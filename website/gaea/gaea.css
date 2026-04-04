@@ -1,0 +1,278 @@
+/* ════════════════════════════════════════════════════════════
+   HAYBAGAEA — "THE GENESIS"
+   Molten Amber · Tectonic Scale · Organic Cinematic
+   ════════════════════════════════════════════════════════════ */
+
+/* ── Custom property overrides ── */
+:root {
+  --bg:            #080C0A;
+  --surface:       #0C110E;
+  --surface2:      #101710;
+  --border:        #111611;
+  --border2:       #1a221a;
+  --accent:        #D4830A;
+  --accent-dim:    rgba(212,131,10,0.07);
+  --accent-mid:    rgba(212,131,10,0.18);
+  --accent-glow:   rgba(212,131,10,0.4);
+  --orange:        #D4830A;
+  --orange-dim:    rgba(212,131,10,0.07);
+  --orange-mid:    rgba(212,131,10,0.18);
+  --orange-glow:   rgba(212,131,10,0.4);
+  --earth:         #2A3A2E;
+  --mist:          rgba(180,200,190,0.05);
+}
+
+/* ── Deep earthy body ── */
+body {
+  background-color: var(--bg);
+}
+
+/* ── Logo pulse → amber ── */
+@keyframes logo-pulse {
+  0%,100% { filter: drop-shadow(0 0 4px rgba(212,131,10,0.2)) brightness(1); }
+  50%      { filter: drop-shadow(0 0 18px rgba(212,131,10,0.8)) brightness(1.3); }
+}
+
+/* ── Hero → deeper cinematic vignette + bottom glow ── */
+.hero-glow {
+  background: radial-gradient(ellipse 70% 50% at 50% 70%,
+    rgba(212,131,10,0.05) 0%, transparent 65%);
+}
+.hero-vignette {
+  background: radial-gradient(ellipse 80% 80% at 50% 50%, transparent 20%, #080C0A 100%);
+}
+
+/* ── Grain overlay ── */
+.grain-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  opacity: 0.35;
+  filter: url(#grain);
+}
+/* SVG grain filter is injected inline in the HTML */
+
+/* ── Mist layer ── */
+.mist-layer {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 200px;
+  pointer-events: none;
+  z-index: 2;
+  background: linear-gradient(to top, rgba(180,200,190,0.04) 0%, transparent 100%);
+  animation: mist-drift 8s ease-in-out infinite alternate;
+}
+@keyframes mist-drift {
+  0%   { opacity: 0.4; transform: translateX(-10px); }
+  100% { opacity: 0.9; transform: translateX(10px); }
+}
+
+/* ── Hero badge → earthy, wider spacing ── */
+.hero-badge {
+  letter-spacing: 0.25em;
+  color: var(--accent);
+  border-color: rgba(212,131,10,0.2);
+  background: rgba(212,131,10,0.04);
+}
+.badge-dot {
+  background: var(--accent);
+  animation: dot-pulse-amber 2s ease-in-out infinite;
+}
+@keyframes dot-pulse-amber {
+  0%,100% { box-shadow: 0 0 0 0 rgba(212,131,10,0.7); }
+  50%      { box-shadow: 0 0 0 5px rgba(212,131,10,0); }
+}
+
+/* ── Hero title → cinematic wider ── */
+.hero-title {
+  letter-spacing: 0.04em;
+}
+
+/* ── Accent line → molten amber ── */
+.accent-line {
+  color: var(--accent);
+  text-shadow: 0 0 60px rgba(212,131,10,0.5), 0 0 120px rgba(212,131,10,0.2);
+  animation: line-in 0.7s cubic-bezier(0.16,1,0.3,1) 0.54s both;
+}
+@keyframes accent-pulse {
+  0%,100% { text-shadow: 0 0 40px rgba(212,131,10,0.4), 0 0 80px rgba(212,131,10,0.15); }
+  50%      { text-shadow: 0 0 80px rgba(212,131,10,0.7), 0 0 140px rgba(212,131,10,0.3); }
+}
+
+/* ── Buttons → amber ── */
+.btn-primary {
+  background: var(--accent);
+  color: #000 !important;
+}
+.btn-primary:hover {
+  box-shadow: 0 0 20px rgba(212,131,10,0.4);
+  opacity: 0.9;
+}
+.btn-hero-primary {
+  background: var(--accent);
+  color: #000;
+}
+.btn-hero-primary:hover {
+  box-shadow: 0 0 40px rgba(212,131,10,0.6), 0 8px 30px rgba(212,131,10,0.3);
+}
+.btn-hero-ghost {
+  border-color: rgba(212,131,10,0.15);
+  color: rgba(212,131,10,0.4);
+}
+.btn-hero-ghost:hover {
+  border-color: rgba(212,131,10,0.3);
+  color: rgba(212,131,10,0.8);
+  background: rgba(212,131,10,0.03);
+}
+
+/* ── Stat suffix → amber ── */
+.stat-suffix { color: var(--accent); }
+
+/* ── Section label → italic, earthy amber ── */
+.section-label {
+  color: var(--accent);
+  font-style: italic;
+  letter-spacing: 0.14em;
+}
+
+/* ── Section borders → gradient amber fade ── */
+.howitworks,
+.getting-started,
+.tools-ref,
+.usecases {
+  border-top: 1px solid;
+  border-image: linear-gradient(90deg, transparent 0%, rgba(212,131,10,0.3) 50%, transparent 100%) 1;
+}
+
+/* ── Feature cards → left border only ── */
+.feature {
+  border: none;
+  border-left: 2px solid var(--accent);
+  border-right: none !important;
+}
+.feature::before {
+  background: radial-gradient(ellipse 80% 80% at 50% 100%, rgba(212,131,10,0.05), transparent);
+}
+.feature::after {
+  background: var(--accent);
+}
+.feature-icon { border-color: rgba(212,131,10,0.15); }
+.feature:hover .feature-icon {
+  border-color: rgba(212,131,10,0.35);
+  background: rgba(212,131,10,0.06);
+  box-shadow: 0 0 15px rgba(212,131,10,0.2);
+}
+.feature-label { color: var(--accent); }
+
+/* ── Marquee items hover → amber ── */
+.marquee-item:hover {
+  border-color: rgba(212,131,10,0.35);
+  box-shadow: 0 0 40px rgba(212,131,10,0.12), 0 12px 40px rgba(0,0,0,0.6);
+}
+.marquee-item:hover .marquee-item-label { color: var(--accent); }
+
+/* ── Pipeline → amber pulse ── */
+.pipeline::before {
+  background: radial-gradient(ellipse 50% 100% at 50% 50%, rgba(212,131,10,0.03), transparent);
+}
+.pipeline-pulse {
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+}
+.pipeline-node:hover .pipeline-node-inner {
+  border-color: rgba(212,131,10,0.3);
+  box-shadow: 0 0 25px rgba(212,131,10,0.15);
+}
+.pipeline-node[data-node="0"] .pipeline-node-label { color: var(--accent); }
+.pipeline-node[data-node="1"] .pipeline-node-label { color: var(--earth); }
+.pipeline-node[data-node="2"] .pipeline-node-label { color: rgba(212,131,10,0.5); }
+.pipeline-node[data-node="3"] .pipeline-node-label { color: rgba(180,200,190,0.4); }
+.pipeline-node:hover .pipeline-node-glow {
+  box-shadow: 0 0 30px rgba(212,131,10,0.25);
+}
+
+/* ── HOW IT WORKS steps → sweeping watermark numbers ── */
+.hiw-step {
+  position: relative;
+  overflow: hidden;
+}
+.hiw-num {
+  font-size: 0.58rem;
+  color: var(--accent);
+  letter-spacing: 0.15em;
+  font-style: italic;
+}
+/* Large watermark behind each step */
+.hiw-step::before {
+  content: attr(data-watermark);
+  position: absolute;
+  right: -0.5rem;
+  bottom: -1rem;
+  font-size: 8rem;
+  font-weight: 900;
+  color: rgba(212,131,10,0.04);
+  line-height: 1;
+  pointer-events: none;
+  letter-spacing: -0.05em;
+  user-select: none;
+}
+
+/* ── Mode cards → amber top bar ── */
+.mode-card::after {
+  background: linear-gradient(90deg, var(--accent), transparent);
+}
+.mode-card-label { color: var(--accent); }
+.tool-chip {
+  background: rgba(212,131,10,0.05);
+  border-color: rgba(212,131,10,0.12);
+  color: var(--accent);
+}
+.tool-chip:hover {
+  background: rgba(212,131,10,0.12);
+  border-color: rgba(212,131,10,0.3);
+  box-shadow: 0 0 10px rgba(212,131,10,0.2);
+}
+
+/* ── HIW content code ── */
+.hiw-content code { color: var(--accent); }
+
+/* ── Setup steps ── */
+.setup-step-num { color: var(--accent); }
+.setup-list li::marker { color: var(--accent); }
+.setup-step-body p code { color: var(--accent); }
+
+/* ── Code blocks ── */
+.c-cmd { color: var(--accent); }
+.c-comment { color: rgba(212,131,10,0.2); }
+
+/* ── Tabs → amber ── */
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* ── Tools reference ── */
+.tool-row::before { background: var(--accent); }
+.tool-name { color: var(--accent); }
+.tool-desc code { color: var(--accent); }
+.catalog-cat-name { color: var(--accent); }
+
+/* ── Use cases ── */
+.usecase::before {
+  background: radial-gradient(ellipse 70% 70% at 50% 100%, rgba(212,131,10,0.04), transparent);
+}
+.usecase-num { color: var(--accent); font-style: italic; }
+.usecase-example { border-left-color: rgba(212,131,10,0.15); }
+.usecase:hover .usecase-example {
+  border-color: rgba(212,131,10,0.35);
+  color: rgba(212,131,10,0.5);
+}
+
+/* ── CTA section ── */
+.cta-glow {
+  background: radial-gradient(ellipse 60% 60% at 50% 50%, rgba(212,131,10,0.08), transparent);
+}
+.cta-title .accent {
+  color: var(--accent);
+  text-shadow: 0 0 60px rgba(212,131,10,0.4);
+}
+
+/* ── Footer ── */
+.footer-links a:hover { color: var(--accent); }
