@@ -31,7 +31,7 @@ export async function generateTerrain(
   // 1. Generate Gaea graph from AI
   let graph: { nodes: unknown[]; edges: unknown[] }
   try {
-    graph = await generateGaeaGraph(req.prompt, config)
+    graph = await generateGaeaGraph(req.prompt, config, req.includeTexture ?? false)
   } catch (err) {
     return {
       id: req.id,
@@ -82,7 +82,7 @@ export async function generateTerrain(
     }
   }
 
-  // 6. Find heightmap output
+  // 6. Find heightmap and optional satmap outputs
   const heightmapPath = findHeightmap(outputFolder)
   if (!heightmapPath) {
     return {
@@ -92,7 +92,9 @@ export async function generateTerrain(
     }
   }
 
-  return { id: req.id, ok: true, heightmapPath }
+  const satmapPath = req.includeTexture ? findSatmap(outputFolder) : undefined
+
+  return { id: req.id, ok: true, heightmapPath, satmapPath }
 }
 
 function writeTerrainFile(
@@ -133,12 +135,35 @@ function writeTerrainFile(
 
 function findHeightmap(folder: string): string | undefined {
   if (!existsSync(folder)) return undefined
+  // Heightmaps are greyscale — Gaea names them after the Autolevel node
   const files = readdirSync(folder).filter(
-    (f) => f.endsWith('.png') || f.endsWith('.r16')
+    (f) => (f.endsWith('.png') || f.endsWith('.r16')) && !isSatmapFile(f)
   )
   if (files.length === 0) return undefined
   const sorted = files
     .map((f) => ({ name: f, mtime: statSync(join(folder, f)).mtimeMs }))
     .sort((a, b) => b.mtime - a.mtime)
   return join(folder, sorted[0].name)
+}
+
+/**
+ * Find the SatMap colour texture output.
+ * Gaea names SatMap outputs after the node (e.g. "SatMap.png" or "satmap.png").
+ */
+function findSatmap(folder: string): string | undefined {
+  if (!existsSync(folder)) return undefined
+  const files = readdirSync(folder).filter((f) => isSatmapFile(f))
+  if (files.length === 0) return undefined
+  const sorted = files
+    .map((f) => ({ name: f, mtime: statSync(join(folder, f)).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime)
+  return join(folder, sorted[0].name)
+}
+
+function isSatmapFile(filename: string): boolean {
+  const lower = filename.toLowerCase()
+  return (
+    (lower.includes('satmap') || lower.includes('supercolor') || lower.includes('color')) &&
+    (lower.endsWith('.png') || lower.endsWith('.jpg'))
+  )
 }

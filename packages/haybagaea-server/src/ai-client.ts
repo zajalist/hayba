@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { HaybaConfig } from './config.js'
 
-const GAEA_SYSTEM_PROMPT = `You are a Gaea 2 terrain expert. When given a terrain description,
+const GAEA_BASE_PROMPT = `You are a Gaea 2 terrain expert. When given a terrain description,
 respond with ONLY a valid JSON object (no markdown) in this exact format:
 
 {
@@ -23,16 +23,30 @@ Weathering, SatMap, SuperColor.
 Always end with an Autolevel node connected to the last processing node.
 Use 3-6 nodes for a good terrain. Keep it focused and coherent.`
 
+const GAEA_TEXTURE_ADDENDUM = `
+Additionally, after the Autolevel node, add a SatMap node for terrain colouring.
+The SatMap node should be connected to the Autolevel output and configured with a
+Biome parameter that matches the terrain type (e.g. "Alpine", "Desert", "Forest",
+"Arctic", "Volcanic"). Give it a unique id like "satmap".
+Example addition to nodes: {"id": "satmap", "type": "SatMap", "params": {"Biome": "Alpine"}}
+Example addition to edges: {"from_id": "autolevel", "from_port": 0, "to_id": "satmap", "to_port": 0}
+The SatMap node produces a colour texture output that Gaea will export as a separate PNG.`
+
 export async function generateGaeaGraph(
   prompt: string,
-  config: HaybaConfig
+  config: HaybaConfig,
+  includeTexture = false
 ): Promise<{ nodes: unknown[]; edges: unknown[] }> {
   const client = new Anthropic({ apiKey: config.aiApiKey })
+
+  const systemPrompt = includeTexture
+    ? GAEA_BASE_PROMPT + GAEA_TEXTURE_ADDENDUM
+    : GAEA_BASE_PROMPT
 
   const message = await client.messages.create({
     model: config.aiModel,
     max_tokens: 2048,
-    system: GAEA_SYSTEM_PROMPT,
+    system: systemPrompt,
     messages: [{ role: 'user', content: prompt }],
   })
 
