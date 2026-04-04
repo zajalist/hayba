@@ -6,7 +6,7 @@
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SSeparator.h"
-#include "Widgets/Layout/SBox.h"
+#include "Widgets/Layout/SWidgetSwitcher.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SMultiLineEditableTextBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
@@ -44,7 +44,7 @@ void SHaybaGaeaPanel::Construct(const FArguments& InArgs, FHaybaGaeaModule* InMo
 
 	ChildSlot
 	[
-		SAssignNew(ScreenSwitcher, SBox)
+		SAssignNew(ScreenSwitcher, SWidgetSwitcher)
 	];
 
 	RebuildContent();
@@ -63,17 +63,19 @@ void SHaybaGaeaPanel::ShowScreen(EHaybaScreen Screen)
 void SHaybaGaeaPanel::RebuildContent()
 {
 	if (!ScreenSwitcher.IsValid()) return;
+	ScreenSwitcher->ClearChildren();
 
 	TSharedRef<SWidget> Content = SNullWidget::NullWidget;
 	switch (CurrentScreen)
 	{
-	case EHaybaScreen::Wizard:       Content = BuildWizardScreen();       break;
-	case EHaybaScreen::ModeSelect:   Content = BuildModeSelectScreen();   break;
-	case EHaybaScreen::MCPStatus:    Content = BuildMCPStatusScreen();    break;
+	case EHaybaScreen::Wizard:       Content = BuildWizardScreen();      break;
+	case EHaybaScreen::ModeSelect:   Content = BuildModeSelectScreen();  break;
+	case EHaybaScreen::MCPStatus:    Content = BuildMCPStatusScreen();   break;
 	case EHaybaScreen::ApiKeyPrompt: Content = BuildApiKeyPromptScreen(); break;
 	}
 
-	ScreenSwitcher->SetContent(Content);
+	ScreenSwitcher->AddSlot() [ Content ];
+	ScreenSwitcher->SetActiveWidgetIndex(0);
 }
 
 // ---------------------------------------------------------------------------

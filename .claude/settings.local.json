@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(cp:*)",
+      "Bash(mkdir:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(gh api:*)",
+      "Bash(grep -E \"\\\\.cpp$|\\\\.h$|\\\\.cs$\")",
+      "Bash(node:*)",
+      "Read(//d/pcgex_bridge/Bridge/pcgex_docs/**)",
+      "Bash(grep -E \"\\\\.uasset$\")",
+      "Bash(wc -l echo \"---categories---\" gh api repos/PCGEx/PCGExExampleProject/git/trees/HEAD?recursive=1 --jq '.tree[].path')",
+      "Bash(python -c ':*)",
+      "Bash(cp \"D:/hayba/packages/pcgex/dist/catalog.js\" \"D:/UnrealEngine/geoforge/Plugins/Hayba_PcgEx_MCP/ThirdParty/mcp_server/dist/catalog.js\")",
+      "Bash(cp \"D:/hayba/packages/pcgex/dist/catalog.js.map\" \"D:/UnrealEngine/geoforge/Plugins/Hayba_PcgEx_MCP/ThirdParty/mcp_server/dist/catalog.js.map\")",
+      "Bash(python -m json.tool)",
+      "Bash(claude mcp:*)",
+      "mcp__hayba-pcgex__check_ue_status",
+      "mcp__hayba-pcgex__search_node_catalog",
+      "mcp__hayba-pcgex__create_pcg_graph",
+      "Bash(grep \".h$\")",
+      "Bash(git -C \"D:/UnrealEngine/geoforge\" status --short)",
+      "Bash(git -C \"D:/UnrealEngine/geoforge\" init)",
+      "Bash(git -C \"D:/UnrealEngine/geoforge\" status)",
+      "Bash(cp -r \"D:/UnrealEngine/geoforge/Plugins/HaybaGaea/Source/\" \"D:/hayba/packages/gaea/Plugins/HaybaGaea/Source/\")",
+      "Bash(cp -r \"D:/UnrealEngine/geoforge/Plugins/Hayba_PcgEx_MCP/Source/\" \"D:/hayba/packages/gaea/Plugins/Hayba_PcgEx_MCP/Source/\")",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(k,v\\) for k,v in d.get\\('mcpServers',{}\\).items\\(\\)]\")",
+      "Read(//c/Users/Admin/**)",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); s=d.get\\('mcpServers',{}\\); [print\\(k,json.dumps\\(v,indent=2\\)\\) for k,v in s.items\\(\\) if 'hayba' in k or 'pcgex' in k.lower\\(\\)]\")"
+    ]
+  }
+}

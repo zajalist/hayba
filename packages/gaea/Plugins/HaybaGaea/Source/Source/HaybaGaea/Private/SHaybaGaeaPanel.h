@@ -7,7 +7,7 @@ class FHaybaGaeaModule;
 class SScrollBox;
 class SMultiLineEditableTextBox;
 class SEditableTextBox;
-class SBox;
+class SWidgetSwitcher;
 
 // Which top-level screen the panel is showing
 enum class EHaybaScreen : uint8
@@ -33,7 +33,7 @@ private:
 	EHaybaScreen CurrentScreen = EHaybaScreen::Wizard;
 	int32 WizardPage = 0; // 0=Welcome 1=ModeSelect 2=Setup
 	EHaybaOperationMode ChosenMode = EHaybaOperationMode::Integrated;
-	TSharedPtr<SBox> ScreenSwitcher;
+	TSharedPtr<SWidgetSwitcher> ScreenSwitcher;
 
 	void ShowScreen(EHaybaScreen Screen);
 	void RebuildContent();

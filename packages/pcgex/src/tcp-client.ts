@@ -32,6 +32,8 @@ export class UETcpClient extends EventEmitter {
     super();
     this.host = host;
     this.port = port;
+    // Prevent unhandled 'error' event from crashing the process
+    this.on('error', () => {});
   }
 
   async connect(): Promise<void> {
