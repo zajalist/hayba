@@ -37,32 +37,51 @@ bool FHaybaGaeaLandscapeImporter::ImportHeightmap(const FString& HeightmapPath)
 		return false;
 	}
 
-	// Decode PNG to 16-bit greyscale via IImageWrapper
+	// Decode heightmap — supports R16 (raw 16-bit) and PNG
 	TArray<uint16> HeightData;
 	int32 Width = 0, Height = 0;
+	const bool bIsR16 = HeightmapPath.EndsWith(TEXT(".r16")) || HeightmapPath.EndsWith(TEXT(".raw"));
 
-	IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
-	TSharedPtr<IImageWrapper> Wrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
-
-	if (Wrapper.IsValid() && Wrapper->SetCompressed(RawData.GetData(), RawData.Num()))
+	if (bIsR16)
 	{
-		TArray<uint8> Uncompressed;
-		if (Wrapper->GetRaw(ERGBFormat::Gray, 16, Uncompressed))
+		// R16: raw little-endian uint16 values, square image assumed
+		const int32 NumPixels = RawData.Num() / 2;
+		const int32 Side = FMath::RoundToInt(FMath::Sqrt((float)NumPixels));
+		if (Side * Side * 2 == RawData.Num())
 		{
-			Width = Wrapper->GetWidth();
-			Height = Wrapper->GetHeight();
+			Width = Height = Side;
+			HeightData.SetNumUninitialized(NumPixels);
+			FMemory::Memcpy(HeightData.GetData(), RawData.GetData(), RawData.Num());
+		}
+		else
+		{
+			UE_LOG(LogHaybaImporter, Warning, TEXT("R16 file size %d does not form a square — falling back to flat"), RawData.Num());
+		}
+	}
+	else
+	{
+		// PNG: decode 16-bit greyscale via IImageWrapper
+		IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
+		TSharedPtr<IImageWrapper> Wrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
 
-			HeightData.SetNumUninitialized(Width * Height);
-			FMemory::Memcpy(HeightData.GetData(), Uncompressed.GetData(), Uncompressed.Num());
+		if (Wrapper.IsValid() && Wrapper->SetCompressed(RawData.GetData(), RawData.Num()))
+		{
+			TArray<uint8> Uncompressed;
+			if (Wrapper->GetRaw(ERGBFormat::Gray, 16, Uncompressed))
+			{
+				Width = Wrapper->GetWidth();
+				Height = Wrapper->GetHeight();
+				HeightData.SetNumUninitialized(Width * Height);
+				FMemory::Memcpy(HeightData.GetData(), Uncompressed.GetData(), Uncompressed.Num());
+			}
 		}
 	}
 
 	// Fall back to flat landscape if decode failed
 	if (HeightData.Num() == 0)
 	{
-		UE_LOG(LogHaybaImporter, Warning, TEXT("Could not decode PNG as 16-bit greyscale — creating flat landscape"));
-		// Standard UE landscape: 1009 verts = 1008 quads = 16*63
-		Width = Height = 1009;
+		UE_LOG(LogHaybaImporter, Warning, TEXT("Could not decode heightmap — creating flat landscape"));
+		Width = Height = 1009; // 1009 verts = 1008 quads (standard UE landscape)
 		HeightData.Init(32768, Width * Height);
 	}
 

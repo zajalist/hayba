@@ -109,6 +109,14 @@ void FHaybaGaeaModule::SendGenerateRequest(
 
 		FString HeightmapPath;
 		Root->TryGetStringField(TEXT("heightmapPath"), HeightmapPath);
+
+		// Log satmap path if present (colour texture from SatMap node)
+		FString SatmapPath;
+		if (Root->TryGetStringField(TEXT("satmapPath"), SatmapPath) && !SatmapPath.IsEmpty())
+		{
+			UE_LOG(LogTemp, Log, TEXT("[HaybaGaea] Colour texture: %s"), *SatmapPath);
+		}
+
 		Callback(true, HeightmapPath);
 	});
 

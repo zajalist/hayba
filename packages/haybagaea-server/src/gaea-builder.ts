@@ -123,7 +123,8 @@ function writeTerrainFile(
       ToPort: e.to_port ?? 0,
     })),
     BuildExtend: {
-      Format: 'PNG16',
+      // R16 (raw 16-bit) gives Gaea's native precision — matches what Gaea2Unreal expects
+      Format: 'R16',
       Output: outputFolder,
       Resolution: resolution,
       IsInBuildMode: true,
@@ -135,12 +136,14 @@ function writeTerrainFile(
 
 function findHeightmap(folder: string): string | undefined {
   if (!existsSync(folder)) return undefined
-  // Heightmaps are greyscale — Gaea names them after the Autolevel node
-  const files = readdirSync(folder).filter(
-    (f) => (f.endsWith('.png') || f.endsWith('.r16')) && !isSatmapFile(f)
-  )
-  if (files.length === 0) return undefined
-  const sorted = files
+  // Gaea names outputs after the node. Autolevel → heightmap.
+  // Prefer .r16 (native 16-bit raw) over .png; skip weight maps (W_ prefix) and satmaps.
+  const all = readdirSync(folder)
+  const r16 = all.filter((f) => f.endsWith('.r16') && !isWeightMap(f))
+  const png = all.filter((f) => f.endsWith('.png') && !isWeightMap(f) && !isSatmapFile(f))
+  const candidates = r16.length > 0 ? r16 : png
+  if (candidates.length === 0) return undefined
+  const sorted = candidates
     .map((f) => ({ name: f, mtime: statSync(join(folder, f)).mtimeMs }))
     .sort((a, b) => b.mtime - a.mtime)
   return join(folder, sorted[0].name)
@@ -148,11 +151,12 @@ function findHeightmap(folder: string): string | undefined {
 
 /**
  * Find the SatMap colour texture output.
- * Gaea names SatMap outputs after the node (e.g. "SatMap.png" or "satmap.png").
+ * Gaea names SatMap/SuperColor outputs after the node (e.g. "SatMap.png").
+ * Weight maps use a "W_" prefix and are excluded from satmap detection.
  */
 function findSatmap(folder: string): string | undefined {
   if (!existsSync(folder)) return undefined
-  const files = readdirSync(folder).filter((f) => isSatmapFile(f))
+  const files = readdirSync(folder).filter((f) => isSatmapFile(f) && !isWeightMap(f))
   if (files.length === 0) return undefined
   const sorted = files
     .map((f) => ({ name: f, mtime: statSync(join(folder, f)).mtimeMs }))
@@ -160,10 +164,16 @@ function findSatmap(folder: string): string | undefined {
   return join(folder, sorted[0].name)
 }
 
+/** Gaea SatMap/SuperColor outputs are named after the node and end in .png/.jpg */
 function isSatmapFile(filename: string): boolean {
   const lower = filename.toLowerCase()
   return (
     (lower.includes('satmap') || lower.includes('supercolor') || lower.includes('color')) &&
     (lower.endsWith('.png') || lower.endsWith('.jpg'))
   )
+}
+
+/** Gaea weight maps use a W_ prefix (e.g. W_Slope.png) */
+function isWeightMap(filename: string): boolean {
+  return filename.startsWith('W_') || filename.startsWith('w_')
 }
