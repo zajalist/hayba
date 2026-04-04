@@ -13,7 +13,7 @@ public class HaybaGaea : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[] {
 			"UnrealEd", "ToolMenus", "WorkspaceMenuStructure",
 			"Sockets", "Networking", "Json",
-			"Landscape", "LandscapeEditor",
+			"Landscape", "LandscapeEditor", "LandscapeEditorUtils",
 			"ImageWrapper"
 		});
 	}
