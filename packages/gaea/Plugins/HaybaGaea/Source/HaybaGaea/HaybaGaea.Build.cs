@@ -1,3 +1,4 @@
+using System.IO;
 using UnrealBuildTool;
 
 public class HaybaGaea : ModuleRules
@@ -6,6 +7,12 @@ public class HaybaGaea : ModuleRules
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
+		// FLandscapeImportHelper lives in LandscapeEditor's private headers
+		var EngineDir = Path.GetFullPath(Target.RelativeEnginePath);
+		PublicSystemIncludePaths.Add(
+			Path.Combine(EngineDir, "Source/Editor/LandscapeEditor/Private")
+		);
+
 		PublicDependencyModuleNames.AddRange(new string[] {
 			"Core", "CoreUObject", "Engine", "Slate", "SlateCore"
 		});
@@ -13,7 +20,7 @@ public class HaybaGaea : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[] {
 			"UnrealEd", "ToolMenus", "WorkspaceMenuStructure",
 			"Sockets", "Networking", "Json",
-			"Landscape", "LandscapeEditor", "LandscapeEditorUtils",
+			"Landscape", "LandscapeEditor",
 			"ImageWrapper"
 		});
 	}
