@@ -713,10 +713,10 @@ FReply SPCGExWizardWidget::OnCreateInUE()
     AddAIMessage(FString::Printf(TEXT("Creating '%s' in UE..."), *AssetName));
 
     int32 StepIndex = Session.CurrentStep;
-    TWeakPtr<SPCGExWizardWidget> WeakThis = SharedThis(this);
-    Module->SendTcpCommand(TEXT("create_graph"), Params, [WeakThis, AssetName, StepIndex](bool bOk, const TSharedPtr<FJsonObject>& Response)
+    TWeakPtr<SPCGExWizardWidget> WeakSelf = SharedThis(this);
+    Module->SendTcpCommand(TEXT("create_graph"), Params, [WeakSelf, AssetName, StepIndex](bool bOk, const TSharedPtr<FJsonObject>& Response)
     {
-        TSharedPtr<SPCGExWizardWidget> Self = WeakThis.Pin();
+        TSharedPtr<SPCGExWizardWidget> Self = WeakSelf.Pin();
         if (!Self.IsValid()) return;
 
         if (!bOk || !Response.IsValid())
@@ -763,10 +763,10 @@ FReply SPCGExWizardWidget::OnTestIt()
     TSharedRef<FJsonObject> Params = MakeShared<FJsonObject>();
     Params->SetStringField(TEXT("assetPath"), AssetPath);
 
-    TWeakPtr<SPCGExWizardWidget> WeakThis = SharedThis(this);
-    Module->SendTcpCommand(TEXT("execute_graph"), Params, [WeakThis, AssetPath](bool bOk, const TSharedPtr<FJsonObject>& Response)
+    TWeakPtr<SPCGExWizardWidget> WeakSelf = SharedThis(this);
+    Module->SendTcpCommand(TEXT("execute_graph"), Params, [WeakSelf, AssetPath](bool bOk, const TSharedPtr<FJsonObject>& Response)
     {
-        TSharedPtr<SPCGExWizardWidget> Self = WeakThis.Pin();
+        TSharedPtr<SPCGExWizardWidget> Self = WeakSelf.Pin();
         if (!Self.IsValid()) return;
 
         if (!bOk || !Response.IsValid())
