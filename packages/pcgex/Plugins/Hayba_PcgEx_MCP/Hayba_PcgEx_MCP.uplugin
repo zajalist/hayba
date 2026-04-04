@@ -2,10 +2,10 @@
   "FileVersion": 3,
   "Version": 1,
   "VersionName": "0.2.0",
-  "FriendlyName": "PCGEx Bridge",
+  "FriendlyName": "Hayba PCGEx MCP",
   "Description": "MCP server bridge for PCGEx procedural geometry generation",
   "Category": "Editor",
-  "CreatedBy": "PCGEx Bridge",
+  "CreatedBy": "Hayba",
   "EnabledByDefault": true,
   "CanContainContent": true,
   "IsBetaVersion": false,
@@ -13,7 +13,7 @@
   "Installed": false,
   "Modules": [
     {
-      "Name": "PCGExBridge",
+      "Name": "Hayba_PcgEx_MCP",
       "Type": "Editor",
       "LoadingPhase": "PostEngineInit"
     }

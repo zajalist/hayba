@@ -19,28 +19,28 @@ DEFINE_LOG_CATEGORY_STATIC(LogPCGExBridge, Log, All);
 
 void FPCGExBridgeModule::StartupModule()
 {
-    PluginBaseDir = IPluginManager::Get().FindPlugin(TEXT("PCGExBridge"))->GetBaseDir();
-    UE_LOG(LogPCGExBridge, Log, TEXT("PCGExBridge module started. Base dir: %s"), *PluginBaseDir);
+    PluginBaseDir = IPluginManager::Get().FindPlugin(TEXT("Hayba_PcgEx_MCP"))->GetBaseDir();
+    UE_LOG(LogPCGExBridge, Log, TEXT("Hayba_PcgEx_MCP module started. Base dir: %s"), *PluginBaseDir);
 
     FPCGExBridgeSettings::Get().Load();
 
     CommandHandler = MakeShared<FPCGExBridgeCommandHandler>();
 
     FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
-        TEXT("PCGExBridge"),
+        TEXT("Hayba_PcgEx_MCP"),
         FOnSpawnTab::CreateRaw(this, &FPCGExBridgeModule::OnSpawnTab))
-        .SetDisplayName(NSLOCTEXT("PCGExBridge", "TabTitle", "PCGEx Bridge"))
-        .SetTooltipText(NSLOCTEXT("PCGExBridge", "TabTooltip", "Open the PCGEx Bridge wizard panel"))
+        .SetDisplayName(NSLOCTEXT("Hayba_PcgEx_MCP", "TabTitle", "Hayba PCGEx MCP"))
+        .SetTooltipText(NSLOCTEXT("Hayba_PcgEx_MCP", "TabTooltip", "Open the Hayba PCGEx MCP wizard panel"))
         .SetGroup(WorkspaceMenu::GetMenuStructure().GetToolsCategory())
         .SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), "ClassIcon.UserDefinedStruct"));
 
     // Also register a console command to open the tab
     IConsoleManager::Get().RegisterConsoleCommand(
-        TEXT("PCGExBridge.Open"),
-        TEXT("Opens the PCGEx Bridge wizard panel"),
+        TEXT("Hayba.PcgEx.Open"),
+        TEXT("Opens the Hayba PCGEx MCP wizard panel"),
         FConsoleCommandDelegate::CreateLambda([]()
         {
-            FGlobalTabmanager::Get()->TryInvokeTab(FName(TEXT("PCGExBridge")));
+            FGlobalTabmanager::Get()->TryInvokeTab(FName(TEXT("Hayba_PcgEx_MCP")));
         }),
         ECVF_Default
     );
@@ -48,7 +48,7 @@ void FPCGExBridgeModule::StartupModule()
 
 void FPCGExBridgeModule::ShutdownModule()
 {
-    FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TEXT("PCGExBridge"));
+    FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TEXT("Hayba_PcgEx_MCP"));
     StopTcpServer();
     StopMCPServer();
     UE_LOG(LogPCGExBridge, Log, TEXT("PCGExBridge module shut down."));
@@ -238,4 +238,4 @@ TSharedRef<SDockTab> FPCGExBridgeModule::OnSpawnTab(const FSpawnTabArgs& Args)
         ];
 }
 
-IMPLEMENT_MODULE(FPCGExBridgeModule, PCGExBridge)
+IMPLEMENT_MODULE(FPCGExBridgeModule, Hayba_PcgEx_MCP)

@@ -1,9 +1,9 @@
-// Plugins/PCGExBridge/Source/PCGExBridge/PCGExBridge.Build.cs
+// Plugins/Hayba_PcgEx_MCP/Source/Hayba_PcgEx_MCP/Hayba_PcgEx_MCP.Build.cs
 using UnrealBuildTool;
 
-public class PCGExBridge : ModuleRules
+public class Hayba_PcgEx_MCP : ModuleRules
 {
-    public PCGExBridge(ReadOnlyTargetRules Target) : base(Target)
+    public Hayba_PcgEx_MCP(ReadOnlyTargetRules Target) : base(Target)
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 

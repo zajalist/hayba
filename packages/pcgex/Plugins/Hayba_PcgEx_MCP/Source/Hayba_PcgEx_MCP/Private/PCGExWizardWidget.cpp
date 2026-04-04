@@ -143,7 +143,7 @@ TSharedRef<SWidget> SPCGExWizardWidget::BuildTopBar()
             .VAlign(VAlign_Center)
             [
                 SNew(STextBlock)
-                .Text(FText::FromString(TEXT("PCGEx Bridge — Wizard")))
+                .Text(FText::FromString(TEXT("Hayba PCGEx MCP")))
                 .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
                 .ColorAndOpacity(ColorText)
             ]
