@@ -38,9 +38,17 @@ export const GRAPH_PATTERNS = `
 - The None-None type compatibility check can cause false validation errors for param-type pins
   (heuristics, blend ops, goal pickers) — these are safe to ignore; the UE validator has a guard.
 
+## Node Positions (UE5 coordinate system)
+- NodePosX and NodePosY must be integers.
+- Origin is top-left; positive Y is downward (NOT upward).
+- Use format_graph_topology to auto-layout any graph before calling create_pcg_graph.
+- Default layered layout: x = layer * (nodeWidth + horizontalSpacing), y = rowIndex * (nodeHeight + verticalSpacing).
+
 ## General
 - Always check actual pin names via get_node_details before connecting nodes.
 - Cluster nodes (Delaunay, Voronoi, etc.) output "Vtx" and "Edges" — not "Out".
+- Use validate_attribute_flow to check that custom attribute names are consistent across the graph before building.
+- Use initiate_infrastructure_brainstorm BEFORE building complex multi-subgraph systems — never create graphs without a user-approved approach.
 `;
 
 export function getGraphPatterns(): string {
