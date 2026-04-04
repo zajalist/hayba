@@ -19,9 +19,14 @@ function edgeKey(edge: PCGEdge): string {
 }
 
 function buildNodeKeyMap(nodes: PCGNode[]): Map<string, PCGNode> {
+  // BUG-D1: handle duplicate class::label keys by appending ::0, ::1 suffixes
   const map = new Map<string, PCGNode>();
-  for (const n of nodes) {
-    map.set(nodeKey(n), n);
+  const counts = new Map<string, number>();
+  for (const node of nodes) {
+    const base = nodeKey(node);
+    const count = counts.get(base) ?? 0;
+    counts.set(base, count + 1);
+    map.set(count === 0 ? base : `${base}::${count}`, node);
   }
   return map;
 }
@@ -54,12 +59,8 @@ export async function diffAgainstWorkingAsset(params: DiffAgainstWorkingAssetPar
   const response = await client.send('export_graph', { assetPath: referenceAssetPath });
   if (!response.ok) throw new Error(response.error || 'Failed to export reference graph');
 
-  let refGraph: PCGGraphJSON;
-  try {
-    refGraph = typeof response.data === 'string' ? JSON.parse(response.data) : (response.data as unknown as PCGGraphJSON);
-  } catch {
-    throw new Error('Reference graph returned from UE is not valid JSON');
-  }
+  // BUG-D7: response.data is Record<string, unknown>; UE export_graph wraps graph in { graph: ... }
+  const refGraph: PCGGraphJSON = (response.data as any)?.graph ?? (response.data as unknown as PCGGraphJSON);
 
   const wipNodeMap = buildNodeKeyMap(wipGraph.nodes);
   const refNodeMap = buildNodeKeyMap(refGraph.nodes);
@@ -126,8 +127,10 @@ export async function diffAgainstWorkingAsset(params: DiffAgainstWorkingAssetPar
     propertyChanges.length === 0 &&
     positionChanges.length === 0;
 
+  // BUG-D5: qualify summary based on diffMode
+  const identicalLabel = diffMode === 'structural' ? 'Graphs are structurally identical' : 'Graphs are identical';
   const summary = identical
-    ? 'Graphs are identical'
+    ? identicalLabel
     : [
         addedNodes.length ? `+${addedNodes.length} nodes` : '',
         removedNodes.length ? `-${removedNodes.length} nodes` : '',

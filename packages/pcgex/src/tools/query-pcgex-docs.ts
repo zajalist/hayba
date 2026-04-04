@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { searchCatalog, getNodeByClass } from '../catalog.js';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
 const schema = z.object({
@@ -19,13 +19,22 @@ interface DocResult {
   pins: Array<{ pin: string; direction: string; type: string; required?: boolean }>;
   properties: Array<{ name: string; type: string; default?: string; description?: string }>;
   sourceSnippet?: string;
+  sourceSnippetUnavailable?: boolean;
   _headerPath?: string;
+}
+
+function isDbAvailable(): boolean {
+  try {
+    return existsSync(DB_PATH);
+  } catch {
+    return false;
+  }
 }
 
 function getDbResults(query: string): DocResult[] {
   try {
-    const db = new DatabaseSync(DB_PATH, { open: false });
-    db.open();
+    // BUG-8: DatabaseSync API — just new DatabaseSync(path), no open/close methods
+    const db = new DatabaseSync(DB_PATH);
     const nodes = db.prepare(
       `SELECT * FROM nodes WHERE class LIKE ? OR display_name LIKE ?`
     ).all(`%${query}%`, `%${query}%`) as Array<{ class: string; display_name: string; description: string; header_path: string }>;
@@ -46,7 +55,6 @@ function getDbResults(query: string): DocResult[] {
         _headerPath: n.header_path,
       };
     });
-    db.close();
     return results;
   } catch {
     return [];
@@ -111,11 +119,21 @@ export async function queryPcgexDocs(params: QueryPcgexDocsParams) {
       }
     }
   } else if (includeSourceSnippet) {
-    const dbResults = getDbResults(query);
-    for (const result of results) {
-      const dbMatch = dbResults.find(d => d.class === result.class);
-      if (dbMatch?._headerPath) {
-        result.sourceSnippet = getSourceSnippet(dbMatch._headerPath, result.class);
+    // BUG-7: flag when snippet unavailable (DB absent)
+    const dbAvailable = isDbAvailable();
+    if (!dbAvailable) {
+      for (const result of results) {
+        result.sourceSnippetUnavailable = true;
+      }
+    } else {
+      const dbResults = getDbResults(query);
+      for (const result of results) {
+        const dbMatch = dbResults.find(d => d.class === result.class);
+        if (dbMatch?._headerPath) {
+          result.sourceSnippet = getSourceSnippet(dbMatch._headerPath, result.class);
+        } else {
+          result.sourceSnippetUnavailable = true;
+        }
       }
     }
   }

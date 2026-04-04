@@ -201,7 +201,7 @@ export function registerTools(server: McpServer): void {
     'query_pcgex_docs',
     {
       query: z.string().describe('Node class name or keyword to search documentation'),
-      includeSourceSnippet: z.boolean().optional().describe('Include up to 80 lines from the header file'),
+      includeSourceSnippet: z.boolean().optional().default(false).describe('Include up to 80 lines from the header file'),
     },
     async (params) => {
       const result = await queryPcgexDocs(params as any);
@@ -211,6 +211,7 @@ export function registerTools(server: McpServer): void {
 
   server.tool(
     'initiate_infrastructure_brainstorm',
+    'Plan complex graph architectures. IMPORTANT: After calling this tool, do NOT call create_pcg_graph, validate_pcg_graph, or any graph-mutation tool until the user explicitly approves an approach from the proposal.',
     {
       topic: z.string().describe('The infrastructure or system design topic to brainstorm'),
       context: z.string().optional().describe('Additional context about the project or constraints'),

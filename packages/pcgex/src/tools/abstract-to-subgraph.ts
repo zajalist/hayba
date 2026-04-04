@@ -25,6 +25,12 @@ export async function abstractToSubgraph(params: AbstractToSubgraphParams) {
 
   if (selectedNodes.length === 0) throw new Error('No nodes found matching provided nodeIds');
 
+  // BUG-A7: collect warnings for nodeIds not found in graph
+  const existingIds = new Set(graph.nodes.map(n => n.id));
+  const warnings: string[] = nodeIds
+    .filter(id => !existingIds.has(id))
+    .map(id => `nodeId "${id}" not found in graph`);
+
   // Classify edges
   const internalEdges: PCGEdge[] = [];
   const boundaryIncoming: PCGEdge[] = []; // from outside -> inside selection
@@ -41,12 +47,13 @@ export async function abstractToSubgraph(params: AbstractToSubgraphParams) {
   }
 
   // Build boundary pin lists
+  // BUG-A3+A4: use fromNode in pin name to prevent collisions
   const boundaryInputPins = boundaryIncoming.map(e => ({
     externalFromNode: e.fromNode,
     externalFromPin: e.fromPin,
     internalToNode: e.toNode,
     internalToPin: e.toPin,
-    paramName: `Input_${e.fromPin}`,
+    paramName: `Input_${e.fromNode}_${e.fromPin}`,
   }));
 
   const boundaryOutputPins = boundaryOutgoing.map(e => ({
@@ -54,27 +61,28 @@ export async function abstractToSubgraph(params: AbstractToSubgraphParams) {
     internalFromPin: e.fromPin,
     externalToNode: e.toNode,
     externalToPin: e.toPin,
-    paramName: `Output_${e.fromPin}`,
+    paramName: `Output_${e.fromNode}_${e.fromPin}`,
   }));
 
   // Build subgraph JSON
-  const inputBoundaryNode: PCGNode = {
+  // BUG-A1: only add boundary nodes when there are boundary edges
+  const inputBoundaryNode: PCGNode | null = boundaryIncoming.length > 0 ? {
     id: 'boundary_input',
     class: 'PCGGraphInputOutputSettings',
     label: 'Inputs',
     position: { x: -400, y: 0 },
     properties: { bIsInput: true },
     customData: {},
-  };
+  } : null;
 
-  const outputBoundaryNode: PCGNode = {
+  const outputBoundaryNode: PCGNode | null = boundaryOutgoing.length > 0 ? {
     id: 'boundary_output',
     class: 'PCGGraphInputOutputSettings',
     label: 'Outputs',
     position: { x: 600, y: 0 },
     properties: { bIsInput: false },
     customData: {},
-  };
+  } : null;
 
   const subgraphInputEdges: PCGEdge[] = boundaryInputPins.map(bp => ({
     fromNode: 'boundary_input',
@@ -90,6 +98,7 @@ export async function abstractToSubgraph(params: AbstractToSubgraphParams) {
     toPin: bp.paramName,
   }));
 
+  // BUG-A5: reset metadata on subgraph so it doesn't inherit parent metadata
   const subgraphJSON: PCGGraphJSON = {
     ...graph,
     meta: {
@@ -97,7 +106,12 @@ export async function abstractToSubgraph(params: AbstractToSubgraphParams) {
       sourceGraph: subgraphName,
       exportedAt: new Date().toISOString(),
     },
-    nodes: [inputBoundaryNode, ...selectedNodes, outputBoundaryNode],
+    metadata: { graphSettings: {}, inputSettings: {}, outputSettings: {} },
+    nodes: [
+      ...(inputBoundaryNode ? [inputBoundaryNode] : []),
+      ...selectedNodes,
+      ...(outputBoundaryNode ? [outputBoundaryNode] : []),
+    ],
     edges: [...subgraphInputEdges, ...internalEdges, ...subgraphOutputEdges],
   };
 
@@ -108,21 +122,22 @@ export async function abstractToSubgraph(params: AbstractToSubgraphParams) {
     class: 'PCGExecuteSubgraphSettings',
     label: subgraphName,
     position: { x: 0, y: 0 }, // caller should run format_graph_topology after
-    properties: { SubgraphAsset: subgraphName },
+    // BUG-A6: SubgraphAsset comment to guide user
+    properties: { SubgraphAsset: `// TODO: set to UE asset path for ${subgraphName}` },
     customData: {},
   };
 
-  // Rewire boundary edges in parent
+  // Rewire boundary edges in parent (use same unique pin naming as subgraph boundary)
   const rewiredIncoming: PCGEdge[] = boundaryIncoming.map(e => ({
     fromNode: e.fromNode,
     fromPin: e.fromPin,
     toNode: subgraphCallNodeId,
-    toPin: `Input_${e.fromPin}`,
+    toPin: `Input_${e.fromNode}_${e.fromPin}`,
   }));
 
   const rewiredOutgoing: PCGEdge[] = boundaryOutgoing.map(e => ({
     fromNode: subgraphCallNodeId,
-    fromPin: `Output_${e.fromPin}`,
+    fromPin: `Output_${e.fromNode}_${e.fromPin}`,
     toNode: e.toNode,
     toPin: e.toPin,
   }));
@@ -139,5 +154,6 @@ export async function abstractToSubgraph(params: AbstractToSubgraphParams) {
     subgraphName,
     boundaryInputPins,
     boundaryOutputPins,
+    warnings,
   };
 }

@@ -78,6 +78,11 @@ function layeredLayout(
     byLayer.get(layer)!.push(id);
   }
 
+  // BUG-F7: sort nodes within each layer by id for deterministic layout
+  for (const ids of byLayer.values()) {
+    ids.sort();
+  }
+
   const nodeById = new Map(nodes.map(n => [n.id, n]));
   const updated: PCGNode[] = [];
 
@@ -117,12 +122,12 @@ function gridLayout(
   }));
 }
 
-function buildCommentBlocks(nodes: PCGNode[]): PCGNode[] {
+function buildCommentBlocks(nodes: PCGNode[], nodeWidth: number, nodeHeight: number): PCGNode[] {
   // Group by class prefix to infer category
   const groups = new Map<string, PCGNode[]>();
   for (const node of nodes) {
-    // Use first segment of class name as category key
-    const match = node.class.match(/^UPCGEX?(\w+?)(?:Settings)?$/);
+    // BUG-F5: fix regex to match both UPCG and UPCGEx prefixes
+    const match = node.class.match(/^UPCG(?:Ex)?(\w+?)(?:Settings)?$/i);
     const group = match ? match[1].substring(0, 4) : 'Misc';
     if (!groups.has(group)) groups.set(group, []);
     groups.get(group)!.push(node);
@@ -137,8 +142,9 @@ function buildCommentBlocks(nodes: PCGNode[]): PCGNode[] {
     const ys = groupNodes.map(n => n.position.y);
     const minX = Math.min(...xs) - 20;
     const minY = Math.min(...ys) - 40;
-    const maxX = Math.max(...xs) + 220;
-    const maxY = Math.max(...ys) + 120;
+    // BUG-F4: use nodeWidth/nodeHeight instead of hardcoded 220/120
+    const maxX = Math.max(...xs) + nodeWidth + 20;
+    const maxY = Math.max(...ys) + nodeHeight + 20;
 
     commentNodes.push({
       id: `comment_${commentId++}`,
@@ -171,7 +177,7 @@ export async function formatGraphTopology(params: FormatGraphTopologyParams) {
     updatedNodes = gridLayout(graph.nodes, nodeWidth, nodeHeight, horizontalSpacing, verticalSpacing);
   }
 
-  const extraNodes = addCommentBlocks ? buildCommentBlocks(updatedNodes) : [];
+  const extraNodes = addCommentBlocks ? buildCommentBlocks(updatedNodes, nodeWidth, nodeHeight) : [];
 
   const result: PCGGraphJSON = {
     ...graph,

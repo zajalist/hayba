@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync, existsSync, unlinkSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
 const schema = z.object({
@@ -45,11 +45,11 @@ function parseHeader(content: string, headerPath: string, sourcePath: string): {
   const pins: PinInfo[] = [];
   const properties: PropertyInfo[] = [];
 
-  const classMatch = content.match(/class\s+\w+_API\s+(UPCGEX\w+Settings)\s*[:\s]/);
+  const classMatch = content.match(/class\s+\w+_API\s+(UPCGEx\w+Settings)\s*[:\s{]/);
   if (!classMatch) return { pins, properties };
   const className = classMatch[1];
 
-  const nodeInfoMatch = content.match(/PCGEX_NODE_INFOS\s*\(\s*\w+\s*,\s*"([^"]+)"\s*,\s*"([^"]*)"/);
+  const nodeInfoMatch = content.match(/PCGEX_NODE_INFOS\s*\(\s*\w+\s*,\s*"([^"]+)"\s*,\s*"([^"]*)"/s);
   const displayName = nodeInfoMatch ? nodeInfoMatch[1] : className;
   const description = nodeInfoMatch ? nodeInfoMatch[2] : '';
 
@@ -71,6 +71,9 @@ function parseHeader(content: string, headerPath: string, sourcePath: string): {
     for (const m of outputPinSection[1].matchAll(/FName\s*\(\s*(?:TEXT\s*\()?\s*"([^"]+)"/g)) {
       pins.push({ nodeClass: className, name: m[1], direction: 'output', pinType: 'Any', required: false });
     }
+    for (const m of outputPinSection[1].matchAll(/PCGEX_PIN_\w+\s*\(\s*(\w+)\s*[,)]/g)) {
+      pins.push({ nodeClass: className, name: m[1], direction: 'output', pinType: 'Any', required: false });
+    }
   }
 
   for (const m of content.matchAll(/UPROPERTY\s*\([^)]*PCG_Overridable[^)]*\)\s*\n?\s*(\w[\w:<>*& ]+?)\s+(\w+)\s*[=;{]/g)) {
@@ -86,6 +89,11 @@ export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
   const dbPath = outputDbPath || DEFAULT_DB_PATH;
   const startMs = Date.now();
   const errors: string[] = [];
+
+  // BUG-5: forceRescan should delete the DB file so schema changes take effect
+  if (forceRescan && existsSync(dbPath)) {
+    try { unlinkSync(dbPath); } catch { /* ignore */ }
+  }
 
   let db: DatabaseSync;
   try {
@@ -106,10 +114,6 @@ export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
     );
   `);
 
-  if (forceRescan) {
-    db.exec('DELETE FROM nodes; DELETE FROM pins; DELETE FROM properties;');
-  }
-
   const headers = walkHeaderFiles(sourcePath);
   let nodesFound = 0;
 
@@ -122,12 +126,17 @@ export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
   const insertProp = db.prepare(
     'INSERT INTO properties(node_class, property_name, cpp_type, is_pcg_overridable) VALUES (?,?,?,?)'
   );
+  // BUG-3: delete existing pins/properties before reinserting to avoid duplicates on non-force rescan
+  const deletePins = db.prepare('DELETE FROM pins WHERE node_class = ?');
+  const deleteProps = db.prepare('DELETE FROM properties WHERE node_class = ?');
 
   for (const headerPath of headers) {
     try {
       const content = readFileSync(headerPath, 'utf-8');
       const { node, pins, properties } = parseHeader(content, headerPath, sourcePath);
       if (node) {
+        deletePins.run(node.className);
+        deleteProps.run(node.className);
         insertNode.run(node.className, node.module, node.displayName, node.description, node.headerPath);
         for (const pin of pins) insertPin.run(pin.nodeClass, pin.name, pin.direction, pin.pinType, pin.required ? 1 : 0);
         for (const prop of properties) insertProp.run(prop.nodeClass, prop.propertyName, prop.cppType, prop.isPcgOverridable ? 1 : 0);

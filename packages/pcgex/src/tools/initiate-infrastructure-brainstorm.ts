@@ -102,7 +102,7 @@ export async function initiateInfrastructureBrainstorm(params: InitiateInfrastru
   const proposal: BrainstormProposal = {
     topic,
     approaches,
-    recommendation: approaches[0].id,
+    recommendation: `${approaches[0].name}: ${approaches[0].description.slice(0, 100)}`,
     risks,
     approvalRequired: true,
     approvalPrompt:

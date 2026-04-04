@@ -26,16 +26,20 @@ export async function parameterizeGraphInputs(params: ParameterizeGraphInputsPar
   const newEdges: PCGEdge[] = [];
   const newNodes: PCGNode[] = [];
   const promotedParameters: Array<{ parameterName: string; nodeId: string; property: string; originalValue: unknown }> = [];
+  // BUG-3: collect skipped IDs
+  const skippedNodeIds: string[] = [];
 
   let paramNodeCounter = 1;
 
   for (const target of targets) {
     const node = nodeById.get(target.nodeId);
     if (!node) {
+      skippedNodeIds.push(target.nodeId);
       continue; // skip missing nodes
     }
 
-    const paramName = target.parameterName || target.property;
+    // BUG-2: default parameterName to `${node.label}_${property}` for clarity
+    const paramName = target.parameterName || `${node.label || target.nodeId}_${target.property}`;
     const originalValue = node.properties[target.property];
 
     // Remove the hardcoded property
@@ -58,10 +62,10 @@ export async function parameterizeGraphInputs(params: ParameterizeGraphInputsPar
     };
 
     // Wire GetParameter output -> node property pin
-    // PCGGetGraphParameterSettings outputs on "Output" pin by convention
+    // BUG-1: PCGGetGraphParameterSettings outputs on "Out" pin
     const edge: PCGEdge = {
       fromNode: paramNodeId,
-      fromPin: 'Output',
+      fromPin: 'Out',
       toNode: target.nodeId,
       toPin: target.property,
     };
@@ -87,5 +91,6 @@ export async function parameterizeGraphInputs(params: ParameterizeGraphInputsPar
   return {
     graph: JSON.stringify(updatedGraph, null, 2),
     promotedParameters,
+    skippedNodeIds,
   };
 }

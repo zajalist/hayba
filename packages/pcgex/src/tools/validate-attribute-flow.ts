@@ -75,7 +75,9 @@ function getNodeWrittenAttributes(node: PCGNode): string[] {
 function getNodeReadAttributes(node: PCGNode): string[] {
   const attrs: string[] = [];
   // Check properties for attribute inputs
+  // BUG-14: exclude "AttributeName" key from read detection (it's a write, not a read)
   for (const [key, val] of Object.entries(node.properties || {})) {
+    if (key === 'AttributeName') continue;
     if (key.toLowerCase().includes('attribute') && !key.toLowerCase().includes('output')) {
       if (typeof val === 'string' && val.length > 0 && !val.startsWith('@')) {
         attrs.push(val);
@@ -95,7 +97,9 @@ export async function validateAttributeFlow(params: ValidateAttributeFlowParams)
     throw new Error('Invalid JSON graph payload');
   }
 
-  const { nodes, edges } = graph;
+  // BUG-15: guard against undefined nodes/edges
+  const nodes = (graph as any).nodes ?? [];
+  const edges = (graph as any).edges ?? [];
   const issues: FlowIssue[] = [];
 
   // Build ancestor map via topological sort
@@ -117,21 +121,20 @@ export async function validateAttributeFlow(params: ValidateAttributeFlowParams)
   const allRead = new Map<string, string[]>();     // attr -> nodeIds that read it
 
   for (const nodeId of order) {
-    const node = nodes.find(n => n.id === nodeId);
+    const node = nodes.find((n: PCGNode) => n.id === nodeId);
     if (!node) continue;
 
     // Compute available = union of all predecessor available + what each predecessor writes
     const available = new Set<string>();
     for (const predId of (predecessors.get(nodeId) ?? [])) {
       for (const a of (availableAt.get(predId) ?? [])) available.add(a);
-      const predNode = nodes.find(n => n.id === predId);
+      const predNode = nodes.find((n: PCGNode) => n.id === predId);
       if (predNode) {
         for (const a of getNodeWrittenAttributes(predNode)) available.add(a);
       }
     }
-    availableAt.set(nodeId, available);
 
-    // Check reads
+    // Check reads (before adding own writes)
     const reads = getNodeReadAttributes(node);
     for (const attr of reads) {
       if (!available.has(attr)) {
@@ -148,11 +151,27 @@ export async function validateAttributeFlow(params: ValidateAttributeFlowParams)
       allRead.set(attr, [...(allRead.get(attr) ?? []), nodeId]);
     }
 
-    // Record writes
+    // Record writes and add them to available so direct successors see them
+    // BUG-13: own writes must be included in availableAt for this node
     const writes = getNodeWrittenAttributes(node);
     for (const attr of writes) {
       allWritten.set(attr, [...(allWritten.get(attr) ?? []), nodeId]);
+      available.add(attr);
     }
+    availableAt.set(nodeId, available);
+  }
+
+  // BUG-12: cycle detection — if topo order didn't include all nodes, there's a cycle
+  if (order.length !== nodes.length) {
+    issues.push({
+      type: 'missing_attribute',
+      severity: 'error',
+      nodeId: '',
+      nodeClass: '',
+      attribute: '',
+      detail: `Graph contains a cycle — ${nodes.length - order.length} node(s) were excluded from topological order`,
+      suggestedFix: 'Remove cyclic edges to make the graph a DAG',
+    });
   }
 
   // Orphan writes (strictMode)
@@ -160,7 +179,7 @@ export async function validateAttributeFlow(params: ValidateAttributeFlowParams)
     for (const [attr, writers] of allWritten) {
       if (!allRead.has(attr)) {
         for (const nodeId of writers) {
-          const node = nodes.find(n => n.id === nodeId);
+          const node = nodes.find((n: PCGNode) => n.id === nodeId);
           issues.push({
             type: 'orphan_write',
             severity: 'warning',

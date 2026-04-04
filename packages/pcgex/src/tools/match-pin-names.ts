@@ -11,7 +11,7 @@ const schema = z.object({
 export type MatchPinNamesParams = z.infer<typeof schema>;
 
 const TYPE_GROUPS: Record<string, string> = {
-  Points: 'spatial', Vtx: 'spatial', Edges: 'graph', Paths: 'spatial',
+  Points: 'spatial', Vtx: 'spatial', Edges: 'spatial', Paths: 'spatial',
   Param: 'param', Heuristics: 'param', In: 'any', Out: 'any',
 };
 
@@ -39,7 +39,9 @@ function scorePinMatch(fromPin: string, candidatePin: string) {
   if (fp === cp) return { confidence: 1.0, reason: 'exact', typeCompatible: true };
 
   const dist = levenshtein(fp, cp);
-  const similarity = 1 - dist / Math.max(fp.length, cp.length);
+  // BUG-11: guard against NaN when both strings are empty
+  const maxLen = Math.max(fp.length, cp.length);
+  const similarity = maxLen === 0 ? 1.0 : 1 - dist / maxLen;
   const fromGroup = typeGroup(fromPin), toGroup = typeGroup(candidatePin);
   const typeCompatible = fromGroup === toGroup || fromGroup === 'any' || toGroup === 'any';
 
@@ -56,10 +58,9 @@ const DB_PATH = 'D:/UnrealEngine/geoforge/Plugins/Hayba_PcgEx_MCP/Resources/pcge
 
 function getPinsFromDb(nodeClass: string, direction: 'input' | 'output'): string[] {
   try {
-    const db = new DatabaseSync(DB_PATH, { open: false });
-    db.open();
+    // BUG-7+8: DatabaseSync API — just new DatabaseSync(path), no open/close methods
+    const db = new DatabaseSync(DB_PATH);
     const rows = db.prepare('SELECT name FROM pins WHERE node_class = ? AND direction = ?').all(nodeClass, direction) as Array<{ name: string }>;
-    db.close();
     return rows.map(r => r.name);
   } catch {
     return [];
@@ -69,18 +70,28 @@ function getPinsFromDb(nodeClass: string, direction: 'input' | 'output'): string
 export async function matchPinNames(params: MatchPinNamesParams) {
   const { fromClass, fromPin, toClass } = schema.parse(params);
 
+  // BUG-9: validate that fromPin exists in fromClass output pins
+  let fromPinNote: string | undefined;
+  const fromCatalogNode = getNodeByClass(fromClass);
+  const fromOutputPins: string[] = fromCatalogNode
+    ? fromCatalogNode.outputs.map(p => p.pin)
+    : getPinsFromDb(fromClass, 'output');
+  if (fromOutputPins.length > 0 && !fromOutputPins.includes(fromPin)) {
+    fromPinNote = `Warning: pin "${fromPin}" not found in ${fromClass} output pins [${fromOutputPins.join(', ')}]`;
+  }
+
   let candidatePins: string[] = [];
   const toCatalogNode = getNodeByClass(toClass);
   if (toCatalogNode) candidatePins = toCatalogNode.inputs.map(p => p.pin);
   if (candidatePins.length === 0) candidatePins = getPinsFromDb(toClass, 'input');
 
   if (candidatePins.length === 0) {
-    return { fromPin, matches: [], bestMatch: null, warning: `No input pins found for ${toClass} in catalog or registry` };
+    return { fromPin, matches: [], bestMatch: null, warning: `No input pins found for ${toClass} in catalog or registry`, fromPinNote };
   }
 
   const matches = candidatePins
     .map(cp => ({ suggestedToPin: cp, ...scorePinMatch(fromPin, cp) }))
     .sort((a, b) => b.confidence - a.confidence);
 
-  return { fromPin, matches, bestMatch: matches[0] ?? null };
+  return { fromPin, matches, bestMatch: matches[0] ?? null, fromPinNote };
 }
