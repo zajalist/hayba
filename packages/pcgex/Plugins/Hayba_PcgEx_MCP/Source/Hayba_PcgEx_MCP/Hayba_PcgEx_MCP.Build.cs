@@ -13,7 +13,8 @@ public class Hayba_PcgEx_MCP : ModuleRules
             "Engine",
             "Slate",
             "SlateCore",
-            "EditorStyle"
+            "EditorStyle",
+            "InputCore"
         });
 
         PrivateDependencyModuleNames.AddRange(new string[] {
