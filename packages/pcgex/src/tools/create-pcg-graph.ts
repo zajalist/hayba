@@ -1,9 +1,13 @@
 import { z } from 'zod';
 import { ensureConnected } from '../tcp-client.js';
+import { getGraphPatterns } from '../graph-patterns.js';
 import type { PCGGraphJSON } from '../types.js';
 
 const schema = z.object({
-  graph: z.string().min(1).describe('JSON string of the PCGEx graph topology'),
+  graph: z.string().min(1).describe(
+    'JSON string of the PCGEx graph topology. ' +
+    'IMPORTANT rules before building:\n' + getGraphPatterns()
+  ),
   name: z.string().min(1).describe('Name for the new PCGGraph asset')
 });
 
