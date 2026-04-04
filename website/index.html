@@ -36,10 +36,11 @@
       position: relative; overflow: hidden;
       transition: border-color 0.25s, box-shadow 0.25s, transform 0.2s;
     }
+    .product-card > * { position: relative; z-index: 1; }
     .product-card::before {
       content: ''; position: absolute; inset: 0;
-      background: linear-gradient(135deg, var(--orange-dim) 0%, transparent 60%);
-      opacity: 0; transition: opacity 0.3s;
+      background: linear-gradient(to top, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.55) 60%, rgba(0,0,0,0.3) 100%);
+      transition: opacity 0.3s;
     }
     .product-card:hover {
       border-color: rgba(255,107,53,0.4);
@@ -53,7 +54,7 @@
       color: var(--orange); margin-bottom: 1.2rem; display: block;
     }
     .product-card h3 { font-size: 1.5rem; font-weight: 900; letter-spacing: -0.02em; margin-bottom: 0.6rem; }
-    .product-card p { color: #555; font-size: 0.82rem; line-height: 1.7; flex: 1; margin-bottom: 1.8rem; }
+    .product-card p { color: #fff; font-size: 0.82rem; line-height: 1.7; flex: 1; margin-bottom: 1.8rem; }
 
     .product-stats {
       display: flex; gap: 1.8rem; padding-top: 1.5rem;
@@ -73,8 +74,8 @@
     .product-card:hover .product-cta svg { transform: translateX(3px); }
 
     /* hero sub-text for umbrella */
-    .hayba-hero-sub { color: #333; }
-    .hayba-hero-sub strong { color: #555; }
+    .hayba-hero-sub { color: #fff; }
+    .hayba-hero-sub strong { color: #fff; }
   </style>
 </head>
 <body>
@@ -86,10 +87,12 @@
     <span class="nav-logo-name">HAYBA</span>
   </a>
   <div class="nav-links">
-    <a href="gaea/">HAYBAGAEA</a>
-    <a href="pcgex/">HAYBAPCGEX</a>
-    <a href="https://github.com/zajalist/gaea_mcp" target="_blank">GITHUB</a>
-    <a href="gaea/" class="btn-primary">GET STARTED</a>
+    <a href="#how-it-works">ARCHITECTURE</a>
+    <a href="#usecases">USE CASES</a>
+    <a href="gaea/index.html">HAYBAGAEA</a>
+    <a href="pcgex/index.html">HAYBAPCGEX</a>
+    <a href="https://github.com/zajalist/hayba" target="_blank">GITHUB</a>
+    <a href="gaea/index.html" class="btn-primary">GET STARTED FREE</a>
   </div>
 </nav>
 
@@ -103,7 +106,7 @@
   <div class="hero-content">
     <div class="hero-badge hayba-hero-badge">
       <span class="badge-dot"></span>
-      <span>AI-Powered Terrain &amp; Procedural Generation &nbsp;·&nbsp; MCP Protocol</span>
+      <span>Open Source &nbsp;·&nbsp; MCP Protocol &nbsp;·&nbsp; Gaea + Unreal Engine 5</span>
     </div>
 
     <h1 class="hero-title">
@@ -114,16 +117,16 @@
     </h1>
 
     <p class="hero-sub hayba-hero-sub">
-      Connect <strong>Claude, Cursor, or Cline</strong> to Gaea's terrain engine and Unreal Engine's PCG system.
-      One prompt. Full graphs.
+      Connect <strong>Claude, Cursor, or Cline</strong> to Gaea and Unreal Engine 5.
+      One prompt generates a full terrain graph or PCG network — live, in your engine, in under a second.
     </p>
 
     <div class="hero-ctas">
-      <a href="gaea/" class="btn-hero-primary">
-        <span>HAYBAGAEA</span>
+      <a href="gaea/index.html" class="btn-hero-primary">
+        <span>GET STARTED FREE</span>
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7h8M7 3l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </a>
-      <a href="pcgex/" class="btn-hero-ghost">HAYBAPCGEX</a>
+      <a href="https://github.com/zajalist/hayba" class="btn-hero-ghost" target="_blank">VIEW ON GITHUB</a>
     </div>
 
     <div class="hero-stats">
@@ -139,7 +142,7 @@
       <div class="stat-divider"></div>
       <div class="stat">
         <span class="stat-num">&lt;1</span><span class="stat-suffix">s</span>
-        <span class="stat-label">Update Time</span>
+        <span class="stat-label">Update</span>
       </div>
       <div class="stat-divider"></div>
       <div class="stat">
@@ -160,15 +163,15 @@
   <div class="products-inner">
     <div class="products-heading">
       <span class="section-label">Products</span>
-      <h2>Two engines. One workflow.</h2>
-      <p>Each product is a standalone MCP server you install in minutes. Use one or both.</p>
+      <h2>Two engines. One prompt.</h2>
+      <p>Two standalone MCP servers. Install one or both. Each configures in under a minute.</p>
     </div>
 
     <div class="product-cards">
-      <a class="product-card" href="gaea/" data-reveal>
+      <a class="product-card" href="gaea/index.html" data-reveal style="background-image:url('../assets/assets/GaeaLS.webp');background-size:cover;background-position:center;">
         <span class="product-tag">Terrain Generation</span>
         <h3>HaybaGaea</h3>
-        <p>Connect your AI to Gaea's build engine. One prompt generates a full terrain graph — mountains, erosion, rivers — then cooks and exports a heightmap to Unreal Engine.</p>
+        <p>Give your AI direct control over Gaea's build engine. One prompt generates a complete terrain graph — mountains, erosion, rivers — cooks headlessly and exports a heightmap to Unreal Engine.</p>
         <div class="product-stats">
           <div>
             <span class="product-stat-val">11</span>
@@ -189,10 +192,10 @@
         </span>
       </a>
 
-      <a class="product-card" href="pcgex/" data-reveal>
+      <a class="product-card" href="pcgex/index.html" data-reveal style="background-image:url('../assets/PCGEXLs.png');background-size:cover;background-position:center;">
         <span class="product-tag">Procedural Geometry</span>
         <h3>HaybaPCGEx</h3>
-        <p>AI-driven PCG graph authoring inside Unreal Engine 5. Describe what you want — cities, forests, dungeons — and Claude builds the PCGEx node graph directly in your project.</p>
+        <p>AI-driven PCG graph authoring inside Unreal Engine 5. Describe the environment — cities, forests, dungeons — and Claude builds the PCGEx node graph directly in your project. Live. No manual wiring.</p>
         <div class="product-stats">
           <div>
             <span class="product-stat-val">8</span>
@@ -222,33 +225,167 @@
     <div class="feature-icon">
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="3" stroke="#ff6b35" stroke-width="1.5"/><path d="M10 2v2M10 16v2M2 10h2M16 10h2" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round"/></svg>
     </div>
-    <div class="feature-label">Live Session</div>
-    <h3>Watch It Build</h3>
-    <p>Nodes appear in your engine's graph in real-time as Claude adds them. No export, no import — auto-reloads on every change.</p>
+    <div class="feature-label">Under a Second</div>
+    <h3>Live Engine Reload</h3>
+    <p>Every node call writes to disk or bridges via TCP. Gaea reloads. Unreal recooks. You watch the graph build in real time — no batch jobs, no dialogs.</p>
   </div>
   <div class="feature" data-index="1">
     <div class="feature-icon">
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="5" width="16" height="10" rx="1" stroke="#ff6b35" stroke-width="1.5"/><path d="M6 9l3 3 5-5" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </div>
     <div class="feature-label">Two Engines</div>
-    <h3>Gaea + Unreal</h3>
-    <p>HaybaGaea for terrain heightmaps. HaybaPCGEx for procedural geometry. Use both in the same project pipeline.</p>
+    <h3>Gaea + Unreal Engine 5</h3>
+    <p>Terrain heightmaps via Gaea. Procedural geometry via UE5 PCGEx. Use both in the same project. One conversation handles the full pipeline.</p>
   </div>
   <div class="feature" data-index="2">
     <div class="feature-icon">
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4 10h12M10 4l6 6-6 6" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </div>
-    <div class="feature-label">19 MCP Tools</div>
-    <h3>Conversation-Driven</h3>
-    <p>Open, add, connect, remove, tweak, cook — all from natural language. The AI handles graph topology.</p>
+    <div class="feature-label">19 Tools. 35+ Nodes.</div>
+    <h3>No Node Names Required</h3>
+    <p>Claude calls <code>list_node_types()</code>, selects the right nodes, and wires them correctly — first time. You describe the output. The AI handles topology.</p>
   </div>
   <div class="feature" data-index="3">
     <div class="feature-icon">
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 6h14M3 10h10M3 14h7" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round"/></svg>
     </div>
-    <div class="feature-label">Any MCP Client</div>
-    <h3>Works Everywhere</h3>
-    <p>Claude Desktop, Claude Code, Cursor, Cline. One installer per product. Cross-platform. Done in under a minute.</p>
+    <div class="feature-label">MIT Licensed</div>
+    <h3>Free. Open Source. No Lock-in.</h3>
+    <p>Auditable, forkable, and free forever. Works with Claude Desktop, Claude Code, Cursor, and Cline. Installs in under a minute on any platform.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ HOW IT WORKS ═══════════════════════════════ -->
+<section class="howitworks" id="how-it-works">
+  <div class="section-inner">
+    <span class="section-label">Architecture</span>
+    <h2>Four steps. No manual wiring.</h2>
+    <p class="section-sub">Hayba sits between your AI and your engines. It speaks MCP to Claude and writes directly to Gaea and Unreal — no proprietary protocols, no plugins to configure beyond the installer.</p>
+
+    <!-- Animated pipeline diagram -->
+    <div class="pipeline">
+      <div class="pipeline-node" data-node="0">
+        <div class="pipeline-node-inner">
+          <div class="pipeline-node-label">AI Client</div>
+          <div class="pipeline-node-name">Claude · Cursor · Cline</div>
+          <div class="pipeline-node-sub">any MCP-compatible tool</div>
+        </div>
+        <div class="pipeline-node-glow"></div>
+      </div>
+      <div class="pipeline-connector" data-conn="0">
+        <div class="pipeline-line"><div class="pipeline-pulse"></div></div>
+        <div class="pipeline-conn-label">stdio MCP</div>
+      </div>
+      <div class="pipeline-node" data-node="1">
+        <div class="pipeline-node-inner">
+          <div class="pipeline-node-label">MCP Server</div>
+          <div class="pipeline-node-name">Hayba</div>
+          <div class="pipeline-node-sub">19 MCP tools</div>
+        </div>
+        <div class="pipeline-node-glow"></div>
+      </div>
+      <div class="pipeline-connector" data-conn="1">
+        <div class="pipeline-line"><div class="pipeline-pulse"></div></div>
+        <div class="pipeline-conn-label">files · TCP</div>
+      </div>
+      <div class="pipeline-node" data-node="2">
+        <div class="pipeline-node-inner">
+          <div class="pipeline-node-label">Terrain / PCG</div>
+          <div class="pipeline-node-name">Gaea · Unreal</div>
+          <div class="pipeline-node-sub">auto-reloads</div>
+        </div>
+        <div class="pipeline-node-glow"></div>
+      </div>
+      <div class="pipeline-connector" data-conn="2">
+        <div class="pipeline-line"><div class="pipeline-pulse"></div></div>
+        <div class="pipeline-conn-label">heightmap · graph</div>
+      </div>
+      <div class="pipeline-node" data-node="3">
+        <div class="pipeline-node-inner">
+          <div class="pipeline-node-label">Output</div>
+          <div class="pipeline-node-name">Your Project</div>
+          <div class="pipeline-node-sub">.r32 / PCG asset</div>
+        </div>
+        <div class="pipeline-node-glow"></div>
+      </div>
+    </div>
+
+    <div class="howitworks-steps">
+      <div class="hiw-step" data-reveal>
+        <div class="hiw-num">// 01</div>
+        <div class="hiw-content">
+          <h3>Write a prompt.</h3>
+          <p>In Claude Desktop, Cursor, or Cline: <em>"Snowy mountain range, heavy hydraulic erosion, export at 4096."</em> No node names. No parameter lookups. Plain language.</p>
+        </div>
+      </div>
+      <div class="hiw-step" data-reveal>
+        <div class="hiw-num">// 02</div>
+        <div class="hiw-content">
+          <h3>AI plans the graph.</h3>
+          <p>Claude calls <code>list_node_types()</code>, selects the correct nodes, and sequences the build — Mountain → Erosion → FractalTerraces → Autolevel. Graph topology handled automatically.</p>
+        </div>
+      </div>
+      <div class="hiw-step" data-reveal>
+        <div class="hiw-num">// 03</div>
+        <div class="hiw-content">
+          <h3>Engine reloads. Live.</h3>
+          <p>Every <code>add_node()</code> call writes to the <code>.terrain</code> file or sends a TCP command to Unreal. The engine detects the change in under a second. You watch it assemble in real time.</p>
+        </div>
+      </div>
+      <div class="hiw-step" data-reveal>
+        <div class="hiw-num">// 04</div>
+        <div class="hiw-content">
+          <h3>Cook and ship.</h3>
+          <p><code>cook_graph()</code> runs headlessly, waits for the build, and returns the output path. A heightmap lands on disk. A PCG asset is live in your project. Import and continue.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ USE CASES ═══════════════════════════════ -->
+<section class="usecases" id="usecases">
+  <div class="section-inner">
+    <span class="section-label">Use Cases</span>
+    <h2>What you can build with it.</h2>
+    <div class="usecase-grid">
+      <div class="usecase" data-reveal>
+        <div class="usecase-num">// 01</div>
+        <h3>Terrain from a sentence.</h3>
+        <p>Describe the landscape. Claude opens Gaea, adds nodes one by one, and you watch the graph assemble live. No manual node placement. No parameter hunting.</p>
+        <div class="usecase-example">"Volcanic island — ash fields, deep caldera, hydraulic erosion on the flanks"</div>
+      </div>
+      <div class="usecase" data-reveal>
+        <div class="usecase-num">// 02</div>
+        <h3>PCG graphs on demand.</h3>
+        <p>Describe the environment. Claude builds the PCGEx node graph inside Unreal Engine 5 — scatter, filter, cluster — and the result appears in your viewport in seconds.</p>
+        <div class="usecase-example">"Dense pine forest on slopes between 20° and 45°, clear below treeline"</div>
+      </div>
+      <div class="usecase" data-reveal>
+        <div class="usecase-num">// 03</div>
+        <h3>One sentence. Sub-second update.</h3>
+        <p>Change erosion strength, noise seed, scale, or scatter density in plain language. Files update atomically. The engine reloads in under a second.</p>
+        <div class="usecase-example">"Less aggressive erosion, sharper ridgelines, increase the rock scree density"</div>
+      </div>
+      <div class="usecase" data-reveal>
+        <div class="usecase-num">// 04</div>
+        <h3>Headless. Silent. Fast.</h3>
+        <p>No Gaea window. No UE viewport. Describe the terrain, get a heightmap on disk. Designed for automation, CI pipelines, and rapid variation generation.</p>
+        <div class="usecase-example">"8 desert heightmap variants at 4096 — different seeds, same base graph"</div>
+      </div>
+      <div class="usecase" data-reveal>
+        <div class="usecase-num">// 05</div>
+        <h3>Non-destructive iteration.</h3>
+        <p>Open any existing <code>.terrain</code> file or PCG asset. Claude reads the current graph state and modifies exactly what you asked. Nothing else is touched.</p>
+        <div class="usecase-example">"Open the canyon project. Deepen the river valley. Leave everything else."</div>
+      </div>
+      <div class="usecase" data-reveal>
+        <div class="usecase-num">// 06</div>
+        <h3>Terrain to world. End to end.</h3>
+        <p>HaybaGaea exports the heightmap. HaybaPCGEx populates it. Foliage, rocks, ruins — one conversation drives both engines. This is the full pipeline.</p>
+        <div class="usecase-example">"Build the mountain, then scatter boulders and dead pines on the ridgelines"</div>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -257,15 +394,15 @@
   <canvas id="ctaCanvas"></canvas>
   <div class="cta-glow"></div>
   <div class="cta-content">
-    <span class="section-label" style="justify-content:center;display:flex;">Ready to build</span>
-    <h2 class="cta-title">CREATE AT THE<br><span class="accent">SPEED OF THOUGHT.</span></h2>
-    <p class="cta-sub">Two products. Two engines. One AI workflow. Free, open source, MIT licensed.</p>
+    <span class="section-label" style="justify-content:center;display:flex;">Get started</span>
+    <h2 class="cta-title">TERRAIN AT THE<br><span class="accent">SPEED OF THOUGHT.</span></h2>
+    <p class="cta-sub">Two engines. 19 tools. One prompt. Free and open source under MIT.</p>
     <div class="cta-actions">
-      <a href="gaea/" class="btn-hero-primary">
-        <span>HAYBAGAEA — TERRAIN</span>
+      <a href="gaea/index.html" class="btn-hero-primary">
+        <span>START WITH HAYBAGAEA</span>
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7h8M7 3l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </a>
-      <a href="pcgex/" class="btn-hero-ghost">HAYBAPCGEX — PROCEDURAL</a>
+      <a href="pcgex/index.html" class="btn-hero-ghost">EXPLORE HAYBAPCGEX</a>
     </div>
   </div>
 </section>
@@ -278,11 +415,11 @@
         <img src="../assets/Logo.svg" alt="Hayba" class="nav-logo-img" />
         <span class="nav-logo-name">HAYBA</span>
       </a>
-      <p>AI-powered terrain &amp; procedural generation</p>
+      <p>Open source MCP toolkit for Gaea and Unreal Engine 5. MIT Licensed.</p>
     </div>
     <div class="footer-links">
-      <a href="gaea/">HaybaGaea</a>
-      <a href="pcgex/">HaybaPCGEx</a>
+      <a href="gaea/index.html">HaybaGaea</a>
+      <a href="pcgex/index.html">HaybaPCGEx</a>
       <a href="https://github.com/zajalist/gaea_mcp" target="_blank">GitHub</a>
       <a href="https://github.com/zajalist/gaea_mcp/blob/main/LICENSE" target="_blank">MIT License</a>
     </div>

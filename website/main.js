@@ -5,134 +5,157 @@
 (function () {
   'use strict';
 
-  /* ─── Terrain Canvas ─── */
+  /* ─── 3D Isometric Terrain Canvas ─── */
   function initTerrainCanvas(canvasId) {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     let W, H, animId;
-    let t = 0;
+
+    const mobile = () => window.innerWidth < 640;
+    let COLS = mobile() ? 36 : 72;
+    let ROWS = mobile() ? 24 : 48;
+
+    let timeX = 0;
+    let buildProgress = 0;
+    let buildStart = null;
 
     function resize() {
       W = canvas.width  = canvas.offsetWidth;
       H = canvas.height = canvas.offsetHeight;
+      COLS = mobile() ? 36 : 72;
+      ROWS = mobile() ? 24 : 48;
     }
     resize();
     window.addEventListener('resize', resize);
 
-    // Simplex-style noise using trig harmonics (no external lib needed)
-    function noise(x, y, z) {
+    // Multi-octave trig noise — no external lib
+    function noise(x, y) {
       return (
-        Math.sin(x * 1.3 + z)       * 0.35 +
-        Math.sin(y * 0.9 - z * 0.7) * 0.25 +
-        Math.sin((x + y) * 0.6 + z * 1.2) * 0.20 +
-        Math.sin(x * 2.1 - y * 1.7 + z * 0.5) * 0.12 +
-        Math.sin(x * 3.4 + y * 2.8 - z * 1.1) * 0.08
+        Math.sin(x * 1.2 + y * 0.9)  * 0.38 +
+        Math.sin(x * 2.7 - y * 1.6)  * 0.22 +
+        Math.sin(x * 5.3 + y * 3.1)  * 0.14 +
+        Math.sin(x * 10.7 - y * 7.3) * 0.08 +
+        Math.sin(x * 0.4 + y * 0.3)  * 0.18
       );
     }
 
-    // Contour lines
-    function drawContours() {
-      const COLS = 120, ROWS = 68;
-      const cw = W / COLS, ch = H / ROWS;
-      const levels = 18;
+    function getHeight(col, row) {
+      const nx = col / COLS * 5.5 - 2.75 + timeX;
+      const ny = row / ROWS * 4.0 - 2.0;
+      const rawH = (noise(nx, ny) + 0.85) / 1.7;
+
+      // Radial fade — peaks cluster toward center, flat at edges
+      const dx = (col / COLS - 0.48) * 2;
+      const dy = (row / ROWS - 0.55) * 2;
+      const fade = Math.max(0, 1 - (dx * dx * 0.65 + dy * dy * 0.85));
+
+      return rawH * fade * buildProgress;
+    }
+
+    function project(col, row, h) {
+      const tileW = W * 2.4 / (COLS + ROWS);
+      const tileH = tileW * 0.5;
+      const hScale = Math.min(W, H) * 0.3;
+      const ox = W * 1.1 - COLS * tileW * 0.5; // right edge at W*1.1
+      const oy = H * 0.22;
+      return [
+        ox + (col - row) * tileW * 0.5,
+        oy + (col + row) * tileH * 0.5 - h * hScale
+      ];
+    }
+
+    function heightColor(h) {
+      const t = Math.max(0, Math.min(1, h));
+      let r, g, b, a;
+      if (t < 0.15) {
+        r = 8;  g = 5;  b = 3;  a = 0.08 + t * 0.4;
+      } else if (t < 0.42) {
+        const p = (t - 0.15) / 0.27;
+        r = Math.round(8  + p * 88);  g = Math.round(5 + p * 22);  b = 3;
+        a = 0.18 + p * 0.42;
+      } else if (t < 0.72) {
+        const p = (t - 0.42) / 0.30;
+        r = Math.round(96  + p * 159); g = Math.round(27 + p * 80); b = 3;
+        a = 0.60 + p * 0.30;
+      } else {
+        const p = (t - 0.72) / 0.28;
+        r = 255; g = Math.round(107 + p * 60); b = Math.round(3 + p * 48);
+        a = 0.9 + p * 0.1;
+      }
+      return `rgba(${r},${g},${b},${a})`;
+    }
+
+    function draw(ts) {
+      if (!buildStart) buildStart = ts;
+      const elapsed = ts - buildStart;
+      const raw = Math.min(1, elapsed / 2800);
+      // Ease in-out cubic
+      buildProgress = raw < 0.5 ? 4 * raw * raw * raw : 1 - Math.pow(-2 * raw + 2, 3) / 2;
+      if (raw >= 1) timeX += 0.00025; // very slow drift once built
 
       ctx.clearRect(0, 0, W, H);
 
-      // Build height field
-      const field = new Float32Array((COLS + 1) * (ROWS + 1));
-      for (let j = 0; j <= ROWS; j++) {
-        for (let i = 0; i <= COLS; i++) {
-          const nx = (i / COLS) * 4 - 2;
-          const ny = (j / ROWS) * 3 - 1.5;
-          field[j * (COLS + 1) + i] = noise(nx, ny, t * 0.18);
+      // Precompute heights
+      const C1 = COLS + 1, R1 = ROWS + 1;
+      const hArr = new Float32Array(C1 * R1);
+      for (let j = 0; j < R1; j++)
+        for (let i = 0; i < C1; i++)
+          hArr[j * C1 + i] = getHeight(i, j);
+
+      // Precompute projected points
+      const px = new Float32Array(C1 * R1);
+      const py = new Float32Array(C1 * R1);
+      for (let j = 0; j < R1; j++) {
+        for (let i = 0; i < C1; i++) {
+          const [sx, sy] = project(i, j, hArr[j * C1 + i]);
+          px[j * C1 + i] = sx;
+          py[j * C1 + i] = sy;
         }
       }
 
-      // Draw contour lines via marching squares (simplified)
-      for (let lev = 0; lev < levels; lev++) {
-        const threshold = -0.9 + (lev / levels) * 1.8;
-        const progress = (threshold + 0.9) / 1.8; // 0..1
+      // Draw quads back-to-front (row 0 = far back)
+      for (let j = 0; j < ROWS; j++) {
+        for (let i = 0; i < COLS; i++) {
+          const i00 = j * C1 + i, i10 = j * C1 + i + 1;
+          const i01 = (j+1) * C1 + i, i11 = (j+1) * C1 + i + 1;
 
-        // Bright orange for peaks, dim for valleys
-        const peakness = Math.max(0, (threshold - 0.1) / 0.8);
-        const alpha = 0.04 + peakness * 0.18;
-        const r = Math.round(30 + peakness * 225);
-        const g = Math.round(5  + peakness * 100);
-        const b = Math.round(0  + peakness * 45);
-        ctx.strokeStyle = `rgba(${r},${g},${b},${alpha})`;
-        ctx.lineWidth = 0.5 + peakness * 0.8;
+          const avgH = (hArr[i00] + hArr[i10] + hArr[i01] + hArr[i11]) * 0.25;
+          if (avgH < 0.012) continue;
 
-        ctx.beginPath();
-        for (let j = 0; j < ROWS; j++) {
-          for (let i = 0; i < COLS; i++) {
-            const v00 = field[j * (COLS+1) + i];
-            const v10 = field[j * (COLS+1) + i+1];
-            const v01 = field[(j+1)*(COLS+1) + i];
-            const v11 = field[(j+1)*(COLS+1) + i+1];
-            const x = i * cw, y = j * ch;
+          const x00 = px[i00], y00 = py[i00];
+          const x10 = px[i10], y10 = py[i10];
+          const x11 = px[i11], y11 = py[i11];
+          const x01 = px[i01], y01 = py[i01];
 
-            // Interpolate edge crossings
-            function lerp(a, b, v) { return (v - a) / (b - a); }
-            const c00 = v00 >= threshold ? 8 : 0;
-            const c10 = v10 >= threshold ? 4 : 0;
-            const c11 = v11 >= threshold ? 2 : 0;
-            const c01 = v01 >= threshold ? 1 : 0;
-            const msCase = c00 | c10 | c11 | c01;
-            if (msCase === 0 || msCase === 15) continue;
+          // Frustum cull
+          if (Math.max(x00,x10,x11,x01) < -20 || Math.min(x00,x10,x11,x01) > W + 20) continue;
+          if (Math.max(y00,y10,y11,y01) < -20) continue;
 
-            const e0x = x + lerp(v00, v10, threshold) * cw, e0y = y;
-            const e1x = x + cw, e1y = y + lerp(v10, v11, threshold) * ch;
-            const e2x = x + lerp(v01, v11, threshold) * cw, e2y = y + ch;
-            const e3x = x, e3y = y + lerp(v00, v01, threshold) * ch;
+          ctx.strokeStyle = heightColor(avgH);
+          ctx.lineWidth = avgH > 0.65 ? 0.75 : 0.38;
 
-            switch (msCase) {
-              case 1:case 14: ctx.moveTo(e2x,e2y); ctx.lineTo(e3x,e3y); break;
-              case 2:case 13: ctx.moveTo(e1x,e1y); ctx.lineTo(e2x,e2y); break;
-              case 3:case 12: ctx.moveTo(e1x,e1y); ctx.lineTo(e3x,e3y); break;
-              case 4:case 11: ctx.moveTo(e0x,e0y); ctx.lineTo(e1x,e1y); break;
-              case 6:case 9:  ctx.moveTo(e0x,e0y); ctx.lineTo(e2x,e2y); break;
-              case 7:case 8:  ctx.moveTo(e0x,e0y); ctx.lineTo(e3x,e3y); break;
-              case 5:
-                ctx.moveTo(e0x,e0y); ctx.lineTo(e1x,e1y);
-                ctx.moveTo(e2x,e2y); ctx.lineTo(e3x,e3y); break;
-              case 10:
-                ctx.moveTo(e0x,e0y); ctx.lineTo(e3x,e3y);
-                ctx.moveTo(e1x,e1y); ctx.lineTo(e2x,e2y); break;
-            }
+          ctx.beginPath();
+          ctx.moveTo(x00, y00);
+          ctx.lineTo(x10, y10);
+          ctx.lineTo(x11, y11);
+          ctx.lineTo(x01, y01);
+          ctx.closePath();
+          ctx.stroke();
+
+          // Subtle fill for high peaks only
+          if (avgH > 0.58) {
+            const p = (avgH - 0.58) / 0.42;
+            ctx.fillStyle = `rgba(255,107,53,${p * 0.05})`;
+            ctx.fill();
           }
         }
-        ctx.stroke();
       }
 
-      // Hotspot particles — glowing orange dots at terrain peaks
-      const dots = 60;
-      for (let d = 0; d < dots; d++) {
-        const px = (Math.sin(d * 2.399) * 0.5 + 0.5);
-        const py = (Math.cos(d * 1.618 + 0.3) * 0.5 + 0.5);
-        const nx = (px * 4 - 2), ny = (py * 3 - 1.5);
-        const h = noise(nx, ny, t * 0.18);
-        if (h < 0.3) continue;
-        const sx = px * W, sy = py * H;
-        const alpha = (h - 0.3) / 0.7 * 0.6;
-        const r2 = 1.5 + h * 2;
-        const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, r2 * 4);
-        grad.addColorStop(0, `rgba(255,107,53,${alpha * 0.9})`);
-        grad.addColorStop(1, 'rgba(255,107,53,0)');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(sx, sy, r2 * 4, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      animId = requestAnimationFrame(draw);
     }
 
-    function tick() {
-      t += 0.016;
-      drawContours();
-      animId = requestAnimationFrame(tick);
-    }
-    tick();
-
+    animId = requestAnimationFrame(draw);
     return () => { cancelAnimationFrame(animId); window.removeEventListener('resize', resize); };
   }
 
@@ -384,7 +407,7 @@
         accentLine.style.animation = 'accent-pulse 0.3s ease-in-out infinite, glitch 0.4s step-end';
       });
       heroTitle.addEventListener('mouseleave', () => {
-        accentLine.style.animation = 'line-in 0.7s var(--ease-out) 0.54s both, accent-pulse 3s ease-in-out 1.5s infinite';
+        accentLine.style.animation = 'accent-pulse 3s ease-in-out infinite';
       });
     }
   }
