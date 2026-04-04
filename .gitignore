@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.js.map
+.env
+*.tsbuildinfo
+Binaries/
+Intermediate/
+Saved/
+.vercel/
