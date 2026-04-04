@@ -10,6 +10,8 @@ let catalog: NodeCatalog | null = null;
 
 function getCatalogPath(): string {
   const candidates = [
+    resolve(__dirname, '..', 'Plugins', 'Hayba_PcgEx_MCP', 'Resources', 'node_catalog.json'),
+    resolve(__dirname, '..', '..', 'Plugins', 'Hayba_PcgEx_MCP', 'Resources', 'node_catalog.json'),
     resolve(__dirname, '..', '..', 'Resources', 'node_catalog.json'),
     resolve(__dirname, '..', 'Resources', 'node_catalog.json'),
     resolve(__dirname, '..', '..', '..', 'Resources', 'node_catalog.json'),
@@ -100,7 +102,12 @@ export function searchCatalog(query: string): CatalogNode[] {
 
 export function getNodeByClass(className: string): CatalogNode | undefined {
   const cat = loadCatalog();
-  return cat.nodes.find(n => n.class === className);
+  // Try exact match first, then with/without leading 'U' prefix
+  return (
+    cat.nodes.find(n => n.class === className) ??
+    cat.nodes.find(n => n.class === `U${className}`) ??
+    cat.nodes.find(n => n.class === className.replace(/^U/, ''))
+  );
 }
 
 export function getNodesByCategory(category: string): CatalogNode[] {
