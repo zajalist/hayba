@@ -1,12 +1,16 @@
 // Plugins/PCGExBridge/Source/PCGExBridge/Private/PCGExWizardWidget.cpp
 #include "PCGExWizardWidget.h"
 #include "PCGExBridgeModule.h"
+#include "PCGExClaudeClient.h"
+#include "PCGExBridgeSettings.h"
+#include "PCGExWizardPrompt.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SSeparator.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SEditableTextBox.h"
+#include "Widgets/Input/SMultiLineEditableTextBox.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Notifications/SProgressBar.h"
@@ -15,6 +19,7 @@
 #include "Misc/Guid.h"
 #include "Json.h"
 #include "JsonUtilities.h"
+#include "Editor.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPCGExWizard, Log, All);
 
@@ -42,11 +47,22 @@ void SPCGExWizardWidget::Construct(const FArguments& InArgs, FPCGExBridgeModule*
         [
             SNew(SVerticalBox)
 
-            // Top bar: title + server status
+            // Top bar: title + server status + gear
             + SVerticalBox::Slot()
             .AutoHeight()
             [
                 BuildTopBar()
+            ]
+
+            // Settings panel (collapsible)
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            [
+                SNew(SBox)
+                .Visibility(this, &SPCGExWizardWidget::GetSettingsPanelVisibility)
+                [
+                    BuildSettingsPanel()
+                ]
             ]
 
             // Server not running prompt
@@ -106,8 +122,12 @@ void SPCGExWizardWidget::Construct(const FArguments& InArgs, FPCGExBridgeModule*
         ]
     ];
 
-    // Start with a greeting
-    AddAIMessage(TEXT("Welcome to the PCGEx Wizard! Tell me what you want to generate.\n\nExamples:\n• \"A mini city with organic roads and parcels\"\n• \"A dungeon with connected rooms\"\n• \"A forest path network through terrain\""));
+    // Start with a greeting based on whether API key is set
+    const FPCGExBridgeSettings& S = FPCGExBridgeSettings::Get();
+    if (!S.HasApiKey())
+        AddAIMessage(TEXT("Welcome to PCGEx Wizard!\n\nTo get started, click \u2699 Settings and enter your Anthropic API key.\n\nOnce set, describe what you want to build and I'll generate a PCG graph for it."));
+    else
+        AddAIMessage(TEXT("Welcome back! Describe what you want to generate.\n\nExamples:\n\u2022 \"A mini city with organic roads and parcels\"\n\u2022 \"A dungeon with connected rooms\"\n\u2022 \"A forest path network\""));
 }
 
 TSharedRef<SWidget> SPCGExWizardWidget::BuildTopBar()
@@ -157,6 +177,75 @@ TSharedRef<SWidget> SPCGExWizardWidget::BuildTopBar()
                 .Font(FCoreStyle::GetDefaultFontStyle("Regular", 8))
                 .ColorAndOpacity(ColorMuted)
             ]
+
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            .Padding(8, 0, 0, 0)
+            .VAlign(VAlign_Center)
+            [
+                SNew(SButton)
+                .Text(FText::FromString(TEXT("\u2699")))
+                .ToolTipText(FText::FromString(TEXT("Settings")))
+                .OnClicked(this, &SPCGExWizardWidget::OnToggleSettings)
+                .ButtonColorAndOpacity(FLinearColor::Transparent)
+            ]
+        ];
+}
+
+TSharedRef<SWidget> SPCGExWizardWidget::BuildSettingsPanel()
+{
+    const FPCGExBridgeSettings& S = FPCGExBridgeSettings::Get();
+
+    return SNew(SBorder)
+        .BorderBackgroundColor(ColorPanel)
+        .Padding(12, 10)
+        [
+            SNew(SVerticalBox)
+
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)
+            [
+                SNew(SVerticalBox)
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 3)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Anthropic API Key")))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Bold", 8))
+                    .ColorAndOpacity(ColorMuted)
+                ]
+                + SVerticalBox::Slot().AutoHeight()
+                [
+                    SAssignNew(ApiKeyBox, SEditableTextBox)
+                    .Text(FText::FromString(S.ApiKey))
+                    .HintText(FText::FromString(TEXT("sk-ant-...")))
+                    .IsPassword(true)
+                ]
+            ]
+
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 10)
+            [
+                SNew(SVerticalBox)
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 3)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Output Content Path")))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Bold", 8))
+                    .ColorAndOpacity(ColorMuted)
+                ]
+                + SVerticalBox::Slot().AutoHeight()
+                [
+                    SAssignNew(OutputPathBox, SEditableTextBox)
+                    .Text(FText::FromString(S.OutputPath))
+                    .HintText(FText::FromString(TEXT("/Game/PCGExBridge/Generated")))
+                ]
+            ]
+
+            + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Right)
+            [
+                SNew(SButton)
+                .Text(FText::FromString(TEXT("Save Settings")))
+                .OnClicked(this, &SPCGExWizardWidget::OnSaveSettings)
+                .ButtonColorAndOpacity(ColorAccent)
+            ]
         ];
 }
 
@@ -203,13 +292,19 @@ TSharedRef<SWidget> SPCGExWizardWidget::BuildInputArea()
         .FillWidth(1.0f)
         .Padding(0, 0, 4, 0)
         [
-            SAssignNew(InputBox, SEditableTextBox)
-            .HintText(FText::FromString(TEXT("Describe what you want to generate...")))
-            .OnTextCommitted_Lambda([this](const FText&, ETextCommit::Type CommitType)
+            SAssignNew(InputBox, SMultiLineEditableTextBox)
+            .HintText(FText::FromString(TEXT("Describe what you want to generate... (Enter to send, Shift+Enter for newline)")))
+            .OnKeyDownHandler_Lambda([this](const FGeometry&, const FKeyEvent& Key) -> FReply
             {
-                if (CommitType == ETextCommit::OnEnter) OnSendMessage();
+                if (Key.GetKey() == EKeys::Enter && !Key.IsShiftDown())
+                {
+                    OnSendMessage();
+                    return FReply::Handled();
+                }
+                return FReply::Unhandled();
             })
             .IsEnabled_Lambda([this]() { return CanSendMessage(); })
+            .AutoWrapText(true)
         ]
 
         + SHorizontalBox::Slot()
@@ -268,6 +363,16 @@ TSharedRef<SWidget> SPCGExWizardWidget::BuildAIMessageBubble(const FPCGExChatMes
             .Text(FText::FromString(TEXT("PCGEx AI")))
             .Font(FCoreStyle::GetDefaultFontStyle("Bold", 8))
             .ColorAndOpacity(ColorAccent)
+        ]
+
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(2, 0, 0, 4)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString(Message.Timestamp.ToString(TEXT("%H:%M"))))
+            .Font(FCoreStyle::GetDefaultFontStyle("Regular", 7))
+            .ColorAndOpacity(FLinearColor(0.3f, 0.3f, 0.3f, 1.0f))
         ]
 
         + SVerticalBox::Slot()
@@ -339,11 +444,27 @@ TSharedRef<SWidget> SPCGExWizardWidget::BuildUserMessageBubble(const FPCGExChatM
             .BorderBackgroundColor(ColorUserBubble)
             .Padding(10, 8)
             [
-                SNew(STextBlock)
-                .Text(FText::FromString(Message.Text))
-                .Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
-                .ColorAndOpacity(ColorText)
-                .AutoWrapText(true)
+                SNew(SVerticalBox)
+
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                .Padding(2, 0, 0, 4)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(Message.Timestamp.ToString(TEXT("%H:%M"))))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Regular", 7))
+                    .ColorAndOpacity(FLinearColor(0.3f, 0.3f, 0.3f, 1.0f))
+                ]
+
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(Message.Text))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
+                    .ColorAndOpacity(ColorText)
+                    .AutoWrapText(true)
+                ]
             ]
         ];
 }
@@ -391,10 +512,12 @@ void SPCGExWizardWidget::RebuildChatUI()
 
 void SPCGExWizardWidget::ScrollToBottom()
 {
-    if (ChatScrollBox.IsValid())
+    if (!ChatScrollBox.IsValid()) return;
+    TWeakPtr<SScrollBox> WeakScroll = ChatScrollBox;
+    GEditor->GetTimerManager()->SetTimerForNextTick([WeakScroll]()
     {
-        ChatScrollBox->ScrollToEnd();
-    }
+        if (WeakScroll.IsValid()) WeakScroll.Pin()->ScrollToEnd();
+    });
 }
 
 void SPCGExWizardWidget::AddAIMessage(const FString& Text, TSharedPtr<FJsonObject> Graph, bool bShowActions)
@@ -405,7 +528,6 @@ void SPCGExWizardWidget::AddAIMessage(const FString& Text, TSharedPtr<FJsonObjec
     Msg.AttachedGraph = Graph;
     Msg.bShowActions = bShowActions;
     Session.Messages.Add(Msg);
-    Session.bWaitingForAI = false;
     RebuildChatUI();
 }
 
@@ -415,6 +537,31 @@ void SPCGExWizardWidget::AddUserMessage(const FString& Text)
     Msg.bFromUser = true;
     Msg.Text = Text;
     Session.Messages.Add(Msg);
+    RebuildChatUI();
+}
+
+void SPCGExWizardWidget::AddTypingIndicator()
+{
+    if (bTypingIndicatorVisible) return;
+    bTypingIndicatorVisible = true;
+    FPCGExChatMessage Msg;
+    Msg.bFromUser = false;
+    Msg.Text = TEXT("PCGEx AI is thinking...");
+    Msg.bShowActions = false;
+    Session.Messages.Add(Msg);
+    RebuildChatUI();
+}
+
+void SPCGExWizardWidget::RemoveTypingIndicator()
+{
+    if (!bTypingIndicatorVisible) return;
+    bTypingIndicatorVisible = false;
+    if (!Session.Messages.IsEmpty()
+        && !Session.Messages.Last().bFromUser
+        && Session.Messages.Last().Text == TEXT("PCGEx AI is thinking..."))
+    {
+        Session.Messages.RemoveAt(Session.Messages.Num() - 1);
+    }
     RebuildChatUI();
 }
 
@@ -449,11 +596,14 @@ EVisibility SPCGExWizardWidget::GetServerPromptVisibility() const
     return (Module && !Module->IsServerRunning()) ? EVisibility::Visible : EVisibility::Collapsed;
 }
 
+EVisibility SPCGExWizardWidget::GetSettingsPanelVisibility() const
+{
+    return bSettingsVisible ? EVisibility::Visible : EVisibility::Collapsed;
+}
+
 bool SPCGExWizardWidget::CanSendMessage() const
 {
-    if (!Module || !Module->IsServerRunning()) return false;
-    if (Session.bWaitingForAI) return false;
-    return true;
+    return !Session.bWaitingForAI;
 }
 
 // ── Tick ─────────────────────────────────────────────────────────
@@ -562,11 +712,16 @@ FReply SPCGExWizardWidget::OnCreateInUE()
 
     AddAIMessage(FString::Printf(TEXT("Creating '%s' in UE..."), *AssetName));
 
-    Module->SendTcpCommand(TEXT("create_graph"), Params, [this, AssetName](bool bOk, const TSharedPtr<FJsonObject>& Response)
+    int32 StepIndex = Session.CurrentStep;
+    TWeakPtr<SPCGExWizardWidget> WeakThis = SharedThis(this);
+    Module->SendTcpCommand(TEXT("create_graph"), Params, [WeakThis, AssetName, StepIndex](bool bOk, const TSharedPtr<FJsonObject>& Response)
     {
+        TSharedPtr<SPCGExWizardWidget> Self = WeakThis.Pin();
+        if (!Self.IsValid()) return;
+
         if (!bOk || !Response.IsValid())
         {
-            AddAIMessage(TEXT("Failed to create graph. Check the Output Log for details."));
+            Self->AddAIMessage(TEXT("Failed to create graph. Check the Output Log for details."));
             return;
         }
 
@@ -576,20 +731,18 @@ FReply SPCGExWizardWidget::OnCreateInUE()
         FString AssetPath;
         Response->TryGetStringField(TEXT("assetPath"), AssetPath);
 
-        if (bCreated)
+        if (bCreated && Self->Session.Steps.IsValidIndex(StepIndex))
         {
-            Session.GetCurrentStep().AssetPath = AssetPath;
-            AddAIMessage(FString::Printf(
+            Self->Session.Steps[StepIndex].AssetPath = AssetPath;
+            Self->AddAIMessage(FString::Printf(
                 TEXT("Created successfully!\n\nAsset: %s\n\nClick **Test It** to see it in the viewport, or **Approve & Continue** to move on."),
                 *AssetPath
             ));
         }
-        else
+        else if (!bCreated)
         {
-            // Show errors from validation
-            AddAIMessage(TEXT("Creation failed due to validation errors. I'll fix them and try again."));
-            // Re-send to MCP with the error context
-            SendToMCP(FString::Printf(TEXT("[FIX_ERRORS] Asset creation failed for step %d"), Session.CurrentStep));
+            Self->AddAIMessage(TEXT("Creation failed due to validation errors. I'll fix them and try again."));
+            Self->SendToMCP(FString::Printf(TEXT("[FIX_ERRORS] Asset creation failed for step %d"), StepIndex));
         }
     });
 
@@ -610,11 +763,15 @@ FReply SPCGExWizardWidget::OnTestIt()
     TSharedRef<FJsonObject> Params = MakeShared<FJsonObject>();
     Params->SetStringField(TEXT("assetPath"), AssetPath);
 
-    Module->SendTcpCommand(TEXT("execute_graph"), Params, [this, AssetPath](bool bOk, const TSharedPtr<FJsonObject>& Response)
+    TWeakPtr<SPCGExWizardWidget> WeakThis = SharedThis(this);
+    Module->SendTcpCommand(TEXT("execute_graph"), Params, [WeakThis, AssetPath](bool bOk, const TSharedPtr<FJsonObject>& Response)
     {
+        TSharedPtr<SPCGExWizardWidget> Self = WeakThis.Pin();
+        if (!Self.IsValid()) return;
+
         if (!bOk || !Response.IsValid())
         {
-            AddAIMessage(TEXT("Failed to execute graph."));
+            Self->AddAIMessage(TEXT("Failed to execute graph."));
             return;
         }
 
@@ -626,13 +783,13 @@ FReply SPCGExWizardWidget::OnTestIt()
 
         if (Count > 0)
         {
-            AddAIMessage(FString::Printf(TEXT("Graph executed on %d PCG component(s). Check the viewport!"), Count));
+            Self->AddAIMessage(FString::Printf(TEXT("Graph executed on %d PCG component(s). Check the viewport!"), Count));
         }
         else
         {
             FString Note;
             Response->TryGetStringField(TEXT("note"), Note);
-            AddAIMessage(FString::Printf(
+            Self->AddAIMessage(FString::Printf(
                 TEXT("No PCG components found using this graph.\n\n%s"),
                 *Note
             ));
@@ -648,86 +805,96 @@ FReply SPCGExWizardWidget::OnStartServer()
     return FReply::Handled();
 }
 
+FReply SPCGExWizardWidget::OnToggleSettings()
+{
+    bSettingsVisible = !bSettingsVisible;
+    return FReply::Handled();
+}
+
+FReply SPCGExWizardWidget::OnSaveSettings()
+{
+    FPCGExBridgeSettings& S = FPCGExBridgeSettings::Get();
+    if (ApiKeyBox.IsValid())     S.ApiKey     = ApiKeyBox->GetText().ToString().TrimStartAndEnd();
+    if (OutputPathBox.IsValid()) S.OutputPath = OutputPathBox->GetText().ToString().TrimStartAndEnd();
+    S.Save();
+    bSettingsVisible = false;
+
+    if (S.HasApiKey())
+        AddAIMessage(TEXT("Settings saved! API key is set. You can start generating graphs."));
+    else
+        AddAIMessage(TEXT("Settings saved. Note: no API key is set \u2014 add one to use the AI."));
+
+    return FReply::Handled();
+}
+
 // ── Step flow handlers ──────────────────────────────────────────
 
 void SPCGExWizardWidget::SendToMCP(const FString& UserMessage)
 {
-    if (!Module || !Module->IsTcpServerRunning()) return;
+    const FPCGExBridgeSettings& Settings = FPCGExBridgeSettings::Get();
+
+    if (!Settings.HasApiKey())
+    {
+        AddAIMessage(TEXT("No API key set. Click \u2699 Settings and enter your Anthropic API key."));
+        return;
+    }
 
     Session.bWaitingForAI = true;
+    AddTypingIndicator();
 
-    // Build the wizard_chat command payload
-    TSharedRef<FJsonObject> Params = MakeShared<FJsonObject>();
-    Params->SetStringField(TEXT("sessionId"), Session.SessionId);
-    Params->SetStringField(TEXT("message"), UserMessage);
-    Params->SetStringField(TEXT("goal"), Session.Goal);
-    Params->SetNumberField(TEXT("currentStep"), Session.CurrentStep);
+    FOnClaudeResponse Callback;
+    Callback.BindSP(this, &SPCGExWizardWidget::OnClaudeResponse);
 
-    // Build steps array
-    TArray<TSharedPtr<FJsonValue>> StepsArr;
-    for (const FPCGExWizardStep& Step : Session.Steps)
+    FPCGExClaudeClient::SendMessage(
+        GetPCGExWizardSystemPrompt(),
+        UserMessage,
+        Settings.ApiKey,
+        Settings.Model,
+        Callback
+    );
+}
+
+void SPCGExWizardWidget::OnClaudeResponse(bool bSuccess, const FString& ResponseText)
+{
+    RemoveTypingIndicator();
+    Session.bWaitingForAI = false;
+
+    if (!bSuccess)
     {
-        TSharedRef<FJsonObject> StepJson = MakeShared<FJsonObject>();
-        StepJson->SetStringField(TEXT("name"), Step.Name);
-        StepJson->SetStringField(TEXT("status"), [&Step]() -> FString {
-            switch (Step.Status)
-            {
-            case EPCGExWizardStepStatus::Approved:   return TEXT("approved");
-            case EPCGExWizardStepStatus::InProgress: return TEXT("in_progress");
-            case EPCGExWizardStepStatus::Redoing:    return TEXT("redoing");
-            default: return TEXT("pending");
-            }
-        }());
-        StepJson->SetStringField(TEXT("assetPath"), Step.AssetPath);
-        StepsArr.Add(MakeShared<FJsonValueObject>(StepJson));
+        AddAIMessage(ResponseText);
+        return;
     }
-    Params->SetArrayField(TEXT("steps"), StepsArr);
 
-    // Send async via the module's TCP connection
-    Module->SendTcpCommand(TEXT("wizard_chat"), Params, [this](bool bOk, const TSharedPtr<FJsonObject>& Response)
+    // Parse JSON: { "reply": "...", "graph": {...} | null }
+    TSharedPtr<FJsonObject> Root;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseText);
+
+    FString ReplyText = ResponseText;
+    TSharedPtr<FJsonObject> Graph;
+
+    if (FJsonSerializer::Deserialize(Reader, Root) && Root.IsValid())
     {
-        if (!bOk || !Response.IsValid())
+        Root->TryGetStringField(TEXT("reply"), ReplyText);
+        const TSharedPtr<FJsonObject>* GraphObj;
+        if (Root->TryGetObjectField(TEXT("graph"), GraphObj) && GraphObj->IsValid())
         {
-            AddAIMessage(TEXT("Connection error — make sure PCGEx Bridge is running."));
-            return;
+            Graph = *GraphObj;
         }
+    }
 
-        FString AIText;
-        Response->TryGetStringField(TEXT("message"), AIText);
-
-        TSharedPtr<FJsonObject> Graph;
-        if (Response->HasField(TEXT("graph")))
-        {
-            Graph = Response->GetObjectField(TEXT("graph"));
-        }
-
-        // Update steps if MCP sent a new plan
-        const TArray<TSharedPtr<FJsonValue>>* NewSteps;
-        if (Response->TryGetArrayField(TEXT("steps"), NewSteps) && Session.Steps.IsEmpty())
-        {
-            for (const TSharedPtr<FJsonValue>& StepVal : *NewSteps)
-            {
-                const TSharedPtr<FJsonObject>& StepObj = StepVal->AsObject();
-                FPCGExWizardStep Step;
-                StepObj->TryGetStringField(TEXT("name"), Step.Name);
-                Session.Steps.Add(Step);
-            }
-            if (!Session.Steps.IsEmpty())
-            {
-                Session.Steps[0].Status = EPCGExWizardStepStatus::InProgress;
-            }
-        }
-
-        // If a graph was returned, store it in the current step
-        if (Graph.IsValid() && Session.HasCurrentStep())
+    if (Graph.IsValid())
+    {
+        if (Session.HasCurrentStep())
         {
             Session.GetCurrentStep().Graph = Graph;
             Session.GetCurrentStep().Status = EPCGExWizardStepStatus::InProgress;
         }
-
-        bool bShowActions = Graph.IsValid();
-        AddAIMessage(AIText, Graph, bShowActions);
-    });
+        AddAIMessage(ReplyText, Graph, true);
+    }
+    else
+    {
+        AddAIMessage(ReplyText);
+    }
 }
 
 void SPCGExWizardWidget::OnMCPResponse(bool bSuccess, const FString& ResponseText, TSharedPtr<FJsonObject> Graph)
@@ -740,12 +907,9 @@ void SPCGExWizardWidget::InitializeSession(const FString& Goal)
 {
     Session.Goal = Goal;
     Session.SessionId = FGuid::NewGuid().ToString();
-    Session.Messages; // keep existing messages
-    Session.bWaitingForAI = true;
 
     AddAIMessage(TEXT("Let me plan the steps for your project..."));
 
-    // Send to MCP to get the step plan
     SendToMCP(FString::Printf(TEXT("[INIT] Goal: %s"), *Goal));
 }
 

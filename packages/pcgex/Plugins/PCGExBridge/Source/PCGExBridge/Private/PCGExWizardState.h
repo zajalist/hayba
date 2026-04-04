@@ -30,6 +30,7 @@ struct FPCGExChatMessage
 	FString Text;
 	TSharedPtr<FJsonObject> AttachedGraph; // Non-null if AI produced a graph
 	bool bShowActions;      // Show Preview/Create/Test buttons
+	FDateTime Timestamp = FDateTime::Now();
 };
 
 /** Full wizard session state */

@@ -2,6 +2,7 @@
 #include "PCGExWizardWidget.h"
 #include "PCGExBridgeTcpServer.h"
 #include "PCGExBridgeCommandHandler.h"
+#include "PCGExBridgeSettings.h"
 #include "Json.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformMisc.h"
@@ -20,6 +21,8 @@ void FPCGExBridgeModule::StartupModule()
 {
     PluginBaseDir = IPluginManager::Get().FindPlugin(TEXT("PCGExBridge"))->GetBaseDir();
     UE_LOG(LogPCGExBridge, Log, TEXT("PCGExBridge module started. Base dir: %s"), *PluginBaseDir);
+
+    FPCGExBridgeSettings::Get().Load();
 
     CommandHandler = MakeShared<FPCGExBridgeCommandHandler>();
 

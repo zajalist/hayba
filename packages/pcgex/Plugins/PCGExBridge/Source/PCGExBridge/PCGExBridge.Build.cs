@@ -25,7 +25,8 @@ public class PCGExBridge : ModuleRules
             "Networking",
             "Json",
             "JsonUtilities",
-            "PCG"
+            "PCG",
+            "HTTP"
         });
     }
 }
