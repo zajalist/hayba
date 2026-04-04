@@ -1,4 +1,5 @@
 #include "PCGExClaudeClient.h"
+#include "PCGExBridgeSettings.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpResponse.h"
 #include "Json.h"
@@ -10,20 +11,32 @@ void FPCGExClaudeClient::SendMessage(
 	const FString& Model,
 	FOnClaudeResponse OnComplete)
 {
+	const FPCGExBridgeSettings& Settings = FPCGExBridgeSettings::Get();
+	const bool bIsAnthropic = Settings.IsAnthropicEndpoint();
+
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
-	Request->SetURL(TEXT("https://api.anthropic.com/v1/messages"));
+	Request->SetURL(Settings.BaseURL);
 	Request->SetVerb(TEXT("POST"));
-	Request->SetHeader(TEXT("content-type"), TEXT("application/json"));
-	Request->SetHeader(TEXT("x-api-key"), ApiKey);
-	Request->SetHeader(TEXT("anthropic-version"), TEXT("2023-06-01"));
-	Request->SetContentAsString(BuildRequestBody(SystemPrompt, UserMessage, Model));
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+
+	if (bIsAnthropic)
+	{
+		Request->SetHeader(TEXT("x-api-key"), ApiKey);
+		Request->SetHeader(TEXT("anthropic-version"), TEXT("2023-06-01"));
+	}
+	else
+	{
+		Request->SetHeader(TEXT("Authorization"), FString::Printf(TEXT("Bearer %s"), *ApiKey));
+	}
+
+	Request->SetContentAsString(BuildRequestBody(SystemPrompt, UserMessage, Model, bIsAnthropic));
 
 	Request->OnProcessRequestComplete().BindLambda(
-		[OnComplete](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
+		[OnComplete, bIsAnthropic](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
 		{
 			if (!bConnected || !Response.IsValid())
 			{
-				OnComplete.ExecuteIfBound(false, TEXT("Network error: could not reach api.anthropic.com"));
+				OnComplete.ExecuteIfBound(false, TEXT("Network error: could not reach the API endpoint."));
 				return;
 			}
 
@@ -32,7 +45,7 @@ void FPCGExClaudeClient::SendMessage(
 
 			if (Code == 401)
 			{
-				OnComplete.ExecuteIfBound(false, TEXT("Invalid API key. Click ⚙ Settings and check your Anthropic API key."));
+				OnComplete.ExecuteIfBound(false, TEXT("Invalid API key. Open Settings (\u2699) and check your key."));
 				return;
 			}
 			if (Code == 429)
@@ -43,13 +56,13 @@ void FPCGExClaudeClient::SendMessage(
 			if (Code != 200)
 			{
 				OnComplete.ExecuteIfBound(false,
-					FString::Printf(TEXT("Claude API error %d: %s"), Code, *Body.Left(200)));
+					FString::Printf(TEXT("API error %d: %s"), Code, *Body.Left(300)));
 				return;
 			}
 
-			const FString Reply = ExtractReplyText(Body);
+			const FString Reply = ExtractReplyText(Body, bIsAnthropic);
 			OnComplete.ExecuteIfBound(!Reply.IsEmpty(), Reply.IsEmpty()
-				? TEXT("Unexpected response format from Claude.") : Reply);
+				? TEXT("Unexpected response format from AI endpoint.") : Reply);
 		}
 	);
 
@@ -59,18 +72,39 @@ void FPCGExClaudeClient::SendMessage(
 FString FPCGExClaudeClient::BuildRequestBody(
 	const FString& SystemPrompt,
 	const FString& UserMessage,
-	const FString& Model)
+	const FString& Model,
+	bool bIsAnthropic)
 {
 	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
 	Root->SetStringField(TEXT("model"), Model);
 	Root->SetNumberField(TEXT("max_tokens"), 4096);
-	Root->SetStringField(TEXT("system"), SystemPrompt);
 
 	TArray<TSharedPtr<FJsonValue>> Messages;
-	TSharedPtr<FJsonObject> UserMsg = MakeShared<FJsonObject>();
-	UserMsg->SetStringField(TEXT("role"), TEXT("user"));
-	UserMsg->SetStringField(TEXT("content"), UserMessage);
-	Messages.Add(MakeShared<FJsonValueObject>(UserMsg));
+
+	if (bIsAnthropic)
+	{
+		// Anthropic: system at top level, messages array has user only
+		Root->SetStringField(TEXT("system"), SystemPrompt);
+
+		TSharedPtr<FJsonObject> UserMsg = MakeShared<FJsonObject>();
+		UserMsg->SetStringField(TEXT("role"), TEXT("user"));
+		UserMsg->SetStringField(TEXT("content"), UserMessage);
+		Messages.Add(MakeShared<FJsonValueObject>(UserMsg));
+	}
+	else
+	{
+		// OpenAI-compatible: system is first message
+		TSharedPtr<FJsonObject> SysMsg = MakeShared<FJsonObject>();
+		SysMsg->SetStringField(TEXT("role"), TEXT("system"));
+		SysMsg->SetStringField(TEXT("content"), SystemPrompt);
+		Messages.Add(MakeShared<FJsonValueObject>(SysMsg));
+
+		TSharedPtr<FJsonObject> UserMsg = MakeShared<FJsonObject>();
+		UserMsg->SetStringField(TEXT("role"), TEXT("user"));
+		UserMsg->SetStringField(TEXT("content"), UserMessage);
+		Messages.Add(MakeShared<FJsonValueObject>(UserMsg));
+	}
+
 	Root->SetArrayField(TEXT("messages"), Messages);
 
 	FString Out;
@@ -79,19 +113,34 @@ FString FPCGExClaudeClient::BuildRequestBody(
 	return Out;
 }
 
-FString FPCGExClaudeClient::ExtractReplyText(const FString& ResponseJson)
+FString FPCGExClaudeClient::ExtractReplyText(const FString& ResponseJson, bool bIsAnthropic)
 {
 	TSharedPtr<FJsonObject> Root;
 	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseJson);
 	if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid()) return TEXT("");
 
-	const TArray<TSharedPtr<FJsonValue>>* Content;
-	if (!Root->TryGetArrayField(TEXT("content"), Content) || Content->IsEmpty()) return TEXT("");
-
-	const TSharedPtr<FJsonObject>* Block;
-	if (!(*Content)[0]->TryGetObject(Block)) return TEXT("");
-
-	FString Text;
-	(*Block)->TryGetStringField(TEXT("text"), Text);
-	return Text;
+	if (bIsAnthropic)
+	{
+		// Anthropic: { "content": [{ "type": "text", "text": "..." }] }
+		const TArray<TSharedPtr<FJsonValue>>* Content;
+		if (!Root->TryGetArrayField(TEXT("content"), Content) || Content->IsEmpty()) return TEXT("");
+		const TSharedPtr<FJsonObject>* Block;
+		if (!(*Content)[0]->TryGetObject(Block)) return TEXT("");
+		FString Text;
+		(*Block)->TryGetStringField(TEXT("text"), Text);
+		return Text;
+	}
+	else
+	{
+		// OpenAI-compatible: { "choices": [{ "message": { "content": "..." } }] }
+		const TArray<TSharedPtr<FJsonValue>>* Choices;
+		if (!Root->TryGetArrayField(TEXT("choices"), Choices) || Choices->IsEmpty()) return TEXT("");
+		const TSharedPtr<FJsonObject>* Choice;
+		if (!(*Choices)[0]->TryGetObject(Choice)) return TEXT("");
+		const TSharedPtr<FJsonObject>* MsgObj;
+		if (!(*Choice)->TryGetObjectField(TEXT("message"), MsgObj)) return TEXT("");
+		FString Content;
+		(*MsgObj)->TryGetStringField(TEXT("content"), Content);
+		return Content;
+	}
 }

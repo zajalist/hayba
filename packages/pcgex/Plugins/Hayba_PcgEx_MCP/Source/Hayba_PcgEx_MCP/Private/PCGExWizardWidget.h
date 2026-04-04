@@ -1,10 +1,10 @@
-// Plugins/PCGExBridge/Source/PCGExBridge/Private/PCGExWizardWidget.h
+// Plugins/Hayba_PcgEx_MCP/Source/Hayba_PcgEx_MCP/Private/PCGExWizardWidget.h
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Widgets/SCompoundWidget.h"
-#include "Widgets/Views/SListView.h"
 #include "Widgets/Input/SMultiLineEditableTextBox.h"
+#include "Styling/SlateBrush.h"
 #include "PCGExWizardState.h"
 
 class FPCGExBridgeModule;
@@ -24,12 +24,17 @@ private:
 	FPCGExBridgeModule* Module = nullptr;
 	FPCGExWizardSession Session;
 
-	// Widget references
+	// Logo brush (loaded from Resources/HaybaLogo_32.png)
+	TSharedPtr<FSlateDynamicImageBrush> LogoBrush;
+
+	// Chat
 	TSharedPtr<SScrollBox> ChatScrollBox;
 	TSharedPtr<SMultiLineEditableTextBox> InputBox;
 
-	// Settings panel
+	// Settings panel fields
 	TSharedPtr<SEditableTextBox> ApiKeyBox;
+	TSharedPtr<SEditableTextBox> BaseUrlBox;
+	TSharedPtr<SEditableTextBox> ModelBox;
 	TSharedPtr<SEditableTextBox> OutputPathBox;
 	bool bSettingsVisible = false;
 
@@ -37,9 +42,9 @@ private:
 	bool bTypingIndicatorVisible = false;
 
 	// UI builders
-	TSharedRef<SWidget> BuildTopBar();
+	TSharedRef<SWidget> BuildHeader();
 	TSharedRef<SWidget> BuildSettingsPanel();
-	TSharedRef<SWidget> BuildStepProgress();
+	TSharedRef<SWidget> BuildStepsSidebar();
 	TSharedRef<SWidget> BuildChatArea();
 	TSharedRef<SWidget> BuildInputArea();
 	TSharedRef<SWidget> BuildActionBar();
@@ -76,9 +81,13 @@ private:
 	void AddTypingIndicator();
 	void RemoveTypingIndicator();
 	void RebuildChatUI();
+	void RebuildSidebar();
 
 	// Step flow
 	void InitializeSession(const FString& Goal);
 	void AdvanceToNextStep();
 	void RedoCurrentStep();
+
+	// Sidebar ref for live updates
+	TSharedPtr<SVerticalBox> StepListBox;
 };
