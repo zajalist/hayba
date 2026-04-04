@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HaybaGaea — AI-Powered Terrain Generation</title>
+  <link rel="icon" type="image/svg+xml" href="../assets/Logo.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+
+<!-- ═══════════════════════════════ NAV ═══════════════════════════════ -->
+<nav id="mainNav">
+  <a class="nav-logo" href="../">
+    <img src="../assets/Logo.svg" alt="Hayba" class="nav-logo-img" />
+    <span class="nav-logo-name">HAYBA</span>
+  </a>
+  <div class="nav-links">
+    <a href="#how-it-works">HOW IT WORKS</a>
+    <a href="#getting-started">SETUP</a>
+    <a href="#tools">TOOLS</a>
+    <a href="#usecases">USE CASES</a>
+    <a href="../pcgex/" style="color:#555;">HAYBAPCGEX</a>
+    <a href="https://github.com/zajalist/gaea_mcp" target="_blank">GITHUB</a>
+    <a href="#getting-started" class="btn-primary">DOWNLOAD</a>
+  </div>
+</nav>
+
+<!-- ═══════════════════════════════ HERO ═══════════════════════════════ -->
+<section class="hero" id="hero">
+  <canvas id="terrainCanvas"></canvas>
+  <canvas id="particlesCanvas"></canvas>
+  <div class="hero-glow"></div>
+  <div class="hero-vignette"></div>
+
+  <div class="hero-content">
+    <div class="hero-badge">
+      <span class="badge-dot"></span>
+      <span>HaybaGaea &nbsp;·&nbsp; AI-Powered Terrain Generation &nbsp;·&nbsp; MCP Protocol</span>
+    </div>
+
+    <h1 class="hero-title">
+      <span class="hero-line" data-delay="0">TERRAIN</span>
+      <span class="hero-line" data-delay="80">AT THE</span>
+      <span class="hero-line" data-delay="160">SPEED OF</span>
+      <span class="hero-line accent-line" data-delay="240">THOUGHT.</span>
+    </h1>
+
+    <p class="hero-sub">
+      Connect <strong>Claude, Cursor, or Cline</strong> to Gaea's build engine.
+      One prompt generates a full terrain graph — mountains, erosion, rivers —
+      then cooks and exports to Unreal Engine.
+    </p>
+
+    <div class="hero-ctas">
+      <a href="#getting-started" class="btn-hero-primary">
+        <span>GET STARTED</span>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7h8M7 3l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      <a href="https://github.com/zajalist/gaea_mcp" class="btn-hero-ghost" target="_blank">VIEW ON GITHUB</a>
+    </div>
+
+    <div class="hero-stats">
+      <div class="stat">
+        <span class="stat-num" data-target="11">0</span>
+        <span class="stat-label">MCP Tools</span>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat">
+        <span class="stat-num" data-target="35">0</span><span class="stat-suffix">+</span>
+        <span class="stat-label">Node Types</span>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat">
+        <span class="stat-num">&lt;1</span><span class="stat-suffix">s</span>
+        <span class="stat-label">Update Time</span>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat">
+        <span class="stat-num" data-target="4">0</span>
+        <span class="stat-label">MCP Clients</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="hero-scroll-hint">
+    <span>SCROLL</span>
+    <div class="scroll-line"></div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ FEATURE STRIP ═══════════════════════════════ -->
+<section class="features">
+  <div class="feature" data-index="0">
+    <div class="feature-icon">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="3" stroke="#ff6b35" stroke-width="1.5"/><path d="M10 2v2M10 16v2M2 10h2M16 10h2" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round"/></svg>
+    </div>
+    <div class="feature-label">Live Session</div>
+    <h3>Watch It Build</h3>
+    <p>Nodes appear in Gaea's graph in real-time as Claude adds them. No export, no import — Gaea auto-reloads on every change.</p>
+  </div>
+  <div class="feature" data-index="1">
+    <div class="feature-icon">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="5" width="16" height="10" rx="1" stroke="#ff6b35" stroke-width="1.5"/><path d="M6 9l3 3 5-5" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="feature-label">Headless Batch</div>
+    <h3>Fast Iteration</h3>
+    <p>No Gaea window needed. Describe a terrain, get a heightmap on disk in seconds. Ideal for pipelines.</p>
+  </div>
+  <div class="feature" data-index="2">
+    <div class="feature-icon">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4 10h12M10 4l6 6-6 6" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="feature-label">11 MCP Tools</div>
+    <h3>Conversation-Driven</h3>
+    <p>Open, add, connect, remove, tweak, cook — all from natural language. The AI handles graph topology.</p>
+  </div>
+  <div class="feature" data-index="3">
+    <div class="feature-icon">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 6h14M3 10h10M3 14h7" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round"/></svg>
+    </div>
+    <div class="feature-label">Any MCP Client</div>
+    <h3>Works Everywhere</h3>
+    <p>Claude Desktop, Claude Code, Cursor, Cline. One installer. Cross-platform. Done in under a minute.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ TERRAIN GALLERY ══════════════════════════════ -->
+<section class="marquee-section">
+  <div class="marquee-header">
+    <span class="section-label">TERRAIN RENDERS — WHAT GAEA GENERATES</span>
+    <p>Mountains, canyons, dunes, volcanos — Gaea produces it all from a single text prompt.</p>
+  </div>
+  <div class="marquee-rows">
+    <!-- Row 1: left to right -->
+    <div class="marquee-wrapper">
+      <div class="marquee-track">
+        <!-- set 1 -->
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=640&h=420&fit=crop&q=80" alt="mountain" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Alpine Range</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=640&h=420&fit=crop&q=80" alt="dunes" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Desert Dunes</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=640&h=420&fit=crop&q=80" alt="peaks" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Snow Peaks</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1518173946687-a4c8892bbd9f?w=640&h=420&fit=crop&q=80" alt="canyon" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Canyon Walls</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1483728642387-6c3bdd6c93e5?w=640&h=420&fit=crop&q=80" alt="rocky" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Rocky Ridge</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?w=640&h=420&fit=crop&q=80" alt="aerial" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Aerial Valley</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1470770903676-69b98201ea1c?w=640&h=420&fit=crop&q=80" alt="alpine" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Alpine Lake</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1480497490787-505ec076689f?w=640&h=420&fit=crop&q=80" alt="volcanic" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Volcanic Field</span></div>
+        <!-- set 2 (duplicate for loop) -->
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=640&h=420&fit=crop&q=80" alt="mountain" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Alpine Range</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=640&h=420&fit=crop&q=80" alt="dunes" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Desert Dunes</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=640&h=420&fit=crop&q=80" alt="peaks" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Snow Peaks</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1518173946687-a4c8892bbd9f?w=640&h=420&fit=crop&q=80" alt="canyon" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Canyon Walls</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1483728642387-6c3bdd6c93e5?w=640&h=420&fit=crop&q=80" alt="rocky" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Rocky Ridge</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?w=640&h=420&fit=crop&q=80" alt="aerial" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Aerial Valley</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1470770903676-69b98201ea1c?w=640&h=420&fit=crop&q=80" alt="alpine" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Alpine Lake</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1480497490787-505ec076689f?w=640&h=420&fit=crop&q=80" alt="volcanic" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Volcanic Field</span></div>
+      </div>
+    </div>
+    <!-- Row 2: right to left -->
+    <div class="marquee-wrapper">
+      <div class="marquee-track reverse">
+        <!-- set 1 -->
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1454496522488-7a8e488e8606?w=640&h=420&fit=crop&q=80" alt="mountains" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Mountain Pass</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1501854140801-50d01698950b?w=640&h=420&fit=crop&q=80" alt="aerial nature" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Erosion Flow</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1559128010-7c1ad6e1b6a5?w=640&h=420&fit=crop&q=80" alt="valley" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Deep Valley</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1494522855154-9297ac14b55f?w=640&h=420&fit=crop&q=80" alt="canyon" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Canyon Aerial</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1517823382935-51bfcb0ec6d3?w=640&h=420&fit=crop&q=80" alt="terrain" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Tundra Plain</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1433086966358-54859d0ed716?w=640&h=420&fit=crop&q=80" alt="waterfall" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">River Cut</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1519681393784-d120267933ba?w=640&h=420&fit=crop&q=80" alt="snow mountain" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Blizzard Ridge</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1513836279014-a89f7a76ae86?w=640&h=420&fit=crop&q=80" alt="forest terrain" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Forest Slope</span></div>
+        <!-- set 2 (duplicate) -->
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1454496522488-7a8e488e8606?w=640&h=420&fit=crop&q=80" alt="mountains" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Mountain Pass</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1501854140801-50d01698950b?w=640&h=420&fit=crop&q=80" alt="aerial nature" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Erosion Flow</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1559128010-7c1ad6e1b6a5?w=640&h=420&fit=crop&q=80" alt="valley" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Deep Valley</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1494522855154-9297ac14b55f?w=640&h=420&fit=crop&q=80" alt="canyon" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Canyon Aerial</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1517823382935-51bfcb0ec6d3?w=640&h=420&fit=crop&q=80" alt="terrain" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Tundra Plain</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1433086966358-54859d0ed716?w=640&h=420&fit=crop&q=80" alt="waterfall" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">River Cut</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1519681393784-d120267933ba?w=640&h=420&fit=crop&q=80" alt="snow mountain" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Blizzard Ridge</span></div>
+        <div class="marquee-item"><img src="https://images.unsplash.com/photo-1513836279014-a89f7a76ae86?w=640&h=420&fit=crop&q=80" alt="forest terrain" loading="lazy"><div class="marquee-item-overlay"></div><span class="marquee-item-label">Forest Slope</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ HOW IT WORKS ═══════════════════════════════ -->
+<section class="howitworks" id="how-it-works">
+  <div class="section-inner">
+    <span class="section-label">Architecture</span>
+    <h2>How HaybaGaea works.</h2>
+    <p class="section-sub">HaybaGaea sits between your AI assistant and Gaea. It speaks MCP to Claude and writes <code>.terrain</code> files that Gaea auto-reloads — no proprietary protocol reverse-engineering required.</p>
+
+    <!-- Animated pipeline diagram -->
+    <div class="pipeline">
+      <div class="pipeline-node" data-node="0">
+        <div class="pipeline-node-inner">
+          <div class="pipeline-node-label">AI Client</div>
+          <div class="pipeline-node-name">Claude · Cursor · Cline</div>
+          <div class="pipeline-node-sub">any MCP-compatible tool</div>
+        </div>
+        <div class="pipeline-node-glow"></div>
+      </div>
+      <div class="pipeline-connector" data-conn="0">
+        <div class="pipeline-line">
+          <div class="pipeline-pulse"></div>
+        </div>
+        <div class="pipeline-conn-label">stdio MCP</div>
+      </div>
+      <div class="pipeline-node" data-node="1">
+        <div class="pipeline-node-inner">
+          <div class="pipeline-node-label">Node.js Server</div>
+          <div class="pipeline-node-name">HaybaGaea</div>
+          <div class="pipeline-node-sub">11 MCP tools</div>
+        </div>
+        <div class="pipeline-node-glow"></div>
+      </div>
+      <div class="pipeline-connector" data-conn="1">
+        <div class="pipeline-line">
+          <div class="pipeline-pulse"></div>
+        </div>
+        <div class="pipeline-conn-label">.terrain files</div>
+      </div>
+      <div class="pipeline-node" data-node="2">
+        <div class="pipeline-node-inner">
+          <div class="pipeline-node-label">Terrain Engine</div>
+          <div class="pipeline-node-name">Gaea 2.x</div>
+          <div class="pipeline-node-sub">auto-reloads</div>
+        </div>
+        <div class="pipeline-node-glow"></div>
+      </div>
+      <div class="pipeline-connector" data-conn="2">
+        <div class="pipeline-line">
+          <div class="pipeline-pulse"></div>
+        </div>
+        <div class="pipeline-conn-label">heightmap</div>
+      </div>
+      <div class="pipeline-node" data-node="3">
+        <div class="pipeline-node-inner">
+          <div class="pipeline-node-label">Game Engine</div>
+          <div class="pipeline-node-name">Unreal Engine 5</div>
+          <div class="pipeline-node-sub">.r32 / .png import</div>
+        </div>
+        <div class="pipeline-node-glow"></div>
+      </div>
+    </div>
+
+    <!-- Steps -->
+    <div class="howitworks-steps">
+      <div class="hiw-step" data-reveal>
+        <div class="hiw-num">// 01</div>
+        <div class="hiw-content">
+          <h3>You type a prompt</h3>
+          <p>In Claude Desktop: <em>"Build me a snowy mountain range with heavy erosion and deep valleys."</em> No JSON, no node names to memorize.</p>
+        </div>
+      </div>
+      <div class="hiw-step" data-reveal>
+        <div class="hiw-num">// 02</div>
+        <div class="hiw-content">
+          <h3>Claude plans the graph</h3>
+          <p>Claude calls <code>list_node_types()</code> to see available nodes, then decides which to add and how to wire them — Mountain → Erosion → FractalTerraces → Autolevel.</p>
+        </div>
+      </div>
+      <div class="hiw-step" data-reveal>
+        <div class="hiw-num">// 03</div>
+        <div class="hiw-content">
+          <h3>HaybaGaea writes the file</h3>
+          <p>Each <code>add_node()</code> call writes to the <code>.terrain</code> JSON on disk. Gaea's file watcher detects the change and reloads the graph in real-time.</p>
+        </div>
+      </div>
+      <div class="hiw-step" data-reveal>
+        <div class="hiw-num">// 04</div>
+        <div class="hiw-content">
+          <h3>Cook and export</h3>
+          <p><code>cook_graph()</code> runs headlessly, waits for the build, and returns the heightmap path. Import directly into Unreal Engine as a Landscape.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Two Modes -->
+    <div class="two-modes">
+      <div class="mode-card" data-reveal>
+        <div class="mode-card-label">Live Session Mode</div>
+        <h3>Interactive Graph Building</h3>
+        <p>Gaea opens alongside Claude Desktop. Every node appears instantly. Tweak parameters mid-conversation. Edit manually in Gaea and Claude picks up your changes automatically.</p>
+        <div class="mode-tools">
+          <span class="tool-chip">open_session</span>
+          <span class="tool-chip">add_node</span>
+          <span class="tool-chip">connect_nodes</span>
+          <span class="tool-chip">remove_node</span>
+          <span class="tool-chip">set_parameter</span>
+          <span class="tool-chip">cook_graph</span>
+          <span class="tool-chip">close_session</span>
+        </div>
+      </div>
+      <div class="mode-card" data-reveal>
+        <div class="mode-card-label">Headless Batch Mode</div>
+        <h3>Silent Pipeline Export</h3>
+        <p>Gaea never opens. One call generates the graph, runs the build silently, and returns a heightmap path. Ideal for rapid iteration, automation, and CI pipelines.</p>
+        <div class="mode-tools">
+          <span class="tool-chip">create_terrain</span>
+          <span class="tool-chip">list_node_types</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ GETTING STARTED ═══════════════════════════════ -->
+<section class="getting-started" id="getting-started">
+  <div class="section-inner">
+    <span class="section-label">Setup</span>
+    <h2>Up and running in 3 steps.</h2>
+
+    <div class="setup-steps">
+      <div class="setup-step" data-reveal>
+        <div class="setup-step-num">1</div>
+        <div class="setup-step-body">
+          <h3>Download HaybaGaea</h3>
+          <p>Clone the repo or download the ZIP from GitHub.</p>
+          <div class="code-block">
+            <div class="code-block-header">
+              <div class="code-dots"><span></span><span></span><span></span></div>
+              <span class="code-block-lang">bash</span>
+            </div>
+            <div class="code-block-body">
+              <span class="c-cmd">git clone</span> <span class="c-str">https://github.com/zajalist/gaea_mcp</span><br>
+              <span class="c-cmd">cd</span> gaea_mcp
+            </div>
+          </div>
+          <p class="req-note">Requires <strong>Gaea 2.0+</strong> and <strong>Node.js 20+</strong></p>
+        </div>
+      </div>
+
+      <div class="setup-step" data-reveal>
+        <div class="setup-step-num">2</div>
+        <div class="setup-step-body">
+          <h3>Run the interactive installer</h3>
+          <p>Auto-detects your OS, Gaea installation, and installed MCP clients, then patches the right config file.</p>
+
+          <div class="platform-tabs">
+            <div class="tab active" data-tab="windows">Windows</div>
+            <div class="tab" data-tab="macos">macOS</div>
+            <div class="tab" data-tab="linux">Linux</div>
+          </div>
+
+          <div class="tab-content active" id="windows-content">
+            <div class="code-block">
+              <div class="code-block-header">
+                <div class="code-dots"><span></span><span></span><span></span></div>
+                <span class="code-block-lang">powershell</span>
+              </div>
+              <div class="code-block-body">
+                <span class="c-comment"># Option A: Node.js installer (recommended)</span><br>
+                <span class="c-cmd">node</span> installer/index.js<br><br>
+                <span class="c-comment"># Option B: PowerShell (legacy)</span><br>
+                <span class="c-comment"># Right-click install.ps1 → "Run with PowerShell"</span>
+              </div>
+            </div>
+            <ul class="setup-list">
+              <li>Detects your Gaea installation</li>
+              <li>Shows all available MCP clients (Claude Desktop, Cursor, Continue.dev, etc.)</li>
+              <li>Asks which one to configure</li>
+              <li>Asks for heightmap output folder</li>
+              <li>Builds the server and patches your config</li>
+            </ul>
+          </div>
+
+          <div class="tab-content" id="macos-content">
+            <div class="code-block">
+              <div class="code-block-header">
+                <div class="code-dots"><span></span><span></span><span></span></div>
+                <span class="code-block-lang">bash</span>
+              </div>
+              <div class="code-block-body">
+                <span class="c-cmd">bash</span> install.sh
+              </div>
+            </div>
+            <p style="font-size:0.78rem;color:var(--muted);margin-bottom:0.75rem;"><strong style="color:#555;">Note:</strong> Gaea is Windows-only. On macOS, you'll use headless mode.</p>
+            <ul class="setup-list">
+              <li>Detects installed MCP clients</li>
+              <li>Asks for output folder</li>
+              <li>Patches your MCP client's config</li>
+            </ul>
+          </div>
+
+          <div class="tab-content" id="linux-content">
+            <div class="code-block">
+              <div class="code-block-header">
+                <div class="code-dots"><span></span><span></span><span></span></div>
+                <span class="code-block-lang">bash</span>
+              </div>
+              <div class="code-block-body">
+                <span class="c-cmd">bash</span> install.sh
+              </div>
+            </div>
+            <p style="font-size:0.78rem;color:var(--muted);margin-bottom:0.75rem;"><strong style="color:#555;">Note:</strong> Gaea is Windows-only. On Linux, headless mode only.</p>
+            <ul class="setup-list">
+              <li>Detects installed MCP clients (VS Code extensions, Continue.dev, etc.)</li>
+              <li>Configures them for GaeaMCP</li>
+              <li>Sets up output directory</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="setup-step" data-reveal>
+        <div class="setup-step-num">3</div>
+        <div class="setup-step-body">
+          <h3>Restart Claude Desktop and prompt</h3>
+          <p>Restart Claude Desktop. HaybaGaea is now available as a set of tools. Start with:</p>
+          <div class="code-block">
+            <div class="code-block-header">
+              <div class="code-dots"><span></span><span></span><span></span></div>
+              <span class="code-block-lang">prompt</span>
+            </div>
+            <div class="code-block-body">
+              <span class="c-muted">"Build me a snowy mountain range with heavy erosion"</span><br><br>
+              <span class="c-comment"># Or open a live session:</span><br>
+              <span class="c-muted">"Open a new terrain session and add a mountain node"</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="manual-setup" data-reveal>
+      <div class="manual-header">
+        <span class="section-label">Manual Setup</span>
+        <p>Prefer to configure manually? Here's the full config.</p>
+      </div>
+      <div class="manual-grid">
+        <div>
+          <p class="manual-label">swarmhost.config.json</p>
+          <div class="code-block">
+            <div class="code-block-header">
+              <div class="code-dots"><span></span><span></span><span></span></div>
+              <span class="code-block-lang">json</span>
+            </div>
+            <div class="code-block-body">
+<span class="c-key">{</span><br>
+&nbsp;&nbsp;<span class="c-str">"execPath"</span>: <span class="c-muted">"C:\\...\\Gaea.Swarm.exe"</span>,<br>
+&nbsp;&nbsp;<span class="c-str">"port"</span>: <span class="c-key">0</span>,<br>
+&nbsp;&nbsp;<span class="c-str">"outputDir"</span>: <span class="c-muted">"C:\\Users\\You\\Desktop\\gaea_output"</span>,<br>
+&nbsp;&nbsp;<span class="c-str">"gaeaExePath"</span>: <span class="c-muted">"C:\\...\\Gaea.exe"</span><br>
+<span class="c-key">}</span>
+            </div>
+          </div>
+        </div>
+        <div>
+          <p class="manual-label">claude_desktop_config.json</p>
+          <div class="code-block">
+            <div class="code-block-header">
+              <div class="code-dots"><span></span><span></span><span></span></div>
+              <span class="code-block-lang">json</span>
+            </div>
+            <div class="code-block-body">
+<span class="c-key">{</span><br>
+&nbsp;&nbsp;<span class="c-str">"mcpServers"</span>: <span class="c-key">{</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="c-str">"gaea-mcp"</span>: <span class="c-key">{</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="c-str">"command"</span>: <span class="c-muted">"node"</span>,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="c-str">"args"</span>: <span class="c-key">[</span><span class="c-muted">"...\\dist\\index.js"</span><span class="c-key">]</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="c-key">}</span><br>
+&nbsp;&nbsp;<span class="c-key">}</span><br>
+<span class="c-key">}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ TOOLS REFERENCE ═══════════════════════════════ -->
+<section class="tools-ref" id="tools">
+  <div class="section-inner">
+    <span class="section-label">Tools Reference</span>
+    <h2>11 tools. Two modes.</h2>
+
+
+    <div class="tools-group" data-reveal>
+      <div class="tools-group-label">Session Tools — live Gaea window</div>
+      <div class="tools-table">
+        <div class="tool-row"><div class="tool-name">open_session</div><div class="tool-args"><code>path?</code></div><div class="tool-desc">Open an existing <code>.terrain</code> or create a blank one. Launches Gaea.exe. Call this first.</div></div>
+        <div class="tool-row"><div class="tool-name">add_node</div><div class="tool-args"><code>type, id, params?, position?</code></div><div class="tool-desc">Add a node to the live graph. Gaea auto-reloads instantly.</div></div>
+        <div class="tool-row"><div class="tool-name">connect_nodes</div><div class="tool-args"><code>from_id, from_port, to_id, to_port</code></div><div class="tool-desc">Wire two nodes together by port name.</div></div>
+        <div class="tool-row"><div class="tool-name">remove_node</div><div class="tool-args"><code>id</code></div><div class="tool-desc">Remove a node and clear all its connections.</div></div>
+        <div class="tool-row"><div class="tool-name">set_parameter</div><div class="tool-args"><code>nodeId, param, value</code></div><div class="tool-desc">Change a single parameter value. Sub-second update.</div></div>
+        <div class="tool-row"><div class="tool-name">cook_graph</div><div class="tool-args"><code>nodes?</code></div><div class="tool-desc">Build the current session and export heightmap.</div></div>
+        <div class="tool-row"><div class="tool-name">get_graph_state</div><div class="tool-args">—</div><div class="tool-desc">Inspect all nodes, connections, and cook status.</div></div>
+        <div class="tool-row"><div class="tool-name">get_parameters</div><div class="tool-args"><code>nodeId</code></div><div class="tool-desc">List editable parameters for a specific node.</div></div>
+        <div class="tool-row"><div class="tool-name">close_session</div><div class="tool-args">—</div><div class="tool-desc">Stop Gaea and clear saved session state.</div></div>
+      </div>
+    </div>
+
+    <div class="tools-group" data-reveal>
+      <div class="tools-group-label">Batch Tools — headless, no Gaea window</div>
+      <div class="tools-table">
+        <div class="tool-row"><div class="tool-name">create_terrain</div><div class="tool-args"><code>prompt?, template?, graph?, outputDir?, resolution?</code></div><div class="tool-desc">Full pipeline: generate graph → build → return heightmap path. Three modes: template, graph, or catalog.</div></div>
+        <div class="tool-row"><div class="tool-name">list_node_types</div><div class="tool-args"><code>category?</code></div><div class="tool-desc">Full node catalog with categories, parameters, and port names.</div></div>
+      </div>
+    </div>
+
+    <div class="node-catalog" data-reveal>
+      <div class="tools-group-label">35+ Node Types</div>
+      <div class="catalog-grid">
+        <div class="catalog-cat"><div class="catalog-cat-name">Primitives (10)</div><div class="catalog-nodes">Mountain · MountainSide · Ridge · Perlin · MultiFractal · Voronoi · Range · Crater · Rugged · RadialGradient</div><div class="catalog-desc">Base terrain generators with full enum support</div></div>
+        <div class="catalog-cat"><div class="catalog-cat-name">Erosion (3)</div><div class="catalog-nodes">Erosion2 · EasyErosion · ThermalShaper</div><div class="catalog-desc">Hydraulic &amp; thermal erosion with validated enums</div></div>
+        <div class="catalog-cat"><div class="catalog-cat-name">Filters (12)</div><div class="catalog-nodes">FractalTerraces · Roughen · Height · Slope · Adjust · Autolevel · Deflate · Fold · Curvature · Clamp · Blur · Invert</div><div class="catalog-desc">Shape modifiers; Autolevel normalizes height</div></div>
+        <div class="catalog-cat"><div class="catalog-cat-name">Transform (2)</div><div class="catalog-nodes">Combine · Transform</div><div class="catalog-desc">Blend modes (24 enums) and spatial transforms</div></div>
+        <div class="catalog-cat"><div class="catalog-cat-name">Weather (4)</div><div class="catalog-nodes">Snow · Snowfield · Glacier · Weathering</div><div class="catalog-desc">Snow &amp; ice effects with validated enums</div></div>
+        <div class="catalog-cat"><div class="catalog-cat-name">Data &amp; Color (6)</div><div class="catalog-nodes">SatMap · SuperColor · ColorErosion · TextureBase · GroundTexture · FlowMap</div><div class="catalog-desc">Coloring, texturing, and data extraction</div></div>
+        <div class="catalog-cat"><div class="catalog-cat-name">Advanced (3)</div><div class="catalog-nodes">Debris · Scree · Sandstone</div><div class="catalog-desc">Procedural debris and sediment deposition</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ USE CASES ═══════════════════════════════ -->
+<section class="usecases" id="usecases">
+  <div class="section-inner">
+    <span class="section-label">Use Cases</span>
+    <h2>What you can do.</h2>
+    <div class="usecase-grid">
+      <div class="usecase" data-reveal><div class="usecase-num">// 01</div><h3>Build from scratch</h3><p>Describe a terrain in natural language. Claude opens Gaea, adds nodes one by one, and you watch the graph assemble in real-time.</p><div class="usecase-example">"Build me a snowy mountain range with heavy erosion and deep valleys"</div></div>
+      <div class="usecase" data-reveal><div class="usecase-num">// 02</div><h3>Iterate on existing projects</h3><p>Open any existing .terrain file. Claude reads the current graph and modifies nodes without touching anything you didn't ask about.</p><div class="usecase-example">"Open my canyon project and add more rock surface detail to the walls"</div></div>
+      <div class="usecase" data-reveal><div class="usecase-num">// 03</div><h3>Live parameter tweaking</h3><p>Change erosion strength, seed, scale — one sentence. The file updates atomically and Gaea reloads in under a second.</p><div class="usecase-example">"Make the erosion less aggressive" → set_parameter updates in &lt;1s</div></div>
+      <div class="usecase" data-reveal><div class="usecase-num">// 04</div><h3>Pick up your manual edits</h3><p>Edit nodes manually inside Gaea and save. gaea_mcp detects the file change automatically. Ask Claude to continue seamlessly.</p><div class="usecase-example">"Now erode what I just set up"</div></div>
+      <div class="usecase" data-reveal><div class="usecase-num">// 05</div><h3>Quick headless batch</h3><p>No session needed. Describe a terrain, get a heightmap on disk. Gaea never opens. Ideal for pipelines and automation.</p><div class="usecase-example">"Generate a desert heightmap at 4096 and save to my desktop"</div></div>
+      <div class="usecase" data-reveal><div class="usecase-num">// 06</div><h3>Use terrain templates</h3><p>Four built-in presets — desert, mountains, tropical, volcanic — with tweakable parameters for quick results.</p><div class="usecase-example">"Use the volcanic template, seed 42, extra erosion"</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ CINEMATIC CTA ═══════════════════════════════ -->
+<section class="cta-section">
+  <canvas id="ctaCanvas"></canvas>
+  <div class="cta-glow"></div>
+  <div class="cta-content">
+    <span class="section-label" style="justify-content:center;display:flex;">Ready to build</span>
+    <h2 class="cta-title">TERRAIN AT THE<br><span class="accent">SPEED OF THOUGHT.</span></h2>
+    <p class="cta-sub">Connect your AI to Gaea's build engine today. Free, open source, MIT licensed.</p>
+    <div class="cta-actions">
+      <a href="#getting-started" class="btn-hero-primary">
+        <span>GET STARTED FREE</span>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7h8M7 3l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      <a href="https://github.com/zajalist/gaea_mcp" class="btn-hero-ghost" target="_blank">VIEW ON GITHUB</a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ FOOTER ═══════════════════════════════ -->
+<footer>
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <a class="nav-logo" href="../">
+        <img src="../assets/Logo.svg" alt="Hayba" class="nav-logo-img" />
+        <span class="nav-logo-name">HAYBA</span>
+      </a>
+      <p>HaybaGaea — built for QuadSpinner Gaea 2.0+</p>
+    </div>
+    <div class="footer-links">
+      <a href="../">Hayba Home</a>
+      <a href="../pcgex/">HaybaPCGEx</a>
+      <a href="https://github.com/zajalist/gaea_mcp" target="_blank">GitHub</a>
+      <a href="https://github.com/zajalist/gaea_mcp/blob/main/LICENSE" target="_blank">MIT License</a>
+      <a href="https://quadspinner.com/gaea" target="_blank">Gaea Docs</a>
+    </div>
+  </div>
+</footer>
+
+<script src="../main.js"></script>
+</body>
+</html>

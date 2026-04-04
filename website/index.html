@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hayba — AI-Powered Terrain &amp; Procedural Generation</title>
+  <link rel="icon" type="image/svg+xml" href="../assets/Logo.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    /* ── Hayba umbrella-only styles ── */
+    .hayba-hero-badge { margin-bottom: 2rem; }
+
+    .products-section {
+      padding: 6rem 2rem 7rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .products-inner { max-width: 900px; margin: 0 auto; }
+    .products-heading {
+      text-align: center; margin-bottom: 3.5rem;
+    }
+    .products-heading .section-label { display: flex; justify-content: center; margin-bottom: 1rem; }
+    .products-heading h2 { font-size: clamp(1.8rem, 4vw, 2.8rem); font-weight: 900; letter-spacing: -0.03em; }
+    .products-heading p { color: #666; font-size: 0.85rem; max-width: 480px; margin: 0.8rem auto 0; line-height: 1.7; }
+
+    .product-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+    @media (max-width: 640px) { .product-cards { grid-template-columns: 1fr; } }
+
+    .product-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 2.5rem;
+      text-decoration: none; color: var(--text);
+      display: flex; flex-direction: column;
+      position: relative; overflow: hidden;
+      transition: border-color 0.25s, box-shadow 0.25s, transform 0.2s;
+    }
+    .product-card::before {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(135deg, var(--orange-dim) 0%, transparent 60%);
+      opacity: 0; transition: opacity 0.3s;
+    }
+    .product-card:hover {
+      border-color: rgba(255,107,53,0.4);
+      box-shadow: 0 0 40px rgba(255,107,53,0.08), 0 8px 32px rgba(0,0,0,0.4);
+      transform: translateY(-3px);
+    }
+    .product-card:hover::before { opacity: 1; }
+
+    .product-tag {
+      font-size: 0.58rem; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase;
+      color: var(--orange); margin-bottom: 1.2rem; display: block;
+    }
+    .product-card h3 { font-size: 1.5rem; font-weight: 900; letter-spacing: -0.02em; margin-bottom: 0.6rem; }
+    .product-card p { color: #555; font-size: 0.82rem; line-height: 1.7; flex: 1; margin-bottom: 1.8rem; }
+
+    .product-stats {
+      display: flex; gap: 1.8rem; padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+    }
+    .product-stat-val { display: block; font-size: 1.3rem; font-weight: 900; color: var(--text); line-height: 1; }
+    .product-stat-lbl { display: block; font-size: 0.6rem; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 0.3rem; }
+
+    .product-cta {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      margin-top: 1.5rem; font-size: 0.68rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--orange); transition: gap 0.2s;
+    }
+    .product-card:hover .product-cta { gap: 0.8rem; }
+    .product-cta svg { transition: transform 0.2s; }
+    .product-card:hover .product-cta svg { transform: translateX(3px); }
+
+    /* hero sub-text for umbrella */
+    .hayba-hero-sub { color: #333; }
+    .hayba-hero-sub strong { color: #555; }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════ NAV ═══════════════════════════════ -->
+<nav id="mainNav">
+  <a class="nav-logo" href="#">
+    <img src="../assets/Logo.svg" alt="Hayba" class="nav-logo-img" />
+    <span class="nav-logo-name">HAYBA</span>
+  </a>
+  <div class="nav-links">
+    <a href="gaea/">HAYBAGAEA</a>
+    <a href="pcgex/">HAYBAPCGEX</a>
+    <a href="https://github.com/zajalist/gaea_mcp" target="_blank">GITHUB</a>
+    <a href="gaea/" class="btn-primary">GET STARTED</a>
+  </div>
+</nav>
+
+<!-- ═══════════════════════════════ HERO ═══════════════════════════════ -->
+<section class="hero" id="hero">
+  <canvas id="terrainCanvas"></canvas>
+  <canvas id="particlesCanvas"></canvas>
+  <div class="hero-glow"></div>
+  <div class="hero-vignette"></div>
+
+  <div class="hero-content">
+    <div class="hero-badge hayba-hero-badge">
+      <span class="badge-dot"></span>
+      <span>AI-Powered Terrain &amp; Procedural Generation &nbsp;·&nbsp; MCP Protocol</span>
+    </div>
+
+    <h1 class="hero-title">
+      <span class="hero-line" data-delay="0">CREATE</span>
+      <span class="hero-line" data-delay="80">AT THE</span>
+      <span class="hero-line" data-delay="160">SPEED OF</span>
+      <span class="hero-line accent-line" data-delay="240">THOUGHT.</span>
+    </h1>
+
+    <p class="hero-sub hayba-hero-sub">
+      Connect <strong>Claude, Cursor, or Cline</strong> to Gaea's terrain engine and Unreal Engine's PCG system.
+      One prompt. Full graphs.
+    </p>
+
+    <div class="hero-ctas">
+      <a href="gaea/" class="btn-hero-primary">
+        <span>HAYBAGAEA</span>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7h8M7 3l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      <a href="pcgex/" class="btn-hero-ghost">HAYBAPCGEX</a>
+    </div>
+
+    <div class="hero-stats">
+      <div class="stat">
+        <span class="stat-num" data-target="19">0</span>
+        <span class="stat-label">MCP Tools</span>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat">
+        <span class="stat-num" data-target="35">0</span><span class="stat-suffix">+</span>
+        <span class="stat-label">Node Types</span>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat">
+        <span class="stat-num">&lt;1</span><span class="stat-suffix">s</span>
+        <span class="stat-label">Update Time</span>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat">
+        <span class="stat-num" data-target="2">0</span>
+        <span class="stat-label">Engines</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="hero-scroll-hint">
+    <span>SCROLL</span>
+    <div class="scroll-line"></div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ PRODUCTS ═══════════════════════════════ -->
+<section class="products-section">
+  <div class="products-inner">
+    <div class="products-heading">
+      <span class="section-label">Products</span>
+      <h2>Two engines. One workflow.</h2>
+      <p>Each product is a standalone MCP server you install in minutes. Use one or both.</p>
+    </div>
+
+    <div class="product-cards">
+      <a class="product-card" href="gaea/" data-reveal>
+        <span class="product-tag">Terrain Generation</span>
+        <h3>HaybaGaea</h3>
+        <p>Connect your AI to Gaea's build engine. One prompt generates a full terrain graph — mountains, erosion, rivers — then cooks and exports a heightmap to Unreal Engine.</p>
+        <div class="product-stats">
+          <div>
+            <span class="product-stat-val">11</span>
+            <span class="product-stat-lbl">MCP Tools</span>
+          </div>
+          <div>
+            <span class="product-stat-val">35+</span>
+            <span class="product-stat-lbl">Node Types</span>
+          </div>
+          <div>
+            <span class="product-stat-val">&lt;1s</span>
+            <span class="product-stat-lbl">Update</span>
+          </div>
+        </div>
+        <span class="product-cta">
+          EXPLORE HAYBAGAEA
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2.5 6h7M6 2.5l3.5 3.5L6 9.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+      </a>
+
+      <a class="product-card" href="pcgex/" data-reveal>
+        <span class="product-tag">Procedural Geometry</span>
+        <h3>HaybaPCGEx</h3>
+        <p>AI-driven PCG graph authoring inside Unreal Engine 5. Describe what you want — cities, forests, dungeons — and Claude builds the PCGEx node graph directly in your project.</p>
+        <div class="product-stats">
+          <div>
+            <span class="product-stat-val">8</span>
+            <span class="product-stat-lbl">MCP Tools</span>
+          </div>
+          <div>
+            <span class="product-stat-val">UE 5.7</span>
+            <span class="product-stat-lbl">Compatible</span>
+          </div>
+          <div>
+            <span class="product-stat-val">TCP</span>
+            <span class="product-stat-lbl">Live Bridge</span>
+          </div>
+        </div>
+        <span class="product-cta">
+          EXPLORE HAYBAPCGEX
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2.5 6h7M6 2.5l3.5 3.5L6 9.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ FEATURE STRIP ═══════════════════════════════ -->
+<section class="features">
+  <div class="feature" data-index="0">
+    <div class="feature-icon">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="3" stroke="#ff6b35" stroke-width="1.5"/><path d="M10 2v2M10 16v2M2 10h2M16 10h2" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round"/></svg>
+    </div>
+    <div class="feature-label">Live Session</div>
+    <h3>Watch It Build</h3>
+    <p>Nodes appear in your engine's graph in real-time as Claude adds them. No export, no import — auto-reloads on every change.</p>
+  </div>
+  <div class="feature" data-index="1">
+    <div class="feature-icon">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="5" width="16" height="10" rx="1" stroke="#ff6b35" stroke-width="1.5"/><path d="M6 9l3 3 5-5" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="feature-label">Two Engines</div>
+    <h3>Gaea + Unreal</h3>
+    <p>HaybaGaea for terrain heightmaps. HaybaPCGEx for procedural geometry. Use both in the same project pipeline.</p>
+  </div>
+  <div class="feature" data-index="2">
+    <div class="feature-icon">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4 10h12M10 4l6 6-6 6" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="feature-label">19 MCP Tools</div>
+    <h3>Conversation-Driven</h3>
+    <p>Open, add, connect, remove, tweak, cook — all from natural language. The AI handles graph topology.</p>
+  </div>
+  <div class="feature" data-index="3">
+    <div class="feature-icon">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 6h14M3 10h10M3 14h7" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round"/></svg>
+    </div>
+    <div class="feature-label">Any MCP Client</div>
+    <h3>Works Everywhere</h3>
+    <p>Claude Desktop, Claude Code, Cursor, Cline. One installer per product. Cross-platform. Done in under a minute.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ CINEMATIC CTA ═══════════════════════════════ -->
+<section class="cta-section">
+  <canvas id="ctaCanvas"></canvas>
+  <div class="cta-glow"></div>
+  <div class="cta-content">
+    <span class="section-label" style="justify-content:center;display:flex;">Ready to build</span>
+    <h2 class="cta-title">CREATE AT THE<br><span class="accent">SPEED OF THOUGHT.</span></h2>
+    <p class="cta-sub">Two products. Two engines. One AI workflow. Free, open source, MIT licensed.</p>
+    <div class="cta-actions">
+      <a href="gaea/" class="btn-hero-primary">
+        <span>HAYBAGAEA — TERRAIN</span>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7h8M7 3l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      <a href="pcgex/" class="btn-hero-ghost">HAYBAPCGEX — PROCEDURAL</a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ FOOTER ═══════════════════════════════ -->
+<footer>
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <a class="nav-logo" href="#">
+        <img src="../assets/Logo.svg" alt="Hayba" class="nav-logo-img" />
+        <span class="nav-logo-name">HAYBA</span>
+      </a>
+      <p>AI-powered terrain &amp; procedural generation</p>
+    </div>
+    <div class="footer-links">
+      <a href="gaea/">HaybaGaea</a>
+      <a href="pcgex/">HaybaPCGEx</a>
+      <a href="https://github.com/zajalist/gaea_mcp" target="_blank">GitHub</a>
+      <a href="https://github.com/zajalist/gaea_mcp/blob/main/LICENSE" target="_blank">MIT License</a>
+    </div>
+  </div>
+</footer>
+
+<script src="main.js"></script>
+</body>
+</html>

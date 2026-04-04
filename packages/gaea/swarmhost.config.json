@@ -1,0 +1,6 @@
+{
+  "execPath": "C:\\Program Files\\QuadSpinner\\Gaea 2\\Gaea.BuildManager.exe",
+  "port": 0,
+  "outputDir": "C:\\Users\\Admin\\AppData\\Local\\Temp\\gaea-mcp-output",
+  "_comment": "Update execPath to point to your Gaea 2 installation. Common locations: C:\\Program Files\\QuadSpinner\\Gaea 2 or C:\\Program Files (x86)\\QuadSpinner\\Gaea 2"
+}

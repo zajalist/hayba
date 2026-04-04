@@ -1,0 +1,1956 @@
+{
+  "_meta": {
+    "plugin": "PCGExtendedToolkit",
+    "repository": "https://github.com/Nebukam/PCGExtendedToolkit",
+    "version_support": ["UE 5.4", "UE 5.5", "UE 5.6", "UE 5.7"],
+    "license": "MIT",
+    "generated": "2026-04-03",
+    "total_nodes": 75,
+    "notes": "Pin names follow PCGEx label conventions. Points processors have In:'Points' Out:'Points'. Cluster processors have In:'Vtx'+'Edges' Out:'Vtx'+'Edges'. Path processors have In:'Paths' Out:'Paths'. All UPROPERTY fields marked PCG_Overridable can be driven by upstream attributes."
+  },
+  "pin_conventions": {
+    "cluster_input": [
+      {"name": "Vtx", "type": "Points", "required": true, "tooltip": "Cluster vertices tagged with PCGEx_Vtx"},
+      {"name": "Edges", "type": "Points", "required": true, "tooltip": "Cluster edges tagged with PCGEx_Edges"}
+    ],
+    "cluster_output": [
+      {"name": "Vtx", "type": "Points"},
+      {"name": "Edges", "type": "Points"}
+    ],
+    "points_input": [
+      {"name": "In", "type": "Points", "required": true}
+    ],
+    "points_output": [
+      {"name": "Out", "type": "Points"}
+    ],
+    "paths_input": [
+      {"name": "Paths", "type": "Points", "required": true}
+    ],
+    "paths_output": [
+      {"name": "Paths", "type": "Points"}
+    ],
+    "common_extra_pins": {
+      "Seeds": {"type": "Points", "tooltip": "Seed points for pathfinding/growth"},
+      "Goals": {"type": "Points", "tooltip": "Goal points for pathfinding"},
+      "Targets": {"type": "Points", "tooltip": "Target point collection for sampling"},
+      "Sources": {"type": "Points", "tooltip": "Source data for blending/transfer"},
+      "Bounds": {"type": "Points", "tooltip": "Bounding data"},
+      "Plots": {"type": "Points", "tooltip": "Plot waypoints for pathfinding"},
+      "Filters": {"type": "Param (Filter)", "tooltip": "Point filter factory chain"},
+      "VtxFilters": {"type": "Param (Filter)", "tooltip": "Vertex filter factory chain"},
+      "EdgeFilters": {"type": "Param (Filter)", "tooltip": "Edge filter factory chain"},
+      "Packed Clusters": {"type": "Points", "tooltip": "Packed cluster data (vtx+edges in one)"},
+      "Probes": {"type": "Param (Probe)", "tooltip": "Probing factory chain for connectivity"},
+      "Sites": {"type": "Points", "tooltip": "Voronoi/Delaunay site output"}
+    }
+  },
+  "categories": {
+    "Cluster Diagrams": {
+      "description": "Build graph structures from point clouds using geometric algorithms",
+      "nodes": [
+        {
+          "class": "UPCGExBuildDelaunayGraph2DSettings",
+          "display_name": "Build Delaunay 2D",
+          "description": "Builds a 2D Delaunay triangulation cluster from input points, with optional Urquhart graph extraction.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"},
+            {"name": "Sites", "type": "Points", "tooltip": "Delaunay triangle sites (centroids), only if bOutputSites=true"}
+          ],
+          "properties": {
+            "bUrquhart": {"type": "bool", "default": false, "tooltip": "Remove longest edge of each triangle to produce Urquhart graph"},
+            "bOutputSites": {"type": "bool", "default": false, "tooltip": "Output triangle site points"},
+            "bMarkHull": {"type": "bool", "default": false, "tooltip": "Write hull flag attribute to vertices"},
+            "HullAttributeName": {"type": "FName", "default": "bIsOnHull"},
+            "bMarkSiteHull": {"type": "bool", "default": false},
+            "SiteHullAttributeName": {"type": "FName", "default": "bIsOnHull"},
+            "UrquhartSitesMerge": {"type": "EPCGExUrquhartSiteMergeMode", "default": "None", "enum_values": ["None", "MergeSites", "MergeEdges"]},
+            "bMarkEdgeOnTouch": {"type": "bool", "default": false},
+            "ProjectionDetails": {"type": "FPCGExGeo2DProjectionDetails", "tooltip": "2D projection axis settings"},
+            "GraphBuilderDetails": {"type": "FPCGExGraphBuilderDetails", "default": "MinimalAxis::X", "tooltip": "Cluster output settings (edge pruning axis)"}
+          }
+        },
+        {
+          "class": "UPCGExBuildDelaunayGraphSettings",
+          "display_name": "Build Delaunay 3D",
+          "description": "Builds a 3D Delaunay tetrahedralization cluster from input points.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"},
+            {"name": "Sites", "type": "Points"}
+          ],
+          "properties": {
+            "bUrquhart": {"type": "bool", "default": false},
+            "bOutputSites": {"type": "bool", "default": false},
+            "bMarkHull": {"type": "bool", "default": false},
+            "HullAttributeName": {"type": "FName", "default": "bIsOnHull"},
+            "bMarkSiteHull": {"type": "bool", "default": false},
+            "SiteHullAttributeName": {"type": "FName", "default": "bIsOnHull"},
+            "bMergeUrquhartSites": {"type": "bool", "default": false},
+            "bMarkEdgeOnTouch": {"type": "bool", "default": false},
+            "GraphBuilderDetails": {"type": "FPCGExGraphBuilderDetails", "default": "MinimalAxis::X"}
+          }
+        },
+        {
+          "class": "UPCGExBuildVoronoiGraph2DSettings",
+          "display_name": "Build Voronoi 2D",
+          "description": "Builds a 2D Voronoi diagram cluster from input points.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"},
+            {"name": "Sites", "type": "Points"}
+          ],
+          "properties": {
+            "Metric": {"type": "EPCGExVoronoiMetric", "default": "Euclidean"},
+            "Method": {"type": "EPCGExCellCenter", "default": "Centroid", "tooltip": "How to compute Voronoi cell center position"},
+            "ExpandBounds": {"type": "double", "default": 100, "tooltip": "Expand input bounds for diagram generation"},
+            "bPruneOutOfBounds": {"type": "bool", "default": false},
+            "bMarkHull": {"type": "bool", "default": false},
+            "HullAttributeName": {"type": "FName", "default": "bIsOnHull"},
+            "bMarkEdgeOnTouch": {"type": "bool", "default": false},
+            "bOutputSites": {"type": "bool", "default": true},
+            "bPruneOpenSites": {"type": "bool", "default": true},
+            "OpenSiteFlag": {"type": "FName", "default": "OpenSite"},
+            "ProjectionDetails": {"type": "FPCGExGeo2DProjectionDetails"},
+            "GraphBuilderDetails": {"type": "FPCGExGraphBuilderDetails"},
+            "SitesOutputDetails": {"type": "FPCGExVoronoiSitesOutputDetails"}
+          }
+        },
+        {
+          "class": "UPCGExBuildVoronoiGraphSettings",
+          "display_name": "Build Voronoi 3D",
+          "description": "Builds a 3D Voronoi diagram cluster from input points.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {
+            "Method": {"type": "EPCGExCellCenter", "default": "Centroid"},
+            "ExpandBounds": {"type": "double", "default": 100},
+            "bPruneOutOfBounds": {"type": "bool", "default": false},
+            "bMarkHull": {"type": "bool", "default": false},
+            "HullAttributeName": {"type": "FName", "default": "bIsOnHull"},
+            "bMarkEdgeOnTouch": {"type": "bool", "default": false},
+            "GraphBuilderDetails": {"type": "FPCGExGraphBuilderDetails", "default": "MinimalAxis::X"}
+          }
+        },
+        {
+          "class": "UPCGExBuildConvexHull2DSettings",
+          "display_name": "Build Convex Hull 2D",
+          "description": "Builds a 2D convex hull cluster or path from input points.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {
+            "bOutputClusters": {"type": "bool", "default": true, "tooltip": "Output hull as cluster (vtx+edges) instead of paths"},
+            "Winding": {"type": "EPCGExWinding", "default": "CounterClockwise"},
+            "ProjectionDetails": {"type": "FPCGExGeo2DProjectionDetails"},
+            "GraphBuilderDetails": {"type": "FPCGExGraphBuilderDetails"}
+          }
+        },
+        {
+          "class": "UPCGExBuildConvexHullSettings",
+          "display_name": "Build Convex Hull 3D",
+          "description": "Builds a 3D convex hull cluster from input points.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {
+            "GraphBuilderDetails": {"type": "FPCGExGraphBuilderDetails"}
+          }
+        },
+        {
+          "class": "UPCGExBuildDualGraphSettings",
+          "display_name": "Build Dual Graph",
+          "description": "Builds the dual graph of a Delaunay/Voronoi cluster (sites become vertices, adjacency becomes edges).",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExBuildCellDiagramSettings",
+          "display_name": "Build Cell Diagram",
+          "description": "Builds a cell-based diagram cluster from input points.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {}
+        }
+      ]
+    },
+    "Clusters": {
+      "description": "Operations on cluster data (Vtx + Edges graphs)",
+      "nodes": [
+        {
+          "class": "UPCGExBuildCustomGraphSettings",
+          "display_name": "Build Custom Graph",
+          "description": "Builds a cluster from custom graph builder logic defined in Blueprint/C++ on actors.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true},
+            {"name": "Overrides : Graph Builder", "type": "Param", "required": false}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {
+            "Mode": {"type": "EPCGExCustomGraphActorSourceMode", "default": "Owner", "enum_values": ["Owner", "ActorReferences"]},
+            "ActorReferenceAttribute": {"type": "FName", "default": "ActorReference"},
+            "GraphBuilderDetails": {"type": "FPCGExGraphBuilderDetails"},
+            "bQuietUnprocessedSettingsWarning": {"type": "bool", "default": false},
+            "bQuietFailedBuildGraphWarning": {"type": "bool", "default": false}
+          }
+        },
+        {
+          "class": "UPCGExConnectClustersSettings",
+          "display_name": "Connect Clusters",
+          "description": "Connects separate clusters into a single graph by bridging nearest points between them.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {
+            "BridgeMethod": {"type": "EPCGExBridgeClusterMethod", "default": "Delaunay3D", "enum_values": ["Delaunay3D", "Delaunay2D", "LeastEdges", "MostEdges", "Filters"]},
+            "ProjectionDetails": {"type": "FPCGExGeo2DProjectionDetails"},
+            "CarryOverDetails": {"type": "FPCGExCarryOverDetails"},
+            "GraphBuilderDetails": {"type": "FPCGExGraphBuilderDetails"},
+            "bFlagVtxConnector": {"type": "bool", "default": false},
+            "VtxConnectorFlagName": {"type": "FName", "default": "NumBridges"},
+            "bFlagEdgeConnector": {"type": "bool", "default": false},
+            "EdgeConnectorFlagName": {"type": "FName", "default": "IsBridge"}
+          }
+        },
+        {
+          "class": "UPCGExFuseClustersSettings",
+          "display_name": "Fuse Clusters",
+          "description": "Merges overlapping clusters by fusing vertices and detecting point-edge/edge-edge intersections.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {
+            "PointPointIntersectionDetails": {"type": "FPCGExPointPointIntersectionDetails"},
+            "bFindPointEdgeIntersections": {"type": "bool", "default": false},
+            "PointEdgeIntersectionDetails": {"type": "FPCGExPointEdgeIntersectionDetails"},
+            "bFindEdgeEdgeIntersections": {"type": "bool", "default": false},
+            "EdgeEdgeIntersectionDetails": {"type": "FPCGExEdgeEdgeIntersectionDetails"},
+            "DefaultPointsBlendingDetails": {"type": "FPCGExBlendingDetails"},
+            "DefaultEdgesBlendingDetails": {"type": "FPCGExBlendingDetails"},
+            "bUseCustomPointEdgeBlending": {"type": "bool", "default": false},
+            "bUseCustomEdgeEdgeBlending": {"type": "bool", "default": false},
+            "GraphBuilderDetails": {"type": "FPCGExGraphBuilderDetails"}
+          }
+        },
+        {
+          "class": "UPCGExMeshToClustersSettings",
+          "display_name": "Mesh to Clusters",
+          "description": "Converts static mesh geometry into cluster data (vertices and edges).",
+          "input_pins": [
+            {"name": "Targets", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {
+            "GraphOutputType": {"type": "EPCGExTriangulationType", "default": "Raw"},
+            "StaticMeshInput": {"type": "EPCGExInputValueType", "default": "Constant"},
+            "StaticMeshAttribute": {"type": "FName", "default": "Mesh"},
+            "StaticMeshConstant": {"type": "TSoftObjectPtr<UStaticMesh>"},
+            "AttributeHandling": {"type": "EPCGExMeshAttributeHandling", "enum_values": ["StaticMeshSoftPath", "ActorReference"]},
+            "TransformDetails": {"type": "FPCGExTransformDetails"},
+            "ImportDetails": {"type": "FPCGExGeoMeshImportDetails"},
+            "bIgnoreMeshWarnings": {"type": "bool", "default": false},
+            "VertexMergeHashTolerance": {"type": "float", "default": 0.001},
+            "bPreciseVertexMerge": {"type": "bool", "default": false},
+            "GraphBuilderDetails": {"type": "FPCGExGraphBuilderDetails"},
+            "AttributesForwarding": {"type": "FPCGExForwardDetails"}
+          }
+        },
+        {
+          "class": "UPCGExCopyClustersToPointsSettings",
+          "display_name": "Copy Clusters to Points",
+          "description": "Stamps/instances cluster data at each target point location with transform inheritance.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true},
+            {"name": "Targets", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {
+            "DataMatching": {"type": "FPCGExMatchingDetails"},
+            "TransformDetails": {"type": "FPCGExTransformDetails"},
+            "TargetsAttributesToClusterTags": {"type": "FPCGExAttributeToTagDetails"},
+            "TargetsForwarding": {"type": "FPCGExForwardDetails"}
+          }
+        },
+        {
+          "class": "UPCGExClusterCentralitySettings",
+          "display_name": "Cluster Centrality",
+          "description": "Computes graph centrality metrics (betweenness, closeness, degree, eigenvector, Katz) and writes them as vertex attributes.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {
+            "CentralityType": {"type": "EPCGExCentralityType", "default": "Betweenness", "enum_values": ["Betweenness", "Closeness", "HarmonicCloseness", "Degree", "Eigenvector", "Katz"]},
+            "CentralityValueAttributeName": {"type": "FName", "default": "Centrality"},
+            "bNormalize": {"type": "bool", "default": true},
+            "bOutputOneMinus": {"type": "bool", "default": false},
+            "bApplyContrast": {"type": "bool", "default": false},
+            "ContrastCurve": {"type": "EPCGExContrastCurve", "default": "SCurve"},
+            "ContrastAmount": {"type": "double", "default": 1.5},
+            "MaxIterations": {"type": "int32", "default": 100},
+            "Tolerance": {"type": "double", "default": 1e-6},
+            "KatzAlpha": {"type": "double", "default": 0.1},
+            "HeuristicScoreMode": {"type": "EPCGExHeuristicScoreMode", "default": "WeightedAverage"},
+            "DownsamplingMode": {"type": "EPCGExCentralityDownsampling", "default": "None", "enum_values": ["None", "Ratio", "Filters"]}
+          }
+        },
+        {
+          "class": "UPCGExEdgeOrderSettings",
+          "display_name": "Cluster : Edge Order",
+          "description": "Fixes a consistent direction for edge start/end endpoints based on configurable rules.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {
+            "DirectionSettings": {"type": "FPCGExEdgeDirectionSettings", "tooltip": "Edge direction sorting rules"}
+          }
+        },
+        {
+          "class": "UPCGExPackClustersSettings",
+          "display_name": "Pack Clusters",
+          "description": "Packs each cluster (vtx+edges) into a single point data object for transport/storage.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Packed Clusters", "type": "Points"}
+          ],
+          "properties": {
+            "CarryOverDetails": {"type": "FPCGExCarryOverDetails"}
+          }
+        },
+        {
+          "class": "UPCGExUnpackClustersSettings",
+          "display_name": "Unpack Clusters",
+          "description": "Unpacks packed cluster data back into separate Vtx and Edges point collections.",
+          "input_pins": [
+            {"name": "Packed Clusters", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExMergeVerticesSettings",
+          "display_name": "Merge Vertices",
+          "description": "Merges selected vertices in a cluster, collapsing edges.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExSimplifyClustersSettings",
+          "display_name": "Simplify Clusters",
+          "description": "Simplifies cluster topology by removing low-connectivity vertices.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExSanitizeClustersSettings",
+          "display_name": "Sanitize Clusters",
+          "description": "Removes invalid or duplicate edges and isolated vertices from clusters.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExPartitionVerticesSettings",
+          "display_name": "Partition Vertices",
+          "description": "Partitions cluster vertices into separate output collections.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExFilterVtxSettings",
+          "display_name": "Filter Vtx",
+          "description": "Filters cluster vertices using composable filter chains.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true},
+            {"name": "VtxFilters", "type": "Param (Filter)", "required": false}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExMakeClustersUniqueSettings",
+          "display_name": "Make Clusters Unique",
+          "description": "Ensures each cluster has its own unique point data (deep copy).",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {}
+        }
+      ]
+    },
+    "Cluster Paths": {
+      "description": "Convert between clusters and paths",
+      "nodes": [
+        {
+          "class": "UPCGExBreakClustersToPathsSettings",
+          "display_name": "Break Clusters to Paths",
+          "description": "Breaks cluster topology into individual paths or edge chains.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {
+            "OperateOn": {"type": "EPCGExBreakClusterOperationTarget", "default": "Paths", "enum_values": ["Paths", "Edges"]},
+            "LeavesHandling": {"type": "EPCGExBreakClusterLeavesHandling", "default": "Include", "enum_values": ["Include", "Exclude", "Only"]},
+            "DirectionSettings": {"type": "FPCGExEdgeDirectionSettings"},
+            "Winding": {"type": "EPCGExWindingMutation", "default": "CounterClockwise"},
+            "bWindOnlyClosedLoops": {"type": "bool", "default": true},
+            "ProjectionDetails": {"type": "FPCGExGeo2DProjectionDetails"},
+            "MinPointCount": {"type": "int32", "default": 2},
+            "bOmitAbovePointCount": {"type": "bool", "default": false},
+            "MaxPointCount": {"type": "int32", "default": 500}
+          }
+        },
+        {
+          "class": "UPCGExCutClustersSettings",
+          "display_name": "Cut Clusters",
+          "description": "Cuts cluster edges using path intersections.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExPathToClustersSettings",
+          "display_name": "Path to Clusters",
+          "description": "Converts path point data into cluster data (vtx + edges).",
+          "input_pins": [
+            {"name": "Paths", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {}
+        }
+      ]
+    },
+    "Cluster Refine": {
+      "description": "Refine and relax cluster topology",
+      "nodes": [
+        {
+          "class": "UPCGExRefineEdgesSettings",
+          "display_name": "Refine Edges",
+          "description": "Removes edges from a cluster using pluggable refinement strategies (MST, shortest/longest, filters).",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true},
+            {"name": "Overrides : Refinement", "type": "Param", "required": false},
+            {"name": "SanitizeFilters", "type": "Param (Filter)", "required": false}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {
+            "Refinement": {"type": "UPCGExEdgeRefineInstancedFactory*", "tooltip": "Pluggable refinement strategy"},
+            "Mode": {"type": "EPCGExRefineEdgesOutput", "default": "Clusters", "enum_values": ["Clusters", "Points", "Attribute"]},
+            "Sanitization": {"type": "EPCGExRefineSanitization", "default": "None", "enum_values": ["None", "Shortest", "Longest", "Filters"]},
+            "bRestoreEdgesThatConnectToValidNodes": {"type": "bool", "default": false},
+            "HeuristicScoreMode": {"type": "EPCGExHeuristicScoreMode", "default": "WeightedAverage"},
+            "GraphBuilderDetails": {"type": "FPCGExGraphBuilderDetails"},
+            "bAllowZeroPointOutputs": {"type": "bool", "default": false}
+          }
+        },
+        {
+          "class": "UPCGExRelaxClustersSettings",
+          "display_name": "Relax Clusters",
+          "description": "Applies spring-based relaxation to cluster vertices, evening out edge lengths.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExClusterDecompositionSettings",
+          "display_name": "Cluster Decomposition",
+          "description": "Decomposes a cluster into sub-clusters based on connectivity analysis.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {}
+        }
+      ]
+    },
+    "Cluster Meta": {
+      "description": "Write metadata and properties on cluster vertices and edges",
+      "nodes": [
+        {
+          "class": "UPCGExWriteEdgePropertiesSettings",
+          "display_name": "Write Edge Properties",
+          "description": "Writes computed edge properties (length, direction, etc.) as attributes on edge points.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExWriteVtxPropertiesSettings",
+          "display_name": "Write Vtx Properties",
+          "description": "Writes computed vertex properties (adjacency count, etc.) as attributes on vertex points.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExSampleNeighborsSettings",
+          "display_name": "Sample Neighbors",
+          "description": "Samples and blends attribute values from neighboring vertices in the cluster graph.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {}
+        }
+      ]
+    },
+    "Pathfinding": {
+      "description": "A* and growth-based pathfinding through clusters",
+      "nodes": [
+        {
+          "class": "UPCGExPathfindingEdgesSettings",
+          "display_name": "Pathfinding : Edges",
+          "description": "Finds shortest paths between seed and goal points through cluster edges using A*/Dijkstra.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true},
+            {"name": "Seeds", "type": "Points", "required": true},
+            {"name": "Goals", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {
+            "GoalPicker": {"type": "UPCGExGoalPicker*", "tooltip": "Pluggable goal picker strategy"},
+            "SearchAlgorithm": {"type": "UPCGExSearchInstancedFactory*", "tooltip": "Pluggable search algorithm (A*, Dijkstra)"},
+            "HeuristicScoreMode": {"type": "EPCGExHeuristicScoreMode", "default": "WeightedAverage"},
+            "bAddSeedToPath": {"type": "bool", "default": false},
+            "bAddGoalToPath": {"type": "bool", "default": false},
+            "PathComposition": {"type": "EPCGExPathComposition", "default": "Vtx"},
+            "SeedPicking": {"type": "FPCGExNodeSelectionDetails"},
+            "GoalPicking": {"type": "FPCGExNodeSelectionDetails"},
+            "SeedForwarding": {"type": "FPCGExForwardDetails"},
+            "GoalForwarding": {"type": "FPCGExForwardDetails"},
+            "Statistics": {"type": "FPCGExPathStatistics"},
+            "PathOutputDetails": {"type": "FPCGExPathOutputDetails"},
+            "bUseOctreeSearch": {"type": "bool", "default": false},
+            "bGreedyQueries": {"type": "bool", "default": true}
+          }
+        },
+        {
+          "class": "UPCGExPathfindingPlotEdgesSettings",
+          "display_name": "Pathfinding : Plot Edges",
+          "description": "Finds a path through cluster edges visiting a sequence of plot waypoints in order.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true},
+            {"name": "Plots", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {
+            "HeuristicScoreMode": {"type": "EPCGExHeuristicScoreMode", "default": "WeightedAverage"},
+            "bAddSeedToPath": {"type": "bool", "default": false},
+            "bAddGoalToPath": {"type": "bool", "default": false},
+            "bAddPlotPointsToPath": {"type": "bool", "default": false},
+            "bClosedLoop": {"type": "bool", "default": false},
+            "PathComposition": {"type": "EPCGExPathComposition", "default": "Vtx"},
+            "SeedPicking": {"type": "FPCGExNodeSelectionDetails"},
+            "GoalPicking": {"type": "FPCGExNodeSelectionDetails"},
+            "SearchAlgorithm": {"type": "UPCGExSearchInstancedFactory*"},
+            "DataMatching": {"type": "FPCGExMatchingDetails"},
+            "Statistics": {"type": "FPCGExPathStatistics"},
+            "bUseOctreeSearch": {"type": "bool", "default": false},
+            "bOmitCompletePathOnFailedPlot": {"type": "bool", "default": false},
+            "bGreedyQueries": {"type": "bool", "default": true}
+          }
+        },
+        {
+          "class": "UPCGExPathfindingGrowPathsSettings",
+          "display_name": "Pathfinding : Grow Paths",
+          "description": "Grows paths from seed points through a cluster graph using iterative directional expansion.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true},
+            {"name": "Seeds", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {
+            "SeedPicking": {"type": "FPCGExNodeSelectionDetails"},
+            "HeuristicScoreMode": {"type": "EPCGExHeuristicScoreMode", "default": "WeightedAverage"},
+            "GrowthMode": {"type": "EPCGExGrowthIterationMode", "default": "Parallel", "enum_values": ["Parallel", "Sequence"]},
+            "NumIterations": {"type": "EPCGExGrowthValueSource", "default": "Constant", "enum_values": ["Constant", "SeedAttribute", "VtxAttribute"]},
+            "NumIterationsConstant": {"type": "int32", "default": 3},
+            "NumIterationsUpdateMode": {"type": "EPCGExGrowthUpdateMode", "default": "Once", "enum_values": ["Once", "SetEachIteration", "AddEachIteration"]},
+            "SeedNumBranches": {"type": "EPCGExGrowthValueSource", "default": "Constant"},
+            "NumBranchesConstant": {"type": "int32", "default": 1},
+            "GrowthDirection": {"type": "EPCGExGrowthValueSource", "default": "Constant"},
+            "GrowthDirectionConstant": {"type": "FVector", "default": "UpVector"},
+            "GrowthMaxDistance": {"type": "EPCGExGrowthValueSource", "default": "Constant"},
+            "GrowthMaxDistanceConstant": {"type": "double", "default": 500},
+            "bUseGrowthStop": {"type": "bool", "default": false},
+            "bUseNoGrowth": {"type": "bool", "default": false},
+            "SeedForwarding": {"type": "FPCGExForwardDetails"},
+            "Statistics": {"type": "FPCGExPathStatistics"},
+            "bUseOctreeSearch": {"type": "bool", "default": false}
+          }
+        },
+        {
+          "class": "UPCGExFindContoursSettings",
+          "display_name": "Pathfinding : Find Cells",
+          "description": "Finds closed cell contours in a cluster by walking edges from seed points.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true},
+            {"name": "Seeds", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"},
+            {"name": "SeedGenSuccess", "type": "Points"},
+            {"name": "SeedGenFailed", "type": "Points"}
+          ],
+          "properties": {
+            "SeedPicking": {"type": "FPCGExNodeSelectionDetails"},
+            "SeedOwnership": {"type": "EPCGExCellSeedOwnership", "default": "SeedOrder"},
+            "SortDirection": {"type": "EPCGExSortDirection", "default": "Ascending"},
+            "Constraints": {"type": "FPCGExCellConstraintsDetails"},
+            "Artifacts": {"type": "FPCGExCellArtifactsDetails"},
+            "SeedGrowth": {"type": "FPCGExCellGrowthDetails"},
+            "bWriteExpansionAttributes": {"type": "bool", "default": false},
+            "bOutputFilteredSeeds": {"type": "bool", "default": false},
+            "SeedMutations": {"type": "FPCGExCellSeedMutationDetails"},
+            "ProjectionDetails": {"type": "FPCGExGeo2DProjectionDetails"},
+            "SeedForwarding": {"type": "FPCGExForwardDetails"},
+            "bUseOctreeSearch": {"type": "bool", "default": false}
+          }
+        },
+        {
+          "class": "UPCGExPathfindingNavmeshSettings",
+          "display_name": "Pathfinding : Navmesh",
+          "description": "Finds paths between seeds and goals using the UE navigation mesh (no cluster required).",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true},
+            {"name": "Seeds", "type": "Points", "required": true},
+            {"name": "Goals", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {
+            "GoalPicker": {"type": "UPCGExGoalPicker*"},
+            "bAddSeedToPath": {"type": "bool", "default": true},
+            "bAddGoalToPath": {"type": "bool", "default": true},
+            "bRequireNavigableEndLocation": {"type": "bool", "default": true},
+            "FuseDistance": {"type": "double", "default": 10},
+            "Blending": {"type": "UPCGExSubPointsBlendInstancedFactory*"},
+            "PathfindingMode": {"type": "EPCGExPathfindingNavmeshMode", "default": "Regular"},
+            "NavAgentProperties": {"type": "FNavAgentProperties"},
+            "SeedForwarding": {"type": "FPCGExForwardDetails"},
+            "GoalForwarding": {"type": "FPCGExForwardDetails"}
+          }
+        }
+      ]
+    },
+    "Flood Fill": {
+      "description": "Flood fill and BFS operations on clusters",
+      "nodes": [
+        {
+          "class": "UPCGExClusterDiffusionSettings",
+          "display_name": "Flood Fill Clusters",
+          "description": "Performs flood-fill diffusion from seed points through a cluster, writing depth/order/distance attributes.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true},
+            {"name": "Seeds", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"},
+            {"name": "Paths", "type": "Points", "tooltip": "Only if PathOutput != None"}
+          ],
+          "properties": {
+            "Seeds": {"type": "FPCGExFloodFillSeedPickingDetails"},
+            "Processing": {"type": "EPCGExFloodFillProcessing", "default": "Parallel", "enum_values": ["Parallel", "Sequence"]},
+            "Diffusion": {"type": "FPCGExFloodFillFlowDetails"},
+            "bWriteDiffusionDepth": {"type": "bool", "default": false},
+            "DiffusionDepthAttributeName": {"type": "FName", "default": "DiffusionDepth"},
+            "bWriteDiffusionOrder": {"type": "bool", "default": false},
+            "DiffusionOrderAttributeName": {"type": "FName", "default": "DiffusionOrder"},
+            "bWriteDiffusionDistance": {"type": "bool", "default": false},
+            "DiffusionDistanceAttributeName": {"type": "FName", "default": "DiffusionDistance"},
+            "bWriteDiffusionEnding": {"type": "bool", "default": false},
+            "DiffusionEndingAttributeName": {"type": "FName", "default": "DiffusionEnding"},
+            "SeedForwarding": {"type": "FPCGExForwardDetails"},
+            "PathOutput": {"type": "EPCGExFloodFillPathOutput", "default": "None", "enum_values": ["None", "Full", "Partitions"]},
+            "PathPartitions": {"type": "EPCGExFloodFillPathPartitions", "default": "Length", "enum_values": ["Length", "Score", "Depth"]},
+            "bUseOctreeSearch": {"type": "bool", "default": false}
+          }
+        },
+        {
+          "class": "UPCGExBFSDepthSettings",
+          "display_name": "BFS Depth",
+          "description": "Computes BFS traversal depth from seed points and writes it as a vertex attribute.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true},
+            {"name": "Seeds", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {}
+        }
+      ]
+    },
+    "Paths": {
+      "description": "Operations on ordered point paths (polylines)",
+      "nodes": [
+        {
+          "class": "UPCGExSmoothSettings",
+          "display_name": "Smooth",
+          "description": "Smooths path points using pluggable smoothing methods with configurable influence and amount.",
+          "input_pins": [
+            {"name": "Paths", "type": "Points", "required": true},
+            {"name": "Overrides : Smoothing", "type": "Param", "required": false},
+            {"name": "Filters", "type": "Param (Filter)", "required": false}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {
+            "bPreserveStart": {"type": "bool", "default": false},
+            "bPreserveEnd": {"type": "bool", "default": false},
+            "SmoothingMethod": {"type": "UPCGExSmoothingInstancedFactory*", "tooltip": "Pluggable smoothing method"},
+            "InfluenceInput": {"type": "EPCGExInputValueType", "default": "Constant"},
+            "InfluenceConstant": {"type": "double", "default": 1.0},
+            "SmoothingAmountType": {"type": "EPCGExInputValueType", "default": "Constant"},
+            "SmoothingAmountConstant": {"type": "double", "default": 5},
+            "BlendingInterface": {"type": "EPCGExBlendingInterface", "default": "Individual"},
+            "BlendingSettings": {"type": "FPCGExBlendingDetails", "default": "Average"}
+          }
+        },
+        {
+          "class": "UPCGExSubdivideSettings",
+          "display_name": "Subdivide",
+          "description": "Subdivides path segments by distance or count, inserting interpolated sub-points.",
+          "input_pins": [
+            {"name": "Paths", "type": "Points", "required": true},
+            {"name": "Filters", "type": "Param (Filter)", "required": false}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {
+            "SubdivideMethod": {"type": "EPCGExSubdivideMode", "default": "Distance", "enum_values": ["Distance", "Count"]},
+            "AmountInput": {"type": "EPCGExInputValueType", "default": "Constant"},
+            "Distance": {"type": "double", "default": 10, "min": 0.1},
+            "Count": {"type": "int32", "default": 10, "min": 1},
+            "bRedistributeEvenly": {"type": "bool", "default": false},
+            "Blending": {"type": "UPCGExSubPointsBlendInstancedFactory*"},
+            "bFlagSubPoints": {"type": "bool", "default": false},
+            "SubPointFlagName": {"type": "FName", "default": "IsSubPoint"},
+            "bWriteAlpha": {"type": "bool", "default": false},
+            "AlphaAttributeName": {"type": "FName", "default": "Alpha"}
+          }
+        },
+        {
+          "class": "UPCGExResamplePathSettings",
+          "display_name": "Resample Path",
+          "description": "Resamples a path at uniform intervals by distance or count.",
+          "input_pins": [
+            {"name": "Paths", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {
+            "Mode": {"type": "EPCGExResampleMode", "default": "Sweep", "enum_values": ["Sweep", "Redistribute"]},
+            "ResolutionMode": {"type": "EPCGExResolutionMode", "default": "Distance"},
+            "bRedistributeEvenly": {"type": "bool", "default": true},
+            "bPreserveLastPoint": {"type": "bool", "default": false},
+            "SampleLength": {"type": "double", "default": 100},
+            "Truncate": {"type": "EPCGExTruncateMode", "default": "Round"},
+            "BlendingSettings": {"type": "FPCGExBlendingDetails", "default": "Lerp"},
+            "bEnsureUniqueSeeds": {"type": "bool", "default": true}
+          }
+        },
+        {
+          "class": "UPCGExOffsetPathSettings",
+          "display_name": "Offset Path",
+          "description": "Offsets a path laterally by a configurable distance with mitre/smooth adjustment.",
+          "input_pins": [
+            {"name": "Paths", "type": "Points", "required": true},
+            {"name": "Filters", "type": "Param (Filter)", "required": false}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {
+            "OffsetMethod": {"type": "EPCGExOffsetMethod", "default": "Slide", "enum_values": ["Slide", "LinePlane"]},
+            "OffsetInput": {"type": "EPCGExInputValueType", "default": "Constant"},
+            "OffsetConstant": {"type": "double", "default": 1.0},
+            "bApplyPointScaleToOffset": {"type": "bool", "default": false},
+            "UpVectorConstant": {"type": "FVector", "default": "WorldUp"},
+            "DirectionType": {"type": "EPCGExInputValueType", "default": "Constant"},
+            "DirectionConstant": {"type": "EPCGExPathNormalDirection", "default": "AverageNormal"},
+            "bInvertDirection": {"type": "bool", "default": false},
+            "Adjustment": {"type": "EPCGExOffsetAdjustment", "default": "SmoothAuto", "enum_values": ["None", "SmoothCustom", "SmoothAuto", "Mitre"]},
+            "AdjustmentScale": {"type": "double", "default": -0.5},
+            "MitreLimit": {"type": "double", "default": 4.0}
+          }
+        },
+        {
+          "class": "UPCGExBevelPathSettings",
+          "display_name": "Bevel Path",
+          "description": "Bevels path corners with configurable profile (line, arc, custom), width, and subdivision.",
+          "input_pins": [
+            {"name": "Paths", "type": "Points", "required": true},
+            {"name": "Bevel Conditions", "type": "Param (Filter)", "required": false},
+            {"name": "Profile", "type": "Points", "required": false}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {
+            "Mode": {"type": "EPCGExBevelMode", "default": "Radius", "enum_values": ["Radius", "Distance"]},
+            "Type": {"type": "EPCGExBevelProfileType", "default": "Line", "enum_values": ["Line", "Arc", "Custom"]},
+            "bKeepCornerPoint": {"type": "bool", "default": false},
+            "WidthMeasure": {"type": "EPCGExMeanMeasure", "default": "Relative"},
+            "WidthInput": {"type": "EPCGExInputValueType", "default": "Constant"},
+            "WidthConstant": {"type": "double", "default": 0.1},
+            "Limit": {"type": "EPCGExBevelLimit", "default": "Balanced", "enum_values": ["None", "ClosestNeighbor", "Balanced"]},
+            "bSubdivide": {"type": "bool", "default": false},
+            "SubdivideMethod": {"type": "EPCGExSubdivideMode", "default": "Count"},
+            "SubdivisionCount": {"type": "int32", "default": 10},
+            "SubdivisionDistance": {"type": "double", "default": 10},
+            "bFlagPoles": {"type": "bool", "default": false},
+            "PoleFlagName": {"type": "FName", "default": "IsBevelPole"}
+          }
+        },
+        {
+          "class": "UPCGExSplitPathSettings",
+          "display_name": "Split Path",
+          "description": "Splits paths at filtered points into multiple sub-paths.",
+          "input_pins": [
+            {"name": "Paths", "type": "Points", "required": true},
+            {"name": "Split Conditions", "type": "Param (Filter)", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {
+            "SplitAction": {"type": "EPCGExPathSplitAction", "default": "Split", "enum_values": ["Split", "Remove", "Disconnect", "Partition", "Switch"]},
+            "InitialBehavior": {"type": "EPCGExPathSplitInitialValue", "default": "Constant", "enum_values": ["Constant", "ConstantPreserve", "FromPoint", "FromPointPreserve"]},
+            "bInitialValue": {"type": "bool", "default": false},
+            "bInclusive": {"type": "bool", "default": false},
+            "bOmitSinglePointOutputs": {"type": "bool", "default": true},
+            "bTagIfEvenSplit": {"type": "bool", "default": true},
+            "IsEvenTag": {"type": "FString", "default": "EvenSplit"}
+          }
+        },
+        {
+          "class": "UPCGExWriteTangentsSettings",
+          "display_name": "Write Tangents",
+          "description": "Computes and writes arrive/leave tangent vectors for each path point (for spline generation).",
+          "input_pins": [
+            {"name": "Paths", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {
+            "ArriveName": {"type": "FName", "default": "ArriveTangent"},
+            "LeaveName": {"type": "FName", "default": "LeaveTangent"},
+            "Tangents": {"type": "UPCGExTangentsInstancedFactory*", "tooltip": "Main tangent computation method"},
+            "StartTangents": {"type": "UPCGExTangentsInstancedFactory*"},
+            "EndTangents": {"type": "UPCGExTangentsInstancedFactory*"},
+            "ArriveScaleInput": {"type": "EPCGExInputValueType", "default": "Constant"},
+            "ArriveScaleConstant": {"type": "double", "default": 1},
+            "LeaveScaleInput": {"type": "EPCGExInputValueType", "default": "Constant"},
+            "LeaveScaleConstant": {"type": "double", "default": 1}
+          }
+        },
+        {
+          "class": "UPCGExCreateSplineSettings",
+          "display_name": "Create Spline",
+          "description": "Creates spline components or spline data from path points.",
+          "input_pins": [
+            {"name": "Paths", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Splines", "type": "Spline"}
+          ],
+          "properties": {
+            "Mode": {"type": "EPCGCreateSplineMode", "default": "CreateDataOnly"},
+            "DefaultPointType": {"type": "EPCGExSplinePointType", "default": "Linear"},
+            "bApplyCustomPointType": {"type": "bool", "default": false},
+            "PointTypeAttribute": {"type": "FName", "default": "PointType"},
+            "Tangents": {"type": "FPCGExTangentsDetails"},
+            "TargetActor": {"type": "TSoftObjectPtr<AActor>"}
+          }
+        },
+        {
+          "class": "UPCGExWritePathPropertiesSettings",
+          "display_name": "Write Path Properties",
+          "description": "Writes path metadata (length, point count, closed loop flag) as point attributes.",
+          "input_pins": [
+            {"name": "Paths", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExReversePointOrderSettings",
+          "display_name": "Reverse Point Order",
+          "description": "Reverses the order of points in each path.",
+          "input_pins": [
+            {"name": "Paths", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExPathSolidifySettings",
+          "display_name": "Path Solidify",
+          "description": "Extrudes/solidifies a 2D path into 3D geometry points.",
+          "input_pins": [
+            {"name": "Paths", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExSplineToPathSettings",
+          "display_name": "Spline to Path",
+          "description": "Samples a spline into a PCGEx path point collection.",
+          "input_pins": [
+            {"name": "In", "type": "Spline", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExPathSplineMeshSimpleSettings",
+          "display_name": "Path Spline Mesh",
+          "description": "Spawns spline mesh components along paths for visual representation.",
+          "input_pins": [
+            {"name": "Paths", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExFuseCollinearSettings",
+          "display_name": "Fuse Collinear",
+          "description": "Removes near-collinear points from paths to simplify geometry.",
+          "input_pins": [
+            {"name": "Paths", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExPathCrossingsSettings",
+          "display_name": "Path Crossings",
+          "description": "Detects and inserts points at path self-intersections.",
+          "input_pins": [
+            {"name": "Paths", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {}
+        }
+      ]
+    },
+    "Sampling": {
+      "description": "Sample and transfer data between point sets, surfaces, splines, and textures",
+      "nodes": [
+        {
+          "class": "UPCGExSampleNearestPointSettings",
+          "display_name": "Sample Nearest Point",
+          "description": "Samples and blends attributes from the nearest target points within range, with configurable weighting.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true},
+            {"name": "Targets", "type": "Points", "required": true},
+            {"name": "Filters", "type": "Param (Filter)", "required": false}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {
+            "SampleMethod": {"type": "EPCGExSampleMethod", "default": "WithinRange"},
+            "SortDirection": {"type": "EPCGExSortDirection", "default": "Ascending"},
+            "WeightMode": {"type": "EPCGExSampleWeightMode", "default": "Distance"},
+            "WeightMethod": {"type": "EPCGExRangeType", "default": "FullRange"},
+            "bUseLocalCurve": {"type": "bool", "default": false},
+            "LocalWeightOverDistance": {"type": "FRuntimeFloatCurve"},
+            "WeightOverDistance": {"type": "TSoftObjectPtr<UCurveFloat>"},
+            "BlendingInterface": {"type": "EPCGExBlendingInterface", "default": "Individual"},
+            "bBlendPointProperties": {"type": "bool", "default": false},
+            "bWriteSuccess": {"type": "bool", "default": false},
+            "SuccessAttributeName": {"type": "FName", "default": "bSamplingSuccess"},
+            "bWriteTransform": {"type": "bool", "default": false},
+            "TransformAttributeName": {"type": "FName", "default": "WeightedTransform"},
+            "bWriteDistance": {"type": "bool", "default": false},
+            "DistanceAttributeName": {"type": "FName", "default": "WeightedDistance"},
+            "bWriteAngle": {"type": "bool", "default": false},
+            "AngleAttributeName": {"type": "FName", "default": "WeightedAngle"},
+            "bWriteNumSamples": {"type": "bool", "default": false},
+            "NumSamplesAttributeName": {"type": "FName", "default": "NumSamples"},
+            "bWriteSampledIndex": {"type": "bool", "default": false},
+            "SampledIndexAttributeName": {"type": "FName", "default": "SampledIndex"},
+            "bPruneFailedSamples": {"type": "bool", "default": false},
+            "bIgnoreSelf": {"type": "bool", "default": true}
+          }
+        },
+        {
+          "class": "UPCGExSampleNearestSurfaceSettings",
+          "display_name": "Sample Nearest Surface",
+          "description": "Raycasts from each point to find the nearest surface hit, writing location/normal/distance.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true},
+            {"name": "Filters", "type": "Param (Filter)", "required": false}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {
+            "SurfaceSource": {"type": "EPCGExSurfaceSource", "default": "ActorReferences"},
+            "ActorReference": {"type": "FName", "default": "ActorReference"},
+            "Distance": {"type": "double", "default": 1000},
+            "CollisionSettings": {"type": "FPCGExCollisionDetails"},
+            "bWriteSuccess": {"type": "bool", "default": false},
+            "SuccessAttributeName": {"type": "FName", "default": "bSamplingSuccess"},
+            "bWriteLocation": {"type": "bool", "default": false},
+            "LocationAttributeName": {"type": "FName", "default": "NearestLocation"},
+            "bWriteNormal": {"type": "bool", "default": false},
+            "NormalAttributeName": {"type": "FName", "default": "NearestNormal"},
+            "bWriteDistance": {"type": "bool", "default": false},
+            "DistanceAttributeName": {"type": "FName", "default": "NearestDistance"},
+            "bWriteIsInside": {"type": "bool", "default": false},
+            "IsInsideAttributeName": {"type": "FName", "default": "IsInside"},
+            "bPruneFailedSamples": {"type": "bool", "default": false}
+          }
+        },
+        {
+          "class": "UPCGExSampleNearestPathSettings",
+          "display_name": "Sample Nearest Path",
+          "description": "Samples the nearest path segments for each point, writing distance/transform/inside status.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true},
+            {"name": "Paths", "type": "Points", "required": true},
+            {"name": "Filters", "type": "Param (Filter)", "required": false}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {
+            "SampleInputs": {"type": "EPCGExPathSamplingIncludeMode", "default": "All", "enum_values": ["All", "ClosedLoopOnly", "OpenLoopsOnly"]},
+            "SampleMethod": {"type": "EPCGExSampleMethod", "default": "WithinRange"},
+            "bAlwaysSampleWhenInside": {"type": "bool", "default": true},
+            "bOnlySampleWhenInside": {"type": "bool", "default": true},
+            "bWriteSuccess": {"type": "bool", "default": false},
+            "bWriteTransform": {"type": "bool", "default": false},
+            "bWriteDistance": {"type": "bool", "default": false},
+            "bPruneFailedSamples": {"type": "bool", "default": false},
+            "bIgnoreSelf": {"type": "bool", "default": true}
+          }
+        },
+        {
+          "class": "UPCGExSampleNearestBoundsSettings",
+          "display_name": "Sample Nearest Bounds",
+          "description": "Samples the nearest bounding boxes from target points, writing weighted distance/transform.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true},
+            {"name": "Targets", "type": "Points", "required": true},
+            {"name": "Filters", "type": "Param (Filter)", "required": false}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {
+            "SampleMethod": {"type": "EPCGExBoundsSampleMethod", "default": "WithinRange", "enum_values": ["WithinRange", "ClosestBounds", "FarthestBounds", "LargestBounds", "SmallestBounds", "BestCandidate"]},
+            "BoundsSource": {"type": "EPCGExPointBoundsSource", "default": "ScaledBounds"},
+            "DistanceType": {"type": "EPCGExDistanceType", "default": "Euclidian"},
+            "BlendingInterface": {"type": "EPCGExBlendingInterface", "default": "Individual"},
+            "bWriteSuccess": {"type": "bool", "default": false},
+            "bWriteTransform": {"type": "bool", "default": false},
+            "bWriteDistance": {"type": "bool", "default": false},
+            "bWriteAngle": {"type": "bool", "default": false},
+            "bPruneFailedSamples": {"type": "bool", "default": false},
+            "bIgnoreSelf": {"type": "bool", "default": true}
+          }
+        },
+        {
+          "class": "UPCGExSampleTextureSettings",
+          "display_name": "Sample Texture",
+          "description": "Samples texture data at UV coordinates for each point.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true},
+            {"name": "Filters", "type": "Param (Filter)", "required": false}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {
+            "UVSource": {"type": "FPCGAttributePropertyInputSelector", "tooltip": "Attribute containing UV coordinates"},
+            "bPruneFailedSamples": {"type": "bool", "default": false}
+          }
+        },
+        {
+          "class": "UPCGExSelfPruningSettings",
+          "display_name": "Self Pruning",
+          "description": "Removes overlapping points from a collection based on bounds overlap testing.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true},
+            {"name": "Filters", "type": "Param (Filter)", "required": false}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {
+            "Mode": {"type": "EPCGExSelfPruningMode", "default": "Prune", "enum_values": ["Prune", "WriteResult"]},
+            "SortDirection": {"type": "EPCGExSortDirection", "default": "Ascending"},
+            "bRandomize": {"type": "bool", "default": true},
+            "RandomRange": {"type": "double", "default": 0.05},
+            "NumOverlapAttributeName": {"type": "FName", "default": "NumOverlaps"},
+            "bPreciseTest": {"type": "bool", "default": false},
+            "PrimaryMode": {"type": "EPCGExSelfPruningExpandOrder", "default": "None", "enum_values": ["None", "Before", "After"]},
+            "PrimaryExpansion": {"type": "double", "default": 0},
+            "SecondaryMode": {"type": "EPCGExSelfPruningExpandOrder", "default": "None"},
+            "SecondaryExpansion": {"type": "double", "default": 0}
+          }
+        },
+        {
+          "class": "UPCGExDiscardByOverlapSettings",
+          "display_name": "Discard by Overlap",
+          "description": "Discards entire point collections that overlap with others based on bounds testing.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"},
+            {"name": "Discarded", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExSampleNearestSplineSettings",
+          "display_name": "Sample Nearest Spline",
+          "description": "Samples the nearest spline for each point, writing closest location/distance/tangent.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExSampleInsidePathSettings",
+          "display_name": "Sample Inside Path",
+          "description": "Tests whether points are inside closed path regions.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true},
+            {"name": "Paths", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {}
+        }
+      ]
+    },
+    "Spatial": {
+      "description": "Spatial operations on point clouds (fusion, relaxation, projection, bounds)",
+      "nodes": [
+        {
+          "class": "UPCGExFusePointsSettings",
+          "display_name": "Fuse Points",
+          "description": "Fuses nearby points within a tolerance distance, blending their attributes.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {
+            "Mode": {"type": "EPCGExFusedPointOutput", "default": "Blend", "enum_values": ["Blend", "MostCentral"]},
+            "PointPointIntersectionDetails": {"type": "FPCGExPointPointIntersectionDetails"},
+            "bPreserveOrder": {"type": "bool", "default": true},
+            "BlendingDetails": {"type": "FPCGExBlendingDetails", "default": "Average"},
+            "CarryOverDetails": {"type": "FPCGExCarryOverDetails"}
+          }
+        },
+        {
+          "class": "UPCGExLloydRelaxSettings",
+          "display_name": "Lloyd Relax 3D",
+          "description": "Applies Lloyd relaxation iterations to spread points more uniformly in 3D space.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {
+            "Iterations": {"type": "int32", "default": 5, "min": 1, "tooltip": "Number of relaxation iterations"},
+            "InfluenceDetails": {"type": "FPCGExInfluenceDetails"}
+          }
+        },
+        {
+          "class": "UPCGExLloydRelax2DSettings",
+          "display_name": "Lloyd Relax 2D",
+          "description": "Applies Lloyd relaxation iterations in 2D projected space.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {
+            "Iterations": {"type": "int32", "default": 5, "min": 1},
+            "InfluenceDetails": {"type": "FPCGExInfluenceDetails"}
+          }
+        },
+        {
+          "class": "UPCGExConnectPointsSettings",
+          "display_name": "Connect Points",
+          "description": "Connects points into a cluster using pluggable probe strategies (radius, direction, etc.).",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true},
+            {"name": "Probes", "type": "Param (Probe)", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {
+            "bPreventCoincidence": {"type": "bool", "default": true},
+            "CoincidenceTolerance": {"type": "double", "default": 0.001},
+            "bProjectPoints": {"type": "bool", "default": false},
+            "ProjectionDetails": {"type": "FPCGExGeo2DProjectionDetails"},
+            "GraphBuilderDetails": {"type": "FPCGExGraphBuilderDetails", "default": "MinimalAxis::X"}
+          }
+        },
+        {
+          "class": "UPCGExFlatProjectionSettings",
+          "display_name": "Flat Projection",
+          "description": "Projects points onto a 2D plane, flattening one axis.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExNormalizeSettings",
+          "display_name": "Normalize",
+          "description": "Normalizes point positions into a 0-1 range within their bounding box.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExPointsToBoundsSettings",
+          "display_name": "Points to Bounds",
+          "description": "Converts point collections into bounding box point representations.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Bounds", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExMovePivotSettings",
+          "display_name": "Move Pivot",
+          "description": "Moves the pivot/origin of point collections.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExCollocationCountSettings",
+          "display_name": "Collocation Count",
+          "description": "Counts nearby collocated points and writes the count as an attribute.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {}
+        }
+      ]
+    },
+    "Layout": {
+      "description": "Spatial layout and packing algorithms",
+      "nodes": [
+        {
+          "class": "UPCGExBinPackingSettings",
+          "display_name": "Bin Packing",
+          "description": "Packs points into a bounding volume using 3D bin packing with configurable seed/split strategies.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {
+            "SortDirection": {"type": "EPCGExSortDirection", "default": "Ascending"},
+            "SeedMode": {"type": "EPCGExBinSeedMode", "default": "UVWConstant", "enum_values": ["UVWConstant", "UVWAttribute", "PositionConstant", "PositionAttribute"]},
+            "SeedUVW": {"type": "FVector", "default": "(0, 0, -1)"},
+            "bInferSplitAxisFromSeed": {"type": "bool", "default": false},
+            "SplitAxis": {"type": "EPCGExAxis", "default": "Up"},
+            "bAvoidWastedSpace": {"type": "bool", "default": true},
+            "PlacementFavor": {"type": "EPCGExPlacementFavor", "default": "SeedProximity", "enum_values": ["SeedProximity", "Space"]},
+            "OccupationPadding": {"type": "FVector"},
+            "bAbsolutePadding": {"type": "bool", "default": true}
+          }
+        },
+        {
+          "class": "UPCGExBinPacking3DSettings",
+          "display_name": "Bin Packing 3D",
+          "description": "3D bin packing variant with full volumetric space partitioning.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExLayoutSettings",
+          "display_name": "Layout",
+          "description": "Arranges points in configurable grid/radial/custom layouts.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {}
+        }
+      ]
+    },
+    "Bounds": {
+      "description": "Bounding box analysis and conversion utilities",
+      "nodes": [
+        {
+          "class": "UPCGExBoundsToPointsSettings",
+          "display_name": "Bounds to Points",
+          "description": "Generates corner/edge/face points from bounding boxes.",
+          "input_pins": [{"name": "In", "type": "Points", "required": true}],
+          "output_pins": [{"name": "Out", "type": "Points"}],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExBoundsAxisToPointsSettings",
+          "display_name": "Bounds Axis to Points",
+          "description": "Generates axis-aligned points from bounding boxes.",
+          "input_pins": [{"name": "In", "type": "Points", "required": true}],
+          "output_pins": [{"name": "Out", "type": "Points"}],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExFindPointOnBoundsSettings",
+          "display_name": "Find Point on Bounds",
+          "description": "Finds the closest point on a bounding box surface for each input point.",
+          "input_pins": [{"name": "In", "type": "Points", "required": true}],
+          "output_pins": [{"name": "Out", "type": "Points"}],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExBestMatchAxisSettings",
+          "display_name": "Best Match Axis",
+          "description": "Finds the best matching axis for point distributions within bounds.",
+          "input_pins": [{"name": "In", "type": "Points", "required": true}],
+          "output_pins": [{"name": "Out", "type": "Points"}],
+          "properties": {}
+        }
+      ]
+    },
+    "Meta / Attributes": {
+      "description": "Attribute manipulation, sorting, partitioning, and state writing",
+      "nodes": [
+        {
+          "class": "UPCGExWriteIndexSettings",
+          "display_name": "Write Index",
+          "description": "Writes point index, collection index, and entry count as attributes.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {
+            "bOutputPointIndex": {"type": "bool", "default": true},
+            "OutputAttributeName": {"type": "FName", "default": "CurrentIndex"},
+            "bOneMinus": {"type": "bool", "default": false},
+            "bNormalizedEntryIndex": {"type": "bool", "default": false},
+            "bOutputCollectionIndex": {"type": "bool", "default": false},
+            "CollectionIndexAttributeName": {"type": "FName", "default": "@Data.CollectionIndex"},
+            "CollectionIndexOutputType": {"type": "EPCGExNumericOutput", "default": "Int32"},
+            "bOutputCollectionNumEntries": {"type": "bool", "default": false},
+            "NumEntriesAttributeName": {"type": "FName", "default": "@Data.NumEntries"},
+            "bAllowInterpolation": {"type": "bool", "default": true}
+          }
+        },
+        {
+          "class": "UPCGExAttributeRemapSettings",
+          "display_name": "Attribute Remap",
+          "description": "Remaps attribute values through clamping and range remapping with per-component overrides.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {
+            "Attributes": {"type": "FPCGExAttributeSourceToTargetDetails"},
+            "bAutoCastIntegerToDouble": {"type": "bool", "default": false},
+            "BaseRemap": {"type": "FPCGExComponentRemapRule", "tooltip": "Clamp + remap for all components"},
+            "bOverrideComponent2": {"type": "bool", "default": false},
+            "Component2RemapOverride": {"type": "FPCGExComponentRemapRule"},
+            "bOverrideComponent3": {"type": "bool", "default": false},
+            "Component3RemapOverride": {"type": "FPCGExComponentRemapRule"},
+            "bOverrideComponent4": {"type": "bool", "default": false},
+            "Component4RemapOverride": {"type": "FPCGExComponentRemapRule"}
+          }
+        },
+        {
+          "class": "UPCGExSortPointsSettings",
+          "display_name": "Sort Points",
+          "description": "Sorts points within each collection by configurable attribute rules.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {
+            "SortDirection": {"type": "EPCGExSortDirection", "default": "Ascending"},
+            "Rules": {"type": "TArray<FPCGExSortRuleConfig>", "tooltip": "Ordered list of sort rules (attribute + direction)"}
+          }
+        },
+        {
+          "class": "UPCGExPartitionByValuesSettings",
+          "display_name": "Partition by Values",
+          "description": "Splits point collections into separate outputs based on attribute value buckets.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {
+            "bSplitOutput": {"type": "bool", "default": true},
+            "bWriteKeySum": {"type": "bool", "default": false},
+            "KeySumAttributeName": {"type": "FName", "default": "KeySum"},
+            "PartitionRules": {"type": "TArray<FPCGExPartitonRuleConfig>"}
+          }
+        },
+        {
+          "class": "UPCGExWriteStatesSettings",
+          "display_name": "Write States",
+          "description": "Evaluates point state factory chains and writes results as an int64 flag bitmask attribute.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {
+            "FlagAttribute": {"type": "FName", "default": "Flags"}
+          }
+        },
+        {
+          "class": "UPCGExUberNoiseSettings",
+          "display_name": "Uber Noise",
+          "description": "Applies 3D procedural noise to an attribute with configurable blend mode.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true},
+            {"name": "Filters", "type": "Param (Filter)", "required": false}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {
+            "Mode": {"type": "EPCGExUberNoiseMode", "default": "New", "enum_values": ["New", "Mutate"]},
+            "OutputType": {"type": "EPCGMetadataTypes", "default": "Double"},
+            "Attributes": {"type": "FPCGExAttributeSourceToTargetDetails", "default": "$Density"},
+            "BlendMode": {"type": "EPCGExABBlendingType", "default": "Add"}
+          }
+        },
+        {
+          "class": "UPCGExAttributeHashSettings",
+          "display_name": "Attribute Hash",
+          "description": "Computes a hash from one or more attributes and writes it as a new attribute.",
+          "input_pins": [{"name": "In", "type": "Points", "required": true}],
+          "output_pins": [{"name": "Out", "type": "Points"}],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExAttributeStatsSettings",
+          "display_name": "Attribute Stats",
+          "description": "Computes statistics (min, max, mean, etc.) of attributes and writes them as new attributes.",
+          "input_pins": [{"name": "In", "type": "Points", "required": true}],
+          "output_pins": [{"name": "Out", "type": "Points"}],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExBlendAttributesSettings",
+          "display_name": "Blend Attributes",
+          "description": "Blends attributes between two point collections using configurable blending modes.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true},
+            {"name": "Sources", "type": "Points", "required": true}
+          ],
+          "output_pins": [{"name": "Out", "type": "Points"}],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExRefreshSeedSettings",
+          "display_name": "Refresh Seed",
+          "description": "Regenerates the random seed on each point for downstream stochastic operations.",
+          "input_pins": [{"name": "In", "type": "Points", "required": true}],
+          "output_pins": [{"name": "Out", "type": "Points"}],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExModularSortPointsSettings",
+          "display_name": "Modular Sort Points",
+          "description": "Sorts points using pluggable modular sorting rule factories.",
+          "input_pins": [{"name": "In", "type": "Points", "required": true}],
+          "output_pins": [{"name": "Out", "type": "Points"}],
+          "properties": {}
+        }
+      ]
+    },
+    "Shapes": {
+      "description": "Procedural shape generation",
+      "nodes": [
+        {
+          "class": "UPCGExCreateShapesSettings",
+          "display_name": "Create Shapes",
+          "description": "Generates 2D/3D procedural shapes (circles, polygons, spirals, etc.) from shape factory inputs.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {
+            "bWriteShapeId": {"type": "bool", "default": false},
+            "ShapeIdAttributeName": {"type": "FName", "default": "ShapeId"},
+            "bRemoveBelow": {"type": "bool", "default": true},
+            "MinPointCount": {"type": "int32", "default": 2},
+            "bRemoveAbove": {"type": "bool", "default": false},
+            "MaxPointCount": {"type": "int32", "default": 500}
+          }
+        }
+      ]
+    },
+    "Clipper2": {
+      "description": "Polygon boolean and offset operations via Clipper2 library",
+      "nodes": [
+        {
+          "class": "UPCGExClipper2BooleanSettings",
+          "display_name": "Clipper Boolean",
+          "description": "Performs 2D polygon boolean operations (union, intersection, difference, XOR) on path collections.",
+          "input_pins": [
+            {"name": "Paths", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {
+            "Operation": {"type": "EPCGExClipper2BooleanOp", "default": "Union", "enum_values": ["Intersection", "Union", "Difference", "Xor"]},
+            "FillRule": {"type": "EPCGExClipper2FillRule", "default": "NonZero"},
+            "bUseOperandPin": {"type": "bool", "default": false},
+            "ProjectionDetails": {"type": "FPCGExGeo2DProjectionDetails"}
+          }
+        },
+        {
+          "class": "UPCGExClipper2OffsetSettings",
+          "display_name": "Clipper Offset",
+          "description": "Offsets/inflates 2D polygon paths using Clipper2 library.",
+          "input_pins": [
+            {"name": "Paths", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExClipper2RectClipSettings",
+          "display_name": "Clipper Rect Clip",
+          "description": "Clips 2D polygon paths against a rectangular region.",
+          "input_pins": [
+            {"name": "Paths", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {}
+        }
+      ]
+    },
+    "Topology": {
+      "description": "Surface generation and mesh topology from clusters and paths",
+      "nodes": [
+        {
+          "class": "UPCGExTopologyClusterSurfaceSettings",
+          "display_name": "Topology : Cluster Surface",
+          "description": "Creates a triangle surface mesh from cluster cell topology for collision or visualization.",
+          "input_pins": [
+            {"name": "Vtx", "type": "Points", "required": true},
+            {"name": "Edges", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExTopologyPathSurfaceSettings",
+          "display_name": "Topology : Path Surface",
+          "description": "Creates a triangle surface from closed path contours.",
+          "input_pins": [
+            {"name": "Paths", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExTopologyPointSurfaceSettings",
+          "display_name": "Topology : Point Surface",
+          "description": "Creates a triangle surface from point cloud data.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExClipper2TriangulateSettings",
+          "display_name": "Clipper2 Triangulate",
+          "description": "Triangulates 2D polygon paths using Clipper2 for surface generation.",
+          "input_pins": [
+            {"name": "Paths", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExDynamicMeshToClustersSettings",
+          "display_name": "Dynamic Mesh to Clusters",
+          "description": "Converts UDynamicMesh data into cluster vertex/edge data.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Vtx", "type": "Points"},
+            {"name": "Edges", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExSpawnDynamicMeshSettings",
+          "display_name": "Spawn Dynamic Mesh",
+          "description": "Spawns dynamic mesh actors from generated surface data.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {}
+        }
+      ]
+    },
+    "Tensors": {
+      "description": "Vector field / tensor-based path extrusion and transformation",
+      "nodes": [
+        {
+          "class": "UPCGExExtrudeTensorsSettings",
+          "display_name": "Extrude Tensors",
+          "description": "Extrudes paths from seed points by iteratively sampling stacked tensor/vector fields.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Paths", "type": "Points"}
+          ],
+          "properties": {
+            "bTransformRotation": {"type": "bool", "default": true},
+            "Rotation": {"type": "EPCGExTensorTransformMode", "default": "Align"},
+            "AlignAxis": {"type": "EPCGExAxis", "default": "Forward"},
+            "Iterations": {"type": "int32", "default": 1},
+            "bUseMaxLength": {"type": "bool", "default": false},
+            "MaxLength": {"type": "double", "default": 100},
+            "bUseMaxPointsCount": {"type": "bool", "default": false},
+            "MaxPointsCount": {"type": "int32", "default": 100},
+            "FuseDistance": {"type": "double", "default": 0.001},
+            "StopConditionHandling": {"type": "EPCGExTensorStopConditionHandling", "default": "Exclude"},
+            "bAllowChildExtrusions": {"type": "bool", "default": false},
+            "bDoExternalPathIntersections": {"type": "bool", "default": false},
+            "bDoSelfPathIntersections": {"type": "bool", "default": false},
+            "SelfIntersectionMode": {"type": "EPCGExSelfIntersectionMode", "default": "PathLength", "enum_values": ["PathLength", "SortingOnly"]},
+            "bDetectClosedLoops": {"type": "bool", "default": false},
+            "ClosedLoopSearchDistance": {"type": "double", "default": 100},
+            "bRefreshSeed": {"type": "bool", "default": true}
+          }
+        },
+        {
+          "class": "UPCGExTensorsTransformSettings",
+          "display_name": "Tensors Transform",
+          "description": "Transforms points using stacked tensor field sampling (rotation, translation).",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {}
+        }
+      ]
+    },
+    "Bridges / Misc": {
+      "description": "Utility and cross-system bridge nodes",
+      "nodes": [
+        {
+          "class": "UPCGExWaitForPCGDataSettings",
+          "display_name": "Wait for PCG Data",
+          "description": "Waits for external PCG graph execution to complete before proceeding.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {}
+        },
+        {
+          "class": "UPCGExBatchActionsSettings",
+          "display_name": "Batch Actions",
+          "description": "Applies pluggable action factories to point collections in batch.",
+          "input_pins": [
+            {"name": "In", "type": "Points", "required": true}
+          ],
+          "output_pins": [
+            {"name": "Out", "type": "Points"}
+          ],
+          "properties": {}
+        }
+      ]
+    }
+  },
+  "common_workflows": {
+    "delaunay_to_paths": {
+      "description": "Build a Delaunay graph then extract paths for road/river networks",
+      "steps": ["Build Delaunay 2D", "Refine Edges (MST/filter)", "Break Clusters to Paths", "Smooth", "Subdivide"]
+    },
+    "voronoi_parceling": {
+      "description": "Generate land parcels using Voronoi diagrams",
+      "steps": ["Build Voronoi 2D", "Find Cells", "Break Clusters to Paths", "Clipper Boolean/Offset"]
+    },
+    "pathfinding_network": {
+      "description": "Create navigable path networks through point clouds",
+      "steps": ["Connect Points (Probes)", "Refine Edges", "Pathfinding : Edges", "Smooth"]
+    },
+    "urban_layout": {
+      "description": "Generate city-like block layouts",
+      "steps": ["Build Voronoi 2D", "Find Cells", "Clipper Offset (inset)", "Topology : Path Surface"]
+    },
+    "cluster_stamping": {
+      "description": "Stamp pre-built clusters at scattered points",
+      "steps": ["Build Delaunay 2D (template)", "Pack Clusters", "Copy Clusters to Points", "Unpack Clusters"]
+    },
+    "growth_simulation": {
+      "description": "Grow organic paths using tensor fields",
+      "steps": ["Extrude Tensors", "Smooth", "Subdivide", "Sample Nearest Surface"]
+    },
+    "point_distribution": {
+      "description": "Create uniform point distributions",
+      "steps": ["Lloyd Relax 3D", "Self Pruning", "Sample Nearest Point"]
+    },
+    "flood_fill_regions": {
+      "description": "Assign ownership regions via flood fill",
+      "steps": ["Build Delaunay 2D", "Flood Fill Clusters", "Break Clusters to Paths"]
+    }
+  }
+}

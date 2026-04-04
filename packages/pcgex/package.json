@@ -1,0 +1,28 @@
+{
+  "name": "@hayba/pcgex",
+  "version": "1.0.0",
+  "description": "HaybaPCGEx — AI-powered PCG graph authoring for Unreal Engine via MCP",
+  "type": "module",
+  "bin": { "hayba-pcgex": "./dist/index.js" },
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "express": "^4.21.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": { "node": ">=20.0.0" },
+  "license": "MIT"
+}
