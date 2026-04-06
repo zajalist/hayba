@@ -38,6 +38,10 @@ import { setParameterHandler } from './hayba-set-parameter.js';
 import { listNodeTypesHandler } from './hayba-list-node-types.js';
 import { cookGraphHandler } from './hayba-cook-graph.js';
 
+// ── Conventions tool handlers ─────────────────────────────────────────────────
+import { setupConventionsHandler } from './hayba-setup-conventions.js';
+import { analyzeConventionsHandler } from './hayba-analyze-conventions.js';
+
 export function registerTools(server: McpServer, session: SessionManager): void {
 
   // ── PCGEx tools ─────────────────────────────────────────────────────────────
@@ -413,6 +417,38 @@ export function registerTools(server: McpServer, session: SessionManager): void 
     { nodes: z.array(z.string()).optional().describe('Node ids for partial re-cook; omit for full cook') },
     async (params) => {
       const result = await cookGraphHandler(params as Record<string, unknown>, session);
+      return { content: result.content, isError: result.isError };
+    }
+  );
+
+  // ── Conventions tools ────────────────────────────────────────────────────────
+
+  server.tool(
+    'hayba_setup_conventions',
+    'Multi-turn wizard to configure UE project conventions. Call repeatedly with advancing stages.',
+    {
+      stage: z.enum(['start', 'folders', 'naming', 'workflow', 'confirm', 'save']).describe('Current wizard stage'),
+      preset: z.enum(['epic-default', 'gamedevtv', 'custom']).optional().describe('Preset to load (required at start stage)'),
+      answers: z.record(z.unknown()).optional().describe('Accumulated user responses from previous stages'),
+      target: z.enum(['global', 'project']).optional().describe('Where to save (required at save stage)'),
+      projectRoot: z.string().optional().describe('UE project root path (required if target is project)'),
+    },
+    async (params) => {
+      const result = await setupConventionsHandler(params as Record<string, unknown>);
+      return { content: result.content, isError: result.isError };
+    }
+  );
+
+  server.tool(
+    'hayba_analyze_conventions',
+    'Scan a UE project Content directory and infer conventions from existing folder structure and asset naming.',
+    {
+      projectRoot: z.string().describe('Path to UE project root (contains .uproject file)'),
+      save: z.boolean().optional().describe('If true, write inferred conventions to target (default: false — dry run)'),
+      target: z.enum(['global', 'project']).optional().describe('Where to save (required when save is true)'),
+    },
+    async (params) => {
+      const result = await analyzeConventionsHandler(params as Record<string, unknown>);
       return { content: result.content, isError: result.isError };
     }
   );
