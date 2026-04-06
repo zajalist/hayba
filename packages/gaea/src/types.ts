@@ -114,8 +114,22 @@ export interface ExportResult {
   splatmap?: string;
 }
 
+export type TemplateVariableType = "Int" | "Float" | "Bool" | "String" | "Choice";
+
+export interface TemplateVariableSpec {
+  type: TemplateVariableType;
+  default: unknown;
+  min?: number;
+  max?: number;
+  choices?: string[];
+  description: string;
+}
+
+export type TemplateVariableContract = Record<string, TemplateVariableSpec>;
+
 export interface TemplateMeta {
   name: string;
   description: string;
-  tweakable: string[]; // param names the user can override
+  tweakable: string[];
+  variables?: TemplateVariableContract;
 }
