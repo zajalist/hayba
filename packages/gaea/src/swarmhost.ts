@@ -1081,6 +1081,46 @@ export class SwarmHostClient {
     }
   }
 
+  readTerrainVariables(terrainPath?: string): Record<string, Record<string, unknown>> {
+    const p = terrainPath ?? this._currentTerrainPath;
+    if (!p) throw new Error("No terrain path provided and no terrain currently loaded.");
+    const terrain = JSON.parse(readFileSync(p, "utf-8"));
+    const vars = getAssets(terrain)[0]?.Automation?.Variables ?? {};
+    const result: Record<string, Record<string, unknown>> = {};
+    for (const [k, v] of Object.entries(vars)) {
+      if (k === "$id") continue;
+      result[k] = v as Record<string, unknown>;
+    }
+    return result;
+  }
+
+  setTerrainVariables(
+    contract: Record<string, { type: string; default: unknown; min?: number; max?: number; description: string }>,
+    values: Record<string, unknown>,
+    terrainPath?: string
+  ): void {
+    const p = terrainPath ?? this._currentTerrainPath;
+    if (!p) throw new Error("No terrain path provided and no terrain currently loaded.");
+    const terrain = JSON.parse(readFileSync(p, "utf-8"));
+    const automation = getAssets(terrain)[0].Automation;
+    const existing = automation.Variables ?? {};
+    const existingId = (existing as Record<string, unknown>)["$id"] ?? String(findMaxJsonId(terrain) + 1);
+
+    const newVars: Record<string, unknown> = { "$id": existingId };
+    for (const [name, spec] of Object.entries(contract)) {
+      const value = name in values ? values[name] : spec.default;
+      newVars[name] = {
+        Type: spec.type,
+        Value: value,
+        ...(spec.min !== undefined && { Min: spec.min }),
+        ...(spec.max !== undefined && { Max: spec.max }),
+        Name: name,
+      };
+    }
+    automation.Variables = newVars;
+    writeFileSync(p, serializeGaea(terrain), "utf-8");
+  }
+
   async export(outputDir: string, format: "PNG" | "EXR"): Promise<ExportResult> {
     if (this.base) {
       return this.request("POST", "/graph/export", { outputDir, format });
