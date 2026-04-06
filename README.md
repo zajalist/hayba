@@ -1,22 +1,46 @@
-# Hayba
+# Hayba MCP Toolkit
 
-AI-powered terrain and procedural generation. Two MCP servers, one vision.
+AI-powered terrain and procedural generation for Unreal Engine 5. One MCP server, one UE plugin.
 
-| Package | What it does | Install |
-|---------|-------------|---------|
-| **@hayba/gaea** | AI terrain generation via Gaea 2 | `npm i -g @hayba/gaea` |
-| **@hayba/pcgex** | AI PCG graph authoring in UE5 | `npm i -g @hayba/pcgex` |
+## Installation
+
+### 1. UE Plugin
+
+Copy `packages/hayba/Plugins/HaybaMCPToolkit/` into your UE project's `Plugins/` folder:
+
+```
+YourProject/
+  Plugins/
+    HaybaMCPToolkit/   ← copy here
+```
+
+Right-click your `.uproject` file → **Generate Visual Studio project files**, then recompile. Enable in **Edit > Plugins > Hayba MCP Toolkit**.
+
+### 2. MCP Server
+
+Add to `~/.claude/claude_desktop_config.json` (create it if it doesn't exist):
+
+```json
+{
+  "mcpServers": {
+    "hayba-mcp": {
+      "command": "npx",
+      "args": ["-y", "@hayba/mcp"]
+    }
+  }
+}
+```
+
+Restart Claude Desktop. You should see **hayba-mcp** connected in the MCP panel.
+
+### 3. First launch
+
+Open UE, go to **Tools > Hayba MCP Toolkit**, and follow the setup wizard to configure your API key and output paths.
 
 ## Quick Start
 
-### HaybaGaea (terrain)
 ```bash
-claude mcp add hayba-gaea -- node packages/gaea/dist/index.js
-```
-
-### HaybaPCGEx (procedural geometry)
-```bash
-claude mcp add -e UE_TCP_PORT=52342 -e UE_TCP_HOST=127.0.0.1 hayba-pcgex -- node packages/pcgex/dist/index.js
+claude mcp add hayba-mcp -- npx -y @hayba/mcp
 ```
 
 ## Development
@@ -29,8 +53,7 @@ npm test           # Test all packages
 
 ## Packages
 
-- [`packages/gaea`](packages/gaea) — HaybaGaea MCP server (11 tools, Gaea 2.x)
-- [`packages/pcgex`](packages/pcgex) — HaybaPCGEx MCP server + UE5 C++ plugin (8 tools, UE 5.7)
+- [`packages/hayba`](packages/hayba) — Hayba MCP Toolkit (unified server, 26 tools, UE 5.7 plugin)
 
 ## Website
 

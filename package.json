@@ -2,7 +2,7 @@
   "name": "hayba",
   "version": "1.0.0",
   "private": true,
-  "description": "AI-powered terrain and procedural generation — Gaea + PCGEx + Unreal Engine",
+  "description": "Hayba MCP Toolkit — AI-powered terrain and PCG authoring for Unreal Engine",
   "workspaces": ["packages/*"],
   "scripts": {
     "build": "npm run build --workspaces",
