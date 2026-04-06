@@ -548,6 +548,78 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildSettingsPanel()
                 .Text(LOCTEXT("SaveSettings", "Save"))
                 .OnClicked(this, &SHaybaMCPWizardWidget::OnSaveSettings)
             ]
+
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 16, 0, 0)
+            [ SNew(SSeparator) ]
+
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 10, 0, 8)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().FillWidth(1.0f)
+                [ SNew(STextBlock).Text(LOCTEXT("ConventionsTitle", "Conventions")).TextStyle(FAppStyle::Get(), "NormalText") ]
+                + SHorizontalBox::Slot().AutoWidth()
+                [
+                    SNew(STextBlock)
+                    .Text_Lambda([]() -> FText
+                    {
+                        const FHaybaMCPSettings& CS = FHaybaMCPSettings::Get();
+                        return FText::Format(LOCTEXT("ConventionsScopeLabel", "Scope: {0}"),
+                            FText::FromString(CS.ConventionsScope));
+                    })
+                    .TextStyle(FAppStyle::Get(), "SmallText")
+                    .ColorAndOpacity(ColorMuted)
+                ]
+            ]
+
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
+            [
+                SNew(SVerticalBox)
+                + SVerticalBox::Slot().AutoHeight()
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot().FillWidth(1.0f)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([]() -> FText
+                        {
+                            const FHaybaMCPSettings& CS = FHaybaMCPSettings::Get();
+                            return FText::Format(LOCTEXT("ConventionsOverwriteLabel", "Confirm overwrite: {0}"),
+                                CS.bConfirmBeforeOverwrite ? FText::FromString(TEXT("Yes")) : FText::FromString(TEXT("No")));
+                        })
+                        .TextStyle(FAppStyle::Get(), "SmallText")
+                    ]
+                    + SHorizontalBox::Slot().FillWidth(1.0f)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([]() -> FText
+                        {
+                            const FHaybaMCPSettings& CS = FHaybaMCPSettings::Get();
+                            return FText::Format(LOCTEXT("ConventionsResLabel", "Landscape res: {0}"),
+                                FText::AsNumber(CS.PreferredLandscapeResolution));
+                        })
+                        .TextStyle(FAppStyle::Get(), "SmallText")
+                    ]
+                ]
+            ]
+
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 8, 0, 0)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 8, 0)
+                [
+                    SNew(SButton)
+                    .Text(LOCTEXT("SetupConventions", "Setup Conventions"))
+                    .ToolTipText(LOCTEXT("SetupConventionsTip", "Open the conventions wizard in Claude"))
+                    .OnClicked(this, &SHaybaMCPWizardWidget::OnSetupConventions)
+                ]
+                + SHorizontalBox::Slot().AutoWidth()
+                [
+                    SNew(SButton)
+                    .Text(LOCTEXT("AnalyzeConventions", "Analyze Project"))
+                    .ToolTipText(LOCTEXT("AnalyzeConventionsTip", "Scan project folder and infer conventions"))
+                    .OnClicked(this, &SHaybaMCPWizardWidget::OnAnalyzeConventions)
+                ]
+            ]
         ];
 }
 
@@ -1189,6 +1261,29 @@ FReply SHaybaMCPWizardWidget::OnSaveSettings()
         ? FString::Printf(TEXT("Settings saved. Endpoint: %s"), *S.BaseURL)
         : TEXT("Settings saved. No API key set \u2014 add one to use the AI."));
 
+    return FReply::Handled();
+}
+
+// ---------------------------------------------------------------------------
+// Conventions actions
+// ---------------------------------------------------------------------------
+
+FReply SHaybaMCPWizardWidget::OnSetupConventions()
+{
+    AddAIMessage(TEXT("Opening conventions setup wizard. I'll guide you through configuring your UE project's folder structure, naming conventions, and workflow preferences."));
+    return FReply::Handled();
+}
+
+FReply SHaybaMCPWizardWidget::OnAnalyzeConventions()
+{
+    FString ProjectDir = FPaths::ProjectDir();
+    if (ProjectDir.IsEmpty())
+    {
+        AddAIMessage(TEXT("Could not determine the current UE project directory."));
+        return FReply::Handled();
+    }
+
+    AddAIMessage(FString::Printf(TEXT("Analyzing project conventions from: %s\n\nScanning Content folder structure and asset naming patterns..."), *ProjectDir));
     return FReply::Handled();
 }
 

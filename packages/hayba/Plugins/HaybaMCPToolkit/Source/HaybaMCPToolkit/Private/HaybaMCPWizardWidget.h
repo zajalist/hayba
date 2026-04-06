@@ -90,6 +90,8 @@ private:
 	FReply OnStartServer();
 	FReply OnToggleSettings();
 	FReply OnSaveSettings();
+	FReply OnSetupConventions();
+	FReply OnAnalyzeConventions();
 
 	FText GetStepProgressText() const;
 	EVisibility GetActionBarVisibility() const;

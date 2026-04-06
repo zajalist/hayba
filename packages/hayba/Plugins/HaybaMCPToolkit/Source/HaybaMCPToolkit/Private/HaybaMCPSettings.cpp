@@ -29,6 +29,9 @@ void FHaybaMCPSettings::Load()
     GConfig->GetString(Section, KeyOutputPath, OutputPath,  GEditorPerProjectIni);
     GConfig->GetString(Section, TEXT("HeightmapOutputFolder"), HeightmapOutputFolder, GEditorPerProjectIni);
     GConfig->GetBool(Section, TEXT("bHasSeenWizard"), bHasSeenWizard, GEditorPerProjectIni);
+    GConfig->GetString(Section, TEXT("ConventionsScope"), ConventionsScope, GEditorPerProjectIni);
+    GConfig->GetBool(Section, TEXT("bConfirmBeforeOverwrite"), bConfirmBeforeOverwrite, GEditorPerProjectIni);
+    GConfig->GetInt(Section, TEXT("PreferredLandscapeResolution"), PreferredLandscapeResolution, GEditorPerProjectIni);
 
     FString ModeStr;
     GConfig->GetString(Section, TEXT("OperationMode"), ModeStr, GEditorPerProjectIni);
@@ -49,6 +52,9 @@ void FHaybaMCPSettings::Save() const
     GConfig->SetString(Section, KeyOutputPath, *OutputPath,  GEditorPerProjectIni);
     GConfig->SetString(Section, TEXT("HeightmapOutputFolder"), *HeightmapOutputFolder, GEditorPerProjectIni);
     GConfig->SetBool(Section, TEXT("bHasSeenWizard"), bHasSeenWizard, GEditorPerProjectIni);
+    GConfig->SetString(Section, TEXT("ConventionsScope"), *ConventionsScope, GEditorPerProjectIni);
+    GConfig->SetBool(Section, TEXT("bConfirmBeforeOverwrite"), bConfirmBeforeOverwrite, GEditorPerProjectIni);
+    GConfig->SetInt(Section, TEXT("PreferredLandscapeResolution"), PreferredLandscapeResolution, GEditorPerProjectIni);
     GConfig->SetString(Section, TEXT("OperationMode"),
         OperationMode == EHaybaMCPOperationMode::ApiKey ? TEXT("ApiKey") : TEXT("Integrated"),
         GEditorPerProjectIni);

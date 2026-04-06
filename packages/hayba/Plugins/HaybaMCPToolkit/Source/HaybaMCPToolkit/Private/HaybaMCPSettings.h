@@ -24,6 +24,11 @@ public:
     // Gaea heightmap output folder (from HaybaGaea)
     FString HeightmapOutputFolder;
 
+    // Conventions
+    FString ConventionsScope = TEXT("global");
+    bool bConfirmBeforeOverwrite = true;
+    int32 PreferredLandscapeResolution = 1009;
+
     bool bHasSeenWizard = false;
     EHaybaMCPOperationMode OperationMode = EHaybaMCPOperationMode::Integrated;
 
