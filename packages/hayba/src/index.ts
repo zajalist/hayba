@@ -6,8 +6,8 @@ import { listCatalogResources, readCatalogResource } from './resources.js';
 import { registerTools } from './tools/index.js';
 
 const server = new McpServer({
-  name: 'hayba-pcgex',
-  version: '0.2.0'
+  name: 'hayba-mcp',
+  version: '1.0.0'
 });
 
 // Register catalog resources
@@ -32,7 +32,7 @@ registerTools(server);
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`PCGEx Bridge MCP server v0.2.0 started on stdio`);
+  console.error(`Hayba MCP Toolkit v1.0.0 started on stdio`);
   console.error(`UE TCP target: ${config.ueTcpHost}:${config.ueTcpPort}`);
 }
 

@@ -1,10 +1,10 @@
 {
-  "name": "@hayba/pcgex",
+  "name": "@hayba/mcp",
   "version": "1.0.0",
-  "description": "HaybaPCGEx — AI-powered PCG graph authoring for Unreal Engine via MCP",
+  "description": "Hayba MCP Toolkit — AI-powered terrain and PCG authoring for Unreal Engine",
   "type": "module",
   "bin": {
-    "hayba-pcgex": "./dist/index.js"
+    "hayba-mcp": "./dist/index.js"
   },
   "main": "./dist/index.js",
   "scripts": {
