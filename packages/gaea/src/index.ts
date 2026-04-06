@@ -24,6 +24,10 @@ import "./tools/add-node.js";
 import "./tools/connect-nodes.js";
 import "./tools/remove-node.js";
 import "./tools/close-session.js";
+import "./tools/bake-terrain.js";
+import "./tools/read-terrain-variables.js";
+import "./tools/set-terrain-variables.js";
+import "./tools/open-in-gaea.js";
 
 // Load config from swarmhost.config.json (update execPath to point at Gaea.BuildManager.exe)
 const configPath = path.join(

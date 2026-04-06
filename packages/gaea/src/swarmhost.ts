@@ -1,8 +1,9 @@
-import { spawnSync } from "child_process";
+import * as cp from "child_process";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 import type { SwarmNodeType, SwarmParameter, GraphState, GraphEdge, ExportResult, Graph } from "./types.js";
+import { detectSwarmPath, GAEA_SWARM_CANDIDATE_PATHS } from "./gaea-launcher.js";
 
 // ─── Public config interface ──────────────────────────────────────────────────
 
@@ -11,6 +12,7 @@ export interface SwarmHostConfig {
   port: number;      // kept for back-compat; unused in CLI mode
   outputDir: string; // build output directory
   gaeaExePath?: string; // optional path to Gaea.exe for launching the UI
+  swarmExePath?: string; // optional path to Gaea.Swarm.exe for CLI cooking
 }
 
 // ─── Internal terrain-file types ─────────────────────────────────────────────
@@ -1041,7 +1043,7 @@ export class SwarmHostClient {
     writeFileSync(this._currentTerrainPath!, serializeGaea(terrain), "utf-8");
   }
 
-  async cook(nodeIds?: string[]): Promise<void> {
+  async cook(nodeIds?: string[], variables?: Record<string, unknown>, ignorecache = true): Promise<void> {
     if (this.base) {
       await this.request("POST", "/graph/cook", nodeIds ? { nodes: nodeIds } : {});
       return;
@@ -1049,34 +1051,75 @@ export class SwarmHostClient {
     if (!this._currentTerrainPath) {
       throw new Error("No terrain loaded. Call createGraph or loadGraph first.");
     }
-    const result = spawnSync(
-      this.cfg!.execPath,
-      [this._currentTerrainPath, "--automation"],
-      { encoding: "utf-8", timeout: 120_000 }
-    );
+
+    const swarmExe = this.cfg!.swarmExePath ?? detectSwarmPath();
+    if (!swarmExe) {
+      throw new Error(
+        `Gaea.Swarm.exe not found. Install Gaea 2.x or set swarmExePath in swarmhost.config.json.\n` +
+        `Checked paths:\n` + GAEA_SWARM_CANDIDATE_PATHS.map(p => `  ${p}`).join("\n")
+      );
+    }
+
+    // Build args — -v flags MUST come last (Gaea requirement)
+    const args: string[] = ["-filename", this._currentTerrainPath];
+    if (ignorecache) args.push("-ignorecache");
+
+    if (variables && Object.keys(variables).length > 0) {
+      for (const [key, val] of Object.entries(variables)) {
+        args.push("-v", `${key}=${val}`);
+      }
+    }
+
+    const result = cp.spawnSync(swarmExe, args, { encoding: "utf-8", timeout: 300_000 });
+
     if (result.error) {
-      throw new Error(`Failed to start Gaea.BuildManager.exe: ${result.error.message}`);
+      throw new Error(`Failed to start Gaea.Swarm.exe: ${result.error.message}`);
     }
     if (result.status !== 0) {
       const output = result.stderr?.slice(0, 500) || result.stdout?.slice(0, 500) || "";
-      // Detect missing Gaea.BuildManager.dll — a known issue with some Gaea installations
-      if (output.includes("does not exist") && output.includes(".dll")) {
-        const dllPath = this.cfg!.execPath.replace(/\.exe$/i, ".dll");
-        throw new Error(
-          `Gaea.BuildManager.dll is missing from your Gaea installation.\n` +
-          `  Expected: ${dllPath}\n\n` +
-          `This is a known issue with some Gaea 2 installations where the BuildManager DLL\n` +
-          `is not included. To fix this:\n` +
-          `  1. Reinstall or repair Gaea 2 from https://www.quadspinner.com/\n` +
-          `  2. Or set "port": 35771 in swarmhost.config.json to use Gaea's network API\n` +
-          `     (requires Gaea to be running).\n\n` +
-          `The terrain graph was created successfully at:\n` +
-          `  ${this._currentTerrainPath}\n` +
-          `You can open this file directly in Gaea to cook and export.`
-        );
-      }
       throw new Error(`Gaea build failed (exit ${result.status}): ${output}`);
     }
+  }
+
+  readTerrainVariables(terrainPath?: string): Record<string, Record<string, unknown>> {
+    const p = terrainPath ?? this._currentTerrainPath;
+    if (!p) throw new Error("No terrain path provided and no terrain currently loaded.");
+    const terrain = JSON.parse(readFileSync(p, "utf-8"));
+    const vars = getAssets(terrain)[0]?.Automation?.Variables ?? {};
+    const result: Record<string, Record<string, unknown>> = {};
+    for (const [k, v] of Object.entries(vars)) {
+      if (k === "$id") continue;
+      result[k] = v as Record<string, unknown>;
+    }
+    return result;
+  }
+
+  setTerrainVariables(
+    contract: Record<string, { type: string; default: unknown; min?: number; max?: number; description: string }>,
+    values: Record<string, unknown>,
+    terrainPath?: string
+  ): void {
+    const p = terrainPath ?? this._currentTerrainPath;
+    if (!p) throw new Error("No terrain path provided and no terrain currently loaded.");
+    const terrain = JSON.parse(readFileSync(p, "utf-8"));
+    const automation = getAssets(terrain)[0].Automation;
+    const existing = automation.Variables ?? {};
+    const existingId = (existing as Record<string, unknown>)["$id"] ?? String(findMaxJsonId(terrain) + 1);
+
+    // Contract is authoritative — any variables not in the contract are removed from the file.
+    const newVars: Record<string, unknown> = { "$id": existingId };
+    for (const [name, spec] of Object.entries(contract)) {
+      const value = name in values ? values[name] : spec.default;
+      newVars[name] = {
+        Type: spec.type,
+        Value: value,
+        ...(spec.min !== undefined && { Min: spec.min }),
+        ...(spec.max !== undefined && { Max: spec.max }),
+        Name: name,
+      };
+    }
+    automation.Variables = newVars;
+    writeFileSync(p, serializeGaea(terrain), "utf-8");
   }
 
   async export(outputDir: string, format: "PNG" | "EXR"): Promise<ExportResult> {

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { GraphSchema, NodeSchema, EdgeSchema } from "../src/types.js";
+import type { TemplateMeta, TemplateVariableContract } from "../src/types.js";
 
 describe("GraphSchema", () => {
   it("accepts a valid minimal graph", () => {
@@ -90,5 +91,28 @@ describe("GraphSchema circular edge detection", () => {
     };
     const result = GraphSchema.safeParse(graph);
     expect(result.success).toBe(true);
+  });
+});
+
+describe("TemplateVariableContract and TemplateMeta", () => {
+  it("TemplateVariableContract type accepts valid contracts", () => {
+    const contract: TemplateVariableContract = {
+      Seed: { type: "Int", default: 0, min: 0, max: 9999, description: "Random seed" },
+      Scale: { type: "Float", default: 1.5, min: 0.5, max: 4.0, description: "Terrain scale" },
+    };
+    expect(contract.Seed.type).toBe("Int");
+    expect(contract.Scale.default).toBe(1.5);
+  });
+
+  it("TemplateMeta accepts optional variables field", () => {
+    const meta: TemplateMeta = {
+      name: "test",
+      description: "test template",
+      tweakable: ["Seed"],
+      variables: {
+        Seed: { type: "Int", default: 0, min: 0, max: 9999, description: "Seed" }
+      }
+    };
+    expect(meta.variables?.Seed.type).toBe("Int");
   });
 });

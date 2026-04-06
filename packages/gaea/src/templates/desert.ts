@@ -1,19 +1,28 @@
-import type { Graph } from "../types.js";
+import type { Graph, TemplateVariableContract } from "../types.js";
+
+export const variables: TemplateVariableContract = {
+  Seed:            { type: "Int",   default: 0,   min: 0,   max: 9999, description: "Random seed" },
+  Scale:           { type: "Float", default: 2.5, min: 0.5, max: 5.0,  description: "Dune scale" },
+  ErosionStrength: { type: "Float", default: 0.2, min: 0.0, max: 1.0,  description: "Wind erosion strength" },
+};
 
 export const meta = {
   name: "desert",
   description: "Arid desert with sand dunes and wind-carved ridges",
-  tweakable: ["Seed", "Scale", "Height", "Downcutting"]
+  tweakable: ["Seed", "Scale", "Height", "Downcutting"],
+  variables,
 };
 
 export function build(overrides: Record<string, unknown> = {}): Graph {
   const seed = (overrides.Seed as number) ?? 0;
+  const scale = (overrides.Scale as number) ?? 2.5;
+  const downcutting = (overrides.ErosionStrength as number) ?? 0.2;
   return {
     nodes: [
-      { id: "base", type: "Perlin", params: { Seed: seed, Scale: 2.5, Octaves: 6, ...pick(overrides, ["Scale", "Octaves"]) } },
+      { id: "base", type: "Perlin", params: { Seed: seed, Scale: scale, Octaves: 6 } },
       { id: "dunes", type: "Perlin", params: { Seed: seed + 1, Scale: 5.0, Octaves: 3 } },
       { id: "blend", type: "Combine", params: { Ratio: 0.3, Mode: "Add" } },
-      { id: "erode", type: "Erosion2", params: { Downcutting: 0.2, ErosionScale: 200, Seed: seed, ...pick(overrides, ["Downcutting", "ErosionScale"]) } },
+      { id: "erode", type: "Erosion2", params: { Downcutting: downcutting, ErosionScale: 200, Seed: seed } },
       { id: "final", type: "Autolevel", params: {} }
     ],
     edges: [
@@ -23,10 +32,4 @@ export function build(overrides: Record<string, unknown> = {}): Graph {
       { from: "erode", fromPort: "Out", to: "final", toPort: "In" }
     ]
   };
-}
-
-function pick(obj: Record<string, unknown>, keys: string[]): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const k of keys) { if (k in obj) result[k] = obj[k]; }
-  return result;
 }
