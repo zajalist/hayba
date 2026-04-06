@@ -1106,6 +1106,7 @@ export class SwarmHostClient {
     const existing = automation.Variables ?? {};
     const existingId = (existing as Record<string, unknown>)["$id"] ?? String(findMaxJsonId(terrain) + 1);
 
+    // Contract is authoritative — any variables not in the contract are removed from the file.
     const newVars: Record<string, unknown> = { "$id": existingId };
     for (const [name, spec] of Object.entries(contract)) {
       const value = name in values ? values[name] : spec.default;

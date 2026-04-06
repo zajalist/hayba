@@ -75,4 +75,33 @@ describe("setTerrainVariables", () => {
     const vars = client.readTerrainVariables();
     expect(vars.Scale.Value).toBe(2.5);
   });
+
+  it("uses contract default when a key is absent from values", () => {
+    writeFileSync(TERRAIN, makeTerrainWithVars({}), "utf-8");
+    const client = new SwarmHostClient({ execPath: "", port: 0, outputDir: TMP });
+    (client as any)._currentTerrainPath = TERRAIN;
+
+    client.setTerrainVariables({
+      Scale: { type: "Float", default: 3.0, min: 0.5, max: 4.0, description: "Scale" }
+    }, {}); // no values provided — should use default
+
+    const raw = JSON.parse(readFileSync(TERRAIN, "utf-8"));
+    const vars = raw.Assets["$values"][0].Automation.Variables;
+    expect(vars.Scale.Value).toBe(3.0);
+  });
+
+  it("preserves existing $id on Variables after write", () => {
+    writeFileSync(TERRAIN, makeTerrainWithVars({}), "utf-8");
+    const client = new SwarmHostClient({ execPath: "", port: 0, outputDir: TMP });
+    (client as any)._currentTerrainPath = TERRAIN;
+
+    client.setTerrainVariables({
+      Seed: { type: "Int", default: 0, min: 0, max: 9999, description: "Seed" }
+    }, { Seed: 1 });
+
+    const raw = JSON.parse(readFileSync(TERRAIN, "utf-8"));
+    const vars = raw.Assets["$values"][0].Automation.Variables;
+    expect(vars["$id"]).toBeDefined();
+    expect(typeof vars["$id"]).toBe("string");
+  });
 });
