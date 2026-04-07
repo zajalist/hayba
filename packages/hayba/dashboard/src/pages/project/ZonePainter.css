@@ -5,6 +5,43 @@
   background: var(--bg-deep);
 }
 
+.zone-painter--locked {
+  align-items: center;
+  justify-content: center;
+}
+
+.zp-lock-overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 40px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  text-align: center;
+  max-width: 320px;
+}
+
+.zp-lock-icon {
+  color: #444;
+  margin-bottom: 4px;
+}
+
+.zp-lock-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #777;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.zp-lock-msg {
+  font-size: 11px;
+  color: #666;
+  line-height: 1.6;
+}
+
 /* Tool palette */
 .zp-toolbar {
   width: 36px;

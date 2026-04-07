@@ -4,7 +4,7 @@ import { log } from '../logger.js';
 import { getUEClient } from '../tcp-client.js';
 import { loadCatalog, searchCatalog, getCategories } from '../catalog.js';
 import { createProject, getProject, listProjects } from '../projects.js';
-import { submitZones, getCurrentZones, setHeightmap, getHeightmap } from '../zones.js';
+import { submitZones, getCurrentZones, setHeightmap, getHeightmap, getPainterSession, lockPainter } from '../zones.js';
 import { getEntries, addEntry, deleteEntry, getBaseTemplates } from '../encyclopedia.js';
 
 /**
@@ -136,6 +136,17 @@ export function registerApiRoutes(app: Express): void {
   app.get('/api/zones/heightmap/:projectId', async (req: Request, res: Response) => {
     const path = await getHeightmap(req.params.projectId as string);
     res.json({ heightmapPath: path });
+  });
+
+  // ── Painter session (lock/unlock) ─────────────────────────────────────────
+
+  app.get('/api/zones/painter-session', (_req: Request, res: Response) => {
+    res.json(getPainterSession() ?? { unlocked: false });
+  });
+
+  app.delete('/api/zones/painter-session', (_req: Request, res: Response) => {
+    lockPainter();
+    res.json({ ok: true });
   });
 
   // ── Encyclopedia ──────────────────────────────────────────────────────────

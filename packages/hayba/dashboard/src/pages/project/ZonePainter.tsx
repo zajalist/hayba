@@ -24,7 +24,25 @@ export function ZonePainter({ project }: { project: Project }) {
   const [phase, setPhase] = useState<'a' | 'b'>('a');
   const [heightmapImg, setHeightmapImg] = useState<HTMLImageElement | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [locked, setLocked] = useState(true);
   const isPainting = useRef(false);
+
+  // Poll painter session — unlock only when AI opens this project
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const session = await fetch('/api/zones/painter-session').then(r => r.json()) as { projectId?: string; phase?: 'a' | 'b' };
+        if (cancelled) return;
+        const isUnlocked = session?.projectId === project.id;
+        setLocked(!isUnlocked);
+        if (isUnlocked && session.phase) setPhase(session.phase);
+      } catch { /* server not ready */ }
+    };
+    poll();
+    const interval = setInterval(poll, 3000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [project.id]);
 
   // Load heightmap for phase B
   useEffect(() => {
@@ -115,14 +133,35 @@ export function ZonePainter({ project }: { project: Project }) {
       pngBase64: canvasToBase64(maskCanvases.get(z.id)!),
     }));
     await api.zones.submit({ projectId: project.id, zones, masks, canvasSize: CANVAS_SIZE, phase });
+    await fetch('/api/zones/painter-session', { method: 'DELETE' });
     setSubmitting(false);
-    alert('Zones submitted! Claude can now read them.');
+    setLocked(true);
   };
 
   const TOOLS: { id: Tool; label: string; icon: string }[] = [
     { id: 'paint', label: 'Paint', icon: '✏' },
     { id: 'erase', label: 'Erase', icon: '⬜' },
   ];
+
+  if (locked) {
+    return (
+      <div className="zone-painter zone-painter--locked">
+        <div className="zp-lock-overlay">
+          <div className="zp-lock-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <rect x="3" y="11" width="18" height="11" rx="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+          </div>
+          <div className="zp-lock-title">Painter Locked</div>
+          <div className="zp-lock-msg">
+            Ask Claude to open the Zone Painter for this project.<br />
+            <span className="muted">It will unlock automatically when ready.</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="zone-painter">

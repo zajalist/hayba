@@ -1,5 +1,6 @@
 import type { ToolResult } from './hayba-bake-terrain.js';
 import { createProject, getProject, DEFAULT_PROJECTS_BASE } from '../projects.js';
+import { unlockPainter } from '../zones.js';
 import { config } from '../config.js';
 
 export async function openZonePainterHandler(
@@ -22,6 +23,8 @@ export async function openZonePainterHandler(
     const project = await createProject(projectName, base);
     resolvedId = project.id;
   }
+
+  unlockPainter(resolvedId, phase);
 
   const url = `http://${config.dashboardHost}:${config.dashboardPort}`;
   const result = {

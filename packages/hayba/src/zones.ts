@@ -24,6 +24,25 @@ export interface ZoneSession {
 // In-memory heightmap store (keyed by projectId)
 const heightmapStore = new Map<string, string>();
 
+// In-memory painter session — only one project can be unlocked at a time
+export interface PainterSession {
+  projectId: string;
+  phase: 'a' | 'b';
+}
+let activePainterSession: PainterSession | null = null;
+
+export function unlockPainter(projectId: string, phase: 'a' | 'b'): void {
+  activePainterSession = { projectId, phase };
+}
+
+export function lockPainter(): void {
+  activePainterSession = null;
+}
+
+export function getPainterSession(): PainterSession | null {
+  return activePainterSession;
+}
+
 function projectDir(projectId: string, base: string): string {
   return join(base, projectId);
 }
