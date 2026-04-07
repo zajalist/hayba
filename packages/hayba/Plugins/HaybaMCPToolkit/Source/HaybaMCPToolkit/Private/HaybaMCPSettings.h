@@ -19,7 +19,7 @@ public:
     FString Model = TEXT("claude-opus-4-6-20251101");
 
     // PCGEx output
-    FString OutputPath = TEXT("/Game/PCGExBridge/Generated");
+    FString OutputPath = TEXT("/Game/Hayba/Generated");
 
     // Gaea heightmap output folder (from HaybaGaea)
     FString HeightmapOutputFolder;

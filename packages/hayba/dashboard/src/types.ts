@@ -1,6 +1,7 @@
 export interface Zone {
   id: string;
   name: string;
+  description: string;
   color: string;
   type: 'terrain' | 'placement';
   placementCategory?: 'foliage' | 'vegetation' | 'rocks' | 'props';

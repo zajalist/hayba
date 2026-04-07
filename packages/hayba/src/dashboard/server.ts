@@ -12,7 +12,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  */
 export async function startDashboard(port: number, host: string): Promise<void> {
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: '50mb' }));
 
   // Register API routes for dashboard data
   registerApiRoutes(app);

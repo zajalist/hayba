@@ -279,9 +279,10 @@ export function registerTools(server: McpServer, session: SessionManager): void 
     'hayba_create_terrain',
     {
       prompt: z.string().describe('Natural language terrain description'),
+      name: z.string().optional().describe('Name for the terrain file (e.g. the landscape/project name). Used as the .terrain filename.'),
       template: z.string().optional().describe('Predefined terrain template: desert, mountains, tropical, volcanic'),
       template_overrides: z.record(z.unknown()).optional().describe('Override specific template parameters'),
-      graph: z.unknown().optional().describe('Full Gaea node graph JSON with nodes and edges arrays'),
+      graph: z.unknown().optional().describe('Full Gaea node graph JSON with nodes and edges arrays. Use File nodes (params: { FileName: "<abs_path_to_mask.png>" }) to bring in painted zone masks as inputs.'),
       output_dir: z.string().optional().describe('Output directory (uses config default if omitted)'),
       resolution: z.number().optional().describe('Output heightmap resolution: 1024, 2048, or 4096 (default: 1024)'),
     },
@@ -481,7 +482,7 @@ export function registerTools(server: McpServer, session: SessionManager): void 
   server.tool(
     'hayba_brainstorm_terrain',
     {
-      step: z.enum(['start', 'biome', 'scale', 'features', 'layout', 'bake', 'foliage', 'done'])
+      step: z.enum(['start', 'biome', 'scale', 'features', 'name', 'layout', 'preview', 'bake', 'foliage', 'done'])
         .describe('Current step in the brainstorm flow. Always start with "start".'),
       answer: z.string().optional()
         .describe('The user\'s answer to the previous step\'s question.'),

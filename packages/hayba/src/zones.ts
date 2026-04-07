@@ -1,10 +1,11 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEFAULT_PROJECTS_BASE } from './projects.js';
 
 export interface Zone {
   id: string;
   name: string;
+  description: string;
   color: string;
   type: 'terrain' | 'placement';
   placementCategory?: 'foliage' | 'vegetation' | 'rocks' | 'props';
@@ -56,6 +57,7 @@ export async function submitZones(
   phase: 'a' | 'b' = 'a',
 ): Promise<ZoneSession> {
   const masksDir = join(projectDir(projectId, base), 'masks');
+  mkdirSync(masksDir, { recursive: true });
   const writtenMasks: { zoneId: string; pngPath: string }[] = [];
 
   for (const m of masks) {

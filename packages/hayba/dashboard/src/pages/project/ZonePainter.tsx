@@ -8,6 +8,20 @@ type Tool = 'paint' | 'erase';
 const CANVAS_SIZE = 1024;
 const ZONE_COLORS = ['#3a6e3a', '#6e5a2a', '#3a4a6e', '#6e3a3a', '#5a6e3a', '#6e3a6e'];
 
+const IconBrush = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M9.06 11.9l8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/>
+    <path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1 1 2.48 1.02 3.5 1.02 2.2 0 3.5-1.8 3.5-4.02 0-1.67-1.35-3.04-3-3.04z"/>
+  </svg>
+);
+
+const IconEraser = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M20 20H7L3 16l10-10 7 7-3.5 3.5"/>
+    <path d="M6.0 11.0 L13 18"/>
+  </svg>
+);
+
 function generateId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
@@ -25,6 +39,8 @@ export function ZonePainter({ project }: { project: Project }) {
   const [heightmapImg, setHeightmapImg] = useState<HTMLImageElement | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [locked, setLocked] = useState(true);
+  const [editingZoneId, setEditingZoneId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
   const isPainting = useRef(false);
 
   // Poll painter session — unlock only when AI opens this project
@@ -118,11 +134,13 @@ export function ZonePainter({ project }: { project: Project }) {
   const addZone = () => {
     const id = generateId();
     const color = ZONE_COLORS[zones.length % ZONE_COLORS.length];
-    const zone: Zone = { id, name: `Zone ${zones.length + 1}`, color, type: 'placement', placementCategory: 'foliage', maskPath: '', visible: true };
+    const zone: Zone = { id, name: `Zone ${zones.length + 1}`, description: '', color, type: 'placement', placementCategory: 'foliage', maskPath: '', visible: true };
     const mask = createMaskCanvas(CANVAS_SIZE);
     setMaskCanvases(prev => new Map(prev).set(id, mask));
     setZones(prev => [...prev, zone]);
     setActiveZoneId(id);
+    setEditingZoneId(id);
+    setEditingName(`Zone ${zones.length + 1}`);
   };
 
   const handleSubmit = async () => {
@@ -138,9 +156,22 @@ export function ZonePainter({ project }: { project: Project }) {
     setLocked(true);
   };
 
-  const TOOLS: { id: Tool; label: string; icon: string }[] = [
-    { id: 'paint', label: 'Paint', icon: '✏' },
-    { id: 'erase', label: 'Erase', icon: '⬜' },
+  const startRenameZone = (z: Zone, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingZoneId(z.id);
+    setEditingName(z.name);
+  };
+
+  const commitRename = () => {
+    if (!editingZoneId) return;
+    const trimmed = editingName.trim();
+    if (trimmed) setZones(prev => prev.map(z => z.id === editingZoneId ? { ...z, name: trimmed } : z));
+    setEditingZoneId(null);
+  };
+
+  const TOOLS: { id: Tool; label: string; icon: React.ReactNode }[] = [
+    { id: 'paint', label: 'Paint', icon: <IconBrush /> },
+    { id: 'erase', label: 'Erase', icon: <IconEraser /> },
   ];
 
   if (locked) {
@@ -207,17 +238,18 @@ export function ZonePainter({ project }: { project: Project }) {
         </div>
 
         <div className="zp-viewport">
-          <canvas
-            ref={displayRef}
-            width={CANVAS_SIZE}
-            height={CANVAS_SIZE}
-            className="zp-canvas"
-            style={{ cursor: tool === 'erase' ? 'crosshair' : 'crosshair' }}
-            onMouseDown={() => { isPainting.current = true; }}
-            onMouseUp={() => { isPainting.current = false; }}
-            onMouseLeave={() => { isPainting.current = false; }}
-            onMouseMove={paint}
-          />
+          <div className="zp-canvas-wrapper">
+            <canvas
+              ref={displayRef}
+              width={CANVAS_SIZE}
+              height={CANVAS_SIZE}
+              className="zp-canvas"
+              onMouseDown={() => { isPainting.current = true; }}
+              onMouseUp={() => { isPainting.current = false; }}
+              onMouseLeave={() => { isPainting.current = false; }}
+              onMouseMove={paint}
+            />
+          </div>
         </div>
       </div>
 
@@ -228,7 +260,19 @@ export function ZonePainter({ project }: { project: Project }) {
           {zones.map(z => (
             <div key={z.id} className={`zp-zone-item ${activeZoneId === z.id ? 'active' : ''}`} onClick={() => setActiveZoneId(z.id)}>
               <div className="zp-zone-swatch" style={{ background: z.color }} />
-              <span className="zp-zone-name">{z.name}</span>
+              {editingZoneId === z.id ? (
+                <input
+                  className="zp-zone-name-input"
+                  value={editingName}
+                  autoFocus
+                  onChange={e => setEditingName(e.target.value)}
+                  onBlur={commitRename}
+                  onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setEditingZoneId(null); }}
+                  onClick={e => e.stopPropagation()}
+                />
+              ) : (
+                <span className="zp-zone-name" title="Double-click to rename" onDoubleClick={e => startRenameZone(z, e)}>{z.name}</span>
+              )}
               <button
                 className="zp-zone-vis"
                 onClick={e => { e.stopPropagation(); setZones(prev => prev.map(p => p.id === z.id ? { ...p, visible: !p.visible } : p)); }}
@@ -240,6 +284,22 @@ export function ZonePainter({ project }: { project: Project }) {
           ))}
         </div>
         <button className="zp-add-zone" onClick={addZone}>+ New Zone</button>
+
+        {activeZoneId && (() => {
+          const az = zones.find(z => z.id === activeZoneId);
+          if (!az) return null;
+          return (
+            <div className="zp-zone-details">
+              <div className="zp-panel-header uppercase muted">Description</div>
+              <textarea
+                className="zp-zone-desc"
+                placeholder="What does this zone represent? e.g. 'Main water channel running north–south'"
+                value={az.description}
+                onChange={e => setZones(prev => prev.map(z => z.id === activeZoneId ? { ...z, description: e.target.value } : z))}
+              />
+            </div>
+          );
+        })()}
 
         <div className="zp-panel-header uppercase muted" style={{ marginTop: 8 }}>Brush</div>
         <div className="zp-props">

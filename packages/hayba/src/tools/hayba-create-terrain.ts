@@ -32,7 +32,8 @@ export const createTerrainHandler: ToolHandler = async (args, session) => {
       };
     }
 
-    await session.enqueue(async () => { await session.client.createGraph(validation.data); });
+    const terrainName = args.name as string | undefined;
+    await session.enqueue(async () => { await session.client.createGraph(validation.data, terrainName); });
     const terrainPath = session.client.currentTerrainPath;
 
     let exported: { heightmap: string; normalmap?: string; splatmap?: string } | null = null;

@@ -545,7 +545,7 @@ FString FHaybaMCPCommandHandler::Cmd_CreateGraph(const TSharedPtr<FJsonObject>& 
         }
     }
 
-    FString PackagePath = TEXT("/Game/PCGExBridge/Generated");
+    FString PackagePath = TEXT("/Game/Hayba/Generated");
     FString FullPath = FString::Printf(TEXT("%s/%s"), *PackagePath, *SafeName);
 
     UPackage* Package = CreatePackage(*FullPath);
@@ -618,7 +618,7 @@ FString FHaybaMCPCommandHandler::Cmd_CreateGraph(const TSharedPtr<FJsonObject>& 
                         FString ValueStr;
                         if (Pair.Value->TryGetString(ValueStr))
                         {
-                            Prop->ImportText_Direct(ValueStr, Prop->ContainerPtrToValuePtr<void>(Settings), Settings, PPF_None);
+                            Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(Settings), Settings, PPF_None);
                         }
                     }
                 }

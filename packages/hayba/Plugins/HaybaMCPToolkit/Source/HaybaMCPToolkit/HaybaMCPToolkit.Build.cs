@@ -22,7 +22,8 @@ public class HaybaMCPToolkit : ModuleRules
             "UnrealEd", "Projects", "ToolMenus", "WorkspaceMenuStructure",
             "Sockets", "Networking", "Json", "JsonUtilities",
             "PCG", "HTTP",
-            "Landscape", "LandscapeEditor", "ImageWrapper"
+            "Landscape", "LandscapeEditor", "ImageWrapper",
+            "ApplicationCore"
         });
     }
 }

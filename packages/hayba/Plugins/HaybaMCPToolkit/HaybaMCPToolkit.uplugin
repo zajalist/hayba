@@ -18,7 +18,6 @@
     }
   ],
   "Plugins": [
-    { "Name": "PCG", "Enabled": true },
-    { "Name": "Landscape", "Enabled": true }
+    { "Name": "PCG", "Enabled": true }
   ]
 }

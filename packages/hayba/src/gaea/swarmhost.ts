@@ -974,7 +974,7 @@ export class SwarmHostClient {
       : NODE_CATALOG;
   }
 
-  async createGraph(graph: Graph): Promise<void> {
+  async createGraph(graph: Graph, name?: string): Promise<void> {
     if (this.base) {
       await this.request("POST", "/graph", graph);
       return;
@@ -982,7 +982,8 @@ export class SwarmHostClient {
     // CLI mode: serialise graph to a .terrain file
     const cfg = this.cfg!;
     const terrain = buildTerrainFile(graph, cfg.outputDir);
-    const terrainPath = path.join(cfg.outputDir, "gaea-mcp.terrain");
+    const safeName = name ? name.replace(/[^a-zA-Z0-9_\-]/g, '_') : 'gaea-mcp';
+    const terrainPath = path.join(cfg.outputDir, `${safeName}.terrain`);
     mkdirSync(cfg.outputDir, { recursive: true });
     writeFileSync(terrainPath, serializeGaea(terrain), "utf-8");
     this._currentTerrainPath = terrainPath;

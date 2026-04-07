@@ -1305,7 +1305,7 @@ void SHaybaMCPWizardWidget::SendToMCP(const FString& UserMessage)
 
     FOnClaudeResponse Callback;
     Callback.BindSP(this, &SHaybaMCPWizardWidget::OnClaudeResponse);
-    FHaybaMCPClaudeClient::SendMessage(GetPCGExWizardSystemPrompt(), UserMessage,
+    FHaybaMCPClaudeClient::SendMessage(GetHaybaMCPWizardSystemPrompt(), UserMessage,
         FHaybaMCPSettings::GetSharedApiKey(), S.Model, Callback);
 }
 
