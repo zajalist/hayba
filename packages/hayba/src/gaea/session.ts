@@ -8,6 +8,7 @@ export class SessionManager {
   readonly outputDir: string;
   readonly gaeaExePath: string;
   terrainPath: string | null = null;
+  lastBakedHeightmap: string | null = null;
   gaeaPid: number | null = null;
   private queue: Promise<unknown> = Promise.resolve();
 
