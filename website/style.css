@@ -157,11 +157,11 @@ nav.hide { transform: translateY(-100%); }
 }
 
 .hero-sub {
-  font-size: 0.9rem; color: #383838; line-height: 1.8;
+  font-size: 0.9rem; color: #fff; line-height: 1.8;
   max-width: 520px; margin: 2rem auto 2.5rem;
   opacity: 0; animation: fade-up 0.7s var(--ease-out) 0.8s both;
 }
-.hero-sub strong { color: #555; font-weight: 500; }
+.hero-sub strong { color: #fff; font-weight: 500; }
 
 .hero-ctas {
   display: flex; gap: 0.8rem; justify-content: center; flex-wrap: wrap;
