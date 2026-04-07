@@ -38,6 +38,7 @@ private:
 	FString Cmd_ValidateGraph(const TSharedPtr<FJsonObject>& Params, const FString& Id);
 	FString Cmd_ExecuteGraph(const TSharedPtr<FJsonObject>& Params, const FString& Id);
 	FString Cmd_WizardChat(const TSharedPtr<FJsonObject>& Params, const FString& Id);
+	FString Cmd_ImportLandscape(const TSharedPtr<FJsonObject>& Params, const FString& Id);
 
 	// Graph validation helper
 	TArray<TSharedPtr<FJsonValue>> ValidateGraphJson(const TSharedPtr<FJsonObject>& Graph) const;

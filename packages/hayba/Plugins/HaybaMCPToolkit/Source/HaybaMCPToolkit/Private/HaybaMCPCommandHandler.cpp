@@ -1,4 +1,5 @@
 #include "HaybaMCPCommandHandler.h"
+#include "HaybaMCPLandscapeImporter.h"
 #include "Json.h"
 #include "JsonUtilities.h"
 #include "PCGSettings.h"
@@ -37,6 +38,7 @@ FHaybaMCPCommandHandler::FHaybaMCPCommandHandler()
 	CommandMap.Add(TEXT("validate_graph"), &FHaybaMCPCommandHandler::Cmd_ValidateGraph);
 	CommandMap.Add(TEXT("execute_graph"), &FHaybaMCPCommandHandler::Cmd_ExecuteGraph);
 	CommandMap.Add(TEXT("wizard_chat"), &FHaybaMCPCommandHandler::Cmd_WizardChat);
+	CommandMap.Add(TEXT("import_landscape"), &FHaybaMCPCommandHandler::Cmd_ImportLandscape);
 
 	UE_LOG(LogHaybaMCPCmd, Log, TEXT("Command handler initialized with %d commands"), CommandMap.Num());
 }
@@ -1140,6 +1142,47 @@ FString FHaybaMCPCommandHandler::Cmd_WizardChat(const TSharedPtr<FJsonObject>& P
     {
         Data->SetStringField(TEXT("message"), TEXT("Got it. Based on your input, I'm generating the graph for this step. One moment..."));
     }
+
+    return MakeOkResponse(Id, Data);
+}
+
+FString FHaybaMCPCommandHandler::Cmd_ImportLandscape(const TSharedPtr<FJsonObject>& Params, const FString& Id)
+{
+    FHaybaMCPImportParams ImportParams;
+
+    // Required
+    if (!Params->TryGetStringField(TEXT("heightmapPath"), ImportParams.HeightmapPath) || ImportParams.HeightmapPath.IsEmpty())
+    {
+        return MakeErrorResponse(Id, TEXT("heightmapPath is required"));
+    }
+
+    // Optional with defaults
+    double WorldSizeKm = 8.0;
+    double MaxHeightM  = 600.0;
+    Params->TryGetNumberField(TEXT("worldSizeKm"), WorldSizeKm);
+    Params->TryGetNumberField(TEXT("maxHeightM"),  MaxHeightM);
+    ImportParams.WorldSizeKm = static_cast<float>(WorldSizeKm);
+    ImportParams.MaxHeightM  = static_cast<float>(MaxHeightM);
+
+    Params->TryGetStringField(TEXT("landscapeMaterial"), ImportParams.LandscapeMaterial);
+    Params->TryGetStringField(TEXT("actorLabel"), ImportParams.ActorLabel);
+    if (ImportParams.ActorLabel.IsEmpty()) ImportParams.ActorLabel = TEXT("Hayba_Terrain");
+
+    // Compute scale values for the response (same formula as in the importer)
+    // Resolution is unknown here — the importer reads it; we return approximate values for confirmation
+    const bool bSuccess = FHaybaMCPLandscapeImporter::ImportHeightmap(ImportParams);
+
+    if (!bSuccess)
+    {
+        return MakeErrorResponse(Id, FString::Printf(
+            TEXT("Failed to import landscape from: %s"), *ImportParams.HeightmapPath));
+    }
+
+    TSharedPtr<FJsonObject> Data = MakeShareable(new FJsonObject());
+    Data->SetStringField(TEXT("actorLabel"), ImportParams.ActorLabel);
+    Data->SetStringField(TEXT("heightmapPath"), ImportParams.HeightmapPath);
+    Data->SetNumberField(TEXT("worldSizeKm"), ImportParams.WorldSizeKm);
+    Data->SetNumberField(TEXT("maxHeightM"),  ImportParams.MaxHeightM);
 
     return MakeOkResponse(Id, Data);
 }
