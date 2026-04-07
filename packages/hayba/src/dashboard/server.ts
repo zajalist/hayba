@@ -41,11 +41,19 @@ export async function startDashboard(port: number, host: string): Promise<void> 
     });
   }
 
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const server = app.listen(port, host, () => {
       console.error(`Dashboard listening at http://${host}:${port}`);
       resolve();
     });
-    server.on('error', reject);
+    server.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        console.error(`Dashboard port ${port} already in use — dashboard HTTP skipped, MCP stdio still active`);
+        resolve(); // don't crash the MCP process
+      } else {
+        console.error(`Dashboard server error: ${err.message}`);
+        resolve();
+      }
+    });
   });
 }
