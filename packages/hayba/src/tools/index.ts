@@ -37,6 +37,7 @@ import { getParametersHandler } from './hayba-get-parameters.js';
 import { setParameterHandler } from './hayba-set-parameter.js';
 import { listNodeTypesHandler } from './hayba-list-node-types.js';
 import { cookGraphHandler } from './hayba-cook-graph.js';
+import { importLandscapeHandler } from './hayba-import-landscape.js';
 
 // ── Conventions tool handlers ─────────────────────────────────────────────────
 import { setupConventionsHandler } from './hayba-setup-conventions.js';
@@ -449,6 +450,24 @@ export function registerTools(server: McpServer, session: SessionManager): void 
     },
     async (params) => {
       const result = await analyzeConventionsHandler(params as Record<string, unknown>);
+      return { content: result.content, isError: result.isError };
+    }
+  );
+
+  // ── Landscape Import ────────────────────────────────────────────────────────
+
+  server.tool(
+    'hayba_import_landscape',
+    {
+      heightmapPath: z.string().optional().describe('Absolute path to .r16 or .png heightmap. Defaults to last baked heightmap from session.'),
+      worldSizeKm: z.number().optional().describe('Real-world terrain width and depth in km (default: 8.0).'),
+      maxHeightM: z.number().optional().describe('Maximum terrain height in meters (default: 600.0).'),
+      landscapeMaterial: z.string().optional().describe('UE asset path for landscape material, e.g. "/Game/Materials/Landscape/M_Terrain". Pass "" to import with no material. Resolved from conventions if omitted.'),
+      actorLabel: z.string().optional().describe('Actor label in the UE level (default: Hayba_Terrain).'),
+      projectRoot: z.string().optional().describe('Absolute path to UE project root — used to read project-level conventions.'),
+    },
+    async (params) => {
+      const result = await importLandscapeHandler(params as Record<string, unknown>, session);
       return { content: result.content, isError: result.isError };
     }
   );
