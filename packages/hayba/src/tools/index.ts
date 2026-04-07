@@ -475,7 +475,7 @@ export function registerTools(server: McpServer, session: SessionManager): void 
     }
   );
 
-  // ── Dashboard tools ────────────────────────────────────────────────────────
+  // ── Zone Painter tools ──────────────────────────────────────────────────────
 
   server.tool(
     'hayba_open_zone_painter',

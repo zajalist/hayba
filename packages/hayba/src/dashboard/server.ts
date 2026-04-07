@@ -27,7 +27,10 @@ export async function startDashboard(port: number, host: string): Promise<void> 
     staticDir = join(__dirname, '..', '..', '..', 'dashboard', 'dist');
   }
   if (!existsSync(staticDir)) {
-    staticDir = join(__dirname, '..', '..', '..', 'dashboard');
+    staticDir = join(__dirname, '..', '..', 'dashboard');
+  }
+  if (!existsSync(staticDir)) {
+    staticDir = join(__dirname, '..', '..', '..', 'dashboard', 'dist');
   }
   if (existsSync(staticDir)) {
     app.use(express.static(staticDir));

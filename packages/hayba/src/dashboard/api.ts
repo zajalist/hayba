@@ -99,6 +99,7 @@ export function registerApiRoutes(app: Express): void {
 
   app.get('/api/projects/:projectId', async (req: Request, res: Response) => {
     const project = await getProject(req.params.projectId as string);
+    const project = await getProject(req.params.projectId as string);
     if (!project) return res.status(404).json({ error: 'Project not found' });
     res.json(project);
   });
@@ -122,6 +123,7 @@ export function registerApiRoutes(app: Express): void {
 
   app.get('/api/zones/current/:projectId', async (req: Request, res: Response) => {
     const session = await getCurrentZones(req.params.projectId as string);
+    const session = await getCurrentZones(req.params.projectId as string);
     if (!session) return res.status(404).json({ error: 'No zone submission found' });
     res.json(session);
   });
@@ -135,6 +137,7 @@ export function registerApiRoutes(app: Express): void {
 
   app.get('/api/zones/heightmap/:projectId', async (req: Request, res: Response) => {
     const path = await getHeightmap(req.params.projectId as string);
+    const path = await getHeightmap(req.params.projectId as string);
     res.json({ heightmapPath: path });
   });
 
@@ -146,6 +149,7 @@ export function registerApiRoutes(app: Express): void {
 
   app.get('/api/encyclopedia/:projectId', async (req: Request, res: Response) => {
     const entries = await getEntries(req.params.projectId as string);
+    const entries = await getEntries(req.params.projectId as string);
     res.json(entries);
   });
 
@@ -153,10 +157,12 @@ export function registerApiRoutes(app: Express): void {
     const entry = req.body;
     if (!entry?.id || !entry?.name) return res.status(400).json({ error: 'id and name are required' });
     await addEntry(req.params.projectId as string, entry);
+    await addEntry(req.params.projectId as string, entry);
     res.json({ ok: true });
   });
 
   app.delete('/api/encyclopedia/:projectId/:entryId', async (req: Request, res: Response) => {
+    await deleteEntry(req.params.projectId as string, req.params.entryId as string);
     await deleteEntry(req.params.projectId as string, req.params.entryId as string);
     res.json({ ok: true });
   });

@@ -15,14 +15,13 @@ describe('hayba_open_zone_painter', () => {
     const result = await openZonePainterHandler({ projectName: 'New Scene' }, TEST_BASE);
     expect(result.isError).toBeFalsy();
     const data = JSON.parse(result.content[0].text);
-    expect(data.url).toMatch(/^https?:\/\//);
+    expect(data.url).toContain('127.0.0.1');
     expect(typeof data.projectId).toBe('string');
   });
 
   it('uses existing project when projectId is provided', async () => {
     const first = await openZonePainterHandler({ projectName: 'My Scene' }, TEST_BASE);
     const { projectId } = JSON.parse(first.content[0].text);
-
     const second = await openZonePainterHandler({ projectId }, TEST_BASE);
     const data = JSON.parse(second.content[0].text);
     expect(data.projectId).toBe(projectId);

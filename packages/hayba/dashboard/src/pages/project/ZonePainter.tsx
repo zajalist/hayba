@@ -26,6 +26,7 @@ export function ZonePainter({ project }: { project: Project }) {
   const [submitting, setSubmitting] = useState(false);
   const isPainting = useRef(false);
 
+  // Load heightmap for phase B
   useEffect(() => {
     if (phase === 'b') {
       api.zones.getHeightmap(project.id).then(({ heightmapPath }) => {
@@ -38,24 +39,28 @@ export function ZonePainter({ project }: { project: Project }) {
     }
   }, [phase, project.id]);
 
+  // Redraw display canvas whenever zones/masks change
   const redraw = useCallback(() => {
     const canvas = displayRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d')!;
     ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
+    // Background: heightmap or dark grid
     if (phase === 'b' && heightmapImg) {
       ctx.drawImage(heightmapImg, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
       ctx.fillStyle = 'rgba(0,0,0,0.3)';
       ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
     }
 
+    // Draw each visible zone mask in its color
     zones.forEach(zone => {
       if (!zone.visible) return;
       const maskCanvas = maskCanvases.get(zone.id);
       if (!maskCanvas) return;
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = 0.6;
+      // Tint the mask with zone color
       const tmp = document.createElement('canvas');
       tmp.width = CANVAS_SIZE; tmp.height = CANVAS_SIZE;
       const tCtx = tmp.getContext('2d')!;

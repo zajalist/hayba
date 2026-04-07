@@ -14,6 +14,7 @@ const TYPE_ICONS: Record<string, string> = {
 export function EncyclopediaView({ project }: { project: Project }) {
   const [entries, setEntries] = useState<EncyclopediaEntry[]>([]);
   const [selected, setSelected] = useState<EncyclopediaEntry | null>(null);
+  const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState('');
 
   useEffect(() => {
@@ -46,7 +47,7 @@ export function EncyclopediaView({ project }: { project: Project }) {
         <div className="enc-list-header">
           <input className="input" placeholder="Search..." value={filter} onChange={e => setFilter(e.target.value)} style={{ flex: 1 }} />
           <button className="btn btn-ghost" onClick={importTemplates} title="Import base templates" style={{ padding: '0 8px' }}>↓ Templates</button>
-          <button className="btn btn-primary" onClick={() => {}}>+</button>
+          <button className="btn btn-primary" onClick={() => setAdding(true)}>+</button>
         </div>
         <div className="enc-entries">
           {filtered.map(entry => (

@@ -1,6 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { DEFAULT_PROJECTS_BASE } from './projects.js';
 
 export interface Zone {
