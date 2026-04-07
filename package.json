@@ -1,0 +1,13 @@
+{
+  "name": "hayba",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hayba MCP Toolkit — AI-powered terrain and PCG authoring for Unreal Engine",
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces --if-present",
+    "dev": "npm run dev --workspaces --if-present"
+  },
+  "license": "MIT"
+}

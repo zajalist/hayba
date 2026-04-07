@@ -1,0 +1,25 @@
+{
+  "name": "@hayba/gaea-server",
+  "version": "1.0.0",
+  "description": "HaybaGaea TCP server — bridges UE5 to Gaea terrain generation via AI",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": { "hayba-gaea-server": "./dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  },
+  "engines": { "node": ">=20.0.0" }
+}

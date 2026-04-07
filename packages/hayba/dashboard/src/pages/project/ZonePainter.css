@@ -1,0 +1,194 @@
+.zone-painter {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  background: var(--bg-deep);
+}
+
+.zone-painter--locked {
+  align-items: center;
+  justify-content: center;
+}
+
+.zp-lock-overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 40px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  text-align: center;
+  max-width: 320px;
+}
+
+.zp-lock-icon {
+  color: #444;
+  margin-bottom: 4px;
+}
+
+.zp-lock-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #777;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.zp-lock-msg {
+  font-size: 11px;
+  color: #666;
+  line-height: 1.6;
+}
+
+/* Tool palette */
+.zp-toolbar {
+  width: 36px;
+  background: linear-gradient(180deg, #1c1c1c 0%, #181818 100%);
+  border-right: 1px solid #111;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.zp-tool-btn {
+  width: 26px; height: 26px;
+  border-radius: 3px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+  transition: all 0.1s;
+}
+.zp-tool-btn:hover { background: #2a2a2a; color: var(--text-secondary); }
+.zp-tool-btn.active {
+  background: linear-gradient(180deg, #2c2c2c 0%, #222 100%);
+  color: var(--accent);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 0 0 1px var(--accent-glow);
+}
+.zp-tool-sep { width: 20px; height: 1px; background: #252525; margin: 4px 0; }
+
+/* Canvas area */
+.zp-canvas-area { flex: 1; display: flex; flex-direction: column; background: #161616; overflow: hidden; }
+.zp-canvas-toolbar {
+  height: 32px;
+  background: linear-gradient(180deg, #1e1e1e 0%, #1a1a1a 100%);
+  border-bottom: 1px solid #111;
+  display: flex; align-items: center;
+  padding: 0 10px; gap: 10px; flex-shrink: 0;
+}
+.zp-slider-group { display: flex; align-items: center; gap: 6px; font-size: 9px; }
+.zp-slider-group .slider { width: 72px; }
+.zp-canvas-sep { width: 1px; height: 18px; background: #252525; }
+.zp-swatch { width: 10px; height: 10px; border-radius: 2px; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1); }
+.zp-phase-btn {
+  padding: 3px 10px; font-size: 9px; letter-spacing: 0.5px; text-transform: uppercase;
+  border-radius: 2px; cursor: pointer; color: var(--text-muted);
+  background: var(--bg-panel); border: 1px solid var(--border-soft);
+}
+.zp-phase-btn.active { color: var(--accent); border-color: var(--accent-glow); background: var(--accent-dim); }
+
+.zp-viewport {
+  flex: 1; overflow: hidden; position: relative;
+  /* Dead zone — clearly non-paintable: very dark, diagonal hatch */
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      transparent,
+      transparent 4px,
+      rgba(255,255,255,0.015) 4px,
+      rgba(255,255,255,0.015) 5px
+    ),
+    #0d0d0d;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+
+/* Square canvas wrapper — enforces 1:1 aspect ratio, fills available space */
+.zp-canvas-wrapper {
+  aspect-ratio: 1 / 1;
+  height: 100%;
+  max-height: 100%;
+  max-width: 100%;
+  position: relative;
+  /* Visible paintable boundary */
+  border: 1px solid rgba(255,255,255,0.22);
+  box-shadow:
+    0 0 0 1px #000,
+    0 0 24px rgba(0,0,0,0.8),
+    inset 0 0 0 1px rgba(255,255,255,0.04);
+  flex-shrink: 0;
+  /* Canvas area gets its own grid — distinct from the dead zone outside */
+  background:
+    repeating-linear-gradient(0deg, transparent, transparent 31px, rgba(255,255,255,0.04) 31px, rgba(255,255,255,0.04) 32px),
+    repeating-linear-gradient(90deg, transparent, transparent 31px, rgba(255,255,255,0.04) 31px, rgba(255,255,255,0.04) 32px),
+    #1a1a1a;
+}
+
+.zp-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  /* Canvas is transparent so wrapper background shows through as the grid */
+}
+
+/* Right panel */
+.zp-right {
+  width: 200px; background: #161616;
+  border-left: 1px solid #111;
+  display: flex; flex-direction: column;
+  padding: 0; flex-shrink: 0;
+}
+.zp-panel-header {
+  padding: 8px 10px 4px;
+  font-size: 9px;
+}
+.zp-zone-list { padding: 0 8px; display: flex; flex-direction: column; gap: 2px; }
+.zp-zone-item {
+  display: flex; align-items: center; height: 26px; padding: 0 4px;
+  border-radius: 2px; cursor: pointer; gap: 7px; position: relative;
+  transition: background 0.1s;
+}
+.zp-zone-item:hover { background: #1e1e1e; }
+.zp-zone-item.active { background: #222; }
+.zp-zone-item.active::before { content: ''; position: absolute; left: 0; top: 2px; bottom: 2px; width: 2px; background: var(--accent); border-radius: 1px; }
+.zp-zone-swatch { width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1); }
+.zp-zone-name { flex: 1; font-size: 10px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: text; }
+.zp-zone-name-input {
+  flex: 1; font-size: 10px; color: var(--text-primary);
+  background: #111; border: 1px solid var(--accent-glow);
+  border-radius: 2px; padding: 0 4px; height: 18px;
+  outline: none; min-width: 0;
+}
+.zp-zone-vis { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 11px; padding: 0 2px; }
+.zp-zone-vis:hover { color: var(--text-secondary); }
+.zp-add-zone {
+  margin: 6px 8px; height: 24px;
+  background: var(--bg-panel); border: 1px dashed var(--border-soft); border-radius: 2px;
+  color: var(--text-muted); font-size: 10px; cursor: pointer;
+  transition: all 0.15s;
+}
+.zp-add-zone:hover { border-color: var(--accent-glow); color: var(--accent); }
+.zp-zone-details { padding: 0 8px 4px; }
+.zp-zone-desc {
+  width: 100%; box-sizing: border-box;
+  background: #111; border: 1px solid var(--border-soft);
+  border-radius: 2px; color: var(--text-primary);
+  font-size: 10px; line-height: 1.5;
+  padding: 5px 6px; resize: none; height: 54px;
+  outline: none; font-family: inherit;
+}
+.zp-zone-desc:focus { border-color: var(--accent-glow); }
+.zp-zone-desc::placeholder { color: var(--text-muted); }
+
+.zp-props { padding: 4px 8px; }
+.zp-prop-row { display: flex; align-items: center; height: 22px; gap: 6px; }
+.zp-prop-label { font-size: 9px; width: 60px; flex-shrink: 0; }
+.zp-prop-val { font-size: 9px; width: 28px; text-align: right; }
+.zp-submit { margin: 8px; width: calc(100% - 16px); }

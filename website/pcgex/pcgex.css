@@ -1,0 +1,324 @@
+/* ════════════════════════════════════════════════════════════
+   HAYBAPGCEX — "THE ARCHITECT"
+   Blueprint Blue · Circuit Logic · Engineering Precision
+   ════════════════════════════════════════════════════════════ */
+
+/* ── Custom property overrides ── */
+:root {
+  --bg:            #0A0A0C;
+  --surface:       #0D0D10;
+  --surface2:      #111116;
+  --border:        #0f0f14;
+  --border2:       #191920;
+  --accent:        #4A9EFF;
+  --accent-dim:    rgba(74,158,255,0.08);
+  --accent-mid:    rgba(74,158,255,0.18);
+  --accent-glow:   rgba(74,158,255,0.35);
+  --orange:        #4A9EFF; /* Alias so any base-css orange refs pick up blue */
+  --orange-dim:    rgba(74,158,255,0.08);
+  --orange-mid:    rgba(74,158,255,0.18);
+  --orange-glow:   rgba(74,158,255,0.35);
+  --cyan:          #00D9FF;
+  --grid-line:     rgba(74,158,255,0.06);
+  --mono:          'JetBrains Mono','Cascadia Code','Fira Code','Consolas',monospace;
+}
+
+/* ── Blueprint grid body background ── */
+body {
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 40px 40px;
+  background-position: 0 0;
+}
+
+/* ── Logo pulse → blue ── */
+@keyframes logo-pulse {
+  0%,100% { filter: drop-shadow(0 0 4px rgba(74,158,255,0.2)) brightness(1); }
+  50%      { filter: drop-shadow(0 0 18px rgba(74,158,255,0.8)) brightness(1.3); }
+}
+
+/* ── Hero scanning-line animation ── */
+.hero::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  top: -2px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, var(--cyan) 40%, var(--cyan) 60%, transparent 100%);
+  opacity: 0.45;
+  animation: scan-line 6s linear infinite;
+  pointer-events: none;
+  z-index: 3;
+}
+@keyframes scan-line {
+  0%   { top: -2px; opacity: 0; }
+  5%   { opacity: 0.45; }
+  95%  { opacity: 0.45; }
+  100% { top: 100%; opacity: 0; }
+}
+
+/* ── Blueprint grid overlay div ── */
+.pcgex-grid-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    linear-gradient(rgba(74,158,255,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(74,158,255,0.04) 1px, transparent 1px);
+  background-size: 60px 60px;
+}
+
+/* ── Hero glow → blue ── */
+.hero-glow {
+  background: radial-gradient(ellipse 60% 55% at 50% 60%,
+    rgba(74,158,255,0.06) 0%, transparent 70%);
+}
+
+/* ── Hero badge → monospace, cyan, dashed ── */
+.hero-badge {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  color: var(--cyan);
+  border: 1px dashed rgba(0,217,255,0.3);
+  background: rgba(0,217,255,0.03);
+  letter-spacing: 0.15em;
+}
+.badge-dot {
+  background: var(--cyan);
+  animation: dot-pulse-cyan 2s ease-in-out infinite;
+}
+@keyframes dot-pulse-cyan {
+  0%,100% { box-shadow: 0 0 0 0 rgba(0,217,255,0.7); }
+  50%      { box-shadow: 0 0 0 5px rgba(0,217,255,0); }
+}
+
+/* ── Hero title → tighter ── */
+.hero-title {
+  letter-spacing: -0.02em;
+}
+
+/* ── Accent line → blueprint blue ── */
+.accent-line {
+  color: var(--accent);
+  text-shadow: 0 0 60px rgba(74,158,255,0.5), 0 0 120px rgba(74,158,255,0.2);
+  animation: line-in 0.7s cubic-bezier(0.16,1,0.3,1) 0.54s both;
+}
+@keyframes accent-pulse {
+  0%,100% { text-shadow: 0 0 40px rgba(74,158,255,0.4), 0 0 80px rgba(74,158,255,0.15); }
+  50%      { text-shadow: 0 0 80px rgba(74,158,255,0.7), 0 0 140px rgba(74,158,255,0.3); }
+}
+
+/* ── Buttons → blue ── */
+.btn-primary {
+  background: var(--accent);
+  color: #000 !important;
+}
+.btn-primary:hover {
+  box-shadow: 0 0 20px rgba(74,158,255,0.4);
+  opacity: 0.9;
+}
+.btn-hero-primary {
+  background: var(--accent);
+  color: #000;
+  font-family: var(--mono);
+}
+.btn-hero-primary:hover {
+  box-shadow: 0 0 40px rgba(74,158,255,0.6), 0 8px 30px rgba(74,158,255,0.3);
+}
+.btn-hero-ghost {
+  font-family: var(--mono);
+  border-color: rgba(74,158,255,0.15);
+  color: rgba(74,158,255,0.4);
+}
+.btn-hero-ghost:hover {
+  border-color: rgba(74,158,255,0.3);
+  color: rgba(74,158,255,0.8);
+  background: rgba(74,158,255,0.03);
+}
+
+/* ── Stat suffix → blue ── */
+.stat-suffix { color: var(--accent); }
+
+/* ── Section label → monospace, cyan ── */
+.section-label {
+  font-family: var(--mono);
+  color: var(--cyan);
+  letter-spacing: 0.18em;
+}
+
+/* ── Feature cards → dashed borders ── */
+.feature {
+  border: 1px dashed rgba(74,158,255,0.2);
+  border-right: 1px dashed rgba(74,158,255,0.2);
+}
+.feature:last-child { border-right: 1px dashed rgba(74,158,255,0.2); }
+.feature::before {
+  background: radial-gradient(ellipse 80% 80% at 50% 100%, rgba(74,158,255,0.05), transparent);
+}
+.feature::after {
+  background: var(--accent);
+}
+.feature-icon {
+  border-color: rgba(74,158,255,0.15);
+}
+.feature:hover .feature-icon {
+  border-color: rgba(74,158,255,0.4);
+  background: rgba(74,158,255,0.06);
+  box-shadow: 0 0 15px rgba(74,158,255,0.2);
+}
+.feature-label { color: var(--cyan); }
+.features { border-color: rgba(74,158,255,0.1); }
+
+/* ── Marquee items hover → blue ── */
+.marquee-item:hover {
+  border-color: rgba(74,158,255,0.4);
+  box-shadow: 0 0 40px rgba(74,158,255,0.12), 0 12px 40px rgba(0,0,0,0.6);
+}
+.marquee-item:hover .marquee-item-label { color: var(--accent); }
+
+/* ── Pipeline → blue pulse ── */
+.pipeline {
+  background: var(--surface);
+  border-color: rgba(74,158,255,0.1);
+}
+.pipeline::before {
+  background: radial-gradient(ellipse 50% 100% at 50% 50%, rgba(74,158,255,0.03), transparent);
+}
+.pipeline-pulse {
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+}
+.pipeline-node-inner { border-color: rgba(74,158,255,0.12); }
+.pipeline-node:hover .pipeline-node-inner {
+  border-color: rgba(74,158,255,0.35);
+  box-shadow: 0 0 25px rgba(74,158,255,0.15);
+}
+.pipeline-node[data-node="0"] .pipeline-node-label { color: var(--accent); }
+.pipeline-node[data-node="1"] .pipeline-node-label { color: var(--cyan); }
+.pipeline-node[data-node="2"] .pipeline-node-label { color: rgba(74,158,255,0.5); }
+.pipeline-node[data-node="3"] .pipeline-node-label { color: rgba(0,217,255,0.4); }
+.pipeline-node:hover .pipeline-node-glow {
+  box-shadow: 0 0 30px rgba(74,158,255,0.25);
+}
+
+/* ── Steps → terminal window aesthetic ── */
+.terminal-step {
+  background: #08080C;
+  border: 1px solid rgba(74,158,255,0.15);
+  overflow: hidden;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+.terminal-step:hover {
+  border-color: rgba(74,158,255,0.3);
+  box-shadow: 0 0 20px rgba(74,158,255,0.08);
+}
+.terminal-step-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 1rem;
+  background: #0C0C12;
+  border-bottom: 1px solid rgba(74,158,255,0.1);
+}
+.terminal-dots {
+  display: flex;
+  gap: 0.3rem;
+}
+.terminal-dots span {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+}
+.terminal-dots span:nth-child(1) { background: rgba(74,158,255,0.25); }
+.terminal-dots span:nth-child(2) { background: rgba(74,158,255,0.15); }
+.terminal-dots span:nth-child(3) { background: rgba(74,158,255,0.08); }
+.terminal-step-title {
+  font-family: var(--mono);
+  font-size: 0.52rem;
+  color: var(--cyan);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.7;
+  margin-left: auto;
+}
+.terminal-step-body {
+  padding: 1.5rem 1.5rem 1.75rem;
+}
+
+/* ── HIW steps wrapped as terminal steps ── */
+.howitworks-steps {
+  background: transparent;
+  gap: 1rem;
+}
+.hiw-step {
+  background: transparent;
+  padding: 0;
+}
+.hiw-num {
+  font-family: var(--mono);
+  color: var(--cyan);
+  opacity: 0.8;
+}
+.hiw-content code { color: var(--accent); font-family: var(--mono); }
+
+/* ── Mode cards → blue top bar ── */
+.mode-card::after {
+  background: linear-gradient(90deg, var(--accent), transparent);
+}
+.mode-card-label { color: var(--accent); }
+.tool-chip {
+  background: rgba(74,158,255,0.05);
+  border-color: rgba(74,158,255,0.12);
+  color: var(--accent);
+}
+.tool-chip:hover {
+  background: rgba(74,158,255,0.12);
+  border-color: rgba(74,158,255,0.3);
+  box-shadow: 0 0 10px rgba(74,158,255,0.15);
+}
+
+/* ── Setup steps ── */
+.setup-step-num { color: var(--accent); }
+.setup-list li::marker { color: var(--accent); }
+.setup-step-body p code { color: var(--accent); }
+
+/* ── Code blocks ── */
+.c-cmd { color: var(--accent); }
+.c-comment { color: rgba(74,158,255,0.2); }
+
+/* ── Tabs → blue ── */
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* ── Tools reference ── */
+.tool-row::before { background: var(--accent); }
+.tool-name { color: var(--accent); }
+.tool-desc code { color: var(--accent); }
+.catalog-cat-name { color: var(--accent); }
+
+/* ── Use cases ── */
+.usecase::before {
+  background: radial-gradient(ellipse 70% 70% at 50% 100%, rgba(74,158,255,0.04), transparent);
+}
+.usecase-num { color: var(--cyan); }
+.usecase-example {
+  border-left-color: rgba(74,158,255,0.15);
+}
+.usecase:hover .usecase-example {
+  border-color: rgba(74,158,255,0.35);
+  color: rgba(74,158,255,0.5);
+}
+
+/* ── CTA section ── */
+.cta-glow {
+  background: radial-gradient(ellipse 60% 60% at 50% 50%, rgba(74,158,255,0.07), transparent);
+}
+.cta-title .accent { color: var(--accent); text-shadow: 0 0 60px rgba(74,158,255,0.4); }
+
+/* ── Footer ── */
+.footer-links a:hover { color: var(--accent); }
+
+/* ── Responsive ── */
+@media (max-width: 640px) {
+  .hero::after { display: none; }
+}
