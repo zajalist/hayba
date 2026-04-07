@@ -18,10 +18,13 @@ export async function startDashboard(port: number, host: string): Promise<void> 
   registerApiRoutes(app);
 
   // Serve static files from the dashboard directory
-  // Auto-detect: standalone (../../dashboard) or bundled (../../../dashboard)
-  let staticDir = join(__dirname, '..', '..', 'dashboard');
+  // Auto-detect: prefer dist output, fall back to source or parent locations
+  let staticDir = join(__dirname, '..', '..', 'dashboard', 'dist');
   if (!existsSync(staticDir)) {
-    staticDir = join(__dirname, '..', '..', '..', 'dashboard');
+    staticDir = join(__dirname, '..', '..', 'dashboard');
+  }
+  if (!existsSync(staticDir)) {
+    staticDir = join(__dirname, '..', '..', '..', 'dashboard', 'dist');
   }
   if (existsSync(staticDir)) {
     app.use(express.static(staticDir));
