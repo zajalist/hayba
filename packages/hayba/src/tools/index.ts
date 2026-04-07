@@ -38,6 +38,9 @@ import { setParameterHandler } from './hayba-set-parameter.js';
 import { listNodeTypesHandler } from './hayba-list-node-types.js';
 import { cookGraphHandler } from './hayba-cook-graph.js';
 import { importLandscapeHandler } from './hayba-import-landscape.js';
+import { openZonePainterHandler } from './hayba-open-zone-painter.js';
+import { readZonesHandler } from './hayba-read-zones.js';
+import { setPainterHeightmapHandler } from './hayba-set-painter-heightmap.js';
 
 // ── Conventions tool handlers ─────────────────────────────────────────────────
 import { setupConventionsHandler } from './hayba-setup-conventions.js';
@@ -468,6 +471,44 @@ export function registerTools(server: McpServer, session: SessionManager): void 
     },
     async (params) => {
       const result = await importLandscapeHandler(params as Record<string, unknown>, session);
+      return { content: result.content, isError: result.isError };
+    }
+  );
+
+  // ── Dashboard tools ────────────────────────────────────────────────────────
+
+  server.tool(
+    'hayba_open_zone_painter',
+    {
+      projectId: z.string().optional().describe('Existing project ID. Omit to create a new project.'),
+      projectName: z.string().optional().describe('Name for the new project (used when projectId is omitted).'),
+      phase: z.enum(['a', 'b']).optional().describe('Phase A = blank canvas, Phase B = heightmap overlay (default: a).'),
+    },
+    async (params) => {
+      const result = await openZonePainterHandler(params as Record<string, unknown>);
+      return { content: result.content, isError: result.isError };
+    }
+  );
+
+  server.tool(
+    'hayba_read_zones',
+    {
+      projectId: z.string().describe('Project ID to read submitted zones from.'),
+    },
+    async (params) => {
+      const result = await readZonesHandler(params as Record<string, unknown>);
+      return { content: result.content, isError: result.isError };
+    }
+  );
+
+  server.tool(
+    'hayba_set_painter_heightmap',
+    {
+      projectId: z.string().describe('Project ID to associate the heightmap with.'),
+      heightmapPath: z.string().describe('Absolute path to the baked heightmap PNG or R16 file.'),
+    },
+    async (params) => {
+      const result = await setPainterHeightmapHandler(params as Record<string, unknown>);
       return { content: result.content, isError: result.isError };
     }
   );
