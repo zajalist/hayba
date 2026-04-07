@@ -38,6 +38,7 @@ import { setParameterHandler } from './hayba-set-parameter.js';
 import { listNodeTypesHandler } from './hayba-list-node-types.js';
 import { cookGraphHandler } from './hayba-cook-graph.js';
 import { importLandscapeHandler } from './hayba-import-landscape.js';
+import { readZonesHandler } from './hayba-read-zones.js';
 
 // ── Conventions tool handlers ─────────────────────────────────────────────────
 import { setupConventionsHandler } from './hayba-setup-conventions.js';
@@ -468,6 +469,17 @@ export function registerTools(server: McpServer, session: SessionManager): void 
     },
     async (params) => {
       const result = await importLandscapeHandler(params as Record<string, unknown>, session);
+      return { content: result.content, isError: result.isError };
+    }
+  );
+
+  // ── Zone Painter tools ──────────────────────────────────────────────────────
+
+  server.tool(
+    'hayba_read_zones',
+    { projectId: z.string().describe('Project ID to read zone submissions from') },
+    async (params) => {
+      const result = await readZonesHandler(params as Record<string, unknown>);
       return { content: result.content, isError: result.isError };
     }
   );
