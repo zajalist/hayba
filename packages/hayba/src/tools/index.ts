@@ -39,6 +39,7 @@ import { listNodeTypesHandler } from './hayba-list-node-types.js';
 import { cookGraphHandler } from './hayba-cook-graph.js';
 import { importLandscapeHandler } from './hayba-import-landscape.js';
 import { readZonesHandler } from './hayba-read-zones.js';
+import { setPainterHeightmapHandler } from './hayba-set-painter-heightmap.js';
 
 // ── Conventions tool handlers ─────────────────────────────────────────────────
 import { setupConventionsHandler } from './hayba-setup-conventions.js';
@@ -480,6 +481,18 @@ export function registerTools(server: McpServer, session: SessionManager): void 
     { projectId: z.string().describe('Project ID to read zone submissions from') },
     async (params) => {
       const result = await readZonesHandler(params as Record<string, unknown>);
+      return { content: result.content, isError: result.isError };
+    }
+  );
+
+  server.tool(
+    'hayba_set_painter_heightmap',
+    {
+      projectId: z.string().describe('Project ID to set the heightmap for'),
+      heightmapPath: z.string().describe('Absolute path to the .r16 heightmap file'),
+    },
+    async (params) => {
+      const result = await setPainterHeightmapHandler(params as Record<string, unknown>);
       return { content: result.content, isError: result.isError };
     }
   );
