@@ -30,6 +30,9 @@ export const bakeTerrain: ToolHandler = async (args, session) => {
   let exported: { heightmap: string; normalmap?: string; splatmap?: string } | null = null;
   try {
     exported = await session.enqueue(() => session.client.export(session.outputDir, 'EXR'));
+    if (exported?.heightmap) {
+      session.lastBakedHeightmap = exported.heightmap;
+    }
   } catch {
     // Cook succeeded but export scan failed — not fatal
   }
