@@ -19,7 +19,13 @@ export async function startDashboard(port: number, host: string): Promise<void> 
 
   // Serve static files from the dashboard directory
   // Auto-detect: standalone (../../dashboard) or bundled (../../../dashboard)
-  let staticDir = join(__dirname, '..', '..', 'dashboard');
+  let staticDir = join(__dirname, '..', '..', 'dashboard', 'dist');
+  if (!existsSync(staticDir)) {
+    staticDir = join(__dirname, '..', '..', 'dashboard');
+  }
+  if (!existsSync(staticDir)) {
+    staticDir = join(__dirname, '..', '..', '..', 'dashboard', 'dist');
+  }
   if (!existsSync(staticDir)) {
     staticDir = join(__dirname, '..', '..', '..', 'dashboard');
   }
