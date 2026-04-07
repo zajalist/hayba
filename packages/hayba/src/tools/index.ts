@@ -39,6 +39,7 @@ import { listNodeTypesHandler } from './hayba-list-node-types.js';
 import { cookGraphHandler } from './hayba-cook-graph.js';
 import { importLandscapeHandler } from './hayba-import-landscape.js';
 import { openZonePainterHandler } from './hayba-open-zone-painter.js';
+import { brainstormTerrainHandler, type BrainstormStep } from './hayba-brainstorm-terrain.js';
 import { readZonesHandler } from './hayba-read-zones.js';
 import { setPainterHeightmapHandler } from './hayba-set-painter-heightmap.js';
 
@@ -471,6 +472,26 @@ export function registerTools(server: McpServer, session: SessionManager): void 
     },
     async (params) => {
       const result = await importLandscapeHandler(params as Record<string, unknown>, session);
+      return { content: result.content, isError: result.isError };
+    }
+  );
+
+  // ── Scene workflow ────────────────────────────────────────────────────────────
+
+  server.tool(
+    'hayba_brainstorm_terrain',
+    {
+      step: z.enum(['start', 'biome', 'scale', 'features', 'layout', 'bake', 'foliage', 'done'])
+        .describe('Current step in the brainstorm flow. Always start with "start".'),
+      answer: z.string().optional()
+        .describe('The user\'s answer to the previous step\'s question.'),
+      projectId: z.string().optional()
+        .describe('Project ID — returned by the "layout" step, pass it through on subsequent steps.'),
+      projectName: z.string().optional()
+        .describe('Name for the project, used at the "layout" step when creating the project.'),
+    },
+    async (params) => {
+      const result = await brainstormTerrainHandler(params as Record<string, unknown>);
       return { content: result.content, isError: result.isError };
     }
   );
