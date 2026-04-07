@@ -1,0 +1,11 @@
+.projects-page { display: flex; flex-direction: column; flex: 1; padding: 16px; overflow: auto; }
+.projects-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.projects-title { font-size: 10px; }
+.projects-create-row { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+.projects-create-row .input { flex: 1; max-width: 320px; }
+.projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.project-card { padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+.project-card-name { color: var(--text-primary); font-size: 12px; }
+.project-card-meta { font-size: 10px; }
+.project-card-actions { margin-top: 4px; display: flex; gap: 6px; }
+.projects-empty { color: var(--text-muted); font-size: 11px; padding: 24px 0; }
