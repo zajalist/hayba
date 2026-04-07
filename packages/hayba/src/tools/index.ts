@@ -38,6 +38,7 @@ import { setParameterHandler } from './hayba-set-parameter.js';
 import { listNodeTypesHandler } from './hayba-list-node-types.js';
 import { cookGraphHandler } from './hayba-cook-graph.js';
 import { importLandscapeHandler } from './hayba-import-landscape.js';
+import { openZonePainterHandler } from './hayba-open-zone-painter.js';
 import { readZonesHandler } from './hayba-read-zones.js';
 import { setPainterHeightmapHandler } from './hayba-set-painter-heightmap.js';
 
@@ -475,6 +476,19 @@ export function registerTools(server: McpServer, session: SessionManager): void 
   );
 
   // ── Zone Painter tools ──────────────────────────────────────────────────────
+
+  server.tool(
+    'hayba_open_zone_painter',
+    {
+      projectId: z.string().optional().describe('Existing project ID. Omit to create a new project.'),
+      projectName: z.string().optional().describe('Name for the new project (used when projectId is omitted).'),
+      phase: z.enum(['a', 'b']).optional().describe('Phase A = blank canvas, Phase B = heightmap overlay (default: a).'),
+    },
+    async (params) => {
+      const result = await openZonePainterHandler(params as Record<string, unknown>);
+      return { content: result.content, isError: result.isError };
+    }
+  );
 
   server.tool(
     'hayba_read_zones',
