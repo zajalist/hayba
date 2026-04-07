@@ -4,13 +4,21 @@ import type { Project } from '../types';
 import { ProjectView } from './project/ProjectView';
 import './ProjectsPage.css';
 
-export function ProjectsPage() {
+export function ProjectsPage({ deepLinkProjectId, deepLinkSection }: { deepLinkProjectId?: string; deepLinkSection?: string }) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selected, setSelected] = useState<Project | null>(null);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
 
-  useEffect(() => { api.projects.list().then(setProjects); }, []);
+  useEffect(() => {
+    api.projects.list().then(ps => {
+      setProjects(ps);
+      if (deepLinkProjectId) {
+        const target = ps.find(p => p.id === deepLinkProjectId);
+        if (target) setSelected(target);
+      }
+    });
+  }, [deepLinkProjectId]);
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
@@ -22,7 +30,7 @@ export function ProjectsPage() {
   };
 
   if (selected) {
-    return <ProjectView project={selected} onBack={() => setSelected(null)} />;
+    return <ProjectView project={selected} onBack={() => setSelected(null)} initialSection={deepLinkProjectId === selected.id ? deepLinkSection : undefined} />;
   }
 
   return (

@@ -4,7 +4,7 @@ import { log } from '../logger.js';
 import { getUEClient } from '../tcp-client.js';
 import { loadCatalog, searchCatalog, getCategories } from '../catalog.js';
 import { createProject, getProject, listProjects } from '../projects.js';
-import { submitZones, getCurrentZones, setHeightmap, getHeightmap, getPainterSession, lockPainter } from '../zones.js';
+import { submitZones, getCurrentZones, setHeightmap, getHeightmap, getPainterSession, lockPainter, unlockPainter } from '../zones.js';
 import { getEntries, addEntry, deleteEntry, getBaseTemplates } from '../encyclopedia.js';
 
 /**
@@ -142,6 +142,13 @@ export function registerApiRoutes(app: Express): void {
 
   app.get('/api/zones/painter-session', (_req: Request, res: Response) => {
     res.json(getPainterSession() ?? { unlocked: false });
+  });
+
+  app.post('/api/zones/painter-session', (req: Request, res: Response) => {
+    const { projectId, phase } = req.body as { projectId?: string; phase?: 'a' | 'b' };
+    if (!projectId) return res.status(400).json({ error: 'projectId is required' });
+    unlockPainter(projectId, phase ?? 'a');
+    res.json({ ok: true });
   });
 
   app.delete('/api/zones/painter-session', (_req: Request, res: Response) => {

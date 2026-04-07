@@ -14,10 +14,19 @@
  * the terrain layout. The AI waits for zone submission, then advances to "bake".
  */
 
+
 import type { ToolResult } from './hayba-bake-terrain.js';
 import { createProject, DEFAULT_PROJECTS_BASE } from '../projects.js';
-import { unlockPainter } from '../zones.js';
 import { config } from '../config.js';
+
+async function unlockPainterViaApi(projectId: string, phase: 'a' | 'b'): Promise<void> {
+  const url = `http://${config.dashboardHost}:${config.dashboardPort}/api/zones/painter-session`;
+  await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ projectId, phase }),
+  });
+}
 
 export type BrainstormStep =
   | 'start'
@@ -117,16 +126,16 @@ export async function brainstormTerrainHandler(
     }
 
     case 'layout': {
-      // Create project and unlock painter
+      // Create project and unlock painter via HTTP API (shared with dashboard process)
       const name = projectName ?? answer ?? 'New Scene';
       const project = await createProject(name, base);
-      unlockPainter(project.id, 'a');
+      await unlockPainterViaApi(project.id, 'a');
 
-      const url = `http://${config.dashboardHost}:${config.dashboardPort}`;
+      const url = `http://${config.dashboardHost}:${config.dashboardPort}/#project/${project.id}/zones`;
       result = {
         step: 'layout',
         nextStep: 'bake',
-        prompt: `Zone Painter is unlocked for project "${name}" (ID: ${project.id}).\n\nOpen ${url} → Projects → ${name} → Zone Painter.\n\nPaint your terrain layout zones and click Submit. Then come back and tell me you're done.`,
+        prompt: `Zone Painter is unlocked for project "${name}".\n\nOpen this URL — it will land directly on the Zone Painter:\n${url}\n\nPaint your terrain layout zones and click Submit. Then come back and tell me you're done.`,
         action: `Created project "${name}" (${project.id}). Zone Painter unlocked at Phase A.`,
         painterUrl: url,
         projectId: project.id,
@@ -153,7 +162,7 @@ export async function brainstormTerrainHandler(
       // Terrain is imported — time for foliage/placement zones
       const url = `http://${config.dashboardHost}:${config.dashboardPort}`;
       if (projectId) {
-        unlockPainter(projectId, 'b');
+        await unlockPainterViaApi(projectId, 'b');
       }
       result = {
         step: 'foliage',

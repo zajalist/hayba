@@ -6,8 +6,14 @@ import { EncyclopediaView } from './EncyclopediaView';
 
 type Section = 'Overview' | 'Zone Painter' | 'Encyclopedia';
 
-export function ProjectView({ project, onBack }: { project: Project; onBack: () => void }) {
-  const [section, setSection] = useState<Section>('Overview');
+function resolveSection(s?: string): Section {
+  if (s === 'zones') return 'Zone Painter';
+  if (s === 'encyclopedia') return 'Encyclopedia';
+  return 'Overview';
+}
+
+export function ProjectView({ project, onBack, initialSection }: { project: Project; onBack: () => void; initialSection?: string }) {
+  const [section, setSection] = useState<Section>(resolveSection(initialSection));
 
   const crumbs = [
     { label: 'Projects', onClick: onBack },
