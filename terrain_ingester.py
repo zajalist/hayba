@@ -6,6 +6,11 @@ import re
 import sys
 from pathlib import Path
 
+DEFAULT_ARCHETYPES_PATH = "packages/hayba/src/gaea/knowledge/archetypes.json"
+
+# Batch processing directory
+TERRAIN_EXAMPLES_DIR = r"C:\Users\Admin\AppData\Local\Programs\Gaea 2.0\Examples"
+
 try:
     from litellm import completion
     HAS_LITELLM = True
@@ -200,12 +205,116 @@ def parse_terrain_file(terrain_path: str) -> dict:
     }
 
 
+def process_directory(dir_path: str, mock: bool, output_path: str) -> None:
+    """Process all .terrain files in a directory."""
+    import glob
+    
+    path = Path(dir_path)
+    if not path.exists():
+        print(f"Error: Directory not found: {dir_path}", file=sys.stderr)
+        sys.exit(1)
+    
+    terrain_files = sorted(path.glob("*.terrain"))
+    if not terrain_files:
+        print(f"Error: No .terrain files found in {dir_path}", file=sys.stderr)
+        sys.exit(1)
+    
+    print(f"Processing {len(terrain_files)} .terrain files...", file=sys.stderr)
+    
+    added = 0
+    skipped = 0
+    
+    for terrain_file in terrain_files:
+        try:
+            parsed = parse_terrain_file(str(terrain_file))
+        except Exception as e:
+            print(f"  Skipping {terrain_file.name}: {e}", file=sys.stderr)
+            skipped += 1
+            continue
+        
+        enrichment = enrich_with_llm(
+            parsed["core_topology"],
+            parsed["heuristic_parameters"],
+            mock=mock
+        )
+        
+        result = {
+            "pattern_name": enrichment.get("pattern_name", "Unknown"),
+            "semantic_intent": enrichment.get("semantic_intent", ""),
+            "biome_tags": enrichment.get("biome_tags", []),
+            "core_topology": parsed["core_topology"],
+            "heuristic_parameters": parsed["heuristic_parameters"],
+            "llm_heuristic_parameters": enrichment.get("heuristic_parameters", {}),
+            "_source_file": str(terrain_file)
+        }
+        
+        if append_to_archetypes(result, output_path):
+            print(f"  + {terrain_file.stem}", file=sys.stderr)
+            added += 1
+        else:
+            print(f"  = {terrain_file.stem} (skipped duplicate)", file=sys.stderr)
+            skipped += 1
+    
+    print(f"\nDone: {added} added, {skipped} skipped", file=sys.stderr)
+    """Infer the workflow phase from node topology."""
+    simulation_nodes = {'Erosion2', 'Anastomosis', 'Thermal', 'EasyErosion', 'Crumble', 'Fluvial', 'ThermalShaper'}
+    base_nodes = {'Mountain', 'MountainRange', 'MountainSide', 'Ridge', 'Hillify', 'Perlin', 'Gradient', 'Template', 'RadialGradient', 'Canyon', 'Crater'}
+    lookdev_nodes = {'Surface', 'Craggy', 'Sandstone', 'Color', 'Normal', 'SatMap', 'TextureBase', 'SuperColor', 'ColorErosion', 'GroundTexture'}
+    utility_nodes = {'Combine', 'Mask', 'Clip', 'Clamp', 'Adjust', 'AutoLevel', 'Blur', 'Transform', 'Fold', 'Curvature'}
+    
+    node_set = set(topology)
+    
+    if node_set & simulation_nodes:
+        return 'simulation'
+    elif node_set & lookdev_nodes:
+        return 'lookdev'
+    elif node_set & base_nodes:
+        return 'base'
+    else:
+        return 'utility'
+
+
+def append_to_archetypes(archetype: dict, output_path: str) -> bool:
+    path = Path(output_path)
+    
+    if path.exists():
+        archetypes = json.loads(path.read_text(encoding="utf-8"))
+    else:
+        archetypes = []
+    
+    pattern_name = archetype.get("pattern_name", "Unknown")
+    filename = Path(archetype.get("_source_file", "")).stem
+    source_video_id = f"{filename}#{pattern_name}"
+    
+    for existing in archetypes:
+        if existing.get("source_video_id") == source_video_id:
+            return False
+    
+    enriched = {
+        "pattern_name": pattern_name,
+        "phase": archetype.get("phase") or infer_phase(archetype.get("core_topology", [])),
+        "semantic_intent": archetype.get("semantic_intent", ""),
+        "core_topology": archetype.get("core_topology", []),
+        "heuristic_parameters": archetype.get("heuristic_parameters", {}),
+        "biome_tags": archetype.get("biome_tags", []),
+        "scale_reference": archetype.get("scale_reference"),
+        "source_video_id": source_video_id
+    }
+    
+    archetypes.append(enriched)
+    path.write_text(json.dumps(archetypes, indent=2), encoding="utf-8")
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description="Parse .terrain files and extract node topology/parameters")
     parser.add_argument("--input", required=True, help="Path to .terrain file")
     parser.add_argument("--dry-run", action="store_true", help="Use mock LLM response (for testing)")
     parser.add_argument("--output", help="Output JSON file path (default: stdout)")
     parser.add_argument("--mock", action="store_true", help="Use mock LLM response (alias for --dry-run)")
+    parser.add_argument("--append", "-a", action="store_true", help="Append to archetypes.json")
+    parser.add_argument("--dir", "-d", help="Process all .terrain files in directory")
+    parser.add_argument("--examples", action="store_true", help=f"Process Gaea examples ({TERRAIN_EXAMPLES_DIR})")
     
     args = parser.parse_args()
     
@@ -237,15 +346,32 @@ def main():
         "biome_tags": enrichment.get("biome_tags", []),
         "core_topology": parsed["core_topology"],
         "heuristic_parameters": parsed["heuristic_parameters"],
-        "llm_heuristic_parameters": enrichment.get("heuristic_parameters", {})
+        "llm_heuristic_parameters": enrichment.get("heuristic_parameters", {}),
+        "_source_file": args.input
     }
     
-    json_output = json.dumps(result, indent=2)
+    # Handle batch processing
+    if args.examples:
+        process_directory(TERRAIN_EXAMPLES_DIR, use_mock, args.output or DEFAULT_ARCHETYPES_PATH)
+        return
     
-    if args.output:
-        Path(args.output).write_text(json_output, encoding="utf-8")
+    if args.dir:
+        process_directory(args.dir, use_mock, args.output or DEFAULT_ARCHETYPES_PATH)
+        return
+    
+    if args.append:
+        output_path = args.output or DEFAULT_ARCHETYPES_PATH
+        if append_to_archetypes(result, output_path):
+            print(f"Appended archetype to {output_path}", file=sys.stderr)
+        else:
+            print(f"Skipped duplicate archetype in {output_path}", file=sys.stderr)
     else:
-        print(json_output)
+        json_output = json.dumps(result, indent=2)
+        
+        if args.output:
+            Path(args.output).write_text(json_output, encoding="utf-8")
+        else:
+            print(json_output)
 
 
 if __name__ == "__main__":
