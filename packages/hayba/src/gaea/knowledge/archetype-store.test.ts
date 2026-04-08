@@ -1,5 +1,27 @@
 import { describe, it, expect } from 'vitest';
 import { GaeaArchetypeSchema, SearchInputSchema } from './types.js';
+import { embed, cosineSimilarity } from './embedder.js';
+
+describe('embedder', () => {
+  it('produces a non-zero vector for a text input', async () => {
+    const vec = await embed('coastal cliffs with erosion');
+    expect(vec.length).toBe(384);
+    expect(vec.some(v => v !== 0)).toBe(true);
+  }, 30_000);
+
+  it('cosine similarity: identical texts score ~1.0', async () => {
+    const a = await embed('desert canyon');
+    const b = await embed('desert canyon');
+    expect(cosineSimilarity(a, b)).toBeCloseTo(1.0, 2);
+  }, 30_000);
+
+  it('cosine similarity: related texts score higher than unrelated', async () => {
+    const query = await embed('snowy mountain peaks');
+    const related = await embed('alpine ridges with snow coverage');
+    const unrelated = await embed('tropical beach with palm trees');
+    expect(cosineSimilarity(query, related)).toBeGreaterThan(cosineSimilarity(query, unrelated));
+  }, 30_000);
+});
 
 describe('GaeaArchetypeSchema', () => {
   it('validates a well-formed archetype entry', () => {
