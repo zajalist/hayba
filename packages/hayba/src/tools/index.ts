@@ -21,6 +21,9 @@ import { parameterizeGraphInputs } from './parameterize-graph-inputs.js';
 import { queryPcgexDocs, type QueryPcgexDocsParams } from './query-pcgex-docs.js';
 import { initiateInfrastructureBrainstorm } from './initiate-infrastructure-brainstorm.js';
 
+// ── Knowledge tool handlers ───────────────────────────────────────────────────
+import { searchGaeaArchetypes } from './search-gaea-archetypes.js';
+
 // ── Gaea tool handlers ────────────────────────────────────────────────────────
 import { bakeTerrain } from './hayba-bake-terrain.js';
 import { createTerrainHandler } from './hayba-create-terrain.js';
@@ -260,6 +263,22 @@ export function registerTools(server: McpServer, session: SessionManager): void 
     }
   );
 
+  // ── Knowledge tools ──────────────────────────────────────────────────────────
+
+  server.tool(
+    'hayba_search_gaea_archetypes',
+    {
+      query: z.string().describe('Natural language terrain idea, e.g. "frozen coastal cliffs"'),
+      biome_tags: z.array(z.string()).optional().describe('Filter to archetypes matching these biomes'),
+      topology_filter: z.array(z.string()).optional().describe('Boost archetypes containing these Gaea node types'),
+      limit: z.number().int().optional().default(3).describe('Max results (default: 3)'),
+    },
+    async (params) => {
+      const result = await searchGaeaArchetypes(params);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
   // ── Gaea tools ───────────────────────────────────────────────────────────────
 
   server.tool(
@@ -492,7 +511,7 @@ export function registerTools(server: McpServer, session: SessionManager): void 
         .describe('Name for the project, used at the "layout" step when creating the project.'),
     },
     async (params) => {
-      const result = await brainstormTerrainHandler(params as Record<string, unknown>);
+      const result = await brainstormTerrainHandler(params as Record<string, unknown>, session);
       return { content: result.content, isError: result.isError };
     }
   );
