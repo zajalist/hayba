@@ -521,6 +521,10 @@ export function registerTools(server: McpServer, session: SessionManager): void 
         .describe('Project ID — returned by the "layout" step, pass it through on subsequent steps.'),
       projectName: z.string().optional()
         .describe('Name for the project, used at the "layout" step when creating the project.'),
+      biomeAnswer: z.string().optional()
+        .describe('The biome answer from step "biome" — used for archetype search in preview.'),
+      featureAnswer: z.string().optional()
+        .describe('The feature answer from step "features" — used for archetype search in preview.'),
     },
     async (params) => {
       const result = await brainstormTerrainHandler(params as Record<string, unknown>, session);

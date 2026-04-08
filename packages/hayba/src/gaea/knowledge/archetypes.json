@@ -7728,5 +7728,1676 @@
     ],
     "scale_reference": null,
     "source_video_id": "Using Compare#Mock Pattern (Dry Run)"
+  },
+  {
+    "pattern_name": "Mock Pattern (Dry Run)",
+    "phase": "simulation",
+    "semantic_intent": "Mock terrain intent - dry run mode",
+    "core_topology": [
+      "Combine",
+      "Adjust",
+      "Cracks",
+      "Combine",
+      "Height",
+      "Warp",
+      "Combine",
+      "SatMap",
+      "Adjust",
+      "ColorErosion",
+      "TextureBase",
+      "Aperture",
+      "Blur",
+      "SatMap",
+      "Combine",
+      "Cracks",
+      "Slope",
+      "Blur",
+      "Warp",
+      "Combine",
+      "Combine",
+      "Height",
+      "Blur",
+      "Warp",
+      "SatMap",
+      "Adjust",
+      "Wizard2",
+      "Adjust",
+      "Warp",
+      "Combine",
+      "Adjust",
+      "SlopeBlur",
+      "Adjust",
+      "Combine",
+      "Combine",
+      "SatMap",
+      "Cracks",
+      "Draw",
+      "TextureBase",
+      "Lake",
+      "Warp",
+      "Adjust",
+      "Normals",
+      "Island",
+      "Sea",
+      "Aperture",
+      "Combine",
+      "FlowMap",
+      "ColorErosion",
+      "Adjust",
+      "Combine",
+      "Perlin",
+      "Adjust",
+      "Slope",
+      "LinearGradient",
+      "Combine",
+      "Chokepoint",
+      "LightX",
+      "Combine",
+      "Combine",
+      "LinearGradient",
+      "VariableBlur",
+      "Combine",
+      "Adjust",
+      "Combine",
+      "Adjust",
+      "Rivers",
+      "Adjust",
+      "SatMap",
+      "Erosion2",
+      "Combine",
+      "ThermalShaper",
+      "Combine",
+      "Adjust",
+      "Combine",
+      "Combine",
+      "Blur",
+      "CLUTer",
+      "Cartography"
+    ],
+    "heuristic_parameters": {
+      "Combine": {
+        "Ratio": {
+          "value": 1.0,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Mode": {
+          "value": "Multiply",
+          "reason": "non-default (default: Blend)"
+        },
+        "RenderIntentOverride": {
+          "value": "Mask",
+          "reason": "non-standard parameter"
+        }
+      },
+      "SatMap": {
+        "Library": {
+          "value": "Green",
+          "reason": "non-standard parameter"
+        },
+        "LibraryItem": {
+          "value": 97,
+          "reason": "non-standard parameter"
+        },
+        "Saturation": {
+          "value": -0.45094287,
+          "reason": "non-standard parameter"
+        },
+        "Lightness": {
+          "value": -0.3443564,
+          "reason": "non-standard parameter"
+        },
+        "GraphIndex": {
+          "value": 1,
+          "reason": "non-standard parameter"
+        }
+      },
+      "ColorErosion": {
+        "TransportDistance": {
+          "value": 0.09720579,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Blend": {
+          "value": 0.18235856,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Seed": {
+          "value": 47636,
+          "reason": "non-default (default: 0)"
+        },
+        "StateOverride": {
+          "value": "Bypassed",
+          "reason": "non-standard parameter"
+        },
+        "GraphIndex": {
+          "value": 1,
+          "reason": "non-standard parameter"
+        },
+        "RenderIntentOverride": {
+          "value": "Color",
+          "reason": "non-standard parameter"
+        }
+      },
+      "TextureBase": {
+        "Slope": {
+          "value": 0.67429626,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Scale": {
+          "value": 0.3422383,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Soil": {
+          "value": 0.38938233,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Patches": {
+          "value": 0.70914185,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Seed": {
+          "value": 23637,
+          "reason": "non-default (default: 0)"
+        },
+        "GraphIndex": {
+          "value": 1,
+          "reason": "non-standard parameter"
+        }
+      },
+      "Erosion2": {
+        "Duration": {
+          "value": 135.47206,
+          "reason": "non-default (default: 50.0)"
+        },
+        "Downcutting": {
+          "value": 0.74398744,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Seed": {
+          "value": 30250,
+          "reason": "non-default (default: 0)"
+        },
+        "CoarseSedimentsDischargeAmount": {
+          "value": 0.8957871,
+          "reason": "non-default (default: 0.5)"
+        },
+        "CoarseSedimentsDischargeAngle": {
+          "value": 12.073171,
+          "reason": "non-default (default: 30.0)"
+        },
+        "Shape": {
+          "value": 0.825977,
+          "reason": "non-standard parameter"
+        },
+        "ShapeSharpness": {
+          "value": 0.36273572,
+          "reason": "non-default (default: 0.5)"
+        },
+        "ShapeDetailScale": {
+          "value": 0.68929607,
+          "reason": "non-default (default: 0.5)"
+        }
+      },
+      "ThermalShaper": {
+        "Influence": {
+          "value": 0.80138016,
+          "reason": "non-standard parameter"
+        },
+        "Shape": {
+          "value": -0.032659195,
+          "reason": "non-standard parameter"
+        }
+      }
+    },
+    "biome_tags": [
+      "mock"
+    ],
+    "scale_reference": null,
+    "source_video_id": "auto_continentv2005#Mock Pattern (Dry Run)"
+  },
+  {
+    "pattern_name": "Mock Pattern (Dry Run)",
+    "phase": "simulation",
+    "semantic_intent": "Mock terrain intent - dry run mode",
+    "core_topology": [
+      "SatMap",
+      "Sea",
+      "Edge",
+      "Erosion2",
+      "WaterColor",
+      "Tint",
+      "Height",
+      "Combine",
+      "Chokepoint",
+      "SatMap",
+      "Adjust",
+      "Combine",
+      "HSL",
+      "EasyErosion",
+      "Combine",
+      "Combine",
+      "EasyErosion",
+      "Combine",
+      "Peaks",
+      "Height",
+      "RockNoise",
+      "Hemisphere",
+      "SuperColor",
+      "TextureBase",
+      "Combine",
+      "Accumulator",
+      "TextureBase",
+      "Combine",
+      "Hemisphere",
+      "Island",
+      "SoftClip",
+      "Distance",
+      "Combine",
+      "Combine",
+      "SatMap",
+      "Mountain",
+      "Accumulator",
+      "Volcano",
+      "Combine",
+      "Transform",
+      "Slump"
+    ],
+    "heuristic_parameters": {
+      "SatMap": {
+        "LibraryItem": {
+          "value": 493,
+          "reason": "non-standard parameter"
+        }
+      },
+      "Erosion2": {
+        "Duration": {
+          "value": 14.277936,
+          "reason": "non-default (default: 50.0)"
+        },
+        "Downcutting": {
+          "value": 0.49370652,
+          "reason": "non-default (default: 0.5)"
+        },
+        "ErosionScale": {
+          "value": 476.61234,
+          "reason": "non-standard parameter"
+        },
+        "Seed": {
+          "value": 20636,
+          "reason": "non-default (default: 0)"
+        }
+      },
+      "Combine": {
+        "Ratio": {
+          "value": 1.0,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Mode": {
+          "value": "Add",
+          "reason": "non-default (default: Blend)"
+        }
+      },
+      "EasyErosion": {
+        "Style": {
+          "value": "Withered",
+          "reason": "non-default (default: Simple)"
+        }
+      },
+      "SuperColor": {
+        "Seed": {
+          "value": 43239,
+          "reason": "non-default (default: 0)"
+        },
+        "Library": {
+          "value": "Sand",
+          "reason": "non-standard parameter"
+        },
+        "LibraryItem": {
+          "value": 4,
+          "reason": "non-standard parameter"
+        },
+        "Bias": {
+          "value": -0.076642334,
+          "reason": "non-default (default: 0.5)"
+        }
+      },
+      "TextureBase": {
+        "Slope": {
+          "value": 0.35856107,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Scale": {
+          "value": 0.37905636,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Peaks": {
+          "value": 0.44054228,
+          "reason": "non-standard parameter"
+        },
+        "Seed": {
+          "value": 47802,
+          "reason": "non-default (default: 0)"
+        }
+      },
+      "Mountain": {
+        "Scale": {
+          "value": 0.69523954,
+          "reason": "non-default (default: 1.0)"
+        },
+        "Bulk": {
+          "value": "High",
+          "reason": "non-default (default: Medium)"
+        },
+        "Seed": {
+          "value": 27853,
+          "reason": "non-default (default: 0)"
+        }
+      },
+      "Transform": {
+        "Rotate": {
+          "value": 180.0,
+          "reason": "non-standard parameter"
+        }
+      }
+    },
+    "biome_tags": [
+      "mock"
+    ],
+    "scale_reference": null,
+    "source_video_id": "Help 1 (volcanic island)001#Mock Pattern (Dry Run)"
+  },
+  {
+    "pattern_name": "Mock Pattern (Dry Run)",
+    "phase": "lookdev",
+    "semantic_intent": "Mock terrain intent - dry run mode",
+    "core_topology": [
+      "Adjust",
+      "Trees",
+      "SatMap",
+      "Aperture",
+      "TextureBase",
+      "SatMap",
+      "MountainSide",
+      "Combine",
+      "Adjust"
+    ],
+    "heuristic_parameters": {
+      "SatMap": {
+        "LibraryItem": {
+          "value": 83,
+          "reason": "non-standard parameter"
+        }
+      },
+      "TextureBase": {
+        "Seed": {
+          "value": 17364,
+          "reason": "non-default (default: 0)"
+        }
+      },
+      "MountainSide": {
+        "Seed": {
+          "value": 34800,
+          "reason": "non-default (default: 0)"
+        }
+      },
+      "Combine": {
+        "Ratio": {
+          "value": 1.0,
+          "reason": "non-default (default: 0.5)"
+        },
+        "RenderIntentOverride": {
+          "value": "Color",
+          "reason": "non-standard parameter"
+        }
+      }
+    },
+    "biome_tags": [
+      "mock"
+    ],
+    "scale_reference": null,
+    "source_video_id": "Help 11 (Tree colourisation)#Mock Pattern (Dry Run)"
+  },
+  {
+    "pattern_name": "Mock Pattern (Dry Run)",
+    "phase": "lookdev",
+    "semantic_intent": "Mock terrain intent - dry run mode",
+    "core_topology": [
+      "TextureBaker",
+      "SatMap",
+      "Mesher",
+      "Canyon",
+      "TextureBase",
+      "Normals"
+    ],
+    "heuristic_parameters": {
+      "SatMap": {
+        "LibraryItem": {
+          "value": 541,
+          "reason": "non-standard parameter"
+        }
+      },
+      "TextureBase": {
+        "Slope": {
+          "value": 0.7558422,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Seed": {
+          "value": 14424,
+          "reason": "non-default (default: 0)"
+        }
+      }
+    },
+    "biome_tags": [
+      "mock"
+    ],
+    "scale_reference": null,
+    "source_video_id": "Help 6 (Basic setup)#Mock Pattern (Dry Run)"
+  },
+  {
+    "pattern_name": "Mock Pattern (Dry Run)",
+    "phase": "lookdev",
+    "semantic_intent": "Mock terrain intent - dry run mode",
+    "core_topology": [
+      "TextureBaker",
+      "SatMap",
+      "Mesher",
+      "Canyon",
+      "TextureBase",
+      "AO",
+      "Normals"
+    ],
+    "heuristic_parameters": {
+      "SatMap": {
+        "LibraryItem": {
+          "value": 541,
+          "reason": "non-standard parameter"
+        }
+      },
+      "TextureBase": {
+        "Slope": {
+          "value": 0.7558422,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Seed": {
+          "value": 14424,
+          "reason": "non-default (default: 0)"
+        }
+      }
+    },
+    "biome_tags": [
+      "mock"
+    ],
+    "scale_reference": null,
+    "source_video_id": "Help 6 (Basic TexBaker setup)#Mock Pattern (Dry Run)"
+  },
+  {
+    "pattern_name": "Mock Pattern (Dry Run)",
+    "phase": "base",
+    "semantic_intent": "Mock terrain intent - dry run mode",
+    "core_topology": [
+      "Constant",
+      "Constant",
+      "Hemisphere",
+      "Canyon",
+      "Combine",
+      "Blur",
+      "Constant",
+      "Transform",
+      "Combine",
+      "Mountain"
+    ],
+    "heuristic_parameters": {
+      "Combine": {
+        "Ratio": {
+          "value": 1.0,
+          "reason": "non-default (default: 0.5)"
+        }
+      },
+      "Transform": {
+        "OffsetX": {
+          "value": 1.0,
+          "reason": "non-default (default: 0.0)"
+        },
+        "Uniform": {
+          "value": false,
+          "reason": "non-standard parameter"
+        },
+        "ScaleX": {
+          "value": 0.19867244,
+          "reason": "non-default (default: 1.0)"
+        },
+        "RenderIntentOverride": {
+          "value": "Mask",
+          "reason": "non-standard parameter"
+        }
+      },
+      "Mountain": {
+        "Scale": {
+          "value": 0.61259484,
+          "reason": "non-default (default: 1.0)"
+        },
+        "Height": {
+          "value": 3.0,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Seed": {
+          "value": 43644,
+          "reason": "non-default (default: 0)"
+        }
+      }
+    },
+    "biome_tags": [
+      "mock"
+    ],
+    "scale_reference": null,
+    "source_video_id": "Help 7 (Edge blending)#Mock Pattern (Dry Run)"
+  },
+  {
+    "pattern_name": "Mock Pattern (Dry Run)",
+    "phase": "utility",
+    "semantic_intent": "Mock terrain intent - dry run mode",
+    "core_topology": [
+      "Volcano",
+      "Hemisphere",
+      "Lake"
+    ],
+    "heuristic_parameters": {},
+    "biome_tags": [
+      "mock"
+    ],
+    "scale_reference": null,
+    "source_video_id": "Help 8 (lake precipitation)#Mock Pattern (Dry Run)"
+  },
+  {
+    "pattern_name": "Mock Pattern (Dry Run)",
+    "phase": "simulation",
+    "semantic_intent": "Mock terrain intent - dry run mode",
+    "core_topology": [
+      "Combine",
+      "Transpose",
+      "Combine",
+      "Height",
+      "Lichtenberg",
+      "EasyErosion",
+      "Blur",
+      "Lichtenberg",
+      "Voronoi",
+      "Lichtenberg",
+      "Combine",
+      "Erosion2",
+      "Adjust",
+      "Lichtenberg",
+      "Erosion2",
+      "Adjust",
+      "Combine",
+      "Erosion2",
+      "Voronoi",
+      "Peaks",
+      "Hemisphere"
+    ],
+    "heuristic_parameters": {
+      "Combine": {
+        "Ratio": {
+          "value": 1.0,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Mode": {
+          "value": "Max",
+          "reason": "non-default (default: Blend)"
+        }
+      },
+      "EasyErosion": {
+        "Style": {
+          "value": "Rocky",
+          "reason": "non-default (default: Simple)"
+        },
+        "Influence": {
+          "value": 0.03373058,
+          "reason": "non-default (default: 0.5)"
+        }
+      },
+      "Erosion2": {
+        "Duration": {
+          "value": 12.597278,
+          "reason": "non-default (default: 50.0)"
+        },
+        "Downcutting": {
+          "value": 0.20186406,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Seed": {
+          "value": 11690,
+          "reason": "non-default (default: 0)"
+        },
+        "SuspendedLoadDischargeAngle": {
+          "value": 30.59161,
+          "reason": "non-standard parameter"
+        },
+        "BedLoadDischargeAmount": {
+          "value": 1.0,
+          "reason": "non-default (default: 0.5)"
+        },
+        "BedLoadDischargeAngle": {
+          "value": 40.12389,
+          "reason": "non-standard parameter"
+        }
+      }
+    },
+    "biome_tags": [
+      "mock"
+    ],
+    "scale_reference": null,
+    "source_video_id": "Help 9 (Tall mountains)#Mock Pattern (Dry Run)"
+  },
+  {
+    "pattern_name": "Mock Pattern (Dry Run)",
+    "phase": "simulation",
+    "semantic_intent": "Mock terrain intent - dry run mode",
+    "core_topology": [
+      "Sandstone",
+      "Mixer",
+      "Erosion2",
+      "SatMap",
+      "Height",
+      "SatMap",
+      "Rockscape",
+      "Erosion2",
+      "Erosion2",
+      "RadialGradient",
+      "Height",
+      "Sandstone",
+      "TextureBase",
+      "Rockscape",
+      "Adjust",
+      "FlowMap",
+      "Layers",
+      "Erosion2",
+      "Outcrops",
+      "Shaper"
+    ],
+    "heuristic_parameters": {
+      "Erosion2": {
+        "Duration": {
+          "value": 14.0,
+          "reason": "non-default (default: 50.0)"
+        },
+        "Downcutting": {
+          "value": 0.21,
+          "reason": "non-default (default: 0.5)"
+        },
+        "ErosionScale": {
+          "value": 300.0,
+          "reason": "non-standard parameter"
+        },
+        "Seed": {
+          "value": 45219,
+          "reason": "non-default (default: 0)"
+        },
+        "BedLoadDischargeAmount": {
+          "value": 1.0,
+          "reason": "non-default (default: 0.5)"
+        },
+        "CoarseSedimentsDischargeAmount": {
+          "value": 1.0,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Shape": {
+          "value": 0.01,
+          "reason": "non-standard parameter"
+        },
+        "GraphIndex": {
+          "value": 1,
+          "reason": "non-standard parameter"
+        }
+      },
+      "SatMap": {
+        "LibraryItem": {
+          "value": 65,
+          "reason": "non-standard parameter"
+        },
+        "Bias": {
+          "value": -0.05,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Hue": {
+          "value": 0.08,
+          "reason": "non-standard parameter"
+        },
+        "Saturation": {
+          "value": 0.2,
+          "reason": "non-standard parameter"
+        },
+        "GraphIndex": {
+          "value": 1,
+          "reason": "non-standard parameter"
+        }
+      },
+      "TextureBase": {
+        "Slope": {
+          "value": 0.15,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Scale": {
+          "value": 0.55,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Soil": {
+          "value": 0.65,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Chaos": {
+          "value": 0.14,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Peaks": {
+          "value": 0.03,
+          "reason": "non-standard parameter"
+        },
+        "Seed": {
+          "value": 38710,
+          "reason": "non-default (default: 0)"
+        },
+        "GraphIndex": {
+          "value": 1,
+          "reason": "non-standard parameter"
+        }
+      }
+    },
+    "biome_tags": [
+      "mock"
+    ],
+    "scale_reference": null,
+    "source_video_id": "lamentis1#Mock Pattern (Dry Run)"
+  },
+  {
+    "pattern_name": "Mock Pattern (Dry Run)",
+    "phase": "simulation",
+    "semantic_intent": "Mock terrain intent - dry run mode",
+    "core_topology": [
+      "LightX",
+      "Blur",
+      "Mixer",
+      "File",
+      "Sharpen",
+      "SatMap",
+      "SatMap",
+      "Mask",
+      "TextureBase",
+      "Erosion2",
+      "Slope"
+    ],
+    "heuristic_parameters": {
+      "SatMap": {
+        "Library": {
+          "value": "Green",
+          "reason": "non-standard parameter"
+        },
+        "LibraryItem": {
+          "value": 206,
+          "reason": "non-standard parameter"
+        },
+        "Rough": {
+          "value": "Low",
+          "reason": "non-default (default: Med)"
+        }
+      },
+      "TextureBase": {
+        "Scale": {
+          "value": 0.34425303,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Seed": {
+          "value": 30616,
+          "reason": "non-default (default: 0)"
+        }
+      },
+      "Erosion2": {
+        "Duration": {
+          "value": 6.285302,
+          "reason": "non-default (default: 50.0)"
+        },
+        "ErosionScale": {
+          "value": 37.71854,
+          "reason": "non-standard parameter"
+        },
+        "Seed": {
+          "value": 43087,
+          "reason": "non-default (default: 0)"
+        }
+      }
+    },
+    "biome_tags": [
+      "mock"
+    ],
+    "scale_reference": null,
+    "source_video_id": "PolandSwietokrzyskieTerrain#Mock Pattern (Dry Run)"
+  },
+  {
+    "pattern_name": "Mock Pattern (Dry Run)",
+    "phase": "simulation",
+    "semantic_intent": "Mock terrain intent - dry run mode",
+    "core_topology": [
+      "Combine",
+      "Erosion2",
+      "Stratify",
+      "Blur",
+      "Slope",
+      "Adjust",
+      "Combine",
+      "FractalTerraces",
+      "Combine",
+      "SatMap",
+      "Rivers",
+      "Combine",
+      "Island",
+      "Roughen",
+      "Autolevel",
+      "FractalTerraces",
+      "Combine",
+      "Threshold",
+      "GraphicEQ",
+      "SatMap",
+      "ColorErosion",
+      "Adjust",
+      "Sandstone",
+      "Adjust",
+      "SatMap",
+      "Blur",
+      "GraphicEQ"
+    ],
+    "heuristic_parameters": {
+      "Combine": {
+        "Clamp": {
+          "value": "Clamp",
+          "reason": "non-standard parameter"
+        },
+        "IsMaskable": {
+          "value": true,
+          "reason": "non-standard parameter"
+        }
+      },
+      "Erosion2": {
+        "Duration": {
+          "value": 4.8201823,
+          "reason": "non-default (default: 50.0)"
+        },
+        "Downcutting": {
+          "value": 0.8138058,
+          "reason": "non-default (default: 0.5)"
+        },
+        "ErosionScale": {
+          "value": 75.91747,
+          "reason": "non-standard parameter"
+        },
+        "Seed": {
+          "value": 26640,
+          "reason": "non-default (default: 0)"
+        },
+        "SuspendedLoadDischargeAmount": {
+          "value": 1.0,
+          "reason": "non-default (default: 0.1)"
+        },
+        "SuspendedLoadDischargeAngle": {
+          "value": 24.0,
+          "reason": "non-standard parameter"
+        },
+        "BedLoadDischargeAngle": {
+          "value": 15.0,
+          "reason": "non-standard parameter"
+        },
+        "CoarseSedimentsDischargeAmount": {
+          "value": 0.26382628,
+          "reason": "non-default (default: 0.5)"
+        },
+        "CoarseSedimentsDischargeAngle": {
+          "value": 6.3416634,
+          "reason": "non-default (default: 30.0)"
+        },
+        "Shape": {
+          "value": 0.6079476,
+          "reason": "non-standard parameter"
+        },
+        "ShapeSharpness": {
+          "value": 0.086890645,
+          "reason": "non-default (default: 0.5)"
+        },
+        "RenderIntentOverride": {
+          "value": "Heightfield",
+          "reason": "non-standard parameter"
+        },
+        "IsMaskable": {
+          "value": true,
+          "reason": "non-standard parameter"
+        }
+      },
+      "SatMap": {
+        "Library": {
+          "value": "Rock",
+          "reason": "non-standard parameter"
+        },
+        "LibraryItem": {
+          "value": 353,
+          "reason": "non-standard parameter"
+        },
+        "Bias": {
+          "value": 0.71364194,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Enhance": {
+          "value": "Autolevel",
+          "reason": "non-default (default: None)"
+        }
+      },
+      "ColorErosion": {
+        "TransportDistance": {
+          "value": 1.44552,
+          "reason": "non-default (default: 0.5)"
+        },
+        "SedimentDensity": {
+          "value": 0.7031954,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Blend": {
+          "value": 0.79844326,
+          "reason": "non-default (default: 0.5)"
+        },
+        "ColorHold": {
+          "value": 1.0,
+          "reason": "non-default (default: 0.5)"
+        },
+        "FlowVolume": {
+          "value": 1.0,
+          "reason": "non-standard parameter"
+        },
+        "Seed": {
+          "value": 27032,
+          "reason": "non-default (default: 0)"
+        },
+        "IsMaskable": {
+          "value": true,
+          "reason": "non-standard parameter"
+        }
+      }
+    },
+    "biome_tags": [
+      "mock"
+    ],
+    "scale_reference": null,
+    "source_video_id": "RiverErosion_Sample#Mock Pattern (Dry Run)"
+  },
+  {
+    "pattern_name": "Mock Pattern (Dry Run)",
+    "phase": "base",
+    "semantic_intent": "Mock terrain intent - dry run mode",
+    "core_topology": [
+      "MountainRange",
+      "SlopeBlur",
+      "Adjust",
+      "Transpose",
+      "SlopeBlur",
+      "Combine",
+      "Draw"
+    ],
+    "heuristic_parameters": {
+      "MountainRange": {
+        "Scale": {
+          "value": 0.5,
+          "reason": "non-default (default: 1.0)"
+        },
+        "Height": {
+          "value": 1.0,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Style": {
+          "value": "Stratified",
+          "reason": "non-default (default: Basic)"
+        },
+        "Seed": {
+          "value": 34267,
+          "reason": "non-default (default: 0)"
+        }
+      },
+      "Combine": {
+        "Ratio": {
+          "value": 1.0,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Clamp": {
+          "value": "Clamp",
+          "reason": "non-standard parameter"
+        },
+        "IsLocked": {
+          "value": true,
+          "reason": "non-standard parameter"
+        },
+        "IsMaskable": {
+          "value": true,
+          "reason": "non-standard parameter"
+        }
+      }
+    },
+    "biome_tags": [
+      "mock"
+    ],
+    "scale_reference": null,
+    "source_video_id": "Road making#Mock Pattern (Dry Run)"
+  },
+  {
+    "pattern_name": "Mock Pattern (Dry Run)",
+    "phase": "simulation",
+    "semantic_intent": "Mock terrain intent - dry run mode",
+    "core_topology": [
+      "Mask",
+      "RadialGradient",
+      "Sandstone",
+      "Outcrops",
+      "Erosion2",
+      "Shaper",
+      "Erosion2",
+      "Sandstone",
+      "Erosion2",
+      "Sediments",
+      "Height",
+      "GraphicEQ",
+      "TextureBase",
+      "SatMap"
+    ],
+    "heuristic_parameters": {
+      "Erosion2": {
+        "Duration": {
+          "value": 5.097791,
+          "reason": "non-default (default: 50.0)"
+        },
+        "Downcutting": {
+          "value": 0.14096016,
+          "reason": "non-default (default: 0.5)"
+        },
+        "ErosionScale": {
+          "value": 191.9349,
+          "reason": "non-standard parameter"
+        },
+        "Seed": {
+          "value": 62103,
+          "reason": "non-default (default: 0)"
+        },
+        "BedLoadDischargeAmount": {
+          "value": 1.0,
+          "reason": "non-default (default: 0.5)"
+        },
+        "CoarseSedimentsDischargeAmount": {
+          "value": 1.0,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Shape": {
+          "value": 0.01,
+          "reason": "non-standard parameter"
+        }
+      },
+      "TextureBase": {
+        "Slope": {
+          "value": 0.27,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Scale": {
+          "value": 0.35,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Chaos": {
+          "value": 0.17,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Peaks": {
+          "value": 0.05,
+          "reason": "non-standard parameter"
+        },
+        "Seed": {
+          "value": 25819,
+          "reason": "non-default (default: 0)"
+        }
+      },
+      "SatMap": {
+        "LibraryItem": {
+          "value": 1,
+          "reason": "non-standard parameter"
+        },
+        "Bias": {
+          "value": 0.43309498,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Reverse": {
+          "value": true,
+          "reason": "non-default (default: False)"
+        },
+        "Hue": {
+          "value": 0.45863125,
+          "reason": "non-standard parameter"
+        },
+        "Saturation": {
+          "value": -0.057201188,
+          "reason": "non-standard parameter"
+        },
+        "Lightness": {
+          "value": 0.6905005,
+          "reason": "non-standard parameter"
+        }
+      }
+    },
+    "biome_tags": [
+      "mock"
+    ],
+    "scale_reference": null,
+    "source_video_id": "Snowymount#Mock Pattern (Dry Run)"
+  },
+  {
+    "pattern_name": "Mock Pattern (Dry Run)",
+    "phase": "simulation",
+    "semantic_intent": "Mock terrain intent - dry run mode",
+    "core_topology": [
+      "Transform",
+      "Gate",
+      "Erosion2",
+      "CraterField",
+      "Combine",
+      "Gate",
+      "Combine",
+      "Transform",
+      "Gate",
+      "Mountain",
+      "Volcano",
+      "Draw",
+      "Gate"
+    ],
+    "heuristic_parameters": {
+      "Transform": {
+        "OffsetY": {
+          "value": 0.4378356,
+          "reason": "non-default (default: 0.0)"
+        },
+        "StateOverride": {
+          "value": "Baked",
+          "reason": "non-standard parameter"
+        }
+      },
+      "Erosion2": {
+        "ErosionScale": {
+          "value": 551.75555,
+          "reason": "non-standard parameter"
+        },
+        "Seed": {
+          "value": 44079,
+          "reason": "non-default (default: 0)"
+        },
+        "StateOverride": {
+          "value": "Baked",
+          "reason": "non-standard parameter"
+        },
+        "SaveDefinition": {
+          "value": {
+            "$id": "47",
+            "Node": 269,
+            "Filename": "Erosion2",
+            "Format": "EXR",
+            "IsEnabled": true,
+            "DisabledInProfiles": {
+              "$id": "48",
+              "$values": []
+            }
+          },
+          "reason": "non-standard parameter"
+        }
+      },
+      "Combine": {
+        "Ratio": {
+          "value": 1.0,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Mode": {
+          "value": "Max",
+          "reason": "non-default (default: Blend)"
+        },
+        "StateOverride": {
+          "value": "Baked",
+          "reason": "non-standard parameter"
+        }
+      },
+      "Mountain": {
+        "Height": {
+          "value": 1.604006,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Style": {
+          "value": "Eroded",
+          "reason": "non-default (default: Basic)"
+        },
+        "Seed": {
+          "value": 14076,
+          "reason": "non-default (default: 0)"
+        },
+        "StateOverride": {
+          "value": "Baked",
+          "reason": "non-standard parameter"
+        }
+      }
+    },
+    "biome_tags": [
+      "mock"
+    ],
+    "scale_reference": null,
+    "source_video_id": "test regions#Mock Pattern (Dry Run)"
+  },
+  {
+    "pattern_name": "Mock Pattern (Dry Run)",
+    "phase": "simulation",
+    "semantic_intent": "Mock terrain intent - dry run mode",
+    "core_topology": [
+      "CraterField",
+      "Warp",
+      "Combine",
+      "Aperture",
+      "Combine",
+      "Combine",
+      "CraterField",
+      "Steps",
+      "Terraces",
+      "Combine",
+      "CraterField",
+      "Steps",
+      "Aperture",
+      "Lake",
+      "Snow",
+      "SatMap",
+      "Combine",
+      "Combine",
+      "Lake",
+      "Combine",
+      "TextureBase",
+      "Erosion2",
+      "Export",
+      "Adjust",
+      "LinearGradient",
+      "Combine",
+      "Blur",
+      "Lake",
+      "Clamp",
+      "Combine",
+      "Warp",
+      "Sandstone",
+      "Transform3D",
+      "Combine",
+      "Warp",
+      "Combine",
+      "Mesher",
+      "LinearGradient",
+      "Steps",
+      "Export",
+      "Steps",
+      "Swirl",
+      "CraterField",
+      "Export",
+      "Erosion2",
+      "CraterField",
+      "Lake",
+      "Sharpen"
+    ],
+    "heuristic_parameters": {
+      "Combine": {
+        "Ratio": {
+          "value": 1.0,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Mode": {
+          "value": "Max",
+          "reason": "non-default (default: Blend)"
+        }
+      },
+      "Snow": {
+        "Duration": {
+          "value": 0.059374146,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Intensity": {
+          "value": 0.19260727,
+          "reason": "non-default (default: 0.5)"
+        },
+        "SettleThaw": {
+          "value": 1.0,
+          "reason": "non-default (default: 0.5)"
+        },
+        "SlipOffAngle": {
+          "value": 49.43359,
+          "reason": "non-standard parameter"
+        },
+        "AdheredSnowMass": {
+          "value": 4.1794205,
+          "reason": "non-standard parameter"
+        }
+      },
+      "SatMap": {
+        "Library": {
+          "value": "Sand",
+          "reason": "non-standard parameter"
+        },
+        "LibraryItem": {
+          "value": 180,
+          "reason": "non-standard parameter"
+        },
+        "Rough": {
+          "value": "Low",
+          "reason": "non-default (default: Med)"
+        }
+      },
+      "TextureBase": {
+        "Scale": {
+          "value": 0.5697595,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Seed": {
+          "value": 20892,
+          "reason": "non-default (default: 0)"
+        }
+      },
+      "Erosion2": {
+        "Duration": {
+          "value": 16.794033,
+          "reason": "non-default (default: 50.0)"
+        },
+        "Downcutting": {
+          "value": 0.063473634,
+          "reason": "non-default (default: 0.5)"
+        },
+        "ErosionScale": {
+          "value": 194.04851,
+          "reason": "non-standard parameter"
+        },
+        "Seed": {
+          "value": 3802,
+          "reason": "non-default (default: 0)"
+        },
+        "SuspendedLoadDischargeAmount": {
+          "value": 0.51646626,
+          "reason": "non-default (default: 0.1)"
+        },
+        "BedLoadDischargeAmount": {
+          "value": 0.67839575,
+          "reason": "non-default (default: 0.5)"
+        },
+        "BedLoadDischargeAngle": {
+          "value": 26.746037,
+          "reason": "non-standard parameter"
+        },
+        "CoarseSedimentsDischargeAmount": {
+          "value": 0.06962287,
+          "reason": "non-default (default: 0.5)"
+        }
+      }
+    },
+    "biome_tags": [
+      "mock"
+    ],
+    "scale_reference": null,
+    "source_video_id": "Thermal Pools example#Mock Pattern (Dry Run)"
+  },
+  {
+    "pattern_name": "Mock Pattern (Dry Run)",
+    "phase": "simulation",
+    "semantic_intent": "Mock terrain intent - dry run mode",
+    "core_topology": [
+      "Curve",
+      "Combine",
+      "HSL",
+      "Curve",
+      "Adjust",
+      "Combine",
+      "Sharpen",
+      "Slope",
+      "Slope",
+      "Combine",
+      "Chokepoint",
+      "Rivers",
+      "Splat",
+      "Slope",
+      "SatMap",
+      "Rivers",
+      "Slope",
+      "Chokepoint",
+      "Snow",
+      "Roughen",
+      "Combine",
+      "Export",
+      "ColorErosion",
+      "Curve",
+      "ThermalShaper",
+      "Erosion2",
+      "Combine",
+      "Snow",
+      "Rivers",
+      "FlowMap",
+      "FlowMap",
+      "HSL",
+      "Combine",
+      "Erosion2",
+      "Warp",
+      "Chokepoint",
+      "Combine",
+      "LightX",
+      "SatMap",
+      "Draw",
+      "Slope",
+      "SoftClip",
+      "Combine",
+      "ColorErosion",
+      "Transpose",
+      "Export",
+      "Combine",
+      "Chokepoint",
+      "Chokepoint",
+      "Canyon",
+      "Transform3D",
+      "Peaks",
+      "Combine",
+      "FractalTerraces",
+      "ThermalShaper",
+      "Curve",
+      "Warp",
+      "Combine",
+      "Erosion2",
+      "File",
+      "FractalTerraces",
+      "Adjust",
+      "Trees",
+      "Combine",
+      "Warp",
+      "Gabor",
+      "Warp",
+      "Combine",
+      "Accumulator",
+      "Export",
+      "Draw"
+    ],
+    "heuristic_parameters": {
+      "Combine": {
+        "Ratio": {
+          "value": 0.7969951,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Mode": {
+          "value": "Overlay",
+          "reason": "non-default (default: Blend)"
+        },
+        "StateOverride": {
+          "value": "Baked",
+          "reason": "non-standard parameter"
+        },
+        "RenderIntentOverride": {
+          "value": "Color",
+          "reason": "non-standard parameter"
+        }
+      },
+      "SatMap": {
+        "Library": {
+          "value": "Green",
+          "reason": "non-standard parameter"
+        },
+        "LibraryItem": {
+          "value": 19,
+          "reason": "non-standard parameter"
+        },
+        "Hue": {
+          "value": 0.07434944,
+          "reason": "non-standard parameter"
+        },
+        "Saturation": {
+          "value": -0.115654685,
+          "reason": "non-standard parameter"
+        },
+        "Lightness": {
+          "value": -0.17348203,
+          "reason": "non-standard parameter"
+        },
+        "StateOverride": {
+          "value": "Baked",
+          "reason": "non-standard parameter"
+        }
+      },
+      "Snow": {
+        "Duration": {
+          "value": 0.13,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Intensity": {
+          "value": 0.15,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Melt": {
+          "value": 0.09,
+          "reason": "non-default (default: 0.5)"
+        },
+        "SnowLine": {
+          "value": 0.05,
+          "reason": "non-default (default: 0.0)"
+        },
+        "ModelScale": {
+          "value": 3.0,
+          "reason": "non-standard parameter"
+        },
+        "Seed": {
+          "value": 43812,
+          "reason": "non-default (default: 0)"
+        },
+        "StateOverride": {
+          "value": "Baked",
+          "reason": "non-standard parameter"
+        }
+      },
+      "ColorErosion": {
+        "TransportDistance": {
+          "value": 0.25031307,
+          "reason": "non-default (default: 0.5)"
+        },
+        "SedimentDensity": {
+          "value": 1.0,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Blend": {
+          "value": 1.0,
+          "reason": "non-default (default: 0.5)"
+        },
+        "ColorHold": {
+          "value": 0.25192174,
+          "reason": "non-default (default: 0.5)"
+        },
+        "FlowVolume": {
+          "value": 0.14849755,
+          "reason": "non-standard parameter"
+        },
+        "Seed": {
+          "value": 10955,
+          "reason": "non-default (default: 0)"
+        },
+        "StateOverride": {
+          "value": "Baked",
+          "reason": "non-standard parameter"
+        },
+        "RenderIntentOverride": {
+          "value": "Mask",
+          "reason": "non-standard parameter"
+        }
+      },
+      "ThermalShaper": {
+        "Influence": {
+          "value": 0.3471706,
+          "reason": "non-standard parameter"
+        },
+        "Shape": {
+          "value": 0.35305658,
+          "reason": "non-standard parameter"
+        },
+        "Scale": {
+          "value": 75.0,
+          "reason": "non-standard parameter"
+        },
+        "StateOverride": {
+          "value": "Baked",
+          "reason": "non-standard parameter"
+        }
+      },
+      "Erosion2": {
+        "Downcutting": {
+          "value": 0.099235855,
+          "reason": "non-default (default: 0.5)"
+        },
+        "ErosionScale": {
+          "value": 250.0,
+          "reason": "non-standard parameter"
+        },
+        "Seed": {
+          "value": 4705,
+          "reason": "non-default (default: 0)"
+        },
+        "SuspendedLoadDischargeAngle": {
+          "value": 32.0,
+          "reason": "non-standard parameter"
+        },
+        "BedLoadDischargeAmount": {
+          "value": 0.1,
+          "reason": "non-default (default: 0.5)"
+        },
+        "BedLoadDischargeAngle": {
+          "value": 20.0,
+          "reason": "non-standard parameter"
+        },
+        "CoarseSedimentsDischargeAngle": {
+          "value": 28.0,
+          "reason": "non-default (default: 30.0)"
+        },
+        "Shape": {
+          "value": 0.5,
+          "reason": "non-standard parameter"
+        },
+        "ShapeSharpness": {
+          "value": 0.0,
+          "reason": "non-default (default: 0.5)"
+        },
+        "Enable": {
+          "value": true,
+          "reason": "non-standard parameter"
+        },
+        "Slope": {
+          "value": {
+            "$id": "190",
+            "Y": 60.0
+          },
+          "reason": "non-standard parameter"
+        },
+        "StateOverride": {
+          "value": "Baked",
+          "reason": "non-standard parameter"
+        }
+      }
+    },
+    "biome_tags": [
+      "mock"
+    ],
+    "scale_reference": null,
+    "source_video_id": "YukonRiverValley16k4Tiles#Mock Pattern (Dry Run)"
   }
 ]

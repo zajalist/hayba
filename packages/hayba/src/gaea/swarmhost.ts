@@ -294,13 +294,21 @@ function buildTerrainFile(
 
   const hasOutput = graph.nodes.some(n => n.type === "Unreal" || n.type === "Output");
   const lastDataNode = graph.nodes[graph.nodes.length - 1];
-  const exportNodeId = 900;
+  // Place the export node one step past the last real node so it never collides.
+  // Real node IDs are 400 + i*100, so the first safe ID is 400 + nodes.length*100.
+  const exportNodeId = 400 + graph.nodes.length * 100;
 
   // Build nodes with proper JSON.NET $id format
   const nodesEntries: Array<[string, object]> = [];
   let posX = 26650;
 
   for (const n of graph.nodes) {
+    // Validate node type exists in catalog — unknown $type strings corrupt the terrain file
+    if (!VALID_NODE_TYPES.has(n.type)) {
+      const valid = NODE_CATALOG.map(nd => nd.type).join(", ");
+      throw new Error(`Unknown node type "${n.type}" in graph. Valid types: ${valid}`);
+    }
+
     const intId = idMap.get(n.id)!;
     const nodeJsonId = id(); // $id for this node object — referenced by port Parents
     const incomingEdges = graph.edges.filter(e => e.to === n.id);
@@ -350,6 +358,7 @@ function buildTerrainFile(
       "$type": "QuadSpinner.Gaea.Nodes.Unreal, Gaea.Nodes",
       Id: exportNodeId,
       Name: "00-Heightmap",
+      Format: "R16",
       PortCount: 1,
       Position: { "$id": id(), X: posX, Y: 26300.0 },
       Ports: {
@@ -364,6 +373,18 @@ function buildTerrainFile(
       },
       Modifiers: { "$id": id(), "$values": [] }
     }]);
+  }
+
+  // Guard: Object.fromEntries silently drops duplicate keys, which corrupts the graph
+  // (e.g. a real node and the export node sharing the same integer ID).
+  // Catch any collision here before it becomes a missing node in Gaea.
+  const seenKeys = new Set<string>();
+  for (const [key] of nodesEntries) {
+    if (seenKeys.has(key)) {
+      const names = nodesEntries.filter(([k]) => k === key).map(([, v]) => (v as Record<string, unknown>).Name ?? '?');
+      throw new Error(`Node ID collision at key "${key}" — both "${names[0]}" and "${names[1]}" map to the same integer ID. Adjust the ID assignment scheme.`);
+    }
+    seenKeys.add(key);
   }
 
   // nodesObj uses the pre-assigned NODES_ID — no collision with ROOT_ID
@@ -403,7 +424,7 @@ function buildTerrainFile(
         BuildDefinition: {
           "$id": id(),
           Type: "Standard",
-          Destination: outputDir,
+          Destination: "<Builds>\\[Filename]\\[+++]",
           Resolution: 1024,
           BakeResolution: 1024,
           TileResolution: 512,
@@ -879,6 +900,14 @@ const NODE_CATALOG: SwarmNodeType[] = [
     ],
     inputs: ["In"], outputs: ["Out", "Layers"]
   },
+  // ── Input ───────────────────────────────────────────────────────────────────
+  {
+    type: "File", category: "input",
+    parameters: [
+      { name: "FileName", type: "string", default: "" }
+    ],
+    inputs: [], outputs: ["Out"]
+  },
   // ── Output ──────────────────────────────────────────────────────────────────
   {
     type: "Unreal", category: "output",
@@ -886,6 +915,9 @@ const NODE_CATALOG: SwarmNodeType[] = [
     inputs: ["In"], outputs: ["Out"]
   }
 ];
+
+// Fast lookup set for node type validation
+const VALID_NODE_TYPES = new Set(NODE_CATALOG.map(n => n.type));
 
 // ─── SwarmHostClient ──────────────────────────────────────────────────────────
 //
@@ -1062,23 +1094,30 @@ export class SwarmHostClient {
     }
 
     // Build args — -v flags MUST come last (Gaea requirement)
-    const args: string[] = ["-filename", this._currentTerrainPath];
-    if (ignorecache) args.push("-ignorecache");
+    // Use --buildpath to force output to our outputDir
+    const buildOutputDir = path.join(this.cfg!.outputDir, "build").replace(/\\/g, "/");
+    mkdirSync(buildOutputDir, { recursive: true });
+
+    // Normalise paths to forward slashes for cmd.exe quoting safety
+    const exePath = swarmExe.replace(/\\/g, "/");
+    const terrainPath = this._currentTerrainPath!.replace(/\\/g, "/");
+
+    let cmdLine = `start /wait "" "${exePath}" --Filename "${terrainPath}" --buildpath "${buildOutputDir}" --silent`;
+    if (ignorecache) cmdLine += " --ignorecache";
 
     if (variables && Object.keys(variables).length > 0) {
       for (const [key, val] of Object.entries(variables)) {
-        args.push("-v", `${key}=${val}`);
+        cmdLine += ` -v ${key}=${val}`;
       }
     }
 
-    const result = cp.spawnSync(swarmExe, args, { encoding: "utf-8", timeout: 300_000 });
-
-    if (result.error) {
-      throw new Error(`Failed to start Gaea.Swarm.exe: ${result.error.message}`);
-    }
-    if (result.status !== 0) {
-      const output = result.stderr?.slice(0, 500) || result.stdout?.slice(0, 500) || "";
-      throw new Error(`Gaea build failed (exit ${result.status}): ${output}`);
+    // Gaea.Swarm.exe crashes with "The handle is invalid" when spawned without
+    // a real console window. Using `start /wait` via cmd.exe gives it one.
+    try {
+      cp.execSync(cmdLine, { encoding: "utf-8", timeout: 300_000, shell: "cmd.exe" });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Gaea build failed: ${msg.slice(0, 500)}`);
     }
   }
 
@@ -1127,7 +1166,17 @@ export class SwarmHostClient {
     if (this.base) {
       return this.request("POST", "/graph/export", { outputDir, format });
     }
-    // Look for the latest build in the Gaea Builds folder
+    // Check the --buildpath output dir first (our standard output location)
+    const buildSubDir = path.join(outputDir, "build");
+    if (existsSync(buildSubDir)) {
+      try {
+        return findExportFiles(buildSubDir);
+      } catch {
+        // fall through
+      }
+    }
+
+    // Fallback: Gaea's default Builds folder
     const buildsBase = "C:/Users/Admin/Documents/Gaea/Builds";
     const projectName = path.basename(this._currentTerrainPath ?? "", ".terrain");
     const projectBuildsDir = path.join(buildsBase, projectName);
@@ -1139,7 +1188,7 @@ export class SwarmHostClient {
         try {
           return findExportFiles(latestBuild);
         } catch {
-          // fall through to outputDir fallback
+          // fall through
         }
       }
     }
@@ -1193,6 +1242,12 @@ export class SwarmHostClient {
         : 26300;
       return { X: maxX + 330, Y: avgY };
     })();
+
+    // Validate node type exists in catalog — unknown $type strings corrupt the terrain file
+    if (!VALID_NODE_TYPES.has(nodeType)) {
+      const valid = NODE_CATALOG.map(n => n.type).join(", ");
+      throw new Error(`Unknown node type "${nodeType}". Valid types: ${valid}`);
+    }
 
     // Validate all enum params before writing to prevent file corruption
     const validatedParams: Record<string, unknown> = {};

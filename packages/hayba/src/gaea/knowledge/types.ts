@@ -5,8 +5,11 @@ export const HeuristicParameterSchema = z.object({
   reason: z.string(),
 });
 
+export const PhaseSchema = z.enum(['base', 'character', 'simulation', 'lookdev', 'utility']);
+
 export const GaeaArchetypeSchema = z.object({
   pattern_name: z.string().min(1),
+  phase: PhaseSchema.default('character'),
   semantic_intent: z.string().min(1),
   core_topology: z.array(z.string()).min(1),
   heuristic_parameters: z.record(HeuristicParameterSchema),
@@ -16,6 +19,7 @@ export const GaeaArchetypeSchema = z.object({
 });
 
 export type GaeaArchetype = z.infer<typeof GaeaArchetypeSchema>;
+export type Phase = z.infer<typeof PhaseSchema>;
 
 export const SearchInputSchema = z.object({
   query: z.string().min(1),

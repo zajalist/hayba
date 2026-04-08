@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -50,6 +50,13 @@ export async function updateProject(id: string, patch: Partial<Project>, base = 
   const updated = { ...existing, ...patch, lastModified: new Date().toISOString() };
   writeFileSync(join(projectDir(id, base), 'project.json'), JSON.stringify(updated, null, 2), 'utf-8');
   return updated;
+}
+
+export async function deleteProject(id: string, base = DEFAULT_PROJECTS_BASE): Promise<boolean> {
+  const dir = projectDir(id, base);
+  if (!existsSync(dir)) return false;
+  rmSync(dir, { recursive: true, force: true });
+  return true;
 }
 
 export async function listProjects(base = DEFAULT_PROJECTS_BASE): Promise<Project[]> {
