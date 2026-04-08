@@ -31,7 +31,9 @@ def get_nodes(terrain: dict) -> dict:
     assets = get_assets(terrain)
     if not assets:
         return {}
-    terrain_data = assets[0].get("Terrain", {})
+    terrain_data = assets[0].get("Terrain", {}) if assets else {}
+    if not terrain_data:
+        return {}
     nodes = terrain_data.get("Nodes", {})
     if isinstance(nodes, dict) and "$id" in nodes:
         return {k: v for k, v in nodes.items() if k != "$id"}
@@ -62,13 +64,13 @@ def get_node_params(node: dict) -> dict:
 
 
 def extract_topology(nodes: dict) -> list:
-    sorted_nodes = sorted(nodes.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 0)
+    sorted_nodes = sorted(nodes.items(), key=lambda x: int(x[0]) if x[0].isdigit() else float('inf'))
     return [get_node_type(n) for _, n in sorted_nodes if get_node_type(n)]
 
 
 def extract_key_parameters(nodes: dict) -> dict:
     result = {}
-    sorted_nodes = sorted(nodes.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 0)
+    sorted_nodes = sorted(nodes.items(), key=lambda x: int(x[0]) if x[0].isdigit() else float('inf'))
     
     for _, node in sorted_nodes:
         node_type = get_node_type(node)
