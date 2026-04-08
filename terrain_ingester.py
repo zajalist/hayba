@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import sys
+from pathlib import Path
+
+
+EXCLUDED_KEYS = {
+    "$type", "$id", "$ref", "Id", "Name", "Position", "Ports", "Modifiers",
+    "NodeSize", "PortCount", "Parent", "HasUI", "Intrinsic", "Version"
+}
+
+IMPORTANT_NODE_TYPES = {
+    "Erosion2", "Mountain", "MountainRange", "MountainSide",
+    "EasyErosion", "ThermalShaper", "Snow", "Snowfield", "Glacier",
+    "Combine", "Transform", "Fold", "Curvature", "Crater",
+    "TextureBase", "SatMap", "SuperColor", "ColorErosion", "GroundTexture"
+}
+
+
+def get_assets(terrain: dict) -> list:
+    a = terrain.get("Assets")
+    if isinstance(a, list):
+        return a
+    if a and isinstance(a, dict) and "$values" in a:
+        return a["$values"]
+    return []
+
+
+def get_nodes(terrain: dict) -> dict:
+    assets = get_assets(terrain)
+    if not assets:
+        return {}
+    terrain_data = assets[0].get("Terrain", {})
+    nodes = terrain_data.get("Nodes", {})
+    if isinstance(nodes, dict) and "$id" in nodes:
+        return {k: v for k, v in nodes.items() if k != "$id"}
+    return nodes
+
+
+def get_node_type(node: dict) -> str:
+    full_type = node.get("$type", "")
+    if not full_type:
+        return ""
+    if "," in full_type:
+        type_part = full_type.split(",")[0]
+        if "." in type_part:
+            return type_part.split(".")[-1]
+        return type_part
+    if "." in full_type:
+        return full_type.split(".")[-1]
+    return full_type
+
+
+def get_node_params(node: dict) -> dict:
+    params = {}
+    for k, v in node.items():
+        if k in EXCLUDED_KEYS or k.startswith("$"):
+            continue
+        params[k] = v
+    return params
+
+
+def extract_topology(nodes: dict) -> list:
+    sorted_nodes = sorted(nodes.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 0)
+    return [get_node_type(n) for _, n in sorted_nodes if get_node_type(n)]
+
+
+def extract_key_parameters(nodes: dict) -> dict:
+    result = {}
+    sorted_nodes = sorted(nodes.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 0)
+    
+    for _, node in sorted_nodes:
+        node_type = get_node_type(node)
+        if node_type not in IMPORTANT_NODE_TYPES:
+            continue
+        
+        params = get_node_params(node)
+        if not params:
+            continue
+        
+        default_params = get_default_params(node_type)
+        key_params = {}
+        
+        for name, value in params.items():
+            if name not in default_params:
+                key_params[name] = {"value": value, "reason": "non-standard parameter"}
+            elif default_params[name] != value:
+                key_params[name] = {"value": value, "reason": f"non-default (default: {default_params[name]})"}
+        
+        if key_params:
+            result[node_type] = key_params
+    
+    return result
+
+
+def get_default_params(node_type: str) -> dict:
+    defaults = {
+        "Erosion2": {
+            "Duration": 50.0, "Downcutting": 0.5, "Seed": 0,
+            "SuspendedLoadDischargeAmount": 0.1, "BedLoadDischargeAmount": 0.5,
+            "CoarseSedimentsDischargeAmount": 0.5, "CoarseSedimentsDischargeAngle": 30.0,
+            "ShapeSharpness": 0.5, "ShapeDetailScale": 0.5
+        },
+        "Mountain": {"Seed": 0, "Scale": 1.0, "Height": 0.5, "Style": "Basic", "Bulk": "Medium"},
+        "MountainRange": {"Seed": 0, "Scale": 1.0, "Height": 0.5, "Style": "Basic"},
+        "MountainSide": {"Seed": 0, "Scale": 1.0, "Detail": 0.5, "Style": "Slope"},
+        "EasyErosion": {"Style": "Simple", "Influence": 0.5},
+        "ThermalShaper": {},
+        "Snow": {"Duration": 0.5, "Intensity": 0.5, "SettleThaw": 0.5, "MeltType": "Uniform", "Melt": 0.5, "SnowLine": 0.0, "Seed": 0},
+        "Snowfield": {"Cascades": 3, "Duration": 0.5, "Intensity": 0.5, "SettleThaw": 0.5, "Direction": "N", "Seed": 0},
+        "Glacier": {"Scale": 0.5, "Direction": 0.0, "Breakage": 0.5, "Seed": 0},
+        "Combine": {"Ratio": 0.5, "Mode": "Blend", "Enhance": "None"},
+        "Transform": {"OffsetX": 0.0, "OffsetY": 0.0, "Rotation": 0.0, "ScaleX": 1.0, "ScaleY": 1.0},
+        "Fold": {"Waveform": "Sine", "Folds": 0.5, "Symmetric": False},
+        "Curvature": {"Type": "Vertical"},
+        "Crater": {"Seed": 0, "Style": "New"},
+        "TextureBase": {"Slope": 0.5, "Scale": 0.5, "Soil": 0.5, "Patches": 0.5, "Chaos": 0.5, "Seed": 0},
+        "SatMap": {"Enhance": "None", "Rough": "Med", "Bias": 0.5, "Reverse": False},
+        "SuperColor": {"Texture": "Texture", "Strength": 0.5, "Seed": 0, "Bias": 0.5, "Reverse": False},
+        "ColorErosion": {"TransportDistance": 0.5, "SedimentDensity": 0.5, "Seed": 0, "Blend": 0.5, "ColorHold": 0.5},
+        "GroundTexture": {"Strength": 0.5, "Coverage": 0.5, "Density": 0.5},
+        "RadialGradient": {"Height": 1.0, "Scale": 1.0},
+    }
+    return defaults.get(node_type, {})
+
+
+def parse_terrain_file(terrain_path: str) -> dict:
+    with open(terrain_path, "r", encoding="utf-8") as f:
+        terrain = json.load(f)
+    
+    nodes = get_nodes(terrain)
+    core_topology = extract_topology(nodes)
+    heuristic_parameters = extract_key_parameters(nodes)
+    
+    return {
+        "core_topology": core_topology,
+        "heuristic_parameters": heuristic_parameters
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Parse .terrain files and extract node topology/parameters")
+    parser.add_argument("--input", required=True, help="Path to .terrain file")
+    parser.add_argument("--dry-run", action="store_true", help="Parse but don't output")
+    parser.add_argument("--output", help="Output JSON file path (default: stdout)")
+    
+    args = parser.parse_args()
+    
+    input_path = Path(args.input)
+    if not input_path.exists():
+        print(f"Error: File not found: {args.input}", file=sys.stderr)
+        sys.exit(1)
+    
+    try:
+        result = parse_terrain_file(args.input)
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON in terrain file: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    
+    if args.dry_run:
+        print(f"Parsed {args.input}: {len(result['core_topology'])} nodes, {len(result['heuristic_parameters'])} with key params")
+        return
+    
+    json_output = json.dumps(result, indent=2)
+    
+    if args.output:
+        Path(args.output).write_text(json_output, encoding="utf-8")
+    else:
+        print(json_output)
+
+
+if __name__ == "__main__":
+    main()
