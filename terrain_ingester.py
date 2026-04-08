@@ -256,6 +256,9 @@ def process_directory(dir_path: str, mock: bool, output_path: str) -> None:
             skipped += 1
     
     print(f"\nDone: {added} added, {skipped} skipped", file=sys.stderr)
+
+
+def infer_phase(topology: list) -> str:
     """Infer the workflow phase from node topology."""
     simulation_nodes = {'Erosion2', 'Anastomosis', 'Thermal', 'EasyErosion', 'Crumble', 'Fluvial', 'ThermalShaper'}
     base_nodes = {'Mountain', 'MountainRange', 'MountainSide', 'Ridge', 'Hillify', 'Perlin', 'Gradient', 'Template', 'RadialGradient', 'Canyon', 'Crater'}
@@ -308,7 +311,7 @@ def append_to_archetypes(archetype: dict, output_path: str) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description="Parse .terrain files and extract node topology/parameters")
-    parser.add_argument("--input", required=True, help="Path to .terrain file")
+    parser.add_argument("--input", help="Path to .terrain file")
     parser.add_argument("--dry-run", action="store_true", help="Use mock LLM response (for testing)")
     parser.add_argument("--output", help="Output JSON file path (default: stdout)")
     parser.add_argument("--mock", action="store_true", help="Use mock LLM response (alias for --dry-run)")
@@ -318,8 +321,22 @@ def main():
     
     args = parser.parse_args()
     
+    # Validate input requirements
+    if not args.examples and not args.dir and not args.input:
+        parser.error("--input is required unless --examples or --dir is specified")
+    
     use_mock = args.dry_run or args.mock
     
+    # Handle batch processing FIRST (before single file logic)
+    if args.examples:
+        process_directory(TERRAIN_EXAMPLES_DIR, use_mock, args.output or DEFAULT_ARCHETYPES_PATH)
+        return
+    
+    if args.dir:
+        process_directory(args.dir, use_mock, args.output or DEFAULT_ARCHETYPES_PATH)
+        return
+    
+    # Single file processing
     input_path = Path(args.input)
     if not input_path.exists():
         print(f"Error: File not found: {args.input}", file=sys.stderr)
@@ -349,15 +366,6 @@ def main():
         "llm_heuristic_parameters": enrichment.get("heuristic_parameters", {}),
         "_source_file": args.input
     }
-    
-    # Handle batch processing
-    if args.examples:
-        process_directory(TERRAIN_EXAMPLES_DIR, use_mock, args.output or DEFAULT_ARCHETYPES_PATH)
-        return
-    
-    if args.dir:
-        process_directory(args.dir, use_mock, args.output or DEFAULT_ARCHETYPES_PATH)
-        return
     
     if args.append:
         output_path = args.output or DEFAULT_ARCHETYPES_PATH
