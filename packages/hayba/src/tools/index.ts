@@ -23,6 +23,7 @@ import { initiateInfrastructureBrainstorm } from './initiate-infrastructure-brai
 
 // ── Knowledge tool handlers ───────────────────────────────────────────────────
 import { searchGaeaArchetypes } from './search-gaea-archetypes.js';
+import { getFullArchetypeGraph } from './get-full-archetype-graph.js';
 
 // ── Gaea tool handlers ────────────────────────────────────────────────────────
 import { bakeTerrain } from './hayba-bake-terrain.js';
@@ -275,6 +276,17 @@ export function registerTools(server: McpServer, session: SessionManager): void 
     },
     async (params) => {
       const result = await searchGaeaArchetypes(params);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'hayba_get_full_archetype_graph',
+    {
+      pattern_name: z.string().describe('Exact pattern_name from search_gaea_archetypes results'),
+    },
+    async (params) => {
+      const result = await getFullArchetypeGraph(params);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
