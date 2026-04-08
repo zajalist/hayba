@@ -319,6 +319,16 @@ function buildTerrainFile(
       validatedParams[k] = validateAndFixParameter(n.type, k, v);
     }
 
+    // Fill missing parameters with defaults from catalog to prevent null reference crashes
+    const nodeDef = NODE_CATALOG.find(nd => nd.type === n.type);
+    if (nodeDef) {
+      for (const paramDef of nodeDef.parameters) {
+        if (!(paramDef.name in validatedParams)) {
+          validatedParams[paramDef.name] = paramDef.default;
+        }
+      }
+    }
+
     const portValues: object[] = [];
     if (incomingEdges.length === 0) {
       portValues.push({ "$id": id(), Name: "In", Type: "PrimaryIn", IsExporting: true, Parent: { "$ref": nodeJsonId } });
@@ -1237,10 +1247,8 @@ export class SwarmHostClient {
     const pos = position ?? (() => {
       const vals = Object.values(nodes).filter((n: any) => n && typeof n === "object" && n.Position) as any[];
       const maxX = vals.length > 0 ? Math.max(...vals.map((n: any) => n.Position.X)) : 26650;
-      const avgY = vals.length > 0
-        ? vals.reduce((s: number, n: any) => s + n.Position.Y, 0) / vals.length
-        : 26300;
-      return { X: maxX + 330, Y: avgY };
+      const maxY = vals.length > 0 ? Math.max(...vals.map((n: any) => n.Position.Y)) : 26300;
+      return { X: maxX, Y: maxY + 400 };
     })();
 
     // Validate node type exists in catalog — unknown $type strings corrupt the terrain file
@@ -1253,6 +1261,16 @@ export class SwarmHostClient {
     const validatedParams: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(params)) {
       validatedParams[k] = validateAndFixParameter(nodeType, k, v);
+    }
+
+    // Fill missing parameters with defaults from catalog to prevent null reference crashes
+    const nodeDef = NODE_CATALOG.find(nd => nd.type === nodeType);
+    if (nodeDef) {
+      for (const paramDef of nodeDef.parameters) {
+        if (!(paramDef.name in validatedParams)) {
+          validatedParams[paramDef.name] = paramDef.default;
+        }
+      }
     }
 
     const nodeJsonId = id();
