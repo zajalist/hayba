@@ -1,8 +1,58 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
+
+try:
+    from litellm import completion
+    HAS_LITELLM = True
+except ImportError:
+    HAS_LITELLM = False
+
+
+LLM_SYSTEM_PROMPT = """You are an expert AAA terrain artist specializing in Gaea 2.0.
+Analyze this raw Gaea node graph and its parameters. Generate a JSON response containing:
+1. semantic_intent: A detailed description of what kind of terrain this graph likely builds.
+2. heuristic_parameters: For each parameter provided, write a short geological/technical "reason" why this value was chosen.
+3. biome_tags: A list of applicable biomes (e.g., alpine, desert, coastal, volcanic, tropical, arctic).
+4. pattern_name: A highly descriptive, creative name for this workflow (e.g., "Alpine Glacial Erosion" or "Desert Dune Formation").
+
+Return ONLY valid JSON, no additional text."""
+
+MOCK_RESPONSE = {
+    "semantic_intent": "Mock terrain intent - dry run mode",
+    "heuristic_parameters": {"Mock": {"value": "mock", "reason": "Mock reason for testing"}},
+    "biome_tags": ["mock"],
+    "pattern_name": "Mock Pattern (Dry Run)"
+}
+
+
+def enrich_with_llm(topology: list, parameters: dict, mock: bool = False) -> dict:
+    if mock:
+        return MOCK_RESPONSE
+
+    if not HAS_LITELLM:
+        raise RuntimeError("litellm not installed. Install with: pip install litellm")
+
+    user_message = f"Node topology: {topology}\n\nParameters: {json.dumps(parameters, indent=2)}"
+
+    try:
+        response = completion(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": LLM_SYSTEM_PROMPT},
+                {"role": "user", "content": user_message}
+            ]
+        )
+        content = response.choices[0].message.content
+        json_match = re.search(r'\{[\s\S]*\}', content)
+        if json_match:
+            return json.loads(json_match.group())
+        raise ValueError("No valid JSON found in LLM response")
+    except Exception as e:
+        raise RuntimeError(f"LLM enrichment failed: {e}")
 
 
 EXCLUDED_KEYS = {
@@ -144,10 +194,13 @@ def parse_terrain_file(terrain_path: str) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="Parse .terrain files and extract node topology/parameters")
     parser.add_argument("--input", required=True, help="Path to .terrain file")
-    parser.add_argument("--dry-run", action="store_true", help="Parse but don't output")
+    parser.add_argument("--dry-run", action="store_true", help="Use mock LLM response (for testing)")
     parser.add_argument("--output", help="Output JSON file path (default: stdout)")
+    parser.add_argument("--mock", action="store_true", help="Use mock LLM response (alias for --dry-run)")
     
     args = parser.parse_args()
+    
+    use_mock = args.dry_run or args.mock
     
     input_path = Path(args.input)
     if not input_path.exists():
@@ -155,7 +208,7 @@ def main():
         sys.exit(1)
     
     try:
-        result = parse_terrain_file(args.input)
+        parsed = parse_terrain_file(args.input)
     except json.JSONDecodeError as e:
         print(f"Error: Invalid JSON in terrain file: {e}", file=sys.stderr)
         sys.exit(1)
@@ -163,9 +216,20 @@ def main():
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
     
-    if args.dry_run:
-        print(f"Parsed {args.input}: {len(result['core_topology'])} nodes, {len(result['heuristic_parameters'])} with key params")
-        return
+    enrichment = enrich_with_llm(
+        parsed["core_topology"],
+        parsed["heuristic_parameters"],
+        mock=use_mock
+    )
+    
+    result = {
+        "pattern_name": enrichment.get("pattern_name", "Unknown"),
+        "semantic_intent": enrichment.get("semantic_intent", ""),
+        "biome_tags": enrichment.get("biome_tags", []),
+        "core_topology": parsed["core_topology"],
+        "heuristic_parameters": parsed["heuristic_parameters"],
+        "llm_heuristic_parameters": enrichment.get("heuristic_parameters", {})
+    }
     
     json_output = json.dumps(result, indent=2)
     
