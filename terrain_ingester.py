@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -36,15 +37,23 @@ def enrich_with_llm(topology: list, parameters: dict, mock: bool = False) -> dic
     if not HAS_LITELLM:
         raise RuntimeError("litellm not installed. Install with: pip install litellm")
 
-    user_message = f"Node topology: {topology}\n\nParameters: {json.dumps(parameters, indent=2)}"
+    user_message = f"""Node topology: {' -> '.join(topology)}
 
+Parameters:
+{json.dumps(parameters, indent=2)}
+
+Generate the JSON response as specified in the system prompt."""
+
+    # Use Ollama (local, free) - no API costs
     try:
         response = completion(
-            model="gpt-4o",
+            model="ollama/llama3.2",
             messages=[
                 {"role": "system", "content": LLM_SYSTEM_PROMPT},
                 {"role": "user", "content": user_message}
-            ]
+            ],
+            api_base="http://localhost:11434",
+            timeout=180
         )
         content = response.choices[0].message.content
         json_match = re.search(r'\{[\s\S]*\}', content)
@@ -52,7 +61,7 @@ def enrich_with_llm(topology: list, parameters: dict, mock: bool = False) -> dic
             return json.loads(json_match.group())
         raise ValueError("No valid JSON found in LLM response")
     except Exception as e:
-        raise RuntimeError(f"LLM enrichment failed: {e}")
+        raise RuntimeError(f"LLM enrichment failed: {e}. Use --mock for testing.")
 
 
 EXCLUDED_KEYS = {
