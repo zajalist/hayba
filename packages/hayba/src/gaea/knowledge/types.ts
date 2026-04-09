@@ -7,6 +7,31 @@ export const HeuristicParameterSchema = z.object({
 
 export const PhaseSchema = z.enum(['base', 'character', 'simulation', 'lookdev', 'utility']);
 
+export const ArchetypeGraphNodeSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  params: z.record(z.union([z.string(), z.number(), z.boolean()])).default({}),
+});
+
+export const ArchetypeGraphEdgeSchema = z.object({
+  from: z.string(),
+  fromPort: z.string(),
+  to: z.string(),
+  toPort: z.string(),
+});
+
+export const ArchetypeGraphSchema = z.object({
+  nodes: z.array(ArchetypeGraphNodeSchema),
+  edges: z.array(ArchetypeGraphEdgeSchema),
+});
+
+export const ArchetypeSourceSchema = z.object({
+  type: z.enum(['terrain_file', 'transcript', 'forum', 'blog']),
+  name: z.string().optional(),
+  video_id: z.string().optional(),
+  timestamp: z.number().optional(),
+});
+
 export const GaeaArchetypeSchema = z.object({
   pattern_name: z.string().min(1),
   phase: PhaseSchema.default('character'),
@@ -16,10 +41,16 @@ export const GaeaArchetypeSchema = z.object({
   biome_tags: z.array(z.string()),
   scale_reference: z.string().nullable().default(null),
   source_video_id: z.string().nullable().default(null),
+  graph: ArchetypeGraphSchema.optional(),
+  node_reasoning: z.record(z.string()).default({}),
+  common_mistakes: z.array(z.string()).default([]),
+  sources: z.array(ArchetypeSourceSchema).default([]),
 });
 
 export type GaeaArchetype = z.infer<typeof GaeaArchetypeSchema>;
 export type Phase = z.infer<typeof PhaseSchema>;
+export type ArchetypeGraph = z.infer<typeof ArchetypeGraphSchema>;
+export type ArchetypeSource = z.infer<typeof ArchetypeSourceSchema>;
 
 export const SearchInputSchema = z.object({
   query: z.string().min(1),

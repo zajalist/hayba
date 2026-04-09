@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { GaeaArchetypeSchema, SearchInputSchema } from './types.js';
 import { embed, cosineSimilarity } from './embedder.js';
 import { ArchetypeStore } from './archetype-store.js';
@@ -61,6 +61,87 @@ describe('GaeaArchetypeSchema', () => {
     };
     const result = GaeaArchetypeSchema.safeParse(entry);
     expect(result.success).toBe(true);
+  });
+
+  it('parses archetype with all new fields (graph, node_reasoning, common_mistakes, sources)', () => {
+    const entry = {
+      pattern_name: 'Full Featured Canyon',
+      semantic_intent: 'Deep canyon with full graph data',
+      core_topology: ['Mountain', 'Canyon', 'Erosion'],
+      heuristic_parameters: {},
+      biome_tags: ['desert'],
+      scale_reference: '1km x 1km',
+      source_video_id: null,
+      graph: {
+        nodes: [
+          { id: 'n1', type: 'Mountain', params: { Height: 0.8 } },
+          { id: 'n2', type: 'Canyon', params: { Depth: 0.7 } },
+        ],
+        edges: [
+          { from: 'n1', fromPort: 'Output', to: 'n2', toPort: 'Input' },
+        ],
+      },
+      node_reasoning: {
+        Mountain: 'Provides the initial height field',
+        Canyon: 'Carves the canyon shape',
+      },
+      common_mistakes: [
+        'Setting Canyon.Depth too high causes floating geometry',
+        'Missing Erosion node leaves unrealistic sharp edges',
+      ],
+      sources: [
+        { type: 'terrain_file', name: 'canyon_example.tor' },
+        { type: 'transcript', video_id: 'abc123', timestamp: 142 },
+      ],
+    };
+    const result = GaeaArchetypeSchema.safeParse(entry);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.graph).toBeDefined();
+    expect(result.data.graph!.nodes).toHaveLength(2);
+    expect(result.data.graph!.edges).toHaveLength(1);
+    expect(result.data.node_reasoning).toEqual({
+      Mountain: 'Provides the initial height field',
+      Canyon: 'Carves the canyon shape',
+    });
+    expect(result.data.common_mistakes).toHaveLength(2);
+    expect(result.data.sources).toHaveLength(2);
+  });
+
+  it('backwards compatibility: old entries without new fields parse with defaults', () => {
+    const entry = {
+      pattern_name: 'Old Style Entry',
+      semantic_intent: 'Legacy entry without new fields',
+      core_topology: ['Mountain', 'Erosion'],
+      heuristic_parameters: {},
+      biome_tags: ['mountain'],
+      scale_reference: null,
+      source_video_id: null,
+    };
+    const result = GaeaArchetypeSchema.safeParse(entry);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.graph).toBeUndefined();
+    expect(result.data.node_reasoning).toEqual({});
+    expect(result.data.common_mistakes).toEqual([]);
+    expect(result.data.sources).toEqual([]);
+  });
+
+  it('validates source entries with all valid type values', () => {
+    const makeEntry = (sourceType: string) => ({
+      pattern_name: 'Source Test',
+      semantic_intent: 'test',
+      core_topology: ['Mountain'],
+      heuristic_parameters: {},
+      biome_tags: [],
+      scale_reference: null,
+      source_video_id: null,
+      sources: [{ type: sourceType }],
+    });
+    for (const t of ['terrain_file', 'transcript', 'forum', 'blog']) {
+      expect(GaeaArchetypeSchema.safeParse(makeEntry(t)).success).toBe(true);
+    }
+    expect(GaeaArchetypeSchema.safeParse(makeEntry('invalid_type')).success).toBe(false);
   });
 });
 
@@ -178,5 +259,30 @@ describe('ArchetypeStore', () => {
     const store = new ArchetypeStore(indexPath, embeddingsPath, graphsDir);
     const result = store.getFullGraph('Desert Canyon Carved');
     expect(result).toBeNull();
+  });
+
+  it('LCS: ranks archetype with matching node order higher', async () => {
+    const store = new ArchetypeStore(indexPath, embeddingsPath, graphsDir);
+    await store.ensureEmbeddings();
+    const results = await store.searchWithScoring({
+      query: 'terrain',
+      topology_filter: ['Gradient', 'Clamp', 'SlopeBlur', 'Erosion'],
+      limit: 10,
+    });
+    expect(results[0].archetype.pattern_name).toBe('Coastal Shelf Base');
+    expect(results[0].breakdown.sequenceScore).toBeGreaterThan(0);
+  }, 30_000);
+
+  it('phase flexibility: returns results across all phases when no phase detected', async () => {
+    const store = new ArchetypeStore(indexPath, embeddingsPath, graphsDir);
+    await store.ensureEmbeddings();
+    const results = await store.search({ query: 'terrain with rocks', limit: 10 });
+    expect(results.length).toBe(3);
+  }, 30_000);
+
+  it('word-boundary intent: "sand" should not false-positive on "sandstone"', async () => {
+    const { analyzeQueryIntent } = await import('./archetype-store.js');
+    const intent = analyzeQueryIntent('sand dunes in desert');
+    expect(intent.requiredNodes).not.toContain('sandstone');
   });
 });
