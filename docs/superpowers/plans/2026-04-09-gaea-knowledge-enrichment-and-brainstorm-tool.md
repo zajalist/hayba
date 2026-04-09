@@ -309,8 +309,12 @@ Example for Mountain (add after `typical_successors`):
 
 ```json
 "zone_strategy": "position",
-"position_params": ["X", "Y"]
+"position_params": []
 ```
+
+Note: Gaea primitive nodes (Mountain, Ridge, etc.) have no direct X/Y terrain-position parameters.
+Positioning is achieved via a `Transform` node inserted upstream. `position_params` is `[]` for all nodes;
+the brainstorm tool derives position from zone centroid via graph-level strategy, not node params.
 
 Example for Erosion2:
 
