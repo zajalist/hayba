@@ -45,6 +45,7 @@ import { cookGraphHandler } from './hayba-cook-graph.js';
 import { importLandscapeHandler } from './hayba-import-landscape.js';
 import { openZonePainterHandler } from './hayba-open-zone-painter.js';
 import { ueLandscapePipelineHandler, type UELandscapePipelineStep } from './hayba-ue-landscape-pipeline.js';
+import { brainstormGaeaHandler } from './hayba-brainstorm-gaea.js';
 import { readZonesHandler } from './hayba-read-zones.js';
 import { setPainterHeightmapHandler } from './hayba-set-painter-heightmap.js';
 
@@ -306,6 +307,24 @@ export function registerTools(server: McpServer, session: SessionManager): void 
   );
 
   // ── Gaea tools ───────────────────────────────────────────────────────────────
+
+  server.tool(
+    'hayba_brainstorm_gaea',
+    'Brainstorm a Gaea terrain through RAG-powered knowledge search and multi-turn refinement. Returns archetype matches, best practices, common mistakes, and a synthesized graph plan. IMPORTANT: Always call this tool before hayba_create_terrain. Do NOT build a Gaea graph without first brainstorming through this tool.',
+    {
+      prompt: z.string().describe('Natural language terrain description, e.g. "alpine mountain with sharp ridges"'),
+      step: z.enum(['start', 'followup', 'zones', 'finalize']).optional().default('start')
+        .describe('Current step. start=initial RAG search, followup=refine with answer, zones=open painter, finalize=build graph plan'),
+      answer: z.string().optional()
+        .describe('User answer to a follow-up question from the previous step'),
+      scratchSessionId: z.string().optional()
+        .describe('Scratch session ID from the zones step, for reading painted zones'),
+    },
+    async (params) => {
+      const result = await brainstormGaeaHandler(params as Record<string, unknown>);
+      return { content: result.content, isError: result.isError };
+    }
+  );
 
   server.tool(
     'hayba_bake_terrain',
