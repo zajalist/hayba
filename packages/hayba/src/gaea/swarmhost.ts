@@ -268,8 +268,16 @@ function findMaxJsonId(obj: unknown): number {
 
 // ─── Helper: build a fresh .terrain file from our simplified graph JSON ───────
 
+/** Normalize common port name aliases to the canonical Gaea names */
+function normalizePort(port: string, isOutput: boolean): string {
+  if (!port) return isOutput ? "Out" : "In";
+  if (isOutput && port === "Output") return "Out";
+  if (!isOutput && port === "Input") return "In";
+  return port;
+}
+
 function buildTerrainFile(
-  graph: { nodes: Array<{ id: string; type: string; params: Record<string, unknown> }>; edges: Array<{ from: string; fromPort: string; to: string; toPort: string }> },
+  graph: { nodes: Array<{ id: string; type: string; params: Record<string, unknown>; position?: { X: number; Y: number } }>; edges: Array<{ from: string; fromPort: string; to: string; toPort: string }> },
   outputDir: string
 ): object {
   const id = makeIdCounter(1);
@@ -336,9 +344,9 @@ function buildTerrainFile(
       for (const edge of incomingEdges) {
         portValues.push({
           "$id": id(),
-          Name: edge.toPort || "In",
+          Name: normalizePort(edge.toPort, false),
           Type: "PrimaryIn, Required",
-          Record: { "$id": id(), From: idMap.get(edge.from)!, To: intId, FromPort: edge.fromPort || "Out", ToPort: edge.toPort || "In", IsValid: true },
+          Record: { "$id": id(), From: idMap.get(edge.from)!, To: intId, FromPort: normalizePort(edge.fromPort, true), ToPort: normalizePort(edge.toPort, false), IsValid: true },
           IsExporting: true,
           Parent: { "$ref": nodeJsonId }
         });
@@ -352,7 +360,7 @@ function buildTerrainFile(
       ...validatedParams,
       Id: intId,
       Name: n.id,
-      Position: { "$id": id(), X: posX, Y: 26300.0 },
+      Position: { "$id": id(), X: n.position?.X ?? posX, Y: n.position?.Y ?? 26300.0 },
       Ports: { "$id": id(), "$values": portValues },
       Modifiers: { "$id": id(), "$values": [] }
     }]);
@@ -1248,7 +1256,7 @@ export class SwarmHostClient {
       const vals = Object.values(nodes).filter((n: any) => n && typeof n === "object" && n.Position) as any[];
       const maxX = vals.length > 0 ? Math.max(...vals.map((n: any) => n.Position.X)) : 26650;
       const maxY = vals.length > 0 ? Math.max(...vals.map((n: any) => n.Position.Y)) : 26300;
-      return { X: maxX, Y: maxY + 400 };
+      return { X: maxX + 400, Y: maxY };
     })();
 
     // Validate node type exists in catalog — unknown $type strings corrupt the terrain file
@@ -1267,8 +1275,9 @@ export class SwarmHostClient {
     const nodeDef = NODE_CATALOG.find(nd => nd.type === nodeType);
     if (nodeDef) {
       for (const paramDef of nodeDef.parameters) {
-        if (!(paramDef.name in validatedParams)) {
-          validatedParams[paramDef.name] = paramDef.default;
+        const key = paramDef.name;
+        if (!(key in validatedParams) || validatedParams[key] === undefined) {
+          validatedParams[key] = paramDef.default;
         }
       }
     }
