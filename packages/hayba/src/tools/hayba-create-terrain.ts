@@ -1,6 +1,7 @@
 import type { ToolHandler } from './hayba-bake-terrain.js';
 import { GraphSchema } from '../gaea/types.js';
 import { getTemplate, listTemplates } from '../gaea/templates/index.js';
+import { layoutGraph } from '../gaea/layout-engine.js';
 
 export const createTerrainHandler: ToolHandler = async (args, session) => {
   if (typeof args.prompt !== 'string' || !args.prompt.trim()) {
@@ -32,8 +33,21 @@ export const createTerrainHandler: ToolHandler = async (args, session) => {
       };
     }
 
+    // Apply DAG layout if nodes don't have positions
+    const graphData = validation.data;
+    const hasPositions = graphData.nodes.some(n => n.position);
+    if (!hasPositions) {
+      const positioned = layoutGraph(graphData.nodes, graphData.edges);
+      for (let i = 0; i < graphData.nodes.length; i++) {
+        const match = positioned.find(p => p.id === graphData.nodes[i].id);
+        if (match) {
+          (graphData.nodes[i] as Record<string, unknown>).position = match.position;
+        }
+      }
+    }
+
     const terrainName = args.name as string | undefined;
-    await session.enqueue(async () => { await session.client.createGraph(validation.data, terrainName); });
+    await session.enqueue(async () => { await session.client.createGraph(graphData, terrainName); });
     const terrainPath = session.client.currentTerrainPath;
 
     let exported: { heightmap: string; normalmap?: string; splatmap?: string } | null = null;
@@ -74,6 +88,9 @@ export const createTerrainHandler: ToolHandler = async (args, session) => {
     return { content: [{ type: 'text', text: lines }] };
   }
 
+  // Soft gate: no graph provided — likely called without brainstorming first
+  const warning = '⚠️ No brainstorm session detected. For better results, call hayba_brainstorm_gaea first — it performs RAG search against the knowledge base and produces an optimized graph plan.\n\n';
+
   const nodeTypes = await session.enqueue(() => session.client.listNodeTypes());
   const catalog = nodeTypes
     .map((n) => {
@@ -97,7 +114,7 @@ export const createTerrainHandler: ToolHandler = async (args, session) => {
     content: [{
       type: 'text',
       text: [
-        templateSection,
+        warning + templateSection,
         ``,
         `No graph provided. Please build a graph JSON and call again with the "graph" parameter.`,
         ``,

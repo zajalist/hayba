@@ -341,8 +341,9 @@ export function registerTools(server: McpServer, session: SessionManager): void 
 
   server.tool(
     'hayba_create_terrain',
+    'Create a Gaea terrain from a graph definition or template. IMPORTANT: Do NOT call this tool without first calling hayba_brainstorm_gaea. The brainstorm tool performs RAG search, knowledge lookup, and graph planning that is essential for quality terrain output.',
     {
-      prompt: z.string().describe('Natural language terrain description'),
+      prompt: z.string().describe('Natural language terrain description — used for logging and as fallback if no graph provided'),
       name: z.string().optional().describe('Name for the terrain file (e.g. the landscape/project name). Used as the .terrain filename.'),
       template: z.string().optional().describe('Predefined terrain template: desert, mountains, tropical, volcanic'),
       template_overrides: z.record(z.unknown()).optional().describe('Override specific template parameters'),
