@@ -1024,7 +1024,28 @@
         "Out"
       ]
     },
-    "parameters": {},
+    "parameters": {
+      "Influence": {
+        "type": "float",
+        "default": "0.8",
+        "range": "0-1"
+      },
+      "Shape": {
+        "type": "float",
+        "default": "0.5",
+        "range": "-1-1"
+      },
+      "Scale": {
+        "type": "float",
+        "default": "50",
+        "range": "1-200"
+      },
+      "MicrodetailPreservation": {
+        "type": "float",
+        "default": "0",
+        "range": "0-1"
+      }
+    },
     "tips": [
       "Good for softening sharp edges after erosion"
     ],
@@ -1255,7 +1276,7 @@
     "parameters": {
       "Duration": {
         "type": "float",
-        "default": "0.5",
+        "default": "0.3",
         "range": "0-1"
       },
       "Intensity": {
@@ -1268,18 +1289,24 @@
         "default": "0.5",
         "range": "0-1"
       },
-      "MeltType": {
-        "type": "enum",
-        "default": "Uniform"
+      "SlipOffAngle": {
+        "type": "float",
+        "default": "50",
+        "range": "0-90"
+      },
+      "AdheredSnowMass": {
+        "type": "float",
+        "default": "3.0",
+        "range": "0-10"
       },
       "Melt": {
         "type": "float",
-        "default": "0.5",
+        "default": "0.3",
         "range": "0-1"
       },
       "SnowLine": {
         "type": "float",
-        "default": "0.0",
+        "default": "0.3",
         "range": "0-1"
       },
       "Seed": {
