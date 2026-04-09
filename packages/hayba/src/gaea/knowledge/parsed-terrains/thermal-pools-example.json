@@ -1,0 +1,990 @@
+{
+  "source_file": "Thermal Pools example.terrain",
+  "metadata": {
+    "name": "",
+    "version": "2.1.2.0"
+  },
+  "nodes": [
+    {
+      "id": "CraterField_103",
+      "type": "CraterField",
+      "params": {
+        "Scale": 1.2663296,
+        "Depth": 0.04905711,
+        "Density": 0.0941514,
+        "Seed": 17863
+      },
+      "position": {
+        "X": 25688.574,
+        "Y": 25913.975
+      }
+    },
+    {
+      "id": "Warp_133",
+      "type": "Warp",
+      "params": {
+        "Seed": 45265
+      },
+      "position": {
+        "X": 26550,
+        "Y": 25519
+      }
+    },
+    {
+      "id": "Combine_137",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1,
+        "Mode": "Max"
+      },
+      "position": {
+        "X": 26300,
+        "Y": 26000
+      }
+    },
+    {
+      "id": "Aperture_193",
+      "type": "Aperture",
+      "params": {
+        "Size": 0.005
+      },
+      "position": {
+        "X": 28149.732,
+        "Y": 25656.988
+      }
+    },
+    {
+      "id": "Combine_252",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1,
+        "Mode": "Max"
+      },
+      "position": {
+        "X": 27250,
+        "Y": 25813.975
+      }
+    },
+    {
+      "id": "Combine_256",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 0.64355016,
+        "Mode": "Min"
+      },
+      "position": {
+        "X": 29921,
+        "Y": 25970
+      }
+    },
+    {
+      "id": "CraterField_260",
+      "type": "CraterField",
+      "params": {
+        "Scale": 1.1433452,
+        "Depth": 0.012161787,
+        "Density": 0.45490572,
+        "Seed": 58563
+      },
+      "position": {
+        "X": 25688.574,
+        "Y": 25713.975
+      }
+    },
+    {
+      "id": "Steps_273",
+      "type": "Steps",
+      "params": {
+        "Scale": 1,
+        "Density": 1.5494896,
+        "Seed": 31966
+      },
+      "position": {
+        "X": 25686.11,
+        "Y": 25400
+      }
+    },
+    {
+      "id": "Terraces_300",
+      "type": "Terraces",
+      "params": {
+        "NumTerraces": 36,
+        "Uniformity": 0.13265923,
+        "Steepness": 1,
+        "Seed": 11376
+      },
+      "position": {
+        "X": 26550,
+        "Y": 26027.436
+      }
+    },
+    {
+      "id": "Combine_325",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1,
+        "Mode": "Max"
+      },
+      "position": {
+        "X": 26239,
+        "Y": 25400
+      }
+    },
+    {
+      "id": "CraterField_385",
+      "type": "CraterField",
+      "params": {
+        "Scale": 0.9342717,
+        "Depth": 0.016261267,
+        "Density": 0.286827,
+        "Seed": 7384
+      },
+      "position": {
+        "X": 25688.574,
+        "Y": 26163.975
+      }
+    },
+    {
+      "id": "Steps_404",
+      "type": "Steps",
+      "params": {
+        "Scale": 1,
+        "Density": 1.5494896,
+        "Seed": 50101
+      },
+      "position": {
+        "X": 25686.11,
+        "Y": 25284
+      }
+    },
+    {
+      "id": "Aperture_417",
+      "type": "Aperture",
+      "params": {
+        "Size": 0.01915195
+      },
+      "position": {
+        "X": 27470.99,
+        "Y": 25813.975
+      }
+    },
+    {
+      "id": "Lake_430",
+      "type": "Lake",
+      "params": {
+        "Precipitation": 9.203335,
+        "ShoreSize": 0.1,
+        "AltitudeBias": 0.8730528
+      },
+      "position": {
+        "X": 30156,
+        "Y": 25625
+      }
+    },
+    {
+      "id": "Snow_433",
+      "type": "Snow",
+      "params": {
+        "Duration": 0.059374146,
+        "Intensity": 0.19260727,
+        "SettleThaw": 1,
+        "SlipOffAngle": 49.43359,
+        "AdheredSnowMass": 4.1794205
+      },
+      "position": {
+        "X": 28149.732,
+        "Y": 26074.68
+      }
+    },
+    {
+      "id": "SatMap_452",
+      "type": "SatMap",
+      "params": {
+        "Library": "Sand",
+        "LibraryItem": 180,
+        "Rough": "Low"
+      },
+      "position": {
+        "X": 31125,
+        "Y": 25375
+      }
+    },
+    {
+      "id": "Combine_483",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1
+      },
+      "position": {
+        "X": 30392,
+        "Y": 25940
+      }
+    },
+    {
+      "id": "Combine_486",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1,
+        "Mode": "Max"
+      },
+      "position": {
+        "X": 26111,
+        "Y": 25209.547
+      }
+    },
+    {
+      "id": "Lake_500",
+      "type": "Lake",
+      "params": {
+        "Precipitation": 25.191309,
+        "SmallLakes": 0.001,
+        "FloodControl": false,
+        "ShoreSize": 0.012230118,
+        "SizeBias": 0.11061765
+      },
+      "position": {
+        "X": 29220,
+        "Y": 26300
+      }
+    },
+    {
+      "id": "Combine_523",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1,
+        "Mode": "Max"
+      },
+      "position": {
+        "X": 26239,
+        "Y": 25900
+      }
+    },
+    {
+      "id": "TextureBase_526",
+      "type": "TextureBase",
+      "params": {
+        "Scale": 0.5697595,
+        "Seed": 20892,
+        "Version": 2
+      },
+      "position": {
+        "X": 30825,
+        "Y": 25375
+      }
+    },
+    {
+      "id": "Erosion2_536",
+      "type": "Erosion2",
+      "params": {
+        "Duration": 6.7045927,
+        "Downcutting": 0.03477726,
+        "ErosionScale": 45.46735,
+        "Seed": 62678,
+        "SuspendedLoadDischargeAmount": 0.44472533,
+        "SuspendedLoadDischargeAngle": 10.604332,
+        "BedLoadDischargeAmount": 0.5533616,
+        "BedLoadDischargeAngle": 20.658308,
+        "CoarseSedimentsDischargeAngle": 0,
+        "Shape": 0.04912544,
+        "ShapeSharpness": 0.2295026,
+        "ShapeDetailScale": 0.0469036,
+        "Version": 2
+      },
+      "position": {
+        "X": 29450,
+        "Y": 25940
+      }
+    },
+    {
+      "id": "Export_554",
+      "type": "Export",
+      "params": {},
+      "position": {
+        "X": 31164,
+        "Y": 25525
+      }
+    },
+    {
+      "id": "Adjust_569",
+      "type": "Adjust",
+      "params": {
+        "Strong": true,
+        "Invert": true,
+        "RenderIntentOverride": "Mask"
+      },
+      "position": {
+        "X": 29450,
+        "Y": 26100
+      }
+    },
+    {
+      "id": "LinearGradient_583",
+      "type": "LinearGradient",
+      "params": {
+        "Scale": 0.09811423,
+        "Direction": 51,
+        "Edge": "Clip"
+      },
+      "position": {
+        "X": 29875,
+        "Y": 26116
+      }
+    },
+    {
+      "id": "Combine_614",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1,
+        "Mode": "Max"
+      },
+      "position": {
+        "X": 26364,
+        "Y": 25525
+      }
+    },
+    {
+      "id": "Blur_640",
+      "type": "Blur",
+      "params": {
+        "Radius": 0.0037774488
+      },
+      "position": {
+        "X": 28516.52,
+        "Y": 26096.68
+      }
+    },
+    {
+      "id": "Lake_660",
+      "type": "Lake",
+      "params": {
+        "Precipitation": 103.286415,
+        "SmallLakes": 0.014279858
+      },
+      "position": {
+        "X": 30525,
+        "Y": 25924
+      }
+    },
+    {
+      "id": "Clamp_681",
+      "type": "Clamp",
+      "params": {},
+      "position": {
+        "X": 28671.348,
+        "Y": 25813.975
+      }
+    },
+    {
+      "id": "Combine_745",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1,
+        "Mode": "Max"
+      },
+      "position": {
+        "X": 26119.875,
+        "Y": 25741
+      }
+    },
+    {
+      "id": "Warp_755",
+      "type": "Warp",
+      "params": {
+        "Size": 0.43447664,
+        "Strength": 0.77063406,
+        "Seed": 49361
+      },
+      "position": {
+        "X": 30162,
+        "Y": 26100
+      }
+    },
+    {
+      "id": "Sandstone_769",
+      "type": "Sandstone",
+      "params": {
+        "Spacing": 0.09590052,
+        "Intensity": 0.64355016,
+        "Seed": 15822
+      },
+      "position": {
+        "X": 29525,
+        "Y": 26200
+      }
+    },
+    {
+      "id": "Transform3D_778",
+      "type": "Transform3D",
+      "params": {
+        "Antialiasing": true,
+        "IsLocked": true
+      },
+      "position": {
+        "X": 27915.092,
+        "Y": 25813.975
+      }
+    },
+    {
+      "id": "Combine_810",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1
+      },
+      "position": {
+        "X": 28925,
+        "Y": 26000
+      }
+    },
+    {
+      "id": "Warp_812",
+      "type": "Warp",
+      "params": {
+        "Strength": 0.24385078,
+        "ZScale": 0.6601803,
+        "Seed": 44235,
+        "Mode": "VectorFieldIntegral"
+      },
+      "position": {
+        "X": 26925,
+        "Y": 26027.436
+      }
+    },
+    {
+      "id": "Combine_818",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1,
+        "Mode": "Max"
+      },
+      "position": {
+        "X": 26400,
+        "Y": 26075
+      }
+    },
+    {
+      "id": "Mesher_853",
+      "type": "Mesher",
+      "params": {
+        "Topology": "Quads",
+        "TopologyWarning": "Quads are only supported for OBJ, FBX and DAE export. GLTF and GLB formats don't support quads.",
+        "CreateUVs": true,
+        "LODInfo": "Base Mesh:\n2049x2049 | V: 4,198,401 | F: 8,388,608\n"
+      },
+      "position": {
+        "X": 31164,
+        "Y": 25685
+      }
+    },
+    {
+      "id": "LinearGradient_867",
+      "type": "LinearGradient",
+      "params": {},
+      "position": {
+        "X": 25179.01,
+        "Y": 25725
+      }
+    },
+    {
+      "id": "Steps_886",
+      "type": "Steps",
+      "params": {
+        "Scale": 1,
+        "Density": 1.4306107,
+        "Seed": 18786
+      },
+      "position": {
+        "X": 25686.11,
+        "Y": 25525
+      }
+    },
+    {
+      "id": "Export_914",
+      "type": "Export",
+      "params": {
+        "Format": "TIFF16"
+      },
+      "position": {
+        "X": 31400,
+        "Y": 25375
+      }
+    },
+    {
+      "id": "Steps_915",
+      "type": "Steps",
+      "params": {
+        "Scale": 1,
+        "Density": 1.5494896,
+        "Seed": 51669
+      },
+      "position": {
+        "X": 25686.11,
+        "Y": 25114.387
+      }
+    },
+    {
+      "id": "Swirl_924",
+      "type": "Swirl",
+      "params": {
+        "Size": 0.09675154,
+        "X": 0.33602077
+      },
+      "position": {
+        "X": 26925,
+        "Y": 25531
+      }
+    },
+    {
+      "id": "CraterField_930",
+      "type": "CraterField",
+      "params": {
+        "Scale": 0.9342717,
+        "Depth": 0.016261267,
+        "Density": 0.286827,
+        "Seed": 16386
+      },
+      "position": {
+        "X": 25688.574,
+        "Y": 26063.975
+      }
+    },
+    {
+      "id": "Export_963",
+      "type": "Export",
+      "params": {
+        "Format": "JPEG",
+        "RenderIntentOverride": "Mask"
+      },
+      "position": {
+        "X": 31164,
+        "Y": 25924
+      }
+    },
+    {
+      "id": "Erosion2_980",
+      "type": "Erosion2",
+      "params": {
+        "Duration": 16.794033,
+        "Downcutting": 0.063473634,
+        "ErosionScale": 194.04851,
+        "Seed": 3802,
+        "SuspendedLoadDischargeAmount": 0.51646626,
+        "BedLoadDischargeAmount": 0.67839575,
+        "BedLoadDischargeAngle": 26.746037,
+        "CoarseSedimentsDischargeAmount": 0.06962287,
+        "Version": 2
+      },
+      "position": {
+        "X": 29450,
+        "Y": 25725
+      }
+    },
+    {
+      "id": "CraterField_981",
+      "type": "CraterField",
+      "params": {
+        "Scale": 1.7582673,
+        "Depth": 0.13924569,
+        "Density": 0.09415141,
+        "Seed": 30222
+      },
+      "position": {
+        "X": 25688.574,
+        "Y": 25813.975
+      }
+    },
+    {
+      "id": "Lake_989",
+      "type": "Lake",
+      "params": {
+        "Precipitation": 36.87483,
+        "SmallLakes": 0.001,
+        "FloodControl": false,
+        "ShoreSize": 0.036827,
+        "SizeBias": 0.6374009
+      },
+      "position": {
+        "X": 28900,
+        "Y": 26300
+      }
+    },
+    {
+      "id": "Sharpen_990",
+      "type": "Sharpen",
+      "params": {
+        "Method": "Edge",
+        "Amount": 0.17895335
+      },
+      "position": {
+        "X": 27665.035,
+        "Y": 25813.975
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "LinearGradient_867",
+      "fromPort": "Out",
+      "to": "CraterField_103",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_614",
+      "fromPort": "Out",
+      "to": "Warp_133",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_523",
+      "fromPort": "Out",
+      "to": "Combine_137",
+      "toPort": "In"
+    },
+    {
+      "from": "CraterField_930",
+      "fromPort": "Out",
+      "to": "Combine_137",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Transform3D_778",
+      "fromPort": "Out",
+      "to": "Aperture_193",
+      "toPort": "In"
+    },
+    {
+      "from": "Swirl_924",
+      "fromPort": "Out",
+      "to": "Combine_252",
+      "toPort": "In"
+    },
+    {
+      "from": "Warp_812",
+      "fromPort": "Out",
+      "to": "Combine_252",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Erosion2_536",
+      "fromPort": "Out",
+      "to": "Combine_256",
+      "toPort": "In"
+    },
+    {
+      "from": "Sandstone_769",
+      "fromPort": "Out",
+      "to": "Combine_256",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Adjust_569",
+      "fromPort": "Out",
+      "to": "Combine_256",
+      "toPort": "Mask"
+    },
+    {
+      "from": "LinearGradient_867",
+      "fromPort": "Out",
+      "to": "CraterField_260",
+      "toPort": "In"
+    },
+    {
+      "from": "LinearGradient_867",
+      "fromPort": "Out",
+      "to": "Steps_273",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_818",
+      "fromPort": "Out",
+      "to": "Terraces_300",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_486",
+      "fromPort": "Out",
+      "to": "Combine_325",
+      "toPort": "In"
+    },
+    {
+      "from": "Steps_273",
+      "fromPort": "Out",
+      "to": "Combine_325",
+      "toPort": "Input2"
+    },
+    {
+      "from": "LinearGradient_867",
+      "fromPort": "Out",
+      "to": "CraterField_385",
+      "toPort": "In"
+    },
+    {
+      "from": "LinearGradient_867",
+      "fromPort": "Out",
+      "to": "Steps_404",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_252",
+      "fromPort": "Out",
+      "to": "Aperture_417",
+      "toPort": "In"
+    },
+    {
+      "from": "Erosion2_536",
+      "fromPort": "Out",
+      "to": "Lake_430",
+      "toPort": "In"
+    },
+    {
+      "from": "Aperture_193",
+      "fromPort": "Out",
+      "to": "Snow_433",
+      "toPort": "In"
+    },
+    {
+      "from": "TextureBase_526",
+      "fromPort": "Out",
+      "to": "SatMap_452",
+      "toPort": "In"
+    },
+    {
+      "from": "Erosion2_980",
+      "fromPort": "Out",
+      "to": "Combine_483",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_256",
+      "fromPort": "Out",
+      "to": "Combine_483",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Warp_755",
+      "fromPort": "Out",
+      "to": "Combine_483",
+      "toPort": "Mask"
+    },
+    {
+      "from": "Steps_915",
+      "fromPort": "Out",
+      "to": "Combine_486",
+      "toPort": "In"
+    },
+    {
+      "from": "Steps_404",
+      "fromPort": "Out",
+      "to": "Combine_486",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Lake_989",
+      "fromPort": "Out",
+      "to": "Lake_500",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_745",
+      "fromPort": "Out",
+      "to": "Combine_523",
+      "toPort": "In"
+    },
+    {
+      "from": "CraterField_103",
+      "fromPort": "Out",
+      "to": "Combine_523",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Lake_660",
+      "fromPort": "Out",
+      "to": "TextureBase_526",
+      "toPort": "In"
+    },
+    {
+      "from": "Lake_500",
+      "fromPort": "Out",
+      "to": "Erosion2_536",
+      "toPort": "In"
+    },
+    {
+      "from": "Lake_430",
+      "fromPort": "Out",
+      "to": "Export_554",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_325",
+      "fromPort": "Out",
+      "to": "Combine_614",
+      "toPort": "In"
+    },
+    {
+      "from": "Steps_886",
+      "fromPort": "Out",
+      "to": "Combine_614",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Snow_433",
+      "fromPort": "Snow",
+      "to": "Blur_640",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_483",
+      "fromPort": "Out",
+      "to": "Lake_660",
+      "toPort": "In"
+    },
+    {
+      "from": "Aperture_193",
+      "fromPort": "Out",
+      "to": "Clamp_681",
+      "toPort": "In"
+    },
+    {
+      "from": "CraterField_260",
+      "fromPort": "Out",
+      "to": "Combine_745",
+      "toPort": "In"
+    },
+    {
+      "from": "CraterField_981",
+      "fromPort": "Out",
+      "to": "Combine_745",
+      "toPort": "Input2"
+    },
+    {
+      "from": "LinearGradient_583",
+      "fromPort": "Out",
+      "to": "Warp_755",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_810",
+      "fromPort": "Out",
+      "to": "Sandstone_769",
+      "toPort": "In"
+    },
+    {
+      "from": "Sharpen_990",
+      "fromPort": "Out",
+      "to": "Transform3D_778",
+      "toPort": "In"
+    },
+    {
+      "from": "Transform3D_778",
+      "fromPort": "Out",
+      "to": "Combine_810",
+      "toPort": "In"
+    },
+    {
+      "from": "Clamp_681",
+      "fromPort": "Out",
+      "to": "Combine_810",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Blur_640",
+      "fromPort": "Out",
+      "to": "Combine_810",
+      "toPort": "Mask"
+    },
+    {
+      "from": "Terraces_300",
+      "fromPort": "Out",
+      "to": "Warp_812",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_137",
+      "fromPort": "Out",
+      "to": "Combine_818",
+      "toPort": "In"
+    },
+    {
+      "from": "CraterField_385",
+      "fromPort": "Out",
+      "to": "Combine_818",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Lake_660",
+      "fromPort": "Out",
+      "to": "Mesher_853",
+      "toPort": "In"
+    },
+    {
+      "from": "LinearGradient_867",
+      "fromPort": "Out",
+      "to": "Steps_886",
+      "toPort": "In"
+    },
+    {
+      "from": "SatMap_452",
+      "fromPort": "Out",
+      "to": "Export_914",
+      "toPort": "In"
+    },
+    {
+      "from": "LinearGradient_867",
+      "fromPort": "Out",
+      "to": "Steps_915",
+      "toPort": "In"
+    },
+    {
+      "from": "Warp_133",
+      "fromPort": "Out",
+      "to": "Swirl_924",
+      "toPort": "In"
+    },
+    {
+      "from": "LinearGradient_867",
+      "fromPort": "Out",
+      "to": "CraterField_930",
+      "toPort": "In"
+    },
+    {
+      "from": "Lake_660",
+      "fromPort": "Water",
+      "to": "Export_963",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_810",
+      "fromPort": "Out",
+      "to": "Erosion2_980",
+      "toPort": "In"
+    },
+    {
+      "from": "LinearGradient_867",
+      "fromPort": "Out",
+      "to": "CraterField_981",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_810",
+      "fromPort": "Out",
+      "to": "Lake_989",
+      "toPort": "In"
+    },
+    {
+      "from": "Aperture_417",
+      "fromPort": "Out",
+      "to": "Sharpen_990",
+      "toPort": "In"
+    }
+  ]
+}

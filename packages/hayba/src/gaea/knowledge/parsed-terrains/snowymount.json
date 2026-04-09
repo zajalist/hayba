@@ -1,0 +1,296 @@
+{
+  "source_file": "Snowymount.terrain",
+  "metadata": {
+    "name": "Weathered Colossus",
+    "version": "2.2.9.0"
+  },
+  "nodes": [
+    {
+      "id": "Mask_621",
+      "type": "Mask",
+      "params": {},
+      "position": {
+        "X": 30717.572,
+        "Y": 26326.447
+      }
+    },
+    {
+      "id": "RadialGradient_50000",
+      "type": "RadialGradient",
+      "params": {
+        "Scale": 0.89646244,
+        "Height": 0.48
+      },
+      "position": {
+        "X": 26383.068,
+        "Y": 26036.932
+      }
+    },
+    {
+      "id": "Sandstone_50010",
+      "type": "Sandstone",
+      "params": {
+        "Passes": 4,
+        "Iterations": 5,
+        "Spacing": 0.46,
+        "Convexity": 0.85,
+        "Chaos": 0.4,
+        "Seed": 41902,
+        "Chipped": false
+      },
+      "position": {
+        "X": 26700,
+        "Y": 26019
+      }
+    },
+    {
+      "id": "Outcrops_50020",
+      "type": "Outcrops",
+      "params": {
+        "Chipped": false,
+        "Seed": 33714
+      },
+      "position": {
+        "X": 27002.117,
+        "Y": 26025
+      }
+    },
+    {
+      "id": "Erosion2_50030",
+      "type": "Erosion2",
+      "params": {
+        "ErosionScale": 11000,
+        "Seed": 48271,
+        "BedLoadDischargeAmount": 0.25,
+        "Version": 2
+      },
+      "position": {
+        "X": 27300,
+        "Y": 26025
+      }
+    },
+    {
+      "id": "Shaper_50040",
+      "type": "Shaper",
+      "params": {
+        "Shape": -0.16,
+        "MaintainFineDetails": true
+      },
+      "position": {
+        "X": 27600,
+        "Y": 26025
+      }
+    },
+    {
+      "id": "Erosion2_50050",
+      "type": "Erosion2",
+      "params": {
+        "Duration": 6.138824,
+        "Downcutting": 0,
+        "Seed": 19384,
+        "SuspendedLoadDischargeAmount": 0,
+        "CoarseSedimentsDischargeAmount": 1,
+        "CoarseSedimentsDischargeAngle": 20,
+        "Shape": 0.14,
+        "ShapeSharpness": 0.4,
+        "Version": 2
+      },
+      "position": {
+        "X": 27962.254,
+        "Y": 25981
+      }
+    },
+    {
+      "id": "Sandstone_50060",
+      "type": "Sandstone",
+      "params": {
+        "Iterations": 19,
+        "Spacing": 0.09275236,
+        "Intensity": 0.30774805,
+        "Tilt": 0.96,
+        "Direction": 145,
+        "Chaos": 0.4,
+        "Seed": 57231,
+        "Chipped": false
+      },
+      "position": {
+        "X": 28321.45,
+        "Y": 26111.777
+      }
+    },
+    {
+      "id": "Erosion2_50070",
+      "type": "Erosion2",
+      "params": {
+        "Duration": 5.097791,
+        "Downcutting": 0.14096016,
+        "ErosionScale": 191.9349,
+        "Seed": 62103,
+        "BedLoadDischargeAmount": 1,
+        "CoarseSedimentsDischargeAmount": 1,
+        "Shape": 0.01,
+        "Version": 2
+      },
+      "position": {
+        "X": 28588.986,
+        "Y": 25859.283
+      }
+    },
+    {
+      "id": "Sediments_50100",
+      "type": "Sediments",
+      "params": {
+        "Passes": 3,
+        "Scale": 0.035806693
+      },
+      "position": {
+        "X": 29339.271,
+        "Y": 26326.447
+      }
+    },
+    {
+      "id": "Height_50110",
+      "type": "Height",
+      "params": {
+        "Falloff": 0.14
+      },
+      "position": {
+        "X": 29738.098,
+        "Y": 26003
+      }
+    },
+    {
+      "id": "GraphicEQ_50120",
+      "type": "GraphicEQ",
+      "params": {
+        "Band4": 0.47,
+        "Band5": 0.34,
+        "Band6": 0
+      },
+      "position": {
+        "X": 30073.36,
+        "Y": 26318.447
+      }
+    },
+    {
+      "id": "TextureBase_50130",
+      "type": "TextureBase",
+      "params": {
+        "Slope": 0.27,
+        "Scale": 0.35,
+        "Chaos": 0.17,
+        "Peaks": 0.05,
+        "Seed": 25819,
+        "Version": 2
+      },
+      "position": {
+        "X": 30380.895,
+        "Y": 26165.549
+      }
+    },
+    {
+      "id": "SatMap_50140",
+      "type": "SatMap",
+      "params": {
+        "LibraryItem": 1,
+        "Bias": 0.43309498,
+        "Enhance": "None",
+        "Reverse": true,
+        "Rough": "Med",
+        "Hue": 0.45863125,
+        "Saturation": -0.057201188,
+        "Lightness": 0.6905005
+      },
+      "position": {
+        "X": 29652.518,
+        "Y": 26442.488
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "TextureBase_50130",
+      "fromPort": "Out",
+      "to": "Mask_621",
+      "toPort": "In"
+    },
+    {
+      "from": "RadialGradient_50000",
+      "fromPort": "Out",
+      "to": "Sandstone_50010",
+      "toPort": "In"
+    },
+    {
+      "from": "Sandstone_50010",
+      "fromPort": "Out",
+      "to": "Outcrops_50020",
+      "toPort": "In"
+    },
+    {
+      "from": "Outcrops_50020",
+      "fromPort": "Out",
+      "to": "Erosion2_50030",
+      "toPort": "In"
+    },
+    {
+      "from": "Erosion2_50030",
+      "fromPort": "Out",
+      "to": "Shaper_50040",
+      "toPort": "In"
+    },
+    {
+      "from": "Shaper_50040",
+      "fromPort": "Out",
+      "to": "Erosion2_50050",
+      "toPort": "In"
+    },
+    {
+      "from": "Erosion2_50050",
+      "fromPort": "Out",
+      "to": "Sandstone_50060",
+      "toPort": "In"
+    },
+    {
+      "from": "Sandstone_50060",
+      "fromPort": "Out",
+      "to": "Erosion2_50070",
+      "toPort": "In"
+    },
+    {
+      "from": "Erosion2_50070",
+      "fromPort": "Out",
+      "to": "Sediments_50100",
+      "toPort": "In"
+    },
+    {
+      "from": "Sediments_50100",
+      "fromPort": "Out",
+      "to": "Height_50110",
+      "toPort": "In"
+    },
+    {
+      "from": "Sediments_50100",
+      "fromPort": "Out",
+      "to": "GraphicEQ_50120",
+      "toPort": "In"
+    },
+    {
+      "from": "Height_50110",
+      "fromPort": "Out",
+      "to": "GraphicEQ_50120",
+      "toPort": "Mask"
+    },
+    {
+      "from": "GraphicEQ_50120",
+      "fromPort": "Out",
+      "to": "TextureBase_50130",
+      "toPort": "In"
+    },
+    {
+      "from": "Sediments_50100",
+      "fromPort": "Out",
+      "to": "SatMap_50140",
+      "toPort": "In"
+    }
+  ]
+}

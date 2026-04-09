@@ -1,0 +1,233 @@
+{
+  "source_file": "test regions.terrain",
+  "metadata": {
+    "name": "",
+    "version": "2.2.8.0"
+  },
+  "nodes": [
+    {
+      "id": "Transform_140",
+      "type": "Transform",
+      "params": {
+        "OffsetX": -0.052870713,
+        "OffsetY": -0.5857084,
+        "Version": 2
+      },
+      "position": {
+        "X": 27065,
+        "Y": 25875
+      }
+    },
+    {
+      "id": "Gate_152",
+      "type": "Gate",
+      "params": {},
+      "position": {
+        "X": 27065,
+        "Y": 26100
+      }
+    },
+    {
+      "id": "Erosion2_269",
+      "type": "Erosion2",
+      "params": {
+        "ErosionScale": 551.75555,
+        "Seed": 44079,
+        "Version": 2
+      },
+      "position": {
+        "X": 27800,
+        "Y": 26035.305
+      }
+    },
+    {
+      "id": "CraterField_345",
+      "type": "CraterField",
+      "params": {
+        "Seed": 54223
+      },
+      "position": {
+        "X": 26720,
+        "Y": 26100
+      }
+    },
+    {
+      "id": "Combine_425",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 0.8659645,
+        "Mode": "Overlay"
+      },
+      "position": {
+        "X": 27442,
+        "Y": 26175
+      }
+    },
+    {
+      "id": "Gate_496",
+      "type": "Gate",
+      "params": {},
+      "position": {
+        "X": 28100,
+        "Y": 26057.305
+      }
+    },
+    {
+      "id": "Combine_504",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1,
+        "Mode": "Max"
+      },
+      "position": {
+        "X": 27640,
+        "Y": 26035.305
+      }
+    },
+    {
+      "id": "Transform_629",
+      "type": "Transform",
+      "params": {
+        "OffsetY": 0.4378356,
+        "Version": 2
+      },
+      "position": {
+        "X": 26950,
+        "Y": 26266.223
+      }
+    },
+    {
+      "id": "Gate_696",
+      "type": "Gate",
+      "params": {},
+      "position": {
+        "X": 27212,
+        "Y": 26350
+      }
+    },
+    {
+      "id": "Mountain_728",
+      "type": "Mountain",
+      "params": {
+        "Height": 1.604006,
+        "Style": "Eroded",
+        "Seed": 14076
+      },
+      "position": {
+        "X": 26663.055,
+        "Y": 26266.223
+      }
+    },
+    {
+      "id": "Volcano_730",
+      "type": "Volcano",
+      "params": {
+        "Scale": 0.9339116,
+        "Height": 0.9072697,
+        "Mouth": 0.29250312,
+        "Seed": 11597
+      },
+      "position": {
+        "X": 26720,
+        "Y": 25875
+      }
+    },
+    {
+      "id": "Draw_795",
+      "type": "Draw",
+      "params": {
+        "Soften": 1.5237188,
+        "StrokeData": "AgAAAB+LCAAAAAAAAAqLjgUAKbtMDQIAAAA="
+      },
+      "position": {
+        "X": 26720,
+        "Y": 26450
+      }
+    },
+    {
+      "id": "Gate_968",
+      "type": "Gate",
+      "params": {},
+      "position": {
+        "X": 27359,
+        "Y": 25825
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "Volcano_730",
+      "fromPort": "Out",
+      "to": "Transform_140",
+      "toPort": "In"
+    },
+    {
+      "from": "CraterField_345",
+      "fromPort": "Out",
+      "to": "Gate_152",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_504",
+      "fromPort": "Out",
+      "to": "Erosion2_269",
+      "toPort": "In"
+    },
+    {
+      "from": "Gate_152",
+      "fromPort": "Out",
+      "to": "Combine_425",
+      "toPort": "In"
+    },
+    {
+      "from": "Gate_696",
+      "fromPort": "Out",
+      "to": "Combine_425",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Erosion2_269",
+      "fromPort": "Out",
+      "to": "Gate_496",
+      "toPort": "In"
+    },
+    {
+      "from": "Gate_968",
+      "fromPort": "Out",
+      "to": "Combine_504",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_425",
+      "fromPort": "Out",
+      "to": "Combine_504",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Mountain_728",
+      "fromPort": "Out",
+      "to": "Transform_629",
+      "toPort": "In"
+    },
+    {
+      "from": "Draw_795",
+      "fromPort": "Out",
+      "to": "Transform_629",
+      "toPort": "Mask"
+    },
+    {
+      "from": "Transform_629",
+      "fromPort": "Out",
+      "to": "Gate_696",
+      "toPort": "In"
+    },
+    {
+      "from": "Transform_140",
+      "fromPort": "Out",
+      "to": "Gate_968",
+      "toPort": "In"
+    }
+  ]
+}

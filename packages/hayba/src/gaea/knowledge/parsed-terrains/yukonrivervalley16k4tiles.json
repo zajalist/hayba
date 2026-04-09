@@ -1,0 +1,1504 @@
+{
+  "source_file": "YukonRiverValley16k4Tiles.terrain",
+  "metadata": {
+    "name": "",
+    "version": "2.2.9.0"
+  },
+  "nodes": [
+    {
+      "id": "Curve_102",
+      "type": "Curve",
+      "params": {
+        "RenderIntentOverride": "Mask"
+      },
+      "position": {
+        "X": 37650,
+        "Y": 26768.383
+      }
+    },
+    {
+      "id": "Combine_124",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1,
+        "Mode": "Min"
+      },
+      "position": {
+        "X": 32140.012,
+        "Y": 26316.227
+      }
+    },
+    {
+      "id": "HSL_141",
+      "type": "HSL",
+      "params": {
+        "Hue": -0.0041305246,
+        "Saturation": -0.44196615,
+        "Lightness": 0.08817891
+      },
+      "position": {
+        "X": 37700,
+        "Y": 26575
+      }
+    },
+    {
+      "id": "Curve_148",
+      "type": "Curve",
+      "params": {
+        "RenderIntentOverride": "Mask"
+      },
+      "position": {
+        "X": 37930,
+        "Y": 26128.06
+      }
+    },
+    {
+      "id": "Adjust_207",
+      "type": "Adjust",
+      "params": {
+        "Shaper": 1,
+        "Autolevel": true,
+        "RenderIntentOverride": "Mask"
+      },
+      "position": {
+        "X": 38968.85,
+        "Y": 26045.945
+      }
+    },
+    {
+      "id": "Combine_216",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1,
+        "Mode": "Screen",
+        "RenderIntentOverride": "Mask"
+      },
+      "position": {
+        "X": 29724.125,
+        "Y": 26775
+      }
+    },
+    {
+      "id": "Sharpen_217",
+      "type": "Sharpen",
+      "params": {
+        "Amount": 0.09728708
+      },
+      "position": {
+        "X": 33852.203,
+        "Y": 26359
+      }
+    },
+    {
+      "id": "Slope_237",
+      "type": "Slope",
+      "params": {},
+      "position": {
+        "X": 29641.125,
+        "Y": 26545.365
+      }
+    },
+    {
+      "id": "Slope_250",
+      "type": "Slope",
+      "params": {},
+      "position": {
+        "X": 33622.203,
+        "Y": 26524.82
+      }
+    },
+    {
+      "id": "Combine_258",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1,
+        "Mode": "Overlay",
+        "RenderIntentOverride": "Color"
+      },
+      "position": {
+        "X": 40000,
+        "Y": 26302.02
+      }
+    },
+    {
+      "id": "Chokepoint_271",
+      "type": "Chokepoint",
+      "params": {},
+      "position": {
+        "X": 36025,
+        "Y": 26275
+      }
+    },
+    {
+      "id": "Rivers_274",
+      "type": "Rivers",
+      "params": {
+        "Downcutting": 1,
+        "Headwaters": 1000,
+        "Seed": 30060
+      },
+      "position": {
+        "X": 28025,
+        "Y": 26205.916
+      }
+    },
+    {
+      "id": "Splat_276",
+      "type": "Splat",
+      "params": {
+        "RenderIntentOverride": "Mask"
+      },
+      "position": {
+        "X": 38675,
+        "Y": 25725
+      }
+    },
+    {
+      "id": "Slope_277",
+      "type": "Slope",
+      "params": {
+        "Falloff": 10
+      },
+      "position": {
+        "X": 32820,
+        "Y": 26650
+      }
+    },
+    {
+      "id": "SatMap_281",
+      "type": "SatMap",
+      "params": {
+        "LibraryItem": 445,
+        "Bias": 0.1693515,
+        "Rough": "Low",
+        "Hue": 0.024458421,
+        "Saturation": -0.35185185,
+        "Lightness": -0.07337526
+      },
+      "position": {
+        "X": 36583.727,
+        "Y": 26498.896
+      }
+    },
+    {
+      "id": "Rivers_307",
+      "type": "Rivers",
+      "params": {
+        "Water": 0.19640644,
+        "RiverValleyWidth": "minus2",
+        "Seed": 24410
+      },
+      "position": {
+        "X": 31788.678,
+        "Y": 26177.81
+      }
+    },
+    {
+      "id": "Slope_315",
+      "type": "Slope",
+      "params": {},
+      "position": {
+        "X": 36599.01,
+        "Y": 26200
+      }
+    },
+    {
+      "id": "Chokepoint_318",
+      "type": "Chokepoint",
+      "params": {},
+      "position": {
+        "X": 34200,
+        "Y": 26359
+      }
+    },
+    {
+      "id": "Snow_332",
+      "type": "Snow",
+      "params": {
+        "Duration": 0.38,
+        "Intensity": 0.36,
+        "SettleThaw": 0.34,
+        "Melt": 0.36,
+        "SnowLine": 0.02,
+        "SlipOffAngle": 55,
+        "RealScale": false,
+        "TerrainScale": 10000,
+        "Verticality": 3000,
+        "Seed": 37075
+      },
+      "position": {
+        "X": 35374.664,
+        "Y": 26275
+      }
+    },
+    {
+      "id": "Roughen_335",
+      "type": "Roughen",
+      "params": {
+        "Depth": 0.1,
+        "Oriented": true,
+        "Quality": "Full"
+      },
+      "position": {
+        "X": 34875,
+        "Y": 26359
+      }
+    },
+    {
+      "id": "Combine_357",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1,
+        "Mode": "Max",
+        "RenderIntentOverride": "Mask"
+      },
+      "position": {
+        "X": 33622.203,
+        "Y": 25700
+      }
+    },
+    {
+      "id": "Export_361",
+      "type": "Export",
+      "params": {
+        "Format": "PNG16",
+        "RenderIntentOverride": "Mask"
+      },
+      "position": {
+        "X": 39248.41,
+        "Y": 25675
+      }
+    },
+    {
+      "id": "ColorErosion_388",
+      "type": "ColorErosion",
+      "params": {
+        "SedimentDensity": 0.7987421,
+        "Blend": 1,
+        "Seed": 48740
+      },
+      "position": {
+        "X": 37470,
+        "Y": 26575
+      }
+    },
+    {
+      "id": "Curve_402",
+      "type": "Curve",
+      "params": {
+        "RenderIntentOverride": "Mask"
+      },
+      "position": {
+        "X": 36925,
+        "Y": 26050
+      }
+    },
+    {
+      "id": "ThermalShaper_429",
+      "type": "ThermalShaper",
+      "params": {
+        "Shape": 0.5,
+        "Scale": 50,
+        "MicrodetailPreservation": 0,
+        "Version": 2
+      },
+      "position": {
+        "X": 28675,
+        "Y": 26199.916
+      }
+    },
+    {
+      "id": "Erosion2_466",
+      "type": "Erosion2",
+      "params": {
+        "Duration": 19.99601,
+        "Downcutting": 0.10130112,
+        "ErosionScale": 100,
+        "Seed": 24584,
+        "BedLoadDischargeAngle": 25,
+        "CoarseSedimentsDischargeAmount": 0.5,
+        "Shape": 0.5,
+        "ShapeSharpness": 0.7,
+        "ShapeDetailScale": 0.5,
+        "Version": 2
+      },
+      "position": {
+        "X": 28350,
+        "Y": 26205.916
+      }
+    },
+    {
+      "id": "Combine_474",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1,
+        "Mode": "Screen",
+        "RenderIntentOverride": "Mask"
+      },
+      "position": {
+        "X": 37303.766,
+        "Y": 26114.06
+      }
+    },
+    {
+      "id": "Snow_480",
+      "type": "Snow",
+      "params": {
+        "Duration": 0.13,
+        "Intensity": 0.15,
+        "SettleThaw": 0.5,
+        "Melt": 0.09,
+        "SnowLine": 0.05,
+        "ModelScale": 3,
+        "Seed": 43812
+      },
+      "position": {
+        "X": 35700,
+        "Y": 26275
+      }
+    },
+    {
+      "id": "Rivers_485",
+      "type": "Rivers",
+      "params": {
+        "Water": 0.09727386,
+        "RiverValleyWidth": "minus2",
+        "Seed": 52454
+      },
+      "position": {
+        "X": 31795.012,
+        "Y": 26454.645
+      }
+    },
+    {
+      "id": "FlowMap_528",
+      "type": "FlowMap",
+      "params": {
+        "FlowLength": 0.49780825,
+        "FlowVolume": 0.01,
+        "Seed": 39915
+      },
+      "position": {
+        "X": 36599.01,
+        "Y": 25900
+      }
+    },
+    {
+      "id": "FlowMap_537",
+      "type": "FlowMap",
+      "params": {
+        "FlowLength": 0.34872824,
+        "FlowVolume": 0,
+        "Seed": 8449
+      },
+      "position": {
+        "X": 36599.01,
+        "Y": 26756.383
+      }
+    },
+    {
+      "id": "HSL_571",
+      "type": "HSL",
+      "params": {
+        "Hue": -0.01397624,
+        "Saturation": -0.35534588,
+        "Lightness": 0.031446543
+      },
+      "position": {
+        "X": 37150,
+        "Y": 26498.896
+      }
+    },
+    {
+      "id": "Combine_574",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "RenderIntentOverride": "Color"
+      },
+      "position": {
+        "X": 38155,
+        "Y": 26519
+      }
+    },
+    {
+      "id": "Erosion2_586",
+      "type": "Erosion2",
+      "params": {
+        "Duration": 5,
+        "Downcutting": 0.1,
+        "ErosionScale": 200,
+        "Seed": 24584,
+        "SuspendedLoadDischargeAmount": 0,
+        "SuspendedLoadDischargeAngle": 0,
+        "BedLoadDischargeAmount": 0.2,
+        "BedLoadDischargeAngle": 25,
+        "CoarseSedimentsDischargeAngle": 0,
+        "Shape": 0,
+        "ShapeDetailScale": 0.05,
+        "Enable": true,
+        "Version": 2
+      },
+      "position": {
+        "X": 34525,
+        "Y": 26359
+      }
+    },
+    {
+      "id": "Warp_594",
+      "type": "Warp",
+      "params": {
+        "Size": 0.0025,
+        "Strength": 0.20260224,
+        "NoiseType": "VoronoiR",
+        "Seed": 39348,
+        "Iterations": 4
+      },
+      "position": {
+        "X": 29850,
+        "Y": 26325
+      }
+    },
+    {
+      "id": "Chokepoint_595",
+      "type": "Chokepoint",
+      "params": {},
+      "position": {
+        "X": 31000,
+        "Y": 26193.916
+      }
+    },
+    {
+      "id": "Combine_630",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "RenderIntentOverride": "Color"
+      },
+      "position": {
+        "X": 40225,
+        "Y": 26302.02
+      }
+    },
+    {
+      "id": "LightX_635",
+      "type": "LightX",
+      "params": {
+        "SunAzimuth": 93.6803,
+        "SunElevation": 35.018585,
+        "SunIntensity": 1.2478315
+      },
+      "position": {
+        "X": 40700,
+        "Y": 26242.02
+      }
+    },
+    {
+      "id": "SatMap_644",
+      "type": "SatMap",
+      "params": {
+        "Library": "Green",
+        "LibraryItem": 19,
+        "Hue": 0.07434944,
+        "Saturation": -0.115654685,
+        "Lightness": -0.17348203
+      },
+      "position": {
+        "X": 39651.863,
+        "Y": 26101.041
+      }
+    },
+    {
+      "id": "Draw_659",
+      "type": "Draw",
+      "params": {
+        "Soften": 0.5956064,
+        "StrokeData": "BQwAAB+LCAAAAAAAAAq11r9u2zAQx/F38RwE/HdHMk/QbkWnFkGGAMngxQXqdCiCvHvvdzKPF7UsUMA1PovxlUSLlijdvx4+fTueXs6Hu/vXw5fDXbgNXNTN4Su+ptZEfrtZ5B7EMucYwOWoknWG2Yk3o6cKxW1Aar1BqUCj5wC+kyq2QQS/QdmsNwjKeoLy9nBz+PD4/en0fJbZDLfyCz4/Ph1/6JeQ5OvH08vz6Xx8+akZx9vPfaxJXQ5dYgMbOdasVrmxsswwc+9izHyJBFZTbGA5MbieGLL1Dr7Lzm32HMD3DrNn+Mv++x4qWC7gc4TV3tvJzalJDVznCnV19pED0LJTV9YLuMzKcgaXSS3zH/e+wvWWclDjZi4NdNNLj2rdt4t/dJ2VxMu+XQIuvx++N+FyKmrcaKHDNc6bQoAxbmhg45bexbomYfVy2c7cqrDMWbnMwnIN4HKPYuYq5rFJrsB5Ee6X3m1hpMVcU2hgFXevqzGAVRa+ZrDaha8F7F/Sv9RVBqu6IF/jP6ypg63C+pk3Tc0BLOuS4HKJMHKRBV7O0GUCy7q/zx0sM7hMJMZik4mUy1XM3JTLRVjmotzYFUauCXxm2OcrTDi3KsaRST9z3H1l4WsXVuX+6e6q517EqBwjuNqF1RRhnu/2wLdK4CqDVYb/sHJSJ8GrhfO3TDKMjnT5XfpwnZmrGjkzzNyiGMfeXx/vn6OjXuGUSyIY7z3MVdS5dKUKM8v/Ty5vj2w75UzgsjyOm8sBXJZ3jb7O2zvdnE9dwFx+t0SNfIU50deINO7VGJua9/KuX95SXCYYmbKambLoI1eG5jIJyy2ofz6th18iJjrLBQwAAA==",
+        "RenderIntentOverride": "Mask"
+      },
+      "position": {
+        "X": 29386.348,
+        "Y": 26691.31
+      }
+    },
+    {
+      "id": "Slope_713",
+      "type": "Slope",
+      "params": {
+        "Falloff": 5
+      },
+      "position": {
+        "X": 35144.664,
+        "Y": 26498.896
+      }
+    },
+    {
+      "id": "SoftClip_723",
+      "type": "SoftClip",
+      "params": {
+        "ClipMode": "BelowThreshold",
+        "Threshold": 0.30173483
+      },
+      "position": {
+        "X": 26850,
+        "Y": 26199.916
+      }
+    },
+    {
+      "id": "Combine_726",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1
+      },
+      "position": {
+        "X": 33400,
+        "Y": 26375
+      }
+    },
+    {
+      "id": "ColorErosion_738",
+      "type": "ColorErosion",
+      "params": {
+        "TransportDistance": 0.25031307,
+        "SedimentDensity": 1,
+        "Blend": 1,
+        "ColorHold": 0.25192174,
+        "FlowVolume": 0.14849755,
+        "Seed": 10955,
+        "RenderIntentOverride": "Mask"
+      },
+      "position": {
+        "X": 37550,
+        "Y": 26114.06
+      }
+    },
+    {
+      "id": "Transpose_747",
+      "type": "Transpose",
+      "params": {
+        "Amount": 0.7007435
+      },
+      "position": {
+        "X": 30325,
+        "Y": 26193.916
+      }
+    },
+    {
+      "id": "Export_754",
+      "type": "Export",
+      "params": {},
+      "position": {
+        "X": 36599.01,
+        "Y": 25700
+      }
+    },
+    {
+      "id": "Combine_760",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1,
+        "Mode": "Multiply",
+        "RenderIntentOverride": "Mask"
+      },
+      "position": {
+        "X": 39600,
+        "Y": 26200
+      }
+    },
+    {
+      "id": "Chokepoint_771",
+      "type": "Chokepoint",
+      "params": {},
+      "position": {
+        "X": 32375,
+        "Y": 26300.227
+      }
+    },
+    {
+      "id": "Chokepoint_786",
+      "type": "Chokepoint",
+      "params": {},
+      "position": {
+        "X": 28975,
+        "Y": 26205.916
+      }
+    },
+    {
+      "id": "Canyon_791",
+      "type": "Canyon",
+      "params": {
+        "Valley": 0.49500206,
+        "Seed": 16096
+      },
+      "position": {
+        "X": 26566.5,
+        "Y": 26205.916
+      }
+    },
+    {
+      "id": "Transform3D_793",
+      "type": "Transform3D",
+      "params": {
+        "DropToFloor": true,
+        "OffsetX": -0.18174309,
+        "Scale": 1.4969767
+      },
+      "position": {
+        "X": 27750,
+        "Y": 26205.916
+      }
+    },
+    {
+      "id": "Peaks_801",
+      "type": "Peaks",
+      "params": {},
+      "position": {
+        "X": 36599.01,
+        "Y": 26050
+      }
+    },
+    {
+      "id": "Combine_853",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1,
+        "Mode": "Screen",
+        "RenderIntentOverride": "Color"
+      },
+      "position": {
+        "X": 40475,
+        "Y": 26302.02
+      }
+    },
+    {
+      "id": "FractalTerraces_856",
+      "type": "FractalTerraces",
+      "params": {
+        "Spacing": 0.0005,
+        "Seed": 44527,
+        "Character": 0.2498253,
+        "ApplyTilt": true,
+        "Direction": 35,
+        "TiltSeed": 27999
+      },
+      "position": {
+        "X": 32721.865,
+        "Y": 26426.645
+      }
+    },
+    {
+      "id": "ThermalShaper_866",
+      "type": "ThermalShaper",
+      "params": {
+        "Influence": 0.3471706,
+        "Shape": 0.35305658,
+        "Scale": 75,
+        "Version": 2
+      },
+      "position": {
+        "X": 30625,
+        "Y": 26193.916
+      }
+    },
+    {
+      "id": "Curve_868",
+      "type": "Curve",
+      "params": {
+        "RenderIntentOverride": "Mask"
+      },
+      "position": {
+        "X": 37550,
+        "Y": 25900
+      }
+    },
+    {
+      "id": "Warp_896",
+      "type": "Warp",
+      "params": {
+        "Size": 0.25423378,
+        "Seed": 45352
+      },
+      "position": {
+        "X": 27425,
+        "Y": 26205.916
+      }
+    },
+    {
+      "id": "Combine_897",
+      "type": "Combine",
+      "params": {
+        "PortCount": 3,
+        "Ratio": 1,
+        "Mode": "Screen",
+        "RenderIntentOverride": "Mask"
+      },
+      "position": {
+        "X": 38275,
+        "Y": 25975
+      }
+    },
+    {
+      "id": "Erosion2_900",
+      "type": "Erosion2",
+      "params": {
+        "Downcutting": 0.099235855,
+        "ErosionScale": 250,
+        "Seed": 4705,
+        "SuspendedLoadDischargeAngle": 32,
+        "BedLoadDischargeAmount": 0.1,
+        "BedLoadDischargeAngle": 20,
+        "CoarseSedimentsDischargeAmount": 0.5,
+        "CoarseSedimentsDischargeAngle": 28,
+        "Shape": 0.5,
+        "ShapeSharpness": 0,
+        "Enable": true,
+        "Version": 2
+      },
+      "position": {
+        "X": 31427.9,
+        "Y": 26172.533
+      }
+    },
+    {
+      "id": "File_905",
+      "type": "File",
+      "params": {
+        "FileName": "C:\\Users\\Elfe2023\\Downloads\\weathered_sandstone_cliff_temsfahp_8k (1)\\Weathered_Sandstone_Cliff_temsfahp_8K_BaseColor.jpg",
+        "IsRGB": true,
+        "NeverCache": false
+      },
+      "position": {
+        "X": 36861,
+        "Y": 26434
+      }
+    },
+    {
+      "id": "FractalTerraces_917",
+      "type": "FractalTerraces",
+      "params": {
+        "Spacing": 0.07,
+        "Intensity": 0.73,
+        "Seed": 41220,
+        "Character": 0.15,
+        "HardnessUniformity": 0.2,
+        "ApplyTilt": true,
+        "Direction": 35,
+        "TiltSeed": 5524
+      },
+      "position": {
+        "X": 29475,
+        "Y": 25975
+      }
+    },
+    {
+      "id": "Adjust_935",
+      "type": "Adjust",
+      "params": {
+        "Shaper": -0.49979347,
+        "Invert": true,
+        "RenderIntentOverride": "Mask"
+      },
+      "position": {
+        "X": 38954.41,
+        "Y": 26275.15
+      }
+    },
+    {
+      "id": "Trees_940",
+      "type": "Trees",
+      "params": {
+        "TreeCount": 600,
+        "Shape": "Big",
+        "Seed": 20817,
+        "Health": 0.7,
+        "Patches": 0.0001,
+        "Spread": 0.3,
+        "AltitudeFalloff": 0.09861669,
+        "Version": 2,
+        "RenderIntentOverride": "Mask"
+      },
+      "position": {
+        "X": 38625,
+        "Y": 25959
+      }
+    },
+    {
+      "id": "Combine_948",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1,
+        "Mode": "Screen",
+        "RenderIntentOverride": "Mask"
+      },
+      "position": {
+        "X": 30080,
+        "Y": 26650
+      }
+    },
+    {
+      "id": "Warp_952",
+      "type": "Warp",
+      "params": {
+        "Size": 0.05,
+        "Strength": 0.06,
+        "Roughness": 0.6956674,
+        "Seed": 14676
+      },
+      "position": {
+        "X": 33050,
+        "Y": 26426.645
+      }
+    },
+    {
+      "id": "Gabor_955",
+      "type": "Gabor",
+      "params": {
+        "Size": 0.09933911,
+        "Entropy": 1,
+        "Gain": 0.6982652,
+        "Seed": 15612
+      },
+      "position": {
+        "X": 27125,
+        "Y": 26205.916
+      }
+    },
+    {
+      "id": "Warp_959",
+      "type": "Warp",
+      "params": {
+        "Size": 0.024989674,
+        "Strength": 0.2046675,
+        "Roughness": 0.74989676,
+        "Seed": 52377,
+        "Iterations": 2,
+        "RenderIntentOverride": "Mask"
+      },
+      "position": {
+        "X": 39294.367,
+        "Y": 26088.574
+      }
+    },
+    {
+      "id": "Combine_964",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 0.7969951,
+        "Mode": "Overlay",
+        "RenderIntentOverride": "Color"
+      },
+      "position": {
+        "X": 37050,
+        "Y": 26519
+      }
+    },
+    {
+      "id": "Accumulator_965",
+      "type": "Accumulator",
+      "params": {},
+      "position": {
+        "X": 36025,
+        "Y": 26450
+      }
+    },
+    {
+      "id": "Export_973",
+      "type": "Export",
+      "params": {
+        "Format": "JPEG"
+      },
+      "position": {
+        "X": 39018.41,
+        "Y": 26503
+      }
+    },
+    {
+      "id": "Draw_975",
+      "type": "Draw",
+      "params": {
+        "Soften": 0.6010041,
+        "StrokeData": "ggcAAB+LCAAAAAAAAAqt1LFqHDEQxvF32fowI2lG0vgJnC64cjAuDHZxzQVy58IYv7vnk08aZcMWgYVfs/xZrSS0evxYfv4+ni7n5fbxY3lYbulGqpp8WH7hKWkw/HnoVcl4jcZrDgLXyqQw1Qy9BgKvMcKoDFNNMKrAVAVGLfD5dFjunv+8nF7P5zb1w3L//HJ8aw8U7fHH6fJ6Oh8v7y1jtPVmVGK4DixcYHy2UoKNWmo1XiN4LdmMmhJMVYzXAFs1Vpi+m4zXDF61mq13KxUY32XwGghGLbDHNmsg2NiMdf17UkoKveZq8lQrjKom73IyNJg+cI0JfKdWlWGaVIBeWWCqGUZVmDaDoVdRo1Mt0GtmM9c2r1HF6B6bIaRwHViz7XHxK2MVi2ZfjgSBjRgZRrRryRcjSaDHQlqCR2YYMek+90GgCH1cYRU/ieuYrI9ImppeUwLPVWDkGMFz+y2p9CtOYwDvuTZjxZFg6tL0HCJMmZuev3+a7ZxgO7fTvct2F2quIxcV4+fjn8xmzhn6fVVyNnOuMLJEM+f2M43METxXanpOBf570U9fCGQBlYIHAAA="
+      },
+      "position": {
+        "X": 29386.348,
+        "Y": 26850
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "FlowMap_537",
+      "fromPort": "Out",
+      "to": "Curve_102",
+      "toPort": "In"
+    },
+    {
+      "from": "Rivers_307",
+      "fromPort": "Out",
+      "to": "Combine_124",
+      "toPort": "In"
+    },
+    {
+      "from": "Rivers_485",
+      "fromPort": "Out",
+      "to": "Combine_124",
+      "toPort": "Input2"
+    },
+    {
+      "from": "ColorErosion_388",
+      "fromPort": "Out",
+      "to": "HSL_141",
+      "toPort": "In"
+    },
+    {
+      "from": "ColorErosion_738",
+      "fromPort": "Out",
+      "to": "Curve_148",
+      "toPort": "In"
+    },
+    {
+      "from": "Trees_940",
+      "fromPort": "Trees",
+      "to": "Adjust_207",
+      "toPort": "In"
+    },
+    {
+      "from": "Draw_659",
+      "fromPort": "Out",
+      "to": "Combine_216",
+      "toPort": "In"
+    },
+    {
+      "from": "Draw_975",
+      "fromPort": "Out",
+      "to": "Combine_216",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Combine_726",
+      "fromPort": "Out",
+      "to": "Sharpen_217",
+      "toPort": "In"
+    },
+    {
+      "from": "Slope_250",
+      "fromPort": "Out",
+      "to": "Sharpen_217",
+      "toPort": "Mask"
+    },
+    {
+      "from": "Chokepoint_786",
+      "fromPort": "Out",
+      "to": "Slope_237",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_726",
+      "fromPort": "Out",
+      "to": "Slope_250",
+      "toPort": "In"
+    },
+    {
+      "from": "Export_973",
+      "fromPort": "Out",
+      "to": "Combine_258",
+      "toPort": "In"
+    },
+    {
+      "from": "SatMap_644",
+      "fromPort": "Out",
+      "to": "Combine_258",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Combine_760",
+      "fromPort": "Out",
+      "to": "Combine_258",
+      "toPort": "Mask"
+    },
+    {
+      "from": "Snow_480",
+      "fromPort": "Out",
+      "to": "Chokepoint_271",
+      "toPort": "In"
+    },
+    {
+      "from": "Transform3D_793",
+      "fromPort": "Out",
+      "to": "Rivers_274",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_760",
+      "fromPort": "Out",
+      "to": "Splat_276",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_897",
+      "fromPort": "Out",
+      "to": "Splat_276",
+      "toPort": "In2"
+    },
+    {
+      "from": "Combine_357",
+      "fromPort": "Out",
+      "to": "Splat_276",
+      "toPort": "In3"
+    },
+    {
+      "from": "Accumulator_965",
+      "fromPort": "Out",
+      "to": "Splat_276",
+      "toPort": "In4"
+    },
+    {
+      "from": "Chokepoint_771",
+      "fromPort": "Out",
+      "to": "Slope_277",
+      "toPort": "In"
+    },
+    {
+      "from": "Chokepoint_271",
+      "fromPort": "Out",
+      "to": "SatMap_281",
+      "toPort": "In"
+    },
+    {
+      "from": "Erosion2_900",
+      "fromPort": "Out",
+      "to": "Rivers_307",
+      "toPort": "In"
+    },
+    {
+      "from": "Chokepoint_271",
+      "fromPort": "Out",
+      "to": "Slope_315",
+      "toPort": "In"
+    },
+    {
+      "from": "Sharpen_217",
+      "fromPort": "Out",
+      "to": "Chokepoint_318",
+      "toPort": "In"
+    },
+    {
+      "from": "Roughen_335",
+      "fromPort": "Out",
+      "to": "Snow_332",
+      "toPort": "In"
+    },
+    {
+      "from": "Slope_713",
+      "fromPort": "Out",
+      "to": "Snow_332",
+      "toPort": "Mask"
+    },
+    {
+      "from": "Erosion2_586",
+      "fromPort": "Out",
+      "to": "Roughen_335",
+      "toPort": "In"
+    },
+    {
+      "from": "Rivers_307",
+      "fromPort": "Depth",
+      "to": "Combine_357",
+      "toPort": "In"
+    },
+    {
+      "from": "Rivers_485",
+      "fromPort": "Depth",
+      "to": "Combine_357",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Splat_276",
+      "fromPort": "Out",
+      "to": "Export_361",
+      "toPort": "In"
+    },
+    {
+      "from": "HSL_571",
+      "fromPort": "Out",
+      "to": "ColorErosion_388",
+      "toPort": "In"
+    },
+    {
+      "from": "Chokepoint_271",
+      "fromPort": "Out",
+      "to": "ColorErosion_388",
+      "toPort": "Height"
+    },
+    {
+      "from": "Peaks_801",
+      "fromPort": "Out",
+      "to": "Curve_402",
+      "toPort": "In"
+    },
+    {
+      "from": "Erosion2_466",
+      "fromPort": "Out",
+      "to": "ThermalShaper_429",
+      "toPort": "In"
+    },
+    {
+      "from": "Rivers_274",
+      "fromPort": "Out",
+      "to": "Erosion2_466",
+      "toPort": "In"
+    },
+    {
+      "from": "Slope_315",
+      "fromPort": "Out",
+      "to": "Combine_474",
+      "toPort": "In"
+    },
+    {
+      "from": "Curve_402",
+      "fromPort": "Out",
+      "to": "Combine_474",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Snow_332",
+      "fromPort": "Out",
+      "to": "Snow_480",
+      "toPort": "In"
+    },
+    {
+      "from": "Erosion2_900",
+      "fromPort": "Out",
+      "to": "Rivers_485",
+      "toPort": "In"
+    },
+    {
+      "from": "Chokepoint_271",
+      "fromPort": "Out",
+      "to": "FlowMap_528",
+      "toPort": "In"
+    },
+    {
+      "from": "Snow_480",
+      "fromPort": "Out",
+      "to": "FlowMap_537",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_964",
+      "fromPort": "Out",
+      "to": "HSL_571",
+      "toPort": "In"
+    },
+    {
+      "from": "ColorErosion_388",
+      "fromPort": "Out",
+      "to": "Combine_574",
+      "toPort": "In"
+    },
+    {
+      "from": "HSL_141",
+      "fromPort": "Out",
+      "to": "Combine_574",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Curve_102",
+      "fromPort": "Out",
+      "to": "Combine_574",
+      "toPort": "Mask"
+    },
+    {
+      "from": "Chokepoint_318",
+      "fromPort": "Out",
+      "to": "Erosion2_586",
+      "toPort": "In"
+    },
+    {
+      "from": "FractalTerraces_917",
+      "fromPort": "Out",
+      "to": "Warp_594",
+      "toPort": "In"
+    },
+    {
+      "from": "ThermalShaper_866",
+      "fromPort": "Out",
+      "to": "Chokepoint_595",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_258",
+      "fromPort": "Out",
+      "to": "Combine_630",
+      "toPort": "In"
+    },
+    {
+      "from": "Chokepoint_271",
+      "fromPort": "Out",
+      "to": "LightX_635",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_853",
+      "fromPort": "Out",
+      "to": "LightX_635",
+      "toPort": "Texture"
+    },
+    {
+      "from": "Warp_959",
+      "fromPort": "Out",
+      "to": "SatMap_644",
+      "toPort": "In"
+    },
+    {
+      "from": "Roughen_335",
+      "fromPort": "Out",
+      "to": "Slope_713",
+      "toPort": "In"
+    },
+    {
+      "from": "Canyon_791",
+      "fromPort": "Out",
+      "to": "SoftClip_723",
+      "toPort": "In"
+    },
+    {
+      "from": "Chokepoint_771",
+      "fromPort": "Out",
+      "to": "Combine_726",
+      "toPort": "In"
+    },
+    {
+      "from": "Warp_952",
+      "fromPort": "Out",
+      "to": "Combine_726",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Slope_277",
+      "fromPort": "Out",
+      "to": "Combine_726",
+      "toPort": "Mask"
+    },
+    {
+      "from": "Combine_474",
+      "fromPort": "Out",
+      "to": "ColorErosion_738",
+      "toPort": "In"
+    },
+    {
+      "from": "Chokepoint_271",
+      "fromPort": "Out",
+      "to": "ColorErosion_738",
+      "toPort": "Height"
+    },
+    {
+      "from": "Chokepoint_786",
+      "fromPort": "Out",
+      "to": "Transpose_747",
+      "toPort": "In"
+    },
+    {
+      "from": "Warp_594",
+      "fromPort": "Out",
+      "to": "Transpose_747",
+      "toPort": "Reference"
+    },
+    {
+      "from": "Combine_948",
+      "fromPort": "Out",
+      "to": "Transpose_747",
+      "toPort": "Mask"
+    },
+    {
+      "from": "Chokepoint_271",
+      "fromPort": "Out",
+      "to": "Export_754",
+      "toPort": "In"
+    },
+    {
+      "from": "Warp_959",
+      "fromPort": "Out",
+      "to": "Combine_760",
+      "toPort": "In"
+    },
+    {
+      "from": "Adjust_935",
+      "fromPort": "Out",
+      "to": "Combine_760",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Combine_124",
+      "fromPort": "Out",
+      "to": "Chokepoint_771",
+      "toPort": "In"
+    },
+    {
+      "from": "ThermalShaper_429",
+      "fromPort": "Out",
+      "to": "Chokepoint_786",
+      "toPort": "In"
+    },
+    {
+      "from": "Warp_896",
+      "fromPort": "Out",
+      "to": "Transform3D_793",
+      "toPort": "In"
+    },
+    {
+      "from": "Chokepoint_271",
+      "fromPort": "Out",
+      "to": "Peaks_801",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_630",
+      "fromPort": "Out",
+      "to": "Combine_853",
+      "toPort": "In"
+    },
+    {
+      "from": "Accumulator_965",
+      "fromPort": "Out",
+      "to": "Combine_853",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Chokepoint_771",
+      "fromPort": "Out",
+      "to": "FractalTerraces_856",
+      "toPort": "In"
+    },
+    {
+      "from": "Transpose_747",
+      "fromPort": "Out",
+      "to": "ThermalShaper_866",
+      "toPort": "In"
+    },
+    {
+      "from": "FlowMap_528",
+      "fromPort": "Out",
+      "to": "Curve_868",
+      "toPort": "In"
+    },
+    {
+      "from": "Gabor_955",
+      "fromPort": "Out",
+      "to": "Warp_896",
+      "toPort": "In"
+    },
+    {
+      "from": "Curve_868",
+      "fromPort": "Out",
+      "to": "Combine_897",
+      "toPort": "In"
+    },
+    {
+      "from": "Curve_148",
+      "fromPort": "Out",
+      "to": "Combine_897",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Combine_357",
+      "fromPort": "Out",
+      "to": "Combine_897",
+      "toPort": "Input3"
+    },
+    {
+      "from": "Chokepoint_595",
+      "fromPort": "Out",
+      "to": "Erosion2_900",
+      "toPort": "In"
+    },
+    {
+      "from": "Chokepoint_786",
+      "fromPort": "Out",
+      "to": "FractalTerraces_917",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_897",
+      "fromPort": "Out",
+      "to": "Adjust_935",
+      "toPort": "In"
+    },
+    {
+      "from": "Chokepoint_271",
+      "fromPort": "Out",
+      "to": "Trees_940",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_897",
+      "fromPort": "Out",
+      "to": "Trees_940",
+      "toPort": "Inhibition"
+    },
+    {
+      "from": "Slope_237",
+      "fromPort": "Out",
+      "to": "Combine_948",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_216",
+      "fromPort": "Out",
+      "to": "Combine_948",
+      "toPort": "Input2"
+    },
+    {
+      "from": "FractalTerraces_856",
+      "fromPort": "Out",
+      "to": "Warp_952",
+      "toPort": "In"
+    },
+    {
+      "from": "SoftClip_723",
+      "fromPort": "Out",
+      "to": "Gabor_955",
+      "toPort": "In"
+    },
+    {
+      "from": "Adjust_207",
+      "fromPort": "Out",
+      "to": "Warp_959",
+      "toPort": "In"
+    },
+    {
+      "from": "File_905",
+      "fromPort": "Out",
+      "to": "Combine_964",
+      "toPort": "In"
+    },
+    {
+      "from": "SatMap_281",
+      "fromPort": "Out",
+      "to": "Combine_964",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Snow_480",
+      "fromPort": "Out",
+      "to": "Accumulator_965",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_574",
+      "fromPort": "Out",
+      "to": "Export_973",
+      "toPort": "In"
+    }
+  ]
+}

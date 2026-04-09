@@ -1,0 +1,657 @@
+{
+  "source_file": "RiverErosion_Sample.terrain",
+  "metadata": {
+    "name": "",
+    "version": "2.0.5.4"
+  },
+  "nodes": [
+    {
+      "id": "Combine_132",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1,
+        "Mode": "Max",
+        "Clamp": "Clamp",
+        "RenderIntentOverride": "Color",
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 30073.336,
+        "Y": 25909.496
+      }
+    },
+    {
+      "id": "Erosion2_142",
+      "type": "Erosion2",
+      "params": {
+        "Duration": 4.8201823,
+        "Downcutting": 0.8138058,
+        "ErosionScale": 75.91747,
+        "Seed": 26640,
+        "SuspendedLoadDischargeAmount": 1,
+        "SuspendedLoadDischargeAngle": 24,
+        "BedLoadDischargeAngle": 15,
+        "CoarseSedimentsDischargeAmount": 0.26382628,
+        "CoarseSedimentsDischargeAngle": 6.3416634,
+        "Shape": 0.6079476,
+        "ShapeSharpness": 0.086890645,
+        "RenderIntentOverride": "Heightfield",
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 28765.361,
+        "Y": 26295.38
+      }
+    },
+    {
+      "id": "Stratify_149",
+      "type": "Stratify",
+      "params": {
+        "Spacing": 0.0153449485,
+        "Octaves": 2,
+        "Intensity": 0.34678409,
+        "Shape": -1,
+        "Seed": 60358,
+        "TiltAmount": 0.042195823,
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 27095.48,
+        "Y": 26037.676
+      }
+    },
+    {
+      "id": "Blur_150",
+      "type": "Blur",
+      "params": {
+        "Radius": 0.00693226,
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 27809.21,
+        "Y": 26037.676
+      }
+    },
+    {
+      "id": "Slope_154",
+      "type": "Slope",
+      "params": {
+        "Falloff": 25.12707,
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 27095.48,
+        "Y": 26270.195
+      }
+    },
+    {
+      "id": "Adjust_159",
+      "type": "Adjust",
+      "params": {
+        "Multiply": 7.185861,
+        "Shaper": -0.10446538,
+        "Autolevel": true,
+        "RenderIntentOverride": "Mask",
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 28109.635,
+        "Y": 26295.38
+      }
+    },
+    {
+      "id": "Combine_164",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1,
+        "Clamp": "Clamp",
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 28504.969,
+        "Y": 25953.049
+      }
+    },
+    {
+      "id": "FractalTerraces_197",
+      "type": "FractalTerraces",
+      "params": {
+        "Spacing": 0.023968538,
+        "Octaves": 12,
+        "Intensity": 0.61061037,
+        "Seed": 5149,
+        "MacroOctaves": 5,
+        "Character": 0.064113066,
+        "StrataDetails": 0.92748874,
+        "ApplyTilt": true,
+        "TiltAmount": 0.012290045,
+        "TiltSeed": 43106,
+        "WarpAmount": 1,
+        "WarpSize": 0.9446948,
+        "RenderIntentOverride": "Heightfield",
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 28495.875,
+        "Y": 26295.38
+      }
+    },
+    {
+      "id": "Combine_279",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 0.27918887,
+        "Clamp": "Clamp",
+        "IsLocked": true,
+        "RenderIntentOverride": "Color",
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 30677.424,
+        "Y": 26147.492
+      }
+    },
+    {
+      "id": "SatMap_288",
+      "type": "SatMap",
+      "params": {
+        "Library": "Rock",
+        "LibraryItem": 353,
+        "Enhance": "Autolevel"
+      },
+      "position": {
+        "X": 29774.89,
+        "Y": 25773.846
+      }
+    },
+    {
+      "id": "Rivers_307",
+      "type": "Rivers",
+      "params": {
+        "Water": 0.5,
+        "Width": 20,
+        "Depth": 0.2,
+        "Downcutting": 0.033387955,
+        "RiverValleyWidth": "zero",
+        "Headwaters": 4000,
+        "RenderSurface": true,
+        "Seed": 46669,
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 27809.21,
+        "Y": 26189.38
+      }
+    },
+    {
+      "id": "Combine_360",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 1,
+        "Mode": "Subtract",
+        "Clamp": "Clamp",
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 29544.766,
+        "Y": 26037.676
+      }
+    },
+    {
+      "id": "Island_364",
+      "type": "Island",
+      "params": {
+        "Size": 0.35600165,
+        "Chaos": 0.16243343,
+        "Seed": 32392
+      },
+      "position": {
+        "X": 26261.826,
+        "Y": 26038.998
+      }
+    },
+    {
+      "id": "Roughen_410",
+      "type": "Roughen",
+      "params": {
+        "Width": 1,
+        "Depth": 0.082548134,
+        "Quality": "Half",
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 26809.326,
+        "Y": 26038.998
+      }
+    },
+    {
+      "id": "Autolevel_507",
+      "type": "Autolevel",
+      "params": {
+        "RenderIntentOverride": "Mask",
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 28109.635,
+        "Y": 26187.527
+      }
+    },
+    {
+      "id": "FractalTerraces_520",
+      "type": "FractalTerraces",
+      "params": {
+        "Spacing": 0.027570337,
+        "Octaves": 12,
+        "Intensity": 0.5956575,
+        "Shape": -0.41089717,
+        "Seed": 57398,
+        "MacroOctaves": 5,
+        "StrataDetails": 0.6,
+        "TiltAmount": 0.5,
+        "TiltSeed": 7331,
+        "WarpAmount": 0.33,
+        "WarpSize": 0.33,
+        "RenderIntentOverride": "Heightfield",
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 29045.852,
+        "Y": 26297.38
+      }
+    },
+    {
+      "id": "Combine_684",
+      "type": "Combine",
+      "params": {
+        "PortCount": 2,
+        "Ratio": 0.5,
+        "Clamp": "Clamp",
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 27474.803,
+        "Y": 25953.049
+      }
+    },
+    {
+      "id": "Threshold_761",
+      "type": "Threshold",
+      "params": {
+        "Level": 0.036460463,
+        "RenderIntentOverride": "Mask",
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 28224.135,
+        "Y": 26126.197
+      }
+    },
+    {
+      "id": "GraphicEQ_793",
+      "type": "GraphicEQ",
+      "params": {
+        "Band1": 1.6030316,
+        "Band2": 1.1290455,
+        "Band3": 1.0184351,
+        "Band4": 1,
+        "Band5": 0.17042196,
+        "Band6": 0.25030726,
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 26535.992,
+        "Y": 26038.998
+      }
+    },
+    {
+      "id": "SatMap_821",
+      "type": "SatMap",
+      "params": {
+        "Library": "Blue",
+        "LibraryItem": 2,
+        "Bias": -0.7251127,
+        "Enhance": "Autolevel"
+      },
+      "position": {
+        "X": 30230.25,
+        "Y": 26295.38
+      }
+    },
+    {
+      "id": "ColorErosion_850",
+      "type": "ColorErosion",
+      "params": {
+        "TransportDistance": 1.44552,
+        "SedimentDensity": 0.7031954,
+        "Blend": 0.79844326,
+        "ColorHold": 1,
+        "FlowVolume": 1,
+        "Seed": 27032,
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 30230.25,
+        "Y": 26103.492
+      }
+    },
+    {
+      "id": "Adjust_869",
+      "type": "Adjust",
+      "params": {
+        "Multiply": 1,
+        "Invert": true,
+        "RenderIntentOverride": "Heightfield",
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 29366.518,
+        "Y": 26355.38
+      }
+    },
+    {
+      "id": "Sandstone_877",
+      "type": "Sandstone",
+      "params": {
+        "Passes": 1,
+        "Iterations": 15,
+        "Spacing": 0.22388366,
+        "Intensity": 0.95206887,
+        "Convexity": 0.74436706,
+        "Tilt": 0.38017204,
+        "Chaos": 0.15,
+        "Seed": 23882,
+        "Chipping": 0.45,
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 27095.48,
+        "Y": 26143.686
+      }
+    },
+    {
+      "id": "Adjust_900",
+      "type": "Adjust",
+      "params": {
+        "Multiply": 1,
+        "Invert": true,
+        "RenderIntentOverride": "Heightfield",
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 29366.518,
+        "Y": 26227.38
+      }
+    },
+    {
+      "id": "SatMap_969",
+      "type": "SatMap",
+      "params": {
+        "Library": "Rock",
+        "LibraryItem": 353,
+        "Bias": 0.71364194,
+        "Enhance": "Autolevel"
+      },
+      "position": {
+        "X": 29774.89,
+        "Y": 25893.496
+      }
+    },
+    {
+      "id": "Blur_975",
+      "type": "Blur",
+      "params": {
+        "Radius": 0.0027131487,
+        "RenderIntentOverride": "Mask",
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 28643.537,
+        "Y": 26037.676
+      }
+    },
+    {
+      "id": "GraphicEQ_983",
+      "type": "GraphicEQ",
+      "params": {
+        "Band2": 0.0553052,
+        "Band3": 1.7603441,
+        "Band4": 0.7464154,
+        "Band5": 0.5436296,
+        "RenderIntentOverride": "Heightfield",
+        "IsMaskable": true
+      },
+      "position": {
+        "X": 28224.135,
+        "Y": 26287.38
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "SatMap_288",
+      "fromPort": "Out",
+      "to": "Combine_132",
+      "toPort": "In"
+    },
+    {
+      "from": "SatMap_969",
+      "fromPort": "Out",
+      "to": "Combine_132",
+      "toPort": "Input2"
+    },
+    {
+      "from": "FractalTerraces_197",
+      "fromPort": "Out",
+      "to": "Erosion2_142",
+      "toPort": "In"
+    },
+    {
+      "from": "Roughen_410",
+      "fromPort": "Out",
+      "to": "Stratify_149",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_684",
+      "fromPort": "Out",
+      "to": "Blur_150",
+      "toPort": "In"
+    },
+    {
+      "from": "Stratify_149",
+      "fromPort": "Out",
+      "to": "Slope_154",
+      "toPort": "In"
+    },
+    {
+      "from": "Rivers_307",
+      "fromPort": "Depth",
+      "to": "Adjust_159",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_684",
+      "fromPort": "Out",
+      "to": "Combine_164",
+      "toPort": "In"
+    },
+    {
+      "from": "Blur_150",
+      "fromPort": "Out",
+      "to": "Combine_164",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Threshold_761",
+      "fromPort": "Out",
+      "to": "Combine_164",
+      "toPort": "Mask"
+    },
+    {
+      "from": "GraphicEQ_983",
+      "fromPort": "Out",
+      "to": "FractalTerraces_197",
+      "toPort": "In"
+    },
+    {
+      "from": "ColorErosion_850",
+      "fromPort": "Out",
+      "to": "Combine_279",
+      "toPort": "In"
+    },
+    {
+      "from": "SatMap_821",
+      "fromPort": "Out",
+      "to": "Combine_279",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Threshold_761",
+      "fromPort": "Out",
+      "to": "Combine_279",
+      "toPort": "Mask"
+    },
+    {
+      "from": "Combine_360",
+      "fromPort": "Out",
+      "to": "SatMap_288",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_684",
+      "fromPort": "Out",
+      "to": "Rivers_307",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_164",
+      "fromPort": "Out",
+      "to": "Combine_360",
+      "toPort": "In"
+    },
+    {
+      "from": "Adjust_900",
+      "fromPort": "Out",
+      "to": "Combine_360",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Adjust_869",
+      "fromPort": "Out",
+      "to": "Combine_360",
+      "toPort": "Mask"
+    },
+    {
+      "from": "GraphicEQ_793",
+      "fromPort": "Out",
+      "to": "Roughen_410",
+      "toPort": "In"
+    },
+    {
+      "from": "Rivers_307",
+      "fromPort": "Depth",
+      "to": "Autolevel_507",
+      "toPort": "In"
+    },
+    {
+      "from": "Erosion2_142",
+      "fromPort": "Out",
+      "to": "FractalTerraces_520",
+      "toPort": "In"
+    },
+    {
+      "from": "Stratify_149",
+      "fromPort": "Out",
+      "to": "Combine_684",
+      "toPort": "In"
+    },
+    {
+      "from": "Sandstone_877",
+      "fromPort": "Out",
+      "to": "Combine_684",
+      "toPort": "Input2"
+    },
+    {
+      "from": "Slope_154",
+      "fromPort": "Out",
+      "to": "Combine_684",
+      "toPort": "Mask"
+    },
+    {
+      "from": "Autolevel_507",
+      "fromPort": "Out",
+      "to": "Threshold_761",
+      "toPort": "In"
+    },
+    {
+      "from": "Island_364",
+      "fromPort": "Out",
+      "to": "GraphicEQ_793",
+      "toPort": "In"
+    },
+    {
+      "from": "Threshold_761",
+      "fromPort": "Out",
+      "to": "SatMap_821",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_132",
+      "fromPort": "Out",
+      "to": "ColorErosion_850",
+      "toPort": "In"
+    },
+    {
+      "from": "Combine_360",
+      "fromPort": "Out",
+      "to": "ColorErosion_850",
+      "toPort": "Height"
+    },
+    {
+      "from": "Threshold_761",
+      "fromPort": "Out",
+      "to": "ColorErosion_850",
+      "toPort": "Precipitation"
+    },
+    {
+      "from": "FractalTerraces_520",
+      "fromPort": "Out",
+      "to": "Adjust_869",
+      "toPort": "In"
+    },
+    {
+      "from": "Stratify_149",
+      "fromPort": "Out",
+      "to": "Sandstone_877",
+      "toPort": "In"
+    },
+    {
+      "from": "FractalTerraces_520",
+      "fromPort": "Out",
+      "to": "Adjust_900",
+      "toPort": "In"
+    },
+    {
+      "from": "Blur_975",
+      "fromPort": "Out",
+      "to": "SatMap_969",
+      "toPort": "In"
+    },
+    {
+      "from": "Autolevel_507",
+      "fromPort": "Out",
+      "to": "Blur_975",
+      "toPort": "In"
+    },
+    {
+      "from": "Adjust_159",
+      "fromPort": "Out",
+      "to": "GraphicEQ_983",
+      "toPort": "In"
+    }
+  ]
+}
