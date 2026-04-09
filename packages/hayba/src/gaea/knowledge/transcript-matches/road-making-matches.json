@@ -1,0 +1,338 @@
+{
+  "source_file": "Road making.terrain",
+  "terrain_name": "",
+  "node_types": [
+    "MountainRange",
+    "SlopeBlur",
+    "Adjust",
+    "Transpose",
+    "Combine",
+    "Draw"
+  ],
+  "transcript_matches": [
+    {
+      "filename": "3yhhDPpEzYI.txt",
+      "snippet": "...one and two we're going to make them the same so what we going to do is we're going to get a portal from our erosion so in case if you don't have it again take this output and there's going to be make a portal so next one we're going to add another real quick quick color and we going to set it up let's say to the green let's start with our threes um I probably the easiest is here I just going to adjust these numbers copy and paste and for this what we're going to need to do is we going to need to um a baral output so here's going to be a bit kind of like where you need to put attenion and go slowly is for some places we're going to use output and for some places we're going to use uh basically this masks coloriz is going to be kind of like a mask so we're going to use that one so for this...",
+      "matchedTerms": [
+        "adjust",
+        "combine",
+        "draw"
+      ]
+    },
+    {
+      "filename": "4UPf3PtVoV4.txt",
+      "snippet": "...ommon issues that might appear during the process. Finally, we'll take a quick look at how to import the maps into Unreal Engine and create a scene like this one. To start, we add a mountain range node to create some scattered elevations on the terrain, giving it a more natural look instead of a flat raw surface. Next, we add a mountain to the scene and use the transform node to scale it down and adjust its shape to match our reference. However, we're getting some unwanted bumps along the edges which can cause issues later. So, let's use a 3D transform to move the terrain slightly downward. Although, this might create some problems during export. Don't worry, we'll come back to this step later to fix it. Next, we add an adjust node to increase the height of our mountain. Now, we want to co...",
+      "matchedTerms": [
+        "adjust",
+        "combine",
+        "draw"
+      ]
+    },
+    {
+      "filename": "aa-gQ0GOcyw.txt",
+      "snippet": "...fs around the island which I think it's really cool and it looks really nice so that's the well not the end result but one step ahead towards our goal so um as you can see I combined the previous note with the FX Noe which will Elevate the whole landscape so if we choose clamp setting and then raise it you'll see the whole landscape is getting lift so let's stick with 5% later on we might want to adjust those settings and the great thing about this whole node workflow is that we can adjust all of those settings non-destructively so we can go back and forth like working in kind of a substance designer style so it's very handy so coming back over here we are combining those two landscape levels with the mask which is comprised of the height information so over here we are masking a particula...",
+      "matchedTerms": [
+        "adjust",
+        "combine",
+        "draw"
+      ]
+    },
+    {
+      "filename": "f5YIzzoQJwI.txt",
+      "snippet": "...ur terrain/biome workflows. The second node is cracks. The cracks node in GIA generates cracked patterns on flat terrain. You can use this output as a mask or subtract it from other terrain shapes using the combine node. It's ideal for simulating features like dried river beds, cracked soil, crevices, or airid terrain details. As you can see, it comes in three modes: normal, hard, and classic. By adjusting parameters such as octaves, scale, or depth, we can achieve some very interesting results. For example, if we apply a wizard effect to our cone to make it look like a mountain, then combine it with cracks, we can create some very unique outcomes. The next node is draw, which can be extremely useful. [Music] The draw node in Gaia is used to create hand painted masks directly inside the gr...",
+      "matchedTerms": [
+        "adjust",
+        "combine",
+        "draw"
+      ]
+    },
+    {
+      "filename": "Gaea 2 - Using a photo or image for texturing andor a guide.txt",
+      "snippet": "...:00 Now we can click on open painter. And\n04:02 \n\n04:02 because we forced the image file, we can\n04:06 \n\n04:06 see the actual landscape image uh in\n04:09 \n\n04:09 painter. I just need to reduce the size\n04:11 \n\n04:11 of the brush. Something like that. I'll\n04:13 \n\n04:13 do it so it's a bit bigger than the\n04:15 \n\n04:15 road. That should be fine. Height I'm\n04:17 \n\n04:17 going to bring I'm going to adjust it up\n04:19 \n\n04:19 more into the lighter or white area\n04:21 \n\n04:21 which reveals. Then black height and\n04:24 \n\n04:24 hardness I can keep as it is. The\n04:26 \n\n04:26 strength of this will will control in\n04:27 \n\n04:27 another way. And now simply let's just\n04:29 \n\n04:29 draw over the road. And as you can see\n04:32 \n\n04:32 immediately we can see the effect there\n04:34 \n\n04:34 on our lands...",
+      "matchedTerms": [
+        "adjust",
+        "combine",
+        "draw"
+      ]
+    },
+    {
+      "filename": "Gaea 2 XPU Erosion, Surface Nodes, and ColorErosion!.txt",
+      "snippet": "...ain I'm going to\n09:29 \n\n09:29 increase the set density just a little\n09:31 \n\n09:31 bit so from afar we can see these cool\n09:34 \n\n09:34 Rivers increase the transport distance a\n09:37 \n\n09:37 little bit and maybe also the color hold\n09:40 \n\n09:40 a little bit so the rivers can maintain\n09:43 \n\n09:43 their color for much\n09:45 \n\n09:45 longer this is cool I think I still\n09:48 \n\n09:48 would like to adjust the uh edges of all\n09:51 \n\n09:51 this so all I have to do is I can just\n09:54 \n\n09:54 lock my preview to color erosion just\n09:56 \n\n09:56 press F then I can go back to mixer\n10:00 \n\n10:00 and then I can\n10:02 \n\n10:02 change uh this and be able to see what's\n10:07 \n\n10:07 happening\n10:09 \n\n10:09 so yeah\n10:12 \n\n10:12 that's more like this oops no not that\n10:16 \n\n10:16 much this bring this...",
+      "matchedTerms": [
+        "adjust",
+        "transpose",
+        "combine"
+      ]
+    },
+    {
+      "filename": "Gaea Deep Dive Snowy Peaks.txt",
+      "snippet": "...too is very versatile,\nvery strong,\n04:35 and it has a lot of effects on your shape.\n04:37 So I personally like to put it more early\nin the stack in what I call\n04:42 the shaping area, because it creates\nthese big changes in my mountain.\n04:47 If I have the erosion scale set higher,\nyou will get big valleys,\n04:51 you know,\nbig river kind of details, big flows.\n04:55 So you can, of course,\n04:57 adjust the node to be very minimal\nand very light effects.\n04:60 But, you know, I love the erosion\nto look in state creates a very believable\n05:05 shape off of any, you know, primitives\nthat you threw together.\n05:08 It's just that it's a very strong one,\na very strong notes.\n05:11 I like to have it more earlier my stack\nso it doesn't override any cool details\n05:16 that have at it.\n05:16 You kno...",
+      "matchedTerms": [
+        "adjust",
+        "transpose",
+        "combine"
+      ]
+    },
+    {
+      "filename": "Master Gaea 2.2 Nodes Ep.1  Create Epic Terrains with Primitives (Generators) #gaea #tutorial.txt",
+      "snippet": "...terrain. You can use\n01:06 \n\n01:06 this output as a mask or subtract it\n01:09 \n\n01:09 from other terrain shapes using the\n01:10 \n\n01:10 combine node. It's ideal for simulating\n01:13 \n\n01:13 features like dried river beds, cracked\n01:15 \n\n01:15 soil, crevices, or airid terrain\n01:18 \n\n01:18 details. As you can see, it comes in\n01:21 \n\n01:21 three modes: normal, hard, and classic.\n01:24 \n\n01:24 By adjusting parameters such as octaves,\n01:27 \n\n01:27 scale, or depth, we can achieve some\n01:30 \n\n01:30 very interesting results. For example,\n01:33 \n\n01:33 if we apply a wizard effect to our cone\n01:35 \n\n01:35 to make it look like a mountain, then\n01:37 \n\n01:37 combine it with cracks, we can create\n01:39 \n\n01:39 some very unique outcomes. The next node\n01:42 \n\n01:42 is draw, which can be extremely...",
+      "matchedTerms": [
+        "adjust",
+        "combine",
+        "draw"
+      ]
+    },
+    {
+      "filename": "Master of Gaea Returns! Creating Mars Terrain – Ground & Mountain Workflow #gaea #tutorial #mars.txt",
+      "snippet": "...to Unreal Engine and create a\n00:52 \n\n00:52 scene like this one.\n00:55 \n\n00:55 To start, we add a mountain range node\n00:58 \n\n00:58 to create some scattered elevations on\n00:60 \n\n00:60 the terrain, giving it a more natural\n01:02 \n\n01:02 look instead of a flat raw surface.\n01:08 \n\n01:08 Next, we add a mountain to the scene and\n01:10 \n\n01:10 use the transform node to scale it down\n01:13 \n\n01:13 and adjust its shape to match our\n01:15 \n\n01:15 reference.\n01:33 \n\n01:33 However, we're getting some unwanted\n01:35 \n\n01:35 bumps along the edges which can cause\n01:37 \n\n01:37 issues later. So, let's use a 3D\n01:40 \n\n01:40 transform to move the terrain slightly\n01:42 \n\n01:42 downward. Although, this might create\n01:44 \n\n01:44 some problems during export. Don't\n01:46 \n\n01:46 worry, we'll come back to t...",
+      "matchedTerms": [
+        "adjust",
+        "combine",
+        "draw"
+      ]
+    },
+    {
+      "filename": "Master of Gaea.Ep 3 – Complete Guide to Modify Nodes for Perfect Terrain Control #gaea #tutorials.txt",
+      "snippet": "00:00 Ready to unlock the true power of\n00:03 \n\n00:03 terrain shaping? The modify nodes in\n00:05 \n\n00:05 Gaia are your secret weapon. And today\n00:08 \n\n00:08 we're diving deep. And finally, by\n00:11 \n\n00:11 building a landscape with the new nodes,\n00:13 \n\n00:13 we'll do a practice exercise together.\n00:16 \n\n00:16 The adjust node. The adjust node is a\n00:19 \n\n00:19 lightweight and flexible tool used to\n00:21 \n\n00:21 quickly fine-tune the shape and volume\n00:23 \n\n00:23 of your terrain. It allows you to subtly\n00:25 \n\n00:25 reduce or enhance the overall bulk of a\n00:28 \n\n00:28 terrain without altering its\n00:30 \n\n00:30 foundational structure. This is\n00:32 \n\n00:32 especially useful during the early\n00:34 \n\n00:34...",
+      "matchedTerms": [
+        "adjust",
+        "transpose",
+        "combine"
+      ]
+    },
+    {
+      "filename": "Real to Unreal 2 Gaea 2.0 to Unreal Engine 5 (NEW UPDATE).txt",
+      "snippet": "...ere the file node.\n03:53 And if you downloaded\ndirectly from Gumroad, this node will most likely be baked. So first thing we need to do\nis unmake the node.\n04:01 And that will give us access\nto the file path. So now let's bring in\n04:07 the previously exported heightmap. And you'll see here that the\n04:13 elevation is quite intense. So there's a couple ways to go about this.\n04:19 We could use an adjustment layer\nto clamp it, or we can adjust it via\nthe project settings.\n04:25 So if you go to project build settings\nand then down to terrain, you can adjust the terrain definition.\n04:31 And this will automatically\nscale the maximum heights. Now you could give it a good guess as to,\n04:37 your definitions\nbased on these examples below. Or you could Google if you know the exact\nlocation and na...",
+      "matchedTerms": [
+        "adjust",
+        "combine",
+        "draw"
+      ]
+    },
+    {
+      "filename": "SWEmK_x4mvY.txt",
+      "snippet": "Ready to unlock the true power of terrain shaping? The modify nodes in Gaia are your secret weapon. And today we're diving deep. And finally, by building a landscape with the new nodes, we'll do a practice exercise together. The adjust node. The adjust node is a lightweight and flexible tool used to quickly fine-tune the shape and volume of your terrain. It allows you to subtly reduce or enhance the overall bulk of a terrain without altering its foundational structure. This is especially useful during the early stages of landscape design when you need quick corrections without redoing your entire node setup. For example,...",
+      "matchedTerms": [
+        "adjust",
+        "transpose",
+        "combine"
+      ]
+    },
+    {
+      "filename": "BPz0gNv1Iuo.txt",
+      "snippet": "...mb mass that we created in part one and uh creating this you can see we've got the the rivers added Lakes nice erosion and uh obviously the kind of colored and textures uh done um this is quite a complicated workflow so so in order to just help me and not get lost making this tutorial I've kind of made this ahead of time but don't worry I'm going to go through every single node and explain uh the adjustments that you need to make um drop me a comment if uh you get lost anywhere and I'm happy to reach out and help so going back to where we left off um I did make slightest modification um I just kind of clamped this adjust node down slightly just to kind of uh reduce the size of the cliffs um around the edges just made it a little less dramatic than where we left off um but overall I'm I'm p...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "coSlK0Olknk.txt",
+      "snippet": "...the resolution of the height map so in this case uh a, and9 so let's type 1,00 and nine here there we go let's hit enter and this should update for the X and Y and there we go now we have the correct scale for um importing a height map from guia now we can just hit um import here let's wait a bit and there we go now as you can see see we have the same landscape that we had in Gaia let me just um adjust here the exponential height fog so let me go to selection here let's go back to selection let's select the exponential height fog and I want to decrease this a little bit there we go and here we have the the same map that we have in Gaia so let's uh start importing the maps okay so I'm going a little bit fast on this because I already created a video showing you how you can create and impor...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "DcJmrgPHqGI.txt",
+      "snippet": "...the process you see the rivers here weren't really taken into consideration and I kind of want them to I want to actually use these Rivers here in the river note as a mask to color them differently for that we will combine two set Maps one is our terrain color and now let's add another one which will be blue for example this 0031 and of course this might be too blue but don't worry we can always adjust the color later this is just for preview purposes to combine the two set Maps just drag this out Dot from one to another and automatically this combine mask is created just like in blender where we would use the mix color node raise the ratio to one and now have a look for our Rivers note and let me show you something uh right click on it and show this locked preview mode and in here we can...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "es6ujnkAqjI.txt",
+      "snippet": "...ite undesirable um for when we're going to erode the terrain later because that will show us a flat spot um the first thing that we want to do is to have that kind of water level [Music] introduced now we should and maybe when you're watching this video uh you will be able to do this we should be able to add in an effects node so if you drag out brings up this um search bar here it's we want this adjust node uh you can just type FX FX uh to bring that in as well um we should be able to clip this I think uh but at the time of recording this really just doesn't seem to do anything um but it's not a problem we can uh instead use a c node get a kind of similar effect um for the scale of this terrain um I'm going to turn Coastal erosion off um I don't really want to to have the these beaches um...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "FEhwuATcwSs.txt",
+      "snippet": "...too rigid or sharp and then tensity I'll probably leave default shape we can play a bit with that and it kind of just changes the way it looks does it kind of push in more or kind of more protrude out and we'll try to just dial in something that kind of looks okay and then for our tilt amount we can leave this default but that will kind of tilt the whole pattern but I don't think I really need to adjust that and then seed we can just kind of Click around with this and get a a look that you kind of like just put in like a random number or something and maybe that that works next I'll add a rockscape nodee and this is going to add some more Rocky details and if we look at a rockscape node by itself it just adds a bunch of of Rocky details and we can dial in those details to look kind of more...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "Gaea 2 - Combining Rivers and Lakes.txt",
+      "snippet": "...t wait for that\n02:46 \n\n02:46 to load. I've got this at 4K, so it take\n02:48 \n\n02:48 a bit longer. I find that the runoff\n02:51 \n\n02:51 from the landscape just I just don't get\n02:54 \n\n02:54 the effect that I'm looking for. I just\n02:56 \n\n02:56 don't think the effect is is as good.\n02:57 \n\n02:57 Now, there there are there's probably um\n03:01 \n\n03:01 different ways you could go about\n03:02 \n\n03:02 adjusting this, but in this case, just\n03:05 \n\n03:05 to keep it simple, I'm just going to use\n03:08 \n\n03:08 an add option in the combine node.\n03:11 \n\n03:11 Again, if I was going to bring this into\n03:13 \n\n03:13 something like Unreal Engine, I would\n03:14 \n\n03:14 probably drop the lake down even deeper.\n03:17 \n\n03:17 I would sculpt it a bit in Unreal\n03:18 \n\n03:18 Engine. Then I would add a plane...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "Gaea Deep Dive Rolling Hills.txt",
+      "snippet": "...:27 \n\n01:27 Now I'm going to drag the output of the\n01:28 \n\n01:28 mountain range on top of the output of\n01:30 \n\n01:30 the Vorono node to create a combine\n01:32 \n\n01:32 node. I'm going to create a mask using a\n01:34 \n\n01:34 constant and a transform 3D node.\n01:39 \n\n01:39 And in the transform 3D node, I have to\n01:41 \n\n01:41 set the offset back to one as well. And\n01:44 \n\n01:44 now I can make some adjustments. I'm\n01:46 \n\n01:46 going to offset the constant on the X\n01:48 \n\n01:48 to.5 and minus.5 on the Y. Then I will\n01:52 \n\n01:52 use the roll function to rotate it by\n01:54 \n\n01:54 45°. And then I'll use the invert\n01:56 \n\n01:56 function so that we only have a small\n01:58 \n\n01:58 corner of the terrain that is set to\n02:02 \n\n02:02 zero while the rest of the terrain is\n02:03 \n\n02:03 set to on...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "Gaea Deep Dive Volcano.txt",
+      "snippet": "...ume\nand Color Hold because we want the color\n25:47 to flow down\nand we don't necessarily worry\n25:50 too much about it, \nsticking to the existing flow structure.\n25:55 So if it goes out, like, for example,\n25:57 there, this\nis what it would be like with lower Flow.\n25:60 But then I wanted it\nto be higher Flow here so that we have\n26:03 these wide, lava flows coming down.\n26:07 you can always just adjust this to however\nyou want it to be,\n26:11 to create, different kinds\nof, outputs now.\n26:16 Okay.\n26:16 Now, last part is where we grow\nsome trees,\n26:19 and that's\nwhere it gets a tiny bit, creative.\n26:23 We're going to go away\nfrom a standard view of doing this\n26:26 with the existing nodes and like,\nhack ourselves a custom method.\n26:31 So instead of, like, consuming specific\nmasks, like...",
+      "matchedTerms": [
+        "adjust",
+        "draw"
+      ]
+    },
+    {
+      "filename": "Gaea to Unreal – Build Realistic Worlds Like a Pro!  Advanced Practice Part 1#gaea #unrealengine.txt",
+      "snippet": "...ap exercises and diving into creating\n00:08 \n\n00:08 ultra realistic scenes. This tutorial\n00:10 \n\n00:10 will consist of two videos. First, we'll\n00:14 \n\n00:14 go over creating a height map in Gaia\n00:17 \n\n00:17 and then import it into Unreal. Next,\n00:19 \n\n00:19 we'll work on creating a professional\n00:21 \n\n00:21 material for the landscape and solve the\n00:23 \n\n00:23 related issues. We'll work on adjusting\n00:25 \n\n00:25 the textures with Gaia height maps.\n00:28 \n\n00:28 Next, we'll try to use PCG to align\n00:30 \n\n00:30 trees or meshes with the textures. So,\n00:33 \n\n00:33 stay with us because this tutorial is\n00:36 \n\n00:36 the best and most complete landscape\n00:38 \n\n00:38 tutorial on our channel.\n00:44 \n\n00:44 First, let's review the nodes we created\n00:46 \n\n00:46 for this height map. As yo...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "Gaea to Unreal – Build Realistic Worlds Like a Pro!  Advanced Practice Part 2#gaea #unrealengine.txt",
+      "snippet": "...19:31 \n\n19:31 [Music]\n19:48 \n\n19:48 [Music]\n19:57 \n\n19:57 [Music]\n20:11 \n\n20:11 We import a few planks from Quixlebridge\n20:14 \n\n20:14 and then using the modeling mode, we\n20:17 \n\n20:17 merge them together to create a simple\n20:19 \n\n20:19 fence.\n20:30 \n\n20:30 Heat. Heat. N.\n20:34 \n\n20:34 [Music]\n21:43 \n\n21:43 [Music]\n22:11 \n\n22:11 We assign it to the static mesh and then\n22:14 \n\n22:14 continue by adjusting the spacing.\n22:16 \n\n22:16 [Music]\n22:47 \n\n22:47 As you can see, E, it doesn't look quite\n22:49 \n\n22:49 right. So, we add a create spline node,\n22:52 \n\n22:52 then add a spawn spline mesh node and\n22:55 \n\n22:55 assign our fence to it.\n23:00 \n\n23:00 [Music]\n23:13 \n\n23:13 [Music]\n23:28 \n\n23:28 Next, in landscape paint mode, we paint\n23:30 \n\n23:30 some of the snow material on the ground,\n23:...",
+      "matchedTerms": [
+        "adjust",
+        "draw"
+      ]
+    },
+    {
+      "filename": "Gaea Tutorial - High Mountain.txt",
+      "snippet": "...s is how most mountains are made.\n00:25 Especially the big tall ones.\n00:26 So they uplift like this.\n00:29 Now, what I'm going to do\nis I'm going to increase the Height,\n00:31 and I'm going to increase the Scale.\n00:34 But then at the same time\nI'm going to reduce the Bulk.\n00:37 So what happens is\nwe get these amazing pinnacles\n00:41 like these cool looking, sharp mountains.\n00:45 But I want to adjust this a little bit.\n00:46 So I'm going to\nincrease the Scale even more.\n00:51 So it's yeah, it's really high.\n00:53 And I'm going to see\nif I can maybe reduce the Height\n00:56 a little bit\nand then also try a different Seed.\n00:60 If it's not, you know better than this,\nwe can always come back.\n01:04 It's easy to remember it's 6000.\n01:06 So rare to get a round number. So.\n01:11 Now you can...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "Gaea Tutorial - Masked Area Effect.txt",
+      "snippet": "...:06 That's simple enough.\n03:08 And let me make another one.\n03:11 And this one will make it\nslightly different\n03:14 so that it shows\nthat we have that, exposed strata\n03:18 which should look like there's\nsome minerals or whatnot coming out.\n03:22 So I want to find a color map\nthat can do it justice.\n03:27 Maybe something like this,\n03:28 because it will go hand in hand with this\nand then we can adjust it later.\n03:32 So first thing I want to do,\nI want to select both of these\n03:36 right click and Combine\ninto Mixer as Color Layers.\n03:41 So I now have these two colored layers.\n03:44 Now this one is being distributed\nby height.\n03:46 But I just want it very specifically\nto go where this effect is.\n03:50 And so to do that\nI'm going to create a DataExtractor node.\n03:54 The DataExtractor n...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "Gaea Tutorial - River Valley.txt",
+      "snippet": "00:01 Let's create, a very large area\n00:04 that's like, a mountain range with rivers\nflowing through them.\n00:07 So to create that,\nI'll create a MountainRange node,\n00:12 and it already comes with\n00:13 like a couple of peaks\nand a whole mountain system in between.\n00:16 But I'm going to increase the Height,\n00:20 like, so,\nmaybe increase the Bulk as well.\n00:25 Like, it was really high bulk\n00:28 like this.\n00:29 And then let's see if I reduce the Scale.\n00:33 There you go. That's cool.\n00:35 I think that's a very good starting point.\n00:...",
+      "matchedTerms": [
+        "mountainrange",
+        "combine"
+      ]
+    },
+    {
+      "filename": "Gaea Tutorial - Rocky Craterfield.txt",
+      "snippet": "...ect this\nand send it to where I want it to be.\n03:21 Just a little bit here,\njust a little bit here, maybe here.\n03:26 So now it feels like,\nall this is connected somehow.\n03:30 There's a specific pattern to this\n03:34 and that's it.\n03:35 I'll just close this.\n03:36 I can always increase the softness\nto have it blend better,\n03:41 like so.\n03:43 And you can always just, \nuse the Influence or use Combine to mix it\n03:47 with two different versions of itself\nand reduce the intensity and so on.\n03:52 But there\nI think that's looking pretty cool.\n03:55 So next step is, I want to add\n04:00 just a little bit of like,\n04:03 not exactly craters but like pockmarks.\n04:05 And so we have a node for that.\n04:07 So I'll add Pockmarks there.\n04:09 It's creating these little divots\neverywhere.\n04:11 So...",
+      "matchedTerms": [
+        "combine",
+        "draw"
+      ]
+    },
+    {
+      "filename": "Gaea Tutorial - Sandstone and Sand.txt",
+      "snippet": "...let's go here.\n04:39 And let's look at this.\n04:41 And in this one I'm going to go add\n04:44 another SatMap.\n04:47 I think these two fit\nwell enough for sand.\n04:52 Maybe I'll just go for like,\n04:53 Ultra, noise or roughness.\n04:57 So there are no clear lines,\nat least for the sand part.\n05:01 And then let's bring these two together.\n05:04 Reduce the Sediment output.\n05:06 Let me actually add an Adjust node\nso you can see it.\n05:10 That's the sand, depth.\n05:13 And so this I'm going to increase\nwith Shaper.\n05:15 So we get the effect all the way.\n05:16 Maybe even Auto Level.\n05:18 Or rather, it is already Auto Level.\n05:20 So you don't need to do that.\n05:21 But yeah Shaper maximum. That's great.\n05:24 I can also use Strong\nto really fill it in all the way.\n05:28 And then as we said we'll...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "H9Jm6IxSx0E.txt",
+      "snippet": "...uch strong details like rocky or exposed surfaces to the entire terrain, offering a wide variety for different scenes. The erosion node. The erosion node is one of Gaia's most powerful and essential simulation tools. It mimics the realworld processes of water flow, sediment displacement, and thermal erosion to create stunningly realistic terrain details. As you can see in the erosion section, you adjust the hardness percentage along with the depth of the rocks and erosion. By using the down cutting option, you create a cut with eroded details at the lower surface. Then by adding the flow features, you can achieve results that resemble this image. Erosion node two. The erosion node and erosion node 2 in GIA are generally similar in functionality. Both are used to simulate natural erosion, b...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "HhTRStM5doc.txt",
+      "snippet": "...f you hold out then left click and drag you can rotate the camera and with the scroll you can zoom in and out in this view here down here we have the graph this is where we're going to put all the nodes that we need to create the Landscapes and these nodes we can find here in the left so here is all of them all the noes that you can use in different categories like Primitives Geo Primitives warps adjustments profile filters erosion we have all here in this right side we have the properties so when you select a node here in the graph the properties of the of that node will show up and you can change them up here we have the preview resolution um so you have 1K 2K 4K now is in the 0.5k but I will change this to 1K because I'm using the free version of this software and this version only lets...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "How to Texture Landscapes in GAEA 2.0  Beginner to Advanced Tutorial.txt",
+      "snippet": "...01:26 similar look. It's almost impossible to\n01:29 \n\n01:29 get the exact same looking landscape. Of\n01:32 \n\n01:32 course, unless you used the exact same\n01:34 \n\n01:34 settings, maybe now the easiest way to\n01:37 \n\n01:37 add a new node is to press the tab key\n01:40 \n\n01:40 and then you can search for the node\n01:41 \n\n01:41 that you want and then just select it.\n01:43 \n\n01:43 Right click on the adjust node, select\n01:45 \n\n01:45 the input option and connect the lake\n01:48 \n\n01:48 portal. Do the same thing for the depth.\n01:51 \n\n01:51 Be careful not to duplicate the nodes\n01:53 \n\n01:53 for GIA might crash as it did with me.\n01:56 \n\n01:56 Instead, create a separate adjust node\n01:58 \n\n01:58 for the depth output and then do the\n01:60 \n\n02:00 same thing selecting the depth input as\n02:03 \n\n02...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "hPcZ25Tho_k.txt",
+      "snippet": "Ever wanted to [music] create your own landscape patches that you can move, reshape, and duplicate across your world [music] instantly? Let's do that. [music] Hello everyone. Welcome to another episode of Master of [music] Ga. In this part, we're going to use Gaia to create patches for Unreal [music] so we can have control over them. First, we add a mountain node and use the adjust settings to stretch it a bit and flatten the top. [music] [music] Next, we add a shape node and apply a blur node to soften a bit. Then, we add a wizard node to give it better [music] detail. [music] Our goal is to combine these two together so we can give a sharper edge to the top of the first mountain. >> [music] [music] >> Now we add a cone, apply a [music] blur to it, and then use a wiz...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "Master Gaea 2.2 Nodes Ep.2  Terrains  #gaea #tutorial #landscape #3d.txt",
+      "snippet": "...04 cratered hill in the plains or even a\n00:06 \n\n00:06 foothill landscape in Gaia? Then stay\n00:09 \n\n00:09 with us. Hello friends. In this episode,\n00:12 \n\n00:12 we're going to explore the second tab in\n00:14 \n\n00:14 Gaia which is terrains. The first node\n00:17 \n\n00:17 is canyon which generates a valley\n00:20 \n\n00:20 formation for us. As you can see with\n00:23 \n\n00:23 features like scale slot for adjusting\n00:25 \n\n00:25 the crack depth, valley for controlling\n00:28 \n\n00:28 the size of the canyon and other options\n00:30 \n\n00:30 such as widening the gap. This node\n00:32 \n\n00:32 gives us a huge variety of possibilities\n00:34 \n\n00:34 for creating valleys.\n00:59 \n\n00:59 The next node is Carterfield. As you can\n01:01 \n\n01:01 see, it generates a surface full of\n01:04 \n\n01:04 craters similar to th...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "Master of Gaea Ep 5 Simulate the Power of Nature with Simulation Nodes #gaea #tutorial #landscape.txt",
+      "snippet": "...cenes.\n02:03 \n\n02:03 The erosion node. The erosion node is\n02:07 \n\n02:07 one of Gaia's most powerful and\n02:09 \n\n02:09 essential simulation tools. It mimics\n02:12 \n\n02:12 the realworld processes of water flow,\n02:14 \n\n02:14 sediment displacement, and thermal\n02:17 \n\n02:17 erosion to create stunningly realistic\n02:19 \n\n02:19 terrain details. As you can see in the\n02:23 \n\n02:23 erosion section, you adjust the hardness\n02:25 \n\n02:25 percentage along with the depth of the\n02:27 \n\n02:27 rocks and erosion. By using the down\n02:29 \n\n02:29 cutting option, you create a cut with\n02:31 \n\n02:31 eroded details at the lower surface.\n02:34 \n\n02:34 Then by adding the flow features, you\n02:36 \n\n02:36 can achieve results that resemble this\n02:39 \n\n02:39 image.\n02:41 \n\n02:41 Erosion node two. The erosion nod...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "Master of Gaea – Creating Dynamic Landscape Patches  Gaea + Unreal Engine  #gaea #unrealengine.txt",
+      "snippet": "...uplicate across your world\n00:07 \n\n00:07 [music] instantly? Let's do that.\n00:12 \n\n00:12 [music]\n00:15 \n\n00:15 Hello everyone. Welcome to another\n00:17 \n\n00:17 episode of Master of [music] Ga. In this\n00:20 \n\n00:20 part, we're going to use Gaia to create\n00:21 \n\n00:21 patches for Unreal [music] so we can\n00:24 \n\n00:24 have control over them. First, we add a\n00:26 \n\n00:26 mountain node and use the adjust\n00:28 \n\n00:28 settings to stretch it a bit and flatten\n00:30 \n\n00:30 the top.\n00:33 \n\n00:33 [music]\n00:48 \n\n00:48 [music]\n00:50 \n\n00:50 Next, we add a shape node and apply a\n00:52 \n\n00:52 blur node to soften a bit. Then, we add\n00:55 \n\n00:55 a wizard node to give it better [music]\n00:56 \n\n00:56 detail.\n01:04 \n\n01:04 [music]\n01:06 \n\n01:06 Our goal is to combine these two\n01:08 \n\n01:08 togeth...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "Master of Gaea.Ep4 Surface Nodes Just Changed the Game #gaea #tutorial #landscape #terrain.txt",
+      "snippet": "...examples for them.\n00:21 \n\n00:21 The contours node. The contours node\n00:23 \n\n00:23 generates stylized contour lines based\n00:26 \n\n00:26 on terrain elevation. It's often used to\n00:29 \n\n00:29 create layered map-like visuals or to\n00:32 \n\n00:32 drive masks and texturing based on\n00:34 \n\n00:34 elevation steps. As always, we create a\n00:37 \n\n00:37 mountain for testing and by adding an\n00:40 \n\n00:40 adjust node, we increase its strength.\n00:43 \n\n00:43 Now, we add the contours node. As you\n00:46 \n\n00:46 can see, it generates a layered mask for\n00:48 \n\n00:48 us. We can increase the count, subdivide\n00:51 \n\n00:51 it, raise the accuracy, adjust the\n00:54 \n\n00:54 number of main layers, and also control\n00:56 \n\n00:56 the secondary layers. To get better\n00:58 \n\n00:58 layers, we can add some blur to...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "napJowdSlEM.txt",
+      "snippet": "Do you want to create vast mountain ranges in the distance or maybe a cratered hill in the plains or even a foothill landscape in Gaia? Then stay with us. Hello friends. In this episode, we're going to explore the second tab in Gaia which is terrains. The first node is canyon which generates a valley formation for us. As you can see with features like scale slot for adjusting the crack depth, valley for controlling the size of the canyon and other options such as widening the gap. This node gives us a huge variety of possibilities for creating valleys. The next node is Carterfield. As you can see, it generates a surface full of craters similar to the surface of the moon or a stylized sci-fi terrain. And every detail can be fully controlled. The Dune Sea Node....",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "oTqnw2dTvzs.txt",
+      "snippet": "...fore, we apply the projection and then continue the work using transform points and static mesh. [Music] [Music] [Music] Ding. [Music] Hey. Hey. [Music] Heat. Heat. N. [Music] [Music] [Music] We import a few planks from Quixlebridge and then using the modeling mode, we merge them together to create a simple fence. Heat. Heat. N. [Music] [Music] We assign it to the static mesh and then continue by adjusting the spacing. [Music] As you can see, E, it doesn't look quite right. So, we add a create spline node, then add a spawn spline mesh node and assign our fence to it. [Music] [Music] Next, in landscape paint mode, we paint some of the snow material on the ground, similar to the reference, and if needed, we use smooth to refine it. [Music] [Music] Heat. Heat. Heat. [Music] Heat. [Music] We c...",
+      "matchedTerms": [
+        "adjust",
+        "draw"
+      ]
+    },
+    {
+      "filename": "SU1NX8z2jCE.txt",
+      "snippet": "...we're going to focus on the surface category where you'll get familiar with the nodes and we'll go through real examples for them. The contours node. The contours node generates stylized contour lines based on terrain elevation. It's often used to create layered map-like visuals or to drive masks and texturing based on elevation steps. As always, we create a mountain for testing and by adding an adjust node, we increase its strength. Now, we add the contours node. As you can see, it generates a layered mask for us. We can increase the count, subdivide it, raise the accuracy, adjust the number of main layers, and also control the secondary layers. To get better layers, we can add some blur to it. And after combining it with our mountain, we subtract it from the mountain to achieve the resu...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    },
+    {
+      "filename": "YIwW1igH1H8.txt",
+      "snippet": "Hey friends, finally it's time. We're kicking off part one of our Gaia height map exercises and diving into creating ultra realistic scenes. This tutorial will consist of two videos. First, we'll go over creating a height map in Gaia and then import it into Unreal. Next, we'll work on creating a professional material for the landscape and solve the related issues. We'll work on adjusting the textures with Gaia height maps. Next, we'll try to use PCG to align trees or meshes with the textures. So, stay with us because this tutorial is the best and most complete landscape tutorial on our channel. First, let's review the nodes we created for this height map. As you can see, this scene is made up of three main mountains. The back mountain has a greater height and I made the...",
+      "matchedTerms": [
+        "adjust",
+        "combine"
+      ]
+    }
+  ]
+}
