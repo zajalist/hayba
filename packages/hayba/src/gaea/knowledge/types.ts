@@ -8,20 +8,20 @@ export const HeuristicParameterSchema = z.object({
 export const PhaseSchema = z.enum(['base', 'character', 'simulation', 'lookdev', 'utility']);
 
 export const ArchetypeGraphNodeSchema = z.object({
-  id: z.string(),
-  type: z.string(),
+  id: z.string().min(1),
+  type: z.string().min(1),
   params: z.record(z.union([z.string(), z.number(), z.boolean()])).default({}),
 });
 
 export const ArchetypeGraphEdgeSchema = z.object({
-  from: z.string(),
-  fromPort: z.string(),
-  to: z.string(),
-  toPort: z.string(),
+  from: z.string().min(1),
+  fromPort: z.string().min(1),
+  to: z.string().min(1),
+  toPort: z.string().min(1),
 });
 
 export const ArchetypeGraphSchema = z.object({
-  nodes: z.array(ArchetypeGraphNodeSchema),
+  nodes: z.array(ArchetypeGraphNodeSchema).min(1),
   edges: z.array(ArchetypeGraphEdgeSchema),
 });
 

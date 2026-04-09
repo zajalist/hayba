@@ -161,7 +161,7 @@ export const ArchetypeSourceSchema = z.object({
   type: z.enum(['terrain_file', 'transcript', 'forum', 'blog']),
   name: z.string().optional(),
   video_id: z.string().optional(),
-  timestamp: z.string().optional(),
+  timestamp: z.number().optional(),
 });
 
 export const GaeaArchetypeSchema = z.object({
