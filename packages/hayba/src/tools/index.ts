@@ -44,7 +44,7 @@ import { listNodeTypesHandler } from './hayba-list-node-types.js';
 import { cookGraphHandler } from './hayba-cook-graph.js';
 import { importLandscapeHandler } from './hayba-import-landscape.js';
 import { openZonePainterHandler } from './hayba-open-zone-painter.js';
-import { brainstormTerrainHandler, type BrainstormStep } from './hayba-brainstorm-terrain.js';
+import { ueLandscapePipelineHandler, type UELandscapePipelineStep } from './hayba-ue-landscape-pipeline.js';
 import { readZonesHandler } from './hayba-read-zones.js';
 import { setPainterHeightmapHandler } from './hayba-set-painter-heightmap.js';
 
@@ -525,10 +525,11 @@ export function registerTools(server: McpServer, session: SessionManager): void 
   // ── Scene workflow ────────────────────────────────────────────────────────────
 
   server.tool(
-    'hayba_brainstorm_terrain',
+    'hayba_ue_landscape_pipeline',
+    'Full UE landscape project pipeline: guided brainstorm → zone painting → Gaea terrain generation → bake → import into Unreal Engine → foliage zones. Use this for major landscape projects that will be imported into UE5. For standalone Gaea terrain work, use hayba_brainstorm_gaea instead.',
     {
       step: z.enum(['start', 'biome', 'scale', 'features', 'name', 'layout', 'preview', 'bake', 'foliage', 'done'])
-        .describe('Current step in the brainstorm flow. Always start with "start".'),
+        .describe('Current step in the pipeline flow. Always start with "start".'),
       answer: z.string().optional()
         .describe('The user\'s answer to the previous step\'s question.'),
       projectId: z.string().optional()
@@ -541,7 +542,7 @@ export function registerTools(server: McpServer, session: SessionManager): void 
         .describe('The feature answer from step "features" — used for archetype search in preview.'),
     },
     async (params) => {
-      const result = await brainstormTerrainHandler(params as Record<string, unknown>, session);
+      const result = await ueLandscapePipelineHandler(params as Record<string, unknown>, session);
       return { content: result.content, isError: result.isError };
     }
   );

@@ -1,7 +1,7 @@
 /**
- * hayba_brainstorm_terrain
+ * hayba_ue_landscape_pipeline
  *
- * Guided, multi-step terrain brainstorm. The AI calls this tool once per step,
+ * Guided, multi-step UE landscape project pipeline. The AI calls this tool once per step,
  * advancing through a hardcoded flow:
  *
  *   start → biome → scale → features → name → preview → bake → foliage → done
@@ -23,6 +23,7 @@ import type { SessionManager } from '../gaea/session.js';
 import { getCurrentZones } from '../zones.js';
 import { launchGaea, detectGaeaPath } from '../gaea/gaea-launcher.js';
 import { searchGaeaArchetypes } from './search-gaea-archetypes.js';
+import { layoutGraph } from '../gaea/layout-engine.js';
 
 async function unlockPainterViaApi(projectId: string, phase: 'a' | 'b'): Promise<void> {
   const url = `http://${config.dashboardHost}:${config.dashboardPort}/api/zones/painter-session`;
@@ -33,7 +34,7 @@ async function unlockPainterViaApi(projectId: string, phase: 'a' | 'b'): Promise
   });
 }
 
-export type BrainstormStep =
+export type UELandscapePipelineStep =
   | 'start'
   | 'biome'
   | 'scale'
@@ -46,8 +47,8 @@ export type BrainstormStep =
   | 'done';
 
 interface StepResult {
-  step: BrainstormStep;
-  nextStep: BrainstormStep;
+  step: UELandscapePipelineStep;
+  nextStep: UELandscapePipelineStep;
   prompt: string;
   choices?: Record<string, string>;  // key → description shown to user
   action?: string;                   // side effect description
@@ -57,12 +58,12 @@ interface StepResult {
   waitForUser: boolean;              // true = AI must wait for user before calling next step
 }
 
-export async function brainstormTerrainHandler(
+export async function ueLandscapePipelineHandler(
   args: Record<string, unknown>,
   session?: SessionManager,
   base = DEFAULT_PROJECTS_BASE,
 ): Promise<ToolResult> {
-  const step = (args.step as BrainstormStep | undefined) ?? 'start';
+  const step = (args.step as UELandscapePipelineStep | undefined) ?? 'start';
   const answer = args.answer as string | undefined;
   const projectId = args.projectId as string | undefined;
   const projectName = (args.projectName as string | undefined);
@@ -271,6 +272,15 @@ export async function brainstormTerrainHandler(
         };
       }
 
+      // Apply DAG layout for clean node positioning
+      const positioned = layoutGraph(nodes, edges);
+      for (let i = 0; i < nodes.length; i++) {
+        const match = positioned.find(p => p.id === nodes[i].id);
+        if (match) {
+          (nodes[i] as Record<string, unknown>).position = match.position;
+        }
+      }
+
       const graph = { nodes, edges };
 
       // Create terrain file and cook
@@ -347,7 +357,7 @@ export async function brainstormTerrainHandler(
       result = {
         step: 'done',
         nextStep: 'done',
-        prompt: `Foliage zones submitted. The full scene workflow is complete:\n\n✓ Terrain generated in Gaea\n✓ Landscape imported into UE5\n✓ Placement zones ready for PCG\n\nYou can now use hayba_read_zones to feed the placement zones into PCG graphs, or call hayba_brainstorm_terrain again to start a new scene.`,
+        prompt: `Foliage zones submitted. The full scene workflow is complete:\n\n✓ Terrain generated in Gaea\n✓ Landscape imported into UE5\n✓ Placement zones ready for PCG\n\nYou can now use hayba_read_zones to feed the placement zones into PCG graphs, or call hayba_ue_landscape_pipeline again to start a new scene.`,
         waitForUser: false,
       };
       break;
