@@ -8,6 +8,8 @@ export const api = {
       fetch(`${BASE}/projects/${id}`).then(r => r.json()),
     create: (name: string): Promise<import('./types').Project> =>
       fetch(`${BASE}/projects`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }).then(r => r.json()),
+    delete: (id: string): Promise<{ ok: boolean }> =>
+      fetch(`${BASE}/projects/${id}`, { method: 'DELETE' }).then(r => r.json()),
   },
   zones: {
     getCurrent: (projectId: string): Promise<import('./types').ZoneSession | null> =>
@@ -16,6 +18,8 @@ export const api = {
       fetch(`${BASE}/zones/submit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json()),
     getHeightmap: (projectId: string): Promise<{ heightmapPath: string | null }> =>
       fetch(`${BASE}/zones/heightmap/${projectId}`).then(r => r.json()),
+    scratchSubmit: (body: { scratchSessionId: string; zones: import('./types').Zone[]; masks: { zoneId: string; pngBase64: string }[]; canvasSize?: number }) =>
+      fetch(`${BASE}/zones/scratch-submit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json()),
   },
   encyclopedia: {
     getEntries: (projectId: string): Promise<import('./types').EncyclopediaEntry[]> =>

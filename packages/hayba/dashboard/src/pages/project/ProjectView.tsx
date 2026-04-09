@@ -12,7 +12,7 @@ function resolveSection(s?: string): Section {
   return 'Overview';
 }
 
-export function ProjectView({ project, onBack, initialSection }: { project: Project; onBack: () => void; initialSection?: string }) {
+export function ProjectView({ project, onBack, initialSection, scratchSessionId }: { project: Project; onBack: () => void; initialSection?: string; scratchSessionId?: string }) {
   const [section, setSection] = useState<Section>(resolveSection(initialSection));
 
   const crumbs = [
@@ -57,7 +57,7 @@ export function ProjectView({ project, onBack, initialSection }: { project: Proj
               <div>Created: {new Date(project.createdAt).toLocaleString()}</div>
             </div>
           )}
-          {section === 'Zone Painter' && <ZonePainter project={project} />}
+          {section === 'Zone Painter' && <ZonePainter project={project} scratchSessionId={scratchSessionId} />}
           {section === 'Encyclopedia' && <EncyclopediaView project={project} />}
         </div>
       </div>

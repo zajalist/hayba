@@ -26,7 +26,7 @@ function generateId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
-export function ZonePainter({ project }: { project: Project }) {
+export function ZonePainter({ project, scratchSessionId }: { project: Project; scratchSessionId?: string }) {
   const displayRef = useRef<HTMLCanvasElement>(null);
   const [zones, setZones] = useState<Zone[]>([]);
   const [activeZoneId, setActiveZoneId] = useState<string | null>(null);
@@ -150,7 +150,11 @@ export function ZonePainter({ project }: { project: Project }) {
       zoneId: z.id,
       pngBase64: canvasToBase64(maskCanvases.get(z.id)!),
     }));
-    await api.zones.submit({ projectId: project.id, zones, masks, canvasSize: CANVAS_SIZE, phase });
+    if (scratchSessionId) {
+      await api.zones.scratchSubmit({ scratchSessionId, zones, masks, canvasSize: CANVAS_SIZE });
+    } else {
+      await api.zones.submit({ projectId: project.id, zones, masks, canvasSize: CANVAS_SIZE, phase });
+    }
     await fetch('/api/zones/painter-session', { method: 'DELETE' });
     setSubmitting(false);
     setLocked(true);

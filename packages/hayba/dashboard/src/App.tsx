@@ -6,12 +6,15 @@ import { SettingsPage } from './pages/SettingsPage';
 
 type Tab = 'Projects' | 'PCG' | 'Settings';
 
-// Parse deep-link from hash: #project/{id}/zones or #project/{id}
-function parseHash(): { projectId?: string; section?: string } {
+// Parse deep-link from hash: #project/{id}/zones, #project/{id}, or #scratch/{id}
+function parseHash(): { projectId?: string; scratchSessionId?: string; section?: string } {
   const hash = window.location.hash.replace('#', '');
   const parts = hash.split('/');
   if (parts[0] === 'project' && parts[1]) {
     return { projectId: parts[1], section: parts[2] ?? 'zones' };
+  }
+  if (parts[0] === 'scratch' && parts[1]) {
+    return { scratchSessionId: parts[1], section: parts[2] ?? 'zones' };
   }
   return {};
 }
@@ -24,7 +27,7 @@ export function App() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       <TitleBar currentTab={tab} onTabChange={t => setTab(t as Tab)} />
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        {tab === 'Projects' && <ProjectsPage deepLinkProjectId={deepLink.projectId} deepLinkSection={deepLink.section} />}
+        {tab === 'Projects' && <ProjectsPage deepLinkProjectId={deepLink.projectId} deepLinkSection={deepLink.section} deepLinkScratchSessionId={deepLink.scratchSessionId} />}
         {tab === 'PCG' && <PCGPage />}
         {tab === 'Settings' && <SettingsPage />}
       </div>

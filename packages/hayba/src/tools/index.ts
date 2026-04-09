@@ -24,6 +24,7 @@ import { initiateInfrastructureBrainstorm } from './initiate-infrastructure-brai
 // ── Knowledge tool handlers ───────────────────────────────────────────────────
 import { searchGaeaArchetypes } from './search-gaea-archetypes.js';
 import { getFullArchetypeGraph } from './get-full-archetype-graph.js';
+import { queryGaeaKnowledge, type QueryGaeaKnowledgeParams } from './query-gaea-knowledge.js';
 
 // ── Gaea tool handlers ────────────────────────────────────────────────────────
 import { bakeTerrain } from './hayba-bake-terrain.js';
@@ -291,6 +292,19 @@ export function registerTools(server: McpServer, session: SessionManager): void 
     }
   );
 
+  server.tool(
+    'hayba_query_gaea_knowledge',
+    {
+      node_type: z.string().optional().describe('Gaea node type to look up (e.g. "Erosion2", "Mountain")'),
+      phase: z.string().optional().describe('Filter by phase: base, character, simulation, lookdev, utility'),
+      query: z.string().optional().describe('Search keyword for best practices and workflow patterns'),
+    },
+    async (params) => {
+      const result = await queryGaeaKnowledge(params as QueryGaeaKnowledgeParams);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
   // ── Gaea tools ───────────────────────────────────────────────────────────────
 
   server.tool(
@@ -550,7 +564,8 @@ export function registerTools(server: McpServer, session: SessionManager): void 
   server.tool(
     'hayba_read_zones',
     {
-      projectId: z.string().describe('Project ID to read submitted zones from.'),
+      projectId: z.string().optional().describe('Project ID to read submitted zones from.'),
+      scratchSessionId: z.string().optional().describe('Scratch session ID (for standalone zone painting without a project).'),
     },
     async (params) => {
       const result = await readZonesHandler(params as Record<string, unknown>);

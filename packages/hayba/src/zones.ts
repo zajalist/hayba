@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { DEFAULT_PROJECTS_BASE } from './projects.js';
 
 export interface Zone {
@@ -99,6 +100,88 @@ export async function getCurrentZones(
   const raw = readFileSync(file, 'utf-8');
   const parsed = JSON.parse(raw);
   return parsed === null ? null : (parsed as ZoneSession);
+}
+
+// ── Scratch sessions ───────────────────────────────────────────────────────
+
+const SCRATCH_SUBDIR = '.scratch';
+const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+function scratchSessionDir(scratchId: string, base: string): string {
+  return join(base, SCRATCH_SUBDIR, scratchId);
+}
+
+export function createScratchSession(
+  base = DEFAULT_PROJECTS_BASE,
+  ttlMs = DEFAULT_TTL_MS,
+): { scratchSessionId: string } {
+  const id = randomUUID();
+  const dir = scratchSessionDir(id, base);
+  mkdirSync(dir, { recursive: true });
+  const meta = { createdAt: Date.now(), expiresAt: Date.now() + ttlMs };
+  writeFileSync(join(dir, 'meta.json'), JSON.stringify(meta));
+  return { scratchSessionId: id };
+}
+
+export async function submitScratchZones(
+  scratchSessionId: string,
+  zones: Omit<Zone, 'maskPath'>[],
+  masks: { zoneId: string; pngBase64: string }[],
+  base = DEFAULT_PROJECTS_BASE,
+  canvasSize: 1024 | 2048 | 4096 = 1024,
+): Promise<ZoneSession> {
+  const dir = scratchSessionDir(scratchSessionId, base);
+  const masksDir = join(dir, 'masks');
+  mkdirSync(masksDir, { recursive: true });
+  const writtenMasks: { zoneId: string; pngPath: string }[] = [];
+
+  for (const m of masks) {
+    const pngPath = join(masksDir, `${m.zoneId}.png`);
+    writeFileSync(pngPath, Buffer.from(m.pngBase64, 'base64'));
+    writtenMasks.push({ zoneId: m.zoneId, pngPath });
+  }
+
+  const zonesWithPaths: Zone[] = zones.map(z => ({
+    ...z,
+    maskPath: writtenMasks.find(m => m.zoneId === z.id)?.pngPath ?? '',
+  }));
+
+  const session: ZoneSession = {
+    projectId: `scratch:${scratchSessionId}`,
+    zones: zonesWithPaths,
+    masks: writtenMasks,
+    submittedAt: new Date().toISOString(),
+    canvasSize,
+    phase: 'a',
+  };
+
+  writeFileSync(join(dir, 'zones.json'), JSON.stringify(session, null, 2), 'utf-8');
+  return session;
+}
+
+export async function getScratchZones(
+  scratchSessionId: string,
+  base = DEFAULT_PROJECTS_BASE,
+): Promise<ZoneSession | null> {
+  const file = join(scratchSessionDir(scratchSessionId, base), 'zones.json');
+  if (!existsSync(file)) return null;
+  return JSON.parse(readFileSync(file, 'utf-8')) as ZoneSession;
+}
+
+export function cleanupExpiredScratch(base = DEFAULT_PROJECTS_BASE): void {
+  const scratchBase = join(base, SCRATCH_SUBDIR);
+  if (!existsSync(scratchBase)) return;
+  const now = Date.now();
+  for (const entry of readdirSync(scratchBase)) {
+    const metaPath = join(scratchBase, entry, 'meta.json');
+    if (!existsSync(metaPath)) continue;
+    try {
+      const meta = JSON.parse(readFileSync(metaPath, 'utf-8')) as { expiresAt: number };
+      if (meta.expiresAt < now) {
+        rmSync(join(scratchBase, entry), { recursive: true, force: true });
+      }
+    } catch { /* skip corrupt entries */ }
+  }
 }
 
 export async function setHeightmap(

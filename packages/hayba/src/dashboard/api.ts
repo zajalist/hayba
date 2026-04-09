@@ -3,8 +3,8 @@ import { config } from '../config.js';
 import { log } from '../logger.js';
 import { getUEClient } from '../tcp-client.js';
 import { loadCatalog, searchCatalog, getCategories } from '../catalog.js';
-import { createProject, getProject, listProjects } from '../projects.js';
-import { submitZones, getCurrentZones, setHeightmap, getHeightmap, getPainterSession, lockPainter, unlockPainter } from '../zones.js';
+import { createProject, deleteProject, getProject, listProjects } from '../projects.js';
+import { submitZones, getCurrentZones, setHeightmap, getHeightmap, getPainterSession, lockPainter, unlockPainter, createScratchSession, submitScratchZones, getScratchZones } from '../zones.js';
 import { getEntries, addEntry, deleteEntry, getBaseTemplates } from '../encyclopedia.js';
 
 /**
@@ -103,6 +103,12 @@ export function registerApiRoutes(app: Express): void {
     res.json(project);
   });
 
+  app.delete('/api/projects/:projectId', async (req: Request, res: Response) => {
+    const deleted = await deleteProject(req.params.projectId as string);
+    if (!deleted) return res.status(404).json({ error: 'Project not found' });
+    res.json({ ok: true });
+  });
+
   // ── Zones ─────────────────────────────────────────────────────────────────
 
   app.post('/api/zones/submit', async (req: Request, res: Response) => {
@@ -154,6 +160,35 @@ export function registerApiRoutes(app: Express): void {
   app.delete('/api/zones/painter-session', (_req: Request, res: Response) => {
     lockPainter();
     res.json({ ok: true });
+  });
+
+  // ── Scratch sessions ───────────────────────────────────────────────────────
+
+  app.post('/api/zones/scratch-session', (_req: Request, res: Response) => {
+    const result = createScratchSession();
+    unlockPainter(`scratch:${result.scratchSessionId}`, 'a');
+    res.json(result);
+  });
+
+  app.post('/api/zones/scratch-submit', async (req: Request, res: Response) => {
+    const { scratchSessionId, zones, masks, canvasSize } = req.body as {
+      scratchSessionId?: string;
+      zones?: Omit<Parameters<typeof submitScratchZones>[1][0], never>[];
+      masks?: { zoneId: string; pngBase64: string }[];
+      canvasSize?: 1024 | 2048 | 4096;
+    };
+    if (!scratchSessionId || !zones || !masks) {
+      return res.status(400).json({ error: 'scratchSessionId, zones, and masks are required' });
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const session = await submitScratchZones(scratchSessionId, zones as any, masks, undefined, canvasSize);
+    res.json(session);
+  });
+
+  app.get('/api/zones/scratch/:scratchSessionId', async (req: Request, res: Response) => {
+    const session = await getScratchZones(req.params.scratchSessionId as string);
+    if (!session) return res.status(404).json({ error: 'No zone submission found for scratch session' });
+    res.json(session);
   });
 
   // ── Encyclopedia ──────────────────────────────────────────────────────────

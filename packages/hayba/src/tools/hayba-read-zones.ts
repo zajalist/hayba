@@ -1,5 +1,5 @@
 import type { ToolResult } from './hayba-bake-terrain.js';
-import { getCurrentZones } from '../zones.js';
+import { getCurrentZones, getScratchZones } from '../zones.js';
 import { DEFAULT_PROJECTS_BASE } from '../projects.js';
 
 export async function readZonesHandler(
@@ -7,14 +7,20 @@ export async function readZonesHandler(
   base = DEFAULT_PROJECTS_BASE,
 ): Promise<ToolResult> {
   const projectId = args.projectId as string | undefined;
-  if (!projectId) {
-    return { content: [{ type: 'text', text: 'Error: projectId is required.' }], isError: true };
+  const scratchSessionId = args.scratchSessionId as string | undefined;
+
+  if (!projectId && !scratchSessionId) {
+    return { content: [{ type: 'text', text: 'Error: projectId or scratchSessionId is required.' }], isError: true };
   }
 
-  const session = await getCurrentZones(projectId, base);
+  const session = scratchSessionId
+    ? await getScratchZones(scratchSessionId, base)
+    : await getCurrentZones(projectId!, base);
+
   if (!session) {
+    const target = scratchSessionId ? `scratch session "${scratchSessionId}"` : `project "${projectId}"`;
     return {
-      content: [{ type: 'text', text: `No zone submission found for project "${projectId}". Ask the user to paint and submit zones in the dashboard first.` }],
+      content: [{ type: 'text', text: `No zone submission found for ${target}. Ask the user to paint and submit zones first.` }],
       isError: true,
     };
   }

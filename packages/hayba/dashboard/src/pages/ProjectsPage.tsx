@@ -4,11 +4,12 @@ import type { Project } from '../types';
 import { ProjectView } from './project/ProjectView';
 import './ProjectsPage.css';
 
-export function ProjectsPage({ deepLinkProjectId, deepLinkSection }: { deepLinkProjectId?: string; deepLinkSection?: string }) {
+export function ProjectsPage({ deepLinkProjectId, deepLinkSection, deepLinkScratchSessionId }: { deepLinkProjectId?: string; deepLinkSection?: string; deepLinkScratchSessionId?: string }) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selected, setSelected] = useState<Project | null>(null);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
     api.projects.list().then(ps => {
@@ -20,6 +21,12 @@ export function ProjectsPage({ deepLinkProjectId, deepLinkSection }: { deepLinkP
     });
   }, [deepLinkProjectId]);
 
+  const handleDelete = async (id: string) => {
+    await api.projects.delete(id);
+    setProjects(prev => prev.filter(p => p.id !== id));
+    setConfirmDeleteId(null);
+  };
+
   const handleCreate = async () => {
     if (!newName.trim()) return;
     const p = await api.projects.create(newName.trim());
@@ -28,6 +35,19 @@ export function ProjectsPage({ deepLinkProjectId, deepLinkSection }: { deepLinkP
     setCreating(false);
     setNewName('');
   };
+
+  // Scratch session: open zone painter directly without a real project
+  if (deepLinkScratchSessionId) {
+    const scratchProject: Project = {
+      id: `scratch:${deepLinkScratchSessionId}`,
+      name: 'Scratch Session',
+      createdAt: new Date().toISOString(),
+      lastModified: new Date().toISOString(),
+      terrainPath: null,
+      bakeStatus: 'none',
+    };
+    return <ProjectView project={scratchProject} onBack={() => window.history.back()} initialSection="zones" scratchSessionId={deepLinkScratchSessionId} />;
+  }
 
   if (selected) {
     return <ProjectView project={selected} onBack={() => setSelected(null)} initialSection={deepLinkProjectId === selected.id ? deepLinkSection : undefined} />;
@@ -60,9 +80,22 @@ export function ProjectsPage({ deepLinkProjectId, deepLinkSection }: { deepLinkP
           <div key={p.id} className="project-card panel">
             <div className="project-card-name">{p.name}</div>
             <div className="project-card-meta muted">{p.bakeStatus} · {new Date(p.lastModified).toLocaleDateString()}</div>
-            <div className="project-card-actions">
-              <button className="btn btn-primary" onClick={() => setSelected(p)}>Open</button>
-            </div>
+            {confirmDeleteId === p.id ? (
+              <div className="project-delete-confirm">
+                <div className="project-delete-warning">
+                  This removes the zone masks and project record only. The Gaea terrain files and Unreal Engine landscape are not touched. If you want to prompt AI to edit this terrain later, reconnecting the dots will be difficult.
+                </div>
+                <div className="project-card-actions">
+                  <button className="btn btn-danger" onClick={() => handleDelete(p.id)}>Yes, delete</button>
+                  <button className="btn btn-ghost" onClick={() => setConfirmDeleteId(null)}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <div className="project-card-actions">
+                <button className="btn btn-primary" onClick={() => setSelected(p)}>Open</button>
+                <button className="btn btn-ghost project-delete-btn" onClick={() => setConfirmDeleteId(p.id)}>Delete</button>
+              </div>
+            )}
           </div>
         ))}
         {projects.length === 0 && !creating && (
