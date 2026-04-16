@@ -39,6 +39,7 @@ FHaybaMCPCommandHandler::FHaybaMCPCommandHandler()
 	CommandMap.Add(TEXT("execute_graph"), &FHaybaMCPCommandHandler::Cmd_ExecuteGraph);
 	CommandMap.Add(TEXT("wizard_chat"), &FHaybaMCPCommandHandler::Cmd_WizardChat);
 	CommandMap.Add(TEXT("import_landscape"), &FHaybaMCPCommandHandler::Cmd_ImportLandscape);
+	CommandMap.Add(TEXT("read_node_output"), &FHaybaMCPCommandHandler::Cmd_ReadNodeOutput);
 
 	UE_LOG(LogHaybaMCPCmd, Log, TEXT("Command handler initialized with %d commands"), CommandMap.Num());
 }
@@ -1183,6 +1184,115 @@ FString FHaybaMCPCommandHandler::Cmd_ImportLandscape(const TSharedPtr<FJsonObjec
     Data->SetStringField(TEXT("heightmapPath"), ImportParams.HeightmapPath);
     Data->SetNumberField(TEXT("worldSizeKm"), ImportParams.WorldSizeKm);
     Data->SetNumberField(TEXT("maxHeightM"),  ImportParams.MaxHeightM);
+
+    return MakeOkResponse(Id, Data);
+}
+
+// Cmd_ReadNodeOutput
+// Reads the output point/spline data for a specific node in a PCG graph after execution.
+// The graph must already have been executed (via execute_graph) before calling this.
+// Params: { assetPath: string, nodeId: string }
+// Response data: { geometry_type, point_count, attributes[], value_ranges{} }
+//
+// NOTE: PCG executes the full graph, not individual nodes. This command reads the cached
+// output data stored on the PCGComponent after the last Generate() call. If the graph has
+// not been executed yet, the output data will be empty and point_count will be 0.
+FString FHaybaMCPCommandHandler::Cmd_ReadNodeOutput(const TSharedPtr<FJsonObject>& Params, const FString& Id)
+{
+    FString AssetPath;
+    FString NodeId;
+
+    if (!Params->TryGetStringField(TEXT("assetPath"), AssetPath) || AssetPath.IsEmpty())
+    {
+        return MakeErrorResponse(Id, TEXT("Missing required param: assetPath"));
+    }
+    if (!Params->TryGetStringField(TEXT("nodeId"), NodeId) || NodeId.IsEmpty())
+    {
+        return MakeErrorResponse(Id, TEXT("Missing required param: nodeId"));
+    }
+
+    UPCGGraph* Graph = LoadObject<UPCGGraph>(nullptr, *AssetPath);
+    if (!Graph)
+    {
+        return MakeErrorResponse(Id, FString::Printf(TEXT("Graph not found: %s"), *AssetPath));
+    }
+
+    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    if (!World)
+    {
+        return MakeErrorResponse(Id, TEXT("No editor world available"));
+    }
+
+    // Build response features
+    TSharedPtr<FJsonObject> Features = MakeShareable(new FJsonObject());
+    int32 TotalPointCount = 0;
+    TArray<TSharedPtr<FJsonValue>> AttrNames;
+    TSharedPtr<FJsonObject> ValueRanges = MakeShareable(new FJsonObject());
+    FString GeometryType = TEXT("unknown");
+
+    // Walk all actors with a PCGComponent referencing this graph
+    // and read their cached output data after the last Generate() call.
+    bool bFoundAnyComponent = false;
+    for (TActorIterator<AActor> It(World); It; ++It)
+    {
+        TArray<UPCGComponent*> PCGComponents;
+        (*It)->GetComponents<UPCGComponent>(PCGComponents);
+
+        for (UPCGComponent* Comp : PCGComponents)
+        {
+            if (!Comp || Comp->GetGraph() != Graph) continue;
+            bFoundAnyComponent = true;
+
+            TArray<FPCGTaggedData> OutputData = Comp->GetGeneratedGraphOutput().TaggedData;
+            for (const FPCGTaggedData& Tagged : OutputData)
+            {
+                if (!Tagged.Data) continue;
+
+                if (const UPCGPointData* PointData = Cast<UPCGPointData>(Tagged.Data))
+                {
+                    GeometryType = TEXT("points");
+                    TotalPointCount += PointData->GetPoints().Num();
+
+                    if (const UPCGMetadata* Meta = PointData->ConstMetadata())
+                    {
+                        TArray<FName> AttrNamesList;
+                        Meta->GetAttributesByName(AttrNamesList);
+                        for (const FName& AttrName : AttrNamesList)
+                        {
+                            const FString AttrStr = AttrName.ToString();
+                            bool bAlreadyAdded = false;
+                            for (const auto& V : AttrNames)
+                            {
+                                if (V->AsString() == AttrStr) { bAlreadyAdded = true; break; }
+                            }
+                            if (!bAlreadyAdded)
+                            {
+                                AttrNames.Add(MakeShared<FJsonValueString>(AttrStr));
+                            }
+                        }
+                    }
+                }
+                else if (Tagged.Data->IsA<UPCGSplineData>() || Tagged.Data->IsA<UPCGPolyLineData>())
+                {
+                    GeometryType = TEXT("splines");
+                }
+            }
+        }
+    }
+
+    Features->SetStringField(TEXT("geometry_type"), GeometryType);
+    Features->SetNumberField(TEXT("point_count"), TotalPointCount);
+    Features->SetArrayField(TEXT("attributes"), AttrNames);
+    Features->SetObjectField(TEXT("value_ranges"), ValueRanges);
+
+    if (!bFoundAnyComponent)
+    {
+        Features->SetStringField(TEXT("note"), TEXT("No PCGComponents found for this graph. Place an actor with a PCGComponent referencing this graph."));
+    }
+
+    TSharedPtr<FJsonObject> Data = MakeShareable(new FJsonObject());
+    Data->SetBoolField(TEXT("success"), true);
+    Data->SetObjectField(TEXT("features"), Features);
 
     return MakeOkResponse(Id, Data);
 }
