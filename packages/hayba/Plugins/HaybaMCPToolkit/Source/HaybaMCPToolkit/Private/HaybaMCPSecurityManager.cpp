@@ -7,6 +7,73 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
+#include "HAL/FileManager.h"
+#include "Algo/Sort.h"
+
+namespace
+{
+    static void WriteSortedJson(const TSharedRef<FJsonValue>& V,
+                                TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>& W)
+    {
+        switch (V->Type)
+        {
+        case EJson::Object:
+        {
+            const TSharedPtr<FJsonObject>& Obj = V->AsObject();
+            W.WriteObjectStart();
+            if (Obj.IsValid())
+            {
+                TArray<FString> Keys;
+                Obj->Values.GenerateKeyArray(Keys);
+                Keys.Sort();
+                for (const FString& Key : Keys)
+                {
+                    const TSharedPtr<FJsonValue> Child = Obj->Values.FindRef(Key);
+                    if (!Child.IsValid())
+                    {
+                        W.WriteNull(Key);
+                        continue;
+                    }
+                    W.WriteIdentifierPrefix(Key);
+                    WriteSortedJson(Child.ToSharedRef(), W);
+                }
+            }
+            W.WriteObjectEnd();
+            break;
+        }
+        case EJson::Array:
+        {
+            W.WriteArrayStart();
+            for (const TSharedPtr<FJsonValue>& Item : V->AsArray())
+            {
+                if (Item.IsValid())
+                {
+                    WriteSortedJson(Item.ToSharedRef(), W);
+                }
+                else
+                {
+                    W.WriteNull();
+                }
+            }
+            W.WriteArrayEnd();
+            break;
+        }
+        case EJson::String:
+            W.WriteValue(V->AsString());
+            break;
+        case EJson::Number:
+            W.WriteValue(V->AsNumber());
+            break;
+        case EJson::Boolean:
+            W.WriteValue(V->AsBool());
+            break;
+        case EJson::Null:
+        default:
+            W.WriteNull();
+            break;
+        }
+    }
+}
 
 FHaybaMCPSecurityManager& FHaybaMCPSecurityManager::Get()
 {
@@ -55,7 +122,28 @@ FString FHaybaMCPSecurityManager::HashParams(const TSharedPtr<FJsonObject>& Para
     FString Serialized;
     TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
         TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Serialized);
-    FJsonSerializer::Serialize(Params.ToSharedRef(), Writer);
+
+    // Walk the JSON object with keys emitted in sorted order so the hash is
+    // deterministic regardless of FJsonObject's hash-keyed TMap iteration order.
+    Writer->WriteObjectStart();
+    {
+        TArray<FString> Keys;
+        Params->Values.GenerateKeyArray(Keys);
+        Keys.Sort();
+        for (const FString& Key : Keys)
+        {
+            const TSharedPtr<FJsonValue> Child = Params->Values.FindRef(Key);
+            if (!Child.IsValid())
+            {
+                Writer->WriteNull(Key);
+                continue;
+            }
+            Writer->WriteIdentifierPrefix(Key);
+            WriteSortedJson(Child.ToSharedRef(), Writer.Get());
+        }
+    }
+    Writer->WriteObjectEnd();
+    Writer->Close();
 
     FTCHARToUTF8 Utf8(*Serialized);
     FSHAHash Hash;
@@ -88,10 +176,19 @@ void FHaybaMCPSecurityManager::Journal(const FHaybaJournalEntry& Entry)
         *SafeError);
 
     FScopeLock Lock(&JournalLock);
-    FFileHelper::SaveStringToFile(
+
+    // Ensure Saved/ exists — first run on a fresh project may not have created it yet.
+    const FString SavedDir = FPaths::ProjectSavedDir();
+    IFileManager::Get().MakeDirectory(*SavedDir, /*Tree=*/true);
+
+    const bool bWrote = FFileHelper::SaveStringToFile(
         Line,
         *LogPath,
         FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM,
         &IFileManager::Get(),
         FILEWRITE_Append);
+    if (!bWrote)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Hayba journal write failed: %s"), *LogPath);
+    }
 }
