@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { getNodeByClass } from '../catalog.js';
-import { DatabaseSync } from 'node:sqlite';
+import { createRequire } from 'node:module';
+const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
 
 const schema = z.object({
   fromClass: z.string().describe('Source node class'),

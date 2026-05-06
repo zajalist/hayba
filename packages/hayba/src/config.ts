@@ -12,7 +12,7 @@ export const config = {
   ueTcpHost: process.env.UE_TCP_HOST || '127.0.0.1',
 
   /** Web dashboard port */
-  dashboardPort: parseInt(process.env.DASHBOARD_PORT || '52341', 10),
+  dashboardPort: parseInt(process.env.DASHBOARD_PORT || '52343', 10),
 
   /** Dashboard host */
   dashboardHost: process.env.DASHBOARD_HOST || '127.0.0.1',
@@ -21,4 +21,10 @@ export const config = {
   get catalogPath() {
     return resolve(__dirname, '..', '..', 'Resources', 'node_catalog.json');
   },
+
+  /** Terrain critique threshold — complexity score above which self-critique triggers */
+  critiqueThreshold: parseFloat(process.env.HAYBA_CRITIQUE_THRESHOLD || '15.0'),
+
+  /** Whether terrain critique is enabled */
+  critiqueEnabled: process.env.HAYBA_CRITIQUE_ENABLED !== 'false',
 };

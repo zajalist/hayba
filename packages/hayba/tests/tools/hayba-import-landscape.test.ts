@@ -40,7 +40,7 @@ function writeGlobalConventions(landscapeMaterials: string) {
 }
 
 function cleanupGlobal() {
-  if (existsSync(GLOBAL_DIR)) rmSync(GLOBAL_DIR, { recursive: true, force: true });
+  if (existsSync(GLOBAL_PATH)) rmSync(GLOBAL_PATH, { force: true });
 }
 
 describe('hayba_import_landscape', () => {
@@ -145,6 +145,45 @@ describe('hayba_import_landscape', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Heightmap not found');
+  });
+
+  it('returns TCP error when ensureConnected throws', async () => {
+    writeGlobalConventions('/Game/Materials/Landscape');
+    vi.mocked(ensureConnected).mockRejectedValue(new Error('Connection refused'));
+
+    const result = await importLandscapeHandler({ heightmapPath: '/tmp/terrain.r16' }, makeSession());
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('TCP error');
+    expect(result.content[0].text).toContain('Connection refused');
+  });
+
+  it('passes custom worldSizeKm and maxHeightM', async () => {
+    writeGlobalConventions('/Game/Materials/Landscape');
+    const mockClient = makeMockClient({ ok: true, data: { actorLabel: 'Custom', scaleXY: 50.0, scaleZ: 200.0 } });
+    vi.mocked(ensureConnected).mockResolvedValue(mockClient as never);
+
+    await importLandscapeHandler({ heightmapPath: '/tmp/t.r16', worldSizeKm: 4.0, maxHeightM: 1200.0 }, makeSession());
+
+    expect(mockClient.send).toHaveBeenCalledWith(
+      'import_landscape',
+      expect.objectContaining({ worldSizeKm: 4.0, maxHeightM: 1200.0 }),
+      expect.any(Number)
+    );
+  });
+
+  it('passes custom actorLabel', async () => {
+    writeGlobalConventions('/Game/Materials/Landscape');
+    const mockClient = makeMockClient({ ok: true, data: { actorLabel: 'MyTerrain' } });
+    vi.mocked(ensureConnected).mockResolvedValue(mockClient as never);
+
+    await importLandscapeHandler({ heightmapPath: '/tmp/t.r16', actorLabel: 'MyTerrain' }, makeSession());
+
+    expect(mockClient.send).toHaveBeenCalledWith(
+      'import_landscape',
+      expect.objectContaining({ actorLabel: 'MyTerrain' }),
+      expect.any(Number)
+    );
   });
 
   it('returns actor label and scale values on success', async () => {

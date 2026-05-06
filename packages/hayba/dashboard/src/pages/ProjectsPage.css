@@ -9,3 +9,9 @@
 .project-card-meta { font-size: 10px; }
 .project-card-actions { margin-top: 4px; display: flex; gap: 6px; }
 .projects-empty { color: var(--text-muted); font-size: 11px; padding: 24px 0; }
+.project-delete-btn { opacity: 0.45; }
+.project-card:hover .project-delete-btn { opacity: 1; }
+.project-delete-confirm { display: flex; flex-direction: column; gap: 8px; }
+.project-delete-warning { font-size: 10px; color: var(--text-muted); line-height: 1.5; border-left: 2px solid var(--accent-warn, #c87941); padding-left: 8px; }
+.btn-danger { background: transparent; color: #c05858; border: 1px solid #c05858; }
+.btn-danger:hover { background: #c05858; color: #fff; }

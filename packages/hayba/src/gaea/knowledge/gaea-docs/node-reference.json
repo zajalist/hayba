@@ -1318,6 +1318,9 @@
       "Use Snow output as mask for white material in UE",
       "SnowLine controls minimum altitude for snow"
     ],
+    "known_issues": [
+      "Gaea 2.2.9 bug: Clicking the Snow node in the UI crashes with NullReferenceException in Snow.UpdateUI() when SnowMap and MeltMap ports are unconnected. Use Snowfield instead for standalone snow without map inputs."
+    ],
     "phase_hint": "simulation",
     "typical_predecessors": [
       "Lake",

@@ -78,7 +78,8 @@ describe("SwarmHostClient.connectNodes", () => {
     await client.connectNodes("src", "Out", "dst", "In");
     const nodes = readNodes();
     const dst = Object.values(nodes).find((n: unknown) => (n as { Name: string }).Name === "dst") as Record<string, unknown>;
-    const ports = dst.Ports as Array<{ Name: string; Record?: { From: number } }>;
+    const rawPorts = dst.Ports as any;
+    const ports = (Array.isArray(rawPorts) ? rawPorts : rawPorts.$values) as Array<{ Name: string; Record?: { From: number } }>;
     const inPort = ports.find(p => p.Name === "In");
     expect(inPort?.Record).toBeDefined();
     expect(typeof inPort?.Record?.From).toBe("number");
@@ -96,7 +97,8 @@ describe("SwarmHostClient.removeNode", () => {
     const names = Object.values(nodes).map((n: unknown) => (n as { Name: string }).Name);
     expect(names).not.toContain("src");
     const dst = Object.values(nodes).find((n: unknown) => (n as { Name: string }).Name === "dst") as Record<string, unknown>;
-    const ports = dst.Ports as Array<{ Record?: unknown }>;
+    const rawPorts = dst.Ports as any;
+    const ports = (Array.isArray(rawPorts) ? rawPorts : rawPorts.$values) as Array<{ Record?: unknown }>;
     expect(ports.every(p => !p.Record)).toBe(true);
   });
 });

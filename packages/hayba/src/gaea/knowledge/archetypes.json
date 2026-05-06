@@ -705,43 +705,108 @@
   {
     "pattern_name": "Snowy Alpine Peaks",
     "phase": "character",
-    "semantic_intent": "High-altitude cirques and aretes where frost wedging creates steep faces while sheltered pockets accumulate snow. Aspect drives snow distribution - north faces retain longer. Erosion channels form natural avalanche paths.",
+    "semantic_intent": "High-altitude cirques and aretes where frost wedging creates steep faces while sheltered pockets accumulate snow. Aspect drives snow distribution - north faces retain longer. Erosion channels form natural avalanche paths. Combines complex shape (Mountain×Perlin noise + Ridge blended in) with multi-stage erosion (hydraulic + thermal), glacier carving, subtle Snowfield coverage, and a full texture pass (TextureBase → SatMap → ColorErosion → FlowMap composite).",
     "core_topology": [
-      "Mountain",
-      "Erosion",
-      "Snow",
-      "Combine",
-      "Autolevel"
+      "Mountain", "Perlin", "Ridge", "Combine",
+      "Erosion2", "ThermalShaper", "Glacier", "Autolevel",
+      "Snowfield",
+      "TextureBase", "SatMap", "ColorErosion", "FlowMap", "Combine"
     ],
+    "graph": {
+      "nodes": [
+        {"id": "mountain", "type": "Mountain", "params": {"Seed": 42, "Scale": 1.3, "Height": 0.85, "Style": "Basic", "Bulk": "High"}},
+        {"id": "perlin", "type": "Perlin", "params": {"Seed": 23435, "Scale": 0.8, "Octaves": 2}},
+        {"id": "ridge", "type": "Ridge", "params": {"Seed": 22026, "Height": 0.5}},
+        {"id": "combine_mp", "type": "Combine", "params": {"Ratio": 0.5, "Mode": "Multiply"}},
+        {"id": "combine_r", "type": "Combine", "params": {"Ratio": 0.3, "Mode": "Add"}},
+        {"id": "erosion", "type": "Erosion2", "params": {"Duration": 0.45, "Downcutting": 0.1, "ErosionScale": 0.5, "Seed": 42}},
+        {"id": "thermal", "type": "ThermalShaper", "params": {}},
+        {"id": "glacier", "type": "Glacier", "params": {"Scale": 0.35, "Breakage": 0.6, "Seed": 42}},
+        {"id": "autolevel", "type": "Autolevel", "params": {}},
+        {"id": "snow", "type": "Snowfield", "params": {"Duration": 0.5, "Intensity": 0.65, "SettleThaw": 0.4, "Seed": 42}},
+        {"id": "texbase", "type": "TextureBase", "params": {"Slope": 0.22, "Scale": 0.25, "Soil": 0.17, "Seed": 42}},
+        {"id": "satmap", "type": "SatMap", "params": {"Rough": "Low", "Bias": 0.1}},
+        {"id": "colorerosion", "type": "ColorErosion", "params": {"Seed": 42}},
+        {"id": "flowmap", "type": "FlowMap", "params": {"FlowLength": 0.7, "FlowVolume": 0.005, "Seed": 42}},
+        {"id": "combine_color", "type": "Combine", "params": {"Ratio": 0.6, "Mode": "Overlay"}},
+        {"id": "output", "type": "Unreal", "params": {"PortCount": 1}}
+      ],
+      "edges": [
+        {"from": "mountain", "fromPort": "Out", "to": "combine_mp", "toPort": "In"},
+        {"from": "perlin", "fromPort": "Out", "to": "combine_mp", "toPort": "Input2"},
+        {"from": "combine_mp", "fromPort": "Out", "to": "combine_r", "toPort": "In"},
+        {"from": "ridge", "fromPort": "Out", "to": "combine_r", "toPort": "Input2"},
+        {"from": "combine_r", "fromPort": "Out", "to": "erosion", "toPort": "In"},
+        {"from": "erosion", "fromPort": "Out", "to": "thermal", "toPort": "In"},
+        {"from": "thermal", "fromPort": "Out", "to": "glacier", "toPort": "In"},
+        {"from": "erosion", "fromPort": "Out", "to": "glacier", "toPort": "Reference"},
+        {"from": "glacier", "fromPort": "Out", "to": "autolevel", "toPort": "In"},
+        {"from": "autolevel", "fromPort": "Out", "to": "snow", "toPort": "In"},
+        {"from": "snow", "fromPort": "Out", "to": "output", "toPort": "In"},
+        {"from": "autolevel", "fromPort": "Out", "to": "texbase", "toPort": "In"},
+        {"from": "texbase", "fromPort": "Out", "to": "satmap", "toPort": "In"},
+        {"from": "satmap", "fromPort": "Out", "to": "colorerosion", "toPort": "In"},
+        {"from": "autolevel", "fromPort": "Out", "to": "colorerosion", "toPort": "Height"},
+        {"from": "autolevel", "fromPort": "Out", "to": "flowmap", "toPort": "In"},
+        {"from": "colorerosion", "fromPort": "Out", "to": "combine_color", "toPort": "In"},
+        {"from": "flowmap", "fromPort": "Out", "to": "combine_color", "toPort": "Input2"}
+      ]
+    },
+    "node_reasoning": {
+      "mountain": "High bulk and scale gives enough mass for erosion to carve dramatic relief without flattening to foothills.",
+      "perlin": "Low octave (2) Perlin multiplied into mountain adds broad macro variation to ridge lines — prevents uniform symmetric cone. Multiply mode keeps it subtle.",
+      "ridge": "Blended at low ratio (0.3/Add) to inject sharp linear ridge character without dominating the mountain mass. Seed controls ridge alignment.",
+      "combine_mp": "Multiply mode for Perlin×Mountain keeps variation proportional to height — high peaks stay complex, valleys stay smooth.",
+      "combine_r": "Add mode at 0.3 ratio blends ridge lines into the composite shape before erosion carves them in.",
+      "erosion": "Low Downcutting (0.1) preserves ridge sharpness — higher values round everything into foothills. ErosionScale 0.5 produces fine alpine channel detail.",
+      "thermal": "Shapes steep cliff faces and scree deposits. MicrodetailPreservation=0.75 retains fine surface texture after thermal settling.",
+      "glacier": "Carves classic U-shaped glacial valleys. Breakage=0.6 produces realistic seracs and crevasse-like fractures.",
+      "autolevel": "Normalizes height range after erosion/glacier passes — ensures full dynamic range before snow and texture.",
+      "snow": "Snowfield avoids the Gaea 2.2.9 Snow.UpdateUI() crash. Duration=0.5, Intensity=0.65 gives heavy but realistic alpine coverage.",
+      "texbase": "Generates slope/soil/patch distribution from heightmap — drives how SatMap colors map to terrain features. Slope=0.22 biases color toward steep rocky faces.",
+      "satmap": "Low roughness prevents color noise. Bias=0.1 shifts palette toward cooler/rockier tones for alpine look.",
+      "colorerosion": "Adds sediment transport color variation — darkens drainage channels, lightens deposited areas for geological realism.",
+      "flowmap": "FlowLength=0.7 traces long drainage paths. FlowVolume=0.005 keeps river channels narrow. Used as Overlay blend into color for visible drainage staining.",
+      "combine_color": "Overlay at 0.6 composites flow staining over base color — flow darkens valleys while preserving peak coloring."
+    },
     "heuristic_parameters": {
       "Mountain.Height": {
-        "value": 2,
-        "reason": "Treeline elevation creates dramatic alpine zone"
+        "value": 0.85,
+        "reason": "Treeline elevation creates dramatic alpine zone with enough mass for erosion to work into"
       },
-      "Mountain.Seed": {
-        "value": "varied",
-        "reason": "Iterate for ridge-crest complexity and cirque formation"
+      "Erosion2.Downcutting": {
+        "value": 0.1,
+        "reason": "Low downcutting preserves ridge sharpness — high values round peaks into foothills"
       },
-      "Erosion.Downcutting": {
-        "value": 0.3,
-        "reason": "Glacial valley carving creates dramatic relief"
+      "Erosion2.ErosionScale": {
+        "value": 0.5,
+        "reason": "Fine channel scale appropriate for alpine terrain detail"
       },
-      "Snow.Amount": {
-        "value": 0.7,
-        "reason": "Heavy snow based on orographic precipitation patterns"
+      "Snowfield.Intensity": {
+        "value": 0.65,
+        "reason": "Heavy but realistic alpine snow coverage"
+      },
+      "Glacier.Breakage": {
+        "value": 0.6,
+        "reason": "Produces realistic serac and crevasse-like fractures in glacial valleys"
       }
     },
     "biome_tags": [
-      "alpine",
-      "snow",
-      "mountain",
-      "cold",
-      "glacial",
-      "cirque",
-      "arete"
+      "alpine", "snow", "mountain", "cold", "glacial", "cirque", "arete", "rocky", "texture"
     ],
-    "scale_reference": "2km x 2km",
-    "source_video_id": "Gaea Deep Dive Snowy Peaks"
+    "scale_reference": "8-10km x 8-10km",
+    "source_video_id": "Gaea Deep Dive Snowy Peaks",
+    "sources": [
+      {"type": "terrain_file", "name": "Kyrgyz Valley Tutorial.terrain"}
+    ],
+    "common_mistakes": [
+      "Using Snow node without SnowMap/MeltMap connected — crashes Gaea 2.2.9 UI (NullReferenceException in Snow.UpdateUI()). Use Snowfield instead for standalone snow without map inputs.",
+      "Snow.Amount is not a valid parameter — use Snow.Intensity instead",
+      "Setting Erosion2.Downcutting > 0.3 on alpine terrain — destroys ridge definition and rounds peaks into hills",
+      "Skipping TextureBase before SatMap — SatMap without a TextureBase Guide produces flat uniform color with no slope/rock variation",
+      "Not connecting FlowMap output into color composite — drainage channels remain invisible, terrain looks plasticky",
+      "Leaving Glacier's Reference port unconnected — node errors in viewport with red dashes. Always feed a pre-thermal shape (erosion output) into Glacier:Reference"
+    ]
   },
   {
     "pattern_name": "Volcanic Terrain",
@@ -2917,5 +2982,264 @@
     ],
     "scale_reference": "1km x 1km",
     "source_video_id": "Master of Gaea - Creating Eroded Hoodoos Formations"
+  },
+  {
+    "pattern_name": "Distance Guided Mountain Erosion",
+    "phase": "simulation",
+    "semantic_intent": "Directional Distance masks sculpt a mountain base before warp, erosion, and river simulation. This pattern builds branching cuts and controlled drainage while preserving broad alpine structure for downstream snow and color passes.",
+    "core_topology": [
+      "Mountain",
+      "Distance",
+      "Warp",
+      "Erosion2",
+      "Voronoi",
+      "Rivers",
+      "HydroFix",
+      "Thermal2",
+      "Snow",
+      "ColorErosion"
+    ],
+    "heuristic_parameters": {
+      "Distance.Angle": {
+        "value": 120.66915,
+        "reason": "Sets dominant directional bias for valley/ridge alignment"
+      },
+      "Distance.Falloff": {
+        "value": 0.54584885,
+        "reason": "Balances broad structure with tapering edges"
+      },
+      "Rivers.Downcutting": {
+        "value": 0.5,
+        "reason": "Carves clear fluvial channels into the distance-shaped terrain"
+      },
+      "Erosion2.Downcutting": {
+        "value": 0.047087982,
+        "reason": "Keeps initial erosion pass subtle before later detail stages"
+      },
+      "Snow.Intensity": {
+        "value": 0.3,
+        "reason": "Adds moderate alpine snow coverage after primary simulation"
+      }
+    },
+    "biome_tags": [
+      "mountain",
+      "alpine",
+      "river",
+      "snow",
+      "distance-mask"
+    ],
+    "scale_reference": "3x3 tiles @ 2048 (bake 8192)",
+    "source_video_id": null,
+    "sources": [
+      {
+        "type": "terrain_file",
+        "name": "Distance Tutorial.terrain"
+      }
+    ]
+  },
+  {
+    "pattern_name": "Transpose Layer Transfer Workflow",
+    "phase": "utility",
+    "semantic_intent": "A Draw-driven terrain is repeatedly transposed through simulation stages to transfer structure between variants. Useful for preserving hand-authored forms while applying erosion and warp passes in modular layers.",
+    "core_topology": [
+      "Draw",
+      "Warp",
+      "Erosion2",
+      "ThermalShaper",
+      "Transpose",
+      "Transpose",
+      "Warp"
+    ],
+    "heuristic_parameters": {
+      "Draw.Soften": {
+        "value": 2.0,
+        "reason": "Smooths painted shapes so transpose transfers are less aliased"
+      },
+      "Erosion2.Downcutting": {
+        "value": 0.5334572,
+        "reason": "Strong secondary erosion creates pronounced transferred relief"
+      },
+      "ThermalShaper.Shape": {
+        "value": 0.5,
+        "reason": "Stabilizes slope breakup before transpose operations"
+      },
+      "Warp.Strength": {
+        "value": 0.1,
+        "reason": "Light final distortion avoids destroying transposed detail"
+      }
+    },
+    "biome_tags": [
+      "utility",
+      "transpose",
+      "hand-sculpted",
+      "layered",
+      "workflow"
+    ],
+    "scale_reference": "2x2 tiles @ 2048",
+    "source_video_id": null,
+    "sources": [
+      {
+        "type": "terrain_file",
+        "name": "Transpose Tutorial.terrain"
+      }
+    ]
+  },
+  {
+    "pattern_name": "Kyrgyz Layered Valley Base",
+    "phase": "character",
+    "semantic_intent": "Layered valley blockout combining anisotropic noise and ridge structure. This archetype forms broad continental valley flow with controllable mountain backbone suitable for later erosion and texturing.",
+    "core_topology": [
+      "Gabor",
+      "Perlin",
+      "Combine",
+      "Ridge",
+      "Combine",
+      "Draw"
+    ],
+    "heuristic_parameters": {
+      "Gabor.Size": {
+        "value": 0.17,
+        "reason": "Establishes meso-scale directional roughness"
+      },
+      "Gabor.Anisotropy": {
+        "value": 0.9256506,
+        "reason": "Pushes stretched valley grain rather than isotropic noise"
+      },
+      "Perlin.Scale": {
+        "value": 0.8004957,
+        "reason": "Introduces broad elevation undulation beneath ridge forms"
+      },
+      "Perlin.Octaves": {
+        "value": 2,
+        "reason": "Keeps detail restrained for clean large-landform reads"
+      },
+      "Combine.Mode": {
+        "value": "Multiply",
+        "reason": "Interlocks ridge and noise fields into coherent valley relief"
+      }
+    },
+    "biome_tags": [
+      "valley",
+      "mountain",
+      "continental",
+      "kyrgyz",
+      "layered-noise"
+    ],
+    "scale_reference": "2x2 tiles @ 2048",
+    "source_video_id": null,
+    "sources": [
+      {
+        "type": "terrain_file",
+        "name": "Kyrgyz Valley Tutorial.terrain"
+      }
+    ]
+  },
+  {
+    "pattern_name": "Heavy Kyrgyzstan Production Valley",
+    "phase": "utility",
+    "semantic_intent": "Large-world production graph for mountainous valleys with integrated simulation, lookdev masks, vegetation placement, and export outputs. Designed for high-resolution tiled builds and Unreal-ready splat workflows.",
+    "core_topology": [
+      "Slope",
+      "Thermal2",
+      "Rivers",
+      "Snow",
+      "TextureBase",
+      "SatMap",
+      "ColorErosion",
+      "Trees",
+      "Splat",
+      "Export"
+    ],
+    "heuristic_parameters": {
+      "Rivers.Water": {
+        "value": 0.05,
+        "reason": "Conservative water volume keeps channels believable at large scale"
+      },
+      "Rivers.Downcutting": {
+        "value": 0.3,
+        "reason": "Medium incision depth for broad valley readability"
+      },
+      "Snow.Intensity": {
+        "value": 0.19578685,
+        "reason": "Light-to-moderate snow to preserve exposed rock variation"
+      },
+      "Trees.TreeCount": {
+        "value": 150,
+        "reason": "Base vegetation density before mask-based layering"
+      },
+      "Build.Resolution": {
+        "value": 16384,
+        "reason": "Supports high-fidelity tiled production export"
+      }
+    },
+    "biome_tags": [
+      "mountain",
+      "valley",
+      "large-world",
+      "vegetation",
+      "splat"
+    ],
+    "scale_reference": "16x16 tiles @ 16384 (bake 4096)",
+    "source_video_id": null,
+    "sources": [
+      {
+        "type": "terrain_file",
+        "name": "HEAVY Kyrgyzstan Valley.terrain"
+      }
+    ]
+  },
+  {
+    "pattern_name": "Fractal Terraces Mountain Stack",
+    "phase": "character",
+    "semantic_intent": "Terrace-focused mountain workflow using stratification and Fractal Terraces with follow-up thermal and fluvial shaping. Produces stepped, geologically layered terrain with controlled river/lake interaction.",
+    "core_topology": [
+      "Voronoi",
+      "LinearGradient",
+      "Curve",
+      "Stratify",
+      "Warp",
+      "FractalTerraces",
+      "Erosion2",
+      "Rivers",
+      "Lake",
+      "Snow"
+    ],
+    "heuristic_parameters": {
+      "FractalTerraces.Intensity": {
+        "value": 0.4,
+        "reason": "Defines clear terrace stepping without over-quantizing terrain"
+      },
+      "FractalTerraces.Spacing": {
+        "value": 0.005,
+        "reason": "Creates tight terrace intervals for layered profiles"
+      },
+      "Stratify.Intensity": {
+        "value": 0.24535315,
+        "reason": "Injects sedimentary banding prior to terrace carving"
+      },
+      "Rivers.Downcutting": {
+        "value": 0.45910782,
+        "reason": "Cuts through terrace field to avoid flat synthetic look"
+      },
+      "Lake.Precipitation": {
+        "value": 6.0,
+        "reason": "Supports basin filling and shoreline definition"
+      }
+    },
+    "biome_tags": [
+      "terrace",
+      "stratified",
+      "mountain",
+      "river",
+      "lake"
+    ],
+    "scale_reference": "3x3 tiles @ 2048",
+    "source_video_id": null,
+    "sources": [
+      {
+        "type": "terrain_file",
+        "name": "Terraces & Fractal Terraces Tutorial.terrain"
+      }
+    ]
   }
 ]

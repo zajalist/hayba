@@ -321,16 +321,21 @@ function buildTerrainFile(
     const nodeJsonId = id(); // $id for this node object — referenced by port Parents
     const incomingEdges = graph.edges.filter(e => e.to === n.id);
 
-    // Validate all enum params before writing
+    // Validate and filter to ONLY known params from catalog. Unknown params crash Gaea.
+    const nodeDefForParams = NODE_CATALOG.find(nd => nd.type === n.type);
+    const knownParamNames = new Set(nodeDefForParams?.parameters.map(p => p.name) ?? []);
     const validatedParams: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(n.params)) {
+      if (!knownParamNames.has(k)) {
+        console.warn(`Ignoring unknown parameter "${k}" for node type "${n.type}" — not in catalog`);
+        continue;
+      }
       validatedParams[k] = validateAndFixParameter(n.type, k, v);
     }
 
     // Fill missing parameters with defaults from catalog to prevent null reference crashes
-    const nodeDef = NODE_CATALOG.find(nd => nd.type === n.type);
-    if (nodeDef) {
-      for (const paramDef of nodeDef.parameters) {
+    if (nodeDefForParams) {
+      for (const paramDef of nodeDefForParams.parameters) {
         if (!(paramDef.name in validatedParams)) {
           validatedParams[paramDef.name] = paramDef.default;
         }
@@ -338,21 +343,47 @@ function buildTerrainFile(
     }
 
     const portValues: object[] = [];
+    const nodeDefForPorts = NODE_CATALOG.find(nd => nd.type === n.type);
+    const knownInputs = nodeDefForPorts?.inputs ?? ["In"];
+
+    // Add all known input ports - but only "In" as primary (connected or not)
+    // Don't add optional secondary input ports (SnowMap, MeltMap, etc.) as placeholders - causes file issues
     if (incomingEdges.length === 0) {
+      // No edges: add "In" as primary input
       portValues.push({ "$id": id(), Name: "In", Type: "PrimaryIn", IsExporting: true, Parent: { "$ref": nodeJsonId } });
     } else {
       for (const edge of incomingEdges) {
         portValues.push({
           "$id": id(),
           Name: normalizePort(edge.toPort, false),
-          Type: "PrimaryIn, Required",
+          Type: "PrimaryIn",  // Match working file format - no ", Required"
           Record: { "$id": id(), From: idMap.get(edge.from)!, To: intId, FromPort: normalizePort(edge.fromPort, true), ToPort: normalizePort(edge.toPort, false), IsValid: true },
           IsExporting: true,
           Parent: { "$ref": nodeJsonId }
         });
       }
     }
-    portValues.push({ "$id": id(), Name: "Out", Type: "PrimaryOut", IsExporting: true, Parent: { "$ref": nodeJsonId } });
+
+    // DO NOT add secondary input ports that weren't connected - causes file corruption
+    // const connectedInputs = new Set(incomingEdges.map(e => normalizePort(e.toPort, false)));
+    // for (const inputName of knownInputs) {
+    //   if (inputName !== "In" && !connectedInputs.has(inputName)) {
+    //     portValues.push({ "$id": id(), Name: inputName, Type: "SecondaryIn", IsExporting: true, Parent: { "$ref": nodeJsonId } });
+    //   }
+    // }
+
+    // Add output port(s) - only "Out" for primary output
+    // Don't add secondary outputs (Snow, Hard, Depth) as ports - they cause file corruption
+    const knownOutputs = nodeDefForPorts?.outputs ?? ["Out"];
+    if (knownOutputs.includes("Out")) {
+      portValues.push({ "$id": id(), Name: "Out", Type: "PrimaryOut", IsExporting: true, Parent: { "$ref": nodeJsonId } });
+    }
+    // DO NOT add secondary outputs - they cause file corruption in Gaea
+    // for (const outputName of knownOutputs) {
+    //   if (outputName !== "Out") {
+    //     portValues.push({ "$id": id(), Name: outputName, Type: "SecondaryOut", IsExporting: true, Parent: { "$ref": nodeJsonId } });
+    //   }
+    // }
 
     nodesEntries.push([String(intId), {
       "$id": nodeJsonId,
@@ -778,18 +809,17 @@ const NODE_CATALOG: SwarmNodeType[] = [
     inputs: ["In"], outputs: ["Out"]
   },
   // ── Snow / weather ──────────────────────────────────────────────────────────
+  // CRITICAL: Only use the exact params from Gaea 2.2.7 format. Writing extra
+  // params causes UpdateUI() to crash. Verified: AlpineMountain_SnowCaps.terrain
+  // works with only SnowLine, Intensity, Seed.
   {
     type: "Snow", category: "weather",
     parameters: [
-      { name: "Duration", type: "float", min: 0, max: 1, default: 0.5 },
-      { name: "Intensity", type: "float", min: 0, max: 1, default: 0.5 },
-      { name: "SettleThaw", type: "float", min: 0, max: 1, default: 0.5 },
-      { name: "MeltType", type: "enum", default: "Uniform", options: ["Uniform", "Directional"] },
-      { name: "Melt", type: "float", min: 0, max: 1, default: 0.5 },
       { name: "SnowLine", type: "float", min: 0, max: 1, default: 0.0 },
+      { name: "Intensity", type: "float", min: 0, max: 1, default: 0.5 },
       { name: "Seed", type: "int", default: 0 }
     ],
-    inputs: ["In", "SnowMap", "MeltMap"], outputs: ["Out", "Snow", "Hard", "Depth"]
+    inputs: ["In"], outputs: ["Out"]
   },
   {
     type: "Snowfield", category: "weather",

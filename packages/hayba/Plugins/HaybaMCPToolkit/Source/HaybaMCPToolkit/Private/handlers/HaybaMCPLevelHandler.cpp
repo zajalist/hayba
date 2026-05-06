@@ -242,18 +242,18 @@ FHaybaHandlerResult FHaybaMCPLevelHandler::LevelGotoBookmark(const TSharedPtr<FJ
     FVector Location = T->GetLocation();
     FRotator Rotation = T->Rotator();
 
-    if (GEditor)
+    if (!GEditor)
+        return FHaybaHandlerResult::Err(TEXT("level_goto_bookmark: editor not available"));
+
+    FViewport* Viewport = GEditor->GetActiveViewport();
+    if (Viewport)
     {
-        FViewport* Viewport = GEditor->GetActiveViewport();
-        if (Viewport)
+        FEditorViewportClient* VPC = static_cast<FEditorViewportClient*>(Viewport->GetClient());
+        if (VPC)
         {
-            FEditorViewportClient* VPC = static_cast<FEditorViewportClient*>(Viewport->GetClient());
-            if (VPC)
-            {
-                VPC->SetViewLocation(Location);
-                VPC->SetViewRotation(Rotation);
-                VPC->Invalidate();
-            }
+            VPC->SetViewLocation(Location);
+            VPC->SetViewRotation(Rotation);
+            VPC->Invalidate();
         }
     }
 

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { readdirSync, readFileSync, statSync, existsSync, unlinkSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
+import { createRequire } from 'node:module';
+const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
 
 const schema = z.object({
   pluginSourcePath: z.string().optional().describe('Path to PCGExtendedToolkit/Source/ directory'),
@@ -95,7 +96,7 @@ export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
     try { unlinkSync(dbPath); } catch { /* ignore */ }
   }
 
-  let db: DatabaseSync;
+  let db: InstanceType<typeof DatabaseSync>;
   try {
     db = new DatabaseSync(dbPath);
   } catch (e: any) {

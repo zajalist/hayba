@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { searchCatalog, getNodeByClass } from '../catalog.js';
 import { readFileSync, existsSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
+import { createRequire } from 'node:module';
+const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
 
 const schema = z.object({
   query: z.string().min(1).describe('Node class name or keyword to search documentation'),
