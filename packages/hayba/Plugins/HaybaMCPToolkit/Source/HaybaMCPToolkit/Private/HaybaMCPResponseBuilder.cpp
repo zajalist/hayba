@@ -43,38 +43,59 @@ int32 FHaybaMCPResponseBuilder::TrimArray(TArray<TSharedPtr<FJsonValue>>& InOutI
 
 namespace
 {
+    // Safety guard against pathological/cyclic input. When reached, recursion
+    // simply stops descending — no _truncated entry is emitted (silent guard).
+    static constexpr int32 MaxRecursionDepth = 64;
+
+    struct FTruncationEntry
+    {
+        FString Path;
+        FString Kind;   // "string" | "array" | "fields"
+        int32   Removed = 0;
+    };
+
     // Recursively walk and trim a JSON object in place.
     // Because FJsonValueString and FJsonValueArray have no public setters, we
     // replace the TSharedPtr<FJsonValue> entry in the parent map/array when a
     // mutation is needed.
     void WalkObjectInPlace(const TSharedPtr<FJsonObject>& Object,
+                           const FString& Path,
+                           int32 Depth,
                            const FHaybaMCPResponseBuilder& Builder,
-                           TSet<FString>& TruncatedKeys);
+                           TArray<FTruncationEntry>& Truncations);
 
-    // Walk an array's items, possibly replacing them; returns true if any item changed.
-    // If a child string/array was trimmed, AssociatedKey is added to TruncatedKeys.
     bool WalkArrayItemsInPlace(TArray<TSharedPtr<FJsonValue>>& Items,
-                               const FString& AssociatedKey,
+                               const FString& Path,
+                               int32 Depth,
                                const FHaybaMCPResponseBuilder& Builder,
-                               TSet<FString>& TruncatedKeys)
+                               TArray<FTruncationEntry>& Truncations)
     {
-        bool bChanged = false;
-        for (TSharedPtr<FJsonValue>& Item : Items)
+        if (Depth >= MaxRecursionDepth)
         {
+            return false;
+        }
+
+        bool bChanged = false;
+        for (int32 Index = 0; Index < Items.Num(); ++Index)
+        {
+            TSharedPtr<FJsonValue>& Item = Items[Index];
             if (!Item.IsValid())
             {
                 continue;
             }
+
+            const FString ItemPath = Path + FString::Printf(TEXT("[%d]"), Index);
 
             switch (Item->Type)
             {
             case EJson::String:
             {
                 FString Str = Item->AsString();
+                const int32 OriginalLen = Str.Len();
                 if (Builder.TrimString(Str))
                 {
                     Item = MakeShared<FJsonValueString>(Str);
-                    TruncatedKeys.Add(AssociatedKey);
+                    Truncations.Add({ItemPath, TEXT("string"), OriginalLen - Str.Len()});
                     bChanged = true;
                 }
                 break;
@@ -86,9 +107,9 @@ namespace
                 bool bInnerChanged = (Removed > 0);
                 if (Removed > 0)
                 {
-                    TruncatedKeys.Add(AssociatedKey);
+                    Truncations.Add({ItemPath, TEXT("array"), Removed});
                 }
-                if (WalkArrayItemsInPlace(Inner, AssociatedKey, Builder, TruncatedKeys))
+                if (WalkArrayItemsInPlace(Inner, ItemPath, Depth + 1, Builder, Truncations))
                 {
                     bInnerChanged = true;
                 }
@@ -101,7 +122,7 @@ namespace
             }
             case EJson::Object:
             {
-                WalkObjectInPlace(Item->AsObject(), Builder, TruncatedKeys);
+                WalkObjectInPlace(Item->AsObject(), ItemPath, Depth + 1, Builder, Truncations);
                 break;
             }
             default:
@@ -112,10 +133,12 @@ namespace
     }
 
     void WalkObjectInPlace(const TSharedPtr<FJsonObject>& Object,
+                           const FString& Path,
+                           int32 Depth,
                            const FHaybaMCPResponseBuilder& Builder,
-                           TSet<FString>& TruncatedKeys)
+                           TArray<FTruncationEntry>& Truncations)
     {
-        if (!Object.IsValid())
+        if (!Object.IsValid() || Depth >= MaxRecursionDepth)
         {
             return;
         }
@@ -129,15 +152,18 @@ namespace
                 continue;
             }
 
+            const FString ChildPath = Path.IsEmpty() ? Key : (Path + TEXT(".") + Key);
+
             switch (Value->Type)
             {
             case EJson::String:
             {
                 FString Str = Value->AsString();
+                const int32 OriginalLen = Str.Len();
                 if (Builder.TrimString(Str))
                 {
                     Value = MakeShared<FJsonValueString>(Str);
-                    TruncatedKeys.Add(Key);
+                    Truncations.Add({ChildPath, TEXT("string"), OriginalLen - Str.Len()});
                 }
                 break;
             }
@@ -148,9 +174,9 @@ namespace
                 bool bChanged = (Removed > 0);
                 if (Removed > 0)
                 {
-                    TruncatedKeys.Add(Key);
+                    Truncations.Add({ChildPath, TEXT("array"), Removed});
                 }
-                if (WalkArrayItemsInPlace(Items, Key, Builder, TruncatedKeys))
+                if (WalkArrayItemsInPlace(Items, ChildPath, Depth + 1, Builder, Truncations))
                 {
                     bChanged = true;
                 }
@@ -162,7 +188,7 @@ namespace
             }
             case EJson::Object:
             {
-                WalkObjectInPlace(Value->AsObject(), Builder, TruncatedKeys);
+                WalkObjectInPlace(Value->AsObject(), ChildPath, Depth + 1, Builder, Truncations);
                 break;
             }
             default:
@@ -174,7 +200,9 @@ namespace
 
 TSharedRef<FJsonObject> FHaybaMCPResponseBuilder::Build(const TSharedRef<FJsonObject>& Source) const
 {
-    // Deep-copy via serialize/deserialize so we don't mutate the caller's object.
+    // TODO(perf): Deep-copy via serialize/deserialize round-trip so we don't
+    // mutate the caller's object. If profiling shows this as a hotspot, replace
+    // with a structural clone that walks the tree directly.
     FString Serialized;
     TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Serialized);
     FJsonSerializer::Serialize(Source, Writer);
@@ -187,28 +215,36 @@ TSharedRef<FJsonObject> FHaybaMCPResponseBuilder::Build(const TSharedRef<FJsonOb
         return Source;
     }
 
-    TSet<FString> TruncatedKeys;
-    WalkObjectInPlace(Copy, *this, TruncatedKeys);
+    TArray<FTruncationEntry> Truncations;
+    WalkObjectInPlace(Copy, FString(), 0, *this, Truncations);
 
     // Enforce MaxTopLevelFields by dropping extra top-level entries.
+    // Sort keys lexicographically first so the drop is deterministic across
+    // runs (TMap iteration order is otherwise unspecified).
     if (Limits.MaxTopLevelFields > 0 && Copy->Values.Num() > Limits.MaxTopLevelFields)
     {
         TArray<FString> Keys;
-        Copy->Values.GetKeys(Keys);
+        Copy->Values.GenerateKeyArray(Keys);
+        Keys.Sort();
+        const int32 RemovedCount = Keys.Num() - Limits.MaxTopLevelFields;
         for (int32 i = Limits.MaxTopLevelFields; i < Keys.Num(); ++i)
         {
-            TruncatedKeys.Add(Keys[i]);
             Copy->Values.Remove(Keys[i]);
         }
+        Truncations.Add({TEXT("_root"), TEXT("fields"), RemovedCount});
     }
 
-    if (TruncatedKeys.Num() > 0)
+    if (Truncations.Num() > 0)
     {
         TArray<TSharedPtr<FJsonValue>> TruncatedArray;
-        TruncatedArray.Reserve(TruncatedKeys.Num());
-        for (const FString& K : TruncatedKeys)
+        TruncatedArray.Reserve(Truncations.Num());
+        for (const FTruncationEntry& Entry : Truncations)
         {
-            TruncatedArray.Add(MakeShared<FJsonValueString>(K));
+            TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+            Obj->SetStringField(TEXT("path"), Entry.Path);
+            Obj->SetStringField(TEXT("kind"), Entry.Kind);
+            Obj->SetNumberField(TEXT("removed"), Entry.Removed);
+            TruncatedArray.Add(MakeShared<FJsonValueObject>(Obj));
         }
         Copy->SetArrayField(TEXT("_truncated"), TruncatedArray);
     }
