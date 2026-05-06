@@ -46,8 +46,7 @@ void FHaybaMCPModule::StartupModule()
         ECVF_Default
     );
 
-    // Auto-start TCP server so Claude can connect without UI interaction
-    StartTcpServer();
+
 }
 
 void FHaybaMCPModule::ShutdownModule()

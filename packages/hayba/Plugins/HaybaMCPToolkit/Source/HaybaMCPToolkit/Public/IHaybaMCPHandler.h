@@ -2,6 +2,29 @@
 #include "CoreMinimal.h"
 #include "Dom/JsonObject.h"
 
+struct FHaybaHandlerResult
+{
+    bool bOk = true;
+    TSharedPtr<FJsonObject> Data;   // populated when bOk=true
+    FString ErrorMessage;           // populated when bOk=false
+
+    static FHaybaHandlerResult Ok(TSharedPtr<FJsonObject> InData)
+    {
+        FHaybaHandlerResult R;
+        R.bOk = true;
+        R.Data = InData;
+        return R;
+    }
+
+    static FHaybaHandlerResult Err(const FString& Msg)
+    {
+        FHaybaHandlerResult R;
+        R.bOk = false;
+        R.ErrorMessage = Msg;
+        return R;
+    }
+};
+
 class IHaybaMCPHandler
 {
 public:
@@ -14,13 +37,11 @@ public:
     virtual TArray<FString> GetCommands() const = 0;
 
     /**
-     * Dispatch a command. Returns the FULL response JSON string already
-     * formatted with MakeOkResponse / MakeErrorResponse helpers.
-     * (Future handlers may return JsonObject + use FHaybaMCPResponseBuilder
-     *  for trimming, but the legacy migration preserves FString returns
-     *  to avoid behavior changes.)
+     * Dispatch a command. Returns a FHaybaHandlerResult containing either
+     * the payload data object (on success) or an error message (on failure).
+     * The router (FHaybaMCPCommandHandler) is responsible for building the
+     * {id, ok, data} envelope.
      */
-    virtual FString Handle(const FString& Command,
-                           const TSharedPtr<FJsonObject>& Params,
-                           const FString& Id) = 0;
+    virtual FHaybaHandlerResult Handle(const FString& Command,
+                                       const TSharedPtr<FJsonObject>& Params) = 0;
 };

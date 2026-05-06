@@ -18,9 +18,6 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPLegacy, Log, All);
 
-#define MakeOkResponse(Id, Data) FHaybaMCPCommandHandler::MakeOkResponse(Id, Data)
-#define MakeErrorResponse(Id, Msg) FHaybaMCPCommandHandler::MakeErrorResponse(Id, Msg)
-
 FHaybaMCPLegacyHandler::FHaybaMCPLegacyHandler() {}
 
 TArray<FString> FHaybaMCPLegacyHandler::GetCommands() const
@@ -40,37 +37,37 @@ TArray<FString> FHaybaMCPLegacyHandler::GetCommands() const
     };
 }
 
-FString FHaybaMCPLegacyHandler::Handle(const FString& Cmd,
-    const TSharedPtr<FJsonObject>& Params, const FString& Id)
+FHaybaHandlerResult FHaybaMCPLegacyHandler::Handle(const FString& Cmd,
+    const TSharedPtr<FJsonObject>& Params)
 {
-    if (Cmd == TEXT("ping")) return Cmd_Ping(Params, Id);
+    if (Cmd == TEXT("ping")) return Cmd_Ping(Params);
     if (Cmd == TEXT("list_node_classes") || Cmd == TEXT("pcg_list_node_classes"))
-        return Cmd_ListNodeClasses(Params, Id);
+        return Cmd_ListNodeClasses(Params);
     if (Cmd == TEXT("get_node_details") || Cmd == TEXT("pcg_get_node_details"))
-        return Cmd_GetNodeDetails(Params, Id);
+        return Cmd_GetNodeDetails(Params);
     if (Cmd == TEXT("list_pcg_assets") || Cmd == TEXT("pcg_list_assets"))
-        return Cmd_ListPCGAssets(Params, Id);
+        return Cmd_ListPCGAssets(Params);
     if (Cmd == TEXT("export_graph") || Cmd == TEXT("pcg_export_graph"))
-        return Cmd_ExportGraph(Params, Id);
+        return Cmd_ExportGraph(Params);
     if (Cmd == TEXT("create_graph") || Cmd == TEXT("pcg_create_graph"))
-        return Cmd_CreateGraph(Params, Id);
+        return Cmd_CreateGraph(Params);
     if (Cmd == TEXT("validate_graph") || Cmd == TEXT("pcg_validate_graph"))
-        return Cmd_ValidateGraph(Params, Id);
+        return Cmd_ValidateGraph(Params);
     if (Cmd == TEXT("execute_graph") || Cmd == TEXT("pcg_execute_graph"))
-        return Cmd_ExecuteGraph(Params, Id);
-    if (Cmd == TEXT("wizard_chat")) return Cmd_WizardChat(Params, Id);
+        return Cmd_ExecuteGraph(Params);
+    if (Cmd == TEXT("wizard_chat")) return Cmd_WizardChat(Params);
     if (Cmd == TEXT("import_landscape") || Cmd == TEXT("landscape_import"))
-        return Cmd_ImportLandscape(Params, Id);
+        return Cmd_ImportLandscape(Params);
     if (Cmd == TEXT("read_node_output") || Cmd == TEXT("pcg_read_node_output"))
-        return Cmd_ReadNodeOutput(Params, Id);
+        return Cmd_ReadNodeOutput(Params);
 
-    return FHaybaMCPCommandHandler::MakeErrorResponse(Id,
+    return FHaybaHandlerResult::Err(
         FString::Printf(TEXT("Legacy handler: unknown command %s"), *Cmd));
 }
 
-// --- Command implementations (migrated verbatim from FHaybaMCPCommandHandler) ---
+// --- Command implementations ---
 
-FString FHaybaMCPLegacyHandler::Cmd_Ping(const TSharedPtr<FJsonObject>& Params, const FString& Id)
+FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_Ping(const TSharedPtr<FJsonObject>& Params)
 {
 	TSharedPtr<FJsonObject> Data = MakeShareable(new FJsonObject());
 	Data->SetStringField(TEXT("status"), TEXT("ok"));
@@ -79,10 +76,10 @@ FString FHaybaMCPLegacyHandler::Cmd_Ping(const TSharedPtr<FJsonObject>& Params, 
 	Data->SetStringField(TEXT("pluginVersion"), TEXT("0.2.0"));
 
 	UE_LOG(LogHaybaMCPLegacy, Log, TEXT("Ping command processed"));
-	return MakeOkResponse(Id, Data);
+	return FHaybaHandlerResult::Ok(Data);
 }
 
-FString FHaybaMCPLegacyHandler::Cmd_ListNodeClasses(const TSharedPtr<FJsonObject>& Params, const FString& Id)
+FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_ListNodeClasses(const TSharedPtr<FJsonObject>& Params)
 {
 	FString CategoryFilter;
 	Params->TryGetStringField(TEXT("category"), CategoryFilter);
@@ -142,7 +139,7 @@ FString FHaybaMCPLegacyHandler::Cmd_ListNodeClasses(const TSharedPtr<FJsonObject
 	TSharedPtr<FJsonObject> Data = MakeShareable(new FJsonObject());
 	Data->SetArrayField(TEXT("classes"), ClassArray);
 	Data->SetNumberField(TEXT("count"), ClassArray.Num());
-	return MakeOkResponse(Id, Data);
+	return FHaybaHandlerResult::Ok(Data);
 }
 
 TArray<UClass*> FHaybaMCPLegacyHandler::FindPCGExNodeClasses() const
@@ -190,12 +187,12 @@ void FHaybaMCPLegacyHandler::GetPinInfo(const UClass* SettingsClass, TArray<TSha
 	}
 }
 
-FString FHaybaMCPLegacyHandler::Cmd_GetNodeDetails(const TSharedPtr<FJsonObject>& Params, const FString& Id)
+FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_GetNodeDetails(const TSharedPtr<FJsonObject>& Params)
 {
     FString ClassName;
     if (!Params->TryGetStringField(TEXT("class"), ClassName))
     {
-        return MakeErrorResponse(Id, TEXT("Missing required param: class"));
+        return FHaybaHandlerResult::Err(TEXT("Missing required param: class"));
     }
 
     // Strip U/A prefix if present
@@ -217,13 +214,13 @@ FString FHaybaMCPLegacyHandler::Cmd_GetNodeDetails(const TSharedPtr<FJsonObject>
 
     if (!FoundClass)
     {
-        return MakeErrorResponse(Id, FString::Printf(TEXT("Class not found: %s"), *ClassName));
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("Class not found: %s"), *ClassName));
     }
 
     const UPCGSettings* CDO = FoundClass->GetDefaultObject<UPCGSettings>();
     if (!CDO)
     {
-        return MakeErrorResponse(Id, FString::Printf(TEXT("Cannot create CDO for: %s"), *ClassName));
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("Cannot create CDO for: %s"), *ClassName));
     }
 
     // Pins
@@ -297,10 +294,10 @@ FString FHaybaMCPLegacyHandler::Cmd_GetNodeDetails(const TSharedPtr<FJsonObject>
     Data->SetArrayField(TEXT("inputs"), Inputs);
     Data->SetArrayField(TEXT("outputs"), Outputs);
     Data->SetArrayField(TEXT("properties"), Properties);
-    return MakeOkResponse(Id, Data);
+    return FHaybaHandlerResult::Ok(Data);
 }
 
-FString FHaybaMCPLegacyHandler::Cmd_ListPCGAssets(const TSharedPtr<FJsonObject>& Params, const FString& Id)
+FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_ListPCGAssets(const TSharedPtr<FJsonObject>& Params)
 {
     FString PathFilter = TEXT("/Game/");
     Params->TryGetStringField(TEXT("path"), PathFilter);
@@ -345,21 +342,21 @@ FString FHaybaMCPLegacyHandler::Cmd_ListPCGAssets(const TSharedPtr<FJsonObject>&
     TSharedPtr<FJsonObject> Data = MakeShareable(new FJsonObject());
     Data->SetArrayField(TEXT("assets"), AssetArray);
     Data->SetNumberField(TEXT("count"), AssetArray.Num());
-    return MakeOkResponse(Id, Data);
+    return FHaybaHandlerResult::Ok(Data);
 }
 
-FString FHaybaMCPLegacyHandler::Cmd_ExportGraph(const TSharedPtr<FJsonObject>& Params, const FString& Id)
+FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_ExportGraph(const TSharedPtr<FJsonObject>& Params)
 {
     FString AssetPath;
     if (!Params->TryGetStringField(TEXT("assetPath"), AssetPath))
     {
-        return MakeErrorResponse(Id, TEXT("Missing required param: assetPath"));
+        return FHaybaHandlerResult::Err(TEXT("Missing required param: assetPath"));
     }
 
     UPCGGraph* Graph = LoadObject<UPCGGraph>(nullptr, *AssetPath);
     if (!Graph)
     {
-        return MakeErrorResponse(Id, FString::Printf(TEXT("Graph not found: %s"), *AssetPath));
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("Graph not found: %s"), *AssetPath));
     }
 
     // Build graph JSON
@@ -480,21 +477,21 @@ FString FHaybaMCPLegacyHandler::Cmd_ExportGraph(const TSharedPtr<FJsonObject>& P
 
     TSharedPtr<FJsonObject> Data = MakeShareable(new FJsonObject());
     Data->SetObjectField(TEXT("graph"), GraphJson);
-    return MakeOkResponse(Id, Data);
+    return FHaybaHandlerResult::Ok(Data);
 }
 
-FString FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJsonObject>& Params, const FString& Id)
+FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJsonObject>& Params)
 {
     FString Name;
     if (!Params->TryGetStringField(TEXT("name"), Name))
     {
-        return MakeErrorResponse(Id, TEXT("Missing required param: name"));
+        return FHaybaHandlerResult::Err(TEXT("Missing required param: name"));
     }
 
     const TSharedPtr<FJsonObject>* GraphObj;
     if (!Params->TryGetObjectField(TEXT("graph"), GraphObj) || !GraphObj->IsValid())
     {
-        return MakeErrorResponse(Id, TEXT("Missing required param: graph"));
+        return FHaybaHandlerResult::Err(TEXT("Missing required param: graph"));
     }
 
     // Validate first
@@ -504,7 +501,7 @@ FString FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJsonObject>& P
         TSharedPtr<FJsonObject> Data = MakeShareable(new FJsonObject());
         Data->SetBoolField(TEXT("created"), false);
         Data->SetArrayField(TEXT("errors"), ValidationErrors);
-        return MakeOkResponse(Id, Data);
+        return FHaybaHandlerResult::Ok(Data);
     }
 
     // Sanitize name
@@ -523,13 +520,13 @@ FString FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJsonObject>& P
     UPackage* Package = CreatePackage(*FullPath);
     if (!Package)
     {
-        return MakeErrorResponse(Id, TEXT("Failed to create package"));
+        return FHaybaHandlerResult::Err(TEXT("Failed to create package"));
     }
 
     UPCGGraph* NewGraph = NewObject<UPCGGraph>(Package, *SafeName, RF_Public | RF_Standalone);
     if (!NewGraph)
     {
-        return MakeErrorResponse(Id, TEXT("Failed to create PCGGraph object"));
+        return FHaybaHandlerResult::Err(TEXT("Failed to create PCGGraph object"));
     }
 
     // Add nodes
@@ -648,10 +645,10 @@ FString FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJsonObject>& P
     Data->SetBoolField(TEXT("created"), true);
     Data->SetStringField(TEXT("assetPath"), FullPath);
     Data->SetNumberField(TEXT("nodeCount"), CreatedNodes.Num());
-    return MakeOkResponse(Id, Data);
+    return FHaybaHandlerResult::Ok(Data);
 }
 
-FString FHaybaMCPLegacyHandler::Cmd_ValidateGraph(const TSharedPtr<FJsonObject>& Params, const FString& Id)
+FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_ValidateGraph(const TSharedPtr<FJsonObject>& Params)
 {
     const TSharedPtr<FJsonObject>* GraphObj;
     if (!Params->TryGetObjectField(TEXT("graph"), GraphObj) || !GraphObj->IsValid())
@@ -665,7 +662,7 @@ FString FHaybaMCPLegacyHandler::Cmd_ValidateGraph(const TSharedPtr<FJsonObject>&
         Errors.Add(MakeShareable(new FJsonValueObject(Err.ToSharedRef())));
         Data->SetArrayField(TEXT("errors"), Errors);
         Data->SetNumberField(TEXT("errorCount"), 1);
-        return MakeOkResponse(Id, Data);
+        return FHaybaHandlerResult::Ok(Data);
     }
 
     TArray<TSharedPtr<FJsonValue>> Errors = ValidateGraphJson(*GraphObj);
@@ -674,7 +671,7 @@ FString FHaybaMCPLegacyHandler::Cmd_ValidateGraph(const TSharedPtr<FJsonObject>&
     Data->SetBoolField(TEXT("valid"), Errors.Num() == 0);
     Data->SetArrayField(TEXT("errors"), Errors);
     Data->SetNumberField(TEXT("errorCount"), Errors.Num());
-    return MakeOkResponse(Id, Data);
+    return FHaybaHandlerResult::Ok(Data);
 }
 
 TArray<TSharedPtr<FJsonValue>> FHaybaMCPLegacyHandler::ValidateGraphJson(const TSharedPtr<FJsonObject>& Graph) const
@@ -991,24 +988,24 @@ TArray<TSharedPtr<FJsonValue>> FHaybaMCPLegacyHandler::ValidateGraphJson(const T
     return Errors;
 }
 
-FString FHaybaMCPLegacyHandler::Cmd_ExecuteGraph(const TSharedPtr<FJsonObject>& Params, const FString& Id)
+FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_ExecuteGraph(const TSharedPtr<FJsonObject>& Params)
 {
     FString AssetPath;
     if (!Params->TryGetStringField(TEXT("assetPath"), AssetPath))
     {
-        return MakeErrorResponse(Id, TEXT("Missing required param: assetPath"));
+        return FHaybaHandlerResult::Err(TEXT("Missing required param: assetPath"));
     }
 
     UPCGGraph* Graph = LoadObject<UPCGGraph>(nullptr, *AssetPath);
     if (!Graph)
     {
-        return MakeErrorResponse(Id, FString::Printf(TEXT("Graph not found: %s"), *AssetPath));
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("Graph not found: %s"), *AssetPath));
     }
 
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {
-        return MakeErrorResponse(Id, TEXT("No editor world available"));
+        return FHaybaHandlerResult::Err(TEXT("No editor world available"));
     }
 
     int32 ExecutedCount = 0;
@@ -1037,10 +1034,10 @@ FString FHaybaMCPLegacyHandler::Cmd_ExecuteGraph(const TSharedPtr<FJsonObject>& 
         Data->SetStringField(TEXT("note"), TEXT("No PCGComponents found using this graph. Place an actor with a PCGComponent referencing this graph to see results."));
     }
 
-    return MakeOkResponse(Id, Data);
+    return FHaybaHandlerResult::Ok(Data);
 }
 
-FString FHaybaMCPLegacyHandler::Cmd_WizardChat(const TSharedPtr<FJsonObject>& Params, const FString& Id)
+FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_WizardChat(const TSharedPtr<FJsonObject>& Params)
 {
     FString SessionId, Message, Goal;
     Params->TryGetStringField(TEXT("sessionId"), SessionId);
@@ -1115,17 +1112,17 @@ FString FHaybaMCPLegacyHandler::Cmd_WizardChat(const TSharedPtr<FJsonObject>& Pa
         Data->SetStringField(TEXT("message"), TEXT("Got it. Based on your input, I'm generating the graph for this step. One moment..."));
     }
 
-    return MakeOkResponse(Id, Data);
+    return FHaybaHandlerResult::Ok(Data);
 }
 
-FString FHaybaMCPLegacyHandler::Cmd_ImportLandscape(const TSharedPtr<FJsonObject>& Params, const FString& Id)
+FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_ImportLandscape(const TSharedPtr<FJsonObject>& Params)
 {
     FHaybaMCPImportParams ImportParams;
 
     // Required
     if (!Params->TryGetStringField(TEXT("heightmapPath"), ImportParams.HeightmapPath) || ImportParams.HeightmapPath.IsEmpty())
     {
-        return MakeErrorResponse(Id, TEXT("heightmapPath is required"));
+        return FHaybaHandlerResult::Err(TEXT("heightmapPath is required"));
     }
 
     // Optional with defaults
@@ -1140,13 +1137,11 @@ FString FHaybaMCPLegacyHandler::Cmd_ImportLandscape(const TSharedPtr<FJsonObject
     Params->TryGetStringField(TEXT("actorLabel"), ImportParams.ActorLabel);
     if (ImportParams.ActorLabel.IsEmpty()) ImportParams.ActorLabel = TEXT("Hayba_Terrain");
 
-    // Compute scale values for the response (same formula as in the importer)
-    // Resolution is unknown here — the importer reads it; we return approximate values for confirmation
     const bool bSuccess = FHaybaMCPLandscapeImporter::ImportHeightmap(ImportParams);
 
     if (!bSuccess)
     {
-        return MakeErrorResponse(Id, FString::Printf(
+        return FHaybaHandlerResult::Err(FString::Printf(
             TEXT("Failed to import landscape from: %s"), *ImportParams.HeightmapPath));
     }
 
@@ -1156,7 +1151,7 @@ FString FHaybaMCPLegacyHandler::Cmd_ImportLandscape(const TSharedPtr<FJsonObject
     Data->SetNumberField(TEXT("worldSizeKm"), ImportParams.WorldSizeKm);
     Data->SetNumberField(TEXT("maxHeightM"),  ImportParams.MaxHeightM);
 
-    return MakeOkResponse(Id, Data);
+    return FHaybaHandlerResult::Ok(Data);
 }
 
 // Cmd_ReadNodeOutput
@@ -1168,30 +1163,30 @@ FString FHaybaMCPLegacyHandler::Cmd_ImportLandscape(const TSharedPtr<FJsonObject
 // NOTE: PCG executes the full graph, not individual nodes. This command reads the cached
 // output data stored on the PCGComponent after the last Generate() call. If the graph has
 // not been executed yet, the output data will be empty and point_count will be 0.
-FString FHaybaMCPLegacyHandler::Cmd_ReadNodeOutput(const TSharedPtr<FJsonObject>& Params, const FString& Id)
+FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_ReadNodeOutput(const TSharedPtr<FJsonObject>& Params)
 {
     FString AssetPath;
     FString NodeId;
 
     if (!Params->TryGetStringField(TEXT("assetPath"), AssetPath) || AssetPath.IsEmpty())
     {
-        return MakeErrorResponse(Id, TEXT("Missing required param: assetPath"));
+        return FHaybaHandlerResult::Err(TEXT("Missing required param: assetPath"));
     }
     if (!Params->TryGetStringField(TEXT("nodeId"), NodeId) || NodeId.IsEmpty())
     {
-        return MakeErrorResponse(Id, TEXT("Missing required param: nodeId"));
+        return FHaybaHandlerResult::Err(TEXT("Missing required param: nodeId"));
     }
 
     UPCGGraph* Graph = LoadObject<UPCGGraph>(nullptr, *AssetPath);
     if (!Graph)
     {
-        return MakeErrorResponse(Id, FString::Printf(TEXT("Graph not found: %s"), *AssetPath));
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("Graph not found: %s"), *AssetPath));
     }
 
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {
-        return MakeErrorResponse(Id, TEXT("No editor world available"));
+        return FHaybaHandlerResult::Err(TEXT("No editor world available"));
     }
 
     // Build response features
@@ -1265,8 +1260,5 @@ FString FHaybaMCPLegacyHandler::Cmd_ReadNodeOutput(const TSharedPtr<FJsonObject>
     Data->SetBoolField(TEXT("success"), true);
     Data->SetObjectField(TEXT("features"), Features);
 
-    return MakeOkResponse(Id, Data);
+    return FHaybaHandlerResult::Ok(Data);
 }
-
-#undef MakeOkResponse
-#undef MakeErrorResponse

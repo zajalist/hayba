@@ -37,9 +37,6 @@ void FHaybaMCPSettings::Load()
     GConfig->GetString(Section, TEXT("OperationMode"), ModeStr, GEditorPerProjectIni);
     OperationMode = (ModeStr == TEXT("ApiKey")) ? EHaybaMCPOperationMode::ApiKey : EHaybaMCPOperationMode::Integrated;
 
-    GConfig->GetFloat(Section, KeyCritiqueThreshold, CritiqueThreshold, GEditorPerProjectIni);
-    GConfig->GetBool(Section, KeyCritiqueEnabled, bCritiqueEnabled, GEditorPerProjectIni);
-
     if (BaseURL.IsEmpty())             BaseURL    = TEXT("https://api.anthropic.com/v1/messages");
     if (Model.IsEmpty())               Model      = TEXT("claude-opus-4-6-20251101");
     if (OutputPath.IsEmpty())          OutputPath = TEXT("/Game/Hayba/Generated");
@@ -62,7 +59,5 @@ void FHaybaMCPSettings::Save() const
         OperationMode == EHaybaMCPOperationMode::ApiKey ? TEXT("ApiKey") : TEXT("Integrated"),
         GEditorPerProjectIni);
 
-    GConfig->SetFloat(Section, KeyCritiqueThreshold, CritiqueThreshold, GEditorPerProjectIni);
-    GConfig->SetBool(Section, KeyCritiqueEnabled, bCritiqueEnabled, GEditorPerProjectIni);
     GConfig->Flush(false, GEditorPerProjectIni);
 }

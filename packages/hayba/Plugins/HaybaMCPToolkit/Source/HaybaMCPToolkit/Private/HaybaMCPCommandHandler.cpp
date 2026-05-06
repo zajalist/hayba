@@ -1,6 +1,7 @@
 #include "HaybaMCPCommandHandler.h"
 #include "IHaybaMCPHandler.h"
 #include "HaybaMCPSecurityManager.h"
+#include "HaybaMCPResponseBuilder.h"
 #include "Json.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPCmd, Log, All);
@@ -71,26 +72,30 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     }
 
     const double Start = FPlatformTime::Seconds();
-    const FString Response = (*Found)->Handle(Cmd, Params, Id);
+    FHaybaHandlerResult Result = (*Found)->Handle(Cmd, Params);
     const int64 DurMs = (int64)((FPlatformTime::Seconds() - Start) * 1000.0);
 
-    // Heuristic: parse response back to detect ok flag for journaling
-    bool bOk = true;
-    FString ErrMsg;
-    {
-        TSharedPtr<FJsonObject> RespObj;
-        TSharedRef<TJsonReader<>> RespReader = TJsonReaderFactory<>::Create(Response);
-        if (FJsonSerializer::Deserialize(RespReader, RespObj) && RespObj.IsValid())
-        {
-            RespObj->TryGetBoolField(TEXT("ok"), bOk);
-            RespObj->TryGetStringField(TEXT("error"), ErrMsg);
-        }
-    }
+    // Journal using result directly — no need to re-parse the response string
     FHaybaJournalEntry E{ FDateTime::UtcNow(), Cmd,
-        FHaybaMCPSecurityManager::HashParams(Params), DurMs, bOk, ErrMsg };
+        FHaybaMCPSecurityManager::HashParams(Params), DurMs, Result.bOk, Result.ErrorMessage };
     FHaybaMCPSecurityManager::Get().Journal(E);
 
-    return Response;
+    if (Result.bOk)
+    {
+        // Apply response limits via FHaybaMCPResponseBuilder before serializing
+        TSharedPtr<FJsonObject> DataObj = Result.Data.IsValid() ? Result.Data : MakeShared<FJsonObject>();
+        FHaybaResponseLimits Limits;
+        Limits.MaxArrayItems = 50;
+        Limits.MaxStringChars = 512;
+        Limits.MaxTopLevelFields = 20;
+        FHaybaMCPResponseBuilder Builder(Limits);
+        TSharedRef<FJsonObject> Trimmed = Builder.Build(DataObj.ToSharedRef());
+        return MakeOkResponse(Id, Trimmed);
+    }
+    else
+    {
+        return MakeErrorResponse(Id, Result.ErrorMessage);
+    }
 }
 
 FString FHaybaMCPCommandHandler::MakeOkResponse(const FString& Id, const TSharedPtr<FJsonObject>& Data)
