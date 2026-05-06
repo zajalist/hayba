@@ -4,6 +4,7 @@
 #include "HaybaMCPCommandHandler.h"
 #include "handlers/HaybaMCPLegacyHandler.h"
 #include "handlers/HaybaMCPActorHandler.h"
+#include "handlers/HaybaMCPLevelHandler.h"
 #include "HaybaMCPSettings.h"
 #include "Json.h"
 #include "HAL/PlatformProcess.h"
@@ -29,6 +30,7 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler = MakeShared<FHaybaMCPCommandHandler>();
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPLegacyHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPActorHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPLevelHandler>());
 
     FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
         TEXT("HaybaMCPToolkit"),
