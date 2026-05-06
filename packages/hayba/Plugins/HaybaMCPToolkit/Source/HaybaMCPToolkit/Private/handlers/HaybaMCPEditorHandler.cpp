@@ -196,6 +196,9 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::RunConsoleCommand(const TSharedPtr<F
     if (!P.IsValid() || !P->TryGetStringField(TEXT("command"), Command) || Command.IsEmpty())
         return FHaybaHandlerResult::Err(TEXT("command parameter is required"));
 
+    if (!GEngine)
+        return FHaybaHandlerResult::Err(TEXT("editor_run_console_command: GEngine not available"));
+
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     GEngine->Exec(World, *Command, *GLog);
 
@@ -237,7 +240,8 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::GetOutputLog(const TSharedPtr<FJsonO
     }
 
     TArray<FString> AllLines;
-    FFileHelper::LoadFileToStringArray(AllLines, *MostRecentFile);
+    if (!FFileHelper::LoadFileToStringArray(AllLines, *MostRecentFile))
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("editor_get_output_log: failed to read log file: %s"), *MostRecentFile));
 
     int32 StartIdx = FMath::Max(0, AllLines.Num() - Lines);
     TArray<TSharedPtr<FJsonValue>> LogLineValues;
@@ -284,7 +288,8 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::StreamLog(const TSharedPtr<FJsonObje
     }
 
     TArray<FString> AllLines;
-    FFileHelper::LoadFileToStringArray(AllLines, *MostRecentFile);
+    if (!FFileHelper::LoadFileToStringArray(AllLines, *MostRecentFile))
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("editor_stream_log: failed to read log file: %s"), *MostRecentFile));
 
     int32 ClampedStart = FMath::Clamp(SinceLine, 0, AllLines.Num());
     TArray<TSharedPtr<FJsonValue>> OutLines;
@@ -336,7 +341,7 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::SetViewportMode(const TSharedPtr<FJs
 
     EViewModeIndex ModeIndex = VMI_Lit;
     if (Mode == TEXT("unlit"))            ModeIndex = VMI_Unlit;
-    else if (Mode == TEXT("wireframe"))   ModeIndex = VMI_BrushWireframe;
+    else if (Mode == TEXT("wireframe"))   ModeIndex = VMI_Wireframe;
     else if (Mode == TEXT("detail_lighting")) ModeIndex = VMI_Lit_DetailLighting;
     else if (Mode != TEXT("lit"))
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("Unknown mode: %s. Use lit|unlit|wireframe|detail_lighting"), *Mode));
