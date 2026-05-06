@@ -163,9 +163,8 @@ FHaybaHandlerResult FHaybaMCPActorHandler::Delete(const TSharedPtr<FJsonObject>&
     if (!Actor)
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("actor_delete: actor not found: %s"), *ActorId));
 
-    UEditorActorSubsystem* EAS = GEditor->GetEditorSubsystem<UEditorActorSubsystem>();
-    if (!EAS)
-        return FHaybaHandlerResult::Err(TEXT("actor_delete: EditorActorSubsystem unavailable"));
+    UEditorActorSubsystem* EAS = GEditor ? GEditor->GetEditorSubsystem<UEditorActorSubsystem>() : nullptr;
+    if (!EAS) return FHaybaHandlerResult::Err(TEXT("actor_delete: EditorActorSubsystem unavailable"));
 
     bool bDeleted = EAS->DestroyActor(Actor);
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
@@ -230,7 +229,7 @@ FHaybaHandlerResult FHaybaMCPActorHandler::List(const TSharedPtr<FJsonObject>& P
         if (Actor->ActorHasTag(TEXT("HaybaMCPCaptureActor"))) continue;
 
         // Class filter
-        if (!ClassFilter.IsEmpty() && !Actor->GetClass()->GetName().StartsWith(ClassFilter))
+        if (!ClassFilter.IsEmpty() && Actor->GetClass()->GetName() != ClassFilter)
             continue;
 
         // Tag filter
@@ -309,11 +308,17 @@ FHaybaHandlerResult FHaybaMCPActorHandler::SetProps(const TSharedPtr<FJsonObject
         if (!Prop || !Prop->HasAnyPropertyFlags(CPF_Edit)) continue;
 
         FString ValueStr;
-        if (Pair.Value->TryGetString(ValueStr))
+        if (!Pair.Value->TryGetString(ValueStr))
         {
-            Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(Actor), Actor, PPF_None);
-            SetNames.Add(MakeShared<FJsonValueString>(Pair.Key));
+            if (Pair.Value->Type == EJson::Number)
+                ValueStr = FString::SanitizeFloat(Pair.Value->AsNumber());
+            else if (Pair.Value->Type == EJson::Boolean)
+                ValueStr = Pair.Value->AsBool() ? TEXT("True") : TEXT("False");
+            else
+                continue;
         }
+        Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(Actor), Actor, PPF_None);
+        SetNames.Add(MakeShared<FJsonValueString>(Pair.Key));
     }
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
@@ -389,6 +394,10 @@ FHaybaHandlerResult FHaybaMCPActorHandler::SnapToSocket(const TSharedPtr<FJsonOb
     if (!SocketComp)
         return FHaybaHandlerResult::Err(TEXT("actor_snap_to_socket: target has no SkeletalMesh or StaticMesh component"));
 
+    if (SocketComp && !SocketComp->DoesSocketExist(FName(*SocketName)))
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("actor_snap_to_socket: socket '%s' does not exist on target actor"), *SocketName));
+
     Actor->AttachToComponent(SocketComp,
         FAttachmentTransformRules::SnapToTargetNotIncludingScale,
         FName(*SocketName));
@@ -414,9 +423,8 @@ FHaybaHandlerResult FHaybaMCPActorHandler::Duplicate(const TSharedPtr<FJsonObjec
     if (!Actor)
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("actor_duplicate: actor not found: %s"), *ActorId));
 
-    UEditorActorSubsystem* EAS = GEditor->GetEditorSubsystem<UEditorActorSubsystem>();
-    if (!EAS)
-        return FHaybaHandlerResult::Err(TEXT("actor_duplicate: EditorActorSubsystem unavailable"));
+    UEditorActorSubsystem* EAS = GEditor ? GEditor->GetEditorSubsystem<UEditorActorSubsystem>() : nullptr;
+    if (!EAS) return FHaybaHandlerResult::Err(TEXT("actor_duplicate: EditorActorSubsystem unavailable"));
 
     FVector Offset = FVector(0, 0, 100);
     const TArray<TSharedPtr<FJsonValue>>* OffArr;
@@ -512,10 +520,11 @@ FHaybaHandlerResult FHaybaMCPActorHandler::CallFunction(const TSharedPtr<FJsonOb
     if (!Func)
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("actor_call_function: function not found: %s"), *FuncName));
 
-    // Allocate params buffer on the stack (zero-initialized)
-    TArray<uint8> ParamsBuffer;
-    ParamsBuffer.AddZeroed(Func->ParmsSize);
-    Actor->ProcessEvent(Func, ParamsBuffer.GetData());
+    if (!Func->HasAnyFunctionFlags(FUNC_BlueprintCallable))
+        return FHaybaHandlerResult::Err(TEXT("actor_call_function: function is not BlueprintCallable"));
+    if (Func->ParmsSize > 0)
+        return FHaybaHandlerResult::Err(TEXT("actor_call_function: parameterised functions not yet supported — use actor_set_properties instead"));
+    Actor->ProcessEvent(Func, nullptr);
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("actor_id"), ActorId);
@@ -532,6 +541,10 @@ FHaybaHandlerResult FHaybaMCPActorHandler::BatchSpawn(const TSharedPtr<FJsonObje
     const TArray<TSharedPtr<FJsonValue>>* ActorsArr;
     if (!P->TryGetArrayField(TEXT("actors"), ActorsArr))
         return FHaybaHandlerResult::Err(TEXT("actor_batch_spawn: missing actors array"));
+
+    const int32 MaxBatch = 100;
+    if (ActorsArr->Num() > MaxBatch)
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("actor_batch_spawn: batch size %d exceeds limit of %d"), ActorsArr->Num(), MaxBatch));
 
     TArray<TSharedPtr<FJsonValue>> Spawned;
     TArray<TSharedPtr<FJsonValue>> Errors;
