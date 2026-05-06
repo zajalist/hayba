@@ -32,6 +32,16 @@ public:
     bool bHasSeenWizard = false;
     EHaybaMCPOperationMode OperationMode = EHaybaMCPOperationMode::Integrated;
 
+    // Terrain critique settings
+    float CritiqueThreshold = 15.0f;
+    bool bCritiqueEnabled = true;
+
+    // Security
+    // Optional. When set, every TCP request must include matching `auth` field.
+    FString CapabilityToken;
+    // Append every command execution to Saved/hayba-execution.log.
+    bool bEnableExecutionJournal = true;
+
     static FString GetSharedApiKey();
     static void SetSharedApiKey(const FString& Key);
 
@@ -48,4 +58,6 @@ private:
     static constexpr const TCHAR* KeyBaseURL    = TEXT("BaseURL");
     static constexpr const TCHAR* KeyModel      = TEXT("Model");
     static constexpr const TCHAR* KeyOutputPath = TEXT("OutputPath");
+    static constexpr const TCHAR* KeyCritiqueThreshold = TEXT("CritiqueThreshold");
+    static constexpr const TCHAR* KeyCritiqueEnabled   = TEXT("CritiqueEnabled");
 };
