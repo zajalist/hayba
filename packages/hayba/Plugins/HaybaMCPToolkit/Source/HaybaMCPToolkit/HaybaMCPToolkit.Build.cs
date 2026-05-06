@@ -25,7 +25,8 @@ public class HaybaMCPToolkit : ModuleRules
             "Landscape", "LandscapeEditor", "ImageWrapper",
             "ApplicationCore",
             "Renderer", "RenderCore", "RHI",
-            "HotReload"
+            "HotReload",
+            "PythonScriptPlugin"
         });
     }
 }

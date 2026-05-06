@@ -37,6 +37,8 @@ public:
     FString CapabilityToken;
     // Append every command execution to Saved/hayba-execution.log.
     bool bEnableExecutionJournal = true;
+    // Allow Tier 3 Python scripts (filesystem, subprocess, socket).
+    bool bAllowUnsafePython = false;
 
     static FString GetSharedApiKey();
     static void SetSharedApiKey(const FString& Key);
