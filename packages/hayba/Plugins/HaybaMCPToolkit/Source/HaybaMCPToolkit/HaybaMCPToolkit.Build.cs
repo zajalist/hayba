@@ -23,7 +23,8 @@ public class HaybaMCPToolkit : ModuleRules
             "Sockets", "Networking", "Json", "JsonUtilities",
             "PCG", "HTTP",
             "Landscape", "LandscapeEditor", "ImageWrapper",
-            "ApplicationCore"
+            "ApplicationCore",
+            "Renderer", "RenderCore", "RHI"
         });
     }
 }
