@@ -138,13 +138,18 @@ FString FHaybaMCPSceneGraphHandler::ClassifyActor(AActor* A)
 
 void FHaybaMCPSceneGraphHandler::WriteCognitiveMapCache(const TSharedRef<FJsonObject>& Data)
 {
-    // Add timestamp
-    Data->SetStringField(TEXT("built_at"), FDateTime::UtcNow().ToIso8601());
+    // Build a local copy so we don't mutate the caller's object
+    TSharedRef<FJsonObject> CacheObj = MakeShared<FJsonObject>();
+    for (const auto& Field : Data->Values)
+        CacheObj->SetField(Field.Key, Field.Value);
+
+    // Add timestamp only to the local copy
+    CacheObj->SetStringField(TEXT("built_at"), FDateTime::UtcNow().ToIso8601());
 
     FString JsonStr;
     TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
         TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&JsonStr);
-    FJsonSerializer::Serialize(Data, Writer);
+    FJsonSerializer::Serialize(CacheObj, Writer);
 
     FString CachePath = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("hayba-cognitive-map.json"));
     FFileHelper::SaveStringToFile(JsonStr, *CachePath);
@@ -313,7 +318,7 @@ FHaybaHandlerResult FHaybaMCPSceneGraphHandler::ValidatePhysics(const TSharedPtr
         FVector End   = Loc - FVector(0.f, 0.f, Extent.Z * 2.f + 100.f);
         FCollisionQueryParams TraceParams(TEXT("HaybaPhysicsCheck"), false, A);
 
-        bool bHit = World->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, TraceParams);
+        bool bHit = World->LineTraceSingleByChannel(Hit, Start, End, ECC_WorldStatic, TraceParams);
         if (!bHit)
         {
             TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
@@ -386,20 +391,30 @@ FHaybaHandlerResult FHaybaMCPSceneGraphHandler::GetActorRelations(const TSharedP
 
     FVector FocalLoc = Focal->GetActorLocation();
 
+    static constexpr int32 ActorCap = 500;
+    int32 CollectedCount = 0;
+    bool bCapped = false;
+
     TArray<TSharedPtr<FJsonValue>> Relations;
     for (TActorIterator<AActor> It(World); It; ++It)
     {
+        if (CollectedCount >= ActorCap) { bCapped = true; break; }
+
         AActor* A = *It;
         if (!A || A == Focal) continue;
         if (A->ActorHasTag(TEXT("HaybaMCPCaptureActor"))) continue;
 
+        ++CollectedCount;
+
         float Dist = FVector::Dist(FocalLoc, A->GetActorLocation());
         if (Dist > Radius) continue;
 
+        // Skip actors beyond 2000uu (they would be classified "far")
+        if (Dist >= 2000.f) continue;
+
         FString Relation;
-        if (Dist < 200.f)      Relation = TEXT("adjacent_to");
-        else if (Dist < 2000.f) Relation = TEXT("near");
-        else                   Relation = TEXT("far");
+        if (Dist < 200.f) Relation = TEXT("adjacent_to");
+        else              Relation = TEXT("near");
 
         TSharedRef<FJsonObject> Rel = MakeShared<FJsonObject>();
         Rel->SetStringField(TEXT("id"),       A->GetName());
@@ -413,5 +428,6 @@ FHaybaHandlerResult FHaybaMCPSceneGraphHandler::GetActorRelations(const TSharedP
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("actor_id"), ActorId);
     Out->SetArrayField(TEXT("relations"), Relations);
+    Out->SetBoolField(TEXT("capped"), bCapped);
     return FHaybaHandlerResult::Ok(Out);
 }
