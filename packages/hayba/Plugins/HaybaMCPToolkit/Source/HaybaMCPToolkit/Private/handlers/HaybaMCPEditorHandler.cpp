@@ -9,6 +9,7 @@
 #include "HAL/FileManager.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "IHotReloadModule.h"
 
 TArray<FString> FHaybaMCPEditorHandler::GetCommands() const
 {

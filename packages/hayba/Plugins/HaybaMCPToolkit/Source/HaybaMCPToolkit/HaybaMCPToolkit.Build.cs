@@ -24,7 +24,8 @@ public class HaybaMCPToolkit : ModuleRules
             "PCG", "HTTP",
             "Landscape", "LandscapeEditor", "ImageWrapper",
             "ApplicationCore",
-            "Renderer", "RenderCore", "RHI"
+            "Renderer", "RenderCore", "RHI",
+            "HotReload"
         });
     }
 }
