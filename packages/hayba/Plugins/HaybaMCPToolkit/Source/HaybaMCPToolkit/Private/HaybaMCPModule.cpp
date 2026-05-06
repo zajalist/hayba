@@ -2,6 +2,7 @@
 #include "HaybaMCPWizardWidget.h"
 #include "HaybaMCPTcpServer.h"
 #include "HaybaMCPCommandHandler.h"
+#include "handlers/HaybaMCPLegacyHandler.h"
 #include "HaybaMCPSettings.h"
 #include "Json.h"
 #include "HAL/PlatformProcess.h"
@@ -25,6 +26,7 @@ void FHaybaMCPModule::StartupModule()
     FHaybaMCPSettings::Get().Load();
 
     CommandHandler = MakeShared<FHaybaMCPCommandHandler>();
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPLegacyHandler>());
 
     FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
         TEXT("HaybaMCPToolkit"),
@@ -43,6 +45,9 @@ void FHaybaMCPModule::StartupModule()
         }),
         ECVF_Default
     );
+
+    // Auto-start TCP server so Claude can connect without UI interaction
+    StartTcpServer();
 }
 
 void FHaybaMCPModule::ShutdownModule()

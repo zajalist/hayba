@@ -76,39 +76,45 @@ bool FHaybaMCPLandscapeImporter::ImportHeightmap(const FHaybaMCPImportParams& Pa
         FLandscapeImportResolution(SizeX, SizeY),
         ELandscapeImportTransformType::ExpandCentered);
 
-    // ── Gaea2Unreal scale formula ─────────────────────────────────────────────
-    // Source: github.com/QuadSpinner/Gaea2Unreal GaeaSubsystem.cpp
-    // ScaleXY = worldSizeKm * 1000m * 100cm / resolution  (cm per pixel)
-    // ScaleZ  = maxHeightM * 100cm / 512                  (Gaea's height baseline)
-    // LocationZ = maxHeightM * 100cm / 2                  (center landscape vertically)
+    // ── Scale & position ────────────────────────────────────────────────────────
+    // UE landscape height: uint16 0–65535 maps to -256..+256 (512 total) * ZScale.
+    // At ZScale=100, total range = 512m.  ZScale = MaxHeightM / 512 * 100.
+    // XY: each quad = 1m at scale 100.  ScaleXY = WorldSizeKm * 1000 / Resolution * 100.
     const int32 Resolution = OutDescriptor.ImportResolutions[DescriptorIndex].Width;
-    const float ScaleXY   = (Params.WorldSizeKm * 1000.f * 100.f) / static_cast<float>(Resolution);
-    const float ScaleZ    = (Params.MaxHeightM  * 100.f) / 512.f;
-    const float LocationZ = (Params.MaxHeightM  * 100.f) / 2.f;
+    const float ScaleXY = (Params.WorldSizeKm * 1000.f) / static_cast<float>(Resolution) * 100.f;
+    const float ScaleZ  = (Params.MaxHeightM / 512.f) * 100.f;
+    const FVector Scale(ScaleXY, ScaleXY, ScaleZ);
+
+    const FVector Offset = FTransform(FRotator::ZeroRotator, FVector::ZeroVector, Scale)
+        .TransformVector(FVector(
+            -OutComponentCount.X * QuadsPerComponent / 2.0,
+            -OutComponentCount.Y * QuadsPerComponent / 2.0,
+            0.0));
+    const FVector Location = FVector(0.f, 0.f, 0.f) + Offset;
 
     UE_LOG(LogHaybaMCPImporter, Log,
-        TEXT("Scale: XY=%.2f ScaleZ=%.2f Resolution=%d WorldSize=%.1fkm MaxHeight=%.1fm"),
+        TEXT("Scale: XY=%.2f Z=%.2f  Resolution=%d  WorldSize=%.1fkm  MaxHeight=%.1fm"),
         ScaleXY, ScaleZ, Resolution, Params.WorldSizeKm, Params.MaxHeightM);
 
     // ── Spawn landscape ───────────────────────────────────────────────────────
-    FTransform LandscapeTransform;
-    LandscapeTransform.SetLocation(FVector(0.f, 0.f, LocationZ));
-    LandscapeTransform.SetScale3D(FVector(ScaleXY, ScaleXY, ScaleZ));
-
-    TMap<FGuid, TArray<uint16>> HeightmapDataPerLayers;
-    TMap<FGuid, TArray<FLandscapeImportLayerInfo>> MaterialLayerDataPerLayers;
-    const FGuid LayerGuid = FGuid::NewGuid();
-    HeightmapDataPerLayers.Add(LayerGuid, FinalHeightData);
-
-    ALandscape* Landscape = World->SpawnActor<ALandscape>(ALandscape::StaticClass(), LandscapeTransform);
+    ALandscape* Landscape = World->SpawnActor<ALandscape>(Location, FRotator::ZeroRotator);
     if (!Landscape)
     {
         UE_LOG(LogHaybaMCPImporter, Error, TEXT("Failed to spawn ALandscape actor"));
         return false;
     }
+    Landscape->SetActorRelativeScale3D(Scale);
+
+    // Maps keyed by empty FGuid — Import() expects this convention
+    // (see GaeaUnrealTools/GaeaSubsystem.cpp for reference)
+    TMap<FGuid, TArray<uint16>> HeightmapDataPerLayers;
+    HeightmapDataPerLayers.Add(FGuid(), MoveTemp(FinalHeightData));
+
+    TMap<FGuid, TArray<FLandscapeImportLayerInfo>> MaterialLayerDataPerLayers;
+    MaterialLayerDataPerLayers.Add(FGuid(), TArray<FLandscapeImportLayerInfo>());
 
     Landscape->Import(
-        LayerGuid, 0, 0, SizeX - 1, SizeY - 1,
+        FGuid::NewGuid(), 0, 0, SizeX - 1, SizeY - 1,
         OutSectionsPerComponent, OutQuadsPerSection,
         HeightmapDataPerLayers, *Params.HeightmapPath,
         MaterialLayerDataPerLayers,
@@ -131,6 +137,9 @@ bool FHaybaMCPLandscapeImporter::ImportHeightmap(const FHaybaMCPImportParams& Pa
                 *Params.LandscapeMaterial);
         }
     }
+
+    Landscape->StaticLightingLOD = FMath::DivideAndRoundUp(
+        FMath::CeilLogTwo((SizeX * SizeY) / (2048 * 2048) + 1), (uint32)2);
 
     Landscape->SetActorLabel(Params.ActorLabel);
 
