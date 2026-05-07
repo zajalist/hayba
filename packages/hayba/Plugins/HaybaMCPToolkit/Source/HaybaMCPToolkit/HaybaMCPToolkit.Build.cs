@@ -29,7 +29,8 @@ public class HaybaMCPToolkit : ModuleRules
             "HotReload",
             "PythonScriptPlugin",
             "AssetRegistry", "AssetTools", "EditorScriptingUtilities", "DataValidation",
-            "Kismet", "KismetCompiler", "BlueprintGraph"
+            "Kismet", "KismetCompiler", "BlueprintGraph",
+            "DeveloperSettings"
         });
     }
 }

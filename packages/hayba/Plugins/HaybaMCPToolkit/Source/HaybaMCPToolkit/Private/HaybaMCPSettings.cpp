@@ -1,4 +1,5 @@
 #include "HaybaMCPSettings.h"
+#include "HaybaMCPDeveloperSettings.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/Paths.h"
 
@@ -23,6 +24,21 @@ void FHaybaMCPSettings::SetSharedApiKey(const FString& Key)
 
 void FHaybaMCPSettings::Load()
 {
+    if (const UHaybaMCPDeveloperSettings* DevSettings = GetDefault<UHaybaMCPDeveloperSettings>())
+    {
+        CapabilityToken          = DevSettings->CapabilityToken;
+        bEnableExecutionJournal  = DevSettings->bEnableExecutionJournal;
+        bAllowUnsafePython       = DevSettings->bAllowUnsafePython;
+        RateLimitPerMinute       = DevSettings->RateLimitPerMinute;
+        bCodeModeEnabled         = DevSettings->bCodeModeEnabled;
+        ToolCacheTTLSeconds      = DevSettings->ToolCacheTTLSeconds;
+        SidecarURL               = DevSettings->SidecarURL;
+        ModelPreset              = (int32)DevSettings->ModelPreset;
+        bEnableSpatialCLIP       = DevSettings->bEnableSpatialCLIP;
+        bEnableOWLViT            = DevSettings->bEnableOWLViT;
+        bEnableContinuousCapture = DevSettings->bEnableContinuousCapture;
+    }
+
     GConfig->GetString(Section, KeyApiKey,     ApiKey,      GEditorPerProjectIni);
     GConfig->GetString(Section, KeyBaseURL,    BaseURL,     GEditorPerProjectIni);
     GConfig->GetString(Section, KeyModel,      Model,       GEditorPerProjectIni);

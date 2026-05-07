@@ -40,6 +40,16 @@ public:
     // Allow Tier 3 Python scripts (filesystem, subprocess, socket).
     bool bAllowUnsafePython = false;
 
+    // Mirrored from UHaybaMCPDeveloperSettings (Project Settings UI)
+    int32 RateLimitPerMinute = 60;
+    bool bCodeModeEnabled = true;
+    float ToolCacheTTLSeconds = 2.0f;
+    FString SidecarURL = TEXT("http://localhost:7821");
+    int32 ModelPreset = 0;       // 0=Minimal, 1=Balanced, 2=Full
+    bool bEnableSpatialCLIP = false;
+    bool bEnableOWLViT = false;
+    bool bEnableContinuousCapture = false;
+
     static FString GetSharedApiKey();
     static void SetSharedApiKey(const FString& Key);
 
