@@ -32,6 +32,15 @@ public:
     bool bHasSeenWizard = false;
     EHaybaMCPOperationMode OperationMode = EHaybaMCPOperationMode::Integrated;
 
+    // Onboarding (new branching wizard, separate from legacy bHasSeenWizard)
+    bool bHasSeenOnboarding = false;
+
+    // Plan Mode — safety toggle. ON by default for first 7 days / 50 tool calls.
+    bool bPlanModeEnabled = true;
+    FDateTime PlanModeFirstUseDate;
+    int32 PlanModeToolCallCount = 0;
+    bool bShownPlanModePrompt = false;
+
     // Security
     // Optional. When set, every TCP request must include matching `auth` field.
     FString CapabilityToken;

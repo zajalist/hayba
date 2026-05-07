@@ -1,5 +1,14 @@
 #include "HaybaMCPModule.h"
 #include "HaybaMCPChatPanel.h"
+#include "HaybaMCPToolStreamPanel.h"
+#include "HaybaMCPSceneMapPanel.h"
+#include "HaybaMCPPlanPanel.h"
+#include "HaybaMCPDiffPanel.h"
+#include "HaybaMCPValidationPanel.h"
+#include "HaybaMCPMemoryPanel.h"
+#include "HaybaMCPOnboardingWidget.h"
+#include "Editor.h"
+#include "TimerManager.h"
 #include "HaybaMCPTcpServer.h"
 #include "HaybaMCPCommandHandler.h"
 #include "handlers/HaybaMCPLegacyHandler.h"
@@ -50,6 +59,15 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCP, Log, All);
 
+const FName FHaybaMCPModule::TabChat(TEXT("HaybaMCP_Chat"));
+const FName FHaybaMCPModule::TabToolStream(TEXT("HaybaMCP_ToolStream"));
+const FName FHaybaMCPModule::TabSceneMap(TEXT("HaybaMCP_SceneMap"));
+const FName FHaybaMCPModule::TabPlan(TEXT("HaybaMCP_Plan"));
+const FName FHaybaMCPModule::TabDiff(TEXT("HaybaMCP_Diff"));
+const FName FHaybaMCPModule::TabValidation(TEXT("HaybaMCP_Validation"));
+const FName FHaybaMCPModule::TabMemory(TEXT("HaybaMCP_Memory"));
+const FName FHaybaMCPModule::TabOnboarding(TEXT("HaybaMCP_Onboarding"));
+
 void FHaybaMCPModule::StartupModule()
 {
     PluginBaseDir = IPluginManager::Get().FindPlugin(TEXT("HaybaMCPToolkit"))->GetBaseDir();
@@ -92,30 +110,67 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPBuildHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPTestHandler>());
 
-    FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
-        TEXT("HaybaMCPToolkit"),
-        FOnSpawnTab::CreateRaw(this, &FHaybaMCPModule::OnSpawnTab))
-        .SetDisplayName(NSLOCTEXT("HaybaMCPToolkit", "TabTitle", "Hayba MCP Toolkit"))
-        .SetTooltipText(NSLOCTEXT("HaybaMCPToolkit", "TabTooltip", "Open the Hayba MCP Toolkit panel"))
-        .SetGroup(WorkspaceMenu::GetMenuStructure().GetToolsCategory())
+    auto& TM = FGlobalTabmanager::Get();
+    auto ToolsGroup = WorkspaceMenu::GetMenuStructure().GetToolsCategory();
+
+    TM->RegisterNomadTabSpawner(TabChat, FOnSpawnTab::CreateRaw(this, &FHaybaMCPModule::SpawnChatTab))
+        .SetDisplayName(NSLOCTEXT("Hayba", "Chat", "Hayba Chat"))
+        .SetGroup(ToolsGroup)
         .SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), "ClassIcon.UserDefinedStruct"));
+
+    TM->RegisterNomadTabSpawner(TabToolStream, FOnSpawnTab::CreateRaw(this, &FHaybaMCPModule::SpawnToolStreamTab))
+        .SetDisplayName(NSLOCTEXT("Hayba", "ToolStream", "Hayba Tool Stream"))
+        .SetGroup(ToolsGroup);
+
+    TM->RegisterNomadTabSpawner(TabSceneMap, FOnSpawnTab::CreateRaw(this, &FHaybaMCPModule::SpawnSceneMapTab))
+        .SetDisplayName(NSLOCTEXT("Hayba", "SceneMap", "Hayba Scene Map"))
+        .SetGroup(ToolsGroup);
+
+    TM->RegisterNomadTabSpawner(TabPlan, FOnSpawnTab::CreateRaw(this, &FHaybaMCPModule::SpawnPlanTab))
+        .SetDisplayName(NSLOCTEXT("Hayba", "Plan", "Hayba Wireframe / Plan"))
+        .SetGroup(ToolsGroup);
+
+    TM->RegisterNomadTabSpawner(TabDiff, FOnSpawnTab::CreateRaw(this, &FHaybaMCPModule::SpawnDiffTab))
+        .SetDisplayName(NSLOCTEXT("Hayba", "Diff", "Hayba Diff"))
+        .SetGroup(ToolsGroup);
+
+    TM->RegisterNomadTabSpawner(TabValidation, FOnSpawnTab::CreateRaw(this, &FHaybaMCPModule::SpawnValidationTab))
+        .SetDisplayName(NSLOCTEXT("Hayba", "Validation", "Hayba Validation Report"))
+        .SetGroup(ToolsGroup);
+
+    TM->RegisterNomadTabSpawner(TabMemory, FOnSpawnTab::CreateRaw(this, &FHaybaMCPModule::SpawnMemoryTab))
+        .SetDisplayName(NSLOCTEXT("Hayba", "Memory", "Hayba Memory Inspector"))
+        .SetGroup(ToolsGroup);
+
+    TM->RegisterNomadTabSpawner(TabOnboarding, FOnSpawnTab::CreateRaw(this, &FHaybaMCPModule::SpawnOnboardingTab))
+        .SetDisplayName(NSLOCTEXT("Hayba", "Onboarding", "Hayba Setup"))
+        .SetGroup(ToolsGroup);
 
     IConsoleManager::Get().RegisterConsoleCommand(
         TEXT("Hayba.MCP.Open"),
-        TEXT("Opens the Hayba MCP Toolkit panel"),
+        TEXT("Opens the Hayba Chat panel"),
         FConsoleCommandDelegate::CreateLambda([]()
         {
-            FGlobalTabmanager::Get()->TryInvokeTab(FName(TEXT("HaybaMCPToolkit")));
+            FGlobalTabmanager::Get()->TryInvokeTab(FHaybaMCPModule::TabChat);
         }),
         ECVF_Default
     );
 
-
+    // Auto-open onboarding on first run
+    if (!FHaybaMCPSettings::Get().bHasSeenOnboarding && GEditor)
+    {
+        GEditor->GetTimerManager()->SetTimerForNextTick(FTimerDelegate::CreateLambda([]()
+        {
+            FGlobalTabmanager::Get()->TryInvokeTab(FHaybaMCPModule::TabOnboarding);
+        }));
+    }
 }
 
 void FHaybaMCPModule::ShutdownModule()
 {
-    FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TEXT("HaybaMCPToolkit"));
+    auto& TM = FGlobalTabmanager::Get();
+    for (const FName& Tab : { TabChat, TabToolStream, TabSceneMap, TabPlan, TabDiff, TabValidation, TabMemory, TabOnboarding })
+        TM->UnregisterNomadTabSpawner(Tab);
     StopTcpServer();
     StopMCPServer();
     UE_LOG(LogHaybaMCP, Log, TEXT("HaybaMCPToolkit module shut down."));
@@ -277,11 +332,62 @@ FString FHaybaMCPModule::GetMCPServerPath() const
 
 TSharedRef<SDockTab> FHaybaMCPModule::OnSpawnTab(const FSpawnTabArgs& Args)
 {
-    return SNew(SDockTab)
-        .TabRole(ETabRole::NomadTab)
-        [
-            SNew(SHaybaMCPChatPanel, this)
-        ];
+    return SpawnChatTab(Args);
+}
+
+TSharedRef<SDockTab> FHaybaMCPModule::SpawnChatTab(const FSpawnTabArgs&)
+{
+    return SNew(SDockTab).TabRole(ETabRole::NomadTab)
+        [ SNew(SHaybaMCPChatPanel, this) ];
+}
+
+TSharedRef<SDockTab> FHaybaMCPModule::SpawnToolStreamTab(const FSpawnTabArgs&)
+{
+    auto Panel = SNew(SHaybaMCPToolStreamPanel);
+    ToolStreamPanel = Panel;
+    return SNew(SDockTab).TabRole(ETabRole::NomadTab) [ Panel ];
+}
+
+TSharedRef<SDockTab> FHaybaMCPModule::SpawnSceneMapTab(const FSpawnTabArgs&)
+{
+    auto Panel = SNew(SHaybaMCPSceneMapPanel);
+    SceneMapPanel = Panel;
+    return SNew(SDockTab).TabRole(ETabRole::NomadTab) [ Panel ];
+}
+
+TSharedRef<SDockTab> FHaybaMCPModule::SpawnPlanTab(const FSpawnTabArgs&)
+{
+    auto Panel = SNew(SHaybaMCPPlanPanel);
+    PlanPanel = Panel;
+    return SNew(SDockTab).TabRole(ETabRole::NomadTab) [ Panel ];
+}
+
+TSharedRef<SDockTab> FHaybaMCPModule::SpawnDiffTab(const FSpawnTabArgs&)
+{
+    auto Panel = SNew(SHaybaMCPDiffPanel);
+    DiffPanel = Panel;
+    return SNew(SDockTab).TabRole(ETabRole::NomadTab) [ Panel ];
+}
+
+TSharedRef<SDockTab> FHaybaMCPModule::SpawnValidationTab(const FSpawnTabArgs&)
+{
+    auto Panel = SNew(SHaybaMCPValidationPanel);
+    ValidationPanel = Panel;
+    return SNew(SDockTab).TabRole(ETabRole::NomadTab) [ Panel ];
+}
+
+TSharedRef<SDockTab> FHaybaMCPModule::SpawnMemoryTab(const FSpawnTabArgs&)
+{
+    auto Panel = SNew(SHaybaMCPMemoryPanel);
+    MemoryPanel = Panel;
+    return SNew(SDockTab).TabRole(ETabRole::NomadTab) [ Panel ];
+}
+
+TSharedRef<SDockTab> FHaybaMCPModule::SpawnOnboardingTab(const FSpawnTabArgs&)
+{
+    TSharedRef<SDockTab> Tab = SNew(SDockTab).TabRole(ETabRole::NomadTab);
+    Tab->SetContent(SNew(SHaybaMCPOnboardingWidget, Tab));
+    return Tab;
 }
 
 IMPLEMENT_MODULE(FHaybaMCPModule, HaybaMCPToolkit)

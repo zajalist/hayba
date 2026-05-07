@@ -45,6 +45,15 @@ void FHaybaMCPSettings::Load()
     GConfig->GetString(Section, KeyOutputPath, OutputPath,  GEditorPerProjectIni);
     GConfig->GetString(Section, TEXT("HeightmapOutputFolder"), HeightmapOutputFolder, GEditorPerProjectIni);
     GConfig->GetBool(Section, TEXT("bHasSeenWizard"), bHasSeenWizard, GEditorPerProjectIni);
+    GConfig->GetBool(Section, TEXT("bHasSeenOnboarding"), bHasSeenOnboarding, GEditorPerProjectIni);
+    GConfig->GetBool(Section, TEXT("bPlanModeEnabled"), bPlanModeEnabled, GEditorPerProjectIni);
+    GConfig->GetInt(Section, TEXT("PlanModeToolCallCount"), PlanModeToolCallCount, GEditorPerProjectIni);
+    GConfig->GetBool(Section, TEXT("bShownPlanModePrompt"), bShownPlanModePrompt, GEditorPerProjectIni);
+    {
+        FString DateStr;
+        if (GConfig->GetString(Section, TEXT("PlanModeFirstUseDate"), DateStr, GEditorPerProjectIni) && !DateStr.IsEmpty())
+            FDateTime::ParseIso8601(*DateStr, PlanModeFirstUseDate);
+    }
     GConfig->GetString(Section, TEXT("ConventionsScope"), ConventionsScope, GEditorPerProjectIni);
     GConfig->GetBool(Section, TEXT("bConfirmBeforeOverwrite"), bConfirmBeforeOverwrite, GEditorPerProjectIni);
     GConfig->GetInt(Section, TEXT("PreferredLandscapeResolution"), PreferredLandscapeResolution, GEditorPerProjectIni);
@@ -68,6 +77,11 @@ void FHaybaMCPSettings::Save() const
     GConfig->SetString(Section, KeyOutputPath, *OutputPath,  GEditorPerProjectIni);
     GConfig->SetString(Section, TEXT("HeightmapOutputFolder"), *HeightmapOutputFolder, GEditorPerProjectIni);
     GConfig->SetBool(Section, TEXT("bHasSeenWizard"), bHasSeenWizard, GEditorPerProjectIni);
+    GConfig->SetBool(Section, TEXT("bHasSeenOnboarding"), bHasSeenOnboarding, GEditorPerProjectIni);
+    GConfig->SetBool(Section, TEXT("bPlanModeEnabled"), bPlanModeEnabled, GEditorPerProjectIni);
+    GConfig->SetInt(Section, TEXT("PlanModeToolCallCount"), PlanModeToolCallCount, GEditorPerProjectIni);
+    GConfig->SetBool(Section, TEXT("bShownPlanModePrompt"), bShownPlanModePrompt, GEditorPerProjectIni);
+    GConfig->SetString(Section, TEXT("PlanModeFirstUseDate"), *PlanModeFirstUseDate.ToIso8601(), GEditorPerProjectIni);
     GConfig->SetString(Section, TEXT("ConventionsScope"), *ConventionsScope, GEditorPerProjectIni);
     GConfig->SetBool(Section, TEXT("bConfirmBeforeOverwrite"), bConfirmBeforeOverwrite, GEditorPerProjectIni);
     GConfig->SetInt(Section, TEXT("PreferredLandscapeResolution"), PreferredLandscapeResolution, GEditorPerProjectIni);
