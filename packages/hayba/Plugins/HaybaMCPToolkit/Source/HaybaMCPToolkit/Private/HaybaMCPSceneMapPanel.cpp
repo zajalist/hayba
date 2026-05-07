@@ -11,17 +11,25 @@ void FHaybaQuadtreeNode::Insert(int32 Idx, FVector2D Pos, int32 Depth)
 {
     if (bLeaf)
     {
-        NodeIndices.Add(Idx);
-        if (NodeIndices.Num() > MaxPerLeaf && Depth < MaxDepth)
+        Entries.Add({ Idx, Pos });
+        if (Entries.Num() > MaxPerLeaf && Depth < MaxDepth)
         {
             const FVector2D Mid = Bounds.GetCenter();
             Children[0] = MakeUnique<FHaybaQuadtreeNode>(); Children[0]->Bounds = FBox2D(Bounds.Min, Mid);
             Children[1] = MakeUnique<FHaybaQuadtreeNode>(); Children[1]->Bounds = FBox2D(FVector2D(Mid.X, Bounds.Min.Y), FVector2D(Bounds.Max.X, Mid.Y));
             Children[2] = MakeUnique<FHaybaQuadtreeNode>(); Children[2]->Bounds = FBox2D(Mid, Bounds.Max);
             Children[3] = MakeUnique<FHaybaQuadtreeNode>(); Children[3]->Bounds = FBox2D(FVector2D(Bounds.Min.X, Mid.Y), FVector2D(Mid.X, Bounds.Max.Y));
-            // Indices stay in this leaf — depth limit prevents runaway recursion;
-            // splitting only happens if a position-aware re-insert is added later.
             bLeaf = false;
+            TArray<FHaybaQuadtreeEntry> Old = MoveTemp(Entries);
+            for (const auto& E : Old)
+            {
+                bool bPlaced = false;
+                for (auto& C : Children)
+                {
+                    if (C && C->Bounds.IsInside(E.Pos)) { C->Insert(E.Idx, E.Pos, Depth + 1); bPlaced = true; break; }
+                }
+                if (!bPlaced) Entries.Add(E); // straddler stays in parent
+            }
         }
         return;
     }
@@ -29,13 +37,16 @@ void FHaybaQuadtreeNode::Insert(int32 Idx, FVector2D Pos, int32 Depth)
     {
         if (C && C->Bounds.IsInside(Pos)) { C->Insert(Idx, Pos, Depth + 1); return; }
     }
-    NodeIndices.Add(Idx);
+    Entries.Add({ Idx, Pos });
 }
 
 void FHaybaQuadtreeNode::Query(const FBox2D& Rect, TArray<int32>& Out) const
 {
     if (!Bounds.Intersect(Rect)) return;
-    Out.Append(NodeIndices);
+    for (const auto& E : Entries)
+    {
+        if (Rect.IsInside(E.Pos)) Out.Add(E.Idx);
+    }
     if (!bLeaf)
     {
         for (const auto& C : Children) if (C) C->Query(Rect, Out);

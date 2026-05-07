@@ -5,6 +5,10 @@
 #include "HaybaMCPSettings.h"
 #include "HaybaMCPModule.h"
 #include "HaybaMCPPlanPanel.h"
+#include "HaybaMCPToolStreamPanel.h"
+#include "HaybaMCPSceneMapPanel.h"
+#include "HaybaMCPSceneMapData.h"
+#include "HaybaMCPValidationPanel.h"
 #include "Json.h"
 #include "Async/Async.h"
 #include "Modules/ModuleManager.h"
@@ -41,6 +45,121 @@ static void MaybeShowPlanModePrompt()
             "You've been using Plan Mode for a while — consider disabling it from the toolbar if you trust your workflow."));
         Info.ExpireDuration = 10.f;
         FSlateNotificationManager::Get().AddNotification(Info);
+    });
+}
+
+static EHaybaNodeSemantic SemanticFromString(const FString& S)
+{
+    if (S.Equals(TEXT("foliage"),   ESearchCase::IgnoreCase)) return EHaybaNodeSemantic::Foliage;
+    if (S.Equals(TEXT("building"),  ESearchCase::IgnoreCase)) return EHaybaNodeSemantic::Building;
+    if (S.Equals(TEXT("light"),     ESearchCase::IgnoreCase)) return EHaybaNodeSemantic::Light;
+    if (S.Equals(TEXT("trigger"),   ESearchCase::IgnoreCase)) return EHaybaNodeSemantic::Trigger;
+    if (S.Equals(TEXT("character"), ESearchCase::IgnoreCase)) return EHaybaNodeSemantic::Character;
+    if (S.Equals(TEXT("blueprint"), ESearchCase::IgnoreCase)) return EHaybaNodeSemantic::Blueprint;
+    if (S.Equals(TEXT("ism"),       ESearchCase::IgnoreCase)) return EHaybaNodeSemantic::ISM;
+    return EHaybaNodeSemantic::Other;
+}
+
+static void PushSceneGraphToPanel(const TSharedPtr<FJsonObject>& Data)
+{
+    if (!Data.IsValid()) return;
+    TArray<FHaybaSceneNode> Nodes;
+    TArray<FHaybaSceneEdge> Edges;
+    TMap<FString, int32> IdToIdx;
+
+    const TArray<TSharedPtr<FJsonValue>>* NodesArr = nullptr;
+    if (Data->TryGetArrayField(TEXT("nodes"), NodesArr))
+    {
+        for (const auto& V : *NodesArr)
+        {
+            const TSharedPtr<FJsonObject> N = V->AsObject();
+            if (!N.IsValid()) continue;
+            FHaybaSceneNode SN;
+            N->TryGetStringField(TEXT("actorId"), SN.ActorId);
+            N->TryGetStringField(TEXT("label"),   SN.Label);
+            const TSharedPtr<FJsonObject>* Loc = nullptr;
+            if (N->TryGetObjectField(TEXT("location"), Loc) && Loc && (*Loc).IsValid())
+            {
+                double X = 0, Y = 0;
+                (*Loc)->TryGetNumberField(TEXT("x"), X);
+                (*Loc)->TryGetNumberField(TEXT("y"), Y);
+                SN.WorldPos = FVector2D(X, Y);
+            }
+            FString SemStr;
+            N->TryGetStringField(TEXT("semantic"), SemStr);
+            SN.Semantic = SemanticFromString(SemStr);
+            IdToIdx.Add(SN.ActorId, Nodes.Num());
+            Nodes.Add(MoveTemp(SN));
+        }
+    }
+
+    const TArray<TSharedPtr<FJsonValue>>* EdgesArr = nullptr;
+    if (Data->TryGetArrayField(TEXT("edges"), EdgesArr))
+    {
+        for (const auto& V : *EdgesArr)
+        {
+            const TSharedPtr<FJsonObject> E = V->AsObject();
+            if (!E.IsValid()) continue;
+            FString From, To;
+            E->TryGetStringField(TEXT("from"), From);
+            E->TryGetStringField(TEXT("to"),   To);
+            const int32* FromIdx = IdToIdx.Find(From);
+            const int32* ToIdx   = IdToIdx.Find(To);
+            if (FromIdx && ToIdx)
+            {
+                FHaybaSceneEdge SE;
+                SE.FromIdx = *FromIdx;
+                SE.ToIdx = *ToIdx;
+                E->TryGetBoolField(TEXT("hierarchical"), SE.bHierarchical);
+                Edges.Add(SE);
+            }
+        }
+    }
+
+    AsyncTask(ENamedThreads::GameThread, [Nodes = MoveTemp(Nodes), Edges = MoveTemp(Edges)]()
+    {
+        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        {
+            if (TSharedPtr<SHaybaMCPSceneMapPanel> Panel = M->SceneMapPanel.Pin())
+            {
+                Panel->LoadSceneGraph(Nodes, Edges);
+            }
+        }
+    });
+}
+
+static void PushPhysicsResultsToPanel(const TSharedPtr<FJsonObject>& Data)
+{
+    if (!Data.IsValid()) return;
+    TArray<FHaybaValidationIssue> Issues;
+    const TArray<TSharedPtr<FJsonValue>>* OverlapsArr = nullptr;
+    if (Data->TryGetArrayField(TEXT("overlaps"), OverlapsArr))
+    {
+        for (const auto& V : *OverlapsArr)
+        {
+            const TSharedPtr<FJsonObject> O = V->AsObject();
+            if (!O.IsValid()) continue;
+            FHaybaValidationIssue I;
+            I.IssueType = TEXT("Physics Overlap");
+            I.Severity = EHaybaSeverity::Warning;
+            FString A, B;
+            O->TryGetStringField(TEXT("a"), A);
+            O->TryGetStringField(TEXT("b"), B);
+            I.ActorLabel = A;
+            I.Description = FString::Printf(TEXT("overlaps %s"), *B);
+            Issues.Add(MoveTemp(I));
+        }
+    }
+    AsyncTask(ENamedThreads::GameThread, [Issues = MoveTemp(Issues)]()
+    {
+        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        {
+            if (TSharedPtr<SHaybaMCPValidationPanel> Panel = M->ValidationPanel.Pin())
+            {
+                Panel->Clear();
+                for (const auto& I : Issues) Panel->AddIssue(I);
+            }
+        }
     });
 }
 
@@ -172,6 +291,32 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     FHaybaJournalEntry E{ FDateTime::UtcNow(), Cmd,
         FHaybaMCPSecurityManager::HashParams(Params), DurMs, Result.bOk, Result.ErrorMessage };
     FHaybaMCPSecurityManager::Get().Journal(E);
+
+    // Push scene-shaped results into their dedicated panels.
+    if (Result.bOk && Result.Data.IsValid())
+    {
+        if (Cmd == TEXT("scene_get_graph"))           PushSceneGraphToPanel(Result.Data);
+        else if (Cmd == TEXT("scene_validate_physics")) PushPhysicsResultsToPanel(Result.Data);
+    }
+
+    // Push to Tool Stream panel for live observability.
+    {
+        const FString ParamsStr = JsonToString(Params.ToSharedRef());
+        FString ResultStr;
+        if (Result.bOk && Result.Data.IsValid()) ResultStr = JsonToString(Result.Data.ToSharedRef());
+        else if (!Result.bOk) ResultStr = FString::Printf(TEXT("ERROR: %s"), *Result.ErrorMessage);
+
+        AsyncTask(ENamedThreads::GameThread, [Cmd, ParamsStr, ResultStr]()
+        {
+            if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+            {
+                if (TSharedPtr<SHaybaMCPToolStreamPanel> Panel = M->ToolStreamPanel.Pin())
+                {
+                    Panel->AddToolCall(Cmd, ParamsStr, ResultStr);
+                }
+            }
+        });
+    }
 
     if (Result.bOk)
     {

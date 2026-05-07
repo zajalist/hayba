@@ -25,11 +25,17 @@ struct FHaybaSceneEdge
     bool bHierarchical = false;
 };
 
-/** Minimal quadtree storing node indices. */
+/** Minimal quadtree storing node index + position so splits can redistribute. */
+struct FHaybaQuadtreeEntry
+{
+    int32 Idx = INDEX_NONE;
+    FVector2D Pos = FVector2D::ZeroVector;
+};
+
 struct FHaybaQuadtreeNode
 {
     FBox2D Bounds = FBox2D(ForceInit);
-    TArray<int32> NodeIndices;
+    TArray<FHaybaQuadtreeEntry> Entries;
     TUniquePtr<FHaybaQuadtreeNode> Children[4];
     bool bLeaf = true;
 
