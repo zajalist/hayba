@@ -17,6 +17,23 @@
 #include "handlers/HaybaMCPISMHandler.h"
 #include "handlers/HaybaMCPPhysicsHandler.h"
 #include "handlers/HaybaMCPDocsHandler.h"
+// ===== Stub handlers (advertise commands; return not_implemented) =====
+#include "handlers/HaybaMCPSequencerHandler.h"
+#include "handlers/HaybaMCPAnimationHandler.h"
+#include "handlers/HaybaMCPNiagaraHandler.h"
+#include "handlers/HaybaMCPAudioHandler.h"
+#include "handlers/HaybaMCPMetaSoundHandler.h"
+#include "handlers/HaybaMCPGASHandler.h"
+#include "handlers/HaybaMCPBehaviorTreeHandler.h"
+#include "handlers/HaybaMCPInputHandler.h"
+#include "handlers/HaybaMCPUIHandler.h"
+#include "handlers/HaybaMCPNetworkHandler.h"
+#include "handlers/HaybaMCPStaticMeshHandler.h"
+#include "handlers/HaybaMCPTextureHandler.h"
+#include "handlers/HaybaMCPDataAssetHandler.h"
+#include "handlers/HaybaMCPProjectHandler.h"
+#include "handlers/HaybaMCPBuildHandler.h"
+#include "handlers/HaybaMCPTestHandler.h"
 #include "HaybaMCPCaptureActor.h"
 #include "HaybaMCPSettings.h"
 #include "Json.h"
@@ -56,6 +73,24 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPISMHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPPhysicsHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPDocsHandler>());
+
+    // ===== Stub handlers (advertise commands; return not_implemented) =====
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPSequencerHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPAnimationHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPNiagaraHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPAudioHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPMetaSoundHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPGASHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPBehaviorTreeHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPInputHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPUIHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPNetworkHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPStaticMeshHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPTextureHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPDataAssetHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPProjectHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPBuildHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPTestHandler>());
 
     FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
         TEXT("HaybaMCPToolkit"),
