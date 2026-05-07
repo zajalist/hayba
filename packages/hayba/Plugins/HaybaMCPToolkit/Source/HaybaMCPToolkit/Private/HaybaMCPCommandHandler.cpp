@@ -10,6 +10,7 @@
 #include "HaybaMCPSceneMapData.h"
 #include "HaybaMCPValidationPanel.h"
 #include "HaybaMCPMemoryPanel.h"
+#include "HaybaMCPDiffPanel.h"
 #include "Json.h"
 #include "Async/Async.h"
 #include "Modules/ModuleManager.h"
@@ -194,6 +195,110 @@ static void PushMemoryResultsToPanel(const TSharedPtr<FJsonObject>& Data)
     });
 }
 
+static FString JsonValueToString(const TSharedPtr<FJsonValue>& V)
+{
+    if (!V.IsValid()) return TEXT("");
+    switch (V->Type)
+    {
+        case EJson::String: return V->AsString();
+        case EJson::Number: return FString::SanitizeFloat(V->AsNumber());
+        case EJson::Boolean: return V->AsBool() ? TEXT("true") : TEXT("false");
+        case EJson::Null:   return TEXT("null");
+        default: {
+            FString Out;
+            TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+                TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Out);
+            FJsonSerializer::Serialize(V.ToSharedRef(), TEXT(""), Writer);
+            return Out;
+        }
+    }
+}
+
+static void PushDiffEntries(const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
+{
+    if (!Params.IsValid()) return;
+    TArray<FHaybaDiffEntry> Entries;
+    FString ActorId;
+    Params->TryGetStringField(TEXT("actorId"), ActorId);
+
+    if (Cmd == TEXT("actor_delete"))
+    {
+        FHaybaDiffEntry E;
+        E.ActorLabel = ActorId.IsEmpty() ? TEXT("(unknown)") : ActorId;
+        E.Property = TEXT("exists");
+        E.Before = TEXT("true");
+        E.After = TEXT("DELETED");
+        Entries.Add(MoveTemp(E));
+    }
+    else if (Cmd == TEXT("actor_spawn"))
+    {
+        FString Cls;
+        Params->TryGetStringField(TEXT("class"), Cls);
+        FHaybaDiffEntry E;
+        E.ActorLabel = Cls.IsEmpty() ? TEXT("(unknown class)") : Cls;
+        E.Property = TEXT("exists");
+        E.Before = TEXT("(none)");
+        E.After = TEXT("SPAWNED");
+        Entries.Add(MoveTemp(E));
+    }
+    else if (Cmd == TEXT("actor_set_transform"))
+    {
+        for (const TCHAR* Field : { TEXT("location"), TEXT("rotation"), TEXT("scale") })
+        {
+            const TSharedPtr<FJsonObject>* Sub = nullptr;
+            if (Params->TryGetObjectField(Field, Sub) && Sub && (*Sub).IsValid())
+            {
+                FHaybaDiffEntry E;
+                E.ActorLabel = ActorId;
+                E.Property = Field;
+                E.Before = TEXT("(unknown)");
+                E.After = JsonValueToString(MakeShared<FJsonValueObject>(*Sub));
+                Entries.Add(MoveTemp(E));
+            }
+        }
+    }
+    else if (Cmd == TEXT("actor_set_property"))
+    {
+        FString Prop;
+        Params->TryGetStringField(TEXT("property"), Prop);
+        const TSharedPtr<FJsonValue> Val = Params->TryGetField(TEXT("value"));
+        FHaybaDiffEntry E;
+        E.ActorLabel = ActorId;
+        E.Property = Prop;
+        E.Before = TEXT("(unknown)");
+        E.After = JsonValueToString(Val);
+        Entries.Add(MoveTemp(E));
+    }
+    else if (Cmd == TEXT("actor_set_tags"))
+    {
+        const TArray<TSharedPtr<FJsonValue>>* Tags = nullptr;
+        if (Params->TryGetArrayField(TEXT("tags"), Tags) && Tags)
+        {
+            FString After;
+            for (const auto& V : *Tags) After += (After.IsEmpty() ? TEXT("") : TEXT(", ")) + V->AsString();
+            FHaybaDiffEntry E;
+            E.ActorLabel = ActorId;
+            E.Property = TEXT("tags");
+            E.Before = TEXT("(unknown)");
+            E.After = After;
+            Entries.Add(MoveTemp(E));
+        }
+    }
+
+    if (Entries.IsEmpty()) return;
+
+    AsyncTask(ENamedThreads::GameThread, [Entries = MoveTemp(Entries)]()
+    {
+        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        {
+            if (TSharedPtr<SHaybaMCPDiffPanel> Panel = M->DiffPanel.Pin())
+            {
+                for (const auto& E : Entries) Panel->AddEntry(E);
+            }
+        }
+    });
+}
+
 static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject>& Params)
 {
     TArray<FHaybaPlanStep> Steps;
@@ -339,6 +444,11 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         if (Cmd == TEXT("scene_get_graph"))           PushSceneGraphToPanel(Result.Data);
         else if (Cmd == TEXT("scene_validate_physics")) PushPhysicsResultsToPanel(Result.Data);
         else if (Cmd == TEXT("memory_query"))           PushMemoryResultsToPanel(Result.Data);
+    }
+    // Log destructive ops to the Diff panel (params describe the requested change).
+    if (Result.bOk)
+    {
+        PushDiffEntries(Cmd, Params);
     }
 
     // Push to Tool Stream panel for live observability.
