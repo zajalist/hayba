@@ -4,6 +4,7 @@
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/CompilerResultsLog.h"
+#include "Logging/TokenizedMessage.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "Engine/SimpleConstructionScript.h"
@@ -227,14 +228,36 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Compile(const TSharedPtr<FJsonObj
     UBlueprint* BP = LoadBPByPath(Path);
     if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_compile: blueprint not found"));
 
-    FKismetEditorUtilities::CompileBlueprint(BP);
+    FCompilerResultsLog ResultsLog;
+    ResultsLog.SetSourcePath(BP->GetPathName());
+    ResultsLog.BeginEvent(TEXT("Compile"));
+
+    FKismetEditorUtilities::FCompileBlueprintOptions CompileOptions;
+    FKismetEditorUtilities::CompileBlueprint(BP, CompileOptions, &ResultsLog);
+
+    ResultsLog.EndEvent();
 
     bool bOk = (BP->Status == BS_UpToDate || BP->Status == BS_UpToDateWithWarnings);
+
+    TArray<TSharedPtr<FJsonValue>> Errors;
+    TArray<TSharedPtr<FJsonValue>> Warnings;
+    for (const TSharedRef<FTokenizedMessage>& Msg : ResultsLog.Messages)
+    {
+        const FString Text = Msg->ToText().ToString();
+        const EMessageSeverity::Type Sev = Msg->GetSeverity();
+        if (Sev == EMessageSeverity::Error)
+            Errors.Add(MakeShared<FJsonValueString>(Text));
+        else if (Sev == EMessageSeverity::Warning)
+            Warnings.Add(MakeShared<FJsonValueString>(Text));
+    }
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetBoolField(TEXT("compiled"), bOk);
     Out->SetNumberField(TEXT("status"), (int32)BP->Status);
-    Out->SetArrayField(TEXT("errors"), TArray<TSharedPtr<FJsonValue>>());
+    Out->SetNumberField(TEXT("num_errors"),   ResultsLog.NumErrors);
+    Out->SetNumberField(TEXT("num_warnings"), ResultsLog.NumWarnings);
+    Out->SetArrayField(TEXT("errors"),   Errors);
+    Out->SetArrayField(TEXT("warnings"), Warnings);
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -314,20 +337,80 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetDefaults(const TSharedPtr<FJso
     if (!CDO) return FHaybaHandlerResult::Err(TEXT("blueprint_set_defaults: CDO missing"));
 
     TArray<TSharedPtr<FJsonValue>> SetNames;
+    TArray<TSharedPtr<FJsonValue>> Skipped;
+
+    auto AddSkipped = [&Skipped](const FString& Key, const TCHAR* Reason)
+    {
+        TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+        Entry->SetStringField(TEXT("name"), Key);
+        Entry->SetStringField(TEXT("reason"), Reason);
+        Skipped.Add(MakeShared<FJsonValueObject>(Entry.ToSharedRef()));
+    };
+
     for (const auto& Pair : (*PropsObj)->Values)
     {
         FProperty* Prop = BP->GeneratedClass->FindPropertyByName(FName(*Pair.Key));
-        if (!Prop) continue;
+        if (!Prop)
+        {
+            AddSkipped(Pair.Key, TEXT("property_not_found"));
+            continue;
+        }
 
         FString ValueStr;
-        if (!Pair.Value->TryGetString(ValueStr))
+        bool bHaveValue = Pair.Value->TryGetString(ValueStr);
+        if (!bHaveValue)
         {
-            if (Pair.Value->Type == EJson::Number)
+            switch (Pair.Value->Type)
+            {
+            case EJson::Number:
                 ValueStr = FString::SanitizeFloat(Pair.Value->AsNumber());
-            else if (Pair.Value->Type == EJson::Boolean)
+                bHaveValue = true;
+                break;
+            case EJson::Boolean:
                 ValueStr = Pair.Value->AsBool() ? TEXT("True") : TEXT("False");
-            else continue;
+                bHaveValue = true;
+                break;
+            case EJson::Array:
+            {
+                const TArray<TSharedPtr<FJsonValue>>& Arr = Pair.Value->AsArray();
+                // Numeric vector/rotator/color coercion.
+                bool bAllNumbers = Arr.Num() > 0;
+                for (const TSharedPtr<FJsonValue>& V : Arr)
+                {
+                    if (!V.IsValid() || V->Type != EJson::Number) { bAllNumbers = false; break; }
+                }
+                if (bAllNumbers && Arr.Num() == 3)
+                {
+                    ValueStr = FString::Printf(TEXT("(X=%f,Y=%f,Z=%f)"),
+                        Arr[0]->AsNumber(), Arr[1]->AsNumber(), Arr[2]->AsNumber());
+                    bHaveValue = true;
+                }
+                else if (bAllNumbers && Arr.Num() == 4)
+                {
+                    ValueStr = FString::Printf(TEXT("(R=%f,G=%f,B=%f,A=%f)"),
+                        Arr[0]->AsNumber(), Arr[1]->AsNumber(),
+                        Arr[2]->AsNumber(), Arr[3]->AsNumber());
+                    bHaveValue = true;
+                }
+                else if (bAllNumbers && Arr.Num() == 2)
+                {
+                    ValueStr = FString::Printf(TEXT("(X=%f,Y=%f)"),
+                        Arr[0]->AsNumber(), Arr[1]->AsNumber());
+                    bHaveValue = true;
+                }
+                break;
+            }
+            default:
+                break;
+            }
         }
+
+        if (!bHaveValue)
+        {
+            AddSkipped(Pair.Key, TEXT("unsupported_value_type"));
+            continue;
+        }
+
         Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(CDO), CDO, PPF_None);
         SetNames.Add(MakeShared<FJsonValueString>(Pair.Key));
     }
@@ -336,5 +419,6 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetDefaults(const TSharedPtr<FJso
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetArrayField(TEXT("set"), SetNames);
+    Out->SetArrayField(TEXT("skipped"), Skipped);
     return FHaybaHandlerResult::Ok(Out);
 }

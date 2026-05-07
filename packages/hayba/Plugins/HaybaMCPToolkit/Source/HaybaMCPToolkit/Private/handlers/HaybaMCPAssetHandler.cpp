@@ -11,6 +11,9 @@
 #include "EditorValidatorSubsystem.h"
 #include "DataValidationModule.h"
 #include "Misc/DataValidation.h"
+#include "Logging/MessageLog.h"
+#include "Logging/TokenizedMessage.h"
+#include "Misc/UObjectToken.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPAsset, Log, All);
 
@@ -59,7 +62,9 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetSearch(const TSharedPtr<FJsonObj
     for (const FAssetData& A : Assets)
     {
         if (!NameFilter.IsEmpty() && !A.PackageName.ToString().Contains(NameFilter)) continue;
-        if (!ClassFilter.IsEmpty() && A.AssetClassPath.GetAssetName().ToString() != ClassFilter) continue;
+        if (!ClassFilter.IsEmpty()
+            && A.AssetClassPath.GetAssetName().ToString() != ClassFilter
+            && A.AssetClassPath.ToString() != ClassFilter) continue;
 
         if (Out.Num() >= Cap) { bCapped = true; break; }
 
@@ -182,6 +187,8 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetGetReferences(const TSharedPtr<F
 
     const int32 Cap = 100;
     TArray<TSharedPtr<FJsonValue>> RefArr, DepArr;
+    const bool bRefCapped = Referencers.Num() > Cap;
+    const bool bDepCapped = Dependencies.Num() > Cap;
     for (int32 i = 0; i < Referencers.Num() && i < Cap; ++i)
         RefArr.Add(MakeShared<FJsonValueString>(Referencers[i].ToString()));
     for (int32 i = 0; i < Dependencies.Num() && i < Cap; ++i)
@@ -190,6 +197,7 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetGetReferences(const TSharedPtr<F
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetArrayField(TEXT("referencers"),  RefArr);
     Out->SetArrayField(TEXT("dependencies"), DepArr);
+    Out->SetBoolField(TEXT("capped"), bRefCapped || bDepCapped);
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -215,6 +223,13 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetValidate(const TSharedPtr<FJsonO
     FValidateAssetsSettings Settings;
     Settings.bSkipExcludedDirectories = true;
     Settings.ValidationUsecase = EDataValidationUsecase::Manual;
+
+    // Spin up a fresh AssetCheck message-log page so we can capture per-message
+    // results emitted by validators (the FValidateAssetsResults summary only
+    // exposes counts in this UE version).
+    FMessageLog AssetCheckLog("AssetCheck");
+    AssetCheckLog.NewPage(FText::FromString(TEXT("Hayba asset_validate")));
+
     FValidateAssetsResults Results;
     Validator->ValidateAssetsWithSettings(ToValidate, Settings, Results);
 
@@ -223,8 +238,18 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetValidate(const TSharedPtr<FJsonO
     Out->SetNumberField(TEXT("num_valid"),   Results.NumValid);
     Out->SetNumberField(TEXT("num_invalid"), Results.NumInvalid);
     Out->SetNumberField(TEXT("num_warnings"), Results.NumWarnings);
+
+    // FMessageLog::GetMessages is not part of the public API across UE 5.x, so
+    // we cannot portably extract individual tokenized messages here. Surface a
+    // hint so callers know to consult the editor's Message Log → Asset Check.
+    // TODO(v1.1): wire up message capture when the API stabilizes (e.g. via a
+    // custom IMessageLogListing or by iterating Results.AssetsResults once that
+    // surface is consistently available).
     Out->SetArrayField(TEXT("errors"),   TArray<TSharedPtr<FJsonValue>>());
     Out->SetArrayField(TEXT("warnings"), TArray<TSharedPtr<FJsonValue>>());
+    Out->SetBoolField(TEXT("details_available"), false);
+    Out->SetBoolField(TEXT("details_in_message_log"),
+        Results.NumInvalid > 0 || Results.NumWarnings > 0);
     return FHaybaHandlerResult::Ok(Out);
 }
 
