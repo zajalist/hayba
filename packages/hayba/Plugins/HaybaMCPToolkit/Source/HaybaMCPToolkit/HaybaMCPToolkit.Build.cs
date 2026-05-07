@@ -30,7 +30,11 @@ public class HaybaMCPToolkit : ModuleRules
             "PythonScriptPlugin",
             "AssetRegistry", "AssetTools", "EditorScriptingUtilities", "DataValidation",
             "Kismet", "KismetCompiler", "BlueprintGraph",
-            "DeveloperSettings"
+            "DeveloperSettings",
+            "LevelEditor",
+            "WorldPartitionEditor",
+            "MaterialEditor",
+            "MovieScene"
         });
     }
 }
