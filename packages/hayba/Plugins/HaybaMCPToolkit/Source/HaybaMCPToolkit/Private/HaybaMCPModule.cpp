@@ -7,8 +7,12 @@
 #include "HaybaMCPValidationPanel.h"
 #include "HaybaMCPMemoryPanel.h"
 #include "HaybaMCPOnboardingWidget.h"
+#include "HaybaMCPPlanModeWidget.h"
 #include "Editor.h"
 #include "TimerManager.h"
+#include "ToolMenus.h"
+#include "Framework/Notifications/NotificationManager.h"
+#include "Widgets/Notifications/SNotificationList.h"
 #include "HaybaMCPTcpServer.h"
 #include "HaybaMCPCommandHandler.h"
 #include "handlers/HaybaMCPLegacyHandler.h"
@@ -164,6 +168,20 @@ void FHaybaMCPModule::StartupModule()
             FGlobalTabmanager::Get()->TryInvokeTab(FHaybaMCPModule::TabOnboarding);
         }));
     }
+
+    // Add Plan Mode toggle to the level-editor toolbar.
+    UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateLambda([]()
+    {
+        if (UToolMenu* Menu = UToolMenus::Get()->ExtendMenu("LevelEditor.LevelEditorToolBar.PlayToolBar"))
+        {
+            FToolMenuSection& Section = Menu->FindOrAddSection("HaybaMCP");
+            Section.AddEntry(FToolMenuEntry::InitWidget(
+                "HaybaPlanMode",
+                SNew(SHaybaMCPPlanModeWidget),
+                FText::GetEmpty(),
+                true));
+        }
+    }));
 }
 
 void FHaybaMCPModule::ShutdownModule()
