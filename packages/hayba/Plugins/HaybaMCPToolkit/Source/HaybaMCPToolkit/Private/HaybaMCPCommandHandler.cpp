@@ -2,9 +2,81 @@
 #include "IHaybaMCPHandler.h"
 #include "HaybaMCPSecurityManager.h"
 #include "HaybaMCPResponseBuilder.h"
+#include "HaybaMCPSettings.h"
+#include "HaybaMCPModule.h"
+#include "HaybaMCPPlanPanel.h"
 #include "Json.h"
+#include "Async/Async.h"
+#include "Modules/ModuleManager.h"
+#include "Framework/Notifications/NotificationManager.h"
+#include "Widgets/Notifications/SNotificationList.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPCmd, Log, All);
+
+static bool IsDestructiveCommand(const FString& Cmd)
+{
+    return Cmd == TEXT("actor_delete")
+        || Cmd == TEXT("actor_spawn")
+        || Cmd == TEXT("python_exec")
+        || Cmd == TEXT("memory_clear")
+        || Cmd == TEXT("editor_execute_console")
+        || Cmd == TEXT("landscape_import")
+        || Cmd == TEXT("pcg_execute_graph");
+}
+
+static void MaybeShowPlanModePrompt()
+{
+    auto& S = FHaybaMCPSettings::Get();
+    if (!S.bPlanModeEnabled || S.bShownPlanModePrompt) return;
+    if (S.PlanModeFirstUseDate == FDateTime()) S.PlanModeFirstUseDate = FDateTime::Now();
+    const bool bOver7Days = (FDateTime::Now() - S.PlanModeFirstUseDate).GetDays() >= 7;
+    const bool bOver50Calls = S.PlanModeToolCallCount >= 50;
+    if (!bOver7Days && !bOver50Calls) return;
+
+    S.bShownPlanModePrompt = true;
+    S.Save();
+    AsyncTask(ENamedThreads::GameThread, []()
+    {
+        FNotificationInfo Info(NSLOCTEXT("Hayba", "PlanModePrompt",
+            "You've been using Plan Mode for a while — consider disabling it from the toolbar if you trust your workflow."));
+        Info.ExpireDuration = 10.f;
+        FSlateNotificationManager::Get().AddNotification(Info);
+    });
+}
+
+static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject>& Params)
+{
+    TArray<FHaybaPlanStep> Steps;
+    const TArray<TSharedPtr<FJsonValue>>* StepsArr = nullptr;
+    if (Params.IsValid() && Params->TryGetArrayField(TEXT("steps"), StepsArr))
+    {
+        for (int32 i = 0; i < StepsArr->Num(); i++)
+        {
+            FHaybaPlanStep S;
+            S.Index = i;
+            S.Title = (*StepsArr)[i]->AsString();
+            Steps.Add(S);
+        }
+    }
+    int32 AwaitSecs = 30;
+    if (Params.IsValid()) Params->TryGetNumberField(TEXT("await_seconds"), AwaitSecs);
+
+    AsyncTask(ENamedThreads::GameThread, [Steps, AwaitSecs]()
+    {
+        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        {
+            if (TSharedPtr<SHaybaMCPPlanPanel> Panel = M->PlanPanel.Pin())
+            {
+                Panel->LoadPlan(Steps, AwaitSecs);
+            }
+        }
+    });
+
+    auto Data = MakeShared<FJsonObject>();
+    Data->SetBoolField(TEXT("received"), true);
+    Data->SetNumberField(TEXT("step_count"), Steps.Num());
+    return FHaybaMCPCommandHandler::MakeOkResponse(Id, Data);
+}
 
 // Helper: serialize FJsonObject to compact string
 static FString JsonToString(const TSharedRef<FJsonObject>& Obj)
@@ -59,6 +131,27 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     if (!FHaybaMCPSecurityManager::Get().ValidateRequest(Parsed, AuthReason))
     {
         return MakeErrorResponse(Id, AuthReason);
+    }
+
+    // Special-case: hayba_propose_plan pushes to the UI Plan panel (no domain handler).
+    if (Cmd == TEXT("hayba_propose_plan"))
+    {
+        return HandleProposePlan(Id, Params);
+    }
+
+    // Plan Mode safety gate: block destructive commands until a plan is acknowledged.
+    {
+        auto& S = FHaybaMCPSettings::Get();
+        if (S.bPlanModeEnabled && IsDestructiveCommand(Cmd))
+        {
+            auto Data = MakeShared<FJsonObject>();
+            Data->SetStringField(TEXT("status"), TEXT("plan_mode_required"));
+            Data->SetStringField(TEXT("hint"), TEXT("Plan Mode is ON. Call hayba_propose_plan with a steps[] array before invoking destructive commands."));
+            return MakeOkResponse(Id, Data);
+        }
+        S.PlanModeToolCallCount++;
+        S.Save();
+        MaybeShowPlanModePrompt();
     }
 
     auto* Found = CommandToHandler.Find(Cmd);
