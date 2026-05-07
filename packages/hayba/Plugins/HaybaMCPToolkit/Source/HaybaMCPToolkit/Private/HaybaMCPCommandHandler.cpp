@@ -195,6 +195,92 @@ static void PushMemoryResultsToPanel(const TSharedPtr<FJsonObject>& Data)
     });
 }
 
+/**
+ * Find an actor by its label in the editor world. Must run on the game thread.
+ */
+static AActor* FindActorByLabel_GameThread(const FString& Label)
+{
+    if (!GEditor) return nullptr;
+    UWorld* World = GEditor->GetEditorWorldContext().World();
+    if (!World) return nullptr;
+    for (TActorIterator<AActor> It(World); It; ++It)
+    {
+        if (It->GetActorLabel() == Label) return *It;
+    }
+    return nullptr;
+}
+
+/**
+ * Snapshot relevant fields of an actor BEFORE a destructive command runs.
+ * Returns a map of "Property" -> "Before-value string".
+ * Synchronously marshals to the game thread.
+ */
+static TMap<FString, FString> CaptureBeforeState(const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
+{
+    TMap<FString, FString> Before;
+    if (!Params.IsValid()) return Before;
+    FString ActorId;
+    if (!Params->TryGetStringField(TEXT("actorId"), ActorId) || ActorId.IsEmpty()) return Before;
+
+    // For commands that read existing state, snapshot synchronously on the game thread.
+    const bool bWantTransform = (Cmd == TEXT("actor_set_transform"));
+    const bool bWantTags      = (Cmd == TEXT("actor_set_tags"));
+    const bool bWantProperty  = (Cmd == TEXT("actor_set_property"));
+    const bool bWantDelete    = (Cmd == TEXT("actor_delete"));
+    if (!bWantTransform && !bWantTags && !bWantProperty && !bWantDelete) return Before;
+
+    FString PropertyName;
+    if (bWantProperty) Params->TryGetStringField(TEXT("property"), PropertyName);
+
+    FEvent* Done = FPlatformProcess::GetSynchEventFromPool(true);
+    AsyncTask(ENamedThreads::GameThread, [&Before, ActorId, Cmd, PropertyName, Done, bWantTransform, bWantTags, bWantProperty, bWantDelete]()
+    {
+        if (AActor* Actor = FindActorByLabel_GameThread(ActorId))
+        {
+            if (bWantDelete)
+            {
+                Before.Add(TEXT("exists"), TEXT("true"));
+            }
+            if (bWantTransform)
+            {
+                const FVector L  = Actor->GetActorLocation();
+                const FRotator R = Actor->GetActorRotation();
+                const FVector S  = Actor->GetActorScale3D();
+                Before.Add(TEXT("location"), FString::Printf(TEXT("(%.1f, %.1f, %.1f)"), L.X, L.Y, L.Z));
+                Before.Add(TEXT("rotation"), FString::Printf(TEXT("(p=%.1f y=%.1f r=%.1f)"), R.Pitch, R.Yaw, R.Roll));
+                Before.Add(TEXT("scale"),    FString::Printf(TEXT("(%.2f, %.2f, %.2f)"), S.X, S.Y, S.Z));
+            }
+            if (bWantTags)
+            {
+                FString Joined;
+                for (const FName& T : Actor->Tags) Joined += (Joined.IsEmpty() ? TEXT("") : TEXT(", ")) + T.ToString();
+                Before.Add(TEXT("tags"), Joined.IsEmpty() ? TEXT("(none)") : Joined);
+            }
+            if (bWantProperty && !PropertyName.IsEmpty())
+            {
+                if (FProperty* Prop = Actor->GetClass()->FindPropertyByName(*PropertyName))
+                {
+                    FString Out;
+                    Prop->ExportText_InContainer(0, Out, Actor, Actor, Actor, PPF_None);
+                    Before.Add(PropertyName, Out);
+                }
+                else
+                {
+                    Before.Add(PropertyName, TEXT("(no such property)"));
+                }
+            }
+        }
+        else
+        {
+            Before.Add(TEXT("__missing__"), TEXT("(actor not found)"));
+        }
+        Done->Trigger();
+    });
+    Done->Wait(2000);   // 2-second timeout to avoid deadlock if game thread is stalled
+    FPlatformProcess::ReturnSynchEventToPool(Done);
+    return Before;
+}
+
 static FString JsonValueToString(const TSharedPtr<FJsonValue>& V)
 {
     if (!V.IsValid()) return TEXT("");
@@ -214,19 +300,25 @@ static FString JsonValueToString(const TSharedPtr<FJsonValue>& V)
     }
 }
 
-static void PushDiffEntries(const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
+static void PushDiffEntries(const FString& Cmd, const TSharedPtr<FJsonObject>& Params, const TMap<FString, FString>& Before)
 {
     if (!Params.IsValid()) return;
     TArray<FHaybaDiffEntry> Entries;
     FString ActorId;
     Params->TryGetStringField(TEXT("actorId"), ActorId);
 
+    auto BeforeOr = [&](const FString& Key, const TCHAR* Fallback) -> FString
+    {
+        const FString* V = Before.Find(Key);
+        return V ? *V : FString(Fallback);
+    };
+
     if (Cmd == TEXT("actor_delete"))
     {
         FHaybaDiffEntry E;
         E.ActorLabel = ActorId.IsEmpty() ? TEXT("(unknown)") : ActorId;
         E.Property = TEXT("exists");
-        E.Before = TEXT("true");
+        E.Before = BeforeOr(TEXT("exists"), TEXT("(unknown)"));
         E.After = TEXT("DELETED");
         Entries.Add(MoveTemp(E));
     }
@@ -251,7 +343,7 @@ static void PushDiffEntries(const FString& Cmd, const TSharedPtr<FJsonObject>& P
                 FHaybaDiffEntry E;
                 E.ActorLabel = ActorId;
                 E.Property = Field;
-                E.Before = TEXT("(unknown)");
+                E.Before = BeforeOr(Field, TEXT("(unknown)"));
                 E.After = JsonValueToString(MakeShared<FJsonValueObject>(*Sub));
                 Entries.Add(MoveTemp(E));
             }
@@ -265,7 +357,7 @@ static void PushDiffEntries(const FString& Cmd, const TSharedPtr<FJsonObject>& P
         FHaybaDiffEntry E;
         E.ActorLabel = ActorId;
         E.Property = Prop;
-        E.Before = TEXT("(unknown)");
+        E.Before = BeforeOr(Prop, TEXT("(unknown)"));
         E.After = JsonValueToString(Val);
         Entries.Add(MoveTemp(E));
     }
@@ -279,7 +371,7 @@ static void PushDiffEntries(const FString& Cmd, const TSharedPtr<FJsonObject>& P
             FHaybaDiffEntry E;
             E.ActorLabel = ActorId;
             E.Property = TEXT("tags");
-            E.Before = TEXT("(unknown)");
+            E.Before = BeforeOr(TEXT("tags"), TEXT("(unknown)"));
             E.After = After;
             Entries.Add(MoveTemp(E));
         }
@@ -429,6 +521,9 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         return MakeErrorResponse(Id, FString::Printf(TEXT("Unknown command: %s"), *Cmd));
     }
 
+    // Capture actor before-state for destructive ops so the Diff panel shows true Before -> After.
+    const TMap<FString, FString> BeforeState = CaptureBeforeState(Cmd, Params);
+
     const double Start = FPlatformTime::Seconds();
     FHaybaHandlerResult Result = (*Found)->Handle(Cmd, Params);
     const int64 DurMs = (int64)((FPlatformTime::Seconds() - Start) * 1000.0);
@@ -445,10 +540,10 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         else if (Cmd == TEXT("scene_validate_physics")) PushPhysicsResultsToPanel(Result.Data);
         else if (Cmd == TEXT("memory_query"))           PushMemoryResultsToPanel(Result.Data);
     }
-    // Log destructive ops to the Diff panel (params describe the requested change).
+    // Log destructive ops to the Diff panel with true Before / requested After.
     if (Result.bOk)
     {
-        PushDiffEntries(Cmd, Params);
+        PushDiffEntries(Cmd, Params, BeforeState);
     }
 
     // Push to Tool Stream panel for live observability.
