@@ -1,5 +1,5 @@
-// Plugins/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/PCGExWizardWidget.cpp
-#include "HaybaMCPWizardWidget.h"
+// Plugins/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPChatPanel.cpp
+#include "HaybaMCPChatPanel.h"
 #include "HaybaMCPModule.h"
 #include "HaybaMCPClaudeClient.h"
 #include "HaybaMCPSettings.h"
@@ -39,7 +39,7 @@ static const FLinearColor ColorMuted  (0.380f, 0.380f, 0.380f, 1.0f);
 // Construct
 // ---------------------------------------------------------------------------
 
-void SHaybaMCPWizardWidget::Construct(const FArguments& InArgs, FHaybaMCPModule* InModule)
+void SHaybaMCPChatPanel::Construct(const FArguments& InArgs, FHaybaMCPModule* InModule)
 {
     Module = InModule;
 
@@ -68,13 +68,13 @@ void SHaybaMCPWizardWidget::Construct(const FArguments& InArgs, FHaybaMCPModule*
 // Screen routing
 // ---------------------------------------------------------------------------
 
-void SHaybaMCPWizardWidget::ShowScreen(EHaybaMCPScreen Screen)
+void SHaybaMCPChatPanel::ShowScreen(EHaybaMCPScreen Screen)
 {
     CurrentScreen = Screen;
     RebuildContent();
 }
 
-void SHaybaMCPWizardWidget::RebuildContent()
+void SHaybaMCPChatPanel::RebuildContent()
 {
     if (!ScreenSwitcher.IsValid()) return;
 
@@ -94,7 +94,7 @@ void SHaybaMCPWizardWidget::RebuildContent()
 // Shared header
 // ---------------------------------------------------------------------------
 
-TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildHeader(const FText& Title)
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildHeader(const FText& Title)
 {
     return SNew(SBorder)
         .BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
@@ -125,7 +125,7 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildHeader(const FText& Title)
             [
                 SNew(SButton)
                 .Text(LOCTEXT("SetupBtn", "\u2699 Setup"))
-                .OnClicked(this, &SHaybaMCPWizardWidget::OnSetupButton)
+                .OnClicked(this, &SHaybaMCPChatPanel::OnSetupButton)
             ]
         ];
 }
@@ -134,7 +134,7 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildHeader(const FText& Title)
 // Wizard screen
 // ---------------------------------------------------------------------------
 
-TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildWizardScreen()
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildWizardScreen()
 {
     TSharedRef<SWidget> PageContent = SNullWidget::NullWidget;
     switch (WizardPage)
@@ -155,7 +155,7 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildWizardScreen()
         [
             SNew(SButton)
             .Text(LOCTEXT("Back", "\u2190 Back"))
-            .OnClicked(this, &SHaybaMCPWizardWidget::OnWizardBack)
+            .OnClicked(this, &SHaybaMCPChatPanel::OnWizardBack)
         ];
     }
     NavRow->AddSlot().FillWidth(1.0f);
@@ -165,7 +165,7 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildWizardScreen()
         [
             SNew(SButton)
             .Text(LOCTEXT("Next", "Next \u2192"))
-            .OnClicked(this, &SHaybaMCPWizardWidget::OnWizardNext)
+            .OnClicked(this, &SHaybaMCPChatPanel::OnWizardNext)
         ];
     }
     else
@@ -174,7 +174,7 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildWizardScreen()
         [
             SNew(SButton)
             .Text(LOCTEXT("Finish", "Finish"))
-            .OnClicked(this, &SHaybaMCPWizardWidget::OnWizardFinish)
+            .OnClicked(this, &SHaybaMCPChatPanel::OnWizardFinish)
         ];
     }
 
@@ -196,7 +196,7 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildWizardScreen()
         [ NavRow ];
 }
 
-TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildWizardPage0_Welcome()
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildWizardPage0_Welcome()
 {
     return SNew(SVerticalBox)
         + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 12)
@@ -226,7 +226,7 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildWizardPage0_Welcome()
         ];
 }
 
-TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildWizardPage1_ModeChoice()
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildWizardPage1_ModeChoice()
 {
     return SNew(SVerticalBox)
         + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 12)
@@ -251,12 +251,12 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildWizardPage1_ModeChoice()
         ];
 }
 
-TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildModeCard(const FText& Title, const FText& Desc, EHaybaMCPOperationMode Mode)
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildModeCard(const FText& Title, const FText& Desc, EHaybaMCPOperationMode Mode)
 {
     const bool bSelected = (ChosenMode == Mode);
-    FReply (SHaybaMCPWizardWidget::*Handler)() = (Mode == EHaybaMCPOperationMode::Integrated)
-        ? &SHaybaMCPWizardWidget::OnSelectIntegrated
-        : &SHaybaMCPWizardWidget::OnSelectApiKey;
+    FReply (SHaybaMCPChatPanel::*Handler)() = (Mode == EHaybaMCPOperationMode::Integrated)
+        ? &SHaybaMCPChatPanel::OnSelectIntegrated
+        : &SHaybaMCPChatPanel::OnSelectApiKey;
 
     return SNew(SButton)
         .OnClicked(this, Handler)
@@ -274,7 +274,7 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildModeCard(const FText& Title, con
         ];
 }
 
-TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildWizardPage2a_Integrated()
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildWizardPage2a_Integrated()
 {
     FString MCPPath = ResolveMCPServerPath();
     FString ClaudeCmd  = FString::Printf(TEXT("claude mcp add hayba-pcgex -- node \"%s\""), *MCPPath);
@@ -320,7 +320,7 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildWizardPage2a_Integrated()
         [ MakeRow(LOCTEXT("OpenCodeLabel", "OpenCode (.opencode/config.json):"), OpenCode) ];
 }
 
-TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildWizardPage2b_ApiKey()
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildWizardPage2b_ApiKey()
 {
     FString CurrentKey = FHaybaMCPSettings::GetSharedApiKey();
 
@@ -352,7 +352,7 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildWizardPage2b_ApiKey()
 // Mode Selection Screen
 // ---------------------------------------------------------------------------
 
-TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildModeSelectScreen()
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildModeSelectScreen()
 {
     return SNew(SVerticalBox)
         + SVerticalBox::Slot().AutoHeight()
@@ -383,7 +383,7 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildModeSelectScreen()
 // MCP Status Screen (Mode A)
 // ---------------------------------------------------------------------------
 
-TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildMCPStatusScreen()
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildMCPStatusScreen()
 {
     FHaybaMCPSettings& S = FHaybaMCPSettings::Get();
     FString StatusText = FString::Printf(TEXT("\u25CF LISTENING   127.0.0.1:52342"));
@@ -435,7 +435,7 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildMCPStatusScreen()
         ];
 }
 
-void SHaybaMCPWizardWidget::AddActivity(const FString& Text)
+void SHaybaMCPChatPanel::AddActivity(const FString& Text)
 {
     if (!ActivityLog.IsValid()) return;
     ActivityLog->AddSlot()
@@ -452,7 +452,7 @@ void SHaybaMCPWizardWidget::AddActivity(const FString& Text)
 // Chat Screen (Mode B)
 // ---------------------------------------------------------------------------
 
-TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildChatScreen()
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildChatScreen()
 {
     const FHaybaMCPSettings& S = FHaybaMCPSettings::Get();
 
@@ -467,7 +467,7 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildChatScreen()
 
         + SVerticalBox::Slot().AutoHeight()
         [
-            SNew(SBox).Visibility(this, &SHaybaMCPWizardWidget::GetSettingsPanelVisibility)
+            SNew(SBox).Visibility(this, &SHaybaMCPChatPanel::GetSettingsPanelVisibility)
             [ BuildSettingsPanel() ]
         ]
 
@@ -492,7 +492,7 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildChatScreen()
 // Settings panel (inside chat screen)
 // ---------------------------------------------------------------------------
 
-TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildSettingsPanel()
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildSettingsPanel()
 {
     const FHaybaMCPSettings& S = FHaybaMCPSettings::Get();
     FString CurrentKey = FHaybaMCPSettings::GetSharedApiKey();
@@ -546,7 +546,7 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildSettingsPanel()
             [
                 SNew(SButton)
                 .Text(LOCTEXT("SaveSettings", "Save"))
-                .OnClicked(this, &SHaybaMCPWizardWidget::OnSaveSettings)
+                .OnClicked(this, &SHaybaMCPChatPanel::OnSaveSettings)
             ]
 
             + SVerticalBox::Slot().AutoHeight().Padding(0, 16, 0, 0)
@@ -610,14 +610,14 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildSettingsPanel()
                     SNew(SButton)
                     .Text(LOCTEXT("SetupConventions", "Setup Conventions"))
                     .ToolTipText(LOCTEXT("SetupConventionsTip", "Open the conventions wizard in Claude"))
-                    .OnClicked(this, &SHaybaMCPWizardWidget::OnSetupConventions)
+                    .OnClicked(this, &SHaybaMCPChatPanel::OnSetupConventions)
                 ]
                 + SHorizontalBox::Slot().AutoWidth()
                 [
                     SNew(SButton)
                     .Text(LOCTEXT("AnalyzeConventions", "Analyze Project"))
                     .ToolTipText(LOCTEXT("AnalyzeConventionsTip", "Scan project folder and infer conventions"))
-                    .OnClicked(this, &SHaybaMCPWizardWidget::OnAnalyzeConventions)
+                    .OnClicked(this, &SHaybaMCPChatPanel::OnAnalyzeConventions)
                 ]
             ]
         ];
@@ -627,7 +627,7 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildSettingsPanel()
 // Steps sidebar
 // ---------------------------------------------------------------------------
 
-TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildStepsSidebar()
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildStepsSidebar()
 {
     return SNew(SBorder)
         .BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
@@ -713,12 +713,12 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildStepsSidebar()
 // Chat area, input, action bar
 // ---------------------------------------------------------------------------
 
-TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildChatArea()
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildChatArea()
 {
     return SAssignNew(ChatScrollBox, SScrollBox).Orientation(Orient_Vertical);
 }
 
-TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildInputArea()
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildInputArea()
 {
     return SNew(SVerticalBox)
         + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
@@ -741,15 +741,15 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildInputArea()
         [
             SNew(SButton)
             .Text(LOCTEXT("SendBtn", "Send \u23CE"))
-            .OnClicked(this, &SHaybaMCPWizardWidget::OnSendMessage)
+            .OnClicked(this, &SHaybaMCPChatPanel::OnSendMessage)
             .IsEnabled_Lambda([this]() { return CanSendMessage(); })
         ];
 }
 
-TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildActionBar()
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildActionBar()
 {
     return SNew(SBox)
-        .Visibility(this, &SHaybaMCPWizardWidget::GetActionBarVisibility)
+        .Visibility(this, &SHaybaMCPChatPanel::GetActionBarVisibility)
         [
             SNew(SBorder)
             .BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
@@ -760,19 +760,19 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildActionBar()
                 [
                     SNew(SButton)
                     .Text(LOCTEXT("ApproveBtn", "\u2713  Approve & Continue"))
-                    .OnClicked(this, &SHaybaMCPWizardWidget::OnApproveStep)
+                    .OnClicked(this, &SHaybaMCPChatPanel::OnApproveStep)
                 ]
                 + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)
                 [
                     SNew(SButton)
                     .Text(LOCTEXT("TestBtn", "\u25B6  Test"))
-                    .OnClicked(this, &SHaybaMCPWizardWidget::OnTestIt)
+                    .OnClicked(this, &SHaybaMCPChatPanel::OnTestIt)
                 ]
                 + SHorizontalBox::Slot().AutoWidth()
                 [
                     SNew(SButton)
                     .Text(LOCTEXT("RedoBtn", "\u21ba  Redo"))
-                    .OnClicked(this, &SHaybaMCPWizardWidget::OnRedoStep)
+                    .OnClicked(this, &SHaybaMCPChatPanel::OnRedoStep)
                 ]
             ]
         ];
@@ -782,7 +782,7 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildActionBar()
 // Message widgets — plain rows, no colored bubbles
 // ---------------------------------------------------------------------------
 
-TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildMessageWidget(const FHaybaMCPChatMessage& Message)
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildMessageWidget(const FHaybaMCPChatMessage& Message)
 {
     FText RoleLabel = Message.bFromUser
         ? LOCTEXT("YouLabel", "You")
@@ -817,13 +817,13 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildMessageWidget(const FHaybaMCPCha
             [
                 SNew(SButton)
                 .Text(LOCTEXT("PreviewBtn", "Preview"))
-                .OnClicked(this, &SHaybaMCPWizardWidget::OnPreviewGraph)
+                .OnClicked(this, &SHaybaMCPChatPanel::OnPreviewGraph)
             ]
             + SHorizontalBox::Slot().AutoWidth()
             [
                 SNew(SButton)
                 .Text(LOCTEXT("CreateBtn", "\u2B06  Create in UE"))
-                .OnClicked(this, &SHaybaMCPWizardWidget::OnCreateInUE)
+                .OnClicked(this, &SHaybaMCPChatPanel::OnCreateInUE)
             ]
         ];
     }
@@ -832,20 +832,20 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildMessageWidget(const FHaybaMCPCha
     [ Content ];
 }
 
-TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildStepActionButtons(int32 StepIndex)
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildStepActionButtons(int32 StepIndex)
 {
     return SNew(SHorizontalBox)
         + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 4, 0)
         [
             SNew(SButton)
             .Text(LOCTEXT("ApproveStepBtn", "\u2713"))
-            .OnClicked(this, &SHaybaMCPWizardWidget::OnApproveStep)
+            .OnClicked(this, &SHaybaMCPChatPanel::OnApproveStep)
         ]
         + SHorizontalBox::Slot().AutoWidth()
         [
             SNew(SButton)
             .Text(LOCTEXT("RedoStepBtn", "\u21ba"))
-            .OnClicked(this, &SHaybaMCPWizardWidget::OnRedoStep)
+            .OnClicked(this, &SHaybaMCPChatPanel::OnRedoStep)
         ];
 }
 
@@ -853,7 +853,7 @@ TSharedRef<SWidget> SHaybaMCPWizardWidget::BuildStepActionButtons(int32 StepInde
 // Chat management
 // ---------------------------------------------------------------------------
 
-void SHaybaMCPWizardWidget::RebuildChatUI()
+void SHaybaMCPChatPanel::RebuildChatUI()
 {
     if (!ChatScrollBox.IsValid()) return;
     ChatScrollBox->ClearChildren();
@@ -862,7 +862,7 @@ void SHaybaMCPWizardWidget::RebuildChatUI()
     ScrollToBottom();
 }
 
-void SHaybaMCPWizardWidget::RebuildSidebar()
+void SHaybaMCPChatPanel::RebuildSidebar()
 {
     if (!StepListBox.IsValid()) return;
     StepListBox->ClearChildren();
@@ -916,7 +916,7 @@ void SHaybaMCPWizardWidget::RebuildSidebar()
     }
 }
 
-void SHaybaMCPWizardWidget::ScrollToBottom()
+void SHaybaMCPChatPanel::ScrollToBottom()
 {
     if (!ChatScrollBox.IsValid()) return;
     TWeakPtr<SScrollBox> WeakScroll = ChatScrollBox;
@@ -926,7 +926,7 @@ void SHaybaMCPWizardWidget::ScrollToBottom()
     });
 }
 
-void SHaybaMCPWizardWidget::AddAIMessage(const FString& Text, TSharedPtr<FJsonObject> Graph, bool bShowActions)
+void SHaybaMCPChatPanel::AddAIMessage(const FString& Text, TSharedPtr<FJsonObject> Graph, bool bShowActions)
 {
     FHaybaMCPChatMessage Msg;
     Msg.bFromUser     = false;
@@ -937,7 +937,7 @@ void SHaybaMCPWizardWidget::AddAIMessage(const FString& Text, TSharedPtr<FJsonOb
     RebuildChatUI();
 }
 
-void SHaybaMCPWizardWidget::AddUserMessage(const FString& Text)
+void SHaybaMCPChatPanel::AddUserMessage(const FString& Text)
 {
     FHaybaMCPChatMessage Msg;
     Msg.bFromUser = true;
@@ -946,7 +946,7 @@ void SHaybaMCPWizardWidget::AddUserMessage(const FString& Text)
     RebuildChatUI();
 }
 
-void SHaybaMCPWizardWidget::AddTypingIndicator()
+void SHaybaMCPChatPanel::AddTypingIndicator()
 {
     if (bTypingIndicatorVisible) return;
     bTypingIndicatorVisible = true;
@@ -958,7 +958,7 @@ void SHaybaMCPWizardWidget::AddTypingIndicator()
     RebuildChatUI();
 }
 
-void SHaybaMCPWizardWidget::RemoveTypingIndicator()
+void SHaybaMCPChatPanel::RemoveTypingIndicator()
 {
     if (!bTypingIndicatorVisible) return;
     bTypingIndicatorVisible = false;
@@ -975,14 +975,14 @@ void SHaybaMCPWizardWidget::RemoveTypingIndicator()
 // State queries
 // ---------------------------------------------------------------------------
 
-FText SHaybaMCPWizardWidget::GetStepProgressText() const
+FText SHaybaMCPChatPanel::GetStepProgressText() const
 {
     if (Session.Steps.IsEmpty()) return FText::GetEmpty();
     return FText::FromString(FString::Printf(TEXT("Step %d / %d"),
         Session.CurrentStep + 1, Session.Steps.Num()));
 }
 
-EVisibility SHaybaMCPWizardWidget::GetActionBarVisibility() const
+EVisibility SHaybaMCPChatPanel::GetActionBarVisibility() const
 {
     if (!Session.HasCurrentStep()) return EVisibility::Collapsed;
     const FHaybaMCPWizardStep& Step = Session.Steps[Session.CurrentStep];
@@ -990,17 +990,17 @@ EVisibility SHaybaMCPWizardWidget::GetActionBarVisibility() const
         ? EVisibility::Visible : EVisibility::Collapsed;
 }
 
-EVisibility SHaybaMCPWizardWidget::GetServerPromptVisibility() const
+EVisibility SHaybaMCPChatPanel::GetServerPromptVisibility() const
 {
     return (Module && !Module->IsServerRunning()) ? EVisibility::Visible : EVisibility::Collapsed;
 }
 
-EVisibility SHaybaMCPWizardWidget::GetSettingsPanelVisibility() const
+EVisibility SHaybaMCPChatPanel::GetSettingsPanelVisibility() const
 {
     return bSettingsVisible ? EVisibility::Visible : EVisibility::Collapsed;
 }
 
-bool SHaybaMCPWizardWidget::CanSendMessage() const
+bool SHaybaMCPChatPanel::CanSendMessage() const
 {
     return !Session.bWaitingForAI;
 }
@@ -1009,7 +1009,7 @@ bool SHaybaMCPWizardWidget::CanSendMessage() const
 // Tick
 // ---------------------------------------------------------------------------
 
-void SHaybaMCPWizardWidget::Tick(const FGeometry& AllottedGeometry, double InCurrentTime, float InDeltaTime)
+void SHaybaMCPChatPanel::Tick(const FGeometry& AllottedGeometry, double InCurrentTime, float InDeltaTime)
 {
     SCompoundWidget::Tick(AllottedGeometry, InCurrentTime, InDeltaTime);
 }
@@ -1018,21 +1018,21 @@ void SHaybaMCPWizardWidget::Tick(const FGeometry& AllottedGeometry, double InCur
 // Wizard navigation
 // ---------------------------------------------------------------------------
 
-FReply SHaybaMCPWizardWidget::OnWizardNext()
+FReply SHaybaMCPChatPanel::OnWizardNext()
 {
     WizardPage = FMath::Min(WizardPage + 1, 2);
     RebuildContent();
     return FReply::Handled();
 }
 
-FReply SHaybaMCPWizardWidget::OnWizardBack()
+FReply SHaybaMCPChatPanel::OnWizardBack()
 {
     WizardPage = FMath::Max(WizardPage - 1, 0);
     RebuildContent();
     return FReply::Handled();
 }
 
-FReply SHaybaMCPWizardWidget::OnWizardFinish()
+FReply SHaybaMCPChatPanel::OnWizardFinish()
 {
     FHaybaMCPSettings& S = FHaybaMCPSettings::Get();
     S.bHasSeenWizard = true;
@@ -1045,7 +1045,7 @@ FReply SHaybaMCPWizardWidget::OnWizardFinish()
     return FReply::Handled();
 }
 
-FReply SHaybaMCPWizardWidget::OnSelectIntegrated()
+FReply SHaybaMCPChatPanel::OnSelectIntegrated()
 {
     ChosenMode = EHaybaMCPOperationMode::Integrated;
     if (CurrentScreen == EHaybaMCPScreen::Wizard)
@@ -1062,7 +1062,7 @@ FReply SHaybaMCPWizardWidget::OnSelectIntegrated()
     return FReply::Handled();
 }
 
-FReply SHaybaMCPWizardWidget::OnSelectApiKey()
+FReply SHaybaMCPChatPanel::OnSelectApiKey()
 {
     ChosenMode = EHaybaMCPOperationMode::ApiKey;
     if (CurrentScreen == EHaybaMCPScreen::Wizard)
@@ -1083,7 +1083,7 @@ FReply SHaybaMCPWizardWidget::OnSelectApiKey()
 // Action handlers (chat)
 // ---------------------------------------------------------------------------
 
-FReply SHaybaMCPWizardWidget::OnSendMessage()
+FReply SHaybaMCPChatPanel::OnSendMessage()
 {
     if (!InputBox.IsValid()) return FReply::Handled();
     FString Text = InputBox->GetText().ToString().TrimStartAndEnd();
@@ -1098,7 +1098,7 @@ FReply SHaybaMCPWizardWidget::OnSendMessage()
     return FReply::Handled();
 }
 
-FReply SHaybaMCPWizardWidget::OnApproveStep()
+FReply SHaybaMCPChatPanel::OnApproveStep()
 {
     if (!Session.HasCurrentStep()) return FReply::Handled();
     Session.GetCurrentStep().Status = EHaybaMCPWizardStepStatus::Approved;
@@ -1107,7 +1107,7 @@ FReply SHaybaMCPWizardWidget::OnApproveStep()
     return FReply::Handled();
 }
 
-FReply SHaybaMCPWizardWidget::OnRedoStep()
+FReply SHaybaMCPChatPanel::OnRedoStep()
 {
     if (!Session.HasCurrentStep()) return FReply::Handled();
     Session.GetCurrentStep().Status = EHaybaMCPWizardStepStatus::Redoing;
@@ -1118,7 +1118,7 @@ FReply SHaybaMCPWizardWidget::OnRedoStep()
     return FReply::Handled();
 }
 
-FReply SHaybaMCPWizardWidget::OnPreviewGraph()
+FReply SHaybaMCPChatPanel::OnPreviewGraph()
 {
     if (!Session.HasCurrentStep()) return FReply::Handled();
     TSharedPtr<FJsonObject> Graph = Session.GetCurrentStep().Graph;
@@ -1135,7 +1135,7 @@ FReply SHaybaMCPWizardWidget::OnPreviewGraph()
     return FReply::Handled();
 }
 
-FReply SHaybaMCPWizardWidget::OnCreateInUE()
+FReply SHaybaMCPChatPanel::OnCreateInUE()
 {
     if (!Session.HasCurrentStep() || !Module) return FReply::Handled();
     TSharedPtr<FJsonObject> Graph = Session.GetCurrentStep().Graph;
@@ -1157,11 +1157,11 @@ FReply SHaybaMCPWizardWidget::OnCreateInUE()
     AddAIMessage(FString::Printf(TEXT("Creating \"%s\"..."), *AssetName));
 
     int32 StepIndex = Session.CurrentStep;
-    TWeakPtr<SHaybaMCPWizardWidget> WeakSelf = SharedThis(this);
+    TWeakPtr<SHaybaMCPChatPanel> WeakSelf = SharedThis(this);
     Module->SendTcpCommand(TEXT("create_graph"), Params,
         [WeakSelf, AssetName, StepIndex](bool bOk, const TSharedPtr<FJsonObject>& Response)
     {
-        TSharedPtr<SHaybaMCPWizardWidget> Self = WeakSelf.Pin();
+        TSharedPtr<SHaybaMCPChatPanel> Self = WeakSelf.Pin();
         if (!Self.IsValid()) return;
 
         if (!bOk || !Response.IsValid())
@@ -1191,7 +1191,7 @@ FReply SHaybaMCPWizardWidget::OnCreateInUE()
     return FReply::Handled();
 }
 
-FReply SHaybaMCPWizardWidget::OnTestIt()
+FReply SHaybaMCPChatPanel::OnTestIt()
 {
     if (!Session.HasCurrentStep() || !Module) return FReply::Handled();
     FString AssetPath = Session.GetCurrentStep().AssetPath;
@@ -1204,11 +1204,11 @@ FReply SHaybaMCPWizardWidget::OnTestIt()
     TSharedRef<FJsonObject> Params = MakeShared<FJsonObject>();
     Params->SetStringField(TEXT("assetPath"), AssetPath);
 
-    TWeakPtr<SHaybaMCPWizardWidget> WeakSelf = SharedThis(this);
+    TWeakPtr<SHaybaMCPChatPanel> WeakSelf = SharedThis(this);
     Module->SendTcpCommand(TEXT("execute_graph"), Params,
         [WeakSelf](bool bOk, const TSharedPtr<FJsonObject>& Response)
     {
-        TSharedPtr<SHaybaMCPWizardWidget> Self = WeakSelf.Pin();
+        TSharedPtr<SHaybaMCPChatPanel> Self = WeakSelf.Pin();
         if (!Self.IsValid()) return;
 
         if (!bOk || !Response.IsValid()) { Self->AddAIMessage(TEXT("Failed to execute graph.")); return; }
@@ -1230,19 +1230,19 @@ FReply SHaybaMCPWizardWidget::OnTestIt()
     return FReply::Handled();
 }
 
-FReply SHaybaMCPWizardWidget::OnStartServer()
+FReply SHaybaMCPChatPanel::OnStartServer()
 {
     if (Module) Module->StartMCPServer();
     return FReply::Handled();
 }
 
-FReply SHaybaMCPWizardWidget::OnToggleSettings()
+FReply SHaybaMCPChatPanel::OnToggleSettings()
 {
     bSettingsVisible = !bSettingsVisible;
     return FReply::Handled();
 }
 
-FReply SHaybaMCPWizardWidget::OnSaveSettings()
+FReply SHaybaMCPChatPanel::OnSaveSettings()
 {
     FHaybaMCPSettings& S = FHaybaMCPSettings::Get();
     if (ApiKeyBox.IsValid())     FHaybaMCPSettings::SetSharedApiKey(ApiKeyBox->GetText().ToString().TrimStartAndEnd());
@@ -1268,13 +1268,13 @@ FReply SHaybaMCPWizardWidget::OnSaveSettings()
 // Conventions actions
 // ---------------------------------------------------------------------------
 
-FReply SHaybaMCPWizardWidget::OnSetupConventions()
+FReply SHaybaMCPChatPanel::OnSetupConventions()
 {
     AddAIMessage(TEXT("Opening conventions setup wizard. I'll guide you through configuring your UE project's folder structure, naming conventions, and workflow preferences."));
     return FReply::Handled();
 }
 
-FReply SHaybaMCPWizardWidget::OnAnalyzeConventions()
+FReply SHaybaMCPChatPanel::OnAnalyzeConventions()
 {
     FString ProjectDir = FPaths::ProjectDir();
     if (ProjectDir.IsEmpty())
@@ -1291,7 +1291,7 @@ FReply SHaybaMCPWizardWidget::OnAnalyzeConventions()
 // Step flow
 // ---------------------------------------------------------------------------
 
-void SHaybaMCPWizardWidget::SendToMCP(const FString& UserMessage)
+void SHaybaMCPChatPanel::SendToMCP(const FString& UserMessage)
 {
     const FHaybaMCPSettings& S = FHaybaMCPSettings::Get();
     if (!S.HasApiKey())
@@ -1304,12 +1304,12 @@ void SHaybaMCPWizardWidget::SendToMCP(const FString& UserMessage)
     AddTypingIndicator();
 
     FOnClaudeResponse Callback;
-    Callback.BindSP(this, &SHaybaMCPWizardWidget::OnClaudeResponse);
+    Callback.BindSP(this, &SHaybaMCPChatPanel::OnClaudeResponse);
     FHaybaMCPClaudeClient::SendMessage(GetHaybaMCPWizardSystemPrompt(), UserMessage,
         FHaybaMCPSettings::GetSharedApiKey(), S.Model, Callback);
 }
 
-void SHaybaMCPWizardWidget::OnClaudeResponse(bool bSuccess, const FString& ResponseText)
+void SHaybaMCPChatPanel::OnClaudeResponse(bool bSuccess, const FString& ResponseText)
 {
     RemoveTypingIndicator();
     Session.bWaitingForAI = false;
@@ -1345,12 +1345,12 @@ void SHaybaMCPWizardWidget::OnClaudeResponse(bool bSuccess, const FString& Respo
     }
 }
 
-void SHaybaMCPWizardWidget::OnMCPResponse(bool bSuccess, const FString& ResponseText, TSharedPtr<FJsonObject> Graph)
+void SHaybaMCPChatPanel::OnMCPResponse(bool bSuccess, const FString& ResponseText, TSharedPtr<FJsonObject> Graph)
 {
     UE_LOG(LogHaybaMCPWizard, Log, TEXT("OnMCPResponse: %s"), *ResponseText);
 }
 
-void SHaybaMCPWizardWidget::InitializeSession(const FString& Goal)
+void SHaybaMCPChatPanel::InitializeSession(const FString& Goal)
 {
     Session.Goal      = Goal;
     Session.SessionId = FGuid::NewGuid().ToString();
@@ -1359,7 +1359,7 @@ void SHaybaMCPWizardWidget::InitializeSession(const FString& Goal)
     SendToMCP(FString::Printf(TEXT("[INIT] Goal: %s"), *Goal));
 }
 
-void SHaybaMCPWizardWidget::AdvanceToNextStep()
+void SHaybaMCPChatPanel::AdvanceToNextStep()
 {
     int32 Next = Session.CurrentStep + 1;
     if (Session.Steps.IsValidIndex(Next))
@@ -1377,7 +1377,7 @@ void SHaybaMCPWizardWidget::AdvanceToNextStep()
     }
 }
 
-void SHaybaMCPWizardWidget::RedoCurrentStep()
+void SHaybaMCPChatPanel::RedoCurrentStep()
 {
     OnRedoStep();
 }
@@ -1386,13 +1386,13 @@ void SHaybaMCPWizardWidget::RedoCurrentStep()
 // Helpers
 // ---------------------------------------------------------------------------
 
-FReply SHaybaMCPWizardWidget::OnCopyText(FString Text)
+FReply SHaybaMCPChatPanel::OnCopyText(FString Text)
 {
     FPlatformApplicationMisc::ClipboardCopy(*Text);
     return FReply::Handled();
 }
 
-FString SHaybaMCPWizardWidget::ResolveMCPServerPath() const
+FString SHaybaMCPChatPanel::ResolveMCPServerPath() const
 {
     TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("HaybaMCPToolkit"));
     if (Plugin.IsValid())

@@ -1,4 +1,4 @@
-// Plugins/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPWizardWidget.h
+// Plugins/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPChatPanel.h
 #pragma once
 
 #include "CoreMinimal.h"
@@ -21,10 +21,10 @@ enum class EHaybaMCPScreen : uint8
 	ChatUI,
 };
 
-class SHaybaMCPWizardWidget : public SCompoundWidget
+class SHaybaMCPChatPanel : public SCompoundWidget
 {
 public:
-	SLATE_BEGIN_ARGS(SHaybaMCPWizardWidget) {}
+	SLATE_BEGIN_ARGS(SHaybaMCPChatPanel) {}
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs, FHaybaMCPModule* InModule);

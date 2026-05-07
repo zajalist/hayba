@@ -1,5 +1,5 @@
 #include "HaybaMCPModule.h"
-#include "HaybaMCPWizardWidget.h"
+#include "HaybaMCPChatPanel.h"
 #include "HaybaMCPTcpServer.h"
 #include "HaybaMCPCommandHandler.h"
 #include "handlers/HaybaMCPLegacyHandler.h"
@@ -280,7 +280,7 @@ TSharedRef<SDockTab> FHaybaMCPModule::OnSpawnTab(const FSpawnTabArgs& Args)
     return SNew(SDockTab)
         .TabRole(ETabRole::NomadTab)
         [
-            SNew(SHaybaMCPWizardWidget, this)
+            SNew(SHaybaMCPChatPanel, this)
         ];
 }
 
