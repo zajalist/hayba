@@ -1,7 +1,9 @@
 #include "HaybaMCPOnboardingWidget.h"
 #include "HaybaMCPSettings.h"
+#include "HaybaMCPStyle.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SBorder.h"
+#include "Widgets/Images/SImage.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
@@ -103,18 +105,21 @@ void SHaybaMCPOnboardingWidget::ShowScreen(EHaybaOnboardingScreen Screen)
 
 TSharedRef<SWidget> SHaybaMCPOnboardingWidget::BuildSplashScreen()
 {
+    const FSlateBrush* LogoBrush     = FHaybaMCPStyle::GetBrush(TEXT("Hayba.Logo"));
+    const FSlateBrush* WordmarkBrush = FHaybaMCPStyle::GetBrush(TEXT("Hayba.Wordmark"));
+
     return SNew(SBox).HAlign(HAlign_Center).VAlign(VAlign_Center)
     [
         SNew(SVerticalBox)
         + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)
         [
-            SNew(SBox).WidthOverride(120).HeightOverride(120)
-            [
-                SNew(SBorder)
-                .BorderBackgroundColor(FLinearColor(0.05f, 0.4f, 0.8f))
-                .HAlign(HAlign_Center).VAlign(VAlign_Center)
-                [ SNew(STextBlock).Text(FText::FromString(TEXT("HAYBA"))) ]
-            ]
+            SNew(SBox).WidthOverride(160).HeightOverride(160)
+            [ SNew(SImage).Image(LogoBrush) ]
+        ]
+        + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center).Padding(0, 16, 0, 0)
+        [
+            SNew(SBox).WidthOverride(280).HeightOverride(60)
+            [ SNew(SImage).Image(WordmarkBrush) ]
         ]
         + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center).Padding(0, 12)
         [ SNew(STextBlock).Text(NSLOCTEXT("Hayba", "Loading", "Setting up...")) ]

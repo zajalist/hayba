@@ -8,6 +8,7 @@
 #include "HaybaMCPMemoryPanel.h"
 #include "HaybaMCPOnboardingWidget.h"
 #include "HaybaMCPPlanModeWidget.h"
+#include "HaybaMCPStyle.h"
 #include "Editor.h"
 #include "TimerManager.h"
 #include "ToolMenus.h"
@@ -77,6 +78,7 @@ void FHaybaMCPModule::StartupModule()
     PluginBaseDir = IPluginManager::Get().FindPlugin(TEXT("HaybaMCPToolkit"))->GetBaseDir();
     UE_LOG(LogHaybaMCP, Log, TEXT("HaybaMCPToolkit module started. Base dir: %s"), *PluginBaseDir);
 
+    FHaybaMCPStyle::Initialize();
     FHaybaMCPSettings::Get().Load();
 
     CommandHandler = MakeShared<FHaybaMCPCommandHandler>();
@@ -191,6 +193,7 @@ void FHaybaMCPModule::ShutdownModule()
         TM->UnregisterNomadTabSpawner(Tab);
     StopTcpServer();
     StopMCPServer();
+    FHaybaMCPStyle::Shutdown();
     UE_LOG(LogHaybaMCP, Log, TEXT("HaybaMCPToolkit module shut down."));
 }
 
