@@ -11,6 +11,11 @@
 #include "handlers/HaybaMCPAssetHandler.h"
 #include "handlers/HaybaMCPBlueprintHandler.h"
 #include "handlers/HaybaMCPMaterialHandler.h"
+#include "handlers/HaybaMCPFoliageHandler.h"
+#include "handlers/HaybaMCPSplineHandler.h"
+#include "handlers/HaybaMCPWorldPartitionHandler.h"
+#include "handlers/HaybaMCPISMHandler.h"
+#include "handlers/HaybaMCPPhysicsHandler.h"
 #include "HaybaMCPCaptureActor.h"
 #include "HaybaMCPSettings.h"
 #include "Json.h"
@@ -44,6 +49,11 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPAssetHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPBlueprintHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPMaterialHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPFoliageHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPSplineHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPWorldPartitionHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPISMHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPPhysicsHandler>());
 
     FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
         TEXT("HaybaMCPToolkit"),
