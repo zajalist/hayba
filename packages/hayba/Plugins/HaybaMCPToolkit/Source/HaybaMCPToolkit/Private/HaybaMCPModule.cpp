@@ -16,6 +16,7 @@
 #include "handlers/HaybaMCPWorldPartitionHandler.h"
 #include "handlers/HaybaMCPISMHandler.h"
 #include "handlers/HaybaMCPPhysicsHandler.h"
+#include "handlers/HaybaMCPDocsHandler.h"
 #include "HaybaMCPCaptureActor.h"
 #include "HaybaMCPSettings.h"
 #include "Json.h"
@@ -54,6 +55,7 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPWorldPartitionHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPISMHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPPhysicsHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPDocsHandler>());
 
     FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
         TEXT("HaybaMCPToolkit"),
