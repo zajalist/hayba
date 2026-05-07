@@ -9,6 +9,7 @@
 #include "HaybaMCPSceneMapPanel.h"
 #include "HaybaMCPSceneMapData.h"
 #include "HaybaMCPValidationPanel.h"
+#include "HaybaMCPMemoryPanel.h"
 #include "Json.h"
 #include "Async/Async.h"
 #include "Modules/ModuleManager.h"
@@ -163,6 +164,36 @@ static void PushPhysicsResultsToPanel(const TSharedPtr<FJsonObject>& Data)
     });
 }
 
+static void PushMemoryResultsToPanel(const TSharedPtr<FJsonObject>& Data)
+{
+    if (!Data.IsValid()) return;
+    TArray<FString> Entries;
+    const TArray<TSharedPtr<FJsonValue>>* ResultsArr = nullptr;
+    if (Data->TryGetArrayField(TEXT("results"), ResultsArr))
+    {
+        for (const auto& V : *ResultsArr)
+        {
+            const TSharedPtr<FJsonObject> R = V->AsObject();
+            if (!R.IsValid()) continue;
+            FString Role, Content, Scope;
+            R->TryGetStringField(TEXT("agentRole"), Role);
+            R->TryGetStringField(TEXT("scope"),     Scope);
+            R->TryGetStringField(TEXT("content"),   Content);
+            Entries.Add(FString::Printf(TEXT("[%s/%s] %s"), *Scope, *Role, *Content));
+        }
+    }
+    AsyncTask(ENamedThreads::GameThread, [Entries = MoveTemp(Entries)]()
+    {
+        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        {
+            if (TSharedPtr<SHaybaMCPMemoryPanel> Panel = M->MemoryPanel.Pin())
+            {
+                Panel->SetResults(Entries);
+            }
+        }
+    });
+}
+
 static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject>& Params)
 {
     TArray<FHaybaPlanStep> Steps;
@@ -258,6 +289,16 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         return HandleProposePlan(Id, Params);
     }
 
+    // Special-case: ui_memory_set pushes memory rows into the Memory Inspector
+    // (called by the TS-side memoryQuery tool after the sqlite read).
+    if (Cmd == TEXT("ui_memory_set"))
+    {
+        PushMemoryResultsToPanel(Params);
+        auto Data = MakeShared<FJsonObject>();
+        Data->SetBoolField(TEXT("received"), true);
+        return MakeOkResponse(Id, Data);
+    }
+
     // Plan Mode safety gate: block destructive commands until a plan is acknowledged.
     {
         auto& S = FHaybaMCPSettings::Get();
@@ -297,6 +338,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     {
         if (Cmd == TEXT("scene_get_graph"))           PushSceneGraphToPanel(Result.Data);
         else if (Cmd == TEXT("scene_validate_physics")) PushPhysicsResultsToPanel(Result.Data);
+        else if (Cmd == TEXT("memory_query"))           PushMemoryResultsToPanel(Result.Data);
     }
 
     // Push to Tool Stream panel for live observability.
