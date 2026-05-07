@@ -26,7 +26,9 @@ public class HaybaMCPToolkit : ModuleRules
             "ApplicationCore",
             "Renderer", "RenderCore", "RHI",
             "HotReload",
-            "PythonScriptPlugin"
+            "PythonScriptPlugin",
+            "AssetRegistry", "AssetTools", "EditorScriptingUtilities", "DataValidation",
+            "Kismet", "KismetCompiler", "BlueprintGraph"
         });
     }
 }

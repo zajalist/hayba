@@ -8,6 +8,9 @@
 #include "handlers/HaybaMCPSceneGraphHandler.h"
 #include "handlers/HaybaMCPEditorHandler.h"
 #include "handlers/HaybaMCPPythonHandler.h"
+#include "handlers/HaybaMCPAssetHandler.h"
+#include "handlers/HaybaMCPBlueprintHandler.h"
+#include "handlers/HaybaMCPMaterialHandler.h"
 #include "HaybaMCPCaptureActor.h"
 #include "HaybaMCPSettings.h"
 #include "Json.h"
@@ -38,6 +41,9 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPSceneGraphHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPEditorHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPPythonHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPAssetHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPBlueprintHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPMaterialHandler>());
 
     FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
         TEXT("HaybaMCPToolkit"),
