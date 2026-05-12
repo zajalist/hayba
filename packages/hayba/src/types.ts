@@ -53,6 +53,21 @@ export interface PCGEdge {
   toPin: string;
 }
 
+/**
+ * Normalize legacy edge keys (`from`/`to`) to the canonical schema
+ * (`fromNode`/`toNode`). The C++ legacy handler accepts both, so tools
+ * that parse incoming graphs should pass edges through here first.
+ */
+export function normalizeEdges(edges: any[] | undefined): PCGEdge[] {
+  if (!Array.isArray(edges)) return [];
+  return edges.map(e => ({
+    fromNode: e.fromNode ?? e.from ?? '',
+    fromPin:  e.fromPin  ?? 'Out',
+    toNode:   e.toNode   ?? e.to ?? '',
+    toPin:    e.toPin    ?? 'In',
+  }));
+}
+
 /** Full PCGEx graph JSON schema v2 */
 export interface PCGGraphJSON {
   version: string;

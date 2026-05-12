@@ -3,10 +3,12 @@ import { LRUCache } from 'lru-cache';
 export type ToolEffect = 'read' | 'write' | 'destructive';
 
 export class ToolCache {
-  private cache: LRUCache<string, unknown>;
+  // `{}` here is the TS "non-nullish" upper bound that lru-cache v11 requires
+  // for stored values; we never cache `undefined` (see early return below).
+  private cache: LRUCache<string, {}>;
 
   constructor(opts: { ttlSeconds: number; max?: number }) {
-    this.cache = new LRUCache({ max: opts.max ?? 200, ttl: opts.ttlSeconds * 1000 });
+    this.cache = new LRUCache<string, {}>({ max: opts.max ?? 200, ttl: opts.ttlSeconds * 1000 });
   }
 
   async run<T>(
@@ -23,7 +25,9 @@ export class ToolCache {
     const hit = this.cache.get(key) as T | undefined;
     if (hit !== undefined) return hit;
     const v = await exec();
-    this.cache.set(key, v);
+    if (v !== undefined && v !== null) {
+      this.cache.set(key, v as {});
+    }
     return v;
   }
 }

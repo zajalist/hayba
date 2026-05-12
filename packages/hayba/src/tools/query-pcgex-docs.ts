@@ -11,7 +11,8 @@ const schema = z.object({
 
 export type QueryPcgexDocsParams = z.infer<typeof schema>;
 
-const DB_PATH = 'D:/UnrealEngine/geoforge/Plugins/Hayba_PcgEx_MCP/Resources/pcgex_registry.db';
+import { config } from '../config.js';
+const DB_PATH = config.pcgexDbPath;
 
 interface DocResult {
   class: string;

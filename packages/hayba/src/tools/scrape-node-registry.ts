@@ -11,8 +11,10 @@ const schema = z.object({
 
 export type ScrapeNodeRegistryParams = z.infer<typeof schema>;
 
-const DEFAULT_SOURCE_PATH = 'D:/UnrealEngine/geoforge/Plugins/PCGExtendedToolkit/Source';
-const DEFAULT_DB_PATH = 'D:/UnrealEngine/geoforge/Plugins/Hayba_PcgEx_MCP/Resources/pcgex_registry.db';
+import { config } from '../config.js';
+const DEFAULT_SOURCE_PATH = process.env.HAYBA_PCGEX_SOURCE
+  || 'D:/UnrealEngine/geoforge/Plugins/PCGExtendedToolkit/Source';
+const DEFAULT_DB_PATH = config.pcgexDbPath;
 
 function walkHeaderFiles(dir: string): string[] {
   const results: string[] = [];
@@ -40,13 +42,55 @@ function extractModule(headerPath: string, sourcePath: string): string {
   return parts[0] || 'Unknown';
 }
 
-function parseHeader(content: string, headerPath: string, sourcePath: string): {
+function extractPinsFromImpl(
+  cppContent: string,
+  className: string,
+  methodName: 'InputPinProperties' | 'OutputPinProperties',
+  direction: 'input' | 'output',
+): PinInfo[] {
+  const pins: PinInfo[] = [];
+  // Find: `<ReturnType> <className>::<methodName>(...) const { ... }`
+  // Body is the balanced-brace chunk after the signature.
+  const sigRe = new RegExp(
+    String.raw`\b${className}::${methodName}\s*\([^)]*\)\s*const\s*\{`,
+    's'
+  );
+  const m = sigRe.exec(cppContent);
+  if (!m) return pins;
+  let depth = 1;
+  let i = m.index + m[0].length;
+  const start = i;
+  while (i < cppContent.length && depth > 0) {
+    const ch = cppContent[i++];
+    if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+  }
+  const body = cppContent.slice(start, i - 1);
+
+  // PCGEX_PIN_<KIND>(<labelExpr>, "<tooltip>", <flag?>) — labelExpr may be a
+  // namespaced constant like `PCGExGraph::SourceVtxFiltersLabel` or a string.
+  for (const pm of body.matchAll(/PCGEX_PIN_(\w+)\s*\(\s*([^,)]+?)\s*[,)]/g)) {
+    const kind = pm[1];                          // POINTS / PARAM / ANY / TOOLTIP / …
+    if (kind === 'TOOLTIP') continue;            // not a pin
+    let label = pm[2].trim().replace(/^FName\s*\(\s*/, '').replace(/\)$/, '');
+    label = label.replace(/^TEXT\s*\(\s*/, '').replace(/\)$/, '');
+    label = label.replace(/^"(.*)"$/, '$1');
+    const typeFromKind = kind.replace(/_(SINGLE|ARRAY|REQUIRED|ADVANCED)$/i, '').toLowerCase();
+    const required = /REQUIRED/i.test(kind);
+    pins.push({ nodeClass: className, name: label, direction, pinType: typeFromKind, required });
+  }
+  return pins;
+}
+
+function parseHeader(content: string, headerPath: string, sourcePath: string, cppContent: string | null): {
   node?: NodeInfo; pins: PinInfo[]; properties: PropertyInfo[];
 } {
   const pins: PinInfo[] = [];
   const properties: PropertyInfo[] = [];
 
-  const classMatch = content.match(/class\s+\w+_API\s+(UPCGEx\w+Settings)\s*[:\s{]/);
+  // Modern PCGEx uses UCLASS(MinimalAPI, ...) with NO API macro; older code
+  // uses MODULE_API. Match both: API macro optional.
+  const classMatch = content.match(/class\s+(?:\w+_API\s+)?(UPCGEx\w+Settings)\s*[:\s{]/);
   if (!classMatch) return { pins, properties };
   const className = classMatch[1];
 
@@ -57,28 +101,32 @@ function parseHeader(content: string, headerPath: string, sourcePath: string): {
   const module = extractModule(headerPath, sourcePath);
   const node: NodeInfo = { className, module, displayName, description, headerPath };
 
-  const inputPinSection = content.match(/GetInputPins[\s\S]*?\{([\s\S]*?)\}/);
-  if (inputPinSection) {
-    for (const m of inputPinSection[1].matchAll(/FName\s*\(\s*(?:TEXT\s*\()?\s*"([^"]+)"/g)) {
-      pins.push({ nodeClass: className, name: m[1], direction: 'input', pinType: 'Any', required: false });
+  // Some older PCGEx code overrides GetInputPins/GetOutputPins in the header.
+  const scanHeaderPins = (methodName: string, direction: 'input' | 'output') => {
+    const sec = content.match(new RegExp(methodName + String.raw`[\s\S]*?\{([\s\S]*?)\}`));
+    if (!sec) return;
+    for (const m of sec[1].matchAll(/FName\s*\(\s*(?:TEXT\s*\()?\s*"([^"]+)"/g)) {
+      pins.push({ nodeClass: className, name: m[1], direction, pinType: 'Any', required: false });
     }
-    for (const m of inputPinSection[1].matchAll(/PCGEX_PIN_\w+\s*\(\s*(\w+)\s*[,)]/g)) {
-      pins.push({ nodeClass: className, name: m[1], direction: 'input', pinType: 'Any', required: false });
+    for (const m of sec[1].matchAll(/PCGEX_PIN_\w+\s*\(\s*(\w+)\s*[,)]/g)) {
+      pins.push({ nodeClass: className, name: m[1], direction, pinType: 'Any', required: false });
     }
+  };
+  scanHeaderPins('GetInputPins', 'input');
+  scanHeaderPins('GetOutputPins', 'output');
+
+  // Modern PCGEx puts pin definitions in the .cpp's *PinProperties() override.
+  if (cppContent) {
+    pins.push(...extractPinsFromImpl(cppContent, className, 'InputPinProperties', 'input'));
+    pins.push(...extractPinsFromImpl(cppContent, className, 'OutputPinProperties', 'output'));
   }
 
-  const outputPinSection = content.match(/GetOutputPins[\s\S]*?\{([\s\S]*?)\}/);
-  if (outputPinSection) {
-    for (const m of outputPinSection[1].matchAll(/FName\s*\(\s*(?:TEXT\s*\()?\s*"([^"]+)"/g)) {
-      pins.push({ nodeClass: className, name: m[1], direction: 'output', pinType: 'Any', required: false });
-    }
-    for (const m of outputPinSection[1].matchAll(/PCGEX_PIN_\w+\s*\(\s*(\w+)\s*[,)]/g)) {
-      pins.push({ nodeClass: className, name: m[1], direction: 'output', pinType: 'Any', required: false });
-    }
-  }
-
-  for (const m of content.matchAll(/UPROPERTY\s*\([^)]*PCG_Overridable[^)]*\)\s*\n?\s*(\w[\w:<>*& ]+?)\s+(\w+)\s*[=;{]/g)) {
-    properties.push({ nodeClass: className, propertyName: m[2], cppType: m[1].trim(), isPcgOverridable: true });
+  // UE's UPROPERTY(...) commonly contains `meta=(...)` — a single nested paren
+  // pair — so a naive [^)]* breaks. Balance one level of nesting.
+  const upropRe = /UPROPERTY\s*\(((?:[^()]|\([^()]*\))*)\)\s*\n?\s*(\w[\w:<>*& ]+?)\s+(\w+)\s*[=;{]/g;
+  for (const m of content.matchAll(upropRe)) {
+    if (!m[1].includes('PCG_Overridable')) continue;
+    properties.push({ nodeClass: className, propertyName: m[3], cppType: m[2].trim(), isPcgOverridable: true });
   }
 
   return { node, pins, properties };
@@ -134,7 +182,11 @@ export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
   for (const headerPath of headers) {
     try {
       const content = readFileSync(headerPath, 'utf-8');
-      const { node, pins, properties } = parseHeader(content, headerPath, sourcePath);
+      // PCGEx convention: header at Public/.../Foo.h, impl at Private/.../Foo.cpp
+      const cppPath = headerPath.replace('/Public/', '/Private/').replace(/\.h$/, '.cpp');
+      let cppContent: string | null = null;
+      try { cppContent = readFileSync(cppPath, 'utf-8'); } catch { /* no impl file — ok */ }
+      const { node, pins, properties } = parseHeader(content, headerPath, sourcePath, cppContent);
       if (node) {
         deletePins.run(node.className);
         deleteProps.run(node.className);
