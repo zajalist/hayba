@@ -5,6 +5,7 @@
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ensureConnected } from '../tcp-client.js';
+import { isToolDisabled } from './disabled-tools-watcher.js';
 
 function preview(value: unknown, max: number): string {
   if (value == null) return '';
@@ -62,6 +63,22 @@ export function installToolStreamMirror(server: McpServer): void {
     if (typeof handler !== 'function') return orig(...args);
 
     const wrapped = async (params: unknown, ...rest: unknown[]) => {
+      // MCP panel gate: if the user disabled this tool, short-circuit with a
+      // clear status. Meta-tools (list_tool_categories / get_tool_signature)
+      // are never gated themselves — they handle disabled-state internally.
+      if (isToolDisabled(name) && name !== 'list_tool_categories' && name !== 'get_tool_signature') {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              status: 'tool_disabled',
+              tool: name,
+              hint: 'This tool is disabled in the Hayba MCP panel — ask the user to re-enable it.',
+            }, null, 2),
+          }],
+          isError: true,
+        };
+      }
       const result = await handler(params, ...rest);
       // Extract the text content the tool returned, when available — that's
       // what users care about in the stream. Fall back to the full object.
