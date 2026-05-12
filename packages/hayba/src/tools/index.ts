@@ -934,9 +934,12 @@ function recordEagerSchemas(
   }, 'medium', '{image_base64, width, height, camera}');
   reg('editor_start_pie', { single_step: coerceBool.optional() }, 'high', '{ok, pie_world_id}');
   reg('editor_stream_log', {
-    filter: z.string().optional(),
+    filter: z.string().optional().describe('Plain substring filter (legacy)'),
+    regex_filter: z.string().optional().describe('Perl-style regex applied to each line'),
+    severity_filter: z.string().optional().describe('Comma-separated severities: Verbose,Display,Log,Warning,Error,Fatal'),
+    format: z.enum(['raw', 'structured']).optional().describe('"structured" emits {line, category, severity, msg, raw} objects'),
     since_line: z.coerce.number().int().min(0).optional(),
-  }, 'low', '{lines:[string], next_line:int}');
+  }, 'low', '{lines:[string|object], next_line:int, format}');
 
   // ── PCGEx domain ──────────────────────────────────────────────────────────
   reg('hayba_search_node_catalog', {
