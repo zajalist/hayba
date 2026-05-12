@@ -34,7 +34,7 @@ function walkHeaderFiles(dir: string): string[] {
 }
 
 interface NodeInfo { className: string; module: string; displayName: string; description: string; headerPath: string; }
-interface PinInfo { nodeClass: string; name: string; direction: 'input' | 'output'; pinType: string; required: boolean; }
+interface PinInfo { nodeClass: string; name: string; direction: 'input' | 'output'; pinType: string; required: boolean; description: string; }
 interface PropertyInfo { nodeClass: string; propertyName: string; cppType: string; isPcgOverridable: boolean; description: string; }
 
 function extractModule(headerPath: string, sourcePath: string): string {
@@ -112,15 +112,21 @@ function extractPinsFromImpl(
 
   // PCGEX_PIN_<KIND>(<labelExpr>, "<tooltip>", <flag?>) — labelExpr may be a
   // namespaced constant like `PCGExGraph::SourceVtxFiltersLabel` or a string.
-  for (const pm of body.matchAll(/PCGEX_PIN_(\w+)\s*\(\s*([^,)]+?)\s*[,)]/g)) {
-    const kind = pm[1];                          // POINTS / PARAM / ANY / TOOLTIP / …
-    if (kind === 'TOOLTIP') continue;            // not a pin
+  // The label must run up to the first comma (or closing paren for the
+  // 1-arg form). The description is the next quoted string if present.
+  // Greedy on the label so it runs all the way to the comma (the char class
+  // already excludes "," and ")" so greedy is safe). Optional `, "desc"`.
+  const pinCallRe = /PCGEX_PIN_(\w+)\s*\(\s*([^,)]+)(?:\s*,\s*"((?:[^"\\]|\\.)*)")?[^)]*\)/g;
+  for (const pm of body.matchAll(pinCallRe)) {
+    const kind = pm[1];
+    if (kind === 'TOOLTIP') continue;
     let label = pm[2].trim().replace(/^FName\s*\(\s*/, '').replace(/\)$/, '');
     label = label.replace(/^TEXT\s*\(\s*/, '').replace(/\)$/, '');
     label = label.replace(/^"(.*)"$/, '$1');
     const typeFromKind = kind.replace(/_(SINGLE|ARRAY|REQUIRED|ADVANCED)$/i, '').toLowerCase();
     const required = /REQUIRED/i.test(kind);
-    pins.push({ nodeClass: className, name: label, direction, pinType: typeFromKind, required });
+    const description = (pm[3] ?? '').replace(/\\"/g, '"');
+    pins.push({ nodeClass: className, name: label, direction, pinType: typeFromKind, required, description });
   }
   return pins;
 }
@@ -149,10 +155,10 @@ function parseHeader(content: string, headerPath: string, sourcePath: string, cp
     const sec = content.match(new RegExp(methodName + String.raw`[\s\S]*?\{([\s\S]*?)\}`));
     if (!sec) return;
     for (const m of sec[1].matchAll(/FName\s*\(\s*(?:TEXT\s*\()?\s*"([^"]+)"/g)) {
-      pins.push({ nodeClass: className, name: m[1], direction, pinType: 'Any', required: false });
+      pins.push({ nodeClass: className, name: m[1], direction, pinType: 'Any', required: false, description: '' });
     }
     for (const m of sec[1].matchAll(/PCGEX_PIN_\w+\s*\(\s*(\w+)\s*[,)]/g)) {
-      pins.push({ nodeClass: className, name: m[1], direction, pinType: 'Any', required: false });
+      pins.push({ nodeClass: className, name: m[1], direction, pinType: 'Any', required: false, description: '' });
     }
   };
   scanHeaderPins('GetInputPins', 'input');
@@ -225,7 +231,7 @@ export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
       class TEXT PRIMARY KEY, module TEXT, display_name TEXT, description TEXT, header_path TEXT
     );
     CREATE TABLE IF NOT EXISTS pins (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, node_class TEXT, name TEXT, direction TEXT, type TEXT, required INTEGER
+      id INTEGER PRIMARY KEY AUTOINCREMENT, node_class TEXT, name TEXT, direction TEXT, type TEXT, required INTEGER, description TEXT
     );
     CREATE TABLE IF NOT EXISTS properties (
       id INTEGER PRIMARY KEY AUTOINCREMENT, node_class TEXT, property_name TEXT, cpp_type TEXT, is_pcg_overridable INTEGER, description TEXT
@@ -242,7 +248,7 @@ export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
     'INSERT OR REPLACE INTO nodes(class, module, display_name, description, header_path) VALUES (?,?,?,?,?)'
   );
   const insertPin = db.prepare(
-    'INSERT INTO pins(node_class, name, direction, type, required) VALUES (?,?,?,?,?)'
+    'INSERT INTO pins(node_class, name, direction, type, required, description) VALUES (?,?,?,?,?,?)'
   );
   const insertProp = db.prepare(
     'INSERT INTO properties(node_class, property_name, cpp_type, is_pcg_overridable, description) VALUES (?,?,?,?,?)'
@@ -265,7 +271,7 @@ export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
         insertNode.run(node.className, node.module, node.displayName, node.description, node.headerPath);
         for (const pin of pins) {
           const resolvedName = resolvePinLabel(pin.name, labelTable);
-          insertPin.run(pin.nodeClass, resolvedName, pin.direction, pin.pinType, pin.required ? 1 : 0);
+          insertPin.run(pin.nodeClass, resolvedName, pin.direction, pin.pinType, pin.required ? 1 : 0, pin.description);
         }
         for (const prop of properties) insertProp.run(prop.nodeClass, prop.propertyName, prop.cppType, prop.isPcgOverridable ? 1 : 0, prop.description);
         nodesFound++;
@@ -283,18 +289,18 @@ export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
     const allNodes = db.prepare('SELECT * FROM nodes').all() as Array<{
       class: string; module: string; display_name: string; description: string; header_path: string;
     }>;
-    const pinSt = db.prepare('SELECT name, direction, type, required FROM pins WHERE node_class=?');
+    const pinSt = db.prepare('SELECT name, direction, type, required, description FROM pins WHERE node_class=?');
     const propSt = db.prepare('SELECT property_name, cpp_type, is_pcg_overridable, description FROM properties WHERE node_class=?');
     const byModule: Record<string, any[]> = {};
     for (const n of allNodes) {
-      const pins = pinSt.all(n.class) as Array<{ name: string; direction: string; type: string; required: number }>;
+      const pins = pinSt.all(n.class) as Array<{ name: string; direction: string; type: string; required: number; description: string }>;
       const props = propSt.all(n.class) as Array<{ property_name: string; cpp_type: string; is_pcg_overridable: number; description: string }>;
       const entry = {
         class: n.class,
         display_name: n.display_name || n.class,
         description: n.description || '',
-        input_pins:  pins.filter(p => p.direction === 'input').map(p => ({ name: p.name, type: p.type, required: !!p.required })),
-        output_pins: pins.filter(p => p.direction === 'output').map(p => ({ name: p.name, type: p.type })),
+        input_pins:  pins.filter(p => p.direction === 'input').map(p => ({ name: p.name, type: p.type, required: !!p.required, tooltip: p.description || '' })),
+        output_pins: pins.filter(p => p.direction === 'output').map(p => ({ name: p.name, type: p.type, tooltip: p.description || '' })),
         properties:  Object.fromEntries(props.map(p => [p.property_name, {
           type: p.cpp_type,
           description: p.description || '',
