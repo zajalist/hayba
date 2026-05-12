@@ -34,12 +34,54 @@ function walkHeaderFiles(dir: string): string[] {
 
 interface NodeInfo { className: string; module: string; displayName: string; description: string; headerPath: string; }
 interface PinInfo { nodeClass: string; name: string; direction: 'input' | 'output'; pinType: string; required: boolean; }
-interface PropertyInfo { nodeClass: string; propertyName: string; cppType: string; isPcgOverridable: boolean; }
+interface PropertyInfo { nodeClass: string; propertyName: string; cppType: string; isPcgOverridable: boolean; description: string; }
 
 function extractModule(headerPath: string, sourcePath: string): string {
   const rel = headerPath.replace(sourcePath.replace(/\\/g, '/'), '').replace(/\\/g, '/');
   const parts = rel.split('/').filter(Boolean);
   return parts[0] || 'Unknown';
+}
+
+/**
+ * Pre-pass: scan all headers for `const FName <Name> = TEXT("<Value>")` or
+ * `inline const FName ... = FName(TEXT("..."))` style declarations and build
+ * a lookup table. PCGEx pin labels are emitted into the catalog as their
+ * fully-qualified C++ symbol (`PCGExClusters::Labels::OutputEdgesLabel`),
+ * which is useless to an LLM authoring graphs — resolve those to the actual
+ * runtime FName string (e.g. "Edges").
+ */
+function buildLabelTable(headerPaths: string[]): Map<string, string> {
+  // Map: bare symbol name → resolved FName value. PCGEx Label names are
+  // unique enough across the codebase that bare-name lookup is sufficient
+  // — collisions would be visible as inconsistent values, and a later
+  // pass could namespace-qualify if it ever becomes an issue.
+  const labels = new Map<string, string>();
+  // Accept all four flavors PCGEx uses in practice:
+  //   const FName X = TEXT("foo");
+  //   const FName X = FName(TEXT("foo"));
+  //   const FName X = FName("foo");
+  //   static inline const FName X = FName("foo");
+  const labelRe = /(?:static\s+)?(?:inline\s+)?const\s+FName\s+(\w+)\s*=\s*(?:FName\s*\(\s*)?(?:TEXT\s*\(\s*)?"([^"]+)"/g;
+  for (const headerPath of headerPaths) {
+    try {
+      const content = readFileSync(headerPath, 'utf-8');
+      for (const m of content.matchAll(labelRe)) {
+        // Don't overwrite a previously-seen mapping unless it agrees; if
+        // it disagrees, the second value wins (last wins, deterministic
+        // enough for now and easy to extend with namespace tracking later).
+        labels.set(m[1], m[2]);
+      }
+    } catch { /* skip */ }
+  }
+  return labels;
+}
+
+function resolvePinLabel(raw: string, labels: Map<string, string>): string {
+  // Resolve `Foo::Bar::OutputEdgesLabel` → "Edges" by trailing-symbol
+  // lookup. Leave already-string-literal pin names alone.
+  if (!raw.includes('::')) return raw;
+  const bare = raw.split('::').pop() ?? raw;
+  return labels.get(bare) ?? raw;
 }
 
 function extractPinsFromImpl(
@@ -126,7 +168,33 @@ function parseHeader(content: string, headerPath: string, sourcePath: string, cp
   const upropRe = /UPROPERTY\s*\(((?:[^()]|\([^()]*\))*)\)\s*\n?\s*(\w[\w:<>*& ]+?)\s+(\w+)\s*[=;{]/g;
   for (const m of content.matchAll(upropRe)) {
     if (!m[1].includes('PCG_Overridable')) continue;
-    properties.push({ nodeClass: className, propertyName: m[3], cppType: m[2].trim(), isPcgOverridable: true });
+    // Pull the /** ... */ docstring IMMEDIATELY preceding this UPROPERTY.
+    // Walk all doc blocks in the lookbehind window, take the last one, and
+    // require it to be adjacent (only whitespace between it and the
+    // UPROPERTY) — otherwise we'd grab the previous property's doc.
+    const lookbehindStart = Math.max(0, m.index! - 800);
+    const lookbehind = content.slice(lookbehindStart, m.index);
+    const blocks = [...lookbehind.matchAll(/\/\*\*\s*([\s\S]*?)\s*\*\//g)];
+    let description = '';
+    if (blocks.length > 0) {
+      const last = blocks[blocks.length - 1];
+      const blockEnd = last.index! + last[0].length;
+      const gap = lookbehind.slice(blockEnd);
+      if (/^\s*$/.test(gap)) {
+        description = last[1]
+          .split('\n')
+          .map(line => line.replace(/^\s*\*\s?/, '').trim())
+          .filter(line => line.length > 0)
+          .join(' ');
+      }
+    }
+    properties.push({
+      nodeClass: className,
+      propertyName: m[3],
+      cppType: m[2].trim(),
+      isPcgOverridable: true,
+      description,
+    });
   }
 
   return { node, pins, properties };
@@ -159,11 +227,14 @@ export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
       id INTEGER PRIMARY KEY AUTOINCREMENT, node_class TEXT, name TEXT, direction TEXT, type TEXT, required INTEGER
     );
     CREATE TABLE IF NOT EXISTS properties (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, node_class TEXT, property_name TEXT, cpp_type TEXT, is_pcg_overridable INTEGER
+      id INTEGER PRIMARY KEY AUTOINCREMENT, node_class TEXT, property_name TEXT, cpp_type TEXT, is_pcg_overridable INTEGER, description TEXT
     );
   `);
 
   const headers = walkHeaderFiles(sourcePath);
+  // Pre-pass: resolve PCGEx pin-label symbols (Foo::Labels::OutputEdgesLabel
+  // → "Edges") so the catalog ships clean FName strings, not C++ refs.
+  const labelTable = buildLabelTable(headers);
   let nodesFound = 0;
 
   const insertNode = db.prepare(
@@ -173,7 +244,7 @@ export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
     'INSERT INTO pins(node_class, name, direction, type, required) VALUES (?,?,?,?,?)'
   );
   const insertProp = db.prepare(
-    'INSERT INTO properties(node_class, property_name, cpp_type, is_pcg_overridable) VALUES (?,?,?,?)'
+    'INSERT INTO properties(node_class, property_name, cpp_type, is_pcg_overridable, description) VALUES (?,?,?,?,?)'
   );
   // BUG-3: delete existing pins/properties before reinserting to avoid duplicates on non-force rescan
   const deletePins = db.prepare('DELETE FROM pins WHERE node_class = ?');
@@ -191,8 +262,11 @@ export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
         deletePins.run(node.className);
         deleteProps.run(node.className);
         insertNode.run(node.className, node.module, node.displayName, node.description, node.headerPath);
-        for (const pin of pins) insertPin.run(pin.nodeClass, pin.name, pin.direction, pin.pinType, pin.required ? 1 : 0);
-        for (const prop of properties) insertProp.run(prop.nodeClass, prop.propertyName, prop.cppType, prop.isPcgOverridable ? 1 : 0);
+        for (const pin of pins) {
+          const resolvedName = resolvePinLabel(pin.name, labelTable);
+          insertPin.run(pin.nodeClass, resolvedName, pin.direction, pin.pinType, pin.required ? 1 : 0);
+        }
+        for (const prop of properties) insertProp.run(prop.nodeClass, prop.propertyName, prop.cppType, prop.isPcgOverridable ? 1 : 0, prop.description);
         nodesFound++;
       }
     } catch (e: any) {

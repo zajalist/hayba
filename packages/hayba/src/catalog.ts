@@ -58,7 +58,9 @@ export function loadCatalog(): NodeCatalog {
               name,
               type: prop.type || 'unknown',
               default: prop.default !== undefined ? String(prop.default) : undefined,
-              description: prop.tooltip || '',
+              // Accept either `tooltip` (legacy hand-authored catalog) or
+              // `description` (scrape-node-registry output).
+              description: prop.tooltip || prop.description || '',
               enum_values: prop.enum_values,
             })),
             common_patterns: [],
