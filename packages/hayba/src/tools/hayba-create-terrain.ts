@@ -25,7 +25,20 @@ export const createTerrainHandler: ToolHandler = async (args, session) => {
   }
 
   if (args.graph) {
-    const validation = GraphSchema.safeParse(args.graph);
+    // Handle both string and object formats for graph parameter
+    let graphInput: unknown = args.graph;
+    if (typeof args.graph === 'string') {
+      try {
+        graphInput = JSON.parse(args.graph);
+      } catch {
+        return {
+          content: [{ type: 'text', text: `Graph parsing failed: invalid JSON string` }],
+          isError: true
+        };
+      }
+    }
+
+    const validation = GraphSchema.safeParse(graphInput);
     if (!validation.success) {
       return {
         content: [{ type: 'text', text: `Graph validation failed: ${validation.error.message}` }],

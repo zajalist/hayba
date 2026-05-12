@@ -1,30 +1,21 @@
 // mcp_server/src/catalog.ts
-import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { existsSync, readFileSync } from 'node:fs';
 import type { NodeCatalog, CatalogNode } from './types.js';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import { config } from './config.js';
 
 let catalog: NodeCatalog | null = null;
 
 function getCatalogPath(): string {
-  const candidates = [
-    resolve(__dirname, '..', 'Plugins', 'Hayba_PcgEx_MCP', 'Resources', 'node_catalog.json'),
-    resolve(__dirname, '..', '..', 'Plugins', 'Hayba_PcgEx_MCP', 'Resources', 'node_catalog.json'),
-    resolve(__dirname, '..', '..', 'Resources', 'node_catalog.json'),
-    resolve(__dirname, '..', 'Resources', 'node_catalog.json'),
-    resolve(__dirname, '..', '..', '..', 'Resources', 'node_catalog.json'),
-  ];
-  for (const p of candidates) {
-    try {
-      readFileSync(p, 'utf-8');
-      return p;
-    } catch {
-      continue;
-    }
+  const p = config.catalogPath;
+  if (!existsSync(p)) {
+    throw new Error(
+      `node_catalog.json not found at "${p}". ` +
+      `Set HAYBA_NODE_CATALOG to override, or place the file at ` +
+      `<workspace>/packages/hayba/Plugins/HaybaMCPToolkit/Resources/node_catalog.json. ` +
+      `Run hayba_scrape_node_registry against your PCGExtendedToolkit source to (re)generate the registry DB.`
+    );
   }
-  throw new Error(`node_catalog.json not found. Checked: ${candidates.join(', ')}`);
+  return p;
 }
 
 /**
@@ -67,7 +58,9 @@ export function loadCatalog(): NodeCatalog {
               name,
               type: prop.type || 'unknown',
               default: prop.default !== undefined ? String(prop.default) : undefined,
-              description: prop.tooltip || '',
+              // Accept either `tooltip` (legacy hand-authored catalog) or
+              // `description` (scrape-node-registry output).
+              description: prop.tooltip || prop.description || '',
               enum_values: prop.enum_values,
             })),
             common_patterns: [],

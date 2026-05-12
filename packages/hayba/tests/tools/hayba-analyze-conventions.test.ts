@@ -7,9 +7,8 @@ import { analyzeConventionsHandler } from '../../src/tools/hayba-analyze-convent
 const GLOBAL_PATH = join(homedir(), '.hayba', 'conventions.json');
 
 function cleanupGlobal(): void {
-  const dir = join(homedir(), '.hayba');
-  if (existsSync(dir)) {
-    try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  if (existsSync(GLOBAL_PATH)) {
+    try { rmSync(GLOBAL_PATH, { force: true }); } catch { /* ignore */ }
   }
 }
 

@@ -5,7 +5,8 @@ export const NodeParamValueSchema = z.union([z.string(), z.number(), z.boolean()
 export const NodeSchema = z.object({
   id: z.string().min(1),
   type: z.string().min(1),
-  params: z.record(NodeParamValueSchema).optional().default({})
+  params: z.record(NodeParamValueSchema).optional().default({}),
+  position: z.object({ X: z.number(), Y: z.number() }).optional(),
 });
 
 export const EdgeSchema = z.object({

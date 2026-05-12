@@ -1,4 +1,11 @@
 // mcp_server/src/index.ts
+//
+// Gaea EULA posture: this MCP server is automation used solely for licensed
+// rendering, internal production pipelines, and asset integration — the
+// carve-out explicitly permitted by Gaea EULA §1.3.3. It is not used to
+// scrape, analyze, or replicate the Software, and it does not redistribute
+// any QuadSpinner-authored Software or Assets. Operation as an interactive
+// terrain-generation product is covered by a custom license per §1.2.
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { readFileSync } from 'node:fs';

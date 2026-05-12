@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { PCGGraphJSON, PCGNode, PCGEdge } from '../types.js';
+import { normalizeEdges } from '../types.js';
 
 const schema = z.object({
   graph: z.string().min(1).describe('JSON string of the full PCGEx graph'),
@@ -18,6 +19,8 @@ export async function abstractToSubgraph(params: AbstractToSubgraphParams) {
   } catch {
     throw new Error('Invalid JSON graph payload');
   }
+  // Accept either canonical (fromNode/toNode) or legacy (from/to) edge keys.
+  graph.edges = normalizeEdges(graph.edges as unknown as any[]);
 
   const selectedSet = new Set(nodeIds);
   const selectedNodes = graph.nodes.filter(n => selectedSet.has(n.id));

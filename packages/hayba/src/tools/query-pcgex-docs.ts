@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { searchCatalog, getNodeByClass } from '../catalog.js';
 import { readFileSync, existsSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
+import { createRequire } from 'node:module';
+const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
 
 const schema = z.object({
   query: z.string().min(1).describe('Node class name or keyword to search documentation'),
@@ -10,7 +11,8 @@ const schema = z.object({
 
 export type QueryPcgexDocsParams = z.infer<typeof schema>;
 
-const DB_PATH = 'D:/UnrealEngine/geoforge/Plugins/Hayba_PcgEx_MCP/Resources/pcgex_registry.db';
+import { config } from '../config.js';
+const DB_PATH = config.pcgexDbPath;
 
 interface DocResult {
   class: string;

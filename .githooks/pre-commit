@@ -1,0 +1,24 @@
+#!/usr/bin/env sh
+# Pre-commit guard: ensure packages/hayba TypeScript still compiles and that
+# dist/ is regenerated whenever src/ changes. Stops a stale dist/ from
+# silently shipping (the bug that bit us during MCP stabilization).
+
+set -e
+
+cd "$(git rev-parse --show-toplevel)"
+
+# Only bother when packages/hayba TS sources are part of the commit.
+if ! git diff --cached --name-only | grep -qE '^packages/hayba/(src/|tsconfig\.json|package\.json)'; then
+  exit 0
+fi
+
+echo "pre-commit: hayba TS changed — typechecking and rebuilding dist/"
+cd packages/hayba
+npx tsc
+
+# Stage any updated dist/ outputs so the commit reflects what consumers run.
+cd ../..
+if git diff --name-only -- packages/hayba/dist | grep -q .; then
+  echo "pre-commit: staging refreshed dist/ outputs"
+  git add packages/hayba/dist
+fi
