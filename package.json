@@ -7,7 +7,8 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces --if-present",
-    "dev": "npm run dev --workspaces --if-present"
+    "dev": "npm run dev --workspaces --if-present",
+    "prepare": "git config core.hooksPath .githooks || true"
   },
   "license": "MIT"
 }
