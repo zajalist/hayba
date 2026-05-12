@@ -1,0 +1,71 @@
+name: Bug report
+description: Something doesn't work as expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The more reproducer detail, the faster we can land a fix.
+
+  - type: input
+    id: ue_version
+    attributes:
+      label: Unreal Engine version
+      placeholder: e.g. 5.7.4
+    validations:
+      required: true
+
+  - type: input
+    id: plugin_version
+    attributes:
+      label: Hayba plugin version
+      description: From the watermark in the Hayba panel, or the .uplugin descriptor.
+      placeholder: e.g. 0.3.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Operation mode
+      options: [Integrated (Claude Desktop / Code / Cursor), API Key (in-editor chat)]
+    validations:
+      required: true
+
+  - type: dropdown
+    id: host
+    attributes:
+      label: MCP host (Integrated mode only)
+      options: [Claude Desktop, Claude Code, Cursor, Other]
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproducer
+      description: Steps to reproduce. Include the exact MCP tool call(s) and any params if known.
+      placeholder: |
+        1. Open a level with a Landscape
+        2. Ask Claude: "validate physics"
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output Log excerpt
+      description: Filter for `LogHaybaMCP*` and paste the relevant window.
+      render: shell
+
+  - type: textarea
+    id: crash
+    attributes:
+      label: Crash dump (if applicable)
+      description: Attach `geoforge.log` + `UEMinidump.dmp` from `Saved/Crashes/`.
