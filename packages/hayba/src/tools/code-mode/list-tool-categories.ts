@@ -1,4 +1,4 @@
-import type { ToolHandler } from '../hayba-bake-terrain.js';
+import type { ToolHandler } from '../types.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 import { isToolDisabled } from '../disabled-tools-watcher.js';
 

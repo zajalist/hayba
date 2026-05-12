@@ -114,9 +114,3 @@ The pre-commit hook (`.githooks/pre-commit`) typechecks `packages/hayba` and res
 ## License
 
 Hayba's source code is MIT-licensed (see [LICENSE](LICENSE)).
-
-### Third-party software notice
-
-Hayba operates as an automation client for [QuadSpinner Gaea](https://quadspinner.com/gaea). Running the Gaea pipeline requires a valid Gaea license. Hayba does **not** redistribute Gaea, any Gaea binaries, or QuadSpinner-authored sample `.terrain` files. The MCP server drives Gaea exclusively through its public TCP automation API, permitted under Gaea EULA §1.3.3.
-
-QuadSpinner® and Gaea® are trademarks of QuadSpinner. No QuadSpinner trademark or logo is used by this project beyond nominative reference.

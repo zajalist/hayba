@@ -1,6 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import type { SessionManager } from '../gaea/session.js';
 import { config } from '../config.js';
 import { appendMeta } from './hayba-tool-meta.js';
 import { recordSchema, type Cost } from './schema-registry.js';
@@ -41,31 +40,8 @@ import { parameterizeGraphInputs } from './parameterize-graph-inputs.js';
 import { queryPcgexDocs, type QueryPcgexDocsParams } from './query-pcgex-docs.js';
 import { initiateInfrastructureBrainstorm } from './initiate-infrastructure-brainstorm.js';
 
-// ── Knowledge tool handlers ───────────────────────────────────────────────────
-import { searchGaeaArchetypes } from './search-gaea-archetypes.js';
-import { getFullArchetypeGraph } from './get-full-archetype-graph.js';
-import { queryGaeaKnowledge, type QueryGaeaKnowledgeParams } from './query-gaea-knowledge.js';
-
-// ── Gaea tool handlers ────────────────────────────────────────────────────────
-import { bakeTerrain } from './hayba-bake-terrain.js';
-import { createTerrainHandler } from './hayba-create-terrain.js';
-import { openInGaeaTool } from './hayba-open-in-gaea.js';
-import { readTerrainVariablesTool } from './hayba-read-terrain-variables.js';
-import { setTerrainVariablesTool } from './hayba-set-terrain-variables.js';
-import { openSessionHandler } from './hayba-open-session.js';
-import { closeSessionHandler } from './hayba-close-session.js';
-import { addNodeHandler } from './hayba-add-node.js';
-import { removeNodeHandler } from './hayba-remove-node.js';
-import { connectNodesHandler } from './hayba-connect-nodes.js';
-import { getGraphStateHandler } from './hayba-get-graph-state.js';
-import { getParametersHandler } from './hayba-get-parameters.js';
-import { setParameterHandler } from './hayba-set-parameter.js';
-import { listNodeTypesHandler } from './hayba-list-node-types.js';
-import { cookGraphHandler } from './hayba-cook-graph.js';
-import { importLandscapeHandler } from './hayba-import-landscape.js';
+// ── Zone painter tool handlers ────────────────────────────────────────────────
 import { openZonePainterHandler } from './hayba-open-zone-painter.js';
-import { ueLandscapePipelineHandler, type UELandscapePipelineStep } from './hayba-ue-landscape-pipeline.js';
-import { brainstormGaeaHandler } from './hayba-brainstorm-gaea.js';
 import { readZonesHandler } from './hayba-read-zones.js';
 import { setPainterHeightmapHandler } from './hayba-set-painter-heightmap.js';
 
@@ -73,7 +49,11 @@ import { setPainterHeightmapHandler } from './hayba-set-painter-heightmap.js';
 import { setupConventionsHandler } from './hayba-setup-conventions.js';
 import { analyzeConventionsHandler } from './hayba-analyze-conventions.js';
 
-export function registerTools(server: McpServer, session: SessionManager): void {
+// SessionManager (Gaea session) parked while terrain features are off — kept
+// as a typed shim so registerTools' signature doesn't churn for callers.
+type SessionManagerStub = Record<string, unknown>;
+
+export function registerTools(server: McpServer, session: SessionManagerStub): void {
 
   // Wrap server.tool BEFORE any registration so every tool is captured in the
   // UE Tool Stream panel, including pure TS-side handlers (PCGEx catalog, etc).
@@ -525,7 +505,9 @@ export function registerTools(server: McpServer, session: SessionManager): void 
     }
   );
 
-  // ── Knowledge tools (Gaea — disabled, will be re-added later) ───────────────
+  // Gaea / terrain feature surface intentionally disabled — kept out of the
+  // build by removing imports + registrations. Will return when the
+  // worldbuilding-hub roadmap reaches the terrain integration phase.
   /*
   server.tool(
     'hayba_search_gaea_archetypes',
@@ -784,23 +766,8 @@ export function registerTools(server: McpServer, session: SessionManager): void 
     }
   );
 
-  // ── Landscape Import ────────────────────────────────────────────────────────
-
-  server.tool(
-    'hayba_import_landscape',
-    {
-      heightmapPath: z.string().optional().describe('Absolute path to .r16 or .png heightmap. Defaults to last baked heightmap from session.'),
-      worldSizeKm: z.number().optional().describe('Real-world terrain width and depth in km (default: 8.0).'),
-      maxHeightM: z.number().optional().describe('Maximum terrain height in meters (default: 600.0).'),
-      landscapeMaterial: z.string().optional().describe('UE asset path for landscape material, e.g. "/Game/Materials/Landscape/M_Terrain". Pass "" to import with no material. Resolved from conventions if omitted.'),
-      actorLabel: z.string().optional().describe('Actor label in the UE level (default: Hayba_Terrain).'),
-      projectRoot: z.string().optional().describe('Absolute path to UE project root — used to read project-level conventions.'),
-    },
-    async (params) => {
-      const result = await importLandscapeHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
+  // Landscape import surface intentionally disabled with the rest of the
+  // terrain features. See note above.
 
   // ── Scene workflow ────────────────────────────────────────────────────────────
 
@@ -1046,14 +1013,7 @@ function recordEagerSchemas(
   }, 'medium', '{inferred:{folders, naming, workflow}, saved_to?}');
 
   // ── Landscape import ──────────────────────────────────────────────────────
-  reg('hayba_import_landscape', {
-    heightmapPath: z.string().optional(),
-    worldSizeKm: z.number().optional(),
-    maxHeightM: z.number().optional(),
-    landscapeMaterial: z.string().optional(),
-    actorLabel: z.string().optional(),
-    projectRoot: z.string().optional(),
-  }, 'high', '{ok, actor_id, components}');
+  // hayba_import_landscape schema parked with the rest of the terrain stack.
 
   // ── Zone painter domain ───────────────────────────────────────────────────
   reg('hayba_open_zone_painter', {
