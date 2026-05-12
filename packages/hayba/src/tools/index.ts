@@ -96,6 +96,39 @@ export function registerTools(server: McpServer, session: SessionManager): void 
   // ──────────────────────────────────────────────────────────────────────────
 
   server.tool(
+    'hayba_propose_plan',
+    'Propose a step-by-step plan to the user before performing destructive operations. Required when Plan Mode is on. Steps may be strings or {title, description, tool} objects.',
+    {
+      steps: z.array(z.union([
+        z.string(),
+        z.object({
+          title: z.string(),
+          description: z.string().optional(),
+          tool: z.string().optional(),
+        }),
+      ])).describe('Ordered list of plan steps'),
+      await_seconds: z.number().int().min(0).max(600).optional()
+        .describe('How long the agent will wait for human approval (informational; default 30)'),
+    },
+    async (params) => {
+      try {
+        const { ensureConnected } = await import('../tcp-client.js');
+        const c = await ensureConnected();
+        const res = await c.send('hayba_propose_plan', params as Record<string, unknown>, 5000);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(res.data ?? { ok: res.ok }, null, 2) }],
+          isError: !res.ok,
+        };
+      } catch (e) {
+        return {
+          content: [{ type: 'text', text: `Error pushing plan to UE: ${(e as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.tool(
     'list_tool_categories',
     appendMeta('List all HaybaOS command domains and their commands. Call this first to discover what is available before requesting a specific schema.', listMeta),
     {},
