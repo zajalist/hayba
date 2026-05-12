@@ -17,9 +17,25 @@ function preview(value: unknown, max: number): string {
   return str.length > max ? str.slice(0, max) : str;
 }
 
+// One conversation turn = one Claude reply. Back-to-back tool calls inside
+// the same reply finish within sub-second of each other; a gap of multiple
+// seconds means Claude has handed control back to the user, replied, and is
+// now starting a fresh turn. 3s is generous for slow tools without merging
+// distinct user prompts.
+const NEW_TURN_GAP_MS = 3000;
+let lastMirrorTimestamp = 0;
+
 async function mirror(toolName: string, params: unknown, result: unknown): Promise<void> {
   try {
     const client = await ensureConnected();
+
+    const now = Date.now();
+    const shouldStartNewTurn = lastMirrorTimestamp > 0 && (now - lastMirrorTimestamp) > NEW_TURN_GAP_MS;
+    lastMirrorTimestamp = now;
+    if (shouldStartNewTurn) {
+      await client.send('ui_tool_stream_new_turn', {}, 1500).catch(() => {});
+    }
+
     // Stringify defensively — UE expects three string fields.
     await client.send('ui_tool_stream', {
       tool: toolName,
