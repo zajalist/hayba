@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { SessionManager } from '../gaea/session.js';
 import { config } from '../config.js';
 import { appendMeta } from './hayba-tool-meta.js';
+import { recordSchema, type Cost } from './schema-registry.js';
 
 // ── Code Mode meta-tools (always-on) ──────────────────────────────────────────
 import { listToolCategoriesHandler, meta as listMeta } from './code-mode/list-tool-categories.js';
@@ -73,6 +74,14 @@ import { analyzeConventionsHandler } from './hayba-analyze-conventions.js';
 
 export function registerTools(server: McpServer, session: SessionManager): void {
 
+  // Record every Zod shape into the schema registry so get_tool_signature can
+  // derive parameter docs from the actual validation schema — independent of
+  // whether the tool is also eagerly registered with server.tool() under
+  // Code Mode. The registry is the source of truth; the hand-maintained dict
+  // in get-tool-signature.ts is only a fallback for un-migrated tools.
+  const reg = (name: string, shape: z.ZodRawShape, cost: Cost, returns: string) =>
+    recordSchema(name, { shape, cost, returns });
+
   // ──────────────────────────────────────────────────────────────────────────
   // Code Mode meta-tools — always registered. Per the HaybaOS spec (§2.4),
   // these are Claude's progressive-discovery entry points.
@@ -113,6 +122,10 @@ export function registerTools(server: McpServer, session: SessionManager): void 
       return { content: r.content, isError: r.isError };
     }
   );
+
+  // Record schemas for tools whose shapes we want get_tool_signature to derive
+  // live. Runs regardless of Code Mode so the registry stays in sync.
+  recordEagerSchemas(reg);
 
   // When Code Mode is ON (default), stop here — full schemas are only fetched
   // on demand via get_tool_signature. Set HAYBA_CODE_MODE=off to expose
@@ -816,4 +829,74 @@ export function registerTools(server: McpServer, session: SessionManager): void 
       return { content: result.content, isError: result.isError };
     }
   );
+}
+
+// Schema registry seeding. Mirrors the Zod shapes used by the eager
+// server.tool() calls above, but lives independently of the Code Mode gate
+// so get_tool_signature can derive params from real schemas at runtime.
+// New tools should add an entry here when first registered.
+function recordEagerSchemas(
+  reg: (name: string, shape: z.ZodRawShape, cost: Cost, returns: string) => void,
+): void {
+  const vec3 = z.tuple([z.number(), z.number(), z.number()]);
+  const coerceBool = z.preprocess(
+    (v) => typeof v === 'string' ? v.toLowerCase() === 'true' : v,
+    z.boolean(),
+  );
+  const coerceVec3 = z.preprocess((v) => {
+    if (typeof v === 'string') { try { return JSON.parse(v); } catch { return v; } }
+    return v;
+  }, vec3);
+
+  // ── Code Mode meta ────────────────────────────────────────────────────────
+  reg('list_tool_categories', {}, 'low', '{categories:[{domain,commands:[string]}]}');
+  reg('get_tool_signature',
+    { command: z.string().describe('Exact command name, e.g. "actor_spawn"') },
+    'low', '{command, params, returns, cost} or {status:"no_schema_available", did_you_mean}');
+  reg('python_run', {
+    script: z.string().describe('Python source to execute'),
+    allow_unsafe: z.boolean().optional().describe('Override Tier 3 filesystem/subprocess block (DANGEROUS)'),
+  }, 'high', '{ok, tier, stdout, stderr}');
+
+  // ── Actor domain ──────────────────────────────────────────────────────────
+  reg('actor_spawn', {
+    class_path: z.string().describe('UE class path, e.g. "/Script/Engine.StaticMeshActor"'),
+    location: coerceVec3.optional(),
+    rotation: coerceVec3.optional(),
+    scale: coerceVec3.optional(),
+    label: z.string().optional(),
+  }, 'medium', '{actor_id, label, class}');
+  reg('actor_list', {
+    class_filter: z.string().optional().describe('Exact class name filter'),
+    tag: z.string().optional().describe('Tag filter'),
+  }, 'low', '{actors:[{id,label,class,location}], count}');
+  reg('actor_delete', { actor_id: z.string() }, 'low', '{ok, actor_id}');
+  reg('actor_transform', {
+    actor_id: z.string(),
+    location: coerceVec3.optional(),
+    rotation: coerceVec3.optional(),
+    scale: coerceVec3.optional(),
+  }, 'low', '{ok, actor_id, before, after}');
+
+  // ── Scene domain ──────────────────────────────────────────────────────────
+  reg('scene_export', {
+    mode: z.enum(['flat', 'relational', 'hierarchical']).optional(),
+    window: z.object({ min: vec3, max: vec3 }).optional(),
+    max_items: z.coerce.number().int().optional(),
+  }, 'medium', 'mode-specific shape');
+  reg('scene_validate_physics', {
+    deep_check: coerceBool.optional(),
+    window: z.object({ min: vec3, max: vec3 }).optional(),
+  }, 'medium', '{valid, floating, interpenetrating, checked_count, scanned_actors, skipped_system_actors}');
+
+  // ── Editor domain ─────────────────────────────────────────────────────────
+  reg('editor_capture_viewport', {
+    width: z.coerce.number().int().optional(),
+    height: z.coerce.number().int().optional(),
+  }, 'medium', '{image_base64, width, height, camera}');
+  reg('editor_start_pie', { single_step: coerceBool.optional() }, 'high', '{ok, pie_world_id}');
+  reg('editor_stream_log', {
+    filter: z.string().optional(),
+    since_line: z.coerce.number().int().min(0).optional(),
+  }, 'low', '{lines:[string], next_line:int}');
 }

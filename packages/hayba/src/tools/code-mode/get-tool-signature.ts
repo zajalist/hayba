@@ -1,5 +1,6 @@
 import type { ToolHandler } from '../hayba-bake-terrain.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
+import { deriveSignature, listRecordedCommands } from '../schema-registry.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'low',
@@ -290,9 +291,14 @@ export const getToolSignatureHandler: ToolHandler = async (args) => {
   if (!command) {
     return { content: [{ type: 'text', text: 'Error: command parameter is required' }], isError: true };
   }
-  const sig = SCHEMAS[command];
+  // Prefer the live registry (derived from the actual Zod shape used to
+  // validate inputs) — falls back to the hand-maintained dict for tools
+  // that haven't been migrated through recordSchema() yet.
+  const derived = deriveSignature(command);
+  const sig = derived ?? SCHEMAS[command];
   if (!sig) {
-    const did_you_mean = suggestClose(command, Object.keys(SCHEMAS));
+    const all = Array.from(new Set([...Object.keys(SCHEMAS), ...listRecordedCommands()]));
+    const did_you_mean = suggestClose(command, all);
     return {
       content: [{
         type: 'text',
