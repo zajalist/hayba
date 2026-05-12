@@ -4,6 +4,7 @@ import type { SessionManager } from '../gaea/session.js';
 import { config } from '../config.js';
 import { appendMeta } from './hayba-tool-meta.js';
 import { recordSchema, type Cost } from './schema-registry.js';
+import { installToolStreamMirror } from './tool-stream-mirror.js';
 
 // ── Code Mode meta-tools (always-on) ──────────────────────────────────────────
 import { listToolCategoriesHandler, meta as listMeta } from './code-mode/list-tool-categories.js';
@@ -73,6 +74,10 @@ import { setupConventionsHandler } from './hayba-setup-conventions.js';
 import { analyzeConventionsHandler } from './hayba-analyze-conventions.js';
 
 export function registerTools(server: McpServer, session: SessionManager): void {
+
+  // Wrap server.tool BEFORE any registration so every tool is captured in the
+  // UE Tool Stream panel, including pure TS-side handlers (PCGEx catalog, etc).
+  installToolStreamMirror(server);
 
   // Record every Zod shape into the schema registry so get_tool_signature can
   // derive parameter docs from the actual validation schema — independent of

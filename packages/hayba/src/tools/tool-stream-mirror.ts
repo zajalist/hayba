@@ -1,0 +1,70 @@
+// Fire-and-forget mirror of every MCP tool call into the UE Tool Stream panel.
+// Wraps server.tool() once so every subsequent registration is captured
+// without per-call-site changes. UE handles `ui_tool_stream` by recording the
+// entry into its module-level history buffer and pushing into the live panel.
+
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { ensureConnected } from '../tcp-client.js';
+
+function preview(value: unknown, max: number): string {
+  if (value == null) return '';
+  let str: string;
+  try {
+    str = typeof value === 'string' ? value : JSON.stringify(value);
+  } catch {
+    str = String(value);
+  }
+  return str.length > max ? str.slice(0, max) : str;
+}
+
+async function mirror(toolName: string, params: unknown, result: unknown): Promise<void> {
+  try {
+    const client = await ensureConnected();
+    // Stringify defensively — UE expects three string fields.
+    await client.send('ui_tool_stream', {
+      tool: toolName,
+      params: preview(params, 2000),
+      result: preview(result, 4000),
+    }, 1500);
+  } catch {
+    // UE editor closed, port unreachable, etc. — silent: the tool itself
+    // already succeeded, mirroring is best-effort observability.
+  }
+}
+
+/**
+ * Install the wrapper once, before any tool is registered. Every subsequent
+ * call to `server.tool(name, ..., handler)` is intercepted so the handler's
+ * result is mirrored to UE after it resolves.
+ */
+export function installToolStreamMirror(server: McpServer): void {
+  const orig = (server.tool as Function).bind(server);
+  (server as any).tool = (...args: unknown[]) => {
+    if (args.length < 2) return orig(...args);
+    const name = args[0] as string;
+    const handler = args[args.length - 1] as Function;
+    if (typeof handler !== 'function') return orig(...args);
+
+    const wrapped = async (params: unknown, ...rest: unknown[]) => {
+      const result = await handler(params, ...rest);
+      // Extract the text content the tool returned, when available — that's
+      // what users care about in the stream. Fall back to the full object.
+      let resultForMirror: unknown = result;
+      if (result && typeof result === 'object') {
+        const r = result as { content?: Array<{ type?: string; text?: string }> };
+        if (Array.isArray(r.content)) {
+          const text = r.content
+            .filter(c => c?.type === 'text' && typeof c.text === 'string')
+            .map(c => c.text)
+            .join('\n');
+          if (text) resultForMirror = text;
+        }
+      }
+      mirror(name, params, resultForMirror).catch(() => {});
+      return result;
+    };
+
+    args[args.length - 1] = wrapped;
+    return orig(...args);
+  };
+}
