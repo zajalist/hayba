@@ -1,7 +1,0 @@
-fastapi>=0.115
-uvicorn[standard]>=0.32
-pydantic>=2.7
-# Add when wiring real models:
-# torch
-# open-clip-torch
-# Pillow
