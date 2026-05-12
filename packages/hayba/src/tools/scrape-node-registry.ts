@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { readdirSync, readFileSync, statSync, existsSync, unlinkSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync, existsSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
 
@@ -274,5 +275,42 @@ export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
     }
   }
 
-  return { nodesFound, dbPath, durationMs: Date.now() - startMs, errors };
+  // Side-effect: emit node_catalog.json alongside the DB. The MCP catalog
+  // loader reads the JSON, not the DB directly — keep them in sync without
+  // a manual regen step.
+  const catalogPath = join(dirname(dbPath), 'node_catalog.json');
+  try {
+    const allNodes = db.prepare('SELECT * FROM nodes').all() as Array<{
+      class: string; module: string; display_name: string; description: string; header_path: string;
+    }>;
+    const pinSt = db.prepare('SELECT name, direction, type, required FROM pins WHERE node_class=?');
+    const propSt = db.prepare('SELECT property_name, cpp_type, is_pcg_overridable, description FROM properties WHERE node_class=?');
+    const byModule: Record<string, any[]> = {};
+    for (const n of allNodes) {
+      const pins = pinSt.all(n.class) as Array<{ name: string; direction: string; type: string; required: number }>;
+      const props = propSt.all(n.class) as Array<{ property_name: string; cpp_type: string; is_pcg_overridable: number; description: string }>;
+      const entry = {
+        class: n.class,
+        display_name: n.display_name || n.class,
+        description: n.description || '',
+        input_pins:  pins.filter(p => p.direction === 'input').map(p => ({ name: p.name, type: p.type, required: !!p.required })),
+        output_pins: pins.filter(p => p.direction === 'output').map(p => ({ name: p.name, type: p.type })),
+        properties:  Object.fromEntries(props.map(p => [p.property_name, {
+          type: p.cpp_type,
+          description: p.description || '',
+          is_pcg_overridable: !!p.is_pcg_overridable,
+        }])),
+      };
+      (byModule[n.module] ||= []).push(entry);
+    }
+    const catalog = {
+      _meta: { version_support: ['1.0'], generated: new Date().toISOString(), source_db: 'pcgex_registry.db', node_count: allNodes.length },
+      categories: Object.fromEntries(Object.entries(byModule).map(([m, ns]) => [m, { description: `PCGEx module: ${m}`, nodes: ns }])),
+    };
+    writeFileSync(catalogPath, JSON.stringify(catalog, null, 2));
+  } catch (e: any) {
+    errors.push(`node_catalog.json regen: ${e.message}`);
+  }
+
+  return { nodesFound, dbPath, catalogPath, durationMs: Date.now() - startMs, errors };
 }
