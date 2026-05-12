@@ -965,6 +965,21 @@ function recordEagerSchemas(
     assetPath: z.string().describe('Full UE asset path to execute'),
   }, 'high', '{ok, generated_count, duration_ms}');
   reg('hayba_check_ue_status', {}, 'low', '{connected, status, ueVersion, plugin, pluginVersion}');
+
+  // ── Asset domain — added Initiative #6 + #10 (ref-preserving move, deps) ─
+  reg('asset_move', {
+    path: z.string().describe('Source asset path, e.g. "/Game/Foo/Bar.Bar"'),
+    target_dir: z.string().describe('Target content-browser folder, e.g. "/Game/Archive"'),
+  }, 'medium', '{ok, old_path, new_path}');
+  reg('asset_fix_redirectors', {
+    path: z.string().optional().describe('Content path to scan (default /Game)'),
+  }, 'medium', '{fixed_count, path}');
+  reg('asset_get_dependencies', {
+    path: z.string().describe('Asset path; returns what this asset depends on'),
+  }, 'low', '{dependencies:[string], count}');
+  reg('asset_get_referencers', {
+    path: z.string().describe('Asset path; returns who depends on this asset (blast radius)'),
+  }, 'low', '{referencers:[string], count}');
   reg('hayba_scrape_node_registry', {
     pluginSourcePath: z.string().optional().describe('Path to PCGExtendedToolkit/Source/ directory'),
     outputDbPath: z.string().optional().describe('Output SQLite DB path (default: Resources/pcgex_registry.db)'),
