@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { getNodeByClass } from '../catalog.js';
-import { DatabaseSync } from 'node:sqlite';
+import { createRequire } from 'node:module';
+const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
 
 const schema = z.object({
   fromClass: z.string().describe('Source node class'),
@@ -54,7 +55,8 @@ function scorePinMatch(fromPin: string, candidatePin: string) {
   return { confidence, reason, typeCompatible };
 }
 
-const DB_PATH = 'D:/UnrealEngine/geoforge/Plugins/Hayba_PcgEx_MCP/Resources/pcgex_registry.db';
+import { config } from '../config.js';
+const DB_PATH = config.pcgexDbPath;
 
 function getPinsFromDb(nodeClass: string, direction: 'input' | 'output'): string[] {
   try {

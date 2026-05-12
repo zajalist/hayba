@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { PCGGraphJSON, PCGNode, PCGEdge } from '../types.js';
+import { normalizeEdges } from '../types.js';
 
 const schema = z.object({
   graph: z.string().min(1).describe('JSON string of the PCGEx graph'),
@@ -21,6 +22,8 @@ export async function parameterizeGraphInputs(params: ParameterizeGraphInputsPar
   } catch {
     throw new Error('Invalid JSON graph payload');
   }
+  // Accept either canonical (fromNode/toNode) or legacy (from/to) edge keys.
+  graph.edges = normalizeEdges(graph.edges as unknown as any[]);
 
   const nodeById = new Map(graph.nodes.map(n => [n.id, { ...n, properties: { ...n.properties } }]));
   const newEdges: PCGEdge[] = [];
@@ -30,6 +33,10 @@ export async function parameterizeGraphInputs(params: ParameterizeGraphInputsPar
   const skippedNodeIds: string[] = [];
 
   let paramNodeCounter = 1;
+  // Track how many GetParameter nodes we've stacked next to each target node
+  // so multiple parameters on the same node don't overlap.
+  const paramsPerNode = new Map<string, number>();
+  const PARAM_VERTICAL_GAP = 120;
 
   for (const target of targets) {
     const node = nodeById.get(target.nodeId);
@@ -45,7 +52,10 @@ export async function parameterizeGraphInputs(params: ParameterizeGraphInputsPar
     // Remove the hardcoded property
     delete node.properties[target.property];
 
-    // Find the node's position to place the GetParameter node upstream
+    // Find the node's position to place the GetParameter node upstream.
+    // Stack each subsequent param vertically so they don't overlap.
+    const stackIdx = paramsPerNode.get(target.nodeId) ?? 0;
+    paramsPerNode.set(target.nodeId, stackIdx + 1);
     const paramNodeId = `get_param_${paramName}_${paramNodeCounter++}`;
     const paramNode: PCGNode = {
       id: paramNodeId,
@@ -53,7 +63,7 @@ export async function parameterizeGraphInputs(params: ParameterizeGraphInputsPar
       label: paramName,
       position: {
         x: (node.position?.x ?? 0) - 350,
-        y: (node.position?.y ?? 0),
+        y: (node.position?.y ?? 0) + stackIdx * PARAM_VERTICAL_GAP,
       },
       properties: {
         ParameterName: paramName,

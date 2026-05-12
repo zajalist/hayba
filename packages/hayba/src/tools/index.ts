@@ -1,6 +1,25 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { SessionManager } from '../gaea/session.js';
+import { config } from '../config.js';
+import { appendMeta } from './hayba-tool-meta.js';
+import { recordSchema, type Cost } from './schema-registry.js';
+
+// ── Code Mode meta-tools (always-on) ──────────────────────────────────────────
+import { listToolCategoriesHandler, meta as listMeta } from './code-mode/list-tool-categories.js';
+import { getToolSignatureHandler, meta as sigMeta } from './code-mode/get-tool-signature.js';
+import { pythonRunHandler, meta as pyMeta } from './python/python-run.js';
+
+// ── New UE-domain tool handlers ───────────────────────────────────────────────
+import { actorSpawnHandler, meta as actorSpawnMeta } from './actor/actor-spawn.js';
+import { actorListHandler, meta as actorListMeta } from './actor/actor-list.js';
+import { actorDeleteHandler, meta as actorDeleteMeta } from './actor/actor-delete.js';
+import { actorTransformHandler, meta as actorTransformMeta } from './actor/actor-transform.js';
+import { sceneExportHandler, meta as sceneExportMeta } from './scene/scene-export.js';
+import { sceneValidatePhysicsHandler, meta as scenePhysicsMeta } from './scene/scene-validate-physics.js';
+import { editorCaptureViewportHandler, meta as captureMeta } from './editor/editor-capture-viewport.js';
+import { editorStartPieHandler, meta as pieMeta } from './editor/editor-start-pie.js';
+import { editorStreamLogHandler, meta as streamLogMeta } from './editor/editor-stream-log.js';
 
 // ── PCGEx tool handlers ───────────────────────────────────────────────────────
 import { searchNodeCatalog } from './search-node-catalog.js';
@@ -54,6 +73,207 @@ import { setupConventionsHandler } from './hayba-setup-conventions.js';
 import { analyzeConventionsHandler } from './hayba-analyze-conventions.js';
 
 export function registerTools(server: McpServer, session: SessionManager): void {
+
+  // Record every Zod shape into the schema registry so get_tool_signature can
+  // derive parameter docs from the actual validation schema — independent of
+  // whether the tool is also eagerly registered with server.tool() under
+  // Code Mode. The registry is the source of truth; the hand-maintained dict
+  // in get-tool-signature.ts is only a fallback for un-migrated tools.
+  const reg = (name: string, shape: z.ZodRawShape, cost: Cost, returns: string) =>
+    recordSchema(name, { shape, cost, returns });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Code Mode meta-tools — always registered. Per the HaybaOS spec (§2.4),
+  // these are Claude's progressive-discovery entry points.
+  //   list_tool_categories  → returns domain list + command counts
+  //   get_tool_signature    → returns the JSON schema for a specific command
+  //   python_run            → executes any command via UE Python (escape hatch)
+  // ──────────────────────────────────────────────────────────────────────────
+
+  server.tool(
+    'list_tool_categories',
+    appendMeta('List all HaybaOS command domains and their commands. Call this first to discover what is available before requesting a specific schema.', listMeta),
+    {},
+    async () => {
+      const r = await listToolCategoriesHandler({}, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+
+  server.tool(
+    'get_tool_signature',
+    appendMeta('Return the JSON schema (params, return shape, cost) for a specific HaybaOS command. Call list_tool_categories first to find command names.', sigMeta),
+    { command: z.string().describe('Exact command name, e.g. "actor_spawn"') },
+    async (params) => {
+      const r = await getToolSignatureHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+
+  server.tool(
+    'python_run',
+    appendMeta('Execute a Python script inside UE via PythonScriptPlugin. Universal escape hatch for invoking any UE command not otherwise exposed.', pyMeta),
+    {
+      script: z.string().describe('Python source to execute'),
+      allow_unsafe: z.boolean().optional().describe('Override Tier 3 filesystem/subprocess block (DANGEROUS)'),
+    },
+    async (params) => {
+      const r = await pythonRunHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+
+  // Record schemas for tools whose shapes we want get_tool_signature to derive
+  // live. Runs regardless of Code Mode so the registry stays in sync.
+  recordEagerSchemas(reg);
+
+  // When Code Mode is ON (default), stop here — full schemas are only fetched
+  // on demand via get_tool_signature. Set HAYBA_CODE_MODE=off to expose
+  // every tool eagerly (~70 tools, much larger initial tool-list payload).
+  if (config.codeMode) return;
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Eager registrations (Code Mode disabled) — every domain tool below here.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  // ── Actor domain ────────────────────────────────────────────────────────────
+
+  const vec3 = z.tuple([z.number(), z.number(), z.number()]);
+
+  // Some MCP clients (incl. Claude Code's tool harness) JSON-stringify nested
+  // arrays/booleans before they hit Zod. Wrap so we accept both raw and the
+  // stringified form for params we know are commonly affected.
+  const coerceBool = z.preprocess(
+    (v) => typeof v === 'string' ? v.toLowerCase() === 'true' : v,
+    z.boolean()
+  );
+  const coerceVec3 = z.preprocess((v) => {
+    if (typeof v === 'string') {
+      try { return JSON.parse(v); } catch { return v; }
+    }
+    return v;
+  }, vec3);
+
+  server.tool(
+    'actor_spawn',
+    appendMeta('Spawn a new actor in the active level.', actorSpawnMeta),
+    {
+      class_path: z.string().describe('UE class path, e.g. "/Script/Engine.StaticMeshActor"'),
+      location: coerceVec3.optional(),
+      rotation: coerceVec3.optional(),
+      scale: coerceVec3.optional(),
+      label: z.string().optional(),
+    },
+    async (params) => {
+      const r = await actorSpawnHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+
+  server.tool(
+    'actor_list',
+    appendMeta('Enumerate actors in the active level.', actorListMeta),
+    {
+      class_filter: z.string().optional().describe('Exact class name filter'),
+      tag: z.string().optional().describe('Tag filter'),
+    },
+    async (params) => {
+      const r = await actorListHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+
+  server.tool(
+    'actor_delete',
+    appendMeta('Destroy an actor in the active level.', actorDeleteMeta),
+    { actor_id: z.string() },
+    async (params) => {
+      const r = await actorDeleteHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+
+  server.tool(
+    'actor_transform',
+    appendMeta('Reposition, rotate, or scale an existing actor.', actorTransformMeta),
+    {
+      actor_id: z.string(),
+      location: coerceVec3.optional(),
+      rotation: coerceVec3.optional(),
+      scale: coerceVec3.optional(),
+    },
+    async (params) => {
+      const r = await actorTransformHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+
+  // ── Scene domain ────────────────────────────────────────────────────────────
+
+  server.tool(
+    'scene_export',
+    appendMeta('Export a 3D scene graph for LLM reasoning (flat / relational / hierarchical).', sceneExportMeta),
+    {
+      mode: z.enum(['flat', 'relational', 'hierarchical']).optional(),
+      window: z.object({ min: vec3, max: vec3 }).optional(),
+      max_items: z.coerce.number().int().optional(),
+    },
+    async (params) => {
+      const r = await sceneExportHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+
+  server.tool(
+    'scene_validate_physics',
+    appendMeta('Detect floating / interpenetrating actors in the level.', scenePhysicsMeta),
+    {
+      deep_check: coerceBool.optional(),
+      window: z.object({ min: vec3, max: vec3 }).optional(),
+    },
+    async (params) => {
+      const r = await sceneValidatePhysicsHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+
+  // ── Editor domain ───────────────────────────────────────────────────────────
+
+  server.tool(
+    'editor_capture_viewport',
+    appendMeta('Capture the active editor viewport as a base64 PNG.', captureMeta),
+    {
+      width: z.coerce.number().int().optional(),
+      height: z.coerce.number().int().optional(),
+    },
+    async (params) => {
+      const r = await editorCaptureViewportHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+
+  server.tool(
+    'editor_start_pie',
+    appendMeta('Start Play-In-Editor.', pieMeta),
+    { single_step: coerceBool.optional() },
+    async (params) => {
+      const r = await editorStartPieHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+
+  server.tool(
+    'editor_stream_log',
+    appendMeta('Tail recent UE log lines (paged via since_line).', streamLogMeta),
+    {
+      filter: z.string().optional(),
+      since_line: z.coerce.number().int().nonnegative().optional(),
+    },
+    async (params) => {
+      const r = await editorStreamLogHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
 
   // ── PCGEx tools ─────────────────────────────────────────────────────────────
 
@@ -162,7 +382,7 @@ export function registerTools(server: McpServer, session: SessionManager): void 
     'hayba_validate_attribute_flow',
     {
       graph: z.string().describe('JSON string of the PCGEx graph to validate attribute flow'),
-      strictMode: z.boolean().optional().describe('If true, also flag orphan writes (written but never consumed)'),
+      strictMode: coerceBool.optional().describe('If true, also flag orphan writes (written but never consumed)'),
     },
     async (params) => {
       const result = await validateAttributeFlow(params as unknown as ValidateAttributeFlowParams);
@@ -188,7 +408,8 @@ export function registerTools(server: McpServer, session: SessionManager): void 
     {
       graph: z.string().describe(
         'JSON string of the PCGEx graph to layout. ' +
-        'NOTE: UE5 uses integer NodePosX/NodePosY, top-left origin, positive Y downward.'
+        'Edges accept either canonical (fromNode/fromPin/toNode/toPin) or legacy (from/fromPin/to/toPin) keys. ' +
+        'Output nodes carry a position:{x,y} object; the C++ legacy handler reads that.'
       ),
       algorithm: z.enum(['layered', 'grid']).optional().describe('Layout algorithm (default: layered)'),
       nodeWidth: z.number().int().optional().describe('Node width in pixels (default: 200)'),
@@ -266,8 +487,8 @@ export function registerTools(server: McpServer, session: SessionManager): void 
     }
   );
 
-  // ── Knowledge tools ──────────────────────────────────────────────────────────
-
+  // ── Knowledge tools (Gaea — disabled, will be re-added later) ───────────────
+  /*
   server.tool(
     'hayba_search_gaea_archetypes',
     {
@@ -491,6 +712,7 @@ export function registerTools(server: McpServer, session: SessionManager): void 
       return { content: result.content, isError: result.isError };
     }
   );
+  */ // end Gaea + Knowledge tool block
 
   // ── Conventions tools ────────────────────────────────────────────────────────
 
@@ -544,6 +766,7 @@ export function registerTools(server: McpServer, session: SessionManager): void 
 
   // ── Scene workflow ────────────────────────────────────────────────────────────
 
+  /* Disabled: depends on Gaea pipeline; will be re-added later.
   server.tool(
     'hayba_ue_landscape_pipeline',
     'Full UE landscape project pipeline: guided brainstorm → zone painting → Gaea terrain generation → bake → import into Unreal Engine → foliage zones. Use this for major landscape projects that will be imported into UE5. For standalone Gaea terrain work, use hayba_brainstorm_gaea instead.',
@@ -566,6 +789,7 @@ export function registerTools(server: McpServer, session: SessionManager): void 
       return { content: result.content, isError: result.isError };
     }
   );
+  */
 
   // ── Zone Painter tools ──────────────────────────────────────────────────────
 
@@ -605,4 +829,188 @@ export function registerTools(server: McpServer, session: SessionManager): void 
       return { content: result.content, isError: result.isError };
     }
   );
+}
+
+// Schema registry seeding. Mirrors the Zod shapes used by the eager
+// server.tool() calls above, but lives independently of the Code Mode gate
+// so get_tool_signature can derive params from real schemas at runtime.
+// New tools should add an entry here when first registered.
+function recordEagerSchemas(
+  reg: (name: string, shape: z.ZodRawShape, cost: Cost, returns: string) => void,
+): void {
+  const vec3 = z.tuple([z.number(), z.number(), z.number()]);
+  const coerceBool = z.preprocess(
+    (v) => typeof v === 'string' ? v.toLowerCase() === 'true' : v,
+    z.boolean(),
+  );
+  const coerceVec3 = z.preprocess((v) => {
+    if (typeof v === 'string') { try { return JSON.parse(v); } catch { return v; } }
+    return v;
+  }, vec3);
+
+  // ── Code Mode meta ────────────────────────────────────────────────────────
+  reg('list_tool_categories', {}, 'low', '{categories:[{domain,commands:[string]}]}');
+  reg('get_tool_signature',
+    { command: z.string().describe('Exact command name, e.g. "actor_spawn"') },
+    'low', '{command, params, returns, cost} or {status:"no_schema_available", did_you_mean}');
+  reg('python_run', {
+    script: z.string().describe('Python source to execute'),
+    allow_unsafe: z.boolean().optional().describe('Override Tier 3 filesystem/subprocess block (DANGEROUS)'),
+  }, 'high', '{ok, tier, stdout, stderr}');
+
+  // ── Actor domain ──────────────────────────────────────────────────────────
+  reg('actor_spawn', {
+    class_path: z.string().describe('UE class path, e.g. "/Script/Engine.StaticMeshActor"'),
+    location: coerceVec3.optional(),
+    rotation: coerceVec3.optional(),
+    scale: coerceVec3.optional(),
+    label: z.string().optional(),
+  }, 'medium', '{actor_id, label, class}');
+  reg('actor_list', {
+    class_filter: z.string().optional().describe('Exact class name filter'),
+    tag: z.string().optional().describe('Tag filter'),
+  }, 'low', '{actors:[{id,label,class,location}], count}');
+  reg('actor_delete', { actor_id: z.string() }, 'low', '{ok, actor_id}');
+  reg('actor_transform', {
+    actor_id: z.string(),
+    location: coerceVec3.optional(),
+    rotation: coerceVec3.optional(),
+    scale: coerceVec3.optional(),
+  }, 'low', '{ok, actor_id, before, after}');
+
+  // ── Scene domain ──────────────────────────────────────────────────────────
+  reg('scene_export', {
+    mode: z.enum(['flat', 'relational', 'hierarchical']).optional(),
+    window: z.object({ min: vec3, max: vec3 }).optional(),
+    max_items: z.coerce.number().int().optional(),
+  }, 'medium', 'mode-specific shape');
+  reg('scene_validate_physics', {
+    deep_check: coerceBool.optional(),
+    window: z.object({ min: vec3, max: vec3 }).optional(),
+  }, 'medium', '{valid, floating, interpenetrating, checked_count, scanned_actors, skipped_system_actors}');
+
+  // ── Editor domain ─────────────────────────────────────────────────────────
+  reg('editor_capture_viewport', {
+    width: z.coerce.number().int().optional(),
+    height: z.coerce.number().int().optional(),
+  }, 'medium', '{image_base64, width, height, camera}');
+  reg('editor_start_pie', { single_step: coerceBool.optional() }, 'high', '{ok, pie_world_id}');
+  reg('editor_stream_log', {
+    filter: z.string().optional(),
+    since_line: z.coerce.number().int().min(0).optional(),
+  }, 'low', '{lines:[string], next_line:int}');
+
+  // ── PCGEx domain ──────────────────────────────────────────────────────────
+  reg('hayba_search_node_catalog', {
+    query: z.string().describe('Search query — keyword, node class, or category'),
+  }, 'low', '{results:[{class,category,description,inputs,outputs,key_properties}], matchType}');
+  reg('hayba_get_node_details', {
+    class: z.string().describe('PCGEx node class name'),
+  }, 'low', '{class, category, description, inputs, outputs, properties}');
+  reg('hayba_create_pcg_graph', {
+    graph: z.string().describe('JSON string of the PCGEx graph topology'),
+    name: z.string().describe('Asset name for the new PCGGraph'),
+  }, 'high', '{ok, asset_path}');
+  reg('hayba_validate_pcg_graph', {
+    graph: z.string().describe('JSON string of the PCGEx graph to validate'),
+  }, 'medium', '{valid, errors:[{type,node,pin,detail}], errorCount}');
+  reg('hayba_list_pcg_assets', {
+    path: z.string().optional().describe('Content path filter (default: /Game/)'),
+  }, 'low', '{assets:[{name,path,nodeCount,edgeCount}], count}');
+  reg('hayba_export_pcg_graph', {
+    assetPath: z.string().describe('Full UE asset path to the PCGGraph'),
+  }, 'medium', '{graph:{version,meta,nodes,edges,metadata}}');
+  reg('hayba_execute_pcg_graph', {
+    assetPath: z.string().describe('Full UE asset path to execute'),
+  }, 'high', '{ok, generated_count, duration_ms}');
+  reg('hayba_check_ue_status', {}, 'low', '{connected, status, ueVersion, plugin, pluginVersion}');
+  reg('hayba_scrape_node_registry', {
+    pluginSourcePath: z.string().optional().describe('Path to PCGExtendedToolkit/Source/ directory'),
+    outputDbPath: z.string().optional().describe('Output SQLite DB path (default: Resources/pcgex_registry.db)'),
+    forceRescan: z.boolean().optional().describe('Force re-scan even if DB exists'),
+  }, 'high', '{nodes_scanned, pins_scanned, properties_scanned, db_path, catalog_path}');
+  reg('hayba_match_pin_names', {
+    fromClass: z.string().describe('Source node class'),
+    fromPin: z.string().describe('Pin name on source node (may be approximate)'),
+    toClass: z.string().describe('Target node class to find a matching input pin on'),
+  }, 'low', '{matches:[{pin,confidence,reason}]}');
+  reg('hayba_validate_attribute_flow', {
+    graph: z.string().describe('JSON string of the PCGEx graph to validate attribute flow'),
+    strictMode: coerceBool.optional().describe('If true, also flag orphan writes (written but never consumed)'),
+  }, 'medium', '{valid, errors:[{type,node,attribute,detail}]}');
+  reg('hayba_diff_against_working_asset', {
+    wipGraph: z.string().describe('JSON string of the work-in-progress graph'),
+    referenceAssetPath: z.string().describe('Full UE asset path to the reference PCGGraph'),
+    diffMode: z.enum(['structural', 'properties', 'full']).optional().describe('What to diff (default: full)'),
+  }, 'medium', '{added, removed, modified, identical}');
+  reg('hayba_format_graph_topology', {
+    graph: z.string().describe('JSON string of the PCGEx graph to layout'),
+    algorithm: z.enum(['layered', 'grid']).optional(),
+    nodeWidth: z.number().int().optional(),
+    nodeHeight: z.number().int().optional(),
+    horizontalSpacing: z.number().int().optional(),
+    verticalSpacing: z.number().int().optional(),
+    addCommentBlocks: z.boolean().optional(),
+  }, 'low', 'JSON string of laid-out graph (nodes carry position:{x,y})');
+  reg('hayba_abstract_to_subgraph', {
+    graph: z.string().describe('JSON string of the full PCGEx graph'),
+    nodeIds: z.array(z.string()).describe('Array of node IDs to extract into a subgraph'),
+    subgraphName: z.string().optional().describe('Name for the extracted subgraph (default: SubGraph)'),
+  }, 'medium', '{subgraph, mainGraph}');
+  reg('hayba_parameterize_graph_inputs', {
+    graph: z.string().describe('JSON string of the PCGEx graph'),
+    targets: z.array(z.object({
+      nodeId: z.string(),
+      property: z.string(),
+      parameterName: z.string().optional(),
+    })),
+  }, 'medium', '{graph, parameters:[{name,type,defaultValue}]}');
+  reg('hayba_query_pcgex_docs', {
+    query: z.string().describe('Node class name or keyword to search documentation'),
+    includeSourceSnippet: z.boolean().optional().describe('Include up to 80 lines from the header file'),
+  }, 'low', '{results:[{class,description,sourceSnippet?}]}');
+  reg('hayba_initiate_infrastructure_brainstorm', {
+    topic: z.string().describe('The infrastructure or system design topic to brainstorm'),
+    context: z.string().optional(),
+    constraints: z.array(z.string()).optional(),
+  }, 'low', '{approaches:[{name,description,nodes,tradeoffs}]} — PROPOSAL ONLY');
+
+  // ── Conventions domain ────────────────────────────────────────────────────
+  reg('hayba_setup_conventions', {
+    stage: z.enum(['start', 'folders', 'naming', 'workflow', 'confirm', 'save']),
+    preset: z.enum(['epic-default', 'gamedevtv', 'custom']).optional(),
+    answers: z.record(z.unknown()).optional(),
+    target: z.enum(['global', 'project']).optional(),
+    projectRoot: z.string().optional(),
+  }, 'low', '{stage, question?, next_stage?, saved_to?}');
+  reg('hayba_analyze_conventions', {
+    projectRoot: z.string().describe('Path to UE project root (contains .uproject file)'),
+    save: z.boolean().optional(),
+    target: z.enum(['global', 'project']).optional(),
+  }, 'medium', '{inferred:{folders, naming, workflow}, saved_to?}');
+
+  // ── Landscape import ──────────────────────────────────────────────────────
+  reg('hayba_import_landscape', {
+    heightmapPath: z.string().optional(),
+    worldSizeKm: z.number().optional(),
+    maxHeightM: z.number().optional(),
+    landscapeMaterial: z.string().optional(),
+    actorLabel: z.string().optional(),
+    projectRoot: z.string().optional(),
+  }, 'high', '{ok, actor_id, components}');
+
+  // ── Zone painter domain ───────────────────────────────────────────────────
+  reg('hayba_open_zone_painter', {
+    projectId: z.string().optional(),
+    projectName: z.string().optional(),
+    phase: z.enum(['a', 'b']).optional(),
+  }, 'low', '{ok, url, projectId}');
+  reg('hayba_read_zones', {
+    projectId: z.string().optional(),
+    scratchSessionId: z.string().optional(),
+  }, 'low', '{zones:[{id,label,mask_path,bounds}]}');
+  reg('hayba_set_painter_heightmap', {
+    projectId: z.string(),
+    heightmapPath: z.string(),
+  }, 'low', '{ok}');
 }

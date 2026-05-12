@@ -1,3 +1,6 @@
+# Local-only training corpus (per Gaea EULA §1, do not redistribute QuadSpinner samples).
+packages/hayba/src/gaea/knowledge/more_examples/
+
 node_modules/
 dist/
 *.js.map

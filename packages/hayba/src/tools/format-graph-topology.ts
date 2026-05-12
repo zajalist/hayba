@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { PCGGraphJSON, PCGNode, PCGEdge } from '../types.js';
+import { normalizeEdges } from '../types.js';
 
 const schema = z.object({
   graph: z.string().min(1).describe('JSON string of the PCGEx graph to format'),
@@ -168,6 +169,8 @@ export async function formatGraphTopology(params: FormatGraphTopologyParams) {
   } catch {
     throw new Error('Invalid JSON graph payload');
   }
+  // Accept either canonical (fromNode/toNode) or legacy (from/to) edge schemas.
+  graph.edges = normalizeEdges(graph.edges as unknown as any[]);
 
   let updatedNodes: PCGNode[];
 

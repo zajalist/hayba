@@ -26,33 +26,34 @@ export function analyzeQueryIntent(query: string): QueryIntent {
   const requiredNodes: string[] = [];
   let targetPhase: string | undefined;
 
-  // Detect explicit node requirements
+  // Detect explicit node requirements using word-boundary regex
   const nodePatterns = [
     'anastomosis', 'erosion', 'thermal', 'fold', 'crater', 'warp',
     'mountain', 'perlin', 'gradient', 'canyon', 'clip', 'blur',
-    'combine', 'autolevel', 'dust', 'sandstone', 'craggy', 'snow'
+    'combine', 'autolevel', 'dust', 'sandstone', 'craggy', 'snow',
   ];
-  
+
   for (const node of nodePatterns) {
-    if (q.includes(node) || q.includes(`use ${node}`) || q.includes(`${node} node`)) {
+    const regex = new RegExp(`\\b${node}\\b`, 'i');
+    if (regex.test(q) || q.includes(`use ${node}`) || q.includes(`${node} node`)) {
       requiredNodes.push(node);
     }
   }
 
   // If specific nodes mentioned, boost topology weight
   if (requiredNodes.length > 0) {
-    semanticWeight = 0.3;
-    topologyWeight = 0.5;
-    biomeWeight = 0.1;
-    phaseWeight = 0.1;
+    semanticWeight = 0.25;
+    topologyWeight = 0.45;
+    biomeWeight = 0.15;
+    phaseWeight = 0.15;
   }
 
-  // Detect phase requirements
-  if (q.includes('simulation') || q.includes('erosion') || q.includes('fluvial')) {
+  // Detect phase requirements (expanded keywords)
+  if (/\b(simulation|erosion|fluvial|hydrology|river)\b/.test(q)) {
     targetPhase = 'simulation';
-  } else if (q.includes('base') || q.includes('foundation') || q.includes('starting')) {
+  } else if (/\b(base|foundation|starting|primitive|generator)\b/.test(q)) {
     targetPhase = 'base';
-  } else if (q.includes('texture') || q.includes('lookdev') || q.includes('material')) {
+  } else if (/\b(texture|lookdev|material|color|satmap)\b/.test(q)) {
     targetPhase = 'lookdev';
   }
 
@@ -76,37 +77,25 @@ export function analyzeQueryIntent(query: string): QueryIntent {
   };
 }
 
-/** Calculate sequence similarity using normalized Jaccard index with position penalty */
-function sequenceSimilarity(querySeq: string[], targetSeq: string[]): number {
-  if (querySeq.length === 0) return 0;
-  
-  const q = querySeq.map(n => n.toLowerCase());
-  const t = targetSeq.map(n => n.toLowerCase());
-  
-  // Exact sequence match bonus
-  if (q.length === t.length && q.every((n, i) => n === t[i])) {
-    return 1.0;
-  }
-
-  // Jaccard similarity for node presence
-  const qSet = new Set(q);
-  const tSet = new Set(t);
-  const intersection = [...qSet].filter(n => tSet.has(n));
-  const union = new Set([...qSet, ...tSet]);
-  const jaccard = intersection.length / union.size;
-
-  // Position-based sequence penalty
-  // If order differs, reduce score
-  let positionScore = 1.0;
-  for (let i = 0; i < Math.min(q.length, t.length); i++) {
-    if (q[i] !== t[i]) {
-      positionScore -= 0.15; // Penalty for order mismatch
+/** Compute Longest Common Subsequence length */
+function lcsLength(a: string[], b: string[]): number {
+  const m = a.length, n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1].toLowerCase() === b[j - 1].toLowerCase()
+        ? dp[i - 1][j - 1] + 1
+        : Math.max(dp[i - 1][j], dp[i][j - 1]);
     }
   }
-  positionScore = Math.max(0, positionScore);
+  return dp[m][n];
+}
 
-  // Combined: prioritize both presence AND order
-  return (jaccard * 0.6) + (positionScore * 0.4);
+/** Calculate sequence similarity using LCS — rewards preserved relative order */
+function sequenceSimilarity(querySeq: string[], targetSeq: string[]): number {
+  if (querySeq.length === 0) return 0;
+  const lcs = lcsLength(querySeq, targetSeq);
+  return lcs / Math.max(querySeq.length, targetSeq.length);
 }
 
 /** Search result with full scoring breakdown */
@@ -151,16 +140,28 @@ export class ArchetypeStore {
 
   async ensureEmbeddings(): Promise<void> {
     if (this.embeddingsReady) return;
-    let dirty = false;
-    for (const a of this.archetypes) {
-      if (!this.embeddings[a.pattern_name]) {
+
+    const missing = this.archetypes.filter(a => !this.embeddings[a.pattern_name]);
+    if (missing.length === 0) {
+      this.embeddingsReady = true;
+      return;
+    }
+
+    const cpuCount = (await import('os')).cpus().length;
+    if (cpuCount > 8 && missing.length > 1) {
+      const { embedBatch } = await import('./embedder.js');
+      const texts = missing.map(a => a.semantic_intent);
+      const vectors = await embedBatch(texts);
+      for (let i = 0; i < missing.length; i++) {
+        this.embeddings[missing[i].pattern_name] = vectors[i];
+      }
+    } else {
+      for (const a of missing) {
         this.embeddings[a.pattern_name] = await embed(a.semantic_intent);
-        dirty = true;
       }
     }
-    if (dirty) {
-      writeFileSync(this.embeddingsPath, JSON.stringify(this.embeddings));
-    }
+
+    writeFileSync(this.embeddingsPath, JSON.stringify(this.embeddings));
     this.embeddingsReady = true;
   }
 
@@ -228,13 +229,15 @@ export class ArchetypeStore {
         phaseScore = ((archetype.phase || 'character') === intent.targetPhase) ? 1.0 : 0;
       }
 
+      // Apply sequence score as multiplier on topology
+      const adjustedTopology = topologyScore * (1 + sequenceScore);
+
       // Apply dynamic weights from intent analysis
-      const score = 
+      const score =
         (semanticScore * intent.semanticWeight) +
-        (topologyScore * intent.topologyWeight) +
+        (adjustedTopology * intent.topologyWeight) +
         (biomeScore * intent.biomeWeight) +
-        (phaseScore * intent.phaseWeight) +
-        (sequenceScore * 0.2); // Sequence bonus
+        (phaseScore * intent.phaseWeight);
 
       return {
         archetype,
