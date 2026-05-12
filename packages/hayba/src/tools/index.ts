@@ -40,6 +40,32 @@ import { parameterizeGraphInputs } from './parameterize-graph-inputs.js';
 import { queryPcgexDocs, type QueryPcgexDocsParams } from './query-pcgex-docs.js';
 import { initiateInfrastructureBrainstorm } from './initiate-infrastructure-brainstorm.js';
 
+import {
+  definePhonology,
+  definePhonologySchema,
+  generateNameSchema,
+  languageApplySoundChanges,
+  languageGenerateName,
+  languageProposeDerivation,
+  languageRemixPhonologies,
+  languageWordFor,
+  proposeDerivationSchema,
+  remixPhonologiesSchema,
+  soundChangesSchema,
+  wordForSchema,
+} from './worldbuilding/language-handlers.js';
+import {
+  dynamoSchema,
+  escapeSchema,
+  hzSchema,
+  planetDynamoField,
+  planetEscapeRegime,
+  planetHabitableZone,
+  planetStabilityReportPayload,
+  planetTidalLocking,
+  tidalSchema,
+} from './worldbuilding/planet-handlers.js';
+
 // ── Zone painter tool handlers ────────────────────────────────────────────────
 import { openZonePainterHandler } from './hayba-open-zone-painter.js';
 import { readZonesHandler } from './hayba-read-zones.js';
@@ -502,6 +528,132 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
             'until the user has explicitly approved an approach above.',
         }]
       };
+    }
+  );
+
+  // ── Worldbuilding hub — linguistics + planet physics packages ───────────────
+  server.tool(
+    'language_define_phonology',
+    'Persist phoneme inventory (+ optional phonotactics) for deterministic validation / naming.',
+    definePhonologySchema.shape,
+    async (params) => {
+      try {
+        const result = definePhonology(params as z.infer<typeof definePhonologySchema>);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'language_word_for',
+    'Deterministic lexeme lookup for (language_id, concept_id); optionally seed the lexicon inline.',
+    wordForSchema.shape,
+    async (params) => {
+      try {
+        const result = languageWordFor(params as z.infer<typeof wordForSchema>);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'language_generate_name',
+    'Seeded phonotactic name generation using phonology + phonotactics registered for the language.',
+    generateNameSchema.shape,
+    async (params) => {
+      try {
+        const result = languageGenerateName(params as z.infer<typeof generateNameSchema>);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'language_apply_sound_changes',
+    'Placeholder for Lexurgy-style ordered rules (L5).',
+    soundChangesSchema.shape,
+    async (params) => {
+      const result = languageApplySoundChanges(params as z.infer<typeof soundChangesSchema>);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'language_propose_derivation',
+    'Placeholder for LLM-assisted constrained derivations (L7).',
+    proposeDerivationSchema.shape,
+    async (params) => {
+      const result = languageProposeDerivation(params as z.infer<typeof proposeDerivationSchema>);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'language_remix_phonologies',
+    'Placeholder for creole / substrate blending (L9).',
+    remixPhonologiesSchema.shape,
+    async (params) => {
+      const result = languageRemixPhonologies(params as z.infer<typeof remixPhonologiesSchema>);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'hayba_planet_habitable_zone',
+    'Kopparapu et al. (2014) HZ distances with Ramirez-style inner-edge mass correction.',
+    hzSchema.shape,
+    async (params) => {
+      const result = planetHabitableZone(params as z.infer<typeof hzSchema>);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'hayba_planet_tidal_locking',
+    'Darwin-style tidal locking timescale with constant Q.',
+    tidalSchema.shape,
+    async (params) => {
+      const result = planetTidalLocking(params as z.infer<typeof tidalSchema>);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'hayba_planet_dynamo_field',
+    'Christensen–Aubert-style dipole scaling diagnostic.',
+    dynamoSchema.shape,
+    async (params) => {
+      const result = planetDynamoField(params as z.infer<typeof dynamoSchema>);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'hayba_planet_escape_regime',
+    'Jeans parameter vs energy-limited escape heuristic.',
+    escapeSchema.shape,
+    async (params) => {
+      const result = planetEscapeRegime(params as z.infer<typeof escapeSchema>);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'hayba_planet_stability_schema',
+    'Returns stability-report JSON Schema + example fixture (planet-sim P8).',
+    {},
+    async () => {
+      const result = planetStabilityReportPayload();
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
 
@@ -1011,6 +1163,18 @@ function recordEagerSchemas(
     save: z.boolean().optional(),
     target: z.enum(['global', 'project']).optional(),
   }, 'medium', '{inferred:{folders, naming, workflow}, saved_to?}');
+
+  reg('language_define_phonology', definePhonologySchema.shape, 'low', '{ok, language_id, phoneme_count}');
+  reg('language_word_for', wordForSchema.shape, 'low', '{lexeme}');
+  reg('language_generate_name', generateNameSchema.shape, 'low', '{name}');
+  reg('language_apply_sound_changes', soundChangesSchema.shape, 'low', '{ok, message}');
+  reg('language_propose_derivation', proposeDerivationSchema.shape, 'low', '{ok, message}');
+  reg('language_remix_phonologies', remixPhonologiesSchema.shape, 'low', '{ok, message}');
+  reg('hayba_planet_habitable_zone', hzSchema.shape, 'low', 'HabitableZoneResult JSON');
+  reg('hayba_planet_tidal_locking', tidalSchema.shape, 'low', 'TidalLockingResult JSON');
+  reg('hayba_planet_dynamo_field', dynamoSchema.shape, 'low', 'DynamoScalingResult JSON');
+  reg('hayba_planet_escape_regime', escapeSchema.shape, 'low', 'AtmosphericEscapeResult JSON');
+  reg('hayba_planet_stability_schema', {}, 'low', '{schema_json, example}');
 
   // ── Landscape import ──────────────────────────────────────────────────────
   // hayba_import_landscape schema parked with the rest of the terrain stack.

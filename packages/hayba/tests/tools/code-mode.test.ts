@@ -1,8 +1,24 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { listToolCategoriesHandler } from '../../src/tools/code-mode/list-tool-categories.js';
 import { getToolSignatureHandler } from '../../src/tools/code-mode/get-tool-signature.js';
+import { recordSchema } from '../../src/tools/schema-registry.js';
+import { z } from 'zod';
 
 const fakeSession = {} as any;
+
+beforeAll(() => {
+  recordSchema('actor_spawn', {
+    shape: {
+      class_path: z.string().describe('UE class path'),
+      location: z.object({ x: z.number(), y: z.number(), z: z.number() }).optional(),
+      rotation: z.object({ x: z.number(), y: z.number(), z: z.number() }).optional(),
+      scale: z.object({ x: z.number(), y: z.number(), z: z.number() }).optional(),
+      label: z.string().optional(),
+    },
+    cost: 'medium',
+    returns: '{actor_id, label, class}',
+  });
+});
 
 describe('list_tool_categories', () => {
   it('returns 31 domains and ~157 commands', async () => {

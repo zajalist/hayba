@@ -1,0 +1,19 @@
+{
+  "name": "@hayba/linguistics",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "license": "MIT"
+}
