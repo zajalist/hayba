@@ -899,4 +899,118 @@ function recordEagerSchemas(
     filter: z.string().optional(),
     since_line: z.coerce.number().int().min(0).optional(),
   }, 'low', '{lines:[string], next_line:int}');
+
+  // ── PCGEx domain ──────────────────────────────────────────────────────────
+  reg('hayba_search_node_catalog', {
+    query: z.string().describe('Search query — keyword, node class, or category'),
+  }, 'low', '{results:[{class,category,description,inputs,outputs,key_properties}], matchType}');
+  reg('hayba_get_node_details', {
+    class: z.string().describe('PCGEx node class name'),
+  }, 'low', '{class, category, description, inputs, outputs, properties}');
+  reg('hayba_create_pcg_graph', {
+    graph: z.string().describe('JSON string of the PCGEx graph topology'),
+    name: z.string().describe('Asset name for the new PCGGraph'),
+  }, 'high', '{ok, asset_path}');
+  reg('hayba_validate_pcg_graph', {
+    graph: z.string().describe('JSON string of the PCGEx graph to validate'),
+  }, 'medium', '{valid, errors:[{type,node,pin,detail}], errorCount}');
+  reg('hayba_list_pcg_assets', {
+    path: z.string().optional().describe('Content path filter (default: /Game/)'),
+  }, 'low', '{assets:[{name,path,nodeCount,edgeCount}], count}');
+  reg('hayba_export_pcg_graph', {
+    assetPath: z.string().describe('Full UE asset path to the PCGGraph'),
+  }, 'medium', '{graph:{version,meta,nodes,edges,metadata}}');
+  reg('hayba_execute_pcg_graph', {
+    assetPath: z.string().describe('Full UE asset path to execute'),
+  }, 'high', '{ok, generated_count, duration_ms}');
+  reg('hayba_check_ue_status', {}, 'low', '{connected, status, ueVersion, plugin, pluginVersion}');
+  reg('hayba_scrape_node_registry', {
+    pluginSourcePath: z.string().optional().describe('Path to PCGExtendedToolkit/Source/ directory'),
+    outputDbPath: z.string().optional().describe('Output SQLite DB path (default: Resources/pcgex_registry.db)'),
+    forceRescan: z.boolean().optional().describe('Force re-scan even if DB exists'),
+  }, 'high', '{nodes_scanned, pins_scanned, properties_scanned, db_path, catalog_path}');
+  reg('hayba_match_pin_names', {
+    fromClass: z.string().describe('Source node class'),
+    fromPin: z.string().describe('Pin name on source node (may be approximate)'),
+    toClass: z.string().describe('Target node class to find a matching input pin on'),
+  }, 'low', '{matches:[{pin,confidence,reason}]}');
+  reg('hayba_validate_attribute_flow', {
+    graph: z.string().describe('JSON string of the PCGEx graph to validate attribute flow'),
+    strictMode: coerceBool.optional().describe('If true, also flag orphan writes (written but never consumed)'),
+  }, 'medium', '{valid, errors:[{type,node,attribute,detail}]}');
+  reg('hayba_diff_against_working_asset', {
+    wipGraph: z.string().describe('JSON string of the work-in-progress graph'),
+    referenceAssetPath: z.string().describe('Full UE asset path to the reference PCGGraph'),
+    diffMode: z.enum(['structural', 'properties', 'full']).optional().describe('What to diff (default: full)'),
+  }, 'medium', '{added, removed, modified, identical}');
+  reg('hayba_format_graph_topology', {
+    graph: z.string().describe('JSON string of the PCGEx graph to layout'),
+    algorithm: z.enum(['layered', 'grid']).optional(),
+    nodeWidth: z.number().int().optional(),
+    nodeHeight: z.number().int().optional(),
+    horizontalSpacing: z.number().int().optional(),
+    verticalSpacing: z.number().int().optional(),
+    addCommentBlocks: z.boolean().optional(),
+  }, 'low', 'JSON string of laid-out graph (nodes carry position:{x,y})');
+  reg('hayba_abstract_to_subgraph', {
+    graph: z.string().describe('JSON string of the full PCGEx graph'),
+    nodeIds: z.array(z.string()).describe('Array of node IDs to extract into a subgraph'),
+    subgraphName: z.string().optional().describe('Name for the extracted subgraph (default: SubGraph)'),
+  }, 'medium', '{subgraph, mainGraph}');
+  reg('hayba_parameterize_graph_inputs', {
+    graph: z.string().describe('JSON string of the PCGEx graph'),
+    targets: z.array(z.object({
+      nodeId: z.string(),
+      property: z.string(),
+      parameterName: z.string().optional(),
+    })),
+  }, 'medium', '{graph, parameters:[{name,type,defaultValue}]}');
+  reg('hayba_query_pcgex_docs', {
+    query: z.string().describe('Node class name or keyword to search documentation'),
+    includeSourceSnippet: z.boolean().optional().describe('Include up to 80 lines from the header file'),
+  }, 'low', '{results:[{class,description,sourceSnippet?}]}');
+  reg('hayba_initiate_infrastructure_brainstorm', {
+    topic: z.string().describe('The infrastructure or system design topic to brainstorm'),
+    context: z.string().optional(),
+    constraints: z.array(z.string()).optional(),
+  }, 'low', '{approaches:[{name,description,nodes,tradeoffs}]} — PROPOSAL ONLY');
+
+  // ── Conventions domain ────────────────────────────────────────────────────
+  reg('hayba_setup_conventions', {
+    stage: z.enum(['start', 'folders', 'naming', 'workflow', 'confirm', 'save']),
+    preset: z.enum(['epic-default', 'gamedevtv', 'custom']).optional(),
+    answers: z.record(z.unknown()).optional(),
+    target: z.enum(['global', 'project']).optional(),
+    projectRoot: z.string().optional(),
+  }, 'low', '{stage, question?, next_stage?, saved_to?}');
+  reg('hayba_analyze_conventions', {
+    projectRoot: z.string().describe('Path to UE project root (contains .uproject file)'),
+    save: z.boolean().optional(),
+    target: z.enum(['global', 'project']).optional(),
+  }, 'medium', '{inferred:{folders, naming, workflow}, saved_to?}');
+
+  // ── Landscape import ──────────────────────────────────────────────────────
+  reg('hayba_import_landscape', {
+    heightmapPath: z.string().optional(),
+    worldSizeKm: z.number().optional(),
+    maxHeightM: z.number().optional(),
+    landscapeMaterial: z.string().optional(),
+    actorLabel: z.string().optional(),
+    projectRoot: z.string().optional(),
+  }, 'high', '{ok, actor_id, components}');
+
+  // ── Zone painter domain ───────────────────────────────────────────────────
+  reg('hayba_open_zone_painter', {
+    projectId: z.string().optional(),
+    projectName: z.string().optional(),
+    phase: z.enum(['a', 'b']).optional(),
+  }, 'low', '{ok, url, projectId}');
+  reg('hayba_read_zones', {
+    projectId: z.string().optional(),
+    scratchSessionId: z.string().optional(),
+  }, 'low', '{zones:[{id,label,mask_path,bounds}]}');
+  reg('hayba_set_painter_heightmap', {
+    projectId: z.string(),
+    heightmapPath: z.string(),
+  }, 'low', '{ok}');
 }
