@@ -14,10 +14,6 @@
  * nasal-stop POA harmony) is preserved.
  */
 
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname as pathDirname, join as pathJoin } from 'node:path';
-
 export interface InventoryRecord {
   language: string;
   family: string;
@@ -176,11 +172,30 @@ export async function loadInventoriesFromPhoible(path: string): Promise<Inventor
 let _phoibleCache: InventoryRecord[] | null = null;
 export function loadPhoibleCorpus(): InventoryRecord[] {
   if (_phoibleCache) return _phoibleCache;
+  // Browser-safe guard: only attempt filesystem access in a Node-like
+  // runtime. Without this check, the browser-loaded bundle would crash on
+  // the `node:fs` / `node:url` / `node:path` resolution below.
+  const isNode =
+    typeof process !== 'undefined' &&
+    typeof (process as { versions?: { node?: string } }).versions?.node === 'string';
+  if (!isNode) return INVENTORIES;
   try {
-    // Resolve sibling JSON synchronously without a static import (so the
-    // ~12MB file is never bundled or scanned unless present). The file is
-    // intentionally gitignored — absence is the common case and yields the
-    // bundled subset.
+    // Resolve sibling JSON synchronously without a top-level static import
+    // (which would leak `node:*` specifiers into the browser bundle). We use
+    // `process.getBuiltinModule` (Node 22.3+) to obtain `node:module`, then
+    // `createRequire` to pull in the rest of the Node built-ins — all gated
+    // behind the `isNode` check above. The ~12MB JSON is intentionally
+    // gitignored — absence is the common case and yields the bundled subset.
+    const getBuiltin = (process as unknown as {
+      getBuiltinModule?: (id: string) => unknown;
+    }).getBuiltinModule;
+    if (typeof getBuiltin !== 'function') return INVENTORIES;
+    const nodeModule = getBuiltin('node:module') as typeof import('node:module');
+    const nodeRequire = nodeModule.createRequire(import.meta.url);
+    const { readFileSync } = nodeRequire('node:fs') as typeof import('node:fs');
+    const { fileURLToPath } = nodeRequire('node:url') as typeof import('node:url');
+    const { dirname: pathDirname, join: pathJoin } =
+      nodeRequire('node:path') as typeof import('node:path');
     const here = fileURLToPath(import.meta.url);
     const jsonPath = pathJoin(pathDirname(here), 'inventories.phoible.json');
     const raw = readFileSync(jsonPath, 'utf8');
