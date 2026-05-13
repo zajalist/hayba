@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  IDENTITY_M, translateY, scale, rotateY, compose, transform, revolve, loft,
+  IDENTITY_M, translateY, scale, rotateY, compose, transform, revolve, loft, mergeMeshes,
 } from './primitives.js';
 import type { Mesh } from './types.js';
 import { parseSvgProfile } from './svg-parse.js';
@@ -138,5 +138,41 @@ describe('loft', () => {
       'open-path',
     );
     expect(() => loft([open, open], [[0, 0, 0], [0, 100, 0]])).toThrow(/closed-path/);
+  });
+});
+
+describe('mergeMeshes', () => {
+  const tri = (offsetY: number): Mesh => ({
+    positions: new Float32Array([0, offsetY, 0,  1, offsetY, 0,  0, offsetY + 1, 0]),
+    normals:   new Float32Array([0, 0, 1,  0, 0, 1,  0, 0, 1]),
+    indices:   new Uint32Array([0, 1, 2]),
+  });
+
+  it('concatenates two meshes with index offsets', () => {
+    const m = mergeMeshes([tri(0), tri(10)]);
+    expect(m.positions.length).toBe(18);
+    expect(m.indices.length).toBe(6);
+    expect(m.indices[3]).toBe(3);
+    expect(m.indices[4]).toBe(4);
+    expect(m.indices[5]).toBe(5);
+  });
+  it('merges three meshes preserving all data', () => {
+    const m = mergeMeshes([tri(0), tri(5), tri(10)]);
+    expect(m.positions.length / 3).toBe(9);
+    expect(m.indices.length / 3).toBe(3);
+  });
+  it('is deterministic', () => {
+    const a = mergeMeshes([tri(0), tri(1)]);
+    const b = mergeMeshes([tri(0), tri(1)]);
+    expect(Array.from(a.positions)).toEqual(Array.from(b.positions));
+    expect(Array.from(a.indices)).toEqual(Array.from(b.indices));
+  });
+  it('rejects empty input', () => {
+    expect(() => mergeMeshes([])).toThrow();
+  });
+  it('single-mesh merge is equivalent', () => {
+    const m = mergeMeshes([tri(0)]);
+    expect(Array.from(m.positions)).toEqual([0,0,0, 1,0,0, 0,1,0]);
+    expect(Array.from(m.indices)).toEqual([0, 1, 2]);
   });
 });
