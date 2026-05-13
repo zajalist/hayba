@@ -3,6 +3,10 @@ dist/
 *.js.map
 .env
 *.tsbuildinfo
+
+# PHOIBLE full corpus is opt-in per developer (CC-BY-SA 4.0).
+# Generate via `npm run import:phoible --workspace @hayba/linguistics`.
+packages/linguistics/src/data/inventories.phoible.json
 Binaries/
 Intermediate/
 Saved/

@@ -20,7 +20,7 @@ export {
 export type { CoOccurrenceModel } from './cooccurrence.js';
 export { buildCoOccurrenceModel } from './cooccurrence.js';
 export type { InventoryRecord } from './data/inventories.js';
-export { INVENTORIES, loadInventoriesFromPhoible } from './data/inventories.js';
+export { INVENTORIES, loadInventoriesFromPhoible, loadPhoibleCorpus } from './data/inventories.js';
 export { audioUrlFor, audioCatalogueKeys } from './audio.js';
 
 // Phonotactics (L2)

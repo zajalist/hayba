@@ -10,7 +10,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "demo": "tsc && node dist/demo.js",
-    "serve": "tsc && node demo/serve.mjs"
+    "serve": "tsc && node demo/serve.mjs",
+    "import:phoible": "tsc && node scripts/import-phoible.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.12.2",
