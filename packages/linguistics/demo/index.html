@@ -205,6 +205,7 @@
   nav button[data-view="phonology"]     { --icon-c: var(--tag-blue); }
   nav button[data-view="lexicon"]       { --icon-c: var(--tag-pink); }
   nav button[data-view="translator"]    { --icon-c: var(--tag-green); }
+  nav button[data-view="grammar"]       { --icon-c: #c685c0; }
   nav button[data-view="sound-changes"] { --icon-c: var(--status-orange); }
   nav button[data-view="romanization"]  { --icon-c: var(--accent); }
   nav button[data-view="names"]         { --icon-c: #c685c0; }
@@ -407,6 +408,32 @@
     display: inline-block; padding: 1px 6px; border-radius: 3px;
     font-size: 10px; background: var(--accent-dim); color: var(--accent);
     border: 1px solid var(--accent); margin-left: 6px;
+  }
+
+  /* Grammar paradigm tables */
+  .paradigm-table {
+    border-collapse: separate; border-spacing: 0;
+    background: var(--bg-panel); border: 1px solid var(--border-mid);
+    border-radius: 5px; overflow: hidden;
+    font: 12px var(--font-ipa); min-width: max-content;
+  }
+  .paradigm-table th, .paradigm-table td {
+    padding: 7px 12px; text-align: left;
+    border-right: 1px solid var(--border-mid);
+    border-bottom: 1px solid var(--border-mid);
+  }
+  .paradigm-table thead th {
+    background: var(--bg-raised); color: var(--text-muted);
+    font-size: 11px; font-weight: 600;
+  }
+  .paradigm-table tbody th {
+    background: var(--bg-base); color: var(--text-secondary);
+    font-weight: 500; font-size: 11px;
+  }
+  .paradigm-table td.cell-form { color: var(--accent); font-weight: 500; font-size: 14px; }
+  .paradigm-table td.cell-empty { color: var(--text-muted); }
+  .paradigm-table td.cell-conflict {
+    background: rgba(224, 100, 100, 0.10); color: var(--status-red);
   }
 
   audio { height: 22px; }
@@ -628,6 +655,14 @@
       </svg>
       <span>Translator</span><span class="key">3</span>
     </button>
+    <button data-view="grammar">
+      <!-- Grid / paradigm table -->
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <path d="M3 9h18M3 15h18M9 3v18M15 3v18"/>
+      </svg>
+      <span>Grammar</span><span class="key">4</span>
+    </button>
     <button data-view="sound-changes">
       <!-- Diachrony: time arrow with transform -->
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -638,7 +673,7 @@
         <circle cx="19" cy="7" r="1.5"/>
         <circle cx="19" cy="17" r="1.5"/>
       </svg>
-      <span>Sound Changes</span><span class="key">4</span>
+      <span>Sound Changes</span><span class="key">5</span>
     </button>
     <button data-view="romanization">
       <!-- "Aa" alphabet -->
@@ -647,7 +682,7 @@
         <path d="M13 14.5c0-1.5 1.2-2.5 3-2.5s3 1 3 2.5V18"/>
         <path d="M19 15c-1 .5-2.5.5-3.5.5C14.5 15.5 13.5 16 13.5 17S14.5 18.5 16 18.5 19 17.5 19 16.5"/>
       </svg>
-      <span>Romanization</span><span class="key">5</span>
+      <span>Romanization</span><span class="key">6</span>
     </button>
     <button data-view="names">
       <!-- Sparkle / dice -->
@@ -656,7 +691,7 @@
         <path d="M18.5 14.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8Z"/>
         <path d="M5.5 16l.5 1.3L7.3 18 6 18.7 5.5 20l-.5-1.3L3.7 18l1.3-.7.5-1.3Z"/>
       </svg>
-      <span>Name Gen</span><span class="key">6</span>
+      <span>Name Gen</span><span class="key">7</span>
     </button>
     <h3>Library</h3>
     <button data-view="docs">
@@ -938,6 +973,93 @@
       </div>
     </section>
 
+    <!-- ====================== Grammar ====================== -->
+    <section class="view" id="view-grammar">
+      <div class="panel">
+        <div class="panel-header">
+          Grammar — Paradigms &amp; affix rules
+          <span class="sub">declensions and conjugations · click any cell to inspect the rule</span>
+          <span class="meta" id="gr-meta">no paradigm</span>
+        </div>
+        <div class="panel-body">
+
+          <div class="row" style="margin-bottom: 12px; gap: 8px">
+            <label class="field" style="flex:1"><span>Paradigm</span>
+              <select id="gr-preset">
+                <option value="">— select a starter —</option>
+              </select>
+            </label>
+            <label class="field" style="flex:1"><span>Sample stem</span>
+              <input class="input mono" id="gr-stem" placeholder="e.g. puell">
+            </label>
+            <label class="field" style="flex:1"><span>Or lexicon entry</span>
+              <select id="gr-lex">
+                <option value="">— pick from lexicon —</option>
+              </select>
+            </label>
+            <button class="btn" id="gr-load-preset" style="align-self:flex-end">Load preset</button>
+          </div>
+
+          <div id="gr-table-host" style="overflow-x: auto"></div>
+
+          <div class="hint" id="gr-empty" style="margin-top: 8px">
+            Load a preset, or define your own paradigm + affix rules. Cells show inflected forms. Conflicts (multiple rules tied for the same cell) appear in red.
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">Affix rules
+          <span class="meta" id="gr-rules-meta">0 rules</span>
+        </div>
+        <div class="panel-body">
+          <div class="row" style="margin-bottom: 10px; gap: 8px; flex-wrap: wrap">
+            <label class="field" style="width: 100px"><span>POS</span>
+              <select id="gr-rule-pos">
+                <option value="noun">noun</option>
+                <option value="verb">verb</option>
+                <option value="adjective">adjective</option>
+                <option value="adverb">adverb</option>
+                <option value="pronoun">pronoun</option>
+              </select>
+            </label>
+            <label class="field" style="width: 100px"><span>Position</span>
+              <select id="gr-rule-pos-kind">
+                <option value="suffix">suffix</option>
+                <option value="prefix">prefix</option>
+                <option value="circumfix">circumfix</option>
+                <option value="replace">replace</option>
+                <option value="infix">infix</option>
+              </select>
+            </label>
+            <label class="field" style="flex: 2; min-width: 200px"><span>Condition (key=value, comma-sep)</span>
+              <input class="input mono" id="gr-rule-cond" placeholder="case=nom, number=sg">
+            </label>
+            <label class="field" style="width: 120px"><span>Form</span>
+              <input class="input mono" id="gr-rule-form" placeholder="a">
+            </label>
+            <label class="field" style="width: 70px"><span>Priority</span>
+              <input class="input mono" id="gr-rule-pri" type="number" value="0">
+            </label>
+            <button class="btn primary" id="gr-rule-add" style="align-self:flex-end">Add rule</button>
+          </div>
+          <table class="data" id="gr-rules-table">
+            <thead>
+              <tr>
+                <th style="width: 10%">POS</th>
+                <th style="width: 30%">Condition</th>
+                <th style="width: 14%">Position</th>
+                <th style="width: 18%">Form</th>
+                <th style="width: 10%">Priority</th>
+                <th class="right-actions"></th>
+              </tr>
+            </thead>
+            <tbody id="gr-rules-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <!-- ====================== Sound Changes ====================== -->
     <section class="view" id="view-sound-changes">
       <div class="panel">
@@ -1082,6 +1204,7 @@ import {
   parseRules, evolveLexicon, generatePhonotacticName, deriveSeed,
   defaultRomanization, romanize,
   translate, renderRomanized,
+  buildParadigm, findRuleConflicts, PRESET_PARADIGMS,
 } from '../dist/index.js';
 
 /* ─────────────────────  state  ───────────────────── */
@@ -1099,6 +1222,10 @@ const state = loadState() ?? {
   romRules: [/* [ipa, spelling] */],
   romTest: 'paʃa',
   inspectorPinned: true,
+  grammar: {
+    /* { def: ParadigmDef, stem: string, rules: AffixRule[] } */
+    def: null, stem: '', rules: [],
+  },
 };
 
 function loadState() {
@@ -1113,6 +1240,7 @@ function loadState() {
       rules: j.rules ?? '',
       romTest: j.romTest ?? 'paʃa',
       inspectorPinned: j.inspectorPinned ?? true,
+      grammar: j.grammar ?? { def: null, stem: '', rules: [] },
     };
   } catch { return null; }
 }
@@ -1981,6 +2109,155 @@ document.getElementById('tr-clear').addEventListener('click', () => {
   document.getElementById('tr-meta').textContent = '—';
 });
 
+/* ─────────────────────  Grammar / paradigms (L11)  ───────────────────── */
+
+// Populate preset dropdown
+const grPresetSelect = document.getElementById('gr-preset');
+for (let i = 0; i < PRESET_PARADIGMS.length; i++) {
+  const opt = document.createElement('option');
+  opt.value = String(i); opt.textContent = PRESET_PARADIGMS[i].name;
+  grPresetSelect.appendChild(opt);
+}
+
+document.getElementById('gr-load-preset').addEventListener('click', () => {
+  const idx = grPresetSelect.value;
+  if (idx === '') return;
+  const p = PRESET_PARADIGMS[+idx];
+  state.grammar = { def: p.def, stem: p.exampleStem, rules: [...p.rules] };
+  document.getElementById('gr-stem').value = p.exampleStem;
+  saveState(); renderGrammar();
+});
+
+document.getElementById('gr-stem').addEventListener('input', e => {
+  state.grammar.stem = e.target.value;
+  saveState(); renderGrammar();
+});
+
+document.getElementById('gr-lex').addEventListener('change', e => {
+  const concept = e.target.value;
+  if (!concept) return;
+  const entry = state.lexicon.find(x => x.concept === concept);
+  if (!entry) return;
+  state.grammar.stem = entry.lemma;
+  document.getElementById('gr-stem').value = entry.lemma;
+  saveState(); renderGrammar();
+});
+
+document.getElementById('gr-rule-add').addEventListener('click', () => {
+  const pos = document.getElementById('gr-rule-pos').value;
+  const position = document.getElementById('gr-rule-pos-kind').value;
+  const condStr = document.getElementById('gr-rule-cond').value.trim();
+  const form = document.getElementById('gr-rule-form').value;
+  const priority = Number(document.getElementById('gr-rule-pri').value || 0);
+  const condition = {};
+  for (const pair of condStr.split(',')) {
+    const m = pair.trim().match(/^([^=]+)\s*=\s*(.+)$/);
+    if (m) condition[m[1].trim()] = m[2].trim();
+  }
+  state.grammar.rules.push({ pos, condition, position, form, priority });
+  // Reset inputs
+  document.getElementById('gr-rule-cond').value = '';
+  document.getElementById('gr-rule-form').value = '';
+  saveState(); renderGrammar();
+});
+
+function renderGrammar() {
+  // Lexicon picker
+  const lexSel = document.getElementById('gr-lex');
+  lexSel.innerHTML = '<option value="">— pick from lexicon —</option>';
+  for (const e of state.lexicon) {
+    const opt = document.createElement('option');
+    opt.value = e.concept; opt.textContent = `${e.concept} · ${e.lemma}${e.pos ? ' (' + e.pos + ')' : ''}`;
+    lexSel.appendChild(opt);
+  }
+  document.getElementById('gr-stem').value = state.grammar.stem || '';
+
+  // Paradigm table
+  const host = document.getElementById('gr-table-host');
+  const empty = document.getElementById('gr-empty');
+  if (!state.grammar.def || !state.grammar.stem) {
+    host.innerHTML = '';
+    empty.style.display = '';
+    document.getElementById('gr-meta').textContent = 'no paradigm';
+  } else {
+    empty.style.display = 'none';
+    const def = state.grammar.def;
+    const rules = state.grammar.rules;
+    const cells = buildParadigm(state.grammar.stem, def, rules);
+    const conflicts = findRuleConflicts(state.grammar.stem, def, rules);
+    const conflictKeys = new Set(conflicts.map(c => JSON.stringify(c.target)));
+
+    const axes = Object.entries(def.axes);
+    const rowAxis = axes[0] ?? ['_', ['']];
+    const colAxis = axes[1] ?? ['_', ['']];
+    const [rowKey, rowVals] = rowAxis;
+    const [colKey, colVals] = colAxis;
+
+    const tbl = document.createElement('table');
+    tbl.className = 'paradigm-table';
+    let thead = '<thead><tr><th></th>';
+    for (const v of colVals) thead += `<th>${escapeHtml(v)}</th>`;
+    thead += '</tr></thead>';
+    tbl.innerHTML = thead;
+    const tbody = document.createElement('tbody');
+    for (const rv of rowVals) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<th>${escapeHtml(rv)}</th>`;
+      for (const cv of colVals) {
+        const target = {};
+        if (rowKey !== '_') target[rowKey] = rv;
+        if (colKey !== '_') target[colKey] = cv;
+        const cell = cells.find(c =>
+          (rowKey === '_' || c.target[rowKey] === rv) &&
+          (colKey === '_' || c.target[colKey] === cv)
+        );
+        const conflicted = conflictKeys.has(JSON.stringify(target));
+        const td = document.createElement('td');
+        td.className = cell?.ruleIndices.length
+          ? (conflicted ? 'cell-form cell-conflict' : 'cell-form')
+          : 'cell-empty';
+        td.textContent = cell?.form ?? '—';
+        td.title = conflicted
+          ? `${cell?.form ?? '—'} · conflict: rules ${cell?.ruleIndices.join(', ')} tied`
+          : `${cell?.form ?? '—'}${cell?.ruleIndices.length ? ` · rule #${cell.ruleIndices.join(',')}` : ' · no rule matches'}`;
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+    tbl.appendChild(tbody);
+    host.innerHTML = '';
+    host.appendChild(tbl);
+
+    const filled = cells.filter(c => c.ruleIndices.length > 0).length;
+    document.getElementById('gr-meta').textContent =
+      `${filled}/${cells.length} cells filled${conflicts.length ? ' · ' + conflicts.length + ' conflict' + (conflicts.length === 1 ? '' : 's') : ''}`;
+  }
+
+  // Rules table
+  const rt = document.getElementById('gr-rules-tbody');
+  rt.innerHTML = '';
+  for (let i = 0; i < state.grammar.rules.length; i++) {
+    const r = state.grammar.rules[i];
+    const tr = document.createElement('tr');
+    const condStr = Object.entries(r.condition).map(([k, v]) => `${k}=${v}`).join(', ') || '(any)';
+    tr.innerHTML = `
+      <td><span class="pos-tag">${escapeHtml(r.pos)}</span></td>
+      <td class="mono">${escapeHtml(condStr)}</td>
+      <td class="muted">${escapeHtml(r.position)}</td>
+      <td class="accent mono">${escapeHtml(r.form || '∅')}</td>
+      <td class="mono">${r.priority ?? 0}</td>
+      <td class="right-actions"><button class="btn" data-rm="${i}">×</button></td>`;
+    rt.appendChild(tr);
+  }
+  rt.querySelectorAll('button[data-rm]').forEach(b =>
+    b.addEventListener('click', () => {
+      state.grammar.rules.splice(+b.dataset.rm, 1);
+      saveState(); renderGrammar();
+    }));
+  document.getElementById('gr-rules-meta').textContent =
+    `${state.grammar.rules.length} rule${state.grammar.rules.length === 1 ? '' : 's'}`;
+}
+
 /* ─────────────────────  Name gen  ───────────────────── */
 document.getElementById('ng-roll').addEventListener('click', () => {
   const sel = [...state.selected];
@@ -2039,6 +2316,7 @@ function renderTopbar() {
 function renderAll() {
   renderNav(); renderTopbar(); renderPhonology();
   renderLexicon(); renderSoundChanges(); renderRomanization();
+  renderGrammar();
 }
 
 /* —— Inspector pin + sticky shadow —— */
