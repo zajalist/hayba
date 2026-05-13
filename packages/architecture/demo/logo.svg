@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- Three layered building silhouettes — references the typology/style/guide split -->
+  <rect x="3" y="20" width="6" height="9" fill="#B56A1D"/>
+  <rect x="11" y="14" width="10" height="15" fill="#D17F2A"/>
+  <rect x="23" y="9" width="6" height="20" fill="#DED4C3"/>
+  <!-- Tiny windows -->
+  <rect x="5" y="23" width="2" height="2" fill="#1b1e24"/>
+  <rect x="13" y="17" width="2" height="2" fill="#1b1e24"/>
+  <rect x="17" y="17" width="2" height="2" fill="#1b1e24"/>
+  <rect x="13" y="22" width="2" height="2" fill="#1b1e24"/>
+  <rect x="17" y="22" width="2" height="2" fill="#1b1e24"/>
+  <rect x="25" y="12" width="2" height="2" fill="#1b1e24"/>
+  <rect x="25" y="16" width="2" height="2" fill="#1b1e24"/>
+  <rect x="25" y="20" width="2" height="2" fill="#1b1e24"/>
+  <!-- Ground line -->
+  <rect x="0" y="29" width="32" height="1" fill="#1a1d22"/>
+</svg>
