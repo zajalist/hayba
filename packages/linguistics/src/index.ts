@@ -38,7 +38,7 @@ export { InMemoryLexicon, LexiconStore, PostgresLexicon, PARTS_OF_SPEECH } from 
 // Sound changes (L5)
 export type { SoundChangeRule } from './sound-changes.js';
 export {
-  parseRule, parseRules, applyRule, evolveWord, evolveLexicon,
+  parseRule, parseRules, stringifyRule, applyRule, evolveWord, evolveLexicon,
 } from './sound-changes.js';
 
 // RNG (used by L4, exposed for hosts that want sub-streams)

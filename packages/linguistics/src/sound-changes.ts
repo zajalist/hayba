@@ -53,6 +53,25 @@ export function parseRule(line: string): SoundChangeRule {
   };
 }
 
+/**
+ * Inverse of `parseRule`: emit canonical text for a rule AST.
+ *
+ * Round-trips with `parseRule` modulo whitespace + trailing comments:
+ *   parseRule(stringifyRule(r))  →  structurally equal r (sans `source`)
+ *
+ * Canonical form: `target > replacement[ / before _ after]`. Multi-token
+ * context lists are joined by a single space; an empty context slot stays
+ * empty (no leading/trailing space inside the `/ … _ …` block).
+ */
+export function stringifyRule(rule: SoundChangeRule): string {
+  const ctx = rule.before.length > 0 || rule.after.length > 0;
+  const lhs = rule.before.join(' ');
+  const rhs = rule.after.join(' ');
+  const head = `${rule.target} > ${rule.replacement}`;
+  if (!ctx) return head;
+  return `${head} / ${lhs} _ ${rhs}`.replace(/  +/g, ' ').replace(/ +$/g, '');
+}
+
 export function parseRules(text: string): SoundChangeRule[] {
   return text
     .split('\n')

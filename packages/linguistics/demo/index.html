@@ -625,6 +625,103 @@
     background: var(--tag-c, var(--accent));
   }
 
+  /* Visual SCA rule builder (L16) */
+  .seg-toggle {
+    display: inline-flex; border: 1px solid var(--border-soft);
+    border-radius: 4px; overflow: hidden;
+    margin-left: 8px;
+  }
+  .seg-toggle button {
+    background: transparent; color: var(--text-secondary);
+    border: none; padding: 3px 10px; font-size: 11px;
+    cursor: pointer; font-family: inherit;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .seg-toggle button + button { border-left: 1px solid var(--border-soft); }
+  .seg-toggle button.on {
+    background: var(--accent-dim); color: var(--accent);
+  }
+  .sca-visual-list { display: flex; flex-direction: column; gap: 6px; }
+  .sca-rule-row {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--bg-base); border: 1px solid var(--border-soft);
+    border-radius: 4px; padding: 6px 8px;
+    flex-wrap: wrap;
+  }
+  .sca-rule-row .sep {
+    color: var(--text-muted); font-family: var(--font-mono);
+    font-size: 13px; padding: 0 2px;
+  }
+  .sca-chip {
+    background: var(--bg-base);
+    border: 1px solid var(--border-soft);
+    color: var(--text-muted);
+    border-radius: 4px;
+    padding: 3px 9px;
+    font-size: 13px;
+    font-family: var(--font-mono);
+    cursor: pointer;
+    min-width: 36px;
+    text-align: center;
+    transition: border-color .12s, color .12s, background .12s;
+  }
+  .sca-chip:hover { border-color: var(--accent); }
+  .sca-chip.filled {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-dim);
+  }
+  .sca-chip.context-empty { font-style: italic; }
+  .sca-rule-row .row-del {
+    margin-left: auto;
+    background: transparent; border: none;
+    color: var(--text-muted); font-size: 16px; cursor: pointer;
+    padding: 2px 6px; border-radius: 3px;
+  }
+  .sca-rule-row .row-del:hover { color: var(--status-red); background: var(--bg-elevated); }
+  .sca-add-rule {
+    align-self: flex-start;
+    border: 1px dashed var(--border-soft);
+    background: transparent; color: var(--text-secondary);
+    border-radius: 4px; padding: 5px 12px; font-size: 12px;
+    cursor: pointer; margin-top: 4px;
+  }
+  .sca-add-rule:hover { border-color: var(--accent); color: var(--accent); }
+
+  .sca-pop {
+    min-width: 260px; max-width: 320px;
+  }
+  .sca-pop .pop-section {
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .sca-pop .pop-section + .pop-section {
+    margin-top: 6px; padding-top: 6px;
+    border-top: 1px solid var(--border-soft);
+  }
+  .sca-pop .pop-label {
+    font-size: 10px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .sca-pop .pop-grid {
+    display: flex; flex-wrap: wrap; gap: 4px;
+  }
+  .sca-pop .pop-tok {
+    background: var(--bg-base); border: 1px solid var(--border-soft);
+    color: var(--text-primary); padding: 2px 8px;
+    border-radius: 3px; font-family: var(--font-mono); font-size: 12px;
+    cursor: pointer;
+  }
+  .sca-pop .pop-tok:hover { border-color: var(--accent); color: var(--accent); }
+  .sca-pop .pop-tok.selected { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+  .sca-pop .pop-grouplabel {
+    font-size: 9px; color: var(--text-muted);
+    text-transform: uppercase; width: 100%; margin-top: 2px;
+  }
+  .sca-pop input.input { width: 100%; font-size: 12px; }
+  .sca-mode-err {
+    color: var(--status-red); font-size: 11px; margin-top: 4px;
+  }
+
   /* Inventory chip strip */
   .chip-strip {
     display: flex; flex-wrap: wrap; gap: 6px;
@@ -1367,17 +1464,31 @@
     <section class="view" id="view-sound-changes">
       <div class="panel">
         <div class="panel-header"><span class="dot"></span>Sound Change Rules · Lexurgy-style
+          <span class="seg-toggle" id="sca-mode-toggle" role="tablist" aria-label="Rule editor mode">
+            <button type="button" class="on" data-mode="text" role="tab" aria-selected="true">Text</button>
+            <button type="button" data-mode="visual" role="tab" aria-selected="false">Visual</button>
+          </span>
           <span class="meta" id="sca-meta">0 rules</span>
         </div>
         <div class="panel-body">
-          <textarea id="sca-rules" style="width:100%; height:180px"
-            placeholder="# example
+          <div id="sca-text-mode">
+            <textarea id="sca-rules" style="width:100%; height:180px"
+              placeholder="# example
 p > b / [V] _ [V]    // intervocalic voicing
 [nasal] > 0 / _ #     // final-nasal deletion
 t > s / _ i"></textarea>
-          <div class="hint" style="margin-top:6px">
-            grammar: <span class="mono">target &gt; replacement / before _ after</span> · use <span class="mono">[V] [C] [nasal]</span> for classes · <span class="mono">#</span> = word boundary · <span class="mono">0</span> = deletion
+            <div class="hint" style="margin-top:6px">
+              grammar: <span class="mono">target &gt; replacement / before _ after</span> · use <span class="mono">[V] [C] [nasal]</span> for classes · <span class="mono">#</span> = word boundary · <span class="mono">0</span> = deletion
+            </div>
           </div>
+          <div id="sca-visual-mode" style="display:none">
+            <div class="sca-visual-list" id="sca-visual-list"></div>
+            <button class="sca-add-rule" id="sca-add-rule" type="button">+ add rule</button>
+            <div class="hint" style="margin-top:6px">
+              click each chip to pick a phoneme, feature class <span class="mono">[V] [C] [nasal]</span>, word boundary <span class="mono">#</span>, or null <span class="mono">0</span> (deletion). context slots are optional.
+            </div>
+          </div>
+          <div class="sca-mode-err" id="sca-mode-err" style="display:none"></div>
           <div class="row" style="margin-top:8px">
             <button class="btn primary" id="sca-apply">Apply to lexicon (in place)</button>
             <button class="btn" id="sca-fork" title="Fork a daughter language with these sound changes applied; auto-links cognates back to the parent">Fork as daughter language…</button>
@@ -1505,7 +1616,7 @@ import {
   PULMONIC_CONSONANTS, NON_PULMONIC_CONSONANTS, CARDINAL_VOWELS,
   buildCoOccurrenceModel, INVENTORIES, audioUrlFor,
   consonantToPhonemeFeatures, vowelToPhonemeFeatures,
-  parseRules, evolveLexicon, generatePhonotacticName, deriveSeed,
+  parseRules, stringifyRule, evolveLexicon, generatePhonotacticName, deriveSeed,
   defaultRomanization, romanize,
   translate, renderRomanized,
   buildParadigm, findRuleConflicts, PRESET_PARADIGMS,
@@ -2386,8 +2497,231 @@ function forkActiveLanguageAsDaughter() {
 document.getElementById('sca-fork').addEventListener('click', forkActiveLanguageAsDaughter);
 document.getElementById('ft-fork').addEventListener('click', forkActiveLanguageAsDaughter);
 
+/* ───── Visual SCA builder (L16) ─────
+   A rule-row holds an AST (target / replacement / before[] / after[]).
+   Whenever any chip changes we stringify the whole list back into
+   `state.rules` so the existing engine + preview keep working unchanged. */
+let scaMode = 'text';          // 'text' | 'visual'
+let scaVisualAst = [];         // SoundChangeRule[] when in visual mode
+
+function emptyRule() {
+  return { target: '', replacement: '', before: [], after: [], source: '' };
+}
+function ruleIsRenderable(r) {
+  // Only stringify rules with both target + replacement filled in. Until
+  // the user has picked both, the rule is a draft and we skip it from text.
+  return !!r.target && !!r.replacement;
+}
+function syncVisualToState() {
+  // Stringify every renderable rule; drafts stay as comments so they
+  // survive a text/visual toggle without breaking parseRules().
+  const lines = scaVisualAst.map(r =>
+    ruleIsRenderable(r) ? stringifyRule(r) : '// (draft rule)'
+  );
+  state.rules = lines.join('\n');
+  saveState();
+  renderSoundChanges();
+}
+
+document.querySelectorAll('#sca-mode-toggle button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const next = btn.dataset.mode;
+    if (next === scaMode) return;
+    const errEl = document.getElementById('sca-mode-err');
+    errEl.style.display = 'none'; errEl.textContent = '';
+    if (next === 'visual') {
+      // Text → AST. If it fails, refuse the switch and surface the error.
+      try {
+        scaVisualAst = state.rules.trim() === '' ? [] : parseRules(state.rules);
+      } catch (e) {
+        errEl.textContent = 'Cannot parse rules: ' + (e.message ?? e) + ' — fix in text mode first.';
+        errEl.style.display = '';
+        return;
+      }
+    }
+    scaMode = next;
+    document.querySelectorAll('#sca-mode-toggle button').forEach(b =>
+      b.classList.toggle('on', b.dataset.mode === scaMode));
+    document.getElementById('sca-text-mode').style.display = scaMode === 'text' ? '' : 'none';
+    document.getElementById('sca-visual-mode').style.display = scaMode === 'visual' ? '' : 'none';
+    if (scaMode === 'visual') renderSCAVisual();
+  });
+});
+
+document.getElementById('sca-add-rule').addEventListener('click', () => {
+  scaVisualAst.push(emptyRule());
+  renderSCAVisual();
+});
+
+function getInventoryByManner() {
+  // Group the active inventory by manner for the popover phoneme picker.
+  const sel = state.selected;
+  const groups = { nasal: [], plosive: [], fricative: [], approximant: [], vowel: [], other: [] };
+  for (const c of [...PULMONIC_CONSONANTS, ...NON_PULMONIC_CONSONANTS]) {
+    if (!sel.has(c.ipa)) continue;
+    const m = c.manner;
+    if (m === 'nasal' || m === 'plosive' || m === 'fricative' || m === 'approximant') groups[m].push(c.ipa);
+    else groups.other.push(c.ipa);
+  }
+  for (const v of CARDINAL_VOWELS) {
+    if (sel.has(v.ipa)) groups.vowel.push(v.ipa);
+  }
+  return groups;
+}
+
+const FEATURE_CLASSES = ['[V]', '[C]', '[nasal]', '[stop]', '[fricative]', '[liquid]'];
+
+/** Open the chip popover. `slot` is one of 'target'|'replacement'|'before'|'after'.
+ *  For context slots ('before'/'after') the chip stores a comma-joined token list. */
+function openChipPopover(anchor, rule, slot) {
+  openPopoverAt(anchor, pop => {
+    pop.classList.add('sca-pop');
+    const isCtx = slot === 'before' || slot === 'after';
+    const isReplacement = slot === 'replacement';
+    const groups = getInventoryByManner();
+    const sectionHtml = [];
+
+    // Special tokens row depends on slot.
+    const specials = [];
+    if (isReplacement || slot === 'target') {
+      if (isReplacement) specials.push({ tok: '0', label: '0 (delete)' });
+    }
+    if (isCtx) {
+      specials.push({ tok: '#', label: '# (word edge)' });
+    }
+    if (specials.length) {
+      sectionHtml.push(`<div class="pop-section">
+        <div class="pop-label">special</div>
+        <div class="pop-grid">${
+          specials.map(s => `<button class="pop-tok" data-pick="${escapeHtml(s.tok)}">${escapeHtml(s.label)}</button>`).join('')
+        }</div></div>`);
+    }
+
+    // Feature classes (target / context only; replacement allows them too).
+    sectionHtml.push(`<div class="pop-section">
+      <div class="pop-label">feature class</div>
+      <div class="pop-grid">${
+        FEATURE_CLASSES.map(fc => `<button class="pop-tok" data-pick="${escapeHtml(fc)}">${escapeHtml(fc)}</button>`).join('')
+      }</div>
+      <input class="input mono" id="sca-pop-feat" placeholder="custom: [+nasal]" style="margin-top:4px">
+    </div>`);
+
+    // Phonemes grouped by manner.
+    const groupOrder = [['nasal', 'nasal'], ['plosive', 'stop'], ['fricative', 'fricative'],
+                       ['approximant', 'approximant'], ['vowel', 'vowel'], ['other', 'other']];
+    const phonRows = groupOrder
+      .filter(([k]) => groups[k] && groups[k].length)
+      .map(([k, label]) => `
+        <div class="pop-grouplabel">${label}</div>
+        <div class="pop-grid">${
+          groups[k].map(ipa => `<button class="pop-tok" data-pick="${escapeHtml(ipa)}">${escapeHtml(ipa)}</button>`).join('')
+        }</div>`).join('');
+    if (phonRows) {
+      sectionHtml.push(`<div class="pop-section">
+        <div class="pop-label">phoneme (inventory)</div>
+        ${phonRows}
+      </div>`);
+    } else {
+      sectionHtml.push(`<div class="pop-section"><div class="pop-label">phoneme</div><div class="hint">add phonemes to the inventory first.</div></div>`);
+    }
+
+    if (isCtx) {
+      sectionHtml.push(`<div class="pop-section">
+        <div class="pop-label">context (append; existing tokens stay)</div>
+        <div class="row" style="gap:6px">
+          <button class="btn" id="sca-pop-clear">clear</button>
+          <span class="hint" style="margin:0">current: <span class="mono">${
+            (slot === 'before' ? rule.before : rule.after).join(' ') || '∅'
+          }</span></span>
+        </div>
+      </div>`);
+    }
+
+    pop.innerHTML = sectionHtml.join('');
+
+    const commit = (tok) => {
+      if (isCtx) {
+        const arr = slot === 'before' ? rule.before : rule.after;
+        arr.push(tok);
+      } else {
+        rule[slot] = tok;
+      }
+      closePopover();
+      syncVisualToState();
+      renderSCAVisual();
+    };
+
+    pop.querySelectorAll('.pop-tok').forEach(b => {
+      b.addEventListener('click', () => commit(b.dataset.pick));
+    });
+    const featIn = pop.querySelector('#sca-pop-feat');
+    if (featIn) {
+      featIn.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          let v = featIn.value.trim();
+          if (!v) return;
+          if (!v.startsWith('[')) v = '[' + v;
+          if (!v.endsWith(']')) v = v + ']';
+          commit(v);
+        }
+      });
+    }
+    const clr = pop.querySelector('#sca-pop-clear');
+    if (clr) {
+      clr.addEventListener('click', () => {
+        if (slot === 'before') rule.before = []; else rule.after = [];
+        closePopover();
+        syncVisualToState();
+        renderSCAVisual();
+      });
+    }
+  });
+}
+
+function renderSCAVisual() {
+  const host = document.getElementById('sca-visual-list');
+  host.innerHTML = '';
+  scaVisualAst.forEach((rule, idx) => {
+    const row = document.createElement('div');
+    row.className = 'sca-rule-row';
+    const mkChip = (text, filled, slot, placeholder) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'sca-chip' + (filled ? ' filled' : '');
+      b.textContent = filled ? text : placeholder;
+      b.addEventListener('click', () => openChipPopover(b, rule, slot));
+      return b;
+    };
+    row.appendChild(mkChip(rule.target, !!rule.target, 'target', 'target'));
+    const arr = document.createElement('span'); arr.className = 'sep'; arr.textContent = '→'; row.appendChild(arr);
+    row.appendChild(mkChip(rule.replacement, !!rule.replacement, 'replacement', 'replacement'));
+    const sl = document.createElement('span'); sl.className = 'sep'; sl.textContent = '/'; row.appendChild(sl);
+    row.appendChild(mkChip(rule.before.join(' '), rule.before.length > 0, 'before', '(before)'));
+    const un = document.createElement('span'); un.className = 'sep'; un.textContent = '_'; row.appendChild(un);
+    row.appendChild(mkChip(rule.after.join(' '), rule.after.length > 0, 'after', '(after)'));
+    const del = document.createElement('button');
+    del.className = 'row-del'; del.type = 'button'; del.title = 'remove rule';
+    del.textContent = '×';
+    del.addEventListener('click', () => {
+      scaVisualAst.splice(idx, 1);
+      syncVisualToState();
+      renderSCAVisual();
+    });
+    row.appendChild(del);
+    host.appendChild(row);
+  });
+  if (scaVisualAst.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'hint';
+    empty.textContent = 'no rules yet — click "+ add rule".';
+    host.appendChild(empty);
+  }
+}
+
 function renderSoundChanges() {
+  // Text mode mirrors state.rules into the textarea; visual mode mirrors AST.
   document.getElementById('sca-rules').value = state.rules;
+  if (scaMode === 'visual') renderSCAVisual();
   let rules = [];
   try { rules = parseRules(state.rules); } catch {}
   document.getElementById('sca-meta').textContent = `${rules.length} rule${rules.length===1?'':'s'}`;

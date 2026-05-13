@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseRule, parseRules, evolveWord } from './sound-changes.js';
+import { parseRule, parseRules, stringifyRule, evolveWord } from './sound-changes.js';
 import type { Phonology } from './phonology.js';
 
 const ph: Phonology = {
@@ -51,6 +51,51 @@ describe('rule parser', () => {
       t > 0 / _ #
     `);
     expect(rs).toHaveLength(2);
+  });
+});
+
+describe('rule stringify round-trip', () => {
+  // Helper: compare structurally, ignoring `source` (which preserves the
+  // original input text and is not part of the canonical form).
+  const eqStruct = (a: ReturnType<typeof parseRule>, b: ReturnType<typeof parseRule>) => {
+    expect(a.target).toBe(b.target);
+    expect(a.replacement).toBe(b.replacement);
+    expect(a.before).toEqual(b.before);
+    expect(a.after).toEqual(b.after);
+  };
+
+  const cases: Array<[string, string]> = [
+    ['bare segment, no context', 't > s'],
+    ['feature-class target, V context', '[V] > [V] / [V] _ [V]'],
+    ['shorthand class target', '[nasal] > 0 / _ #'],
+    ['deletion to 0', 't > 0 / _ #'],
+    ['word-boundary on the left', 'k > x / # _'],
+    ['multi-segment context', 'a > e / # p _ t'],
+  ];
+
+  for (const [label, text] of cases) {
+    it(`round-trips: ${label}`, () => {
+      const r = parseRule(text);
+      const text2 = stringifyRule(r);
+      const r2 = parseRule(text2);
+      eqStruct(r, r2);
+      // Idempotent.
+      expect(stringifyRule(r2)).toBe(text2);
+    });
+  }
+
+  it('strips trailing // comments on round-trip', () => {
+    const r = parseRule('p > b / [V] _ [V]    // intervocalic voicing');
+    const out = stringifyRule(r);
+    expect(out).toBe('p > b / [V] _ [V]');
+    // Parse-of-stringify still structurally equals original.
+    const r2 = parseRule(out);
+    expect(r2.before).toEqual(r.before);
+    expect(r2.after).toEqual(r.after);
+  });
+
+  it('throws clearly on a malformed rule', () => {
+    expect(() => parseRule('this is not a rule')).toThrow(/cannot parse sound-change rule/);
   });
 });
 
