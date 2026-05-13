@@ -1176,6 +1176,20 @@
       </div>
 
       <div class="panel">
+        <div class="panel-header">Phonotactic legality heatmap
+          <span class="sub">rows = onsets · columns = codas · click a cell to seed the Name Generator</span>
+        </div>
+        <div class="panel-body">
+          <div id="legality-heatmap" style="overflow:auto"></div>
+          <div class="chart-legend" style="margin-top:8px">
+            <span><span class="sw" style="background:var(--status-green)"></span>legal</span>
+            <span><span class="sw" style="background:var(--status-orange)"></span>restricted (cluster blacklist)</span>
+            <span><span class="sw" style="background:var(--bg-base); border:1px solid var(--border-soft)"></span>illegal</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
         <div class="panel-header">Phonology JSON
           <span class="sub">ready to feed into the rest of the suite</span>
         </div>
@@ -1617,6 +1631,7 @@ import {
   buildCoOccurrenceModel, INVENTORIES, audioUrlFor,
   consonantToPhonemeFeatures, vowelToPhonemeFeatures,
   parseRules, stringifyRule, evolveLexicon, generatePhonotacticName, deriveSeed,
+  clusterLegality,
   defaultRomanization, romanize,
   translate, renderRomanized,
   buildParadigm, findRuleConflicts, PRESET_PARADIGMS,
@@ -3721,6 +3736,94 @@ function renderAll() {
   renderNav(); renderTopbar(); renderPhonology();
   renderLexicon(); renderSoundChanges(); renderRomanization();
   renderGrammar(); renderFamilyTree(); renderTypology();
+  renderLegalityHeatmap();
+}
+
+/* ───────── L19 — Phonotactic legality heatmap ───────── */
+function renderLegalityHeatmap() {
+  const host = document.getElementById('legality-heatmap');
+  if (!host) return;
+  const phono = buildPhonologyJson();
+  const sel = [...state.selected];
+  const vs = new Set(CARDINAL_VOWELS.map(v => v.ipa));
+  const vowels = sel.filter(x => vs.has(x));
+  const consonants = sel.filter(x => !vs.has(x));
+
+  if (vowels.length === 0 || consonants.length === 0) {
+    host.innerHTML = '<div class="hint">Add at least one vowel and one consonant to see the legality heatmap.</div>';
+    return;
+  }
+
+  // Pick a permissive spec — CV + CVC, single-segment slots only — so cells reflect
+  // pure (onset, coda) legality rather than cluster ordering.
+  const spec = {
+    phonologyId: phono.languageId,
+    vowels,
+    syllable: { templates: ['CV', 'CVC'] },
+  };
+
+  const cells = clusterLegality(spec, phono);
+  const byKey = new Map();
+  for (const c of cells) byKey.set(c.onset + '|' + c.coda, c);
+
+  const colCodas = ['', ...consonants]; // first column is "(no coda)"
+  const colW = 34, rowH = 30, headerH = 26, headerW = 38;
+
+  const parts = [];
+  parts.push(`<div style="display:inline-grid; grid-template-columns: ${headerW}px repeat(${colCodas.length}, ${colW}px); gap:2px; font-family: var(--font-mono); font-size: 11px">`);
+  // header row
+  parts.push(`<div style="height:${headerH}px"></div>`);
+  for (const coda of colCodas) {
+    const label = coda === '' ? '∅' : coda;
+    parts.push(`<div style="height:${headerH}px; display:flex; align-items:center; justify-content:center; color:var(--text-muted)" title="${coda === '' ? 'no coda (open syllable)' : 'coda ' + escapeHtml(coda)}">${escapeHtml(label)}</div>`);
+  }
+  // data rows
+  for (const onset of consonants) {
+    parts.push(`<div style="height:${rowH}px; display:flex; align-items:center; justify-content:center; color:var(--text-muted)">${escapeHtml(onset)}</div>`);
+    for (const coda of colCodas) {
+      const cell = byKey.get(onset + '|' + coda);
+      if (!cell) {
+        parts.push(`<div style="height:${rowH}px; background:var(--bg-base); border:1px solid var(--border-soft)"></div>`);
+        continue;
+      }
+      const bg = cell.legality === 'legal'
+        ? 'var(--status-green)'
+        : cell.legality === 'restricted'
+          ? 'var(--status-orange)'
+          : 'var(--bg-base)';
+      const border = cell.legality === 'illegal' ? '1px solid var(--border-soft)' : '1px solid transparent';
+      const sample = cell.sample ?? '';
+      const showSample = cell.legality !== 'illegal';
+      const cursor = showSample ? 'pointer' : 'default';
+      const tip = cell.legality === 'legal'
+        ? `legal · ${sample}`
+        : cell.legality === 'restricted'
+          ? `restricted · ${cell.reason ?? ''}`
+          : `illegal · ${cell.reason ?? ''}`;
+      const dataAttrs = showSample
+        ? ` data-seed-onset="${escapeHtml(onset)}" data-seed-coda="${escapeHtml(coda)}"`
+        : '';
+      parts.push(
+        `<div class="legality-cell" style="height:${rowH}px; background:${bg}; border:${border}; display:flex; align-items:center; justify-content:center; font-family: var(--font-ipa); font-size: 12px; color: var(--bg-base); cursor:${cursor}" title="${escapeHtml(tip)}"${dataAttrs}>${showSample ? escapeHtml(sample) : ''}</div>`,
+      );
+    }
+  }
+  parts.push('</div>');
+  host.innerHTML = parts.join('');
+
+  for (const el of host.querySelectorAll('.legality-cell[data-seed-onset]')) {
+    el.addEventListener('click', () => {
+      const onset = el.dataset.seedOnset;
+      const coda = el.dataset.seedCoda;
+      const tpl = coda ? 'CVC' : 'CV';
+      const tplSel = document.getElementById('ng-tpl');
+      if (tplSel) tplSel.value = tpl;
+      // Stash the seed override on window for the name-gen roller to pick up;
+      // also switch to the Name Gen tab so the user sees the change.
+      window.__haybaNameGenSeed = { onset, coda };
+      state.view = 'names'; saveState(); renderNav();
+    });
+  }
 }
 
 /* —— Inspector pin + sticky shadow —— */

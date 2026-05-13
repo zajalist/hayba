@@ -206,3 +206,60 @@ export function passesPhonotactics(word: string, phonology: Phonology, spec: Pho
 // `findPhonemeByIpa` is intentionally re-exported elsewhere; touch it here so the import
 // stays load-bearing for future feature-based slot extensions (e.g. NPA harmony).
 void findPhonemeByIpa;
+
+/* ───────────────────── L19 — legality heatmap ───────────────────── */
+
+export type ClusterLegality = 'legal' | 'illegal' | 'restricted';
+
+export interface ClusterCell {
+  onset: string;
+  coda: string;
+  legality: ClusterLegality;
+  /** Sample syllable that demonstrates this onset/coda pair, e.g. "pak". */
+  sample?: string;
+  /** Reason for non-legal status, if applicable. */
+  reason?: string;
+}
+
+/**
+ * For each (onset-consonant × coda-consonant + a sentinel "no coda" column),
+ * build a candidate syllable `onset + nucleus + coda` and classify it via
+ * `validatePhonotactics`.
+ *
+ * - `ok` → legal, with the candidate as `sample`.
+ * - validator reason mentions "disallowed onset/coda cluster" → restricted.
+ * - anything else → illegal.
+ */
+export function clusterLegality(
+  spec: PhonotacticSpec,
+  phonology: Phonology,
+): ClusterCell[] {
+  const vset = new Set(spec.vowels);
+  const consonants = phonology.phonemes
+    .map(p => p.ipa)
+    .filter(ipa => !vset.has(ipa));
+  const nucleus = spec.vowels[0];
+  const cells: ClusterCell[] = [];
+  if (!nucleus) return cells;
+
+  // First column: "(no coda)" sentinel, represented as coda='' .
+  const codas = ['', ...consonants];
+
+  for (const onset of consonants) {
+    for (const coda of codas) {
+      const candidate = onset + nucleus + coda;
+      const result = validatePhonotactics(candidate, phonology, spec);
+      if (result.ok) {
+        cells.push({ onset, coda, legality: 'legal', sample: candidate });
+      } else {
+        const reason = result.reason ?? 'invalid';
+        if (/disallowed (?:onset|coda) cluster/i.test(reason)) {
+          cells.push({ onset, coda, legality: 'restricted', sample: candidate, reason });
+        } else {
+          cells.push({ onset, coda, legality: 'illegal', reason });
+        }
+      }
+    }
+  }
+  return cells;
+}

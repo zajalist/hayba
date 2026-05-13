@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Phonology } from './phonology.js';
-import { validatePhonotactics, passesPhonotactics } from './phonotactics.js';
+import { validatePhonotactics, passesPhonotactics, clusterLegality } from './phonotactics.js';
 
 const demoPhonology: Phonology = {
   languageId: 'demo',
@@ -70,6 +70,53 @@ describe('cluster blacklist', () => {
 
   it('accepts /stao/ — st onset is fine', () => {
     expect(passesPhonotactics('stao', demoPhonology, spec)).toBe(true);
+  });
+});
+
+describe('clusterLegality — heatmap cells', () => {
+  const vowels = ['a', 'o'];
+
+  it('all-CV inventory: every (onset, "") cell is legal', () => {
+    const cells = clusterLegality(
+      { phonologyId: 'demo', vowels, syllable: { templates: ['CV'] } },
+      demoPhonology,
+    );
+    const noCoda = cells.filter(c => c.coda === '');
+    expect(noCoda.length).toBeGreaterThan(0);
+    for (const c of noCoda) expect(c.legality).toBe('legal');
+  });
+
+  it('codaClusters=["t"] under CVC: (onset, "t") cell is restricted', () => {
+    const cells = clusterLegality(
+      {
+        phonologyId: 'demo', vowels,
+        syllable: { templates: ['CVC'], codaClusters: ['t'] },
+      },
+      demoPhonology,
+    );
+    const pt = cells.find(c => c.onset === 'p' && c.coda === 't');
+    expect(pt).toBeDefined();
+    expect(pt!.legality).toBe('restricted');
+    expect(pt!.reason).toMatch(/disallowed coda cluster/);
+  });
+
+  it('CV-only templates: every (onset, non-empty coda) cell is illegal', () => {
+    const cells = clusterLegality(
+      { phonologyId: 'demo', vowels, syllable: { templates: ['CV'] } },
+      demoPhonology,
+    );
+    const withCoda = cells.filter(c => c.coda !== '');
+    expect(withCoda.length).toBeGreaterThan(0);
+    for (const c of withCoda) expect(c.legality).toBe('illegal');
+  });
+
+  it('CV+CVC templates with no blacklists: every (onset, coda) cell is legal', () => {
+    const cells = clusterLegality(
+      { phonologyId: 'demo', vowels, syllable: { templates: ['CV', 'CVC'] } },
+      demoPhonology,
+    );
+    expect(cells.length).toBeGreaterThan(0);
+    for (const c of cells) expect(c.legality).toBe('legal');
   });
 });
 
