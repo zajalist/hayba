@@ -2993,12 +2993,10 @@ function renderFamilyTree() {
   const empty = document.getElementById('ft-empty');
   if (!svg) return;
 
-  // Make sure the active language has an up-to-date snapshot so its lexicon
-  // counts reflect what's actually in the editor right now.
-  state.languages[state.langId] = state.languages[state.langId] ?? {};
-  state.languages[state.langId].selected = [...state.selected];
-  state.languages[state.langId].lexicon = state.lexicon;
-
+  // Note: do NOT mutate state.languages here. Rendering should be a pure read
+  // of state. For the active language we derive counts directly from the live
+  // editor state (state.selected / state.lexicon); other languages are read
+  // from their stored snapshots in state.languages.
   const ids = Array.from(new Set([state.langId, ...Object.keys(state.languages)]));
   const roots = buildFamilyTree(ids, state.wordlinks ?? []);
 
@@ -3116,9 +3114,17 @@ function renderFamilyTree() {
     rect.setAttribute('stroke-width', isActive ? '2' : '1.5');
     g.appendChild(rect);
 
-    const snap = state.languages[e.node.id] ?? {};
-    const phonemes = (snap.selected ?? []).length;
-    const words = (snap.lexicon ?? []).length;
+    // For the active language, counts come from the live editor state so the
+    // node reflects unsaved edits. For other languages, read from the snapshot.
+    let phonemes, words;
+    if (e.node.id === state.langId) {
+      phonemes = (state.selected ?? []).length;
+      words = (state.lexicon ?? []).length;
+    } else {
+      const snap = state.languages[e.node.id] ?? {};
+      phonemes = (snap.selected ?? []).length;
+      words = (snap.lexicon ?? []).length;
+    }
 
     const idText = document.createElementNS(SVGNS, 'text');
     idText.setAttribute('x', W_NODE / 2);
