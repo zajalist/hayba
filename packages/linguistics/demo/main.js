@@ -3,6 +3,7 @@ import {
   buildCoOccurrenceModel, INVENTORIES, audioUrlFor,
   consonantToPhonemeFeatures, vowelToPhonemeFeatures,
   parseRules, stringifyRule, evolveLexicon, generatePhonotacticName, deriveSeed,
+  SCA_PRESETS,
   applyAllophony, parseAllophonyRules, stringifyAllophonyRule,
   clusterLegality,
   defaultRomanization, romanize,
@@ -1118,6 +1119,60 @@ document.getElementById('sca-apply').addEventListener('click', () => {
     statusEl.textContent = String(e.message ?? e);
   }
 });
+
+/* L26 — Historical SCA preset modal.
+   Grouped by family, opens on "Load preset…", drops the chosen preset's
+   rulesText into state.rules. Confirms before clobbering existing rules. */
+(function wireScaPresetModal() {
+  const dlg = document.getElementById('sca-preset-dlg');
+  const list = document.getElementById('sca-preset-list');
+  const openBtn = document.getElementById('sca-load-preset');
+  const cancelBtn = document.getElementById('sca-preset-cancel');
+  if (!dlg || !list || !openBtn) return;
+
+  function render() {
+    list.innerHTML = '';
+    const byFamily = new Map();
+    for (const p of SCA_PRESETS) {
+      if (!byFamily.has(p.family)) byFamily.set(p.family, []);
+      byFamily.get(p.family).push(p);
+    }
+    for (const [family, presets] of byFamily) {
+      const header = document.createElement('div');
+      header.textContent = family;
+      header.style.cssText = 'font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:var(--text-muted); margin:10px 0 4px';
+      list.appendChild(header);
+      for (const p of presets) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        const desc = escapeHtml(p.description);
+        const cite = escapeHtml(p.citation);
+        btn.innerHTML = `
+          <div><strong>${escapeHtml(p.name)}</strong> <span class="ph">· ${escapeHtml(p.era)}</span></div>
+          <div class="ph" style="white-space:normal; line-height:1.4; margin-top:4px">${desc}</div>
+          <div class="ph" style="margin-top:4px"><a href="${cite}" target="_blank" rel="noopener" onclick="event.stopPropagation()">citation ↗</a></div>`;
+        btn.addEventListener('click', () => {
+          const hasExisting = state.rules.trim().length > 0;
+          if (hasExisting && !confirm(`Replace your current rules with "${p.name}"?`)) return;
+          state.rules = p.rulesText;
+          saveState();
+          dlg.classList.remove('open');
+          renderSoundChanges();
+        });
+        list.appendChild(btn);
+      }
+    }
+  }
+
+  openBtn.addEventListener('click', () => { render(); dlg.classList.add('open'); });
+  cancelBtn.addEventListener('click', () => dlg.classList.remove('open'));
+  dlg.addEventListener('click', e => {
+    if (e.target.id === 'sca-preset-dlg') dlg.classList.remove('open');
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && dlg.classList.contains('open')) dlg.classList.remove('open');
+  });
+})();
 
 // Fork: derive a daughter language with these sound changes applied + auto-cognates back to parent.
 function forkActiveLanguageAsDaughter() {

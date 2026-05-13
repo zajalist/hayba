@@ -1652,6 +1652,7 @@ p > p̚ / _ #          // unreleased final stop"></textarea>
             <button type="button" class="on" data-mode="text" role="tab" aria-selected="true">Text</button>
             <button type="button" data-mode="visual" role="tab" aria-selected="false">Visual</button>
           </span>
+          <button class="btn" id="sca-load-preset" type="button" style="margin-left:8px" title="Drop in a historical sound-change preset (Grimm, Great Vowel Shift, …)">Load preset…</button>
           <span class="meta" id="sca-meta">0 rules</span>
         </div>
         <div class="panel-body">
@@ -1822,6 +1823,18 @@ t > s / _ i"></textarea>
     <div class="preset-list" id="preset-list"></div>
     <div class="row" style="margin-top:14px; justify-content: flex-end">
       <button class="btn" id="preset-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- SCA preset modal (L26) -->
+<div class="preset-dialog" id="sca-preset-dlg">
+  <div class="preset-card" style="max-width: 720px">
+    <h4>Load a historical sound-change preset</h4>
+    <div class="hint">Real diachronic changes from well-documented language histories. Loading replaces your current rules.</div>
+    <div class="preset-list" id="sca-preset-list"></div>
+    <div class="row" style="margin-top:14px; justify-content: flex-end">
+      <button class="btn" id="sca-preset-cancel">Cancel</button>
     </div>
   </div>
 </div>

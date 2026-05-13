@@ -41,6 +41,10 @@ export {
   parseRule, parseRules, stringifyRule, applyRule, evolveWord, evolveLexicon,
 } from './sound-changes.js';
 
+// Historical SCA presets (L26)
+export type { ScaPreset } from './data/sca-presets.js';
+export { SCA_PRESETS } from './data/sca-presets.js';
+
 // Allophony (L25)
 export type { AllophonyRule, SurfaceMapping } from './allophony.js';
 export {
