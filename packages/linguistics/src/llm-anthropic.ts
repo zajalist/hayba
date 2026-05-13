@@ -154,6 +154,10 @@ export function createAnthropicLLM(opts: AnthropicAdapterOpts = {}): DerivationL
     const resp = await client.messages.create({
       model,
       max_tokens: maxTokens,
+      // Anthropic default is 1.0, which is too hot for short lexeme coinage —
+      // we want the model to commit to a plausible form, not roll dice on
+      // exotic phoneme combinations.
+      temperature: 0.7,
       // Prompt caching — the system block is stable per language, so subsequent
       // calls within ~5 minutes hit the ephemeral cache.
       system: [

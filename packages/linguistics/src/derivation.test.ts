@@ -50,4 +50,15 @@ describe('proposeDerivation', () => {
     expect(r.source).toBe('fallback');
     expect(r.history.length).toBe(2);
   });
+
+  it('survives an adapter that throws, falling back to L4', async () => {
+    const r = await proposeDerivation({
+      phonology: ph, phonotactics: pt, fallbackProfile: profile,
+      gloss: 'thunder', seed: 9, maxRetries: 2,
+    }, async () => { throw new Error('network blip'); });
+    expect(r.source).toBe('fallback');
+    expect(r.history.length).toBe(2);
+    expect(r.history.every(h => h.includes('network blip'))).toBe(true);
+    expect(r.lexeme.lemma).toMatch(/^[ptkao]+$/);
+  });
 });

@@ -66,7 +66,19 @@ export async function proposeDerivation(
   if (llm) {
     let feedback: string | null = null;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      const cand = await llm(attempt, feedback, req);
+      let cand: DerivationCandidate;
+      try {
+        cand = await llm(attempt, feedback, req);
+      } catch (err) {
+        // Adapter blip (network, malformed response, missing tool_use) — log
+        // it, surface as feedback to the next attempt, and continue. After the
+        // loop exhausts we fall through to the deterministic L4 fallback so
+        // callers always get *some* derivation back.
+        const msg = err instanceof Error ? err.message : String(err);
+        history.push(msg);
+        feedback = msg;
+        continue;
+      }
       const check = passesPhonotactics(cand.lemma, req.phonology, req.phonotactics);
       if (check) {
         return {
