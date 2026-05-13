@@ -18,7 +18,6 @@ export type TypologyCategory =
   | 'word-order'
   | 'morphology'
   | 'phonology'
-  | 'syntax'
   | 'semantics';
 
 export interface TypologyOption {
