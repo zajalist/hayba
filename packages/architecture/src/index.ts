@@ -28,3 +28,15 @@ export type {
 export {
   listStyleGuides, getStyleGuideTool, getTypologyTool, validateStyleGuideTool,
 } from './mcp.js';
+
+// Element catalog + kernel surface
+export type {
+  ProfileHint, ProfileSlot, ParamSlot, ParamSlotKind,
+  ElementCategory, ElementGraphRef, Element,
+  ProvenanceSource, BindingProvenance, ElementBinding,
+} from './schema.js';
+export { validateElement, validateElementBinding, isElement } from './validate.js';
+export type { ElementCatalog, BindingCatalog, EmitResult, EmitError } from './element-registry.js';
+export {
+  loadElementCatalog, loadBinding, emitElementMesh,
+} from './element-registry.js';
