@@ -59,3 +59,11 @@ export type {
 export {
   translate, tokenize as tokenizeText, lemmatize, renderTranslation, renderRomanized,
 } from './translator.js';
+
+// Morphology / paradigms (L11)
+export type {
+  AffixRule, AffixPosition, ParadigmDef, ParadigmCell, MorphTarget,
+} from './morphology.js';
+export {
+  inflect, buildParadigm, enumerateAxes, findRuleConflicts, PRESET_PARADIGMS,
+} from './morphology.js';
