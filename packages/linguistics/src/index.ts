@@ -74,3 +74,7 @@ export type { Wordlink, WordlinkKind, WordlinkRepo } from './wordlinks.js';
 export {
   InMemoryWordlinks, PostgresWordlinks, autoCognatesFromDiachrony,
 } from './wordlinks.js';
+
+// Family tree (L14)
+export type { LanguageTreeNode, SampleChange } from './family-tree.js';
+export { buildFamilyTree } from './family-tree.js';

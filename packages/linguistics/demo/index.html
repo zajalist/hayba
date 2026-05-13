@@ -218,6 +218,7 @@
   nav button[data-view="translator"]    { --icon-c: var(--tag-green); }
   nav button[data-view="grammar"]       { --icon-c: #c685c0; }
   nav button[data-view="sound-changes"] { --icon-c: var(--status-orange); }
+  nav button[data-view="family-tree"]   { --icon-c: var(--accent); }
   nav button[data-view="romanization"]  { --icon-c: var(--accent); }
   nav button[data-view="names"]         { --icon-c: #c685c0; }
   nav button[data-view="docs"]          { --icon-c: var(--text-muted); }
@@ -844,6 +845,18 @@
       </svg>
       <span>Grammar</span><span class="key">4</span>
     </button>
+    <button data-view="family-tree">
+      <!-- Family tree: branching node graph -->
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="4.5" r="1.8"/>
+        <circle cx="6"  cy="19" r="1.8"/>
+        <circle cx="18" cy="19" r="1.8"/>
+        <path d="M12 6.3v4.7"/>
+        <path d="M12 11h-6v6.2"/>
+        <path d="M12 11h6v6.2"/>
+      </svg>
+      <span>Family Tree</span><span class="key">T</span>
+    </button>
     <button data-view="sound-changes">
       <!-- Diachrony: time arrow with transform -->
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -1251,6 +1264,29 @@
       </div>
     </section>
 
+    <!-- ====================== Family Tree (L14) ====================== -->
+    <section class="view" id="view-family-tree">
+      <div class="panel">
+        <div class="panel-header">
+          Family Tree — Language relationships
+          <span class="sub">cognate links between languages, parent → daughter</span>
+          <span class="meta" id="ft-meta">0 languages</span>
+        </div>
+        <div class="panel-body">
+          <div class="row" style="margin-bottom: 10px; gap: 8px; align-items: center">
+            <button class="btn primary" id="ft-fork" title="Fork the active language as a daughter using its current sound-change rules">Fork from active language…</button>
+            <span class="hint" id="ft-hint">Click any node to make that language the active one. Edges show the most-changed cognate.</span>
+          </div>
+          <div id="ft-host" style="overflow: auto; border: 1px solid var(--border-soft); border-radius: 6px; padding: 12px; background: var(--bg-panel-2, #1c1f25)">
+            <svg id="ft-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+          </div>
+          <div class="hint" id="ft-empty" style="margin-top: 8px; display:none">
+            No daughter languages yet. Open Sound Changes, type some rules, and click <span class="mono">Fork as daughter language…</span> to grow the tree.
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- ====================== Sound Changes ====================== -->
     <section class="view" id="view-sound-changes">
       <div class="panel">
@@ -1399,6 +1435,7 @@ import {
   buildParadigm, findRuleConflicts, PRESET_PARADIGMS,
   addAxis, removeAxis, addAxisValue, removeAxisValue,
   InMemoryWordlinks, autoCognatesFromDiachrony,
+  buildFamilyTree,
 } from '../dist/index.js';
 
 /* ─────────────────────  state  ───────────────────── */
@@ -2185,14 +2222,14 @@ document.getElementById('sca-apply').addEventListener('click', () => {
 });
 
 // Fork: derive a daughter language with these sound changes applied + auto-cognates back to parent.
-document.getElementById('sca-fork').addEventListener('click', () => {
+function forkActiveLanguageAsDaughter() {
   if (state.lexicon.length === 0) {
     alert('Add some words to the lexicon before forking.');
     return;
   }
   const parentRules = state.rules.trim();
   if (!parentRules) {
-    alert('Type at least one sound-change rule above before forking.');
+    alert('Type at least one sound-change rule in the Sound Changes panel before forking.');
     return;
   }
   const newId = prompt('Daughter language ID:', `${state.langId}-daughter`);
@@ -2255,7 +2292,9 @@ document.getElementById('sca-fork').addEventListener('click', () => {
   loadLanguageSnapshot(daughterId);
   saveState(); renderAll();
   alert(`Forked "${daughterId}" with ${cognates.length} cognate link${cognates.length === 1 ? '' : 's'} back to "${parentId}". Switched to the daughter.`);
-});
+}
+document.getElementById('sca-fork').addEventListener('click', forkActiveLanguageAsDaughter);
+document.getElementById('ft-fork').addEventListener('click', forkActiveLanguageAsDaughter);
 
 function renderSoundChanges() {
   document.getElementById('sca-rules').value = state.rules;
@@ -2947,10 +2986,180 @@ function renderTopbar() {
   document.getElementById('heatmap-mode').value = state.heatmapMode;
 }
 
+/* ─────────────────────  Family tree (L14)  ───────────────────── */
+function renderFamilyTree() {
+  const svg = document.getElementById('ft-svg');
+  const meta = document.getElementById('ft-meta');
+  const empty = document.getElementById('ft-empty');
+  if (!svg) return;
+
+  // Make sure the active language has an up-to-date snapshot so its lexicon
+  // counts reflect what's actually in the editor right now.
+  state.languages[state.langId] = state.languages[state.langId] ?? {};
+  state.languages[state.langId].selected = [...state.selected];
+  state.languages[state.langId].lexicon = state.lexicon;
+
+  const ids = Array.from(new Set([state.langId, ...Object.keys(state.languages)]));
+  const roots = buildFamilyTree(ids, state.wordlinks ?? []);
+
+  meta.textContent = `${ids.length} language${ids.length === 1 ? '' : 's'}`;
+  // Only "empty" when there is a single language and no cognate links at all.
+  const cognateCount = (state.wordlinks ?? []).filter(l => l.kind === 'cognate').length;
+  empty.style.display = (ids.length <= 1 && cognateCount === 0) ? '' : 'none';
+
+  // ─── Layout ───
+  // Top-down hierarchical: assign each node an (x, y). y = depth row.
+  // x = horizontal slot from an in-order walk of leaves.
+  const W_NODE = 170, H_NODE = 62;
+  const H_GAP = 32, V_GAP = 90;
+  const PAD_X = 24, PAD_Y = 24;
+
+  const flat = []; // { node, depth, x, y }
+  let cursor = 0;
+  function layout(node, depth) {
+    const entry = { node, depth, x: 0, y: PAD_Y + depth * (H_NODE + V_GAP) };
+    flat.push(entry);
+    if (node.children.length === 0) {
+      entry.x = PAD_X + cursor * (W_NODE + H_GAP);
+      cursor++;
+    } else {
+      const childEntries = node.children.map(c => layout(c, depth + 1));
+      const minX = childEntries[0].x;
+      const maxX = childEntries[childEntries.length - 1].x;
+      entry.x = (minX + maxX) / 2;
+    }
+    return entry;
+  }
+  for (const r of roots) layout(r, 0);
+
+  const maxDepth = Math.max(0, ...flat.map(e => e.depth));
+  const width  = PAD_X + Math.max(1, cursor) * (W_NODE + H_GAP) + PAD_X;
+  const height = PAD_Y + (maxDepth + 1) * (H_NODE + V_GAP) - V_GAP + PAD_Y + 24;
+
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('width', width);
+  svg.setAttribute('height', height);
+  svg.innerHTML = '';
+
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const accent = 'var(--accent)';
+  const borderSoft = 'var(--border-soft)';
+  const textSecondary = 'var(--text-secondary)';
+  const textColor = 'var(--text-primary, #e6e8ec)';
+  const bgPanel = 'var(--bg-panel, #22262e)';
+
+  const byId = new Map(flat.map(e => [e.node.id, e]));
+
+  // ─── Edges (drawn first so nodes overlay them) ───
+  for (const e of flat) {
+    if (!e.node.parentId) continue;
+    const p = byId.get(e.node.parentId);
+    if (!p) continue;
+    const x1 = p.x + W_NODE / 2;
+    const y1 = p.y + H_NODE;
+    const x2 = e.x + W_NODE / 2;
+    const y2 = e.y;
+    const midY = (y1 + y2) / 2;
+    const path = document.createElementNS(SVGNS, 'path');
+    path.setAttribute('d', `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`);
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', borderSoft);
+    path.setAttribute('stroke-width', '1.5');
+    svg.appendChild(path);
+
+    if (e.node.ruleSummary) {
+      const labelY = midY - 6;
+      const summary = document.createElementNS(SVGNS, 'text');
+      summary.setAttribute('x', (x1 + x2) / 2);
+      summary.setAttribute('y', labelY);
+      summary.setAttribute('text-anchor', 'middle');
+      summary.setAttribute('fill', textSecondary);
+      summary.setAttribute('font-size', '11');
+      summary.setAttribute('font-family', "ui-monospace, 'JetBrains Mono', Menlo, monospace");
+      summary.textContent = e.node.ruleSummary;
+      svg.appendChild(summary);
+
+      if (e.node.sampleChange) {
+        const sample = document.createElementNS(SVGNS, 'text');
+        sample.setAttribute('x', (x1 + x2) / 2);
+        sample.setAttribute('y', labelY + 13);
+        sample.setAttribute('text-anchor', 'middle');
+        sample.setAttribute('fill', textSecondary);
+        sample.setAttribute('font-size', '10');
+        sample.setAttribute('font-style', 'italic');
+        sample.textContent = `“${e.node.sampleChange.concept}”`;
+        svg.appendChild(sample);
+      }
+    }
+  }
+
+  // ─── Nodes ───
+  for (const e of flat) {
+    const isActive = e.node.id === state.langId;
+    const g = document.createElementNS(SVGNS, 'g');
+    g.setAttribute('transform', `translate(${e.x}, ${e.y})`);
+    g.style.cursor = 'pointer';
+    g.addEventListener('click', () => {
+      if (e.node.id === state.langId) return;
+      snapshotActiveLanguage();
+      loadLanguageSnapshot(e.node.id);
+      saveState(); renderAll();
+    });
+
+    const rect = document.createElementNS(SVGNS, 'rect');
+    rect.setAttribute('width', W_NODE);
+    rect.setAttribute('height', H_NODE);
+    rect.setAttribute('rx', '5');
+    rect.setAttribute('ry', '5');
+    rect.setAttribute('fill', bgPanel);
+    rect.setAttribute('stroke', isActive ? accent : borderSoft);
+    rect.setAttribute('stroke-width', isActive ? '2' : '1.5');
+    g.appendChild(rect);
+
+    const snap = state.languages[e.node.id] ?? {};
+    const phonemes = (snap.selected ?? []).length;
+    const words = (snap.lexicon ?? []).length;
+
+    const idText = document.createElementNS(SVGNS, 'text');
+    idText.setAttribute('x', W_NODE / 2);
+    idText.setAttribute('y', 24);
+    idText.setAttribute('text-anchor', 'middle');
+    idText.setAttribute('fill', isActive ? accent : textColor);
+    idText.setAttribute('font-size', '13');
+    idText.setAttribute('font-weight', '600');
+    idText.textContent = e.node.id.length > 22 ? e.node.id.slice(0, 20) + '…' : e.node.id;
+    g.appendChild(idText);
+
+    const stats = document.createElementNS(SVGNS, 'text');
+    stats.setAttribute('x', W_NODE / 2);
+    stats.setAttribute('y', 44);
+    stats.setAttribute('text-anchor', 'middle');
+    stats.setAttribute('fill', textSecondary);
+    stats.setAttribute('font-size', '11');
+    stats.textContent = `${phonemes} phoneme${phonemes === 1 ? '' : 's'} · ${words} word${words === 1 ? '' : 's'}`;
+    g.appendChild(stats);
+
+    if (isActive) {
+      const tag = document.createElementNS(SVGNS, 'text');
+      tag.setAttribute('x', W_NODE / 2);
+      tag.setAttribute('y', 58);
+      tag.setAttribute('text-anchor', 'middle');
+      tag.setAttribute('fill', accent);
+      tag.setAttribute('font-size', '9.5');
+      tag.setAttribute('font-weight', '600');
+      tag.setAttribute('letter-spacing', '0.5');
+      tag.textContent = 'ACTIVE';
+      g.appendChild(tag);
+    }
+
+    svg.appendChild(g);
+  }
+}
+
 function renderAll() {
   renderNav(); renderTopbar(); renderPhonology();
   renderLexicon(); renderSoundChanges(); renderRomanization();
-  renderGrammar();
+  renderGrammar(); renderFamilyTree();
 }
 
 /* —— Inspector pin + sticky shadow —— */
