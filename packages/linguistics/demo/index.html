@@ -2532,6 +2532,7 @@ document.getElementById('gr-rule-add').addEventListener('click', () => {
 });
 
 function renderGrammar() {
+  if (typeof closePopover === 'function') closePopover();
   renderGrammarTemplateGallery();
   renderGrammarLemmaChips();
   renderGrammarAxisEditor();
