@@ -474,6 +474,141 @@
     background: rgba(224, 100, 100, 0.10); color: var(--status-red);
   }
 
+  /* L12 — Grammar UI polish */
+  .axis-editor {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    padding: 8px 10px; margin-bottom: 10px;
+    background: var(--bg-base);
+    border: 1px solid var(--border-soft);
+    border-radius: 4px;
+  }
+  .axis-editor .axis-label {
+    font-size: 11px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.6px;
+    margin-right: 4px;
+  }
+  .axis-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-soft);
+    border-radius: 4px; padding: 3px 6px 3px 8px;
+    font-size: 12px;
+  }
+  .axis-pill .axis-name {
+    font-weight: 600; color: var(--text-primary);
+    margin-right: 4px;
+  }
+  .axis-pill .axis-val {
+    display: inline-flex; align-items: center; gap: 3px;
+    background: var(--bg-base); border: 1px solid var(--border-soft);
+    border-radius: 10px; padding: 1px 4px 1px 7px;
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--text-secondary);
+  }
+  .axis-pill .axis-val .x,
+  .axis-pill .axis-rm {
+    width: 14px; height: 14px; border-radius: 50%;
+    border: none; background: transparent;
+    color: var(--text-muted); cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; line-height: 1; padding: 0;
+  }
+  .axis-pill .axis-val .x:hover { background: var(--status-red); color: white; }
+  .axis-pill .axis-rm { margin-left: 2px; }
+  .axis-pill .axis-rm:hover { background: var(--status-red); color: white; }
+  .axis-pill .axis-add {
+    width: 16px; height: 16px; border-radius: 3px;
+    border: 1px dashed var(--border-soft); background: transparent;
+    color: var(--text-muted); cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; line-height: 1; padding: 0;
+  }
+  .axis-pill .axis-add:hover { border-color: var(--accent); color: var(--accent); }
+  .axis-add-btn {
+    border: 1px dashed var(--border-soft);
+    background: transparent; color: var(--text-secondary);
+    border-radius: 4px; padding: 3px 8px; font-size: 12px;
+    cursor: pointer;
+  }
+  .axis-add-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* Inline popover (anchored) */
+  .gr-popover {
+    position: absolute; z-index: 50;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-mid);
+    border-radius: 4px;
+    padding: 10px; min-width: 220px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.40);
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .gr-popover label { font-size: 11px; color: var(--text-muted); }
+  .gr-popover input.input { width: 100%; }
+  .gr-popover .row { gap: 6px; justify-content: flex-end; }
+
+  /* Lemma chip strip ("Try with…") */
+  .lemma-chip-strip {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    margin-bottom: 10px; align-items: center;
+  }
+  .lemma-chip-strip .label {
+    font-size: 11px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.6px;
+    margin-right: 2px;
+  }
+  .lemma-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: var(--bg-base); border: 1px solid var(--border-soft);
+    color: var(--text-secondary); padding: 2px 9px;
+    border-radius: 12px; font-size: 12px; cursor: pointer;
+    transition: border-color .12s, color .12s;
+  }
+  .lemma-chip:hover { border-color: var(--accent); color: var(--accent); }
+  .lemma-chip.active { border-color: var(--accent); background: var(--accent-dim); color: var(--text-primary); }
+  .lemma-chip .lc-lemma { font-family: var(--font-mono); color: var(--accent); }
+  .lemma-chip .lc-pos { color: var(--text-muted); font-size: 10px; }
+
+  /* Drag handle on rule rows */
+  #gr-rules-table tr td.drag-cell {
+    width: 18px; padding: 0 4px;
+    color: var(--text-muted); cursor: grab;
+    user-select: none; text-align: center;
+    font-size: 14px; line-height: 1;
+  }
+  #gr-rules-table tr td.drag-cell:hover { color: var(--accent); }
+  #gr-rules-table tr.dragging { opacity: 0.45; }
+  #gr-rules-table tr.drag-over-top td { box-shadow: inset 0 2px 0 var(--accent); }
+  #gr-rules-table tr.drag-over-bottom td { box-shadow: inset 0 -2px 0 var(--accent); }
+
+  /* Starter template gallery */
+  .template-gallery {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+    margin-bottom: 12px;
+  }
+  .template-card {
+    background: var(--bg-base);
+    border: 1px solid var(--border-soft);
+    border-radius: 4px; padding: 10px 12px;
+    cursor: pointer; transition: border-color .12s, background .12s;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .template-card:hover { border-color: var(--accent); background: var(--bg-elevated); }
+  .template-card .tc-title {
+    font-size: 12px; font-weight: 600; color: var(--text-primary);
+    line-height: 1.3;
+  }
+  .template-card .tc-axes {
+    font-size: 10px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .template-card .tc-preview {
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--text-secondary); line-height: 1.55;
+    background: var(--bg-panel); border: 1px solid var(--border-soft);
+    border-radius: 3px; padding: 5px 7px;
+  }
+  .template-card .tc-preview .accent { color: var(--accent); }
+
   audio { height: 22px; }
   audio::-webkit-media-controls-panel { background: var(--bg-panel); }
   .hint { color: var(--text-muted); font-size: 10px; margin-top: 4px; }
@@ -1029,8 +1164,10 @@
         </div>
         <div class="panel-body">
 
+          <div id="gr-template-gallery" class="template-gallery"></div>
+
           <div class="row" style="margin-bottom: 12px; gap: 8px">
-            <label class="field" style="flex:1"><span>Paradigm</span>
+            <label class="field" style="flex:1"><span>Paradigm preset</span>
               <select id="gr-preset">
                 <option value="">— select a starter —</option>
               </select>
@@ -1045,6 +1182,10 @@
             </label>
             <button class="btn" id="gr-load-preset" style="align-self:flex-end">Load preset</button>
           </div>
+
+          <div id="gr-lemma-chips" class="lemma-chip-strip"></div>
+
+          <div id="gr-axis-editor" class="axis-editor" style="display:none"></div>
 
           <div id="gr-table-host" style="overflow-x: auto"></div>
 
@@ -1092,8 +1233,9 @@
           <table class="data" id="gr-rules-table">
             <thead>
               <tr>
+                <th style="width: 22px" title="Drag to reorder"></th>
                 <th style="width: 10%">POS</th>
-                <th style="width: 30%">Condition</th>
+                <th style="width: 28%">Condition</th>
                 <th style="width: 14%">Position</th>
                 <th style="width: 18%">Form</th>
                 <th style="width: 10%">Priority</th>
@@ -1102,6 +1244,9 @@
             </thead>
             <tbody id="gr-rules-tbody"></tbody>
           </table>
+          <div class="hint" style="margin-top:6px">
+            Drag the <span class="mono">⋮⋮</span> handle to reorder rules. Earlier rules win ties on (priority, specificity).
+          </div>
         </div>
       </div>
     </section>
@@ -1252,6 +1397,7 @@ import {
   defaultRomanization, romanize,
   translate, renderRomanized,
   buildParadigm, findRuleConflicts, PRESET_PARADIGMS,
+  addAxis, removeAxis, addAxisValue, removeAxisValue,
   InMemoryWordlinks, autoCognatesFromDiachrony,
 } from '../dist/index.js';
 
@@ -2386,6 +2532,10 @@ document.getElementById('gr-rule-add').addEventListener('click', () => {
 });
 
 function renderGrammar() {
+  renderGrammarTemplateGallery();
+  renderGrammarLemmaChips();
+  renderGrammarAxisEditor();
+
   // Lexicon picker
   const lexSel = document.getElementById('gr-lex');
   lexSel.innerHTML = '<option value="">— pick from lexicon —</option>';
@@ -2463,8 +2613,11 @@ function renderGrammar() {
   for (let i = 0; i < state.grammar.rules.length; i++) {
     const r = state.grammar.rules[i];
     const tr = document.createElement('tr');
+    tr.draggable = true;
+    tr.dataset.idx = String(i);
     const condStr = Object.entries(r.condition).map(([k, v]) => `${k}=${v}`).join(', ') || '(any)';
     tr.innerHTML = `
+      <td class="drag-cell" title="Drag to reorder">⋮⋮</td>
       <td><span class="pos-tag">${escapeHtml(r.pos)}</span></td>
       <td class="mono">${escapeHtml(condStr)}</td>
       <td class="muted">${escapeHtml(r.position)}</td>
@@ -2478,8 +2631,254 @@ function renderGrammar() {
       state.grammar.rules.splice(+b.dataset.rm, 1);
       saveState(); renderGrammar();
     }));
+  attachRuleDragHandlers(rt);
   document.getElementById('gr-rules-meta').textContent =
     `${state.grammar.rules.length} rule${state.grammar.rules.length === 1 ? '' : 's'}`;
+}
+
+/* Drag-to-reorder for affix-rule rows. The drag image is the row itself; we
+   compute the drop index from the pointer position relative to each row's
+   midpoint, so the user gets a visual top/bottom hint and the drop never
+   misses by one. */
+function attachRuleDragHandlers(tbody) {
+  let dragIdx = -1;
+  tbody.querySelectorAll('tr[draggable]').forEach(tr => {
+    tr.addEventListener('dragstart', e => {
+      dragIdx = +tr.dataset.idx;
+      tr.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      // Some browsers (Firefox) need data to start the drag.
+      try { e.dataTransfer.setData('text/plain', String(dragIdx)); } catch {}
+    });
+    tr.addEventListener('dragend', () => {
+      tr.classList.remove('dragging');
+      tbody.querySelectorAll('tr').forEach(r => r.classList.remove('drag-over-top', 'drag-over-bottom'));
+      dragIdx = -1;
+    });
+    tr.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const rect = tr.getBoundingClientRect();
+      const before = (e.clientY - rect.top) < rect.height / 2;
+      tbody.querySelectorAll('tr').forEach(r => r.classList.remove('drag-over-top', 'drag-over-bottom'));
+      tr.classList.add(before ? 'drag-over-top' : 'drag-over-bottom');
+    });
+    tr.addEventListener('drop', e => {
+      e.preventDefault();
+      if (dragIdx < 0) return;
+      const targetIdx = +tr.dataset.idx;
+      const rect = tr.getBoundingClientRect();
+      const before = (e.clientY - rect.top) < rect.height / 2;
+      let dropIdx = before ? targetIdx : targetIdx + 1;
+      if (dragIdx < dropIdx) dropIdx--;
+      if (dragIdx === dropIdx) return;
+      const arr = state.grammar.rules;
+      const [moved] = arr.splice(dragIdx, 1);
+      arr.splice(dropIdx, 0, moved);
+      saveState(); renderGrammar();
+    });
+  });
+}
+
+/* "Try with…" recent-lemma chips. Show the most recent up-to-10 noun/verb
+   lemmas (POS filter; if a language has no POS data we fall back to all
+   lemmas). Click loads the lemma as the stem. */
+function renderGrammarLemmaChips() {
+  const host = document.getElementById('gr-lemma-chips');
+  host.innerHTML = '';
+  const eligible = [];
+  // Walk lexicon backwards so "most recent" comes first.
+  for (let i = state.lexicon.length - 1; i >= 0 && eligible.length < 10; i--) {
+    const e = state.lexicon[i];
+    if (!e || !e.lemma) continue;
+    if (e.pos && !['noun', 'verb'].includes(e.pos)) continue;
+    eligible.push(e);
+  }
+  if (eligible.length === 0) {
+    host.style.display = 'none';
+    return;
+  }
+  host.style.display = '';
+  const label = document.createElement('span');
+  label.className = 'label';
+  label.textContent = 'Try with';
+  host.appendChild(label);
+  for (const e of eligible) {
+    const chip = document.createElement('span');
+    chip.className = 'lemma-chip' + (e.lemma === state.grammar.stem ? ' active' : '');
+    chip.title = e.concept ? `${e.concept} → ${e.lemma}` : e.lemma;
+    chip.innerHTML = `<span class="lc-lemma">${escapeHtml(e.lemma)}</span>${e.pos ? `<span class="lc-pos">${escapeHtml(e.pos)}</span>` : ''}`;
+    chip.addEventListener('click', () => {
+      state.grammar.stem = e.lemma;
+      saveState(); renderGrammar();
+    });
+    host.appendChild(chip);
+  }
+}
+
+/* Inline axis editor — pills per axis, × on each value, + on each header,
+   + axis button to add a new one. All edits go through the pure helpers. */
+function renderGrammarAxisEditor() {
+  const host = document.getElementById('gr-axis-editor');
+  if (!state.grammar.def) {
+    host.style.display = 'none';
+    host.innerHTML = '';
+    return;
+  }
+  host.style.display = '';
+  host.innerHTML = '';
+  const label = document.createElement('span');
+  label.className = 'axis-label';
+  label.textContent = 'Axes';
+  host.appendChild(label);
+
+  const axes = Object.entries(state.grammar.def.axes);
+  for (const [axisName, values] of axes) {
+    const pill = document.createElement('span');
+    pill.className = 'axis-pill';
+    pill.innerHTML = `<span class="axis-name">${escapeHtml(axisName)}</span>`;
+    for (const v of values) {
+      const vs = document.createElement('span');
+      vs.className = 'axis-val';
+      vs.innerHTML = `<span>${escapeHtml(v)}</span><button class="x" title="remove value">×</button>`;
+      vs.querySelector('.x').addEventListener('click', ev => {
+        ev.stopPropagation();
+        state.grammar.def = removeAxisValue(state.grammar.def, axisName, v);
+        saveState(); renderGrammar();
+      });
+      pill.appendChild(vs);
+    }
+    const addBtn = document.createElement('button');
+    addBtn.className = 'axis-add';
+    addBtn.textContent = '+';
+    addBtn.title = `Add a value to "${axisName}"`;
+    addBtn.addEventListener('click', ev => {
+      ev.stopPropagation();
+      openValuePopover(addBtn, axisName);
+    });
+    pill.appendChild(addBtn);
+
+    const rmBtn = document.createElement('button');
+    rmBtn.className = 'axis-rm';
+    rmBtn.textContent = '×';
+    rmBtn.title = `Remove the "${axisName}" axis`;
+    rmBtn.addEventListener('click', ev => {
+      ev.stopPropagation();
+      if (!confirm(`Remove the "${axisName}" axis? Cells in this dimension will be lost.`)) return;
+      state.grammar.def = removeAxis(state.grammar.def, axisName);
+      saveState(); renderGrammar();
+    });
+    pill.appendChild(rmBtn);
+    host.appendChild(pill);
+  }
+
+  const newAxisBtn = document.createElement('button');
+  newAxisBtn.className = 'axis-add-btn';
+  newAxisBtn.textContent = '+ axis';
+  newAxisBtn.addEventListener('click', () => openAxisPopover(newAxisBtn));
+  host.appendChild(newAxisBtn);
+}
+
+/* Anchored popovers. A single shared element — only one popover open at a
+   time — positioned just under the anchor. Clicking outside closes it. */
+let activePopover = null;
+function closePopover() {
+  if (activePopover) { activePopover.remove(); activePopover = null; }
+  document.removeEventListener('mousedown', popoverClickAway, true);
+}
+function popoverClickAway(e) {
+  if (activePopover && !activePopover.contains(e.target)) closePopover();
+}
+function openPopoverAt(anchor, builder) {
+  closePopover();
+  const pop = document.createElement('div');
+  pop.className = 'gr-popover';
+  document.body.appendChild(pop);
+  builder(pop);
+  const r = anchor.getBoundingClientRect();
+  pop.style.left = (window.scrollX + r.left) + 'px';
+  pop.style.top  = (window.scrollY + r.bottom + 4) + 'px';
+  activePopover = pop;
+  setTimeout(() => document.addEventListener('mousedown', popoverClickAway, true), 0);
+  return pop;
+}
+function openAxisPopover(anchor) {
+  openPopoverAt(anchor, pop => {
+    pop.innerHTML = `
+      <label>Axis name<input class="input mono" id="pop-axis-name" placeholder="e.g. case"></label>
+      <label>Values (comma-sep)<input class="input mono" id="pop-axis-vals" placeholder="nom, gen, dat"></label>
+      <div class="row"><button class="btn" id="pop-cancel">Cancel</button><button class="btn primary" id="pop-add">Add axis</button></div>`;
+    setTimeout(() => pop.querySelector('#pop-axis-name').focus(), 0);
+    pop.querySelector('#pop-cancel').addEventListener('click', closePopover);
+    pop.querySelector('#pop-add').addEventListener('click', () => {
+      const name = pop.querySelector('#pop-axis-name').value.trim();
+      const vals = pop.querySelector('#pop-axis-vals').value.split(',').map(s => s.trim()).filter(Boolean);
+      if (!name || vals.length === 0) { closePopover(); return; }
+      state.grammar.def = addAxis(state.grammar.def, name, vals);
+      saveState(); closePopover(); renderGrammar();
+    });
+  });
+}
+function openValuePopover(anchor, axisName) {
+  openPopoverAt(anchor, pop => {
+    pop.innerHTML = `
+      <label>New value for <span class="mono">${escapeHtml(axisName)}</span><input class="input mono" id="pop-val" placeholder="e.g. dat"></label>
+      <div class="row"><button class="btn" id="pop-cancel">Cancel</button><button class="btn primary" id="pop-add">Add</button></div>`;
+    setTimeout(() => pop.querySelector('#pop-val').focus(), 0);
+    pop.querySelector('#pop-cancel').addEventListener('click', closePopover);
+    const commit = () => {
+      const v = pop.querySelector('#pop-val').value.trim();
+      if (!v) { closePopover(); return; }
+      state.grammar.def = addAxisValue(state.grammar.def, axisName, v);
+      saveState(); closePopover(); renderGrammar();
+    };
+    pop.querySelector('#pop-add').addEventListener('click', commit);
+    pop.querySelector('#pop-val').addEventListener('keydown', e => { if (e.key === 'Enter') commit(); });
+  });
+}
+
+/* Starter template gallery — cards with a 1-row preview of the paradigm. */
+function renderGrammarTemplateGallery() {
+  const host = document.getElementById('gr-template-gallery');
+  host.innerHTML = '';
+  for (let i = 0; i < PRESET_PARADIGMS.length; i++) {
+    const p = PRESET_PARADIGMS[i];
+    const card = document.createElement('div');
+    card.className = 'template-card';
+    // Preview: pick the first row-axis value, render 3 column-axis variants.
+    const axes = Object.entries(p.def.axes);
+    const axisSummary = axes.map(([k, vs]) => `${k} · ${vs.length}`).join(' × ');
+    let previewHtml = '';
+    try {
+      const cells = buildParadigm(p.exampleStem, p.def, p.rules);
+      const seen = new Set();
+      const pick = cells.filter(c => {
+        const k = Object.entries(c.target).map(([k, v]) => `${k}=${v}`).join(',');
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return c.ruleIndices.length > 0;
+      }).slice(0, 3);
+      previewHtml = pick.map(c => {
+        const tag = Object.entries(c.target).map(([k, v]) => v).join('.');
+        return `<div>${escapeHtml(tag)} → <span class="accent">${escapeHtml(c.form)}</span></div>`;
+      }).join('');
+      if (!previewHtml) previewHtml = `<div class="muted">${escapeHtml(p.exampleStem)} · ${p.rules.length} rules</div>`;
+    } catch {
+      previewHtml = `<div class="muted">${escapeHtml(p.exampleStem)} · ${p.rules.length} rules</div>`;
+    }
+    card.innerHTML = `
+      <div class="tc-title">${escapeHtml(p.name)}</div>
+      <div class="tc-axes">${escapeHtml(axisSummary)}</div>
+      <div class="tc-preview">${previewHtml}</div>`;
+    card.addEventListener('click', () => {
+      const hasExisting = state.grammar.def && state.grammar.rules.length > 0;
+      if (hasExisting && !confirm(`Replace the current paradigm with "${p.name}"? Your existing axes and rules will be discarded.`)) return;
+      state.grammar = { def: { pos: p.def.pos, axes: { ...p.def.axes } }, stem: p.exampleStem, rules: [...p.rules] };
+      document.getElementById('gr-stem').value = p.exampleStem;
+      saveState(); renderGrammar();
+    });
+    host.appendChild(card);
+  }
 }
 
 /* ─────────────────────  Name gen  ───────────────────── */

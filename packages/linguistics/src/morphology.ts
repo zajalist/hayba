@@ -165,6 +165,64 @@ export function findRuleConflicts(
   return conflicts;
 }
 
+/* ─────────────────────  Axis CRUD helpers  ─────────────────────
+ *
+ * The Grammar UI lets users edit paradigm axes interactively (add/remove an
+ * axis, add/remove a value). These helpers keep that work pure: they take a
+ * ParadigmDef and return a *new* def without mutating the input. The UI also
+ * needs to know which existing rules become unreachable after a value is
+ * removed — `prunedRulesAfterAxisChange` reports that.
+ */
+
+/** Add a new axis with the given values. No-op if `name` already exists. */
+export function addAxis(
+  def: ParadigmDef,
+  name: string,
+  values: readonly string[],
+): ParadigmDef {
+  const clean = name.trim();
+  if (!clean) return def;
+  if (Object.prototype.hasOwnProperty.call(def.axes, clean)) return def;
+  const vs = values.map(v => v.trim()).filter(v => v.length > 0);
+  if (vs.length === 0) return def;
+  return { ...def, axes: { ...def.axes, [clean]: vs } };
+}
+
+/** Remove an axis by name. Returns the same def if the axis doesn't exist. */
+export function removeAxis(def: ParadigmDef, name: string): ParadigmDef {
+  if (!Object.prototype.hasOwnProperty.call(def.axes, name)) return def;
+  const next: Record<string, readonly string[]> = {};
+  for (const [k, v] of Object.entries(def.axes)) {
+    if (k !== name) next[k] = v;
+  }
+  return { ...def, axes: next };
+}
+
+/** Append a value to an existing axis. No-op if axis missing or value exists. */
+export function addAxisValue(
+  def: ParadigmDef,
+  axis: string,
+  value: string,
+): ParadigmDef {
+  const v = value.trim();
+  if (!v) return def;
+  const cur = def.axes[axis];
+  if (!cur) return def;
+  if (cur.includes(v)) return def;
+  return { ...def, axes: { ...def.axes, [axis]: [...cur, v] } };
+}
+
+/** Remove a value from an existing axis. No-op if axis or value missing. */
+export function removeAxisValue(
+  def: ParadigmDef,
+  axis: string,
+  value: string,
+): ParadigmDef {
+  const cur = def.axes[axis];
+  if (!cur || !cur.includes(value)) return def;
+  return { ...def, axes: { ...def.axes, [axis]: cur.filter(x => x !== value) } };
+}
+
 /* ─────────────────────  Built-in starter paradigms  ───────────────────── */
 
 /**

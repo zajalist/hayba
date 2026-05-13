@@ -66,6 +66,7 @@ export type {
 } from './morphology.js';
 export {
   inflect, buildParadigm, enumerateAxes, findRuleConflicts, PRESET_PARADIGMS,
+  addAxis, removeAxis, addAxisValue, removeAxisValue,
 } from './morphology.js';
 
 // Wordlinks — cross-language translation graph (L13)

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   inflect, buildParadigm, enumerateAxes, findRuleConflicts,
   PRESET_PARADIGMS,
+  addAxis, removeAxis, addAxisValue, removeAxisValue,
 } from './morphology.js';
 import type { AffixRule, ParadigmDef } from './morphology.js';
 
@@ -131,5 +132,51 @@ describe('preset paradigms', () => {
     expect(byKey['3.sg']).toBe('walks');
     expect(byKey['1.sg']).toBe('walk');
     expect(byKey['2.pl']).toBe('walk');
+  });
+});
+
+describe('axis CRUD', () => {
+  const base: ParadigmDef = { pos: 'noun', axes: { case: ['nom', 'acc'], number: ['sg', 'pl'] } };
+
+  it('addAxis appends a new axis with cleaned values', () => {
+    const next = addAxis(base, 'gender', ['m', 'f', ' n ']);
+    expect(next.axes).toEqual({ case: ['nom', 'acc'], number: ['sg', 'pl'], gender: ['m', 'f', 'n'] });
+    // Input not mutated
+    expect(base.axes).toEqual({ case: ['nom', 'acc'], number: ['sg', 'pl'] });
+  });
+
+  it('addAxis is a no-op when the axis already exists', () => {
+    expect(addAxis(base, 'case', ['dat'])).toBe(base);
+  });
+
+  it('addAxis is a no-op for empty name or empty values', () => {
+    expect(addAxis(base, '   ', ['x'])).toBe(base);
+    expect(addAxis(base, 'gender', [])).toBe(base);
+    expect(addAxis(base, 'gender', ['  ', ''])).toBe(base);
+  });
+
+  it('removeAxis drops the axis', () => {
+    const next = removeAxis(base, 'number');
+    expect(Object.keys(next.axes)).toEqual(['case']);
+    expect(base.axes).toHaveProperty('number'); // unmutated
+  });
+
+  it('removeAxis is a no-op for unknown axis', () => {
+    expect(removeAxis(base, 'gender')).toBe(base);
+  });
+
+  it('addAxisValue appends a value and dedupes', () => {
+    const next = addAxisValue(base, 'case', 'dat');
+    expect(next.axes.case).toEqual(['nom', 'acc', 'dat']);
+    expect(addAxisValue(base, 'case', 'nom')).toBe(base);
+    expect(addAxisValue(base, 'missing', 'x')).toBe(base);
+    expect(addAxisValue(base, 'case', '   ')).toBe(base);
+  });
+
+  it('removeAxisValue drops the value', () => {
+    const next = removeAxisValue(base, 'case', 'acc');
+    expect(next.axes.case).toEqual(['nom']);
+    expect(removeAxisValue(base, 'case', 'dat')).toBe(base);
+    expect(removeAxisValue(base, 'gender', 'm')).toBe(base);
   });
 });
