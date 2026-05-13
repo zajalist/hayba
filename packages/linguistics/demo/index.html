@@ -1588,6 +1588,7 @@ t > s / _ i"></textarea>
               <input class="input mono" id="ng-seed" type="number" value="42">
             </label>
             <button class="btn primary" id="ng-roll" style="align-self:flex-end">roll 20</button>
+            <div id="ng-scratch-hint" class="hint" style="display:none; align-self:center; margin-left:8px"></div>
           </div>
           <div id="ng-results" style="display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; font-family:var(--font-mono); font-size:13px"></div>
           <div class="hint" style="margin-top:8px">
@@ -1666,6 +1667,9 @@ const state = loadState() ?? {
   // languages[id] holds the per-language facets when not active.
   languages: {},
   wordlinks: [/* { langA, conceptA, langB, conceptB, kind, note? } */],
+  // L19 follow-up: one-shot Name Gen seed from the phonotactic heatmap.
+  // Session-only intent: cleared after the next roll completes.
+  nameGenScratch: null, /* { onset: string, coda: string } | null */
 };
 
 function loadState() {
@@ -1684,6 +1688,7 @@ function loadState() {
       typology: j.typology ?? {},
       languages: j.languages ?? {},
       wordlinks: j.wordlinks ?? [],
+      nameGenScratch: j.nameGenScratch ?? null,
     };
   } catch { return null; }
 }
@@ -3361,6 +3366,16 @@ function renderGrammarTemplateGallery() {
 }
 
 /* ─────────────────────  Name gen  ───────────────────── */
+function renderNameGenScratchHint() {
+  const el = document.getElementById('ng-scratch-hint');
+  if (!el) return;
+  const s = state.nameGenScratch;
+  if (!s) { el.style.display = 'none'; el.textContent = ''; return; }
+  const codaStr = s.coda ? ` + /${s.coda}/` : '';
+  el.textContent = `seeded from heatmap: /${s.onset}/${codaStr}`;
+  el.style.display = '';
+}
+
 document.getElementById('ng-roll').addEventListener('click', () => {
   const sel = [...state.selected];
   const cs = new Set([...PULMONIC_CONSONANTS, ...NON_PULMONIC_CONSONANTS].map(c => c.ipa));
@@ -3377,6 +3392,12 @@ document.getElementById('ng-roll').addEventListener('click', () => {
   const syl = Number(document.getElementById('ng-syl').value || 2);
   const phono = buildPhonologyJson();
   const nasals = [...PULMONIC_CONSONANTS].filter(c => c.manner === 'nasal' && state.selected.has(c.ipa)).map(c => c.ipa);
+  // L19 follow-up: one-shot heatmap seed narrows the onset/coda pools for
+  // this single roll, then is cleared so subsequent rolls revert to the full
+  // selected inventory.
+  const scratch = state.nameGenScratch;
+  const onsetPool = scratch ? [scratch.onset] : consonants;
+  const codaPool = scratch && scratch.coda ? [scratch.coda] : consonants;
   const grid = document.getElementById('ng-results'); grid.innerHTML = '';
   for (let i = 0; i < 20; i++) {
     try {
@@ -3384,7 +3405,7 @@ document.getElementById('ng-roll').addEventListener('click', () => {
         phonology: phono,
         phonotactics: { phonologyId: phono.languageId, vowels,
           syllable: { templates: [tpl] } },
-        profile: { syllableTemplate: tpl, vowels, onsetPool: consonants, codaPool: consonants, nasalPool: nasals.length ? nasals : undefined },
+        profile: { syllableTemplate: tpl, vowels, onsetPool, codaPool, nasalPool: nasals.length ? nasals : undefined },
         syllableCount: syl, seed: baseSeed,
         category: cat, instance: `${i}`,
       });
@@ -3403,6 +3424,13 @@ document.getElementById('ng-roll').addEventListener('click', () => {
       });
       grid.appendChild(div);
     } catch {}
+  }
+  // L19 follow-up: clear one-shot scratch so subsequent rolls use the full
+  // inventory again. Update the hint UI to reflect that.
+  if (scratch) {
+    state.nameGenScratch = null;
+    saveState();
+    renderNameGenScratchHint();
   }
 });
 
@@ -3737,6 +3765,7 @@ function renderAll() {
   renderLexicon(); renderSoundChanges(); renderRomanization();
   renderGrammar(); renderFamilyTree(); renderTypology();
   renderLegalityHeatmap();
+  renderNameGenScratchHint();
 }
 
 /* ───────── L19 — Phonotactic legality heatmap ───────── */
@@ -3818,10 +3847,11 @@ function renderLegalityHeatmap() {
       const tpl = coda ? 'CVC' : 'CV';
       const tplSel = document.getElementById('ng-tpl');
       if (tplSel) tplSel.value = tpl;
-      // Stash the seed override on window for the name-gen roller to pick up;
-      // also switch to the Name Gen tab so the user sees the change.
-      window.__haybaNameGenSeed = { onset, coda };
-      state.view = 'names'; saveState(); renderNav();
+      // Stash a one-shot seed override on state for the name-gen roller to
+      // pick up; also switch to the Name Gen tab so the user sees the change.
+      // The scratch is cleared after the next roll completes.
+      state.nameGenScratch = { onset, coda };
+      state.view = 'names'; saveState(); renderNav(); renderNameGenScratchHint();
     });
   }
 }
