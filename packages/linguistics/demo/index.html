@@ -374,6 +374,35 @@
     border: 1px solid var(--border-soft);
   }
 
+  /* Translator output tokens */
+  .tr-tok {
+    display: inline; padding: 1px 4px; border-radius: 3px;
+    cursor: pointer; transition: background .12s, border-color .12s;
+    border: 1px solid transparent;
+  }
+  .tr-tok:hover { background: var(--accent-dim); border-color: var(--accent); }
+  .tr-tok.gen   { color: var(--accent); border-color: var(--accent-glow); border-style: dashed; }
+  .tr-tok.gen:hover { background: var(--accent-dim); }
+  .tr-tok.punct, .tr-tok.space { cursor: default; padding: 0; border: none; background: transparent; }
+  #tr-detail .tr-row {
+    display: grid; grid-template-columns: 1fr 1fr 0.6fr 1fr 0.7fr;
+    gap: 12px; padding: 6px 10px; border-bottom: 1px solid var(--border-mid);
+    align-items: center; font-size: 12px;
+  }
+  #tr-detail .tr-row.header {
+    color: var(--text-muted); background: var(--bg-panel);
+    border-bottom: 1px solid var(--border-soft);
+    font-weight: 500; padding: 8px 10px;
+  }
+  #tr-detail .tr-row .lemma { font-family: var(--font-ipa); color: var(--accent); font-size: 14px; }
+  #tr-detail .tr-row .src   { color: var(--text-primary); }
+  #tr-detail .tr-row .rom   { font-family: var(--font-mono); color: var(--text-muted); }
+  #tr-detail .gen-badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 10px; background: var(--accent-dim); color: var(--accent);
+    border: 1px solid var(--accent); margin-left: 6px;
+  }
+
   audio { height: 22px; }
   audio::-webkit-media-controls-panel { background: var(--bg-panel); }
   .hint { color: var(--text-muted); font-size: 10px; margin-top: 4px; }
@@ -547,9 +576,10 @@
     <h3>Language</h3>
     <button data-view="phonology" class="active"><span>Phonology</span><span class="key">1</span></button>
     <button data-view="lexicon"><span>Lexicon</span><span class="key">2</span></button>
-    <button data-view="sound-changes"><span>Sound Changes</span><span class="key">3</span></button>
-    <button data-view="romanization"><span>Romanization</span><span class="key">4</span></button>
-    <button data-view="names"><span>Name Gen</span><span class="key">5</span></button>
+    <button data-view="translator"><span>Translator</span><span class="key">3</span></button>
+    <button data-view="sound-changes"><span>Sound Changes</span><span class="key">4</span></button>
+    <button data-view="romanization"><span>Romanization</span><span class="key">5</span></button>
+    <button data-view="names"><span>Name Gen</span><span class="key">6</span></button>
     <h3>Library</h3>
     <button data-view="docs"><span>Reference</span><span class="key">?</span></button>
   </nav>
@@ -779,6 +809,49 @@
       </div>
     </section>
 
+    <!-- ====================== Translator ====================== -->
+    <section class="view" id="view-translator">
+      <div class="panel">
+        <div class="panel-header">
+          Translator
+          <span class="sub">type English · get conlang · auto-generates missing words deterministically</span>
+          <span class="meta" id="tr-meta">—</span>
+        </div>
+        <div class="panel-body">
+
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 10px">
+            <label class="field"><span>English input</span>
+              <textarea id="tr-input" rows="4" placeholder="e.g. The big mountain stands above the cold river."></textarea>
+            </label>
+            <label class="field"><span>Translation</span>
+              <div id="tr-output" style="background: var(--bg-base); border: 1px solid var(--border-soft); border-radius: 4px; padding: 8px 10px; min-height: 92px; font: 14px var(--font-ipa); line-height: 1.7"></div>
+            </label>
+          </div>
+
+          <div class="row" style="margin-bottom:8px">
+            <button class="btn primary" id="tr-translate">Translate</button>
+            <button class="btn" id="tr-clear">Clear</button>
+            <span class="grow" style="flex:1"></span>
+            <span class="hint" id="tr-status"></span>
+          </div>
+
+          <div id="tr-detail" style="margin-top: 6px">
+            <div class="hint">Token breakdown will appear here after translation. Auto-generated words are dashed-orange and persist to the lexicon.</div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="panel" id="tr-romanized-panel" style="display: none">
+        <div class="panel-header">Romanized output
+          <span class="sub">via your current romanization map</span>
+        </div>
+        <div class="panel-body">
+          <div id="tr-romanized" class="mono" style="font-size:15px; line-height:1.7; color: var(--text-primary)"></div>
+        </div>
+      </div>
+    </section>
+
     <!-- ====================== Sound Changes ====================== -->
     <section class="view" id="view-sound-changes">
       <div class="panel">
@@ -922,6 +995,7 @@ import {
   consonantToPhonemeFeatures, vowelToPhonemeFeatures,
   parseRules, evolveLexicon, generatePhonotacticName, deriveSeed,
   defaultRomanization, romanize,
+  translate, renderRomanized,
 } from '../dist/index.js';
 
 /* ─────────────────────  state  ───────────────────── */
@@ -1695,6 +1769,130 @@ document.getElementById('rom-clear').addEventListener('click', () => {
 });
 document.getElementById('rom-test').addEventListener('input', e => {
   state.romTest = e.target.value; saveState(); renderRomanizationOutput();
+});
+
+/* ─────────────────────  Translator  ───────────────────── */
+// Tiny in-memory lexicon adapter on top of state.lexicon so the translator
+// reads/writes through the same array the Lexicon panel renders.
+const translatorLex = {
+  get(_lang, concept) { return state.lexicon.find(e => e.concept === concept) ?? null; },
+  set(_lang, concept, entry) {
+    const idx = state.lexicon.findIndex(e => e.concept === concept);
+    const row = {
+      concept, lemma: entry.lemma, ipa: entry.ipa,
+      pos: entry.pos, register: entry.register ?? 'neutral',
+      gloss: entry.gloss, etymology: entry.etymology,
+    };
+    if (idx >= 0) state.lexicon[idx] = row; else state.lexicon.push(row);
+  },
+  all(_lang) { return state.lexicon.map(e => ({ concept: e.concept, entry: e })); },
+};
+
+function buildTranslatorCtx() {
+  const phono = buildPhonologyJson();
+  const sel = [...state.selected];
+  const cs = new Set([...PULMONIC_CONSONANTS, ...NON_PULMONIC_CONSONANTS].map(c => c.ipa));
+  const vs = new Set(CARDINAL_VOWELS.map(v => v.ipa));
+  const consonants = sel.filter(x => cs.has(x));
+  const vowels = sel.filter(x => vs.has(x));
+  return {
+    languageId: state.langId,
+    phonology: phono,
+    phonotactics: { phonologyId: phono.languageId, vowels, syllable: { templates: ['CV','CVC'] } },
+    lexicon: translatorLex,
+    fallbackProfile: { syllableTemplate: 'CV', vowels, onsetPool: consonants.length ? consonants : phono.phonemes.map(p => p.ipa) },
+    romanization: { languageId: state.langId, rules: state.romRules },
+    seed: deriveSeed(1234n, state.langId),
+  };
+}
+
+async function runTranslate() {
+  const text = document.getElementById('tr-input').value;
+  if (!text.trim()) return;
+  const sel = [...state.selected];
+  const cs = new Set([...PULMONIC_CONSONANTS, ...NON_PULMONIC_CONSONANTS].map(c => c.ipa));
+  const vs = new Set(CARDINAL_VOWELS.map(v => v.ipa));
+  if (!sel.some(x => cs.has(x)) || !sel.some(x => vs.has(x))) {
+    document.getElementById('tr-status').textContent = 'Need at least one consonant and one vowel in the inventory.';
+    document.getElementById('tr-status').style.color = 'var(--status-red)';
+    return;
+  }
+  try {
+    const sentence = await translate(text, buildTranslatorCtx());
+    state.lastTranslation = sentence;
+    saveState();
+    renderTranslation_(sentence);
+    document.getElementById('tr-status').style.color = 'var(--status-green)';
+    document.getElementById('tr-status').textContent =
+      sentence.generated.length
+        ? `Translated · ${sentence.generated.length} new word${sentence.generated.length === 1 ? '' : 's'} added to lexicon`
+        : 'Translated · all words already in lexicon';
+    renderLexicon(); renderSoundChanges();
+  } catch (e) {
+    document.getElementById('tr-status').textContent = e.message ?? String(e);
+    document.getElementById('tr-status').style.color = 'var(--status-red)';
+  }
+}
+
+function renderTranslation_(sentence) {
+  const out = document.getElementById('tr-output');
+  out.innerHTML = '';
+  for (const t of sentence.tokens) {
+    const span = document.createElement('span');
+    span.className = 'tr-tok ' + t.kind + (t.generated ? ' gen' : '');
+    span.textContent = t.kind === 'word' ? (t.lemma ?? t.source) : t.source;
+    if (t.kind === 'word') {
+      span.title = `${t.source} → ${t.lemma} (concept "${t.concept}"${t.pos ? ', ' + t.pos : ''})${t.generated ? ' · auto-generated' : ''}`;
+      span.addEventListener('click', () => {
+        // Switch to Lexicon view with this concept pre-filtered
+        document.getElementById('lex-search').value = t.concept;
+        renderLexicon();
+        state.view = 'lexicon'; saveState(); renderNav();
+      });
+    }
+    out.appendChild(span);
+  }
+  // Detail breakdown
+  const detail = document.getElementById('tr-detail');
+  detail.innerHTML = '';
+  const header = document.createElement('div');
+  header.className = 'tr-row header';
+  header.innerHTML = `<div>Source</div><div>Concept</div><div>POS</div><div>Lemma</div><div>Romanized</div>`;
+  detail.appendChild(header);
+  for (const t of sentence.tokens) {
+    if (t.kind !== 'word') continue;
+    const row = document.createElement('div');
+    row.className = 'tr-row';
+    row.innerHTML = `
+      <div class="src">${escapeHtml(t.source)}${t.generated ? '<span class="gen-badge">new</span>' : ''}</div>
+      <div>${escapeHtml(t.concept)}</div>
+      <div>${t.pos ? `<span class="pos-tag">${escapeHtml(t.pos)}</span>` : '<span class="muted">—</span>'}</div>
+      <div class="lemma">${escapeHtml(t.lemma ?? '')}</div>
+      <div class="rom">${escapeHtml(t.romanized ?? '—')}</div>`;
+    detail.appendChild(row);
+  }
+  // Romanized output panel
+  if (state.romRules.length) {
+    document.getElementById('tr-romanized-panel').style.display = '';
+    document.getElementById('tr-romanized').textContent = renderRomanized(sentence);
+  } else {
+    document.getElementById('tr-romanized-panel').style.display = 'none';
+  }
+  document.getElementById('tr-meta').textContent =
+    `${sentence.tokens.filter(t => t.kind === 'word').length} words · ${sentence.generated.length} new`;
+}
+
+document.getElementById('tr-translate').addEventListener('click', runTranslate);
+document.getElementById('tr-input').addEventListener('keydown', e => {
+  if (e.ctrlKey && e.key === 'Enter') runTranslate();
+});
+document.getElementById('tr-clear').addEventListener('click', () => {
+  document.getElementById('tr-input').value = '';
+  document.getElementById('tr-output').innerHTML = '';
+  document.getElementById('tr-detail').innerHTML = '<div class="hint">Token breakdown will appear here after translation.</div>';
+  document.getElementById('tr-romanized-panel').style.display = 'none';
+  document.getElementById('tr-status').textContent = '';
+  document.getElementById('tr-meta').textContent = '—';
 });
 
 /* ─────────────────────  Name gen  ───────────────────── */
