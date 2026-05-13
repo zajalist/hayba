@@ -1,0 +1,27 @@
+{
+  "id": "tang-chinese-7c",
+  "styleSheet": {
+    "id": "tang-chinese-7c",
+    "cultureId": "tang-chinese",
+    "dateRange": [618, 800],
+    "core": {
+      "primaryMaterial": "timber",
+      "secondaryMaterial": "stone",
+      "roofType": "pagoda",
+      "ornamentation": ["dougong-bracket", "ridge-finial", "lacquered-eaves", "cinnabar-columns"]
+    },
+    "extras": {
+      "dougong": "present",
+      "colorPalette": ["red", "gold"]
+    }
+  },
+  "typologyWeights": [
+    { "typologyId": "peasant_home",  "weight": 6 },
+    { "typologyId": "townhouse",     "weight": 5 },
+    { "typologyId": "temple",        "weight": 4 },
+    { "typologyId": "walled_palace", "weight": 4 },
+    { "typologyId": "granary",       "weight": 2 },
+    { "typologyId": "market_stall",  "weight": 2 },
+    { "typologyId": "civic_hall",    "weight": 1 }
+  ]
+}

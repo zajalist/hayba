@@ -55,6 +55,16 @@ import {
   wordForSchema,
 } from './worldbuilding/language-handlers.js';
 import {
+  listStyleGuidesSchema,
+  getStyleGuideSchema,
+  getTypologySchema,
+  validateStyleGuideSchema,
+  listStyleGuides as architectureListStyleGuides,
+  getStyleGuide as architectureGetStyleGuide,
+  getTypology as architectureGetTypology,
+  validateStyleGuide as architectureValidateStyleGuide,
+} from './worldbuilding/architecture-handlers.js';
+import {
   dynamoSchema,
   escapeSchema,
   hzSchema,
@@ -604,6 +614,66 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
     async (params) => {
       const result = languageRemixPhonologies(params as z.infer<typeof remixPhonologiesSchema>);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'architecture_list_style_guides',
+    'List all seed StyleGuide palettes (metadata only — id, cultureId, dateRange, typologyCount).',
+    listStyleGuidesSchema.shape,
+    async (params) => {
+      try {
+        const result = architectureListStyleGuides(params as z.infer<typeof listStyleGuidesSchema>);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'architecture_get_style_guide',
+    'Fetch a full StyleGuide by id (embedded StyleSheet + typologyWeights). Returns { error: "not_found" } if unknown.',
+    getStyleGuideSchema.shape,
+    async (params) => {
+      try {
+        const result = architectureGetStyleGuide(params as z.infer<typeof getStyleGuideSchema>);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'architecture_get_typology',
+    'Fetch a Typology by id (footprint, storyRange, fenestrationDensity). Returns { error: "not_found" } if unknown.',
+    getTypologySchema.shape,
+    async (params) => {
+      try {
+        const result = architectureGetTypology(params as z.infer<typeof getTypologySchema>);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'architecture_validate_style_guide',
+    'Validate a candidate StyleGuide JSON against the A1 schema. Returns { ok: true } or { ok: false, errors: [...] }.',
+    validateStyleGuideSchema.shape,
+    async (params) => {
+      try {
+        const result = architectureValidateStyleGuide(params as z.infer<typeof validateStyleGuideSchema>);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
     }
   );
 
@@ -1170,6 +1240,10 @@ function recordEagerSchemas(
   reg('language_apply_sound_changes', soundChangesSchema.shape, 'low', '{ok, message}');
   reg('language_propose_derivation', proposeDerivationSchema.shape, 'low', '{ok, message}');
   reg('language_remix_phonologies', remixPhonologiesSchema.shape, 'low', '{ok, message}');
+  reg('architecture_list_style_guides',   listStyleGuidesSchema.shape,   'low', '{guides:[{id,cultureId,dateRange,typologyCount}]}');
+  reg('architecture_get_style_guide',     getStyleGuideSchema.shape,     'low', '{guide}|{error,id}');
+  reg('architecture_get_typology',        getTypologySchema.shape,       'low', '{typology}|{error,id}');
+  reg('architecture_validate_style_guide',validateStyleGuideSchema.shape,'low', '{ok}|{ok:false,errors:[{path,message}]}');
   reg('hayba_planet_habitable_zone', hzSchema.shape, 'low', 'HabitableZoneResult JSON');
   reg('hayba_planet_tidal_locking', tidalSchema.shape, 'low', 'TidalLockingResult JSON');
   reg('hayba_planet_dynamo_field', dynamoSchema.shape, 'low', 'DynamoScalingResult JSON');

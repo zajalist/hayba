@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@hayba/architecture": "*",
     "@hayba/linguistics": "file:../linguistics",
     "@hayba/planet-physics": "file:../planet-physics",
     "@distube/ytdl-core": "^4.16.12",
