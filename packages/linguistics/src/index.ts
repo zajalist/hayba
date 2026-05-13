@@ -31,9 +31,9 @@ export { validatePhonotactics, passesPhonotactics } from './phonotactics.js';
 export type { NameCategory, NameGeneratorProfile, GenerateNameParams } from './name-generator.js';
 export { generatePhonotacticName } from './name-generator.js';
 
-// Lexicon (L3)
-export type { Lexeme, LexiconRepo, SqlClient } from './lexicon.js';
-export { InMemoryLexicon, LexiconStore, PostgresLexicon } from './lexicon.js';
+// Lexicon (L3 + L9 POS / morph)
+export type { Lexeme, LexiconRepo, SqlClient, PartOfSpeech, MorphFeatures } from './lexicon.js';
+export { InMemoryLexicon, LexiconStore, PostgresLexicon, PARTS_OF_SPEECH } from './lexicon.js';
 
 // Sound changes (L5)
 export type { SoundChangeRule } from './sound-changes.js';
@@ -51,3 +51,19 @@ export { proposeDerivation } from './derivation.js';
 // Romanization
 export type { RomanizationMap, RomanizationRule } from './romanization.js';
 export { romanize, deromanize, defaultRomanization } from './romanization.js';
+
+// Translator (L10)
+export type {
+  TranslatedToken, TranslatedSentence, TranslatorContext, RawToken,
+} from './translator.js';
+export {
+  translate, tokenize as tokenizeText, lemmatize, renderTranslation, renderRomanized,
+} from './translator.js';
+
+// Morphology / paradigms (L11)
+export type {
+  AffixRule, AffixPosition, ParadigmDef, ParadigmCell, MorphTarget,
+} from './morphology.js';
+export {
+  inflect, buildParadigm, enumerateAxes, findRuleConflicts, PRESET_PARADIGMS,
+} from './morphology.js';
