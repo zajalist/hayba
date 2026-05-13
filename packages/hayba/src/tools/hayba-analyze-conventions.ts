@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ToolResult } from './hayba-bake-terrain.js';
+import type { ToolResult } from './types.js';
 import type { HaybaConventions, PresetName } from '../conventions.js';
 import { getPreset, writeGlobalConventions, writeProjectConventions } from '../conventions.js';
 

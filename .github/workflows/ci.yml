@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  node:
+    name: Node MCP server — typecheck + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install
+        run: npm install
+
+      - name: Typecheck + build
+        working-directory: packages/hayba
+        run: npx tsc
+
+      - name: Test (if present)
+        working-directory: packages/hayba
+        run: |
+          if [ -f vitest.config.ts ] || [ -f jest.config.ts ]; then
+            npm test
+          else
+            echo "no test runner configured, skipping"
+          fi
+
+  sidecar:
+    name: Visual sidecar — import + lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install sidecar
+        working-directory: packages/hayba/addons/visual-embeddings
+        run: |
+          if [ -f pyproject.toml ]; then
+            python -m pip install --upgrade pip
+            pip install ruff
+            pip install -e .[cpu] || pip install -e .
+          fi
+
+      - name: Lint
+        working-directory: packages/hayba/addons/visual-embeddings
+        run: ruff check . || true   # don't fail CI until we adopt a style baseline
+
+  spec:
+    name: Spec doc — link sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure design spec exists
+        run: test -f docs/superpowers/specs/2026-05-06-hayba-ue-expansion-design.md

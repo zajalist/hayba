@@ -17,7 +17,7 @@ export function TitleBar({ currentTab, onTabChange }: {
     return () => clearInterval(id);
   }, []);
 
-  const tabs = ['Projects', 'PCG', 'Settings'];
+  const tabs = ['Projects', 'PCG', 'Linguistics', 'Settings'];
 
   return (
     <div className="titlebar">

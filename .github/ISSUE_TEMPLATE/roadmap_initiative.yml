@@ -1,0 +1,42 @@
+name: Roadmap initiative
+description: A scoped engineering initiative from the market-research roadmap.
+labels: [enhancement, roadmap]
+body:
+  - type: input
+    id: number
+    attributes:
+      label: Initiative number
+      description: From the spec doc §9.4.
+      placeholder: e.g. "#3"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Expected impact
+      options: [Small, Medium, Large, Massive]
+    validations:
+      required: true
+
+  - type: input
+    id: cost
+    attributes:
+      label: Engineering cost
+      placeholder: e.g. "2-3 days"
+    validations:
+      required: true
+
+  - type: textarea
+    id: benchmark
+    attributes:
+      label: Competitor benchmark
+      description: Which competitor ships this well and what does their implementation look like?
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Concrete deliverables.
+    validations:
+      required: true

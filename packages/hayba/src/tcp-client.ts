@@ -134,9 +134,47 @@ export class UETcpClient extends EventEmitter {
 // Singleton instance for the MCP server
 let client: UETcpClient | null = null;
 
+function discoverPortFromInstanceRegistry(): number | null {
+  // Initiative #3: UE writes Saved/HaybaMCP/instances/<pid>.json on startup.
+  // Pick the most recently started live entry so the Node side connects to
+  // whichever editor is currently running, regardless of port collision.
+  try {
+    // Lazy require to keep the cold path free of fs imports when env is set.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('node:fs') as typeof import('node:fs');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require('node:path') as typeof import('node:path');
+    const cwd = process.cwd();
+    // Walk up to 4 levels so we find Saved/ from a workspace dist location.
+    for (let i = 0; i < 4; ++i) {
+      const dir = path.resolve(cwd, '../'.repeat(i), 'Saved/HaybaMCP/instances');
+      if (!fs.existsSync(dir)) continue;
+      const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
+      const entries = files.map(f => {
+        try {
+          const raw = fs.readFileSync(path.join(dir, f), 'utf-8');
+          return JSON.parse(raw) as { pid: number; port: number; started_at: string };
+        } catch {
+          return null;
+        }
+      }).filter((e): e is { pid: number; port: number; started_at: string } => e !== null);
+      if (entries.length === 0) continue;
+      // Most recently started wins.
+      entries.sort((a, b) => b.started_at.localeCompare(a.started_at));
+      return entries[0].port;
+    }
+  } catch {
+    // Fall through to default.
+  }
+  return null;
+}
+
 export function getUEClient(): UETcpClient {
   if (!client) {
-    const port = parseInt(process.env.UE_TCP_PORT || '52342', 10);
+    const envPort = process.env.UE_TCP_PORT ? parseInt(process.env.UE_TCP_PORT, 10) : NaN;
+    const port = Number.isFinite(envPort)
+      ? envPort
+      : (discoverPortFromInstanceRegistry() ?? 52342);
     client = new UETcpClient('127.0.0.1', port);
   }
   return client;

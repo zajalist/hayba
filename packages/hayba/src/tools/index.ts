@@ -1,9 +1,9 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import type { SessionManager } from '../gaea/session.js';
 import { config } from '../config.js';
 import { appendMeta } from './hayba-tool-meta.js';
 import { recordSchema, type Cost } from './schema-registry.js';
+import { installToolStreamMirror } from './tool-stream-mirror.js';
 
 // ── Code Mode meta-tools (always-on) ──────────────────────────────────────────
 import { listToolCategoriesHandler, meta as listMeta } from './code-mode/list-tool-categories.js';
@@ -40,31 +40,34 @@ import { parameterizeGraphInputs } from './parameterize-graph-inputs.js';
 import { queryPcgexDocs, type QueryPcgexDocsParams } from './query-pcgex-docs.js';
 import { initiateInfrastructureBrainstorm } from './initiate-infrastructure-brainstorm.js';
 
-// ── Knowledge tool handlers ───────────────────────────────────────────────────
-import { searchGaeaArchetypes } from './search-gaea-archetypes.js';
-import { getFullArchetypeGraph } from './get-full-archetype-graph.js';
-import { queryGaeaKnowledge, type QueryGaeaKnowledgeParams } from './query-gaea-knowledge.js';
+import {
+  definePhonology,
+  definePhonologySchema,
+  generateNameSchema,
+  languageApplySoundChanges,
+  languageGenerateName,
+  languageProposeDerivation,
+  languageRemixPhonologies,
+  languageWordFor,
+  proposeDerivationSchema,
+  remixPhonologiesSchema,
+  soundChangesSchema,
+  wordForSchema,
+} from './worldbuilding/language-handlers.js';
+import {
+  dynamoSchema,
+  escapeSchema,
+  hzSchema,
+  planetDynamoField,
+  planetEscapeRegime,
+  planetHabitableZone,
+  planetStabilityReportPayload,
+  planetTidalLocking,
+  tidalSchema,
+} from './worldbuilding/planet-handlers.js';
 
-// ── Gaea tool handlers ────────────────────────────────────────────────────────
-import { bakeTerrain } from './hayba-bake-terrain.js';
-import { createTerrainHandler } from './hayba-create-terrain.js';
-import { openInGaeaTool } from './hayba-open-in-gaea.js';
-import { readTerrainVariablesTool } from './hayba-read-terrain-variables.js';
-import { setTerrainVariablesTool } from './hayba-set-terrain-variables.js';
-import { openSessionHandler } from './hayba-open-session.js';
-import { closeSessionHandler } from './hayba-close-session.js';
-import { addNodeHandler } from './hayba-add-node.js';
-import { removeNodeHandler } from './hayba-remove-node.js';
-import { connectNodesHandler } from './hayba-connect-nodes.js';
-import { getGraphStateHandler } from './hayba-get-graph-state.js';
-import { getParametersHandler } from './hayba-get-parameters.js';
-import { setParameterHandler } from './hayba-set-parameter.js';
-import { listNodeTypesHandler } from './hayba-list-node-types.js';
-import { cookGraphHandler } from './hayba-cook-graph.js';
-import { importLandscapeHandler } from './hayba-import-landscape.js';
+// ── Zone painter tool handlers ────────────────────────────────────────────────
 import { openZonePainterHandler } from './hayba-open-zone-painter.js';
-import { ueLandscapePipelineHandler, type UELandscapePipelineStep } from './hayba-ue-landscape-pipeline.js';
-import { brainstormGaeaHandler } from './hayba-brainstorm-gaea.js';
 import { readZonesHandler } from './hayba-read-zones.js';
 import { setPainterHeightmapHandler } from './hayba-set-painter-heightmap.js';
 
@@ -72,7 +75,15 @@ import { setPainterHeightmapHandler } from './hayba-set-painter-heightmap.js';
 import { setupConventionsHandler } from './hayba-setup-conventions.js';
 import { analyzeConventionsHandler } from './hayba-analyze-conventions.js';
 
-export function registerTools(server: McpServer, session: SessionManager): void {
+// SessionManager (Gaea session) parked while terrain features are off — kept
+// as a typed shim so registerTools' signature doesn't churn for callers.
+type SessionManagerStub = Record<string, unknown>;
+
+export function registerTools(server: McpServer, session: SessionManagerStub): void {
+
+  // Wrap server.tool BEFORE any registration so every tool is captured in the
+  // UE Tool Stream panel, including pure TS-side handlers (PCGEx catalog, etc).
+  installToolStreamMirror(server);
 
   // Record every Zod shape into the schema registry so get_tool_signature can
   // derive parameter docs from the actual validation schema — independent of
@@ -89,6 +100,39 @@ export function registerTools(server: McpServer, session: SessionManager): void 
   //   get_tool_signature    → returns the JSON schema for a specific command
   //   python_run            → executes any command via UE Python (escape hatch)
   // ──────────────────────────────────────────────────────────────────────────
+
+  server.tool(
+    'hayba_propose_plan',
+    'Propose a step-by-step plan to the user before performing destructive operations. Required when Plan Mode is on. Steps may be strings or {title, description, tool} objects.',
+    {
+      steps: z.array(z.union([
+        z.string(),
+        z.object({
+          title: z.string(),
+          description: z.string().optional(),
+          tool: z.string().optional(),
+        }),
+      ])).describe('Ordered list of plan steps'),
+      await_seconds: z.number().int().min(0).max(600).optional()
+        .describe('How long the agent will wait for human approval (informational; default 30)'),
+    },
+    async (params) => {
+      try {
+        const { ensureConnected } = await import('../tcp-client.js');
+        const c = await ensureConnected();
+        const res = await c.send('hayba_propose_plan', params as Record<string, unknown>, 5000);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(res.data ?? { ok: res.ok }, null, 2) }],
+          isError: !res.ok,
+        };
+      } catch (e) {
+        return {
+          content: [{ type: 'text', text: `Error pushing plan to UE: ${(e as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
 
   server.tool(
     'list_tool_categories',
@@ -487,7 +531,135 @@ export function registerTools(server: McpServer, session: SessionManager): void 
     }
   );
 
-  // ── Knowledge tools (Gaea — disabled, will be re-added later) ───────────────
+  // ── Worldbuilding hub — linguistics + planet physics packages ───────────────
+  server.tool(
+    'language_define_phonology',
+    'Persist phoneme inventory (+ optional phonotactics) for deterministic validation / naming.',
+    definePhonologySchema.shape,
+    async (params) => {
+      try {
+        const result = definePhonology(params as z.infer<typeof definePhonologySchema>);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'language_word_for',
+    'Deterministic lexeme lookup for (language_id, concept_id); optionally seed the lexicon inline.',
+    wordForSchema.shape,
+    async (params) => {
+      try {
+        const result = languageWordFor(params as z.infer<typeof wordForSchema>);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'language_generate_name',
+    'Seeded phonotactic name generation using phonology + phonotactics registered for the language.',
+    generateNameSchema.shape,
+    async (params) => {
+      try {
+        const result = languageGenerateName(params as z.infer<typeof generateNameSchema>);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'language_apply_sound_changes',
+    'Placeholder for Lexurgy-style ordered rules (L5).',
+    soundChangesSchema.shape,
+    async (params) => {
+      const result = languageApplySoundChanges(params as z.infer<typeof soundChangesSchema>);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'language_propose_derivation',
+    'Placeholder for LLM-assisted constrained derivations (L7).',
+    proposeDerivationSchema.shape,
+    async (params) => {
+      const result = languageProposeDerivation(params as z.infer<typeof proposeDerivationSchema>);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'language_remix_phonologies',
+    'Placeholder for creole / substrate blending (L9).',
+    remixPhonologiesSchema.shape,
+    async (params) => {
+      const result = languageRemixPhonologies(params as z.infer<typeof remixPhonologiesSchema>);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'hayba_planet_habitable_zone',
+    'Kopparapu et al. (2014) HZ distances with Ramirez-style inner-edge mass correction.',
+    hzSchema.shape,
+    async (params) => {
+      const result = planetHabitableZone(params as z.infer<typeof hzSchema>);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'hayba_planet_tidal_locking',
+    'Darwin-style tidal locking timescale with constant Q.',
+    tidalSchema.shape,
+    async (params) => {
+      const result = planetTidalLocking(params as z.infer<typeof tidalSchema>);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'hayba_planet_dynamo_field',
+    'Christensen–Aubert-style dipole scaling diagnostic.',
+    dynamoSchema.shape,
+    async (params) => {
+      const result = planetDynamoField(params as z.infer<typeof dynamoSchema>);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'hayba_planet_escape_regime',
+    'Jeans parameter vs energy-limited escape heuristic.',
+    escapeSchema.shape,
+    async (params) => {
+      const result = planetEscapeRegime(params as z.infer<typeof escapeSchema>);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'hayba_planet_stability_schema',
+    'Returns stability-report JSON Schema + example fixture (planet-sim P8).',
+    {},
+    async () => {
+      const result = planetStabilityReportPayload();
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // Gaea / terrain feature surface intentionally disabled — kept out of the
+  // build by removing imports + registrations. Will return when the
+  // worldbuilding-hub roadmap reaches the terrain integration phase.
   /*
   server.tool(
     'hayba_search_gaea_archetypes',
@@ -746,23 +918,8 @@ export function registerTools(server: McpServer, session: SessionManager): void 
     }
   );
 
-  // ── Landscape Import ────────────────────────────────────────────────────────
-
-  server.tool(
-    'hayba_import_landscape',
-    {
-      heightmapPath: z.string().optional().describe('Absolute path to .r16 or .png heightmap. Defaults to last baked heightmap from session.'),
-      worldSizeKm: z.number().optional().describe('Real-world terrain width and depth in km (default: 8.0).'),
-      maxHeightM: z.number().optional().describe('Maximum terrain height in meters (default: 600.0).'),
-      landscapeMaterial: z.string().optional().describe('UE asset path for landscape material, e.g. "/Game/Materials/Landscape/M_Terrain". Pass "" to import with no material. Resolved from conventions if omitted.'),
-      actorLabel: z.string().optional().describe('Actor label in the UE level (default: Hayba_Terrain).'),
-      projectRoot: z.string().optional().describe('Absolute path to UE project root — used to read project-level conventions.'),
-    },
-    async (params) => {
-      const result = await importLandscapeHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
+  // Landscape import surface intentionally disabled with the rest of the
+  // terrain features. See note above.
 
   // ── Scene workflow ────────────────────────────────────────────────────────────
 
@@ -896,9 +1053,12 @@ function recordEagerSchemas(
   }, 'medium', '{image_base64, width, height, camera}');
   reg('editor_start_pie', { single_step: coerceBool.optional() }, 'high', '{ok, pie_world_id}');
   reg('editor_stream_log', {
-    filter: z.string().optional(),
+    filter: z.string().optional().describe('Plain substring filter (legacy)'),
+    regex_filter: z.string().optional().describe('Perl-style regex applied to each line'),
+    severity_filter: z.string().optional().describe('Comma-separated severities: Verbose,Display,Log,Warning,Error,Fatal'),
+    format: z.enum(['raw', 'structured']).optional().describe('"structured" emits {line, category, severity, msg, raw} objects'),
     since_line: z.coerce.number().int().min(0).optional(),
-  }, 'low', '{lines:[string], next_line:int}');
+  }, 'low', '{lines:[string|object], next_line:int, format}');
 
   // ── PCGEx domain ──────────────────────────────────────────────────────────
   reg('hayba_search_node_catalog', {
@@ -924,6 +1084,21 @@ function recordEagerSchemas(
     assetPath: z.string().describe('Full UE asset path to execute'),
   }, 'high', '{ok, generated_count, duration_ms}');
   reg('hayba_check_ue_status', {}, 'low', '{connected, status, ueVersion, plugin, pluginVersion}');
+
+  // ── Asset domain — added Initiative #6 + #10 (ref-preserving move, deps) ─
+  reg('asset_move', {
+    path: z.string().describe('Source asset path, e.g. "/Game/Foo/Bar.Bar"'),
+    target_dir: z.string().describe('Target content-browser folder, e.g. "/Game/Archive"'),
+  }, 'medium', '{ok, old_path, new_path}');
+  reg('asset_fix_redirectors', {
+    path: z.string().optional().describe('Content path to scan (default /Game)'),
+  }, 'medium', '{fixed_count, path}');
+  reg('asset_get_dependencies', {
+    path: z.string().describe('Asset path; returns what this asset depends on'),
+  }, 'low', '{dependencies:[string], count}');
+  reg('asset_get_referencers', {
+    path: z.string().describe('Asset path; returns who depends on this asset (blast radius)'),
+  }, 'low', '{referencers:[string], count}');
   reg('hayba_scrape_node_registry', {
     pluginSourcePath: z.string().optional().describe('Path to PCGExtendedToolkit/Source/ directory'),
     outputDbPath: z.string().optional().describe('Output SQLite DB path (default: Resources/pcgex_registry.db)'),
@@ -989,15 +1164,20 @@ function recordEagerSchemas(
     target: z.enum(['global', 'project']).optional(),
   }, 'medium', '{inferred:{folders, naming, workflow}, saved_to?}');
 
+  reg('language_define_phonology', definePhonologySchema.shape, 'low', '{ok, language_id, phoneme_count}');
+  reg('language_word_for', wordForSchema.shape, 'low', '{lexeme}');
+  reg('language_generate_name', generateNameSchema.shape, 'low', '{name}');
+  reg('language_apply_sound_changes', soundChangesSchema.shape, 'low', '{ok, message}');
+  reg('language_propose_derivation', proposeDerivationSchema.shape, 'low', '{ok, message}');
+  reg('language_remix_phonologies', remixPhonologiesSchema.shape, 'low', '{ok, message}');
+  reg('hayba_planet_habitable_zone', hzSchema.shape, 'low', 'HabitableZoneResult JSON');
+  reg('hayba_planet_tidal_locking', tidalSchema.shape, 'low', 'TidalLockingResult JSON');
+  reg('hayba_planet_dynamo_field', dynamoSchema.shape, 'low', 'DynamoScalingResult JSON');
+  reg('hayba_planet_escape_regime', escapeSchema.shape, 'low', 'AtmosphericEscapeResult JSON');
+  reg('hayba_planet_stability_schema', {}, 'low', '{schema_json, example}');
+
   // ── Landscape import ──────────────────────────────────────────────────────
-  reg('hayba_import_landscape', {
-    heightmapPath: z.string().optional(),
-    worldSizeKm: z.number().optional(),
-    maxHeightM: z.number().optional(),
-    landscapeMaterial: z.string().optional(),
-    actorLabel: z.string().optional(),
-    projectRoot: z.string().optional(),
-  }, 'high', '{ok, actor_id, components}');
+  // hayba_import_landscape schema parked with the rest of the terrain stack.
 
   // ── Zone painter domain ───────────────────────────────────────────────────
   reg('hayba_open_zone_painter', {

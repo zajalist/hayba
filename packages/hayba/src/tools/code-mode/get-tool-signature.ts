@@ -1,6 +1,7 @@
-import type { ToolHandler } from '../hayba-bake-terrain.js';
+import type { ToolHandler } from '../types.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 import { deriveSignature, listRecordedCommands } from '../schema-registry.js';
+import { isToolDisabled } from '../disabled-tools-watcher.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'low',
@@ -33,6 +34,18 @@ export const getToolSignatureHandler: ToolHandler = async (args) => {
   const command = typeof args.command === 'string' ? args.command : '';
   if (!command) {
     return { content: [{ type: 'text', text: 'Error: command parameter is required' }], isError: true };
+  }
+  if (isToolDisabled(command)) {
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          status: 'tool_disabled',
+          command,
+          hint: 'This tool is disabled in the Hayba MCP panel — ask the user to re-enable it there.',
+        }, null, 2),
+      }],
+    };
   }
   const sig = deriveSignature(command);
   if (!sig) {

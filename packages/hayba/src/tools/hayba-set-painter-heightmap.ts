@@ -1,4 +1,4 @@
-import type { ToolResult } from './hayba-bake-terrain.js';
+import type { ToolResult } from './types.js';
 import { setHeightmap } from '../zones.js';
 import { DEFAULT_PROJECTS_BASE } from '../projects.js';
 

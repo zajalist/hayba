@@ -3,8 +3,9 @@ import { TitleBar } from './components/TitleBar';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { PCGPage } from './pages/PCGPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { LinguisticsPage } from './pages/LinguisticsPage';
 
-type Tab = 'Projects' | 'PCG' | 'Settings';
+type Tab = 'Projects' | 'PCG' | 'Linguistics' | 'Settings';
 
 // Parse deep-link from hash: #project/{id}/zones, #project/{id}, or #scratch/{id}
 function parseHash(): { projectId?: string; scratchSessionId?: string; section?: string } {
@@ -29,6 +30,7 @@ export function App() {
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {tab === 'Projects' && <ProjectsPage deepLinkProjectId={deepLink.projectId} deepLinkSection={deepLink.section} deepLinkScratchSessionId={deepLink.scratchSessionId} />}
         {tab === 'PCG' && <PCGPage />}
+        {tab === 'Linguistics' && <LinguisticsPage />}
         {tab === 'Settings' && <SettingsPage />}
       </div>
     </div>

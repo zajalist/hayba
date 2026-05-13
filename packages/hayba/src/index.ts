@@ -1,35 +1,10 @@
 // mcp_server/src/index.ts
-//
-// Gaea EULA posture: this MCP server is automation used solely for licensed
-// rendering, internal production pipelines, and asset integration — the
-// carve-out explicitly permitted by Gaea EULA §1.3.3. It is not used to
-// scrape, analyze, or replicate the Software, and it does not redistribute
-// any QuadSpinner-authored Software or Assets. Operation as an interactive
-// terrain-generation product is covered by a custom license per §1.2.
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { listCatalogResources, readCatalogResource } from './resources.js';
 import { registerTools } from './tools/index.js';
 import { startDashboard } from './dashboard/server.js';
-import { SessionManager } from './gaea/session.js';
-import { detectGaeaPath } from './gaea/gaea-launcher.js';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// ── Gaea session setup ────────────────────────────────────────────────────────
-const swarmConfigPath = resolve(__dirname, '..', 'swarmhost.config.json');
-const swarmConfig = JSON.parse(readFileSync(swarmConfigPath, 'utf-8').replace(/^\uFEFF/, ''));
-
-if (!swarmConfig.gaeaExePath) {
-  const detected = detectGaeaPath();
-  if (detected) swarmConfig.gaeaExePath = detected;
-}
-
-const gaeaSession = new SessionManager(swarmConfig);
 
 // ── MCP server setup ─────────────────────────────────────────────────────────
 const server = new McpServer({
@@ -52,8 +27,9 @@ server.resource('pcgex_catalog', catalogTemplate, async (uri, { category }) => {
   };
 });
 
-// Register all tools (PCGEx + Gaea)
-registerTools(server, gaeaSession);
+// Register all tools. The legacy SessionManager arg is a typed-shim no-op until
+// the worldbuilding-hub roadmap reaches the terrain integration phase.
+registerTools(server, {});
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 async function main() {
