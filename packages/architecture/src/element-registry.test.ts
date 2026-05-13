@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   loadElementCatalog, loadBinding, emitElementMesh,
+  _resetCacheForTests,
 } from './element-registry.js';
 
 describe('element-registry', () => {
@@ -36,8 +37,6 @@ describe('element-registry', () => {
     expect(result.ok).toBe(false);
   });
 });
-
-import { _resetCacheForTests } from './element-registry.js';
 
 describe('determinism — Gothic column GLB byte-equality', () => {
   it('two emits of the same binding produce byte-identical GLB output', () => {
