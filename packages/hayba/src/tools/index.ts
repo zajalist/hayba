@@ -20,6 +20,16 @@ import { sceneValidatePhysicsHandler, meta as scenePhysicsMeta } from './scene/s
 import { editorCaptureViewportHandler, meta as captureMeta } from './editor/editor-capture-viewport.js';
 import { editorStartPieHandler, meta as pieMeta } from './editor/editor-start-pie.js';
 import { editorStreamLogHandler, meta as streamLogMeta } from './editor/editor-stream-log.js';
+import {
+  haybaRequestInputHandler,
+  meta as requestInputMeta,
+  requestInputSchema,
+} from './prompts/hayba-request-input.js';
+import {
+  haybaGetUserResponseHandler,
+  meta as getUserResponseMeta,
+  getUserResponseSchema,
+} from './prompts/hayba-get-user-response.js';
 
 // ── PCGEx tool handlers ───────────────────────────────────────────────────────
 import { searchNodeCatalog } from './search-node-catalog.js';
@@ -131,6 +141,32 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
           isError: true,
         };
       }
+    },
+  );
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Generic input-request system (Plan tab AI monitor, issue #11).
+  // hayba_request_input pushes a prompt to UE; hayba_get_user_response polls
+  // for the user's answer. UE handlers maintain the prompt/response queues.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  server.tool(
+    'hayba_request_input',
+    appendMeta('Push a prompt to the UE Plan tab — approve / choose_one / choose_many / text / form / progress kinds. Returns prompt_id; poll hayba_get_user_response to retrieve the answer.', requestInputMeta),
+    requestInputSchema.shape,
+    async (params) => {
+      const r = await haybaRequestInputHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    },
+  );
+
+  server.tool(
+    'hayba_get_user_response',
+    appendMeta('Poll for the user response to a prompt previously pushed via hayba_request_input. Returns {prompt_id, status: pending|answered|rejected|timeout|unknown, value?}.', getUserResponseMeta),
+    getUserResponseSchema.shape,
+    async (params) => {
+      const r = await haybaGetUserResponseHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
     },
   );
 
@@ -1004,6 +1040,10 @@ function recordEagerSchemas(
     if (typeof v === 'string') { try { return JSON.parse(v); } catch { return v; } }
     return v;
   }, vec3);
+
+  // ── Plan tab prompts (issue #11) ──────────────────────────────────────────
+  reg('hayba_request_input', requestInputSchema.shape, 'low', '{prompt_id, status:"pushed"|"push_failed", error?}');
+  reg('hayba_get_user_response', getUserResponseSchema.shape, 'low', '{prompt_id, status, value?, error?}');
 
   // ── Code Mode meta ────────────────────────────────────────────────────────
   reg('list_tool_categories', {}, 'low', '{categories:[{domain,commands:[string]}]}');
