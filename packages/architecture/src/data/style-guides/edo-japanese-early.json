@@ -1,0 +1,28 @@
+{
+  "id": "edo-japanese-early",
+  "styleSheet": {
+    "id": "edo-japanese-early",
+    "cultureId": "edo-japanese",
+    "dateRange": [1603, 1750],
+    "core": {
+      "primaryMaterial": "timber",
+      "secondaryMaterial": "stone",
+      "roofType": "hip",
+      "ornamentation": ["shoji-grid", "engawa-veranda", "irimoya-gable", "kawara-tile-end"]
+    },
+    "extras": {
+      "engawa": "present",
+      "tokonoma": "common",
+      "shoji": "ubiquitous"
+    }
+  },
+  "typologyWeights": [
+    { "typologyId": "peasant_home",  "weight": 6 },
+    { "typologyId": "townhouse",     "weight": 5 },
+    { "typologyId": "market_stall",  "weight": 4 },
+    { "typologyId": "temple",        "weight": 4 },
+    { "typologyId": "manor",         "weight": 2 },
+    { "typologyId": "granary",       "weight": 2 },
+    { "typologyId": "civic_hall",    "weight": 1 }
+  ]
+}
