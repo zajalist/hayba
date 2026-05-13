@@ -367,6 +367,12 @@
   table.data tr:hover td { background: var(--bg-panel); }
   table.data td.muted { color: var(--text-muted); }
   table.data .right-actions { text-align: right; }
+  .pos-tag {
+    display: inline-block; padding: 1px 7px; border-radius: 3px;
+    font-size: 11px; font-weight: 500;
+    background: var(--bg-base); color: var(--text-secondary);
+    border: 1px solid var(--border-soft);
+  }
 
   audio { height: 22px; }
   audio::-webkit-media-controls-panel { background: var(--bg-panel); }
@@ -705,6 +711,22 @@
             <label class="field" style="flex:2"><span>Lemma (IPA)</span>
               <input class="input" id="lex-lemma" placeholder="e.g. paka">
             </label>
+            <label class="field" style="flex:1"><span>Part of speech</span>
+              <select id="lex-pos">
+                <option value="">—</option>
+                <option value="noun">noun</option>
+                <option value="verb">verb</option>
+                <option value="adjective">adjective</option>
+                <option value="adverb">adverb</option>
+                <option value="pronoun">pronoun</option>
+                <option value="determiner">determiner</option>
+                <option value="preposition">preposition</option>
+                <option value="conjunction">conjunction</option>
+                <option value="interjection">interjection</option>
+                <option value="numeral">numeral</option>
+                <option value="particle">particle</option>
+              </select>
+            </label>
             <label class="field" style="flex:1"><span>Register</span>
               <select id="lex-register">
                 <option value="neutral">neutral</option>
@@ -713,25 +735,40 @@
                 <option value="poetic">poetic</option>
               </select>
             </label>
-            <label class="field" style="flex:3"><span>Etymology · gloss</span>
+            <label class="field" style="flex:2"><span>Etymology · gloss</span>
               <input class="input" id="lex-gloss" placeholder="optional">
             </label>
-            <button class="btn primary" id="lex-add" style="align-self:flex-end">add</button>
+            <button class="btn primary" id="lex-add" style="align-self:flex-end">Add</button>
           </div>
 
           <div class="row" style="margin-bottom:8px">
             <input class="input" id="lex-search" placeholder="search concept or lemma…" style="flex:1">
-            <button class="btn" id="lex-autogen">auto-generate from phonotactics</button>
-            <button class="btn" id="lex-clear">clear lexicon</button>
+            <select id="lex-pos-filter">
+              <option value="">All parts of speech</option>
+              <option value="noun">Nouns</option>
+              <option value="verb">Verbs</option>
+              <option value="adjective">Adjectives</option>
+              <option value="adverb">Adverbs</option>
+              <option value="pronoun">Pronouns</option>
+              <option value="determiner">Determiners</option>
+              <option value="preposition">Prepositions</option>
+              <option value="conjunction">Conjunctions</option>
+              <option value="interjection">Interjections</option>
+              <option value="numeral">Numerals</option>
+              <option value="particle">Particles</option>
+            </select>
+            <button class="btn" id="lex-autogen">Auto-generate from phonotactics</button>
+            <button class="btn" id="lex-clear">Clear lexicon</button>
           </div>
 
           <table class="data" id="lex-table">
             <thead>
               <tr>
-                <th style="width:24%">Concept</th>
-                <th style="width:18%">Lemma</th>
-                <th style="width:18%">Romanized</th>
-                <th style="width:12%">Register</th>
+                <th style="width:20%">Concept</th>
+                <th style="width:16%">Lemma</th>
+                <th style="width:16%">Romanized</th>
+                <th style="width:10%">POS</th>
+                <th style="width:10%">Register</th>
                 <th>Etymology · gloss</th>
                 <th class="right-actions" style="width:60px"></th>
               </tr>
@@ -1435,8 +1472,12 @@ document.getElementById('copy-btn').addEventListener('click', async () => {
 /* ─────────────────────  Lexicon  ───────────────────── */
 function renderLexicon() {
   const q = (document.getElementById('lex-search').value || '').toLowerCase();
-  const filtered = state.lexicon.filter(e =>
-    !q || e.concept.toLowerCase().includes(q) || e.lemma.toLowerCase().includes(q));
+  const posFilter = document.getElementById('lex-pos-filter').value;
+  const filtered = state.lexicon.filter(e => {
+    if (q && !(e.concept.toLowerCase().includes(q) || e.lemma.toLowerCase().includes(q))) return false;
+    if (posFilter && e.pos !== posFilter) return false;
+    return true;
+  });
   const tbody = document.getElementById('lex-tbody');
   const romMap = { languageId: state.langId, rules: state.romRules };
   tbody.innerHTML = '';
@@ -1446,13 +1487,24 @@ function renderLexicon() {
       <td>${escapeHtml(e.concept)}</td>
       <td class="accent">${escapeHtml(e.lemma)}</td>
       <td class="muted">${escapeHtml(state.romRules.length ? romanize(e.lemma, romMap) : '—')}</td>
+      <td>${e.pos ? `<span class="pos-tag">${escapeHtml(e.pos)}</span>` : '<span class="muted">—</span>'}</td>
       <td class="muted">${escapeHtml(e.register || 'neutral')}</td>
       <td class="muted">${escapeHtml(e.gloss || '')}</td>
       <td class="right-actions"><button class="btn" data-del="${escapeHtml(e.concept)}">×</button></td>`;
     tbody.appendChild(tr);
   }
-  document.getElementById('lex-meta').textContent = `${state.lexicon.length} entries`;
-  document.getElementById('t-words').textContent = state.lexicon.length;
+  // Meta line: total + breakdown by POS
+  const total = state.lexicon.length;
+  const posCounts = {};
+  for (const l of state.lexicon) {
+    const p = l.pos || 'untagged';
+    posCounts[p] = (posCounts[p] || 0) + 1;
+  }
+  const summary = Object.entries(posCounts).sort((a, b) => b[1] - a[1])
+    .map(([p, n]) => `${n} ${p}`).join(' · ');
+  document.getElementById('lex-meta').textContent =
+    total === 0 ? '0 entries' : `${total} entries · ${summary}`;
+  document.getElementById('t-words').textContent = total;
   tbody.querySelectorAll('button[data-del]').forEach(b =>
     b.addEventListener('click', () => {
       state.lexicon = state.lexicon.filter(x => x.concept !== b.dataset.del);
@@ -1464,8 +1516,10 @@ document.getElementById('lex-add').addEventListener('click', () => {
   const lemma = document.getElementById('lex-lemma').value.trim();
   if (!concept || !lemma) return;
   const idx = state.lexicon.findIndex(e => e.concept === concept);
+  const pos = document.getElementById('lex-pos').value || undefined;
   const entry = {
     concept, lemma, ipa: lemma,
+    pos,
     register: document.getElementById('lex-register').value,
     gloss: document.getElementById('lex-gloss').value.trim() || undefined,
   };
@@ -1476,6 +1530,7 @@ document.getElementById('lex-add').addEventListener('click', () => {
   saveState(); renderLexicon(); renderSoundChanges();
 });
 document.getElementById('lex-search').addEventListener('input', renderLexicon);
+document.getElementById('lex-pos-filter').addEventListener('change', renderLexicon);
 document.getElementById('lex-clear').addEventListener('click', () => {
   if (!confirm('Clear the entire lexicon?')) return;
   state.lexicon = []; saveState(); renderLexicon(); renderSoundChanges();
@@ -1491,8 +1546,22 @@ document.getElementById('lex-autogen').addEventListener('click', () => {
     alert('select at least one consonant and one vowel in the phonology first.');
     return;
   }
-  const sample = ['mountain','river','sun','moon','star','fire','water','stone','wind','sky','child','house','road','spirit','word'];
-  for (const concept of sample) {
+  // Seeded sample lexicon — each concept tagged with its natural POS so the
+  // Translator (L10) and grammar engine (L11) have something to work with.
+  const sample = [
+    ['mountain','noun'], ['river','noun'], ['sun','noun'], ['moon','noun'],
+    ['star','noun'], ['fire','noun'], ['water','noun'], ['stone','noun'],
+    ['wind','noun'], ['sky','noun'], ['child','noun'], ['house','noun'],
+    ['road','noun'], ['spirit','noun'], ['word','noun'],
+    ['to-walk','verb'], ['to-speak','verb'], ['to-see','verb'], ['to-eat','verb'], ['to-give','verb'],
+    ['big','adjective'], ['small','adjective'], ['red','adjective'], ['cold','adjective'],
+    ['I','pronoun'], ['you','pronoun'], ['they','pronoun'],
+    ['the','determiner'], ['this','determiner'],
+    ['and','conjunction'], ['but','conjunction'],
+    ['in','preposition'], ['from','preposition'],
+    ['one','numeral'], ['two','numeral'], ['three','numeral'],
+  ];
+  for (const [concept, pos] of sample) {
     if (state.lexicon.some(e => e.concept === concept)) continue;
     try {
       const lemma = generatePhonotacticName({
@@ -1500,12 +1569,12 @@ document.getElementById('lex-autogen').addEventListener('click', () => {
         phonotactics: { phonologyId: phono.languageId, vowels,
           syllable: { templates: ['CV', 'CVC'] } },
         profile: { syllableTemplate: 'CV', vowels, onsetPool: consonants },
-        syllableCount: 2 + Math.floor(Math.random() * 2),
+        syllableCount: pos === 'pronoun' || pos === 'determiner' || pos === 'preposition' || pos === 'conjunction' ? 1 : 2,
         seed: deriveSeed(7777n, concept, state.langId),
-        category: 'object',
+        category: pos === 'verb' ? 'concept' : 'object',
         instance: concept,
       });
-      state.lexicon.push({ concept, lemma, ipa: lemma, register: 'neutral' });
+      state.lexicon.push({ concept, lemma, ipa: lemma, pos, register: 'neutral' });
     } catch {}
   }
   saveState(); renderLexicon(); renderSoundChanges();
