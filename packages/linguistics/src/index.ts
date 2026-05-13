@@ -24,8 +24,8 @@ export { INVENTORIES, loadInventoriesFromPhoible, loadPhoibleCorpus } from './da
 export { audioUrlFor, audioCatalogueKeys } from './audio.js';
 
 // Phonotactics (L2)
-export type { PhonotacticSpec, SyllableProfile, PhonotacticResult, ClusterCell, ClusterLegality } from './phonotactics.js';
-export { validatePhonotactics, passesPhonotactics, clusterLegality } from './phonotactics.js';
+export type { PhonotacticSpec, SyllableProfile, PhonotacticResult, ClusterCell, ClusterLegality, UserCellVerdict, UserLegalityOverrides, CustomClusterBlacklists } from './phonotactics.js';
+export { validatePhonotactics, passesPhonotactics, clusterLegality, userCustomLegalityToClusters } from './phonotactics.js';
 
 // Name generator (L4)
 export type { NameCategory, NameGeneratorProfile, GenerateNameParams } from './name-generator.js';

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Phonology } from './phonology.js';
-import { validatePhonotactics, passesPhonotactics, clusterLegality } from './phonotactics.js';
+import { validatePhonotactics, passesPhonotactics, clusterLegality, userCustomLegalityToClusters } from './phonotactics.js';
 
 const demoPhonology: Phonology = {
   languageId: 'demo',
@@ -117,6 +117,86 @@ describe('clusterLegality — heatmap cells', () => {
     );
     expect(cells.length).toBeGreaterThan(0);
     for (const c of cells) expect(c.legality).toBe('legal');
+  });
+});
+
+describe('clusterLegality — onsetClusters=["p"] under CV+CVC: every (p, *) cell is restricted', () => {
+  const vowels = ['a', 'o'];
+  const cells = clusterLegality(
+    {
+      phonologyId: 'demo', vowels,
+      syllable: { templates: ['CV', 'CVC'], onsetClusters: ['p'] },
+    },
+    demoPhonology,
+  );
+
+  it('every (p, *) cell — both no-coda and with-coda — is restricted', () => {
+    const pRow = cells.filter(c => c.onset === 'p');
+    expect(pRow.length).toBeGreaterThan(0);
+    for (const c of pRow) {
+      expect(c.legality).toBe('restricted');
+      expect(c.reason).toMatch(/disallowed onset cluster/);
+    }
+  });
+
+  it('other onsets stay legal under same template', () => {
+    const tRow = cells.filter(c => c.onset === 't');
+    expect(tRow.length).toBeGreaterThan(0);
+    for (const c of tRow) expect(c.legality).toBe('legal');
+  });
+});
+
+describe('userCustomLegalityToClusters — UI ↔ spec sync helper', () => {
+  it('routes a non-empty-coda override to codaClusters', () => {
+    const out = userCustomLegalityToClusters({ 'p|t': 'illegal' });
+    expect(out.codaClusters).toEqual(['t']);
+    expect(out.onsetClusters).toEqual([]);
+  });
+
+  it('routes a "(no coda)" override to onsetClusters', () => {
+    const out = userCustomLegalityToClusters({ 'p|': 'illegal' });
+    expect(out.onsetClusters).toEqual(['p']);
+    expect(out.codaClusters).toEqual([]);
+  });
+
+  it('treats restricted the same as illegal (no restrictedClusters field on spec)', () => {
+    const out = userCustomLegalityToClusters({ 'k|s': 'restricted' });
+    expect(out.codaClusters).toEqual(['s']);
+  });
+
+  it('drops user-set legal — only illegal/restricted blacklists', () => {
+    const out = userCustomLegalityToClusters({ 'k|s': 'legal' });
+    expect(out.codaClusters).toEqual([]);
+    expect(out.onsetClusters).toEqual([]);
+  });
+
+  it('round-trip: illegal cell → blacklist → clusterLegality sees that cell as restricted', () => {
+    // Simulate: user clicks (p, t) and cycles it to illegal. The buildSpec
+    // sync writes 't' to codaClusters. clusterLegality then re-reads the spec
+    // and marks every (*, t) cell as restricted with a disallowed-coda reason.
+    const overrides: Record<string, 'legal' | 'restricted' | 'illegal'> = { 'p|t': 'illegal' };
+    const { codaClusters, onsetClusters } = userCustomLegalityToClusters(overrides);
+    const cells = clusterLegality(
+      {
+        phonologyId: 'demo', vowels: ['a', 'o'],
+        syllable: { templates: ['CV', 'CVC'], onsetClusters, codaClusters },
+      },
+      demoPhonology,
+    );
+    const pt = cells.find(c => c.onset === 'p' && c.coda === 't');
+    expect(pt).toBeDefined();
+    expect(pt!.legality).toBe('restricted');
+    expect(pt!.reason).toMatch(/disallowed coda cluster/);
+  });
+
+  it('null/undefined input yields empty blacklists', () => {
+    expect(userCustomLegalityToClusters(null)).toEqual({ onsetClusters: [], codaClusters: [] });
+    expect(userCustomLegalityToClusters(undefined)).toEqual({ onsetClusters: [], codaClusters: [] });
+  });
+
+  it('deduplicates repeated cluster strings', () => {
+    const out = userCustomLegalityToClusters({ 'p|t': 'illegal', 'k|t': 'illegal' });
+    expect(out.codaClusters).toEqual(['t']);
   });
 });
 

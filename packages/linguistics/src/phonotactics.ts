@@ -207,6 +207,49 @@ export function passesPhonotactics(word: string, phonology: Phonology, spec: Pho
 // stays load-bearing for future feature-based slot extensions (e.g. NPA harmony).
 void findPhonemeByIpa;
 
+/* ───────────────────── L30 — user heatmap-cell overrides ───────────────────── */
+
+/** Verdict that the user pinned onto a heatmap cell via click-to-cycle. */
+export type UserCellVerdict = 'legal' | 'restricted' | 'illegal';
+
+/** Map keyed by `"<onset>|<coda>"` strings — coda may be the empty string for
+ *  the "(no coda)" column. Built by the demo's cycleLegalityCell handler. */
+export type UserLegalityOverrides = Record<string, UserCellVerdict>;
+
+export interface CustomClusterBlacklists {
+  onsetClusters: string[];
+  codaClusters: string[];
+}
+
+/**
+ * Project user heatmap-cell overrides into onset/coda blacklist arrays that
+ * can be merged into a `PhonotacticSpec.syllable`. Side selection: a cell
+ * with non-empty coda contributes its coda to `codaClusters`; the "(no coda)"
+ * column contributes its onset to `onsetClusters`. Both 'illegal' and
+ * 'restricted' verdicts blacklist the cluster — there is no distinct
+ * `restrictedClusters` field on the spec today.
+ */
+export function userCustomLegalityToClusters(
+  overrides: UserLegalityOverrides | null | undefined,
+): CustomClusterBlacklists {
+  const onsetClusters: string[] = [];
+  const codaClusters: string[] = [];
+  if (!overrides) return { onsetClusters, codaClusters };
+  for (const [key, verdict] of Object.entries(overrides)) {
+    if (verdict !== 'illegal' && verdict !== 'restricted') continue;
+    const sep = key.indexOf('|');
+    if (sep < 0) continue;
+    const onset = key.slice(0, sep);
+    const coda = key.slice(sep + 1);
+    if (coda) {
+      if (!codaClusters.includes(coda)) codaClusters.push(coda);
+    } else if (onset) {
+      if (!onsetClusters.includes(onset)) onsetClusters.push(onset);
+    }
+  }
+  return { onsetClusters, codaClusters };
+}
+
 /* ───────────────────── L19 — legality heatmap ───────────────────── */
 
 export type ClusterLegality = 'legal' | 'illegal' | 'restricted';

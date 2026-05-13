@@ -31,6 +31,8 @@ export function defaultState() {
     nameGenScratch: null,
     ttsEnabled: true,
     phrasePack: null,
+    suggestedLegality: [],
+    userCustomizedLegality: {},
   };
 }
 
@@ -39,9 +41,23 @@ export function loadState() {
     const raw = localStorage.getItem(STATE_KEY);
     if (!raw) return null;
     const j = JSON.parse(raw);
+    // L29/L30 migration: userCustomizedLegality was originally a string[] of
+    // "onset|coda" keys. The cell-click toggle now stores a Record keyed by
+    // those strings with values 'legal'|'restricted'|'illegal'. Treat any
+    // legacy array entries as 'legal' for back-compat.
+    let userCustomizedLegality = j.userCustomizedLegality;
+    if (Array.isArray(userCustomizedLegality)) {
+      const migrated = {};
+      for (const k of userCustomizedLegality) migrated[k] = 'legal';
+      userCustomizedLegality = migrated;
+    } else if (!userCustomizedLegality || typeof userCustomizedLegality !== 'object') {
+      userCustomizedLegality = {};
+    }
     return {
       ...j,
       selected: new Set(j.selected),
+      userCustomizedLegality,
+      suggestedLegality: j.suggestedLegality ?? [],
       lexicon: j.lexicon ?? [],
       romRules: j.romRules ?? [],
       rules: j.rules ?? '',

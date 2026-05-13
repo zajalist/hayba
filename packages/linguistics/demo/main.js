@@ -5,7 +5,7 @@ import {
   parseRules, stringifyRule, evolveLexicon, generatePhonotacticName, deriveSeed,
   SCA_PRESETS,
   applyAllophony, parseAllophonyRules, stringifyAllophonyRule,
-  clusterLegality,
+  clusterLegality, userCustomLegalityToClusters,
   suggestPhonotactics, suggestAllophony,
   assignStress, applyTones, toneToLetters,
   validatePhonotactics, tokenize as tokenizePhonemes,
@@ -750,8 +750,23 @@ function buildPhonotacticSpec() {
   };
   const choice = state.typology?.syllable;
   const templates = SYLLABLE_TEMPLATES[choice] ?? ['CV', 'CVC'];
+  // L30 — merge user heatmap-cell overrides into onset/coda blacklists.
+  // PhonotacticSpec has no `restrictedClusters` field today, so both
+  // 'illegal' and 'restricted' overrides land in the same blacklist.
+  // Side selection: a cell with non-empty coda writes the coda into
+  // codaClusters; a cell in the "(no coda)" column writes the onset into
+  // onsetClusters. This matches how clusterLegality classifies cells.
+  const { onsetClusters, codaClusters } = userCustomLegalityToClusters(state.userCustomizedLegality);
   return {
-    spec: { phonologyId: phono.languageId, vowels, syllable: { templates } },
+    spec: {
+      phonologyId: phono.languageId,
+      vowels,
+      syllable: {
+        templates,
+        ...(onsetClusters.length ? { onsetClusters } : {}),
+        ...(codaClusters.length ? { codaClusters } : {}),
+      },
+    },
     phono,
   };
 }
@@ -1853,6 +1868,7 @@ function renderAllophony() {
 (function initNaturalisticSuggestions() {
   const suggestPtBtn = document.getElementById('suggest-phonotactics-btn');
   const resetPtBtn = document.getElementById('reset-phonotactics-suggestions-btn');
+  const resetCustomBtn = document.getElementById('reset-phonotactics-customizations-btn');
   const suggestAlBtn = document.getElementById('suggest-allophony-btn');
   const dlg = document.getElementById('allo-suggest-dlg');
   const list = document.getElementById('allo-suggest-list');
@@ -1882,14 +1898,23 @@ function renderAllophony() {
         return;
       }
       saveState();
-      renderAffected(['selected']);
+      renderAffected(['suggestedLegality']);
     });
   }
   if (resetPtBtn) {
     resetPtBtn.addEventListener('click', () => {
       state.suggestedLegality = [];
       saveState();
-      renderAffected(['selected']);
+      renderAffected(['suggestedLegality']);
+    });
+  }
+  if (resetCustomBtn) {
+    resetCustomBtn.addEventListener('click', () => {
+      // Clearing the Record also drops the derived blacklist entries, since
+      // buildPhonotacticSpec rebuilds them from userCustomizedLegality each call.
+      state.userCustomizedLegality = {};
+      saveState();
+      renderAffected(['userCustomizedLegality']);
     });
   }
 
@@ -3203,8 +3228,7 @@ function renderTypology() {
             profile[f.key] = o.value;
           }
           saveState();
-          renderTypology();
-          renderPhonology(); // update inv-stats typology tags
+          renderAffected(['typology']);
         });
         opts.appendChild(btn);
       }
@@ -3224,12 +3248,12 @@ function renderTypology() {
     const tpl = TYPOLOGY_PRESETS[name];
     if (!tpl) return;
     state.typology = { ...tpl };
-    saveState(); renderTypology(); renderPhonology();
+    saveState(); renderAffected(['typology']);
   });
   const clear = document.getElementById('typ-clear');
   if (clear) clear.addEventListener('click', () => {
     state.typology = {};
-    saveState(); renderTypology(); renderPhonology();
+    saveState(); renderAffected(['typology']);
   });
 })();
 
@@ -3264,7 +3288,7 @@ const VIEW_DEPS = {
   grammar:         ['grammar', 'lexicon'],
   familyTree:      ['languages', 'wordlinks', 'langId', 'selected', 'lexicon'],
   typology:        ['typology'],
-  legalityHeatmap: ['selected'],
+  legalityHeatmap: ['selected', 'typology', 'suggestedLegality', 'userCustomizedLegality'],
   statsDashboard:  ['selected', 'lexicon', 'typology'],
   nameGen:         ['nameGenScratch'],
   phrasePack:      ['phrasePack', 'lexicon', 'langId'],
@@ -3333,7 +3357,12 @@ function renderLegalityHeatmap() {
   const suggestions = state.suggestedLegality ?? [];
   const suggByKey = new Map();
   for (const s of suggestions) suggByKey.set(s.pair[0] + '|' + s.pair[1], s);
-  const userCustom = new Set(state.userCustomizedLegality ?? []);
+  // L30 — userCustomizedLegality is a Record<"onset|coda", 'legal'|'restricted'|'illegal'>.
+  // (Migrated from string[] by loadState.) `userCustom` lookups in this renderer
+  // only need set-membership for the orange border; effective-legality cycling
+  // happens in the click handler below.
+  const customMap = state.userCustomizedLegality ?? {};
+  const userCustom = new Set(Object.keys(customMap));
 
   const colCodas = ['', ...consonants]; // first column is "(no coda)"
   const colW = 34, rowH = 30, headerH = 26, headerW = 38;
@@ -3355,15 +3384,18 @@ function renderLegalityHeatmap() {
         parts.push(`<div style="height:${rowH}px; background:var(--bg-base); border:1px solid var(--border-soft)"></div>`);
         continue;
       }
-      const bg = cell.legality === 'legal'
+      const key = onset + '|' + coda;
+      const userVerdict = customMap[key];
+      // Effective legality: user override wins over engine-computed.
+      const effective = userVerdict ?? cell.legality;
+      const bg = effective === 'legal'
         ? 'var(--status-green)'
-        : cell.legality === 'restricted'
+        : effective === 'restricted'
           ? 'var(--status-orange)'
           : 'var(--bg-base)';
-      const key = onset + '|' + coda;
       const sugg = suggByKey.get(key);
-      const isUserCustom = userCustom.has(key);
-      let border = cell.legality === 'illegal' ? '1px solid var(--border-soft)' : '1px solid transparent';
+      const isUserCustom = !!userVerdict;
+      let border = effective === 'illegal' ? '1px solid var(--border-soft)' : '1px solid transparent';
       if (sugg && !isUserCustom) {
         const sc = sugg.suggestedLegality === 'legal'
           ? 'var(--status-green)'
@@ -3375,41 +3407,58 @@ function renderLegalityHeatmap() {
         border = '2px solid var(--accent, var(--text-primary))';
       }
       const sample = cell.sample ?? '';
-      const showSample = cell.legality !== 'illegal';
-      const cursor = showSample ? 'pointer' : 'default';
-      const baseTip = cell.legality === 'legal'
-        ? `legal · ${sample}`
-        : cell.legality === 'restricted'
-          ? `restricted · ${cell.reason ?? ''}`
-          : `illegal · ${cell.reason ?? ''}`;
+      const showSample = effective !== 'illegal';
+      const baseTip = effective === 'legal'
+        ? `legal · ${sample || '(user-set)'}`
+        : effective === 'restricted'
+          ? `restricted · ${isUserCustom ? 'user-set' : (cell.reason ?? '')}`
+          : `illegal · ${isUserCustom ? 'user-set' : (cell.reason ?? '')}`;
+      const overridePart = isUserCustom ? '\nuser-customized · click to cycle · shift+click to seed name-gen' : '\nclick to cycle legality · shift+click to seed name-gen';
       const tip = sugg
-        ? `${baseTip}\nsuggested: ${sugg.suggestedLegality} (conf ${sugg.confidence.toFixed(2)}) — ${sugg.rationale}`
-        : baseTip;
-      const dataAttrs = showSample
-        ? ` data-seed-onset="${escapeHtml(onset)}" data-seed-coda="${escapeHtml(coda)}"`
-        : '';
+        ? `${baseTip}\nsuggested: ${sugg.suggestedLegality} (conf ${sugg.confidence.toFixed(2)}) — ${sugg.rationale}${overridePart}`
+        : `${baseTip}${overridePart}`;
+      const dataAttrs = ` data-cell-onset="${escapeHtml(onset)}" data-cell-coda="${escapeHtml(coda)}"`;
       parts.push(
-        `<div class="legality-cell" style="height:${rowH}px; background:${bg}; border:${border}; display:flex; align-items:center; justify-content:center; font-family: var(--font-ipa); font-size: 12px; color: var(--bg-base); cursor:${cursor}" title="${escapeHtml(tip)}"${dataAttrs}>${showSample ? escapeHtml(sample) : ''}</div>`,
+        `<div class="legality-cell" style="height:${rowH}px; background:${bg}; border:${border}; display:flex; align-items:center; justify-content:center; font-family: var(--font-ipa); font-size: 12px; color: var(--bg-base); cursor:pointer" title="${escapeHtml(tip)}"${dataAttrs}>${showSample ? escapeHtml(sample) : ''}</div>`,
       );
     }
   }
   parts.push('</div>');
   host.innerHTML = parts.join('');
 
-  for (const el of host.querySelectorAll('.legality-cell[data-seed-onset]')) {
-    el.addEventListener('click', () => {
-      const onset = el.dataset.seedOnset;
-      const coda = el.dataset.seedCoda;
-      const tpl = coda ? 'CVC' : 'CV';
-      const tplSel = document.getElementById('ng-tpl');
-      if (tplSel) tplSel.value = tpl;
-      // Stash a one-shot seed override on state for the name-gen roller to
-      // pick up; also switch to the Name Gen tab so the user sees the change.
-      // The scratch is cleared after the next roll completes.
-      state.nameGenScratch = { onset, coda };
-      state.view = 'names'; saveState(); renderNav(); renderNameGenScratchHint();
+  for (const el of host.querySelectorAll('.legality-cell[data-cell-onset]')) {
+    el.addEventListener('click', ev => {
+      const onset = el.dataset.cellOnset;
+      const coda = el.dataset.cellCoda;
+      // Shift+click preserves the legacy "seed name generator" affordance.
+      if (ev.shiftKey) {
+        const tpl = coda ? 'CVC' : 'CV';
+        const tplSel = document.getElementById('ng-tpl');
+        if (tplSel) tplSel.value = tpl;
+        state.nameGenScratch = { onset, coda };
+        state.view = 'names'; saveState(); renderNav(); renderNameGenScratchHint();
+        return;
+      }
+      cycleLegalityCell(onset, coda);
     });
   }
+}
+
+/** Cycle a heatmap cell's legality:
+ *    engine-computed → user 'legal' → user 'restricted' → user 'illegal' → cleared
+ *  The user verdict lives in state.userCustomizedLegality[key]; clearing it
+ *  removes the key entirely so the engine value is shown again. */
+function cycleLegalityCell(onset, coda) {
+  const key = onset + '|' + coda;
+  const custom = state.userCustomizedLegality ?? (state.userCustomizedLegality = {});
+  const current = custom[key]; // undefined === engine-computed
+  // Cycle ordering per the spec.
+  const NEXT = { undefined: 'legal', legal: 'restricted', restricted: 'illegal', illegal: undefined };
+  const next = NEXT[current === undefined ? 'undefined' : current];
+  if (next === undefined) delete custom[key];
+  else custom[key] = next;
+  saveState();
+  renderAffected(['userCustomizedLegality']);
 }
 
 /* —— Inspector pin + sticky shadow —— */
