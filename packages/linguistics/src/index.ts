@@ -89,6 +89,10 @@ export type {
 } from './loanword.js';
 export { createLoanwordAdapter } from './loanword.js';
 
+// Lexicon statistics (L21)
+export type { LexiconStatistics, StatsLexEntry } from './statistics.js';
+export { computeLexiconStatistics } from './statistics.js';
+
 // Typology catalogue (L15)
 export type {
   TypologyFeature, TypologyOption, TypologyCategory, LanguageProfile,

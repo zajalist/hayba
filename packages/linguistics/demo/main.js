@@ -9,6 +9,7 @@ import {
   buildParadigm, findRuleConflicts, PRESET_PARADIGMS,
   addAxis, removeAxis, addAxisValue, removeAxisValue,
   createLoanwordAdapter,
+  computeLexiconStatistics,
   InMemoryWordlinks, autoCognatesFromDiachrony,
   buildFamilyTree,
   TYPOLOGY_FEATURES, TYPOLOGY_PRESETS, profileSummary,
@@ -826,7 +827,7 @@ document.getElementById('lex-search').addEventListener('input', renderLexicon);
 document.getElementById('lex-pos-filter').addEventListener('change', renderLexicon);
 document.getElementById('lex-clear').addEventListener('click', () => {
   if (!confirm('Clear the entire lexicon?')) return;
-  state.lexicon = []; saveState(); renderLexicon(); renderSoundChanges();
+  state.lexicon = []; saveState(); renderAffected(['lexicon']);
 });
 document.getElementById('lex-autogen').addEventListener('click', () => {
   const phono = buildPhonologyJson();
@@ -870,7 +871,7 @@ document.getElementById('lex-autogen').addEventListener('click', () => {
       state.lexicon.push({ concept, lemma, ipa: lemma, pos, register: 'neutral' });
     } catch {}
   }
-  saveState(); renderLexicon(); renderSoundChanges();
+  saveState(); renderAffected(['lexicon']);
 });
 
 /* ─────────────────────  Sound changes  ───────────────────── */
@@ -2157,6 +2158,7 @@ const VIEW_RENDERERS = {
   familyTree: () => renderFamilyTree(),
   typology: () => renderTypology(),
   legalityHeatmap: () => renderLegalityHeatmap(),
+  statsDashboard: () => renderStatsDashboard(),
   nameGen: () => renderNameGenScratchHint(),
 };
 
@@ -2171,6 +2173,7 @@ const VIEW_DEPS = {
   familyTree:      ['languages', 'wordlinks', 'langId', 'selected', 'lexicon'],
   typology:        ['typology'],
   legalityHeatmap: ['selected'],
+  statsDashboard:  ['selected', 'lexicon', 'typology'],
   nameGen:         ['nameGenScratch'],
 };
 
@@ -2330,6 +2333,252 @@ function setupStickyShadow() {
 setupStickyShadow();
 
 // escapeHtml is imported from ./components/utils.js
+
+/* ───────── L21 — Statistics dashboard ───────── */
+
+// Caching: re-derive only when the lexicon/inventory signature changes.
+let _statsCache = null;
+
+function statsSignature() {
+  // Cheap fingerprint of the inputs the stats panel depends on.
+  const lex = state.lexicon.map(e => `${e.lemma}|${e.pos ?? ''}|${e.register ?? ''}`).join('');
+  const sel = [...state.selected].sort().join(',');
+  const syl = state.typology?.syllable ?? '';
+  return `${sel}::${syl}::${lex}`;
+}
+
+function _phonemeManner(ipa) {
+  const all = [...PULMONIC_CONSONANTS, ...NON_PULMONIC_CONSONANTS];
+  const c = all.find(x => x.ipa === ipa);
+  if (c) {
+    const m = c.manner;
+    if (m === 'nasal') return 'nasal';
+    if (m === 'plosive' || m === 'stop' || m === 'affricate' || m === 'implosive' || m === 'ejective' || m === 'click') return 'plosive';
+    if (m === 'fricative' || m === 'sibilant-fricative' || m === 'lateral-fricative') return 'fricative';
+    if (m === 'approximant' || m === 'lateral-approximant' || m === 'trill' || m === 'tap' || m === 'lateral-tap') return 'approximant';
+    return 'other';
+  }
+  if (CARDINAL_VOWELS.some(v => v.ipa === ipa)) return 'vowel';
+  return 'other';
+}
+
+const MANNER_COLOR = {
+  nasal: 'var(--tag-pink, #b66bb0)',
+  plosive: 'var(--tag-blue, #5d8acf)',
+  fricative: 'var(--tag-green, #4caf6d)',
+  approximant: 'var(--accent, #4dc4c4)',
+  vowel: 'var(--status-orange, #e08a3c)',
+  other: 'var(--text-muted, #888)',
+};
+
+function _svgEscape(s) { return escapeHtml(String(s)); }
+
+function _renderPhonemeBar(stats) {
+  const total = [...stats.phonemeFrequency.values()].reduce((a, b) => a + b, 0);
+  if (total === 0) {
+    return '<div class="hint">No tokenisable lemmas yet. Add a word with phonemes from your inventory.</div>';
+  }
+  const rows = [...stats.phonemeFrequency.entries()].sort((a, b) => b[1] - a[1]);
+  const max = rows[0][1];
+  const W = 220, H = 14;
+  const parts = [];
+  parts.push('<div style="display:flex; flex-direction:column; gap:3px">');
+  for (const [ipa, count] of rows) {
+    const pct = (count / total) * 100;
+    const w = Math.max(2, (count / max) * W);
+    const manner = _phonemeManner(ipa);
+    const color = MANNER_COLOR[manner];
+    const examples = stats.phonemeExamples.get(ipa) ?? [];
+    const tip = `${ipa} · ${count} (${pct.toFixed(1)}%)${examples.length ? ' · in: ' + examples.join(', ') : ''}`;
+    parts.push(`<div class="row" style="align-items:center; gap:8px" title="${_svgEscape(tip)}">
+      <span style="font-family: var(--font-ipa, var(--font-mono)); font-size:13px; width:24px; text-align:right">${_svgEscape(ipa)}</span>
+      <svg width="${W}" height="${H}" style="display:block">
+        <rect x="0" y="2" width="${w}" height="${H - 4}" rx="2" fill="${color}"></rect>
+      </svg>
+      <span class="mono" style="font-size:11px; color:var(--text-muted); min-width:60px">${count} · ${pct.toFixed(1)}%</span>
+    </div>`);
+  }
+  parts.push('</div>');
+  // legend
+  parts.push(`<div class="chart-legend" style="margin-top:8px; font-size:11px">
+    <span><span class="sw" style="background:${MANNER_COLOR.nasal}"></span>nasal</span>
+    <span><span class="sw" style="background:${MANNER_COLOR.plosive}"></span>plosive</span>
+    <span><span class="sw" style="background:${MANNER_COLOR.fricative}"></span>fricative</span>
+    <span><span class="sw" style="background:${MANNER_COLOR.approximant}"></span>approximant</span>
+    <span><span class="sw" style="background:${MANNER_COLOR.vowel}"></span>vowel</span>
+  </div>`);
+  return parts.join('');
+}
+
+function _renderSyllableShapes(stats) {
+  const entries = [...stats.syllableShapeDistribution.entries()].sort((a, b) => b[1] - a[1]);
+  const total = entries.reduce((a, [, c]) => a + c, 0);
+  if (total === 0) return '<div class="hint">No syllable shapes yet.</div>';
+  const W = 320, H = 22;
+  const palette = ['var(--tag-blue, #5d8acf)', 'var(--accent, #4dc4c4)', 'var(--tag-green, #4caf6d)',
+                   'var(--status-orange, #e08a3c)', 'var(--tag-pink, #b66bb0)', 'var(--text-muted, #888)'];
+  let x = 0;
+  const segs = [];
+  const legends = [];
+  for (let i = 0; i < entries.length; i++) {
+    const [shape, count] = entries[i];
+    const w = (count / total) * W;
+    const color = palette[i % palette.length];
+    segs.push(`<rect x="${x.toFixed(2)}" y="0" width="${w.toFixed(2)}" height="${H}" fill="${color}"><title>${_svgEscape(shape)} · ${count}</title></rect>`);
+    legends.push({ shape, count, color, pct: (count / total) * 100 });
+    x += w;
+  }
+  const top = legends.slice(0, 3);
+  const caption = top.map(l => `${l.shape} (${l.pct.toFixed(0)}%)`).join(', ');
+  return `<svg width="${W}" height="${H}" style="display:block; border-radius:3px; overflow:hidden">${segs.join('')}</svg>
+    <div class="chart-legend" style="margin-top:6px; font-size:11px; flex-wrap:wrap; gap:4px 10px">
+      ${legends.map(l => `<span><span class="sw" style="background:${l.color}"></span><span class="mono">${_svgEscape(l.shape)}</span> ${l.count}</span>`).join('')}
+    </div>
+    <div class="hint" style="margin-top:6px">most common: ${_svgEscape(caption)}</div>`;
+}
+
+function _renderLengthHistogram(stats) {
+  const entries = [...stats.wordLengthHistogram.entries()].sort((a, b) => a[0] - b[0]);
+  if (entries.length === 0) return '<div class="hint">No word lengths recorded yet.</div>';
+  const minLen = Math.min(1, entries[0][0]);
+  const maxLen = Math.max(12, entries[entries.length - 1][0]);
+  const bins = [];
+  for (let i = minLen; i <= maxLen; i++) {
+    bins.push([i, stats.wordLengthHistogram.get(i) ?? 0]);
+  }
+  const maxCount = Math.max(1, ...bins.map(b => b[1]));
+  const barW = 18, gap = 4, H = 90, pad = 14;
+  const W = bins.length * (barW + gap);
+  // median
+  const flat = [];
+  for (const [len, c] of bins) for (let i = 0; i < c; i++) flat.push(len);
+  flat.sort((a, b) => a - b);
+  const median = flat.length === 0 ? 0 : flat.length % 2 === 1
+    ? flat[(flat.length - 1) / 2]
+    : (flat[flat.length / 2 - 1] + flat[flat.length / 2]) / 2;
+
+  const bars = bins.map(([len, c], i) => {
+    const h = c === 0 ? 0 : Math.max(2, (c / maxCount) * (H - pad));
+    const x = i * (barW + gap);
+    const y = H - h - pad;
+    return `<g>
+      <rect x="${x}" y="${y}" width="${barW}" height="${h}" rx="2" fill="var(--tag-blue, #5d8acf)"><title>${len} phonemes · ${c} word${c === 1 ? '' : 's'}</title></rect>
+      <text x="${x + barW / 2}" y="${H - 2}" font-size="9" text-anchor="middle" fill="var(--text-muted)" font-family="var(--font-mono)">${len}</text>
+      ${c > 0 ? `<text x="${x + barW / 2}" y="${y - 2}" font-size="9" text-anchor="middle" fill="var(--text-muted)" font-family="var(--font-mono)">${c}</text>` : ''}
+    </g>`;
+  }).join('');
+  return `<svg width="${W}" height="${H}" style="display:block">${bars}</svg>
+    <div class="hint" style="margin-top:6px">
+      mean <span class="mono accent">${stats.avgWordLength.toFixed(2)}</span>
+      · median <span class="mono accent">${median.toFixed(median % 1 === 0 ? 0 : 1)}</span>
+      · C:V <span class="mono accent">${stats.consonantVowelRatio.toFixed(2)}</span>
+      ${stats.unparseable > 0 ? `· <span style="color:var(--status-orange, #e08a3c)">${stats.unparseable} unparseable</span>` : ''}
+    </div>`;
+}
+
+function _renderDonut(map, title, palette) {
+  const entries = [...map.entries()].sort((a, b) => b[1] - a[1]);
+  const total = entries.reduce((a, [, c]) => a + c, 0);
+  if (total === 0) {
+    return `<div class="hint"><b style="color:var(--text-primary)">${_svgEscape(title)}</b><br>—</div>`;
+  }
+  const R = 42, r = 26, cx = 50, cy = 50;
+  let a0 = -Math.PI / 2;
+  const arcs = entries.map(([key, count], i) => {
+    const frac = count / total;
+    const a1 = a0 + frac * Math.PI * 2;
+    const large = frac > 0.5 ? 1 : 0;
+    // Force a whole circle for single-slice case (e.g. one POS).
+    let d;
+    if (entries.length === 1) {
+      // Two semicircles to make a ring.
+      d = `M ${cx - R} ${cy} A ${R} ${R} 0 1 1 ${cx + R} ${cy} A ${R} ${R} 0 1 1 ${cx - R} ${cy} Z
+           M ${cx - r} ${cy} A ${r} ${r} 0 1 0 ${cx + r} ${cy} A ${r} ${r} 0 1 0 ${cx - r} ${cy} Z`;
+    } else {
+      const x0 = cx + R * Math.cos(a0), y0 = cy + R * Math.sin(a0);
+      const x1 = cx + R * Math.cos(a1), y1 = cy + R * Math.sin(a1);
+      const xr0 = cx + r * Math.cos(a1), yr0 = cy + r * Math.sin(a1);
+      const xr1 = cx + r * Math.cos(a0), yr1 = cy + r * Math.sin(a0);
+      d = `M ${x0.toFixed(2)} ${y0.toFixed(2)}
+           A ${R} ${R} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}
+           L ${xr0.toFixed(2)} ${yr0.toFixed(2)}
+           A ${r} ${r} 0 ${large} 0 ${xr1.toFixed(2)} ${yr1.toFixed(2)} Z`;
+    }
+    const color = palette[i % palette.length];
+    a0 = a1;
+    return { d, color, key, count, frac };
+  });
+  const svg = `<svg width="100" height="100" viewBox="0 0 100 100" style="display:block">
+    ${arcs.map(a => `<path d="${a.d}" fill="${a.color}" fill-rule="evenodd"><title>${_svgEscape(a.key)} · ${a.count} (${(a.frac * 100).toFixed(1)}%)</title></path>`).join('')}
+    <text x="50" y="54" text-anchor="middle" font-size="14" font-family="var(--font-mono)" fill="var(--text-primary)">${total}</text>
+  </svg>`;
+  const legend = arcs.map(a => `<div class="row" style="align-items:center; gap:6px; font-size:11px">
+    <span class="sw" style="background:${a.color}; width:10px; height:10px; display:inline-block; border-radius:2px"></span>
+    <span style="flex:1">${_svgEscape(a.key)}</span>
+    <span class="mono" style="color:var(--text-muted)">${a.count}</span>
+  </div>`).join('');
+  return `<div><div class="hint" style="margin-bottom:4px"><b style="color:var(--text-primary)">${_svgEscape(title)}</b></div>
+    <div class="row" style="align-items:flex-start; gap:10px">
+      ${svg}
+      <div style="flex:1; display:flex; flex-direction:column; gap:2px; min-width:0">${legend}</div>
+    </div></div>`;
+}
+
+function renderStatsDashboard() {
+  const host = document.getElementById('stats-dashboard');
+  if (!host) return;
+  if (state.lexicon.length === 0) {
+    host.innerHTML = '<div class="hint">No words yet. Add entries in the <b>Lexicon</b> tab to see phoneme balance, syllable shapes and word-length distribution.</div>';
+    _statsCache = null;
+    return;
+  }
+  const sig = statsSignature();
+  let stats;
+  if (_statsCache && _statsCache.sig === sig) {
+    stats = _statsCache.stats;
+  } else {
+    const { spec, phono } = buildPhonotacticSpec();
+    if (phono.phonemes.length === 0) {
+      host.innerHTML = '<div class="hint">Select an inventory in the chart above first.</div>';
+      _statsCache = null;
+      return;
+    }
+    stats = computeLexiconStatistics(state.lexicon, phono, spec);
+    _statsCache = { sig, stats };
+  }
+
+  const posPalette = ['var(--tag-blue, #5d8acf)', 'var(--tag-green, #4caf6d)', 'var(--accent, #4dc4c4)',
+                      'var(--status-orange, #e08a3c)', 'var(--tag-pink, #b66bb0)', 'var(--text-muted, #888)',
+                      '#d44a4a', '#7aa0d9', '#b9a04a', '#4caf6d', '#a06bb6'];
+  const regPalette = ['var(--accent, #4dc4c4)', 'var(--status-orange, #e08a3c)', 'var(--tag-pink, #b66bb0)',
+                      'var(--tag-blue, #5d8acf)', 'var(--text-muted, #888)'];
+
+  host.innerHTML = `
+    <div style="display:grid; grid-template-columns: minmax(260px, 1fr) minmax(260px, 1fr); gap: 16px">
+      <div>
+        <div class="hint" style="margin-bottom:6px"><b style="color:var(--text-primary)">Phoneme frequency</b>
+          <span style="color:var(--text-muted)"> · ${stats.parsedCount}/${stats.wordCount} word${stats.wordCount === 1 ? '' : 's'} parsed</span>
+        </div>
+        ${_renderPhonemeBar(stats)}
+      </div>
+      <div style="display:flex; flex-direction:column; gap:14px">
+        <div>
+          <div class="hint" style="margin-bottom:6px"><b style="color:var(--text-primary)">Syllable shape</b></div>
+          ${_renderSyllableShapes(stats)}
+        </div>
+        <div>
+          <div class="hint" style="margin-bottom:6px"><b style="color:var(--text-primary)">Word length</b>
+            <span style="color:var(--text-muted)"> · phonemes per lemma</span>
+          </div>
+          ${_renderLengthHistogram(stats)}
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px">
+          ${_renderDonut(stats.posBreakdown, 'Parts of speech', posPalette)}
+          ${_renderDonut(stats.registerBreakdown, 'Register', regPalette)}
+        </div>
+      </div>
+    </div>`;
+}
 
 // Initial paint.
 renderAll();
