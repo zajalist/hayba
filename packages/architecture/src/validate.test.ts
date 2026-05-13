@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { validateFootprintShape, validateTypology, validateStyleSheet } from './validate.js';
+import {
+  validateFootprintShape, validateTypology, validateStyleSheet,
+  validateStyleGuide, validateStyleGuideRefs,
+} from './validate.js';
 
 describe('validateFootprintShape', () => {
   it('accepts a well-formed rectangle', () => {
@@ -125,5 +128,68 @@ describe('validateStyleSheet', () => {
     const bad = { ...valid, dateRange: [1400, 1140] };
     const errs = validateStyleSheet(bad, '/sheet');
     expect(errs.some(e => e.path === '/sheet/dateRange')).toBe(true);
+  });
+});
+
+describe('validateStyleGuide', () => {
+  const sheet = {
+    id: 's1', cultureId: 'c', dateRange: [0, 100],
+    core: { primaryMaterial: 'timber', roofType: 'thatch', ornamentation: [] },
+    extras: {},
+  };
+  const valid = {
+    id: 'g1',
+    styleSheet: sheet,
+    typologyWeights: [
+      { typologyId: 'peasant_home', weight: 1 },
+      { typologyId: 'townhouse',    weight: 2.5 },
+    ],
+  };
+
+  it('accepts a well-formed guide', () => {
+    expect(validateStyleGuide(valid, '/g')).toEqual([]);
+  });
+
+  it('rejects empty typologyWeights', () => {
+    const errs = validateStyleGuide({ ...valid, typologyWeights: [] }, '/g');
+    expect(errs.some(e => e.path === '/g/typologyWeights')).toBe(true);
+  });
+
+  it('rejects zero/negative weight', () => {
+    const bad = {
+      ...valid,
+      typologyWeights: [{ typologyId: 'peasant_home', weight: 0 }],
+    };
+    const errs = validateStyleGuide(bad, '/g');
+    expect(errs.some(e => e.path === '/g/typologyWeights/0/weight')).toBe(true);
+  });
+
+  it('rejects malformed embedded styleSheet', () => {
+    const bad = { ...valid, styleSheet: { ...sheet, core: { ...sheet.core, roofType: 'X' } } };
+    const errs = validateStyleGuide(bad, '/g');
+    expect(errs.some(e => e.path === '/g/styleSheet/core/roofType')).toBe(true);
+  });
+});
+
+describe('validateStyleGuideRefs', () => {
+  const sheet = {
+    id: 's', cultureId: 'c', dateRange: [0, 1],
+    core: { primaryMaterial: 'timber', roofType: 'thatch', ornamentation: [] },
+    extras: {},
+  };
+  const guide = {
+    id: 'g', styleSheet: sheet,
+    typologyWeights: [{ typologyId: 'peasant_home', weight: 1 }],
+  };
+
+  it('returns no errors when all typology refs resolve', () => {
+    expect(validateStyleGuideRefs(guide as never, new Set(['peasant_home']), '/g')).toEqual([]);
+  });
+
+  it('reports dangling typology references', () => {
+    const errs = validateStyleGuideRefs(guide as never, new Set(['townhouse']), '/g');
+    expect(errs).toHaveLength(1);
+    expect(errs[0].path).toBe('/g/typologyWeights/0/typologyId');
+    expect(errs[0].message).toMatch(/peasant_home/);
   });
 });
