@@ -78,3 +78,11 @@ export {
 // Family tree (L14)
 export type { LanguageTreeNode, SampleChange } from './family-tree.js';
 export { buildFamilyTree } from './family-tree.js';
+
+// Typology catalogue (L15)
+export type {
+  TypologyFeature, TypologyOption, TypologyCategory, LanguageProfile,
+} from './data/typology.js';
+export {
+  TYPOLOGY_FEATURES, TYPOLOGY_PRESETS, getTypologyFeature, validateProfile, profileSummary,
+} from './data/typology.js';

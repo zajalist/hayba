@@ -219,6 +219,7 @@
   nav button[data-view="grammar"]       { --icon-c: #c685c0; }
   nav button[data-view="sound-changes"] { --icon-c: var(--status-orange); }
   nav button[data-view="family-tree"]   { --icon-c: var(--accent); }
+  nav button[data-view="typology"]      { --icon-c: var(--tag-green); }
   nav button[data-view="romanization"]  { --icon-c: var(--accent); }
   nav button[data-view="names"]         { --icon-c: #c685c0; }
   nav button[data-view="docs"]          { --icon-c: var(--text-muted); }
@@ -706,6 +707,48 @@
   .companion .pct { color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; }
   .companion .name { color: var(--text-secondary); font-size: 11px; flex: 1; padding: 0 8px; }
 
+  /* L15 — Typology */
+  .typ-cat-title {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .12em;
+    color: var(--text-muted); margin: 14px 4px 6px;
+  }
+  .typ-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px;
+  }
+  .typ-card {
+    background: var(--bg-panel); border: 1px solid var(--border-soft);
+    border-radius: 6px; padding: 10px 12px;
+  }
+  .typ-card .typ-label {
+    font-size: 13px; color: var(--text-primary); font-weight: 600;
+  }
+  .typ-card .typ-desc {
+    font-size: 11px; color: var(--text-muted); margin: 2px 0 8px; line-height: 1.4;
+  }
+  .typ-opts { display: flex; flex-direction: column; gap: 5px; }
+  .typ-opt {
+    display: flex; flex-direction: column; gap: 3px;
+    padding: 6px 8px; background: var(--bg-base);
+    border: 1px solid var(--border-soft); border-radius: 4px;
+    cursor: pointer; transition: border-color .12s, background .12s;
+    font-size: 12px; color: var(--text-secondary); text-align: left;
+  }
+  .typ-opt:hover { border-color: var(--accent); color: var(--text-primary); }
+  .typ-opt.selected {
+    border-color: var(--accent); background: var(--accent-dim); color: var(--accent);
+  }
+  .typ-opt .typ-opt-top {
+    display: flex; justify-content: space-between; align-items: center; gap: 6px;
+  }
+  .typ-opt .typ-opt-freq { font-size: 10px; color: var(--text-muted); font-family: var(--font-mono); }
+  .typ-opt.selected .typ-opt-freq { color: var(--accent); }
+  .typ-freq-bar {
+    height: 3px; background: var(--accent-dim); border-radius: 2px; overflow: hidden;
+  }
+  .typ-freq-bar > span {
+    display: block; height: 100%; background: var(--accent); border-radius: 2px;
+  }
+
   /* Preset modal */
   .preset-dialog {
     position: fixed; inset: 0; background: rgba(0,0,0,0.6);
@@ -856,6 +899,15 @@
         <path d="M12 11h6v6.2"/>
       </svg>
       <span>Family Tree</span><span class="key">T</span>
+    </button>
+    <button data-view="typology">
+      <!-- Typology: hexagon with linking diagonals -->
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3l7 4v10l-7 4-7-4V7l7-4Z"/>
+        <path d="M5 7l7 4 7-4"/>
+        <path d="M12 11v10"/>
+      </svg>
+      <span>Typology</span><span class="key">Y</span>
     </button>
     <button data-view="sound-changes">
       <!-- Diachrony: time arrow with transform -->
@@ -1287,6 +1339,30 @@
       </div>
     </section>
 
+    <!-- ====================== Typology (L15) ====================== -->
+    <section class="view" id="view-typology">
+      <div class="panel">
+        <div class="panel-header">
+          Typology — WALS-style feature checklist
+          <span class="sub" id="typ-summary">no profile set</span>
+          <span class="meta" id="typ-meta">0 / 0 features set</span>
+        </div>
+        <div class="panel-body">
+          <div class="row" style="gap:8px; align-items:center; flex-wrap:wrap">
+            <label class="field" style="min-width:220px">
+              <span>Match a known language</span>
+              <select class="input" id="typ-preset">
+                <option value="">— preset —</option>
+              </select>
+            </label>
+            <button class="btn" id="typ-clear" title="Clear all typology choices for this language">Clear profile</button>
+            <span class="hint" style="flex:1; min-width:200px">Cited frequencies are approximate (WALS / Grambank).</span>
+          </div>
+        </div>
+      </div>
+      <div id="typ-categories"></div>
+    </section>
+
     <!-- ====================== Sound Changes ====================== -->
     <section class="view" id="view-sound-changes">
       <div class="panel">
@@ -1436,6 +1512,7 @@ import {
   addAxis, removeAxis, addAxisValue, removeAxisValue,
   InMemoryWordlinks, autoCognatesFromDiachrony,
   buildFamilyTree,
+  TYPOLOGY_FEATURES, TYPOLOGY_PRESETS, profileSummary,
 } from '../dist/index.js';
 
 /* ─────────────────────  state  ───────────────────── */
@@ -1457,6 +1534,8 @@ const state = loadState() ?? {
     /* { def: ParadigmDef, stem: string, rules: AffixRule[] } */
     def: null, stem: '', rules: [],
   },
+  // L15: typology profile (feature key → option value) for the active language.
+  typology: {},
   // L13: multi-language snapshots + cross-language links.
   // languages[id] holds the per-language facets when not active.
   languages: {},
@@ -1476,6 +1555,7 @@ function loadState() {
       romTest: j.romTest ?? 'paʃa',
       inspectorPinned: j.inspectorPinned ?? true,
       grammar: j.grammar ?? { def: null, stem: '', rules: [] },
+      typology: j.typology ?? {},
       languages: j.languages ?? {},
       wordlinks: j.wordlinks ?? [],
     };
@@ -1878,6 +1958,13 @@ function renderPhonology() {
     if (selectedConsRecords.some(c => c.place === 'uvular' || c.place === 'pharyngeal' || c.place === 'epiglottal')) tags.push({ label: 'back-articulated' });
     if (vCount >= 12) tags.push({ label: 'rich vowel system' });
     if (vCount > 0 && vCount <= 3) tags.push({ label: 'minimal vowels' });
+    // L15 — surface typology highlights as tags
+    const typ = state.typology ?? {};
+    if (typ.word_order && typ.word_order !== 'free') tags.push({ label: typ.word_order });
+    if (typ.word_order === 'free') tags.push({ label: 'free word order' });
+    if (typ.tone && typ.tone !== 'none') tags.push({ label: 'tonal' });
+    if (typ.vowel_harmony && typ.vowel_harmony !== 'none') tags.push({ label: 'vowel harmony' });
+    if (typ.polysynthesis === 'yes') tags.push({ label: 'polysynthetic' });
   }
   for (const t of tags) {
     const el = document.createElement('span');
@@ -1936,6 +2023,7 @@ function snapshotActiveLanguage() {
     rules: state.rules,
     romRules: state.romRules,
     grammar: state.grammar,
+    typology: { ...(state.typology ?? {}) },
   };
 }
 function loadLanguageSnapshot(langId) {
@@ -1946,10 +2034,12 @@ function loadLanguageSnapshot(langId) {
     state.rules = snap.rules;
     state.romRules = snap.romRules;
     state.grammar = snap.grammar ?? { def: null, stem: '', rules: [] };
+    state.typology = snap.typology ?? {};
   } else {
     // New language: start with the current inventory but empty lexicon/rules.
     state.lexicon = []; state.rules = ''; state.romRules = [];
     state.grammar = { def: null, stem: '', rules: [] };
+    state.typology = {};
   }
   state.langId = langId;
 }
@@ -3162,10 +3252,142 @@ function renderFamilyTree() {
   }
 }
 
+/* —— L15 typology renderer —— */
+const TYP_CATEGORY_LABELS = {
+  'word-order': 'Word order',
+  'morphology': 'Morphology',
+  'semantics':  'Tense · aspect · semantics',
+  'phonology':  'Phonology',
+  'syntax':     'Syntax',
+};
+function renderTypology() {
+  const profile = state.typology ?? (state.typology = {});
+
+  // Summary line + meta
+  const summaryEl = document.getElementById('typ-summary');
+  const metaEl = document.getElementById('typ-meta');
+  if (summaryEl) {
+    const s = profileSummary(profile);
+    summaryEl.textContent = s || 'no profile set';
+  }
+  if (metaEl) {
+    const set = Object.keys(profile).filter(k => profile[k]).length;
+    metaEl.textContent = `${set} / ${TYPOLOGY_FEATURES.length} features set`;
+  }
+
+  // Preset dropdown — only build the options once.
+  const presetSel = document.getElementById('typ-preset');
+  if (presetSel && presetSel.options.length <= 1) {
+    for (const name of Object.keys(TYPOLOGY_PRESETS)) {
+      const o = document.createElement('option');
+      o.value = name; o.textContent = name;
+      presetSel.appendChild(o);
+    }
+  }
+  if (presetSel) presetSel.value = '';
+
+  // Category sections + feature cards
+  const host = document.getElementById('typ-categories');
+  if (!host) return;
+  host.innerHTML = '';
+
+  const byCat = new Map();
+  for (const f of TYPOLOGY_FEATURES) {
+    if (!byCat.has(f.category)) byCat.set(f.category, []);
+    byCat.get(f.category).push(f);
+  }
+
+  for (const [cat, feats] of byCat.entries()) {
+    const title = document.createElement('div');
+    title.className = 'typ-cat-title';
+    title.textContent = TYP_CATEGORY_LABELS[cat] ?? cat;
+    host.appendChild(title);
+
+    const grid = document.createElement('div');
+    grid.className = 'typ-grid';
+    for (const f of feats) {
+      const card = document.createElement('div');
+      card.className = 'typ-card panel';
+      card.style.padding = '10px 12px';
+      const label = document.createElement('div');
+      label.className = 'typ-label'; label.textContent = f.label;
+      const desc = document.createElement('div');
+      desc.className = 'typ-desc'; desc.textContent = f.description;
+      card.appendChild(label); card.appendChild(desc);
+
+      const opts = document.createElement('div');
+      opts.className = 'typ-opts';
+      for (const o of f.options) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'typ-opt' + (profile[f.key] === o.value ? ' selected' : '');
+        btn.dataset.feature = f.key;
+        btn.dataset.option = o.value;
+
+        const top = document.createElement('div');
+        top.className = 'typ-opt-top';
+        const lbl = document.createElement('span'); lbl.textContent = o.label;
+        const freq = document.createElement('span');
+        freq.className = 'typ-opt-freq';
+        if (typeof o.frequency === 'number') {
+          const pct = o.frequency * 100;
+          freq.textContent = `~${pct < 1 ? pct.toFixed(1) : pct.toFixed(0)}%`;
+        } else {
+          freq.textContent = '';
+        }
+        top.appendChild(lbl); top.appendChild(freq);
+        btn.appendChild(top);
+
+        if (typeof o.frequency === 'number') {
+          const bar = document.createElement('div');
+          bar.className = 'typ-freq-bar';
+          const fill = document.createElement('span');
+          fill.style.width = `${Math.min(100, o.frequency * 100)}%`;
+          bar.appendChild(fill);
+          btn.appendChild(bar);
+        }
+
+        btn.addEventListener('click', () => {
+          if (profile[f.key] === o.value) {
+            delete profile[f.key]; // toggle off
+          } else {
+            profile[f.key] = o.value;
+          }
+          saveState();
+          renderTypology();
+          renderPhonology(); // update inv-stats typology tags
+        });
+        opts.appendChild(btn);
+      }
+      card.appendChild(opts);
+      grid.appendChild(card);
+    }
+    host.appendChild(grid);
+  }
+}
+
+/* preset + clear wiring */
+(() => {
+  const preset = document.getElementById('typ-preset');
+  if (preset) preset.addEventListener('change', e => {
+    const name = e.target.value;
+    if (!name) return;
+    const tpl = TYPOLOGY_PRESETS[name];
+    if (!tpl) return;
+    state.typology = { ...tpl };
+    saveState(); renderTypology(); renderPhonology();
+  });
+  const clear = document.getElementById('typ-clear');
+  if (clear) clear.addEventListener('click', () => {
+    state.typology = {};
+    saveState(); renderTypology(); renderPhonology();
+  });
+})();
+
 function renderAll() {
   renderNav(); renderTopbar(); renderPhonology();
   renderLexicon(); renderSoundChanges(); renderRomanization();
-  renderGrammar(); renderFamilyTree();
+  renderGrammar(); renderFamilyTree(); renderTypology();
 }
 
 /* —— Inspector pin + sticky shadow —— */
