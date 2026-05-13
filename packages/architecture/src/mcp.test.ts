@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { listStyleGuides, getStyleGuideTool, getTypologyTool, validateStyleGuideTool } from './mcp.js';
+import {
+  listStyleGuides, getStyleGuideTool, getTypologyTool, validateStyleGuideTool,
+  listStyleGuides as _ls, getStyleGuideTool as _gs, getTypologyTool as _gt,
+} from './mcp.js';
 
 describe('architecture_list_style_guides', () => {
   it('returns metadata for all 11 seed guides', () => {
@@ -104,5 +107,30 @@ describe('architecture_validate_style_guide', () => {
     });
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.errors.length).toBeGreaterThanOrEqual(5);
+  });
+});
+
+describe('determinism — byte-identical JSON across calls', () => {
+  it('list_style_guides', () => {
+    expect(JSON.stringify(_ls())).toBe(JSON.stringify(_ls()));
+  });
+  it('get_style_guide on every seed id', () => {
+    const ids = _ls().guides.map(g => g.id);
+    for (const id of ids) {
+      expect(JSON.stringify(_gs({ id }))).toBe(JSON.stringify(_gs({ id })));
+    }
+  });
+  it('get_typology on every seed typology', () => {
+    const seen = new Set<string>();
+    for (const meta of _ls().guides) {
+      const g = _gs({ id: meta.id });
+      if ('guide' in g) {
+        for (const w of g.guide.typologyWeights) seen.add(w.typologyId);
+      }
+    }
+    expect(seen.size).toBeGreaterThan(0);
+    for (const id of seen) {
+      expect(JSON.stringify(_gt({ id }))).toBe(JSON.stringify(_gt({ id })));
+    }
   });
 });
