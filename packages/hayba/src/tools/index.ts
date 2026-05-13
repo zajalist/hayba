@@ -20,6 +20,9 @@ import { sceneValidatePhysicsHandler, meta as scenePhysicsMeta } from './scene/s
 import { editorCaptureViewportHandler, meta as captureMeta } from './editor/editor-capture-viewport.js';
 import { editorStartPieHandler, meta as pieMeta } from './editor/editor-start-pie.js';
 import { editorStreamLogHandler, meta as streamLogMeta } from './editor/editor-stream-log.js';
+import { editorGetPerfStatsHandler, meta as perfStatsMeta, schema as perfStatsSchema } from './perf/editor-get-perf-stats.js';
+import { textureAuditHandler, meta as textureAuditMeta, schema as textureAuditSchema } from './perf/texture-audit.js';
+import { meshAuditHandler, meta as meshAuditMeta, schema as meshAuditSchema } from './perf/mesh-audit.js';
 
 // ── PCGEx tool handlers ───────────────────────────────────────────────────────
 import { searchNodeCatalog } from './search-node-catalog.js';
@@ -317,6 +320,37 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       const r = await editorStreamLogHandler(params as Record<string, unknown>, session);
       return { content: r.content, isError: r.isError };
     }
+  );
+
+  // ── Perf telemetry (issue #5) ───────────────────────────────────────────────
+  server.tool(
+    'editor_get_perf_stats',
+    appendMeta('Sample frame ms / draw calls / triangles / memory from FStatManager. Use this before suggesting scene optimizations.', perfStatsMeta),
+    perfStatsSchema.shape,
+    async (params) => {
+      const r = await editorGetPerfStatsHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    },
+  );
+
+  server.tool(
+    'texture_audit',
+    appendMeta('Surface largest textures by memory + compression-format outliers, ordered descending. Use for technical-artist passes.', textureAuditMeta),
+    textureAuditSchema.shape,
+    async (params) => {
+      const r = await textureAuditHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    },
+  );
+
+  server.tool(
+    'mesh_audit',
+    appendMeta('Surface highest-poly meshes, LOD-chain gaps, and instance-count hotspots. Pairs with texture_audit for full scene perf passes.', meshAuditMeta),
+    meshAuditSchema.shape,
+    async (params) => {
+      const r = await meshAuditHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    },
   );
 
   // ── PCGEx tools ─────────────────────────────────────────────────────────────
@@ -1059,6 +1093,11 @@ function recordEagerSchemas(
     format: z.enum(['raw', 'structured']).optional().describe('"structured" emits {line, category, severity, msg, raw} objects'),
     since_line: z.coerce.number().int().min(0).optional(),
   }, 'low', '{lines:[string|object], next_line:int, format}');
+
+  // ── Perf telemetry (issue #5) ─────────────────────────────────────────────
+  reg('editor_get_perf_stats', perfStatsSchema.shape, 'low', '{frame_ms, draw_calls, triangles, memory_mb, sampled_frames}');
+  reg('texture_audit', textureAuditSchema.shape, 'medium', '{items:[{path, width, height, format, on_disk_kb, group, compression}], total_count}');
+  reg('mesh_audit', meshAuditSchema.shape, 'medium', '{items:[{path, triangles, lod_count, instance_count, lod_issue?}], total_count}');
 
   // ── PCGEx domain ──────────────────────────────────────────────────────────
   reg('hayba_search_node_catalog', {
