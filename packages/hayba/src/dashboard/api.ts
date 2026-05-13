@@ -6,6 +6,7 @@ import { loadCatalog, searchCatalog, getCategories } from '../catalog.js';
 import { createProject, deleteProject, getProject, listProjects } from '../projects.js';
 import { submitZones, getCurrentZones, setHeightmap, getHeightmap, getPainterSession, lockPainter, unlockPainter, createScratchSession, submitScratchZones, getScratchZones } from '../zones.js';
 import { getEntries, addEntry, deleteEntry, getBaseTemplates } from '../encyclopedia.js';
+import { getCachedSidecarHealth, pingSidecar } from '../tools/visual/sidecar-client.js';
 
 /**
  * Register REST API endpoints for the dashboard.
@@ -49,21 +50,38 @@ export function registerApiRoutes(app: Express): void {
     }
   });
 
-  // UE status (ping)
+  // UE status (ping) + visual sidecar handshake
   app.get('/api/ue/status', async (_req: Request, res: Response) => {
+    const sidecar = getCachedSidecarHealth() ?? await pingSidecar();
+    const sidecarFields = {
+      visual_embeddings_available: sidecar.available,
+      active_models: sidecar.active_models,
+      sidecar_url: sidecar.url,
+      sidecar_error: sidecar.error,
+    };
     try {
       const client = getUEClient();
       if (!client.isConnected()) {
-        return res.json({ connected: false, error: 'Not connected to UE' });
+        return res.json({ connected: false, error: 'Not connected to UE', ...sidecarFields });
       }
       const response = await client.send('ping', {}, 5000);
       if (response.ok) {
-        res.json({ connected: true, ...response.data });
+        res.json({ connected: true, ...sidecarFields, ...response.data });
       } else {
-        res.json({ connected: false, error: response.error });
+        res.json({ connected: false, error: response.error, ...sidecarFields });
       }
     } catch (err) {
-      res.json({ connected: false, error: err instanceof Error ? err.message : 'Unknown error' });
+      res.json({ connected: false, error: err instanceof Error ? err.message : 'Unknown error', ...sidecarFields });
+    }
+  });
+
+  // Force a fresh sidecar probe (useful after launching the sidecar mid-session)
+  app.post('/api/sidecar/refresh', async (_req: Request, res: Response) => {
+    try {
+      const health = await pingSidecar();
+      res.json(health);
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
     }
   });
 
