@@ -12,6 +12,7 @@ import {
   translate, renderRomanized,
   buildParadigm, findRuleConflicts, PRESET_PARADIGMS,
   addAxis, removeAxis, addAxisValue, removeAxisValue,
+  generateDerivations,
   createLoanwordAdapter,
   computeLexiconStatistics,
   exportToCsv, exportToAnkiTsv, exportToMarkdown,
@@ -2277,11 +2278,180 @@ document.getElementById('gr-rule-add').addEventListener('click', () => {
   saveState(); renderGrammar();
 });
 
+/* ───────────  Derivational morphology (L28)  ─────────── */
+
+document.getElementById('gr-deriv-add').addEventListener('click', () => {
+  if (!state.grammar.derivationRules) state.grammar.derivationRules = [];
+  const sourcePos = document.getElementById('gr-deriv-src').value;
+  const resultPos = document.getElementById('gr-deriv-res').value;
+  const kind = document.getElementById('gr-deriv-kind').value.trim();
+  const position = document.getElementById('gr-deriv-pos-kind').value;
+  const form = document.getElementById('gr-deriv-form').value;
+  const productivity = document.getElementById('gr-deriv-prod').value;
+  const glossTemplate = document.getElementById('gr-deriv-gloss').value.trim() || undefined;
+  if (!kind || !form) return;
+  state.grammar.derivationRules.push({
+    sourcePos, resultPos, kind, position, form, productivity, glossTemplate,
+  });
+  document.getElementById('gr-deriv-kind').value = '';
+  document.getElementById('gr-deriv-form').value = '';
+  document.getElementById('gr-deriv-gloss').value = '';
+  saveState(); renderGrammarDerivations();
+});
+
+document.getElementById('gr-deriv-generate').addEventListener('click', () => {
+  const rules = state.grammar.derivationRules ?? [];
+  const fossil = document.getElementById('gr-deriv-fossil').checked;
+  state.derivationResults = generateDerivations(state.lexicon, rules, { includeFossilised: fossil });
+  renderGrammarDerivations();
+});
+
+document.getElementById('gr-deriv-add-all').addEventListener('click', () => {
+  const results = state.derivationResults ?? [];
+  for (const r of results) addDerivationToLexicon(r);
+  state.derivationResults = [];
+  saveState();
+  renderGrammarDerivations();
+  renderAffected(['lexicon', 'wordlinks']);
+});
+
+/** Persist a derivation to the lexicon + add a cognate wordlink to its root. */
+function addDerivationToLexicon(result) {
+  const { root, derived } = result;
+  // Coin a concept for the derived form. Prefer "${rootConcept}.${kind}".
+  const rootConcept = root.concept ?? root.gloss ?? root.lemma;
+  const baseConcept = `${rootConcept}.${result.rule.kind}`;
+  let concept = baseConcept;
+  let i = 2;
+  while (state.lexicon.some(e => e.concept === concept)) {
+    concept = `${baseConcept}.${i++}`;
+  }
+  const entry = {
+    concept,
+    lemma: derived.lemma,
+    ipa: derived.ipa,
+    gloss: derived.gloss,
+    pos: derived.pos,
+    register: derived.register ?? 'neutral',
+    etymology: derived.etymology,
+  };
+  state.lexicon.push(entry);
+  // Intra-language cognate wordlink back to the root.
+  if (root.concept) {
+    const link = {
+      langA: state.langId, conceptA: root.concept,
+      langB: state.langId, conceptB: concept,
+      kind: 'cognate',
+    };
+    const dup = state.wordlinks.find(l =>
+      (l.langA === link.langA && l.conceptA === link.conceptA &&
+       l.langB === link.langB && l.conceptB === link.conceptB) ||
+      (l.langA === link.langB && l.conceptA === link.conceptB &&
+       l.langB === link.langA && l.conceptB === link.conceptA));
+    if (!dup) state.wordlinks.push(link);
+  }
+  return entry;
+}
+
+function renderGrammarDerivations() {
+  const rules = state.grammar.derivationRules ?? [];
+  const tbody = document.getElementById('gr-deriv-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  for (let i = 0; i < rules.length; i++) {
+    const r = rules[i];
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><span class="pos-tag">${escapeHtml(r.sourcePos)}</span></td>
+      <td><span class="pos-tag">${escapeHtml(r.resultPos)}</span></td>
+      <td>${escapeHtml(r.kind)}</td>
+      <td class="muted">${escapeHtml(r.position)}</td>
+      <td class="accent mono">${escapeHtml(r.form)}</td>
+      <td class="muted">${escapeHtml(r.productivity)}</td>
+      <td class="mono">${escapeHtml(r.glossTemplate ?? '')}</td>
+      <td class="right-actions"><button class="btn" data-rm="${i}">×</button></td>`;
+    tbody.appendChild(tr);
+  }
+  tbody.querySelectorAll('button[data-rm]').forEach(b =>
+    b.addEventListener('click', () => {
+      state.grammar.derivationRules.splice(+b.dataset.rm, 1);
+      saveState(); renderGrammarDerivations();
+    }));
+  document.getElementById('gr-deriv-meta').textContent =
+    `${rules.length} rule${rules.length === 1 ? '' : 's'}`;
+
+  // Results
+  const results = state.derivationResults ?? null;
+  const resultsTbl = document.getElementById('gr-deriv-results-table');
+  const resultsEmpty = document.getElementById('gr-deriv-results-empty');
+  const addAllBtn = document.getElementById('gr-deriv-add-all');
+  const meta = document.getElementById('gr-deriv-results-meta');
+  const resultsBody = document.getElementById('gr-deriv-results-tbody');
+  resultsBody.innerHTML = '';
+  if (!results) {
+    resultsTbl.style.display = 'none';
+    resultsEmpty.style.display = 'none';
+    addAllBtn.style.display = 'none';
+    meta.textContent = '';
+    return;
+  }
+  if (results.length === 0) {
+    resultsTbl.style.display = 'none';
+    resultsEmpty.style.display = '';
+    addAllBtn.style.display = 'none';
+    meta.textContent = '0 derivations';
+    return;
+  }
+  resultsTbl.style.display = '';
+  resultsEmpty.style.display = 'none';
+  addAllBtn.style.display = '';
+  meta.textContent = `${results.length} derivation${results.length === 1 ? '' : 's'}`;
+  for (let i = 0; i < results.length; i++) {
+    const { root, rule, derived } = results[i];
+    const rootConcept = root.concept ?? root.gloss ?? root.lemma;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>
+        <a href="#" class="deriv-jump" data-concept="${escapeHtml(root.concept ?? '')}">
+          <span class="mono" style="font-family: var(--font-ipa, monospace)">${escapeHtml(root.lemma)}</span>
+        </a>
+        <span class="muted" style="font-size:11px"> (${escapeHtml(rootConcept)})</span>
+      </td>
+      <td style="font-family: var(--font-ipa, monospace)" class="accent">${escapeHtml(derived.lemma)}</td>
+      <td><span class="pos-tag">${escapeHtml(rule.kind)}</span></td>
+      <td class="muted mono" style="font-size:11px">${escapeHtml(derived.etymology ?? '')}</td>
+      <td class="right-actions"><button class="btn primary" data-add="${i}">Add</button></td>`;
+    resultsBody.appendChild(tr);
+  }
+  resultsBody.querySelectorAll('button[data-add]').forEach(b =>
+    b.addEventListener('click', () => {
+      const idx = +b.dataset.add;
+      const r = results[idx];
+      if (!r) return;
+      addDerivationToLexicon(r);
+      // Remove from results array so user can't double-add
+      state.derivationResults.splice(idx, 1);
+      saveState();
+      renderGrammarDerivations();
+      renderAffected(['lexicon', 'wordlinks']);
+    }));
+  resultsBody.querySelectorAll('a.deriv-jump').forEach(a =>
+    a.addEventListener('click', e => {
+      e.preventDefault();
+      const concept = a.dataset.concept;
+      if (!concept) return;
+      const searchEl = document.getElementById('lex-search');
+      if (searchEl) searchEl.value = concept;
+      state.view = 'lexicon'; saveState(); renderNav();
+    }));
+}
+
 function renderGrammar() {
   if (typeof closePopover === 'function') closePopover();
   renderGrammarTemplateGallery();
   renderGrammarLemmaChips();
   renderGrammarAxisEditor();
+  renderGrammarDerivations();
 
   // Lexicon picker
   const lexSel = document.getElementById('gr-lex');

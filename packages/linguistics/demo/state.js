@@ -24,7 +24,7 @@ export function defaultState() {
     romRules: [],
     romTest: 'paʃa',
     inspectorPinned: true,
-    grammar: { def: null, stem: '', rules: [] },
+    grammar: { def: null, stem: '', rules: [], derivationRules: [] },
     typology: {},
     languages: {},
     wordlinks: [],
@@ -57,6 +57,7 @@ export function loadState() {
       nameGenScratch: j.nameGenScratch ?? null,
       ttsEnabled: j.ttsEnabled ?? true,
       phrasePack: j.phrasePack ?? null,
+      derivationResults: null,
     };
   } catch {
     return null;
@@ -94,7 +95,8 @@ export function loadLanguageSnapshot(state, langId) {
     state.allophony = snap.allophony ?? { rulesText: '' };
     state.prosody = snap.prosody ?? defaultProsody();
     state.romRules = snap.romRules;
-    state.grammar = snap.grammar ?? { def: null, stem: '', rules: [] };
+    state.grammar = snap.grammar ?? { def: null, stem: '', rules: [], derivationRules: [] };
+    if (!state.grammar.derivationRules) state.grammar.derivationRules = [];
     state.typology = snap.typology ?? {};
   } else {
     state.lexicon = [];
@@ -102,7 +104,7 @@ export function loadLanguageSnapshot(state, langId) {
     state.allophony = { rulesText: '' };
     state.prosody = defaultProsody();
     state.romRules = [];
-    state.grammar = { def: null, stem: '', rules: [] };
+    state.grammar = { def: null, stem: '', rules: [], derivationRules: [] };
     state.typology = {};
   }
   state.langId = langId;

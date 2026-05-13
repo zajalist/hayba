@@ -1664,6 +1664,95 @@ phoneme=a : HL"></textarea>
           </div>
         </div>
       </div>
+
+      <div class="panel">
+        <div class="panel-header">Derivations
+          <span class="sub">coin new vocabulary by attaching POS-shifting affixes</span>
+          <span class="meta" id="gr-deriv-meta">0 rules</span>
+        </div>
+        <div class="panel-body">
+          <div class="row" style="margin-bottom: 10px; gap: 8px; flex-wrap: wrap">
+            <label class="field" style="width: 100px"><span>Source POS</span>
+              <select id="gr-deriv-src">
+                <option value="noun">noun</option>
+                <option value="verb">verb</option>
+                <option value="adjective">adjective</option>
+                <option value="adverb">adverb</option>
+              </select>
+            </label>
+            <label class="field" style="width: 100px"><span>Result POS</span>
+              <select id="gr-deriv-res">
+                <option value="noun">noun</option>
+                <option value="verb">verb</option>
+                <option value="adjective">adjective</option>
+                <option value="adverb">adverb</option>
+              </select>
+            </label>
+            <label class="field" style="flex: 1; min-width: 140px"><span>Kind</span>
+              <input class="input" id="gr-deriv-kind" placeholder="agent-noun">
+            </label>
+            <label class="field" style="width: 110px"><span>Position</span>
+              <select id="gr-deriv-pos-kind">
+                <option value="suffix">suffix</option>
+                <option value="prefix">prefix</option>
+                <option value="circumfix">circumfix</option>
+              </select>
+            </label>
+            <label class="field" style="width: 110px"><span>Form</span>
+              <input class="input mono" id="gr-deriv-form" placeholder="-er">
+            </label>
+            <label class="field" style="width: 130px"><span>Productivity</span>
+              <select id="gr-deriv-prod">
+                <option value="productive">productive</option>
+                <option value="semi-productive">semi-productive</option>
+                <option value="fossilised">fossilised</option>
+              </select>
+            </label>
+            <label class="field" style="flex: 1; min-width: 140px"><span>Gloss template</span>
+              <input class="input mono" id="gr-deriv-gloss" placeholder="${root}-er">
+            </label>
+            <button class="btn primary" id="gr-deriv-add" style="align-self:flex-end">Add rule</button>
+          </div>
+          <table class="data" id="gr-deriv-table">
+            <thead>
+              <tr>
+                <th style="width: 9%">Source</th>
+                <th style="width: 9%">Result</th>
+                <th style="width: 16%">Kind</th>
+                <th style="width: 12%">Position</th>
+                <th style="width: 12%">Form</th>
+                <th style="width: 14%">Productivity</th>
+                <th style="width: 20%">Gloss</th>
+                <th class="right-actions"></th>
+              </tr>
+            </thead>
+            <tbody id="gr-deriv-tbody"></tbody>
+          </table>
+          <div class="row" style="margin-top: 10px; gap: 8px; align-items: center">
+            <button class="btn" id="gr-deriv-generate">Generate derived vocabulary</button>
+            <label class="row" style="gap: 4px; font-size: 12px">
+              <input type="checkbox" id="gr-deriv-fossil"> include fossilised
+            </label>
+            <span class="meta" id="gr-deriv-results-meta"></span>
+            <button class="btn" id="gr-deriv-add-all" style="margin-left:auto; display:none">Add all to lexicon</button>
+          </div>
+          <table class="data" id="gr-deriv-results-table" style="margin-top: 8px; display:none">
+            <thead>
+              <tr>
+                <th style="width: 24%">Root</th>
+                <th style="width: 26%">Derived</th>
+                <th style="width: 18%">Kind</th>
+                <th style="width: 22%">Etymology</th>
+                <th class="right-actions"></th>
+              </tr>
+            </thead>
+            <tbody id="gr-deriv-results-tbody"></tbody>
+          </table>
+          <div class="hint" id="gr-deriv-results-empty" style="margin-top:6px; display:none">
+            No derivations yet. Add at least one rule that matches a POS present in the lexicon, then click Generate.
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- ====================== Family Tree (L14) ====================== -->
