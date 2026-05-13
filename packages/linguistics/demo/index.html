@@ -99,26 +99,25 @@
   }
   .lang-picker input::placeholder { color: var(--text-muted); }
 
-  /* Stat badges with colored leading dot */
-  .stats-bar { display: flex; gap: 4px; }
+  /* Stat badges */
+  .stats-bar { display: flex; gap: 2px; }
   .stat-pill {
-    display: inline-flex; align-items: center; gap: 7px;
-    padding: 5px 10px 5px 9px; border-radius: 5px;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 10px; border-radius: 5px;
     color: var(--text-secondary); font-size: 12.5px;
     cursor: default; transition: background .12s, color .12s;
   }
   .stat-pill:hover { background: var(--bg-panel); color: var(--text-primary); }
-  .stat-pill .dot {
-    width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
-    box-shadow: 0 0 5px currentColor;
+  .stat-pill .icon {
+    width: 13px; height: 13px; flex-shrink: 0; opacity: 0.85;
   }
   .stat-pill .v {
     color: var(--text-primary); font-weight: 600;
     font-family: var(--font-mono); font-variant-numeric: tabular-nums;
   }
-  .stat-pill.phonemes .dot  { color: var(--tag-blue); background: currentColor; }
-  .stat-pill.words .dot     { color: var(--tag-pink); background: currentColor; }
-  .stat-pill.rules .dot     { color: var(--tag-green); background: currentColor; }
+  .stat-pill.phonemes .icon { color: var(--tag-blue); }
+  .stat-pill.words .icon    { color: var(--tag-pink); }
+  .stat-pill.rules .icon    { color: var(--tag-green); }
 
   .toolbar .grow { flex: 1; }
   .toolbar .actions { display: flex; align-items: center; gap: 8px; }
@@ -152,12 +151,13 @@
   .kebab-menu button.danger:hover { background: rgba(224,100,100,0.1); }
   .kebab-menu .divider-h { height: 1px; background: var(--border-mid); margin: 4px 0; }
 
-  /* Autosave indicator */
+  /* Autosave indicator — subtle text only, no glowing dot. */
   .autosave {
     display: inline-flex; align-items: center; gap: 5px;
-    color: var(--text-muted); font-size: 11.5px; padding-right: 4px;
+    color: var(--text-muted); font-size: 11px; padding-right: 6px;
+    font-variant-numeric: tabular-nums; letter-spacing: 0.2px;
   }
-  .autosave .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--status-green); box-shadow: 0 0 4px var(--status-green); }
+  .autosave svg { opacity: 0.7; }
   .btn {
     display: inline-flex; align-items: center; justify-content: center;
     padding: 0 12px; height: 26px; border-radius: 4px;
@@ -188,26 +188,33 @@
   }
   nav button {
     background: none; border: none; text-align: left;
-    padding: 8px 16px; color: var(--text-secondary);
+    padding: 9px 16px 9px 14px; color: var(--text-secondary);
     font: 13px var(--font-ui); cursor: pointer;
     border-left: 2px solid transparent;
-    display: flex; align-items: center; gap: 10px;
+    display: flex; align-items: center; gap: 11px;
     transition: background .12s, color .12s;
   }
   nav button:hover { color: var(--text-primary); background: var(--bg-panel); }
+  nav button:hover .nav-icon { color: var(--icon-c, var(--text-primary)); opacity: 1; }
   nav button.active {
     color: var(--text-primary); border-left-color: var(--accent);
     background: var(--bg-panel);
   }
-  nav button .swatch {
-    width: 4px; height: 14px; border-radius: 2px; background: var(--tag-blue);
-    flex-shrink: 0;
+  nav button.active .nav-icon { color: var(--icon-c, var(--accent)); opacity: 1; }
+  /* Per-tab icon tint */
+  nav button[data-view="phonology"]     { --icon-c: var(--tag-blue); }
+  nav button[data-view="lexicon"]       { --icon-c: var(--tag-pink); }
+  nav button[data-view="translator"]    { --icon-c: var(--tag-green); }
+  nav button[data-view="grammar"]       { --icon-c: #c685c0; }
+  nav button[data-view="sound-changes"] { --icon-c: var(--status-orange); }
+  nav button[data-view="romanization"]  { --icon-c: var(--accent); }
+  nav button[data-view="names"]         { --icon-c: #c685c0; }
+  nav button[data-view="docs"]          { --icon-c: var(--text-muted); }
+  .nav-icon {
+    width: 18px; height: 18px; flex-shrink: 0;
+    color: var(--icon-c, var(--text-muted));
+    opacity: 0.65; transition: opacity .12s, color .12s;
   }
-  nav button[data-view="lexicon"] .swatch { background: var(--tag-pink); }
-  nav button[data-view="sound-changes"] .swatch { background: var(--tag-green); }
-  nav button[data-view="romanization"] .swatch { background: var(--accent); }
-  nav button[data-view="names"] .swatch { background: var(--status-orange); }
-  nav button[data-view="docs"] .swatch { background: var(--text-muted); }
   nav .key { color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; margin-left: auto; }
 
   main { overflow: auto; }
@@ -374,6 +381,61 @@
     border: 1px solid var(--border-soft);
   }
 
+  /* Translator output tokens */
+  .tr-tok {
+    display: inline; padding: 1px 4px; border-radius: 3px;
+    cursor: pointer; transition: background .12s, border-color .12s;
+    border: 1px solid transparent;
+  }
+  .tr-tok:hover { background: var(--accent-dim); border-color: var(--accent); }
+  .tr-tok.gen   { color: var(--accent); border-color: var(--accent-glow); border-style: dashed; }
+  .tr-tok.gen:hover { background: var(--accent-dim); }
+  .tr-tok.punct, .tr-tok.space { cursor: default; padding: 0; border: none; background: transparent; }
+  #tr-detail .tr-row {
+    display: grid; grid-template-columns: 1fr 1fr 0.6fr 1fr 0.7fr;
+    gap: 12px; padding: 6px 10px; border-bottom: 1px solid var(--border-mid);
+    align-items: center; font-size: 12px;
+  }
+  #tr-detail .tr-row.header {
+    color: var(--text-muted); background: var(--bg-panel);
+    border-bottom: 1px solid var(--border-soft);
+    font-weight: 500; padding: 8px 10px;
+  }
+  #tr-detail .tr-row .lemma { font-family: var(--font-ipa); color: var(--accent); font-size: 14px; }
+  #tr-detail .tr-row .src   { color: var(--text-primary); }
+  #tr-detail .tr-row .rom   { font-family: var(--font-mono); color: var(--text-muted); }
+  #tr-detail .gen-badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 10px; background: var(--accent-dim); color: var(--accent);
+    border: 1px solid var(--accent); margin-left: 6px;
+  }
+
+  /* Grammar paradigm tables */
+  .paradigm-table {
+    border-collapse: separate; border-spacing: 0;
+    background: var(--bg-panel); border: 1px solid var(--border-mid);
+    border-radius: 5px; overflow: hidden;
+    font: 12px var(--font-ipa); min-width: max-content;
+  }
+  .paradigm-table th, .paradigm-table td {
+    padding: 7px 12px; text-align: left;
+    border-right: 1px solid var(--border-mid);
+    border-bottom: 1px solid var(--border-mid);
+  }
+  .paradigm-table thead th {
+    background: var(--bg-raised); color: var(--text-muted);
+    font-size: 11px; font-weight: 600;
+  }
+  .paradigm-table tbody th {
+    background: var(--bg-base); color: var(--text-secondary);
+    font-weight: 500; font-size: 11px;
+  }
+  .paradigm-table td.cell-form { color: var(--accent); font-weight: 500; font-size: 14px; }
+  .paradigm-table td.cell-empty { color: var(--text-muted); }
+  .paradigm-table td.cell-conflict {
+    background: rgba(224, 100, 100, 0.10); color: var(--status-red);
+  }
+
   audio { height: 22px; }
   audio::-webkit-media-controls-panel { background: var(--bg-panel); }
   .hint { color: var(--text-muted); font-size: 10px; margin-top: 4px; }
@@ -513,20 +575,39 @@
 
   <div class="stats-bar">
     <span class="stat-pill phonemes" title="Phonemes in your inventory">
-      <span class="dot"></span><span>Phonemes</span><span class="v" id="t-count">0</span>
+      <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <path d="M3 8c0-2.5 1.5-4 3-4M3 8c0 2.5 1.5 4 3 4M13 8c0-2.5-1.5-4-3-4M13 8c0 2.5-1.5 4-3 4M6 5.5v5M10 5.5v5"/>
+      </svg>
+      <span>Phonemes</span><span class="v" id="t-count">0</span>
     </span>
     <span class="stat-pill words" title="Lexicon entries">
-      <span class="dot"></span><span>Words</span><span class="v" id="t-words">0</span>
+      <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 3v10a1 1 0 0 0 1 1h9V2H4a1 1 0 0 0-1 1Z"/>
+        <path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3"/>
+      </svg>
+      <span>Words</span><span class="v" id="t-words">0</span>
     </span>
     <span class="stat-pill rules" title="Sound-change rules">
-      <span class="dot"></span><span>Rules</span><span class="v" id="t-rules">0</span>
+      <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 5h6M3 11h6"/>
+        <path d="M9 5l2-1.5M9 5l2 1.5"/>
+        <path d="M9 11l2-1.5M9 11l2 1.5"/>
+      </svg>
+      <span>Rules</span><span class="v" id="t-rules">0</span>
     </span>
   </div>
 
   <span class="grow"></span>
 
   <div class="actions">
-    <span class="autosave"><span class="dot"></span>Auto-saved</span>
+    <span class="autosave" title="Saved locally to your browser">
+      <svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4">
+        <path d="M2.5 4.5v6.5a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5l-2-2.5h-6a1 1 0 0 0-1 1Z"/>
+        <path d="M4.5 2.5v2.5h4v-2.5"/>
+        <path d="M5 8.5h4"/>
+      </svg>
+      Saved
+    </span>
     <button class="btn primary" id="export-btn">Export language</button>
     <div class="kebab-wrap">
       <button class="kebab" id="kebab-btn" title="More actions">⋮</button>
@@ -545,13 +626,83 @@
 
   <nav>
     <h3>Language</h3>
-    <button data-view="phonology" class="active"><span>Phonology</span><span class="key">1</span></button>
-    <button data-view="lexicon"><span>Lexicon</span><span class="key">2</span></button>
-    <button data-view="sound-changes"><span>Sound Changes</span><span class="key">3</span></button>
-    <button data-view="romanization"><span>Romanization</span><span class="key">4</span></button>
-    <button data-view="names"><span>Name Gen</span><span class="key">5</span></button>
+    <button data-view="phonology" class="active">
+      <!-- IPA chart / phoneme grid -->
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="16" rx="2"/>
+        <path d="M3 9h18M3 15h18M9 4v16M15 4v16"/>
+        <circle cx="6" cy="6.5" r="0.6" fill="currentColor" stroke="none"/>
+        <circle cx="12" cy="12" r="0.6" fill="currentColor" stroke="none"/>
+        <circle cx="18" cy="17.5" r="0.6" fill="currentColor" stroke="none"/>
+      </svg>
+      <span>Phonology</span><span class="key">1</span>
+    </button>
+    <button data-view="lexicon">
+      <!-- Open dictionary -->
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 5.5C3 4.7 3.7 4 4.5 4H11v15H4.5C3.7 19 3 18.3 3 17.5v-12Z"/>
+        <path d="M21 5.5C21 4.7 20.3 4 19.5 4H13v15h6.5c.8 0 1.5-.7 1.5-1.5v-12Z"/>
+        <path d="M6 8h3M6 11h3M15 8h3M15 11h3"/>
+      </svg>
+      <span>Lexicon</span><span class="key">2</span>
+    </button>
+    <button data-view="translator">
+      <!-- Translate: two languages with arrow -->
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 5h7M6.5 5v2M5 11.5c2-1 4-1 5-3.5M5 11.5c.6 1 2 1.5 4 1.5"/>
+        <path d="M14 19l3.5-9 3.5 9M15.6 16h4"/>
+        <path d="M11 19l1-3"/>
+      </svg>
+      <span>Translator</span><span class="key">3</span>
+    </button>
+    <button data-view="grammar">
+      <!-- Grid / paradigm table -->
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <path d="M3 9h18M3 15h18M9 3v18M15 3v18"/>
+      </svg>
+      <span>Grammar</span><span class="key">4</span>
+    </button>
+    <button data-view="sound-changes">
+      <!-- Diachrony: time arrow with transform -->
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 7h11"/>
+        <path d="M12 4l3 3-3 3"/>
+        <path d="M4 17h11"/>
+        <path d="M12 14l3 3-3 3"/>
+        <circle cx="19" cy="7" r="1.5"/>
+        <circle cx="19" cy="17" r="1.5"/>
+      </svg>
+      <span>Sound Changes</span><span class="key">5</span>
+    </button>
+    <button data-view="romanization">
+      <!-- "Aa" alphabet -->
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 18l3.5-10 3.5 10M4.6 15h3.8"/>
+        <path d="M13 14.5c0-1.5 1.2-2.5 3-2.5s3 1 3 2.5V18"/>
+        <path d="M19 15c-1 .5-2.5.5-3.5.5C14.5 15.5 13.5 16 13.5 17S14.5 18.5 16 18.5 19 17.5 19 16.5"/>
+      </svg>
+      <span>Romanization</span><span class="key">6</span>
+    </button>
+    <button data-view="names">
+      <!-- Sparkle / dice -->
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3Z"/>
+        <path d="M18.5 14.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8Z"/>
+        <path d="M5.5 16l.5 1.3L7.3 18 6 18.7 5.5 20l-.5-1.3L3.7 18l1.3-.7.5-1.3Z"/>
+      </svg>
+      <span>Name Gen</span><span class="key">7</span>
+    </button>
     <h3>Library</h3>
-    <button data-view="docs"><span>Reference</span><span class="key">?</span></button>
+    <button data-view="docs">
+      <!-- Book with bookmark -->
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2V4Z"/>
+        <path d="M5 18h13"/>
+        <path d="M9 4v8l2.5-1.5L14 12V4"/>
+      </svg>
+      <span>Reference</span><span class="key">?</span>
+    </button>
   </nav>
 
   <main>
@@ -779,6 +930,136 @@
       </div>
     </section>
 
+    <!-- ====================== Translator ====================== -->
+    <section class="view" id="view-translator">
+      <div class="panel">
+        <div class="panel-header">
+          Translator
+          <span class="sub">type English · get conlang · auto-generates missing words deterministically</span>
+          <span class="meta" id="tr-meta">—</span>
+        </div>
+        <div class="panel-body">
+
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 10px">
+            <label class="field"><span>English input</span>
+              <textarea id="tr-input" rows="4" placeholder="e.g. The big mountain stands above the cold river."></textarea>
+            </label>
+            <label class="field"><span>Translation</span>
+              <div id="tr-output" style="background: var(--bg-base); border: 1px solid var(--border-soft); border-radius: 4px; padding: 8px 10px; min-height: 92px; font: 14px var(--font-ipa); line-height: 1.7"></div>
+            </label>
+          </div>
+
+          <div class="row" style="margin-bottom:8px">
+            <button class="btn primary" id="tr-translate">Translate</button>
+            <button class="btn" id="tr-clear">Clear</button>
+            <span class="grow" style="flex:1"></span>
+            <span class="hint" id="tr-status"></span>
+          </div>
+
+          <div id="tr-detail" style="margin-top: 6px">
+            <div class="hint">Token breakdown will appear here after translation. Auto-generated words are dashed-orange and persist to the lexicon.</div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="panel" id="tr-romanized-panel" style="display: none">
+        <div class="panel-header">Romanized output
+          <span class="sub">via your current romanization map</span>
+        </div>
+        <div class="panel-body">
+          <div id="tr-romanized" class="mono" style="font-size:15px; line-height:1.7; color: var(--text-primary)"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================== Grammar ====================== -->
+    <section class="view" id="view-grammar">
+      <div class="panel">
+        <div class="panel-header">
+          Grammar — Paradigms &amp; affix rules
+          <span class="sub">declensions and conjugations · click any cell to inspect the rule</span>
+          <span class="meta" id="gr-meta">no paradigm</span>
+        </div>
+        <div class="panel-body">
+
+          <div class="row" style="margin-bottom: 12px; gap: 8px">
+            <label class="field" style="flex:1"><span>Paradigm</span>
+              <select id="gr-preset">
+                <option value="">— select a starter —</option>
+              </select>
+            </label>
+            <label class="field" style="flex:1"><span>Sample stem</span>
+              <input class="input mono" id="gr-stem" placeholder="e.g. puell">
+            </label>
+            <label class="field" style="flex:1"><span>Or lexicon entry</span>
+              <select id="gr-lex">
+                <option value="">— pick from lexicon —</option>
+              </select>
+            </label>
+            <button class="btn" id="gr-load-preset" style="align-self:flex-end">Load preset</button>
+          </div>
+
+          <div id="gr-table-host" style="overflow-x: auto"></div>
+
+          <div class="hint" id="gr-empty" style="margin-top: 8px">
+            Load a preset, or define your own paradigm + affix rules. Cells show inflected forms. Conflicts (multiple rules tied for the same cell) appear in red.
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">Affix rules
+          <span class="meta" id="gr-rules-meta">0 rules</span>
+        </div>
+        <div class="panel-body">
+          <div class="row" style="margin-bottom: 10px; gap: 8px; flex-wrap: wrap">
+            <label class="field" style="width: 100px"><span>POS</span>
+              <select id="gr-rule-pos">
+                <option value="noun">noun</option>
+                <option value="verb">verb</option>
+                <option value="adjective">adjective</option>
+                <option value="adverb">adverb</option>
+                <option value="pronoun">pronoun</option>
+              </select>
+            </label>
+            <label class="field" style="width: 100px"><span>Position</span>
+              <select id="gr-rule-pos-kind">
+                <option value="suffix">suffix</option>
+                <option value="prefix">prefix</option>
+                <option value="circumfix">circumfix</option>
+                <option value="replace">replace</option>
+                <option value="infix">infix</option>
+              </select>
+            </label>
+            <label class="field" style="flex: 2; min-width: 200px"><span>Condition (key=value, comma-sep)</span>
+              <input class="input mono" id="gr-rule-cond" placeholder="case=nom, number=sg">
+            </label>
+            <label class="field" style="width: 120px"><span>Form</span>
+              <input class="input mono" id="gr-rule-form" placeholder="a">
+            </label>
+            <label class="field" style="width: 70px"><span>Priority</span>
+              <input class="input mono" id="gr-rule-pri" type="number" value="0">
+            </label>
+            <button class="btn primary" id="gr-rule-add" style="align-self:flex-end">Add rule</button>
+          </div>
+          <table class="data" id="gr-rules-table">
+            <thead>
+              <tr>
+                <th style="width: 10%">POS</th>
+                <th style="width: 30%">Condition</th>
+                <th style="width: 14%">Position</th>
+                <th style="width: 18%">Form</th>
+                <th style="width: 10%">Priority</th>
+                <th class="right-actions"></th>
+              </tr>
+            </thead>
+            <tbody id="gr-rules-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <!-- ====================== Sound Changes ====================== -->
     <section class="view" id="view-sound-changes">
       <div class="panel">
@@ -922,6 +1203,8 @@ import {
   consonantToPhonemeFeatures, vowelToPhonemeFeatures,
   parseRules, evolveLexicon, generatePhonotacticName, deriveSeed,
   defaultRomanization, romanize,
+  translate, renderRomanized,
+  buildParadigm, findRuleConflicts, PRESET_PARADIGMS,
 } from '../dist/index.js';
 
 /* ─────────────────────  state  ───────────────────── */
@@ -939,6 +1222,10 @@ const state = loadState() ?? {
   romRules: [/* [ipa, spelling] */],
   romTest: 'paʃa',
   inspectorPinned: true,
+  grammar: {
+    /* { def: ParadigmDef, stem: string, rules: AffixRule[] } */
+    def: null, stem: '', rules: [],
+  },
 };
 
 function loadState() {
@@ -953,6 +1240,7 @@ function loadState() {
       rules: j.rules ?? '',
       romTest: j.romTest ?? 'paʃa',
       inspectorPinned: j.inspectorPinned ?? true,
+      grammar: j.grammar ?? { def: null, stem: '', rules: [] },
     };
   } catch { return null; }
 }
@@ -1697,6 +1985,279 @@ document.getElementById('rom-test').addEventListener('input', e => {
   state.romTest = e.target.value; saveState(); renderRomanizationOutput();
 });
 
+/* ─────────────────────  Translator  ───────────────────── */
+// Tiny in-memory lexicon adapter on top of state.lexicon so the translator
+// reads/writes through the same array the Lexicon panel renders.
+const translatorLex = {
+  get(_lang, concept) { return state.lexicon.find(e => e.concept === concept) ?? null; },
+  set(_lang, concept, entry) {
+    const idx = state.lexicon.findIndex(e => e.concept === concept);
+    const row = {
+      concept, lemma: entry.lemma, ipa: entry.ipa,
+      pos: entry.pos, register: entry.register ?? 'neutral',
+      gloss: entry.gloss, etymology: entry.etymology,
+    };
+    if (idx >= 0) state.lexicon[idx] = row; else state.lexicon.push(row);
+  },
+  all(_lang) { return state.lexicon.map(e => ({ concept: e.concept, entry: e })); },
+};
+
+function buildTranslatorCtx() {
+  const phono = buildPhonologyJson();
+  const sel = [...state.selected];
+  const cs = new Set([...PULMONIC_CONSONANTS, ...NON_PULMONIC_CONSONANTS].map(c => c.ipa));
+  const vs = new Set(CARDINAL_VOWELS.map(v => v.ipa));
+  const consonants = sel.filter(x => cs.has(x));
+  const vowels = sel.filter(x => vs.has(x));
+  return {
+    languageId: state.langId,
+    phonology: phono,
+    phonotactics: { phonologyId: phono.languageId, vowels, syllable: { templates: ['CV','CVC'] } },
+    lexicon: translatorLex,
+    fallbackProfile: { syllableTemplate: 'CV', vowels, onsetPool: consonants.length ? consonants : phono.phonemes.map(p => p.ipa) },
+    romanization: { languageId: state.langId, rules: state.romRules },
+    seed: deriveSeed(1234n, state.langId),
+  };
+}
+
+async function runTranslate() {
+  const text = document.getElementById('tr-input').value;
+  if (!text.trim()) return;
+  const sel = [...state.selected];
+  const cs = new Set([...PULMONIC_CONSONANTS, ...NON_PULMONIC_CONSONANTS].map(c => c.ipa));
+  const vs = new Set(CARDINAL_VOWELS.map(v => v.ipa));
+  if (!sel.some(x => cs.has(x)) || !sel.some(x => vs.has(x))) {
+    document.getElementById('tr-status').textContent = 'Need at least one consonant and one vowel in the inventory.';
+    document.getElementById('tr-status').style.color = 'var(--status-red)';
+    return;
+  }
+  try {
+    const sentence = await translate(text, buildTranslatorCtx());
+    state.lastTranslation = sentence;
+    saveState();
+    renderTranslation_(sentence);
+    document.getElementById('tr-status').style.color = 'var(--status-green)';
+    document.getElementById('tr-status').textContent =
+      sentence.generated.length
+        ? `Translated · ${sentence.generated.length} new word${sentence.generated.length === 1 ? '' : 's'} added to lexicon`
+        : 'Translated · all words already in lexicon';
+    renderLexicon(); renderSoundChanges();
+  } catch (e) {
+    document.getElementById('tr-status').textContent = e.message ?? String(e);
+    document.getElementById('tr-status').style.color = 'var(--status-red)';
+  }
+}
+
+function renderTranslation_(sentence) {
+  const out = document.getElementById('tr-output');
+  out.innerHTML = '';
+  for (const t of sentence.tokens) {
+    const span = document.createElement('span');
+    span.className = 'tr-tok ' + t.kind + (t.generated ? ' gen' : '');
+    span.textContent = t.kind === 'word' ? (t.lemma ?? t.source) : t.source;
+    if (t.kind === 'word') {
+      span.title = `${t.source} → ${t.lemma} (concept "${t.concept}"${t.pos ? ', ' + t.pos : ''})${t.generated ? ' · auto-generated' : ''}`;
+      span.addEventListener('click', () => {
+        // Switch to Lexicon view with this concept pre-filtered
+        document.getElementById('lex-search').value = t.concept;
+        renderLexicon();
+        state.view = 'lexicon'; saveState(); renderNav();
+      });
+    }
+    out.appendChild(span);
+  }
+  // Detail breakdown
+  const detail = document.getElementById('tr-detail');
+  detail.innerHTML = '';
+  const header = document.createElement('div');
+  header.className = 'tr-row header';
+  header.innerHTML = `<div>Source</div><div>Concept</div><div>POS</div><div>Lemma</div><div>Romanized</div>`;
+  detail.appendChild(header);
+  for (const t of sentence.tokens) {
+    if (t.kind !== 'word') continue;
+    const row = document.createElement('div');
+    row.className = 'tr-row';
+    row.innerHTML = `
+      <div class="src">${escapeHtml(t.source)}${t.generated ? '<span class="gen-badge">new</span>' : ''}</div>
+      <div>${escapeHtml(t.concept)}</div>
+      <div>${t.pos ? `<span class="pos-tag">${escapeHtml(t.pos)}</span>` : '<span class="muted">—</span>'}</div>
+      <div class="lemma">${escapeHtml(t.lemma ?? '')}</div>
+      <div class="rom">${escapeHtml(t.romanized ?? '—')}</div>`;
+    detail.appendChild(row);
+  }
+  // Romanized output panel
+  if (state.romRules.length) {
+    document.getElementById('tr-romanized-panel').style.display = '';
+    document.getElementById('tr-romanized').textContent = renderRomanized(sentence);
+  } else {
+    document.getElementById('tr-romanized-panel').style.display = 'none';
+  }
+  document.getElementById('tr-meta').textContent =
+    `${sentence.tokens.filter(t => t.kind === 'word').length} words · ${sentence.generated.length} new`;
+}
+
+document.getElementById('tr-translate').addEventListener('click', runTranslate);
+document.getElementById('tr-input').addEventListener('keydown', e => {
+  if (e.ctrlKey && e.key === 'Enter') runTranslate();
+});
+document.getElementById('tr-clear').addEventListener('click', () => {
+  document.getElementById('tr-input').value = '';
+  document.getElementById('tr-output').innerHTML = '';
+  document.getElementById('tr-detail').innerHTML = '<div class="hint">Token breakdown will appear here after translation.</div>';
+  document.getElementById('tr-romanized-panel').style.display = 'none';
+  document.getElementById('tr-status').textContent = '';
+  document.getElementById('tr-meta').textContent = '—';
+});
+
+/* ─────────────────────  Grammar / paradigms (L11)  ───────────────────── */
+
+// Populate preset dropdown
+const grPresetSelect = document.getElementById('gr-preset');
+for (let i = 0; i < PRESET_PARADIGMS.length; i++) {
+  const opt = document.createElement('option');
+  opt.value = String(i); opt.textContent = PRESET_PARADIGMS[i].name;
+  grPresetSelect.appendChild(opt);
+}
+
+document.getElementById('gr-load-preset').addEventListener('click', () => {
+  const idx = grPresetSelect.value;
+  if (idx === '') return;
+  const p = PRESET_PARADIGMS[+idx];
+  state.grammar = { def: p.def, stem: p.exampleStem, rules: [...p.rules] };
+  document.getElementById('gr-stem').value = p.exampleStem;
+  saveState(); renderGrammar();
+});
+
+document.getElementById('gr-stem').addEventListener('input', e => {
+  state.grammar.stem = e.target.value;
+  saveState(); renderGrammar();
+});
+
+document.getElementById('gr-lex').addEventListener('change', e => {
+  const concept = e.target.value;
+  if (!concept) return;
+  const entry = state.lexicon.find(x => x.concept === concept);
+  if (!entry) return;
+  state.grammar.stem = entry.lemma;
+  document.getElementById('gr-stem').value = entry.lemma;
+  saveState(); renderGrammar();
+});
+
+document.getElementById('gr-rule-add').addEventListener('click', () => {
+  const pos = document.getElementById('gr-rule-pos').value;
+  const position = document.getElementById('gr-rule-pos-kind').value;
+  const condStr = document.getElementById('gr-rule-cond').value.trim();
+  const form = document.getElementById('gr-rule-form').value;
+  const priority = Number(document.getElementById('gr-rule-pri').value || 0);
+  const condition = {};
+  for (const pair of condStr.split(',')) {
+    const m = pair.trim().match(/^([^=]+)\s*=\s*(.+)$/);
+    if (m) condition[m[1].trim()] = m[2].trim();
+  }
+  state.grammar.rules.push({ pos, condition, position, form, priority });
+  // Reset inputs
+  document.getElementById('gr-rule-cond').value = '';
+  document.getElementById('gr-rule-form').value = '';
+  saveState(); renderGrammar();
+});
+
+function renderGrammar() {
+  // Lexicon picker
+  const lexSel = document.getElementById('gr-lex');
+  lexSel.innerHTML = '<option value="">— pick from lexicon —</option>';
+  for (const e of state.lexicon) {
+    const opt = document.createElement('option');
+    opt.value = e.concept; opt.textContent = `${e.concept} · ${e.lemma}${e.pos ? ' (' + e.pos + ')' : ''}`;
+    lexSel.appendChild(opt);
+  }
+  document.getElementById('gr-stem').value = state.grammar.stem || '';
+
+  // Paradigm table
+  const host = document.getElementById('gr-table-host');
+  const empty = document.getElementById('gr-empty');
+  if (!state.grammar.def || !state.grammar.stem) {
+    host.innerHTML = '';
+    empty.style.display = '';
+    document.getElementById('gr-meta').textContent = 'no paradigm';
+  } else {
+    empty.style.display = 'none';
+    const def = state.grammar.def;
+    const rules = state.grammar.rules;
+    const cells = buildParadigm(state.grammar.stem, def, rules);
+    const conflicts = findRuleConflicts(state.grammar.stem, def, rules);
+    const conflictKeys = new Set(conflicts.map(c => JSON.stringify(c.target)));
+
+    const axes = Object.entries(def.axes);
+    const rowAxis = axes[0] ?? ['_', ['']];
+    const colAxis = axes[1] ?? ['_', ['']];
+    const [rowKey, rowVals] = rowAxis;
+    const [colKey, colVals] = colAxis;
+
+    const tbl = document.createElement('table');
+    tbl.className = 'paradigm-table';
+    let thead = '<thead><tr><th></th>';
+    for (const v of colVals) thead += `<th>${escapeHtml(v)}</th>`;
+    thead += '</tr></thead>';
+    tbl.innerHTML = thead;
+    const tbody = document.createElement('tbody');
+    for (const rv of rowVals) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<th>${escapeHtml(rv)}</th>`;
+      for (const cv of colVals) {
+        const target = {};
+        if (rowKey !== '_') target[rowKey] = rv;
+        if (colKey !== '_') target[colKey] = cv;
+        const cell = cells.find(c =>
+          (rowKey === '_' || c.target[rowKey] === rv) &&
+          (colKey === '_' || c.target[colKey] === cv)
+        );
+        const conflicted = conflictKeys.has(JSON.stringify(target));
+        const td = document.createElement('td');
+        td.className = cell?.ruleIndices.length
+          ? (conflicted ? 'cell-form cell-conflict' : 'cell-form')
+          : 'cell-empty';
+        td.textContent = cell?.form ?? '—';
+        td.title = conflicted
+          ? `${cell?.form ?? '—'} · conflict: rules ${cell?.ruleIndices.join(', ')} tied`
+          : `${cell?.form ?? '—'}${cell?.ruleIndices.length ? ` · rule #${cell.ruleIndices.join(',')}` : ' · no rule matches'}`;
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+    tbl.appendChild(tbody);
+    host.innerHTML = '';
+    host.appendChild(tbl);
+
+    const filled = cells.filter(c => c.ruleIndices.length > 0).length;
+    document.getElementById('gr-meta').textContent =
+      `${filled}/${cells.length} cells filled${conflicts.length ? ' · ' + conflicts.length + ' conflict' + (conflicts.length === 1 ? '' : 's') : ''}`;
+  }
+
+  // Rules table
+  const rt = document.getElementById('gr-rules-tbody');
+  rt.innerHTML = '';
+  for (let i = 0; i < state.grammar.rules.length; i++) {
+    const r = state.grammar.rules[i];
+    const tr = document.createElement('tr');
+    const condStr = Object.entries(r.condition).map(([k, v]) => `${k}=${v}`).join(', ') || '(any)';
+    tr.innerHTML = `
+      <td><span class="pos-tag">${escapeHtml(r.pos)}</span></td>
+      <td class="mono">${escapeHtml(condStr)}</td>
+      <td class="muted">${escapeHtml(r.position)}</td>
+      <td class="accent mono">${escapeHtml(r.form || '∅')}</td>
+      <td class="mono">${r.priority ?? 0}</td>
+      <td class="right-actions"><button class="btn" data-rm="${i}">×</button></td>`;
+    rt.appendChild(tr);
+  }
+  rt.querySelectorAll('button[data-rm]').forEach(b =>
+    b.addEventListener('click', () => {
+      state.grammar.rules.splice(+b.dataset.rm, 1);
+      saveState(); renderGrammar();
+    }));
+  document.getElementById('gr-rules-meta').textContent =
+    `${state.grammar.rules.length} rule${state.grammar.rules.length === 1 ? '' : 's'}`;
+}
+
 /* ─────────────────────  Name gen  ───────────────────── */
 document.getElementById('ng-roll').addEventListener('click', () => {
   const sel = [...state.selected];
@@ -1755,6 +2316,7 @@ function renderTopbar() {
 function renderAll() {
   renderNav(); renderTopbar(); renderPhonology();
   renderLexicon(); renderSoundChanges(); renderRomanization();
+  renderGrammar();
 }
 
 /* —— Inspector pin + sticky shadow —— */

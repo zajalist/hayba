@@ -51,3 +51,19 @@ export { proposeDerivation } from './derivation.js';
 // Romanization
 export type { RomanizationMap, RomanizationRule } from './romanization.js';
 export { romanize, deromanize, defaultRomanization } from './romanization.js';
+
+// Translator (L10)
+export type {
+  TranslatedToken, TranslatedSentence, TranslatorContext, RawToken,
+} from './translator.js';
+export {
+  translate, tokenize as tokenizeText, lemmatize, renderTranslation, renderRomanized,
+} from './translator.js';
+
+// Morphology / paradigms (L11)
+export type {
+  AffixRule, AffixPosition, ParadigmDef, ParadigmCell, MorphTarget,
+} from './morphology.js';
+export {
+  inflect, buildParadigm, enumerateAxes, findRuleConflicts, PRESET_PARADIGMS,
+} from './morphology.js';
