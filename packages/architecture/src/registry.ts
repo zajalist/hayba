@@ -36,19 +36,14 @@ export interface Registry {
 
 let CACHED: Registry | null = null;
 
-export function loadRegistry(): Registry {
-  if (CACHED) return CACHED;
-
+export function buildRegistry(
+  rawTypos: unknown[],
+  rawGuides: unknown[],
+): Registry {
   const errors: ValidationError[] = [];
   const typologies = new Map<string, Typology>();
   const typologyIds = new Set<string>();
 
-  const rawTypos = (typologiesFile as { typologies?: unknown[] }).typologies;
-  if (!Array.isArray(rawTypos)) {
-    throw new ArchitectureRegistryError([
-      { path: '/typologies', message: 'typologies.json missing "typologies" array' },
-    ]);
-  }
   rawTypos.forEach((t, i) => {
     const errs = validateTypology(t, `/typologies/${i}`);
     if (errs.length === 0) {
@@ -67,7 +62,7 @@ export function loadRegistry(): Registry {
   const styleGuidesById = new Map<string, StyleGuide>();
   const styleGuideOrder: string[] = [];
 
-  RAW_GUIDES.forEach((g, i) => {
+  rawGuides.forEach((g, i) => {
     const path = `/styleGuides/${i}`;
     const errs = validateStyleGuide(g, path);
     if (errs.length > 0) {
@@ -92,11 +87,24 @@ export function loadRegistry(): Registry {
     throw new ArchitectureRegistryError(errors);
   }
 
-  CACHED = {
+  return {
     typologies, typologyIds,
     styleGuidesById,
     styleGuideOrder: Object.freeze([...styleGuideOrder]),
   };
+}
+
+export function loadRegistry(): Registry {
+  if (CACHED) return CACHED;
+
+  const rawTypos = (typologiesFile as { typologies?: unknown[] }).typologies;
+  if (!Array.isArray(rawTypos)) {
+    throw new ArchitectureRegistryError([
+      { path: '/typologies', message: 'typologies.json missing "typologies" array' },
+    ]);
+  }
+
+  CACHED = buildRegistry(rawTypos, RAW_GUIDES);
   return CACHED;
 }
 
