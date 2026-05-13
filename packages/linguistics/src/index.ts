@@ -83,6 +83,12 @@ export {
 export type { LanguageTreeNode, SampleChange } from './family-tree.js';
 export { buildFamilyTree } from './family-tree.js';
 
+// Loanword adapter (L20)
+export type {
+  AdaptationStep, AdaptedLoanword, LoanwordAdapter, LoanwordAdapterOptions,
+} from './loanword.js';
+export { createLoanwordAdapter } from './loanword.js';
+
 // Typology catalogue (L15)
 export type {
   TypologyFeature, TypologyOption, TypologyCategory, LanguageProfile,

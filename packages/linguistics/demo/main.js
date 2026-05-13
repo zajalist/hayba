@@ -8,6 +8,7 @@ import {
   translate, renderRomanized,
   buildParadigm, findRuleConflicts, PRESET_PARADIGMS,
   addAxis, removeAxis, addAxisValue, removeAxisValue,
+  createLoanwordAdapter,
   InMemoryWordlinks, autoCognatesFromDiachrony,
   buildFamilyTree,
   TYPOLOGY_FEATURES, TYPOLOGY_PRESETS, profileSummary,
@@ -654,6 +655,145 @@ function renderLexicon() {
       saveState(); renderLexicon(); renderSoundChanges();
     }));
 }
+/* ─────────────────────  L20 — Loanword adapter  ───────────────────── */
+function buildPhonotacticSpec() {
+  const phono = buildPhonologyJson();
+  const vs = new Set(CARDINAL_VOWELS.map(v => v.ipa));
+  const vowels = [...state.selected].filter(x => vs.has(x));
+  return {
+    spec: { phonologyId: phono.languageId, vowels, syllable: { templates: ['CV','CVC','V'] } },
+    phono,
+  };
+}
+
+function renderLoanOtherLangs() {
+  const sel = document.getElementById('loan-other-lang');
+  if (!sel) return;
+  const langs = Object.keys(state.languages || {}).filter(id => id !== state.langId);
+  sel.innerHTML = langs.length
+    ? langs.map(id => `<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`).join('')
+    : '<option value="">(no other conlangs)</option>';
+}
+
+function renderLoanResults(results) {
+  const host = document.getElementById('loan-results');
+  if (!host) return;
+  if (!results || results.length === 0) {
+    host.innerHTML = '<div class="hint">Type some words and click Adapt to see the conlang version.</div>';
+    return;
+  }
+  const KIND_COLORS = { 'substitute': '#e08a3c', 'insert-vowel': '#4caf6d', 'delete': '#d44a4a', 'transpose': '#7aa0d9' };
+  const parts = [];
+  for (const r of results) {
+    if (r.error) {
+      parts.push(`<div class="loan-card" style="border:1px solid #d44a4a55; border-radius:6px; padding:10px; margin-bottom:10px">
+        <div class="muted">${escapeHtml(r.source)}</div>
+        <div style="color:#d44a4a">Error: ${escapeHtml(r.error)}</div>
+      </div>`);
+      continue;
+    }
+    const steps = r.steps.map((s, i) => `
+      <li style="margin:2px 0; padding-left:4px; border-left:3px solid ${KIND_COLORS[s.kind] ?? '#888'}">
+        <span class="muted" style="font-size:11px">${i + 1}.</span>
+        <span style="color:${KIND_COLORS[s.kind] ?? '#888'}; font-weight:600; font-size:11px; text-transform:uppercase">${escapeHtml(s.kind)}</span>
+        ${escapeHtml(s.reason)}
+      </li>`).join('');
+    parts.push(`<div class="loan-card" data-idx="${r.idx}" style="border:1px solid #2a2a2a; border-radius:6px; padding:10px; margin-bottom:10px">
+      <div class="row" style="align-items:baseline; justify-content:space-between">
+        <div>
+          <span class="muted" style="font-size:12px">${escapeHtml(r.source)} →</span>
+          <span style="font-family: var(--font-ipa, var(--font-mono)); font-size:18px; margin-left:6px">${escapeHtml(r.adapted)}</span>
+          ${r.romanized ? `<span class="muted" style="margin-left:8px">⟨${escapeHtml(r.romanized)}⟩</span>` : ''}
+        </div>
+        <button class="btn primary" data-loan-save="${r.idx}">Save to lexicon as borrowing</button>
+      </div>
+      ${r.steps.length ? `<ol style="margin:8px 0 0; padding-left:18px; font-size:12px; list-style:none">${steps}</ol>`
+                       : '<div class="muted" style="font-size:12px; margin-top:6px">No adaptation needed — input already legal.</div>'}
+    </div>`);
+  }
+  host.innerHTML = parts.join('');
+  host.querySelectorAll('button[data-loan-save]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = Number(btn.dataset.loanSave);
+      const r = results[idx];
+      if (!r || r.error) return;
+      const concept = (prompt('Concept (English gloss) for borrowed word:', r.source) || '').trim();
+      if (!concept) return;
+      const existing = state.lexicon.findIndex(e => e.concept === concept);
+      const entry = {
+        concept,
+        lemma: r.adapted,
+        ipa: r.adapted,
+        pos: 'noun',
+        register: 'neutral',
+        etymology: `borrowed from "${r.source}"`,
+      };
+      if (existing >= 0) state.lexicon[existing] = entry; else state.lexicon.push(entry);
+      // Source-conlang wordlink if applicable
+      const from = document.getElementById('loan-from').value;
+      if (from === 'other') {
+        const otherLang = document.getElementById('loan-other-lang').value;
+        if (otherLang && state.languages?.[otherLang]) {
+          // Find source concept in the other language's lexicon (best-effort by lemma match)
+          const otherEntry = (state.languages[otherLang].lexicon ?? [])
+            .find(e => e.lemma === r.source || e.concept === r.source || e.concept === concept);
+          if (otherEntry) {
+            const link = { langA: state.langId, conceptA: concept, langB: otherLang, conceptB: otherEntry.concept, kind: 'borrowing' };
+            const dup = state.wordlinks.find(l =>
+              (l.langA === link.langA && l.conceptA === link.conceptA && l.langB === link.langB && l.conceptB === link.conceptB) ||
+              (l.langA === link.langB && l.conceptA === link.conceptB && l.langB === link.langA && l.conceptB === link.conceptA));
+            if (!dup) state.wordlinks.push(link);
+          }
+        }
+      }
+      saveState();
+      renderAffected(['lexicon', 'wordlinks']);
+      btn.textContent = '✓ Saved';
+      btn.disabled = true;
+    });
+  });
+}
+
+function runLoanwordAdapt() {
+  const raw = (document.getElementById('loan-input').value || '').trim();
+  if (!raw) return;
+  const from = document.getElementById('loan-from').value;
+  const { spec, phono } = buildPhonotacticSpec();
+  if (spec.vowels.length === 0 || phono.phonemes.length === 0) {
+    document.getElementById('loan-results').innerHTML = '<div class="hint">Select at least one vowel and one consonant in the Phonology tab first.</div>';
+    return;
+  }
+  const romMap = state.romRules.length ? { languageId: state.langId, rules: state.romRules } : undefined;
+  const adapter = createLoanwordAdapter(phono, spec, { romanization: romMap });
+  const words = raw.split(/\s+/).filter(Boolean);
+  const results = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    try {
+      // For IPA mode, leave the source string as-is. For 'other' conlang, we
+      // accept their lemma as IPA (since lexicon stores IPA in `lemma`).
+      const input = w;
+      const r = adapter.adapt(input);
+      results.push({ idx: i, source: w, ...r });
+    } catch (e) {
+      results.push({ idx: i, source: w, error: e?.message || String(e) });
+    }
+  }
+  renderLoanResults(results);
+}
+
+(function initLoanwordUI() {
+  const adaptBtn = document.getElementById('loan-adapt');
+  if (!adaptBtn) return;
+  adaptBtn.addEventListener('click', runLoanwordAdapt);
+  document.getElementById('loan-from').addEventListener('change', () => {
+    const from = document.getElementById('loan-from').value;
+    document.getElementById('loan-other-wrap').style.display = from === 'other' ? '' : 'none';
+    renderLoanOtherLangs();
+  });
+  renderLoanOtherLangs();
+})();
+
 document.getElementById('lex-add').addEventListener('click', () => {
   const concept = document.getElementById('lex-concept').value.trim();
   const lemma = document.getElementById('lex-lemma').value.trim();

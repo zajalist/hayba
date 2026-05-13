@@ -1206,6 +1206,38 @@
 
     <!-- ====================== Lexicon ====================== -->
     <section class="view" id="view-lexicon">
+      <!-- L20 — Loanword adapter -->
+      <div class="panel" style="margin-bottom:14px">
+        <div class="panel-header"><span class="dot"></span>Loanwords
+          <span class="meta">adapt foreign words to this conlang's phonology</span>
+        </div>
+        <div class="panel-body">
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px">
+            <div>
+              <label class="field" style="margin-bottom:8px"><span>Input (one word per line)</span>
+                <textarea class="input" id="loan-input" rows="4" placeholder="e.g. Aragorn, computer, θeos"></textarea>
+              </label>
+              <div class="row" style="margin-bottom:8px">
+                <label class="field" style="flex:1"><span>From</span>
+                  <select id="loan-from">
+                    <option value="english">English (romanized)</option>
+                    <option value="ipa">IPA</option>
+                    <option value="other">Other conlang…</option>
+                  </select>
+                </label>
+                <label class="field" id="loan-other-wrap" style="flex:1; display:none"><span>Source conlang</span>
+                  <select id="loan-other-lang"></select>
+                </label>
+                <button class="btn primary" id="loan-adapt" style="align-self:flex-end">Adapt</button>
+              </div>
+            </div>
+            <div>
+              <div id="loan-results" class="hint" style="min-height:120px">Type some words and click Adapt to see the conlang version.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="panel">
         <div class="panel-header"><span class="dot"></span>Lexicon
           <span class="meta" id="lex-meta">0 entries</span>
