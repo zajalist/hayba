@@ -12,6 +12,7 @@ import {
   computeLexiconStatistics,
   exportToCsv, exportToAnkiTsv, exportToMarkdown,
   createWebSpeechTts,
+  buildPhrasePack, PHRASE_TEMPLATES,
   InMemoryWordlinks, autoCognatesFromDiachrony,
   buildFamilyTree,
   TYPOLOGY_FEATURES, TYPOLOGY_PRESETS, profileSummary,
@@ -1662,6 +1663,182 @@ document.getElementById('tr-clear').addEventListener('click', () => {
   renderTranslationTtsBtn();
 });
 
+/* ─────────────────────  Phrase Pack (L24)  ───────────────────── */
+
+const PP_CATEGORIES = ['greeting', 'farewell', 'yesno', 'numbers', 'days', 'kin', 'directions', 'politeness', 'questions'];
+const PP_CAT_LABEL = {
+  greeting: 'Greetings', farewell: 'Farewells', yesno: 'Yes / No / Maybe',
+  numbers: 'Numbers 1–10', days: 'Days of the week', kin: 'Kinship',
+  directions: 'Directions', politeness: 'Politeness', questions: 'Questions',
+};
+
+let _ppSelectedCats = new Set(PP_CATEGORIES);
+
+function renderPhrasePackCategoryChecks() {
+  const host = document.getElementById('pp-categories');
+  if (!host) return;
+  host.innerHTML = '';
+  for (const cat of PP_CATEGORIES) {
+    const id = `pp-cat-${cat}`;
+    const wrap = document.createElement('label');
+    wrap.style.display = 'flex'; wrap.style.alignItems = 'center'; wrap.style.gap = '6px';
+    wrap.style.fontSize = '12px'; wrap.style.color = 'var(--text-secondary)';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.id = id; cb.checked = _ppSelectedCats.has(cat);
+    cb.addEventListener('change', () => {
+      if (cb.checked) _ppSelectedCats.add(cat); else _ppSelectedCats.delete(cat);
+    });
+    wrap.appendChild(cb);
+    const txt = document.createElement('span');
+    txt.textContent = PP_CAT_LABEL[cat];
+    wrap.appendChild(txt);
+    host.appendChild(wrap);
+  }
+}
+
+function _ppEnsureSlotInLexiconView(slot) {
+  // No-op data layer: lexicon was already mutated by buildPhrasePack via translatorLex.
+  // This helper exists so token click can re-render the Lexicon view consistently.
+  return state.lexicon.find(e => e.concept === slot);
+}
+
+function renderPhrasePack() {
+  const host = document.getElementById('pp-results');
+  if (!host) return;
+  const pack = state.phrasePack?.results ?? [];
+  if (!pack.length) {
+    host.innerHTML = '<div class="hint">Pick categories (all by default), set a seed, then hit Generate. Missing concepts are auto-filled from L4 and persisted to your lexicon.</div>';
+    document.getElementById('pp-meta').textContent = '—';
+    document.getElementById('pp-speak-all').style.display = 'none';
+    return;
+  }
+  // Group by category preserving template order.
+  const groups = new Map();
+  for (const entry of pack) {
+    if (!groups.has(entry.category)) groups.set(entry.category, []);
+    groups.get(entry.category).push(entry);
+  }
+  const ttsOn = ttsActive();
+  document.getElementById('pp-speak-all').style.display = ttsOn ? '' : 'none';
+
+  const parts = [];
+  for (const [cat, rows] of groups) {
+    parts.push(`<div class="pp-cat-group"><div class="pp-cat-head">${PP_CAT_LABEL[cat] ?? cat}</div>`);
+    for (const row of rows) {
+      const tokensHtml = row.tokens.map(t =>
+        `<span class="pp-tok" data-concept="${escapeHtml(t.source)}" title="concept &quot;${escapeHtml(t.source)}&quot; → ${escapeHtml(t.lemma)}">${escapeHtml(t.lemma)}</span>`
+      ).join('');
+      const note = row.contextNote ? `<span class="pp-note">${escapeHtml(row.contextNote)}</span>` : '';
+      const speakBtn = ttsOn
+        ? `<button class="pp-speak" data-phrase="${escapeHtml(row.phrase)}" title="Speak">${SPEAKER_SVG}</button>`
+        : '<span></span>';
+      parts.push(`
+        <div class="pp-row">
+          <div class="pp-concept">${escapeHtml(row.concept)}${note}</div>
+          <div><span class="pp-reg-chip ${row.register}">${escapeHtml(row.register)}</span></div>
+          <div class="pp-phrase">${tokensHtml}</div>
+          <div>${speakBtn}</div>
+        </div>`);
+    }
+    parts.push('</div>');
+  }
+  host.innerHTML = parts.join('');
+
+  // Wire token chips → Lexicon
+  host.querySelectorAll('.pp-tok').forEach(el => {
+    el.addEventListener('click', () => {
+      const concept = el.dataset.concept;
+      _ppEnsureSlotInLexiconView(concept);
+      const search = document.getElementById('lex-search');
+      if (search) search.value = concept;
+      renderLexicon();
+      state.view = 'lexicon'; saveState(); renderNav();
+    });
+  });
+  // Wire per-row Speak
+  host.querySelectorAll('.pp-speak').forEach(btn => {
+    btn.addEventListener('click', () => ttsSpeak(btn.dataset.phrase));
+  });
+
+  document.getElementById('pp-meta').textContent =
+    `${pack.length} phrase${pack.length === 1 ? '' : 's'} · seed ${state.phrasePack.seed}`;
+}
+
+async function runPhrasePack() {
+  const sel = [...state.selected];
+  const cs = new Set([...PULMONIC_CONSONANTS, ...NON_PULMONIC_CONSONANTS].map(c => c.ipa));
+  const vs = new Set(CARDINAL_VOWELS.map(v => v.ipa));
+  if (!sel.some(x => cs.has(x)) || !sel.some(x => vs.has(x))) {
+    const status = document.getElementById('pp-status');
+    status.textContent = 'Need at least one consonant and one vowel in the inventory.';
+    status.style.color = 'var(--status-red)';
+    return;
+  }
+  const seedRaw = Number(document.getElementById('pp-seed').value) || 0;
+  const cats = [..._ppSelectedCats];
+  const ctx = buildTranslatorCtx();
+  const phono = ctx.phonology;
+  try {
+    const results = await buildPhrasePack({
+      languageId: state.langId,
+      phonology: phono,
+      phonotactics: ctx.phonotactics,
+      lexicon: translatorLex,
+      fallbackProfile: ctx.fallbackProfile,
+      seed: deriveSeed(BigInt(seedRaw), state.langId, 'phrase-pack'),
+      categories: cats.length === PP_CATEGORIES.length ? undefined : cats,
+    });
+    state.phrasePack = { categories: cats, seed: seedRaw, results };
+    saveState();
+    renderPhrasePack();
+    renderLexicon();
+    const status = document.getElementById('pp-status');
+    status.style.color = 'var(--status-green)';
+    status.textContent = `Generated ${results.length} phrase${results.length === 1 ? '' : 's'}.`;
+  } catch (e) {
+    const status = document.getElementById('pp-status');
+    status.textContent = e.message ?? String(e);
+    status.style.color = 'var(--status-red)';
+  }
+}
+
+function exportPhrasePackCsv() {
+  const pack = state.phrasePack?.results ?? [];
+  if (!pack.length) return;
+  const esc = (s) => {
+    const v = String(s ?? '');
+    return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+  };
+  const rows = [['category', 'concept', 'phrase', 'register', 'tokens', 'context']];
+  for (const p of pack) {
+    rows.push([
+      p.category, p.concept, p.phrase, p.register,
+      p.tokens.map(t => `${t.source}=${t.lemma}`).join(' | '),
+      p.contextNote ?? '',
+    ]);
+  }
+  const csv = rows.map(r => r.map(esc).join(',')).join('\n');
+  downloadBlob(csv, `${state.langId || 'language'}-phrase-pack.csv`, 'text/csv;charset=utf-8');
+}
+
+async function speakAllPhrases() {
+  const pack = state.phrasePack?.results ?? [];
+  if (!ttsActive() || !pack.length) return;
+  // Speak sequentially with a small gap. tts.speak() returns a promise that
+  // resolves on end (per L23 wrapper); fall back to setTimeout if it doesn't.
+  for (const entry of pack) {
+    try { tts.stop(); await tts.speak(entry.phrase, { rate: 1.0, pitch: 1.0 }); }
+    catch { /* swallow per-phrase failures */ }
+  }
+}
+
+document.getElementById('pp-generate')?.addEventListener('click', runPhrasePack);
+document.getElementById('pp-export-csv')?.addEventListener('click', exportPhrasePackCsv);
+document.getElementById('pp-speak-all')?.addEventListener('click', speakAllPhrases);
+
+renderPhrasePackCategoryChecks();
+renderPhrasePack();
+
 /* ─────────────────────  Grammar / paradigms (L11)  ───────────────────── */
 
 // Populate preset dropdown
@@ -2409,6 +2586,7 @@ const VIEW_RENDERERS = {
   legalityHeatmap: () => renderLegalityHeatmap(),
   statsDashboard: () => renderStatsDashboard(),
   nameGen: () => renderNameGenScratchHint(),
+  phrasePack: () => renderPhrasePack(),
 };
 
 const VIEW_DEPS = {
@@ -2424,6 +2602,7 @@ const VIEW_DEPS = {
   legalityHeatmap: ['selected'],
   statsDashboard:  ['selected', 'lexicon', 'typology'],
   nameGen:         ['nameGenScratch'],
+  phrasePack:      ['phrasePack', 'lexicon', 'langId'],
 };
 
 /** Dirty-flag render: only re-paint views whose deps overlap `changedKeys`.

@@ -222,6 +222,7 @@
   nav button[data-view="typology"]      { --icon-c: var(--tag-green); }
   nav button[data-view="romanization"]  { --icon-c: var(--accent); }
   nav button[data-view="names"]         { --icon-c: #c685c0; }
+  nav button[data-view="phrase-pack"]   { --icon-c: var(--tag-green); }
   nav button[data-view="docs"]          { --icon-c: var(--text-muted); }
   .nav-icon {
     width: 18px; height: 18px; flex-shrink: 0;
@@ -422,6 +423,48 @@
     font-size: 10px; background: var(--accent-dim); color: var(--accent);
     border: 1px solid var(--accent); margin-left: 6px;
   }
+
+  /* Phrase Pack (L24) */
+  .pp-cat-group {
+    margin-bottom: 14px; border: 1px solid var(--border-soft); border-radius: 6px;
+    background: var(--bg-panel);
+  }
+  .pp-cat-group > .pp-cat-head {
+    padding: 6px 12px; font-size: 12px; font-weight: 500;
+    color: var(--text-secondary); background: var(--bg-base);
+    border-bottom: 1px solid var(--border-soft); text-transform: capitalize;
+    letter-spacing: 0.3px;
+  }
+  .pp-row {
+    display: grid; grid-template-columns: 0.9fr 0.5fr 1.6fr 24px;
+    gap: 12px; padding: 7px 12px; border-bottom: 1px solid var(--border-mid);
+    align-items: center; font-size: 12px;
+  }
+  .pp-row:last-child { border-bottom: none; }
+  .pp-row .pp-concept { color: var(--text-primary); }
+  .pp-row .pp-note    { color: var(--text-muted); font-style: italic; font-size: 11px; display: block; }
+  .pp-row .pp-phrase  { font-family: var(--font-ipa); font-size: 14px; color: var(--accent); }
+  .pp-row .pp-phrase .pp-tok {
+    display: inline-block; padding: 1px 6px; margin-right: 4px;
+    border: 1px solid transparent; border-radius: 3px; cursor: pointer;
+    transition: background .12s, border-color .12s;
+  }
+  .pp-row .pp-phrase .pp-tok:hover { background: var(--accent-dim); border-color: var(--accent); }
+  .pp-row .pp-speak {
+    background: transparent; border: 1px solid var(--border-soft); border-radius: 3px;
+    color: var(--text-muted); cursor: pointer; padding: 2px 4px;
+  }
+  .pp-row .pp-speak:hover { color: var(--accent); border-color: var(--accent); }
+  .pp-reg-chip {
+    display: inline-block; padding: 1px 7px; border-radius: 3px;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+    background: var(--bg-base); color: var(--text-secondary);
+    border: 1px solid var(--border-soft);
+  }
+  .pp-reg-chip.formal { color: var(--tag-blue); border-color: var(--tag-blue); }
+  .pp-reg-chip.slang  { color: var(--status-orange); border-color: var(--status-orange); }
+  .pp-reg-chip.poetic { color: #c685c0; border-color: #c685c0; }
+  .pp-reg-chip.ritual { color: var(--tag-pink); border-color: var(--tag-pink); }
 
   /* Wordlinks — chips revealed in lexicon expand-rows */
   .link-badge {
@@ -1037,6 +1080,15 @@
         <path d="M5.5 16l.5 1.3L7.3 18 6 18.7 5.5 20l-.5-1.3L3.7 18l1.3-.7.5-1.3Z"/>
       </svg>
       <span>Name Gen</span><span class="key">7</span>
+    </button>
+    <button data-view="phrase-pack">
+      <!-- Phrase pack: speech bubble with stacked lines -->
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 5h12a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-4 3v-3H4a1 1 0 0 1-1-1V7a2 2 0 0 1 1-2Z"/>
+        <path d="M7 8h7M7 11h5"/>
+        <circle cx="20" cy="18" r="1.2"/>
+      </svg>
+      <span>Phrase Pack</span><span class="key">8</span>
     </button>
     <h3>Library</h3>
     <button data-view="docs">
@@ -1662,6 +1714,36 @@ t > s / _ i"></textarea>
           <div class="hint" style="margin-top:8px">
             same seed + same scope → identical word forever. Pick the ones you like — click to add to the lexicon under a chosen concept.
           </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================== Phrase Pack (L24) ====================== -->
+    <section class="view" id="view-phrase-pack">
+      <div class="panel">
+        <div class="panel-header">
+          Phrase Pack
+          <span class="sub">~50 deterministic phrases · greetings, numbers, kin, directions, politeness, questions</span>
+          <span class="meta" id="pp-meta">—</span>
+        </div>
+        <div class="panel-body">
+
+          <div class="row" style="gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 10px">
+            <label class="field" style="width: 110px"><span>Seed</span>
+              <input class="input mono" id="pp-seed" type="number" value="42">
+            </label>
+            <button class="btn primary" id="pp-generate">Generate</button>
+            <button class="btn" id="pp-export-csv">Export CSV</button>
+            <button class="btn" id="pp-speak-all" style="display:none" title="Speak every phrase in order">Speak all</button>
+            <span class="hint" id="pp-status" style="flex:1; min-width:180px"></span>
+          </div>
+
+          <div id="pp-categories" class="row" style="gap: 10px 14px; flex-wrap: wrap; margin-bottom: 12px"></div>
+
+          <div id="pp-results">
+            <div class="hint">Pick categories (all by default), set a seed, then hit Generate. Missing concepts are auto-filled from L4 and persisted to your lexicon.</div>
+          </div>
+
         </div>
       </div>
     </section>

@@ -23,6 +23,7 @@ export function defaultState() {
     wordlinks: [],
     nameGenScratch: null,
     ttsEnabled: true,
+    phrasePack: null,
   };
 }
 
@@ -45,6 +46,7 @@ export function loadState() {
       wordlinks: j.wordlinks ?? [],
       nameGenScratch: j.nameGenScratch ?? null,
       ttsEnabled: j.ttsEnabled ?? true,
+      phrasePack: j.phrasePack ?? null,
     };
   } catch {
     return null;

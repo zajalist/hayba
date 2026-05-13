@@ -101,6 +101,12 @@ export { exportToCsv, exportToAnkiTsv, exportToMarkdown } from './export-formats
 export type { TtsProvider } from './tts.js';
 export { createWebSpeechTts, createNoopTts } from './tts.js';
 
+// Phrase pack generator (L24)
+export type {
+  PhraseEntry, PhrasePackParams, PhraseToken, PhraseCategory, PhraseRegister,
+} from './phrase-pack.js';
+export { buildPhrasePack, PHRASE_TEMPLATES, allPhraseSlots } from './phrase-pack.js';
+
 // Typology catalogue (L15)
 export type {
   TypologyFeature, TypologyOption, TypologyCategory, LanguageProfile,
