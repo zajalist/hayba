@@ -11,8 +11,12 @@
     "typecheck": "tsc --noEmit",
     "serve": "node demo/serve.mjs"
   },
+  "dependencies": {
+    "three": "^0.169.0"
+  },
   "devDependencies": {
     "@types/node": "^24.12.2",
+    "@types/three": "^0.169.0",
     "@vitest/coverage-v8": "^2.1.9",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
