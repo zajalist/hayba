@@ -10,6 +10,7 @@ import {
   addAxis, removeAxis, addAxisValue, removeAxisValue,
   createLoanwordAdapter,
   computeLexiconStatistics,
+  exportToCsv, exportToAnkiTsv, exportToMarkdown,
   InMemoryWordlinks, autoCognatesFromDiachrony,
   buildFamilyTree,
   TYPOLOGY_FEATURES, TYPOLOGY_PRESETS, profileSummary,
@@ -873,6 +874,161 @@ document.getElementById('lex-autogen').addEventListener('click', () => {
   }
   saveState(); renderAffected(['lexicon']);
 });
+
+/* ─────────────────────  Lexicon export (L22)  ───────────────────── */
+function buildExportContext() {
+  return {
+    languageId: state.langId,
+    lexicon: state.lexicon.map(e => ({
+      lemma: e.lemma,
+      ipa: e.ipa,
+      gloss: e.concept,        // canonical Lexeme uses `gloss`
+      concept: e.concept,      // engine also accepts an explicit `concept`
+      pos: e.pos,
+      register: e.register,
+      etymology: e.etymology,
+    })),
+    phonology: buildPhonologyJson(),
+    romanization: { languageId: state.langId, rules: state.romRules },
+    phonotactics: {
+      phonologyId: state.langId,
+      vowels: [...state.selected].filter(x => CARDINAL_VOWELS.some(v => v.ipa === x)),
+      syllable: { templates: ['CV', 'CVC'] },
+    },
+  };
+}
+
+function downloadBlob(content, filename, mime) {
+  const blob = new Blob([content], { type: mime });
+  const a = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 0);
+}
+
+/* Tiny markdown→HTML renderer for the print view. Handles the subset we emit:
+   # H1 / ## H2 / ### H3, blank lines, `code`, **bold**, *italic*, bullets. */
+function mdToPrintHtml(md) {
+  const lines = md.split('\n');
+  const out = [];
+  let inList = false;
+  let inDict = false;
+  let posSectionCount = 0;
+  const inline = (s) => escapeHtml(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    // [ipa] groups — render in IPA font
+    .replace(/\[([^\]]+)\]/g, '<span class="ipa">[$1]</span>')
+    .replace(/&lt;br&gt;/g, '<br>');
+  const closeList = () => { if (inList) { out.push('</ul>'); inList = false; } };
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    if (!line) { closeList(); continue; }
+    if (line.startsWith('# ')) {
+      closeList();
+      out.push('<h1>' + inline(line.slice(2)) + '</h1>');
+    } else if (line.startsWith('## ')) {
+      closeList();
+      const title = line.slice(3);
+      if (title === 'Dictionary') inDict = true;
+      out.push('<h2>' + inline(title) + '</h2>');
+    } else if (line.startsWith('### ')) {
+      closeList();
+      const cls = inDict ? ' class="pos-section"' : '';
+      if (inDict) posSectionCount++;
+      // First POS section inside Dictionary should not page-break (it's already
+      // on a fresh page after the H2); CSS uses :nth-of-type to handle that.
+      out.push('<h3' + cls + '>' + inline(line.slice(4)) + '</h3>');
+    } else if (line.startsWith('- ')) {
+      if (!inList) { out.push('<ul>'); inList = true; }
+      out.push('<li>' + inline(line.slice(2)) + '</li>');
+    } else {
+      closeList();
+      out.push('<p>' + inline(line) + '</p>');
+    }
+  }
+  closeList();
+  return out.join('\n');
+}
+
+function openPrintView(ctx) {
+  const md = exportToMarkdown(ctx);
+  const body = mdToPrintHtml(md);
+  const title = (ctx.languageId || 'language') + ' — dictionary';
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
+<style>
+  @page { margin: 1in; }
+  :root {
+    --font-ipa: 'Charis SIL', 'Doulos SIL', 'Gentium Plus', 'DejaVu Sans', serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { background: #fff; color: #111; margin: 0; padding: 0; }
+  body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 11pt; line-height: 1.45; padding: 0 0.25in; }
+  h1, h2, h3 { font-family: 'Helvetica', 'Arial', sans-serif; color: #111; }
+  h1 { font-size: 24pt; margin: 0 0 0.3in; border-bottom: 2px solid #111; padding-bottom: 8px; }
+  h2 { font-size: 16pt; margin: 0.4in 0 0.15in; }
+  h3 { font-size: 13pt; margin: 0.25in 0 0.1in; color: #444; }
+  h3.pos-section { page-break-before: always; }
+  h3.pos-section:first-of-type { page-break-before: auto; }
+  p { margin: 0.05in 0; }
+  ul { list-style: none; padding-left: 0; margin: 0; }
+  li { margin: 0.04in 0; padding: 0.04in 0; border-bottom: 1px solid #eee; }
+  li strong { color: #111; }
+  li em { color: #333; }
+  .ipa { font-family: var(--font-ipa); color: #225; }
+  code { font-family: var(--font-ipa); background: transparent; color: #225; }
+  /* Hide any potential nav/UI bleed-through (none expected in a new tab,
+     but defensive in case the browser injects extension chrome). */
+  nav, header.app, aside, .kebab-menu, .toolbar { display: none !important; }
+</style></head><body>${body}</body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) { alert('Pop-up blocked — allow pop-ups for the print export.'); return; }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  // Give the new window a moment to lay out before invoking print().
+  setTimeout(() => {
+    try { w.focus(); w.print(); } catch {}
+  }, 200);
+}
+
+const lexExportBtn = document.getElementById('lex-export-btn');
+const lexExportMenu = document.getElementById('lex-export-menu');
+if (lexExportBtn && lexExportMenu) {
+  lexExportBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    lexExportMenu.classList.toggle('open');
+    lexExportBtn.setAttribute('aria-expanded', lexExportMenu.classList.contains('open') ? 'true' : 'false');
+  });
+  document.addEventListener('click', () => {
+    lexExportMenu.classList.remove('open');
+    lexExportBtn.setAttribute('aria-expanded', 'false');
+  });
+  lexExportMenu.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-export]');
+    if (!btn) { e.stopPropagation(); return; }
+    const kind = btn.dataset.export;
+    lexExportMenu.classList.remove('open');
+    lexExportBtn.setAttribute('aria-expanded', 'false');
+    const ctx = buildExportContext();
+    const base = ctx.languageId || 'language';
+    try {
+      if (kind === 'csv') {
+        downloadBlob(exportToCsv(ctx), base + '.csv', 'text/csv;charset=utf-8');
+      } else if (kind === 'anki') {
+        downloadBlob(exportToAnkiTsv(ctx), base + '-anki.tsv', 'text/tab-separated-values;charset=utf-8');
+      } else if (kind === 'pdf') {
+        openPrintView(ctx);
+      } else if (kind === 'json') {
+        document.getElementById('export-btn').click();
+      }
+    } catch (err) {
+      alert('Export failed: ' + (err.message ?? err));
+    }
+  });
+}
 
 /* ─────────────────────  Sound changes  ───────────────────── */
 document.getElementById('sca-rules').addEventListener('input', e => {

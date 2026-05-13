@@ -1308,6 +1308,15 @@
             </select>
             <button class="btn" id="lex-autogen">Auto-generate from phonotactics</button>
             <button class="btn" id="lex-clear">Clear lexicon</button>
+            <div class="kebab-wrap" style="position:relative">
+              <button class="btn" id="lex-export-btn" aria-haspopup="menu" aria-expanded="false">Export ▾</button>
+              <div class="kebab-menu" id="lex-export-menu" role="menu">
+                <button type="button" data-export="csv" role="menuitem">CSV (.csv)</button>
+                <button type="button" data-export="anki" role="menuitem">Anki deck (.tsv)</button>
+                <button type="button" data-export="pdf" role="menuitem">Printable PDF (via browser)</button>
+                <button type="button" data-export="json" role="menuitem">Full language JSON</button>
+              </div>
+            </div>
           </div>
 
           <table class="data" id="lex-table">

@@ -93,6 +93,10 @@ export { createLoanwordAdapter } from './loanword.js';
 export type { LexiconStatistics, StatsLexEntry } from './statistics.js';
 export { computeLexiconStatistics } from './statistics.js';
 
+// Export formats (L22) — CSV / Anki TSV / Markdown
+export type { ExportContext } from './export-formats.js';
+export { exportToCsv, exportToAnkiTsv, exportToMarkdown } from './export-formats.js';
+
 // Typology catalogue (L15)
 export type {
   TypologyFeature, TypologyOption, TypologyCategory, LanguageProfile,
