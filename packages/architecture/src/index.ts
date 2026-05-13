@@ -21,3 +21,10 @@ export {
   ArchitectureRegistryError,
   loadRegistry, listStyleGuideMeta, getStyleGuide, getTypology,
 } from './registry.js';
+
+export type {
+  ListStyleGuidesResult, GetStyleGuideResult, GetTypologyResult, ValidateStyleGuideResult,
+} from './mcp.js';
+export {
+  listStyleGuides, getStyleGuideTool, getTypologyTool, validateStyleGuideTool,
+} from './mcp.js';
