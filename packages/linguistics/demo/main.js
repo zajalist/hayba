@@ -3341,14 +3341,10 @@ function renderLegalityHeatmap() {
     return;
   }
 
-  // Pick a permissive spec — CV + CVC, single-segment slots only — so cells reflect
-  // pure (onset, coda) legality rather than cluster ordering.
-  const spec = {
-    phonologyId: phono.languageId,
-    vowels,
-    syllable: { templates: ['CV', 'CVC'] },
-  };
-
+  // Use the live spec so typology changes (cv/cvc/ccvcc) and user cluster
+  // customizations actually flow into the heatmap. The shared
+  // buildPhonotacticSpec() helper already merges typology + userCustomizedLegality.
+  const { spec } = buildPhonotacticSpec();
   const cells = clusterLegality(spec, phono);
   const byKey = new Map();
   for (const c of cells) byKey.set(c.onset + '|' + c.coda, c);
