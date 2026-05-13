@@ -660,8 +660,18 @@ function buildPhonotacticSpec() {
   const phono = buildPhonologyJson();
   const vs = new Set(CARDINAL_VOWELS.map(v => v.ipa));
   const vowels = [...state.selected].filter(x => vs.has(x));
+  // Honour the user's syllable-structure typology choice (state.typology.syllable);
+  // fall back to a permissive default for conlangs that haven't set it yet.
+  const SYLLABLE_TEMPLATES = {
+    cv:      ['CV'],
+    cvc:     ['CV', 'CVC'],
+    ccvcc:   ['CV', 'CVC', 'CCV', 'CCVC', 'CVCC', 'CCVCC'],
+    complex: ['CV', 'CVC', 'CCV', 'CCVC', 'CVCC', 'CCVCC', 'CCCVC', 'CVCCC'],
+  };
+  const choice = state.typology?.syllable;
+  const templates = SYLLABLE_TEMPLATES[choice] ?? ['CV', 'CVC'];
   return {
-    spec: { phonologyId: phono.languageId, vowels, syllable: { templates: ['CV','CVC','V'] } },
+    spec: { phonologyId: phono.languageId, vowels, syllable: { templates } },
     phono,
   };
 }
