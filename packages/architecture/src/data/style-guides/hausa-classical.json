@@ -1,0 +1,28 @@
+{
+  "id": "hausa-classical",
+  "styleSheet": {
+    "id": "hausa-classical",
+    "cultureId": "hausa",
+    "dateRange": [1400, 1800],
+    "core": {
+      "primaryMaterial": "mudbrick",
+      "secondaryMaterial": "wattle-daub",
+      "roofType": "flat",
+      "ornamentation": ["tubali-pinnacle", "carved-mud-relief", "azara-banding"]
+    },
+    "extras": {
+      "tubali": "molded-mud-cones",
+      "multiBuilding": "true",
+      "pinnacles": "azara"
+    }
+  },
+  "typologyWeights": [
+    { "typologyId": "peasant_home",  "weight": 6 },
+    { "typologyId": "walled_palace", "weight": 5 },
+    { "typologyId": "market_stall",  "weight": 4 },
+    { "typologyId": "civic_hall",    "weight": 4 },
+    { "typologyId": "granary",       "weight": 3 },
+    { "typologyId": "temple",        "weight": 2 },
+    { "typologyId": "workshop",      "weight": 1 }
+  ]
+}

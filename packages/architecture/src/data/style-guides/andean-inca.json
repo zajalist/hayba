@@ -1,0 +1,27 @@
+{
+  "id": "andean-inca",
+  "styleSheet": {
+    "id": "andean-inca",
+    "cultureId": "andean",
+    "dateRange": [1438, 1533],
+    "core": {
+      "primaryMaterial": "stone",
+      "secondaryMaterial": "adobe",
+      "roofType": "thatch",
+      "ornamentation": ["polygonal-stonework", "trapezoidal-niche", "double-jamb-doorway"]
+    },
+    "extras": {
+      "wallStyle": "polygonal-fitted",
+      "niches": "trapezoidal"
+    }
+  },
+  "typologyWeights": [
+    { "typologyId": "peasant_home",  "weight": 6 },
+    { "typologyId": "granary",       "weight": 5 },
+    { "typologyId": "temple",        "weight": 4 },
+    { "typologyId": "walled_palace", "weight": 4 },
+    { "typologyId": "watchtower",    "weight": 4 },
+    { "typologyId": "workshop",      "weight": 2 },
+    { "typologyId": "civic_hall",    "weight": 1 }
+  ]
+}

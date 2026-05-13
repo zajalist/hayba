@@ -1,0 +1,26 @@
+{
+  "id": "medieval-european-carolingian",
+  "styleSheet": {
+    "id": "medieval-european-carolingian",
+    "cultureId": "medieval-european",
+    "dateRange": [750, 1000],
+    "core": {
+      "primaryMaterial": "timber",
+      "secondaryMaterial": "stone",
+      "roofType": "gable",
+      "ornamentation": ["corner-quoins", "rounded-arch", "decorative-shingles"]
+    },
+    "extras": {
+      "roofPitch": "steep",
+      "defensiveWalls": "earthen"
+    }
+  },
+  "typologyWeights": [
+    { "typologyId": "peasant_home", "weight": 7 },
+    { "typologyId": "granary",      "weight": 5 },
+    { "typologyId": "watchtower",   "weight": 4 },
+    { "typologyId": "temple",       "weight": 2 },
+    { "typologyId": "manor",        "weight": 2 },
+    { "typologyId": "market_stall", "weight": 1 }
+  ]
+}
