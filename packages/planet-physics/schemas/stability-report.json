@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hayba.dev/schemas/planet-sim/stability-report-v1.json",
+  "title": "PlanetSim Stability Report",
+  "description": "Cross-axis stability assessment for stellar systems and terrestrial planets (Hayba planet-sim hub).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at_utc", "axes"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "generated_at_utc": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp when the report was produced."
+    },
+    "system_id": {
+      "type": "string",
+      "description": "Opaque identifier for the stellar system / simulation run."
+    },
+    "axes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["orbital", "axial", "tidal", "atmospheric", "habitable_zone"],
+      "properties": {
+        "orbital": { "$ref": "#/$defs/axisStatus" },
+        "axial": { "$ref": "#/$defs/axisStatus" },
+        "tidal": { "$ref": "#/$defs/axisStatus" },
+        "atmospheric": { "$ref": "#/$defs/axisStatus" },
+        "habitable_zone": { "$ref": "#/$defs/axisStatus" }
+      }
+    },
+    "bodies": {
+      "type": "array",
+      "description": "Optional per-body overrides or drill-down metrics.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "orbital": { "$ref": "#/$defs/axisStatus" },
+          "axial": { "$ref": "#/$defs/axisStatus" },
+          "tidal": { "$ref": "#/$defs/axisStatus" },
+          "atmospheric": { "$ref": "#/$defs/axisStatus" },
+          "habitable_zone": { "$ref": "#/$defs/axisStatus" }
+        }
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "severity": {
+      "type": "string",
+      "enum": ["green", "yellow", "red", "unknown"]
+    },
+    "axisStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["severity"],
+      "properties": {
+        "severity": { "$ref": "#/$defs/severity" },
+        "score": {
+          "type": "number",
+          "description": "Normalized score in [0,1] when available; higher is more stable / favorable."
+        },
+        "summary": { "type": "string" },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

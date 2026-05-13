@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at_utc": "2026-05-12T12:00:00.000Z",
+  "system_id": "fixture-demo",
+  "axes": {
+    "orbital": { "severity": "green", "summary": "fixture", "metrics": { "megno": 2.0 } },
+    "axial": { "severity": "yellow", "summary": "fixture" },
+    "tidal": { "severity": "green", "summary": "fixture" },
+    "atmospheric": { "severity": "unknown", "summary": "fixture" },
+    "habitable_zone": { "severity": "green", "summary": "fixture", "metrics": { "seff": 1.0 } }
+  },
+  "notes": ["Example fixture for planet-sim P8 schema validation."]
+}

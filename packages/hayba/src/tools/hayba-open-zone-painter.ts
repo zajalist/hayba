@@ -1,5 +1,5 @@
 
-import type { ToolResult } from './hayba-bake-terrain.js';
+import type { ToolResult } from './types.js';
 import { createProject, getProject, DEFAULT_PROJECTS_BASE } from '../projects.js';
 import { config } from '../config.js';
 

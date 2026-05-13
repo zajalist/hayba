@@ -1,0 +1,1734 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hayba · Linguistics Suite</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- Noto Sans + Noto Sans Mono have comprehensive IPA glyph coverage -->
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&family=Noto+Sans+Mono:wght@400;500;600&family=Charis+SIL:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  /* —— Hayba UE plugin design language —— slate base, blue accent, sentence-case */
+  :root {
+    --bg-deep:     #1b1e24;
+    --bg-base:     #22262e;
+    --bg-panel:    #2a2e36;
+    --bg-raised:   #303540;
+    --bg-elevated: #353a45;
+    --border-hard: #1a1d22;
+    --border-mid:  #2f343d;
+    --border-soft: #3d434e;
+    --accent:      #B56A1D;
+    --accent-hover:#D17F2A;
+    --accent-dim:  #B56A1D22;
+    --accent-glow: #B56A1D55;
+    --cream:       #DED4C3;
+    --text-primary:   #e5e8eb;
+    --text-secondary: #a8aeb8;
+    --text-muted:     #6b7280;
+    --text-accent:    #D17F2A;
+    --status-green:   #4db38a;
+    --status-orange:  #B56A1D;
+    --status-red:     #e06464;
+    --tag-blue:    #6a9fdc;
+    --tag-pink:    #c685c0;
+    --tag-green:   #7ec48e;
+    --font-ui:   'Noto Sans', 'Segoe UI', 'Roboto', system-ui, sans-serif;
+    --font-mono: 'Noto Sans Mono', 'Consolas', 'Cascadia Mono', 'Courier New', monospace;
+    /* IPA-specific stack — Charis SIL is purpose-built for full IPA coverage
+       including pharyngeals, epiglottals, clicks. Noto Sans is the cleaner
+       fallback for ordinary letters. */
+    --font-ipa:  'Charis SIL', 'Noto Sans', 'Doulos SIL', 'Lucida Sans Unicode', 'Arial Unicode MS', 'Segoe UI', sans-serif;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg-deep);
+    color: var(--text-primary);
+    font-family: var(--font-ui);
+    font-size: 13px;
+    height: 100vh;
+    display: grid;
+    grid-template-rows: 38px 1fr;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .accent { color: var(--accent); }
+  .muted { color: var(--text-muted); }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg-deep); }
+  ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a3a3a; }
+
+  /* —— Top toolbar —— */
+  .toolbar {
+    background: var(--bg-base);
+    border-bottom: 1px solid var(--border-hard);
+    display: flex;
+    align-items: center;
+    padding: 0 18px;
+    gap: 0;
+    font-size: 13px;
+  }
+  .toolbar .divider {
+    width: 1px; height: 22px; background: var(--border-soft);
+    margin: 0 14px;
+  }
+  .toolbar .brand-block {
+    display: flex; align-items: center; gap: 10px;
+  }
+  .toolbar .logo { height: 26px; width: auto; }
+  .toolbar .brand {
+    color: var(--text-primary); font-weight: 600; font-size: 14px;
+    letter-spacing: -0.1px;
+  }
+  .toolbar .brand .sub { color: var(--text-secondary); font-weight: 400; margin-left: 2px; }
+
+  /* Language selector — styled like a tab/pill */
+  .lang-picker {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--bg-panel); border: 1px solid var(--border-soft);
+    border-radius: 5px; padding: 4px 4px 4px 10px;
+    transition: border-color .12s;
+  }
+  .lang-picker:hover, .lang-picker:focus-within { border-color: var(--accent); }
+  .lang-picker .icon { color: var(--accent); font-size: 12px; }
+  .lang-picker input {
+    background: transparent; border: none; color: var(--text-primary);
+    font: 13px var(--font-ui); width: 180px; padding: 4px 0; outline: none;
+  }
+  .lang-picker input::placeholder { color: var(--text-muted); }
+
+  /* Stat badges with colored leading dot */
+  .stats-bar { display: flex; gap: 4px; }
+  .stat-pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 5px 10px 5px 9px; border-radius: 5px;
+    color: var(--text-secondary); font-size: 12.5px;
+    cursor: default; transition: background .12s, color .12s;
+  }
+  .stat-pill:hover { background: var(--bg-panel); color: var(--text-primary); }
+  .stat-pill .dot {
+    width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+    box-shadow: 0 0 5px currentColor;
+  }
+  .stat-pill .v {
+    color: var(--text-primary); font-weight: 600;
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  }
+  .stat-pill.phonemes .dot  { color: var(--tag-blue); background: currentColor; }
+  .stat-pill.words .dot     { color: var(--tag-pink); background: currentColor; }
+  .stat-pill.rules .dot     { color: var(--tag-green); background: currentColor; }
+
+  .toolbar .grow { flex: 1; }
+  .toolbar .actions { display: flex; align-items: center; gap: 8px; }
+
+  /* Kebab dropdown */
+  .kebab-wrap { position: relative; }
+  .kebab {
+    width: 30px; height: 30px; padding: 0; border-radius: 5px;
+    background: transparent; border: 1px solid transparent;
+    color: var(--text-secondary); cursor: pointer; font-size: 18px;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background .12s, border-color .12s, color .12s;
+  }
+  .kebab:hover { background: var(--bg-panel); color: var(--text-primary); border-color: var(--border-soft); }
+  .kebab-menu {
+    position: absolute; right: 0; top: calc(100% + 6px);
+    background: var(--bg-panel); border: 1px solid var(--border-soft);
+    border-radius: 6px; min-width: 180px; padding: 4px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    display: none; z-index: 50;
+  }
+  .kebab-menu.open { display: block; }
+  .kebab-menu button {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 8px 12px; border-radius: 4px; border: none;
+    background: transparent; color: var(--text-primary);
+    font: 13px var(--font-ui); text-align: left; cursor: pointer;
+  }
+  .kebab-menu button:hover { background: var(--bg-raised); }
+  .kebab-menu button.danger { color: var(--status-red); }
+  .kebab-menu button.danger:hover { background: rgba(224,100,100,0.1); }
+  .kebab-menu .divider-h { height: 1px; background: var(--border-mid); margin: 4px 0; }
+
+  /* Autosave indicator */
+  .autosave {
+    display: inline-flex; align-items: center; gap: 5px;
+    color: var(--text-muted); font-size: 11.5px; padding-right: 4px;
+  }
+  .autosave .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--status-green); box-shadow: 0 0 4px var(--status-green); }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 0 12px; height: 26px; border-radius: 4px;
+    font-size: 12px; font-weight: 500;
+    cursor: pointer; border: 1px solid var(--border-soft);
+    background: var(--bg-elevated); color: var(--text-primary);
+    transition: background .12s, border-color .12s;
+  }
+  .btn:hover { background: var(--bg-raised); border-color: var(--accent); }
+  .btn.primary {
+    background: var(--accent);
+    color: #0e1219; border-color: var(--accent);
+    font-weight: 600;
+  }
+  .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: #0e1219; }
+  .btn.danger:hover { border-color: var(--status-red); color: var(--status-red); }
+
+  /* —— App shell: nav + content —— */
+  .app { display: grid; grid-template-columns: 200px 1fr; overflow: hidden; }
+  nav {
+    background: var(--bg-base);
+    border-right: 1px solid var(--border-mid);
+    padding: 14px 0; display: flex; flex-direction: column;
+  }
+  nav h3 {
+    font-size: 11px; color: var(--text-muted); font-weight: 600;
+    padding: 6px 16px; margin-top: 8px;
+  }
+  nav button {
+    background: none; border: none; text-align: left;
+    padding: 8px 16px; color: var(--text-secondary);
+    font: 13px var(--font-ui); cursor: pointer;
+    border-left: 2px solid transparent;
+    display: flex; align-items: center; gap: 10px;
+    transition: background .12s, color .12s;
+  }
+  nav button:hover { color: var(--text-primary); background: var(--bg-panel); }
+  nav button.active {
+    color: var(--text-primary); border-left-color: var(--accent);
+    background: var(--bg-panel);
+  }
+  nav button .swatch {
+    width: 4px; height: 14px; border-radius: 2px; background: var(--tag-blue);
+    flex-shrink: 0;
+  }
+  nav button[data-view="lexicon"] .swatch { background: var(--tag-pink); }
+  nav button[data-view="sound-changes"] .swatch { background: var(--tag-green); }
+  nav button[data-view="romanization"] .swatch { background: var(--accent); }
+  nav button[data-view="names"] .swatch { background: var(--status-orange); }
+  nav button[data-view="docs"] .swatch { background: var(--text-muted); }
+  nav .key { color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; margin-left: auto; }
+
+  main { overflow: auto; }
+  .view { padding: 14px; display: none; }
+  .view.active { display: block; }
+
+  /* —— Panels —— */
+  .panel {
+    background: var(--bg-panel);
+    border: 1px solid var(--border-mid);
+    border-radius: 6px;
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+  .panel-header {
+    height: 36px;
+    background: var(--bg-raised);
+    border-bottom: 1px solid var(--border-mid);
+    display: flex; align-items: center;
+    padding: 0 14px; gap: 10px;
+    font-size: 13px; font-weight: 600;
+    color: var(--text-primary);
+  }
+  .panel-header .sub { color: var(--text-secondary); font-weight: 400; font-size: 12px; }
+  .panel-header .meta { margin-left: auto; color: var(--text-muted); font-size: 12px; font-family: var(--font-mono); }
+  .panel-body { padding: 14px; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+
+  /* —— Inputs —— */
+  .input, select, textarea {
+    background: var(--bg-base);
+    border: 1px solid var(--border-soft);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font: 13px var(--font-ui);
+    padding: 6px 10px; outline: none;
+    transition: border-color .12s, background .12s;
+  }
+  textarea { font-family: var(--font-mono); font-size: 12px; line-height: 1.55; resize: vertical; }
+  .input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+  label.field {
+    display: flex; flex-direction: column; gap: 5px;
+    font-size: 12px; color: var(--text-secondary);
+  }
+  label.field input, label.field select { font-size: 13px; }
+  .switch { display: inline-flex; gap: 6px; align-items: center;
+            font-size: 12px; color: var(--text-secondary); cursor: pointer; }
+  .switch input { accent-color: var(--accent); }
+
+  /* —— IPA grid —— */
+  .chart-legend { display: flex; gap: 14px; align-items: center;
+                  font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; flex-wrap: wrap; }
+  .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block;
+        margin-right: 5px; vertical-align: middle; }
+  .ipa-table { border-collapse: separate; border-spacing: 3px; }
+  .ipa-table th { font-size: 11px; color: var(--text-muted); font-weight: 500;
+                  text-align: center; padding: 4px 6px; }
+  .ipa-table th.row { text-align: right; padding-right: 8px; }
+  .cell {
+    width: 30px; height: 28px; border-radius: 3px;
+    background: var(--bg-base); border: 1px solid var(--border-soft);
+    color: var(--text-secondary); font: 13.5px var(--font-ipa);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; user-select: none; position: relative;
+    transition: border-color .12s, background .12s, color .12s, transform .08s;
+    flex-shrink: 0;
+  }
+  .big-ipa, .companion .ipa { font-family: var(--font-ipa) !important; }
+  .cell:hover { border-color: var(--accent); color: var(--text-primary); }
+  .cell.selected {
+    background: var(--accent-dim); border-color: var(--accent);
+    color: var(--text-primary); font-weight: 500;
+  }
+  .cell.selected::after {
+    content: '✓'; position: absolute; top: -5px; right: -5px;
+    width: 14px; height: 14px; background: var(--accent);
+    color: #0e1219; font-size: 9px; font-weight: 700;
+    border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  }
+  .cell.active { outline: 2px solid var(--accent-hover); outline-offset: 2px; }
+  /* Heatmap intensity is conveyed by cell color alone — the per-cell number
+     was visual clutter at this density. Exact percentages live in the
+     inspector's "Often co-occurs with" list for the active phoneme. */
+  .cell .p { display: none; }
+  .cell-pair { display: flex; gap: 2px; justify-content: center; }
+  .cell-pair > div:empty { width: 30px; height: 28px; flex-shrink: 0; }
+
+  /* Wrap each grid in a horizontal scroller so the panel can never overflow. */
+  .ipa-grid-scroll {
+    overflow-x: auto;
+    overflow-y: visible;
+    padding: 8px 2px 2px;       /* leave room for the badge that overhangs the cell */
+    margin: -8px -2px -2px;
+  }
+  .ipa-grid-scroll::-webkit-scrollbar { height: 8px; }
+  .ipa-table {
+    min-width: max-content; table-layout: fixed;
+    border-collapse: separate; border-spacing: 0;
+  }
+  .ipa-table th { font-size: 10.5px; padding: 6px 4px;
+                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+                  background: var(--bg-raised); border-bottom: 1px solid var(--border-soft); }
+  /* Body cells reserve full pair width so columns line up row-to-row even when empty. */
+  .ipa-table td       {
+    width: 64px; min-width: 64px; padding: 2px 1px;
+    vertical-align: middle; text-align: center;
+    border-right: 1px solid var(--border-mid);
+    border-bottom: 1px dashed var(--border-mid);
+  }
+  .ipa-table thead th { width: 64px; min-width: 64px;
+                        position: sticky; top: 0; z-index: 3;
+                        font-weight: 600; color: var(--text-secondary);
+                        text-transform: capitalize;
+                        border-right: 1px solid var(--border-soft); }
+  .ipa-table th.row   {
+    width: 96px; min-width: 96px;
+    text-align: right; padding-right: 8px;
+    position: sticky; left: 0; z-index: 2;
+    background: var(--bg-panel);
+    border-right: 1px solid var(--border-soft);
+    color: var(--text-secondary); font-weight: 600;
+    text-transform: capitalize;
+  }
+  /* corner: where thead meets first column */
+  .ipa-table thead th:first-child {
+    left: 0; z-index: 4; background: var(--bg-raised);
+    width: 96px; min-width: 96px;
+  }
+  .group-header {
+    font-size: 9.5px; color: var(--text-muted) !important;
+    text-transform: uppercase; letter-spacing: 0.6px;
+    font-weight: 700 !important;
+    padding: 2px 0 !important;
+  }
+  /* Row hover: tint the whole row */
+  .ipa-table tbody tr:hover td { background: rgba(232, 130, 28, 0.04); }
+  .ipa-table tbody tr:hover th.row { background: var(--bg-raised); color: var(--text-primary); }
+  /* Zebra striping for scanability */
+  .ipa-table tbody tr:nth-child(even) td { background: rgba(255,255,255,0.012); }
+
+  /* —— Tables (lexicon) —— */
+  table.data {
+    width: 100%; border-collapse: collapse;
+    font-size: 11px; font-family: var(--font-mono);
+  }
+  table.data th {
+    text-align: left; padding: 5px 8px;
+    background: var(--bg-panel); border-bottom: 1px solid var(--border-soft);
+    color: var(--text-muted); font-weight: 500;
+    font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  table.data td {
+    padding: 5px 8px; border-bottom: 1px solid var(--border-mid);
+  }
+  table.data tr:hover td { background: var(--bg-panel); }
+  table.data td.muted { color: var(--text-muted); }
+  table.data .right-actions { text-align: right; }
+
+  audio { height: 22px; }
+  audio::-webkit-media-controls-panel { background: var(--bg-panel); }
+  .hint { color: var(--text-muted); font-size: 10px; margin-top: 4px; }
+  a { color: var(--accent); text-decoration: none; }
+  .section-tag {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12px; font-weight: 600; color: var(--text-primary);
+    margin-bottom: 10px;
+  }
+  .section-tag::before {
+    content: ''; width: 4px; height: 14px; border-radius: 2px;
+    background: var(--tag-c, var(--accent));
+  }
+
+  /* Inventory chip strip */
+  .chip-strip {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    min-height: 30px; align-items: center;
+  }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--bg-base); border: 1px solid var(--border-soft);
+    color: var(--text-primary); padding: 4px 4px 4px 10px;
+    border-radius: 20px; font-size: 13px;
+    transition: border-color .12s;
+  }
+  .chip:hover { border-color: var(--accent); cursor: pointer; }
+  .chip.active { border-color: var(--accent); background: var(--accent-dim); }
+  .chip .x {
+    width: 18px; height: 18px; border-radius: 50%;
+    background: transparent; border: none; color: var(--text-muted);
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer; font-size: 14px; line-height: 1;
+  }
+  .chip .x:hover { background: var(--status-red); color: white; }
+
+  .big-ipa {
+    font-size: 46px; font-weight: 300; line-height: 1;
+    padding: 8px 0 12px; color: var(--text-primary);
+    text-align: center;
+  }
+
+  /* Inspector rail — sticky panel that casts a shadow once it overhangs content. */
+  .inspector-rail { display: flex; flex-direction: column; gap: 12px; }
+  .inspector-panel {
+    transition: box-shadow .18s ease, transform .18s ease;
+    z-index: 5;
+  }
+  .inspector-panel.pinned {
+    position: sticky; top: 12px;
+  }
+  .inspector-panel.pinned.stuck {
+    box-shadow:
+      0 18px 36px rgba(0, 0, 0, 0.55),
+      0 4px 10px rgba(0, 0, 0, 0.35),
+      0 0 0 1px var(--accent);
+  }
+  .pin-btn {
+    width: 26px; height: 22px; border-radius: 4px; padding: 0;
+    background: transparent; border: 1px solid transparent;
+    color: var(--text-muted); cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background .12s, color .12s, border-color .12s, transform .12s;
+  }
+  .pin-btn:hover { background: var(--bg-base); color: var(--text-primary); border-color: var(--border-soft); }
+  .pin-btn[aria-pressed="true"] {
+    color: var(--accent); background: var(--accent-dim);
+    border-color: var(--accent);
+  }
+  .pin-btn svg { transform: rotate(45deg); transition: transform .15s; }
+  .pin-btn[aria-pressed="false"] svg { transform: rotate(0deg); }
+  .stat-big { font-size: 22px; font-weight: 600; padding-top: 2px; }
+  .kv-grid { display: grid; gap: 4px; }
+  .kv { display: flex; justify-content: space-between; padding: 4px 0;
+        border-bottom: 1px dashed var(--border-mid); font-size: 12px; }
+  .kv:last-child { border-bottom: none; }
+  .kv .k { color: var(--text-secondary); }
+  .kv .v { color: var(--text-primary); }
+  .tag {
+    display: inline-block; padding: 2px 8px;
+    background: var(--accent-dim); color: var(--accent);
+    font-size: 11px; border-radius: 10px; border: 1px solid var(--accent);
+  }
+  .tag.muted { background: var(--bg-base); color: var(--text-muted); border-color: var(--border-soft); }
+  .companion {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 4px 8px; background: var(--bg-base);
+    border: 1px solid var(--border-mid); border-radius: 4px;
+    margin-bottom: 4px; font-size: 12px;
+    cursor: pointer; transition: border-color .12s;
+  }
+  .companion:hover { border-color: var(--accent); }
+  .companion .ipa { font-family: var(--font-mono); color: var(--accent); font-size: 14px; }
+  .companion .pct { color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; }
+  .companion .name { color: var(--text-secondary); font-size: 11px; flex: 1; padding: 0 8px; }
+
+  /* Preset modal */
+  .preset-dialog {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    display: none; align-items: center; justify-content: center; z-index: 100;
+  }
+  .preset-dialog.open { display: flex; }
+  .preset-card {
+    background: var(--bg-panel); border: 1px solid var(--border-mid);
+    border-radius: 8px; padding: 18px; min-width: 420px; max-width: 540px;
+  }
+  .preset-card h4 { font-size: 15px; margin-bottom: 4px; }
+  .preset-card .hint { margin-bottom: 14px; }
+  .preset-list { display: grid; gap: 6px; }
+  .preset-list button {
+    text-align: left; padding: 10px 12px; background: var(--bg-base);
+    border: 1px solid var(--border-soft); border-radius: 5px;
+    color: var(--text-primary); cursor: pointer; font: inherit;
+    display: flex; flex-direction: column; gap: 3px;
+    transition: border-color .12s, background .12s;
+  }
+  .preset-list button:hover { border-color: var(--accent); background: var(--bg-raised); }
+  .preset-list button .ph { color: var(--text-muted); font-size: 11px; font-family: var(--font-mono); }
+</style>
+</head>
+<body>
+
+<header class="toolbar">
+  <div class="brand-block">
+    <img src="./logo.svg" class="logo" alt="Hayba">
+    <span class="brand">Hayba<span class="sub">· Linguistics</span></span>
+  </div>
+
+  <span class="divider"></span>
+
+  <label class="lang-picker" title="Current language ID">
+    <span class="icon">◆</span>
+    <input type="text" id="lang-id" value="my-conlang" placeholder="languageId">
+  </label>
+
+  <span class="divider"></span>
+
+  <div class="stats-bar">
+    <span class="stat-pill phonemes" title="Phonemes in your inventory">
+      <span class="dot"></span><span>Phonemes</span><span class="v" id="t-count">0</span>
+    </span>
+    <span class="stat-pill words" title="Lexicon entries">
+      <span class="dot"></span><span>Words</span><span class="v" id="t-words">0</span>
+    </span>
+    <span class="stat-pill rules" title="Sound-change rules">
+      <span class="dot"></span><span>Rules</span><span class="v" id="t-rules">0</span>
+    </span>
+  </div>
+
+  <span class="grow"></span>
+
+  <div class="actions">
+    <span class="autosave"><span class="dot"></span>Auto-saved</span>
+    <button class="btn primary" id="export-btn">Export language</button>
+    <div class="kebab-wrap">
+      <button class="kebab" id="kebab-btn" title="More actions">⋮</button>
+      <div class="kebab-menu" id="kebab-menu">
+        <button id="action-copy-json">Copy phonology JSON</button>
+        <button id="action-import">Import language…</button>
+        <div class="divider-h"></div>
+        <button id="action-reset" class="danger">Reset language</button>
+      </div>
+    </div>
+  </div>
+</header>
+<input type="file" id="import-file" accept=".json,application/json" style="display:none">
+
+<div class="app">
+
+  <nav>
+    <h3>Language</h3>
+    <button data-view="phonology" class="active"><span>Phonology</span><span class="key">1</span></button>
+    <button data-view="lexicon"><span>Lexicon</span><span class="key">2</span></button>
+    <button data-view="sound-changes"><span>Sound Changes</span><span class="key">3</span></button>
+    <button data-view="romanization"><span>Romanization</span><span class="key">4</span></button>
+    <button data-view="names"><span>Name Gen</span><span class="key">5</span></button>
+    <h3>Library</h3>
+    <button data-view="docs"><span>Reference</span><span class="key">?</span></button>
+  </nav>
+
+  <main>
+
+    <!-- ====================== Phonology ====================== -->
+    <section class="view active" id="view-phonology">
+
+      <!-- Persistent inventory strip -->
+      <div class="panel">
+        <div class="panel-header">
+          Your inventory
+          <span class="sub" id="inv-summary">empty</span>
+          <span class="meta" id="fit-meta-top">cross-linguistic fit —</span>
+        </div>
+        <div class="panel-body" style="padding: 10px 14px">
+          <div id="inv-chips" class="chip-strip">
+            <span class="hint" id="inv-empty-hint">click any phoneme in the chart below, then press <b>+ Add to inventory</b>. Chips you add appear here — click × to remove.</span>
+          </div>
+          <div class="row" style="margin-top: 10px; gap: 8px">
+            <button class="btn" id="inv-presets" title="load a starter inventory">Load preset…</button>
+            <button class="btn danger" id="inv-clear">Clear inventory</button>
+            <span class="grow" style="flex:1"></span>
+            <label class="switch"><input type="checkbox" id="heatmap-toggle">Show co-occurrence heatmap</label>
+            <select id="heatmap-mode">
+              <option value="npmi">NPMI (surprise)</option>
+              <option value="rescaled">Rescaled P(B|A)</option>
+              <option value="lift">Lift vs chance</option>
+              <option value="conditional">Raw P(B|A)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chart + inspector side-by-side -->
+      <div style="display:grid; grid-template-columns: 1fr 320px; gap: 12px">
+
+        <div class="panel">
+          <div class="panel-header">
+            IPA chart
+            <span class="sub">click a cell to inspect · use the inspector to add or remove</span>
+          </div>
+          <div class="panel-body">
+            <div class="chart-legend">
+              <span><span class="sw" style="background:var(--bg-base); border:1px solid var(--border-soft)"></span>not in inventory</span>
+              <span><span class="sw" style="background:var(--accent-dim); border:1px solid var(--accent)"></span>in inventory</span>
+              <span style="margin-left:auto; color:var(--text-muted)">heatmap:
+                <span class="sw" style="background:#0d2942"></span>0
+                <span class="sw" style="background:#1a6aa6"></span>·
+                <span class="sw" style="background:#e08a3a"></span>·
+                <span class="sw" style="background:#d04545"></span>1
+              </span>
+            </div>
+
+            <div class="section-tag" style="--tag-c: var(--tag-blue)">Pulmonic consonants</div>
+            <div class="ipa-grid-scroll"><div id="grid-pulmonic"></div></div>
+
+            <div class="section-tag" style="--tag-c: var(--tag-pink); margin-top: 18px">Non-pulmonic · clicks · implosives · ejectives</div>
+            <div class="ipa-grid-scroll"><div id="grid-nonpulmonic"></div></div>
+
+            <div class="section-tag" style="--tag-c: var(--tag-green); margin-top: 18px">Vowels</div>
+            <div class="ipa-grid-scroll"><div id="grid-vowels"></div></div>
+          </div>
+        </div>
+
+        <!-- Inspector + stats -->
+        <div class="inspector-rail">
+          <div class="panel inspector-panel" id="inspector-panel">
+            <div class="panel-header">
+              Inspector
+              <span class="meta" style="margin-left: auto">
+                <button class="pin-btn" id="pin-btn" title="Pin to viewport (follow scroll)" aria-pressed="true">
+                  <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M9.828 1.586a2 2 0 0 1 2.828 0l1.758 1.758a2 2 0 0 1 0 2.828L12.5 7.586l.293.293a1 1 0 0 1 0 1.414l-1.207 1.207-3.793-3.793L9 5.5l-.293-.293a1 1 0 0 1 0-1.414L9.828 2.586zM7.293 8.707 2.586 13.414a1 1 0 0 1-1.414-1.414l4.707-4.707z"/></svg>
+                </button>
+              </span>
+            </div>
+            <div class="panel-body">
+              <div id="active-ipa" class="big-ipa">—</div>
+              <div class="hint" id="active-name" style="font-size:13px; color:var(--text-primary); margin-bottom: 4px">click any phoneme</div>
+              <div class="hint" id="active-features">—</div>
+              <div style="margin: 12px 0 4px">
+                <audio id="audio" controls style="width: 100%"></audio>
+              </div>
+              <a id="audio-link" target="_blank" rel="noopener" style="font-size:12px"></a>
+
+              <div style="margin-top: 14px">
+                <button class="btn primary" id="inspector-toggle" style="width: 100%; height: 32px" disabled>Select a phoneme</button>
+              </div>
+
+              <div id="active-rarity" class="hint" style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-mid); line-height: 1.6">—</div>
+              <div id="active-companions" style="margin-top: 8px"></div>
+              <div id="active-langs" class="hint" style="margin-top: 8px; line-height:1.55"></div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">Inventory stats
+              <span class="meta" id="stats-fit">—</span>
+            </div>
+            <div class="panel-body">
+              <div class="grid-3" style="text-align: center">
+                <div><div class="hint">Phonemes</div><div class="mono accent stat-big" id="s-count">0</div></div>
+                <div><div class="hint">Consonants</div><div class="mono stat-big" id="s-c">0</div></div>
+                <div><div class="hint">Vowels</div><div class="mono stat-big" id="s-v">0</div></div>
+              </div>
+              <div class="kv-grid" style="margin-top: 14px">
+                <div class="kv"><span class="k">C:V ratio</span><span class="v mono" id="s-ratio">—</span></div>
+                <div class="kv"><span class="k">Voicing pairs</span><span class="v mono" id="s-pairs">—</span></div>
+                <div class="kv"><span class="k">Places used</span><span class="v mono" id="s-places">—</span></div>
+                <div class="kv"><span class="k">Manners used</span><span class="v mono" id="s-manners">—</span></div>
+                <div class="kv"><span class="k">CV syllable space</span><span class="v mono" id="s-syl">—</span></div>
+                <div class="kv"><span class="k">Cross-ling. fit</span><span class="v mono accent" id="s-fit">—</span></div>
+              </div>
+              <div id="s-tags" style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px"></div>
+              <div class="hint" style="margin-top: 10px" id="s-closest">—</div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">Suggested additions
+              <span class="meta">based on co-occurrence</span>
+            </div>
+            <div class="panel-body" id="s-suggestions">
+              <div class="hint">Add some phonemes to see what cross-linguistically typical companions you might be missing.</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">Phonology JSON
+          <span class="sub">ready to feed into the rest of the suite</span>
+        </div>
+        <div class="panel-body">
+          <textarea id="export-out" readonly style="height: 140px; width: 100%"></textarea>
+          <div class="row" style="margin-top: 8px">
+            <button class="btn" id="copy-btn">Copy JSON</button>
+            <span class="hint" id="copy-hint"></span>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ====================== Lexicon ====================== -->
+    <section class="view" id="view-lexicon">
+      <div class="panel">
+        <div class="panel-header"><span class="dot"></span>Lexicon
+          <span class="meta" id="lex-meta">0 entries</span>
+        </div>
+        <div class="panel-body">
+
+          <div class="row" style="margin-bottom:10px">
+            <label class="field" style="flex:2"><span>Concept</span>
+              <input class="input" id="lex-concept" placeholder="e.g. mountain">
+            </label>
+            <label class="field" style="flex:2"><span>Lemma (IPA)</span>
+              <input class="input" id="lex-lemma" placeholder="e.g. paka">
+            </label>
+            <label class="field" style="flex:1"><span>Register</span>
+              <select id="lex-register">
+                <option value="neutral">neutral</option>
+                <option value="formal">formal</option>
+                <option value="slang">slang</option>
+                <option value="poetic">poetic</option>
+              </select>
+            </label>
+            <label class="field" style="flex:3"><span>Etymology · gloss</span>
+              <input class="input" id="lex-gloss" placeholder="optional">
+            </label>
+            <button class="btn primary" id="lex-add" style="align-self:flex-end">add</button>
+          </div>
+
+          <div class="row" style="margin-bottom:8px">
+            <input class="input" id="lex-search" placeholder="search concept or lemma…" style="flex:1">
+            <button class="btn" id="lex-autogen">auto-generate from phonotactics</button>
+            <button class="btn" id="lex-clear">clear lexicon</button>
+          </div>
+
+          <table class="data" id="lex-table">
+            <thead>
+              <tr>
+                <th style="width:24%">Concept</th>
+                <th style="width:18%">Lemma</th>
+                <th style="width:18%">Romanized</th>
+                <th style="width:12%">Register</th>
+                <th>Etymology · gloss</th>
+                <th class="right-actions" style="width:60px"></th>
+              </tr>
+            </thead>
+            <tbody id="lex-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================== Sound Changes ====================== -->
+    <section class="view" id="view-sound-changes">
+      <div class="panel">
+        <div class="panel-header"><span class="dot"></span>Sound Change Rules · Lexurgy-style
+          <span class="meta" id="sca-meta">0 rules</span>
+        </div>
+        <div class="panel-body">
+          <textarea id="sca-rules" style="width:100%; height:180px"
+            placeholder="# example
+p > b / [V] _ [V]    // intervocalic voicing
+[nasal] > 0 / _ #     // final-nasal deletion
+t > s / _ i"></textarea>
+          <div class="hint" style="margin-top:6px">
+            grammar: <span class="mono">target &gt; replacement / before _ after</span> · use <span class="mono">[V] [C] [nasal]</span> for classes · <span class="mono">#</span> = word boundary · <span class="mono">0</span> = deletion
+          </div>
+          <div class="row" style="margin-top:8px">
+            <button class="btn primary" id="sca-apply">apply to lexicon</button>
+            <span class="hint" id="sca-status"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header"><span class="dot"></span>Diachronic Preview
+          <span class="meta" id="sca-pmeta">—</span>
+        </div>
+        <div class="panel-body">
+          <table class="data" id="sca-table">
+            <thead>
+              <tr><th>Concept</th><th>Before</th><th></th><th>After</th></tr>
+            </thead>
+            <tbody id="sca-tbody"></tbody>
+          </table>
+          <div class="hint" id="sca-empty" style="margin-top:6px">add lexicon entries first, then apply rules.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================== Romanization ====================== -->
+    <section class="view" id="view-romanization">
+      <div class="panel">
+        <div class="panel-header"><span class="dot"></span>Romanization · IPA ↔ Orthography
+          <span class="meta" id="rom-meta">0 rules</span>
+        </div>
+        <div class="panel-body">
+          <div class="row" style="margin-bottom:8px">
+            <button class="btn primary" id="rom-defaults">apply sensible defaults</button>
+            <button class="btn" id="rom-clear">clear</button>
+          </div>
+          <table class="data" id="rom-table">
+            <thead>
+              <tr>
+                <th style="width:18%">IPA</th>
+                <th style="width:18%">Spelling</th>
+                <th style="width:24%">Preview (this word)</th>
+                <th></th>
+                <th style="width:50px"></th>
+              </tr>
+            </thead>
+            <tbody id="rom-tbody"></tbody>
+          </table>
+
+          <div class="row" style="margin-top:14px">
+            <label class="field" style="flex:1"><span>Try a word (IPA)</span>
+              <input class="input" id="rom-test" placeholder="e.g. paʃa">
+            </label>
+            <div style="flex:1">
+              <div class="hint">romanized</div>
+              <div class="mono accent" style="font-size:18px; padding:5px 0" id="rom-out">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================== Name Gen ====================== -->
+    <section class="view" id="view-names">
+      <div class="panel">
+        <div class="panel-header"><span class="dot"></span>Deterministic Name Generator</div>
+        <div class="panel-body">
+          <div class="row" style="margin-bottom:10px">
+            <label class="field" style="flex:1"><span>Category</span>
+              <select id="ng-cat">
+                <option>person</option><option>place</option><option>faction</option>
+                <option>object</option><option>concept</option>
+              </select>
+            </label>
+            <label class="field" style="flex:1"><span>Template</span>
+              <select id="ng-tpl">
+                <option>CV</option><option>CVC</option><option>CCV</option><option>CVN</option>
+              </select>
+            </label>
+            <label class="field" style="flex:1"><span>Syllables</span>
+              <input class="input mono" id="ng-syl" type="number" min="1" max="6" value="2">
+            </label>
+            <label class="field" style="flex:1"><span>Seed</span>
+              <input class="input mono" id="ng-seed" type="number" value="42">
+            </label>
+            <button class="btn primary" id="ng-roll" style="align-self:flex-end">roll 20</button>
+          </div>
+          <div id="ng-results" style="display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; font-family:var(--font-mono); font-size:13px"></div>
+          <div class="hint" style="margin-top:8px">
+            same seed + same scope → identical word forever. Pick the ones you like — click to add to the lexicon under a chosen concept.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================== Reference ====================== -->
+    <section class="view" id="view-docs">
+      <div class="panel">
+        <div class="panel-header"><span class="dot"></span>Reference</div>
+        <div class="panel-body" style="font-size:12px; line-height:1.6">
+          <p><b>Hayba Linguistics</b> — open-core conlang stack for AAA game devs, 3D artists, and rigorous worldbuilders. Pareto-relevant 80% (game devs: names, persistent lexicon, signage) on top of a conlang-pro engine (phonology, phonotactics, sound changes, derivation).</p>
+          <p style="margin-top:10px"><b>Determinism</b> · every public function is pure over <span class="mono">(master_seed, params)</span> via SplitMix64. Same input → same output forever.</p>
+          <p style="margin-top:10px"><b>Cross-linguistic data</b> · phoneme co-occurrence is derived from <a href="https://phoible.org" target="_blank">PHOIBLE</a> (CC-BY-SA). Sampled audio comes from <a href="https://commons.wikimedia.org/" target="_blank">Wikimedia Commons</a> (CC-BY-SA).</p>
+          <p style="margin-top:10px"><b>SCA syntax</b> · rules are Lexurgy-flavored: <span class="mono">target &gt; replacement / before _ after</span> with <span class="mono">[class]</span> feature sets and <span class="mono">#</span> word boundaries.</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- Preset modal -->
+<div class="preset-dialog" id="preset-dlg">
+  <div class="preset-card">
+    <h4>Load a starter inventory</h4>
+    <div class="hint">Replaces your current inventory. Picks let you sanity-check what a real-language phoneme set looks like.</div>
+    <div class="preset-list" id="preset-list"></div>
+    <div class="row" style="margin-top:14px; justify-content: flex-end">
+      <button class="btn" id="preset-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import {
+  PULMONIC_CONSONANTS, NON_PULMONIC_CONSONANTS, CARDINAL_VOWELS,
+  buildCoOccurrenceModel, INVENTORIES, audioUrlFor,
+  consonantToPhonemeFeatures, vowelToPhonemeFeatures,
+  parseRules, evolveLexicon, generatePhonotacticName, deriveSeed,
+  defaultRomanization, romanize,
+} from '../dist/index.js';
+
+/* ─────────────────────  state  ───────────────────── */
+const STATE_KEY = 'hayba-ling-v3';
+
+const state = loadState() ?? {
+  selected: new Set(['p','t','k','m','n','s','l','j','w','i','a','u']),
+  active: 'm',
+  heatmap: false,
+  heatmapMode: 'npmi',
+  langId: 'my-conlang',
+  view: 'phonology',
+  lexicon: [/* {concept, lemma, ipa, register, gloss} */],
+  rules: '',
+  romRules: [/* [ipa, spelling] */],
+  romTest: 'paʃa',
+  inspectorPinned: true,
+};
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STATE_KEY); if (!raw) return null;
+    const j = JSON.parse(raw);
+    return {
+      ...j,
+      selected: new Set(j.selected),
+      lexicon: j.lexicon ?? [],
+      romRules: j.romRules ?? [],
+      rules: j.rules ?? '',
+      romTest: j.romTest ?? 'paʃa',
+      inspectorPinned: j.inspectorPinned ?? true,
+    };
+  } catch { return null; }
+}
+function saveState() {
+  localStorage.setItem(STATE_KEY, JSON.stringify({
+    ...state,
+    selected: [...state.selected],
+  }));
+}
+
+const model = buildCoOccurrenceModel();
+
+/* ─────────────────────  navigation  ───────────────────── */
+document.querySelectorAll('nav button[data-view]').forEach(b => {
+  b.addEventListener('click', () => {
+    state.view = b.dataset.view; saveState(); renderNav();
+  });
+});
+function renderNav() {
+  document.querySelectorAll('nav button[data-view]').forEach(b => {
+    b.classList.toggle('active', b.dataset.view === state.view);
+  });
+  document.querySelectorAll('.view').forEach(v => {
+    v.classList.toggle('active', v.id === `view-${state.view}`);
+  });
+}
+
+/* ─────────────────────  IPA chart  ───────────────────── */
+const PLACE_ORDER = [
+  'bilabial','labiodental','linguolabial','dental','alveolar','postalveolar',
+  'retroflex','alveolo-palatal','palatal','velar','uvular','pharyngeal','epiglottal','glottal',
+  'labial-velar','labial-palatal',
+];
+const MANNER_ORDER = [
+  'nasal','plosive','sibilant-fricative','fricative','lateral-fricative',
+  'approximant','lateral-approximant','tap','lateral-tap','trill','affricate',
+  'click','implosive','ejective',
+];
+const HEIGHT_ORDER   = ['close','near-close','close-mid','mid','open-mid','near-open','open'];
+const BACKNESS_ORDER = ['front','central','back'];
+
+function makeCell(ipa) {
+  const d = document.createElement('div');
+  d.className = 'cell'; d.dataset.ipa = ipa;
+  d.innerHTML = `${ipa}<span class="p"></span>`;
+  d.addEventListener('click', () => inspect(ipa));
+  d.addEventListener('dblclick', () => toggleInventory(ipa));
+  d.title = `Click to inspect · double-click to add/remove`;
+  return d;
+}
+
+// Place groupings (Labial / Coronal / Dorsal / Laryngeal) — matches IPA conventions
+// for visual separation between major articulation zones.
+const PLACE_GROUP = {
+  bilabial: 'labial', labiodental: 'labial', linguolabial: 'labial',
+  dental: 'coronal', alveolar: 'coronal', postalveolar: 'coronal',
+  retroflex: 'coronal', 'alveolo-palatal': 'coronal',
+  palatal: 'dorsal', velar: 'dorsal', uvular: 'dorsal',
+  pharyngeal: 'laryngeal', epiglottal: 'laryngeal', glottal: 'laryngeal',
+  'labial-velar': 'co-articulated', 'labial-palatal': 'co-articulated',
+};
+const GROUP_COLOR = {
+  labial: 'rgba(106,159,220,0.10)',
+  coronal: 'rgba(126,196,142,0.10)',
+  dorsal: 'rgba(232,165,96,0.10)',
+  laryngeal: 'rgba(198,133,192,0.10)',
+  'co-articulated': 'rgba(255,255,255,0.06)',
+};
+
+/** Standard IPA chart cell: voiceless left, voiced right, share one td. */
+function buildConsonantGrid(targetId, items) {
+  const presentPlaces = new Set(items.map(i => i.place));
+  const presentManners = new Set(items.map(i => i.manner));
+  const cols = PLACE_ORDER.filter(p => presentPlaces.has(p));
+  const rows = MANNER_ORDER.filter(m => presentManners.has(m));
+
+  const tbl = document.createElement('table'); tbl.className = 'ipa-table';
+
+  // Group super-row (labial / coronal / dorsal / laryngeal banner)
+  const groupRow = tbl.insertRow();
+  groupRow.className = 'group-row';
+  const cornerGroup = document.createElement('th');
+  cornerGroup.className = 'row'; cornerGroup.textContent = '';
+  groupRow.appendChild(cornerGroup);
+  let i = 0;
+  while (i < cols.length) {
+    const g = PLACE_GROUP[cols[i]] ?? '';
+    let span = 1;
+    while (i + span < cols.length && PLACE_GROUP[cols[i + span]] === g) span++;
+    const th = document.createElement('th');
+    th.colSpan = span;
+    th.className = 'group-header';
+    th.textContent = g;
+    th.style.background = GROUP_COLOR[g] ?? '';
+    groupRow.appendChild(th);
+    i += span;
+  }
+
+  // Column header row
+  const thead = tbl.insertRow();
+  const cornerHead = document.createElement('th');
+  cornerHead.className = 'row corner';
+  cornerHead.innerHTML = `<span style="color:var(--text-muted); font-size:9px;">manner ↓ / place →</span>`;
+  thead.appendChild(cornerHead);
+  for (const c of cols) {
+    const th = document.createElement('th');
+    th.textContent = c.replace(/-/g, '-​');
+    th.dataset.place = c;
+    thead.appendChild(th);
+  }
+
+  // Body rows
+  for (const r of rows) {
+    const tr = tbl.insertRow();
+    tr.dataset.manner = r;
+    const lab = document.createElement('th'); lab.className = 'row';
+    lab.textContent = r.replace(/-/g, '-​'); tr.appendChild(lab);
+    for (const c of cols) {
+      const td = document.createElement('td');
+      td.dataset.place = c;
+      const grp = PLACE_GROUP[c]; if (grp) td.dataset.group = grp;
+      const voiceless = items.find(i => i.manner === r && i.place === c && i.voicing === 'voiceless');
+      const voiced    = items.find(i => i.manner === r && i.place === c && i.voicing === 'voiced');
+      if (voiceless || voiced) {
+        const wrap = document.createElement('div'); wrap.className = 'cell-pair';
+        if (voiceless) wrap.appendChild(makeCell(voiceless.ipa)); else wrap.appendChild(document.createElement('div'));
+        if (voiced)    wrap.appendChild(makeCell(voiced.ipa));    else wrap.appendChild(document.createElement('div'));
+        td.appendChild(wrap);
+      }
+      tr.appendChild(td);
+    }
+  }
+  document.getElementById(targetId).appendChild(tbl);
+}
+
+/** Vowel grid: unrounded | rounded per (height, backness). */
+function buildVowelGrid(targetId, items) {
+  const tbl = document.createElement('table'); tbl.className = 'ipa-table';
+  const thead = tbl.insertRow(); thead.insertCell();
+  for (const c of BACKNESS_ORDER) { const th = document.createElement('th'); th.textContent = c; thead.appendChild(th); }
+  for (const r of HEIGHT_ORDER) {
+    if (!items.some(i => i.height === r)) continue;
+    const tr = tbl.insertRow();
+    const lab = document.createElement('th'); lab.className = 'row'; lab.textContent = r; tr.appendChild(lab);
+    for (const c of BACKNESS_ORDER) {
+      const td = document.createElement('td');
+      const unr = items.find(i => i.height === r && i.backness === c && i.roundness === 'unrounded');
+      const rnd = items.find(i => i.height === r && i.backness === c && i.roundness === 'rounded');
+      if (unr || rnd) {
+        const wrap = document.createElement('div'); wrap.className = 'cell-pair';
+        if (unr) wrap.appendChild(makeCell(unr.ipa)); else wrap.appendChild(document.createElement('div'));
+        if (rnd) wrap.appendChild(makeCell(rnd.ipa)); else wrap.appendChild(document.createElement('div'));
+        td.appendChild(wrap);
+      }
+      tr.appendChild(td);
+    }
+  }
+  document.getElementById(targetId).appendChild(tbl);
+}
+
+buildConsonantGrid('grid-pulmonic',    PULMONIC_CONSONANTS);
+buildConsonantGrid('grid-nonpulmonic', NON_PULMONIC_CONSONANTS);
+buildVowelGrid    ('grid-vowels',      CARDINAL_VOWELS);
+
+function inspect(ipa) {
+  state.active = ipa; saveState(); renderPhonology();
+}
+function toggleInventory(ipa) {
+  if (state.selected.has(ipa)) state.selected.delete(ipa); else state.selected.add(ipa);
+  state.active = ipa; saveState(); renderPhonology(); renderTopbar(); renderRomanization();
+}
+
+document.getElementById('inspector-toggle').addEventListener('click', () => {
+  if (state.active) toggleInventory(state.active);
+});
+
+/* —— Presets —— */
+const PRESETS = [
+  { name: 'Minimal (Pirahã-like)', phonemes: ['p','t','k','ʔ','h','b','i','o','a'] },
+  { name: 'Polynesian (Hawaiian)', phonemes: ['p','k','ʔ','m','n','h','l','w','i','e','a','o','u'] },
+  { name: 'Romance (Spanish core)', phonemes: ['p','t','k','b','d','ɡ','m','n','ɲ','f','s','x','l','ʎ','r','j','w','i','e','a','o','u'] },
+  { name: 'Germanic (English core)', phonemes: ['p','t','k','b','d','ɡ','m','n','ŋ','f','v','θ','ð','s','z','ʃ','ʒ','h','l','j','w','ɹ','i','ɪ','e','ɛ','æ','ə','a','ɑ','ɔ','o','ʊ','u'] },
+  { name: 'Slavic (Russian-ish)', phonemes: ['p','t','k','b','d','ɡ','m','n','f','v','s','z','ʃ','ʒ','x','l','j','r','t͡s','t͡ʃ','i','e','a','o','u'] },
+  { name: 'Sino-Tibetan (Mandarin-ish)', phonemes: ['p','t','k','m','n','ŋ','f','s','ʃ','x','l','j','w','t͡s','t͡ʃ','t͡ɕ','ɕ','i','y','u','e','o','a','ə'] },
+  { name: 'Click-rich (Xhosa-ish flavour)', phonemes: ['p','t','k','b','d','ɡ','m','n','ŋ','f','s','ʃ','h','l','j','w','ǀ','ǃ','ǂ','ɡǀ','ɡǃ','i','e','a','o','u'] },
+  { name: 'Tonal Mainland SEA (Thai-ish)', phonemes: ['p','t','k','b','d','m','n','ŋ','f','s','h','l','j','w','r','i','e','ɛ','a','u','o','ɔ','ə','pʼ','tʼ','kʼ'] },
+];
+const presetList = document.getElementById('preset-list');
+for (const p of PRESETS) {
+  const b = document.createElement('button');
+  b.innerHTML = `<div>${p.name}</div><div class="ph">${p.phonemes.join('  ')}</div>`;
+  b.addEventListener('click', () => {
+    state.selected = new Set(p.phonemes);
+    state.active = p.phonemes[0]; saveState();
+    document.getElementById('preset-dlg').classList.remove('open');
+    renderAll();
+  });
+  presetList.appendChild(b);
+}
+document.getElementById('inv-presets').addEventListener('click', () =>
+  document.getElementById('preset-dlg').classList.add('open'));
+document.getElementById('preset-cancel').addEventListener('click', () =>
+  document.getElementById('preset-dlg').classList.remove('open'));
+document.getElementById('preset-dlg').addEventListener('click', e => {
+  if (e.target.id === 'preset-dlg') e.target.classList.remove('open');
+});
+document.getElementById('inv-clear').addEventListener('click', () => {
+  if (!confirm('Remove all phonemes from the inventory?')) return;
+  state.selected = new Set(); saveState(); renderAll();
+});
+
+function lerpColor(w) {
+  const stops = [[0,[13,41,66]],[0.4,[26,106,166]],[0.7,[224,138,58]],[1,[208,69,69]]];
+  for (let i=0;i<stops.length-1;i++){ const [w0,c0]=stops[i],[w1,c1]=stops[i+1];
+    if (w<=w1){ const t=(w-w0)/(w1-w0); const c=c0.map((v,j)=>Math.round(v+(c1[j]-v)*t));
+      return `rgb(${c[0]},${c[1]},${c[2]})`; }
+  } return 'rgb(208,69,69)';
+}
+
+function inventoryFit() {
+  const sel = [...state.selected]; if (sel.length < 2) return null;
+  let sum=0,n=0;
+  for (const a of sel) for (const b of sel) if (a !== b) { sum += model.pGivenPresent(b, a); n++; }
+  return sum / n;
+}
+
+function buildPhonologyJson() {
+  const phonemes = [];
+  for (const c of [...PULMONIC_CONSONANTS, ...NON_PULMONIC_CONSONANTS])
+    if (state.selected.has(c.ipa)) phonemes.push({ id: c.ipa, ipa: c.ipa, features: consonantToPhonemeFeatures(c) });
+  for (const v of CARDINAL_VOWELS)
+    if (state.selected.has(v.ipa)) phonemes.push({ id: v.ipa, ipa: v.ipa, features: vowelToPhonemeFeatures(v) });
+  return { languageId: state.langId || 'my-conlang', phonemes };
+}
+
+function describePhoneme(meta) {
+  if (!meta) return '';
+  if ('manner' in meta) {
+    const v = meta.voicing === 'voiced' ? 'Voiced' : 'Voiceless';
+    return `${v} ${meta.place} ${meta.manner.replace(/-/g, ' ')}`;
+  }
+  return `${meta.height} ${meta.backness} ${meta.roundness} vowel`;
+}
+
+function renderPhonology() {
+  let weights = null;
+  if (state.heatmap && state.active) {
+    const cs = [...document.querySelectorAll('.cell')].map(d => d.dataset.ipa);
+    weights = model.heatmapWeights(state.active, cs, state.heatmapMode);
+  }
+  for (const d of document.querySelectorAll('.cell')) {
+    const ipa = d.dataset.ipa;
+    if (weights) {
+      const w = weights.get(ipa) ?? 0;
+      d.style.background = lerpColor(w);
+    } else {
+      d.style.background = '';
+    }
+    d.classList.toggle('selected', state.selected.has(ipa));
+    d.classList.toggle('active', ipa === state.active);
+  }
+
+  // Inspector
+  document.getElementById('active-ipa').textContent = state.active ?? '—';
+  const meta = state.active
+    ? [...PULMONIC_CONSONANTS, ...NON_PULMONIC_CONSONANTS, ...CARDINAL_VOWELS].find(p => p.ipa === state.active)
+    : null;
+  const nameEl = document.getElementById('active-name');
+  const featEl = document.getElementById('active-features');
+  const statsEl = document.getElementById('active-stats');
+  const rarityEl = document.getElementById('active-rarity');
+  const companionsEl = document.getElementById('active-companions');
+  const langsEl = document.getElementById('active-langs');
+  if (meta) {
+    nameEl.textContent = describePhoneme(meta);
+    featEl.innerHTML = Object.entries(meta)
+      .filter(([k]) => k !== 'symbol' && k !== 'ipa')
+      .map(([k,v]) => `<span style="color:var(--text-muted)">${k}:</span> ${v}`).join(' · ');
+    const marg = model.marginal(state.active);
+    const rarityLabel =
+      marg > 0.85 ? 'near-universal' :
+      marg > 0.55 ? 'common' :
+      marg > 0.25 ? 'attested' :
+      marg > 0.10 ? 'rare' : 'very rare';
+    rarityEl.innerHTML = `
+      <b style="color:var(--text-primary)">Frequency</b> · ${(marg*100).toFixed(0)}% of world languages
+      <span class="tag" style="margin-left:6px">${rarityLabel}</span>`;
+    const companions = model.topCoOccurring(state.active, 5);
+    companionsEl.innerHTML = `<div class="hint" style="margin-bottom:4px"><b style="color:var(--text-primary)">Often co-occurs with</b></div>`
+      + companions.map(c => `
+        <div class="companion" data-jump="${c.ipa}">
+          <span class="ipa">/${c.ipa}/</span>
+          <span class="name">${escapeHtml(describePhoneme([...PULMONIC_CONSONANTS, ...NON_PULMONIC_CONSONANTS, ...CARDINAL_VOWELS].find(p => p.ipa === c.ipa)))}</span>
+          <span class="pct">${(c.p*100).toFixed(0)}%</span>
+        </div>`).join('');
+    companionsEl.querySelectorAll('[data-jump]').forEach(el =>
+      el.addEventListener('click', () => inspect(el.dataset.jump)));
+    const langs = model.languagesWith(state.active);
+    langsEl.innerHTML = langs.length
+      ? `<b style="color:var(--text-primary)">Sample languages</b><br>${escapeHtml(langs.slice(0, 8).join(', '))}${langs.length>8?'…':''}`
+      : `<b style="color:var(--text-primary)">Sample languages</b><br>Not in the bundled corpus — heatmap falls back to universal prior.`;
+  } else {
+    nameEl.textContent = 'Click any phoneme';
+    featEl.textContent = 'Single click = inspect. Double-click a cell, or use the button below, to add/remove from your inventory.';
+    rarityEl.innerHTML = '';
+    companionsEl.innerHTML = '';
+    langsEl.innerHTML = '';
+  }
+  // Inspector toggle button reflects current state
+  const btn = document.getElementById('inspector-toggle');
+  if (!state.active) {
+    btn.textContent = 'Select a phoneme'; btn.disabled = true;
+    btn.classList.remove('danger');
+  } else if (state.selected.has(state.active)) {
+    btn.textContent = `− Remove /${state.active}/ from inventory`;
+    btn.disabled = false; btn.classList.remove('primary'); btn.classList.add('danger');
+  } else {
+    btn.textContent = `+ Add /${state.active}/ to inventory`;
+    btn.disabled = false; btn.classList.add('primary'); btn.classList.remove('danger');
+  }
+  // Audio
+  const url = state.active ? audioUrlFor(state.active) : null;
+  const audio = document.getElementById('audio'); const link = document.getElementById('audio-link');
+  if (url) { audio.src = url; audio.style.display=''; link.href=url; link.textContent='Listen on Wikimedia Commons →'; }
+  else { audio.removeAttribute('src'); audio.style.display='none'; link.textContent=''; }
+
+  // Inventory chips
+  const chipStrip = document.getElementById('inv-chips');
+  const sel = [...state.selected];
+  const cs = new Set([...PULMONIC_CONSONANTS, ...NON_PULMONIC_CONSONANTS].map(c => c.ipa));
+  const vs = new Set(CARDINAL_VOWELS.map(v => v.ipa));
+  const cCount = sel.filter(x => cs.has(x)).length;
+  const vCount = sel.filter(x => vs.has(x)).length;
+  if (sel.length === 0) {
+    chipStrip.innerHTML = `<span class="hint" id="inv-empty-hint">Click any phoneme in the chart below, then press <b>+ Add to inventory</b>. Or just double-click a cell. Chips you add appear here — click × to remove.</span>`;
+  } else {
+    chipStrip.innerHTML = '';
+    for (const ipa of sel) {
+      const chip = document.createElement('span');
+      chip.className = 'chip' + (ipa === state.active ? ' active' : '');
+      chip.innerHTML = `<span class="mono">${escapeHtml(ipa)}</span><button class="x" title="remove">×</button>`;
+      chip.addEventListener('click', e => {
+        if (e.target.classList.contains('x')) { toggleInventory(ipa); }
+        else { inspect(ipa); }
+      });
+      chipStrip.appendChild(chip);
+    }
+  }
+
+  // Stats
+  document.getElementById('s-count').textContent = sel.length;
+  document.getElementById('s-c').textContent = cCount;
+  document.getElementById('s-v').textContent = vCount;
+  const fit = inventoryFit();
+  document.getElementById('s-fit').textContent = fit == null ? '—' : fit.toFixed(3);
+  document.getElementById('stats-fit').textContent = fit == null ? '—' : `fit ${fit.toFixed(3)}`;
+  document.getElementById('fit-meta-top').textContent = fit == null ? 'cross-linguistic fit —' : `cross-linguistic fit ${fit.toFixed(3)}`;
+  document.getElementById('inv-summary').textContent = sel.length === 0
+    ? 'empty'
+    : `${sel.length} phonemes · ${cCount} consonant${cCount===1?'':'s'} · ${vCount} vowel${vCount===1?'':'s'}`;
+
+  // Rich inventory diagnostics
+  const ratio = vCount === 0 ? '—' : (cCount / vCount).toFixed(2);
+  document.getElementById('s-ratio').textContent = ratio;
+  const allCons = [...PULMONIC_CONSONANTS, ...NON_PULMONIC_CONSONANTS];
+  const selectedConsRecords = allCons.filter(c => state.selected.has(c.ipa));
+  const placesUsed = new Set(selectedConsRecords.map(c => c.place)).size;
+  const mannersUsed = new Set(selectedConsRecords.map(c => c.manner)).size;
+  // Voicing pairs: count (manner, place) buckets where both voiceless and voiced are selected
+  const placeMannerByVoicing = new Map();
+  for (const c of selectedConsRecords) {
+    const k = `${c.manner}|${c.place}`;
+    if (!placeMannerByVoicing.has(k)) placeMannerByVoicing.set(k, new Set());
+    placeMannerByVoicing.get(k).add(c.voicing);
+  }
+  const pairs = [...placeMannerByVoicing.values()].filter(s => s.has('voiceless') && s.has('voiced')).length;
+  document.getElementById('s-pairs').textContent = pairs;
+  document.getElementById('s-places').textContent = placesUsed;
+  document.getElementById('s-manners').textContent = mannersUsed;
+  document.getElementById('s-syl').textContent = (cCount * vCount).toLocaleString();
+
+  // Typology tags
+  const tagsEl = document.getElementById('s-tags');
+  tagsEl.innerHTML = '';
+  const tags = [];
+  if (sel.length === 0) tags.push({ label: 'empty', muted: true });
+  else {
+    if (sel.length < 14) tags.push({ label: 'small inventory' });
+    else if (sel.length > 40) tags.push({ label: 'large inventory' });
+    else tags.push({ label: 'medium inventory', muted: true });
+    const sizeRatio = vCount > 0 ? cCount / vCount : Infinity;
+    if (sizeRatio > 4) tags.push({ label: 'consonant-heavy' });
+    if (sizeRatio < 1.2 && vCount > 0) tags.push({ label: 'vowel-heavy' });
+    if (selectedConsRecords.some(c => c.manner === 'click')) tags.push({ label: 'click-using' });
+    if (selectedConsRecords.some(c => c.manner === 'ejective')) tags.push({ label: 'ejective' });
+    if (selectedConsRecords.some(c => c.manner === 'implosive')) tags.push({ label: 'implosive' });
+    if (selectedConsRecords.some(c => c.place === 'retroflex')) tags.push({ label: 'retroflex' });
+    if (selectedConsRecords.some(c => c.place === 'uvular' || c.place === 'pharyngeal' || c.place === 'epiglottal')) tags.push({ label: 'back-articulated' });
+    if (vCount >= 12) tags.push({ label: 'rich vowel system' });
+    if (vCount > 0 && vCount <= 3) tags.push({ label: 'minimal vowels' });
+  }
+  for (const t of tags) {
+    const el = document.createElement('span');
+    el.className = 'tag' + (t.muted ? ' muted' : '');
+    el.textContent = t.label;
+    tagsEl.appendChild(el);
+  }
+
+  // Closest natural language
+  const closestEl = document.getElementById('s-closest');
+  if (sel.length === 0) {
+    closestEl.textContent = '';
+  } else {
+    const close = model.closestLanguage(sel);
+    if (close) {
+      closestEl.innerHTML = `<b style="color:var(--text-primary)">Closest natural language</b><br>
+        ${escapeHtml(close.language)} <span style="color:var(--text-muted)">(${escapeHtml(close.family)})</span> · Jaccard <span class="mono accent">${close.jaccard.toFixed(2)}</span>`;
+    }
+  }
+
+  // Suggested additions
+  const suggEl = document.getElementById('s-suggestions');
+  if (sel.length === 0) {
+    suggEl.innerHTML = `<div class="hint">Add some phonemes to see what cross-linguistically typical companions you might be missing.</div>`;
+  } else {
+    const suggestions = model.suggestedAdditions(sel, 5);
+    suggEl.innerHTML = suggestions.map(s => {
+      const meta = [...allCons, ...CARDINAL_VOWELS].find(p => p.ipa === s.ipa);
+      const name = meta ? describePhoneme(meta) : '';
+      return `<div class="companion" data-add="${escapeHtml(s.ipa)}">
+        <span class="ipa">/${escapeHtml(s.ipa)}/</span>
+        <span class="name">${escapeHtml(name)}</span>
+        <span class="pct">${(s.marginal*100).toFixed(0)}%</span>
+      </div>`;
+    }).join('');
+    suggEl.querySelectorAll('[data-add]').forEach(el =>
+      el.addEventListener('click', () => toggleInventory(el.dataset.add)));
+  }
+
+  // Export JSON
+  document.getElementById('export-out').value = JSON.stringify(buildPhonologyJson(), null, 2);
+}
+
+document.getElementById('heatmap-toggle').addEventListener('change', e => {
+  state.heatmap = e.target.checked; saveState(); renderPhonology();
+});
+document.getElementById('heatmap-mode').addEventListener('change', e => {
+  state.heatmapMode = e.target.value; saveState(); renderPhonology();
+});
+document.getElementById('lang-id').addEventListener('input', e => {
+  state.langId = e.target.value; saveState(); renderTopbar();
+});
+/* —— Kebab menu —— */
+const kebab = document.getElementById('kebab-btn');
+const kebabMenu = document.getElementById('kebab-menu');
+kebab.addEventListener('click', e => {
+  e.stopPropagation();
+  kebabMenu.classList.toggle('open');
+});
+document.addEventListener('click', () => kebabMenu.classList.remove('open'));
+kebabMenu.addEventListener('click', e => e.stopPropagation());
+
+document.getElementById('action-reset').addEventListener('click', () => {
+  kebabMenu.classList.remove('open');
+  if (!confirm('Reset all linguistics state? This clears inventory, lexicon, rules, and romanization.')) return;
+  state.selected = new Set(); state.active = null;
+  state.lexicon = []; state.rules = ''; state.romRules = [];
+  saveState(); renderAll();
+});
+
+document.getElementById('action-copy-json').addEventListener('click', async () => {
+  kebabMenu.classList.remove('open');
+  await navigator.clipboard.writeText(JSON.stringify(buildPhonologyJson(), null, 2));
+  const note = document.getElementById('copy-hint');
+  if (note) { note.textContent = 'Phonology JSON copied to clipboard'; setTimeout(() => note.textContent = '', 2000); }
+});
+
+document.getElementById('action-import').addEventListener('click', () => {
+  kebabMenu.classList.remove('open');
+  document.getElementById('import-file').click();
+});
+document.getElementById('import-file').addEventListener('change', async e => {
+  const file = e.target.files?.[0]; if (!file) return;
+  try {
+    const text = await file.text();
+    const j = JSON.parse(text);
+    if (j.phonology) {
+      state.langId = j.phonology.languageId || state.langId;
+      state.selected = new Set((j.phonology.phonemes || []).map(p => p.ipa));
+    }
+    if (j.lexicon) state.lexicon = j.lexicon;
+    if (j.soundChangesText) state.rules = j.soundChangesText;
+    if (j.romanization?.rules) state.romRules = j.romanization.rules;
+    saveState(); renderAll();
+  } catch (err) {
+    alert('Could not import: ' + (err.message ?? err));
+  }
+  e.target.value = '';
+});
+document.getElementById('export-btn').addEventListener('click', () => {
+  const payload = {
+    phonology: buildPhonologyJson(),
+    lexicon: state.lexicon,
+    soundChangesText: state.rules,
+    romanization: { languageId: state.langId, rules: state.romRules },
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = `${state.langId || 'language'}.json`; a.click();
+});
+document.getElementById('copy-btn').addEventListener('click', async () => {
+  await navigator.clipboard.writeText(document.getElementById('export-out').value);
+  const h = document.getElementById('copy-hint'); h.textContent = 'copied';
+  setTimeout(() => h.textContent = '', 1200);
+});
+
+/* ─────────────────────  Lexicon  ───────────────────── */
+function renderLexicon() {
+  const q = (document.getElementById('lex-search').value || '').toLowerCase();
+  const filtered = state.lexicon.filter(e =>
+    !q || e.concept.toLowerCase().includes(q) || e.lemma.toLowerCase().includes(q));
+  const tbody = document.getElementById('lex-tbody');
+  const romMap = { languageId: state.langId, rules: state.romRules };
+  tbody.innerHTML = '';
+  for (const e of filtered) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escapeHtml(e.concept)}</td>
+      <td class="accent">${escapeHtml(e.lemma)}</td>
+      <td class="muted">${escapeHtml(state.romRules.length ? romanize(e.lemma, romMap) : '—')}</td>
+      <td class="muted">${escapeHtml(e.register || 'neutral')}</td>
+      <td class="muted">${escapeHtml(e.gloss || '')}</td>
+      <td class="right-actions"><button class="btn" data-del="${escapeHtml(e.concept)}">×</button></td>`;
+    tbody.appendChild(tr);
+  }
+  document.getElementById('lex-meta').textContent = `${state.lexicon.length} entries`;
+  document.getElementById('t-words').textContent = state.lexicon.length;
+  tbody.querySelectorAll('button[data-del]').forEach(b =>
+    b.addEventListener('click', () => {
+      state.lexicon = state.lexicon.filter(x => x.concept !== b.dataset.del);
+      saveState(); renderLexicon(); renderSoundChanges();
+    }));
+}
+document.getElementById('lex-add').addEventListener('click', () => {
+  const concept = document.getElementById('lex-concept').value.trim();
+  const lemma = document.getElementById('lex-lemma').value.trim();
+  if (!concept || !lemma) return;
+  const idx = state.lexicon.findIndex(e => e.concept === concept);
+  const entry = {
+    concept, lemma, ipa: lemma,
+    register: document.getElementById('lex-register').value,
+    gloss: document.getElementById('lex-gloss').value.trim() || undefined,
+  };
+  if (idx >= 0) state.lexicon[idx] = entry; else state.lexicon.push(entry);
+  document.getElementById('lex-concept').value = '';
+  document.getElementById('lex-lemma').value = '';
+  document.getElementById('lex-gloss').value = '';
+  saveState(); renderLexicon(); renderSoundChanges();
+});
+document.getElementById('lex-search').addEventListener('input', renderLexicon);
+document.getElementById('lex-clear').addEventListener('click', () => {
+  if (!confirm('Clear the entire lexicon?')) return;
+  state.lexicon = []; saveState(); renderLexicon(); renderSoundChanges();
+});
+document.getElementById('lex-autogen').addEventListener('click', () => {
+  const phono = buildPhonologyJson();
+  const sel = [...state.selected];
+  const cs = new Set([...PULMONIC_CONSONANTS, ...NON_PULMONIC_CONSONANTS].map(c => c.ipa));
+  const vs = new Set(CARDINAL_VOWELS.map(v => v.ipa));
+  const consonants = sel.filter(x => cs.has(x));
+  const vowels = sel.filter(x => vs.has(x));
+  if (consonants.length === 0 || vowels.length === 0) {
+    alert('select at least one consonant and one vowel in the phonology first.');
+    return;
+  }
+  const sample = ['mountain','river','sun','moon','star','fire','water','stone','wind','sky','child','house','road','spirit','word'];
+  for (const concept of sample) {
+    if (state.lexicon.some(e => e.concept === concept)) continue;
+    try {
+      const lemma = generatePhonotacticName({
+        phonology: phono,
+        phonotactics: { phonologyId: phono.languageId, vowels,
+          syllable: { templates: ['CV', 'CVC'] } },
+        profile: { syllableTemplate: 'CV', vowels, onsetPool: consonants },
+        syllableCount: 2 + Math.floor(Math.random() * 2),
+        seed: deriveSeed(7777n, concept, state.langId),
+        category: 'object',
+        instance: concept,
+      });
+      state.lexicon.push({ concept, lemma, ipa: lemma, register: 'neutral' });
+    } catch {}
+  }
+  saveState(); renderLexicon(); renderSoundChanges();
+});
+
+/* ─────────────────────  Sound changes  ───────────────────── */
+document.getElementById('sca-rules').addEventListener('input', e => {
+  state.rules = e.target.value; saveState(); renderSoundChanges();
+});
+document.getElementById('sca-apply').addEventListener('click', () => {
+  try {
+    const rules = parseRules(state.rules);
+    state.rules += ''; saveState();
+    const statusEl = document.getElementById('sca-status');
+    statusEl.style.color = 'var(--status-green)';
+    statusEl.textContent = `parsed ${rules.length} rule${rules.length===1?'':'s'} — preview below.`;
+    renderSoundChanges();
+  } catch (e) {
+    const statusEl = document.getElementById('sca-status');
+    statusEl.style.color = 'var(--status-red)';
+    statusEl.textContent = String(e.message ?? e);
+  }
+});
+
+function renderSoundChanges() {
+  document.getElementById('sca-rules').value = state.rules;
+  let rules = [];
+  try { rules = parseRules(state.rules); } catch {}
+  document.getElementById('sca-meta').textContent = `${rules.length} rule${rules.length===1?'':'s'}`;
+  document.getElementById('t-rules').textContent = rules.length;
+  const tbody = document.getElementById('sca-tbody');
+  tbody.innerHTML = '';
+  if (state.lexicon.length === 0) {
+    document.getElementById('sca-empty').style.display = '';
+    document.getElementById('sca-pmeta').textContent = '—';
+    return;
+  }
+  document.getElementById('sca-empty').style.display = 'none';
+  const phono = buildPhonologyJson();
+  const sel = [...state.selected];
+  const cs = new Set([...PULMONIC_CONSONANTS, ...NON_PULMONIC_CONSONANTS].map(c => c.ipa));
+  const vs = new Set(CARDINAL_VOWELS.map(v => v.ipa));
+  const consonants = sel.filter(x => cs.has(x));
+  const vowels = sel.filter(x => vs.has(x));
+  const nasals = [...PULMONIC_CONSONANTS].filter(c => c.manner === 'nasal' && state.selected.has(c.ipa)).map(c => c.ipa);
+  const classes = {
+    V: new Set(vowels), C: new Set(consonants), nasal: new Set(nasals),
+  };
+  let evolved = [];
+  try {
+    evolved = evolveLexicon(
+      state.lexicon.map(e => ({ concept: e.concept, lemma: e.lemma })),
+      phono, rules, classes,
+    );
+  } catch (err) {
+    document.getElementById('sca-pmeta').textContent = 'error: ' + (err.message ?? err);
+    return;
+  }
+  let changed = 0;
+  for (const e of evolved) {
+    const tr = document.createElement('tr');
+    const diff = e.lemma !== e.evolved;
+    if (diff) changed++;
+    tr.innerHTML = `
+      <td>${escapeHtml(e.concept)}</td>
+      <td class="muted">${escapeHtml(e.lemma)}</td>
+      <td class="${diff ? 'accent' : 'muted'}">→</td>
+      <td class="${diff ? 'accent' : ''}">${escapeHtml(e.evolved)}</td>`;
+    tbody.appendChild(tr);
+  }
+  document.getElementById('sca-pmeta').textContent = `${changed}/${evolved.length} changed`;
+}
+
+/* ─────────────────────  Romanization  ───────────────────── */
+function renderRomanization() {
+  const tbody = document.getElementById('rom-tbody');
+  tbody.innerHTML = '';
+  for (let i = 0; i < state.romRules.length; i++) {
+    const [ipa, spell] = state.romRules[i];
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="accent">${escapeHtml(ipa)}</td>
+      <td><input class="input mono" data-edit="${i}" value="${escapeHtml(spell)}" style="width:90%"></td>
+      <td class="muted">${escapeHtml(applyToSample(ipa, spell))}</td>
+      <td class="muted">${escapeHtml(state.lexicon[0]?.lemma ?? '')}</td>
+      <td class="right-actions"><button class="btn" data-rm="${i}">×</button></td>`;
+    tbody.appendChild(tr);
+  }
+  document.getElementById('rom-meta').textContent = `${state.romRules.length} rule${state.romRules.length===1?'':'s'}`;
+  tbody.querySelectorAll('input[data-edit]').forEach(inp =>
+    inp.addEventListener('input', e => {
+      state.romRules[+inp.dataset.edit] = [state.romRules[+inp.dataset.edit][0], e.target.value];
+      saveState(); renderRomanizationOutput(); renderLexicon();
+    }));
+  tbody.querySelectorAll('button[data-rm]').forEach(b =>
+    b.addEventListener('click', () => {
+      state.romRules.splice(+b.dataset.rm, 1);
+      saveState(); renderRomanization(); renderLexicon();
+    }));
+  renderRomanizationOutput();
+}
+function applyToSample(ipa, spell) {
+  return ipa + ' → ' + spell;
+}
+function renderRomanizationOutput() {
+  const inp = document.getElementById('rom-test');
+  if (inp) inp.value = state.romTest;
+  const map = { languageId: state.langId, rules: state.romRules };
+  document.getElementById('rom-out').textContent = state.romRules.length ? romanize(state.romTest, map) : '—';
+}
+document.getElementById('rom-defaults').addEventListener('click', () => {
+  const sel = [...state.selected];
+  state.romRules = defaultRomanization(state.langId, sel).rules.map(r => [r[0], r[1]]);
+  saveState(); renderRomanization(); renderLexicon();
+});
+document.getElementById('rom-clear').addEventListener('click', () => {
+  state.romRules = []; saveState(); renderRomanization(); renderLexicon();
+});
+document.getElementById('rom-test').addEventListener('input', e => {
+  state.romTest = e.target.value; saveState(); renderRomanizationOutput();
+});
+
+/* ─────────────────────  Name gen  ───────────────────── */
+document.getElementById('ng-roll').addEventListener('click', () => {
+  const sel = [...state.selected];
+  const cs = new Set([...PULMONIC_CONSONANTS, ...NON_PULMONIC_CONSONANTS].map(c => c.ipa));
+  const vs = new Set(CARDINAL_VOWELS.map(v => v.ipa));
+  const consonants = sel.filter(x => cs.has(x));
+  const vowels = sel.filter(x => vs.has(x));
+  if (consonants.length === 0 || vowels.length === 0) {
+    alert('add at least one consonant and one vowel to the inventory.');
+    return;
+  }
+  const baseSeed = BigInt(document.getElementById('ng-seed').value || 42);
+  const cat = document.getElementById('ng-cat').value;
+  const tpl = document.getElementById('ng-tpl').value;
+  const syl = Number(document.getElementById('ng-syl').value || 2);
+  const phono = buildPhonologyJson();
+  const nasals = [...PULMONIC_CONSONANTS].filter(c => c.manner === 'nasal' && state.selected.has(c.ipa)).map(c => c.ipa);
+  const grid = document.getElementById('ng-results'); grid.innerHTML = '';
+  for (let i = 0; i < 20; i++) {
+    try {
+      const name = generatePhonotacticName({
+        phonology: phono,
+        phonotactics: { phonologyId: phono.languageId, vowels,
+          syllable: { templates: [tpl] } },
+        profile: { syllableTemplate: tpl, vowels, onsetPool: consonants, codaPool: consonants, nasalPool: nasals.length ? nasals : undefined },
+        syllableCount: syl, seed: baseSeed,
+        category: cat, instance: `${i}`,
+      });
+      const map = { languageId: state.langId, rules: state.romRules };
+      const rom = state.romRules.length ? romanize(name, map) : '';
+      const div = document.createElement('div');
+      div.style.cssText = 'background:var(--bg-panel); border:1px solid var(--border-soft); padding:6px 8px; border-radius:2px; cursor:pointer';
+      div.innerHTML = `<span class="accent">${escapeHtml(name)}</span>${rom ? ` <span style="color:var(--text-muted)">· ${escapeHtml(rom)}</span>` : ''}`;
+      div.addEventListener('click', () => {
+        const concept = prompt(`save "${name}" under which concept?`);
+        if (!concept) return;
+        const idx = state.lexicon.findIndex(e => e.concept === concept);
+        const entry = { concept, lemma: name, ipa: name, register: 'neutral' };
+        if (idx >= 0) state.lexicon[idx] = entry; else state.lexicon.push(entry);
+        saveState(); renderLexicon(); renderSoundChanges();
+      });
+      grid.appendChild(div);
+    } catch {}
+  }
+});
+
+/* ─────────────────────  topbar  ───────────────────── */
+function renderTopbar() {
+  document.getElementById('lang-id').value = state.langId;
+  document.getElementById('t-count').textContent = state.selected.size;
+  document.getElementById('t-words').textContent = state.lexicon.length;
+  document.getElementById('heatmap-toggle').checked = state.heatmap;
+  document.getElementById('heatmap-mode').value = state.heatmapMode;
+}
+
+function renderAll() {
+  renderNav(); renderTopbar(); renderPhonology();
+  renderLexicon(); renderSoundChanges(); renderRomanization();
+}
+
+/* —— Inspector pin + sticky shadow —— */
+function applyInspectorPin() {
+  const inspector = document.getElementById('inspector-panel');
+  const btn = document.getElementById('pin-btn');
+  if (!inspector || !btn) return;
+  inspector.classList.toggle('pinned', state.inspectorPinned);
+  btn.setAttribute('aria-pressed', String(state.inspectorPinned));
+  btn.title = state.inspectorPinned
+    ? 'Pinned · click to unpin (stop following scroll)'
+    : 'Unpinned · click to pin (follow scroll)';
+}
+
+function setupStickyShadow() {
+  const inspector = document.getElementById('inspector-panel');
+  const main = document.querySelector('main');
+  const btn = document.getElementById('pin-btn');
+  if (!inspector || !main || !btn) return;
+  const sentinel = document.createElement('div');
+  sentinel.style.cssText = 'position: absolute; top: 0; height: 1px; pointer-events: none;';
+  inspector.parentElement.style.position = 'relative';
+  inspector.parentElement.prepend(sentinel);
+  new IntersectionObserver(
+    ([entry]) => {
+      if (state.inspectorPinned) inspector.classList.toggle('stuck', !entry.isIntersecting);
+      else inspector.classList.remove('stuck');
+    },
+    { root: main, threshold: [1] },
+  ).observe(sentinel);
+  btn.addEventListener('click', () => {
+    state.inspectorPinned = !state.inspectorPinned;
+    saveState(); applyInspectorPin();
+  });
+  applyInspectorPin();
+}
+setupStickyShadow();
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+renderAll();
+</script>
+</body>
+</html>

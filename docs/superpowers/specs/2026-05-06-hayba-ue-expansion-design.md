@@ -669,3 +669,72 @@ Implementation adapts best-of-breed patterns from:
 - **Natfii/UnrealClaude** — AnimBP state machine editing, character configuration tools
 - **3DGraphLLM** — relational triplet scene graph format
 - **KeySG** — hierarchical macro/meso/micro/nano graph topology
+
+---
+
+## 9. Market Positioning & Gap Analysis (2026 update)
+
+Synthesized from a Gemini Deep Research survey of the 2026 MCP game engine ecosystem (StraySpark, VibeUE, Flopperam, GenOrca, AnkleBreaker, CoplayDev, Bluepuff71, IvanMurzak, Gopeak, sandraschi, Codeturion, Meta XR, plus Unity AI Assistant and Blender Lab first-party). Replaces ad-hoc roadmap with a market-validated set of priorities.
+
+### 9.1 Strategic Position
+
+**Hayba MCP Toolkit** stakes out the category:
+
+> **The Ultimate Agentic Engine for Spatial and Procedural World-Building.**
+
+Rationale: text-based LLMs are inherently spatially-blind. Most competing MCP servers treat UE as a 2D code repository and feed the LLM raw XYZ coordinate arrays. Hayba treats UE as a true spatial canvas — PCG SQLite registry, 2D Slate cognitive map, SpatialCLIP grounding, Gaea terrain pipelines. Competitors fight over who wires a movement Blueprint faster; Hayba dominates technical-art, environment-design, and procedural generation.
+
+### 9.2 Moats (defensibility ranking)
+
+| Moat | Defensibility | Why |
+|---|---|---|
+| PCG Node Catalog (344 nodes / 356 pins / 2270 properties scraped from PCGEx C++ headers into SQLite) | **Extremely High** | Replicating requires deep PCG/PCGEx domain expertise + custom header parser. As PCG replaces manual env art, this is an insurmountable lead. |
+| 2D Slate Scene Map (Quadtree + MakeCustomVerts + bidirectional USelection sync) | **Very High** | Competitors ship raw JSON coordinate arrays or basic viewport PNGs. Native Slate UI engineered for AI spatial grounding is not trivially copyable by Python-only servers. |
+| Code Mode meta-tool schema registry (Zod-derived, 3 tools → 100+ on demand, 92% payload reduction) | **Medium** | Concept is gaining traction (VibeUE "Domain Skills", AnkleBreaker `unity_advanced_tool` proxy). Hayba's Zod-bound implementation ensures parity but competitors will adopt similar patterns. |
+| Visual sidecar (FastAPI + CLIP + SpatialCLIP + OWL-ViT for spatial physics validation) | **Low–Medium** | Localized multimodal embedding is commoditizing. Off-the-shelf serving engines (ColPali etc.) will close this gap within months. |
+
+### 9.3 Critical Gaps (vs 2026 ecosystem)
+
+| # | Gap | Benchmark competitor | Severity |
+|---|---|---|---|
+| 1 | No native editor transaction wrapping (Ctrl+Z does nothing for AI ops) | StraySpark wraps every mutating tool in `BeginTransaction`/`EndTransaction` | **Massive** |
+| 2 | No live DAP/LSP runtime debugger | Gopeak-godot-mcp ships full DAP + LSP for runtime breakpoints | **High** |
+| 3 | No engine documentation RAG | CoplayDev `unity_docs`, Codeturion `unreal-api-mcp` SQLite | **High** |
+| 4 | No performance/profiling telemetry | AnkleBreaker exposes Memory Profiler + Frame Debugger; Flopperam `performance_audit` | **Medium** |
+| 5 | Hardcoded TCP port (52342) — collides on multi-editor setups | AnkleBreaker dynamic port range (7890-7899) + instance registry | **Medium** |
+| 6 | No reference-preserving asset move (raw duplicate-and-delete corrupts projects) | VibeUE `manage_asset` | **Medium** |
+| 7 | No Blueprint compilation verification gate | VibeUE strict compilation-before-injection | **Large** |
+| 8 | No headless CLI runner (CI/CD blocker) | IvanMurzak Unity-MCP CLI, Gopeak-godot-mcp CLI | **Medium** |
+| 9 | No regex-filtered structured log tailer | VibeUE `read_logs` regex | **Small–Medium** |
+| 10 | No asset dependency graph (blast-radius unknown) | Monolith full-text + reference trace | **Medium** |
+
+### 9.4 Prioritized Engineering Initiatives (next month)
+
+Implementation order — ranked by impact/effort ratio, not raw impact:
+
+1. **Editor transaction wrapping** — 2–3 days. Wrap every mutating handler in `GEditor->BeginTransaction`/`EndTransaction`. Closes the StraySpark gap. **Largest UX win.**
+2. **Dynamic port allocation + instance registry** — 2–3 days. Port-scan 52342-52350, write heartbeat file under `Saved/HaybaMCP/instances/`. Unblocks multi-editor / multi-agent workflows.
+3. **Reference-preserving asset move** — 1–2 days. Wrap `UAssetToolsHelpers` for safe rename/move with auto-redirector and dependency updates.
+4. **Blueprint compilation safety gates** — 2 days. Run `FKismetEditorUtilities::CompileBlueprint` after every BP mutation; refuse subsequent BP ops if compile fails.
+5. **Asset dependency graph commands** — 3 days. Expose `IAssetRegistry::GetReferencers`/`GetDependencies` via `asset_get_dependencies` + `asset_get_referencers`.
+6. **Regex-filtered log tailer** — 2 days. Upgrade `editor_stream_log` with optional `regex_filter`, severity filter, structured `{ts, severity, category, msg}` output.
+7. **Performance telemetry endpoints** — 3–4 days. `editor_get_perf_stats`, `texture_audit`, `mesh_audit` over `FStatManager` + memory profiler.
+8. **UE docs RAG database** — 5–7 days. Scrape Epic's UE 5.7 API into SQLite, expose `query_ue_docs` MCP tool with semantic search.
+9. **PIE test harness assertions** — 5–7 days. `editor_pie_assert`, `editor_pie_press_key`, `editor_pie_wait_for`. Hook `FEditorDelegates::BeginPIE`/`EndPIE`.
+10. **Headless CLI runner** — 3–4 days. Wrap Node MCP server in NPM binary that drives UE in `-batchmode -Cmd`. Enterprise CI/CD path.
+
+### 9.5 Competitor Benchmark Matrix
+
+| Product | Engine | Distribution | Tool Surface | Safety | Observability | Last Update |
+|---|---|---|---|---|---|---|
+| **Hayba MCP Toolkit** | UE 5.x | Proprietary | 100+ tools, 34 domains, PCG SQLite registry, Splines | Plan Mode, Tiered Python sandbox, Execution journal | 2D Slate Scene Map, Diff Panel, SpatialCLIP | Current |
+| StraySpark Unreal MCP | UE 5.7 | Fab (paid) | 304 tools, 43 categories incl. GAS/PCG/Sequencer | Native editor transactions, rate limits | 15 context resources, live status bar | May 2026 |
+| VibeUE | UE 5.7 | GitHub/Fab (MIT) | 10 MCP tools mapping to 866+ Python methods | Discovery-First requirement | In-editor chat, regex log tailer | May 2026 |
+| Flopperam unreal-mcp | UE 5.5+ | GitHub/Hosted | 50+ tools (BP/Landscape/Sequencer) | PIE assertions, contract validation | Viewport capture, embedded browser | Spring 2026 |
+| it-is-unreal | UE 5.x | GitHub (MIT) | 123 tools | 41 CLAUDE.md rules, no-parallel | Standard logs | Spring 2026 |
+| Unity AI Assistant | Unity 6+ | Asset Store (Pro) | Built-in + custom | User approval, Plan Mode | Vision, checkpoints | May 2026 |
+| AnkleBreaker MCP | Unity | GitHub | 288 tools, 30 categories | Multi-instance port routing, crash detection | Memory Profiler, Frame Debugger | May 2026 |
+| Bluepuff71 UnityMCP | Unity 6+ | GitHub (GPL-3.0) | 51 tools (native C#) | Checkpoint diff system | Vision capture, activity log | April 2026 |
+| CoplayDev unity-mcp | Unity | GitHub (MIT) | 34+ tools | Session state filtering | Reflection API + RAG Unity docs | May 2026 |
+| Gopeak-godot-mcp | Godot 4.x | GitHub (MIT) | 95+ tools | Breakpoint injection | **Full DAP debugger + GDScript LSP** | April 2026 |
+| sandraschi blender-mcp | Blender | GitHub (MIT) | 40+ pro tools | FastMCP 3.2 security | Visual verification loop | April 2026 |

@@ -1,5 +1,6 @@
-import type { ToolHandler } from '../hayba-bake-terrain.js';
+import type { ToolHandler } from '../types.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
+import { isToolDisabled } from '../disabled-tools-watcher.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'low',
@@ -44,7 +45,20 @@ const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: 
 ];
 
 export const listToolCategoriesHandler: ToolHandler = async () => {
+  // Filter out tools the user has disabled in the MCP panel. Drop categories
+  // that end up empty so the agent doesn't see "actor: 0 commands" noise.
+  const filtered = DOMAINS
+    .map(d => ({
+      domain: d.domain,
+      commands: d.commands.filter(c => !isToolDisabled(c)),
+    }))
+    .filter(d => d.commands.length > 0)
+    .map(d => ({ domain: d.domain, command_count: d.commands.length, commands: d.commands }));
+
   return {
-    content: [{ type: 'text', text: JSON.stringify({ domains: DOMAINS, total_commands: DOMAINS.reduce((n, d) => n + d.command_count, 0) }, null, 2) }],
+    content: [{ type: 'text', text: JSON.stringify({
+      domains: filtered,
+      total_commands: filtered.reduce((n, d) => n + d.command_count, 0),
+    }, null, 2) }],
   };
 };

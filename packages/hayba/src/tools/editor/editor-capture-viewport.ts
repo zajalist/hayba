@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ToolHandler } from '../hayba-bake-terrain.js';
+import type { ToolHandler } from '../types.js';
 import { ensureConnected } from '../../tcp-client.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 
