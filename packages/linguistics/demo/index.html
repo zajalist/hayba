@@ -1311,6 +1311,75 @@ p > p̚ / _ #          // unreleased final stop"></textarea>
         </div>
       </div>
 
+      <!-- L27 — Prosody (stress + tone) -->
+      <div class="panel">
+        <div class="panel-header">Prosody
+          <span class="sub">stress placement + lexical tone — applied to lexicon previews</span>
+        </div>
+        <div class="panel-body">
+          <div class="row" style="gap:14px; align-items:flex-end; flex-wrap:wrap">
+            <label class="field" style="min-width:200px">
+              <span class="label">Stress</span>
+              <select id="prosody-stress" class="input">
+                <option value="none">none</option>
+                <option value="fixed-initial">fixed — initial</option>
+                <option value="fixed-penultimate">fixed — penultimate</option>
+                <option value="fixed-antepenultimate">fixed — antepenultimate</option>
+                <option value="fixed-final">fixed — final</option>
+                <option value="weight-sensitive">weight-sensitive</option>
+              </select>
+            </label>
+            <label class="field" id="prosody-heavy-wrap" style="min-width:180px; display:none">
+              <span class="label">Heavy =</span>
+              <select id="prosody-heavy" class="input">
+                <option value="closed-syllable">closed syllable</option>
+                <option value="long-vowel">long vowel</option>
+                <option value="closed-or-long">closed or long</option>
+              </select>
+            </label>
+          </div>
+          <div style="margin-top:14px">
+            <label class="field" style="flex-direction:row; align-items:center; gap:6px; margin:0">
+              <input type="checkbox" id="prosody-tone-enabled">
+              <span style="margin:0">Enable tone</span>
+            </label>
+          </div>
+          <div id="prosody-tone-controls" style="display:none; margin-top:10px">
+            <div class="row" style="gap:14px; flex-wrap:wrap">
+              <div style="flex:1; min-width:260px">
+                <div class="label" style="margin-bottom:4px">Tone rules
+                  <span class="hint" style="font-weight:normal">— one per line: <span class="mono">initial : H [2]</span> or <span class="mono">phoneme=a : HL</span></span>
+                </div>
+                <textarea id="prosody-tone-rules" class="mono" style="width:100%; height:90px" placeholder="initial : H
+phoneme=a : HL"></textarea>
+              </div>
+              <div style="flex:1; min-width:260px">
+                <div class="label" style="margin-bottom:4px">Sandhi
+                  <span class="hint" style="font-weight:normal">— one per line: <span class="mono">HL + HL → LH</span></span>
+                </div>
+                <textarea id="prosody-sandhi" class="mono" style="width:100%; height:90px" placeholder="HL + HL -> LH"></textarea>
+              </div>
+            </div>
+            <div class="hint" id="prosody-parse-status" style="margin-top:6px"></div>
+          </div>
+          <div style="margin-top:14px">
+            <div class="panel-header" style="border:none; padding:0 0 6px 0">Preview
+              <span class="meta" id="prosody-preview-meta">—</span>
+            </div>
+            <div class="row" style="gap:10px; align-items:center; margin-bottom:8px">
+              <label class="field" style="min-width:220px; margin:0">
+                <span class="label">Word</span>
+                <select id="prosody-preview-word" class="input"></select>
+              </label>
+            </div>
+            <table class="data" style="width:auto">
+              <tbody id="prosody-preview-body"></tbody>
+            </table>
+            <div class="hint" id="prosody-preview-empty" style="margin-top:6px; display:none">add lexicon entries to preview prosody.</div>
+          </div>
+        </div>
+      </div>
+
       <div class="panel">
         <div class="panel-header">Phonology JSON
           <span class="sub">ready to feed into the rest of the suite</span>

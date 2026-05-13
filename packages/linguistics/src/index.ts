@@ -117,6 +117,10 @@ export type {
 } from './phrase-pack.js';
 export { buildPhrasePack, PHRASE_TEMPLATES, allPhraseSlots } from './phrase-pack.js';
 
+// Prosody — stress + tone (L27)
+export type { StressRule, Tone, ToneRule, ToneSandhi } from './prosody.js';
+export { assignStress, applyTones, toneToLetters } from './prosody.js';
+
 // Typology catalogue (L15)
 export type {
   TypologyFeature, TypologyOption, TypologyCategory, LanguageProfile,

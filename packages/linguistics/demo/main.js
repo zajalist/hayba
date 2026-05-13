@@ -6,6 +6,8 @@ import {
   SCA_PRESETS,
   applyAllophony, parseAllophonyRules, stringifyAllophonyRule,
   clusterLegality,
+  assignStress, applyTones, toneToLetters,
+  validatePhonotactics, tokenize as tokenizePhonemes,
   defaultRomanization, romanize,
   translate, renderRomanized,
   buildParadigm, findRuleConflicts, PRESET_PARADIGMS,
@@ -2972,6 +2974,7 @@ const VIEW_RENDERERS = {
   statsDashboard: () => renderStatsDashboard(),
   nameGen: () => renderNameGenScratchHint(),
   phrasePack: () => renderPhrasePack(),
+  prosody: () => renderProsody(),
 };
 
 const VIEW_DEPS = {
@@ -2989,6 +2992,7 @@ const VIEW_DEPS = {
   statsDashboard:  ['selected', 'lexicon', 'typology'],
   nameGen:         ['nameGenScratch'],
   phrasePack:      ['phrasePack', 'lexicon', 'langId'],
+  prosody:         ['prosody', 'lexicon', 'selected', 'typology', 'langId'],
 };
 
 /** Dirty-flag render: only re-paint views whose deps overlap `changedKeys`.
@@ -3393,6 +3397,284 @@ function renderStatsDashboard() {
       </div>
     </div>`;
 }
+
+/* ─────────────────────  L27 — Prosody (stress + tone)  ───────────────────── */
+
+function ensureProsody() {
+  if (!state.prosody) {
+    state.prosody = { stress: { kind: 'none' }, toneRules: [], sandhi: [], toneEnabled: false };
+  }
+  return state.prosody;
+}
+
+/** Parse a UI stress dropdown value into a StressRule. */
+function parseStressChoice(value, heavyDefinedBy) {
+  if (value === 'none') return { kind: 'none' };
+  if (value === 'weight-sensitive') {
+    return { kind: 'weight-sensitive', heavyDefinedBy: heavyDefinedBy || 'closed-syllable' };
+  }
+  const m = /^fixed-(initial|penultimate|antepenultimate|final)$/.exec(value);
+  if (m) return { kind: 'fixed', position: m[1] };
+  return { kind: 'none' };
+}
+
+function stressChoiceFor(stress) {
+  if (!stress || stress.kind === 'none') return 'none';
+  if (stress.kind === 'weight-sensitive') return 'weight-sensitive';
+  return `fixed-${stress.position}`;
+}
+
+/** Parse one tone-rule line; returns null if malformed. */
+function parseToneRuleLine(line) {
+  const s = line.trim();
+  if (!s || s.startsWith('#') || s.startsWith('//')) return null;
+  // `<lhs> : <tone>[ <priority>]`
+  const colonIdx = s.indexOf(':');
+  if (colonIdx < 0) throw new Error(`expected ':' in "${line}"`);
+  const lhs = s.slice(0, colonIdx).trim();
+  const rhs = s.slice(colonIdx + 1).trim();
+  const parts = rhs.split(/\s+/);
+  const tone = parts[0];
+  if (!['H','M','L','HL','LH','HLH'].includes(tone)) throw new Error(`unknown tone "${tone}"`);
+  let priority = 0;
+  if (parts[1] !== undefined) {
+    // allow `[2]` or `2`
+    const pr = parts[1].replace(/[\[\]]/g, '');
+    const n = Number(pr);
+    if (!Number.isFinite(n)) throw new Error(`bad priority "${parts[1]}"`);
+    priority = n;
+  }
+  const condition = {};
+  if (['initial','final','penultimate'].includes(lhs)) {
+    condition.position = lhs;
+  } else if (lhs.startsWith('phoneme=')) {
+    condition.phoneme = lhs.slice('phoneme='.length).trim();
+    if (!condition.phoneme) throw new Error(`missing phoneme in "${line}"`);
+  } else {
+    throw new Error(`unknown condition "${lhs}"`);
+  }
+  return { condition, tone, priority };
+}
+
+function parseToneRulesText(text) {
+  const out = [];
+  for (const line of (text || '').split('\n')) {
+    const r = parseToneRuleLine(line);
+    if (r) out.push(r);
+  }
+  return out;
+}
+
+function stringifyToneRules(rules) {
+  return rules.map(r => {
+    const lhs = r.condition.position ? r.condition.position : `phoneme=${r.condition.phoneme}`;
+    const pr = (r.priority && r.priority !== 0) ? ` [${r.priority}]` : '';
+    return `${lhs} : ${r.tone}${pr}`;
+  }).join('\n');
+}
+
+const SANDHI_ARROWS = /(?:->|→)/;
+function parseSandhiLine(line) {
+  const s = line.trim();
+  if (!s || s.startsWith('#') || s.startsWith('//')) return null;
+  const arrowParts = s.split(SANDHI_ARROWS);
+  if (arrowParts.length !== 2) throw new Error(`expected '->' in "${line}"`);
+  const lhs = arrowParts[0].split('+').map(x => x.trim());
+  const rhs = arrowParts[1].trim();
+  if (lhs.length !== 2) throw new Error(`expected 'A + B -> C' in "${line}"`);
+  for (const t of [...lhs, rhs]) {
+    if (!['H','M','L','HL','LH','HLH'].includes(t)) throw new Error(`unknown tone "${t}"`);
+  }
+  return { pattern: [lhs[0], lhs[1]], result: rhs };
+}
+
+function parseSandhiText(text) {
+  const out = [];
+  for (const line of (text || '').split('\n')) {
+    const r = parseSandhiLine(line);
+    if (r) out.push(r);
+  }
+  return out;
+}
+
+function stringifySandhi(sandhi) {
+  return sandhi.map(s => `${s.pattern[0]} + ${s.pattern[1]} -> ${s.result}`).join('\n');
+}
+
+/** Best-effort syllabification of a lemma for prosody preview.
+ *  Try the active phonotactic spec; if that fails, greedy CV chunk. */
+function syllabifyLemma(lemma) {
+  const { spec, phono } = buildPhonotacticSpec();
+  try {
+    const res = validatePhonotactics(lemma, phono, spec);
+    if (res.ok && res.parse) return { syllables: res.parse, phonology: phono };
+  } catch { /* fall through */ }
+  // Fallback: greedy CV chunking on phoneme tokens.
+  const toks = tokenizePhonemes(lemma, phono);
+  if (!toks) return { syllables: [[lemma]], phonology: phono };
+  const vset = new Set(spec.vowels);
+  const syl = [];
+  let cur = [];
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    cur.push(t);
+    if (vset.has(t)) {
+      // close the syllable; allow at most one trailing consonant if no further vowel follows soon
+      const nextVowelIdx = toks.slice(i + 1).findIndex(x => vset.has(x));
+      if (nextVowelIdx === 0) {
+        syl.push(cur); cur = [];
+      } else if (nextVowelIdx > 0) {
+        // pull one trailing consonant only if followed by another consonant before the next vowel
+        if (nextVowelIdx >= 2 && i + 1 < toks.length) {
+          cur.push(toks[i + 1]); i++;
+        }
+        syl.push(cur); cur = [];
+      }
+    }
+  }
+  if (cur.length) {
+    if (syl.length) syl[syl.length - 1].push(...cur);
+    else syl.push(cur);
+  }
+  return { syllables: syl.length ? syl : [toks], phonology: phono };
+}
+
+function renderProsodyPreviewRows(lemma) {
+  const pros = ensureProsody();
+  if (!lemma) return null;
+  let syllables, phono;
+  try {
+    const r = syllabifyLemma(lemma);
+    syllables = r.syllables; phono = r.phonology;
+  } catch (e) {
+    return { error: String(e.message ?? e) };
+  }
+  const syllabified = syllables.map(s => s.join('')).join('.');
+  const stressIdx = assignStress(syllables, pros.stress, phono);
+  const stressed = syllables.map((s, i) => (i === stressIdx ? 'ˈ' : '') + s.join('')).join('.');
+  let toned = null;
+  if (pros.toneEnabled) {
+    const out = applyTones(syllables, pros.toneRules || [], pros.sandhi || []);
+    toned = out.map((o, i) => {
+      const prefix = (i === stressIdx) ? 'ˈ' : '';
+      const tone = o.tone ? toneToLetters(o.tone) : '';
+      return prefix + o.syllable.join('') + tone;
+    }).join('.');
+  }
+  return { syllabified, stressed, toned };
+}
+
+function renderProsody() {
+  const stressSel = document.getElementById('prosody-stress');
+  if (!stressSel) return;
+  const pros = ensureProsody();
+  stressSel.value = stressChoiceFor(pros.stress);
+  const heavyWrap = document.getElementById('prosody-heavy-wrap');
+  if (pros.stress?.kind === 'weight-sensitive') {
+    heavyWrap.style.display = '';
+    document.getElementById('prosody-heavy').value = pros.stress.heavyDefinedBy || 'closed-syllable';
+  } else {
+    heavyWrap.style.display = 'none';
+  }
+  document.getElementById('prosody-tone-enabled').checked = !!pros.toneEnabled;
+  document.getElementById('prosody-tone-controls').style.display = pros.toneEnabled ? '' : 'none';
+  const rulesTa = document.getElementById('prosody-tone-rules');
+  if (document.activeElement !== rulesTa) rulesTa.value = stringifyToneRules(pros.toneRules || []);
+  const sandTa = document.getElementById('prosody-sandhi');
+  if (document.activeElement !== sandTa) sandTa.value = stringifySandhi(pros.sandhi || []);
+
+  const status = document.getElementById('prosody-parse-status');
+  status.style.color = 'var(--muted)';
+  status.textContent = `${(pros.toneRules || []).length} rule${(pros.toneRules || []).length === 1 ? '' : 's'} · ${(pros.sandhi || []).length} sandhi`;
+
+  // Word selector
+  const wordSel = document.getElementById('prosody-preview-word');
+  const emptyEl = document.getElementById('prosody-preview-empty');
+  const body = document.getElementById('prosody-preview-body');
+  body.innerHTML = '';
+  if (!state.lexicon.length) {
+    emptyEl.style.display = '';
+    wordSel.innerHTML = '';
+    document.getElementById('prosody-preview-meta').textContent = '—';
+    return;
+  }
+  emptyEl.style.display = 'none';
+  const current = wordSel.value;
+  wordSel.innerHTML = state.lexicon.map(e =>
+    `<option value="${escapeHtml(e.lemma)}">${escapeHtml(e.lemma)} — ${escapeHtml(e.concept)}</option>`
+  ).join('');
+  if (current && state.lexicon.some(e => e.lemma === current)) wordSel.value = current;
+
+  const lemma = wordSel.value || state.lexicon[0].lemma;
+  const preview = renderProsodyPreviewRows(lemma);
+  document.getElementById('prosody-preview-meta').textContent = lemma;
+  if (!preview) { body.innerHTML = ''; return; }
+  if (preview.error) {
+    body.innerHTML = `<tr><td colspan="2" class="muted">${escapeHtml(preview.error)}</td></tr>`;
+    return;
+  }
+  const rows = [
+    ['syllabified', preview.syllabified],
+    ['stressed',    preview.stressed],
+  ];
+  if (preview.toned != null) rows.push(['toned', preview.toned]);
+  body.innerHTML = rows.map(([k, v]) =>
+    `<tr><td class="muted" style="padding-right:14px">${k}</td><td class="mono accent">${escapeHtml(v)}</td></tr>`
+  ).join('');
+}
+
+(function initProsodyPanel() {
+  const stressSel = document.getElementById('prosody-stress');
+  if (!stressSel) return;
+  stressSel.addEventListener('change', () => {
+    const pros = ensureProsody();
+    pros.stress = parseStressChoice(stressSel.value, document.getElementById('prosody-heavy').value);
+    saveState();
+    renderAffected(['prosody']);
+  });
+  document.getElementById('prosody-heavy').addEventListener('change', () => {
+    const pros = ensureProsody();
+    pros.stress = parseStressChoice(stressSel.value, document.getElementById('prosody-heavy').value);
+    saveState();
+    renderAffected(['prosody']);
+  });
+  document.getElementById('prosody-tone-enabled').addEventListener('change', e => {
+    ensureProsody().toneEnabled = !!e.target.checked;
+    saveState();
+    renderAffected(['prosody']);
+  });
+  document.getElementById('prosody-tone-rules').addEventListener('input', e => {
+    const pros = ensureProsody();
+    const status = document.getElementById('prosody-parse-status');
+    try {
+      pros.toneRules = parseToneRulesText(e.target.value);
+      status.style.color = 'var(--muted)';
+      status.textContent = `${pros.toneRules.length} rule${pros.toneRules.length === 1 ? '' : 's'} · ${(pros.sandhi || []).length} sandhi`;
+      saveState();
+      renderAffected(['prosody']);
+    } catch (err) {
+      status.style.color = 'var(--status-red)';
+      status.textContent = String(err.message ?? err);
+    }
+  });
+  document.getElementById('prosody-sandhi').addEventListener('input', e => {
+    const pros = ensureProsody();
+    const status = document.getElementById('prosody-parse-status');
+    try {
+      pros.sandhi = parseSandhiText(e.target.value);
+      status.style.color = 'var(--muted)';
+      status.textContent = `${(pros.toneRules || []).length} rule${(pros.toneRules || []).length === 1 ? '' : 's'} · ${pros.sandhi.length} sandhi`;
+      saveState();
+      renderAffected(['prosody']);
+    } catch (err) {
+      status.style.color = 'var(--status-red)';
+      status.textContent = String(err.message ?? err);
+    }
+  });
+  document.getElementById('prosody-preview-word').addEventListener('change', () => {
+    renderProsody();
+  });
+})();
 
 // Initial paint.
 renderAll();

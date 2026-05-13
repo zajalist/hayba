@@ -4,6 +4,10 @@
 
 export const STATE_KEY = 'hayba-ling-v3';
 
+export function defaultProsody() {
+  return { stress: { kind: 'none' }, toneRules: [], sandhi: [], toneEnabled: false };
+}
+
 export function defaultState() {
   return {
     selected: new Set(['p','t','k','m','n','s','l','j','w','i','a','u']),
@@ -16,6 +20,7 @@ export function defaultState() {
     rules: '',
     allophony: { rulesText: '' },
     applyAllophony: false,
+    prosody: defaultProsody(),
     romRules: [],
     romTest: 'paʃa',
     inspectorPinned: true,
@@ -42,6 +47,7 @@ export function loadState() {
       rules: j.rules ?? '',
       allophony: j.allophony ?? { rulesText: '' },
       applyAllophony: j.applyAllophony ?? false,
+      prosody: j.prosody ?? defaultProsody(),
       romTest: j.romTest ?? 'paʃa',
       inspectorPinned: j.inspectorPinned ?? true,
       grammar: j.grammar ?? { def: null, stem: '', rules: [] },
@@ -71,6 +77,7 @@ export function snapshotActiveLanguage(state) {
     lexicon: [...state.lexicon],
     rules: state.rules,
     allophony: state.allophony ?? { rulesText: '' },
+    prosody: state.prosody ?? defaultProsody(),
     romRules: state.romRules,
     grammar: state.grammar,
     typology: { ...(state.typology ?? {}) },
@@ -85,6 +92,7 @@ export function loadLanguageSnapshot(state, langId) {
     state.lexicon = snap.lexicon;
     state.rules = snap.rules;
     state.allophony = snap.allophony ?? { rulesText: '' };
+    state.prosody = snap.prosody ?? defaultProsody();
     state.romRules = snap.romRules;
     state.grammar = snap.grammar ?? { def: null, stem: '', rules: [] };
     state.typology = snap.typology ?? {};
@@ -92,6 +100,7 @@ export function loadLanguageSnapshot(state, langId) {
     state.lexicon = [];
     state.rules = '';
     state.allophony = { rulesText: '' };
+    state.prosody = defaultProsody();
     state.romRules = [];
     state.grammar = { def: null, stem: '', rules: [] };
     state.typology = {};
