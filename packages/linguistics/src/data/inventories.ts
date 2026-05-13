@@ -186,12 +186,25 @@ export function loadPhoibleCorpus(): InventoryRecord[] {
     const raw = readFileSync(jsonPath, 'utf8');
     const data = JSON.parse(raw) as InventoryRecord[];
     if (Array.isArray(data) && data.length > 0) {
+      // Only memoize on a successful JSON load. If we cached the fallback
+      // here, a long-running process that later generated the JSON would
+      // never pick it up without a restart.
       _phoibleCache = data;
       return data;
     }
   } catch {
-    // Fall through to bundled subset.
+    // Fall through to bundled subset without populating the cache, so the
+    // next call retries the JSON read.
   }
-  _phoibleCache = INVENTORIES;
   return INVENTORIES;
+}
+
+/**
+ * Test-only: reset the module-scoped PHOIBLE cache so a subsequent
+ * `loadPhoibleCorpus()` call re-reads the JSON file from disk. Not part of
+ * the public API — exported solely to make the cache-poisoning regression
+ * test possible.
+ */
+export function _resetPhoibleCacheForTesting(): void {
+  _phoibleCache = null;
 }

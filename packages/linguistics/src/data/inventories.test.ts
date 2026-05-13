@@ -1,14 +1,22 @@
-import { describe, expect, it } from 'vitest';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdtemp, writeFile, rm, unlink } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   INVENTORIES,
+  _resetPhoibleCacheForTesting,
   loadInventoriesFromPhoible,
   loadPhoibleCorpus,
   parseCsvLine,
 } from './inventories.js';
+
+const PHOIBLE_JSON_PATH = join(
+  dirname(fileURLToPath(import.meta.url)),
+  'inventories.phoible.json',
+);
 
 async function withTempCsv(body: string, fn: (path: string) => Promise<void>) {
   const dir = await mkdtemp(join(tmpdir(), 'hayba-phoible-'));
@@ -122,6 +130,17 @@ describe('loadInventoriesFromPhoible', () => {
 });
 
 describe('loadPhoibleCorpus', () => {
+  beforeEach(() => {
+    _resetPhoibleCacheForTesting();
+  });
+
+  afterEach(async () => {
+    _resetPhoibleCacheForTesting();
+    if (existsSync(PHOIBLE_JSON_PATH)) {
+      await unlink(PHOIBLE_JSON_PATH);
+    }
+  });
+
   it('falls back to the bundled INVENTORIES when no phoible JSON has been generated', () => {
     // In the test environment the gitignored inventories.phoible.json is not
     // present, so the lazy accessor should return the curated subset.
@@ -129,5 +148,42 @@ describe('loadPhoibleCorpus', () => {
     expect(corpus.length).toBeGreaterThanOrEqual(INVENTORIES.length);
     // Identity-equality is fine: the fallback returns the bundled array as-is.
     expect(corpus === INVENTORIES || corpus.length === INVENTORIES.length).toBe(true);
+  });
+
+  it('memoizes a successful JSON load across calls, even if the JSON file later disappears', async () => {
+    const fixture: { language: string; family: string; phonemes: string[] }[] = [
+      { language: 'Testish', family: 'TestFam', phonemes: ['t', 'e', 's'] },
+      { language: 'Otherish', family: 'OtherFam', phonemes: ['o', 'k'] },
+    ];
+    await writeFile(PHOIBLE_JSON_PATH, JSON.stringify(fixture), 'utf8');
+
+    const first = loadPhoibleCorpus();
+    expect(first).toHaveLength(2);
+    expect(first[0].language).toBe('Testish');
+    expect(first).not.toBe(INVENTORIES);
+
+    // Remove the JSON; cached value should still come back identically.
+    await unlink(PHOIBLE_JSON_PATH);
+    const second = loadPhoibleCorpus();
+    expect(second).toBe(first);
+  });
+
+  it('does not poison the cache on initial fallback: a JSON written after the first miss is picked up', async () => {
+    // 1. JSON absent → fallback to bundled subset, but cache must NOT be set.
+    const fallback = loadPhoibleCorpus();
+    expect(fallback).toBe(INVENTORIES);
+
+    // 2. User generates the JSON later (e.g. long-running demo server).
+    const fixture = [
+      { language: 'LateLoaded', family: 'LateFam', phonemes: ['l', 'a', 't', 'e'] },
+    ];
+    await writeFile(PHOIBLE_JSON_PATH, JSON.stringify(fixture), 'utf8');
+
+    // 3. Next call should re-read the JSON instead of returning the cached
+    //    fallback — this is the regression we are guarding against.
+    const after = loadPhoibleCorpus();
+    expect(after).toHaveLength(1);
+    expect(after[0].language).toBe('LateLoaded');
+    expect(after).not.toBe(INVENTORIES);
   });
 });
