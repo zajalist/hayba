@@ -1,8 +1,68 @@
 import { describe, it, expect } from 'vitest';
 import {
   loadRegistry, listStyleGuideMeta, getStyleGuide, getTypology,
-  ArchitectureRegistryError,
+  buildRegistry, ArchitectureRegistryError,
+  _resetRegistryCacheForTests,
 } from './registry.js';
+
+const validTypology = {
+  id: 'peasant_home',
+  footprint: { kind: 'rectangle', aspectRatio: [1, 2], areaRange: [25, 80] },
+  storyRange: [1, 2],
+  fenestrationDensity: [0.05, 0.15],
+};
+const validSheet = {
+  id: 's', cultureId: 'c', dateRange: [0, 100],
+  core: { primaryMaterial: 'timber', roofType: 'thatch', ornamentation: [] },
+  extras: {},
+};
+const validGuide = {
+  id: 'g', styleSheet: validSheet,
+  typologyWeights: [{ typologyId: 'peasant_home', weight: 1 }],
+};
+
+describe('buildRegistry error paths', () => {
+  it('throws ArchitectureRegistryError when a guide refs an unknown typology', () => {
+    const badGuide = { ...validGuide, typologyWeights: [{ typologyId: 'unknown_t', weight: 1 }] };
+    expect(() => buildRegistry([validTypology], [badGuide])).toThrow(ArchitectureRegistryError);
+  });
+
+  it('throws on duplicate typology ids', () => {
+    expect(() => buildRegistry([validTypology, validTypology], [validGuide]))
+      .toThrow(ArchitectureRegistryError);
+  });
+
+  it('throws on duplicate styleGuide ids', () => {
+    expect(() => buildRegistry([validTypology], [validGuide, { ...validGuide }]))
+      .toThrow(ArchitectureRegistryError);
+  });
+
+  it('throws on structurally malformed guide (rejected by validateStyleGuide)', () => {
+    expect(() => buildRegistry([validTypology], [{ id: '', styleSheet: validSheet, typologyWeights: [] }]))
+      .toThrow(ArchitectureRegistryError);
+  });
+
+  it('error carries the structured ValidationError list', () => {
+    try {
+      buildRegistry([validTypology], [{ ...validGuide, typologyWeights: [{ typologyId: 'unknown_t', weight: 1 }] }]);
+      expect.fail('expected throw');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ArchitectureRegistryError);
+      expect((e as ArchitectureRegistryError).errors.length).toBeGreaterThan(0);
+      expect((e as ArchitectureRegistryError).errors[0].path).toMatch(/typologyId/);
+    }
+  });
+});
+
+describe('_resetRegistryCacheForTests', () => {
+  it('drops the cache so the next loadRegistry rebuilds', () => {
+    const before = loadRegistry();
+    _resetRegistryCacheForTests();
+    const after = loadRegistry();
+    expect(before).not.toBe(after);   // distinct object after reset
+    expect(after.typologyIds.size).toBe(before.typologyIds.size);  // same data
+  });
+});
 
 describe('registry', () => {
   it('loads the bundled seed data without errors', () => {
