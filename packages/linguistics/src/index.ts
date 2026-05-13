@@ -48,6 +48,10 @@ export { SplitMix64, deriveSeed, fnv1a64 } from './rng.js';
 export type { DerivationLLM, DerivationRequest, DerivationResult } from './derivation.js';
 export { proposeDerivation } from './derivation.js';
 
+// Anthropic LLM adapter for L7 derivation (L18) — gated by optional SDK.
+export type { AnthropicAdapterOpts } from './llm-anthropic.js';
+export { createAnthropicLLM, buildSystemPrompt } from './llm-anthropic.js';
+
 // Romanization
 export type { RomanizationMap, RomanizationRule } from './romanization.js';
 export { romanize, deromanize, defaultRomanization } from './romanization.js';
