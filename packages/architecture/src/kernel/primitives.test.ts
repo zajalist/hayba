@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
-  IDENTITY_M, translateY, scale, rotateY, compose, transform,
+  IDENTITY_M, translateY, scale, rotateY, compose, transform, revolve,
 } from './primitives.js';
 import type { Mesh } from './types.js';
+import { parseSvgProfile } from './svg-parse.js';
 
 const triMesh = (): Mesh => ({
   positions: new Float32Array([0, 0, 0,  1, 0, 0,  0, 1, 0]),
@@ -50,5 +51,47 @@ describe('transform(mesh, matrix)', () => {
   it('rotateY(180°) flips X coordinate', () => {
     const out = transform(triMesh(), rotateY(Math.PI));
     expect(out.positions[3]).toBeCloseTo(-1);
+  });
+});
+
+describe('revolve', () => {
+  it('a 100mm × 1000mm rectangle revolved 360° produces a mesh', () => {
+    const profile = parseSvgProfile(
+      '<svg viewBox="0 0 100 1000"><path d="M0 0 L 100 0 L 100 1000 L 0 1000 Z"/></svg>',
+      'symmetric-half',
+    );
+    const m = revolve(profile, 'Y', 16, 360);
+    expect(m.positions.length).toBeGreaterThan(0);
+    expect(m.indices.length).toBeGreaterThan(0);
+    expect(m.indices.length % 3).toBe(0);
+  });
+  it('produces deterministic output', () => {
+    const profile = parseSvgProfile(
+      '<svg viewBox="0 0 50 200"><path d="M0 0 L 50 0 L 50 200 L 0 200 Z"/></svg>',
+      'symmetric-half',
+    );
+    const a = revolve(profile, 'Y', 24, 360);
+    const b = revolve(profile, 'Y', 24, 360);
+    expect(Array.from(a.positions)).toEqual(Array.from(b.positions));
+    expect(Array.from(a.indices)).toEqual(Array.from(b.indices));
+  });
+  it('rejects non-symmetric-half input', () => {
+    const profile = parseSvgProfile(
+      '<svg viewBox="0 0 100 100"><path d="M0 0 L 100 0 L 100 100 L 0 100 Z"/></svg>',
+      'closed-path',
+    );
+    expect(() => revolve(profile, 'Y', 16, 360)).toThrow(/symmetric-half/);
+  });
+  it('output triangles are all properly indexed', () => {
+    const profile = parseSvgProfile(
+      '<svg viewBox="0 0 30 60"><path d="M0 0 L 30 0 L 30 60 L 0 60 Z"/></svg>',
+      'symmetric-half',
+    );
+    const m = revolve(profile, 'Y', 8, 360);
+    const vertCount = m.positions.length / 3;
+    for (let i = 0; i < m.indices.length; i++) {
+      expect(m.indices[i]).toBeGreaterThanOrEqual(0);
+      expect(m.indices[i]).toBeLessThan(vertCount);
+    }
   });
 });
