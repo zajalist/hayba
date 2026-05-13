@@ -6,6 +6,7 @@ import {
   SCA_PRESETS,
   applyAllophony, parseAllophonyRules, stringifyAllophonyRule,
   clusterLegality,
+  suggestPhonotactics, suggestAllophony,
   assignStress, applyTones, toneToLetters,
   validatePhonotactics, tokenize as tokenizePhonemes,
   defaultRomanization, romanize,
@@ -209,7 +210,10 @@ function inspect(ipa) {
 }
 function toggleInventory(ipa) {
   if (state.selected.has(ipa)) state.selected.delete(ipa); else state.selected.add(ipa);
-  state.active = ipa; saveState(); renderPhonology(); renderTopbar(); renderRomanization();
+  state.active = ipa; saveState();
+  // Use renderAffected so every view that depends on `selected` (incl. the
+  // L19 legality heatmap and L29 naturalistic overlays) re-paints.
+  renderAffected(['selected', 'active']);
 }
 
 document.getElementById('inspector-toggle').addEventListener('click', () => {
@@ -1845,6 +1849,108 @@ function renderAllophony() {
   });
 })();
 
+/* ─────────────────────  L29 — Naturalistic suggestions  ───────────────────── */
+(function initNaturalisticSuggestions() {
+  const suggestPtBtn = document.getElementById('suggest-phonotactics-btn');
+  const resetPtBtn = document.getElementById('reset-phonotactics-suggestions-btn');
+  const suggestAlBtn = document.getElementById('suggest-allophony-btn');
+  const dlg = document.getElementById('allo-suggest-dlg');
+  const list = document.getElementById('allo-suggest-list');
+  const cancel = document.getElementById('allo-suggest-cancel');
+
+  function currentSpec() {
+    const phono = buildPhonologyJson();
+    const vs = new Set(CARDINAL_VOWELS.map(v => v.ipa));
+    const vowels = [...state.selected].filter(x => vs.has(x));
+    return {
+      phono,
+      spec: {
+        phonologyId: phono.languageId,
+        vowels,
+        syllable: { templates: ['CV', 'CVC'] },
+      },
+    };
+  }
+
+  if (suggestPtBtn) {
+    suggestPtBtn.addEventListener('click', () => {
+      const { phono, spec } = currentSpec();
+      try {
+        state.suggestedLegality = suggestPhonotactics(spec, phono);
+      } catch (err) {
+        console.error('[suggestPhonotactics]', err);
+        return;
+      }
+      saveState();
+      renderAffected(['selected']);
+    });
+  }
+  if (resetPtBtn) {
+    resetPtBtn.addEventListener('click', () => {
+      state.suggestedLegality = [];
+      saveState();
+      renderAffected(['selected']);
+    });
+  }
+
+  function closeDlg() { dlg?.classList.remove('open'); }
+  dlg?.addEventListener('click', e => { if (e.target === dlg) closeDlg(); });
+  cancel?.addEventListener('click', closeDlg);
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && dlg?.classList.contains('open')) closeDlg();
+  });
+
+  if (suggestAlBtn) {
+    suggestAlBtn.addEventListener('click', () => {
+      const { phono } = currentSpec();
+      let suggs = [];
+      try { suggs = suggestAllophony(phono); }
+      catch (err) { console.error('[suggestAllophony]', err); return; }
+
+      list.innerHTML = '';
+      if (suggs.length === 0) {
+        list.innerHTML = '<div class="hint">No common processes matched the current inventory. Add more phonemes (e.g. voiced stops, nasals, front vowels) and try again.</div>';
+      } else {
+        for (const s of suggs) {
+          const ruleText = stringifyAllophonyRule(s.rule);
+          const card = document.createElement('div');
+          card.style.cssText = 'border:1px solid var(--border-soft); border-radius:6px; padding:10px 12px; display:flex; flex-direction:column; gap:6px';
+          const confPct = Math.round(s.confidence * 100);
+          card.innerHTML = `
+            <div style="display:flex; align-items:baseline; justify-content:space-between; gap:8px">
+              <b>${escapeHtml(s.rule.label ?? `${s.rule.phoneme} > ${s.rule.surface}`)}</b>
+              <code class="mono" style="font-size:11px; color:var(--text-muted)">${escapeHtml(ruleText)}</code>
+            </div>
+            <div class="hint">${escapeHtml(s.rationale)}</div>
+            <div style="display:flex; flex-wrap:wrap; gap:4px">
+              ${s.attestation.map(a => `<span style="font-size:10px; padding:2px 6px; background:var(--bg-base); border:1px solid var(--border-soft); border-radius:10px">${escapeHtml(a)}</span>`).join('')}
+            </div>
+            <div style="display:flex; align-items:center; gap:8px">
+              <div style="flex:1; height:4px; background:var(--bg-base); border-radius:2px; overflow:hidden">
+                <div style="width:${confPct}%; height:100%; background:var(--status-green)"></div>
+              </div>
+              <span style="font-size:10px; color:var(--text-muted)">${confPct}%</span>
+              <button type="button" class="btn-sm" data-add-rule>Add to rules</button>
+            </div>`;
+          card.querySelector('[data-add-rule]').addEventListener('click', () => {
+            if (!state.allophony) state.allophony = { rulesText: '' };
+            const existing = state.allophony.rulesText ?? '';
+            const next = existing.trim()
+              ? existing.replace(/\s*$/, '') + '\n' + ruleText
+              : ruleText;
+            state.allophony.rulesText = next;
+            saveState();
+            renderAllophony();
+            renderLexicon();
+          });
+          list.appendChild(card);
+        }
+      }
+      dlg.classList.add('open');
+    });
+  }
+})();
+
 /* ─────────────────────  Romanization  ───────────────────── */
 function renderRomanization() {
   const tbody = document.getElementById('rom-tbody');
@@ -3223,6 +3329,12 @@ function renderLegalityHeatmap() {
   const byKey = new Map();
   for (const c of cells) byKey.set(c.onset + '|' + c.coda, c);
 
+  // L29 — naturalistic suggestion overlay (populated by the "Suggest naturalistic" button).
+  const suggestions = state.suggestedLegality ?? [];
+  const suggByKey = new Map();
+  for (const s of suggestions) suggByKey.set(s.pair[0] + '|' + s.pair[1], s);
+  const userCustom = new Set(state.userCustomizedLegality ?? []);
+
   const colCodas = ['', ...consonants]; // first column is "(no coda)"
   const colW = 34, rowH = 30, headerH = 26, headerW = 38;
 
@@ -3248,15 +3360,31 @@ function renderLegalityHeatmap() {
         : cell.legality === 'restricted'
           ? 'var(--status-orange)'
           : 'var(--bg-base)';
-      const border = cell.legality === 'illegal' ? '1px solid var(--border-soft)' : '1px solid transparent';
+      const key = onset + '|' + coda;
+      const sugg = suggByKey.get(key);
+      const isUserCustom = userCustom.has(key);
+      let border = cell.legality === 'illegal' ? '1px solid var(--border-soft)' : '1px solid transparent';
+      if (sugg && !isUserCustom) {
+        const sc = sugg.suggestedLegality === 'legal'
+          ? 'var(--status-green)'
+          : sugg.suggestedLegality === 'restricted'
+            ? 'var(--status-orange)'
+            : 'var(--text-muted)';
+        border = `1px dashed ${sc}`;
+      } else if (isUserCustom) {
+        border = '2px solid var(--accent, var(--text-primary))';
+      }
       const sample = cell.sample ?? '';
       const showSample = cell.legality !== 'illegal';
       const cursor = showSample ? 'pointer' : 'default';
-      const tip = cell.legality === 'legal'
+      const baseTip = cell.legality === 'legal'
         ? `legal · ${sample}`
         : cell.legality === 'restricted'
           ? `restricted · ${cell.reason ?? ''}`
           : `illegal · ${cell.reason ?? ''}`;
+      const tip = sugg
+        ? `${baseTip}\nsuggested: ${sugg.suggestedLegality} (conf ${sugg.confidence.toFixed(2)}) — ${sugg.rationale}`
+        : baseTip;
       const dataAttrs = showSample
         ? ` data-seed-onset="${escapeHtml(onset)}" data-seed-coda="${escapeHtml(coda)}"`
         : '';

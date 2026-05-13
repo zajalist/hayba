@@ -51,6 +51,10 @@ export {
   applyAllophony, surfaceOf, parseAllophonyRules, stringifyAllophonyRule,
 } from './allophony.js';
 
+// Naturalistic suggestions (L29)
+export type { PhonotacticSuggestion, AllophonySuggestion } from './naturalistic.js';
+export { suggestPhonotactics, suggestAllophony } from './naturalistic.js';
+
 // RNG (used by L4, exposed for hosts that want sub-streams)
 export { SplitMix64, deriveSeed, fnv1a64 } from './rng.js';
 

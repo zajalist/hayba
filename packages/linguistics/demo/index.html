@@ -1250,6 +1250,10 @@
       <div class="panel">
         <div class="panel-header">Phonotactic legality heatmap
           <span class="sub">rows = onsets · columns = codas · click a cell to seed the Name Generator</span>
+          <span style="margin-left:auto; display:inline-flex; gap:6px">
+            <button type="button" id="suggest-phonotactics-btn" class="btn-sm" title="Score cells by Sonority Sequencing Principle">Suggest naturalistic</button>
+            <button type="button" id="reset-phonotactics-suggestions-btn" class="btn-sm" title="Clear suggestion overlay">Reset suggestions</button>
+          </span>
         </div>
         <div class="panel-body">
           <div id="legality-heatmap" style="overflow:auto"></div>
@@ -1257,6 +1261,7 @@
             <span><span class="sw" style="background:var(--status-green)"></span>legal</span>
             <span><span class="sw" style="background:var(--status-orange)"></span>restricted (cluster blacklist)</span>
             <span><span class="sw" style="background:var(--bg-base); border:1px solid var(--border-soft)"></span>illegal</span>
+            <span><span class="sw" style="background:transparent; border:1px dashed var(--text-muted)"></span>naturalistic suggestion overlay</span>
           </div>
         </div>
       </div>
@@ -1269,6 +1274,9 @@
             <button type="button" data-mode="visual" role="tab" aria-selected="false">Visual</button>
           </span>
           <span class="sub">surface realizations applied every render — e.g. <span class="mono">t &gt; ɾ / [V] _ [V]</span> (intervocalic flap)</span>
+          <span style="margin-left:auto">
+            <button type="button" id="suggest-allophony-btn" class="btn-sm" title="Pattern-match against well-attested cross-linguistic processes">Suggest common processes</button>
+          </span>
         </div>
         <div class="panel-body">
           <div id="allo-text-mode">
@@ -1993,6 +2001,18 @@ t > s / _ i"></textarea>
     <div class="preset-list" id="sca-preset-list"></div>
     <div class="row" style="margin-top:14px; justify-content: flex-end">
       <button class="btn" id="sca-preset-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- L29 — Allophony suggestions modal -->
+<div class="preset-dialog" id="allo-suggest-dlg">
+  <div class="preset-card" style="max-width: 760px">
+    <h4>Suggested common processes</h4>
+    <div class="hint">Pattern-matched against well-attested cross-linguistic processes. Confidence reflects how well your inventory matches the prerequisite, not how "right" the rule is.</div>
+    <div id="allo-suggest-list" style="display:flex; flex-direction:column; gap:10px; margin-top:12px; max-height: 60vh; overflow:auto"></div>
+    <div class="row" style="margin-top:14px; justify-content: flex-end">
+      <button class="btn" id="allo-suggest-cancel">Close</button>
     </div>
   </div>
 </div>
