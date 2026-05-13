@@ -1,0 +1,54 @@
+import { z } from 'zod';
+import { ensureConnected } from '../../tcp-client.js';
+import type { ToolHandler } from '../types.js';
+import type { HaybaToolMeta } from '../hayba-tool-meta.js';
+
+export const meta: HaybaToolMeta = {
+  cost: 'low',
+  effects: [],
+  when: 'polling for the answer to a prompt previously pushed via hayba_request_input',
+  not_when: 'pushing a new prompt — use hayba_request_input',
+};
+
+export const getUserResponseSchema = z.object({
+  prompt_id: z.string().min(1),
+  wait_ms: z.number().int().min(0).max(300_000).optional()
+    .describe('How long the UE side should block waiting for an answer. Default 0 (non-blocking poll).'),
+});
+
+export type GetUserResponseParams = z.infer<typeof getUserResponseSchema>;
+
+export type UserResponseStatus = 'pending' | 'answered' | 'rejected' | 'timeout' | 'unknown';
+
+export interface UserResponse {
+  prompt_id: string;
+  status: UserResponseStatus;
+  value?: unknown;
+  error?: string;
+}
+
+export const haybaGetUserResponseHandler: ToolHandler = async (args) => {
+  const parsed = getUserResponseSchema.safeParse(args);
+  if (!parsed.success) {
+    return { content: [{ type: 'text', text: `Validation error: ${parsed.error.message}` }], isError: true };
+  }
+  const waitMs = parsed.data.wait_ms ?? 0;
+  // TCP request timeout has to outlive the UE-side wait, plus a margin.
+  const tcpTimeoutMs = Math.max(5000, waitMs + 2000);
+  try {
+    const client = await ensureConnected();
+    const resp = await client.send(
+      'hayba_get_user_response',
+      { prompt_id: parsed.data.prompt_id, wait_ms: waitMs },
+      tcpTimeoutMs,
+    );
+    if (!resp.ok) {
+      const body: UserResponse = { prompt_id: parsed.data.prompt_id, status: 'unknown', error: resp.error };
+      return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }], isError: true };
+    }
+    return { content: [{ type: 'text', text: JSON.stringify(resp.data, null, 2) }] };
+  } catch (e) {
+    const body: UserResponse = { prompt_id: parsed.data.prompt_id, status: 'unknown', error: (e as Error).message };
+    return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }], isError: true };
+  }
+};
