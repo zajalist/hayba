@@ -11,6 +11,7 @@ import {
   createLoanwordAdapter,
   computeLexiconStatistics,
   exportToCsv, exportToAnkiTsv, exportToMarkdown,
+  createWebSpeechTts,
   InMemoryWordlinks, autoCognatesFromDiachrony,
   buildFamilyTree,
   TYPOLOGY_FEATURES, TYPOLOGY_PRESETS, profileSummary,
@@ -31,6 +32,19 @@ function snapshotActiveLanguage() { _snapshotActiveLanguage(state); }
 function loadLanguageSnapshot(langId) { _loadLanguageSnapshot(state, langId); }
 
 const model = buildCoOccurrenceModel();
+
+/* ─────────────────────  TTS (L23)  ───────────────────── */
+const tts = createWebSpeechTts();
+const SPEAKER_SVG = `<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6.5h2.5l3-2v8l-3-2H3.5z" fill="currentColor" stroke-width="0"/><path d="M11 5c1.5 1 1.5 5 0 6"/></svg>`;
+function ttsActive() {
+  return tts.available() && state.ttsEnabled !== false;
+}
+function ttsSpeak(text) {
+  if (!ttsActive() || !text) return;
+  try { tts.stop(); tts.speak(String(text), { rate: 1.0, pitch: 1.0 }).catch(() => {}); } catch { /* ignore */ }
+}
+const _VOWEL_SET = new Set(CARDINAL_VOWELS.map(v => v.ipa));
+function _isVowelIpa(ipa) { return _VOWEL_SET.has(ipa); }
 
 /* ─────────────────────  navigation  ───────────────────── */
 document.querySelectorAll('nav button[data-view]').forEach(b => {
@@ -195,6 +209,17 @@ function toggleInventory(ipa) {
 document.getElementById('inspector-toggle').addEventListener('click', () => {
   if (state.active) toggleInventory(state.active);
 });
+document.getElementById('tts-speak-context')?.addEventListener('click', () => {
+  if (!ttsActive() || !state.active) return;
+  const vowel = [...state.selected].find(_isVowelIpa);
+  if (!vowel) return;
+  // Build a CV sample. If the active phoneme is already a vowel, just speak it.
+  const raw = _isVowelIpa(state.active) ? state.active : (state.active + vowel);
+  // Prefer romanization so the TTS engine has a chance of pronouncing it.
+  const romMap = { languageId: state.langId, rules: state.romRules };
+  const spoken = state.romRules.length ? romanize(raw, romMap) : raw;
+  ttsSpeak(spoken);
+});
 
 /* —— Presets —— */
 const PRESETS = [
@@ -345,6 +370,13 @@ function renderPhonology() {
   const audio = document.getElementById('audio'); const link = document.getElementById('audio-link');
   if (url) { audio.src = url; audio.style.display=''; link.href=url; link.textContent='Listen on Wikimedia Commons →'; }
   else { audio.removeAttribute('src'); audio.style.display='none'; link.textContent=''; }
+  // L23 — Speak-in-context button (CV sample syllable for active phoneme)
+  const ttsRow = document.getElementById('tts-inspector-row');
+  if (ttsRow) {
+    const vowelInInv = [...state.selected].find(_isVowelIpa);
+    const canSpeak = ttsActive() && !!state.active && !!vowelInInv;
+    ttsRow.style.display = canSpeak ? '' : 'none';
+  }
 
   // Inventory chips
   const chipStrip = document.getElementById('inv-chips');
@@ -531,6 +563,28 @@ document.getElementById('action-reset').addEventListener('click', () => {
   saveState(); renderAll();
 });
 
+const ttsToggleBtn = document.getElementById('action-toggle-tts');
+function renderTtsToggle() {
+  if (!ttsToggleBtn) return;
+  const on = state.ttsEnabled !== false;
+  ttsToggleBtn.textContent = (on ? '✓ ' : '   ') + 'Enable text-to-speech';
+  ttsToggleBtn.setAttribute('aria-checked', String(on));
+  if (!tts.available()) {
+    ttsToggleBtn.disabled = true;
+    ttsToggleBtn.title = 'Web Speech API not available in this browser';
+  }
+}
+renderTtsToggle();
+ttsToggleBtn?.addEventListener('click', () => {
+  state.ttsEnabled = !(state.ttsEnabled !== false);
+  if (!state.ttsEnabled) tts.stop();
+  saveState();
+  renderTtsToggle();
+  renderLexicon();
+  renderPhonology();
+  renderTranslationTtsBtn();
+});
+
 document.getElementById('action-copy-json').addEventListener('click', async () => {
   kebabMenu.classList.remove('open');
   await navigator.clipboard.writeText(JSON.stringify(buildPhonologyJson(), null, 2));
@@ -604,7 +658,11 @@ function renderLexicon() {
       <td>${e.pos ? `<span class="pos-tag">${escapeHtml(e.pos)}</span>` : '<span class="muted">—</span>'}</td>
       <td class="muted">${escapeHtml(e.register || 'neutral')}</td>
       <td class="muted">${escapeHtml(e.gloss || '')}</td>
-      <td class="right-actions"><button class="btn" data-del="${escapeHtml(e.concept)}">×</button></td>`;
+      <td class="right-actions">${
+        ttsActive()
+          ? `<button class="btn" data-speak="${escapeHtml(e.concept)}" title="Speak word" style="padding:2px 6px">${SPEAKER_SVG}</button> `
+          : ''
+      }<button class="btn" data-del="${escapeHtml(e.concept)}">×</button></td>`;
     tbody.appendChild(tr);
     if (links.length) {
       const expandTr = document.createElement('tr');
@@ -655,6 +713,14 @@ function renderLexicon() {
     b.addEventListener('click', () => {
       state.lexicon = state.lexicon.filter(x => x.concept !== b.dataset.del);
       saveState(); renderLexicon(); renderSoundChanges();
+    }));
+  tbody.querySelectorAll('button[data-speak]').forEach(b =>
+    b.addEventListener('click', e => {
+      e.stopPropagation();
+      const entry = state.lexicon.find(x => x.concept === b.dataset.speak);
+      if (!entry) return;
+      const word = state.romRules.length ? romanize(entry.lemma, romMap) : entry.lemma;
+      ttsSpeak(word);
     }));
 }
 /* ─────────────────────  L20 — Loanword adapter  ───────────────────── */
@@ -1554,7 +1620,31 @@ function renderTranslation_(sentence) {
   }
   document.getElementById('tr-meta').textContent =
     `${sentence.tokens.filter(t => t.kind === 'word').length} words · ${sentence.generated.length} new`;
+  renderTranslationTtsBtn();
 }
+
+function _sentenceToSpoken(sentence) {
+  if (!sentence) return '';
+  const romMap = { languageId: state.langId, rules: state.romRules };
+  const useRom = state.romRules.length > 0;
+  const parts = sentence.tokens.map(t => {
+    if (t.kind !== 'word') return t.source;
+    const lemma = t.lemma ?? t.source;
+    return useRom ? (t.romanized ?? romanize(lemma, romMap)) : lemma;
+  });
+  // Simple join with spaces — re-insert minimal spacing; punctuation tokens keep their own glyphs.
+  return parts.join(' ').replace(/\s+([.,!?;:])/g, '$1').trim();
+}
+
+function renderTranslationTtsBtn() {
+  const btn = document.getElementById('tts-speak-translation');
+  if (!btn) return;
+  btn.style.display = (ttsActive() && state.lastTranslation) ? '' : 'none';
+}
+document.getElementById('tts-speak-translation')?.addEventListener('click', () => {
+  if (!ttsActive() || !state.lastTranslation) return;
+  ttsSpeak(_sentenceToSpoken(state.lastTranslation));
+});
 
 document.getElementById('tr-translate').addEventListener('click', runTranslate);
 document.getElementById('tr-input').addEventListener('keydown', e => {
@@ -1567,6 +1657,9 @@ document.getElementById('tr-clear').addEventListener('click', () => {
   document.getElementById('tr-romanized-panel').style.display = 'none';
   document.getElementById('tr-status').textContent = '';
   document.getElementById('tr-meta').textContent = '—';
+  state.lastTranslation = null;
+  saveState();
+  renderTranslationTtsBtn();
 });
 
 /* ─────────────────────  Grammar / paradigms (L11)  ───────────────────── */

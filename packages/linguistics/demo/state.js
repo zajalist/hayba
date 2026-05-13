@@ -22,6 +22,7 @@ export function defaultState() {
     languages: {},
     wordlinks: [],
     nameGenScratch: null,
+    ttsEnabled: true,
   };
 }
 
@@ -43,6 +44,7 @@ export function loadState() {
       languages: j.languages ?? {},
       wordlinks: j.wordlinks ?? [],
       nameGenScratch: j.nameGenScratch ?? null,
+      ttsEnabled: j.ttsEnabled ?? true,
     };
   } catch {
     return null;

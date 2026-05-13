@@ -97,6 +97,10 @@ export { computeLexiconStatistics } from './statistics.js';
 export type { ExportContext } from './export-formats.js';
 export { exportToCsv, exportToAnkiTsv, exportToMarkdown } from './export-formats.js';
 
+// Speech synthesis (L23) — Web Speech API wrapper
+export type { TtsProvider } from './tts.js';
+export { createWebSpeechTts, createNoopTts } from './tts.js';
+
 // Typology catalogue (L15)
 export type {
   TypologyFeature, TypologyOption, TypologyCategory, LanguageProfile,
