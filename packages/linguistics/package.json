@@ -8,7 +8,9 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "demo": "tsc && node dist/demo.js",
+    "serve": "tsc && node demo/serve.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.12.2",

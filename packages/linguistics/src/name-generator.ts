@@ -1,16 +1,27 @@
-import type { Phonology } from './phonology.js';
-import { validatePhonotactics } from './phonotactics.js';
-import type { PhonotacticSpec } from './phonotactics.js';
+/**
+ * L4 — Phonotactic name generator.
+ *
+ * Deterministic: same `(seed, lang_id, category, instance)` → identical word
+ * forever. Uses the SplitMix64 stream from `rng.ts` for reproducibility across
+ * runs / arches. Generation is rejection-sampled against the language's
+ * phonotactic spec (L2).
+ */
 
-export type NameCategory = 'person' | 'place' | 'faction';
+import type { Phonology } from './phonology.js';
+import { passesPhonotactics } from './phonotactics.js';
+import type { PhonotacticSpec } from './phonotactics.js';
+import { SplitMix64, deriveSeed } from './rng.js';
+
+export type NameCategory = 'person' | 'place' | 'faction' | 'object' | 'concept';
 
 export interface NameGeneratorProfile {
-  /** Supported: CV or CVC per syllable */
-  syllableTemplate: 'CV' | 'CVC';
+  syllableTemplate: 'CV' | 'CVC' | 'CCV' | 'CVN';
   vowels: string[];
   onsetPool: string[];
-  /** Used as final consonant in CVC; falls back to onsetPool when empty */
+  /** Used as final consonant in CVC/CVN; falls back to onsetPool when empty. */
   codaPool?: string[];
+  /** Optional nasal pool for CVN. */
+  nasalPool?: string[];
 }
 
 export interface GenerateNameParams {
@@ -19,46 +30,35 @@ export interface GenerateNameParams {
   profile: NameGeneratorProfile;
   category?: NameCategory;
   syllableCount: number;
-  seed: number;
+  seed: number | bigint;
+  /** Optional extra scope tag for sub-stream derivation (e.g. an entity id). */
+  instance?: string;
 }
 
-function mulberry32(a: number): () => number {
-  return () => {
-    let t = (a += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function pick<T>(arr: T[], rnd: () => number): T {
-  return arr[Math.floor(rnd() * arr.length)]!;
-}
-
-function categorySalt(cat?: NameCategory): number {
-  if (!cat) return 0;
-  let h = 0;
-  for (let i = 0; i < cat.length; i++) h = (h * 31 + cat.charCodeAt(i)) | 0;
-  return h;
-}
-
-function buildSyllable(profile: NameGeneratorProfile, rnd: () => number): string {
-  const codas = profile.codaPool?.length ? profile.codaPool : profile.onsetPool;
-  if (profile.syllableTemplate === 'CV') {
-    return pick(profile.onsetPool, rnd) + pick(profile.vowels, rnd);
+function buildSyllable(profile: NameGeneratorProfile, rng: SplitMix64): string {
+  const onset = rng.pick(profile.onsetPool);
+  const v = rng.pick(profile.vowels);
+  switch (profile.syllableTemplate) {
+    case 'CV': return onset + v;
+    case 'CCV': return onset + rng.pick(profile.onsetPool) + v;
+    case 'CVC': return onset + v + rng.pick(profile.codaPool?.length ? profile.codaPool : profile.onsetPool);
+    case 'CVN': return onset + v + rng.pick(profile.nasalPool?.length ?? 0 ? profile.nasalPool! : profile.codaPool?.length ? profile.codaPool : profile.onsetPool);
   }
-  return pick(profile.onsetPool, rnd) + pick(profile.vowels, rnd) + pick(codas, rnd);
 }
 
 export function generatePhonotacticName(p: GenerateNameParams): string {
-  const salt = categorySalt(p.category);
+  const scope: string[] = [
+    p.phonology.languageId,
+    p.category ?? 'unknown',
+  ];
+  if (p.instance) scope.push(p.instance);
+  const base = deriveSeed(p.seed, ...scope);
+
   for (let attempt = 0; attempt < 1000; attempt++) {
-    const rnd = mulberry32(p.seed + salt + attempt * 7919);
+    const rng = new SplitMix64(base ^ BigInt(attempt) * 0x9E3779B97F4A7C15n);
     let word = '';
-    for (let syl = 0; syl < p.syllableCount; syl++) {
-      word += buildSyllable(p.profile, rnd);
-    }
-    if (validatePhonotactics(word, p.phonology, p.phonotactics)) return word;
+    for (let s = 0; s < p.syllableCount; s++) word += buildSyllable(p.profile, rng);
+    if (passesPhonotactics(word, p.phonology, p.phonotactics)) return word;
   }
-  throw new Error('hayba: could not sample a phonotactic name — widen pools or templates');
+  throw new Error('hayba: phonotactic name generator exhausted 1000 attempts — widen onset/vowel pools or relax templates');
 }

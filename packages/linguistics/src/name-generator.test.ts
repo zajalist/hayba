@@ -5,10 +5,10 @@ import { generatePhonotacticName } from './name-generator.js';
 const phonology: Phonology = {
   languageId: 'testlang',
   phonemes: [
-    { symbol: 'p', ipa: 'p', features: [] },
-    { symbol: 't', ipa: 't', features: [] },
-    { symbol: 'a', ipa: 'a', features: [] },
-    { symbol: 'o', ipa: 'o', features: [] },
+    { id: 'p', ipa: 'p', features: { place: 'bilabial', manner: 'stop', voicing: 'voiceless' } },
+    { id: 't', ipa: 't', features: { place: 'alveolar', manner: 'stop', voicing: 'voiceless' } },
+    { id: 'a', ipa: 'a', features: { height: 'open', backness: 'front' } },
+    { id: 'o', ipa: 'o', features: { height: 'close-mid', backness: 'back' } },
   ],
 };
 

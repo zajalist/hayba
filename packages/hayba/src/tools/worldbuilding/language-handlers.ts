@@ -1,17 +1,25 @@
 import { z } from 'zod';
 import {
-  LexiconStore,
+  InMemoryLexicon,
   generatePhonotacticName,
+  parseRules,
+  evolveLexicon,
+  proposeDerivation,
+  buildCoOccurrenceModel,
+  passesPhonotactics,
   type Lexeme,
   type NameGeneratorProfile,
   type Phonology,
   type PhonotacticSpec,
+  type SoundChangeRule,
 } from '@hayba/linguistics';
 
+/* ─────────────────────  schemas  ───────────────────── */
+
 const phonemeSchema = z.object({
-  symbol: z.string(),
+  id: z.string(),
   ipa: z.string(),
-  features: z.array(z.string()),
+  features: z.record(z.string(), z.string()),
 });
 
 const phonologySchema = z.object({
@@ -26,7 +34,9 @@ const phonotacticSchema = z.object({
     templates: z.array(z.string()),
     onsetClusters: z.array(z.string()).optional(),
     codaClusters: z.array(z.string()).optional(),
+    boundaryClusters: z.array(z.string()).optional(),
   }),
+  slotClasses: z.record(z.string(), z.array(z.string())).optional(),
 });
 
 export const definePhonologySchema = z.object({
@@ -37,7 +47,6 @@ export const definePhonologySchema = z.object({
 export const wordForSchema = z.object({
   language_id: z.string(),
   concept_id: z.string(),
-  /** When absent and nothing stored yet, returns null unless define_lexeme provided */
   define_lexeme: z
     .object({
       lemma: z.string(),
@@ -53,29 +62,44 @@ export const generateNameSchema = z.object({
   language_id: z.string(),
   seed: z.number().int(),
   syllable_count: z.number().int().min(1).max(8),
-  syllable_template: z.enum(['CV', 'CVC']),
+  syllable_template: z.enum(['CV', 'CVC', 'CCV', 'CVN']),
   vowels: z.array(z.string()),
   onset_pool: z.array(z.string()),
   coda_pool: z.array(z.string()).optional(),
-  category: z.enum(['person', 'place', 'faction']).optional(),
+  nasal_pool: z.array(z.string()).optional(),
+  category: z.enum(['person', 'place', 'faction', 'object', 'concept']).optional(),
 });
 
 export const soundChangesSchema = z.object({
-  rules_json: z.string().describe('Lexurgy-style rule stack JSON — engine lands in L5'),
+  language_id: z.string(),
+  rules_text: z.string().describe('One rule per line, e.g. "p > b / V _ V"'),
 });
 
 export const proposeDerivationSchema = z.object({
   language_id: z.string(),
-  proto_form: z.string(),
-  target_gloss: z.string(),
+  gloss: z.string(),
+  derivation_kind: z.string().optional(),
+  root_lemma: z.string().optional(),
+  seed: z.number().int(),
 });
 
 export const remixPhonologiesSchema = z.object({
   language_ids: z.array(z.string()).min(2),
 });
 
-const langs = new Map<string, { phonology: Phonology; phonotactic?: PhonotacticSpec }>();
-export const lexicon = new LexiconStore();
+/* ─────────────────────  state  ───────────────────── */
+
+interface LanguageRecord {
+  phonology: Phonology;
+  phonotactic?: PhonotacticSpec;
+}
+
+const langs = new Map<string, LanguageRecord>();
+export const lexicon = new InMemoryLexicon();
+
+const coOccurrence = buildCoOccurrenceModel();
+
+/* ─────────────────────  handlers  ───────────────────── */
 
 export function definePhonology(params: z.infer<typeof definePhonologySchema>) {
   const ph = phonologySchema.parse(JSON.parse(params.phonology));
@@ -87,11 +111,21 @@ export function definePhonology(params: z.infer<typeof definePhonologySchema>) {
     }
   }
   langs.set(ph.languageId, { phonology: ph, phonotactic });
-  return { ok: true as const, language_id: ph.languageId, phoneme_count: ph.phonemes.length };
+  // Co-occurrence summary helps the caller sanity-check the inventory.
+  const summary = ph.phonemes.map(p => ({
+    ipa: p.ipa,
+    marginal: Number(coOccurrence.marginal(p.ipa).toFixed(3)),
+  }));
+  return {
+    ok: true as const,
+    language_id: ph.languageId,
+    phoneme_count: ph.phonemes.length,
+    cross_linguistic_summary: summary,
+  };
 }
 
 export function languageWordFor(params: z.infer<typeof wordForSchema>) {
-  let hit = lexicon.wordFor(params.language_id, params.concept_id);
+  let hit = lexicon.get(params.language_id, params.concept_id);
   if (!hit && params.define_lexeme) {
     const row: Lexeme = {
       lemma: params.define_lexeme.lemma,
@@ -116,6 +150,7 @@ export function languageGenerateName(params: z.infer<typeof generateNameSchema>)
     vowels: params.vowels,
     onsetPool: params.onset_pool,
     codaPool: params.coda_pool,
+    nasalPool: params.nasal_pool,
   };
   const name = generatePhonotacticName({
     phonology: cfg.phonology,
@@ -128,27 +163,75 @@ export function languageGenerateName(params: z.infer<typeof generateNameSchema>)
   return { name };
 }
 
-export function languageApplySoundChanges(_params: z.infer<typeof soundChangesSchema>) {
-  return {
-    ok: false as const,
-    message:
-      'Deterministic sound-change engine + visual builder are tracked under linguistics L5; rule execution is not wired in this MCP release.',
+export function languageApplySoundChanges(params: z.infer<typeof soundChangesSchema>) {
+  const cfg = langs.get(params.language_id);
+  if (!cfg) throw new Error(`language "${params.language_id}" not defined`);
+  let rules: SoundChangeRule[];
+  try {
+    rules = parseRules(params.rules_text);
+  } catch (e) {
+    return { ok: false as const, message: (e as Error).message };
+  }
+  const entries = lexicon.all(params.language_id).map(({ concept, entry }) => ({
+    concept, lemma: entry.lemma,
+  }));
+  const vset = new Set(cfg.phonotactic?.vowels ?? []);
+  const classes: Record<string, Set<string>> = {
+    V: vset,
+    C: new Set(cfg.phonology.phonemes.map(p => p.ipa).filter(ipa => !vset.has(ipa))),
+    nasal: new Set(cfg.phonology.phonemes.filter(p => p.features.manner === 'nasal').map(p => p.ipa)),
   };
+  const evolved = evolveLexicon(entries, cfg.phonology, rules, classes);
+  return { ok: true as const, evolved };
 }
 
-export function languageProposeDerivation(_params: z.infer<typeof proposeDerivationSchema>) {
-  return {
-    ok: false as const,
-    message:
-      'LLM-assisted derivation (linguistics L7) is pending constrained decoding hooks — use phonotactic validator client-side first.',
-  };
+export async function languageProposeDerivation(params: z.infer<typeof proposeDerivationSchema>) {
+  const cfg = langs.get(params.language_id);
+  if (!cfg?.phonotactic) {
+    throw new Error(`language "${params.language_id}" missing phonology + phonotactics`);
+  }
+  const consonants = cfg.phonology.phonemes
+    .filter(p => p.features.manner && p.features.manner !== 'plosive')
+    .map(p => p.ipa);
+  const vowels = cfg.phonotactic.vowels;
+  const result = await proposeDerivation({
+    phonology: cfg.phonology,
+    phonotactics: cfg.phonotactic,
+    fallbackProfile: {
+      syllableTemplate: 'CV',
+      vowels,
+      onsetPool: consonants.length ? consonants : cfg.phonology.phonemes.map(p => p.ipa),
+    },
+    gloss: params.gloss,
+    derivationKind: params.derivation_kind,
+    rootLemma: params.root_lemma,
+    seed: params.seed,
+  });
+  lexicon.set(params.language_id, params.gloss, result.lexeme);
+  return { ok: true as const, ...result };
 }
 
 export function languageRemixPhonologies(params: z.infer<typeof remixPhonologiesSchema>) {
+  // M3 feature — collect the union of all phonemes, intersect cluster rules.
+  const found = params.language_ids.map(id => langs.get(id)).filter(Boolean) as LanguageRecord[];
+  if (found.length !== params.language_ids.length) {
+    return { ok: false as const, message: 'one or more languages not defined' };
+  }
+  const merged = new Map<string, Phonology['phonemes'][number]>();
+  for (const r of found) for (const p of r.phonology.phonemes) merged.set(p.id, p);
+  // Probability-weighted survival: only keep phonemes plausibly co-occurring
+  // with the most-common phoneme of the first language (anchor harmony).
+  const anchor = found[0]?.phonology.phonemes[0]?.ipa;
+  const phonemes = [...merged.values()].filter(p =>
+    !anchor || p.ipa === anchor || coOccurrence.pGivenPresent(p.ipa, anchor) > 0.2);
   return {
-    ok: false as const,
-    language_ids: params.language_ids,
-    message:
-      'Language remixing / creole blending (linguistics L9) is not implemented yet — export phonologies via language_define_phonology + merge manually.',
+    ok: true as const,
+    creole: {
+      languageId: params.language_ids.join('+'),
+      phonemes,
+    },
   };
 }
+
+// Stay used so dead-code passes don't strip them when this file is split later.
+void passesPhonotactics;
