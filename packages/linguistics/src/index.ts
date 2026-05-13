@@ -67,3 +67,9 @@ export type {
 export {
   inflect, buildParadigm, enumerateAxes, findRuleConflicts, PRESET_PARADIGMS,
 } from './morphology.js';
+
+// Wordlinks — cross-language translation graph (L13)
+export type { Wordlink, WordlinkKind, WordlinkRepo } from './wordlinks.js';
+export {
+  InMemoryWordlinks, PostgresWordlinks, autoCognatesFromDiachrony,
+} from './wordlinks.js';

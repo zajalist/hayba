@@ -86,18 +86,29 @@
 
   /* Language selector — styled like a tab/pill */
   .lang-picker {
-    display: inline-flex; align-items: center; gap: 8px;
+    display: inline-flex; align-items: center; gap: 0;
     background: var(--bg-panel); border: 1px solid var(--border-soft);
-    border-radius: 5px; padding: 4px 4px 4px 10px;
+    border-radius: 5px; padding: 0;
     transition: border-color .12s;
   }
   .lang-picker:hover, .lang-picker:focus-within { border-color: var(--accent); }
-  .lang-picker .icon { color: var(--accent); font-size: 12px; }
-  .lang-picker input {
-    background: transparent; border: none; color: var(--text-primary);
-    font: 13px var(--font-ui); width: 180px; padding: 4px 0; outline: none;
+  .lang-picker .picker-icon {
+    color: var(--accent); padding: 0 8px 0 10px;
+    display: inline-flex; align-items: center;
   }
-  .lang-picker input::placeholder { color: var(--text-muted); }
+  .lang-picker select {
+    background: transparent; border: none; color: var(--text-primary);
+    font: 13px var(--font-ui); padding: 5px 4px; outline: none;
+    cursor: pointer; min-width: 130px;
+  }
+  .lang-picker select:focus { background: var(--bg-base); }
+  .lang-picker .lang-action {
+    background: transparent; border: none; border-left: 1px solid var(--border-soft);
+    color: var(--text-muted); padding: 0 8px; cursor: pointer;
+    display: inline-flex; align-items: center; height: 24px;
+    transition: color .12s;
+  }
+  .lang-picker .lang-action:hover { color: var(--accent); }
 
   /* Stat badges */
   .stats-bar { display: flex; gap: 2px; }
@@ -410,6 +421,33 @@
     border: 1px solid var(--accent); margin-left: 6px;
   }
 
+  /* Wordlinks — chips revealed in lexicon expand-rows */
+  .link-badge {
+    display: inline-block; margin-left: 6px; padding: 0 5px;
+    background: var(--accent-dim); color: var(--accent);
+    border: 1px solid var(--accent-glow); border-radius: 8px;
+    font-size: 10px; font-family: var(--font-mono);
+  }
+  .lex-links-row td { background: rgba(255,255,255,0.018); padding: 6px 14px 10px 28px; border-bottom: 1px solid var(--border-mid); }
+  .wordlink-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--bg-base); border: 1px solid var(--border-soft);
+    color: var(--text-secondary); padding: 3px 8px 3px 4px;
+    border-radius: 12px; font-size: 11.5px; margin-right: 6px; margin-top: 4px;
+    cursor: pointer; transition: border-color .12s, background .12s;
+  }
+  .wordlink-chip:hover { border-color: var(--accent); background: var(--bg-panel); color: var(--text-primary); }
+  .wordlink-chip .kind {
+    font-size: 9.5px; font-weight: 600; padding: 1px 6px;
+    border-radius: 8px; text-transform: uppercase; letter-spacing: 0.4px;
+  }
+  .wordlink-chip .kind-cognate     { background: rgba(126,196,142,0.18); color: var(--tag-green); }
+  .wordlink-chip .kind-borrowing   { background: rgba(232,165,96,0.20);  color: var(--status-orange); }
+  .wordlink-chip .kind-calque      { background: rgba(106,159,220,0.20); color: var(--tag-blue); }
+  .wordlink-chip .kind-translation { background: rgba(198,133,192,0.18); color: var(--tag-pink); }
+  .wordlink-chip .lang { color: var(--text-muted); font-family: var(--font-mono); font-size: 10.5px; }
+  .wordlink-chip .lemma { color: var(--accent); font-size: 13px; }
+
   /* Grammar paradigm tables */
   .paradigm-table {
     border-collapse: separate; border-spacing: 0;
@@ -566,10 +604,18 @@
 
   <span class="divider"></span>
 
-  <label class="lang-picker" title="Current language ID">
-    <span class="icon">◆</span>
-    <input type="text" id="lang-id" value="my-conlang" placeholder="languageId">
-  </label>
+  <div class="lang-picker" title="Active language">
+    <span class="picker-icon">
+      <svg viewBox="0 0 14 14" width="11" height="11" fill="currentColor"><path d="M7 1.5l1.4 4 4.2.4-3.2 2.8 1 4.1L7 10.5 2.6 12.8l1-4.1L.4 5.9l4.2-.4L7 1.5Z"/></svg>
+    </span>
+    <select id="lang-id"></select>
+    <button class="lang-action" id="lang-new" title="Create a new language">
+      <svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M7 3v8M3 7h8"/></svg>
+    </button>
+    <button class="lang-action" id="lang-rename" title="Rename the current language">
+      <svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2.5l2 2-7 7H2.5v-2l7-7Z"/></svg>
+    </button>
+  </div>
 
   <span class="divider"></span>
 
@@ -1076,7 +1122,8 @@ t > s / _ i"></textarea>
             grammar: <span class="mono">target &gt; replacement / before _ after</span> · use <span class="mono">[V] [C] [nasal]</span> for classes · <span class="mono">#</span> = word boundary · <span class="mono">0</span> = deletion
           </div>
           <div class="row" style="margin-top:8px">
-            <button class="btn primary" id="sca-apply">apply to lexicon</button>
+            <button class="btn primary" id="sca-apply">Apply to lexicon (in place)</button>
+            <button class="btn" id="sca-fork" title="Fork a daughter language with these sound changes applied; auto-links cognates back to the parent">Fork as daughter language…</button>
             <span class="hint" id="sca-status"></span>
           </div>
         </div>
@@ -1205,6 +1252,7 @@ import {
   defaultRomanization, romanize,
   translate, renderRomanized,
   buildParadigm, findRuleConflicts, PRESET_PARADIGMS,
+  InMemoryWordlinks, autoCognatesFromDiachrony,
 } from '../dist/index.js';
 
 /* ─────────────────────  state  ───────────────────── */
@@ -1226,6 +1274,10 @@ const state = loadState() ?? {
     /* { def: ParadigmDef, stem: string, rules: AffixRule[] } */
     def: null, stem: '', rules: [],
   },
+  // L13: multi-language snapshots + cross-language links.
+  // languages[id] holds the per-language facets when not active.
+  languages: {},
+  wordlinks: [/* { langA, conceptA, langB, conceptB, kind, note? } */],
 };
 
 function loadState() {
@@ -1241,6 +1293,8 @@ function loadState() {
       romTest: j.romTest ?? 'paʃa',
       inspectorPinned: j.inspectorPinned ?? true,
       grammar: j.grammar ?? { def: null, stem: '', rules: [] },
+      languages: j.languages ?? {},
+      wordlinks: j.wordlinks ?? [],
     };
   } catch { return null; }
 }
@@ -1690,8 +1744,67 @@ document.getElementById('heatmap-toggle').addEventListener('change', e => {
 document.getElementById('heatmap-mode').addEventListener('change', e => {
   state.heatmapMode = e.target.value; saveState(); renderPhonology();
 });
-document.getElementById('lang-id').addEventListener('input', e => {
-  state.langId = e.target.value; saveState(); renderTopbar();
+/* —— Multi-language switching (L13) —— */
+// Snapshot the active language's facets so we can restore them on switch back.
+function snapshotActiveLanguage() {
+  state.languages[state.langId] = {
+    selected: [...state.selected],
+    lexicon: [...state.lexicon],
+    rules: state.rules,
+    romRules: state.romRules,
+    grammar: state.grammar,
+  };
+}
+function loadLanguageSnapshot(langId) {
+  const snap = state.languages[langId];
+  if (snap) {
+    state.selected = new Set(snap.selected);
+    state.lexicon = snap.lexicon;
+    state.rules = snap.rules;
+    state.romRules = snap.romRules;
+    state.grammar = snap.grammar ?? { def: null, stem: '', rules: [] };
+  } else {
+    // New language: start with the current inventory but empty lexicon/rules.
+    state.lexicon = []; state.rules = ''; state.romRules = [];
+    state.grammar = { def: null, stem: '', rules: [] };
+  }
+  state.langId = langId;
+}
+
+document.getElementById('lang-id').addEventListener('change', e => {
+  if (e.target.value === state.langId) return;
+  snapshotActiveLanguage();
+  loadLanguageSnapshot(e.target.value);
+  saveState(); renderAll();
+});
+
+document.getElementById('lang-new').addEventListener('click', () => {
+  const name = prompt('New language ID:', `language-${Object.keys(state.languages).length + 2}`);
+  if (!name || !name.trim()) return;
+  const id = name.trim();
+  if (id === state.langId || state.languages[id]) {
+    alert('That language ID is already in use.');
+    return;
+  }
+  snapshotActiveLanguage();
+  loadLanguageSnapshot(id);
+  saveState(); renderAll();
+});
+
+document.getElementById('lang-rename').addEventListener('click', () => {
+  const newName = prompt('Rename language:', state.langId);
+  if (!newName || !newName.trim() || newName.trim() === state.langId) return;
+  const oldId = state.langId;
+  const newId = newName.trim();
+  if (state.languages[newId]) { alert('A language with that ID already exists.'); return; }
+  // Migrate wordlinks that referenced the old id.
+  state.wordlinks = state.wordlinks.map(l => ({
+    ...l,
+    langA: l.langA === oldId ? newId : l.langA,
+    langB: l.langB === oldId ? newId : l.langB,
+  }));
+  state.langId = newId;
+  saveState(); renderAll();
 });
 /* —— Kebab menu —— */
 const kebab = document.getElementById('kebab-btn');
@@ -1771,8 +1884,14 @@ function renderLexicon() {
   tbody.innerHTML = '';
   for (const e of filtered) {
     const tr = document.createElement('tr');
+    const links = state.wordlinks.filter(l =>
+      (l.langA === state.langId && l.conceptA === e.concept) ||
+      (l.langB === state.langId && l.conceptB === e.concept));
+    const linkBadge = links.length
+      ? `<span class="link-badge" title="${links.length} wordlink${links.length===1?'':'s'}">${links.length}🔗</span>`
+      : '';
     tr.innerHTML = `
-      <td>${escapeHtml(e.concept)}</td>
+      <td>${escapeHtml(e.concept)} ${linkBadge}</td>
       <td class="accent">${escapeHtml(e.lemma)}</td>
       <td class="muted">${escapeHtml(state.romRules.length ? romanize(e.lemma, romMap) : '—')}</td>
       <td>${e.pos ? `<span class="pos-tag">${escapeHtml(e.pos)}</span>` : '<span class="muted">—</span>'}</td>
@@ -1780,7 +1899,39 @@ function renderLexicon() {
       <td class="muted">${escapeHtml(e.gloss || '')}</td>
       <td class="right-actions"><button class="btn" data-del="${escapeHtml(e.concept)}">×</button></td>`;
     tbody.appendChild(tr);
+    if (links.length) {
+      const expandTr = document.createElement('tr');
+      expandTr.className = 'lex-links-row';
+      expandTr.innerHTML = `<td colspan="7" class="lex-links-cell">${
+        links.map(l => {
+          const other = l.langA === state.langId
+            ? { lang: l.langB, concept: l.conceptB }
+            : { lang: l.langA, concept: l.conceptA };
+          const otherEntry = (state.languages[other.lang]?.lexicon ?? []).find(x => x.concept === other.concept);
+          const lemma = otherEntry?.lemma ?? '?';
+          return `<span class="wordlink-chip" data-lang="${escapeHtml(other.lang)}" data-concept="${escapeHtml(other.concept)}" title="${escapeHtml(l.note ?? '')}">
+            <span class="kind kind-${l.kind}">${l.kind}</span>
+            <span class="lang">${escapeHtml(other.lang)}</span>
+            <span class="lemma mono">${escapeHtml(lemma)}</span>
+          </span>`;
+        }).join('')
+      }</td>`;
+      tbody.appendChild(expandTr);
+    }
   }
+  // Click a wordlink chip → jump to that language and search the concept.
+  tbody.querySelectorAll('.wordlink-chip').forEach(el => {
+    el.addEventListener('click', () => {
+      const targetLang = el.dataset.lang;
+      const targetConcept = el.dataset.concept;
+      if (targetLang !== state.langId) {
+        snapshotActiveLanguage();
+        loadLanguageSnapshot(targetLang);
+      }
+      document.getElementById('lex-search').value = targetConcept;
+      saveState(); renderAll();
+    });
+  });
   // Meta line: total + breakdown by POS
   const total = state.lexicon.length;
   const posCounts = {};
@@ -1885,6 +2036,79 @@ document.getElementById('sca-apply').addEventListener('click', () => {
     statusEl.style.color = 'var(--status-red)';
     statusEl.textContent = String(e.message ?? e);
   }
+});
+
+// Fork: derive a daughter language with these sound changes applied + auto-cognates back to parent.
+document.getElementById('sca-fork').addEventListener('click', () => {
+  if (state.lexicon.length === 0) {
+    alert('Add some words to the lexicon before forking.');
+    return;
+  }
+  const parentRules = state.rules.trim();
+  if (!parentRules) {
+    alert('Type at least one sound-change rule above before forking.');
+    return;
+  }
+  const newId = prompt('Daughter language ID:', `${state.langId}-daughter`);
+  if (!newId || !newId.trim()) return;
+  if (state.languages[newId.trim()] || newId.trim() === state.langId) {
+    alert('That language ID is already in use.'); return;
+  }
+  const daughterId = newId.trim();
+  // Compute evolved lexicon under the parent context.
+  const phono = buildPhonologyJson();
+  const sel = [...state.selected];
+  const cs = new Set([...PULMONIC_CONSONANTS, ...NON_PULMONIC_CONSONANTS].map(c => c.ipa));
+  const vs = new Set(CARDINAL_VOWELS.map(v => v.ipa));
+  const vowels = sel.filter(x => vs.has(x));
+  const consonants = sel.filter(x => cs.has(x));
+  const nasals = [...PULMONIC_CONSONANTS].filter(c => c.manner === 'nasal' && state.selected.has(c.ipa)).map(c => c.ipa);
+  const classes = { V: new Set(vowels), C: new Set(consonants), nasal: new Set(nasals) };
+  let evolved;
+  try {
+    evolved = evolveLexicon(
+      state.lexicon.map(e => ({ concept: e.concept, lemma: e.lemma })),
+      phono, parseRules(parentRules), classes,
+    );
+  } catch (err) {
+    alert('Could not apply rules: ' + (err.message ?? err)); return;
+  }
+  // Snapshot parent, prepare daughter snapshot (inherits inventory + romanization + grammar
+  // but starts with the evolved lexicon and an empty rule stack of its own).
+  snapshotActiveLanguage();
+  const parentId = state.langId;
+  const daughterLexicon = evolved.map(e => {
+    const parentEntry = state.lexicon.find(p => p.concept === e.concept);
+    return {
+      concept: e.concept,
+      lemma: e.evolved,
+      ipa: e.evolved,
+      pos: parentEntry?.pos,
+      register: parentEntry?.register ?? 'neutral',
+      gloss: parentEntry?.gloss,
+      etymology: `< ${parentId} ${e.lemma}`,
+    };
+  });
+  state.languages[daughterId] = {
+    selected: [...state.selected],
+    lexicon: daughterLexicon,
+    rules: '',
+    romRules: [...state.romRules],
+    grammar: state.grammar,
+  };
+  // Auto-cognate every parent ↔ daughter pair.
+  const cognates = autoCognatesFromDiachrony(parentId, daughterId, evolved);
+  for (const link of cognates) {
+    // De-duplicate.
+    const exists = state.wordlinks.find(l =>
+      l.langA === link.langA && l.conceptA === link.conceptA &&
+      l.langB === link.langB && l.conceptB === link.conceptB);
+    if (!exists) state.wordlinks.push(link);
+  }
+  // Switch to the daughter.
+  loadLanguageSnapshot(daughterId);
+  saveState(); renderAll();
+  alert(`Forked "${daughterId}" with ${cognates.length} cognate link${cognates.length === 1 ? '' : 's'} back to "${parentId}". Switched to the daughter.`);
 });
 
 function renderSoundChanges() {
@@ -2306,7 +2530,17 @@ document.getElementById('ng-roll').addEventListener('click', () => {
 
 /* ─────────────────────  topbar  ───────────────────── */
 function renderTopbar() {
-  document.getElementById('lang-id').value = state.langId;
+  // Multi-language selector
+  const sel = document.getElementById('lang-id');
+  // Gather all known languages: snapshots + the active one.
+  const ids = new Set([state.langId, ...Object.keys(state.languages)]);
+  sel.innerHTML = '';
+  for (const id of [...ids].sort()) {
+    const opt = document.createElement('option');
+    opt.value = id; opt.textContent = id;
+    if (id === state.langId) opt.selected = true;
+    sel.appendChild(opt);
+  }
   document.getElementById('t-count').textContent = state.selected.size;
   document.getElementById('t-words').textContent = state.lexicon.length;
   document.getElementById('heatmap-toggle').checked = state.heatmap;
