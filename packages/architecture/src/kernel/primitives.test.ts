@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  IDENTITY_M, translateY, scale, rotateY, compose, transform, revolve,
+  IDENTITY_M, translateY, scale, rotateY, compose, transform, revolve, loft,
 } from './primitives.js';
 import type { Mesh } from './types.js';
 import { parseSvgProfile } from './svg-parse.js';
@@ -93,5 +93,50 @@ describe('revolve', () => {
       expect(m.indices[i]).toBeGreaterThanOrEqual(0);
       expect(m.indices[i]).toBeLessThan(vertCount);
     }
+  });
+});
+
+describe('loft', () => {
+  const sq = (size: number) => parseSvgProfile(
+    `<svg viewBox="${-size/2} ${-size/2} ${size} ${size}"><path d="M${-size/2} ${-size/2} L ${size/2} ${-size/2} L ${size/2} ${size/2} L ${-size/2} ${size/2} Z"/></svg>`,
+    'closed-path',
+  );
+
+  it('interpolates between two same-sized squares (extrusion)', () => {
+    const a = sq(100), b = sq(100);
+    const m = loft([a, b], [[0, 0, 0], [0, 100, 0]]);
+    expect(m.positions.length).toBeGreaterThan(0);
+    expect(m.indices.length % 3).toBe(0);
+  });
+
+  it('interpolates between two different-sized squares (frustum)', () => {
+    const a = sq(100), b = sq(200);
+    const m = loft([a, b], [[0, 0, 0], [0, 100, 0]]);
+    // 4 closed-path verts per profile × 2 layers = 8 vertices.
+    // Modular wrap → 4 edges × 2 triangles per edge = 8 triangles.
+    expect(m.positions.length / 3).toBe(8);
+    expect(m.indices.length / 3).toBe(8);
+  });
+
+  it('is deterministic', () => {
+    const a = sq(50), b = sq(150);
+    const m1 = loft([a, b], [[0, 0, 0], [0, 200, 0]]);
+    const m2 = loft([a, b], [[0, 0, 0], [0, 200, 0]]);
+    expect(Array.from(m1.positions)).toEqual(Array.from(m2.positions));
+    expect(Array.from(m1.indices)).toEqual(Array.from(m2.indices));
+  });
+
+  it('rejects mismatched profile/position counts', () => {
+    const a = sq(50);
+    expect(() => loft([a], [[0, 0, 0], [0, 100, 0]])).toThrow();
+    expect(() => loft([a, a, a], [[0, 0, 0], [0, 100, 0]])).toThrow();
+  });
+
+  it('rejects non-closed-path profiles', () => {
+    const open = parseSvgProfile(
+      '<svg viewBox="0 0 100 100"><path d="M0 0 L 100 0 L 100 100"/></svg>',
+      'open-path',
+    );
+    expect(() => loft([open, open], [[0, 0, 0], [0, 100, 0]])).toThrow(/closed-path/);
   });
 });
