@@ -41,6 +41,12 @@ export {
   parseRule, parseRules, stringifyRule, applyRule, evolveWord, evolveLexicon,
 } from './sound-changes.js';
 
+// Allophony (L25)
+export type { AllophonyRule, SurfaceMapping } from './allophony.js';
+export {
+  applyAllophony, surfaceOf, parseAllophonyRules, stringifyAllophonyRule,
+} from './allophony.js';
+
 // RNG (used by L4, exposed for hosts that want sub-streams)
 export { SplitMix64, deriveSeed, fnv1a64 } from './rng.js';
 

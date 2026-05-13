@@ -14,6 +14,8 @@ export function defaultState() {
     view: 'phonology',
     lexicon: [],
     rules: '',
+    allophony: { rulesText: '' },
+    applyAllophony: false,
     romRules: [],
     romTest: 'paʃa',
     inspectorPinned: true,
@@ -38,6 +40,8 @@ export function loadState() {
       lexicon: j.lexicon ?? [],
       romRules: j.romRules ?? [],
       rules: j.rules ?? '',
+      allophony: j.allophony ?? { rulesText: '' },
+      applyAllophony: j.applyAllophony ?? false,
       romTest: j.romTest ?? 'paʃa',
       inspectorPinned: j.inspectorPinned ?? true,
       grammar: j.grammar ?? { def: null, stem: '', rules: [] },
@@ -66,6 +70,7 @@ export function snapshotActiveLanguage(state) {
     selected: [...state.selected],
     lexicon: [...state.lexicon],
     rules: state.rules,
+    allophony: state.allophony ?? { rulesText: '' },
     romRules: state.romRules,
     grammar: state.grammar,
     typology: { ...(state.typology ?? {}) },
@@ -79,12 +84,14 @@ export function loadLanguageSnapshot(state, langId) {
     state.selected = new Set(snap.selected);
     state.lexicon = snap.lexicon;
     state.rules = snap.rules;
+    state.allophony = snap.allophony ?? { rulesText: '' };
     state.romRules = snap.romRules;
     state.grammar = snap.grammar ?? { def: null, stem: '', rules: [] };
     state.typology = snap.typology ?? {};
   } else {
     state.lexicon = [];
     state.rules = '';
+    state.allophony = { rulesText: '' };
     state.romRules = [];
     state.grammar = { def: null, stem: '', rules: [] };
     state.typology = {};

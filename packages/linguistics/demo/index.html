@@ -1261,6 +1261,56 @@
         </div>
       </div>
 
+      <!-- L25 — Allophony engine -->
+      <div class="panel">
+        <div class="panel-header">Allophony
+          <span class="seg-toggle" id="allo-mode-toggle" role="tablist" aria-label="Allophony rule editor mode">
+            <button type="button" class="on" data-mode="text" role="tab" aria-selected="true">Text</button>
+            <button type="button" data-mode="visual" role="tab" aria-selected="false">Visual</button>
+          </span>
+          <span class="sub">surface realizations applied every render — e.g. <span class="mono">t &gt; ɾ / [V] _ [V]</span> (intervocalic flap)</span>
+        </div>
+        <div class="panel-body">
+          <div id="allo-text-mode">
+            <textarea id="allo-rules" style="width:100%; height:140px"
+              placeholder="# example
+t > ɾ / [V] _ [V]   // intervocalic flap
+n > ŋ / _ [velar]   // velar nasalization
+p > p̚ / _ #          // unreleased final stop"></textarea>
+            <div class="hint" style="margin-top:6px">
+              same grammar as Sound Changes — <span class="mono">underlying &gt; surface / before _ after</span>. unlike sound changes, allophony rules apply every time the word is rendered.
+            </div>
+          </div>
+          <div id="allo-visual-mode" style="display:none">
+            <div class="sca-visual-list" id="allo-visual-list"></div>
+            <button class="sca-add-rule" id="allo-add-rule" type="button">+ add rule</button>
+            <div class="hint" style="margin-top:6px">
+              click each chip to pick an underlying phoneme, surface form, or context.
+            </div>
+          </div>
+          <div class="sca-mode-err" id="allo-mode-err" style="display:none"></div>
+          <div class="row" style="margin-top:10px; align-items:center; gap:14px">
+            <label class="field" style="flex-direction:row; align-items:center; gap:6px; margin:0">
+              <input type="checkbox" id="allo-apply-toggle">
+              <span style="margin:0">Apply allophony to all (Lexicon &amp; Translator show surface forms)</span>
+            </label>
+            <span class="hint" id="allo-status" style="flex:1"></span>
+          </div>
+          <div style="margin-top:14px">
+            <div class="panel-header" style="border:none; padding:0 0 6px 0">Surface forms
+              <span class="meta" id="allo-surface-meta">—</span>
+            </div>
+            <table class="data" id="allo-surface-table">
+              <thead>
+                <tr><th>Concept</th><th>Underlying</th><th></th><th>Surface</th></tr>
+              </thead>
+              <tbody id="allo-surface-tbody"></tbody>
+            </table>
+            <div class="hint" id="allo-surface-empty" style="margin-top:6px">add lexicon entries to preview surface forms.</div>
+          </div>
+        </div>
+      </div>
+
       <div class="panel">
         <div class="panel-header">Phonology JSON
           <span class="sub">ready to feed into the rest of the suite</span>

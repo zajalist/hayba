@@ -101,11 +101,11 @@ function tokenizeContext(s: string): string[] {
   return out;
 }
 
-function isClass(token: string): boolean {
+export function isClass(token: string): boolean {
   return token.startsWith('[') && token.endsWith(']');
 }
 
-function classMatch(
+export function classMatch(
   token: string,
   className: string,
   classes: Record<string, Set<string>>,
@@ -130,7 +130,7 @@ function tokenMatch(
   return word[idx] === pat;
 }
 
-function matchSequence(
+export function matchSequence(
   word: string[],
   start: number,
   pattern: string[],

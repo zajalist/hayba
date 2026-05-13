@@ -3,6 +3,7 @@ import {
   buildCoOccurrenceModel, INVENTORIES, audioUrlFor,
   consonantToPhonemeFeatures, vowelToPhonemeFeatures,
   parseRules, stringifyRule, evolveLexicon, generatePhonotacticName, deriveSeed,
+  applyAllophony, parseAllophonyRules, stringifyAllophonyRule,
   clusterLegality,
   defaultRomanization, romanize,
   translate, renderRomanized,
@@ -652,10 +653,12 @@ function renderLexicon() {
     const linkBadge = links.length
       ? `<span class="link-badge" title="${links.length} wordlink${links.length===1?'':'s'}">${links.length}🔗</span>`
       : '';
+    const displayLemma = state.applyAllophony ? surfaceLemma(e.lemma) : e.lemma;
+    const lemmaDiff = state.applyAllophony && displayLemma !== e.lemma;
     tr.innerHTML = `
       <td>${escapeHtml(e.concept)} ${linkBadge}</td>
-      <td class="accent">${escapeHtml(e.lemma)}</td>
-      <td class="muted">${escapeHtml(state.romRules.length ? romanize(e.lemma, romMap) : '—')}</td>
+      <td class="${lemmaDiff ? 'accent' : 'accent'}" title="${lemmaDiff ? 'underlying: ' + escapeHtml(e.lemma) : ''}">${escapeHtml(displayLemma)}${lemmaDiff ? ' <span class="muted mono" style="font-size:10px">[surf]</span>' : ''}</td>
+      <td class="muted">${escapeHtml(state.romRules.length ? romanize(displayLemma, romMap) : '—')}</td>
       <td>${e.pos ? `<span class="pos-tag">${escapeHtml(e.pos)}</span>` : '<span class="muted">—</span>'}</td>
       <td class="muted">${escapeHtml(e.register || 'neutral')}</td>
       <td class="muted">${escapeHtml(e.gloss || '')}</td>
@@ -1463,6 +1466,327 @@ function renderSoundChanges() {
   document.getElementById('sca-pmeta').textContent = `${changed}/${evolved.length} changed`;
 }
 
+/* ─────────────────────  L25 — Allophony  ─────────────────────
+   Same engine shape as L5 sound changes, but applied synchronically at
+   every render. Visual builder reuses the SCA chip popover (openChipPopover)
+   by treating the AllophonyRule list as a parallel AST. */
+let alloMode = 'text';        // 'text' | 'visual'
+let alloVisualAst = [];       // AllophonyRule[] in visual mode
+
+function emptyAlloRule() {
+  return { phoneme: '', surface: '', before: [], after: [] };
+}
+function alloRuleIsRenderable(r) {
+  return !!r.phoneme && !!r.surface;
+}
+function syncAlloVisualToState() {
+  const lines = alloVisualAst.map(r =>
+    alloRuleIsRenderable(r) ? stringifyAllophonyRule(r) : '// (draft rule)'
+  );
+  if (!state.allophony) state.allophony = { rulesText: '' };
+  state.allophony.rulesText = lines.join('\n');
+  saveState();
+  renderAllophony();
+  // surface forms propagate everywhere: lexicon + translator (when toggle on)
+  renderLexicon();
+}
+
+/** Build the {V, C, nasal, …} class map from the current inventory.
+ *  Mirrors the block in renderSoundChanges / forkActiveLanguageAsDaughter. */
+function buildPhonotacticClasses() {
+  const sel = [...state.selected];
+  const cs = new Set([...PULMONIC_CONSONANTS, ...NON_PULMONIC_CONSONANTS].map(c => c.ipa));
+  const vs = new Set(CARDINAL_VOWELS.map(v => v.ipa));
+  const consonants = sel.filter(x => cs.has(x));
+  const vowels = sel.filter(x => vs.has(x));
+  const allCons = [...PULMONIC_CONSONANTS, ...NON_PULMONIC_CONSONANTS];
+  const byManner = (m) => allCons.filter(c => c.manner === m && state.selected.has(c.ipa)).map(c => c.ipa);
+  const byPlace = (placePred) => allCons.filter(c => placePred(c.place) && state.selected.has(c.ipa)).map(c => c.ipa);
+  return {
+    V: new Set(vowels), C: new Set(consonants),
+    nasal: new Set(byManner('nasal')),
+    stop: new Set(byManner('plosive')),
+    fricative: new Set(byManner('fricative')),
+    plosive: new Set(byManner('plosive')),
+    approximant: new Set(byManner('approximant')),
+    liquid: new Set(allCons.filter(c => (c.manner === 'approximant' || c.manner === 'lateral-approximant' || c.manner === 'trill' || c.manner === 'tap') && state.selected.has(c.ipa)).map(c => c.ipa)),
+    velar: new Set(byPlace(p => p === 'velar' || p === 'labial-velar')),
+    labial: new Set(byPlace(p => p === 'bilabial' || p === 'labiodental')),
+    coronal: new Set(byPlace(p => p === 'dental' || p === 'alveolar' || p === 'postalveolar' || p === 'retroflex' || p === 'alveolo-palatal')),
+    palatal: new Set(byPlace(p => p === 'palatal' || p === 'alveolo-palatal')),
+  };
+}
+
+/** Compute the surface form of a lemma under the active allophony rules.
+ *  Returns the underlying lemma unchanged if there are no rules or tokenization fails. */
+function surfaceLemma(lemma) {
+  if (!lemma) return lemma;
+  const rulesText = state.allophony?.rulesText ?? '';
+  if (!rulesText.trim()) return lemma;
+  let rules;
+  try { rules = parseAllophonyRules(rulesText); } catch { return lemma; }
+  if (!rules.length) return lemma;
+  const phono = buildPhonologyJson();
+  const classes = buildPhonotacticClasses();
+  try {
+    return applyAllophony(lemma, phono, rules, classes).surface;
+  } catch {
+    return lemma;
+  }
+}
+
+function renderAllophonyVisual() {
+  const host = document.getElementById('allo-visual-list');
+  if (!host) return;
+  host.innerHTML = '';
+  alloVisualAst.forEach((rule, idx) => {
+    const row = document.createElement('div');
+    row.className = 'sca-rule-row';
+    const mkChip = (text, filled, slot, placeholder) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'sca-chip' + (filled ? ' filled' : '');
+      b.textContent = filled ? text : placeholder;
+      b.addEventListener('click', () => openAlloChipPopover(b, rule, slot));
+      return b;
+    };
+    row.appendChild(mkChip(rule.phoneme, !!rule.phoneme, 'phoneme', 'underlying'));
+    const arr = document.createElement('span'); arr.className = 'sep'; arr.textContent = '→'; row.appendChild(arr);
+    row.appendChild(mkChip(rule.surface, !!rule.surface, 'surface', 'surface'));
+    const sl = document.createElement('span'); sl.className = 'sep'; sl.textContent = '/'; row.appendChild(sl);
+    row.appendChild(mkChip(rule.before.join(' '), rule.before.length > 0, 'before', '(before)'));
+    const un = document.createElement('span'); un.className = 'sep'; un.textContent = '_'; row.appendChild(un);
+    row.appendChild(mkChip(rule.after.join(' '), rule.after.length > 0, 'after', '(after)'));
+    const del = document.createElement('button');
+    del.className = 'row-del'; del.type = 'button'; del.title = 'remove rule';
+    del.textContent = '×';
+    del.addEventListener('click', () => {
+      alloVisualAst.splice(idx, 1);
+      syncAlloVisualToState();
+      renderAllophonyVisual();
+    });
+    row.appendChild(del);
+    host.appendChild(row);
+  });
+  if (alloVisualAst.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'hint';
+    empty.textContent = 'no rules yet — click "+ add rule".';
+    host.appendChild(empty);
+  }
+}
+
+/** Reuses the SCA chip popover (openChipPopover) by mapping AllophonyRule
+ *  slots to SoundChangeRule slot names. The shape is identical — only the
+ *  field names differ on the AST side. */
+function openAlloChipPopover(anchor, rule, slot) {
+  // Build a thin shim object that exposes the SCA-shape fields the popover
+  // code mutates, then copy back into the AllophonyRule.
+  const shim = {
+    target: rule.phoneme,
+    replacement: rule.surface,
+    before: rule.before,
+    after: rule.after,
+  };
+  const slotMap = { phoneme: 'target', surface: 'replacement', before: 'before', after: 'after' };
+  const shimSlot = slotMap[slot];
+
+  // Mirror openChipPopover, but with our own commit + close path so the
+  // shim writes back to the AllophonyRule.
+  openPopoverAt(anchor, pop => {
+    pop.classList.add('sca-pop');
+    const isCtx = shimSlot === 'before' || shimSlot === 'after';
+    const isReplacement = shimSlot === 'replacement';
+    const groups = getInventoryByManner();
+    const sectionHtml = [];
+
+    const specials = [];
+    if (isReplacement) specials.push({ tok: '0', label: '0 (delete)' });
+    if (isCtx) specials.push({ tok: '#', label: '# (word edge)' });
+    if (specials.length) {
+      sectionHtml.push(`<div class="pop-section">
+        <div class="pop-label">special</div>
+        <div class="pop-grid">${
+          specials.map(s => `<button class="pop-tok" data-pick="${escapeHtml(s.tok)}">${escapeHtml(s.label)}</button>`).join('')
+        }</div></div>`);
+    }
+    sectionHtml.push(`<div class="pop-section">
+      <div class="pop-label">feature class</div>
+      <div class="pop-grid">${
+        FEATURE_CLASSES.map(fc => `<button class="pop-tok" data-pick="${escapeHtml(fc)}">${escapeHtml(fc)}</button>`).join('')
+      }</div>
+      <input class="input mono" id="sca-pop-feat" placeholder="custom: [+nasal]" style="margin-top:4px">
+    </div>`);
+    const groupOrder = [['nasal', 'nasal'], ['plosive', 'stop'], ['fricative', 'fricative'],
+                       ['approximant', 'approximant'], ['vowel', 'vowel'], ['other', 'other']];
+    const phonRows = groupOrder
+      .filter(([k]) => groups[k] && groups[k].length)
+      .map(([k, label]) => `
+        <div class="pop-grouplabel">${label}</div>
+        <div class="pop-grid">${
+          groups[k].map(ipa => `<button class="pop-tok" data-pick="${escapeHtml(ipa)}">${escapeHtml(ipa)}</button>`).join('')
+        }</div>`).join('');
+    if (phonRows) {
+      sectionHtml.push(`<div class="pop-section">
+        <div class="pop-label">phoneme (inventory)</div>
+        ${phonRows}
+      </div>`);
+    } else {
+      sectionHtml.push(`<div class="pop-section"><div class="pop-label">phoneme</div><div class="hint">add phonemes to the inventory first.</div></div>`);
+    }
+    if (isCtx) {
+      sectionHtml.push(`<div class="pop-section">
+        <div class="pop-label">context (append; existing tokens stay)</div>
+        <div class="row" style="gap:6px">
+          <button class="btn" id="sca-pop-clear">clear</button>
+          <span class="hint" style="margin:0">current: <span class="mono">${
+            (shimSlot === 'before' ? rule.before : rule.after).join(' ') || '∅'
+          }</span></span>
+        </div>
+      </div>`);
+    }
+    pop.innerHTML = sectionHtml.join('');
+
+    const commit = (tok) => {
+      if (isCtx) {
+        const arr = shimSlot === 'before' ? rule.before : rule.after;
+        arr.push(tok);
+      } else if (shimSlot === 'target') {
+        rule.phoneme = tok;
+      } else if (shimSlot === 'replacement') {
+        rule.surface = tok;
+      }
+      closePopover();
+      syncAlloVisualToState();
+      renderAllophonyVisual();
+    };
+    pop.querySelectorAll('.pop-tok').forEach(b => {
+      b.addEventListener('click', () => commit(b.dataset.pick));
+    });
+    const featIn = pop.querySelector('#sca-pop-feat');
+    if (featIn) {
+      featIn.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          let v = featIn.value.trim();
+          if (!v) return;
+          if (!v.startsWith('[')) v = '[' + v;
+          if (!v.endsWith(']')) v = v + ']';
+          commit(v);
+        }
+      });
+    }
+    const clr = pop.querySelector('#sca-pop-clear');
+    if (clr) {
+      clr.addEventListener('click', () => {
+        if (shimSlot === 'before') rule.before = []; else rule.after = [];
+        closePopover();
+        syncAlloVisualToState();
+        renderAllophonyVisual();
+      });
+    }
+  });
+}
+
+function renderAllophony() {
+  const ta = document.getElementById('allo-rules');
+  if (!ta) return;
+  const rulesText = state.allophony?.rulesText ?? '';
+  ta.value = rulesText;
+  document.getElementById('allo-apply-toggle').checked = !!state.applyAllophony;
+  if (alloMode === 'visual') renderAllophonyVisual();
+
+  // Parse rules + render surface forms table
+  const status = document.getElementById('allo-status');
+  let rules = [];
+  try {
+    rules = parseAllophonyRules(rulesText);
+    status.style.color = 'var(--muted)';
+    status.textContent = `${rules.length} rule${rules.length === 1 ? '' : 's'}`;
+  } catch (e) {
+    status.style.color = 'var(--status-red)';
+    status.textContent = String(e.message ?? e);
+  }
+
+  const tbody = document.getElementById('allo-surface-tbody');
+  const empty = document.getElementById('allo-surface-empty');
+  const meta = document.getElementById('allo-surface-meta');
+  tbody.innerHTML = '';
+  if (state.lexicon.length === 0) {
+    empty.style.display = '';
+    meta.textContent = '—';
+    return;
+  }
+  empty.style.display = 'none';
+  const phono = buildPhonologyJson();
+  const classes = buildPhonotacticClasses();
+  let changed = 0;
+  for (const e of state.lexicon) {
+    let surface = e.lemma;
+    if (rules.length) {
+      try { surface = applyAllophony(e.lemma, phono, rules, classes).surface; }
+      catch { surface = e.lemma; }
+    }
+    const diff = surface !== e.lemma;
+    if (diff) changed++;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escapeHtml(e.concept)}</td>
+      <td class="muted">${escapeHtml(e.lemma)}</td>
+      <td class="${diff ? 'accent' : 'muted'}">→</td>
+      <td class="${diff ? 'accent' : ''}">${escapeHtml(surface)}</td>`;
+    tbody.appendChild(tr);
+  }
+  meta.textContent = `${changed}/${state.lexicon.length} differ`;
+}
+
+// Wire up the allophony controls.
+(function initAllophonyPanel() {
+  const ta = document.getElementById('allo-rules');
+  if (!ta) return;
+  ta.addEventListener('input', e => {
+    if (!state.allophony) state.allophony = { rulesText: '' };
+    state.allophony.rulesText = e.target.value;
+    saveState();
+    renderAllophony();
+    renderLexicon();
+  });
+  document.querySelectorAll('#allo-mode-toggle button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const next = btn.dataset.mode;
+      if (next === alloMode) return;
+      const errEl = document.getElementById('allo-mode-err');
+      errEl.style.display = 'none'; errEl.textContent = '';
+      if (next === 'visual') {
+        try {
+          const text = state.allophony?.rulesText ?? '';
+          alloVisualAst = text.trim() === '' ? [] : parseAllophonyRules(text);
+        } catch (err) {
+          errEl.textContent = 'Cannot parse rules: ' + (err.message ?? err) + ' — fix in text mode first.';
+          errEl.style.display = '';
+          return;
+        }
+      }
+      alloMode = next;
+      document.querySelectorAll('#allo-mode-toggle button').forEach(b =>
+        b.classList.toggle('on', b.dataset.mode === alloMode));
+      document.getElementById('allo-text-mode').style.display = alloMode === 'text' ? '' : 'none';
+      document.getElementById('allo-visual-mode').style.display = alloMode === 'visual' ? '' : 'none';
+      if (alloMode === 'visual') renderAllophonyVisual();
+    });
+  });
+  document.getElementById('allo-add-rule').addEventListener('click', () => {
+    alloVisualAst.push(emptyAlloRule());
+    renderAllophonyVisual();
+  });
+  document.getElementById('allo-apply-toggle').addEventListener('change', e => {
+    state.applyAllophony = !!e.target.checked;
+    saveState();
+    renderLexicon();
+    // re-render translator output if there's one cached
+    if (state.lastTranslation) renderTranslation_(state.lastTranslation);
+  });
+})();
+
 /* ─────────────────────  Romanization  ───────────────────── */
 function renderRomanization() {
   const tbody = document.getElementById('rom-tbody');
@@ -1578,12 +1902,16 @@ async function runTranslate() {
 function renderTranslation_(sentence) {
   const out = document.getElementById('tr-output');
   out.innerHTML = '';
+  const useSurface = !!state.applyAllophony;
+  const surfaceFor = (lemma) => useSurface ? surfaceLemma(lemma) : lemma;
   for (const t of sentence.tokens) {
     const span = document.createElement('span');
     span.className = 'tr-tok ' + t.kind + (t.generated ? ' gen' : '');
-    span.textContent = t.kind === 'word' ? (t.lemma ?? t.source) : t.source;
+    const shown = t.kind === 'word' ? surfaceFor(t.lemma ?? t.source) : t.source;
+    span.textContent = shown;
     if (t.kind === 'word') {
-      span.title = `${t.source} → ${t.lemma} (concept "${t.concept}"${t.pos ? ', ' + t.pos : ''})${t.generated ? ' · auto-generated' : ''}`;
+      const surfNote = (useSurface && shown !== (t.lemma ?? t.source)) ? ` · surface (underlying ${t.lemma})` : '';
+      span.title = `${t.source} → ${shown} (concept "${t.concept}"${t.pos ? ', ' + t.pos : ''})${t.generated ? ' · auto-generated' : ''}${surfNote}`;
       span.addEventListener('click', () => {
         // Switch to Lexicon view with this concept pre-filtered
         document.getElementById('lex-search').value = t.concept;
@@ -1604,11 +1932,12 @@ function renderTranslation_(sentence) {
     if (t.kind !== 'word') continue;
     const row = document.createElement('div');
     row.className = 'tr-row';
+    const detailLemma = useSurface ? surfaceFor(t.lemma ?? '') : (t.lemma ?? '');
     row.innerHTML = `
       <div class="src">${escapeHtml(t.source)}${t.generated ? '<span class="gen-badge">new</span>' : ''}</div>
       <div>${escapeHtml(t.concept)}</div>
       <div>${t.pos ? `<span class="pos-tag">${escapeHtml(t.pos)}</span>` : '<span class="muted">—</span>'}</div>
-      <div class="lemma">${escapeHtml(t.lemma ?? '')}</div>
+      <div class="lemma">${escapeHtml(detailLemma)}</div>
       <div class="rom">${escapeHtml(t.romanized ?? '—')}</div>`;
     detail.appendChild(row);
   }
@@ -2579,6 +2908,7 @@ const VIEW_RENDERERS = {
   phonology: () => renderPhonology(),
   lexicon: () => renderLexicon(),
   rules: () => renderSoundChanges(),
+  allophony: () => renderAllophony(),
   romanization: () => renderRomanization(),
   grammar: () => renderGrammar(),
   familyTree: () => renderFamilyTree(),
@@ -2595,6 +2925,7 @@ const VIEW_DEPS = {
   phonology:       ['selected', 'active', 'heatmap', 'heatmapMode', 'typology'],
   lexicon:         ['lexicon', 'romRules', 'langId', 'wordlinks', 'languages'],
   rules:           ['rules', 'lexicon', 'selected'],
+  allophony:       ['allophony', 'lexicon', 'selected', 'applyAllophony'],
   romanization:    ['romRules', 'romTest', 'lexicon', 'selected', 'langId'],
   grammar:         ['grammar', 'lexicon'],
   familyTree:      ['languages', 'wordlinks', 'langId', 'selected', 'lexicon'],
