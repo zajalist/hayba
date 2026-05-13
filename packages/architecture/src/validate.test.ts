@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateFootprintShape, validateTypology } from './validate.js';
+import { validateFootprintShape, validateTypology, validateStyleSheet } from './validate.js';
 
 describe('validateFootprintShape', () => {
   it('accepts a well-formed rectangle', () => {
@@ -78,5 +78,52 @@ describe('validateTypology', () => {
       { ...valid, pathfindingHints: { footTraffic: 'high' } }, '/typology',
     );
     expect(errs).toEqual([]);
+  });
+});
+
+describe('validateStyleSheet', () => {
+  const valid = {
+    id: 'medieval-european-gothic',
+    cultureId: 'medieval-european',
+    dateRange: [1140, 1400],
+    core: {
+      primaryMaterial: 'stone',
+      roofType: 'gable',
+      ornamentation: ['pointed-arch', 'flying-buttress'],
+    },
+    extras: { stainedGlass: 'present' },
+  };
+
+  it('accepts a well-formed sheet', () => {
+    expect(validateStyleSheet(valid, '/sheet')).toEqual([]);
+  });
+
+  it('rejects unknown roofType', () => {
+    const bad = { ...valid, core: { ...valid.core, roofType: 'tepee' } };
+    const errs = validateStyleSheet(bad, '/sheet');
+    expect(errs.some(e => e.path === '/sheet/core/roofType')).toBe(true);
+  });
+
+  it('rejects unknown primaryMaterial', () => {
+    const bad = { ...valid, core: { ...valid.core, primaryMaterial: 'plasma' } };
+    const errs = validateStyleSheet(bad, '/sheet');
+    expect(errs.some(e => e.path === '/sheet/core/primaryMaterial')).toBe(true);
+  });
+
+  it('rejects extras with non-string-non-array value', () => {
+    const bad = { ...valid, extras: { count: 42 } };
+    const errs = validateStyleSheet(bad, '/sheet');
+    expect(errs.some(e => e.path === '/sheet/extras/count')).toBe(true);
+  });
+
+  it('accepts extras with string[] values', () => {
+    const ok = { ...valid, extras: { tags: ['rural', 'old'] } };
+    expect(validateStyleSheet(ok, '/sheet')).toEqual([]);
+  });
+
+  it('rejects dateRange with negative endYear smaller than startYear', () => {
+    const bad = { ...valid, dateRange: [1400, 1140] };
+    const errs = validateStyleSheet(bad, '/sheet');
+    expect(errs.some(e => e.path === '/sheet/dateRange')).toBe(true);
   });
 });
