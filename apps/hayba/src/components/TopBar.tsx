@@ -70,7 +70,7 @@ function buildMenus(closeMenu: () => void): Record<string, MenuEntry[]> {
 }
 
 // ---------------------------------------------------------------------------
-// WinCtrlButton — mirrors TopMenuBar.tsx exactly, 42×34 hit area
+// WinCtrlButton — 42×34 hit area
 // ---------------------------------------------------------------------------
 
 function WinCtrlButton({
@@ -114,7 +114,7 @@ function WinCtrlButton({
 }
 
 // ---------------------------------------------------------------------------
-// WindowControls — matches TopMenuBar.tsx pattern
+// WindowControls — min / max / close
 // ---------------------------------------------------------------------------
 
 function WindowControls() {
