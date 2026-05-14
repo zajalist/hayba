@@ -1,14 +1,22 @@
 // Hayba design tokens — single source of truth for color + typography
-// across the marketing site (hayba.com) and the Hayba Explorer desktop app.
+// across the marketing site (hayba.com), the workbench/dashboard, and the
+// Hayba Explorer desktop app.
 //
-// Keep values in sync with packages/hayba/src/tokens.css (marketing site).
+// Reference: the marketing-restyle brief explicitly pins the stack as
+// Segoe UI / Noto Sans on slate (#1b1e24) with #B56A1D as the filled
+// accent and #e8821c as the text accent for uppercase tracked labels.
+// Charis SIL is reserved for IPA samples only — do not use as a heading
+// serif.
 
 export const colors = {
   bgDeep:         "#1b1e24",
   bgBase:         "#22262e",
   bgPanel:        "#2a2e36",
+  /** Filled accent — buttons, swatches, dividers, painted state. */
   accent:         "#B56A1D",
   accentHover:    "#d77f24",
+  /** Text accent — uppercase tracked labels, accent prose, hover-on-text. */
+  accentText:     "#e8821c",
   secondary:      "#6a9fdc",
   secondaryHover: "#8ab5e6",
   textPrimary:    "#e5e8eb",
@@ -19,15 +27,18 @@ export const colors = {
 } as const;
 
 export const fonts = {
-  sans:  '"Noto Sans", system-ui, sans-serif',
-  serif: '"Charis SIL", Georgia, serif',
-  mono:  '"Noto Sans Mono", ui-monospace, monospace',
+  /** UI stack — Segoe UI first (matches the UE plugin + workbench), Noto Sans fallback. */
+  sans:  '"Segoe UI", "Noto Sans", system-ui, sans-serif',
+  /** Reserved for IPA samples — phonology demos, conlang display. NOT for general headings. */
+  ipa:   '"Charis SIL", Georgia, serif',
+  /** Mono — Consolas first (matches workbench), Noto Sans Mono fallback. */
+  mono:  '"Consolas", "Noto Sans Mono", ui-monospace, monospace',
 } as const;
 
 export const radii = {
-  sm: "4px",
-  md: "8px",
-  lg: "12px",
+  sm: "3px",
+  md: "4px",
+  lg: "6px",
 } as const;
 
 export const shadows = {
