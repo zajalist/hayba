@@ -1,6 +1,15 @@
 import * as THREE from "three";
-import type { WizardDraft } from "../wizard/state";
+import type { WizardDraft, BoundaryType } from "../wizard/state";
 import type { PlanetSnapshot } from "../App";
+
+export interface BoundaryRender {
+  /** Cells highlighted neutrally (TE pink) — every boundary cell in the partition. */
+  allBoundaryCells: number[];
+  /** Cells the user is currently hovering over (the focused boundary pair). */
+  hoverCells?: number[];
+  /** Per-pair assignments — cells colored convergent/divergent. */
+  assigned: Array<{ cells: number[]; type: BoundaryType }>;
+}
 
 // Wizard-time color set. Continental = filled accent, ocean = deep slate,
 // preview = soft tinted accent for the brush hover ring.
@@ -11,6 +20,10 @@ const PREVIEW_COLOR_ERASE: [number, number, number] = [0.65, 0.20, 0.20]; // mut
 // Matches TE's BOUNDARY_COLOR exactly — keeps the visual signature of the
 // original tectonic-explorer for cells that sit on a plate boundary.
 const BOUNDARY_COLOR:  [number, number, number] = [0.80, 0.20, 0.50];
+// Distinct hues for assigned boundary types — green = converging, blue = diverging.
+const BOUNDARY_CONVERGENT_COLOR: [number, number, number] = [0.30, 0.75, 0.50];
+const BOUNDARY_DIVERGENT_COLOR:  [number, number, number] = [0.35, 0.60, 0.95];
+const BOUNDARY_HOVER_COLOR:      [number, number, number] = [0.98, 0.85, 0.30];
 
 export interface GlobeHandle {
   object: THREE.Object3D;
@@ -20,6 +33,7 @@ export interface GlobeHandle {
     nCells: number,
     previewCells?: Iterable<number>,
     previewMode?: "paint" | "erase",
+    boundary?: BoundaryRender,
   ): void;
   /** Color cells by the baked snapshot's per-plate colors (with continental cues). */
   recolorFromSnapshot(snap: PlanetSnapshot, palette: ReadonlyArray<[number, number, number]>): void;

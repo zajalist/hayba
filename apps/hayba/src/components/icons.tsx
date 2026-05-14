@@ -19,6 +19,7 @@ import rotateUrl from "../assets/icons/IconRotate.svg";
 import zoomUrl   from "../assets/icons/IconZoom.svg";
 import panUrl    from "../assets/icons/IconPan.svg";
 import recenterUrl from "../assets/icons/IconRecenter.svg";
+import boundaryUrl from "../assets/icons/IconBoundary.svg";
 
 export interface IconProps {
   size?: number;
@@ -53,6 +54,7 @@ export const IconRotate = (p: IconProps = {}) => img(rotateUrl, "rotate", p);
 export const IconZoom   = (p: IconProps = {}) => img(zoomUrl,   "zoom",   p);
 export const IconPan    = (p: IconProps = {}) => img(panUrl,    "pan",    p);
 export const IconRecenter = (p: IconProps = {}) => img(recenterUrl, "recenter", p);
+export const IconBoundary = (p: IconProps = {}) => img(boundaryUrl, "boundary", p);
 
 export const ICON_URLS = {
   sphere: sphereUrl,
@@ -67,4 +69,5 @@ export const ICON_URLS = {
   zoom:   zoomUrl,
   pan:    panUrl,
   recenter: recenterUrl,
+  boundary: boundaryUrl,
 };

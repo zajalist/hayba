@@ -33,8 +33,124 @@ pub struct WizardDraft {
     pub preset: String,
     pub brush_radius_rad: f32,
     pub continental_cells: Vec<u32>,
+    /// Per-boundary type assignment. Key = "min_id-max_id" (sorted plate
+    /// pair, e.g. "1-3"). Value = "convergent" or "divergent". Missing
+    /// pairs are left to the sim's default initial-omega.
+    #[serde(default)]
+    pub boundary_types: std::collections::HashMap<String, String>,
     pub run_length_steps: u32,
     pub dt_ma: f32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PartitionResult {
+    pub n_cells: u32,
+    /// Plate id per cell (`-1` cannot happen here — every cell falls in one
+    /// preset bucket). Use u32 since 0xFFFF_FFFF would also be unreachable.
+    pub cell_plate_ids: Vec<u32>,
+    /// Ordered, deterministic list of (plate_a, plate_b, boundary_cells)
+    /// triples. plate_a < plate_b always; cells listed are those that sit on
+    /// the seam between the pair. Cells on three-plate junctions appear in
+    /// multiple entries.
+    pub boundaries: Vec<BoundaryPair>,
+    /// Per-plate seed centroid in 3D — used by the front-end to position
+    /// arrow indicators / force-direction previews.
+    pub plate_centroids: Vec<[f32; 3]>,
+    /// Plate ids parallel to `plate_centroids`.
+    pub plate_ids: Vec<u32>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BoundaryPair {
+    pub plate_a: u32,
+    pub plate_b: u32,
+    pub cells: Vec<u32>,
+}
+
+/// Run the preset → cell-plate-id partition without baking the planet so the
+/// front-end can highlight boundaries during the force step. Deterministic
+/// for any (divisions, preset, seed) triple.
+#[tauri::command]
+pub fn compute_partition(divisions: u32, preset: String, seed: u64) -> PartitionResult {
+    use std::collections::BTreeMap;
+
+    let img = image::load_from_memory(preset_bytes(&preset))
+        .expect("preset PNG should decode")
+        .to_rgba8();
+    let grid = Grid::new(divisions);
+    let n_cells = grid.n_fields();
+
+    let mut hue_to_plate: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut next_id: u32 = 1;
+    let mut cell_plate_ids: Vec<u32> = Vec::with_capacity(n_cells as usize);
+
+    let mut cell_hue: Vec<u32> = Vec::with_capacity(n_cells as usize);
+    for fid in 0..n_cells {
+        let pos = grid.position(fid);
+        let (r, g, b) = sample_preset(&img, pos);
+        let (h, _s, _v) = rgb_to_hsv(r, g, b);
+        cell_hue.push(((h / 10.0).round() as u32) * 10);
+        hue_to_plate.entry(cell_hue[fid as usize]).or_insert_with(|| {
+            let pid = next_id; next_id += 1; pid
+        });
+    }
+    for fid in 0..n_cells {
+        cell_plate_ids.push(hue_to_plate[&cell_hue[fid as usize]]);
+    }
+
+    // Denoise: anti-aliased pixels at the PNG's plate-color edges can drop
+    // single cells into the wrong hue bucket, producing phantom boundary
+    // speckles mid-plate. Two-pass majority filter: if a cell disagrees with
+    // strictly more than half its neighbours, snap it to the neighbour
+    // majority. Repeat once to absorb adjacent speckle clusters.
+    cell_plate_ids = majority_smooth(&grid, cell_plate_ids);
+    cell_plate_ids = majority_smooth(&grid, cell_plate_ids);
+
+    // Boundary discovery — pairs keyed (min, max) so we don't double-count.
+    let mut pair_cells: BTreeMap<(u32, u32), Vec<u32>> = BTreeMap::new();
+    for fid in 0..n_cells {
+        let my = cell_plate_ids[fid as usize];
+        let mut emitted_pairs: Vec<(u32, u32)> = Vec::new();
+        for &nb in grid.neighbours(fid) {
+            let theirs = cell_plate_ids[nb as usize];
+            if theirs == my { continue; }
+            let pair = if my < theirs { (my, theirs) } else { (theirs, my) };
+            if emitted_pairs.contains(&pair) { continue; }
+            emitted_pairs.push(pair);
+            pair_cells.entry(pair).or_insert_with(Vec::new).push(fid);
+        }
+    }
+
+    let boundaries: Vec<BoundaryPair> = pair_cells
+        .into_iter()
+        .map(|((a, b), cells)| BoundaryPair { plate_a: a, plate_b: b, cells })
+        .collect();
+
+    // Plate centroids — average unit-sphere position of all member cells,
+    // then renormalised so it lives on the sphere.
+    let n_plates = next_id - 1;
+    let mut sums = vec![Vec3::ZERO; n_plates as usize];
+    let mut counts = vec![0u32; n_plates as usize];
+    for fid in 0..n_cells {
+        let pid = cell_plate_ids[fid as usize];
+        sums[(pid - 1) as usize] += grid.position(fid);
+        counts[(pid - 1) as usize] += 1;
+    }
+    let mut plate_centroids: Vec<[f32; 3]> = Vec::with_capacity(n_plates as usize);
+    let mut plate_ids: Vec<u32> = Vec::with_capacity(n_plates as usize);
+    for i in 0..n_plates {
+        let c = sums[i as usize].normalize_or_zero();
+        plate_centroids.push([c.x, c.y, c.z]);
+        plate_ids.push(i + 1);
+    }
+
+    PartitionResult {
+        n_cells,
+        cell_plate_ids,
+        boundaries,
+        plate_centroids,
+        plate_ids,
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -130,6 +246,41 @@ fn hsv_value_to_elevation(value: f32) -> f32 {
     -0.3 + t * 1.3
 }
 
+/// One pass of cellular majority filtering. A cell whose plate id is strictly
+/// outnumbered by a different neighbour plate id gets snapped to that
+/// majority. Cleans up anti-aliased PNG edges that would otherwise produce
+/// phantom boundary cells mid-plate. Deterministic — visits cells in id
+/// order and consumes its input array (the read view is frozen).
+fn majority_smooth(grid: &Grid, cells: Vec<u32>) -> Vec<u32> {
+    use std::collections::HashMap;
+    let mut out = cells.clone();
+    for fid in 0..grid.n_fields() {
+        let mut counts: HashMap<u32, u32> = HashMap::new();
+        let mut total = 0u32;
+        for &nb in grid.neighbours(fid) {
+            *counts.entry(cells[nb as usize]).or_insert(0) += 1;
+            total += 1;
+        }
+        let me = cells[fid as usize];
+        let mut best = me;
+        let mut best_count = *counts.get(&me).unwrap_or(&0);
+        for (&pid, &count) in &counts {
+            // Prefer the neighbour-majority. Tie-break favours the smaller
+            // plate id for determinism.
+            if count > best_count || (count == best_count && pid < best) {
+                best = pid;
+                best_count = count;
+            }
+        }
+        // Only flip if the majority is strictly larger than half the neighbour
+        // count — leaves legitimate boundary cells (≈ 50/50) untouched.
+        if best != me && best_count * 2 > total {
+            out[fid as usize] = best;
+        }
+    }
+    out
+}
+
 fn is_continental(elevation: f32) -> bool {
     // Matches TE: > BASE_OCEAN_ELEVATION + HIGHEST_MOUNTAIN_ELEVATION * 0.05
     // In our normalised range: > -0.3 + 1.0 * 0.05 = -0.25. But we want a
@@ -212,14 +363,23 @@ fn bake_impl(draft: &WizardDraft) -> PlanetSnapshot {
         });
     }
 
+    // ── Step 1b: denoise — anti-aliased PNG edges create speckle cells in
+    // the wrong hue bucket; majority-filter twice so the bake matches what
+    // the user sees in the partition preview.
+    let mut cell_plate_ids: Vec<u32> = infos
+        .iter()
+        .map(|i| hue_to_plate[&i.hue_bucket])
+        .collect();
+    cell_plate_ids = majority_smooth(&model.grid, cell_plate_ids);
+    cell_plate_ids = majority_smooth(&model.grid, cell_plate_ids);
+
     // ── Step 2: build per-plate cell buckets in plate-id order.
     let plate_count = hue_to_plate.len() as u32;
     let mut buckets: Vec<Vec<u32>> = (0..plate_count).map(|_| Vec::new()).collect();
     let mut plate_continental: Vec<bool> = vec![false; plate_count as usize];
     for fid in 0..n_cells {
-        let pid = hue_to_plate[&infos[fid as usize].hue_bucket];
+        let pid = cell_plate_ids[fid as usize];
         buckets[(pid - 1) as usize].push(fid);
-        // User's brush wins; otherwise fall back to the preset's elevation.
         let cont = if user_continental[fid as usize] {
             true
         } else {
@@ -230,13 +390,71 @@ fn bake_impl(draft: &WizardDraft) -> PlanetSnapshot {
         }
     }
 
-    // ── Step 3: register plates with the model.
+    // ── Step 3a: compute plate centroids so we can bias initial omega from
+    // the user-assigned boundary types (convergent/divergent).
+    let n_plates = buckets.len();
+    let mut plate_centroids: Vec<Vec3> = vec![Vec3::ZERO; n_plates];
+    let mut plate_counts: Vec<u32> = vec![0; n_plates];
+    for (i, cells) in buckets.iter().enumerate() {
+        for &fid in cells {
+            plate_centroids[i] += model.grid.position(fid);
+            plate_counts[i] += 1;
+        }
+        if plate_counts[i] > 0 {
+            plate_centroids[i] = plate_centroids[i].normalize_or_zero();
+        }
+    }
+
+    // ── Step 3b: per-plate force accumulator from the user's boundary types.
+    // For each (a, b) assignment:
+    //   convergent — plate a wants to move toward b, plate b toward a
+    //   divergent  — plate a wants to move away from b, plate b away from a
+    // Translate "movement toward direction d" into an angular velocity around
+    // axis (d × position) so the rotation actually drifts the plate that way.
+    let mut force_dir: Vec<Vec3> = vec![Vec3::ZERO; n_plates];
+    for (pair_key, ty) in &draft.boundary_types {
+        let mut it = pair_key.split('-');
+        let a: u32 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let b: u32 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        if a == 0 || b == 0 || a as usize > n_plates || b as usize > n_plates {
+            continue;
+        }
+        let ia = (a - 1) as usize;
+        let ib = (b - 1) as usize;
+        let dir_ab = (plate_centroids[ib] - plate_centroids[ia]).normalize_or_zero();
+        if dir_ab.length_squared() < 1e-6 { continue; }
+        let sign: f32 = match ty.as_str() {
+            "convergent" => 1.0,
+            "divergent"  => -1.0,
+            _ => 0.0,
+        };
+        force_dir[ia] += dir_ab * sign;
+        force_dir[ib] -= dir_ab * sign;
+    }
+
+    // ── Step 3c: register plates with the model.
     for (i, cells) in buckets.iter().enumerate() {
         let pid = (i + 1) as u32;
         let color_arr = PALETTE[i % PALETTE.len()];
         let packed = ((color_arr[0] as u32) << 16) | ((color_arr[1] as u32) << 8) | (color_arr[2] as u32);
         let density = if plate_continental[i] { 0.35 } else { 1.05 };
         let mut omega = omega_for_plate(pid, draft.seed);
+
+        // If the user assigned any boundaries to this plate, override the
+        // random omega with one that points the plate along the user's force
+        // direction. Translate desired linear velocity at the centroid into
+        // an angular velocity: omega = pos × velocity / |pos|^2.
+        let f = force_dir[i];
+        if f.length_squared() > 1e-6 {
+            let v = f.normalize() * 0.01; // target tangential speed
+            // Project v onto the tangent plane of plate_centroids[i].
+            let p = plate_centroids[i];
+            let tangent = v - p * v.dot(p);
+            if tangent.length_squared() > 1e-6 {
+                omega = p.cross(tangent);
+            }
+        }
+
         let len = omega.length();
         if len > MAX_PLATE_SPEED {
             omega *= MAX_PLATE_SPEED / len;
@@ -288,6 +506,7 @@ mod tests {
             preset: preset.into(),
             brush_radius_rad: 0.1,
             continental_cells: vec![],
+            boundary_types: std::collections::HashMap::new(),
             run_length_steps: 1,
             dt_ma: 0.5,
         }
