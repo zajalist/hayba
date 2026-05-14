@@ -9,9 +9,11 @@
 // serif.
 
 export const colors = {
-  bgDeep:         "#1b1e24",
-  bgBase:         "#22262e",
-  bgPanel:        "#2a2e36",
+  // Editorial-dark: tightened toward Gaea's #1a1a1a feel while keeping a
+  // subtle slate-cool cast that ties to the marketing-restyle palette.
+  bgDeep:         "#141619",
+  bgBase:         "#181b20",
+  bgPanel:        "#1f2228",
   /** Filled accent — buttons, swatches, dividers, painted state. */
   accent:         "#B56A1D",
   accentHover:    "#d77f24",
@@ -27,12 +29,13 @@ export const colors = {
 } as const;
 
 export const fonts = {
-  /** UI stack — Segoe UI first (matches the UE plugin + workbench), Noto Sans fallback. */
-  sans:  '"Segoe UI", "Noto Sans", system-ui, sans-serif',
-  /** Reserved for IPA samples — phonology demos, conlang display. NOT for general headings. */
+  /** UI stack — Inter is the editorial-dark default (matches the Gaea look);
+   * falls back to system-ui then Noto Sans for the rare offline case. */
+  sans:  '"Inter", "Inter Variable", system-ui, "Segoe UI", "Noto Sans", sans-serif',
+  /** Reserved for IPA samples — phonology demos, conlang display. */
   ipa:   '"Charis SIL", Georgia, serif',
-  /** Mono — Consolas first (matches workbench), Noto Sans Mono fallback. */
-  mono:  '"Consolas", "Noto Sans Mono", ui-monospace, monospace',
+  /** Mono — JetBrains Mono first (matches numeric tables in pro tools). */
+  mono:  '"JetBrains Mono", "Consolas", "Noto Sans Mono", ui-monospace, monospace',
 } as const;
 
 export const radii = {
