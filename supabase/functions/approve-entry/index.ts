@@ -3,8 +3,9 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
-const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const SUPABASE_URL    = Deno.env.get('SUPABASE_URL')!;
+const SERVICE_ROLE    = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const PUBLIC_SITE_URL = Deno.env.get('PUBLIC_SITE_URL') ?? 'https://hayba.app';
 
 Deno.serve(async (req) => {
   const auth = req.headers.get('Authorization') ?? '';
@@ -48,7 +49,7 @@ Deno.serve(async (req) => {
 
   // Send the invite email.
   const { error: invErr } = await admin.auth.admin.inviteUserByEmail(entry.email, {
-    redirectTo: `${SUPABASE_URL.replace('api', 'hayba')}/app`,
+    redirectTo: `${PUBLIC_SITE_URL}/app`,
   });
   if (invErr) {
     // Roll back status so the admin can retry cleanly.

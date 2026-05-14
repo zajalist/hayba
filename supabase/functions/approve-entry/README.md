@@ -11,10 +11,9 @@ Supabase Edge Function for admin-only waitlist approvals.
 
 ## Required env
 
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-
-Both are provided by Supabase OSS / hosted automatically.
+- `SUPABASE_URL` — provided by the runtime automatically
+- `SUPABASE_SERVICE_ROLE_KEY` — provided by the runtime automatically
+- `PUBLIC_SITE_URL` — the public origin where the magic-link should land (e.g. `https://hayba.app`). Defaults to `https://hayba.app` if unset.
 
 ## Deploy
 
