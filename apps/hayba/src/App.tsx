@@ -7,7 +7,8 @@ import { attachPainter, type PainterHandle } from "./viewport/painter";
 import StatusBar, { Mono } from "./components/StatusBar";
 import WizardPanel from "./wizard/WizardPanel";
 import { createDefaultDraft, type WizardDraft, type PresetName } from "./wizard/state";
-import { buildCellKdTree, cellsWithinRadius, nearestCell, type KdTree } from "./wizard/kdtree";
+import { buildCellKdTree, cellsWithinRadius, type KdTree } from "./wizard/kdtree";
+import ConfirmDialog from "./components/ConfirmDialog";
 
 export interface PlanetSnapshot {
   divisions: number;
@@ -54,43 +55,21 @@ export default function App() {
   // Cells highlighted under the hovering brush (preview before click).
   const previewRef = useRef<number[]>([]);
 
-  // Positions stay around so we can re-project painted cells when the user
-  // switches resolution — each old painted cell becomes the nearest cell at
-  // the new resolution.
-  const cellPositionsRef = useRef<Float32Array | null>(null);
+  // Pending resolution swap, gated by ConfirmDialog when paint exists.
+  const [pendingDivisions, setPendingDivisions] = useState<number | null>(null);
 
   const initWizard = useCallback(async (
     divisions: number,
-    carry?: { preset?: PresetName; seed?: number; previousPaint?: number[]; previousPositions?: Float32Array },
+    carry?: { preset?: PresetName; seed?: number },
   ) => {
     const init = await invoke<WizardInit>("start_wizard", { divisions });
     const positions = new Float32Array(init.cell_positions);
-    const tree = buildCellKdTree(positions);
-    kdTreeRef.current = tree;
-    cellPositionsRef.current = positions;
+    kdTreeRef.current = buildCellKdTree(positions);
     cellCountRef.current = init.n_cells;
 
     const seed = carry?.seed ?? await invoke<number>("roll_seed");
     const fresh = createDefaultDraft(divisions, seed);
     if (carry?.preset) fresh.preset = carry.preset;
-
-    // Re-project old painted cells onto the new sphere. Each old cell's
-    // position → nearest cell on the new resolution. De-duplicate.
-    if (carry?.previousPaint && carry?.previousPositions) {
-      const reprojected = new Set<number>();
-      for (const oldCell of carry.previousPaint) {
-        const base = oldCell * 3;
-        if (base + 2 >= carry.previousPositions.length) continue;
-        const cell = nearestCell(
-          tree,
-          carry.previousPositions[base],
-          carry.previousPositions[base + 1],
-          carry.previousPositions[base + 2],
-        );
-        if (cell >= 0) reprojected.add(cell);
-      }
-      fresh.continental_cells = Array.from(reprojected);
-    }
 
     setDraft(fresh);
     draftRef.current = fresh;
@@ -159,14 +138,25 @@ export default function App() {
   // ── Wizard actions
   const handleChangeDivisions = useCallback((divisions: number) => {
     const d = draftRef.current;
-    const positions = cellPositionsRef.current;
-    initWizard(divisions, {
-      preset: d?.preset,
-      seed: d?.seed,
-      previousPaint: d?.continental_cells,
-      previousPositions: positions ?? undefined,
-    }).catch((e) => setError(String(e)));
+    if (!d || divisions === d.divisions) return;
+    // If the user has painted continents, gate the change behind a confirm
+    // dialog — switching resolution wipes the paint stroke.
+    if (d.continental_cells.length > 0) {
+      setPendingDivisions(divisions);
+      return;
+    }
+    initWizard(divisions, { preset: d.preset, seed: d.seed }).catch((e) => setError(String(e)));
   }, [initWizard]);
+
+  const confirmChangeDivisions = useCallback(() => {
+    const divisions = pendingDivisions;
+    if (divisions == null) return;
+    setPendingDivisions(null);
+    const d = draftRef.current;
+    initWizard(divisions, { preset: d?.preset, seed: d?.seed }).catch((e) => setError(String(e)));
+  }, [pendingDivisions, initWizard]);
+
+  const cancelChangeDivisions = useCallback(() => setPendingDivisions(null), []);
 
   const handleChangePreset = useCallback((preset: PresetName) => {
     if (!draft) return;
@@ -278,6 +268,21 @@ export default function App() {
       <StatusBar state={mode === "baking" ? "baking" : error ? "error" : mode === "viewing" ? "ready" : "idle"} label={statusLabel}>
         {error ? `Error: ${error}` : statusBody}
       </StatusBar>
+      <ConfirmDialog
+        open={pendingDivisions !== null}
+        title="Change detail level?"
+        body={
+          <>
+            Switching resolution rebuilds the planet's icosphere at a different cell count.
+            Your <strong style={{ color: "#e8821c" }}>{draft?.continental_cells.length.toLocaleString() ?? 0} painted cells</strong> will be wiped — there's no way to map them across resolutions.
+          </>
+        }
+        confirmLabel="change & wipe"
+        cancelLabel="keep current"
+        destructive
+        onConfirm={confirmChangeDivisions}
+        onCancel={cancelChangeDivisions}
+      />
     </>
   );
 }

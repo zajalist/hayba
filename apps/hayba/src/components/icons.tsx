@@ -1,139 +1,162 @@
 import React from "react";
 
 // Hayba Explorer iconography — visual language ported from the UE plugin
-// resources at HaybaMCPToolkit/Resources/. Each icon is:
-//   - a cream-body filled shape (`uFill`)
-//   - bound by a 2-weight accent stroke (`uStroke`)
-//   - sometimes accented with a deeper hue for the "active" element
-// 24x24 viewBox keeps geometric detail crisp when rendered at 14-16px.
+// resources at HaybaMCPToolkit/Resources/. Reference style:
+//   - 64x64 viewBox
+//   - stroke-width 2.5, round caps + joins
+//   - filled body (slate-blue depth OR cream highlight)
+//   - Hayba accent (#B56A1D) as the primary stroke
+//   - spot colors for emphasis: #88C0A0 green, #FFD060 yellow, #C880A0 rose
+//
+// Each icon is opinionated about its palette — they're crafted to match
+// the UE plugin set, not parameterised line art.
 
 export interface IconProps {
   size?: number;
-  fill?: string;
-  stroke?: string;
   className?: string;
 }
 
-const FILL_DEFAULT   = "#DED4C3"; // matches the UE-plugin cream body
-const STROKE_DEFAULT = "#B56A1D"; // Hayba filled accent
+// Shared palette — mirrors the UE plugin icon set.
+const SLATE_DEEP   = "#1F2A3D";
+const SLATE_MID    = "#3F4F70";
+const SLATE_LIGHT  = "#5A6F9F";
+const CREAM        = "#DED4C3";
+const ACCENT       = "#B56A1D";
+const ACCENT_TEXT  = "#E8821C";
+const SAGE         = "#88C0A0";
+const SAND         = "#E0B080";
+const ROSE         = "#C880A0";
+const SUN          = "#FFD060";
 
 function frame(props: IconProps, paths: React.ReactNode) {
-  const { size = 16, fill = FILL_DEFAULT, stroke = STROKE_DEFAULT, className } = props;
+  const { size = 18, className } = props;
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 24 24"
+      viewBox="0 0 64 64"
       fill="none"
-      stroke={stroke}
-      strokeWidth={1.6}
-      strokeLinejoin="miter"
-      strokeLinecap="square"
       className={className}
-      style={{ flexShrink: 0, color: stroke }}
+      style={{ flexShrink: 0, display: "block" }}
     >
-      <g data-fill={fill}>{paths}</g>
+      {paths}
     </svg>
   );
 }
 
-/** Two stacked dice — the "roll a new seed" affordance. */
+/** Two dice — the "roll a new seed" affordance. */
 export function IconReroll(props: IconProps) {
-  const fill = props.fill ?? FILL_DEFAULT;
-  const stroke = props.stroke ?? STROKE_DEFAULT;
   return frame(props, (
     <>
-      <rect x="3.5" y="9.5" width="10" height="10" fill={fill} stroke={stroke} />
-      <circle cx="6.5" cy="12.5" r="0.9" fill={stroke} stroke="none" />
-      <circle cx="10.5" cy="16.5" r="0.9" fill={stroke} stroke="none" />
-      <rect x="11.5" y="3.5" width="9" height="9" fill={fill} stroke={stroke} />
-      <circle cx="16" cy="8" r="0.9" fill={stroke} stroke="none" />
+      <rect x="6" y="26" width="28" height="28" rx="3" fill={SLATE_DEEP} stroke={ACCENT} strokeWidth="2.5" strokeLinejoin="round" />
+      <circle cx="14" cy="34" r="2.4" fill={ACCENT_TEXT} />
+      <circle cx="26" cy="46" r="2.4" fill={ACCENT_TEXT} />
+      <rect x="30" y="10" width="28" height="28" rx="3" fill={CREAM} stroke={ACCENT} strokeWidth="2.5" strokeLinejoin="round" />
+      <circle cx="38" cy="18" r="2.4" fill={ACCENT} />
+      <circle cx="50" cy="30" r="2.4" fill={ACCENT} />
+      <circle cx="44" cy="24" r="2.4" fill={ACCENT} />
     </>
   ));
 }
 
-/** Trash can — clear continents. */
+/** Trash can with lid — clear continents. */
 export function IconClear(props: IconProps) {
-  const fill = props.fill ?? FILL_DEFAULT;
-  const stroke = props.stroke ?? STROKE_DEFAULT;
   return frame(props, (
     <>
-      <path d="M5 8 L19 8 L17.5 20 L6.5 20 Z" fill={fill} stroke={stroke} />
-      <line x1="3" y1="5.5" x2="21" y2="5.5" stroke={stroke} />
-      <path d="M9 4 L9 5 L15 5 L15 4" fill="none" stroke={stroke} />
-      <line x1="10" y1="11" x2="10" y2="17" stroke={stroke} />
-      <line x1="14" y1="11" x2="14" y2="17" stroke={stroke} />
+      <path d="M14 22 L50 22 L46 56 L18 56 Z" fill={SLATE_DEEP} stroke={ACCENT} strokeWidth="2.5" strokeLinejoin="round" />
+      <line x1="8" y1="16" x2="56" y2="16" stroke={ACCENT} strokeWidth="3" strokeLinecap="round" />
+      <path d="M24 10 L24 14 L40 14 L40 10" stroke={ACCENT} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+      <line x1="26" y1="30" x2="26" y2="48" stroke={ACCENT_TEXT} strokeWidth="2.5" strokeLinecap="round" />
+      <line x1="38" y1="30" x2="38" y2="48" stroke={ACCENT_TEXT} strokeWidth="2.5" strokeLinecap="round" />
     </>
   ));
 }
 
-/** Hayba spark — echoes the sun-ray crown on the logo. The "bake" mark. */
+/** Spark — "bake" mark. Echoes the sun-rays atop the Hayba logo vessel. */
 export function IconBake(props: IconProps) {
-  const fill = props.fill ?? FILL_DEFAULT;
-  const stroke = props.stroke ?? STROKE_DEFAULT;
   return frame(props, (
     <>
       <path
-        d="M12 2 L13.6 9 L21 10.4 L15.4 14.4 L17.2 22 L12 17.8 L6.8 22 L8.6 14.4 L3 10.4 L10.4 9 Z"
-        fill={fill}
-        stroke={stroke}
+        d="M32 4 L37.3 25 L58 27.5 L42 41 L46.6 60 L32 49.5 L17.4 60 L22 41 L6 27.5 L26.7 25 Z"
+        fill={CREAM}
+        stroke={ACCENT}
+        strokeWidth="2.5"
+        strokeLinejoin="round"
       />
-      <circle cx="12" cy="12" r="1.6" fill={stroke} stroke="none" />
+      <circle cx="32" cy="32" r="4" fill={ACCENT} />
     </>
   ));
 }
 
-/** Flat-edge brush — used in the Continents section heading. */
+/** Flat brush — Continents section glyph. */
 export function IconBrush(props: IconProps) {
-  const fill = props.fill ?? FILL_DEFAULT;
-  const stroke = props.stroke ?? STROKE_DEFAULT;
   return frame(props, (
     <>
-      <path d="M3.5 17.5 L9 12 L13 16 L7.5 21 Z" fill={fill} stroke={stroke} />
-      <path d="M9 12 L17 4 L21 8 L13 16 Z" fill={fill} stroke={stroke} />
-      <line x1="7.5" y1="21" x2="3.5" y2="21" stroke={stroke} />
+      {/* Bristle splay */}
+      <path d="M10 54 L24 36 L36 48 L22 56 Z" fill={CREAM} stroke={ACCENT} strokeWidth="2.5" strokeLinejoin="round" />
+      {/* Handle */}
+      <path d="M24 36 L48 12 L56 20 L36 48 Z" fill={SLATE_DEEP} stroke={ACCENT} strokeWidth="2.5" strokeLinejoin="round" />
+      {/* Ferrule */}
+      <line x1="28" y1="40" x2="40" y2="52" stroke={ACCENT_TEXT} strokeWidth="2.5" strokeLinecap="round" />
     </>
   ));
 }
 
-/** Icosphere — globe with meridian + equator. */
+/** Icosphere globe — Detail section glyph. */
 export function IconSphere(props: IconProps) {
-  const fill = props.fill ?? FILL_DEFAULT;
-  const stroke = props.stroke ?? STROKE_DEFAULT;
   return frame(props, (
     <>
-      <circle cx="12" cy="12" r="9" fill={fill} stroke={stroke} />
-      <ellipse cx="12" cy="12" rx="9" ry="3.5" fill="none" stroke={stroke} />
-      <line x1="12" y1="3" x2="12" y2="21" stroke={stroke} />
+      <circle cx="32" cy="32" r="24" fill={SLATE_DEEP} stroke={ACCENT} strokeWidth="2.5" />
+      <ellipse cx="32" cy="32" rx="24" ry="9" fill="none" stroke={ACCENT} strokeWidth="2" />
+      <line x1="32" y1="8" x2="32" y2="56" stroke={ACCENT} strokeWidth="2" />
+      <circle cx="32" cy="32" r="3" fill={ACCENT_TEXT} />
     </>
   ));
 }
 
-/** Globe with a tectonic seam — divergent boundary suggestion. */
+/** Globe with a pink seam — Tectonic-preset glyph. */
 export function IconPlates(props: IconProps) {
-  const fill = props.fill ?? FILL_DEFAULT;
-  const stroke = props.stroke ?? STROKE_DEFAULT;
   return frame(props, (
     <>
-      <circle cx="12" cy="12" r="9" fill={fill} stroke={stroke} />
-      <path d="M3.5 10 Q8 14 12 10 T20.5 13" fill="none" stroke={stroke} strokeWidth={1.8} />
-      <circle cx="8" cy="11.2" r="0.8" fill={stroke} stroke="none" />
-      <circle cx="16" cy="11.6" r="0.8" fill={stroke} stroke="none" />
+      <circle cx="32" cy="32" r="24" fill={SLATE_DEEP} stroke={ACCENT} strokeWidth="2.5" />
+      <path
+        d="M9 28 Q20 38 32 28 T55 34"
+        fill="none"
+        stroke={ROSE}
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="20" cy="32" r="2" fill={ROSE} />
+      <circle cx="44" cy="31" r="2" fill={ROSE} />
     </>
   ));
 }
 
-/** Hash — seed glyph. Crosshatched grid evokes the determinism contract. */
+/** Hash card — Seed / Determinism glyph. */
 export function IconSeed(props: IconProps) {
-  const fill = props.fill ?? FILL_DEFAULT;
-  const stroke = props.stroke ?? STROKE_DEFAULT;
   return frame(props, (
     <>
-      <rect x="3.5" y="3.5" width="17" height="17" fill={fill} stroke={stroke} />
-      <line x1="9" y1="4" x2="9" y2="20" stroke={stroke} />
-      <line x1="15" y1="4" x2="15" y2="20" stroke={stroke} />
-      <line x1="4" y1="9" x2="20" y2="9" stroke={stroke} />
-      <line x1="4" y1="15" x2="20" y2="15" stroke={stroke} />
+      <rect x="8" y="8" width="48" height="48" rx="3" fill={CREAM} stroke={ACCENT} strokeWidth="2.5" strokeLinejoin="round" />
+      <line x1="24" y1="10" x2="24" y2="54" stroke={ACCENT} strokeWidth="2.5" strokeLinecap="round" />
+      <line x1="40" y1="10" x2="40" y2="54" stroke={ACCENT} strokeWidth="2.5" strokeLinecap="round" />
+      <line x1="10" y1="24" x2="54" y2="24" stroke={ACCENT} strokeWidth="2.5" strokeLinecap="round" />
+      <line x1="10" y1="40" x2="54" y2="40" stroke={ACCENT} strokeWidth="2.5" strokeLinecap="round" />
     </>
   ));
 }
+
+// Re-exported palette so callers (e.g. the bake button) can match the icon's
+// inks when they need to flip context (dark icon on accent surface).
+export const ICON_PALETTE = {
+  slateDeep: SLATE_DEEP,
+  slateMid:  SLATE_MID,
+  slateLight: SLATE_LIGHT,
+  cream:     CREAM,
+  accent:    ACCENT,
+  accentText: ACCENT_TEXT,
+  sage:      SAGE,
+  sand:      SAND,
+  rose:      ROSE,
+  sun:       SUN,
+};

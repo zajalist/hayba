@@ -20,9 +20,9 @@ export interface WizardPanelProps {
 
 function SectionHeading({ icon, children, hint }: { icon: React.ReactNode; children: React.ReactNode; hint?: React.ReactNode }) {
   return (
-    <div style={{ marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-        <span style={{ color: colors.accentText, display: "inline-flex" }}>{icon}</span>
+    <div style={{ marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+        <span style={{ display: "inline-flex" }}>{icon}</span>
         <span style={{ fontFamily: fonts.sans, fontSize: 13, color: colors.textPrimary, letterSpacing: "0.04em", fontWeight: 600 }}>
           {children}
         </span>
@@ -95,22 +95,22 @@ export default function WizardPanel({
 
       <div style={{ flex: 1, overflowY: "auto", padding: "16px 24px 24px" }}>
         <section style={{ marginBottom: 22 }}>
-          <SectionHeading icon={<IconSphere size={14} />} hint="resolution">Detail</SectionHeading>
+          <SectionHeading icon={<IconSphere size={18} />} hint="resolution">Detail</SectionHeading>
           <ResolutionChips value={draft.divisions} onChange={onChangeDivisions} disabled={busy} />
         </section>
 
         <section style={{ marginBottom: 22 }}>
-          <SectionHeading icon={<IconPlates size={14} />} hint="plates">Tectonic preset</SectionHeading>
+          <SectionHeading icon={<IconPlates size={18} />} hint="plates">Tectonic preset</SectionHeading>
           <PresetChips value={draft.preset} onChange={onChangePreset} disabled={busy} />
         </section>
 
         <section style={{ marginBottom: 22 }}>
-          <SectionHeading icon={<IconSeed size={14} />} hint="seed">Determinism</SectionHeading>
+          <SectionHeading icon={<IconSeed size={18} />} hint="seed">Determinism</SectionHeading>
           <SeedRow seed={draft.seed} onReroll={onReroll} disabled={busy} />
         </section>
 
         <section style={{ marginBottom: 22 }}>
-          <SectionHeading icon={<IconBrush size={14} />} hint={`${draft.continental_cells.length.toLocaleString()} cells`}>
+          <SectionHeading icon={<IconBrush size={18} />} hint={`${draft.continental_cells.length.toLocaleString()} cells`}>
             Continents
           </SectionHeading>
           <p style={{ margin: "0 0 14px", fontSize: 12, color: colors.textMuted, lineHeight: 1.5, letterSpacing: "0.02em" }}>
@@ -166,7 +166,7 @@ export default function WizardPanel({
             cursor: busy ? "default" : "pointer",
           }}
         >
-          <IconBake size={14} fill={busy ? "transparent" : colors.bgDeep} stroke={busy ? colors.textMuted : colors.bgDeep} />
+          <IconBake size={16} />
           {busy ? "baking…" : "bake planet"}
         </button>
       </footer>
