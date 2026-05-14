@@ -12,6 +12,7 @@
     "serve": "tsc && node demo/serve.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.96.0",
     "three": "^0.169.0"
   },
   "devDependencies": {
