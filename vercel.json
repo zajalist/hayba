@@ -1,3 +1,11 @@
 {
-  "outputDirectory": "website"
+  "outputDirectory": "website",
+  "buildCommand": "npm run build --workspace @hayba/linguistics && cp -r packages/linguistics/dist website/dist && cp -r packages/linguistics/demo website/app",
+  "rewrites": [
+    { "source": "/app/:path*", "destination": "/app/index.html" },
+    { "source": "/lang/:id",   "destination": "/app/index.html" },
+    { "source": "/waitlist",   "destination": "/waitlist/index.html" },
+    { "source": "/login",      "destination": "/login/index.html" },
+    { "source": "/admin",      "destination": "/admin/index.html" }
+  ]
 }

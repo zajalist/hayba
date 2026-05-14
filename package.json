@@ -8,6 +8,7 @@
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces --if-present",
     "dev": "npm run dev --workspaces --if-present",
+    "vercel-build": "npm run build && envsubst < website/config.js > website/config.runtime.js && mv website/config.runtime.js website/config.js",
     "prepare": "git config core.hooksPath .githooks || true"
   },
   "license": "MIT"
