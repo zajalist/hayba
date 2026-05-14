@@ -50,3 +50,73 @@ test('DELETE removes', async () => {
   const after = await handleRequest({ method: 'GET', url: '/api/cultures/d' });
   assert.equal(after.status, 404);
 });
+
+// ─── /resolve endpoint ────────────────────────────────────────────────────
+
+async function makeResolveFixture() {
+  // Create a culture with one era and one rule
+  const culture = {
+    id: 'rc',
+    name: 'Resolve Culture',
+    region: 'Test',
+    climate: 'temperate',
+    rules: [
+      {
+        id: 'r-1',
+        priority: 1,
+        conditions: { scenario: 'temple', tagMatches: { climate: 'cold' } },
+        assigns: { materialId: 'limestone' },
+      },
+    ],
+    eras: [
+      {
+        id: 'era-1',
+        name: 'Era One',
+        dateRange: [100, 200],
+        defaults: { roofType: 'gabled', proportions: {}, palette: [], ornamentDensity: 'moderate', technique: '' },
+        typologyMix: {},
+        rules: [],
+      },
+    ],
+    materials: [],
+    ornaments: [],
+    tagAxes: [],
+  };
+  await handleRequest({ method: 'POST', url: '/api/cultures', body: JSON.stringify({ id: 'rc', name: 'RC', region: 'X', climate: 'temperate' }) });
+  await handleRequest({ method: 'PATCH', url: '/api/cultures/rc', body: JSON.stringify(culture) });
+}
+
+test('GET /resolve returns assigns for a matching rule', async () => {
+  await makeResolveFixture();
+  const res = await handleRequest({ method: 'GET', url: '/api/cultures/rc/resolve?eraId=era-1&scenario=temple&tags=climate:cold' });
+  assert.equal(res.status, 200);
+  const body = JSON.parse(res.body);
+  assert.equal(body.assigns.materialId, 'limestone');
+  assert.equal(body.ruleId, 'r-1');
+});
+
+test('GET /resolve returns empty assigns when no rule matches', async () => {
+  await makeResolveFixture();
+  const res = await handleRequest({ method: 'GET', url: '/api/cultures/rc/resolve?eraId=era-1&scenario=temple&tags=climate:warm' });
+  assert.equal(res.status, 200);
+  const body = JSON.parse(res.body);
+  assert.deepEqual(body.assigns, {});
+  assert.equal(body.ruleId, null);
+});
+
+test('GET /resolve returns 404 for unknown culture', async () => {
+  const res = await handleRequest({ method: 'GET', url: '/api/cultures/ghost/resolve?eraId=era-1&scenario=x' });
+  assert.equal(res.status, 404);
+});
+
+test('GET /resolve returns 404 for unknown era', async () => {
+  await makeResolveFixture();
+  const res = await handleRequest({ method: 'GET', url: '/api/cultures/rc/resolve?eraId=no-era&scenario=x' });
+  assert.equal(res.status, 404);
+});
+
+test('GET /resolve returns 400 when eraId missing', async () => {
+  await makeResolveFixture();
+  const res = await handleRequest({ method: 'GET', url: '/api/cultures/rc/resolve?scenario=temple' });
+  assert.equal(res.status, 400);
+});

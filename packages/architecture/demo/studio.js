@@ -507,79 +507,613 @@ function renderTagAxesSubtab(body) {
   body.appendChild(wrap);
 }
 
-/* ── Culture rules sub-tab (placeholder, Task 14 will add full editor) ── */
+/* ── Culture rules sub-tab ───────────────────────────────── */
 
 function renderCultureRulesSubtab(body) {
-  const rules = state.culture.rules ?? [];
-
   const wrap = document.createElement('div');
   wrap.className = 'subtab-section';
-
-  const note = document.createElement('p');
-  note.className = 'placeholder rules-note';
-  note.textContent = 'Full conditional editor lands in Task 14.';
-  wrap.appendChild(note);
-
-  if (rules.length > 0) {
-    const table = document.createElement('table');
-    table.className = 'rules-table';
-    table.innerHTML = `
-      <thead>
-        <tr>
-          <th>id</th><th>priority</th><th>scenario</th><th>tag matches</th><th>assigns</th><th></th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    `;
-    const tbody = table.querySelector('tbody');
-    rules.forEach((rule, idx) => {
-      const tr = document.createElement('tr');
-      const tagSummary = (rule.conditions?.tagMatches ?? []).map(t => `${t.axis}=${t.value}`).join(', ') || '—';
-      const assignSummary = Object.entries(rule.assigns ?? {}).map(([k,v]) => `${k}=${v}`).join(', ') || '—';
-      tr.innerHTML = `
-        <td class="mono">${esc(rule.id ?? '')}</td>
-        <td>${rule.priority ?? 0}</td>
-        <td>${esc(rule.scenario ?? '—')}</td>
-        <td class="muted">${esc(tagSummary)}</td>
-        <td class="muted">${esc(assignSummary)}</td>
-        <td><button class="rule-del icon-btn-sm">× Delete</button></td>
-      `;
-      tr.querySelector('.rule-del').addEventListener('click', () => {
-        state.culture.rules = rules.filter((_, i) => i !== idx);
-        savePartial({ rules: state.culture.rules });
-        renderSubtab();
-      });
-      tbody.appendChild(tr);
-    });
-    wrap.appendChild(table);
-  } else {
-    const empty = document.createElement('p');
-    empty.className = 'muted';
-    empty.style.fontSize = '12px';
-    empty.style.padding = '4px 0';
-    empty.textContent = 'No rules yet.';
-    wrap.appendChild(empty);
-  }
-
-  const addBtn = document.createElement('button');
-  addBtn.className = 'add-btn';
-  addBtn.textContent = '+ Add rule';
-  addBtn.addEventListener('click', () => {
-    const newRule = {
-      id: nextId('new-rule', state.culture.rules ?? []),
-      priority: 0,
-      scenario: '',
-      conditions: { tagMatches: [] },
-      assigns: {},
-    };
-    state.culture.rules = [...(state.culture.rules ?? []), newRule];
-    savePartial({ rules: state.culture.rules });
-    renderSubtab();
-  });
-
-  wrap.appendChild(addBtn);
+  renderRuleEditor('culture', wrap);
   body.innerHTML = '';
   body.appendChild(wrap);
+}
+
+/* ── Rule editor (shared by culture sub-tab + era panel) ─── */
+/**
+ * scope: 'culture'  → edits state.culture.rules
+ *        {eraId: string} → edits the named era's rules
+ *
+ * v2: drag-to-reorder via HTML5 drag-and-drop. For now, priority is a
+ * numeric input so the user can set sort order directly.
+ */
+function renderRuleEditor(scope, container) {
+  const isEraScope = typeof scope === 'object' && scope !== null;
+  const eraId = isEraScope ? scope.eraId : null;
+  const era = isEraScope
+    ? (state.culture.eras ?? []).find(e => e.id === eraId) ?? null
+    : null;
+
+  // Helpers to get/set the active rule list
+  function getRules() {
+    if (isEraScope) return era ? (era.rules ?? []) : [];
+    return state.culture.rules ?? [];
+  }
+  function setRules(arr) {
+    if (isEraScope) {
+      if (era) era.rules = arr;
+      savePartial({ eras: state.culture.eras });
+    } else {
+      state.culture.rules = arr;
+      savePartial({ rules: state.culture.rules });
+    }
+  }
+
+  const list = document.createElement('div');
+  list.className = 'rule-list';
+
+  function rerenderList() {
+    list.innerHTML = '';
+    // Era scope: show inherited culture rules first (grayed), unless overridden
+    if (isEraScope) {
+      const eraRuleIds = new Set(getRules().map(r => r.id));
+      const inheritedRules = (state.culture.rules ?? []).filter(r => !eraRuleIds.has(r.id));
+      for (const rule of inheritedRules) {
+        list.appendChild(buildRuleRow(rule, true));
+      }
+    }
+    // Own rules
+    for (const rule of getRules()) {
+      list.appendChild(buildRuleRow(rule, false));
+    }
+    if (getRules().length === 0 && !(isEraScope && (state.culture.rules ?? []).length > 0)) {
+      const ph = document.createElement('p');
+      ph.className = 'placeholder';
+      ph.style.margin = '4px 0';
+      ph.textContent = 'No rules yet.';
+      list.appendChild(ph);
+    }
+    // Re-render grid after list update
+    renderRuleGrid(scope, gridContainer);
+  }
+
+  function buildRuleRow(rule, inherited) {
+    const row = document.createElement('div');
+    row.className = 'rule-row' + (inherited ? ' rule-row-inherited' : '');
+
+    // ─ priority ─
+    const priLabel = document.createElement('label');
+    priLabel.className = 'rule-field-label';
+    priLabel.textContent = 'Priority';
+    const priInput = document.createElement('input');
+    priInput.type = 'number';
+    priInput.className = 'rule-priority field-input-sm';
+    priInput.value = rule.priority ?? 0;
+    priInput.disabled = inherited;
+    priInput.style.width = '52px';
+    priInput.addEventListener('input', () => {
+      rule.priority = parseInt(priInput.value, 10) || 0;
+      setRules(getRules());
+    });
+
+    // ─ id ─
+    const idSpan = document.createElement('span');
+    idSpan.className = 'rule-id mono muted';
+    idSpan.textContent = rule.id;
+    idSpan.title = rule.id;
+
+    // ─ scenario ─
+    const scenLabel = document.createElement('label');
+    scenLabel.className = 'rule-field-label';
+    scenLabel.textContent = 'Scenario';
+    const scenInput = document.createElement('input');
+    scenInput.type = 'text';
+    scenInput.className = 'field-input-sm rule-scenario';
+    scenInput.placeholder = '* (any)';
+    scenInput.value = rule.conditions?.scenario ?? '';
+    scenInput.disabled = inherited;
+    scenInput.addEventListener('input', () => {
+      if (!rule.conditions) rule.conditions = { tagMatches: {} };
+      const v = scenInput.value.trim();
+      rule.conditions.scenario = v || undefined;
+      setRules(getRules());
+      renderRuleGrid(scope, gridContainer);
+    });
+
+    // ─ tagMatches chip area ─
+    const tagLabel = document.createElement('div');
+    tagLabel.className = 'rule-field-label';
+    tagLabel.textContent = 'Tag matches';
+    const tagArea = document.createElement('div');
+    tagArea.className = 'rule-chip-area';
+
+    function renderTagChips() {
+      tagArea.innerHTML = '';
+      const tagMatches = rule.conditions?.tagMatches ?? {};
+      for (const [axis, val] of Object.entries(tagMatches)) {
+        const chip = document.createElement('span');
+        chip.className = 'rule-chip removable';
+        chip.textContent = `${axis}: ${val}`;
+        if (!inherited) {
+          const x = document.createElement('button');
+          x.className = 'chip-remove';
+          x.textContent = '×';
+          x.title = `Remove ${axis}`;
+          x.addEventListener('click', () => {
+            delete rule.conditions.tagMatches[axis];
+            setRules(getRules());
+            renderTagChips();
+            renderRuleGrid(scope, gridContainer);
+          });
+          chip.appendChild(x);
+        }
+        tagArea.appendChild(chip);
+      }
+      if (!inherited) {
+        const addTagBtn = document.createElement('button');
+        addTagBtn.className = 'add-btn-sm rule-add-tag-btn';
+        addTagBtn.textContent = '+ Tag';
+        addTagBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openTagPopover(addTagBtn, rule, () => {
+            setRules(getRules());
+            renderTagChips();
+            renderRuleGrid(scope, gridContainer);
+          });
+        });
+        tagArea.appendChild(addTagBtn);
+      }
+    }
+    renderTagChips();
+
+    // ─ materialId select ─
+    const matLabel = document.createElement('label');
+    matLabel.className = 'rule-field-label';
+    matLabel.textContent = 'Material';
+    const matSelect = document.createElement('select');
+    matSelect.className = 'field-input-sm rule-material-select';
+    matSelect.disabled = inherited;
+    const emptyOpt = document.createElement('option');
+    emptyOpt.value = '';
+    emptyOpt.textContent = '— none —';
+    matSelect.appendChild(emptyOpt);
+    for (const mat of state.culture.materials ?? []) {
+      const opt = document.createElement('option');
+      opt.value = mat.id;
+      opt.textContent = mat.name ? `${mat.name} (${mat.id})` : mat.id;
+      opt.selected = rule.assigns?.materialId === mat.id;
+      matSelect.appendChild(opt);
+    }
+    if (rule.assigns?.materialId && !(state.culture.materials ?? []).some(m => m.id === rule.assigns.materialId)) {
+      const opt = document.createElement('option');
+      opt.value = rule.assigns.materialId;
+      opt.textContent = rule.assigns.materialId;
+      opt.selected = true;
+      matSelect.appendChild(opt);
+    }
+    matSelect.addEventListener('change', () => {
+      if (!rule.assigns) rule.assigns = {};
+      rule.assigns.materialId = matSelect.value || undefined;
+      setRules(getRules());
+      renderRuleGrid(scope, gridContainer);
+    });
+
+    // ─ ornamentIds chip area ─
+    const ornLabel = document.createElement('div');
+    ornLabel.className = 'rule-field-label';
+    ornLabel.textContent = 'Ornaments';
+    const ornArea = document.createElement('div');
+    ornArea.className = 'rule-chip-area';
+
+    function renderOrnChips() {
+      ornArea.innerHTML = '';
+      const ids = rule.assigns?.ornamentIds ?? [];
+      for (const oid of ids) {
+        const chip = document.createElement('span');
+        chip.className = 'rule-chip removable';
+        chip.textContent = oid;
+        if (!inherited) {
+          const x = document.createElement('button');
+          x.className = 'chip-remove';
+          x.textContent = '×';
+          x.addEventListener('click', () => {
+            rule.assigns.ornamentIds = ids.filter(o => o !== oid);
+            setRules(getRules());
+            renderOrnChips();
+          });
+          chip.appendChild(x);
+        }
+        ornArea.appendChild(chip);
+      }
+      if (!inherited) {
+        const addOrnBtn = document.createElement('button');
+        addOrnBtn.className = 'add-btn-sm';
+        addOrnBtn.textContent = '+ Ornament';
+        addOrnBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openOrnamentPopover(addOrnBtn, rule, () => {
+            setRules(getRules());
+            renderOrnChips();
+          });
+        });
+        ornArea.appendChild(addOrnBtn);
+      }
+    }
+    renderOrnChips();
+
+    // ─ weight slider ─
+    const weightLabel = document.createElement('label');
+    weightLabel.className = 'rule-field-label';
+    weightLabel.textContent = 'Weight';
+    const weightWrap = document.createElement('div');
+    weightWrap.className = 'rule-weight-wrap';
+    const weightSlider = document.createElement('input');
+    weightSlider.type = 'range';
+    weightSlider.min = '0';
+    weightSlider.max = '1';
+    weightSlider.step = '0.01';
+    weightSlider.value = rule.assigns?.weight ?? 1;
+    weightSlider.disabled = inherited;
+    const weightVal = document.createElement('span');
+    weightVal.className = 'slider-val';
+    weightVal.textContent = fmt(rule.assigns?.weight ?? 1);
+    weightSlider.addEventListener('input', () => {
+      if (!rule.assigns) rule.assigns = {};
+      rule.assigns.weight = parseFloat(weightSlider.value);
+      weightVal.textContent = fmt(rule.assigns.weight);
+      setRules(getRules());
+    });
+    weightWrap.appendChild(weightSlider);
+    weightWrap.appendChild(weightVal);
+
+    // ─ delete / override button ─
+    const actionBtn = document.createElement('button');
+    if (inherited) {
+      actionBtn.className = 'add-btn-sm rule-override-btn';
+      actionBtn.textContent = 'Override in era';
+      actionBtn.addEventListener('click', () => {
+        const clone = JSON.parse(JSON.stringify(rule));
+        era.rules = [...(era.rules ?? []), clone];
+        savePartial({ eras: state.culture.eras });
+        rerenderList();
+      });
+    } else {
+      actionBtn.className = 'icon-btn rule-delete-btn';
+      actionBtn.textContent = '× Delete';
+      actionBtn.addEventListener('click', () => {
+        setRules(getRules().filter(r => r.id !== rule.id));
+        rerenderList();
+      });
+    }
+
+    // ─ assemble row ─
+    const meta = document.createElement('div');
+    meta.className = 'rule-row-meta';
+    meta.appendChild(idSpan);
+
+    const fields = document.createElement('div');
+    fields.className = 'rule-row-fields';
+
+    function fieldGroup(label, input) {
+      const g = document.createElement('div');
+      g.className = 'rule-field-group';
+      g.appendChild(label);
+      g.appendChild(input);
+      return g;
+    }
+
+    fields.appendChild(fieldGroup(priLabel, priInput));
+    fields.appendChild(fieldGroup(scenLabel, scenInput));
+
+    const tagGroup = document.createElement('div');
+    tagGroup.className = 'rule-field-group rule-field-group-wide';
+    tagGroup.appendChild(tagLabel);
+    tagGroup.appendChild(tagArea);
+    fields.appendChild(tagGroup);
+
+    fields.appendChild(fieldGroup(matLabel, matSelect));
+
+    const ornGroup = document.createElement('div');
+    ornGroup.className = 'rule-field-group rule-field-group-wide';
+    ornGroup.appendChild(ornLabel);
+    ornGroup.appendChild(ornArea);
+    fields.appendChild(ornGroup);
+
+    const weightGroup = document.createElement('div');
+    weightGroup.className = 'rule-field-group';
+    weightGroup.appendChild(weightLabel);
+    weightGroup.appendChild(weightWrap);
+    fields.appendChild(weightGroup);
+
+    row.appendChild(meta);
+    row.appendChild(fields);
+    row.appendChild(actionBtn);
+
+    return row;
+  }
+
+  rerenderList();
+
+  // ─ Add rule button ─
+  const addRuleBtn = document.createElement('button');
+  addRuleBtn.className = 'add-btn';
+  addRuleBtn.textContent = '+ Add rule';
+  addRuleBtn.addEventListener('click', () => {
+    const newRule = {
+      id: nextId('new-rule', [...(state.culture.rules ?? []), ...(era?.rules ?? [])]),
+      priority: 0,
+      conditions: { tagMatches: {} },
+      assigns: {},
+    };
+    setRules([...getRules(), newRule]);
+    rerenderList();
+  });
+
+  // ─ Grid preview ─
+  const gridContainer = document.createElement('div');
+  gridContainer.className = 'rule-grid-container';
+  renderRuleGrid(scope, gridContainer);
+
+  container.appendChild(list);
+  container.appendChild(addRuleBtn);
+  container.appendChild(gridContainer);
+}
+
+/* ── Tag popover ──────────────────────────────────────────── */
+
+function openTagPopover(anchor, rule, onCommit) {
+  closeAllPopovers();
+  const tagAxes = state.culture.tagAxes ?? [];
+  if (tagAxes.length === 0) {
+    alert('No tag axes defined yet. Add tag axes in the "Tag axes" sub-tab first.');
+    return;
+  }
+  const pop = document.createElement('div');
+  pop.className = 'rule-popover';
+  pop.innerHTML = `
+    <div class="rule-popover-title">Add tag match</div>
+    <div class="rule-popover-body">
+      <select class="rule-popover-axis field-input-sm">
+        ${tagAxes.map(a => `<option value="${esc(a.id)}">${esc(a.label || a.id)}</option>`).join('')}
+      </select>
+      <select class="rule-popover-value field-input-sm">
+        <option value="">— pick axis first —</option>
+      </select>
+      <button class="add-btn-sm rule-popover-confirm">Add</button>
+    </div>
+  `;
+  const axisSelect = pop.querySelector('.rule-popover-axis');
+  const valueSelect = pop.querySelector('.rule-popover-value');
+
+  function updateValues() {
+    const axis = tagAxes.find(a => a.id === axisSelect.value);
+    valueSelect.innerHTML = (axis?.values ?? []).map(v => `<option value="${esc(v.id)}">${esc(v.label || v.id)}</option>`).join('') ||
+      '<option value="">— no values defined —</option>';
+  }
+  axisSelect.addEventListener('change', updateValues);
+  updateValues();
+
+  pop.querySelector('.rule-popover-confirm').addEventListener('click', () => {
+    const axis = axisSelect.value;
+    const val  = valueSelect.value;
+    if (!axis || !val) return;
+    if (!rule.conditions) rule.conditions = { tagMatches: {} };
+    rule.conditions.tagMatches[axis] = val;
+    onCommit();
+    pop.remove();
+  });
+
+  anchor.parentElement.style.position = 'relative';
+  anchor.parentElement.appendChild(pop);
+  document.addEventListener('click', (e) => {
+    if (!pop.contains(e.target) && e.target !== anchor) pop.remove();
+  }, { once: true, capture: true });
+}
+
+function openOrnamentPopover(anchor, rule, onCommit) {
+  closeAllPopovers();
+  const ornaments = state.culture.ornaments ?? [];
+  if (ornaments.length === 0) {
+    alert('No ornaments in the library yet. Add ornaments first.');
+    return;
+  }
+  const existing = new Set(rule.assigns?.ornamentIds ?? []);
+  const pop = document.createElement('div');
+  pop.className = 'rule-popover';
+  pop.innerHTML = `
+    <div class="rule-popover-title">Add ornament</div>
+    <div class="rule-popover-body rule-popover-orn-list">
+      ${ornaments.map(o => `
+        <button class="rule-popover-orn-item add-btn-sm${existing.has(o.id) ? ' disabled' : ''}" data-id="${esc(o.id)}" ${existing.has(o.id) ? 'disabled' : ''}>
+          ${esc(o.name || o.id)}
+        </button>
+      `).join('')}
+    </div>
+  `;
+  pop.querySelectorAll('.rule-popover-orn-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id;
+      if (!id) return;
+      if (!rule.assigns) rule.assigns = {};
+      if (!rule.assigns.ornamentIds) rule.assigns.ornamentIds = [];
+      if (!rule.assigns.ornamentIds.includes(id)) rule.assigns.ornamentIds.push(id);
+      onCommit();
+      pop.remove();
+    });
+  });
+  anchor.parentElement.style.position = 'relative';
+  anchor.parentElement.appendChild(pop);
+  document.addEventListener('click', (e) => {
+    if (!pop.contains(e.target) && e.target !== anchor) pop.remove();
+  }, { once: true, capture: true });
+}
+
+function closeAllPopovers() {
+  document.querySelectorAll('.rule-popover').forEach(p => p.remove());
+}
+
+/* ── Resolved grid preview ───────────────────────────────── */
+
+function renderRuleGrid(scope, container) {
+  if (!container) return;
+  container.innerHTML = '';
+
+  // Culture scope: grid requires era context
+  if (scope === 'culture') {
+    const note = document.createElement('p');
+    note.className = 'placeholder';
+    note.textContent = 'Grid preview shows in an era context. Open an era to see this culture\'s rules resolved.';
+    container.appendChild(note);
+    return;
+  }
+
+  const eraId = scope.eraId;
+  const culture = state.culture;
+  if (!culture) return;
+
+  // Collect all scenarios used across culture + era rules
+  const era = (culture.eras ?? []).find(e => e.id === eraId);
+  if (!era) return;
+
+  const allRules = [...(culture.rules ?? []), ...(era.rules ?? [])];
+  const scenarioSet = new Set(allRules.map(r => r.conditions?.scenario).filter(Boolean));
+  const scenarios = scenarioSet.size > 0 ? [...scenarioSet] : ['*'];
+
+  // Build cartesian product of tag axes, capped at 32 columns
+  const tagAxes = culture.tagAxes ?? [];
+  let columns = [{}]; // start with one empty combo
+  for (const axis of tagAxes) {
+    const vals = (axis.values ?? []).map(v => v.id).filter(Boolean);
+    if (vals.length === 0) continue;
+    const expanded = [];
+    for (const combo of columns) {
+      for (const v of vals) {
+        expanded.push({ ...combo, [axis.id]: v });
+      }
+    }
+    columns = expanded;
+    if (columns.length > 32) break;
+  }
+  const CAP = 32;
+  const truncated = columns.length > CAP;
+  if (truncated) columns = columns.slice(0, CAP);
+
+  if (columns.length === 0) columns = [{}];
+
+  // Build header labels
+  function colLabel(combo) {
+    const entries = Object.entries(combo);
+    if (entries.length === 0) return '(any tags)';
+    return entries.map(([k, v]) => `${k}:${v}`).join(', ');
+  }
+
+  const title = document.createElement('div');
+  title.className = 'rule-field-label';
+  title.style.marginBottom = '4px';
+  title.textContent = 'Resolved grid preview';
+  container.appendChild(title);
+
+  if (truncated) {
+    const warn = document.createElement('p');
+    warn.className = 'placeholder';
+    warn.style.marginBottom = '4px';
+    warn.textContent = `Tag combinations exceed ${CAP}; showing first ${CAP}. Filter axes: add fewer values to reduce columns.`;
+    container.appendChild(warn);
+  }
+
+  const table = document.createElement('table');
+  table.className = 'rule-grid';
+
+  // Header row
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  const th0 = document.createElement('th');
+  th0.textContent = 'Scenario \\ Tags';
+  headerRow.appendChild(th0);
+  for (const combo of columns) {
+    const th = document.createElement('th');
+    th.textContent = colLabel(combo);
+    th.title = colLabel(combo);
+    headerRow.appendChild(th);
+  }
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  table.appendChild(tbody);
+  container.appendChild(table);
+
+  // Cache to avoid duplicate fetches
+  const cache = new Map();
+
+  async function fetchCell(scenario, tags) {
+    const key = `${scenario}|${JSON.stringify(tags)}`;
+    if (cache.has(key)) return cache.get(key);
+    const tagStr = Object.entries(tags).map(([k,v]) => `${k}:${v}`).join(',');
+    const scenParam = scenario === '*' ? '' : scenario;
+    const url = `/api/cultures/${encodeURIComponent(culture.id)}/resolve?eraId=${encodeURIComponent(eraId)}&scenario=${encodeURIComponent(scenParam)}&tags=${encodeURIComponent(tagStr)}`;
+    try {
+      const r = await fetch(url);
+      const data = r.ok ? await r.json() : { assigns: {}, ruleId: null };
+      cache.set(key, data);
+      return data;
+    } catch {
+      return { assigns: {}, ruleId: null };
+    }
+  }
+
+  function matColor(materialId) {
+    if (!materialId) return null;
+    const m = (culture.materials ?? []).find(m => m.id === materialId);
+    return m?.color ?? null;
+  }
+
+  // Build rows and kick off fetches
+  for (const scenario of scenarios) {
+    const tr = document.createElement('tr');
+    const th = document.createElement('th');
+    th.textContent = scenario;
+    tr.appendChild(th);
+
+    for (const combo of columns) {
+      const td = document.createElement('td');
+      td.className = 'rule-grid-cell';
+      td.textContent = '…';
+      tr.appendChild(td);
+
+      // Fetch asynchronously and update cell
+      fetchCell(scenario, combo).then(({ assigns, ruleId }) => {
+        td.innerHTML = '';
+        if (!assigns || Object.keys(assigns).length === 0) {
+          td.textContent = '—';
+          td.className = 'rule-grid-cell rule-grid-empty';
+          return;
+        }
+        td.className = 'rule-grid-cell rule-grid-match';
+        if (assigns.materialId) {
+          const color = matColor(assigns.materialId);
+          if (color) {
+            const swatch = document.createElement('span');
+            swatch.className = 'swatch';
+            swatch.style.background = color;
+            td.appendChild(swatch);
+          }
+          const mid = document.createElement('span');
+          mid.className = 'grid-cell-mat';
+          mid.textContent = assigns.materialId;
+          td.appendChild(mid);
+        }
+        const ornIds = assigns.ornamentIds ?? [];
+        if (ornIds.length > 0) {
+          const badge = document.createElement('span');
+          badge.className = 'grid-cell-orn-badge';
+          badge.textContent = `+${ornIds.length} orn`;
+          td.appendChild(badge);
+        }
+        if (ruleId) td.title = `from rule "${ruleId}"`;
+      });
+    }
+
+    tbody.appendChild(tr);
+  }
 }
 
 /* ── Timeline ────────────────────────────────────────────── */
@@ -706,7 +1240,7 @@ function renderEraDetail() {
     <div class="era-detail-grid">
       <section id="panel-defaults"><h3>Defaults</h3><div class="panel-body"></div></section>
       <section id="panel-typology"><h3>Typology mix</h3><div class="panel-body"></div></section>
-      <section id="panel-rules"><h3>Rules</h3><div class="panel-body"><p class="placeholder">Rule editor lands in Task 14.</p></div></section>
+      <section id="panel-rules" class="panel-rules-full"><h3>Rules</h3><div class="panel-body"></div></section>
       <section id="panel-ornaments"><h3>Ornaments</h3><div class="panel-body"></div></section>
     </div>
   `;
@@ -740,6 +1274,11 @@ function renderEraDetail() {
   renderDefaultsPanel(era, el.querySelector('#panel-defaults .panel-body'));
   renderTypologyPanel(era, el.querySelector('#panel-typology .panel-body'));
   renderOrnamentsPanel(era, el.querySelector('#panel-ornaments .panel-body'));
+  const rulesPanelBody = el.querySelector('#panel-rules .panel-body');
+  if (rulesPanelBody) {
+    rulesPanelBody.innerHTML = '';
+    renderRuleEditor({ eraId: era.id }, rulesPanelBody);
+  }
 }
 
 /* ── Era panel: Defaults ─────────────────────────────────── */

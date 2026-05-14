@@ -782,3 +782,255 @@ textarea.field-input {
   padding: 2px 6px;
   border-radius: 2px;
 }
+
+/* ── Rules panel: full-width in era grid ────────────────── */
+.panel-rules-full {
+  grid-column: 1 / -1;
+}
+
+/* ── Rule list ───────────────────────────────────────────── */
+.rule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.rule-row {
+  background: var(--bg-panel, #2a2e36);
+  border: 1px solid var(--border-soft, #3d434e);
+  border-radius: 5px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+}
+
+.rule-row-inherited {
+  background: var(--bg-deep, #14171c);
+  border-color: #2a2e36;
+  opacity: 0.8;
+}
+
+.rule-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.rule-id {
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+
+.rule-row-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: flex-start;
+}
+
+.rule-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 90px;
+}
+
+.rule-field-group-wide {
+  min-width: 160px;
+  flex: 1;
+}
+
+.rule-field-label {
+  font-size: 10px;
+  color: var(--text-muted, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.rule-priority {
+  width: 52px !important;
+}
+
+.rule-material-select {
+  max-width: 180px;
+}
+
+.rule-weight-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rule-weight-wrap input[type=range] {
+  flex: 1;
+  accent-color: var(--accent, #B56A1D);
+  cursor: pointer;
+}
+
+.rule-delete-btn {
+  align-self: flex-start;
+  margin-top: 4px;
+  color: var(--text-muted, #888);
+  font-size: 11px;
+}
+.rule-delete-btn:hover { color: var(--status-red, #e06464); }
+
+.rule-override-btn {
+  align-self: flex-start;
+  margin-top: 4px;
+  color: var(--accent, #B56A1D);
+  border-color: var(--accent, #B56A1D);
+}
+
+/* ── Rule chips ──────────────────────────────────────────── */
+.rule-chip-area {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  min-height: 24px;
+}
+
+.rule-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: #22262e;
+  border: 1px solid #3d434e;
+  color: var(--text-secondary, #ccc);
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 10px;
+}
+
+.rule-chip.removable {
+  padding-right: 3px;
+}
+
+.chip-remove {
+  background: none;
+  border: none;
+  color: var(--text-muted, #666);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 1px;
+  line-height: 1;
+}
+.chip-remove:hover { color: var(--status-red, #e06464); }
+
+/* ── Rule popover ────────────────────────────────────────── */
+.rule-popover {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  background: var(--bg-elevated, #2a2e36);
+  border: 1px solid var(--border-soft, #3d434e);
+  border-radius: 5px;
+  padding: 10px;
+  z-index: 100;
+  min-width: 200px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+
+.rule-popover-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted, #888);
+  margin-bottom: 6px;
+}
+
+.rule-popover-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rule-popover-orn-list {
+  max-height: 140px;
+  overflow-y: auto;
+  gap: 4px;
+}
+
+/* ── Rule grid preview ───────────────────────────────────── */
+.rule-grid-container {
+  margin-top: 10px;
+}
+
+.rule-grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  table-layout: auto;
+}
+
+.rule-grid th,
+.rule-grid td {
+  border: 1px solid var(--border-mid, #2a2e36);
+  padding: 4px 6px;
+  text-align: left;
+  vertical-align: middle;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rule-grid th {
+  background: var(--bg-deep, #14171c);
+  color: var(--text-muted, #888);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.rule-grid-cell {
+  background: var(--bg-panel, #2a2e36);
+  color: var(--text-secondary, #ccc);
+  cursor: default;
+}
+
+.rule-grid-empty {
+  color: var(--text-muted, #555);
+  text-align: center;
+}
+
+.rule-grid-match {
+  /* Children (.swatch, .grid-cell-mat, .grid-cell-orn-badge) rendered inline */
+}
+
+.swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid rgba(255,255,255,0.1);
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+.grid-cell-mat {
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.grid-cell-orn-badge {
+  font-size: 9px;
+  background: rgba(181,106,29,0.2);
+  border: 1px solid rgba(181,106,29,0.4);
+  color: var(--accent, #B56A1D);
+  border-radius: 8px;
+  padding: 1px 4px;
+  flex-shrink: 0;
+}
+
+/* rule-grid-match: flex inside table cell uses inline-flex on inner wrapper via JS */
