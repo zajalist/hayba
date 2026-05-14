@@ -75,4 +75,26 @@ describe('parseSvgProfile', () => {
     const svg = '<svg><path d="M0 0 L 10 0 Z"/></svg>';
     expect(() => parseSvgProfile(svg, 'closed-path')).toThrow(/viewBox/);
   });
+
+  it('centered viewBox produces output symmetric around origin', () => {
+    // viewBox (-50, -50, 100, 100), SVG point (0, -50) is at top of viewBox.
+    // After Y-flip: should map to y=+50 in engine (top), keeping symmetric range [-50, +50].
+    const svg = '<svg viewBox="-50 -50 100 100"><path d="M0 -50 L 50 0 L 0 50 L -50 0 Z"/></svg>';
+    const p = parseSvgProfile(svg, 'closed-path');
+    // diamond around origin: top (0,50), right (50,0), bottom (0,-50), left (-50,0).
+    expect(p.points[0]).toEqual([0, 50]);   // was top of SVG → top of engine
+    expect(p.points[1]).toEqual([50, 0]);
+    expect(p.points[2]).toEqual([0, -50]);  // was bottom of SVG → bottom of engine
+    expect(p.points[3]).toEqual([-50, 0]);
+  });
+
+  it('top-left-origin viewBox preserves prior behavior', () => {
+    // viewBox (0, 0, 100, 200), SVG point (50, 0) is at top.
+    // After Y-flip: should map to y=200 (top in engine).
+    const svg = '<svg viewBox="0 0 100 200"><path d="M50 0 L 100 200 L 0 200 Z"/></svg>';
+    const p = parseSvgProfile(svg, 'closed-path');
+    expect(p.points[0]).toEqual([50, 200]);
+    expect(p.points[1]).toEqual([100, 0]);
+    expect(p.points[2]).toEqual([0, 0]);
+  });
 });
