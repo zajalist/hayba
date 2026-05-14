@@ -6,6 +6,7 @@
 //! at `docs/superpowers/specs/2026-05-14-hayba-explorer-design.md`.
 
 mod planet;
+mod wizard;
 
 #[tauri::command]
 fn bake_demo_planet() -> planet::PlanetSnapshot {
@@ -15,7 +16,12 @@ fn bake_demo_planet() -> planet::PlanetSnapshot {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![bake_demo_planet])
+        .invoke_handler(tauri::generate_handler![
+            bake_demo_planet,
+            wizard::start_wizard,
+            wizard::roll_seed,
+            wizard::bake_from_wizard,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Hayba Explorer");
 }
