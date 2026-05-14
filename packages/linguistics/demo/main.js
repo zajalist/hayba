@@ -31,10 +31,23 @@ import {
 import { escapeHtml } from './components/utils.js';
 import { attachPopover, closeActivePopover } from './components/popover.js';
 import * as NameGenView from './views/name-gen.js';
+import {
+  fetchUserLanguages,
+  mergeRemoteIntoState,
+  queueLanguageSave,
+  flushAll,
+  migrateLocalToRemote,
+} from './sync.js';
+import { getSession } from './auth.js';
 
 /* state - load/save/snapshot helpers live in ./state.js */
 const state = _loadState() ?? defaultState();
-function saveState() { _saveState(state); }
+function saveState() {
+  _saveState(state);
+  if (state._signedIn && state.langId) {
+    queueLanguageSave(state, state.langId);
+  }
+}
 function snapshotActiveLanguage() { _snapshotActiveLanguage(state); }
 function loadLanguageSnapshot(langId) { _loadLanguageSnapshot(state, langId); }
 
@@ -4019,5 +4032,26 @@ function renderProsody() {
   });
 })();
 
-// Initial paint.
-renderAll();
+// Initial paint — hydrate from Supabase first if signed in.
+(async () => {
+  try {
+    const session = await getSession();
+    state._signedIn = !!session;
+    if (session) {
+      try {
+        const remote = await fetchUserLanguages();
+        if (remote.length === 0 && Object.keys(state.languages ?? {}).length > 0) {
+          await migrateLocalToRemote(state);
+        } else {
+          mergeRemoteIntoState(state, remote);
+        }
+      } catch (e) {
+        console.error('[hayba] hydrate failed; using local state only', e);
+      }
+    }
+  } catch (e) {
+    console.error('[hayba] session check failed; using local state only', e);
+    state._signedIn = false;
+  }
+  renderAll();
+})();
