@@ -297,6 +297,29 @@ pub fn apply_boundary_types(
     Ok(snapshot_model(&state.model, state.divisions))
 }
 
+/// Apply a plate density rank to the running model. The frontend ships a
+/// list of plate ids ordered lightest → densest; we map that onto a linear
+/// density spread and write each plate's `density` in place.
+#[tauri::command]
+pub fn apply_density_rank(
+    order: Vec<u32>,
+    sim: State<'_, ManagedSim>,
+) -> Result<PlanetSnapshot, String> {
+    const MIN_DENSITY: f32 = 0.30;
+    const MAX_DENSITY: f32 = 1.20;
+    let mut guard = sim.0.lock().map_err(|_| "sim mutex poisoned".to_string())?;
+    let state = guard.as_mut().ok_or_else(|| "no baked planet".to_string())?;
+    let n = order.len().max(1) as f32;
+    for (i, pid) in order.iter().enumerate() {
+        let t = if n <= 1.0 { 0.5 } else { i as f32 / (n - 1.0) };
+        let d = MIN_DENSITY + t * (MAX_DENSITY - MIN_DENSITY);
+        if let Some(plate) = state.model.plates.iter_mut().find(|p| p.id == *pid) {
+            plate.density = d;
+        }
+    }
+    Ok(snapshot_model(&state.model, state.divisions))
+}
+
 // ── Preset rasters, embedded at compile time ─────────────────────────────
 const PRESET_PLATES2:        &[u8] = include_bytes!("../presets/plates2.png");
 const PRESET_PLATES3:        &[u8] = include_bytes!("../presets/plates3.png");

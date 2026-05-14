@@ -22,6 +22,7 @@ pub fn run() {
             wizard::step_planet,
             wizard::reset_sim,
             wizard::apply_boundary_types,
+            wizard::apply_density_rank,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hayba Explorer");

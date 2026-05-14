@@ -13,11 +13,9 @@ export interface PhaseStripProps {
 }
 
 /**
- * Minimalist sim-phase indicator for the status bar's right end:
+ * Sim-phase indicator on the right end of the status bar:
  *   `Cretaceous · 12.4 Ma · ▶`
- *
- * Era + time read in mono so the strip stays visually still while only the
- * play/pause glyph toggles. Disabled state during pre-bake.
+ * Sentence case, calm mono numerics, beige tones.
  */
 export default function PhaseStrip({
   simTimeMa, era, playing, disabled, onTogglePlay,
@@ -26,33 +24,31 @@ export default function PhaseStrip({
     <div style={{
       display: "inline-flex",
       alignItems: "center",
-      gap: 10,
-      paddingRight: 12,
+      gap: 12,
+      paddingRight: 14,
       borderLeft: `1px solid ${colors.borderMid}`,
-      paddingLeft: 14,
+      paddingLeft: 16,
       height: "100%",
       fontFamily: fonts.sans,
       opacity: disabled ? 0.4 : 1,
     }}>
       <span style={{
-        fontSize: 11,
+        fontSize: 13,
         color: BEIGE,
-        letterSpacing: "0.02em",
+        letterSpacing: "0.01em",
         whiteSpace: "nowrap",
       }}>
         {era}
       </span>
       <span style={{
         fontFamily: fonts.mono,
-        fontSize: 10,
+        fontSize: 12,
         color: colors.textMuted,
-      }}>
-        ·
-      </span>
+      }}>·</span>
       <span style={{
         fontFamily: fonts.mono,
-        fontSize: 11,
-        color: colors.textPrimary,
+        fontSize: 12,
+        color: BEIGE,
         whiteSpace: "nowrap",
       }}>
         {simTimeMa.toFixed(1)} Ma
@@ -63,8 +59,8 @@ export default function PhaseStrip({
         disabled={disabled}
         title={playing ? "Pause (Space)" : "Play (Space)"}
         style={{
-          width: 22,
-          height: 22,
+          width: 28,
+          height: 28,
           padding: 0,
           display: "inline-flex",
           alignItems: "center",
@@ -75,7 +71,7 @@ export default function PhaseStrip({
           marginLeft: 4,
         }}
       >
-        {playing ? <IconPause size={14} /> : <IconPlay size={14} />}
+        {playing ? <IconPause size={16} /> : <IconPlay size={16} />}
       </button>
     </div>
   );

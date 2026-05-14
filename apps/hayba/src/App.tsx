@@ -14,6 +14,7 @@ import ConfirmDialog from "./components/ConfirmDialog";
 import BoundaryPopover from "./components/BoundaryPopover";
 import PhaseStrip from "./components/PhaseStrip";
 import PhaseSteps, { type PhaseStepId } from "./components/PhaseSteps";
+import DensitiesPanel from "./components/DensitiesPanel";
 import { createDefaultDraft, pairKey, type WizardDraft, type PresetName, type BoundaryType } from "./wizard/state";
 import { BoundaryModel, setBoundary, clearBoundary } from "./wizard/boundary-model";
 import { buildCellKdTree, cellsWithinRadius, nearestCell, type KdTree } from "./wizard/kdtree";
@@ -36,7 +37,13 @@ interface WizardInit {
   cell_positions: number[];
 }
 
-type Mode = "wizard" | "baking" | "viewing";
+// Phase lifecycle:
+//   wizard     — composing (presets, paint continents, seed, detail)
+//   baking     — transient while the Rust sim crunches the initial frames
+//   boundaries — post-bake. Click pink seams → convergent/divergent.
+//   densities  — assign plate density rank (continental-floats-over-oceanic).
+//   simulating — sim is live. Play/Pause + time scrubbing available.
+type Mode = "wizard" | "baking" | "boundaries" | "densities" | "simulating";
 
 const INITIAL_DIVISIONS = 64;
 const TOP_HEIGHT = 32 + 28; // menu strip + tab strip
@@ -46,10 +53,15 @@ function angularToChord(rad: number): number {
   return 2 * Math.sin(rad / 2);
 }
 
-/** Map (mode, playing) → current phase-step pill in the bottom bar. */
-function currentPhaseStep(mode: Mode, playing: boolean): PhaseStepId {
-  if (mode === "wizard" || mode === "baking") return "compose";
-  return playing ? "animate" : "boundaries";
+/** Map mode → current phase-step pill in the bottom bar. */
+function currentPhaseStep(mode: Mode): PhaseStepId {
+  switch (mode) {
+    case "wizard":
+    case "baking":     return "compose";
+    case "boundaries": return "boundaries";
+    case "densities":  return "densities";
+    case "simulating": return "simulate";
+  }
 }
 
 /** Mirrors hayba_tectonics_v2::time::era_for_ma. */
@@ -140,12 +152,12 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Space toggles play/pause in viewing mode.
+  // Space toggles play/pause — only valid in the simulating phase.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.code !== "Space") return;
-      if (modeRef.current !== "viewing") return;
+      if (modeRef.current !== "simulating") return;
       e.preventDefault();
       setPlaying((p) => !p);
     };
@@ -257,9 +269,9 @@ export default function App() {
   useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => { playingRef.current = playing; }, [playing]);
 
-  // Playback is post-bake only.
+  // Playback is locked to the simulating phase.
   useEffect(() => {
-    if (mode !== "viewing" && playing) setPlaying(false);
+    if (mode !== "simulating" && playing) setPlaying(false);
   }, [mode, playing]);
   useEffect(() => {
     snapshotRef.current = snapshot;
@@ -267,9 +279,9 @@ export default function App() {
     boundaryModelRef.current = snapshot ? BoundaryModel.fromSnapshot(snapshot) : null;
   }, [snapshot]);
 
-  // Re-tint baked boundaries when assignments change.
+  // Re-tint baked boundaries whenever assignments change in any post-bake phase.
   useEffect(() => {
-    if (mode !== "viewing" || !snapshot || !draft) return;
+    if (mode === "wizard" || mode === "baking" || !snapshot || !draft) return;
     const bm = boundaryModelRef.current;
     globeRef.current?.recolorFromSnapshot(
       snapshot, PLATE_PALETTE,
@@ -310,12 +322,11 @@ export default function App() {
     return () => { cancelled = true; };
   }, [playing]);
 
-  // Post-bake boundary picking — listens to clicks on the canvas while in
-  // viewing mode. Raycasts → nearest cell → if it's a boundary cell, walks
-  // its neighbours to find the adjacent plate, then opens the popover at
-  // the screen coords.
+  // Boundary picking only fires during the boundaries phase. Densities +
+  // simulating modes leave the seams as-is; the user can come back via the
+  // wizard chrome.
   useEffect(() => {
-    if (mode !== "viewing") return;
+    if (mode !== "boundaries") return;
     const scene = sceneRef.current;
     if (!scene) return;
     const canvas = scene.canvas;
@@ -451,7 +462,10 @@ export default function App() {
     try {
       const snap = await invoke<PlanetSnapshot>("bake_from_wizard", { draft });
       setSnapshot(snap);
-      setMode("viewing");
+      // After bake → land on the Boundaries phase (the next step in the
+      // wizard sequence). User clicks Next/Start to advance to densities
+      // and finally simulating.
+      setMode("boundaries");
       const bm = BoundaryModel.fromSnapshot(snap);
       boundaryModelRef.current = bm;
       globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE, {
@@ -467,22 +481,64 @@ export default function App() {
     previewRef.current = [];
     invoke("reset_sim").catch(() => {});
     setMode("wizard");
+    setPlaying(false);
     if (draft) globeRef.current?.recolorFromDraft(draft, cellCountRef.current);
   }, [draft]);
 
+  // Density rank — populated when entering the densities phase, then live-
+  // applied to the running model on each reorder.
+  const [densityOrder, setDensityOrder] = useState<number[]>([]);
+
+  const handleAdvanceToDensities = useCallback(() => {
+    if (!snapshot) return;
+    // Seed the order from the current plate ids (ascending). The user can
+    // reorder before clicking Start.
+    const ids = Array.from(new Set(snapshot.cell_plate_ids.filter((p) => p >= 0))).sort((a, b) => a - b);
+    setDensityOrder(ids);
+    setMode("densities");
+  }, [snapshot]);
+
+  const handleBackToBoundaries = useCallback(() => {
+    setMode("boundaries");
+  }, []);
+
+  const handleStartSimulation = useCallback(() => {
+    setMode("simulating");
+  }, []);
+
+  const handleDensityChange = useCallback((order: number[], snap: PlanetSnapshot) => {
+    setDensityOrder(order);
+    setSnapshot(snap);
+    const bm = BoundaryModel.fromSnapshot(snap);
+    boundaryModelRef.current = bm;
+    const drft = draftRef.current;
+    if (drft) {
+      globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE, {
+        model: bm, assignments: drft.boundary_types,
+      });
+    }
+  }, []);
+
   const statusLabel =
-    mode === "wizard" ? activeTool :
-    mode === "baking" ? "baking" :
-    error ? "error" : "ready";
+    mode === "wizard"     ? activeTool :
+    mode === "baking"     ? "baking" :
+    mode === "boundaries" ? "boundaries" :
+    mode === "densities"  ? "densities" :
+    error                 ? "error" :
+                            "simulating";
 
   const statusBody =
     mode === "wizard" && draft ? (
       <>{draft.preset} · <Mono>{cellCountRef.current.toLocaleString()}</Mono> cells · <Mono>{draft.continental_cells.length.toLocaleString()}</Mono> painted</>
     ) : mode === "wizard" ? "Loading…"
     : mode === "baking" ? "Running tectonic step loop…"
+    : mode === "boundaries" && snapshot ? (
+        <>Click pink seams to assign convergent or divergent · <Mono>{Object.keys(draft?.boundary_types ?? {}).length}</Mono> set</>
+    )
+    : mode === "densities" ? "Rank plates by density · lightest on top, densest on the bottom"
     : snapshot ? <>
-      planet baked · <Mono>{snapshot.n_cells.toLocaleString()}</Mono> cells · <Mono>{snapshot.sim_time_ma.toFixed(1)}</Mono> Ma
-    </> : "—";
+        Planet baked · <Mono>{snapshot.n_cells.toLocaleString()}</Mono> cells · <Mono>{snapshot.sim_time_ma.toFixed(1)}</Mono> Ma
+      </> : "—";
 
   const showWizard = mode === "wizard";
   const getScene = useCallback(() => sceneRef.current, []);
@@ -499,7 +555,7 @@ export default function App() {
         <Viewport onReady={handleSceneReady} />
       </div>
 
-      <TopMenuBar documentTitle={mode === "viewing" ? "Planet (baked)" : "Untitled"} />
+      <TopMenuBar documentTitle={mode === "wizard" || mode === "baking" ? "Untitled" : "Planet (baked)"} />
 
       {showWizard && draft && (
         <DockToolbar
@@ -524,7 +580,28 @@ export default function App() {
 
       <RecenterButton getScene={getScene} />
 
-      {mode === "viewing" && (
+      {mode === "boundaries" && (
+        <ViewingChrome
+          topOffset={TOP_HEIGHT}
+          assignedCount={Object.keys(draft?.boundary_types ?? {}).length}
+          onEditWizard={handleEditWizard}
+          onNext={handleAdvanceToDensities}
+          nextLabel="Next: Densities →"
+        />
+      )}
+
+      {mode === "densities" && snapshot && (
+        <DensitiesPanel
+          snapshot={snapshot}
+          topOffset={TOP_HEIGHT}
+          order={densityOrder}
+          onChange={handleDensityChange}
+          onBack={handleBackToBoundaries}
+          onStart={handleStartSimulation}
+        />
+      )}
+
+      {mode === "simulating" && (
         <ViewingChrome
           topOffset={TOP_HEIGHT}
           assignedCount={Object.keys(draft?.boundary_types ?? {}).length}
@@ -546,12 +623,15 @@ export default function App() {
       )}
 
       <StatusBar
-        state={mode === "baking" ? "baking" : error ? "error" : mode === "viewing" ? "ready" : "idle"}
-        label={statusLabel}
-        centerSlot={
-          <PhaseSteps current={currentPhaseStep(mode, playing)} />
+        state={
+          mode === "baking" ? "baking" :
+          error ? "error" :
+          mode === "wizard" ? "idle" :
+          "ready"
         }
-        rightSlot={mode === "viewing" && snapshot ? (
+        label={statusLabel}
+        centerSlot={<PhaseSteps current={currentPhaseStep(mode)} />}
+        rightSlot={mode === "simulating" && snapshot ? (
           <PhaseStrip
             simTimeMa={snapshot.sim_time_ma}
             era={eraForMa(snapshot.sim_time_ma)}
@@ -584,10 +664,14 @@ export default function App() {
   );
 }
 
-function ViewingChrome({ topOffset, assignedCount, onEditWizard }: {
+function ViewingChrome({
+  topOffset, assignedCount, onEditWizard, onNext, nextLabel,
+}: {
   topOffset: number;
   assignedCount: number;
   onEditWizard: () => void;
+  onNext?: () => void;
+  nextLabel?: string;
 }) {
   const BEIGE = "#DED4C3";
   const baseBtn: React.CSSProperties = {
@@ -645,6 +729,20 @@ function ViewingChrome({ topOffset, assignedCount, onEditWizard }: {
         <button type="button" onClick={onEditWizard} style={baseBtn}>
           Edit wizard →
         </button>
+        {onNext && (
+          <button
+            type="button"
+            onClick={onNext}
+            style={{
+              ...baseBtn,
+              borderColor: "#DED4C3",
+              color: "#DED4C3",
+              fontWeight: 500,
+            }}
+          >
+            {nextLabel ?? "Next →"}
+          </button>
+        )}
       </div>
     </>
   );
