@@ -6,7 +6,9 @@ export default defineConfig({
   plugins: [react()],
   clearScreen: false,
   server: {
-    port: 5173,
+    // Use a Hayba-specific port so we never collide with other Vite apps
+    // (5173 is the default, owned by whoever launched it first).
+    port: 5184,
     strictPort: true,
     host: "127.0.0.1",
   },

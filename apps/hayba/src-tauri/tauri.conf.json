@@ -5,7 +5,7 @@
   "identifier": "com.hayba.explorer",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:5184",
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build"
   },
