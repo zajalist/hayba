@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import { colors, fonts } from "@hayba/design-tokens";
+import { colors, fonts, radii } from "@hayba/design-tokens";
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -54,6 +54,7 @@ export default function ConfirmDialog({
           background: colors.bgBase,
           border: `1px solid ${colors.borderMid}`,
           borderLeft: `2px solid ${accent}`,
+          borderRadius: radii.sm,
           boxShadow: "0 20px 60px rgba(0,0,0,0.55)",
           color: colors.textPrimary,
           fontFamily: fonts.sans,
@@ -78,6 +79,7 @@ export default function ConfirmDialog({
               border: `1px solid ${colors.borderSoft}`,
               color: colors.textSecondary,
               padding: "8px 16px",
+              borderRadius: radii.xs,
               fontSize: 11,
               letterSpacing: "0.18em",
               textTransform: "lowercase",
@@ -95,6 +97,7 @@ export default function ConfirmDialog({
               color: colors.bgDeep,
               border: `1px solid ${accent}`,
               padding: "8px 16px",
+              borderRadius: radii.xs,
               fontSize: 11,
               letterSpacing: "0.22em",
               textTransform: "uppercase",

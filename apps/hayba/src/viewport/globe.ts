@@ -6,7 +6,8 @@ import type { PlanetSnapshot } from "../App";
 // preview = soft tinted accent for the brush hover ring.
 const OCEAN_COLOR:     [number, number, number] = [0.13, 0.21, 0.34];
 const CONTINENT_COLOR: [number, number, number] = [0.71, 0.42, 0.11]; // #B56A1D
-const PREVIEW_COLOR:   [number, number, number] = [0.50, 0.34, 0.18]; // muted accent
+const PREVIEW_COLOR_PAINT: [number, number, number] = [0.50, 0.34, 0.18]; // muted accent
+const PREVIEW_COLOR_ERASE: [number, number, number] = [0.65, 0.20, 0.20]; // muted red
 // Matches TE's BOUNDARY_COLOR exactly — keeps the visual signature of the
 // original tectonic-explorer for cells that sit on a plate boundary.
 const BOUNDARY_COLOR:  [number, number, number] = [0.80, 0.20, 0.50];
@@ -14,7 +15,12 @@ const BOUNDARY_COLOR:  [number, number, number] = [0.80, 0.20, 0.50];
 export interface GlobeHandle {
   object: THREE.Object3D;
   /** Color cells from the user's draft + the optional preview set. */
-  recolorFromDraft(draft: WizardDraft, nCells: number, previewCells?: Iterable<number>): void;
+  recolorFromDraft(
+    draft: WizardDraft,
+    nCells: number,
+    previewCells?: Iterable<number>,
+    previewMode?: "paint" | "erase",
+  ): void;
   /** Color cells by the baked snapshot's per-plate colors (with continental cues). */
   recolorFromSnapshot(snap: PlanetSnapshot, palette: ReadonlyArray<[number, number, number]>): void;
 }
@@ -50,16 +56,29 @@ export function buildGlobe(cellPositions: Float32Array): GlobeHandle {
 
   return {
     object: points,
-    recolorFromDraft(draft, nCells, previewCells) {
+    recolorFromDraft(draft, nCells, previewCells, previewMode = "paint") {
       for (let i = 0; i < nCells; i++) paintCell(i, OCEAN_COLOR);
-      // Preview first, so painted cells stamp over the preview if they overlap.
-      if (previewCells) {
-        for (const id of previewCells) {
-          if (id >= 0 && id < nCells) paintCell(id, PREVIEW_COLOR);
+      // For paint preview: stamp preview first so painted cells overlay it.
+      // For erase preview: stamp painted cells first, then OVERLAY red preview
+      //   so the user sees which painted cells will go away.
+      if (previewMode === "paint") {
+        if (previewCells) {
+          for (const id of previewCells) {
+            if (id >= 0 && id < nCells) paintCell(id, PREVIEW_COLOR_PAINT);
+          }
         }
-      }
-      for (const id of draft.continental_cells) {
-        if (id >= 0 && id < nCells) paintCell(id, CONTINENT_COLOR);
+        for (const id of draft.continental_cells) {
+          if (id >= 0 && id < nCells) paintCell(id, CONTINENT_COLOR);
+        }
+      } else {
+        for (const id of draft.continental_cells) {
+          if (id >= 0 && id < nCells) paintCell(id, CONTINENT_COLOR);
+        }
+        if (previewCells) {
+          for (const id of previewCells) {
+            if (id >= 0 && id < nCells) paintCell(id, PREVIEW_COLOR_ERASE);
+          }
+        }
       }
       colorAttr.needsUpdate = true;
     },
