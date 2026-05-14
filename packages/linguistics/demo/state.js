@@ -89,7 +89,10 @@ export function saveState(state) {
 
 /** Capture the active language's facets so they can be restored on switch back. */
 export function snapshotActiveLanguage(state) {
+  if (!state.languages) state.languages = {};
+  const prev = state.languages[state.langId] ?? {};
   state.languages[state.langId] = {
+    ...prev,
     selected: [...state.selected],
     lexicon: [...state.lexicon],
     rules: state.rules,
@@ -98,12 +101,13 @@ export function snapshotActiveLanguage(state) {
     romRules: state.romRules,
     grammar: state.grammar,
     typology: { ...(state.typology ?? {}) },
+    _meta: prev._meta,
   };
 }
 
 /** Load a language snapshot into the live editor slots. */
 export function loadLanguageSnapshot(state, langId) {
-  const snap = state.languages[langId];
+  const snap = state.languages?.[langId];
   if (snap) {
     state.selected = new Set(snap.selected);
     state.lexicon = snap.lexicon;
@@ -114,6 +118,7 @@ export function loadLanguageSnapshot(state, langId) {
     state.grammar = snap.grammar ?? { def: null, stem: '', rules: [], derivationRules: [] };
     if (!state.grammar.derivationRules) state.grammar.derivationRules = [];
     state.typology = snap.typology ?? {};
+    // _meta stays on state.languages[langId]; do not lift to top-level state.
   } else {
     state.lexicon = [];
     state.rules = '';
