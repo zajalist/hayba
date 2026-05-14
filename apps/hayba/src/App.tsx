@@ -6,9 +6,9 @@ import type { SceneHandle } from "./viewport/scene";
 import { buildGlobe, PLATE_PALETTE, type GlobeHandle } from "./viewport/globe";
 import { attachPainter, type PainterHandle } from "./viewport/painter";
 import StatusBar, { Mono } from "./components/StatusBar";
-import SettingsCorner from "./components/SettingsCorner";
+import SettingsPanel from "./components/SettingsPanel";
 import ToolPalette, { type ToolName } from "./components/ToolPalette";
-import ToolSizeSlider from "./components/ToolSizeSlider";
+import TopMenuBar from "./components/TopMenuBar";
 import ConfirmDialog from "./components/ConfirmDialog";
 import { createDefaultDraft, type WizardDraft, type PresetName } from "./wizard/state";
 import { buildCellKdTree, cellsWithinRadius, type KdTree } from "./wizard/kdtree";
@@ -33,6 +33,10 @@ interface WizardInit {
 type Mode = "wizard" | "baking" | "viewing";
 
 const INITIAL_DIVISIONS = 64;
+const TOP_HEIGHT = 32 + 28; // menu strip + tab strip
+const BOTTOM_HEIGHT = 28;   // status bar
+const RIGHT_PANEL_WIDTH = 300;
+const LEFT_TOOL_WIDTH = 48;
 
 function angularToChord(rad: number): number {
   return 2 * Math.sin(rad / 2);
@@ -56,8 +60,6 @@ export default function App() {
   const [activeTool, setActiveTool] = useState<ToolName>("brush");
   const [pendingDivisions, setPendingDivisions] = useState<number | null>(null);
 
-  // Whenever the active tool changes, re-bind the OrbitControls mouse buttons
-  // so left-click does the right thing.
   useEffect(() => {
     activeToolRef.current = activeTool;
     const scene = sceneRef.current;
@@ -73,13 +75,11 @@ export default function App() {
       c.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
       c.enablePan = true;
     } else {
-      // brush + erase — left mouse free for paint, right rotates.
       c.mouseButtons = { LEFT: null as unknown as THREE.MOUSE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
       c.enablePan = false;
     }
   }, [activeTool]);
 
-  // Keyboard shortcuts for tools.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -126,7 +126,6 @@ export default function App() {
       canvas: handle.canvas,
       camera: handle.camera,
       target: handle.raycastTarget,
-      // Painter only activates for brush + erase tools.
       isActive: () => {
         const t = activeToolRef.current;
         return !!draftRef.current && (t === "brush" || t === "erase");
@@ -280,26 +279,40 @@ export default function App() {
       planet baked · <Mono>{snapshot.n_cells.toLocaleString()}</Mono> cells · <Mono>{snapshot.sim_time_ma.toFixed(1)}</Mono> Ma
     </> : "—";
 
-  const showTools = mode === "wizard";
-  const showSizeSlider = showTools && (activeTool === "brush" || activeTool === "erase");
+  const showWizard = mode === "wizard";
 
   return (
     <>
-      <Viewport onReady={handleSceneReady} />
-      {showTools && (
-        <ToolPalette active={activeTool} onChange={setActiveTool} />
-      )}
-      {showSizeSlider && draft && (
-        <ToolSizeSlider
-          value={draft.brush_radius_rad}
-          onChange={handleChangeBrushRadius}
-          destructive={activeTool === "erase"}
+      {/* Viewport sized to the inner viewport rect so the planet doesn't sit under panels. */}
+      <div style={{
+        position: "fixed",
+        top: TOP_HEIGHT,
+        bottom: BOTTOM_HEIGHT,
+        left: showWizard ? LEFT_TOOL_WIDTH : 0,
+        right: showWizard ? RIGHT_PANEL_WIDTH : 0,
+      }}>
+        <Viewport onReady={handleSceneReady} />
+      </div>
+
+      <TopMenuBar documentTitle={mode === "viewing" ? "Planet (baked)" : "Untitled"} />
+
+      {showWizard && (
+        <ToolPalette
+          active={activeTool}
+          onChange={setActiveTool}
+          topOffset={TOP_HEIGHT}
+          bottomOffset={BOTTOM_HEIGHT}
+          brushRadius={draft?.brush_radius_rad}
+          onChangeBrushRadius={handleChangeBrushRadius}
         />
       )}
-      {mode === "wizard" && draft && (
-        <SettingsCorner
+
+      {showWizard && draft && (
+        <SettingsPanel
           draft={draft}
           busy={false}
+          topOffset={TOP_HEIGHT}
+          bottomOffset={BOTTOM_HEIGHT}
           onChangeDivisions={handleChangeDivisions}
           onChangePreset={handleChangePreset}
           onReroll={handleReroll}
@@ -307,40 +320,46 @@ export default function App() {
           onBake={handleBake}
         />
       )}
+
       {mode === "viewing" && (
         <button
           type="button"
           onClick={handleEditWizard}
           style={{
             position: "fixed",
-            top: 20,
-            right: 20,
+            top: TOP_HEIGHT + 12,
+            right: 12,
             zIndex: 60,
-            background: "transparent",
+            background: "rgba(27, 31, 37, 0.92)",
             border: "1px solid #2f343d",
-            color: "#e8821c",
+            color: "#B56A1D",
             fontFamily: 'Inter, system-ui, sans-serif',
             fontSize: 10,
             letterSpacing: "0.32em",
             textTransform: "uppercase",
             padding: "8px 14px",
             cursor: "pointer",
-            fontWeight: 500,
+            fontWeight: 600,
           }}
         >
           Edit wizard →
         </button>
       )}
-      <StatusBar state={mode === "baking" ? "baking" : error ? "error" : mode === "viewing" ? "ready" : "idle"} label={statusLabel}>
+
+      <StatusBar
+        state={mode === "baking" ? "baking" : error ? "error" : mode === "viewing" ? "ready" : "idle"}
+        label={statusLabel}
+      >
         {error ? `Error: ${error}` : statusBody}
       </StatusBar>
+
       <ConfirmDialog
         open={pendingDivisions !== null}
         title="Change detail level?"
         body={
           <>
             Switching resolution rebuilds the planet's icosphere at a different cell count.
-            Your <strong style={{ color: "#e8821c" }}>{draft?.continental_cells.length.toLocaleString() ?? 0} painted cells</strong> will be wiped — there's no way to map them across resolutions.
+            Your <strong style={{ color: "#B56A1D" }}>{draft?.continental_cells.length.toLocaleString() ?? 0} painted cells</strong> will be wiped — there's no way to map them across resolutions.
           </>
         }
         confirmLabel="change & wipe"

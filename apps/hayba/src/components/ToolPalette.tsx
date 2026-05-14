@@ -7,6 +7,11 @@ export type ToolName = "brush" | "erase" | "rotate" | "zoom" | "pan";
 export interface ToolPaletteProps {
   active: ToolName;
   onChange: (tool: ToolName) => void;
+  topOffset: number;
+  bottomOffset: number;
+  /** Brush radius in radians — shown only for brush/erase. */
+  brushRadius?: number;
+  onChangeBrushRadius?: (rad: number) => void;
 }
 
 interface ToolDef {
@@ -24,31 +29,36 @@ const TOOLS: ToolDef[] = [
   { name: "pan",    label: "Pan",    shortcut: "P", icon: IconPan },
 ];
 
-export default function ToolPalette({ active, onChange }: ToolPaletteProps) {
+const MIN_RAD = 0.015;
+const MAX_RAD = 0.25;
+
+export default function ToolPalette({
+  active, onChange, topOffset, bottomOffset, brushRadius, onChangeBrushRadius,
+}: ToolPaletteProps) {
+  const showSize = (active === "brush" || active === "erase") && brushRadius != null && onChangeBrushRadius;
+  const destructive = active === "erase";
+
   return (
     <aside
       style={{
         position: "fixed",
-        left: 20,
-        top: "50%",
-        transform: "translateY(-50%)",
+        left: 0,
+        top: topOffset,
+        bottom: bottomOffset,
         zIndex: 60,
+        width: 48,
         background: colors.bgBase,
-        border: `1px solid ${colors.borderMid}`,
-        borderRadius: radii.sm,
-        boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
-        overflow: "hidden",
+        borderRight: `1px solid ${colors.borderMid}`,
         display: "flex",
         flexDirection: "column",
       }}
     >
-      {/* UE-style tab cap */}
       <div
         style={{
           background: colors.bgPanelHeader,
           borderBottom: `1px solid ${colors.borderMid}`,
-          padding: "6px 10px",
-          fontSize: 9,
+          padding: "6px 0",
+          fontSize: 8,
           letterSpacing: "0.32em",
           textTransform: "uppercase",
           fontWeight: 500,
@@ -60,11 +70,19 @@ export default function ToolPalette({ active, onChange }: ToolPaletteProps) {
         Tools
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", padding: 4, gap: 2 }}>
+      <div style={{ display: "flex", flexDirection: "column", padding: "4px 0", flex: 1 }}>
         {TOOLS.map((t) => (
           <ToolButton key={t.name} tool={t} active={t.name === active} onClick={() => onChange(t.name)} />
         ))}
       </div>
+
+      {showSize && (
+        <SizeStrip
+          value={brushRadius!}
+          onChange={onChangeBrushRadius!}
+          destructive={destructive}
+        />
+      )}
     </aside>
   );
 }
@@ -81,27 +99,25 @@ function ToolButton({ tool, active, onClick }: { tool: ToolDef; active: boolean;
       title={`${tool.label} · ${tool.shortcut}`}
       style={{
         position: "relative",
-        width: 40,
-        height: 40,
+        width: 48,
+        height: 44,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: active
-          ? colors.bgPanel
-          : hover ? "rgba(255,255,255,0.04)" : "transparent",
-        border: active ? `1px solid ${colors.accent}` : `1px solid transparent`,
-        borderRadius: radii.xs,
+        background: active ? colors.bgPanel : hover ? "rgba(255,255,255,0.04)" : "transparent",
+        border: "none",
+        borderLeft: `2px solid ${active ? colors.accent : "transparent"}`,
         cursor: "pointer",
-        transition: "background 90ms ease, border-color 90ms ease",
+        transition: "background 90ms ease",
       }}
     >
-      <Icon size={22} />
+      <Icon size={20} />
       {hover && (
         <span
           style={{
             position: "absolute",
             left: "100%",
-            marginLeft: 12,
+            marginLeft: 8,
             top: "50%",
             transform: "translateY(-50%)",
             background: colors.bgBase,
@@ -119,11 +135,73 @@ function ToolButton({ tool, active, onClick }: { tool: ToolDef; active: boolean;
           }}
         >
           {tool.label}
-          <span style={{ marginLeft: 8, color: colors.accentText, fontFamily: fonts.mono }}>
+          <span style={{ marginLeft: 8, color: colors.accent, fontFamily: fonts.mono }}>
             {tool.shortcut}
           </span>
         </span>
       )}
     </button>
+  );
+}
+
+function SizeStrip({ value, onChange, destructive }: {
+  value: number; onChange: (r: number) => void; destructive: boolean;
+}) {
+  const pct = Math.min(1, Math.max(0, (value - MIN_RAD) / (MAX_RAD - MIN_RAD)));
+  const degrees = (value * 180 / Math.PI).toFixed(1);
+  const accent = destructive ? "#C04848" : colors.accent;
+  return (
+    <div
+      style={{
+        borderTop: `1px solid ${colors.borderMid}`,
+        background: colors.bgPanelHeader,
+        padding: "10px 0 12px",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 8,
+      }}
+    >
+      <span style={{
+        fontSize: 8,
+        letterSpacing: "0.32em",
+        textTransform: "uppercase",
+        color: colors.textMuted,
+        fontFamily: "Inter, sans-serif",
+      }}>
+        Size
+      </span>
+      <span style={{
+        fontFamily: "JetBrains Mono, Consolas, monospace",
+        fontSize: 10,
+        color: accent,
+      }}>
+        {degrees}°
+      </span>
+      <div style={{ position: "relative", width: 20, height: 80 }}>
+        <div style={{
+          position: "absolute", left: 9, top: 0, bottom: 0, width: 2,
+          background: colors.borderSoft,
+        }} />
+        <div style={{
+          position: "absolute", left: 9, bottom: 0, width: 2,
+          height: `${pct * 100}%`, background: accent,
+        }} />
+        <div style={{
+          position: "absolute", left: 6, bottom: `calc(${pct * 100}% - 4px)`,
+          width: 8, height: 8, background: accent, pointerEvents: "none",
+          boxShadow: `0 0 0 2px ${colors.bgPanelHeader}`,
+        }} />
+        <input
+          type="range" min={MIN_RAD} max={MAX_RAD} step={0.005} value={value}
+          onChange={(e) => onChange(parseFloat(e.target.value))}
+          style={{
+            position: "absolute", left: -32, top: 30, width: 80, height: 24,
+            transform: "rotate(-90deg)", transformOrigin: "52px 12px",
+            background: "transparent", opacity: 0, cursor: "pointer",
+          }}
+        />
+      </div>
+    </div>
   );
 }

@@ -16,11 +16,13 @@ export const colors = {
   bgPanel:        "#252a32",
   /** Slightly darker tone for panel HEADERS — UE-editor tab caps. */
   bgPanelHeader:  "#1d2129",
-  /** Filled accent — buttons, swatches, dividers, painted state. */
+  /** Filled accent — matches the Hayba logo exactly (#B56A1D). Used for
+   * buttons, swatches, dividers, active selection, and uppercase labels. */
   accent:         "#B56A1D",
-  accentHover:    "#d77f24",
-  /** Text accent — uppercase tracked labels, accent prose, hover-on-text. */
-  accentText:     "#e8821c",
+  accentHover:    "#d27a25",
+  /** Same as accent — kept as a separate token so future themes can split
+   * the two if needed, but in v1 they are identical. */
+  accentText:     "#B56A1D",
   secondary:      "#6a9fdc",
   secondaryHover: "#8ab5e6",
   textPrimary:    "#e5e8eb",
