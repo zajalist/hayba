@@ -3,7 +3,7 @@ import { colors, fonts, radii } from "@hayba/design-tokens";
 import type { WizardDraft, PresetName } from "../wizard/state";
 import { PRESETS } from "../wizard/state";
 import { PRESETS as RESOLUTION_PRESETS } from "../wizard/ResolutionChips";
-import { IconSphere, IconPlates, IconSeed, IconReroll, IconBake } from "./icons";
+import { IconSphere, IconPlates, IconSeed, IconReroll } from "./icons";
 
 const BEIGE = "#DED4C3";
 
@@ -195,7 +195,6 @@ export default function SettingsModal({
                 e.currentTarget.style.background = "transparent";
               }}
             >
-              <IconBake size={20} />
               {busy ? "Baking…" : "Bake planet →"}
             </button>
           </div>
