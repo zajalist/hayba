@@ -587,6 +587,7 @@ export default function App() {
           onEditWizard={handleEditWizard}
           onNext={handleAdvanceToDensities}
           nextLabel="Next: Densities →"
+          showBoundaryHint
         />
       )}
 
@@ -665,13 +666,15 @@ export default function App() {
 }
 
 function ViewingChrome({
-  topOffset, assignedCount, onEditWizard, onNext, nextLabel,
+  topOffset, assignedCount, onEditWizard, onNext, nextLabel, showBoundaryHint,
 }: {
   topOffset: number;
   assignedCount: number;
   onEditWizard: () => void;
   onNext?: () => void;
   nextLabel?: string;
+  /** Only the boundaries phase shows the "click a pink seam" hint banner. */
+  showBoundaryHint?: boolean;
 }) {
   const BEIGE = "#DED4C3";
   const baseBtn: React.CSSProperties = {
@@ -689,34 +692,34 @@ function ViewingChrome({
   };
   return (
     <>
-      {/* Boundary editor hint banner — top center, fades the user toward
-          clicking the pink seams. */}
-      <div
-        style={{
-          position: "fixed",
-          top: topOffset + 22,
-          left: "50%",
-          transform: "translateX(-50%)",
-          zIndex: 60,
-          background: "rgba(34, 38, 46, 0.92)",
-          border: "1px solid #2f343d",
-          borderRadius: 10,
-          padding: "8px 16px",
-          fontSize: 12,
-          color: "#a8aeb8",
-          fontFamily: '"Segoe UI", "Noto Sans", system-ui, sans-serif',
-          letterSpacing: "0.01em",
-          backdropFilter: "blur(10px)",
-          pointerEvents: "none",
-        }}
-      >
-        Click a pink seam to set boundary type
-        {assignedCount > 0 && (
-          <span style={{ marginLeft: 10, color: "#B56A1D" }}>
-            · {assignedCount} assigned
-          </span>
-        )}
-      </div>
+      {showBoundaryHint && (
+        <div
+          style={{
+            position: "fixed",
+            top: topOffset + 22,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 60,
+            background: "rgba(34, 38, 46, 0.92)",
+            border: "1px solid #2f343d",
+            borderRadius: 10,
+            padding: "8px 16px",
+            fontSize: 12,
+            color: "#a8aeb8",
+            fontFamily: '"Segoe UI", "Noto Sans", system-ui, sans-serif',
+            letterSpacing: "0.01em",
+            backdropFilter: "blur(10px)",
+            pointerEvents: "none",
+          }}
+        >
+          Click a pink seam to set boundary type
+          {assignedCount > 0 && (
+            <span style={{ marginLeft: 10, color: BEIGE }}>
+              · {assignedCount} assigned
+            </span>
+          )}
+        </div>
+      )}
 
       <div style={{
         position: "fixed",
