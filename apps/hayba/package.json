@@ -10,6 +10,8 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.2.8",
+    "@fontsource/jetbrains-mono": "^5.2.8",
     "@hayba/design-tokens": "file:../../packages/hayba-design-tokens",
     "@tauri-apps/api": "^2.0.0",
     "react": "^18.3.1",
