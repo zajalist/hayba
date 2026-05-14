@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import Viewport from "./viewport/Viewport";
 import type { SceneHandle } from "./viewport/scene";
 import { buildGlobeMesh } from "./viewport/globe";
+import StatusBar from "./components/StatusBar";
 
 export interface PlanetSnapshot {
   divisions: number;
@@ -14,42 +15,48 @@ export interface PlanetSnapshot {
   cell_continental: number[];
 }
 
+type Status = "idle" | "baking" | "ready" | "error";
+
 export default function App() {
   const sceneRef = useRef<SceneHandle | null>(null);
   const [snapshot, setSnapshot] = useState<PlanetSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<Status>("idle");
 
   const handleSceneReady = useCallback((handle: SceneHandle) => {
     sceneRef.current = handle;
   }, []);
 
   useEffect(() => {
+    setStatus("baking");
     invoke<PlanetSnapshot>("bake_demo_planet")
-      .then(setSnapshot)
-      .catch((e) => setError(String(e)));
+      .then((snap) => {
+        setSnapshot(snap);
+        setStatus("ready");
+      })
+      .catch((e) => {
+        setError(String(e));
+        setStatus("error");
+      });
   }, []);
 
-  // When both the scene and the snapshot are ready, swap the placeholder
-  // sphere for the real point-cloud globe. Runs once per snapshot change.
   useEffect(() => {
     if (!sceneRef.current || !snapshot) return;
     const mesh = buildGlobeMesh(snapshot);
     sceneRef.current.setGlobe(mesh);
   }, [snapshot]);
 
+  const message =
+    status === "baking" ? "Baking demo planet…" :
+    status === "ready" && snapshot ?
+      `Planet ready — ${snapshot.n_cells.toLocaleString()} cells, ${snapshot.sim_time_ma.toFixed(1)} Ma` :
+    status === "error" ? `Error: ${error}` :
+    "Idle";
+
   return (
     <>
       <Viewport onReady={handleSceneReady} />
-      {error && (
-        <div style={{ position: "fixed", top: 8, left: 8, color: "#d77f24", fontSize: 12 }}>
-          error: {error}
-        </div>
-      )}
-      {snapshot && (
-        <div style={{ position: "fixed", top: 8, left: 8, color: "#a8aeb8", fontSize: 12 }}>
-          planet ready — n_cells={snapshot.n_cells}, sim_time_ma={snapshot.sim_time_ma.toFixed(1)}
-        </div>
-      )}
+      <StatusBar state={status} message={message} />
     </>
   );
 }
