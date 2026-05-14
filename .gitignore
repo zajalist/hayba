@@ -42,3 +42,5 @@ tools/peels-audit/ts-peels-*.json
 tools/peels-audit/rust-peels-*.json
 tools/peels-audit/world-*.bin
 tools/peels-audit/world-*.bin.json
+apps/hayba/dist/
+apps/hayba/node_modules/
