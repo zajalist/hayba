@@ -65,7 +65,7 @@ function parseBindingSeed(raw: unknown): bigint {
   throw new Error(`seed must be bigint, hex string, or number; got ${typeof raw}`);
 }
 
-function loadBindingCatalog(): BindingCatalog {
+export function loadBindingCatalog(): BindingCatalog {
   if (CAT_BINDINGS) return CAT_BINDINGS;
   const elements = loadElementCatalog();
   const errors: ValidationError[] = [];
@@ -117,6 +117,27 @@ export interface EmitError {
   ok: false;
   error: 'not_found' | 'kernel_error';
   message: string;
+}
+
+/**
+ * Register a binding at runtime (session-only). Adds (or overwrites) an entry
+ * in the binding catalog. Persistence to disk is a separate concern — call
+ * `acceptBindingToDisk` (Plan 4) to commit, or `Download JSON` from the atlas.
+ *
+ * Throws if the element type is unknown.
+ */
+export function registerBinding(binding: ElementBinding): void {
+  const elements = loadElementCatalog();
+  if (!elements.elementsById.has(binding.elementId)) {
+    throw new Error(`registerBinding: unknown element ${JSON.stringify(binding.elementId)}`);
+  }
+  // Force the binding catalog to load if it hasn't yet.
+  loadBindingCatalog();
+  const key = `${binding.styleSheetId}::${binding.elementId}`;
+  // CAT_BINDINGS.byKey is a ReadonlyMap typewise but a real Map at runtime;
+  // cast via unknown to set/overwrite.
+  const map = (CAT_BINDINGS as unknown as { byKey: Map<string, ElementBinding> }).byKey;
+  map.set(key, binding);
 }
 
 export function emitElementMesh(styleSheetId: string, elementId: string): EmitResult | EmitError {
