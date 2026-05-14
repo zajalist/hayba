@@ -17,9 +17,10 @@ import SettingsPanel from "./components/panels/SettingsPanel";
 import DockToolbar, { type ToolName } from "./components/DockToolbar";
 import RecenterButton from "./components/RecenterButton";
 import ConfirmDialog from "./components/ConfirmDialog";
+import BoundaryPopover from "./components/BoundaryPopover";
 import { buildPlateLabels, type PlateLabelsHandle } from "./viewport/overlays/plateLabels";
 import { buildForceArrows, type ForceArrowsHandle } from "./viewport/overlays/forceArrows";
-import { createDefaultDraft, type WizardDraft, type PresetName, type BoundaryType } from "./wizard/state";
+import { createDefaultDraft, pairKey, type WizardDraft, type PresetName, type BoundaryType } from "./wizard/state";
 import { BoundaryModel, setBoundary, clearBoundary } from "./wizard/boundary-model";
 import { buildCellKdTree, cellsWithinRadius, nearestCell, type KdTree } from "./wizard/kdtree";
 
@@ -154,9 +155,13 @@ export default function App() {
 
   // Panel state
   const [panelCategory, setPanelCategory] = useState<PanelCategory>("compose");
-  const [selectedPairKey, setSelectedPairKey] = useState<string | null>(null);
   const [showPlateLabels, setShowPlateLabels] = useState(true);
   const [showForceArrows, setShowForceArrows] = useState(true);
+
+  // Click-on-planet boundary popover (replaces selected-seam editor in the side panel)
+  const [boundaryPopover, setBoundaryPopover] = useState<{
+    screenX: number; screenY: number; plateA: number; plateB: number;
+  } | null>(null);
 
   useEffect(() => {
     activeToolRef.current = activeTool;
@@ -396,11 +401,17 @@ export default function App() {
       const cell = nearestCell(tree, p.x, p.y, p.z);
       const key = bm.pairKeyForCell(cell);
       if (!key) {
-        setSelectedPairKey(null);
+        setBoundaryPopover(null);
         return;
       }
-      setSelectedPairKey(key);
-      setPanelCategory("boundaries");
+      const members = bm.membersFor(key);
+      if (!members) return;
+      setBoundaryPopover({
+        screenX: ev.clientX,
+        screenY: ev.clientY,
+        plateA: members[0],
+        plateB: members[1],
+      });
     };
     canvas.addEventListener("pointerdown", onPointer);
     return () => canvas.removeEventListener("pointerdown", onPointer);
@@ -420,21 +431,35 @@ export default function App() {
     }
   }, []);
 
-  const handlePickType = useCallback((t: BoundaryType) => {
-    if (!selectedPairKey || !draft) return;
-    const nextTypes = setBoundary(draft.boundary_types, selectedPairKey, t);
+  const handleSetBoundary = useCallback((type: BoundaryType) => {
+    if (!boundaryPopover || !draft) return;
+    const key = pairKey(boundaryPopover.plateA, boundaryPopover.plateB);
+    const nextTypes = setBoundary(draft.boundary_types, key, type);
     const next: WizardDraft = { ...draft, boundary_types: nextTypes };
     setDraft(next); draftRef.current = next;
+    setBoundaryPopover(null);
     applyBoundaryTypesLive(nextTypes);
-  }, [selectedPairKey, draft, applyBoundaryTypesLive]);
+  }, [boundaryPopover, draft, applyBoundaryTypesLive]);
 
-  const handleClearType = useCallback(() => {
-    if (!selectedPairKey || !draft) return;
-    const nextTypes = clearBoundary(draft.boundary_types, selectedPairKey);
+  const handleClearBoundary = useCallback(() => {
+    if (!boundaryPopover || !draft) return;
+    const key = pairKey(boundaryPopover.plateA, boundaryPopover.plateB);
+    const nextTypes = clearBoundary(draft.boundary_types, key);
     const next: WizardDraft = { ...draft, boundary_types: nextTypes };
     setDraft(next); draftRef.current = next;
+    setBoundaryPopover(null);
     applyBoundaryTypesLive(nextTypes);
-  }, [selectedPairKey, draft, applyBoundaryTypesLive]);
+  }, [boundaryPopover, draft, applyBoundaryTypesLive]);
+
+  // Escape dismisses the popover
+  useEffect(() => {
+    if (!boundaryPopover) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setBoundaryPopover(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [boundaryPopover]);
 
   const handleChangeDivisions = useCallback((divisions: number) => {
     const d = draftRef.current;
@@ -636,11 +661,6 @@ export default function App() {
           <BoundariesPanel
             totalSeams={boundaryModelRef.current?.pairs.length ?? 0}
             assignedCount={Object.keys(draft.boundary_types ?? {}).length}
-            selectedKey={selectedPairKey}
-            selectedMembers={selectedPairKey ? boundaryModelRef.current?.membersFor(selectedPairKey) ?? null : null}
-            selectedType={selectedPairKey ? draft.boundary_types[selectedPairKey] : undefined}
-            onPickType={handlePickType}
-            onClearType={handleClearType}
             onAdvance={handleAdvanceToDensities}
           />
         )}
@@ -703,6 +723,19 @@ export default function App() {
           ) : null}
         />
       </div>
+
+      {boundaryPopover && draft && (
+        <BoundaryPopover
+          screenX={boundaryPopover.screenX}
+          screenY={boundaryPopover.screenY}
+          plateA={boundaryPopover.plateA}
+          plateB={boundaryPopover.plateB}
+          current={draft.boundary_types[pairKey(boundaryPopover.plateA, boundaryPopover.plateB)]}
+          onPick={handleSetBoundary}
+          onClear={handleClearBoundary}
+          onDismiss={() => setBoundaryPopover(null)}
+        />
+      )}
 
       <ConfirmDialog
         open={pendingDivisions !== null}
