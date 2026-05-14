@@ -5,14 +5,11 @@
 //! map modes, MCP automation, and live observability UX per the design spec
 //! at `docs/superpowers/specs/2026-05-14-hayba-explorer-design.md`.
 
+mod planet;
+
 #[tauri::command]
-fn bake_demo_planet() -> serde_json::Value {
-    // T2 stub. Real bake lands in T5.
-    serde_json::json!({
-        "status": "stub",
-        "n_cells": 42,
-        "message": "hello from Rust"
-    })
+fn bake_demo_planet() -> planet::PlanetSnapshot {
+    planet::bake_demo()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
