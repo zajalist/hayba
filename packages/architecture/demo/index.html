@@ -821,20 +821,6 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 /* ─── data loading ─────────────────────────────────────── */
 
-const GUIDE_FILES = [
-  'medieval-european-carolingian',
-  'medieval-european-romanesque',
-  'medieval-european-gothic',
-  'tang-chinese-7c',
-  'tang-chinese-9c',
-  'andean-pre-inca',
-  'andean-inca',
-  'edo-japanese-early',
-  'edo-japanese-late',
-  'hausa-classical',
-  'industrial-revolution-english',
-];
-
 // Start with a dynamic listing from the server. If the listing endpoint is
 // unavailable (e.g. the user is serving static files from a non-Hayba server),
 // fall back to a hardcoded set so the page still works.
@@ -853,10 +839,11 @@ try {
 }
 
 
-const [typologyFile, ...guides] = await Promise.all([
+// Style-guides data removed in Task 11 — style-guide view is retired.
+const [typologyFile] = await Promise.all([
   fetch('../src/data/typologies.json').then(r => r.json()),
-  ...GUIDE_FILES.map(n => fetch(`../src/data/style-guides/${n}.json`).then(r => r.json())),
 ]);
+const guides = [];
 
 const bindings = {};
 await Promise.all(BOUND_PAIRS.map(async ({ styleSheetId, elementId }) => {
