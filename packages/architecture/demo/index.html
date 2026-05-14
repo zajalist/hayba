@@ -11,9 +11,7 @@
 {
   "imports": {
     "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/",
-    "paper": "https://unpkg.com/paper@0.12.18/dist/paper-core.js",
-    "@anthropic-ai/sdk": "https://esm.sh/@anthropic-ai/sdk@0.96.0?bundle"
+    "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/"
   }
 }
 </script>
@@ -759,13 +757,11 @@
   <div class="tabs" id="tabs">
     <button class="tab active" data-view="guides">Style guides</button>
     <button class="tab" data-view="typologies">Typologies</button>
-    <button class="tab" data-view="editor">Editor</button>
   </div>
   <div class="divider"></div>
   <div class="stats-bar" id="stats"></div>
   <div class="grow"></div>
   <span class="mono muted" style="font-size:11px;">A1 · style-data explorer</span>
-  <button class="settings-btn" id="settingsBtn" title="Configure AI provider">⚙ settings</button>
 </div>
 
 <!-- ─── app shell ─────────────────────────────────────────── -->
@@ -775,83 +771,6 @@
   <div class="pane right" id="rightPane"><div class="right-wrap" id="rightWrap"></div></div>
 </div>
 
-<div class="editor-view" id="editorView" style="display:none;">
-  <div class="editor-topbar">
-    <div class="editor-crumb">
-      <span class="editor-crumb-prefix muted">Editing /</span>
-      <span class="editor-crumb-name" id="editorBindingName">— no binding loaded —</span>
-    </div>
-    <div class="editor-slot-tabs" id="editorSlotTabs"></div>
-    <button class="editor-save-btn" id="editorSaveBtn" disabled>SAVE</button>
-  </div>
-  <div class="editor-body">
-    <div class="editor-canvas-wrap">
-      <div class="editor-toolpalette">
-        <button class="editor-tool-btn active" data-tool="select" title="Select (V)">↖</button>
-        <button class="editor-tool-btn" data-tool="pen" title="Pen (P) — add vertex">✎</button>
-        <button class="editor-tool-btn" data-tool="pan" title="Pan (space)">✋</button>
-        <button class="editor-tool-btn" data-tool="zoom" title="Zoom (scroll)">⊕</button>
-        <button class="editor-tool-btn active" id="editorSnapBtn" data-tool="snap" title="Snap to grid (5mm)">⊞</button>
-      </div>
-      <canvas id="editorCanvas" resize="true"></canvas>
-      <div class="editor-statusbar" id="editorStatus">grid 5mm · 0 vertices</div>
-    </div>
-    <div class="editor-preview">
-      <div class="editor-preview-h">Live preview</div>
-      <div class="editor-preview-stage" id="editorPreviewStage"></div>
-      <div class="editor-preview-stats mono muted" id="editorPreviewStats">—</div>
-      <div class="editor-preview-meta" id="editorPreviewMeta">—</div>
-    </div>
-  </div>
-</div>
-
-<div id="settingsModal" class="viewer-modal" style="display:none;">
-  <div class="viewer-modal-backdrop"></div>
-  <div class="viewer-modal-card" style="width: 480px;">
-    <div class="viewer-modal-h">
-      <span>Settings · AI provider</span>
-      <button class="viewer-modal-close" id="settingsModalClose">✕</button>
-    </div>
-    <div style="padding: 8px 0; display: flex; flex-direction: column; gap: 14px;">
-      <div>
-        <div class="settings-label">Provider</div>
-        <select class="settings-input" id="settingsProvider">
-          <option value="mock">Mock (no key, canned output — for testing)</option>
-          <optgroup label="Free providers">
-            <option value="groq">Groq — free tier, very fast (llama / mixtral)</option>
-            <option value="openrouter">OpenRouter — free routes (llama-3, gemini-flash)</option>
-          </optgroup>
-          <optgroup label="Local (no key, run a server first)">
-            <option value="ollama">Ollama (localhost:11434) — qwen, llama, etc.</option>
-            <option value="lmstudio">LM Studio (localhost:1234)</option>
-          </optgroup>
-          <optgroup label="Paid">
-            <option value="anthropic">Anthropic Claude (BYOK)</option>
-            <option value="openai">OpenAI (BYOK)</option>
-          </optgroup>
-          <option value="custom">Custom OpenAI-compatible endpoint</option>
-        </select>
-      </div>
-      <div id="settingsKeyRow">
-        <div class="settings-label">API key</div>
-        <input type="password" class="settings-input" id="settingsApiKey" placeholder="sk-..." autocomplete="off">
-        <div class="settings-hint">Stays on this machine (browser localStorage). Sent only to the chosen provider's endpoint.</div>
-      </div>
-      <div id="settingsBaseUrlRow" style="display:none;">
-        <div class="settings-label">Base URL</div>
-        <input type="text" class="settings-input" id="settingsBaseUrl" placeholder="http://localhost:8080/v1">
-        <div class="settings-hint">For custom endpoints (vLLM, llama.cpp server, etc.). Must point to the root that exposes /chat/completions.</div>
-      </div>
-      <div>
-        <div class="settings-label">Model</div>
-        <input type="text" class="settings-input" id="settingsModel" placeholder="model name">
-      </div>
-      <div style="display: flex; gap: 8px; justify-content: flex-end;">
-        <button class="settings-action settings-action-primary" id="settingsSaveBtn">Save</button>
-      </div>
-    </div>
-  </div>
-</div>
 <div id="viewerModal" class="viewer-modal" style="display:none;">
   <div class="viewer-modal-backdrop"></div>
   <div class="viewer-modal-card">
@@ -868,15 +787,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import {
-  openEditor as editorOpen,
-  closeEditor as editorClose,
-  hasUnsavedChanges as editorHasUnsavedChanges,
-  editorSelectTool,
-  editorToggleSnap,
-  editorSave,
-  editorRefresh,
-} from './editor.js';
 
 'use strict';
 
@@ -913,35 +823,6 @@ try {
   BOUND_PAIRS = FALLBACK_BOUND_PAIRS;
 }
 
-/* ── AI provider settings (BYOK), persisted to localStorage ── */
-const SETTINGS_KEY = 'hayba-architecture-atlas-settings';
-function loadSettings() {
-  try {
-    return JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}');
-  } catch { return {}; }
-}
-function saveSettings(s) {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
-}
-
-// Per-provider defaults; user can override via settings UI.
-const PROVIDER_DEFAULTS = {
-  mock:       { model: 'mock-deterministic',                needsKey: false, needsBaseUrl: false, baseUrl: '' },
-  groq:       { model: 'llama-3.1-70b-versatile',            needsKey: true,  needsBaseUrl: false, baseUrl: 'https://api.groq.com/openai/v1' },
-  openrouter: { model: 'meta-llama/llama-3-8b-instruct:free',needsKey: true,  needsBaseUrl: false, baseUrl: 'https://openrouter.ai/api/v1' },
-  ollama:     { model: 'qwen2.5-coder:7b-instruct',          needsKey: false, needsBaseUrl: false, baseUrl: 'http://localhost:11434/v1' },
-  lmstudio:   { model: 'local-model',                        needsKey: false, needsBaseUrl: false, baseUrl: 'http://localhost:1234/v1' },
-  anthropic:  { model: 'claude-haiku-4-5',                   needsKey: true,  needsBaseUrl: false, baseUrl: '' },
-  openai:     { model: 'gpt-4o-mini',                        needsKey: true,  needsBaseUrl: false, baseUrl: 'https://api.openai.com/v1' },
-  custom:     { model: '',                                   needsKey: false, needsBaseUrl: true,  baseUrl: '' },
-};
-
-const settings = Object.assign({
-  provider: 'mock',
-  apiKey: '',
-  model: PROVIDER_DEFAULTS.mock.model,
-  baseUrl: '',
-}, loadSettings());
 
 const [typologyFile, ...guides] = await Promise.all([
   fetch('../src/data/typologies.json').then(r => r.json()),
@@ -984,7 +865,6 @@ const state = {
   // When set, the right pane displays a material-editor-style inspector
   // for that material or ornament instead of typology weights / across-cultures.
   inspecting: null,  // null | { kind: 'material' | 'ornament', id: string }
-  editorLastBindingKey: null,   // NEW
 };
 
 /* ─── stats bar ─────────────────────────────────────────── */
@@ -1127,10 +1007,6 @@ function renderCenter() {
                   </div>
                   <div class="bec-meta">
                     <span class="mono muted">${Object.entries(b.params).slice(0, 2).map(([k, v]) => `${k.replace(/_m$/,'')} ${v}`).join(' · ')} · seed ${String(b.seed).slice(0, 10)}…</span>
-                  </div>
-                  <div style="display: flex; gap: 6px;">
-                    <button class="bec-regen" data-regen-element="${p.elementId}" data-regen-style="${p.styleSheetId}" title="Regenerate via AI">⟲ regen</button>
-                    <button class="bec-edit" data-edit-element="${p.elementId}" data-edit-style="${p.styleSheetId}" title="Edit vertices">✎ edit</button>
                   </div>
                 </div>
               `;
@@ -1780,42 +1656,15 @@ document.getElementById('tabs').addEventListener('click', e => {
   const t = e.target.closest('.tab');
   if (!t) return;
 
-  // Block tab switch if editor has unsaved changes.
-  if (state.view === 'editor' && editorHasUnsavedChanges()) {
-    if (!confirm('You have unsaved changes in the editor. Discard?')) return;
-  }
-
   document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
   t.classList.add('active');
   const view = t.dataset.view;
   state.view = view;
 
-  const isEditor = view === 'editor';
-  document.getElementById('editorView').style.display = isEditor ? '' : 'none';
-  for (const pane of document.querySelectorAll('.pane')) {
-    pane.style.display = isEditor ? 'none' : '';
-  }
-
-  if (isEditor) {
-    if (state.editorLastBindingKey && bindings[state.editorLastBindingKey]) {
-      editorOpen(state.editorLastBindingKey, {
-        bindingsRef: bindings,
-        kernelRef: kernelMod,
-        onSave: (newBinding) => {
-          // Reflect the saved binding in the atlas's local cache.
-          bindings[`${newBinding.styleSheetId}::${newBinding.elementId}`] =
-            { ...newBinding, seed: '0x' + newBinding.seed.toString(16) };
-          renderCenter();
-        },
-      });
-    }
-  } else {
-    editorClose();
-    if (state.view === 'typologies' && !state.typologyId) state.typologyId = typologies[0].id;
-    renderLeftPane();
-    renderCenter();
-    renderRight();
-  }
+  if (state.view === 'typologies' && !state.typologyId) state.typologyId = typologies[0].id;
+  renderLeftPane();
+  renderCenter();
+  renderRight();
 });
 
 /* ─── kernel + 3D viewer ─────────────────────────────────── */
@@ -1832,108 +1681,6 @@ async function loadKernel() {
 
 const kernelMod = await loadKernel();
 
-async function generateBindingInBrowser(styleSheetId, elementId, seedHex = '0xa70') {
-  if (!kernelMod) throw new Error('Kernel not loaded');
-  const catalog = kernelMod.loadElementCatalog();
-  const reg = kernelMod.loadRegistry();
-  const element = catalog.elementsById.get(elementId);
-  const guide = reg.styleGuidesById.get(styleSheetId);
-  if (!element || !guide) throw new Error('Unknown element or style sheet');
-
-  const provider = (() => {
-    const defaults = PROVIDER_DEFAULTS[settings.provider] ?? PROVIDER_DEFAULTS.mock;
-    if (settings.provider === 'mock') return new kernelMod.MockProvider();
-    if (settings.provider === 'anthropic') {
-      if (!settings.apiKey) throw new Error('Anthropic key not set. Open ⚙ settings.');
-      return new kernelMod.AnthropicProvider({
-        apiKey: settings.apiKey,
-        model: settings.model || defaults.model,
-        dangerouslyAllowBrowser: true,
-      });
-    }
-    // OpenAI-compatible family.
-    const baseUrl = settings.provider === 'custom'
-      ? settings.baseUrl
-      : defaults.baseUrl;
-    if (!baseUrl) throw new Error('No base URL configured for this provider. Open ⚙ settings.');
-    if (defaults.needsKey && !settings.apiKey) {
-      throw new Error(`Key required for ${settings.provider}. Open ⚙ settings.`);
-    }
-    return new kernelMod.OpenAICompatibleProvider({
-      baseUrl,
-      apiKey: settings.apiKey || '',
-      model: settings.model || defaults.model,
-      name: settings.provider,
-    });
-  })();
-
-  const seed = BigInt(seedHex);
-  const r = await kernelMod.generateBinding({
-    element, styleSheet: guide.styleSheet, seed, provider,
-  });
-  return r;
-}
-
-async function persistBindingToServer(binding) {
-  // Serialize bigint seed as hex string for JSON transport.
-  const transported = { ...binding, seed: '0x' + binding.seed.toString(16) };
-  const url = `/api/bindings/${encodeURIComponent(binding.styleSheetId)}/${encodeURIComponent(binding.elementId)}`;
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(transported),
-  });
-  if (!r.ok) {
-    const txt = await r.text();
-    throw new Error(`Persist failed (HTTP ${r.status}): ${txt}`);
-  }
-  return await r.json();
-}
-
-async function regenerateBoundElement(styleSheetId, elementId, button) {
-  const originalText = button.textContent;
-  button.disabled = true;
-  button.textContent = '⏳ generating…';
-  try {
-    // Seed varies with timestamp so repeated regens give different output.
-    const seed = '0x' + (Date.now() & 0xffffffff).toString(16);
-    const r = await generateBindingInBrowser(styleSheetId, elementId, seed);
-    if (!r.ok) {
-      alert(`Generation failed (${r.stage}):\n` + r.errors.map(e => `${e.path}: ${e.message}`).join('\n'));
-      button.textContent = originalText;
-      button.disabled = false;
-      return;
-    }
-    // Register the new binding with the kernel so emitElementMesh picks it up.
-    kernelMod.registerBinding(r.draft);
-
-    // Persist to disk so the binding survives page reload.
-    button.textContent = '💾 saving…';
-    try {
-      await persistBindingToServer(r.draft);
-    } catch (persistErr) {
-      console.warn('Persist failed (kept in session only):', persistErr);
-      alert(`Saved to session but failed to persist to disk:\n${persistErr.message}`);
-    }
-
-    // Update local cache so re-renders see the new binding.
-    bindings[`${styleSheetId}::${elementId}`] = { ...r.draft, seed: '0x' + r.draft.seed.toString(16) };
-
-    button.textContent = '✓ accepted';
-    setTimeout(() => {
-      button.textContent = originalText;
-      button.disabled = false;
-    }, 1200);
-    if (document.getElementById('viewerModal').style.display === 'flex') {
-      openViewer(styleSheetId, elementId);
-    }
-    renderCenter();
-  } catch (e) {
-    alert(`Generation error: ${e.message}`);
-    button.textContent = originalText;
-    button.disabled = false;
-  }
-}
 
 function emitGLBForBinding(styleSheetId, elementId) {
   if (!kernelMod) throw new Error('Kernel not loaded — run `npm run build --workspace=@hayba/architecture`');
@@ -2107,60 +1854,8 @@ document.getElementById('viewerModalClose').addEventListener('click', () => {
   document.getElementById('viewerStage').innerHTML = '';
 });
 
-// Settings modal wiring.
-function updateSettingsModalVisibility() {
-  const provider = document.getElementById('settingsProvider').value;
-  const defaults = PROVIDER_DEFAULTS[provider] ?? PROVIDER_DEFAULTS.mock;
-  document.getElementById('settingsKeyRow').style.display = (defaults.needsKey || provider === 'custom') ? '' : 'none';
-  document.getElementById('settingsBaseUrlRow').style.display = defaults.needsBaseUrl ? '' : 'none';
-}
-
-document.getElementById('settingsBtn').addEventListener('click', () => {
-  document.getElementById('settingsModal').style.display = 'flex';
-  document.getElementById('settingsProvider').value = settings.provider;
-  document.getElementById('settingsApiKey').value = settings.apiKey;
-  document.getElementById('settingsModel').value = settings.model;
-  document.getElementById('settingsBaseUrl').value = settings.baseUrl;
-  updateSettingsModalVisibility();
-});
-document.getElementById('settingsProvider').addEventListener('change', () => {
-  const provider = document.getElementById('settingsProvider').value;
-  const defaults = PROVIDER_DEFAULTS[provider] ?? PROVIDER_DEFAULTS.mock;
-  document.getElementById('settingsModel').value = defaults.model;
-  if (defaults.baseUrl) document.getElementById('settingsBaseUrl').value = defaults.baseUrl;
-  updateSettingsModalVisibility();
-});
-document.getElementById('settingsModalClose').addEventListener('click', () => {
-  document.getElementById('settingsModal').style.display = 'none';
-});
-document.getElementById('settingsSaveBtn').addEventListener('click', () => {
-  settings.provider = document.getElementById('settingsProvider').value;
-  settings.apiKey   = document.getElementById('settingsApiKey').value.trim();
-  settings.model    = document.getElementById('settingsModel').value.trim() || PROVIDER_DEFAULTS[settings.provider]?.model || '';
-  settings.baseUrl  = document.getElementById('settingsBaseUrl').value.trim();
-  saveSettings(settings);
-  document.getElementById('settingsModal').style.display = 'none';
-});
 
 document.addEventListener('click', (e) => {
-  // ✎ edit → switch to Editor tab with this binding loaded.
-  const editBtn = e.target.closest('[data-edit-element]');
-  if (editBtn) {
-    e.stopPropagation();
-    const key = `${editBtn.dataset.editStyle}::${editBtn.dataset.editElement}`;
-    state.editorLastBindingKey = key;
-    document.querySelector('.tab[data-view="editor"]').click();
-    return;
-  }
-
-  // Regen button — must be handled BEFORE the card-click handler swallows it.
-  const regenBtn = e.target.closest('[data-regen-element]');
-  if (regenBtn) {
-    e.stopPropagation();
-    regenerateBoundElement(regenBtn.dataset.regenStyle, regenBtn.dataset.regenElement, regenBtn);
-    return;
-  }
-
   const card = e.target.closest('.bound-element-card');
   if (card) { openViewer(card.dataset.style, card.dataset.element); return; }
 
@@ -2657,26 +2352,6 @@ function getOrnamentCanvases(ornament) {
   return { diffuseCanvas: data.diffuseCanvas, normalCanvas: data.normalCanvas };
 }
 
-// Editor tool palette + save button + snap toggle.
-for (const btn of document.querySelectorAll('.editor-tool-btn[data-tool]')) {
-  btn.addEventListener('click', () => {
-    if (btn.dataset.tool === 'snap') {
-      editorToggleSnap();
-    } else {
-      editorSelectTool(btn.dataset.tool);
-    }
-  });
-}
-document.getElementById('editorSaveBtn')?.addEventListener('click', () => {
-  editorSave().catch(err => alert(`Save error: ${err.message}`));
-});
-
-window.addEventListener('beforeunload', (e) => {
-  if (editorHasUnsavedChanges()) {
-    e.preventDefault();
-    e.returnValue = '';
-  }
-});
 
 /* ─── boot ──────────────────────────────────────────────── */
 
