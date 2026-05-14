@@ -1694,6 +1694,61 @@ document.querySelectorAll('#studio-subtabs button').forEach(btn => {
   });
 });
 
+/* ── SSE live-reload ─────────────────────────────────────── */
+// v2 note: if the user's own PATCH triggers a file-write which emits an SSE
+// event back to the same client, we will re-render (~200 ms after save).
+// Deduplicating own-writes is left for v2 — the 200 ms file-watcher debounce
+// keeps storms under control in v1.
+
+function reRenderOpenCulture() {
+  if (!state.culture) return;
+  renderHeader();
+  // Skip sub-tab body re-render if the user is actively typing inside it.
+  // Known small bug (v2): two clients editing the same culture will miss
+  // remote updates while one is focused in an input.
+  if (!document.activeElement || !document.getElementById('subtab-body').contains(document.activeElement)) {
+    renderSubtab();
+  }
+  renderTimeline();
+  if (!document.activeElement || !document.getElementById('era-detail').contains(document.activeElement)) {
+    renderEraDetail();
+  }
+}
+
+let lastErrorLog = 0;
+function setupSse() {
+  let es;
+  try {
+    es = new EventSource('/api/events');
+  } catch (e) {
+    console.warn('SSE not available:', e);
+    return;
+  }
+  es.addEventListener('culture-changed', async (ev) => {
+    let payload;
+    try { payload = JSON.parse(ev.data); } catch { return; }
+    const changedId = payload?.id;
+    if (changedId && state.selectedId === changedId) {
+      try {
+        state.culture = await api.get(state.selectedId);
+        reRenderOpenCulture();
+      } catch (e) {
+        console.warn('Failed to refresh on culture-changed', e);
+      }
+    }
+    // Always refresh list to pick up adds/deletes.
+    try { await refreshList(); } catch {}
+  });
+  es.addEventListener('error', () => {
+    const now = Date.now();
+    if (now - lastErrorLog > 5000) {
+      lastErrorLog = now;
+      console.warn('SSE connection error (auto-reconnecting)');
+    }
+  });
+}
+
 /* ── Boot ────────────────────────────────────────────────── */
 
 refreshList();
+setupSse();
