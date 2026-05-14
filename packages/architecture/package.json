@@ -5,6 +5,20 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./culture": {
+      "import": "./dist/culture/index.js",
+      "types": "./dist/culture/index.d.ts"
+    },
+    "./schema-v2": {
+      "import": "./dist/schema-v2.js",
+      "types": "./dist/schema-v2.d.ts"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",

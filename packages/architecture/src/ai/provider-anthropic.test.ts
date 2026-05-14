@@ -1,12 +1,21 @@
 import { describe, it, expect, vi } from 'vitest';
 import { AnthropicProvider } from './provider-anthropic.js';
-import { loadElementCatalog, loadRegistry } from '../index.js';
+import { loadElementCatalog } from '../index.js';
 import { buildPrompt } from './prompt-builder.js';
 
 const catalog = loadElementCatalog();
-const reg = loadRegistry();
 const element = catalog.elementsById.get('column')!;
-const styleSheet = reg.styleGuidesById.get('medieval-european-gothic')!.styleSheet;
+const styleSheet = {
+  id: 'medieval-european-gothic',
+  cultureId: 'medieval-european',
+  dateRange: [1100, 1400] as [number, number],
+  core: {
+    primaryMaterial: 'stone' as const,
+    roofType: 'gable' as const,
+    ornamentation: ['pointed-arch', 'tracery', 'flying-buttress'],
+  },
+  extras: {},
+};
 
 describe('AnthropicProvider', () => {
   it('uses the configured model id', () => {

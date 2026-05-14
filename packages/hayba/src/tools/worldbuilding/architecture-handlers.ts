@@ -1,147 +1,329 @@
-import { z } from 'zod';
+/**
+ * MCP handler surface for the Architecture Culture Studio.
+ *
+ * Each export is an async (args) => result function matching the spec in
+ * docs/superpowers/plans/2026-05-12-tectonic-pillar-roadmap.md §MCP tools.
+ *
+ * __setDataRoot() is exported for test isolation — in production the default
+ * data root is packages/architecture/src/data/cultures, resolved relative to
+ * this file via import.meta.url. This avoids any runtime package-resolution
+ * tricks and keeps the path computable without a build step.
+ *
+ * For _update_rule / _delete_rule we accept an optional scope param (same
+ * shape as add_rule) to disambiguate when a rule id exists in both culture and
+ * era scope. When scope is omitted we search culture rules first, then all
+ * eras. This is the simplest ergonomic choice — callers don't need to track
+ * scope after creation.
+ */
+
+import { fileURLToPath } from 'node:url';
+import { join, dirname } from 'node:path';
 import {
-  listStyleGuides as engineListStyleGuides,
-  getStyleGuideTool as engineGetStyleGuide,
-  getTypologyTool as engineGetTypology,
-  validateStyleGuideTool as engineValidateStyleGuide,
-} from '@hayba/architecture';
+  seedCulture,
+  writeCulture,
+  readCulture,
+  listCultures,
+  deleteCulture,
+  validateCulture,
+  resolveRules,
+} from '@hayba/architecture/culture';
+import type {
+  Culture, Era, Material, Ornament, TagAxis, Rule,
+} from '@hayba/architecture/schema-v2';
 
-/* ─────────────────────  schemas  ───────────────────── */
+// ── Data root resolution ─────────────────────────────────────────────────────
 
-export const listStyleGuidesSchema = z.object({});
+// Default: packages/architecture/src/data/cultures
+// From this file:  packages/hayba/src/tools/worldbuilding/architecture-handlers.ts
+// Relative depth:  ../../../../architecture/src/data/cultures
+const DEFAULT_DATA_ROOT = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..', '..', '..', '..', 'architecture', 'src', 'data', 'cultures',
+);
 
-export const getStyleGuideSchema = z.object({
-  id: z.string().describe('StyleGuide id, e.g. "medieval-european-gothic"'),
-});
+let _dataRoot: string = DEFAULT_DATA_ROOT;
 
-export const getTypologySchema = z.object({
-  id: z.string().describe('Typology id, e.g. "peasant_home"'),
-});
-
-export const validateStyleGuideSchema = z.object({
-  json: z.record(z.string(), z.unknown()).describe('Candidate StyleGuide JSON to validate against the A1 schema'),
-});
-
-/* ─────────────────────  handlers  ───────────────────── */
-
-export function listStyleGuides(_params: z.infer<typeof listStyleGuidesSchema>) {
-  return engineListStyleGuides();
+/** Test-only: override the data root so tests can use a temp directory. */
+export function __setDataRoot(dir: string): void {
+  _dataRoot = dir;
 }
 
-export function getStyleGuide(params: z.infer<typeof getStyleGuideSchema>) {
-  return engineGetStyleGuide(params);
+function dataRoot(): string {
+  return _dataRoot;
 }
 
-export function getTypology(params: z.infer<typeof getTypologySchema>) {
-  return engineGetTypology(params);
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+async function load(id: string): Promise<Culture> {
+  return readCulture(dataRoot(), id);
 }
 
-export function validateStyleGuide(params: z.infer<typeof validateStyleGuideSchema>) {
-  return engineValidateStyleGuide(params);
+async function save(culture: Culture): Promise<void> {
+  return writeCulture(dataRoot(), culture);
 }
 
-import {
-  loadElementCatalog as engineLoadElementCatalog,
-  generateBinding as engineGenerateBinding,
-  MockProvider, AnthropicProvider, OpenAICompatibleProvider,
-  loadRegistry as engineLoadRegistry,
-} from '@hayba/architecture';
+// Top-level field merge: scalar fields replaced, arrays replaced wholesale.
+function mergeTopLevel<T extends object>(base: T, partial: Partial<T>): T {
+  return { ...base, ...partial };
+}
 
-/* ─────────────────────  AI binding generation  ───────────────────── */
+// ── Read handlers ─────────────────────────────────────────────────────────────
 
-export const generateBindingSchema = z.object({
-  styleSheetId: z.string().describe('Target style sheet id (e.g. "medieval-european-gothic")'),
-  elementId: z.string().describe('Target element id (e.g. "column")'),
-  seed: z.string().optional().describe('Hex bigint seed (e.g. "0x42"). Defaults to 0xa70.'),
-  provider: z.enum(['mock', 'anthropic', 'groq', 'openrouter', 'openai', 'ollama', 'lmstudio', 'custom']).optional().default('mock')
-    .describe('AI provider. Default mock (no key). free: groq, openrouter, ollama, lmstudio. paid: anthropic, openai. custom: provide baseUrl.'),
-  model: z.string().optional().describe('Provider-specific model id.'),
-  baseUrl: z.string().optional().describe('Required when provider="custom". The OpenAI-compatible chat-completions root, e.g. http://localhost:8080/v1.'),
-});
+export async function architecture_list_cultures(
+  _args: Record<string, never> | object,
+): Promise<{ id: string; name: string; eraCount: number }[]> {
+  return listCultures(dataRoot());
+}
 
-const ENV_KEY_BY_PROVIDER: Record<string, string> = {
-  anthropic:  'HAYBA_ANTHROPIC_API_KEY',
-  groq:       'HAYBA_GROQ_API_KEY',
-  openrouter: 'HAYBA_OPENROUTER_API_KEY',
-  openai:     'HAYBA_OPENAI_API_KEY',
-  custom:     'HAYBA_CUSTOM_API_KEY',
-};
+export async function architecture_get_culture(
+  args: { id: string },
+): Promise<Culture> {
+  return load(args.id);
+}
 
-const BASE_URL_BY_PROVIDER: Record<string, string> = {
-  groq:       'https://api.groq.com/openai/v1',
-  openrouter: 'https://openrouter.ai/api/v1',
-  openai:     'https://api.openai.com/v1',
-  ollama:     'http://localhost:11434/v1',
-  lmstudio:   'http://localhost:1234/v1',
-};
+export async function architecture_resolve_rules(
+  args: { cultureId: string; eraId: string; scenario: string; tagState: Record<string, string> },
+): Promise<Rule['assigns']> {
+  const culture = await load(args.cultureId);
+  return resolveRules(culture, args.eraId, args.scenario, args.tagState);
+}
 
-const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
-  anthropic:  'claude-haiku-4-5',
-  groq:       'llama-3.1-70b-versatile',
-  openrouter: 'meta-llama/llama-3-8b-instruct:free',
-  openai:     'gpt-4o-mini',
-  ollama:     'qwen2.5-coder:7b-instruct',
-  lmstudio:   'local-model',
-};
+export async function architecture_validate_culture(
+  args: { id: string },
+): Promise<{ ok: boolean; issues: { path: string; message: string; severity: string }[] }> {
+  const culture = await load(args.id);
+  return validateCulture(culture);
+}
 
-export async function generateBinding(params: z.infer<typeof generateBindingSchema>) {
-  const catalog = engineLoadElementCatalog();
-  const reg = engineLoadRegistry();
-  const element = catalog.elementsById.get(params.elementId);
-  if (!element) return { ok: false, error: 'unknown_element', message: `no element ${JSON.stringify(params.elementId)}` };
-  const guide = reg.styleGuidesById.get(params.styleSheetId);
-  if (!guide) return { ok: false, error: 'unknown_style', message: `no style sheet ${JSON.stringify(params.styleSheetId)}` };
+// ── Culture CRUD ──────────────────────────────────────────────────────────────
 
-  let provider;
-  if (params.provider === 'mock') {
-    provider = new MockProvider();
-  } else if (params.provider === 'anthropic') {
-    const key = process.env.HAYBA_ANTHROPIC_API_KEY;
-    if (!key) {
-      return { ok: false, error: 'ai_failed', message: 'no API key configured. Set HAYBA_ANTHROPIC_API_KEY.' };
-    }
-    provider = new AnthropicProvider({ apiKey: key, model: params.model });
+export async function architecture_create_culture(args: {
+  id: string;
+  name: string;
+  region: string;
+  climate: string;
+  seedFromPresets?: boolean;
+}): Promise<void> {
+  // seedFromPresets defaults to true (omitting it seeds from presets)
+  const culture = (args.seedFromPresets === false)
+    ? { id: args.id, name: args.name, region: args.region, climate: args.climate, tagAxes: [], materials: [], ornaments: [], rules: [], eras: [] }
+    : seedCulture({ id: args.id, name: args.name, region: args.region, climate: args.climate });
+  await save(culture);
+}
+
+export async function architecture_update_culture(args: {
+  id: string;
+  partial: Partial<Omit<Culture, 'id'>>;
+}): Promise<void> {
+  const culture = await load(args.id);
+  const updated = mergeTopLevel(culture, args.partial as Partial<Culture>);
+  await save(updated);
+}
+
+export async function architecture_delete_culture(args: { id: string }): Promise<void> {
+  await deleteCulture(dataRoot(), args.id);
+}
+
+// ── Era CRUD ──────────────────────────────────────────────────────────────────
+
+export async function architecture_add_era(args: {
+  cultureId: string;
+  era: Era;
+}): Promise<void> {
+  const culture = await load(args.cultureId);
+  culture.eras = [...culture.eras, args.era];
+  await save(culture);
+}
+
+export async function architecture_update_era(args: {
+  cultureId: string;
+  eraId: string;
+  partial: Partial<Era>;
+}): Promise<void> {
+  const culture = await load(args.cultureId);
+  culture.eras = culture.eras.map(e =>
+    e.id === args.eraId ? mergeTopLevel(e, args.partial) : e,
+  );
+  await save(culture);
+}
+
+export async function architecture_delete_era(args: {
+  cultureId: string;
+  eraId: string;
+}): Promise<void> {
+  const culture = await load(args.cultureId);
+  culture.eras = culture.eras.filter(e => e.id !== args.eraId);
+  await save(culture);
+}
+
+// ── Material CRUD ─────────────────────────────────────────────────────────────
+
+export async function architecture_add_material(args: {
+  cultureId: string;
+  material: Material;
+}): Promise<void> {
+  const culture = await load(args.cultureId);
+  culture.materials = [...culture.materials, args.material];
+  await save(culture);
+}
+
+export async function architecture_update_material(args: {
+  cultureId: string;
+  materialId: string;
+  partial: Partial<Material>;
+}): Promise<void> {
+  const culture = await load(args.cultureId);
+  culture.materials = culture.materials.map(m =>
+    m.id === args.materialId ? mergeTopLevel(m, args.partial) : m,
+  );
+  await save(culture);
+}
+
+export async function architecture_delete_material(args: {
+  cultureId: string;
+  materialId: string;
+}): Promise<void> {
+  const culture = await load(args.cultureId);
+  culture.materials = culture.materials.filter(m => m.id !== args.materialId);
+  await save(culture);
+}
+
+// ── Ornament CRUD ─────────────────────────────────────────────────────────────
+
+export async function architecture_add_ornament(args: {
+  cultureId: string;
+  ornament: Ornament;
+}): Promise<void> {
+  const culture = await load(args.cultureId);
+  culture.ornaments = [...culture.ornaments, args.ornament];
+  await save(culture);
+}
+
+export async function architecture_update_ornament(args: {
+  cultureId: string;
+  ornamentId: string;
+  partial: Partial<Ornament>;
+}): Promise<void> {
+  const culture = await load(args.cultureId);
+  culture.ornaments = culture.ornaments.map(o =>
+    o.id === args.ornamentId ? mergeTopLevel(o, args.partial) : o,
+  );
+  await save(culture);
+}
+
+export async function architecture_delete_ornament(args: {
+  cultureId: string;
+  ornamentId: string;
+}): Promise<void> {
+  const culture = await load(args.cultureId);
+  culture.ornaments = culture.ornaments.filter(o => o.id !== args.ornamentId);
+  await save(culture);
+}
+
+// ── TagAxis CRUD ──────────────────────────────────────────────────────────────
+
+export async function architecture_add_tag_axis(args: {
+  cultureId: string;
+  axis: TagAxis;
+}): Promise<void> {
+  const culture = await load(args.cultureId);
+  culture.tagAxes = [...culture.tagAxes, args.axis];
+  await save(culture);
+}
+
+export async function architecture_update_tag_axis(args: {
+  cultureId: string;
+  axisId: string;
+  partial: Partial<TagAxis>;
+}): Promise<void> {
+  const culture = await load(args.cultureId);
+  culture.tagAxes = culture.tagAxes.map(a =>
+    a.id === args.axisId ? mergeTopLevel(a, args.partial) : a,
+  );
+  await save(culture);
+}
+
+export async function architecture_delete_tag_axis(args: {
+  cultureId: string;
+  axisId: string;
+}): Promise<void> {
+  const culture = await load(args.cultureId);
+  culture.tagAxes = culture.tagAxes.filter(a => a.id !== args.axisId);
+  await save(culture);
+}
+
+// ── Rule CRUD ─────────────────────────────────────────────────────────────────
+
+type RuleScope = 'culture' | { era: string };
+
+export async function architecture_add_rule(args: {
+  cultureId: string;
+  rule: Rule;
+  scope: RuleScope;
+}): Promise<void> {
+  const culture = await load(args.cultureId);
+  if (args.scope === 'culture') {
+    culture.rules = [...culture.rules, args.rule];
   } else {
-    // OpenAI-compatible family: groq / openrouter / openai / ollama / lmstudio / custom
-    const baseUrl = params.provider === 'custom'
-      ? params.baseUrl
-      : BASE_URL_BY_PROVIDER[params.provider!];
-    if (!baseUrl) {
-      return { ok: false, error: 'ai_failed', message: `unknown provider ${JSON.stringify(params.provider)} or missing baseUrl` };
-    }
-    const envKey = ENV_KEY_BY_PROVIDER[params.provider!];
-    const key = envKey ? (process.env[envKey] ?? '') : '';
-    if (envKey && !key && params.provider !== 'custom') {
-      return {
-        ok: false,
-        error: 'ai_failed',
-        message: `no API key for ${params.provider}. Set ${envKey}, or use provider="mock"/"ollama"/"lmstudio" for keyless options.`,
-      };
-    }
-    const model = params.model ?? DEFAULT_MODEL_BY_PROVIDER[params.provider!] ?? 'unknown';
-    provider = new OpenAICompatibleProvider({ baseUrl, apiKey: key, model, name: params.provider! });
+    const eraId = (args.scope as { era: string }).era;
+    culture.eras = culture.eras.map(e =>
+      e.id === eraId ? { ...e, rules: [...e.rules, args.rule] } : e,
+    );
   }
+  await save(culture);
+}
 
-  const seed = params.seed ? BigInt(params.seed) : 0xa70n;
-  const result = await engineGenerateBinding({
-    element, styleSheet: guide.styleSheet, seed, provider,
-  });
+export async function architecture_update_rule(args: {
+  cultureId: string;
+  ruleId: string;
+  partial: Partial<Rule>;
+  scope?: RuleScope;
+}): Promise<void> {
+  const culture = await load(args.cultureId);
+  const updateList = (rules: Rule[]) =>
+    rules.map(r => r.id === args.ruleId ? mergeTopLevel(r, args.partial) : r);
 
-  if (result.ok) {
-    return {
-      ok: true,
-      // bigint isn't JSON-transportable — serialize as hex string at the MCP boundary.
-      draft: { ...result.draft, seed: '0x' + result.draft.seed.toString(16) },
-      rationale: result.rationale ?? null,
-      validation: { ok: true },
-      retriesUsed: 0,
-    };
+  if (args.scope === undefined) {
+    // Search culture-level first, then eras
+    const inCulture = culture.rules.some(r => r.id === args.ruleId);
+    if (inCulture) {
+      culture.rules = updateList(culture.rules);
+    } else {
+      culture.eras = culture.eras.map(e => ({
+        ...e,
+        rules: updateList(e.rules),
+      }));
+    }
+  } else if (args.scope === 'culture') {
+    culture.rules = updateList(culture.rules);
+  } else {
+    const eraId = (args.scope as { era: string }).era;
+    culture.eras = culture.eras.map(e =>
+      e.id === eraId ? { ...e, rules: updateList(e.rules) } : e,
+    );
   }
-  return {
-    ok: false,
-    error: 'ai_failed',
-    message: result.message,
-    stage: result.stage,
-    errors: result.errors,
-  };
+  await save(culture);
+}
+
+export async function architecture_delete_rule(args: {
+  cultureId: string;
+  ruleId: string;
+  scope?: RuleScope;
+}): Promise<void> {
+  const culture = await load(args.cultureId);
+  const removeFrom = (rules: Rule[]) => rules.filter(r => r.id !== args.ruleId);
+
+  if (args.scope === undefined) {
+    // Remove from culture-level and all eras (belt-and-suspenders)
+    culture.rules = removeFrom(culture.rules);
+    culture.eras = culture.eras.map(e => ({ ...e, rules: removeFrom(e.rules) }));
+  } else if (args.scope === 'culture') {
+    culture.rules = removeFrom(culture.rules);
+  } else {
+    const eraId = (args.scope as { era: string }).era;
+    culture.eras = culture.eras.map(e =>
+      e.id === eraId ? { ...e, rules: removeFrom(e.rules) } : e,
+    );
+  }
+  await save(culture);
 }

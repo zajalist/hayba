@@ -1,12 +1,21 @@
 import { describe, it, expect } from 'vitest';
 import { generateBinding } from './generate-binding.js';
 import { MockProvider } from './provider-mock.js';
-import { loadElementCatalog, loadRegistry } from '../index.js';
+import { loadElementCatalog } from '../index.js';
 
 const catalog = loadElementCatalog();
-const reg = loadRegistry();
 const element = catalog.elementsById.get('column')!;
-const styleSheet = reg.styleGuidesById.get('medieval-european-gothic')!.styleSheet;
+const styleSheet = {
+  id: 'medieval-european-gothic',
+  cultureId: 'medieval-european',
+  dateRange: [1100, 1400] as [number, number],
+  core: {
+    primaryMaterial: 'stone' as const,
+    roofType: 'gable' as const,
+    ornamentation: ['pointed-arch', 'tracery', 'flying-buttress'],
+  },
+  extras: {},
+};
 
 describe('generateBinding', () => {
   it('produces a valid binding draft via the mock provider', async () => {

@@ -55,16 +55,28 @@ import {
   wordForSchema,
 } from './worldbuilding/language-handlers.js';
 import {
-  listStyleGuidesSchema,
-  getStyleGuideSchema,
-  getTypologySchema,
-  validateStyleGuideSchema,
-  generateBindingSchema,
-  listStyleGuides as architectureListStyleGuides,
-  getStyleGuide as architectureGetStyleGuide,
-  getTypology as architectureGetTypology,
-  validateStyleGuide as architectureValidateStyleGuide,
-  generateBinding as architectureGenerateBinding,
+  architecture_list_cultures,
+  architecture_get_culture,
+  architecture_resolve_rules,
+  architecture_validate_culture,
+  architecture_create_culture,
+  architecture_update_culture,
+  architecture_delete_culture,
+  architecture_add_era,
+  architecture_update_era,
+  architecture_delete_era,
+  architecture_add_material,
+  architecture_update_material,
+  architecture_delete_material,
+  architecture_add_ornament,
+  architecture_update_ornament,
+  architecture_delete_ornament,
+  architecture_add_tag_axis,
+  architecture_update_tag_axis,
+  architecture_delete_tag_axis,
+  architecture_add_rule,
+  architecture_update_rule,
+  architecture_delete_rule,
 } from './worldbuilding/architecture-handlers.js';
 import {
   dynamoSchema,
@@ -619,13 +631,15 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
     }
   );
 
+  // ── Architecture Culture Studio ─────────────────────────────────────────────
+
   server.tool(
-    'architecture_list_style_guides',
-    'List all seed StyleGuide palettes (metadata only — id, cultureId, dateRange, typologyCount).',
-    listStyleGuidesSchema.shape,
-    async (params) => {
+    'architecture_list_cultures',
+    'List all architecture cultures (id, name, eraCount).',
+    {},
+    async () => {
       try {
-        const result = architectureListStyleGuides(params as z.infer<typeof listStyleGuidesSchema>);
+        const result = await architecture_list_cultures({});
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -635,12 +649,12 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
   );
 
   server.tool(
-    'architecture_get_style_guide',
-    'Fetch a full StyleGuide by id (embedded StyleSheet + typologyWeights). Returns { error: "not_found" } if unknown.',
-    getStyleGuideSchema.shape,
+    'architecture_get_culture',
+    'Fetch a full Culture object by id.',
+    { id: z.string().describe('Culture id') },
     async (params) => {
       try {
-        const result = architectureGetStyleGuide(params as z.infer<typeof getStyleGuideSchema>);
+        const result = await architecture_get_culture(params);
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -650,12 +664,22 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
   );
 
   server.tool(
-    'architecture_get_typology',
-    'Fetch a Typology by id (footprint, storyRange, fenestrationDensity). Returns { error: "not_found" } if unknown.',
-    getTypologySchema.shape,
+    'architecture_resolve_rules',
+    'Resolve the highest-priority matching rule assigns for (cultureId, eraId, scenario, tagState).',
+    {
+      cultureId: z.string(),
+      eraId: z.string(),
+      scenario: z.string().optional().default(''),
+      tagState: z.record(z.string()).optional().default({}),
+    },
     async (params) => {
       try {
-        const result = architectureGetTypology(params as z.infer<typeof getTypologySchema>);
+        const result = await architecture_resolve_rules({
+          cultureId: params.cultureId,
+          eraId: params.eraId,
+          scenario: params.scenario ?? '',
+          tagState: params.tagState ?? {},
+        });
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -665,12 +689,12 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
   );
 
   server.tool(
-    'architecture_validate_style_guide',
-    'Validate a candidate StyleGuide JSON against the A1 schema. Returns { ok: true } or { ok: false, errors: [...] }.',
-    validateStyleGuideSchema.shape,
+    'architecture_validate_culture',
+    'Validate a culture and return {ok, issues}.',
+    { id: z.string() },
     async (params) => {
       try {
-        const result = architectureValidateStyleGuide(params as z.infer<typeof validateStyleGuideSchema>);
+        const result = await architecture_validate_culture(params);
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -680,16 +704,293 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
   );
 
   server.tool(
-    'architecture_generate_binding',
-    'Generate an AI-authored ElementBinding for (styleSheetId, elementId). Non-deterministic: calls an LLM provider. Returns a draft binding for review; caller decides whether to accept/register/save.',
-    generateBindingSchema.shape,
+    'architecture_create_culture',
+    'Create a new culture, optionally seeding from presets.',
+    {
+      id: z.string().describe('kebab-case culture id'),
+      name: z.string(),
+      region: z.string(),
+      climate: z.string(),
+      seedFromPresets: z.boolean().optional(),
+    },
     async (params) => {
       try {
-        const result = await architectureGenerateBinding(params as z.infer<typeof generateBindingSchema>);
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        await architecture_create_culture(params);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: 'unexpected', message: msg }) }], isError: true };
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'architecture_update_culture',
+    'Top-level field merge on a culture; arrays replaced wholesale.',
+    {
+      id: z.string(),
+      partial: z.record(z.unknown()).describe('Partial culture fields to merge'),
+    },
+    async (params) => {
+      try {
+        await architecture_update_culture({ id: params.id, partial: params.partial as never });
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'architecture_delete_culture',
+    'Delete a culture and all its files.',
+    { id: z.string() },
+    async (params) => {
+      try {
+        await architecture_delete_culture(params);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'architecture_add_era',
+    'Add an era to a culture.',
+    { cultureId: z.string(), era: z.record(z.unknown()).describe('Era object') },
+    async (params) => {
+      try {
+        await architecture_add_era({ cultureId: params.cultureId, era: params.era as never });
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'architecture_update_era',
+    'Patch fields on an existing era.',
+    { cultureId: z.string(), eraId: z.string(), partial: z.record(z.unknown()) },
+    async (params) => {
+      try {
+        await architecture_update_era({ cultureId: params.cultureId, eraId: params.eraId, partial: params.partial as never });
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'architecture_delete_era',
+    'Remove an era from a culture.',
+    { cultureId: z.string(), eraId: z.string() },
+    async (params) => {
+      try {
+        await architecture_delete_era(params);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'architecture_add_material',
+    'Add a material to a culture.',
+    { cultureId: z.string(), material: z.record(z.unknown()) },
+    async (params) => {
+      try {
+        await architecture_add_material({ cultureId: params.cultureId, material: params.material as never });
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'architecture_update_material',
+    'Patch fields on a material.',
+    { cultureId: z.string(), materialId: z.string(), partial: z.record(z.unknown()) },
+    async (params) => {
+      try {
+        await architecture_update_material({ cultureId: params.cultureId, materialId: params.materialId, partial: params.partial as never });
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'architecture_delete_material',
+    'Remove a material from a culture.',
+    { cultureId: z.string(), materialId: z.string() },
+    async (params) => {
+      try {
+        await architecture_delete_material(params);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'architecture_add_ornament',
+    'Add an ornament to a culture.',
+    { cultureId: z.string(), ornament: z.record(z.unknown()) },
+    async (params) => {
+      try {
+        await architecture_add_ornament({ cultureId: params.cultureId, ornament: params.ornament as never });
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'architecture_update_ornament',
+    'Patch fields on an ornament.',
+    { cultureId: z.string(), ornamentId: z.string(), partial: z.record(z.unknown()) },
+    async (params) => {
+      try {
+        await architecture_update_ornament({ cultureId: params.cultureId, ornamentId: params.ornamentId, partial: params.partial as never });
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'architecture_delete_ornament',
+    'Remove an ornament from a culture.',
+    { cultureId: z.string(), ornamentId: z.string() },
+    async (params) => {
+      try {
+        await architecture_delete_ornament(params);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'architecture_add_tag_axis',
+    'Add a tag axis to a culture.',
+    { cultureId: z.string(), axis: z.record(z.unknown()) },
+    async (params) => {
+      try {
+        await architecture_add_tag_axis({ cultureId: params.cultureId, axis: params.axis as never });
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'architecture_update_tag_axis',
+    'Patch fields on a tag axis.',
+    { cultureId: z.string(), axisId: z.string(), partial: z.record(z.unknown()) },
+    async (params) => {
+      try {
+        await architecture_update_tag_axis({ cultureId: params.cultureId, axisId: params.axisId, partial: params.partial as never });
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'architecture_delete_tag_axis',
+    'Remove a tag axis from a culture.',
+    { cultureId: z.string(), axisId: z.string() },
+    async (params) => {
+      try {
+        await architecture_delete_tag_axis(params);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'architecture_add_rule',
+    'Add a rule to culture scope or a specific era scope.',
+    {
+      cultureId: z.string(),
+      rule: z.record(z.unknown()),
+      scope: z.union([z.literal('culture'), z.object({ era: z.string() })]),
+    },
+    async (params) => {
+      try {
+        await architecture_add_rule({ cultureId: params.cultureId, rule: params.rule as never, scope: params.scope as never });
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'architecture_update_rule',
+    'Patch fields on a rule (search by id, optional scope hint).',
+    {
+      cultureId: z.string(),
+      ruleId: z.string(),
+      partial: z.record(z.unknown()),
+      scope: z.union([z.literal('culture'), z.object({ era: z.string() })]).optional(),
+    },
+    async (params) => {
+      try {
+        await architecture_update_rule({ cultureId: params.cultureId, ruleId: params.ruleId, partial: params.partial as never, scope: params.scope as never });
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'architecture_delete_rule',
+    'Remove a rule (search by id, optional scope hint).',
+    {
+      cultureId: z.string(),
+      ruleId: z.string(),
+      scope: z.union([z.literal('culture'), z.object({ era: z.string() })]).optional(),
+    },
+    async (params) => {
+      try {
+        await architecture_delete_rule({ cultureId: params.cultureId, ruleId: params.ruleId, scope: params.scope as never });
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
       }
     }
   );
@@ -1257,11 +1558,28 @@ function recordEagerSchemas(
   reg('language_apply_sound_changes', soundChangesSchema.shape, 'low', '{ok, message}');
   reg('language_propose_derivation', proposeDerivationSchema.shape, 'low', '{ok, message}');
   reg('language_remix_phonologies', remixPhonologiesSchema.shape, 'low', '{ok, message}');
-  reg('architecture_list_style_guides',   listStyleGuidesSchema.shape,   'low', '{guides:[{id,cultureId,dateRange,typologyCount}]}');
-  reg('architecture_get_style_guide',     getStyleGuideSchema.shape,     'low', '{guide}|{error,id}');
-  reg('architecture_get_typology',        getTypologySchema.shape,       'low', '{typology}|{error,id}');
-  reg('architecture_validate_style_guide',validateStyleGuideSchema.shape,'low', '{ok}|{ok:false,errors:[{path,message}]}');
-  reg('architecture_generate_binding', generateBindingSchema.shape, 'high', '{ok, draft, rationale, validation, retriesUsed}|{ok:false, error, message, stage, errors}');
+  reg('architecture_list_cultures',  {}, 'low', '{id,name,eraCount}[]');
+  reg('architecture_get_culture',    { id: z.string() }, 'low', 'Culture');
+  reg('architecture_resolve_rules',  { cultureId: z.string(), eraId: z.string(), scenario: z.string().optional(), tagState: z.record(z.string()).optional() }, 'low', 'Rule assigns object');
+  reg('architecture_validate_culture', { id: z.string() }, 'low', '{ok,issues:[{path,message,severity}]}');
+  reg('architecture_create_culture', { id: z.string(), name: z.string(), region: z.string(), climate: z.string(), seedFromPresets: z.boolean().optional() }, 'low', '{ok}');
+  reg('architecture_update_culture', { id: z.string(), partial: z.record(z.unknown()) }, 'low', '{ok}');
+  reg('architecture_delete_culture', { id: z.string() }, 'low', '{ok}');
+  reg('architecture_add_era',    { cultureId: z.string(), era: z.record(z.unknown()) }, 'low', '{ok}');
+  reg('architecture_update_era', { cultureId: z.string(), eraId: z.string(), partial: z.record(z.unknown()) }, 'low', '{ok}');
+  reg('architecture_delete_era', { cultureId: z.string(), eraId: z.string() }, 'low', '{ok}');
+  reg('architecture_add_material',    { cultureId: z.string(), material: z.record(z.unknown()) }, 'low', '{ok}');
+  reg('architecture_update_material', { cultureId: z.string(), materialId: z.string(), partial: z.record(z.unknown()) }, 'low', '{ok}');
+  reg('architecture_delete_material', { cultureId: z.string(), materialId: z.string() }, 'low', '{ok}');
+  reg('architecture_add_ornament',    { cultureId: z.string(), ornament: z.record(z.unknown()) }, 'low', '{ok}');
+  reg('architecture_update_ornament', { cultureId: z.string(), ornamentId: z.string(), partial: z.record(z.unknown()) }, 'low', '{ok}');
+  reg('architecture_delete_ornament', { cultureId: z.string(), ornamentId: z.string() }, 'low', '{ok}');
+  reg('architecture_add_tag_axis',    { cultureId: z.string(), axis: z.record(z.unknown()) }, 'low', '{ok}');
+  reg('architecture_update_tag_axis', { cultureId: z.string(), axisId: z.string(), partial: z.record(z.unknown()) }, 'low', '{ok}');
+  reg('architecture_delete_tag_axis', { cultureId: z.string(), axisId: z.string() }, 'low', '{ok}');
+  reg('architecture_add_rule',    { cultureId: z.string(), rule: z.record(z.unknown()), scope: z.union([z.literal('culture'), z.object({ era: z.string() })]) }, 'low', '{ok}');
+  reg('architecture_update_rule', { cultureId: z.string(), ruleId: z.string(), partial: z.record(z.unknown()), scope: z.union([z.literal('culture'), z.object({ era: z.string() })]).optional() }, 'low', '{ok}');
+  reg('architecture_delete_rule', { cultureId: z.string(), ruleId: z.string(), scope: z.union([z.literal('culture'), z.object({ era: z.string() })]).optional() }, 'low', '{ok}');
   reg('hayba_planet_habitable_zone', hzSchema.shape, 'low', 'HabitableZoneResult JSON');
   reg('hayba_planet_tidal_locking', tidalSchema.shape, 'low', 'TidalLockingResult JSON');
   reg('hayba_planet_dynamo_field', dynamoSchema.shape, 'low', 'DynamoScalingResult JSON');
