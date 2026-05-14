@@ -243,13 +243,27 @@
   }
 
   /* —— ornamentation tag list —— */
-  .orn-list { display: flex; flex-wrap: wrap; gap: 5px; }
+  .orn-list { display: flex; flex-wrap: wrap; gap: 8px; }
   .orn-tag {
-    padding: 3px 9px; border-radius: 3px;
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 3px 9px 3px 3px; border-radius: 3px;
     background: var(--bg-panel);
     border: 1px solid var(--border-soft);
     color: var(--text-secondary); font-size: 11.5px;
     font-family: var(--font-mono);
+  }
+  .orn-sphere {
+    width: 22px; height: 22px; border-radius: 50%;
+    display: inline-block; flex-shrink: 0;
+    background: var(--bg-deep);
+  }
+
+  /* —— material chip sphere preview —— */
+  .chip .sphere-preview {
+    width: 26px; height: 26px; border-radius: 50%;
+    display: inline-block; flex-shrink: 0;
+    background: var(--bg-deep);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   }
 
   /* —— era timeline (horizontal bar w/ tick markers) —— */
@@ -654,7 +668,7 @@ function renderCenter() {
         </div>
         <div class="panel-h" style="margin-top:18px;">Ornamentation</div>
         <div class="orn-list">
-          ${s.core.ornamentation.map(o => `<span class="orn-tag">${o}</span>`).join('') || '<span class="muted">—</span>'}
+          ${s.core.ornamentation.map(o => `<span class="orn-tag"><img class="orn-sphere" src="${getOrnamentPreviewUrl(o)}" alt="${o}">${o}</span>`).join('') || '<span class="muted">—</span>'}
         </div>
       </div>
 
@@ -777,9 +791,9 @@ function renderTimeline(cultureId, activeGuideId) {
 /* ─── chips ─────────────────────────────────────────────── */
 
 function materialChip(role, material) {
-  const v = `var(--mat-${material})`;
+  const previewUrl = getMaterialPreviewUrl(material);
   return `<div class="chip" title="${material}">
-    <span class="swatch" style="background:${v}"></span>
+    <img class="sphere-preview" src="${previewUrl}" alt="${material}">
     <span class="kind">${role}</span>
     <span class="label">${material}</span>
   </div>`;
@@ -1253,6 +1267,424 @@ document.addEventListener('click', (e) => {
   if (!card) return;
   openViewer(card.dataset.style, card.dataset.element);
 });
+
+/* ─── PBR sphere material previews ──────────────────────────
+ * Pre-renders a small (96 px) sphere preview for each material + each
+ * ornament tag at app boot. Uses a single shared three.js renderer +
+ * scene + sphere mesh; swap the material between renders and capture
+ * each frame to a data URL. Cached forever for the session.
+ *
+ * Each preview is a real-PBR render — diffuse + normal map procedurally
+ * generated from canvas noise / hatching / pattern primitives. No external
+ * texture assets; everything ships in this single HTML.
+ */
+
+const PREVIEW_SIZE = 96;
+let _previewRenderer = null;
+let _previewScene = null;
+let _previewCamera = null;
+let _previewSphere = null;
+
+function _setupPreviewer() {
+  if (_previewRenderer) return;
+  _previewRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, premultipliedAlpha: false });
+  _previewRenderer.setSize(PREVIEW_SIZE, PREVIEW_SIZE);
+  _previewRenderer.setPixelRatio(2);
+  _previewRenderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  _previewScene = new THREE.Scene();
+  _previewCamera = new THREE.PerspectiveCamera(28, 1, 0.1, 10);
+  _previewCamera.position.set(0, 0.15, 3.6);
+  _previewCamera.lookAt(0, 0, 0);
+
+  const key = new THREE.DirectionalLight(0xfff2dd, 1.7);
+  key.position.set(1.4, 1.6, 2.0);
+  _previewScene.add(key);
+  const fill = new THREE.DirectionalLight(0xa0b0c4, 0.55);
+  fill.position.set(-1.4, 0.6, -0.8);
+  _previewScene.add(fill);
+  const rim = new THREE.DirectionalLight(0xffffff, 0.25);
+  rim.position.set(0, -1.2, -2.0);
+  _previewScene.add(rim);
+  _previewScene.add(new THREE.AmbientLight(0xffffff, 0.10));
+
+  _previewSphere = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 48, 48),
+    new THREE.MeshStandardMaterial(),
+  );
+  _previewScene.add(_previewSphere);
+}
+
+function _renderSphereWithMaterial(material) {
+  _setupPreviewer();
+  _previewSphere.material = material;
+  _previewRenderer.render(_previewScene, _previewCamera);
+  return _previewRenderer.domElement.toDataURL('image/png');
+}
+
+/* ── procedural canvas pattern generators ── */
+
+function _noisyFill(ctx, size, baseColor, jitter) {
+  ctx.fillStyle = baseColor;
+  ctx.fillRect(0, 0, size, size);
+  const id = ctx.getImageData(0, 0, size, size);
+  for (let i = 0; i < id.data.length; i += 4) {
+    const n = (Math.random() - 0.5) * jitter;
+    id.data[i]     = Math.max(0, Math.min(255, id.data[i]     + n));
+    id.data[i + 1] = Math.max(0, Math.min(255, id.data[i + 1] + n * 0.95));
+    id.data[i + 2] = Math.max(0, Math.min(255, id.data[i + 2] + n * 0.9));
+  }
+  ctx.putImageData(id, 0, 0);
+}
+
+function _heightToNormal(heights, size, strength = 4) {
+  const out = new Uint8ClampedArray(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const xL = heights[y * size + Math.max(0, x - 1)];
+      const xR = heights[y * size + Math.min(size - 1, x + 1)];
+      const yD = heights[Math.max(0, y - 1) * size + x];
+      const yU = heights[Math.min(size - 1, y + 1) * size + x];
+      const dx = (xR - xL) * strength;
+      const dy = (yU - yD) * strength;
+      const dz = 1;
+      const len = Math.hypot(dx, dy, dz) || 1;
+      const i = (y * size + x) * 4;
+      out[i]     = ((-dx / len) * 0.5 + 0.5) * 255;
+      out[i + 1] = ((-dy / len) * 0.5 + 0.5) * 255;
+      out[i + 2] = ((dz / len) * 0.5 + 0.5) * 255;
+      out[i + 3] = 255;
+    }
+  }
+  return out;
+}
+
+function _normalFromHeightFn(nctx, size, heightFn, strength = 4) {
+  const heights = new Float32Array(size * size);
+  for (let y = 0; y < size; y++)
+    for (let x = 0; x < size; x++)
+      heights[y * size + x] = heightFn(x / size, y / size);
+  const buf = _heightToNormal(heights, size, strength);
+  const id = new ImageData(buf, size, size);
+  nctx.putImageData(id, 0, 0);
+}
+
+function _renderMaterialPatterns(materialId, size) {
+  const diffuse = document.createElement('canvas');
+  diffuse.width = diffuse.height = size;
+  const dctx = diffuse.getContext('2d');
+  const normal = document.createElement('canvas');
+  normal.width = normal.height = size;
+  const nctx = normal.getContext('2d');
+
+  switch (materialId) {
+    case 'stone': {
+      _noisyFill(dctx, size, '#9aa0a8', 50);
+      // Subtle banding
+      dctx.fillStyle = 'rgba(70, 65, 60, 0.07)';
+      for (let i = 0; i < 4; i++) dctx.fillRect(0, Math.random() * size, size, 2 + Math.random() * 4);
+      _normalFromHeightFn(nctx, size, () => Math.random(), 3.5);
+      break;
+    }
+    case 'timber': {
+      // Vertical wood grain
+      for (let x = 0; x < size; x++) {
+        const t = (x / size) * 11;
+        const grain = Math.sin(t * 2) * 0.4 + Math.sin(t * 5.3 + 1) * 0.15 + (Math.random() - 0.5) * 0.18;
+        const base = 152 + grain * 32;
+        dctx.fillStyle = `rgb(${Math.round(base + 32)}, ${Math.round(base - 10)}, ${Math.round(base - 42)})`;
+        dctx.fillRect(x, 0, 1, size);
+      }
+      // dark streaks
+      for (let k = 0; k < 4; k++) {
+        const x0 = Math.random() * size;
+        dctx.strokeStyle = 'rgba(60, 35, 18, 0.42)';
+        dctx.lineWidth = 0.6 + Math.random() * 1.5;
+        dctx.beginPath();
+        dctx.moveTo(x0, 0);
+        for (let y = 0; y <= size; y += 8) dctx.lineTo(x0 + (Math.random() - 0.5) * 6, y);
+        dctx.stroke();
+      }
+      _normalFromHeightFn(nctx, size, (u, v) => 0.5 + Math.sin(u * 70) * 0.35 + (Math.random() - 0.5) * 0.05, 5);
+      break;
+    }
+    case 'mudbrick': {
+      _noisyFill(dctx, size, '#a06a3e', 32);
+      // hairline cracks
+      dctx.strokeStyle = 'rgba(40, 20, 10, 0.45)';
+      dctx.lineWidth = 0.8;
+      for (let i = 0; i < 14; i++) {
+        dctx.beginPath();
+        dctx.moveTo(Math.random() * size, Math.random() * size);
+        for (let s = 0; s < 3; s++) dctx.lineTo(Math.random() * size, Math.random() * size);
+        dctx.stroke();
+      }
+      _normalFromHeightFn(nctx, size, () => Math.random() * 0.5 + 0.5, 4);
+      break;
+    }
+    case 'adobe': {
+      _noisyFill(dctx, size, '#c89060', 22);
+      _normalFromHeightFn(nctx, size, () => Math.random() * 0.3 + 0.5, 2.5);
+      break;
+    }
+    case 'rammed-earth': {
+      // Horizontal bands of varying colors
+      const bandH = size / 8;
+      for (let i = 0; i < 8; i++) {
+        const t = i / 8;
+        const r = 130 + Math.round(Math.sin(t * 12) * 22 + (Math.random() - 0.5) * 10);
+        const g = 95  + Math.round(Math.sin(t * 12 + 0.4) * 16);
+        const b = 65  + Math.round(Math.sin(t * 12 + 0.8) * 12);
+        dctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+        dctx.fillRect(0, i * bandH, size, bandH);
+      }
+      // Stipple over
+      const id = dctx.getImageData(0, 0, size, size);
+      for (let i = 0; i < id.data.length; i += 4) {
+        const n = (Math.random() - 0.5) * 18;
+        id.data[i]     += n;
+        id.data[i + 1] += n * 0.9;
+        id.data[i + 2] += n * 0.8;
+      }
+      dctx.putImageData(id, 0, 0);
+      _normalFromHeightFn(nctx, size, (u, v) => 0.5 + Math.sin(v * 50) * 0.2, 3);
+      break;
+    }
+    case 'brick': {
+      // Brick coursing with mortar
+      const brickH = size / 5, brickW = size / 2.5;
+      dctx.fillStyle = '#7a7066';   // mortar
+      dctx.fillRect(0, 0, size, size);
+      for (let row = 0; row < 5; row++) {
+        const offset = (row % 2) * (brickW / 2);
+        for (let col = -1; col < 4; col++) {
+          const x = col * brickW + offset + 2;
+          const y = row * brickH + 2;
+          const r = 175 + Math.random() * 25;
+          const g = 70 + Math.random() * 20;
+          const b = 55 + Math.random() * 15;
+          dctx.fillStyle = `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
+          dctx.fillRect(x, y, brickW - 4, brickH - 4);
+        }
+      }
+      _normalFromHeightFn(nctx, size, (u, v) => {
+        const row = Math.floor(v * 5);
+        const off = (row % 2) * 0.2;
+        const inCol = ((u + off) * 2.5) % 1;
+        const inRow = (v * 5) % 1;
+        // Brick faces high, mortar low
+        return (inCol > 0.04 && inCol < 0.96 && inRow > 0.04 && inRow < 0.96) ? 0.9 : 0.3;
+      }, 7);
+      break;
+    }
+    case 'concrete': {
+      _noisyFill(dctx, size, '#8a8e95', 18);
+      // sparse pebble specks
+      for (let i = 0; i < 80; i++) {
+        dctx.fillStyle = `rgba(50, 50, 50, ${0.3 + Math.random() * 0.4})`;
+        dctx.beginPath();
+        dctx.arc(Math.random() * size, Math.random() * size, 0.5 + Math.random() * 1.5, 0, Math.PI * 2);
+        dctx.fill();
+      }
+      _normalFromHeightFn(nctx, size, () => Math.random() * 0.15 + 0.5, 1.4);
+      break;
+    }
+    case 'wattle-daub': {
+      // Cross-hatched weave
+      _noisyFill(dctx, size, '#c4a96a', 18);
+      dctx.strokeStyle = 'rgba(90, 65, 35, 0.4)';
+      dctx.lineWidth = 1.2;
+      for (let y = 4; y < size; y += 8) {
+        dctx.beginPath(); dctx.moveTo(0, y); dctx.lineTo(size, y); dctx.stroke();
+      }
+      for (let x = 4; x < size; x += 8) {
+        dctx.beginPath(); dctx.moveTo(x, 0); dctx.lineTo(x, size); dctx.stroke();
+      }
+      _normalFromHeightFn(nctx, size, (u, v) => {
+        const a = Math.sin(v * 32) * 0.4 + 0.5;
+        const b = Math.sin(u * 32) * 0.4 + 0.5;
+        return Math.max(a, b);
+      }, 5);
+      break;
+    }
+    default:
+      _noisyFill(dctx, size, '#888', 30);
+      _normalFromHeightFn(nctx, size, () => Math.random(), 3);
+  }
+
+  const dT = new THREE.CanvasTexture(diffuse);
+  dT.wrapS = dT.wrapT = THREE.RepeatWrapping;
+  dT.colorSpace = THREE.SRGBColorSpace;
+  const nT = new THREE.CanvasTexture(normal);
+  nT.wrapS = nT.wrapT = THREE.RepeatWrapping;
+  return { diffuseTex: dT, normalTex: nT };
+}
+
+const ROUGHNESS_BY_MATERIAL = {
+  stone: 0.92, timber: 0.78, mudbrick: 0.95, adobe: 0.88,
+  'rammed-earth': 0.96, brick: 0.88, concrete: 0.86, 'wattle-daub': 0.90,
+};
+
+function makeMaterialFor(materialId) {
+  const { diffuseTex, normalTex } = _renderMaterialPatterns(materialId, 256);
+  return new THREE.MeshStandardMaterial({
+    map: diffuseTex,
+    normalMap: normalTex,
+    normalScale: new THREE.Vector2(0.7, 0.7),
+    roughness: ROUGHNESS_BY_MATERIAL[materialId] ?? 0.85,
+    metalness: 0.02,
+  });
+}
+
+const MATERIAL_PREVIEW_CACHE = {};
+function getMaterialPreviewUrl(materialId) {
+  if (!MATERIAL_PREVIEW_CACHE[materialId]) {
+    MATERIAL_PREVIEW_CACHE[materialId] = _renderSphereWithMaterial(makeMaterialFor(materialId));
+  }
+  return MATERIAL_PREVIEW_CACHE[materialId];
+}
+
+/* ── ornament textures: 2D patterns rendered as carved relief on stone ── */
+
+function _drawOrnamentPattern(dctx, nctx, size, ornament) {
+  // Base: stone-tinted
+  _noisyFill(dctx, size, '#9aa0a8', 26);
+  // Pattern overlay (darker = carved deeper)
+  dctx.strokeStyle = 'rgba(40, 35, 30, 0.55)';
+  dctx.lineWidth = 1.2;
+
+  let heightFn;
+  switch (ornament) {
+    case 'pointed-arch':
+    case 'pointed_arch':
+      // Repeating tall pointed arches
+      for (let i = 0; i < 4; i++) {
+        const x = i * (size / 4) + (size / 8);
+        const top = size * 0.25;
+        const w = size / 4 * 0.7;
+        dctx.beginPath();
+        dctx.moveTo(x - w / 2, size * 0.95);
+        dctx.lineTo(x - w / 2, size * 0.55);
+        dctx.lineTo(x, top);
+        dctx.lineTo(x + w / 2, size * 0.55);
+        dctx.lineTo(x + w / 2, size * 0.95);
+        dctx.stroke();
+      }
+      heightFn = (u, v) => {
+        const inX = (u * 4) % 1;
+        const inArch = Math.abs(inX - 0.5) < 0.32 && v > 0.18;
+        return inArch ? 0.9 : 0.3;
+      };
+      break;
+
+    case 'flying-buttress':
+    case 'flying_buttress':
+      // Angled diagonal struts
+      for (let i = 0; i < 6; i++) {
+        dctx.beginPath();
+        dctx.moveTo(i * size / 6, size);
+        dctx.lineTo(i * size / 6 + size * 0.25, 0);
+        dctx.stroke();
+      }
+      heightFn = (u, v) => {
+        const d = (u + v * 0.4) % (1 / 6);
+        return d < 0.04 ? 1.0 : 0.3;
+      };
+      break;
+
+    case 'rose-window':
+    case 'rose_window':
+      // Radial petals
+      dctx.strokeStyle = 'rgba(40, 35, 30, 0.5)';
+      const cx = size / 2, cy = size / 2;
+      dctx.beginPath();
+      dctx.arc(cx, cy, size * 0.4, 0, Math.PI * 2);
+      dctx.stroke();
+      for (let i = 0; i < 8; i++) {
+        const ang = (i / 8) * Math.PI * 2;
+        dctx.beginPath();
+        dctx.moveTo(cx + Math.cos(ang) * 5, cy + Math.sin(ang) * 5);
+        dctx.lineTo(cx + Math.cos(ang) * size * 0.4, cy + Math.sin(ang) * size * 0.4);
+        dctx.stroke();
+      }
+      heightFn = (u, v) => {
+        const dx = u - 0.5, dy = v - 0.5;
+        const r = Math.hypot(dx, dy);
+        const ang = Math.atan2(dy, dx);
+        const spoke = Math.abs((ang * 4) % 1 - 0.5) < 0.1;
+        return (r < 0.42 && (spoke || Math.abs(r - 0.4) < 0.02)) ? 0.95 : 0.4;
+      };
+      break;
+
+    case 'tracery':
+      // Lattice
+      for (let x = 0; x < size; x += size / 8) {
+        for (let y = 0; y < size; y += size / 8) {
+          dctx.strokeRect(x, y, size / 8, size / 8);
+        }
+      }
+      heightFn = (u, v) => {
+        const a = ((u * 8) % 1);
+        const b = ((v * 8) % 1);
+        return (Math.min(a, 1 - a) < 0.06 || Math.min(b, 1 - b) < 0.06) ? 0.95 : 0.45;
+      };
+      break;
+
+    case 'gargoyle':
+    case 'pediment-relief':
+    case 'pediment_relief':
+    case 'frieze':
+      // Generic carved-relief — noisy bumps
+      for (let i = 0; i < 30; i++) {
+        const x = Math.random() * size, y = Math.random() * size;
+        const r = 3 + Math.random() * 8;
+        dctx.fillStyle = `rgba(40, 35, 30, ${0.4 + Math.random() * 0.3})`;
+        dctx.beginPath();
+        dctx.arc(x, y, r, 0, Math.PI * 2);
+        dctx.fill();
+      }
+      heightFn = () => Math.random();
+      break;
+
+    default:
+      // Subtle hatching
+      dctx.strokeStyle = 'rgba(50, 45, 40, 0.4)';
+      for (let i = 0; i < 8; i++) {
+        dctx.beginPath();
+        dctx.moveTo(0, (i + 0.5) * size / 8);
+        dctx.lineTo(size, (i + 0.5) * size / 8);
+        dctx.stroke();
+      }
+      heightFn = (u, v) => Math.sin(v * 24) * 0.5 + 0.5;
+  }
+
+  _normalFromHeightFn(nctx, size, heightFn, 8);
+}
+
+const ORNAMENT_PREVIEW_CACHE = {};
+function getOrnamentPreviewUrl(ornament) {
+  if (ORNAMENT_PREVIEW_CACHE[ornament]) return ORNAMENT_PREVIEW_CACHE[ornament];
+  const size = 256;
+  const diffuse = document.createElement('canvas');
+  diffuse.width = diffuse.height = size;
+  const dctx = diffuse.getContext('2d');
+  const normal = document.createElement('canvas');
+  normal.width = normal.height = size;
+  const nctx = normal.getContext('2d');
+  _drawOrnamentPattern(dctx, nctx, size, ornament);
+  const dT = new THREE.CanvasTexture(diffuse);
+  dT.wrapS = dT.wrapT = THREE.RepeatWrapping;
+  dT.colorSpace = THREE.SRGBColorSpace;
+  const nT = new THREE.CanvasTexture(normal);
+  nT.wrapS = nT.wrapT = THREE.RepeatWrapping;
+  const mat = new THREE.MeshStandardMaterial({
+    map: dT, normalMap: nT,
+    normalScale: new THREE.Vector2(1.0, 1.0),
+    roughness: 0.9, metalness: 0.02,
+  });
+  ORNAMENT_PREVIEW_CACHE[ornament] = _renderSphereWithMaterial(mat);
+  return ORNAMENT_PREVIEW_CACHE[ornament];
+}
 
 /* ─── boot ──────────────────────────────────────────────── */
 
