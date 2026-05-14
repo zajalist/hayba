@@ -14,20 +14,45 @@ export function buildPlateLabels(): PlateLabelsHandle {
   group.renderOrder = 10;
   const sprites: THREE.Sprite[] = [];
 
+  // Hi-res canvas for crisp 1x display; sprite scaled down in world units.
+  const SIZE = 128;
   const makeSprite = (text: string): THREE.Sprite => {
     const canvas = document.createElement("canvas");
-    canvas.width = 64; canvas.height = 64;
+    canvas.width = SIZE; canvas.height = SIZE;
     const ctx = canvas.getContext("2d")!;
-    ctx.font = "bold 36px Consolas, monospace";
-    ctx.fillStyle = "#DED4C3";
+    const cx = SIZE / 2;
+    const cy = SIZE / 2;
+    const r  = SIZE * 0.40;
+
+    // Slate radial gradient with a subtle top-left highlight
+    const grad = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.4, r * 0.1, cx, cy, r);
+    grad.addColorStop(0.0, "rgba(70, 76, 88, 0.96)");
+    grad.addColorStop(0.65, "rgba(28, 32, 40, 0.92)");
+    grad.addColorStop(1.0, "rgba(18, 20, 26, 0.92)");
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Crisp white edge
+    ctx.lineWidth = 2.6;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.92)";
+    ctx.stroke();
+
+    // Number, white, sized to fit comfortably
+    ctx.font = "bold 56px Consolas, monospace";
+    ctx.fillStyle = "#FFFFFF";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(text, 32, 32);
+    ctx.fillText(text, cx, cy + 2);
+
     const tex = new THREE.CanvasTexture(canvas);
     tex.minFilter = THREE.LinearFilter;
     const mat = new THREE.SpriteMaterial({ map: tex, depthTest: true, transparent: true });
     const sprite = new THREE.Sprite(mat);
-    sprite.scale.set(0.08, 0.08, 1);
+    sprite.scale.set(0.10, 0.10, 1);
     return sprite;
   };
 

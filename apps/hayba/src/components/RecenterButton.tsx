@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import * as THREE from "three";
-import { colors, fonts, radii } from "@hayba/design-tokens";
+import { colors, fonts } from "@hayba/design-tokens";
 import type { SceneHandle } from "../viewport/scene";
 import { IconRecenter } from "./icons";
 
@@ -61,34 +61,41 @@ export default function RecenterButton({ getScene }: RecenterButtonProps) {
       type="button"
       onClick={onClick}
       title="Recenter planet"
+      aria-label="Recenter planet"
       style={{
-        position: "fixed",
-        right: 22,
-        bottom: 80,
+        position: "absolute",
+        right: 16,
+        bottom: 16,
         zIndex: 60,
+        width: 28,
+        height: 28,
         display: "inline-flex",
         alignItems: "center",
-        gap: 8,
-        background: "rgba(34, 38, 46, 0.92)",
-        border: `1px solid ${colors.borderMid}`,
-        borderRadius: radii.sm,
-        padding: "8px 14px",
-        fontSize: 12,
-        letterSpacing: "0.02em",
+        justifyContent: "center",
+        background: "transparent",
+        border: `1px solid ${colors.borderSoft}`,
+        borderRadius: 3,
+        color: colors.textSecondary,
         fontFamily: fonts.sans,
-        fontWeight: 500,
-        color: "#DED4C3",
         cursor: "pointer",
-        boxShadow: "none",
-        backdropFilter: "blur(10px)",
-        opacity: show ? 1 : 0,
-        transform: show ? "translateY(0)" : "translateY(8px)",
+        padding: 0,
+        opacity: show ? 0.85 : 0,
+        transform: show ? "translateY(0)" : "translateY(6px)",
         pointerEvents: show ? "auto" : "none",
-        transition: "opacity 220ms ease, transform 220ms ease",
+        transition: "opacity 200ms ease, transform 200ms ease, color 120ms ease, border-color 120ms ease",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.color = "#DED4C3";
+        e.currentTarget.style.borderColor = "#DED4C3";
+        e.currentTarget.style.opacity = "1";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.color = colors.textSecondary;
+        e.currentTarget.style.borderColor = colors.borderSoft;
+        e.currentTarget.style.opacity = "0.85";
       }}
     >
       <IconRecenter size={14} />
-      Recenter
     </button>
   );
 }

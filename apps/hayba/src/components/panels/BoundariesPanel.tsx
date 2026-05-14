@@ -2,22 +2,17 @@ import React from "react";
 import { colors, fonts } from "@hayba/design-tokens";
 import PropertyRow from "../PropertyRow";
 import PropertySection from "../PropertySection";
-import type { BoundaryType } from "../../wizard/state";
 
 export interface BoundariesPanelProps {
   totalSeams: number;
   assignedCount: number;
-  /** Currently selected pair_key (e.g. "0-2"), or null if no seam selected. */
-  selectedKey: string | null;
-  /** Numeric plate ids — for showing "Plate 0 ↔ Plate 2" caption. */
-  selectedMembers: [number, number] | null;
-  /** Current type for the selected seam (Convergent / Divergent / undefined). */
-  selectedType: BoundaryType | undefined;
-  onPickType: (t: BoundaryType) => void;
-  onClearType: () => void;
   onAdvance: () => void;
 }
 
+/**
+ * Geological reference + progress readout. Boundary editing itself happens
+ * via the click-on-planet popover; this panel is the onboarding surface.
+ */
 export default function BoundariesPanel(p: BoundariesPanelProps) {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -27,32 +22,46 @@ export default function BoundariesPanel(p: BoundariesPanelProps) {
           <PropertyRow label="Assigned" value={`${p.assignedCount} / ${p.totalSeams}`} noSeparator />
         </PropertySection>
 
-        {p.selectedKey && p.selectedMembers ? (
-          <PropertySection heading="Selected seam">
-            <PropertyRow label="Pair" value={`Plate ${p.selectedMembers[0]} ↔ Plate ${p.selectedMembers[1]}`} />
-            <PropertyRow
-              label="Type"
-              noSeparator
-              value={
-                <span style={{ display: "inline-flex", gap: 6 }}>
-                  <SegButton label="Convergent" active={p.selectedType === "convergent"} onClick={() => p.onPickType("convergent")} />
-                  <SegButton label="Divergent"  active={p.selectedType === "divergent"}  onClick={() => p.onPickType("divergent")}  />
-                  <SegButton label="Clear"      active={false}                            onClick={p.onClearType} />
-                </span>
-              }
-            />
-          </PropertySection>
-        ) : (
+        <PropertySection heading="How to assign">
           <div style={{
-            padding: "12px 16px",
+            padding: "4px 16px 12px",
             color: colors.textSecondary,
             fontFamily: fonts.sans,
             fontSize: 12,
-            lineHeight: 1.5,
+            lineHeight: 1.55,
           }}>
-            Click a pink seam on the planet to assign convergent or divergent.
+            Click any pink seam on the planet. A small popover appears with the
+            two plates and lets you pick the relative motion.
           </div>
-        )}
+        </PropertySection>
+
+        <PropertySection heading="Convergent">
+          <div style={{
+            padding: "4px 16px 12px",
+            color: colors.textSecondary,
+            fontFamily: fonts.sans,
+            fontSize: 12,
+            lineHeight: 1.55,
+          }}>
+            Plates push into each other. The denser plate dives under the lighter one,
+            building mountain ranges (continent–continent) or volcanic arcs and trenches
+            (ocean–continent). On Earth: Himalayas, Andes, Cascadia.
+          </div>
+        </PropertySection>
+
+        <PropertySection heading="Divergent">
+          <div style={{
+            padding: "4px 16px 12px",
+            color: colors.textSecondary,
+            fontFamily: fonts.sans,
+            fontSize: 12,
+            lineHeight: 1.55,
+          }}>
+            Plates pull apart. New crust upwells along the seam — mid-ocean ridges
+            (most divergent boundaries) or continental rift valleys. On Earth: Mid-Atlantic
+            Ridge, East African Rift.
+          </div>
+        </PropertySection>
 
       </div>
 
@@ -62,27 +71,6 @@ export default function BoundariesPanel(p: BoundariesPanelProps) {
         </button>
       </div>
     </div>
-  );
-}
-
-function SegButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        padding: "4px 10px",
-        fontSize: 11,
-        background: active ? colors.bgBase : "transparent",
-        border: `1px solid ${active ? colors.beige : colors.borderMid}`,
-        borderRadius: 3,
-        color: active ? colors.beige : colors.textSecondary,
-        cursor: "pointer",
-        fontFamily: fonts.sans,
-      }}
-    >
-      {label}
-    </button>
   );
 }
 
@@ -99,7 +87,7 @@ const primaryActionButtonStyle: React.CSSProperties = {
   border: `1px solid ${colors.beige}`,
   borderRadius: 3,
   color: colors.beige,
-  fontFamily: fonts.sans,
+  fontFamily: "inherit",
   fontSize: 12,
   cursor: "pointer",
 };
