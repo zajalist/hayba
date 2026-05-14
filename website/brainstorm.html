@@ -1,0 +1,843 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Hayba — Nav animation brainstorm</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600&family=Charis+SIL:wght@400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-deep: #14171c;
+    --bg-base: #1b1e24;
+    --bg-nav:  rgba(20, 22, 27, 0.78);
+    --text:    #e5e8eb;
+    --text-2:  #a8aeb8;
+    --text-3:  #6b7280;
+    --accent:  #B56A1D;
+    --border:  rgba(255,255,255,0.06);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg-deep);
+    color: var(--text);
+    font: 14px 'Noto Sans', system-ui, sans-serif;
+    padding: 40px 32px 80px;
+  }
+  h1 { font-weight: 600; font-size: 22px; margin: 0 0 4px; }
+  p.lead { color: var(--text-2); margin: 0 0 36px; font-size: 13px; }
+
+  .card {
+    margin-bottom: 28px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    background:
+      radial-gradient(60% 80% at 20% 50%, rgba(181,106,29,0.15), transparent 70%),
+      radial-gradient(40% 60% at 75% 50%, rgba(181,106,29,0.10), transparent 70%),
+      #0e1014;
+  }
+  .label {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 18px;
+    font-size: 12px; color: var(--text-3);
+    border-bottom: 1px solid var(--border);
+    background: #11141a;
+  }
+  .label b { color: var(--text); font-weight: 600; letter-spacing: 0.02em; }
+  .label .num {
+    display: inline-block; width: 22px; height: 22px; border-radius: 50%;
+    background: var(--accent); color: #1a0800;
+    text-align: center; line-height: 22px;
+    font-weight: 700; font-size: 11px;
+  }
+  .navstrip {
+    position: relative;
+    height: 60px;
+    background: var(--bg-nav);
+    backdrop-filter: blur(14px) saturate(130%);
+    -webkit-backdrop-filter: blur(14px) saturate(130%);
+    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    gap: 22px;
+  }
+  .navstrip .logo {
+    width: 22px; height: 22px;
+    background: #fff;
+    -webkit-mask: url("assets/Logo-white.svg") center / contain no-repeat;
+    mask: url("assets/Logo-white.svg") center / contain no-repeat;
+    position: relative; z-index: 2;
+  }
+  .navstrip .sep { width: 1px; height: 14px; background: rgba(255,255,255,0.12); z-index: 2; }
+  .navstrip .links {
+    display: flex; align-items: center; gap: 22px;
+    position: relative; z-index: 2;
+    font-size: 12.5px; color: var(--text-2); font-weight: 500;
+  }
+  .navstrip .links a { color: var(--text-2); text-decoration: none; padding: 4px 0; }
+  .navstrip .links a:hover { color: var(--text); }
+  .anim { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+
+  /* ─────────────── #1 TOPO CONTOUR DRIFT ─────────────── */
+  .a1 svg { position: absolute; inset: 0; width: 200%; height: 100%;
+            animation: a1-pan 38s linear infinite; }
+  @keyframes a1-pan { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+  .a1 path { fill: none; stroke: rgba(255,255,255,0.07); stroke-width: 1; }
+
+  /* ─────────────── #2 PLATE-TECTONIC SEAM ─────────────── */
+  .a2::before {
+    content: ''; position: absolute; left: 0; right: 0; bottom: 8px;
+    height: 1px;
+    background: linear-gradient(to right, transparent, rgba(181,106,29,0.45), transparent);
+    animation: a2-seam 14s ease-in-out infinite;
+  }
+  @keyframes a2-seam {
+    0%, 100% { transform: translateY(0) scaleX(1); opacity: 0.6; }
+    45%      { transform: translateY(-2px) scaleX(1.05); opacity: 0.9; }
+    55%      { transform: translateY(1px) scaleX(0.95); opacity: 0.8; }
+  }
+  .a2 .spark {
+    position: absolute; bottom: 6px; width: 3px; height: 3px;
+    background: var(--accent); border-radius: 50%;
+    opacity: 0; filter: blur(0.5px);
+    animation: a2-spark 6s ease-in-out infinite;
+  }
+  .a2 .spark:nth-child(1) { left: 15%; animation-delay: 0s;   }
+  .a2 .spark:nth-child(2) { left: 38%; animation-delay: 1.4s; }
+  .a2 .spark:nth-child(3) { left: 62%; animation-delay: 3.1s; }
+  .a2 .spark:nth-child(4) { left: 82%; animation-delay: 4.6s; }
+  @keyframes a2-spark { 0%, 70%, 100% { opacity: 0; transform: scale(0.5); } 80% { opacity: 0.9; transform: scale(1.2); } }
+
+  /* ─────────────── #3 SEDIMENT STRATA ─────────────── */
+  .a3 span {
+    position: absolute; left: -10%; right: -10%; height: 1px;
+    background: rgba(255,255,255,0.05);
+    animation: a3-drift 60s linear infinite;
+  }
+  .a3 span:nth-child(1) { top: 14px; opacity: 0.5; animation-duration: 90s; }
+  .a3 span:nth-child(2) { top: 22px; opacity: 0.8; animation-duration: 70s; animation-direction: reverse; }
+  .a3 span:nth-child(3) { top: 30px; opacity: 0.6; animation-duration: 110s; }
+  .a3 span:nth-child(4) { top: 38px; opacity: 0.4; animation-duration: 80s; animation-direction: reverse; }
+  .a3 span:nth-child(5) { top: 46px; opacity: 0.7; animation-duration: 100s; }
+  @keyframes a3-drift { from { transform: translateX(0); } to { transform: translateX(100px); } }
+
+  /* ─────────────── #4 COMPASS DRIFT ─────────────── */
+  .a4 .compass {
+    position: absolute; left: 28px; top: 50%; transform: translateY(-50%);
+    width: 32px; height: 32px;
+  }
+  .a4 .ring { width: 100%; height: 100%; border: 1px solid rgba(255,255,255,0.10); border-radius: 50%; position: absolute; }
+  .a4 .needle {
+    position: absolute; left: 50%; top: 6px; width: 1px; height: 20px;
+    background: linear-gradient(to bottom, var(--accent) 0 50%, rgba(255,255,255,0.18) 50% 100%);
+    transform-origin: 50% 50%;
+    animation: a4-drift 28s ease-in-out infinite alternate;
+  }
+  @keyframes a4-drift {
+    0%   { transform: translateX(-50%) rotate(-15deg); }
+    50%  { transform: translateX(-50%) rotate(8deg); }
+    100% { transform: translateX(-50%) rotate(-12deg); }
+  }
+  .a4 .tick { position: absolute; left: 50%; top: 2px; width: 1px; height: 3px; background: rgba(255,255,255,0.18); transform-origin: 50% 14px; }
+  .a4 .tick:nth-child(3) { transform: translateX(-50%) rotate(90deg); }
+  .a4 .tick:nth-child(4) { transform: translateX(-50%) rotate(180deg); }
+  .a4 .tick:nth-child(5) { transform: translateX(-50%) rotate(270deg); }
+
+  /* ─────────────── #5 RIVER MEANDER ─────────────── */
+  .a5 svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .a5 .river {
+    fill: none; stroke: rgba(120, 165, 200, 0.22); stroke-width: 1.2;
+    stroke-dasharray: 8 4;
+    animation: a5-flow 14s linear infinite;
+  }
+  @keyframes a5-flow { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -36; } }
+
+  /* ─────────────── #6 PHONEME FOG ─────────────── */
+  .a6 { font-family: 'Charis SIL', serif; }
+  .a6 .ipa {
+    position: absolute; font-size: 22px; color: rgba(255,255,255,0.06);
+    opacity: 0;
+    animation: a6-fade 10s ease-in-out infinite;
+  }
+  .a6 .ipa:nth-child(1) { top: 18px; left: 6%;  animation-delay: 0s;   }
+  .a6 .ipa:nth-child(2) { top: 12px; left: 22%; animation-delay: 1.8s; }
+  .a6 .ipa:nth-child(3) { top: 22px; left: 38%; animation-delay: 3.4s; }
+  .a6 .ipa:nth-child(4) { top: 14px; left: 56%; animation-delay: 5.1s; }
+  .a6 .ipa:nth-child(5) { top: 20px; left: 74%; animation-delay: 6.9s; }
+  .a6 .ipa:nth-child(6) { top: 16px; left: 88%; animation-delay: 8.3s; }
+  @keyframes a6-fade {
+    0%, 100% { opacity: 0; transform: translateY(0); }
+    40%      { opacity: 1; transform: translateY(-3px); }
+    60%      { opacity: 1; transform: translateY(-4px); }
+  }
+
+  /* ─────────────── #7 SPECTROGRAM PULSE ─────────────── */
+  .a7 { display: flex; align-items: flex-end; justify-content: center; gap: 2px; padding: 0 12%; }
+  .a7 i {
+    flex: 1; max-width: 4px; width: 3px;
+    background: linear-gradient(to top, rgba(181,106,29,0.5), rgba(181,106,29,0.05));
+    border-radius: 1px;
+    transform-origin: bottom;
+    animation: a7-breathe 2.2s ease-in-out infinite;
+  }
+  @keyframes a7-breathe { 0%,100% { transform: scaleY(0.2); } 50% { transform: scaleY(1); } }
+
+  /* ─────────────── #8 CONSTELLATION REFORM ─────────────── */
+  .a8 svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .a8 line { stroke: rgba(255,255,255,0.10); stroke-width: 0.6; animation: a8-fade 11s ease-in-out infinite; }
+  .a8 line:nth-child(odd)  { animation-delay: 0s;    }
+  .a8 line:nth-child(even) { animation-delay: 5.5s;  }
+  .a8 circle { fill: rgba(255,255,255,0.35); }
+  @keyframes a8-fade {
+    0%, 45%, 100% { opacity: 1; }
+    50%, 95%      { opacity: 0; }
+  }
+
+  /* ─────────────── #9 WIND FIELD ─────────────── */
+  .a9 .arrow {
+    position: absolute; width: 10px; height: 1px; background: rgba(255,255,255,0.10);
+    transform-origin: center;
+    animation: a9-rotate 60s ease-in-out infinite alternate;
+  }
+  .a9 .arrow::after {
+    content: ''; position: absolute; right: -2px; top: -2px;
+    width: 4px; height: 4px; border-top: 1px solid rgba(255,255,255,0.10); border-right: 1px solid rgba(255,255,255,0.10);
+    transform: rotate(45deg);
+  }
+  .a9 .arrow:nth-child(1) { top: 12px;  left: 12%;  animation-delay: 0s;    }
+  .a9 .arrow:nth-child(2) { top: 36px;  left: 25%;  animation-delay: 4s;    }
+  .a9 .arrow:nth-child(3) { top: 18px;  left: 40%;  animation-delay: 8s;    }
+  .a9 .arrow:nth-child(4) { top: 40px;  left: 56%;  animation-delay: 12s;   }
+  .a9 .arrow:nth-child(5) { top: 14px;  left: 70%;  animation-delay: 6s;    }
+  .a9 .arrow:nth-child(6) { top: 38px;  left: 84%;  animation-delay: 10s;   }
+  @keyframes a9-rotate { from { transform: rotate(-25deg); } to { transform: rotate(20deg); } }
+
+  /* ─────────────── #10 CRYSTALLINE PULSE ─────────────── */
+  .a10 svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .a10 circle { fill: rgba(255,255,255,0.18); }
+  .a10 .pulse { animation: a10-pulse 4.5s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+  .a10 line { stroke: rgba(255,255,255,0.05); stroke-width: 0.6; }
+  @keyframes a10-pulse {
+    0%, 70%, 100% { opacity: 0.3; transform: scale(1); fill: rgba(255,255,255,0.18); }
+    75% { opacity: 1; transform: scale(1.6); fill: var(--accent); }
+  }
+
+</style>
+</head>
+<body>
+
+<h1>Navbar animation brainstorm</h1>
+<p class="lead">Each strip uses the same nav layout, same blur, same logo. Only the background animation differs. Tell me the number.</p>
+
+<!-- 1 -->
+<div class="card">
+  <div class="label"><span class="num">1</span><b>Topographic contour drift</b> — slow-panning topo lines</div>
+  <div class="navstrip">
+    <div class="anim a1">
+      <svg viewBox="0 0 800 60" preserveAspectRatio="none">
+        <path d="M0,20 C100,8 200,32 300,20 S500,8 600,20 800,32 800,20" />
+        <path d="M0,30 C120,18 220,42 320,30 S520,18 620,30 800,42 800,30" />
+        <path d="M0,40 C140,28 240,52 340,40 S540,28 640,40 800,52 800,40" />
+        <path d="M0,50 C160,38 260,62 360,50 S560,38 660,50 800,62 800,50" />
+      </svg>
+    </div>
+    <div class="logo"></div><div class="sep"></div>
+    <div class="links"><a>Tools</a><a>Demo</a><a>Docs</a><a>About</a></div>
+  </div>
+</div>
+
+<!-- 2 -->
+<div class="card">
+  <div class="label"><span class="num">2</span><b>Plate-tectonic seam</b> — a fault line breathing with stress sparks</div>
+  <div class="navstrip">
+    <div class="anim a2">
+      <span class="spark"></span><span class="spark"></span><span class="spark"></span><span class="spark"></span>
+    </div>
+    <div class="logo"></div><div class="sep"></div>
+    <div class="links"><a>Tools</a><a>Demo</a><a>Docs</a><a>About</a></div>
+  </div>
+</div>
+
+<!-- 3 -->
+<div class="card">
+  <div class="label"><span class="num">3</span><b>Sediment strata</b> — five faint horizontal layers drifting at different rates</div>
+  <div class="navstrip">
+    <div class="anim a3">
+      <span></span><span></span><span></span><span></span><span></span>
+    </div>
+    <div class="logo"></div><div class="sep"></div>
+    <div class="links"><a>Tools</a><a>Demo</a><a>Docs</a><a>About</a></div>
+  </div>
+</div>
+
+<!-- 4 -->
+<div class="card">
+  <div class="label"><span class="num">4</span><b>Compass drift</b> — a small cardinal rose whose needle never quite settles</div>
+  <div class="navstrip">
+    <div class="anim a4">
+      <div class="compass">
+        <div class="ring"></div>
+        <div class="needle"></div>
+        <div class="tick"></div><div class="tick"></div><div class="tick"></div><div class="tick"></div>
+      </div>
+    </div>
+    <div class="logo"></div><div class="sep"></div>
+    <div class="links"><a>Tools</a><a>Demo</a><a>Docs</a><a>About</a></div>
+  </div>
+</div>
+
+<!-- 5 -->
+<div class="card">
+  <div class="label"><span class="num">5</span><b>River meander</b> — a single dashed curve flowing across the nav</div>
+  <div class="navstrip">
+    <div class="anim a5">
+      <svg viewBox="0 0 800 60" preserveAspectRatio="none">
+        <path class="river" d="M-20,40 C100,10 220,55 340,35 S600,55 820,30" />
+      </svg>
+    </div>
+    <div class="logo"></div><div class="sep"></div>
+    <div class="links"><a>Tools</a><a>Demo</a><a>Docs</a><a>About</a></div>
+  </div>
+</div>
+
+<!-- 6 -->
+<div class="card">
+  <div class="label"><span class="num">6</span><b>Phoneme fog</b> — IPA glyphs fading in and out at 6% opacity</div>
+  <div class="navstrip">
+    <div class="anim a6">
+      <span class="ipa">ʃ</span><span class="ipa">θ</span><span class="ipa">ŋ</span><span class="ipa">ʔ</span><span class="ipa">ɕ</span><span class="ipa">ɣ</span>
+    </div>
+    <div class="logo"></div><div class="sep"></div>
+    <div class="links"><a>Tools</a><a>Demo</a><a>Docs</a><a>About</a></div>
+  </div>
+</div>
+
+<!-- 7 -->
+<div class="card">
+  <div class="label"><span class="num">7</span><b>Spectrogram pulse</b> — vertical bars breathing like slow speech</div>
+  <div class="navstrip">
+    <div class="anim a7">
+      <i style="animation-delay: 0.0s"></i><i style="animation-delay: 0.1s"></i><i style="animation-delay: 0.2s"></i><i style="animation-delay: 0.3s"></i><i style="animation-delay: 0.4s"></i><i style="animation-delay: 0.5s"></i><i style="animation-delay: 0.6s"></i><i style="animation-delay: 0.7s"></i><i style="animation-delay: 0.8s"></i><i style="animation-delay: 0.9s"></i><i style="animation-delay: 1.0s"></i><i style="animation-delay: 1.1s"></i><i style="animation-delay: 1.2s"></i><i style="animation-delay: 1.3s"></i><i style="animation-delay: 1.4s"></i><i style="animation-delay: 1.5s"></i><i style="animation-delay: 1.6s"></i><i style="animation-delay: 1.7s"></i><i style="animation-delay: 1.8s"></i><i style="animation-delay: 1.9s"></i><i style="animation-delay: 2.0s"></i>
+    </div>
+    <div class="logo"></div><div class="sep"></div>
+    <div class="links"><a>Tools</a><a>Demo</a><a>Docs</a><a>About</a></div>
+  </div>
+</div>
+
+<!-- 8 -->
+<div class="card">
+  <div class="label"><span class="num">8</span><b>Constellation reform</b> — dots stay, edges fade between configurations</div>
+  <div class="navstrip">
+    <div class="anim a8">
+      <svg viewBox="0 0 800 60" preserveAspectRatio="none">
+        <line x1="60"  y1="20" x2="200" y2="42" />
+        <line x1="200" y1="42" x2="360" y2="14" />
+        <line x1="360" y1="14" x2="520" y2="40" />
+        <line x1="520" y1="40" x2="680" y2="18" />
+        <line x1="200" y1="42" x2="520" y2="40" />
+        <line x1="60"  y1="20" x2="360" y2="14" />
+        <line x1="360" y1="14" x2="680" y2="18" />
+        <circle cx="60"  cy="20" r="1.5" />
+        <circle cx="200" cy="42" r="1.5" />
+        <circle cx="360" cy="14" r="1.5" />
+        <circle cx="520" cy="40" r="1.5" />
+        <circle cx="680" cy="18" r="1.5" />
+      </svg>
+    </div>
+    <div class="logo"></div><div class="sep"></div>
+    <div class="links"><a>Tools</a><a>Demo</a><a>Docs</a><a>About</a></div>
+  </div>
+</div>
+
+<!-- 9 -->
+<div class="card">
+  <div class="label"><span class="num">9</span><b>Wind field</b> — scattered arrows slowly rotating together like a weather map</div>
+  <div class="navstrip">
+    <div class="anim a9">
+      <span class="arrow"></span><span class="arrow"></span><span class="arrow"></span><span class="arrow"></span><span class="arrow"></span><span class="arrow"></span>
+    </div>
+    <div class="logo"></div><div class="sep"></div>
+    <div class="links"><a>Tools</a><a>Demo</a><a>Docs</a><a>About</a></div>
+  </div>
+</div>
+
+<!-- 10 -->
+<div class="card">
+  <div class="label"><span class="num">10</span><b>Crystalline pulse</b> — a lattice where individual vertices flash orange and decay</div>
+  <div class="navstrip">
+    <div class="anim a10">
+      <svg viewBox="0 0 800 60" preserveAspectRatio="none" id="lattice"></svg>
+    </div>
+    <div class="logo"></div><div class="sep"></div>
+    <div class="links"><a>Tools</a><a>Demo</a><a>Docs</a><a>About</a></div>
+  </div>
+</div>
+
+<!-- 13 — Multi-color domain warp -->
+<div class="card" style="margin-bottom: 40px">
+  <div class="label"><span class="num">13</span><b>Hero — multi-color domain warp</b> &nbsp; · &nbsp; navy + amber + black, chaotic FBM zones</div>
+  <div style="position: relative; height: 280px; background: #14171c; overflow: hidden">
+    <canvas id="warp2Canvas" data-shader="warp2" style="position: absolute; inset: 0; width: 100%; height: 100%; display: block"></canvas>
+  </div>
+</div>
+
+<!-- 14 — Voronoi blobs -->
+<div class="card" style="margin-bottom: 40px">
+  <div class="label"><span class="num">14</span><b>Hero — Voronoi ink blobs</b> &nbsp; · &nbsp; scattered cells tinted from the palette, smoothed edges</div>
+  <div style="position: relative; height: 280px; background: #14171c; overflow: hidden">
+    <canvas id="voronoiCanvas" data-shader="voronoi" style="position: absolute; inset: 0; width: 100%; height: 100%; display: block"></canvas>
+  </div>
+</div>
+
+<!-- 15 — Curl-noise ink -->
+<div class="card" style="margin-bottom: 40px">
+  <div class="label"><span class="num">15</span><b>Hero — curl-noise ink flow</b> &nbsp; · &nbsp; divergence-free swirls, ink-in-water</div>
+  <div style="position: relative; height: 280px; background: #14171c; overflow: hidden">
+    <canvas id="curlCanvas" data-shader="curl" style="position: absolute; inset: 0; width: 100%; height: 100%; display: block"></canvas>
+  </div>
+</div>
+
+<script>
+(function shaders() {
+  const VS = `attribute vec2 a_pos; void main(){ gl_Position=vec4(a_pos,0.,1.); }`;
+
+  const NOISE_LIB = `
+    float hash(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
+    vec2 hash2(vec2 p){return fract(sin(vec2(dot(p,vec2(127.1,311.7)),dot(p,vec2(269.5,183.3))))*43758.5453);}
+    float noise(vec2 p){vec2 i=floor(p);vec2 f=fract(p);vec2 u=f*f*(3.-2.*f);
+      return mix(mix(hash(i),hash(i+vec2(1,0)),u.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),u.x),u.y);}
+    float fbm(vec2 x){float v=0.,a=.5;mat2 r=mat2(cos(.5),sin(.5),-sin(.5),cos(.5));
+      for(int i=0;i<5;i++){v+=a*noise(x);x=r*x*2.+vec2(100);a*=.5;}return v;}
+    float bayer4(vec2 p){int x=int(mod(p.x,4.)),y=int(mod(p.y,4.));
+      float m[16];m[0]=0.;m[1]=8.;m[2]=2.;m[3]=10.;m[4]=12.;m[5]=4.;m[6]=14.;m[7]=6.;
+      m[8]=3.;m[9]=11.;m[10]=1.;m[11]=9.;m[12]=15.;m[13]=7.;m[14]=13.;m[15]=5.;
+      int idx=x+y*4;float v=0.;
+      for(int k=0;k<16;k++){if(k==idx)v=m[k];}
+      return v/16.;}
+  `;
+
+  // ── #13 multi-color domain warp ──
+  const FS_WARP2 = `precision mediump float;uniform vec2 u_res;uniform float u_time;
+    ${NOISE_LIB}
+    const vec3 BLACK = vec3(0.055,0.063,0.078);   // #0e1014
+    const vec3 NAVY  = vec3(0.114,0.165,0.220);   // deep slate-blue
+    const vec3 SLATE = vec3(0.133,0.149,0.180);   // #22262e
+    const vec3 EMBER = vec3(0.710,0.416,0.114);   // #B56A1D
+    const vec3 HOT   = vec3(0.843,0.498,0.141);   // #d77f24
+    void main(){
+      vec2 st=gl_FragCoord.xy/u_res.xy; st.x*=u_res.x/u_res.y;
+      vec2 q=vec2(fbm(st+.06*u_time),fbm(st+vec2(5.2,1.3)+.04*u_time));
+      vec2 r=vec2(fbm(st+1.8*q+vec2(1.7,9.2)+.12*u_time),
+                  fbm(st+1.8*q+vec2(8.3,2.8)+.10*u_time));
+      float f=fbm(st+2.5*r);
+      // 4-stop palette ramp
+      vec3 col;
+      if(f<0.30) col=mix(BLACK, NAVY, smoothstep(0.0,0.30,f));
+      else if(f<0.55) col=mix(NAVY, SLATE, smoothstep(0.30,0.55,f));
+      else if(f<0.80) col=mix(SLATE, EMBER, smoothstep(0.55,0.80,f));
+      else col=mix(EMBER, HOT, smoothstep(0.80,1.0,f));
+      // Dither
+      col += vec3((bayer4(gl_FragCoord.xy)-.5)/255.);
+      gl_FragColor=vec4(col,1.);
+    }`;
+
+  // ── #14 voronoi blobs ──
+  const FS_VORONOI = `precision mediump float;uniform vec2 u_res;uniform float u_time;
+    ${NOISE_LIB}
+    const vec3 BLACK = vec3(0.055,0.063,0.078);
+    const vec3 NAVY  = vec3(0.114,0.165,0.220);
+    const vec3 EMBER = vec3(0.710,0.416,0.114);
+    const vec3 DIM   = vec3(0.478,0.271,0.078);  // #7a4514
+    vec3 voronoi(vec2 x){
+      vec2 n=floor(x); vec2 f=fract(x);
+      float d=1e9; vec2 mr; vec2 mid;
+      for(int j=-1;j<=1;j++)for(int i=-1;i<=1;i++){
+        vec2 g=vec2(float(i),float(j));
+        vec2 o=hash2(n+g);
+        o=0.5+0.5*sin(u_time*0.4+6.28*o);
+        vec2 r=g+o-f;
+        float dist=dot(r,r);
+        if(dist<d){ d=dist; mr=r; mid=n+g; }
+      }
+      return vec3(d, mid);
+    }
+    void main(){
+      vec2 st=gl_FragCoord.xy/u_res.xy; st.x*=u_res.x/u_res.y;
+      // Slight FBM warp on coords so cells aren't a grid
+      vec2 warp = vec2(fbm(st*2.+u_time*0.05), fbm(st*2.+vec2(3.7,1.2)+u_time*0.04));
+      vec3 v = voronoi(st*4. + warp*0.8);
+      float cellDist = v.x;
+      float cellHash = hash(v.yz);
+      // Pick a colour per cell from the palette
+      vec3 cellCol;
+      if(cellHash<0.30) cellCol = BLACK;
+      else if(cellHash<0.55) cellCol = NAVY;
+      else if(cellHash<0.78) cellCol = DIM;
+      else cellCol = EMBER;
+      // Smooth blob: brighter at cell center, fade to black at edges
+      float intensity = smoothstep(0.35, 0.0, cellDist);
+      vec3 col = mix(BLACK, cellCol, intensity);
+      // Edge highlight on warm cells
+      if(cellHash>=0.78){
+        float edge = smoothstep(0.05, 0.0, cellDist);
+        col = mix(col, vec3(0.95,0.6,0.2), edge*0.25);
+      }
+      col += vec3((bayer4(gl_FragCoord.xy)-.5)/255.);
+      gl_FragColor=vec4(col,1.);
+    }`;
+
+  // ── #15 curl-noise ink ──
+  const FS_CURL = `precision mediump float;uniform vec2 u_res;uniform float u_time;
+    ${NOISE_LIB}
+    const vec3 BLACK = vec3(0.055,0.063,0.078);
+    const vec3 NAVY  = vec3(0.114,0.165,0.220);
+    const vec3 EMBER = vec3(0.710,0.416,0.114);
+    // Curl noise: rotate gradient of potential field 90°
+    vec2 curl(vec2 p){
+      float eps=0.01;
+      float a=fbm(p+vec2(eps,0)) - fbm(p-vec2(eps,0));
+      float b=fbm(p+vec2(0,eps)) - fbm(p-vec2(0,eps));
+      return vec2(b,-a)/(2.*eps);
+    }
+    void main(){
+      vec2 st=gl_FragCoord.xy/u_res.xy; st.x*=u_res.x/u_res.y;
+      vec2 p = st * 3.0;
+      // Advect by curl field iteratively (Eulerian)
+      for(int i=0;i<3;i++){
+        p += 0.04 * curl(p + u_time*0.04);
+      }
+      float dens = fbm(p*1.5);
+      float warm = smoothstep(0.6, 0.85, dens);
+      float cool = smoothstep(0.35, 0.55, dens) * (1.0 - warm);
+      vec3 col = mix(BLACK, NAVY, cool);
+      col = mix(col, EMBER, warm * 0.65);
+      col += vec3((bayer4(gl_FragCoord.xy)-.5)/255.);
+      gl_FragColor=vec4(col,1.);
+    }`;
+
+  const PROGRAMS = { warp2: FS_WARP2, voronoi: FS_VORONOI, curl: FS_CURL };
+
+  function makeShader(canvas, fsrc){
+    const gl = canvas.getContext('webgl', { antialias:false, depth:false });
+    if(!gl){ canvas.style.display='none'; return; }
+    function compile(t,s){const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);
+      if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))console.warn(gl.getShaderInfoLog(sh));return sh;}
+    const prog=gl.createProgram();
+    gl.attachShader(prog,compile(gl.VERTEX_SHADER,VS));
+    gl.attachShader(prog,compile(gl.FRAGMENT_SHADER,fsrc));
+    gl.linkProgram(prog);
+    if(!gl.getProgramParameter(prog,gl.LINK_STATUS)){console.warn(gl.getProgramInfoLog(prog));return;}
+    gl.useProgram(prog);
+    const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);
+    const pos=gl.getAttribLocation(prog,'a_pos');gl.enableVertexAttribArray(pos);
+    gl.vertexAttribPointer(pos,2,gl.FLOAT,false,0,0);
+    const uRes=gl.getUniformLocation(prog,'u_res');
+    const uTime=gl.getUniformLocation(prog,'u_time');
+    function resize(){
+      const r=canvas.getBoundingClientRect();
+      const ratio=Math.min(window.devicePixelRatio||1,1.5);
+      canvas.width=Math.round(r.width*ratio);canvas.height=Math.round(r.height*ratio);
+      gl.viewport(0,0,canvas.width,canvas.height);
+    }
+    resize();
+    window.addEventListener('resize',resize);
+    if(typeof ResizeObserver!=='undefined') new ResizeObserver(resize).observe(canvas);
+    const start=performance.now();
+    const reduce=window.matchMedia('(prefers-reduced-motion: reduce)');
+    function frame(now){
+      const t=reduce.matches?0:(now-start)*0.0002;
+      gl.uniform2f(uRes,canvas.width,canvas.height);
+      gl.uniform1f(uTime,t);
+      gl.drawArrays(gl.TRIANGLES,0,6);
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  document.querySelectorAll('canvas[data-shader]').forEach(c => {
+    const key = c.getAttribute('data-shader');
+    if (PROGRAMS[key]) makeShader(c, PROGRAMS[key]);
+  });
+})();
+</script>
+
+<!-- 12 — Domain-warped WebGL fragment shader for the HERO (not the nav) -->
+<div class="card" style="margin-bottom: 40px">
+  <div class="label"><span class="num">12</span><b>Hero — domain-warped FBM (WebGL)</b> &nbsp; · &nbsp; tectonic strata, slate + amber, ~5KB</div>
+  <div style="position: relative; height: 280px; background: #14171c; overflow: hidden">
+    <canvas id="warpCanvas" style="position: absolute; inset: 0; width: 100%; height: 100%; display: block"></canvas>
+    <div style="position: relative; z-index: 1; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #e5e8eb; font-family: 'Noto Sans', system-ui">
+      <div style="font-size: 11px; letter-spacing: 0.18em; color: #B56A1D; text-transform: uppercase; margin-bottom: 10px">A worldbuilding toolset</div>
+      <div style="font-size: 26px; font-weight: 600; line-height: 1.15">Build worlds the way<br>geologists, linguists, and architects would.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Domain-warped FBM fragment shader, slate + amber palette
+  (function warpShader() {
+    const canvas = document.getElementById('warpCanvas');
+    if (!canvas) return;
+    const gl = canvas.getContext('webgl', { antialias: false, depth: false, premultipliedAlpha: false });
+    if (!gl) { canvas.style.display = 'none'; return; }
+
+    const vsrc = `
+      attribute vec2 a_pos;
+      void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }
+    `;
+    const fsrc = `
+      precision mediump float;
+      uniform vec2 u_res;
+      uniform float u_time;
+
+      const vec3 C_BASE = vec3(0.106, 0.118, 0.141); // #1b1e24
+      const vec3 C_MID  = vec3(0.133, 0.149, 0.180); // #22262e
+      const vec3 C_HOT  = vec3(0.710, 0.416, 0.114); // #B56A1D
+
+      float hash(vec2 p) {
+        return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+      }
+      float noise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(hash(i + vec2(0.0,0.0)), hash(i + vec2(1.0,0.0)), u.x),
+                   mix(hash(i + vec2(0.0,1.0)), hash(i + vec2(1.0,1.0)), u.x), u.y);
+      }
+      float fbm(vec2 x) {
+        float v = 0.0;
+        float a = 0.5;
+        vec2 shift = vec2(100.0);
+        mat2 rot = mat2(cos(0.5), sin(0.5), -sin(0.5), cos(0.50));
+        for (int i = 0; i < 4; i++) {
+          v += a * noise(x);
+          x = rot * x * 2.0 + shift;
+          a *= 0.5;
+        }
+        return v;
+      }
+
+      // 4x4 Bayer matrix for sub-pixel dither (kills banding)
+      float bayer4(vec2 p) {
+        int x = int(mod(p.x, 4.0));
+        int y = int(mod(p.y, 4.0));
+        int idx = x + y * 4;
+        float v = 0.0;
+        if (idx == 0)  v = 0.0/16.0;
+        if (idx == 1)  v = 8.0/16.0;
+        if (idx == 2)  v = 2.0/16.0;
+        if (idx == 3)  v = 10.0/16.0;
+        if (idx == 4)  v = 12.0/16.0;
+        if (idx == 5)  v = 4.0/16.0;
+        if (idx == 6)  v = 14.0/16.0;
+        if (idx == 7)  v = 6.0/16.0;
+        if (idx == 8)  v = 3.0/16.0;
+        if (idx == 9)  v = 11.0/16.0;
+        if (idx == 10) v = 1.0/16.0;
+        if (idx == 11) v = 9.0/16.0;
+        if (idx == 12) v = 15.0/16.0;
+        if (idx == 13) v = 7.0/16.0;
+        if (idx == 14) v = 13.0/16.0;
+        if (idx == 15) v = 5.0/16.0;
+        return v;
+      }
+
+      void main() {
+        vec2 st = gl_FragCoord.xy / u_res.xy;
+        st.x *= u_res.x / u_res.y;
+
+        // Domain warp
+        vec2 q = vec2(fbm(st + 0.05 * u_time), fbm(st + vec2(5.2, 1.3)));
+        vec2 r = vec2(
+          fbm(st + 1.6 * q + vec2(1.7, 9.2) + 0.15 * u_time),
+          fbm(st + 1.6 * q + vec2(8.3, 2.8) + 0.13 * u_time)
+        );
+        float f = fbm(st + 2.0 * r);
+
+        // Map scalar to palette
+        vec3 col = mix(C_BASE, C_MID, clamp(f * f * 3.5, 0.0, 1.0));
+        float accent = smoothstep(0.92, 1.0, f);
+        col = mix(col, C_HOT, accent * 0.30);
+
+        // Dither: ±1/512 jitter per pixel before quantising to 8-bit
+        float d = (bayer4(gl_FragCoord.xy) - 0.5) / 255.0;
+        col += vec3(d);
+
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    function compile(type, src) {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+        console.warn('shader compile:', gl.getShaderInfoLog(s));
+      }
+      return s;
+    }
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, vsrc));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fsrc));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      console.warn('link:', gl.getProgramInfoLog(prog));
+      return;
+    }
+    gl.useProgram(prog);
+
+    // Full-screen quad as two triangles
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -1,-1,  1,-1,  -1, 1,
+      -1, 1,  1,-1,   1, 1,
+    ]), gl.STATIC_DRAW);
+    const posLoc = gl.getAttribLocation(prog, 'a_pos');
+    gl.enableVertexAttribArray(posLoc);
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+    const uRes = gl.getUniformLocation(prog, 'u_res');
+    const uTime = gl.getUniformLocation(prog, 'u_time');
+
+    function resize() {
+      const r = canvas.getBoundingClientRect();
+      const ratio = Math.min(window.devicePixelRatio || 1, 1.5);
+      canvas.width = Math.round(r.width * ratio);
+      canvas.height = Math.round(r.height * ratio);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const start = performance.now();
+    function frame(now) {
+      const t = reduce.matches ? 0 : (now - start) * 0.0002;
+      gl.uniform2f(uRes, canvas.width, canvas.height);
+      gl.uniform1f(uTime, t);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  })();
+</script>
+
+<!-- 11 -->
+<div class="card">
+  <div class="label"><span class="num">11</span><b>Starfield — irregular scatter, each star twinkles on its own cycle</b> (Quadspinner-class)</div>
+  <div class="navstrip">
+    <canvas class="anim" id="starfield" style="z-index:1"></canvas>
+    <div class="logo"></div><div class="sep"></div>
+    <div class="links"><a>Tools</a><a>Demo</a><a>Docs</a><a>About</a></div>
+  </div>
+</div>
+
+<script>
+  // Starfield (#11) — random scatter, independent twinkle, sparks
+  (function starfield() {
+    const c = document.getElementById('starfield');
+    if (!c) return;
+    const ctx = c.getContext('2d');
+    let W, H, stars, dpr = window.devicePixelRatio || 1;
+    let nextSparkAt = 0;
+    function resize() {
+      const r = c.getBoundingClientRect();
+      W = r.width; H = r.height;
+      c.width = W * dpr; c.height = H * dpr;
+      c.style.width = W + 'px'; c.style.height = H + 'px';
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.scale(dpr, dpr);
+      stars = Array.from({ length: Math.round(W * 0.5) }, () => ({
+        // mild left bias, but stars reach the right edge
+        x: Math.pow(Math.random(), 1.15) * W,
+        y: Math.random() * H,
+        r: 0.18 + Math.random() * 0.45,
+        base: 0.04 + Math.random() * 0.22,
+        speed: 0.0001 + Math.random() * 0.0009,
+        phase: Math.random() * Math.PI * 2,
+        warm: Math.random() < 0.18,
+        spark: 0,
+      }));
+    }
+    function frame(t) {
+      ctx.clearRect(0, 0, W, H);
+
+      // schedule a spark every 4-9s
+      if (t > nextSparkAt && stars && stars.length) {
+        const target = stars[Math.floor(Math.random() * stars.length)];
+        target.spark = 1;
+        nextSparkAt = t + 4000 + Math.random() * 5000;
+      }
+
+      for (const s of stars) {
+        // twinkle
+        const twinkle = s.base * (0.35 + 0.65 * Math.sin(t * s.speed + s.phase));
+        // spark decay (linear over ~900ms)
+        if (s.spark > 0) s.spark = Math.max(0, s.spark - 0.012);
+        const op = Math.min(1, twinkle + s.spark);
+
+        // halo for brighter stars and sparks
+        const showHalo = (s.base > 0.18 && twinkle > s.base * 0.7) || s.spark > 0.3;
+        const haloOp = Math.min(0.35, op * 0.4 + s.spark * 0.4);
+
+        const color = s.warm
+          ? `${Math.round(255)}, ${Math.round(220 - s.spark * 20)}, ${Math.round(178 - s.spark * 20)}`
+          : `255, 255, 255`;
+
+        if (showHalo) {
+          ctx.fillStyle = `rgba(${color}, ${haloOp.toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, s.r * (2.4 + s.spark * 1.6), 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.fillStyle = `rgba(${color}, ${op.toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.r * (1 + s.spark * 0.3), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      requestAnimationFrame(frame);
+    }
+    resize();
+    window.addEventListener('resize', resize);
+    requestAnimationFrame(frame);
+  })();
+
+  // Build the lattice for #10
+  (function buildLattice() {
+    const svg = document.getElementById('lattice');
+    if (!svg) return;
+    const W = 800, H = 60, step = 40;
+    const points = [];
+    for (let y = 10; y <= H; y += 20) {
+      const offset = (y / 20) % 2 === 0 ? step / 2 : 0;
+      for (let x = -offset; x <= W; x += step) {
+        points.push({ x, y });
+      }
+    }
+    // edges to nearest neighbours
+    for (let i = 0; i < points.length; i++) {
+      for (let j = i + 1; j < points.length; j++) {
+        const dx = points[i].x - points[j].x;
+        const dy = points[i].y - points[j].y;
+        if (dx*dx + dy*dy < step*step + 4) {
+          const ln = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+          ln.setAttribute('x1', points[i].x); ln.setAttribute('y1', points[i].y);
+          ln.setAttribute('x2', points[j].x); ln.setAttribute('y2', points[j].y);
+          svg.appendChild(ln);
+        }
+      }
+    }
+    points.forEach((p, k) => {
+      const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      c.setAttribute('cx', p.x); c.setAttribute('cy', p.y); c.setAttribute('r', 1.4);
+      c.classList.add('pulse');
+      c.style.animationDelay = (k * 0.41) + 's';
+      svg.appendChild(c);
+    });
+  })();
+</script>
+
+</body>
+</html>
