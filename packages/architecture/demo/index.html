@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&family=Noto+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./studio.css">
 <script type="importmap">
 {
   "imports": {
@@ -755,7 +756,7 @@
   </div>
   <div class="divider"></div>
   <div class="tabs" id="tabs">
-    <button class="tab active" data-view="guides">Style guides</button>
+    <button class="tab active" data-view="cultures">Cultures</button>
     <button class="tab" data-view="typologies">Typologies</button>
   </div>
   <div class="divider"></div>
@@ -764,12 +765,40 @@
   <span class="mono muted" style="font-size:11px;">A1 · style-data explorer</span>
 </div>
 
+<!-- ─── cultures studio shell ─────────────────────────────── -->
+<div id="cultures-app" class="active">
+  <aside class="studio-list">
+    <button id="culture-create" class="studio-create">+ Create culture</button>
+    <ul id="culture-list"></ul>
+  </aside>
+  <main class="studio-main">
+    <header id="culture-header" class="studio-header">
+      <div class="studio-header-fields">
+        <h2 id="culture-name">—</h2>
+        <div class="studio-header-meta"><span id="culture-region">—</span> · <span id="culture-climate">—</span> · <span id="culture-counts">0 eras</span></div>
+      </div>
+      <button id="culture-delete" class="studio-delete" disabled>× Delete</button>
+    </header>
+    <nav class="studio-subtabs" id="studio-subtabs">
+      <button data-subtab="materials" class="active">Materials</button>
+      <button data-subtab="ornaments">Ornaments</button>
+      <button data-subtab="tag-axes">Tag axes</button>
+      <button data-subtab="culture-rules">Culture rules</button>
+    </nav>
+    <div id="subtab-body" class="studio-subtab-body"><p class="placeholder">Materials editor lands in Task 11.</p></div>
+    <section id="culture-timeline" class="culture-timeline"><p class="placeholder">Timeline lands in Task 12.</p></section>
+    <section id="era-detail" class="era-detail" hidden></section>
+  </main>
+</div>
+
 <!-- ─── app shell ─────────────────────────────────────────── -->
-<div class="app" id="app">
+<div class="app" id="app" style="display:none;">
   <div class="pane left"  id="leftPane"></div>
   <div class="pane center"><div class="center-wrap" id="centerPane"></div></div>
   <div class="pane right" id="rightPane"><div class="right-wrap" id="rightWrap"></div></div>
 </div>
+
+<script type="module" src="./studio.js"></script>
 
 <div id="viewerModal" class="viewer-modal" style="display:none;">
   <div class="viewer-modal-backdrop"></div>
@@ -859,7 +888,7 @@ for (const g of guides) for (const k of Object.keys(g.styleSheet.extras || {})) 
 /* ─── state ─────────────────────────────────────────────── */
 
 const state = {
-  view: 'guides',
+  view: 'cultures',
   guideId: 'medieval-european-gothic',
   typologyId: null,
   // When set, the right pane displays a material-editor-style inspector
@@ -1661,6 +1690,18 @@ document.getElementById('tabs').addEventListener('click', e => {
   const view = t.dataset.view;
   state.view = view;
 
+  const culturesApp = document.getElementById('cultures-app');
+  const legacyApp   = document.getElementById('app');
+
+  if (view === 'cultures') {
+    if (culturesApp) culturesApp.classList.add('active');
+    if (legacyApp)   legacyApp.style.display = 'none';
+    return;
+  }
+
+  if (culturesApp) culturesApp.classList.remove('active');
+  if (legacyApp)   legacyApp.style.display = '';
+
   if (state.view === 'typologies' && !state.typologyId) state.typologyId = typologies[0].id;
   renderLeftPane();
   renderCenter();
@@ -2356,9 +2397,12 @@ function getOrnamentCanvases(ornament) {
 /* ─── boot ──────────────────────────────────────────────── */
 
 renderStats();
-renderLeftPane();
-renderCenter();
-renderRight();
+// Only render the legacy three-pane views when not on the Cultures tab.
+if (state.view !== 'cultures') {
+  renderLeftPane();
+  renderCenter();
+  renderRight();
+}
 </script>
 
 </body>
