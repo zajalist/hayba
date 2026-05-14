@@ -704,10 +704,10 @@ function renderEraDetail() {
       <button class="era-detail-delete" title="Delete era">× Delete era</button>
     </header>
     <div class="era-detail-grid">
-      <section id="panel-defaults"><h3>Defaults</h3><div class="panel-body"><p class="placeholder">Defaults editor lands in Task 13.</p></div></section>
-      <section id="panel-typology"><h3>Typology mix</h3><div class="panel-body"><p class="placeholder">Typology mix editor lands in Task 13.</p></div></section>
+      <section id="panel-defaults"><h3>Defaults</h3><div class="panel-body"></div></section>
+      <section id="panel-typology"><h3>Typology mix</h3><div class="panel-body"></div></section>
       <section id="panel-rules"><h3>Rules</h3><div class="panel-body"><p class="placeholder">Rule editor lands in Task 14.</p></div></section>
-      <section id="panel-ornaments"><h3>Ornaments</h3><div class="panel-body"><p class="placeholder">Ornament link lands in Task 13.</p></div></section>
+      <section id="panel-ornaments"><h3>Ornaments</h3><div class="panel-body"></div></section>
     </div>
   `;
   el.querySelector('.era-name-input').addEventListener('input', (e) => {
@@ -736,6 +736,338 @@ function renderEraDetail() {
     renderTimeline();
     renderEraDetail();
   });
+
+  renderDefaultsPanel(era, el.querySelector('#panel-defaults .panel-body'));
+  renderTypologyPanel(era, el.querySelector('#panel-typology .panel-body'));
+  renderOrnamentsPanel(era, el.querySelector('#panel-ornaments .panel-body'));
+}
+
+/* ── Era panel: Defaults ─────────────────────────────────── */
+
+function renderDefaultsPanel(era, body) {
+  if (!body) return;
+  const d = era.defaults ?? {};
+  const props = d.proportions ?? {};
+  const palette = d.palette ?? [];
+  const densityValues = ['sparse', 'moderate', 'dense', 'saturated'];
+
+  function save() { savePartial({ eras: state.culture.eras }); }
+
+  // Build the form
+  const form = document.createElement('div');
+  form.className = 'defaults-form';
+
+  // Roof type
+  const roofRow = document.createElement('div');
+  roofRow.className = 'field-row';
+  roofRow.innerHTML = `<label>Roof type</label><input type="text" class="field-input" value="${esc(d.roofType ?? '')}" placeholder="e.g. gabled">`;
+  roofRow.querySelector('input').addEventListener('input', e => {
+    if (!era.defaults) era.defaults = {};
+    era.defaults.roofType = e.target.value;
+    save();
+  });
+  form.appendChild(roofRow);
+
+  // Technique
+  const techRow = document.createElement('div');
+  techRow.className = 'field-row';
+  techRow.innerHTML = `<label>Technique</label><input type="text" class="field-input" value="${esc(d.technique ?? '')}" placeholder="e.g. dressed stone">`;
+  techRow.querySelector('input').addEventListener('input', e => {
+    if (!era.defaults) era.defaults = {};
+    era.defaults.technique = e.target.value;
+    save();
+  });
+  form.appendChild(techRow);
+
+  // Proportions
+  const propSection = document.createElement('div');
+  propSection.className = 'defaults-section';
+  const propLabel = document.createElement('div');
+  propLabel.className = 'field-label';
+  propLabel.textContent = 'Proportions';
+  propSection.appendChild(propLabel);
+
+  const propDefs = [
+    { key: 'columnSlenderness', label: 'Col. slenderness' },
+    { key: 'storyHeight',       label: 'Story height' },
+    { key: 'doorAspect',        label: 'Door aspect' },
+  ];
+  for (const { key, label } of propDefs) {
+    const val = props[key] ?? 1;
+    const row = document.createElement('div');
+    row.className = 'field-row';
+    row.innerHTML = `<label>${esc(label)}</label>
+      <div class="prop-input-wrap">
+        <input type="number" step="0.05" min="0.1" max="5" class="field-input" value="${val}" data-prop="${key}">
+        <span class="prop-val">${Number(val).toFixed(2)}</span>
+      </div>`;
+    const input = row.querySelector('input');
+    const valEl = row.querySelector('.prop-val');
+    input.addEventListener('input', e => {
+      const v = parseFloat(e.target.value);
+      if (!isNaN(v)) {
+        valEl.textContent = v.toFixed(2);
+        if (!era.defaults) era.defaults = {};
+        if (!era.defaults.proportions) era.defaults.proportions = {};
+        era.defaults.proportions[key] = v;
+        save();
+      }
+    });
+    propSection.appendChild(row);
+  }
+  form.appendChild(propSection);
+
+  // Palette
+  const paletteSection = document.createElement('div');
+  paletteSection.className = 'defaults-section';
+  const paletteLabel = document.createElement('div');
+  paletteLabel.className = 'field-label';
+  paletteLabel.textContent = 'Palette';
+  paletteSection.appendChild(paletteLabel);
+
+  const paletteList = document.createElement('div');
+  paletteList.className = 'palette-list';
+
+  function renderPaletteRows() {
+    paletteList.innerHTML = '';
+    const currentPalette = era.defaults?.palette ?? [];
+    currentPalette.forEach((color, idx) => {
+      const row = document.createElement('div');
+      row.className = 'palette-row';
+      row.innerHTML = `<input type="color" value="${esc(color)}"><button class="icon-btn-sm palette-remove" title="Remove color">×</button>`;
+      row.querySelector('input[type=color]').addEventListener('input', e => {
+        if (!era.defaults) era.defaults = {};
+        if (!era.defaults.palette) era.defaults.palette = [];
+        era.defaults.palette[idx] = e.target.value;
+        save();
+      });
+      row.querySelector('.palette-remove').addEventListener('click', () => {
+        if (!era.defaults) era.defaults = {};
+        era.defaults.palette = (era.defaults.palette ?? []).filter((_, i) => i !== idx);
+        save();
+        renderPaletteRows();
+      });
+      paletteList.appendChild(row);
+    });
+  }
+
+  renderPaletteRows();
+  paletteSection.appendChild(paletteList);
+
+  const addColorBtn = document.createElement('button');
+  addColorBtn.className = 'add-btn-sm';
+  addColorBtn.textContent = '+ Add color';
+  addColorBtn.addEventListener('click', () => {
+    if (!era.defaults) era.defaults = {};
+    if (!era.defaults.palette) era.defaults.palette = [];
+    era.defaults.palette.push('#888888');
+    save();
+    renderPaletteRows();
+  });
+  paletteSection.appendChild(addColorBtn);
+  form.appendChild(paletteSection);
+
+  // Ornament density segmented control
+  const densitySection = document.createElement('div');
+  densitySection.className = 'defaults-section';
+  const densityLabel = document.createElement('div');
+  densityLabel.className = 'field-label';
+  densityLabel.textContent = 'Ornament density';
+  densitySection.appendChild(densityLabel);
+
+  const segWrap = document.createElement('div');
+  segWrap.className = 'segmented';
+
+  function renderSegmented() {
+    segWrap.innerHTML = '';
+    const current = era.defaults?.ornamentDensity ?? 'moderate';
+    for (const val of densityValues) {
+      const btn = document.createElement('button');
+      btn.textContent = val;
+      btn.className = val === current ? 'active' : '';
+      btn.addEventListener('click', () => {
+        if (!era.defaults) era.defaults = {};
+        era.defaults.ornamentDensity = val;
+        save();
+        renderSegmented();
+      });
+      segWrap.appendChild(btn);
+    }
+  }
+
+  renderSegmented();
+  densitySection.appendChild(segWrap);
+  form.appendChild(densitySection);
+
+  body.innerHTML = '';
+  body.appendChild(form);
+}
+
+/* ── Era panel: Typology mix ─────────────────────────────── */
+
+function renderTypologyPanel(era, body) {
+  if (!body) return;
+  const mix = era.typologyMix ?? {};
+  const entries = Object.entries(mix);
+
+  function save() { savePartial({ eras: state.culture.eras }); }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'typology-wrap';
+
+  const list = document.createElement('div');
+  list.className = 'typology-list';
+
+  function renderRows() {
+    list.innerHTML = '';
+    const currentMix = era.typologyMix ?? {};
+    const keys = Object.keys(currentMix);
+    if (keys.length === 0) {
+      const ph = document.createElement('p');
+      ph.className = 'placeholder';
+      ph.textContent = 'No typologies yet. Click + to add one.';
+      list.appendChild(ph);
+      return;
+    }
+    keys.forEach(typId => {
+      const weight = currentMix[typId];
+      const row = document.createElement('div');
+      row.className = 'typology-row';
+      row.innerHTML = `
+        <input type="text" class="field-input-sm typ-id" value="${esc(typId)}" placeholder="typology-id">
+        <input type="range" class="typ-slider" min="0" max="1" step="0.01" value="${weight}">
+        <span class="typ-val">${fmt(weight)}</span>
+        <button class="icon-btn-sm typ-remove" title="Remove">×</button>
+      `;
+      const idInput = row.querySelector('.typ-id');
+      const slider  = row.querySelector('.typ-slider');
+      const valEl   = row.querySelector('.typ-val');
+
+      idInput.addEventListener('change', e => {
+        const newId = e.target.value.trim();
+        if (!newId || newId === typId) return;
+        const v = currentMix[typId];
+        delete era.typologyMix[typId];
+        era.typologyMix[newId] = v;
+        save();
+        renderRows();
+      });
+
+      slider.addEventListener('input', e => {
+        const v = parseFloat(e.target.value);
+        valEl.textContent = fmt(v);
+        era.typologyMix[typId] = v;
+        save();
+      });
+
+      row.querySelector('.typ-remove').addEventListener('click', () => {
+        delete era.typologyMix[typId];
+        save();
+        renderRows();
+      });
+
+      list.appendChild(row);
+    });
+  }
+
+  renderRows();
+
+  let addCounter = 0;
+  const addBtn = document.createElement('button');
+  addBtn.className = 'add-btn';
+  addBtn.textContent = '+ Add typology';
+  addBtn.addEventListener('click', () => {
+    if (!era.typologyMix) era.typologyMix = {};
+    let newId = `new-typology-${++addCounter}`;
+    while (newId in era.typologyMix) newId = `new-typology-${++addCounter}`;
+    era.typologyMix[newId] = 1.0;
+    save();
+    renderRows();
+  });
+
+  wrap.appendChild(list);
+  wrap.appendChild(addBtn);
+  body.innerHTML = '';
+  body.appendChild(wrap);
+}
+
+/* ── Era panel: Ornaments (navigation shortcut) ──────────── */
+
+function renderOrnamentsPanel(era, body) {
+  if (!body) return;
+
+  const note = document.createElement('p');
+  note.className = 'placeholder ornaments-note';
+  note.textContent = 'Ornaments are selected by rules in this culture. Edit the culture\'s ornament library or rules to control what appears in this era.';
+  body.appendChild(note);
+
+  const btnWrap = document.createElement('div');
+  btnWrap.className = 'shortcut-buttons';
+
+  const libBtn = document.createElement('button');
+  libBtn.className = 'add-btn-sm';
+  libBtn.textContent = 'Open ornament library';
+  libBtn.addEventListener('click', () => {
+    state.subtab = 'ornaments';
+    document.querySelectorAll('#studio-subtabs button').forEach(b => {
+      b.classList.toggle('active', b.dataset.subtab === 'ornaments');
+    });
+    renderSubtab();
+    document.getElementById('subtab-body')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  const rulesBtn = document.createElement('button');
+  rulesBtn.className = 'add-btn-sm';
+  rulesBtn.textContent = 'Open rules';
+  rulesBtn.addEventListener('click', () => {
+    state.subtab = 'culture-rules';
+    document.querySelectorAll('#studio-subtabs button').forEach(b => {
+      b.classList.toggle('active', b.dataset.subtab === 'culture-rules');
+    });
+    renderSubtab();
+    document.getElementById('subtab-body')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  btnWrap.appendChild(libBtn);
+  btnWrap.appendChild(rulesBtn);
+  body.appendChild(btnWrap);
+
+  // Collect ornament ids from all rules (era rules + culture rules)
+  // v2: filter by actual era-scoped resolution
+  const allRules = [
+    ...(era.rules ?? []),
+    ...(state.culture?.rules ?? []),
+  ];
+  const ornamentIds = new Set();
+  for (const rule of allRules) {
+    const ids = rule.assigns?.ornamentIds;
+    if (Array.isArray(ids)) ids.forEach(id => ornamentIds.add(id));
+    else if (typeof ids === 'string' && ids) ornamentIds.add(ids);
+  }
+
+  if (ornamentIds.size > 0) {
+    const pillsLabel = document.createElement('div');
+    pillsLabel.className = 'field-label';
+    pillsLabel.style.marginTop = '8px';
+    pillsLabel.textContent = 'Ornaments referenced by rules';
+    body.appendChild(pillsLabel);
+
+    const pills = document.createElement('ul');
+    pills.className = 'ornament-pills';
+    for (const id of ornamentIds) {
+      const li = document.createElement('li');
+      li.className = 'ornament-pill';
+      li.textContent = id;
+      pills.appendChild(li);
+    }
+    body.appendChild(pills);
+  } else {
+    const empty = document.createElement('p');
+    empty.className = 'placeholder';
+    empty.style.marginTop = '6px';
+    empty.textContent = 'No ornament ids referenced in any rule yet.';
+    body.appendChild(empty);
+  }
 }
 
 /* ── select & refresh ────────────────────────────────────── */
