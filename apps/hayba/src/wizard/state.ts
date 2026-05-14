@@ -21,6 +21,8 @@ export const PRESETS: PresetMeta[] = [
   { name: "plates5Uneven", label: "5 plates", plates: 5, note: "uneven distribution" },
 ];
 
+export type BoundaryType = "convergent" | "divergent";
+
 export interface WizardDraft {
   divisions: number;
   seed: number;
@@ -29,8 +31,14 @@ export interface WizardDraft {
   brush_radius_rad: number;
   /** Set of cell ids painted as continental crust. Duplicates tolerated. */
   continental_cells: number[];
+  /** Per-plate-pair boundary type — key is sorted "min-max" plate ids. */
+  boundary_types: Record<string, BoundaryType>;
   run_length_steps: number;
   dt_ma: number;
+}
+
+export function pairKey(a: number, b: number): string {
+  return a < b ? `${a}-${b}` : `${b}-${a}`;
 }
 
 export function createDefaultDraft(divisions: number, seed: number): WizardDraft {
@@ -38,8 +46,9 @@ export function createDefaultDraft(divisions: number, seed: number): WizardDraft
     divisions,
     seed,
     preset: "plates4",
-    brush_radius_rad: 0.06, // ≈ 3.4° great-circle radius — comfortable default brush
+    brush_radius_rad: 0.06,
     continental_cells: [],
+    boundary_types: {},
     run_length_steps: 5,
     dt_ma: 0.5,
   };

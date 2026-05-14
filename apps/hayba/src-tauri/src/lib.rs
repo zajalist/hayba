@@ -21,6 +21,7 @@ pub fn run() {
             wizard::start_wizard,
             wizard::roll_seed,
             wizard::bake_from_wizard,
+            wizard::compute_partition,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hayba Explorer");
