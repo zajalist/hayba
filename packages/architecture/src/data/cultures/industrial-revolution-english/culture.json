@@ -1,0 +1,311 @@
+{
+  "climate": "(set during review)",
+  "eras": [
+    {
+      "dateRange": [
+        1760,
+        1900
+      ],
+      "defaults": {
+        "ornamentDensity": "moderate",
+        "palette": [],
+        "proportions": {
+          "columnSlenderness": 1,
+          "doorAspect": 1,
+          "storyHeight": 1
+        },
+        "roofType": "mansard",
+        "technique": ""
+      },
+      "id": "industrial-revolution-english",
+      "name": "Industrial Revolution English",
+      "rules": [],
+      "typologyMix": {
+        "civic_hall": 4,
+        "manor": 1,
+        "market_stall": 4,
+        "peasant_home": 3,
+        "townhouse": 7,
+        "workshop": 5
+      }
+    }
+  ],
+  "id": "industrial-revolution-english",
+  "materials": [
+    {
+      "id": "limestone",
+      "name": "Limestone"
+    },
+    {
+      "id": "granite",
+      "name": "Granite"
+    },
+    {
+      "id": "sandstone",
+      "name": "Sandstone"
+    },
+    {
+      "id": "marble",
+      "name": "Marble"
+    },
+    {
+      "id": "oak",
+      "name": "Oak"
+    },
+    {
+      "id": "pine",
+      "name": "Pine"
+    },
+    {
+      "id": "mudbrick",
+      "name": "Mudbrick"
+    },
+    {
+      "id": "fired-brick",
+      "name": "Fired Brick"
+    },
+    {
+      "id": "slate",
+      "name": "Slate"
+    },
+    {
+      "id": "terracotta",
+      "name": "Terracotta"
+    },
+    {
+      "id": "lime-plaster",
+      "name": "Lime Plaster"
+    },
+    {
+      "id": "iron",
+      "name": "Iron"
+    },
+    {
+      "id": "brick",
+      "name": "Brick"
+    },
+    {
+      "id": "stone",
+      "name": "Stone"
+    }
+  ],
+  "name": "Industrial Revolution English",
+  "ornaments": [
+    {
+      "id": "acanthus-leaf",
+      "name": "Acanthus Leaf"
+    },
+    {
+      "id": "interlace-knot",
+      "name": "Interlace Knot"
+    },
+    {
+      "id": "dentil",
+      "name": "Dentil"
+    },
+    {
+      "id": "egg-and-dart",
+      "name": "Egg and Dart"
+    },
+    {
+      "id": "rosette",
+      "name": "Rosette"
+    },
+    {
+      "id": "palmette",
+      "name": "Palmette"
+    },
+    {
+      "id": "meander",
+      "name": "Meander"
+    },
+    {
+      "id": "guilloche",
+      "name": "Guilloche"
+    },
+    {
+      "id": "fleur-de-lis",
+      "name": "Fleur-de-lis"
+    },
+    {
+      "id": "quatrefoil",
+      "name": "Quatrefoil"
+    },
+    {
+      "id": "trefoil",
+      "name": "Trefoil"
+    },
+    {
+      "id": "floral-spray",
+      "name": "Floral Spray"
+    },
+    {
+      "id": "geometric-arabesque",
+      "name": "Geometric Arabesque"
+    },
+    {
+      "id": "dragon-scroll",
+      "name": "Dragon Scroll"
+    },
+    {
+      "id": "cloud-motif",
+      "name": "Cloud Motif"
+    },
+    {
+      "id": "lotus-pad",
+      "name": "Lotus Pad"
+    },
+    {
+      "id": "wave-crest",
+      "name": "Wave Crest"
+    },
+    {
+      "id": "corbel-head",
+      "name": "Corbel Head"
+    },
+    {
+      "id": "gargoyle-face",
+      "name": "Gargoyle Face"
+    },
+    {
+      "id": "chevron-band",
+      "name": "Chevron Band"
+    },
+    {
+      "id": "bay-window",
+      "name": "bay-window"
+    },
+    {
+      "id": "cornice-bracket",
+      "name": "cornice-bracket"
+    },
+    {
+      "id": "cast-iron-balcony",
+      "name": "cast-iron-balcony"
+    },
+    {
+      "id": "fanlight-arch",
+      "name": "fanlight-arch"
+    }
+  ],
+  "region": "(set during review)",
+  "rules": [],
+  "tagAxes": [
+    {
+      "id": "climate",
+      "label": "Climate",
+      "values": [
+        {
+          "id": "arid",
+          "label": "Arid"
+        },
+        {
+          "id": "temperate",
+          "label": "Temperate"
+        },
+        {
+          "id": "alpine",
+          "label": "Alpine"
+        },
+        {
+          "id": "coastal",
+          "label": "Coastal"
+        }
+      ]
+    },
+    {
+      "id": "terrain",
+      "label": "Terrain",
+      "values": [
+        {
+          "id": "lowland",
+          "label": "Lowland"
+        },
+        {
+          "id": "highland",
+          "label": "Highland"
+        },
+        {
+          "id": "coastal-cliff",
+          "label": "Coastal Cliff"
+        }
+      ]
+    },
+    {
+      "id": "wealth",
+      "label": "Wealth",
+      "values": [
+        {
+          "id": "peasant",
+          "label": "Peasant"
+        },
+        {
+          "id": "merchant",
+          "label": "Merchant"
+        },
+        {
+          "id": "noble",
+          "label": "Noble"
+        },
+        {
+          "id": "royal",
+          "label": "Royal"
+        }
+      ]
+    },
+    {
+      "id": "defensive-posture",
+      "label": "Defensive Posture",
+      "values": [
+        {
+          "id": "peaceful",
+          "label": "Peaceful"
+        },
+        {
+          "id": "borderland",
+          "label": "Borderland"
+        },
+        {
+          "id": "wartime",
+          "label": "Wartime"
+        }
+      ]
+    },
+    {
+      "id": "water-access",
+      "label": "Water Access",
+      "values": [
+        {
+          "id": "riverine",
+          "label": "Riverine"
+        },
+        {
+          "id": "lakeside",
+          "label": "Lakeside"
+        },
+        {
+          "id": "dry",
+          "label": "Dry"
+        }
+      ]
+    },
+    {
+      "id": "trade",
+      "label": "Trade",
+      "values": [
+        {
+          "id": "isolated",
+          "label": "Isolated"
+        },
+        {
+          "id": "local",
+          "label": "Local"
+        },
+        {
+          "id": "long-distance",
+          "label": "Long-Distance"
+        }
+      ]
+    }
+  ]
+}
