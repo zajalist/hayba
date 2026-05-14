@@ -34,3 +34,11 @@ update profiles set is_admin = true where user_id = (
   select id from auth.users where email = 'YOUR@EMAIL'
 );
 ```
+
+## Cloudflare Tunnel
+
+1. `cloudflared tunnel login`
+2. `cloudflared tunnel create hayba-api`
+3. Copy the tunnel ID into `cloudflared.yml` (replace `REPLACE_WITH_TUNNEL_ID` in both places)
+4. `cloudflared tunnel route dns hayba-api api.hayba.app`
+5. `sudo systemctl enable --now cloudflared` (uses cloudflared.yml as default config)
