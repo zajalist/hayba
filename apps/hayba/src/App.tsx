@@ -12,6 +12,7 @@ import TopMenuBar from "./components/TopMenuBar";
 import RecenterButton from "./components/RecenterButton";
 import ConfirmDialog from "./components/ConfirmDialog";
 import BoundaryPopover from "./components/BoundaryPopover";
+import PhaseStrip from "./components/PhaseStrip";
 import { createDefaultDraft, pairKey, type WizardDraft, type PresetName, type BoundaryType } from "./wizard/state";
 import { BoundaryModel, setBoundary, clearBoundary } from "./wizard/boundary-model";
 import { buildCellKdTree, cellsWithinRadius, nearestCell, type KdTree } from "./wizard/kdtree";
@@ -44,6 +45,27 @@ function angularToChord(rad: number): number {
   return 2 * Math.sin(rad / 2);
 }
 
+/** Mirrors hayba_tectonics_v2::time::era_for_ma. */
+function eraForMa(ma: number): string {
+  if (ma < 0.0117) return "Holocene";
+  if (ma < 2.58)   return "Pleistocene";
+  if (ma < 5.333)  return "Pliocene";
+  if (ma < 23.03)  return "Miocene";
+  if (ma < 33.9)   return "Oligocene";
+  if (ma < 56.0)   return "Eocene";
+  if (ma < 66.0)   return "Paleocene";
+  if (ma < 145.0)  return "Cretaceous";
+  if (ma < 201.4)  return "Jurassic";
+  if (ma < 251.9)  return "Triassic";
+  if (ma < 298.9)  return "Permian";
+  if (ma < 358.9)  return "Carboniferous";
+  if (ma < 419.2)  return "Devonian";
+  if (ma < 443.8)  return "Silurian";
+  if (ma < 485.4)  return "Ordovician";
+  if (ma < 538.8)  return "Cambrian";
+  return "Precambrian";
+}
+
 export default function App() {
   const sceneRef = useRef<SceneHandle | null>(null);
   const globeRef = useRef<GlobeHandle | null>(null);
@@ -74,6 +96,8 @@ export default function App() {
   const [boundaryPopover, setBoundaryPopover] = useState<{
     screenX: number; screenY: number; plateA: number; plateB: number;
   } | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const playingRef = useRef(false);
 
   useEffect(() => {
     activeToolRef.current = activeTool;
@@ -104,6 +128,19 @@ export default function App() {
       else if (k === "r") setActiveTool("rotate");
       else if (k === "z") setActiveTool("zoom");
       else if (k === "p") setActiveTool("pan");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Space toggles play/pause in viewing mode.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.code !== "Space") return;
+      if (modeRef.current !== "viewing") return;
+      e.preventDefault();
+      setPlaying((p) => !p);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -211,6 +248,12 @@ export default function App() {
 
   useEffect(() => { draftRef.current = draft; }, [draft]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
+  useEffect(() => { playingRef.current = playing; }, [playing]);
+
+  // Playback is post-bake only.
+  useEffect(() => {
+    if (mode !== "viewing" && playing) setPlaying(false);
+  }, [mode, playing]);
   useEffect(() => {
     snapshotRef.current = snapshot;
     // Rebuild the BoundaryModel once per new snapshot.
@@ -226,6 +269,39 @@ export default function App() {
       bm ? { model: bm, assignments: draft.boundary_types } : undefined,
     );
   }, [mode, snapshot, draft?.boundary_types]);
+
+  // Animation tick — advance the Rust sim on rAF cadence while `playing`.
+  // step_planet(1) per tick = dt_ma per tick, so the visual delta stays
+  // gentle. Cancellation flag bridges the async gap.
+  useEffect(() => {
+    if (!playing) return;
+    let cancelled = false;
+    const tick = () => {
+      if (cancelled || !playingRef.current) return;
+      invoke<PlanetSnapshot>("step_planet", { nSteps: 1 })
+        .then((snap) => {
+          if (cancelled || !playingRef.current) return;
+          setSnapshot(snap);
+          const bm = BoundaryModel.fromSnapshot(snap);
+          boundaryModelRef.current = bm;
+          const drft = draftRef.current;
+          if (drft) {
+            globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE, {
+              model: bm, assignments: drft.boundary_types,
+            });
+          } else {
+            globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE);
+          }
+          if (!cancelled && playingRef.current) requestAnimationFrame(tick);
+        })
+        .catch((e) => {
+          setPlaying(false);
+          setError(String(e));
+        });
+    };
+    requestAnimationFrame(tick);
+    return () => { cancelled = true; };
+  }, [playing]);
 
   // Post-bake boundary picking — listens to clicks on the canvas while in
   // viewing mode. Raycasts → nearest cell → if it's a boundary cell, walks
@@ -389,6 +465,7 @@ export default function App() {
 
   const handleEditWizard = useCallback(() => {
     previewRef.current = [];
+    invoke("reset_sim").catch(() => {});
     setMode("wizard");
     if (draft) globeRef.current?.recolorFromDraft(draft, cellCountRef.current);
   }, [draft]);
@@ -472,6 +549,14 @@ export default function App() {
       <StatusBar
         state={mode === "baking" ? "baking" : error ? "error" : mode === "viewing" ? "ready" : "idle"}
         label={statusLabel}
+        rightSlot={mode === "viewing" && snapshot ? (
+          <PhaseStrip
+            simTimeMa={snapshot.sim_time_ma}
+            era={eraForMa(snapshot.sim_time_ma)}
+            playing={playing}
+            onTogglePlay={() => setPlaying((p) => !p)}
+          />
+        ) : null}
       >
         {error ? `Error: ${error}` : statusBody}
       </StatusBar>
