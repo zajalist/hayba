@@ -8,7 +8,7 @@
  *   - editorOpenSlot(slotName): void
  *   - editorSelectTool(toolName): void
  *   - editorToggleSnap(): void
- *   - editorSave(): Promise<void>   -- stub in this batch; real impl in Batch 5
+ *   - editorSave(): Promise<void>   -- POST to /api/bindings/:sheetId/:elementId + Cmd/Ctrl+S
  *   - editorRefresh(): void
  */
 
