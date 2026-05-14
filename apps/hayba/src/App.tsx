@@ -5,17 +5,21 @@ import Viewport from "./viewport/Viewport";
 import type { SceneHandle } from "./viewport/scene";
 import { buildGlobe, PLATE_PALETTE, type GlobeHandle } from "./viewport/globe";
 import { attachPainter, type PainterHandle } from "./viewport/painter";
-import StatusBar, { Mono } from "./components/StatusBar";
-import SettingsModal from "./components/SettingsModal";
+import StatusBarV2, { Mono } from "./components/StatusBarV2";
+import TopBar from "./components/TopBar";
+import RightPanel from "./components/RightPanel";
+import type { PanelCategory } from "./components/CategoryStrip";
+import ComposePanel from "./components/panels/ComposePanel";
+import BoundariesPanel from "./components/panels/BoundariesPanel";
+import DensitiesPanelDocked from "./components/panels/DensitiesPanelDocked";
+import SimulatePanel from "./components/panels/SimulatePanel";
+import SettingsPanel from "./components/panels/SettingsPanel";
 import DockToolbar, { type ToolName } from "./components/DockToolbar";
-import TopMenuBar from "./components/TopMenuBar";
 import RecenterButton from "./components/RecenterButton";
 import ConfirmDialog from "./components/ConfirmDialog";
-import BoundaryPopover from "./components/BoundaryPopover";
-import PhaseStrip from "./components/PhaseStrip";
-import PhaseSteps, { type PhaseStepId } from "./components/PhaseSteps";
-import DensitiesPanel from "./components/DensitiesPanel";
-import { createDefaultDraft, pairKey, type WizardDraft, type PresetName, type BoundaryType } from "./wizard/state";
+import { buildPlateLabels, type PlateLabelsHandle } from "./viewport/overlays/plateLabels";
+import { buildForceArrows, type ForceArrowsHandle } from "./viewport/overlays/forceArrows";
+import { createDefaultDraft, type WizardDraft, type PresetName, type BoundaryType } from "./wizard/state";
 import { BoundaryModel, setBoundary, clearBoundary } from "./wizard/boundary-model";
 import { buildCellKdTree, cellsWithinRadius, nearestCell, type KdTree } from "./wizard/kdtree";
 
@@ -46,22 +50,9 @@ interface WizardInit {
 type Mode = "wizard" | "baking" | "boundaries" | "densities" | "simulating";
 
 const INITIAL_DIVISIONS = 64;
-const TOP_HEIGHT = 32 + 28; // menu strip + tab strip
-const BOTTOM_HEIGHT = 28;
 
 function angularToChord(rad: number): number {
   return 2 * Math.sin(rad / 2);
-}
-
-/** Map mode → current phase-step pill in the bottom bar. */
-function currentPhaseStep(mode: Mode): PhaseStepId {
-  switch (mode) {
-    case "wizard":
-    case "baking":     return "compose";
-    case "boundaries": return "boundaries";
-    case "densities":  return "densities";
-    case "simulating": return "simulate";
-  }
 }
 
 /** Mirrors hayba_tectonics_v2::time::era_for_ma. */
@@ -85,6 +76,50 @@ function eraForMa(ma: number): string {
   return "Precambrian";
 }
 
+function statusMode(mode: Mode): "compose" | "boundaries" | "densities" | "simulate" {
+  if (mode === "boundaries") return "boundaries";
+  if (mode === "densities")  return "densities";
+  if (mode === "simulating") return "simulate";
+  return "compose"; // wizard + baking both report as compose
+}
+
+function statusChips(
+  mode: Mode,
+  draft: WizardDraft | null,
+  snap: PlanetSnapshot | null,
+  cellCount: number,
+): { label: string; value: React.ReactNode }[] {
+  if (mode === "wizard" || mode === "baking") {
+    if (!draft) return [];
+    return [
+      { label: "Preset",  value: draft.preset },
+      { label: "Cells",   value: cellCount.toLocaleString() },
+      { label: "Painted", value: draft.continental_cells.length.toLocaleString() },
+      { label: "Brush",   value: `${(draft.brush_radius_rad * 180 / Math.PI).toFixed(1)}°` },
+    ];
+  }
+  if (mode === "boundaries") {
+    const assigned = Object.keys(draft?.boundary_types ?? {}).length;
+    return [{ label: "Assigned", value: `${assigned} / —` }];
+  }
+  if (mode === "densities") {
+    return [{ label: "Plates", value: snap ? new Set(snap.cell_plate_ids.filter((p) => p >= 0)).size : 0 }];
+  }
+  if (snap) {
+    return [
+      { label: "Era",   value: eraForMa(snap.sim_time_ma) },
+      { label: "Time",  value: `${snap.sim_time_ma.toFixed(1)} Ma` },
+    ];
+  }
+  return [];
+}
+
+function statusHint(mode: Mode): string | undefined {
+  if (mode === "boundaries") return "Click a pink seam to assign convergent or divergent.";
+  if (mode === "densities")  return "Drag plates to reorder. Top = lightest.";
+  return undefined;
+}
+
 export default function App() {
   const sceneRef = useRef<SceneHandle | null>(null);
   const globeRef = useRef<GlobeHandle | null>(null);
@@ -104,19 +139,24 @@ export default function App() {
   // globe's recolor path.
   const boundaryModelRef = useRef<BoundaryModel | null>(null);
 
+  // Overlay refs
+  const plateLabelsRef = useRef<PlateLabelsHandle | null>(null);
+  const forceArrowsRef = useRef<ForceArrowsHandle | null>(null);
+
   const [draft, setDraft] = useState<WizardDraft | null>(null);
   const [mode, setMode] = useState<Mode>("wizard");
   const [snapshot, setSnapshot] = useState<PlanetSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<ToolName>("brush");
   const [pendingDivisions, setPendingDivisions] = useState<number | null>(null);
-  // Post-bake boundary editing — popover anchored at screen coords, with
-  // the plate pair the user clicked.
-  const [boundaryPopover, setBoundaryPopover] = useState<{
-    screenX: number; screenY: number; plateA: number; plateB: number;
-  } | null>(null);
   const [playing, setPlaying] = useState(false);
   const playingRef = useRef(false);
+
+  // Panel state
+  const [panelCategory, setPanelCategory] = useState<PanelCategory>("compose");
+  const [selectedPairKey, setSelectedPairKey] = useState<string | null>(null);
+  const [showPlateLabels, setShowPlateLabels] = useState(true);
+  const [showForceArrows, setShowForceArrows] = useState(true);
 
   useEffect(() => {
     activeToolRef.current = activeTool;
@@ -262,6 +302,16 @@ export default function App() {
       },
     });
 
+    // Mount overlays
+    const labels = buildPlateLabels();
+    const arrows = buildForceArrows();
+    handle.scene.add(labels.group);
+    handle.scene.add(arrows.group);
+    plateLabelsRef.current = labels;
+    forceArrowsRef.current = arrows;
+    labels.setVisible(false);
+    arrows.setVisible(false);
+
     initWizard(INITIAL_DIVISIONS).catch((e) => setError(String(e)));
   }, [initWizard]);
 
@@ -322,9 +372,7 @@ export default function App() {
     return () => { cancelled = true; };
   }, [playing]);
 
-  // Boundary picking only fires during the boundaries phase. Densities +
-  // simulating modes leave the seams as-is; the user can come back via the
-  // wizard chrome.
+  // Boundary picking only fires during the boundaries phase.
   useEffect(() => {
     if (mode !== "boundaries") return;
     const scene = sceneRef.current;
@@ -348,31 +396,15 @@ export default function App() {
       const cell = nearestCell(tree, p.x, p.y, p.z);
       const key = bm.pairKeyForCell(cell);
       if (!key) {
-        setBoundaryPopover(null);
+        setSelectedPairKey(null);
         return;
       }
-      const members = bm.membersFor(key);
-      if (!members) return;
-      setBoundaryPopover({
-        screenX: ev.clientX,
-        screenY: ev.clientY,
-        plateA: members[0],
-        plateB: members[1],
-      });
+      setSelectedPairKey(key);
+      setPanelCategory("boundaries");
     };
     canvas.addEventListener("pointerdown", onPointer);
     return () => canvas.removeEventListener("pointerdown", onPointer);
   }, [mode]);
-
-  // ESC dismisses the boundary popover.
-  useEffect(() => {
-    if (!boundaryPopover) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setBoundaryPopover(null);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [boundaryPopover]);
 
   // Live-apply boundary assignments — Rust rewrites plate omegas on the
   // running model so the change is visible immediately. No re-bake.
@@ -388,27 +420,21 @@ export default function App() {
     }
   }, []);
 
-  const handleSetBoundary = useCallback((type: BoundaryType) => {
-    if (!boundaryPopover || !draft) return;
-    const key = pairKey(boundaryPopover.plateA, boundaryPopover.plateB);
-    const nextTypes = setBoundary(draft.boundary_types, key, type);
+  const handlePickType = useCallback((t: BoundaryType) => {
+    if (!selectedPairKey || !draft) return;
+    const nextTypes = setBoundary(draft.boundary_types, selectedPairKey, t);
     const next: WizardDraft = { ...draft, boundary_types: nextTypes };
-    setDraft(next);
-    draftRef.current = next;
-    setBoundaryPopover(null);
+    setDraft(next); draftRef.current = next;
     applyBoundaryTypesLive(nextTypes);
-  }, [boundaryPopover, draft, applyBoundaryTypesLive]);
+  }, [selectedPairKey, draft, applyBoundaryTypesLive]);
 
-  const handleClearBoundary = useCallback(() => {
-    if (!boundaryPopover || !draft) return;
-    const key = pairKey(boundaryPopover.plateA, boundaryPopover.plateB);
-    const nextTypes = clearBoundary(draft.boundary_types, key);
+  const handleClearType = useCallback(() => {
+    if (!selectedPairKey || !draft) return;
+    const nextTypes = clearBoundary(draft.boundary_types, selectedPairKey);
     const next: WizardDraft = { ...draft, boundary_types: nextTypes };
-    setDraft(next);
-    draftRef.current = next;
-    setBoundaryPopover(null);
+    setDraft(next); draftRef.current = next;
     applyBoundaryTypesLive(nextTypes);
-  }, [boundaryPopover, draft, applyBoundaryTypesLive]);
+  }, [selectedPairKey, draft, applyBoundaryTypesLive]);
 
   const handleChangeDivisions = useCallback((divisions: number) => {
     const d = draftRef.current;
@@ -519,132 +545,164 @@ export default function App() {
     }
   }, []);
 
-  const statusLabel =
-    mode === "wizard"     ? activeTool :
-    mode === "baking"     ? "baking" :
-    mode === "boundaries" ? "boundaries" :
-    mode === "densities"  ? "densities" :
-    error                 ? "error" :
-                            "simulating";
-
-  const statusBody =
-    mode === "wizard" && draft ? (
-      <>{draft.preset} · <Mono>{cellCountRef.current.toLocaleString()}</Mono> cells · <Mono>{draft.continental_cells.length.toLocaleString()}</Mono> painted</>
-    ) : mode === "wizard" ? "Loading…"
-    : mode === "baking" ? "Running tectonic step loop…"
-    : mode === "boundaries" && snapshot ? (
-        <>Click pink seams to assign convergent or divergent · <Mono>{Object.keys(draft?.boundary_types ?? {}).length}</Mono> set</>
-    )
-    : mode === "densities" ? "Rank plates by density · lightest on top, densest on the bottom"
-    : snapshot ? <>
-        Planet baked · <Mono>{snapshot.n_cells.toLocaleString()}</Mono> cells · <Mono>{snapshot.sim_time_ma.toFixed(1)}</Mono> Ma
-      </> : "—";
-
   const showWizard = mode === "wizard";
   const getScene = useCallback(() => sceneRef.current, []);
 
+  // Category gating
+  const categoryEnabled: Record<PanelCategory, boolean> = {
+    compose:    true,
+    boundaries: mode === "boundaries" || mode === "densities" || mode === "simulating",
+    densities:  mode === "densities" || mode === "simulating",
+    simulate:   mode === "simulating",
+    settings:   true,
+  };
+  const categoryDisabledReason: Partial<Record<PanelCategory, string>> = {
+    boundaries: "Bake the planet to edit boundaries",
+    densities:  "Complete boundaries to rank densities",
+    simulate:   "Start the simulation from the Densities panel",
+  };
+
+  // Auto-promote panel category when mode changes
+  useEffect(() => {
+    if (mode === "boundaries")  setPanelCategory("boundaries");
+    if (mode === "densities")   setPanelCategory("densities");
+    if (mode === "simulating")  setPanelCategory("simulate");
+    if (mode === "wizard")      setPanelCategory("compose");
+  }, [mode]);
+
+  // Overlay update effect
+  useEffect(() => {
+    const snap = snapshot;
+    const labels = plateLabelsRef.current;
+    const arrows = forceArrowsRef.current;
+    if (!snap || !labels || !arrows) return;
+    const show = mode === "simulating";
+    labels.setVisible(show && showPlateLabels);
+    arrows.setVisible(show && showForceArrows);
+    if (show) {
+      labels.update(snap);
+      // Per-plate omegas not yet in PlanetSnapshot. Empty map → no arrows
+      // until that lands; scaffolding is in place.
+      arrows.update(snap, new Map());
+    }
+  }, [snapshot, mode, showPlateLabels, showForceArrows]);
+
   return (
-    <>
-      <div style={{
-        position: "fixed",
-        top: TOP_HEIGHT,
-        bottom: BOTTOM_HEIGHT,
-        left: 0,
-        right: 0,
-      }}>
-        <Viewport onReady={handleSceneReady} />
+    <div style={{
+      position: "fixed",
+      inset: 0,
+      display: "grid",
+      gridTemplateRows: "34px 1fr 36px",
+      gridTemplateColumns: "1fr 340px",
+      background: "#22262e",
+    }}>
+      <div style={{ gridColumn: "1 / span 2" }}>
+        <TopBar divisions={draft?.divisions ?? INITIAL_DIVISIONS} documentTitle="untitled.planet" />
       </div>
 
-      <TopMenuBar documentTitle={mode === "wizard" || mode === "baking" ? "Untitled" : "Planet (baked)"} />
+      <div style={{ position: "relative", minWidth: 0, minHeight: 0 }}>
+        <Viewport onReady={handleSceneReady} />
 
-      {showWizard && draft && (
-        <DockToolbar
-          active={activeTool}
-          onChange={setActiveTool}
-          brushRadius={draft.brush_radius_rad}
-          onChangeBrushRadius={handleChangeBrushRadius}
-        />
-      )}
+        {showWizard && draft && (
+          <DockToolbar
+            active={activeTool}
+            onChange={setActiveTool}
+            brushRadius={draft.brush_radius_rad}
+            onChangeBrushRadius={handleChangeBrushRadius}
+          />
+        )}
 
-      {showWizard && draft && (
-        <SettingsModal
-          draft={draft}
-          busy={false}
-          topOffset={TOP_HEIGHT}
-          onChangeDivisions={handleChangeDivisions}
-          onChangePreset={handleChangePreset}
-          onReroll={handleReroll}
-          onBake={handleBake}
-        />
-      )}
+        <RecenterButton getScene={getScene} />
+      </div>
 
-      <RecenterButton getScene={getScene} />
+      <RightPanel
+        active={panelCategory}
+        enabled={categoryEnabled}
+        disabledReason={categoryDisabledReason}
+        onPick={setPanelCategory}
+      >
+        {panelCategory === "compose" && draft && (
+          <ComposePanel
+            draft={draft}
+            busy={mode === "baking"}
+            onChangeDivisions={handleChangeDivisions}
+            onChangePreset={handleChangePreset}
+            onReroll={handleReroll}
+            onBake={handleBake}
+          />
+        )}
 
-      {mode === "boundaries" && (
-        <ViewingChrome
-          topOffset={TOP_HEIGHT}
-          assignedCount={Object.keys(draft?.boundary_types ?? {}).length}
-          onEditWizard={handleEditWizard}
-          onNext={handleAdvanceToDensities}
-          nextLabel="Next: Densities →"
-          showBoundaryHint
-        />
-      )}
+        {panelCategory === "boundaries" && snapshot && draft && (
+          <BoundariesPanel
+            totalSeams={boundaryModelRef.current?.pairs.length ?? 0}
+            assignedCount={Object.keys(draft.boundary_types ?? {}).length}
+            selectedKey={selectedPairKey}
+            selectedMembers={selectedPairKey ? boundaryModelRef.current?.membersFor(selectedPairKey) ?? null : null}
+            selectedType={selectedPairKey ? draft.boundary_types[selectedPairKey] : undefined}
+            onPickType={handlePickType}
+            onClearType={handleClearType}
+            onAdvance={handleAdvanceToDensities}
+          />
+        )}
 
-      {mode === "densities" && snapshot && (
-        <DensitiesPanel
-          snapshot={snapshot}
-          topOffset={TOP_HEIGHT}
-          order={densityOrder}
-          onChange={handleDensityChange}
-          onBack={handleBackToBoundaries}
-          onStart={handleStartSimulation}
-        />
-      )}
+        {panelCategory === "densities" && snapshot && (
+          <DensitiesPanelDocked
+            snapshot={snapshot}
+            order={densityOrder}
+            onChange={handleDensityChange}
+            onBack={handleBackToBoundaries}
+            onStart={handleStartSimulation}
+          />
+        )}
 
-      {mode === "simulating" && (
-        <ViewingChrome
-          topOffset={TOP_HEIGHT}
-          assignedCount={Object.keys(draft?.boundary_types ?? {}).length}
-          onEditWizard={handleEditWizard}
-        />
-      )}
-
-      {boundaryPopover && draft && (
-        <BoundaryPopover
-          screenX={boundaryPopover.screenX}
-          screenY={boundaryPopover.screenY}
-          plateA={boundaryPopover.plateA}
-          plateB={boundaryPopover.plateB}
-          current={draft.boundary_types[pairKey(boundaryPopover.plateA, boundaryPopover.plateB)]}
-          onPick={handleSetBoundary}
-          onClear={handleClearBoundary}
-          onDismiss={() => setBoundaryPopover(null)}
-        />
-      )}
-
-      <StatusBar
-        state={
-          mode === "baking" ? "baking" :
-          error ? "error" :
-          mode === "wizard" ? "idle" :
-          "ready"
-        }
-        label={statusLabel}
-        centerSlot={<PhaseSteps current={currentPhaseStep(mode)} />}
-        rightSlot={mode === "simulating" && snapshot ? (
-          <PhaseStrip
-            simTimeMa={snapshot.sim_time_ma}
+        {panelCategory === "simulate" && snapshot && (
+          <SimulatePanel
             era={eraForMa(snapshot.sim_time_ma)}
+            simTimeMa={snapshot.sim_time_ma}
+            steps={0}
             playing={playing}
             onTogglePlay={() => setPlaying((p) => !p)}
+            onReset={() => { invoke("reset_sim").catch(() => {}); setPlaying(false); }}
           />
-        ) : null}
-      >
-        {error ? `Error: ${error}` : statusBody}
-      </StatusBar>
+        )}
 
+        {panelCategory === "settings" && (
+          <SettingsPanel
+            showPlateLabels={showPlateLabels}
+            showForceArrows={showForceArrows}
+            onToggleLabels={setShowPlateLabels}
+            onToggleArrows={setShowForceArrows}
+          />
+        )}
+      </RightPanel>
 
+      <div style={{ gridColumn: "1 / span 2" }}>
+        <StatusBarV2
+          mode={statusMode(mode)}
+          chips={statusChips(mode, draft, snapshot, cellCountRef.current)}
+          hint={statusHint(mode)}
+          rightSlot={mode === "simulating" && snapshot ? (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => setPlaying((p) => !p)}
+                aria-label={playing ? "Pause" : "Play"}
+                style={{
+                  width: 28, height: 28,
+                  background: "transparent",
+                  border: "1px solid #DED4C3",
+                  borderRadius: 2,
+                  color: "#DED4C3",
+                  cursor: "pointer",
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                }}
+              >
+                {playing ? "⏸" : "▶"}
+              </button>
+            </span>
+          ) : null}
+        />
+      </div>
 
       <ConfirmDialog
         open={pendingDivisions !== null}
@@ -661,92 +719,6 @@ export default function App() {
         onConfirm={confirmChangeDivisions}
         onCancel={cancelChangeDivisions}
       />
-    </>
-  );
-}
-
-function ViewingChrome({
-  topOffset, assignedCount, onEditWizard, onNext, nextLabel, showBoundaryHint,
-}: {
-  topOffset: number;
-  assignedCount: number;
-  onEditWizard: () => void;
-  onNext?: () => void;
-  nextLabel?: string;
-  /** Only the boundaries phase shows the "click a pink seam" hint banner. */
-  showBoundaryHint?: boolean;
-}) {
-  const BEIGE = "#DED4C3";
-  const baseBtn: React.CSSProperties = {
-    background: "rgba(34, 38, 46, 0.92)",
-    border: "1px solid #2f343d",
-    borderRadius: "10px",
-    color: BEIGE,
-    fontFamily: '"Segoe UI", "Noto Sans", system-ui, sans-serif',
-    fontSize: 12,
-    letterSpacing: "0.02em",
-    padding: "8px 14px",
-    cursor: "pointer",
-    fontWeight: 500,
-    backdropFilter: "blur(10px)",
-  };
-  return (
-    <>
-      {showBoundaryHint && (
-        <div
-          style={{
-            position: "fixed",
-            top: topOffset + 22,
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 60,
-            background: "rgba(34, 38, 46, 0.92)",
-            border: "1px solid #2f343d",
-            borderRadius: 10,
-            padding: "8px 16px",
-            fontSize: 12,
-            color: "#a8aeb8",
-            fontFamily: '"Segoe UI", "Noto Sans", system-ui, sans-serif',
-            letterSpacing: "0.01em",
-            backdropFilter: "blur(10px)",
-            pointerEvents: "none",
-          }}
-        >
-          Click a pink seam to set boundary type
-          {assignedCount > 0 && (
-            <span style={{ marginLeft: 10, color: BEIGE }}>
-              · {assignedCount} assigned
-            </span>
-          )}
-        </div>
-      )}
-
-      <div style={{
-        position: "fixed",
-        top: topOffset + 22,
-        right: 22,
-        zIndex: 60,
-        display: "flex",
-        gap: 8,
-      }}>
-        <button type="button" onClick={onEditWizard} style={baseBtn}>
-          Edit wizard →
-        </button>
-        {onNext && (
-          <button
-            type="button"
-            onClick={onNext}
-            style={{
-              ...baseBtn,
-              borderColor: "#DED4C3",
-              color: "#DED4C3",
-              fontWeight: 500,
-            }}
-          >
-            {nextLabel ?? "Next →"}
-          </button>
-        )}
-      </div>
-    </>
+    </div>
   );
 }
