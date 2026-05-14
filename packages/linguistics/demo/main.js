@@ -40,6 +40,7 @@ import {
 } from './sync.js';
 import { getSession } from './auth.js';
 import { renderAuthGate } from './views/auth-gate.js';
+import { renderLangPicker } from './views/lang-picker.js';
 
 /* state - load/save/snapshot helpers live in ./state.js */
 const state = _loadState() ?? defaultState();
@@ -532,43 +533,7 @@ document.getElementById('heatmap-toggle').addEventListener('change', e => {
 document.getElementById('heatmap-mode').addEventListener('change', e => {
   state.heatmapMode = e.target.value; saveState(); renderPhonology();
 });
-/* Multi-language switching (L13) - implementations live in ./state.js. */
-
-document.getElementById('lang-id').addEventListener('change', e => {
-  if (e.target.value === state.langId) return;
-  snapshotActiveLanguage();
-  loadLanguageSnapshot(e.target.value);
-  saveState(); renderAll();
-});
-
-document.getElementById('lang-new').addEventListener('click', () => {
-  const name = prompt('New language ID:', `language-${Object.keys(state.languages).length + 2}`);
-  if (!name || !name.trim()) return;
-  const id = name.trim();
-  if (id === state.langId || state.languages[id]) {
-    alert('That language ID is already in use.');
-    return;
-  }
-  snapshotActiveLanguage();
-  loadLanguageSnapshot(id);
-  saveState(); renderAll();
-});
-
-document.getElementById('lang-rename').addEventListener('click', () => {
-  const newName = prompt('Rename language:', state.langId);
-  if (!newName || !newName.trim() || newName.trim() === state.langId) return;
-  const oldId = state.langId;
-  const newId = newName.trim();
-  if (state.languages[newId]) { alert('A language with that ID already exists.'); return; }
-  // Migrate wordlinks that referenced the old id.
-  state.wordlinks = state.wordlinks.map(l => ({
-    ...l,
-    langA: l.langA === oldId ? newId : l.langA,
-    langB: l.langB === oldId ? newId : l.langB,
-  }));
-  state.langId = newId;
-  saveState(); renderAll();
-});
+/* Multi-language switching (L13) — owned by views/lang-picker.js. */
 /* —— Kebab menu —— */
 const kebab = document.getElementById('kebab-btn');
 const kebabMenu = document.getElementById('kebab-menu');
@@ -2948,17 +2913,7 @@ function renderNameGenScratchHint() {
 
 /* ─────────────────────  topbar  ───────────────────── */
 function renderTopbar() {
-  // Multi-language selector
-  const sel = document.getElementById('lang-id');
-  // Gather all known languages: snapshots + the active one.
-  const ids = new Set([state.langId, ...Object.keys(state.languages)]);
-  sel.innerHTML = '';
-  for (const id of [...ids].sort()) {
-    const opt = document.createElement('option');
-    opt.value = id; opt.textContent = id;
-    if (id === state.langId) opt.selected = true;
-    sel.appendChild(opt);
-  }
+  // The language picker now owns its own slot — see views/lang-picker.js.
   document.getElementById('t-count').textContent = state.selected.size;
   document.getElementById('t-words').textContent = state.lexicon.length;
   document.getElementById('heatmap-toggle').checked = state.heatmap;
@@ -3275,6 +3230,12 @@ function renderTypology() {
    renderAffected(changed) re-renders only the views whose deps intersect. */
 const VIEW_RENDERERS = {
   authGate: () => renderAuthGate(state, { renderAll }),
+  langPicker: () => renderLangPicker(state, {
+    renderAll,
+    saveState,
+    snapshotActiveLanguage,
+    loadLanguageSnapshot,
+  }),
   nav: () => renderNav(),
   topbar: () => renderTopbar(),
   phonology: () => renderPhonology(),
@@ -3294,8 +3255,9 @@ const VIEW_RENDERERS = {
 
 const VIEW_DEPS = {
   authGate:        ['_signedIn', 'languages'],
+  langPicker:      ['languages', 'langId', '_readonly'],
   nav:             ['view'],
-  topbar:          ['selected', 'lexicon', 'langId', 'languages', 'heatmap', 'heatmapMode'],
+  topbar:          ['selected', 'lexicon', 'heatmap', 'heatmapMode'],
   phonology:       ['selected', 'active', 'heatmap', 'heatmapMode', 'typology'],
   lexicon:         ['lexicon', 'romRules', 'langId', 'wordlinks', 'languages'],
   rules:           ['rules', 'lexicon', 'selected'],

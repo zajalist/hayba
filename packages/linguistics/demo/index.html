@@ -912,6 +912,18 @@
   .preset-list button:hover { border-color: var(--accent); background: var(--bg-raised); }
   .preset-list button .ph { color: var(--text-muted); font-size: 11px; font-family: var(--font-mono); }
 
+  /* Topbar lang picker host */
+  #lang-picker { display: flex; align-items: center; gap: 6px; }
+  #lang-picker select {
+    background: var(--bg-panel); border: 1px solid var(--border-soft);
+    border-radius: 4px; color: var(--text-primary);
+    padding: 4px 8px; font-size: 13px; font-family: var(--font-ui, inherit);
+  }
+  #lang-picker select:focus { border-color: var(--accent); outline: none; }
+  #lang-picker .btn { padding: 4px 10px; font-size: 12px; }
+  .btn.danger { border-color: #b54a4a44; color: #d99090; }
+  .btn.danger:hover { border-color: #b54a4a; color: #f0a0a0; background: #b54a4a22; }
+
   /* Auth migration banner */
   .auth-banner {
     background: var(--accent-dim, #B56A1D22);
@@ -934,18 +946,7 @@
 
   <span class="divider"></span>
 
-  <div class="lang-picker" title="Active language">
-    <span class="picker-icon">
-      <svg viewBox="0 0 14 14" width="11" height="11" fill="currentColor"><path d="M7 1.5l1.4 4 4.2.4-3.2 2.8 1 4.1L7 10.5 2.6 12.8l1-4.1L.4 5.9l4.2-.4L7 1.5Z"/></svg>
-    </span>
-    <select id="lang-id"></select>
-    <button class="lang-action" id="lang-new" title="Create a new language">
-      <svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M7 3v8M3 7h8"/></svg>
-    </button>
-    <button class="lang-action" id="lang-rename" title="Rename the current language">
-      <svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2.5l2 2-7 7H2.5v-2l7-7Z"/></svg>
-    </button>
-  </div>
+  <div id="lang-picker" class="topbar-section"></div>
 
   <span class="divider"></span>
 
