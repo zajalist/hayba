@@ -20,6 +20,8 @@ import zoomUrl   from "../assets/icons/IconZoom.svg";
 import panUrl    from "../assets/icons/IconPan.svg";
 import recenterUrl from "../assets/icons/IconRecenter.svg";
 import boundaryUrl from "../assets/icons/IconBoundary.svg";
+import playUrl from "../assets/icons/IconPlay.svg";
+import pauseUrl from "../assets/icons/IconPause.svg";
 
 export interface IconProps {
   size?: number;
@@ -55,6 +57,8 @@ export const IconZoom   = (p: IconProps = {}) => img(zoomUrl,   "zoom",   p);
 export const IconPan    = (p: IconProps = {}) => img(panUrl,    "pan",    p);
 export const IconRecenter = (p: IconProps = {}) => img(recenterUrl, "recenter", p);
 export const IconBoundary = (p: IconProps = {}) => img(boundaryUrl, "boundary", p);
+export const IconPlay     = (p: IconProps = {}) => img(playUrl,     "play",     p);
+export const IconPause    = (p: IconProps = {}) => img(pauseUrl,    "pause",    p);
 
 export const ICON_URLS = {
   sphere: sphereUrl,
@@ -70,4 +74,6 @@ export const ICON_URLS = {
   pan:    panUrl,
   recenter: recenterUrl,
   boundary: boundaryUrl,
+  play:     playUrl,
+  pause:    pauseUrl,
 };
