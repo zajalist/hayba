@@ -51,4 +51,28 @@ describe('parseSvgProfile', () => {
     const p = parseSvgProfile(svg, 'closed-path');
     expect(p.points[0][0]).toBe(0.1235);   // rounded to 4 dp
   });
+
+  it('handles relative move + line (m, l) commands', () => {
+    const svg = '<svg viewBox="0 0 100 100"><path d="m10 10 l5 0 l0 5 l-5 0 z"/></svg>';
+    const p = parseSvgProfile(svg, 'closed-path');
+    expect(p.points.length).toBe(4);
+  });
+
+  it('handles relative horizontal and vertical (h, v) commands', () => {
+    const svg = '<svg viewBox="0 0 100 100"><path d="M0 0 h10 v10 h-10 z"/></svg>';
+    const p = parseSvgProfile(svg, 'closed-path');
+    expect(p.points.length).toBe(4);
+  });
+
+  it('auto-closes closed-path without Z when last != first', () => {
+    const svg = '<svg viewBox="0 0 10 10"><path d="M0 0 L 10 0 L 10 10 L 0 10"/></svg>';
+    const p = parseSvgProfile(svg, 'closed-path');
+    expect(p.points.length).toBe(5);
+    expect(p.points[0]).toEqual(p.points[p.points.length - 1]);
+  });
+
+  it('throws on missing viewBox', () => {
+    const svg = '<svg><path d="M0 0 L 10 0 Z"/></svg>';
+    expect(() => parseSvgProfile(svg, 'closed-path')).toThrow(/viewBox/);
+  });
 });

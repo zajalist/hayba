@@ -36,6 +36,24 @@ describe('element-registry', () => {
     const result = emitElementMesh('medieval-european-gothic', 'mystery');
     expect(result.ok).toBe(false);
   });
+
+  it('error has descriptive message for unknown style sheet', () => {
+    const result = emitElementMesh('mystery-culture', 'column');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBe('not_found');
+      expect(result.message).toMatch(/mystery-culture/);
+    }
+  });
+
+  it('stats sizeBytes matches GLB byteLength for the Gothic column', () => {
+    const result = emitElementMesh('medieval-european-gothic', 'column');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.stats.vertices).toBeGreaterThan(0);
+      expect(result.stats.sizeBytes).toBe(result.glb.byteLength);
+    }
+  });
 });
 
 describe('determinism — Gothic column GLB byte-equality', () => {
