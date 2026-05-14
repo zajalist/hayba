@@ -41,3 +41,4 @@ packages/hayba/src/tools/query-gaea-knowledge.ts
 packages/hayba/tests/tools/hayba-add-node.test.ts
 packages/hayba/tests/tools/hayba-connect-nodes.test.ts
 packages/hayba/tests/tools/hayba-remove-node.test.ts
+.vercel

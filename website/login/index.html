@@ -2,31 +2,37 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hayba — Sign in</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/style.css">
+<link rel="icon" type="image/svg+xml" href="/assets/Logo.svg">
 <script src="/config.js"></script>
 <script type="module" src="/login/auth.js" defer></script>
 </head>
-<body class="page-form">
+<body class="page-form page-signin">
   <main class="form-shell">
-    <a href="/" class="brand-link">← Hayba</a>
+    <a href="/" class="brand-link">
+      <img src="/assets/Logo-white.svg" alt="" class="brand-mark" />
+      <span>Hayba</span>
+    </a>
     <h1>Sign in</h1>
     <p class="lead">We'll email you a magic link — no password to remember.</p>
 
     <form id="login-form" class="form">
       <label>Email
-        <input type="email" name="email" required>
+        <input type="email" name="email" required placeholder="you@example.com">
       </label>
       <button type="submit" class="btn primary">Send magic link</button>
     </form>
 
     <div id="login-sent" hidden>
       <h2>Check your inbox.</h2>
-      <p>The link expires in 24 hours. If you don't see it, check spam.</p>
+      <p class="muted small">The link expires in 24 hours. If you don't see it, check spam.</p>
     </div>
 
-    <p class="muted small">
-      Not on the waitlist yet? <a href="/waitlist">Join here</a>.
+    <p class="muted small signin-foot">
+      Not on the waitlist yet? <a href="/waitlist/">Join here</a>.
     </p>
   </main>
 </body>

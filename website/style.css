@@ -122,6 +122,27 @@ nav.subnav {
   transition: transform 0.28s var(--ease-out);
 }
 .nav-links a:hover::after { transform: scaleX(1); }
+.nav-sign-in {
+  position: absolute;
+  right: 28px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  color: var(--text-primary);
+  text-decoration: none;
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  padding: 6px 12px;
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 3px;
+  transition: border-color 0.2s, color 0.2s, background 0.2s;
+}
+.nav-sign-in:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(181,106,29,0.06);
+}
 .btn-primary {
   background: var(--orange); color: #000 !important;
   padding: 0.35rem 1.1rem; font-size: 0.65rem; font-weight: 800;
@@ -1078,6 +1099,352 @@ footer {
   background: var(--accent-dim); color: var(--accent);
   font-size: 11px; margin: 2px;
 }
+
+/* ─────────── brand-link variants (used by WIP/about/docs/forum) ─────────── */
+.brand-link {
+  display: inline-flex; align-items: center; gap: 8px;
+  color: var(--text-secondary); text-decoration: none;
+  font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase;
+  font-weight: 600; margin-bottom: 36px;
+  transition: color 0.15s;
+}
+.brand-link:hover { color: var(--text-primary); }
+.brand-link .brand-mark { width: 18px; height: 18px; }
+.brand-link-compact { margin-bottom: 28px; }
+
+/* ─────────── WIP / placeholder pages (showcase) ─────────── */
+.page-wip {
+  background: var(--bg-deep); min-height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+  padding: 60px 24px;
+}
+.wip-shell {
+  max-width: 520px; width: 100%; text-align: center;
+  color: var(--text-primary);
+}
+.wip-shell .brand-link {
+  justify-content: center;
+}
+.wip-eyebrow {
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.45em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 18px;
+}
+.wip-shell h1 {
+  font-size: 38px; font-weight: 600;
+  letter-spacing: -0.02em; line-height: 1.1;
+  margin: 0 0 18px;
+}
+.wip-lead {
+  color: var(--text-secondary); font-size: 15px;
+  line-height: 1.7; margin: 0 0 24px;
+  max-width: 420px; margin-left: auto; margin-right: auto;
+}
+
+/* ─────────── Static doc pages (about) ─────────── */
+.page-doc {
+  background: var(--bg-deep); min-height: 100vh;
+  padding: 70px 24px 80px;
+}
+.doc-shell {
+  max-width: 720px; margin: 0 auto;
+  color: var(--text-primary);
+}
+.doc-eyebrow {
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.32em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 14px;
+}
+.doc-shell h1 {
+  font-size: 34px; font-weight: 600;
+  line-height: 1.15; letter-spacing: -0.02em;
+  margin: 0 0 40px;
+}
+.doc-section { margin-bottom: 36px; }
+.doc-section h2 {
+  font-size: 17px; font-weight: 600;
+  margin: 0 0 10px; color: var(--text-primary);
+}
+.doc-section p {
+  margin: 0 0 12px; font-size: 14px;
+  line-height: 1.75; color: var(--text-secondary);
+}
+
+/* ─────────── Documentation page (docs) ─────────── */
+.page-docs {
+  background: var(--bg-deep); min-height: 100vh;
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  color: var(--text-primary);
+}
+.docs-sidebar {
+  position: sticky; top: 0;
+  height: 100vh;
+  border-right: 1px solid var(--border-mid);
+  padding: 36px 24px 36px 36px;
+  overflow-y: auto;
+}
+.docs-toc { display: flex; flex-direction: column; gap: 22px; }
+.docs-toc-group { display: flex; flex-direction: column; gap: 2px; }
+.docs-toc-title {
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 6px;
+}
+.docs-toc-link {
+  position: relative;
+  display: block;
+  font-size: 13px; color: var(--text-secondary);
+  text-decoration: none;
+  padding: 3px 0 3px 12px;
+  transition: color 0.15s, padding-left 0.15s;
+}
+.docs-toc-link::before {
+  content: '';
+  position: absolute; left: 0; top: 12px;
+  width: 4px; height: 1px;
+  background: var(--text-muted);
+  opacity: 0.5;
+}
+.docs-toc-link:hover { color: var(--text-primary); padding-left: 14px; }
+.docs-toc-link.is-active {
+  color: var(--text-primary); padding-left: 18px;
+}
+.docs-toc-link.is-active::before {
+  background: var(--accent); opacity: 1; width: 10px;
+}
+.docs-main {
+  max-width: 760px; padding: 60px 56px 100px;
+}
+.docs-eyebrow {
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.32em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 12px;
+}
+.docs-main h1 {
+  font-size: 32px; font-weight: 600;
+  letter-spacing: -0.02em; line-height: 1.15;
+  margin: 0 0 14px;
+}
+.docs-lead {
+  color: var(--text-secondary);
+  font-size: 15px; line-height: 1.7;
+  margin: 0 0 44px;
+}
+.docs-section {
+  margin-bottom: 40px;
+  padding-bottom: 32px;
+  border-bottom: 1px solid var(--border-mid);
+}
+.docs-section:last-of-type { border-bottom: none; }
+.docs-section h2 {
+  font-size: 20px; font-weight: 600;
+  margin: 0 0 14px; letter-spacing: -0.01em;
+}
+.docs-section p {
+  font-size: 14px; line-height: 1.75;
+  color: var(--text-secondary); margin: 0 0 12px;
+}
+.docs-section code {
+  font: 0.92em var(--font-mono);
+  background: var(--bg-base);
+  border: 1px solid var(--border-mid);
+  padding: 1px 6px; border-radius: 3px;
+  color: var(--text-primary);
+}
+.docs-status {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px; color: var(--text-muted) !important;
+  margin-top: 10px !important;
+}
+.docs-status-tag {
+  display: inline-block;
+  font-size: 9px; font-weight: 700;
+  letter-spacing: 0.15em; text-transform: uppercase;
+  padding: 3px 8px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-radius: 3px;
+}
+.docs-footer-link {
+  margin-top: 60px;
+  font-size: 13px;
+}
+.docs-footer-link a {
+  color: var(--text-muted); text-decoration: none;
+}
+.docs-footer-link a:hover { color: var(--accent); }
+
+@media (max-width: 900px) {
+  .page-docs { grid-template-columns: 1fr; }
+  .docs-sidebar { position: relative; height: auto; border-right: none; border-bottom: 1px solid var(--border-mid); }
+  .docs-main { padding: 40px 24px 80px; }
+}
+
+/* ─────────── Forum page ─────────── */
+.page-forum {
+  background: var(--bg-deep); min-height: 100vh;
+  padding: 70px 24px 100px;
+}
+.forum-shell {
+  max-width: 720px; margin: 0 auto;
+  color: var(--text-primary);
+}
+.forum-eyebrow {
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.32em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 14px;
+}
+.forum-shell h1 {
+  font-size: 36px; font-weight: 600;
+  letter-spacing: -0.02em; line-height: 1.1;
+  margin: 0 0 12px;
+}
+.forum-lead {
+  color: var(--text-secondary); font-size: 14.5px;
+  line-height: 1.6; margin: 0 0 40px;
+}
+
+.forum-composer {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-mid);
+  border-radius: 4px;
+  padding: 22px 24px;
+  margin-bottom: 36px;
+}
+.forum-composer-title {
+  font-size: 13px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-secondary); margin: 0 0 14px;
+}
+.composer-actions {
+  display: flex; align-items: center; gap: 14px;
+  margin-top: 4px;
+}
+
+.forum-signed-out {
+  padding: 18px 22px;
+  border: 1px dashed var(--border-soft);
+  border-radius: 4px;
+  margin-bottom: 36px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+.forum-signed-out p { margin: 0; }
+.forum-cta {
+  color: var(--accent); text-decoration: none;
+  font-weight: 600;
+}
+.forum-cta:hover { text-decoration: underline; }
+
+.forum-topics-header {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: 14px;
+}
+.forum-topics-header h2 {
+  font-size: 13px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-secondary); margin: 0;
+}
+
+.forum-topics-list { display: flex; flex-direction: column; gap: 1px; }
+.forum-topic {
+  padding: 18px 0;
+  border-top: 1px solid var(--border-mid);
+}
+.forum-topic:last-child { border-bottom: 1px solid var(--border-mid); }
+.forum-topic-title {
+  font-size: 16px; font-weight: 600;
+  margin: 0 0 6px; letter-spacing: -0.01em;
+}
+.forum-topic-body {
+  font-size: 13.5px; line-height: 1.6;
+  color: var(--text-secondary); margin: 0 0 8px;
+}
+.forum-topic-meta {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11.5px; color: var(--text-muted);
+}
+.forum-topic-author { font-weight: 500; color: var(--text-secondary); }
+
+/* ─────────── Waitlist compact (no-scroll target) ─────────── */
+.page-form .form-shell h1 {
+  font-size: 22px; margin-bottom: 6px;
+}
+.page-form .form-shell .lead {
+  font-size: 13px; color: var(--text-secondary); margin: 0 0 18px;
+  line-height: 1.5;
+}
+.page-form .form-shell .eyebrow {
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.32em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 10px;
+}
+.page-form .form { gap: 12px; }
+.page-form .form label { gap: 4px; font-size: 10.5px; }
+.page-form .form input,
+.page-form .form select,
+.page-form .form textarea { padding: 7px 9px; font-size: 12.5px; }
+.page-form .form textarea { min-height: 60px; }
+.page-form .form fieldset { padding: 10px 12px; }
+.page-form .form legend { font-size: 10.5px; }
+.page-form .chip-group {
+  gap: 4px; margin-top: 6px;
+}
+.page-form .chip-label {
+  font-size: 9.5px; margin-top: 2px;
+  width: 100%;
+}
+.page-form .chip {
+  padding: 3px 7px; font-size: 10.5px;
+  border-radius: 10px;
+}
+.page-form .form button.primary {
+  padding: 9px 16px; font-size: 12px;
+  margin-top: 4px;
+}
+.page-form { padding: 32px 24px; }
+
+/* Two-column form-shell on wide screens so waitlist fits the viewport */
+.page-form .form-shell { max-width: 880px; }
+@media (min-width: 880px) {
+  .page-form .form-shell > .form {
+    display: grid;
+    grid-template-columns: 1fr 1.1fr;
+    grid-auto-flow: dense;
+    gap: 12px 24px;
+  }
+  .page-form .form-shell > .form > fieldset {
+    grid-row: span 4;
+    grid-column: 2;
+  }
+  .page-form .form-shell > .form > label:last-of-type {
+    grid-column: 1 / -1;
+  }
+  .page-form .form-shell > .form > button {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+  .page-form .form-shell > .form > .muted {
+    grid-column: 1 / -1;
+    margin-top: -4px;
+  }
+}
+
+/* Sign-in page polish — smaller, centered, premium */
+.page-form.page-signin { align-items: center; padding: 24px; }
+.page-signin .form-shell {
+  max-width: 380px; text-align: center;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-mid);
+  border-radius: 6px;
+  padding: 40px 36px;
+}
+.page-signin .brand-link { justify-content: center; }
+.page-signin h1 { font-size: 24px; margin-bottom: 6px; }
+.page-signin .lead { margin-bottom: 22px; }
+.page-signin .form label { text-align: left; }
+.page-signin .form button { width: 100%; }
 
 /* Admin page */
 .page-admin {
