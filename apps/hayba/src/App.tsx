@@ -330,7 +330,6 @@ export default function App() {
             padding: "8px 14px",
             cursor: "pointer",
             fontWeight: 600,
-            boxShadow: "0 12px 28px rgba(0,0,0,0.45)",
             backdropFilter: "blur(10px)",
           }}
         >

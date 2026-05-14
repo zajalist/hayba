@@ -30,7 +30,7 @@ const BASE_SIZE     = 44;
 const MAX_SIZE      = 72;
 const SLOT_GAP      = 16;   // breathing room between icons
 const SLOT_WIDTH    = BASE_SIZE + SLOT_GAP;
-const INFLUENCE     = 130;  // px from cursor where icons start growing
+const INFLUENCE     = 75;   // px — tight so only the hovered icon + immediate neighbour grow
 const ROW_PAD       = 8;
 const DOCK_BOTTOM   = 64;   // lift the dock above the status bar
 const POPOVER_GAP   = 16;   // visible space between icon top and popover bottom
@@ -103,7 +103,7 @@ export default function DockToolbar({ active, onChange, brushRadius, onChangeBru
           background: "rgba(34, 38, 46, 0.78)",
           border: `1px solid ${colors.borderMid}`,
           borderRadius: 16,
-          boxShadow: "0 22px 56px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.04)",
+          boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
           backdropFilter: "blur(14px)",
           WebkitBackdropFilter: "blur(14px)",
         }}
@@ -183,7 +183,7 @@ function DockSlot({
           justifyContent: "flex-end",
           cursor: "pointer",
           transform: `translateY(${-iconLift}px)`,
-          transition: "transform 90ms ease",
+          transition: "transform 70ms cubic-bezier(0.16, 1, 0.3, 1)",
         }}
       >
         <Icon size={Math.round(size * 0.82)} />
@@ -222,7 +222,7 @@ function DockSlot({
             fontFamily: fonts.sans,
             color: colors.textPrimary,
             whiteSpace: "nowrap",
-            boxShadow: "0 6px 20px rgba(0,0,0,0.45)",
+            boxShadow: "none",
           }}
         >
           {tool.label}
@@ -280,7 +280,7 @@ function BrushSizePopover({
         background: colors.bgBase,
         border: `1px solid ${colors.borderMid}`,
         borderRadius: 12,
-        boxShadow: "0 16px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04)",
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
         backdropFilter: "blur(8px)",
         padding: "14px 16px 12px",
         width: 240,
