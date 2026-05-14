@@ -312,7 +312,6 @@ export default function TopBar({ divisions, documentTitle }: TopBarProps) {
               onClick={() => toggleMenu(id)}
               style={{
                 background: isOpen ? colors.bgBase : "transparent",
-                borderBottom: isOpen ? `1px solid ${colors.accent}` : "1px solid transparent",
                 border: "none",
                 borderBottomStyle: "solid",
                 borderBottomWidth: 1,
