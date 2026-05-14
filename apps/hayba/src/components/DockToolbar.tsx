@@ -146,23 +146,31 @@ function DockSlot({
           width: size,
           height: size,
           padding: 0,
-          background: isActive
-            ? "rgba(181, 106, 29, 0.18)"
-            : "rgba(255,255,255,0.03)",
-          border: `1px solid ${isActive ? colors.accent : "rgba(255,255,255,0.06)"}`,
-          borderRadius: 10,
+          background: "transparent",
+          border: "none",
           display: "flex",
+          flexDirection: "column",
           alignItems: "center",
-          justifyContent: "center",
+          justifyContent: "flex-end",
           cursor: "pointer",
           transform: `translateY(${(size - BASE_SIZE) * -0.35}px)`,
-          transition: "background 90ms ease, border-color 90ms ease",
-          boxShadow: isActive
-            ? `0 6px 18px ${colors.accentDim}, inset 0 1px 0 rgba(255,255,255,0.05)`
-            : "inset 0 1px 0 rgba(255,255,255,0.04)",
+          transition: "transform 90ms ease",
         }}
       >
-        <Icon size={Math.round(size * 0.5)} />
+        <Icon size={Math.round(size * 0.78)} />
+        {/* Active dot — small accent indicator beneath the icon, apple-dock style */}
+        <span
+          aria-hidden
+          style={{
+            width: isActive ? 4 : 0,
+            height: isActive ? 4 : 0,
+            marginTop: 2,
+            background: colors.accent,
+            borderRadius: "50%",
+            boxShadow: isActive ? `0 0 6px ${colors.accent}` : "none",
+            transition: "width 120ms ease, height 120ms ease",
+          }}
+        />
       </button>
 
       {/* Tooltip label — sits above the icon, fades in with hover */}

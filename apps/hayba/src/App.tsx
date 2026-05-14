@@ -6,9 +6,10 @@ import type { SceneHandle } from "./viewport/scene";
 import { buildGlobe, PLATE_PALETTE, type GlobeHandle } from "./viewport/globe";
 import { attachPainter, type PainterHandle } from "./viewport/painter";
 import StatusBar, { Mono } from "./components/StatusBar";
-import SettingsPanel from "./components/SettingsPanel";
-import ToolPalette, { type ToolName } from "./components/ToolPalette";
+import SettingsModal from "./components/SettingsModal";
+import DockToolbar, { type ToolName } from "./components/DockToolbar";
 import TopMenuBar from "./components/TopMenuBar";
+import RecenterButton from "./components/RecenterButton";
 import ConfirmDialog from "./components/ConfirmDialog";
 import { createDefaultDraft, type WizardDraft, type PresetName } from "./wizard/state";
 import { buildCellKdTree, cellsWithinRadius, type KdTree } from "./wizard/kdtree";
@@ -34,9 +35,7 @@ type Mode = "wizard" | "baking" | "viewing";
 
 const INITIAL_DIVISIONS = 64;
 const TOP_HEIGHT = 32 + 28; // menu strip + tab strip
-const BOTTOM_HEIGHT = 28;   // status bar
-const RIGHT_PANEL_WIDTH = 300;
-const LEFT_TOOL_WIDTH = 48;
+const BOTTOM_HEIGHT = 28;
 
 function angularToChord(rad: number): number {
   return 2 * Math.sin(rad / 2);
@@ -238,14 +237,6 @@ export default function App() {
     }
   }, [draft]);
 
-  const handleClearContinents = useCallback(() => {
-    if (!draft) return;
-    const next: WizardDraft = { ...draft, continental_cells: [] };
-    setDraft(next);
-    draftRef.current = next;
-    globeRef.current?.recolorFromDraft(next, cellCountRef.current);
-  }, [draft]);
-
   const handleBake = useCallback(async () => {
     if (!draft) return;
     setMode("baking");
@@ -280,46 +271,44 @@ export default function App() {
     </> : "—";
 
   const showWizard = mode === "wizard";
+  const getScene = useCallback(() => sceneRef.current, []);
 
   return (
     <>
-      {/* Viewport sized to the inner viewport rect so the planet doesn't sit under panels. */}
       <div style={{
         position: "fixed",
         top: TOP_HEIGHT,
         bottom: BOTTOM_HEIGHT,
-        left: showWizard ? LEFT_TOOL_WIDTH : 0,
-        right: showWizard ? RIGHT_PANEL_WIDTH : 0,
+        left: 0,
+        right: 0,
       }}>
         <Viewport onReady={handleSceneReady} />
       </div>
 
       <TopMenuBar documentTitle={mode === "viewing" ? "Planet (baked)" : "Untitled"} />
 
-      {showWizard && (
-        <ToolPalette
+      {showWizard && draft && (
+        <DockToolbar
           active={activeTool}
           onChange={setActiveTool}
-          topOffset={TOP_HEIGHT}
-          bottomOffset={BOTTOM_HEIGHT}
-          brushRadius={draft?.brush_radius_rad}
+          brushRadius={draft.brush_radius_rad}
           onChangeBrushRadius={handleChangeBrushRadius}
         />
       )}
 
       {showWizard && draft && (
-        <SettingsPanel
+        <SettingsModal
           draft={draft}
           busy={false}
           topOffset={TOP_HEIGHT}
-          bottomOffset={BOTTOM_HEIGHT}
           onChangeDivisions={handleChangeDivisions}
           onChangePreset={handleChangePreset}
           onReroll={handleReroll}
-          onClearContinents={handleClearContinents}
           onBake={handleBake}
         />
       )}
+
+      <RecenterButton getScene={getScene} />
 
       {mode === "viewing" && (
         <button
@@ -327,19 +316,22 @@ export default function App() {
           onClick={handleEditWizard}
           style={{
             position: "fixed",
-            top: TOP_HEIGHT + 12,
-            right: 12,
+            top: TOP_HEIGHT + 22,
+            right: 22,
             zIndex: 60,
-            background: "rgba(27, 31, 37, 0.92)",
+            background: "rgba(34, 38, 46, 0.92)",
             border: "1px solid #2f343d",
+            borderRadius: "3px",
             color: "#B56A1D",
-            fontFamily: 'Inter, system-ui, sans-serif',
+            fontFamily: '"Segoe UI", "Noto Sans", system-ui, sans-serif',
             fontSize: 10,
             letterSpacing: "0.32em",
             textTransform: "uppercase",
             padding: "8px 14px",
             cursor: "pointer",
             fontWeight: 600,
+            boxShadow: "0 12px 28px rgba(0,0,0,0.45)",
+            backdropFilter: "blur(10px)",
           }}
         >
           Edit wizard →
