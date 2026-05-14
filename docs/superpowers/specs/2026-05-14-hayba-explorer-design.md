@@ -198,3 +198,24 @@ Shipped behind tag `hayba-explorer-v0.1`. Plan: `docs/superpowers/plans/2026-05-
 - Save / load (`WorldSave` JSON contract exists in Rust at `packages/hayba-tectonics-v2/src/save/mod.rs`, not yet wired to the UI).
 - Export pipeline (equirect PNGs, PBR textures, per-cell JSON).
 - Educational tooltips, help drawer, first-run tour.
+
+---
+
+## v0.2 status — 2026-05-14
+
+Shipped behind tag `hayba-explorer-v0.2`. Plan: `docs/superpowers/plans/2026-05-14-hayba-explorer-v0-2.md`.
+
+**Landed (TE-faithful refactor):**
+- Wizard panel — right-side 360px, Hayba design language (Segoe UI, slate panel, accent rail).
+- Detail preset chips (peels d=32 / d=64 / d=96), tectonic preset chips (plates2 / plates3 / plates4 / plates5 / plates5Uneven), seed reroll, brush size slider, clear-continents, bake.
+- **TE-faithful plate partitioning.** Each tectonic preset is TE's actual PNG raster (`tectonic-explorer/.../data/platesN.png`), embedded into the Tauri Rust binary via `include_bytes!`. Every cell sampled by equirectangular projection of its unit-sphere position. HSV-hue (rounded to 10° buckets) → plate id; HSV-value → base elevation. Algorithm matches `generate-plates.ts`.
+- **Continent painter.** Left-click & drag paints continental crust over the preset's partition. Right-click drags to rotate the camera. Brush angular radius slider (~0.9° → ~14.3°). Client-side 3D kd-tree with range query batches all cells inside the brush per pointer event. User brush wins over preset elevation on overlap.
+- **Status bar** — drops the glowy AI-slop dot. Now a 2px accent rail + small-caps tracked state word + Consolas/Noto Mono numerics ("draft · plates4 · 40,962 cells · 1,204 painted · seed 12345").
+- **Splash + tokens.** Tokens refactored to match the marketing-restyle brief — Segoe UI / Noto Sans, `#B56A1D` filled accent, `#e8821c` text accent, Charis SIL reserved for IPA samples only (never as a heading serif). Splash uses the Hayba logo SVG inline.
+- Rust unit tests cover preset partitioning (plates2 → 2 plates, plates4 → ~4) and brush-overrides-preset semantics.
+
+**Wizard parity gaps (deferred to v0.3+):**
+- TE step 3 (force assignment) — currently auto-assigns deterministic per-plate omega from the draft seed.
+- TE step 4 (density rank) — currently continental plates get density 0.35, oceanic 1.05; no user override.
+- Continent erasing (eraser mode toggle).
+- Triangulated Voronoi mesh — viewport still renders a point cloud, not a shaded surface.
