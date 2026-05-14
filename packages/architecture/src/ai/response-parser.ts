@@ -1,7 +1,8 @@
 import type {
-  Element, ElementBinding, AIProviderName,
+  Element, ElementBinding,
 } from '../index.js';
 import { validateElementBinding } from '../index.js';
+import type { AIProviderName } from './types.js';
 import { parseSvgProfile } from '../kernel/svg-parse.js';
 import type { GenerateBindingResult, GenerateBindingError } from './types.js';
 
