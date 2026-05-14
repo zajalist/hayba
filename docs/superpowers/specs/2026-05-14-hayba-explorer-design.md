@@ -171,3 +171,30 @@ Estimate: 3–6 weeks of focused work. Slippage likely on the cross-section view
 - Save file format: JSON for now (Phase 13.1's `WorldSave`). Binary `.haybasave` later if file sizes matter.
 - Multi-planet workspaces: out of v1 scope, but the save format should accommodate it later (one save = one planet for now).
 - Localization: English only for v1.
+
+---
+
+## v0.1 status — 2026-05-14
+
+Shipped behind tag `hayba-explorer-v0.1`. Plan: `docs/superpowers/plans/2026-05-14-hayba-explorer-v0-1.md`. Run instructions: `apps/hayba/README.md`.
+
+**Landed:**
+- Tauri shell at `apps/hayba/src-tauri/` with `hayba-tectonics-v2` as an embedded Rust dependency.
+- `bake_demo_planet` Tauri command — builds a `Model` at `divisions=64`, seeds 8 plates (4 continental + 4 oceanic) from a hardcoded preset, runs 5 steps, returns a `PlanetSnapshot` (cell positions, plate ids, elevation, continental flag).
+- Vite + React + TypeScript + Three.js frontend in `apps/hayba/src/`. Scene wired with `OrbitControls`, lights, resize observer, RAF loop.
+- Point-cloud globe (`buildGlobeMesh`) colored by continental flag — accent (#B56A1D) for continents, slate-blue for ocean.
+- Hayba boot splash (Charis SIL serif "Hayba" + tagline), dark slate chrome, accent divider.
+- `StatusBar` with state machine (idle / baking / ready / error) — Stop button present but disabled until the MCP layer lands.
+- `@hayba/design-tokens` package — single source of truth for color + typography shared between marketing site and explorer.
+- Rust unit test (`planet::tests::demo_bake_produces_expected_shape`) asserts shape invariants (40,962 cells, ≥4 distinct plates).
+
+**Deferred to v0.2 and beyond per the design spec:**
+- Wizard (planet is still hardcoded — drop-in slot exists at `apps/hayba/src-tauri/src/planet.rs`).
+- MCP automation surface (Stop button is a placeholder).
+- Time scrubbing / playback, frame timeline.
+- Cross-section view.
+- Climate map modes (temperature, humidity, biome, ocean currents, snow extent, crust stack).
+- Triangulated Voronoi mesh + shaded material (point cloud only for v0.1).
+- Save / load (`WorldSave` JSON contract exists in Rust at `packages/hayba-tectonics-v2/src/save/mod.rs`, not yet wired to the UI).
+- Export pipeline (equirect PNGs, PBR textures, per-cell JSON).
+- Educational tooltips, help drawer, first-run tour.
