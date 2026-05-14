@@ -19,6 +19,9 @@ import {
   loadElementCatalog,
   registerBinding, emitElementMesh,
 } from '../dist/index.js';
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 /* ─── module-local state ──────────────────────────────────────────────── */
 
@@ -94,9 +97,12 @@ export function openEditor(bindingKey, opts) {
   _refreshStatus();
   _refreshSaveButton();
   _refreshBreadcrumb();
+  _refreshPreview();
 }
 
 export function closeEditor() {
+  _disposePreview();
+  document.removeEventListener('keydown', _onGlobalKeyDown);
   if (state.paperScope) {
     try { state.paperScope.project?.clear(); } catch {}
     state.paperScope = null;
@@ -147,8 +153,78 @@ export function editorToggleSnap() {
 }
 
 export async function editorSave() {
-  // Stub — Batch 5 fills this in.
-  console.warn('editorSave: not yet implemented (Task 11)');
+  if (!state.binding) return;
+  if (!hasUnsavedChanges()) return;
+
+  // Build saved profiles: dirty slots use Paper.js state; clean slots
+  // keep their originalSvg.
+  const savedProfiles = {};
+  const newOriginals = {};
+  for (const [name, slot] of Object.entries(state.slots)) {
+    if (slot.dirty) {
+      const svg = verticesToSvgPath(slot.vertices, slot.viewBox, slot.hint);
+      savedProfiles[name] = svg;
+      newOriginals[name] = svg;
+    } else {
+      savedProfiles[name] = slot.originalSvg;
+      newOriginals[name] = slot.originalSvg;
+    }
+  }
+
+  // bigint seed handling: state.binding.seed may be a bigint or a hex string.
+  let seed = state.binding.seed;
+  if (typeof seed === 'string') seed = BigInt(seed);
+
+  const updatedBinding = { ...state.binding, seed, profiles: savedProfiles };
+
+  // In-session register so emitElementMesh sees the saved state immediately.
+  try {
+    registerBinding(updatedBinding);
+  } catch (err) {
+    alert(`Save failed at kernel-register step:\n${err.message}`);
+    return;
+  }
+
+  // Persist via Phase 1 endpoint.
+  const transport = { ...updatedBinding, seed: '0x' + seed.toString(16) };
+  const url = `/api/bindings/${encodeURIComponent(updatedBinding.styleSheetId)}/${encodeURIComponent(updatedBinding.elementId)}`;
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(transport),
+    });
+  } catch (err) {
+    alert(`Save failed: network error\n${err.message}`);
+    return;
+  }
+  if (!response.ok) {
+    const txt = await response.text();
+    alert(`Save failed (HTTP ${response.status}):\n${txt}`);
+    return;
+  }
+
+  // Clear dirty flags, update originals.
+  for (const [name, slot] of Object.entries(state.slots)) {
+    slot.dirty = false;
+    slot.originalSvg = newOriginals[name];
+  }
+  state.binding = updatedBinding;
+
+  // Notify caller so the atlas refreshes its local bindings cache.
+  state.saveCallback?.(updatedBinding);
+
+  _refreshSaveButton();
+  _renderSlotTabs();
+
+  // Briefly flash the save button to confirm.
+  const btn = document.getElementById('editorSaveBtn');
+  if (btn) {
+    const orig = btn.textContent;
+    btn.textContent = '✓ SAVED';
+    setTimeout(() => { btn.textContent = orig; }, 1200);
+  }
 }
 
 export function editorRefresh() {
@@ -169,6 +245,7 @@ function _initPaper() {
     paper.setup(canvas);
     state.paperScope = paper;
     _setupTools();
+    document.addEventListener('keydown', _onGlobalKeyDown);
   }
 }
 
@@ -480,6 +557,135 @@ function _scheduleSlotSync() {
   }
 }
 
+/* ─── global keyboard shortcuts ───────────────────────────────────────── */
+
+function _onGlobalKeyDown(e) {
+  if (!state.active) return;
+  if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+    e.preventDefault();
+    editorSave().catch(err => console.error('editorSave error:', err));
+  }
+}
+
+/* ─── live three.js preview ───────────────────────────────────────────── */
+
+let _preview = null;   // { scene, camera, renderer, controls, currentMesh, raf }
+
+function _ensurePreview() {
+  if (_preview) return _preview;
+  const stage = document.getElementById('editorPreviewStage');
+  if (!stage) return null;
+  stage.innerHTML = '';
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x1b1e24);
+
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
+  camera.position.set(2.5, 3, 4);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(stage.clientWidth, stage.clientHeight);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  stage.appendChild(renderer.domElement);
+
+  const key = new THREE.DirectionalLight(0xffffff, 1.2);
+  key.position.set(5, 8, 6);
+  scene.add(key);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+  scene.add(new THREE.GridHelper(10, 10, 0x3d434e, 0x2a2e36));
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.update();
+
+  function animate() {
+    if (!_preview) return;
+    _preview.raf = requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  }
+  _preview = { scene, camera, renderer, controls, currentMesh: null, raf: 0 };
+  animate();
+  return _preview;
+}
+
+function _disposePreview() {
+  if (!_preview) return;
+  cancelAnimationFrame(_preview.raf);
+  if (_preview.currentMesh) _preview.scene.remove(_preview.currentMesh);
+  _preview.renderer.dispose();
+  if (_preview.renderer.domElement.parentNode) {
+    _preview.renderer.domElement.parentNode.removeChild(_preview.renderer.domElement);
+  }
+  _preview = null;
+}
+
 function _refreshPreview() {
-  // Implemented in Batch 5 (Task 10).
+  if (!state.active || !state.binding) return;
+  const preview = _ensurePreview();
+  if (!preview) return;
+
+  // Build ephemeral binding from current Paper.js state of every slot.
+  const editedProfiles = {};
+  for (const [name, slot] of Object.entries(state.slots)) {
+    try {
+      editedProfiles[name] = verticesToSvgPath(slot.vertices, slot.viewBox, slot.hint);
+    } catch (err) {
+      console.warn(`_refreshPreview: skip slot ${name}:`, err.message);
+      editedProfiles[name] = slot.originalSvg;
+    }
+  }
+
+  // bigint seed: state.binding.seed might be a string (from atlas's bindings dict).
+  let seed = state.binding.seed;
+  if (typeof seed === 'string') seed = BigInt(seed);
+
+  const ephemeral = { ...state.binding, seed, profiles: editedProfiles };
+  try {
+    registerBinding(ephemeral);
+  } catch (err) {
+    console.warn('_refreshPreview: registerBinding failed:', err.message);
+    return;
+  }
+
+  const result = emitElementMesh(ephemeral.styleSheetId, ephemeral.elementId);
+  const statsEl = document.getElementById('editorPreviewStats');
+  if (!result.ok) {
+    if (statsEl) statsEl.textContent = `kernel error: ${result.message}`;
+    return;
+  }
+  if (statsEl) {
+    statsEl.textContent = `${result.stats.triangles} tris · ${(result.stats.sizeBytes / 1024).toFixed(1)} kB`;
+  }
+
+  // Replace the mesh in the scene.
+  if (preview.currentMesh) preview.scene.remove(preview.currentMesh);
+
+  const loader = new GLTFLoader();
+  loader.parse(result.glb, '', (gltf) => {
+    gltf.scene.traverse((o) => {
+      if (o.isMesh) {
+        o.material = new THREE.MeshStandardMaterial({ color: 0xb8b0a0, roughness: 0.85, metalness: 0.1 });
+      }
+    });
+    preview.scene.add(gltf.scene);
+    preview.currentMesh = gltf.scene;
+    const box = new THREE.Box3().setFromObject(gltf.scene);
+    const c = box.getCenter(new THREE.Vector3());
+    const s = box.getSize(new THREE.Vector3());
+    const m = Math.max(s.x, s.y, s.z, 0.5);
+    preview.camera.position.set(c.x + m * 1.7, c.y + m * 0.7, c.z + m * 1.7);
+    preview.controls.target.copy(c);
+    preview.controls.update();
+  });
+
+  const metaEl = document.getElementById('editorPreviewMeta');
+  if (metaEl) {
+    const slot = state.slots[state.activeSlot];
+    metaEl.innerHTML =
+      `Hint: <span class="accent">${slot?.hint ?? '—'}</span><br>` +
+      `Vertices: ${slot?.vertices.length ?? 0}<br>` +
+      `Closed: ${slot?.hint === 'closed-path' ? 'yes' : 'no'}`;
+  }
 }
