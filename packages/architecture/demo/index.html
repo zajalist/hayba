@@ -295,16 +295,23 @@
     background: radial-gradient(circle at 30% 30%, var(--bg-panel) 0%, var(--bg-deep) 80%);
     border: 1px solid var(--border-mid);
     border-radius: 6px;
-    padding: 14px;
-    display: flex; justify-content: center; align-items: center;
+    padding: 4px;
     aspect-ratio: 1; max-width: 100%;
+    position: relative; overflow: hidden;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45) inset;
   }
-  .inspector-sphere {
-    width: 100%; max-width: 240px; height: auto;
-    border-radius: 50%;
-    background: var(--bg-deep);
-    image-rendering: -webkit-optimize-contrast;
-    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+  .inspector-sphere-wrap canvas {
+    width: 100% !important;
+    height: 100% !important;
+    display: block;
+    border-radius: 4px;
+    cursor: grab;
+  }
+  .inspector-sphere-wrap canvas:active { cursor: grabbing; }
+  .inspector-hint {
+    font: 10px var(--font-mono); color: var(--text-muted);
+    text-align: center; padding: 2px 0;
+    letter-spacing: 0.3px;
   }
   .inspector-desc {
     font-size: 11.5px; color: var(--text-secondary);
@@ -1053,9 +1060,97 @@ function windowDots(x, y, w, h, density) {
 
 /* ─── inspector (material / ornament editor) ──────────────────────────────── */
 
+let _inspectorTeardown = null;
+
+function teardownInspectorSphere() {
+  if (_inspectorTeardown) {
+    try { _inspectorTeardown(); } catch (_) { /* swallow */ }
+    _inspectorTeardown = null;
+  }
+}
+
+function mountLiveSphere(container, material) {
+  teardownInspectorSphere();
+  container.innerHTML = '';
+
+  const scene = new THREE.Scene();
+  scene.background = null;
+
+  const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 10);
+  camera.position.set(0, 0.15, 3.6);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  const updateSize = () => {
+    const w = Math.max(80, container.clientWidth);
+    const h = Math.max(80, container.clientHeight || w);
+    renderer.setSize(w, h, true);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  };
+  container.appendChild(renderer.domElement);
+  updateSize();
+
+  // Match the cached preview lighting.
+  const key = new THREE.DirectionalLight(0xfff2dd, 1.7);
+  key.position.set(1.4, 1.6, 2.0); scene.add(key);
+  const fill = new THREE.DirectionalLight(0xa0b0c4, 0.55);
+  fill.position.set(-1.4, 0.6, -0.8); scene.add(fill);
+  const rim = new THREE.DirectionalLight(0xffffff, 0.25);
+  rim.position.set(0, -1.2, -2.0); scene.add(rim);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.10));
+
+  const geo = new THREE.SphereGeometry(1, 64, 64);
+  const sphere = new THREE.Mesh(geo, material);
+  scene.add(sphere);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.target.set(0, 0, 0);
+  controls.minDistance = 2.6;
+  controls.maxDistance = 6;
+  controls.enablePan = false;
+  controls.rotateSpeed = 0.7;
+
+  let stopped = false;
+  let rafId = 0;
+  const animate = () => {
+    if (stopped) return;
+    rafId = requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  };
+  animate();
+
+  let ro = null;
+  if (typeof ResizeObserver !== 'undefined') {
+    ro = new ResizeObserver(updateSize);
+    ro.observe(container);
+  }
+
+  _inspectorTeardown = () => {
+    stopped = true;
+    cancelAnimationFrame(rafId);
+    if (ro) ro.disconnect();
+    controls.dispose();
+    geo.dispose();
+    if (material.map)        material.map.dispose();
+    if (material.normalMap)  material.normalMap.dispose();
+    material.dispose();
+    renderer.dispose();
+    renderer.forceContextLoss?.();
+    if (renderer.domElement.parentNode === container) {
+      container.removeChild(renderer.domElement);
+    }
+  };
+}
+
 function renderInspector(wrap) {
   const insp = state.inspecting;
-  if (!insp) { wrap.innerHTML = ''; return; }
+  if (!insp) { teardownInspectorSphere(); wrap.innerHTML = ''; return; }
   if (insp.kind === 'material') {
     renderMaterialInspector(wrap, insp.id);
   } else if (insp.kind === 'ornament') {
@@ -1086,7 +1181,6 @@ function _materialDescription(materialId) {
 }
 
 function renderMaterialInspector(wrap, materialId) {
-  const largeUrl = getMaterialLargeSphereUrl(materialId);
   const { diffuseCanvas, normalCanvas } = getMaterialCanvases(materialId);
   const roughness = ROUGHNESS_BY_MATERIAL[materialId] ?? 0.85;
   const dDataUrl = diffuseCanvas.toDataURL('image/png');
@@ -1102,9 +1196,8 @@ function renderMaterialInspector(wrap, materialId) {
         </div>
       </div>
 
-      <div class="inspector-sphere-wrap">
-        <img class="inspector-sphere" src="${largeUrl}" alt="${materialId}">
-      </div>
+      <div class="inspector-sphere-wrap" id="inspectorSphereHost"></div>
+      <div class="inspector-hint">drag to rotate · scroll to zoom</div>
 
       <div class="inspector-desc">${_materialDescription(materialId)}</div>
 
@@ -1137,6 +1230,13 @@ function renderMaterialInspector(wrap, materialId) {
       </div>
     </div>
   `;
+
+  const host = wrap.querySelector('#inspectorSphereHost');
+  if (host) {
+    const data = _ensureMaterialData(materialId);
+    mountLiveSphere(host, _materialFromData(data));
+  }
+
   wrap.querySelector('#inspectorBack')?.addEventListener('click', () => {
     state.inspecting = null;
     renderCenter(); renderRight();
@@ -1157,7 +1257,6 @@ function _ornamentDescription(ornament) {
 }
 
 function renderOrnamentInspector(wrap, ornament) {
-  const largeUrl = getOrnamentLargeSphereUrl(ornament);
   const { diffuseCanvas, normalCanvas } = getOrnamentCanvases(ornament);
   const dDataUrl = diffuseCanvas.toDataURL('image/png');
   const nDataUrl = normalCanvas.toDataURL('image/png');
@@ -1172,9 +1271,8 @@ function renderOrnamentInspector(wrap, ornament) {
         </div>
       </div>
 
-      <div class="inspector-sphere-wrap">
-        <img class="inspector-sphere" src="${largeUrl}" alt="${ornament}">
-      </div>
+      <div class="inspector-sphere-wrap" id="inspectorSphereHost"></div>
+      <div class="inspector-hint">drag to rotate · scroll to zoom</div>
 
       <div class="inspector-desc">${_ornamentDescription(ornament)}</div>
 
@@ -1206,6 +1304,13 @@ function renderOrnamentInspector(wrap, ornament) {
       </div>
     </div>
   `;
+
+  const host = wrap.querySelector('#inspectorSphereHost');
+  if (host) {
+    const data = _ensureOrnamentData(ornament);
+    mountLiveSphere(host, _ornamentMaterial(data));
+  }
+
   wrap.querySelector('#inspectorBack')?.addEventListener('click', () => {
     state.inspecting = null;
     renderCenter(); renderRight();
@@ -1222,6 +1327,9 @@ function renderRight() {
     renderInspector(wrap);
     return;
   }
+
+  // Leaving inspector → tear down live sphere if it was mounted.
+  teardownInspectorSphere();
 
   if (state.view === 'guides') {
     const g = guideById[state.guideId];
