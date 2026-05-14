@@ -11,8 +11,9 @@ import DockToolbar, { type ToolName } from "./components/DockToolbar";
 import TopMenuBar from "./components/TopMenuBar";
 import RecenterButton from "./components/RecenterButton";
 import ConfirmDialog from "./components/ConfirmDialog";
-import { createDefaultDraft, type WizardDraft, type PresetName } from "./wizard/state";
-import { buildCellKdTree, cellsWithinRadius, type KdTree } from "./wizard/kdtree";
+import BoundaryPopover from "./components/BoundaryPopover";
+import { createDefaultDraft, pairKey, type WizardDraft, type PresetName, type BoundaryType } from "./wizard/state";
+import { buildCellKdTree, cellsWithinRadius, nearestCell, type KdTree } from "./wizard/kdtree";
 
 export interface PlanetSnapshot {
   divisions: number;
@@ -62,6 +63,11 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<ToolName>("brush");
   const [pendingDivisions, setPendingDivisions] = useState<number | null>(null);
+  // Post-bake boundary editing — popover anchored at screen coords, with
+  // the plate pair the user clicked.
+  const [boundaryPopover, setBoundaryPopover] = useState<{
+    screenX: number; screenY: number; plateA: number; plateB: number;
+  } | null>(null);
 
   useEffect(() => {
     activeToolRef.current = activeTool;
@@ -201,6 +207,116 @@ export default function App() {
   useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => { snapshotRef.current = snapshot; }, [snapshot]);
 
+  // Re-tint baked boundaries when assignments change.
+  useEffect(() => {
+    if (mode !== "viewing" || !snapshot || !draft) return;
+    globeRef.current?.recolorFromSnapshot(snapshot, PLATE_PALETTE, draft.boundary_types);
+  }, [mode, snapshot, draft?.boundary_types]);
+
+  // Post-bake boundary picking — listens to clicks on the canvas while in
+  // viewing mode. Raycasts → nearest cell → if it's a boundary cell, walks
+  // its neighbours to find the adjacent plate, then opens the popover at
+  // the screen coords.
+  useEffect(() => {
+    if (mode !== "viewing") return;
+    const scene = sceneRef.current;
+    if (!scene) return;
+    const canvas = scene.canvas;
+    const onPointer = (ev: PointerEvent) => {
+      if (ev.button !== 0) return;
+      const tree = kdTreeRef.current;
+      const snap = snapshotRef.current;
+      if (!tree || !snap) return;
+      // Project pointer to a unit-sphere hit point.
+      const rect = canvas.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((ev.clientX - rect.left) / rect.width) * 2 - 1,
+        -(((ev.clientY - rect.top) / rect.height) * 2 - 1),
+      );
+      const ray = new THREE.Raycaster();
+      ray.setFromCamera(ndc, scene.camera);
+      const hits = ray.intersectObject(scene.raycastTarget, false);
+      if (hits.length === 0) return;
+      const p = hits[0].point.clone().normalize();
+      const cell = nearestCell(tree, p.x, p.y, p.z);
+      if (cell < 0) return;
+      if (!snap.cell_is_boundary[cell]) {
+        setBoundaryPopover(null);
+        return;
+      }
+      const myPlate = snap.cell_plate_ids[cell];
+      if (myPlate < 0) return;
+      // Find a nearby cell with a different plate — that's the pair.
+      // First try direct neighbours within a small radius.
+      const candidates = cellsWithinRadius(tree, p.x, p.y, p.z, 0.05);
+      let otherPlate = -1;
+      for (const c of candidates) {
+        const pid = snap.cell_plate_ids[c];
+        if (pid >= 0 && pid !== myPlate) {
+          otherPlate = pid;
+          break;
+        }
+      }
+      if (otherPlate < 0) return;
+      setBoundaryPopover({
+        screenX: ev.clientX,
+        screenY: ev.clientY,
+        plateA: Math.min(myPlate, otherPlate),
+        plateB: Math.max(myPlate, otherPlate),
+      });
+    };
+    canvas.addEventListener("pointerdown", onPointer);
+    return () => canvas.removeEventListener("pointerdown", onPointer);
+  }, [mode]);
+
+  // ESC dismisses the boundary popover.
+  useEffect(() => {
+    if (!boundaryPopover) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setBoundaryPopover(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [boundaryPopover]);
+
+  const handleSetBoundary = useCallback((type: BoundaryType) => {
+    if (!boundaryPopover || !draft) return;
+    const key = pairKey(boundaryPopover.plateA, boundaryPopover.plateB);
+    const next: WizardDraft = {
+      ...draft,
+      boundary_types: { ...draft.boundary_types, [key]: type },
+    };
+    setDraft(next);
+    draftRef.current = next;
+    setBoundaryPopover(null);
+  }, [boundaryPopover, draft]);
+
+  const handleClearBoundary = useCallback(() => {
+    if (!boundaryPopover || !draft) return;
+    const key = pairKey(boundaryPopover.plateA, boundaryPopover.plateB);
+    const next_types = { ...draft.boundary_types };
+    delete next_types[key];
+    const next: WizardDraft = { ...draft, boundary_types: next_types };
+    setDraft(next);
+    draftRef.current = next;
+    setBoundaryPopover(null);
+  }, [boundaryPopover, draft]);
+
+  const handleRebake = useCallback(async () => {
+    if (!draft) return;
+    setMode("baking");
+    setBoundaryPopover(null);
+    try {
+      const snap = await invoke<PlanetSnapshot>("bake_from_wizard", { draft });
+      setSnapshot(snap);
+      setMode("viewing");
+      globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE, draft.boundary_types);
+    } catch (e) {
+      setError(String(e));
+      setMode("viewing");
+    }
+  }, [draft]);
+
   const handleChangeDivisions = useCallback((divisions: number) => {
     const d = draftRef.current;
     if (!d || divisions === d.divisions) return;
@@ -254,7 +370,7 @@ export default function App() {
       const snap = await invoke<PlanetSnapshot>("bake_from_wizard", { draft });
       setSnapshot(snap);
       setMode("viewing");
-      globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE);
+      globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE, draft.boundary_types);
     } catch (e) {
       setError(String(e));
       setMode("wizard");
@@ -322,29 +438,25 @@ export default function App() {
       <RecenterButton getScene={getScene} />
 
       {mode === "viewing" && (
-        <button
-          type="button"
-          onClick={handleEditWizard}
-          style={{
-            position: "fixed",
-            top: TOP_HEIGHT + 22,
-            right: 22,
-            zIndex: 60,
-            background: "rgba(34, 38, 46, 0.92)",
-            border: "1px solid #2f343d",
-            borderRadius: "10px",
-            color: "#DED4C3",
-            fontFamily: '"Segoe UI", "Noto Sans", system-ui, sans-serif',
-            fontSize: 12,
-            letterSpacing: "0.02em",
-            padding: "8px 14px",
-            cursor: "pointer",
-            fontWeight: 500,
-            backdropFilter: "blur(10px)",
-          }}
-        >
-          Edit wizard →
-        </button>
+        <ViewingChrome
+          topOffset={TOP_HEIGHT}
+          assignedCount={Object.keys(draft?.boundary_types ?? {}).length}
+          onEditWizard={handleEditWizard}
+          onRebake={handleRebake}
+        />
+      )}
+
+      {boundaryPopover && draft && (
+        <BoundaryPopover
+          screenX={boundaryPopover.screenX}
+          screenY={boundaryPopover.screenY}
+          plateA={boundaryPopover.plateA}
+          plateB={boundaryPopover.plateB}
+          current={draft.boundary_types[pairKey(boundaryPopover.plateA, boundaryPopover.plateB)]}
+          onPick={handleSetBoundary}
+          onClear={handleClearBoundary}
+          onDismiss={() => setBoundaryPopover(null)}
+        />
       )}
 
       <StatusBar
@@ -353,6 +465,8 @@ export default function App() {
       >
         {error ? `Error: ${error}` : statusBody}
       </StatusBar>
+
+
 
       <ConfirmDialog
         open={pendingDivisions !== null}
@@ -369,6 +483,88 @@ export default function App() {
         onConfirm={confirmChangeDivisions}
         onCancel={cancelChangeDivisions}
       />
+    </>
+  );
+}
+
+function ViewingChrome({ topOffset, assignedCount, onEditWizard, onRebake }: {
+  topOffset: number;
+  assignedCount: number;
+  onEditWizard: () => void;
+  onRebake: () => void;
+}) {
+  const BEIGE = "#DED4C3";
+  const baseBtn: React.CSSProperties = {
+    background: "rgba(34, 38, 46, 0.92)",
+    border: "1px solid #2f343d",
+    borderRadius: "10px",
+    color: BEIGE,
+    fontFamily: '"Segoe UI", "Noto Sans", system-ui, sans-serif',
+    fontSize: 12,
+    letterSpacing: "0.02em",
+    padding: "8px 14px",
+    cursor: "pointer",
+    fontWeight: 500,
+    backdropFilter: "blur(10px)",
+  };
+  return (
+    <>
+      {/* Boundary editor hint banner — top center, fades the user toward
+          clicking the pink seams. */}
+      <div
+        style={{
+          position: "fixed",
+          top: topOffset + 22,
+          left: "50%",
+          transform: "translateX(-50%)",
+          zIndex: 60,
+          background: "rgba(34, 38, 46, 0.92)",
+          border: "1px solid #2f343d",
+          borderRadius: 10,
+          padding: "8px 16px",
+          fontSize: 12,
+          color: "#a8aeb8",
+          fontFamily: '"Segoe UI", "Noto Sans", system-ui, sans-serif',
+          letterSpacing: "0.01em",
+          backdropFilter: "blur(10px)",
+          pointerEvents: "none",
+        }}
+      >
+        Click a pink seam to set boundary type
+        {assignedCount > 0 && (
+          <span style={{ marginLeft: 10, color: "#B56A1D" }}>
+            · {assignedCount} assigned
+          </span>
+        )}
+      </div>
+
+      <div style={{
+        position: "fixed",
+        top: topOffset + 22,
+        right: 22,
+        zIndex: 60,
+        display: "flex",
+        gap: 8,
+      }}>
+        {assignedCount > 0 && (
+          <button
+            type="button"
+            onClick={onRebake}
+            style={{
+              ...baseBtn,
+              background: "rgba(181, 106, 29, 0.14)",
+              borderColor: "#B56A1D",
+              color: "#B56A1D",
+              fontWeight: 600,
+            }}
+          >
+            Apply &amp; re-bake →
+          </button>
+        )}
+        <button type="button" onClick={onEditWizard} style={baseBtn}>
+          Edit wizard →
+        </button>
+      </div>
     </>
   );
 }
