@@ -541,6 +541,40 @@
   .viewer-stats {
     font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);
   }
+
+  /* —— settings button + settings modal —— */
+  .settings-btn {
+    height: 26px; padding: 0 10px;
+    background: transparent; border: 1px solid var(--border-soft);
+    color: var(--text-secondary); border-radius: 4px;
+    font: 11.5px var(--font-ui); cursor: pointer;
+    margin-left: 8px;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .settings-btn:hover { background: var(--bg-panel); color: var(--text-primary); border-color: var(--accent); }
+  .settings-label {
+    font-size: 10.5px; letter-spacing: 0.6px; text-transform: uppercase;
+    color: var(--text-muted); font-weight: 700; margin-bottom: 6px;
+  }
+  .settings-input {
+    width: 100%; padding: 6px 10px;
+    background: var(--bg-deep); color: var(--text-primary);
+    border: 1px solid var(--border-soft); border-radius: 4px;
+    font: 12px var(--font-mono); outline: none;
+    transition: border-color .12s;
+  }
+  .settings-input:focus { border-color: var(--accent); }
+  .settings-hint { font-size: 10.5px; color: var(--text-muted); margin-top: 4px; }
+  .settings-action {
+    height: 28px; padding: 0 14px; border-radius: 4px;
+    background: var(--bg-elevated); border: 1px solid var(--border-soft);
+    color: var(--text-primary); font: 12px var(--font-ui); cursor: pointer;
+  }
+  .settings-action:hover { background: var(--bg-raised); border-color: var(--accent); }
+  .settings-action-primary {
+    background: var(--accent); color: #0e1219; border-color: var(--accent); font-weight: 600;
+  }
+  .settings-action-primary:hover { background: var(--accent-hover); }
 </style>
 </head>
 <body>
@@ -560,6 +594,7 @@
   <div class="stats-bar" id="stats"></div>
   <div class="grow"></div>
   <span class="mono muted" style="font-size:11px;">A1 · style-data explorer</span>
+  <button class="settings-btn" id="settingsBtn" title="Configure AI provider">⚙ settings</button>
 </div>
 
 <!-- ─── app shell ─────────────────────────────────────────── -->
@@ -569,6 +604,53 @@
   <div class="pane right" id="rightPane"><div class="right-wrap" id="rightWrap"></div></div>
 </div>
 
+<div id="settingsModal" class="viewer-modal" style="display:none;">
+  <div class="viewer-modal-backdrop"></div>
+  <div class="viewer-modal-card" style="width: 480px;">
+    <div class="viewer-modal-h">
+      <span>Settings · AI provider</span>
+      <button class="viewer-modal-close" id="settingsModalClose">✕</button>
+    </div>
+    <div style="padding: 8px 0; display: flex; flex-direction: column; gap: 14px;">
+      <div>
+        <div class="settings-label">Provider</div>
+        <select class="settings-input" id="settingsProvider">
+          <option value="mock">Mock (no key, canned output — for testing)</option>
+          <optgroup label="Free providers">
+            <option value="groq">Groq — free tier, very fast (llama / mixtral)</option>
+            <option value="openrouter">OpenRouter — free routes (llama-3, gemini-flash)</option>
+          </optgroup>
+          <optgroup label="Local (no key, run a server first)">
+            <option value="ollama">Ollama (localhost:11434) — qwen, llama, etc.</option>
+            <option value="lmstudio">LM Studio (localhost:1234)</option>
+          </optgroup>
+          <optgroup label="Paid">
+            <option value="anthropic">Anthropic Claude (BYOK)</option>
+            <option value="openai">OpenAI (BYOK)</option>
+          </optgroup>
+          <option value="custom">Custom OpenAI-compatible endpoint</option>
+        </select>
+      </div>
+      <div id="settingsKeyRow">
+        <div class="settings-label">API key</div>
+        <input type="password" class="settings-input" id="settingsApiKey" placeholder="sk-..." autocomplete="off">
+        <div class="settings-hint">Stays on this machine (browser localStorage). Sent only to the chosen provider's endpoint.</div>
+      </div>
+      <div id="settingsBaseUrlRow" style="display:none;">
+        <div class="settings-label">Base URL</div>
+        <input type="text" class="settings-input" id="settingsBaseUrl" placeholder="http://localhost:8080/v1">
+        <div class="settings-hint">For custom endpoints (vLLM, llama.cpp server, etc.). Must point to the root that exposes /chat/completions.</div>
+      </div>
+      <div>
+        <div class="settings-label">Model</div>
+        <input type="text" class="settings-input" id="settingsModel" placeholder="model name">
+      </div>
+      <div style="display: flex; gap: 8px; justify-content: flex-end;">
+        <button class="settings-action settings-action-primary" id="settingsSaveBtn">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
 <div id="viewerModal" class="viewer-modal" style="display:none;">
   <div class="viewer-modal-backdrop"></div>
   <div class="viewer-modal-card">
@@ -609,6 +691,36 @@ const BOUND_PAIRS = [
   { styleSheetId: 'medieval-european-gothic', elementId: 'cornice' },
   { styleSheetId: 'medieval-european-gothic', elementId: 'finial' },
 ];
+
+/* ── AI provider settings (BYOK), persisted to localStorage ── */
+const SETTINGS_KEY = 'hayba-architecture-atlas-settings';
+function loadSettings() {
+  try {
+    return JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}');
+  } catch { return {}; }
+}
+function saveSettings(s) {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+}
+
+// Per-provider defaults; user can override via settings UI.
+const PROVIDER_DEFAULTS = {
+  mock:       { model: 'mock-deterministic',                needsKey: false, needsBaseUrl: false, baseUrl: '' },
+  groq:       { model: 'llama-3.1-70b-versatile',            needsKey: true,  needsBaseUrl: false, baseUrl: 'https://api.groq.com/openai/v1' },
+  openrouter: { model: 'meta-llama/llama-3-8b-instruct:free',needsKey: true,  needsBaseUrl: false, baseUrl: 'https://openrouter.ai/api/v1' },
+  ollama:     { model: 'qwen2.5-coder:7b-instruct',          needsKey: false, needsBaseUrl: false, baseUrl: 'http://localhost:11434/v1' },
+  lmstudio:   { model: 'local-model',                        needsKey: false, needsBaseUrl: false, baseUrl: 'http://localhost:1234/v1' },
+  anthropic:  { model: 'claude-haiku-4-5',                   needsKey: true,  needsBaseUrl: false, baseUrl: '' },
+  openai:     { model: 'gpt-4o-mini',                        needsKey: true,  needsBaseUrl: false, baseUrl: 'https://api.openai.com/v1' },
+  custom:     { model: '',                                   needsKey: false, needsBaseUrl: true,  baseUrl: '' },
+};
+
+const settings = Object.assign({
+  provider: 'mock',
+  apiKey: '',
+  model: PROVIDER_DEFAULTS.mock.model,
+  baseUrl: '',
+}, loadSettings());
 
 const [typologyFile, ...guides] = await Promise.all([
   fetch('../src/data/typologies.json').then(r => r.json()),
@@ -1628,6 +1740,41 @@ function openViewer(styleSheetId, elementId) {
 document.getElementById('viewerModalClose').addEventListener('click', () => {
   document.getElementById('viewerModal').style.display = 'none';
   document.getElementById('viewerStage').innerHTML = '';
+});
+
+// Settings modal wiring.
+function updateSettingsModalVisibility() {
+  const provider = document.getElementById('settingsProvider').value;
+  const defaults = PROVIDER_DEFAULTS[provider] ?? PROVIDER_DEFAULTS.mock;
+  document.getElementById('settingsKeyRow').style.display = (defaults.needsKey || provider === 'custom') ? '' : 'none';
+  document.getElementById('settingsBaseUrlRow').style.display = defaults.needsBaseUrl ? '' : 'none';
+}
+
+document.getElementById('settingsBtn').addEventListener('click', () => {
+  document.getElementById('settingsModal').style.display = 'flex';
+  document.getElementById('settingsProvider').value = settings.provider;
+  document.getElementById('settingsApiKey').value = settings.apiKey;
+  document.getElementById('settingsModel').value = settings.model;
+  document.getElementById('settingsBaseUrl').value = settings.baseUrl;
+  updateSettingsModalVisibility();
+});
+document.getElementById('settingsProvider').addEventListener('change', () => {
+  const provider = document.getElementById('settingsProvider').value;
+  const defaults = PROVIDER_DEFAULTS[provider] ?? PROVIDER_DEFAULTS.mock;
+  document.getElementById('settingsModel').value = defaults.model;
+  if (defaults.baseUrl) document.getElementById('settingsBaseUrl').value = defaults.baseUrl;
+  updateSettingsModalVisibility();
+});
+document.getElementById('settingsModalClose').addEventListener('click', () => {
+  document.getElementById('settingsModal').style.display = 'none';
+});
+document.getElementById('settingsSaveBtn').addEventListener('click', () => {
+  settings.provider = document.getElementById('settingsProvider').value;
+  settings.apiKey   = document.getElementById('settingsApiKey').value.trim();
+  settings.model    = document.getElementById('settingsModel').value.trim() || PROVIDER_DEFAULTS[settings.provider]?.model || '';
+  settings.baseUrl  = document.getElementById('settingsBaseUrl').value.trim();
+  saveSettings(settings);
+  document.getElementById('settingsModal').style.display = 'none';
 });
 
 document.addEventListener('click', (e) => {
