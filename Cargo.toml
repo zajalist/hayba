@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "packages/hayba-fixedpoint",
+    "packages/hayba-seeds",
+    "packages/hayba-tectonics",
+    "packages/hayba-tectonics-v2",
+    "apps/hayba/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/zajalist/hayba"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+overflow-checks = true
