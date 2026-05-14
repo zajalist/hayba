@@ -218,7 +218,11 @@ export function parseHeader(reader) {
   const dt_ma = reader.u32();
   const keyframe_stride = reader.u32();
   const master_seed = reader.u32();
-  reader.skip(4); // reserved u32 -> brings header to 32 bytes
+  // Phase 10.1: last u32 of header is now `divisions: u16` + reserved u16.
+  // Older streams emit 0 in this slot — treat 0 as "unknown" and let the
+  // consumer fall back to deriving it from n_cells (10·d² + 2 → d).
+  const divisions = reader.u16();
+  reader.skip(2); // reserved u16 -> header still 32 bytes
   return {
     version,
     total_frames,
@@ -226,6 +230,7 @@ export function parseHeader(reader) {
     dt_ma,
     keyframe_stride,
     master_seed,
+    divisions,
   };
 }
 

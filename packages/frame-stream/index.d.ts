@@ -30,6 +30,11 @@ export interface FrameStreamHeader {
   version: number;
   n_cells: number;
   total_frames: number;
+  /** Peels `divisions` parameter. 0 for older streams; derive from n_cells. */
+  divisions: number;
+  dt_ma?: number;
+  keyframe_stride?: number;
+  master_seed?: number;
   determinism_version?: string;
 }
 
