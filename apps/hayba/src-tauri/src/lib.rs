@@ -21,6 +21,7 @@ pub fn run() {
             wizard::compute_partition,
             wizard::step_planet,
             wizard::reset_sim,
+            wizard::apply_boundary_types,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hayba Explorer");

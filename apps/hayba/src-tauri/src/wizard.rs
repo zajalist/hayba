@@ -224,6 +224,79 @@ pub fn reset_sim(sim: State<'_, ManagedSim>) {
     *guard = None;
 }
 
+/// Reapply the user's boundary-type assignments to the running model without
+/// re-baking from scratch. Each plate's angular velocity is rewritten from
+/// its *current* centroid + the assigned types — so the sim instantly
+/// reflects the edit at the play head.
+#[tauri::command]
+pub fn apply_boundary_types(
+    boundary_types: std::collections::HashMap<String, String>,
+    sim: State<'_, ManagedSim>,
+) -> Result<PlanetSnapshot, String> {
+    let mut guard = sim.0.lock().map_err(|_| "sim mutex poisoned".to_string())?;
+    let state = guard.as_mut().ok_or_else(|| "no baked planet".to_string())?;
+
+    let n_cells = state.model.grid.n_fields();
+    let mut sums: std::collections::HashMap<u32, Vec3> = std::collections::HashMap::new();
+    let mut counts: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+    for fid in 0..n_cells {
+        if let Some(pid) = state.model.fields[fid as usize].plate_id {
+            *sums.entry(pid).or_insert(Vec3::ZERO) += state.model.grid.position(fid);
+            *counts.entry(pid).or_insert(0) += 1;
+        }
+    }
+    let mut centroids: std::collections::HashMap<u32, Vec3> = std::collections::HashMap::new();
+    for (pid, sum) in sums {
+        centroids.insert(pid, sum.normalize_or_zero());
+    }
+
+    let mut force_dir: std::collections::HashMap<u32, Vec3> = std::collections::HashMap::new();
+    for (key, ty) in &boundary_types {
+        let mut it = key.split('-');
+        let a: u32 = match it.next().and_then(|s| s.parse().ok()) { Some(v) => v, None => continue };
+        let b: u32 = match it.next().and_then(|s| s.parse().ok()) { Some(v) => v, None => continue };
+        let (ca, cb) = match (centroids.get(&a), centroids.get(&b)) {
+            (Some(ca), Some(cb)) => (*ca, *cb),
+            _ => continue,
+        };
+        let dir_ab = (cb - ca).normalize_or_zero();
+        if dir_ab.length_squared() < 1e-6 { continue; }
+        let sign = match ty.as_str() {
+            "convergent" =>  1.0_f32,
+            "divergent"  => -1.0_f32,
+            _            =>  0.0_f32,
+        };
+        *force_dir.entry(a).or_insert(Vec3::ZERO) += dir_ab * sign;
+        *force_dir.entry(b).or_insert(Vec3::ZERO) -= dir_ab * sign;
+    }
+
+    let seed = state.model.master_seed;
+    for plate in state.model.plates.iter_mut() {
+        let pid = plate.id;
+        let pos = match centroids.get(&pid) { Some(p) => *p, None => continue };
+        let f = force_dir.get(&pid).copied().unwrap_or(Vec3::ZERO);
+        let mut omega = if f.length_squared() > 1e-6 {
+            let v = f.normalize() * 0.01;
+            let tangent = v - pos * v.dot(pos);
+            if tangent.length_squared() > 1e-6 {
+                pos.cross(tangent)
+            } else {
+                omega_for_plate(pid, seed)
+            }
+        } else {
+            omega_for_plate(pid, seed)
+        };
+        let len = omega.length();
+        if len > MAX_PLATE_SPEED {
+            omega *= MAX_PLATE_SPEED / len;
+        }
+        plate.angular_velocity = omega;
+    }
+
+    let _ = counts; // silence unused; kept for future inertia recompute
+    Ok(snapshot_model(&state.model, state.divisions))
+}
+
 // ── Preset rasters, embedded at compile time ─────────────────────────────
 const PRESET_PLATES2:        &[u8] = include_bytes!("../presets/plates2.png");
 const PRESET_PLATES3:        &[u8] = include_bytes!("../presets/plates3.png");
