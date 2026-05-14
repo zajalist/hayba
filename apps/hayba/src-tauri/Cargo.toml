@@ -1,0 +1,19 @@
+[package]
+name = "hayba-explorer"
+version = "0.1.0"
+edition = "2021"
+description = "Hayba Explorer — desktop viewer for the Hayba tectonic simulation"
+
+[lib]
+name = "hayba_explorer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hayba-tectonics-v2 = { path = "../../../packages/hayba-tectonics-v2" }
+glam = "0.27"
