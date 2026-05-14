@@ -41,32 +41,7 @@ export {
   loadElementCatalog, loadBinding, emitElementMesh,
 } from './element-registry.js';
 
-// AI binding pipeline
-export type {
-  BindingRequest, RawBindingResponse, ParsedBindingDraft,
-  AIProviderName, AIProvider,
-  GenerateBindingResult, GenerateBindingError,
-} from './ai/types.js';
-export { buildPrompt, hashPrompt } from './ai/prompt-builder.js';
-export { parseResponse } from './ai/response-parser.js';
-export { MockProvider } from './ai/provider-mock.js';
-export { AnthropicProvider } from './ai/provider-anthropic.js';
-export type { AnthropicProviderOptions } from './ai/provider-anthropic.js';
-export { OpenAICompatibleProvider, OPENAI_COMPAT_PRESETS } from './ai/provider-openai-compat.js';
-export type { OpenAICompatibleProviderOptions } from './ai/provider-openai-compat.js';
-export { generateBinding } from './ai/generate-binding.js';
-export type { GenerateBindingArgs } from './ai/generate-binding.js';
 export { registerBinding } from './element-registry.js';
-
-// SVG editor utilities (pure, browser-safe)
-export type { Vec2 } from './editor/svg-serialize.js';
-export {
-  verticesToSvgPath, parsePathD, applyHint, sanitizeVertices,
-} from './editor/svg-serialize.js';
-export type { ViewState, CanvasPt, SvgPt } from './editor/coord-map.js';
-export {
-  canvasToSvgSpace, svgToCanvasSpace, fitViewBox, snap,
-} from './editor/coord-map.js';
 
 // Culture system (v2)
 export * from './culture/index.js';
