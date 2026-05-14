@@ -1,14 +1,17 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import * as THREE from "three";
 import Viewport from "./viewport/Viewport";
 import type { SceneHandle } from "./viewport/scene";
 import { buildGlobe, PLATE_PALETTE, type GlobeHandle } from "./viewport/globe";
 import { attachPainter, type PainterHandle } from "./viewport/painter";
 import StatusBar, { Mono } from "./components/StatusBar";
-import WizardPanel from "./wizard/WizardPanel";
+import SettingsCorner from "./components/SettingsCorner";
+import ToolPalette, { type ToolName } from "./components/ToolPalette";
+import ToolSizeSlider from "./components/ToolSizeSlider";
+import ConfirmDialog from "./components/ConfirmDialog";
 import { createDefaultDraft, type WizardDraft, type PresetName } from "./wizard/state";
 import { buildCellKdTree, cellsWithinRadius, type KdTree } from "./wizard/kdtree";
-import ConfirmDialog from "./components/ConfirmDialog";
 
 export interface PlanetSnapshot {
   divisions: number;
@@ -31,7 +34,6 @@ type Mode = "wizard" | "baking" | "viewing";
 
 const INITIAL_DIVISIONS = 64;
 
-/** Angular radius (rad) → chord on unit sphere. */
 function angularToChord(rad: number): number {
   return 2 * Math.sin(rad / 2);
 }
@@ -43,20 +45,54 @@ export default function App() {
   const kdTreeRef = useRef<KdTree | null>(null);
   const cellCountRef = useRef(0);
 
-  // Draft lives in a ref alongside state so the painter callback always sees
-  // the freshest cell set without re-attaching listeners on every paint.
   const draftRef = useRef<WizardDraft | null>(null);
+  const activeToolRef = useRef<ToolName>("brush");
+  const previewRef = useRef<number[]>([]);
 
   const [draft, setDraft] = useState<WizardDraft | null>(null);
   const [mode, setMode] = useState<Mode>("wizard");
   const [snapshot, setSnapshot] = useState<PlanetSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  // Cells highlighted under the hovering brush (preview before click).
-  const previewRef = useRef<number[]>([]);
-
-  // Pending resolution swap, gated by ConfirmDialog when paint exists.
+  const [activeTool, setActiveTool] = useState<ToolName>("brush");
   const [pendingDivisions, setPendingDivisions] = useState<number | null>(null);
+
+  // Whenever the active tool changes, re-bind the OrbitControls mouse buttons
+  // so left-click does the right thing.
+  useEffect(() => {
+    activeToolRef.current = activeTool;
+    const scene = sceneRef.current;
+    if (!scene) return;
+    const c = scene.controls;
+    if (activeTool === "rotate") {
+      c.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+      c.enablePan = false;
+    } else if (activeTool === "zoom") {
+      c.mouseButtons = { LEFT: THREE.MOUSE.DOLLY, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+      c.enablePan = false;
+    } else if (activeTool === "pan") {
+      c.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+      c.enablePan = true;
+    } else {
+      // brush + erase — left mouse free for paint, right rotates.
+      c.mouseButtons = { LEFT: null as unknown as THREE.MOUSE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+      c.enablePan = false;
+    }
+  }, [activeTool]);
+
+  // Keyboard shortcuts for tools.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      const k = e.key.toLowerCase();
+      if      (k === "b") setActiveTool("brush");
+      else if (k === "e") setActiveTool("erase");
+      else if (k === "r") setActiveTool("rotate");
+      else if (k === "z") setActiveTool("zoom");
+      else if (k === "p") setActiveTool("pan");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const initWizard = useCallback(async (
     divisions: number,
@@ -90,11 +126,22 @@ export default function App() {
       canvas: handle.canvas,
       camera: handle.camera,
       target: handle.raycastTarget,
-      isActive: () => !!draftRef.current,
+      // Painter only activates for brush + erase tools.
+      isActive: () => {
+        const t = activeToolRef.current;
+        return !!draftRef.current && (t === "brush" || t === "erase");
+      },
       onHover: (x, y, z) => {
         const tree = kdTreeRef.current;
         const drft = draftRef.current;
         if (!tree || !drft) return;
+        const t = activeToolRef.current;
+        if (t !== "brush" && t !== "erase") {
+          if (previewRef.current.length === 0) return;
+          previewRef.current = [];
+          globeRef.current?.recolorFromDraft(drft, cellCountRef.current);
+          return;
+        }
         const chord = angularToChord(drft.brush_radius_rad);
         previewRef.current = cellsWithinRadius(tree, x, y, z, chord);
         globeRef.current?.recolorFromDraft(drft, cellCountRef.current, previewRef.current);
@@ -109,19 +156,20 @@ export default function App() {
         const tree = kdTreeRef.current;
         const drft = draftRef.current;
         if (!tree || !drft) return;
+        const t = activeToolRef.current;
+        if (t !== "brush" && t !== "erase") return;
         const chord = angularToChord(drft.brush_radius_rad);
         const hits = cellsWithinRadius(tree, x, y, z, chord);
         if (hits.length === 0) return;
 
         const seen = new Set(drft.continental_cells);
-        let added = 0;
-        for (const cell of hits) {
-          if (!seen.has(cell)) {
-            seen.add(cell);
-            added++;
-          }
+        let mutated = false;
+        if (t === "brush") {
+          for (const c of hits) if (!seen.has(c)) { seen.add(c); mutated = true; }
+        } else {
+          for (const c of hits) if (seen.delete(c)) mutated = true;
         }
-        if (added === 0) return;
+        if (!mutated) return;
         const next: WizardDraft = { ...drft, continental_cells: Array.from(seen) };
         draftRef.current = next;
         setDraft(next);
@@ -135,12 +183,9 @@ export default function App() {
 
   useEffect(() => { draftRef.current = draft; }, [draft]);
 
-  // ── Wizard actions
   const handleChangeDivisions = useCallback((divisions: number) => {
     const d = draftRef.current;
     if (!d || divisions === d.divisions) return;
-    // If the user has painted continents, gate the change behind a confirm
-    // dialog — switching resolution wipes the paint stroke.
     if (d.continental_cells.length > 0) {
       setPendingDivisions(divisions);
       return;
@@ -211,34 +256,44 @@ export default function App() {
     if (draft) globeRef.current?.recolorFromDraft(draft, cellCountRef.current);
   }, [draft]);
 
-  // ── Status copy
   const statusLabel =
-    mode === "wizard" ? "draft" :
+    mode === "wizard" ? activeTool :
     mode === "baking" ? "baking" :
     error ? "error" : "ready";
 
   const statusBody =
     mode === "wizard" && draft ? (
-      <>{draft.preset} · <Mono>{cellCountRef.current.toLocaleString()}</Mono> cells · <Mono>{draft.continental_cells.length.toLocaleString()}</Mono> painted · seed <Mono>{draft.seed}</Mono></>
+      <>{draft.preset} · <Mono>{cellCountRef.current.toLocaleString()}</Mono> cells · <Mono>{draft.continental_cells.length.toLocaleString()}</Mono> painted</>
     ) : mode === "wizard" ? "Loading…"
     : mode === "baking" ? "Running tectonic step loop…"
     : snapshot ? <>
       planet baked · <Mono>{snapshot.n_cells.toLocaleString()}</Mono> cells · <Mono>{snapshot.sim_time_ma.toFixed(1)}</Mono> Ma
     </> : "—";
 
+  const showTools = mode === "wizard";
+  const showSizeSlider = showTools && (activeTool === "brush" || activeTool === "erase");
+
   return (
     <>
       <Viewport onReady={handleSceneReady} />
+      {showTools && (
+        <ToolPalette active={activeTool} onChange={setActiveTool} />
+      )}
+      {showSizeSlider && draft && (
+        <ToolSizeSlider
+          value={draft.brush_radius_rad}
+          onChange={handleChangeBrushRadius}
+        />
+      )}
       {mode === "wizard" && draft && (
-        <WizardPanel
+        <SettingsCorner
           draft={draft}
+          busy={false}
           onChangeDivisions={handleChangeDivisions}
           onChangePreset={handleChangePreset}
-          onChangeBrushRadius={handleChangeBrushRadius}
           onReroll={handleReroll}
           onClearContinents={handleClearContinents}
           onBake={handleBake}
-          busy={false}
         />
       )}
       {mode === "viewing" && (
@@ -247,22 +302,22 @@ export default function App() {
           onClick={handleEditWizard}
           style={{
             position: "fixed",
-            top: 16,
-            right: 16,
+            top: 20,
+            right: 20,
             zIndex: 60,
-            background: "rgba(34, 38, 46, 0.92)",
-            border: "1px solid #3d434e",
-            color: "#e5e8eb",
-            fontFamily: '"Segoe UI", "Noto Sans", system-ui, sans-serif',
-            fontSize: 11,
-            letterSpacing: "0.18em",
-            textTransform: "lowercase",
+            background: "transparent",
+            border: "1px solid #2f343d",
+            color: "#e8821c",
+            fontFamily: 'Inter, system-ui, sans-serif',
+            fontSize: 10,
+            letterSpacing: "0.32em",
+            textTransform: "uppercase",
             padding: "8px 14px",
             cursor: "pointer",
-            backdropFilter: "blur(6px)",
+            fontWeight: 500,
           }}
         >
-          edit wizard
+          Edit wizard →
         </button>
       )}
       <StatusBar state={mode === "baking" ? "baking" : error ? "error" : mode === "viewing" ? "ready" : "idle"} label={statusLabel}>

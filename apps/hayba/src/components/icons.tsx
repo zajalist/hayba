@@ -5,7 +5,7 @@ import React from "react";
 // as URLs (Vite default for static assets) and renders via <img>.
 //
 // Visual language matches the UE plugin's HaybaMCPToolkit/Resources/ — 64x64
-// viewBox, stroke-width 2.5, round joins, cream/slate fills, accent stroke.
+// viewBox with distinct per-icon palettes (no uniform stamp).
 
 import sphereUrl from "../assets/icons/IconSphere.svg";
 import platesUrl from "../assets/icons/IconPlates.svg";
@@ -14,6 +14,10 @@ import brushUrl  from "../assets/icons/IconBrush.svg";
 import rerollUrl from "../assets/icons/IconReroll.svg";
 import clearUrl  from "../assets/icons/IconClear.svg";
 import bakeUrl   from "../assets/icons/IconBake.svg";
+import eraseUrl  from "../assets/icons/IconErase.svg";
+import rotateUrl from "../assets/icons/IconRotate.svg";
+import zoomUrl   from "../assets/icons/IconZoom.svg";
+import panUrl    from "../assets/icons/IconPan.svg";
 
 export interface IconProps {
   size?: number;
@@ -43,10 +47,11 @@ export const IconBrush  = (p: IconProps = {}) => img(brushUrl,  "brush",  p);
 export const IconReroll = (p: IconProps = {}) => img(rerollUrl, "reroll", p);
 export const IconClear  = (p: IconProps = {}) => img(clearUrl,  "clear",  p);
 export const IconBake   = (p: IconProps = {}) => img(bakeUrl,   "bake",   p);
+export const IconErase  = (p: IconProps = {}) => img(eraseUrl,  "erase",  p);
+export const IconRotate = (p: IconProps = {}) => img(rotateUrl, "rotate", p);
+export const IconZoom   = (p: IconProps = {}) => img(zoomUrl,   "zoom",   p);
+export const IconPan    = (p: IconProps = {}) => img(panUrl,    "pan",    p);
 
-// SVG file paths for callers that want to reference them directly (e.g. as
-// CSS mask-image). Useful for the bake button where the color needs to flip
-// when sitting on the accent-orange surface.
 export const ICON_URLS = {
   sphere: sphereUrl,
   plates: platesUrl,
@@ -55,4 +60,8 @@ export const ICON_URLS = {
   reroll: rerollUrl,
   clear:  clearUrl,
   bake:   bakeUrl,
+  erase:  eraseUrl,
+  rotate: rotateUrl,
+  zoom:   zoomUrl,
+  pan:    panUrl,
 };
