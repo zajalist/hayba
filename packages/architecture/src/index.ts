@@ -57,3 +57,14 @@ export type { OpenAICompatibleProviderOptions } from './ai/provider-openai-compa
 export { generateBinding } from './ai/generate-binding.js';
 export type { GenerateBindingArgs } from './ai/generate-binding.js';
 export { registerBinding } from './element-registry.js';
+
+
+// SVG editor utilities (pure, browser-safe)
+export type { Vec2 } from './editor/svg-serialize.js';
+export {
+  verticesToSvgPath, parsePathD, applyHint, sanitizeVertices,
+} from './editor/svg-serialize.js';
+export type { ViewState, CanvasPt, SvgPt } from './editor/coord-map.js';
+export {
+  canvasToSvgSpace, svgToCanvasSpace, fitViewBox, snap,
+} from './editor/coord-map.js';
