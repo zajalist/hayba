@@ -14,6 +14,7 @@ import { watch } from 'node:fs';
 import { extname, join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listCultures, readCulture, writeCulture, deleteCulture, seedCulture } from '../dist/culture/index.js';
+import { resolveRules } from '../dist/culture/resolve.js';
 
 const ROOT = resolve(fileURLToPath(import.meta.url), '..', '..');
 
@@ -146,6 +147,58 @@ export async function handleRequest({ method, url, body }) {
       await deleteCulture(dataCulturesDir, id);
       return { status: 204, body: '', headers: {} };
     }
+  }
+
+  // ─── GET /api/cultures/:id/resolve ───────────────────────────────────────
+  const resolveMatch = path.match(/^\/api\/cultures\/([^/]+)\/resolve$/);
+  if (resolveMatch && method === 'GET') {
+    const id = resolveMatch[1];
+    const qp = new URLSearchParams(url.split('?')[1] ?? '');
+    const eraId    = qp.get('eraId');
+    const scenario = qp.get('scenario');
+    const tagsRaw  = qp.get('tags') ?? '';
+    if (!eraId || scenario === null) {
+      return { status: 400, body: JSON.stringify({ error: 'eraId and scenario are required' }), headers: JSON_HEADERS };
+    }
+    let culture;
+    try { culture = await readCulture(dataCulturesDir, id); } catch {
+      return { status: 404, body: JSON.stringify({ error: 'culture not found' }), headers: JSON_HEADERS };
+    }
+    const era = (culture.eras ?? []).find(e => e.id === eraId);
+    if (!era) {
+      return { status: 404, body: JSON.stringify({ error: 'era not found' }), headers: JSON_HEADERS };
+    }
+    // Parse tags=axis1:val1,axis2:val2
+    const tagState = {};
+    if (tagsRaw) {
+      for (const pair of tagsRaw.split(',')) {
+        const colon = pair.indexOf(':');
+        if (colon > 0) tagState[pair.slice(0, colon)] = pair.slice(colon + 1);
+      }
+    }
+    // Resolve with ruleId for tooltip support
+    const eraIds = new Set((era.rules ?? []).map(r => r.id));
+    const allRules = [
+      ...(culture.rules ?? []).filter(r => !eraIds.has(r.id)).map(rule => ({ rule, source: 0 })),
+      ...(era.rules ?? []).map(rule => ({ rule, source: 1 })),
+    ];
+    const matches = allRules.filter(({ rule }) => {
+      if (rule.conditions?.scenario !== undefined && rule.conditions.scenario !== scenario) return false;
+      for (const [axis, val] of Object.entries(rule.conditions?.tagMatches ?? {})) {
+        if (tagState[axis] !== val) return false;
+      }
+      return true;
+    });
+    matches.sort((a, b) => {
+      if (b.rule.priority !== a.rule.priority) return b.rule.priority - a.rule.priority;
+      return a.source - b.source;
+    });
+    const best = matches[0];
+    return {
+      status: 200,
+      body: JSON.stringify({ assigns: best?.rule.assigns ?? {}, ruleId: best?.rule.id ?? null }),
+      headers: JSON_HEADERS,
+    };
   }
 
   // ─── GET /api/bindings/list ───────────────────────────────────────────────
