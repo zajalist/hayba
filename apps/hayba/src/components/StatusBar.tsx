@@ -3,17 +3,24 @@ import { colors, fonts } from "@hayba/design-tokens";
 
 export interface StatusBarProps {
   state: "idle" | "baking" | "ready" | "error";
-  message: string;
+  /** Short state word ("ready", "baking", etc.) rendered in the leading slot. */
+  label: string;
+  /** Main message — supports `<mono>123</mono>`-style spans via children. */
+  children: React.ReactNode;
   /** When the future MCP layer lands, this becomes a real stop handler. */
   onStop?: () => void;
 }
 
-export default function StatusBar({ state, message, onStop }: StatusBarProps) {
-  const dotColor =
-    state === "ready" ? colors.accent :
-    state === "baking" ? colors.secondary :
-    state === "error" ? "#d77f24" :
-    colors.textMuted;
+const ACCENT_FOR: Record<StatusBarProps["state"], string> = {
+  idle:   colors.textMuted,
+  baking: colors.secondary,
+  ready:  colors.accent,
+  error:  colors.accentHover,
+};
+
+export default function StatusBar({ state, label, children, onStop }: StatusBarProps) {
+  const accent = ACCENT_FOR[state];
+  const canStop = state === "baking";
 
   return (
     <div
@@ -22,50 +29,93 @@ export default function StatusBar({ state, message, onStop }: StatusBarProps) {
         left: 0,
         right: 0,
         bottom: 0,
-        height: 32,
+        height: 30,
         display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "0 14px",
+        alignItems: "stretch",
         background: colors.bgBase,
         borderTop: `1px solid ${colors.borderMid}`,
         color: colors.textSecondary,
         fontFamily: fonts.sans,
         fontSize: 12,
-        letterSpacing: "0.03em",
         zIndex: 100,
         userSelect: "none",
       }}
     >
-      <span
+      {/* Left accent rail — 2px vertical bar; the only color affordance for state. */}
+      <div
         style={{
-          width: 8,
-          height: 8,
-          borderRadius: "50%",
-          background: dotColor,
-          boxShadow: `0 0 6px ${dotColor}`,
+          width: 2,
+          background: accent,
+          opacity: state === "idle" ? 0.35 : 1,
         }}
       />
-      <span style={{ flex: 1 }}>{message}</span>
-      <button
-        type="button"
-        disabled={state !== "baking"}
-        onClick={onStop}
+
+      {/* State label slot — small caps, tracked, deliberately understated. */}
+      <div
         style={{
-          background: "transparent",
-          border: `1px solid ${colors.borderSoft}`,
-          color: state === "baking" ? colors.textPrimary : colors.textMuted,
-          padding: "3px 12px",
-          borderRadius: 4,
-          fontSize: 11,
-          letterSpacing: "0.06em",
+          display: "flex",
+          alignItems: "center",
+          padding: "0 14px 0 16px",
+          fontSize: 10,
+          letterSpacing: "0.18em",
           textTransform: "uppercase",
-          cursor: state === "baking" ? "pointer" : "default",
-          fontFamily: fonts.sans,
+          color: accent,
+          fontWeight: 500,
         }}
       >
-        Stop
+        {label}
+      </div>
+
+      {/* Vertical divider */}
+      <div style={{ alignSelf: "center", width: 1, height: 14, background: colors.borderSoft }} />
+
+      {/* Message body — mono numerics ride on top of the sans-serif copy via <Mono />. */}
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          alignItems: "center",
+          padding: "0 14px",
+          letterSpacing: "0.02em",
+          color: colors.textSecondary,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {children}
+      </div>
+
+      <button
+        type="button"
+        disabled={!canStop}
+        onClick={onStop}
+        style={{
+          alignSelf: "center",
+          marginRight: 10,
+          background: "transparent",
+          border: "none",
+          color: canStop ? colors.textPrimary : colors.textMuted,
+          padding: "4px 10px",
+          fontSize: 10,
+          letterSpacing: "0.22em",
+          textTransform: "lowercase",
+          cursor: canStop ? "pointer" : "default",
+          fontFamily: fonts.sans,
+          borderBottom: `1px solid ${canStop ? colors.accent : "transparent"}`,
+        }}
+      >
+        stop
       </button>
     </div>
+  );
+}
+
+/** Inline mono span for numeric values inside the status message. */
+export function Mono({ children }: { children: React.ReactNode }) {
+  return (
+    <span style={{ fontFamily: fonts.mono, color: colors.textPrimary, padding: "0 1px" }}>
+      {children}
+    </span>
   );
 }

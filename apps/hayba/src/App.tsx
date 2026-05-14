@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import Viewport from "./viewport/Viewport";
 import type { SceneHandle } from "./viewport/scene";
 import { buildGlobeMesh } from "./viewport/globe";
-import StatusBar from "./components/StatusBar";
+import StatusBar, { Mono } from "./components/StatusBar";
 
 export interface PlanetSnapshot {
   divisions: number;
@@ -46,17 +46,25 @@ export default function App() {
     sceneRef.current.setGlobe(mesh);
   }, [snapshot]);
 
-  const message =
+  const label =
+    status === "ready" ? "ready" :
+    status === "baking" ? "baking" :
+    status === "error" ? "error" :
+    "idle";
+
+  const body =
     status === "baking" ? "Baking demo planet…" :
-    status === "ready" && snapshot ?
-      `Planet ready — ${snapshot.n_cells.toLocaleString()} cells, ${snapshot.sim_time_ma.toFixed(1)} Ma` :
-    status === "error" ? `Error: ${error}` :
-    "Idle";
+    status === "ready" && snapshot ? (
+      <>
+        demo planet · <Mono>{snapshot.n_cells.toLocaleString()}</Mono> cells · <Mono>{snapshot.sim_time_ma.toFixed(1)}</Mono> Ma
+      </>
+    ) : status === "error" ? error ?? "Unknown error" :
+    "Waiting";
 
   return (
     <>
       <Viewport onReady={handleSceneReady} />
-      <StatusBar state={status} message={message} />
+      <StatusBar state={status} label={label}>{body}</StatusBar>
     </>
   );
 }
