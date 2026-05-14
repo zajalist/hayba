@@ -19,8 +19,8 @@ export default function BrushSlider({ value, onChange, disabled }: BrushSliderPr
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-        <span style={{ fontSize: 11, color: colors.textSecondary, letterSpacing: "0.04em" }}>brush size</span>
-        <span style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.accentText }}>
+        <span style={{ fontSize: 10, color: colors.textMuted, letterSpacing: "0.24em", textTransform: "uppercase", fontWeight: 500 }}>brush size</span>
+        <span style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.accentText, letterSpacing: "0.04em" }}>
           {degrees}°
         </span>
       </div>

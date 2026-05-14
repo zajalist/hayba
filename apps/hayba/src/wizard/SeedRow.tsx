@@ -1,6 +1,5 @@
 import React from "react";
 import { colors, fonts } from "@hayba/design-tokens";
-import { IconReroll } from "../components/icons";
 
 export interface SeedRowProps {
   seed: number;
@@ -14,15 +13,24 @@ export default function SeedRow({ seed, onReroll, disabled }: SeedRowProps) {
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 10,
-        padding: "10px 12px",
-        background: colors.bgPanel,
-        border: `1px solid ${colors.borderMid}`,
-        borderLeft: `2px solid ${colors.borderSoft}`,
+        justifyContent: "space-between",
+        gap: 14,
+        padding: "10px 0",
+        borderTop: `1px solid ${colors.borderMid}`,
+        borderBottom: `1px solid ${colors.borderMid}`,
       }}
     >
-      <span style={{ fontFamily: fonts.mono, fontSize: 12, color: colors.textPrimary, letterSpacing: "0.04em", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>
-        {seed.toString().padStart(20, "0")}
+      <span style={{
+        fontFamily: fonts.mono,
+        fontSize: 12,
+        color: colors.textPrimary,
+        letterSpacing: "0.04em",
+        flex: 1,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}>
+        {seed.toString()}
       </span>
       <button
         type="button"
@@ -30,22 +38,19 @@ export default function SeedRow({ seed, onReroll, disabled }: SeedRowProps) {
         onClick={onReroll}
         title="Roll a new seed"
         style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 6,
           background: "transparent",
-          border: `1px solid ${colors.borderSoft}`,
-          color: colors.textPrimary,
-          padding: "4px 10px",
+          border: "none",
+          color: colors.accentText,
+          padding: 0,
           fontSize: 11,
-          letterSpacing: "0.14em",
-          textTransform: "lowercase",
+          letterSpacing: "0.24em",
+          textTransform: "uppercase",
           fontFamily: fonts.sans,
+          fontWeight: 500,
           cursor: disabled ? "default" : "pointer",
         }}
       >
-        <IconReroll size={12} />
-        reroll
+        Reroll →
       </button>
     </div>
   );
