@@ -37,7 +37,8 @@ export default function DensitiesPanelDocked({
           <div style={{
             padding: "4px 16px 8px",
             color: colors.textSecondary,
-            fontSize: 11,
+            fontFamily: fonts.sans,
+            fontSize: 12,
             lineHeight: 1.5,
           }}>
             Lightest on top floats over the densest at the bottom.
