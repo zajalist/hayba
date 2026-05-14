@@ -24,6 +24,8 @@ use hayba_tectonics_v2::model::{Model, MAX_PLATE_SPEED};
 use hayba_tectonics_v2::sphere::Grid;
 
 use crate::planet::{snapshot_model, PlanetSnapshot};
+use crate::sim_state::{ManagedSim, SimState};
+use tauri::State;
 
 #[derive(Debug, Deserialize)]
 pub struct WizardDraft {
@@ -186,8 +188,40 @@ pub fn roll_seed() -> u64 {
 }
 
 #[tauri::command]
-pub fn bake_from_wizard(draft: WizardDraft) -> PlanetSnapshot {
-    bake_impl(&draft)
+pub fn bake_from_wizard(
+    draft: WizardDraft,
+    sim: State<'_, ManagedSim>,
+) -> PlanetSnapshot {
+    let model = bake_model(&draft);
+    let snap = snapshot_model(&model, draft.divisions);
+    let mut guard = sim.0.lock().expect("sim mutex poisoned");
+    *guard = Some(SimState {
+        model,
+        divisions: draft.divisions,
+        dt_ma: draft.dt_ma,
+    });
+    snap
+}
+
+/// Advance the persisted sim by `n_steps` and return a fresh snapshot.
+#[tauri::command]
+pub fn step_planet(
+    n_steps: u32,
+    sim: State<'_, ManagedSim>,
+) -> Result<PlanetSnapshot, String> {
+    let mut guard = sim.0.lock().map_err(|_| "sim mutex poisoned".to_string())?;
+    let state = guard.as_mut().ok_or_else(|| "no baked planet".to_string())?;
+    for _ in 0..n_steps {
+        state.model.step(state.dt_ma);
+    }
+    Ok(snapshot_model(&state.model, state.divisions))
+}
+
+/// Drop the persisted model — called on edit-wizard / new bake.
+#[tauri::command]
+pub fn reset_sim(sim: State<'_, ManagedSim>) {
+    let mut guard = sim.0.lock().expect("sim mutex poisoned");
+    *guard = None;
 }
 
 // ── Preset rasters, embedded at compile time ─────────────────────────────
@@ -325,7 +359,7 @@ fn omega_for_plate(plate_id: u32, seed: u64) -> Vec3 {
     Vec3::new(r1 as f32, r2 as f32, r3 as f32).normalize_or_zero() * 0.01
 }
 
-fn bake_impl(draft: &WizardDraft) -> PlanetSnapshot {
+fn bake_model(draft: &WizardDraft) -> Model {
     let preset = image::load_from_memory(preset_bytes(&draft.preset))
         .expect("preset PNG should decode")
         .to_rgba8();
@@ -491,7 +525,13 @@ fn bake_impl(draft: &WizardDraft) -> PlanetSnapshot {
         model.step(draft.dt_ma);
     }
 
-    let _ = n_cells; // silence warning when snapshot_model is the only consumer
+    let _ = n_cells;
+    model
+}
+
+#[cfg(test)]
+pub fn bake_impl(draft: &WizardDraft) -> PlanetSnapshot {
+    let model = bake_model(draft);
     snapshot_model(&model, draft.divisions)
 }
 
