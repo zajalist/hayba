@@ -867,6 +867,15 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import {
+  openEditor as editorOpen,
+  closeEditor as editorClose,
+  hasUnsavedChanges as editorHasUnsavedChanges,
+  editorSelectTool,
+  editorToggleSnap,
+  editorSave,
+  editorRefresh,
+} from './editor.js';
 
 'use strict';
 
@@ -974,6 +983,7 @@ const state = {
   // When set, the right pane displays a material-editor-style inspector
   // for that material or ornament instead of typology weights / across-cultures.
   inspecting: null,  // null | { kind: 'material' | 'ornament', id: string }
+  editorLastBindingKey: null,   // NEW
 };
 
 /* ─── stats bar ─────────────────────────────────────────── */
@@ -1117,7 +1127,10 @@ function renderCenter() {
                   <div class="bec-meta">
                     <span class="mono muted">${Object.entries(b.params).slice(0, 2).map(([k, v]) => `${k.replace(/_m$/,'')} ${v}`).join(' · ')} · seed ${String(b.seed).slice(0, 10)}…</span>
                   </div>
-                  <button class="bec-regen" data-regen-element="${p.elementId}" data-regen-style="${p.styleSheetId}" title="Regenerate via AI">⟲ regen</button>
+                  <div style="display: flex; gap: 6px;">
+                    <button class="bec-regen" data-regen-element="${p.elementId}" data-regen-style="${p.styleSheetId}" title="Regenerate via AI">⟲ regen</button>
+                    <button class="bec-edit" data-edit-element="${p.elementId}" data-edit-style="${p.styleSheetId}" title="Edit vertices">✎ edit</button>
+                  </div>
                 </div>
               `;
             }).join('')}
@@ -1765,11 +1778,43 @@ function hexA(hex, a) {
 document.getElementById('tabs').addEventListener('click', e => {
   const t = e.target.closest('.tab');
   if (!t) return;
+
+  // Block tab switch if editor has unsaved changes.
+  if (state.view === 'editor' && editorHasUnsavedChanges()) {
+    if (!confirm('You have unsaved changes in the editor. Discard?')) return;
+  }
+
   document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
   t.classList.add('active');
-  state.view = t.dataset.view;
-  if (state.view === 'typologies' && !state.typologyId) state.typologyId = typologies[0].id;
-  renderLeftPane(); renderCenter(); renderRight();
+  const view = t.dataset.view;
+  state.view = view;
+
+  const isEditor = view === 'editor';
+  document.getElementById('editorView').style.display = isEditor ? '' : 'none';
+  for (const pane of document.querySelectorAll('.pane')) {
+    pane.style.display = isEditor ? 'none' : '';
+  }
+
+  if (isEditor) {
+    if (state.editorLastBindingKey && bindings[state.editorLastBindingKey]) {
+      editorOpen(state.editorLastBindingKey, {
+        bindingsRef: bindings,
+        kernelRef: kernelMod,
+        onSave: (newBinding) => {
+          // Reflect the saved binding in the atlas's local cache.
+          bindings[`${newBinding.styleSheetId}::${newBinding.elementId}`] =
+            { ...newBinding, seed: '0x' + newBinding.seed.toString(16) };
+          renderCenter();
+        },
+      });
+    }
+  } else {
+    editorClose();
+    if (state.view === 'typologies' && !state.typologyId) state.typologyId = typologies[0].id;
+    renderLeftPane();
+    renderCenter();
+    renderRight();
+  }
 });
 
 /* ─── kernel + 3D viewer ─────────────────────────────────── */
@@ -2097,6 +2142,16 @@ document.getElementById('settingsSaveBtn').addEventListener('click', () => {
 });
 
 document.addEventListener('click', (e) => {
+  // ✎ edit → switch to Editor tab with this binding loaded.
+  const editBtn = e.target.closest('[data-edit-element]');
+  if (editBtn) {
+    e.stopPropagation();
+    const key = `${editBtn.dataset.editStyle}::${editBtn.dataset.editElement}`;
+    state.editorLastBindingKey = key;
+    document.querySelector('.tab[data-view="editor"]').click();
+    return;
+  }
+
   // Regen button — must be handled BEFORE the card-click handler swallows it.
   const regenBtn = e.target.closest('[data-regen-element]');
   if (regenBtn) {
@@ -2600,6 +2655,27 @@ function getOrnamentCanvases(ornament) {
   const data = _ensureOrnamentData(ornament);
   return { diffuseCanvas: data.diffuseCanvas, normalCanvas: data.normalCanvas };
 }
+
+// Editor tool palette + save button + snap toggle.
+for (const btn of document.querySelectorAll('.editor-tool-btn[data-tool]')) {
+  btn.addEventListener('click', () => {
+    if (btn.dataset.tool === 'snap') {
+      editorToggleSnap();
+    } else {
+      editorSelectTool(btn.dataset.tool);
+    }
+  });
+}
+document.getElementById('editorSaveBtn')?.addEventListener('click', () => {
+  editorSave().catch(err => alert(`Save error: ${err.message}`));
+});
+
+window.addEventListener('beforeunload', (e) => {
+  if (editorHasUnsavedChanges()) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
 
 /* ─── boot ──────────────────────────────────────────────── */
 
