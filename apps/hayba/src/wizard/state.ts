@@ -2,84 +2,45 @@
 // the Rust `WizardDraft` exactly so it can be JSON-serialised straight into
 // the `bake_from_wizard` Tauri command.
 
-export interface WizardPlate {
-  id: number;
-  color_rgb: [number, number, number];
-  density: number;
-  continental: boolean;
-  initial_omega: [number, number, number];
-  /** Cells the user explicitly painted. Empty for auto-fill plates. */
-  cell_ids: number[];
+export type PresetName = "plates2" | "plates3" | "plates4" | "plates5" | "plates5Uneven";
+
+export interface PresetMeta {
+  name: PresetName;
+  label: string;
+  /** Approximate plate count; used in chip subtitle. */
+  plates: number;
+  /** Optional second line, e.g. "uneven distribution". */
+  note?: string;
 }
+
+export const PRESETS: PresetMeta[] = [
+  { name: "plates2",       label: "2 plates", plates: 2 },
+  { name: "plates3",       label: "3 plates", plates: 3 },
+  { name: "plates4",       label: "4 plates", plates: 4 },
+  { name: "plates5",       label: "5 plates", plates: 5 },
+  { name: "plates5Uneven", label: "5 plates", plates: 5, note: "uneven distribution" },
+];
 
 export interface WizardDraft {
   divisions: number;
   seed: number;
-  plates: WizardPlate[];
+  preset: PresetName;
+  /** Brush angular radius in radians on the unit sphere. */
+  brush_radius_rad: number;
+  /** Set of cell ids painted as continental crust. Duplicates tolerated. */
+  continental_cells: number[];
   run_length_steps: number;
   dt_ma: number;
 }
 
-/** Hayba-friendly palette for plates — accent variants + earth-tone hues. */
-const PLATE_PALETTE: [number, number, number][] = [
-  [181, 106,  29], // accent
-  [138,  74, 138], // muted plum
-  [ 90,  58, 138], // muted indigo
-  [ 58, 122,  90], // muted forest
-  [168, 132,  58], // muted goldenrod
-  [168,  58,  58], // muted red
-  [ 58, 138, 138], // muted teal
-  [106, 159, 220], // secondary
-  [212, 159, 102], // sand
-  [128, 102,  76], // taupe
-  [ 91, 116,  74], // olive
-  [156,  92, 108], // dusty rose
-  [ 76,  98, 142], // deep slate-blue
-  [188, 150,  98], // wheat
-  [114,  74,  58], // brick
-  [ 90, 140, 105], // sage
-];
-
-/** Roughly opposing initial omegas so plates push against each other. */
-function omegaForIndex(i: number): [number, number, number] {
-  const sign = i % 2 === 0 ? 1 : -1;
-  const axis = i % 3;
-  const v: [number, number, number] = [0, 0, 0];
-  v[axis] = sign * 0.008;
-  v[(axis + 1) % 3] = sign * 0.003;
-  return v;
-}
-
-export function createDefaultDraft(divisions: number, seed: number, plateCount = 8): WizardDraft {
-  const plates: WizardPlate[] = [];
-  for (let i = 0; i < plateCount; i++) {
-    const continental = i % 2 === 0; // alternate continental/oceanic by default
-    plates.push({
-      id: i + 1,
-      color_rgb: PLATE_PALETTE[i % PLATE_PALETTE.length],
-      density: continental ? 0.35 : 1.05,
-      continental,
-      initial_omega: omegaForIndex(i),
-      cell_ids: [],
-    });
-  }
+export function createDefaultDraft(divisions: number, seed: number): WizardDraft {
   return {
     divisions,
     seed,
-    plates,
+    preset: "plates4",
+    brush_radius_rad: 0.06, // ≈ 3.4° great-circle radius — comfortable default brush
+    continental_cells: [],
     run_length_steps: 5,
     dt_ma: 0.5,
   };
-}
-
-/** Cell → plate-id lookup table, sized to the current divisions. -1 = unassigned. */
-export function buildPlateLookup(draft: WizardDraft, nCells: number): Int32Array {
-  const out = new Int32Array(nCells);
-  out.fill(-1);
-  for (const plate of draft.plates) {
-    for (const cellId of plate.cell_ids) {
-      if (cellId >= 0 && cellId < nCells) out[cellId] = plate.id;
-    }
-  }
-  return out;
 }

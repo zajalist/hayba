@@ -1,17 +1,18 @@
 import React from "react";
 import { colors, fonts } from "@hayba/design-tokens";
-import type { WizardDraft, WizardPlate } from "./state";
+import type { WizardDraft, PresetName } from "./state";
 import ResolutionChips from "./ResolutionChips";
 import SeedRow from "./SeedRow";
-import PlateRow from "./PlateRow";
+import PresetChips from "./PresetChips";
+import BrushSlider from "./BrushSlider";
 
 export interface WizardPanelProps {
   draft: WizardDraft;
-  activePlateId: number;
   onChangeDivisions: (divisions: number) => void;
+  onChangePreset: (preset: PresetName) => void;
+  onChangeBrushRadius: (rad: number) => void;
   onReroll: () => void;
-  onActivatePlate: (id: number) => void;
-  onTogglePlateContinental: (id: number) => void;
+  onClearContinents: () => void;
   onBake: () => void;
   busy?: boolean;
 }
@@ -19,11 +20,11 @@ export interface WizardPanelProps {
 function SectionHeading({ children, hint }: { children: React.ReactNode; hint?: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 8, display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
-      <span style={{ fontFamily: fonts.serif, fontSize: 18, color: colors.textPrimary, letterSpacing: "0.02em" }}>
+      <span style={{ fontFamily: fonts.sans, fontSize: 14, color: colors.textPrimary, letterSpacing: "0.04em", fontWeight: 600 }}>
         {children}
       </span>
       {hint && (
-        <span style={{ fontFamily: fonts.sans, fontSize: 10, color: colors.textMuted, letterSpacing: "0.12em", textTransform: "uppercase" }}>
+        <span style={{ fontFamily: fonts.sans, fontSize: 10, color: colors.accentText, letterSpacing: "0.14em", textTransform: "uppercase" }}>
           {hint}
         </span>
       )}
@@ -33,25 +34,21 @@ function SectionHeading({ children, hint }: { children: React.ReactNode; hint?: 
 
 export default function WizardPanel({
   draft,
-  activePlateId,
   onChangeDivisions,
+  onChangePreset,
+  onChangeBrushRadius,
   onReroll,
-  onActivatePlate,
-  onTogglePlateContinental,
+  onClearContinents,
   onBake,
   busy,
 }: WizardPanelProps) {
-  const continentalPainted = draft.plates
-    .filter((p) => p.continental)
-    .reduce((sum, p) => sum + p.cell_ids.length, 0);
-
   return (
     <aside
       style={{
         position: "fixed",
         top: 0,
         right: 0,
-        bottom: 30, // sits above the status bar
+        bottom: 30,
         width: 360,
         background: colors.bgBase,
         borderLeft: `1px solid ${colors.borderMid}`,
@@ -64,12 +61,14 @@ export default function WizardPanel({
       }}
     >
       <header style={{ padding: "20px 24px 14px", borderBottom: `1px solid ${colors.borderMid}` }}>
-        <div style={{ fontFamily: fonts.serif, fontSize: 26, color: colors.textPrimary, letterSpacing: "0.01em" }}>
-          New planet
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: 22, color: colors.textPrimary, letterSpacing: "0.02em", fontWeight: 600 }}>
+            New planet
+          </span>
         </div>
-        <div style={{ height: 2, width: 32, background: colors.accent, marginTop: 8 }} />
-        <div style={{ marginTop: 10, fontSize: 11, color: colors.textMuted, letterSpacing: "0.06em" }}>
-          paint continents · pick plates · bake
+        <div style={{ height: 2, width: 32, background: colors.accent, marginTop: 10 }} />
+        <div style={{ marginTop: 8, fontSize: 10, color: colors.accentText, letterSpacing: "0.16em", textTransform: "uppercase" }}>
+          pick a preset · paint continents · bake
         </div>
       </header>
 
@@ -80,32 +79,42 @@ export default function WizardPanel({
         </section>
 
         <section style={{ marginBottom: 22 }}>
+          <SectionHeading hint="plates">Tectonic preset</SectionHeading>
+          <PresetChips value={draft.preset} onChange={onChangePreset} disabled={busy} />
+        </section>
+
+        <section style={{ marginBottom: 22 }}>
           <SectionHeading hint="seed">Determinism</SectionHeading>
           <SeedRow seed={draft.seed} onReroll={onReroll} disabled={busy} />
         </section>
 
         <section style={{ marginBottom: 22 }}>
-          <SectionHeading hint={`${continentalPainted} cells`}>Continents</SectionHeading>
-          <p style={{ margin: "0 0 10px", fontSize: 12, color: colors.textMuted, lineHeight: 1.45, letterSpacing: "0.02em" }}>
-            Pick a continental plate, then <span style={{ color: colors.textSecondary }}>left-click and drag</span> on the planet to paint its land.
-            Unpainted continental plates stay empty; oceanic plates auto-fill the rest.
+          <SectionHeading hint={`${draft.continental_cells.length.toLocaleString()} cells`}>
+            Continents
+          </SectionHeading>
+          <p style={{ margin: "0 0 14px", fontSize: 12, color: colors.textMuted, lineHeight: 1.5, letterSpacing: "0.02em" }}>
+            <span style={{ color: colors.textSecondary }}>Left-click and drag</span> on the planet to paint continental crust. Right-click drags to rotate.
           </p>
-        </section>
-
-        <section style={{ marginBottom: 22 }}>
-          <SectionHeading hint={`${draft.plates.length} plates`}>Plates</SectionHeading>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {draft.plates.map((plate: WizardPlate) => (
-              <PlateRow
-                key={plate.id}
-                plate={plate}
-                active={plate.id === activePlateId && plate.continental}
-                paintedCount={plate.cell_ids.length}
-                onActivate={() => onActivatePlate(plate.id)}
-                onToggleContinental={() => onTogglePlateContinental(plate.id)}
-              />
-            ))}
-          </div>
+          <BrushSlider value={draft.brush_radius_rad} onChange={onChangeBrushRadius} disabled={busy} />
+          <button
+            type="button"
+            disabled={busy || draft.continental_cells.length === 0}
+            onClick={onClearContinents}
+            style={{
+              marginTop: 10,
+              background: "transparent",
+              border: `1px solid ${colors.borderSoft}`,
+              color: draft.continental_cells.length === 0 ? colors.textMuted : colors.textSecondary,
+              padding: "5px 12px",
+              fontSize: 10,
+              letterSpacing: "0.18em",
+              textTransform: "lowercase",
+              fontFamily: fonts.sans,
+              cursor: busy || draft.continental_cells.length === 0 ? "default" : "pointer",
+            }}
+          >
+            clear continents
+          </button>
         </section>
       </div>
 
@@ -126,7 +135,6 @@ export default function WizardPanel({
             fontFamily: fonts.sans,
             fontWeight: 600,
             cursor: busy ? "default" : "pointer",
-            transition: "background 120ms, color 120ms",
           }}
         >
           {busy ? "baking…" : "bake planet"}

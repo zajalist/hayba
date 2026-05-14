@@ -74,6 +74,49 @@ export function nearestCell(tree: KdTree, x: number, y: number, z: number): numb
   return best.idx;
 }
 
+/**
+ * All cells within `radius` (chord distance on the unit sphere) of (x,y,z).
+ * For an angular radius `α`, pass `chord = 2 * sin(α / 2)`. The output array
+ * is unsorted; duplicates are not produced.
+ */
+export function cellsWithinRadius(
+  tree: KdTree,
+  x: number, y: number, z: number,
+  radius: number,
+  out: number[] = [],
+): number[] {
+  if (!tree.root) return out;
+  const r2 = radius * radius;
+  walkRadius(tree.root, tree.positions, x, y, z, r2, out);
+  return out;
+}
+
+function walkRadius(
+  node: Node, pos: Float32Array,
+  x: number, y: number, z: number,
+  r2: number, out: number[],
+) {
+  const ix = node.idx * 3;
+  const dx = pos[ix] - x;
+  const dy = pos[ix + 1] - y;
+  const dz = pos[ix + 2] - z;
+  const d2 = dx * dx + dy * dy + dz * dz;
+  if (d2 <= r2) out.push(node.idx);
+  const q = node.axis === 0 ? x : node.axis === 1 ? y : z;
+  const v = pos[ix + node.axis];
+  const planeDist = q - v;
+  const planeDist2 = planeDist * planeDist;
+  // Always descend the near side; descend the far side only if the splitting
+  // plane is within radius of the query.
+  if (planeDist < 0) {
+    if (node.left)  walkRadius(node.left,  pos, x, y, z, r2, out);
+    if (planeDist2 <= r2 && node.right) walkRadius(node.right, pos, x, y, z, r2, out);
+  } else {
+    if (node.right) walkRadius(node.right, pos, x, y, z, r2, out);
+    if (planeDist2 <= r2 && node.left)  walkRadius(node.left,  pos, x, y, z, r2, out);
+  }
+}
+
 function walk(node: Node, pos: Float32Array, x: number, y: number, z: number, best: { idx: number; dist2: number }) {
   const ix = node.idx * 3;
   const dx = pos[ix] - x;

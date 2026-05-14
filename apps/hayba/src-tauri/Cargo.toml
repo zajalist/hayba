@@ -17,3 +17,4 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 hayba-tectonics-v2 = { path = "../../../packages/hayba-tectonics-v2" }
 glam = "0.27"
+image = { version = "0.25", default-features = false, features = ["png"] }
