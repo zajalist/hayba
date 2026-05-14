@@ -5,7 +5,7 @@
  *   npm run serve   →  http://localhost:5184/demo/
  */
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -26,6 +26,33 @@ const MIME = {
 const server = createServer(async (req, res) => {
   try {
     let url = decodeURIComponent((req.url ?? '/').split('?')[0]);
+
+    // ─── API: list bindings on disk ─────────────────────────────────────
+    if (url === '/api/bindings/list' && req.method === 'GET') {
+      const bindingsRoot = join(ROOT, 'src', 'bindings');
+      const out = [];
+      try {
+        const styleSheets = await readdir(bindingsRoot, { withFileTypes: true });
+        for (const sheetEntry of styleSheets) {
+          if (!sheetEntry.isDirectory()) continue;
+          const sheetDir = join(bindingsRoot, sheetEntry.name);
+          const files = await readdir(sheetDir, { withFileTypes: true });
+          for (const fileEntry of files) {
+            if (!fileEntry.isFile() || !fileEntry.name.endsWith('.json')) continue;
+            out.push({
+              styleSheetId: sheetEntry.name,
+              elementId: fileEntry.name.replace(/\.json$/, ''),
+            });
+          }
+        }
+      } catch (err) {
+        if (err.code !== 'ENOENT') throw err;
+      }
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(out));
+      return;
+    }
+
     if (url === '/') url = '/demo/';
     if (url.endsWith('/')) url += 'index.html';
     const fp = join(ROOT, url);
