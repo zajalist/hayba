@@ -23,6 +23,18 @@ export const colors = {
   textMuted:      "#6b7280",
   borderMid:      "#2f343d",
   borderSoft:     "#3d434e",
+  /** Top-bar background — one notch darker than bgDeep. */
+  bgTopBar:       "#16191f",
+  /** Status-bar background — same family as bgPanelHeader. */
+  bgStatusBar:    "#1d2129",
+  /** Right-panel category strip background. */
+  bgCategoryStrip:"#1d2129",
+  /** Primary beige foreground (action labels, mode names). */
+  beige:          "#DED4C3",
+  /** Muted beige — property-row labels. */
+  beigeMuted:     "#a8aeb8",
+  /** 1px property-row separator (lighter than borderMid). */
+  rule:           "#2a2e36",
   // Optional reserved second tone — used only on a few legacy paths.
   secondary:      "#6a9fdc",
   secondaryHover: "#8ab5e6",
@@ -38,10 +50,11 @@ export const fonts = {
 } as const;
 
 export const radii = {
-  xs: "6px",   // chips + small buttons
-  sm: "10px",  // modals + floating panels
-  md: "14px",  // larger surfaces
-  lg: "18px",  // pill-style
+  /** Tight Gaea/UE5-style — surfaces feel docked, not floating. */
+  xs: "2px",   // chips + small buttons
+  sm: "3px",   // modals + small floating panels
+  md: "4px",   // larger surfaces
+  lg: "8px",   // pill-style affordances
 } as const;
 
 export const shadows = {
