@@ -22,6 +22,12 @@ import recenterUrl from "../assets/icons/IconRecenter.svg";
 import boundaryUrl from "../assets/icons/IconBoundary.svg";
 import playUrl from "../assets/icons/IconPlay.svg";
 import pauseUrl from "../assets/icons/IconPause.svg";
+import categoryComposeUrl from "../assets/icons/IconCategoryCompose.svg";
+import categoryBoundariesUrl from "../assets/icons/IconCategoryBoundaries.svg";
+import categoryDensitiesUrl from "../assets/icons/IconCategoryDensities.svg";
+import categorySimulateUrl from "../assets/icons/IconCategorySimulate.svg";
+import categorySettingsUrl from "../assets/icons/IconCategorySettings.svg";
+import logoUrl from "../assets/logo.svg";
 
 export interface IconProps {
   size?: number;
@@ -59,6 +65,12 @@ export const IconRecenter = (p: IconProps = {}) => img(recenterUrl, "recenter", 
 export const IconBoundary = (p: IconProps = {}) => img(boundaryUrl, "boundary", p);
 export const IconPlay     = (p: IconProps = {}) => img(playUrl,     "play",     p);
 export const IconPause    = (p: IconProps = {}) => img(pauseUrl,    "pause",    p);
+export const IconCategoryCompose = (p: IconProps = {}) => img(categoryComposeUrl, "compose", p);
+export const IconCategoryBoundaries = (p: IconProps = {}) => img(categoryBoundariesUrl, "boundaries", p);
+export const IconCategoryDensities = (p: IconProps = {}) => img(categoryDensitiesUrl, "densities", p);
+export const IconCategorySimulate = (p: IconProps = {}) => img(categorySimulateUrl, "simulate", p);
+export const IconCategorySettings = (p: IconProps = {}) => img(categorySettingsUrl, "settings", p);
+export const Logo = (p: IconProps = {}) => img(logoUrl, "logo", p);
 
 export const ICON_URLS = {
   sphere: sphereUrl,
@@ -76,4 +88,10 @@ export const ICON_URLS = {
   boundary: boundaryUrl,
   play:     playUrl,
   pause:    pauseUrl,
+  categoryCompose: categoryComposeUrl,
+  categoryBoundaries: categoryBoundariesUrl,
+  categoryDensities: categoryDensitiesUrl,
+  categorySimulate: categorySimulateUrl,
+  categorySettings: categorySettingsUrl,
+  logo: logoUrl,
 };
