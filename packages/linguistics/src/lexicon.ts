@@ -5,7 +5,7 @@
  *   - `InMemoryLexicon` for tests and dev demos
  *   - `PostgresLexicon` — adapter point that a host app wires to its driver
  *
- * The schema mirrors the SQL migration in `migrations/0001_lexicon.sql`.
+ * The schema mirrors the SQL migration in `supabase/migrations/*_lexicon.sql`.
  */
 
 /**
@@ -97,7 +97,7 @@ export class LexiconStore extends InMemoryLexicon {
 /**
  * Driver-agnostic Postgres adapter. Pass a minimal `Pool`-like client that
  * exposes `query(text, params) → { rows }` (matches `pg`, `postgres`,
- * Supabase JS, etc.). The schema lives in `migrations/0001_lexicon.sql`.
+ * Supabase JS, etc.). The schema lives in `supabase/migrations/*_lexicon.sql`.
  */
 export interface SqlClient {
   query<T>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;

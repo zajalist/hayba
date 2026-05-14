@@ -1,7 +1,5 @@
-import { createHaybaSupabaseClient } from '/dist/supabase-client.js';
+import { auth, profile, entries } from '/lib/hayba-client.js';
 
-const CONFIG = window.HAYBA_CONFIG ?? { url: 'http://localhost:54321', anonKey: '...' };
-const supabase = createHaybaSupabaseClient(CONFIG);
 const SLOTS = 50;
 
 const TOOL_LABELS = {
@@ -19,11 +17,9 @@ const MAKING_LABELS = {
 };
 
 async function requireAdmin() {
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await auth.getUser();
   if (!user) { window.location.href = '/login?next=/admin'; return false; }
-  const { data: prof } = await supabase
-    .from('profiles').select('is_admin').eq('user_id', user.id).single();
-  if (!prof?.is_admin) {
+  if (!(await profile.isAdmin(user.id))) {
     document.body.innerHTML = '<div class="readonly-404">Not authorised.</div>';
     return false;
   }
@@ -31,31 +27,27 @@ async function requireAdmin() {
 }
 
 async function loadCounts() {
-  const { count: pending } = await supabase
-    .from('waitlist_entries').select('*', { count: 'exact', head: true })
-    .eq('status', 'pending');
-  const { count: approved } = await supabase
-    .from('waitlist_entries').select('*', { count: 'exact', head: true })
-    .eq('status', 'approved');
-  document.getElementById('count-pending').textContent  = pending  ?? 0;
-  document.getElementById('count-approved').textContent = approved ?? 0;
-  document.getElementById('count-slots').textContent    = SLOTS - (approved ?? 0);
+  const [pending, approved] = await Promise.all([
+    entries.countByStatus('pending'),
+    entries.countByStatus('approved'),
+  ]);
+  document.getElementById('count-pending').textContent  = pending;
+  document.getElementById('count-approved').textContent = approved;
+  document.getElementById('count-slots').textContent    = SLOTS - approved;
 }
 
 async function loadEntries(filter) {
-  let q = supabase.from('waitlist_entries').select('*').order('created_at', { ascending: false });
-  if (filter !== 'all') q = q.eq('status', filter);
-  const { data, error } = await q;
+  const { data, error } = await entries.list({ status: filter });
   const host = document.getElementById('admin-list');
   if (error) { host.textContent = 'Error: ' + error.message; return; }
   if (!data.length) { host.textContent = 'No entries.'; return; }
-  host.innerHTML = data.map(e => renderEntry(e)).join('');
-  host.querySelectorAll('[data-approve]').forEach(b => b.addEventListener('click', () => approve(+b.dataset.approve)));
-  host.querySelectorAll('[data-reject]').forEach(b => b.addEventListener('click', () => reject(+b.dataset.reject)));
+  host.innerHTML = data.map(renderEntry).join('');
+  host.querySelectorAll('[data-approve]').forEach((b) => b.addEventListener('click', () => approve(+b.dataset.approve)));
+  host.querySelectorAll('[data-reject]').forEach((b) => b.addEventListener('click', () => reject(+b.dataset.reject)));
 }
 
 function renderEntry(e) {
-  const tools = (e.questionnaire?.tools ?? []).map(t => `<span class="chip-tag">${TOOL_LABELS[t] ?? t}</span>`).join('');
+  const tools = (e.questionnaire?.tools ?? []).map((t) => `<span class="chip-tag">${TOOL_LABELS[t] ?? t}</span>`).join('');
   const making = MAKING_LABELS[e.questionnaire?.making] ?? '—';
   return `
     <article class="entry status-${e.status}">
@@ -77,24 +69,24 @@ function renderEntry(e) {
 }
 
 async function approve(id) {
-  const { error } = await supabase.functions.invoke('approve-entry', { body: { id } });
+  const { error } = await entries.approve(id);
   if (error) { alert('Failed: ' + error.message); return; }
   await Promise.all([loadCounts(), loadEntries(document.getElementById('filter').value)]);
 }
 async function reject(id) {
-  const { error } = await supabase.from('waitlist_entries').update({ status: 'rejected' }).eq('id', id);
+  const { error } = await entries.reject(id);
   if (error) { alert('Failed: ' + error.message); return; }
   await Promise.all([loadCounts(), loadEntries(document.getElementById('filter').value)]);
 }
 
-function escapeText(s) { return String(s).replace(/[<>&]/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;' }[c])); }
+function escapeText(s) { return String(s).replace(/[<>&]/g, (c) => ({ '<':'&lt;','>':'&gt;','&':'&amp;' }[c])); }
 
 (async () => {
   if (!(await requireAdmin())) return;
   document.getElementById('admin-signout').onclick = async () => {
-    await supabase.auth.signOut();
+    await auth.signOut();
     window.location.href = '/login';
   };
-  document.getElementById('filter').addEventListener('change', e => loadEntries(e.target.value));
+  document.getElementById('filter').addEventListener('change', (e) => loadEntries(e.target.value));
   await Promise.all([loadCounts(), loadEntries('pending')]);
 })();

@@ -19,12 +19,11 @@ docker compose -f docker-compose.supabase.yml up -d
 ## Apply migrations
 
 ```bash
-psql "$POSTGRES_URL" -f ../packages/linguistics/migrations/0001_lexicon.sql
-psql "$POSTGRES_URL" -f ../packages/linguistics/migrations/0002_lexicon_pos.sql
-psql "$POSTGRES_URL" -f ../packages/linguistics/migrations/0003_wordlinks.sql
-psql "$POSTGRES_URL" -f ../packages/linguistics/migrations/0004_auth_profiles.sql
-psql "$POSTGRES_URL" -f ../packages/linguistics/migrations/0005_waitlist.sql
-psql "$POSTGRES_URL" -f ../packages/linguistics/migrations/0006_languages.sql
+# Preferred: use the Supabase CLI (applies everything under supabase/migrations/)
+supabase db push
+
+# Or, against a non-Supabase Postgres, apply them in timestamp order:
+for f in ../supabase/migrations/*.sql; do psql "$POSTGRES_URL" -f "$f"; done
 ```
 
 ## Bootstrap an admin
