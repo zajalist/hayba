@@ -43,9 +43,15 @@ import { renderAuthGate } from './views/auth-gate.js';
 import { renderLangPicker } from './views/lang-picker.js';
 import './views/share.js';
 
+/* Read-only share-link route: /lang/:id */
+const READONLY_MATCH = window.location.pathname.match(/^\/lang\/([^/]+)/);
+const READONLY_LANG_ID = READONLY_MATCH ? READONLY_MATCH[1] : null;
+const READONLY = !!READONLY_LANG_ID;
+
 /* state - load/save/snapshot helpers live in ./state.js */
 const state = _loadState() ?? defaultState();
 function saveState() {
+  if (state._readonly) return;
   _saveState(state);
   if (state._signedIn && state.langId) {
     queueLanguageSave(state, state.langId);
@@ -3998,12 +4004,33 @@ function renderProsody() {
   });
 })();
 
-// Initial paint — hydrate from Supabase first if signed in.
+// Initial paint — hydrate from Supabase first if signed in, or from the
+// public snapshot for read-only /lang/:id routes.
 (async () => {
   try {
     const session = await getSession();
     state._signedIn = !!session;
-    if (session) {
+    state._readonly = READONLY;
+
+    if (READONLY) {
+      const { supabase } = await import('./auth.js');
+      const { data, error } = await supabase
+        .from('languages')
+        .select('id, name, is_public, snapshot, updated_at')
+        .eq('id', READONLY_LANG_ID)
+        .eq('is_public', true)
+        .maybeSingle();
+      if (error || !data) {
+        document.body.innerHTML = '<div class="readonly-404">This language isn\'t public.</div>';
+        return;
+      }
+      state.languages = { [data.id]: {
+        ...(data.snapshot ?? {}),
+        _meta: { id: data.id, is_public: true, updated_at: data.updated_at },
+      }};
+      state.langId = data.id;
+      loadLanguageSnapshot(data.id);
+    } else if (session) {
       try {
         const remote = await fetchUserLanguages();
         if (remote.length === 0 && Object.keys(state.languages ?? {}).length > 0) {
@@ -4019,5 +4046,7 @@ function renderProsody() {
     console.error('[hayba] session check failed; using local state only', e);
     state._signedIn = false;
   }
+  const banner = document.getElementById('readonly-banner');
+  if (banner) banner.style.display = state._readonly ? 'block' : 'none';
   renderAll();
 })();

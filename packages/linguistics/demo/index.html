@@ -950,6 +950,13 @@
   .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
   #share-url-row { display: flex; gap: 8px; margin-top: 12px; }
   #share-url { flex: 1; }
+
+  /* Read-only 404 */
+  .readonly-404 {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; font: 18px var(--font-ui); color: var(--text-secondary);
+    background: var(--bg-deep);
+  }
 </style>
 </head>
 <body>
@@ -1015,6 +1022,9 @@
     </div>
   </div>
 </header>
+<div id="readonly-banner" style="display:none; padding:8px 16px; background:var(--accent-dim); color:var(--accent); font-size:13px; text-align:center">
+  Read-only view. <a href="/login" style="color:var(--accent); text-decoration:underline">Sign in to fork</a> a copy into your own account.
+</div>
 <div id="auth-gate" style="display:none"></div>
 <input type="file" id="import-file" accept=".json,application/json" style="display:none">
 
