@@ -35,8 +35,8 @@ export default function BoundariesPanel(p: BoundariesPanelProps) {
               noSeparator
               value={
                 <span style={{ display: "inline-flex", gap: 6 }}>
-                  <SegButton label="Convergent" active={p.selectedType === "convergent"} onClick={() => p.onPickType("convergent" as BoundaryType)} />
-                  <SegButton label="Divergent"  active={p.selectedType === "divergent"}  onClick={() => p.onPickType("divergent"  as BoundaryType)} />
+                  <SegButton label="Convergent" active={p.selectedType === "convergent"} onClick={() => p.onPickType("convergent")} />
+                  <SegButton label="Divergent"  active={p.selectedType === "divergent"}  onClick={() => p.onPickType("divergent")}  />
                   <SegButton label="Clear"      active={false}                            onClick={p.onClearType} />
                 </span>
               }
