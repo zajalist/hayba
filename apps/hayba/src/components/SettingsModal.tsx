@@ -5,6 +5,8 @@ import { PRESETS } from "../wizard/state";
 import { PRESETS as RESOLUTION_PRESETS } from "../wizard/ResolutionChips";
 import { IconSphere, IconPlates, IconSeed, IconReroll, IconBake } from "./icons";
 
+const BEIGE = "#DED4C3";
+
 export interface SettingsModalProps {
   draft: WizardDraft;
   busy: boolean;
@@ -31,7 +33,7 @@ export default function SettingsModal({
         right: 22,
         top: topOffset + 22,
         zIndex: 60,
-        width: 280,
+        width: 300,
         background: "rgba(34, 38, 46, 0.92)",
         border: `1px solid ${colors.borderMid}`,
         borderRadius: radii.sm,
@@ -54,7 +56,7 @@ export default function SettingsModal({
           justifyContent: "space-between",
           background: colors.bgPanelHeader,
           borderBottom: collapsed ? "none" : `1px solid ${colors.borderMid}`,
-          padding: "10px 14px",
+          padding: "12px 16px",
           fontFamily: fonts.sans,
           cursor: "pointer",
           border: "none",
@@ -63,23 +65,23 @@ export default function SettingsModal({
         }}
       >
         <span style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-          <span style={{ fontSize: 9, color: colors.accent, letterSpacing: "0.32em", textTransform: "uppercase", fontWeight: 600 }}>
+          <span style={{ fontSize: 14, color: BEIGE, letterSpacing: "0.01em", fontWeight: 600 }}>
             Compose
           </span>
           {collapsed && (
-            <span style={{ fontSize: 10, color: colors.textMuted, letterSpacing: "0.04em" }}>
-              {resolution?.label.toLowerCase()} · {preset?.plates} plates · seed {String(draft.seed).slice(-6)}
+            <span style={{ fontSize: 11, color: colors.textMuted, letterSpacing: "0.01em" }}>
+              {resolution?.label} · {preset?.plates} plates · seed {String(draft.seed).slice(-6)}
             </span>
           )}
         </span>
-        <span style={{ color: colors.textSecondary, fontSize: 12, fontFamily: fonts.mono }}>
+        <span style={{ color: colors.textSecondary, fontSize: 14, fontFamily: fonts.mono }}>
           {collapsed ? "▸" : "▾"}
         </span>
       </button>
 
       {!collapsed && (
         <>
-          <Subsection icon={<IconSphere size={14} />} label="Detail" hint="resolution">
+          <Subsection icon={<IconSphere size={22} />} label="Detail" hint="Resolution">
             <ChipRow>
               {RESOLUTION_PRESETS.map((p) => (
                 <Chip
@@ -91,7 +93,7 @@ export default function SettingsModal({
                   {p.label}
                   <span style={{
                     fontFamily: fonts.mono,
-                    fontSize: 9,
+                    fontSize: 10,
                     marginLeft: 6,
                     opacity: 0.7,
                   }}>
@@ -102,7 +104,7 @@ export default function SettingsModal({
             </ChipRow>
           </Subsection>
 
-          <Subsection icon={<IconPlates size={14} />} label="Plate number" hint="preset">
+          <Subsection icon={<IconPlates size={22} />} label="Plate number" hint="Preset">
             <ChipRow>
               {PRESETS.map((p) => (
                 <Chip
@@ -116,12 +118,12 @@ export default function SettingsModal({
                 </Chip>
               ))}
             </ChipRow>
-            <div style={{ marginTop: 6, fontSize: 9, color: colors.textMuted, letterSpacing: "0.04em" }}>
-              {preset?.note ? "* uneven distribution" : " "}
+            <div style={{ marginTop: 6, fontSize: 11, color: colors.textMuted }}>
+              {preset?.note ? "* uneven distribution" : " "}
             </div>
           </Subsection>
 
-          <Subsection icon={<IconSeed size={14} />} label="Seed" hint="determinism">
+          <Subsection icon={<IconSeed size={22} />} label="Seed" hint="Determinism">
             <div style={{
               display: "flex",
               alignItems: "center",
@@ -130,8 +132,8 @@ export default function SettingsModal({
               gap: 8,
             }}>
               <span style={{
-                fontFamily: fonts.mono, fontSize: 11, color: colors.textPrimary,
-                letterSpacing: "0.04em",
+                fontFamily: fonts.mono, fontSize: 12, color: colors.textPrimary,
+                letterSpacing: "0.02em",
                 overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1,
               }}>
                 {draft.seed.toString()}
@@ -144,26 +146,25 @@ export default function SettingsModal({
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: 6,
+                  gap: 8,
                   background: "transparent",
                   border: "none",
-                  color: colors.accent,
+                  color: BEIGE,
                   padding: 0,
-                  fontSize: 10,
-                  letterSpacing: "0.24em",
-                  textTransform: "uppercase",
+                  fontSize: 13,
+                  letterSpacing: "0.01em",
                   fontFamily: fonts.sans,
-                  fontWeight: 600,
+                  fontWeight: 500,
                   cursor: busy ? "default" : "pointer",
                 }}
               >
-                <IconReroll size={11} />
+                <IconReroll size={18} />
                 Reroll →
               </button>
             </div>
           </Subsection>
 
-          <div style={{ padding: "12px 14px", background: colors.bgPanelHeader }}>
+          <div style={{ padding: "14px 16px", background: colors.bgPanelHeader }}>
             <button
               type="button"
               disabled={busy}
@@ -173,23 +174,28 @@ export default function SettingsModal({
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
-                gap: 10,
-                background: busy ? "transparent" : colors.accent,
-                border: `1px solid ${busy ? colors.borderSoft : colors.accent}`,
+                gap: 12,
+                background: "transparent",
+                border: `1px solid ${busy ? colors.borderSoft : BEIGE}`,
                 borderRadius: radii.xs,
-                color: busy ? colors.textMuted : "#1b1e24",
-                padding: "10px 14px",
-                fontSize: 11,
-                letterSpacing: "0.32em",
-                textTransform: "uppercase",
+                color: busy ? colors.textMuted : BEIGE,
+                padding: "12px 16px",
+                fontSize: 14,
+                letterSpacing: "0.01em",
                 fontFamily: fonts.sans,
-                fontWeight: 700,
+                fontWeight: 500,
                 cursor: busy ? "default" : "pointer",
-                transition: "background 140ms",
+                transition: "background 140ms, border-color 140ms",
                 boxShadow: "none",
               }}
+              onMouseEnter={(e) => {
+                if (!busy) e.currentTarget.style.background = "rgba(222, 212, 195, 0.06)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+              }}
             >
-              <IconBake size={14} />
+              <IconBake size={20} />
               {busy ? "Baking…" : "Bake planet →"}
             </button>
           </div>
@@ -201,16 +207,16 @@ export default function SettingsModal({
 
 function Subsection({ icon, label, hint, children }: { icon: React.ReactNode; label: string; hint?: string; children: React.ReactNode }) {
   return (
-    <div style={{ padding: "12px 14px", borderBottom: `1px solid ${colors.borderMid}` }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+    <div style={{ padding: "14px 16px", borderBottom: `1px solid ${colors.borderMid}` }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
           {icon}
-          <span style={{ fontSize: 10, color: colors.textPrimary, letterSpacing: "0.24em", textTransform: "uppercase", fontWeight: 600 }}>
+          <span style={{ fontSize: 13, color: BEIGE, letterSpacing: "0.01em", fontWeight: 600 }}>
             {label}
           </span>
         </span>
         {hint && (
-          <span style={{ fontSize: 9, color: colors.textMuted, letterSpacing: "0.28em", textTransform: "uppercase" }}>
+          <span style={{ fontSize: 11, color: colors.textMuted, letterSpacing: "0.01em" }}>
             {hint}
           </span>
         )}
@@ -221,7 +227,7 @@ function Subsection({ icon, label, hint, children }: { icon: React.ReactNode; la
 }
 
 function ChipRow({ children }: { children: React.ReactNode }) {
-  return <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>{children}</div>;
+  return <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>{children}</div>;
 }
 
 function Chip({ active, onClick, disabled, children, small }: {
@@ -237,14 +243,14 @@ function Chip({ active, onClick, disabled, children, small }: {
         border: `1px solid ${active ? colors.accent : colors.borderMid}`,
         borderRadius: radii.xs,
         color: active ? colors.accent : colors.textSecondary,
-        padding: small ? "4px 10px" : "5px 10px",
-        fontSize: small ? 11 : 11,
+        padding: small ? "6px 12px" : "6px 12px",
+        fontSize: 12,
         fontFamily: small ? "JetBrains Mono, Consolas, monospace" : fonts.sans,
         fontWeight: active ? 600 : 500,
-        letterSpacing: "0.02em",
+        letterSpacing: "0.01em",
         cursor: disabled ? "default" : "pointer",
         transition: "background 90ms, border-color 90ms, color 90ms",
-        minWidth: small ? 32 : "auto",
+        minWidth: small ? 36 : "auto",
         textAlign: "center",
       }}
     >
