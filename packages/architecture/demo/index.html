@@ -575,6 +575,16 @@
     background: var(--accent); color: #0e1219; border-color: var(--accent); font-weight: 600;
   }
   .settings-action-primary:hover { background: var(--accent-hover); }
+  .bec-regen {
+    align-self: flex-start; margin-top: 4px;
+    background: transparent; border: 1px solid var(--border-soft);
+    color: var(--text-secondary); padding: 3px 8px;
+    border-radius: 3px; cursor: pointer;
+    font: 10.5px var(--font-ui);
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .bec-regen:hover { background: var(--bg-elevated); color: var(--text-primary); border-color: var(--accent); }
+  .bec-regen:disabled { opacity: 0.5; cursor: wait; }
 </style>
 </head>
 <body>
@@ -902,6 +912,7 @@ function renderCenter() {
                   <div class="bec-meta">
                     <span class="mono muted">${Object.entries(b.params).slice(0, 2).map(([k, v]) => `${k.replace(/_m$/,'')} ${v}`).join(' · ')} · seed ${String(b.seed).slice(0, 10)}…</span>
                   </div>
+                  <button class="bec-regen" data-regen-element="${p.elementId}" data-regen-style="${p.styleSheetId}" title="Regenerate via AI">⟲ regen</button>
                 </div>
               `;
             }).join('')}
@@ -1570,6 +1581,80 @@ async function loadKernel() {
 
 const kernelMod = await loadKernel();
 
+async function generateBindingInBrowser(styleSheetId, elementId, seedHex = '0xa70') {
+  if (!kernelMod) throw new Error('Kernel not loaded');
+  const catalog = kernelMod.loadElementCatalog();
+  const reg = kernelMod.loadRegistry();
+  const element = catalog.elementsById.get(elementId);
+  const guide = reg.styleGuidesById.get(styleSheetId);
+  if (!element || !guide) throw new Error('Unknown element or style sheet');
+
+  const provider = (() => {
+    const defaults = PROVIDER_DEFAULTS[settings.provider] ?? PROVIDER_DEFAULTS.mock;
+    if (settings.provider === 'mock') return new kernelMod.MockProvider();
+    if (settings.provider === 'anthropic') {
+      if (!settings.apiKey) throw new Error('Anthropic key not set. Open ⚙ settings.');
+      return new kernelMod.AnthropicProvider({
+        apiKey: settings.apiKey,
+        model: settings.model || defaults.model,
+        dangerouslyAllowBrowser: true,
+      });
+    }
+    // OpenAI-compatible family.
+    const baseUrl = settings.provider === 'custom'
+      ? settings.baseUrl
+      : defaults.baseUrl;
+    if (!baseUrl) throw new Error('No base URL configured for this provider. Open ⚙ settings.');
+    if (defaults.needsKey && !settings.apiKey) {
+      throw new Error(`Key required for ${settings.provider}. Open ⚙ settings.`);
+    }
+    return new kernelMod.OpenAICompatibleProvider({
+      baseUrl,
+      apiKey: settings.apiKey || '',
+      model: settings.model || defaults.model,
+      name: settings.provider,
+    });
+  })();
+
+  const seed = BigInt(seedHex);
+  const r = await kernelMod.generateBinding({
+    element, styleSheet: guide.styleSheet, seed, provider,
+  });
+  return r;
+}
+
+async function regenerateBoundElement(styleSheetId, elementId, button) {
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = '⏳ generating…';
+  try {
+    // Seed varies with timestamp so repeated regens give different output.
+    const seed = '0x' + (Date.now() & 0xffffffff).toString(16);
+    const r = await generateBindingInBrowser(styleSheetId, elementId, seed);
+    if (!r.ok) {
+      alert(`Generation failed (${r.stage}):\n` + r.errors.map(e => `${e.path}: ${e.message}`).join('\n'));
+      button.textContent = originalText;
+      button.disabled = false;
+      return;
+    }
+    // Register the new binding with the kernel so emitElementMesh picks it up.
+    kernelMod.registerBinding(r.draft);
+    button.textContent = '✓ accepted';
+    setTimeout(() => {
+      button.textContent = originalText;
+      button.disabled = false;
+    }, 1200);
+    // If the viewer is currently showing this element, re-open it with the new binding.
+    if (document.getElementById('viewerModal').style.display === 'flex') {
+      openViewer(styleSheetId, elementId);
+    }
+  } catch (e) {
+    alert(`Generation error: ${e.message}`);
+    button.textContent = originalText;
+    button.disabled = false;
+  }
+}
+
 function emitGLBForBinding(styleSheetId, elementId) {
   if (!kernelMod) throw new Error('Kernel not loaded — run `npm run build --workspace=@hayba/architecture`');
   const result = kernelMod.emitElementMesh(styleSheetId, elementId);
@@ -1778,6 +1863,14 @@ document.getElementById('settingsSaveBtn').addEventListener('click', () => {
 });
 
 document.addEventListener('click', (e) => {
+  // Regen button — must be handled BEFORE the card-click handler swallows it.
+  const regenBtn = e.target.closest('[data-regen-element]');
+  if (regenBtn) {
+    e.stopPropagation();
+    regenerateBoundElement(regenBtn.dataset.regenStyle, regenBtn.dataset.regenElement, regenBtn);
+    return;
+  }
+
   const card = e.target.closest('.bound-element-card');
   if (card) { openViewer(card.dataset.style, card.dataset.element); return; }
 
