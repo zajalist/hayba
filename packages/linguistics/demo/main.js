@@ -39,6 +39,7 @@ import {
   migrateLocalToRemote,
 } from './sync.js';
 import { getSession } from './auth.js';
+import { renderAuthGate } from './views/auth-gate.js';
 
 /* state - load/save/snapshot helpers live in ./state.js */
 const state = _loadState() ?? defaultState();
@@ -3273,6 +3274,7 @@ function renderTypology() {
 /* View dependency map - each entry lists the state keys a view reads.
    renderAffected(changed) re-renders only the views whose deps intersect. */
 const VIEW_RENDERERS = {
+  authGate: () => renderAuthGate(state, { renderAll }),
   nav: () => renderNav(),
   topbar: () => renderTopbar(),
   phonology: () => renderPhonology(),
@@ -3291,6 +3293,7 @@ const VIEW_RENDERERS = {
 };
 
 const VIEW_DEPS = {
+  authGate:        ['_signedIn', 'languages'],
   nav:             ['view'],
   topbar:          ['selected', 'lexicon', 'langId', 'languages', 'heatmap', 'heatmapMode'],
   phonology:       ['selected', 'active', 'heatmap', 'heatmapMode', 'typology'],

@@ -911,6 +911,17 @@
   }
   .preset-list button:hover { border-color: var(--accent); background: var(--bg-raised); }
   .preset-list button .ph { color: var(--text-muted); font-size: 11px; font-family: var(--font-mono); }
+
+  /* Auth migration banner */
+  .auth-banner {
+    background: var(--accent-dim, #B56A1D22);
+    border-bottom: 1px solid var(--accent, #B56A1D);
+    color: var(--text-primary);
+    padding: 10px 18px;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 13px;
+  }
+  .auth-banner-actions { display: flex; gap: 8px; }
 </style>
 </head>
 <body>
@@ -987,6 +998,7 @@
     </div>
   </div>
 </header>
+<div id="auth-gate" style="display:none"></div>
 <input type="file" id="import-file" accept=".json,application/json" style="display:none">
 
 <div class="app">
