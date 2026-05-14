@@ -27,7 +27,7 @@ describe('verticesToSvgPath', () => {
   });
 
   it('round-trips through parseSvgProfile (closed-path)', () => {
-    const verts = [[0, 0], [100, 0], [100, 50], [0, 50]];
+    const verts: [number, number][] = [[0, 0], [100, 0], [100, 50], [0, 50]];
     const svg = verticesToSvgPath(verts, [0, 0, 100, 50], 'closed-path');
     const parsed = parseSvgProfile(svg, 'closed-path');
     expect(parsed.points.length).toBeGreaterThanOrEqual(4);
@@ -77,17 +77,17 @@ describe('applyHint', () => {
   });
 
   it('closed-path is identity (closure is encoded with Z in serialization)', () => {
-    const verts = [[0, 0], [10, 0], [10, 10]];
+    const verts: [number, number][] = [[0, 0], [10, 0], [10, 10]];
     expect(applyHint(verts, 'closed-path')).toEqual(verts);
   });
 
   it('open-path is identity', () => {
-    const verts = [[0, 0], [10, 0]];
+    const verts: [number, number][] = [[0, 0], [10, 0]];
     expect(applyHint(verts, 'open-path')).toEqual(verts);
   });
 
   it('tileable is identity in v0 (ghost-wrap is visual-only)', () => {
-    const verts = [[0, 0], [100, 0]];
+    const verts: [number, number][] = [[0, 0], [100, 0]];
     expect(applyHint(verts, 'tileable')).toEqual(verts);
   });
 });
