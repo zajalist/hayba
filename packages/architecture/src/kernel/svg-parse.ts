@@ -148,11 +148,15 @@ export function parseSvgProfile(svgStr: string, hint: SvgPath['hint']): SvgPath 
   const tokens = tokenize(d);
   const { pts: raw, closedByZ } = walkPath(tokens);
 
-  // SVG Y-down → engine Y-up: y_engine = (vb.y + vb.h) - y_svg
-  // Then snap to PRECISION.
+  // SVG Y-down → engine Y-up, preserving viewBox extent.
+  // Correct formula: y_engine = (2 * vb.y + vb.h) - y_svg
+  //  - viewBox (0, 0, W, H):       y_engine = H - y_svg            (range [0, H])
+  //  - viewBox (-W/2, -H/2, W, H): y_engine = -y_svg               (range [-H/2, H/2], centered)
+  // This way symmetric viewBoxes produce symmetric output around the origin,
+  // which is what cross-section profiles (loft inputs) need.
   const points: Array<readonly [number, number]> = raw.map(([x, y]) => {
     const ex = snap(x);
-    const ey = snap((vb.y + vb.h) - y);
+    const ey = snap((2 * vb.y + vb.h) - y);
     return [ex, ey] as const;
   });
 

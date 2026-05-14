@@ -1,0 +1,20 @@
+{
+  "id": "finial",
+  "category": "ornament",
+  "graph": {
+    "kind": "kernel-fn",
+    "module": "./kernel/elements/finial.js",
+    "export": "finialGraph"
+  },
+  "profileSlots": [
+    {
+      "name": "profile",
+      "description": "Vertical half-profile of the finial. x >= 0 (revolved around Y axis). Encodes the spire / urn / animal silhouette.",
+      "hint": "symmetric-half",
+      "bbox": [0, 0, 200, 600]
+    }
+  ],
+  "paramSchema": [
+    { "name": "revolve_segments", "kind": "integer", "range": [8, 48], "default": 24 }
+  ]
+}

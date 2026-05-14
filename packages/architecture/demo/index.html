@@ -7,6 +7,14 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&family=Noto+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
 <style>
   /* —— Hayba UE plugin design language — shared with linguistics workbench —— */
   :root {
@@ -468,9 +476,9 @@
 </div>
 
 <script type="module">
-import * as THREE from 'https://unpkg.com/three@0.169.0/build/three.module.js';
-import { GLTFLoader } from 'https://unpkg.com/three@0.169.0/examples/jsm/loaders/GLTFLoader.js';
-import { OrbitControls } from 'https://unpkg.com/three@0.169.0/examples/jsm/controls/OrbitControls.js';
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 'use strict';
 
@@ -492,6 +500,8 @@ const GUIDE_FILES = [
 
 const BOUND_PAIRS = [
   { styleSheetId: 'medieval-european-gothic', elementId: 'column' },
+  { styleSheetId: 'medieval-european-gothic', elementId: 'cornice' },
+  { styleSheetId: 'medieval-european-gothic', elementId: 'finial' },
 ];
 
 const [typologyFile, ...guides] = await Promise.all([
@@ -666,7 +676,7 @@ function renderCenter() {
                     <span class="muted" style="font-size:11px;">click to view 3D</span>
                   </div>
                   <div class="bec-meta">
-                    <span class="mono muted">shaft ${b.params.shaft_height_m}m · seed ${String(b.seed).slice(0, 12)}…</span>
+                    <span class="mono muted">${Object.entries(b.params).slice(0, 2).map(([k, v]) => `${k.replace(/_m$/,'')} ${v}`).join(' · ')} · seed ${String(b.seed).slice(0, 10)}…</span>
                   </div>
                 </div>
               `;
@@ -908,22 +918,31 @@ function fitToBox(aspect, W, H) {
 }
 
 function windowDots(x, y, w, h, density) {
+  // Edge-aligned window slits on the building perimeter — much more readable
+  // than scattered interior dots. Density controls the count along each edge.
   const d = mid(density);
   if (d <= 0) return '';
-  const cols = Math.max(2, Math.round(w / 18));
-  const rows = Math.max(1, Math.round(h / 22));
-  const sw = 3, sh = 3.5;
-  let svg = '';
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      // place ~d fraction of slots
-      if ((c + r * cols) % Math.max(1, Math.round(1 / Math.max(d, 0.02))) !== 0) continue;
-      const cx = x + (c + 0.5) * (w / cols) - sw/2;
-      const cy = y + (r + 0.5) * (h / rows) - sh/2;
-      svg += `<rect class="window" x="${cx}" y="${cy}" width="${sw}" height="${sh}" rx="0.5"/>`;
-    }
+  const slitDepth = 2.5;       // perpendicular to the edge
+  const slitLength = 5.5;      // along the edge
+  const inset = 1.5;           // how far inside the wall the slit sits
+  const baseGap = 22;
+  const gap = Math.max(8, baseGap * (0.04 / Math.max(d, 0.04)));
+
+  const slits = [];
+  // top edge (y = y), bottom edge (y = y + h - slitDepth)
+  for (let cx = x + gap; cx < x + w - slitLength - gap/2; cx += gap + slitLength) {
+    slits.push({ x: cx, y: y + inset, w: slitLength, h: slitDepth });
+    slits.push({ x: cx, y: y + h - inset - slitDepth, w: slitLength, h: slitDepth });
   }
-  return svg;
+  // left edge (x = x), right edge (x = x + w - slitDepth)
+  for (let cy = y + gap; cy < y + h - slitLength - gap/2; cy += gap + slitLength) {
+    slits.push({ x: x + inset, y: cy, w: slitDepth, h: slitLength });
+    slits.push({ x: x + w - inset - slitDepth, y: cy, w: slitDepth, h: slitLength });
+  }
+
+  return slits
+    .map(s => `<rect class="window" x="${s.x}" y="${s.y}" width="${s.w}" height="${s.h}" rx="0.4"/>`)
+    .join('');
 }
 
 /* ─── right pane (typology weights for the active guide, or footprint detail) ── */
@@ -1064,6 +1083,101 @@ function emitGLBForBinding(styleSheetId, elementId) {
   return result;
 }
 
+/* —— procedural stone texture + normal map (CanvasTexture, no external assets) —— */
+function makeStoneTexture(size = 512) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  // Base warm-grey
+  ctx.fillStyle = '#a89c8a';
+  ctx.fillRect(0, 0, size, size);
+  // Stochastic stippling for surface noise
+  const id = ctx.getImageData(0, 0, size, size);
+  for (let i = 0; i < id.data.length; i += 4) {
+    const n = (Math.random() - 0.5) * 36;
+    id.data[i]     = Math.max(0, Math.min(255, id.data[i]     + n));
+    id.data[i + 1] = Math.max(0, Math.min(255, id.data[i + 1] + n * 0.95));
+    id.data[i + 2] = Math.max(0, Math.min(255, id.data[i + 2] + n * 0.85));
+  }
+  ctx.putImageData(id, 0, 0);
+  // Soft veining (a few low-opacity strokes)
+  ctx.strokeStyle = 'rgba(70, 60, 50, 0.18)';
+  ctx.lineWidth = 1.2;
+  for (let k = 0; k < 30; k++) {
+    ctx.beginPath();
+    ctx.moveTo(Math.random() * size, Math.random() * size);
+    for (let s = 0; s < 5; s++) {
+      ctx.lineTo(Math.random() * size, Math.random() * size);
+    }
+    ctx.stroke();
+  }
+  const t = new THREE.CanvasTexture(canvas);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(2, 4);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+function makeStoneNormalMap(size = 512) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  // Compute a tiny height field from noise, then convert to normals.
+  const h = new Float32Array(size * size);
+  for (let i = 0; i < h.length; i++) h[i] = Math.random();
+  // Blur (3x3 box) once for smoother normals
+  const blurred = new Float32Array(h.length);
+  for (let y = 1; y < size - 1; y++) {
+    for (let x = 1; x < size - 1; x++) {
+      let s = 0;
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++)
+          s += h[(y + dy) * size + (x + dx)];
+      blurred[y * size + x] = s / 9;
+    }
+  }
+  const id = ctx.createImageData(size, size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = y * size + x;
+      const xL = blurred[Math.max(0, y * size + (x - 1))] ?? 0.5;
+      const xR = blurred[Math.min(size - 1, y * size + (x + 1))] ?? 0.5;
+      const yD = blurred[Math.max(0, (y - 1) * size + x)] ?? 0.5;
+      const yU = blurred[Math.min(size - 1, (y + 1) * size + x)] ?? 0.5;
+      const dx = (xR - xL) * 4;
+      const dy = (yU - yD) * 4;
+      const dz = 1;
+      const len = Math.hypot(dx, dy, dz) || 1;
+      const r = ((-dx / len) * 0.5 + 0.5) * 255;
+      const g = ((-dy / len) * 0.5 + 0.5) * 255;
+      const b = ((dz / len) * 0.5 + 0.5) * 255;
+      id.data[i * 4]     = r;
+      id.data[i * 4 + 1] = g;
+      id.data[i * 4 + 2] = b;
+      id.data[i * 4 + 3] = 255;
+    }
+  }
+  ctx.putImageData(id, 0, 0);
+  const t = new THREE.CanvasTexture(canvas);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(2, 4);
+  return t;
+}
+
+let STONE_DIFFUSE_TEXTURE = null;
+let STONE_NORMAL_TEXTURE = null;
+function getStoneMaterial() {
+  if (!STONE_DIFFUSE_TEXTURE) STONE_DIFFUSE_TEXTURE = makeStoneTexture();
+  if (!STONE_NORMAL_TEXTURE)  STONE_NORMAL_TEXTURE  = makeStoneNormalMap();
+  return new THREE.MeshStandardMaterial({
+    map: STONE_DIFFUSE_TEXTURE,
+    normalMap: STONE_NORMAL_TEXTURE,
+    normalScale: new THREE.Vector2(0.7, 0.7),
+    roughness: 0.92,
+    metalness: 0.02,
+  });
+}
+
 function openViewer(styleSheetId, elementId) {
   document.getElementById('viewerModal').style.display = 'flex';
   document.getElementById('viewerModalTitle').textContent = `${humanize(elementId)} · ${cultureLabel(styleSheetId)}`;
@@ -1090,10 +1204,13 @@ function openViewer(styleSheetId, elementId) {
   renderer.setSize(stage.clientWidth, stage.clientHeight);
   stage.appendChild(renderer.domElement);
 
-  const light1 = new THREE.DirectionalLight(0xffffff, 1.2);
-  light1.position.set(5, 8, 6);
-  scene.add(light1);
-  scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+  const keyLight = new THREE.DirectionalLight(0xfff2dd, 1.6);
+  keyLight.position.set(5, 8, 6);
+  scene.add(keyLight);
+  const fillLight = new THREE.DirectionalLight(0xa0b0c4, 0.6);
+  fillLight.position.set(-4, 3, -2);
+  scene.add(fillLight);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.18));
   const grid = new THREE.GridHelper(10, 10, 0x3d434e, 0x2a2e36);
   scene.add(grid);
 
@@ -1102,16 +1219,16 @@ function openViewer(styleSheetId, elementId) {
 
   const loader = new GLTFLoader();
   loader.parse(result.glb, '', (gltf) => {
+    const stoneMat = getStoneMaterial();
     gltf.scene.traverse((o) => {
-      if (o.isMesh) {
-        o.material = new THREE.MeshStandardMaterial({ color: 0xb8b0a0, roughness: 0.85, metalness: 0.1 });
-      }
+      if (o.isMesh) o.material = stoneMat;
     });
     scene.add(gltf.scene);
     const box = new THREE.Box3().setFromObject(gltf.scene);
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
-    camera.position.set(center.x + size.x * 2, center.y + size.y * 0.7, center.z + size.z * 2);
+    const maxDim = Math.max(size.x, size.y, size.z, 0.5);
+    camera.position.set(center.x + maxDim * 1.6, center.y + maxDim * 0.6, center.z + maxDim * 1.6);
     controls.target.copy(center);
     controls.update();
   }, (err) => {

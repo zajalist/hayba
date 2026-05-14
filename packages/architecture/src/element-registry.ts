@@ -3,10 +3,15 @@ import type { Element, ElementBinding } from './schema.js';
 import { ELEMENT_GENERATORS } from './kernel/elements/index.js';
 import { emitGLB } from './kernel/glb-emit.js';
 
-import columnFile from './data/elements/column.json' with { type: 'json' };
-import gothicColumnFile from './bindings/medieval-european-gothic/column.json' with { type: 'json' };
+import columnFile  from './data/elements/column.json'  with { type: 'json' };
+import corniceFile from './data/elements/cornice.json' with { type: 'json' };
+import finialFile  from './data/elements/finial.json'  with { type: 'json' };
 
-const RAW_ELEMENTS: unknown[] = [columnFile];
+import gothicColumnFile  from './bindings/medieval-european-gothic/column.json'  with { type: 'json' };
+import gothicCorniceFile from './bindings/medieval-european-gothic/cornice.json' with { type: 'json' };
+import gothicFinialFile  from './bindings/medieval-european-gothic/finial.json'  with { type: 'json' };
+
+const RAW_ELEMENTS: unknown[] = [columnFile, corniceFile, finialFile];
 
 interface BindingRecord {
   styleSheetId: string;
@@ -14,6 +19,8 @@ interface BindingRecord {
 }
 const RAW_BINDINGS: BindingRecord[] = [
   { styleSheetId: 'medieval-european-gothic', raw: gothicColumnFile },
+  { styleSheetId: 'medieval-european-gothic', raw: gothicCorniceFile },
+  { styleSheetId: 'medieval-european-gothic', raw: gothicFinialFile },
 ];
 
 export interface ElementCatalog {
