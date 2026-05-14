@@ -6,19 +6,40 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:        #000;
-  --surface:   #070707;
-  --surface2:  #0c0c0c;
-  --border:    #111;
-  --border2:   #1a1a1a;
-  --orange:    #ff6b35;
-  --orange-dim: rgba(255,107,53,0.06);
-  --orange-mid: rgba(255,107,53,0.18);
-  --orange-glow: rgba(255,107,53,0.35);
-  --text:      #fff;
-  --muted:     #4a4a4a;
-  --muted2:    #252525;
-  --mono:      'Cascadia Code','Fira Code','Consolas',monospace;
+  --bg-deep:     #1b1e24;
+  --bg-base:     #22262e;
+  --bg-panel:    #2a2e36;
+  --bg-raised:   #303540;
+  --bg-elevated: #353a45;
+  --border-soft: #3d434e;
+  --border-mid:  #2f343d;
+  --accent:      #B56A1D;
+  --accent-dim:  #B56A1D22;
+  --accent-glow: #B56A1D55;
+  --text-primary:   #e5e8eb;
+  --text-secondary: #a8aeb8;
+  --text-muted:     #6b7280;
+  --status-green:   #4db38a;
+  --status-orange:  #B56A1D;
+  --status-red:     #e06464;
+  --font-ui:   'Segoe UI', 'Noto Sans', system-ui, sans-serif;
+  --font-mono: 'Consolas', 'Noto Sans Mono', monospace;
+  --font-ipa:  'Charis SIL', 'Noto Sans', 'Lucida Sans Unicode', sans-serif;
+  /* Marketing-only aliases, mapped to the new theme. */
+  --bg:         var(--bg-deep);
+  --surface:    var(--bg-panel);
+  --surface2:   var(--bg-raised);
+  --border:     var(--border-soft);
+  --border2:    var(--border-mid);
+  --text:       var(--text-primary);
+  --text-dim:   var(--text-secondary);
+  --orange:     var(--accent);
+  --orange-dim: var(--accent-dim);
+  --orange-mid: var(--accent-glow);
+  --orange-glow: var(--accent-glow);
+  --muted:      var(--text-secondary);
+  --muted2:     var(--text-muted);
+  --mono:       var(--font-mono);
   --ease-out:  cubic-bezier(0.16,1,0.3,1);
   --ease-spring: cubic-bezier(0.34,1.56,0.64,1);
 }
@@ -27,7 +48,7 @@ html { scroll-behavior: smooth; }
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: var(--font-ui);
   line-height: 1.6;
   overflow-x: hidden;
 }
@@ -717,4 +738,178 @@ footer {
   .usecase-grid { grid-template-columns: 1fr; }
   .hero-stats { display: grid; grid-template-columns: repeat(2,1fr); gap: 1px; background: #0f0f0f; }
   .stat { padding: 0.75rem 1rem; background: #000; }
+}
+
+/* ============================================================
+   Shared form / page styles for /waitlist, /login, /admin pages
+   ============================================================ */
+
+.brand-link {
+  display: inline-block; color: var(--text-secondary);
+  text-decoration: none; font-size: 13px; margin-bottom: 24px;
+}
+.brand-link:hover { color: var(--accent); }
+
+.eyebrow {
+  color: var(--accent); font-weight: 700; font-size: 12px;
+  letter-spacing: 1.5px; margin-bottom: 8px;
+}
+
+.lead {
+  color: var(--text-secondary); font-size: 14px; line-height: 1.5;
+  margin-bottom: 24px;
+}
+
+.muted { color: var(--text-muted); font-size: 12.5px; }
+.muted.small { font-size: 11.5px; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 9px 18px; border-radius: 4px; font: 600 13px var(--font-ui);
+  border: 1px solid var(--border-soft); background: var(--bg-panel);
+  color: var(--text-primary); cursor: pointer; text-decoration: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+.btn:hover { background: var(--bg-elevated); border-color: var(--accent); }
+.btn.primary {
+  background: var(--accent); color: #1a0800; border-color: var(--accent);
+}
+.btn.primary:hover { background: #D17F2A; border-color: #D17F2A; }
+.btn.ghost { background: transparent; }
+.btn.approve { background: var(--status-green); color: #0e2010; border-color: var(--status-green); }
+.btn.danger { background: var(--status-red); color: #2a0e0e; border-color: var(--status-red); }
+
+.page-form {
+  background: var(--bg-deep); min-height: 100vh;
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 60px 24px;
+}
+.form-shell {
+  max-width: 540px; width: 100%; color: var(--text-primary);
+}
+.form-shell h1 {
+  font-size: 26px; font-weight: 700; line-height: 1.2;
+  margin-bottom: 12px;
+}
+.form-shell h2 { font-size: 20px; margin-bottom: 8px; }
+
+.form { display: flex; flex-direction: column; gap: 18px; }
+.form label {
+  display: flex; flex-direction: column; gap: 6px;
+  font-size: 12px; color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.form input[type=email],
+.form input[type=text],
+.form select,
+.form textarea {
+  background: var(--bg-base); border: 1px solid var(--border-soft);
+  border-radius: 4px; color: var(--text-primary);
+  padding: 8px 10px; font: 13px var(--font-ui); width: 100%;
+  text-transform: none;
+}
+.form textarea { resize: vertical; }
+.form fieldset {
+  border: 1px solid var(--border-soft); border-radius: 4px;
+  padding: 14px 16px;
+}
+.form legend {
+  color: var(--text-secondary); font-size: 12px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  padding: 0 6px;
+}
+.chip-group {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px;
+  align-items: center;
+}
+.chip-label {
+  color: var(--text-muted); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  width: 100%; margin-top: 4px;
+}
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 9px; border-radius: 12px;
+  border: 1px solid var(--border-soft); background: var(--bg-base);
+  color: var(--text-primary); font-size: 11.5px; cursor: pointer;
+}
+.chip:has(input:checked) {
+  background: var(--accent-dim); border-color: var(--accent);
+  color: var(--accent);
+}
+.chip input { display: none; }
+.chip-tag {
+  display: inline-block; padding: 2px 8px; border-radius: 10px;
+  background: var(--accent-dim); color: var(--accent);
+  font-size: 11px; margin: 2px;
+}
+
+/* Admin page */
+.page-admin {
+  background: var(--bg-deep); min-height: 100vh; padding: 0;
+  color: var(--text-primary);
+}
+.admin-header {
+  display: flex; align-items: center; gap: 16px;
+  padding: 16px 24px; border-bottom: 1px solid var(--border-mid);
+}
+.admin-header h1 { font-size: 18px; margin: 0; }
+.admin-header .brand-link { margin-bottom: 0; }
+.admin-header > .btn { margin-left: auto; }
+.admin-counts {
+  display: flex; gap: 24px; padding: 16px 24px;
+  border-bottom: 1px solid var(--border-mid); align-items: center;
+}
+.admin-counts .label {
+  color: var(--text-muted); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.admin-counts .count {
+  font: 700 22px var(--font-mono); color: var(--text-primary);
+}
+.admin-counts .count.pending { color: var(--accent); }
+.admin-counts .count.approved { color: var(--status-green); }
+.admin-counts select {
+  margin-left: auto; background: var(--bg-base);
+  border: 1px solid var(--border-soft); color: var(--text-primary);
+  padding: 6px 10px; border-radius: 4px; font: 12px var(--font-ui);
+}
+.admin-list { padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; }
+.entry {
+  background: var(--bg-panel); border: 1px solid var(--border-mid);
+  border-radius: 4px; padding: 14px 18px;
+}
+.entry header {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 8px;
+}
+.entry .email { font-weight: 600; }
+.entry .time { color: var(--text-muted); font-size: 11px; }
+.entry .actions { margin-left: auto; display: flex; gap: 6px; }
+.entry .row {
+  display: grid; grid-template-columns: 80px 1fr; gap: 12px;
+  margin-top: 4px; font-size: 12.5px;
+}
+.entry .field-label {
+  color: var(--text-muted); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.status-pill {
+  font-size: 10px; padding: 1px 8px; border-radius: 10px;
+  text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;
+  border: 1px solid; background: var(--accent-dim); color: var(--accent);
+  border-color: var(--accent);
+}
+.status-pill.approved {
+  background: rgba(77, 179, 138, 0.18); color: var(--status-green);
+  border-color: var(--status-green);
+}
+.status-pill.rejected {
+  background: rgba(224, 100, 100, 0.18); color: var(--status-red);
+  border-color: var(--status-red);
+}
+
+.readonly-404 {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100vh; font: 18px var(--font-ui); color: var(--text-secondary);
+  background: var(--bg-deep);
 }
