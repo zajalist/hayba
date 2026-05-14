@@ -41,6 +41,7 @@ import {
 import { getSession } from './auth.js';
 import { renderAuthGate } from './views/auth-gate.js';
 import { renderLangPicker } from './views/lang-picker.js';
+import './views/share.js';
 
 /* state - load/save/snapshot helpers live in ./state.js */
 const state = _loadState() ?? defaultState();

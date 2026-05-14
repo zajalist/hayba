@@ -934,6 +934,22 @@
     font-size: 13px;
   }
   .auth-banner-actions { display: flex; gap: 8px; }
+
+  /* Share modal */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .modal {
+    background: var(--bg-panel); border: 1px solid var(--border-soft);
+    border-radius: 6px; padding: 24px; min-width: 420px; max-width: 540px;
+    color: var(--text-primary);
+  }
+  .modal h3 { margin: 0 0 8px; }
+  .modal .checkbox { display: flex; align-items: center; gap: 8px; margin: 16px 0; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  #share-url-row { display: flex; gap: 8px; margin-top: 12px; }
+  #share-url { flex: 1; }
 </style>
 </head>
 <body>
