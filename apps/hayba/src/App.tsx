@@ -5,7 +5,7 @@ import Viewport from "./viewport/Viewport";
 import type { SceneHandle } from "./viewport/scene";
 import { buildGlobe, PLATE_PALETTE, type GlobeHandle } from "./viewport/globe";
 import { attachPainter, type PainterHandle } from "./viewport/painter";
-import StatusBarV2, { Mono } from "./components/StatusBarV2";
+import StatusBar, { Mono } from "./components/StatusBar";
 import TopBar from "./components/TopBar";
 import RightPanel from "./components/RightPanel";
 import type { PanelCategory } from "./components/CategoryStrip";
@@ -677,7 +677,7 @@ export default function App() {
       </RightPanel>
 
       <div style={{ gridColumn: "1 / span 2" }}>
-        <StatusBarV2
+        <StatusBar
           mode={statusMode(mode)}
           chips={statusChips(mode, draft, snapshot, cellCountRef.current)}
           hint={statusHint(mode)}
