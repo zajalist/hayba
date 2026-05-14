@@ -104,7 +104,8 @@ const TAG_PAYLOAD_SIZE = Object.freeze({
   [0x21]: 4,  // u32 id
 });
 
-const MAGIC = [0x48, 0x41, 0x59, 0x42, 0x41]; // "HAYBA"
+const MAGIC = [0x48, 0x41, 0x59, 0x42, 0x41]; // "HAYBA" — legacy v1
+const MAGIC_V2 = [0x48, 0x41, 0x59, 0x56, 0x32]; // "HAYV2" — current Rust encoder
 const PLATE_PARENT_NONE = 0xFFFFFFFF;
 
 // -----------------------------------------------------------------------------
@@ -204,12 +205,13 @@ export class ByteReader {
 // -----------------------------------------------------------------------------
 export function parseHeader(reader) {
   const magic = reader.bytes(5);
-  for (let i = 0; i < 5; i++) {
-    if (magic[i] !== MAGIC[i]) {
-      throw new Error(
-        `parseHeader: bad magic. expected "HAYBA", got [${Array.from(magic).join(",")}]`
-      );
-    }
+  let format = null;
+  if (magic.every((b, i) => b === MAGIC[i])) format = "HAYBA";
+  else if (magic.every((b, i) => b === MAGIC_V2[i])) format = "HAYV2";
+  if (!format) {
+    throw new Error(
+      `parseHeader: bad magic. expected "HAYBA" or "HAYV2", got [${Array.from(magic).join(",")}]`
+    );
   }
   const version = reader.u8();
   reader.skip(2); // 2 pad bytes -> brings us to byte 8
@@ -224,6 +226,7 @@ export function parseHeader(reader) {
   const divisions = reader.u16();
   reader.skip(2); // reserved u16 -> header still 32 bytes
   return {
+    format,
     version,
     total_frames,
     n_cells,
@@ -231,6 +234,61 @@ export function parseHeader(reader) {
     keyframe_stride,
     master_seed,
     divisions,
+  };
+}
+
+/**
+ * HAYV2 initial-state block: a much simpler shape than HAYBA's. The Rust
+ * `te-port` CLI emits this minimal format today — see
+ * packages/hayba-tectonics-v2/src/frame_stream/mod.rs.
+ *
+ * Layout per cell:
+ *   u16 plate_id (0xFFFF = NO_PLATE)
+ *   f32 elevation_m
+ *   u8  is_continental
+ *
+ * No plate blocks, no MORs, no climate. The returned state is sparse — only
+ * the per-cell arrays the encoder actually wrote are populated. Consumers
+ * that need plate orientation / climate must fall back to defaults.
+ */
+export function parseInitialStateV2(reader, n_cells) {
+  const cell_plate = new Uint32Array(n_cells);
+  for (let i = 0; i < n_cells; i++) {
+    const v = reader.u16();
+    cell_plate[i] = v === 0xFFFF ? 0xFFFFFFFF : v;
+  }
+  const cell_elevation_m_f32 = new Float32Array(n_cells);
+  for (let i = 0; i < n_cells; i++) cell_elevation_m_f32[i] = reader.f32();
+  // Project f32 elevation onto the i16-meters shape the renderer expects.
+  // HAYBA stores elevation as i16 meters; HAYV2 stores f32 meters. Clamp to
+  // i16 range so downstream code can treat the array uniformly.
+  const cell_elevation_m = new Int16Array(n_cells);
+  for (let i = 0; i < n_cells; i++) {
+    const e = Math.round(cell_elevation_m_f32[i]);
+    cell_elevation_m[i] = Math.max(-32768, Math.min(32767, e));
+  }
+  const cell_continental = readU8Array(reader, n_cells);
+
+  return {
+    cell_plate,
+    cell_elevation_m,
+    cell_continental,
+    // Fill the HAYBA-shaped slots so existing renderers don't crash on
+    // missing arrays. These stay zero until later format passes wire them.
+    cell_composition: new Uint8Array(n_cells),
+    cell_rift_progress: new Uint8Array(n_cells),
+    cell_failed_rift_age_ma: new Uint16Array(n_cells),
+    cell_lip_age_ma: new Uint16Array(n_cells),
+    cell_volcanic_act: new Uint8Array(n_cells),
+    cell_age_ma: new Uint16Array(n_cells),
+    plates: [],
+    mors: [],
+    lip_bursts: [],
+    boundary_polylines: [],
+    events_this_frame: {
+      spawns: [], deaths: [], passive_splits: [], failed_rifts: [], lip_bursts: [],
+    },
+    spawn_count: 0, death_count: 0, passive_split_count: 0, failed_rift_count: 0,
   };
 }
 
@@ -653,19 +711,27 @@ export class FrameCache {
 
     const reader = new ByteReader(arrayBuffer);
     this.header = parseHeader(reader);
-    this.state0 = parseInitialState(reader, this.header.n_cells);
+    if (this.header.format === "HAYV2") {
+      this.state0 = parseInitialStateV2(reader, this.header.n_cells);
+    } else {
+      this.state0 = parseInitialState(reader, this.header.n_cells);
+    }
 
     // Index per-frame byte offsets (relative to arrayBuffer start).
     // After the initial state, each frame is:
     //   u32 frame_idx | u32 payload_size | payload bytes
     // We index the offset of the u32 frame_idx header, so seek can construct
     // a reader at that position and call applyFrame() directly.
+    //
+    // Phase 10.1: HAYV2 streams emit 1-indexed frame_idx (1..total_frames)
+    // and seek() short-circuits to the initial state anyway, so we skip the
+    // frame-offset scan entirely for HAYV2 to avoid bogus range errors.
     this.frameOffsets = new Array(this.header.total_frames);
+    let scanned = this.header.format === "HAYV2" ? this.header.total_frames : 0;
 
     let cursor = reader.absolutePos;
     const totalLen = arrayBuffer.byteLength;
-    let scanned = 0;
-    while (cursor < totalLen && scanned < this.header.total_frames) {
+    while (this.header.format !== "HAYV2" && cursor < totalLen && scanned < this.header.total_frames) {
       const peek = new DataView(arrayBuffer, cursor, 8);
       const frame_idx = peek.getUint32(0, true);
       const payload_size = peek.getUint32(4, true);
@@ -765,6 +831,18 @@ export class FrameCache {
       );
     }
     if (targetFrame === this.currentFrame) return this.current;
+
+    // Phase 10.1: HAYV2's per-frame delta tags have a different shape than
+    // HAYBA's (count-prefixed batches vs single-record tags). Until the JS
+    // decoder grows HAYV2-flavoured handlers, treat HAYV2 streams as
+    // initial-state-only — every frame returns the frame-0 snapshot. This
+    // is enough to validate geography (cell positions + initial elevations);
+    // animation belongs to the Hayba Explorer rewrite.
+    if (this.header.format === "HAYV2") {
+      this.current = FrameCache.cloneState(this.state0);
+      this.currentFrame = targetFrame;
+      return this.current;
+    }
 
     if (targetFrame < this.currentFrame) {
       // Rewind to state0.
