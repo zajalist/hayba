@@ -9,7 +9,7 @@
     "build": "tsc",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "serve": "node demo/serve.mjs"
+    "serve": "tsc && node demo/serve.mjs"
   },
   "dependencies": {
     "three": "^0.169.0"
