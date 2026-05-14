@@ -152,7 +152,13 @@ impl<W: Write> FrameEncoder<W> {
         writer.write_all(&dt_ma.to_bits().to_le_bytes())?;
         writer.write_all(&keyframe_stride.to_le_bytes())?;
         writer.write_all(&(master_seed as u32).to_le_bytes())?;
-        writer.write_all(&((master_seed >> 32) as u32).to_le_bytes())?;
+        // Last u32 of the 32-byte header carries the peels `divisions` (u16)
+        // plus a u16 reserved slot. Phase 10.1 surfaced that without divisions
+        // in-band, JS consumers had to guess what sphere to build to match the
+        // bin's cells. n_cells = 10*d² + 2 → derive d from n_cells.
+        let divisions: u16 = (((n_cells as f64 - 2.0) / 10.0).sqrt().round() as u16).max(1);
+        writer.write_all(&divisions.to_le_bytes())?;
+        writer.write_all(&0u16.to_le_bytes())?; // reserved u16
 
         // ── Initial-state block ──────────────────────────────────────
         let (plate, elev, continental) = snapshot(n_cells, fields);
