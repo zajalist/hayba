@@ -1,0 +1,13 @@
+# infra/caddy.Caddyfile
+# Caddy fronts the Supabase Kong gateway on srv-dev-01.
+# Cloudflare Tunnel handles public TLS; Caddy stays internal HTTP.
+
+:8080 {
+    encode gzip
+    reverse_proxy /auth/* localhost:9999
+    reverse_proxy /rest/* localhost:3000
+    reverse_proxy /realtime/* localhost:4000
+    reverse_proxy /storage/* localhost:5000
+    reverse_proxy /functions/* localhost:9998
+    reverse_proxy /* localhost:8000     # kong fallthrough
+}
