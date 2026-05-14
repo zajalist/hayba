@@ -2105,3 +2105,20 @@ Two execution options:
 2. **Inline Execution** — Execute tasks in this session using executing-plans, batched with checkpoints for review.
 
 Which approach?
+
+---
+
+## Implementation deviations log (rolling)
+
+Captures any behavioral deviations from the plan as the subagent loop runs.
+
+### Tasks 9-12 — wordlink rename migration not ported
+
+The previous topbar `lang-rename` handler updated `state.wordlinks` rows
+where `langA` / `langB` matched the renamed language ID. The new
+`lang-picker.js` does NOT carry that logic. Renaming a language that has
+cross-language wordlinks will orphan those rows.
+
+Workaround until fixed: don't rename a language that has been forked or
+shares cognates with another language. Address in Phase 6 polish or as a
+follow-up issue.
