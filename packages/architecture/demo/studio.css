@@ -615,3 +615,170 @@ textarea.field-input {
   letter-spacing: 0.12em;
 }
 .panel-body { min-height: 60px; }
+
+/* ── Era panel: Defaults ─────────────────────────────────── */
+.defaults-form {
+  display: grid;
+  gap: 8px;
+}
+.defaults-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
+}
+.field-row {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  align-items: center;
+  gap: 6px;
+}
+.field-row label {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.field-row input[type="number"],
+.field-row input[type="text"] {
+  background: #1b1e24;
+  color: #ccc;
+  border: 1px solid #2a2e36;
+  padding: 3px 6px;
+  font-family: inherit;
+  font-size: 12px;
+  border-radius: 3px;
+}
+.field-row input[type="number"]:focus,
+.field-row input[type="text"]:focus {
+  outline: none;
+  border-color: var(--accent, #B56A1D);
+}
+.prop-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.prop-input-wrap input[type="number"] {
+  flex: 1;
+  min-width: 0;
+}
+.prop-val {
+  font-size: 10px;
+  color: var(--text-muted, #888);
+  font-family: var(--font-mono, monospace);
+  width: 34px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.palette-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.palette-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 2px;
+}
+.palette-row input[type="color"] {
+  width: 32px;
+  height: 24px;
+  border: 1px solid #2a2e36;
+  border-radius: 3px;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  background: none;
+}
+.segmented {
+  display: flex;
+  gap: 0;
+  border: 1px solid #2a2e36;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.segmented button {
+  background: #1b1e24;
+  color: #888;
+  border: 0;
+  padding: 4px 10px;
+  font-size: 10px;
+  font-family: inherit;
+  cursor: pointer;
+  border-right: 1px solid #2a2e36;
+  text-transform: capitalize;
+}
+.segmented button:last-child { border-right: 0; }
+.segmented button.active {
+  background: var(--accent, #B56A1D);
+  color: #000;
+}
+.segmented button:hover:not(.active) { background: #22262e; color: #ccc; }
+
+/* ── Era panel: Typology mix ─────────────────────────────── */
+.typology-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.typology-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.typology-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 2px;
+}
+.typology-row .typ-id {
+  width: 120px;
+  flex-shrink: 0;
+}
+.typology-row .typ-slider {
+  flex: 1;
+  accent-color: var(--accent, #B56A1D);
+  cursor: pointer;
+}
+.typ-val {
+  font-size: 10px;
+  color: var(--text-muted, #888);
+  font-family: var(--font-mono, monospace);
+  width: 30px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* ── Era panel: Ornaments shortcut ───────────────────────── */
+.ornaments-note {
+  font-style: italic;
+  line-height: 1.4;
+}
+.shortcut-buttons {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0;
+  flex-wrap: wrap;
+}
+.ornament-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 0;
+  list-style: none;
+}
+.ornament-pill {
+  background: #22262e;
+  border: 1px solid #2a2e36;
+  color: var(--text-secondary, #ccc);
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 2px;
+}
