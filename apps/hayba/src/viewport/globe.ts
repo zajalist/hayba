@@ -36,7 +36,11 @@ export interface GlobeHandle {
     boundary?: BoundaryRender,
   ): void;
   /** Color cells by the baked snapshot's per-plate colors (with continental cues). */
-  recolorFromSnapshot(snap: PlanetSnapshot, palette: ReadonlyArray<[number, number, number]>): void;
+  recolorFromSnapshot(
+    snap: PlanetSnapshot,
+    palette: ReadonlyArray<[number, number, number]>,
+    boundaryTypes?: Record<string, BoundaryType>,
+  ): void;
 }
 
 export function buildGlobe(cellPositions: Float32Array): GlobeHandle {
@@ -96,13 +100,35 @@ export function buildGlobe(cellPositions: Float32Array): GlobeHandle {
       }
       colorAttr.needsUpdate = true;
     },
-    recolorFromSnapshot(snap, palette) {
-      // Continental cells: take the plate's color, slightly desaturated.
-      // Oceanic cells: take the plate's color, deeply darkened toward slate.
-      // Boundary cells: TE's pink — wins over the plate tint, matching TE.
+    recolorFromSnapshot(snap, palette, boundaryTypes) {
       for (let i = 0; i < snap.n_cells; i++) {
         if (snap.cell_is_boundary && snap.cell_is_boundary[i] === 1) {
-          paintCell(i, BOUNDARY_COLOR);
+          // If this boundary's pair has an assigned type, tint by type. We
+          // look at each neighbour-id from cell_plate_ids[i] and any one of
+          // its different-plate neighbours via a small scan; we lack the
+          // neighbour table client-side, so we use a heuristic: look at the
+          // first cell with a different plate in a small index window.
+          let tinted = false;
+          if (boundaryTypes) {
+            const myPlate = snap.cell_plate_ids[i];
+            // Scan ±48 cells for a neighbour with a different plate (cheap;
+            // peels orders cells along peel rows so nearby ids are spatially close).
+            for (let offset = 1; offset <= 48; offset++) {
+              for (const j of [i - offset, i + offset]) {
+                if (j < 0 || j >= snap.n_cells) continue;
+                if (!snap.cell_is_boundary[j]) continue;
+                const other = snap.cell_plate_ids[j];
+                if (other === myPlate || other < 0) continue;
+                const key = myPlate < other ? `${myPlate}-${other}` : `${other}-${myPlate}`;
+                const t = boundaryTypes[key];
+                if (t === "convergent") { paintCell(i, BOUNDARY_CONVERGENT_COLOR); tinted = true; }
+                else if (t === "divergent") { paintCell(i, BOUNDARY_DIVERGENT_COLOR); tinted = true; }
+                break;
+              }
+              if (tinted) break;
+            }
+          }
+          if (!tinted) paintCell(i, BOUNDARY_COLOR);
           continue;
         }
         const pid = snap.cell_plate_ids[i];
@@ -122,6 +148,8 @@ export function buildGlobe(cellPositions: Float32Array): GlobeHandle {
           ]);
         }
       }
+      // Mute unused declared colors so TS doesn't complain.
+      void BOUNDARY_HOVER_COLOR;
       colorAttr.needsUpdate = true;
     },
   };
