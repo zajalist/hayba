@@ -478,10 +478,140 @@ textarea.field-input {
 }
 
 /* ── Timeline + era detail ──────────────────────────────── */
-.culture-timeline,
+.culture-timeline {
+  position: relative;
+  padding: 10px 12px;
+  min-height: 80px;
+  background: var(--bg-deep, #14171c);
+  border: 1px solid var(--border-mid, #2a2e36);
+  border-radius: 3px;
+}
 .era-detail {
   background: var(--bg-deep, #14171c);
   border: 1px solid var(--border-mid, #2a2e36);
   padding: 10px;
   border-radius: 3px;
 }
+.timeline-track {
+  position: relative;
+  height: 44px;
+  background: #14171c;
+  border: 1px solid #2a2e36;
+  border-radius: 3px;
+}
+.era-block {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  background: linear-gradient(180deg, rgba(181,106,29,0.22), rgba(181,106,29,0.10));
+  border: 1px solid #6b4a23;
+  border-radius: 2px;
+  padding: 4px 6px;
+  cursor: pointer;
+  color: #c8a878;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  font-family: inherit;
+  text-align: left;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.era-block:hover { border-color: #B56A1D; color: #fff; }
+.era-block.expanded {
+  background: linear-gradient(180deg, rgba(181,106,29,0.55), rgba(181,106,29,0.30));
+  border-color: #B56A1D;
+  border-width: 2px;
+  color: #fff;
+}
+.era-block .era-name {
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.era-block .era-dates {
+  font-size: 9px;
+  opacity: 0.8;
+  font-family: monospace;
+}
+.timeline-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: #555;
+  font-family: monospace;
+  padding: 4px 2px 0;
+}
+.timeline-add, .timeline-empty-add { margin-top: 8px; }
+.era-detail-header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #2a2e36;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.era-name-input {
+  background: transparent;
+  color: #fff;
+  border: 1px solid transparent;
+  padding: 4px 6px;
+  font-size: 14px;
+  font-weight: 600;
+  min-width: 200px;
+  font-family: inherit;
+  border-radius: 3px;
+}
+.era-name-input:hover, .era-name-input:focus { border-color: #2a2e36; outline: none; background: #1b1e24; }
+.era-date-inputs {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  color: #888;
+}
+.era-date-inputs input {
+  background: #1b1e24;
+  color: #ccc;
+  border: 1px solid #2a2e36;
+  padding: 3px 6px;
+  width: 70px;
+  font-family: monospace;
+  font-size: 11px;
+  border-radius: 3px;
+}
+.era-date-inputs input:focus { outline: none; border-color: var(--accent, #B56A1D); }
+.era-detail-collapse, .era-detail-delete {
+  background: transparent;
+  color: #888;
+  border: 1px solid #444;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+  border-radius: 3px;
+}
+.era-detail-delete:hover { color: #d65a4a; border-color: #d65a4a; }
+.era-detail-collapse:hover { color: #ccc; border-color: #666; }
+.era-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+.era-detail-grid section {
+  background: #14171c;
+  border: 1px solid #2a2e36;
+  padding: 10px;
+  border-radius: 3px;
+}
+.era-detail-grid h3 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+.panel-body { min-height: 60px; }

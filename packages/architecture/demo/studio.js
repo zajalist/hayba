@@ -582,10 +582,167 @@ function renderCultureRulesSubtab(body) {
   body.appendChild(wrap);
 }
 
+/* ── Timeline ────────────────────────────────────────────── */
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function escapeAttr(s) { return escapeHtml(s); }
+
+function renderTimeline() {
+  const el = document.getElementById('culture-timeline');
+  if (!el) return;
+  el.innerHTML = '';
+  if (!state.culture) return;
+  const eras = state.culture.eras ?? [];
+
+  if (eras.length === 0) {
+    const btn = document.createElement('button');
+    btn.className = 'add-btn timeline-empty-add';
+    btn.textContent = '+ Add first era';
+    btn.addEventListener('click', addEra);
+    el.appendChild(btn);
+    return;
+  }
+
+  const minY = Math.min(...eras.map(e => e.dateRange?.[0] ?? 0)) - 50;
+  const maxY = Math.max(...eras.map(e => e.dateRange?.[1] ?? 0)) + 50;
+  const span = Math.max(maxY - minY, 1);
+
+  const track = document.createElement('div');
+  track.className = 'timeline-track';
+  for (const era of eras) {
+    const dr = era.dateRange ?? [0, 100];
+    const left = ((dr[0] - minY) / span) * 100;
+    const width = Math.max(((dr[1] - dr[0]) / span) * 100, 1);
+    const block = document.createElement('button');
+    block.className = 'era-block' + (era.id === state.expandedEraId ? ' expanded' : '');
+    block.style.left = left + '%';
+    block.style.width = width + '%';
+    block.innerHTML = `<span class="era-name">${escapeHtml(era.name)}</span><span class="era-dates">${dr[0]}–${dr[1]}</span>`;
+    block.title = `${era.name} (${dr[0]}–${dr[1]})`;
+    block.addEventListener('click', () => expandEra(era.id));
+    track.appendChild(block);
+  }
+  el.appendChild(track);
+
+  const axis = document.createElement('div');
+  axis.className = 'timeline-axis';
+  const ticks = [minY, Math.round((minY + maxY) / 2), maxY];
+  for (const t of ticks) {
+    const tick = document.createElement('span');
+    tick.textContent = t;
+    axis.appendChild(tick);
+  }
+  el.appendChild(axis);
+
+  const addBtn = document.createElement('button');
+  addBtn.className = 'add-btn timeline-add';
+  addBtn.textContent = '+ Add era';
+  addBtn.addEventListener('click', addEra);
+  el.appendChild(addBtn);
+}
+
+async function addEra() {
+  const id = (prompt('Era id (kebab-case)?') ?? '').trim();
+  if (!id) return;
+  if (!/^[a-z][a-z0-9-]*$/.test(id)) { alert('Id must be kebab-case.'); return; }
+  if ((state.culture.eras ?? []).some(e => e.id === id)) { alert('An era with that id already exists.'); return; }
+  const name = (prompt('Era name?') ?? id).trim() || id;
+  const start = Number(prompt('Start year?') ?? '0');
+  const end = Number(prompt('End year?') ?? '100');
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) { alert('Invalid date range — end must be greater than start.'); return; }
+  if (!state.culture.eras) state.culture.eras = [];
+  state.culture.eras.push({
+    id, name, dateRange: [start, end],
+    defaults: {
+      roofType: 'gabled',
+      proportions: { columnSlenderness: 1, storyHeight: 1, doorAspect: 1 },
+      palette: [],
+      ornamentDensity: 'moderate',
+      technique: '',
+    },
+    typologyMix: {},
+    rules: [],
+  });
+  await patchCulture({ eras: state.culture.eras });
+  state.expandedEraId = id;
+  renderTimeline();
+  renderEraDetail();
+}
+
+function expandEra(eraId) {
+  state.expandedEraId = state.expandedEraId === eraId ? null : eraId;
+  renderTimeline();
+  renderEraDetail();
+}
+
+/* ── Era detail shell ────────────────────────────────────── */
+// v2: drag-to-resize and drag-to-move era blocks on the timeline track are deferred.
+// Only click-to-expand and form-based editing of dateRange are implemented here.
+
+function renderEraDetail() {
+  const el = document.getElementById('era-detail');
+  if (!el) return;
+  if (!state.expandedEraId || !state.culture) {
+    el.hidden = true;
+    el.innerHTML = '';
+    return;
+  }
+  const era = (state.culture.eras ?? []).find(e => e.id === state.expandedEraId);
+  if (!era) { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = `
+    <header class="era-detail-header">
+      <input class="era-name-input" value="${escapeAttr(era.name)}" data-field="name" />
+      <div class="era-date-inputs">
+        <input type="number" data-field="start" value="${era.dateRange?.[0] ?? 0}" />
+        <span>–</span>
+        <input type="number" data-field="end" value="${era.dateRange?.[1] ?? 100}" />
+      </div>
+      <button class="era-detail-collapse" title="Collapse">▾ Collapse</button>
+      <button class="era-detail-delete" title="Delete era">× Delete era</button>
+    </header>
+    <div class="era-detail-grid">
+      <section id="panel-defaults"><h3>Defaults</h3><div class="panel-body"><p class="placeholder">Defaults editor lands in Task 13.</p></div></section>
+      <section id="panel-typology"><h3>Typology mix</h3><div class="panel-body"><p class="placeholder">Typology mix editor lands in Task 13.</p></div></section>
+      <section id="panel-rules"><h3>Rules</h3><div class="panel-body"><p class="placeholder">Rule editor lands in Task 14.</p></div></section>
+      <section id="panel-ornaments"><h3>Ornaments</h3><div class="panel-body"><p class="placeholder">Ornament link lands in Task 13.</p></div></section>
+    </div>
+  `;
+  el.querySelector('.era-name-input').addEventListener('input', (e) => {
+    era.name = e.target.value;
+    savePartial({ eras: state.culture.eras });
+  });
+  for (const inp of el.querySelectorAll('input[type="number"]')) {
+    inp.addEventListener('input', () => {
+      const start = Number(el.querySelector('[data-field="start"]').value);
+      const end = Number(el.querySelector('[data-field="end"]').value);
+      era.dateRange = [start, end];
+      savePartial({ eras: state.culture.eras });
+      renderTimeline();
+    });
+  }
+  el.querySelector('.era-detail-collapse').addEventListener('click', () => {
+    state.expandedEraId = null;
+    renderTimeline();
+    renderEraDetail();
+  });
+  el.querySelector('.era-detail-delete').addEventListener('click', async () => {
+    if (!confirm(`Delete era "${era.id}"?`)) return;
+    state.culture.eras = (state.culture.eras ?? []).filter(e => e.id !== era.id);
+    state.expandedEraId = null;
+    await patchCulture({ eras: state.culture.eras });
+    renderTimeline();
+    renderEraDetail();
+  });
+}
+
 /* ── select & refresh ────────────────────────────────────── */
 
 async function select(id) {
   state.selectedId = id;
+  state.expandedEraId = null;
   try {
     state.culture = await api.get(id);
   } catch (e) {
@@ -595,6 +752,8 @@ async function select(id) {
   renderList();
   renderHeader();
   renderSubtab();
+  renderTimeline();
+  renderEraDetail();
 }
 
 async function refreshList() {
