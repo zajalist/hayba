@@ -6,6 +6,24 @@
   'use strict';
 
   /* ─── 3D Isometric Terrain Canvas ─── */
+  const TERRAIN_COLORS = {
+    bg:        '#1b1e24',
+    grid:      '#3d434e',
+    accent:    '#B56A1D',
+    highlight: '#D17F2A',
+  };
+  // Pre-parsed RGB for interpolation.
+  const _hexRgb = (hex) => {
+    const n = parseInt(hex.slice(1), 16);
+    return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
+  };
+  const TERRAIN_RGB = {
+    bg:        _hexRgb(TERRAIN_COLORS.bg),
+    grid:      _hexRgb(TERRAIN_COLORS.grid),
+    accent:    _hexRgb(TERRAIN_COLORS.accent),
+    highlight: _hexRgb(TERRAIN_COLORS.highlight),
+  };
+
   function initTerrainCanvas(canvasId) {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
@@ -67,22 +85,20 @@
 
     function heightColor(h) {
       const t = Math.max(0, Math.min(1, h));
-      let r, g, b, a;
-      if (t < 0.15) {
-        r = 8;  g = 5;  b = 3;  a = 0.08 + t * 0.4;
-      } else if (t < 0.42) {
-        const p = (t - 0.15) / 0.27;
-        r = Math.round(8  + p * 88);  g = Math.round(5 + p * 22);  b = 3;
-        a = 0.18 + p * 0.42;
-      } else if (t < 0.72) {
-        const p = (t - 0.42) / 0.30;
-        r = Math.round(96  + p * 159); g = Math.round(27 + p * 80); b = 3;
-        a = 0.60 + p * 0.30;
+      // Ramp: grid (low) → accent (mid) → highlight (peaks).
+      let from, to, p, a;
+      if (t < 0.5) {
+        from = TERRAIN_RGB.grid; to = TERRAIN_RGB.accent;
+        p = t / 0.5;
+        a = 0.18 + t * 0.9;
       } else {
-        const p = (t - 0.72) / 0.28;
-        r = 255; g = Math.round(107 + p * 60); b = Math.round(3 + p * 48);
-        a = 0.9 + p * 0.1;
+        from = TERRAIN_RGB.accent; to = TERRAIN_RGB.highlight;
+        p = (t - 0.5) / 0.5;
+        a = 0.7 + p * 0.3;
       }
+      const r = Math.round(from[0] + (to[0] - from[0]) * p);
+      const g = Math.round(from[1] + (to[1] - from[1]) * p);
+      const b = Math.round(from[2] + (to[2] - from[2]) * p);
       return `rgba(${r},${g},${b},${a})`;
     }
 
@@ -146,7 +162,8 @@
           // Subtle fill for high peaks only
           if (avgH > 0.58) {
             const p = (avgH - 0.58) / 0.42;
-            ctx.fillStyle = `rgba(255,107,53,${p * 0.05})`;
+            const [ar, ag, ab] = TERRAIN_RGB.accent;
+            ctx.fillStyle = `rgba(${ar},${ag},${ab},${p * 0.05})`;
             ctx.fill();
           }
         }
