@@ -15,7 +15,7 @@
         "title": "Hayba Explorer",
         "width": 1280,
         "height": 800,
-        "decorations": true,
+        "decorations": false,
         "transparent": false,
         "backgroundColor": "#1b1e24"
       }
