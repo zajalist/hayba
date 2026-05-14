@@ -13,6 +13,7 @@ import RecenterButton from "./components/RecenterButton";
 import ConfirmDialog from "./components/ConfirmDialog";
 import BoundaryPopover from "./components/BoundaryPopover";
 import { createDefaultDraft, pairKey, type WizardDraft, type PresetName, type BoundaryType } from "./wizard/state";
+import { BoundaryModel, setBoundary, clearBoundary } from "./wizard/boundary-model";
 import { buildCellKdTree, cellsWithinRadius, nearestCell, type KdTree } from "./wizard/kdtree";
 
 export interface PlanetSnapshot {
@@ -24,6 +25,7 @@ export interface PlanetSnapshot {
   cell_elevation: number[];
   cell_continental: number[];
   cell_is_boundary: number[];
+  cell_neighbor_plate: number[];
 }
 
 interface WizardInit {
@@ -56,6 +58,10 @@ export default function App() {
   // planet from the (now-stale) wizard draft.
   const modeRef = useRef<Mode>("wizard");
   const snapshotRef = useRef<PlanetSnapshot | null>(null);
+  // Single source of truth for cell → boundary-pair mapping. Rebuilt once
+  // each time a snapshot lands; read by both the click handler and the
+  // globe's recolor path.
+  const boundaryModelRef = useRef<BoundaryModel | null>(null);
 
   const [draft, setDraft] = useState<WizardDraft | null>(null);
   const [mode, setMode] = useState<Mode>("wizard");
@@ -205,12 +211,20 @@ export default function App() {
 
   useEffect(() => { draftRef.current = draft; }, [draft]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
-  useEffect(() => { snapshotRef.current = snapshot; }, [snapshot]);
+  useEffect(() => {
+    snapshotRef.current = snapshot;
+    // Rebuild the BoundaryModel once per new snapshot.
+    boundaryModelRef.current = snapshot ? BoundaryModel.fromSnapshot(snapshot) : null;
+  }, [snapshot]);
 
   // Re-tint baked boundaries when assignments change.
   useEffect(() => {
     if (mode !== "viewing" || !snapshot || !draft) return;
-    globeRef.current?.recolorFromSnapshot(snapshot, PLATE_PALETTE, draft.boundary_types);
+    const bm = boundaryModelRef.current;
+    globeRef.current?.recolorFromSnapshot(
+      snapshot, PLATE_PALETTE,
+      bm ? { model: bm, assignments: draft.boundary_types } : undefined,
+    );
   }, [mode, snapshot, draft?.boundary_types]);
 
   // Post-bake boundary picking — listens to clicks on the canvas while in
@@ -225,9 +239,8 @@ export default function App() {
     const onPointer = (ev: PointerEvent) => {
       if (ev.button !== 0) return;
       const tree = kdTreeRef.current;
-      const snap = snapshotRef.current;
-      if (!tree || !snap) return;
-      // Project pointer to a unit-sphere hit point.
+      const bm = boundaryModelRef.current;
+      if (!tree || !bm) return;
       const rect = canvas.getBoundingClientRect();
       const ndc = new THREE.Vector2(
         ((ev.clientX - rect.left) / rect.width) * 2 - 1,
@@ -239,30 +252,18 @@ export default function App() {
       if (hits.length === 0) return;
       const p = hits[0].point.clone().normalize();
       const cell = nearestCell(tree, p.x, p.y, p.z);
-      if (cell < 0) return;
-      if (!snap.cell_is_boundary[cell]) {
+      const key = bm.pairKeyForCell(cell);
+      if (!key) {
         setBoundaryPopover(null);
         return;
       }
-      const myPlate = snap.cell_plate_ids[cell];
-      if (myPlate < 0) return;
-      // Find a nearby cell with a different plate — that's the pair.
-      // First try direct neighbours within a small radius.
-      const candidates = cellsWithinRadius(tree, p.x, p.y, p.z, 0.05);
-      let otherPlate = -1;
-      for (const c of candidates) {
-        const pid = snap.cell_plate_ids[c];
-        if (pid >= 0 && pid !== myPlate) {
-          otherPlate = pid;
-          break;
-        }
-      }
-      if (otherPlate < 0) return;
+      const members = bm.membersFor(key);
+      if (!members) return;
       setBoundaryPopover({
         screenX: ev.clientX,
         screenY: ev.clientY,
-        plateA: Math.min(myPlate, otherPlate),
-        plateB: Math.max(myPlate, otherPlate),
+        plateA: members[0],
+        plateB: members[1],
       });
     };
     canvas.addEventListener("pointerdown", onPointer);
@@ -284,7 +285,7 @@ export default function App() {
     const key = pairKey(boundaryPopover.plateA, boundaryPopover.plateB);
     const next: WizardDraft = {
       ...draft,
-      boundary_types: { ...draft.boundary_types, [key]: type },
+      boundary_types: setBoundary(draft.boundary_types, key, type),
     };
     setDraft(next);
     draftRef.current = next;
@@ -294,9 +295,10 @@ export default function App() {
   const handleClearBoundary = useCallback(() => {
     if (!boundaryPopover || !draft) return;
     const key = pairKey(boundaryPopover.plateA, boundaryPopover.plateB);
-    const next_types = { ...draft.boundary_types };
-    delete next_types[key];
-    const next: WizardDraft = { ...draft, boundary_types: next_types };
+    const next: WizardDraft = {
+      ...draft,
+      boundary_types: clearBoundary(draft.boundary_types, key),
+    };
     setDraft(next);
     draftRef.current = next;
     setBoundaryPopover(null);
@@ -310,7 +312,11 @@ export default function App() {
       const snap = await invoke<PlanetSnapshot>("bake_from_wizard", { draft });
       setSnapshot(snap);
       setMode("viewing");
-      globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE, draft.boundary_types);
+      const bm = BoundaryModel.fromSnapshot(snap);
+      boundaryModelRef.current = bm;
+      globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE, {
+        model: bm, assignments: draft.boundary_types,
+      });
     } catch (e) {
       setError(String(e));
       setMode("viewing");
@@ -370,7 +376,11 @@ export default function App() {
       const snap = await invoke<PlanetSnapshot>("bake_from_wizard", { draft });
       setSnapshot(snap);
       setMode("viewing");
-      globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE, draft.boundary_types);
+      const bm = BoundaryModel.fromSnapshot(snap);
+      boundaryModelRef.current = bm;
+      globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE, {
+        model: bm, assignments: draft.boundary_types,
+      });
     } catch (e) {
       setError(String(e));
       setMode("wizard");

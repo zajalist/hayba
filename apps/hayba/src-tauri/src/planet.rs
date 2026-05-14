@@ -33,6 +33,11 @@ pub struct PlanetSnapshot {
     /// 1 = on a plate boundary, 0 = interior. Matches TE's `field.boundary`
     /// — cells whose neighbour list includes any cell on a different plate.
     pub cell_is_boundary: Vec<u8>,
+    /// For each boundary cell, the plate id on the OTHER side (majority of
+    /// differing neighbours). `-1` for interior cells. Lets the front-end
+    /// look up `boundary_types[pair(me, other)]` per cell — no client-side
+    /// neighbour search needed.
+    pub cell_neighbor_plate: Vec<i32>,
 }
 
 struct DemoPlate {
@@ -142,6 +147,7 @@ pub fn snapshot_model(model: &Model, divisions: u32) -> PlanetSnapshot {
     let mut cell_elevation: Vec<f32> = Vec::with_capacity(n_cells as usize);
     let mut cell_continental: Vec<u8> = Vec::with_capacity(n_cells as usize);
     let mut cell_is_boundary: Vec<u8> = Vec::with_capacity(n_cells as usize);
+    let mut cell_neighbor_plate: Vec<i32> = Vec::with_capacity(n_cells as usize);
 
     for fid in 0..n_cells {
         let p = model.grid.position(fid);
@@ -154,15 +160,41 @@ pub fn snapshot_model(model: &Model, divisions: u32) -> PlanetSnapshot {
         cell_elevation.push(f.elevation);
         cell_continental.push(if f.is_continent_crust() { 1 } else { 0 });
 
-        // Derive boundary from neighbour plate ids — cheap O(6) per cell.
+        // For boundary cells, record the majority neighbour plate. Tally each
+        // unique neighbour plate id; pick whichever has the most votes.
         let mut on_boundary = false;
+        let mut neighbour_counts: [(i32, u32); 6] = [(-1, 0); 6];
+        let mut n_neighbour_kinds = 0;
         for &nb in model.grid.neighbours(fid) {
-            if model.fields[nb as usize].plate_id != my_plate {
+            let np = model.fields[nb as usize].plate_id;
+            if np != my_plate {
                 on_boundary = true;
-                break;
+                let id = match np { Some(p) => p as i32, None => -1 };
+                let mut found = false;
+                for i in 0..n_neighbour_kinds {
+                    if neighbour_counts[i].0 == id {
+                        neighbour_counts[i].1 += 1;
+                        found = true;
+                        break;
+                    }
+                }
+                if !found && n_neighbour_kinds < 6 {
+                    neighbour_counts[n_neighbour_kinds] = (id, 1);
+                    n_neighbour_kinds += 1;
+                }
             }
         }
         cell_is_boundary.push(if on_boundary { 1 } else { 0 });
+        let mut best = -1i32;
+        let mut best_count = 0u32;
+        for i in 0..n_neighbour_kinds {
+            let (id, c) = neighbour_counts[i];
+            if c > best_count || (c == best_count && id >= 0 && id < best) {
+                best = id;
+                best_count = c;
+            }
+        }
+        cell_neighbor_plate.push(best);
     }
 
     PlanetSnapshot {
@@ -174,6 +206,7 @@ pub fn snapshot_model(model: &Model, divisions: u32) -> PlanetSnapshot {
         cell_elevation,
         cell_continental,
         cell_is_boundary,
+        cell_neighbor_plate,
     }
 }
 
