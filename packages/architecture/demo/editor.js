@@ -168,6 +168,7 @@ function _initPaper() {
     paper.install(window);
     paper.setup(canvas);
     state.paperScope = paper;
+    _setupTools();
   }
 }
 
@@ -321,4 +322,164 @@ function _refreshSaveButton() {
   const btn = document.getElementById('editorSaveBtn');
   if (!btn) return;
   btn.disabled = !hasUnsavedChanges();
+}
+
+/* ─── Tool implementations (Paper.js Tool API) ──────────────────────── */
+
+function _setupTools() {
+  if (!state.paperScope) return;
+  const ps = state.paperScope;
+
+  const selectTool = new ps.Tool();
+  let dragSegment = null;
+
+  selectTool.onMouseDown = (event) => {
+    if (state.tool !== 'select') return;
+    const slot = state.slots[state.activeSlot];
+    if (!slot) return;
+    const hit = ps.project.hitTest(event.point, { fill: true, tolerance: 6 });
+    if (hit && hit.item.data.role === 'vertex') {
+      dragSegment = slot.paperPath.segments[hit.item.data.segmentIndex];
+      // Visually highlight the selected vertex.
+      for (const h of slot.paperHandles.children) {
+        h.fillColor = '#B56A1D';
+      }
+      slot.paperHandles.children[hit.item.data.segmentIndex].fillColor = '#ff8956';
+    } else {
+      dragSegment = null;
+      for (const h of slot.paperHandles.children) h.fillColor = '#B56A1D';
+    }
+  };
+
+  selectTool.onMouseDrag = (event) => {
+    if (state.tool !== 'select' || !dragSegment) return;
+    const slot = state.slots[state.activeSlot];
+    if (!slot) return;
+    // Canvas mouse → SVG-space → snap → hint enforcement → back to canvas.
+    const sv = _canvasToSvg({ px: event.point.x, py: event.point.y }, slot.cachedView);
+    const sx = state.snapGrid > 0 ? snap(sv.sx, state.snapGrid) : sv.sx;
+    const sy = state.snapGrid > 0 ? snap(sv.sy, state.snapGrid) : sv.sy;
+    const clamped = applyHint([[sx, sy]], slot.hint)[0];
+    const c = _svgToCanvas({ sx: clamped[0], sy: clamped[1] }, slot.cachedView);
+    dragSegment.point = new ps.Point(c.px, c.py);
+    const idx = slot.paperPath.segments.indexOf(dragSegment);
+    if (idx >= 0 && slot.paperHandles) {
+      slot.paperHandles.children[idx].position = new ps.Point(c.px, c.py);
+    }
+    _markDirty();
+    _refreshStatus();
+    _scheduleSlotSync();
+  };
+
+  selectTool.onMouseUp = () => { dragSegment = null; };
+
+  selectTool.onKeyDown = (event) => {
+    if (state.tool !== 'select') return;
+    if (event.key === 'delete' || event.key === 'backspace') {
+      const slot = state.slots[state.activeSlot];
+      if (!slot) return;
+      // Find selected vertex handles (highlighted in orange-bright via fillColor).
+      const handles = slot.paperHandles.children;
+      const selectedIndices = [];
+      for (let i = 0; i < handles.length; i++) {
+        const c = handles[i].fillColor;
+        if (c && c.red > 0.99 && c.green > 0.5) selectedIndices.push(i);
+      }
+      if (selectedIndices.length === 0) return;
+      // Remove in reverse order so indices stay valid.
+      selectedIndices.sort((a, b) => b - a);
+      for (const idx of selectedIndices) {
+        slot.paperPath.removeSegment(idx);
+        slot.paperHandles.children[idx].remove();
+      }
+      // Re-tag handle indices.
+      for (let i = 0; i < slot.paperHandles.children.length; i++) {
+        slot.paperHandles.children[i].data.segmentIndex = i;
+      }
+      _markDirty();
+      _refreshStatus();
+      _scheduleSlotSync();
+    }
+  };
+
+  const penTool = new ps.Tool();
+  penTool.onMouseDown = (event) => {
+    if (state.tool !== 'pen') return;
+    const slot = state.slots[state.activeSlot];
+    if (!slot) return;
+    let { sx, sy } = _canvasToSvg({ px: event.point.x, py: event.point.y }, slot.cachedView);
+    if (state.snapGrid > 0) {
+      sx = snap(sx, state.snapGrid);
+      sy = snap(sy, state.snapGrid);
+    }
+    const clamped = applyHint([[sx, sy]], slot.hint)[0];
+    const c = _svgToCanvas({ sx: clamped[0], sy: clamped[1] }, slot.cachedView);
+    slot.paperPath.add(new ps.Point(c.px, c.py));
+    const h = new ps.Path.Circle({ center: [c.px, c.py], radius: 5 });
+    h.fillColor = '#B56A1D';
+    h.strokeColor = '#1b1e24';
+    h.strokeWidth = 1.2;
+    h.data.role = 'vertex';
+    h.data.segmentIndex = slot.paperPath.segments.length - 1;
+    slot.paperHandles.addChild(h);
+    _markDirty();
+    _refreshStatus();
+    _scheduleSlotSync();
+  };
+
+  const panTool = new ps.Tool();
+  panTool.onMouseDrag = (event) => {
+    if (state.tool !== 'pan') return;
+    ps.view.translate(event.delta);
+  };
+
+  // Wheel zoom (Paper.js Tool API doesn't natively expose scroll).
+  const canvas = document.getElementById('editorCanvas');
+  if (canvas) {
+    canvas.addEventListener('wheel', (e) => {
+      if (!state.active) return;
+      e.preventDefault();
+      const oldZoom = ps.view.zoom;
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      ps.view.zoom = Math.max(0.2, Math.min(10, oldZoom * factor));
+    }, { passive: false });
+  }
+
+  // Default-activate the select tool.
+  selectTool.activate();
+}
+
+/* ─── dirty tracking + slot sync ──────────────────────────────────────── */
+
+function _markDirty() {
+  const slot = state.slots[state.activeSlot];
+  if (!slot) return;
+  if (!slot.dirty) {
+    slot.dirty = true;
+    _refreshSaveButton();
+    _renderSlotTabs();
+  }
+}
+
+let _previewQueued = false;
+function _scheduleSlotSync() {
+  // Sync the Paper.js path's current segment positions back to slot.vertices,
+  // then queue a preview refresh.
+  const slot = state.slots[state.activeSlot];
+  if (!slot || !slot.paperPath) return;
+  slot.vertices = slot.paperPath.segments.map((seg) => {
+    const sv = _canvasToSvg({ px: seg.point.x, py: seg.point.y }, slot.cachedView);
+    return [sv.sx, sv.sy];
+  });
+  if (!_previewQueued) {
+    _previewQueued = true;
+    requestAnimationFrame(() => {
+      _previewQueued = false;
+      _refreshPreview();
+    });
+  }
+}
+
+function _refreshPreview() {
+  // Implemented in Batch 5 (Task 10).
 }
