@@ -703,11 +703,22 @@ const GUIDE_FILES = [
   'industrial-revolution-english',
 ];
 
-const BOUND_PAIRS = [
+// Start with a dynamic listing from the server. If the listing endpoint is
+// unavailable (e.g. the user is serving static files from a non-Hayba server),
+// fall back to a hardcoded set so the page still works.
+const FALLBACK_BOUND_PAIRS = [
   { styleSheetId: 'medieval-european-gothic', elementId: 'column' },
   { styleSheetId: 'medieval-european-gothic', elementId: 'cornice' },
   { styleSheetId: 'medieval-european-gothic', elementId: 'finial' },
 ];
+
+let BOUND_PAIRS;
+try {
+  const list = await fetch('/api/bindings/list').then(r => r.json());
+  BOUND_PAIRS = Array.isArray(list) && list.length > 0 ? list : FALLBACK_BOUND_PAIRS;
+} catch {
+  BOUND_PAIRS = FALLBACK_BOUND_PAIRS;
+}
 
 /* ── AI provider settings (BYOK), persisted to localStorage ── */
 const SETTINGS_KEY = 'hayba-architecture-atlas-settings';
@@ -745,10 +756,14 @@ const [typologyFile, ...guides] = await Promise.all([
 ]);
 
 const bindings = {};
-for (const { styleSheetId, elementId } of BOUND_PAIRS) {
-  bindings[`${styleSheetId}::${elementId}`] =
-    await fetch(`../src/bindings/${styleSheetId}/${elementId}.json`).then(r => r.json());
-}
+await Promise.all(BOUND_PAIRS.map(async ({ styleSheetId, elementId }) => {
+  try {
+    bindings[`${styleSheetId}::${elementId}`] =
+      await fetch(`../src/bindings/${styleSheetId}/${elementId}.json`).then(r => r.json());
+  } catch (err) {
+    console.warn(`Failed to load binding ${styleSheetId}/${elementId}:`, err);
+  }
+}));
 
 const typologies = typologyFile.typologies;
 const typologyById = Object.fromEntries(typologies.map(t => [t.id, t]));
