@@ -1,0 +1,159 @@
+/* ── Studio shell: Cultures tab ─────────────────────────── */
+
+#cultures-app {
+  display: none;
+  height: 100%;
+  overflow: hidden;
+}
+#cultures-app.active {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 0;
+}
+
+/* ── Left rail ──────────────────────────────────────────── */
+.studio-list {
+  background: var(--bg-base, #1b1e24);
+  border-right: 1px solid var(--border-mid, #2a2e36);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+.studio-create {
+  background: transparent;
+  color: var(--accent, #B56A1D);
+  border: 1px dashed var(--accent, #B56A1D);
+  padding: 6px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  letter-spacing: 0.05em;
+  font-family: inherit;
+  border-radius: 3px;
+}
+.studio-create:hover {
+  background: rgba(181, 106, 29, 0.08);
+}
+
+.studio-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.studio-list li {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text-secondary, #ccc);
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  border-radius: 2px;
+}
+.studio-list li:hover {
+  background: var(--bg-panel, #22262e);
+}
+.studio-list li.selected {
+  background: rgba(181, 106, 29, 0.18);
+  border-left-color: var(--accent, #B56A1D);
+  color: var(--text-primary, #fff);
+}
+
+/* ── Main pane ──────────────────────────────────────────── */
+.studio-main {
+  display: flex;
+  flex-direction: column;
+  padding: 12px 16px;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+/* ── Header strip ───────────────────────────────────────── */
+.studio-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-mid, #2a2e36);
+}
+.studio-header-fields h2 {
+  margin: 0;
+  font-size: 18px;
+  color: var(--text-primary, #fff);
+}
+.studio-header-meta {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  margin-top: 4px;
+}
+
+.studio-delete {
+  background: transparent;
+  color: var(--text-muted, #888);
+  border: 1px solid var(--border-soft, #444);
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 3px;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+.studio-delete:hover:not(:disabled) {
+  color: #d65a4a;
+  border-color: #d65a4a;
+}
+.studio-delete:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Sub-tabs ───────────────────────────────────────────── */
+.studio-subtabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border-mid, #2a2e36);
+}
+.studio-subtabs button {
+  background: transparent;
+  color: var(--text-muted, #888);
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.studio-subtabs button:hover {
+  color: var(--text-secondary, #ccc);
+}
+.studio-subtabs button.active {
+  color: var(--accent, #B56A1D);
+  border-bottom-color: var(--accent, #B56A1D);
+}
+
+/* ── Sub-tab body ───────────────────────────────────────── */
+.studio-subtab-body {
+  min-height: 120px;
+}
+
+/* ── Placeholder text ───────────────────────────────────── */
+.placeholder {
+  color: var(--text-muted, #666);
+  font-style: italic;
+  font-size: 12px;
+  padding: 8px 0;
+}
+
+/* ── Timeline + era detail ──────────────────────────────── */
+.culture-timeline,
+.era-detail {
+  background: var(--bg-deep, #14171c);
+  border: 1px solid var(--border-mid, #2a2e36);
+  padding: 10px;
+  border-radius: 3px;
+}
