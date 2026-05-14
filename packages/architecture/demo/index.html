@@ -384,6 +384,49 @@
     color: var(--text-muted); text-align: center; padding: 40px 20px;
     font-style: italic;
   }
+
+  /* —— bound elements panel —— */
+  .bound-elements-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+  }
+  .bound-element-card {
+    background: var(--bg-base); border: 1px solid var(--border-mid);
+    border-radius: 6px; padding: 12px;
+    display: flex; flex-direction: column; gap: 6px;
+    cursor: pointer;
+    transition: border-color .12s, transform .12s;
+  }
+  .bound-element-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .bec-name { font-weight: 600; font-size: 13px; text-transform: capitalize; }
+  .bec-thumb {
+    background: var(--bg-deep); border-radius: 3px;
+    height: 140px; display: flex; align-items: center; justify-content: center;
+  }
+  .bec-meta { font-size: 10.5px; }
+
+  /* —— viewer modal —— */
+  .viewer-modal { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; }
+  .viewer-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.6); }
+  .viewer-modal-card {
+    position: relative; width: 720px; max-width: 90vw; max-height: 90vh;
+    background: var(--bg-base); border: 1px solid var(--border-soft);
+    border-radius: 8px; padding: 16px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .viewer-modal-h { display: flex; align-items: center; justify-content: space-between; }
+  .viewer-modal-h span { font-size: 14px; font-weight: 600; }
+  .viewer-modal-close {
+    background: transparent; border: none; color: var(--text-secondary);
+    cursor: pointer; font-size: 18px;
+  }
+  .viewer-stage {
+    width: 100%; height: 480px; background: var(--bg-deep);
+    border-radius: 4px;
+  }
+  .viewer-stats {
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);
+  }
 </style>
 </head>
 <body>
@@ -412,7 +455,23 @@
   <div class="pane right" id="rightPane"><div class="right-wrap" id="rightWrap"></div></div>
 </div>
 
+<div id="viewerModal" class="viewer-modal" style="display:none;">
+  <div class="viewer-modal-backdrop"></div>
+  <div class="viewer-modal-card">
+    <div class="viewer-modal-h">
+      <span id="viewerModalTitle">Element preview</span>
+      <button class="viewer-modal-close" id="viewerModalClose">✕</button>
+    </div>
+    <div id="viewerStage" class="viewer-stage"></div>
+    <div id="viewerStats" class="viewer-stats"></div>
+  </div>
+</div>
+
 <script type="module">
+import * as THREE from 'https://unpkg.com/three@0.169.0/build/three.module.js';
+import { GLTFLoader } from 'https://unpkg.com/three@0.169.0/examples/jsm/loaders/GLTFLoader.js';
+import { OrbitControls } from 'https://unpkg.com/three@0.169.0/examples/jsm/controls/OrbitControls.js';
+
 'use strict';
 
 /* ─── data loading ─────────────────────────────────────── */
@@ -431,10 +490,20 @@ const GUIDE_FILES = [
   'industrial-revolution-english',
 ];
 
+const BOUND_PAIRS = [
+  { styleSheetId: 'medieval-european-gothic', elementId: 'column' },
+];
+
 const [typologyFile, ...guides] = await Promise.all([
   fetch('../src/data/typologies.json').then(r => r.json()),
   ...GUIDE_FILES.map(n => fetch(`../src/data/style-guides/${n}.json`).then(r => r.json())),
 ]);
+
+const bindings = {};
+for (const { styleSheetId, elementId } of BOUND_PAIRS) {
+  bindings[`${styleSheetId}::${elementId}`] =
+    await fetch(`../src/bindings/${styleSheetId}/${elementId}.json`).then(r => r.json());
+}
 
 const typologies = typologyFile.typologies;
 const typologyById = Object.fromEntries(typologies.map(t => [t.id, t]));
@@ -583,6 +652,28 @@ function renderCenter() {
         <div class="panel-h">Extras · ${Object.keys(s.extras || {}).length} key${Object.keys(s.extras || {}).length !== 1 ? 's' : ''}</div>
         ${renderExtras(s.extras)}
       </div>
+
+      ${BOUND_PAIRS.filter(p => p.styleSheetId === g.id).length === 0 ? '' : `
+        <div class="panel">
+          <div class="panel-h">Bound elements · ${BOUND_PAIRS.filter(p => p.styleSheetId === g.id).length}</div>
+          <div class="bound-elements-grid">
+            ${BOUND_PAIRS.filter(p => p.styleSheetId === g.id).map(p => {
+              const b = bindings[`${p.styleSheetId}::${p.elementId}`];
+              return `
+                <div class="bound-element-card" data-element="${p.elementId}" data-style="${p.styleSheetId}">
+                  <div class="bec-name">${humanize(p.elementId)}</div>
+                  <div class="bec-thumb">
+                    <span class="muted" style="font-size:11px;">click to view 3D</span>
+                  </div>
+                  <div class="bec-meta">
+                    <span class="mono muted">shaft ${b.params.shaft_height_m}m · seed ${String(b.seed).slice(0, 12)}…</span>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `}
     `;
     wrap.querySelectorAll('.timeline .seg').forEach(el => {
       el.addEventListener('click', () => {
@@ -950,6 +1041,100 @@ document.getElementById('tabs').addEventListener('click', e => {
   state.view = t.dataset.view;
   if (state.view === 'typologies' && !state.typologyId) state.typologyId = typologies[0].id;
   renderLeftPane(); renderCenter(); renderRight();
+});
+
+/* ─── kernel + 3D viewer ─────────────────────────────────── */
+
+async function loadKernel() {
+  try {
+    const mod = await import('../dist/index.js');
+    return mod;
+  } catch (e) {
+    console.error('Kernel import failed (did you run `npm run build`?):', e);
+    return null;
+  }
+}
+
+const kernelMod = await loadKernel();
+
+function emitGLBForBinding(styleSheetId, elementId) {
+  if (!kernelMod) throw new Error('Kernel not loaded — run `npm run build --workspace=@hayba/architecture`');
+  const result = kernelMod.emitElementMesh(styleSheetId, elementId);
+  if (!result.ok) throw new Error(result.message);
+  return result;
+}
+
+function openViewer(styleSheetId, elementId) {
+  document.getElementById('viewerModal').style.display = 'flex';
+  document.getElementById('viewerModalTitle').textContent = `${humanize(elementId)} · ${cultureLabel(styleSheetId)}`;
+  const stage = document.getElementById('viewerStage');
+  stage.innerHTML = '';
+  const stats = document.getElementById('viewerStats');
+  stats.textContent = 'loading…';
+
+  let result;
+  try {
+    result = emitGLBForBinding(styleSheetId, elementId);
+  } catch (e) {
+    stage.innerHTML = `<div style="padding:24px;color:var(--status-red);">Kernel error: ${e.message}</div>`;
+    return;
+  }
+  stats.textContent = `triangles ${result.stats.triangles} · vertices ${result.stats.vertices} · ${(result.stats.sizeBytes/1024).toFixed(1)} KB`;
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x1b1e24);
+  const camera = new THREE.PerspectiveCamera(45, stage.clientWidth / stage.clientHeight, 0.01, 100);
+  camera.position.set(2.5, 3, 4);
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(stage.clientWidth, stage.clientHeight);
+  stage.appendChild(renderer.domElement);
+
+  const light1 = new THREE.DirectionalLight(0xffffff, 1.2);
+  light1.position.set(5, 8, 6);
+  scene.add(light1);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+  const grid = new THREE.GridHelper(10, 10, 0x3d434e, 0x2a2e36);
+  scene.add(grid);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+
+  const loader = new GLTFLoader();
+  loader.parse(result.glb, '', (gltf) => {
+    gltf.scene.traverse((o) => {
+      if (o.isMesh) {
+        o.material = new THREE.MeshStandardMaterial({ color: 0xb8b0a0, roughness: 0.85, metalness: 0.1 });
+      }
+    });
+    scene.add(gltf.scene);
+    const box = new THREE.Box3().setFromObject(gltf.scene);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    camera.position.set(center.x + size.x * 2, center.y + size.y * 0.7, center.z + size.z * 2);
+    controls.target.copy(center);
+    controls.update();
+  }, (err) => {
+    stage.innerHTML = `<div style="padding:24px;color:var(--status-red);">GLB load error: ${err}</div>`;
+  });
+
+  (function animate() {
+    if (document.getElementById('viewerModal').style.display === 'none') return;
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  })();
+}
+
+document.getElementById('viewerModalClose').addEventListener('click', () => {
+  document.getElementById('viewerModal').style.display = 'none';
+  document.getElementById('viewerStage').innerHTML = '';
+});
+
+document.addEventListener('click', (e) => {
+  const card = e.target.closest('.bound-element-card');
+  if (!card) return;
+  openViewer(card.dataset.style, card.dataset.element);
 });
 
 /* ─── boot ──────────────────────────────────────────────── */
