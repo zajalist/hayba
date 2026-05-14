@@ -2,12 +2,12 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import Viewport from "./viewport/Viewport";
 import type { SceneHandle } from "./viewport/scene";
-import { buildGlobe, type GlobeHandle } from "./viewport/globe";
+import { buildGlobe, PLATE_PALETTE, type GlobeHandle } from "./viewport/globe";
 import { attachPainter, type PainterHandle } from "./viewport/painter";
 import StatusBar, { Mono } from "./components/StatusBar";
 import WizardPanel from "./wizard/WizardPanel";
 import { createDefaultDraft, type WizardDraft, type PresetName } from "./wizard/state";
-import { buildCellKdTree, cellsWithinRadius, type KdTree } from "./wizard/kdtree";
+import { buildCellKdTree, cellsWithinRadius, nearestCell, type KdTree } from "./wizard/kdtree";
 
 export interface PlanetSnapshot {
   divisions: number;
@@ -17,6 +17,7 @@ export interface PlanetSnapshot {
   cell_plate_ids: number[];
   cell_elevation: number[];
   cell_continental: number[];
+  cell_is_boundary: number[];
 }
 
 interface WizardInit {
@@ -50,18 +51,47 @@ export default function App() {
   const [snapshot, setSnapshot] = useState<PlanetSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Track recent cell ids so a single drag doesn't fight itself.
-  const drawingSetRef = useRef<Set<number>>(new Set());
+  // Cells highlighted under the hovering brush (preview before click).
+  const previewRef = useRef<number[]>([]);
 
-  const initWizard = useCallback(async (divisions: number, carry?: { preset?: PresetName; seed?: number }) => {
+  // Positions stay around so we can re-project painted cells when the user
+  // switches resolution — each old painted cell becomes the nearest cell at
+  // the new resolution.
+  const cellPositionsRef = useRef<Float32Array | null>(null);
+
+  const initWizard = useCallback(async (
+    divisions: number,
+    carry?: { preset?: PresetName; seed?: number; previousPaint?: number[]; previousPositions?: Float32Array },
+  ) => {
     const init = await invoke<WizardInit>("start_wizard", { divisions });
     const positions = new Float32Array(init.cell_positions);
-    kdTreeRef.current = buildCellKdTree(positions);
+    const tree = buildCellKdTree(positions);
+    kdTreeRef.current = tree;
+    cellPositionsRef.current = positions;
     cellCountRef.current = init.n_cells;
 
     const seed = carry?.seed ?? await invoke<number>("roll_seed");
     const fresh = createDefaultDraft(divisions, seed);
     if (carry?.preset) fresh.preset = carry.preset;
+
+    // Re-project old painted cells onto the new sphere. Each old cell's
+    // position → nearest cell on the new resolution. De-duplicate.
+    if (carry?.previousPaint && carry?.previousPositions) {
+      const reprojected = new Set<number>();
+      for (const oldCell of carry.previousPaint) {
+        const base = oldCell * 3;
+        if (base + 2 >= carry.previousPositions.length) continue;
+        const cell = nearestCell(
+          tree,
+          carry.previousPositions[base],
+          carry.previousPositions[base + 1],
+          carry.previousPositions[base + 2],
+        );
+        if (cell >= 0) reprojected.add(cell);
+      }
+      fresh.continental_cells = Array.from(reprojected);
+    }
+
     setDraft(fresh);
     draftRef.current = fresh;
 
@@ -82,6 +112,20 @@ export default function App() {
       camera: handle.camera,
       target: handle.raycastTarget,
       isActive: () => !!draftRef.current,
+      onHover: (x, y, z) => {
+        const tree = kdTreeRef.current;
+        const drft = draftRef.current;
+        if (!tree || !drft) return;
+        const chord = angularToChord(drft.brush_radius_rad);
+        previewRef.current = cellsWithinRadius(tree, x, y, z, chord);
+        globeRef.current?.recolorFromDraft(drft, cellCountRef.current, previewRef.current);
+      },
+      onHoverEnd: () => {
+        if (previewRef.current.length === 0) return;
+        previewRef.current = [];
+        const drft = draftRef.current;
+        if (drft) globeRef.current?.recolorFromDraft(drft, cellCountRef.current);
+      },
       onPaint: (x, y, z) => {
         const tree = kdTreeRef.current;
         const drft = draftRef.current;
@@ -102,7 +146,8 @@ export default function App() {
         const next: WizardDraft = { ...drft, continental_cells: Array.from(seen) };
         draftRef.current = next;
         setDraft(next);
-        globeRef.current?.recolorFromDraft(next, cellCountRef.current);
+        previewRef.current = hits;
+        globeRef.current?.recolorFromDraft(next, cellCountRef.current, previewRef.current);
       },
     });
 
@@ -114,7 +159,13 @@ export default function App() {
   // ── Wizard actions
   const handleChangeDivisions = useCallback((divisions: number) => {
     const d = draftRef.current;
-    initWizard(divisions, { preset: d?.preset, seed: d?.seed }).catch((e) => setError(String(e)));
+    const positions = cellPositionsRef.current;
+    initWizard(divisions, {
+      preset: d?.preset,
+      seed: d?.seed,
+      previousPaint: d?.continental_cells,
+      previousPositions: positions ?? undefined,
+    }).catch((e) => setError(String(e)));
   }, [initWizard]);
 
   const handleChangePreset = useCallback((preset: PresetName) => {
@@ -158,7 +209,7 @@ export default function App() {
       const snap = await invoke<PlanetSnapshot>("bake_from_wizard", { draft });
       setSnapshot(snap);
       setMode("viewing");
-      globeRef.current?.recolorFromSnapshot(snap);
+      globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE);
     } catch (e) {
       setError(String(e));
       setMode("wizard");

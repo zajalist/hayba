@@ -30,6 +30,9 @@ pub struct PlanetSnapshot {
     pub cell_elevation: Vec<f32>,
     /// 1 = continental crust, 0 = oceanic.
     pub cell_continental: Vec<u8>,
+    /// 1 = on a plate boundary, 0 = interior. Matches TE's `field.boundary`
+    /// — cells whose neighbour list includes any cell on a different plate.
+    pub cell_is_boundary: Vec<u8>,
 }
 
 struct DemoPlate {
@@ -125,11 +128,20 @@ pub fn bake_demo() -> PlanetSnapshot {
         model.step(DEMO_DT_MA);
     }
 
-    // Dump snapshot.
+    let snap = snapshot_model(&model, DEMO_DIVISIONS);
+    snap
+}
+
+/// Build a `PlanetSnapshot` from a stepped model. Boundary detection matches
+/// TE: a cell is on the boundary if any of its neighbours belong to a
+/// different plate (see `tectonic-explorer/.../plate.ts` boundary scan).
+pub fn snapshot_model(model: &Model, divisions: u32) -> PlanetSnapshot {
+    let n_cells = model.grid.n_fields();
     let mut cell_positions: Vec<f32> = Vec::with_capacity((n_cells * 3) as usize);
     let mut cell_plate_ids: Vec<i32> = Vec::with_capacity(n_cells as usize);
     let mut cell_elevation: Vec<f32> = Vec::with_capacity(n_cells as usize);
     let mut cell_continental: Vec<u8> = Vec::with_capacity(n_cells as usize);
+    let mut cell_is_boundary: Vec<u8> = Vec::with_capacity(n_cells as usize);
 
     for fid in 0..n_cells {
         let p = model.grid.position(fid);
@@ -137,19 +149,31 @@ pub fn bake_demo() -> PlanetSnapshot {
         cell_positions.push(p.y);
         cell_positions.push(p.z);
         let f = &model.fields[fid as usize];
-        cell_plate_ids.push(match f.plate_id { Some(pid) => pid as i32, None => -1 });
+        let my_plate = f.plate_id;
+        cell_plate_ids.push(match my_plate { Some(pid) => pid as i32, None => -1 });
         cell_elevation.push(f.elevation);
         cell_continental.push(if f.is_continent_crust() { 1 } else { 0 });
+
+        // Derive boundary from neighbour plate ids — cheap O(6) per cell.
+        let mut on_boundary = false;
+        for &nb in model.grid.neighbours(fid) {
+            if model.fields[nb as usize].plate_id != my_plate {
+                on_boundary = true;
+                break;
+            }
+        }
+        cell_is_boundary.push(if on_boundary { 1 } else { 0 });
     }
 
     PlanetSnapshot {
-        divisions: DEMO_DIVISIONS,
+        divisions,
         n_cells,
         sim_time_ma: model.sim_time_ma,
         cell_positions,
         cell_plate_ids,
         cell_elevation,
         cell_continental,
+        cell_is_boundary,
     }
 }
 

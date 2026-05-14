@@ -1,5 +1,6 @@
 import React from "react";
 import { colors, fonts } from "@hayba/design-tokens";
+import { IconReroll } from "../components/icons";
 
 export interface SeedRowProps {
   seed: number;
@@ -29,6 +30,9 @@ export default function SeedRow({ seed, onReroll, disabled }: SeedRowProps) {
         onClick={onReroll}
         title="Roll a new seed"
         style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
           background: "transparent",
           border: `1px solid ${colors.borderSoft}`,
           color: colors.textPrimary,
@@ -40,6 +44,7 @@ export default function SeedRow({ seed, onReroll, disabled }: SeedRowProps) {
           cursor: disabled ? "default" : "pointer",
         }}
       >
+        <IconReroll size={12} />
         reroll
       </button>
     </div>

@@ -4,8 +4,13 @@ export interface PainterOptions {
   canvas: HTMLCanvasElement;
   camera: THREE.PerspectiveCamera;
   target: THREE.Object3D;
+  /** Stamped paint while the left mouse is held. */
   onPaint: (x: number, y: number, z: number) => void;
-  /** Returning false suppresses paint (e.g. no active plate). */
+  /** Hover-preview fires on every move (regardless of buttons). */
+  onHover?: (x: number, y: number, z: number) => void;
+  /** Pointer left the canvas or window. */
+  onHoverEnd?: () => void;
+  /** Returning false suppresses paint (not hover). */
   isActive?: () => boolean;
 }
 
@@ -14,22 +19,29 @@ export interface PainterHandle {
 }
 
 /**
- * Wires left-mouse-button painting on a hidden raycast target. Drag = stream
- * of paint events throttled to one per animation frame (~60Hz). OrbitControls
- * is expected to have already rebound rotation to the right mouse button.
+ * Wires left-mouse painting and hover preview on a hidden raycast target.
+ * - pointermove fires both onHover (always) and onPaint (when button 0 held).
+ * - Both callbacks are throttled to one per animation frame.
+ * - OrbitControls is expected to have rebound rotation to right-mouse.
  */
 export function attachPainter(opts: PainterOptions): PainterHandle {
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
   let painting = false;
-  let pendingPoint: THREE.Vector3 | null = null;
+  let pendingPaint: THREE.Vector3 | null = null;
+  let pendingHover: THREE.Vector3 | null = null;
   let raf = 0;
 
   const flush = () => {
     raf = 0;
-    if (!pendingPoint) return;
-    opts.onPaint(pendingPoint.x, pendingPoint.y, pendingPoint.z);
-    pendingPoint = null;
+    if (pendingHover && opts.onHover) {
+      opts.onHover(pendingHover.x, pendingHover.y, pendingHover.z);
+    }
+    pendingHover = null;
+    if (pendingPaint) {
+      opts.onPaint(pendingPaint.x, pendingPaint.y, pendingPaint.z);
+      pendingPaint = null;
+    }
   };
 
   const project = (ev: PointerEvent): THREE.Vector3 | null => {
@@ -49,29 +61,33 @@ export function attachPainter(opts: PainterOptions): PainterHandle {
     if (!p) return;
     painting = true;
     opts.canvas.setPointerCapture(ev.pointerId);
-    pendingPoint = p;
+    pendingPaint = p;
     if (!raf) raf = requestAnimationFrame(flush);
   };
   const onMove = (ev: PointerEvent) => {
-    if (!painting) return;
     const p = project(ev);
     if (!p) return;
-    pendingPoint = p;
+    pendingHover = p;
+    if (painting) pendingPaint = p;
     if (!raf) raf = requestAnimationFrame(flush);
   };
   const onUp = (ev: PointerEvent) => {
     if (!painting) return;
     painting = false;
     opts.canvas.releasePointerCapture(ev.pointerId);
-    if (pendingPoint && !raf) raf = requestAnimationFrame(flush);
+    if (pendingPaint && !raf) raf = requestAnimationFrame(flush);
   };
+  const onLeave = () => {
+    pendingHover = null;
+    if (opts.onHoverEnd) opts.onHoverEnd();
+  };
+  const onCtx = (ev: Event) => ev.preventDefault();
 
   opts.canvas.addEventListener("pointerdown", onDown);
   opts.canvas.addEventListener("pointermove", onMove);
   opts.canvas.addEventListener("pointerup", onUp);
   opts.canvas.addEventListener("pointercancel", onUp);
-  // Suppress browser context menu so right-click-drag rotates cleanly.
-  const onCtx = (ev: Event) => ev.preventDefault();
+  opts.canvas.addEventListener("pointerleave", onLeave);
   opts.canvas.addEventListener("contextmenu", onCtx);
 
   return {
@@ -80,6 +96,7 @@ export function attachPainter(opts: PainterOptions): PainterHandle {
       opts.canvas.removeEventListener("pointermove", onMove);
       opts.canvas.removeEventListener("pointerup", onUp);
       opts.canvas.removeEventListener("pointercancel", onUp);
+      opts.canvas.removeEventListener("pointerleave", onLeave);
       opts.canvas.removeEventListener("contextmenu", onCtx);
       if (raf) cancelAnimationFrame(raf);
     },
