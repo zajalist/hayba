@@ -11,7 +11,8 @@
 {
   "imports": {
     "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/"
+    "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/",
+    "paper": "https://unpkg.com/paper@0.12.18/dist/paper-core.js"
   }
 }
 </script>
@@ -592,6 +593,157 @@
   }
   .bec-regen:hover { background: var(--bg-elevated); color: var(--text-primary); border-color: var(--accent); }
   .bec-regen:disabled { opacity: 0.5; cursor: wait; }
+
+  /* —— Editor view —— */
+  .editor-view {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-rows: 44px 1fr;
+    overflow: hidden;
+    background: var(--bg-deep);
+  }
+  .editor-topbar {
+    background: var(--bg-base);
+    border-bottom: 1px solid var(--border-mid);
+    padding: 0 18px;
+    display: flex; align-items: center; gap: 16px;
+  }
+  .editor-crumb { display: flex; align-items: center; gap: 8px; }
+  .editor-crumb-prefix { font-size: 11px; }
+  .editor-crumb-name { font-weight: 600; font-size: 13px; }
+  .editor-slot-tabs { display: flex; flex: 1; gap: 0; align-self: flex-end; }
+  .editor-slot-tab {
+    padding: 8px 14px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    font: 12px var(--font-ui);
+    cursor: pointer;
+    transition: color .12s, border-color .12s;
+  }
+  .editor-slot-tab:hover { color: var(--text-primary); }
+  .editor-slot-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+  .editor-slot-tab .dirty-dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    background: var(--accent);
+    border-radius: 50%;
+    margin-left: 4px;
+    vertical-align: middle;
+  }
+  .editor-save-btn {
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+    border: 1px solid var(--border-soft);
+    padding: 6px 18px;
+    font: 700 11px var(--font-ui);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    cursor: not-allowed;
+    border-radius: 3px;
+    transition: background .12s, color .12s;
+  }
+  .editor-save-btn:not(:disabled) {
+    background: var(--accent);
+    color: #0e1219;
+    cursor: pointer;
+    border-color: var(--accent);
+  }
+  .editor-save-btn:not(:disabled):hover { background: var(--accent-hover); }
+
+  .editor-body {
+    display: grid;
+    grid-template-columns: 1fr 280px;
+    gap: 0;
+    overflow: hidden;
+  }
+  .editor-canvas-wrap {
+    background: var(--bg-deep);
+    position: relative;
+    overflow: hidden;
+  }
+  .editor-canvas-wrap canvas {
+    width: 100%; height: 100%;
+    display: block;
+    background: var(--bg-deep);
+    cursor: crosshair;
+  }
+  .editor-toolpalette {
+    position: absolute;
+    top: 10px; left: 10px;
+    display: flex; flex-direction: column; gap: 4px;
+    background: rgba(34, 38, 46, 0.92);
+    padding: 4px; border-radius: 4px;
+    border: 1px solid var(--border-soft);
+    backdrop-filter: blur(8px);
+    z-index: 5;
+  }
+  .editor-tool-btn {
+    width: 30px; height: 30px;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 14px;
+    border-radius: 3px;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .editor-tool-btn:hover { background: var(--bg-panel); color: var(--text-primary); }
+  .editor-tool-btn.active {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .editor-statusbar {
+    position: absolute;
+    bottom: 8px; left: 12px;
+    font: 11px var(--font-mono);
+    color: var(--text-muted);
+    background: rgba(27, 30, 36, 0.7);
+    padding: 4px 8px; border-radius: 3px;
+    pointer-events: none;
+    z-index: 5;
+  }
+  .editor-preview {
+    background: var(--bg-base);
+    border-left: 1px solid var(--border-mid);
+    padding: 14px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .editor-preview-h {
+    font: 700 10px var(--font-ui);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .editor-preview-stage {
+    height: 240px;
+    background: var(--bg-deep);
+    border: 1px solid var(--border-mid);
+    border-radius: 3px;
+  }
+  .editor-preview-stats { font-size: 10.5px; }
+  .editor-preview-meta {
+    font-size: 11px; color: var(--text-secondary); line-height: 1.6;
+  }
+
+  /* —— ✎ edit button on bound-element cards (used by Batch 6) —— */
+  .bec-edit {
+    align-self: flex-start; margin-top: 4px; margin-left: 6px;
+    background: transparent;
+    border: 1px solid var(--border-soft);
+    color: var(--text-secondary);
+    padding: 3px 8px;
+    border-radius: 3px;
+    font: 10.5px var(--font-ui);
+    cursor: pointer;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .bec-edit:hover { background: var(--bg-elevated); color: var(--text-primary); border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -606,6 +758,7 @@
   <div class="tabs" id="tabs">
     <button class="tab active" data-view="guides">Style guides</button>
     <button class="tab" data-view="typologies">Typologies</button>
+    <button class="tab" data-view="editor">Editor</button>
   </div>
   <div class="divider"></div>
   <div class="stats-bar" id="stats"></div>
@@ -619,6 +772,36 @@
   <div class="pane left"  id="leftPane"></div>
   <div class="pane center"><div class="center-wrap" id="centerPane"></div></div>
   <div class="pane right" id="rightPane"><div class="right-wrap" id="rightWrap"></div></div>
+</div>
+
+<div class="editor-view" id="editorView" style="display:none;">
+  <div class="editor-topbar">
+    <div class="editor-crumb">
+      <span class="editor-crumb-prefix muted">Editing /</span>
+      <span class="editor-crumb-name" id="editorBindingName">— no binding loaded —</span>
+    </div>
+    <div class="editor-slot-tabs" id="editorSlotTabs"></div>
+    <button class="editor-save-btn" id="editorSaveBtn" disabled>SAVE</button>
+  </div>
+  <div class="editor-body">
+    <div class="editor-canvas-wrap">
+      <div class="editor-toolpalette">
+        <button class="editor-tool-btn active" data-tool="select" title="Select (V)">↖</button>
+        <button class="editor-tool-btn" data-tool="pen" title="Pen (P) — add vertex">✎</button>
+        <button class="editor-tool-btn" data-tool="pan" title="Pan (space)">✋</button>
+        <button class="editor-tool-btn" data-tool="zoom" title="Zoom (scroll)">⊕</button>
+        <button class="editor-tool-btn active" id="editorSnapBtn" data-tool="snap" title="Snap to grid (5mm)">⊞</button>
+      </div>
+      <canvas id="editorCanvas" resize="true"></canvas>
+      <div class="editor-statusbar" id="editorStatus">grid 5mm · 0 vertices</div>
+    </div>
+    <div class="editor-preview">
+      <div class="editor-preview-h">Live preview</div>
+      <div class="editor-preview-stage" id="editorPreviewStage"></div>
+      <div class="editor-preview-stats mono muted" id="editorPreviewStats">—</div>
+      <div class="editor-preview-meta" id="editorPreviewMeta">—</div>
+    </div>
+  </div>
 </div>
 
 <div id="settingsModal" class="viewer-modal" style="display:none;">
