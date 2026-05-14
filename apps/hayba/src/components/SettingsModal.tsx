@@ -35,7 +35,7 @@ export default function SettingsModal({
         background: "rgba(34, 38, 46, 0.92)",
         border: `1px solid ${colors.borderMid}`,
         borderRadius: radii.sm,
-        boxShadow: "0 20px 50px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.04)",
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
         backdropFilter: "blur(14px)",
         WebkitBackdropFilter: "blur(14px)",
         color: colors.textSecondary,
@@ -186,7 +186,7 @@ export default function SettingsModal({
                 fontWeight: 700,
                 cursor: busy ? "default" : "pointer",
                 transition: "background 140ms",
-                boxShadow: busy ? "none" : `0 4px 14px ${colors.accentDim}`,
+                boxShadow: "none",
               }}
             >
               <IconBake size={14} />

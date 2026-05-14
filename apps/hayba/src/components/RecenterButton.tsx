@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import * as THREE from "three";
 import { colors, fonts, radii } from "@hayba/design-tokens";
 import type { SceneHandle } from "../viewport/scene";
+import { IconRecenter } from "./icons";
 
 export interface RecenterButtonProps {
   /** When the planet has clearly been moved, this control fades in. */
@@ -11,13 +12,12 @@ export interface RecenterButtonProps {
 // Camera home — must match createScene's initial setup.
 const HOME_POSITION = new THREE.Vector3(0, 0, 3.5);
 const HOME_TARGET   = new THREE.Vector3(0, 0, 0);
-const POS_THRESHOLD    = 0.2;   // sphere-units before showing
-const TARGET_THRESHOLD = 0.05;  // pan-offset before showing
+const POS_THRESHOLD    = 0.2;
+const TARGET_THRESHOLD = 0.05;
 
 export default function RecenterButton({ getScene }: RecenterButtonProps) {
   const [show, setShow] = useState(false);
 
-  // Poll the scene each frame. Cheap — just three vector comparisons.
   useEffect(() => {
     let raf = 0;
     const tick = () => {
@@ -25,9 +25,9 @@ export default function RecenterButton({ getScene }: RecenterButtonProps) {
       if (scene) {
         const cam = scene.camera;
         const tgt = scene.controls.target;
-        const posDelta = cam.position.distanceTo(HOME_POSITION);
-        const tgtDelta = tgt.distanceTo(HOME_TARGET);
-        const off = posDelta > POS_THRESHOLD || tgtDelta > TARGET_THRESHOLD;
+        const off =
+          cam.position.distanceTo(HOME_POSITION) > POS_THRESHOLD ||
+          tgt.distanceTo(HOME_TARGET) > TARGET_THRESHOLD;
         setShow((s) => (s === off ? s : off));
       }
       raf = requestAnimationFrame(tick);
@@ -39,7 +39,6 @@ export default function RecenterButton({ getScene }: RecenterButtonProps) {
   const onClick = () => {
     const scene = getScene();
     if (!scene) return;
-    // Animate camera + target back to home with a quick ease-out.
     const cam = scene.camera;
     const tgt = scene.controls.target;
     const startPos = cam.position.clone();
@@ -74,14 +73,13 @@ export default function RecenterButton({ getScene }: RecenterButtonProps) {
         border: `1px solid ${colors.borderMid}`,
         borderRadius: radii.sm,
         padding: "8px 14px",
-        fontSize: 10,
-        letterSpacing: "0.24em",
-        textTransform: "uppercase",
+        fontSize: 12,
+        letterSpacing: "0.02em",
         fontFamily: fonts.sans,
-        fontWeight: 600,
-        color: colors.accent,
+        fontWeight: 500,
+        color: "#DED4C3",
         cursor: "pointer",
-        boxShadow: "0 12px 28px rgba(0,0,0,0.45)",
+        boxShadow: "none",
         backdropFilter: "blur(10px)",
         opacity: show ? 1 : 0,
         transform: show ? "translateY(0)" : "translateY(8px)",
@@ -89,21 +87,8 @@ export default function RecenterButton({ getScene }: RecenterButtonProps) {
         transition: "opacity 220ms ease, transform 220ms ease",
       }}
     >
-      <RecenterGlyph />
+      <IconRecenter size={14} />
       Recenter
     </button>
-  );
-}
-
-function RecenterGlyph() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <circle cx="12" cy="12" r="8.5" stroke={colors.accent} strokeWidth="1.6"/>
-      <circle cx="12" cy="12" r="2.2" fill={colors.accent}/>
-      <line x1="12" y1="2" x2="12" y2="5"   stroke={colors.accent} strokeWidth="1.6" strokeLinecap="round"/>
-      <line x1="12" y1="19" x2="12" y2="22" stroke={colors.accent} strokeWidth="1.6" strokeLinecap="round"/>
-      <line x1="2"  y1="12" x2="5"  y2="12" stroke={colors.accent} strokeWidth="1.6" strokeLinecap="round"/>
-      <line x1="19" y1="12" x2="22" y2="12" stroke={colors.accent} strokeWidth="1.6" strokeLinecap="round"/>
-    </svg>
   );
 }
