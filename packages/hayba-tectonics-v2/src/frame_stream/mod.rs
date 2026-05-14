@@ -282,11 +282,363 @@ impl<W: Write> FrameEncoder<W> {
         Ok(())
     }
 
+    // ── Phase 9 climate / crust / plume writers ─────────────────────────
+    //
+    // Each writer emits one frame record (frame_idx + u32 payload_len +
+    // payload). The payload begins with the tag byte, then for the per-cell
+    // tags a `u32 n_cells` length prefix, then quantized data.
+
+    /// u8-quantized per-cell temperatures (200..328 K, 0.5 K step).
+    pub fn write_cell_temperature(&mut self, temps_k: &[f32]) -> io::Result<()> {
+        let mut payload = Vec::with_capacity(1 + 4 + temps_k.len());
+        payload.push(TAG_CELL_TEMPERATURE_K);
+        payload.extend_from_slice(&(temps_k.len() as u32).to_le_bytes());
+        for &t in temps_k {
+            payload.push(quantize_temperature_k(t));
+        }
+        self.emit_frame_payload(&payload)
+    }
+
+    /// u8-quantized humidity (0..1).
+    pub fn write_cell_humidity(&mut self, humidity: &[f32]) -> io::Result<()> {
+        let mut payload = Vec::with_capacity(1 + 4 + humidity.len());
+        payload.push(TAG_CELL_HUMIDITY);
+        payload.extend_from_slice(&(humidity.len() as u32).to_le_bytes());
+        for &h in humidity {
+            payload.push(quantize_unit(h));
+        }
+        self.emit_frame_payload(&payload)
+    }
+
+    /// Biome ids (u8 enum).
+    pub fn write_cell_biome(&mut self, biomes: &[u8]) -> io::Result<()> {
+        let mut payload = Vec::with_capacity(1 + 4 + biomes.len());
+        payload.push(TAG_CELL_BIOME_ID);
+        payload.extend_from_slice(&(biomes.len() as u32).to_le_bytes());
+        payload.extend_from_slice(biomes);
+        self.emit_frame_payload(&payload)
+    }
+
+    /// u16 log2-quantized river flow.
+    pub fn write_cell_river_flow(&mut self, flow_m3_s: &[f32]) -> io::Result<()> {
+        let mut payload = Vec::with_capacity(1 + 4 + flow_m3_s.len() * 2);
+        payload.push(TAG_CELL_RIVER_FLOW);
+        payload.extend_from_slice(&(flow_m3_s.len() as u32).to_le_bytes());
+        for &f in flow_m3_s {
+            payload.extend_from_slice(&quantize_river_flow(f).to_le_bytes());
+        }
+        self.emit_frame_payload(&payload)
+    }
+
+    /// Bitpacked lake mask, 1 bit / cell, LSB-first per byte.
+    pub fn write_cell_lake_mask(&mut self, mask: &[bool]) -> io::Result<()> {
+        let n = mask.len();
+        let n_bytes = (n + 7) / 8;
+        let mut payload = Vec::with_capacity(1 + 4 + n_bytes);
+        payload.push(TAG_CELL_LAKE_MASK);
+        payload.extend_from_slice(&(n as u32).to_le_bytes());
+        let mut bytes = vec![0u8; n_bytes];
+        for (i, &b) in mask.iter().enumerate() {
+            if b {
+                bytes[i >> 3] |= 1 << (i & 7);
+            }
+        }
+        payload.extend_from_slice(&bytes);
+        self.emit_frame_payload(&payload)
+    }
+
+    /// u8-quantized snow cover (0..1).
+    pub fn write_cell_snow_cover(&mut self, snow: &[f32]) -> io::Result<()> {
+        let mut payload = Vec::with_capacity(1 + 4 + snow.len());
+        payload.push(TAG_CELL_SNOW_COVER);
+        payload.extend_from_slice(&(snow.len() as u32).to_le_bytes());
+        for &s in snow {
+            payload.push(quantize_unit(s));
+        }
+        self.emit_frame_payload(&payload)
+    }
+
+    /// 3 × f16 ocean-current vector per cell.
+    pub fn write_cell_ocean_current(&mut self, vecs: &[[f32; 3]]) -> io::Result<()> {
+        let mut payload = Vec::with_capacity(1 + 4 + vecs.len() * 6);
+        payload.push(TAG_CELL_OCEAN_CURRENT_VEC);
+        payload.extend_from_slice(&(vecs.len() as u32).to_le_bytes());
+        for v in vecs {
+            for &c in v {
+                payload.extend_from_slice(&f16::from_f32(c).to_le_bytes());
+            }
+        }
+        self.emit_frame_payload(&payload)
+    }
+
+    /// Single plume-track point: `u32 plume_id, u32 cell_idx, u16 age_ma`.
+    pub fn write_plume_track_point(
+        &mut self,
+        plume_id: u32,
+        cell: u32,
+        age_ma: u16,
+    ) -> io::Result<()> {
+        let mut payload = Vec::with_capacity(1 + 4 + 4 + 2);
+        payload.push(TAG_PLUME_TRACK_POINT);
+        payload.extend_from_slice(&plume_id.to_le_bytes());
+        payload.extend_from_slice(&cell.to_le_bytes());
+        payload.extend_from_slice(&age_ma.to_le_bytes());
+        self.emit_frame_payload(&payload)
+    }
+
+    /// Variable-length per-cell crust layer stack. Each cell contributes
+    /// `u8 n_layers` followed by `n_layers * (u8 rock_id, u16 thickness_m)`.
+    pub fn write_crust_layer_stack(&mut self, stacks: &[Vec<(u8, u16)>]) -> io::Result<()> {
+        let mut payload = Vec::new();
+        payload.push(TAG_CRUST_LAYER_STACK);
+        payload.extend_from_slice(&(stacks.len() as u32).to_le_bytes());
+        for layers in stacks {
+            assert!(
+                layers.len() <= u8::MAX as usize,
+                "crust layer stack length {} exceeds u8 range",
+                layers.len()
+            );
+            payload.push(layers.len() as u8);
+            for (rock_id, thickness_m) in layers {
+                payload.push(*rock_id);
+                payload.extend_from_slice(&thickness_m.to_le_bytes());
+            }
+        }
+        self.emit_frame_payload(&payload)
+    }
+
+    /// Wrap a raw payload in a frame record (frame_idx + u32 len + bytes).
+    fn emit_frame_payload(&mut self, payload: &[u8]) -> io::Result<()> {
+        self.frame_idx = self.frame_idx.wrapping_add(1);
+        self.writer.write_all(&self.frame_idx.to_le_bytes())?;
+        self.writer.write_all(&(payload.len() as u32).to_le_bytes())?;
+        self.writer.write_all(payload)?;
+        self.frames_written += 1;
+        Ok(())
+    }
+
     /// Flush + return the inner writer.
     pub fn finish(mut self) -> io::Result<W> {
         self.writer.flush()?;
         Ok(self.writer)
     }
+}
+
+// ── Quantization helpers ────────────────────────────────────────────────────
+
+/// Quantize a temperature in Kelvin to a u8 (200..328 K, 0.5 K step).
+pub fn quantize_temperature_k(t: f32) -> u8 {
+    let v = ((t - TEMP_K_MIN) / TEMP_K_STEP).round();
+    v.clamp(0.0, 255.0) as u8
+}
+
+/// Dequantize the inverse of [`quantize_temperature_k`].
+pub fn dequantize_temperature_k(q: u8) -> f32 {
+    TEMP_K_MIN + (q as f32) * TEMP_K_STEP
+}
+
+/// Quantize a 0..1 value to u8 (round, clamp).
+pub fn quantize_unit(v: f32) -> u8 {
+    (v.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+/// Inverse of [`quantize_unit`].
+pub fn dequantize_unit(q: u8) -> f32 {
+    (q as f32) / 255.0
+}
+
+/// `u16 = (log2(flow + 1) * 1024) as u16`, saturating.
+pub fn quantize_river_flow(flow_m3_s: f32) -> u16 {
+    let v = ((flow_m3_s.max(0.0) + 1.0).log2() * 1024.0).round();
+    v.clamp(0.0, u16::MAX as f32) as u16
+}
+
+/// Inverse of [`quantize_river_flow`]: `2^(q/1024) - 1`.
+pub fn dequantize_river_flow(q: u16) -> f32 {
+    2f32.powf((q as f32) / 1024.0) - 1.0
+}
+
+// ── Phase 9 decoder helpers ─────────────────────────────────────────────────
+//
+// Free functions that decode a single tag payload (the bytes immediately
+// following the tag byte). The JS side has its own decoder in
+// `viz/lib/frame-stream.js`; these are Rust round-trip helpers.
+
+/// Errors raised by the Phase-9 decoders.
+#[derive(Debug)]
+pub enum DecodeError {
+    /// Buffer too short for the declared payload.
+    UnexpectedEof,
+    /// Tag header byte did not match the expected tag.
+    UnexpectedTag { expected: u8, got: u8 },
+}
+
+impl std::fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DecodeError::UnexpectedEof => write!(f, "unexpected EOF in frame_stream payload"),
+            DecodeError::UnexpectedTag { expected, got } => {
+                write!(f, "unexpected tag 0x{:02X} (expected 0x{:02X})", got, expected)
+            }
+        }
+    }
+}
+
+impl std::error::Error for DecodeError {}
+
+fn read_u8(buf: &[u8], off: &mut usize) -> Result<u8, DecodeError> {
+    if *off + 1 > buf.len() {
+        return Err(DecodeError::UnexpectedEof);
+    }
+    let v = buf[*off];
+    *off += 1;
+    Ok(v)
+}
+
+fn read_u16(buf: &[u8], off: &mut usize) -> Result<u16, DecodeError> {
+    if *off + 2 > buf.len() {
+        return Err(DecodeError::UnexpectedEof);
+    }
+    let v = u16::from_le_bytes(buf[*off..*off + 2].try_into().unwrap());
+    *off += 2;
+    Ok(v)
+}
+
+fn read_u32(buf: &[u8], off: &mut usize) -> Result<u32, DecodeError> {
+    if *off + 4 > buf.len() {
+        return Err(DecodeError::UnexpectedEof);
+    }
+    let v = u32::from_le_bytes(buf[*off..*off + 4].try_into().unwrap());
+    *off += 4;
+    Ok(v)
+}
+
+fn expect_tag(buf: &[u8], off: &mut usize, expected: u8) -> Result<(), DecodeError> {
+    let got = read_u8(buf, off)?;
+    if got != expected {
+        return Err(DecodeError::UnexpectedTag { expected, got });
+    }
+    Ok(())
+}
+
+/// Decode a [`TAG_CELL_TEMPERATURE_K`] payload starting at the tag byte.
+pub fn read_cell_temperature(buf: &[u8]) -> Result<Vec<f32>, DecodeError> {
+    let mut off = 0;
+    expect_tag(buf, &mut off, TAG_CELL_TEMPERATURE_K)?;
+    let n = read_u32(buf, &mut off)? as usize;
+    if off + n > buf.len() {
+        return Err(DecodeError::UnexpectedEof);
+    }
+    Ok(buf[off..off + n]
+        .iter()
+        .map(|&q| dequantize_temperature_k(q))
+        .collect())
+}
+
+pub fn read_cell_humidity(buf: &[u8]) -> Result<Vec<f32>, DecodeError> {
+    let mut off = 0;
+    expect_tag(buf, &mut off, TAG_CELL_HUMIDITY)?;
+    let n = read_u32(buf, &mut off)? as usize;
+    if off + n > buf.len() {
+        return Err(DecodeError::UnexpectedEof);
+    }
+    Ok(buf[off..off + n].iter().map(|&q| dequantize_unit(q)).collect())
+}
+
+pub fn read_cell_biome(buf: &[u8]) -> Result<Vec<u8>, DecodeError> {
+    let mut off = 0;
+    expect_tag(buf, &mut off, TAG_CELL_BIOME_ID)?;
+    let n = read_u32(buf, &mut off)? as usize;
+    if off + n > buf.len() {
+        return Err(DecodeError::UnexpectedEof);
+    }
+    Ok(buf[off..off + n].to_vec())
+}
+
+pub fn read_cell_river_flow(buf: &[u8]) -> Result<Vec<f32>, DecodeError> {
+    let mut off = 0;
+    expect_tag(buf, &mut off, TAG_CELL_RIVER_FLOW)?;
+    let n = read_u32(buf, &mut off)? as usize;
+    if off + n * 2 > buf.len() {
+        return Err(DecodeError::UnexpectedEof);
+    }
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let q = u16::from_le_bytes(buf[off + i * 2..off + i * 2 + 2].try_into().unwrap());
+        out.push(dequantize_river_flow(q));
+    }
+    Ok(out)
+}
+
+pub fn read_cell_lake_mask(buf: &[u8]) -> Result<Vec<bool>, DecodeError> {
+    let mut off = 0;
+    expect_tag(buf, &mut off, TAG_CELL_LAKE_MASK)?;
+    let n = read_u32(buf, &mut off)? as usize;
+    let n_bytes = (n + 7) / 8;
+    if off + n_bytes > buf.len() {
+        return Err(DecodeError::UnexpectedEof);
+    }
+    let bits = &buf[off..off + n_bytes];
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        out.push((bits[i >> 3] >> (i & 7)) & 1 == 1);
+    }
+    Ok(out)
+}
+
+pub fn read_cell_snow_cover(buf: &[u8]) -> Result<Vec<f32>, DecodeError> {
+    let mut off = 0;
+    expect_tag(buf, &mut off, TAG_CELL_SNOW_COVER)?;
+    let n = read_u32(buf, &mut off)? as usize;
+    if off + n > buf.len() {
+        return Err(DecodeError::UnexpectedEof);
+    }
+    Ok(buf[off..off + n].iter().map(|&q| dequantize_unit(q)).collect())
+}
+
+pub fn read_cell_ocean_current(buf: &[u8]) -> Result<Vec<[f32; 3]>, DecodeError> {
+    let mut off = 0;
+    expect_tag(buf, &mut off, TAG_CELL_OCEAN_CURRENT_VEC)?;
+    let n = read_u32(buf, &mut off)? as usize;
+    if off + n * 6 > buf.len() {
+        return Err(DecodeError::UnexpectedEof);
+    }
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let base = off + i * 6;
+        let x = f16::from_le_bytes([buf[base], buf[base + 1]]).to_f32();
+        let y = f16::from_le_bytes([buf[base + 2], buf[base + 3]]).to_f32();
+        let z = f16::from_le_bytes([buf[base + 4], buf[base + 5]]).to_f32();
+        out.push([x, y, z]);
+    }
+    Ok(out)
+}
+
+pub fn read_plume_track_point(buf: &[u8]) -> Result<(u32, u32, u16), DecodeError> {
+    let mut off = 0;
+    expect_tag(buf, &mut off, TAG_PLUME_TRACK_POINT)?;
+    let plume_id = read_u32(buf, &mut off)?;
+    let cell = read_u32(buf, &mut off)?;
+    let age_ma = read_u16(buf, &mut off)?;
+    Ok((plume_id, cell, age_ma))
+}
+
+pub fn read_crust_layer_stack(buf: &[u8]) -> Result<Vec<Vec<(u8, u16)>>, DecodeError> {
+    let mut off = 0;
+    expect_tag(buf, &mut off, TAG_CRUST_LAYER_STACK)?;
+    let n_cells = read_u32(buf, &mut off)? as usize;
+    let mut out = Vec::with_capacity(n_cells);
+    for _ in 0..n_cells {
+        let n_layers = read_u8(buf, &mut off)? as usize;
+        let mut layers = Vec::with_capacity(n_layers);
+        for _ in 0..n_layers {
+            let rock_id = read_u8(buf, &mut off)?;
+            let thickness = read_u16(buf, &mut off)?;
+            layers.push((rock_id, thickness));
+        }
+        out.push(layers);
+    }
+    Ok(out)
 }
 
 fn snapshot(n_cells: u32, fields: &[Field]) -> (Vec<u16>, Vec<f32>, Vec<u8>) {
@@ -445,5 +797,194 @@ mod tests {
             buf
         }
         assert_eq!(run(&fields), run(&fields));
+    }
+
+    // ── Phase 9 round-trip tests ────────────────────────────────────────
+
+    /// Extract the payload of the most recently written frame. Format is
+    /// `[header(32) | initial-snapshot | (u32 frame_idx | u32 len | bytes)*]`.
+    /// We scan from the end: read back `len`, then `bytes` = last `len` bytes
+    /// before the final 0-byte trailer. Simpler: just iterate frames.
+    fn last_frame_payload(buf: &[u8], n_cells: u32) -> Vec<u8> {
+        let header = 32;
+        let init = (n_cells as usize) * (2 + 4 + 1);
+        let mut off = header + init;
+        let mut last = Vec::new();
+        while off + 8 <= buf.len() {
+            off += 4; // frame_idx
+            let len = u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()) as usize;
+            off += 4;
+            last = buf[off..off + len].to_vec();
+            off += len;
+        }
+        last
+    }
+
+    fn make_encoder<'a>(buf: &'a mut Vec<u8>, n_cells: u32) -> FrameEncoder<&'a mut Vec<u8>> {
+        let fields = make_fields(n_cells);
+        FrameEncoder::new(buf, n_cells, 1.0, 1, 1_000_000, 0, &fields).unwrap()
+    }
+
+    #[test]
+    fn roundtrip_cell_temperature() {
+        let temps = vec![200.0f32, 250.5, 287.3, 327.9, 400.0]; // last clamps
+        let mut buf = Vec::new();
+        {
+            let mut enc = make_encoder(&mut buf, temps.len() as u32);
+            enc.write_cell_temperature(&temps).unwrap();
+        }
+        let payload = last_frame_payload(&buf, temps.len() as u32);
+        let decoded = read_cell_temperature(&payload).unwrap();
+        assert_eq!(decoded.len(), temps.len());
+        for (i, (&want, &got)) in temps.iter().zip(decoded.iter()).enumerate() {
+            let want_clamped = want.clamp(TEMP_K_MIN, TEMP_K_MIN + 255.0 * TEMP_K_STEP);
+            assert!(
+                (got - want_clamped).abs() <= TEMP_K_STEP * 0.5 + 1e-3,
+                "[{}] got {} want {}",
+                i,
+                got,
+                want_clamped
+            );
+        }
+    }
+
+    #[test]
+    fn roundtrip_cell_humidity_and_snow() {
+        let vals = vec![0.0f32, 0.25, 0.5, 0.75, 1.0];
+        let mut buf = Vec::new();
+        {
+            let mut enc = make_encoder(&mut buf, vals.len() as u32);
+            enc.write_cell_humidity(&vals).unwrap();
+        }
+        let p = last_frame_payload(&buf, vals.len() as u32);
+        let dec = read_cell_humidity(&p).unwrap();
+        for (a, b) in vals.iter().zip(dec.iter()) {
+            assert!((a - b).abs() <= 0.5 / 255.0 + 1e-6);
+        }
+
+        let mut buf2 = Vec::new();
+        {
+            let mut enc = make_encoder(&mut buf2, vals.len() as u32);
+            enc.write_cell_snow_cover(&vals).unwrap();
+        }
+        let p2 = last_frame_payload(&buf2, vals.len() as u32);
+        let dec2 = read_cell_snow_cover(&p2).unwrap();
+        for (a, b) in vals.iter().zip(dec2.iter()) {
+            assert!((a - b).abs() <= 0.5 / 255.0 + 1e-6);
+        }
+    }
+
+    #[test]
+    fn roundtrip_cell_biome() {
+        let biomes: Vec<u8> = vec![0, 1, 7, 42, 255];
+        let mut buf = Vec::new();
+        {
+            let mut enc = make_encoder(&mut buf, biomes.len() as u32);
+            enc.write_cell_biome(&biomes).unwrap();
+        }
+        let p = last_frame_payload(&buf, biomes.len() as u32);
+        assert_eq!(read_cell_biome(&p).unwrap(), biomes);
+    }
+
+    #[test]
+    fn roundtrip_cell_river_flow() {
+        let flows = vec![0.0f32, 1.0, 10.0, 1_000.0, 1.0e6];
+        let mut buf = Vec::new();
+        {
+            let mut enc = make_encoder(&mut buf, flows.len() as u32);
+            enc.write_cell_river_flow(&flows).unwrap();
+        }
+        let p = last_frame_payload(&buf, flows.len() as u32);
+        let dec = read_cell_river_flow(&p).unwrap();
+        for (a, b) in flows.iter().zip(dec.iter()) {
+            // Log-domain quantization: tolerance ~ a * (2^(1/1024) - 1)
+            let tol = (a.max(1.0)) * (2f32.powf(1.0 / 1024.0) - 1.0) + 1e-3;
+            assert!(
+                (a - b).abs() <= tol,
+                "want {} got {} tol {}",
+                a,
+                b,
+                tol
+            );
+        }
+    }
+
+    #[test]
+    fn roundtrip_cell_lake_mask() {
+        let mask = vec![true, false, true, true, false, false, false, true, true, false, true];
+        let mut buf = Vec::new();
+        {
+            let mut enc = make_encoder(&mut buf, mask.len() as u32);
+            enc.write_cell_lake_mask(&mask).unwrap();
+        }
+        let p = last_frame_payload(&buf, mask.len() as u32);
+        assert_eq!(read_cell_lake_mask(&p).unwrap(), mask);
+    }
+
+    #[test]
+    fn roundtrip_cell_ocean_current() {
+        let vecs = vec![[0.0, 0.0, 0.0], [1.0, -1.0, 0.5], [3.14, 2.71, -0.001]];
+        let mut buf = Vec::new();
+        {
+            let mut enc = make_encoder(&mut buf, vecs.len() as u32);
+            enc.write_cell_ocean_current(&vecs).unwrap();
+        }
+        let p = last_frame_payload(&buf, vecs.len() as u32);
+        let dec = read_cell_ocean_current(&p).unwrap();
+        assert_eq!(dec.len(), vecs.len());
+        for (a, b) in vecs.iter().zip(dec.iter()) {
+            for k in 0..3 {
+                // f16 mantissa precision ~ 10 bits → relative ~1e-3.
+                let tol = a[k].abs() * 1.5e-3 + 1e-3;
+                assert!(
+                    (a[k] - b[k]).abs() <= tol,
+                    "comp {}: want {} got {} tol {}",
+                    k,
+                    a[k],
+                    b[k],
+                    tol
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn roundtrip_plume_track_point() {
+        let mut buf = Vec::new();
+        {
+            let mut enc = make_encoder(&mut buf, 4);
+            enc.write_plume_track_point(7, 1234, 250).unwrap();
+        }
+        let p = last_frame_payload(&buf, 4);
+        assert_eq!(read_plume_track_point(&p).unwrap(), (7, 1234, 250));
+    }
+
+    #[test]
+    fn roundtrip_crust_layer_stack() {
+        let stacks: Vec<Vec<(u8, u16)>> = vec![
+            vec![(0, 100), (1, 250)],
+            vec![],
+            vec![(2, 7000), (3, 1234), (4, 65535)],
+        ];
+        let mut buf = Vec::new();
+        {
+            let mut enc = make_encoder(&mut buf, stacks.len() as u32);
+            enc.write_crust_layer_stack(&stacks).unwrap();
+        }
+        let p = last_frame_payload(&buf, stacks.len() as u32);
+        assert_eq!(read_crust_layer_stack(&p).unwrap(), stacks);
+    }
+
+    #[test]
+    fn unexpected_tag_is_rejected() {
+        let payload = vec![0xAB, 0, 0, 0, 0];
+        let err = read_cell_temperature(&payload).unwrap_err();
+        match err {
+            DecodeError::UnexpectedTag { expected, got } => {
+                assert_eq!(expected, TAG_CELL_TEMPERATURE_K);
+                assert_eq!(got, 0xAB);
+            }
+            other => panic!("wrong error: {:?}", other),
+        }
     }
 }
