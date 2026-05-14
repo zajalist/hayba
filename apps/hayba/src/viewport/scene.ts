@@ -7,8 +7,11 @@ export interface SceneHandle {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
+  canvas: HTMLCanvasElement;
+  /** Invisible unit sphere used as the painter raycast target. */
+  raycastTarget: THREE.Mesh;
   dispose: () => void;
-  /** Replace the current globe with a new mesh / points object. */
+  /** Replace the current globe object (point cloud or future mesh). */
   setGlobe: (object: THREE.Object3D | null) => void;
 }
 
@@ -27,8 +30,6 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
   camera.position.set(0, 0, 3.5);
   camera.lookAt(0, 0, 0);
 
-  // Lights — keyed warm + cool fill, evoking the Hayba palette without
-  // shouting through. Materials we ship later can be tuned against these.
   const key = new THREE.DirectionalLight(0xffffff, 1.0);
   key.position.set(2, 1.5, 2);
   scene.add(key);
@@ -37,14 +38,16 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
   scene.add(fill);
   scene.add(new THREE.AmbientLight(0x404040, 0.5));
 
-  // Placeholder while the real globe loads.
-  const placeholder = new THREE.Mesh(
-    new THREE.SphereGeometry(1, 32, 16),
-    new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.8 }),
+  // Invisible unit sphere — sole purpose is raycast hit-testing for the painter.
+  // Slightly inside the cell radius so we don't catch point-cloud sprites first.
+  const raycastTarget = new THREE.Mesh(
+    new THREE.SphereGeometry(0.999, 64, 32),
+    new THREE.MeshBasicMaterial({ visible: false }),
   );
-  scene.add(placeholder);
+  raycastTarget.name = "painter-target";
+  scene.add(raycastTarget);
 
-  let currentGlobe: THREE.Object3D | null = placeholder;
+  let currentGlobe: THREE.Object3D | null = null;
 
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true;
@@ -54,9 +57,13 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
   controls.maxDistance = 8;
   controls.rotateSpeed = 0.7;
   controls.zoomSpeed = 0.8;
+  // v0.2 painter binding: left mouse free for paint, right rotates, middle zooms.
+  controls.mouseButtons = {
+    LEFT:   null as unknown as THREE.MOUSE,
+    MIDDLE: THREE.MOUSE.DOLLY,
+    RIGHT:  THREE.MOUSE.ROTATE,
+  };
 
-  // Resize handling — driven by parent observer rather than window resize so
-  // the canvas tracks the viewport container precisely.
   const ro = new ResizeObserver((entries) => {
     for (const entry of entries) {
       const { width, height } = entry.contentRect;
@@ -82,10 +89,11 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
     scene,
     camera,
     controls,
+    canvas,
+    raycastTarget,
     setGlobe(object) {
       if (currentGlobe) {
         scene.remove(currentGlobe);
-        // Best-effort cleanup. v0.1 swap is one-shot so leaks are bounded.
         if ((currentGlobe as THREE.Mesh).geometry) (currentGlobe as THREE.Mesh).geometry.dispose();
         const mat = (currentGlobe as THREE.Mesh).material;
         if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
