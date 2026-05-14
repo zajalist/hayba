@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { colors } from "@hayba/design-tokens";
+import { createStarfield, type StarfieldHandle } from "./starfield";
 
 export interface SceneHandle {
   renderer: THREE.WebGLRenderer;
@@ -37,6 +38,11 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
   fill.position.set(-2, -1, -2);
   scene.add(fill);
   scene.add(new THREE.AmbientLight(0x404040, 0.5));
+
+  // Starfield backdrop — slow rotation + per-star twinkle. Sits at render
+  // order -10 so it never z-fights the globe.
+  const starfield: StarfieldHandle = createStarfield();
+  scene.add(starfield.object);
 
   // Invisible unit sphere — sole purpose is raycast hit-testing for the painter.
   // Slightly inside the cell radius so we don't catch point-cloud sprites first.
@@ -77,7 +83,12 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
   ro.observe(canvas);
 
   let raf = 0;
+  let prevTime = performance.now();
   const tick = () => {
+    const now = performance.now();
+    const dt = Math.min(0.1, (now - prevTime) / 1000);
+    prevTime = now;
+    starfield.tick(dt);
     controls.update();
     renderer.render(scene, camera);
     raf = requestAnimationFrame(tick);
@@ -106,6 +117,7 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
       cancelAnimationFrame(raf);
       ro.disconnect();
       controls.dispose();
+      starfield.dispose();
       renderer.dispose();
     },
   };

@@ -23,7 +23,7 @@ use hayba_tectonics_v2::field::Crust;
 use hayba_tectonics_v2::model::{Model, MAX_PLATE_SPEED};
 use hayba_tectonics_v2::sphere::Grid;
 
-use crate::planet::PlanetSnapshot;
+use crate::planet::{snapshot_model, PlanetSnapshot};
 
 #[derive(Debug, Deserialize)]
 pub struct WizardDraft {
@@ -273,30 +273,8 @@ fn bake_impl(draft: &WizardDraft) -> PlanetSnapshot {
         model.step(draft.dt_ma);
     }
 
-    let mut cell_positions = Vec::with_capacity((n_cells * 3) as usize);
-    let mut cell_plate_ids = Vec::with_capacity(n_cells as usize);
-    let mut cell_elevation = Vec::with_capacity(n_cells as usize);
-    let mut cell_continental = Vec::with_capacity(n_cells as usize);
-    for fid in 0..n_cells {
-        let p = model.grid.position(fid);
-        cell_positions.push(p.x);
-        cell_positions.push(p.y);
-        cell_positions.push(p.z);
-        let f = &model.fields[fid as usize];
-        cell_plate_ids.push(match f.plate_id { Some(pid) => pid as i32, None => -1 });
-        cell_elevation.push(f.elevation);
-        cell_continental.push(if f.is_continent_crust() { 1 } else { 0 });
-    }
-
-    PlanetSnapshot {
-        divisions: draft.divisions,
-        n_cells,
-        sim_time_ma: model.sim_time_ma,
-        cell_positions,
-        cell_plate_ids,
-        cell_elevation,
-        cell_continental,
-    }
+    let _ = n_cells; // silence warning when snapshot_model is the only consumer
+    snapshot_model(&model, draft.divisions)
 }
 
 #[cfg(test)]
