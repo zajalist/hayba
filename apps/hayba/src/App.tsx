@@ -1,51 +1,49 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { colors, fonts } from "@hayba/design-tokens";
+import Viewport from "./viewport/Viewport";
+import type { SceneHandle } from "./viewport/scene";
 
-interface BakeResult {
-  status?: string;
-  n_cells?: number;
-  message?: string;
+export interface PlanetSnapshot {
+  divisions: number;
+  n_cells: number;
+  sim_time_ma: number;
+  cell_positions: number[];
+  cell_plate_ids: number[];
+  cell_elevation: number[];
+  cell_continental: number[];
 }
 
 export default function App() {
-  const [bake, setBake] = useState<BakeResult | null>(null);
+  const sceneRef = useRef<SceneHandle | null>(null);
+  const [snapshot, setSnapshot] = useState<PlanetSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const handleSceneReady = useCallback((handle: SceneHandle) => {
+    sceneRef.current = handle;
+  }, []);
+
   useEffect(() => {
-    invoke<BakeResult>("bake_demo_planet")
-      .then(setBake)
+    invoke<PlanetSnapshot>("bake_demo_planet")
+      .then(setSnapshot)
       .catch((e) => setError(String(e)));
   }, []);
 
+  // Globe-rendering side effect lands in T8 (renders the snapshot).
+  // For T6 we just keep the placeholder sphere on screen.
+
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        background: colors.bgDeep,
-        color: colors.textSecondary,
-        fontFamily: fonts.sans,
-        fontSize: 14,
-        letterSpacing: "0.04em",
-        gap: 12,
-      }}
-    >
-      <div style={{ fontFamily: fonts.serif, fontSize: 32, color: colors.textPrimary }}>
-        Hayba Explorer
-      </div>
-      <div style={{ width: 80, height: 2, background: colors.accent }} />
-      {!bake && !error && <div>booting…</div>}
-      {error && <div style={{ color: "#d77f24" }}>error: {error}</div>}
-      {bake && (
-        <div style={{ marginTop: 8 }}>
-          {bake.message} <span style={{ color: colors.textMuted }}>(n_cells={bake.n_cells})</span>
+    <>
+      <Viewport onReady={handleSceneReady} />
+      {error && (
+        <div style={{ position: "fixed", top: 8, left: 8, color: "#d77f24", fontSize: 12 }}>
+          error: {error}
         </div>
       )}
-    </div>
+      {snapshot && (
+        <div style={{ position: "fixed", top: 8, left: 8, color: "#a8aeb8", fontSize: 12 }}>
+          planet ready — n_cells={snapshot.n_cells}, sim_time_ma={snapshot.sim_time_ma.toFixed(1)}
+        </div>
+      )}
+    </>
   );
 }
