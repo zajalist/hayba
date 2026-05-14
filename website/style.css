@@ -913,3 +913,15 @@ footer {
   min-height: 100vh; font: 18px var(--font-ui); color: var(--text-secondary);
   background: var(--bg-deep);
 }
+
+/* Hero + product-card additions for repositioned marketing copy */
+.product-card-eyebrow {
+  color: var(--accent); font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;
+}
+.product-card .card-cta {
+  color: var(--accent); font-size: 13px; font-weight: 600;
+  margin-top: auto;
+}
+.hero-lead { color: var(--text-secondary); font-size: 14px; line-height: 1.6; max-width: 420px; }
+.hero-cta { display: flex; gap: 8px; margin-top: 20px; }
