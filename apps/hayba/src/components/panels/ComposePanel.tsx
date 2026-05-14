@@ -8,7 +8,6 @@ import { PRESETS as RESOLUTION_PRESETS } from "../../wizard/ResolutionChips";
 
 export interface ComposePanelProps {
   draft: WizardDraft;
-  cellCount: number;
   busy: boolean;
   onChangeDivisions: (d: number) => void;
   onChangePreset: (p: PresetName) => void;
@@ -57,7 +56,7 @@ export default function ComposePanel(p: ComposePanelProps) {
             value={
               <span>
                 {p.draft.seed}
-                <button onClick={p.onReroll} style={inlineActionStyle} title="Reroll seed">↻</button>
+                <button onClick={p.onReroll} style={inlineActionStyle} title="Reroll seed" aria-label="Reroll seed">↻</button>
               </span>
             }
           />
@@ -78,7 +77,13 @@ export default function ComposePanel(p: ComposePanelProps) {
           type="button"
           onClick={p.onBake}
           disabled={p.busy}
-          style={primaryActionButtonStyle}
+          style={{
+            ...primaryActionButtonStyle,
+            cursor: p.busy ? "default" : "pointer",
+            opacity: p.busy ? 0.5 : 1,
+            borderColor: p.busy ? colors.borderSoft : colors.beige,
+            color: p.busy ? colors.textMuted : colors.beige,
+          }}
         >
           {p.busy ? "Baking…" : "Bake planet"}
         </button>
