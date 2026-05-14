@@ -144,7 +144,12 @@ export default function App() {
         }
         const chord = angularToChord(drft.brush_radius_rad);
         previewRef.current = cellsWithinRadius(tree, x, y, z, chord);
-        globeRef.current?.recolorFromDraft(drft, cellCountRef.current, previewRef.current);
+        globeRef.current?.recolorFromDraft(
+          drft,
+          cellCountRef.current,
+          previewRef.current,
+          t === "erase" ? "erase" : "paint",
+        );
       },
       onHoverEnd: () => {
         if (previewRef.current.length === 0) return;
@@ -174,7 +179,12 @@ export default function App() {
         draftRef.current = next;
         setDraft(next);
         previewRef.current = hits;
-        globeRef.current?.recolorFromDraft(next, cellCountRef.current, previewRef.current);
+        globeRef.current?.recolorFromDraft(
+          next,
+          cellCountRef.current,
+          previewRef.current,
+          t === "erase" ? "erase" : "paint",
+        );
       },
     });
 
@@ -283,6 +293,7 @@ export default function App() {
         <ToolSizeSlider
           value={draft.brush_radius_rad}
           onChange={handleChangeBrushRadius}
+          destructive={activeTool === "erase"}
         />
       )}
       {mode === "wizard" && draft && (

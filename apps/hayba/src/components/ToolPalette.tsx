@@ -1,5 +1,5 @@
 import React from "react";
-import { colors, fonts } from "@hayba/design-tokens";
+import { colors, fonts, radii } from "@hayba/design-tokens";
 import { IconBrush, IconErase, IconRotate, IconZoom, IconPan } from "./icons";
 
 export type ToolName = "brush" | "erase" | "rotate" | "zoom" | "pan";
@@ -33,19 +33,38 @@ export default function ToolPalette({ active, onChange }: ToolPaletteProps) {
         top: "50%",
         transform: "translateY(-50%)",
         zIndex: 60,
-        display: "flex",
-        flexDirection: "column",
-        gap: 2,
         background: colors.bgBase,
         border: `1px solid ${colors.borderMid}`,
-        padding: 6,
-        backdropFilter: "blur(8px)",
+        borderRadius: radii.sm,
+        boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
       }}
     >
-      {TOOLS.map((t) => {
-        const isActive = t.name === active;
-        return <ToolButton key={t.name} tool={t} active={isActive} onClick={() => onChange(t.name)} />;
-      })}
+      {/* UE-style tab cap */}
+      <div
+        style={{
+          background: colors.bgPanelHeader,
+          borderBottom: `1px solid ${colors.borderMid}`,
+          padding: "6px 10px",
+          fontSize: 9,
+          letterSpacing: "0.32em",
+          textTransform: "uppercase",
+          fontWeight: 500,
+          color: colors.textMuted,
+          textAlign: "center",
+          fontFamily: fonts.sans,
+        }}
+      >
+        Tools
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", padding: 4, gap: 2 }}>
+        {TOOLS.map((t) => (
+          <ToolButton key={t.name} tool={t} active={t.name === active} onClick={() => onChange(t.name)} />
+        ))}
+      </div>
     </aside>
   );
 }
@@ -62,31 +81,21 @@ function ToolButton({ tool, active, onClick }: { tool: ToolDef; active: boolean;
       title={`${tool.label} · ${tool.shortcut}`}
       style={{
         position: "relative",
-        width: 44,
-        height: 44,
+        width: 40,
+        height: 40,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: active ? colors.bgPanel : hover ? colors.bgPanel : "transparent",
-        border: "none",
+        background: active
+          ? colors.bgPanel
+          : hover ? "rgba(255,255,255,0.04)" : "transparent",
+        border: active ? `1px solid ${colors.accent}` : `1px solid transparent`,
+        borderRadius: radii.xs,
         cursor: "pointer",
-        transition: "background 90ms ease",
+        transition: "background 90ms ease, border-color 90ms ease",
       }}
     >
-      <span
-        aria-hidden
-        style={{
-          position: "absolute",
-          left: 0,
-          top: 6,
-          bottom: 6,
-          width: 2,
-          background: active ? colors.accent : "transparent",
-          transition: "background 120ms ease",
-        }}
-      />
       <Icon size={22} />
-      {/* Floating label appears on hover, off to the right */}
       {hover && (
         <span
           style={{
@@ -97,6 +106,7 @@ function ToolButton({ tool, active, onClick }: { tool: ToolDef; active: boolean;
             transform: "translateY(-50%)",
             background: colors.bgBase,
             border: `1px solid ${colors.borderMid}`,
+            borderRadius: radii.xs,
             padding: "4px 10px",
             fontSize: 10,
             letterSpacing: "0.22em",
@@ -105,6 +115,7 @@ function ToolButton({ tool, active, onClick }: { tool: ToolDef; active: boolean;
             color: colors.textPrimary,
             whiteSpace: "nowrap",
             pointerEvents: "none",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
           }}
         >
           {tool.label}

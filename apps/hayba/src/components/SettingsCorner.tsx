@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { colors, fonts } from "@hayba/design-tokens";
+import { colors, fonts, radii } from "@hayba/design-tokens";
 import type { WizardDraft, PresetName } from "../wizard/state";
 import { PRESETS } from "../wizard/state";
 import { PRESETS as RESOLUTION_PRESETS } from "../wizard/ResolutionChips";
@@ -29,38 +29,42 @@ export default function SettingsCorner({
         right: 20,
         top: 20,
         zIndex: 60,
-        width: 280,
+        width: 300,
         background: colors.bgBase,
         border: `1px solid ${colors.borderMid}`,
+        borderRadius: radii.sm,
+        boxShadow: "0 8px 28px rgba(0,0,0,0.5)",
         color: colors.textSecondary,
         fontFamily: fonts.sans,
-        backdropFilter: "blur(8px)",
+        overflow: "hidden",
       }}
     >
-      {/* Header: wordmark + collapse toggle */}
+      {/* UE-style header tab cap */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "12px 16px",
-          borderBottom: open ? `1px solid ${colors.borderMid}` : "none",
+          background: colors.bgPanelHeader,
+          borderBottom: `1px solid ${colors.borderMid}`,
+          padding: "10px 14px",
           cursor: "pointer",
+          borderLeft: `2px solid ${colors.accent}`,
         }}
         onClick={() => setOpen((o) => !o)}
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <span style={{ fontSize: 10, color: colors.accentText, letterSpacing: "0.32em", textTransform: "uppercase", fontWeight: 500 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          <span style={{ fontSize: 9, color: colors.accentText, letterSpacing: "0.32em", textTransform: "uppercase", fontWeight: 600 }}>
             New planet
           </span>
           {!open && (
-            <span style={{ fontSize: 11, color: colors.textMuted, letterSpacing: "0.02em" }}>
+            <span style={{ fontSize: 10, color: colors.textMuted, letterSpacing: "0.04em" }}>
               {resolution?.label.toLowerCase()} · {preset?.plates} plates · seed {String(draft.seed).slice(-6)}
             </span>
           )}
         </div>
-        <span style={{ color: colors.accentText, fontSize: 14, fontFamily: fonts.mono }}>
-          {open ? "−" : "+"}
+        <span style={{ color: colors.textSecondary, fontSize: 12, fontFamily: fonts.mono }}>
+          {open ? "▾" : "▸"}
         </span>
       </div>
 
@@ -135,15 +139,16 @@ export default function SettingsCorner({
               onClick={onBake}
               style={{
                 width: "100%",
-                background: "transparent",
+                background: busy ? "transparent" : "rgba(232, 130, 28, 0.08)",
                 border: `1px solid ${busy ? colors.borderSoft : colors.accentText}`,
+                borderRadius: radii.xs,
                 color: busy ? colors.textMuted : colors.accentText,
                 padding: "10px 14px",
                 fontSize: 11,
                 letterSpacing: "0.32em",
                 textTransform: "uppercase",
                 fontFamily: fonts.sans,
-                fontWeight: 500,
+                fontWeight: 600,
                 cursor: busy ? "default" : "pointer",
                 transition: "background 140ms, color 140ms",
               }}

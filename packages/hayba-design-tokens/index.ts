@@ -12,8 +12,10 @@ export const colors = {
   // Editorial-dark: tightened toward Gaea's #1a1a1a feel while keeping a
   // subtle slate-cool cast that ties to the marketing-restyle palette.
   bgDeep:         "#141619",
-  bgBase:         "#181b20",
-  bgPanel:        "#1f2228",
+  bgBase:         "#1b1f25",
+  bgPanel:        "#252a32",
+  /** Slightly darker tone for panel HEADERS — UE-editor tab caps. */
+  bgPanelHeader:  "#1d2129",
   /** Filled accent — buttons, swatches, dividers, painted state. */
   accent:         "#B56A1D",
   accentHover:    "#d77f24",
@@ -39,6 +41,9 @@ export const fonts = {
 } as const;
 
 export const radii = {
+  /** Buttons, tool icons, small chips. */
+  xs: "2px",
+  /** Panels, modals, palette containers. UE editor uses ~3px. */
   sm: "3px",
   md: "4px",
   lg: "6px",
