@@ -85,284 +85,781 @@
 
 <!-- ═══════════════════════════════ NAV ═══════════════════════════════ -->
 <nav id="mainNav">
-  <a class="nav-logo" href="#">
-    <img src="assets/Logo.svg" alt="Hayba" class="nav-logo-img" />
-    <span class="nav-logo-name">HAYBA</span>
-  </a>
-  <div class="nav-links">
-    <a href="#how-it-works">ARCHITECTURE</a>
-    <a href="#usecases">USE CASES</a>
-    <a href="gaea/g_index.html">HAYBAGAEA</a>
-    <a href="pcgex/p_index.html">HAYBAPCGEX</a>
-    <a href="https://github.com/zajalist/hayba" target="_blank">GITHUB</a>
-    <a href="gaea/g_index.html" class="btn-primary">GET STARTED FREE</a>
+  <canvas id="navStarfield" aria-hidden="true"></canvas>
+  <div class="nav-inner">
+    <a class="nav-logo" href="#" aria-label="Hayba home">
+      <img src="assets/Logo-white.svg" alt="Hayba" class="nav-logo-img" />
+    </a>
+    <div class="nav-sep"></div>
+    <div class="nav-links">
+      <a href="#linguistics">Tools</a>
+      <a href="/lang/demo-conlang">Demo</a>
+      <a href="/waitlist/">Waitlist</a>
+      <a href="#">Docs</a>
+      <a href="#">Showcase</a>
+      <a href="#">Forum</a>
+      <a href="#">About</a>
+      <a href="https://github.com/zajalist/hayba" target="_blank">GitHub</a>
+      <a href="/login/">Sign in</a>
+    </div>
   </div>
 </nav>
 
 <!-- ═══════════════════════════════ HERO ═══════════════════════════════ -->
 <section class="hero" id="hero">
-  <canvas id="terrainCanvas"></canvas>
-  <canvas id="particlesCanvas"></canvas>
-  <div class="hero-glow"></div>
+  <canvas id="heroField" aria-hidden="true"></canvas>
+  <div class="hero-embers" aria-hidden="true">
+    <span></span><span></span><span></span><span></span>
+  </div>
+  <div class="hero-specks" aria-hidden="true">
+    <span></span><span></span><span></span><span></span><span></span>
+    <span></span><span></span><span></span><span></span><span></span>
+  </div>
+  <div class="hero-water-tint" aria-hidden="true"></div>
+  <div class="hero-flare" id="heroFlare" aria-hidden="true"></div>
+  <canvas id="heroRipples" aria-hidden="true"></canvas>
+  <div class="hero-grain" aria-hidden="true"></div>
   <div class="hero-vignette"></div>
 
   <div class="hero-content">
     <div class="hayba-hero-badge">A worldbuilding toolset</div>
-    <h1>Build worlds the way<br>geologists, linguists, and<br>architects would.</h1>
-    <p class="hero-lead">
-      Tectonics that ages right. Conlangs that obey real phonotactics. Cities that follow trade routes. Wired together by an MCP your LLM can drive.
-    </p>
+    <h1>Build at the speed<br>of thought.</h1>
     <div class="hero-cta">
-      <a href="/waitlist" class="btn primary">Join the waitlist</a>
-      <a href="/lang/demo-conlang" class="btn ghost">See the linguistics tool</a>
+      <a href="/waitlist/" class="hero-link">Join the waitlist <span class="hero-link-arrow">→</span></a>
     </div>
   </div>
 
-  <div class="hero-scroll-hint">
-    <span>SCROLL</span>
-    <div class="scroll-line"></div>
+  <div class="hero-status">
+    <div class="hero-version">Hayba 0.5.0</div>
+    <div class="hero-status-line">In Development</div>
   </div>
 </section>
 
-<!-- ═══════════════════════════════ PRODUCTS ═══════════════════════════════ -->
-<section class="products-section">
-  <div class="products-inner">
-    <div class="products-heading">
-      <span class="section-label">Products</span>
-      <h2>Two engines. One prompt.</h2>
-      <p>Two standalone MCP servers. Install one or both. Each configures in under a minute.</p>
-    </div>
+<!-- ═══════════════════════════════ LEFT TOC ═══════════════════════════════ -->
+<aside class="page-toc" id="pageToc" aria-label="Page sections">
+  <a href="#top" data-target="top" class="toc-link toc-brand">Hayba</a>
+  <a href="#linguistics" data-target="linguistics" class="toc-link">Linguistics</a>
+  <a href="#tectonics" data-target="tectonics" class="toc-link">Tectonics</a>
+  <a href="#pipelines" data-target="pipelines" class="toc-link">Pipelines</a>
+  <a href="#architecture" data-target="architecture" class="toc-link">Architecture</a>
+  <a href="#workflow" data-target="workflow" class="toc-link">Workflow</a>
+  <a href="#opensource" data-target="opensource" class="toc-link">Open Source</a>
+  <a href="#roadmap" data-target="roadmap" class="toc-link">Roadmap</a>
+  <a href="#faq" data-target="faq" class="toc-link">FAQ</a>
+  <a href="/waitlist/" class="toc-link toc-cta">Waitlist</a>
+</aside>
 
-    <div class="product-cards">
-      <a href="/lang/demo-conlang" class="product-card">
-        <div class="product-card-eyebrow">Linguistics</div>
-        <h3>Conlangs with phonology, diachrony, and grammar.</h3>
-        <p>A full conlang workbench — IPA chart, sound changes, paradigms, family trees. Persist to your account; share by link.</p>
-        <span class="card-cta">Try the public demo →</span>
-      </a>
-      <a href="#" class="product-card">
-        <div class="product-card-eyebrow">Tectonics</div>
-        <h3>Plate dynamics that feed mountains, rivers, and climate.</h3>
-        <p>Simulate plate motion over geological time. Results plug into terrain, hydrology, and biome generation.</p>
-        <span class="card-cta">Coming with the waitlist →</span>
-      </a>
-      <a href="#" class="product-card">
-        <div class="product-card-eyebrow">UE5 plugin</div>
-        <h3>An MCP toolkit your LLM can author live in-engine.</h3>
-        <p>Hayba speaks Model Context Protocol. Any LLM with MCP support can author terrain, place actors, and apply conventions directly in Unreal.</p>
-        <span class="card-cta">Docs →</span>
-      </a>
-    </div>
+<!-- ═══════════════════════════════ SUB-NAV ═══════════════════════════════ -->
+<nav class="subnav" aria-label="Jump to">
+  <a href="#linguistics" class="subnav-link is-active">Linguistics</a>
+  <a href="#tectonics" class="subnav-link">Tectonics</a>
+  <a href="#pipelines" class="subnav-link">Pipelines</a>
+  <a href="/waitlist/" class="subnav-link">Waitlist</a>
+  <a href="https://github.com/zajalist/hayba" target="_blank" class="subnav-link">GitHub</a>
+</nav>
+
+<!-- ═══════════════════════════════ LINGUISTICS ═══════════════════════════════ -->
+<section class="feature-row" id="linguistics">
+  <div class="feature-row-text">
+    <div class="feature-eyebrow">Linguistics</div>
+    <h2>Conlangs that obey<br>real phonotactics.</h2>
+  </div>
+  <div class="feature-row-body">
+    <p>A full conlang workbench — IPA chart, phonotactic legality heatmap, sound changes, paradigms, family trees. Persist languages to your account; share any one of them by read-only link.</p>
+    <p>Built on PHOIBLE co-occurrence data so inventory suggestions reflect what actually appears in human languages.</p>
+    <a href="/lang/demo-conlang" class="feature-cta">Try the public demo →</a>
+  </div>
+</section>
+<div class="feature-screenshot">
+  <span class="screenshot-eyebrow">The workbench</span>
+  <div class="screenshot-frame" data-placeholder="linguistics workbench"></div>
+</div>
+
+<!-- ═══════════════════════════════ TECTONICS ═══════════════════════════════ -->
+<section class="feature-row" id="tectonics">
+  <div class="feature-row-text">
+    <div class="feature-eyebrow">Tectonics</div>
+    <h2>Plate dynamics that<br>age right.</h2>
+  </div>
+  <div class="feature-row-body">
+    <p>Simulate plate motion over geological time. Rifts open, collide, subduct. Results feed terrain, hydrology, and biome generation downstream.</p>
+    <p>Per-tile invariants are visualised, not abstracted — you see plate areas, drift, and divergence regimes as you tune the simulation.</p>
+    <a href="#" class="feature-cta">Coming with the waitlist →</a>
+  </div>
+</section>
+<div class="feature-screenshot">
+  <span class="screenshot-eyebrow">Plate lifecycle</span>
+  <div class="screenshot-frame" data-placeholder="tectonics viewer"></div>
+</div>
+
+<!-- ═══════════════════════════════ PIPELINES ═══════════════════════════════ -->
+<section class="feature-row" id="pipelines">
+  <div class="feature-row-text">
+    <div class="feature-eyebrow">Pipelines · UE5</div>
+    <h2>An MCP your LLM<br>can author with.</h2>
+  </div>
+  <div class="feature-row-body">
+    <p>Hayba speaks Model Context Protocol. Any LLM with MCP support can author terrain, place actors, apply conventions, and orchestrate the full toolset directly in Unreal Engine.</p>
+    <p>Tools are organised by domain so you can scope what the agent sees — Scene, Editor, PCGEx, Zone Painter, Conventions.</p>
+    <a href="#" class="feature-cta">Docs →</a>
+  </div>
+</section>
+<div class="feature-screenshot">
+  <span class="screenshot-eyebrow">UE5 plugin · 35 tools, 8 domains</span>
+  <div class="screenshot-frame" data-placeholder="ue5 mcp tool panel"></div>
+</div>
+
+<!-- ═══════════════════════════════ ARCHITECTURE ═══════════════════════════════ -->
+<section class="feature-row" id="architecture">
+  <div class="feature-row-text">
+    <div class="feature-eyebrow">Architecture · Cities</div>
+    <h2>Cities that follow<br>their own trade routes.</h2>
+  </div>
+  <div class="feature-row-body">
+    <p>Procedural settlements grow from upstream signals — tectonic uplift, river hydrology, biome viability, language families. Roads aren't drawn; they emerge from where people would actually need to walk.</p>
+    <p>Style guides parameterise vernacular: wall material, roof pitch, courtyard logic, façade rhythm. The same generator produces a North-African medina, an alpine timber village, or a delta market town depending on what the world demands of it.</p>
+    <a href="#" class="feature-cta">Architecture pillar →</a>
+  </div>
+</section>
+<div class="feature-screenshot">
+  <span class="screenshot-eyebrow">Style guide · vernacular parameters</span>
+  <div class="screenshot-frame" data-placeholder="architecture style guide"></div>
+</div>
+
+<!-- ═══════════════════════════════ WORKFLOW ═══════════════════════════════ -->
+<section class="feature-row" id="workflow">
+  <div class="feature-row-text">
+    <div class="feature-eyebrow">Workflow</div>
+    <h2>One prompt, one world,<br>three editors.</h2>
+  </div>
+  <div class="feature-row-body">
+    <p>Drive Hayba from a chat session, a desktop dashboard, or directly inside Unreal Engine 5. The state of your world lives in a single source of truth — every editor reads and writes the same canonical JSON.</p>
+    <p>Diff and version like code. Branch a continent, merge a language family, roll back a culture. The toolset assumes you'll iterate, not commit-and-pray.</p>
+    <a href="#" class="feature-cta">See the pipeline →</a>
+  </div>
+</section>
+<div class="feature-screenshot">
+  <span class="screenshot-eyebrow">Dashboard · world state</span>
+  <div class="screenshot-frame" data-placeholder="dashboard pipeline"></div>
+</div>
+
+<!-- ═══════════════════════════════ OPEN SOURCE ═══════════════════════════════ -->
+<section class="feature-row" id="opensource">
+  <div class="feature-row-text">
+    <div class="feature-eyebrow">Open source</div>
+    <h2>MIT-licensed.<br>Forkable. Inspectable.</h2>
+  </div>
+  <div class="feature-row-body">
+    <p>The full toolset is on GitHub. Schema definitions, simulation engines, the MCP server, the linguistics workbench — all of it. No telemetry, no required cloud account to use the local tools.</p>
+    <p>The hosted tier is the waitlist; the local tier is free. Bring your own LLM via MCP — Claude, GPT-4, Llama, anything that speaks the protocol.</p>
+    <a href="https://github.com/zajalist/hayba" target="_blank" class="feature-cta">GitHub →</a>
   </div>
 </section>
 
-<!-- ═══════════════════════════════ FEATURE STRIP ═══════════════════════════════ -->
-<section class="features">
-  <div class="feature" data-index="0">
-    <div class="feature-icon">
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="3" stroke="#ff6b35" stroke-width="1.5"/><path d="M10 2v2M10 16v2M2 10h2M16 10h2" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round"/></svg>
-    </div>
-    <div class="feature-label">Under a Second</div>
-    <h3>Live Engine Reload</h3>
-    <p>Every node call writes to disk or bridges via TCP. Gaea reloads. Unreal recooks. You watch the graph build in real time — no batch jobs, no dialogs.</p>
+<!-- ═══════════════════════════════ ROADMAP ═══════════════════════════════ -->
+<section class="feature-row roadmap-row" id="roadmap">
+  <div class="feature-row-text">
+    <div class="feature-eyebrow">Roadmap</div>
+    <h2>The plan.</h2>
   </div>
-  <div class="feature" data-index="1">
-    <div class="feature-icon">
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="5" width="16" height="10" rx="1" stroke="#ff6b35" stroke-width="1.5"/><path d="M6 9l3 3 5-5" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    </div>
-    <div class="feature-label">Two Engines</div>
-    <h3>Gaea + Unreal Engine 5</h3>
-    <p>Terrain heightmaps via Gaea. Procedural geometry via UE5 PCGEx. Use both in the same project. One conversation handles the full pipeline.</p>
-  </div>
-  <div class="feature" data-index="2">
-    <div class="feature-icon">
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4 10h12M10 4l6 6-6 6" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    </div>
-    <div class="feature-label">19 Tools. 35+ Nodes.</div>
-    <h3>No Node Names Required</h3>
-    <p>Claude calls <code>list_node_types()</code>, selects the right nodes, and wires them correctly — first time. You describe the output. The AI handles topology.</p>
-  </div>
-  <div class="feature" data-index="3">
-    <div class="feature-icon">
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 6h14M3 10h10M3 14h7" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round"/></svg>
-    </div>
-    <div class="feature-label">MIT Licensed</div>
-    <h3>Free. Open Source. No Lock-in.</h3>
-    <p>Auditable, forkable, and free forever. Works with Claude Desktop, Claude Code, Cursor, and Cline. Installs in under a minute on any platform.</p>
+  <div class="feature-row-body">
+    <p>Hayba is built pillar-by-pillar in public. Each pillar lands as a working toolset before the next begins. You can track progress on the GitHub issues.</p>
   </div>
 </section>
+<div class="roadmap-grid">
+  <div class="roadmap-item is-done">
+    <div class="roadmap-ver">0.1</div>
+    <div class="roadmap-name">Linguistics workbench</div>
+    <div class="roadmap-status">Shipped · public demo live</div>
+  </div>
+  <div class="roadmap-item is-doing">
+    <div class="roadmap-ver">0.5</div>
+    <div class="roadmap-name">Tectonics M0 → M3</div>
+    <div class="roadmap-status">In progress · dynamic plate lifecycle</div>
+  </div>
+  <div class="roadmap-item is-doing">
+    <div class="roadmap-ver">0.5</div>
+    <div class="roadmap-name">UE5 MCP plugin</div>
+    <div class="roadmap-status">In progress · 35 tools across 8 domains</div>
+  </div>
+  <div class="roadmap-item">
+    <div class="roadmap-ver">0.7</div>
+    <div class="roadmap-name">Architecture pillar</div>
+    <div class="roadmap-status">Q3 · cities, style guides, vernacular</div>
+  </div>
+  <div class="roadmap-item">
+    <div class="roadmap-ver">0.8</div>
+    <div class="roadmap-name">Hydrology & climate</div>
+    <div class="roadmap-status">Q4 · rivers, coasts, biomes</div>
+  </div>
+  <div class="roadmap-item">
+    <div class="roadmap-ver">1.0</div>
+    <div class="roadmap-name">Public release</div>
+    <div class="roadmap-status">Self-hosted + cloud tier</div>
+  </div>
+</div>
 
-<!-- ═══════════════════════════════ HOW IT WORKS ═══════════════════════════════ -->
-<section class="howitworks" id="how-it-works">
-  <div class="section-inner">
-    <span class="section-label">Architecture</span>
-    <h2>Four steps. No manual wiring.</h2>
-    <p class="section-sub">Hayba sits between your AI and your engines. It speaks MCP to Claude and writes directly to Gaea and Unreal — no proprietary protocols, no plugins to configure beyond the installer.</p>
-
-    <!-- Animated pipeline diagram -->
-    <div class="pipeline">
-      <div class="pipeline-node" data-node="0">
-        <div class="pipeline-node-inner">
-          <div class="pipeline-node-label">AI Client</div>
-          <div class="pipeline-node-name">Claude · Cursor · Cline</div>
-          <div class="pipeline-node-sub">any MCP-compatible tool</div>
-        </div>
-        <div class="pipeline-node-glow"></div>
-      </div>
-      <div class="pipeline-connector" data-conn="0">
-        <div class="pipeline-line"><div class="pipeline-pulse"></div></div>
-        <div class="pipeline-conn-label">stdio MCP</div>
-      </div>
-      <div class="pipeline-node" data-node="1">
-        <div class="pipeline-node-inner">
-          <div class="pipeline-node-label">MCP Server</div>
-          <div class="pipeline-node-name">Hayba</div>
-          <div class="pipeline-node-sub">19 MCP tools</div>
-        </div>
-        <div class="pipeline-node-glow"></div>
-      </div>
-      <div class="pipeline-connector" data-conn="1">
-        <div class="pipeline-line"><div class="pipeline-pulse"></div></div>
-        <div class="pipeline-conn-label">files · TCP</div>
-      </div>
-      <div class="pipeline-node" data-node="2">
-        <div class="pipeline-node-inner">
-          <div class="pipeline-node-label">Terrain / PCG</div>
-          <div class="pipeline-node-name">Gaea · Unreal</div>
-          <div class="pipeline-node-sub">auto-reloads</div>
-        </div>
-        <div class="pipeline-node-glow"></div>
-      </div>
-      <div class="pipeline-connector" data-conn="2">
-        <div class="pipeline-line"><div class="pipeline-pulse"></div></div>
-        <div class="pipeline-conn-label">heightmap · graph</div>
-      </div>
-      <div class="pipeline-node" data-node="3">
-        <div class="pipeline-node-inner">
-          <div class="pipeline-node-label">Output</div>
-          <div class="pipeline-node-name">Your Project</div>
-          <div class="pipeline-node-sub">.r32 / PCG asset</div>
-        </div>
-        <div class="pipeline-node-glow"></div>
-      </div>
-    </div>
-
-    <div class="howitworks-steps">
-      <div class="hiw-step" data-reveal>
-        <div class="hiw-num">// 01</div>
-        <div class="hiw-content">
-          <h3>Write a prompt.</h3>
-          <p>In Claude Desktop, Cursor, or Cline: <em>"Snowy mountain range, heavy hydraulic erosion, export at 4096."</em> No node names. No parameter lookups. Plain language.</p>
-        </div>
-      </div>
-      <div class="hiw-step" data-reveal>
-        <div class="hiw-num">// 02</div>
-        <div class="hiw-content">
-          <h3>AI plans the graph.</h3>
-          <p>Claude calls <code>list_node_types()</code>, selects the correct nodes, and sequences the build — Mountain → Erosion → FractalTerraces → Autolevel. Graph topology handled automatically.</p>
-        </div>
-      </div>
-      <div class="hiw-step" data-reveal>
-        <div class="hiw-num">// 03</div>
-        <div class="hiw-content">
-          <h3>Engine reloads. Live.</h3>
-          <p>Every <code>add_node()</code> call writes to the <code>.terrain</code> file or sends a TCP command to Unreal. The engine detects the change in under a second. You watch it assemble in real time.</p>
-        </div>
-      </div>
-      <div class="hiw-step" data-reveal>
-        <div class="hiw-num">// 04</div>
-        <div class="hiw-content">
-          <h3>Cook and ship.</h3>
-          <p><code>cook_graph()</code> runs headlessly, waits for the build, and returns the output path. A heightmap lands on disk. A PCG asset is live in your project. Import and continue.</p>
-        </div>
-      </div>
-    </div>
+<!-- ═══════════════════════════════ FAQ ═══════════════════════════════ -->
+<section class="feature-row faq-row" id="faq">
+  <div class="feature-row-text">
+    <div class="feature-eyebrow">FAQ</div>
+    <h2>Common questions.</h2>
+  </div>
+  <div class="feature-row-body">
+    <p>Specific worries about MCP, licensing, the hosted tier, and the open-source pieces.</p>
   </div>
 </section>
+<div class="faq-list">
+  <details class="faq-item">
+    <summary>Is Hayba free?</summary>
+    <p>The full local toolset is MIT-licensed and free forever. The hosted tier — cloud sync, share-links, the admin queue — is currently waitlist-gated while we shake out the first 50 users.</p>
+  </details>
+  <details class="faq-item">
+    <summary>Do I need an LLM API key?</summary>
+    <p>Only if you want agentic authoring. Hayba speaks MCP, so any client that speaks MCP works — Claude Desktop, Cursor, Continue, even local Llama runs through Ollama-MCP. The simulation, linguistics, and architecture tools all run without an LLM.</p>
+  </details>
+  <details class="faq-item">
+    <summary>Will this run on my machine?</summary>
+    <p>The web tools (linguistics workbench, dashboard) run in any modern browser. The MCP server is a small Rust binary. The UE5 plugin needs UE 5.4+. Tectonics and architecture simulations are CPU-friendly — no GPU required for headless runs.</p>
+  </details>
+  <details class="faq-item">
+    <summary>Can I use Hayba output commercially?</summary>
+    <p>Yes. Worlds you generate are yours. The toolset is MIT — no royalties, no per-seat fees, no commercial use restrictions on the output.</p>
+  </details>
+  <details class="faq-item">
+    <summary>Why a waitlist if it's free?</summary>
+    <p>Because the hosted tier sits on a single self-hosted Supabase. 50 users is what one box comfortably runs. Once we're confident in the sync + share-link flow we'll open it up. Until then, joining the waitlist costs nothing and gets you in early.</p>
+  </details>
+  <details class="faq-item">
+    <summary>How is this different from World Anvil / Worldographer / Inkarnate?</summary>
+    <p>Those are excellent reference tools — they help you write down a world you already know. Hayba is a generation tool — it helps you discover what the world is by simulating its causes. The two genuinely complement each other.</p>
+  </details>
+</div>
 
-<!-- ═══════════════════════════════ USE CASES ═══════════════════════════════ -->
-<section class="usecases" id="usecases">
-  <div class="section-inner">
-    <span class="section-label">Use Cases</span>
-    <h2>What you can build with it.</h2>
-    <div class="usecase-grid">
-      <div class="usecase" data-reveal>
-        <div class="usecase-num">// 01</div>
-        <h3>Terrain from a sentence.</h3>
-        <p>Describe the landscape. Claude opens Gaea, adds nodes one by one, and you watch the graph assemble live. No manual node placement. No parameter hunting.</p>
-        <div class="usecase-example">"Volcanic island — ash fields, deep caldera, hydraulic erosion on the flanks"</div>
-      </div>
-      <div class="usecase" data-reveal>
-        <div class="usecase-num">// 02</div>
-        <h3>PCG graphs on demand.</h3>
-        <p>Describe the environment. Claude builds the PCGEx node graph inside Unreal Engine 5 — scatter, filter, cluster — and the result appears in your viewport in seconds.</p>
-        <div class="usecase-example">"Dense pine forest on slopes between 20° and 45°, clear below treeline"</div>
-      </div>
-      <div class="usecase" data-reveal>
-        <div class="usecase-num">// 03</div>
-        <h3>One sentence. Sub-second update.</h3>
-        <p>Change erosion strength, noise seed, scale, or scatter density in plain language. Files update atomically. The engine reloads in under a second.</p>
-        <div class="usecase-example">"Less aggressive erosion, sharper ridgelines, increase the rock scree density"</div>
-      </div>
-      <div class="usecase" data-reveal>
-        <div class="usecase-num">// 04</div>
-        <h3>Headless. Silent. Fast.</h3>
-        <p>No Gaea window. No UE viewport. Describe the terrain, get a heightmap on disk. Designed for automation, CI pipelines, and rapid variation generation.</p>
-        <div class="usecase-example">"8 desert heightmap variants at 4096 — different seeds, same base graph"</div>
-      </div>
-      <div class="usecase" data-reveal>
-        <div class="usecase-num">// 05</div>
-        <h3>Non-destructive iteration.</h3>
-        <p>Open any existing <code>.terrain</code> file or PCG asset. Claude reads the current graph state and modifies exactly what you asked. Nothing else is touched.</p>
-        <div class="usecase-example">"Open the canyon project. Deepen the river valley. Leave everything else."</div>
-      </div>
-      <div class="usecase" data-reveal>
-        <div class="usecase-num">// 06</div>
-        <h3>Terrain to world. End to end.</h3>
-        <p>HaybaGaea exports the heightmap. HaybaPCGEx populates it. Foliage, rocks, ruins — one conversation drives both engines. This is the full pipeline.</p>
-        <div class="usecase-example">"Build the mountain, then scatter boulders and dead pines on the ridgelines"</div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ═══════════════════════════════ CINEMATIC CTA ═══════════════════════════════ -->
-<section class="cta-section">
-  <canvas id="ctaCanvas"></canvas>
-  <div class="cta-glow"></div>
-  <div class="cta-content">
-    <span class="section-label" style="justify-content:center;display:flex;">Get started</span>
-    <h2 class="cta-title">TERRAIN AT THE<br><span class="accent">SPEED OF THOUGHT.</span></h2>
-    <p class="cta-sub">Two engines. 19 tools. One prompt. Free and open source under MIT.</p>
-    <div class="cta-actions">
-      <a href="gaea/g_index.html" class="btn-hero-primary">
-        <span>START WITH HAYBAGAEA</span>
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7h8M7 3l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </a>
-      <a href="pcgex/p_index.html" class="btn-hero-ghost">EXPLORE HAYBAPCGEX</a>
-    </div>
-  </div>
-</section>
+<!-- ═══════════════════════════════ JUMP-TO ═══════════════════════════════ -->
+<div class="jump-to">
+  <span class="jump-to-label">Or jump to:</span>
+  <a href="#linguistics" class="subnav-link">Linguistics</a>
+  <a href="#tectonics" class="subnav-link">Tectonics</a>
+  <a href="#pipelines" class="subnav-link">Pipelines</a>
+  <a href="#architecture" class="subnav-link">Architecture</a>
+  <a href="#workflow" class="subnav-link">Workflow</a>
+  <a href="#roadmap" class="subnav-link">Roadmap</a>
+  <a href="#faq" class="subnav-link">FAQ</a>
+  <a href="/waitlist/" class="subnav-link">Waitlist</a>
+</div>
 
 <!-- ═══════════════════════════════ FOOTER ═══════════════════════════════ -->
-<footer>
-  <div class="footer-inner">
-    <div class="footer-brand">
-      <a class="nav-logo" href="#">
-        <img src="assets/Logo.svg" alt="Hayba" class="nav-logo-img" />
-        <span class="nav-logo-name">HAYBA</span>
-      </a>
-      <p>Open source MCP toolkit for Gaea and Unreal Engine 5. MIT Licensed.</p>
+<footer class="site-footer">
+  <canvas id="footerStarfield" aria-hidden="true"></canvas>
+  <div class="footer-grid">
+    <div class="footer-col">
+      <h4>Tools</h4>
+      <a href="#linguistics">Linguistics</a>
+      <a href="#tectonics">Tectonics</a>
+      <a href="#pipelines">UE5 plugin</a>
     </div>
-    <div class="footer-links">
-      <a href="gaea/g_index.html">HaybaGaea</a>
-      <a href="pcgex/p_index.html">HaybaPCGEx</a>
-      <a href="https://github.com/zajalist/gaea_mcp" target="_blank">GitHub</a>
-      <a href="https://github.com/zajalist/gaea_mcp/blob/main/LICENSE" target="_blank">MIT License</a>
+    <div class="footer-col">
+      <h4>Learning</h4>
+      <a href="#">Documentation</a>
+      <a href="#">Tutorials</a>
+      <a href="#">Roadmap</a>
+    </div>
+    <div class="footer-col">
+      <h4>Account</h4>
+      <a href="/waitlist/">Join waitlist</a>
+      <a href="/login/">Sign in</a>
+      <a href="/admin/">Admin</a>
+    </div>
+    <div class="footer-col">
+      <h4>About</h4>
+      <a href="https://github.com/zajalist/hayba" target="_blank">GitHub</a>
+      <a href="#">Brand</a>
+      <a href="#">Contact</a>
+    </div>
+  </div>
+  <div class="footer-bottom">
+    <a class="footer-brand-mark" href="#">
+      <img src="assets/Logo.svg" alt="Hayba" />
+    </a>
+    <div class="footer-copy">
+      <p>© 2026 Hayba. A worldbuilding toolset.</p>
+      <p class="footer-fine">Built by a small team for makers of imaginary places.</p>
+    </div>
+    <div class="footer-legal">
+      <a href="#">Privacy</a>
+      <a href="#">Terms</a>
+      <a href="#">Imprint</a>
     </div>
   </div>
 </footer>
 
 <script src="main.js"></script>
+<script>
+  // Starfield — irregular scatter, twinkles, occasional sparks. Attaches to any canvas.
+  function startStarfield(canvasId, opts) {
+    const c = document.getElementById(canvasId);
+    if (!c) return;
+    const ctx = c.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const o = Object.assign({
+      density: 0.5,   // stars per px width
+      maxR: 0.45,     // max radius
+      maxBase: 0.22,  // max base brightness
+      warmChance: 0.18,
+      sparkMinMs: 4000,
+      sparkMaxMs: 9000,
+      leftBias: 1.0,  // 1.0 = uniform, >1 concentrates toward left
+    }, opts || {});
+    let W, H, stars, nextSparkAt = 0;
+
+    function resize() {
+      const parent = c.parentElement || c;
+      W = parent.clientWidth; H = parent.clientHeight;
+      if (W < 2 || H < 2) return;
+      c.width = Math.round(W * dpr);
+      c.height = Math.round(H * dpr);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.scale(dpr, dpr);
+      stars = Array.from({ length: Math.round(W * o.density) }, () => ({
+        x: Math.pow(Math.random(), o.leftBias) * W,
+        y: Math.random() * H,
+        r: 0.18 + Math.random() * o.maxR,
+        base: 0.04 + Math.random() * o.maxBase,
+        speed: 0.0001 + Math.random() * 0.0009,
+        phase: Math.random() * Math.PI * 2,
+        warm: Math.random() < o.warmChance,
+        spark: 0,
+      }));
+    }
+    function frame(t) {
+      ctx.clearRect(0, 0, W, H);
+      if (t > nextSparkAt && stars && stars.length) {
+        stars[Math.floor(Math.random() * stars.length)].spark = 1;
+        nextSparkAt = t + o.sparkMinMs + Math.random() * (o.sparkMaxMs - o.sparkMinMs);
+      }
+      for (const s of stars) {
+        const twinkle = s.base * (0.35 + 0.65 * Math.sin(t * s.speed + s.phase));
+        if (s.spark > 0) s.spark = Math.max(0, s.spark - 0.012);
+        const op = Math.min(1, twinkle + s.spark);
+        const showHalo = (s.base > 0.18 && twinkle > s.base * 0.7) || s.spark > 0.3;
+        const haloOp = Math.min(0.35, op * 0.4 + s.spark * 0.4);
+        const color = s.warm
+          ? `255, ${Math.round(220 - s.spark * 20)}, ${Math.round(178 - s.spark * 20)}`
+          : '255, 255, 255';
+        if (showHalo) {
+          ctx.fillStyle = `rgba(${color}, ${haloOp.toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, s.r * (2.4 + s.spark * 1.6), 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = `rgba(${color}, ${op.toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.r * (1 + s.spark * 0.3), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      requestAnimationFrame(frame);
+    }
+    resize();
+    window.addEventListener('resize', resize);
+    if (typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(resize).observe(c.parentElement || c);
+    }
+    // Refire after fonts/layout settle
+    setTimeout(resize, 100);
+    window.addEventListener('load', resize);
+    requestAnimationFrame(frame);
+  }
+
+  // WebGL hero field: orb composition rendered in linear RGB with in-shader Bayer
+  // dither, then sRGB-encoded. Solves the banding from CSS-layered blurs.
+  (function heroField() {
+    const c = document.getElementById('heroField');
+    if (!c) return;
+    const gl = c.getContext('webgl', { antialias: false, depth: false, premultipliedAlpha: false, alpha: false });
+    if (!gl) { c.style.display = 'none'; return; }
+
+    const N = 22;
+    // Palette in LINEAR RGB (sRGB → linear via approx pow(x, 2.2))
+    const PAL_SRGB = [
+      [0.710, 0.416, 0.114], // #B56A1D ember
+      [0.843, 0.498, 0.141], // #d77f24 bright ember
+      [0.478, 0.271, 0.078], // #7a4514 dim ember
+      [0.114, 0.227, 0.290], // #1d3a4a navy
+      [0.141, 0.188, 0.251], // #243040 slate-blue
+      [0.086, 0.098, 0.122], // #16191f shadow
+    ];
+    // Balanced: Warm 4+1+2=7 ; Cool 3+3=6 ; Shadow 2 — warm slight majority, cool present
+    const palWeights = [4, 1, 2, 3, 3, 2];
+    const PAL_LIN = PAL_SRGB.map(rgb => rgb.map(v => Math.pow(v, 2.2)));
+    const weighted = [];
+    palWeights.forEach((w, i) => { for (let k = 0; k < w; k++) weighted.push(i); });
+
+    function rand(a, b) { return a + Math.random() * (b - a); }
+    // Build static orb descriptors
+    const orbs = Array.from({ length: N }, () => {
+      const palIdx = weighted[Math.floor(Math.random() * weighted.length)];
+      const isShadow = palIdx === 5;
+      const isCool = palIdx === 3 || palIdx === 4;
+      const intensity =
+        isShadow ? -rand(0.55, 0.85) :
+        isCool   ?  rand(0.30, 0.55) :   // cool orbs visible but not dominant
+                    rand(0.22, 0.50);    // warm orbs lead with reasonable balance
+      return {
+        ax: rand(-0.1, 1.05),
+        ay: rand(-0.15, 1.05),
+        baseR: rand(0.10, 0.32),         // radius in uv units (height-normalised)
+        col: PAL_LIN[palIdx],
+        intensity,
+        driftAmp: rand(0.04, 0.10),
+        driftPhX: rand(0, Math.PI * 2),
+        driftPhY: rand(0, Math.PI * 2),
+        driftSpX: rand(0.04, 0.10),
+        driftSpY: rand(0.04, 0.10),
+        breathePh: rand(0, Math.PI * 2),
+        breatheSp: rand(0.30, 0.70),
+      };
+    });
+
+    const VS = `attribute vec2 a_pos; void main(){gl_Position=vec4(a_pos,0.,1.);}`;
+    const FS = `
+      precision highp float;
+      uniform vec2 u_res;
+      uniform float u_time;
+      uniform vec3 u_pos[${N}];        // x, y, radius (aspect-corrected uv space)
+      uniform vec3 u_col[${N}];        // linear RGB × intensity (negative ⇒ shadow well)
+
+      // ────────────────────────────────────────────────────────────
+      // Hash-based per-pixel pseudo-random.  Same idea as Dave Hoskins'
+      // hash33 — small, GPU-friendly, no banding/periodicity at common scales.
+      // ────────────────────────────────────────────────────────────
+      float hash21(vec2 p) {
+        vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+        p3 += dot(p3, p3.yzx + 33.33);
+        return fract((p3.x + p3.y) * p3.z);
+      }
+
+      // Per-channel TPDF (triangular probability density) noise in [-1, 1].
+      // Sum of two uniform hashes → triangular distribution, which gives the
+      // best perceptual dither at 1-LSB amplitude.  Temporally seeded so
+      // static bands cannot accumulate.
+      vec3 tpdfNoise(vec2 fc, float seed) {
+        vec3 a = vec3(
+          hash21(fc + vec2(seed + 0.0,  3.7)),
+          hash21(fc + vec2(seed + 11.3, 5.1)),
+          hash21(fc + vec2(seed + 7.9,  17.2))
+        );
+        vec3 b = vec3(
+          hash21(fc + vec2(seed + 23.1, 91.7)),
+          hash21(fc + vec2(seed + 47.2, 13.5)),
+          hash21(fc + vec2(seed + 5.6,  61.3))
+        );
+        return a - b;
+      }
+
+      // sRGB encode (piecewise, more accurate than pow 1/2.2 for darks)
+      vec3 toSRGB(vec3 c) {
+        c = clamp(c, 0.0, 1.0);
+        vec3 lo = c * 12.92;
+        vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
+        bvec3 cutoff = lessThan(c, vec3(0.0031308));
+        return mix(hi, lo, vec3(cutoff));
+      }
+
+      // Long-tailed orb falloff — matches a CSS Gaussian-blurred disc better
+      // than pure Gaussian.  Power 1.6 sits between exponential and Gaussian
+      // → soft plateau in the centre + a noticeable bloom tail.
+      float orbFalloff(vec2 d, float r) {
+        return exp(- pow(length(d) / max(r, 1e-4), 1.6));
+      }
+
+      void main() {
+        vec2 uv = gl_FragCoord.xy / u_res.xy;
+        float aspect = u_res.x / u_res.y;
+        vec2 p = uv; p.x *= aspect;
+
+        // ── Base linear-RGB slate ──
+        vec3 col = vec3(0.0050, 0.0060, 0.0078);
+
+        // ── Soft directional aurora wash — warm dominant, cool counterpoint ──
+        float ang = u_time * 0.045;
+        vec2 dir = vec2(cos(ang), sin(ang));
+        vec2 cc = uv - 0.5;
+        float warmA = max(0.0, dot(cc, dir)) * 0.55;
+        float coolA = max(0.0, dot(cc, -dir)) * 0.30;
+        col += vec3(0.020, 0.009, 0.0028) * warmA;
+        col += vec3(0.0022, 0.0060, 0.0110) * coolA;
+
+        // ── Orbs ──
+        for (int i = 0; i < ${N}; i++) {
+          vec3 pos = u_pos[i];
+          vec2 d = p - pos.xy;
+          float g = orbFalloff(d, pos.z);
+          col += u_col[i] * g;
+        }
+
+        // ── Pulse traversal (slow, screen-wide) — gentle warm sweep ──
+        float pulseX = mod(u_time * 0.034, 1.4) - 0.2;
+        float pulse = exp(- pow((uv.x - pulseX) * 3.6, 2.0))
+                    * exp(- pow((uv.y - 0.5)   * 2.2, 2.0));
+        col += vec3(0.022, 0.012, 0.0048) * pulse;
+
+        // ── Water tint (subtle cool wash) ──
+        vec3 tint = mix(
+          vec3(0.0058, 0.0110, 0.0170),
+          vec3(0.0022, 0.0048, 0.0090),
+          uv.y
+        );
+        col += tint * 0.55;
+        col *= mix(vec3(1.0), vec3(0.92, 0.97, 1.06), 0.14);
+
+        // ── Soft circular vignette ──
+        vec2 vc = (uv - 0.5);
+        vc.x *= aspect;
+        float r2 = dot(vc, vc);
+        float vig = 1.0 - smoothstep(0.20, 0.62, r2);
+        col *= 0.55 + 0.45 * vig;
+
+        // ── sRGB encode first ──
+        col = toSRGB(col);
+
+        // ── TPDF dither AFTER sRGB encoding at exactly 1 LSB amplitude.
+        // Rendered at native device pixels → each noise pixel is sub-perceptual
+        // on retina/hi-DPI, but its statistical effect breaks 8-bit bands.
+        vec3 noise = tpdfNoise(gl_FragCoord.xy, fract(u_time * 0.5) * 100.0);
+        col += noise * (1.0 / 255.0);
+
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    function compile(t, s) {
+      const sh = gl.createShader(t);
+      gl.shaderSource(sh, s);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) console.warn(gl.getShaderInfoLog(sh));
+      return sh;
+    }
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      console.warn('hero-field link:', gl.getProgramInfoLog(prog));
+      return;
+    }
+    gl.useProgram(prog);
+
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+    const posLoc = gl.getAttribLocation(prog, 'a_pos');
+    gl.enableVertexAttribArray(posLoc);
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+    const uRes = gl.getUniformLocation(prog, 'u_res');
+    const uTime = gl.getUniformLocation(prog, 'u_time');
+    const uPos = [], uCol = [];
+    for (let i = 0; i < N; i++) {
+      uPos.push(gl.getUniformLocation(prog, `u_pos[${i}]`));
+      uCol.push(gl.getUniformLocation(prog, `u_col[${i}]`));
+    }
+
+    function resize() {
+      const r = c.parentElement.getBoundingClientRect();
+      // Match native device pixels so each shader pixel = 1 device pixel.
+      // Dither becomes sub-perceptual on retina; browser does no resampling.
+      const dpr = window.devicePixelRatio || 1;
+      c.width = Math.round(r.width * dpr);
+      c.height = Math.round(r.height * dpr);
+      gl.viewport(0, 0, c.width, c.height);
+    }
+    resize();
+    window.addEventListener('resize', resize);
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(resize).observe(c.parentElement);
+
+    const start = performance.now();
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
+    function frame(now) {
+      const t = reduce.matches ? 0 : (now - start) / 1000;
+      const aspect = c.width / c.height;
+      for (let i = 0; i < N; i++) {
+        const o = orbs[i];
+        const dx = Math.sin(o.driftPhX + t * o.driftSpX) * o.driftAmp;
+        const dy = Math.sin(o.driftPhY + t * o.driftSpY) * o.driftAmp;
+        const x = (o.ax + dx) * aspect; // aspect-corrected x to match shader frame
+        const y = o.ay + dy;
+        const breathe = 0.8 + 0.4 * Math.sin(o.breathePh + t * o.breatheSp);
+        const r = o.baseR * breathe;
+        gl.uniform3f(uPos[i], x, y, r);
+        const k = o.intensity * breathe;
+        gl.uniform3f(uCol[i], o.col[0] * k, o.col[1] * k, o.col[2] * k);
+      }
+      gl.uniform2f(uRes, c.width, c.height);
+      gl.uniform1f(uTime, t);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  })();
+
+  // Navbar: left-concentrated, lower density
+  // ── Hero ripples with normals (WebGL) ────────────────────────────────
+  (function heroRipples() {
+    const c = document.getElementById('heroRipples');
+    if (!c) return;
+    const gl = c.getContext('webgl', { antialias: false, depth: false, premultipliedAlpha: false });
+    if (!gl) { c.style.display = 'none'; return; }
+
+    const VS = 'attribute vec2 a_pos; void main(){gl_Position=vec4(a_pos,0.,1.);}';
+    const FS = `
+      precision mediump float;
+      uniform vec2 u_res;
+      uniform float u_time;
+
+      // Continuous water surface — 6 waves in different directions, drift cancels
+      float field(vec2 uv) {
+        vec2 p = uv * 3.0;
+        p.x *= u_res.x / u_res.y;
+        float t = u_time;
+        float h = 0.0;
+        // Each wave: amplitude * sin(dot(p, direction) * frequency + time * speed)
+        h += 0.55 * sin(dot(p, vec2( 0.95,  0.31)) * 1.9 + t *  0.55);  // 18°  drifting right
+        h += 0.42 * sin(dot(p, vec2(-0.50,  0.87)) * 2.4 + t *  0.72);  // 120° drifting up-left
+        h += 0.30 * sin(dot(p, vec2(-0.81, -0.59)) * 3.1 + t * -0.65);  // 216° drifting down-left
+        h += 0.22 * sin(dot(p, vec2( 0.31, -0.95)) * 3.8 + t *  0.85);  // 288° drifting down
+        h += 0.14 * sin(dot(p, vec2( 0.71,  0.71)) * 5.5 + t * -0.90);  // 45°  small detail
+        h += 0.10 * sin(dot(p, vec2(-0.93,  0.37)) * 6.8 + t *  1.05);  // 158° small detail
+        return h * 0.40;
+      }
+
+      // Animated caustic bands — intersecting sine waves
+      float caustics(vec2 uv) {
+        vec2 p = uv * 4.5;
+        p.x *= u_res.x / u_res.y;
+        float t = u_time * 0.35;
+        float a = sin(p.x * 1.6 + sin(p.y * 1.3 + t * 0.7) * 1.4 + t);
+        float b = sin(p.y * 1.8 + sin(p.x * 1.5 - t * 0.5) * 1.4 + t * 0.6);
+        float c = a * b;
+        c = pow(max(0., c), 4.0);
+        return c;
+      }
+
+      void main() {
+        vec2 uv = gl_FragCoord.xy / u_res.xy;
+        float eps = 1.5 / u_res.y;
+
+        float hL = field(uv - vec2(eps, 0.0));
+        float hR = field(uv + vec2(eps, 0.0));
+        float hU = field(uv - vec2(0.0, eps));
+        float hD = field(uv + vec2(0.0, eps));
+
+        // Surface normal from height-field gradient (stronger gain → snappier highlights)
+        vec3 n = normalize(vec3((hL - hR) * 45.0, (hU - hD) * 45.0, 1.0));
+        vec3 L = normalize(vec3(0.45, 0.40, 0.80));
+        float diff = max(0.0, dot(n, L));
+        float spec = pow(diff, 48.0);            // sharper, snappier crest highlights
+        float wide = pow(diff, 6.0) * 0.18;       // broader sheen along whole crest
+
+        float caust = caustics(uv);
+        float h = field(uv);
+
+        // overlay-neutral 0.5 + tilt
+        float v = 0.5
+                + spec * 0.45            // sharp crest hotspot
+                + wide                   // broader crest sheen
+                + caust * 0.16           // caustic bright bands
+                - max(0., -h) * 0.10     // valley shadows
+                + h * 0.04;
+        // TPDF dither — same hash technique as hero field, prevents bands
+        // in the overlay-blended ripple highlights.
+        vec2 fc = gl_FragCoord.xy;
+        float seed = fract(u_time * 0.5) * 100.0;
+        float n1 = fract(sin(dot(fc + vec2(seed, 3.7),     vec2(12.9898, 78.233))) * 43758.5453);
+        float n2 = fract(sin(dot(fc + vec2(seed + 23.1, 91.7), vec2(12.9898, 78.233))) * 43758.5453);
+        v += (n1 - n2) * (1.0 / 255.0);
+        gl_FragColor = vec4(vec3(v), 0.92);
+      }
+    `;
+
+    function compile(t, s) {
+      const sh = gl.createShader(t);
+      gl.shaderSource(sh, s);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) console.warn(gl.getShaderInfoLog(sh));
+      return sh;
+    }
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+    const pos = gl.getAttribLocation(prog, 'a_pos');
+    gl.enableVertexAttribArray(pos);
+    gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+    const uRes = gl.getUniformLocation(prog, 'u_res');
+    const uTime = gl.getUniformLocation(prog, 'u_time');
+    const start = performance.now() / 1000;
+
+    function resize() {
+      const r = c.parentElement.getBoundingClientRect();
+      // Native device resolution so dither is sub-perceptual on retina
+      const dpr = window.devicePixelRatio || 1;
+      c.width = Math.round(r.width * dpr);
+      c.height = Math.round(r.height * dpr);
+      gl.viewport(0, 0, c.width, c.height);
+    }
+    resize();
+    window.addEventListener('resize', resize);
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(resize).observe(c.parentElement);
+
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
+    function frame(now) {
+      const t = (now / 1000) - start;
+      gl.uniform2f(uRes, c.width, c.height);
+      gl.uniform1f(uTime, reduce.matches ? 0 : t);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  })();
+
+  startStarfield('navStarfield', { density: 0.22, leftBias: 1.8 });
+  // Footer: uniform across the whole width, slightly bigger and rarer sparks
+  startStarfield('footerStarfield', { density: 0.18, maxR: 0.6, maxBase: 0.28, sparkMinMs: 6000, sparkMaxMs: 14000 });
+
+  // ── Left TOC: show after hero, track active section ──
+  (function pageToc() {
+    const toc = document.getElementById('pageToc');
+    if (!toc) return;
+    const hero = document.getElementById('hero');
+    const links = Array.from(toc.querySelectorAll('.toc-link[data-target]'));
+    const targets = links
+      .map(l => ({ link: l, el: document.getElementById(l.dataset.target) || (l.dataset.target === 'top' ? hero : null) }))
+      .filter(t => t.el);
+
+    function onScroll() {
+      const y = window.scrollY;
+      const heroH = hero ? hero.offsetHeight : 0;
+      // Show TOC once we've scrolled into the hero a bit
+      toc.classList.toggle('is-visible', y > heroH * 0.45);
+
+      // Which section is active — the one whose top is closest above viewport center
+      const probe = y + window.innerHeight * 0.4;
+      let active = targets[0];
+      for (const t of targets) {
+        if (t.el.offsetTop <= probe) active = t;
+      }
+      links.forEach(l => l.classList.toggle('is-active', l === active.link));
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    onScroll();
+  })();
+</script>
 </body>
 </html>
+

@@ -238,6 +238,8 @@
     const y = window.scrollY;
     if (y > lastY && y > 100) nav.classList.add('hide');
     else nav.classList.remove('hide');
+    if (y > 80) nav.classList.add('scrolled');
+    else nav.classList.remove('scrolled');
     lastY = y;
   }, { passive: true });
 
