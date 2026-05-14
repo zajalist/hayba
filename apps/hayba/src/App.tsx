@@ -51,6 +51,10 @@ export default function App() {
   const draftRef = useRef<WizardDraft | null>(null);
   const activeToolRef = useRef<ToolName>("brush");
   const previewRef = useRef<number[]>([]);
+  // Mode mirror — read by the painter so post-bake hover doesn't repaint the
+  // planet from the (now-stale) wizard draft.
+  const modeRef = useRef<Mode>("wizard");
+  const snapshotRef = useRef<PlanetSnapshot | null>(null);
 
   const [draft, setDraft] = useState<WizardDraft | null>(null);
   const [mode, setMode] = useState<Mode>("wizard");
@@ -127,9 +131,11 @@ export default function App() {
       target: handle.raycastTarget,
       isActive: () => {
         const t = activeToolRef.current;
-        return !!draftRef.current && (t === "brush" || t === "erase");
+        return modeRef.current === "wizard" && !!draftRef.current && (t === "brush" || t === "erase");
       },
       onHover: (x, y, z) => {
+        // Painter is wizard-mode-only. After bake we leave the snapshot alone.
+        if (modeRef.current !== "wizard") return;
         const tree = kdTreeRef.current;
         const drft = draftRef.current;
         if (!tree || !drft) return;
@@ -150,12 +156,14 @@ export default function App() {
         );
       },
       onHoverEnd: () => {
+        if (modeRef.current !== "wizard") return;
         if (previewRef.current.length === 0) return;
         previewRef.current = [];
         const drft = draftRef.current;
         if (drft) globeRef.current?.recolorFromDraft(drft, cellCountRef.current);
       },
       onPaint: (x, y, z) => {
+        if (modeRef.current !== "wizard") return;
         const tree = kdTreeRef.current;
         const drft = draftRef.current;
         if (!tree || !drft) return;
@@ -190,6 +198,8 @@ export default function App() {
   }, [initWizard]);
 
   useEffect(() => { draftRef.current = draft; }, [draft]);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
+  useEffect(() => { snapshotRef.current = snapshot; }, [snapshot]);
 
   const handleChangeDivisions = useCallback((divisions: number) => {
     const d = draftRef.current;
@@ -252,6 +262,7 @@ export default function App() {
   }, [draft]);
 
   const handleEditWizard = useCallback(() => {
+    previewRef.current = [];
     setMode("wizard");
     if (draft) globeRef.current?.recolorFromDraft(draft, cellCountRef.current);
   }, [draft]);
