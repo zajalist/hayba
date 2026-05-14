@@ -16,17 +16,17 @@ export {
   isFootprintShape, isTypology, isStyleSheet, isStyleGuide,
 } from './validate.js';
 
-export type { Registry, StyleGuideMeta } from './registry.js';
+export type { Registry } from './registry.js';
 export {
   ArchitectureRegistryError,
-  loadRegistry, listStyleGuideMeta, getStyleGuide, getTypology,
+  loadRegistry, getTypology,
 } from './registry.js';
 
 export type {
-  ListStyleGuidesResult, GetStyleGuideResult, GetTypologyResult, ValidateStyleGuideResult,
+  GetTypologyResult, ValidateStyleGuideResult,
 } from './mcp.js';
 export {
-  listStyleGuides, getStyleGuideTool, getTypologyTool, validateStyleGuideTool,
+  getTypologyTool, validateStyleGuideTool,
 } from './mcp.js';
 
 // Element catalog + kernel surface
@@ -58,7 +58,6 @@ export { generateBinding } from './ai/generate-binding.js';
 export type { GenerateBindingArgs } from './ai/generate-binding.js';
 export { registerBinding } from './element-registry.js';
 
-
 // SVG editor utilities (pure, browser-safe)
 export type { Vec2 } from './editor/svg-serialize.js';
 export {
@@ -68,3 +67,6 @@ export type { ViewState, CanvasPt, SvgPt } from './editor/coord-map.js';
 export {
   canvasToSvgSpace, svgToCanvasSpace, fitViewBox, snap,
 } from './editor/coord-map.js';
+
+// Culture system (v2)
+export * from './culture/index.js';

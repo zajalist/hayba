@@ -1,12 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { OpenAICompatibleProvider } from './provider-openai-compat.js';
 import { buildPrompt } from './prompt-builder.js';
-import { loadElementCatalog, loadRegistry } from '../index.js';
+import { loadElementCatalog } from '../index.js';
 
 const catalog = loadElementCatalog();
-const reg = loadRegistry();
 const element = catalog.elementsById.get('column')!;
-const styleSheet = reg.styleGuidesById.get('medieval-european-gothic')!.styleSheet;
+const styleSheet = {
+  id: 'medieval-european-gothic',
+  cultureId: 'medieval-european',
+  dateRange: [1100, 1400] as [number, number],
+  core: {
+    primaryMaterial: 'stone' as const,
+    roofType: 'gable' as const,
+    ornamentation: ['pointed-arch', 'tracery', 'flying-buttress'],
+  },
+  extras: {},
+};
 
 const fetchMock = vi.fn();
 const realFetch = globalThis.fetch;
