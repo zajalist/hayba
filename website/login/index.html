@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hayba — Sign in</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/config.js"></script>
+<script type="module" src="/login/auth.js" defer></script>
+</head>
+<body class="page-form">
+  <main class="form-shell">
+    <a href="/" class="brand-link">← Hayba</a>
+    <h1>Sign in</h1>
+    <p class="lead">We'll email you a magic link — no password to remember.</p>
+
+    <form id="login-form" class="form">
+      <label>Email
+        <input type="email" name="email" required>
+      </label>
+      <button type="submit" class="btn primary">Send magic link</button>
+    </form>
+
+    <div id="login-sent" hidden>
+      <h2>Check your inbox.</h2>
+      <p>The link expires in 24 hours. If you don't see it, check spam.</p>
+    </div>
+
+    <p class="muted small">
+      Not on the waitlist yet? <a href="/waitlist">Join here</a>.
+    </p>
+  </main>
+</body>
+</html>
