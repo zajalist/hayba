@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { colors, fonts, radii } from "@hayba/design-tokens";
 import { IconBrush, IconErase, IconRotate, IconZoom, IconPan } from "./icons";
 
@@ -27,9 +27,14 @@ const TOOLS: ToolDef[] = [
 ];
 
 const BASE_SIZE     = 44;
-const MAX_SIZE      = 68;
-const INFLUENCE     = 110; // px from cursor where icons start growing
-const SLOT_PAD      = 4;
+const MAX_SIZE      = 72;
+const SLOT_GAP      = 16;   // breathing room between icons
+const SLOT_WIDTH    = BASE_SIZE + SLOT_GAP;
+const INFLUENCE     = 130;  // px from cursor where icons start growing
+const ROW_PAD       = 8;
+const DOCK_BOTTOM   = 64;   // lift the dock above the status bar
+const POPOVER_GAP   = 16;   // visible space between icon top and popover bottom
+const BRIDGE_PAD    = 24;   // invisible forgiveness band the cursor can cross
 
 const MIN_RAD = 0.015;
 const MAX_RAD = 0.25;
@@ -38,6 +43,29 @@ export default function DockToolbar({ active, onChange, brushRadius, onChangeBru
   const rowRef = useRef<HTMLDivElement>(null);
   const [cursorX, setCursorX] = useState<number | null>(null);
   const [hoveredTool, setHoveredTool] = useState<ToolName | null>(null);
+  // Forgiveness window — the popover stays open for a beat after the cursor
+  // leaves the slot, so brief crossings of dead space don't dismiss it.
+  const hideTimerRef = useRef<number | null>(null);
+
+  const requestHover = useCallback((tool: ToolName) => {
+    if (hideTimerRef.current) {
+      window.clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+    setHoveredTool(tool);
+  }, []);
+
+  const requestUnhover = useCallback((tool: ToolName) => {
+    if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = window.setTimeout(() => {
+      setHoveredTool((h) => (h === tool ? null : h));
+      hideTimerRef.current = null;
+    }, 240);
+  }, []);
+
+  useEffect(() => () => {
+    if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current);
+  }, []);
 
   const onMouseMove = useCallback((e: React.MouseEvent) => {
     const rect = rowRef.current?.getBoundingClientRect();
@@ -49,15 +77,14 @@ export default function DockToolbar({ active, onChange, brushRadius, onChangeBru
     setCursorX(null);
   }, []);
 
-  // Compute per-icon center positions so the magnetic effect can read them.
-  // Centers depend only on BASE_SIZE since all icons start at the same size.
-  const centers = TOOLS.map((_, i) => SLOT_PAD + (i + 0.5) * BASE_SIZE);
+  // Per-slot centers — every slot is SLOT_WIDTH wide.
+  const centers = TOOLS.map((_, i) => ROW_PAD + (i + 0.5) * SLOT_WIDTH);
 
   return (
     <div
       style={{
         position: "fixed",
-        bottom: 22,
+        bottom: DOCK_BOTTOM,
         left: "50%",
         transform: "translateX(-50%)",
         zIndex: 60,
@@ -72,20 +99,19 @@ export default function DockToolbar({ active, onChange, brushRadius, onChangeBru
           display: "flex",
           alignItems: "flex-end",
           gap: 0,
-          padding: SLOT_PAD,
+          padding: ROW_PAD,
           background: "rgba(34, 38, 46, 0.78)",
           border: `1px solid ${colors.borderMid}`,
-          borderRadius: 14,
-          boxShadow: "0 20px 50px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.04)",
+          borderRadius: 16,
+          boxShadow: "0 22px 56px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.04)",
           backdropFilter: "blur(14px)",
           WebkitBackdropFilter: "blur(14px)",
         }}
       >
         {TOOLS.map((t, i) => {
           const dist = cursorX == null ? Infinity : Math.abs(cursorX - centers[i]);
-          // smooth falloff: 1 at center, 0 beyond INFLUENCE.
           const closeness = Math.max(0, 1 - dist / INFLUENCE);
-          const eased = closeness * closeness * (3 - 2 * closeness); // smoothstep
+          const eased = closeness * closeness * (3 - 2 * closeness);
           const size = BASE_SIZE + (MAX_SIZE - BASE_SIZE) * eased;
           const isActive = t.name === active;
           const isHovered = hoveredTool === t.name;
@@ -96,8 +122,8 @@ export default function DockToolbar({ active, onChange, brushRadius, onChangeBru
               isActive={isActive}
               isHovered={isHovered}
               size={size}
-              onHover={() => setHoveredTool(t.name)}
-              onUnhover={() => setHoveredTool((h) => (h === t.name ? null : h))}
+              onHover={() => requestHover(t.name)}
+              onUnhover={() => requestUnhover(t.name)}
               onClick={() => onChange(t.name)}
               brushRadius={brushRadius}
               onChangeBrushRadius={onChangeBrushRadius}
@@ -125,13 +151,16 @@ function DockSlot({
 }) {
   const showPopover = isHovered && (tool.name === "brush" || tool.name === "erase");
   const { Icon } = tool;
+  const iconLift = (size - BASE_SIZE) * 0.35;
+  // Anchor (in CSS bottom-from-slot terms) where the popover floats.
+  const popAnchor = size + iconLift + POPOVER_GAP;
   return (
     <div
       onMouseEnter={onHover}
       onMouseLeave={onUnhover}
       style={{
         position: "relative",
-        width: BASE_SIZE,
+        width: SLOT_WIDTH,
         height: BASE_SIZE,
         display: "flex",
         alignItems: "flex-end",
@@ -153,12 +182,11 @@ function DockSlot({
           alignItems: "center",
           justifyContent: "flex-end",
           cursor: "pointer",
-          transform: `translateY(${(size - BASE_SIZE) * -0.35}px)`,
+          transform: `translateY(${-iconLift}px)`,
           transition: "transform 90ms ease",
         }}
       >
-        <Icon size={Math.round(size * 0.78)} />
-        {/* Active dot — small accent indicator beneath the icon, apple-dock style */}
+        <Icon size={Math.round(size * 0.82)} />
         <span
           aria-hidden
           style={{
@@ -173,42 +201,60 @@ function DockSlot({
         />
       </button>
 
-      {/* Tooltip label — sits above the icon, fades in with hover */}
-      <div
-        style={{
-          position: "absolute",
-          bottom: size + (size - BASE_SIZE) * 0.35 + 12,
-          left: "50%",
-          transform: "translateX(-50%)",
-          opacity: isHovered ? 1 : 0,
-          pointerEvents: "none",
-          transition: "opacity 120ms ease",
-          background: colors.bgBase,
-          border: `1px solid ${colors.borderMid}`,
-          borderRadius: radii.xs,
-          padding: "5px 12px",
-          fontSize: 10,
-          letterSpacing: "0.22em",
-          textTransform: "uppercase",
-          fontFamily: fonts.sans,
-          color: colors.textPrimary,
-          whiteSpace: "nowrap",
-          boxShadow: "0 6px 20px rgba(0,0,0,0.45)",
-        }}
-      >
-        {tool.label}
-        <span style={{ marginLeft: 10, color: colors.accent, fontFamily: fonts.mono }}>
-          {tool.shortcut}
-        </span>
-      </div>
+      {/* Tooltip label — only when there's no popover open above the icon */}
+      {!showPopover && (
+        <div
+          style={{
+            position: "absolute",
+            bottom: size + iconLift + 10,
+            left: "50%",
+            transform: "translateX(-50%)",
+            opacity: isHovered ? 1 : 0,
+            pointerEvents: "none",
+            transition: "opacity 120ms ease",
+            background: colors.bgBase,
+            border: `1px solid ${colors.borderMid}`,
+            borderRadius: radii.xs,
+            padding: "5px 12px",
+            fontSize: 10,
+            letterSpacing: "0.22em",
+            textTransform: "uppercase",
+            fontFamily: fonts.sans,
+            color: colors.textPrimary,
+            whiteSpace: "nowrap",
+            boxShadow: "0 6px 20px rgba(0,0,0,0.45)",
+          }}
+        >
+          {tool.label}
+          <span style={{ marginLeft: 10, color: colors.accent, fontFamily: fonts.mono }}>
+            {tool.shortcut}
+          </span>
+        </div>
+      )}
 
-      {/* Premium brush-size popover — only on brush/erase hover */}
+      {/* Hover bridge — invisible band that bridges the icon top to the
+          popover bottom plus a forgiveness pad on each side so the cursor
+          can wander a bit without losing the hover state. */}
+      {showPopover && (
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            bottom: size + iconLift - 4,
+            left: -BRIDGE_PAD,
+            right: -BRIDGE_PAD,
+            height: POPOVER_GAP + 8 + BRIDGE_PAD,
+            pointerEvents: "auto",
+          }}
+        />
+      )}
+
       {showPopover && (
         <BrushSizePopover
           destructive={tool.name === "erase"}
           value={brushRadius}
           onChange={onChangeBrushRadius}
-          anchorBottom={size + (size - BASE_SIZE) * 0.35 + 44}
+          anchorBottom={popAnchor}
         />
       )}
     </div>
@@ -223,7 +269,6 @@ function BrushSizePopover({
   const pct = Math.min(1, Math.max(0, (value - MIN_RAD) / (MAX_RAD - MIN_RAD)));
   const degrees = (value * 180 / Math.PI).toFixed(1);
   const accent = destructive ? "#C04848" : colors.accent;
-  // Preview disc — diameter scales smoothly with radius.
   const previewDiameter = 18 + pct * 46;
   return (
     <div
@@ -238,7 +283,7 @@ function BrushSizePopover({
         boxShadow: "0 16px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04)",
         backdropFilter: "blur(8px)",
         padding: "14px 16px 12px",
-        width: 220,
+        width: 240,
         fontFamily: fonts.sans,
         pointerEvents: "auto",
       }}
@@ -252,7 +297,6 @@ function BrushSizePopover({
         </span>
       </div>
 
-      {/* Preview disc + horizontal track */}
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 6 }}>
         <div style={{
           width: 64, height: 64,
