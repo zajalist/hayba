@@ -9,6 +9,8 @@ export interface StatusBarProps {
   children: React.ReactNode;
   /** When the future MCP layer lands, this becomes a real stop handler. */
   onStop?: () => void;
+  /** Optional element rendered between the message body and the stop button. */
+  rightSlot?: React.ReactNode;
 }
 
 const ACCENT_FOR: Record<StatusBarProps["state"], string> = {
@@ -18,7 +20,7 @@ const ACCENT_FOR: Record<StatusBarProps["state"], string> = {
   error:  colors.accentHover,
 };
 
-export default function StatusBar({ state, label, children, onStop }: StatusBarProps) {
+export default function StatusBar({ state, label, children, onStop, rightSlot }: StatusBarProps) {
   const accent = ACCENT_FOR[state];
   const canStop = state === "baking";
 
@@ -85,6 +87,8 @@ export default function StatusBar({ state, label, children, onStop }: StatusBarP
       >
         {children}
       </div>
+
+      {rightSlot}
 
       <button
         type="button"
