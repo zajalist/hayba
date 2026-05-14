@@ -1645,6 +1645,22 @@ async function generateBindingInBrowser(styleSheetId, elementId, seedHex = '0xa7
   return r;
 }
 
+async function persistBindingToServer(binding) {
+  // Serialize bigint seed as hex string for JSON transport.
+  const transported = { ...binding, seed: '0x' + binding.seed.toString(16) };
+  const url = `/api/bindings/${encodeURIComponent(binding.styleSheetId)}/${encodeURIComponent(binding.elementId)}`;
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(transported),
+  });
+  if (!r.ok) {
+    const txt = await r.text();
+    throw new Error(`Persist failed (HTTP ${r.status}): ${txt}`);
+  }
+  return await r.json();
+}
+
 async function regenerateBoundElement(styleSheetId, elementId, button) {
   const originalText = button.textContent;
   button.disabled = true;
@@ -1661,15 +1677,28 @@ async function regenerateBoundElement(styleSheetId, elementId, button) {
     }
     // Register the new binding with the kernel so emitElementMesh picks it up.
     kernelMod.registerBinding(r.draft);
+
+    // Persist to disk so the binding survives page reload.
+    button.textContent = '💾 saving…';
+    try {
+      await persistBindingToServer(r.draft);
+    } catch (persistErr) {
+      console.warn('Persist failed (kept in session only):', persistErr);
+      alert(`Saved to session but failed to persist to disk:\n${persistErr.message}`);
+    }
+
+    // Update local cache so re-renders see the new binding.
+    bindings[`${styleSheetId}::${elementId}`] = { ...r.draft, seed: '0x' + r.draft.seed.toString(16) };
+
     button.textContent = '✓ accepted';
     setTimeout(() => {
       button.textContent = originalText;
       button.disabled = false;
     }, 1200);
-    // If the viewer is currently showing this element, re-open it with the new binding.
     if (document.getElementById('viewerModal').style.display === 'flex') {
       openViewer(styleSheetId, elementId);
     }
+    renderCenter();
   } catch (e) {
     alert(`Generation error: ${e.message}`);
     button.textContent = originalText;
