@@ -11,6 +11,8 @@ export interface StatusBarProps {
   onStop?: () => void;
   /** Optional element rendered between the message body and the stop button. */
   rightSlot?: React.ReactNode;
+  /** Optional element rendered between the state label divider and the message body. */
+  centerSlot?: React.ReactNode;
 }
 
 const ACCENT_FOR: Record<StatusBarProps["state"], string> = {
@@ -20,7 +22,7 @@ const ACCENT_FOR: Record<StatusBarProps["state"], string> = {
   error:  colors.accentHover,
 };
 
-export default function StatusBar({ state, label, children, onStop, rightSlot }: StatusBarProps) {
+export default function StatusBar({ state, label, children, onStop, rightSlot, centerSlot }: StatusBarProps) {
   const accent = ACCENT_FOR[state];
   const canStop = state === "baking";
 
@@ -70,6 +72,13 @@ export default function StatusBar({ state, label, children, onStop, rightSlot }:
 
       {/* Vertical divider */}
       <div style={{ alignSelf: "center", width: 1, height: 14, background: colors.borderSoft }} />
+
+      {centerSlot && (
+        <>
+          {centerSlot}
+          <div style={{ alignSelf: "center", width: 1, height: 14, background: colors.borderSoft, marginLeft: 4 }} />
+        </>
+      )}
 
       {/* Message body — mono numerics ride on top of the sans-serif copy via <Mono />. */}
       <div

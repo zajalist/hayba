@@ -13,6 +13,7 @@ import RecenterButton from "./components/RecenterButton";
 import ConfirmDialog from "./components/ConfirmDialog";
 import BoundaryPopover from "./components/BoundaryPopover";
 import PhaseStrip from "./components/PhaseStrip";
+import PhaseSteps, { type PhaseStepId } from "./components/PhaseSteps";
 import { createDefaultDraft, pairKey, type WizardDraft, type PresetName, type BoundaryType } from "./wizard/state";
 import { BoundaryModel, setBoundary, clearBoundary } from "./wizard/boundary-model";
 import { buildCellKdTree, cellsWithinRadius, nearestCell, type KdTree } from "./wizard/kdtree";
@@ -43,6 +44,12 @@ const BOTTOM_HEIGHT = 28;
 
 function angularToChord(rad: number): number {
   return 2 * Math.sin(rad / 2);
+}
+
+/** Map (mode, playing) → current phase-step pill in the bottom bar. */
+function currentPhaseStep(mode: Mode, playing: boolean): PhaseStepId {
+  if (mode === "wizard" || mode === "baking") return "compose";
+  return playing ? "animate" : "boundaries";
 }
 
 /** Mirrors hayba_tectonics_v2::time::era_for_ma. */
@@ -356,48 +363,41 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [boundaryPopover]);
 
+  // Live-apply boundary assignments — Rust rewrites plate omegas on the
+  // running model so the change is visible immediately. No re-bake.
+  const applyBoundaryTypesLive = useCallback(async (types: Record<string, BoundaryType>) => {
+    try {
+      const snap = await invoke<PlanetSnapshot>("apply_boundary_types", { boundaryTypes: types });
+      setSnapshot(snap);
+      const bm = BoundaryModel.fromSnapshot(snap);
+      boundaryModelRef.current = bm;
+      globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE, { model: bm, assignments: types });
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
   const handleSetBoundary = useCallback((type: BoundaryType) => {
     if (!boundaryPopover || !draft) return;
     const key = pairKey(boundaryPopover.plateA, boundaryPopover.plateB);
-    const next: WizardDraft = {
-      ...draft,
-      boundary_types: setBoundary(draft.boundary_types, key, type),
-    };
+    const nextTypes = setBoundary(draft.boundary_types, key, type);
+    const next: WizardDraft = { ...draft, boundary_types: nextTypes };
     setDraft(next);
     draftRef.current = next;
     setBoundaryPopover(null);
-  }, [boundaryPopover, draft]);
+    applyBoundaryTypesLive(nextTypes);
+  }, [boundaryPopover, draft, applyBoundaryTypesLive]);
 
   const handleClearBoundary = useCallback(() => {
     if (!boundaryPopover || !draft) return;
     const key = pairKey(boundaryPopover.plateA, boundaryPopover.plateB);
-    const next: WizardDraft = {
-      ...draft,
-      boundary_types: clearBoundary(draft.boundary_types, key),
-    };
+    const nextTypes = clearBoundary(draft.boundary_types, key);
+    const next: WizardDraft = { ...draft, boundary_types: nextTypes };
     setDraft(next);
     draftRef.current = next;
     setBoundaryPopover(null);
-  }, [boundaryPopover, draft]);
-
-  const handleRebake = useCallback(async () => {
-    if (!draft) return;
-    setMode("baking");
-    setBoundaryPopover(null);
-    try {
-      const snap = await invoke<PlanetSnapshot>("bake_from_wizard", { draft });
-      setSnapshot(snap);
-      setMode("viewing");
-      const bm = BoundaryModel.fromSnapshot(snap);
-      boundaryModelRef.current = bm;
-      globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE, {
-        model: bm, assignments: draft.boundary_types,
-      });
-    } catch (e) {
-      setError(String(e));
-      setMode("viewing");
-    }
-  }, [draft]);
+    applyBoundaryTypesLive(nextTypes);
+  }, [boundaryPopover, draft, applyBoundaryTypesLive]);
 
   const handleChangeDivisions = useCallback((divisions: number) => {
     const d = draftRef.current;
@@ -529,7 +529,6 @@ export default function App() {
           topOffset={TOP_HEIGHT}
           assignedCount={Object.keys(draft?.boundary_types ?? {}).length}
           onEditWizard={handleEditWizard}
-          onRebake={handleRebake}
         />
       )}
 
@@ -549,6 +548,9 @@ export default function App() {
       <StatusBar
         state={mode === "baking" ? "baking" : error ? "error" : mode === "viewing" ? "ready" : "idle"}
         label={statusLabel}
+        centerSlot={
+          <PhaseSteps current={currentPhaseStep(mode, playing)} />
+        }
         rightSlot={mode === "viewing" && snapshot ? (
           <PhaseStrip
             simTimeMa={snapshot.sim_time_ma}
@@ -582,11 +584,10 @@ export default function App() {
   );
 }
 
-function ViewingChrome({ topOffset, assignedCount, onEditWizard, onRebake }: {
+function ViewingChrome({ topOffset, assignedCount, onEditWizard }: {
   topOffset: number;
   assignedCount: number;
   onEditWizard: () => void;
-  onRebake: () => void;
 }) {
   const BEIGE = "#DED4C3";
   const baseBtn: React.CSSProperties = {
@@ -641,21 +642,6 @@ function ViewingChrome({ topOffset, assignedCount, onEditWizard, onRebake }: {
         display: "flex",
         gap: 8,
       }}>
-        {assignedCount > 0 && (
-          <button
-            type="button"
-            onClick={onRebake}
-            style={{
-              ...baseBtn,
-              background: "rgba(181, 106, 29, 0.14)",
-              borderColor: "#B56A1D",
-              color: "#B56A1D",
-              fontWeight: 600,
-            }}
-          >
-            Apply &amp; re-bake →
-          </button>
-        )}
         <button type="button" onClick={onEditWizard} style={baseBtn}>
           Edit wizard →
         </button>
