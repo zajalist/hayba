@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import Viewport from "./viewport/Viewport";
 import type { SceneHandle } from "./viewport/scene";
+import { buildGlobeMesh } from "./viewport/globe";
 
 export interface PlanetSnapshot {
   divisions: number;
@@ -28,8 +29,13 @@ export default function App() {
       .catch((e) => setError(String(e)));
   }, []);
 
-  // Globe-rendering side effect lands in T8 (renders the snapshot).
-  // For T6 we just keep the placeholder sphere on screen.
+  // When both the scene and the snapshot are ready, swap the placeholder
+  // sphere for the real point-cloud globe. Runs once per snapshot change.
+  useEffect(() => {
+    if (!sceneRef.current || !snapshot) return;
+    const mesh = buildGlobeMesh(snapshot);
+    sceneRef.current.setGlobe(mesh);
+  }, [snapshot]);
 
   return (
     <>
