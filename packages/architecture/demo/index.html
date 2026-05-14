@@ -266,6 +266,91 @@
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   }
 
+  /* —— click-affordance for inspectable chips/tags —— */
+  .chip-clickable { cursor: pointer; transition: border-color .12s, background .12s; }
+  .chip-clickable:hover { border-color: var(--accent); background: var(--bg-elevated); }
+  .chip-active {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 1px var(--accent-glow) inset;
+  }
+
+  /* —— inspector (right pane material/ornament editor) —— */
+  .inspector { display: flex; flex-direction: column; gap: 14px; padding-bottom: 30px; }
+  .inspector-h {
+    display: flex; align-items: center; gap: 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border-mid);
+  }
+  .inspector-back {
+    background: transparent; border: 1px solid var(--border-soft);
+    color: var(--text-secondary); cursor: pointer;
+    padding: 4px 9px; border-radius: 4px;
+    font: 11.5px var(--font-ui);
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .inspector-back:hover { background: var(--bg-elevated); color: var(--text-primary); border-color: var(--accent); }
+  .inspector-title { display: flex; flex-direction: column; }
+  .inspector-name { font-size: 16px; font-weight: 600; text-transform: capitalize; color: var(--text-primary); }
+  .inspector-sphere-wrap {
+    background: radial-gradient(circle at 30% 30%, var(--bg-panel) 0%, var(--bg-deep) 80%);
+    border: 1px solid var(--border-mid);
+    border-radius: 6px;
+    padding: 14px;
+    display: flex; justify-content: center; align-items: center;
+    aspect-ratio: 1; max-width: 100%;
+  }
+  .inspector-sphere {
+    width: 100%; max-width: 240px; height: auto;
+    border-radius: 50%;
+    background: var(--bg-deep);
+    image-rendering: -webkit-optimize-contrast;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+  }
+  .inspector-desc {
+    font-size: 11.5px; color: var(--text-secondary);
+    line-height: 1.55; padding: 0 2px;
+  }
+  .inspector-section { display: flex; flex-direction: column; gap: 7px; }
+  .inspector-section-h {
+    font-size: 10.5px; letter-spacing: 0.7px; text-transform: uppercase;
+    color: var(--text-muted); font-weight: 700;
+    padding-bottom: 2px;
+    border-bottom: 1px solid var(--border-mid);
+  }
+  .prop-grid {
+    display: grid; grid-template-columns: max-content max-content 1fr;
+    gap: 5px 12px; align-items: center;
+    font-size: 11.5px;
+  }
+  .prop-k { color: var(--text-muted); font-family: var(--font-mono); }
+  .prop-v { color: var(--text-primary); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .prop-bar {
+    height: 5px; background: var(--bg-deep); border-radius: 2.5px;
+    overflow: hidden; min-width: 60px;
+  }
+  .prop-bar-fill { display: block; height: 100%; background: var(--accent); }
+  .map-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .map-tile {
+    background: var(--bg-base); border: 1px solid var(--border-mid);
+    border-radius: 4px; padding: 6px;
+    display: flex; flex-direction: column; gap: 5px;
+  }
+  .map-img {
+    width: 100%; aspect-ratio: 1; object-fit: cover;
+    border-radius: 2px;
+    image-rendering: -webkit-optimize-contrast;
+  }
+  .map-label {
+    font: 10px var(--font-mono); color: var(--text-muted);
+    text-align: center;
+  }
+  .inspector-foot {
+    margin-top: 4px;
+    font-size: 10px; text-align: center;
+    padding: 6px 0;
+    border-top: 1px solid var(--border-mid);
+  }
+
   /* —— era timeline (horizontal bar w/ tick markers) —— */
   .timeline {
     position: relative; height: 56px; margin-top: 6px;
@@ -552,6 +637,9 @@ const state = {
   view: 'guides',
   guideId: 'medieval-european-gothic',
   typologyId: null,
+  // When set, the right pane displays a material-editor-style inspector
+  // for that material or ornament instead of typology weights / across-cultures.
+  inspecting: null,  // null | { kind: 'material' | 'ornament', id: string }
 };
 
 /* ─── stats bar ─────────────────────────────────────────── */
@@ -668,7 +756,10 @@ function renderCenter() {
         </div>
         <div class="panel-h" style="margin-top:18px;">Ornamentation</div>
         <div class="orn-list">
-          ${s.core.ornamentation.map(o => `<span class="orn-tag"><img class="orn-sphere" src="${getOrnamentPreviewUrl(o)}" alt="${o}">${o}</span>`).join('') || '<span class="muted">—</span>'}
+          ${s.core.ornamentation.map(o => {
+            const a = state.inspecting && state.inspecting.kind === 'ornament' && state.inspecting.id === o;
+            return `<span class="orn-tag chip-clickable ${a ? 'chip-active' : ''}" data-inspect-ornament="${o}" title="Click to inspect"><img class="orn-sphere" src="${getOrnamentPreviewUrl(o)}" alt="${o}">${o}</span>`;
+          }).join('') || '<span class="muted">—</span>'}
         </div>
       </div>
 
@@ -792,7 +883,8 @@ function renderTimeline(cultureId, activeGuideId) {
 
 function materialChip(role, material) {
   const previewUrl = getMaterialPreviewUrl(material);
-  return `<div class="chip" title="${material}">
+  const active = state.inspecting && state.inspecting.kind === 'material' && state.inspecting.id === material;
+  return `<div class="chip chip-clickable ${active ? 'chip-active' : ''}" data-inspect-material="${material}" title="Click to inspect">
     <img class="sphere-preview" src="${previewUrl}" alt="${material}">
     <span class="kind">${role}</span>
     <span class="label">${material}</span>
@@ -959,10 +1051,178 @@ function windowDots(x, y, w, h, density) {
     .join('');
 }
 
+/* ─── inspector (material / ornament editor) ──────────────────────────────── */
+
+function renderInspector(wrap) {
+  const insp = state.inspecting;
+  if (!insp) { wrap.innerHTML = ''; return; }
+  if (insp.kind === 'material') {
+    renderMaterialInspector(wrap, insp.id);
+  } else if (insp.kind === 'ornament') {
+    renderOrnamentInspector(wrap, insp.id);
+  }
+}
+
+function _humanizeRoughness(materialId) {
+  const r = ROUGHNESS_BY_MATERIAL[materialId] ?? 0.85;
+  if (r > 0.9) return 'matte';
+  if (r > 0.8) return 'rough';
+  if (r > 0.65) return 'satin';
+  return 'smooth';
+}
+
+function _materialDescription(materialId) {
+  const desc = {
+    'stone':         'Quarried sedimentary or igneous rock. Heavy, durable, weatherable. The default for monumental Mediaeval and Andean work.',
+    'timber':        'Dimensional or hewn wood (oak, cedar, cypress, cryptomeria). Light, workable, anisotropic grain. Tang-Chinese and Edo-Japanese vernacular default.',
+    'mudbrick':      'Sun-dried clay loaf with straw binder. Cheap, thermal-mass-rich, requires roof overhang protection. Sub-Saharan and Andean default.',
+    'adobe':         'Smoothed mud-clay render over rammed-earth or mudbrick core. Sandy warm color, soft surface.',
+    'rammed-earth':  'Compacted earth in horizontal lifts inside formwork. Striated visible bands record each pour.',
+    'brick':         'Fired clay unit, mortar-bedded. Industrial-Revolution-English default; high compressive strength, machine-regular.',
+    'concrete':      'Cementitious paste with aggregate. Cast in formwork; monolithic. Industrial era onward.',
+    'wattle-daub':   'Woven wood lattice (wattle) packed with clay/straw mix (daub). Lightweight infill between timber frame.',
+  };
+  return desc[materialId] ?? 'Material in the schema enum.';
+}
+
+function renderMaterialInspector(wrap, materialId) {
+  const largeUrl = getMaterialLargeSphereUrl(materialId);
+  const { diffuseCanvas, normalCanvas } = getMaterialCanvases(materialId);
+  const roughness = ROUGHNESS_BY_MATERIAL[materialId] ?? 0.85;
+  const dDataUrl = diffuseCanvas.toDataURL('image/png');
+  const nDataUrl = normalCanvas.toDataURL('image/png');
+
+  wrap.innerHTML = `
+    <div class="inspector">
+      <div class="inspector-h">
+        <button class="inspector-back" id="inspectorBack">◀ back</button>
+        <div class="inspector-title">
+          <span class="muted" style="font-size:10.5px;">MATERIAL</span>
+          <div class="inspector-name">${materialId}</div>
+        </div>
+      </div>
+
+      <div class="inspector-sphere-wrap">
+        <img class="inspector-sphere" src="${largeUrl}" alt="${materialId}">
+      </div>
+
+      <div class="inspector-desc">${_materialDescription(materialId)}</div>
+
+      <div class="inspector-section">
+        <div class="inspector-section-h">PBR properties</div>
+        <div class="prop-grid">
+          <span class="prop-k">roughness</span><span class="prop-v">${roughness.toFixed(2)}</span><span class="prop-bar"><span class="prop-bar-fill" style="width:${roughness*100}%"></span></span>
+          <span class="prop-k">metalness</span><span class="prop-v">0.02</span>          <span class="prop-bar"><span class="prop-bar-fill" style="width:2%"></span></span>
+          <span class="prop-k">normal·z</span><span class="prop-v">0.70</span>            <span class="prop-bar"><span class="prop-bar-fill" style="width:70%"></span></span>
+          <span class="prop-k">surface</span><span class="prop-v" style="grid-column: span 2;">${_humanizeRoughness(materialId)}</span>
+        </div>
+      </div>
+
+      <div class="inspector-section">
+        <div class="inspector-section-h">Texture maps</div>
+        <div class="map-grid">
+          <div class="map-tile">
+            <img class="map-img" src="${dDataUrl}" alt="diffuse">
+            <div class="map-label">diffuse · 256²</div>
+          </div>
+          <div class="map-tile">
+            <img class="map-img" src="${nDataUrl}" alt="normal">
+            <div class="map-label">normal · 256²</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="inspector-foot">
+        <span class="muted">procedural · canvas-generated · ${materialId}</span>
+      </div>
+    </div>
+  `;
+  wrap.querySelector('#inspectorBack')?.addEventListener('click', () => {
+    state.inspecting = null;
+    renderCenter(); renderRight();
+  });
+}
+
+function _ornamentDescription(ornament) {
+  const desc = {
+    'pointed-arch':    'The structural and visual signature of Gothic. A two-centred arch carrying the wall thrust outward and upward, allowing thinner walls and larger glazed openings.',
+    'flying-buttress': 'External diagonal masonry strut transferring vault thrust to a free-standing pier. Lets the nave wall be opened up with windows.',
+    'rose-window':     'Circular stained-glass aperture in a gable wall, typically with radial tracery dividing it into petal-shaped lights.',
+    'gargoyle':        'Carved waterspout in the form of a grotesque human or animal, projecting from the cornice to throw rainwater clear of the wall.',
+    'tracery':         'Ornamental stonework dividing window openings into geometric patterns. Plate, bar, or curvilinear depending on period.',
+    'pediment-relief': 'Sculptural fill in the triangular gable above a portico, typically narrative or heraldic.',
+    'frieze':          'Horizontal band of ornamental carving, often repeating a motif, running between architrave and cornice.',
+  };
+  return desc[ornament] ?? 'Ornamental motif. Procedural pattern shown is a generic carved-relief approximation; future versions will use AI-generated culture-specific references.';
+}
+
+function renderOrnamentInspector(wrap, ornament) {
+  const largeUrl = getOrnamentLargeSphereUrl(ornament);
+  const { diffuseCanvas, normalCanvas } = getOrnamentCanvases(ornament);
+  const dDataUrl = diffuseCanvas.toDataURL('image/png');
+  const nDataUrl = normalCanvas.toDataURL('image/png');
+
+  wrap.innerHTML = `
+    <div class="inspector">
+      <div class="inspector-h">
+        <button class="inspector-back" id="inspectorBack">◀ back</button>
+        <div class="inspector-title">
+          <span class="muted" style="font-size:10.5px;">ORNAMENT</span>
+          <div class="inspector-name">${ornament}</div>
+        </div>
+      </div>
+
+      <div class="inspector-sphere-wrap">
+        <img class="inspector-sphere" src="${largeUrl}" alt="${ornament}">
+      </div>
+
+      <div class="inspector-desc">${_ornamentDescription(ornament)}</div>
+
+      <div class="inspector-section">
+        <div class="inspector-section-h">Relief properties</div>
+        <div class="prop-grid">
+          <span class="prop-k">base material</span><span class="prop-v" style="grid-column: span 2;">stone</span>
+          <span class="prop-k">carving depth</span><span class="prop-v">strong</span><span class="prop-bar"><span class="prop-bar-fill" style="width:80%"></span></span>
+          <span class="prop-k">tileable</span><span class="prop-v" style="grid-column: span 2;">yes (256² repeating)</span>
+        </div>
+      </div>
+
+      <div class="inspector-section">
+        <div class="inspector-section-h">Texture maps</div>
+        <div class="map-grid">
+          <div class="map-tile">
+            <img class="map-img" src="${dDataUrl}" alt="diffuse">
+            <div class="map-label">diffuse · 256²</div>
+          </div>
+          <div class="map-tile">
+            <img class="map-img" src="${nDataUrl}" alt="normal">
+            <div class="map-label">normal · 256²</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="inspector-foot">
+        <span class="muted">procedural placeholder · AI-generated references arrive in plan 3</span>
+      </div>
+    </div>
+  `;
+  wrap.querySelector('#inspectorBack')?.addEventListener('click', () => {
+    state.inspecting = null;
+    renderCenter(); renderRight();
+  });
+}
+
 /* ─── right pane (typology weights for the active guide, or footprint detail) ── */
 
 function renderRight() {
   const wrap = document.getElementById('rightWrap');
+
+  // Inspector mode takes precedence over the default right-pane views.
+  if (state.inspecting) {
+    renderInspector(wrap);
+    return;
+  }
+
   if (state.view === 'guides') {
     const g = guideById[state.guideId];
     if (!g) { wrap.innerHTML = ''; return; }
@@ -1264,8 +1524,21 @@ document.getElementById('viewerModalClose').addEventListener('click', () => {
 
 document.addEventListener('click', (e) => {
   const card = e.target.closest('.bound-element-card');
-  if (!card) return;
-  openViewer(card.dataset.style, card.dataset.element);
+  if (card) { openViewer(card.dataset.style, card.dataset.element); return; }
+
+  // Material / ornament inspector — click any chip / orn-tag with a data-inspect-* attribute.
+  const matEl = e.target.closest('[data-inspect-material]');
+  if (matEl) {
+    state.inspecting = { kind: 'material', id: matEl.dataset.inspectMaterial };
+    renderCenter(); renderRight();
+    return;
+  }
+  const ornEl = e.target.closest('[data-inspect-ornament]');
+  if (ornEl) {
+    state.inspecting = { kind: 'ornament', id: ornEl.dataset.inspectOrnament };
+    renderCenter(); renderRight();
+    return;
+  }
 });
 
 /* ─── PBR sphere material previews ──────────────────────────
@@ -1315,8 +1588,11 @@ function _setupPreviewer() {
   _previewScene.add(_previewSphere);
 }
 
-function _renderSphereWithMaterial(material) {
+function _renderSphereWithMaterial(material, size = PREVIEW_SIZE) {
   _setupPreviewer();
+  if (_previewRenderer.domElement.width !== size * 2) {
+    _previewRenderer.setSize(size, size);
+  }
   _previewSphere.material = material;
   _previewRenderer.render(_previewScene, _previewCamera);
   return _previewRenderer.domElement.toDataURL('image/png');
@@ -1369,14 +1645,7 @@ function _normalFromHeightFn(nctx, size, heightFn, strength = 4) {
   nctx.putImageData(id, 0, 0);
 }
 
-function _renderMaterialPatterns(materialId, size) {
-  const diffuse = document.createElement('canvas');
-  diffuse.width = diffuse.height = size;
-  const dctx = diffuse.getContext('2d');
-  const normal = document.createElement('canvas');
-  normal.width = normal.height = size;
-  const nctx = normal.getContext('2d');
-
+function _paintMaterial(materialId, dctx, nctx, size) {
   switch (materialId) {
     case 'stone': {
       _noisyFill(dctx, size, '#9aa0a8', 50);
@@ -1511,13 +1780,6 @@ function _renderMaterialPatterns(materialId, size) {
       _noisyFill(dctx, size, '#888', 30);
       _normalFromHeightFn(nctx, size, () => Math.random(), 3);
   }
-
-  const dT = new THREE.CanvasTexture(diffuse);
-  dT.wrapS = dT.wrapT = THREE.RepeatWrapping;
-  dT.colorSpace = THREE.SRGBColorSpace;
-  const nT = new THREE.CanvasTexture(normal);
-  nT.wrapS = nT.wrapT = THREE.RepeatWrapping;
-  return { diffuseTex: dT, normalTex: nT };
 }
 
 const ROUGHNESS_BY_MATERIAL = {
@@ -1525,23 +1787,62 @@ const ROUGHNESS_BY_MATERIAL = {
   'rammed-earth': 0.96, brick: 0.88, concrete: 0.86, 'wattle-daub': 0.90,
 };
 
-function makeMaterialFor(materialId) {
-  const { diffuseTex, normalTex } = _renderMaterialPatterns(materialId, 256);
+/** Cached per-material data: { diffuseCanvas, normalCanvas, smallSphereUrl, largeSphereUrl? } */
+const MATERIAL_DATA = {};
+
+function _ensureMaterialData(materialId) {
+  if (MATERIAL_DATA[materialId]) return MATERIAL_DATA[materialId];
+  const size = 256;
+  const diffuse = document.createElement('canvas');
+  diffuse.width = diffuse.height = size;
+  const dctx = diffuse.getContext('2d');
+  const normal = document.createElement('canvas');
+  normal.width = normal.height = size;
+  const nctx = normal.getContext('2d');
+  _paintMaterial(materialId, dctx, nctx, size);
+  MATERIAL_DATA[materialId] = {
+    materialId,
+    diffuseCanvas: diffuse,
+    normalCanvas: normal,
+    smallSphereUrl: null,
+    largeSphereUrl: null,
+  };
+  return MATERIAL_DATA[materialId];
+}
+
+function _materialFromData(data) {
+  const dT = new THREE.CanvasTexture(data.diffuseCanvas);
+  dT.wrapS = dT.wrapT = THREE.RepeatWrapping;
+  dT.colorSpace = THREE.SRGBColorSpace;
+  const nT = new THREE.CanvasTexture(data.normalCanvas);
+  nT.wrapS = nT.wrapT = THREE.RepeatWrapping;
   return new THREE.MeshStandardMaterial({
-    map: diffuseTex,
-    normalMap: normalTex,
+    map: dT, normalMap: nT,
     normalScale: new THREE.Vector2(0.7, 0.7),
-    roughness: ROUGHNESS_BY_MATERIAL[materialId] ?? 0.85,
+    roughness: ROUGHNESS_BY_MATERIAL[data.materialId] ?? 0.85,
     metalness: 0.02,
   });
 }
 
-const MATERIAL_PREVIEW_CACHE = {};
 function getMaterialPreviewUrl(materialId) {
-  if (!MATERIAL_PREVIEW_CACHE[materialId]) {
-    MATERIAL_PREVIEW_CACHE[materialId] = _renderSphereWithMaterial(makeMaterialFor(materialId));
+  const data = _ensureMaterialData(materialId);
+  if (!data.smallSphereUrl) {
+    data.smallSphereUrl = _renderSphereWithMaterial(_materialFromData(data), PREVIEW_SIZE);
   }
-  return MATERIAL_PREVIEW_CACHE[materialId];
+  return data.smallSphereUrl;
+}
+
+function getMaterialLargeSphereUrl(materialId) {
+  const data = _ensureMaterialData(materialId);
+  if (!data.largeSphereUrl) {
+    data.largeSphereUrl = _renderSphereWithMaterial(_materialFromData(data), 260);
+  }
+  return data.largeSphereUrl;
+}
+
+function getMaterialCanvases(materialId) {
+  const data = _ensureMaterialData(materialId);
+  return { diffuseCanvas: data.diffuseCanvas, normalCanvas: data.normalCanvas };
 }
 
 /* ── ornament textures: 2D patterns rendered as carved relief on stone ── */
@@ -1661,9 +1962,11 @@ function _drawOrnamentPattern(dctx, nctx, size, ornament) {
   _normalFromHeightFn(nctx, size, heightFn, 8);
 }
 
-const ORNAMENT_PREVIEW_CACHE = {};
-function getOrnamentPreviewUrl(ornament) {
-  if (ORNAMENT_PREVIEW_CACHE[ornament]) return ORNAMENT_PREVIEW_CACHE[ornament];
+/** Cached per-ornament data: { diffuseCanvas, normalCanvas, smallSphereUrl, largeSphereUrl }. */
+const ORNAMENT_DATA = {};
+
+function _ensureOrnamentData(ornament) {
+  if (ORNAMENT_DATA[ornament]) return ORNAMENT_DATA[ornament];
   const size = 256;
   const diffuse = document.createElement('canvas');
   diffuse.width = diffuse.height = size;
@@ -1672,18 +1975,48 @@ function getOrnamentPreviewUrl(ornament) {
   normal.width = normal.height = size;
   const nctx = normal.getContext('2d');
   _drawOrnamentPattern(dctx, nctx, size, ornament);
-  const dT = new THREE.CanvasTexture(diffuse);
+  ORNAMENT_DATA[ornament] = {
+    ornament,
+    diffuseCanvas: diffuse,
+    normalCanvas: normal,
+    smallSphereUrl: null,
+    largeSphereUrl: null,
+  };
+  return ORNAMENT_DATA[ornament];
+}
+
+function _ornamentMaterial(data) {
+  const dT = new THREE.CanvasTexture(data.diffuseCanvas);
   dT.wrapS = dT.wrapT = THREE.RepeatWrapping;
   dT.colorSpace = THREE.SRGBColorSpace;
-  const nT = new THREE.CanvasTexture(normal);
+  const nT = new THREE.CanvasTexture(data.normalCanvas);
   nT.wrapS = nT.wrapT = THREE.RepeatWrapping;
-  const mat = new THREE.MeshStandardMaterial({
+  return new THREE.MeshStandardMaterial({
     map: dT, normalMap: nT,
     normalScale: new THREE.Vector2(1.0, 1.0),
     roughness: 0.9, metalness: 0.02,
   });
-  ORNAMENT_PREVIEW_CACHE[ornament] = _renderSphereWithMaterial(mat);
-  return ORNAMENT_PREVIEW_CACHE[ornament];
+}
+
+function getOrnamentPreviewUrl(ornament) {
+  const data = _ensureOrnamentData(ornament);
+  if (!data.smallSphereUrl) {
+    data.smallSphereUrl = _renderSphereWithMaterial(_ornamentMaterial(data), PREVIEW_SIZE);
+  }
+  return data.smallSphereUrl;
+}
+
+function getOrnamentLargeSphereUrl(ornament) {
+  const data = _ensureOrnamentData(ornament);
+  if (!data.largeSphereUrl) {
+    data.largeSphereUrl = _renderSphereWithMaterial(_ornamentMaterial(data), 260);
+  }
+  return data.largeSphereUrl;
+}
+
+function getOrnamentCanvases(ornament) {
+  const data = _ensureOrnamentData(ornament);
+  return { diffuseCanvas: data.diffuseCanvas, normalCanvas: data.normalCanvas };
 }
 
 /* ─── boot ──────────────────────────────────────────────── */
