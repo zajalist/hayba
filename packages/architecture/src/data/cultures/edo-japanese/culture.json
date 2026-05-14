@@ -1,0 +1,353 @@
+{
+  "climate": "temperate",
+  "eras": [
+    {
+      "dateRange": [
+        1603,
+        1750
+      ],
+      "defaults": {
+        "ornamentDensity": "moderate",
+        "palette": [],
+        "proportions": {
+          "columnSlenderness": 1,
+          "doorAspect": 1,
+          "storyHeight": 1
+        },
+        "roofType": "hip",
+        "technique": ""
+      },
+      "id": "edo-japanese-early",
+      "name": "Edo Japanese Early",
+      "rules": [],
+      "typologyMix": {
+        "civic_hall": 1,
+        "granary": 2,
+        "manor": 2,
+        "market_stall": 4,
+        "peasant_home": 6,
+        "temple": 4,
+        "townhouse": 5
+      }
+    },
+    {
+      "dateRange": [
+        1750,
+        1868
+      ],
+      "defaults": {
+        "ornamentDensity": "moderate",
+        "palette": [],
+        "proportions": {
+          "columnSlenderness": 1,
+          "doorAspect": 1,
+          "storyHeight": 1
+        },
+        "roofType": "hip",
+        "technique": ""
+      },
+      "id": "edo-japanese-late",
+      "name": "Edo Japanese Late",
+      "rules": [],
+      "typologyMix": {
+        "civic_hall": 4,
+        "market_stall": 5,
+        "peasant_home": 3,
+        "temple": 2,
+        "townhouse": 6,
+        "walled_palace": 4,
+        "workshop": 1
+      }
+    }
+  ],
+  "id": "edo-japanese",
+  "materials": [
+    {
+      "id": "limestone",
+      "name": "Limestone"
+    },
+    {
+      "id": "granite",
+      "name": "Granite"
+    },
+    {
+      "id": "sandstone",
+      "name": "Sandstone"
+    },
+    {
+      "id": "marble",
+      "name": "Marble"
+    },
+    {
+      "id": "oak",
+      "name": "Oak"
+    },
+    {
+      "id": "pine",
+      "name": "Pine"
+    },
+    {
+      "id": "mudbrick",
+      "name": "Mudbrick"
+    },
+    {
+      "id": "fired-brick",
+      "name": "Fired Brick"
+    },
+    {
+      "id": "slate",
+      "name": "Slate"
+    },
+    {
+      "id": "terracotta",
+      "name": "Terracotta"
+    },
+    {
+      "id": "lime-plaster",
+      "name": "Lime Plaster"
+    },
+    {
+      "id": "iron",
+      "name": "Iron"
+    },
+    {
+      "id": "timber",
+      "name": "Timber"
+    },
+    {
+      "id": "stone",
+      "name": "Stone"
+    }
+  ],
+  "name": "Edo Japanese",
+  "ornaments": [
+    {
+      "id": "acanthus-leaf",
+      "name": "Acanthus Leaf"
+    },
+    {
+      "id": "interlace-knot",
+      "name": "Interlace Knot"
+    },
+    {
+      "id": "dentil",
+      "name": "Dentil"
+    },
+    {
+      "id": "egg-and-dart",
+      "name": "Egg and Dart"
+    },
+    {
+      "id": "rosette",
+      "name": "Rosette"
+    },
+    {
+      "id": "palmette",
+      "name": "Palmette"
+    },
+    {
+      "id": "meander",
+      "name": "Meander"
+    },
+    {
+      "id": "guilloche",
+      "name": "Guilloche"
+    },
+    {
+      "id": "fleur-de-lis",
+      "name": "Fleur-de-lis"
+    },
+    {
+      "id": "quatrefoil",
+      "name": "Quatrefoil"
+    },
+    {
+      "id": "trefoil",
+      "name": "Trefoil"
+    },
+    {
+      "id": "floral-spray",
+      "name": "Floral Spray"
+    },
+    {
+      "id": "geometric-arabesque",
+      "name": "Geometric Arabesque"
+    },
+    {
+      "id": "dragon-scroll",
+      "name": "Dragon Scroll"
+    },
+    {
+      "id": "cloud-motif",
+      "name": "Cloud Motif"
+    },
+    {
+      "id": "lotus-pad",
+      "name": "Lotus Pad"
+    },
+    {
+      "id": "wave-crest",
+      "name": "Wave Crest"
+    },
+    {
+      "id": "corbel-head",
+      "name": "Corbel Head"
+    },
+    {
+      "id": "gargoyle-face",
+      "name": "Gargoyle Face"
+    },
+    {
+      "id": "chevron-band",
+      "name": "Chevron Band"
+    },
+    {
+      "id": "shoji-grid",
+      "name": "shoji-grid"
+    },
+    {
+      "id": "engawa-veranda",
+      "name": "engawa-veranda"
+    },
+    {
+      "id": "irimoya-gable",
+      "name": "irimoya-gable"
+    },
+    {
+      "id": "kawara-tile-end",
+      "name": "kawara-tile-end"
+    },
+    {
+      "id": "kawara-tile",
+      "name": "kawara-tile"
+    },
+    {
+      "id": "namako-wall",
+      "name": "namako-wall"
+    },
+    {
+      "id": "irimoya-roof",
+      "name": "irimoya-roof"
+    }
+  ],
+  "region": "East Asia",
+  "rules": [],
+  "tagAxes": [
+    {
+      "id": "climate",
+      "label": "Climate",
+      "values": [
+        {
+          "id": "arid",
+          "label": "Arid"
+        },
+        {
+          "id": "temperate",
+          "label": "Temperate"
+        },
+        {
+          "id": "alpine",
+          "label": "Alpine"
+        },
+        {
+          "id": "coastal",
+          "label": "Coastal"
+        }
+      ]
+    },
+    {
+      "id": "terrain",
+      "label": "Terrain",
+      "values": [
+        {
+          "id": "lowland",
+          "label": "Lowland"
+        },
+        {
+          "id": "highland",
+          "label": "Highland"
+        },
+        {
+          "id": "coastal-cliff",
+          "label": "Coastal Cliff"
+        }
+      ]
+    },
+    {
+      "id": "wealth",
+      "label": "Wealth",
+      "values": [
+        {
+          "id": "peasant",
+          "label": "Peasant"
+        },
+        {
+          "id": "merchant",
+          "label": "Merchant"
+        },
+        {
+          "id": "noble",
+          "label": "Noble"
+        },
+        {
+          "id": "royal",
+          "label": "Royal"
+        }
+      ]
+    },
+    {
+      "id": "defensive-posture",
+      "label": "Defensive Posture",
+      "values": [
+        {
+          "id": "peaceful",
+          "label": "Peaceful"
+        },
+        {
+          "id": "borderland",
+          "label": "Borderland"
+        },
+        {
+          "id": "wartime",
+          "label": "Wartime"
+        }
+      ]
+    },
+    {
+      "id": "water-access",
+      "label": "Water Access",
+      "values": [
+        {
+          "id": "riverine",
+          "label": "Riverine"
+        },
+        {
+          "id": "lakeside",
+          "label": "Lakeside"
+        },
+        {
+          "id": "dry",
+          "label": "Dry"
+        }
+      ]
+    },
+    {
+      "id": "trade",
+      "label": "Trade",
+      "values": [
+        {
+          "id": "isolated",
+          "label": "Isolated"
+        },
+        {
+          "id": "local",
+          "label": "Local"
+        },
+        {
+          "id": "long-distance",
+          "label": "Long-Distance"
+        }
+      ]
+    }
+  ]
+}

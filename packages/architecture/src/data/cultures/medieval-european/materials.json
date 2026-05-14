@@ -1,0 +1,158 @@
+{
+  "materials": [
+    {
+      "color": "#d4c9a8",
+      "grain": "fine, sedimentary bands",
+      "id": "limestone",
+      "name": "Limestone",
+      "properties": {
+        "cost": 0.35,
+        "durability": 0.65,
+        "workability": 0.75
+      }
+    },
+    {
+      "color": "#8a7d72",
+      "grain": "coarse crystalline speckle",
+      "id": "granite",
+      "name": "Granite",
+      "properties": {
+        "cost": 0.8,
+        "durability": 0.95,
+        "workability": 0.25
+      }
+    },
+    {
+      "color": "#c8a96e",
+      "grain": "gritty, warm-toned bands",
+      "id": "sandstone",
+      "name": "Sandstone",
+      "properties": {
+        "cost": 0.3,
+        "durability": 0.55,
+        "workability": 0.8
+      }
+    },
+    {
+      "color": "#f0ece4",
+      "grain": "smooth with fine veining",
+      "id": "marble",
+      "name": "Marble",
+      "properties": {
+        "cost": 0.9,
+        "durability": 0.7,
+        "workability": 0.6
+      }
+    },
+    {
+      "color": "#8b6340",
+      "grain": "strong straight grain with rays",
+      "id": "oak",
+      "name": "Oak",
+      "properties": {
+        "cost": 0.45,
+        "durability": 0.7,
+        "workability": 0.65
+      }
+    },
+    {
+      "color": "#c49a6c",
+      "grain": "soft, resinous with knots",
+      "id": "pine",
+      "name": "Pine",
+      "properties": {
+        "cost": 0.2,
+        "durability": 0.4,
+        "workability": 0.85
+      }
+    },
+    {
+      "color": "#b5834a",
+      "grain": "rough earthen surface",
+      "id": "mudbrick",
+      "name": "Mudbrick",
+      "properties": {
+        "cost": 0.05,
+        "durability": 0.25,
+        "workability": 0.9
+      }
+    },
+    {
+      "color": "#b5522a",
+      "grain": "smooth face with mortar joints",
+      "id": "fired-brick",
+      "name": "Fired Brick",
+      "properties": {
+        "cost": 0.25,
+        "durability": 0.75,
+        "workability": 0.7
+      }
+    },
+    {
+      "color": "#5a6672",
+      "grain": "cleaved flat planes, dark grey",
+      "id": "slate",
+      "name": "Slate",
+      "properties": {
+        "cost": 0.5,
+        "durability": 0.85,
+        "workability": 0.45
+      }
+    },
+    {
+      "color": "#c1622f",
+      "grain": "smooth to slightly porous, warm red",
+      "id": "terracotta",
+      "name": "Terracotta",
+      "properties": {
+        "cost": 0.2,
+        "durability": 0.55,
+        "workability": 0.75
+      }
+    },
+    {
+      "color": "#e8e0d0",
+      "grain": "smooth or lightly textured finish",
+      "id": "lime-plaster",
+      "name": "Lime Plaster",
+      "properties": {
+        "cost": 0.15,
+        "durability": 0.35,
+        "workability": 0.95
+      }
+    },
+    {
+      "color": "#4a4a4a",
+      "grain": "cast or wrought surface with scale",
+      "id": "iron",
+      "name": "Iron",
+      "properties": {
+        "cost": 0.7,
+        "durability": 0.85,
+        "workability": 0.35
+      }
+    },
+    {
+      "color": "#888888",
+      "grain": "",
+      "id": "timber",
+      "name": "Timber",
+      "properties": {
+        "cost": 0.5,
+        "durability": 0.5,
+        "workability": 0.5
+      }
+    },
+    {
+      "color": "#888888",
+      "grain": "",
+      "id": "stone",
+      "name": "Stone",
+      "properties": {
+        "cost": 0.5,
+        "durability": 0.5,
+        "workability": 0.5
+      }
+    }
+  ]
+}
