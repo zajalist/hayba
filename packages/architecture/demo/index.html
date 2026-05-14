@@ -455,8 +455,15 @@
     background: var(--bg-deep);
   }
   .footprint-svg .lot      { fill: none; stroke: var(--border-soft); stroke-dasharray: 3 3; }
-  .footprint-svg .building { fill: var(--accent-dim); stroke: var(--accent); stroke-width: 1.4; }
-  .footprint-svg .window   { fill: var(--cream); opacity: 0.55; }
+  .footprint-svg .building {
+    fill: rgba(181, 106, 29, 0.22);    /* accent-dim, slightly stronger */
+    stroke: var(--accent); stroke-width: 1.6;
+  }
+  .footprint-svg .window   {
+    fill: var(--cream);
+    stroke: var(--accent); stroke-width: 0.4;
+    opacity: 0.92;
+  }
   .footprint-svg .label    { fill: var(--text-muted); font-size: 9px; font-family: var(--font-mono); }
 
   .meta-row {
@@ -1154,30 +1161,30 @@ function fitToBox(aspect, W, H) {
 }
 
 function windowDots(x, y, w, h, density) {
-  // Edge-aligned window slits on the building perimeter — much more readable
-  // than scattered interior dots. Density controls the count along each edge.
+  // Edge-aligned window slits on the building perimeter, sized as a fraction
+  // of the building so they stay visible at any zoom level. Higher density
+  // produces more windows (smaller gap).
   const d = mid(density);
   if (d <= 0) return '';
-  const slitDepth = 2.5;       // perpendicular to the edge
-  const slitLength = 5.5;      // along the edge
-  const inset = 1.5;           // how far inside the wall the slit sits
-  const baseGap = 22;
-  const gap = Math.max(8, baseGap * (0.04 / Math.max(d, 0.04)));
+  const minSide = Math.min(w, h);
+  const slitDepth  = Math.max(3, minSide * 0.07);   // perpendicular to the edge
+  const slitLength = Math.max(6, minSide * 0.13);   // along the edge
+  const inset      = Math.max(2, minSide * 0.045);  // distance from wall
+  const baseGap    = Math.max(slitLength * 1.1, minSide * 0.18);
+  const gap = baseGap * (0.04 / Math.max(d, 0.04));
 
   const slits = [];
-  // top edge (y = y), bottom edge (y = y + h - slitDepth)
-  for (let cx = x + gap; cx < x + w - slitLength - gap/2; cx += gap + slitLength) {
+  for (let cx = x + gap; cx + slitLength < x + w - gap; cx += gap + slitLength) {
     slits.push({ x: cx, y: y + inset, w: slitLength, h: slitDepth });
     slits.push({ x: cx, y: y + h - inset - slitDepth, w: slitLength, h: slitDepth });
   }
-  // left edge (x = x), right edge (x = x + w - slitDepth)
-  for (let cy = y + gap; cy < y + h - slitLength - gap/2; cy += gap + slitLength) {
+  for (let cy = y + gap; cy + slitLength < y + h - gap; cy += gap + slitLength) {
     slits.push({ x: x + inset, y: cy, w: slitDepth, h: slitLength });
     slits.push({ x: x + w - inset - slitDepth, y: cy, w: slitDepth, h: slitLength });
   }
 
   return slits
-    .map(s => `<rect class="window" x="${s.x}" y="${s.y}" width="${s.w}" height="${s.h}" rx="0.4"/>`)
+    .map(s => `<rect class="window" x="${s.x}" y="${s.y}" width="${s.w}" height="${s.h}" rx="0.5"/>`)
     .join('');
 }
 
