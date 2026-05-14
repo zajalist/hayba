@@ -38,10 +38,10 @@ export const fonts = {
 } as const;
 
 export const radii = {
-  xs: "2px",
-  sm: "3px",
-  md: "4px",
-  lg: "6px",
+  xs: "6px",   // chips + small buttons
+  sm: "10px",  // modals + floating panels
+  md: "14px",  // larger surfaces
+  lg: "18px",  // pill-style
 } as const;
 
 export const shadows = {
