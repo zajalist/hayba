@@ -254,7 +254,10 @@ const EARTH_HEIGHTMAP_URL = "/earth-heightmap.png";
 // low land genuinely low so mid-latitude continents don't get inflated to
 // km-high terrain and then frozen by the lapse rate. Tune if the map is
 // replaced.
-const SEA_GRAY = 0.52;
+// 0.40 was too low (continental-shelf bloat); 0.52 too high (real coasts
+// clipped to ocean). 0.46 sits in the shelf→land gap (ocean ≤ ~0.34,
+// lowest land ~0.56) — tune this one constant if coasts still look off.
+const SEA_GRAY = 0.46;
 const LAND_GAIN = 0.85;
 const LAND_EXP = 1.6;
 
@@ -307,7 +310,9 @@ export async function earthElevationsFromImage(
     const z = positions[3 * i + 2];
     const latDeg = Math.asin(clamp(y, -1, 1)) * RAD2DEG; // +90 N .. -90 S
     const lonDeg = Math.atan2(z, x) * RAD2DEG; // -180 .. 180
-    const u = (lonDeg + 180) / 360; // 0..1
+    // Flip longitude: our sphere's atan2(z,x) runs opposite the image's
+    // west→east, so the un-flipped sample rendered a mirror-image Earth.
+    const u = 1 - (lonDeg + 180) / 360; // 0..1, east-west corrected
     const v = (90 - latDeg) / 180; // 0 = north (top row)
     const L = lum(u * W, v * H);
     let elev: number;
