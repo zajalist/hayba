@@ -4,6 +4,7 @@
 //! Grounded in the worldbuildingpasta simplified climate model.
 
 use glam::Vec3;
+use hayba_tectonics_v2::model::Model;
 
 /// Sea-level equatorial mean temperature (°C).
 const T_EQUATOR: f32 = 30.0;
@@ -196,6 +197,121 @@ pub fn classify_biome(temp_c: f32, precip: f32) -> u8 {
     BIOME_HOT_DESERT
 }
 
+/// Always-shipped per-cell climate output (floats for direct upload as
+/// Three.js buffer attributes; biome id stored as f32).
+pub struct ClimateFields {
+    pub temperature: Vec<f32>, // °C
+    pub precip: Vec<f32>,      // 0..1
+    pub biome: Vec<f32>,       // biome id 0..9 as f32
+    pub debug: Option<ClimateDebug>,
+}
+
+/// Inspectable intermediates (only when `want_debug`). One f32 per cell
+/// each; wind packed as (x,y,z) triples.
+pub struct ClimateDebug {
+    pub insolation: Vec<f32>,
+    pub base_temp: Vec<f32>,
+    pub dist_to_ocean: Vec<f32>, // km
+    pub wind: Vec<f32>,          // n*3
+    pub current_dt: Vec<f32>,
+    pub orographic: Vec<f32>,
+    pub continental_dry: Vec<f32>,
+}
+
+/// Run the full annual-mean climate model. O(cells): one BFS + per-cell
+/// analytic passes + one bounded orographic neighbour read.
+pub fn compute_climate(model: &Model, seed: u64, want_debug: bool) -> ClimateFields {
+    let grid = &model.grid;
+    let n = grid.n_fields() as usize;
+
+    let mut pos: Vec<Vec3> = Vec::with_capacity(n);
+    let mut elev: Vec<f32> = Vec::with_capacity(n);
+    let mut is_ocean: Vec<bool> = Vec::with_capacity(n);
+    for fid in 0..n as u32 {
+        let p = grid.position(fid);
+        let f = &model.fields[fid as usize];
+        pos.push(p);
+        elev.push(f.elevation);
+        is_ocean.push(!f.is_continent_crust() || f.elevation < 0.0);
+    }
+
+    let neighbours: Vec<Vec<u32>> =
+        (0..n as u32).map(|fid| grid.neighbours(fid).to_vec()).collect();
+    let hops = distance_to_ocean_hops(&neighbours, &is_ocean);
+
+    let km_per_hop = grid.field_area_km2().sqrt();
+    let max_hop = (*hops.iter().filter(|&&h| h != u32::MAX).max().unwrap_or(&1)).max(1);
+
+    let mut temperature = vec![0.0f32; n];
+    let mut precip = vec![0.0f32; n];
+    let mut biome = vec![0.0f32; n];
+
+    let mut dbg = if want_debug {
+        Some(ClimateDebug {
+            insolation: vec![0.0; n],
+            base_temp: vec![0.0; n],
+            dist_to_ocean: vec![0.0; n],
+            wind: vec![0.0; n * 3],
+            current_dt: vec![0.0; n],
+            orographic: vec![0.0; n],
+            continental_dry: vec![0.0; n],
+        })
+    } else {
+        None
+    };
+
+    for i in 0..n {
+        let p = pos[i];
+        let lat = latitude_rad(p);
+        let coastalness = if hops[i] == u32::MAX {
+            1.0
+        } else {
+            (hops[i] as f32 / max_hop as f32).clamp(0.0, 1.0)
+        };
+
+        let base_t = base_temperature_c(p, elev[i]);
+        let cur_dt = current_temp_anomaly(p, coastalness);
+        let cont_cool = coastalness * 6.0;
+        let t = base_t + cur_dt - cont_cool;
+        temperature[i] = t;
+
+        let wind = prevailing_wind(p);
+        let mut up_grad = 0.0f32;
+        for &nb in &neighbours[i] {
+            let to_nb = (pos[nb as usize] - p).normalize_or_zero();
+            let de = elev[nb as usize] - elev[i];
+            up_grad += de * to_nb.dot(wind);
+        }
+        let orographic = (up_grad * 6.0).clamp(-1.0, 1.0);
+
+        let zonal = zonal_precip(lat);
+        let cont = continental_factor(if hops[i] == u32::MAX { max_hop } else { hops[i] });
+        let pn = value_noise(p * 3.5, seed) - 0.5;
+        let pr = (zonal * cont + orographic * 0.5 + pn * 0.25).clamp(0.0, 1.0);
+        precip[i] = pr;
+
+        biome[i] = classify_biome(t, pr) as f32;
+
+        if let Some(d) = dbg.as_mut() {
+            d.insolation[i] = (1.0 - (p.y * p.y)).clamp(0.0, 1.0);
+            d.base_temp[i] = base_t;
+            d.dist_to_ocean[i] = if hops[i] == u32::MAX {
+                max_hop as f32 * km_per_hop
+            } else {
+                hops[i] as f32 * km_per_hop
+            };
+            d.wind[i * 3] = wind.x;
+            d.wind[i * 3 + 1] = wind.y;
+            d.wind[i * 3 + 2] = wind.z;
+            d.current_dt[i] = cur_dt;
+            d.orographic[i] = orographic;
+            d.continental_dry[i] = 1.0 - cont;
+        }
+    }
+
+    ClimateFields { temperature, precip, biome, debug: dbg }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,5 +422,21 @@ mod tests {
         let b = classify_biome(t, 0.9);
         assert!(b == BIOME_TUNDRA || b == BIOME_ICE || b == BIOME_BOREAL,
                 "tall equatorial peak must be a cold biome, got {}", b);
+    }
+
+    #[test]
+    fn compute_climate_smoke_on_demo_model() {
+        use hayba_tectonics_v2::model::Model;
+        let model = Model::new(16, 7);
+        let n = model.grid.n_fields() as usize;
+        let cf = compute_climate(&model, 7, true);
+        assert_eq!(cf.temperature.len(), n);
+        assert_eq!(cf.precip.len(), n);
+        assert_eq!(cf.biome.len(), n);
+        let dbg = cf.debug.expect("debug requested");
+        assert_eq!(dbg.dist_to_ocean.len(), n);
+        assert!(cf.biome.iter().all(|&b| b <= 9.0));
+        let cf2 = compute_climate(&model, 7, false);
+        assert!(cf2.debug.is_none());
     }
 }
