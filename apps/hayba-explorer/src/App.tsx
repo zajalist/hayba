@@ -1194,6 +1194,11 @@ export default function App() {
               Once the sim starts, plate motion takes over and you{"’"}ll no longer be able to
               edit boundaries, density rank, or the wizard. Save your configuration first
               if you want to revisit this setup later.
+              {paintedCount > 0 && (
+                <div style={{ marginTop: 10, color: "#DED4C3", fontSize: 12 }}>
+                  {paintedCount} cells painted.
+                </div>
+              )}
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <button
