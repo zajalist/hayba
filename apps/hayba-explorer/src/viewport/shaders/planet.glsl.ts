@@ -168,6 +168,19 @@ export const FRAGMENT_SHADER = /* glsl */ `
   // equator, ±1 at poles.
   float latitude(vec3 n) { return n.y; }
 
+  // ── G.7 step 3: analytical relief normal ─────────────────────────────────
+  // Perturb the SMOOTH interpolated sphere normal by the gradient of the
+  // noise field (3-sample finite difference). NOT dFdx/dFdy — those are
+  // per-face-constant on a low-poly icosphere and would facet the sphere.
+  // This is what makes flat dark continents catch directional light.
+  vec3 computeReliefNormal(vec3 p, float currentNoise, float bumpScale) {
+    vec2 e = vec2(0.0015, 0.0);
+    float dx = fbm(p + e.xyy) - currentNoise;
+    float dy = fbm(p + e.yxy) - currentNoise;
+    float dz = fbm(p + e.yyx) - currentNoise;
+    return normalize(vWorldNormal - vec3(dx, dy, dz) * bumpScale);
+  }
+
   void main() {
     // ── Per-fragment scalar fields ────────────────────────────────────────
     float fbmCoarse = fbm(vWorldNormal *   6.0);   // continent-scale
@@ -294,11 +307,11 @@ export const FRAGMENT_SHADER = /* glsl */ `
                    + (fbmFine - 0.5) * 2.5;
     // Threshold well below freezing — snow only at high lat or extreme
     // elevation. Smooth band so the snow line itself looks natural.
-    float snowMask = 1.0 - smoothstep(-6.0, -1.0, tempLand);
+    // Warmer threshold + wider band → stronger, further-reaching polar
+    // caps (user wants more snow; likes the marbled ice look).
+    float snowMask = 1.0 - smoothstep(-2.0, 10.0, tempLand);
     snowMask *= (1.0 - oceanMask);
-    // Even at full cold, cap how much white is laid down so we don't
-    // pave the poles a single flat color.
-    snowMask = min(snowMask, 0.85);
+    snowMask = min(snowMask, 0.95);
     albedo = mix(albedo, vec3(0.94, 0.94, 0.95), snowMask);
 
     // ── Pink seam highlight (unassigned boundaries) ──────────────────────
@@ -332,20 +345,32 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // ── Cavity AO from elevation-field derivatives (Gemini point 7) ──────
     float cavity = length(vec2(dFdx(vElevation), dFdy(vElevation)));
     float fakeAO = 1.0 - smoothstep(0.0, 0.4, cavity);
-    albedo *= mix(0.78, 1.0, fakeAO);
+    albedo *= mix(0.90, 1.0, fakeAO);   // softened (was 0.78 — dFdx AO is coarse on a low-poly icosphere)
 
-    // ── Lighting: Lambert + rim + atmospheric scatter (Gemini point 9) ───
-    vec3 N = normalize(vWorldNormal);
+    // ── Lighting: relief Lambert + rim + atmospheric scatter ─────────────
     vec3 L = normalize(uSunDir);
     vec3 V = normalize(cameraPosition - vWorldPos);
 
-    float lambert = max(dot(N, L), 0.0);
+    // Relief normal for diffuse only — flat plains stay smooth, steep
+    // orogenic zones get rugged directional shading. Silhouette effects
+    // (halo / rim / view) stay on the TRUE sphere normal.
+    vec3 N = normalize(vWorldNormal);
+    float bumpScale = (0.6 + smoothstep(0.1, 0.6, vSlope) * 5.0)
+                    * (1.0 - oceanMask);   // no relief on water
+    vec3 reliefNormal = computeReliefNormal(vWorldNormal * 30.0, fbmFine, bumpScale);
+
+    float lambert = max(dot(reliefNormal, L), 0.0);
     float viewAngle = max(dot(N, V), 0.0);
     float halo = pow(1.0 - viewAngle, 4.0);
 
     vec3 atmosphere = vec3(0.40, 0.62, 1.00);
 
     vec3 lit = albedo * (uAmbient + (1.0 - uAmbient) * lambert);
+
+    // Measured vibrance + exposure — real-Earth SatMap albedo is genuinely
+    // low; lift midtones without going cartoony (user: green too dark).
+    float luma = dot(lit, vec3(0.2126, 0.7152, 0.0722));
+    lit = mix(vec3(luma), lit, 1.18) * 1.12;
 
     // Limb / Rayleigh — only the actual silhouette gets atmospheric tint;
     // the rest of the planet keeps its true SatMap colors.
