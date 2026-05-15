@@ -18,8 +18,8 @@
   },
   "dependencies": {
     "@hayba/architecture": "*",
-    "@hayba/linguistics": "file:../linguistics",
-    "@hayba/planet-physics": "file:../planet-physics",
+    "@hayba/linguistics": "*",
+    "@hayba/planet-physics": "*",
     "@distube/ytdl-core": "^4.16.12",
     "@huggingface/transformers": "^4.0.1",
     "@modelcontextprotocol/sdk": "^1.0.0",
@@ -28,7 +28,6 @@
     "express": "^4.21.0",
     "lru-cache": "^11.3.6",
     "youtube-transcript-api": "^3.0.6",
-    "ytdl-core": "^4.11.5",
     "zod": "^3.23.0"
   },
   "devDependencies": {

@@ -145,9 +145,10 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
           content: [{ type: 'text', text: JSON.stringify(res.data ?? { ok: res.ok }, null, 2) }],
           isError: !res.ok,
         };
-      } catch (e) {
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
         return {
-          content: [{ type: 'text', text: `Error pushing plan to UE: ${(e as Error).message}` }],
+          content: [{ type: 'text', text: `Error pushing plan to UE: ${msg}` }],
           isError: true,
         };
       }

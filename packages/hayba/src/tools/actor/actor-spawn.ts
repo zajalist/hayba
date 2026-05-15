@@ -34,7 +34,7 @@ export const actorSpawnHandler: ToolHandler = async (args) => {
       return { content: [{ type: 'text', text: `actor_spawn failed: ${resp.error ?? 'unknown error'}` }], isError: true };
     }
     return { content: [{ type: 'text', text: JSON.stringify(resp.data, null, 2) }] };
-  } catch (e) {
-    return { content: [{ type: 'text', text: `actor_spawn error: ${(e as Error).message}` }], isError: true };
+  } catch (e: unknown) {
+    return { content: [{ type: 'text', text: `actor_spawn error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
   }
 };

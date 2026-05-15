@@ -47,8 +47,8 @@ export const haybaGetUserResponseHandler: ToolHandler = async (args) => {
       return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }], isError: true };
     }
     return { content: [{ type: 'text', text: JSON.stringify(resp.data, null, 2) }] };
-  } catch (e) {
-    const body: UserResponse = { prompt_id: parsed.data.prompt_id, status: 'unknown', error: (e as Error).message };
+  } catch (e: unknown) {
+    const body: UserResponse = { prompt_id: parsed.data.prompt_id, status: 'unknown', error: e instanceof Error ? e.message : String(e) };
     return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }], isError: true };
   }
 };

@@ -8,7 +8,19 @@
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces --if-present",
     "dev": "npm run dev --workspaces --if-present",
-    "prepare": "git config core.hooksPath .githooks || true"
+    "prepare": "git config core.hooksPath .githooks || true",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --check \"**/*.{ts,js,json,md}\"",
+    "format:fix": "prettier --write \"**/*.{ts,js,json,md}\"",
+    "typecheck": "tsc -b --noEmit"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.20.0",
+    "eslint": "^9.20.0",
+    "eslint-config-prettier": "^10.0.0",
+    "prettier": "^3.5.0",
+    "typescript-eslint": "^8.24.0"
   },
   "license": "MIT"
 }
