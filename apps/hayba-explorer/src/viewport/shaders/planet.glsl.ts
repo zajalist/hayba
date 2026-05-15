@@ -492,12 +492,13 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // ragged term makes every boundary crunchy/patchy (not a smooth halo).
     // Land-gated (substrate/snow never on ocean).
     float land      = 1.0 - oceanMask;
-    // Stage 1: bare rock as ground gets cold-exposed. The "outgoing grey"
-    // was still way too pronounced — keep it as only a faint tint so the
-    // biome shows through (just a hint of exposed rock, never a grey wash).
-    vec3  alpineRock = vec3(0.19, 0.17, 0.155) * (0.80 + scatter * 0.9);
-    float substrate  = substrateA * land;
-    albedo = mix(albedo, alpineRock, substrate * 0.18);
+    // Stage 1: cold-exposed ground. Do NOT paint a flat grey — that wiped
+    // the SatMap detail and read as smooth monochrome blotches. Instead
+    // very faintly darken/cool the EXISTING textured albedo, broken up by
+    // high-freq noise so it stays detailed. Deliberately tiny.
+    float rockBreak  = 0.55 + 0.9 * fbm(vWorldNormal * 95.0);
+    float coldExpose = substrateA * land * 0.10 * rockBreak;
+    albedo *= mix(vec3(1.0), vec3(0.76, 0.74, 0.72), coldExpose);
     // Stage 2: snow over the colder, also-ragged snowA → a broken speckled
     // snowline. Higher-frequency shading so the cap body isn't a flat white
     // blob (subtle exposed-rock mottle reads through the snow).
