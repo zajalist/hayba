@@ -247,6 +247,21 @@ impl Model {
             resolve_field_collision(c, &plates_snapshot, &mut self.fields);
         }
 
+        // ── PHASE D-end: orogenic-uplift decay + MOR age increment ────
+        // orogenic_uplift decays toward 0 by 8% each step; floored to
+        // exactly 0.0 once negligible so the renderer can fast-path zeros.
+        // mor_age_steps counts how many steps each plate-assigned cell has
+        // existed since MOR spawning (saturating at u16::MAX).
+        for f in self.fields.iter_mut() {
+            f.orogenic_uplift *= 0.92;
+            if f.orogenic_uplift < 0.005 {
+                f.orogenic_uplift = 0.0;
+            }
+            if f.plate_id.is_some() {
+                f.mor_age_steps = f.mor_age_steps.saturating_add(1);
+            }
+        }
+
         // ── PHASE E: advance subduction (Hayba addition) ───────────────
         let field_diam = self.grid.field_diameter();
         self.advance_subduction(dt, field_diam);
@@ -342,7 +357,10 @@ impl Model {
     /// TE `model.ts:301 → generateNewFields` (mid-ocean-ridge spawning).
     /// Phase 2. Stub no-op.
     fn generate_new_fields(&mut self, _dt: f32) {
-        // TODO Phase 2: MOR field generation.
+        // TODO Phase 2: MOR field generation. When a new field is spawned here,
+        // set `field.mor_age_steps = 0` immediately after initialization so the
+        // renderer correctly treats it as freshly-born crust. Example:
+        //   field.mor_age_steps = 0;
     }
 
     /// TE `model.ts:306-313 → forEachPlate(plate.updateInertiaTensor)` (and
