@@ -471,6 +471,14 @@ export const FRAGMENT_SHADER = /* glsl */ `
       float spec = pow(max(dot(vWorldNormal, Ho), 0.0), 500.0) * fres;
       water += vec3(1.0, 0.96, 0.86) * spec * 1.2;
 
+      // Polar sea ice: very cold ocean freezes over (Arctic / Southern
+      // Ocean). Bypasses precip — same deep-cold cap as the land poles, so
+      // the (ocean) north pole reads as a white ice cap, not open water.
+      float seaIce = 1.0 - smoothstep(-9.0, -3.0, coldC);
+      water = mix(water,
+                  vec3(0.80, 0.84, 0.89) * (0.92 + 0.12 * fbm(vSeed * 26.0)),
+                  seaIce);
+
       albedo = mix(albedo, water, oceanMask);
     }
 
@@ -483,7 +491,13 @@ export const FRAGMENT_SHADER = /* glsl */ `
     float slopeKeep = 1.0 - smoothstep(0.34, 0.60, vSlope + avNoise);
     // Hyper-arid high terrain stays bare rock (very dry, little snowfall).
     float precipKeep = smoothstep(0.03, 0.18, vPrecip);
-    float snowCover  = snowAccum * slopeKeep * precipKeep * land;
+    // Deep-cold PERMANENT ice cap (poles, ice sheets): full coverage that
+    // BYPASSES precip & slope — polar regions are precip-deserts yet fully
+    // ice-covered (Antarctica/Greenland). The marginal/alpine term keeps
+    // the slope+precip nuance only where it isn't deep-freeze.
+    float polarCap   = 1.0 - smoothstep(-9.0, -3.0, coldC);
+    float marginal   = snowAccum * slopeKeep * precipKeep;
+    float snowCover  = max(polarCap, marginal) * land;
     // In the cold region, whatever snow does NOT cover is exposed ALPINE
     // ROCK (the rock SatMap) — never the dark continent biome (that was the
     // dark-brown bug). Rock first, snow on top → a real snowcap.
