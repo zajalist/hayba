@@ -1,0 +1,184 @@
+{
+  "rules": [
+    {
+      "id": "bp-001",
+      "category": "workflow",
+      "rule": "Begin with basic nodes and gradually add more complex nodes as you become comfortable. Experiment with presets before refining.",
+      "source": "docs/using/getting-started"
+    },
+    {
+      "id": "bp-002",
+      "category": "workflow",
+      "rule": "Erosion is the primary process through which we turn abstract and geometric shapes into believable terrains.",
+      "source": "docs/using/understanding-erosion"
+    },
+    {
+      "id": "bp-003",
+      "category": "simulation",
+      "rule": "Chain erosion strategically: apply multiple erosion passes sequentially with decreasing duration rather than relying on single-pass processing.",
+      "source": "docs/using/understanding-erosion"
+    },
+    {
+      "id": "bp-004",
+      "category": "simulation",
+      "rule": "Use selective processing with masks for specific flow control when needing precise major flow lines.",
+      "source": "docs/using/understanding-erosion"
+    },
+    {
+      "id": "bp-005",
+      "category": "simulation",
+      "rule": "Erosion is not mandatory as the final step. Modern workflows use LookDev nodes (Canyonizer, Stacks, Anastomosis, Shear) for alternative effects.",
+      "source": "docs/using/understanding-erosion"
+    },
+    {
+      "id": "bp-006",
+      "category": "simulation",
+      "rule": "Apply Thermal/Thermal2 simulation before water-based erosion for realistic landslide patterns on slopes.",
+      "source": "docs/reference/simulation"
+    },
+    {
+      "id": "bp-007",
+      "category": "organization",
+      "rule": "Use Tabs to separate concerns — split complex graphs across multiple tabs by function: main shape, colors, masks, and exports.",
+      "source": "docs/using/managing-graphs"
+    },
+    {
+      "id": "bp-008",
+      "category": "organization",
+      "rule": "Organize related nodes into collapsible Groups with colors and icons to clarify workflow logic.",
+      "source": "docs/using/managing-graphs"
+    },
+    {
+      "id": "bp-009",
+      "category": "organization",
+      "rule": "Use Portals to connect nodes across vast gaps without visible connections, reducing clutter.",
+      "source": "docs/using/managing-graphs"
+    },
+    {
+      "id": "bp-010",
+      "category": "organization",
+      "rule": "Use Auto Layout (F4) to untangle dense graph areas while preserving logic.",
+      "source": "docs/using/managing-graphs"
+    },
+    {
+      "id": "bp-011",
+      "category": "organization",
+      "rule": "Bookmark critical nodes (key generators, export points) for instant navigation in large graphs.",
+      "source": "docs/using/managing-graphs"
+    },
+    {
+      "id": "bp-012",
+      "category": "performance",
+      "rule": "Suspend the engine (backtick key) when making multiple edits to avoid long reprocessing.",
+      "source": "docs/using/managing-graphs"
+    },
+    {
+      "id": "bp-013",
+      "category": "performance",
+      "rule": "Lock Preview (F key) to pin a specific node and prevent full recalculation when testing upstream changes.",
+      "source": "docs/using/managing-graphs"
+    },
+    {
+      "id": "bp-014",
+      "category": "performance",
+      "rule": "Bake heavy/finalized nodes at high resolution to reduce computational load during editing. Resolution options: 1024, 2048 (default), 4096, 8192.",
+      "source": "docs/using/baking-nodes"
+    },
+    {
+      "id": "bp-015",
+      "category": "performance",
+      "rule": "Use Build Swarm (close Gaea UI first) for full-resolution builds — the UI takes up large portions of RAM, CPU, and GPU.",
+      "source": "docs/developers"
+    },
+    {
+      "id": "bp-016",
+      "category": "performance",
+      "rule": "Enable \"Purge Unnecessary Cache During Build\" in Options > Build to reduce RAM usage on memory-constrained systems.",
+      "source": "docs/using/build-and-export"
+    },
+    {
+      "id": "bp-017",
+      "category": "export",
+      "rule": "Use Build Path Tokens (<FileLocation>, [Filename], [Timestamp], [+++]) for organized, reproducible output paths.",
+      "source": "docs/using/build-and-export"
+    },
+    {
+      "id": "bp-018",
+      "category": "export",
+      "rule": "Add Regions to isolate and upscale high-detail areas without rebuilding the entire terrain.",
+      "source": "docs/using/build-and-export"
+    },
+    {
+      "id": "bp-019",
+      "category": "export",
+      "rule": "Choose build subdivision based on quality vs speed: None for fast builds, Balanced for standard, Slower for production.",
+      "source": "docs/using/build-and-export"
+    },
+    {
+      "id": "bp-020",
+      "category": "lookdev",
+      "rule": "Apply ColorErosion after terrain shape is finalized to tint worn surfaces realistically without altering geometry.",
+      "source": "docs/reference/colorize"
+    },
+    {
+      "id": "bp-021",
+      "category": "lookdev",
+      "rule": "Use Normals, Curvature, and Slope nodes as masks to selectively apply effects to specific terrain features.",
+      "source": "docs/reference/derive"
+    },
+    {
+      "id": "bp-022",
+      "category": "lookdev",
+      "rule": "Start coloring pipeline with TextureBase → SatMap, then layer additional color nodes with Combine.",
+      "source": "docs/using/colorizing-and-textures"
+    },
+    {
+      "id": "bp-023",
+      "category": "workflow",
+      "rule": "Use chained creation shortcodes (m,e2,e2,tb,sm) to rapidly build linear sequences: Mountain→Erosion2→Erosion2→TextureBase→SatMap.",
+      "source": "docs/ui/graph-conveniences"
+    },
+    {
+      "id": "bp-024",
+      "category": "workflow",
+      "rule": "Drag output-to-output to auto-insert a Combine node — avoids manual setup.",
+      "source": "docs/ui/graph-conveniences"
+    },
+    {
+      "id": "bp-025",
+      "category": "workflow",
+      "rule": "Push nodes with Ctrl+Shift drag to shift them rightward for quick graph reorganization.",
+      "source": "docs/ui/graph-conveniences"
+    },
+    {
+      "id": "bp-026",
+      "category": "organization",
+      "rule": "Set correct Underlays on secondary branches (right-click > Use as Underlay or press G) to prevent incorrect terrain display.",
+      "source": "docs/using/managing-graphs"
+    },
+    {
+      "id": "bp-027",
+      "category": "performance",
+      "rule": "Avoid modifying nodes upstream of an Underlay — all intermediate nodes rebuild, causing slowdowns at 2K+ resolution.",
+      "source": "docs/using/managing-graphs"
+    },
+    {
+      "id": "bp-028",
+      "category": "simulation",
+      "rule": "Erosion2 algorithm is resolution-independent — 512x512 previews match 4K/8K output quality.",
+      "source": "docs/using/understanding-erosion"
+    },
+    {
+      "id": "bp-029",
+      "category": "simulation",
+      "rule": "Enable Deterministic option on erosion for reproducible results (slower but identical outputs).",
+      "source": "docs/using/understanding-erosion"
+    },
+    {
+      "id": "bp-030",
+      "category": "workflow",
+      "rule": "Combine Warp with primitive shapes (RadialGradient, heightmaps) for realistic detail generation.",
+      "source": "docs/using/understanding-erosion"
+    }
+  ]
+}

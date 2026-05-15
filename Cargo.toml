@@ -1,11 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-    "packages/hayba-fixedpoint",
-    "packages/hayba-seeds",
-    "packages/hayba-tectonics",
-    "packages/hayba-tectonics-v2",
-    "apps/hayba/src-tauri",
+    "apps/hayba-explorer/packages/fixedpoint",
+    "apps/hayba-explorer/packages/seeds",
+    "apps/hayba-explorer/packages/tectonics",
+    "apps/hayba-explorer/src-tauri",
 ]
 
 [workspace.package]

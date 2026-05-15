@@ -1,0 +1,13 @@
+/* Hayba Explorer global styles. Most chrome lives in inline styles backed by
+   the @hayba/design-tokens package; this file covers what must be CSS. */
+
+* { box-sizing: border-box; }
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Prevent default focus outlines on the canvas; we'll handle focus a11y per
+   component when interactive widgets land in later milestones. */
+canvas:focus { outline: none; }

@@ -1,0 +1,257 @@
+00:01 Let's create, a very large area
+00:04 that's like, a mountain range with rivers
+flowing through them.
+00:07 So to create that,
+I'll create a MountainRange node,
+00:12 and it already comes with
+00:13 like a couple of peaks
+and a whole mountain system in between.
+00:16 But I'm going to increase the Height,
+00:20 like, so,
+maybe increase the Bulk as well.
+00:25 Like, it was really high bulk
+00:28 like this.
+00:29 And then let's see if I reduce the Scale.
+00:33 There you go. That's cool.
+00:35 I think that's a very good starting point.
+00:37 What I want to do is
+I don't want to have too much detail.
+00:40 I think this is way too detailed,
+but I think I can get that out in Erosion.
+00:44 So after adding this Erosion node,
+one of the first things I do is increase
+00:49 the Duration.
+00:49 Like quite high,
+reduced DownCutting just a little bit.
+00:54 And then down here in Shape,
+I will reduce the Detail that we get.
+01:01 So you can see some of the tinier
+details from the slopes are being,
+01:05 reshaped into this larger,
+01:08 more cohesive soft, regular shaping.
+01:11 So this is actually much closer
+to what you might see
+01:15 if you look at a mountain range
+on Google Earth, for example.
+01:19 So I'm gonna, play with this
+a little bit more.
+01:22 So if you've reduced the Sharpness,
+you can get these
+01:25 nice bulbous mountains
+with, without those sharper peaks.
+01:28 And then, of course, inversely,
+if you sharpen, then you get these
+01:32 fantastic sharp peaks.
+01:35 So for our purposes, I'm just going to
+leave it right here on default 0.6.
+01:40 That looks pretty good to me.
+01:42 What I will add are some Coarse Sediments.
+01:45 In fact, I'll go all the
+01:47 way, with 1.0
+and then play with the angle a little bit.
+01:53 I want to have them be lower
+01:54 so that the sediments
+are flowing down here and filling in the
+01:59 the spaces down here,
+as opposed to being up here on the slope.
+02:03 So like
+02:06 so that's where they're higher
+02:08 up on the slopes.
+02:11 So bringing them back down here,
+02:13 maybe adding a little Bed Load
+to just increase that
+02:17 in fact with the Bed Load
+I can take the risk of,
+02:21 having a slightly higher angle
+so we can have the best of both worlds.
+02:27 Hopefully.
+02:29 Now I'm going to run a thermal
+pass on this.
+02:31 So that's adding a Thermal 2 node.
+02:35 So it's creating,
+02:37 you know, this thermal compaction.
+02:40 And then I'll add one more Erosion node,
+02:45 this time with a very high Erosion Scale.
+02:48 Lots of DownCutting
+02:50 with Duration.
+02:51 And then again, Coarse Sediment
+and Bed Load.
+02:54 Play with the Angle
+02:60 until I find something that I like.
+03:03 Like so and so.
+03:05 I think I have my mountain range.
+03:07 Last thing I want to do is
+I want to add Rivers.
+03:10 So this will now create this river
+network.
+03:16 Next thing is texturing.
+03:19 So let's take this create a TextureBase
+03:24 that's looking nice.
+03:26 What I want to do
+is actually create two TextureBases.
+03:30 Now this one will have
+higher emphasis on flow okay,
+03:35 maybe not that much, but yeah, higher
+emphasis on Flow and Soil less on Slope.
+03:41 Whereas the first one
+will have very high relevance.
+03:45 Or reliance on Slope,
+very little on Flow.
+03:49 And let me just a little bit on Soil.
+03:55 So with
+03:55 the first one I'm going to create a SatMap
+03:59 and let's find something very earthy.
+04:04 I think yeah, this is fine.
+04:10 It's very noisy.
+04:11 But we're going to use ColorErosion,
+04:13 which will take care of all of this,
+so I'm not too worried about it.
+04:16 So let's leave it like this.
+04:18 And then I'll add, to the second one.
+04:22 I'll add a SatMap.
+04:24 And this one I want it to be more green.
+04:26 So we have some options right here.
+04:29 And this is actually the inverse
+of what we want.
+04:32 So I'll Reverse it.
+04:34 So there
+so the areas with access to river water,
+04:39 they can be, you know,
+brighter green or something like that.
+04:43 And then with this one or rather
+04:47 let's create a mix of both of these
+just so we can have a bit of fun.
+04:51 I'll switch this to Difference mode.
+04:53 So we get this rather
+04:56 really highly textural map.
+04:59 Create one more SatMap.
+05:01 This one.
+05:03 Let's get like so we have this.
+05:05 So I want to have
+something closer to that.
+05:07 But just a little bit different.
+05:11 Let me see what I can do with this one.
+05:14 Again, reversing it to see if that works.
+05:21 There.
+05:21 This is actually giving us
+a few nice options
+05:25 up here for trees or vegetation areas.
+05:28 And should switched it to this one
+which I think looks better.
+05:31 I think that has yeah,
+a more variety in color.
+05:33 So anyways, with these three
+05:36 I'm just going to select these three.
+05:37 Right
+click and combine them into a Mixer node.
+05:41 So this will help me create
+05:44 our kind of base template.
+05:47 So let's see.
+05:48 Let's look at this that's our
+05:53 middle map.
+05:55 It's this one.
+05:57 And so I'm going to increase the Warp
+on this.
+05:60 So it's uneven with a smaller Warp Size.
+06:04 We're going to have more Falloff.
+06:05 So just blends more gently into this.
+06:09 You can
+bring it further down if you want to,
+06:13 and then we go up here,
+06:14 and this is the one where
+I actually wanted to have this green.
+06:18 So I think I can just easily
+drag this down here.
+06:21 So that's at the bottom.
+06:22 And now this one's here more at the top.
+06:26 So there we have our green areas up here.
+06:29 And then down here we have
+06:32 this coming through.
+06:35 And I want to have some of this brown
+area left just so we can give it like
+06:41 you know, a more varied look.
+06:43 Now, all of this right now
+does not look too realistic.
+06:46 And that's just fine because next
+we create a ColorErosion node,
+06:52 which will then take our entire structure
+and make let me make sure I connect this
+06:56 to our proper height output so it can,
+06:59 run a simulation properly.
+07:02 And then with increased Sediment
+Density and Blend,
+07:05 we get these,
+these beautiful flowing colors.
+07:08 You can see the
+07:09 rivers are being created right here
+along the existing river paths.
+07:13 And so that helps us create
+07:16 a more cohesive look for our terrain.
+07:19 Should we go from having this to this.
+07:22 And then you can experiment
+with what you want.
+07:24 Like for example, I'll reduce the Blend
+07:26 so we get a little bit
+more of the original color.
+07:29 Because I do want some of that graininess.
+07:32 You can increase the Sediment
+Density or reduce it.
+07:37 That will also affect, 
+how much of the original values are being,
+07:41 processed by the erosion.
+07:45 You can increase the Transport
+07:47 Distance or reduce it
+to see how far you want these flows to go.
+07:51 Like,
+I just want it to be maximum right now.
+07:54 And then lastly you have the Flow.
+07:56 So if you want
+you can have it be like a bit higher.
+07:58 But that's just creating
+flood plains right now.
+08:01 And that's not
+08:03 that's not looking as cool
+as we want it to be.
+08:05 So going back to this, you can see
+we have some of the dry areas down here
+08:11 and these, greener, more fertile areas.
+08:17 Now, let's say we decide that now
+08:20 with what we have created,
+we want to go back and change things.
+08:23 So this one, which is at the top,
+we want it to be a bit different.
+08:28 So if I just change it a little bit here.
+08:32 So it's like so and then go back
+08:36 you can see
+we now have these drier mountains
+08:39 with these rivers
+that have fertile areas nearby.
+08:43 So this is a great way to actually,
+08:46 you know, change things after the fact.
+08:49 That's another beauty of procedural,
+graph based creation.
+08:53 And as just an added benefit,
+you can always lock preview here.
+08:57 You can right click and Lock Preview.
+08:59 Then go back to the Mixer
+09:02 and you can change things
+09:04 and have the ColorErosion
+affected in real time.
+09:07 And then you can see
+how that blends together.
+09:10 So I think right here
+that's one way to see it.
+09:15 If I want to go back here and change
+this, SatMap completely,
+09:20 like if I go here like this, you can see
+it instantly affect the final output.
+09:25 So that way you can make
+a great informed decision.
+09:29 So there you have it.
+09:30 You have a large mountain system
+with rivers.
+09:34 If you want,
+you can also pull the river mask from here
+09:37 and then add some blue
+or green rivers to it.
+09:41 And then do a lot more.

@@ -1,0 +1,158 @@
+00:01 Okay, let's go move some mountains.
+00:04 I'll start by creating
+three different mountains.
+00:08 I don't really care much about what shape
+they are they just should be.
+00:12 Just distinctive enough
+that we know that they're different.
+00:17 So I'll, just create,
+like, a more cohesive shape.
+00:21 I'll go for three different
+Alpine mountains.
+00:26 You can see
+they all have different shapes.
+00:28 Let's take the middle one
+and make it stratified,
+00:30 because it'll be Alpine enough
+and then have this extra stuff on top.
+00:36 This is good enough.
+00:37 We'll do more stuff. To this soon.
+00:40 So to move our mountains,
+00:44 the first thing we do is
+we actually add a Transform node
+00:48 to each of them.
+00:55 Here we go.
+00:56 And then our last one for this.
+01:00 Then I'm going to take
+all three Transforms.
+01:04 And I'm going to press F8.
+01:05 Or you could right click and select
+you could select all
+01:09 and then right click
+and combine them into a Combine node.
+01:12 So here they're all together.
+01:15 I'm going to switch this to Max mode.
+01:20 And what we'll do is I'm going to have
+01:24 all these be different moveable ones
+while locking the preview here.
+01:29 So you right
+click Lock Preview go here, press
+01:33 Z or press the Gizmo button up here.
+01:36 You take this thing, move your mountain.
+01:39 Go to the other one.
+01:41 Press Z again.
+01:42 Move your other mountain
+01:45 and then go to the third one and again
+and move this one.
+01:49 Actually, I would love for them
+to be different scales,
+01:51 so I'll go and Scale them
+a bit differently.
+01:56 And I just noticed that
+the one in the back.
+01:60 Oh look there are these edges.
+02:02 Oh that's easy enough because here
+you can just quickly select Thin edge
+02:06 Wide edge,
+something like that to kind of,
+02:10 null it out at the edge.
+02:13 It's fine if it's looking like this,
+that's not a big deal.
+02:16 There's a very easy way to deal with this,
+which is I'm going to add a Ridge.
+02:22 Since the preview was locked,
+I'll unlock it there.
+02:25 This is a very nice and low ridge.
+02:27 And then I will
+02:30 add it down here as another Port.
+02:34 So it's included in this
+since it's all being maxed.
+02:37 And so that empty area has been filled.
+02:40 If I feel this is not the right one,
+I can just change the Seed,
+02:43 get something flatter
+like so go back there.
+02:48 We have it.
+02:49 And going back here you will see like,
+02:53 yeah, these are different mountains
+but they don't really fit that well together.
+02:58 One of the things I want to do,
+just because
+03:00 the shapes will look cooler,
+is I'm going to have all three be Strata.
+03:04 So we have these cool uplifts on the top.
+03:08 There we go up.
+03:10 They also give it a fair
+bit of directionality.
+03:12 So another cool thing we can do
+is go to individual ones
+03:15 and rotate them.
+03:20 So like there.
+03:20 This one's going this way.
+This one's going that way.
+03:23 It's not really something
+we see too much in nature.
+03:26 But hey why not?
+03:28 Maybe there's a tectonic line right here
+sending both of them different ways.
+03:33 And then the third one,
+I'm going to rotate it just a little bit,
+03:37 so like so.
+03:39 And now with all of these
+I'll go and create an Erosion node
+03:45 high Downcutting
+03:46 high Duration but low Detail.
+03:51 And that's my result.
+03:53 Now I can Lock Preview here.
+03:56 Go down to one of the Transform nodes,
+04:00 hit Z
+04:02 and I can move mountains
+04:04 and you can see how
+well the erosion is responding.
+04:07 I can go back here, add Coarse Sediments.
+04:10 Give it a low Angle.
+04:13 Very high Erosion Scale.
+04:17 Again, very low Detail.
+04:19 Maybe the Duration is a bit too high
+because I'm losing some of the bulk here.
+04:24 But again, go back,
+04:26 press Z, move your mountain.
+04:31 So this is a very quick and easy
+04:34 way to craft large, complex terrains
+by isolating different parts.
+04:39 And then merging them like so,
+and then adding Erosion
+04:42 and other, effects on top of it.
+04:45 So you're not wasting too much time
+trying to make these too detailed
+04:49 and, realistic.
+04:52 You can do all that work here.
+04:55 And so from the ground level,
+04:58 there you go.
+04:59 They may look like three isolated
+mountain peaks from up here.
+05:02 But then when you go down here,
+you can see this is already
+05:05 something really great
+that you can use for a backdrop.
+05:09 So I'll switch this to 4K
+so we can see it in detail.
+05:12 And in high resolution,
+you can see we have this
+05:15 beautiful mountain scape.
+05:17 And heck, if you're already here,
+I'll just quickly add a SatMap.
+05:22 I find something with a little bit
+more color
+05:27 like so.
+05:29 And add ColorErosion to this.
+05:36 And let's amp up the settings.
+05:46 And so they're very quickly able to color
+this mountain scape.
+05:50 We can easily do a lot more
+just with a few different changes here.
+05:54 If I add more noise
+then it's not so clear.
+05:58 Stratification spreads around a bit.
+06:01 Then we erode it
+and make it even nicer shape.

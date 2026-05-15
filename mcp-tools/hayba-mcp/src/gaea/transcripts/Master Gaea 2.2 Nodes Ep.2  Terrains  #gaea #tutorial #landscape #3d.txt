@@ -1,0 +1,469 @@
+00:00 Do you want to create vast mountain
+00:02 
+
+00:02 ranges in the distance or maybe a
+00:04 
+
+00:04 cratered hill in the plains or even a
+00:06 
+
+00:06 foothill landscape in Gaia? Then stay
+00:09 
+
+00:09 with us. Hello friends. In this episode,
+00:12 
+
+00:12 we're going to explore the second tab in
+00:14 
+
+00:14 Gaia which is terrains. The first node
+00:17 
+
+00:17 is canyon which generates a valley
+00:20 
+
+00:20 formation for us. As you can see with
+00:23 
+
+00:23 features like scale slot for adjusting
+00:25 
+
+00:25 the crack depth, valley for controlling
+00:28 
+
+00:28 the size of the canyon and other options
+00:30 
+
+00:30 such as widening the gap. This node
+00:32 
+
+00:32 gives us a huge variety of possibilities
+00:34 
+
+00:34 for creating valleys.
+00:59 
+
+00:59 The next node is Carterfield. As you can
+01:01 
+
+01:01 see, it generates a surface full of
+01:04 
+
+01:04 craters similar to the surface of the
+01:06 
+
+01:06 moon or a stylized sci-fi terrain. And
+01:09 
+
+01:09 every detail can be fully controlled.
+01:16 
+
+01:16 The Dune Sea Node. The dune sea node in
+01:18 
+
+01:18 Gaia is designed to generate large
+01:21 
+
+01:21 desert dune fields with high control and
+01:23 
+
+01:23 realism. Unlike the basic dunes node,
+01:27 
+
+01:27 which focuses on smaller and more
+01:29 
+
+01:29 regular patterns, Dune Creates vast
+01:32 
+
+01:32 natural dune landscapes that stretch
+01:34 
+
+01:34 across the terrain. As you can see, you
+01:37 
+
+01:37 can adjust the scale and also generate
+01:39 
+
+01:39 it in four different modes. In addition,
+01:42 
+
+01:42 you can control the intensity,
+01:44 
+
+01:44 direction, softness, or sharpness of the
+01:47 
+
+01:47 effect.
+01:51 
+
+01:51 The mountain range node. The mountain
+01:53 
+
+01:53 range node in Gaia is designed to
+01:55 
+
+01:55 generate large scale mountain chains and
+01:58 
+
+01:58 ranges with realistic geological
+02:00 
+
+02:00 formations. It provides a fast way to
+02:03 
+
+02:03 create a natural foundation for
+02:05 
+
+02:05 landscapes that need prominent rugged
+02:08 
+
+02:08 mountain.
+02:14 
+
+02:14 As you can see, you can increase its
+02:16 
+
+02:16 scale and height. And it also comes with
+02:18 
+
+02:18 four different styles. For example, if
+02:21 
+
+02:21 you add a node like erosion to it,
+02:23 
+
+02:23 you'll end up with much better detail.
+02:29 
+
+02:29 [Music]
+02:37 
+
+02:37 [Music]
+02:39 
+
+02:39 The plates node. The plates node in Gaia
+02:42 
+
+02:42 simulates tectonic plate movements to
+02:45 
+
+02:45 generate massive geological structures.
+02:47 
+
+02:47 Instead of smallcale terrain details,
+02:50 
+
+02:50 plates focuses on creating large
+02:52 
+
+02:52 continental features such as ridges,
+02:54 
+
+02:54 fractures, and plateaus. As mentioned
+02:57 
+
+02:57 before, it can generate surfaces that
+02:60 
+
+02:60 look completely fractured, stretched, or
+03:03 
+
+03:03 slightly altered in certain areas,
+03:05 
+
+03:05 giving us this unique feature.
+03:08 
+
+03:08 The ridge node. The ridge node in Gaia
+03:10 
+
+03:10 is used to create sharp ridge lines and
+03:13 
+
+03:13 mountainous crests across your terrain.
+03:15 
+
+03:15 Unlike broad generators such as mountain
+03:18 
+
+03:18 range, the ridge node focuses on
+03:20 
+
+03:20 producing long, narrow, elevated
+03:23 
+
+03:23 features that resemble mountain spines
+03:25 
+
+03:25 or sharp geological formations.
+03:33 
+
+03:33 The rugged node. The rugged node in Ga
+03:36 
+
+03:36 is designed to create rough, uneven
+03:39 
+
+03:39 terrains with broken surfaces and
+03:41 
+
+03:41 irregular patterns. Unlike smoother
+03:43 
+
+03:43 nodes such as hills or valley, rugged
+03:47 
+
+03:47 focuses on adding harsh details and
+03:49 
+
+03:49 natural randomness to your landscapes.
+03:56 
+
+03:56 For example, if we combine it with the
+03:58 
+
+03:58 canyon node, we'll get much rougher and
+04:00 
+
+04:00 more dramatic rock formations.
+04:07 
+
+04:07 [Music]
+04:11 
+
+04:11 The uplift node in Gaia simulates
+04:14 
+
+04:14 tectonic uplift, the geological process
+04:17 
+
+04:17 where sections of the earth crust are
+04:19 
+
+04:19 pushed upward. This creates dramatic
+04:21 
+
+04:21 terrain formations such as young
+04:23 
+
+04:23 mountain ranges, tilted plateaus, and
+04:26 
+
+04:26 uplifted ridges.
+04:29 
+
+04:29 [Music]
+04:49 
+
+04:49 Crater node is the best tool for
+04:51 
+
+04:51 creating meteorite or volcanic craters
+04:54 
+
+04:54 and is very suitable for space fantasy
+04:57 
+
+04:57 projects or even realistic environments
+04:59 
+
+04:59 such as simulating the surface. of the
+05:01 
+
+05:01 moon and Mars. As you can see, you can
+05:04 
+
+05:04 scale it up or down, increase or
+05:07 
+
+05:07 decrease the height, and even move it
+05:09 
+
+05:09 along the X and Y axis.
+05:17 
+
+05:17 Now, imagine you want to create a
+05:19 
+
+05:19 massive hill in nature with a large hole
+05:21 
+
+05:21 in it. The best way to do this is by
+05:24 
+
+05:24 adding a radial gradient node. If you're
+05:26 
+
+05:26 not familiar with this node, I invite
+05:28 
+
+05:28 you to check out episode one of the Gaia
+05:30 
+
+05:30 tutorials.
+05:35 
+
+05:35 [Music]
+05:45 
+
+05:45 The next node is island. It randomly
+05:47 
+
+05:47 generates a series of elevations that
+05:50 
+
+05:50 look like islands.
+05:53 
+
+05:53 [Music]
+05:59 
+
+05:59 But personally, if I want to use it, I'd
+06:02 
+
+06:02 add nodes like blur or voronoi to make
+06:04 
+
+06:04 it look more natural.
+06:11 
+
+06:11 [Music]
+06:22 
+
+06:22 The next node is mountain. This is one
+06:24 
+
+06:24 of my personal favorites because it
+06:26 
+
+06:26 quickly generates a massive mountain
+06:28 
+
+06:28 range and with its different modes, it
+06:30 
+
+06:30 can add a lot of variety to your work.
+06:34 
+
+06:34 [Music]
+06:44 
+
+06:44 If you enjoyed this video, please
+06:46 
+
+06:46 support us. Don't forget to hit the like
+06:48 
+
+06:48 button and drop a comment below. Your
+06:50 
+
+06:50 feedback really helps the channel grow
+06:52 
+
+06:52 and it motivates us to keep creating
+06:54 
+
+06:54 more tutorials for you.
+07:12 
+
+07:12 [Music]
+07:18 
+
+07:18 [Music]
+07:27 
+
+07:27 The X and Y options can be very useful.
+07:30 
+
+07:30 For example, if you want to place a
+07:32 
+
+07:32 mountain range in the distance of your
+07:34 
+
+07:34 landscape, you can simply use this node.
+07:36 
+
+07:36 You can even duplicate it and combine
+07:38 
+
+07:38 them together for more variety.
+07:44 
+
+07:44 [Music]
+07:53 
+
+07:53 [Music]
+07:56 
+
+07:56 The next node is mountainside. This node
+07:59 
+
+07:59 can generate foothill-like formations
+08:02 
+
+08:02 and with options like sandy or rocky
+08:04 
+
+08:04 styles, it can be very useful for
+08:06 
+
+08:06 shaping naturallook landscapes.
+08:09 
+
+08:09 Imagine
+08:17 
+
+08:17 placing a village at the base of a
+08:18 
+
+08:18 foothill or presenting a villa within
+08:21 
+
+08:21 the landscape. This node gives you one
+08:23 
+
+08:23 of the easiest ways to quickly create a
+08:26 
+
+08:26 believable environment.
+08:30 
+
+08:30 [Music]
+08:47 
+
+08:47 [Music]
+08:56 
+
+08:56 The next exciting node is volcano. This
+08:59 
+
+08:59 node can generate not only mountains but
+09:01 
+
+09:01 also hills or even recreate the same
+09:04 
+
+09:04 kind of crater we built earlier, but
+09:06 
+
+09:06 this time with much more detail. If you
+09:09 
+
+09:09 enjoyed this video, please support us.
+09:11 
+
+09:11 Don't forget to hit the like button and
+09:13 
+
+09:13 drop a comment below. Your feedback
+09:15 
+
+09:15 really helps the channel grow and it
+09:17 
+
+09:17 motivates us to keep creating more
+09:18 
+
+09:18 tutorials for
