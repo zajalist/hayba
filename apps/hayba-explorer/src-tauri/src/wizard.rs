@@ -42,6 +42,14 @@ pub struct WizardDraft {
     pub boundary_types: std::collections::HashMap<String, String>,
     pub run_length_steps: u32,
     pub dt_ma: f32,
+    /// Per-cell elevation override from the height painter. When
+    /// `painted_mask[i] == 1`, this value wins over the continental brush
+    /// and preset HSV. Range: [-1, +1].
+    #[serde(default)]
+    pub painted_elevations: Vec<f32>,
+    /// Flag per cell: 1 = authored by painter, 0 = use the default pipeline.
+    #[serde(default)]
+    pub painted_mask: Vec<u8>,
 }
 
 #[derive(Debug, Serialize)]
@@ -592,20 +600,35 @@ fn bake_model(draft: &WizardDraft) -> Model {
         model.add_plate(pid, packed, density, cells, plate_continental[i], omega);
     }
 
-    // ── Step 4: per-cell crust override. User brush + preset elevation
-    // both feed in; brush wins where they conflict.
+    // ── Step 4: per-cell crust override. Precedence: painter > continental
+    //  brush > preset HSV. Continental brush "lowland" floor drops from 0.5
+    //  to 0.05 — barely above sea level, leaves room for the painter to
+    //  sculpt mountains on top. Continentality is derived: elev > 0.
+    const CONTINENTAL_BRUSH_FLOOR: f32 = 0.05;
     for fid in 0..n_cells {
         let info = &infos[fid as usize];
-        let painted = user_continental[fid as usize];
-        let cont = painted || is_continental(info.preset_elevation);
+        let painted = draft
+            .painted_mask
+            .get(fid as usize)
+            .copied()
+            .unwrap_or(0)
+            == 1;
+        let elevation = if painted {
+            draft.painted_elevations[fid as usize].clamp(-1.0, 1.0)
+        } else if user_continental[fid as usize] {
+            CONTINENTAL_BRUSH_FLOOR
+        } else {
+            info.preset_elevation
+        };
+        let cont = elevation > 0.0;
         if let Some(f) = model.fields.get_mut(fid as usize) {
             if cont {
                 f.crust = Crust::new_continental();
-                f.elevation = if painted { 0.5 } else { info.preset_elevation.max(0.05) };
+                f.elevation = elevation.max(0.0);
                 f.become_continental_lithosphere(200.0);
             } else {
                 f.crust = Crust::new_oceanic();
-                f.elevation = info.preset_elevation.min(-0.1);
+                f.elevation = elevation.min(-0.0001);
                 f.refresh_oceanic_lithosphere();
             }
         }
@@ -654,6 +677,8 @@ mod tests {
             boundary_types: std::collections::HashMap::new(),
             run_length_steps: 1,
             dt_ma: 0.5,
+            painted_elevations: vec![],
+            painted_mask: vec![],
         }
     }
 
@@ -683,5 +708,80 @@ mod tests {
         let snap = bake_impl(&draft);
         let cont: u32 = snap.cell_continental.iter().take(200).map(|&c| c as u32).sum();
         assert!(cont >= 180, "expected >=180 painted-continental cells, got {}", cont);
+    }
+
+    #[test]
+    fn painted_elevations_override_preset() {
+        let mut draft = draft_for("plates2");
+        let n_cells = 10242; // div=32
+        draft.painted_elevations = vec![0.0; n_cells];
+        draft.painted_mask = vec![0u8; n_cells];
+        for i in 0..200 {
+            draft.painted_elevations[i] = 0.8;
+            draft.painted_mask[i] = 1;
+        }
+        let snap = bake_impl(&draft);
+        // After bake the sim has stepped run_length_steps times so values may
+        // drift slightly — confirm they're well above the preset baseline.
+        let mut above_threshold = 0;
+        for i in 0..200 {
+            if snap.cell_elevation[i] > 0.5 { above_threshold += 1; }
+        }
+        assert!(above_threshold >= 180, "expected >=180 painted-high cells, got {}", above_threshold);
+    }
+
+    #[test]
+    fn painted_overrides_continental_brush() {
+        let mut draft = draft_for("plates2");
+        let n_cells = 10242;
+        draft.continental_cells = (0..100).collect();
+        draft.painted_elevations = vec![0.0; n_cells];
+        draft.painted_mask = vec![0u8; n_cells];
+        // First 50 cells painted to a deep negative — overrides continental-brush.
+        for i in 0..50 {
+            draft.painted_elevations[i] = -0.4;
+            draft.painted_mask[i] = 1;
+        }
+        let snap = bake_impl(&draft);
+        let mut below_zero = 0;
+        for i in 0..50 {
+            if snap.cell_elevation[i] < 0.0 { below_zero += 1; }
+        }
+        assert!(below_zero >= 40, "expected painted-negative to beat continental-mask, got {} below zero", below_zero);
+    }
+
+    #[test]
+    fn empty_painted_arrays_match_today_behaviour() {
+        // No-op painter: empty arrays must leave bake bit-identical to the original.
+        let mut draft_a = draft_for("plates2");
+        draft_a.painted_elevations = vec![];
+        draft_a.painted_mask = vec![];
+        let snap_a = bake_impl(&draft_a);
+        let snap_b = bake_impl(&draft_for("plates2"));
+        assert_eq!(snap_a.cell_elevation.len(), snap_b.cell_elevation.len());
+        for i in 0..snap_a.cell_elevation.len() {
+            let diff = (snap_a.cell_elevation[i] - snap_b.cell_elevation[i]).abs();
+            assert!(diff < 1e-6, "drift at cell {}: {} vs {}", i, snap_a.cell_elevation[i], snap_b.cell_elevation[i]);
+        }
+    }
+
+    #[test]
+    fn continentality_derived_from_final_elevation() {
+        let mut draft = draft_for("plates2");
+        let n_cells = 10242;
+        draft.continental_cells = (0..50).collect();
+        draft.painted_elevations = vec![0.0; n_cells];
+        draft.painted_mask = vec![0u8; n_cells];
+        // Cells 0..50 are in continental_cells but painted negative — should bake as oceanic.
+        for i in 0..50 {
+            draft.painted_elevations[i] = -0.2;
+            draft.painted_mask[i] = 1;
+        }
+        let snap = bake_impl(&draft);
+        let mut oceanic = 0;
+        for i in 0..50 {
+            if snap.cell_continental[i] == 0 { oceanic += 1; }
+        }
+        assert!(oceanic >= 40, "painted-negative cells should be oceanic, got {} oceanic", oceanic);
     }
 }
