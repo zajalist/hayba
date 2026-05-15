@@ -12,17 +12,26 @@
 
 The current shader is a working multi-zone climate blender with Beer-Lambert ocean, ACES tone mapping, hash-noise FBM, slope rock mask, and per-fragment latitude-driven SatMap selection. It hits roughly 40–50% of AAA-style planet realism on a small budget. The remaining 50% comes from **decoupling physics from color**, **introducing a real macro-normal pass**, and **fixing five concrete bugs** that produce the artifacts the user reported (cyan ocean, equatorial snow patches, hex silhouette).
 
+### THE central bug (validated against user screenshots 2026-05-15)
+
+**Continents render as concentric contour rings ("bullseye"), not terrain.** This is the single most important finding in this document and supersedes the original framing of §3.4 as a "polish" item. Base albedo is keyed on **elevation alone** via a 1D-gradient SatMap lookup (`sampleGradient(tex, h)`, `h = elevField/1.6`). Because the sim pushes continent centers high and edges low, elevation varies **radially**, so a 1D lookup paints **closed colour contours** — dark center → olive ring → white halo → orange ring → blue edge. The FBM offset on `h` only makes the rings *wavy*; it never breaks them into surface texture. Every other land artifact (white halo, orange band, dark centers) is a symptom of this one disease. **Fix = stop keying base colour on elevation; key it on a horizontally-varying biome/climate field, with elevation demoted to a secondary modifier (snow line, rock, coastal tint).** See §3.4 (reframed) and §C (color pipeline) below.
+
+### Pre-flight: color management may be invalidating everything (under-weighted in v1)
+
+Before *any* shader colour work: verify the Three.js r0.169 colour pipeline. The muddy/crushed/desaturated look in the user's screenshots is the textbook signature of an sRGB/linear mismatch. Our SatMaps are k-means-derived from real Blue Marble sRGB PNGs. If they're decoded as linear (wrong `.colorSpace`), or `renderer.outputColorSpace`/tone-map order is wrong, **no shader colour change will fix the look** — it's upstream. See new §C. This is cheap to check and must be ruled out first.
+
 ### The five most leveraged changes (do these first)
 
 | # | Change | Effort | Quality gain | Section |
 |---|---|---|---|---|
-| 1 | Fix ocean palette + Schlick fresnel + sun specular | 1h | Massive — water reads "Earth", not "sci-fi" | §3.1 |
-| 2 | Kill rock-mask false positives on shallow continent interiors | 30m | Removes "random snow" patches | §3.2 |
-| 3 | Bake a screen-space normal from elevation derivatives + height detail noise | 2h | Continents stop looking like flat decals — every fragment gets relief | §3.3 |
-| 4 | Triplanar SatMap sampling (kill pole pinch + axis stretching) | 2h | High-res textures stop banding near the poles | §3.4 |
-| 5 | Two-layer cloud system (drop-shadow on terrain + volumetric edge) | 3h | Earth signature: scale-selling clouds with land shadows | §3.5 |
+| 0 | Verify/fix sRGB-linear color pipeline + texture `.colorSpace` | 1h | Possibly the whole muddy look; gates everything below | §C |
+| 1 | Replace elevation-keyed albedo with biome/climate-keyed field | 4h | **Kills the bullseye** — the headline bug | §3.4 |
+| 2 | Fix ocean palette + coast-noise/mask-window + fresnel + glint | 2h | Water reads "Earth"; kills cyan + speckled fringe | §3.1 |
+| 3 | Elevation-gate the rock mask | 30m | Removes the spurious grey/white mid-continent rings | §3.2 |
+| 4 | Macro-normal from elevation derivatives + detail noise | 2h | Continents stop looking like flat decals — relief | §3.3 |
+| 5 | Two-layer cloud system (drop-shadow + volumetric edge) | 3h | Earth signature: scale-selling clouds with land shadows | §3.5 |
 
-Doing these five — about a day of work — moves the planet from "very stylized procedural" to "credible Earth-from-orbit". Subsequent layers (atmospheric scattering LUTs, ocean current advection, biome NDVI proxy) are improvements but not transformative on the same axis.
+Order matters: §C gates everything (a gamma bug masks all colour work), §3.4 is THE bug, then ocean, then relief. Subsequent layers (atmospheric scattering LUTs, ocean current advection, biome NDVI proxy) are improvements but not transformative on the same axis.
 
 ---
 
@@ -41,9 +50,15 @@ Doing these five — about a day of work — moves the planet from "very stylize
 
 ### 1.2 What's wrong (root-cause analysis of reported bugs)
 
-**Bug A — "Ocean too cyan, doesn't look like real Earth."**
+**Bug 0 — THE bug: continents are concentric contour rings ("bullseye").**
 
-Current palette (`planet.glsl.ts` lines 226–228):
+Confirmed against the 2026-05-15 screenshot. `base = sampleGradient(uSat*, h)` with `h = elevField/1.6` reads one vertical column of the SatMap indexed by height. Sim uplift makes elevation vary *radially* across each continent (high center, low coast), so equal-elevation cells get equal colour everywhere → **closed colour contours**: dark center → olive/yellow ring → white halo → orange ring → blue edge. The `+ (fbmCoarse-0.5)*0.55` offset on `h` only makes the rings *wavy*, never breaks them into terrain. The white halo, orange band and dark centers are all the *same* artifact — different SatMap rows traced as loops at fixed elevations. This is not a tuning problem; the data model (1D elevation LUT as the primary albedo key) is wrong. See §3.4 (reframed) and §C.
+
+**Bug 0b — green/land reads near-black.** Four compounding causes: (1) the dark center is the *wrong row* (high-elevation top of the gradient), not vegetation — a symptom of Bug 0; (2) real vegetation albedo is genuinely low and nothing lifts it; (3) no macro-normal → no sunlit-slope midtone lift (§3.3); (4) cavity-AO `*mix(0.78,1.0)` then `aces(lit*1.05)` double-crush already-dark input. Plus a likely gamma-pipeline fault (§C) that desaturates everything upstream of the shader.
+
+**Bug A — "Ocean too cyan" + noisy near-white fringe at coastlines.**
+
+Two symptoms, one bug family. Current palette (`planet.glsl.ts` lines 226–228):
 ```glsl
 vec3 coast   = vec3(0.55, 0.82, 0.88);   // shallow reef turquoise — too saturated
 vec3 shelf   = vec3(0.18, 0.50, 0.74);   // still too bright in red+green
@@ -56,7 +71,14 @@ Real Earth-from-orbit ocean as captured by Blue Marble + Suomi NPP VIIRS:
 - Coast (clear tropical): `vec3(0.118, 0.314, 0.471)` — the brightest case
 - Coast (turbid temperate, e.g. North Sea): `vec3(0.063, 0.165, 0.235)`
 
-The current "shallow reef turquoise" is what an artist would paint a *Caribbean reef closeup*, not an *Earth-from-orbit coastline*. The `0.55, 0.82, 0.88` is closer to a swimming pool. Worse: the depth blend reaches `coast` color across an enormous surface area because `t1` ramps from 0 at depth=0 to 1 at depth=0.08 — a tiny depth window. Most of "ocean" is the bright coast color.
+The current "shallow reef turquoise" is what an artist would paint a *Caribbean reef closeup*, not an *Earth-from-orbit coastline*. The `0.55, 0.82, 0.88` is closer to a swimming pool. Worse: the depth blend reaches `coast` color across an enormous surface area because `t1` ramps from 0 at depth=0 to 1 at depth=0.08 — a tiny depth window. Most of "ocean" is the bright coast color. **This is why painting any modest ocean depth renders cyan**: small depth → `t1 ≈ 0` → pure `coast` → pool-cyan, then `* (1.0 + ripple)` pushes it brighter toward white.
+
+**The noisy near-white fringe at every coastline** is a distinct mechanism in the same block:
+```glsl
+float coastNoise = (fbm(vWorldNormal*55.0) - 0.5) * 0.12;   // ±0.06
+float oceanMask  = 1.0 - smoothstep(-0.02, 0.05, seaCoord); // 0.07-wide window
+```
+At the shoreline `vElevation≈0` so `seaCoord≈coastNoise` (±0.06), modulating a mask whose transition window is only 0.07. **Noise amplitude ≈ transition width → the mask dithers 0↔1 cell-to-cell** instead of producing an organic edge, and at `d≈0` the colour is pinned to the bright `coast` stop → a speckled near-white-cyan band tracing every coast. **General principle (applies to snow line §4.2 too): any FBM perturbing a smoothstep mask MUST have amplitude ≪ the smoothstep window, or you get dither, not organic variation.** Fix is either drop `coastNoise` to ~±0.015 *or* widen the `oceanMask` window to ~0.18 (≫ noise amplitude). Palette fix alone will not remove the speckle.
 
 Also missing entirely:
 - **Schlick fresnel reflectance**. At grazing angles, water reflects almost 100% — gives the bright limb on Earth photos. Current shader has none.
@@ -264,11 +286,20 @@ vec3 perturbedNormal = normalize(vWorldNormal + macroPerturb + detailPerturb);
 
 **Visual gain:** continents start looking like geography rather than painted decals. Mountains catch the sun on east-facing slopes and shadow their west-facing slopes. Rivers (post §3.4 triplanar) read as actual carved channels.
 
-### 3.4 Triplanar SatMap sampling
+### 3.4 THE central bug: elevation-keyed albedo → contour rings. Re-key on biome.
 
-**Why:** the current `sampleGradient(tex, h)` samples the SatMap by elevation only. Every fragment at the same elevation gets the same color — no spatial variation other than the FBM offset on `h`. This is what produces visible *banding* in the user's screenshots (the same brown band wraps around the planet at a single elevation).
+**This is the headline finding of the dossier, not a polish item.** Reframed 2026-05-15 after the bullseye screenshot.
 
-**Industry standard:** triplanar mapping projects the texture along three axes and blends by the surface normal. We adapt it for SatMaps (which are 1D gradients, not 2D tileables) by **stochastic sampling** — perturb `h` with three world-space-aligned noise lookups, blended by normal-weighted weights.
+**The disease:** `base = sampleGradient(uSat*, h)` keys base albedo on `h = elevField/1.6` — i.e. **elevation is the primary colour axis**. On a sim-uplifted continent, elevation is radially monotone (high center → low coast), so a 1D LUT *must* produce closed colour contours. No amount of noise on `h` fixes this; it only makes the contours wavy. **This is architecturally wrong: in real satellite imagery, base colour is keyed on _biome_ (climate × moisture × vegetation), and elevation is only a weak secondary modifier (snow line, exposed rock, coastal darkening).** Production planet renderers never use an elevation LUT as the primary albedo key (open question for Gemini — see §8.6 — but the working assumption is firm).
+
+**The fix (the real one):** decouple colour from elevation.
+1. **Base albedo = biome field.** Drive it from the existing latitude-climate weights (`wTrop/wArid/wTemp/wPolar`) *plus* a low-frequency 2D/3D biome-noise field that varies *horizontally* (a Whittaker-style climate×moisture selection), **not** by `h`. Same-elevation cells in different biomes get different colour; same-biome cells at different elevations get *similar* colour. This alone kills the bullseye.
+2. **Elevation demoted to modifiers only:** snow line (§4.2), exposed-rock mask gated by altitude (§3.2), coastal/beach darkening, and a *gentle* hypsometric tint (a few % darkening with height, not a full gradient sweep).
+3. **Then** apply stochastic/bi-planar sampling (below) as a refinement to break residual repetition — but it is the *third* fix, not the first. Doing stochastic sampling on top of an elevation-keyed lookup just makes wavy rings; it does not fix the model.
+
+**Decision needed (Gemini §8.6 + §8.7):** is the right end-state to keep 1D SatMaps but select the *row* by biome instead of elevation, or to replace SatMaps with a 2D climate×moisture (Whittaker) lookup texture? This dossier can spec either once the user/Gemini decides; the *principle* (colour ≠ f(elevation)) holds regardless.
+
+**Secondary refinement — stochastic / bi-planar sampling.** Once colour is biome-keyed, repetition of the *same biome's* texture across a large region still benefits from triplanar/stochastic sampling. We adapt it for SatMaps (1D gradients, not 2D tileables) by perturbing the lookup with three world-space-aligned noise lookups, blended by normal-weighted weights.
 
 ```glsl
 vec3 sampleSatTriplanar(sampler2D tex, vec3 worldPos, vec3 worldNormal, float h) {
@@ -340,6 +371,22 @@ Mounted in `apps/hayba-explorer/src/viewport/cloudsMesh.ts`. Materials: `transpa
 **Cost:** one additional draw call, ~64K verts (negligible), one fbm per cloud-mesh fragment (cheap on coarse mesh).
 
 **Visual gain:** transformative. The drop-shadow alone (Layer 1) is 80% of the perceptual win; the volumetric sphere is the "I'm looking at Earth" cue.
+
+---
+
+## C. Color pipeline (pre-flight — must verify before any shader colour work)
+
+**Why this is §C and not buried in §4:** the muddy/crushed/desaturated look in every screenshot is the canonical signature of an sRGB↔linear mismatch. If the pipeline is wrong, **every colour value in §3.1–3.4 is being computed against a corrupted basis** and tuning them is wasted effort. This is ~1 hour to verify and gates everything.
+
+**The three things to verify, in Three.js r0.169:**
+
+1. **SatMap texture `.colorSpace`.** Our SatMaps are k-means-derived from real Blue Marble **sRGB PNGs**. They are *albedo* (colour) textures, so each loaded texture MUST be `tex.colorSpace = THREE.SRGBColorSpace`. If left at the default (`NoColorSpace`/linear) the GPU samples sRGB-encoded bytes as if linear → everything is too dark and desaturated in the midtones, exactly the symptom. Check `satmap-loader.ts` / wherever `THREE.TextureLoader` or `CanvasTexture` is created.
+2. **`renderer.outputColorSpace`.** Must be `THREE.SRGBColorSpace` (the r0.152+ default, but verify it wasn't overridden). With a `ShaderMaterial` writing `gl_FragColor` directly, confirm the renderer still applies the output transform — for raw `ShaderMaterial` you often must do the linear→sRGB OETF yourself or set the material up so the renderer does. This is the most common subtle r0.169 bug.
+3. **Tone-map order + whether to tone-map albedo at all (open question §8.8).** ACES is a *scene-referred HDR* operator. Our SatMaps are *display-referred photographs of Earth* — already tone-mapped by the camera/sensor that shot Blue Marble. Running them through ACES again desaturates and darkens by design. Options: (a) only ACES the *lit radiance* and keep sampled albedo out of the curve; (b) drop ACES entirely for this content and rely on correct sRGB output; (c) keep ACES but pre-brighten albedo to compensate (worst — fights the curve). Production answer unknown → Gemini §8.8.
+
+**Verification recipe:** render a single SatMap full-screen with lighting disabled (`lit = albedo`). It should look like the source PNG opened in an image viewer. If it's darker/muddier than the PNG, the pipeline is wrong and is the dominant problem — fix it before touching §3.x palettes.
+
+**Why I (the dossier author) under-weighted this in v1:** the 2026-05-13 brief flagged "renderer almost certainly draws linear-as-sRGB" but I did not carry it forward, then spent §3.1 specifying exact RGB triples — which are meaningless if the basis is wrong. This is the single biggest correction to v1.
 
 ---
 
@@ -644,6 +691,14 @@ These deserve explicit decisions before implementation:
 4. **Performance target.** 60fps at 1080p on a mid-range GPU, or 30fps at 1440p on a desktop? Affects whether Phase 5 (Tessendorf) is on the table.
 
 5. **Phase 4 atmospheric scattering — port or vendor?** Porting `precomputed_atmospheric_scattering` is ~3 days. Vendoring `@takram/three-atmosphere` is one afternoon but adds an MIT-licensed dependency. Strong recommendation: vendor.
+
+6. **(Gemini) Is an elevation LUT ever used as the primary albedo key in production planet renderers?** Strong prior: no — colour is always biome/splat-keyed, elevation is a modifier. Needs confirmation with production references so we commit to the §3.4 re-architecture without second-guessing.
+
+7. **(Gemini + user) 1D-row-by-biome vs. 2D Whittaker lookup.** Keep 1D SatMaps but select the row by biome (cheap migration, preserves the authored palettes), or replace with a 2D climate×moisture lookup texture (more correct, more authoring work)? Architecture decision; dossier can spec either once chosen.
+
+8. **(Gemini) Tone-map satellite-derived albedo at all?** ACES is scene-referred HDR; our SatMaps are display-referred photos. Need production guidance: ACES the lit radiance only / drop ACES for baked-satellite content / something else. See §C.3.
+
+9. **(Gemini, cheap to verify, highest priority) Correct Three.js r0.169 colour pipeline for raw `ShaderMaterial` + sRGB albedo textures.** Exact `.colorSpace`, `outputColorSpace`, and where the OETF is applied when the material writes `gl_FragColor` directly. If wrong, invalidates all colour work. See §C.
 
 ---
 
