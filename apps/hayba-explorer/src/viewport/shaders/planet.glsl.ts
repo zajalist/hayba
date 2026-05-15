@@ -491,13 +491,15 @@ export const FRAGMENT_SHADER = /* glsl */ `
     vec3  alpineRock = sampleGradient(uSatMapRock, clamp(band + scatter, 0.04, 0.96));
     float substrate  = substrateA * land;
     albedo = mix(albedo, alpineRock, substrate * 0.7);
-    // Stage 2: snow over the colder, also-ragged snowA → a broken speckled
-    // snowline. Higher-frequency shading so the cap body isn't a flat white
-    // blob (subtle exposed-rock mottle reads through the snow).
-    float iceShade = 0.78 + 0.17 * fbm(vWorldNormal * 30.0)
-                          + 0.07 * fbm(vWorldNormal * 80.0);
+    // Stage 2: snow. SATURATED (high-contrast, near-binary) cell-stable
+    // hole noise punches DISCRETE bare-rock holes through the cap so the
+    // alpine rock SatMap (already mixed into albedo) shows — not a smooth
+    // white blob. Tight smoothstep = discretized, not a soft gradient.
+    float holeN  = fbm(vSeed * 22.0) * 0.65 + fbm(vSeed * 54.0) * 0.35;
+    float holes  = smoothstep(0.30, 0.40, holeN);   // ~1 = snow, 0 = rock hole
+    float iceShade = 0.80 + 0.20 * fbm(vSeed * 34.0);
     vec3  iceColor = vec3(0.93, 0.95, 0.98) * iceShade;
-    float snow     = snowA * land;
+    float snow     = snowA * land * holes;
     albedo = mix(albedo, iceColor, snow);
 
     // ── Pink seam highlight (unassigned boundaries) ──────────────────────
