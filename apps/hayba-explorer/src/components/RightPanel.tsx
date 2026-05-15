@@ -12,9 +12,8 @@ export interface RightPanelProps {
 }
 
 const TITLES: Record<PanelCategory, { title: string; subtitle: string }> = {
-  compose:         { title: "Compose",       subtitle: "Initial conditions" },
-  "paint-heights": { title: "Paint heights",  subtitle: "Sculpt elevation before bake" },
-  boundaries:      { title: "Boundaries",     subtitle: "Post-bake plate seams" },
+  compose:    { title: "Compose",    subtitle: "Initial conditions" },
+  boundaries: { title: "Boundaries", subtitle: "Post-bake plate seams" },
   densities:  { title: "Densities",  subtitle: "Rank plates by density" },
   simulate:   { title: "Simulate",   subtitle: "Run the tectonic clock" },
   settings:   { title: "Settings",   subtitle: "App preferences" },
