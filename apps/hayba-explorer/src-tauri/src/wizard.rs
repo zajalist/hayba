@@ -610,8 +610,13 @@ fn bake_model(draft: &WizardDraft) -> Model {
     //  to 0.05 — barely above sea level, leaves room for the painter to
     //  sculpt mountains on top. Continentality is derived: elev > 0.
     const CONTINENTAL_BRUSH_FLOOR: f32 = 0.05;
+    // Baseline is now uniform EXTREME DEEP OCEAN: an unpainted planet is
+    // all deep water (-1), so the user paints continents + shallow water
+    // up from a clean deep floor. The preset HSV still defines the plate
+    // partition (above), but no longer leaves varying shallow ocean depths
+    // that read as a smooth water gradient.
+    const DEEP_OCEAN_FLOOR: f32 = -1.0;
     for fid in 0..n_cells {
-        let info = &infos[fid as usize];
         let painted = draft
             .painted_mask
             .get(fid as usize)
@@ -623,7 +628,7 @@ fn bake_model(draft: &WizardDraft) -> Model {
         } else if user_continental[fid as usize] {
             CONTINENTAL_BRUSH_FLOOR
         } else {
-            info.preset_elevation
+            DEEP_OCEAN_FLOOR
         };
         let cont = elevation > 0.0;
         if let Some(f) = model.fields.get_mut(fid as usize) {
