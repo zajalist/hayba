@@ -27,6 +27,9 @@ import { buildPoleLabels,  type PoleLabelsHandle  } from "./viewport/overlays/po
 import { createDefaultDraft, pairKey, type WizardDraft, type PresetName, type BoundaryType } from "./wizard/state";
 import { BoundaryModel, setBoundary, clearBoundary } from "./wizard/boundary-model";
 import { buildCellKdTree, cellsWithinRadius, nearestCell, type KdTree } from "./wizard/kdtree";
+import { HeightPainter, type BrushConfig } from "./wizard/paint/HeightPainter";
+import HeightPaintPanel from "./components/panels/HeightPaintPanel";
+import { buildPainterMesh, type PainterMeshHandle } from "./viewport/painterMesh";
 
 export interface PlanetSnapshot {
   divisions: number;
@@ -135,6 +138,26 @@ function statusHint(mode: Mode): string | undefined {
   return undefined;
 }
 
+function buildAdjacency(triangles: Uint32Array, nCells: number): number[][] {
+  const adj: number[][] = Array.from({ length: nCells }, () => []);
+  const pushUnique = (arr: number[], v: number): void => {
+    if (!arr.includes(v)) arr.push(v);
+  };
+  for (let i = 0; i < triangles.length; i += 3) {
+    const a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
+    pushUnique(adj[a], b); pushUnique(adj[a], c);
+    pushUnique(adj[b], a); pushUnique(adj[b], c);
+    pushUnique(adj[c], a); pushUnique(adj[c], b);
+  }
+  return adj;
+}
+
+function invertBrushMode(b: BrushConfig): BrushConfig {
+  if (b.mode === "raise") return { ...b, mode: "lower" };
+  if (b.mode === "lower") return { ...b, mode: "raise" };
+  return b;
+}
+
 export default function App() {
   const sceneRef = useRef<SceneHandle | null>(null);
   const globeRef = useRef<GlobeHandle | null>(null);
@@ -142,6 +165,14 @@ export default function App() {
   const painterRef = useRef<PainterHandle | null>(null);
   const kdTreeRef = useRef<KdTree | null>(null);
   const cellCountRef = useRef(0);
+
+  // Height-painter (sculpt phase) state. Distinct from `painterRef` which is
+  // the continent-painting hover/click handler.
+  const heightPainterRef = useRef<HeightPainter | null>(null);
+  const painterMeshRef = useRef<PainterMeshHandle | null>(null);
+  const positionsRef = useRef<Float32Array | null>(null);
+  const trianglesRef = useRef<Uint32Array | null>(null);
+  const adjRef = useRef<number[][] | null>(null);
 
   const draftRef = useRef<WizardDraft | null>(null);
   const activeToolRef = useRef<ToolName>("brush");
@@ -168,6 +199,20 @@ export default function App() {
   const [pendingDivisions, setPendingDivisions] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
   const playingRef = useRef(false);
+
+  // Height painter UI state
+  const [paintedCount, setPaintedCount] = useState(0);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  const [paintBrush, setPaintBrush] = useState<BrushConfig>({
+    mode: "raise",
+    radiusRad: 0.06,
+    strength: 0.3,
+    falloff: "smooth",
+    mask: "round-soft",
+    flattenTarget: 0,
+    noiseScale: 4,
+  });
 
   // Panel state
   const [panelCategory, setPanelCategory] = useState<PanelCategory>("compose");
@@ -259,6 +304,14 @@ export default function App() {
     const positions = new Float32Array(init.cell_positions);
     kdTreeRef.current = buildCellKdTree(positions);
     cellCountRef.current = init.n_cells;
+    positionsRef.current = positions;
+    // Invalidate per-grid caches — divisions may have changed.
+    trianglesRef.current = null;
+    adjRef.current = null;
+    heightPainterRef.current = null;
+    setPaintedCount(0);
+    setCanUndo(false);
+    setCanRedo(false);
 
     const seed = carry?.seed ?? await invoke<number>("roll_seed");
     const fresh = createDefaultDraft(divisions, seed);
@@ -505,6 +558,151 @@ export default function App() {
     return () => canvas.removeEventListener("pointerdown", onPointer);
   }, [mode]);
 
+  // Height-painter lifecycle. When the user enters the paint-heights category
+  // during wizard mode, lazily build the adjacency list + painter mesh and
+  // swap it in for the point-cloud globe. On leave, restore the globe and
+  // tear down the GL resources. Painter state itself persists across visits.
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    const active = panelCategory === "paint-heights" && mode === "wizard";
+
+    if (!active) {
+      if (painterMeshRef.current) {
+        scene.scene.remove(painterMeshRef.current.object);
+        painterMeshRef.current.dispose();
+        painterMeshRef.current = null;
+      }
+      if (globeRef.current) globeRef.current.object.visible = true;
+      return;
+    }
+
+    const positions = positionsRef.current;
+    const drft = draftRef.current;
+    if (!positions || !drft) return;
+
+    const divisions = drft.divisions;
+    const setup = async () => {
+      // Triangles — fetch once per grid.
+      if (!trianglesRef.current) {
+        const tris = await invoke<number[]>("get_grid_triangles", { divisions });
+        trianglesRef.current = new Uint32Array(tris);
+      }
+      const triangles = trianglesRef.current;
+      const nCells = cellCountRef.current;
+
+      // Adjacency — build once per grid.
+      if (!adjRef.current) {
+        adjRef.current = buildAdjacency(triangles, nCells);
+      }
+      const adj = adjRef.current;
+
+      // Painter — rebuild if cell count changed since last init.
+      if (!heightPainterRef.current || heightPainterRef.current.n !== nCells) {
+        heightPainterRef.current = new HeightPainter({
+          positions,
+          neighbours: adj,
+          seed: drft.seed,
+        });
+        setPaintedCount(0);
+        setCanUndo(false);
+        setCanRedo(false);
+      }
+      const painter = heightPainterRef.current;
+
+      // Build mesh + add to scene. Hide point-cloud globe while painting.
+      const pmesh = buildPainterMesh({
+        positions,
+        triangles,
+        initialElevations: painter.elevations,
+      });
+      painterMeshRef.current = pmesh;
+      scene.scene.add(pmesh.object);
+      if (globeRef.current) globeRef.current.object.visible = false;
+    };
+
+    let cancelled = false;
+    setup().catch((e) => {
+      if (!cancelled) setError(String(e));
+    });
+    return () => {
+      cancelled = true;
+      if (painterMeshRef.current) {
+        scene.scene.remove(painterMeshRef.current.object);
+        painterMeshRef.current.dispose();
+        painterMeshRef.current = null;
+      }
+      if (globeRef.current) globeRef.current.object.visible = true;
+    };
+  }, [panelCategory, mode, draft?.divisions]);
+
+  // Height-painter pointer interactions. Gated on the paint-heights category
+  // in wizard mode. Shift inverts raise<->lower.
+  useEffect(() => {
+    if (panelCategory !== "paint-heights" || mode !== "wizard") return;
+    const scene = sceneRef.current;
+    if (!scene) return;
+    const canvas = scene.canvas;
+
+    const raycast = (ev: PointerEvent): { cellId: number; point: [number, number, number] } | null => {
+      const tree = kdTreeRef.current;
+      if (!tree) return null;
+      const rect = canvas.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((ev.clientX - rect.left) / rect.width) * 2 - 1,
+        -(((ev.clientY - rect.top) / rect.height) * 2 - 1),
+      );
+      const ray = new THREE.Raycaster();
+      ray.setFromCamera(ndc, scene.camera);
+      const meshObj = painterMeshRef.current?.object ?? scene.raycastTarget;
+      const hits = ray.intersectObject(meshObj, true);
+      if (hits.length === 0) return null;
+      const p = hits[0].point.clone().normalize();
+      const cell = nearestCell(tree, p.x, p.y, p.z);
+      return { cellId: cell, point: [p.x, p.y, p.z] };
+    };
+
+    const onPointerDown = (ev: PointerEvent) => {
+      if (ev.button !== 0) return;
+      const painter = heightPainterRef.current;
+      if (!painter) return;
+      const hit = raycast(ev);
+      if (!hit) return;
+      const effectiveBrush = ev.shiftKey ? invertBrushMode(paintBrush) : paintBrush;
+      painter.beginStroke(effectiveBrush);
+      painter.tickStroke({ seedCellId: hit.cellId, hit: hit.point });
+      painterMeshRef.current?.syncFromPainter(painter);
+    };
+    const onPointerMove = (ev: PointerEvent) => {
+      const painter = heightPainterRef.current;
+      const pmesh = painterMeshRef.current;
+      if (!painter || !pmesh) return;
+      const hit = raycast(ev);
+      pmesh.setCursor(hit?.point ?? null, paintBrush.radiusRad, (ev.buttons & 1) === 1);
+      if ((ev.buttons & 1) === 1 && hit) {
+        painter.tickStroke({ seedCellId: hit.cellId, hit: hit.point });
+        pmesh.syncFromPainter(painter);
+      }
+    };
+    const onPointerUp = () => {
+      const painter = heightPainterRef.current;
+      if (!painter) return;
+      painter.endStroke();
+      setCanUndo(painter.undoCount() > 0);
+      setCanRedo(false);
+      setPaintedCount(painter.countTouched());
+    };
+
+    canvas.addEventListener("pointerdown", onPointerDown);
+    canvas.addEventListener("pointermove", onPointerMove);
+    canvas.addEventListener("pointerup", onPointerUp);
+    return () => {
+      canvas.removeEventListener("pointerdown", onPointerDown);
+      canvas.removeEventListener("pointermove", onPointerMove);
+      canvas.removeEventListener("pointerup", onPointerUp);
+    };
+  }, [panelCategory, mode, paintBrush]);
+
   // Live-apply boundary assignments — Rust rewrites plate omegas on the
   // running model so the change is visible immediately. No re-bake.
   const applyBoundaryTypesLive = useCallback(async (types: Record<string, BoundaryType>) => {
@@ -600,7 +798,11 @@ export default function App() {
     if (!draft) return;
     setMode("baking");
     try {
-      const snap = await invoke<PlanetSnapshot>("bake_from_wizard", { draft });
+      const paintedFields = heightPainterRef.current
+        ? heightPainterRef.current.toDraftFields()
+        : { painted_elevations: [], painted_mask: [] };
+      const finalDraft: WizardDraft = { ...draft, ...paintedFields };
+      const snap = await invoke<PlanetSnapshot>("bake_from_wizard", { draft: finalDraft });
       setSnapshot(snap);
       // After bake → land on the Boundaries phase (the next step in the
       // wizard sequence). User clicks Next/Start to advance to densities
@@ -704,16 +906,18 @@ export default function App() {
 
   // Category gating
   const categoryEnabled: Record<PanelCategory, boolean> = {
-    compose:    true,
-    boundaries: mode === "boundaries" || mode === "densities" || mode === "simulating",
-    densities:  mode === "densities" || mode === "simulating",
-    simulate:   mode === "simulating",
-    settings:   true,
+    compose:         true,
+    "paint-heights": mode === "wizard",
+    boundaries:      mode === "boundaries" || mode === "densities" || mode === "simulating",
+    densities:       mode === "densities" || mode === "simulating",
+    simulate:        mode === "simulating",
+    settings:        true,
   };
   const categoryDisabledReason: Partial<Record<PanelCategory, string>> = {
     boundaries: "Bake the planet to edit boundaries",
     densities:  "Complete boundaries to rank densities",
     simulate:   "Start the simulation from the Densities panel",
+    "paint-heights": "Available before baking",
   };
 
   // Auto-promote panel category when mode changes
@@ -790,6 +994,47 @@ export default function App() {
             onChangePreset={handleChangePreset}
             onReroll={handleReroll}
             onBake={handleBake}
+          />
+        )}
+
+        {panelCategory === "paint-heights" && draft && (
+          <HeightPaintPanel
+            brush={paintBrush}
+            paintedCount={paintedCount}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            onChangeBrush={setPaintBrush}
+            onUndo={() => {
+              const p = heightPainterRef.current;
+              if (p?.undo()) {
+                painterMeshRef.current?.syncFromPainter(p);
+                setCanUndo(p.undoCount() > 0);
+                setCanRedo(true);
+                setPaintedCount(p.countTouched());
+              }
+            }}
+            onRedo={() => {
+              const p = heightPainterRef.current;
+              if (p?.redo()) {
+                painterMeshRef.current?.syncFromPainter(p);
+                setCanUndo(true);
+                setCanRedo(p.redoCount() > 0);
+                setPaintedCount(p.countTouched());
+              }
+            }}
+            onReset={() => {
+              if (!window.confirm("Reset all painted heights?")) return;
+              const p = heightPainterRef.current;
+              if (p) {
+                p.reset();
+                painterMeshRef.current?.syncFromPainter(p);
+              }
+              setCanUndo(false);
+              setCanRedo(false);
+              setPaintedCount(0);
+            }}
+            onBack={() => setPanelCategory("compose")}
+            onNext={() => setPanelCategory("compose")}
           />
         )}
 
