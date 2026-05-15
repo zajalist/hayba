@@ -76,6 +76,21 @@ pub fn prevailing_wind(p: Vec3) -> Vec3 {
     (east * sign + north * toward_eq * 0.15).normalize_or_zero()
 }
 
+/// The neighbour the wind blows FROM (max dot of (p_i - p_nb)·wind).
+fn upwind_neighbour(pos: &[Vec3], neighbours: &[Vec<u32>], i: usize, wind: Vec3) -> i64 {
+    let mut best = -1i64;
+    let mut best_d = -2.0f32;
+    for &nb in &neighbours[i] {
+        let dir = (pos[i] - pos[nb as usize]).normalize_or_zero();
+        let d = dir.dot(wind);
+        if d > best_d {
+            best_d = d;
+            best = nb as i64;
+        }
+    }
+    best
+}
+
 /// Coastal temperature anomaly (°C) from analytic subtropical gyres.
 /// Warm poleward western-boundary currents (up to +12°C), cold
 /// equatorward eastern-boundary currents (down to −10°C → coastal
@@ -250,6 +265,37 @@ pub fn compute_climate(model: &Model, seed: u64, want_debug: bool) -> ClimateFie
     let km_per_hop = grid.field_area_km2().sqrt();
     let max_hop = (*hops.iter().filter(|&&h| h != u32::MAX).max().unwrap_or(&1)).max(1);
 
+    // Downwind moisture transport. Moisture sourced at oceans (=1.0) is
+    // carried inland along the prevailing wind, decayed per hop, and
+    // blocked where terrain rises into the wind → real lee deserts.
+    let winds: Vec<Vec3> = (0..n).map(|i| prevailing_wind(pos[i])).collect();
+    let up: Vec<i64> = (0..n)
+        .map(|i| upwind_neighbour(&pos, &neighbours, i, winds[i]))
+        .collect();
+    let mut moist = vec![0.0f32; n];
+    for i in 0..n {
+        if is_ocean[i] {
+            moist[i] = 1.0;
+        }
+    }
+    // Bounded relaxation (K = 6): O(cells·K). Moisture carried from the
+    // upwind cell, decayed per hop, blocked where terrain rises into the wind.
+    for _ in 0..6 {
+        for i in 0..n {
+            if is_ocean[i] {
+                continue;
+            }
+            let u = up[i];
+            if u < 0 {
+                continue;
+            }
+            let ui = u as usize;
+            let rise = (elev[i] - elev[ui]).max(0.0);
+            let block = 1.0 - smoothstep(0.06, 0.20, rise);
+            moist[i] = moist[i].max(moist[ui] * 0.94 * block);
+        }
+    }
+
     let mut temperature = vec![0.0f32; n];
     let mut precip = vec![0.0f32; n];
     let mut biome = vec![0.0f32; n];
@@ -297,7 +343,15 @@ pub fn compute_climate(model: &Model, seed: u64, want_debug: bool) -> ClimateFie
         let zonal = zonal_precip(lat);
         let cont = continental_factor(if hops[i] == u32::MAX { max_hop } else { hops[i] });
         let pn = value_noise(p * 3.5, seed) - 0.5;
-        let pr = (zonal * cont + orographic * 0.5 + pn * 0.25).clamp(0.0, 1.0);
+        // Physically-ordered precip: humid air supply (zonal vs.
+        // transported ocean moisture) lifted on windward slopes (oro),
+        // wrung out on the lee (lee), with residual continental drying.
+        let base_h = zonal.max(moist[i] * 0.85);
+        let oro = orographic.max(0.0) * 0.6;
+        let lee = (-orographic).max(0.0) * 0.5;
+        let dry = 1.0 - cont;
+        let pr =
+            (base_h + oro - lee - dry * 0.5 + pn * 0.12).clamp(0.0, 1.0);
         precip[i] = pr;
 
         let primary = classify_biome(t, pr);
@@ -477,5 +531,84 @@ mod tests {
         let has_boundary = (0..n)
             .any(|i| cf.biome2[i] != cf.biome[i] && cf.biome_blend[i] > 0.0);
         assert!(has_boundary, "expected at least one mixed cell");
+    }
+
+    #[test]
+    fn upwind_neighbour_picks_cell_wind_blows_from() {
+        // 3-cell line along +X: 0 at x=-1, 1 at x=0, 2 at x=+1.
+        // Wind blows toward +X, so the upwind neighbour of cell 1 is
+        // cell 0 (the −X side, the cell the wind came from).
+        let pos = vec![
+            Vec3::new(-1.0, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+        ];
+        let neighbours: Vec<Vec<u32>> = vec![vec![1], vec![0, 2], vec![1]];
+        let wind = Vec3::new(1.0, 0.0, 0.0);
+        let u = upwind_neighbour(&pos, &neighbours, 1, wind);
+        assert_eq!(u, 0, "wind +X → upwind of middle cell is the −X cell");
+        // Edge cell still resolves to its only neighbour.
+        assert_eq!(upwind_neighbour(&pos, &neighbours, 2, wind), 1);
+        // No neighbours → −1 sentinel.
+        let empty: Vec<Vec<u32>> = vec![vec![]];
+        assert_eq!(
+            upwind_neighbour(&[Vec3::ZERO], &empty, 0, wind),
+            -1,
+            "no neighbours yields the -1 sentinel"
+        );
+    }
+
+    #[test]
+    fn moisture_relaxation_produces_lee_rain_shadow() {
+        // 4-cell chain, wind blows ocean→inland (0→1→2→3):
+        //   0 = ocean (moisture source)
+        //   1 = low land  (pre-mountain, windward)
+        //   2 = HIGH land (the mountain — rises into the wind)
+        //   3 = low land  (post-mountain, the lee)
+        // Upwind of i is i-1. Run the exact 6-iteration recurrence
+        // from compute_climate inline and assert the lee cell ends up
+        // drier than the windward cell.
+        let elev = [0.0f32, 0.05, 0.40, 0.05];
+        let is_ocean = [true, false, false, false];
+        let up: [i64; 4] = [-1, 0, 1, 2];
+        let mut moist = [0.0f32; 4];
+        moist[0] = 1.0; // ocean source
+
+        for _ in 0..6 {
+            for i in 0..4 {
+                if is_ocean[i] {
+                    continue;
+                }
+                let u = up[i];
+                if u < 0 {
+                    continue;
+                }
+                let ui = u as usize;
+                let rise = (elev[i] - elev[ui]).max(0.0);
+                let block = 1.0 - smoothstep(0.06, 0.20, rise);
+                moist[i] = moist[i].max(moist[ui] * 0.94 * block);
+            }
+        }
+
+        let windward = moist[1]; // pre-mountain
+        let lee = moist[3]; // post-mountain (rain shadow)
+        assert!(
+            lee < windward,
+            "lee cell ({}) must be drier than windward cell ({})",
+            lee,
+            windward
+        );
+        // The mountain itself should heavily block transport.
+        assert!(
+            lee < 0.5,
+            "lee should be substantially dried by the mountain, got {}",
+            lee
+        );
+        // Sanity: the windward side still gets near-source moisture.
+        assert!(
+            windward > 0.5,
+            "windward side should stay humid, got {}",
+            windward
+        );
     }
 }
