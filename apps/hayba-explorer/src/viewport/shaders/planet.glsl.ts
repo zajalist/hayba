@@ -408,24 +408,20 @@ export const FRAGMENT_SHADER = /* glsl */ `
     float ragged     = (fbm(vWorldNormal * 58.0)  - 0.5) * 9.0
                      + (fbm(vWorldNormal * 132.0) - 0.5) * 4.0;
     float coldC      = vTemperature + edgeJ * 4.0 * jScale + ragged;
-    // Stage 1 — exposed alpine substrate. Windowed to HUG the snowline:
-    // FULL by coldC≈-2 (where snow begins) so rock is continuous up to /
-    // under the ice cap — no bare-biome gap. Ragged term breaks it up.
-    float substrateA = 1.0 - smoothstep(-2.0, 4.0, coldC);
-    // Stage 2 — snow on top of that substrate: a SEPARATE, colder, TIGHT
-    // 5°C window → ragged, speckled snowline (not a smooth white blob).
+    // Snow mask ONLY. The temperature-driven alpine "substrate" rock band
+    // was a smooth brush that formed a dark ring around the cap — REMOVED.
+    // Rock now comes solely from the slope/elevation rock mask (i.e. where
+    // mountains actually are), revealed through holes punched in the snow.
     float snowA      = 1.0 - smoothstep(-7.0, -2.0, coldC);
 
     // Tibet-style high plateau: tall, non-polar ground reads as warm ochre
-    // high-desert. (a) inputs jittered by edgeJ so it is not a hex/ring;
-    // (b) gated OUT under the alpine substrate so it never forms a grey
-    // halo between snow and continent; (c) lower max opacity + warmer tone
-    // so it blends continuously into the surrounding continent.
+    // high-desert. Inputs jittered by edgeJ so it is not a hex/ring; low
+    // max opacity + warm tone so it blends into the surrounding continent.
     // tibetH window 0.32 ≫ amplitude |edgeJ|·0.05·jScale ≈ 0.05 → no dither.
     float tibetH    = smoothstep(0.42, 0.74, vElevation + edgeJ * 0.05 * jScale);
     // nonPolar window 12°C ≫ |edgeJ|·5·jScale ≈ 8°C jitter (shared coldC).
     float nonPolar  = smoothstep(-4.0, 8.0, coldC);
-    float tibetMask = tibetH * nonPolar * (1.0 - substrateA);
+    float tibetMask = tibetH * nonPolar;
     vec3  tibetCol  = vec3(0.44, 0.36, 0.24) * (0.92 + scatter * 0.5); // warmer
     albedo = mix(albedo, tibetCol, tibetMask * 0.5);                    // lower
 
@@ -478,25 +474,17 @@ export const FRAGMENT_SHADER = /* glsl */ `
       albedo = mix(albedo, water, oceanMask);
     }
 
-    // ── 3-stage snow / rock / continent gradient ────────────────────────
-    // CONCENTRIC bands sharing the ragged cold coordinate (coldC /
-    // substrateA / snowA): vegetation → exposed alpine rock → snow. The
-    // ragged term makes every boundary crunchy/patchy (not a smooth halo).
-    // Land-gated (substrate/snow never on ocean).
+    // ── Snow cap (no separate rock substrate) ───────────────────────────
+    // Snow sits directly on whatever the surface already is — biome, or
+    // the slope/elevation rock SatMap where mountains are. A SATURATED
+    // (near-binary) cell-stable multi-octave hole noise punches MANY
+    // discrete bare holes through the cap so the real underlying rock
+    // shows — never a smooth white blob, no temperature rock ring.
     float land      = 1.0 - oceanMask;
-    // Stage 1: cold-exposed alpine ROCK sampled from the rock SatMap (real
-    // texture — not a flat grey wash). Same band+scatter coordinate as the
-    // slope rock so it's detailed & cell-stable; substrateA hugs the
-    // snowline so it's a continuous rock fringe into the ice cap, no gap.
-    vec3  alpineRock = sampleGradient(uSatMapRock, clamp(band + scatter, 0.04, 0.96));
-    float substrate  = substrateA * land;
-    albedo = mix(albedo, alpineRock, substrate * 0.7);
-    // Stage 2: snow. SATURATED (high-contrast, near-binary) cell-stable
-    // hole noise punches DISCRETE bare-rock holes through the cap so the
-    // alpine rock SatMap (already mixed into albedo) shows — not a smooth
-    // white blob. Tight smoothstep = discretized, not a soft gradient.
-    float holeN  = fbm(vSeed * 22.0) * 0.65 + fbm(vSeed * 54.0) * 0.35;
-    float holes  = smoothstep(0.30, 0.40, holeN);   // ~1 = snow, 0 = rock hole
+    float holeN  = fbm(vSeed * 20.0) * 0.50
+                 + fbm(vSeed * 48.0) * 0.32
+                 + fbm(vSeed * 110.0) * 0.18;
+    float holes  = smoothstep(0.40, 0.56, holeN);   // 1 = snow, 0 = bare rock hole
     float iceShade = 0.80 + 0.20 * fbm(vSeed * 34.0);
     vec3  iceColor = vec3(0.93, 0.95, 0.98) * iceShade;
     float snow     = snowA * land * holes;
