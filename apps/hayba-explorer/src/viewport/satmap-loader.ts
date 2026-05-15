@@ -81,6 +81,11 @@ export function loadSatMap(name: string): THREE.Texture {
 /** Convenience export for callers that want a typed alias (the union is open). */
 export type SatMapName = string;
 
+/** Resolved PNG URL for a SatMap (for <img> thumbnails in the picker). */
+export function satMapUrl(name: string): string | undefined {
+  return URLS[name];
+}
+
 /** Biome slot order — MUST match climate.rs BIOME_* ids and mesh uBiome0..9. */
 export const BIOME_SLOTS: { index: number; label: string; defaultName: string }[] = [
   { index: 0, label: "Tropical rainforest", defaultName: "tropical_wet_basin" },
