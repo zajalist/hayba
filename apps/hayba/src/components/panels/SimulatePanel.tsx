@@ -2,6 +2,7 @@ import React from "react";
 import { colors } from "@hayba/design-tokens";
 import PropertyRow from "../PropertyRow";
 import PropertySection from "../PropertySection";
+import { IconPlay, IconPause, IconReset } from "../icons";
 
 export interface SimulatePanelProps {
   era: string;
@@ -30,10 +31,18 @@ export default function SimulatePanel(p: SimulatePanelProps) {
         display: "flex",
         gap: 8,
       }}>
-        <button type="button" onClick={p.onTogglePlay} style={primaryBtn}>
-          {p.playing ? "Pause" : "Play"}
+        <button type="button" onClick={p.onTogglePlay} style={primaryBtn} aria-label={p.playing ? "Pause" : "Play"}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            {p.playing ? <IconPause size={14} /> : <IconPlay size={14} />}
+            {p.playing ? "Pause" : "Play"}
+          </span>
         </button>
-        <button type="button" onClick={p.onReset} style={secondaryBtn}>Reset</button>
+        <button type="button" onClick={p.onReset} style={secondaryBtn} aria-label="Reset">
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <IconReset size={14} />
+            Reset
+          </span>
+        </button>
       </div>
     </div>
   );
