@@ -195,40 +195,75 @@ export const FRAGMENT_SHADER = /* glsl */ `
                     + (fbmCoarse - 0.5) * 0.55
                     + (fbmFine   - 0.5) * 0.15;
 
-    // ── Biome engine (Gemini-prescribed) ─────────────────────────────────
-    // STRICT decoupling: biome identity = climate masks (which SatMap);
-    // the 1-D row 'h' = pure local elevation (where in that SatMap). The
-    // previous bug fed moisture/noise into h → semantically scrambled the
-    // elevation-ramp SatMaps (wet lowland sampled the dry-rock rows).
-    float lat    = abs(vWorldNormal.y);                  // 0 equator .. 1 pole
+    // ── Climate model (worldbuildingpasta-grounded, not pure zonal) ──────
+    float sinLat = vWorldNormal.y;
+    float lat    = abs(sinLat);                          // 0 equator .. 1 pole
+    float latDeg = degrees(asin(clamp(lat, 0.0, 1.0)));  // 0 .. 90
     float elevKm = max(vElevation, 0.0) * 8.0;           // vElevation 1.0 ≈ 8 km
 
-    // Pseudo-physical surface temperature (°C): latitude + 6.5°C/km lapse
-    // + low-freq continental drift (±4°C).
-    float tempC = 30.0 - 55.0 * lat * lat
-                       - 6.5 * elevKm
-                       + (fbm(vWorldNormal * 2.0) - 0.5) * 8.0;
+    // Continentality proxy (no cheap ocean-distance SDF available): a
+    // low-freq field read as "inlandness". Drives continental drying +
+    // colder interiors — the visibly non-zonal effect.
+    float inland = fbm(vWorldNormal * 1.6);
 
-    // Hadley-ish moisture: wet at ITCZ + mid-latitudes, dry ~30° subtropics.
-    float hadley   = 1.0 - abs(sin(lat * 3.14159 * 1.5));
-    float moisture = clamp(hadley * 0.6 + fbm(vWorldNormal * 4.0) * 0.5, 0.0, 1.0);
+    // Temperature (°C): equator base, 4.46°C/km lapse (worldbuildingpasta),
+    // continental cooling, organic variation.
+    float tempC = 30.0 - 50.0 * lat * lat
+                       - 4.46 * elevKm
+                       - inland * 7.0
+                       + (fbm(vWorldNormal * 3.0) - 0.5) * 5.0;
 
-    // h = STRICT local elevation, domain-warped only to hide contour rings.
-    // NO moisture / temperature / macro-noise here.
-    float microNoise = fbm(vWorldNormal * 40.0) * 0.05
-                     + fbm(vWorldNormal * 15.0) * 0.10;
-    float h = clamp(max(vElevation, 0.0) + microNoise, 0.02, 0.98);
+    // Prevailing wind by latitude band (worldbuildingpasta): trades (E→W,
+    // 0–30°), westerlies (W→E, 30–60°), polar easterlies (E→W, 60–90°).
+    vec3 east = normalize(cross(vec3(0.0, 1.0, 0.0), vWorldNormal) + 1e-5);
+    float windSign = (latDeg < 30.0) ? -1.0 : (latDeg < 60.0 ? 1.0 : -1.0);
+    vec3 wind = normalize(east * windSign);
 
-    // 4-way climate weights from physical (°C, moisture) thresholds.
-    float wTrop  = smoothstep(18.0, 22.0, tempC) * smoothstep(0.30, 0.50, moisture);
-    float wArid  = smoothstep(10.0, 15.0, tempC) * (1.0 - smoothstep(0.10, 0.30, moisture));
-    float wPolar = 1.0 - smoothstep(-5.0, 0.0, tempC);
-    float wTemp  = max(0.0, 1.0 - wTrop - wArid - wPolar);
+    // Orographic rain shadow: a relief normal's horizontal tilt vs the
+    // wind → windward (wet) / leeward (dry), scaled by actual slope.
+    vec3  rN   = computeReliefNormal(vWorldNormal * 28.0, fbm(vWorldNormal * 28.0), 2.0);
+    vec3  tilt = rN - vWorldNormal;
+    float orographic = dot(normalize(tilt + 1e-5), wind)
+                     * smoothstep(0.15, 0.65, vSlope);
 
-    // Dominant-takes-all sharpen — a 4-way average of dissimilar palettes
-    // is mathematically grey mud; pow(8) snaps to the dominant biome with
-    // a thin AA crossfade.
-    vec4 bw = pow(max(vec4(wTrop, wArid, wTemp, wPolar), 0.0), vec4(8.0));
+    // Precipitation 0..1: Hadley/Ferrel bands + ITCZ + orographic +
+    // continental drying + organic noise.
+    vec3 pwarp = vec3(fbm(vWorldNormal*2.0+11.3), fbm(vWorldNormal*2.0+27.1),
+                      fbm(vWorldNormal*2.0+41.7));
+    float itcz    = 1.0 - smoothstep(0.0, 16.0, latDeg);          // wet equator
+    float subtrop = 1.0 - smoothstep(0.0, 12.0, abs(latDeg - 30.0)); // dry ~30°
+    float midlat  = 1.0 - smoothstep(0.0, 14.0, abs(latDeg - 58.0)); // wet ~55-60°
+    float polarDry= smoothstep(62.0, 82.0, latDeg);
+    float zonal   = 0.85*itcz - 0.6*subtrop + 0.55*midlat - 0.4*polarDry + 0.35;
+    float continentalDry = smoothstep(0.35, 0.85, inland);
+    float precip = clamp(zonal + orographic * 0.6 - continentalDry * 0.55
+                       + (fbm(vWorldNormal * 3.5 + pwarp * 1.4) - 0.5) * 0.35,
+                       0.0, 1.0);
+
+    // ── Biome classification (Köppen-ish, soft) ──────────────────────────
+    float warmth = smoothstep(-2.0, 4.0, tempC);
+    float wPolar = 1.0 - warmth;
+    float hot    = smoothstep(16.0, 22.0, tempC);
+    float wTrop  = hot * warmth * smoothstep(0.45, 0.65, precip);
+    float wArid  = warmth * (1.0 - wPolar) * (1.0 - smoothstep(0.18, 0.36, precip));
+    float wTemp  = max(0.0, warmth * (1.0 - wPolar) - wTrop - wArid);
+
+    // ── Colour: NOISE-DOMINANT sample coord (jsulpis-proven organic look).
+    // NOT pure elevation (→ contour rings / bullseye) and NOT moisture
+    // (→ semantic scramble). Strong domain-warped multi-octave noise with
+    // only a gentle elevation bias → organic patches of each SatMap's
+    // tonal range, mountains trending up-gradient, zero rings.
+    vec3 cwarp = vec3(fbm(vWorldNormal*2.0+5.2), fbm(vWorldNormal*2.0+19.7),
+                      fbm(vWorldNormal*2.0+37.1));
+    float organic = fbm(vWorldNormal * 5.0 + cwarp * 1.6) * 0.6
+                  + fbm(vWorldNormal * 13.0)              * 0.4;
+    float h = clamp(0.70 * organic + 0.30 * max(vElevation, 0.0), 0.04, 0.96);
+
+    // Soft, NOISY-boundary blend — user wants colours to blend & be noisy,
+    // not hard argmax patches. Boundary noise breaks ties organically;
+    // pow(3) keeps a dominant biome without 4-way grey-mud averaging.
+    float bnz = (fbm(vWorldNormal * 8.0) - 0.5) * 0.18;
+    vec4 bw = pow(max(vec4(wTrop, wArid, wTemp, wPolar) + bnz, 0.0), vec4(3.0));
     bw /= (bw.x + bw.y + bw.z + bw.w + 1e-5);
 
     vec3 climateBase =
@@ -237,9 +272,9 @@ export const FRAGMENT_SHADER = /* glsl */ `
       + sampleGradient(uSatTemperate, h) * bw.z
       + sampleGradient(uSatPolar,     h) * bw.w;
 
-    // The user can disable climate diversity to lock to a single SatMap.
     vec3 base = mix(sampleGradient(uSatMap, h), climateBase, uClimateBlend);
     vec3 rock = sampleGradient(uSatMapRock, clamp(h * 1.1, 0.02, 0.98));
+    float moisture = precip;   // debug-mode alias
 
     // Slope rock mask — smoothstep + fwidth anti-aliasing per Gemini.
     // Threshold around ~0.55 (≈ 33° incline); biome-dependent in a future v3.
