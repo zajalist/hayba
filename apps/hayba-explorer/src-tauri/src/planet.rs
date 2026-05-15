@@ -78,6 +78,10 @@ pub struct PlanetSnapshot {
     pub cell_precip: Vec<f32>,
     /// Whittaker biome id (0..9) as f32 for buffer-attribute upload.
     pub cell_biome: Vec<f32>,
+    /// Secondary (perturbed) biome id (0..9) for soft 2-way blending.
+    pub cell_biome2: Vec<f32>,
+    /// Primary→secondary blend weight, 0..0.5.
+    pub cell_biome_blend: Vec<f32>,
     /// Climate debug fields — empty unless `want_climate_debug`.
     #[serde(default)]
     pub climate_debug: ClimateDebugWire,
@@ -333,6 +337,8 @@ pub fn snapshot_model(model: &Model, divisions: u32, want_climate_debug: bool) -
         cell_temperature: cf.temperature,
         cell_precip: cf.precip,
         cell_biome: cf.biome,
+        cell_biome2: cf.biome2,
+        cell_biome_blend: cf.biome_blend,
         climate_debug,
     }
 }
@@ -373,6 +379,8 @@ mod tests {
         assert_eq!(snap.cell_temperature.len(), n);
         assert_eq!(snap.cell_precip.len(), n);
         assert_eq!(snap.cell_biome.len(), n);
+        assert_eq!(snap.cell_biome2.len(), n);
+        assert_eq!(snap.cell_biome_blend.len(), n);
         assert!(snap.cell_biome.iter().all(|&b| (0.0..=9.0).contains(&b)));
     }
 }
