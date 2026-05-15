@@ -44,18 +44,22 @@ export default function Select<T extends string | number>({ value, options, onCh
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
+        onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = open ? "rgba(255,255,255,0.04)" : "transparent"; }}
         style={{
-          background: "transparent",
-          border: "none",
+          background: open ? "rgba(255,255,255,0.04)" : "transparent",
+          border: `1px solid ${open ? colors.borderSoft : colors.borderMid}`,
           color: colors.beige,
           fontFamily: fonts.mono,
           fontSize: 12,
           cursor: "pointer",
-          padding: 0,
+          padding: "3px 8px",
+          borderRadius: 3,
           display: "inline-flex",
           alignItems: "center",
-          gap: 6,
+          gap: 8,
           textAlign: "right",
+          transition: "background 120ms, border-color 120ms",
         }}
       >
         <span>{current?.label}</span>

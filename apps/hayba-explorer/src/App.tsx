@@ -4,6 +4,8 @@ import * as THREE from "three";
 import Viewport from "./viewport/Viewport";
 import type { SceneHandle } from "./viewport/scene";
 import { buildGlobe, PLATE_PALETTE, type GlobeHandle } from "./viewport/globe";
+import { buildGlobeMesh, type GlobeMeshHandle } from "./viewport/mesh";
+import { SATMAP_NAMES, SATMAP_FAMILIES, METADATA as SATMAP_METADATA, type SatMapName } from "./viewport/satmap-loader";
 import { attachPainter, type PainterHandle } from "./viewport/painter";
 import StatusBar, { Mono } from "./components/StatusBar";
 import TopBar from "./components/TopBar";
@@ -18,9 +20,10 @@ import DockToolbar, { type ToolName } from "./components/DockToolbar";
 import RecenterButton from "./components/RecenterButton";
 import ConfirmDialog from "./components/ConfirmDialog";
 import BoundaryPopover from "./components/BoundaryPopover";
-import { IconPlay, IconPause } from "./components/icons";
+import { IconPlay, IconPause, IconReset } from "./components/icons";
 import { buildPlateLabels, type PlateLabelsHandle } from "./viewport/overlays/plateLabels";
 import { buildForceArrows, type ForceArrowsHandle } from "./viewport/overlays/forceArrows";
+import { buildPoleLabels,  type PoleLabelsHandle  } from "./viewport/overlays/poleLabels";
 import { createDefaultDraft, pairKey, type WizardDraft, type PresetName, type BoundaryType } from "./wizard/state";
 import { BoundaryModel, setBoundary, clearBoundary } from "./wizard/boundary-model";
 import { buildCellKdTree, cellsWithinRadius, nearestCell, type KdTree } from "./wizard/kdtree";
@@ -135,6 +138,7 @@ function statusHint(mode: Mode): string | undefined {
 export default function App() {
   const sceneRef = useRef<SceneHandle | null>(null);
   const globeRef = useRef<GlobeHandle | null>(null);
+  const globeMeshRef = useRef<GlobeMeshHandle | null>(null);
   const painterRef = useRef<PainterHandle | null>(null);
   const kdTreeRef = useRef<KdTree | null>(null);
   const cellCountRef = useRef(0);
@@ -154,6 +158,7 @@ export default function App() {
   // Overlay refs
   const plateLabelsRef = useRef<PlateLabelsHandle | null>(null);
   const forceArrowsRef = useRef<ForceArrowsHandle | null>(null);
+  const poleLabelsRef  = useRef<PoleLabelsHandle  | null>(null);
 
   const [draft, setDraft] = useState<WizardDraft | null>(null);
   const [mode, setMode] = useState<Mode>("wizard");
@@ -169,10 +174,35 @@ export default function App() {
   const [showPlateLabels, setShowPlateLabels] = useState(true);
   const [showForceArrows, setShowForceArrows] = useState(true);
 
+  // SatMap & terrain rendering settings (apply post-bake to the triangulated mesh)
+  // Default to a high-contrast biome so the SatMap pipeline is unmistakable
+  // when the user bakes a fresh planet — they can switch to anything else
+  // from the Settings panel afterwards.
+  const DEFAULT_SATMAP: SatMapName = SATMAP_NAMES.includes("arid_hot_dunes")
+    ? "arid_hot_dunes"
+    : SATMAP_NAMES[0];
+  const [satMap, setSatMap] = useState<SatMapName>(DEFAULT_SATMAP);
+  const [exaggeration, setExaggeration] = useState(1.0);
+  const [showPlateOutlines, setShowPlateOutlines] = useState(true);
+  const [showBoundaryGlow, setShowBoundaryGlow] = useState(true);
+
+  useEffect(() => { globeMeshRef.current?.setSatMap(satMap); }, [satMap]);
+  useEffect(() => { globeMeshRef.current?.setExaggeration(exaggeration); }, [exaggeration]);
+  useEffect(() => { globeMeshRef.current?.setShowPlateOutlines(showPlateOutlines); }, [showPlateOutlines]);
+  useEffect(() => { globeMeshRef.current?.setShowBoundaryGlow(showBoundaryGlow); }, [showBoundaryGlow]);
+
   // Click-on-planet boundary popover (replaces selected-seam editor in the side panel)
   const [boundaryPopover, setBoundaryPopover] = useState<{
     screenX: number; screenY: number; plateA: number; plateB: number;
   } | null>(null);
+
+  // Cell inspector — simulating mode only. Click a cell to read its sim state.
+  const [selectedCell, setSelectedCell] = useState<number | null>(null);
+
+  // Playback speed (steps per rAF tick). 1× is the wizard's dt_ma per frame.
+  const [speedMult, setSpeedMult] = useState<1 | 2 | 4 | 8>(1);
+  const speedRef = useRef<1 | 2 | 4 | 8>(1);
+  useEffect(() => { speedRef.current = speedMult; }, [speedMult]);
 
   useEffect(() => {
     activeToolRef.current = activeTool;
@@ -321,12 +351,16 @@ export default function App() {
     // Mount overlays
     const labels = buildPlateLabels();
     const arrows = buildForceArrows();
+    const poles  = buildPoleLabels();
     handle.scene.add(labels.group);
     handle.scene.add(arrows.group);
+    handle.scene.add(poles.group);
     plateLabelsRef.current = labels;
     forceArrowsRef.current = arrows;
+    poleLabelsRef.current  = poles;
     labels.setVisible(false);
     arrows.setVisible(false);
+    poles.setVisible(true);   // N/S poles always visible (auto-hidden if a plate label collides)
 
     initWizard(INITIAL_DIVISIONS).catch((e) => setError(String(e)));
   }, [initWizard]);
@@ -353,6 +387,7 @@ export default function App() {
       snapshot, PLATE_PALETTE,
       bm ? { model: bm, assignments: draft.boundary_types } : undefined,
     );
+    globeMeshRef.current?.updateFromSnapshot(snapshot);
   }, [mode, snapshot, draft?.boundary_types]);
 
   // Animation tick — advance the Rust sim on rAF cadence while `playing`.
@@ -363,7 +398,7 @@ export default function App() {
     let cancelled = false;
     const tick = () => {
       if (cancelled || !playingRef.current) return;
-      invoke<PlanetSnapshot>("step_planet", { nSteps: 1 })
+      invoke<PlanetSnapshot>("step_planet", { nSteps: speedRef.current })
         .then((snap) => {
           if (cancelled || !playingRef.current) return;
           setSnapshot(snap);
@@ -377,6 +412,7 @@ export default function App() {
           } else {
             globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE);
           }
+          globeMeshRef.current?.updateFromSnapshot(snap);
           if (!cancelled && playingRef.current) requestAnimationFrame(tick);
         })
         .catch((e) => {
@@ -406,11 +442,24 @@ export default function App() {
       );
       const ray = new THREE.Raycaster();
       ray.setFromCamera(ndc, scene.camera);
-      const hits = ray.intersectObject(scene.raycastTarget, false);
-      if (hits.length === 0) return;
+      // Try the displaced mesh first (so we hit the actual cell the user
+      // sees — extruded continents would otherwise let the ray pass through
+      // and hit a DIFFERENT cell on the unit sphere). Fall back to the
+      // invisible unit-sphere raycast target for ocean cells where the
+      // mesh and the sphere coincide.
+      const targets: THREE.Object3D[] = [];
+      const meshObj = globeMeshRef.current?.object;
+      if (meshObj) targets.push(meshObj);
+      targets.push(scene.raycastTarget);
+      const hits = ray.intersectObjects(targets, false);
+      if (hits.length === 0) {
+        console.log("[boundary-click] no raycast hit");
+        return;
+      }
       const p = hits[0].point.clone().normalize();
       const cell = nearestCell(tree, p.x, p.y, p.z);
       const key = bm.pairKeyForCell(cell);
+      console.log(`[boundary-click] cell=${cell} pairKey=${key ?? "(interior)"}`);
       if (!key) {
         setBoundaryPopover(null);
         return;
@@ -428,6 +477,34 @@ export default function App() {
     return () => canvas.removeEventListener("pointerdown", onPointer);
   }, [mode]);
 
+  // Cell inspector — simulating mode only. Click a cell to select it for
+  // readout in the right panel.
+  useEffect(() => {
+    if (mode !== "simulating") return;
+    const scene = sceneRef.current;
+    if (!scene) return;
+    const canvas = scene.canvas;
+    const onPointer = (ev: PointerEvent) => {
+      if (ev.button !== 0) return;
+      const tree = kdTreeRef.current;
+      if (!tree) return;
+      const rect = canvas.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((ev.clientX - rect.left) / rect.width) * 2 - 1,
+        -(((ev.clientY - rect.top) / rect.height) * 2 - 1),
+      );
+      const ray = new THREE.Raycaster();
+      ray.setFromCamera(ndc, scene.camera);
+      const hits = ray.intersectObject(scene.raycastTarget, false);
+      if (hits.length === 0) return;
+      const p = hits[0].point.clone().normalize();
+      const cell = nearestCell(tree, p.x, p.y, p.z);
+      setSelectedCell(cell);
+    };
+    canvas.addEventListener("pointerdown", onPointer);
+    return () => canvas.removeEventListener("pointerdown", onPointer);
+  }, [mode]);
+
   // Live-apply boundary assignments — Rust rewrites plate omegas on the
   // running model so the change is visible immediately. No re-bake.
   const applyBoundaryTypesLive = useCallback(async (types: Record<string, BoundaryType>) => {
@@ -437,6 +514,7 @@ export default function App() {
       const bm = BoundaryModel.fromSnapshot(snap);
       boundaryModelRef.current = bm;
       globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE, { model: bm, assignments: types });
+      globeMeshRef.current?.updateFromSnapshot(snap);
     } catch (e) {
       setError(String(e));
     }
@@ -530,9 +608,25 @@ export default function App() {
       setMode("boundaries");
       const bm = BoundaryModel.fromSnapshot(snap);
       boundaryModelRef.current = bm;
-      globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE, {
-        model: bm, assignments: draft.boundary_types,
-      });
+
+      // Swap point-cloud globe for triangulated mesh with SatMap shading.
+      // Wrapped in its own try so a mesh-build failure doesn't undo the
+      // successful bake (user can still proceed with the old point-cloud
+      // renderer if the new mesh path errors out).
+      try {
+        const tris = await invoke<number[]>("get_grid_triangles", { divisions: snap.divisions });
+        if (globeMeshRef.current) globeMeshRef.current.dispose();
+        const mesh = buildGlobeMesh(snap, new Uint32Array(tris));
+        mesh.setSatMap(satMap);
+        mesh.setExaggeration(exaggeration);
+        mesh.setShowPlateOutlines(showPlateOutlines);
+        mesh.setShowBoundaryGlow(showBoundaryGlow);
+        sceneRef.current?.setGlobe(mesh.object);
+        globeMeshRef.current = mesh;
+        console.log(`[mesh] ✓ built triangulated planet — ${snap.n_cells} cells, ${tris.length / 3} triangles, satmap='${satMap}'`);
+      } catch (meshErr) {
+        console.warn("[mesh] could not build triangulated mesh — falling back to point cloud:", meshErr);
+      }
     } catch (e) {
       setError(String(e));
       setMode("wizard");
@@ -564,9 +658,32 @@ export default function App() {
     setMode("boundaries");
   }, []);
 
+  // Pre-start confirmation. The transition compose → boundaries → densities →
+  // simulating is one-way: once the user presses Start, plate motion takes
+  // over and the configuration becomes immutable. We surface that explicitly
+  // so they have a chance to save first.
+  const [showStartConfirm, setShowStartConfirm] = useState(false);
+
   const handleStartSimulation = useCallback(() => {
+    setShowStartConfirm(true);
+  }, []);
+
+  const handleConfirmStartSimulation = useCallback(() => {
+    setShowStartConfirm(false);
     setMode("simulating");
   }, []);
+
+  const handleSaveConfiguration = useCallback(async () => {
+    // Stub for now — once we have a Tauri save_planet command we'll invoke it.
+    // For v1 we just toast that saving isn't wired yet but let the user proceed.
+    console.log("[save] save_planet command not yet wired — placeholder for future Tauri command");
+    // Optionally persist a JSON snapshot of the draft to localStorage as a
+    // forward-compatible fallback so the user's work isn't lost.
+    if (draft) {
+      const blob = JSON.stringify({ draft, savedAt: new Date().toISOString() }, null, 2);
+      try { localStorage.setItem("hayba.lastConfig", blob); } catch {}
+    }
+  }, [draft]);
 
   const handleDensityChange = useCallback((order: number[], snap: PlanetSnapshot) => {
     setDensityOrder(order);
@@ -579,6 +696,7 @@ export default function App() {
         model: bm, assignments: drft.boundary_types,
       });
     }
+    globeMeshRef.current?.updateFromSnapshot(snap);
   }, []);
 
   const showWizard = mode === "wizard";
@@ -611,10 +729,17 @@ export default function App() {
     const snap = snapshot;
     const labels = plateLabelsRef.current;
     const arrows = forceArrowsRef.current;
+    const poles  = poleLabelsRef.current;
     if (!snap || !labels || !arrows) return;
     const show = mode === "simulating";
     labels.setVisible(show && showPlateLabels);
     arrows.setVisible(show && showForceArrows);
+    // Pole labels are visible whenever we have a baked planet, regardless
+    // of simulating/boundaries phase — they're geographic landmarks.
+    if (poles) {
+      poles.setVisible(mode !== "wizard" && mode !== "baking");
+      poles.update(snap);
+    }
     if (show) {
       labels.update(snap);
       // Per-plate omegas not yet in PlanetSnapshot. Empty map → no arrows
@@ -691,9 +816,8 @@ export default function App() {
             era={eraForMa(snapshot.sim_time_ma)}
             simTimeMa={snapshot.sim_time_ma}
             steps={0}
-            playing={playing}
-            onTogglePlay={() => setPlaying((p) => !p)}
-            onReset={() => { invoke("reset_sim").catch(() => {}); setPlaying(false); }}
+            selectedCell={selectedCell}
+            snapshot={snapshot}
           />
         )}
 
@@ -713,11 +837,12 @@ export default function App() {
           chips={statusChips(mode, draft, snapshot, cellCountRef.current)}
           hint={statusHint(mode)}
           rightSlot={mode === "simulating" && snapshot ? (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
               <button
                 type="button"
                 onClick={() => setPlaying((p) => !p)}
                 aria-label={playing ? "Pause" : "Play"}
+                title={playing ? "Pause" : "Play"}
                 style={{
                   width: 28, height: 28,
                   background: "transparent",
@@ -729,6 +854,47 @@ export default function App() {
                 }}
               >
                 {playing ? <IconPause size={12} /> : <IconPlay size={12} />}
+              </button>
+              {/* Speed multiplier — cycles 1 → 2 → 4 → 8 → 1 */}
+              <button
+                type="button"
+                onClick={() => setSpeedMult((s) => (s === 1 ? 2 : s === 2 ? 4 : s === 4 ? 8 : 1))}
+                aria-label={`Speed ${speedMult}x — click to change`}
+                title="Cycle simulation speed"
+                style={{
+                  height: 28,
+                  padding: "0 8px",
+                  background: "transparent",
+                  border: "1px solid #3d434e",
+                  borderRadius: 2,
+                  color: "#a8aeb8",
+                  fontFamily: "Consolas, monospace",
+                  fontSize: 11,
+                  cursor: "pointer",
+                }}
+              >
+                {speedMult}×
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  invoke("reset_sim").catch(() => {});
+                  setPlaying(false);
+                  setSelectedCell(null);
+                }}
+                aria-label="Reset simulation"
+                title="Reset simulation"
+                style={{
+                  width: 28, height: 28,
+                  background: "transparent",
+                  border: "1px solid #3d434e",
+                  borderRadius: 2,
+                  color: "#a8aeb8",
+                  cursor: "pointer",
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                }}
+              >
+                <IconReset size={12} />
               </button>
             </span>
           ) : null}
@@ -746,6 +912,94 @@ export default function App() {
           onClear={handleClearBoundary}
           onDismiss={() => setBoundaryPopover(null)}
         />
+      )}
+
+      {showStartConfirm && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: "fixed", inset: 0, zIndex: 200,
+            background: "rgba(15, 17, 22, 0.62)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            backdropFilter: "blur(6px)",
+            fontFamily: '"Segoe UI", "Noto Sans", system-ui, sans-serif',
+          }}
+          onClick={() => setShowStartConfirm(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 460,
+              background: "#22262e",
+              border: "1px solid #2f343d",
+              borderLeft: "2px solid #B56A1D",
+              borderRadius: 3,
+              padding: "20px 22px 18px",
+              color: "#e5e8eb",
+            }}
+          >
+            <div style={{ fontSize: 11, color: "#B56A1D", marginBottom: 8 }}>
+              One-way step
+            </div>
+            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 10 }}>
+              Start simulation?
+            </div>
+            <div style={{ fontSize: 13, color: "#a8aeb8", lineHeight: 1.55, marginBottom: 22 }}>
+              Once the sim starts, plate motion takes over and you{"’"}ll no longer be able to
+              edit boundaries, density rank, or the wizard. Save your configuration first
+              if you want to revisit this setup later.
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => setShowStartConfirm(false)}
+                style={{
+                  background: "transparent",
+                  border: "1px solid #3d434e",
+                  color: "#a8aeb8",
+                  padding: "8px 14px", borderRadius: 3, fontSize: 12,
+                  fontFamily: '"Segoe UI", "Noto Sans", system-ui, sans-serif',
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmStartSimulation}
+                style={{
+                  background: "transparent",
+                  border: "1px solid #3d434e",
+                  color: "#a8aeb8",
+                  padding: "8px 14px", borderRadius: 3, fontSize: 12,
+                  fontFamily: '"Segoe UI", "Noto Sans", system-ui, sans-serif',
+                  cursor: "pointer",
+                }}
+              >
+                Start without saving
+              </button>
+              <button
+                type="button"
+                onClick={async () => { await handleSaveConfiguration(); handleConfirmStartSimulation(); }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(222,212,195,0.08)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                style={{
+                  background: "transparent",
+                  border: "1px solid #DED4C3",
+                  color: "#DED4C3",
+                  padding: "8px 14px", borderRadius: 3, fontSize: 12,
+                  fontWeight: 500,
+                  fontFamily: '"Segoe UI", "Noto Sans", system-ui, sans-serif',
+                  cursor: "pointer",
+                  transition: "background 120ms",
+                }}
+              >
+                Save &amp; start
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <ConfirmDialog
