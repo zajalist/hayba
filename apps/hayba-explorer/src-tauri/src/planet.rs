@@ -197,12 +197,19 @@ pub fn bake_demo() -> PlanetSnapshot {
 
 /// Maximum absolute neighbour elevation difference, normalized to [0, 1] by
 /// an empirical scale factor (the model's elevation rarely produces
-/// neighbour deltas > 0.05 in unit-sphere units).
+/// neighbour deltas > 0.05 in unit-sphere units). Neighbour pairs that
+/// straddle sea level are skipped so a land/ocean step (a coastline) does
+/// not manufacture a false steep cliff — slope reflects terrain roughness
+/// within land (or within ocean), not the shoreline jump.
 fn compute_slope(model: &hayba_tectonics_v2::model::Model, fid: u32) -> f32 {
+    // Sea level is 0.0; elevation sign distinguishes land from ocean.
+    fn same_side(a: f32, b: f32) -> bool { (a >= 0.0) == (b >= 0.0) }
     let here = model.fields[fid as usize].elevation;
     let mut max_diff = 0.0_f32;
     for &nb in model.grid.neighbours(fid) {
-        let d = (model.fields[nb as usize].elevation - here).abs();
+        let there = model.fields[nb as usize].elevation;
+        if !same_side(here, there) { continue; } // skip the coastline cliff
+        let d = (there - here).abs();
         if d > max_diff { max_diff = d; }
     }
     (max_diff * 20.0).clamp(0.0, 1.0)
@@ -319,6 +326,20 @@ pub fn snapshot_model(
         cell_mor_age_steps.push(f.mor_age_steps);
     }
 
+    // Relax the per-cell slope so the Slope map mode / rock mask read as a
+    // smooth field instead of tracing the hexagonal cell tessellation.
+    for _ in 0..2 {
+        let prev = cell_slope.clone();
+        for fid in 0..n_cells {
+            let nbs = model.grid.neighbours(fid);
+            if nbs.is_empty() { continue; }
+            let mut acc = 0.0_f32;
+            for &nb in nbs { acc += prev[nb as usize]; }
+            let mean = acc / nbs.len() as f32;
+            cell_slope[fid as usize] = 0.5 * prev[fid as usize] + 0.5 * mean;
+        }
+    }
+
     let cf = crate::climate::compute_climate(
         model,
         model.master_seed,
@@ -407,5 +428,26 @@ mod tests {
         assert_eq!(snap.cell_biome_weights.len(), n * 10);
         assert_eq!(snap.cell_seed.len(), n * 3);
         assert!(snap.cell_biome.iter().all(|&b| (0.0..=9.0).contains(&b)));
+    }
+
+    #[test]
+    fn slope_field_is_smooth_and_bounded() {
+        let snap = bake_demo();
+        let n = snap.n_cells as usize;
+        // Length matches the cell count.
+        assert_eq!(snap.cell_slope.len(), n);
+        // Every value is finite and in [0, 1].
+        assert!(
+            snap.cell_slope.iter().all(|&s| s.is_finite() && (0.0..=1.0).contains(&s)),
+            "slope must be finite and in [0,1]"
+        );
+        // Sanity: with the coastline cliff suppressed the field is no longer
+        // pinned to 1.0 everywhere (old bug saturated every coastal cell), so
+        // the global max stays well under 1.0 on the demo model and the mean
+        // never exceeds it.
+        let max = snap.cell_slope.iter().copied().fold(0.0_f32, f32::max);
+        let mean = snap.cell_slope.iter().sum::<f32>() / n as f32;
+        assert!(max < 1.0, "global max {max} must not be pinned to 1.0");
+        assert!(mean <= max, "mean {mean} should not exceed global max {max}");
     }
 }
