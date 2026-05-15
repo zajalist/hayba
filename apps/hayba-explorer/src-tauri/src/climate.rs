@@ -6,6 +6,12 @@
 use glam::Vec3;
 use hayba_tectonics_v2::model::Model;
 
+/// Mean Earth radius (km). `grid.position()` returns unit-sphere centroids,
+/// so a chord/arc length in unit-sphere units × this = real km. Mirrors
+/// `hayba_tectonics_v2::sphere::grid::EARTH_RADIUS_KM` (kept as a local
+/// const so climate.rs stays self-contained).
+const EARTH_RADIUS_KM: f32 = 6_371.0;
+
 /// User-tunable climate constants. Every default is byte-identical to the
 /// hardcoded constant / inline magic it replaces, so `ClimateParams::default()`
 /// reproduces today's behaviour exactly. Deserialized from the Tauri command
@@ -101,6 +107,93 @@ pub fn distance_to_ocean_hops(neighbours: &[Vec<u32>], is_ocean: &[bool]) -> Vec
             }
         }
     }
+    dist
+}
+
+/// True geodesic distance-to-ocean: multi-source Dijkstra from every ocean
+/// cell, edge weight = Cartesian distance between unit-sphere cell centroids
+/// (`pos[a].distance(pos[b])`), followed by 4 Laplacian relaxation passes.
+///
+/// Replaces the integer BFS hop count, whose discrete equidistant rings
+/// produce triangular faceted contours in the Distance-to-ocean map mode
+/// and a faceted continentality field (Gemini Axis 2). The continuous
+/// metric + smoothing yields C¹ contours instead.
+///
+/// Semantics mirror `distance_to_ocean_hops`: 0.0 in the sea, growing
+/// inland. Cells in a component with no ocean stay `f32::INFINITY` during
+/// the search and are then replaced with the max finite distance found
+/// (mirrors how the hop code's `u32::MAX` is treated as "max inland"),
+/// so all returned values are finite and bounded. O(cells·log cells)
+/// for the search plus O(cells·K) for the K=4 smoothing passes.
+pub fn distance_to_ocean_geo(
+    neighbours: &[Vec<u32>],
+    pos: &[Vec3],
+    is_ocean: &[bool],
+) -> Vec<f32> {
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+
+    let n = neighbours.len();
+    let mut dist = vec![f32::INFINITY; n];
+    // f32 priority via to_bits: every edge weight is a non-negative finite
+    // Euclidean distance, so the IEEE-754 bit pattern orders numerically.
+    let mut heap: BinaryHeap<Reverse<(u32, u32)>> = BinaryHeap::new();
+    for i in 0..n {
+        if is_ocean[i] {
+            dist[i] = 0.0;
+            heap.push(Reverse((0.0_f32.to_bits(), i as u32)));
+        }
+    }
+    while let Some(Reverse((d_bits, fid))) = heap.pop() {
+        let i = fid as usize;
+        let d = f32::from_bits(d_bits);
+        if d > dist[i] {
+            continue; // stale heap entry
+        }
+        let p = pos[i];
+        for &nb in &neighbours[i] {
+            let j = nb as usize;
+            let w = p.distance(pos[j]);
+            let nd = d + w;
+            if nd < dist[j] {
+                dist[j] = nd;
+                heap.push(Reverse((nd.to_bits(), nb)));
+            }
+        }
+    }
+
+    // Replace unreached (no ocean in component) cells with the max finite
+    // distance so downstream normalization/continentality stays bounded —
+    // same intent as the hop code mapping `u32::MAX` → `max_hop`.
+    let max_finite = dist
+        .iter()
+        .cloned()
+        .filter(|d| d.is_finite())
+        .fold(0.0_f32, f32::max);
+    for d in dist.iter_mut() {
+        if !d.is_finite() {
+            *d = max_finite;
+        }
+    }
+
+    // Smooth the field — 4 Laplacian passes, mirroring the planet.rs
+    // coastline-SDF relaxation: tmp[i] = 0.5*d[i] + 0.5*mean(d[nbs]).
+    for _ in 0..4 {
+        let prev = dist.clone();
+        for i in 0..n {
+            let nbs = &neighbours[i];
+            if nbs.is_empty() {
+                continue;
+            }
+            let mut acc = 0.0_f32;
+            for &nb in nbs {
+                acc += prev[nb as usize];
+            }
+            let mean = acc / nbs.len() as f32;
+            dist[i] = 0.5 * prev[i] + 0.5 * mean;
+        }
+    }
+
     dist
 }
 
@@ -374,6 +467,15 @@ pub fn compute_climate(
     let km_per_hop = grid.field_area_km2().sqrt();
     let max_hop = (*hops.iter().filter(|&&h| h != u32::MAX).max().unwrap_or(&1)).max(1);
 
+    // Geodesic (Cartesian-centroid Dijkstra + Laplacian) distance-to-ocean.
+    // De-triangulates the dist-to-ocean map mode and the continentality
+    // field that the discrete hop count facets (Gemini Axis 2). `dist_geo`
+    // is in unit-sphere chord units (already finite — INFINITY replaced
+    // with the max finite value inside the fn). `max_dist` normalizes it
+    // to the same 0..1 inland-ness scale `coastalness` had via hops/max_hop.
+    let dist_geo = distance_to_ocean_geo(&neighbours, &pos, &is_ocean);
+    let max_dist = dist_geo.iter().cloned().fold(0.0f32, f32::max).max(1e-6);
+
     // Per-cell unit mean direction toward nearby ocean (1- and 2-ring
     // neighbours, 2-ring half-weighted). Drives the geography-derived
     // coastal current anomaly — replaces the old fixed-longitude basins.
@@ -450,11 +552,12 @@ pub fn compute_climate(
     for i in 0..n {
         let p = pos[i];
         let lat = latitude_rad(p);
-        let coastalness = if hops[i] == u32::MAX {
-            1.0
-        } else {
-            (hops[i] as f32 / max_hop as f32).clamp(0.0, 1.0)
-        };
+        // Normalized inland-ness 0..1 from the smooth geodesic field.
+        // Same scale/role the hop-normalized `hops/max_hop` had: 0 at the
+        // coast, 1 at the most-inland cell — but C¹ smooth, so the
+        // continentality magnitude is unchanged in spirit (a monotone
+        // remap of the same "fraction of the way to the deepest interior").
+        let coastalness = (dist_geo[i] / max_dist).clamp(0.0, 1.0);
 
         let base_t = base_temperature_c(p, elev[i], params);
         let cur_dt = current_temp_anomaly(p, ocean_dir[i], coastalness, params);
@@ -472,7 +575,13 @@ pub fn compute_climate(
         let orographic = (up_grad * 6.0).clamp(-1.0, 1.0);
 
         let zonal = zonal_precip(lat, params);
-        let cont = continental_factor(if hops[i] == u32::MAX { max_hop } else { hops[i] });
+        // `continental_factor` is tuned in hop units. Convert the geodesic
+        // distance back to an equivalent hop figure (distance in
+        // cell-widths ≈ old hop count) so its smoothstep(2,45) tuning is
+        // preserved. `dist_geo[i]` is finite (INFINITY already replaced),
+        // so landlocked cells map to the max-inland hop equivalent.
+        let hop_equiv = (dist_geo[i] * EARTH_RADIUS_KM / km_per_hop).round() as u32;
+        let cont = continental_factor(hop_equiv);
         let pn = value_noise(p * 3.5, seed) - 0.5;
         // Physically-ordered precip: humid air supply (zonal vs.
         // transported ocean moisture) lifted on windward slopes (oro),
@@ -515,11 +624,12 @@ pub fn compute_climate(
         if let Some(d) = dbg.as_mut() {
             d.insolation[i] = (1.0 - (p.y * p.y)).clamp(0.0, 1.0);
             d.base_temp[i] = base_t;
-            d.dist_to_ocean[i] = if hops[i] == u32::MAX {
-                max_hop as f32 * km_per_hop
-            } else {
-                hops[i] as f32 * km_per_hop
-            };
+            // Smooth geodesic distance in km: `dist_geo` is in unit-sphere
+            // chord units, so × EARTH_RADIUS_KM (6371) → km. Lands typical
+            // inland distances in 0..~4000 km (max possible ~12700 km for
+            // an antipodal chord), comparable to the old `hops*km_per_hop`
+            // and within the shader's /4000.0 normalization → smooth ramp.
+            d.dist_to_ocean[i] = dist_geo[i] * EARTH_RADIUS_KM;
             d.wind[i * 3] = wind.x;
             d.wind[i * 3 + 1] = wind.y;
             d.wind[i * 3 + 2] = wind.z;
@@ -656,6 +766,66 @@ mod tests {
         let is_ocean = vec![true, true];
         let d = distance_to_ocean_hops(&neighbours, &is_ocean);
         assert_eq!(d, vec![0, 0]);
+    }
+
+    #[test]
+    fn dist_geo_zero_in_ocean_grows_inland_and_smooth() {
+        // A line of 5 cells, ~0.1-unit spacing along +X, ocean at cell 0.
+        let pos = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.1, 0.0, 0.0),
+            Vec3::new(0.2, 0.0, 0.0),
+            Vec3::new(0.3, 0.0, 0.0),
+            Vec3::new(0.4, 0.0, 0.0),
+        ];
+        let neighbours: Vec<Vec<u32>> = vec![
+            vec![1], vec![0, 2], vec![1, 3], vec![2, 4], vec![3],
+        ];
+        let is_ocean = vec![true, false, false, false, false];
+
+        let d = distance_to_ocean_geo(&neighbours, &pos, &is_ocean);
+
+        // Every value finite & non-negative (no INFINITY leaks).
+        for &v in &d {
+            assert!(v.is_finite(), "distance leaked non-finite: {v}");
+            assert!(v >= 0.0, "distance went negative: {v}");
+        }
+        // Ocean source is the global minimum and stays close to the sea
+        // floor: the 4 Laplacian passes diffuse the inland gradient slightly
+        // back into the source (same as the planet.rs SDF), so it is not
+        // exactly 0 but is far below the deep-interior value.
+        let min = d.iter().cloned().fold(f32::INFINITY, f32::min);
+        assert!((d[0] - min).abs() < 1e-6, "ocean cell must be the minimum");
+        assert!(d[0] < d[4], "ocean strictly below the deepest interior: {:?}", d);
+        // Monotone non-decreasing outward, max at the farthest-inland cell.
+        for w in d.windows(2) {
+            assert!(w[1] >= w[0] - 1e-6, "should grow inland: {:?}", w);
+        }
+        let max_idx = d
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .unwrap()
+            .0;
+        assert_eq!(max_idx, 4, "deepest interior (cell 4) must be the max");
+        assert!(d[4] > d[0], "inland strictly farther than the sea");
+    }
+
+    #[test]
+    fn dist_geo_landlocked_component_is_finite() {
+        // Cells 0,1 ocean+land; cell 2 isolated with no ocean in its
+        // component → must become the max finite distance, not INFINITY.
+        let pos = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.1, 0.0, 0.0),
+            Vec3::new(5.0, 0.0, 0.0),
+        ];
+        let neighbours: Vec<Vec<u32>> = vec![vec![1], vec![0], vec![]];
+        let is_ocean = vec![true, false, false];
+        let d = distance_to_ocean_geo(&neighbours, &pos, &is_ocean);
+        for &v in &d {
+            assert!(v.is_finite(), "landlocked cell leaked INFINITY: {v}");
+        }
     }
 
     #[test]
