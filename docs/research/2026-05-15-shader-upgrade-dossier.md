@@ -723,6 +723,54 @@ These deserve explicit decisions before implementation:
 
 ---
 
+## D. Case study: jsulpis/realtime-planet-shader (394★, GLSL)
+
+Analyzed 2026-05-15 (`procedural.fragment.glsl`, `earth.fragment.glsl`, `renderer.ts`, `texture.loader.ts`). A well-regarded WebGL2 procedural planet. **Architecture differs from ours** — it's a *raymarched fullscreen quad* (ray-sphere intersect from camera, no mesh), where the author *fully controls* the height field. We have a *vertex-attribute mesh* whose elevation is *sim-dictated*. So we cannot adopt its architecture wholesale; the value is in the *techniques* and what they prove about our hypotheses.
+
+### D.1 The bullseye, explained — this nuances H1
+
+Their coloring (`procedural.fragment.glsl:337–341`) **is** an elevation ramp — stacked `smoothstep`s on a scalar `altitude` selecting water→sand→tree→rock→ice. Identical *structure* to our `sampleGradient(tex, h)`. **Yet it produces fractal continents, not rings.** Why: their `altitude = 5.0 * planetNoise(pos)` where `planetNoise` is `fbm(pos*scale, 6 oct, persistence .5, lacunarity 2, exponentiation 5)`. The colored scalar **IS a high-frequency domain-shaped 3-D FBM** — there is no smooth radial base under it. Iso-`altitude` contours are fractal because `altitude` itself is fractal.
+
+**Corrected diagnosis (supersedes the blunt form of H1):** elevation-keyed color is not wrong *per se*. It is catastrophic only when the keyed field is **smooth and radially monotone** — which ours is, because it's `vElevation` from the sim (high continent center, low coast) plus a *small* FBM offset. Theirs is dominated by the FBM; ours is dominated by the smooth sim gradient. Two viable fixes therefore exist:
+- **(a) Re-key on biome** (dossier §3.4 primary recommendation) — decouple color from elevation entirely. Still the cleanest for *our* sim-driven case.
+- **(b) Fractalize the color key** — drive the color scalar from a strong **domain-warped, exponentiated FBM** of world position, using `vElevation` only to *bias* it (e.g. `colorKey = domainWarpFBM(pos) * 0.7 + landMask * 0.3`). Keeps authored SatMaps, kills rings, costs ~3 extra fbm calls. This is the lighter migration and is now a real option to put to the user/Gemini (relates to §8.7).
+
+### D.2 Domain warping — the single technique we are missing
+
+`domainWarpingFBM` (`:224`) = `fbm(p + offset)` where `offset` is itself an fbm vector (Quilez). Used for **both** terrain shape and clouds. This is the dominant reason their output looks organic and ours looks like contour lines / blobby noise. **Our shader has zero domain warping.** Adding a domain-warp to whatever scalar drives our color/biome field is likely the highest-leverage single line-count addition in the whole dossier. Promote to Phase 1.
+
+### D.3 Histogram redistribution via `pow(total, exponentiation)`
+
+`fbm():165` does `total = total*0.8 + 0.1; total = pow(total, exponentiation)` with **exponentiation = 5** for terrain. This skews the height histogram so most of the planet sits low (ocean) with sparse sharp continental highs — controls land/sea ratio *and* coastline crispness in one parameter. We have no equivalent; our coastline softness/ring-spacing is unmanaged. A `pow()` redistribution on our color-key field (not on `vElevation` itself — that's the sim's) is a cheap crispness lever.
+
+### D.4 Ocean — confirms §3.1 hard
+
+Their entire water model: **two** colors, `WATER_COLOR_DEEP vec3(0.01,0.05,0.15)` and `WATER_COLOR_SURFACE vec3(0.02,0.12,0.27)`, blended over a *tiny* `TRANSITION` (0.02). **No turquoise. No bright cyan anywhere.** This is an independent confirmation that §3.1's corrected palette direction (dark, desaturated, blue-dominant) is right and our `coast = (0.55,0.82,0.88)` is the defect. They don't even bother with shelf/abyss/SSS at orbital scale — two dark blues is enough. We can ship the §3.1 fix with even less than specced.
+
+### D.5 Color pipeline — confirms §C principle, with a caveat
+
+`renderer.ts`/`texture.loader.ts`: they use `four` (not three.js), create textures with **no colorSpace flag**, sample sRGB textures **raw**, light in gamma space, and gamma-encode **once at the very end** inside the shader: `simpleReinhardToneMapping` ends with `pow(color, 1.0/2.4)`. Confirms §C's load-bearing principle: **a raw fragment shader that writes `fragColor`/`gl_FragColor` must apply the output OETF itself** — nothing does it for you. Caveat: their "lighting in gamma space, single encode at end" is the pragmatic creative-coding shortcut that works *because all their color is display-referred* (photos + hand-tuned constants). It is exactly the regime our SatMaps are in. This strengthens **H3**: for display-referred satellite content, *Reinhard-or-none + a single final gamma encode* is a legitimate, shipped choice — ACES is not mandatory and may be actively wrong here.
+
+### D.6 Relief — confirms H4 outright
+
+`planetNormal()` (`:271–280`): the normal is **finite differences of the height field** (`planetDist` sampled at ±epsilon offsets), not geometry. Their entire sense of mountain relief is normal-driven. Direct confirmation of H4 and dossier §3.3 — and they don't even have real geometry, proving orbital relief is *purely* a normal-map phenomenon.
+
+### D.7 No latitude climate model at all
+
+They have **no Köppen / latitude weighting**. Ice is purely altitude (`ICE_LEVEL .15`). The planet reads as Earth-like entirely from domain-warped FBM + the height ramp. Strong signal that our elaborate 4-band latitude blend is *adding* the banding failure mode while contributing less than a good domain-warped biome-noise field would. Consider: latitude should *bias* a noise-driven biome field, not *be* the primary axis.
+
+### D.8 Net transferable punch-list (folds into Phase 1)
+
+1. **Add domain warping** to the color/biome key field (D.2) — highest leverage, ~6 lines.
+2. **Either** re-key on biome (§3.4a) **or** fractalize the color key with domain-warped exp-FBM biased by `vElevation` (§D.1b). Decide with user/Gemini §8.7.
+3. **`pow()` redistribution** on the color-key scalar for coastline crispness (D.3).
+4. **Ocean = two dark blues, tiny transition** (D.4) — ship the minimal §3.1.
+5. **Single final gamma encode in-shader; drop ACES for albedo, try Reinhard or none** (D.5, H3).
+6. **Finite-difference / derivative normal for relief** (D.6, §3.3).
+7. **Demote latitude to a bias on a noise biome field, not the primary axis** (D.7).
+
+---
+
 ## 10. What this dossier deliberately does NOT cover
 
 - **Geometric LOD / quad-sphere displacement** for surface-level zoom. Hayba is an orbital viewer; this is out of scope unless that changes.
