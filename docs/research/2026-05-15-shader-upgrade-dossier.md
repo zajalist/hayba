@@ -250,6 +250,8 @@ This single change eliminates the equatorial snow-patch artifact. The alpine Sat
 
 ### 3.3 Macro-normal from elevation derivatives + detail noise
 
+> **⚠ SUPERSEDED by §G.2.** The `dFdx/dFdy` technique below is WRONG on a low-poly icosphere (per-face-constant derivatives → faceting). The *goal* (normal-driven relief) stands; use the 3-sample noise finite-difference in §G.2 instead.
+
 **Why this is the biggest perceptual gain you can buy:** real Earth from orbit doesn't have geometric Everests sticking out of the sphere. It has a smooth sphere with *normals that vary by tens of degrees over kilometers*. That's what makes the Andes look like the Andes from space — not 8km of geometric displacement, but a normal map.
 
 **Current state:** `vWorldNormal = normalize(position)` — every fragment uses the analytic sphere normal. All variation comes from the SatMap albedo.
@@ -375,6 +377,8 @@ Mounted in `apps/hayba-explorer/src/viewport/cloudsMesh.ts`. Materials: `transpa
 ---
 
 ## C. Color pipeline (pre-flight — must verify before any shader colour work)
+
+> **→ Exact fix is in §G.3** (Three.js `colorspace_fragment` + delete `aces()` + per-texture `colorSpace`). This section explains *why*; §G.3 is *what to do*.
 
 **Why this is §C and not buried in §4:** the muddy/crushed/desaturated look in every screenshot is the canonical signature of an sRGB↔linear mismatch. If the pipeline is wrong, **every colour value in §3.1–3.4 is being computed against a corrupted basis** and tuning them is wasted effort. This is ~1 hour to verify and gates everything.
 
@@ -690,7 +694,7 @@ These deserve explicit decisions before implementation:
 
 4. **Performance target.** 60fps at 1080p on a mid-range GPU, or 30fps at 1440p on a desktop? Affects whether Phase 5 (Tessendorf) is on the table.
 
-5. **Phase 4 atmospheric scattering — port or vendor?** Porting `precomputed_atmospheric_scattering` is ~3 days. Vendoring `@takram/three-atmosphere` is one afternoon but adds an MIT-licensed dependency. Strong recommendation: vendor.
+5. **Phase 4 atmospheric scattering — port or vendor?** ~~Strong recommendation: vendor `@takram/three-atmosphere`.~~ **SUPERSEDED by §G.5: Gemini reverses this — Bruneton's 4-D LUT bands on high curvature; use a stripped Hillaire-2020 single-scatter pass, 4–5-step march. Not vendor, not O'Neil.**
 
 6. **(Gemini) Is an elevation LUT ever used as the primary albedo key in production planet renderers?** Strong prior: no — colour is always biome/splat-keyed, elevation is a modifier. Needs confirmation with production references so we commit to the §3.4 re-architecture without second-guessing.
 
@@ -768,6 +772,132 @@ They have **no Köppen / latitude weighting**. Ice is purely altitude (`ICE_LEVE
 5. **Single final gamma encode in-shader; drop ACES for albedo, try Reinhard or none** (D.5, H3).
 6. **Finite-difference / derivative normal for relief** (D.6, §3.3).
 7. **Demote latitude to a bias on a noise biome field, not the primary axis** (D.7).
+
+---
+
+## E. Case study: 3 C++ planet renderers + the gamedev.SE canonical answer
+
+Analyzed 2026-05-15 (LeifNode/World-Generator, Nokitoo/planet-generator, Illation/PlanetRenderer, gamedev.SE Q5138). These are C++/OpenGL **LOD geometry** renderers — the quad-tree/cube-sphere/CDLOD plumbing is **explicitly out of scope** for our orbital no-zoom viewer (dossier §10) and must not be chased. Only the color/normal/atmosphere techniques transfer.
+
+### E.1 The canonical answer to the bullseye (gamedev.SE Q5138 → Red Blob / Amit Patel)
+
+The accepted-answer lineage for "procedural planet heightmaps and textures" points to **biome as a 2-D discrete table indexed by (elevation band × moisture band)** — *not* a 1-D elevation ramp. This is independent third confirmation of §3.4(a): the recognized solution to contour-ring artifacts is to add an orthogonal axis (moisture/biome) to the color lookup. Reference: Red Blob Games "Polygonal Map Generation". **The 2-D biome table is the textbook fix; our 1-D LUT is the textbook mistake.**
+
+### E.2 LeifNode/World-Generator — our exact bullseye architecture (negative example) + the fix hiding in a comment
+
+`Shaders/terrain_fs.glsl` keys color on absolute elevation via stacked smoothsteps — *identical structure to ours*, and it exhibits the same failure mode. Crucially, the fix is present but **commented out**:
+```glsl
+float dirtFactor = 1.0 - max(0.0, min((dot(SphereNormal, Normal) - 0.5)*4.0, 1.0));
+// color = mix(color, dirtColor, dirtFactor);   // disabled
+```
+That `dot(SphereNormal, Normal)` is a **slope axis** — tinting by surface steepness *independent of elevation*. Adding any second orthogonal axis (slope, or a low-freq moisture/Worley field) to the lookup breaks the rings. Their `terrain_cs.glsl` does exactly this via a **cellular/Worley mask multiplied into the height field** to spatially decorrelate color from radius — a concrete, cheap anti-bullseye lever (Worley mask is spatially independent of the smooth radial elevation, so iso-color contours fractalize). No domain warping or pow-redistribution though — jsulpis §D is still ahead on those.
+
+### E.3 Confirms H3 (tone mapping), H4 (relief), §3.1 (ocean)
+
+- **Color pipeline:** none of the three does sRGB↔linear conversion (all gamma-naive early-2010s). The only tonemap is LeifNode's atmosphere `color = 1.0 - exp(color * -0.8)` — exponential exposure, **not ACES**. Fourth independent data point that ACES is not mandatory and is likely wrong for our display-referred content (**H3 reinforced**).
+- **Relief (H4 reinforced):** all three derive the shading normal from the **heightfield, not geometry** — Illation 4-tap central difference (`patch.glsl`), Nokitoo offline **3×3 Sobel** baked to a normal cubemap (`normal.frag`, `normalStrength=5`), LeifNode normal packed in the height texture RGB. Nokitoo's Sobel-bake-to-normal-map is the cleanest pattern; at orbital scale geometric relief is sub-pixel so this is *the* mechanism.
+- **Ocean (§3.1 corroborated):** LeifNode deep `(0.2,0.3,0.6)`, shallow `(0.2,0.8,0.7)`, **Fresnel-as-alpha** `1.2 - dot(V,N)`, Blinn specular power ~40. Dark blue-dominant again; another vote against our cyan `(0.55,0.82,0.88)`.
+
+### E.4 Atmosphere — refines §8.5 (port vs vendor)
+
+Myth-bust: **Illation/PlanetRenderer has no atmosphere shader in-repo** despite its blog reputation — do not plan to port from it. The only atmosphere among all sources is **LeifNode's classic O'Neil analytic scattering** (GPU Gems 2 Ch.16): single-pass, **3-sample in-shader integration, no precomputed LUT**, the tell-tale `scale()` polynomial-exp approximation. Implication for §8.5: an **O'Neil analytic port is low-risk and self-contained** (many Three.js O'Neil sky shaders exist); Bruneton-precomputed is *not* available to lift from any of these and would be a from-scratch vendor/port effort. Revised recommendation: **start with an O'Neil analytic atmosphere** (cheap, good-enough for orbital), defer Bruneton to a later polish phase only if the terminator/twilight quality proves insufficient.
+
+### E.5 Transferable additions to the punch-list
+
+8. **Add a slope axis to the color lookup** (LeifNode's disabled `dirtFactor`) — second-cheapest anti-bullseye lever after domain warping (D.2).
+9. **Worley/cellular mask multiplied into the color-key field** (LeifNode `terrain_cs`) — spatially decorrelates color from radial elevation; complements domain warping.
+10. **Sobel-bake the per-cell elevation to a normal** for relief (Nokitoo pattern) — concrete recipe for §3.3.
+11. **Atmosphere = O'Neil analytic first** (LeifNode), Bruneton deferred — supersedes §8.5's "vendor @takram" as the *first* step.
+
+---
+
+## F. Case study: Bekk / holgerl/procedural-planet (Three.js) — the look the user likes
+
+Analyzed 2026-05-15 (`js/material.js`, `js/planet.js`, `js/spheremap.js`). **This is the only Three.js source and the user explicitly stated they like its look — treat its aesthetic as a candidate target.** Architecture: a cube-subdivided sphere mesh; each face gets a procedurally generated **grayscale** map from `planetScalarField(x,y,z)`; a normal map is derived from that height map JS-side (`SS.util.heightToNormalMap`); a `ShaderMaterial` shades it.
+
+### F.1 STRATEGIC FLAG — the look they like is *stylized and near-monochrome*, not photoreal Earth
+
+`planet.js:61`: `return new THREE.Color().setRGB(c, c, c)` — the surface map is **grayscale**. There is **no biome, no SatMap, no Köppen, no ocean color** in the holgerl planet. All apparent "color" comes from a single additive atmospheric tint in the fragment shader. The aesthetic the user responded to is a **minimalist normal-mapped noise sphere with a soft glow**, *not* a Blue-Marble photoreal planet. This directly bears on **dossier §8.1 (realism vs stylization)** and is the single most important strategic finding in the case studies: before executing the photoreal roadmap, confirm with the user whether the target is photoreal Earth *or* this stylized look — they are different shaders and the entire §3/§4 plan assumes photoreal. **Do not start implementation until §8.1 is resolved against this reference.**
+
+### F.2 What produces the look (transferable regardless of realism target)
+
+- **The noise IS the field (no smooth radial base).** `planetScalarField` is a 4-octave multiplicative value-noise composite (`c=0.5; c*=1+level1*.75; c*=1+level2*.25; c*=1+level3*.075; c*=1+levelMax/25`) over world position. Same lesson as jsulpis §D.1 and the case studies §E.2 — a third independent confirmation that keying on a *spatially chaotic* field avoids the bullseye, and keying on a *smooth radial* one causes it.
+- **Soft terminator via `asin`.** `material.js:76`: `texelColor = texture2D(map,vUv) * min(asin(lightAngle), 1.0)`. Multiplying albedo by `asin(NdotL)` instead of raw `NdotL` expands the lit hemisphere and softens the day/night terminator into a gentle curve — a one-token change that is a large part of why it looks "soft and planetary" rather than harshly lit. Cheap, adoptable independent of everything else.
+- **Stylized rim-glow atmosphere.** `invertedViewAngle = pow(acos(viewAngle), 3.0) * 0.4`, then an additive `atmColor = vec3(dProd)` capped at 0.8. A pure-fresnel-style rim with an `acos`/`pow` curve — no scattering math. This is the "glow" the user likes; it is ~6 lines and free.
+- **Height→normal map for relief** (`SS.util.heightToNormalMap`, sampled+rotated in `bumpNormal`). Fifth independent confirmation of H4 — relief is *always* normal-driven, never geometric.
+
+### F.3 Verdict
+
+If the user wants the holgerl look: the photoreal §3/§4 roadmap is largely **wrong for the goal** and should be replaced by a much smaller spec (noise field + height→normal + asin terminator + `pow(acos)` rim + a single tint ramp). If the user wants photoreal: holgerl still contributes the `asin` terminator and the rim-glow curve as cheap polish. **Resolve §8.1 first.**
+
+---
+
+## G. Gemini Deep Research — authoritative findings + corrections to THIS dossier
+
+Received 2026-05-15, in response to `2026-05-15-gemini-shader-research-prompt.md`. Gemini confirmed H1, H2, H3, H5 and **partially refuted H4's prescription** (the hypothesis was right; our recommended *technique* was wrong). It also reverses one prior dossier recommendation (§8.5). Treat this section as the authoritative layer where it conflicts with earlier sections.
+
+### G.1 Confirmed
+
+- **H1 (bullseye / albedo keying):** confirmed. Production never keys diffuse albedo on elevation. Resolves **§8.7**: keep 1-D authored SatMaps but **re-key the lookup scalar `h` on a domain-warped moisture field**; a temperature scalar (latitude + elevation lapse + noise) selects the Köppen climate class; elevation is demoted to a *snow-line modifier only*. Cost: negligible (same number of texture fetches, different input variable).
+- **H2 / §C (color pipeline):** confirmed and made precise — see G.3.
+- **H3 (don't ACES display-referred albedo):** confirmed. ACES double-compresses already-tone-mapped Blue Marble imagery → the muddiness. Disable it entirely for this content.
+- **H5 (coast dither):** confirmed as a quantization/dither artifact; fix = domain-warp the *input coordinate* before the elevation eval **and** size the smoothstep window to `fwidth()` (dynamic AA), keeping noise amplitude < 25% of the window.
+
+### G.2 CORRECTION to §3.3 — our dFdx/dFdy macro-normal prescription is WRONG
+
+Gemini refutes the specific technique in §3.3. `dFdx/dFdy` of `vElevation` on a low-poly icosphere yields **per-face-constant derivatives** (vElevation is linearly interpolated across each triangle), producing **faceted, flat-shaded triangles** — it destroys the spherical illusion. H4 (relief must be normal-driven) stands; the *method* must change to **3-sample finite differencing of the noise function** (not the geometry), perturbing the smooth interpolated sphere normal:
+
+```glsl
+vec3 computeReliefNormal(vec3 p, float currentNoise, float bumpScale){
+  vec2 e = vec2(0.001, 0.0);
+  float dx = fbm(p+e.xyy)-currentNoise, dy = fbm(p+e.yxy)-currentNoise, dz = fbm(p+e.yyx)-currentNoise;
+  return normalize(vWorldNormal - vec3(dx,dy,dz) * bumpScale);   // perturb the SMOOTH normal
+}
+// bumpScale = smoothstep(0.1,0.6,vSlope)*45.0;  // flat plains stay smooth, orogenic zones rugged
+```
+
+This aligns with what the C++ case studies actually do (Nokitoo Sobel-bake, jsulpis finite-diff of `planetDist`, Illation central-difference) — §3.3's dFdx idea was the outlier and is **superseded**. Cost 0.5–1.2 ms; cap the relief FBM at 2–3 octaves to stay in budget.
+
+### G.3 CORRECTION/PRECISION to §C — exact Three.js fix
+
+§C said "verify the pipeline"; jsulpis §D.5 showed a manual `pow(1/2.4)`. For our **Three.js (not `four`)** context the production-correct fix is more specific and supersedes both:
+
+1. Every SatMap/color texture: `texture.colorSpace = THREE.SRGBColorSpace`. Noise/mask/data textures: leave **Linear** (`NoColorSpace`) — tagging them sRGB corrupts the math.
+2. **Delete the `aces()` function from the shader entirely.** Do not tone-map display-referred albedo.
+3. Replace the manual output encode with the engine chunk: end `main()` with `gl_FragColor = vec4(lit,1.0); #include <colorspace_fragment>` (let Three.js apply the OETF natively). Cost **0 ms** (removes the ACES ALU).
+
+### G.4 Ocean (refines §3.1) — physically-grounded Beer-Lambert
+
+Per-channel extinction (red dies first): `extinction = vec3(0.65,0.15,0.05)`, `depth = max(-seaCoord,0)*80`, `transmittance = exp(-extinction*depth)`, `waterAlbedo = mix(vec3(0.01,0.02,0.05) /*near-black abyss*/, vec3(0.40,0.65,0.55) /*sandy shelf*/, transmittance)`, Schlick fresnel `0.02 + 0.98*pow(1-VdotH,5)`, tight glint `pow(NdotH, 800)*fresnel`. Replaces §3.1's empirical triples with a physical model; corroborated by the dark-blue values in §D.4/§E.3. Cost ~0.1 ms.
+
+### G.5 REVERSES §8.5 / §E.4 — atmosphere recommendation
+
+§8.5 recommended vendoring `@takram/three-atmosphere` (Bruneton); §E.4 then argued "O'Neil analytic first". Gemini overrides **both**: Bruneton's 4-D LUT is memory-heavy, slow to load, and **bands/facets on high planetary curvature**. Recommendation: a **stripped Hillaire-2020 single-scattering pass** with a small 2-D transmittance LUT, ray-march truncated to **4–5 steps** (valid because the camera never enters the atmosphere) — fits the 4 ms budget with photoreal terminator quality. Net standing recommendation: **Hillaire-lite**, not Bruneton, not O'Neil.
+
+### G.6 Climatology specifics (Tier 3) — adopt as given
+
+- **Rain shadow:** synthetic latitude-band wind vector (Easterlies <30°, Westerlies 30–60°, Polar Easterlies >60°); `orographicLift = dot(reliefNormal, windDir)`; `moistureField *= mix(0.5,1.5, smoothstep(-0.8,0.8,orographicLift))`.
+- **Snow:** `thermalBase = 1 - (vElevation*0.85 + |lat|*0.45)`; subtract equator-facing aspect heat `dot(reliefNormal, equatorDir)*0.15`; subtract slope penalty `smoothstep(0.45,0.75,vSlope)`; threshold.
+- **Clouds:** use **curl noise** (cross product of the gradient of a 3-D noise potential — divergence-free) for cyclonic structure, not plain FBM; project density along the light vector as a dark terrain drop-shadow. This supersedes the §3.5 plain-FBM cloud suggestion.
+
+### G.7 AUTHORITATIVE punch-list (strict dependency order — supersedes §0, §D.8, §E.5)
+
+1. **Color-space rectification (blocking):** delete `aces()`; add `#include <colorspace_fragment>`; set SatMap textures `SRGBColorSpace`, data textures Linear. (§G.3)
+2. **Biome synthesizer (blocking):** deprecate `h = elevation`; compute equivalent-elevation temperature + domain-warped moisture; 2-D threshold → climate-class SatMap; `h = moistureField`. (§G.1)
+3. **Analytical relief:** replace `vWorldNormal` in lighting with 3-sample FBM-gradient `reliefNormal`, scaled by `vSlope`. (§G.2)
+4. **Beer-Lambert ocean:** per-channel extinction + Schlick fresnel + tight glint. (§G.4)
+5. **Anti-aliased coast:** domain-warp input coord + `fwidth()`-dynamic smoothstep window. (§G / H5)
+6. **Climatology polish:** wind-vector rain shadow into moisture; aspect/slope snow; curl-noise clouds. (§G.6)
+7. **Atmosphere:** Hillaire-lite 4–5-step single-scatter pass. (§G.5)
+
+**Pre-step 0 (gate everything):** resolve §8.1 against the holgerl reference (§F.1). If the user wants the stylized look, steps 1–7 are largely moot and a far smaller spec applies.
+
+---
+
+## H. Remaining references (brief — superseded by §G for open questions)
+
+- **Paul Bourke, "Perlin noise and colour" (1990s, archived).** Classic foundational reference. Core relevant idea: colour derived by mapping a noise field through a palette/transfer function — i.e., colour is a function of *noise*, not of a smooth coordinate. Consistent with §D.1/§E.2/§F.2 (the bullseye is caused by a smooth key, not by LUT colouring per se). No new technique beyond what §G prescribes; cited as the origin of the "noise → palette" approach.
+- **kurtkuehnert/planetary_terrain_renderer (Rust/Bevy, modern GPU-driven).** A quadtree/attachment-atlas chunked LOD planet for *surface-to-orbit traversal*. Architecturally an LOD-geometry/streaming system — **explicitly out of scope** per §10 (we are single-shell orbital, no zoom). Confirms the §E pattern that modern planet renderers invest in LOD geometry plumbing that does not transfer to our color problem. Nothing to lift for the shader; noted for completeness.
 
 ---
 
