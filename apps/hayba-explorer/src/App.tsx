@@ -654,8 +654,12 @@ export default function App() {
       );
       const ray = new THREE.Raycaster();
       ray.setFromCamera(ndc, scene.camera);
-      const meshObj = painterMeshRef.current?.object ?? scene.raycastTarget;
-      const hits = ray.intersectObject(meshObj, true);
+      // Pick against the invisible unit sphere (same as the boundary picker
+      // and cell inspector). The painter mesh is GPU-displaced so CPU
+      // raycasting it gives the same undisplaced result anyway, and its
+      // group also contains the cursor-ring Line which the raycaster would
+      // otherwise intercept (Lines have a huge default pick threshold).
+      const hits = ray.intersectObject(scene.raycastTarget, false);
       if (hits.length === 0) return null;
       const p = hits[0].point.clone().normalize();
       const cell = nearestCell(tree, p.x, p.y, p.z);
@@ -986,58 +990,51 @@ export default function App() {
         onPick={setPanelCategory}
       >
         {panelCategory === "compose" && draft && (
-          <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-            <div style={{ flex: "0 0 auto" }}>
-              <ComposePanel
-                draft={draft}
-                busy={mode === "baking"}
-                onChangeDivisions={handleChangeDivisions}
-                onChangePreset={handleChangePreset}
-                onReroll={handleReroll}
-                onBake={handleBake}
-              />
-            </div>
-            <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-              <HeightPaintPanel
-                brush={paintBrush}
-                paintedCount={paintedCount}
-                canUndo={canUndo}
-                canRedo={canRedo}
-                onChangeBrush={setPaintBrush}
-                onUndo={() => {
-                  const p = heightPainterRef.current;
-                  if (p?.undo()) {
-                    painterMeshRef.current?.syncFromPainter(p);
-                    setCanUndo(p.undoCount() > 0);
-                    setCanRedo(true);
-                    setPaintedCount(p.countTouched());
-                  }
-                }}
-                onRedo={() => {
-                  const p = heightPainterRef.current;
-                  if (p?.redo()) {
-                    painterMeshRef.current?.syncFromPainter(p);
-                    setCanUndo(true);
-                    setCanRedo(p.redoCount() > 0);
-                    setPaintedCount(p.countTouched());
-                  }
-                }}
-                onReset={() => {
-                  if (!window.confirm("Reset all painted heights?")) return;
-                  const p = heightPainterRef.current;
-                  if (p) {
-                    p.reset();
-                    painterMeshRef.current?.syncFromPainter(p);
-                  }
-                  setCanUndo(false);
-                  setCanRedo(false);
-                  setPaintedCount(0);
-                }}
-                onBack={() => { /* no-op — paint heights lives inside compose now */ }}
-                onNext={() => { /* no-op — paint heights lives inside compose now */ }}
-              />
-            </div>
-          </div>
+          <ComposePanel
+            draft={draft}
+            busy={mode === "baking"}
+            onChangeDivisions={handleChangeDivisions}
+            onChangePreset={handleChangePreset}
+            onReroll={handleReroll}
+            onBake={handleBake}
+          >
+            <HeightPaintPanel
+              brush={paintBrush}
+              paintedCount={paintedCount}
+              canUndo={canUndo}
+              canRedo={canRedo}
+              onChangeBrush={setPaintBrush}
+              onUndo={() => {
+                const p = heightPainterRef.current;
+                if (p?.undo()) {
+                  painterMeshRef.current?.syncFromPainter(p);
+                  setCanUndo(p.undoCount() > 0);
+                  setCanRedo(true);
+                  setPaintedCount(p.countTouched());
+                }
+              }}
+              onRedo={() => {
+                const p = heightPainterRef.current;
+                if (p?.redo()) {
+                  painterMeshRef.current?.syncFromPainter(p);
+                  setCanUndo(true);
+                  setCanRedo(p.redoCount() > 0);
+                  setPaintedCount(p.countTouched());
+                }
+              }}
+              onReset={() => {
+                if (!window.confirm("Reset all painted heights?")) return;
+                const p = heightPainterRef.current;
+                if (p) {
+                  p.reset();
+                  painterMeshRef.current?.syncFromPainter(p);
+                }
+                setCanUndo(false);
+                setCanRedo(false);
+                setPaintedCount(0);
+              }}
+            />
+          </ComposePanel>
         )}
 
         {panelCategory === "boundaries" && snapshot && draft && (

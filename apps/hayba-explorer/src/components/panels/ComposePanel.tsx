@@ -14,6 +14,9 @@ export interface ComposePanelProps {
   onChangePreset: (p: PresetName) => void;
   onReroll: () => void;
   onBake: () => void;
+  /** Extra sections rendered in the scroll area, below Continents and above
+   *  the Bake action strip. Used to host the height-painter controls. */
+  children?: React.ReactNode;
 }
 
 export default function ComposePanel(p: ComposePanelProps) {
@@ -87,6 +90,8 @@ export default function ComposePanel(p: ComposePanelProps) {
             value={`${(p.draft.brush_radius_rad * 180 / Math.PI).toFixed(1)}°`}
           />
         </PropertySection>
+
+        {p.children}
       </div>
 
       <div style={bottomActionStripStyle}>
