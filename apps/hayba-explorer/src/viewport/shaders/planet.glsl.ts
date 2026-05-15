@@ -421,9 +421,10 @@ export const FRAGMENT_SHADER = /* glsl */ `
     float ragged     = (fbm(vWorldNormal * 58.0)  - 0.5) * 9.0
                      + (fbm(vWorldNormal * 132.0) - 0.5) * 4.0;
     float coldC      = vTemperature + edgeJ * 4.0 * jScale + ragged;
-    // Stage 1 — exposed alpine substrate. TIGHT 5°C window (vs the old soft
-    // 10°C): with the ragged term this gives a broken, patchy rock margin.
-    float substrateA = 1.0 - smoothstep(1.0, 6.0, coldC);
+    // Stage 1 — exposed alpine substrate. Windowed to HUG the snowline:
+    // FULL by coldC≈-2 (where snow begins) so rock is continuous up to /
+    // under the ice cap — no bare-biome gap. Ragged term breaks it up.
+    float substrateA = 1.0 - smoothstep(-2.0, 4.0, coldC);
     // Stage 2 — snow on top of that substrate: a SEPARATE, colder, TIGHT
     // 5°C window → ragged, speckled snowline (not a smooth white blob).
     float snowA      = 1.0 - smoothstep(-7.0, -2.0, coldC);
@@ -496,13 +497,13 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // ragged term makes every boundary crunchy/patchy (not a smooth halo).
     // Land-gated (substrate/snow never on ocean).
     float land      = 1.0 - oceanMask;
-    // Stage 1: cold-exposed ground. Do NOT paint a flat grey — that wiped
-    // the SatMap detail and read as smooth monochrome blotches. Instead
-    // very faintly darken/cool the EXISTING textured albedo, broken up by
-    // high-freq noise so it stays detailed. Deliberately tiny.
-    float rockBreak  = 0.55 + 0.9 * fbm(vWorldNormal * 95.0);
-    float coldExpose = substrateA * land * 0.10 * rockBreak;
-    albedo *= mix(vec3(1.0), vec3(0.76, 0.74, 0.72), coldExpose);
+    // Stage 1: cold-exposed alpine ROCK sampled from the rock SatMap (real
+    // texture — not a flat grey wash). Same band+scatter coordinate as the
+    // slope rock so it's detailed & cell-stable; substrateA hugs the
+    // snowline so it's a continuous rock fringe into the ice cap, no gap.
+    vec3  alpineRock = sampleGradient(uSatMapRock, clamp(band + scatter, 0.04, 0.96));
+    float substrate  = substrateA * land;
+    albedo = mix(albedo, alpineRock, substrate * 0.7);
     // Stage 2: snow over the colder, also-ragged snowA → a broken speckled
     // snowline. Higher-frequency shading so the cap body isn't a flat white
     // blob (subtle exposed-rock mottle reads through the snow).
