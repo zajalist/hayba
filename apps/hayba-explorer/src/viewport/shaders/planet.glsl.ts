@@ -174,27 +174,43 @@ export const FRAGMENT_SHADER = /* glsl */ `
     float fbmFine   = fbm(vWorldNormal *  28.0);   // textural breakup
     float fbmHigh   = fbm(vWorldNormal *  90.0);   // edge-soft noise
 
-    // Smooth elevation input for SatMap sampling — neighbouring fragments
-    // see similar gradient rows, distant ones diverge.
+    // elevField is kept ONLY for downstream elevation-legitimate masks
+    // (beach band, coastline). It must NOT drive base albedo — that is the
+    // bullseye bug (smooth radial elevation → concentric colour contours).
     float elevField = vElevation
                     + (fbmCoarse - 0.5) * 0.55
                     + (fbmFine   - 0.5) * 0.15;
-    float h = elevField / 1.6;   // normalize to ~0..1 for the gradient
 
-    // ── Climate-zone blended base — Köppen-aligned latitude breakpoints ──
-    // |sin(lat)| breakpoints map to real Köppen zones:
-    //   ≈0.39 (23°) — tropical / subtropical edge
-    //   ≈0.57 (35°) — subtropical / temperate edge
-    //   ≈0.87 (60°) — temperate / polar edge
-    // Arid is a narrow subtropical desert band (~23-35°). Temperate is the
-    // wide mid-latitude band (~35-60°) — most of Europe, US, China sit here.
-    float latRaw   = abs(vWorldNormal.y);
-    float latNoisy = clamp(latRaw + (fbmCoarse - 0.5) * 0.10, 0.0, 1.0);
+    // ── G.7 step 2: biome-keyed albedo (kills the bullseye) ───────────────
+    // Base colour is keyed on a DOMAIN-WARPED MOISTURE field — horizontally
+    // varying, fully decoupled from radial elevation. Climate class is
+    // selected by a TEMPERATURE field (latitude lapse + elevation lapse +
+    // noise). Whittaker-style on the hot side: hot+wet→tropical,
+    // hot+dry→arid; temperature ramp on the cold side (temperate→polar).
+    vec3 warp = vec3(
+      fbm(vWorldNormal * 2.5 + vec3(5.2, 1.3, 2.8)),
+      fbm(vWorldNormal * 2.5 + vec3(1.1, 8.4, 3.5)),
+      fbm(vWorldNormal * 2.5 + vec3(7.4, 2.1, 9.6))
+    );
+    float moisture = clamp(fbm(vWorldNormal * 3.0 + warp * 1.5), 0.0, 1.0);
 
-    float wTrop  = 1.0 - smoothstep(0.32, 0.45, latNoisy);
-    float wArid  = smoothstep(0.36, 0.45, latNoisy) - smoothstep(0.52, 0.62, latNoisy);
-    float wTemp  = smoothstep(0.52, 0.62, latNoisy) - smoothstep(0.82, 0.90, latNoisy);
-    float wPolar = smoothstep(0.82, 0.92, latNoisy);
+    float latCooling = abs(vWorldNormal.y);
+    float equivElev  = max(vElevation, 0.0) + latCooling * 0.8;
+    float temperature = 1.0 - clamp(
+        equivElev + (fbm(vWorldNormal * 12.0) - 0.5) * 0.15, 0.0, 1.0);
+
+    // The 1D-gradient row is now driven by moisture, not elevation.
+    float h = clamp(moisture + (fbmFine - 0.5) * 0.1, 0.01, 0.99);
+
+    float cold     = 1.0 - smoothstep(0.20, 0.34, temperature);
+    float hot      = smoothstep(0.58, 0.72, temperature);
+    float midTemp  = clamp(1.0 - cold - hot, 0.0, 1.0);
+    float wet      = smoothstep(0.40, 0.62, moisture);
+
+    float wPolar = cold;
+    float wTemp  = midTemp;
+    float wTrop  = hot * wet;
+    float wArid  = hot * (1.0 - wet);
     float wTotal = wTrop + wArid + wTemp + wPolar + 1e-4;
     wTrop /= wTotal; wArid /= wTotal; wTemp /= wTotal; wPolar /= wTotal;
 
@@ -256,9 +272,11 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // equator-to-pole. The noise band on temperature is small so the
     // snow line stays a clear latitudinal feature; the SatMap noise stays
     // out of this calc to prevent random snow patches in temperate zones.
+    // (step 2: latNoisy removed; reuse the climate temperature field.
+    //  Full physically-based snow mask is step 6.)
     float tempLand = 30.0
                    - max(vElevation, 0.0) * 6.0
-                   - latNoisy * 32.0
+                   - abs(vWorldNormal.y) * 32.0
                    + (fbmFine - 0.5) * 2.5;
     // Threshold well below freezing — snow only at high lat or extreme
     // elevation. Smooth band so the snow line itself looks natural.
