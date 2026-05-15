@@ -1,12 +1,26 @@
 import React from "react";
 import PropertyRow from "../PropertyRow";
 import PropertySection from "../PropertySection";
+import Select from "../Select";
+
+export const MAP_MODES: { value: number; label: string }[] = [
+  { value: 0, label: "Final render" },
+  { value: 1, label: "Temperature" },
+  { value: 2, label: "Moisture" },
+  { value: 3, label: "Biome (argmax)" },
+  { value: 4, label: "Elevation" },
+  { value: 5, label: "Slope" },
+  { value: 6, label: "Ice mask" },
+  { value: 7, label: "Ocean mask" },
+];
 
 export interface SettingsPanelProps {
   showPlateLabels: boolean;
   showForceArrows: boolean;
   onToggleLabels: (v: boolean) => void;
   onToggleArrows: (v: boolean) => void;
+  mapMode: number;
+  onChangeMapMode: (n: number) => void;
 }
 
 export default function SettingsPanel(p: SettingsPanelProps) {
@@ -33,6 +47,20 @@ export default function SettingsPanel(p: SettingsPanelProps) {
               checked={p.showForceArrows}
               onChange={(e) => p.onToggleArrows(e.target.checked)}
               aria-label="Toggle force arrows"
+            />
+          }
+        />
+      </PropertySection>
+
+      <PropertySection heading="Diagnostics">
+        <PropertyRow
+          label="Map mode"
+          noSeparator
+          value={
+            <Select<number>
+              value={p.mapMode}
+              onChange={p.onChangeMapMode}
+              options={MAP_MODES.map((m) => ({ value: m.value, label: m.label }))}
             />
           }
         />

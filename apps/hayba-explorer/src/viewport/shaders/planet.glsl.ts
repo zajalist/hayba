@@ -79,6 +79,7 @@ export const FRAGMENT_SHADER = /* glsl */ `
   uniform vec3      uOceanColor;
   uniform float     uShowPlateOutlines;
   uniform float     uShowBoundaryGlow;
+  uniform float     uMapMode;           // 0 final · 1 temp · 2 moist · 3 biome · 4 elev · 5 slope · 6 ice · 7 ocean
   // cameraPosition is auto-provided by Three.js for ShaderMaterial; we
   // don't redeclare it. It's in world space and updates every frame.
 
@@ -194,62 +195,51 @@ export const FRAGMENT_SHADER = /* glsl */ `
                     + (fbmCoarse - 0.5) * 0.55
                     + (fbmFine   - 0.5) * 0.15;
 
-    // ── G.7 step 2: biome-keyed albedo (kills the bullseye) ───────────────
-    // Base colour is keyed on a DOMAIN-WARPED MOISTURE field — horizontally
-    // varying, fully decoupled from radial elevation. Climate class is
-    // selected by a TEMPERATURE field (latitude lapse + elevation lapse +
-    // noise). Whittaker-style on the hot side: hot+wet→tropical,
-    // hot+dry→arid; temperature ramp on the cold side (temperate→polar).
-    vec3 warp = vec3(
-      fbm(vWorldNormal * 2.5 + vec3(5.2, 1.3, 2.8)),
-      fbm(vWorldNormal * 2.5 + vec3(1.1, 8.4, 3.5)),
-      fbm(vWorldNormal * 2.5 + vec3(7.4, 2.1, 9.6))
-    );
-    // Multi-frequency moisture: a low-freq continental field + mid-freq
-    // detail so biomes aren't two giant blobs.
-    float moisture = clamp(
-        fbm(vWorldNormal * 3.0 + warp * 1.5) * 0.65
-      + fbm(vWorldNormal * 9.0)              * 0.35, 0.0, 1.0);
+    // ── Biome engine (Gemini-prescribed) ─────────────────────────────────
+    // STRICT decoupling: biome identity = climate masks (which SatMap);
+    // the 1-D row 'h' = pure local elevation (where in that SatMap). The
+    // previous bug fed moisture/noise into h → semantically scrambled the
+    // elevation-ramp SatMaps (wet lowland sampled the dry-rock rows).
+    float lat    = abs(vWorldNormal.y);                  // 0 equator .. 1 pole
+    float elevKm = max(vElevation, 0.0) * 8.0;           // vElevation 1.0 ≈ 8 km
 
-    // More latitude cooling so mid-latitudes actually reach the temperate
-    // band (olive/brown), not just equatorial tropical+arid.
-    float latCooling = abs(vWorldNormal.y);
-    float equivElev  = max(vElevation, 0.0) * 0.7 + latCooling * 1.4;
-    float temperature = 1.0 - clamp(
-        equivElev + (fbm(vWorldNormal * 12.0) - 0.5) * 0.15, 0.0, 1.0);
+    // Pseudo-physical surface temperature (°C): latitude + 6.5°C/km lapse
+    // + low-freq continental drift (±4°C).
+    float tempC = 30.0 - 55.0 * lat * lat
+                       - 6.5 * elevKm
+                       + (fbm(vWorldNormal * 2.0) - 0.5) * 8.0;
 
-    // The 1D row: NOT pure moisture (that inverted the SatMap's authored
-    // elevation-ramp semantics and lost detail). A noise-dominated blend
-    // of a gentle within-biome elevation trend + moisture + multi-octave
-    // breakup. Noise dominates so no contour rings re-form.
-    float elevH  = clamp(max(vElevation, 0.0) * 1.1, 0.0, 1.0);
-    float detail = fbm(vWorldNormal * 11.0) * 0.55
-                 + fbm(vWorldNormal * 26.0) * 0.45;
-    float h = clamp(0.28 * elevH + 0.30 * moisture + 0.42 * detail,
-                    0.02, 0.98);
+    // Hadley-ish moisture: wet at ITCZ + mid-latitudes, dry ~30° subtropics.
+    float hadley   = 1.0 - abs(sin(lat * 3.14159 * 1.5));
+    float moisture = clamp(hadley * 0.6 + fbm(vWorldNormal * 4.0) * 0.5, 0.0, 1.0);
 
-    float cold     = 1.0 - smoothstep(0.20, 0.34, temperature);
-    float hot      = smoothstep(0.56, 0.74, temperature);
-    float midTemp  = clamp(1.0 - cold - hot, 0.0, 1.0);
-    float wet      = smoothstep(0.42, 0.60, moisture);
+    // h = STRICT local elevation, domain-warped only to hide contour rings.
+    // NO moisture / temperature / macro-noise here.
+    float microNoise = fbm(vWorldNormal * 40.0) * 0.05
+                     + fbm(vWorldNormal * 15.0) * 0.10;
+    float h = clamp(max(vElevation, 0.0) + microNoise, 0.02, 0.98);
 
-    float wPolar = cold;
-    float wTemp  = midTemp;
-    float wTrop  = hot * wet;
-    float wArid  = hot * (1.0 - wet);
-    float wTotal = wTrop + wArid + wTemp + wPolar + 1e-4;
-    wTrop /= wTotal; wArid /= wTotal; wTemp /= wTotal; wPolar /= wTotal;
+    // 4-way climate weights from physical (°C, moisture) thresholds.
+    float wTrop  = smoothstep(18.0, 22.0, tempC) * smoothstep(0.30, 0.50, moisture);
+    float wArid  = smoothstep(10.0, 15.0, tempC) * (1.0 - smoothstep(0.10, 0.30, moisture));
+    float wPolar = 1.0 - smoothstep(-5.0, 0.0, tempC);
+    float wTemp  = max(0.0, 1.0 - wTrop - wArid - wPolar);
+
+    // Dominant-takes-all sharpen — a 4-way average of dissimilar palettes
+    // is mathematically grey mud; pow(8) snaps to the dominant biome with
+    // a thin AA crossfade.
+    vec4 bw = pow(max(vec4(wTrop, wArid, wTemp, wPolar), 0.0), vec4(8.0));
+    bw /= (bw.x + bw.y + bw.z + bw.w + 1e-5);
 
     vec3 climateBase =
-        sampleGradient(uSatTropical,  h) * wTrop
-      + sampleGradient(uSatArid,      h) * wArid
-      + sampleGradient(uSatTemperate, h) * wTemp
-      + sampleGradient(uSatPolar,     h) * wPolar;
+        sampleGradient(uSatTropical,  h) * bw.x
+      + sampleGradient(uSatArid,      h) * bw.y
+      + sampleGradient(uSatTemperate, h) * bw.z
+      + sampleGradient(uSatPolar,     h) * bw.w;
 
-    // The user can disable climate diversity to lock the whole planet to a
-    // single Settings-chosen SatMap.
+    // The user can disable climate diversity to lock to a single SatMap.
     vec3 base = mix(sampleGradient(uSatMap, h), climateBase, uClimateBlend);
-    vec3 rock = sampleGradient(uSatMapRock, h * 1.1);
+    vec3 rock = sampleGradient(uSatMapRock, clamp(h * 1.1, 0.02, 0.98));
 
     // Slope rock mask — smoothstep + fwidth anti-aliasing per Gemini.
     // Threshold around ~0.55 (≈ 33° incline); biome-dependent in a future v3.
@@ -324,7 +314,7 @@ export const FRAGMENT_SHADER = /* glsl */ `
     float tempLand = 30.0
                    - max(vElevation, 0.0) * 6.0
                    - abs(vWorldNormal.y) * 32.0
-                   + (fbmCoarse - 0.5) * 4.0;
+                   + (fbmCoarse - 0.5) * 2.0;
 
     // Ice cap: OVERRIDE the marbled polar SatMap entirely with smooth
     // near-white ice. The previous attempt only desaturated the SatMap,
@@ -371,6 +361,34 @@ export const FRAGMENT_SHADER = /* glsl */ `
     float fakeAO = 1.0 - smoothstep(0.0, 0.4, cavity);
     albedo *= mix(0.90, 1.0, fakeAO);   // softened (was 0.78 — dFdx AO is coarse on a low-poly icosphere)
 
+    // ── Debug map modes (validate the science before trusting colour) ────
+    // 0 final · 1 temperature · 2 moisture · 3 biome argmax · 4 elevation
+    // 5 slope · 6 ice mask · 7 ocean mask
+    if (uMapMode > 0.5) {
+      vec3 dbg;
+      if (uMapMode < 1.5) {
+        dbg = vec3(clamp(tempC / 40.0, 0.0, 1.0));                       // white hot → black cold
+      } else if (uMapMode < 2.5) {
+        dbg = mix(vec3(0.32, 0.22, 0.05), vec3(0.05, 0.25, 0.95), moisture); // dry tan → wet blue
+      } else if (uMapMode < 3.5) {
+        float mx = max(max(bw.x, bw.y), max(bw.z, bw.w));
+        if      (mx == bw.x) dbg = vec3(0.10, 0.70, 0.16);              // tropical green
+        else if (mx == bw.y) dbg = vec3(0.88, 0.45, 0.10);              // arid orange
+        else if (mx == bw.z) dbg = vec3(0.55, 0.55, 0.20);              // temperate olive
+        else                 dbg = vec3(0.93, 0.96, 1.00);              // polar white
+      } else if (uMapMode < 4.5) {
+        dbg = vec3(clamp(max(vElevation, 0.0), 0.0, 1.0));
+      } else if (uMapMode < 5.5) {
+        dbg = vec3(clamp(vSlope, 0.0, 1.0));
+      } else if (uMapMode < 6.5) {
+        dbg = vec3(iceCap);
+      } else {
+        dbg = vec3(0.0, 0.35, 0.95) * oceanMask;
+      }
+      gl_FragColor = vec4(linearToSrgb(dbg), 1.0);
+      return;
+    }
+
     // ── Lighting: relief Lambert + rim + atmospheric scatter ─────────────
     vec3 L = normalize(uSunDir);
     vec3 V = normalize(cameraPosition - vWorldPos);
@@ -389,10 +407,9 @@ export const FRAGMENT_SHADER = /* glsl */ `
     float halo = pow(1.0 - viewAngle, 4.0);
     vec3 atmosphere = vec3(0.40, 0.62, 1.00);
 
-    // Lift the crushed darks on LAND so dense forest reads as a dark
-    // GREEN, not black (Blue Marble jungle is mid-dark, never 0). Ocean
-    // keeps its true dark values.
-    albedo = mix(albedo, albedo * 0.80 + 0.055, landMask);
+    // (Gemini: the dark-lift + desaturate hacks were band-aids over the
+    //  semantic-scramble bug. Removed. With strict-elevation h + sharpened
+    //  biome blend the native linear SatMap colours behave correctly.)
 
     // Flat-lit-albedo model: real orbital imagery (Blue Marble) is shot
     // near local noon and reads as near-uniform albedo with only a gentle
@@ -403,11 +420,6 @@ export const FRAGMENT_SHADER = /* glsl */ `
     float wrap = clamp(ndl * 0.5 + 0.5, 0.0, 1.0);
     float lightTerm = 0.55 + 0.60 * pow(wrap, 1.2);   // ~0.55 night .. ~1.15 noon
     vec3 lit = albedo * lightTerm;
-
-    // Earth land is LOW saturation — pull it down, don't boost. Slight
-    // exposure only; brightness now comes from the lighting floor.
-    float luma = dot(lit, vec3(0.2126, 0.7152, 0.0722));
-    lit = mix(vec3(luma), lit, 0.86) * 1.02;
 
     // Limb tint — kept subtle so it doesn't wash the disc edge.
     lit = mix(lit, atmosphere, halo * 0.12);
