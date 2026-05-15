@@ -205,20 +205,33 @@ export const FRAGMENT_SHADER = /* glsl */ `
       fbm(vWorldNormal * 2.5 + vec3(1.1, 8.4, 3.5)),
       fbm(vWorldNormal * 2.5 + vec3(7.4, 2.1, 9.6))
     );
-    float moisture = clamp(fbm(vWorldNormal * 3.0 + warp * 1.5), 0.0, 1.0);
+    // Multi-frequency moisture: a low-freq continental field + mid-freq
+    // detail so biomes aren't two giant blobs.
+    float moisture = clamp(
+        fbm(vWorldNormal * 3.0 + warp * 1.5) * 0.65
+      + fbm(vWorldNormal * 9.0)              * 0.35, 0.0, 1.0);
 
+    // More latitude cooling so mid-latitudes actually reach the temperate
+    // band (olive/brown), not just equatorial tropical+arid.
     float latCooling = abs(vWorldNormal.y);
-    float equivElev  = max(vElevation, 0.0) + latCooling * 0.8;
+    float equivElev  = max(vElevation, 0.0) * 0.7 + latCooling * 1.4;
     float temperature = 1.0 - clamp(
         equivElev + (fbm(vWorldNormal * 12.0) - 0.5) * 0.15, 0.0, 1.0);
 
-    // The 1D-gradient row is now driven by moisture, not elevation.
-    float h = clamp(moisture + (fbmFine - 0.5) * 0.1, 0.01, 0.99);
+    // The 1D row: NOT pure moisture (that inverted the SatMap's authored
+    // elevation-ramp semantics and lost detail). A noise-dominated blend
+    // of a gentle within-biome elevation trend + moisture + multi-octave
+    // breakup. Noise dominates so no contour rings re-form.
+    float elevH  = clamp(max(vElevation, 0.0) * 1.1, 0.0, 1.0);
+    float detail = fbm(vWorldNormal * 11.0) * 0.55
+                 + fbm(vWorldNormal * 26.0) * 0.45;
+    float h = clamp(0.28 * elevH + 0.30 * moisture + 0.42 * detail,
+                    0.02, 0.98);
 
     float cold     = 1.0 - smoothstep(0.20, 0.34, temperature);
-    float hot      = smoothstep(0.58, 0.72, temperature);
+    float hot      = smoothstep(0.56, 0.74, temperature);
     float midTemp  = clamp(1.0 - cold - hot, 0.0, 1.0);
-    float wet      = smoothstep(0.40, 0.62, moisture);
+    float wet      = smoothstep(0.42, 0.60, moisture);
 
     float wPolar = cold;
     float wTemp  = midTemp;
@@ -269,27 +282,33 @@ export const FRAGMENT_SHADER = /* glsl */ `
 
     if (oceanMask > 0.001) {
       // All colours LINEAR (output is linear→sRGB encoded). Per-channel
-      // Beer-Lambert extinction: red dies first, blue penetrates deepest,
-      // so deep water → near-black navy, shallow → muted blue over sand.
-      vec3  deepAbyss   = vec3(0.004, 0.016, 0.045);
-      vec3  shallowBed  = vec3(0.10,  0.20,  0.22);
+      // Beer-Lambert extinction (red dies first). CRITICAL: unpainted
+      // oceans have a NARROW shallow vElevation band (~-0.05..-0.35), not
+      // full -1..0 bathymetry, so the depth scale must be small (~6) or
+      // extinction saturates and the whole ocean collapses to black.
+      vec3  deepAbyss   = vec3(0.012, 0.035, 0.085);  // believable deep ocean blue, not black
+      vec3  shallowBed  = vec3(0.05,  0.16,  0.21);   // muted shallow
       vec3  extinction  = vec3(0.65, 0.15, 0.05);
-      float depth       = max(-seaCoord, 0.0) * 60.0;
+      float depth       = max(-seaCoord, 0.0) * 6.0;
       vec3  transmit    = exp(-extinction * depth);
       vec3  water       = mix(deepAbyss, shallowBed, transmit);
+
+      // Subtle large-scale tonal variation so the ocean isn't dead-flat
+      // even when bathymetry is uniform (no painted depth).
+      water *= 0.82 + 0.30 * fbm(vWorldNormal * 4.0);
 
       // Schlick fresnel — sky-reflective at grazing angles.
       vec3  Vo   = normalize(cameraPosition - vWorldPos);
       float NoV  = max(dot(vWorldNormal, Vo), 0.0);
       float fres = 0.02 + 0.98 * pow(1.0 - NoV, 5.0);
-      vec3  skyT = vec3(0.18, 0.34, 0.58);     // linear sky tint
-      water = mix(water, skyT, fres * 0.5);
+      vec3  skyT = vec3(0.16, 0.32, 0.55);     // linear sky tint
+      water = mix(water, skyT, fres * 0.45);
 
       // Tight orbital sun glint.
       vec3  Lo  = normalize(uSunDir);
       vec3  Ho  = normalize(Lo + Vo);
       float spec = pow(max(dot(vWorldNormal, Ho), 0.0), 400.0) * fres;
-      water += vec3(1.0, 0.97, 0.88) * spec * 2.0;
+      water += vec3(1.0, 0.97, 0.88) * spec * 1.3;
 
       albedo = mix(albedo, water, oceanMask);
     }
@@ -301,18 +320,26 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // out of this calc to prevent random snow patches in temperate zones.
     // (step 2: latNoisy removed; reuse the climate temperature field.
     //  Full physically-based snow mask is step 6.)
+    // LOW-freq edge perturbation only (was high-freq fbmFine → fine grey
+    // blotch). The snow LINE stays organic; the cap INTERIOR is solid.
     float tempLand = 30.0
                    - max(vElevation, 0.0) * 6.0
                    - abs(vWorldNormal.y) * 32.0
-                   + (fbmFine - 0.5) * 2.5;
-    // Threshold well below freezing — snow only at high lat or extreme
-    // elevation. Smooth band so the snow line itself looks natural.
-    // Warmer threshold + wider band → stronger, further-reaching polar
-    // caps (user wants more snow; likes the marbled ice look).
-    float snowMask = 1.0 - smoothstep(-2.0, 10.0, tempLand);
-    snowMask *= (1.0 - oceanMask);
-    snowMask = min(snowMask, 0.95);
-    albedo = mix(albedo, vec3(0.94, 0.94, 0.95), snowMask);
+                   + (fbmCoarse - 0.5) * 4.0;
+
+    // Polarness: 1 deep-cold .. 0 warm. Before laying snow, gently
+    // desaturate + cool-lift the underlying polar SatMap so any sub-full
+    // coverage reads as a SUBTLE cool grey, not harsh dark-grey blotches
+    // (matches real Earth ice: smooth white + faint cool shadow).
+    float polarness = (1.0 - smoothstep(-2.0, 14.0, tempLand)) * (1.0 - oceanMask);
+    float bl = dot(albedo, vec3(0.299, 0.587, 0.114));
+    vec3  gentleIce = vec3(bl) * 1.18 + vec3(0.015, 0.025, 0.045);
+    albedo = mix(albedo, mix(albedo, gentleIce, 0.65), polarness);
+
+    // Snow: solid interior (no 0.95 cap), organic low-freq edge. Slightly
+    // cool near-white.
+    float snowMask = (1.0 - smoothstep(-1.0, 7.0, tempLand)) * (1.0 - oceanMask);
+    albedo = mix(albedo, vec3(0.95, 0.96, 0.97), snowMask);
 
     // ── Pink seam highlight (unassigned boundaries) ──────────────────────
     if (vIsBoundary > 0.5 && vCollisionKind < 0.5) {
@@ -370,7 +397,7 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // Measured vibrance + exposure — real-Earth SatMap albedo is genuinely
     // low; lift midtones without going cartoony (user: green too dark).
     float luma = dot(lit, vec3(0.2126, 0.7152, 0.0722));
-    lit = mix(vec3(luma), lit, 1.18) * 1.12;
+    lit = mix(vec3(luma), lit, 1.06) * 1.05;
 
     // Limb / Rayleigh — only the actual silhouette gets atmospheric tint;
     // the rest of the planet keeps its true SatMap colors.
