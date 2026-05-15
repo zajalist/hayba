@@ -686,7 +686,7 @@ Do not skip phases or do them out of order. Phase 2 (macro normal) is the founda
 
 These deserve explicit decisions before implementation:
 
-1. **Realism vs. stylization.** Hayba's overall design language is dark/elegant with a beige+accent palette. Real Earth from orbit is mostly blue/brown/white. Confirm we're targeting photorealism, not a "stylized blue-and-amber Pluto-like aesthetic". This dossier assumes photorealism.
+1. **Realism vs. stylization. → RESOLVED 2026-05-15: PHOTOREAL Earth-from-orbit (Blue Marble).** User chose photoreal over the stylized Bekk/holgerl look (§F.1) and the hybrid. The full §G.7 punch-list applies; the §F stylized-spec branch is dead. Pre-step-0 gate is cleared.
 
 2. **Time-of-day / sun motion.** Currently the sun is a fixed `uSunDir = (0.6, 0.5, 0.8)`. Do we want it to rotate as the sim runs? Day-night terminator becomes much more meaningful once §4.5 lands.
 
@@ -897,7 +897,30 @@ Per-channel extinction (red dies first): `extinction = vec3(0.65,0.15,0.05)`, `d
 ## H. Remaining references (brief — superseded by §G for open questions)
 
 - **Paul Bourke, "Perlin noise and colour" (1990s, archived).** Classic foundational reference. Core relevant idea: colour derived by mapping a noise field through a palette/transfer function — i.e., colour is a function of *noise*, not of a smooth coordinate. Consistent with §D.1/§E.2/§F.2 (the bullseye is caused by a smooth key, not by LUT colouring per se). No new technique beyond what §G prescribes; cited as the origin of the "noise → palette" approach.
+- **michelematteini/dragonfly-examples (`res/data/planet_templates/earth1.xml`).** A C# fractal-planet engine's Earth template. Confirmatory, nothing new vs §G: (a) it drives terrain via a **parameterized histogram** — `OceanPercent 0.60`, `ContinentAvgHeightMeters 300`, `PeaksPercent 0.05`, `FeaturesExponent 3`, `FeaturesHighPassPercent 0.45` — i.e. pow-exponent + high-pass redistribution to make sparse continents (re-confirms jsulpis §D.3). (b) `ContinentAvgHeightMeters 300` independently corroborates our chosen ~0.05 lowland floor. (c) Albedo is an **`AlbedoLUTPath` 2-D `terrainAlbedo1.png` + `terrain_splat1.dds` splat maps** — even a LUT-based engine keys albedo on 2 axes + splat, never 1-D-by-elevation. Fourth corroboration of §G.1. No shaders in this repo (engine is separate); no new technique to lift.
 - **kurtkuehnert/planetary_terrain_renderer (Rust/Bevy, modern GPU-driven).** A quadtree/attachment-atlas chunked LOD planet for *surface-to-orbit traversal*. Architecturally an LOD-geometry/streaming system — **explicitly out of scope** per §10 (we are single-shell orbital, no zoom). Confirms the §E pattern that modern planet renderers invest in LOD geometry plumbing that does not transfer to our color problem. Nothing to lift for the shader; noted for completeness.
+
+---
+
+## I. External bibliography triage (user's curated bookmark dump, 2026-05-15)
+
+The user supplied the well-known croxis/Panda3D-forum planet-rendering reading list. Triaged below. **None of it changes the authoritative §G.7 punch-list** — it is foundational, confirmatory, or out-of-scope. Documented so the reference library is captured.
+
+**Already covered / superseded by §G (authoritative):**
+- *Sean O'Neil — Gamasutra 4-part (2001) + GPU Gems 2 Ch.16 atmosphere.* The baseline analytic scattering. §G.5 supersedes with Hillaire-lite (O'Neil bands/earth-only). Keep as the conceptual primer only.
+- *Eric Bruneton (2008–2012) precomputed scattering* + *Sperlhofer thesis* (explains Bruneton). §G.5 recommends *against* Bruneton for our curvature/LUT reasons. **Keep the Sperlhofer thesis as the implementation reference IF Hillaire-lite proves insufficient and we fall back to precomputed** — it's the clearest Bruneton explainer.
+
+**Out of scope — LOD geometry / large-scale terrain (dossier §10; we are single-shell orbital, no zoom):**
+- *Steven Wittens "Making Worlds" (acko.net)* + *cube→sphere equal-area mapping proof (mathproofs)*. Cube-sphere LOD. The **equal-area cube-sphere mapping** is the only bit worth remembering — relevant *only* if we ever change base geometry away from the icosphere (not planned).
+- *greenleaf 82-page ROAM→rivers paper*, *John Whigham blog*, *Miguel Cepero / Voxel Farm*, *Proland (INRIA)*, *VTerrain.org*, *stainlessbeer tutorials*. All LOD/voxel/large-scale-terrain or planet-type taxonomy. No transfer to an orbital color shader.
+
+**Tangential / cosmetic:**
+- *Homeworld backgrounds (simonschreibt)* — space backdrop art. We already have a starbox; not a planet-shader input.
+
+**GENUINELY NEW — but for the painter, not the shader:**
+- *Maxis/Spore, SIGGRAPH 2007, Willmott et al. "Spherical Worlds" (cs.cmu.edu/~ajw/s2007/0251-SphericalWorlds.pdf)* + *nullpointer.co.uk procedural-planets*. This is the **academic reference for brush-based heightmap editing on a sphere** — i.e. the design basis for our **height-painting wizard** (shipped 2026-05-15), not the shader. Cross-domain note: if the painter gets a v2, Willmott's spherical-brush + quadtree-influence-storage method is the production precedent for player-authored craters/relief. Tracked here so the link isn't lost; out of scope for the shader roadmap.
+
+**Research status:** with Gemini's authoritative answer (§G), five code case studies (§D, §E, §F), and this bibliography triage, the shader research is **compiled and closed**. Further reference-gathering has hit diminishing returns — the foundational sources (O'Neil, Bruneton) were already synthesized by Gemini, and the rest is LOD-geometry we explicitly scope out. **Recommended next action: execute §G.7, starting with step 1 (color-space rectification — blocking, 0 ms, ~1 h).**
 
 ---
 
