@@ -16,6 +16,17 @@ const DEMO_STEPS: u32 = 5;
 const DEMO_DT_MA: f32 = 0.5;
 const DEMO_SEED: u64 = 42;
 
+#[derive(Debug, Serialize, Default)]
+pub struct ClimateDebugWire {
+    pub insolation: Vec<f32>,
+    pub base_temp: Vec<f32>,
+    pub dist_to_ocean: Vec<f32>,
+    pub wind: Vec<f32>,
+    pub current_dt: Vec<f32>,
+    pub orographic: Vec<f32>,
+    pub continental_dry: Vec<f32>,
+}
+
 #[derive(Serialize)]
 pub struct PlanetSnapshot {
     pub divisions: u32,
@@ -61,6 +72,15 @@ pub struct PlanetSnapshot {
     pub cell_orogenic_uplift: Vec<f32>,
     /// Steps since this cell was spawned at a mid-ocean ridge.
     pub cell_mor_age_steps: Vec<u16>,
+    /// Annual-mean surface temperature (°C). Recomputed every step.
+    pub cell_temperature: Vec<f32>,
+    /// Annual precipitation, normalized 0..1.
+    pub cell_precip: Vec<f32>,
+    /// Whittaker biome id (0..9) as f32 for buffer-attribute upload.
+    pub cell_biome: Vec<f32>,
+    /// Climate debug fields — empty unless `want_climate_debug`.
+    #[serde(default)]
+    pub climate_debug: ClimateDebugWire,
 }
 
 struct DemoPlate {
@@ -156,7 +176,7 @@ pub fn bake_demo() -> PlanetSnapshot {
         model.step(DEMO_DT_MA);
     }
 
-    let snap = snapshot_model(&model, DEMO_DIVISIONS);
+    let snap = snapshot_model(&model, DEMO_DIVISIONS, true);
     snap
 }
 
@@ -197,7 +217,7 @@ fn collision_kind(field: &hayba_tectonics_v2::field::Field) -> u8 {
 /// Build a `PlanetSnapshot` from a stepped model. Boundary detection matches
 /// TE: a cell is on the boundary if any of its neighbours belong to a
 /// different plate (see `tectonic-explorer/.../plate.ts` boundary scan).
-pub fn snapshot_model(model: &Model, divisions: u32) -> PlanetSnapshot {
+pub fn snapshot_model(model: &Model, divisions: u32, want_climate_debug: bool) -> PlanetSnapshot {
     let n_cells = model.grid.n_fields();
     let mut cell_positions: Vec<f32> = Vec::with_capacity((n_cells * 3) as usize);
     let mut cell_plate_ids: Vec<i32> = Vec::with_capacity(n_cells as usize);
@@ -279,6 +299,17 @@ pub fn snapshot_model(model: &Model, divisions: u32) -> PlanetSnapshot {
         cell_mor_age_steps.push(f.mor_age_steps);
     }
 
+    let cf = crate::climate::compute_climate(model, model.master_seed, want_climate_debug);
+    let climate_debug = match cf.debug {
+        Some(d) => ClimateDebugWire {
+            insolation: d.insolation, base_temp: d.base_temp,
+            dist_to_ocean: d.dist_to_ocean, wind: d.wind,
+            current_dt: d.current_dt, orographic: d.orographic,
+            continental_dry: d.continental_dry,
+        },
+        None => ClimateDebugWire::default(),
+    };
+
     PlanetSnapshot {
         divisions,
         n_cells,
@@ -299,6 +330,10 @@ pub fn snapshot_model(model: &Model, divisions: u32) -> PlanetSnapshot {
         cell_is_continent_buffer,
         cell_orogenic_uplift,
         cell_mor_age_steps,
+        cell_temperature: cf.temperature,
+        cell_precip: cf.precip,
+        cell_biome: cf.biome,
+        climate_debug,
     }
 }
 
@@ -329,5 +364,15 @@ mod tests {
         assert_eq!(snap.cell_is_continent_buffer.len() as u32, snap.n_cells);
         assert_eq!(snap.cell_orogenic_uplift.len() as u32, snap.n_cells);
         assert_eq!(snap.cell_mor_age_steps.len() as u32, snap.n_cells);
+    }
+
+    #[test]
+    fn snapshot_has_climate_fields() {
+        let snap = bake_demo();
+        let n = snap.n_cells as usize;
+        assert_eq!(snap.cell_temperature.len(), n);
+        assert_eq!(snap.cell_precip.len(), n);
+        assert_eq!(snap.cell_biome.len(), n);
+        assert!(snap.cell_biome.iter().all(|&b| (0.0..=9.0).contains(&b)));
     }
 }

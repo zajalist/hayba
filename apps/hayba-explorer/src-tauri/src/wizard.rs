@@ -201,7 +201,7 @@ pub fn bake_from_wizard(
     sim: State<'_, ManagedSim>,
 ) -> PlanetSnapshot {
     let model = bake_model(&draft);
-    let snap = snapshot_model(&model, draft.divisions);
+    let snap = snapshot_model(&model, draft.divisions, true);
     let mut guard = sim.0.lock().expect("sim mutex poisoned");
     *guard = Some(SimState {
         model,
@@ -222,7 +222,7 @@ pub fn step_planet(
     for _ in 0..n_steps {
         state.model.step(state.dt_ma);
     }
-    Ok(snapshot_model(&state.model, state.divisions))
+    Ok(snapshot_model(&state.model, state.divisions, true))
 }
 
 /// Drop the persisted model — called on edit-wizard / new bake.
@@ -302,7 +302,7 @@ pub fn apply_boundary_types(
     }
 
     let _ = counts; // silence unused; kept for future inertia recompute
-    Ok(snapshot_model(&state.model, state.divisions))
+    Ok(snapshot_model(&state.model, state.divisions, false))
 }
 
 /// Apply a plate density rank to the running model. The frontend ships a
@@ -325,7 +325,7 @@ pub fn apply_density_rank(
             plate.density = d;
         }
     }
-    Ok(snapshot_model(&state.model, state.divisions))
+    Ok(snapshot_model(&state.model, state.divisions, false))
 }
 
 // ── Preset rasters, embedded at compile time ─────────────────────────────
@@ -660,7 +660,7 @@ pub fn get_grid_triangles(divisions: u32) -> Vec<u32> {
 #[cfg(test)]
 pub fn bake_impl(draft: &WizardDraft) -> PlanetSnapshot {
     let model = bake_model(draft);
-    snapshot_model(&model, draft.divisions)
+    snapshot_model(&model, draft.divisions, false)
 }
 
 #[cfg(test)]
