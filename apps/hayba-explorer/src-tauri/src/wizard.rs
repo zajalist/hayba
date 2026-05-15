@@ -23,6 +23,7 @@ use hayba_tectonics_v2::field::Crust;
 use hayba_tectonics_v2::model::{Model, MAX_PLATE_SPEED};
 use hayba_tectonics_v2::sphere::Grid;
 
+use crate::climate::{self, ClimateParams};
 use crate::planet::{snapshot_model, PlanetSnapshot};
 use crate::sim_state::{ManagedSim, SimState};
 use tauri::State;
@@ -199,10 +200,11 @@ pub fn roll_seed() -> u64 {
 pub fn bake_from_wizard(
     draft: WizardDraft,
     want_climate_debug: bool,
+    climate_params: climate::ClimateParams,
     sim: State<'_, ManagedSim>,
 ) -> PlanetSnapshot {
     let model = bake_model(&draft);
-    let snap = snapshot_model(&model, draft.divisions, want_climate_debug);
+    let snap = snapshot_model(&model, draft.divisions, want_climate_debug, &climate_params);
     let mut guard = sim.0.lock().expect("sim mutex poisoned");
     *guard = Some(SimState {
         model,
@@ -217,6 +219,7 @@ pub fn bake_from_wizard(
 pub fn step_planet(
     n_steps: u32,
     want_climate_debug: bool,
+    climate_params: climate::ClimateParams,
     sim: State<'_, ManagedSim>,
 ) -> Result<PlanetSnapshot, String> {
     let mut guard = sim.0.lock().map_err(|_| "sim mutex poisoned".to_string())?;
@@ -224,7 +227,7 @@ pub fn step_planet(
     for _ in 0..n_steps {
         state.model.step(state.dt_ma);
     }
-    Ok(snapshot_model(&state.model, state.divisions, want_climate_debug))
+    Ok(snapshot_model(&state.model, state.divisions, want_climate_debug, &climate_params))
 }
 
 /// Drop the persisted model — called on edit-wizard / new bake.
@@ -304,7 +307,7 @@ pub fn apply_boundary_types(
     }
 
     let _ = counts; // silence unused; kept for future inertia recompute
-    Ok(snapshot_model(&state.model, state.divisions, false))
+    Ok(snapshot_model(&state.model, state.divisions, false, &ClimateParams::default()))
 }
 
 /// Apply a plate density rank to the running model. The frontend ships a
@@ -327,7 +330,7 @@ pub fn apply_density_rank(
             plate.density = d;
         }
     }
-    Ok(snapshot_model(&state.model, state.divisions, false))
+    Ok(snapshot_model(&state.model, state.divisions, false, &ClimateParams::default()))
 }
 
 // ── Preset rasters, embedded at compile time ─────────────────────────────
@@ -662,7 +665,7 @@ pub fn get_grid_triangles(divisions: u32) -> Vec<u32> {
 #[cfg(test)]
 pub fn bake_impl(draft: &WizardDraft) -> PlanetSnapshot {
     let model = bake_model(draft);
-    snapshot_model(&model, draft.divisions, false)
+    snapshot_model(&model, draft.divisions, false, &ClimateParams::default())
 }
 
 #[cfg(test)]

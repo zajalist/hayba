@@ -17,6 +17,7 @@ import DensitiesPanelDocked from "./components/panels/DensitiesPanelDocked";
 import SimulatePanel from "./components/panels/SimulatePanel";
 import SettingsPanel, { MAP_MODES } from "./components/panels/SettingsPanel";
 import TexturingPanel from "./components/panels/TexturingPanel";
+import ClimateLabPanel, { DEFAULT_CLIMATE_PARAMS, type ClimateParams } from "./components/panels/ClimateLabPanel";
 import DockToolbar, { type ToolName } from "./components/DockToolbar";
 import RecenterButton from "./components/RecenterButton";
 import ConfirmDialog from "./components/ConfirmDialog";
@@ -260,6 +261,12 @@ export default function App() {
   const mapModeRef = useRef(0);
   useEffect(() => { mapModeRef.current = mapMode; }, [mapMode]);
 
+  // Live-tunable climate constants. Defaults are byte-identical to the Rust
+  // ClimateParams::default(), so behaviour is unchanged until a slider moves.
+  const [climateParams, setClimateParams] = useState<ClimateParams>(DEFAULT_CLIMATE_PARAMS);
+  const climateParamsRef = useRef<ClimateParams>(DEFAULT_CLIMATE_PARAMS);
+  useEffect(() => { climateParamsRef.current = climateParams; }, [climateParams]);
+
   useEffect(() => { globeMeshRef.current?.setSatMap(satMap); }, [satMap]);
   useEffect(() => { globeMeshRef.current?.setExaggeration(exaggeration); }, [exaggeration]);
   useEffect(() => { globeMeshRef.current?.setShowPlateOutlines(showPlateOutlines); }, [showPlateOutlines]);
@@ -462,6 +469,44 @@ export default function App() {
     boundaryModelRef.current = snapshot ? BoundaryModel.fromSnapshot(snapshot) : null;
   }, [snapshot]);
 
+  // Live climate re-snapshot. When the user moves a Climate Lab slider and a
+  // baked planet exists (and we're NOT actively playing — the rAF tick loop
+  // already feeds the latest params each frame), re-run the climate model on
+  // the persisted sim WITHOUT advancing it: step_planet with nSteps:0 runs the
+  // `for _ in 0..n_steps` loop zero times, so the tectonic state is untouched
+  // and only the climate fields are recomputed with the new params. Skipped
+  // pre-bake (no persisted model) and while playing (would double-step).
+  useEffect(() => {
+    if (mode === "wizard" || mode === "baking") return;
+    if (!snapshotRef.current || playing) return;
+    let cancelled = false;
+    invoke<PlanetSnapshot>("step_planet", {
+      nSteps: 0,
+      wantClimateDebug: true,
+      climateParams,
+    })
+      .then((snap) => {
+        if (cancelled) return;
+        setSnapshot(snap);
+        const bm = BoundaryModel.fromSnapshot(snap);
+        boundaryModelRef.current = bm;
+        const drft = draftRef.current;
+        if (drft) {
+          globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE, {
+            model: bm, assignments: drft.boundary_types,
+          });
+        } else {
+          globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE);
+        }
+        globeMeshRef.current?.updateFromSnapshot(snap);
+      })
+      .catch((e) => setError(String(e)));
+    return () => { cancelled = true; };
+    // Intentionally keyed only on climateParams: this is the param-change
+    // refresh, not a general snapshot/mode reaction.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [climateParams]);
+
   // Re-tint baked boundaries whenever assignments change in any post-bake phase.
   useEffect(() => {
     if (mode === "wizard" || mode === "baking" || !snapshot || !draft) return;
@@ -481,7 +526,11 @@ export default function App() {
     let cancelled = false;
     const tick = () => {
       if (cancelled || !playingRef.current) return;
-      invoke<PlanetSnapshot>("step_planet", { nSteps: speedRef.current, wantClimateDebug: true })
+      invoke<PlanetSnapshot>("step_planet", {
+        nSteps: speedRef.current,
+        wantClimateDebug: true,
+        climateParams: climateParamsRef.current,
+      })
         .then((snap) => {
           if (cancelled || !playingRef.current) return;
           setSnapshot(snap);
@@ -837,7 +886,11 @@ export default function App() {
         ? heightPainterRef.current.toDraftFields()
         : { painted_elevations: [], painted_mask: [] };
       const finalDraft: WizardDraft = { ...draft, ...paintedFields };
-      const snap = await invoke<PlanetSnapshot>("bake_from_wizard", { draft: finalDraft, wantClimateDebug: true });
+      const snap = await invoke<PlanetSnapshot>("bake_from_wizard", {
+        draft: finalDraft,
+        wantClimateDebug: true,
+        climateParams: climateParamsRef.current,
+      });
       setSnapshot(snap);
       // After bake → land on the Boundaries phase (the next step in the
       // wizard sequence). User clicks Next/Start to advance to densities
@@ -943,6 +996,7 @@ export default function App() {
   const categoryEnabled: Record<PanelCategory, boolean> = {
     compose:    true,
     texturing:  mode === "boundaries" || mode === "densities" || mode === "simulating",
+    climate:    mode === "boundaries" || mode === "densities" || mode === "simulating",
     boundaries: mode === "boundaries" || mode === "densities" || mode === "simulating",
     densities:  mode === "densities" || mode === "simulating",
     simulate:   mode === "simulating",
@@ -950,6 +1004,7 @@ export default function App() {
   };
   const categoryDisabledReason: Partial<Record<PanelCategory, string>> = {
     texturing:  "Bake the planet first",
+    climate:    "Bake the planet first",
     boundaries: "Bake the planet to edit boundaries",
     densities:  "Complete boundaries to rank densities",
     simulate:   "Start the simulation from the Densities panel",
@@ -1111,6 +1166,14 @@ export default function App() {
 
         {panelCategory === "texturing" && snapshot && (
           <TexturingPanel assignments={biomeAssignments} remap={biomeRemap} onAssign={handleAssignBiome} onRemap={handleRemapBiome} />
+        )}
+
+        {panelCategory === "climate" && snapshot && (
+          <ClimateLabPanel
+            params={climateParams}
+            onChange={setClimateParams}
+            onFocusGroup={(m) => setMapMode(m)}
+          />
         )}
 
         {panelCategory === "boundaries" && snapshot && draft && (

@@ -14,6 +14,7 @@ export interface RightPanelProps {
 const TITLES: Record<PanelCategory, { title: string; subtitle: string }> = {
   compose:    { title: "Compose",    subtitle: "Initial conditions" },
   texturing:  { title: "Texturing",  subtitle: "Per-biome SatMaps" },
+  climate:    { title: "Climate Lab", subtitle: "Tune the model" },
   boundaries: { title: "Boundaries", subtitle: "Post-bake plate seams" },
   densities:  { title: "Densities",  subtitle: "Rank plates by density" },
   simulate:   { title: "Simulate",   subtitle: "Run the tectonic clock" },

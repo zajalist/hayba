@@ -6,14 +6,61 @@
 use glam::Vec3;
 use hayba_tectonics_v2::model::Model;
 
-/// Sea-level equatorial mean temperature (°C).
-const T_EQUATOR: f32 = 30.0;
-/// Equator→pole annual-mean cooling (°C) at sea level.
-const T_LAT_DROP: f32 = 50.0;
-/// Environmental lapse rate (°C per km) — worldbuildingpasta.
-const LAPSE_C_PER_KM: f32 = 4.46;
-/// vElevation 1.0 ≈ this many km (matches the shader's elevKm scaling).
-const ELEV_KM_SCALE: f32 = 8.0;
+/// User-tunable climate constants. Every default is byte-identical to the
+/// hardcoded constant / inline magic it replaces, so `ClimateParams::default()`
+/// reproduces today's behaviour exactly. Deserialized from the Tauri command
+/// payload; `#[serde(default)]` means a missing/partial JSON object still
+/// yields the full default set (per-field defaults via the Default impl).
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(default)]
+pub struct ClimateParams {
+    /// Sea-level equatorial mean temperature (°C).
+    pub t_equator: f32,
+    /// Equator→pole annual-mean cooling (°C) at sea level.
+    pub t_lat_drop: f32,
+    /// Environmental lapse rate (°C per km).
+    pub lapse_c_per_km: f32,
+    /// vElevation 1.0 ≈ this many km (matches the shader's elevKm scaling).
+    pub elev_km_scale: f32,
+    /// Coastalness → inland cooling amplitude (°C). Inline `coastalness * 6.0`.
+    pub continental_cool: f32,
+    /// Warm-side coastal current SST anomaly cap (°C).
+    pub current_warm: f32,
+    /// Cold-side coastal current SST anomaly cap (°C).
+    pub current_cold: f32,
+    /// Per-hop downwind moisture decay factor in the relaxation sweep.
+    pub moisture_decay: f32,
+    /// ITCZ band half-width (deg) in `zonal_precip`.
+    pub itcz_width_deg: f32,
+    /// Multiplier on the windward orographic precip enhancement.
+    pub orographic_gain: f32,
+    /// Multiplier on the lee rain-shadow precip cut.
+    pub rain_shadow: f32,
+    /// Boreal/tundra→colder thermal boundary (°C) in `classify_biome`.
+    pub biome_cold_c: f32,
+    /// Tropical-onset thermal boundary (°C) in `classify_biome`.
+    pub biome_hot_c: f32,
+}
+
+impl Default for ClimateParams {
+    fn default() -> Self {
+        Self {
+            t_equator: 30.0,
+            t_lat_drop: 50.0,
+            lapse_c_per_km: 4.46,
+            elev_km_scale: 8.0,
+            continental_cool: 6.0,
+            current_warm: 12.0,
+            current_cold: 10.0,
+            moisture_decay: 0.94,
+            itcz_width_deg: 16.0,
+            orographic_gain: 0.6,
+            rain_shadow: 0.5,
+            biome_cold_c: 6.0,
+            biome_hot_c: 18.0,
+        }
+    }
+}
 
 /// Latitude in radians from a unit-sphere position (Y-up). 0 = equator,
 /// ±π/2 = poles.
@@ -24,10 +71,10 @@ pub fn latitude_rad(p: Vec3) -> f32 {
 /// Annual-mean base surface temperature (°C) before continentality /
 /// currents. Latitude falloff uses sin²(lat) (smooth, peaks at equator),
 /// minus the elevation lapse.
-pub fn base_temperature_c(p: Vec3, elevation: f32) -> f32 {
+pub fn base_temperature_c(p: Vec3, elevation: f32, params: &ClimateParams) -> f32 {
     let s = p.y.clamp(-1.0, 1.0); // sin(lat)
-    let elev_km = elevation.max(0.0) * ELEV_KM_SCALE;
-    T_EQUATOR - T_LAT_DROP * (s * s) - LAPSE_C_PER_KM * elev_km
+    let elev_km = elevation.max(0.0) * params.elev_km_scale;
+    params.t_equator - params.t_lat_drop * (s * s) - params.lapse_c_per_km * elev_km
 }
 
 /// Multi-source BFS from every ocean cell simultaneously. Returns hop
@@ -96,7 +143,12 @@ fn upwind_neighbour(pos: &[Vec3], neighbours: &[Vec<u32>], i: usize, wind: Vec3)
 /// lies poleward (cold equatorward current / upwelling). Peaks mid-high
 /// latitude (~45–60°), decays to ~0 inland. Geography-driven from the
 /// per-cell mean ocean direction — no fixed-longitude basins.
-pub fn current_temp_anomaly(p: Vec3, ocean_dir: Vec3, coastalness: f32) -> f32 {
+pub fn current_temp_anomaly(
+    p: Vec3,
+    ocean_dir: Vec3,
+    coastalness: f32,
+    params: &ClimateParams,
+) -> f32 {
     if ocean_dir.length_squared() < 1e-6 {
         return 0.0; // landlocked: no nearby ocean to advect anything
     }
@@ -114,8 +166,8 @@ pub fn current_temp_anomaly(p: Vec3, ocean_dir: Vec3, coastalness: f32) -> f32 {
     let lat_deg = lat.abs().to_degrees();
     let strength = (1.0 - ((lat_deg - 52.0) / 38.0).powi(2)).clamp(0.0, 1.0);
     let coastal = (1.0 - coastalness).clamp(0.0, 1.0);
-    // Warm side up to +12 °C, cold side down to −10 °C.
-    let amp = if s >= 0.0 { 12.0 } else { 10.0 };
+    // Warm side up to +current_warm °C, cold side down to −current_cold °C.
+    let amp = if s >= 0.0 { params.current_warm } else { params.current_cold };
     s * strength * coastal * coastal * amp
 }
 
@@ -165,9 +217,9 @@ fn smoothstep01(x: f32) -> f32 {
 /// Latitudinal precipitation base (worldbuildingpasta cells): wet ITCZ
 /// (~0°), dry subtropics (~30°), wet mid-lats (~55–60°), dry poles.
 /// Returns ~[0,1].
-pub fn zonal_precip(lat_rad: f32) -> f32 {
+pub fn zonal_precip(lat_rad: f32, params: &ClimateParams) -> f32 {
     let d = lat_rad.abs().to_degrees();
-    let itcz    = 1.0 - smoothstep(0.0, 16.0, d);
+    let itcz    = 1.0 - smoothstep(0.0, params.itcz_width_deg, d);
     let subtrop = 1.0 - smoothstep(0.0, 12.0, (d - 30.0).abs());
     let midlat  = 1.0 - smoothstep(0.0, 14.0, (d - 58.0).abs());
     let polar   = smoothstep(62.0, 82.0, d);
@@ -197,17 +249,17 @@ pub const BIOME_ICE: u8 = 9;
 /// Whittaker classification from annual mean temperature (°C) and
 /// precipitation (0..1). Hard cut by temperature first (Köppen-style
 /// thermal limits), then precipitation within the thermal band.
-pub fn classify_biome(temp_c: f32, precip: f32) -> u8 {
+pub fn classify_biome(temp_c: f32, precip: f32, params: &ClimateParams) -> u8 {
     if temp_c < -15.0 {
         return BIOME_ICE;
     }
     if temp_c < -2.0 {
         return BIOME_TUNDRA;
     }
-    if temp_c < 6.0 {
+    if temp_c < params.biome_cold_c {
         return BIOME_BOREAL;
     }
-    if temp_c < 18.0 {
+    if temp_c < params.biome_hot_c {
         if precip > 0.7 {
             return BIOME_TEMPERATE_RAINFOREST;
         }
@@ -258,7 +310,12 @@ pub struct ClimateDebug {
 
 /// Run the full annual-mean climate model. O(cells): one BFS + per-cell
 /// analytic passes + one bounded orographic neighbour read.
-pub fn compute_climate(model: &Model, seed: u64, want_debug: bool) -> ClimateFields {
+pub fn compute_climate(
+    model: &Model,
+    seed: u64,
+    want_debug: bool,
+    params: &ClimateParams,
+) -> ClimateFields {
     let grid = &model.grid;
     let n = grid.n_fields() as usize;
 
@@ -328,7 +385,7 @@ pub fn compute_climate(model: &Model, seed: u64, want_debug: bool) -> ClimateFie
             let ui = u as usize;
             let rise = (elev[i] - elev[ui]).max(0.0);
             let block = 1.0 - smoothstep(0.06, 0.20, rise);
-            moist[i] = moist[i].max(moist[ui] * 0.94 * block);
+            moist[i] = moist[i].max(moist[ui] * params.moisture_decay * block);
         }
     }
 
@@ -362,9 +419,9 @@ pub fn compute_climate(model: &Model, seed: u64, want_debug: bool) -> ClimateFie
             (hops[i] as f32 / max_hop as f32).clamp(0.0, 1.0)
         };
 
-        let base_t = base_temperature_c(p, elev[i]);
-        let cur_dt = current_temp_anomaly(p, ocean_dir[i], coastalness);
-        let cont_cool = coastalness * 6.0;
+        let base_t = base_temperature_c(p, elev[i], params);
+        let cur_dt = current_temp_anomaly(p, ocean_dir[i], coastalness, params);
+        let cont_cool = coastalness * params.continental_cool;
         let t = base_t + cur_dt - cont_cool;
         temperature[i] = t;
 
@@ -377,24 +434,24 @@ pub fn compute_climate(model: &Model, seed: u64, want_debug: bool) -> ClimateFie
         }
         let orographic = (up_grad * 6.0).clamp(-1.0, 1.0);
 
-        let zonal = zonal_precip(lat);
+        let zonal = zonal_precip(lat, params);
         let cont = continental_factor(if hops[i] == u32::MAX { max_hop } else { hops[i] });
         let pn = value_noise(p * 3.5, seed) - 0.5;
         // Physically-ordered precip: humid air supply (zonal vs.
         // transported ocean moisture) lifted on windward slopes (oro),
         // wrung out on the lee (lee), with residual continental drying.
         let base_h = zonal.max(moist[i] * 0.85);
-        let oro = orographic.max(0.0) * 0.6;
-        let lee = (-orographic).max(0.0) * 0.5;
+        let oro = orographic.max(0.0) * params.orographic_gain;
+        let lee = (-orographic).max(0.0) * params.rain_shadow;
         let dry = 1.0 - cont;
         let pr =
             (base_h + oro - lee - dry * 0.5 + pn * 0.12).clamp(0.0, 1.0);
         precip[i] = pr;
 
-        let primary = classify_biome(t, pr);
+        let primary = classify_biome(t, pr, params);
         let nt = (value_noise(p * 9.0, seed ^ 0x9E37) - 0.5) * 6.0;
         let np = (value_noise(p * 9.0, seed ^ 0x1234) - 0.5) * 0.20;
-        let secondary = classify_biome(t + nt, (pr + np).clamp(0.0, 1.0));
+        let secondary = classify_biome(t + nt, (pr + np).clamp(0.0, 1.0), params);
         let blend = if secondary == primary {
             0.0
         } else {
@@ -444,8 +501,9 @@ mod tests {
 
     #[test]
     fn equator_warmer_than_pole() {
-        let eq = base_temperature_c(Vec3::new(1.0, 0.0, 0.0), 0.0);
-        let pole = base_temperature_c(Vec3::new(0.0, 1.0, 0.0), 0.0);
+        let cp = ClimateParams::default();
+        let eq = base_temperature_c(Vec3::new(1.0, 0.0, 0.0), 0.0, &cp);
+        let pole = base_temperature_c(Vec3::new(0.0, 1.0, 0.0), 0.0, &cp);
         assert!(eq > 25.0, "equator should be warm, got {}", eq);
         assert!(pole < 0.0, "pole should be freezing, got {}", pole);
         assert!(eq - pole > 40.0, "equator-pole gradient too small");
@@ -453,8 +511,9 @@ mod tests {
 
     #[test]
     fn mountains_are_colder() {
-        let lowland = base_temperature_c(Vec3::new(1.0, 0.0, 0.0), 0.0);
-        let peak = base_temperature_c(Vec3::new(1.0, 0.0, 0.0), 1.0);
+        let cp = ClimateParams::default();
+        let lowland = base_temperature_c(Vec3::new(1.0, 0.0, 0.0), 0.0, &cp);
+        let peak = base_temperature_c(Vec3::new(1.0, 0.0, 0.0), 1.0, &cp);
         assert!(lowland - peak > 30.0, "8km peak should be ~35°C colder");
     }
 
@@ -493,6 +552,7 @@ mod tests {
 
     #[test]
     fn current_anomaly_bounded_and_signed() {
+        let cp = ClimateParams::default();
         // ~45°N mid-latitude coastal cell.
         let p = Vec3::new(0.5, 0.7, 0.5).normalize();
         // Equatorward unit tangent at p (toward equator, in tangent plane).
@@ -502,21 +562,21 @@ mod tests {
 
         // Ocean equatorward → warm water advected poleward → warm anomaly,
         // and the magnitude must stay inside the ±12 °C envelope.
-        let warm = current_temp_anomaly(p, equatorward, 0.05);
+        let warm = current_temp_anomaly(p, equatorward, 0.05, &cp);
         assert!(warm.abs() <= 12.001, "anomaly out of range: {}", warm);
         assert!(warm > 0.0, "ocean equatorward should warm the coast: {}", warm);
 
         // Same cell, ocean poleward → cold current / upwelling → cold.
-        let cold = current_temp_anomaly(p, poleward, 0.05);
+        let cold = current_temp_anomaly(p, poleward, 0.05, &cp);
         assert!(cold.abs() <= 12.001, "anomaly out of range: {}", cold);
         assert!(cold < 0.0, "ocean poleward should cool the coast: {}", cold);
 
         // Deep interior: effect decays to ~0 regardless of ocean dir.
-        let deep_inland = current_temp_anomaly(p, equatorward, 0.95);
+        let deep_inland = current_temp_anomaly(p, equatorward, 0.95, &cp);
         assert!(deep_inland.abs() < 1.0, "interior should be ~unaffected: {}", deep_inland);
 
         // Landlocked (zero ocean direction) → exactly no anomaly.
-        let landlocked = current_temp_anomaly(p, Vec3::ZERO, 0.05);
+        let landlocked = current_temp_anomaly(p, Vec3::ZERO, 0.05, &cp);
         assert_eq!(landlocked, 0.0, "no nearby ocean → no anomaly");
     }
 
@@ -533,9 +593,10 @@ mod tests {
 
     #[test]
     fn zonal_precip_wet_itcz_dry_subtropics() {
-        let itcz   = zonal_precip(0.0_f32.to_radians());
-        let dry30  = zonal_precip(30.0_f32.to_radians());
-        let mid55  = zonal_precip(55.0_f32.to_radians());
+        let cp = ClimateParams::default();
+        let itcz   = zonal_precip(0.0_f32.to_radians(), &cp);
+        let dry30  = zonal_precip(30.0_f32.to_radians(), &cp);
+        let mid55  = zonal_precip(55.0_f32.to_radians(), &cp);
         assert!(itcz > dry30, "ITCZ ({}) must be wetter than 30° ({})", itcz, dry30);
         assert!(mid55 > dry30, "mid-lat ({}) wetter than 30° ({})", mid55, dry30);
         assert!((0.0..=1.0).contains(&itcz));
@@ -551,20 +612,22 @@ mod tests {
 
     #[test]
     fn whittaker_classifies_canonical_points() {
-        assert_eq!(classify_biome(28.0, 0.9), BIOME_TROPICAL_RAINFOREST);
-        assert_eq!(classify_biome(28.0, 0.1), BIOME_HOT_DESERT);
-        assert_eq!(classify_biome(28.0, 0.45), BIOME_TROPICAL_SAVANNA);
-        assert_eq!(classify_biome(12.0, 0.9), BIOME_TEMPERATE_RAINFOREST);
-        assert_eq!(classify_biome(12.0, 0.2), BIOME_GRASSLAND);
-        assert_eq!(classify_biome(2.0, 0.6), BIOME_BOREAL);
-        assert_eq!(classify_biome(-8.0, 0.5), BIOME_TUNDRA);
-        assert_eq!(classify_biome(-25.0, 0.5), BIOME_ICE);
+        let cp = ClimateParams::default();
+        assert_eq!(classify_biome(28.0, 0.9, &cp), BIOME_TROPICAL_RAINFOREST);
+        assert_eq!(classify_biome(28.0, 0.1, &cp), BIOME_HOT_DESERT);
+        assert_eq!(classify_biome(28.0, 0.45, &cp), BIOME_TROPICAL_SAVANNA);
+        assert_eq!(classify_biome(12.0, 0.9, &cp), BIOME_TEMPERATE_RAINFOREST);
+        assert_eq!(classify_biome(12.0, 0.2, &cp), BIOME_GRASSLAND);
+        assert_eq!(classify_biome(2.0, 0.6, &cp), BIOME_BOREAL);
+        assert_eq!(classify_biome(-8.0, 0.5, &cp), BIOME_TUNDRA);
+        assert_eq!(classify_biome(-25.0, 0.5, &cp), BIOME_ICE);
     }
 
     #[test]
     fn equatorial_peak_is_cold_not_rainforest() {
-        let t = base_temperature_c(Vec3::new(1.0, 0.0, 0.0), 1.0);
-        let b = classify_biome(t, 0.9);
+        let cp = ClimateParams::default();
+        let t = base_temperature_c(Vec3::new(1.0, 0.0, 0.0), 1.0, &cp);
+        let b = classify_biome(t, 0.9, &cp);
         assert!(b == BIOME_TUNDRA || b == BIOME_ICE || b == BIOME_BOREAL,
                 "tall equatorial peak must be a cold biome, got {}", b);
     }
@@ -574,14 +637,15 @@ mod tests {
         use hayba_tectonics_v2::model::Model;
         let model = Model::new(16, 7);
         let n = model.grid.n_fields() as usize;
-        let cf = compute_climate(&model, 7, true);
+        let cp = ClimateParams::default();
+        let cf = compute_climate(&model, 7, true, &cp);
         assert_eq!(cf.temperature.len(), n);
         assert_eq!(cf.precip.len(), n);
         assert_eq!(cf.biome.len(), n);
         let dbg = cf.debug.expect("debug requested");
         assert_eq!(dbg.dist_to_ocean.len(), n);
         assert!(cf.biome.iter().all(|&b| b <= 9.0));
-        let cf2 = compute_climate(&model, 7, false);
+        let cf2 = compute_climate(&model, 7, false, &cp);
         assert!(cf2.debug.is_none());
     }
 
@@ -590,7 +654,7 @@ mod tests {
         use hayba_tectonics_v2::model::Model;
         let model = Model::new(16, 7);
         let n = model.grid.n_fields() as usize;
-        let cf = compute_climate(&model, 7, false);
+        let cf = compute_climate(&model, 7, false, &ClimateParams::default());
         assert_eq!(cf.biome2.len(), n);
         assert_eq!(cf.biome_blend.len(), n);
         assert!(
@@ -609,8 +673,8 @@ mod tests {
         let model = Model::new(16, 7);
         let n = model.grid.n_fields() as usize;
 
-        let a = compute_climate(&model, 7, false);
-        let b = compute_climate(&model, 7, false);
+        let a = compute_climate(&model, 7, false, &ClimateParams::default());
+        let b = compute_climate(&model, 7, false, &ClimateParams::default());
         assert_eq!(a.cell_seed.len(), n * 3, "cell_seed must be n*3");
         // Index-derived only → bit-identical across calls on the same model.
         assert_eq!(

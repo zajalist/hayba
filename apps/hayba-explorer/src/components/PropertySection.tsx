@@ -2,7 +2,9 @@ import React from "react";
 import { colors } from "@hayba/design-tokens";
 
 export interface PropertySectionProps {
-  heading: string;
+  /** Section label. Usually a string; ReactNode allows an interactive
+   *  header (e.g. the Climate Lab's auto-pair 📊 toggle). */
+  heading: React.ReactNode;
   children: React.ReactNode;
 }
 
