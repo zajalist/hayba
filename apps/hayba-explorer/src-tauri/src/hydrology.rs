@@ -135,6 +135,72 @@ pub fn drainage_area(recv: &[u32], cell_area: f32) -> Vec<f32> {
     area
 }
 
+/// One explicit stream-power incision pass (Cordonnier / Braun-Willett):
+/// for each land cell, dz = -K * A^m * S^n * dt, where A is drainage
+/// area, S the slope to its receiver. Ocean cells are fixed base level.
+/// Clamped so a single step cannot punch a land cell below sea level
+/// (prevents fluvial from manufacturing oceans; that is tectonics' job).
+fn stream_power_step(
+    recv: &[u32],
+    pos: &[Vec3],
+    area: &[f32],
+    elev: &mut [f32],
+    is_ocean: &[bool],
+    dt: f32,
+    p: &ErosionParams,
+) {
+    let n = elev.len();
+    for i in 0..n {
+        if is_ocean[i] { continue; }
+        let r = recv[i] as usize;
+        if r == i { continue; } // sink: no incision this pass
+        let d = pos[i].distance(pos[r]).max(1e-6);
+        let s = ((elev[i] - elev[r]) / d).max(0.0);
+        let incision = p.erodibility * area[i].powf(p.area_exp)
+            * s.powf(p.slope_exp) * dt;
+        let next = elev[i] - incision;
+        // never erode a land cell below its receiver (no inversions) or
+        // below sea level via fluvial alone.
+        elev[i] = next.max(elev[r]).max(0.0);
+    }
+}
+
+/// Full erosion driver: `iterations` of (uplift land → Priority-Flood →
+/// receivers → drainage area → stream-power incision). Mutates `elev`
+/// in place. `cell_area` is the mean cell area (km²) from the grid.
+pub fn erode(
+    neighbours: &[Vec<u32>],
+    pos: &[Vec3],
+    elev: &mut [f32],
+    is_ocean: &[bool],
+    cell_area: f32,
+    p: &ErosionParams,
+) {
+    let dt = 1.0_f32;
+    for _ in 0..p.iterations {
+        for i in 0..elev.len() {
+            if !is_ocean[i] { elev[i] += p.uplift; }
+        }
+        let filled = priority_flood(neighbours, elev, is_ocean);
+        let recv = flow_receivers(neighbours, pos, &filled);
+        let area = drainage_area(&recv, cell_area);
+        stream_power_step(&recv, pos, &area, elev, is_ocean, dt, p);
+    }
+}
+
+/// River mask in [0,1]: 1 where drainage area exceeds
+/// `threshold_frac * max_area`, with a soft edge.
+pub fn river_mask(area: &[f32], threshold_frac: f32) -> Vec<f32> {
+    let max_a = area.iter().cloned().fold(0.0_f32, f32::max).max(1e-6);
+    let thr = threshold_frac * max_a;
+    area.iter()
+        .map(|&a| {
+            let t = (a - thr * 0.5) / (thr * 0.5).max(1e-6);
+            t.clamp(0.0, 1.0)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,5 +253,31 @@ mod tests {
         assert!((a[2] - 10.0).abs() < 1e-3);
         assert!((a[1] - 20.0).abs() < 1e-3);
         assert!((a[0] - 30.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn erode_lowers_land_toward_base_level_and_conserves_ocean() {
+        // 3 cells: ocean(0.0) - 1(1.0) - 2(1.0). Erosion must lower land,
+        // never touch ocean, never invert order, stay finite.
+        let neighbours = vec![vec![1u32], vec![0, 2], vec![1]];
+        let pos = vec![Vec3::X, Vec3::new(1.0,0.1,0.0).normalize(),
+                       Vec3::new(1.0,0.2,0.0).normalize()];
+        let mut elev = vec![0.0_f32, 1.0, 1.0];
+        let is_ocean = vec![true, false, false];
+        let p = ErosionParams::default();
+        erode(&neighbours, &pos, &mut elev, &is_ocean, 1.0, &p);
+        assert!((elev[0]).abs() < 1e-6, "ocean cell untouched");
+        assert!(elev[1].is_finite() && elev[2].is_finite());
+        assert!(elev[1] <= 1.0 + 1e-6 && elev[2] <= 1.0 + 1e-6,
+                "land not raised above start by net erosion");
+        assert!(elev[1] >= 0.0, "land not eroded below sea level by fluvial");
+    }
+
+    #[test]
+    fn river_mask_marks_high_drainage_cells() {
+        let area = vec![100.0_f32, 5.0, 1.0];
+        let m = river_mask(&area, 0.1); // threshold = 0.1 * max(=100) = 10
+        assert!(m[0] > 0.5, "big drainage = river");
+        assert!(m[1] < 0.5 && m[2] < 0.5, "small drainage = not river");
     }
 }
