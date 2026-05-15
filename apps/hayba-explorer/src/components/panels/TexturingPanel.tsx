@@ -33,7 +33,7 @@ export default function TexturingPanel(p: TexturingPanelProps): React.ReactEleme
   const r = p.remap[active] ?? DEFAULT_REMAP;
 
   const categories = React.useMemo(() => Object.keys(SATMAP_FAMILIES).sort(), []);
-  const names = cat === "All" ? SATMAP_NAMES : SATMAP_FAMILIES[cat] ?? [];
+  const batches = cat === "All" ? categories : [cat];
 
   const emit = (next: { min: number; max: number; bias: number }) => {
     let { min, max, bias } = next;
@@ -161,72 +161,84 @@ export default function TexturingPanel(p: TexturingPanelProps): React.ReactEleme
         </select>
       </div>
 
-      {/* Scrollable SatMap gradient-row library (Gaea-style: one strip per row) */}
-      <div
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: "6px 8px",
-          display: "flex",
-          flexDirection: "column",
-          gap: 3,
-          alignContent: "start",
-        }}
-      >
-        {names.map((name) => {
-          const selected = name === current;
-          const url = satMapUrl(name);
+      {/* SatMap library — batched by family, smaller wrapped gradient swatches */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "6px 8px" }}>
+        {batches.map((fam) => {
+          const famNames = SATMAP_FAMILIES[fam] ?? [];
+          if (famNames.length === 0) return null;
           return (
-            <button
-              key={name}
-              onClick={() => p.onAssign(active, name)}
-              title={name}
-              style={{
-                position: "relative",
-                width: "100%",
-                height: 22,
-                flex: "0 0 auto",
-                padding: 0,
-                border: `1px solid ${selected ? colors.accent : colors.borderMid}`,
-                borderRadius: 3,
-                cursor: "pointer",
-                overflow: "hidden",
-                display: "block",
-              }}
-            >
-              <img
-                src={url}
-                alt={name}
+            <div key={fam} style={{ marginBottom: 10 }}>
+              <div
                 style={{
-                  position: "absolute",
-                  inset: 0,
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "cover",
-                  display: "block",
-                }}
-              />
-              <span
-                style={{
-                  position: "absolute",
-                  left: 6,
-                  top: "50%",
-                  transform: "translateY(-50%)",
                   fontSize: 10,
-                  lineHeight: "12px",
-                  color: "#fff",
-                  fontFamily: fonts.mono,
-                  textShadow: "0 1px 2px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,0.9)",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  maxWidth: "calc(100% - 12px)",
-                  pointerEvents: "none",
+                  textTransform: "uppercase",
+                  letterSpacing: 0.4,
+                  color: colors.textMuted,
+                  fontFamily: fonts.sans,
+                  margin: "4px 2px 5px",
                 }}
               >
-                {name}
-              </span>
-            </button>
+                {fam} <span style={{ opacity: 0.6 }}>({famNames.length})</span>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                {famNames.map((name) => {
+                  const selected = name === current;
+                  const url = satMapUrl(name);
+                  return (
+                    <button
+                      key={name}
+                      onClick={() => p.onAssign(active, name)}
+                      title={name}
+                      style={{
+                        position: "relative",
+                        width: 84,
+                        height: 30,
+                        flex: "0 0 auto",
+                        padding: 0,
+                        border: `1px solid ${selected ? colors.accent : colors.borderMid}`,
+                        borderRadius: 3,
+                        cursor: "pointer",
+                        overflow: "hidden",
+                        display: "block",
+                      }}
+                    >
+                      <img
+                        src={url}
+                        alt={name}
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                          display: "block",
+                        }}
+                      />
+                      <span
+                        style={{
+                          position: "absolute",
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          fontSize: 8,
+                          lineHeight: "10px",
+                          color: "#fff",
+                          fontFamily: fonts.mono,
+                          background: "rgba(0,0,0,0.55)",
+                          padding: "1px 3px",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          pointerEvents: "none",
+                        }}
+                      >
+                        {name}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           );
         })}
       </div>
