@@ -751,7 +751,8 @@ export default function App() {
   const handleChangeDivisions = useCallback((divisions: number) => {
     const d = draftRef.current;
     if (!d || divisions === d.divisions) return;
-    if (d.continental_cells.length > 0) {
+    const paintedCells = heightPainterRef.current?.countTouched() ?? 0;
+    if (d.continental_cells.length > 0 || paintedCells > 0) {
       setPendingDivisions(divisions);
       return;
     }
