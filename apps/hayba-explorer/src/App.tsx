@@ -230,11 +230,13 @@ export default function App() {
   const [exaggeration, setExaggeration] = useState(1.0);
   const [showPlateOutlines, setShowPlateOutlines] = useState(true);
   const [showBoundaryGlow, setShowBoundaryGlow] = useState(true);
+  const [mapMode, setMapMode] = useState(0);
 
   useEffect(() => { globeMeshRef.current?.setSatMap(satMap); }, [satMap]);
   useEffect(() => { globeMeshRef.current?.setExaggeration(exaggeration); }, [exaggeration]);
   useEffect(() => { globeMeshRef.current?.setShowPlateOutlines(showPlateOutlines); }, [showPlateOutlines]);
   useEffect(() => { globeMeshRef.current?.setShowBoundaryGlow(showBoundaryGlow); }, [showBoundaryGlow]);
+  useEffect(() => { globeMeshRef.current?.setMapMode(mapMode); }, [mapMode]);
 
   // Click-on-planet boundary popover (replaces selected-seam editor in the side panel)
   const [boundaryPopover, setBoundaryPopover] = useState<{
@@ -1071,6 +1073,8 @@ export default function App() {
             showForceArrows={showForceArrows}
             onToggleLabels={setShowPlateLabels}
             onToggleArrows={setShowForceArrows}
+            mapMode={mapMode}
+            onChangeMapMode={setMapMode}
           />
         )}
       </RightPanel>

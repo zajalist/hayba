@@ -10,6 +10,8 @@ export interface GlobeMeshHandle {
   setExaggeration(x: number): void;
   setShowPlateOutlines(v: boolean): void;
   setShowBoundaryGlow(v: boolean): void;
+  /** Debug map mode: 0 final · 1 temp · 2 moisture · 3 biome · 4 elev · 5 slope · 6 ice · 7 ocean */
+  setMapMode(n: number): void;
   dispose(): void;
 }
 
@@ -78,6 +80,7 @@ export function buildGlobeMesh(
       uOceanColor:        { value: new THREE.Color("#2a6fa8") },
       uShowPlateOutlines: { value: 1.0 },
       uShowBoundaryGlow:  { value: 1.0 },
+      uMapMode:           { value: 0.0 },
     },
     // `derivatives` (dFdx/dFdy) is always available in WebGL2 — no extension needed.
   });
@@ -117,6 +120,7 @@ export function buildGlobeMesh(
     setExaggeration: (x) => { mat.uniforms.uExaggeration.value = x; },
     setShowPlateOutlines: (v) => { mat.uniforms.uShowPlateOutlines.value = v ? 1.0 : 0.0; },
     setShowBoundaryGlow:  (v) => { mat.uniforms.uShowBoundaryGlow.value  = v ? 1.0 : 0.0; },
+    setMapMode: (n) => { mat.uniforms.uMapMode.value = n; },
     dispose: () => { geom.dispose(); mat.dispose(); },
   };
 }
