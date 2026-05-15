@@ -21,6 +21,19 @@ varying float vElev;
 varying vec3 vNormalW;
 uniform vec3 uSunDir;
 
+// Compact value-noise fbm to break the per-cell hexagonal coastline in the
+// compose preview: perturb the colour-ramp coordinate so the land/sea (and
+// depth) thresholds wander sub-cell instead of tracing cell polygons.
+float h3(vec3 p){ p = fract(p * vec3(443.8975, 397.2973, 491.1871));
+  p += dot(p, p.yzx + 19.19); return fract((p.x + p.y) * p.z); }
+float vn(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(h3(i),                h3(i+vec3(1,0,0)), f.x),
+                 mix(h3(i+vec3(0,1,0)),    h3(i+vec3(1,1,0)), f.x), f.y),
+             mix(mix(h3(i+vec3(0,0,1)),    h3(i+vec3(1,0,1)), f.x),
+                 mix(h3(i+vec3(0,1,1)),    h3(i+vec3(1,1,1)), f.x), f.y), f.z); }
+float fbm3(vec3 p){ float v = 0.0, a = 0.5;
+  for (int k = 0; k < 4; k++){ v += vn(p) * a; p *= 2.0; a *= 0.5; } return v; }
+
 vec3 heightRamp(float e) {
   vec3 abyss   = vec3(0.012, 0.055, 0.150);
   vec3 deep    = vec3(0.039, 0.180, 0.361);
@@ -39,7 +52,11 @@ vec3 heightRamp(float e) {
 }
 
 void main() {
-  vec3 base = heightRamp(vElev);
+  // Sub-cell domain warp of the ramp coordinate → organic coast/bands,
+  // not a hexagonal staircase tracing the painted cells.
+  float warp = (fbm3(vNormalW * 7.0)  - 0.5) * 0.11
+             + (fbm3(vNormalW * 19.0) - 0.5) * 0.05;
+  vec3 base = heightRamp(vElev + warp);
   float lambert = max(dot(normalize(vNormalW), normalize(uSunDir)), 0.0);
   vec3 lit = base * (0.45 + 0.55 * lambert);
   gl_FragColor = vec4(lit, 1.0);
