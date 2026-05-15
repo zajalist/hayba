@@ -281,34 +281,33 @@ export const FRAGMENT_SHADER = /* glsl */ `
     float oceanMask  = 1.0 - smoothstep(-coastWidth, coastWidth, seaCoord);
 
     if (oceanMask > 0.001) {
-      // All colours LINEAR (output is linear→sRGB encoded). Per-channel
-      // Beer-Lambert extinction (red dies first). CRITICAL: unpainted
-      // oceans have a NARROW shallow vElevation band (~-0.05..-0.35), not
-      // full -1..0 bathymetry, so the depth scale must be small (~6) or
-      // extinction saturates and the whole ocean collapses to black.
-      vec3  deepAbyss   = vec3(0.012, 0.035, 0.085);  // believable deep ocean blue, not black
-      vec3  shallowBed  = vec3(0.05,  0.16,  0.21);   // muted shallow
-      vec3  extinction  = vec3(0.65, 0.15, 0.05);
-      float depth       = max(-seaCoord, 0.0) * 6.0;
-      vec3  transmit    = exp(-extinction * depth);
-      vec3  water       = mix(deepAbyss, shallowBed, transmit);
+      // Earth-from-orbit ocean is a DARK, DESATURATED BLUE — never cyan.
+      // The previous cyan was a BUG: a per-channel exp() transmittance
+      // vec3 used as the mix() factor forces a teal partial-blend that
+      // never reaches deep navy. Fix: a SCALAR depth lerp between two
+      // dark blues. Both endpoints keep B > G > R with G well below B and
+      // low overall, so the result stays on the blue line at every depth.
+      // All colours LINEAR (output is linear→sRGB encoded).
+      float dWater       = clamp(max(-seaCoord, 0.0) / 0.45, 0.0, 1.0);
+      vec3  shallowWater = vec3(0.015, 0.050, 0.085);
+      vec3  deepWater    = vec3(0.002, 0.010, 0.030);
+      vec3  water        = mix(shallowWater, deepWater, dWater);
 
-      // Subtle large-scale tonal variation so the ocean isn't dead-flat
-      // even when bathymetry is uniform (no painted depth).
-      water *= 0.82 + 0.30 * fbm(vWorldNormal * 4.0);
+      // Faint large-scale tonal variation (subtle, never brightens cyan).
+      water *= 0.90 + 0.16 * fbm(vWorldNormal * 4.0);
 
-      // Schlick fresnel — sky-reflective at grazing angles.
+      // Schlick fresnel — only the planet limb picks up a sky sheen, and
+      // the target is itself a darker blue (not a bright tint).
       vec3  Vo   = normalize(cameraPosition - vWorldPos);
       float NoV  = max(dot(vWorldNormal, Vo), 0.0);
       float fres = 0.02 + 0.98 * pow(1.0 - NoV, 5.0);
-      vec3  skyT = vec3(0.16, 0.32, 0.55);     // linear sky tint
-      water = mix(water, skyT, fres * 0.45);
+      water = mix(water, vec3(0.10, 0.20, 0.38), fres * 0.6);
 
-      // Tight orbital sun glint.
+      // Tight specular sun glint (small sharp white highlight only).
       vec3  Lo  = normalize(uSunDir);
       vec3  Ho  = normalize(Lo + Vo);
-      float spec = pow(max(dot(vWorldNormal, Ho), 0.0), 400.0) * fres;
-      water += vec3(1.0, 0.97, 0.88) * spec * 1.3;
+      float spec = pow(max(dot(vWorldNormal, Ho), 0.0), 500.0) * fres;
+      water += vec3(1.0, 0.96, 0.86) * spec * 1.2;
 
       albedo = mix(albedo, water, oceanMask);
     }
@@ -382,31 +381,41 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // orogenic zones get rugged directional shading. Silhouette effects
     // (halo / rim / view) stay on the TRUE sphere normal.
     vec3 N = normalize(vWorldNormal);
-    float bumpScale = (0.6 + smoothstep(0.1, 0.6, vSlope) * 5.0)
-                    * (1.0 - oceanMask);   // no relief on water
+    float landMask = 1.0 - oceanMask;
+    // Moderated relief — orbital land is fairly smooth; aggressive bump
+    // created harsh black speckle. Land only.
+    float bumpScale = (0.4 + smoothstep(0.12, 0.6, vSlope) * 2.6) * landMask;
     vec3 reliefNormal = computeReliefNormal(vWorldNormal * 30.0, fbmFine, bumpScale);
 
-    float lambert = max(dot(reliefNormal, L), 0.0);
     float viewAngle = max(dot(N, V), 0.0);
     float halo = pow(1.0 - viewAngle, 4.0);
-
     vec3 atmosphere = vec3(0.40, 0.62, 1.00);
 
-    vec3 lit = albedo * (uAmbient + (1.0 - uAmbient) * lambert);
+    // Lift the crushed darks on LAND so dense forest reads as a dark
+    // GREEN, not black (Blue Marble jungle is mid-dark, never 0). Ocean
+    // keeps its true dark values.
+    albedo = mix(albedo, albedo * 0.80 + 0.055, landMask);
 
-    // Measured vibrance + exposure — real-Earth SatMap albedo is genuinely
-    // low; lift midtones without going cartoony (user: green too dark).
+    // Flat-lit-albedo model: real orbital imagery (Blue Marble) is shot
+    // near local noon and reads as near-uniform albedo with only a gentle
+    // terminator — NOT a dramatically shaded ball. A soft wrap keeps the
+    // whole day side broadly bright and never crushes to black. (This is
+    // also the soft-terminator look from the Bekk reference.)
+    float ndl  = dot(reliefNormal, L);
+    float wrap = clamp(ndl * 0.5 + 0.5, 0.0, 1.0);
+    float lightTerm = 0.55 + 0.60 * pow(wrap, 1.2);   // ~0.55 night .. ~1.15 noon
+    vec3 lit = albedo * lightTerm;
+
+    // Earth land is LOW saturation — pull it down, don't boost. Slight
+    // exposure only; brightness now comes from the lighting floor.
     float luma = dot(lit, vec3(0.2126, 0.7152, 0.0722));
-    lit = mix(vec3(luma), lit, 1.06) * 1.05;
+    lit = mix(vec3(luma), lit, 0.86) * 1.02;
 
-    // Limb / Rayleigh — only the actual silhouette gets atmospheric tint;
-    // the rest of the planet keeps its true SatMap colors.
-    lit = mix(lit, atmosphere, halo * 0.18);
-    lit += atmosphere * halo * 0.20 * lambert;
-
-    // Warm rim from chrome design tokens
+    // Limb tint — kept subtle so it doesn't wash the disc edge.
+    lit = mix(lit, atmosphere, halo * 0.12);
+    lit += atmosphere * halo * 0.12 * max(ndl, 0.0);
     float rim = pow(1.0 - viewAngle, 2.0);
-    lit += uRimColor * rim * 0.15;
+    lit += uRimColor * rim * 0.10;
 
     // ── Output: linear → sRGB OETF (G.7 step 1) ──────────────────────────
     // No tone mapping: the SatMap content is display-referred satellite
