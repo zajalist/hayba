@@ -51,6 +51,18 @@ export interface PlanetSnapshot {
   cell_is_continent_buffer: number[];
   cell_orogenic_uplift: number[];
   cell_mor_age_steps: number[];
+  cell_temperature: number[];
+  cell_precip: number[];
+  cell_biome: number[];
+  climate_debug: {
+    insolation: number[];
+    base_temp: number[];
+    dist_to_ocean: number[];
+    wind: number[];
+    current_dt: number[];
+    orographic: number[];
+    continental_dry: number[];
+  };
 }
 
 interface WizardInit {

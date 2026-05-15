@@ -38,6 +38,9 @@ export function buildGlobeMesh(
     "elevation", "slope", "plateId", "continental", "isBoundary",
     "collisionKind", "subductionProgress", "orogenicUplift",
     "volcanicIntensity", "morAgeSteps", "crustAge",
+    "biome", "temperature", "precip",
+    "insolation", "baseTemp", "distToOcean",
+    "currentDt", "orographic", "continentalDry",
   ] as const;
 
   const attrs: Record<string, Float32Array> = {};
@@ -107,6 +110,17 @@ export function buildGlobeMesh(
     attrs.volcanicIntensity.set(snap.cell_volcanic_intensity);
     attrs.morAgeSteps.set(snap.cell_mor_age_steps);
     attrs.crustAge.set(snap.cell_age_ma);
+    attrs.biome.set(snap.cell_biome);
+    attrs.temperature.set(snap.cell_temperature);
+    attrs.precip.set(snap.cell_precip);
+    const cd = snap.climate_debug;
+    const z = new Float32Array(n);
+    attrs.insolation.set(cd.insolation.length ? cd.insolation : z);
+    attrs.baseTemp.set(cd.base_temp.length ? cd.base_temp : z);
+    attrs.distToOcean.set(cd.dist_to_ocean.length ? cd.dist_to_ocean : z);
+    attrs.currentDt.set(cd.current_dt.length ? cd.current_dt : z);
+    attrs.orographic.set(cd.orographic.length ? cd.orographic : z);
+    attrs.continentalDry.set(cd.continental_dry.length ? cd.continental_dry : z);
     for (const name of attrNames) {
       (geom.getAttribute(name) as THREE.BufferAttribute).needsUpdate = true;
     }
