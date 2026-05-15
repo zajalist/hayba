@@ -28,8 +28,36 @@ BIOME_MAP: dict[str, set[int]] = {
 }
 
 
+REQUIRED_INPUTS = [
+    ("bluemarble_aug.png", "NASA Blue Marble Next Generation (August), 8192×4096 PNG", "https://visibleearth.nasa.gov/images/74092/august-blue-marble-next-generation-w-topography-and-bathymetry"),
+    ("etopo1.tif",         "ETOPO1 (ETOPO1_Ice_g.tif from the geotiff zip)",            "https://www.ngdc.noaa.gov/mgg/global/"),
+    ("koppen.tif",         "Köppen-Geiger 1 km present (Beck_KG_V1_present_0p0083.tif)", "http://www.gloh2o.org/koppen/"),
+]
+
+
+def check_inputs() -> None:
+    """Verify all 3 input rasters exist before running the bake; print a clear
+    error listing what to download where if anything is missing."""
+    missing = [(f, desc, url) for f, desc, url in REQUIRED_INPUTS if not (CACHE_DIR / f).exists()]
+    if not missing:
+        return
+    msg = [
+        "",
+        "Missing input rasters — download these into `tools/derive_satmaps/cache/`:",
+        "",
+    ]
+    for f, desc, url in missing:
+        msg.append(f"  • {f}")
+        msg.append(f"      {desc}")
+        msg.append(f"      {url}")
+        msg.append("")
+    msg.append(f"Cache dir: {CACHE_DIR}")
+    raise SystemExit("\n".join(msg))
+
+
 def load_inputs():
     """Load and resample the 3 input rasters to a common 4320 × 2160 grid."""
+    check_inputs()
     target_shape = (2160, 4320)  # equirectangular
     # 1. Color (PNG, ~8192 × 4096) — resample with PIL LANCZOS
     color = np.array(
