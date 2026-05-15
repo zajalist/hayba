@@ -13,6 +13,10 @@ export interface TexturingPanelProps {
   remap: Record<number, { min: number; max: number; bias: number }>;
   onAssign: (biomeIndex: number, name: SatMapName) => void;
   onRemap: (biomeIndex: number, r: { min: number; max: number; bias: number }) => void;
+  brightness: number;
+  onBrightness: (v: number) => void;
+  smooth: number;
+  onSmooth: (v: number) => void;
 }
 
 const DEFAULT_REMAP = { min: 0, max: 1, bias: 0.5 };
@@ -53,6 +57,49 @@ export default function TexturingPanel(p: TexturingPanelProps): React.ReactEleme
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {/* Global surface controls (not per-biome) */}
+      <div style={{ padding: "10px 12px", borderBottom: `1px solid ${colors.borderMid}` }}>
+        <div style={{ fontSize: 11, color: colors.textMuted, marginBottom: 8 }}>
+          Surface
+        </div>
+
+        <div style={{ marginBottom: 8 }}>
+          <div style={labelStyle}>
+            <span>Surface brightness</span>
+            <span style={{ color: colors.beige, fontFamily: fonts.mono }}>
+              {p.brightness.toFixed(2)}
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0.6}
+            max={2.4}
+            step={0.01}
+            value={p.brightness}
+            onChange={(e) => p.onBrightness(Number(e.target.value))}
+            style={sliderStyle}
+          />
+        </div>
+
+        <div>
+          <div style={labelStyle}>
+            <span>Smoothing</span>
+            <span style={{ color: colors.beige, fontFamily: fonts.mono }}>
+              {p.smooth.toFixed(2)}
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={p.smooth}
+            onChange={(e) => p.onSmooth(Number(e.target.value))}
+            style={sliderStyle}
+          />
+        </div>
+      </div>
+
       {/* Biome selector chips */}
       <div style={{ padding: "10px 12px 6px", borderBottom: `1px solid ${colors.borderMid}` }}>
         <div style={{ fontSize: 11, color: colors.textMuted, marginBottom: 6 }}>

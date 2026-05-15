@@ -12,6 +12,8 @@ export interface GlobeMeshHandle {
   /** Per-biome ramp remap. biomeIndex 0..9; min/max in 0..1, bias 0..1 (0.5 = identity). */
   setBiomeRemap(biomeIndex: number, min: number, max: number, bias: number): void;
   setExaggeration(x: number): void;
+  setSurfaceBrightness(x: number): void;
+  setTextureSmooth(x: number): void;
   setShowPlateOutlines(v: boolean): void;
   setShowBoundaryGlow(v: boolean): void;
   /** Debug map mode: 0 final · 1 temp · 2 moisture · 3 biome · 4 elev · 5 slope · 6 ice · 7 ocean */
@@ -111,6 +113,8 @@ export function buildGlobeMesh(
       uShowPlateOutlines: { value: 1.0 },
       uShowBoundaryGlow:  { value: 1.0 },
       uMapMode:           { value: 0.0 },
+      uSurfaceBrightness: { value: 1.4 },
+      uTextureSmooth:     { value: 0.4 },
     },
     // `derivatives` (dFdx/dFdy) is always available in WebGL2 — no extension needed.
   });
@@ -177,6 +181,8 @@ export function buildGlobeMesh(
     setShowPlateOutlines: (v) => { mat.uniforms.uShowPlateOutlines.value = v ? 1.0 : 0.0; },
     setShowBoundaryGlow:  (v) => { mat.uniforms.uShowBoundaryGlow.value  = v ? 1.0 : 0.0; },
     setMapMode: (n) => { mat.uniforms.uMapMode.value = n; },
+    setSurfaceBrightness: (x) => { mat.uniforms.uSurfaceBrightness.value = x; },
+    setTextureSmooth: (x) => { mat.uniforms.uTextureSmooth.value = x; },
     dispose: () => { geom.dispose(); mat.dispose(); },
   };
 }
