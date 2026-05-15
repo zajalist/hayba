@@ -10,6 +10,15 @@ export const VERTEX_SHADER = /* glsl */ `
   attribute float volcanicIntensity;
   attribute float morAgeSteps;
   attribute float crustAge;
+  attribute float biome;
+  attribute float temperature;
+  attribute float precip;
+  attribute float insolation;
+  attribute float baseTemp;
+  attribute float distToOcean;
+  attribute float currentDt;
+  attribute float orographic;
+  attribute float continentalDry;
 
   uniform float uExaggeration;
 
@@ -24,6 +33,15 @@ export const VERTEX_SHADER = /* glsl */ `
   varying float vVolcanicIntensity;
   varying float vMorAgeSteps;
   varying float vCrustAge;
+  varying float vBiome;
+  varying float vTemperature;
+  varying float vPrecip;
+  varying float vInsolation;
+  varying float vBaseTemp;
+  varying float vDistToOcean;
+  varying float vCurrentDt;
+  varying float vOrographic;
+  varying float vContinentalDry;
   varying vec3  vWorldNormal;
   varying vec3  vWorldPos;
 
@@ -56,6 +74,15 @@ export const VERTEX_SHADER = /* glsl */ `
     vVolcanicIntensity = volcanicIntensity;
     vMorAgeSteps = morAgeSteps;
     vCrustAge = crustAge;
+    vBiome = biome;
+    vTemperature = temperature;
+    vPrecip = precip;
+    vInsolation = insolation;
+    vBaseTemp = baseTemp;
+    vDistToOcean = distToOcean;
+    vCurrentDt = currentDt;
+    vOrographic = orographic;
+    vContinentalDry = continentalDry;
     vWorldNormal = normalize(position);
     vWorldPos    = displaced;
 
@@ -94,6 +121,15 @@ export const FRAGMENT_SHADER = /* glsl */ `
   varying float vVolcanicIntensity;
   varying float vMorAgeSteps;
   varying float vCrustAge;
+  varying float vBiome;
+  varying float vTemperature;
+  varying float vPrecip;
+  varying float vInsolation;
+  varying float vBaseTemp;
+  varying float vDistToOcean;
+  varying float vCurrentDt;
+  varying float vOrographic;
+  varying float vContinentalDry;
   varying vec3  vWorldNormal;
   varying vec3  vWorldPos;
 
