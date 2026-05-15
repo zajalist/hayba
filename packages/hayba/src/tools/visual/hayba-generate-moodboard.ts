@@ -46,16 +46,16 @@ export const haybaGenerateMoodboardHandler: ToolHandler = async (args) => {
       try {
         const { embedding } = await embedImage(img.base64);
         return { ...img, clip_embedding: embedding };
-      } catch (e) {
+      } catch (e: unknown) {
         const msg = e instanceof SidecarUnavailableError
           ? `sidecar offline — embedding skipped (${e.message})`
-          : (e as Error).message;
+          : (e instanceof Error ? e.message : String(e));
         return { ...img, clip_embedding: null, embedding_error: msg };
       }
     }));
 
     return { content: [{ type: 'text', text: JSON.stringify({ prompt: parsed.data.prompt, images: enriched }, null, 2) }] };
-  } catch (e) {
-    return { content: [{ type: 'text', text: `hayba_generate_moodboard error: ${(e as Error).message}` }], isError: true };
+  } catch (e: unknown) {
+    return { content: [{ type: 'text', text: `hayba_generate_moodboard error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
   }
 };

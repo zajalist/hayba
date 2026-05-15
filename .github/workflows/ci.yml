@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  node:
-    name: Node MCP server — typecheck + build
+  lint:
+    name: TypeScript lint + format check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,11 +20,34 @@ jobs:
       - name: Install
         run: npm install
 
-      - name: Typecheck + build
+      - name: Lint
+        run: npx eslint .
+
+      - name: Format check
+        run: npx prettier --check "**/*.{ts,js,json,md}" --ignore-path .prettierignore
+
+  node:
+    name: Node MCP server — typecheck + build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install
+        run: npm install
+
+      - name: Typecheck
+        working-directory: packages/hayba
+        run: npx tsc --noEmit
+
+      - name: Build
         working-directory: packages/hayba
         run: npx tsc
 
-      - name: Test (if present)
+      - name: Test
         working-directory: packages/hayba
         run: |
           if [ -f vitest.config.ts ] || [ -f jest.config.ts ]; then
@@ -53,7 +76,7 @@ jobs:
 
       - name: Lint
         working-directory: packages/hayba/addons/visual-embeddings
-        run: ruff check . || true   # don't fail CI until we adopt a style baseline
+        run: ruff check .
 
   spec:
     name: Spec doc — link sanity
