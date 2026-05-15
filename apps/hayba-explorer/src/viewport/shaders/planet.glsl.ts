@@ -93,6 +93,8 @@ export const FRAGMENT_SHADER = /* glsl */ `
   uniform sampler2D uBiome6; uniform sampler2D uBiome7; uniform sampler2D uBiome8;
   uniform sampler2D uBiome9;
   uniform sampler2D uSatMapRock;
+  // Per-biome ramp remap: (min, max, bias, _). Default (0,1,0.5,0)=identity.
+  uniform vec4 uBiomeRemap[10];
   uniform float     uClimateBlend;    // 1.0 = climate-driven, 0.0 = single uSatMap
   uniform vec3      uSunDir;
   uniform float     uAmbient;
@@ -195,6 +197,14 @@ export const FRAGMENT_SHADER = /* glsl */ `
     return srgbToLinear(texture2D(tex, vec2(0.5, 1.0 - clamp(h, 0.02, 0.98))).rgb);
   }
 
+  // Gaea-style ramp remap: clamp h to [min,max] then Schlick bias.
+  // rp = (min, max, bias, _). bias 0.5 = identity, <0.5 darker, >0.5 lighter.
+  float remapH(float h, vec4 rp) {
+    float t = clamp((h - rp.x) / max(rp.y - rp.x, 1e-3), 0.0, 1.0);
+    float b = clamp(rp.z, 0.001, 0.999);
+    return t / ((1.0 / b - 2.0) * (1.0 - t) + 1.0);
+  }
+
   vec3 sampleBiome(float id, float h) {
     int b = int(id + 0.5);
     if (b == 0) return sampleGradient(uBiome0, h);
@@ -278,16 +288,16 @@ export const FRAGMENT_SHADER = /* glsl */ `
     float hLand = clamp(organic, 0.04, 0.96);
 
     vec3 base =
-        sampleGradient(uBiome0, hLand) * wRf
-      + sampleGradient(uBiome1, hLand) * wSav
-      + sampleGradient(uBiome2, hLand) * wDes
-      + sampleGradient(uBiome3, hLand) * wTRf
-      + sampleGradient(uBiome4, hLand) * wTF
-      + sampleGradient(uBiome5, hLand) * wWS
-      + sampleGradient(uBiome6, hLand) * wGr
-      + sampleGradient(uBiome7, hLand) * wBor
-      + sampleGradient(uBiome8, hLand) * wTun
-      + sampleGradient(uBiome9, hIce)  * wIce;
+        sampleGradient(uBiome0, remapH(hLand, uBiomeRemap[0])) * wRf
+      + sampleGradient(uBiome1, remapH(hLand, uBiomeRemap[1])) * wSav
+      + sampleGradient(uBiome2, remapH(hLand, uBiomeRemap[2])) * wDes
+      + sampleGradient(uBiome3, remapH(hLand, uBiomeRemap[3])) * wTRf
+      + sampleGradient(uBiome4, remapH(hLand, uBiomeRemap[4])) * wTF
+      + sampleGradient(uBiome5, remapH(hLand, uBiomeRemap[5])) * wWS
+      + sampleGradient(uBiome6, remapH(hLand, uBiomeRemap[6])) * wGr
+      + sampleGradient(uBiome7, remapH(hLand, uBiomeRemap[7])) * wBor
+      + sampleGradient(uBiome8, remapH(hLand, uBiomeRemap[8])) * wTun
+      + sampleGradient(uBiome9, remapH(hIce,  uBiomeRemap[9])) * wIce;
     float wSum = wRf+wSav+wDes+wTRf+wTF+wWS+wGr+wBor+wTun+wIce + 1e-4;
     base /= wSum;
 

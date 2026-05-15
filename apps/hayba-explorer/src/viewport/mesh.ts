@@ -86,6 +86,8 @@ export function buildGlobeMesh(
       uBiome8: { value: pick(["polar_tundra"], "polar_tundra") },
       uBiome9: { value: pick(["polar_icecap"], "polar_icecap") },
       uSatMapRock: { value: pick(["arid_hot_orogeny","continental_orogeny"], "continental_orogeny") },
+      // Per-biome ramp remap (min,max,bias,_). (0,1,0.5,0) = identity.
+      uBiomeRemap: { value: Array.from({ length: 10 }, () => new THREE.Vector4(0, 1, 0.5, 0)) },
       uClimateBlend:      { value: 1.0 },                          // 1.0 = auto, 0.0 = single override
       uExaggeration:      { value: 1.0 },
       uSunDir:            { value: new THREE.Vector3(0.6, 0.5, 0.8).normalize() },
