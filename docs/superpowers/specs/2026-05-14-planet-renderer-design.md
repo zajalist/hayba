@@ -277,29 +277,153 @@ void main() {
 }
 ```
 
-## 8. Active-boundary effects (state in TS, not Rust)
+## 8. TE-faithful plate motion and collision rendering
 
-The Rust sim already advances plates and reports cell→plate assignments per snapshot. The renderer derives the visual effects by **diffing snapshots**:
+This is the most important section. The Rust crate (`packages/hayba-tectonics-v2/`) is a line-by-line port of Tectonic Explorer's geophysics — it already does the heavy work. The renderer's job is to **surface that simulation state** in a way the user can read at a glance. Every visual effect here corresponds to a specific TE/Rust algorithm; the visual is not invented, it's a window onto state that already exists.
 
-| Effect | State per cell | Update rule |
+### 8.1 What the Rust sim already does each `model.step(dt)`
+
+```
+Phase A — Verlet integration (TE step 1)
+  • For each plate, advance angular velocity ω by torque/dt using verlet.
+  • Plate motion is rotation about an Euler pole; cells "owned" by the plate
+    rotate with it.
+  • Plate speeds are clamped at MAX_PLATE_SPEED.
+
+Phase B — Field motion (TE step 2)
+  • For each cell, its world position = plate.rotation * cell.local_pos.
+  • The cell→grid-cell mapping is recomputed via nearest-neighbour lookup
+    against the static icosphere grid (fields are advected through the grid,
+    not the grid itself).
+
+Phase C — Collision detection (TE detectCollisions)
+  • Plates sorted by density (ascending).
+  • For each plate's "possibly colliding" fields, look up which other plate
+    owns the same icosphere cell.
+  • Classify the overlap as one of FOUR kinds:
+      - Subduction        (oceanic going under)
+      - Orogeny           (continent-continent collision)
+      - KillBottomOcean   (ocean caught between two continents)
+      - DragOnly          (continent over ocean, no subduction)
+
+Phase D — Per-cell geological processes
+  • Subduction state advances (slab depth, dip, age, distance subducted).
+  • Volcanic activity fires on cells above the subducting slab at the
+    arc depth (70-100 km).
+  • Orogeny thickens continental crust → uplifts elevation.
+  • MOR (mid-ocean ridge) generates new fields at divergent boundaries with
+    `crust.age = 0`, `elevation` matching ridge crest.
+  • Subducting fields detach when progress saturates → field.alive = false.
+
+Phase E — Plate housekeeping
+  • Empty plates removed.
+  • Plates grouped/split.
+  • Plates divided by age.
+  • Mantle plumes age, deposit hot-spot tracks.
+```
+
+All of this state is already in `Field`, `Plate`, `Subduction`, `VolcanicActivity`, `LithosphericColumn`. We just need to **expose** the relevant fields in the snapshot and **render** them.
+
+### 8.2 Snapshot extension (full list)
+
+`PlanetSnapshot` (Rust) gains these per-cell arrays. All are computed in `snapshot_model()` and serialized to the frontend per step:
+
+| Field | Type | Meaning | TE/Rust source |
+|---|---|---|---|
+| `cell_slope` | `Vec<f32>` (0..1) | Local elevation gradient magnitude | derived from `cell_elevation` |
+| `cell_latitude_band` | `Vec<u8>` (0..4) | Tropical / subtropical / temperate / subpolar / polar | derived from `cell_positions.y` |
+| `cell_age_ma` | `Vec<f32>` | Crust age | `field.age` |
+| `cell_crust_thickness_km` | `Vec<f32>` | Lithospheric thickness | `field.crust_thickness()` |
+| `cell_volcanic_intensity` | `Vec<f32>` (0..1) | Volcanic activity level at this cell | `field.volcanic_activity` |
+| `cell_collision_kind` | `Vec<u8>` | 0=none / 1=Subduction / 2=Orogeny / 3=Buffer / 4=Drag | `field.colliding` + collision record |
+| `cell_subduction_progress` | `Vec<f32>` (0..1) | How far into subduction (used for fade-out) | `field.subduction.progress()` |
+| `cell_is_continent_buffer` | `Vec<u8>` | Continent edge marker (TE coastline) | `field.is_continent_buffer` |
+| `cell_orogenic_uplift` | `Vec<f32>` (0..1) | Active orogeny rate at this cell (recent uplift) | derived from `bending_progress` and crust thickening rate |
+| `cell_mor_age_steps` | `Vec<u16>` | Steps since this cell spawned at MOR (0 = just spawned) | tracked in Rust between `generate_new_fields` calls |
+
+The existing snapshot fields (`cell_positions`, `cell_plate_ids`, `cell_elevation`, `cell_continental`, `cell_is_boundary`, `cell_neighbor_plate`) stay.
+
+Wire-format: keep `Vec<f32>`/`Vec<u8>`/`Vec<u16>` flat. Per-step transfer size at d=64 (~41K cells) with the additions is ~1.6 MB; gzip will trim heavily. Acceptable for rAF cadence.
+
+### 8.3 Per-vertex GPU attributes
+
+Each per-cell field above maps to a `BufferAttribute` on the mesh. They're all `Float32Array(n_cells)` (or normalized uint8 where it fits). The shader reads them as `attribute float ...`. On each `updateFromSnapshot()`, JS writes the new array into the buffer and sets `needsUpdate = true`.
+
+```ts
+// apps/hayba/src/viewport/mesh.ts attribute table
+elevation          : Float32Array(n_cells)
+slope              : Float32Array(n_cells)
+plateId            : Float32Array(n_cells)   // for outline pass
+continental        : Float32Array(n_cells)   // 0 / 1
+isBoundary         : Float32Array(n_cells)   // 0 / 1
+collisionKind      : Float32Array(n_cells)   // 0..4
+subductionProgress : Float32Array(n_cells)   // 0..1
+orogenicUplift     : Float32Array(n_cells)   // 0..1
+volcanicIntensity  : Float32Array(n_cells)   // 0..1
+morAgeSteps        : Float32Array(n_cells)   // 0..50, normalized in shader
+crustAge           : Float32Array(n_cells)   // ma, normalized in shader
+```
+
+`plateId` flows in for an optional plate-outline pass: a fragment-shader epsilon-check on neighbour `plateId` differences draws a 1-pixel contour at plate seams (TE-faithful — TE draws plate outlines too).
+
+### 8.4 Visual effects — one per TE algorithm
+
+Each effect is implemented in the fragment shader using the attributes above. No JS-side decay timers (the spec previously proposed these — but TE's own state already gives us the time-evolving values we need).
+
+| TE algorithm | Renderer effect | Shader uses |
 |---|---|---|
-| Convergent/divergent "compression" pulse | `boundaryActivity: float` (0..1) | When a cell becomes `is_boundary` and its pair has an assigned type, bump `boundaryActivity = 1.0`. Decay 10%/sec. |
-| MOR new-cell brightness | `cellAge: float` (0..1+) | When a cell flips from "no plate" or a different plate id to its current one near a divergent boundary, set `cellAge = 0`. Increment by `deltaTimeSec / 5.0`. SatMap lookup uses `mix(brightFactor, 1.0, clamp(cellAge, 0, 1))`. |
-| Subducting fade-out | `cellFading: float` (0..1) | When a cell is adjacent to a convergent boundary AND on the denser plate (looking up density rank), drift cellFading toward 1.0 over ~3 sec. When the sim reassigns it, snap cellFading back to 0. |
+| **Plate motion** (verlet, Phase A-B) | Cells re-color per snapshot as `plateId` changes. Optional plate-outline pass: 1-pixel dark contour at neighbour-plateId mismatches. Continental crust gets +10% albedo brightness vs oceanic to make continents stand out. | `plateId`, `continental` |
+| **Convergent boundary — subduction** (`collisionKind == 1`) | The subducting cell gets a **hot orange tint** scaled by `(1 - subductionProgress)` — fresh subduction shows brightest; saturated subduction fades. The overriding top cell gets a +5% darken to suggest compression. | `collisionKind`, `subductionProgress` |
+| **Convergent boundary — orogeny** (`collisionKind == 2`) | Continental-continental collision gets a **warm red-brown tint** modulated by `orogenicUplift`. Visually: as orogeny progresses, the cell rises (elevation already increases) and reddens. Mirrors TE's Himalaya-rise visual. | `collisionKind`, `orogenicUplift` |
+| **Convergent boundary — continent buffer kill** (`collisionKind == 3`) | Cell briefly flashes a **dim grey** for the snapshot in which it dies, then disappears (becomes ocean / unowned). The flash is `mix(albedo, vec3(0.15), 0.8)`. | `collisionKind` |
+| **Divergent boundary — MOR new crust** (`morAgeSteps`) | Newly spawned cells start **bright cyan-blue** (`#80c8ff` mixed in) and lerp to the SatMap color over ~30 steps as the cell ages. Mirrors TE's "young oceanic crust is hot/bright, old crust is dark." | `morAgeSteps`, `crustAge` |
+| **Divergent boundary — pure pull-apart** (`isBoundary` & `collisionKind == 0` & continental==0 on both sides) | Cool **slate-blue rim** along the seam. Decays gradually as ridge ages (proxy via `crustAge`). | `isBoundary`, `collisionKind`, `continental` |
+| **Volcanic arc** (`volcanicIntensity > 0`) | Active arc cells get a **glowing orange-yellow** additive: `albedo += vec3(1.0, 0.5, 0.1) * volcanicIntensity * 0.4`. Reads as molten activity. | `volcanicIntensity` |
+| **Hot-spot tracks** (handled at Rust level via `plume_registry.record_tracks`) | The plume registry already deposits per-cell trail markers — the volcanic intensity attribute picks them up. Aging tracks fade per the registry's own decay. | `volcanicIntensity`, `crustAge` |
+| **Crust age fade** (oceanic crust ages, gets denser, sinks slightly) | Older oceanic cells get a **subtle blue darken** proportional to `crustAge / 200ma`. Realistic-looking ocean basin gradient. | `crustAge`, `continental` |
+| **Subducting cell death** (`field.alive = false` from `try_to_detach_from_plate`) | When a cell flips from one plate to another, if it was previously subducting (`subductionProgress > 0.95`), the new cell is drawn dim for one snapshot then settles into normal SatMap color. | `subductionProgress` (read on previous snapshot, diffed in JS-side tiny buffer) |
 
-All three states are `Float32Array(n_cells)` maintained in `globe.ts`. The diff happens on each `updateFromSnapshot` call.
+### 8.5 Vertex displacement — TE-faithful
 
-## 9. Plate motion visualization
+The vertex shader pulls `elevation` outward along the cell normal. **Key detail:** TE does this displacement on the *visible* mesh while keeping the *raycast target* a perfect unit sphere (so brush/click hit-testing stays stable across elevation changes). We do the same — the `scene.raycastTarget` set in `scene.ts` stays a unit-radius `InvisibleSphere`; only the visible mesh displaces.
 
-This works "for free" once the new renderer is in place:
+Displacement formula (matches TE's empirical scale):
 
-- Rust's `model.step()` reassigns cell plate ids each step.
-- `updateFromSnapshot()` writes the new `plateId` attribute into the BufferAttribute.
-- The fragment shader doesn't directly use `plateId` for color (the SatMap drives albedo), but `boundaryActivity` pulses any cell that *just changed* plates, which is exactly the visual of plate drift.
+```glsl
+// Land: positive elevation pushes outward
+float h = max(elevation, 0.0);
+float r = 1.0 + h * 0.08 * uExaggeration;
 
-If we want stronger plate-boundary visibility (currently subtle because the SatMap doesn't tint by plate id), an optional **plate outline pass** can run in fragment: when `isBoundary > 0.5`, darken the albedo by 15%. This gives a TE-like thin contour on every active seam.
+// Ocean: stays flat at sea level (r = 1.0) for the visible mesh, BUT we still
+// want to see trench depth in the SatMap (color), so elevation passes through
+// as `vElevation` to the fragment shader unchanged.
+vec3 displaced = position * r;
+```
 
-## 10. Settings panel additions
+At `uExaggeration = 1.0`, the tallest mountains are ~8% of the planet radius — exaggerated vs Earth's ~0.1% but matches TE's tunable.
+
+### 8.6 Plate motion latency budget
+
+We re-upload all attributes on every snapshot. At 60 fps and d=64 (41K cells):
+- Bytes per attribute: ~164 KB
+- 11 attributes: ~1.8 MB/frame uploaded to GPU
+- WebGL upload bandwidth: easily 200+ MB/s
+- Frame budget: well within rAF
+
+At d=128 (164K cells): ~7.2 MB/frame. Still fine. At d=256 (655K cells): ~28 MB/frame — tight but feasible. The wizard's resolution preset caps user-pickable d at 128 in v1, so we're not entering this zone.
+
+### 8.7 What we deliberately do NOT visualize in v1
+
+Per-cell state that exists in Rust but is **not** shown in the renderer (would be visual noise):
+
+- `bending_progress` (slab bending angle) — used only to inform subduction's detach logic; not directly visible
+- `dragging_plate` — only matters for force calculation, not shape
+- `lithospheric_column` layers (sediment / basalt / granite stack) — too detailed for the planet view; reserved for a future "cross-section" tool
+- `should_propagate_bending` — internal flag
+
+These can be added later if/when a "geology inspector" panel needs them.
+
+## 9. Settings panel additions
 
 `apps/hayba/src/components/panels/SettingsPanel.tsx` gains a new section:
 
@@ -316,7 +440,7 @@ State threads through to App.tsx → mesh handle:
 - `setDisplacementExaggeration(x)` → updates the uniform
 - toggles set boolean uniforms
 
-## 11. File-by-file impact map
+## 10. File-by-file impact map
 
 ### New files
 
@@ -339,7 +463,7 @@ State threads through to App.tsx → mesh handle:
 | `apps/hayba/src/components/panels/SettingsPanel.tsx` | Add Appearance section |
 | `apps/hayba/src/viewport/globe.ts` | Marked deprecated, replaced by mesh.ts. Deleted in a cleanup task at the end. |
 
-## 12. Open questions / future work
+## 11. Open questions / future work
 
 - **Real PBR**: the Gemini research recommends Cook-Torrance + roughness/metallic + Fresnel. We ship without it; revisit when the SatMap-only look has been validated end-to-end.
 - **Atmosphere + clouds**: not in this spec. Would need raymarching pass + cloud volumetrics. Tracked separately.
