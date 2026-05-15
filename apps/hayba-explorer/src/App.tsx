@@ -16,6 +16,7 @@ import BoundariesPanel from "./components/panels/BoundariesPanel";
 import DensitiesPanelDocked from "./components/panels/DensitiesPanelDocked";
 import SimulatePanel from "./components/panels/SimulatePanel";
 import SettingsPanel from "./components/panels/SettingsPanel";
+import TexturingPanel from "./components/panels/TexturingPanel";
 import DockToolbar, { type ToolName } from "./components/DockToolbar";
 import RecenterButton from "./components/RecenterButton";
 import ConfirmDialog from "./components/ConfirmDialog";
@@ -228,6 +229,11 @@ export default function App() {
 
   // Panel state
   const [panelCategory, setPanelCategory] = useState<PanelCategory>("compose");
+  const [biomeAssignments, setBiomeAssignments] = useState<Record<number, string>>({});
+  const handleAssignBiome = useCallback((bi: number, name: string) => {
+    setBiomeAssignments((m) => ({ ...m, [bi]: name }));
+    globeMeshRef.current?.setBiomeSatMap(bi, name);
+  }, []);
   const [showPlateLabels, setShowPlateLabels] = useState(true);
   const [showForceArrows, setShowForceArrows] = useState(true);
 
@@ -928,12 +934,14 @@ export default function App() {
   // Category gating
   const categoryEnabled: Record<PanelCategory, boolean> = {
     compose:    true,
+    texturing:  mode === "boundaries" || mode === "densities" || mode === "simulating",
     boundaries: mode === "boundaries" || mode === "densities" || mode === "simulating",
     densities:  mode === "densities" || mode === "simulating",
     simulate:   mode === "simulating",
     settings:   true,
   };
   const categoryDisabledReason: Partial<Record<PanelCategory, string>> = {
+    texturing:  "Bake the planet first",
     boundaries: "Bake the planet to edit boundaries",
     densities:  "Complete boundaries to rank densities",
     simulate:   "Start the simulation from the Densities panel",
@@ -1051,6 +1059,10 @@ export default function App() {
               }}
             />
           </ComposePanel>
+        )}
+
+        {panelCategory === "texturing" && snapshot && (
+          <TexturingPanel assignments={biomeAssignments} onAssign={handleAssignBiome} />
         )}
 
         {panelCategory === "boundaries" && snapshot && draft && (
