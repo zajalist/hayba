@@ -446,16 +446,12 @@ export const FRAGMENT_SHADER = /* glsl */ `
       // dark blues. Both endpoints keep B > G > R with G well below B and
       // low overall, so the result stays on the blue line at every depth.
       // All colours LINEAR (output is linear→sRGB encoded).
-      // POSTERIZED depth: discrete bands with cell-stable noise-broken
-      // edges (discretized like the SatMap masking — NOT a smooth airbrush
-      // from shallow to deep). 5 steps, dithered by ±half a step.
-      float dRaw   = clamp(max(-seaCoord, 0.0) / 0.45, 0.0, 1.0);
-      float wSteps = 5.0;
-      float dDith  = (fbm(vSeed * 30.0) - 0.5) * (1.2 / wSteps);
-      float dWater = floor(clamp(dRaw + dDith, 0.0, 1.0) * wSteps + 0.001) / wSteps;
-      vec3  shallowWater = vec3(0.015, 0.050, 0.085);
-      vec3  deepWater    = vec3(0.002, 0.010, 0.030);
-      vec3  water        = mix(shallowWater, deepWater, dWater);
+      // UNIFORM deep navy. The shallow→deep depth lerp produced a smooth
+      // lighter-blue band hugging every coastline (a 1-colour-with-opacity
+      // brush) — removed. Ocean is one deep colour; only a faint cell-
+      // stable noise breaks it (NOT depth, so no coastal shallow ring).
+      vec3  water = vec3(0.004, 0.013, 0.030)
+                  * (0.85 + 0.30 * fbm(vSeed * 60.0));
 
       // Schlick fresnel kept ONLY to gate the tight specular glint below.
       // The flat-colour limb-sheen mix was a 1-colour-with-opacity smooth

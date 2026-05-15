@@ -689,6 +689,7 @@ export default function App() {
           positions,
           neighbours: adj,
           seed: drft.seed,
+          defaultElevation: -1, // compose starts as uniform extreme deep ocean
         });
         setPaintedCount(0);
         setCanUndo(false);
