@@ -35,6 +35,12 @@ export interface WizardDraft {
   boundary_types: Record<string, BoundaryType>;
   run_length_steps: number;
   dt_ma: number;
+  /** Per-cell elevation overrides authored by the height painter.
+   *  Length must equal n_cells once known; ignored where painted_mask[i] === 0.
+   *  Range: [-1, +1]. */
+  painted_elevations: number[];
+  /** Per-cell flag: 1 = authored by height painter, 0 = use preset/continental default. */
+  painted_mask: number[];
 }
 
 export function pairKey(a: number, b: number): string {
@@ -51,5 +57,7 @@ export function createDefaultDraft(divisions: number, seed: number): WizardDraft
     boundary_types: {},
     run_length_steps: 5,
     dt_ma: 0.5,
+    painted_elevations: [],
+    painted_mask: [],
   };
 }
