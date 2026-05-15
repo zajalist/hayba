@@ -1,0 +1,865 @@
+00:01 so who wants to see Gaia
+00:03 
+
+00:03 2 I'm going to fire up the Early Access
+00:06 
+
+00:06 build this is the same build that's gone
+00:08 
+
+00:08 out to everyone uh today and uh I'm just
+00:12 
+
+00:12 going to start a new project I'm going
+00:14 
+
+00:14 to make a bunch of nodes to show you
+00:16 
+
+00:16 some of the new tools so I'll just right
+00:18 
+
+00:18 click and type in
+00:20 
+
+00:20 slump kagy
+00:23 
+
+00:23 and um
+00:26 
+
+00:26 Sandstone with this new chain creation
+00:29 
+
+00:29 if you know a bunch of notes that you
+00:30 
+
+00:30 want to create together guy will just
+00:32 
+
+00:32 make them for you let's go look at this
+00:36 
+
+00:36 this is the shape that was just created
+00:38 
+
+00:38 and let me change the rendering mode so
+00:40 
+
+00:40 we can see it better and this neutral
+00:42 
+
+00:42 lighting oh that looks cool let me just
+00:45 
+
+00:45 make the resolution bigger so I just
+00:47 
+
+00:47 took a simple slump node which is a a
+00:50 
+
+00:50 very mellow landscape and then added the
+00:52 
+
+00:52 new Surface node craggy to it kagy takes
+00:55 
+
+00:55 the whatever uh terrain that you give it
+00:58 
+
+00:58 and then turns it into this rock
+01:01 
+
+01:01 landscape uh believe it or not this is
+01:03 
+
+01:03 still a heightfield if I zoom in you can
+01:05 
+
+01:05 see all the different uh little hoodo
+01:07 
+
+01:07 standing out so this is what cagy does
+01:12 
+
+01:12 uh and this is part of our new Surface
+01:14 
+
+01:14 node collections their job is to
+01:17 
+
+01:17 preserve the shape and volume of the
+01:19 
+
+01:19 incoming node whether it's procedural or
+01:21 
+
+01:21 hand sculpted or however and then give
+01:24 
+
+01:24 it a new flavor so here we have our um
+01:29 
+
+01:29 Rocky landscape and then Sandstone is
+01:32 
+
+01:32 giving it this little extra crinkly
+01:34 
+
+01:34 flavor here uh might be a bit hard to
+01:37 
+
+01:37 notice here so let me just make a new
+01:39 
+
+01:39 slump and just
+01:41 
+
+01:41 Sandstone um and this I'm grading with
+01:43 
+
+01:43 the new short Cates that every node
+01:46 
+
+01:46 gets uh
+01:48 
+
+01:48 so this and I'll switch the rendering
+01:51 
+
+01:51 mode again so you can see so this is the
+01:54 
+
+01:54 basic slump and this is what Sandstone
+01:57 
+
+01:57 does to it it adds really delicate
+01:59 
+
+01:59 layering to all of it but it doesn't
+02:02 
+
+02:02 need to be uh delicate sedimentary
+02:04 
+
+02:04 layering all the time uh let me uh make
+02:08 
+
+02:08 this a bit taller let me get a different
+02:10 
+
+02:10 seed so there we have this slightly
+02:12 
+
+02:12 taller
+02:13 
+
+02:13 slump and here you can see uh it's
+02:17 
+
+02:17 creating this nice um uh Terrace
+02:21 
+
+02:21 landscape that's not so even uh if
+02:25 
+
+02:25 you've been to any Sandstone deserty
+02:29 
+
+02:29 environment then you know that this is
+02:31 
+
+02:31 very typical of um Sandstone
+02:33 
+
+02:33 environments now let's make this more
+02:37 
+
+02:37 iconic so I'm going to increase the
+02:39 
+
+02:39 spacing and I'm going to add some chaos
+02:41 
+
+02:41 to
+02:43 
+
+02:43 this and what the heck let's up the
+02:47 
+
+02:47 tions finally I'm going to increase the
+02:50 
+
+02:50 intensity of every single hydration so
+02:53 
+
+02:53 there and that turns it into this really
+02:55 
+
+02:55 nice rough
+02:57 
+
+02:57 sedimentary uh surface and so this is
+03:00 
+
+03:00 part of the new offerings of the surface
+03:03 
+
+03:03 nodes which lets you quickly transform
+03:05 
+
+03:05 any surface into a new Surface and if
+03:08 
+
+03:08 you really want to preserve the exact
+03:11 
+
+03:11 volume this has an iniz option so it'll
+03:14 
+
+03:14 actually do the volume preservation
+03:17 
+
+03:17 inwards so your volume is preserved
+03:21 
+
+03:21 perfectly now I want to erode this and
+03:25 
+
+03:25 so that's where our new erosion comes in
+03:27 
+
+03:27 so I'm going to drag out and create
+03:28 
+
+03:28 erosion 2 which is the work name of our
+03:30 
+
+03:30 new erosion and you can see it's already
+03:33 
+
+03:33 applied this even though we're at 2K
+03:36 
+
+03:36 it's pretty much um I guess you'd call
+03:39 
+
+03:39 it real time although I don't want to
+03:40 
+
+03:40 use that word it's just been thrown
+03:43 
+
+03:43 around so much it's become kind of
+03:45 
+
+03:45 meaningless so yeah it's fast it's
+03:47 
+
+03:47 almost
+03:48 
+
+03:48 instantaneous um even if I increase the
+03:50 
+
+03:50 duration all the way to maximum you can
+03:53 
+
+03:53 see it just works just as fast this is
+03:56 
+
+03:56 still not using the C GPU this is still
+03:59 
+
+03:59 on the CPU and it's still as fast it'll
+04:01 
+
+04:01 be just you know as fast relatively
+04:04 
+
+04:04 speaking when you switch it to 8K or 16k
+04:07 
+
+04:07 um anyways speed is not the point
+04:09 
+
+04:09 quality is and one of the big big things
+04:12 
+
+04:12 that we go after with erosion uh more
+04:15 
+
+04:15 than just uh uh you know realism of
+04:18 
+
+04:18 shape is also realism of process and one
+04:21 
+
+04:21 of the things that we we've always found
+04:23 
+
+04:23 wanting in CG erosion has been
+04:27 
+
+04:27 deposition so we have all this really
+04:29 
+
+04:29 cool cutting of material but where does
+04:32 
+
+04:32 all that go so in this version we paid
+04:35 
+
+04:35 even more attention to what happens to
+04:39 
+
+04:39 the sediment discharge and so here you
+04:41 
+
+04:41 will find a whole group of controls for
+04:43 
+
+04:43 that so there are three kinds of
+04:44 
+
+04:44 sediments and you get to control how
+04:47 
+
+04:47 much and at what angle they start
+04:50 
+
+04:50 depositing so it may sound a bit
+04:52 
+
+04:52 complicated but it's really cool and
+04:54 
+
+04:54 simple so let me show you I'm just going
+04:57 
+
+04:57 to increase the course
+04:59 
+
+04:59 sediments and there you go you just have
+05:01 
+
+05:01 a lot of core sediments everywhere so
+05:04 
+
+05:04 you have down cutting and you have this
+05:07 
+
+05:07 and this is what makes drain look really
+05:10 
+
+05:10 real not just giving it lots of
+05:13 
+
+05:13 different grooves and so if we wanted
+05:15 
+
+05:15 more um let's add some bed
+05:18 
+
+05:18 load and there we have even more and you
+05:21 
+
+05:21 can see how this is carving out a flow
+05:24 
+
+05:24 path as the sediments go down and you
+05:27 
+
+05:27 can already imagine how cool the
+05:29 
+
+05:29 texturing on this would look
+05:31 
+
+05:31 so um let me reduce the erosion duration
+05:34 
+
+05:34 and you can see how this is
+05:36 
+
+05:36 working as you can see I I don't need to
+05:39 
+
+05:39 apply that much duration anyways um this
+05:42 
+
+05:42 is already working out quite well so if
+05:44 
+
+05:44 I go back to my previous note was this
+05:46 
+
+05:46 now we have this this is already a
+05:48 
+
+05:48 pretty cool looking terrain right there
+05:51 
+
+05:51 um now let's take a look at what um this
+05:54 
+
+05:54 erosion can do when I want to turn this
+05:56 
+
+05:56 into a more mountainous landscape well I
+05:60 
+
+05:60 personally wouldn't turn this into a
+06:01 
+
+06:01 mountainous landscape um let's just make
+06:03 
+
+06:03 a new one so I'm going to create a
+06:06 
+
+06:06 ridge uh like all the other Primitives
+06:08 
+
+06:08 this has been reworked so it gives
+06:10 
+
+06:10 better shapes uh let me just fill with
+06:13 
+
+06:13 the seeds a little bit so I can find
+06:16 
+
+06:16 something that's more mountainous like
+06:19 
+
+06:19 this that looks
+06:20 
+
+06:20 cool uh let's add a bit more definition
+06:23 
+
+06:23 to it and I'm going to use the new
+06:26 
+
+06:26 modifier stack down here that um that's
+06:28 
+
+06:28 the evolution of the post proc a stack
+06:30 
+
+06:30 that we used to have I'm going to um
+06:33 
+
+06:33 make it
+06:35 
+
+06:35 doller like
+06:37 
+
+06:37 so and then now uh I'm going to add
+06:40 
+
+06:40 erosion to this and at the same time I'm
+06:43 
+
+06:43 going to amp this up so it really
+06:46 
+
+06:46 erods so now we're getting some really
+06:49 
+
+06:49 cool
+06:49 
+
+06:49 mountains let's not forget our
+06:54 
+
+06:54 sediments so there we're getting some
+06:57 
+
+06:57 really cool Landscapes out here now I'm
+06:59 
+
+06:59 going to change the shape a little bit
+07:02 
+
+07:02 and I'm going to increase the sharpness
+07:05 
+
+07:05 and reduce the
+07:06 
+
+07:06 detail so what that does is it starts
+07:09 
+
+07:09 collapsing the Peaks a little
+07:11 
+
+07:11 bit and I'm going to bring the shape in
+07:14 
+
+07:14 a little fill with it to get the right
+07:18 
+
+07:18 um ratio that I
+07:20 
+
+07:20 want and then increase the sharpness
+07:25 
+
+07:25 more I think reduce the duration a
+07:28 
+
+07:28 little bit
+07:30 
+
+07:30 so now that's creating a kind of an
+07:33 
+
+07:33 Alpine shape that I
+07:35 
+
+07:35 like now I think I added way too much
+07:38 
+
+07:38 detail out here so that's getting in the
+07:41 
+
+07:41 way so I can reduce the definition a
+07:42 
+
+07:42 little bit or I can add one of the new
+07:45 
+
+07:45 nodes um there's the
+07:48 
+
+07:48 bulbus just makes everything smooth like
+07:52 
+
+07:52 so um I just wanted to take away all the
+07:56 
+
+07:56 sharp edges then I can erode this and
+08:00 
+
+08:00 then I can go down to almost zero shaped
+08:04 
+
+08:04 detail or just pretty much zero shaped
+08:07 
+
+08:07 detail and now I have really cool sharp
+08:11 
+
+08:11 mountains with erosion sedimentation and
+08:15 
+
+08:15 so
+08:19 
+
+08:19 forth I think I can increase the erosion
+08:21 
+
+08:21 scale a little
+08:23 
+
+08:23 bit and I think I can decrease the
+08:26 
+
+08:26 sedimentation just a
+08:28 
+
+08:28 little
+08:31 
+
+08:31 and like I said fiddle with the shape
+08:33 
+
+08:33 you can find what you like and you can
+08:35 
+
+08:35 always add a second pass of erosion to
+08:37 
+
+08:37 this so on you know uh not good enough
+08:41 
+
+08:41 you can always add more especially when
+08:43 
+
+08:43 they're this
+08:47 
+
+08:47 fast now on top of all of
+08:51 
+
+08:51 this let's add a
+08:57 
+
+08:57 rockscape oops let me look this
+09:03 
+
+09:03 up so this is another one of those
+09:05 
+
+09:05 surface nodes so when you apply it to
+09:08 
+
+09:08 this very realistic Mountain it can give
+09:13 
+
+09:13 it this amazing broken look do this I
+09:16 
+
+09:16 want to switch this to clusters
+09:21 
+
+09:21 mode and then now we have these large
+09:24 
+
+09:24 Rock clusters on our mountain and that's
+09:27 
+
+09:27 one more way of how you can use the the
+09:30 
+
+09:30 surface
+09:31 
+
+09:31 nodes and if you're new to terrain
+09:33 
+
+09:33 design we have some pretty new um we
+09:36 
+
+09:36 have some pretty cool new toys for you
+09:38 
+
+09:38 so if you were to create um some simple
+09:41 
+
+09:41 thing like a mountain uh which is one of
+09:44 
+
+09:44 our Primitives uh you know you get
+09:47 
+
+09:47 really cool Primitives to start with you
+09:49 
+
+09:49 don't have to Wrangle a noise into a
+09:50 
+
+09:50 shape like Berlin or something uh you
+09:53 
+
+09:53 can have like different styles like
+09:55 
+
+09:55 here's the basic or the eroded this say
+09:58 
+
+09:58 erosion built-in or the Alpine version
+10:01 
+
+10:01 just this cool Alpine
+10:05 
+
+10:05 mountain then let's say you want to do
+10:07 
+
+10:07 some erosion but are not so confident
+10:09 
+
+10:09 that you want to mess with all the
+10:11 
+
+10:11 different settings that you just saw all
+10:13 
+
+10:13 you have to do is create easy erosion
+10:17 
+
+10:17 and with easy erosion we have done most
+10:19 
+
+10:19 of the work for you all you have to do
+10:21 
+
+10:21 is pick one of the different choices now
+10:24 
+
+10:24 these are just um temporary standard
+10:26 
+
+10:26 names uh we're working on all
+10:28 
+
+10:28 fine-tuning all the different flavors of
+10:30 
+
+10:30 erosion here so um you'll get to see
+10:33 
+
+10:33 some changes over the next few builds
+10:34 
+
+10:34 but um here's a little taste so there's
+10:36 
+
+10:36 the simple erosion and all you have to
+10:38 
+
+10:38 do is choose how much influence do you
+10:40 
+
+10:40 want a little bit or a lot and then you
+10:42 
+
+10:42 can choose a random seed if you want and
+10:45 
+
+10:45 then let me change this from simple to
+10:47 
+
+10:47 really strong ancient
+10:50 
+
+10:50 erosion and then that changes this turn
+10:53 
+
+10:53 into this or let's say I want this to be
+10:57 
+
+10:57 Rocky then that will trans transform
+10:60 
+
+10:60 this terrain into something really
+11:03 
+
+11:03 strong and Rocky like so and then you
+11:06 
+
+11:06 have all kinds of different experimental
+11:09 
+
+11:09 shapes you have uh exposed rock
+11:13 
+
+11:13 faces uh with little collapses let me
+11:15 
+
+11:15 zoom in to show you like so and on and
+11:19 
+
+11:19 on and on with all these different
+11:21 
+
+11:21 options you can create a variety of
+11:23 
+
+11:23 erosions without messing with complex
+11:25 
+
+11:25 settings and quickly getting the look
+11:28 
+
+11:28 that you want
+11:30 
+
+11:30 now I only scratch the tip of the
+11:34 
+
+11:34 iceberg um you know these are just some
+11:38 
+
+11:38 of the really uh uh fun cool new things
+11:41 
+
+11:41 that I've been playing with recently so
+11:43 
+
+11:43 they've been at the top of my mind we
+11:45 
+
+11:45 have lots of other things we have um we
+11:49 
+
+11:49 have groups we have uh notes we have
+11:53 
+
+11:53 accumulation nodes we have lots of new
+11:56 
+
+11:56 simulations and um we have have uh uh
+12:01 
+
+12:01 new workflow stuff if you're uh creating
+12:04 
+
+12:04 complex pipelines we have of course the
+12:07 
+
+12:07 god mode we have the new um you know
+12:11 
+
+12:11 output for unreal like right here we
+12:14 
+
+12:14 have the unreal node which lets you uh
+12:16 
+
+12:16 export straight into um unreal and use
+12:20 
+
+12:20 the Gaia uh unreal tools to import the
+12:23 
+
+12:23 entire landscape into ue5 without having
+12:25 
+
+12:25 to worry about anything it's just a
+12:27 
+
+12:27 oneclick thing uh which we'll do a video
+12:29 
+
+12:29 on on very soon and then lots of other
+12:33 
+
+12:33 stuff coming soon so there are only you
+12:35 
+
+12:35 know 24 hours in the day so um uh keep
+12:39 
+
+12:39 your eyes on our social media we'll
+12:42 
+
+12:42 start posting more videos as we go
+12:44 
+
+12:44 forward now that we have bits out in the
+12:47 
+
+12:47 wild you'll get to see people make some
+12:49 
+
+12:49 pretty cool stuff with this and then um
+12:52 
+
+12:52 we'll be releasing more and more
+12:54 
+
+12:54 features and um soon enough we'll have
+12:56 
+
+12:56 the final release with a bunch of
+12:59 
+
+12:59 amazing new tools for everyone to play
+13:02 
+
+13:02 with so thank you and um see you soon

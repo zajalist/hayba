@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hayba PCGEx — Dashboard</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.29.2/cytoscape.min.js" defer></script>
+  <script src="/js/app.js" defer></script>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Titlebar ── -->
+  <div id="titlebar">
+    <div class="brand">HAYBA <span>/ PCGEx</span></div>
+    <div id="server-uptime">00:00:00</div>
+    <div class="sep"></div>
+    <div id="ue-status-badge" class="ue-status-badge">○ UE5 CHECKING…</div>
+  </div>
+
+  <!-- ── Sidebar ── -->
+  <div id="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-label">Monitor</div>
+      <div class="nav-item" data-page="status">
+        <span class="icon">◈</span> Status
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Editor</div>
+      <div class="nav-item" data-page="assets">
+        <span class="icon">≡</span> Assets
+      </div>
+      <div class="nav-item" data-page="graph">
+        <span class="icon">⬡</span> Graph Viewer
+      </div>
+      <div class="nav-item" data-page="validate">
+        <span class="icon">✓</span> Validate
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Reference</div>
+      <div class="nav-item" data-page="catalog">
+        <span class="icon">⊞</span> Node Catalog
+      </div>
+    </div>
+    <div id="sidebar-footer">
+      HAYBA MCP v0.2.0<br>
+      port 52341
+    </div>
+  </div>
+
+  <!-- ── Main ── -->
+  <div id="main">
+
+    <!-- ════════════════════ STATUS ════════════════════ -->
+    <div id="page-status" class="page">
+      <div class="page-header">
+        <span class="page-title">Status</span>
+        <span class="page-subtitle">Server &amp; UE5 connection monitor</span>
+      </div>
+      <div class="page-body">
+        <div class="status-grid">
+
+          <div class="status-card">
+            <div class="card-label">Unreal Engine 5</div>
+            <div class="metric-row">
+              <span class="metric-key">TCP bridge</span>
+              <span class="metric-val red" id="st-ue-val">CHECKING…</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-key">Plugin</span>
+              <span class="metric-val cyan" id="st-plugin-val">—</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-key">UE Version</span>
+              <span class="metric-val" id="st-ueversion-val">—</span>
+            </div>
+          </div>
+
+          <div class="status-card">
+            <div class="card-label">MCP Server</div>
+            <div class="metric-row">
+              <span class="metric-key">Dashboard port</span>
+              <span class="metric-val amber" id="st-port-val">52341</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-key">TCP target</span>
+              <span class="metric-val" id="st-tcp-val">—</span>
+            </div>
+          </div>
+
+          <div class="status-card full-width" style="flex:1;min-height:0;overflow:hidden;">
+            <div class="card-label">Activity Log</div>
+            <div id="activity-log"></div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════════════════ ASSETS ════════════════════ -->
+    <div id="page-assets" class="page">
+      <div class="page-header">
+        <span class="page-title">PCG Assets</span>
+        <span class="page-subtitle" id="assets-count">—</span>
+        <div class="page-actions">
+          <button class="btn" id="assets-refresh">↻ Refresh</button>
+        </div>
+      </div>
+      <div class="page-body">
+        <div class="assets-layout">
+          <div class="toolbar">
+            <input class="input" id="asset-search" type="text" placeholder="Filter by name or path…">
+          </div>
+          <div class="asset-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Asset Path</th>
+                  <th>Nodes</th>
+                  <th>Edges</th>
+                </tr>
+              </thead>
+              <tbody id="assets-tbody">
+                <tr><td colspan="4"><div class="loading"><div class="spinner"></div>Loading…</div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════════════════ GRAPH VIEWER ════════════════════ -->
+    <div id="page-graph" class="page">
+      <div class="page-header">
+        <span class="page-title">Graph Viewer</span>
+        <span class="page-subtitle">Select an asset to visualize</span>
+      </div>
+      <div class="page-body">
+        <div class="graph-layout">
+
+          <div class="graph-panel">
+            <div class="pane-header">Assets</div>
+            <div class="graph-asset-list" id="graph-asset-list">
+              <div class="loading"><div class="spinner"></div></div>
+            </div>
+          </div>
+
+          <div class="graph-panel">
+            <div id="cy-container"></div>
+          </div>
+
+          <div class="graph-panel" id="graph-inspector">
+            <div class="pane-header">Inspector</div>
+            <div class="inspector-content" style="color:var(--text-2)">
+              Click a node to inspect
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════════════════ VALIDATE ════════════════════ -->
+    <div id="page-validate" class="page">
+      <div class="page-header">
+        <span class="page-title">Graph Validator</span>
+        <span class="page-subtitle">Paste JSON, validate schema &amp; pin integrity</span>
+        <div class="page-actions">
+          <button class="btn" id="validate-clear">✕ Clear</button>
+          <button class="btn primary" id="validate-btn">▶ Validate</button>
+        </div>
+      </div>
+      <div class="page-body">
+        <div class="validate-layout">
+
+          <div class="validate-pane">
+            <div class="pane-header">
+              <span>Input — PCGEx Graph JSON</span>
+            </div>
+            <textarea id="validate-input" placeholder='{
+  "nodes": [ ... ],
+  "edges": [ ... ]
+}'></textarea>
+          </div>
+
+          <div class="validate-pane">
+            <div class="pane-header">
+              <span>Results</span>
+            </div>
+            <div class="validate-results" id="validate-results">
+              <div class="empty-state">
+                <div class="empty-icon">✓</div>
+                <div class="empty-label">Paste graph JSON and validate</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════════════════ CATALOG ════════════════════ -->
+    <div id="page-catalog" class="page">
+      <div class="page-header">
+        <span class="page-title">Node Catalog</span>
+        <span class="page-subtitle">PCGEx node reference</span>
+      </div>
+      <div class="page-body">
+        <div class="catalog-layout">
+
+          <div class="catalog-sidebar">
+            <div class="catalog-search">
+              <input class="input" id="catalog-search-input" type="text" placeholder="Search nodes…">
+            </div>
+            <div class="category-list" id="catalog-categories">
+              <div class="loading"><div class="spinner"></div></div>
+            </div>
+          </div>
+
+          <div class="catalog-results" id="catalog-results">
+            <div class="empty-state">
+              <div class="empty-icon">⬡</div>
+              <div class="empty-label">Select a category or search</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /main -->
+</div><!-- /app -->
+</body>
+</html>

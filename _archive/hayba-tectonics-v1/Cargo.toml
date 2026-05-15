@@ -1,0 +1,27 @@
+[package]
+name = "hayba-tectonics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Tectonic simulation core for the Hayba planetary stack. Icosphere mesh, Voronoi plate assignment, slab-pull motion, boundary classification. Bit-exact deterministic via hayba-fixedpoint."
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "tectonic-preview"
+path = "src/bin/preview.rs"
+
+[[bin]]
+name = "tectonic-debug-suite"
+path = "src/bin/debug_suite.rs"
+
+[[bin]]
+name = "m0-diag"
+path = "src/bin/m0_diag.rs"
+
+[dependencies]
+hayba-fixedpoint = { path = "../hayba-fixedpoint" }
+hayba-seeds      = { path = "../hayba-seeds" }
+half             = "2"

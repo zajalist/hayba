@@ -1,0 +1,41 @@
+{
+  "commands": [
+    {
+      "command": "Gaea.exe -deactivate",
+      "description": "Release license activation slot",
+      "flags": []
+    },
+    {
+      "command": "Gaea-2.x.x.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-",
+      "description": "Unattended silent installation",
+      "flags": [
+        {
+          "flag": "/ALLUSERS",
+          "description": "System-wide installation (requires admin)"
+        },
+        {
+          "flag": "/CURRENTUSER",
+          "description": "Per-user installation (non-admin)"
+        },
+        {
+          "flag": "/LOG=\"filename\"",
+          "description": "Save installation log to file"
+        },
+        {
+          "flag": "/DIR=\"X:\\PATH\"",
+          "description": "Override default installation folder"
+        }
+      ]
+    },
+    {
+      "command": "Build Swarm (via Build Options > Execute Build)",
+      "description": "Full-resolution terrain build via CLI. Close Gaea UI first to free resources.",
+      "flags": []
+    },
+    {
+      "command": "Build Options > Copy Command Line",
+      "description": "Get the exact command-line equivalent of current build settings with fully qualified paths",
+      "flags": []
+    }
+  ]
+}

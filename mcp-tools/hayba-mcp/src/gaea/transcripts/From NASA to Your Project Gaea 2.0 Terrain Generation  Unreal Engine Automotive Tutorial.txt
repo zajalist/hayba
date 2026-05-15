@@ -1,0 +1,592 @@
+00:01 Hey, Scattle here and welcome to another
+00:03 
+
+00:03 tutorial in the automotive Unreal Engine
+00:05 
+
+00:05 series. This time we're diving into Gaya
+00:07 
+
+00:07 2.0 and I will show you how to generate
+00:11 
+
+00:11 simple but beautiful and procedurally
+00:13 
+
+00:13 generated terrains. This is the tool
+00:16 
+
+00:16 NASA uses to design planet
+00:18 
+
+00:18 visualizations. The tool Remedy
+00:20 
+
+00:20 Entertainment used to create the entire
+00:22 
+
+00:22 Cauldron Lake for Ellen Wakeake 2.
+00:24 
+
+00:24 Kojima Productions used it for Death
+00:26 
+
+00:26 Stranding, too. So, as you can see,
+00:29 
+
+00:29 we're not talking about some indie tool
+00:31 
+
+00:31 for hobbyists. We're talking about an
+00:33 
+
+00:33 industry standard.
+00:35 
+
+00:35 You can find the program at
+00:36 
+
+00:36 quadspinner.com.
+00:38 
+
+00:38 There's a totally free version you can
+00:40 
+
+00:40 use, but the export is limited to 1K,
+00:42 
+
+00:42 perfect for learning and seeing if the
+00:44 
+
+00:44 tool fits you. There's also an indie
+00:46 
+
+00:46 version for 99 bucks. And the best part,
+00:50 
+
+00:50 these are perpetual licenses. No
+00:53 
+
+00:53 subscriptions eating up my budget every
+00:55 
+
+00:55 month like like Netflix which I don't
+00:58 
+
+00:58 have time to watch anyway. The system is
+01:01 
+
+01:01 node based. You can change any decision
+01:03 
+
+01:03 at any moment. All right, we've talked
+01:06 
+
+01:06 enough. Should we actually make this
+01:08 
+
+01:08 terrain? Start up GA and make a new
+01:12 
+
+01:12 project. You see a black viewport and an
+01:14 
+
+01:14 empty graph in front of you. We start
+01:17 
+
+01:17 with a primitive. In my case, I'm using
+01:19 
+
+01:19 the ridge node. First, you need a mass
+01:22 
+
+01:22 to work with.
+01:24 
+
+01:24 On the right side, you have parameters.
+01:26 
+
+01:26 The first parameter we're interested in
+01:28 
+
+01:28 is seed. This is a random generator. I
+01:31 
+
+01:31 was looking for something with
+01:32 
+
+01:32 interesting collapse terrain.
+01:35 
+
+01:35 Then, let's add some erosion. Whether
+01:37 
+
+01:37 you use the wizard or erode directly,
+01:39 
+
+01:39 your call. Experiment with what fits
+01:41 
+
+01:41 better. Remember, you can change your
+01:43 
+
+01:43 mind at any moment, so don't overthink
+01:45 
+
+01:45 it. Right now, we're laying the
+01:47 
+
+01:47 foundation.
+01:49 
+
+01:49 Next, we can simultaneously add
+01:51 
+
+01:51 something irregular like rock noise.
+01:54 
+
+01:54 Once you're done playing around, connect
+01:56 
+
+01:56 these two terrains. The combine node
+01:58 
+
+01:58 works best for this. In this case, the
+02:00 
+
+02:00 screen option worked for me with ratio
+02:02 
+
+02:02 at one. Finally, you can always add a
+02:06 
+
+02:06 bit more erosion, short duration,
+02:09 
+
+02:09 slightly higher scale, and bigger bed
+02:11 
+
+02:11 load. Definitely something that will
+02:14 
+
+02:14 just gently smooth out the terrain.
+02:18 
+
+02:18 The default node settings are already
+02:19 
+
+02:19 pretty good. Gaya is tuned to give
+02:22 
+
+02:22 sensible results without tedious
+02:23 
+
+02:23 parameter tweaking. But if you need to
+02:25 
+
+02:25 dive deeper, the scene is yours.
+02:29 
+
+02:29 All right, that first ring went a bit
+02:32 
+
+02:32 too fast. Let's make another one. This
+02:34 
+
+02:34 time, I'll show you a slightly more
+02:36 
+
+02:36 complex workflow. We'll use the canyon
+02:39 
+
+02:39 node. In this case, I'll set it up to
+02:41 
+
+02:41 have a fairly deep and relatively
+02:43 
+
+02:43 regular depression. We'll also reduce
+02:46 
+
+02:46 valley to get the right effect. We don't
+02:48 
+
+02:48 want the Grand Canyon, but we also don't
+02:50 
+
+02:50 want a drainage ditch.
+02:53 
+
+02:53 Next, let's add ridge in parallel. No
+02:56 
+
+02:56 complications, just a white scale
+02:58 
+
+02:58 because I'm not interested in huge
+02:60 
+
+02:60 details right now. On the other hand,
+03:03 
+
+03:03 remember we're working
+03:04 
+
+03:04 non-destructively.
+03:06 
+
+03:06 Now, let's connect these two nodes. And
+03:08 
+
+03:08 again, in this case, screen at 100%
+03:11 
+
+03:11 works for me, but you can try something
+03:13 
+
+03:13 else. whatever fits your vibe.
+03:16 
+
+03:16 On the other hand, the whole thing is a
+03:18 
+
+03:18 bit too regular.
+03:20 
+
+03:20 Let's add something to diversify this
+03:22 
+
+03:22 terrain.
+03:24 
+
+03:24 Let's add a mountain. Why not? I want
+03:26 
+
+03:26 something big and tall. Let's also set a
+03:30 
+
+03:30 preset after erosion and keep going.
+03:34 
+
+03:34 Let's move it a bit to the corner. The
+03:36 
+
+03:36 transform node is perfect for this.
+03:39 
+
+03:39 Unfortunately, we have these damn cut
+03:41 
+
+03:41 offs that ruin the effect. It looks like
+03:44 
+
+03:44 someone copy pasted the mountain in MS
+03:46 
+
+03:46 Paint. Sure, we could use the road node,
+03:49 
+
+03:49 tell it to work only at a specific
+03:51 
+
+03:51 height, but why engage our hardware that
+03:54 
+
+03:54 much when there are simpler tools?
+03:57 
+
+03:57 Let's add a node called edge. In this
+03:59 
+
+03:59 case, the default options are more than
+04:01 
+
+04:01 enough. And what? We have a mountain
+04:04 
+
+04:04 that beautifully blended into the ground
+04:06 
+
+04:06 level. You can't see the seams.
+04:09 
+
+04:09 So, what now? We made a great crater. We
+04:12 
+
+04:12 made a cool mountain. Let's connect
+04:14 
+
+04:14 them. Combine again, but this time let's
+04:17 
+
+04:17 add the shaper option and set it to some
+04:19 
+
+04:19 negative value. This will smooth out the
+04:22 
+
+04:22 terrain a bit. Next, let's add clamp and
+04:25 
+
+04:25 raise the lower values a bit. Don't
+04:27 
+
+04:27 forget to ground all of this because the
+04:30 
+
+04:30 floating mountain is a cool concept for
+04:32 
+
+04:32 sci-fi, but not for automotive
+04:34 
+
+04:34 visualization, unless you're shooting
+04:36 
+
+04:36 for Cyber Truck on Mars, but that's a
+04:38 
+
+04:38 different tutorial.
+04:40 
+
+04:40 And finally, let's add the erosion node.
+04:43 
+
+04:43 Let it run a bit longer and increase the
+04:45 
+
+04:45 bed load. Those are the soft flat
+04:47 
+
+04:47 terrains where everything slides down.
+04:51 
+
+04:51 And what? Now we have a nice slightly
+04:53 
+
+04:53 mountainous terrain. And what used to be
+04:56 
+
+04:56 a canyon can now be used as a place to
+04:58 
+
+04:58 lay out a road. Perfect for automotive
+05:01 
+
+05:01 shots. A natural road created by nature
+05:04 
+
+05:04 like Steel View Pass, but you designed
+05:06 
+
+05:06 it yourself.
+05:09 
+
+05:09 When the terrain shape is ready, it's
+05:11 
+
+05:11 worth coloring it to preview how it'll
+05:13 
+
+05:13 look.
+05:15 
+
+05:15 So, in the coloriz tab, let's drop in a
+05:17 
+
+05:17 set map and set some preset right away.
+05:21 
+
+05:21 Gaya has a ton of color presets from
+05:23 
+
+05:23 real satellite data. Just click and you
+05:26 
+
+05:26 get authentic colors without hours of
+05:28 
+
+05:28 painting in Photoshop.
+05:30 
+
+05:30 The only problem is that it textures our
+05:32 
+
+05:32 terrain from top to bottom. It didn't
+05:34 
+
+05:34 calculate anything.
+05:37 
+
+05:37 Fortunately, there's also the texturizer
+05:39 
+
+05:39 node. Let's add it before set map. Wa,
+05:42 
+
+05:42 what a difference. It analyzes our
+05:44 
+
+05:44 terrain and creates several mask maps.
+05:47 
+
+05:47 For example, it separately marks steep
+05:49 
+
+05:49 slopes, flat planes, high altitude
+05:51 
+
+05:51 areas, etc. These masks are so-called
+05:55 
+
+05:55 splat maps or material distribution
+05:57 
+
+05:57 maps. Based on them, the next node set
+05:60 
+
+05:60 maps applies colors taken from real
+06:02 
+
+06:02 satellite data. But for now, these
+06:05 
+
+06:05 colors are just an example of how the
+06:06 
+
+06:06 terrain might look after applying
+06:08 
+
+06:08 materials in Unreal Engine. And speaking
+06:10 
+
+06:10 of Unreal, let's talk about export.
+06:14 
+
+06:14 Technically, you can set any node to
+06:15 
+
+06:15 export by pressing F3, but I like using
+06:18 
+
+06:18 the export node. Since we'll be using
+06:20 
+
+06:20 the mapping UE, let's change the preset
+06:22 
+
+06:22 to match it. So, here we click on
+06:24 
+
+06:24 Unreal. Finally, let's change the
+06:27 
+
+06:27 quality to 4K. Set the export format to
+06:30 
+
+06:30 R16, meaning raw file in 16 bits, and
+06:33 
+
+06:33 specify we want a height map. Choose
+06:35 
+
+06:35 your folder and save. Click build. This
+06:38 
+
+06:38 will take a few minutes depending on
+06:40 
+
+06:40 your resolution and hardware. Go make
+06:42 
+
+06:42 yourself a coffee or do 10 squats.
+06:49 
+
+06:49 All right. So now fire up Unreal Engine
+06:52 
+
+06:52 landscape mode in the toolbar, then
+06:54 
+
+06:54 manage, new, import from file.
+06:58 
+
+06:58 Click select height map and choose your
+06:60 
+
+07:00 height map. Math sometimes comes in
+07:02 
+
+07:02 handy here, but for now we won't get
+07:04 
+
+07:04 picky with details. Click import and
+07:07 
+
+07:07 done. Remember, you can always change
+07:10 
+
+07:10 the scale of your landscape. Obviously,
+07:12 
+
+07:12 it's best to do this during terrain
+07:14 
+
+07:14 generation, but know that it's also an
+07:15 
+
+07:15 option. But now you can apply your
+07:18 
+
+07:18 landscape material and then add foliage
+07:21 
+
+07:21 either manually or using PCG. But relax,
+07:25 
+
+07:25 we'll tackle that in the next episodes.
+07:28 
+
+07:28 So, why GAA for automotive? Because
+07:31 
+
+07:31 automotive visualization demands premium
+07:33 
+
+07:33 quality. You can't have a $200,000
+07:36 
+
+07:36 product shot with basic terrain. Gaya
+07:38 
+
+07:38 gives you Hollywood level terrains for a
+07:40 
+
+07:40 fraction of the cost. If you do
+07:42 
+
+07:42 automotive visualization professionally,
+07:44 
+
+07:44 GA is an investment that pays for itself
+07:46 
+
+07:46 on the first project. And that's it. I
+07:50 
+
+07:50 hope I managed to guide you through the
+07:52 
+
+07:52 whole process of creating landscape in a
+07:54 
+
+07:54 clear and accessible way. If you enjoyed
+07:58 
+
+07:58 this tutorial, feel free to subscribe to
+07:60 
+
+07:60 my channel. I'm Carl Mhallik. Thanks for
+08:03 
+
+08:03 watching and see you next time.

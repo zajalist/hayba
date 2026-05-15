@@ -1273,15 +1273,6 @@ name = "hayba-seeds"
 version = "0.1.0"
 
 [[package]]
-name = "hayba-tectonics"
-version = "0.1.0"
-dependencies = [
- "half",
- "hayba-fixedpoint",
- "hayba-seeds",
-]
-
-[[package]]
 name = "hayba-tectonics-v2"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,529 @@
+00:00 You've shaped the land. Now it's time to
+00:03 
+
+00:03 bring it to life. Welcome to the world
+00:05 
+
+00:05 of surface nodes in Gaia. Hello friends.
+00:09 
+
+00:09 In this lesson, we're going to focus on
+00:11 
+
+00:11 the surface category where you'll get
+00:13 
+
+00:13 familiar with the nodes and we'll go
+00:15 
+
+00:15 through real examples for them.
+00:21 
+
+00:21 The contours node. The contours node
+00:23 
+
+00:23 generates stylized contour lines based
+00:26 
+
+00:26 on terrain elevation. It's often used to
+00:29 
+
+00:29 create layered map-like visuals or to
+00:32 
+
+00:32 drive masks and texturing based on
+00:34 
+
+00:34 elevation steps. As always, we create a
+00:37 
+
+00:37 mountain for testing and by adding an
+00:40 
+
+00:40 adjust node, we increase its strength.
+00:43 
+
+00:43 Now, we add the contours node. As you
+00:46 
+
+00:46 can see, it generates a layered mask for
+00:48 
+
+00:48 us. We can increase the count, subdivide
+00:51 
+
+00:51 it, raise the accuracy, adjust the
+00:54 
+
+00:54 number of main layers, and also control
+00:56 
+
+00:56 the secondary layers. To get better
+00:58 
+
+00:58 layers, we can add some blur to it. And
+01:01 
+
+01:01 after combining it with our mountain, we
+01:03 
+
+01:03 subtract it from the mountain to achieve
+01:05 
+
+01:05 the result you see.
+01:08 
+
+01:08 [Music]
+01:16 
+
+01:16 [Music]
+01:25 
+
+01:25 With this method, we can achieve a
+01:27 
+
+01:27 realistic example like the image you
+01:29 
+
+01:29 see. And it's better to create our first
+01:32 
+
+01:32 example. So we can also review the
+01:34 
+
+01:34 previous nodes. In this example, we make
+01:37 
+
+01:37 a copy of our mountain and by changing
+01:39 
+
+01:39 its position, combine it with the first
+01:41 
+
+01:41 mountain. Then we apply adjust to both.
+01:44 
+
+01:44 Now by adding the soft clip node which
+01:46 
+
+01:46 we learned in the third tutorial, we
+01:48 
+
+01:48 smooth the surface and afterward we
+01:50 
+
+01:50 apply a new node to reach a result close
+01:53 
+
+01:53 to the image we saw.
+02:06 
+
+02:06 [Music]
+02:21 
+
+02:21 The grid node. The grid node generates a
+02:24 
+
+02:24 regular grid pattern across your
+02:26 
+
+02:26 terrain. It's mainly used for debugging,
+02:28 
+
+02:28 alignment, or creating stylized/
+02:32 
+
+02:32 artificial terrain features.
+02:41 
+
+02:41 [Music]
+02:52 
+
+02:52 Let's move on to the rocky subgroup,
+02:56 
+
+02:56 the craggy node. The craggy node adds
+02:59 
+
+02:59 rough, jagged, fractured details to your
+03:02 
+
+03:02 terrain surface, simulating sharp rock
+03:04 
+
+03:04 formations, cracks, or crumbling cliffs.
+03:07 
+
+03:07 It's designed to enhance natural
+03:09 
+
+03:09 realism, especially in rocky or eroded
+03:12 
+
+03:12 areas.
+03:22 
+
+03:22 So even if your surface is blurry, this
+03:25 
+
+03:25 node can add sharp details to the scene.
+03:30 
+
+03:30 Now let's make a real example of it and
+03:32 
+
+03:32 create this surface where we want the
+03:34 
+
+03:34 effect to be absent in some areas. So we
+03:37 
+
+03:37 had a pla node and with some adjustments
+03:40 
+
+03:40 combine and subtract it.
+03:51 
+
+03:51 [Music]
+04:07 
+
+04:07 [Music]
+04:10 
+
+04:10 The outcrops node. The outcrops node
+04:12 
+
+04:12 creates rocky surface protrusions that
+04:14 
+
+04:14 resemble natural stone formations
+04:17 
+
+04:17 jutting out from terrain like cliffs,
+04:19 
+
+04:19 ledges, or broken rock layers. It's
+04:22 
+
+04:22 perfect for adding geological complexity
+04:25 
+
+04:25 and breaking up smooth surfaces. As you
+04:27 
+
+04:27 can see, it can easily create excellent
+04:30 
+
+04:30 rocky details for us with controls for
+04:32 
+
+04:32 size, volume, and rotation.
+04:50 
+
+04:50 The rock noise. The rock noise node
+04:52 
+
+04:52 generates sharp rocky surface patterns
+04:55 
+
+04:55 using specialized highfrequency noise.
+04:58 
+
+04:58 It's designed to simulate natural rock
+05:00 
+
+05:00 textures, cracks, and fragmented
+05:03 
+
+05:03 geological details across your terrain.
+05:05 
+
+05:05 As you can see, it can on its own
+05:07 
+
+05:07 recreate the previous example or even
+05:10 
+
+05:10 simulate eroded terrain.
+05:24 
+
+05:24 The rockscape node. The rockscape node
+05:26 
+
+05:26 generates large scale rocky formations
+05:29 
+
+05:29 and layers that resemble natural rock
+05:31 
+
+05:31 fields, boulder zones, or stratified
+05:34 
+
+05:34 rock beds. It gives your terrain a
+05:36 
+
+05:36 chunky layered rocky structure. Ideal
+05:40 
+
+05:40 for creating dramatic and cinematic
+05:42 
+
+05:42 environments.
+05:46 
+
+05:46 [Music]
+05:51 
+
+05:51 The bomber node. The bomber node is a
+05:54 
+
+05:54 scattering and stamping system that lets
+05:56 
+
+05:56 you bomb or scatter patterns called
+05:59 
+
+05:59 stamps across your terrain. It's used to
+06:01 
+
+06:01 add repeated features like rocks,
+06:03 
+
+06:03 craters, dunes, vegetation patches, and
+06:07 
+
+06:07 more based on any input shape. Imagine
+06:09 
+
+06:09 you've created a small mountain and want
+06:11 
+
+06:11 to scatter taller mountains around it.
+06:13 
+
+06:13 With this node, you can do that.
+06:34 
+
+06:34 [Music]
+06:52 
+
+06:52 the Pockmarks node. The Pockmarks node
+06:54 
+
+06:54 creates scattered tiny impact-like holes
+06:57 
+
+06:57 or eroded pits across your terrain
+06:59 
+
+06:59 surface. These formations resemble
+07:02 
+
+07:02 weathered surfaces, cratered ground, or
+07:05 
+
+07:05 biological erosion. Perfect for adding
+07:07 
+
+07:07 fine detail and realism. The next node
+07:11 
+
+07:11 is stones, which scatters rocks across
+07:13 
+
+07:13 the ground.
+07:18 
+
+07:18 [Music]
+07:28 
+
+07:28 [Music]
+07:34 
+
+07:34 The next node is bulbous, which I tested
+07:37 
+
+07:37 on two nodes. It softens the details and
+07:40 
+
+07:40 makes the bumps a bit more stretched.
+07:45 
+
+07:45 The shatter node. The shatter node
+07:48 
+
+07:48 breaks up your terrain into fractured
+07:50 
+
+07:50 platelike segments, simulating the look
+07:52 
+
+07:52 of shattered stone, tectonic breakage,
+07:55 
+
+07:55 or dry, cracked earth. It's ideal for
+07:57 
+
+07:57 creating dramatic broken surfaces with a
+07:60 
+
+07:60 strong stylized or natural feel. For
+08:03 
+
+08:03 example, you can apply this node to a
+08:05 
+
+08:05 hillside and by adding a lake, you'll
+08:08 
+
+08:08 get a hillside next to the water.
+08:22 
+
+08:22 The shear node. The shear node distorts
+08:25 
+
+08:25 your terrain by sliding parts of it
+08:27 
+
+08:27 horizontally or vertically. Similar to a
+08:30 
+
+08:30 tectonic shear shift or tilting effect,
+08:32 
+
+08:32 it stretches and offsets elevation data
+08:35 
+
+08:35 in a specific direction, creating
+08:38 
+
+08:38 dynamic slanted formations.
+08:43 
+
+08:43 The next node is ground texture, which
+08:46 
+
+08:46 adds a texture to the surface and can be
+08:48 
+
+08:48 useful in some cases.
+08:56 
+
+08:56 The roughen node. The roughen node
+08:58 
+
+08:58 introduces subtle to intense surface
+09:01 
+
+09:01 irregularities, simulating natural
+09:03 
+
+09:03 surface wear, erosion, or uneven
+09:06 
+
+09:06 textures. It's perfect for breaking up
+09:09 
+
+09:09 overly smooth terrains and giving them a
+09:12 
+
+09:12 more believable, gritty appearance. The
+09:15 
+
+09:15 next node is sand, which creates
+09:17 
+
+09:17 wavelike patterns similar to sand dunes.
+09:20 
+
+09:20 If the scale is too low, you can
+09:22 
+
+09:22 increase it with the transform node and
+09:24 
+
+09:24 then combine it with a hill.
+09:35 
+
+09:35 [Music]
+09:58 
+
+09:58 The fractal terraces. The fractal
+10:00 
+
+10:00 terraces node creates naturally broken
+10:04 
+
+10:04 irregular terrace formations by applying
+10:06 
+
+10:06 fractal logic to elevation steps.
+10:17 
+
+10:17 Now I want to create this same image
+10:19 
+
+10:19 with the same generated mountain range.
+10:21 
+
+10:21 I need to make another mountain and move
+10:23 
+
+10:23 it to the corner. Now it's enough to
+10:25 
+
+10:25 simply combine these two and set them to
+10:27 
+
+10:27 ad mode.
+10:44 
+
+10:44 The sandstone node. The sandstone node
+10:46 
+
+10:46 is like a fractal that generates surface
+10:49 
+
+10:49 layers, but it differs in some features.
+10:52 
+
+10:52 By default, it seems to affect finer
+10:54 
+
+10:54 details more. And another distinctive
+10:57 
+
+10:57 option is that it can be rotated.
+11:04 
+
+11:04 [Music]
+11:11 
+
+11:11 [Music]
+11:20 
+
+11:20 The other nodes in this category work in
+11:22 
+
+11:22 a similar way. So to save time, we'll
+11:24 
+
+11:24 just take a quick look at them.
+11:38 
+
+11:38 If you enjoyed this tutorial and learned
+11:40 
+
+11:40 something new, don't forget to like the
+11:42 
+
+11:42 video and leave a comment to share your
+11:43 
+
+11:43 thoughts. Your support really helps the
+11:46 
+
+11:46 channel grow and keeps me motivated to
+11:48 
+
+11:48 create more tutorials for
