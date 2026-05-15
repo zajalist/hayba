@@ -84,6 +84,10 @@ pub struct PlanetSnapshot {
     pub cell_biome2: Vec<f32>,
     /// Primary→secondary blend weight, 0..0.5.
     pub cell_biome_blend: Vec<f32>,
+    /// Per-cell 10-wide biome weight vector (length `n_cells * 10`,
+    /// row-major). Neighbour-diffused so the GPU interpolates fixed biome
+    /// SLOTS' weights across each triangle → no hexagonal biome facets.
+    pub cell_biome_weights: Vec<f32>,
     /// Per-cell STABLE pseudo-random unit vec3 (length = `n_cells * 3`),
     /// keyed on the immutable cell index. The shader keys its within-biome
     /// surface texture noise on this so the texture rides with the drifting
@@ -356,6 +360,7 @@ pub fn snapshot_model(
         cell_biome: cf.biome,
         cell_biome2: cf.biome2,
         cell_biome_blend: cf.biome_blend,
+        cell_biome_weights: cf.biome_weights,
         cell_seed: cf.cell_seed,
         climate_debug,
     }
@@ -399,6 +404,7 @@ mod tests {
         assert_eq!(snap.cell_biome.len(), n);
         assert_eq!(snap.cell_biome2.len(), n);
         assert_eq!(snap.cell_biome_blend.len(), n);
+        assert_eq!(snap.cell_biome_weights.len(), n * 10);
         assert_eq!(snap.cell_seed.len(), n * 3);
         assert!(snap.cell_biome.iter().all(|&b| (0.0..=9.0).contains(&b)));
     }

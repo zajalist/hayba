@@ -18,6 +18,11 @@ export const VERTEX_SHADER = /* glsl */ `
   // vector, rides with the drifting crust (does NOT change as the cell
   // moves through world space).
   attribute vec3 aSeed;
+  // Per-biome weight vector (10 weights → 3 vec4; slots 0..9 used). These
+  // varyings interpolate across the triangle — THAT is the spatial blend.
+  attribute vec4 aBiomeW0;
+  attribute vec4 aBiomeW1;
+  attribute vec4 aBiomeW2;
 
   uniform float uExaggeration;
 
@@ -46,6 +51,9 @@ export const VERTEX_SHADER = /* glsl */ `
   varying vec3  vWorldNormal;
   varying vec3  vWorldPos;
   varying vec3  vSeed;
+  varying vec4  vBW0;
+  varying vec4  vBW1;
+  varying vec4  vBW2;
 
   // Cheap per-vertex hash noise — used to perturb the coastline silhouette
   // away from the underlying hexagonal mesh.
@@ -92,6 +100,11 @@ export const VERTEX_SHADER = /* glsl */ `
     // Stable per-cell texture-space basis. The +1e-4 keeps it away from
     // exactly zero (normalize_or_zero on the Rust side can emit (0,0,0)).
     vSeed        = normalize(aSeed + vec3(1e-4));
+    // Pass the 10 biome weights through — GPU interpolation of these is the
+    // continuous, facet-free cell→cell biome blend.
+    vBW0 = aBiomeW0;
+    vBW1 = aBiomeW1;
+    vBW2 = aBiomeW2;
 
     gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
   }
@@ -146,6 +159,9 @@ export const FRAGMENT_SHADER = /* glsl */ `
   varying vec3  vWorldNormal;
   varying vec3  vWorldPos;
   varying vec3  vSeed;
+  varying vec4  vBW0;
+  varying vec4  vBW1;
+  varying vec4  vBW2;
 
   // ── Noise primitives ─────────────────────────────────────────────────────
   // Deterministic hash → value noise → FBM. Gemini: 4-6 octaves, lacunarity
@@ -338,22 +354,22 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // Ice: tight bright band, still scattered so it isn't a flat sheet.
     float hIce  = clamp(0.34 + scatter * 0.5, 0.02, 0.98);
 
-    // Biome is authoritative from Rust (classify_biome): a primary id, an
-    // optional secondary id, and a blend weight. No shader-side thresholds.
-    // The raw per-cell blend meets neighbours on a hard hex facet edge;
-    // dissolve it with cell-stable fbm so the two biomes interleave across
-    // a widened, organic transition band instead of a straight polygon line.
-    // bdith is now SPATIAL (edgeJ, sub-cell) not vSeed (cell-constant), so
-    // the blend boundary dissolves across the polygon edge instead of
-    // snapping to it. Window is the full [0,1] smoothstep; amplitude is
-    // |edgeJ|·0.95·1.6 ≈ 0.76 max < 1.0 window → widened, no clip-dither.
-    float bmix   = clamp(vBiomeBlend * 2.0, 0.0, 1.0);
-    float bdith  = edgeJ;
-    bmix = smoothstep(0.0, 1.0, clamp(bmix + bdith * mix(0.55, 0.95, uTextureSmooth) * jScale, 0.0, 1.0));
-    vec3 base = mix(
-      sampleBiome(vBiome,  remapBiomeH(vBiome,  hLand, hIce)),
-      sampleBiome(vBiome2, remapBiomeH(vBiome2, hLand, hIce)),
-      bmix);
+    // Biome is authoritative from Rust: a neighbour-diffused 10-wide weight
+    // vector per cell. The weights interpolate across the triangle (the
+    // SLOTS stay fixed) so the cell→cell transition is continuous — this is
+    // "one mask per biome, blended", and is what eliminates the hex facets.
+    float bw[10];
+    bw[0]=vBW0.x; bw[1]=vBW0.y; bw[2]=vBW0.z; bw[3]=vBW0.w;
+    bw[4]=vBW1.x; bw[5]=vBW1.y; bw[6]=vBW1.z; bw[7]=vBW1.w;
+    bw[8]=vBW2.x; bw[9]=vBW2.y;
+    float wsum = 0.0; vec3 base = vec3(0.0);
+    for (int i = 0; i < 10; i++) {
+      if (bw[i] > 0.001) {
+        base += bw[i] * sampleBiome(float(i), remapBiomeH(float(i), hLand, hIce));
+        wsum += bw[i];
+      }
+    }
+    base /= max(wsum, 1e-4);   // interpolation drifts the sum off 1 — renormalize
 
     vec3 rock = sampleGradient(uSatMapRock, clamp(band * 1.1 + scatter, 0.04, 0.96));
 
@@ -554,7 +570,16 @@ export const FRAGMENT_SHADER = /* glsl */ `
         d = mix(d, a2, smoothstep(0.30,0.62,pN));
         d = mix(d, a3, smoothstep(0.62,1.00,pN));
       }
-      else if (uMapMode < 3.5)  d = biomeDebugColor(vBiome);
+      else if (uMapMode < 3.5) {
+        // Blended biome field: same 10-weight sum as the render, so the
+        // debug view matches what is actually drawn (all biomes come
+        // together in one map mode) instead of a hard per-cell category.
+        float dws = 0.0; d = vec3(0.0);
+        for (int i = 0; i < 10; i++) {
+          if (bw[i] > 0.001) { d += bw[i] * biomeDebugColor(float(i)); dws += bw[i]; }
+        }
+        d /= max(dws, 1e-4);
+      }
       else if (uMapMode < 4.5)  d = vec3(clamp(max(vElevation,0.0),0.0,1.0));
       else if (uMapMode < 5.5)  d = vec3(clamp(vSlope,0.0,1.0));
       else if (uMapMode < 6.5)  d = vec3(0.0,0.35,0.95) * oceanMask;

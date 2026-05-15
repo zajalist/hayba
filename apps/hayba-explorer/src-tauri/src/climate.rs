@@ -319,6 +319,12 @@ pub struct ClimateFields {
     pub biome: Vec<f32>,       // primary biome id 0..9 as f32
     pub biome2: Vec<f32>,      // secondary (perturbed) biome id 0..9 as f32
     pub biome_blend: Vec<f32>, // primary→secondary blend weight, 0..0.5
+    /// Per-cell 10-wide biome weight vector (length `n*10`, row-major: 10
+    /// weights per cell, slot k = weight of biome id k). One-hot at the
+    /// primary biome then neighbour-diffused so the SLOTS stay fixed (0..9)
+    /// and only the WEIGHTS interpolate across each GPU triangle → continuous
+    /// cell→cell biome transitions with zero id-interpolation facets.
+    pub biome_weights: Vec<f32>,
     /// Per-cell STABLE pseudo-random unit vec3 (n*3), keyed on the
     /// immutable cell INDEX (not its drifting position). The shader keys
     /// its within-biome surface texture noise on this so the texture rides
@@ -523,7 +529,58 @@ pub fn compute_climate(
         }
     }
 
-    ClimateFields { temperature, precip, biome, biome2, biome_blend, cell_seed, debug: dbg }
+    // Per-biome weight vector (n*10, row-major). Init each cell one-hot at
+    // its primary biome plus `biome_blend` mass on the secondary slot, then
+    // neighbour-diffuse so adjacent cells share weight at their boundary
+    // (the GPU then interpolates the weights, not the biome id).
+    const NB: usize = 10;
+    let mut biome_weights = vec![0.0f32; n * NB];
+    for i in 0..n {
+        let p = biome[i] as usize; // primary 0..9
+        let s = biome2[i] as usize; // secondary 0..9
+        let bl = biome_blend[i].clamp(0.0, 0.5);
+        biome_weights[i * NB + p] += 1.0 - bl;
+        biome_weights[i * NB + s] += bl;
+    }
+    // 3 relaxation passes: w'[c] = normalize(0.5*w[c] + 0.5*mean(w[nb])).
+    // REUSES the same `neighbours` accessor as the distance-to-ocean BFS /
+    // upwind-neighbour passes (grid.neighbours(fid), captured above).
+    let mut scratch = vec![0.0f32; n * NB];
+    for _ in 0..3 {
+        for i in 0..n {
+            let nbs = &neighbours[i];
+            let inv_deg = if nbs.is_empty() { 0.0 } else { 1.0 / nbs.len() as f32 };
+            let mut sum = 0.0f32;
+            for k in 0..NB {
+                let mut mean_nb = 0.0f32;
+                for &nb in nbs {
+                    mean_nb += biome_weights[nb as usize * NB + k];
+                }
+                mean_nb *= inv_deg;
+                let v = 0.5 * biome_weights[i * NB + k] + 0.5 * mean_nb;
+                scratch[i * NB + k] = v;
+                sum += v;
+            }
+            // Renormalize this cell's 10 weights to sum to 1 (>=0 always:
+            // inputs are >=0 and the blend is a convex mix of >=0 values).
+            let inv = if sum > 1e-6 { 1.0 / sum } else { 0.0 };
+            for k in 0..NB {
+                scratch[i * NB + k] *= inv;
+            }
+        }
+        std::mem::swap(&mut biome_weights, &mut scratch);
+    }
+
+    ClimateFields {
+        temperature,
+        precip,
+        biome,
+        biome2,
+        biome_blend,
+        biome_weights,
+        cell_seed,
+        debug: dbg,
+    }
 }
 
 #[cfg(test)]
@@ -696,6 +753,86 @@ mod tests {
         let has_boundary = (0..n)
             .any(|i| cf.biome2[i] != cf.biome[i] && cf.biome_blend[i] > 0.0);
         assert!(has_boundary, "expected at least one mixed cell");
+    }
+
+    #[test]
+    fn biome_weights_are_normalized_and_dominant() {
+        use hayba_tectonics_v2::model::Model;
+        let model = Model::new(16, 7);
+        let n = model.grid.n_fields() as usize;
+        let cf = compute_climate(&model, 7, false, &ClimateParams::default());
+        assert_eq!(cf.biome_weights.len(), n * 10, "biome_weights must be n*10");
+        for i in 0..n {
+            let w = &cf.biome_weights[i * 10..i * 10 + 10];
+            let sum: f32 = w.iter().sum();
+            assert!(
+                (sum - 1.0).abs() < 1e-3,
+                "cell {} weights must sum to ~1.0, got {}",
+                i,
+                sum
+            );
+            assert!(
+                w.iter().all(|&x| x >= 0.0),
+                "cell {} has a negative weight: {:?}",
+                i,
+                w
+            );
+        }
+    }
+
+    #[test]
+    fn uniform_single_biome_model_is_one_hot() {
+        // A degenerate "model" where every cell is the same biome: feed a
+        // hand-built weight grid through the exact diffusion recurrence and
+        // assert the dominant weight stays >= 0.9 and the vector stays a
+        // normalized non-negative simplex point everywhere.
+        const NB: usize = 10;
+        let n = 64usize;
+        // Ring topology so every cell has 2 neighbours (mirrors the real
+        // `neighbours` accessor's shape: Vec<Vec<u32>>).
+        let neighbours: Vec<Vec<u32>> = (0..n)
+            .map(|i| vec![((i + n - 1) % n) as u32, ((i + 1) % n) as u32])
+            .collect();
+        // Every cell one-hot at biome 4 (a uniform single-biome world).
+        let mut bw = vec![0.0f32; n * NB];
+        for i in 0..n {
+            bw[i * NB + 4] = 1.0;
+        }
+        let mut scratch = vec![0.0f32; n * NB];
+        for _ in 0..3 {
+            for i in 0..n {
+                let nbs = &neighbours[i];
+                let inv_deg = 1.0 / nbs.len() as f32;
+                let mut sum = 0.0f32;
+                for k in 0..NB {
+                    let mut mean_nb = 0.0f32;
+                    for &nb in nbs {
+                        mean_nb += bw[nb as usize * NB + k];
+                    }
+                    mean_nb *= inv_deg;
+                    let v = 0.5 * bw[i * NB + k] + 0.5 * mean_nb;
+                    scratch[i * NB + k] = v;
+                    sum += v;
+                }
+                let inv = if sum > 1e-6 { 1.0 / sum } else { 0.0 };
+                for k in 0..NB {
+                    scratch[i * NB + k] *= inv;
+                }
+            }
+            std::mem::swap(&mut bw, &mut scratch);
+        }
+        for i in 0..n {
+            let w = &bw[i * NB..i * NB + NB];
+            let sum: f32 = w.iter().sum();
+            assert!((sum - 1.0).abs() < 1e-3, "cell {} sum {}", i, sum);
+            assert!(w.iter().all(|&x| x >= 0.0), "cell {} negative weight", i);
+            assert!(
+                w[4] >= 0.9,
+                "uniform single-biome cell {} must stay ~one-hot, w[4]={}",
+                i,
+                w[4]
+            );
+        }
     }
 
     #[test]

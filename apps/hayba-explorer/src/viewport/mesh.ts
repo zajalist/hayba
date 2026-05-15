@@ -71,6 +71,18 @@ export function buildGlobeMesh(
   const seedBuf = new Float32Array(n * 3);
   geom.setAttribute("aSeed", new THREE.BufferAttribute(seedBuf, 3));
 
+  // Per-biome weight vector (10 weights/cell) packed into 3 vec4 attributes
+  // (12 slots; 0..9 carry the weights, last 2 stay 0). The GPU interpolates
+  // these WEIGHTS across each triangle while the biome SLOTS stay fixed —
+  // that is the spatial blend that kills the hexagonal biome facets.
+  // Attribute budget: 3 builtins + 6 vec4 (aPack0..5) + aSeed + 3 new = 13 ≤ 16.
+  const biomeW0 = new Float32Array(n * 4);
+  const biomeW1 = new Float32Array(n * 4);
+  const biomeW2 = new Float32Array(n * 4);
+  geom.setAttribute("aBiomeW0", new THREE.BufferAttribute(biomeW0, 4));
+  geom.setAttribute("aBiomeW1", new THREE.BufferAttribute(biomeW1, 4));
+  geom.setAttribute("aBiomeW2", new THREE.BufferAttribute(biomeW2, 4));
+
   // Default to a temperate/humid SatMap if available, otherwise the first
   // SatMap discovered in the library. App.tsx calls setSatMap() immediately
   // after construction so this is just a sane starting point.
@@ -158,8 +170,22 @@ export function buildGlobeMesh(
       seedBuf[i * 3]     = snap.cell_seed[i * 3];
       seedBuf[i * 3 + 1] = snap.cell_seed[i * 3 + 1];
       seedBuf[i * 3 + 2] = snap.cell_seed[i * 3 + 2];
+      // 10 biome weights → 3 vec4 (slots 0..9; last 2 stay 0).
+      const bw = i * 10;
+      biomeW0[j]     = snap.cell_biome_weights[bw];
+      biomeW0[j + 1] = snap.cell_biome_weights[bw + 1];
+      biomeW0[j + 2] = snap.cell_biome_weights[bw + 2];
+      biomeW0[j + 3] = snap.cell_biome_weights[bw + 3];
+      biomeW1[j]     = snap.cell_biome_weights[bw + 4];
+      biomeW1[j + 1] = snap.cell_biome_weights[bw + 5];
+      biomeW1[j + 2] = snap.cell_biome_weights[bw + 6];
+      biomeW1[j + 3] = snap.cell_biome_weights[bw + 7];
+      biomeW2[j]     = snap.cell_biome_weights[bw + 8];
+      biomeW2[j + 1] = snap.cell_biome_weights[bw + 9];
+      biomeW2[j + 2] = 0;
+      biomeW2[j + 3] = 0;
     }
-    for (const a of ["aPack0", "aPack1", "aPack2", "aPack3", "aPack4", "aPack5", "aSeed"]) {
+    for (const a of ["aPack0", "aPack1", "aPack2", "aPack3", "aPack4", "aPack5", "aSeed", "aBiomeW0", "aBiomeW1", "aBiomeW2"]) {
       (geom.getAttribute(a) as THREE.BufferAttribute).needsUpdate = true;
     }
   };
