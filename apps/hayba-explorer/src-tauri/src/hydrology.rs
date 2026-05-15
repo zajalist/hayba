@@ -87,6 +87,54 @@ pub fn priority_flood(
     filled
 }
 
+/// Steepest-descent receiver per cell (D8-equivalent on the graph).
+/// A cell with no strictly-lower neighbour is its own receiver (sink).
+/// Run on the Priority-Flood-filled elevation so every non-ocean cell
+/// has a downhill receiver. Slope uses geodesic centroid distance.
+pub fn flow_receivers(neighbours: &[Vec<u32>], pos: &[Vec3], elev: &[f32]) -> Vec<u32> {
+    let n = elev.len();
+    let mut recv = vec![0u32; n];
+    for i in 0..n {
+        recv[i] = i as u32;
+        let mut best = 0.0_f32; // best (positive) downhill slope
+        for &nb in &neighbours[i] {
+            let j = nb as usize;
+            let drop = elev[i] - elev[j];
+            if drop <= 0.0 { continue; }
+            let d = pos[i].distance(pos[j]).max(1e-6);
+            let s = drop / d;
+            if s > best { best = s; recv[i] = nb; }
+        }
+    }
+    recv
+}
+
+/// Drainage area per cell = own cell area + all upstream cell areas.
+/// O(N): process cells in descending elevation order is unnecessary —
+/// follow each cell's receiver chain accumulating, using a topological
+/// pass over the receiver forest (Braun & Willett 2013 single-pass).
+pub fn drainage_area(recv: &[u32], cell_area: f32) -> Vec<f32> {
+    let n = recv.len();
+    let mut area = vec![cell_area; n];
+    // donor counts → process leaves first (stack), add into receivers.
+    let mut ndonor = vec![0u32; n];
+    for i in 0..n {
+        let r = recv[i] as usize;
+        if r != i { ndonor[r] += 1; }
+    }
+    let mut stack: Vec<usize> = (0..n).filter(|&i| ndonor[i] == 0).collect();
+    let mut remaining = ndonor.clone();
+    while let Some(i) = stack.pop() {
+        let r = recv[i] as usize;
+        if r != i {
+            area[r] += area[i];
+            remaining[r] -= 1;
+            if remaining[r] == 0 { stack.push(r); }
+        }
+    }
+    area
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,5 +159,33 @@ mod tests {
         assert!((filled[2] - 5.0).abs() < 1e-6, "pit filled to lowest rim");
         assert!((filled[3] - 6.0).abs() < 1e-6, "higher rim unchanged");
         for i in 0..4 { assert!(filled[i] >= elev[i] - 1e-6, "fill never lowers"); }
+    }
+
+    #[test]
+    fn flow_receivers_point_downhill_to_steepest() {
+        // line: ocean0(0) - 1(2) - 2(3); receiver of 2 is 1, of 1 is 0.
+        let neighbours = vec![vec![1u32], vec![0, 2], vec![1]];
+        let pos = vec![Vec3::X, Vec3::new(1.0, 0.1, 0.0).normalize(),
+                       Vec3::new(1.0, 0.2, 0.0).normalize()];
+        let elev = vec![0.0_f32, 2.0, 3.0];
+        let recv = flow_receivers(&neighbours, &pos, &elev);
+        assert_eq!(recv[2], 1);
+        assert_eq!(recv[1], 0);
+        assert_eq!(recv[0], 0, "sink/ocean is its own receiver");
+    }
+
+    #[test]
+    fn drainage_area_accumulates_downstream() {
+        let neighbours = vec![vec![1u32], vec![0, 2], vec![1]];
+        let pos = vec![Vec3::X, Vec3::new(1.0, 0.1, 0.0).normalize(),
+                       Vec3::new(1.0, 0.2, 0.0).normalize()];
+        let elev = vec![0.0_f32, 2.0, 3.0];
+        let recv = flow_receivers(&neighbours, &pos, &elev);
+        let cell_area = 10.0_f32;
+        let a = drainage_area(&recv, cell_area);
+        // cell 2 drains only itself; 1 gets 1+2; 0 (mouth) gets all 3.
+        assert!((a[2] - 10.0).abs() < 1e-3);
+        assert!((a[1] - 20.0).abs() < 1e-3);
+        assert!((a[0] - 30.0).abs() < 1e-3);
     }
 }
