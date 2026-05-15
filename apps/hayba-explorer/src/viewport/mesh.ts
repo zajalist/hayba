@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import type { PlanetSnapshot } from "../App";
-import { loadSatMap, type SatMapName } from "./satmap-loader";
+import { loadSatMap, SATMAP_NAMES, type SatMapName } from "./satmap-loader";
 import { VERTEX_SHADER, FRAGMENT_SHADER } from "./shaders/planet.glsl";
 
 export interface GlobeMeshHandle {
@@ -45,17 +45,37 @@ export function buildGlobeMesh(
     geom.setAttribute(name, new THREE.BufferAttribute(buf, 1));
   }
 
-  const satTex = loadSatMap("temperate");
+  // Default to a temperate/humid SatMap if available, otherwise the first
+  // SatMap discovered in the library. App.tsx calls setSatMap() immediately
+  // after construction so this is just a sane starting point.
+  const defaultSatMap: SatMapName =
+    SATMAP_NAMES.includes("arid_hot_dunes") ? "arid_hot_dunes" :
+    SATMAP_NAMES[0];
+  const satTex = loadSatMap(defaultSatMap);
+
+  // Pick a SatMap for each climate zone — falls back to the user-selected
+  // default if the canonical one isn't available.
+  const pick = (preferred: string[], fallback: string): THREE.Texture => {
+    for (const name of preferred) if (SATMAP_NAMES.includes(name)) return loadSatMap(name);
+    return loadSatMap(SATMAP_NAMES.includes(fallback) ? fallback : SATMAP_NAMES[0]);
+  };
+
   const mat = new THREE.ShaderMaterial({
     vertexShader: VERTEX_SHADER,
     fragmentShader: FRAGMENT_SHADER,
     uniforms: {
-      uSatMap:            { value: satTex },
+      uSatMap:            { value: satTex },                       // user override
+      uSatTropical:       { value: pick(["tropical_wet_basin", "tropical_wet_orogeny", "tropical_dry_craton"], "tropical_wet_basin") },
+      uSatArid:           { value: pick(["arid_hot_dunes", "arid_hot_craton", "arid_cold_steppe"], "arid_hot_dunes") },
+      uSatTemperate:      { value: pick(["temperate_humid_orogeny", "temperate_humid_coast", "temperate_med"], "temperate_humid_orogeny") },
+      uSatPolar:          { value: pick(["polar_tundra", "polar_icecap"], "polar_tundra") },
+      uSatMapRock:        { value: pick(["alpine"], "temperate_humid_orogeny") },
+      uClimateBlend:      { value: 1.0 },                          // 1.0 = auto, 0.0 = single override
       uExaggeration:      { value: 1.0 },
       uSunDir:            { value: new THREE.Vector3(0.6, 0.5, 0.8).normalize() },
-      uAmbient:           { value: 0.28 },
+      uAmbient:           { value: 0.32 },
       uRimColor:          { value: new THREE.Color("#DED4C3") },
-      uOceanColor:        { value: new THREE.Color("#1b3a55") },
+      uOceanColor:        { value: new THREE.Color("#2a6fa8") },
       uShowPlateOutlines: { value: 1.0 },
       uShowBoundaryGlow:  { value: 1.0 },
     },

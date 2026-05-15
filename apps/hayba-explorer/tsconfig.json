@@ -17,5 +17,5 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true
   },
-  "include": ["src", "../../packages/hayba-design-tokens/index.ts"]
+  "include": ["src", "../../packages/design-tokens/index.ts"]
 }

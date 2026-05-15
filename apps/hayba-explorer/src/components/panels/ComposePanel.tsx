@@ -40,7 +40,10 @@ export default function ComposePanel(p: ComposePanelProps) {
               <Select<PresetName>
                 value={p.draft.preset}
                 onChange={p.onChangePreset}
-                options={PRESETS.map((s) => ({ value: s.name, label: s.label }))}
+                options={PRESETS.map((s) => ({
+                  value: s.name,
+                  label: s.note ? `${s.label} (${s.note})` : s.label,
+                }))}
               />
             }
           />
@@ -48,10 +51,30 @@ export default function ComposePanel(p: ComposePanelProps) {
             label="Seed"
             noSeparator
             value={
-              <span>
-                {p.draft.seed}
-                <button onClick={p.onReroll} style={inlineActionStyle} title="Reroll seed" aria-label="Reroll seed">↻</button>
-              </span>
+              <button
+                onClick={p.onReroll}
+                title="Click to reroll the seed"
+                aria-label="Reroll seed"
+                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "3px 8px",
+                  background: "transparent",
+                  border: `1px solid ${colors.borderMid}`,
+                  borderRadius: 3,
+                  color: colors.beige,
+                  fontFamily: "Consolas, monospace",
+                  fontSize: 12,
+                  cursor: "pointer",
+                  transition: "background 120ms, border-color 120ms",
+                }}
+              >
+                <span>{String(p.draft.seed).slice(-8)}</span>
+                <span style={{ color: colors.accent }}>↻</span>
+              </button>
             }
           />
         </PropertySection>

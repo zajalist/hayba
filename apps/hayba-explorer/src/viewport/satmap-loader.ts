@@ -1,29 +1,74 @@
 import * as THREE from "three";
 
-import temperateUrl from "../assets/satmaps/temperate.png";
-import tropicalUrl  from "../assets/satmaps/tropical.png";
-import aridUrl      from "../assets/satmaps/arid.png";
-import alpineUrl    from "../assets/satmaps/alpine.png";
-import tundraUrl    from "../assets/satmaps/tundra.png";
-import oceanicUrl   from "../assets/satmaps/oceanic.png";
+/**
+ * SatMap loader — dynamically picks up every PNG in `apps/hayba-explorer/src/
+ * assets/satmaps/` via Vite's import.meta.glob, plus the satmaps.json
+ * metadata sidecar that tags each SatMap with its Köppen climate codes and
+ * geology class.
+ *
+ * The renderer reads this catalog at startup; per-cell SatMap selection
+ * (sim-state driven) happens at sample time via the metadata.
+ */
 
-export type SatMapName = "temperate" | "tropical" | "arid" | "alpine" | "tundra" | "oceanic";
+// Pull every SatMap PNG. Vite resolves these at build time as URLs.
+const PNG_MODULES = import.meta.glob<{ default: string }>("../assets/satmaps/*.png", { eager: true });
 
-const URLS: Record<SatMapName, string> = {
-  temperate: temperateUrl,
-  tropical:  tropicalUrl,
-  arid:      aridUrl,
-  alpine:    alpineUrl,
-  tundra:    tundraUrl,
-  oceanic:   oceanicUrl,
-};
+// Pull the metadata sidecar (committed alongside the PNGs).
+import metaJson from "../assets/satmaps/satmaps.json";
 
-const cache = new Map<SatMapName, THREE.Texture>();
+export interface SatMapClimate {
+  class: string;          // e.g. "tropical_wet" / "arid_cold" / "polar_icecap"
+  koppen: string[];       // ["Af", "Am"]
+  lat_band?: number[];    // [0..4]
+}
 
-export function loadSatMap(name: SatMapName): THREE.Texture {
+export interface SatMapGeology {
+  class: string;          // "sedimentary_basin", "active_orogeny", ...
+  crust?: "continental" | "oceanic";
+  tectonic?: "stable" | "convergent" | "divergent" | "subduction";
+  lithology?: string;
+  surface?: string;
+  modifier?: string;
+}
+
+export interface SatMapMetadata {
+  region: string;
+  climate: SatMapClimate;
+  geology: SatMapGeology;
+  elevation_band_m: (number | null)[];
+}
+
+const URLS: Record<string, string> = {};
+for (const [path, mod] of Object.entries(PNG_MODULES)) {
+  const name = path.split("/").pop()!.replace(/\.png$/, "");
+  URLS[name] = mod.default;
+}
+
+export const METADATA: Record<string, SatMapMetadata> = metaJson as unknown as Record<string, SatMapMetadata>;
+
+/** All SatMaps that have both a PNG on disk AND metadata in satmaps.json. */
+export const SATMAP_NAMES: string[] = Object.keys(URLS)
+  .filter((n) => METADATA[n] !== undefined)
+  .sort();
+
+/** Climate-family grouping for the Settings dropdown. */
+export const SATMAP_FAMILIES: Record<string, string[]> = (() => {
+  const groups: Record<string, string[]> = {};
+  for (const name of SATMAP_NAMES) {
+    const family = METADATA[name].climate.class;
+    (groups[family] ??= []).push(name);
+  }
+  return groups;
+})();
+
+const cache = new Map<string, THREE.Texture>();
+
+export function loadSatMap(name: string): THREE.Texture {
   const cached = cache.get(name);
   if (cached) return cached;
-  const tex = new THREE.TextureLoader().load(URLS[name]);
+  const url = URLS[name];
+  if (!url) throw new Error(`SatMap '${name}' not found — expected file apps/hayba-explorer/src/assets/satmaps/${name}.png`);
+  const tex = new THREE.TextureLoader().load(url);
   tex.minFilter = THREE.LinearFilter;
   tex.magFilter = THREE.LinearFilter;
   tex.wrapS = THREE.ClampToEdgeWrapping;
@@ -33,4 +78,5 @@ export function loadSatMap(name: SatMapName): THREE.Texture {
   return tex;
 }
 
-export const SATMAP_NAMES: SatMapName[] = ["temperate", "tropical", "arid", "alpine", "tundra", "oceanic"];
+/** Convenience export for callers that want a typed alias (the union is open). */
+export type SatMapName = string;
