@@ -138,11 +138,29 @@ fn upwind_neighbour(pos: &[Vec3], neighbours: &[Vec<u32>], i: usize, wind: Vec3)
     best
 }
 
+/// 4-octave fractal Brownian motion built on `value_noise`. Returns
+/// roughly [0,1] (mean ~0.5). `value_noise` floors its input, so callers
+/// must pre-scale `p` by a frequency or it barely varies on unit vectors.
+fn fbm3(p: Vec3, seed: u64) -> f32 {
+    let mut f = 0.0;
+    let mut amp = 0.5;
+    let mut freq = 1.0;
+    for o in 0..4u64 {
+        f += amp * value_noise(p * freq, seed.wrapping_add(o * 1013));
+        freq *= 2.03;
+        amp *= 0.5;
+    }
+    f
+}
+
 /// Coastal SST anomaly (°C). Warm if the adjacent ocean lies equatorward
 /// of the cell (warm water advected poleward up the coast); cold if it
 /// lies poleward (cold equatorward current / upwelling). Peaks mid-high
 /// latitude (~45–60°), decays to ~0 inland. Geography-driven from the
-/// per-cell mean ocean direction — no fixed-longitude basins.
+/// per-cell mean ocean direction — no fixed-longitude basins. The
+/// latitude window meanders and the magnitude is modulated by fBm so the
+/// field reads as Gulf-Stream-like warm/cold tongues and eddies rather
+/// than a clean analytic band; the geography-driven sign is unaffected.
 pub fn current_temp_anomaly(
     p: Vec3,
     ocean_dir: Vec3,
@@ -152,6 +170,9 @@ pub fn current_temp_anomaly(
     if ocean_dir.length_squared() < 1e-6 {
         return 0.0; // landlocked: no nearby ocean to advect anything
     }
+    // Fixed internal seed keeps the field deterministic without changing
+    // the public signature / call sites.
+    const CURRENT_SEED: u64 = 0xC0FFEE;
     let lat = latitude_rad(p);
     // Equatorward unit tangent at p: take the world vector toward the
     // equator (-sign(lat)·Y), remove its radial (p) component so it lies
@@ -164,11 +185,21 @@ pub fn current_temp_anomaly(
     // upwelling (cold anomaly).
     let s = ocean_dir.dot(equatorward);
     let lat_deg = lat.abs().to_degrees();
-    let strength = (1.0 - ((lat_deg - 52.0) / 38.0).powi(2)).clamp(0.0, 1.0);
+    // Meander the warm-band centre (±13°) and half-width (±8°) with a
+    // low-frequency fBm so the band wanders instead of being a clean
+    // parabola in latitude.
+    let centre = 52.0 + (fbm3(p * 1.7, CURRENT_SEED) - 0.5) * 26.0;
+    let half_w = 38.0 + (fbm3(p * 2.3, CURRENT_SEED ^ 0x5151) - 0.5) * 16.0;
+    let strength = (1.0 - ((lat_deg - centre) / half_w).powi(2)).clamp(0.0, 1.0);
     let coastal = (1.0 - coastalness).clamp(0.0, 1.0);
+    // Higher-frequency positive eddy factor (~0.55..1.45) breaks the band
+    // into warm/cold patches along the coast.
+    let eddy = 0.55 + 0.9 * fbm3(p * 6.0, CURRENT_SEED ^ 0x9E37);
     // Warm side up to +current_warm °C, cold side down to −current_cold °C.
     let amp = if s >= 0.0 { params.current_warm } else { params.current_cold };
-    s * strength * coastal * coastal * amp
+    // Sign is exactly sign(s) (geography-driven) by construction; the
+    // positive magnitude is clamped so |result| never exceeds `amp`.
+    s.signum() * (s.abs() * strength * coastal * coastal * amp * eddy).min(amp)
 }
 
 fn hash3(x: i32, y: i32, z: i32, seed: u64) -> f32 {
