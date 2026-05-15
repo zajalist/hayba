@@ -125,6 +125,31 @@ pub fn value_noise(p: Vec3, seed: u64) -> f32 {
     lerp(y0, y1, sz)
 }
 
+fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Latitudinal precipitation base (worldbuildingpasta cells): wet ITCZ
+/// (~0°), dry subtropics (~30°), wet mid-lats (~55–60°), dry poles.
+/// Returns ~[0,1].
+pub fn zonal_precip(lat_rad: f32) -> f32 {
+    let d = lat_rad.abs().to_degrees();
+    let itcz    = 1.0 - smoothstep(0.0, 16.0, d);
+    let subtrop = 1.0 - smoothstep(0.0, 12.0, (d - 30.0).abs());
+    let midlat  = 1.0 - smoothstep(0.0, 14.0, (d - 58.0).abs());
+    let polar   = smoothstep(62.0, 82.0, d);
+    (0.85 * itcz - 0.6 * subtrop + 0.55 * midlat - 0.4 * polar + 0.35)
+        .clamp(0.0, 1.0)
+}
+
+/// Continental drying multiplier from ocean hop-distance. Coast → ~1,
+/// deep interior → ~0.25.
+pub fn continental_factor(hops_from_ocean: u32) -> f32 {
+    let h = hops_from_ocean as f32;
+    1.0 - 0.75 * smoothstep(2.0, 45.0, h)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,5 +222,23 @@ mod tests {
             let v = value_noise(Vec3::new(i as f32 * 0.7, 1.3, -2.1), 7);
             assert!(v >= 0.0 && v <= 1.0, "out of [0,1]: {}", v);
         }
+    }
+
+    #[test]
+    fn zonal_precip_wet_itcz_dry_subtropics() {
+        let itcz   = zonal_precip(0.0_f32.to_radians());
+        let dry30  = zonal_precip(30.0_f32.to_radians());
+        let mid55  = zonal_precip(55.0_f32.to_radians());
+        assert!(itcz > dry30, "ITCZ ({}) must be wetter than 30° ({})", itcz, dry30);
+        assert!(mid55 > dry30, "mid-lat ({}) wetter than 30° ({})", mid55, dry30);
+        assert!((0.0..=1.0).contains(&itcz));
+    }
+
+    #[test]
+    fn continental_drying_reduces_precip_inland() {
+        let coast  = continental_factor(2);
+        let deep   = continental_factor(60);
+        assert!(coast > deep, "coast ({}) wetter factor than interior ({})", coast, deep);
+        assert!((0.0..=1.0).contains(&deep));
     }
 }
