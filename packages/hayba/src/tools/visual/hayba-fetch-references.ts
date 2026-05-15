@@ -41,10 +41,10 @@ export const haybaFetchReferencesHandler: ToolHandler = async (args) => {
       const base64 = buf.toString('base64');
       const { embedding } = await embedImage(base64);
       return { source: 'local', path: p, clip_embedding: embedding };
-    } catch (e) {
+    } catch (e: unknown) {
       const msg = e instanceof SidecarUnavailableError
         ? `sidecar offline — embedding skipped (${e.message})`
-        : (e as Error).message;
+        : (e instanceof Error ? e.message : String(e));
       return { source: 'local', path: p, clip_embedding: null, error: msg };
     }
   }));

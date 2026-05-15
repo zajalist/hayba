@@ -59,13 +59,13 @@ export async function pingSidecar(timeoutMs: number = DEFAULT_HEALTH_TIMEOUT_MS)
     };
     cached = health;
     return health;
-  } catch (e) {
+  } catch (e: unknown) {
     const health: SidecarHealth = {
       available: false,
       url,
       models: {},
       active_models: [],
-      error: (e as Error).message,
+      error: e instanceof Error ? e.message : String(e),
       checked_at: checkedAt,
     };
     cached = health;

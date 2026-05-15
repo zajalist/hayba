@@ -88,9 +88,9 @@ export const haybaRequestInputHandler: ToolHandler = async (args) => {
       ? { prompt_id: promptId, status: 'pushed', ...(resp.data as Record<string, unknown> | undefined) }
       : { prompt_id: promptId, status: 'push_failed', error: resp.error };
     return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }], isError: !resp.ok };
-  } catch (e) {
+  } catch (e: unknown) {
     return {
-      content: [{ type: 'text', text: JSON.stringify({ prompt_id: promptId, status: 'push_failed', error: (e as Error).message }, null, 2) }],
+      content: [{ type: 'text', text: JSON.stringify({ prompt_id: promptId, status: 'push_failed', error: e instanceof Error ? e.message : String(e) }, null, 2) }],
       isError: true,
     };
   }

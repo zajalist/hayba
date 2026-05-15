@@ -1,9 +1,15 @@
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
-import { HaybaMemory } from '../gaea/memory/hayba-memory.js';
 import type { AgentsManifest, ArchetypeConfig } from './types.js';
 
 // TODO: integrate AgentRegistry into src/index.ts once tool registration moves to the meta-aware shape
+// TODO: import { HaybaMemory } from '../gaea/memory/hayba-memory.js' once the gaea feature surface is un-parked
+
+// Local interface mirroring the gaea HaybaMemory API so this module compiles
+// without the parked gaea source.
+interface HaybaMemory {
+  close(): void;
+}
 
 export interface AgentRuntime {
   archetype: ArchetypeConfig;
@@ -34,13 +40,13 @@ export function loadManifest(projectRoot: string): AgentsManifest {
   try {
     const raw = readFileSync(p, 'utf-8');
     return JSON.parse(raw) as AgentsManifest;
-  } catch (e) {
-    console.error(`[hayba] hayba.agents.json malformed (${(e as Error).message}); using bundled defaults`);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`[hayba] hayba.agents.json malformed (${msg}); using bundled defaults`);
     return DEFAULT_MANIFEST;
   }
 }
 
-/** Convert a glob like "actor_*" or "*" into a RegExp. Only "*" wildcards supported. */
 function globToRegex(glob: string): RegExp {
   const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
   return new RegExp(`^${escaped}$`);
@@ -57,7 +63,6 @@ export function createRuntime(archetype: ArchetypeConfig, memory: HaybaMemory): 
   };
 }
 
-/** One-shot loader: parse manifest, open shared memory, materialize a runtime per archetype. */
 export class AgentRegistry {
   readonly manifest: AgentsManifest;
   readonly memory: HaybaMemory;
@@ -65,8 +70,7 @@ export class AgentRegistry {
 
   constructor(projectRoot: string) {
     this.manifest = loadManifest(projectRoot);
-    const dbPath = path.resolve(projectRoot, this.manifest.shared_memory);
-    this.memory = new HaybaMemory(dbPath);
+    this.memory = { close() {} };
     this.runtimes = new Map();
     for (const a of this.manifest.archetypes) {
       this.runtimes.set(a.id, createRuntime(a, this.memory));

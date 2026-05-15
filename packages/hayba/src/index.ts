@@ -49,8 +49,8 @@ async function main() {
     const badge = h.available ? '🟢' : '🔴';
     const detail = h.available ? `models=${h.active_models.join(',') || 'none'}` : (h.error ?? 'unavailable');
     console.error(`Visual sidecar ${badge} ${h.url} — ${detail}`);
-  }).catch((e) => {
-    console.error(`Visual sidecar probe failed: ${(e as Error).message}`);
+  }).catch((e: unknown) => {
+    console.error(`Visual sidecar probe failed: ${e instanceof Error ? e.message : String(e)}`);
   });
 }
 
