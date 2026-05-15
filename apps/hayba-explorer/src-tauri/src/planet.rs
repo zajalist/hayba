@@ -201,24 +201,55 @@ pub fn bake_demo() -> PlanetSnapshot {
     snap
 }
 
-/// Maximum absolute neighbour elevation difference, normalized to [0, 1] by
-/// an empirical scale factor (the model's elevation rarely produces
-/// neighbour deltas > 0.05 in unit-sphere units). Neighbour pairs that
-/// straddle sea level are skipped so a land/ocean step (a coastline) does
-/// not manufacture a false steep cliff — slope reflects terrain roughness
-/// within land (or within ocean), not the shoreline jump.
+// 1.0 normalized elevation unit ≈ 8 km of real relief — matches the
+// shader/climate `elev_km_scale` so slope is in true terrain units.
+const ELEV_KM: f32 = 8.0;
+// Sphere radius used to turn the unit-sphere chord between cell centroids
+// into a real horizontal run (km).
+const EARTH_RADIUS_KM: f32 = 6371.0;
+// Maps the dimensionless mean rise/run gradient into [0, 1]. Calibration:
+// at div-64 the cell run is ~111 km; a full 1.0-elevation (≈8 km) drop
+// across one cell is ≈ 0.072 rise/run, so ×7 ≈ 0.5 — genuine mountain
+// relief lands mid/high while gentle plains stay low. Graded, not binary.
+const SLOPE_GAIN: f32 = 7.0;
+
+/// Pure mapping from a mean rise/run gradient to a graded [0, 1] slope.
+/// Linear-with-gain then clamped (not a hard clamp of a huge number), so
+/// the output is monotonic in the gradient and spans ~0..1 across
+/// plains→mountains instead of saturating at 1.
+fn grade_slope(mean_g: f32) -> f32 {
+    (mean_g * SLOPE_GAIN).clamp(0.0, 1.0)
+}
+
+/// True tangential surface-gradient (rise-over-run) slope, normalized to
+/// [0, 1]. For each same-side neighbour the vertical rise (km) is divided
+/// by the horizontal run (km, the great-circle chord between cell centroids
+/// scaled by Earth's radius); the MEAN of those per-neighbour gradients is
+/// mapped through `grade_slope`. Mean (not max) avoids the spiky saturation
+/// of the old max-delta×20 heuristic and yields a smooth graded field.
+/// Neighbour pairs that straddle sea level are skipped so a land/ocean step
+/// (a coastline) does not manufacture a false steep cliff — slope reflects
+/// terrain steepness within land (or within ocean), not the shoreline jump.
 fn compute_slope(model: &hayba_tectonics_v2::model::Model, fid: u32) -> f32 {
     // Sea level is 0.0; elevation sign distinguishes land from ocean.
     fn same_side(a: f32, b: f32) -> bool { (a >= 0.0) == (b >= 0.0) }
     let here = model.fields[fid as usize].elevation;
-    let mut max_diff = 0.0_f32;
+    let here_pos = model.grid.position(fid);
+    let mut sum_g = 0.0_f32;
+    let mut count = 0u32;
     for &nb in model.grid.neighbours(fid) {
         let there = model.fields[nb as usize].elevation;
         if !same_side(here, there) { continue; } // skip the coastline cliff
-        let d = (there - here).abs();
-        if d > max_diff { max_diff = d; }
+        // Vertical rise in real km (sign-free: steepness, not aspect).
+        let dh_km = (there - here).abs() * ELEV_KM;
+        // Horizontal run in km: unit-sphere chord × Earth radius.
+        let run_km = here_pos.distance(model.grid.position(nb)) * EARTH_RADIUS_KM;
+        if run_km <= 1e-4 { continue; }
+        sum_g += dh_km / run_km; // dimensionless rise/run
+        count += 1;
     }
-    (max_diff * 20.0).clamp(0.0, 1.0)
+    if count == 0 { return 0.0; }
+    grade_slope(sum_g / count as f32)
 }
 
 /// Map a unit-sphere position to a latitude band index.
@@ -591,5 +622,39 @@ mod tests {
         let mean = snap.cell_slope.iter().sum::<f32>() / n as f32;
         assert!(max < 1.0, "global max {max} must not be pinned to 1.0");
         assert!(mean <= max, "mean {mean} should not exceed global max {max}");
+    }
+
+    #[test]
+    fn slope_is_graded_not_saturated() {
+        // Demo snapshot: every value finite and in [0, 1], and the field is
+        // not pinned to 1.0 (no binary saturation).
+        let snap = bake_demo();
+        assert!(
+            snap.cell_slope.iter().all(|&s| s.is_finite() && (0.0..=1.0).contains(&s)),
+            "slope must be finite and in [0,1]"
+        );
+        let max = snap.cell_slope.iter().copied().fold(0.0_f32, f32::max);
+        assert!(max < 1.0, "graded slope must not saturate at 1.0 (got {max})");
+
+        // The gradient→slope mapping is graded/monotonic, not pinned to 1:
+        // a gentle gradient yields a strictly smaller slope than a steep one,
+        // and both stay within bounds.
+        let gentle = grade_slope(0.005); // ~0.04 rise/run-ish, gentle plain
+        let steep = grade_slope(0.072); // ~1.0 elev over one div-64 cell
+        let steeper = grade_slope(0.5); // beyond mountain relief → clamps
+        assert!(
+            gentle < steep,
+            "gentle gradient ({gentle}) must be < steep ({steep}) — graded"
+        );
+        assert!(
+            (0.0..=1.0).contains(&gentle) && (0.0..=1.0).contains(&steep),
+            "mapped slopes must stay in [0,1]"
+        );
+        assert!(gentle > 0.0, "a real gradient must lift slope above 0");
+        assert!(steep < 1.0, "mid mountain relief must not be pinned to 1.0");
+        assert!(
+            (steeper - 1.0).abs() < 1e-6,
+            "extreme gradient clamps to 1.0 (got {steeper})"
+        );
     }
 }
