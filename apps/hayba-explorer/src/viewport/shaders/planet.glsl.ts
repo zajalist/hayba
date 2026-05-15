@@ -411,16 +411,21 @@ export const FRAGMENT_SHADER = /* glsl */ `
 
     // ── Shared cold field (drives the 3-stage snow/rock/continent gradient
     //    AND gates the Tibet tone, so they are concentric — never a ring).
-    // One temperature coordinate, SPATIALLY perturbed by edgeJ in °C so all
-    // three boundaries are organic (no clean ring / hex). Replaces the old
-    // per-mask world-normal fbm that double-patterned the cap edge.
-    float coldC      = vTemperature + edgeJ * 5.0 * jScale;   // ~±8°C jitter
-    // Stage 1 — exposed alpine substrate: as it gets cold, vegetation gives
-    // way to bare rock. WIDE window (10°C ≫ ~8°C jitter → soft, no dither).
-    float substrateA = 1.0 - smoothstep(-2.0, 8.0, coldC);
-    // Stage 2 — snow on top of that substrate: a SEPARATE, colder, also-
-    // perturbed threshold. WIDE window (10°C ≫ jitter → feathered).
-    float snowA      = 1.0 - smoothstep(-12.0, -2.0, coldC);
+    // edgeJ (low-freq) keeps it off the hex grid; ragged (HIGH-freq fbm,
+    // °C) deliberately breaks the snow/rock margins into patches — real
+    // snowlines are crunchy (rock pokes through snow, snow sits on rock),
+    // NOT an airbrushed gradient. Amplitude is intentionally ≳ the window
+    // so the margin fragments; interiors stay smoothstep-saturated (solid
+    // cap / solid continent) so only the margin is noisy, never the body.
+    float ragged     = (fbm(vWorldNormal * 58.0)  - 0.5) * 9.0
+                     + (fbm(vWorldNormal * 132.0) - 0.5) * 4.0;
+    float coldC      = vTemperature + edgeJ * 4.0 * jScale + ragged;
+    // Stage 1 — exposed alpine substrate. TIGHT 5°C window (vs the old soft
+    // 10°C): with the ragged term this gives a broken, patchy rock margin.
+    float substrateA = 1.0 - smoothstep(1.0, 6.0, coldC);
+    // Stage 2 — snow on top of that substrate: a SEPARATE, colder, TIGHT
+    // 5°C window → ragged, speckled snowline (not a smooth white blob).
+    float snowA      = 1.0 - smoothstep(-7.0, -2.0, coldC);
 
     // Tibet-style high plateau: tall, non-polar ground reads as warm ochre
     // high-desert. (a) inputs jittered by edgeJ so it is not a hex/ring;
@@ -482,28 +487,23 @@ export const FRAGMENT_SHADER = /* glsl */ `
     }
 
     // ── 3-stage snow / rock / continent gradient ────────────────────────
-    // The old code had ONE hard ice override (iceCap*0.92) that snapped to
-    // a clean grey ring against the continent → fake-looking. Replace with
-    // THREE soft, CONCENTRIC bands that share the SAME perturbed cold
-    // coordinate (coldC / substrateA / snowA, computed once up top), so
-    // there is no seam or gap between them:
-    //   vegetation  →  exposed alpine rock  →  snow
-    // Every boundary is jittered by edgeJ (folded into coldC) so none is a
-    // clean ring or hex. Land-gated here (substrate/snow never on ocean).
+    // CONCENTRIC bands sharing the ragged cold coordinate (coldC /
+    // substrateA / snowA): vegetation → exposed alpine rock → snow. The
+    // ragged term makes every boundary crunchy/patchy (not a smooth halo).
+    // Land-gated (substrate/snow never on ocean).
     float land      = 1.0 - oceanMask;
-    // Stage 1: blend the biome albedo toward desaturated alpine rock as the
-    // ground gets cold-exposed. WIDE: substrateA already a 10°C smoothstep
-    // (≫ ~8°C edgeJ jitter) → feathered, no dither. Capped < 1 so it never
-    // fully erases the biome (keeps a continuous tonal handoff).
-    vec3  alpineRock = vec3(0.22, 0.20, 0.18) * (0.95 + scatter * 0.4);
+    // Stage 1: bare rock as ground gets cold-exposed. The "outgoing grey"
+    // was too smooth & prominent — darker, noisier rock + LOWER opacity so
+    // it's a thin broken rock fringe, not a wide airbrushed grey halo.
+    vec3  alpineRock = vec3(0.19, 0.17, 0.155) * (0.80 + scatter * 0.9);
     float substrate  = substrateA * land;
-    albedo = mix(albedo, alpineRock, substrate * 0.85);
-    // Stage 2: snow feathers ON TOP of that substrate over the SEPARATE,
-    // colder snowA threshold (also a 10°C window ≫ jitter → soft). Because
-    // snowA shares coldC with substrateA the two bands are concentric:
-    // snow → rock → vegetation with NO border. Gentle low-freq cool shade.
-    float iceShade = 0.88 + 0.12 * fbm(vWorldNormal * 9.0);
-    vec3  iceColor = vec3(0.92, 0.94, 0.97) * iceShade;
+    albedo = mix(albedo, alpineRock, substrate * 0.55);
+    // Stage 2: snow over the colder, also-ragged snowA → a broken speckled
+    // snowline. Higher-frequency shading so the cap body isn't a flat white
+    // blob (subtle exposed-rock mottle reads through the snow).
+    float iceShade = 0.78 + 0.17 * fbm(vWorldNormal * 30.0)
+                          + 0.07 * fbm(vWorldNormal * 80.0);
+    vec3  iceColor = vec3(0.93, 0.95, 0.98) * iceShade;
     float snow     = snowA * land;
     albedo = mix(albedo, iceColor, snow);
 
