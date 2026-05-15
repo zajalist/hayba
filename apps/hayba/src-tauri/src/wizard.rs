@@ -625,6 +625,15 @@ fn bake_model(draft: &WizardDraft) -> Model {
     model
 }
 
+/// Return the triangle index list for the icosphere at the given divisions.
+/// Each consecutive triple of u32s is one triangle, indexing into the
+/// per-cell position list. Used by the renderer to build the planet mesh.
+#[tauri::command]
+pub fn get_grid_triangles(divisions: u32) -> Vec<u32> {
+    let grid = Grid::new(divisions);
+    grid.sphere().triangles().to_vec()
+}
+
 #[cfg(test)]
 pub fn bake_impl(draft: &WizardDraft) -> PlanetSnapshot {
     let model = bake_model(draft);
