@@ -1069,44 +1069,60 @@ export default function App() {
 
         <RecenterButton getScene={getScene} />
 
-        {/* On-canvas map-mode selector (mask inspector) */}
+        {/* EU5-style on-canvas map-mode bar (bottom-left, not in sidebar) */}
         <div
           style={{
             position: "absolute",
-            top: 12,
+            bottom: 12,
             left: 12,
+            maxWidth: 540,
             display: "flex",
+            flexWrap: "wrap",
             alignItems: "center",
-            gap: 6,
-            padding: "5px 8px",
-            background: "rgba(20, 22, 28, 0.78)",
+            gap: 3,
+            padding: "5px 7px",
+            background: "rgba(20, 22, 28, 0.82)",
             border: `1px solid ${mapMode !== 0 ? "#B56A1D" : "#2f343d"}`,
-            borderRadius: 4,
+            borderRadius: 5,
             backdropFilter: "blur(4px)",
             zIndex: 10,
           }}
         >
-          <span style={{ fontSize: 11, color: "#9aa0aa", fontFamily: '"Segoe UI", system-ui, sans-serif' }}>
-            Map
-          </span>
-          <select
-            value={mapMode}
-            onChange={(e) => setMapMode(Number(e.target.value))}
+          <span
             style={{
-              background: "#22262e",
-              color: mapMode !== 0 ? "#DED4C3" : "#a8aeb8",
-              border: "1px solid #3d434e",
-              borderRadius: 3,
-              fontSize: 12,
+              fontSize: 10,
+              letterSpacing: 0.5,
+              textTransform: "uppercase",
+              color: "#9aa0aa",
               fontFamily: '"Segoe UI", system-ui, sans-serif',
-              padding: "3px 6px",
-              cursor: "pointer",
+              marginRight: 4,
             }}
           >
-            {MAP_MODES.map((m) => (
-              <option key={m.value} value={m.value}>{m.label}</option>
-            ))}
-          </select>
+            Map
+          </span>
+          {MAP_MODES.map((m) => {
+            const on = m.value === mapMode;
+            return (
+              <button
+                key={m.value}
+                onClick={() => setMapMode(m.value)}
+                title={m.label}
+                style={{
+                  padding: "3px 7px",
+                  fontSize: 11,
+                  fontFamily: '"Segoe UI", system-ui, sans-serif',
+                  borderRadius: 3,
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                  background: on ? "rgba(181,106,29,0.22)" : "transparent",
+                  border: `1px solid ${on ? "#B56A1D" : "#3d434e"}`,
+                  color: on ? "#DED4C3" : "#a8aeb8",
+                }}
+              >
+                {m.label}
+              </button>
+            );
+          })}
         </div>
       </div>
 

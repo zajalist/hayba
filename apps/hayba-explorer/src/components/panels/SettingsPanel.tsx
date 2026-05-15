@@ -1,7 +1,6 @@
 import React from "react";
 import PropertyRow from "../PropertyRow";
 import PropertySection from "../PropertySection";
-import Select from "../Select";
 
 export const MAP_MODES: { value: number; label: string }[] = [
   { value: 0,  label: "Final render" },
@@ -52,20 +51,6 @@ export default function SettingsPanel(p: SettingsPanelProps) {
               checked={p.showForceArrows}
               onChange={(e) => p.onToggleArrows(e.target.checked)}
               aria-label="Toggle force arrows"
-            />
-          }
-        />
-      </PropertySection>
-
-      <PropertySection heading="Diagnostics">
-        <PropertyRow
-          label="Map mode"
-          noSeparator
-          value={
-            <Select<number>
-              value={p.mapMode}
-              onChange={p.onChangeMapMode}
-              options={MAP_MODES.map((m) => ({ value: m.value, label: m.label }))}
             />
           }
         />

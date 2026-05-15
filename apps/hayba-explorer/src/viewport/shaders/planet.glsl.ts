@@ -304,21 +304,28 @@ export const FRAGMENT_SHADER = /* glsl */ `
     float macro    = fbm(vSeed * 3.0 + cwarp * 1.2);
     float band     = clamp(0.42 * macro + 0.34 * elevTerm
                          + 0.24 * clamp(vPrecip, 0.0, 1.0), 0.06, 0.94);
-    // Stochastic scatter: per-fragment-decorrelated hash + fine FBM, with
-    // amplitude ≈ the plausible-neighbour palette width. This is what
-    // destroys the contour banding ("not the same pixel over and over").
-    float scatter  = (hash3(vSeed * 850.0) - 0.5) * 0.30
-                   + (fbm(vSeed * 220.0) - 0.5) * 0.16;
+    // Stochastic scatter: COHERENT mid-frequency FBM (no per-fragment hash —
+    // that read as standout single-pixel static). Two octaves give larger
+    // "pixel" blobs that still break the 1-D ramp into a contour-free
+    // intermixed pattern, but at a believable macro feature size.
+    float scatter  = (fbm(vSeed * 45.0)  - 0.5) * 0.26
+                   + (fbm(vSeed * 130.0) - 0.5) * 0.12;
     float hLand = clamp(band + scatter, 0.02, 0.98);
     // Ice: tight bright band, still scattered so it isn't a flat sheet.
     float hIce  = clamp(0.34 + scatter * 0.5, 0.02, 0.98);
 
     // Biome is authoritative from Rust (classify_biome): a primary id, an
     // optional secondary id, and a blend weight. No shader-side thresholds.
+    // The raw per-cell blend meets neighbours on a hard hex facet edge;
+    // dissolve it with cell-stable fbm so the two biomes interleave across
+    // a widened, organic transition band instead of a straight polygon line.
+    float bmix   = clamp(vBiomeBlend * 2.0, 0.0, 1.0);
+    float bdith  = fbm(vSeed * 16.0) - 0.5;
+    bmix = smoothstep(0.0, 1.0, clamp(bmix + bdith * 0.55, 0.0, 1.0));
     vec3 base = mix(
       sampleBiome(vBiome,  remapBiomeH(vBiome,  hLand, hIce)),
       sampleBiome(vBiome2, remapBiomeH(vBiome2, hLand, hIce)),
-      clamp(vBiomeBlend * 2.0, 0.0, 1.0));
+      bmix);
 
     vec3 rock = sampleGradient(uSatMapRock, clamp(band * 1.1 + scatter, 0.04, 0.96));
 
