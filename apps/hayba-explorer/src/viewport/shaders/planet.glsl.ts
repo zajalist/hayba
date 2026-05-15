@@ -405,8 +405,10 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // NOT an airbrushed gradient. Amplitude is intentionally ≳ the window
     // so the margin fragments; interiors stay smoothstep-saturated (solid
     // cap / solid continent) so only the margin is noisy, never the body.
-    float ragged     = (fbm(vWorldNormal * 58.0)  - 0.5) * 9.0
-                     + (fbm(vWorldNormal * 132.0) - 0.5) * 4.0;
+    // Coarser/smaller than before: a fine high-freq ragged term spatially
+    // averaged to a SMOOTH grey halo. Lower freq → coherent chunky margin
+    // (the discrete breakup comes from the saturated snow mask instead).
+    float ragged     = (fbm(vWorldNormal * 22.0) - 0.5) * 5.0;
     float coldC      = vTemperature + edgeJ * 4.0 * jScale + ragged;
     // Snow mask ONLY. The temperature-driven alpine "substrate" rock band
     // was a smooth brush that formed a dark ring around the cap — REMOVED.
@@ -450,20 +452,23 @@ export const FRAGMENT_SHADER = /* glsl */ `
       // dark blues. Both endpoints keep B > G > R with G well below B and
       // low overall, so the result stays on the blue line at every depth.
       // All colours LINEAR (output is linear→sRGB encoded).
-      float dWater       = clamp(max(-seaCoord, 0.0) / 0.45, 0.0, 1.0);
+      // POSTERIZED depth: discrete bands with cell-stable noise-broken
+      // edges (discretized like the SatMap masking — NOT a smooth airbrush
+      // from shallow to deep). 5 steps, dithered by ±half a step.
+      float dRaw   = clamp(max(-seaCoord, 0.0) / 0.45, 0.0, 1.0);
+      float wSteps = 5.0;
+      float dDith  = (fbm(vSeed * 30.0) - 0.5) * (1.2 / wSteps);
+      float dWater = floor(clamp(dRaw + dDith, 0.0, 1.0) * wSteps + 0.001) / wSteps;
       vec3  shallowWater = vec3(0.015, 0.050, 0.085);
       vec3  deepWater    = vec3(0.002, 0.010, 0.030);
       vec3  water        = mix(shallowWater, deepWater, dWater);
 
-      // Faint large-scale tonal variation (subtle, never brightens cyan).
-      water *= 0.90 + 0.16 * fbm(vWorldNormal * 4.0);
-
-      // Schlick fresnel — only the planet limb picks up a sky sheen, and
-      // the target is itself a darker blue (not a bright tint).
+      // Schlick fresnel — only the planet limb picks up a faint sky sheen.
+      // Kept small so it is not a smooth bright band over the water.
       vec3  Vo   = normalize(cameraPosition - vWorldPos);
       float NoV  = max(dot(vWorldNormal, Vo), 0.0);
       float fres = 0.02 + 0.98 * pow(1.0 - NoV, 5.0);
-      water = mix(water, vec3(0.10, 0.20, 0.38), fres * 0.6);
+      water = mix(water, vec3(0.08, 0.16, 0.30), fres * 0.22);
 
       // Tight specular sun glint (small sharp white highlight only).
       vec3  Lo  = normalize(uSunDir);
@@ -487,8 +492,11 @@ export const FRAGMENT_SHADER = /* glsl */ `
     float holes  = smoothstep(0.40, 0.56, holeN);   // 1 = snow, 0 = bare rock hole
     float iceShade = 0.80 + 0.20 * fbm(vSeed * 34.0);
     vec3  iceColor = vec3(0.93, 0.95, 0.98) * iceShade;
-    float snow     = snowA * land * holes;
-    albedo = mix(albedo, iceColor, snow);
+    // SATURATE to a near-binary, coherent-noise-broken mask: discrete snow
+    // vs bare-rock patches with a tight edge — NO smooth partial-alpha grey
+    // halo (the old snowA*holes ramp read as a smooth grey brush).
+    float snowMask = smoothstep(0.42, 0.50, snowA * holes) * land;
+    albedo = mix(albedo, iceColor, snowMask);
 
     // ── Pink seam highlight (unassigned boundaries) ──────────────────────
     if (vIsBoundary > 0.5 && vCollisionKind < 0.5) {
