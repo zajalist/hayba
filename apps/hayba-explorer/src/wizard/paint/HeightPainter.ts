@@ -206,6 +206,40 @@ export class HeightPainter {
     this.dirty = true;
   }
 
+  /**
+   * Bulk-load a full per-cell elevation field (e.g. the analytic Earth
+   * template). Records the prior state as a single undo entry (every cell),
+   * so it round-trips through {@link undo}/{@link redo} like a stroke. Marks
+   * every cell touched so the bake honours the full field rather than the
+   * deep-ocean default for unpainted cells. `reset()`/`toDraftFields()`
+   * semantics are unchanged.
+   */
+  loadField(elev: Float32Array): void {
+    const count = Math.min(elev.length, this.n);
+    // One undo record covering every cell (value + mask), mirroring
+    // StrokeRecord so undo/redo treat it exactly like a stroke.
+    const cellIds = new Uint32Array(this.n);
+    const prevValues = new Float32Array(this.n);
+    const prevMask = new Uint8Array(this.n);
+    for (let i = 0; i < this.n; i++) {
+      cellIds[i] = i;
+      prevValues[i] = this.elevations[i];
+      prevMask[i] = this.touched[i];
+    }
+    this.undoStack.push({ cellIds, prevValues, prevMask });
+    if (this.undoStack.length > UNDO_CAPACITY) this.undoStack.shift();
+    this.redoStack.length = 0;
+
+    for (let i = 0; i < count; i++) {
+      let v = elev[i];
+      if (v > 1) v = 1;
+      if (v < -1) v = -1;
+      this.elevations[i] = v;
+    }
+    this.touched.fill(1);
+    this.dirty = true;
+  }
+
   toDraftFields(): { painted_elevations: number[]; painted_mask: number[] } {
     return {
       painted_elevations: Array.from(this.elevations),
