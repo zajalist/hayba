@@ -392,23 +392,10 @@ export const FRAGMENT_SHADER = /* glsl */ `
     rockMask *= smoothstep(0.0, 0.06, elevField);
     vec3  albedo   = mix(base, rock, rockMask);
 
-    // ── Beach mask: low elevation × gentle slope, tight band near 0 ─────
-    // (Note: 'flat' is a reserved GLSL keyword — variable named flatness.)
-    // Beach: a thin, MUTED sand band (linear-space tone, gated by the
-    // same organic coordinate the coast uses so it doesn't dither).
-    // Sand is NOT a function of low elevation alone — it must pass the
-    // climate filter. Only DRY (low-precip) coasts get sand; wet/temperate
-    // lowlands keep their biome vegetation (mangrove/jungle/marsh come
-    // from the biome SatMap, not bare sand).
-    // Perturb the sand line with SPATIAL edgeJ so it is an organic shore
-    // band, not a hex ring. window 0.05·jScale, amplitude |edgeJ|·0.022·
-    // jScale ≈ 0.018·jScale < window → soft, no dither.
-    float beachCoord = elevField + edgeJ * 0.022 * jScale;
-    float beachH   = 1.0 - smoothstep(0.0, 0.05 * jScale, beachCoord);
-    float flatness = 1.0 - smoothstep(0.0, 0.12, vSlope);
-    float aridity  = 1.0 - smoothstep(0.16, 0.42, vPrecip);   // 1 = arid, 0 = wet
-    float beach    = clamp(beachH * flatness * aridity * step(0.0, vElevation), 0.0, 1.0);
-    albedo = mix(albedo, vec3(0.34, 0.27, 0.16), beach * 0.5);
+    // Beach: REMOVED. It was a flat-colour vec3 smoothly brushed along
+    // every coast — a non-discretized smooth band the user explicitly
+    // rejected. Any future shore detail must come from a SatMap + mask,
+    // never a flat colour mix.
 
     // ── Shared cold field (drives the 3-stage snow/rock/continent gradient
     //    AND gates the Tibet tone, so they are concentric — never a ring).
