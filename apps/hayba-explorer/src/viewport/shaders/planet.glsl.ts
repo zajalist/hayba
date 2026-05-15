@@ -94,10 +94,10 @@ export const FRAGMENT_SHADER = /* glsl */ `
   // Five SatMap slots: 4 climate zones blended by per-fragment latitude +
   // elevation + noise, plus a rock layer driven by slope.
   uniform sampler2D uSatMap;          // user-selected override (Settings)
-  uniform sampler2D uSatTropical;
-  uniform sampler2D uSatArid;
-  uniform sampler2D uSatTemperate;
-  uniform sampler2D uSatPolar;
+  uniform sampler2D uBiome0; uniform sampler2D uBiome1; uniform sampler2D uBiome2;
+  uniform sampler2D uBiome3; uniform sampler2D uBiome4; uniform sampler2D uBiome5;
+  uniform sampler2D uBiome6; uniform sampler2D uBiome7; uniform sampler2D uBiome8;
+  uniform sampler2D uBiome9;
   uniform sampler2D uSatMapRock;
   uniform float     uClimateBlend;    // 1.0 = climate-driven, 0.0 = single uSatMap
   uniform vec3      uSunDir;
@@ -201,6 +201,33 @@ export const FRAGMENT_SHADER = /* glsl */ `
     return srgbToLinear(texture2D(tex, vec2(0.5, 1.0 - clamp(h, 0.02, 0.98))).rgb);
   }
 
+  vec3 sampleBiome(float id, float h) {
+    int b = int(id + 0.5);
+    if (b == 0) return sampleGradient(uBiome0, h);
+    if (b == 1) return sampleGradient(uBiome1, h);
+    if (b == 2) return sampleGradient(uBiome2, h);
+    if (b == 3) return sampleGradient(uBiome3, h);
+    if (b == 4) return sampleGradient(uBiome4, h);
+    if (b == 5) return sampleGradient(uBiome5, h);
+    if (b == 6) return sampleGradient(uBiome6, h);
+    if (b == 7) return sampleGradient(uBiome7, h);
+    if (b == 8) return sampleGradient(uBiome8, h);
+    return sampleGradient(uBiome9, h);
+  }
+  vec3 biomeDebugColor(float id) {
+    int b = int(id + 0.5);
+    if (b == 0) return vec3(0.05,0.45,0.10);
+    if (b == 1) return vec3(0.75,0.78,0.30);
+    if (b == 2) return vec3(0.85,0.62,0.30);
+    if (b == 3) return vec3(0.06,0.55,0.35);
+    if (b == 4) return vec3(0.15,0.55,0.20);
+    if (b == 5) return vec3(0.55,0.60,0.30);
+    if (b == 6) return vec3(0.70,0.72,0.42);
+    if (b == 7) return vec3(0.10,0.35,0.30);
+    if (b == 8) return vec3(0.55,0.50,0.45);
+    return vec3(0.95,0.97,1.00);
+  }
+
   // Latitude approximation from a unit-sphere normal (Y-up). Returns 0 at
   // equator, ±1 at poles.
   float latitude(vec3 n) { return n.y; }
@@ -231,86 +258,46 @@ export const FRAGMENT_SHADER = /* glsl */ `
                     + (fbmCoarse - 0.5) * 0.55
                     + (fbmFine   - 0.5) * 0.15;
 
-    // ── Climate model (worldbuildingpasta-grounded, not pure zonal) ──────
-    float sinLat = vWorldNormal.y;
-    float lat    = abs(sinLat);                          // 0 equator .. 1 pole
-    float latDeg = degrees(asin(clamp(lat, 0.0, 1.0)));  // 0 .. 90
-    float elevKm = max(vElevation, 0.0) * 8.0;           // vElevation 1.0 ≈ 8 km
-
-    // Continentality proxy (no cheap ocean-distance SDF available): a
-    // low-freq field read as "inlandness". Drives continental drying +
-    // colder interiors — the visibly non-zonal effect.
-    float inland = fbm(vWorldNormal * 1.6);
-
-    // Temperature (°C): equator base, 4.46°C/km lapse (worldbuildingpasta),
-    // continental cooling, organic variation.
-    float tempC = 30.0 - 50.0 * lat * lat
-                       - 4.46 * elevKm
-                       - inland * 7.0
-                       + (fbm(vWorldNormal * 3.0) - 0.5) * 5.0;
-
-    // Prevailing wind by latitude band (worldbuildingpasta): trades (E→W,
-    // 0–30°), westerlies (W→E, 30–60°), polar easterlies (E→W, 60–90°).
-    vec3 east = normalize(cross(vec3(0.0, 1.0, 0.0), vWorldNormal) + 1e-5);
-    float windSign = (latDeg < 30.0) ? -1.0 : (latDeg < 60.0 ? 1.0 : -1.0);
-    vec3 wind = normalize(east * windSign);
-
-    // Orographic rain shadow: a relief normal's horizontal tilt vs the
-    // wind → windward (wet) / leeward (dry), scaled by actual slope.
-    vec3  rN   = computeReliefNormal(vWorldNormal * 28.0, fbm(vWorldNormal * 28.0), 2.0);
-    vec3  tilt = rN - vWorldNormal;
-    float orographic = dot(normalize(tilt + 1e-5), wind)
-                     * smoothstep(0.15, 0.65, vSlope);
-
-    // Precipitation 0..1: Hadley/Ferrel bands + ITCZ + orographic +
-    // continental drying + organic noise.
-    vec3 pwarp = vec3(fbm(vWorldNormal*2.0+11.3), fbm(vWorldNormal*2.0+27.1),
-                      fbm(vWorldNormal*2.0+41.7));
-    float itcz    = 1.0 - smoothstep(0.0, 16.0, latDeg);          // wet equator
-    float subtrop = 1.0 - smoothstep(0.0, 12.0, abs(latDeg - 30.0)); // dry ~30°
-    float midlat  = 1.0 - smoothstep(0.0, 14.0, abs(latDeg - 58.0)); // wet ~55-60°
-    float polarDry= smoothstep(62.0, 82.0, latDeg);
-    float zonal   = 0.85*itcz - 0.6*subtrop + 0.55*midlat - 0.4*polarDry + 0.35;
-    float continentalDry = smoothstep(0.35, 0.85, inland);
-    float precip = clamp(zonal + orographic * 0.6 - continentalDry * 0.55
-                       + (fbm(vWorldNormal * 3.5 + pwarp * 1.4) - 0.5) * 0.35,
-                       0.0, 1.0);
-
-    // ── Biome classification (Köppen-ish, soft) ──────────────────────────
-    float warmth = smoothstep(-2.0, 4.0, tempC);
-    float wPolar = 1.0 - warmth;
-    float hot    = smoothstep(16.0, 22.0, tempC);
-    float wTrop  = hot * warmth * smoothstep(0.45, 0.65, precip);
-    float wArid  = warmth * (1.0 - wPolar) * (1.0 - smoothstep(0.18, 0.36, precip));
-    float wTemp  = max(0.0, warmth * (1.0 - wPolar) - wTrop - wArid);
-
-    // ── Colour: NOISE-DOMINANT sample coord (jsulpis-proven organic look).
-    // NOT pure elevation (→ contour rings / bullseye) and NOT moisture
-    // (→ semantic scramble). Strong domain-warped multi-octave noise with
-    // only a gentle elevation bias → organic patches of each SatMap's
-    // tonal range, mountains trending up-gradient, zero rings.
+    // ── Colour = f(biome, organic noise) ONLY (spec core invariant) ─────
     vec3 cwarp = vec3(fbm(vWorldNormal*2.0+5.2), fbm(vWorldNormal*2.0+19.7),
                       fbm(vWorldNormal*2.0+37.1));
     float organic = fbm(vWorldNormal * 5.0 + cwarp * 1.6) * 0.6
                   + fbm(vWorldNormal * 13.0)              * 0.4;
-    float h = clamp(0.70 * organic + 0.30 * max(vElevation, 0.0), 0.04, 0.96);
+    float warpT = vTemperature + (fbm(vWorldNormal*7.0) - 0.5) * 4.0;
+    float warpP = clamp(vPrecip  + (fbm(vWorldNormal*7.0+13.0) - 0.5) * 0.18, 0.0, 1.0);
 
-    // Soft, NOISY-boundary blend — user wants colours to blend & be noisy,
-    // not hard argmax patches. Boundary noise breaks ties organically;
-    // pow(3) keeps a dominant biome without 4-way grey-mud averaging.
-    float bnz = (fbm(vWorldNormal * 8.0) - 0.5) * 0.18;
-    vec4 bw = pow(max(vec4(wTrop, wArid, wTemp, wPolar) + bnz, 0.0), vec4(3.0));
-    bw /= (bw.x + bw.y + bw.z + bw.w + 1e-5);
+    float wIce  = 1.0 - smoothstep(-15.0, -13.0, warpT);
+    float wTun  = smoothstep(-15.0,-13.0,warpT) * (1.0 - smoothstep(-2.0,0.0,warpT));
+    float wBor  = smoothstep(-2.0,0.0,warpT)    * (1.0 - smoothstep(6.0,8.0,warpT));
+    float warm  = smoothstep(6.0,8.0,warpT);
+    float hotw  = smoothstep(16.0,18.0,warpT);
+    float temperateW = warm * (1.0 - hotw);
+    float wTRf  = temperateW * smoothstep(0.62,0.72,warpP);
+    float wTF   = temperateW * smoothstep(0.36,0.44,warpP) * (1.0 - smoothstep(0.62,0.72,warpP));
+    float wWS   = temperateW * smoothstep(0.16,0.24,warpP) * (1.0 - smoothstep(0.36,0.44,warpP));
+    float wGr   = temperateW * (1.0 - smoothstep(0.16,0.24,warpP));
+    float wRf   = hotw * smoothstep(0.55,0.65,warpP);
+    float wSav  = hotw * smoothstep(0.16,0.24,warpP) * (1.0 - smoothstep(0.55,0.65,warpP));
+    float wDes  = hotw * (1.0 - smoothstep(0.16,0.24,warpP));
 
-    vec3 climateBase =
-        sampleGradient(uSatTropical,  h) * bw.x
-      + sampleGradient(uSatArid,      h) * bw.y
-      + sampleGradient(uSatTemperate, h) * bw.z
-      + sampleGradient(uSatPolar,     h) * bw.w;
+    float hIce  = 0.30 + organic * 0.12;
+    float hLand = clamp(organic, 0.04, 0.96);
 
-    vec3 base = mix(sampleGradient(uSatMap, h), climateBase, uClimateBlend);
-    vec3 rock = sampleGradient(uSatMapRock, clamp(h * 1.1, 0.02, 0.98));
-    float moisture = precip;   // debug-mode alias
+    vec3 base =
+        sampleGradient(uBiome0, hLand) * wRf
+      + sampleGradient(uBiome1, hLand) * wSav
+      + sampleGradient(uBiome2, hLand) * wDes
+      + sampleGradient(uBiome3, hLand) * wTRf
+      + sampleGradient(uBiome4, hLand) * wTF
+      + sampleGradient(uBiome5, hLand) * wWS
+      + sampleGradient(uBiome6, hLand) * wGr
+      + sampleGradient(uBiome7, hLand) * wBor
+      + sampleGradient(uBiome8, hLand) * wTun
+      + sampleGradient(uBiome9, hIce)  * wIce;
+    float wSum = wRf+wSav+wDes+wTRf+wTF+wWS+wGr+wBor+wTun+wIce + 1e-4;
+    base /= wSum;
+
+    vec3 rock = sampleGradient(uSatMapRock, clamp(organic * 1.1, 0.04, 0.96));
 
     // Slope rock mask — smoothstep + fwidth anti-aliasing per Gemini.
     // Threshold around ~0.55 (≈ 33° incline); biome-dependent in a future v3.
@@ -382,10 +369,7 @@ export const FRAGMENT_SHADER = /* glsl */ `
     //  Full physically-based snow mask is step 6.)
     // LOW-freq edge perturbation only (was high-freq fbmFine → fine grey
     // blotch). The snow LINE stays organic; the cap INTERIOR is solid.
-    float tempLand = 30.0
-                   - max(vElevation, 0.0) * 6.0
-                   - abs(vWorldNormal.y) * 32.0
-                   + (fbmCoarse - 0.5) * 2.0;
+    float tempLand = vTemperature;
 
     // Ice cap: OVERRIDE the marbled polar SatMap entirely with smooth
     // near-white ice. The previous attempt only desaturated the SatMap,
@@ -433,30 +417,21 @@ export const FRAGMENT_SHADER = /* glsl */ `
     albedo *= mix(0.90, 1.0, fakeAO);   // softened (was 0.78 — dFdx AO is coarse on a low-poly icosphere)
 
     // ── Debug map modes (validate the science before trusting colour) ────
-    // 0 final · 1 temperature · 2 moisture · 3 biome argmax · 4 elevation
-    // 5 slope · 6 ice mask · 7 ocean mask
     if (uMapMode > 0.5) {
-      vec3 dbg;
-      if (uMapMode < 1.5) {
-        dbg = vec3(clamp(tempC / 40.0, 0.0, 1.0));                       // white hot → black cold
-      } else if (uMapMode < 2.5) {
-        dbg = mix(vec3(0.32, 0.22, 0.05), vec3(0.05, 0.25, 0.95), moisture); // dry tan → wet blue
-      } else if (uMapMode < 3.5) {
-        float mx = max(max(bw.x, bw.y), max(bw.z, bw.w));
-        if      (mx == bw.x) dbg = vec3(0.10, 0.70, 0.16);              // tropical green
-        else if (mx == bw.y) dbg = vec3(0.88, 0.45, 0.10);              // arid orange
-        else if (mx == bw.z) dbg = vec3(0.55, 0.55, 0.20);              // temperate olive
-        else                 dbg = vec3(0.93, 0.96, 1.00);              // polar white
-      } else if (uMapMode < 4.5) {
-        dbg = vec3(clamp(max(vElevation, 0.0), 0.0, 1.0));
-      } else if (uMapMode < 5.5) {
-        dbg = vec3(clamp(vSlope, 0.0, 1.0));
-      } else if (uMapMode < 6.5) {
-        dbg = vec3(iceCap);
-      } else {
-        dbg = vec3(0.0, 0.35, 0.95) * oceanMask;
-      }
-      gl_FragColor = vec4(linearToSrgb(dbg), 1.0);
+      vec3 d;
+      if      (uMapMode < 1.5)  d = vec3(clamp((vTemperature + 25.0) / 60.0, 0.0, 1.0));
+      else if (uMapMode < 2.5)  d = mix(vec3(0.32,0.22,0.05), vec3(0.05,0.25,0.95), vPrecip);
+      else if (uMapMode < 3.5)  d = biomeDebugColor(vBiome);
+      else if (uMapMode < 4.5)  d = vec3(clamp(max(vElevation,0.0),0.0,1.0));
+      else if (uMapMode < 5.5)  d = vec3(clamp(vSlope,0.0,1.0));
+      else if (uMapMode < 6.5)  d = vec3(0.0,0.35,0.95) * oceanMask;
+      else if (uMapMode < 7.5)  d = vec3(clamp(vInsolation,0.0,1.0));
+      else if (uMapMode < 8.5)  d = vec3(clamp((vBaseTemp + 25.0)/60.0,0.0,1.0));
+      else if (uMapMode < 9.5)  d = vec3(clamp(vDistToOcean / 4000.0,0.0,1.0));
+      else if (uMapMode < 10.5) d = mix(vec3(0.1,0.1,0.9), vec3(0.95,0.3,0.1), clamp(vCurrentDt*0.05 + 0.5, 0.0, 1.0));
+      else if (uMapMode < 11.5) d = mix(vec3(0.85,0.55,0.15), vec3(0.1,0.5,0.95), clamp(vOrographic*0.5 + 0.5, 0.0, 1.0));
+      else                      d = vec3(clamp(vContinentalDry,0.0,1.0));
+      gl_FragColor = vec4(linearToSrgb(d), 1.0);
       return;
     }
 
