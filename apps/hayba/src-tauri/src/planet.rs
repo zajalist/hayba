@@ -38,6 +38,29 @@ pub struct PlanetSnapshot {
     /// look up `boundary_types[pair(me, other)]` per cell — no client-side
     /// neighbour search needed.
     pub cell_neighbor_plate: Vec<i32>,
+    /// Maximum absolute neighbour elevation difference, normalized to [0, 1].
+    pub cell_slope: Vec<f32>,
+    /// Latitude band index: 0=Tropical, 1=Subtropical, 2=Temperate, 3=Subpolar, 4=Polar.
+    pub cell_latitude_band: Vec<u8>,
+    /// Crust age in simulation units (great-circle distance travelled).
+    pub cell_age_ma: Vec<f32>,
+    /// Total crust thickness in meters (model units; label "km" is a naming
+    /// convention inherited from the spec; values are meters internally).
+    pub cell_crust_thickness_km: Vec<f32>,
+    /// Volcanic intensity per cell. 1.0 = active volcanic field, 0.0 = none.
+    /// (VolcanicActivity is currently a placeholder struct with no scalar field;
+    /// presence = 1.0, absence = 0.0.)
+    pub cell_volcanic_intensity: Vec<f32>,
+    /// Collision kind: 0=none, 1=Subduction, 2=Orogeny, 3=Buffer-kill, 4=Drag.
+    pub cell_collision_kind: Vec<u8>,
+    /// Subduction progress in [0, 1]. 0.0 for non-subducting cells.
+    pub cell_subduction_progress: Vec<f32>,
+    /// 1 = is a continent buffer cell, 0 = not.
+    pub cell_is_continent_buffer: Vec<u8>,
+    /// Recent orogenic uplift rate, normalized to [0, 1].
+    pub cell_orogenic_uplift: Vec<f32>,
+    /// Steps since this cell was spawned at a mid-ocean ridge.
+    pub cell_mor_age_steps: Vec<u16>,
 }
 
 struct DemoPlate {
@@ -137,6 +160,40 @@ pub fn bake_demo() -> PlanetSnapshot {
     snap
 }
 
+/// Maximum absolute neighbour elevation difference, normalized to [0, 1] by
+/// an empirical scale factor (the model's elevation rarely produces
+/// neighbour deltas > 0.05 in unit-sphere units).
+fn compute_slope(model: &hayba_tectonics_v2::model::Model, fid: u32) -> f32 {
+    let here = model.fields[fid as usize].elevation;
+    let mut max_diff = 0.0_f32;
+    for &nb in model.grid.neighbours(fid) {
+        let d = (model.fields[nb as usize].elevation - here).abs();
+        if d > max_diff { max_diff = d; }
+    }
+    (max_diff * 20.0).clamp(0.0, 1.0)
+}
+
+/// Map a unit-sphere position to a latitude band index.
+/// Uses the Y component (sin of latitude) as the proxy.
+fn latitude_band(pos: glam::Vec3) -> u8 {
+    let abs_lat = pos.y.abs();
+    if abs_lat < 0.40 { 0 }      // Tropical (0–23.5°)
+    else if abs_lat < 0.60 { 1 } // Subtropical
+    else if abs_lat < 0.78 { 2 } // Temperate
+    else if abs_lat < 0.93 { 3 } // Subpolar
+    else { 4 }                   // Polar
+}
+
+/// Encode collision type as a u8: 0=none, 1=Subduction, 2=Orogeny,
+/// 3=Buffer-kill, 4=Drag.
+fn collision_kind(field: &hayba_tectonics_v2::field::Field) -> u8 {
+    if !field.colliding { return 0; }
+    if field.subduction.is_some() { return 1; }
+    if field.orogenic_uplift > 0.0 { return 2; }
+    if field.is_continent_buffer { return 3; }
+    4
+}
+
 /// Build a `PlanetSnapshot` from a stepped model. Boundary detection matches
 /// TE: a cell is on the boundary if any of its neighbours belong to a
 /// different plate (see `tectonic-explorer/.../plate.ts` boundary scan).
@@ -148,6 +205,16 @@ pub fn snapshot_model(model: &Model, divisions: u32) -> PlanetSnapshot {
     let mut cell_continental: Vec<u8> = Vec::with_capacity(n_cells as usize);
     let mut cell_is_boundary: Vec<u8> = Vec::with_capacity(n_cells as usize);
     let mut cell_neighbor_plate: Vec<i32> = Vec::with_capacity(n_cells as usize);
+    let mut cell_slope: Vec<f32> = Vec::with_capacity(n_cells as usize);
+    let mut cell_latitude_band: Vec<u8> = Vec::with_capacity(n_cells as usize);
+    let mut cell_age_ma: Vec<f32> = Vec::with_capacity(n_cells as usize);
+    let mut cell_crust_thickness_km: Vec<f32> = Vec::with_capacity(n_cells as usize);
+    let mut cell_volcanic_intensity: Vec<f32> = Vec::with_capacity(n_cells as usize);
+    let mut cell_collision_kind: Vec<u8> = Vec::with_capacity(n_cells as usize);
+    let mut cell_subduction_progress: Vec<f32> = Vec::with_capacity(n_cells as usize);
+    let mut cell_is_continent_buffer: Vec<u8> = Vec::with_capacity(n_cells as usize);
+    let mut cell_orogenic_uplift: Vec<f32> = Vec::with_capacity(n_cells as usize);
+    let mut cell_mor_age_steps: Vec<u16> = Vec::with_capacity(n_cells as usize);
 
     for fid in 0..n_cells {
         let p = model.grid.position(fid);
@@ -195,6 +262,21 @@ pub fn snapshot_model(model: &Model, divisions: u32) -> PlanetSnapshot {
             }
         }
         cell_neighbor_plate.push(best);
+
+        cell_slope.push(compute_slope(model, fid));
+        cell_latitude_band.push(latitude_band(p));
+        cell_age_ma.push(f.age);
+        cell_crust_thickness_km.push(f.crust_thickness());
+        cell_volcanic_intensity.push(
+            if f.volcanic_activity.is_some() { 1.0 } else { 0.0 }
+        );
+        cell_collision_kind.push(collision_kind(f));
+        cell_subduction_progress.push(
+            f.subduction.as_ref().map(|s| s.progress()).unwrap_or(0.0)
+        );
+        cell_is_continent_buffer.push(if f.is_continent_buffer { 1 } else { 0 });
+        cell_orogenic_uplift.push(f.orogenic_uplift);
+        cell_mor_age_steps.push(f.mor_age_steps);
     }
 
     PlanetSnapshot {
@@ -207,6 +289,16 @@ pub fn snapshot_model(model: &Model, divisions: u32) -> PlanetSnapshot {
         cell_continental,
         cell_is_boundary,
         cell_neighbor_plate,
+        cell_slope,
+        cell_latitude_band,
+        cell_age_ma,
+        cell_crust_thickness_km,
+        cell_volcanic_intensity,
+        cell_collision_kind,
+        cell_subduction_progress,
+        cell_is_continent_buffer,
+        cell_orogenic_uplift,
+        cell_mor_age_steps,
     }
 }
 
@@ -226,5 +318,16 @@ mod tests {
         distinct.dedup();
         // Expect at least 4 distinct plate ids (some plates may merge).
         assert!(distinct.iter().filter(|&&x| x >= 0).count() >= 4, "got {:?}", distinct);
+
+        assert_eq!(snap.cell_slope.len() as u32, snap.n_cells);
+        assert_eq!(snap.cell_latitude_band.len() as u32, snap.n_cells);
+        assert_eq!(snap.cell_age_ma.len() as u32, snap.n_cells);
+        assert_eq!(snap.cell_crust_thickness_km.len() as u32, snap.n_cells);
+        assert_eq!(snap.cell_volcanic_intensity.len() as u32, snap.n_cells);
+        assert_eq!(snap.cell_collision_kind.len() as u32, snap.n_cells);
+        assert_eq!(snap.cell_subduction_progress.len() as u32, snap.n_cells);
+        assert_eq!(snap.cell_is_continent_buffer.len() as u32, snap.n_cells);
+        assert_eq!(snap.cell_orogenic_uplift.len() as u32, snap.n_cells);
+        assert_eq!(snap.cell_mor_age_steps.len() as u32, snap.n_cells);
     }
 }
