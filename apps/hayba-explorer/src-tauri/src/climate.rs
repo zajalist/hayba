@@ -75,6 +75,24 @@ pub fn prevailing_wind(p: Vec3) -> Vec3 {
     (east * sign + north * toward_eq * 0.15).normalize_or_zero()
 }
 
+/// Coastal temperature anomaly (°C) from analytic subtropical gyres.
+/// Warm poleward western-boundary currents (up to +12°C), cold
+/// equatorward eastern-boundary currents (down to −10°C → coastal
+/// deserts). `coastalness` is the normalized inland fraction (0 = coast,
+/// 1 = deep interior); the effect decays to ~0 inland.
+pub fn current_temp_anomaly(p: Vec3, coastalness: f32) -> f32 {
+    let lat = latitude_rad(p);
+    let lat_deg = lat.abs().to_degrees();
+    let lon = p.z.atan2(p.x); // −π..π
+    let basin_phase = (lon / (std::f32::consts::PI * 2.0 / 3.0)).fract();
+    let west_side = if basin_phase < 0.5 { 1.0 } else { -1.0 };
+    let strength = (1.0 - ((lat_deg - 50.0) / 40.0).powi(2)).clamp(0.0, 1.0);
+    let warm = west_side * lat.signum() * lat.signum(); // ±1
+    let raw = warm * strength * if west_side > 0.0 { 12.0 } else { -10.0 };
+    let coastal = (1.0 - coastalness).clamp(0.0, 1.0);
+    raw * coastal * coastal
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,5 +144,15 @@ mod tests {
         let w_west = prevailing_wind(p_west);
         let east_w = Vec3::new(0.0, 1.0, 0.0).cross(p_west).normalize();
         assert!(w_west.dot(east_w) > 0.0, "westerlies should blow eastward");
+    }
+
+    #[test]
+    fn current_anomaly_bounded_and_signed() {
+        let coastal_west = current_temp_anomaly(
+            Vec3::new(0.5, 0.7, 0.5).normalize(), 0.05);
+        assert!(coastal_west.abs() <= 12.001, "anomaly out of range: {}", coastal_west);
+        let deep_inland = current_temp_anomaly(
+            Vec3::new(0.5, 0.7, 0.5).normalize(), 0.95);
+        assert!(deep_inland.abs() < 1.0, "interior should be ~unaffected: {}", deep_inland);
     }
 }
