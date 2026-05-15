@@ -201,6 +201,34 @@ pub fn river_mask(area: &[f32], threshold_frac: f32) -> Vec<f32> {
         .collect()
 }
 
+/// Final hydrology fields shipped to the renderer.
+pub struct HydrologyFields {
+    /// Drainage area per cell (km²), normalized 0..1 by global max.
+    pub drainage: Vec<f32>,
+    /// River mask 0..1.
+    pub river: Vec<f32>,
+}
+
+/// Erode `elev` in place, then return the drainage (normalized) + river
+/// fields for the final post-erosion state. One call per bake.
+pub fn compute_hydrology(
+    neighbours: &[Vec<u32>],
+    pos: &[Vec3],
+    elev: &mut [f32],
+    is_ocean: &[bool],
+    cell_area: f32,
+    p: &ErosionParams,
+) -> HydrologyFields {
+    erode(neighbours, pos, elev, is_ocean, cell_area, p);
+    let filled = priority_flood(neighbours, elev, is_ocean);
+    let recv = flow_receivers(neighbours, pos, &filled);
+    let raw = drainage_area(&recv, cell_area);
+    let max_a = raw.iter().cloned().fold(0.0_f32, f32::max).max(1e-6);
+    let drainage = raw.iter().map(|&a| (a / max_a).clamp(0.0, 1.0)).collect();
+    let river = river_mask(&raw, p.river_threshold);
+    HydrologyFields { drainage, river }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,5 +307,21 @@ mod tests {
         let m = river_mask(&area, 0.1); // threshold = 0.1 * max(=100) = 10
         assert!(m[0] > 0.5, "big drainage = river");
         assert!(m[1] < 0.5 && m[2] < 0.5, "small drainage = not river");
+    }
+
+    #[test]
+    fn compute_hydrology_returns_aligned_finite_fields() {
+        let neighbours = vec![vec![1u32], vec![0, 2], vec![1]];
+        let pos = vec![Vec3::X, Vec3::new(1.0,0.1,0.0).normalize(),
+                       Vec3::new(1.0,0.2,0.0).normalize()];
+        let mut elev = vec![0.0_f32, 1.0, 2.0];
+        let is_ocean = vec![true, false, false];
+        let h = compute_hydrology(&neighbours, &pos, &mut elev, &is_ocean,
+                                  10.0, &ErosionParams::default());
+        assert_eq!(h.drainage.len(), 3);
+        assert_eq!(h.river.len(), 3);
+        assert!(h.drainage.iter().all(|v| v.is_finite() && *v >= 0.0));
+        assert!(h.river.iter().all(|v| (0.0..=1.0).contains(v)));
+        assert!(elev.iter().all(|v| v.is_finite()), "elevation eroded in place");
     }
 }
