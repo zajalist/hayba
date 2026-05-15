@@ -35,6 +35,16 @@ export interface PlanetSnapshot {
   cell_continental: number[];
   cell_is_boundary: number[];
   cell_neighbor_plate: number[];
+  cell_slope: number[];
+  cell_latitude_band: number[];
+  cell_age_ma: number[];
+  cell_crust_thickness_km: number[];
+  cell_volcanic_intensity: number[];
+  cell_collision_kind: number[];
+  cell_subduction_progress: number[];
+  cell_is_continent_buffer: number[];
+  cell_orogenic_uplift: number[];
+  cell_mor_age_steps: number[];
 }
 
 interface WizardInit {
