@@ -54,6 +54,7 @@ export const VERTEX_SHADER = /* glsl */ `
   varying vec4  vBW0;
   varying vec4  vBW1;
   varying vec4  vBW2;
+  varying float vCoastSdf;   // coarse smoothed signed coastline distance (cell units)
 
   // Cheap per-vertex hash noise — used to perturb the coastline silhouette
   // away from the underlying hexagonal mesh.
@@ -105,6 +106,8 @@ export const VERTEX_SHADER = /* glsl */ `
     vBW0 = aBiomeW0;
     vBW1 = aBiomeW1;
     vBW2 = aBiomeW2;
+    // Spare biome-weight lane carries the coarse signed coastline SDF.
+    vCoastSdf = aBiomeW2.z;
 
     gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
   }
@@ -163,6 +166,7 @@ export const FRAGMENT_SHADER = /* glsl */ `
   varying vec4  vBW0;
   varying vec4  vBW1;
   varying vec4  vBW2;
+  varying float vCoastSdf;   // coarse smoothed signed coastline distance (cell units)
 
   // ── Noise primitives ─────────────────────────────────────────────────────
   // Deterministic hash → value noise → FBM. Gemini: 4-6 octaves, lacunarity
@@ -421,15 +425,18 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // user rejects. High non-polar ground now just shows its own biome /
     // slope-rock SatMap (textured), no flat-colour wash.
 
-    // ── G.7 steps 4+5: Beer-Lambert ocean + crisp fwidth-AA coast ────────
-    // SCRATCHED: the domain-warped "organic coast" produced a cloud-like
-    // blue haze the user disliked. Reverted to a plain land/sea boundary —
-    // a clean fwidth-sized 1px edge straight off vElevation (so the coast
-    // traces the cell tessellation for now). The real sub-cell coastline
-    // approach is parked for a dedicated brainstorm.
-    float seaCoord   = vElevation;
-    float coastWidth = max(fwidth(seaCoord), 0.0025);
-    float oceanMask  = 1.0 - smoothstep(-coastWidth, coastWidth, seaCoord);
+    // ── G.7 steps 4+5: Beer-Lambert ocean + sub-cell coastline ──────────
+    // Sub-cell coastline: displace the SMOOTH coarse signed distance with
+    // multi-octave fbm in the crawl-free cell-stable seed space (A3) so the
+    // shoreline leaves the hex grid with organic bays/peninsulas. The
+    // displacement amplitude EXCEEDS one cell so it genuinely crosses the
+    // polygon seam (Gemini: displace the SDF, not the UVs). smoothstep
+    // feather only — never a hard step.
+    float coastDisp = (fbm(vSeed *  4.0) - 0.5) * 1.7
+                    + (fbm(vSeed *  9.0) - 0.5) * 0.9
+                    + (fbm(vSeed * 21.0) - 0.5) * 0.45;
+    float seaCoord  = vCoastSdf + coastDisp;     // >0 land, <0 ocean (cell units)
+    float oceanMask = 1.0 - smoothstep(-0.6, 0.6, seaCoord);
 
     // Lift land albedo (SatMaps read very dark) — ocean excluded so the
     // dark-navy water (and its no-cyan invariant) is untouched.

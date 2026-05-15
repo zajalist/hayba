@@ -88,6 +88,12 @@ pub struct PlanetSnapshot {
     /// row-major). Neighbour-diffused so the GPU interpolates fixed biome
     /// SLOTS' weights across each triangle → no hexagonal biome facets.
     pub cell_biome_weights: Vec<f32>,
+    /// Coarse, smoothed SIGNED geodesic distance to the land/sea boundary,
+    /// normalized so ~1.0 ≈ one cell spacing. Positive on land, negative in
+    /// ocean (length = `n_cells`). The shader displaces this smooth field
+    /// with multi-octave noise to produce a sub-cell organic coastline that
+    /// no longer traces the hexagonal cell tessellation.
+    pub cell_coast_sdf: Vec<f32>,
     /// Per-cell STABLE pseudo-random unit vec3 (length = `n_cells * 3`),
     /// keyed on the immutable cell index. The shader keys its within-biome
     /// surface texture noise on this so the texture rides with the drifting
@@ -340,6 +346,112 @@ pub fn snapshot_model(
         }
     }
 
+    // Coarse signed coastline distance field. Multi-source Dijkstra of
+    // geodesic (chord-summed) distance from every land/sea-boundary cell,
+    // then sign by side, smooth the zero-crossing, and normalize to cell
+    // units. The shader displaces this smooth field with fbm to give a
+    // sub-cell organic shoreline instead of the hex tessellation.
+    let cell_coast_sdf: Vec<f32> = {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+
+        let n = n_cells as usize;
+        let is_ocean: Vec<bool> = (0..n_cells)
+            .map(|fid| model.fields[fid as usize].elevation < 0.0)
+            .collect();
+
+        // Dijkstra: a cell is a source (dist 0) if any neighbour sits on the
+        // opposite side of sea level. Edge weight = Cartesian centroid
+        // distance. f32 ordered via to_bits (valid: all weights are
+        // non-negative finite, so the bit pattern orders numerically).
+        let mut dist = vec![f32::INFINITY; n];
+        let mut heap: BinaryHeap<Reverse<(u32, u32)>> = BinaryHeap::new();
+        for fid in 0..n_cells {
+            let i = fid as usize;
+            let is_source = model
+                .grid
+                .neighbours(fid)
+                .iter()
+                .any(|&nb| is_ocean[nb as usize] != is_ocean[i]);
+            if is_source {
+                dist[i] = 0.0;
+                heap.push(Reverse((0.0_f32.to_bits(), fid)));
+            }
+        }
+        while let Some(Reverse((d_bits, fid))) = heap.pop() {
+            let i = fid as usize;
+            let d = f32::from_bits(d_bits);
+            if d > dist[i] {
+                continue; // stale heap entry
+            }
+            let p = model.grid.position(fid);
+            for &nb in model.grid.neighbours(fid) {
+                let j = nb as usize;
+                let w = p.distance(model.grid.position(nb));
+                let nd = d + w;
+                if nd < dist[j] {
+                    dist[j] = nd;
+                    heap.push(Reverse((nd.to_bits(), nb)));
+                }
+            }
+        }
+
+        // Sign it: ocean negative, land positive. (Isolated all-one-side
+        // models leave dist = INFINITY; guard to keep values finite.)
+        let mut sdf: Vec<f32> = (0..n)
+            .map(|i| {
+                let d = if dist[i].is_finite() { dist[i] } else { 0.0 };
+                if is_ocean[i] { -d } else { d }
+            })
+            .collect();
+
+        // Smooth the zero-crossing — 4 Laplacian passes, mirroring the
+        // slope-relaxation block above.
+        for _ in 0..4 {
+            let prev = sdf.clone();
+            for fid in 0..n_cells {
+                let nbs = model.grid.neighbours(fid);
+                if nbs.is_empty() {
+                    continue;
+                }
+                let mut acc = 0.0_f32;
+                for &nb in nbs {
+                    acc += prev[nb as usize];
+                }
+                let mean = acc / nbs.len() as f32;
+                sdf[fid as usize] = 0.5 * prev[fid as usize] + 0.5 * mean;
+            }
+        }
+
+        // Normalize to cell units: divide by the average per-cell mean
+        // neighbour spacing so ~1.0 ≈ one cell.
+        let mut spacing_acc = 0.0_f64;
+        let mut spacing_n = 0u64;
+        for fid in 0..n_cells {
+            let p = model.grid.position(fid);
+            let nbs = model.grid.neighbours(fid);
+            if nbs.is_empty() {
+                continue;
+            }
+            let mut acc = 0.0_f32;
+            for &nb in nbs {
+                acc += p.distance(model.grid.position(nb));
+            }
+            spacing_acc += (acc / nbs.len() as f32) as f64;
+            spacing_n += 1;
+        }
+        let cell_spacing = if spacing_n > 0 {
+            (spacing_acc / spacing_n as f64) as f32
+        } else {
+            1.0
+        };
+        let inv = if cell_spacing > 0.0 { 1.0 / cell_spacing } else { 1.0 };
+        for v in sdf.iter_mut() {
+            *v *= inv;
+        }
+        sdf
+    };
+
     let cf = crate::climate::compute_climate(
         model,
         model.master_seed,
@@ -382,6 +494,7 @@ pub fn snapshot_model(
         cell_biome2: cf.biome2,
         cell_biome_blend: cf.biome_blend,
         cell_biome_weights: cf.biome_weights,
+        cell_coast_sdf,
         cell_seed: cf.cell_seed,
         climate_debug,
     }
@@ -426,8 +539,37 @@ mod tests {
         assert_eq!(snap.cell_biome2.len(), n);
         assert_eq!(snap.cell_biome_blend.len(), n);
         assert_eq!(snap.cell_biome_weights.len(), n * 10);
+        assert_eq!(snap.cell_coast_sdf.len() as u32, snap.n_cells);
         assert_eq!(snap.cell_seed.len(), n * 3);
         assert!(snap.cell_biome.iter().all(|&b| (0.0..=9.0).contains(&b)));
+    }
+
+    #[test]
+    fn coast_sdf_signed_and_finite() {
+        let snap = bake_demo();
+        let n = snap.n_cells as usize;
+        assert_eq!(snap.cell_coast_sdf.len(), n);
+        assert!(
+            snap.cell_coast_sdf.iter().all(|&v| v.is_finite()),
+            "coast SDF must be finite everywhere"
+        );
+        // The demo model seeds continental blobs (land) AND oceanic fill
+        // (elevation -0.3), so a real coastline exists: expect both a
+        // negative (ocean) and a positive (land) signed value. If the demo
+        // were ever all-ocean, fall back to "all finite & all <= 0".
+        let has_neg = snap.cell_coast_sdf.iter().any(|&v| v < 0.0);
+        let has_pos = snap.cell_coast_sdf.iter().any(|&v| v > 0.0);
+        if has_pos {
+            assert!(
+                has_neg,
+                "land present → ocean must be too (signed coastline)"
+            );
+        } else {
+            assert!(
+                snap.cell_coast_sdf.iter().all(|&v| v <= 0.0),
+                "all-ocean model → every SDF value must be <= 0"
+            );
+        }
     }
 
     #[test]

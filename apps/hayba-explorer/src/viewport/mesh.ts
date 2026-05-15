@@ -184,7 +184,10 @@ export function buildGlobeMesh(
       biomeW1[j + 3] = snap.cell_biome_weights[bw + 7];
       biomeW2[j]     = snap.cell_biome_weights[bw + 8];
       biomeW2[j + 1] = snap.cell_biome_weights[bw + 9];
-      biomeW2[j + 2] = 0;
+      // Spare biome-weight lane (slot 10) reused for the signed coastline
+      // distance field — the shader displaces it with fbm for a sub-cell
+      // organic shoreline. Slot 11 (.w) stays unused.
+      biomeW2[j + 2] = snap.cell_coast_sdf[i];
       biomeW2[j + 3] = 0;
     }
     for (const a of ["aPack0", "aPack1", "aPack2", "aPack3", "aPack4", "aPack5", "aSeed", "aBiomeW0", "aBiomeW1", "aBiomeW2"]) {
