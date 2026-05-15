@@ -36,30 +36,24 @@ export function buildGlobeMesh(
   geom.setIndex(new THREE.BufferAttribute(triangles, 1));
   geom.computeBoundingSphere();
 
-  const attrNames = [
-    "elevation", "slope", "plateId", "continental", "isBoundary",
-    "collisionKind", "subductionProgress", "orogenicUplift",
-    "volcanicIntensity", "morAgeSteps", "crustAge",
-  ] as const;
-
-  const attrs: Record<string, Float32Array> = {};
-  for (const name of attrNames) {
-    const buf = new Float32Array(n);
-    attrs[name] = buf;
-    geom.setAttribute(name, new THREE.BufferAttribute(buf, 1));
-  }
-
-  // WebGL caps vertex attributes at 16. The 9 climate fields are PACKED
-  // into 3 vec4 attributes (3 slots, not 9) to stay under the limit:
-  //   aClim0 = (biome, temperature, precip, insolation)
-  //   aClim1 = (baseTemp, distToOcean, currentDt, orographic)
-  //   aClim2 = (continentalDry, _, _, _)
-  const clim0 = new Float32Array(n * 4);
-  const clim1 = new Float32Array(n * 4);
-  const clim2 = new Float32Array(n * 4);
-  geom.setAttribute("aClim0", new THREE.BufferAttribute(clim0, 4));
-  geom.setAttribute("aClim1", new THREE.BufferAttribute(clim1, 4));
-  geom.setAttribute("aClim2", new THREE.BufferAttribute(clim2, 4));
+  // WebGL caps vertex attributes at MAX_VERTEX_ATTRIBS (16) and Three.js
+  // ShaderMaterial auto-injects position/normal/uv builtins. ALL 20
+  // per-cell scalars are PACKED into 5 vec4 attributes (5 slots):
+  //   aPack0 = (elevation, slope, plateId, continental)
+  //   aPack1 = (isBoundary, collisionKind, subductionProgress, orogenicUplift)
+  //   aPack2 = (volcanicIntensity, morAgeSteps, crustAge, biome)
+  //   aPack3 = (temperature, precip, insolation, baseTemp)
+  //   aPack4 = (distToOcean, currentDt, orographic, continentalDry)
+  const pack0 = new Float32Array(n * 4);
+  const pack1 = new Float32Array(n * 4);
+  const pack2 = new Float32Array(n * 4);
+  const pack3 = new Float32Array(n * 4);
+  const pack4 = new Float32Array(n * 4);
+  geom.setAttribute("aPack0", new THREE.BufferAttribute(pack0, 4));
+  geom.setAttribute("aPack1", new THREE.BufferAttribute(pack1, 4));
+  geom.setAttribute("aPack2", new THREE.BufferAttribute(pack2, 4));
+  geom.setAttribute("aPack3", new THREE.BufferAttribute(pack3, 4));
+  geom.setAttribute("aPack4", new THREE.BufferAttribute(pack4, 4));
 
   // Default to a temperate/humid SatMap if available, otherwise the first
   // SatMap discovered in the library. App.tsx calls setSatMap() immediately
@@ -113,41 +107,34 @@ export function buildGlobeMesh(
       console.warn("[mesh] snapshot n_cells changed — rebuild required");
       return;
     }
-    attrs.elevation.set(snap.cell_elevation);
-    attrs.slope.set(snap.cell_slope);
-    // plateId can be -1 for unassigned; clamp to 0 for the shader's fwidth() pass
-    for (let i = 0; i < n; i++) {
-      attrs.plateId[i] = Math.max(snap.cell_plate_ids[i], 0);
-    }
-    attrs.continental.set(snap.cell_continental);
-    attrs.isBoundary.set(snap.cell_is_boundary);
-    attrs.collisionKind.set(snap.cell_collision_kind);
-    attrs.subductionProgress.set(snap.cell_subduction_progress);
-    attrs.orogenicUplift.set(snap.cell_orogenic_uplift);
-    attrs.volcanicIntensity.set(snap.cell_volcanic_intensity);
-    attrs.morAgeSteps.set(snap.cell_mor_age_steps);
-    attrs.crustAge.set(snap.cell_age_ma);
     const cd = snap.climate_debug;
     const has = cd.insolation.length === n;
-    const bm = snap.cell_biome, tp = snap.cell_temperature, pr = snap.cell_precip;
     for (let i = 0; i < n; i++) {
       const j = i * 4;
-      clim0[j]     = bm[i];
-      clim0[j + 1] = tp[i];
-      clim0[j + 2] = pr[i];
-      clim0[j + 3] = has ? cd.insolation[i]   : 0;
-      clim1[j]     = has ? cd.base_temp[i]     : 0;
-      clim1[j + 1] = has ? cd.dist_to_ocean[i] : 0;
-      clim1[j + 2] = has ? cd.current_dt[i]    : 0;
-      clim1[j + 3] = has ? cd.orographic[i]    : 0;
-      clim2[j]     = has ? cd.continental_dry[i] : 0;
+      pack0[j]     = snap.cell_elevation[i];
+      pack0[j + 1] = snap.cell_slope[i];
+      pack0[j + 2] = Math.max(snap.cell_plate_ids[i], 0); // -1 → 0 for fwidth() pass
+      pack0[j + 3] = snap.cell_continental[i];
+      pack1[j]     = snap.cell_is_boundary[i];
+      pack1[j + 1] = snap.cell_collision_kind[i];
+      pack1[j + 2] = snap.cell_subduction_progress[i];
+      pack1[j + 3] = snap.cell_orogenic_uplift[i];
+      pack2[j]     = snap.cell_volcanic_intensity[i];
+      pack2[j + 1] = snap.cell_mor_age_steps[i];
+      pack2[j + 2] = snap.cell_age_ma[i];
+      pack2[j + 3] = snap.cell_biome[i];
+      pack3[j]     = snap.cell_temperature[i];
+      pack3[j + 1] = snap.cell_precip[i];
+      pack3[j + 2] = has ? cd.insolation[i] : 0;
+      pack3[j + 3] = has ? cd.base_temp[i]  : 0;
+      pack4[j]     = has ? cd.dist_to_ocean[i]   : 0;
+      pack4[j + 1] = has ? cd.current_dt[i]      : 0;
+      pack4[j + 2] = has ? cd.orographic[i]      : 0;
+      pack4[j + 3] = has ? cd.continental_dry[i] : 0;
     }
-    for (const name of attrNames) {
-      (geom.getAttribute(name) as THREE.BufferAttribute).needsUpdate = true;
+    for (const a of ["aPack0", "aPack1", "aPack2", "aPack3", "aPack4"]) {
+      (geom.getAttribute(a) as THREE.BufferAttribute).needsUpdate = true;
     }
-    (geom.getAttribute("aClim0") as THREE.BufferAttribute).needsUpdate = true;
-    (geom.getAttribute("aClim1") as THREE.BufferAttribute).needsUpdate = true;
-    (geom.getAttribute("aClim2") as THREE.BufferAttribute).needsUpdate = true;
   };
   updateFromSnapshot(initialSnap);
 

@@ -1,22 +1,18 @@
 export const VERTEX_SHADER = /* glsl */ `
-  attribute float elevation;
-  attribute float slope;
-  attribute float plateId;
-  attribute float continental;
-  attribute float isBoundary;
-  attribute float collisionKind;
-  attribute float subductionProgress;
-  attribute float orogenicUplift;
-  attribute float volcanicIntensity;
-  attribute float morAgeSteps;
-  attribute float crustAge;
-  // 9 climate fields PACKED into 3 vec4 (WebGL caps attributes at 16):
-  //   aClim0 = (biome, temperature, precip, insolation)
-  //   aClim1 = (baseTemp, distToOcean, currentDt, orographic)
-  //   aClim2 = (continentalDry, _, _, _)
-  attribute vec4 aClim0;
-  attribute vec4 aClim1;
-  attribute vec4 aClim2;
+  // ALL 20 per-cell scalars PACKED into 5 vec4 attributes. Three.js
+  // ShaderMaterial auto-injects position/normal/uv builtins, so 20 raw
+  // float attributes overflowed MAX_VERTEX_ATTRIBS (16). 5 vec4 + ~3
+  // builtins ≈ 8 slots — well under the cap.
+  //   aPack0 = (elevation, slope, plateId, continental)
+  //   aPack1 = (isBoundary, collisionKind, subductionProgress, orogenicUplift)
+  //   aPack2 = (volcanicIntensity, morAgeSteps, crustAge, biome)
+  //   aPack3 = (temperature, precip, insolation, baseTemp)
+  //   aPack4 = (distToOcean, currentDt, orographic, continentalDry)
+  attribute vec4 aPack0;
+  attribute vec4 aPack1;
+  attribute vec4 aPack2;
+  attribute vec4 aPack3;
+  attribute vec4 aPack4;
 
   uniform float uExaggeration;
 
@@ -57,30 +53,30 @@ export const VERTEX_SHADER = /* glsl */ `
     // don't read as straight hex tile edges.
     float n_coast  = vhash(position * 38.0) - 0.5;
     float n_micro  = vhash(position * 90.0) - 0.5;
-    float hJitter  = elevation + n_coast * 0.18 + n_micro * 0.06;
+    float hJitter  = aPack0.x + n_coast * 0.18 + n_micro * 0.06;
     float h = max(hJitter, 0.0);
     vec3  displaced = position * (1.0 + h * 0.02 * uExaggeration);
 
-    vElevation = elevation;
-    vSlope = slope;
-    vPlateId = plateId;
-    vContinental = continental;
-    vIsBoundary = isBoundary;
-    vCollisionKind = collisionKind;
-    vSubductionProgress = subductionProgress;
-    vOrogenicUplift = orogenicUplift;
-    vVolcanicIntensity = volcanicIntensity;
-    vMorAgeSteps = morAgeSteps;
-    vCrustAge = crustAge;
-    vBiome = aClim0.x;
-    vTemperature = aClim0.y;
-    vPrecip = aClim0.z;
-    vInsolation = aClim0.w;
-    vBaseTemp = aClim1.x;
-    vDistToOcean = aClim1.y;
-    vCurrentDt = aClim1.z;
-    vOrographic = aClim1.w;
-    vContinentalDry = aClim2.x;
+    vElevation = aPack0.x;
+    vSlope = aPack0.y;
+    vPlateId = aPack0.z;
+    vContinental = aPack0.w;
+    vIsBoundary = aPack1.x;
+    vCollisionKind = aPack1.y;
+    vSubductionProgress = aPack1.z;
+    vOrogenicUplift = aPack1.w;
+    vVolcanicIntensity = aPack2.x;
+    vMorAgeSteps = aPack2.y;
+    vCrustAge = aPack2.z;
+    vBiome = aPack2.w;
+    vTemperature = aPack3.x;
+    vPrecip = aPack3.y;
+    vInsolation = aPack3.z;
+    vBaseTemp = aPack3.w;
+    vDistToOcean = aPack4.x;
+    vCurrentDt = aPack4.y;
+    vOrographic = aPack4.z;
+    vContinentalDry = aPack4.w;
     vWorldNormal = normalize(position);
     vWorldPos    = displaced;
 
