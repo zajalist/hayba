@@ -474,9 +474,13 @@ export const FRAGMENT_SHADER = /* glsl */ `
       // Polar sea ice: very cold ocean freezes over (Arctic / Southern
       // Ocean). Bypasses precip — same deep-cold cap as the land poles, so
       // the (ocean) north pole reads as a white ice cap, not open water.
-      float seaIce = 1.0 - smoothstep(-9.0, -3.0, coldC);
+      // Warmer + TIGHT window so polar sea ice meets the land ice with no
+      // dark ocean moat between, and the edge is crisp (ragged coldC gives
+      // the organic shape) — not a wide cloudy fade. Then saturate.
+      float seaIce = 1.0 - smoothstep(-4.0, -1.0, coldC);
+      seaIce = smoothstep(0.25, 0.60, seaIce);
       water = mix(water,
-                  vec3(0.80, 0.84, 0.89) * (0.92 + 0.12 * fbm(vSeed * 26.0)),
+                  vec3(0.93, 0.95, 0.96) * (0.94 + 0.07 * fbm(vSeed * 26.0)),
                   seaIce);
 
       albedo = mix(albedo, water, oceanMask);
@@ -495,7 +499,10 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // BYPASSES precip & slope — polar regions are precip-deserts yet fully
     // ice-covered (Antarctica/Greenland). The marginal/alpine term keeps
     // the slope+precip nuance only where it isn't deep-freeze.
-    float polarCap   = 1.0 - smoothstep(-9.0, -3.0, coldC);
+    // Same warmer+tight+saturated curve as the sea ice so the land cap and
+    // the polar sea ice are CONTINUOUS (no dark ocean moat) with a crisp
+    // organic edge instead of a wide cloudy fade.
+    float polarCap   = smoothstep(0.25, 0.60, 1.0 - smoothstep(-4.0, -1.0, coldC));
     float marginal   = snowAccum * slopeKeep * precipKeep;
     float snowCover  = max(polarCap, marginal) * land;
     // In the cold region, whatever snow does NOT cover is exposed ALPINE
@@ -505,13 +512,13 @@ export const FRAGMENT_SHADER = /* glsl */ `
     albedo = mix(albedo, rock, rockExpose * 0.92);
     // Cool off-white snow (NOT vec3(1) — clips in the no-tonemap linear
     // pipeline). Faint cell-stable shade so the cap body isn't flat.
-    float iceShade = 0.86 + 0.12 * fbm(vSeed * 30.0);
-    vec3  iceColor = vec3(0.86, 0.89, 0.92) * iceShade;
-    // Sky-light shadow tint: the dark side is lit only by blue atmospheric
-    // scatter — subtly tint the snow there (subtle, only where NdotL < 0).
+    // Bright near-white ice (user wants white, not grey). Faint shade only.
+    float iceShade = 0.92 + 0.06 * fbm(vSeed * 30.0);
+    vec3  iceColor = vec3(0.95, 0.96, 0.97) * iceShade;
+    // Night-side cool tint kept WEAK & desaturated so ice stays white.
     float ndlS = dot(normalize(vWorldNormal), normalize(uSunDir));
-    iceColor = mix(iceColor, vec3(0.50, 0.58, 0.78) * iceShade,
-                   smoothstep(0.10, -0.30, ndlS) * 0.45);
+    iceColor = mix(iceColor, vec3(0.78, 0.83, 0.92) * iceShade,
+                   smoothstep(0.10, -0.30, ndlS) * 0.14);
     albedo = mix(albedo, iceColor, snowCover);
 
     // ── Pink seam highlight (unassigned boundaries) ──────────────────────
