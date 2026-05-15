@@ -7,6 +7,8 @@ export interface GlobeMeshHandle {
   object: THREE.Mesh;
   updateFromSnapshot(snap: PlanetSnapshot): void;
   setSatMap(name: SatMapName): void;
+  /** Reassign the SatMap for one biome slot (0..9). */
+  setBiomeSatMap(biomeIndex: number, name: SatMapName): void;
   setExaggeration(x: number): void;
   setShowPlateOutlines(v: boolean): void;
   setShowBoundaryGlow(v: boolean): void;
@@ -137,6 +139,10 @@ export function buildGlobeMesh(
     object: mesh,
     updateFromSnapshot,
     setSatMap: (name) => { mat.uniforms.uSatMap.value = loadSatMap(name); },
+    setBiomeSatMap: (biomeIndex, name) => {
+      const key = "uBiome" + biomeIndex;
+      if (mat.uniforms[key]) mat.uniforms[key].value = loadSatMap(name);
+    },
     setExaggeration: (x) => { mat.uniforms.uExaggeration.value = x; },
     setShowPlateOutlines: (v) => { mat.uniforms.uShowPlateOutlines.value = v ? 1.0 : 0.0; },
     setShowBoundaryGlow:  (v) => { mat.uniforms.uShowBoundaryGlow.value  = v ? 1.0 : 0.0; },
