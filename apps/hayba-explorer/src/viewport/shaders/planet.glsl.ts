@@ -262,11 +262,27 @@ export const FRAGMENT_SHADER = /* glsl */ `
                     + (fbmCoarse - 0.5) * 0.55
                     + (fbmFine   - 0.5) * 0.15;
 
-    // ── Colour = f(biome, organic noise) ONLY (spec core invariant) ─────
+    // ── Colour = f(biome region, STOCHASTIC scatter) ────────────────────
+    // A 1-D ramp sampled by ANY smooth coordinate forms colour contours.
+    // Fix: a low-freq MACRO band picks only the *region* of the palette
+    // (climate + gentle elevation), then a high-frequency per-fragment
+    // hash SCATTER makes neighbouring pixels land on DIFFERENT but
+    // plausible rows → a noisy, intermixed, contour-free pattern (how
+    // real macro-scale satellite terrain actually reads).
     vec3 cwarp = vec3(fbm(vWorldNormal*2.0+5.2), fbm(vWorldNormal*2.0+19.7),
                       fbm(vWorldNormal*2.0+37.1));
-    float organic = fbm(vWorldNormal * 5.0 + cwarp * 1.6) * 0.6
-                  + fbm(vWorldNormal * 13.0)              * 0.4;
+    // Macro region: low-frequency only (never swept smoothly across the
+    // whole ramp). Gentle within-biome elevation trend (flaw A3): valleys
+    // sit lower in the palette, uplands higher.
+    float elevTerm = clamp(max(vElevation, 0.0) * 1.4, 0.0, 1.0);
+    float macro    = fbm(vWorldNormal * 3.0 + cwarp * 1.2);
+    float band     = clamp(0.42 * macro + 0.34 * elevTerm
+                         + 0.24 * clamp(vPrecip, 0.0, 1.0), 0.06, 0.94);
+    // Stochastic scatter: per-fragment-decorrelated hash + fine FBM, with
+    // amplitude ≈ the plausible-neighbour palette width. This is what
+    // destroys the contour banding ("not the same pixel over and over").
+    float scatter  = (hash3(vWorldNormal * 850.0) - 0.5) * 0.30
+                   + (fbm(vWorldNormal * 220.0) - 0.5) * 0.16;
     float warpT = vTemperature + (fbm(vWorldNormal*7.0) - 0.5) * 4.0;
     float warpP = clamp(vPrecip  + (fbm(vWorldNormal*7.0+13.0) - 0.5) * 0.18, 0.0, 1.0);
 
@@ -284,8 +300,9 @@ export const FRAGMENT_SHADER = /* glsl */ `
     float wSav  = hotw * smoothstep(0.16,0.24,warpP) * (1.0 - smoothstep(0.55,0.65,warpP));
     float wDes  = hotw * (1.0 - smoothstep(0.16,0.24,warpP));
 
-    float hIce  = 0.30 + organic * 0.12;
-    float hLand = clamp(organic, 0.04, 0.96);
+    float hLand = clamp(band + scatter, 0.02, 0.98);
+    // Ice: tight bright band, still scattered so it isn't a flat sheet.
+    float hIce  = clamp(0.34 + scatter * 0.5, 0.02, 0.98);
 
     vec3 base =
         sampleGradient(uBiome0, remapH(hLand, uBiomeRemap[0])) * wRf
@@ -301,7 +318,7 @@ export const FRAGMENT_SHADER = /* glsl */ `
     float wSum = wRf+wSav+wDes+wTRf+wTF+wWS+wGr+wBor+wTun+wIce + 1e-4;
     base /= wSum;
 
-    vec3 rock = sampleGradient(uSatMapRock, clamp(organic * 1.1, 0.04, 0.96));
+    vec3 rock = sampleGradient(uSatMapRock, clamp(band * 1.1 + scatter, 0.04, 0.96));
 
     // Slope rock mask — smoothstep + fwidth anti-aliasing per Gemini.
     // Threshold around ~0.55 (≈ 33° incline); biome-dependent in a future v3.
