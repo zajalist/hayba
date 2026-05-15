@@ -131,6 +131,12 @@ fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
+/// Single-argument smoothstep on a value already in roughly [0,1].
+fn smoothstep01(x: f32) -> f32 {
+    let t = x.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 /// Latitudinal precipitation base (worldbuildingpasta cells): wet ITCZ
 /// (~0°), dry subtropics (~30°), wet mid-lats (~55–60°), dry poles.
 /// Returns ~[0,1].
@@ -202,7 +208,9 @@ pub fn classify_biome(temp_c: f32, precip: f32) -> u8 {
 pub struct ClimateFields {
     pub temperature: Vec<f32>, // °C
     pub precip: Vec<f32>,      // 0..1
-    pub biome: Vec<f32>,       // biome id 0..9 as f32
+    pub biome: Vec<f32>,       // primary biome id 0..9 as f32
+    pub biome2: Vec<f32>,      // secondary (perturbed) biome id 0..9 as f32
+    pub biome_blend: Vec<f32>, // primary→secondary blend weight, 0..0.5
     pub debug: Option<ClimateDebug>,
 }
 
@@ -245,6 +253,8 @@ pub fn compute_climate(model: &Model, seed: u64, want_debug: bool) -> ClimateFie
     let mut temperature = vec![0.0f32; n];
     let mut precip = vec![0.0f32; n];
     let mut biome = vec![0.0f32; n];
+    let mut biome2 = vec![0.0f32; n];
+    let mut biome_blend = vec![0.0f32; n];
 
     let mut dbg = if want_debug {
         Some(ClimateDebug {
@@ -290,7 +300,18 @@ pub fn compute_climate(model: &Model, seed: u64, want_debug: bool) -> ClimateFie
         let pr = (zonal * cont + orographic * 0.5 + pn * 0.25).clamp(0.0, 1.0);
         precip[i] = pr;
 
-        biome[i] = classify_biome(t, pr) as f32;
+        let primary = classify_biome(t, pr);
+        let nt = (value_noise(p * 9.0, seed ^ 0x9E37) - 0.5) * 6.0;
+        let np = (value_noise(p * 9.0, seed ^ 0x1234) - 0.5) * 0.20;
+        let secondary = classify_biome(t + nt, (pr + np).clamp(0.0, 1.0));
+        let blend = if secondary == primary {
+            0.0
+        } else {
+            0.5 * smoothstep01((nt.abs() / 3.0 + np.abs() / 0.10) * 0.5)
+        };
+        biome[i] = primary as f32;
+        biome2[i] = secondary as f32;
+        biome_blend[i] = blend;
 
         if let Some(d) = dbg.as_mut() {
             d.insolation[i] = (1.0 - (p.y * p.y)).clamp(0.0, 1.0);
@@ -309,7 +330,7 @@ pub fn compute_climate(model: &Model, seed: u64, want_debug: bool) -> ClimateFie
         }
     }
 
-    ClimateFields { temperature, precip, biome, debug: dbg }
+    ClimateFields { temperature, precip, biome, biome2, biome_blend, debug: dbg }
 }
 
 #[cfg(test)]
@@ -438,5 +459,23 @@ mod tests {
         assert!(cf.biome.iter().all(|&b| b <= 9.0));
         let cf2 = compute_climate(&model, 7, false);
         assert!(cf2.debug.is_none());
+    }
+
+    #[test]
+    fn compute_climate_secondary_biome_and_blend() {
+        use hayba_tectonics_v2::model::Model;
+        let model = Model::new(16, 7);
+        let n = model.grid.n_fields() as usize;
+        let cf = compute_climate(&model, 7, false);
+        assert_eq!(cf.biome2.len(), n);
+        assert_eq!(cf.biome_blend.len(), n);
+        assert!(
+            cf.biome_blend.iter().all(|&b| (0.0..=0.5).contains(&b)),
+            "blend must stay in 0..=0.5"
+        );
+        // A whole planet always has biome boundaries somewhere.
+        let has_boundary = (0..n)
+            .any(|i| cf.biome2[i] != cf.biome[i] && cf.biome_blend[i] > 0.0);
+        assert!(has_boundary, "expected at least one mixed cell");
     }
 }

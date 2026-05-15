@@ -39,23 +39,26 @@ export function buildGlobeMesh(
   geom.computeBoundingSphere();
 
   // WebGL caps vertex attributes at MAX_VERTEX_ATTRIBS (16) and Three.js
-  // ShaderMaterial auto-injects position/normal/uv builtins. ALL 20
-  // per-cell scalars are PACKED into 5 vec4 attributes (5 slots):
+  // ShaderMaterial auto-injects position/normal/uv builtins. Per-cell
+  // scalars are PACKED into 6 vec4 attributes (6 slots):
   //   aPack0 = (elevation, slope, plateId, continental)
   //   aPack1 = (isBoundary, collisionKind, subductionProgress, orogenicUplift)
   //   aPack2 = (volcanicIntensity, morAgeSteps, crustAge, biome)
   //   aPack3 = (temperature, precip, insolation, baseTemp)
   //   aPack4 = (distToOcean, currentDt, orographic, continentalDry)
+  //   aPack5 = (biome, biome2, biomeBlend, _)
   const pack0 = new Float32Array(n * 4);
   const pack1 = new Float32Array(n * 4);
   const pack2 = new Float32Array(n * 4);
   const pack3 = new Float32Array(n * 4);
   const pack4 = new Float32Array(n * 4);
+  const pack5 = new Float32Array(n * 4);
   geom.setAttribute("aPack0", new THREE.BufferAttribute(pack0, 4));
   geom.setAttribute("aPack1", new THREE.BufferAttribute(pack1, 4));
   geom.setAttribute("aPack2", new THREE.BufferAttribute(pack2, 4));
   geom.setAttribute("aPack3", new THREE.BufferAttribute(pack3, 4));
   geom.setAttribute("aPack4", new THREE.BufferAttribute(pack4, 4));
+  geom.setAttribute("aPack5", new THREE.BufferAttribute(pack5, 4));
 
   // Default to a temperate/humid SatMap if available, otherwise the first
   // SatMap discovered in the library. App.tsx calls setSatMap() immediately
@@ -135,8 +138,12 @@ export function buildGlobeMesh(
       pack4[j + 1] = has ? cd.current_dt[i]      : 0;
       pack4[j + 2] = has ? cd.orographic[i]      : 0;
       pack4[j + 3] = has ? cd.continental_dry[i] : 0;
+      pack5[j]     = snap.cell_biome[i];
+      pack5[j + 1] = snap.cell_biome2[i];
+      pack5[j + 2] = snap.cell_biome_blend[i];
+      pack5[j + 3] = 0;
     }
-    for (const a of ["aPack0", "aPack1", "aPack2", "aPack3", "aPack4"]) {
+    for (const a of ["aPack0", "aPack1", "aPack2", "aPack3", "aPack4", "aPack5"]) {
       (geom.getAttribute(a) as THREE.BufferAttribute).needsUpdate = true;
     }
   };

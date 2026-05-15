@@ -13,6 +13,7 @@ export const VERTEX_SHADER = /* glsl */ `
   attribute vec4 aPack2;
   attribute vec4 aPack3;
   attribute vec4 aPack4;
+  attribute vec4 aPack5;
 
   uniform float uExaggeration;
 
@@ -28,6 +29,8 @@ export const VERTEX_SHADER = /* glsl */ `
   varying float vMorAgeSteps;
   varying float vCrustAge;
   varying float vBiome;
+  varying float vBiome2;
+  varying float vBiomeBlend;
   varying float vTemperature;
   varying float vPrecip;
   varying float vInsolation;
@@ -68,7 +71,9 @@ export const VERTEX_SHADER = /* glsl */ `
     vVolcanicIntensity = aPack2.x;
     vMorAgeSteps = aPack2.y;
     vCrustAge = aPack2.z;
-    vBiome = aPack2.w;
+    vBiome = aPack5.x;
+    vBiome2 = aPack5.y;
+    vBiomeBlend = aPack5.z;
     vTemperature = aPack3.x;
     vPrecip = aPack3.y;
     vInsolation = aPack3.z;
@@ -118,6 +123,8 @@ export const FRAGMENT_SHADER = /* glsl */ `
   varying float vMorAgeSteps;
   varying float vCrustAge;
   varying float vBiome;
+  varying float vBiome2;
+  varying float vBiomeBlend;
   varying float vTemperature;
   varying float vPrecip;
   varying float vInsolation;
@@ -205,6 +212,13 @@ export const FRAGMENT_SHADER = /* glsl */ `
     return t / ((1.0 / b - 2.0) * (1.0 - t) + 1.0);
   }
 
+  // Pick the right height ramp for a biome id (ice uses the ice height
+  // field) and apply that biome's Schlick remap.
+  float remapBiomeH(float id, float hl, float hi) {
+    float h = (id > 8.5) ? hi : hl;
+    return remapH(h, uBiomeRemap[int(id + 0.5)]);
+  }
+
   vec3 sampleBiome(float id, float h) {
     int b = int(id + 0.5);
     if (b == 0) return sampleGradient(uBiome0, h);
@@ -283,40 +297,16 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // destroys the contour banding ("not the same pixel over and over").
     float scatter  = (hash3(vWorldNormal * 850.0) - 0.5) * 0.30
                    + (fbm(vWorldNormal * 220.0) - 0.5) * 0.16;
-    float warpT = vTemperature + (fbm(vWorldNormal*7.0) - 0.5) * 4.0;
-    float warpP = clamp(vPrecip  + (fbm(vWorldNormal*7.0+13.0) - 0.5) * 0.18, 0.0, 1.0);
-
-    float wIce  = 1.0 - smoothstep(-15.0, -13.0, warpT);
-    float wTun  = smoothstep(-15.0,-13.0,warpT) * (1.0 - smoothstep(-2.0,0.0,warpT));
-    float wBor  = smoothstep(-2.0,0.0,warpT)    * (1.0 - smoothstep(6.0,8.0,warpT));
-    float warm  = smoothstep(6.0,8.0,warpT);
-    float hotw  = smoothstep(16.0,18.0,warpT);
-    float temperateW = warm * (1.0 - hotw);
-    float wTRf  = temperateW * smoothstep(0.62,0.72,warpP);
-    float wTF   = temperateW * smoothstep(0.36,0.44,warpP) * (1.0 - smoothstep(0.62,0.72,warpP));
-    float wWS   = temperateW * smoothstep(0.16,0.24,warpP) * (1.0 - smoothstep(0.36,0.44,warpP));
-    float wGr   = temperateW * (1.0 - smoothstep(0.16,0.24,warpP));
-    float wRf   = hotw * smoothstep(0.55,0.65,warpP);
-    float wSav  = hotw * smoothstep(0.16,0.24,warpP) * (1.0 - smoothstep(0.55,0.65,warpP));
-    float wDes  = hotw * (1.0 - smoothstep(0.16,0.24,warpP));
-
     float hLand = clamp(band + scatter, 0.02, 0.98);
     // Ice: tight bright band, still scattered so it isn't a flat sheet.
     float hIce  = clamp(0.34 + scatter * 0.5, 0.02, 0.98);
 
-    vec3 base =
-        sampleGradient(uBiome0, remapH(hLand, uBiomeRemap[0])) * wRf
-      + sampleGradient(uBiome1, remapH(hLand, uBiomeRemap[1])) * wSav
-      + sampleGradient(uBiome2, remapH(hLand, uBiomeRemap[2])) * wDes
-      + sampleGradient(uBiome3, remapH(hLand, uBiomeRemap[3])) * wTRf
-      + sampleGradient(uBiome4, remapH(hLand, uBiomeRemap[4])) * wTF
-      + sampleGradient(uBiome5, remapH(hLand, uBiomeRemap[5])) * wWS
-      + sampleGradient(uBiome6, remapH(hLand, uBiomeRemap[6])) * wGr
-      + sampleGradient(uBiome7, remapH(hLand, uBiomeRemap[7])) * wBor
-      + sampleGradient(uBiome8, remapH(hLand, uBiomeRemap[8])) * wTun
-      + sampleGradient(uBiome9, remapH(hIce,  uBiomeRemap[9])) * wIce;
-    float wSum = wRf+wSav+wDes+wTRf+wTF+wWS+wGr+wBor+wTun+wIce + 1e-4;
-    base /= wSum;
+    // Biome is authoritative from Rust (classify_biome): a primary id, an
+    // optional secondary id, and a blend weight. No shader-side thresholds.
+    vec3 base = mix(
+      sampleBiome(vBiome,  remapBiomeH(vBiome,  hLand, hIce)),
+      sampleBiome(vBiome2, remapBiomeH(vBiome2, hLand, hIce)),
+      clamp(vBiomeBlend * 2.0, 0.0, 1.0));
 
     vec3 rock = sampleGradient(uSatMapRock, clamp(band * 1.1 + scatter, 0.04, 0.96));
 
