@@ -116,6 +116,8 @@ export const FRAGMENT_SHADER = /* glsl */ `
   uniform float     uShowPlateOutlines;
   uniform float     uShowBoundaryGlow;
   uniform float     uMapMode;           // 0 final · 1 temp · 2 moist · 3 biome · 4 elev · 5 slope · 6 ice · 7 ocean
+  uniform float     uSurfaceBrightness; // land albedo gain (ocean excluded)
+  uniform float     uTextureSmooth;     // 0 = crisp/dotty .. 1 = feathered
   // cameraPosition is auto-provided by Three.js for ShaderMaterial; we
   // don't redeclare it. It's in world space and updates every frame.
 
@@ -308,8 +310,9 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // that read as standout single-pixel static). Two octaves give larger
     // "pixel" blobs that still break the 1-D ramp into a contour-free
     // intermixed pattern, but at a believable macro feature size.
-    float scatter  = (fbm(vSeed * 45.0)  - 0.5) * 0.26
-                   + (fbm(vSeed * 130.0) - 0.5) * 0.12;
+    float sMul = mix(1.0, 0.45, clamp(uTextureSmooth, 0.0, 1.0));
+    float scatter  = (fbm(vSeed * 45.0)  - 0.5) * 0.26 * mix(1.0, 0.75, uTextureSmooth)
+                   + (fbm(vSeed * 130.0) - 0.5) * 0.12 * sMul;
     float hLand = clamp(band + scatter, 0.02, 0.98);
     // Ice: tight bright band, still scattered so it isn't a flat sheet.
     float hIce  = clamp(0.34 + scatter * 0.5, 0.02, 0.98);
@@ -321,7 +324,7 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // a widened, organic transition band instead of a straight polygon line.
     float bmix   = clamp(vBiomeBlend * 2.0, 0.0, 1.0);
     float bdith  = fbm(vSeed * 16.0) - 0.5;
-    bmix = smoothstep(0.0, 1.0, clamp(bmix + bdith * 0.55, 0.0, 1.0));
+    bmix = smoothstep(0.0, 1.0, clamp(bmix + bdith * mix(0.55, 0.95, uTextureSmooth), 0.0, 1.0));
     vec3 base = mix(
       sampleBiome(vBiome,  remapBiomeH(vBiome,  hLand, hIce)),
       sampleBiome(vBiome2, remapBiomeH(vBiome2, hLand, hIce)),
@@ -350,6 +353,15 @@ export const FRAGMENT_SHADER = /* glsl */ `
     float beach    = clamp(beachH * flatness * aridity * step(0.0, vElevation), 0.0, 1.0);
     albedo = mix(albedo, vec3(0.34, 0.27, 0.16), beach * 0.5);
 
+    // Tibet-style high plateau: tall, non-polar ground reads as bright warm
+    // ochre high-desert rather than dark brown (snow still added later by
+    // the ice override for the genuinely frozen peaks).
+    float tibetH    = smoothstep(0.42, 0.74, vElevation);
+    float nonPolar  = smoothstep(-4.0, 8.0, vTemperature);
+    float tibetMask = tibetH * nonPolar;
+    vec3  tibetCol  = vec3(0.40, 0.33, 0.22) * (0.92 + scatter * 0.5);
+    albedo = mix(albedo, tibetCol, tibetMask * 0.7);
+
     // ── G.7 steps 4+5: Beer-Lambert ocean + fwidth-AA organic coast ──────
     // Coastline: domain-warp the INPUT coordinate (organic fingers), then
     // size the mask transition to fwidth() so it is exactly one-pixel-wide
@@ -362,6 +374,10 @@ export const FRAGMENT_SHADER = /* glsl */ `
     float seaCoord = vElevation + (fbm(coastWarp * 9.0) - 0.5) * 0.03;
     float coastWidth = max(fwidth(seaCoord), 0.0025);
     float oceanMask  = 1.0 - smoothstep(-coastWidth, coastWidth, seaCoord);
+
+    // Lift land albedo (SatMaps read very dark) — ocean excluded so the
+    // dark-navy water (and its no-cyan invariant) is untouched.
+    albedo *= mix(1.0, uSurfaceBrightness, 1.0 - oceanMask);
 
     if (oceanMask > 0.001) {
       // Earth-from-orbit ocean is a DARK, DESATURATED BLUE — never cyan.
