@@ -2,7 +2,7 @@ import React from "react";
 import { colors } from "@hayba/design-tokens";
 import { ICON_URLS } from "./icons";
 
-export type PanelCategory = "compose" | "texturing" | "boundaries" | "densities" | "simulate" | "settings";
+export type PanelCategory = "compose" | "texturing" | "climate" | "boundaries" | "densities" | "simulate" | "settings";
 
 export interface CategoryStripProps {
   active: PanelCategory;
@@ -23,6 +23,7 @@ interface Item {
 const ITEMS: Item[] = [
   { id: "compose",    label: "Compose",    icon: ICON_URLS.categoryCompose },
   { id: "texturing",  label: "Texturing",  icon: ICON_URLS.categoryCompose },
+  { id: "climate",    label: "Climate Lab", icon: ICON_URLS.categoryCompose },
   { id: "boundaries", label: "Boundaries", icon: ICON_URLS.categoryBoundaries },
   { id: "densities",  label: "Densities",  icon: ICON_URLS.categoryDensities },
   { id: "simulate",   label: "Simulate",   icon: ICON_URLS.categorySimulate },

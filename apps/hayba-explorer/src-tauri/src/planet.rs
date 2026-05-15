@@ -11,6 +11,8 @@ use serde::Serialize;
 
 use hayba_tectonics_v2::model::{Model, MAX_PLATE_SPEED};
 
+use crate::climate::ClimateParams;
+
 const DEMO_DIVISIONS: u32 = 64;
 const DEMO_STEPS: u32 = 5;
 const DEMO_DT_MA: f32 = 0.5;
@@ -185,7 +187,7 @@ pub fn bake_demo() -> PlanetSnapshot {
         model.step(DEMO_DT_MA);
     }
 
-    let snap = snapshot_model(&model, DEMO_DIVISIONS, true);
+    let snap = snapshot_model(&model, DEMO_DIVISIONS, true, &ClimateParams::default());
     snap
 }
 
@@ -226,7 +228,12 @@ fn collision_kind(field: &hayba_tectonics_v2::field::Field) -> u8 {
 /// Build a `PlanetSnapshot` from a stepped model. Boundary detection matches
 /// TE: a cell is on the boundary if any of its neighbours belong to a
 /// different plate (see `tectonic-explorer/.../plate.ts` boundary scan).
-pub fn snapshot_model(model: &Model, divisions: u32, want_climate_debug: bool) -> PlanetSnapshot {
+pub fn snapshot_model(
+    model: &Model,
+    divisions: u32,
+    want_climate_debug: bool,
+    climate_params: &ClimateParams,
+) -> PlanetSnapshot {
     let n_cells = model.grid.n_fields();
     let mut cell_positions: Vec<f32> = Vec::with_capacity((n_cells * 3) as usize);
     let mut cell_plate_ids: Vec<i32> = Vec::with_capacity(n_cells as usize);
@@ -308,7 +315,12 @@ pub fn snapshot_model(model: &Model, divisions: u32, want_climate_debug: bool) -
         cell_mor_age_steps.push(f.mor_age_steps);
     }
 
-    let cf = crate::climate::compute_climate(model, model.master_seed, want_climate_debug);
+    let cf = crate::climate::compute_climate(
+        model,
+        model.master_seed,
+        want_climate_debug,
+        climate_params,
+    );
     let climate_debug = match cf.debug {
         Some(d) => ClimateDebugWire {
             insolation: d.insolation, base_temp: d.base_temp,
