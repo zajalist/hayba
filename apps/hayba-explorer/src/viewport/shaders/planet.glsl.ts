@@ -561,9 +561,13 @@ export const FRAGMENT_SHADER = /* glsl */ `
         }
         d /= max(dws, 1e-4);
       }
-      else if (uMapMode < 4.5)  d = vec3(clamp(max(vElevation,0.0),0.0,1.0));
+      else if (uMapMode < 4.5)  d = vElevation < 0.0
+            ? mix(vec3(0.00,0.02,0.10), vec3(0.20,0.55,0.85), clamp(vElevation + 1.0, 0.0, 1.0))
+            : mix(vec3(0.10,0.30,0.10), vec3(1.0),            clamp(vElevation,       0.0, 1.0));
       else if (uMapMode < 5.5)  d = vec3(clamp(vSlope,0.0,1.0));
-      else if (uMapMode < 6.5)  d = vec3(0.0,0.35,0.95) * oceanMask;
+      else if (uMapMode < 6.5)  d = vElevation < 0.0
+            ? mix(vec3(0.02,0.18,0.55), vec3(0.00,0.03,0.14), clamp(-vElevation, 0.0, 1.0))
+            : vec3(0.16,0.34,0.16);
       else if (uMapMode < 7.5)  d = vec3(clamp(vInsolation,0.0,1.0));
       else if (uMapMode < 8.5)  d = vec3(clamp((vBaseTemp + 25.0)/60.0,0.0,1.0));
       else if (uMapMode < 9.5)  d = vec3(clamp(vDistToOcean / 4000.0,0.0,1.0));
