@@ -571,6 +571,39 @@ pub fn compute_climate(
         std::mem::swap(&mut biome_weights, &mut scratch);
     }
 
+    // De-hex: neighbour-relax the per-cell visualization scalars so they
+    // are spatially continuous instead of encoding the hexagonal cell
+    // tessellation (precip / ocean-current ΔT / orographic / etc. all
+    // showed hex facets in their map modes and fed hex into the surface
+    // band). Same Laplacian pattern as the slope + biome-weight passes,
+    // reusing the `neighbours` accessor captured above.
+    let relax = |v: &mut [f32], passes: usize| {
+        let mut tmp = vec![0.0f32; v.len()];
+        for _ in 0..passes {
+            for i in 0..n {
+                let nbs = &neighbours[i];
+                if nbs.is_empty() {
+                    tmp[i] = v[i];
+                    continue;
+                }
+                let mut s = 0.0f32;
+                for &nb in nbs {
+                    s += v[nb as usize];
+                }
+                tmp[i] = 0.5 * v[i] + 0.5 * (s / nbs.len() as f32);
+            }
+            v.copy_from_slice(&tmp);
+        }
+    };
+    relax(&mut temperature, 2);
+    relax(&mut precip, 2);
+    if let Some(d) = dbg.as_mut() {
+        relax(&mut d.base_temp, 2);
+        relax(&mut d.current_dt, 3);
+        relax(&mut d.orographic, 3);
+        relax(&mut d.continental_dry, 2);
+    }
+
     ClimateFields {
         temperature,
         precip,
