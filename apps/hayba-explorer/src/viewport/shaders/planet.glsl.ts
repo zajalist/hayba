@@ -136,28 +136,37 @@ export const FRAGMENT_SHADER = /* glsl */ `
     return v;
   }
 
+  // ── Colour management (G.7 step 1) ───────────────────────────────────────
+  // THREE.ShaderMaterial does NOT auto-convert texture reads or output —
+  // only built-in materials do. So we handle the full linear workflow
+  // ourselves: sRGB-encoded SatMap PNGs are decoded to linear on sample,
+  // all lighting/mixing happens in linear space, and the final composite
+  // is encoded back to sRGB. ACES is deleted (it double-compressed already
+  // display-referred Blue-Marble-derived imagery → the muddiness).
+  vec3 srgbToLinear(vec3 c) {
+    return mix(c / 12.92,
+               pow((c + 0.055) / 1.055, vec3(2.4)),
+               step(0.04045, c));
+  }
+  vec3 linearToSrgb(vec3 c) {
+    c = clamp(c, 0.0, 1.0);
+    return mix(c * 12.92,
+               1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055,
+               step(0.0031308, c));
+  }
+
   // ── Helpers ──────────────────────────────────────────────────────────────
 
   // Sample a SatMap as a pure 1D gradient by normalized elevation h ∈ [0, 1].
-  // uv.x fixed at 0.5 so we hit the centre column every time.
+  // uv.x fixed at 0.5 so we hit the centre column every time. The PNG is
+  // sRGB-encoded; decode to linear here (the single texture chokepoint).
   vec3 sampleGradient(sampler2D tex, float h) {
-    return texture2D(tex, vec2(0.5, 1.0 - clamp(h, 0.02, 0.98))).rgb;
+    return srgbToLinear(texture2D(tex, vec2(0.5, 1.0 - clamp(h, 0.02, 0.98))).rgb);
   }
 
   // Latitude approximation from a unit-sphere normal (Y-up). Returns 0 at
   // equator, ±1 at poles.
   float latitude(vec3 n) { return n.y; }
-
-  // ── ACES filmic tone mapping (Narkowicz 2015 approximation). ────────────
-  // Photographic shoulder — compresses highlights without clipping.
-  vec3 aces(vec3 x) {
-    const float a = 2.51;
-    const float b = 0.03;
-    const float c = 2.43;
-    const float d = 0.59;
-    const float e = 0.14;
-    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
-  }
 
   void main() {
     // ── Per-fragment scalar fields ────────────────────────────────────────
@@ -315,9 +324,9 @@ export const FRAGMENT_SHADER = /* glsl */ `
     float rim = pow(1.0 - viewAngle, 2.0);
     lit += uRimColor * rim * 0.15;
 
-    // ── ACES tone mapping (mandatory per Gemini point 8) ─────────────────
-    vec3 toneMapped = aces(lit * 1.05);
-
-    gl_FragColor = vec4(toneMapped, 1.0);
+    // ── Output: linear → sRGB OETF (G.7 step 1) ──────────────────────────
+    // No tone mapping: the SatMap content is display-referred satellite
+    // imagery, not scene-referred HDR. Just encode linear → sRGB.
+    gl_FragColor = vec4(linearToSrgb(lit), 1.0);
   }
 `;
