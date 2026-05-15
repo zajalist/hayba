@@ -376,7 +376,12 @@ export const FRAGMENT_SHADER = /* glsl */ `
     }
     base /= max(wsum, 1e-4);   // interpolation drifts the sum off 1 — renormalize
 
-    vec3 rock = sampleGradient(uSatMapRock, clamp(band * 1.1 + scatter, 0.04, 0.96));
+    // Rock: DISCRETIZED/pixelized SatMap sample. Posterize the ramp coord
+    // and dither it with the cell-stable seed → discrete LOCALIZED rock
+    // patches, never a smooth GLOBAL colour ramp/wash.
+    float rockH = clamp(band * 1.1 + scatter, 0.04, 0.96);
+    rockH = floor(rockH * 7.0 + (fbm(vSeed * 70.0) - 0.5) * 1.3) / 7.0;
+    vec3 rock = sampleGradient(uSatMapRock, clamp(rockH, 0.04, 0.96));
 
     // Slope rock mask — smoothstep + fwidth anti-aliasing per Gemini.
     // Threshold raised to ~0.60 (≈ 36° incline) so only genuinely steep
@@ -423,8 +428,13 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // turned the coast into a spiky per-cell-random fringe. Sub-cell, gentle.
     float coastDisp = (fbm(vSeed * 2.0) - 0.5) * 0.22
                     + (fbm(vSeed * 4.5) - 0.5) * 0.10;
-    float seaCoord  = vCoastSdf + coastDisp;     // >0 land, <0 ocean (cell units)
-    float oceanMask = 1.0 - smoothstep(-0.45, 0.45, seaCoord);
+    float seaCoord   = vCoastSdf + coastDisp;     // >0 land, <0 ocean (cell units)
+    // Near-binary fwidth-AA edge (~1px at any zoom). The old wide ±0.45-cell
+    // smoothstep lerped land toward dark water across a fat band → the ugly
+    // smooth monocolour grey ring around every coast. Crisp now; the coast
+    // SHAPE is still organic (the SDF is Laplacian-smoothed in Rust).
+    float coastWidth = max(fwidth(seaCoord), 0.012);
+    float oceanMask  = 1.0 - smoothstep(-coastWidth, coastWidth, seaCoord);
 
     // Lift land albedo (SatMaps read very dark) — ocean excluded so the
     // dark-navy water (and its no-cyan invariant) is untouched.
