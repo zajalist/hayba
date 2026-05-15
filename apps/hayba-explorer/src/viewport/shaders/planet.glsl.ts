@@ -131,6 +131,7 @@ export const FRAGMENT_SHADER = /* glsl */ `
   uniform float     uMapMode;           // 0 final · 1 temp · 2 moist · 3 biome · 4 elev · 5 slope · 6 ice · 7 ocean
   uniform float     uSurfaceBrightness; // land albedo gain (ocean excluded)
   uniform float     uTextureSmooth;     // 0 = crisp/dotty .. 1 = feathered
+  uniform float     uSurfaceSaturation; // land chroma (1 = identity), ocean excluded
   // cameraPosition is auto-provided by Three.js for ShaderMaterial; we
   // don't redeclare it. It's in world space and updates every frame.
 
@@ -453,6 +454,9 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // Lift land albedo (SatMaps read very dark) — ocean excluded so the
     // dark-navy water (and its no-cyan invariant) is untouched.
     albedo *= mix(1.0, uSurfaceBrightness, 1.0 - oceanMask);
+    // Land saturation control (ocean excluded, same gate as brightness).
+    float satL = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
+    albedo = mix(albedo, mix(vec3(satL), albedo, uSurfaceSaturation), 1.0 - oceanMask);
 
     if (oceanMask > 0.001) {
       // Earth-from-orbit ocean is a DARK, DESATURATED BLUE — never cyan.
