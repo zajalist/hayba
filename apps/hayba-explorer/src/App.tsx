@@ -59,6 +59,7 @@ export interface PlanetSnapshot {
   cell_biome2: number[];
   cell_biome_blend: number[];
   cell_biome_weights: number[];
+  cell_coast_sdf: number[];
   cell_seed: number[];
   climate_debug: {
     insolation: number[];
