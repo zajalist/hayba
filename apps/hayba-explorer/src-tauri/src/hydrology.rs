@@ -6,6 +6,17 @@ use glam::Vec3;
 
 /// User-tunable erosion constants. Mirrors `climate::ClimateParams`:
 /// `#[serde(default)]` so a missing/partial JSON payload yields defaults.
+///
+/// IMPORTANT — algorithm class: this CARVES an already-final input DEM
+/// (painted, or sampled from real Earth). It is deliberately *not* an
+/// uplift-driven landscape-evolution model: a stream-power law with a
+/// uniform `uplift` term relaxes toward a steady state
+/// `S = (U/K)^(1/n)·A^(-m/n)` that is independent of the initial
+/// elevation — i.e. it ERASES the real heightmap (the
+/// "distance-into-continent" artefact). So there is no uplift here;
+/// instead incision is hard-clamped per step, balanced by hillslope
+/// diffusion, and the final field is blended back toward the original
+/// DEM by `strength` so the macro relief always survives.
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(default)]
 pub struct ErosionParams {
@@ -17,8 +28,17 @@ pub struct ErosionParams {
     pub slope_exp: f32,
     /// Erosion iterations interleaved with the tectonic bake steps.
     pub iterations: u32,
-    /// Per-iteration uplift added to land cells (normalized elev units).
-    pub uplift: f32,
+    /// Max elevation a single incision step may remove (normalized
+    /// units). Caps stream power so erosion can only etch fine detail,
+    /// never bulldoze macro relief.
+    pub max_incision_per_step: f32,
+    /// Hillslope (thermal) diffusion coefficient D for the per-step
+    /// Laplacian smoothing — talus, valley infill, ridge softening.
+    pub hillslope_diffusion: f32,
+    /// Final blend toward the eroded field: `h = lerp(h0, eroded, s)`.
+    /// `0` = original DEM untouched, `1` = full erosion. Guarantees the
+    /// real Earth/painted macro shape is preserved at any K/iterations.
+    pub strength: f32,
     /// Drainage-area fraction (of max) above which a cell is "river".
     pub river_threshold: f32,
 }
@@ -26,11 +46,13 @@ pub struct ErosionParams {
 impl Default for ErosionParams {
     fn default() -> Self {
         Self {
-            erodibility: 0.05,
+            erodibility: 0.04,
             area_exp: 0.5,
             slope_exp: 1.0,
-            iterations: 25,
-            uplift: 0.004,
+            iterations: 15,
+            max_incision_per_step: 0.0015,
+            hillslope_diffusion: 0.08,
+            strength: 0.55,
             river_threshold: 0.015,
         }
     }
@@ -156,8 +178,9 @@ fn stream_power_step(
         if r == i { continue; } // sink: no incision this pass
         let d = pos[i].distance(pos[r]).max(1e-6);
         let s = ((elev[i] - elev[r]) / d).max(0.0);
-        let incision = p.erodibility * area[i].powf(p.area_exp)
-            * s.powf(p.slope_exp) * dt;
+        let incision = (p.erodibility * area[i].powf(p.area_exp)
+            * s.powf(p.slope_exp) * dt)
+            .min(p.max_incision_per_step);
         let next = elev[i] - incision;
         // never erode a land cell below its receiver (no inversions) or
         // below sea level via fluvial alone.
@@ -165,9 +188,44 @@ fn stream_power_step(
     }
 }
 
-/// Full erosion driver: `iterations` of (uplift land → Priority-Flood →
-/// receivers → drainage area → stream-power incision). Mutates `elev`
-/// in place. `cell_area` is the mean cell area (km²) from the grid.
+/// One explicit hillslope-diffusion (thermal creep) pass:
+/// `dh = D * Σ_j (h_j - h_i)/d_ij²` averaged over neighbours, ocean
+/// fixed. Smooths ridges, fills valley floors / talus, and balances
+/// fluvial incision so the result is not pure cut-to-flat. The
+/// per-cell weight is normalized by neighbour count and `D` is
+/// clamped <0.5 so the explicit step is unconditionally stable.
+fn hillslope_diffuse(
+    neighbours: &[Vec<u32>],
+    pos: &[Vec3],
+    elev: &mut [f32],
+    is_ocean: &[bool],
+    d: f32,
+) {
+    if d <= 0.0 { return; }
+    let k = d.min(0.45);
+    let prev: Vec<f32> = elev.to_vec();
+    for i in 0..elev.len() {
+        if is_ocean[i] { continue; }
+        let nbs = &neighbours[i];
+        if nbs.is_empty() { continue; }
+        let mut acc = 0.0_f32;
+        for &nb in nbs {
+            let j = nb as usize;
+            acc += prev[j] - prev[i];
+        }
+        elev[i] = (prev[i] + k * acc / nbs.len() as f32).max(0.0);
+    }
+}
+
+/// Full erosion driver. CARVES the input DEM `elev`: per iteration it
+/// runs Priority-Flood → receivers → drainage → clamped stream-power
+/// incision → hillslope diffusion. There is **no uplift** — that would
+/// drive a steady state independent of the input and erase the real
+/// heightmap. Finally the eroded field is blended back toward the
+/// original DEM by `strength` so the macro relief (continents, mountain
+/// belts) always survives; only sub-relief detail (valleys, channels,
+/// talus) is added. Mutates `elev` in place. `cell_area` is the mean
+/// cell area (km²) from the grid.
 pub fn erode(
     neighbours: &[Vec<u32>],
     pos: &[Vec3],
@@ -176,15 +234,22 @@ pub fn erode(
     cell_area: f32,
     p: &ErosionParams,
 ) {
+    if p.iterations == 0 || p.strength <= 0.0 { return; }
+    let h0: Vec<f32> = elev.to_vec(); // fixed reference DEM (macro shape)
     let dt = 1.0_f32;
     for _ in 0..p.iterations {
-        for i in 0..elev.len() {
-            if !is_ocean[i] { elev[i] += p.uplift; }
-        }
         let filled = priority_flood(neighbours, elev, is_ocean);
         let recv = flow_receivers(neighbours, pos, &filled);
         let area = drainage_area(&recv, cell_area);
         stream_power_step(&recv, pos, &area, elev, is_ocean, dt, p);
+        hillslope_diffuse(neighbours, pos, elev, is_ocean, p.hillslope_diffusion);
+    }
+    // Macro-preserving blend: the carried detail is (eroded - h0); add
+    // back only `strength` of it so the real DEM dominates.
+    let s = p.strength.clamp(0.0, 1.0);
+    for i in 0..elev.len() {
+        if is_ocean[i] { continue; }
+        elev[i] = (h0[i] + s * (elev[i] - h0[i])).max(0.0);
     }
 }
 
