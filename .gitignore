@@ -8,6 +8,7 @@ Intermediate/
 Saved/
 .vercel/
 .worktrees/
+.claude/worktrees/
 __pycache__/
 *.pyc
 tools/derive_satmaps/cache/
