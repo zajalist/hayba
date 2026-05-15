@@ -258,6 +258,7 @@ export default function App() {
   const [exaggeration, setExaggeration] = useState(1.0);
   const [surfaceBrightness, setSurfaceBrightness] = useState(1.4);
   const [textureSmooth, setTextureSmooth] = useState(0.4);
+  const [surfaceSaturation, setSurfaceSaturation] = useState(1.0);
   const [showPlateOutlines, setShowPlateOutlines] = useState(true);
   const [showBoundaryGlow, setShowBoundaryGlow] = useState(true);
   const [mapMode, setMapMode] = useState(0);
@@ -274,6 +275,7 @@ export default function App() {
   useEffect(() => { globeMeshRef.current?.setExaggeration(exaggeration); }, [exaggeration]);
   useEffect(() => { globeMeshRef.current?.setSurfaceBrightness(surfaceBrightness); }, [surfaceBrightness]);
   useEffect(() => { globeMeshRef.current?.setTextureSmooth(textureSmooth); }, [textureSmooth]);
+  useEffect(() => { globeMeshRef.current?.setSurfaceSaturation(surfaceSaturation); }, [surfaceSaturation]);
   useEffect(() => { globeMeshRef.current?.setShowPlateOutlines(showPlateOutlines); }, [showPlateOutlines]);
   useEffect(() => { globeMeshRef.current?.setShowBoundaryGlow(showBoundaryGlow); }, [showBoundaryGlow]);
   useEffect(() => { globeMeshRef.current?.setMapMode(mapMode); }, [mapMode]);
@@ -1187,7 +1189,7 @@ export default function App() {
         )}
 
         {panelCategory === "texturing" && snapshot && (
-          <TexturingPanel assignments={biomeAssignments} remap={biomeRemap} onAssign={handleAssignBiome} onRemap={handleRemapBiome} brightness={surfaceBrightness} onBrightness={setSurfaceBrightness} smooth={textureSmooth} onSmooth={setTextureSmooth} />
+          <TexturingPanel assignments={biomeAssignments} remap={biomeRemap} onAssign={handleAssignBiome} onRemap={handleRemapBiome} brightness={surfaceBrightness} onBrightness={setSurfaceBrightness} smooth={textureSmooth} onSmooth={setTextureSmooth} saturation={surfaceSaturation} onSaturation={setSurfaceSaturation} />
         )}
 
         {panelCategory === "climate" && snapshot && (

@@ -17,6 +17,8 @@ export interface TexturingPanelProps {
   onBrightness: (v: number) => void;
   smooth: number;
   onSmooth: (v: number) => void;
+  saturation: number;
+  onSaturation: (v: number) => void;
 }
 
 const DEFAULT_REMAP = { min: 0, max: 1, bias: 0.5 };
@@ -95,6 +97,24 @@ export default function TexturingPanel(p: TexturingPanelProps): React.ReactEleme
             step={0.01}
             value={p.smooth}
             onChange={(e) => p.onSmooth(Number(e.target.value))}
+            style={sliderStyle}
+          />
+        </div>
+
+        <div style={{ marginTop: 8 }}>
+          <div style={labelStyle}>
+            <span>Saturation</span>
+            <span style={{ color: colors.beige, fontFamily: fonts.mono }}>
+              {p.saturation.toFixed(2)}
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={2}
+            step={0.01}
+            value={p.saturation}
+            onChange={(e) => p.onSaturation(Number(e.target.value))}
             style={sliderStyle}
           />
         </div>
