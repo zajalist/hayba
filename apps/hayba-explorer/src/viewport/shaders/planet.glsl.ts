@@ -493,11 +493,11 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // Land-gated (substrate/snow never on ocean).
     float land      = 1.0 - oceanMask;
     // Stage 1: bare rock as ground gets cold-exposed. The "outgoing grey"
-    // was too smooth & prominent — darker, noisier rock + LOWER opacity so
-    // it's a thin broken rock fringe, not a wide airbrushed grey halo.
+    // was still way too pronounced — keep it as only a faint tint so the
+    // biome shows through (just a hint of exposed rock, never a grey wash).
     vec3  alpineRock = vec3(0.19, 0.17, 0.155) * (0.80 + scatter * 0.9);
     float substrate  = substrateA * land;
-    albedo = mix(albedo, alpineRock, substrate * 0.55);
+    albedo = mix(albedo, alpineRock, substrate * 0.18);
     // Stage 2: snow over the colder, also-ragged snowA → a broken speckled
     // snowline. Higher-frequency shading so the cap body isn't a flat white
     // blob (subtle exposed-rock mottle reads through the snow).
