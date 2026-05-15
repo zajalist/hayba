@@ -1089,7 +1089,8 @@ export default function App() {
             border: `1px solid ${mapMode !== 0 ? "#B56A1D" : "#2f343d"}`,
             borderRadius: 5,
             backdropFilter: "blur(4px)",
-            zIndex: 10,
+            zIndex: 50,
+            pointerEvents: "auto",
           }}
         >
           <span

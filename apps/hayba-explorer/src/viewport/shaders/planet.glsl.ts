@@ -419,29 +419,13 @@ export const FRAGMENT_SHADER = /* glsl */ `
     vec3  tibetCol  = vec3(0.44, 0.36, 0.24) * (0.92 + scatter * 0.5); // warmer
     albedo = mix(albedo, tibetCol, tibetMask * 0.5);                    // lower
 
-    // ── G.7 steps 4+5: Beer-Lambert ocean + fwidth-AA organic coast ──────
-    // Coastline: domain-warp the INPUT coordinate (organic fingers), then
-    // size the mask transition to fwidth() so it is exactly one-pixel-wide
-    // at any zoom (no dither — the old failure was noise amplitude ≈ the
-    // fixed smoothstep window). Noise amplitude is kept ≪ the window.
-    // Domain-warp the coast coordinate with the SPATIAL wWarp (sub-cell) at
-    // a meaningful amplitude so the shoreline grows organic fingers/inlets
-    // that cross the polygon seam instead of tracing it. Two octaves: a
-    // coarse coast warp (0.06) + a finer one (0.03) for sub-cell detail.
-    vec3 coastWarp = vWorldNormal
-        + wWarp * 0.06 * jScale
-        + (vec3(
-            fbm(vWorldNormal * 14.0),
-            fbm(vWorldNormal * 14.0 + 31.7),
-            fbm(vWorldNormal * 14.0 + 67.1)) - 0.5) * 0.05;
-    // seaCoord carries the spatial edgeJ (0.05) + its own coarse & fine
-    // shoreline noise. The smoothstep window is fwidth()-sized (exactly
-    // one pixel) so the mask itself never dithers — the organic edge comes
-    // entirely from warping the INPUT, not from widening the window.
-    float seaCoord = vElevation
-                   + edgeJ * 0.05 * jScale
-                   + (fbm(coastWarp *  9.0) - 0.5) * 0.03
-                   + (fbm(coastWarp * 23.0) - 0.5) * 0.02;
+    // ── G.7 steps 4+5: Beer-Lambert ocean + crisp fwidth-AA coast ────────
+    // SCRATCHED: the domain-warped "organic coast" produced a cloud-like
+    // blue haze the user disliked. Reverted to a plain land/sea boundary —
+    // a clean fwidth-sized 1px edge straight off vElevation (so the coast
+    // traces the cell tessellation for now). The real sub-cell coastline
+    // approach is parked for a dedicated brainstorm.
+    float seaCoord   = vElevation;
     float coastWidth = max(fwidth(seaCoord), 0.0025);
     float oceanMask  = 1.0 - smoothstep(-coastWidth, coastWidth, seaCoord);
 
