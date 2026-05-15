@@ -99,6 +99,14 @@ pub struct PlanetSnapshot {
     /// surface texture noise on this so the texture rides with the drifting
     /// crust instead of crawling through a world-locked noise field.
     pub cell_seed: Vec<f32>,
+    /// Coarse-graph drainage area per cell, normalized 0..1 by global max.
+    /// Computed from the (already-eroded) bake elevation — the snapshot does
+    /// NOT re-erode the persistent model; it only routes flow on the final
+    /// surface (iterations:0).
+    pub cell_drainage: Vec<f32>,
+    /// River mask 0..1: 1 where drainage area exceeds the erosion-params
+    /// `river_threshold` fraction of the global max, with a soft edge.
+    pub cell_river: Vec<f32>,
     /// Climate debug fields — empty unless `want_climate_debug`.
     #[serde(default)]
     pub climate_debug: ClimateDebugWire,
@@ -483,6 +491,36 @@ pub fn snapshot_model(
         sdf
     };
 
+    // ── Coarse-graph macro hydrology (drainage + river of the FINAL surface)
+    // Bake already eroded `model.fields[i].elevation`; we must NOT erode the
+    // persistent model again here. Clone the current elevation into a
+    // throwaway buffer and route flow with iterations:0 — `compute_hydrology`
+    // then only depression-fills + accumulates drainage / river on that final
+    // surface, leaving the model untouched.
+    let (cell_drainage, cell_river) = {
+        let neighbours: Vec<Vec<u32>> = (0..n_cells)
+            .map(|fid| model.grid.neighbours(fid).to_vec())
+            .collect();
+        let pos: Vec<Vec3> = (0..n_cells).map(|fid| model.grid.position(fid)).collect();
+        let elev_vec: Vec<f32> = (0..n_cells)
+            .map(|fid| model.fields[fid as usize].elevation)
+            .collect();
+        let is_ocean: Vec<bool> = elev_vec.iter().map(|&e| e < 0.0).collect();
+        let mut e = elev_vec.clone();
+        let hyd = crate::hydrology::compute_hydrology(
+            &neighbours,
+            &pos,
+            &mut e,
+            &is_ocean,
+            model.grid.field_area_km2(),
+            &crate::hydrology::ErosionParams {
+                iterations: 0,
+                ..Default::default()
+            },
+        );
+        (hyd.drainage, hyd.river)
+    };
+
     let cf = crate::climate::compute_climate(
         model,
         model.master_seed,
@@ -527,6 +565,8 @@ pub fn snapshot_model(
         cell_biome_weights: cf.biome_weights,
         cell_coast_sdf,
         cell_seed: cf.cell_seed,
+        cell_drainage,
+        cell_river,
         climate_debug,
     }
 }
@@ -573,6 +613,21 @@ mod tests {
         assert_eq!(snap.cell_coast_sdf.len() as u32, snap.n_cells);
         assert_eq!(snap.cell_seed.len(), n * 3);
         assert!(snap.cell_biome.iter().all(|&b| (0.0..=9.0).contains(&b)));
+    }
+
+    #[test]
+    fn snapshot_has_hydrology_fields() {
+        let snap = bake_demo();
+        assert_eq!(snap.cell_drainage.len() as u32, snap.n_cells);
+        assert_eq!(snap.cell_river.len() as u32, snap.n_cells);
+        assert!(
+            snap.cell_drainage.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v)),
+            "drainage must be finite and in [0,1]"
+        );
+        assert!(
+            snap.cell_river.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v)),
+            "river mask must be finite and in [0,1]"
+        );
     }
 
     #[test]
