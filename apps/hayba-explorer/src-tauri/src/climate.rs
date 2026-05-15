@@ -236,6 +236,11 @@ pub struct ClimateFields {
     pub biome: Vec<f32>,       // primary biome id 0..9 as f32
     pub biome2: Vec<f32>,      // secondary (perturbed) biome id 0..9 as f32
     pub biome_blend: Vec<f32>, // primary→secondary blend weight, 0..0.5
+    /// Per-cell STABLE pseudo-random unit vec3 (n*3), keyed on the
+    /// immutable cell INDEX (not its drifting position). The shader keys
+    /// its within-biome surface texture noise on this so the texture rides
+    /// with the crust instead of crawling through a world-locked field.
+    pub cell_seed: Vec<f32>,
     pub debug: Option<ClimateDebug>,
 }
 
@@ -332,6 +337,7 @@ pub fn compute_climate(model: &Model, seed: u64, want_debug: bool) -> ClimateFie
     let mut biome = vec![0.0f32; n];
     let mut biome2 = vec![0.0f32; n];
     let mut biome_blend = vec![0.0f32; n];
+    let mut cell_seed = vec![0.0f32; n * 3];
 
     let mut dbg = if want_debug {
         Some(ClimateDebug {
@@ -398,6 +404,20 @@ pub fn compute_climate(model: &Model, seed: u64, want_debug: bool) -> ClimateFie
         biome2[i] = secondary as f32;
         biome_blend[i] = blend;
 
+        // Cell-stable texture seed (flaw A3): a deterministic
+        // pseudo-random unit vec3 derived ONLY from the immutable cell
+        // index `i` + the planet `seed`. Independent of position, so it
+        // does NOT change as the plate (and this cell) drifts — the
+        // shader paints its within-biome texture on THIS, so the surface
+        // rides with the crust instead of crawling through world space.
+        let sx = value_noise(Vec3::new(i as f32 * 0.1373, 7.1, 2.3), seed ^ 0xA53F) * 2.0 - 1.0;
+        let sy = value_noise(Vec3::new(i as f32 * 0.2917, 3.7, 9.1), seed ^ 0x91E7) * 2.0 - 1.0;
+        let sz = value_noise(Vec3::new(i as f32 * 0.4519, 1.9, 5.5), seed ^ 0x7C2B) * 2.0 - 1.0;
+        let s = Vec3::new(sx, sy, sz).normalize_or_zero();
+        cell_seed[i * 3] = s.x;
+        cell_seed[i * 3 + 1] = s.y;
+        cell_seed[i * 3 + 2] = s.z;
+
         if let Some(d) = dbg.as_mut() {
             d.insolation[i] = (1.0 - (p.y * p.y)).clamp(0.0, 1.0);
             d.base_temp[i] = base_t;
@@ -415,7 +435,7 @@ pub fn compute_climate(model: &Model, seed: u64, want_debug: bool) -> ClimateFie
         }
     }
 
-    ClimateFields { temperature, precip, biome, biome2, biome_blend, debug: dbg }
+    ClimateFields { temperature, precip, biome, biome2, biome_blend, cell_seed, debug: dbg }
 }
 
 #[cfg(test)]
@@ -581,6 +601,36 @@ mod tests {
         let has_boundary = (0..n)
             .any(|i| cf.biome2[i] != cf.biome[i] && cf.biome_blend[i] > 0.0);
         assert!(has_boundary, "expected at least one mixed cell");
+    }
+
+    #[test]
+    fn cell_seed_is_stable_and_unitish() {
+        use hayba_tectonics_v2::model::Model;
+        let model = Model::new(16, 7);
+        let n = model.grid.n_fields() as usize;
+
+        let a = compute_climate(&model, 7, false);
+        let b = compute_climate(&model, 7, false);
+        assert_eq!(a.cell_seed.len(), n * 3, "cell_seed must be n*3");
+        // Index-derived only → bit-identical across calls on the same model.
+        assert_eq!(
+            a.cell_seed, b.cell_seed,
+            "cell_seed must be deterministic / stable"
+        );
+        // Each per-cell vec3 is a normalized unit vector (or exactly zero
+        // from normalize_or_zero on the astronomically-unlikely all-zero).
+        for i in 0..n {
+            let x = a.cell_seed[i * 3];
+            let y = a.cell_seed[i * 3 + 1];
+            let z = a.cell_seed[i * 3 + 2];
+            let len = (x * x + y * y + z * z).sqrt();
+            assert!(
+                len == 0.0 || (0.9..=1.1).contains(&len),
+                "cell {} seed length out of range: {}",
+                i,
+                len
+            );
+        }
     }
 
     #[test]
