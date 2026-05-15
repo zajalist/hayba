@@ -150,6 +150,52 @@ pub fn continental_factor(hops_from_ocean: u32) -> f32 {
     1.0 - 0.75 * smoothstep(2.0, 45.0, h)
 }
 
+// Biome ids — order matches the SatMap slot order in mesh.ts.
+pub const BIOME_TROPICAL_RAINFOREST: u8 = 0;
+pub const BIOME_TROPICAL_SAVANNA: u8 = 1;
+pub const BIOME_HOT_DESERT: u8 = 2;
+pub const BIOME_TEMPERATE_RAINFOREST: u8 = 3;
+pub const BIOME_TEMPERATE_FOREST: u8 = 4;
+pub const BIOME_WOODLAND_SHRUB: u8 = 5;
+pub const BIOME_GRASSLAND: u8 = 6;
+pub const BIOME_BOREAL: u8 = 7;
+pub const BIOME_TUNDRA: u8 = 8;
+pub const BIOME_ICE: u8 = 9;
+
+/// Whittaker classification from annual mean temperature (°C) and
+/// precipitation (0..1). Hard cut by temperature first (Köppen-style
+/// thermal limits), then precipitation within the thermal band.
+pub fn classify_biome(temp_c: f32, precip: f32) -> u8 {
+    if temp_c < -15.0 {
+        return BIOME_ICE;
+    }
+    if temp_c < -2.0 {
+        return BIOME_TUNDRA;
+    }
+    if temp_c < 6.0 {
+        return BIOME_BOREAL;
+    }
+    if temp_c < 18.0 {
+        if precip > 0.7 {
+            return BIOME_TEMPERATE_RAINFOREST;
+        }
+        if precip > 0.4 {
+            return BIOME_TEMPERATE_FOREST;
+        }
+        if precip > 0.2 {
+            return BIOME_WOODLAND_SHRUB;
+        }
+        return BIOME_GRASSLAND;
+    }
+    if precip > 0.6 {
+        return BIOME_TROPICAL_RAINFOREST;
+    }
+    if precip > 0.2 {
+        return BIOME_TROPICAL_SAVANNA;
+    }
+    BIOME_HOT_DESERT
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,5 +286,25 @@ mod tests {
         let deep   = continental_factor(60);
         assert!(coast > deep, "coast ({}) wetter factor than interior ({})", coast, deep);
         assert!((0.0..=1.0).contains(&deep));
+    }
+
+    #[test]
+    fn whittaker_classifies_canonical_points() {
+        assert_eq!(classify_biome(28.0, 0.9), BIOME_TROPICAL_RAINFOREST);
+        assert_eq!(classify_biome(28.0, 0.1), BIOME_HOT_DESERT);
+        assert_eq!(classify_biome(28.0, 0.45), BIOME_TROPICAL_SAVANNA);
+        assert_eq!(classify_biome(12.0, 0.9), BIOME_TEMPERATE_RAINFOREST);
+        assert_eq!(classify_biome(12.0, 0.2), BIOME_GRASSLAND);
+        assert_eq!(classify_biome(2.0, 0.6), BIOME_BOREAL);
+        assert_eq!(classify_biome(-8.0, 0.5), BIOME_TUNDRA);
+        assert_eq!(classify_biome(-25.0, 0.5), BIOME_ICE);
+    }
+
+    #[test]
+    fn equatorial_peak_is_cold_not_rainforest() {
+        let t = base_temperature_c(Vec3::new(1.0, 0.0, 0.0), 1.0);
+        let b = classify_biome(t, 0.9);
+        assert!(b == BIOME_TUNDRA || b == BIOME_ICE || b == BIOME_BOREAL,
+                "tall equatorial peak must be a cold biome, got {}", b);
     }
 }
