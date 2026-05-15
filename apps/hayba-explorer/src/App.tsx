@@ -15,7 +15,7 @@ import ComposePanel from "./components/panels/ComposePanel";
 import BoundariesPanel from "./components/panels/BoundariesPanel";
 import DensitiesPanelDocked from "./components/panels/DensitiesPanelDocked";
 import SimulatePanel from "./components/panels/SimulatePanel";
-import SettingsPanel from "./components/panels/SettingsPanel";
+import SettingsPanel, { MAP_MODES } from "./components/panels/SettingsPanel";
 import TexturingPanel from "./components/panels/TexturingPanel";
 import DockToolbar, { type ToolName } from "./components/DockToolbar";
 import RecenterButton from "./components/RecenterButton";
@@ -473,7 +473,7 @@ export default function App() {
     let cancelled = false;
     const tick = () => {
       if (cancelled || !playingRef.current) return;
-      invoke<PlanetSnapshot>("step_planet", { nSteps: speedRef.current, wantClimateDebug: mapModeRef.current !== 0 })
+      invoke<PlanetSnapshot>("step_planet", { nSteps: speedRef.current, wantClimateDebug: true })
         .then((snap) => {
           if (cancelled || !playingRef.current) return;
           setSnapshot(snap);
@@ -829,7 +829,7 @@ export default function App() {
         ? heightPainterRef.current.toDraftFields()
         : { painted_elevations: [], painted_mask: [] };
       const finalDraft: WizardDraft = { ...draft, ...paintedFields };
-      const snap = await invoke<PlanetSnapshot>("bake_from_wizard", { draft: finalDraft, wantClimateDebug: mapModeRef.current !== 0 });
+      const snap = await invoke<PlanetSnapshot>("bake_from_wizard", { draft: finalDraft, wantClimateDebug: true });
       setSnapshot(snap);
       // After bake → land on the Boundaries phase (the next step in the
       // wizard sequence). User clicks Next/Start to advance to densities
@@ -1005,6 +1005,46 @@ export default function App() {
         )}
 
         <RecenterButton getScene={getScene} />
+
+        {/* On-canvas map-mode selector (mask inspector) */}
+        <div
+          style={{
+            position: "absolute",
+            top: 12,
+            left: 12,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "5px 8px",
+            background: "rgba(20, 22, 28, 0.78)",
+            border: `1px solid ${mapMode !== 0 ? "#B56A1D" : "#2f343d"}`,
+            borderRadius: 4,
+            backdropFilter: "blur(4px)",
+            zIndex: 10,
+          }}
+        >
+          <span style={{ fontSize: 11, color: "#9aa0aa", fontFamily: '"Segoe UI", system-ui, sans-serif' }}>
+            Map
+          </span>
+          <select
+            value={mapMode}
+            onChange={(e) => setMapMode(Number(e.target.value))}
+            style={{
+              background: "#22262e",
+              color: mapMode !== 0 ? "#DED4C3" : "#a8aeb8",
+              border: "1px solid #3d434e",
+              borderRadius: 3,
+              fontSize: 12,
+              fontFamily: '"Segoe UI", system-ui, sans-serif',
+              padding: "3px 6px",
+              cursor: "pointer",
+            }}
+          >
+            {MAP_MODES.map((m) => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <RightPanel
