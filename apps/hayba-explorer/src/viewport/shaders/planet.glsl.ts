@@ -412,9 +412,13 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // NOT re-derive base_temp - height*6.5, that double-counts). A high-freq
     // ragged term perturbs the reading so the freezing line is jagged, not
     // a clean ring; the wide smoothstep gives a patchy fading transition.
-    float ragged   = (fbm(vWorldNormal * 22.0) - 0.5) * 5.0;
+    float ragged   = (fbm(vWorldNormal * 22.0) - 0.5) * 2.5;  // calmer edge
     float coldC    = vTemperature + edgeJ * 4.0 * jScale + ragged;
-    float snowAccum = 1.0 - smoothstep(-2.0, 2.0, coldC);   // 1 cold .. 0 warm
+    // Earth-like: permanent snow is RARE (Antarctica/Greenland/high peaks),
+    // not "everything past mid-latitude". Only genuinely cold ground
+    // (deep-polar or high-alpine via the elevation lapse in vTemperature)
+    // gets snow — threshold pulled well below freezing.
+    float snowAccum = 1.0 - smoothstep(-9.0, -3.0, coldC);   // 1 very cold .. 0
 
     // Tibet high-plateau tone: REMOVED. It was a single flat ochre colour
     // mixed over the terrain with opacity — exactly the "smooth brush" the
@@ -480,7 +484,10 @@ export const FRAGMENT_SHADER = /* glsl */ `
       // Generous WARM threshold: the moat is polar ocean a few °C warmer
       // than the land-cap threshold, so it never froze. Freeze it wherever
       // it's near/below 0 °C → ocean ring fills, no dark moat. Crisp edge.
-      float seaIce = 1.0 - smoothstep(-1.0, 4.0, coldC);
+      // Sea ice only on genuinely deep-cold polar ocean (same window as the
+      // land cap → continuous in the cold core, no moat; Earth-like extent,
+      // not "all high-latitude ocean").
+      float seaIce = 1.0 - smoothstep(-12.0, -6.0, coldC);
       seaIce = smoothstep(0.25, 0.60, seaIce);
       water = mix(water,
                   vec3(0.93, 0.95, 0.96) * (0.94 + 0.07 * fbm(vSeed * 26.0)),
@@ -505,7 +512,7 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // Same warmer+tight+saturated curve as the sea ice so the land cap and
     // the polar sea ice are CONTINUOUS (no dark ocean moat) with a crisp
     // organic edge instead of a wide cloudy fade.
-    float polarCap   = smoothstep(0.25, 0.60, 1.0 - smoothstep(-4.0, -1.0, coldC));
+    float polarCap   = smoothstep(0.25, 0.60, 1.0 - smoothstep(-12.0, -6.0, coldC));
     // SATURATE the marginal/continent snow too — it was a smooth product of
     // smooth ramps → the cloudy mainland snow & mushy glacier↔land seam.
     // ragged coldC still gives the organic shape; the edge is crisp now.
