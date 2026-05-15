@@ -16,8 +16,11 @@ export interface BrushConfig {
 export interface PainterInit extends GridAdjacency {
   /** Master noise seed (used by noise-mode brush). */
   seed: number;
-  /** Initial elevations per cell (defaults all zero if omitted). */
+  /** Initial elevations per cell (defaults all `defaultElevation` if omitted). */
   baseline?: Float32Array;
+  /** Uniform starting elevation when no per-cell baseline is given, and the
+   *  value `reset()` restores to. Defaults to 0 (sea level). */
+  defaultElevation?: number;
 }
 
 interface StrokeRecord {
@@ -32,6 +35,7 @@ export class HeightPainter {
   readonly elevations: Float32Array;
   readonly touched: Uint8Array;
   readonly n: number;
+  private readonly defaultElevation: number;
   dirty: boolean = false;
 
   private readonly adj: GridAdjacency;
@@ -47,7 +51,10 @@ export class HeightPainter {
   constructor(init: PainterInit) {
     this.adj = { positions: init.positions, neighbours: init.neighbours };
     this.n = init.neighbours.length;
-    this.elevations = init.baseline ? new Float32Array(init.baseline) : new Float32Array(this.n);
+    this.defaultElevation = init.defaultElevation ?? 0;
+    this.elevations = init.baseline
+      ? new Float32Array(init.baseline)
+      : new Float32Array(this.n).fill(this.defaultElevation);
     this.touched = new Uint8Array(this.n);
     this.seed = init.seed;
   }
@@ -192,7 +199,7 @@ export class HeightPainter {
   }
 
   reset(): void {
-    this.elevations.fill(0);
+    this.elevations.fill(this.defaultElevation);
     this.touched.fill(0);
     this.undoStack.length = 0;
     this.redoStack.length = 0;
