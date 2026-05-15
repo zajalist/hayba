@@ -114,15 +114,15 @@ export default function TexturingPanel(p: TexturingPanelProps): React.ReactEleme
         </select>
       </div>
 
-      {/* Scrollable SatMap thumbnail grid (Gaea-style) */}
+      {/* Scrollable SatMap gradient-row library (Gaea-style: one strip per row) */}
       <div
         style={{
           flex: 1,
           overflowY: "auto",
-          padding: 10,
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(64px, 1fr))",
-          gap: 6,
+          padding: "6px 8px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 3,
           alignContent: "start",
         }}
       >
@@ -135,31 +135,46 @@ export default function TexturingPanel(p: TexturingPanelProps): React.ReactEleme
               onClick={() => p.onAssign(active, name)}
               title={name}
               style={{
+                position: "relative",
+                width: "100%",
+                height: 22,
+                flex: "0 0 auto",
                 padding: 0,
-                border: `2px solid ${selected ? colors.accent : "transparent"}`,
-                borderRadius: 4,
-                background: colors.bgBase,
+                border: `1px solid ${selected ? colors.accent : colors.borderMid}`,
+                borderRadius: 3,
                 cursor: "pointer",
                 overflow: "hidden",
-                display: "flex",
-                flexDirection: "column",
+                display: "block",
               }}
             >
               <img
                 src={url}
                 alt={name}
-                style={{ width: "100%", height: 64, objectFit: "cover", display: "block" }}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  display: "block",
+                }}
               />
               <span
                 style={{
-                  fontSize: 9,
+                  position: "absolute",
+                  left: 6,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  fontSize: 10,
                   lineHeight: "12px",
-                  color: selected ? colors.accentText : colors.textMuted,
+                  color: "#fff",
                   fontFamily: fonts.mono,
-                  padding: "3px 2px",
+                  textShadow: "0 1px 2px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,0.9)",
                   whiteSpace: "nowrap",
                   overflow: "hidden",
                   textOverflow: "ellipsis",
+                  maxWidth: "calc(100% - 12px)",
+                  pointerEvents: "none",
                 }}
               >
                 {name}
