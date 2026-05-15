@@ -401,42 +401,30 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // rejected. Any future shore detail must come from a SatMap + mask,
     // never a flat colour mix.
 
-    // ── Shared cold field (drives the 3-stage snow/rock/continent gradient
-    //    AND gates the Tibet tone, so they are concentric — never a ring).
-    // edgeJ (low-freq) keeps it off the hex grid; ragged (HIGH-freq fbm,
-    // °C) deliberately breaks the snow/rock margins into patches — real
-    // snowlines are crunchy (rock pokes through snow, snow sits on rock),
-    // NOT an airbrushed gradient. Amplitude is intentionally ≳ the window
-    // so the margin fragments; interiors stay smoothstep-saturated (solid
-    // cap / solid continent) so only the margin is noisy, never the body.
-    // Coarser/smaller than before: a fine high-freq ragged term spatially
-    // averaged to a SMOOTH grey halo. Lower freq → coherent chunky margin
-    // (the discrete breakup comes from the saturated snow mask instead).
-    float ragged     = (fbm(vWorldNormal * 22.0) - 0.5) * 5.0;
-    float coldC      = vTemperature + edgeJ * 4.0 * jScale + ragged;
-    // Snow mask ONLY. The temperature-driven alpine "substrate" rock band
-    // was a smooth brush that formed a dark ring around the cap — REMOVED.
-    // Rock now comes solely from the slope/elevation rock mask (i.e. where
-    // mountains actually are), revealed through holes punched in the snow.
-    float snowA      = 1.0 - smoothstep(-7.0, -2.0, coldC);
+    // ── Ragged isotherm (snow region) ───────────────────────────────────
+    // Snow = the 0 deg-C isotherm of the ALREADY-lapsed climate temperature
+    // (vTemperature already includes the altitude lapse in climate.rs — do
+    // NOT re-derive base_temp - height*6.5, that double-counts). A high-freq
+    // ragged term perturbs the reading so the freezing line is jagged, not
+    // a clean ring; the wide smoothstep gives a patchy fading transition.
+    float ragged   = (fbm(vWorldNormal * 22.0) - 0.5) * 5.0;
+    float coldC    = vTemperature + edgeJ * 4.0 * jScale + ragged;
+    float snowAccum = 1.0 - smoothstep(-2.0, 2.0, coldC);   // 1 cold .. 0 warm
 
     // Tibet high-plateau tone: REMOVED. It was a single flat ochre colour
     // mixed over the terrain with opacity — exactly the "smooth brush" the
     // user rejects. High non-polar ground now just shows its own biome /
     // slope-rock SatMap (textured), no flat-colour wash.
 
-    // ── G.7 steps 4+5: Beer-Lambert ocean + sub-cell coastline ──────────
-    // Sub-cell coastline: displace the SMOOTH coarse signed distance with
-    // multi-octave fbm in the crawl-free cell-stable seed space (A3) so the
-    // shoreline leaves the hex grid with organic bays/peninsulas. The
-    // displacement amplitude EXCEEDS one cell so it genuinely crosses the
-    // polygon seam (Gemini: displace the SDF, not the UVs). smoothstep
-    // feather only — never a hard step.
-    float coastDisp = (fbm(vSeed *  4.0) - 0.5) * 1.7
-                    + (fbm(vSeed *  9.0) - 0.5) * 0.9
-                    + (fbm(vSeed * 21.0) - 0.5) * 0.45;
+    // ── Coastline from the Rust-smoothed signed distance field ──────────
+    // The SDF is ALREADY Laplacian-smoothed in Rust, so its zero-crossing
+    // is a smooth de-hexed curve on its own. Add only a TINY low-frequency
+    // organic nudge — the previous multi-cell, high-freq vSeed displacement
+    // turned the coast into a spiky per-cell-random fringe. Sub-cell, gentle.
+    float coastDisp = (fbm(vSeed * 2.0) - 0.5) * 0.22
+                    + (fbm(vSeed * 4.5) - 0.5) * 0.10;
     float seaCoord  = vCoastSdf + coastDisp;     // >0 land, <0 ocean (cell units)
-    float oceanMask = 1.0 - smoothstep(-0.6, 0.6, seaCoord);
+    float oceanMask = 1.0 - smoothstep(-0.45, 0.45, seaCoord);
 
     // Lift land albedo (SatMaps read very dark) — ocean excluded so the
     // dark-navy water (and its no-cyan invariant) is untouched.
@@ -476,24 +464,31 @@ export const FRAGMENT_SHADER = /* glsl */ `
       albedo = mix(albedo, water, oceanMask);
     }
 
-    // ── Snow cap (no separate rock substrate) ───────────────────────────
-    // Snow sits directly on whatever the surface already is — biome, or
-    // the slope/elevation rock SatMap where mountains are. A SATURATED
-    // (near-binary) cell-stable multi-octave hole noise punches MANY
-    // discrete bare holes through the cap so the real underlying rock
-    // shows — never a smooth white blob, no temperature rock ring.
+    // ── Snow cap: ragged isotherm + avalanche slope masking ─────────────
     float land      = 1.0 - oceanMask;
-    float holeN  = fbm(vSeed * 20.0) * 0.50
-                 + fbm(vSeed * 48.0) * 0.32
-                 + fbm(vSeed * 110.0) * 0.18;
-    float holes  = smoothstep(0.40, 0.56, holeN);   // 1 = snow, 0 = bare rock hole
-    float iceShade = 0.80 + 0.20 * fbm(vSeed * 34.0);
-    vec3  iceColor = vec3(0.93, 0.95, 0.98) * iceShade;
-    // SATURATE to a near-binary, coherent-noise-broken mask: discrete snow
-    // vs bare-rock patches with a tight edge — NO smooth partial-alpha grey
-    // halo (the old snowA*holes ramp read as a smooth grey brush).
-    float snowMask = smoothstep(0.42, 0.50, snowA * holes) * land;
-    albedo = mix(albedo, iceColor, snowMask);
+    // Avalanche: snow holds on flat ground, slides off steep faces exposing
+    // rock. Uses the ALREADY-smoothed vSlope (NOT dFdx/dFdy — that refacets
+    // the low-poly icosphere). Cell-stable noise breaks the slip line.
+    float avNoise   = (fbm(vSeed * 30.0) - 0.5) * 0.16;
+    float slopeKeep = 1.0 - smoothstep(0.34, 0.60, vSlope + avNoise);
+    // Hyper-arid high terrain stays bare rock (very dry, little snowfall).
+    float precipKeep = smoothstep(0.03, 0.18, vPrecip);
+    float snowCover  = snowAccum * slopeKeep * precipKeep * land;
+    // In the cold region, whatever snow does NOT cover is exposed ALPINE
+    // ROCK (the rock SatMap) — never the dark continent biome (that was the
+    // dark-brown bug). Rock first, snow on top → a real snowcap.
+    float rockExpose = snowAccum * land * (1.0 - slopeKeep * precipKeep);
+    albedo = mix(albedo, rock, rockExpose * 0.92);
+    // Cool off-white snow (NOT vec3(1) — clips in the no-tonemap linear
+    // pipeline). Faint cell-stable shade so the cap body isn't flat.
+    float iceShade = 0.86 + 0.12 * fbm(vSeed * 30.0);
+    vec3  iceColor = vec3(0.86, 0.89, 0.92) * iceShade;
+    // Sky-light shadow tint: the dark side is lit only by blue atmospheric
+    // scatter — subtly tint the snow there (subtle, only where NdotL < 0).
+    float ndlS = dot(normalize(vWorldNormal), normalize(uSunDir));
+    iceColor = mix(iceColor, vec3(0.50, 0.58, 0.78) * iceShade,
+                   smoothstep(0.10, -0.30, ndlS) * 0.45);
+    albedo = mix(albedo, iceColor, snowCover);
 
     // ── Pink seam highlight (unassigned boundaries) ──────────────────────
     if (vIsBoundary > 0.5 && vCollisionKind < 0.5) {
