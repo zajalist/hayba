@@ -996,15 +996,24 @@ In `App.tsx`, find `interface PlanetSnapshot` (or `export interface PlanetSnapsh
 
 - [ ] **Step 2: Add buffer attributes in mesh.ts**
 
-In `mesh.ts`, the `attrNames` array currently lists `"elevation","slope",...`. Add `"biome"`, `"temperature"`, `"precip"`. In `updateFromSnapshot`, after the existing `attrs.X.set(...)` lines add:
+In `mesh.ts`, the `attrNames` array currently lists `"elevation","slope",...`. Add `"biome"`, `"temperature"`, `"precip"`, **and the climate-debug scalar fields** so every mask is inspectable as a map mode: `"insolation"`, `"baseTemp"`, `"distToOcean"`, `"currentDt"`, `"orographic"`, `"continentalDry"`. (Wind is a vec3 — skip as a buffer attr for now; it's directional and the orographic mask already shows its effect.) In `updateFromSnapshot`, after the existing `attrs.X.set(...)` lines add:
 
 ```ts
     attrs.biome.set(snap.cell_biome);
     attrs.temperature.set(snap.cell_temperature);
     attrs.precip.set(snap.cell_precip);
+    const cd = snap.climate_debug;
+    const dbgLen = snap.cell_biome.length;
+    const z = new Array(dbgLen).fill(0);
+    attrs.insolation.set(cd.insolation.length ? cd.insolation : z);
+    attrs.baseTemp.set(cd.base_temp.length ? cd.base_temp : z);
+    attrs.distToOcean.set(cd.dist_to_ocean.length ? cd.dist_to_ocean : z);
+    attrs.currentDt.set(cd.current_dt.length ? cd.current_dt : z);
+    attrs.orographic.set(cd.orographic.length ? cd.orographic : z);
+    attrs.continentalDry.set(cd.continental_dry.length ? cd.continental_dry : z);
 ```
 
-(The generic `attrNames` loop already creates the `Float32Array` + `BufferAttribute` + sets `needsUpdate`; just adding the names + the `.set` calls is sufficient — mirror exactly how `elevation` is handled.)
+(`climate_debug` arrays are empty when `want_climate_debug` was false — the `.length ? : z` guard keeps the buffers correctly sized. The generic `attrNames` loop already creates the `Float32Array` + `BufferAttribute` + sets `needsUpdate`; just adding the names + the `.set` calls is sufficient — mirror exactly how `elevation` is handled.)
 
 - [ ] **Step 3: tsc**
 
@@ -1027,12 +1036,18 @@ git commit -m "feat(climate): TS snapshot interface + biome/temp/precip buffer a
 
 - [ ] **Step 1: Add attributes + varyings**
 
-In `VERTEX_SHADER`, alongside the existing `attribute float elevation; ...`, add:
+In `VERTEX_SHADER`, alongside the existing `attribute float elevation; ...`, add (the 3 core fields + the 6 debug-mask fields so every mask is inspectable):
 
 ```glsl
   attribute float biome;
   attribute float temperature;
   attribute float precip;
+  attribute float insolation;
+  attribute float baseTemp;
+  attribute float distToOcean;
+  attribute float currentDt;
+  attribute float orographic;
+  attribute float continentalDry;
 ```
 
 and varyings:
@@ -1041,6 +1056,12 @@ and varyings:
   varying float vBiome;
   varying float vTemperature;
   varying float vPrecip;
+  varying float vInsolation;
+  varying float vBaseTemp;
+  varying float vDistToOcean;
+  varying float vCurrentDt;
+  varying float vOrographic;
+  varying float vContinentalDry;
 ```
 
 In `main()` of the vertex shader, alongside `vElevation = elevation;` add:
@@ -1049,14 +1070,26 @@ In `main()` of the vertex shader, alongside `vElevation = elevation;` add:
     vBiome = biome;
     vTemperature = temperature;
     vPrecip = precip;
+    vInsolation = insolation;
+    vBaseTemp = baseTemp;
+    vDistToOcean = distToOcean;
+    vCurrentDt = currentDt;
+    vOrographic = orographic;
+    vContinentalDry = continentalDry;
 ```
 
-In `FRAGMENT_SHADER`, add the matching varyings:
+In `FRAGMENT_SHADER`, add the matching varyings (all 9):
 
 ```glsl
   varying float vBiome;
   varying float vTemperature;
   varying float vPrecip;
+  varying float vInsolation;
+  varying float vBaseTemp;
+  varying float vDistToOcean;
+  varying float vCurrentDt;
+  varying float vOrographic;
+  varying float vContinentalDry;
 ```
 
 - [ ] **Step 2: tsc (it's a TS template string)**
@@ -1204,37 +1237,47 @@ The downstream `rockMask`, beach, ocean, snow, lighting code stays. The old `vec
 
 - [ ] **Step 3: Update the map-mode debug switch**
 
-Replace the existing `if (uMapMode > 0.5) { ... }` block so the modes read the new varyings:
+Replace the existing `if (uMapMode > 0.5) { ... }` block with the FULL mask set (every climate stage inspectable — user requirement):
 
 ```glsl
     if (uMapMode > 0.5) {
       vec3 d;
-      if      (uMapMode < 1.5) d = vec3(clamp((vTemperature + 25.0) / 60.0, 0.0, 1.0)); // temperature
-      else if (uMapMode < 2.5) d = mix(vec3(0.32,0.22,0.05), vec3(0.05,0.25,0.95), vPrecip); // precip
-      else if (uMapMode < 3.5) d = biomeDebugColor(vBiome);                              // biome
-      else if (uMapMode < 4.5) d = vec3(clamp(max(vElevation,0.0),0.0,1.0));             // elevation
-      else if (uMapMode < 5.5) d = vec3(clamp(vSlope,0.0,1.0));                          // slope
-      else                     d = vec3(0.0,0.35,0.95) * oceanMask;                      // ocean
+      if      (uMapMode < 1.5)  d = vec3(clamp((vTemperature + 25.0) / 60.0, 0.0, 1.0));      // temperature
+      else if (uMapMode < 2.5)  d = mix(vec3(0.32,0.22,0.05), vec3(0.05,0.25,0.95), vPrecip);  // precipitation
+      else if (uMapMode < 3.5)  d = biomeDebugColor(vBiome);                                   // biome (argmax)
+      else if (uMapMode < 4.5)  d = vec3(clamp(max(vElevation,0.0),0.0,1.0));                  // elevation
+      else if (uMapMode < 5.5)  d = vec3(clamp(vSlope,0.0,1.0));                               // slope
+      else if (uMapMode < 6.5)  d = vec3(0.0,0.35,0.95) * oceanMask;                           // ocean mask
+      else if (uMapMode < 7.5)  d = vec3(clamp(vInsolation,0.0,1.0));                          // insolation
+      else if (uMapMode < 8.5)  d = vec3(clamp((vBaseTemp + 25.0)/60.0,0.0,1.0));              // base temp (pre current/continental)
+      else if (uMapMode < 9.5)  d = vec3(clamp(vDistToOcean / 4000.0,0.0,1.0));                // distance-to-ocean (km, ~4000 full)
+      else if (uMapMode < 10.5) d = mix(vec3(0.1,0.1,0.9), vec3(0.95,0.3,0.1),                 // ocean-current ΔT
+                                        clamp(vCurrentDt*0.05 + 0.5, 0.0, 1.0));               //   blue=cold .. red=warm
+      else if (uMapMode < 11.5) d = mix(vec3(0.85,0.55,0.15), vec3(0.1,0.5,0.95),              // orographic
+                                        clamp(vOrographic*0.5 + 0.5, 0.0, 1.0));               //   dry leeward .. wet windward
+      else                      d = vec3(clamp(vContinentalDry,0.0,1.0));                      // continental dryness
       gl_FragColor = vec4(linearToSrgb(d), 1.0);
       return;
     }
 ```
 
-(The full debug-array map modes — insolation/wind/currents/etc. — read `climate_debug`; wiring those as extra attributes is deferred: this plan ships temperature/precip/biome/elev/slope/ocean modes, which already validate the science. Note this in the commit.)
-
-- [ ] **Step 4: Trim `MAP_MODES` in SettingsPanel**
-
-Set `MAP_MODES` to exactly the 6 implemented modes:
+- [ ] **Step 4: Set `MAP_MODES` in SettingsPanel (full mask set)**
 
 ```ts
 export const MAP_MODES: { value: number; label: string }[] = [
-  { value: 0, label: "Final render" },
-  { value: 1, label: "Temperature" },
-  { value: 2, label: "Precipitation" },
-  { value: 3, label: "Biome (argmax)" },
-  { value: 4, label: "Elevation" },
-  { value: 5, label: "Slope" },
-  { value: 6, label: "Ocean mask" },
+  { value: 0,  label: "Final render" },
+  { value: 1,  label: "Temperature" },
+  { value: 2,  label: "Precipitation" },
+  { value: 3,  label: "Biome" },
+  { value: 4,  label: "Elevation" },
+  { value: 5,  label: "Slope" },
+  { value: 6,  label: "Ocean mask" },
+  { value: 7,  label: "Insolation" },
+  { value: 8,  label: "Base temp" },
+  { value: 9,  label: "Distance to ocean" },
+  { value: 10, label: "Ocean current ΔT" },
+  { value: 11, label: "Orographic (rain shadow)" },
+  { value: 12, label: "Continental dryness" },
 ];
 ```
 
@@ -1295,18 +1338,159 @@ git commit -m "test(climate): visual validation artifact + success-criteria pass
 
 ---
 
+## Task 15: mesh.ts — per-biome SatMap reassignment hook
+
+**Files:**
+- Modify: `apps/hayba-explorer/src/viewport/mesh.ts`
+
+The 10 biome SatMap uniforms `uBiome0..uBiome9` exist (Task 13). Add a runtime setter so the Texturing UI can swap any slot.
+
+- [ ] **Step 1: Add to `GlobeMeshHandle` interface**
+
+```ts
+  /** Reassign the SatMap for one biome slot (0..9). */
+  setBiomeSatMap(biomeIndex: number, name: SatMapName): void;
+```
+
+- [ ] **Step 2: Implement in the returned handle**
+
+In the `return { ... }` object (alongside `setSatMap`):
+
+```ts
+    setBiomeSatMap: (biomeIndex, name) => {
+      const key = "uBiome" + biomeIndex;
+      if (mat.uniforms[key]) mat.uniforms[key].value = loadSatMap(name);
+    },
+```
+
+- [ ] **Step 3: tsc**
+
+Run from `apps/hayba-explorer/`: `npx tsc --noEmit` → passes.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add apps/hayba-explorer/src/viewport/mesh.ts
+git commit -m "feat(texturing): per-biome SatMap reassignment hook on the mesh"
+```
+
+---
+
+## Task 16: Texturing panel category — per-biome SatMap library picker
+
+**Files:**
+- Create: `apps/hayba-explorer/src/components/panels/TexturingPanel.tsx`
+- Modify: `apps/hayba-explorer/src/components/CategoryStrip.tsx` (add `"texturing"` to the `PanelCategory` union + an `ITEMS` entry between `compose` and `boundaries`, reuse `ICON_URLS.categoryCompose`)
+- Modify: `apps/hayba-explorer/src/components/RightPanel.tsx` (add `texturing` to the `TITLES` record: `{ title: "Texturing", subtitle: "Per-biome SatMaps" }`)
+- Modify: `apps/hayba-explorer/src/App.tsx` (state, `categoryEnabled`, render)
+
+Pattern: mirror exactly how the existing `boundaries`/`densities` categories are wired (union → ITEMS → TITLES → `categoryEnabled` → render block). Enabled post-bake (`mode === "boundaries" || mode === "densities" || mode === "simulating"`).
+
+- [ ] **Step 1: Biome slot constants (shared)**
+
+In `apps/hayba-explorer/src/viewport/satmap-loader.ts`, append:
+
+```ts
+/** Biome slot order — MUST match climate.rs BIOME_* ids and mesh uBiome0..9. */
+export const BIOME_SLOTS: { index: number; label: string; defaultName: string }[] = [
+  { index: 0, label: "Tropical rainforest", defaultName: "tropical_wet_basin" },
+  { index: 1, label: "Tropical savanna",    defaultName: "tropical_dry_craton" },
+  { index: 2, label: "Hot desert",          defaultName: "arid_hot_dunes" },
+  { index: 3, label: "Temperate rainforest",defaultName: "temperate_humid_coast" },
+  { index: 4, label: "Temperate forest",    defaultName: "temperate_humid_orogeny" },
+  { index: 5, label: "Woodland / shrub",    defaultName: "temperate_med" },
+  { index: 6, label: "Grassland / steppe",  defaultName: "continental_steppe" },
+  { index: 7, label: "Boreal / taiga",      defaultName: "continental_shield" },
+  { index: 8, label: "Tundra",              defaultName: "polar_tundra" },
+  { index: 9, label: "Ice cap",             defaultName: "polar_icecap" },
+];
+```
+
+- [ ] **Step 2: Create `TexturingPanel.tsx`**
+
+```tsx
+import React from "react";
+import PropertyRow from "../PropertyRow";
+import PropertySection from "../PropertySection";
+import Select from "../Select";
+import { SATMAP_NAMES, BIOME_SLOTS, type SatMapName } from "../../viewport/satmap-loader";
+
+export interface TexturingPanelProps {
+  assignments: Record<number, SatMapName>; // biomeIndex → SatMap name
+  onAssign: (biomeIndex: number, name: SatMapName) => void;
+}
+
+export default function TexturingPanel(p: TexturingPanelProps): React.ReactElement {
+  const opts = SATMAP_NAMES.map((n) => ({ value: n, label: n }));
+  return (
+    <div style={{ flex: 1, overflowY: "auto" }}>
+      <PropertySection heading="Biome SatMaps">
+        {BIOME_SLOTS.map((b, i) => (
+          <PropertyRow
+            key={b.index}
+            label={b.label}
+            noSeparator={i === BIOME_SLOTS.length - 1}
+            value={
+              <Select<SatMapName>
+                value={p.assignments[b.index] ?? b.defaultName}
+                onChange={(v) => p.onAssign(b.index, v)}
+                options={opts}
+              />
+            }
+          />
+        ))}
+      </PropertySection>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 3: Wire into App.tsx**
+
+Add state + handler near the other panel state:
+
+```tsx
+const [biomeAssignments, setBiomeAssignments] = useState<Record<number, string>>({});
+const handleAssignBiome = useCallback((bi: number, name: string) => {
+  setBiomeAssignments((m) => ({ ...m, [bi]: name }));
+  globeMeshRef.current?.setBiomeSatMap(bi, name);
+}, []);
+```
+
+Add `"texturing"` handling: in `categoryEnabled` set `texturing: mode === "boundaries" || mode === "densities" || mode === "simulating"`; in `categoryDisabledReason` add `texturing: "Bake the planet first"`. Render block alongside the others:
+
+```tsx
+{panelCategory === "texturing" && snapshot && (
+  <TexturingPanel assignments={biomeAssignments} onAssign={handleAssignBiome} />
+)}
+```
+
+Import `TexturingPanel` at the top.
+
+- [ ] **Step 4: tsc**
+
+Run from `apps/hayba-explorer/`: `npx tsc --noEmit` → passes.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add apps/hayba-explorer/src/components/panels/TexturingPanel.tsx apps/hayba-explorer/src/components/CategoryStrip.tsx apps/hayba-explorer/src/components/RightPanel.tsx apps/hayba-explorer/src/App.tsx apps/hayba-explorer/src/viewport/satmap-loader.ts
+git commit -m "feat(texturing): post-bake Texturing category — per-biome SatMap library picker"
+```
+
+---
+
 ## Verification checklist (definition of done)
 
 - `cargo test --lib` green (all `climate::tests::*` + `planet::tests::snapshot_has_climate_fields` + existing wizard tests).
-- `npx tsc --noEmit` clean.
-- `cargo build --lib` clean.
-- Map modes render: temperature/precip/biome/elevation/slope/ocean.
+- `npx tsc --noEmit` clean; `cargo build --lib` clean.
+- **All 12 map modes render** (temperature, precipitation, biome, elevation, slope, ocean, insolation, base-temp, distance-to-ocean, current ΔT, orographic, continental dryness) — every mask inspectable.
+- **Texturing category**: post-bake, each of the 10 biome slots reassignable from the full SatMap library, change reflected live on the globe.
 - Visual: no rings, ≥5 greens, no orange, smooth poles, non-zonal rain shadows, biomes drift with the sim.
 - Spec success criteria 1–7 all confirmed.
 
 After all tasks: use `superpowers:finishing-a-development-branch`.
 
-## Out of scope (separate follow-on plan)
+## Out of scope
 
-- Client-facing post-bake **texture editor** panel category (per-biome SatMap reassignment + params). Depends on these biome slots; its own spec/plan.
-- Debug map modes for insolation/wind/currents/continental-dry (the `climate_debug` arrays are computed & shipped; surfacing them as extra buffer attributes + modes is a small follow-up — temperature/precip/biome already validate the model).
+- Per-biome *texturing parameters* beyond SatMap choice (noise scale, ramp contrast sliders) — the SatMap picker covers the stated need; parameter sliders are a later polish if requested.
