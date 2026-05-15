@@ -238,3 +238,81 @@ export function earthElevations(positions: Float32Array, n: number): Float32Arra
 
   return out;
 }
+
+// ── Real Earth heightmap (bundled equirectangular grayscale DEM) ──────────
+// `public/earth-heightmap.png` is a 4096×2048 equirectangular grayscale
+// relief (downscaled from a 21600×10800 world elevation map). Sampled per
+// cell by (lat, lon) with bilinear luminance. Same axis convention as
+// `earthElevations`. Use this for real geography; fall back to the analytic
+// generator if the asset fails to load.
+const EARTH_HEIGHTMAP_URL = "/earth-heightmap.png";
+// Luminance < SEA_GRAY = ocean (mapped negative, deeper where darker);
+// >= SEA_GRAY = land (0..LAND_GAIN). Tuned to this source: ocean ≈ 0.18–0.34,
+// land ≈ 0.56–0.93 grey. Adjust if the bundled map is replaced.
+const SEA_GRAY = 0.4;
+const LAND_GAIN = 0.95;
+const LAND_FLOOR = 0.04;
+
+export async function earthElevationsFromImage(
+  positions: Float32Array,
+  n: number,
+): Promise<Float32Array> {
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const im = new Image();
+    im.onload = () => resolve(im);
+    im.onerror = () => reject(new Error("earth-heightmap.png failed to load"));
+    im.src = EARTH_HEIGHTMAP_URL;
+  });
+  const W = img.naturalWidth;
+  const H = img.naturalHeight;
+  if (W === 0 || H === 0) throw new Error("earth-heightmap.png has zero size");
+
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) throw new Error("2D canvas context unavailable");
+  ctx.drawImage(img, 0, 0);
+  const data = ctx.getImageData(0, 0, W, H).data;
+
+  // Bilinear luminance (R channel — the DEM is grayscale so R=G=B). x wraps
+  // (longitude is periodic); y clamps (poles).
+  const lum = (px: number, py: number): number => {
+    const x0 = Math.floor(px);
+    const y0 = Math.floor(py);
+    const fx = px - x0;
+    const fy = py - y0;
+    const wrap = (a: number, m: number): number => ((a % m) + m) % m;
+    const clampi = (a: number, m: number): number =>
+      a < 0 ? 0 : a >= m ? m - 1 : a;
+    const xa = wrap(x0, W);
+    const xb = wrap(x0 + 1, W);
+    const ya = clampi(y0, H);
+    const yb = clampi(y0 + 1, H);
+    const g = (xi: number, yi: number): number => data[(yi * W + xi) * 4];
+    const top = g(xa, ya) + (g(xb, ya) - g(xa, ya)) * fx;
+    const bot = g(xa, yb) + (g(xb, yb) - g(xa, yb)) * fx;
+    return (top + (bot - top) * fy) / 255;
+  };
+
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = positions[3 * i];
+    const y = positions[3 * i + 1];
+    const z = positions[3 * i + 2];
+    const latDeg = Math.asin(clamp(y, -1, 1)) * RAD2DEG; // +90 N .. -90 S
+    const lonDeg = Math.atan2(z, x) * RAD2DEG; // -180 .. 180
+    const u = (lonDeg + 180) / 360; // 0..1
+    const v = (90 - latDeg) / 180; // 0 = north (top row)
+    const L = lum(u * W, v * H);
+    let elev: number;
+    if (L >= SEA_GRAY) {
+      elev =
+        LAND_FLOOR + ((L - SEA_GRAY) / (1 - SEA_GRAY)) * (LAND_GAIN - LAND_FLOOR);
+    } else {
+      elev = -((SEA_GRAY - L) / SEA_GRAY);
+    }
+    out[i] = clamp(elev, -1, 1);
+  }
+  return out;
+}
