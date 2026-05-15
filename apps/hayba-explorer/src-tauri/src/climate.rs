@@ -93,6 +93,38 @@ pub fn current_temp_anomaly(p: Vec3, coastalness: f32) -> f32 {
     raw * coastal * coastal
 }
 
+fn hash3(x: i32, y: i32, z: i32, seed: u64) -> f32 {
+    let mut h = (x as i64).wrapping_mul(374_761_393)
+        ^ (y as i64).wrapping_mul(668_265_263)
+        ^ (z as i64).wrapping_mul(2_147_483_647)
+        ^ seed as i64;
+    h = (h ^ (h >> 13)).wrapping_mul(1_274_126_177);
+    h = h ^ (h >> 16);
+    ((h as u64 & 0xFFFF_FFFF) as f32) / 4_294_967_296.0
+}
+
+/// Trilinear value noise in [0, 1]. Deterministic given `seed`.
+pub fn value_noise(p: Vec3, seed: u64) -> f32 {
+    let ix = p.x.floor() as i32;
+    let iy = p.y.floor() as i32;
+    let iz = p.z.floor() as i32;
+    let fx = p.x - ix as f32;
+    let fy = p.y - iy as f32;
+    let fz = p.z - iz as f32;
+    let sx = fx * fx * (3.0 - 2.0 * fx);
+    let sy = fy * fy * (3.0 - 2.0 * fy);
+    let sz = fz * fz * (3.0 - 2.0 * fz);
+    let c = |dx, dy, dz| hash3(ix + dx, iy + dy, iz + dz, seed);
+    let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let x00 = lerp(c(0, 0, 0), c(1, 0, 0), sx);
+    let x10 = lerp(c(0, 1, 0), c(1, 1, 0), sx);
+    let x01 = lerp(c(0, 0, 1), c(1, 0, 1), sx);
+    let x11 = lerp(c(0, 1, 1), c(1, 1, 1), sx);
+    let y0 = lerp(x00, x10, sy);
+    let y1 = lerp(x01, x11, sy);
+    lerp(y0, y1, sz)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,5 +186,16 @@ mod tests {
         let deep_inland = current_temp_anomaly(
             Vec3::new(0.5, 0.7, 0.5).normalize(), 0.95);
         assert!(deep_inland.abs() < 1.0, "interior should be ~unaffected: {}", deep_inland);
+    }
+
+    #[test]
+    fn vnoise_deterministic_and_bounded() {
+        let a = value_noise(Vec3::new(1.2, 3.4, 5.6), 42);
+        let b = value_noise(Vec3::new(1.2, 3.4, 5.6), 42);
+        assert_eq!(a, b, "must be deterministic");
+        for i in 0..50 {
+            let v = value_noise(Vec3::new(i as f32 * 0.7, 1.3, -2.1), 7);
+            assert!(v >= 0.0 && v <= 1.0, "out of [0,1]: {}", v);
+        }
     }
 }
