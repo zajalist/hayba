@@ -91,22 +91,32 @@ fn upwind_neighbour(pos: &[Vec3], neighbours: &[Vec<u32>], i: usize, wind: Vec3)
     best
 }
 
-/// Coastal temperature anomaly (°C) from analytic subtropical gyres.
-/// Warm poleward western-boundary currents (up to +12°C), cold
-/// equatorward eastern-boundary currents (down to −10°C → coastal
-/// deserts). `coastalness` is the normalized inland fraction (0 = coast,
-/// 1 = deep interior); the effect decays to ~0 inland.
-pub fn current_temp_anomaly(p: Vec3, coastalness: f32) -> f32 {
+/// Coastal SST anomaly (°C). Warm if the adjacent ocean lies equatorward
+/// of the cell (warm water advected poleward up the coast); cold if it
+/// lies poleward (cold equatorward current / upwelling). Peaks mid-high
+/// latitude (~45–60°), decays to ~0 inland. Geography-driven from the
+/// per-cell mean ocean direction — no fixed-longitude basins.
+pub fn current_temp_anomaly(p: Vec3, ocean_dir: Vec3, coastalness: f32) -> f32 {
+    if ocean_dir.length_squared() < 1e-6 {
+        return 0.0; // landlocked: no nearby ocean to advect anything
+    }
     let lat = latitude_rad(p);
+    // Equatorward unit tangent at p: take the world vector toward the
+    // equator (-sign(lat)·Y), remove its radial (p) component so it lies
+    // in p's tangent plane, then normalize. Same tangent-projection
+    // trick as `prevailing_wind`'s meridional term.
+    let to_eq = -(Vec3::Y * lat.signum());
+    let equatorward = (to_eq - p * to_eq.dot(p)).normalize_or_zero();
+    // +1: ocean lies equatorward → warm water advected poleward up the
+    // coast (warm anomaly). −1: ocean lies poleward → cold current /
+    // upwelling (cold anomaly).
+    let s = ocean_dir.dot(equatorward);
     let lat_deg = lat.abs().to_degrees();
-    let lon = p.z.atan2(p.x); // −π..π
-    let basin_phase = (lon / (std::f32::consts::PI * 2.0 / 3.0)).fract();
-    let west_side = if basin_phase < 0.5 { 1.0 } else { -1.0 };
-    let strength = (1.0 - ((lat_deg - 50.0) / 40.0).powi(2)).clamp(0.0, 1.0);
-    let warm = west_side * lat.signum() * lat.signum(); // ±1
-    let raw = warm * strength * if west_side > 0.0 { 12.0 } else { -10.0 };
+    let strength = (1.0 - ((lat_deg - 52.0) / 38.0).powi(2)).clamp(0.0, 1.0);
     let coastal = (1.0 - coastalness).clamp(0.0, 1.0);
-    raw * coastal * coastal
+    // Warm side up to +12 °C, cold side down to −10 °C.
+    let amp = if s >= 0.0 { 12.0 } else { 10.0 };
+    s * strength * coastal * coastal * amp
 }
 
 fn hash3(x: i32, y: i32, z: i32, seed: u64) -> f32 {
@@ -265,6 +275,27 @@ pub fn compute_climate(model: &Model, seed: u64, want_debug: bool) -> ClimateFie
     let km_per_hop = grid.field_area_km2().sqrt();
     let max_hop = (*hops.iter().filter(|&&h| h != u32::MAX).max().unwrap_or(&1)).max(1);
 
+    // Per-cell unit mean direction toward nearby ocean (1- and 2-ring
+    // neighbours, 2-ring half-weighted). Drives the geography-derived
+    // coastal current anomaly — replaces the old fixed-longitude basins.
+    // O(cells): bounded neighbour fan-out, single pass.
+    let ocean_dir: Vec<Vec3> = (0..n)
+        .map(|i| {
+            let mut acc = Vec3::ZERO;
+            for &nb in &neighbours[i] {
+                if is_ocean[nb as usize] {
+                    acc += pos[nb as usize] - pos[i];
+                }
+                for &nb2 in &neighbours[nb as usize] {
+                    if is_ocean[nb2 as usize] {
+                        acc += 0.5 * (pos[nb2 as usize] - pos[i]);
+                    }
+                }
+            }
+            acc.normalize_or_zero()
+        })
+        .collect();
+
     // Downwind moisture transport. Moisture sourced at oceans (=1.0) is
     // carried inland along the prevailing wind, decayed per hop, and
     // blocked where terrain rises into the wind → real lee deserts.
@@ -326,7 +357,7 @@ pub fn compute_climate(model: &Model, seed: u64, want_debug: bool) -> ClimateFie
         };
 
         let base_t = base_temperature_c(p, elev[i]);
-        let cur_dt = current_temp_anomaly(p, coastalness);
+        let cur_dt = current_temp_anomaly(p, ocean_dir[i], coastalness);
         let cont_cool = coastalness * 6.0;
         let t = base_t + cur_dt - cont_cool;
         temperature[i] = t;
@@ -442,12 +473,31 @@ mod tests {
 
     #[test]
     fn current_anomaly_bounded_and_signed() {
-        let coastal_west = current_temp_anomaly(
-            Vec3::new(0.5, 0.7, 0.5).normalize(), 0.05);
-        assert!(coastal_west.abs() <= 12.001, "anomaly out of range: {}", coastal_west);
-        let deep_inland = current_temp_anomaly(
-            Vec3::new(0.5, 0.7, 0.5).normalize(), 0.95);
+        // ~45°N mid-latitude coastal cell.
+        let p = Vec3::new(0.5, 0.7, 0.5).normalize();
+        // Equatorward unit tangent at p (toward equator, in tangent plane).
+        let to_eq = -(Vec3::Y * latitude_rad(p).signum());
+        let equatorward = (to_eq - p * to_eq.dot(p)).normalize_or_zero();
+        let poleward = -equatorward;
+
+        // Ocean equatorward → warm water advected poleward → warm anomaly,
+        // and the magnitude must stay inside the ±12 °C envelope.
+        let warm = current_temp_anomaly(p, equatorward, 0.05);
+        assert!(warm.abs() <= 12.001, "anomaly out of range: {}", warm);
+        assert!(warm > 0.0, "ocean equatorward should warm the coast: {}", warm);
+
+        // Same cell, ocean poleward → cold current / upwelling → cold.
+        let cold = current_temp_anomaly(p, poleward, 0.05);
+        assert!(cold.abs() <= 12.001, "anomaly out of range: {}", cold);
+        assert!(cold < 0.0, "ocean poleward should cool the coast: {}", cold);
+
+        // Deep interior: effect decays to ~0 regardless of ocean dir.
+        let deep_inland = current_temp_anomaly(p, equatorward, 0.95);
         assert!(deep_inland.abs() < 1.0, "interior should be ~unaffected: {}", deep_inland);
+
+        // Landlocked (zero ocean direction) → exactly no anomaly.
+        let landlocked = current_temp_anomaly(p, Vec3::ZERO, 0.05);
+        assert_eq!(landlocked, 0.0, "no nearby ocean → no anomaly");
     }
 
     #[test]
