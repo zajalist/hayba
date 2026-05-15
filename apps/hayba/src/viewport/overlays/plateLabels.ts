@@ -79,7 +79,7 @@ export function buildPlateLabels(): PlateLabelsHandle {
     }
     for (const [pid, [x, y, z, n]] of sums) {
       if (n === 0) continue;
-      const v = new THREE.Vector3(x / n, y / n, z / n).normalize().multiplyScalar(1.04);
+      const v = new THREE.Vector3(x / n, y / n, z / n).normalize().multiplyScalar(1.14);
       const sprite = makeSprite(String(pid));
       sprite.position.copy(v);
       group.add(sprite);

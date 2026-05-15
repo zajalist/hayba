@@ -18,6 +18,7 @@ import DockToolbar, { type ToolName } from "./components/DockToolbar";
 import RecenterButton from "./components/RecenterButton";
 import ConfirmDialog from "./components/ConfirmDialog";
 import BoundaryPopover from "./components/BoundaryPopover";
+import { IconPlay, IconPause } from "./components/icons";
 import { buildPlateLabels, type PlateLabelsHandle } from "./viewport/overlays/plateLabels";
 import { buildForceArrows, type ForceArrowsHandle } from "./viewport/overlays/forceArrows";
 import { createDefaultDraft, pairKey, type WizardDraft, type PresetName, type BoundaryType } from "./wizard/state";
@@ -717,7 +718,7 @@ export default function App() {
                   display: "inline-flex", alignItems: "center", justifyContent: "center",
                 }}
               >
-                {playing ? "⏸" : "▶"}
+                {playing ? <IconPause size={12} /> : <IconPlay size={12} />}
               </button>
             </span>
           ) : null}

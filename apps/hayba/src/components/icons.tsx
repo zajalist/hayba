@@ -22,6 +22,7 @@ import recenterUrl from "../assets/icons/IconRecenter.svg";
 import boundaryUrl from "../assets/icons/IconBoundary.svg";
 import playUrl from "../assets/icons/IconPlay.svg";
 import pauseUrl from "../assets/icons/IconPause.svg";
+import resetUrl from "../assets/icons/IconReset.svg";
 import categoryComposeUrl from "../assets/icons/IconCategoryCompose.svg";
 import categoryBoundariesUrl from "../assets/icons/IconCategoryBoundaries.svg";
 import categoryDensitiesUrl from "../assets/icons/IconCategoryDensities.svg";
@@ -65,6 +66,7 @@ export const IconRecenter = (p: IconProps = {}) => img(recenterUrl, "recenter", 
 export const IconBoundary = (p: IconProps = {}) => img(boundaryUrl, "boundary", p);
 export const IconPlay     = (p: IconProps = {}) => img(playUrl,     "play",     p);
 export const IconPause    = (p: IconProps = {}) => img(pauseUrl,    "pause",    p);
+export const IconReset    = (p: IconProps = {}) => img(resetUrl,    "reset",    p);
 export const IconCategoryCompose = (p: IconProps = {}) => img(categoryComposeUrl, "compose", p);
 export const IconCategoryBoundaries = (p: IconProps = {}) => img(categoryBoundariesUrl, "boundaries", p);
 export const IconCategoryDensities = (p: IconProps = {}) => img(categoryDensitiesUrl, "densities", p);
@@ -88,6 +90,7 @@ export const ICON_URLS = {
   boundary: boundaryUrl,
   play:     playUrl,
   pause:    pauseUrl,
+  reset:    resetUrl,
   categoryCompose: categoryComposeUrl,
   categoryBoundaries: categoryBoundariesUrl,
   categoryDensities: categoryDensitiesUrl,

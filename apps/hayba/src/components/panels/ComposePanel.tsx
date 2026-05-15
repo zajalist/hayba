@@ -2,6 +2,7 @@ import React from "react";
 import { colors, fonts } from "@hayba/design-tokens";
 import PropertyRow from "../PropertyRow";
 import PropertySection from "../PropertySection";
+import Select from "../Select";
 import type { WizardDraft, PresetName } from "../../wizard/state";
 import { PRESETS } from "../../wizard/state";
 import { PRESETS as RESOLUTION_PRESETS } from "../../wizard/ResolutionChips";
@@ -23,31 +24,24 @@ export default function ComposePanel(p: ComposePanelProps) {
           <PropertyRow
             label="Resolution"
             value={
-              <select
+              <Select<number>
                 value={p.draft.divisions}
-                onChange={(e) => p.onChangeDivisions(Number(e.target.value))}
-                style={selectStyle}
-              >
-                {RESOLUTION_PRESETS.map((r) => (
-                  <option key={r.divisions} value={r.divisions}>
-                    {r.label} · {r.cellsLabel} cells
-                  </option>
-                ))}
-              </select>
+                onChange={p.onChangeDivisions}
+                options={RESOLUTION_PRESETS.map((r) => ({
+                  value: r.divisions,
+                  label: `${r.label} · ${r.cellsLabel} cells`,
+                }))}
+              />
             }
           />
           <PropertyRow
             label="Preset"
             value={
-              <select
+              <Select<PresetName>
                 value={p.draft.preset}
-                onChange={(e) => p.onChangePreset(e.target.value as PresetName)}
-                style={selectStyle}
-              >
-                {PRESETS.map((s) => (
-                  <option key={s.name} value={s.name}>{s.label}</option>
-                ))}
-              </select>
+                onChange={p.onChangePreset}
+                options={PRESETS.map((s) => ({ value: s.name, label: s.label }))}
+              />
             }
           />
           <PropertyRow
@@ -91,16 +85,6 @@ export default function ComposePanel(p: ComposePanelProps) {
     </div>
   );
 }
-
-const selectStyle: React.CSSProperties = {
-  background: "transparent",
-  border: "none",
-  color: colors.beige,
-  fontFamily: fonts.mono,
-  fontSize: 12,
-  textAlign: "right",
-  cursor: "pointer",
-};
 
 const inlineActionStyle: React.CSSProperties = {
   marginLeft: 8,
