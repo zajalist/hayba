@@ -80,3 +80,17 @@ export function loadSatMap(name: string): THREE.Texture {
 
 /** Convenience export for callers that want a typed alias (the union is open). */
 export type SatMapName = string;
+
+/** Biome slot order — MUST match climate.rs BIOME_* ids and mesh uBiome0..9. */
+export const BIOME_SLOTS: { index: number; label: string; defaultName: string }[] = [
+  { index: 0, label: "Tropical rainforest", defaultName: "tropical_wet_basin" },
+  { index: 1, label: "Tropical savanna",    defaultName: "tropical_dry_craton" },
+  { index: 2, label: "Hot desert",          defaultName: "arid_hot_dunes" },
+  { index: 3, label: "Temperate rainforest",defaultName: "temperate_humid_coast" },
+  { index: 4, label: "Temperate forest",    defaultName: "temperate_humid_orogeny" },
+  { index: 5, label: "Woodland / shrub",    defaultName: "temperate_med" },
+  { index: 6, label: "Grassland / steppe",  defaultName: "continental_steppe" },
+  { index: 7, label: "Boreal / taiga",      defaultName: "continental_shield" },
+  { index: 8, label: "Tundra",              defaultName: "polar_tundra" },
+  { index: 9, label: "Ice cap",             defaultName: "polar_icecap" },
+];
