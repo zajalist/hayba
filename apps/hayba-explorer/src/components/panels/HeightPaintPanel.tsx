@@ -18,6 +18,7 @@ export interface HeightPaintPanelProps {
   onUndo: () => void;
   onRedo: () => void;
   onReset: () => void;
+  onLoadEarth: () => void;
 }
 
 const MODE_LABELS: Record<BrushMode, string> = {
@@ -123,6 +124,18 @@ export default function HeightPaintPanel(p: HeightPaintPanelProps): React.ReactE
             }
           />
         )}
+      </PropertySection>
+
+      <PropertySection heading="Templates">
+        <div style={{ padding: "8px 14px" }}>
+          <div style={{ fontSize: 11, color: colors.textMuted, marginBottom: 8 }}>
+            Populate every cell with an analytic, latitude-correct Earth-like
+            world for validating the debug map modes. Bake to apply.
+          </div>
+          <button onClick={p.onLoadEarth} style={historyButtonStyle(true)}>
+            🌍 Load Earth
+          </button>
+        </div>
       </PropertySection>
 
       <PropertySection heading="History">

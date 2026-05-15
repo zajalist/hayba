@@ -30,6 +30,7 @@ import { createDefaultDraft, pairKey, type WizardDraft, type PresetName, type Bo
 import { BoundaryModel, setBoundary, clearBoundary } from "./wizard/boundary-model";
 import { buildCellKdTree, cellsWithinRadius, nearestCell, type KdTree } from "./wizard/kdtree";
 import { HeightPainter, type BrushConfig } from "./wizard/paint/HeightPainter";
+import { earthElevations } from "./wizard/earth-template";
 import HeightPaintPanel from "./components/panels/HeightPaintPanel";
 import { buildPainterMesh, type PainterMeshHandle } from "./viewport/painterMesh";
 
@@ -1185,6 +1186,17 @@ export default function App() {
                 setCanUndo(false);
                 setCanRedo(false);
                 setPaintedCount(0);
+              }}
+              onLoadEarth={() => {
+                const p = heightPainterRef.current;
+                const positions = positionsRef.current;
+                if (!p || !positions) return;
+                const field = earthElevations(positions, p.n);
+                p.loadField(field);
+                painterMeshRef.current?.syncFromPainter(p);
+                setPaintedCount(p.n);
+                setCanUndo(true);
+                setCanRedo(false);
               }}
             />
           </ComposePanel>
