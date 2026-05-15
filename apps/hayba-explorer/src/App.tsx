@@ -231,6 +231,8 @@ export default function App() {
   const [showPlateOutlines, setShowPlateOutlines] = useState(true);
   const [showBoundaryGlow, setShowBoundaryGlow] = useState(true);
   const [mapMode, setMapMode] = useState(0);
+  const mapModeRef = useRef(0);
+  useEffect(() => { mapModeRef.current = mapMode; }, [mapMode]);
 
   useEffect(() => { globeMeshRef.current?.setSatMap(satMap); }, [satMap]);
   useEffect(() => { globeMeshRef.current?.setExaggeration(exaggeration); }, [exaggeration]);
@@ -453,7 +455,7 @@ export default function App() {
     let cancelled = false;
     const tick = () => {
       if (cancelled || !playingRef.current) return;
-      invoke<PlanetSnapshot>("step_planet", { nSteps: speedRef.current })
+      invoke<PlanetSnapshot>("step_planet", { nSteps: speedRef.current, wantClimateDebug: mapModeRef.current !== 0 })
         .then((snap) => {
           if (cancelled || !playingRef.current) return;
           setSnapshot(snap);
@@ -809,7 +811,7 @@ export default function App() {
         ? heightPainterRef.current.toDraftFields()
         : { painted_elevations: [], painted_mask: [] };
       const finalDraft: WizardDraft = { ...draft, ...paintedFields };
-      const snap = await invoke<PlanetSnapshot>("bake_from_wizard", { draft: finalDraft });
+      const snap = await invoke<PlanetSnapshot>("bake_from_wizard", { draft: finalDraft, wantClimateDebug: mapModeRef.current !== 0 });
       setSnapshot(snap);
       // After bake → land on the Boundaries phase (the next step in the
       // wizard sequence). User clicks Next/Start to advance to densities

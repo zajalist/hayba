@@ -198,10 +198,11 @@ pub fn roll_seed() -> u64 {
 #[tauri::command]
 pub fn bake_from_wizard(
     draft: WizardDraft,
+    want_climate_debug: bool,
     sim: State<'_, ManagedSim>,
 ) -> PlanetSnapshot {
     let model = bake_model(&draft);
-    let snap = snapshot_model(&model, draft.divisions, true);
+    let snap = snapshot_model(&model, draft.divisions, want_climate_debug);
     let mut guard = sim.0.lock().expect("sim mutex poisoned");
     *guard = Some(SimState {
         model,
@@ -215,6 +216,7 @@ pub fn bake_from_wizard(
 #[tauri::command]
 pub fn step_planet(
     n_steps: u32,
+    want_climate_debug: bool,
     sim: State<'_, ManagedSim>,
 ) -> Result<PlanetSnapshot, String> {
     let mut guard = sim.0.lock().map_err(|_| "sim mutex poisoned".to_string())?;
@@ -222,7 +224,7 @@ pub fn step_planet(
     for _ in 0..n_steps {
         state.model.step(state.dt_ma);
     }
-    Ok(snapshot_model(&state.model, state.divisions, true))
+    Ok(snapshot_model(&state.model, state.divisions, want_climate_debug))
 }
 
 /// Drop the persisted model — called on edit-wizard / new bake.
