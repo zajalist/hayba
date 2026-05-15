@@ -558,14 +558,14 @@ export default function App() {
     return () => canvas.removeEventListener("pointerdown", onPointer);
   }, [mode]);
 
-  // Height-painter lifecycle. When the user enters the paint-heights category
+  // Height-painter lifecycle. When the user is in the compose panel pre-bake
   // during wizard mode, lazily build the adjacency list + painter mesh and
   // swap it in for the point-cloud globe. On leave, restore the globe and
   // tear down the GL resources. Painter state itself persists across visits.
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
-    const active = panelCategory === "paint-heights" && mode === "wizard";
+    const active = panelCategory === "compose" && mode === "wizard";
 
     if (!active) {
       if (painterMeshRef.current) {
@@ -636,10 +636,10 @@ export default function App() {
     };
   }, [panelCategory, mode, draft?.divisions]);
 
-  // Height-painter pointer interactions. Gated on the paint-heights category
+  // Height-painter pointer interactions. Gated on the compose panel pre-bake
   // in wizard mode. Shift inverts raise<->lower.
   useEffect(() => {
-    if (panelCategory !== "paint-heights" || mode !== "wizard") return;
+    if (panelCategory !== "compose" || mode !== "wizard") return;
     const scene = sceneRef.current;
     if (!scene) return;
     const canvas = scene.canvas;
@@ -907,18 +907,16 @@ export default function App() {
 
   // Category gating
   const categoryEnabled: Record<PanelCategory, boolean> = {
-    compose:         true,
-    "paint-heights": mode === "wizard",
-    boundaries:      mode === "boundaries" || mode === "densities" || mode === "simulating",
-    densities:       mode === "densities" || mode === "simulating",
-    simulate:        mode === "simulating",
-    settings:        true,
+    compose:    true,
+    boundaries: mode === "boundaries" || mode === "densities" || mode === "simulating",
+    densities:  mode === "densities" || mode === "simulating",
+    simulate:   mode === "simulating",
+    settings:   true,
   };
   const categoryDisabledReason: Partial<Record<PanelCategory, string>> = {
     boundaries: "Bake the planet to edit boundaries",
     densities:  "Complete boundaries to rank densities",
     simulate:   "Start the simulation from the Densities panel",
-    "paint-heights": "Available before baking",
   };
 
   // Auto-promote panel category when mode changes
@@ -988,55 +986,58 @@ export default function App() {
         onPick={setPanelCategory}
       >
         {panelCategory === "compose" && draft && (
-          <ComposePanel
-            draft={draft}
-            busy={mode === "baking"}
-            onChangeDivisions={handleChangeDivisions}
-            onChangePreset={handleChangePreset}
-            onReroll={handleReroll}
-            onBake={handleBake}
-          />
-        )}
-
-        {panelCategory === "paint-heights" && draft && (
-          <HeightPaintPanel
-            brush={paintBrush}
-            paintedCount={paintedCount}
-            canUndo={canUndo}
-            canRedo={canRedo}
-            onChangeBrush={setPaintBrush}
-            onUndo={() => {
-              const p = heightPainterRef.current;
-              if (p?.undo()) {
-                painterMeshRef.current?.syncFromPainter(p);
-                setCanUndo(p.undoCount() > 0);
-                setCanRedo(true);
-                setPaintedCount(p.countTouched());
-              }
-            }}
-            onRedo={() => {
-              const p = heightPainterRef.current;
-              if (p?.redo()) {
-                painterMeshRef.current?.syncFromPainter(p);
-                setCanUndo(true);
-                setCanRedo(p.redoCount() > 0);
-                setPaintedCount(p.countTouched());
-              }
-            }}
-            onReset={() => {
-              if (!window.confirm("Reset all painted heights?")) return;
-              const p = heightPainterRef.current;
-              if (p) {
-                p.reset();
-                painterMeshRef.current?.syncFromPainter(p);
-              }
-              setCanUndo(false);
-              setCanRedo(false);
-              setPaintedCount(0);
-            }}
-            onBack={() => setPanelCategory("compose")}
-            onNext={() => setPanelCategory("compose")}
-          />
+          <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+            <div style={{ flex: "0 0 auto" }}>
+              <ComposePanel
+                draft={draft}
+                busy={mode === "baking"}
+                onChangeDivisions={handleChangeDivisions}
+                onChangePreset={handleChangePreset}
+                onReroll={handleReroll}
+                onBake={handleBake}
+              />
+            </div>
+            <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+              <HeightPaintPanel
+                brush={paintBrush}
+                paintedCount={paintedCount}
+                canUndo={canUndo}
+                canRedo={canRedo}
+                onChangeBrush={setPaintBrush}
+                onUndo={() => {
+                  const p = heightPainterRef.current;
+                  if (p?.undo()) {
+                    painterMeshRef.current?.syncFromPainter(p);
+                    setCanUndo(p.undoCount() > 0);
+                    setCanRedo(true);
+                    setPaintedCount(p.countTouched());
+                  }
+                }}
+                onRedo={() => {
+                  const p = heightPainterRef.current;
+                  if (p?.redo()) {
+                    painterMeshRef.current?.syncFromPainter(p);
+                    setCanUndo(true);
+                    setCanRedo(p.redoCount() > 0);
+                    setPaintedCount(p.countTouched());
+                  }
+                }}
+                onReset={() => {
+                  if (!window.confirm("Reset all painted heights?")) return;
+                  const p = heightPainterRef.current;
+                  if (p) {
+                    p.reset();
+                    painterMeshRef.current?.syncFromPainter(p);
+                  }
+                  setCanUndo(false);
+                  setCanRedo(false);
+                  setPaintedCount(0);
+                }}
+                onBack={() => { /* no-op — paint heights lives inside compose now */ }}
+                onNext={() => { /* no-op — paint heights lives inside compose now */ }}
+              />
+            </div>
+          </div>
         )}
 
         {panelCategory === "boundaries" && snapshot && draft && (
