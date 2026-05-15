@@ -40,9 +40,6 @@ export function buildGlobeMesh(
     "elevation", "slope", "plateId", "continental", "isBoundary",
     "collisionKind", "subductionProgress", "orogenicUplift",
     "volcanicIntensity", "morAgeSteps", "crustAge",
-    "biome", "temperature", "precip",
-    "insolation", "baseTemp", "distToOcean",
-    "currentDt", "orographic", "continentalDry",
   ] as const;
 
   const attrs: Record<string, Float32Array> = {};
@@ -51,6 +48,18 @@ export function buildGlobeMesh(
     attrs[name] = buf;
     geom.setAttribute(name, new THREE.BufferAttribute(buf, 1));
   }
+
+  // WebGL caps vertex attributes at 16. The 9 climate fields are PACKED
+  // into 3 vec4 attributes (3 slots, not 9) to stay under the limit:
+  //   aClim0 = (biome, temperature, precip, insolation)
+  //   aClim1 = (baseTemp, distToOcean, currentDt, orographic)
+  //   aClim2 = (continentalDry, _, _, _)
+  const clim0 = new Float32Array(n * 4);
+  const clim1 = new Float32Array(n * 4);
+  const clim2 = new Float32Array(n * 4);
+  geom.setAttribute("aClim0", new THREE.BufferAttribute(clim0, 4));
+  geom.setAttribute("aClim1", new THREE.BufferAttribute(clim1, 4));
+  geom.setAttribute("aClim2", new THREE.BufferAttribute(clim2, 4));
 
   // Default to a temperate/humid SatMap if available, otherwise the first
   // SatMap discovered in the library. App.tsx calls setSatMap() immediately
@@ -118,20 +127,27 @@ export function buildGlobeMesh(
     attrs.volcanicIntensity.set(snap.cell_volcanic_intensity);
     attrs.morAgeSteps.set(snap.cell_mor_age_steps);
     attrs.crustAge.set(snap.cell_age_ma);
-    attrs.biome.set(snap.cell_biome);
-    attrs.temperature.set(snap.cell_temperature);
-    attrs.precip.set(snap.cell_precip);
     const cd = snap.climate_debug;
-    const z = new Float32Array(n);
-    attrs.insolation.set(cd.insolation.length ? cd.insolation : z);
-    attrs.baseTemp.set(cd.base_temp.length ? cd.base_temp : z);
-    attrs.distToOcean.set(cd.dist_to_ocean.length ? cd.dist_to_ocean : z);
-    attrs.currentDt.set(cd.current_dt.length ? cd.current_dt : z);
-    attrs.orographic.set(cd.orographic.length ? cd.orographic : z);
-    attrs.continentalDry.set(cd.continental_dry.length ? cd.continental_dry : z);
+    const has = cd.insolation.length === n;
+    const bm = snap.cell_biome, tp = snap.cell_temperature, pr = snap.cell_precip;
+    for (let i = 0; i < n; i++) {
+      const j = i * 4;
+      clim0[j]     = bm[i];
+      clim0[j + 1] = tp[i];
+      clim0[j + 2] = pr[i];
+      clim0[j + 3] = has ? cd.insolation[i]   : 0;
+      clim1[j]     = has ? cd.base_temp[i]     : 0;
+      clim1[j + 1] = has ? cd.dist_to_ocean[i] : 0;
+      clim1[j + 2] = has ? cd.current_dt[i]    : 0;
+      clim1[j + 3] = has ? cd.orographic[i]    : 0;
+      clim2[j]     = has ? cd.continental_dry[i] : 0;
+    }
     for (const name of attrNames) {
       (geom.getAttribute(name) as THREE.BufferAttribute).needsUpdate = true;
     }
+    (geom.getAttribute("aClim0") as THREE.BufferAttribute).needsUpdate = true;
+    (geom.getAttribute("aClim1") as THREE.BufferAttribute).needsUpdate = true;
+    (geom.getAttribute("aClim2") as THREE.BufferAttribute).needsUpdate = true;
   };
   updateFromSnapshot(initialSnap);
 
