@@ -477,7 +477,10 @@ export const FRAGMENT_SHADER = /* glsl */ `
       // Warmer + TIGHT window so polar sea ice meets the land ice with no
       // dark ocean moat between, and the edge is crisp (ragged coldC gives
       // the organic shape) — not a wide cloudy fade. Then saturate.
-      float seaIce = 1.0 - smoothstep(-4.0, -1.0, coldC);
+      // Generous WARM threshold: the moat is polar ocean a few °C warmer
+      // than the land-cap threshold, so it never froze. Freeze it wherever
+      // it's near/below 0 °C → ocean ring fills, no dark moat. Crisp edge.
+      float seaIce = 1.0 - smoothstep(-1.0, 4.0, coldC);
       seaIce = smoothstep(0.25, 0.60, seaIce);
       water = mix(water,
                   vec3(0.93, 0.95, 0.96) * (0.94 + 0.07 * fbm(vSeed * 26.0)),
@@ -503,13 +506,16 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // the polar sea ice are CONTINUOUS (no dark ocean moat) with a crisp
     // organic edge instead of a wide cloudy fade.
     float polarCap   = smoothstep(0.25, 0.60, 1.0 - smoothstep(-4.0, -1.0, coldC));
+    // SATURATE the marginal/continent snow too — it was a smooth product of
+    // smooth ramps → the cloudy mainland snow & mushy glacier↔land seam.
+    // ragged coldC still gives the organic shape; the edge is crisp now.
     float marginal   = snowAccum * slopeKeep * precipKeep;
-    float snowCover  = max(polarCap, marginal) * land;
-    // In the cold region, whatever snow does NOT cover is exposed ALPINE
-    // ROCK (the rock SatMap) — never the dark continent biome (that was the
-    // dark-brown bug). Rock first, snow on top → a real snowcap.
-    float rockExpose = snowAccum * land * (1.0 - slopeKeep * precipKeep);
-    albedo = mix(albedo, rock, rockExpose * 0.92);
+    float snowCover  = smoothstep(0.40, 0.55, max(polarCap, marginal)) * land;
+    // Exposed ALPINE ROCK (the discretized rock SatMap) where snow does not
+    // cover the cold region — SATURATED so the glacier→rock→land transition
+    // is crisp/discrete, never a smooth grey mush. Never the dark biome.
+    float rockExpose = smoothstep(0.40, 0.55, snowAccum * (1.0 - slopeKeep * precipKeep)) * land;
+    albedo = mix(albedo, rock, rockExpose);
     // Cool off-white snow (NOT vec3(1) — clips in the no-tonemap linear
     // pipeline). Faint cell-stable shade so the cap body isn't flat.
     // Bright near-white ice (user wants white, not grey). Faint shade only.
