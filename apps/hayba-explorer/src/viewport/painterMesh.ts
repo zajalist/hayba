@@ -22,6 +22,7 @@ varying vec3 vNormalW;
 uniform vec3 uSunDir;
 
 vec3 heightRamp(float e) {
+  vec3 abyss   = vec3(0.012, 0.055, 0.150);
   vec3 deep    = vec3(0.039, 0.180, 0.361);
   vec3 shallow = vec3(0.290, 0.565, 0.784);
   vec3 beach   = vec3(0.784, 0.722, 0.604);
@@ -29,7 +30,7 @@ vec3 heightRamp(float e) {
   vec3 high    = vec3(0.541, 0.416, 0.227);
   vec3 snow    = vec3(1.000, 1.000, 1.000);
 
-  if (e < -0.4) return deep;
+  if (e < -0.4) return mix(abyss, deep, clamp((e + 1.0) / 0.6, 0.0, 1.0));
   if (e < 0.0)  return mix(deep, shallow, (e + 0.4) / 0.4);
   if (e < 0.05) return mix(shallow, beach, e / 0.05);
   if (e < 0.3)  return mix(beach, low, (e - 0.05) / 0.25);
