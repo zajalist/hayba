@@ -280,6 +280,18 @@ export const FRAGMENT_SHADER = /* glsl */ `
     float fbmFine   = fbm(vWorldNormal *  28.0);   // textural breakup
     float fbmHigh   = fbm(vWorldNormal *  90.0);   // edge-soft noise
 
+    // Sub-cell spatial fractal: breaks the per-cell tessellation on every
+    // mask edge. World-space (varies within a triangle) — interiors are
+    // smoothstep-saturated so only transition bands move (no interior crawl).
+    vec3  wpf   = normalize(vWorldPos);
+    float warpA = fbm(wpf * 18.0);
+    float warpB = fbm(wpf * 42.0 + 11.3);
+    float edgeJ = (warpA - 0.5) * 0.65 + (warpB - 0.5) * 0.35; // ~[-0.5,0.5]
+    vec3  wWarp = (vec3(fbm(wpf*9.0), fbm(wpf*9.0+7.1), fbm(wpf*9.0+19.7)) - 0.5);
+    // The Smoothing slider also widens de-hexing: scale every perturbation
+    // (and its matching smoothstep window) by this so they stay paired.
+    float jScale = mix(1.0, 1.6, uTextureSmooth);
+
     // elevField is kept ONLY for downstream elevation-legitimate masks
     // (beach band, coastline). It must NOT drive base albedo — that is the
     // bullseye bug (smooth radial elevation → concentric colour contours).
@@ -304,15 +316,24 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // sit lower in the palette, uplands higher.
     float elevTerm = clamp(max(vElevation, 0.0) * 1.4, 0.0, 1.0);
     float macro    = fbm(vSeed * 3.0 + cwarp * 1.2);
+    // Fold a little SPATIAL edgeJ into the within-biome band: where a true
+    // crossfade is impossible (neighbour cells differ in vBiome, blend≈0)
+    // this organic variation keeps adjacent same-biome cells from reading
+    // as flat polygons, visually burying the facet. Amplitude 0.05 ≪ the
+    // band's [0.06,0.94] working range → only a gentle tonal wobble.
     float band     = clamp(0.42 * macro + 0.34 * elevTerm
-                         + 0.24 * clamp(vPrecip, 0.0, 1.0), 0.06, 0.94);
+                         + 0.24 * clamp(vPrecip, 0.0, 1.0)
+                         + edgeJ * 0.05 * jScale, 0.06, 0.94);
     // Stochastic scatter: COHERENT mid-frequency FBM (no per-fragment hash —
     // that read as standout single-pixel static). Two octaves give larger
     // "pixel" blobs that still break the 1-D ramp into a contour-free
     // intermixed pattern, but at a believable macro feature size.
     float sMul = mix(1.0, 0.45, clamp(uTextureSmooth, 0.0, 1.0));
     float scatter  = (fbm(vSeed * 45.0)  - 0.5) * 0.26 * mix(1.0, 0.75, uTextureSmooth)
-                   + (fbm(vSeed * 130.0) - 0.5) * 0.12 * sMul;
+                   + (fbm(vSeed * 130.0) - 0.5) * 0.12 * sMul
+    // Spatial component (varies within a cell) so same-biome neighbours are
+    // not uniformly flat across the polygon seam. 0.06 ≪ the 0.26 cell term.
+                   + edgeJ * 0.06 * jScale;
     float hLand = clamp(band + scatter, 0.02, 0.98);
     // Ice: tight bright band, still scattered so it isn't a flat sheet.
     float hIce  = clamp(0.34 + scatter * 0.5, 0.02, 0.98);
@@ -322,9 +343,13 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // The raw per-cell blend meets neighbours on a hard hex facet edge;
     // dissolve it with cell-stable fbm so the two biomes interleave across
     // a widened, organic transition band instead of a straight polygon line.
+    // bdith is now SPATIAL (edgeJ, sub-cell) not vSeed (cell-constant), so
+    // the blend boundary dissolves across the polygon edge instead of
+    // snapping to it. Window is the full [0,1] smoothstep; amplitude is
+    // |edgeJ|·0.95·1.6 ≈ 0.76 max < 1.0 window → widened, no clip-dither.
     float bmix   = clamp(vBiomeBlend * 2.0, 0.0, 1.0);
-    float bdith  = fbm(vSeed * 16.0) - 0.5;
-    bmix = smoothstep(0.0, 1.0, clamp(bmix + bdith * mix(0.55, 0.95, uTextureSmooth), 0.0, 1.0));
+    float bdith  = edgeJ;
+    bmix = smoothstep(0.0, 1.0, clamp(bmix + bdith * mix(0.55, 0.95, uTextureSmooth) * jScale, 0.0, 1.0));
     vec3 base = mix(
       sampleBiome(vBiome,  remapBiomeH(vBiome,  hLand, hIce)),
       sampleBiome(vBiome2, remapBiomeH(vBiome2, hLand, hIce)),
@@ -333,10 +358,21 @@ export const FRAGMENT_SHADER = /* glsl */ `
     vec3 rock = sampleGradient(uSatMapRock, clamp(band * 1.1 + scatter, 0.04, 0.96));
 
     // Slope rock mask — smoothstep + fwidth anti-aliasing per Gemini.
-    // Threshold around ~0.55 (≈ 33° incline); biome-dependent in a future v3.
-    float slopeWithNoise = vSlope + (fbmHigh - 0.5) * 0.18;
+    // Threshold raised to ~0.60 (≈ 36° incline) so only genuinely steep
+    // interior terrain gets rock; biome-dependent in a future v3.
+    // Perturb with SPATIAL edgeJ (sub-cell) so the rock band dissolves the
+    // hex facet; fwidth still drives the AA window so it never dithers.
+    // window ≈ (0.74-0.60)=0.14 + 2·sw ; amplitude |edgeJ|·0.18·1.6 ≈ 0.14
+    // max — paired to the window (no dither), softer than a hard band.
+    float slopeWithNoise = vSlope + edgeJ * 0.18 * jScale;
     float sw = max(fwidth(slopeWithNoise), 0.001);
-    float rockMask = smoothstep(0.55 - sw, 0.70 + sw, slopeWithNoise);
+    float rockMask = smoothstep(0.60 - sw, 0.74 + sw, slopeWithNoise);
+    // Suppress the thick coastal rock band: vSlope spikes at the land/sea
+    // elevation step, so gate rock out where land is barely above sea level
+    // (elevField is the organic, sub-cell-perturbed elevation coordinate).
+    // window 0.06, no extra perturbation added (elevField already carries
+    // fbm) → soft, no dither.
+    rockMask *= smoothstep(0.0, 0.06, elevField);
     vec3  albedo   = mix(base, rock, rockMask);
 
     // ── Beach mask: low elevation × gentle slope, tight band near 0 ─────
@@ -347,31 +383,65 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // climate filter. Only DRY (low-precip) coasts get sand; wet/temperate
     // lowlands keep their biome vegetation (mangrove/jungle/marsh come
     // from the biome SatMap, not bare sand).
-    float beachH   = 1.0 - smoothstep(0.0, 0.05, elevField);
+    // Perturb the sand line with SPATIAL edgeJ so it is an organic shore
+    // band, not a hex ring. window 0.05·jScale, amplitude |edgeJ|·0.022·
+    // jScale ≈ 0.018·jScale < window → soft, no dither.
+    float beachCoord = elevField + edgeJ * 0.022 * jScale;
+    float beachH   = 1.0 - smoothstep(0.0, 0.05 * jScale, beachCoord);
     float flatness = 1.0 - smoothstep(0.0, 0.12, vSlope);
     float aridity  = 1.0 - smoothstep(0.16, 0.42, vPrecip);   // 1 = arid, 0 = wet
     float beach    = clamp(beachH * flatness * aridity * step(0.0, vElevation), 0.0, 1.0);
     albedo = mix(albedo, vec3(0.34, 0.27, 0.16), beach * 0.5);
 
-    // Tibet-style high plateau: tall, non-polar ground reads as bright warm
-    // ochre high-desert rather than dark brown (snow still added later by
-    // the ice override for the genuinely frozen peaks).
-    float tibetH    = smoothstep(0.42, 0.74, vElevation);
-    float nonPolar  = smoothstep(-4.0, 8.0, vTemperature);
-    float tibetMask = tibetH * nonPolar;
-    vec3  tibetCol  = vec3(0.40, 0.33, 0.22) * (0.92 + scatter * 0.5);
-    albedo = mix(albedo, tibetCol, tibetMask * 0.7);
+    // ── Shared cold field (drives the 3-stage snow/rock/continent gradient
+    //    AND gates the Tibet tone, so they are concentric — never a ring).
+    // One temperature coordinate, SPATIALLY perturbed by edgeJ in °C so all
+    // three boundaries are organic (no clean ring / hex). Replaces the old
+    // per-mask world-normal fbm that double-patterned the cap edge.
+    float coldC      = vTemperature + edgeJ * 5.0 * jScale;   // ~±8°C jitter
+    // Stage 1 — exposed alpine substrate: as it gets cold, vegetation gives
+    // way to bare rock. WIDE window (10°C ≫ ~8°C jitter → soft, no dither).
+    float substrateA = 1.0 - smoothstep(-2.0, 8.0, coldC);
+    // Stage 2 — snow on top of that substrate: a SEPARATE, colder, also-
+    // perturbed threshold. WIDE window (10°C ≫ jitter → feathered).
+    float snowA      = 1.0 - smoothstep(-12.0, -2.0, coldC);
+
+    // Tibet-style high plateau: tall, non-polar ground reads as warm ochre
+    // high-desert. (a) inputs jittered by edgeJ so it is not a hex/ring;
+    // (b) gated OUT under the alpine substrate so it never forms a grey
+    // halo between snow and continent; (c) lower max opacity + warmer tone
+    // so it blends continuously into the surrounding continent.
+    // tibetH window 0.32 ≫ amplitude |edgeJ|·0.05·jScale ≈ 0.05 → no dither.
+    float tibetH    = smoothstep(0.42, 0.74, vElevation + edgeJ * 0.05 * jScale);
+    // nonPolar window 12°C ≫ |edgeJ|·5·jScale ≈ 8°C jitter (shared coldC).
+    float nonPolar  = smoothstep(-4.0, 8.0, coldC);
+    float tibetMask = tibetH * nonPolar * (1.0 - substrateA);
+    vec3  tibetCol  = vec3(0.44, 0.36, 0.24) * (0.92 + scatter * 0.5); // warmer
+    albedo = mix(albedo, tibetCol, tibetMask * 0.5);                    // lower
 
     // ── G.7 steps 4+5: Beer-Lambert ocean + fwidth-AA organic coast ──────
     // Coastline: domain-warp the INPUT coordinate (organic fingers), then
     // size the mask transition to fwidth() so it is exactly one-pixel-wide
     // at any zoom (no dither — the old failure was noise amplitude ≈ the
     // fixed smoothstep window). Noise amplitude is kept ≪ the window.
-    vec3 coastWarp = vWorldNormal + (vec3(
-        fbm(vWorldNormal * 14.0),
-        fbm(vWorldNormal * 14.0 + 31.7),
-        fbm(vWorldNormal * 14.0 + 67.1)) - 0.5) * 0.05;
-    float seaCoord = vElevation + (fbm(coastWarp * 9.0) - 0.5) * 0.03;
+    // Domain-warp the coast coordinate with the SPATIAL wWarp (sub-cell) at
+    // a meaningful amplitude so the shoreline grows organic fingers/inlets
+    // that cross the polygon seam instead of tracing it. Two octaves: a
+    // coarse coast warp (0.06) + a finer one (0.03) for sub-cell detail.
+    vec3 coastWarp = vWorldNormal
+        + wWarp * 0.06 * jScale
+        + (vec3(
+            fbm(vWorldNormal * 14.0),
+            fbm(vWorldNormal * 14.0 + 31.7),
+            fbm(vWorldNormal * 14.0 + 67.1)) - 0.5) * 0.05;
+    // seaCoord carries the spatial edgeJ (0.05) + its own coarse & fine
+    // shoreline noise. The smoothstep window is fwidth()-sized (exactly
+    // one pixel) so the mask itself never dithers — the organic edge comes
+    // entirely from warping the INPUT, not from widening the window.
+    float seaCoord = vElevation
+                   + edgeJ * 0.05 * jScale
+                   + (fbm(coastWarp *  9.0) - 0.5) * 0.03
+                   + (fbm(coastWarp * 23.0) - 0.5) * 0.02;
     float coastWidth = max(fwidth(seaCoord), 0.0025);
     float oceanMask  = 1.0 - smoothstep(-coastWidth, coastWidth, seaCoord);
 
@@ -411,34 +481,31 @@ export const FRAGMENT_SHADER = /* glsl */ `
       albedo = mix(albedo, water, oceanMask);
     }
 
-    // ── Snow line: tight, decoupled from the SatMap noise field ─────────
-    // Earth-realistic: base 30°C equator, ~6°C/km lapse, ~32°C cooling
-    // equator-to-pole. The noise band on temperature is small so the
-    // snow line stays a clear latitudinal feature; the SatMap noise stays
-    // out of this calc to prevent random snow patches in temperate zones.
-    // (step 2: latNoisy removed; reuse the climate temperature field.
-    //  Full physically-based snow mask is step 6.)
-    // LOW-freq edge perturbation only (was high-freq fbmFine → fine grey
-    // blotch). The snow LINE stays organic; the cap INTERIOR is solid.
-    float tempLand = vTemperature;
-
-    // Ice cap: OVERRIDE the marbled polar SatMap entirely with smooth
-    // near-white ice. The previous attempt only desaturated the SatMap,
-    // so its high-contrast rock/ice pattern (sampled via fine-detail h)
-    // still showed → the 50/50 grey/white mottle. Real Earth ice is
-    // smooth white with gentle LOW-FREQUENCY cool shadow, plus bare rock
-    // only at the very fringe (handled by the soft edge of iceCap).
-    // Snowline must be RAGGED and follow terrain, not a smooth white
-    // amoeba on a mountain. Perturb the temperature threshold with mid-
-    // frequency noise (±3°C) so the ice edge is organic; only the
-    // genuinely frozen core (polar / very high alpine) goes solid, and
-    // even then it is mix'd, not a hard override → no white blob.
-    float frostT  = tempLand + (fbm(vWorldNormal * 22.0) - 0.5) * 6.0;
-    float coldness = (1.0 - smoothstep(-10.0, 2.0, frostT)) * (1.0 - oceanMask);
-    float iceCap   = smoothstep(0.30, 0.85, coldness);
+    // ── 3-stage snow / rock / continent gradient ────────────────────────
+    // The old code had ONE hard ice override (iceCap*0.92) that snapped to
+    // a clean grey ring against the continent → fake-looking. Replace with
+    // THREE soft, CONCENTRIC bands that share the SAME perturbed cold
+    // coordinate (coldC / substrateA / snowA, computed once up top), so
+    // there is no seam or gap between them:
+    //   vegetation  →  exposed alpine rock  →  snow
+    // Every boundary is jittered by edgeJ (folded into coldC) so none is a
+    // clean ring or hex. Land-gated here (substrate/snow never on ocean).
+    float land      = 1.0 - oceanMask;
+    // Stage 1: blend the biome albedo toward desaturated alpine rock as the
+    // ground gets cold-exposed. WIDE: substrateA already a 10°C smoothstep
+    // (≫ ~8°C edgeJ jitter) → feathered, no dither. Capped < 1 so it never
+    // fully erases the biome (keeps a continuous tonal handoff).
+    vec3  alpineRock = vec3(0.22, 0.20, 0.18) * (0.95 + scatter * 0.4);
+    float substrate  = substrateA * land;
+    albedo = mix(albedo, alpineRock, substrate * 0.85);
+    // Stage 2: snow feathers ON TOP of that substrate over the SEPARATE,
+    // colder snowA threshold (also a 10°C window ≫ jitter → soft). Because
+    // snowA shares coldC with substrateA the two bands are concentric:
+    // snow → rock → vegetation with NO border. Gentle low-freq cool shade.
     float iceShade = 0.88 + 0.12 * fbm(vWorldNormal * 9.0);
     vec3  iceColor = vec3(0.92, 0.94, 0.97) * iceShade;
-    albedo = mix(albedo, iceColor, iceCap * 0.92);
+    float snow     = snowA * land;
+    albedo = mix(albedo, iceColor, snow);
 
     // ── Pink seam highlight (unassigned boundaries) ──────────────────────
     if (vIsBoundary > 0.5 && vCollisionKind < 0.5) {
