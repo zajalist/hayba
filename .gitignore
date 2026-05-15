@@ -8,6 +8,9 @@ Intermediate/
 Saved/
 .vercel/
 .worktrees/
+__pycache__/
+*.pyc
+tools/derive_satmaps/cache/
 
 # Gaea / terrain feature surface is parked. Keep on disk for the maintainer
 # but do not redistribute. Will return when the worldbuilding-hub roadmap
