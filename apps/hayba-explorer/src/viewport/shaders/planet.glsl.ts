@@ -326,19 +326,17 @@ export const FRAGMENT_SHADER = /* glsl */ `
                    - abs(vWorldNormal.y) * 32.0
                    + (fbmCoarse - 0.5) * 4.0;
 
-    // Polarness: 1 deep-cold .. 0 warm. Before laying snow, gently
-    // desaturate + cool-lift the underlying polar SatMap so any sub-full
-    // coverage reads as a SUBTLE cool grey, not harsh dark-grey blotches
-    // (matches real Earth ice: smooth white + faint cool shadow).
-    float polarness = (1.0 - smoothstep(-2.0, 14.0, tempLand)) * (1.0 - oceanMask);
-    float bl = dot(albedo, vec3(0.299, 0.587, 0.114));
-    vec3  gentleIce = vec3(bl) * 1.18 + vec3(0.015, 0.025, 0.045);
-    albedo = mix(albedo, mix(albedo, gentleIce, 0.65), polarness);
-
-    // Snow: solid interior (no 0.95 cap), organic low-freq edge. Slightly
-    // cool near-white.
-    float snowMask = (1.0 - smoothstep(-1.0, 7.0, tempLand)) * (1.0 - oceanMask);
-    albedo = mix(albedo, vec3(0.95, 0.96, 0.97), snowMask);
+    // Ice cap: OVERRIDE the marbled polar SatMap entirely with smooth
+    // near-white ice. The previous attempt only desaturated the SatMap,
+    // so its high-contrast rock/ice pattern (sampled via fine-detail h)
+    // still showed → the 50/50 grey/white mottle. Real Earth ice is
+    // smooth white with gentle LOW-FREQUENCY cool shadow, plus bare rock
+    // only at the very fringe (handled by the soft edge of iceCap).
+    float coldness = (1.0 - smoothstep(-1.0, 12.0, tempLand)) * (1.0 - oceanMask);
+    float iceCap   = smoothstep(0.32, 0.72, coldness);   // solid core, soft fringe → terrain
+    float iceShade = 0.90 + 0.10 * fbm(vWorldNormal * 5.0); // gentle, broad, low-contrast
+    vec3  iceColor = vec3(0.90, 0.93, 0.97) * iceShade;     // slightly cool (B>G>R)
+    albedo = mix(albedo, iceColor, iceCap);
 
     // ── Pink seam highlight (unassigned boundaries) ──────────────────────
     if (vIsBoundary > 0.5 && vCollisionKind < 0.5) {
