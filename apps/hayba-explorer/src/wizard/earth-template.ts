@@ -246,12 +246,17 @@ export function earthElevations(positions: Float32Array, n: number): Float32Arra
 // `earthElevations`. Use this for real geography; fall back to the analytic
 // generator if the asset fails to load.
 const EARTH_HEIGHTMAP_URL = "/earth-heightmap.png";
-// Luminance < SEA_GRAY = ocean (mapped negative, deeper where darker);
-// >= SEA_GRAY = land (0..LAND_GAIN). Tuned to this source: ocean ≈ 0.18–0.34,
-// land ≈ 0.56–0.93 grey. Adjust if the bundled map is replaced.
-const SEA_GRAY = 0.4;
-const LAND_GAIN = 0.95;
-const LAND_FLOOR = 0.04;
+// This is an ETOPO-style FULL-RANGE DEM: grey is ~linear in metres from
+// deep ocean to Everest, so sea level sits where the LOWEST land begins —
+// measured on this map at grey ≈ 0.55 (ocean ≤ ~0.29; lowest land — Amazon
+// 0.565, Greenland 0.561, France 0.604). Below SEA_GRAY = ocean (negative,
+// deeper where darker); at/above = land. A power curve (LAND_EXP) keeps
+// low land genuinely low so mid-latitude continents don't get inflated to
+// km-high terrain and then frozen by the lapse rate. Tune if the map is
+// replaced.
+const SEA_GRAY = 0.52;
+const LAND_GAIN = 0.85;
+const LAND_EXP = 1.6;
 
 export async function earthElevationsFromImage(
   positions: Float32Array,
@@ -307,8 +312,8 @@ export async function earthElevationsFromImage(
     const L = lum(u * W, v * H);
     let elev: number;
     if (L >= SEA_GRAY) {
-      elev =
-        LAND_FLOOR + ((L - SEA_GRAY) / (1 - SEA_GRAY)) * (LAND_GAIN - LAND_FLOOR);
+      const landN = (L - SEA_GRAY) / (1 - SEA_GRAY); // 0 coast .. 1 peak
+      elev = Math.pow(landN, LAND_EXP) * LAND_GAIN; // low land stays low
     } else {
       elev = -((SEA_GRAY - L) / SEA_GRAY);
     }
