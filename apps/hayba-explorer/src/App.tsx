@@ -234,6 +234,11 @@ export default function App() {
     setBiomeAssignments((m) => ({ ...m, [bi]: name }));
     globeMeshRef.current?.setBiomeSatMap(bi, name);
   }, []);
+  const [biomeRemap, setBiomeRemap] = useState<Record<number, { min: number; max: number; bias: number }>>({});
+  const handleRemapBiome = useCallback((bi: number, r: { min: number; max: number; bias: number }) => {
+    setBiomeRemap((m) => ({ ...m, [bi]: r }));
+    globeMeshRef.current?.setBiomeRemap(bi, r.min, r.max, r.bias);
+  }, []);
   const [showPlateLabels, setShowPlateLabels] = useState(true);
   const [showForceArrows, setShowForceArrows] = useState(true);
 
@@ -1102,7 +1107,7 @@ export default function App() {
         )}
 
         {panelCategory === "texturing" && snapshot && (
-          <TexturingPanel assignments={biomeAssignments} onAssign={handleAssignBiome} />
+          <TexturingPanel assignments={biomeAssignments} remap={biomeRemap} onAssign={handleAssignBiome} onRemap={handleRemapBiome} />
         )}
 
         {panelCategory === "boundaries" && snapshot && draft && (

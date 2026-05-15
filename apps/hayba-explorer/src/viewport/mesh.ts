@@ -9,6 +9,8 @@ export interface GlobeMeshHandle {
   setSatMap(name: SatMapName): void;
   /** Reassign the SatMap for one biome slot (0..9). */
   setBiomeSatMap(biomeIndex: number, name: SatMapName): void;
+  /** Per-biome ramp remap. biomeIndex 0..9; min/max in 0..1, bias 0..1 (0.5 = identity). */
+  setBiomeRemap(biomeIndex: number, min: number, max: number, bias: number): void;
   setExaggeration(x: number): void;
   setShowPlateOutlines(v: boolean): void;
   setShowBoundaryGlow(v: boolean): void;
@@ -147,6 +149,10 @@ export function buildGlobeMesh(
     setBiomeSatMap: (biomeIndex, name) => {
       const key = "uBiome" + biomeIndex;
       if (mat.uniforms[key]) mat.uniforms[key].value = loadSatMap(name);
+    },
+    setBiomeRemap: (biomeIndex, min, max, bias) => {
+      const arr = mat.uniforms.uBiomeRemap?.value as THREE.Vector4[] | undefined;
+      if (arr && arr[biomeIndex]) arr[biomeIndex].set(min, max, bias, 0);
     },
     setExaggeration: (x) => { mat.uniforms.uExaggeration.value = x; },
     setShowPlateOutlines: (v) => { mat.uniforms.uShowPlateOutlines.value = v ? 1.0 : 0.0; },
