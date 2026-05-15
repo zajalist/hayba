@@ -201,9 +201,14 @@ pub fn bake_from_wizard(
     draft: WizardDraft,
     want_climate_debug: bool,
     climate_params: climate::ClimateParams,
+    erosion_params: Option<crate::hydrology::ErosionParams>,
     sim: State<'_, ManagedSim>,
 ) -> PlanetSnapshot {
-    let model = bake_model(&draft);
+    // Optional: the bake command must keep working before the frontend
+    // sends `erosionParams` (Plan A Task 9). A missing arg → None →
+    // default erosion (Tauri deserializes an absent command arg as None).
+    let erosion_params = erosion_params.unwrap_or_default();
+    let model = bake_impl(&draft, &erosion_params);
     let snap = snapshot_model(&model, draft.divisions, want_climate_debug, &climate_params);
     let mut guard = sim.0.lock().expect("sim mutex poisoned");
     *guard = Some(SimState {
@@ -468,7 +473,14 @@ fn omega_for_plate(plate_id: u32, seed: u64) -> Vec3 {
     Vec3::new(r1 as f32, r2 as f32, r3 as f32).normalize_or_zero() * 0.01
 }
 
-fn bake_model(draft: &WizardDraft) -> Model {
+/// Build the baked `Model` from a wizard draft: preset partition →
+/// continental brush/painter crust override → tectonic step loop →
+/// bake-phase fluvial erosion. The Tauri command and the tests both go
+/// through this one path so they cannot diverge.
+pub(crate) fn bake_impl(
+    draft: &WizardDraft,
+    erosion_params: &crate::hydrology::ErosionParams,
+) -> Model {
     let preset = image::load_from_memory(preset_bytes(&draft.preset))
         .expect("preset PNG should decode")
         .to_rgba8();
@@ -654,6 +666,24 @@ fn bake_model(draft: &WizardDraft) -> Model {
         model.step(draft.dt_ma);
     }
 
+    // ── Bake-phase fluvial erosion (coarse graph) ───────────────────────
+    let n_h = model.grid.n_fields() as usize;
+    let neighbours: Vec<Vec<u32>> =
+        (0..n_h as u32).map(|fid| model.grid.neighbours(fid).to_vec()).collect();
+    let pos: Vec<glam::Vec3> =
+        (0..n_h as u32).map(|fid| model.grid.position(fid)).collect();
+    let mut elev: Vec<f32> = (0..n_h).map(|i| model.fields[i].elevation).collect();
+    let is_ocean: Vec<bool> = elev.iter().map(|&e| e < 0.0).collect();
+    let cell_area = model.grid.field_area_km2();
+    crate::hydrology::erode(&neighbours, &pos, &mut elev, &is_ocean,
+                            cell_area, erosion_params);
+    for i in 0..n_h {
+        if let Some(f) = model.fields.get_mut(i) {
+            // fluvial only sculpts land; never moves a cell across sea level.
+            if !is_ocean[i] { f.elevation = elev[i].max(0.0); }
+        }
+    }
+
     let _ = n_cells;
     model
 }
@@ -668,8 +698,8 @@ pub fn get_grid_triangles(divisions: u32) -> Vec<u32> {
 }
 
 #[cfg(test)]
-pub fn bake_impl(draft: &WizardDraft) -> PlanetSnapshot {
-    let model = bake_model(draft);
+pub fn bake_snap(draft: &WizardDraft) -> PlanetSnapshot {
+    let model = bake_impl(draft, &crate::hydrology::ErosionParams::default());
     snapshot_model(&model, draft.divisions, false, &ClimateParams::default())
 }
 
@@ -694,7 +724,7 @@ mod tests {
 
     #[test]
     fn plates2_partitions_into_two_plates() {
-        let snap = bake_impl(&draft_for("plates2"));
+        let snap = bake_snap(&draft_for("plates2"));
         let mut ids: Vec<i32> = snap.cell_plate_ids.iter().copied().filter(|&p| p >= 0).collect();
         ids.sort();
         ids.dedup();
@@ -703,7 +733,7 @@ mod tests {
 
     #[test]
     fn plates4_partitions_into_about_four_plates() {
-        let snap = bake_impl(&draft_for("plates4"));
+        let snap = bake_snap(&draft_for("plates4"));
         let mut ids: Vec<i32> = snap.cell_plate_ids.iter().copied().filter(|&p| p >= 0).collect();
         ids.sort();
         ids.dedup();
@@ -715,7 +745,7 @@ mod tests {
     fn user_brush_wins_over_preset() {
         let mut draft = draft_for("plates2");
         draft.continental_cells = (0..200).collect();
-        let snap = bake_impl(&draft);
+        let snap = bake_snap(&draft);
         let cont: u32 = snap.cell_continental.iter().take(200).map(|&c| c as u32).sum();
         assert!(cont >= 180, "expected >=180 painted-continental cells, got {}", cont);
     }
@@ -730,7 +760,14 @@ mod tests {
             draft.painted_elevations[i] = 0.8;
             draft.painted_mask[i] = 1;
         }
-        let snap = bake_impl(&draft);
+        // Bake with fluvial erosion OFF — this test isolates painter→preset
+        // override precedence. Default erosion legitimately lowers painted
+        // highlands (covered by its own test) and is orthogonal here.
+        let model = bake_impl(
+            &draft,
+            &crate::hydrology::ErosionParams { iterations: 0, ..Default::default() },
+        );
+        let snap = snapshot_model(&model, draft.divisions, false, &ClimateParams::default());
         // After bake the sim has stepped run_length_steps times so values may
         // drift slightly — confirm they're well above the preset baseline.
         let mut above_threshold = 0;
@@ -752,7 +789,7 @@ mod tests {
             draft.painted_elevations[i] = -0.4;
             draft.painted_mask[i] = 1;
         }
-        let snap = bake_impl(&draft);
+        let snap = bake_snap(&draft);
         let mut below_zero = 0;
         for i in 0..50 {
             if snap.cell_elevation[i] < 0.0 { below_zero += 1; }
@@ -766,13 +803,36 @@ mod tests {
         let mut draft_a = draft_for("plates2");
         draft_a.painted_elevations = vec![];
         draft_a.painted_mask = vec![];
-        let snap_a = bake_impl(&draft_a);
-        let snap_b = bake_impl(&draft_for("plates2"));
+        let snap_a = bake_snap(&draft_a);
+        let snap_b = bake_snap(&draft_for("plates2"));
         assert_eq!(snap_a.cell_elevation.len(), snap_b.cell_elevation.len());
         for i in 0..snap_a.cell_elevation.len() {
             let diff = (snap_a.cell_elevation[i] - snap_b.cell_elevation[i]).abs();
             assert!(diff < 1e-6, "drift at cell {}: {} vs {}", i, snap_a.cell_elevation[i], snap_b.cell_elevation[i]);
         }
+    }
+
+    #[test]
+    fn bake_applies_fluvial_erosion_when_iterations_positive() {
+        // Bake once with iterations=0 (baseline) and once with default
+        // erosion; the eroded land surface must differ (erosion ran) while
+        // ocean cells stay ocean.
+        let mut draft = draft_for("plates2");
+        draft.continental_cells = (0..2000).collect();
+        let base = bake_impl(
+            &draft,
+            &crate::hydrology::ErosionParams { iterations: 0, ..Default::default() },
+        );
+        let eroded = bake_impl(&draft, &crate::hydrology::ErosionParams::default());
+        let land = (0..base.grid.n_fields() as usize)
+            .filter(|&i| base.fields[i].elevation > 0.0)
+            .collect::<Vec<_>>();
+        assert!(!land.is_empty(), "demo has land");
+        let changed = land.iter().any(|&i| {
+            (base.fields[i].elevation - eroded.fields[i].elevation).abs() > 1e-4
+        });
+        assert!(changed, "fluvial erosion altered the land surface");
+        assert!(land.iter().all(|&i| eroded.fields[i].elevation.is_finite()));
     }
 
     #[test]
@@ -787,7 +847,7 @@ mod tests {
             draft.painted_elevations[i] = -0.2;
             draft.painted_mask[i] = 1;
         }
-        let snap = bake_impl(&draft);
+        let snap = bake_snap(&draft);
         let mut oceanic = 0;
         for i in 0..50 {
             if snap.cell_continental[i] == 0 { oceanic += 1; }
