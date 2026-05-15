@@ -314,10 +314,15 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // (Note: 'flat' is a reserved GLSL keyword — variable named flatness.)
     // Beach: a thin, MUTED sand band (linear-space tone, gated by the
     // same organic coordinate the coast uses so it doesn't dither).
+    // Sand is NOT a function of low elevation alone — it must pass the
+    // climate filter. Only DRY (low-precip) coasts get sand; wet/temperate
+    // lowlands keep their biome vegetation (mangrove/jungle/marsh come
+    // from the biome SatMap, not bare sand).
     float beachH   = 1.0 - smoothstep(0.0, 0.05, elevField);
     float flatness = 1.0 - smoothstep(0.0, 0.12, vSlope);
-    float beach    = clamp(beachH * flatness * step(0.0, vElevation), 0.0, 1.0);
-    albedo = mix(albedo, vec3(0.34, 0.27, 0.16), beach * 0.45);
+    float aridity  = 1.0 - smoothstep(0.16, 0.42, vPrecip);   // 1 = arid, 0 = wet
+    float beach    = clamp(beachH * flatness * aridity * step(0.0, vElevation), 0.0, 1.0);
+    albedo = mix(albedo, vec3(0.34, 0.27, 0.16), beach * 0.5);
 
     // ── G.7 steps 4+5: Beer-Lambert ocean + fwidth-AA organic coast ──────
     // Coastline: domain-warp the INPUT coordinate (organic fingers), then
@@ -381,11 +386,17 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // still showed → the 50/50 grey/white mottle. Real Earth ice is
     // smooth white with gentle LOW-FREQUENCY cool shadow, plus bare rock
     // only at the very fringe (handled by the soft edge of iceCap).
-    float coldness = (1.0 - smoothstep(-1.0, 12.0, tempLand)) * (1.0 - oceanMask);
-    float iceCap   = smoothstep(0.32, 0.72, coldness);   // solid core, soft fringe → terrain
-    float iceShade = 0.90 + 0.10 * fbm(vWorldNormal * 5.0); // gentle, broad, low-contrast
-    vec3  iceColor = vec3(0.90, 0.93, 0.97) * iceShade;     // slightly cool (B>G>R)
-    albedo = mix(albedo, iceColor, iceCap);
+    // Snowline must be RAGGED and follow terrain, not a smooth white
+    // amoeba on a mountain. Perturb the temperature threshold with mid-
+    // frequency noise (±3°C) so the ice edge is organic; only the
+    // genuinely frozen core (polar / very high alpine) goes solid, and
+    // even then it is mix'd, not a hard override → no white blob.
+    float frostT  = tempLand + (fbm(vWorldNormal * 22.0) - 0.5) * 6.0;
+    float coldness = (1.0 - smoothstep(-10.0, 2.0, frostT)) * (1.0 - oceanMask);
+    float iceCap   = smoothstep(0.30, 0.85, coldness);
+    float iceShade = 0.88 + 0.12 * fbm(vWorldNormal * 9.0);
+    vec3  iceColor = vec3(0.92, 0.94, 0.97) * iceShade;
+    albedo = mix(albedo, iceColor, iceCap * 0.92);
 
     // ── Pink seam highlight (unassigned boundaries) ──────────────────────
     if (vIsBoundary > 0.5 && vCollisionKind < 0.5) {
@@ -423,8 +434,33 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // ── Debug map modes (validate the science before trusting colour) ────
     if (uMapMode > 0.5) {
       vec3 d;
-      if      (uMapMode < 1.5)  d = vec3(clamp((vTemperature + 25.0) / 60.0, 0.0, 1.0));
-      else if (uMapMode < 2.5)  d = mix(vec3(0.32,0.22,0.05), vec3(0.05,0.25,0.95), vPrecip);
+      if (uMapMode < 1.5) {
+        // Temperature: geographic ramp purple→blue→cyan→green→yellow→red
+        // over −30..+40 °C (reads like a real climate map, not washed grey).
+        float tN = clamp((vTemperature + 30.0) / 70.0, 0.0, 1.0);
+        vec3 c0 = vec3(0.28,0.0,0.42);   // < -30 frozen purple
+        vec3 c1 = vec3(0.10,0.30,0.85);  // cold blue
+        vec3 c2 = vec3(0.10,0.75,0.80);  // cool cyan
+        vec3 c3 = vec3(0.30,0.75,0.20);  // mild green
+        vec3 c4 = vec3(0.95,0.85,0.20);  // warm yellow
+        vec3 c5 = vec3(0.85,0.15,0.10);  // hot red
+        d =       mix(c0, c1, smoothstep(0.00,0.20,tN));
+        d = mix(d, c2, smoothstep(0.20,0.40,tN));
+        d = mix(d, c3, smoothstep(0.40,0.60,tN));
+        d = mix(d, c4, smoothstep(0.60,0.80,tN));
+        d = mix(d, c5, smoothstep(0.80,1.00,tN));
+      }
+      else if (uMapMode < 2.5) {
+        // Precipitation: arid tan → savanna yellow → green → wet deep blue.
+        float pN = clamp(vPrecip, 0.0, 1.0);
+        vec3 a0 = vec3(0.78,0.66,0.40);  // arid tan
+        vec3 a1 = vec3(0.80,0.78,0.30);  // semi-arid
+        vec3 a2 = vec3(0.30,0.65,0.25);  // moist green
+        vec3 a3 = vec3(0.05,0.30,0.75);  // very wet blue
+        d =       mix(a0, a1, smoothstep(0.00,0.30,pN));
+        d = mix(d, a2, smoothstep(0.30,0.62,pN));
+        d = mix(d, a3, smoothstep(0.62,1.00,pN));
+      }
       else if (uMapMode < 3.5)  d = biomeDebugColor(vBiome);
       else if (uMapMode < 4.5)  d = vec3(clamp(max(vElevation,0.0),0.0,1.0));
       else if (uMapMode < 5.5)  d = vec3(clamp(vSlope,0.0,1.0));
