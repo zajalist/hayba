@@ -29,6 +29,33 @@ pub fn base_temperature_c(p: Vec3, elevation: f32) -> f32 {
     T_EQUATOR - T_LAT_DROP * (s * s) - LAPSE_C_PER_KM * elev_km
 }
 
+/// Multi-source BFS from every ocean cell simultaneously. Returns hop
+/// distance to the nearest ocean per cell. O(cells): each cell is
+/// enqueued/dequeued at most once. `u32::MAX` only if a land cell is
+/// unreachable (no ocean at all) — callers treat that as "max inland".
+pub fn distance_to_ocean_hops(neighbours: &[Vec<u32>], is_ocean: &[bool]) -> Vec<u32> {
+    use std::collections::VecDeque;
+    let n = neighbours.len();
+    let mut dist = vec![u32::MAX; n];
+    let mut q: VecDeque<u32> = VecDeque::with_capacity(n);
+    for i in 0..n {
+        if is_ocean[i] {
+            dist[i] = 0;
+            q.push_back(i as u32);
+        }
+    }
+    while let Some(c) = q.pop_front() {
+        let dc = dist[c as usize];
+        for &nb in &neighbours[c as usize] {
+            if dist[nb as usize] == u32::MAX {
+                dist[nb as usize] = dc + 1;
+                q.push_back(nb);
+            }
+        }
+    }
+    dist
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -47,5 +74,25 @@ mod tests {
         let lowland = base_temperature_c(Vec3::new(1.0, 0.0, 0.0), 0.0);
         let peak = base_temperature_c(Vec3::new(1.0, 0.0, 0.0), 1.0);
         assert!(lowland - peak > 30.0, "8km peak should be ~35°C colder");
+    }
+
+    #[test]
+    fn dist_to_ocean_zero_at_ocean_and_grows_inland() {
+        let neighbours: Vec<Vec<u32>> = vec![
+            vec![1], vec![0, 2], vec![1, 3], vec![2, 4], vec![3],
+        ];
+        let is_ocean = vec![true, false, false, false, false];
+        let d = distance_to_ocean_hops(&neighbours, &is_ocean);
+        assert_eq!(d[0], 0);
+        assert_eq!(d[1], 1);
+        assert_eq!(d[4], 4);
+    }
+
+    #[test]
+    fn dist_to_ocean_all_ocean_is_zero() {
+        let neighbours: Vec<Vec<u32>> = vec![vec![1], vec![0]];
+        let is_ocean = vec![true, true];
+        let d = distance_to_ocean_hops(&neighbours, &is_ocean);
+        assert_eq!(d, vec![0, 0]);
     }
 }
