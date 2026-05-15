@@ -60,6 +60,15 @@ export function buildGlobeMesh(
   geom.setAttribute("aPack4", new THREE.BufferAttribute(pack4, 4));
   geom.setAttribute("aPack5", new THREE.BufferAttribute(pack5, 4));
 
+  // Cell-stable texture seed (flaw A3): a dedicated vec3 attribute holding
+  // an index-derived pseudo-random unit vector per cell. The fragment
+  // shader keys its within-biome texture noise on this instead of the
+  // world-space normal, so the surface texture rides with the drifting
+  // crust instead of crawling. Attribute budget: 3 builtins + 6 vec4
+  // (aPack0..5) + 1 vec3 (aSeed) = 10 ≤ 16 — fine.
+  const seedBuf = new Float32Array(n * 3);
+  geom.setAttribute("aSeed", new THREE.BufferAttribute(seedBuf, 3));
+
   // Default to a temperate/humid SatMap if available, otherwise the first
   // SatMap discovered in the library. App.tsx calls setSatMap() immediately
   // after construction so this is just a sane starting point.
@@ -142,8 +151,11 @@ export function buildGlobeMesh(
       pack5[j + 1] = snap.cell_biome2[i];
       pack5[j + 2] = snap.cell_biome_blend[i];
       pack5[j + 3] = 0;
+      seedBuf[i * 3]     = snap.cell_seed[i * 3];
+      seedBuf[i * 3 + 1] = snap.cell_seed[i * 3 + 1];
+      seedBuf[i * 3 + 2] = snap.cell_seed[i * 3 + 2];
     }
-    for (const a of ["aPack0", "aPack1", "aPack2", "aPack3", "aPack4", "aPack5"]) {
+    for (const a of ["aPack0", "aPack1", "aPack2", "aPack3", "aPack4", "aPack5", "aSeed"]) {
       (geom.getAttribute(a) as THREE.BufferAttribute).needsUpdate = true;
     }
   };

@@ -14,6 +14,10 @@ export const VERTEX_SHADER = /* glsl */ `
   attribute vec4 aPack3;
   attribute vec4 aPack4;
   attribute vec4 aPack5;
+  // Cell-stable texture seed (flaw A3): index-derived pseudo-random unit
+  // vector, rides with the drifting crust (does NOT change as the cell
+  // moves through world space).
+  attribute vec3 aSeed;
 
   uniform float uExaggeration;
 
@@ -41,6 +45,7 @@ export const VERTEX_SHADER = /* glsl */ `
   varying float vContinentalDry;
   varying vec3  vWorldNormal;
   varying vec3  vWorldPos;
+  varying vec3  vSeed;
 
   // Cheap per-vertex hash noise — used to perturb the coastline silhouette
   // away from the underlying hexagonal mesh.
@@ -84,6 +89,9 @@ export const VERTEX_SHADER = /* glsl */ `
     vContinentalDry = aPack4.w;
     vWorldNormal = normalize(position);
     vWorldPos    = displaced;
+    // Stable per-cell texture-space basis. The +1e-4 keeps it away from
+    // exactly zero (normalize_or_zero on the Rust side can emit (0,0,0)).
+    vSeed        = normalize(aSeed + vec3(1e-4));
 
     gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
   }
@@ -135,6 +143,7 @@ export const FRAGMENT_SHADER = /* glsl */ `
   varying float vContinentalDry;
   varying vec3  vWorldNormal;
   varying vec3  vWorldPos;
+  varying vec3  vSeed;
 
   // ── Noise primitives ─────────────────────────────────────────────────────
   // Deterministic hash → value noise → FBM. Gemini: 4-6 octaves, lacunarity
@@ -283,20 +292,23 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // hash SCATTER makes neighbouring pixels land on DIFFERENT but
     // plausible rows → a noisy, intermixed, contour-free pattern (how
     // real macro-scale satellite terrain actually reads).
-    vec3 cwarp = vec3(fbm(vWorldNormal*2.0+5.2), fbm(vWorldNormal*2.0+19.7),
-                      fbm(vWorldNormal*2.0+37.1));
+    // flaw A3: key the within-biome texture noise on the cell-STABLE seed
+    // (vSeed) instead of the world-space normal, so the texture rides with
+    // the drifting crust instead of crawling through a world-locked field.
+    vec3 cwarp = vec3(fbm(vSeed*2.0+5.2), fbm(vSeed*2.0+19.7),
+                      fbm(vSeed*2.0+37.1));
     // Macro region: low-frequency only (never swept smoothly across the
     // whole ramp). Gentle within-biome elevation trend (flaw A3): valleys
     // sit lower in the palette, uplands higher.
     float elevTerm = clamp(max(vElevation, 0.0) * 1.4, 0.0, 1.0);
-    float macro    = fbm(vWorldNormal * 3.0 + cwarp * 1.2);
+    float macro    = fbm(vSeed * 3.0 + cwarp * 1.2);
     float band     = clamp(0.42 * macro + 0.34 * elevTerm
                          + 0.24 * clamp(vPrecip, 0.0, 1.0), 0.06, 0.94);
     // Stochastic scatter: per-fragment-decorrelated hash + fine FBM, with
     // amplitude ≈ the plausible-neighbour palette width. This is what
     // destroys the contour banding ("not the same pixel over and over").
-    float scatter  = (hash3(vWorldNormal * 850.0) - 0.5) * 0.30
-                   + (fbm(vWorldNormal * 220.0) - 0.5) * 0.16;
+    float scatter  = (hash3(vSeed * 850.0) - 0.5) * 0.30
+                   + (fbm(vSeed * 220.0) - 0.5) * 0.16;
     float hLand = clamp(band + scatter, 0.02, 0.98);
     // Ice: tight bright band, still scattered so it isn't a flat sheet.
     float hIce  = clamp(0.34 + scatter * 0.5, 0.02, 0.98);
