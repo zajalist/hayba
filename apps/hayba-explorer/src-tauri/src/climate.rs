@@ -56,6 +56,25 @@ pub fn distance_to_ocean_hops(neighbours: &[Vec<u32>], is_ocean: &[bool]) -> Vec
     dist
 }
 
+/// Prevailing surface wind as a unit tangent vector at `p`
+/// (worldbuildingpasta bands): trades 0–30° (E→W), westerlies 30–60°
+/// (W→E), polar easterlies 60–90° (E→W). Small equatorward meridional
+/// component added for realism.
+pub fn prevailing_wind(p: Vec3) -> Vec3 {
+    let lat_deg = latitude_rad(p).abs().to_degrees();
+    let east = Vec3::new(0.0, 1.0, 0.0).cross(p).normalize_or_zero();
+    let sign = if lat_deg < 30.0 {
+        -1.0 // trades, E→W
+    } else if lat_deg < 60.0 {
+        1.0 // westerlies, W→E
+    } else {
+        -1.0 // polar easterlies, E→W
+    };
+    let toward_eq = -p.y.signum();
+    let north = p.cross(east).normalize_or_zero();
+    (east * sign + north * toward_eq * 0.15).normalize_or_zero()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,5 +113,18 @@ mod tests {
         let is_ocean = vec![true, true];
         let d = distance_to_ocean_hops(&neighbours, &is_ocean);
         assert_eq!(d, vec![0, 0]);
+    }
+
+    #[test]
+    fn trade_winds_blow_west_westerlies_blow_east() {
+        let p_trades = Vec3::new(0.966, 0.259, 0.0).normalize(); // ~15°N
+        let w_trades = prevailing_wind(p_trades);
+        let east = Vec3::new(0.0, 1.0, 0.0).cross(p_trades).normalize();
+        assert!(w_trades.dot(east) < 0.0, "trades should blow westward");
+
+        let p_west = Vec3::new(0.707, 0.707, 0.0).normalize(); // ~45°N
+        let w_west = prevailing_wind(p_west);
+        let east_w = Vec3::new(0.0, 1.0, 0.0).cross(p_west).normalize();
+        assert!(w_west.dot(east_w) > 0.0, "westerlies should blow eastward");
     }
 }
