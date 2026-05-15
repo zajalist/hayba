@@ -234,35 +234,49 @@ export const FRAGMENT_SHADER = /* glsl */ `
 
     // ── Beach mask: low elevation × gentle slope, tight band near 0 ─────
     // (Note: 'flat' is a reserved GLSL keyword — variable named flatness.)
-    float beachH   = 1.0 - smoothstep(0.0, 0.04, elevField + (fbmFine - 0.5) * 0.01);
+    // Beach: a thin, MUTED sand band (linear-space tone, gated by the
+    // same organic coordinate the coast uses so it doesn't dither).
+    float beachH   = 1.0 - smoothstep(0.0, 0.05, elevField);
     float flatness = 1.0 - smoothstep(0.0, 0.12, vSlope);
     float beach    = clamp(beachH * flatness * step(0.0, vElevation), 0.0, 1.0);
-    albedo = mix(albedo, vec3(0.88, 0.82, 0.62), beach * 0.7);
+    albedo = mix(albedo, vec3(0.34, 0.27, 0.16), beach * 0.45);
 
-    // ── Ocean: Beer-Lambert depth + noise-perturbed coastline ──────────
-    // Coast mask uses high-freq FBM to break up the hex-mesh silhouette
-    // into organic fingers. Depth gradient now spans further so abyss
-    // reads as truly deep blue, not flat cyan.
-    float coastNoise = (fbm(vWorldNormal * 55.0) - 0.5) * 0.12;
-    float seaCoord   = vElevation + coastNoise;
-    float oceanMask  = 1.0 - smoothstep(-0.02, 0.05, seaCoord);
+    // ── G.7 steps 4+5: Beer-Lambert ocean + fwidth-AA organic coast ──────
+    // Coastline: domain-warp the INPUT coordinate (organic fingers), then
+    // size the mask transition to fwidth() so it is exactly one-pixel-wide
+    // at any zoom (no dither — the old failure was noise amplitude ≈ the
+    // fixed smoothstep window). Noise amplitude is kept ≪ the window.
+    vec3 coastWarp = vWorldNormal + (vec3(
+        fbm(vWorldNormal * 14.0),
+        fbm(vWorldNormal * 14.0 + 31.7),
+        fbm(vWorldNormal * 14.0 + 67.1)) - 0.5) * 0.05;
+    float seaCoord = vElevation + (fbm(coastWarp * 9.0) - 0.5) * 0.03;
+    float coastWidth = max(fwidth(seaCoord), 0.0025);
+    float oceanMask  = 1.0 - smoothstep(-coastWidth, coastWidth, seaCoord);
 
     if (oceanMask > 0.001) {
-      vec3 coast   = vec3(0.55, 0.82, 0.88);   // shallow reef turquoise
-      vec3 shelf   = vec3(0.18, 0.50, 0.74);   // continental shelf blue
-      vec3 abyss   = vec3(0.02, 0.08, 0.22);   // deep abyss
-      float d      = max(-seaCoord, 0.0);
+      // All colours LINEAR (output is linear→sRGB encoded). Per-channel
+      // Beer-Lambert extinction: red dies first, blue penetrates deepest,
+      // so deep water → near-black navy, shallow → muted blue over sand.
+      vec3  deepAbyss   = vec3(0.004, 0.016, 0.045);
+      vec3  shallowBed  = vec3(0.10,  0.20,  0.22);
+      vec3  extinction  = vec3(0.65, 0.15, 0.05);
+      float depth       = max(-seaCoord, 0.0) * 60.0;
+      vec3  transmit    = exp(-extinction * depth);
+      vec3  water       = mix(deepAbyss, shallowBed, transmit);
 
-      // Two-stage depth blend so we see a real shallow→shelf→abyss gradient
-      float t1 = smoothstep(0.00, 0.08, d);    // coast → shelf
-      float t2 = smoothstep(0.10, 0.45, d);    // shelf → abyss
-      vec3 water = mix(coast, shelf, t1);
-      water = mix(water, abyss, t2);
+      // Schlick fresnel — sky-reflective at grazing angles.
+      vec3  Vo   = normalize(cameraPosition - vWorldPos);
+      float NoV  = max(dot(vWorldNormal, Vo), 0.0);
+      float fres = 0.02 + 0.98 * pow(1.0 - NoV, 5.0);
+      vec3  skyT = vec3(0.18, 0.34, 0.58);     // linear sky tint
+      water = mix(water, skyT, fres * 0.5);
 
-      // Subtle surface ripple — fbm at two scales.
-      float ripple = ((fbm(vWorldNormal * 90.0) - 0.5) +
-                      (fbm(vWorldNormal * 35.0) - 0.5) * 0.5) * 0.06;
-      water = water * (1.0 + ripple);
+      // Tight orbital sun glint.
+      vec3  Lo  = normalize(uSunDir);
+      vec3  Ho  = normalize(Lo + Vo);
+      float spec = pow(max(dot(vWorldNormal, Ho), 0.0), 400.0) * fres;
+      water += vec3(1.0, 0.97, 0.88) * spec * 2.0;
 
       albedo = mix(albedo, water, oceanMask);
     }
