@@ -4,14 +4,19 @@ import PropertySection from "../PropertySection";
 import Select from "../Select";
 
 export const MAP_MODES: { value: number; label: string }[] = [
-  { value: 0, label: "Final render" },
-  { value: 1, label: "Temperature" },
-  { value: 2, label: "Moisture" },
-  { value: 3, label: "Biome (argmax)" },
-  { value: 4, label: "Elevation" },
-  { value: 5, label: "Slope" },
-  { value: 6, label: "Ice mask" },
-  { value: 7, label: "Ocean mask" },
+  { value: 0,  label: "Final render" },
+  { value: 1,  label: "Temperature" },
+  { value: 2,  label: "Precipitation" },
+  { value: 3,  label: "Biome" },
+  { value: 4,  label: "Elevation" },
+  { value: 5,  label: "Slope" },
+  { value: 6,  label: "Ocean mask" },
+  { value: 7,  label: "Insolation" },
+  { value: 8,  label: "Base temp" },
+  { value: 9,  label: "Distance to ocean" },
+  { value: 10, label: "Ocean current ΔT" },
+  { value: 11, label: "Orographic (rain shadow)" },
+  { value: 12, label: "Continental dryness" },
 ];
 
 export interface SettingsPanelProps {

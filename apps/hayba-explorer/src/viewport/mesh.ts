@@ -70,11 +70,17 @@ export function buildGlobeMesh(
     fragmentShader: FRAGMENT_SHADER,
     uniforms: {
       uSatMap:            { value: satTex },                       // user override
-      uSatTropical:       { value: pick(["tropical_wet_basin", "tropical_wet_orogeny", "tropical_dry_craton"], "tropical_wet_basin") },
-      uSatArid:           { value: pick(["arid_hot_dunes", "arid_hot_craton", "arid_cold_steppe"], "arid_hot_dunes") },
-      uSatTemperate:      { value: pick(["temperate_humid_orogeny", "temperate_humid_coast", "temperate_med"], "temperate_humid_orogeny") },
-      uSatPolar:          { value: pick(["polar_tundra", "polar_icecap"], "polar_tundra") },
-      uSatMapRock:        { value: pick(["alpine"], "temperate_humid_orogeny") },
+      uBiome0: { value: pick(["tropical_wet_basin","tropical_wet_orogeny"], "tropical_wet_basin") },
+      uBiome1: { value: pick(["tropical_dry_craton","tropical_dry_rift"], "tropical_dry_craton") },
+      uBiome2: { value: pick(["arid_hot_dunes","arid_hot_craton"], "arid_hot_dunes") },
+      uBiome3: { value: pick(["temperate_humid_coast"], "temperate_humid_coast") },
+      uBiome4: { value: pick(["temperate_humid_orogeny","temperate_humid_old_mountain"], "temperate_humid_orogeny") },
+      uBiome5: { value: pick(["temperate_med"], "temperate_med") },
+      uBiome6: { value: pick(["continental_steppe","arid_cold_steppe"], "continental_steppe") },
+      uBiome7: { value: pick(["continental_shield"], "continental_shield") },
+      uBiome8: { value: pick(["polar_tundra"], "polar_tundra") },
+      uBiome9: { value: pick(["polar_icecap"], "polar_icecap") },
+      uSatMapRock: { value: pick(["arid_hot_orogeny","continental_orogeny"], "continental_orogeny") },
       uClimateBlend:      { value: 1.0 },                          // 1.0 = auto, 0.0 = single override
       uExaggeration:      { value: 1.0 },
       uSunDir:            { value: new THREE.Vector3(0.6, 0.5, 0.8).normalize() },
