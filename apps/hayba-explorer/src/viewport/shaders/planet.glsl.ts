@@ -416,16 +416,10 @@ export const FRAGMENT_SHADER = /* glsl */ `
     // mountains actually are), revealed through holes punched in the snow.
     float snowA      = 1.0 - smoothstep(-7.0, -2.0, coldC);
 
-    // Tibet-style high plateau: tall, non-polar ground reads as warm ochre
-    // high-desert. Inputs jittered by edgeJ so it is not a hex/ring; low
-    // max opacity + warm tone so it blends into the surrounding continent.
-    // tibetH window 0.32 ≫ amplitude |edgeJ|·0.05·jScale ≈ 0.05 → no dither.
-    float tibetH    = smoothstep(0.42, 0.74, vElevation + edgeJ * 0.05 * jScale);
-    // nonPolar window 12°C ≫ |edgeJ|·5·jScale ≈ 8°C jitter (shared coldC).
-    float nonPolar  = smoothstep(-4.0, 8.0, coldC);
-    float tibetMask = tibetH * nonPolar;
-    vec3  tibetCol  = vec3(0.44, 0.36, 0.24) * (0.92 + scatter * 0.5); // warmer
-    albedo = mix(albedo, tibetCol, tibetMask * 0.5);                    // lower
+    // Tibet high-plateau tone: REMOVED. It was a single flat ochre colour
+    // mixed over the terrain with opacity — exactly the "smooth brush" the
+    // user rejects. High non-polar ground now just shows its own biome /
+    // slope-rock SatMap (textured), no flat-colour wash.
 
     // ── G.7 steps 4+5: Beer-Lambert ocean + crisp fwidth-AA coast ────────
     // SCRATCHED: the domain-warped "organic coast" produced a cloud-like
@@ -463,12 +457,12 @@ export const FRAGMENT_SHADER = /* glsl */ `
       vec3  deepWater    = vec3(0.002, 0.010, 0.030);
       vec3  water        = mix(shallowWater, deepWater, dWater);
 
-      // Schlick fresnel — only the planet limb picks up a faint sky sheen.
-      // Kept small so it is not a smooth bright band over the water.
+      // Schlick fresnel kept ONLY to gate the tight specular glint below.
+      // The flat-colour limb-sheen mix was a 1-colour-with-opacity smooth
+      // brush over the water — REMOVED per the no-smooth-brush rule.
       vec3  Vo   = normalize(cameraPosition - vWorldPos);
       float NoV  = max(dot(vWorldNormal, Vo), 0.0);
       float fres = 0.02 + 0.98 * pow(1.0 - NoV, 5.0);
-      water = mix(water, vec3(0.08, 0.16, 0.30), fres * 0.22);
 
       // Tight specular sun glint (small sharp white highlight only).
       vec3  Lo  = normalize(uSunDir);
