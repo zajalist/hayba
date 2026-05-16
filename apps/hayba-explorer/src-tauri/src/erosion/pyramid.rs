@@ -1228,57 +1228,6 @@ fn deposition_step(field: &mut Field, cfg: &super::ErosionConfig) {
     }
 }
 
-/// Multi-scale erosion pyramid driver + frequency-separation macro blend
-/// (spec §5.4 / §5.5, Task A10) — the integration capstone of the CPU oracle.
-///
-/// Runs the SIGGRAPH-2024 multi-scale recipe coarse → fine, ×2 per level, then
-/// restores the input macro relief by **frequency separation** (NOT a lerp).
-///
-/// ## Input / macro reference (`h0`)
-/// `src` supplies the macro relief to preserve. The driver works at
-/// `cfg.base_face_res` (the coarsest level). Choice made (documented):
-/// - If `src.cs.n == base_face_res` the start field is `src` verbatim (the
-///   test's path).
-/// - If `src.cs.n > base_face_res` the start field is `src` restricted to
-///   base res by nearest-cell-centre resampling through the real cube-sphere
-///   geometry (`sphere_to_face_uv`), the seam-correct inverse of the upsample
-///   path. (`src` finer than base is the production rasterise path; the
-///   straightforward correct choice is a geometric restrict, not a partial
-///   re-derivation of the pyramid.)
-/// - If `src.cs.n < base_face_res` it is conservatively upsampled to base res
-///   with `upsample2x` (the same operator the level chain uses).
-///
-/// The pristine `src.h` (at whatever resolution it came in) is ALSO kept as
-/// the macro `h0` reference and is resampled — bilinearly, via the same
-/// cube-sphere round-trip `upsample2x`/`Field::neighbour` use — to the FINAL
-/// resolution for the §5.5 blend. This keeps the macro reference independent
-/// of the eroded result (no circularity).
-///
-/// ## Per level (coarse → fine, `pyramid_levels` levels)
-/// 1. `inject_detail_band` — seam-continuous slope-modulated detail; amplitude
-///    scaled down with level (coarser levels get less, finer more) and a
-///    per-texel `slope01 ∈ [0,1]` is computed from the current field's
-///    great-circle gradient (normalised), so detail concentrates on real
-///    slopes (orogenic belts) and flats stay smooth.
-/// 2. `for _ in 0..k_iters_per_level { stream_power_step; thermal_step;
-///    deposition_step }` — the NORMATIVE order **erode → thermal →
-///    deposition** (spec §5.4 step 2, SIGGRAPH-2024).
-/// 3. Unless this is the finest level, `upsample2x` (carries h + water + sed
-///    conservatively, with the mandated post-upsample pit-fill).
-///
-/// ## Frequency-separation macro blend (spec §5.5, NORMATIVE — NOT a lerp)
-/// `h_final = h_eroded + β·(h0_at_final_res − lowpass(h_eroded))`.
-/// `lowpass` is a separable neighbour box blur sized to the macro/base scale
-/// (`pyramid_levels` sweeps ≈ the base-cell radius re-expressed on the fine
-/// grid — the largest drainage-basin scale to protect). This adds back ONLY
-/// the low-frequency component the input had that erosion attenuated, leaving
-/// the high-frequency erosion detail untouched. `β = cfg.beta`. A naive
-/// `lerp(h0, eroded, β)` is explicitly rejected by the spec (it attenuates &
-/// washes out the macro relief). Ocean texels are kept at the eroded/base
-/// level — the blend is applied to land only, preserving the ocean mask.
-///
-/// Returns the finest `Field` with `h = h_final`, plus its water/sed/ocean.
-/// (Resample-to-equirect and the Tauri command are A11 — out of scope here.)
 /// Separable neighbour box-blur of a field's `h` over the seam-correct
 /// topology, `passes` sweeps (each sweep ≈ one cell of radius). This is the
 /// SAME kernel `run_pyramid`'s §5.5 blend uses for `lowpass(h0)`/
@@ -1351,12 +1300,61 @@ pub(crate) struct StageProbe {
     pub v_pre: f32,
 }
 
-/// Multi-scale erosion pyramid driver + §5.5 frequency-separation macro blend
-/// — the public CPU-oracle entry point (Task A10). **Signature and behaviour
-/// are stable** (A11/GPU parity call this). It delegates verbatim to
+/// Multi-scale erosion pyramid driver + frequency-separation macro blend
+/// (spec §5.4 / §5.5, Task A10) — the integration capstone of the CPU oracle
+/// and the public CPU-oracle entry point. **Signature and behaviour are
+/// stable** (A11/GPU parity call this). It delegates verbatim to
 /// `run_pyramid_core` with full erosion enabled and no instrumentation, so the
 /// additive A10 test hook (`run_pyramid_stages`) exercises the EXACT same code
 /// path — it only attaches the core's retention probe.
+///
+/// Runs the SIGGRAPH-2024 multi-scale recipe coarse → fine, ×2 per level, then
+/// restores the input macro relief by **frequency separation** (NOT a lerp).
+///
+/// ## Input / macro reference (`h0`)
+/// `src` supplies the macro relief to preserve. The driver works at
+/// `cfg.base_face_res` (the coarsest level). Choice made (documented):
+/// - If `src.cs.n == base_face_res` the start field is `src` verbatim (the
+///   test's path).
+/// - If `src.cs.n > base_face_res` the start field is `src` restricted to
+///   base res by nearest-cell-centre resampling through the real cube-sphere
+///   geometry (`sphere_to_face_uv`), the seam-correct inverse of the upsample
+///   path. (`src` finer than base is the production rasterise path; the
+///   straightforward correct choice is a geometric restrict, not a partial
+///   re-derivation of the pyramid.)
+/// - If `src.cs.n < base_face_res` it is conservatively upsampled to base res
+///   with `upsample2x` (the same operator the level chain uses).
+///
+/// The pristine `src.h` (at whatever resolution it came in) is ALSO kept as
+/// the macro `h0` reference and is resampled — bilinearly, via the same
+/// cube-sphere round-trip `upsample2x`/`Field::neighbour` use — to the FINAL
+/// resolution for the §5.5 blend. This keeps the macro reference independent
+/// of the eroded result (no circularity).
+///
+/// ## Per level (coarse → fine, `pyramid_levels` levels)
+/// 1. `inject_detail_band` — seam-continuous slope-modulated detail; amplitude
+///    scaled down with level (coarser levels get less, finer more) and a
+///    per-texel `slope01 ∈ [0,1]` is computed from the current field's
+///    great-circle gradient (normalised), so detail concentrates on real
+///    slopes (orogenic belts) and flats stay smooth.
+/// 2. `for _ in 0..k_iters_per_level { stream_power_step; thermal_step;
+///    deposition_step }` — the NORMATIVE order **erode → thermal →
+///    deposition** (spec §5.4 step 2, SIGGRAPH-2024).
+/// 3. Unless this is the finest level, `upsample2x` (carries h + water + sed
+///    conservatively, with the mandated post-upsample pit-fill).
+///
+/// ## Frequency-separation macro blend (spec §5.5, NORMATIVE — NOT a lerp)
+/// h_final = lowpass(h0_at_final_res) + β·(h_eroded − lowpass(h_eroded))  (canonical WM Frequency-Splitter; β = cfg.beta detail-restoration gain, spec §5.5).
+/// lowpass = separable neighbour box-blur, passes = (final_res / base_res).max(1) (the §5.5 macro cutoff).
+/// This adds back ONLY
+/// the low-frequency component the input had that erosion attenuated, leaving
+/// the high-frequency erosion detail untouched. `β = cfg.beta`. A naive
+/// `lerp(h0, eroded, β)` is explicitly rejected by the spec (it attenuates &
+/// washes out the macro relief). Ocean texels are kept at the eroded/base
+/// level — the blend is applied to land only, preserving the ocean mask.
+///
+/// Returns the finest `Field` with `h = h_final`, plus its water/sed/ocean.
+/// (Resample-to-equirect and the Tauri command are A11 — out of scope here.)
 #[allow(dead_code)] // first non-test caller is the A11 bake_erode_v2 command.
 pub fn run_pyramid(src: &Field, cfg: &super::ErosionConfig) -> Field {
     run_pyramid_core(src, cfg, /*erosion_enabled=*/ true, None)
@@ -1574,66 +1572,12 @@ pub(crate) fn run_pyramid_core(
     // radius, so `passes = nf / base` re-expresses the base-cell (largest
     // drainage-basin) scale on the fine grid — the cutoff §5.5 mandates.
     let passes = (nf / base).max(1);
-    let lowpass = {
-        let mut cur = field.h.clone();
-        let mut next = cur.clone();
-        for _ in 0..passes {
-            for face in 0u8..6 {
-                for j in 0..nf {
-                    for i in 0..nf {
-                        let k = field.idx(face, i, j);
-                        let mut acc = cur[k];
-                        let mut cnt = 1.0f32;
-                        for (di, dj) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
-                            let (nfa, ni, nj) =
-                                field.neighbour(face, i as i32 + di, j as i32 + dj);
-                            let nk = field.idx(nfa, ni, nj);
-                            if nk == k {
-                                continue;
-                            }
-                            acc += cur[nk];
-                            cnt += 1.0;
-                        }
-                        next[k] = acc / cnt;
-                    }
-                }
-            }
-            std::mem::swap(&mut cur, &mut next);
-        }
-        cur
-    };
+    let lowpass = box_lowpass_h(&field, &field.h, passes);
 
     // h0's macro band at the final resolution (low-pass of the resampled
     // reference). The macro to *restore* is h0's low-frequency content, not a
     // raw copy of h0 (which would also overwrite the erosion's mid-band).
-    let lowpass_h0 = {
-        let mut cur = h0_fine.clone();
-        let mut next = cur.clone();
-        for _ in 0..passes {
-            for face in 0u8..6 {
-                for j in 0..nf {
-                    for i in 0..nf {
-                        let k = field.idx(face, i, j);
-                        let mut acc = cur[k];
-                        let mut cnt = 1.0f32;
-                        for (di, dj) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
-                            let (nfa, ni, nj) =
-                                field.neighbour(face, i as i32 + di, j as i32 + dj);
-                            let nk = field.idx(nfa, ni, nj);
-                            if nk == k {
-                                continue;
-                            }
-                            acc += cur[nk];
-                            cnt += 1.0;
-                        }
-                        next[k] = acc / cnt;
-                    }
-                }
-            }
-            std::mem::swap(&mut cur, &mut next);
-        }
-        cur
-    };
+    let lowpass_h0 = box_lowpass_h(&field, &h0_fine, passes);
 
     // Frequency-separation macro blend (spec §5.5, NORMATIVE).
     //
