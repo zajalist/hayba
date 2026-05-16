@@ -208,7 +208,8 @@ mod tests {
         let c = ErosionConfig::default();
         assert!(c.pyramid_levels >= 4 && c.k_iters_per_level >= 8);
         assert!(c.incision_clamp > 0.0 && c.incision_clamp < 0.01);
-        assert!(c.beta > 0.0 && c.beta <= 1.0);
+        assert!(c.beta >= 1.0, "β is the §5.5 detail-restoration gain; sub-unity net-smooths");
+        assert!(c.thermal_cadence >= 1, "thermal runs every Nth K-iter; cadence must be >=1");
         assert!(c.uplift == 0.0, "U MUST be 0 (spec §3): no equilibrium attractor");
     }
 }
@@ -232,9 +233,13 @@ pub struct ErosionConfig {
     pub slope_exp: f32,         // n = 1.0
     pub incision_clamp: f32,    // ε per-step (normalized)
     pub thermal_d: f32,         // hillslope diffusion
-    pub talus_angle: f32,       // critical slope (rad-ish, normalized)
+    pub talus_angle: f32,       // critical slope (dh/dx normalized; ~0.6≈31°)
+    pub thermal_cadence: u32,   // run thermal every Nth K-iter (NOT every iter);
+                                // throttles thermal so it can't out-diffuse the
+                                // injected detail band (spec §5.4 HARDENING)
     pub deposition_g: f32,      // Davy-Lague G (~1.6)
-    pub beta: f32,              // frequency-sep macro restore (0..1)
+    pub beta: f32,              // §5.5 detail-restoration GAIN (≥1; >1 amplify,
+                                // <1 mute). MUST be ≥1 — sub-unity net-smooths.
     pub uplift: f32,            // MUST be 0.0
     pub seed: u64,
 }
@@ -242,7 +247,8 @@ impl Default for ErosionConfig {
     fn default() -> Self { Self {
         base_face_res: 64, pyramid_levels: 5, k_iters_per_level: 16,
         erodibility: 5e-5, area_exp: 0.5, slope_exp: 1.0, incision_clamp: 3e-4,
-        thermal_d: 0.08, talus_angle: 0.6, deposition_g: 1.6, beta: 0.2,
+        thermal_d: 0.08, talus_angle: 0.6, thermal_cadence: 4,
+        deposition_g: 1.6, beta: 1.5,
         uplift: 0.0, seed: 0x9E37_79B9,
     } }
 }
@@ -420,6 +426,14 @@ fn detail_band_adds_zero_mean_seam_continuous_relief_scaled_by_slope() {
 - [ ] **Step 2: Run, verify fails** — FAIL.
 
 - [ ] **Step 3: Implement** `inject_detail_band(&mut Field, level, amp, seed, slope01)`: per land texel, `h += amp * slope01[k] * (fbm(pos, level+2, seed)*2-1)` blended with `ridged` where slope high. Ocean untouched. Frequency scales with `level`.
+
+> **NOTE (empirically verified — do NOT change A6 for the net-smooth defect):**
+> per-level base-frequency *anchoring* of the detail band is **inert** for the
+> macro-preserving net-smooth issue. Multi-octave fbm (`level+2` octaves) already
+> deposits ample sub-macro spectrum at `frequency=1` (`var(h−lowpass)` right after
+> injection ≈ 6.6e-4 — strong). The detail is destroyed *downstream* by thermal
+> over-diffusion + a sub-unity β, NOT mis-placed in frequency here. The fix is
+> the A10 thermal-cadence throttle + `β≥1` (spec §5.4/§5.5), not A6.
 
 - [ ] **Step 4: Run, verify pass** — PASS.
 
@@ -608,8 +622,9 @@ fn pyramid_adds_detail_but_preserves_macro_shape() {
         src.h[k] = 0.05 + 0.65 * 0.5 * (1.0 + (std::f32::consts::PI * t).cos());
     }}}
     src.ocean.iter_mut().for_each(|o| *o = false); // all land — isolate erosion
+    // Use the corrected DEFAULTS (β=1.5, thermal_cadence=4) — do NOT override β.
     let cfg = super::ErosionConfig {
-        base_face_res: n0, pyramid_levels: 3, beta: 0.2, ..Default::default() };
+        base_face_res: n0, pyramid_levels: 3, ..Default::default() };
     let out = run_pyramid(&src, &cfg);              // returns finest Field
     let macro_err = lowpass_l2_diff(&out, &src);
     assert!(macro_err < 0.05, "macro relief preserved (frequency-sep), got {macro_err}");
@@ -619,6 +634,18 @@ fn pyramid_adds_detail_but_preserves_macro_shape() {
         "erosion added genuine sub-macro detail: hf_out={hf_out} > 1.5*hf_base={}",
         1.5 * hf_base);
     assert!(out.h.iter().all(|v| v.is_finite()));
+
+    // Regression guard (spec §5.4 HARDENING): thermal must be THROTTLED. The
+    // old broken behaviour = thermal every iter (cadence 1) → it out-diffuses
+    // the injected band → materially LESS surviving detail than the throttled
+    // default. Pins the thermal-vs-detail contract so a future cadence=1
+    // regression is caught here, at its origin, not just end-to-end.
+    let cfg_thrash = super::ErosionConfig {
+        base_face_res: n0, pyramid_levels: 3, thermal_cadence: 1, ..Default::default() };
+    let hf_thrash = highfreq_energy(&run_pyramid(&src, &cfg_thrash));
+    assert!(hf_out > 1.5 * hf_thrash.max(1e-9),
+        "throttled thermal (cadence {}) must retain >> detail vs every-iter thermal: \
+         hf_out={hf_out} vs hf_thrash={hf_thrash}", cfg.thermal_cadence);
 }
 ```
 
@@ -643,7 +670,8 @@ is erosion vs a plain no-erosion upsample of `src`):
 
 - [ ] **Step 2: Run, verify fails** — FAIL.
 
-- [ ] **Step 3: Implement** `run_pyramid`: from `base_face_res`, per level `{ inject_detail_band → for k in K { stream_power_step; thermal_step; deposition (Davy-Lague G) } → upsample2x }`; after the loop `h_final = h_eroded + beta*(h0_resampled_to_final - lowpass(h_eroded))`. `lowpass` = separable box/gaussian over `neighbour`s sized to `base` scale. Deposition: add the transport-limited term `+ G·Qs/A` (sediment carried downstream, deposited where capacity drops).
+- [ ] **Step 3: Implement** `run_pyramid`: from `base_face_res`, per level `{ inject_detail_band → for k in 0..K { stream_power_step; if k % cfg.thermal_cadence == 0 { thermal_step }; deposition (Davy-Lague G) } → upsample2x }`. **Thermal is throttled to every `cfg.thermal_cadence`-th K-iter (NOT every iter) — spec §5.4 HARDENING; running it every iter out-diffuses the injected detail band ~150× before the blend.** After the loop, the **canonical World-Machine Frequency-Splitter blend (spec §5.5, NORMATIVE)**: `h_final = lowpass(h0_resampled_to_final) + β·(h_eroded − lowpass(h_eroded))` (β = `cfg.beta`, the detail-restoration GAIN, default 1.5, MUST be ≥1 — β multiplies the erosion *detail*, sub-unity net-smooths). `lowpass` = separable box/gaussian over `neighbour`s sized to the base/macro scale. Deposition: transport-limited `+ G·Qs/A` (sediment carried downstream, deposited where capacity drops). Ocean preserved (mask + Dirichlet base level) through the blend.
+  **ErosionConfig amendment (do this first, as its own commit):** add `pub thermal_cadence: u32` (default `4`) to `ErosionConfig` and change `beta` default `0.2 → 1.5`; update the committed `config_defaults_are_sane` test in `mod.rs` so its β bound is `c.beta >= 1.0` (not `<= 1.0`) and add `assert!(c.thermal_cadence >= 1)`. Commit msg: `fix(erosion): ErosionConfig — beta>=1 detail-gain default + thermal_cadence (spec §5.4/§5.5)`.
 
 - [ ] **Step 4: Run, verify pass** — PASS. The macro-preservation assertion is satisfied by the frequency-separation blend (tune ONLY the lowpass kernel size / β application, never the 0.05 threshold). The detail-added assertion passes because the face-continuous smooth fixture makes `highfreq_energy_upsampled` ≈ 0 while real flank erosion (detail injection + fluvial incision on the raised-cosine flanks) produces high-freq energy ≫ 1.5× that — it is NOT a tunable knob; if it fails, erosion is genuinely not engaging on the flanks (a real implementation bug to fix, not a threshold to relax).
 

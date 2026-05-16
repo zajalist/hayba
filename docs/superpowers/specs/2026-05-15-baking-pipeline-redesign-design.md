@@ -164,6 +164,20 @@ H-Schott/MultiScaleErosion, SIGGRAPH 2024). Per level:
    — discontinuous bands are the #1 amplification artefact (drainage breaks at level
    transitions).
 2. **Erode → thermal (talus-angle-clamped) → deposition** (this order is normative).
+   **HARDENING — thermal must not out-diffuse the injected detail band (NORMATIVE;
+   this is the primary cause of the net-smooth defect):** running `thermal_step`
+   every K-iteration (16×/level × levels) diffuses the just-injected sub-macro
+   relief ~150× away *before* the §5.5 blend ever runs (empirically: injected
+   `var(h−lowpass)` at a level → ~0.6% survives to the blend). `thermal_step`
+   MUST be throttled relative to detail injection / stream-power so that, on a
+   smooth-flank fixture, the **pre-blend finest field retains ≥ 50% of the
+   injected sub-macro variance** (`var(h − lowpass)` at the §5.5 cutoff).
+   Concretely: `ErosionConfig` carries `thermal_cadence: u32` (default `4`) and
+   `thermal_step` runs only every `thermal_cadence`-th K-iteration, NOT every
+   iteration. Talus-gated creep (`talus_angle≈0.6`) is for steep-slope/scree
+   relaxation only; it must leave the slope-modulated detail band substantially
+   intact. A10's test asserts this retention at the thermal stage (not only
+   end-to-end) so the regression is caught where it originates.
    - **Coarse levels: stream-power incision** (drainage-area law; cheap,
      multi-scale-friendly — the SIGGRAPH-2024 choice). Reuse the existing tested
      Rust stream-power math as the CPU reference / optionally the coarse operator.
@@ -189,12 +203,24 @@ H-Schott/MultiScaleErosion, SIGGRAPH 2024). Per level:
 
 ### 5.5 Macro preservation (frequency separation — NOT lerp)
 
-`h_final = h_eroded + β·(h0 − lowpass(h_eroded))`. This is the World Machine
-Frequency-Splitter production pattern; naive `lerp(h0, h_eroded, β)` attenuates and
-washes out macro relief and is rejected. `lowpass` kernel cutoff = the largest
-drainage-basin radius to protect (separable blur on the pyramid, cheap at coarse);
-`β≈1` fully restores macro, `β<1` lets erosion widen valleys/deltas. Both tuned and
-**validated visually** (per standing project rule).
+**Canonical blend (NORMATIVE — World Machine Frequency-Splitter form):**
+`h_final = lowpass(h0) + β·(h_eroded − lowpass(h_eroded))`. At `β=1` this is
+exactly *macro from `h0`* + *full high-frequency detail from `h_eroded`*. Naive
+`lerp(h0, h_eroded, β)` washes out macro relief and is rejected. `lowpass` kernel
+cutoff = the largest drainage-basin radius to protect (separable blur on the
+pyramid, cheap at coarse).
+
+**β is the detail-restoration GAIN on the high-frequency erosion residual, NOT a
+macro knob (NORMATIVE — corrects an earlier spec contradiction):** `β` multiplies
+`(h_eroded − lowpass(h_eroded))`, i.e. the sub-macro erosion detail. Therefore
+`β=1` = full-strength detail; `β>1` amplifies erosion relief; `β<1` *attenuates*
+it (use ONLY to deliberately mute over-aggressive erosion). **The production
+default MUST be `β ≥ 1`** — a sub-unity β suppresses *all* sub-macro relief and
+net-smooths the output (empirically: `β=0.2` was the single most damaging default;
+recommended default `β ≈ 1.5`, `macro_err` stays ≈10× under the 0.05 limit even at
+`β=2`). The earlier "`β<1` lets erosion widen valleys/deltas" phrasing was wrong
+and is deleted. A10's test pins post-blend sub-macro detail > plain-upsample
+detail at the default β. Tuned and **validated visually** (per standing rule).
 
 ### 5.6 P4 resample
 
