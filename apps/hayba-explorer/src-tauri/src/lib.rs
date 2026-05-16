@@ -28,6 +28,7 @@ pub fn run() {
             wizard::apply_density_rank,
             wizard::get_grid_triangles,
             wizard::bake_erode_v2,
+            wizard::bake_h0_v2,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hayba Explorer");
