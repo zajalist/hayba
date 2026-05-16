@@ -1007,14 +1007,16 @@ function runInto(
   // (stale PHYSICAL GL texture-unit binding from an earlier runInto/runPass
   // surviving a bare resetState; the accumulation/upsample passes here
   // repeatedly reuse scratch RTs as BOTH a sampler source in one pass and
-  // the draw-FBO color attachment in a later pass). 6-step ordering (exact):
-  // getRenderTarget → setRenderTarget(dst) → physically unbind ALL units +
-  // resetState (BEFORE render) → render → setRenderTarget(prev). runInto
-  // has explicit src/dst (NOT channel ping-pong) so there is no book.swap.
-  // After the physical unbind + resetState, three re-binds ONLY this pass's
-  // own samplers and every other unit is physically null; SELF-ALIAS
-  // already proved none of this pass's own uniforms === dst.texture ⇒
-  // feedback loop impossible by construction.
+  // the draw-FBO color attachment in a later pass). 5-step ordering (exact):
+  // getRenderTarget → setRenderTarget(dst) → physically unbind ALL units
+  // (BEFORE render, NO resetState — it would raw-unbind the dst FBO
+  // mid-pass so the draw hits the canvas; see physicallyIsolateUnits) →
+  // render → setRenderTarget(prev). runInto has explicit src/dst (NOT
+  // channel ping-pong) so there is no book.swap. After the physical unbind
+  // every other unit is physically null and three re-binds ONLY this
+  // pass's own samplers from scratch on the next render (setProgram →
+  // resetTextureUnits); SELF-ALIAS already proved none of this pass's own
+  // uniforms === dst.texture ⇒ feedback loop impossible by construction.
   const prev = renderer.getRenderTarget();
   renderer.setRenderTarget(dst);
   _bakeUnitHygiene.isolate(renderer, "runInto", frag, dst);
