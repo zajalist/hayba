@@ -759,6 +759,271 @@ pub fn thermal_step(field: &mut Field, cfg: &super::ErosionConfig) {
     }
 }
 
+/// Mass-conserving ×2 upsample of a cube-sphere `Field` (spec §5, Task A9).
+///
+/// Produces a NEW `Field` at twice the per-face resolution (`n → 2n`). The
+/// finest erosion levels of the pyramid (A10/A11) are built by repeatedly
+/// upsampling from `base_face_res`; this routine is the per-level transfer
+/// operator. Three rules, applied in a **mandatory order**:
+///
+/// 1. **`h` — bilinear.** Each fine texel's sphere-centre is projected back
+///    onto the coarse cube-sphere parametrisation via `sphere_to_face_uv`
+///    (the same real-geometry round-trip `Field::neighbour` uses), then `h`
+///    is bilinearly interpolated from the 4 surrounding coarse cell centres
+///    *within the resolved coarse face's grid*. Sampling through the actual
+///    projection makes it seam-correct: a fine texel straddling a cube edge
+///    resolves onto whichever coarse face physically owns that direction and
+///    bilerps within that face (coarse-face-local bilinear, as allowed by the
+///    spec). UVs are clamped to the half-texel-inset cell-centre range so the
+///    4-tap stencil never reads outside the coarse face.
+///
+/// 2. **NORMATIVE HARDENING — post-upsample pit removal.** Bilinear `h` of a
+///    coarse valley manufactures artificial local minima *between* coarse
+///    samples; the (correctly) conserved water carried in step 3 would then
+///    pool in those phantom pits and sever river networks on the next
+///    iteration. So, AFTER bilinear `h` and BEFORE the carried water/sed is
+///    placed, a Planchon–Darboux depression-fill (ε = 0, monotone variant)
+///    runs over the fine **land** texels using the seam-correct `neighbour`
+///    topology. Ocean texels (and every land texel already at the global-min
+///    land height) are fixed Dirichlet *outlets*; all other land is raised
+///    to `max(h, min_neighbour_filled)` by repeated relaxation sweeps. PD's
+///    working surface is monotone-non-increasing and bounded below by `h`, so
+///    it converges (a hard sweep cap is also applied as a guarantee), and at
+///    convergence every non-outlet land cell has a neighbour at ≤ its height
+///    — i.e. a non-ascending path to an outlet, no spurious interior pit.
+///    Ocean cells are never raised or otherwise touched. Order is mandatory:
+///    upsample h → pit-fill h → apply conserved water/sed.
+///
+/// 3. **`water`/`sed` — exact area-weighted split.** The grid map is a clean
+///    1:4 parent→child partition on the **same face** (coarse `(f,i,j)` →
+///    fine `(f, 2i+di, 2j+dj)`, `di,dj∈{0,1}`); coarse face range `[0,n)`
+///    maps to fine face range `[0,2n)` with no seam crossing, so mass stays
+///    local to each parent. Each child gets `parent · area_child / Σ₄ area`
+///    (areas from the fine `cell_solid_angle`), EXCEPT the 4th child which
+///    receives the exact remainder `parent − (c0+c1+c2)`. The remainder
+///    construction makes `Σ₄ children == parent` hold **exactly** (zero
+///    residual in the test's accumulation order) regardless of f32 rounding
+///    in the weights — conservation is by construction, not by tolerance.
+///
+/// `ocean` is set per fine `h < 0.0` (consistent with `rasterize_from_cells`)
+/// and is computed from the **post-pit-fill** `h`; the pit-fill itself never
+/// raises an ocean cell nor reads/writes ocean as land.
+///
+/// Scratch buffers (`w`, `is_land`, neighbour scratch) are each allocated
+/// once for the whole field, not per texel — this is the once-per-pyramid-
+/// level hot path, same allocation discipline as `stream_power_step`/
+/// `thermal_step`.
+#[allow(dead_code)] // A9 transfer operator; first non-test caller is the A10 pyramid driver (cf. `Field`).
+pub fn upsample2x(field: &Field) -> Field {
+    let nc = field.cs.n; // coarse per-face res
+    let nf = nc * 2; // fine per-face res
+    let mut out = Field::flat(nf, 0.0);
+
+    let inv_f = 1.0 / nf as f32;
+
+    // --- Step 1: bilinear h onto the fine grid (seam-correct). -----------
+    // For each fine texel: centre → sphere → coarse (face,u,v) → bilinear
+    // over the 4 coarse cell centres bracketing (u,v) on that coarse face.
+    for face in 0u8..6 {
+        for j in 0..nf {
+            for i in 0..nf {
+                let kf = out.idx(face, i, j);
+                // Fine texel centre on the unit sphere.
+                let uf = (i as f32 + 0.5) * inv_f;
+                let vf = (j as f32 + 0.5) * inv_f;
+                let p = out.cs.face_uv_to_sphere(face, uf, vf);
+                // Resolve onto whichever coarse face physically owns it
+                // (handles the seam: the round-trip is the same one
+                // `Field::neighbour` relies on).
+                let (cf, cu, cv) = field.cs.sphere_to_face_uv(p);
+
+                // Continuous cell-centre coordinates on the coarse face:
+                // cell centre m has u = (m+0.5)/nc, so m = u*nc - 0.5.
+                let fx = (cu * nc as f32 - 0.5).clamp(0.0, nc as f32 - 1.0);
+                let fy = (cv * nc as f32 - 0.5).clamp(0.0, nc as f32 - 1.0);
+                let i0 = fx.floor() as u32;
+                let j0 = fy.floor() as u32;
+                let i1 = (i0 + 1).min(nc - 1);
+                let j1 = (j0 + 1).min(nc - 1);
+                let tx = fx - i0 as f32;
+                let ty = fy - j0 as f32;
+
+                let h00 = field.h[field.idx(cf, i0, j0)];
+                let h10 = field.h[field.idx(cf, i1, j0)];
+                let h01 = field.h[field.idx(cf, i0, j1)];
+                let h11 = field.h[field.idx(cf, i1, j1)];
+                let a = h00 + (h10 - h00) * tx;
+                let b = h01 + (h11 - h01) * tx;
+                out.h[kf] = a + (b - a) * ty;
+            }
+        }
+    }
+
+    // --- Step 2: NORMATIVE post-upsample pit removal (Planchon–Darboux). -
+    // Land mask once.
+    let total = out.h.len();
+    let is_land: Vec<bool> = (0..total).map(|k| out.h[k] >= 0.0).collect();
+
+    // Outlet set: every ocean texel, plus every land texel already at the
+    // global-min land height (the planet's ultimate sink — water leaves the
+    // modelled land system there). Outlets keep their true elevation; all
+    // other land is initialised to +∞ and relaxed down.
+    let mut global_min = f32::INFINITY;
+    for k in 0..total {
+        if is_land[k] && out.h[k] < global_min {
+            global_min = out.h[k];
+        }
+    }
+    // If there is no land at all, nothing to fill.
+    let has_land = global_min.is_finite();
+
+    // Working surface `w`: outlets/ocean = true h; interior land = +∞.
+    let mut w = vec![0.0f32; total];
+    for k in 0..total {
+        if !is_land[k] {
+            w[k] = out.h[k]; // ocean fixed Dirichlet (never raised)
+        } else if has_land && out.h[k] <= global_min + 1e-9 {
+            w[k] = out.h[k]; // global-min land cell = fixed outlet
+        } else {
+            w[k] = f32::INFINITY; // interior land: to be lowered to terrain/spill
+        }
+    }
+
+    if has_land {
+        // PD relaxation sweeps. `w` is monotone-non-increasing each sweep and
+        // bounded below by `out.h`, so it converges; a hard sweep cap (a small
+        // multiple of the per-face span) guarantees termination even under
+        // f32 plateau stalls — it CANNOT infinite-loop. Neighbours are
+        // resolved directly on the FINE `out` field's seam-correct topology
+        // (4 inline axis steps via `out.neighbour`, self-clamp dropped) — no
+        // per-cell heap allocation.
+        let sweep_cap = (4 * nf as usize) + 8; // > max monotone path length on a face
+        for _ in 0..sweep_cap {
+            let mut changed = false;
+            for facep in 0u8..6 {
+                for jp in 0..nf {
+                    for ip in 0..nf {
+                        let k = out.idx(facep, ip, jp);
+                        if !is_land[k] {
+                            continue; // ocean: fixed, never raised
+                        }
+                        let hk = out.h[k];
+                        if w[k] <= hk + f32::EPSILON {
+                            continue; // already resolved to terrain (≤ outlet level)
+                        }
+                        // Lowest filled neighbour over the FINE field's
+                        // seam-correct topology (4 inline axis steps).
+                        let mut min_nb = f32::INFINITY;
+                        for (di, dj) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+                            let (nfa, ni, nj) =
+                                out.neighbour(facep, ip as i32 + di, jp as i32 + dj);
+                            let nk = out.idx(nfa, ni, nj);
+                            if nk == k {
+                                continue;
+                            }
+                            if w[nk] < min_nb {
+                                min_nb = w[nk];
+                            }
+                        }
+                        // PD step (ε = 0): w[k] = max(h[k], min_nb).
+                        let cand = if hk > min_nb { hk } else { min_nb };
+                        if cand + f32::EPSILON < w[k] {
+                            w[k] = cand;
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        // Any land cell still at +∞ (an isolated basin with no outlet path —
+        // not possible on a connected sphere with outlets, but guard anyway)
+        // falls back to its own terrain so `h` stays finite.
+        for k in 0..total {
+            if is_land[k] && !w[k].is_finite() {
+                w[k] = out.h[k];
+            }
+        }
+        // Commit the depression-free surface to land; ocean h is unchanged.
+        for k in 0..total {
+            if is_land[k] {
+                out.h[k] = w[k];
+            }
+        }
+    }
+
+    // `ocean` from the post-fill h (consistent with `rasterize_from_cells`).
+    for k in 0..total {
+        out.ocean[k] = out.h[k] < 0.0;
+    }
+
+    // --- Step 3: exact area-weighted water/sed split (by construction). --
+    // 1:4 parent→child, SAME face, no seam: mass is local to each parent.
+    // child0..2 = parent·area/Σarea; child3 = parent − (c0+c1+c2) (exact
+    // remainder ⇒ Σ₄ children == parent with zero residual).
+    use super::cubesphere::Cell;
+    for facep in 0u8..6 {
+        for j in 0..nc {
+            for i in 0..nc {
+                let kp = field.idx(facep, i, j);
+                let wp = field.water[kp];
+                let sp = field.sed[kp];
+
+                // The 4 fine children and their solid angles.
+                let mut child_idx = [0usize; 4];
+                let mut area = [0.0f32; 4];
+                let offs = [(0u32, 0u32), (1, 0), (0, 1), (1, 1)];
+                let mut area_sum = 0.0f32;
+                for (c, &(di, dj)) in offs.iter().enumerate() {
+                    let fi = 2 * i + di;
+                    let fj = 2 * j + dj;
+                    child_idx[c] = out.idx(facep, fi, fj);
+                    let aa = out.cs.cell_solid_angle(Cell {
+                        face: facep,
+                        i: fi,
+                        j: fj,
+                    });
+                    area[c] = aa;
+                    area_sum += aa;
+                }
+
+                if area_sum > 0.0 {
+                    // First 3 children: area-weighted share.
+                    let mut acc_w = 0.0f32;
+                    let mut acc_s = 0.0f32;
+                    for c in 0..3 {
+                        let frac = area[c] / area_sum;
+                        let cw = wp * frac;
+                        let cs = sp * frac;
+                        out.water[child_idx[c]] = cw;
+                        out.sed[child_idx[c]] = cs;
+                        acc_w += cw;
+                        acc_s += cs;
+                    }
+                    // 4th child: exact remainder ⇒ Σ₄ == parent exactly.
+                    out.water[child_idx[3]] = wp - acc_w;
+                    out.sed[child_idx[3]] = sp - acc_s;
+                } else {
+                    // Degenerate (should not happen: solid angles > 0). Split
+                    // evenly with an exact remainder so mass is still conserved.
+                    let qw = wp * 0.25;
+                    let qs = sp * 0.25;
+                    for c in 0..3 {
+                        out.water[child_idx[c]] = qw;
+                        out.sed[child_idx[c]] = qs;
+                    }
+                    out.water[child_idx[3]] = wp - qw * 3.0;
+                    out.sed[child_idx[3]] = sp - qs * 3.0;
+                }
+            }
+        }
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1129,6 +1394,69 @@ mod tests {
             f.h.iter().all(|v| v.is_finite()),
             "no NaN at the 8 cube corners"
         );
+    }
+
+    #[test]
+    fn upsample_conserves_water_and_sediment_exactly() {
+        let mut f = Field::flat(4, 0.3);
+        for k in 0..f.water.len() {
+            f.water[k] = 0.4;
+            f.sed[k] = 0.2;
+        }
+        let sum_w0: f32 = f.water.iter().sum();
+        let g = upsample2x(&f);
+        assert_eq!(g.cs.n, 8);
+        // per coarse texel: Σ of its 4 fine children == coarse value
+        let kc = f.idx(4, 1, 1);
+        let mut acc = 0.0;
+        for (di, dj) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            acc += g.water[g.idx(4, 2 * 1 + di, 2 * 1 + dj)];
+        }
+        assert!((acc - f.water[kc]).abs() < 1e-6, "Σ d_fine == d_coarse");
+        assert!(
+            (g.water.iter().sum::<f32>() - sum_w0).abs() < 1e-4,
+            "global water conserved"
+        );
+        // sediment carried by the same exact-by-construction split
+        let sum_s0: f32 = f.sed.iter().sum();
+        let kcs = f.idx(4, 1, 1);
+        let mut accs = 0.0;
+        for (di, dj) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            accs += g.sed[g.idx(4, 2 * 1 + di, 2 * 1 + dj)];
+        }
+        assert!((accs - f.sed[kcs]).abs() < 1e-6, "Σ s_fine == s_coarse");
+        assert!(
+            (g.sed.iter().sum::<f32>() - sum_s0).abs() < 1e-4,
+            "global sediment conserved"
+        );
+    }
+
+    #[test]
+    fn upsample_h_introduces_no_spurious_pits() {
+        // A coarse strictly-monotone valley; bilinear h alone manufactures
+        // local minima between coarse samples → conserved water would pool
+        // there and break rivers. Post-fill must keep a downhill path.
+        let n = 4;
+        let mut f = Field::flat(n, 0.0);
+        for j in 0..n {
+            for i in 0..n {
+                let k = f.idx(4, i, j);
+                f.h[k] = 1.0 - j as f32 * 0.2;
+            }
+        } // strictly descends in +j
+        f.ocean.iter_mut().for_each(|o| *o = false);
+        let g = upsample2x(&f);
+        // every fine land cell (except the global min) has a strictly-lower neighbour
+        for j in 0..g.cs.n - 1 {
+            for i in 0..g.cs.n {
+                let k = g.idx(4, i, j);
+                let down = g.idx(4, i, j + 1);
+                assert!(
+                    g.h[down] <= g.h[k] + 1e-6,
+                    "no upstream-facing pit after upsample fill"
+                );
+            }
+        }
     }
 
     #[test]
