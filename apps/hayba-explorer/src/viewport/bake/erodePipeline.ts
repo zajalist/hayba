@@ -1004,19 +1004,20 @@ function runInto(
   // catch a true same-pass structural alias (a uniform sampling `dst`).
   _bakeDebug.checkSelfAlias("runInto", frag, uniforms, dst);
   // FEEDBACK-LOOP KILL — identical mechanism + fix as pingpong.ts/runPass
-  // (stale PHYSICAL GL texture-unit binding from an earlier runInto/runPass
-  // surviving a bare resetState; the accumulation/upsample passes here
+  // (stale three.js sampler binding from an earlier runInto/runPass that
+  // three re-binds on render(); the accumulation/upsample passes here
   // repeatedly reuse scratch RTs as BOTH a sampler source in one pass and
-  // the draw-FBO color attachment in a later pass). 5-step ordering (exact):
-  // getRenderTarget → setRenderTarget(dst) → physically unbind ALL units
-  // (BEFORE render, NO resetState — it would raw-unbind the dst FBO
-  // mid-pass so the draw hits the canvas; see physicallyIsolateUnits) →
-  // render → setRenderTarget(prev). runInto has explicit src/dst (NOT
-  // channel ping-pong) so there is no book.swap. After the physical unbind
-  // every other unit is physically null and three re-binds ONLY this
-  // pass's own samplers from scratch on the next render (setProgram →
-  // resetTextureUnits); SELF-ALIAS already proved none of this pass's own
-  // uniforms === dst.texture ⇒ feedback loop impossible by construction.
+  // the draw-FBO color attachment in a later pass). Fix synthesized from
+  // two contrasting runtime results — see physicallyIsolateUnits: it does
+  // unbind-all-units → resetState() (the step that actually kills the loop,
+  // by wiping three's sampler cache) → setRenderTarget(dst) AGAIN (re-bind
+  // the FBO resetState just cleared, so render() hits dst not the canvas).
+  // Ordering (exact): getRenderTarget → setRenderTarget(dst) →
+  // _bakeUnitHygiene.isolate (unbind units → resetState → re-setRenderTarget
+  // dst) → render → setRenderTarget(prev). runInto has explicit src/dst
+  // (NOT channel ping-pong) so there is no book.swap. SELF-ALIAS already
+  // proved none of this pass's own uniforms === dst.texture ⇒ with samplers
+  // re-bound fresh post-resetState the feedback loop is impossible.
   const prev = renderer.getRenderTarget();
   renderer.setRenderTarget(dst);
   _bakeUnitHygiene.isolate(renderer, "runInto", frag, dst);
