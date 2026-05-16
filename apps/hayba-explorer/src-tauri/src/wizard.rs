@@ -688,6 +688,121 @@ pub(crate) fn bake_impl(
     model
 }
 
+/// Result of the v2 (cube-sphere) bake oracle: the final eroded height
+/// field, projected to a `equirect_w × equirect_h` equirectangular raster
+/// (row-major, `y*w + x`, `y=0` = North pole). Equirect is *storage only*
+/// — all erosion physics ran on the equal-area cube-sphere.
+#[derive(serde::Serialize)]
+pub struct ErodeResultV2 {
+    pub equirect_w: u32,
+    pub equirect_h: u32,
+    pub h_final: Vec<f32>,
+}
+
+/// Per-cell painted elevation, derived from a wizard draft using the EXACT
+/// precedence `bake_impl` Step 4 uses: painter override > continental
+/// brush floor > deep-ocean floor. The preset HSV only ever decided plate
+/// *partitioning* and the plate-continental flag in `bake_impl`; it never
+/// fed the per-cell final elevation (Step 4 reads only the three sources
+/// above), so the v2 path does not need to decode the preset PNG at all.
+/// This is deliberately a *separate* derivation from `bake_impl` — the v2
+/// path is the new cube-sphere oracle and never runs the tectonic sim or
+/// the legacy graph erosion.
+fn painted_cells_from_draft(draft: &WizardDraft) -> Vec<(Vec3, f32)> {
+    // Same brush / painter floors as `bake_impl` Step 4.
+    const CONTINENTAL_BRUSH_FLOOR: f32 = 0.05;
+    const DEEP_OCEAN_FLOOR: f32 = -1.0;
+
+    // `Model::new` gives us the icosphere grid + per-cell sphere positions
+    // (`grid.position`) without stepping the sim — identical geometry to
+    // the path `bake_impl` uses, just no tectonics/erosion-on-graph.
+    let model = Model::new(draft.divisions, draft.seed);
+    let n_cells = model.grid.n_fields();
+
+    let mut user_continental = vec![false; n_cells as usize];
+    for &fid in &draft.continental_cells {
+        if fid < n_cells {
+            user_continental[fid as usize] = true;
+        }
+    }
+
+    let mut cells: Vec<(Vec3, f32)> = Vec::with_capacity(n_cells as usize);
+    for fid in 0..n_cells {
+        let painted = draft
+            .painted_mask
+            .get(fid as usize)
+            .copied()
+            .unwrap_or(0)
+            == 1;
+        let elevation = if painted {
+            draft.painted_elevations[fid as usize].clamp(-1.0, 1.0)
+        } else if user_continental[fid as usize] {
+            CONTINENTAL_BRUSH_FLOOR
+        } else {
+            DEEP_OCEAN_FLOOR
+        };
+        // rasterize_from_cells nearest-cell lookup needs unit vectors;
+        // grid positions are already on the unit sphere but normalize
+        // defensively (matches the dot-product nearest assumption).
+        cells.push((model.grid.position(fid).normalize_or_zero(), elevation));
+    }
+    cells
+}
+
+/// v2 bake oracle: derive painted per-cell elevations from the draft,
+/// rasterize them onto the cube-sphere at `cfg.base_face_res`, run the
+/// full multi-scale erosion pyramid, then project the finest eroded field
+/// to an equirectangular raster.
+///
+/// **Equirect-dimension contract.** The spec's storage target is an 8K
+/// equirect, but the dimensions must scale with the actual pyramid the
+/// caller asked for (the test uses a tiny `cfg`, so hardcoding 8192 would
+/// waste hours of CPU and break the small-config invariant). We derive:
+///
+/// ```text
+/// finest_face_res = base_face_res * 2^(pyramid_levels - 1)
+/// equirect_w      = (4 * finest_face_res).clamp(64, 8192)
+/// equirect_h      = equirect_w / 2
+/// ```
+///
+/// `4 * finest_face_res` is the classic "cube face perimeter ≈ equator
+/// pixels" heuristic so the raster roughly matches the cube-sphere's
+/// finest sampling density; clamped to `[64, 8192]` so a small test cfg
+/// still yields a sane raster and the production cfg caps at the 8K
+/// storage target. `equirect_h = equirect_w / 2` is the standard 2:1
+/// equirectangular aspect.
+pub(crate) fn bake_erode_v2_impl(
+    draft: &WizardDraft,
+    cfg: &crate::erosion::ErosionConfig,
+) -> ErodeResultV2 {
+    let cells = painted_cells_from_draft(draft);
+    let src = crate::erosion::pyramid::rasterize_from_cells(cfg.base_face_res, &cells);
+
+    let levels = cfg.pyramid_levels.max(1);
+    let finest_face_res = cfg
+        .base_face_res
+        .max(1)
+        .saturating_mul(1u32 << (levels - 1).min(20));
+    let equirect_w = (finest_face_res.saturating_mul(4)).clamp(64, 8192);
+    let equirect_h = equirect_w / 2;
+
+    let h_final = crate::erosion::bake_erode_cpu(&src, cfg, (equirect_w, equirect_h));
+    ErodeResultV2 { equirect_w, equirect_h, h_final }
+}
+
+/// Tauri entry point for the v2 cube-sphere bake oracle. `erosion_config`
+/// is optional — a missing arg deserializes to `None` and falls back to
+/// `ErosionConfig::default()`, mirroring `bake_from_wizard`'s
+/// `erosion_params` Option pattern.
+#[tauri::command]
+pub fn bake_erode_v2(
+    draft: WizardDraft,
+    erosion_config: Option<crate::erosion::ErosionConfig>,
+) -> ErodeResultV2 {
+    let cfg = erosion_config.unwrap_or_default();
+    bake_erode_v2_impl(&draft, &cfg)
+}
+
 /// Return the triangle index list for the icosphere at the given divisions.
 /// Each consecutive triple of u32s is one triangle, indexing into the
 /// per-cell position list. Used by the renderer to build the planet mesh.
@@ -853,5 +968,16 @@ mod tests {
             if snap.cell_continental[i] == 0 { oceanic += 1; }
         }
         assert!(oceanic >= 40, "painted-negative cells should be oceanic, got {} oceanic", oceanic);
+    }
+
+    #[test]
+    fn bake_erode_v2_returns_equirect_h_final_for_a_painted_draft() {
+        let mut d = draft_for("plates2");
+        d.continental_cells = (0..2000).collect();
+        let r = bake_erode_v2_impl(&d, &crate::erosion::ErosionConfig{
+            base_face_res:32, pyramid_levels:3, ..Default::default()});
+        assert_eq!(r.equirect_w * r.equirect_h, r.h_final.len() as u32);
+        assert!(r.h_final.iter().all(|v| v.is_finite()));
+        assert!(r.h_final.iter().any(|&v| v > 0.0), "has land");
     }
 }

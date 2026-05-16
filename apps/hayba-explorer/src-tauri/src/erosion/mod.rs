@@ -49,6 +49,20 @@ impl Default for ErosionConfig {
 pub mod cubesphere;
 pub mod noise;
 pub mod pyramid;
+pub mod resample;
+
+/// Full CPU erosion oracle: run the multi-scale cube-sphere pyramid on
+/// `src`, then resample the finest eroded `Field` to a `w×h`
+/// equirectangular raster. This is the deterministic reference the GPU
+/// port (Phase A2) is checked for parity against. Equirect is storage
+/// only — all erosion physics happens on the equal-area cube-sphere.
+pub fn bake_erode_cpu(
+    src: &pyramid::Field,
+    cfg: &ErosionConfig,
+    (w, h): (u32, u32),
+) -> Vec<f32> {
+    resample::cubesphere_to_equirect(&pyramid::run_pyramid(src, cfg), w, h)
+}
 
 #[cfg(test)]
 mod tests {
