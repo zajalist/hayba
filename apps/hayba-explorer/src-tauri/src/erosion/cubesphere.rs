@@ -3,12 +3,15 @@ use glam::Vec3;
 #[derive(Clone, Copy, Debug)]
 pub struct Cell { pub face: u8, pub i: u32, pub j: u32 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct CornerJunction { pub faces: [u8; 3] }
 
+#[derive(Clone, Copy, Debug)]
 pub struct CubeSphere { pub n: u32 } // n×n texels per face
 
 const FACE_NEI: [[u8;4];6] = // +X,-X,+Y,-Y,+Z,-Z adjacency (right,left,up,down)
-    [[4,5,2,3],[5,4,2,3],[1,0,5,4],[1,0,4,5],[1,0,2,3],[0,1,2,3]];
+    // Values derived empirically by face_adjacency_is_geometrically_continuous test.
+    [[5,4,2,3],[4,5,2,3],[0,1,5,4],[0,1,4,5],[0,1,2,3],[1,0,2,3]];
 
 fn warp(a: f32) -> f32 { (a * std::f32::consts::FRAC_PI_4).tan() } // equal-area-ish
 fn unwarp(a: f32) -> f32 { a.atan() * (4.0 / std::f32::consts::PI) }
@@ -51,7 +54,10 @@ impl CubeSphere {
         let pv=self.face_uv_to_sphere(c.face,u,v+s);
         (pu-p).cross(pv-p).length()
     }
-    pub fn face_neighbours(&self, f: u8) -> [u8;4] { FACE_NEI[f as usize] }
+    pub fn face_neighbours(&self, f: u8) -> [u8;4] {
+        debug_assert!(f < 6, "face index out of range: {f}");
+        FACE_NEI[f as usize]
+    }
     pub fn corner_junctions(&self) -> Vec<CornerJunction> {
         // 8 cube corners; faces meeting at each (static topology).
         vec![
@@ -90,8 +96,59 @@ mod tests {
     #[test]
     fn each_face_has_four_neighbours_and_eight_corners_are_three_way() {
         let g = CubeSphere::new(4);
-        assert_eq!(g.face_neighbours(0).len(), 4);
-        assert_eq!(g.corner_junctions().len(), 8);
-        for j in g.corner_junctions() { assert_eq!(j.faces.len(), 3); }
+        // Corner junctions: must be exactly 8, each with 3 *distinct* face indices.
+        let corners = g.corner_junctions();
+        assert_eq!(corners.len(), 8, "expected 8 cube corners");
+        for j in &corners {
+            let [a, b, c] = j.faces;
+            assert!(a != b && b != c && a != c,
+                "corner junction has duplicate faces: {:?}", j.faces);
+        }
+        // Face neighbours: 4 distinct faces, none equal to the queried face itself.
+        for f in 0u8..6 {
+            let nei = g.face_neighbours(f);
+            assert_eq!(nei.len(), 4);
+            let distinct: std::collections::HashSet<u8> = nei.iter().copied().collect();
+            assert_eq!(distinct.len(), 4, "face {f} has duplicate neighbour entries: {nei:?}");
+            assert!(!distinct.contains(&f), "face {f} lists itself as a neighbour: {nei:?}");
+        }
+    }
+
+    /// For every face f and every edge direction (right=0, left=1, up=2, down=3),
+    /// sample a point just outside that edge in (u,v) space, project it to a sphere
+    /// point, call sphere_to_face_uv, and verify the returned face matches FACE_NEI[f][dir].
+    /// This test is the authoritative derivation of FACE_NEI — if it fails, the table is wrong.
+    #[test]
+    fn face_adjacency_is_geometrically_continuous() {
+        let g = CubeSphere::new(8);
+        const EPS: f32 = 1e-3;
+        // Probe points per direction: (u_offset, v_offset) from face interior to just past edge.
+        // right(+u): u=1+ε, v=0.5
+        // left(-u):  u=-ε,  v=0.5
+        // up(+v):    u=0.5, v=1+ε
+        // down(-v):  u=0.5, v=-ε
+        let probes: [(f32, f32); 4] = [
+            (1.0 + EPS, 0.5),   // 0 = right
+            (-EPS,      0.5),   // 1 = left
+            (0.5,  1.0 + EPS),  // 2 = up
+            (0.5,       -EPS),  // 3 = down
+        ];
+        let dir_names = ["right", "left", "up", "down"];
+        let mut all_ok = true;
+        for f in 0u8..6 {
+            for (dir, &(u, v)) in probes.iter().enumerate() {
+                let sphere_pt = g.face_uv_to_sphere(f, u, v);
+                let (actual_face, _, _) = g.sphere_to_face_uv(sphere_pt);
+                let expected_face = FACE_NEI[f as usize][dir];
+                if actual_face != expected_face {
+                    eprintln!(
+                        "FACE_NEI[{f}][{}] is {expected_face} but geometry says it should be {actual_face}",
+                        dir_names[dir]
+                    );
+                    all_ok = false;
+                }
+            }
+        }
+        assert!(all_ok, "FACE_NEI has wrong entries — see eprintln output above for correct values");
     }
 }
