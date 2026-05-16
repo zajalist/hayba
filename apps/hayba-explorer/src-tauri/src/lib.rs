@@ -5,7 +5,6 @@ mod wizard;
 mod sim_state;
 mod climate;
 mod hydrology;
-mod erosion;
 mod bake_equirect;
 
 #[tauri::command]
@@ -28,8 +27,6 @@ pub fn run() {
             wizard::apply_boundary_types,
             wizard::apply_density_rank,
             wizard::get_grid_triangles,
-            wizard::bake_erode_v2,
-            wizard::bake_h0_v2,
             bake_equirect::bake_inputs_equirect,
         ])
         .run(tauri::generate_context!())
