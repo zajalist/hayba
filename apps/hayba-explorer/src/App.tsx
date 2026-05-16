@@ -306,11 +306,13 @@ export default function App() {
   // displayed globe for a relief-shaded debug sphere driven by the GPU
   // erosion bake. State is independent so the existing app is unaffected.
   const debugMatRef = useRef<THREE.ShaderMaterial | null>(null);
-  // Ownership-transfer refs: runErodeBake hands back equiRT.texture to the
-  // caller; uploadH0 hands back a DataTexture. Neither pipeline disposes
-  // them, so we track the previous bake's textures and dispose before
-  // allocating new ones to prevent VRAM leaks on repeated bake clicks.
-  const prevDebugHFinalRef = useRef<THREE.Texture | null>(null);
+  // Ownership-transfer refs: runErodeBake hands back the owning equirect
+  // WebGLRenderTarget (its .dispose() frees BOTH the GL framebuffer AND
+  // .texture — a bare texture.dispose() would leak the FBO); uploadH0
+  // hands back a DataTexture. Neither pipeline disposes them, so we track
+  // the previous bake's resources and dispose before allocating new ones
+  // to prevent VRAM leaks on repeated bake clicks.
+  const prevDebugHFinalRef = useRef<THREE.WebGLRenderTarget | null>(null);
   const prevDebugSrcH0Ref = useRef<THREE.Texture | null>(null);
   const [debugBaking, setDebugBaking] = useState(false);
   const [debugBakeProgress, setDebugBakeProgress] = useState<string | null>(null);
@@ -991,12 +993,17 @@ export default function App() {
         "bake_h0_v2",
         { draft: finalDraft, faceRes },
       );
-      // Dispose the PREVIOUS bake's textures before allocating new ones.
-      // runErodeBake ownership-transfers equiRT.texture to the caller;
-      // uploadH0 ownership-transfers the DataTexture. Three.js
-      // ShaderMaterial.dispose() does NOT free bound uniform textures,
-      // so without this each re-bake leaks ~256 MB (hFinal RT) + ~100 MB
-      // (srcH0Tex DataTexture). On first bake both refs are null — ?. no-ops.
+      // Dispose the PREVIOUS bake's resources before allocating new
+      // ones. runErodeBake ownership-transfers the equirect
+      // WebGLRenderTarget to the caller (its .dispose() frees BOTH the
+      // GL framebuffer AND its .texture); uploadH0 ownership-transfers
+      // the DataTexture. Three.js ShaderMaterial.dispose() does NOT free
+      // bound uniform textures or the source RT's FBO, so without this
+      // each re-bake leaks ~256 MB (hFinal RT) + ~100 MB (srcH0Tex
+      // DataTexture). On first bake both refs are null — ?. no-ops. Only
+      // the strictly-previous run's RT is freed here; the currently
+      // mounted material's RT is never the one being disposed (this runs
+      // before the new bake allocates / binds anything).
       prevDebugSrcH0Ref.current?.dispose();
       prevDebugHFinalRef.current?.dispose();
       const srcH0Tex = uploadH0(atlas, face_res);
@@ -1008,9 +1015,9 @@ export default function App() {
       const equirectW = Math.min(8192, Math.max(64, finest * 4));
       const equirectH = Math.max(32, equirectW / 2);
 
-      let hFinal: THREE.Texture | null = null;
+      let hFinalRT: THREE.WebGLRenderTarget | null = null;
       await scene.runBake(async (renderer) => {
-        hFinal = await runErodeBake(
+        hFinalRT = await runErodeBake(
           renderer,
           srcH0Tex,
           {
@@ -1024,19 +1031,20 @@ export default function App() {
           },
         );
       });
-      if (!hFinal) throw new Error("runErodeBake returned no texture");
+      if (!hFinalRT) throw new Error("runErodeBake returned no render target");
+      const hFinalTex = (hFinalRT as THREE.WebGLRenderTarget).texture;
 
-      // Record the new textures so the NEXT bake can dispose them.
+      // Record the new resources so the NEXT bake can dispose them.
       // Assignment is on the success path only — a throw mid-bake leaves
       // the previous refs intact (already disposed above, so no double-dispose).
-      prevDebugHFinalRef.current = hFinal;
+      prevDebugHFinalRef.current = hFinalRT;
       prevDebugSrcH0Ref.current = srcH0Tex;
 
       const mat = makeDebugReliefMaterial();
       // h0 view = the raw source equirect is not produced here; bind
       // h_final to both slots so the toggle is always renderable. A19
       // can extend this once a no-erosion equirect path exists.
-      setDebugTexture(mat, hFinal, srcH0Tex);
+      setDebugTexture(mat, hFinalTex, srcH0Tex);
       setDebugMapMode(mat, debugMapMode);
       debugMatRef.current = mat;
 
