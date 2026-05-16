@@ -999,6 +999,17 @@ function runInto(
   renderer.setRenderTarget(dst);
   renderer.render(_quadScene, _quadCam);
   renderer.setRenderTarget(prev);
+  // FEEDBACK-LOOP GUARD — see the matching note in pingpong.ts/runPass.
+  // three r0.169 caches bound sampler textures and skips re-binding when
+  // the same texture object is "already" on a unit, so a texture sampled
+  // in an earlier `runInto`/`runPass` stays bound to a GL texture unit.
+  // The accumulation/upsample passes here repeatedly reuse scratch RTs as
+  // BOTH a sampler source in one pass and the draw-FBO color attachment
+  // in a later pass; without clearing three's GL-state cache the still-
+  // bound texture aliases the active framebuffer attachment → Chrome/
+  // ANGLE feedback loop → discarded draw → degenerate field. Resetting
+  // forces a full re-bind of samplers + framebuffer on the next pass.
+  renderer.resetState();
 }
 
 function disposeHelperCache(): void {

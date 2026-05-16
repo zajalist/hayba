@@ -301,6 +301,24 @@ export function runPass(
   renderer.setRenderTarget(dst);
   renderer.render(scene, camera);
   renderer.setRenderTarget(prevTarget);
+  // FEEDBACK-LOOP GUARD (manual multi-pass ping-pong, three r0.169).
+  // three.js does NOT unbind sampler textures after `render`: it caches
+  // `currentBoundTextures[slot]` and SKIPS `gl.bindTexture` when the same
+  // texture object is "already" on a unit. Across the thousands of manual
+  // passes here, a texture sampled in pass N stays bound to a GL texture
+  // unit; when a later pass binds that very RT as its draw-FBO color
+  // attachment (this channel's write-slot after `swap`, or a reused
+  // scratch RT), the texture is simultaneously a sampler source AND the
+  // active framebuffer attachment → Chrome/ANGLE "Feedback loop formed
+  // between Framebuffer and active Texture" → the draw is DISCARDED and
+  // the erosion field degenerates. The per-pass uniforms being read≠write
+  // does NOT prevent this — the offending binding is STALE state left by
+  // EARLIER passes, not this pass's uniforms. `resetState()` clears
+  // three's GL state tracking (incl. bound-texture/FBO cache) so the next
+  // pass re-binds every sampler + framebuffer from scratch, breaking the
+  // aliasing. Standard mitigation for hand-rolled ping-pong; correctness
+  // over the modest debug-config pass count (see Phase-3 perf note).
+  renderer.resetState();
 
   targets.book.swap(outChannel);
 }
