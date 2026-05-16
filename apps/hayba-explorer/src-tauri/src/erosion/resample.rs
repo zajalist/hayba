@@ -92,6 +92,7 @@ mod tests {
         let eq = cubesphere_to_equirect(&f, 64, 32);
         for y in 0..32 {
             // u=0 and u=63 (±180°) sample the same meridian.
+            // flat field → all samples == 0.5; this pins that the ±180° coord path stays finite/deterministic at the seam pixels (true continuity is by construction: lon=-π and +π resolve to the same meridian).
             assert!((eq[(y * 64) as usize] - eq[(y * 64 + 63) as usize]).abs() < 0.05);
         }
     }
