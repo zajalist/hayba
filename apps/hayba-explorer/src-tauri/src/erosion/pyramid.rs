@@ -891,13 +891,18 @@ pub fn upsample2x(field: &Field) -> Field {
 
     if has_land {
         // PD relaxation sweeps. `w` is monotone-non-increasing each sweep and
-        // bounded below by `out.h`, so it converges; a hard sweep cap (a small
-        // multiple of the per-face span) guarantees termination even under
-        // f32 plateau stalls — it CANNOT infinite-loop. Neighbours are
-        // resolved directly on the FINE `out` field's seam-correct topology
-        // (4 inline axis steps via `out.neighbour`, self-clamp dropped) — no
-        // per-cell heap allocation.
-        let sweep_cap = (4 * nf as usize) + 8; // > max monotone path length on a face
+        // bounded below by `out.h`, so it converges. Neighbours are resolved
+        // directly on the FINE `out` field's seam-correct topology (4 inline
+        // axis steps via `out.neighbour`, self-clamp dropped) — no per-cell
+        // heap allocation.
+        //
+        // Single-direction Gauss–Seidel PD relaxation: worst case is the
+        // longest non-ascending drainage path in cells, which a winding
+        // multi-face continental basin can push toward the land-texel count.
+        // Loop to the fixed point; the ceiling only guards against unforeseen
+        // non-convergence and must NEVER be the normal exit on real input.
+        let sweep_cap = total + 16;
+        let mut hit_cap = true;
         for _ in 0..sweep_cap {
             let mut changed = false;
             for facep in 0u8..6 {
@@ -935,9 +940,15 @@ pub fn upsample2x(field: &Field) -> Field {
                 }
             }
             if !changed {
+                hit_cap = false;
                 break;
             }
         }
+        debug_assert!(
+            !hit_cap,
+            "PD pit-fill hit the {sweep_cap}-sweep ceiling before convergence (nf={nf}); \
+             residual interior pits may sever rivers — investigate before trusting this bake"
+        );
         // Any land cell still at +∞ (an isolated basin with no outlet path —
         // not possible on a connected sphere with outlets, but guard anyway)
         // falls back to its own terrain so `h` stays finite.
