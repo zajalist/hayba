@@ -970,6 +970,20 @@ export default function App() {
     }
   }, [draft]);
 
+  // Debug-globe bake surface config. Phase-1: a deliberately SMALL
+  // pyramid (base face 32, 2 levels → finest face 64, equirect ~256×128)
+  // so the debug/validation bake finishes in seconds even after the
+  // event-loop yields added to runErodeBake. This is the debug-globe
+  // surface ONLY — NOT production resolution. Restoring full-res
+  // (base 64 / 5 levels / 4096×2048) is the deferred Phase-3 bake perf
+  // re-architecture; DEFAULT_ERODE_CONFIG is left UNTOUCHED on purpose
+  // (parity.ts + the Rust default-parity test pin its exact values).
+  const DEBUG_BAKE_CONFIG = {
+    ...DEFAULT_ERODE_CONFIG,
+    baseFaceRes: 32,
+    pyramidLevels: 2,
+  };
+
   // NEW cube-sphere GPU bake — ADDITIVE debug path. Does NOT touch the
   // Rust `bake_from_wizard` sim flow above: it rasterises the painted
   // draft onto a cube-sphere (`bake_h0_v2`), runs the GPU erosion
@@ -988,7 +1002,7 @@ export default function App() {
         : { painted_elevations: [], painted_mask: [] };
       const finalDraft: WizardDraft = { ...draft, ...paintedFields };
 
-      const faceRes = DEFAULT_ERODE_CONFIG.baseFaceRes;
+      const faceRes = DEBUG_BAKE_CONFIG.baseFaceRes;
       const { face_res, atlas } = await invoke<{ face_res: number; atlas: number[] }>(
         "bake_h0_v2",
         { draft: finalDraft, faceRes },
@@ -1011,7 +1025,7 @@ export default function App() {
       // Equirect target sizing mirrors the Rust wizard heuristic
       // (4·finest ≈ equator circumference), clamped to a sane range.
       const finest =
-        face_res * 2 ** Math.max(0, DEFAULT_ERODE_CONFIG.pyramidLevels - 1);
+        face_res * 2 ** Math.max(0, DEBUG_BAKE_CONFIG.pyramidLevels - 1);
       const equirectW = Math.min(8192, Math.max(64, finest * 4));
       const equirectH = Math.max(32, equirectW / 2);
 

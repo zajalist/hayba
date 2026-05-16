@@ -94,6 +94,46 @@ import {
 } from "./passes.glsl";
 
 /* ===================================================================
+ *  Event-loop yield (Phase-1 webview-unfreeze — RESULT-INVARIANT).
+ *
+ *  runErodeBake issues tens of thousands of GL passes (+ per-level
+ *  full-res readbacks) with ZERO event-loop yields, which freezes the
+ *  whole webview UI thread (Windows "not responding"/white screen) and
+ *  starves the GL command queue. `yieldToLoop` parks the microtask
+ *  chain on a MACROTASK (setTimeout(0)) so the browser event loop runs
+ *  one turn — repaint, input, and (critically) the GL driver flushing
+ *  its already-queued command buffer — between pass batches.
+ *
+ *  NOT requestAnimationFrame: `scene.runBake` PAUSES the render loop for
+ *  the duration of the bake; while paused, RAF callbacks can be
+ *  throttled/coalesced (or never fire if the tab is backgrounded), so a
+ *  RAF-gated bake could stall indefinitely. A `setTimeout(0)` macrotask
+ *  always fires regardless of render-loop / visibility state.
+ *
+ *  RESULT-INVARIANCE (LOAD-BEARING): all erosion state lives in the GPU
+ *  ping-pong textures. The JS between `runInto`/`runPass` calls only
+ *  ENQUEUES GL commands; it never mutates texture contents. Awaiting a
+ *  macrotask here does NOT change GL command submission order or any
+ *  texel — it only lets the event loop run and lets the driver drain
+ *  the commands already queued. The only JS-side texture reads are the
+ *  synchronous `computeGlobalMinLand` readbacks; yields are inserted
+ *  only AROUND that call, never between its readRenderTargetPixels and
+ *  its scan. Net: the bake output equirect is BIT-IDENTICAL with and
+ *  without these yields. (No code reads a texture into JS and branches
+ *  on it within a yielded region, and no GL call is reordered.)
+ * =================================================================== */
+const yieldToLoop = (): Promise<void> =>
+  new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+// Yield cadence inside the long bounded inner pass loops (pit-fill,
+// flow-accum/relax, box-lowpass, …). Coarse enough not to tank GL
+// throughput (one macrotask per 64 fullscreen passes is negligible vs
+// the passes themselves), frequent enough to keep the webview UI thread
+// alive (≤64 passes between repaints). Power-of-two so the `& 63` mask
+// is exact.
+const YIELD_EVERY = 64;
+
+/* ===================================================================
  *  Config (mirror of Rust `ErosionConfig`, erosion/mod.rs).
  *  Field names are camelCase TS; the per-field meaning + defaults are
  *  byte-for-byte the Rust struct (so GPU formulas == CPU formulas).
@@ -1204,13 +1244,13 @@ export async function runErodeBake(
       warmRes = n;
       return { rt, cold: true };
     };
-    const relaxAccum = (
+    const relaxAccum = async (
       which: "spA" | "depA" | "depOut",
       fromScratch: (dst: THREE.WebGLRenderTarget) => void,
       accumFrag: string,
       accumUniforms: (prevTex: THREE.Texture) => Record<string, THREE.IUniform>,
       refineCap: number,
-    ): THREE.Texture => {
+    ): Promise<THREE.Texture> => {
       const cur =
         which === "spA" ? warmSpA : which === "depA" ? warmDepA : warmDepOut;
       const { rt: warm, cold } = ensureWarm(cur);
@@ -1240,6 +1280,10 @@ export async function runErodeBake(
         const tmp = s;
         s = d;
         d = tmp;
+        // Yield every YIELD_EVERY passes so the webview UI thread + GL
+        // command queue can drain. Result-invariant: only enqueued GL
+        // commands run between iterations; no texel is read into JS here.
+        if ((i & (YIELD_EVERY - 1)) === 0) await yieldToLoop();
       }
       // Snapshot the converged iterate into the PERSISTENT warm RT (next
       // K-iter / next level seeds from it). The warm RT is NOT in
@@ -1273,7 +1317,7 @@ export async function runErodeBake(
         { ...baseUniforms(), uState: { value: stateTex() } },
         recvRT,
       );
-      const spArea = relaxAccum(
+      const spArea = await relaxAccum(
         "spA",
         // cold seed: A0 = Ω(k) (AREA_INIT — exact Rust per-cell area).
         (dst) =>
@@ -1351,7 +1395,7 @@ export async function runErodeBake(
       );
       // Deposition drainage area — SAME AREA_ACCUM recurrence, warm-
       // started (coarse→fine + per-K-iter) exactly like stream-power's.
-      const depArea = relaxAccum(
+      const depArea = await relaxAccum(
         "depA",
         (dst) =>
           runInto(
@@ -1382,7 +1426,7 @@ export async function runErodeBake(
       // started. Cold seed = qs0 (inflow 0, exactly the prior seed); warm
       // seed = last converged carriedOut. The QS forest fixed point is
       // unique over the acyclic receiver forest ⇒ seed-invariant.
-      const carriedOut = relaxAccum(
+      const carriedOut = await relaxAccum(
         "depOut",
         (dst) =>
           runInto(
@@ -1432,6 +1476,11 @@ export async function runErodeBake(
       disposeScratch();
 
       onProgress?.(level, k);
+      // Once-per-K-iter macrotask yield (alongside the progress callback)
+      // so the webview can repaint progress + the driver can drain this
+      // K-iter's queued passes. Result-invariant (all state is in GPU
+      // textures; only enqueued GL commands run during the yield).
+      await yieldToLoop();
     }
 
     // (c) upsample ×2 unless finest.
@@ -1538,6 +1587,10 @@ export async function runErodeBake(
         const tmp = wSrc;
         wSrc = wDst;
         wDst = tmp;
+        // Yield every YIELD_EVERY PD pit-fill passes. Result-invariant:
+        // the PD fixed point is in the GPU ping-pong (wSrc/wDst); the
+        // yield only flushes already-queued passes, never a JS readback.
+        if ((it & (YIELD_EVERY - 1)) === 0) await yieldToLoop();
       }
       // Commit the filled h back into the fine state's .r (mode 1 output
       // is w; write it into state.r, ocean/g/b preserved).
@@ -1596,6 +1649,13 @@ export async function runErodeBake(
       stateTargets = fineTargets;
       curRes = nf;
     }
+
+    // End-of-pyramid-level macrotask yield (fires for every level,
+    // including the finest). Lets the webview repaint + the GL driver
+    // drain this level's full pass batch before the next level's
+    // (larger) atlas is allocated. Result-invariant: state lives in the
+    // GPU ping-pong (stateTargets); the yield only flushes queued GL.
+    await yieldToLoop();
   }
 
   // --- §5.5 frequency-separation macro blend. -----------------------
@@ -1643,7 +1703,7 @@ export async function runErodeBake(
     eroH,
   );
 
-  const lpEroded = boxLowpass(
+  const lpEroded = await boxLowpass(
     renderer,
     st,
     finalRes,
@@ -1652,7 +1712,7 @@ export async function runErodeBake(
     lpPasses,
     scratch,
   );
-  const lpH0 = boxLowpass(
+  const lpH0 = await boxLowpass(
     renderer,
     st,
     finalRes,
@@ -1733,9 +1793,14 @@ function seedXorLevel(seed: THREE.Vector2, level: number): THREE.Vector2 {
  * Both internal ping-pong RTs are registered into `track` so the
  * caller's single `disposeScratch()` (run AFTER the BLEND pass consumes
  * the result) frees them — no GPU-mem leak across the bake-then-watch
- * boundary. Returns the RT holding the lowpassed h in .r.
+ * boundary. Resolves to the RT holding the lowpassed h in .r.
+ *
+ * `async` ONLY to interleave Phase-1 event-loop yields between sweep
+ * batches (webview-unfreeze). The numerical behaviour is byte-unchanged:
+ * the sweeps are the same separable neighbour-mean over the same GPU
+ * ping-pong; the yield merely flushes already-queued GL between sweeps.
  */
-function boxLowpass(
+async function boxLowpass(
   renderer: THREE.WebGLRenderer,
   targets: PingPongTargets,
   faceRes: number,
@@ -1743,7 +1808,7 @@ function boxLowpass(
   srcRT: THREE.WebGLRenderTarget,
   passes: number,
   track: THREE.WebGLRenderTarget[],
-): THREE.WebGLRenderTarget {
+): Promise<THREE.WebGLRenderTarget> {
   const [w, h] = szTuple(faceRes);
   let a = makeRT(targets, w, h);
   let b = makeRT(targets, w, h);
@@ -1769,6 +1834,10 @@ function boxLowpass(
     const tmp = a;
     a = b;
     b = tmp;
+    // Yield every YIELD_EVERY lowpass sweeps. Result-invariant: the
+    // lowpass field is in the GPU ping-pong (a/b); the yield only
+    // flushes already-queued GL — no JS readback in this loop.
+    if ((p & (YIELD_EVERY - 1)) === 0) await yieldToLoop();
   }
   // Both `a` and `b` are registered in `track` (== the caller's scratch)
   // and freed by the single post-BLEND disposeScratch(); the result is
