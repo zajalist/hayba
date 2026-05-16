@@ -139,6 +139,16 @@ fixed water reservoir.
    `vx = ( f_R(left) − fL + fR − f_L(right) ) / 2`,
    `vy = ( f_T(below) − fB + fT − f_B(above) ) / 2`;
    `v = (vx, vy) / max(eps, l · 0.5·(d + d'))`.
+   > **Impl footnote (2026-05-16, Task 3):** the GPU minimal-state design
+   > (state = A:`b,d,s,ocean` + F only; velocity recomputed from `uF` in
+   > ERODE/ADVECT with NO pre-water depth channel) makes the exact
+   > `0.5·(d+d')` average unavailable in those passes. The implementation
+   > uses `l · d'` (post-water depth — the standard single-buffer Mei
+   > formulation), applied consistently in ERODE and ADVECT. This is a
+   > damping/normalization factor affecting tuning magnitude, not
+   > morphology or sign; gated by the Task-8 visual validation. Exact
+   > averaging would require adding a pre-water depth channel, which the
+   > minimal-state design intentionally forbids.
 4. **Erode / deposit** —
    `sinα = max(sinMin, |∇b| / sqrt(1+|∇b|²))` (∇b from wrapped central diff);
    `C = Kc · sinα · |v|`;
