@@ -43,11 +43,21 @@ assert.ok(/vec3\s+lighting\s*\(/.test(SURFACE_FRAG), "lighting() defined");
 assert.ok(SURFACE_FRAG.includes("uSunDir"), "sun direction uniform used");
 assert.ok(!SURFACE_FRAG.includes("`"), "no backtick in GLSL");
 assert.ok(!/for\s*\(.*octave/i.test(SURFACE_FRAG), "still no procedural octave loop (ALU)");
+// Review D2/D3: macro shadow uses the SMOOTH geometric normal; micro lighting
+// uses the perturbed normal — terminator must not be driven by perturbed N.
+assert.ok(SURFACE_FRAG.includes("vGeomNormal"), "smooth geometric normal carried");
+assert.ok(/macroTerm\s*=\s*smoothstep\([^)]*vGeomNormal/.test(SURFACE_FRAG),
+  "terminator from geometric normal, not perturbed N (no banding on bumps)");
+// Review D1: a TBN matrix is built before applying the relief gradient
+assert.ok(/mat3\s+TBN|tbn/i.test(SURFACE_FRAG), "TBN constructed for relief perturbation");
 console.log("ok");
 ```
 
 - [ ] **Step 2:** `cd apps/hayba-explorer && npx tsx src/viewport/shaders/lighting.test.ts` → FAIL.
-- [ ] **Step 3:** Implement `vec3 lighting(vec3 albedo, vec3 N, vec3 sunDir)` — Lambert + soft terminator (`smoothstep(-0.1,0.15, dot(N,sunDir))`), gentle ambient, no harsh black night side; sample the baked `normalXYZ` mask (perturbed by `localRelief` gradient via `uReliefStrength`) instead of the geometric sphere normal so relief reads. Add `uSunDir`/`uReliefStrength`/`uExposure` to `surfaceMaterial` + `SURFACE_KNOBS`. Call `lighting()` where C's shader had the `mountainStandout`/`sunLight` placeholder.
+- [ ] **Step 3:** Implement, with these **NORMATIVE review fixes**:
+  - **D3 (TBN, object/tangent space):** the baked `normalXYZ` mask + the `localRelief`-gradient relief bump must be combined through a correct **TBN matrix built in-shader from the sphere derivatives** (`T = dFdx(vSpherePos)`-ish orthonormalized against `vGeomNormal`, `B = cross`), so relief lights correctly as the planet rotates (no object/world-space mismatch). Output `vec3 perturbedN`.
+  - **D2 (terminator banding):** decouple macro-shadow from micro-light. `float macroTerm = smoothstep(-0.1, 0.15, dot(vGeomNormal, sunDir));` (the **smooth geometric** normal — `vGeomNormal` from `SURFACE_VERT`), then `finalLight = macroTerm * max(0.0, dot(perturbedN, sunDir))` + gentle ambient (no pitch-black night). Mountains near the terminator can't strobe lit/black.
+  - `vec3 lighting(vec3 albedo, vec3 perturbedN, vec3 geomN, vec3 sunDir)`. Add `uSunDir`/`uReliefStrength`/`uExposure` to `surfaceMaterial` + `SURFACE_KNOBS`. `SURFACE_VERT` already passes `vGeomNormal` (Plan C C2 fix). Call `lighting()` where C's shader had the `mountainStandout`/`sunLight` placeholder.
 - [ ] **Step 4:** PASS; `npx tsc -b` clean.
 - [ ] **Step 5: Commit** `git add apps/hayba-explorer/src/viewport/shaders/surface.glsl.ts apps/hayba-explorer/src/viewport/bake/surfaceMaterial.ts apps/hayba-explorer/src/viewport/shaders/lighting.test.ts` → `feat(render): normal-mapped sun/terminator lighting`.
 
@@ -78,10 +88,14 @@ assert.ok(F.includes("pow(") && F.includes("aoStrength"), "AO composited with st
 import { SURFACE_FRAG as F } from "./surface.glsl";
 assert.ok(/vec3\s+atmosphere\s*\(/.test(F) && F.includes("uAtmoStrength"));
 assert.ok(/tonemap|aces|filmic/i.test(F), "HDR tonemap present");
+// Review D1: atmosphere is a macro volumetric effect — it must use the SMOOTH
+// geometric normal, never the perturbed relief normal (else jagged sparkly rim).
+assert.ok(/atmosphere\([^)]*vGeomNormal/.test(F) && !/atmosphere\([^)]*perturbed/.test(F),
+  "atmosphere() uses geometric normal, not perturbed N");
 ```
 
 - [ ] **Step 2:** FAIL.
-- [ ] **Step 3:** Implement a cheap analytic `atmosphere()` (Fresnel-ish rim glow at the limb keyed to `dot(N, viewDir)` + sun-side scatter tint), additive over the lit surface; final ACES/filmic `tonemap()` with `uExposure`. Align palette to the photoreal target (memory `project_planet_shader_photoreal`).
+- [ ] **Step 3:** Implement a cheap analytic `atmosphere(vec3 lit, vec3 vGeomNormal, vec3 viewDir, vec3 sunDir)` — Fresnel-ish rim glow keyed to `dot(vGeomNormal, viewDir)` + sun-side scatter tint, additive over the lit surface. **NORMATIVE (review D1):** atmosphere is a macro volumetric effect — it MUST use the **smooth geometric normal `vGeomNormal`**, never `perturbedN` (the relief-perturbed normal makes the limb halo jagged/sparkly/broken over mountains). Final ACES/filmic `tonemap()` with `uExposure`. Align palette to the photoreal target (memory `project_planet_shader_photoreal`).
 - [ ] **Step 4:** PASS; `npm run build` ok.
 - [ ] **Step 5: Commit** `git add apps/hayba-explorer/src/viewport/shaders/surface.glsl.ts apps/hayba-explorer/src/viewport/bake/surfaceMaterial.ts` → `feat(render): limb atmosphere + ACES tonemap (photoreal target)`.
 
@@ -147,4 +161,8 @@ console.log("ok");
 
 ## Self-Review
 
-**Spec §8 coverage:** AO multiply → D2; mountain standout (slope/curvature/normal relief) → D1/D2; atmosphere/lighting toward photoreal → D1/D3 (aligned to memory `project_planet_shader_photoreal`). §9 Phase-2 seam → D5 (conformance only; CDLOD explicitly deferred to a future Subsystem E, not built — matches spec "deferred"). **Placeholder scan:** D implements the `lighting()/mountainStandout()/atmosphere()` GLSL that Plan C referenced as stubs — each is a concrete stage pinned by a shape/ALU test; no TODOs. Single-tap/ALU discipline re-asserted by tests in D1 (no octave loop). **Type consistency:** `lighting`, `mountainStandout`, `atmosphere`, `tonemap`, `uSunDir`, `uReliefStrength`, `uAtmoStrength`, `uExposure`, `assertCdlodReady` consistent with Plan C's `SURFACE_FRAG`/`SURFACE_KNOBS`/`SHADING_CONTROLS` and Plan B's `AO`/`normalXYZ`/`curvature` mask names. **Scope:** Subsystem D only; Phase-2 CDLOD is a named future Subsystem E (deferred per spec §9), seam verified not implemented.
+**Spec §8 coverage:** AO multiply → D2; mountain standout → D1/D2; atmosphere/lighting photoreal → D1/D3. §9 Phase-2 seam → D5 (conformance only; CDLOD deferred to Subsystem E).
+
+**Architecture-review fixes folded in:** **(D1, jagged atmosphere)** `atmosphere()` uses the smooth `vGeomNormal`, never the perturbed normal — test forbids `atmosphere(...perturbed...)`. **(D2, terminator banding)** macro-shadow `macroTerm = smoothstep(...,dot(vGeomNormal,sunDir))` decoupled from micro Lambert `dot(perturbedN,sunDir)`; test pins `macroTerm` to `vGeomNormal`. **(D3, object/tangent space)** the baked `normalXYZ` + relief gradient combine through an in-shader **TBN** built from sphere derivatives so relief lights correctly under planet rotation; test asserts a TBN/`mat3` is constructed. `SURFACE_VERT` carries `vGeomNormal` (Plan C C2).
+
+**Placeholder scan:** `lighting()/mountainStandout()/atmosphere()` are concrete stages pinned by shape/ALU/normal-source/TBN assertions — no TODOs. **Type consistency:** `lighting(albedo,perturbedN,geomN,sunDir)`, `mountainStandout`, `atmosphere(lit,vGeomNormal,viewDir,sunDir)`, `tonemap`, `vGeomNormal`, `perturbedN`, `uSunDir/uReliefStrength/uAtmoStrength/uExposure`, `assertCdlodReady` consistent with Plan C (`SURFACE_FRAG/VERT`, `SURFACE_KNOBS`, `vGeomNormal`) and Plan B (`AO/normalXYZ/curvature`). **Scope:** Subsystem D only; Phase-2 CDLOD = future Subsystem E (deferred per spec §9), seam verified not implemented.
