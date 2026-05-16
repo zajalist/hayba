@@ -659,14 +659,25 @@ is erosion vs a plain no-erosion upsample of `src`):
   `out.h` and the resampled `src.h` to the macro scale (a few `neighbour`
   box passes ~ the base-cell radius re-expressed on the fine grid), return
   `sqrt(mean((blur_out - blur_srcRes)^2))` over land. Measures macro drift.
-- `highfreq_energy(f) -> f32`: `mean_over_land( (f.h[k] - mean_of_land_neighbours(k))^2 )`
-  — variance of the 1-ring high-pass (h minus its local neighbour mean).
-- `highfreq_energy_upsampled(src) -> f32`: bilinear-upsample `src` to the FINAL
-  pyramid resolution **with NO erosion** (the conservative `upsample2x` chain or
-  the same bilinear resample, no `inject_detail_band`/`stream_power`/`thermal`),
-  then `highfreq_energy(...)` of that. For a face-continuous smooth fixture this
-  is ~1e-6 (truly smooth), so the `1.5×` assertion cleanly isolates real
-  erosion detail rather than a fixture artefact.
+- `highfreq_energy(f) -> f32`: **macro-removed band-split detail** (NOT a 1-ring
+  Laplacian — a pure 1-ring high-pass of a curved macro conflates fixture macro
+  curvature with detail, which is what made the earlier metric unsatisfiable).
+  Compute `macro = box_lowpass(f.h, P)` where `P` is the SAME heavy macro-scale
+  pass count used by `lowpass_l2_diff` (the §5.5 frequency-separation cutoff —
+  i.e. "detail" is exactly the band the blend operates on), then return
+  `mean_over_land( (f.h[k] - macro[k])^2 )`. This is the metric-independent
+  measure validated by the diagnostic (it gave clean erosion-vs-no-erosion
+  separation at any band); it is curvature-invariant — a genuinely smooth macro
+  (at any resolution) has ≈0 here because the heavy lowpass removes its curvature.
+- `highfreq_energy_upsampled(src) -> f32`: take the **no-erosion** bilinear
+  upsample of `src` to the FINAL pyramid resolution (same resample the impl uses;
+  NO `inject_detail_band`/`stream_power`/`thermal`), then apply the SAME
+  `highfreq_energy` (same `P` macro-removal). Because both helpers strip the
+  identical macro band, this baseline ≈0 for a smooth fixture regardless of
+  per-cell macro curvature, so `hf_out > 1.5×hf_base` cleanly isolates
+  erosion-ADDED sub-macro detail. (Choose `P` = the macro/base-scale pass count;
+  the implementer MUST use the identical `box_lowpass(_, P)` in all three helpers
+  so the bands are consistent — this is the load-bearing correctness property.)
 
 - [ ] **Step 2: Run, verify fails** — FAIL.
 
