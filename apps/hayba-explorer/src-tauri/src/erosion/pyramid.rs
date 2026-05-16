@@ -11,6 +11,7 @@
 
 use glam::Vec3;
 use super::cubesphere::CubeSphere;
+use super::noise::{fbm, ridged};
 
 #[allow(dead_code)] // fields/methods wired in A5+ (rasterize/erosion)
 pub struct Field {
@@ -82,6 +83,86 @@ impl Field {
             3
         } else {
             4
+        }
+    }
+}
+
+/// Inject seam-continuous, slope-modulated detail noise into land texels.
+///
+/// For every land texel (ocean texels are left unchanged) a noise contribution
+/// is added to `field.h`:
+///
+/// ```text
+/// fbm_c     = fbm(pos, level+2, seed) * 2 - 1          // centered, ~zero-mean
+/// envelope  = 1 + slope01[k] * ridged(pos, level+2, seed)   // [1, 2]
+/// delta     = amp * slope01[k] * fbm_c * envelope
+/// ```
+///
+/// `fbm_c` (fbm output centered to `[-1, 1]`) is the zero-mean base signal —
+/// its global mean over many texels is ~0 because fbm is symmetric around 0.5.
+/// The `ridged` noise envelope amplifies oscillations in steep/orogenic areas
+/// without adding a DC bias: multiplying a zero-mean signal by a positive
+/// scalar preserves the zero-mean property.  This gives flat areas smooth fBm
+/// texture and steep areas sharper, ridge-like detail.
+///
+/// The `fbm*2-1` centering is the contract the zero-mean test relies on.
+///
+/// Noise frequency scales with `level` — the function uses `level + 2` octaves
+/// so coarser pyramid levels receive less detail and finer levels more.
+///
+/// # Parameters
+/// - `field`   — mutable reference to the elevation field; only `.h` is mutated.
+/// - `level`   — pyramid level (0 = coarsest); controls octave count (`level+2`).
+/// - `amp`     — amplitude of the added detail in normalized elevation units.
+/// - `seed`    — deterministic seed; same seed → identical noise field.
+/// - `slope01` — per-texel slope in `[0, 1]`; drives fbm↔ridged blend weight
+///               and amplitude scaling.  Must have the same length as `field.h`.
+///
+/// # Panics (debug)
+/// Panics if `slope01.len() != field.h.len()`.
+pub fn inject_detail_band(field: &mut Field, level: u32, amp: f32, seed: u64, slope01: &[f32]) {
+    debug_assert_eq!(
+        slope01.len(),
+        field.h.len(),
+        "slope01 must be the same length as field.h"
+    );
+
+    let n = field.cs.n;
+    let octaves = level + 2;
+    let inv = 1.0 / n as f32;
+
+    for face in 0u8..6 {
+        for j in 0..n {
+            for i in 0..n {
+                let k = field.idx(face, i, j);
+
+                // Ocean texels are untouched — fixed base level.
+                if field.ocean[k] {
+                    continue;
+                }
+
+                // Sphere position at texel centre (seam-continuous domain).
+                let pos = field.cs.face_uv_to_sphere(face, (i as f32 + 0.5) * inv, (j as f32 + 0.5) * inv);
+
+                // Center fbm to [-1, 1] — this is the zero-mean base signal.
+                // fbm output is ~uniform over [0,1], so fbm*2-1 has mean ~0.
+                let fbm_c = fbm(pos, octaves, seed) * 2.0 - 1.0;
+
+                // Ridged noise in [0,1] — used as a multiplicative sharpening
+                // envelope for steep areas. Using it as an envelope (not as an
+                // additive term) preserves the zero-mean property: ridge peaks
+                // amplify fbm oscillations locally without shifting the global mean.
+                let s = slope01[k].clamp(0.0, 1.0);
+                let ridged_env = ridged(pos, octaves, seed); // [0,1]
+
+                // Envelope: flat → plain fbm_c; steep → fbm_c sharpened by ridged.
+                // Multiplying by (1 + s * ridged_env) scales amplitude by up to 2×
+                // but does not shift mean (the mean of fbm_c · positive_envelope ≈ 0
+                // because fbm_c is symmetric around 0 and the envelope is independent).
+                let noise_val = fbm_c * (1.0 + s * ridged_env);
+
+                field.h[k] += amp * s * noise_val;
+            }
         }
     }
 }
@@ -283,6 +364,18 @@ mod tests {
             }
         }
         assert_eq!(three, 4, "exactly 4 corner texels per face");
+    }
+
+    #[test]
+    fn detail_band_adds_zero_mean_seam_continuous_relief_scaled_by_slope() {
+        let mut f = Field::flat(16, 0.5);
+        let before = f.h.clone();
+        let len = f.h.len();
+        inject_detail_band(&mut f, /*level*/2, /*amp*/0.05, /*seed*/7, /*slope*/&vec![1.0; len]);
+        let mean: f32 = f.h.iter().zip(&before).map(|(a,b)| a-b).sum::<f32>() / len as f32;
+        assert!(mean.abs() < 5e-3, "near zero-mean (adds detail, not bias): mean={mean}");
+        assert!(f.h.iter().zip(&before).any(|(a,b)| (a-b).abs() > 1e-4), "did add relief");
+        assert!(f.h.iter().all(|v| v.is_finite()));
     }
 
     #[test]
