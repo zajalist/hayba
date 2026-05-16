@@ -106,7 +106,7 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   ke: 0.015,
   sinMin: 0.02,
   uplift: 0.0008,
-  maxDeltaB: 0.01,
+  maxDeltaB: 0.004,
   kt: 0.3,
   tanTalus: 0.6,
   thermalEvery: 8,
