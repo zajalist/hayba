@@ -34,7 +34,10 @@ impl Default for ErosionConfig {
             incision_clamp: 3e-4,
             thermal_d: 0.08,
             talus_angle: 0.6,
-            thermal_cadence: 4,
+            // smallest cadence where pre-blend injected-variance retention >=0.5
+            // (measured: 4->.348, 6->.421, 8->.538 plateau) — spec §5.4
+            // thermal-vs-detail contract.
+            thermal_cadence: 8,
             deposition_g: 1.6,
             beta: 1.5,
             uplift: 0.0,
