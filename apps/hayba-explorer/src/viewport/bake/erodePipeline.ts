@@ -134,6 +134,61 @@ export const DEFAULT_ERODE_CONFIG: ErodeConfig = {
 };
 
 /* ===================================================================
+ *  HIERARCHICAL COARSE→FINE WARM-START (§6 HARDENING; residual risk #8).
+ *
+ *  Spec §6 + residual risk #8 are NORMATIVE: flow accumulation MUST be
+ *  "hierarchical on the pyramid chain (coarse→fine, reusing the §5.4
+ *  levels)" — NOT a flat full-res parallel-flood / Jacobi-relaxed-to-
+ *  convergence over the finest grid. A flat O(6·n²)-pass Jacobi at the
+ *  production finest (n=1024) is ~6.3M passes × 3 accumulations × 16
+ *  K-iters/level ≈ 4e8 fullscreen passes ⇒ hours / guaranteed GPU
+ *  watchdog TDR. That is the exact prohibited failure mode.
+ *
+ *  The fix carries each converged coarse-level field down to WARM-START
+ *  the fine level (and warm-starts each K-iter from the previous K-iter's
+ *  converged field — the h field moves by a small per-iter increment, so
+ *  the fixed point moves by an O(1) sub-tree). The Braun–Willett donor
+ *  sum is a contraction with a UNIQUE fixed point over the (unchanged)
+ *  acyclic receiver forest (a receiver is chosen only when strictly
+ *  lower ⇒ h strictly decreases along every chain ⇒ the forest is a DAG
+ *  ⇒ the Jacobi map is nilpotent-to-fixed-point); the PD pit-fill is a
+ *  monotone min-operator with a unique fixed point. A FIXED POINT IS
+ *  INDEPENDENT OF THE INITIAL ITERATE: a closer seed cannot change the
+ *  converged value, only how many passes reach it. So this changes ONLY
+ *  the initial iterate + the pass cap — never the per-cell recurrence,
+ *  the receiver/Ω formulas, or the converged value. A18 GPU↔CPU RMSE
+ *  parity is therefore UNAFFECTED (it depends only on the fixed point).
+ *
+ *  With a coarse-seeded start the residual relaxation is the sub-tree
+ *  added by ONE ×2 refinement = O(1) chain-depth, so a small constant
+ *  refine cap converges. The COARSEST level (level 0, base=64 by
+ *  default) still seeds from scratch (Ω / qs0) and runs a generous but
+ *  BOUNDED from-scratch cap — cheap because n is small (6·64² ≈ 24.6k
+ *  texels; the bounded cap there is the only place a ~6·n² depth is
+ *  ever paid, and only at the smallest n). */
+// Warm-started (fine-level + per-K-iter) accumulation/fill refine depth.
+// One ×2 refinement adds O(1) chain-depth on top of a converged seed; a
+// per-K-iter step perturbs h slightly ⇒ the donor/PD fixed point moves
+// by an O(1) sub-tree. 16 Jacobi/PD passes amply covers that residual
+// (8 typically suffices; 16 is a safety margin). NOT a function of n —
+// this is what makes the finest level TDR-safe.
+const ACCUM_REFINE_PASSES = 16;
+// (No FILL_REFINE constant: the PD pit-fill is intentionally NOT warm-
+// started — see the fillPasses note in runErodeBake. It keeps its exact
+// Rust ∞ seed; only its cap is bounded — from O(6·n²) to O(8·n).)
+// Coarsest-level (level 0) FROM-SCRATCH cap. Seeded from Ω/qs0 (no warm
+// start available yet), so it must still relax the full base-res forest:
+// bound = land-texel-count surrogate 6·n² (+slack), with an absolute
+// ceiling so a pathological huge `baseFaceRes` cannot DoS the cap. At
+// the default base=64 this is ~24.6k passes over a 64²·6 grid — fast
+// (the whole point of the pyramid: pay the O(n²) relaxation ONCE, at the
+// smallest n, then only O(1)-refine every finer level).
+const BASE_FROM_SCRATCH_CAP_CEIL = 200_000;
+function baseFromScratchCap(n: number): number {
+  return Math.min(6 * n * n + 64, BASE_FROM_SCRATCH_CAP_CEIL);
+}
+
+/* ===================================================================
  *  pyramidSchedule — PURE, the only A15 unit-tested surface.
  *
  *  Mirrors `run_pyramid_core`: start field is `base_face_res.max(1)`;
@@ -154,6 +209,45 @@ export function pyramidSchedule(cfg: {
     out.push({ faceRes: base * 2 ** level });
   }
   return out;
+}
+
+/* ===================================================================
+ *  erodeAccumPassBudget — PURE. Total fullscreen accumulation/fill pass
+ *  count for a schedule, mirroring runErodeBake's loop structure EXACTLY
+ *  (3 warm-started accumulations × K-iters × levels + 1 PD fill per
+ *  upsampled level). The ONLY level paying the from-scratch O(6·n²) cost
+ *  is level 0 (smallest n); every finer level is O(1)-refine. This makes
+ *  the §6 HARDENING TDR-feasibility claim locally unit-testable: the old
+ *  flat O(6·n²)-every-level scheme was ~4e8 passes @ n=1024; this is
+ *  ~thousands. NOT used by runErodeBake (it inlines the same caps) —
+ *  exported purely so erodePipeline.test.ts can pin the budget. */
+export function erodeAccumPassBudget(cfg: {
+  baseFaceRes: number;
+  pyramidLevels: number;
+  kItersPerLevel: number;
+}): number {
+  const schedule = pyramidSchedule(cfg);
+  const kIters = Math.max(0, Math.floor(cfg.kItersPerLevel));
+  let total = 0;
+  for (let level = 0; level < schedule.length; level++) {
+    const n = schedule[level].faceRes;
+    // 3 accumulations per K-iter (stream-power A, deposition A, QS).
+    for (const which of [0, 1, 2]) {
+      void which;
+      for (let k = 0; k < kIters; k++) {
+        // K-iter 0 of level 0 is the ONLY cold (from-scratch) start;
+        // every other K-iter / level is warm-started.
+        const cold = level === 0 && k === 0;
+        total += cold ? baseFromScratchCap(n) : ACCUM_REFINE_PASSES;
+      }
+    }
+    // PD pit-fill: once per UPSAMPLED level (not the finest), O(8·n).
+    if (level + 1 < schedule.length) {
+      const nf = schedule[level + 1].faceRes;
+      total += Math.min(8 * nf + 64, BASE_FROM_SCRATCH_CAP_CEIL);
+    }
+  }
+  return total;
 }
 
 /* ===================================================================
@@ -337,7 +431,16 @@ const RECV_FRAG: string =
     "  recvAndSlope(face, ci, cj, p0, st.r, oslope, rf, ri, rj);",
     "  float packed = -1.0;",
     "  if (rf >= 0){",
-    "    /* pack (rf,ri,rj) into a float exactly (ints < 2048 ⇒ exact f32). */",
+    "    /* Pack (rf,ri,rj) → one f32, EXACTLY. f32 has a 24-bit mantissa,",
+    "       so consecutive integers are representable iff < 2^24. The packed",
+    "       key is face·n² + i·n + j ≤ 6·n² (face≤5, i,j<n), so exactness",
+    "       requires 6·n² < 2^24 ⇒ n ≲ 1672. This n-ceiling is LOAD-BEARING:",
+    "       the AREA_ACCUM / QS_ACCUM donor test compares this packed key for",
+    "       EQUALITY (|dpk-selfPacked|<0.5); above n≈1672 distinct cells alias",
+    "       to the same f32 and the donor forest is silently corrupted (A18",
+    "       parity + drainage break). Production (pyramidLevels:5 ⇒ n≤1024)",
+    "       is safe; pyramidLevels≥6 ⇒ n≥2048 is NOT (guarded in runErodeBake",
+    "       — the supported ceiling is ≤5 levels / n≤1672). */",
     "    float n = uFaceRes;",
     "    packed = float(rf) * n * n + float(ri) * n + float(rj);",
     "  }",
@@ -644,6 +747,57 @@ const H0_RESAMPLE_FRAG: string =
     "}",
   ].join("\n");
 
+/* SEED_UPSAMPLE_FRAG: bilinear-resample ONE `.r`-channel warm-start field
+ * (converged drainage area `A`, or the converged PD-filled `w`/`h`) from
+ * a coarse atlas to the fine atlas. Structurally byte-identical to
+ * H0_RESAMPLE_FRAG / UPSAMPLE_FRAG mode-0 — the SAME cube-sphere
+ * round-trip (sphereToFaceUv → 4 bracketing coarse cell centres →
+ * clamped 4-tap bilinear) the `h` upsample path uses, so the warm field
+ * is carried down on EXACTLY the level-seam-consistent path `h` is. This
+ * is a PURE INITIAL-ITERATE transport: it never enters any per-cell
+ * recurrence/formula — it only chooses where the Jacobi/PD relaxation
+ * starts. The fixed point (hence A18 parity) is unaffected (the donor
+ * forest / PD operator each have a unique fixed point independent of the
+ * initial iterate; see DELEGATION note 1 + the fixed-point invariance
+ * note at the level loop). uSeedSrc = coarse warm atlas @ uSeedSrcRes. */
+const SEED_UPSAMPLE_FRAG: string =
+  HP +
+  COMMON_MAIN_DECODE +
+  [
+    "uniform sampler2D uSeedSrc;",
+    "uniform float uSeedSrcRes;",
+    "vec2 seedFaceUvToAtlas(int f, float fu, float fv){",
+    "  float tileX = float(f - 3 * (f / 3));",
+    "  float tileY = float(f / 3);",
+    "  return vec2((tileX + fu) / ATLAS_COLS, (tileY + fv) / ATLAS_ROWS);",
+    "}",
+    "float seedCell(int f, int i, int j){",
+    "  float ns = uSeedSrcRes;",
+    "  float fu = (float(i)+0.5)/ns; float fv = (float(j)+0.5)/ns;",
+    "  return texture(uSeedSrc, seedFaceUvToAtlas(f, fu, fv)).r;",
+    "}",
+    "void main(){",
+    "  int face, fi, fj; vec3 p;",
+    "  faceTexelToSpherePos(_atlasUv(), face, fi, fj, p);",
+    "  int sf; float su; float sv;",
+    "  sphereToFaceUv(p, sf, su, sv);",
+    "  float snc = uSeedSrcRes;",
+    "  float fx = clamp(su * snc - 0.5, 0.0, snc - 1.0);",
+    "  float fy = clamp(sv * snc - 0.5, 0.0, snc - 1.0);",
+    "  int i0 = int(floor(fx)); int j0 = int(floor(fy));",
+    "  int i1 = min(i0 + 1, int(snc) - 1);",
+    "  int j1 = min(j0 + 1, int(snc) - 1);",
+    "  float tx = fx - float(i0); float ty = fy - float(j0);",
+    "  float h00 = seedCell(sf, i0, j0);",
+    "  float h10 = seedCell(sf, i1, j0);",
+    "  float h01 = seedCell(sf, i0, j1);",
+    "  float h11 = seedCell(sf, i1, j1);",
+    "  float a = h00 + (h10 - h00) * tx;",
+    "  float b = h01 + (h11 - h01) * tx;",
+    "  fragColor = vec4(a + (b - a) * ty, 0.0, 0.0, 0.0);",
+    "}",
+  ].join("\n");
+
 /* BLEND_FRAG: §5.5 frequency-separation macro blend (pyramid.rs, NOT a
  * lerp): land-only h = lowpass(h0) + β·(h_eroded − lowpass(h_eroded)),
  * .max(0); ocean keeps the eroded/base level. uState = eroded field;
@@ -831,6 +985,26 @@ export async function runErodeBake(
   const levels = schedule.length;
   const finalRes = schedule[levels - 1].faceRes;
 
+  // n-ceiling guard (LOAD-BEARING — see RECV_FRAG pack comment). The
+  // receiver is packed as face·n²+i·n+j into ONE f32; the AREA_ACCUM /
+  // QS_ACCUM donor test compares that key for equality. f32 has a 24-bit
+  // mantissa ⇒ exact integers only below 2^24; the max key is ≈6·n², so
+  // exactness needs 6·n² < 2^24 ⇒ n ≲ 1672. Above that, distinct cells
+  // alias to the same f32, silently corrupting the donor forest (A18
+  // parity + drainage break). Production pyramidLevels:5 ⇒ n≤1024 (safe);
+  // pyramidLevels≥6 ⇒ n≥2048 is UNSUPPORTED — hard-fail with a clear
+  // message rather than emit a corrupted bake.
+  const PACK_N_CEIL = 1672; // floor(sqrt((2^24)/6))
+  if (finalRes > PACK_N_CEIL) {
+    throw new Error(
+      `runErodeBake: finest face res ${finalRes} exceeds the f32 ` +
+        `receiver-pack ceiling (${PACK_N_CEIL}). The donor-equality test ` +
+        `aliases above 6·n²≥2^24 and would silently corrupt drainage/parity. ` +
+        `Supported ceiling: ≤5 pyramid levels at base 64 (n≤1024), or any ` +
+        `base·2^(levels-1) ≤ ${PACK_N_CEIL}.`,
+    );
+  }
+
   // One ping-pong "state" channel (the canonical RGBA32F field atlas:
   // r=h, g=water, b=sed, a=ocean). Allocated at the FINAL res so it can
   // hold every level (we render only the active res's sub-rectangle and
@@ -848,6 +1022,68 @@ export async function runErodeBake(
   const disposeScratch = () => {
     for (const rt of scratch) rt.dispose();
     scratch = [];
+  };
+
+  // --- Hierarchical coarse→fine warm-start state (§6 HARDENING). ------
+  // PERSISTENT single-channel (.r) warm fields, kept ALIVE across K-iters
+  // AND across pyramid levels (disposeScratch must NOT free them). Each
+  // holds the LAST converged value of its accumulation/fill, used as the
+  // next iterate's seed. Carried L→L+1 by SEED_UPSAMPLE_FRAG (the same
+  // seam-correct bilinear round-trip the `h` upsample uses). NOT in the
+  // converged-value path — only the initial iterate (fixed-point
+  // invariant; see the warm-start note above). `warmRes` is the face res
+  // the warm RTs are currently allocated at.
+  // The three FLOW-ACCUMULATION fixed points (Braun–Willett donor sum +
+  // routed-load) are PURE-ADDITIVE Jacobi maps over an acyclic receiver
+  // forest (`acc = Ω + Σ prevA`; QS adds a per-cell post-clamp that is a
+  // function of the cell's own converged inputs) — affine, nilpotent
+  // (spectral radius 0 on a DAG), converging in exactly chain-depth steps
+  // from ANY finite seed. So a closer (coarse-upsampled / previous-K-iter)
+  // seed CANNOT change the fixed point — only the pass count. These ARE
+  // warm-started (the §6 HARDENING target). The PD pit-fill is NOT
+  // warm-started (monotone-DECREASING ⇒ requires a super-solution seed;
+  // see the fillPasses note) — it keeps the exact Rust ∞ seed.
+  let warmSpA: THREE.WebGLRenderTarget | null = null; // stream-power A
+  let warmDepA: THREE.WebGLRenderTarget | null = null; // deposition A
+  let warmDepOut: THREE.WebGLRenderTarget | null = null; // dep routed-load
+  let warmRes = 0;
+  const disposeWarm = () => {
+    for (const rt of [warmSpA, warmDepA, warmDepOut]) rt?.dispose();
+    warmSpA = warmDepA = warmDepOut = null;
+    warmRes = 0;
+  };
+  // Bilinear-resample one persistent warm RT coarse→fine onto a fresh RT
+  // at `fineRes` (the EXACT round-trip the `h` upsample uses). Returns
+  // the new fine RT (caller adopts ownership; old coarse RT disposed).
+  const upsampleWarm = (
+    src: THREE.WebGLRenderTarget | null,
+    coarseRes: number,
+    fineTargets: PingPongTargets,
+    fineRes: number,
+  ): THREE.WebGLRenderTarget | null => {
+    if (!src) return null;
+    const [fw, fh] = szTuple(fineRes);
+    const dst = makeRT(fineTargets, fw, fh);
+    runInto(
+      renderer,
+      SEED_UPSAMPLE_FRAG,
+      {
+        uResolution: { value: new THREE.Vector2(fw, fh) },
+        uFaceRes: { value: fineRes },
+        uAtlasTexel: {
+          value: new THREE.Vector2(
+            1 / (fineRes * ATLAS_COLS),
+            1 / (fineRes * ATLAS_ROWS),
+          ),
+        },
+        uManualBilinear: { value: fineTargets.manualBilinear ? 1 : 0 },
+        uSeedSrc: { value: src.texture },
+        uSeedSrcRes: { value: coarseRes },
+      },
+      dst,
+    );
+    src.dispose();
+    return dst;
   };
 
   // --- Build the start field at base res from srcH0Tex. --------------
@@ -934,54 +1170,121 @@ export async function runErodeBake(
       "state",
     );
 
+    // Warm RTs are allocated at THIS level's res. On level entry they
+    // are either (a) absent (level 0 — seed from scratch) or (b) the
+    // coarse-level converged fields upsampled into this res at the END of
+    // the previous level (warmRes === n already). If a config edge ever
+    // leaves them at the wrong res, drop them (fall back to from-scratch
+    // — still correct, just one slow level).
+    if (warmRes !== n) disposeWarm();
+
+    // relaxAccum: run a Jacobi/PD accumulation to its fixed point with a
+    // WARM START. `warmRef` names the persistent warm RT (carried across
+    // K-iters + levels). On first use at a res it's seeded from
+    // `fromScratch()` and run `baseFromScratchCap(n)` passes (coarsest
+    // level / cold start); thereafter it's seeded from the previous
+    // converged value and run only `refineCap` passes (the residual after
+    // a small h-perturbation or one ×2 refinement is an O(1) sub-tree).
+    // The per-cell `accumFrag` recurrence + uniforms are UNCHANGED — only
+    // the initial iterate + pass count differ ⇒ the unique fixed point
+    // (hence A18 parity) is invariant. Returns the texture holding the
+    // converged field (lives in the persistent warm RT — caller must
+    // consume it before the next relaxAccum on the same warmRef).
+    const ensureWarm = (
+      cur: THREE.WebGLRenderTarget | null,
+    ): { rt: THREE.WebGLRenderTarget; cold: boolean } => {
+      if (cur && warmRes === n) return { rt: cur, cold: false };
+      const rt = makeRT(st, aw, ah);
+      warmRes = n;
+      return { rt, cold: true };
+    };
+    const relaxAccum = (
+      which: "spA" | "depA" | "depOut",
+      fromScratch: (dst: THREE.WebGLRenderTarget) => void,
+      accumFrag: string,
+      accumUniforms: (prevTex: THREE.Texture) => Record<string, THREE.IUniform>,
+      refineCap: number,
+    ): THREE.Texture => {
+      const cur =
+        which === "spA" ? warmSpA : which === "depA" ? warmDepA : warmDepOut;
+      const { rt: warm, cold } = ensureWarm(cur);
+      if (which === "spA") warmSpA = warm;
+      else if (which === "depA") warmDepA = warm;
+      else warmDepOut = warm;
+      // Iterate ping-pong (transient scratch, freed each K-iter).
+      const it0 = makeRT(st, aw, ah);
+      const it1 = makeRT(st, aw, ah);
+      scratch.push(it0, it1);
+      // Seed iterate: cold ⇒ from-scratch init; warm ⇒ previous converged.
+      if (cold) {
+        fromScratch(it0);
+      } else {
+        runInto(
+          renderer,
+          COPY_R_FRAG,
+          { ...baseUniforms(), uSrcR: { value: warm.texture } },
+          it0,
+        );
+      }
+      let s = it0;
+      let d = it1;
+      const passes = cold ? baseFromScratchCap(n) : refineCap;
+      for (let i = 0; i < passes; i++) {
+        runInto(renderer, accumFrag, accumUniforms(s.texture), d);
+        const tmp = s;
+        s = d;
+        d = tmp;
+      }
+      // Snapshot the converged iterate into the PERSISTENT warm RT (next
+      // K-iter / next level seeds from it). The warm RT is NOT in
+      // `scratch`, so disposeScratch() at K-iter end leaves it intact.
+      runInto(
+        renderer,
+        COPY_R_FRAG,
+        { ...baseUniforms(), uSrcR: { value: s.texture } },
+        warm,
+      );
+      return warm.texture;
+    };
+
     // (b) NORMATIVE per-level order: erode → thermal → deposition.
     //     thermal THROTTLED to every cfg.thermal_cadence-th K-iter.
     const cadence = Math.max(1, Math.floor(cfg.thermalCadence));
     for (let k = 0; k < Math.max(0, Math.floor(cfg.kItersPerLevel)); k++) {
       // --- stream_power_step ---
       // Pass 1+2 (A15-delegated): receiver + Braun–Willett drainage area.
+      // §6 HARDENING: the donor sum is relaxed with a HIERARCHICAL
+      // coarse→fine (+ per-K-iter) WARM START, NOT a flat full-res
+      // Jacobi-to-convergence (the prohibited TDR mode). The recurrence
+      // (AREA_ACCUM_FRAG) + receiver field are byte-unchanged; only the
+      // initial iterate (= last converged A, upsampled L→L+1) + the pass
+      // count change ⇒ the unique forest fixed point is invariant.
       const recvRT = makeRT(st, aw, ah);
-      const areaA = makeRT(st, aw, ah);
-      const areaB = makeRT(st, aw, ah);
-      scratch.push(recvRT, areaA, areaB);
-
+      scratch.push(recvRT);
       runInto(
         renderer,
         RECV_FRAG,
         { ...baseUniforms(), uState: { value: stateTex() } },
         recvRT,
       );
-      // A0 = Ω(k).
-      runInto(
-        renderer,
-        AREA_INIT_FRAG,
-        { ...baseUniforms(), uRecv: { value: recvRT.texture } },
-        areaA,
+      const spArea = relaxAccum(
+        "spA",
+        // cold seed: A0 = Ω(k) (AREA_INIT — exact Rust per-cell area).
+        (dst) =>
+          runInto(
+            renderer,
+            AREA_INIT_FRAG,
+            { ...baseUniforms(), uRecv: { value: recvRT.texture } },
+            dst,
+          ),
+        AREA_ACCUM_FRAG,
+        (prevTex) => ({
+          ...baseUniforms(),
+          uRecv: { value: recvRT.texture },
+          uPrevA: { value: prevTex },
+        }),
+        ACCUM_REFINE_PASSES,
       );
-      // Jacobi-relax the donor sum to its fixed point (== Rust
-      // topological forest sum). Bound: longest receiver chain ≤
-      // land-texel count; the per-face cell count (6·n·n) is the safe
-      // bound (matches Rust's sweep_cap = total+16 intent — convergence
-      // is the normal exit, the cap only guards pathological input).
-      const totalCells = 6 * n * n;
-      let aSrc = areaA;
-      let aDst = areaB;
-      const accumPasses = Math.min(totalCells + 16, 8 * n * n + 64);
-      for (let it = 0; it < accumPasses; it++) {
-        runInto(
-          renderer,
-          AREA_ACCUM_FRAG,
-          {
-            ...baseUniforms(),
-            uRecv: { value: recvRT.texture },
-            uPrevA: { value: aSrc.texture },
-          },
-          aDst,
-        );
-        const tmp = aSrc;
-        aSrc = aDst;
-        aDst = tmp;
-      }
       // Merge converged A into state.b (STREAM_POWER reads A from .b).
       runPass(
         renderer,
@@ -990,7 +1293,7 @@ export async function runErodeBake(
         {
           ...baseUniforms(),
           uState: { value: stateTex() },
-          uArea: { value: aSrc.texture },
+          uArea: { value: spArea },
         },
         "state",
       );
@@ -1031,12 +1334,8 @@ export async function runErodeBake(
       // h field changed since stream-power — deposition_step recomputes
       // its own recv/area exactly the same way).
       const dRecv = makeRT(st, aw, ah);
-      const dAreaA = makeRT(st, aw, ah);
-      const dAreaB = makeRT(st, aw, ah);
       const qs0 = makeRT(st, aw, ah);
-      const outA = makeRT(st, aw, ah);
-      const outB = makeRT(st, aw, ah);
-      scratch.push(dRecv, dAreaA, dAreaB, qs0, outA, outB);
+      scratch.push(dRecv, qs0);
 
       runInto(
         renderer,
@@ -1044,67 +1343,63 @@ export async function runErodeBake(
         { ...baseUniforms(), uState: { value: stateTex() } },
         dRecv,
       );
-      runInto(
-        renderer,
-        AREA_INIT_FRAG,
-        { ...baseUniforms(), uRecv: { value: dRecv.texture } },
-        dAreaA,
+      // Deposition drainage area — SAME AREA_ACCUM recurrence, warm-
+      // started (coarse→fine + per-K-iter) exactly like stream-power's.
+      const depArea = relaxAccum(
+        "depA",
+        (dst) =>
+          runInto(
+            renderer,
+            AREA_INIT_FRAG,
+            { ...baseUniforms(), uRecv: { value: dRecv.texture } },
+            dst,
+          ),
+        AREA_ACCUM_FRAG,
+        (prevTex) => ({
+          ...baseUniforms(),
+          uRecv: { value: dRecv.texture },
+          uPrevA: { value: prevTex },
+        }),
+        ACCUM_REFINE_PASSES,
       );
-      let daS = dAreaA;
-      let daD = dAreaB;
-      for (let it = 0; it < accumPasses; it++) {
-        runInto(
-          renderer,
-          AREA_ACCUM_FRAG,
-          {
-            ...baseUniforms(),
-            uRecv: { value: dRecv.texture },
-            uPrevA: { value: daS.texture },
-          },
-          daD,
-        );
-        const tmp = daS;
-        daS = daD;
-        daD = tmp;
-      }
       // qs0 = local sediment supply (Rust deposition Pass-3 supply).
       const depSpUniforms = {
         ...baseUniforms(),
         uRecv: { value: dRecv.texture },
-        uArea: { value: daS.texture },
+        uArea: { value: depArea },
         uErodibility: { value: cfg.erodibility },
         uAreaExp: { value: cfg.areaExp },
         uSlopeExp: { value: cfg.slopeExp },
       };
       runInto(renderer, QS_INIT_FRAG, depSpUniforms, qs0);
-      // Relax carriedOut to the routed-load fixed point.
-      let oS = outA;
-      let oD = outB;
-      // seed carriedOut iterate with qs0 (inflow starts 0).
-      runInto(
-        renderer,
-        COPY_R_FRAG,
-        { ...baseUniforms(), uSrcR: { value: qs0.texture } },
-        oS,
+      // Routed-load (carriedOut) — SAME QS_ACCUM recurrence, warm-
+      // started. Cold seed = qs0 (inflow 0, exactly the prior seed); warm
+      // seed = last converged carriedOut. The QS forest fixed point is
+      // unique over the acyclic receiver forest ⇒ seed-invariant.
+      const carriedOut = relaxAccum(
+        "depOut",
+        (dst) =>
+          runInto(
+            renderer,
+            COPY_R_FRAG,
+            { ...baseUniforms(), uSrcR: { value: qs0.texture } },
+            dst,
+          ),
+        QS_ACCUM_FRAG,
+        (prevTex) => ({
+          ...baseUniforms(),
+          uRecv: { value: dRecv.texture },
+          uArea: { value: depArea },
+          uQs0: { value: qs0.texture },
+          uPrevOut: { value: prevTex },
+          uErodibility: { value: cfg.erodibility },
+          uAreaExp: { value: cfg.areaExp },
+          uSlopeExp: { value: cfg.slopeExp },
+          uDepositionG: { value: cfg.depositionG },
+          uIncisionClamp: { value: cfg.incisionClamp },
+        }),
+        ACCUM_REFINE_PASSES,
       );
-      const depAccUniforms = (prevOut: THREE.Texture) => ({
-        ...baseUniforms(),
-        uRecv: { value: dRecv.texture },
-        uArea: { value: daS.texture },
-        uQs0: { value: qs0.texture },
-        uPrevOut: { value: prevOut },
-        uErodibility: { value: cfg.erodibility },
-        uAreaExp: { value: cfg.areaExp },
-        uSlopeExp: { value: cfg.slopeExp },
-        uDepositionG: { value: cfg.depositionG },
-        uIncisionClamp: { value: cfg.incisionClamp },
-      });
-      for (let it = 0; it < accumPasses; it++) {
-        runInto(renderer, QS_ACCUM_FRAG, depAccUniforms(oS.texture), oD);
-        const tmp = oS;
-        oS = oD;
-        oD = tmp;
-      }
       // Apply deposition (h += dep, ε-clamped, ocean fixed).
       runPass(
         renderer,
@@ -1114,9 +1409,9 @@ export async function runErodeBake(
           ...baseUniforms(),
           uState: { value: stateTex() },
           uRecv: { value: dRecv.texture },
-          uArea: { value: daS.texture },
+          uArea: { value: depArea },
           uQs0: { value: qs0.texture },
-          uCarriedOut: { value: oS.texture },
+          uCarriedOut: { value: carriedOut },
           uErodibility: { value: cfg.erodibility },
           uAreaExp: { value: cfg.areaExp },
           uSlopeExp: { value: cfg.slopeExp },
@@ -1194,7 +1489,29 @@ export async function runErodeBake(
       );
       let wSrc = wA;
       let wDst = wB;
-      const fillPasses = Math.min(6 * nf * nf + 16, 8 * nf * nf + 64);
+      // PD pit-fill pass cap. IMPORTANT: the PD step (fillPits, passes.glsl)
+      // is `w_new = min(wprev, max(hk, min_nbr_w))` — MONOTONE
+      // NON-INCREASING. Its unique fixed point is reached ONLY from a
+      // valid super-solution; the canonical one is `+∞` on interior land
+      // (exactly the Rust seed — SEED_W_FRAG, unchanged here). A
+      // coarse→fine warm start is NOT applied to the PD fill: a bilinear-
+      // upsampled coarse `w*` can dip BELOW the fine fixed point inside
+      // pits whose rim only exists at fine resolution (detail band), and
+      // the monotone-decreasing scheme would lock those cells below the
+      // true fixed point — i.e. it would CHANGE the converged value and
+      // break A18 parity. That is the prohibited "divergent approximation"
+      // (spec residual-risk #8 is about flow *accumulation*, which IS
+      // warm-started above; the PD fill keeps its exact ∞ seed). What WAS
+      // wrong is only the cap: a `+∞`-seeded Jacobi PD propagates the
+      // outlet exactly ONE cell-ring per pass, so it converges in
+      // O(longest fill path) = O(basin diameter) ≤ O(face perimeter)
+      // passes, NOT O(6·n²). The old `6·n²` cap (~1.5M @ nf=1024) was
+      // wildly over-provisioned and itself TDR-infeasible. Bound it at a
+      // generous O(n) envelope (full cube-sphere diameter ≈ a few face
+      // widths; ×8 + slack covers pathological winding basins) — exact
+      // same ∞ seed ⇒ exact same PD fixed point ⇒ A18 unaffected, and
+      // TDR-safe (nf=1024 ⇒ ≤ ~8.2k passes vs ~6.3M).
+      const fillPasses = Math.min(8 * nf + 64, BASE_FROM_SCRATCH_CAP_CEIL);
       for (let it = 0; it < fillPasses; it++) {
         // UPSAMPLE_FRAG mode 1 reads h from uState(.r) + uPrevW; writes w.
         runInto(
@@ -1248,6 +1565,27 @@ export async function runErodeBake(
       );
 
       disposeScratch();
+
+      // §6 HARDENING — carry the converged coarse-level flow fields DOWN
+      // to warm-start the fine level. Each persistent warm RT (the last
+      // converged stream-power A / deposition A / routed-load at coarse
+      // res `n`) is bilinear-resampled to fine res `nf` via
+      // SEED_UPSAMPLE_FRAG — the SAME seam-correct cube-sphere round-trip
+      // UPSAMPLE_FRAG mode 0 uses for `h` (so the warm field is carried
+      // on exactly the level-seam-consistent path the height field is).
+      // This is PURE initial-iterate transport (the additive-Jacobi
+      // forest fixed point is seed-invariant; see the warm-start note) —
+      // it makes the fine level's first K-iter converge in
+      // ACCUM_REFINE_PASSES instead of O(6·nf²). Done AFTER disposeScratch
+      // (warm RTs are not scratch) and BEFORE st.dispose (warm RTs were
+      // allocated against `st` but SEED_UPSAMPLE only samples their
+      // texture into a fresh fineTargets RT, so the old GL texture is
+      // fully consumed before st is freed).
+      warmSpA = upsampleWarm(warmSpA, n, fineTargets, nf);
+      warmDepA = upsampleWarm(warmDepA, n, fineTargets, nf);
+      warmDepOut = upsampleWarm(warmDepOut, n, fineTargets, nf);
+      if (warmSpA || warmDepA || warmDepOut) warmRes = nf;
+
       st.dispose();
       stateTargets = fineTargets;
       curRes = nf;
@@ -1362,6 +1700,7 @@ export async function runErodeBake(
   // --- Teardown (bake-then-watch: free every GPU resource except the
   //     returned equirect texture). ----------------------------------
   disposeScratch();
+  disposeWarm(); // persistent coarse→fine warm RTs (not in `scratch`)
   st.dispose();
   disposeRunPassCache();
   disposeHelperCache();
