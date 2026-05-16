@@ -33,17 +33,25 @@ import { HeightPainter, type BrushConfig } from "./wizard/paint/HeightPainter";
 import { earthElevations, earthElevationsFromImage } from "./wizard/earth-template";
 import HeightPaintPanel from "./components/panels/HeightPaintPanel";
 import { buildPainterMesh, type PainterMeshHandle } from "./viewport/painterMesh";
-// NEW cube-sphere GPU bake pipeline (Subsystem A). Purely additive — the
+// Hydraulic equirect bake pipeline (erosion rework). Purely additive — the
 // existing wizard / bake_from_wizard flow is untouched; this is a
 // debug/validation surface gated behind its own button.
-import { uploadH0 } from "./viewport/bake/uploadH0";
-import { runErodeBake, DEFAULT_ERODE_CONFIG } from "./viewport/bake/erodePipeline";
-import { runParity, type ParityReport } from "./viewport/bake/parity";
+import { uploadEquirect } from "./viewport/bake/equirectInput";
+import { runHydraulicBake, DEFAULT_HYDRAULIC } from "./viewport/bake/hydraulic";
 import {
   makeDebugReliefMaterial,
   setDebugTexture,
   setDebugMapMode,
 } from "./viewport/bake/debugMaterial";
+
+/** `EquirectInputs` as serialized by the Rust `bake_inputs_equirect`
+ *  command (`Vec<f32>` arrives over Tauri as a JSON `number[]`). */
+interface EquirectInputs {
+  w: number;
+  h: number;
+  height: number[];
+  precip: number[];
+}
 
 export interface PlanetSnapshot {
   divisions: number;
@@ -301,31 +309,28 @@ export default function App() {
   // Cell inspector — simulating mode only. Click a cell to read its sim state.
   const [selectedCell, setSelectedCell] = useState<number | null>(null);
 
-  // NEW cube-sphere GPU bake path (debug/validation). Separate from the
+  // Hydraulic equirect bake path (debug/validation). Separate from the
   // wizard `bake_from_wizard` flow above — flipping this on swaps the
   // displayed globe for a relief-shaded debug sphere driven by the GPU
-  // erosion bake. State is independent so the existing app is unaffected.
+  // hydraulic erosion bake. State is independent so the existing app is
+  // unaffected.
   const debugMatRef = useRef<THREE.ShaderMaterial | null>(null);
-  // Ownership-transfer refs: runErodeBake hands back the owning equirect
-  // WebGLRenderTarget (its .dispose() frees BOTH the GL framebuffer AND
-  // .texture — a bare texture.dispose() would leak the FBO); uploadH0
-  // hands back a DataTexture. Neither pipeline disposes them, so we track
-  // the previous bake's resources and dispose before allocating new ones
-  // to prevent VRAM leaks on repeated bake clicks.
+  // Ownership-transfer refs: runHydraulicBake hands back the owning eroded
+  // equirect WebGLRenderTarget (its .dispose() frees BOTH the GL
+  // framebuffer AND .texture — a bare texture.dispose() would leak the
+  // FBO); uploadEquirect hands back the static Base/Precip DataTextures
+  // (runHydraulicBake does NOT dispose its inputs). None of these are
+  // disposed by the pipeline, so we track the previous bake's resources
+  // and dispose them before allocating new ones to prevent VRAM leaks on
+  // repeated bake clicks. (`prevDebugBaseRef` is the no-erosion toggle
+  // texture for the CURRENT globe, so it is only freed when SUPERSEDED.)
   const prevDebugHFinalRef = useRef<THREE.WebGLRenderTarget | null>(null);
-  const prevDebugSrcH0Ref = useRef<THREE.Texture | null>(null);
+  const prevDebugBaseRef = useRef<THREE.DataTexture | null>(null);
+  const prevDebugPrecipRef = useRef<THREE.DataTexture | null>(null);
   const [debugBaking, setDebugBaking] = useState(false);
   const [debugBakeProgress, setDebugBakeProgress] = useState<string | null>(null);
   const [debugBakeReady, setDebugBakeReady] = useState(false);
   const [debugMapMode, setDebugMapModeState] = useState(0);
-
-  // A18 CPU↔GPU parity harness (dev-only). Independent state — running
-  // it does NOT touch the wizard sim flow or the debug-bake globe; it
-  // only logs a table + surfaces the PASS/FAIL numbers in this panel.
-  const [parityRunning, setParityRunning] = useState(false);
-  const [parityResult, setParityResult] = useState<
-    { ok: boolean; text: string } | null
-  >(null);
 
   // Playback speed (steps per rAF tick). 1× is the wizard's dt_ma per frame.
   const [speedMult, setSpeedMult] = useState<1 | 2 | 4 | 8>(1);
@@ -970,95 +975,90 @@ export default function App() {
     }
   }, [draft]);
 
-  // Debug-globe bake surface config. Phase-1: a deliberately SMALL
-  // pyramid (base face 32, 2 levels → finest face 64, equirect ~256×128)
-  // so the debug/validation bake finishes in seconds even after the
-  // event-loop yields added to runErodeBake. This is the debug-globe
-  // surface ONLY — NOT production resolution. Restoring full-res
-  // (base 64 / 5 levels / 4096×2048) is the deferred Phase-3 bake perf
-  // re-architecture; DEFAULT_ERODE_CONFIG is left UNTOUCHED on purpose
-  // (parity.ts + the Rust default-parity test pin its exact values).
-  const DEBUG_BAKE_CONFIG = {
-    ...DEFAULT_ERODE_CONFIG,
-    baseFaceRes: 32,
-    pyramidLevels: 2,
-  };
+  // Debug-globe hydraulic-bake resolution. 1024×512 equirect — the
+  // spec's debug default (W=1024, H=512); large enough for dendritic
+  // detail, small enough to bake in seconds. Production-res tuning is a
+  // deferred follow-up (out of scope per the rework spec).
+  const DEBUG_BAKE_W = 1024;
+  const DEBUG_BAKE_H = 512;
 
-  // NEW cube-sphere GPU bake — ADDITIVE debug path. Does NOT touch the
-  // Rust `bake_from_wizard` sim flow above: it rasterises the painted
-  // draft onto a cube-sphere (`bake_h0_v2`), runs the GPU erosion
-  // pyramid (`runErodeBake`) with the live render loop paused
-  // (`scene.runBake` — bake-then-watch), then shows the equirect
-  // `h_final` on a relief-shaded debug sphere. Validation surface for
-  // A18/A19, not the production UX.
+  // Hydraulic equirect bake — ADDITIVE debug path. Does NOT touch the
+  // Rust `bake_from_wizard` sim flow above: it rasterises the painter-
+  // merged draft + climate precip to one equirect grid
+  // (`bake_inputs_equirect`), uploads Base/Precip DataTextures, runs the
+  // virtual-pipes hydraulic sim with the live render loop paused
+  // (`scene.runBake` — bake-then-watch), then shows the eroded equirect
+  // on a relief-shaded debug sphere with a no-erosion (Base) toggle.
   const handleDebugBake = useCallback(async () => {
     const scene = sceneRef.current;
     if (!scene || !draft || debugBaking) return;
     setDebugBaking(true);
-    setDebugBakeProgress("Rasterising h0…");
+    setDebugBakeProgress("Rasterising inputs…");
     try {
       const paintedFields = heightPainterRef.current
         ? heightPainterRef.current.toDraftFields()
         : { painted_elevations: [], painted_mask: [] };
       const finalDraft: WizardDraft = { ...draft, ...paintedFields };
 
-      const faceRes = DEBUG_BAKE_CONFIG.baseFaceRes;
-      const { face_res, atlas } = await invoke<{ face_res: number; atlas: number[] }>(
-        "bake_h0_v2",
-        { draft: finalDraft, faceRes },
-      );
+      // ONE (w,h) pair drives the Rust invoke AND both uploadEquirect
+      // calls AND runHydraulicBake — they must match exactly.
+      const w = DEBUG_BAKE_W;
+      const h = DEBUG_BAKE_H;
+      const inp = await invoke<EquirectInputs>("bake_inputs_equirect", {
+        draft: finalDraft,
+        w,
+        h,
+      });
+
       // Dispose the PREVIOUS bake's resources before allocating new
-      // ones. runErodeBake ownership-transfers the equirect
+      // ones. runHydraulicBake ownership-transfers the eroded equirect
       // WebGLRenderTarget to the caller (its .dispose() frees BOTH the
-      // GL framebuffer AND its .texture); uploadH0 ownership-transfers
-      // the DataTexture. Three.js ShaderMaterial.dispose() does NOT free
-      // bound uniform textures or the source RT's FBO, so without this
-      // each re-bake leaks ~256 MB (hFinal RT) + ~100 MB (srcH0Tex
-      // DataTexture). On first bake both refs are null — ?. no-ops. Only
-      // the strictly-previous run's RT is freed here; the currently
-      // mounted material's RT is never the one being disposed (this runs
-      // before the new bake allocates / binds anything).
-      prevDebugSrcH0Ref.current?.dispose();
+      // GL framebuffer AND its .texture); uploadEquirect hands back the
+      // static Base/Precip DataTextures (the pipeline disposes neither).
+      // Three.js ShaderMaterial.dispose() does NOT free bound uniform
+      // textures or the source RT's FBO, so without this each re-bake
+      // leaks the RT + both DataTextures. On first bake the refs are
+      // null — ?. no-ops. Only the strictly-previous run's resources are
+      // freed here; the currently mounted material's RT/Base are never
+      // the ones being disposed (this runs before the new bake allocates
+      // / binds anything, and the new `rt`/`base` are fresh objects).
+      prevDebugBaseRef.current?.dispose();
+      prevDebugPrecipRef.current?.dispose();
       prevDebugHFinalRef.current?.dispose();
-      const srcH0Tex = uploadH0(atlas, face_res);
 
-      // Equirect target sizing mirrors the Rust wizard heuristic
-      // (4·finest ≈ equator circumference), clamped to a sane range.
-      const finest =
-        face_res * 2 ** Math.max(0, DEBUG_BAKE_CONFIG.pyramidLevels - 1);
-      const equirectW = Math.min(8192, Math.max(64, finest * 4));
-      const equirectH = Math.max(32, equirectW / 2);
+      const base = uploadEquirect(new Float32Array(inp.height), w, h);
+      const precip = uploadEquirect(new Float32Array(inp.precip), w, h);
 
-      let hFinalRT: THREE.WebGLRenderTarget | null = null;
+      let rt!: THREE.WebGLRenderTarget;
       await scene.runBake(async (renderer) => {
-        hFinalRT = await runErodeBake(
+        rt = await runHydraulicBake(
           renderer,
-          srcH0Tex,
-          {
-            ...DEBUG_BAKE_CONFIG,
-            srcFaceRes: face_res,
-            equirectW,
-            equirectH,
-          },
-          (level, k) => {
-            setDebugBakeProgress(`Eroding — level ${level}, k-iter ${k}`);
+          base,
+          precip,
+          w,
+          h,
+          DEFAULT_HYDRAULIC,
+          (done, total) => {
+            setDebugBakeProgress(`Eroding — step ${done}/${total}`);
           },
         );
       });
-      if (!hFinalRT) throw new Error("runErodeBake returned no render target");
-      const hFinalTex = (hFinalRT as THREE.WebGLRenderTarget).texture;
 
       // Record the new resources so the NEXT bake can dispose them.
       // Assignment is on the success path only — a throw mid-bake leaves
-      // the previous refs intact (already disposed above, so no double-dispose).
-      prevDebugHFinalRef.current = hFinalRT;
-      prevDebugSrcH0Ref.current = srcH0Tex;
+      // the previous refs intact (already disposed above, so no
+      // double-dispose). `precip` is sim-only input; `base` doubles as
+      // the live no-erosion toggle texture, so it (and `rt`) stay alive
+      // until the next bake supersedes them.
+      prevDebugHFinalRef.current = rt;
+      prevDebugBaseRef.current = base;
+      prevDebugPrecipRef.current = precip;
 
       const mat = makeDebugReliefMaterial();
-      // h0 view = the raw source equirect is not produced here; bind
-      // h_final to both slots so the toggle is always renderable. A19
-      // can extend this once a no-erosion equirect path exists.
-      setDebugTexture(mat, hFinalTex, srcH0Tex);
+      // Eroded view = the hydraulic result RT (A.r); no-erosion view =
+      // the raw rasterised Base DataTexture. The checkbox flips between
+      // them via setDebugMapMode (0 = eroded, 1 = no-erosion).
+      setDebugTexture(mat, rt.texture, base);
       setDebugMapMode(mat, debugMapMode);
       debugMatRef.current = mat;
 
@@ -1069,7 +1069,7 @@ export default function App() {
       setDebugBakeReady(true);
       setDebugBakeProgress(null);
       console.log(
-        `[debug-bake] ✓ GPU erosion bake — faceRes ${face_res}, equirect ${equirectW}×${equirectH}`,
+        `[debug-bake] ✓ hydraulic equirect bake — ${w}×${h}`,
       );
     } catch (e) {
       setError(String(e));
@@ -1086,75 +1086,6 @@ export default function App() {
       return next;
     });
   }, []);
-
-  // A18 — CPU↔GPU parity gate (dev-only). Runs the SAME painter-merged
-  // draft through the CPU oracle (`bake_erode_v2`) and the GPU port
-  // (`bake_h0_v2` → `uploadH0` → `runErodeBake`) at a small fixed
-  // config, compares land texels, logs a PASS/FAIL table + worst texels
-  // to the console, and shows the headline numbers in the debug panel.
-  // Purely additive: it does not alter the wizard bake flow or the
-  // debug-bake globe. No-wedge async: try/finally clears the running
-  // flag even on throw (a FAIL throws `ParityError` by design — Step 1:
-  // acceptance is an in-app assertion). `runParity` disposes every
-  // texture it allocates (A17 leak discipline).
-  const handleRunParity = useCallback(async () => {
-    const scene = sceneRef.current;
-    if (!scene || !draft || parityRunning) return;
-    setParityRunning(true);
-    setParityResult(null);
-    try {
-      const paintedFields = heightPainterRef.current
-        ? heightPainterRef.current.toDraftFields()
-        : { painted_elevations: [], painted_mask: [] };
-      const finalDraft: WizardDraft = { ...draft, ...paintedFields };
-      const renderer = scene.renderer;
-      const report: ParityReport = await runParity(
-        renderer,
-        finalDraft as unknown as Record<string, unknown>,
-        scene.runBake,
-      );
-      setParityResult({
-        ok: report.pass,
-        text:
-          "PASS — RMSE " +
-          report.rmse.toExponential(3) +
-          ", maxAbs " +
-          report.maxAbs.toExponential(3) +
-          " over " +
-          report.nLand +
-          " land texels (" +
-          report.width +
-          "×" +
-          report.height +
-          ")",
-      });
-      console.log("[parity] gate PASSED", report);
-    } catch (e) {
-      // A FAIL throws ParityError (carrying the report); any other
-      // error (GL/Tauri) also lands here. Surface it; do NOT setError
-      // (that unmounts the debug panel) — keep it local to the panel.
-      const err = e as { report?: ParityReport; message?: string };
-      if (err.report) {
-        const r = err.report;
-        setParityResult({
-          ok: false,
-          text:
-            "FAIL — RMSE " +
-            r.rmse.toExponential(3) +
-            ", maxAbs " +
-            r.maxAbs.toExponential(3) +
-            " over " +
-            r.nLand +
-            " land texels (see console for worst)",
-        });
-      } else {
-        setParityResult({ ok: false, text: "ERROR — " + String(e) });
-      }
-      console.error("[parity] gate did not pass:", e);
-    } finally {
-      setParityRunning(false);
-    }
-  }, [draft, parityRunning]);
 
   const handleEditWizard = useCallback(() => {
     previewRef.current = [];
@@ -1437,47 +1368,6 @@ export default function App() {
                 />
                 Show h0 (no-erosion) view
               </label>
-            )}
-
-            {/* A18 — dev-only CPU↔GPU parity gate. Runs the SAME draft
-                through the CPU oracle + GPU port at a small fixed
-                config, logs a PASS/FAIL table to the console, and
-                surfaces the headline RMSE/maxAbs here. Additive: does
-                not touch the wizard flow or the debug-bake globe. */}
-            <button
-              type="button"
-              onClick={handleRunParity}
-              disabled={parityRunning || debugBaking}
-              title="CPU↔GPU parity (RMSE<2e-3 / maxAbs<2e-2 over land) — logs a table to the console"
-              style={{
-                padding: "5px 9px",
-                fontSize: 11,
-                borderRadius: 3,
-                cursor:
-                  parityRunning || debugBaking ? "default" : "pointer",
-                background:
-                  parityRunning || debugBaking
-                    ? "rgba(100,104,112,0.18)"
-                    : "rgba(90,140,200,0.20)",
-                border: `1px solid ${
-                  parityRunning || debugBaking ? "#3d434e" : "#5A8CC8"
-                }`,
-                color:
-                  parityRunning || debugBaking ? "#7e848e" : "#CFD8E4",
-              }}
-            >
-              {parityRunning ? "Running parity…" : "Run parity (CPU↔GPU)"}
-            </button>
-            {parityResult && (
-              <span
-                style={{
-                  fontSize: 10,
-                  lineHeight: 1.4,
-                  color: parityResult.ok ? "#7FBF7F" : "#E08A6A",
-                }}
-              >
-                {parityResult.text}
-              </span>
             )}
           </div>
         )}
