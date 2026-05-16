@@ -83,6 +83,8 @@ import {
   createPingPong,
   runPass,
   disposeRunPassCache,
+  // TODO(bake-debug): remove after feedback-loop root-caused.
+  _bakeDebug,
   type PingPongTargets,
 } from "./pingpong";
 import {
@@ -995,6 +997,9 @@ function runInto(
   }
   mat.uniforms = uniforms;
   _quadMesh.material = mat;
+  // TODO(bake-debug): remove after feedback-loop root-caused. Dev-only:
+  // catch a true same-pass structural alias (a uniform sampling `dst`).
+  _bakeDebug.checkSelfAlias("runInto", frag, uniforms, dst);
   const prev = renderer.getRenderTarget();
   renderer.setRenderTarget(dst);
   renderer.render(_quadScene, _quadCam);
