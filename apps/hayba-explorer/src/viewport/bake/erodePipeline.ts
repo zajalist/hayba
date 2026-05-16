@@ -715,6 +715,7 @@ const H0_RESAMPLE_FRAG: string =
   [
     "uniform sampler2D uSrcH0;",
     "uniform float uSrcFaceRes;",
+    // NORMATIVE: must stay bit-identical to wizard.rs::bake_h0_v2_impl serialisation + uploadH0.ts::xyForFaceTexel (tri-source atlas layout; silent divergence breaks A18 parity with no compile error).
     "vec2 srcFaceUvToAtlas(int f, float fu, float fv){",
     "  float tileX = float(f - 3 * (f / 3));",
     "  float tileY = float(f / 3);",
@@ -835,6 +836,7 @@ const RESTRICT_FRAG: string =
   [
     "uniform sampler2D uSrc;",
     "uniform float uSrcFaceRes;",
+    // NORMATIVE: must stay bit-identical to wizard.rs::bake_h0_v2_impl serialisation + uploadH0.ts::xyForFaceTexel (tri-source atlas layout; silent divergence breaks A18 parity with no compile error).
     "vec2 srcFaceUvToAtlas(int f, float fu, float fv){",
     "  float tileX = float(f - 3 * (f / 3));",
     "  float tileY = float(f / 3);",
