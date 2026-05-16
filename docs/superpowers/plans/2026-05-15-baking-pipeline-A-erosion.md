@@ -117,11 +117,15 @@ pub struct CornerJunction { pub faces: [u8; 3] }
 
 pub struct CubeSphere { pub n: u32 } // n×n texels per face
 
-const FACE_NEI: [[u8;4];6] = // +X,-X,+Y,-Y,+Z,-Z adjacency (right,left,up,down)
-    [[4,5,2,3],[5,4,2,3],[1,0,5,4],[1,0,4,5],[1,0,2,3],[0,1,2,3]];
+// (right,left,up,down) for faces 0=+X 1=-X 2=+Y 3=-Y 4=+Z 5=-Z.
+// VERIFIED empirically by `face_adjacency_is_geometrically_continuous`
+// (do NOT hand-edit — the table must satisfy that 24-transition test).
+const FACE_NEI: [[u8;4];6] =
+    [[5,4,2,3],[4,5,2,3],[0,1,5,4],[0,1,4,5],[0,1,2,3],[1,0,2,3]];
 
 fn warp(a: f32) -> f32 { (a * std::f32::consts::FRAC_PI_4).tan() } // equal-area-ish
-fn unwarp(a: f32) -> f32 { a.atan() * std::f32::consts::FRAC_2_PI }
+// inverse of warp: atan(tan(a·π/4))·4/π = a  (NOT 2/π — that gives a/2)
+fn unwarp(a: f32) -> f32 { a.atan() * 4.0 / std::f32::consts::PI }
 
 impl CubeSphere {
     pub fn new(n: u32) -> Self { Self { n } }
@@ -277,7 +281,8 @@ mod tests {
         // a right-edge cell on +Z must resolve its +u neighbour onto +X
         let c = (4,3,1); // (face,i,j)
         let nb = f.neighbour(c.0, c.1 as i32 + 1, c.2 as i32);
-        assert_eq!(nb.0, 1u8, "+Z right edge wraps to +X face");
+        // FACE_NEI[4] = [0,1,2,3] (verified): +Z right edge → +X (face id 0).
+        assert_eq!(nb.0, 0u8, "+Z right edge wraps to +X face (id 0)");
     }
     #[test]
     fn corner_gather_is_three_way_not_four() {
