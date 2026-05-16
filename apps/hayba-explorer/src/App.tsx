@@ -33,6 +33,16 @@ import { HeightPainter, type BrushConfig } from "./wizard/paint/HeightPainter";
 import { earthElevations, earthElevationsFromImage } from "./wizard/earth-template";
 import HeightPaintPanel from "./components/panels/HeightPaintPanel";
 import { buildPainterMesh, type PainterMeshHandle } from "./viewport/painterMesh";
+// NEW cube-sphere GPU bake pipeline (Subsystem A). Purely additive — the
+// existing wizard / bake_from_wizard flow is untouched; this is a
+// debug/validation surface gated behind its own button.
+import { uploadH0 } from "./viewport/bake/uploadH0";
+import { runErodeBake, DEFAULT_ERODE_CONFIG } from "./viewport/bake/erodePipeline";
+import {
+  makeDebugReliefMaterial,
+  setDebugTexture,
+  setDebugMapMode,
+} from "./viewport/bake/debugMaterial";
 
 export interface PlanetSnapshot {
   divisions: number;
@@ -289,6 +299,16 @@ export default function App() {
 
   // Cell inspector — simulating mode only. Click a cell to read its sim state.
   const [selectedCell, setSelectedCell] = useState<number | null>(null);
+
+  // NEW cube-sphere GPU bake path (debug/validation). Separate from the
+  // wizard `bake_from_wizard` flow above — flipping this on swaps the
+  // displayed globe for a relief-shaded debug sphere driven by the GPU
+  // erosion bake. State is independent so the existing app is unaffected.
+  const debugMatRef = useRef<THREE.ShaderMaterial | null>(null);
+  const [debugBaking, setDebugBaking] = useState(false);
+  const [debugBakeProgress, setDebugBakeProgress] = useState<string | null>(null);
+  const [debugBakeReady, setDebugBakeReady] = useState(false);
+  const [debugMapMode, setDebugMapModeState] = useState(0);
 
   // Playback speed (steps per rAF tick). 1× is the wizard's dt_ma per frame.
   const [speedMult, setSpeedMult] = useState<1 | 2 | 4 | 8>(1);
@@ -933,6 +953,89 @@ export default function App() {
     }
   }, [draft]);
 
+  // NEW cube-sphere GPU bake — ADDITIVE debug path. Does NOT touch the
+  // Rust `bake_from_wizard` sim flow above: it rasterises the painted
+  // draft onto a cube-sphere (`bake_h0_v2`), runs the GPU erosion
+  // pyramid (`runErodeBake`) with the live render loop paused
+  // (`scene.runBake` — bake-then-watch), then shows the equirect
+  // `h_final` on a relief-shaded debug sphere. Validation surface for
+  // A18/A19, not the production UX.
+  const handleDebugBake = useCallback(async () => {
+    const scene = sceneRef.current;
+    if (!scene || !draft || debugBaking) return;
+    setDebugBaking(true);
+    setDebugBakeProgress("Rasterising h0…");
+    try {
+      const paintedFields = heightPainterRef.current
+        ? heightPainterRef.current.toDraftFields()
+        : { painted_elevations: [], painted_mask: [] };
+      const finalDraft: WizardDraft = { ...draft, ...paintedFields };
+
+      const faceRes = DEFAULT_ERODE_CONFIG.baseFaceRes;
+      const { face_res, atlas } = await invoke<{ face_res: number; atlas: number[] }>(
+        "bake_h0_v2",
+        { draft: finalDraft, faceRes },
+      );
+      const srcH0Tex = uploadH0(atlas, face_res);
+
+      // Equirect target sizing mirrors the Rust wizard heuristic
+      // (4·finest ≈ equator circumference), clamped to a sane range.
+      const finest =
+        face_res * 2 ** Math.max(0, DEFAULT_ERODE_CONFIG.pyramidLevels - 1);
+      const equirectW = Math.min(8192, Math.max(64, finest * 4));
+      const equirectH = Math.max(32, equirectW / 2);
+
+      let hFinal: THREE.Texture | null = null;
+      await scene.runBake(async (renderer) => {
+        hFinal = await runErodeBake(
+          renderer,
+          srcH0Tex,
+          {
+            ...DEFAULT_ERODE_CONFIG,
+            srcFaceRes: face_res,
+            equirectW,
+            equirectH,
+          },
+          (level, k) => {
+            setDebugBakeProgress(`Eroding — level ${level}, k-iter ${k}`);
+          },
+        );
+      });
+      if (!hFinal) throw new Error("runErodeBake returned no texture");
+
+      const mat = makeDebugReliefMaterial();
+      // h0 view = the raw source equirect is not produced here; bind
+      // h_final to both slots so the toggle is always renderable. A19
+      // can extend this once a no-erosion equirect path exists.
+      setDebugTexture(mat, hFinal, srcH0Tex);
+      setDebugMapMode(mat, debugMapMode);
+      debugMatRef.current = mat;
+
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 256, 128), mat);
+      mesh.name = "hayba-debug-relief";
+      scene.setGlobe(mesh);
+
+      setDebugBakeReady(true);
+      setDebugBakeProgress(null);
+      console.log(
+        `[debug-bake] ✓ GPU erosion bake — faceRes ${face_res}, equirect ${equirectW}×${equirectH}`,
+      );
+    } catch (e) {
+      setError(String(e));
+      setDebugBakeProgress(null);
+    } finally {
+      setDebugBaking(false);
+    }
+  }, [draft, debugBaking, debugMapMode]);
+
+  const handleToggleDebugMapMode = useCallback(() => {
+    setDebugMapModeState((m) => {
+      const next = m === 0 ? 1 : 0;
+      if (debugMatRef.current) setDebugMapMode(debugMatRef.current, next);
+      return next;
+    });
+  }, []);
+
   const handleEditWizard = useCallback(() => {
     previewRef.current = [];
     invoke("reset_sim").catch(() => {});
@@ -1135,6 +1238,88 @@ export default function App() {
             );
           })}
         </div>
+
+        {/* NEW cube-sphere GPU bake — debug/validation affordance
+            (bottom-right). Purely additive: it does not alter the wizard
+            bake_from_wizard flow; it swaps the displayed globe for a
+            relief-shaded debug sphere driven by the GPU erosion pyramid
+            so A18/A19 can eyeball erosion-vs-no-erosion. */}
+        {draft && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: 12,
+              right: 12,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "stretch",
+              gap: 6,
+              padding: "8px 10px",
+              maxWidth: 260,
+              background: "rgba(20, 22, 28, 0.82)",
+              border: `1px solid ${debugBakeReady ? "#B56A1D" : "#2f343d"}`,
+              borderRadius: 5,
+              backdropFilter: "blur(4px)",
+              zIndex: 50,
+              pointerEvents: "auto",
+              fontFamily: '"Segoe UI", system-ui, sans-serif',
+            }}
+          >
+            <span
+              style={{
+                fontSize: 10,
+                letterSpacing: 0.5,
+                textTransform: "uppercase",
+                color: "#9aa0aa",
+              }}
+            >
+              GPU Erosion Bake (debug)
+            </span>
+            <button
+              type="button"
+              onClick={handleDebugBake}
+              disabled={debugBaking}
+              title="Rasterise → GPU erode → relief-shaded debug globe"
+              style={{
+                padding: "5px 9px",
+                fontSize: 11,
+                borderRadius: 3,
+                cursor: debugBaking ? "default" : "pointer",
+                background: debugBaking
+                  ? "rgba(100,104,112,0.18)"
+                  : "rgba(181,106,29,0.22)",
+                border: `1px solid ${debugBaking ? "#3d434e" : "#B56A1D"}`,
+                color: debugBaking ? "#7e848e" : "#DED4C3",
+              }}
+            >
+              {debugBaking ? "Baking…" : "Bake (cube-sphere GPU)"}
+            </button>
+            {debugBakeProgress && (
+              <span style={{ fontSize: 10, color: "#a8aeb8" }}>
+                {debugBakeProgress}
+              </span>
+            )}
+            {debugBakeReady && (
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: 11,
+                  color: "#a8aeb8",
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={debugMapMode === 1}
+                  onChange={handleToggleDebugMapMode}
+                />
+                Show h0 (no-erosion) view
+              </label>
+            )}
+          </div>
+        )}
       </div>
 
       <RightPanel
