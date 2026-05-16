@@ -810,23 +810,36 @@ pub fn bake_erode_v2(
 /// (`passes.glsl.ts`) addresses. `face_res` is `n` (texels per face edge);
 /// the texture is `3·n` wide × `2·n` tall and `atlas.len() == 6·n·n`.
 ///
-/// **Atlas layout (NORMATIVE — must stay in lockstep with
-/// `passes.glsl.ts` GLSL_ATLAS / `srcFaceUvToAtlas`).** Quoting GLSL:
+/// **Atlas layout (NORMATIVE — tri-source lockstep; all three legs MUST
+/// stay bit-identical or A18 CPU↔GPU h0 parity silently breaks with no
+/// compile error):**
 ///
-/// ```text
+/// * **Canonical spec:** `passes.glsl.ts` `GLSL_ATLAS` helpers
+///   (`faceCellToAtlasUv` / `faceUvToAtlasUv`). Quoting the formula:
+///
+///   ```text
 ///   tileX = face % 3 ; tileY = face / 3   (face 0..5)
 ///   atlas uv = ( (tileX + faceU) / 3 , (tileY + faceV) / 2 )
 ///   faceU = (i + 0.5) / n   faceV = (j + 0.5) / n
-/// ```
+///   ```
 ///
-/// So face → tile is `face 0→(0,0) 1→(1,0) 2→(2,0) 3→(0,1) 4→(1,1)
-/// 5→(2,1)`, and cube cell `(face,i,j)` lands at atlas pixel
-/// `x = tileX·n + i`, `y = tileY·n + j`. We serialise ROW-MAJOR
-/// (`atlas[y*(3n) + x]`) with row 0 at atlas-UV v=0. `THREE.DataTexture`
-/// and the bake render targets both default to `flipY = false`, so the
-/// JS `uploadH0` reads element `(y·3n + x)` at UV `((x+0.5)/3n,
-/// (y+0.5)/2n)` — identical to the GLSL `texture(uSrc, srcFaceUvToAtlas)`
-/// sample, giving CPU↔GPU h0 parity (the A18 load-bearing property).
+/// * **GPU consumer:** `erodePipeline.ts` `RESTRICT_FRAG` and
+///   `H0_RESAMPLE_FRAG` each define a local `srcFaceUvToAtlas` that
+///   implements the identical formula. Grep `erodePipeline.ts` for
+///   `srcFaceUvToAtlas` to find both sites.
+///
+/// * **JS uploader:** `uploadH0.ts::xyForFaceTexel` is the pure-TS
+///   inverse (cube cell → atlas pixel); its `DataTexture` layout must also
+///   match.
+///
+/// So face → tile: `0→(0,0) 1→(1,0) 2→(2,0) 3→(0,1) 4→(1,1) 5→(2,1)`,
+/// and cube cell `(face,i,j)` lands at atlas pixel `x = tileX·n + i`,
+/// `y = tileY·n + j`. We serialise ROW-MAJOR (`atlas[y*(3n) + x]`) with
+/// row 0 at atlas-UV v=0. `THREE.DataTexture` and the bake render targets
+/// both default to `flipY = false`, so the JS `uploadH0` reads element
+/// `(y·3n + x)` at UV `((x+0.5)/3n, (y+0.5)/2n)` — identical to the
+/// GLSL `texture(uSrc, srcFaceUvToAtlas)` sample, giving CPU↔GPU h0
+/// parity (the A18 load-bearing property).
 ///
 /// Only the height channel is serialised here (this is the macro `h0`
 /// reference + start field; `RESTRICT_FRAG` reads `.r`); `uploadH0`
@@ -879,7 +892,7 @@ pub(crate) fn bake_h0_v2_impl(draft: &WizardDraft, face_res: u32) -> H0Atlas {
 /// `bake_erode_v2`'s `Option` pattern.
 #[tauri::command]
 pub fn bake_h0_v2(draft: WizardDraft, face_res: Option<u32>) -> H0Atlas {
-    bake_h0_v2_impl(&draft, face_res.unwrap_or(64))
+    bake_h0_v2_impl(&draft, face_res.unwrap_or(64)) // matches ErosionConfig::default().base_face_res
 }
 
 /// Return the triangle index list for the icosphere at the given divisions.

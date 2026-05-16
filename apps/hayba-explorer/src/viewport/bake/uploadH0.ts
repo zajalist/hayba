@@ -1,11 +1,17 @@
 // Task A16: upload the Rust-rasterised cube-sphere `h0` atlas to a
 // `THREE.DataTexture` for `runErodeBake`'s `srcH0Tex`.
 //
-// The Rust side (`wizard.rs::bake_h0_v2_impl` → `H0Atlas`) serialises the
-// macro height field ROW-MAJOR into the SAME 6-faces-in-one-2D-texture,
-// 3-wide × 2-tall tile layout the bake GLSL addresses. Quoting
-// `passes.glsl.ts` GLSL_ATLAS (NORMATIVE — this file MUST mirror it or
-// A15/A18 silently read garbage h0):
+// TRI-SOURCE ATLAS-LAYOUT LOCKSTEP — all three legs must stay
+// bit-identical or A18 CPU↔GPU h0 parity silently breaks:
+//   1. Producer:  wizard.rs::bake_h0_v2_impl  (Rust serialisation)
+//   2. Uploader:  this file — xyForFaceTexel / uploadH0  (← you are here)
+//   3. Consumer:  erodePipeline.ts RESTRICT_FRAG + H0_RESAMPLE_FRAG,
+//                 each with a local `srcFaceUvToAtlas`
+//
+// Canonical layout spec lives in passes.glsl.ts GLSL_ATLAS helpers
+// (`faceCellToAtlasUv` / `faceUvToAtlasUv`). Quoting the formula
+// (NORMATIVE — this file MUST mirror it or A15/A18 silently read
+// garbage h0):
 //
 //   tileX = face % 3 ; tileY = face / 3   (face 0..5)
 //   atlas uv = ( (tileX + faceU) / 3 , (tileY + faceV) / 2 )
@@ -17,15 +23,16 @@
 // `atlas[y·(3n) + x]` (length 6·n·n; the 1-channel height field).
 //
 // `runErodeBake` consumes `srcH0Tex` via `RESTRICT_FRAG` /
-// `H0_RESAMPLE_FRAG`, which sample `texture(uSrc, srcFaceUvToAtlas(...))`
-// — `srcFaceUvToAtlas` is the identical `(tileX+fu)/3, (tileY+fv)/2`
-// formula. `RESTRICT_FRAG` copies the FULL RGBA (`fragColor =
-// texture(uSrc, ...)`; r=h, g=water, b=sed, a=ocean), so the texture
-// MUST be RGBAFormat. The Rust atlas only carries height (the macro `h0`
-// reference / start field — `RESTRICT_FRAG` consumes `.r`); we expand it
-// into RGBA placing h in R and 0 in G/B/A (water=0, sed=0, ocean=false —
-// the rasterised macro field has no transported water/sediment yet, and
-// ocean is re-derived downstream from h).
+// `H0_RESAMPLE_FRAG` (erodePipeline.ts), which sample
+// `texture(uSrc, srcFaceUvToAtlas(...))` — `srcFaceUvToAtlas` is the
+// identical `(tileX+fu)/3, (tileY+fv)/2` formula. `RESTRICT_FRAG` copies
+// the FULL RGBA (`fragColor = texture(uSrc, ...)`; r=h, g=water, b=sed,
+// a=ocean), so the texture MUST be RGBAFormat. The Rust atlas only carries
+// height (the macro `h0` reference / start field — `RESTRICT_FRAG`
+// consumes `.r`); we expand it into RGBA placing h in R and 0 in G/B/A
+// (water=0, sed=0, ocean=false — the rasterised macro field has no
+// transported water/sediment yet, and ocean is re-derived downstream
+// from h).
 //
 // `THREE.DataTexture` and the bake render targets both default to
 // `flipY = false`, so DataTexture element (y·3n + x) is sampled at UV
