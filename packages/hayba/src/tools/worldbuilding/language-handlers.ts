@@ -124,8 +124,8 @@ export function definePhonology(params: z.infer<typeof definePhonologySchema>) {
   };
 }
 
-export function languageWordFor(params: z.infer<typeof wordForSchema>) {
-  let hit = lexicon.get(params.language_id, params.concept_id);
+export async function languageWordFor(params: z.infer<typeof wordForSchema>) {
+  let hit = await lexicon.get(params.language_id, params.concept_id);
   if (!hit && params.define_lexeme) {
     const row: Lexeme = {
       lemma: params.define_lexeme.lemma,
@@ -134,7 +134,7 @@ export function languageWordFor(params: z.infer<typeof wordForSchema>) {
       register: params.define_lexeme.register,
       etymology: params.define_lexeme.etymology,
     };
-    lexicon.set(params.language_id, params.concept_id, row);
+    await lexicon.set(params.language_id, params.concept_id, row);
     hit = row;
   }
   return { lexeme: hit };
@@ -163,7 +163,7 @@ export function languageGenerateName(params: z.infer<typeof generateNameSchema>)
   return { name };
 }
 
-export function languageApplySoundChanges(params: z.infer<typeof soundChangesSchema>) {
+export async function languageApplySoundChanges(params: z.infer<typeof soundChangesSchema>) {
   const cfg = langs.get(params.language_id);
   if (!cfg) throw new Error(`language "${params.language_id}" not defined`);
   let rules: SoundChangeRule[];
@@ -172,7 +172,8 @@ export function languageApplySoundChanges(params: z.infer<typeof soundChangesSch
   } catch (e: unknown) {
     return { ok: false as const, message: e instanceof Error ? e.message : String(e) };
   }
-  const entries = lexicon.all(params.language_id).map(({ concept, entry }) => ({
+  const all = await lexicon.all(params.language_id);
+  const entries = all.map(({ concept, entry }) => ({
     concept, lemma: entry.lemma,
   }));
   const vset = new Set(cfg.phonotactic?.vowels ?? []);
@@ -207,7 +208,7 @@ export async function languageProposeDerivation(params: z.infer<typeof proposeDe
     rootLemma: params.root_lemma,
     seed: params.seed,
   });
-  lexicon.set(params.language_id, params.gloss, result.lexeme);
+  await lexicon.set(params.language_id, params.gloss, result.lexeme);
   return { ok: true as const, ...result };
 }
 

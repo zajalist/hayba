@@ -600,7 +600,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
     wordForSchema.shape,
     async (params) => {
       try {
-        const result = languageWordFor(params as z.infer<typeof wordForSchema>);
+        const result = await languageWordFor(params as z.infer<typeof wordForSchema>);
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -629,8 +629,13 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
     'Placeholder for Lexurgy-style ordered rules (L5).',
     soundChangesSchema.shape,
     async (params) => {
-      const result = languageApplySoundChanges(params as z.infer<typeof soundChangesSchema>);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      try {
+        const result = await languageApplySoundChanges(params as z.infer<typeof soundChangesSchema>);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
     }
   );
 
@@ -639,8 +644,13 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
     'Placeholder for LLM-assisted constrained derivations (L7).',
     proposeDerivationSchema.shape,
     async (params) => {
-      const result = languageProposeDerivation(params as z.infer<typeof proposeDerivationSchema>);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      try {
+        const result = await languageProposeDerivation(params as z.infer<typeof proposeDerivationSchema>);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
     }
   );
 
@@ -649,8 +659,13 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
     'Placeholder for creole / substrate blending (L9).',
     remixPhonologiesSchema.shape,
     async (params) => {
-      const result = languageRemixPhonologies(params as z.infer<typeof remixPhonologiesSchema>);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      try {
+        const result = languageRemixPhonologies(params as z.infer<typeof remixPhonologiesSchema>);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
+      }
     }
   );
 
