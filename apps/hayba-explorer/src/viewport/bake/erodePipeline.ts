@@ -85,11 +85,12 @@ import {
   disposeRunPassCache,
   // TODO(bake-debug): remove after feedback-loop root-caused.
   _bakeDebug,
-  // Shared physical texture-unit isolation (kills the stale-binding
-  // feedback loop); _bakeUnitHygiene also carries the dev-gated probe.
+  // Dev-gated STALE-UNIT-ALIAS probe holder (no longer mutates GL state —
+  // the raw-WebGL2 runner owns per-pass GL hygiene now).
   _bakeUnitHygiene,
   type PingPongTargets,
 } from "./pingpong";
+import { runRawPass, readRawPixels } from "./glPass";
 import {
   DETAIL_BAND_FRAG,
   STREAM_POWER_FRAG,
@@ -999,37 +1000,27 @@ function runInto(
     _helperMatCache.set(frag, mat);
   }
   mat.uniforms = uniforms;
-  _quadMesh.material = mat;
+  // The cached material path is retained ONLY so _helperMatCache + the dev
+  // probes still exist/compile; the actual draw runs on the raw WebGL2
+  // context (glPass.runRawPass), NOT three's renderer.
   // TODO(bake-debug): remove after feedback-loop root-caused. Dev-only:
   // catch a true same-pass structural alias (a uniform sampling `dst`).
   _bakeDebug.checkSelfAlias("runInto", frag, uniforms, dst);
   // TODO(bake-debug): remove after feedback-loop root-caused. Dev-only:
   // GL-texture-identity alias — names the EXACT (frag,uniform) whose
-  // sampler resolves to the SAME __webglTexture as this pass's dst RT
-  // (the accumulation/scratch/PD/lowpass passes reuse makeRT-churned RTs;
-  // a disposed scratch RT's GL texture name can be recycled for a new RT
-  // while a stale uniform ref lingers — this names that pass+uniform).
+  // sampler resolves to the SAME __webglTexture as this pass's dst RT.
+  // On the raw-WebGL2 build this is expected to stay SILENT (clean).
   _bakeDebug.checkGlAlias(renderer, "runInto", frag, uniforms, dst);
-  // FEEDBACK-LOOP KILL — identical mechanism + fix as pingpong.ts/runPass
-  // (stale three.js sampler binding from an earlier runInto/runPass that
-  // three re-binds on render(); the accumulation/upsample passes here
-  // repeatedly reuse scratch RTs as BOTH a sampler source in one pass and
-  // the draw-FBO color attachment in a later pass). Fix synthesized from
-  // two contrasting runtime results — see physicallyIsolateUnits: it does
-  // unbind-all-units → resetState() (the step that actually kills the loop,
-  // by wiping three's sampler cache) → setRenderTarget(dst) AGAIN (re-bind
-  // the FBO resetState just cleared, so render() hits dst not the canvas).
-  // Ordering (exact): getRenderTarget → setRenderTarget(dst) →
-  // _bakeUnitHygiene.isolate (unbind units → resetState → re-setRenderTarget
-  // dst) → render → setRenderTarget(prev). runInto has explicit src/dst
-  // (NOT channel ping-pong) so there is no book.swap. SELF-ALIAS already
-  // proved none of this pass's own uniforms === dst.texture ⇒ with samplers
-  // re-bound fresh post-resetState the feedback loop is impossible.
-  const prev = renderer.getRenderTarget();
-  renderer.setRenderTarget(dst);
+  // TODO(bake-debug): remove after feedback-loop root-caused. Dev-only
+  // STALE-UNIT-ALIAS probe (mutates no GL state now). Expected SILENT.
   _bakeUnitHygiene.isolate(renderer, "runInto", frag, dst);
-  renderer.render(_quadScene, _quadCam);
-  renderer.setRenderTarget(prev);
+  // FEEDBACK-LOOP STRUCTURALLY IMPOSSIBLE: runs on the raw WebGL2 context
+  // with its own FBO + explicit post-draw unbind of every sampler unit
+  // and the FBO (glPass.ts). three's renderer is never invoked here, so
+  // it cannot leak a stale sampler binding that aliases the dst FBO. The
+  // accumulation/upsample passes' explicit src/dst (NOT channel ping-pong)
+  // is preserved — runInto's signature/semantics are unchanged.
+  runRawPass(renderer, frag, uniforms, dst);
 }
 
 function disposeHelperCache(): void {
@@ -1802,6 +1793,21 @@ export async function runErodeBake(
     equiRT,
   );
 
+  // --- Resync three's GL-state cache ONCE, after the final RESAMPLE.
+  //     Every offscreen pass ran on the raw WebGL2 context (glPass.ts) and
+  //     NEVER went through three's renderer, so three's JS-side GL-state
+  //     cache (bound program/textures/FBO/VAO/viewport/…) is now stale
+  //     relative to the real GL state the raw runner left. The app's
+  //     normal render loop resumes immediately after this (it samples
+  //     `equiRT.texture`); a single `resetState()` here makes three
+  //     re-issue all GL state fresh on its next render so it does not
+  //     skip a bindTexture/useProgram/bindFramebuffer based on a stale
+  //     cache. This is the ONLY resetState in the bake (NOT per pass —
+  //     per-pass resetState is exactly the canvas-clobbering bug the raw
+  //     runner eliminates). The raw runner already left every sampler
+  //     unit + the FBO unbound, so this is a clean cache resync only.
+  renderer.resetState();
+
   // --- Teardown (bake-then-watch: free every GPU resource except the
   //     returned equirect render target — the caller owns equiRT and
   //     disposes it (FBO + texture) when done). -----------------------
@@ -1899,10 +1905,14 @@ function computeGlobalMinLand(
   const [w, h] = szTuple(faceRes);
   const src = targets.rt["state"][targets.book.read("state")];
   const buf = new Float32Array(w * h * 4);
-  const prev = renderer.getRenderTarget();
-  renderer.setRenderTarget(src);
-  renderer.readRenderTargetPixels(src, 0, 0, w, h, buf);
-  renderer.setRenderTarget(prev);
+  // Read on the raw WebGL2 context via our own FBO (NOT three's
+  // readRenderTargetPixels): three's cached state.bindFramebuffer would
+  // skip the real bind when its FBO cache is stale (every bake pass ran on
+  // the raw context, leaving three's cache out of sync) → readPixels could
+  // hit the canvas → wrong global_min → corrupted PD pit-fill. See
+  // glPass.readRawPixels. `src` is GL-allocated by runRawPass's first use
+  // (or here on first call), so its __webglTexture resolves.
+  readRawPixels(renderer, src, 0, 0, w, h, buf);
   let gmin = Infinity;
   for (let i = 0; i < w * h; i++) {
     const hv = buf[i * 4]; // .r = h
