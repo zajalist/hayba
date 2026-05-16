@@ -305,6 +305,12 @@ export default function App() {
   // displayed globe for a relief-shaded debug sphere driven by the GPU
   // erosion bake. State is independent so the existing app is unaffected.
   const debugMatRef = useRef<THREE.ShaderMaterial | null>(null);
+  // Ownership-transfer refs: runErodeBake hands back equiRT.texture to the
+  // caller; uploadH0 hands back a DataTexture. Neither pipeline disposes
+  // them, so we track the previous bake's textures and dispose before
+  // allocating new ones to prevent VRAM leaks on repeated bake clicks.
+  const prevDebugHFinalRef = useRef<THREE.Texture | null>(null);
+  const prevDebugSrcH0Ref = useRef<THREE.Texture | null>(null);
   const [debugBaking, setDebugBaking] = useState(false);
   const [debugBakeProgress, setDebugBakeProgress] = useState<string | null>(null);
   const [debugBakeReady, setDebugBakeReady] = useState(false);
@@ -976,6 +982,14 @@ export default function App() {
         "bake_h0_v2",
         { draft: finalDraft, faceRes },
       );
+      // Dispose the PREVIOUS bake's textures before allocating new ones.
+      // runErodeBake ownership-transfers equiRT.texture to the caller;
+      // uploadH0 ownership-transfers the DataTexture. Three.js
+      // ShaderMaterial.dispose() does NOT free bound uniform textures,
+      // so without this each re-bake leaks ~256 MB (hFinal RT) + ~100 MB
+      // (srcH0Tex DataTexture). On first bake both refs are null — ?. no-ops.
+      prevDebugSrcH0Ref.current?.dispose();
+      prevDebugHFinalRef.current?.dispose();
       const srcH0Tex = uploadH0(atlas, face_res);
 
       // Equirect target sizing mirrors the Rust wizard heuristic
@@ -1002,6 +1016,12 @@ export default function App() {
         );
       });
       if (!hFinal) throw new Error("runErodeBake returned no texture");
+
+      // Record the new textures so the NEXT bake can dispose them.
+      // Assignment is on the success path only — a throw mid-bake leaves
+      // the previous refs intact (already disposed above, so no double-dispose).
+      prevDebugHFinalRef.current = hFinal;
+      prevDebugSrcH0Ref.current = srcH0Tex;
 
       const mat = makeDebugReliefMaterial();
       // h0 view = the raw source equirect is not produced here; bind
