@@ -15,8 +15,9 @@
 //
 //   • GPU port: 'bake_h0_v2' (Tauri) → 'uploadH0' (DataTexture) →
 //     'runErodeBake' (erodePipeline.ts) — the verbatim GPU mirror of
-//     'run_pyramid_core'. Returns a 'THREE.Texture' (the equirect
-//     RGBA32F render-target texture; '.r' = h, '.a' = ocean flag).
+//     'run_pyramid_core'. Returns the equirect RGBA32F
+//     'THREE.WebGLRenderTarget' (we read '.texture'; '.r' = h,
+//     '.a' = ocean flag).
 //
 // Both pipelines MUST start from the SAME h0 at the SAME res with the
 // SAME seed/config or the comparison is meaningless. The CPU side
@@ -30,11 +31,12 @@
 //  READBACK ORIENTATION (LOAD-BEARING — a flip mismatch reads as a
 //  catastrophic FAIL and is a real bug to get right HERE)
 // =====================================================================
-// 'runErodeBake' returns 'equiRT.texture', NOT the render target — we
-// CANNOT modify the frozen pipeline to expose internals. So we blit that
-// texture into our OWN throwaway RGBA32F 'WebGLRenderTarget' via a
-// trivial passthrough fullscreen pass, then 'renderer.readRender
-// TargetPixels' from THAT.
+// 'runErodeBake' returns the owning equirect 'WebGLRenderTarget'. We do
+// not read its FBO directly (it is the pipeline's internal RT); we blit
+// 'equiRT.texture' into our OWN throwaway RGBA32F 'WebGLRenderTarget'
+// via a trivial passthrough fullscreen pass, then 'renderer.readRender
+// TargetPixels' from THAT. 'equiRT' itself is disposed in the finally
+// ('rt.dispose()' frees both its framebuffer and its texture).
 //
 // Row order: RESAMPLE_FRAG (passes.glsl.ts PASS 5) writes Rust-row-0
 // (the NORTH pole, v=0) at 'gl_FragCoord.y ≈ h' — i.e. the TOP of the
@@ -103,6 +105,9 @@ export const PARITY_SEED = 0x9e3779b9;
  *  over land texels (tolerance for f32 vs CPU summation ordering). */
 export const PARITY_RMSE_GATE = 2e-3;
 export const PARITY_MAXABS_GATE = 2e-2;
+
+/** Max worst-texel entries retained for FAIL diagnostics. */
+export const PARITY_WORST_K = 16;
 
 /** One offending texel: flat equirect index + its lat/lon + the two
  *  heights and their absolute difference. */
@@ -225,8 +230,8 @@ const BLIT_FRAG: string = [
 ].join("\n");
 
 /**
- * Blit 'srcTex' (the equirect texture 'runErodeBake' returned) into a
- * fresh RGBA32F 'WebGLRenderTarget' we own, then read its pixels back
+ * Blit 'srcTex' (the equirect RT's '.texture' from 'runErodeBake') into
+ * a fresh RGBA32F 'WebGLRenderTarget' we own, then read its pixels back
  * as a Float32Array (RGBA, GL bottom-origin row order). The returned
  * buffer is 'w*h*4' floats; caller indexes '.r' with the documented
  * vertical flip. All transient GPU resources allocated here are
@@ -284,9 +289,9 @@ function readEquirectViaBlit(
     renderer.readRenderTargetPixels(rt, 0, 0, w, h, buf);
   } finally {
     renderer.setRenderTarget(prev);
-    // Dispose everything we allocated here. The source texture is the
-    // caller's (runErodeBake transferred its ownership to runParity);
-    // runParity disposes it after this returns.
+    // Dispose everything we allocated here. The source texture belongs
+    // to runParity's equiRT (runErodeBake transferred RT ownership to
+    // runParity); runParity disposes that RT after this returns.
     rt.dispose();
     mat.dispose();
     geom.dispose();
@@ -313,7 +318,7 @@ function compareLandTexels(
   let maxAbs = 0;
   let nLand = 0;
   // Min-heap-ish: keep the worst K by |Δ| with a small bounded array.
-  const K = 16;
+  const K = PARITY_WORST_K;
   const worst: ParityWorstTexel[] = [];
   let worstMin = Infinity; // smallest |d| currently retained
 
@@ -370,8 +375,9 @@ export interface RunParityOpts {
  * Step 1: no tsx unit test; the check is an in-app assertion).
  *
  * 'scene.runBake' ownership note: 'runErodeBake' transfers the equirect
- * texture to us; we dispose it here once read. 'uploadH0''s DataTexture
- * is also ours; disposed here. No leak (A17 discipline).
+ * 'WebGLRenderTarget' to us; we 'rt.dispose()' it here once read (frees
+ * its framebuffer AND texture). 'uploadH0''s DataTexture is also ours;
+ * disposed here. No leak (A17 discipline).
  */
 export async function runParity(
   renderer: THREE.WebGLRenderer,
@@ -430,25 +436,30 @@ export async function runParity(
   });
   const srcH0Tex = uploadH0(h0.atlas, h0.face_res);
 
-  let equiTex: THREE.Texture | null = null;
+  let equiRT: THREE.WebGLRenderTarget | null = null;
   try {
     await runBake(async (r) => {
-      equiTex = await runErodeBake(r, srcH0Tex, {
+      equiRT = await runErodeBake(r, srcH0Tex, {
         ...gpuCfg,
         srcFaceRes: h0.face_res,
         equirectW: w, // force GPU equirect == CPU equirect dims
         equirectH: h,
       });
     });
-    if (!equiTex) {
-      throw new Error("[parity] runErodeBake returned no texture");
+    if (!equiRT) {
+      throw new Error("[parity] runErodeBake returned no render target");
     }
 
-    // Blit the (frozen-pipeline) returned texture into our own RGBA32F
-    // RT and read it back. Vertical-flip alignment handled in the
-    // comparator (see file header — RESAMPLE writes North at the
+    // Blit the (frozen-pipeline) returned RT's texture into our own
+    // RGBA32F RT and read it back. Vertical-flip alignment handled in
+    // the comparator (see file header — RESAMPLE writes North at the
     // framebuffer top; readRenderTargetPixels is bottom-origin).
-    const gpuBuf = readEquirectViaBlit(renderer, equiTex, w, h);
+    const gpuBuf = readEquirectViaBlit(
+      renderer,
+      (equiRT as THREE.WebGLRenderTarget).texture,
+      w,
+      h,
+    );
 
     const { rmse, maxAbs, nLand, worst } = compareLandTexels(
       cpu.h_final,
@@ -456,6 +467,19 @@ export async function runParity(
       w,
       h,
     );
+    // No-land guard: with zero land texels (cpu>0 && gpu>0) the
+    // comparator returns rmse=0,maxAbs=0 which would pass the gate
+    // below — a meaningless false PASS. A draft with no continental
+    // elevation (both sides ocean) is not a valid parity surface;
+    // surface it as a hard error (App.tsx catches/handles thrown
+    // errors in-panel) BEFORE the PASS/FAIL gate.
+    if (nLand === 0) {
+      throw new Error(
+        "[parity] no land texels (cpu>0 && gpu>0) — draft has no " +
+          "continental elevation / both sides ocean; comparison is " +
+          "vacuous, not a PASS",
+      );
+    }
     const pass = rmse < PARITY_RMSE_GATE && maxAbs < PARITY_MAXABS_GATE;
 
     const report: ParityReport = {
@@ -540,10 +564,13 @@ export async function runParity(
 
     return report;
   } finally {
-    // Dispose everything WE own: the equirect texture runErodeBake
-    // transferred to us, and the h0 DataTexture from uploadH0. The blit
-    // RT/material/geometry are disposed inside readEquirectViaBlit.
-    (equiTex as THREE.Texture | null)?.dispose();
+    // Dispose everything WE own: the equirect render target runErodeBake
+    // transferred to us (rt.dispose() frees BOTH the GL framebuffer AND
+    // rt.texture — a bare texture.dispose() would leak the FBO), and the
+    // h0 DataTexture from uploadH0. The blit RT/material/geometry are
+    // disposed inside readEquirectViaBlit. Single dispose each — no
+    // double-dispose, no use-after-dispose (readback already completed).
+    (equiRT as THREE.WebGLRenderTarget | null)?.dispose();
     srcH0Tex.dispose();
   }
 }

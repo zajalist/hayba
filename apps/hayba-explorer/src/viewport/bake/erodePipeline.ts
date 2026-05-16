@@ -968,9 +968,13 @@ function disposeHelperCache(): void {
  *  b=sed, a=ocean) at `srcFaceRes` per face — A16 produces it; here it
  *  is the macro reference + the start field.
  *
- *  Returns an equirect (`equirectW × equirectH`) RGBA32F `THREE.Texture`
- *  (the render target's texture; ownership transfers to the caller —
- *  every other GPU resource is freed before return).
+ *  Returns the equirect (`equirectW × equirectH`) RGBA32F
+ *  `THREE.WebGLRenderTarget` (NOT just its `.texture`). The caller owns
+ *  it and MUST call `rt.dispose()` exactly once when done — that frees
+ *  BOTH the GL framebuffer (`deallocateRenderTarget`) AND `rt.texture`
+ *  (a bare `rt.texture.dispose()` leaks the framebuffer). Use
+ *  `rt.texture` wherever the sampled equirect texture is needed. Every
+ *  other GPU resource is freed before return.
  * =================================================================== */
 export async function runErodeBake(
   renderer: THREE.WebGLRenderer,
@@ -981,7 +985,7 @@ export async function runErodeBake(
     equirectH: number;
   },
   onProgress?: (level: number, k: number) => void,
-): Promise<THREE.Texture> {
+): Promise<THREE.WebGLRenderTarget> {
   const schedule = pyramidSchedule(cfg);
   const base = Math.max(1, Math.floor(cfg.baseFaceRes));
   const levels = schedule.length;
@@ -1700,14 +1704,15 @@ export async function runErodeBake(
   );
 
   // --- Teardown (bake-then-watch: free every GPU resource except the
-  //     returned equirect texture). ----------------------------------
+  //     returned equirect render target — the caller owns equiRT and
+  //     disposes it (FBO + texture) when done). -----------------------
   disposeScratch();
   disposeWarm(); // persistent coarse→fine warm RTs (not in `scratch`)
   st.dispose();
   disposeRunPassCache();
   disposeHelperCache();
 
-  return equiRT.texture;
+  return equiRT;
 }
 
 /* ---- small GPU sub-routines ------------------------------------- */
