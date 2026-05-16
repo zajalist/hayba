@@ -172,12 +172,21 @@ H-Schott/MultiScaleErosion, SIGGRAPH 2024). Per level:
    MUST be throttled relative to detail injection / stream-power so that, on a
    smooth-flank fixture, the **pre-blend finest field retains ≥ 50% of the
    injected sub-macro variance** (`var(h − lowpass)` at the §5.5 cutoff).
-   Concretely: `ErosionConfig` carries `thermal_cadence: u32` (default `4`) and
-   `thermal_step` runs only every `thermal_cadence`-th K-iteration, NOT every
-   iteration. Talus-gated creep (`talus_angle≈0.6`) is for steep-slope/scree
-   relaxation only; it must leave the slope-modulated detail band substantially
-   intact. A10's test asserts this retention at the thermal stage (not only
-   end-to-end) so the regression is caught where it originates.
+   Concretely: `ErosionConfig` carries `thermal_cadence: u32` (default `8` —
+   empirically the smallest cadence clearing the ≥50% retention contract:
+   measured 4→0.348, 6→0.421, 8→0.538 plateau) and `thermal_step` runs only
+   every `thermal_cadence`-th K-iteration, NOT every iteration. Talus-gated
+   creep (`talus_angle≈0.6`) is for steep-slope/scree relaxation only; it must
+   leave the slope-modulated detail band substantially intact. A10's unit test
+   asserts this retention at the thermal stage (via the `run_pyramid_stages`
+   hook) so the regression is caught where it originates. NOTE: the holistic
+   "erosion adds genuine dendritic detail / is not net-smooth" claim is **not**
+   numerically unit-testable at unit scale (the §5.5 blend β-amplifies the A9
+   PD/bilinear faceting band; a blend-processed no-erosion reference is the band
+   maximum, not ≈0) — it is gated **visually at full bake resolution** in A19
+   Step 2b (no-erosion vs erosion side-by-side), per the standing "validate sim
+   visually" rule. The retention contract + the cadence-1 throttle regression
+   guard are the rigorous numeric guards; visual is the fidelity gate.
    - **Coarse levels: stream-power incision** (drainage-area law; cheap,
      multi-scale-friendly — the SIGGRAPH-2024 choice). Reuse the existing tested
      Rust stream-power math as the CPU reference / optionally the coarse operator.
