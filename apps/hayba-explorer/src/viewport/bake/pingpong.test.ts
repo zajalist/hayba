@@ -14,6 +14,7 @@ import {
   decideFloatSupport,
   createPingPong,
 } from "./pingpong";
+import type { RenderTargetFactory } from "./pingpong";
 
 // --- 1. PingPongBook pure swap logic (spec A12 Step 1) -------------------
 const bk = new PingPongBook(["h", "water", "sed"]);
@@ -82,7 +83,7 @@ assert.equal(dNo32f.ok32f, false, "no color-buffer-float -> not ok");
 function fakeRenderer(gl: { getExtension(n: string): unknown }) {
   return { getContext: () => gl } as unknown as import("three").WebGLRenderer;
 }
-const fakeRtFactory = (_w: number, _h: number, _opts: unknown) =>
+const fakeRtFactory: RenderTargetFactory = (_w, _h, _opts) =>
   ({ dispose() {} }) as unknown as import("three").WebGLRenderTarget;
 
 const ppNoLinear = createPingPong(

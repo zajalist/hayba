@@ -59,7 +59,7 @@ export class PingPongBook {
   }
 
   /** All registered channel names (insertion order). */
-  channels(): string[] {
+  channels(): readonly string[] {
     return [...this.idx.keys()];
   }
 }
@@ -92,6 +92,11 @@ export interface FloatSupport {
  * stair-stepped rivers in the upsample/resample. We surface that here so
  * A14/A15/A19 can switch to an explicit 4-tap manual bilinear in GLSL.
  *
+ * A14/A15/A19 MUST read the returned `PingPongTargets.manualBilinear`;
+ * there is no module-global float-linear flag (it would be last-write-wins
+ * / externally mutable). The per-instance value is the single source of
+ * truth for shader selection.
+ *
  * Split out as a pure function so the decision is unit-testable with an
  * injected fake `{ getExtension }` context (no real WebGL2 required).
  */
@@ -100,15 +105,6 @@ export function decideFloatSupport(gl: GlExtensionProbe): FloatSupport {
   const floatLinearOk = gl.getExtension("OES_texture_float_linear") != null;
   return { ok32f, floatLinearOk, manualBilinear: !floatLinearOk };
 }
-
-/**
- * Module-level snapshot of float-linear support, set the first time
- * createPingPong probes a real renderer's context. A14/A15/A19 read this
- * to pick the hardware-bilinear vs. manual-4-tap path. `null` until the
- * first createPingPong call (use the per-instance `manualBilinear` flag
- * during the bake itself; this is only a convenience for shader selection).
- */
-export let FLOAT_LINEAR_OK: boolean | null = null;
 
 /** Factory for a render target — injectable so the probe path is testable. */
 export type RenderTargetFactory = (
@@ -163,8 +159,6 @@ export function createPingPong(
     );
   }
 
-  FLOAT_LINEAR_OK = support.floatLinearOk;
-
   const filter: THREE.TextureFilter = support.manualBilinear
     ? THREE.NearestFilter
     : THREE.LinearFilter;
@@ -213,10 +207,23 @@ export function createPingPong(
  * here. Kept minimal & correct; the camera/quad are created once and reused.
  * ---------------------------------------------------------------------- */
 
+const QUAD_VERT =
+  "void main(){ gl_Position = vec4(position.xy, 0.0, 1.0); }";
+
 let _quadScene: THREE.Scene | null = null;
 let _quadCamera: THREE.OrthographicCamera | null = null;
 let _quadMesh: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial> | null =
   null;
+
+/**
+ * Materials keyed by fragment-shader source string. Three.js compiles a
+ * ShaderMaterial's GLSL program lazily on first render; a fresh material
+ * per `runPass` call would recompile the shader every pass — catastrophic
+ * in A15's hot pyramid loop (thousands of calls). Caching by source means
+ * distinct shaders get distinct (independent, non-corrupting) materials
+ * while identical/repeated passes reuse one already-compiled program.
+ */
+const _matCache = new Map<string, THREE.ShaderMaterial>();
 
 function ensureQuad(): {
   scene: THREE.Scene;
@@ -230,9 +237,10 @@ function ensureQuad(): {
   // Unit quad spanning the full clip-space NDC with an ortho camera.
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   const geometry = new THREE.PlaneGeometry(2, 2);
+  // Placeholder material; runPass swaps in the per-fragment-source cached
+  // material before every render (the mesh material is never rendered as-is).
   const material = new THREE.ShaderMaterial({
-    vertexShader:
-      "void main(){ gl_Position = vec4(position.xy, 0.0, 1.0); }",
+    vertexShader: QUAD_VERT,
     fragmentShader: "void main(){ gl_FragColor = vec4(0.0); }",
     depthTest: false,
     depthWrite: false,
@@ -246,9 +254,29 @@ function ensureQuad(): {
   return { scene, camera, mesh };
 }
 
+/** Look up (or lazily create) the cached material for a fragment source. */
+function ensureMaterial(fragmentShader: string): THREE.ShaderMaterial {
+  let mat = _matCache.get(fragmentShader);
+  if (!mat) {
+    mat = new THREE.ShaderMaterial({
+      vertexShader: QUAD_VERT,
+      fragmentShader,
+      glslVersion: THREE.GLSL3,
+      depthTest: false,
+      depthWrite: false,
+    });
+    _matCache.set(fragmentShader, mat);
+  }
+  return mat;
+}
+
 /**
  * Run one fullscreen fragment-shader pass into `outChannel`'s write RT,
  * then swap that channel's ping-pong slot.
+ *
+ * Materials are cached per fragment-shader source (see `_matCache`): the
+ * GLSL program for a given shader is compiled once and reused across all
+ * passes using that source, so the A15 hot loop never recompiles.
  */
 export function runPass(
   renderer: THREE.WebGLRenderer,
@@ -259,11 +287,9 @@ export function runPass(
 ): void {
   const { scene, camera, mesh } = ensureQuad();
 
-  const mat = mesh.material;
-  mat.fragmentShader = fragmentShader;
+  const mat = ensureMaterial(fragmentShader);
   mat.uniforms = uniforms;
-  mat.glslVersion = THREE.GLSL3;
-  mat.needsUpdate = true;
+  mesh.material = mat;
 
   const pair = targets.rt[outChannel];
   if (!pair) {
@@ -277,4 +303,14 @@ export function runPass(
   renderer.setRenderTarget(prevTarget);
 
   targets.book.swap(outChannel);
+}
+
+/**
+ * Dispose every cached `runPass` material and clear the cache, freeing the
+ * compiled GPU programs. Called by A15 at end-of-bake teardown — never from
+ * within this module (the cache must survive across passes during a bake).
+ */
+export function disposeRunPassCache(): void {
+  for (const mat of _matCache.values()) mat.dispose();
+  _matCache.clear();
 }
