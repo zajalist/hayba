@@ -80,13 +80,126 @@ function _checkSelfAlias(
     }
   }
 }
+// TODO(bake-debug): remove after feedback-loop root-caused.
+// GL-TEXTURE-IDENTITY alias detector. The SELF-ALIAS probe above compares
+// THREE.Texture JS-object identity (`uniform.value === dst.texture`) and
+// NEVER fires; the STALE-UNIT-ALIAS probe (in physicallyIsolateUnits)
+// compares per-GL-unit `TEXTURE_BINDING_2D` vs the dst's
+// `__webglTexture` and DOES fire. The disagreement means a pass's sampler
+// uniform is a DIFFERENT THREE.Texture object but resolves to the SAME
+// underlying GL `__webglTexture` as that pass's destination RT — a true
+// same-target read==write at the GL level the JS-identity check misses
+// (e.g. two distinct WebGLRenderTarget objects whose GL texture *name* the
+// driver/three RECYCLED after a disposeScratch churn while an old uniform
+// reference lingers). This probe resolves BOTH sides to their actual GL
+// texture handle and names the EXACT (frag, uniform) doing it.
+//
+// Dedupe sets — one GL-ALIAS line per distinct (where,frag,uniform); one
+// GL-PROBE line per distinct (where,frag) listing its texture-uniform
+// keys (so frag ids map to a shader's sampler set). Low-volume by design.
+const _bakeGlAliasSeen = new Set<string>();
+const _bakeGlProbeSeen = new Set<string>();
+
+/** Is a uniform value a THREE.Texture (incl. via an RT's `.texture`)? */
+function _asTexture(v: unknown): THREE.Texture | null {
+  if (v == null) return null;
+  if ((v as { isWebGLRenderTarget?: boolean }).isWebGLRenderTarget === true) {
+    const t = (v as THREE.WebGLRenderTarget).texture;
+    return t instanceof THREE.Texture ? t : null;
+  }
+  return v instanceof THREE.Texture ? v : null;
+}
+
+/** Resolve a texture's backing GL handle via three's WebGLProperties. */
+function _glTexOf(
+  renderer: THREE.WebGLRenderer,
+  tex: THREE.Texture,
+): unknown {
+  // `__webglTexture` is the stable three r0.169 internal on the
+  // WebGLProperties entry (not in public typings) — the SAME cast the
+  // STALE-UNIT-ALIAS probe already uses; dev-gate only.
+  const props = renderer.properties.get(tex) as
+    | { __webglTexture?: unknown }
+    | undefined;
+  return props?.__webglTexture;
+}
+
+/**
+ * TODO(bake-debug): remove after feedback-loop root-caused.
+ * Name the EXACT pass + uniform whose sampler resolves to the SAME GL
+ * texture as the pass's destination RT. For each texture-bearing uniform:
+ * resolve its `__webglTexture` and the dst's `__webglTexture`; if both are
+ * defined and equal, log one `GL-ALIAS` line per (where,frag,uniform).
+ * Also logs one `GL-PROBE` line per (where,frag) naming its texture
+ * uniform keys so frag ids map to shaders. Pass `renderer` (needed to
+ * reach WebGLProperties — the SELF-ALIAS probe did not have it).
+ */
+function _checkGlAlias(
+  renderer: THREE.WebGLRenderer,
+  where: string,
+  frag: string,
+  uniforms: Record<string, THREE.IUniform>,
+  dst: THREE.WebGLRenderTarget,
+): void {
+  if (!_bakeDbgOn) return;
+  const fid = _fragId(frag);
+
+  // GL-PROBE — once per (where,frag): list the texture-uniform KEY names
+  // so the user can map every frag id to its shader's sampler set even
+  // when no alias fires (helps interpret which pass is which).
+  const probeKey = `${where}:${fid}`;
+  if (!_bakeGlProbeSeen.has(probeKey)) {
+    _bakeGlProbeSeen.add(probeKey);
+    const texNames: string[] = [];
+    for (const name of Object.keys(uniforms)) {
+      if (_asTexture(uniforms[name]?.value) != null) texNames.push(name);
+    }
+    // eslint-disable-next-line no-console
+    console.error(
+      `[bake-feedback] GL-PROBE frag=${fid} where=${where} ` +
+        `texUniforms=[${texNames.join(",")}]`,
+    );
+  }
+
+  const dstGl = _glTexOf(renderer, dst.texture);
+  if (dstGl == null) return; // dst not yet GL-allocated → nothing to alias
+
+  for (const name of Object.keys(uniforms)) {
+    const v = uniforms[name]?.value as unknown;
+    const tex = _asTexture(v);
+    if (tex == null) continue;
+    const uGl = _glTexOf(renderer, tex);
+    if (uGl == null || uGl !== dstGl) continue;
+    const key = `${where}:${fid}:${name}`;
+    if (_bakeGlAliasSeen.has(key)) continue;
+    _bakeGlAliasSeen.add(key);
+    // Does the uniform's OWNING RT (if it was passed as an RT, or if the
+    // texture is literally dst.texture) === the dst RT object? Helps tell
+    // "same RT passed twice" (true) from "two different RTs sharing a
+    // recycled GL texture name after disposeScratch" (false).
+    const ownsSameRt =
+      ((v as { isWebGLRenderTarget?: boolean }).isWebGLRenderTarget ===
+        true &&
+        (v as THREE.WebGLRenderTarget) === dst) ||
+      tex === dst.texture;
+    // eslint-disable-next-line no-console
+    console.error(
+      `[bake-feedback] GL-ALIAS frag=${fid} where=${where} ` +
+        `uniform=${name} dstSameObjAsUniformRT=${ownsSameRt}`,
+    );
+  }
+}
+
 /** TODO(bake-debug): remove after feedback-loop root-caused. */
 export const _bakeDebug = {
   on: _bakeDbgOn,
   fragId: _fragId,
   checkSelfAlias: _checkSelfAlias,
+  checkGlAlias: _checkGlAlias,
   resetSeen(): void {
     _bakeAliasSeen.clear();
+    _bakeGlAliasSeen.clear();
+    _bakeGlProbeSeen.clear();
   },
 };
 
@@ -562,6 +675,11 @@ export function runPass(
   // TODO(bake-debug): remove after feedback-loop root-caused. Dev-only:
   // catch a true same-pass structural alias (a uniform sampling `dst`).
   _checkSelfAlias("runPass", fragmentShader, uniforms, dst);
+  // TODO(bake-debug): remove after feedback-loop root-caused. Dev-only:
+  // GL-texture-identity alias — names the EXACT (frag,uniform) whose
+  // sampler resolves to the SAME __webglTexture as this pass's dst RT
+  // (catches recycled-GL-name aliases the JS-identity SELF-ALIAS misses).
+  _checkGlAlias(renderer, "runPass", fragmentShader, uniforms, dst);
 
   // FEEDBACK-LOOP KILL (manual multi-pass ping-pong, three r0.169).
   // Runtime evidence narrowed this to a STALE three.js texture-unit binding
