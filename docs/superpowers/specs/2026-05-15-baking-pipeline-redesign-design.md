@@ -78,6 +78,20 @@ solve grid is the cube-sphere (§5.1); everything downstream of P4 is equirect.
   state — per-step deltas (~1e-4) underflow half-float at terrain magnitudes (shipped
   reference `LanLou123/Webgl-Erosion` uses 32F for all targets). Requires
   `EXT_color_buffer_float`; absence is a hard-fail with a clear error.
+- **Float-linear (NORMATIVE):** `EXT_color_buffer_float` enables *rendering* to
+  float but NOT bilinear *sampling* of it — `OES_texture_float_linear` is a
+  separate extension, absent on some Apple-Silicon/mobile. It must be probed
+  separately; if absent, float RTs use `NearestFilter` and the pyramid-upsample
+  + cube→equirect resample shaders do an explicit **4-tap manual bilinear** (a
+  silent nearest fallback stair-steps and destroys dendritic networks).
+- **Mask precision is PER-TARGET, not blanket 32F (NORMATIVE):** 8×RGBA32F@8K =
+  ~4.3 GB ⇒ guaranteed WebGL context loss. The mask library assigns format per
+  channel-group: **RGBA8** for unorm masks (biomeId, weights, variations,
+  base-temp, wetness, frontier…), **RGBA16F** only for geometric/SDF/AO data,
+  **RGBA32F** only where strictly required. Documented in the mask layout.
+- **MRT split (NORMATIVE):** WebGL2 guarantees only `MAX_COLOR_ATTACHMENTS = 4`
+  (many integrated/Apple GPUs cap at 4). Mask generation must query the limit
+  and run in ≥2 passes (≤4 targets each), never one ≤8-target draw.
 - **Flux layout:** pack the 4 pipe outflow directions as a single RGBA32F texture
   (canonical Mei-2007 layout).
 - **Sediment advection:** MacCormack (semi-Lagrangian alone smears rivers).
@@ -108,7 +122,13 @@ command + CPU reference oracle. Exact paths fixed in the A sub-spec.
   crossing a face edge near a corner must **reorient its direction by ±90° or ±180°**
   into the destination face's coordinate space. Without this, sediment pools
   permanently on the 8 corners. Corner adjacency + per-edge rotation is a fixed,
-  precomputed table (cube topology is static).
+  precomputed table (cube topology is static). **(c) Gradient/Laplacian at
+  corners:** the symmetric finite-difference dx/dy is undefined with only 3
+  neighbours (collapses → NaN/∞ slope, propagates). Stream-power slope and
+  thermal Laplacian at the 8 corner texels must be computed from the
+  **least-squares plane through the 3 available adjacent vertices** (sphere
+  positions + heights), and the FV Laplacian sums only the 3 real fluxes (no
+  zero-filled phantom 4th).
 
 ### 5.2 P1 rasterize
 
@@ -124,6 +144,14 @@ macro slope). Steers detail injection so windward faces carve hard and lee faces
 stay intact (directional realism; pre-empts the India/Indochina rain-shadow class
 of bug). `C_proxy` is *erosion steering only*; the authoritative climate masks are
 recomputed post-erosion in P5.
+
+**NO CIRCULAR DEPENDENCY (NORMATIVE):** `C_proxy` is computed **solely from the
+pre-erosion macro `h0`** by an *isolated* function that runs **before** P3. It is
+NEVER derived from `h_final` (P3 consumes `C_proxy`, so deriving it from the
+erosion output would be circular). Subsystem B owns the climate code, but its
+`compute_cproxy(h0)` entry is callable standalone and is invoked at P2; B's
+`h_final`-based climate masks (temperature/precip/biome…) are a *separate*,
+later computation that does not feed erosion.
 
 ### 5.4 P3 multi-scale amplification
 
@@ -150,6 +178,12 @@ H-Schott/MultiScaleErosion, SIGGRAPH 2024). Per level:
    splits into 4 fine texels, `Σ d_fine = d_coarse` (and likewise `s`) exactly.
    Naïve bilinear upsampling of `d`/`s` spontaneously creates/destroys fluid at
    level boundaries and breaks dendritic continuity.
+   **HARDENING — post-upsample pit removal (NORMATIVE):** bilinear-upsampled `h`
+   manufactures artificial local minima between coarse samples; the (correctly)
+   conserved `d` then pools in those phantom pits next iteration and severs
+   rivers. Mandatory order per level transition: **upsample `h` → monotonic-
+   downhill / depression-fill pass on the fine `h` → only then place the
+   conserved `d`/`s`.**
 
 `U=0`; per-step incision clamped to `ε` (normalized units; start ε≈3e-4, tune).
 
@@ -187,11 +221,13 @@ and pole-clamped (V).
   to the channel network where drainage > τ; smoothly widens riverbeds and blends
   riparian zones — avoids 1-px hard river lines — and supplies `localRelief` =
   height above the nearest channel, the SatMap LUT-X axis. **HARDENING (NORMATIVE):**
-  do NOT compute global flow accumulation via naïve recursive / pointer-jumping
-  parallel-flood over 33.5M equirect texels — that TDRs the GPU. Compute it
-  **hierarchically on the pyramid chain** (accumulate coarse→fine, reusing the §5.4
-  levels) **or** approximate the SDF by an **edge-preserving bilateral blur of the
-  final water-depth `d_final` keyed to the height gradient**. Bounded passes only),
+  (1) flow *accumulation* is NOT a naïve recursive/pointer-jumping parallel-flood
+  over 33.5M texels (GPU TDR) — accumulate **hierarchically on the pyramid chain**
+  (coarse→fine, reusing the §5.4 levels). (2) The *SDF itself* is computed with
+  the **Jump-Flood Algorithm seeded by the river/channel mask** (the same JFA used
+  for dist-to-ocean; O(log N), TDR-safe). A bilateral blur is explicitly **NOT**
+  acceptable: it produces a resolution-dependent value gradient, not a Euclidean
+  distance field.),
   **Wind-Shear / Exposure**
   (`dot(prevailingWindDir, terrainNormal)` from the ported climate engine's per-cell
   wind vector × `h_final` normal; >0 windward/scoured, <0 leeward/sheltered — drives
