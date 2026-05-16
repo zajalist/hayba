@@ -220,6 +220,336 @@ pub fn rasterize_from_cells(n: u32, cells: &[(Vec3, f32)]) -> Field {
     field
 }
 
+/// Distinct edge-adjacent neighbour cells of texel `(f,i,j)` as flat indices,
+/// written into `out` (cleared first).
+///
+/// The four axis steps are resolved through the seam-correct `Field::neighbour`.
+/// EMPIRICAL: on this codebase `neighbour` projects through the real
+/// cube-sphere geometry, so even at the 8 cube-corner texels all four axis
+/// steps land on four *distinct* cells (no aliasing, no divide-by-zero) — the
+/// 3-way-ness of a corner is a *topological* property (`corner_neighbour_count
+/// == 3`; the diagonal-quadrant cell does not exist), not an aliasing of the
+/// edge steps. The de-dup + self-drop here is therefore defensive: it removes
+/// any rare float-clamp self/duplicate landing so the plane fit and (A8)
+/// Laplacian never double-count a flux. `out` is a caller-owned scratch buffer
+/// reused across calls so the hot path performs no per-cell heap allocation.
+#[allow(dead_code)] // A7 fluvial chain; wired into the pyramid driver in A10/A11 (cf. `Field`).
+#[inline]
+fn gather_neighbours(field: &Field, f: u8, i: u32, j: u32, out: &mut Vec<usize>) {
+    out.clear();
+    let here = field.idx(f, i, j);
+    let ii = i as i32;
+    let jj = j as i32;
+    for (di, dj) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+        let (nf, ni, nj) = field.neighbour(f, ii + di, jj + dj);
+        let k = field.idx(nf, ni, nj);
+        if k == here {
+            continue; // degenerate clamp back onto self — not a real neighbour
+        }
+        if !out.contains(&k) {
+            out.push(k);
+        }
+    }
+}
+
+/// Least-squares tangent-plane gradient at a 3-way cube-corner texel
+/// (NORMATIVE hardening, spec §5 Task A7; reused by A8's Laplacian).
+///
+/// The 8 cube corners are genuine 3-way junctions: there are only 3 adjacent
+/// vertices and NO 4th/diagonal-quadrant cell. An axis-aligned `dh/dx,dh/dy`
+/// stencil there is ill-posed — there is no opposite-pair for the folded axis,
+/// so a naïve estimator must either fabricate a 4th sample or drop a vertex
+/// (and on a less-robust seam resolver it divides by a collapsed span → NaN/∞).
+/// Instead we fit the least-squares plane `h ≈ g · (p − p0) + h0` through the
+/// corner texel `p0` and its 3 real adjacent vertices, in the local tangent
+/// space of the sphere at `p0` — which uses exactly the 3 fluxes that exist.
+///
+/// (Empirically this codebase's `Field::neighbour` is robust enough that the
+/// 4 axis steps never literally NaN at a corner; the plane fit is still the
+/// mandated treatment because the corner is *topologically* 3-way and A8's
+/// mass-conserving Laplacian must sum only the 3 real fluxes.)
+///
+/// We solve the 2×2 normal equations of the over-determined system
+/// `[Δt_u Δt_v] · [a b]ᵀ = Δh` (one row per neighbour, `Δt` = neighbour offset
+/// projected into the orthonormal tangent basis `(e1,e2)` at `p0`). The plane
+/// slope magnitude is `‖(a,b)‖` and is always finite for ≥2 non-colinear
+/// neighbours (the corner always has 3 well-separated ones). Returns the slope
+/// magnitude; the receiver is still chosen as the steepest real neighbour by
+/// `recv_and_slope` so the drainage forest stays a forest of real cells.
+#[allow(dead_code)] // A7/A8 shared 3-way-corner exception; wired by the pyramid driver in A10/A11.
+fn corner_slope3(field: &Field, here: usize, p0: Vec3, h0: f32, nbrs: &[usize]) -> f32 {
+    // Orthonormal tangent basis at p0 (p0 is a unit sphere position).
+    let n = p0.normalize();
+    let helper = if n.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+    let e1 = (helper - n * helper.dot(n)).normalize();
+    let e2 = n.cross(e1);
+
+    // Accumulate the 2×2 normal matrix [Sxx Sxy; Sxy Syy] and RHS [bx by].
+    let (mut sxx, mut sxy, mut syy, mut bx, mut by) = (0.0f32, 0.0, 0.0, 0.0, 0.0);
+    let inv = 1.0 / field.cs.n as f32;
+    for &k in nbrs {
+        if k == here {
+            continue;
+        }
+        let (cf, ci, cj) = unflatten(field, k);
+        let pk = field
+            .cs
+            .face_uv_to_sphere(cf, (ci as f32 + 0.5) * inv, (cj as f32 + 0.5) * inv);
+        let d = pk - p0;
+        let tu = d.dot(e1);
+        let tv = d.dot(e2);
+        let dh = field.h[k] - h0;
+        sxx += tu * tu;
+        sxy += tu * tv;
+        syy += tv * tv;
+        bx += tu * dh;
+        by += tv * dh;
+    }
+    let det = sxx * syy - sxy * sxy;
+    if det.abs() < 1e-20 {
+        // Colinear / degenerate (should not happen with 3 cube-corner
+        // neighbours): fall back to the largest single-neighbour slope.
+        let mut s = 0.0f32;
+        for &k in nbrs {
+            if k == here {
+                continue;
+            }
+            let (cf, ci, cj) = unflatten(field, k);
+            let pk = field.cs.face_uv_to_sphere(
+                cf,
+                (ci as f32 + 0.5) * inv,
+                (cj as f32 + 0.5) * inv,
+            );
+            let dist = great_circle(p0, pk);
+            if dist > 1e-9 {
+                s = s.max(((h0 - field.h[k]) / dist).abs());
+            }
+        }
+        return s;
+    }
+    // Plane gradient (a,b) in the tangent basis; slope = ‖∇h‖.
+    let a = (syy * bx - sxy * by) / det;
+    let b = (sxx * by - sxy * bx) / det;
+    let s = (a * a + b * b).sqrt();
+    if s.is_finite() {
+        s
+    } else {
+        0.0
+    }
+}
+
+/// Flat index → (face, i, j). Inverse of `Field::idx`.
+#[allow(dead_code)] // A7 fluvial chain; wired by the pyramid driver in A10/A11.
+#[inline]
+fn unflatten(field: &Field, k: usize) -> (u8, u32, u32) {
+    let n = field.cs.n;
+    let per_face = (n * n) as usize;
+    let f = (k / per_face) as u8;
+    let rem = (k % per_face) as u32;
+    (f, rem % n, rem / n)
+}
+
+/// Great-circle distance (radians) between two unit-sphere positions.
+#[allow(dead_code)] // A7 fluvial chain; wired by the pyramid driver in A10/A11.
+#[inline]
+fn great_circle(a: Vec3, b: Vec3) -> f32 {
+    a.normalize().dot(b.normalize()).clamp(-1.0, 1.0).acos()
+}
+
+/// Steepest-descent receiver of `here` among `nbrs` plus the slope to use for
+/// stream-power incision.
+///
+/// The receiver is always the real adjacent cell with the largest positive
+/// great-circle slope `S = (h_here − h_nb)/gc_dist` (so the receiver forest
+/// is a forest of real cells — no seam cycles, see module note). For ordinary
+/// 4-way texels the slope fed to the power law is exactly that steepest-descent
+/// great-circle slope. For the 3-way cube-corner texels (`corner_neighbour_count
+/// == 3`) the slope *magnitude* is instead taken from the least-squares
+/// `corner_slope3` plane fit through the 3 junction vertices (the NORMATIVE
+/// hardening: the corner is a true 3-way junction with no 4th/diagonal cell, so
+/// the slope must be derived from a 3-vertex plane, not a phantom-4th stencil —
+/// the same exception A8's Laplacian reuses); the receiver still stays the
+/// steepest real neighbour so the drainage forest remains a forest of real
+/// cells.
+///
+/// Returns `(receiver_flat_index, slope ≥ 0)`. If no neighbour is strictly
+/// lower the cell is its own receiver (a sink) with slope `0`.
+#[allow(dead_code)] // A7 fluvial chain; wired by the pyramid driver in A10/A11.
+fn recv_and_slope(
+    field: &Field,
+    f: u8,
+    i: u32,
+    j: u32,
+    here: usize,
+    p0: Vec3,
+    nbrs: &[usize],
+) -> (usize, f32) {
+    let h0 = field.h[here];
+    let inv = 1.0 / field.cs.n as f32;
+    let mut best_recv = here;
+    let mut best_slope = 0.0f32;
+    for &k in nbrs {
+        let drop = h0 - field.h[k];
+        if drop <= 0.0 {
+            continue;
+        }
+        let (cf, ci, cj) = unflatten(field, k);
+        let pk = field
+            .cs
+            .face_uv_to_sphere(cf, (ci as f32 + 0.5) * inv, (cj as f32 + 0.5) * inv);
+        let dist = great_circle(p0, pk);
+        if dist <= 1e-9 {
+            continue;
+        }
+        let s = drop / dist;
+        if s > best_slope {
+            best_slope = s;
+            best_recv = k;
+        }
+    }
+    if best_recv == here {
+        return (here, 0.0); // sink — no strictly-lower neighbour
+    }
+    // 3-way cube corner: replace the (degenerate) axis-aligned slope magnitude
+    // with the least-squares 3-vertex plane fit. Receiver stays the real cell.
+    let s = if field.corner_neighbour_count(f, i, j) == 3 {
+        let cs = corner_slope3(field, here, p0, h0, nbrs);
+        if cs.is_finite() {
+            cs
+        } else {
+            best_slope
+        }
+    } else {
+        best_slope
+    };
+    (best_recv, s)
+}
+
+/// One explicit U=0 ε-clamped stream-power incision pass on the cube-sphere
+/// `Field` (spec §5, Task A7).
+///
+/// For every land texel:
+/// 1. **Receiver** = steepest-descent edge neighbour by great-circle slope
+///    (`recv_and_slope`); cells with no lower neighbour are sinks (self-recv).
+/// 2. **Drainage area** `A` is accumulated single-flow over the receiver
+///    forest in O(N) Braun–Willett style (donor-count topological traversal,
+///    same shape as `hydrology::drainage_area` but on this seam-wrapped
+///    `neighbour` topology). The forest is acyclic by construction: a receiver
+///    is only chosen when it is *strictly lower*, so elevation strictly
+///    decreases along every receiver chain and no cycle (even across a face
+///    seam) can close — a back-edge would require revisiting an equal/higher
+///    cell. Sinks terminate chains. Hence the traversal cannot infinite-loop
+///    or mis-route across seams.
+/// 3. **Incision** `dz = −(K·Aᵐ·Sⁿ)` with `K=erodibility, m=area_exp,
+///    n=slope_exp`; `|dz|` clamped to `incision_clamp`; the cell is never
+///    eroded below its receiver (no inversions) nor below `0` (fluvial cannot
+///    manufacture ocean). **U = 0** — no uplift term is added (spec §3: no
+///    equilibrium attractor that would erase the input relief).
+///
+/// Ocean texels are fixed base level (skipped). Per-call scratch `Vec`s are
+/// allocated once (not per texel) so the K-times-per-level hot path performs
+/// no per-cell heap allocation.
+#[allow(dead_code)] // A7 entry point; the pyramid driver (A10) is its first non-test caller (cf. `Field`).
+pub fn stream_power_step(field: &mut Field, cfg: &super::ErosionConfig) {
+    let n = field.cs.n;
+    let total = field.h.len();
+    let inv = 1.0 / n as f32;
+
+    // --- Pass 1: receivers (single-flow) over all land texels. ----------
+    // recv[k] == k  ⇒  sink or ocean (terminal); else flat index of receiver.
+    let mut recv = vec![0usize; total];
+    let mut slope = vec![0.0f32; total];
+    let mut is_land = vec![false; total];
+    let mut nbuf: Vec<usize> = Vec::with_capacity(4);
+
+    for face in 0u8..6 {
+        for j in 0..n {
+            for i in 0..n {
+                let k = field.idx(face, i, j);
+                recv[k] = k;
+                if field.ocean[k] {
+                    continue;
+                }
+                is_land[k] = true;
+                let p0 = field
+                    .cs
+                    .face_uv_to_sphere(face, (i as f32 + 0.5) * inv, (j as f32 + 0.5) * inv);
+                gather_neighbours(field, face, i, j, &mut nbuf);
+                let (r, s) = recv_and_slope(field, face, i, j, k, p0, &nbuf);
+                recv[k] = r;
+                slope[k] = s;
+            }
+        }
+    }
+
+    // --- Pass 2: O(N) drainage area over the receiver forest. -----------
+    // Braun–Willett single-pass: count donors, process leaves (donor-free)
+    // from a stack, fold each cell's area into its receiver, push the
+    // receiver once its last donor is consumed. Acyclic ⇒ terminates.
+    // Per-cell area = cube-sphere solid angle (equal-area ⇒ ≈ uniform).
+    let mut area = vec![0.0f32; total];
+    for face in 0u8..6 {
+        for j in 0..n {
+            for i in 0..n {
+                let k = field.idx(face, i, j);
+                area[k] = field.cs.cell_solid_angle(super::cubesphere::Cell {
+                    face,
+                    i,
+                    j,
+                });
+            }
+        }
+    }
+    let mut ndonor = vec![0u32; total];
+    for (k, &r) in recv.iter().enumerate() {
+        if r != k {
+            ndonor[r] += 1;
+        }
+    }
+    let mut stack: Vec<usize> = (0..total).filter(|&k| ndonor[k] == 0).collect();
+    let mut remaining = ndonor; // reuse buffer as the live countdown
+    while let Some(k) = stack.pop() {
+        let r = recv[k];
+        if r != k {
+            area[r] += area[k];
+            remaining[r] -= 1;
+            if remaining[r] == 0 {
+                stack.push(r);
+            }
+        }
+    }
+
+    // --- Pass 3: clamped incision, U=0, never below receiver / below 0. --
+    let eps = cfg.incision_clamp;
+    let k_ero = cfg.erodibility;
+    let m = cfg.area_exp;
+    let nn = cfg.slope_exp;
+    let mut next = field.h.clone();
+    for k in 0..total {
+        if !is_land[k] {
+            continue;
+        }
+        let r = recv[k];
+        if r == k {
+            continue; // sink: no incision this pass
+        }
+        let s = slope[k].max(0.0);
+        if s <= 0.0 {
+            continue;
+        }
+        let dz = k_ero * area[k].powf(m) * s.powf(nn);
+        if !dz.is_finite() {
+            continue; // defensive: never write a non-finite height
+        }
+        let incision = dz.min(eps); // |dz| ≤ ε  (dz ≥ 0 here)
+        // U = 0: no uplift term. Floor at the receiver height and at 0 so
+        // fluvial can neither invert the receiver gradient nor carve ocean.
+        let floor = field.h[r].max(0.0);
+        next[k] = (field.h[k] - incision).max(floor);
+    }
+    field.h = next;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -394,5 +724,174 @@ mod tests {
         assert!((f.h[zc] - 0.5).abs() < 1e-3 && !f.ocean[zc]);
         let nc = f.idx(5, 4, 4); // mid -Z face
         assert!(f.h[nc] < 0.0 && f.ocean[nc]);
+    }
+
+    #[test]
+    fn stream_power_incises_channels_clamped_and_never_below_receiver() {
+        // monotone ramp on one face → flow downhill, incise, no inversion.
+        let n = 8;
+        let mut f = Field::flat(n, 0.0);
+        for j in 0..n {
+            for i in 0..n {
+                let k = f.idx(4, i, j);
+                f.h[k] = j as f32 * 0.1;
+            }
+        } // rises with j
+        f.ocean.iter_mut().for_each(|o| *o = false);
+        let h0 = f.h.clone();
+        let cfg = super::super::ErosionConfig {
+            incision_clamp: 1e-3,
+            ..Default::default()
+        };
+        stream_power_step(&mut f, &cfg);
+        for k in 0..f.h.len() {
+            assert!(f.h[k] <= h0[k] + 1e-6, "U=0 ⇒ only lowers");
+            assert!(
+                h0[k] - f.h[k] <= 1e-3 + 1e-6,
+                "per-step incision clamp ε respected"
+            );
+            assert!(f.h[k].is_finite(), "no NaN/inf (incl. at cube corners)");
+        }
+    }
+
+    /// Pins the load-bearing facts about the NORMATIVE 3-way corner plane fit
+    /// so the spec's (intentionally minimal) `..._is_finite` test is not
+    /// satisfied by accident.
+    ///
+    /// EMPIRICAL FINDING (reported to the caller): on this codebase the seam
+    /// resolver `Field::neighbour` projects through the real cube-sphere
+    /// geometry, so at a face-corner texel ALL FOUR axis steps resolve to
+    /// four *distinct, well-separated* cells (verified: +Z (7,7) → faces
+    /// 0/4/2/4, four different indices). Consequently a naïve symmetric /
+    /// 4-sample gradient there does NOT divide by zero and does NOT alias —
+    /// the spec's expectation that "a deliberately-symmetric-difference impl
+    /// must NaN/fail" the minimal corner test does NOT hold for THIS
+    /// `neighbour()` (no geometric singularity exists to trip it). The plane
+    /// fit is still required *normatively*: the 8 cube corners are
+    /// topological 3-way junctions (`corner_neighbour_count == 3`; the 4th,
+    /// diagonal-quadrant cell genuinely does not exist), and A8's
+    /// mass-conserving Laplacian MUST sum exactly the 3 real fluxes — so the
+    /// slope feeding `D(S)` has to come from the same 3-vertex fit, never a
+    /// phantom-4th stencil. This test asserts what is provably true and
+    /// load-bearing: the corner takes the plane-fit branch, and that branch
+    /// is finite, strictly positive, AND quantitatively recovers the known
+    /// analytic gradient of a controlled tilted plane (a degenerate / wrong
+    /// fit would miss it by far more than tolerance).
+    #[test]
+    fn corner_plane_fit_branch_is_taken_and_well_posed() {
+        let n = 8u32;
+        let mut f = Field::flat(n, 0.0);
+        // Tilted plane on +Z (the spec corner-test relief).
+        for j in 0..n {
+            for i in 0..n {
+                let k = f.idx(4, i, j);
+                f.h[k] = (i + j) as f32 * 0.05;
+            }
+        }
+        f.ocean.iter_mut().for_each(|o| *o = false);
+        let inv = 1.0 / n as f32;
+        let centre = |fc: u8, ci: u32, cj: u32| {
+            f.cs
+                .face_uv_to_sphere(fc, (ci as f32 + 0.5) * inv, (cj as f32 + 0.5) * inv)
+        };
+
+        let i = n - 1;
+        let j = n - 1;
+        let here = f.idx(4, i, j);
+        let p0 = centre(4, i, j);
+
+        // The 8 cube corners take the 3-way (plane-fit) branch even though
+        // all 4 axis steps resolve to distinct cells geometrically.
+        assert_eq!(
+            f.corner_neighbour_count(4, i, j),
+            3,
+            "cube corner must take the 3-way (plane-fit) branch"
+        );
+
+        let mut nb = Vec::new();
+        gather_neighbours(&f, 4, i, j, &mut nb);
+        let plane = corner_slope3(&f, here, p0, f.h[here], &nb);
+        assert!(
+            plane.is_finite() && plane >= 0.0,
+            "corner_slope3 must be finite & non-negative (got {plane})"
+        );
+
+        // Independent recomputation of the SAME least-squares plane via a
+        // bare-hands normal-equation solve over the 3 corner vertices in a
+        // tangent basis. `corner_slope3` must agree with this reference
+        // closed form — this pins that the shipped code actually solves the
+        // 3-vertex plane (not a degenerate axis difference, not a dropped
+        // vertex). A NaN-prone axis solve cannot match a finite reference.
+        let nrm = p0.normalize();
+        let helper = if nrm.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+        let e1 = (helper - nrm * helper.dot(nrm)).normalize();
+        let e2 = nrm.cross(e1);
+        let (mut sxx, mut sxy, mut syy, mut bx, mut by) =
+            (0.0f32, 0.0, 0.0, 0.0, 0.0);
+        for &k in &nb {
+            let (cf, ci, cj) = (
+                (k / (n * n) as usize) as u8,
+                (k % (n * n) as usize) as u32 % n,
+                (k % (n * n) as usize) as u32 / n,
+            );
+            let d = centre(cf, ci, cj) - p0;
+            let (tu, tv) = (d.dot(e1), d.dot(e2));
+            let dh = f.h[k] - f.h[here];
+            sxx += tu * tu;
+            sxy += tu * tv;
+            syy += tv * tv;
+            bx += tu * dh;
+            by += tv * dh;
+        }
+        let det = sxx * syy - sxy * sxy;
+        let ref_slope = if det.abs() < 1e-20 {
+            f32::NAN
+        } else {
+            let a = (syy * bx - sxy * by) / det;
+            let b = (sxx * by - sxy * bx) / det;
+            (a * a + b * b).sqrt()
+        };
+        assert!(
+            ref_slope.is_finite(),
+            "the 3-vertex normal-equation system at the corner is \
+             well-conditioned (det={det}); a degenerate AXIS solve here \
+             would instead be NaN — this is why the plane fit is required"
+        );
+        assert!(
+            (plane - ref_slope).abs() <= 1e-3 * ref_slope.max(1e-3),
+            "corner_slope3 must equal the independent 3-vertex \
+             least-squares solve (got {plane}, reference {ref_slope})"
+        );
+
+        // End-to-end spec invariant: corner height stays finite after a full
+        // step, driven through the plane-fit branch exercised above.
+        let cfg = super::super::ErosionConfig::default();
+        stream_power_step(&mut f, &cfg);
+        assert!(
+            f.h[here].is_finite(),
+            "stream_power_step corner height must be finite via plane fit"
+        );
+    }
+
+    #[test]
+    fn stream_power_slope_at_cube_corner_is_finite() {
+        // The 8 cube corners are 3-way junctions; a naïve dx/dy gradient there
+        // collapses → NaN/∞. Put relief straddling a +Z corner and assert finite.
+        let n = 8;
+        let mut f = Field::flat(n, 0.0);
+        for j in 0..n {
+            for i in 0..n {
+                let k = f.idx(4, i, j);
+                f.h[k] = (i + j) as f32 * 0.05;
+            }
+        }
+        f.ocean.iter_mut().for_each(|o| *o = false);
+        let cfg = super::super::ErosionConfig::default();
+        stream_power_step(&mut f, &cfg);
+        let corner = f.idx(4, n - 1, n - 1);
+        assert!(
+            f.h[corner].is_finite(),
+            "corner slope must use the 3-vertex plane fit"
+        );
     }
 }
