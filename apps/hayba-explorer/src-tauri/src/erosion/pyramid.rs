@@ -97,9 +97,11 @@ impl Field {
 /// Brute-force O(texels × cells) — correct for the test fixture. The
 /// production path (Task A11) will supply a kd-tree; this function's
 /// signature is the stable contract.
+///
+/// # Panics (debug): if `cells` is empty.
 pub fn rasterize_from_cells(n: u32, cells: &[(Vec3, f32)]) -> Field {
+    debug_assert!(!cells.is_empty(), "rasterize_from_cells: cells must not be empty");
     let mut field = Field::flat(n, 0.0);
-    let cs = CubeSphere::new(n);
     let inv = 1.0 / n as f32;
 
     for face in 0u8..6 {
@@ -108,7 +110,7 @@ pub fn rasterize_from_cells(n: u32, cells: &[(Vec3, f32)]) -> Field {
                 // Centre of this texel on the unit sphere.
                 let u = (i as f32 + 0.5) * inv;
                 let v = (j as f32 + 0.5) * inv;
-                let pos = cs.face_uv_to_sphere(face, u, v);
+                let pos = field.cs.face_uv_to_sphere(face, u, v);
 
                 // Nearest cell = maximum dot-product (both are unit vectors).
                 let elev = cells
