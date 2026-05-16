@@ -130,6 +130,7 @@ fn noise1(pos: Vec3, seed: u64) -> f32 {
 ///
 /// Returns a value in `[0, 1]`.  Same `(pos, octaves, seed)` → identical `f32`.
 pub fn fbm(pos: Vec3, octaves: u32, seed: u64) -> f32 {
+    if octaves == 0 { return 0.5; }
     let mut value = 0.0f32;
     let mut amplitude = 0.5f32;
     let mut frequency = 1.0f32;
@@ -224,8 +225,9 @@ pub fn worley(pos: Vec3, seed: u64) -> f32 {
         }
     }
 
-    // Max possible F1 distance in a 3×3×3 search: sqrt(3)/2 ≈ 0.866 (diagonal to corner).
-    // Normalise to [0, 1]; clamp to handle edge cases.
+    // Max possible F1 distance in a 3x3x3 search with full [0,1) per-cell jitter
+    // approaches sqrt(3) ≈ 1.732 (unit-cell space diagonal). Normalizing by this
+    // keeps output in [0,1]; the clamp below handles any overshoot.
     let max_dist = 3.0f32.sqrt();
     (min_dist_sq.sqrt() / max_dist).clamp(0.0, 1.0)
 }
