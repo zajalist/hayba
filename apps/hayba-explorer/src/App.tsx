@@ -1035,7 +1035,7 @@ export default function App() {
           renderer,
           srcH0Tex,
           {
-            ...DEFAULT_ERODE_CONFIG,
+            ...DEBUG_BAKE_CONFIG,
             srcFaceRes: face_res,
             equirectW,
             equirectH,
