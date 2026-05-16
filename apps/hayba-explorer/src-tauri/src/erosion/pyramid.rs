@@ -277,7 +277,7 @@ fn gather_neighbours(field: &Field, f: u8, i: u32, j: u32, out: &mut Vec<usize>)
 /// magnitude; the receiver is still chosen as the steepest real neighbour by
 /// `recv_and_slope` so the drainage forest stays a forest of real cells.
 #[allow(dead_code)] // A7/A8 shared 3-way-corner exception; wired by the pyramid driver in A10/A11.
-fn corner_slope3(field: &Field, here: usize, p0: Vec3, h0: f32, nbrs: &[usize]) -> f32 {
+fn corner_slope3(field: &Field, here: usize, p0: Vec3, h0: f32, nbrs: &[usize], pos: &[Vec3]) -> f32 {
     // Orthonormal tangent basis at p0 (p0 is a unit sphere position).
     let n = p0.normalize();
     let helper = if n.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
@@ -286,15 +286,13 @@ fn corner_slope3(field: &Field, here: usize, p0: Vec3, h0: f32, nbrs: &[usize]) 
 
     // Accumulate the 2×2 normal matrix [Sxx Sxy; Sxy Syy] and RHS [bx by].
     let (mut sxx, mut sxy, mut syy, mut bx, mut by) = (0.0f32, 0.0, 0.0, 0.0, 0.0);
-    let inv = 1.0 / field.cs.n as f32;
     for &k in nbrs {
         if k == here {
             continue;
         }
-        let (cf, ci, cj) = unflatten(field, k);
-        let pk = field
-            .cs
-            .face_uv_to_sphere(cf, (ci as f32 + 0.5) * inv, (cj as f32 + 0.5) * inv);
+        // Cell centre is the precomputed buffer entry (bit-identical to
+        // face_uv_to_sphere(cf,(ci+0.5)*inv,(cj+0.5)*inv) — same inputs).
+        let pk = pos[k];
         let d = pk - p0;
         let tu = d.dot(e1);
         let tv = d.dot(e2);
@@ -314,12 +312,7 @@ fn corner_slope3(field: &Field, here: usize, p0: Vec3, h0: f32, nbrs: &[usize]) 
             if k == here {
                 continue;
             }
-            let (cf, ci, cj) = unflatten(field, k);
-            let pk = field.cs.face_uv_to_sphere(
-                cf,
-                (ci as f32 + 0.5) * inv,
-                (cj as f32 + 0.5) * inv,
-            );
+            let pk = pos[k];
             let dist = great_circle(p0, pk);
             if dist > 1e-9 {
                 s = s.max(((h0 - field.h[k]) / dist).abs());
@@ -375,6 +368,9 @@ fn great_circle(a: Vec3, b: Vec3) -> f32 {
 /// Returns `(receiver_flat_index, slope ≥ 0)`. If no neighbour is strictly
 /// lower the cell is its own receiver (a sink) with slope `0`.
 #[allow(dead_code)] // A7 fluvial chain; wired by the pyramid driver in A10/A11.
+// `pos: &[Vec3]` (the precomputed sphere-centre buffer) is threaded in to kill
+// the ~5x per-cell trig recompute; it pushes the arg count to 8 by design.
+#[allow(clippy::too_many_arguments)]
 fn recv_and_slope(
     field: &Field,
     f: u8,
@@ -383,9 +379,9 @@ fn recv_and_slope(
     here: usize,
     p0: Vec3,
     nbrs: &[usize],
+    pos: &[Vec3],
 ) -> (usize, f32) {
     let h0 = field.h[here];
-    let inv = 1.0 / field.cs.n as f32;
     let mut best_recv = here;
     let mut best_slope = 0.0f32;
     for &k in nbrs {
@@ -393,10 +389,9 @@ fn recv_and_slope(
         if drop <= 0.0 {
             continue;
         }
-        let (cf, ci, cj) = unflatten(field, k);
-        let pk = field
-            .cs
-            .face_uv_to_sphere(cf, (ci as f32 + 0.5) * inv, (cj as f32 + 0.5) * inv);
+        // Neighbour cell centre from the precomputed buffer (bit-identical to
+        // recomputing face_uv_to_sphere with the same (cf,(ci+0.5)*inv,...)).
+        let pk = pos[k];
         let dist = great_circle(p0, pk);
         if dist <= 1e-9 {
             continue;
@@ -413,7 +408,7 @@ fn recv_and_slope(
     // 3-way cube corner: replace the (degenerate) axis-aligned slope magnitude
     // with the least-squares 3-vertex plane fit. Receiver stays the real cell.
     let s = if field.corner_neighbour_count(f, i, j) == 3 {
-        let cs = corner_slope3(field, here, p0, h0, nbrs);
+        let cs = corner_slope3(field, here, p0, h0, nbrs, pos);
         if cs.is_finite() {
             cs
         } else {
@@ -462,6 +457,21 @@ pub fn stream_power_step(field: &mut Field, cfg: &super::ErosionConfig) {
     let mut is_land = vec![false; total];
     let mut nbuf: Vec<usize> = Vec::with_capacity(4);
 
+    // Precompute every texel's sphere-centre ONCE. The K-times-per-level hot
+    // path previously recomputed `face_uv_to_sphere` ~5× per cell (own p0, as
+    // each neighbour's pk in recv_and_slope, again in corner_slope3). The
+    // arguments here are bit-identical to every prior recompute site —
+    // SAME `inv`, SAME `unflatten`, SAME `(i+0.5)*inv,(j+0.5)*inv` — so every
+    // consumer sees the exact same f32 it computed before (value-identical).
+    let pos: Vec<Vec3> = (0..total)
+        .map(|k| {
+            let (f, i, j) = unflatten(field, k);
+            field
+                .cs
+                .face_uv_to_sphere(f, (i as f32 + 0.5) * inv, (j as f32 + 0.5) * inv)
+        })
+        .collect();
+
     for face in 0u8..6 {
         for j in 0..n {
             for i in 0..n {
@@ -471,11 +481,9 @@ pub fn stream_power_step(field: &mut Field, cfg: &super::ErosionConfig) {
                     continue;
                 }
                 is_land[k] = true;
-                let p0 = field
-                    .cs
-                    .face_uv_to_sphere(face, (i as f32 + 0.5) * inv, (j as f32 + 0.5) * inv);
+                let p0 = pos[k];
                 gather_neighbours(field, face, i, j, &mut nbuf);
-                let (r, s) = recv_and_slope(field, face, i, j, k, p0, &nbuf);
+                let (r, s) = recv_and_slope(field, face, i, j, k, p0, &nbuf, &pos);
                 recv[k] = r;
                 slope[k] = s;
             }
@@ -492,6 +500,7 @@ pub fn stream_power_step(field: &mut Field, cfg: &super::ErosionConfig) {
         for j in 0..n {
             for i in 0..n {
                 let k = field.idx(face, i, j);
+                // note: cell_solid_angle recomputes p internally; out of A7 scope to change its API
                 area[k] = field.cs.cell_solid_angle(super::cubesphere::Cell {
                     face,
                     i,
@@ -810,7 +819,16 @@ mod tests {
 
         let mut nb = Vec::new();
         gather_neighbours(&f, 4, i, j, &mut nb);
-        let plane = corner_slope3(&f, here, p0, f.h[here], &nb);
+        // Precomputed sphere-centre buffer: each entry is bit-identical to the
+        // `face_uv_to_sphere(cf,(ci+0.5)*inv,(cj+0.5)*inv)` corner_slope3 used
+        // to recompute internally — so the asserted plane value is unchanged.
+        let pos: Vec<Vec3> = (0..f.h.len())
+            .map(|k| {
+                let (cf, ci, cj) = unflatten(&f, k);
+                centre(cf, ci, cj)
+            })
+            .collect();
+        let plane = corner_slope3(&f, here, p0, f.h[here], &nb, &pos);
         assert!(
             plane.is_finite() && plane >= 0.0,
             "corner_slope3 must be finite & non-negative (got {plane})"
