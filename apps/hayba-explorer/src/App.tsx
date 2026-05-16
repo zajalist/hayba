@@ -1290,11 +1290,11 @@ export default function App() {
           })}
         </div>
 
-        {/* NEW cube-sphere GPU bake — debug/validation affordance
+        {/* Hydraulic equirect bake — debug/validation affordance
             (bottom-right). Purely additive: it does not alter the wizard
             bake_from_wizard flow; it swaps the displayed globe for a
-            relief-shaded debug sphere driven by the GPU erosion pyramid
-            so A18/A19 can eyeball erosion-vs-no-erosion. */}
+            relief-shaded debug sphere driven by the hydraulic erosion
+            sim so we can eyeball erosion-vs-no-erosion. */}
         {draft && (
           <div
             style={{
@@ -1324,13 +1324,13 @@ export default function App() {
                 color: "#9aa0aa",
               }}
             >
-              GPU Erosion Bake (debug)
+              Hydraulic Bake (debug)
             </span>
             <button
               type="button"
               onClick={handleDebugBake}
               disabled={debugBaking}
-              title="Rasterise → GPU erode → relief-shaded debug globe"
+              title="Rasterise → hydraulic erosion → relief-shaded debug globe"
               style={{
                 padding: "5px 9px",
                 fontSize: 11,
@@ -1343,7 +1343,7 @@ export default function App() {
                 color: debugBaking ? "#7e848e" : "#DED4C3",
               }}
             >
-              {debugBaking ? "Baking…" : "Bake (cube-sphere GPU)"}
+              {debugBaking ? "Baking…" : "Bake (hydraulic equirect)"}
             </button>
             {debugBakeProgress && (
               <span style={{ fontSize: 10, color: "#a8aeb8" }}>
@@ -1366,7 +1366,7 @@ export default function App() {
                   checked={debugMapMode === 1}
                   onChange={handleToggleDebugMapMode}
                 />
-                Show h0 (no-erosion) view
+                Show base (no-erosion) view
               </label>
             )}
           </div>
