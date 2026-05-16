@@ -891,7 +891,15 @@ const RESTRICT_FRAG: string =
     "  int si = clamp(int(floor(su * ns)), 0, int(ns) - 1);",
     "  int sj = clamp(int(floor(sv * ns)), 0, int(ns) - 1);",
     "  float fu = (float(si)+0.5)/ns; float fv = (float(sj)+0.5)/ns;",
-    "  fragColor = texture(uSrc, srcFaceUvToAtlas(sf, fu, fv));",
+    // NORMATIVE: derive start-field ocean (.a) from the rasterised cell height
+    // sign — bit-identical to CPU `src.ocean = elev < 0.0` (pyramid.rs::
+    // rasterize_from_cells L216 / run_pyramid_core L1384,L1409). uploadH0.ts
+    // serialises ONLY h into .r and leaves .a=0, so a passthrough would key
+    // every texel as land and collapse h_final to 0 (Defect-2). R/G/B pass
+    // through unchanged; only .a is corrected (a crisp 0/1 mask, NOT lerped —
+    // matches the CPU nearest-cell restrict copy of the per-cell `ocean` bool).
+    "  vec4 s = texture(uSrc, srcFaceUvToAtlas(sf, fu, fv));",
+    "  fragColor = vec4(s.r, s.g, s.b, s.r < 0.0 ? 1.0 : 0.0);",
     "}",
   ].join("\n");
 
