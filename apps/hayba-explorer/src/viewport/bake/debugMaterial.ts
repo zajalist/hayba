@@ -12,16 +12,15 @@
 // (passes.glsl.ts, port of `cubesphere_to_equirect`) WROTE the equirect:
 //
 //   RESAMPLE_FRAG forward map (equirect texel -> sphere):
-//     yRow = hgt - gl_FragCoord.y        (yRow=0 at BOTTOM framebuffer row)
-//     v    = yRow / hgt                  (v=0 -> bottom row, v=1 -> top row)
-//     phi  = PI/2 - v*PI                 (lat: +PI/2 at v=1/top, -PI/2 at v=0/bottom)
+//     yRow = hgt - gl_FragCoord.y   (yRow=0 at TOP; gl_FragCoord.y=hgt is the top row)
+//     v    = yRow / hgt             (v=0 -> top row, v=1 -> bottom row)
+//     phi  = PI/2 - v*PI            (lat: +PI/2 at v=0/top = NORTH, -PI/2 at v=1/bottom = SOUTH)
 //     u    = px / w
 //     lam  = u*2PI - PI                  (lon: -PI at u=0, +PI at u=1)
 //     pos  = (cos phi*cos lam, sin phi, cos phi*sin lam)   [Y-up]
 //
-//   So RESAMPLE_FRAG writes SOUTH pole -> bottom framebuffer row (v=0),
-//   NORTH pole -> top framebuffer row (v=1). THREE.WebGLRenderTarget.texture
-//   has NO implicit Y-flip, so the sampled texture preserves this layout.
+//   So RESAMPLE_FRAG writes NORTH pole -> top framebuffer row, SOUTH -> bottom row.
+//   WebGLRenderTarget.texture has no Y-flip, so to sample sphere normal n:
 //
 //   Inverse here (sphere unit normal -> equirect uv we SAMPLE):
 //     phi  = asin(n.y)
@@ -102,7 +101,7 @@ const FRAG: string = [
   "  vec2 uv = sphereToEquirectUv(n);",
   "",
   "  /* Pick the eroded vs raw view. Sample both with explicit-LOD-free",
-  "     texture() (RGBA32F, NearestFilter targets) — the relief shading",
+  "     texture2D() (RGBA32F, NearestFilter targets) — the relief shading",
   "     uses screen-space derivatives of the SAMPLED height, which works",
   "     regardless of the texture filter. */",
   "  float hEroded = texture2D(uHeight,  uv).r;",
