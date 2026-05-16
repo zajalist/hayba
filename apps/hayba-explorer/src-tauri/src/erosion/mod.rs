@@ -12,8 +12,11 @@ pub struct ErosionConfig {
     pub incision_clamp: f32,    // ε per-step (normalized)
     pub thermal_d: f32,         // hillslope diffusion
     pub talus_angle: f32,       // critical slope as dh/dx in normalized units (~0.6 ≈ 31°); thermal creep only acts above it
+    /// Run thermal every Nth K-iter; throttles thermal so it can't out-diffuse
+    /// the injected detail band — spec §5.4.
+    pub thermal_cadence: u32,
     pub deposition_g: f32,      // Davy-Lague G (~1.6)
-    pub beta: f32,              // frequency-sep macro restore (0..1)
+    pub beta: f32,              // §5.5 detail-restoration GAIN (≥1; >1 amplify, <1 mute — sub-unity net-smooths)
     pub uplift: f32,            // MUST be 0.0
     /// RNG seed for deterministic sphere-domain noise (spec §5.4).
     pub seed: u64,
@@ -31,8 +34,9 @@ impl Default for ErosionConfig {
             incision_clamp: 3e-4,
             thermal_d: 0.08,
             talus_angle: 0.6,
+            thermal_cadence: 4,
             deposition_g: 1.6,
-            beta: 0.2,
+            beta: 1.5,
             uplift: 0.0,
             seed: 0x9E37_79B9,
         }
@@ -51,7 +55,8 @@ mod tests {
         let c = ErosionConfig::default();
         assert!(c.pyramid_levels >= 4 && c.k_iters_per_level >= 8);
         assert!(c.incision_clamp > 0.0 && c.incision_clamp < 0.01);
-        assert!(c.beta > 0.0 && c.beta <= 1.0);
+        assert!(c.beta >= 1.0, "β is the §5.5 detail-restoration gain; sub-unity net-smooths");
+        assert!(c.thermal_cadence >= 1, "thermal runs every Nth K-iter; cadence must be >=1");
         assert!(c.uplift == 0.0, "U MUST be 0 (spec §3): no equilibrium attractor");
         assert!(c.erodibility > 0.0 && c.erodibility < 1e-2, "erodibility sane (catches 5e-5 vs 5e5 typo)");
         assert!(c.talus_angle > 0.0 && c.talus_angle < 1.0, "talus_angle normalized slope in (0,1)");
