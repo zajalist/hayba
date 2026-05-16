@@ -101,6 +101,14 @@ command + CPU reference oracle. Exact paths fixed in the A sub-spec.
 - Per erosion iteration, each face reads a 1-cell (configurable halo width) border
   from its 4 neighbour faces so flow is continuous across face edges. Halo exchange
   is a fixed adjacency (cube topology) — deterministic, offline.
+- **HARDENING — cube-corner singularities (NORMATIVE):** the 8 cube corners are
+  three-way face junctions where the 4-direction Mei flux layout has no orthogonal
+  neighbour. The halo-exchange pass must explicitly special-case the 8 corner texels:
+  (a) neighbourhood lookup is a **3-way distribution** (not 4), and (b) any flux pipe
+  crossing a face edge near a corner must **reorient its direction by ±90° or ±180°**
+  into the destination face's coordinate space. Without this, sediment pools
+  permanently on the 8 corners. Corner adjacency + per-edge rotation is a fixed,
+  precomputed table (cube topology is static).
 
 ### 5.2 P1 rasterize
 
@@ -136,6 +144,12 @@ H-Schott/MultiScaleErosion, SIGGRAPH 2024). Per level:
      slippage → evaporate; ~9 ping-pong passes/step; K≈16 iters/level is realistic).
 3. Upsample ×2 **carrying height + water + sediment** (not height alone — else
    drainage restarts and macro channels break at the transition).
+   **HARDENING — conservative fluid upsampling (NORMATIVE):** `h` may be
+   bilinear/sampled, but the water depth `d` and sediment `s` tensors must be
+   split with a **mass-conserving area-weighted** layout: when a coarse texel
+   splits into 4 fine texels, `Σ d_fine = d_coarse` (and likewise `s`) exactly.
+   Naïve bilinear upsampling of `d`/`s` spontaneously creates/destroys fluid at
+   level boundaries and breaks dendritic continuity.
 
 `U=0`; per-step incision clamped to `ε` (normalized units; start ε≈3e-4, tune).
 
@@ -172,7 +186,13 @@ and pole-clamped (V).
   narrow band), ridge/valley (curvature), **Flow-Accumulation SDF** (signed distance
   to the channel network where drainage > τ; smoothly widens riverbeds and blends
   riparian zones — avoids 1-px hard river lines — and supplies `localRelief` =
-  height above the nearest channel, the SatMap LUT-X axis), **Wind-Shear / Exposure**
+  height above the nearest channel, the SatMap LUT-X axis. **HARDENING (NORMATIVE):**
+  do NOT compute global flow accumulation via naïve recursive / pointer-jumping
+  parallel-flood over 33.5M equirect texels — that TDRs the GPU. Compute it
+  **hierarchically on the pyramid chain** (accumulate coarse→fine, reusing the §5.4
+  levels) **or** approximate the SDF by an **edge-preserving bilateral blur of the
+  final water-depth `d_final` keyed to the height gradient**. Bounded passes only),
+  **Wind-Shear / Exposure**
   (`dot(prevailingWindDir, terrainNormal)` from the ported climate engine's per-cell
   wind vector × `h_final` normal; >0 windward/scoured, <0 leeward/sheltered — drives
   dune alignment and windward bedrock exposure).
@@ -343,6 +363,12 @@ stubbed behind `sampleField()`. Something real on screen before any tiling work.
 4. 8K bake wall-clock (multi-second acceptable per bake-then-watch; budget K and
    pyramid depth).
 5. Mask library pass count at 33M texels — the real GPU cost centre; measure.
+6. Cube-corner singularities — sediment pooling on the 8 corners if the halo pass
+   doesn't special-case 3-way junctions + flux reorientation (§5.1 hardening).
+7. Non-conservative `d`/`s` pyramid upsampling — fluid created/destroyed at level
+   seams, breaks dendritic continuity (§5.4 hardening: area-weighted split).
+8. Flow-Accumulation TDR — naïve parallel-flood over 33.5M texels times out;
+   hierarchical-on-pyramid or bilateral-blur approximation only (§6 hardening).
 
 ## 13. Reference implementations (port/study targets)
 
