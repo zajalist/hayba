@@ -559,6 +559,200 @@ pub fn stream_power_step(field: &mut Field, cfg: &super::ErosionConfig) {
     field.h = next;
 }
 
+/// One explicit, mass-conserving, talus-clamped thermal (hillslope) diffusion
+/// pass on the cube-sphere `Field` (spec §5, Task A8).
+///
+/// Physics: a finite-volume Laplacian over each land texel's *real* edge
+/// neighbours. The flux across an edge `(i,j)` is
+/// `F_ij = c_ij · (h_j − h_i)` with a **slope-dependent diffusivity**
+///
+/// ```text
+/// S    = great-circle slope between cell centres i and j
+///        (at the 8 cube corners S comes from the A7 3-vertex plane fit)
+/// D(S) = 0                        if S <  talus_angle   (gentle → no creep)
+///        thermal_d · (1 − talus/S) if S >= talus_angle   (oversteep relaxes)
+/// ```
+///
+/// so flat / sub-talus relief is left bit-for-bit untouched (only macro,
+/// already-stable terrain), while over-steep spikes relax toward the talus
+/// angle.
+///
+/// ## Mass conservation (NORMATIVE)
+/// The pass is exactly mass-conserving over land. We build the set of
+/// **unordered** real land–land edges once (an edge exists if *either*
+/// endpoint lists the other through the seam-correct `Field::neighbour`,
+/// deduped by `(min,max)` flat index — robust to any non-reciprocal seam
+/// adjacency), compute a single flux per edge from the OLD field into a
+/// scratch `delta` buffer, and apply it antisymmetrically
+/// (`delta[i] += F`, `delta[j] −= F`). Because every edge contributes `+F`
+/// to one cell and exactly `−F` to the other, `Σ delta == 0` *by
+/// construction* — independent of the seam/corner topology. The new field is
+/// `h += delta` applied from the snapshot, so there is no in-place
+/// read-after-write asymmetry.
+///
+/// ## CFL stability (NORMATIVE)
+/// Forward-Euler diffusion is stable iff the sum of outgoing edge weights at
+/// every cell is `≤ 1/2`. The raw coefficient `thermal_d·(1−talus/S)` is
+/// capped at `CFL_SUM/ max_degree` (`CFL_SUM = 0.5`, `max_degree = 4`), i.e.
+/// each edge weight `≤ 0.125`, so even a 4-way cell's outgoing weight sum is
+/// `≤ 0.5`. The step therefore cannot overshoot, oscillate, or explode and
+/// stays finite (asserted at the 8 cube corners by the A8 test).
+///
+/// ## 3-way cube corners (NORMATIVE HARDENING)
+/// At `corner_neighbour_count == 3` texels there is no 4th / diagonal cell.
+/// The FV Laplacian sums **only the 3 real edge fluxes** — the missing edge
+/// is never zero-filled (a phantom 0-flux edge would still be wrong as soon
+/// as one builds the dual area, and zero-filling the *slope* would mis-gate
+/// `D(S)`). The slope `S` feeding `D(S)` at a corner is taken from the A7
+/// `corner_slope3` least-squares 3-vertex plane fit, exactly as
+/// `recv_and_slope` does, never a phantom-4th axis stencil.
+///
+/// Ocean texels are a fixed Dirichlet base level: an edge is only created
+/// when **both** endpoints are land, so no mass ever enters or leaves the
+/// land system through the ocean and land Σh is conserved (consistent with
+/// how `stream_power_step` treats ocean as fixed base level).
+///
+/// Per-call scratch `Vec`s are allocated once (not per texel); the precomputed
+/// `pos: Vec<Vec3>` sphere-centre buffer is the SAME pattern as
+/// `stream_power_step` (A7) so the K-times-per-level hot path does no per-cell
+/// `face_uv_to_sphere` recompute.
+#[allow(dead_code)] // A8 entry point; the pyramid driver (A10) is its first non-test caller (cf. `Field`).
+pub fn thermal_step(field: &mut Field, cfg: &super::ErosionConfig) {
+    let n = field.cs.n;
+    let total = field.h.len();
+    let inv = 1.0 / n as f32;
+
+    // CFL: outgoing edge-weight sum per cell must stay ≤ 0.5. With ≤ 4 real
+    // neighbours, capping each edge weight at 0.5/4 = 0.125 guarantees it.
+    const CFL_SUM: f32 = 0.5;
+    const MAX_DEGREE: f32 = 4.0;
+    let w_cap = CFL_SUM / MAX_DEGREE;
+
+    let talus = cfg.talus_angle.max(1e-9);
+    let thermal_d = cfg.thermal_d.max(0.0);
+
+    // Precompute every texel's sphere-centre ONCE (identical A7 pattern:
+    // same `inv`, same `unflatten`, same `(i+0.5)*inv,(j+0.5)*inv` inputs →
+    // value-identical to any per-cell recompute, e.g. inside `corner_slope3`).
+    let pos: Vec<Vec3> = (0..total)
+        .map(|k| {
+            let (f, i, j) = unflatten(field, k);
+            field
+                .cs
+                .face_uv_to_sphere(f, (i as f32 + 0.5) * inv, (j as f32 + 0.5) * inv)
+        })
+        .collect();
+
+    // Land mask once.
+    let is_land: Vec<bool> = field.ocean.iter().map(|&o| !o).collect();
+
+    // --- Build the unordered land–land edge set once. -------------------
+    // An edge exists if EITHER endpoint lists the other through the
+    // seam-correct `neighbour`; dedup by (min,max) flat index so each
+    // physical edge is processed exactly once regardless of any
+    // non-reciprocal seam adjacency. Storing the 3-way flag of the
+    // *source-of-record* endpoint lets the slope term use the A7 plane fit.
+    let mut nbuf: Vec<usize> = Vec::with_capacity(4);
+    // (a, b, a_is_corner, b_is_corner) with a < b.
+    let mut edges: Vec<(usize, usize, bool, bool)> = Vec::with_capacity(total * 2);
+    let mut seen: std::collections::HashSet<(usize, usize)> =
+        std::collections::HashSet::with_capacity(total * 2);
+    for face in 0u8..6 {
+        for j in 0..n {
+            for i in 0..n {
+                let k = field.idx(face, i, j);
+                if !is_land[k] {
+                    continue; // ocean: fixed Dirichlet, no land flux through it
+                }
+                let k_corner = field.corner_neighbour_count(face, i, j) == 3;
+                gather_neighbours(field, face, i, j, &mut nbuf);
+                for &nk in &nbuf {
+                    if !is_land[nk] {
+                        continue; // edge only when BOTH ends are land
+                    }
+                    let (a, b) = if k < nk { (k, nk) } else { (nk, k) };
+                    if !seen.insert((a, b)) {
+                        continue; // physical edge already recorded
+                    }
+                    let (nf, ni, nj) = unflatten(field, nk);
+                    let nk_corner = field.corner_neighbour_count(nf, ni, nj) == 3;
+                    let (a_c, b_c) = if k < nk {
+                        (k_corner, nk_corner)
+                    } else {
+                        (nk_corner, k_corner)
+                    };
+                    edges.push((a, b, a_c, b_c));
+                }
+            }
+        }
+    }
+
+    // --- Single flux per edge from the OLD field → scratch delta. -------
+    // Antisymmetric application (`+F` to a, `−F` to b) ⇒ Σ delta == 0 by
+    // construction (mass-conserving on ANY seam/corner topology).
+    let mut delta = vec![0.0f32; total];
+    // Scratch for the corner plane-fit slope (needs the cell's full
+    // neighbour list); allocated once, reused per corner edge.
+    let mut cbuf: Vec<usize> = Vec::with_capacity(4);
+    for &(a, b, a_corner, b_corner) in &edges {
+        let pa = pos[a];
+        let pb = pos[b];
+        // `great_circle` = acos(clamp(·)) ⇒ always finite, ≥ 0.
+        let dist = great_circle(pa, pb);
+        if dist <= 1e-9 {
+            continue; // degenerate (clamped) edge — no flux, conserves mass
+        }
+        let dh = field.h[b] - field.h[a]; // OLD field
+
+        // Slope S between the two cells. At a 3-way cube corner the
+        // axis-aligned span is degenerate, so the slope MAGNITUDE comes
+        // from the A7 least-squares 3-vertex plane fit (reused, NORMATIVE).
+        // Use the corner endpoint's plane fit if either end is a corner;
+        // otherwise the symmetric great-circle slope.
+        let s = if a_corner || b_corner {
+            let (ce, cp0, ch0) = if a_corner {
+                (a, pa, field.h[a])
+            } else {
+                (b, pb, field.h[b])
+            };
+            let (cf, ci, cj) = unflatten(field, ce);
+            gather_neighbours(field, cf, ci, cj, &mut cbuf);
+            let cs = corner_slope3(field, ce, cp0, ch0, &cbuf, &pos);
+            if cs.is_finite() && cs > 0.0 {
+                cs
+            } else {
+                (dh.abs() / dist).max(0.0)
+            }
+        } else {
+            (dh.abs() / dist).max(0.0)
+        };
+
+        // Talus-clamped diffusivity: zero below the critical slope.
+        if s < talus {
+            continue; // gentle slope: NO creep (test's `kf` assertion)
+        }
+        let d_eff = thermal_d * (1.0 - talus / s); // ≥ 0, < thermal_d
+        if d_eff <= 0.0 {
+            continue; // s == talus (or thermal_d == 0): no creep
+        }
+        // CFL-capped symmetric edge weight.
+        let w = d_eff.min(w_cap);
+        let flux = w * dh; // moves mass a→b when h_b > h_a
+        if !flux.is_finite() {
+            continue; // defensive: never inject a non-finite delta
+        }
+        delta[a] += flux;
+        delta[b] -= flux;
+    }
+
+    // --- Apply from the snapshot (no read-after-write asymmetry). -------
+    for k in 0..total {
+        if is_land[k] {
+            field.h[k] += delta[k];
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -888,6 +1082,34 @@ mod tests {
         assert!(
             f.h[here].is_finite(),
             "stream_power_step corner height must be finite via plane fit"
+        );
+    }
+
+    #[test]
+    fn thermal_relaxes_oversteep_slopes_only_and_is_mass_conserving() {
+        let n = 8;
+        let mut f = Field::flat(n, 0.0);
+        let kc = f.idx(4, 4, 4);
+        f.h[kc] = 1.0; // a spike steeper than talus
+        let kf = f.idx(4, 1, 1);
+        f.h[kf] = 0.001; // gentle ≪ talus
+        f.ocean.iter_mut().for_each(|o| *o = false);
+        let before_flat = f.h[kf];
+        let sum0: f32 = f.h.iter().sum();
+        let cfg = super::super::ErosionConfig::default();
+        thermal_step(&mut f, &cfg);
+        assert!(f.h[kc] < 1.0, "oversteep spike relaxed");
+        assert!(
+            (f.h[kf] - before_flat).abs() < 1e-7,
+            "gentle slope untouched (talus clamp)"
+        );
+        assert!(
+            (f.h.iter().sum::<f32>() - sum0).abs() < 1e-3,
+            "diffusion conserves mass"
+        );
+        assert!(
+            f.h.iter().all(|v| v.is_finite()),
+            "no NaN at the 8 cube corners"
         );
     }
 
