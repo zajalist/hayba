@@ -169,7 +169,13 @@ and pole-clamped (V).
 - **Geometric (from `h_final`):** height, slope, normal, curvature, **AO** (baked
   multi-tap horizon occlusion), drainage/flow (final water + accumulation passes),
   deposition (sediment), wetness, river/stream, **thin-shoreline SDF** (jump-flood,
-  narrow band), ridge/valley (curvature).
+  narrow band), ridge/valley (curvature), **Flow-Accumulation SDF** (signed distance
+  to the channel network where drainage > τ; smoothly widens riverbeds and blends
+  riparian zones — avoids 1-px hard river lines — and supplies `localRelief` =
+  height above the nearest channel, the SatMap LUT-X axis), **Wind-Shear / Exposure**
+  (`dot(prevailingWindDir, terrainNormal)` from the ported climate engine's per-cell
+  wind vector × `h_final` normal; >0 windward/scoured, <0 leeward/sheltered — drives
+  dune alignment and windward bedrock exposure).
 - **Climate (ported math, not re-invented):** insolation, base-temp **with
   continentality from final elevation** (also closes task #193), temperature,
   dist-to-ocean (seam-wrapped jump-flood — flagged fidelity change vs the geodesic
@@ -183,34 +189,103 @@ and pole-clamped (V).
   never crosses biomes). This is the *only* place spatial bleed happens. It is
   macro-invisible micro-cohesion, not a macro smooth-brush (consistent with the
   standing no-flat-brush rule). Strength is a bake parameter, not a live knob.
+- **Procedural-noise catalog (bake-time generators):** `fbm` (3D simplex, relief
+  detail), `ridged` (3D ridged-multifractal, mountain ridgelines), `worley` (3D
+  cellular, cracks/patchiness/talus/biome patches), `domainWarp` (warps the sample
+  position of the above; organic non-linear shapes; warps frontiers + ocean gyres).
+  All evaluated at world sphere position ⇒ seam-free by construction, deterministic
+  with fixed seed.
+- **Named pattern-break / per-biome masks (all baked here):** `macroVariation`
+  (low-freq fBm), `mesoDetail` (mid-freq fBm+worley), `edgeBreak` (domainWarp applied
+  to every hard boundary — coast/biome/snow — so lines are organic, never straight),
+  `noisePerturbedFrontier` (Sobel frontier wiggled by `edgeBreak`), and per-biome
+  representation brushes `rockExposure` (= slope·curvature), `dune`, `vegetationPatch`
+  (= worley).
+- **ALU Bake Enforcement (NORMATIVE):** all multi-octave `fbm`/`ridged`/`worley`/
+  `domainWarp` for the pattern-break + per-biome-brush masks **and** the frontier
+  perturbation are evaluated **at bake time and written into MRT channels**. The live
+  shader performs **zero multi-octave procedural math** — only O(1) texture taps,
+  plus exactly **one** blue-noise tile tap for the live variation jitter (§7).
 - Debug map-mode view for every mask (keep the EU5-style overlay).
 
 ## 7. Subsystem C — Live multi-layer SatMap shading (always-on; no texturing step)
 
-Single-tap only. **No cross-texel sampling at render** (VT/CDLOD-safe; live
-neighbour sampling + page queries would choke the fragment shader). All regional
-cohesion is the §6 baked micro-bleed.
+Single-tap only. **No cross-texel sampling at render** (VT/CDLOD-safe). All regional
+cohesion is the §6 baked micro-bleed; the only live noise is one blue-noise tap.
 
-Layer order (Gaea production order, normative): **biome base → slope → flow →
-curvature → snow (last)**. Each layer = one SatMap CLUT, indexed as a 2D LUT:
-X = local relief-relative elevation (height above local drainage, *not* raw planet
-elevation), Y = slope. Plus the user's layer set mapped onto this:
+### 7.1 The SatMap atom
 
-- **global-dry / global-wet** SatMaps form/modulate the biome base; wet/dry mix
-  driven by `w_wet = f(precipitation, wetness/drainage, dist-to-water)` (explicit).
-- **per-biome** SatMaps weighted by continuous biome-weights, cross-faded only
-  inside the Sobel frontier band (interiors crisp).
-- **per-flow** SatMap where river/drainage > τ (banks, deltas).
-- **mountain-detail** SatMap keyed by slope·altitude·curvature so erosion ridges
-  read realistically.
+A SatMap is a **2D RGBA color texture used as a LUT** — never projected onto the
+sphere as an image. Indexed per-texel by two physical scalars:
 
-**Blend = noise-masked Combine/Max, never flat alpha** (Gaea anti-seam practice;
-flat opacity gives visible seams and is the forbidden "smooth brush").
+- **LUT-X = `localRelief`** — height **above the local drainage base** (from the
+  Flow-Accumulation SDF: `localRelief = h_final − heightOfNearestChannel`,
+  normalized), *not* raw planet elevation. Makes a desert dune vs mesa, and a
+  Himalayan valley floor vs peak, both read correctly.
+- **LUT-Y = `slope01`** — normalized slope.
 
-**Live knobs (cheap, single-tap):** per-layer SatMap opacities, wet/dry curve, AO
-strength, mountain-standout contrast, **variation jitter amplitude/scale** (single-
-tap blue-noise; no neighbour fetch). Baked (re-bake to change): micro-bleed radius/
-strength.
+`layerColor = texture(SM_layer, vec2(localRelief, slope01))` — one bilinear tap.
+
+### 7.2 SatMap registry
+
+Fixed-size 2D textures: `globalDry, globalWet, snow, flow, curvature, mountain,
++ one per biome`. Bilinear, clamp, single-tap.
+
+### 7.3 The composite (exact order; all O(1) taps + 1 blue-noise tap)
+
+```glsl
+// inputs: O(1) taps from baked MRTs + live UI uniforms + 1 blueNoise tap
+vec3 dry = texture(SM_globalDry, vec2(localRelief, slope01)).rgb;
+vec3 wec = texture(SM_globalWet, vec2(localRelief, slope01)).rgb;
+float w  = smoothstep(uWetLo, uWetHi, wet);   // wet=f(precip,drainage,distWater); curve LIVE
+vec3 base = mix(dry, wec, w);
+
+vec3 biome = vec3(0.0);                        // continuous weights -> no hex
+for (b in topBiomes) biome += biomeW[b]*texture(SM_biome[b], vec2(localRelief,slope01)).rgb;
+float edgeMix = noisePerturbedFrontier;        // baked: Sobel wiggled by edgeBreak
+base = combineOverlay(base, biome, mix(hardBiomeMask, 1.0, edgeMix)); // crisp interior, organic edge
+
+base = combineMax(base, texture(SM_flow,      vec2(flowSDF,    slope01)).rgb,
+                        riverMask  * (0.6 + 0.4*edgeBreak));
+base = combineMax(base, texture(SM_curvature, vec2(curv,       slope01)).rgb,
+                        ridgeValley* (0.6 + 0.4*edgeBreak));
+base = combineMax(base, texture(SM_mountain,  vec2(localRelief,slope01)).rgb,
+                        rockExposure*highAlt*(0.7 + 0.3*windExposure));
+base = applyBiomeBrush(base, biomeId, dune*windExposure, vegetationPatch, mesoDetail);
+
+base = mix(base, texture(SM_snow, vec2(localRelief,slope01)).rgb,           // snow LAST
+                 snowMask * (0.6 + 0.4*edgeBreak));
+
+base *= 1.0 + uVarAmp*(macroVariation - 0.5);            // baked large-scale variation
+base  = mix(base, texture(SM_cohesion, uv).rgb, uCohesion); // baked ~5-6px micro-bleed (1 tap)
+base += uJitterAmp*(blueNoiseJitter - 0.5);              // ONLY live noise tap
+
+base *= pow(AO, uAOStrength);
+base  = mountainStandout(base, slope01, curv, normal);
+fragColor = tonemap(base*sunLight + atmosphere);
+```
+
+**Every blend is noise-masked Combine/Overlay/Max, never flat alpha** (Gaea
+anti-seam; flat opacity is the forbidden "smooth brush"). Biome interiors are
+winner-take-all (crisp); blending happens **only inside `noisePerturbedFrontier`**.
+
+### 7.4 "Onto Earth" (concrete)
+
+Masks (from `h_final`) pick *which* SatMap + wet/dry mix per equirect texel; the
+`(localRelief, slope)` coordinate picks the color *within* it:
+- **Sahara:** desert biome, `wet`≈0 → `globalDry`×`SM_biome[desert]`; `dune·windExposure`
+  aligns dunes; low `localRelief`→sand, mesa tops→rock.
+- **Amazon:** tropical, `wet`≈1 → `globalWet`×`SM_biome[rainforest]`; `vegetationPatch`
+  mottles; rivers via `SM_flow` widened by `flowSDF`.
+- **Himalaya:** high `localRelief`+steep+`snowMask` → `SM_mountain` windward rock
+  (`windExposure`>0), `SM_snow` on top, ragged by `edgeBreak`.
+
+### 7.5 Live vs baked
+
+- **Live knobs (cheap):** per-layer opacities, `uWetLo/uWetHi`, `uVarAmp`,
+  `uJitterAmp`, `uCohesion`, `uAOStrength`, mountain-standout contrast.
+- **Baked (re-bake to change):** every mask, the micro-bleed/cohesion, all
+  multi-octave noise (ALU Bake Enforcement, §6).
 
 ## 8. Subsystem D — Renderer quality
 
