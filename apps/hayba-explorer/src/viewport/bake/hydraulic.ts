@@ -369,8 +369,11 @@ export async function runHydraulicBake(
   let done = 0;
   for (const c of plan.chunks) {
     for (let i = 0; i < c; i++) {
-      // step index is 1-based for the thermal cadence so step 0 does not
-      // trivially trigger THERMAL on every disabled-cadence run.
+      // Thermal cadence is 1-based so THERMAL fires on steps
+      // thermalEvery, 2*thermalEvery, 3*thermalEvery, ... — matching the
+      // user's natural "every N steps" count rather than a 0-indexed
+      // offset (and so step 0, the freshly-seeded un-eroded state, is
+      // never a thermal step). Not a bug; intentional cadence phase.
       const stepIdx = done + i + 1;
       const doThermal =
         cfg.thermalEvery > 0 && stepIdx % cfg.thermalEvery === 0;
