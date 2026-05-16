@@ -118,8 +118,11 @@ impl Field {
 /// - `slope01` — per-texel slope in `[0, 1]`; drives fbm↔ridged blend weight
 ///               and amplitude scaling.  Must have the same length as `field.h`.
 ///
-/// # Panics (debug)
-/// Panics if `slope01.len() != field.h.len()`.
+/// # Panics
+/// In debug builds, panics immediately via `debug_assert_eq!` if
+/// `slope01.len() != field.h.len()`. In release builds, the `slope01[k]`
+/// index panics at the first out-of-bounds access (Rust bounds-checks even
+/// in release). Callers must always pass `slope01` with one entry per texel.
 pub fn inject_detail_band(field: &mut Field, level: u32, amp: f32, seed: u64, slope01: &[f32]) {
     debug_assert_eq!(
         slope01.len(),
@@ -155,10 +158,14 @@ pub fn inject_detail_band(field: &mut Field, level: u32, amp: f32, seed: u64, sl
                 let s = slope01[k].clamp(0.0, 1.0);
                 let ridged_env = ridged(pos, octaves, seed); // [0,1]
 
-                // Envelope: flat → plain fbm_c; steep → fbm_c sharpened by ridged.
-                // Multiplying by (1 + s * ridged_env) scales amplitude by up to 2×
-                // but does not shift mean (the mean of fbm_c · positive_envelope ≈ 0
-                // because fbm_c is symmetric around 0 and the envelope is independent).
+                // Envelope: flat → plain fbm_c; steep → fbm_c amplitude-boosted by ridged.
+                // DESIGN NOTE: a lerp toward `ridged` directly (mix(fbm_c, ridged-based, s))
+                // would give true ridge morphology (hard peaks / soft valleys) but injects
+                // DC bias (ridged ∈ [0,1], non-symmetric mean), breaking the spec-mandated
+                // zero-mean guarantee and the A6 test. The multiplicative envelope keeps the
+                // mean at zero (positive scalar × zero-mean signal stays zero-mean). True
+                // asymmetric ridge morphology is INTENTIONALLY deferred to the Subsystem D
+                // mountain-tuning / A19 visual-validation pass — do not "fix" this to a lerp.
                 let noise_val = fbm_c * (1.0 + s * ridged_env);
 
                 field.h[k] += amp * s * noise_val;
