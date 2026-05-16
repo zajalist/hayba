@@ -1,6 +1,6 @@
 //! Equal-area cube-sphere erosion subsystem (spec §5).
 
-#[derive(Clone, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct ErosionConfig {
     pub base_face_res: u32,     // coarsest face res (e.g. 64)
@@ -11,10 +11,11 @@ pub struct ErosionConfig {
     pub slope_exp: f32,         // n = 1.0
     pub incision_clamp: f32,    // ε per-step (normalized)
     pub thermal_d: f32,         // hillslope diffusion
-    pub talus_angle: f32,       // critical slope (rad-ish, normalized)
+    pub talus_angle: f32,       // critical slope as dh/dx in normalized units (~0.6 ≈ 31°); thermal creep only acts above it
     pub deposition_g: f32,      // Davy-Lague G (~1.6)
     pub beta: f32,              // frequency-sep macro restore (0..1)
     pub uplift: f32,            // MUST be 0.0
+    /// RNG seed for deterministic sphere-domain noise (spec §5.4).
     pub seed: u64,
 }
 
@@ -50,5 +51,9 @@ mod tests {
         assert!(c.incision_clamp > 0.0 && c.incision_clamp < 0.01);
         assert!(c.beta > 0.0 && c.beta <= 1.0);
         assert!(c.uplift == 0.0, "U MUST be 0 (spec §3): no equilibrium attractor");
+        assert!(c.erodibility > 0.0 && c.erodibility < 1e-2, "erodibility sane (catches 5e-5 vs 5e5 typo)");
+        assert!(c.talus_angle > 0.0 && c.talus_angle < 1.0, "talus_angle normalized slope in (0,1)");
+        assert!(c.deposition_g >= 1.0, "Davy-Lague G must be >= 1.0 for physical deposition");
+        assert!(c.base_face_res >= 8 && c.k_iters_per_level <= 64, "grid/iter bounds sane");
     }
 }
