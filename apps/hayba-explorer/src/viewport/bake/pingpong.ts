@@ -17,6 +17,7 @@
 // GL allocation / runPass paths are exercised by the A18 parity harness.
 
 import * as THREE from "three";
+import { runRawPass } from "./glPass";
 
 // TODO(bake-debug): remove after feedback-loop root-caused.
 // Dev-only structural self-alias detector for the GPU bake. Gated by both
@@ -231,69 +232,28 @@ interface GlBindingCtx {
 }
 
 /**
- * FEEDBACK-LOOP KILL — physically isolate units, resetState, re-bind dst.
+ * Dev-gated STALE-UNIT-ALIAS probe holder.
  *
- * three r0.169 only tracks bound sampler textures in a JS-side cache
- * (`currentBoundTextures`) and SKIPS `gl.bindTexture` when it thinks a
- * texture is "already" on a unit. A texture bound to a high GL texture unit
- * by an EARLIER `runInto`/`runPass` survives physically. When a later pass
- * does `setRenderTarget(dst); render()` and that stale texture IS `dst`'s
- * color attachment, Chrome/ANGLE flags "Feedback loop formed between
- * Framebuffer and active Texture" and DISCARDS the draw → the erosion field
- * degenerates.
+ * HISTORICAL CONTEXT: the bake feedback loop was three.js's renderer
+ * leaking texture-unit GL state across our manual passes — three caches
+ * bound samplers JS-side and skips `gl.bindTexture`, so a texture bound by
+ * an earlier `runInto`/`runPass` survives physically and, when a later
+ * pass binds that very RT as its draw-FBO color attachment, Chrome/ANGLE
+ * flags "Feedback loop formed between Framebuffer and active Texture" and
+ * discards the draw. The OLD fix here (per-unit null-bind → resetState →
+ * re-setRenderTarget) is OBSOLETE: the bake now runs every offscreen pass
+ * on the raw WebGL2 context (see glPass.ts `runRawPass`) with its own FBO
+ * + explicit post-draw sampler/FBO unbind, so the loop is STRUCTURALLY
+ * impossible and three's renderer never touches these passes' GL state.
  *
- * TWO contrasting runtime results pinned the exact fix (not theory):
+ * This function no longer mutates any GL state (no per-pass unbind, NO
+ * `renderer.resetState()` — that now happens exactly ONCE at end-of-bake
+ * in runErodeBake). It is now ONLY the dev-gated STALE-UNIT-ALIAS probe:
+ * on a correct build it will find NO unit aliasing the dst (clean — as
+ * expected), confirming the structural fix; it is kept callable so the
+ * existing dev instrumentation continues to compile and run.
  *
- *  • Commit 9ebde89 (per-unit null-bind + `resetState()` AFTER
- *    setRenderTarget(dst), BEFORE render): ZERO "Feedback loop" GL errors —
- *    so `resetState()` IS what actually kills the loop (it wipes three's
- *    `currentBoundTextures` cache so three re-binds THIS material's samplers
- *    fresh on render → nothing aliases the FBO). BUT `resetState()` also
- *    raw-unbinds the dst FBO + sets canvas viewport, and `render()` does NOT
- *    re-bind the RT, so every bake draw hit the canvas → all bake RTs (incl.
- *    the returned equiRT) stayed zero → erosion produced nothing.
- *  • Commit 7b386c0 (per-unit null-bind ONLY, `resetState()` removed): the
- *    "Feedback loop … (×25)" GL errors RETURNED and STALE-UNIT-ALIAS still
- *    fired — so the per-unit null-bind loop ALONE does NOT prevent the loop
- *    (three re-binds the aliasing sampler on `render()` from its still-warm
- *    cache); field still wrong.
- *
- * SYNTHESIS — we need BOTH effects, in this exact order:
- *   1. physically `bindTexture(null)` every unit (defensive: drops any stale
- *      physical binding; restore the active unit so three's unit-0 invariant
- *      holds);
- *   2. `renderer.resetState()` — REQUIRED. This is what actually kills the
- *      feedback loop: `resetState()` → `state.reset()` wipes
- *      `currentBoundTextures = {}` (three.module.js @23842) so three's
- *      `setProgram` re-binds THIS pass's own samplers from scratch on the
- *      next `render()` → no stale sampler can alias the dst FBO. Per-unit
- *      null-bind alone is insufficient because three re-binds the aliasing
- *      sampler from its un-cleared JS cache on render (7b386c0 proved this).
- *   3. `renderer.setRenderTarget(dst)` AGAIN — `state.reset()` also raw-issues
- *      `gl.bindFramebuffer(FRAMEBUFFER/DRAW/READ,null)` + `gl.viewport(0,0,
- *      canvas.w,canvas.h)` and wipes `currentBoundFramebuffers = {}`
- *      (three.module.js resetState @31537, state.reset @23826-23828/@23835/
- *      @23844). So after step 2 the dst FBO is UNBOUND. Re-calling
- *      `setRenderTarget(dst)` re-binds it: because `currentBoundFramebuffers`
- *      was wiped, `state.bindFramebuffer` (@23097-23121) sees
- *      `undefined !== framebuffer` and ACTUALLY issues `gl.bindFramebuffer`
- *      (the cache-skip cannot suppress it), and `state.viewport(@31097)`
- *      re-applies the RT viewport. The caller's immediate `render()` then
- *      writes to dst, not the canvas (9ebde89's zero-field bug). This
- *      re-bind is the step BOTH prior attempts lacked.
- *
- * Must be called with the dst RT already bound (renderer.setRenderTarget(dst)
- * done) and before renderer.render(...); this helper ends with
- * `setRenderTarget(dst)` so the caller's next `render()` targets dst.
- *
- * Phase-3 perf note: the per-pass full-unit unbind + per-pass
- * `getParameter(MAX_TEXTURE_IMAGE_UNITS)` is heavy at high resolution
- * (thousands of passes). It is correct and acceptable at the low debug-bake
- * config; narrow it later (cache the cap; unbind only units this pass uses).
- * Do NOT optimize now — correctness first.
- *
- * TODO(bake-debug): the dev-gated STALE-UNIT-ALIAS probe inside (runs
- * BEFORE the unbind) is debug-only — remove after feedback-loop root-caused.
+ * TODO(bake-debug): remove after feedback-loop root-caused.
  */
 function physicallyIsolateUnits(
   renderer: THREE.WebGLRenderer,
@@ -301,11 +261,13 @@ function physicallyIsolateUnits(
   frag: string,
   dst: THREE.WebGLRenderTarget,
 ): void {
+  // Probe is dev-only; on prod this is an immediate no-op (the raw-GL
+  // runner in glPass.ts owns all per-pass GL-state hygiene now).
+  if (!_bakeDbgOn) return;
+
   const gl = renderer.getContext() as unknown as Partial<GlBindingCtx>;
-  // Defensive: only proceed on a real WebGL2 context (the unit tests'
-  // fake renderer has none of these — though it never reaches here). This
-  // does NOT weaken the real path: a real WebGL2RenderingContext always
-  // implements all of these.
+  // Defensive: only probe on a real WebGL2 context (the unit tests' fake
+  // renderer has none of these — though it never reaches here).
   if (
     !gl ||
     typeof gl.getParameter !== "function" ||
@@ -317,72 +279,37 @@ function physicallyIsolateUnits(
   const g = gl as GlBindingCtx;
   const maxUnits = g.getParameter(g.MAX_TEXTURE_IMAGE_UNITS) as number;
 
-  // TODO(bake-debug): remove after feedback-loop root-caused. Dev-only
-  // stale-unit probe — runs BEFORE the unbind so on a FIXED build the user
-  // still sees STALE-UNIT-ALIAS lines (proving the stale-binding mechanism
-  // + which unit) while the unbind right after neutralizes it (no GL
-  // "Feedback loop" spam, healthy field). On a still-broken build the probe
-  // + bake summary localize the next step.
-  if (_bakeDbgOn) {
-    // `__webglTexture` is a stable three r0.169 internal on the
-    // WebGLProperties entry (not in the public typings) — used here ONLY
-    // behind the dev gate to compare the dst's GL texture against bound
-    // units. The cast is the documented way to reach it.
-    const dstProps = renderer.properties.get(dst.texture) as
-      | { __webglTexture?: unknown }
-      | undefined;
-    const dstGlTex = dstProps?.__webglTexture as unknown;
-    if (dstGlTex != null) {
-      const savedActive = g.getParameter(g.ACTIVE_TEXTURE) as number;
-      for (let u = 0; u < maxUnits; u++) {
-        g.activeTexture(g.TEXTURE0 + u);
-        const bound = g.getParameter(g.TEXTURE_BINDING_2D) as unknown;
-        if (bound != null && bound === dstGlTex) {
-          const fid = _fragId(frag);
-          const key = `${where}:${fid}:${u}`;
-          if (!_bakeStaleSeen.has(key)) {
-            _bakeStaleSeen.add(key);
-            // eslint-disable-next-line no-console
-            console.error(
-              `[bake-feedback] STALE-UNIT-ALIAS unit=${u} where=${where} ` +
-                `frag=${fid}`,
-            );
-          }
-          break;
-        }
-      }
-      g.activeTexture(savedActive);
-    }
-  }
-
-  // Step 1 — physically unbind ALL texture units (defensive: drop any
-  // stale physical binding from an earlier pass). Save/restore the active
-  // texture unit so this loop leaves the active-unit GL state exactly as
-  // three left it (three's invariant expects unit 0).
-  const savedActiveUnit = g.getParameter(g.ACTIVE_TEXTURE) as number;
+  // Dev-only STALE-UNIT-ALIAS probe. On the FIXED (raw-WebGL2) build this
+  // should find NO unit bound to the dst's GL texture (every prior
+  // runRawPass explicitly unbound all sampler units) → it stays SILENT,
+  // which is the expected/good signal that the structural fix holds. It
+  // mutates nothing (active unit is saved/restored).
+  // `__webglTexture` is the stable three r0.169 internal on the
+  // WebGLProperties entry (not in public typings) — dev-gate only.
+  const dstProps = renderer.properties.get(dst.texture) as
+    | { __webglTexture?: unknown }
+    | undefined;
+  const dstGlTex = dstProps?.__webglTexture as unknown;
+  if (dstGlTex == null) return;
+  const savedActive = g.getParameter(g.ACTIVE_TEXTURE) as number;
   for (let u = 0; u < maxUnits; u++) {
     g.activeTexture(g.TEXTURE0 + u);
-    g.bindTexture(g.TEXTURE_2D, null);
+    const bound = g.getParameter(g.TEXTURE_BINDING_2D) as unknown;
+    if (bound != null && bound === dstGlTex) {
+      const fid = _fragId(frag);
+      const key = `${where}:${fid}:${u}`;
+      if (!_bakeStaleSeen.has(key)) {
+        _bakeStaleSeen.add(key);
+        // eslint-disable-next-line no-console
+        console.error(
+          `[bake-feedback] STALE-UNIT-ALIAS unit=${u} where=${where} ` +
+            `frag=${fid}`,
+        );
+      }
+      break;
+    }
   }
-  g.activeTexture(savedActiveUnit);
-
-  // Step 2 — resetState() is what ACTUALLY kills the feedback loop: it
-  // wipes three's `currentBoundTextures` cache so `setProgram` re-binds
-  // THIS pass's own samplers fresh on the caller's next render() (nothing
-  // stale can alias the dst FBO). Per-unit null-bind ALONE is insufficient:
-  // three re-binds the aliasing sampler from its un-cleared JS cache on
-  // render — commit 7b386c0 proved the loop returns without this; commit
-  // 9ebde89 proved with this the loop is gone (zero "Feedback loop" errors).
-  renderer.resetState();
-
-  // Step 3 — resetState() ALSO raw-unbinds the dst framebuffer and sets the
-  // canvas viewport (and wipes `currentBoundFramebuffers`), so re-bind dst
-  // here. Because the FBO cache was just wiped, this setRenderTarget DOES
-  // issue the real gl.bindFramebuffer + re-applies the RT viewport (the
-  // cache-skip cannot suppress it). The caller's immediate render() then
-  // writes to dst, not the canvas (the 9ebde89 zero-field bug). This
-  // re-bind is the step both prior attempts lacked.
-  renderer.setRenderTarget(dst);
+  g.activeTexture(savedActive);
 }
 
 /** TODO(bake-debug): remove after feedback-loop root-caused. */
@@ -660,11 +587,12 @@ export function runPass(
   uniforms: Record<string, THREE.IUniform>,
   outChannel: string,
 ): void {
-  const { scene, camera, mesh } = ensureQuad();
-
+  // The cached quad/material path is retained ONLY so the dev probes and
+  // the ensureQuad/ensureMaterial caches still exist/compile; the actual
+  // draw now runs on the raw WebGL2 context (glPass.runRawPass), NOT
+  // three's renderer, so three can never leak GL state across our passes.
   const mat = ensureMaterial(fragmentShader);
   mat.uniforms = uniforms;
-  mesh.material = mat;
 
   const pair = targets.rt[outChannel];
   if (!pair) {
@@ -677,36 +605,21 @@ export function runPass(
   _checkSelfAlias("runPass", fragmentShader, uniforms, dst);
   // TODO(bake-debug): remove after feedback-loop root-caused. Dev-only:
   // GL-texture-identity alias — names the EXACT (frag,uniform) whose
-  // sampler resolves to the SAME __webglTexture as this pass's dst RT
-  // (catches recycled-GL-name aliases the JS-identity SELF-ALIAS misses).
+  // sampler resolves to the SAME __webglTexture as this pass's dst RT.
+  // On the raw-WebGL2 build this is expected to stay SILENT (clean).
   _checkGlAlias(renderer, "runPass", fragmentShader, uniforms, dst);
-
-  // FEEDBACK-LOOP KILL (manual multi-pass ping-pong, three r0.169).
-  // Runtime evidence narrowed this to a STALE three.js texture-unit binding
-  // (NOT a same-pass uniform alias — SELF-ALIAS never fired — and NOT a
-  // competing external render — rAF guard airtight): three caches bound
-  // samplers in JS and re-binds the aliasing sampler on render(), so when a
-  // later pass binds that very RT as its draw-FBO color attachment the
-  // texture is simultaneously a sampler source AND the active framebuffer
-  // attachment → Chrome/ANGLE "Feedback loop formed between Framebuffer
-  // and active Texture" → the draw is DISCARDED → degenerate field. The
-  // fix, synthesized from TWO contrasting runtime results (9ebde89 had
-  // resetState → zero feedback errors but zero field; 7b386c0 dropped it →
-  // feedback errors returned), lives in physicallyIsolateUnits: unbind
-  // units → resetState() (kills the loop) → setRenderTarget(dst) (re-bind
-  // the FBO resetState cleared, so render() hits dst not the canvas).
-  //
-  // Ordering (exact): getRenderTarget → setRenderTarget(dst) →
-  // physicallyIsolateUnits (unbind units → resetState → re-setRenderTarget
-  // dst) → render → setRenderTarget(prev) → book.swap. The helper ends
-  // bound to dst so this render() targets dst; the SELF-ALIAS detector
-  // already proved none of this pass's own sampler uniforms === dst.texture
-  // ⇒ no bound texture can alias the dst FBO ⇒ loop impossible.
-  const prevTarget = renderer.getRenderTarget();
-  renderer.setRenderTarget(dst);
+  // TODO(bake-debug): remove after feedback-loop root-caused. Dev-only
+  // STALE-UNIT-ALIAS probe (mutates no GL state now — see
+  // physicallyIsolateUnits). Expected SILENT on the raw-WebGL2 build.
   physicallyIsolateUnits(renderer, "runPass", fragmentShader, dst);
-  renderer.render(scene, camera);
-  renderer.setRenderTarget(prevTarget);
+
+  // FEEDBACK-LOOP STRUCTURALLY IMPOSSIBLE: the pass runs on the raw
+  // WebGL2 context with its own FBO + explicit post-draw unbind of every
+  // sampler unit and the FBO (glPass.ts). three's renderer is never
+  // invoked here, so it cannot leak a stale sampler binding that aliases
+  // the dst FBO. `targets.book.swap` (pure JS index bookkeeping) is
+  // UNCHANGED — the ping-pong schedule is identical.
+  runRawPass(renderer, fragmentShader, uniforms, dst);
 
   targets.book.swap(outChannel);
 }
