@@ -12,24 +12,24 @@
 // (passes.glsl.ts, port of `cubesphere_to_equirect`) WROTE the equirect:
 //
 //   RESAMPLE_FRAG forward map (equirect texel -> sphere):
-//     v   = yRow / h   (yRow = 0 at the NORTH pole / top row)
-//     phi = PI/2 - v*PI                  (lat: +PI/2 at v=0, -PI/2 at v=1)
-//     u   = px / w
-//     lam = u*2PI - PI                   (lon: -PI at u=0, +PI at u=1)
-//     pos = (cos phi*cos lam, sin phi, cos phi*sin lam)   [Y-up]
+//     yRow = hgt - gl_FragCoord.y        (yRow=0 at BOTTOM framebuffer row)
+//     v    = yRow / hgt                  (v=0 -> bottom row, v=1 -> top row)
+//     phi  = PI/2 - v*PI                 (lat: +PI/2 at v=1/top, -PI/2 at v=0/bottom)
+//     u    = px / w
+//     lam  = u*2PI - PI                  (lon: -PI at u=0, +PI at u=1)
+//     pos  = (cos phi*cos lam, sin phi, cos phi*sin lam)   [Y-up]
+//
+//   So RESAMPLE_FRAG writes SOUTH pole -> bottom framebuffer row (v=0),
+//   NORTH pole -> top framebuffer row (v=1). THREE.WebGLRenderTarget.texture
+//   has NO implicit Y-flip, so the sampled texture preserves this layout.
 //
 //   Inverse here (sphere unit normal -> equirect uv we SAMPLE):
 //     phi  = asin(n.y)
 //     lam  = atan2(n.z, n.x)
 //     uTex = lam/(2PI) + 0.5             (= atan2(z,x)/(2PI)+0.5)
-//     vTex = 0.5 - asin(n.y)/PI          (north pole -> vTex 0 = row 0)
-//
-//   The equirect comes from a `THREE.WebGLRenderTarget` (flipY=false,
-//   like the `DataTexture` h0), so texture V=0 is the render target's
-//   bottom-origin row 0, which `RESAMPLE_FRAG` wrote as the NORTH pole
-//   (`yRow = hgt - py`, `v = yRow/hgt`). Sampling at
-//   `vTex = 0.5 - asin(y)/PI` therefore puts the north pole at the top
-//   of the globe — same lon/lat orientation the resample produced.
+//     vTex = 0.5 + asin(n.y)/PI          (n.y=+1 north -> vTex=1 = top row
+//                                          where RESAMPLE_FRAG wrote north;
+//                                          n.y=-1 south -> vTex=0 = bottom)
 //
 // GLSL FOOTGUN: no backticks anywhere in the shader strings (this file
 // follows the `.glsl.ts` array-join convention so the template-literal
@@ -64,7 +64,7 @@ const FRAG: string = [
   "vec2 sphereToEquirectUv(vec3 n){",
   "  float lam = atan(n.z, n.x);          /* atan2(z, x) in [-PI, PI]      */",
   "  float u = lam / (2.0 * PI) + 0.5;    /* [0,1], lon wrap exact         */",
-  "  float v = 0.5 - asin(clamp(n.y, -1.0, 1.0)) / PI; /* north -> v=0     */",
+  "  float v = 0.5 + asin(clamp(n.y, -1.0, 1.0)) / PI; /* n.y=+1 north -> v=1 (top row; RESAMPLE_FRAG wrote north to the top, south to the bottom row) */",
   "  return vec2(u, v);",
   "}",
   "",
