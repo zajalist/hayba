@@ -18,6 +18,78 @@
 
 import * as THREE from "three";
 
+// TODO(bake-debug): remove after feedback-loop root-caused.
+// Dev-only structural self-alias detector for the GPU bake. Gated by both
+// an explicit module const AND import.meta.env.DEV so the production build
+// is byte-for-byte unaffected (Vite tree-shakes the dead branch). Flip
+// BAKE_DEBUG to false (or delete this block + its call sites) to disable.
+// Used by runPass (pingpong.ts) and runInto (erodePipeline.ts) to print
+// the EXACT pass whose uniforms sample the very texture it draws into.
+export const BAKE_DEBUG = true;
+// `import.meta.env` is Vite-injected and statically replaced in the
+// browser build (so the prod branch tree-shakes away); under bare Node
+// test runners (tsx) it is `undefined`, hence the `unknown`-cast optional
+// chain — keeps tsc happy (Vite types it as always-defined) AND avoids a
+// "Cannot read properties of undefined" throw in the headless bake tests.
+const _isDev =
+  (import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV === true;
+const _bakeDbgOn = BAKE_DEBUG && _isDev;
+// One log per distinct fragment-shader id so a real alias is ALWAYS shown
+// at least once but the console is not flooded across thousands of passes.
+const _bakeAliasSeen = new Set<string>();
+/** Short, stable id for a fragment source (first GLSL signature-ish line). */
+function _fragId(frag: string): string {
+  const m = frag.match(/[a-zA-Z_][\w]*\s*\(/);
+  const head = (m ? m[0] : frag.slice(0, 24)).replace(/\s+/g, "");
+  return `${head}#${frag.length}`;
+}
+/**
+ * TODO(bake-debug): remove after feedback-loop root-caused.
+ * If any uniform value is the texture this pass draws into (a true
+ * same-pass structural feedback alias), log it once per distinct shader.
+ * Also checks the RT object identity in case `.texture` is swapped.
+ */
+function _checkSelfAlias(
+  where: string,
+  frag: string,
+  uniforms: Record<string, THREE.IUniform>,
+  dst: THREE.WebGLRenderTarget,
+): void {
+  if (!_bakeDbgOn) return;
+  const dstTex = dst.texture as unknown;
+  for (const name of Object.keys(uniforms)) {
+    const v = uniforms[name]?.value as unknown;
+    if (v == null) continue;
+    const aliases =
+      v === dstTex ||
+      (v instanceof THREE.Texture && v === dst.texture) ||
+      // RT passed directly as a uniform (its .texture is the attachment).
+      (v as { isWebGLRenderTarget?: boolean }).isWebGLRenderTarget === true &&
+        (v as THREE.WebGLRenderTarget).texture === dst.texture;
+    if (aliases) {
+      const fid = _fragId(frag);
+      const key = `${where}:${fid}:${name}`;
+      if (_bakeAliasSeen.has(key)) return;
+      _bakeAliasSeen.add(key);
+      // eslint-disable-next-line no-console
+      console.error(
+        `[bake-feedback] SELF-ALIAS where=${where} frag=${fid} uniform=${name} ` +
+          `(this uniform texture === the dst render-target this pass draws into)`,
+      );
+      return;
+    }
+  }
+}
+/** TODO(bake-debug): remove after feedback-loop root-caused. */
+export const _bakeDebug = {
+  on: _bakeDbgOn,
+  fragId: _fragId,
+  checkSelfAlias: _checkSelfAlias,
+  resetSeen(): void {
+    _bakeAliasSeen.clear();
+  },
+};
+
 /** Read/write index for a single channel: 0 or 1. */
 export type PingPongIndex = 0 | 1;
 
@@ -296,6 +368,10 @@ export function runPass(
     throw new Error(`runPass: unknown channel ${outChannel}`);
   }
   const dst = pair[targets.book.write(outChannel)];
+
+  // TODO(bake-debug): remove after feedback-loop root-caused. Dev-only:
+  // catch a true same-pass structural alias (a uniform sampling `dst`).
+  _checkSelfAlias("runPass", fragmentShader, uniforms, dst);
 
   const prevTarget = renderer.getRenderTarget();
   renderer.setRenderTarget(dst);
