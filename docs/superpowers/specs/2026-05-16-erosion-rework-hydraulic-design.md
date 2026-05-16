@@ -202,7 +202,14 @@ this is purely JS-loop chunking).
   button.
 - **TS modify** `pingpong.ts` — reduce to float-probe + RT alloc; delete the
   rest (per Scope).
-- **KEEP unchanged** `glPass.ts`, `debugMaterial.ts`.
+- **KEEP** `glPass.ts` (unchanged) and `debugMaterial.ts` (the relief
+  material is kept, but its equirect-UV sampling MUST be updated to §98's
+  rework convention — `vTex = 0.5 - asin(n.y)/PI`, North→v=0/row 0. The
+  old `vTex = 0.5 + asin(n.y)/PI` mirrored the now-DELETED cube-sphere
+  `RESAMPLE_FRAG`; keeping it byte-identical would render the debug globe
+  North↔South mirrored. §98 is authoritative; this supersedes any
+  "byte-unchanged" reading of this line — 2026-05-16, final integration
+  review).
 
 ## Error handling
 

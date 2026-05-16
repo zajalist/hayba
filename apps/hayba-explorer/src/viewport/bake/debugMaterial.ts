@@ -8,27 +8,22 @@
 // / validation surface, NOT the production renderer (that is Subsystem
 // D).
 //
-// EQUIRECT-UV CONVENTION — must match exactly how `RESAMPLE_FRAG`
-// (passes.glsl.ts, port of `cubesphere_to_equirect`) WROTE the equirect:
+// EQUIRECT-UV CONVENTION — matches the 2026-05-16 HYDRAULIC REWORK
+// equirect convention (the old cube-sphere RESAMPLE_FRAG was deleted):
 //
-//   RESAMPLE_FRAG forward map (equirect texel -> sphere):
-//     yRow = hgt - gl_FragCoord.y   (yRow=0 at TOP; gl_FragCoord.y=hgt is the top row)
-//     v    = yRow / hgt             (v=0 -> top row, v=1 -> bottom row)
-//     phi  = PI/2 - v*PI            (lat: +PI/2 at v=0/top = NORTH, -PI/2 at v=1/bottom = SOUTH)
-//     u    = px / w
-//     lam  = u*2PI - PI                  (lon: -PI at u=0, +PI at u=1)
-//     pos  = (cos phi*cos lam, sin phi, cos phi*sin lam)   [Y-up]
+//   Rust `bake_inputs_equirect` (bake_equirect.rs) writes data so that
+//   row ry=0 = NORTH pole: lat = 90 - (ry+0.5)/H*180,
+//   lon = (rx+0.5)/W*360 - 180. `uploadEquirect` uses flipY=false and the
+//   hydraulic shaders (+ the eroded WebGLRenderTarget) apply NO Y-flip, so
+//   data row 0 (NORTH) == texture/framebuffer row 0 == texture v ~= 0;
+//   SOUTH == row H-1 == v ~= 1. Longitude: lon = u*360 - 180.
 //
-//   So RESAMPLE_FRAG writes NORTH pole -> top framebuffer row, SOUTH -> bottom row.
-//   WebGLRenderTarget.texture has no Y-flip, so to sample sphere normal n:
-//
-//   Inverse here (sphere unit normal -> equirect uv we SAMPLE):
-//     phi  = asin(n.y)
+//   Inverse here (sphere unit normal n -> equirect uv we SAMPLE):
 //     lam  = atan2(n.z, n.x)
 //     uTex = lam/(2PI) + 0.5             (= atan2(z,x)/(2PI)+0.5)
-//     vTex = 0.5 + asin(n.y)/PI          (n.y=+1 north -> vTex=1 = top row
-//                                          where RESAMPLE_FRAG wrote north;
-//                                          n.y=-1 south -> vTex=0 = bottom)
+//     vTex = 0.5 - asin(n.y)/PI          (n.y=+1 NORTH -> vTex=0 = row 0,
+//                                          where the rework writes north;
+//                                          n.y=-1 SOUTH -> vTex=1 = row H-1)
 //
 // GLSL FOOTGUN: no backticks anywhere in the shader strings (this file
 // follows the `.glsl.ts` array-join convention so the template-literal
@@ -59,11 +54,11 @@ const FRAG: string = [
   "",
   "const float PI = 3.141592653589793;",
   "",
-  "/* sphere unit normal -> equirect uv, inverse of RESAMPLE_FRAG. */",
+  "/* sphere unit normal -> equirect uv (hydraulic-rework convention). */",
   "vec2 sphereToEquirectUv(vec3 n){",
   "  float lam = atan(n.z, n.x);          /* atan2(z, x) in [-PI, PI]      */",
   "  float u = lam / (2.0 * PI) + 0.5;    /* [0,1], lon wrap exact         */",
-  "  float v = 0.5 + asin(clamp(n.y, -1.0, 1.0)) / PI; /* n.y=+1 north -> v=1 (top row; RESAMPLE_FRAG wrote north to the top, south to the bottom row) */",
+  "  float v = 0.5 - asin(clamp(n.y, -1.0, 1.0)) / PI; /* n.y=+1 north -> v=0 (row 0, where the rework writes north; flipY=false, no shader Y-flip) */",
   "  return vec2(u, v);",
   "}",
   "",
