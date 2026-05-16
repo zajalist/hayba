@@ -11,6 +11,7 @@
 
 use super::cubesphere::CubeSphere;
 
+#[allow(dead_code)] // fields/methods wired in A5+ (rasterize/erosion)
 pub struct Field {
     pub cs: CubeSphere,
     pub h: Vec<f32>,
@@ -21,7 +22,7 @@ pub struct Field {
 
 impl Field {
     pub fn flat(n: u32, h0: f32) -> Self {
-        let len = (6 * n * n) as usize;
+        let len = (6u64 * n as u64 * n as u64) as usize;
         Self {
             cs: CubeSphere::new(n),
             h: vec![h0; len],
@@ -70,7 +71,9 @@ impl Field {
     /// Number of edge-adjacent neighbours for a texel. The four texels whose
     /// `(i,j) ∈ {0, n-1}²` sit on a cube *corner* where 3 faces meet — they
     /// have a 3-way junction (drop the missing diagonal), everything else 4.
+    // Face index intentionally unused — all 6 cube faces share an identical n×n layout and corner topology.
     pub fn corner_neighbour_count(&self, _f: u8, i: u32, j: u32) -> u32 {
+        debug_assert!(self.cs.n >= 1, "cube-sphere resolution must be >= 1");
         let n = self.cs.n;
         let on_i_edge = i == 0 || i == n - 1;
         let on_j_edge = j == 0 || j == n - 1;
@@ -127,6 +130,7 @@ mod tests {
         // A generous cell-width upper bound: the diagonal of a face is the
         // largest scale; one cell spans ~ (face angular extent)/n. The full
         // cube face subtends ~90° (π/2 rad). Allow 1.5 cells of slack.
+        // 1.5x slack: the equal-area warp widens corner cells above the nominal FRAC_PI_2/n width; empirically a true adjacent pair sits ~1.1x nominal, a wrong axis-swap >1.3x — so this bound discriminates without false negatives. Do not tighten below ~1.3.
         let max_cell_w = (std::f32::consts::FRAC_PI_2 / n as f32) * 1.5;
 
         // Sample interior-edge offsets so the step actually crosses a seam
