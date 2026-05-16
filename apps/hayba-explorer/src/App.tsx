@@ -38,6 +38,7 @@ import { buildPainterMesh, type PainterMeshHandle } from "./viewport/painterMesh
 // debug/validation surface gated behind its own button.
 import { uploadH0 } from "./viewport/bake/uploadH0";
 import { runErodeBake, DEFAULT_ERODE_CONFIG } from "./viewport/bake/erodePipeline";
+import { runParity, type ParityReport } from "./viewport/bake/parity";
 import {
   makeDebugReliefMaterial,
   setDebugTexture,
@@ -315,6 +316,14 @@ export default function App() {
   const [debugBakeProgress, setDebugBakeProgress] = useState<string | null>(null);
   const [debugBakeReady, setDebugBakeReady] = useState(false);
   const [debugMapMode, setDebugMapModeState] = useState(0);
+
+  // A18 CPU↔GPU parity harness (dev-only). Independent state — running
+  // it does NOT touch the wizard sim flow or the debug-bake globe; it
+  // only logs a table + surfaces the PASS/FAIL numbers in this panel.
+  const [parityRunning, setParityRunning] = useState(false);
+  const [parityResult, setParityResult] = useState<
+    { ok: boolean; text: string } | null
+  >(null);
 
   // Playback speed (steps per rAF tick). 1× is the wizard's dt_ma per frame.
   const [speedMult, setSpeedMult] = useState<1 | 2 | 4 | 8>(1);
@@ -1056,6 +1065,75 @@ export default function App() {
     });
   }, []);
 
+  // A18 — CPU↔GPU parity gate (dev-only). Runs the SAME painter-merged
+  // draft through the CPU oracle (`bake_erode_v2`) and the GPU port
+  // (`bake_h0_v2` → `uploadH0` → `runErodeBake`) at a small fixed
+  // config, compares land texels, logs a PASS/FAIL table + worst texels
+  // to the console, and shows the headline numbers in the debug panel.
+  // Purely additive: it does not alter the wizard bake flow or the
+  // debug-bake globe. No-wedge async: try/finally clears the running
+  // flag even on throw (a FAIL throws `ParityError` by design — Step 1:
+  // acceptance is an in-app assertion). `runParity` disposes every
+  // texture it allocates (A17 leak discipline).
+  const handleRunParity = useCallback(async () => {
+    const scene = sceneRef.current;
+    if (!scene || !draft || parityRunning) return;
+    setParityRunning(true);
+    setParityResult(null);
+    try {
+      const paintedFields = heightPainterRef.current
+        ? heightPainterRef.current.toDraftFields()
+        : { painted_elevations: [], painted_mask: [] };
+      const finalDraft: WizardDraft = { ...draft, ...paintedFields };
+      const renderer = scene.renderer;
+      const report: ParityReport = await runParity(
+        renderer,
+        finalDraft as unknown as Record<string, unknown>,
+        scene.runBake,
+      );
+      setParityResult({
+        ok: report.pass,
+        text:
+          "PASS — RMSE " +
+          report.rmse.toExponential(3) +
+          ", maxAbs " +
+          report.maxAbs.toExponential(3) +
+          " over " +
+          report.nLand +
+          " land texels (" +
+          report.width +
+          "×" +
+          report.height +
+          ")",
+      });
+      console.log("[parity] gate PASSED", report);
+    } catch (e) {
+      // A FAIL throws ParityError (carrying the report); any other
+      // error (GL/Tauri) also lands here. Surface it; do NOT setError
+      // (that unmounts the debug panel) — keep it local to the panel.
+      const err = e as { report?: ParityReport; message?: string };
+      if (err.report) {
+        const r = err.report;
+        setParityResult({
+          ok: false,
+          text:
+            "FAIL — RMSE " +
+            r.rmse.toExponential(3) +
+            ", maxAbs " +
+            r.maxAbs.toExponential(3) +
+            " over " +
+            r.nLand +
+            " land texels (see console for worst)",
+        });
+      } else {
+        setParityResult({ ok: false, text: "ERROR — " + String(e) });
+      }
+      console.error("[parity] gate did not pass:", e);
+    } finally {
+      setParityRunning(false);
+    }
+  }, [draft, parityRunning]);
+
   const handleEditWizard = useCallback(() => {
     previewRef.current = [];
     invoke("reset_sim").catch(() => {});
@@ -1337,6 +1415,47 @@ export default function App() {
                 />
                 Show h0 (no-erosion) view
               </label>
+            )}
+
+            {/* A18 — dev-only CPU↔GPU parity gate. Runs the SAME draft
+                through the CPU oracle + GPU port at a small fixed
+                config, logs a PASS/FAIL table to the console, and
+                surfaces the headline RMSE/maxAbs here. Additive: does
+                not touch the wizard flow or the debug-bake globe. */}
+            <button
+              type="button"
+              onClick={handleRunParity}
+              disabled={parityRunning || debugBaking}
+              title="CPU↔GPU parity (RMSE<2e-3 / maxAbs<2e-2 over land) — logs a table to the console"
+              style={{
+                padding: "5px 9px",
+                fontSize: 11,
+                borderRadius: 3,
+                cursor:
+                  parityRunning || debugBaking ? "default" : "pointer",
+                background:
+                  parityRunning || debugBaking
+                    ? "rgba(100,104,112,0.18)"
+                    : "rgba(90,140,200,0.20)",
+                border: `1px solid ${
+                  parityRunning || debugBaking ? "#3d434e" : "#5A8CC8"
+                }`,
+                color:
+                  parityRunning || debugBaking ? "#7e848e" : "#CFD8E4",
+              }}
+            >
+              {parityRunning ? "Running parity…" : "Run parity (CPU↔GPU)"}
+            </button>
+            {parityResult && (
+              <span
+                style={{
+                  fontSize: 10,
+                  lineHeight: 1.4,
+                  color: parityResult.ok ? "#7FBF7F" : "#E08A6A",
+                }}
+              >
+                {parityResult.text}
+              </span>
             )}
           </div>
         )}
