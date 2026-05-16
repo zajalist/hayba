@@ -40,6 +40,7 @@ impl Default for ErosionConfig {
 }
 
 pub mod cubesphere;
+pub mod pyramid;
 
 #[cfg(test)]
 mod tests {
