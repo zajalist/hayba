@@ -85,6 +85,9 @@ import {
   disposeRunPassCache,
   // TODO(bake-debug): remove after feedback-loop root-caused.
   _bakeDebug,
+  // Shared physical texture-unit isolation (kills the stale-binding
+  // feedback loop); _bakeUnitHygiene also carries the dev-gated probe.
+  _bakeUnitHygiene,
   type PingPongTargets,
 } from "./pingpong";
 import {
@@ -1000,21 +1003,23 @@ function runInto(
   // TODO(bake-debug): remove after feedback-loop root-caused. Dev-only:
   // catch a true same-pass structural alias (a uniform sampling `dst`).
   _bakeDebug.checkSelfAlias("runInto", frag, uniforms, dst);
+  // FEEDBACK-LOOP KILL — identical mechanism + fix as pingpong.ts/runPass
+  // (stale PHYSICAL GL texture-unit binding from an earlier runInto/runPass
+  // surviving a bare resetState; the accumulation/upsample passes here
+  // repeatedly reuse scratch RTs as BOTH a sampler source in one pass and
+  // the draw-FBO color attachment in a later pass). 6-step ordering (exact):
+  // getRenderTarget → setRenderTarget(dst) → physically unbind ALL units +
+  // resetState (BEFORE render) → render → setRenderTarget(prev). runInto
+  // has explicit src/dst (NOT channel ping-pong) so there is no book.swap.
+  // After the physical unbind + resetState, three re-binds ONLY this pass's
+  // own samplers and every other unit is physically null; SELF-ALIAS
+  // already proved none of this pass's own uniforms === dst.texture ⇒
+  // feedback loop impossible by construction.
   const prev = renderer.getRenderTarget();
   renderer.setRenderTarget(dst);
+  _bakeUnitHygiene.isolate(renderer, "runInto", frag, dst);
   renderer.render(_quadScene, _quadCam);
   renderer.setRenderTarget(prev);
-  // FEEDBACK-LOOP GUARD — see the matching note in pingpong.ts/runPass.
-  // three r0.169 caches bound sampler textures and skips re-binding when
-  // the same texture object is "already" on a unit, so a texture sampled
-  // in an earlier `runInto`/`runPass` stays bound to a GL texture unit.
-  // The accumulation/upsample passes here repeatedly reuse scratch RTs as
-  // BOTH a sampler source in one pass and the draw-FBO color attachment
-  // in a later pass; without clearing three's GL-state cache the still-
-  // bound texture aliases the active framebuffer attachment → Chrome/
-  // ANGLE feedback loop → discarded draw → degenerate field. Resetting
-  // forces a full re-bind of samplers + framebuffer on the next pass.
-  renderer.resetState();
 }
 
 function disposeHelperCache(): void {
