@@ -14,6 +14,17 @@ export interface SceneHandle {
   dispose: () => void;
   /** Replace the current globe object (point cloud or future mesh). */
   setGlobe: (object: THREE.Object3D | null) => void;
+  /**
+   * Run an offline GPU job (the A15 erosion bake) with the live render
+   * loop PAUSED — "bake-then-watch". Erosion is a heavy multi-pass
+   * offscreen job; sharing the renderer with the per-frame `tick`
+   * (render-target thrash + GPU contention) would both slow the bake and
+   * stutter the viewport. So: cancel the pending `requestAnimationFrame`,
+   * await `fn(renderer)`, then resume the tick exactly as before
+   * (`prevTime` is reset so the resumed frame's `dt` is not a huge spike).
+   * The tick always resumes even if `fn` throws/rejects (try/finally).
+   */
+  runBake: (fn: (renderer: THREE.WebGLRenderer) => Promise<void> | void) => Promise<void>;
 }
 
 function hexToColor(hex: string): THREE.Color {
@@ -84,7 +95,11 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
 
   let raf = 0;
   let prevTime = performance.now();
+  // True while a bake owns the renderer; the tick must not reschedule
+  // itself (and a stray in-flight tick must not render) until resumed.
+  let baking = false;
   const tick = () => {
+    if (baking) return;
     const now = performance.now();
     const dt = Math.min(0.1, (now - prevTime) / 1000);
     prevTime = now;
@@ -112,6 +127,21 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
       }
       currentGlobe = object;
       if (object) scene.add(object);
+    },
+    async runBake(fn) {
+      // Pause the live loop: cancel the pending frame and flag the tick
+      // so any already-queued callback returns without rendering.
+      baking = true;
+      cancelAnimationFrame(raf);
+      try {
+        await fn(renderer);
+      } finally {
+        // Resume exactly as before. Reset prevTime so the first resumed
+        // frame's dt is a normal step, not a multi-second spike.
+        baking = false;
+        prevTime = performance.now();
+        raf = requestAnimationFrame(tick);
+      }
     },
     dispose() {
       cancelAnimationFrame(raf);
