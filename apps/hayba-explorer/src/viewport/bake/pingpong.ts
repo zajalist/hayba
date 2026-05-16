@@ -118,43 +118,60 @@ interface GlBindingCtx {
 }
 
 /**
- * FEEDBACK-LOOP KILL — physically isolate this pass's texture units.
+ * FEEDBACK-LOOP KILL — physically isolate units, resetState, re-bind dst.
  *
- * three r0.169 only tracks bound sampler textures in a JS-side cache and
- * SKIPS `gl.bindTexture` when it thinks a texture is "already" on a unit.
- * `renderer.resetState()` clears that JS cache but does NOT issue any
- * `gl.bindTexture(unit, null)` — so a texture bound to a high GL texture
- * unit by an EARLIER `runInto`/`runPass` survives physically. When a later
- * pass does `setRenderTarget(dst); render()` and that stale texture IS
- * `dst`'s color attachment, Chrome/ANGLE flags "Feedback loop formed
- * between Framebuffer and active Texture" and DISCARDS the draw → the
- * erosion field degenerates.
+ * three r0.169 only tracks bound sampler textures in a JS-side cache
+ * (`currentBoundTextures`) and SKIPS `gl.bindTexture` when it thinks a
+ * texture is "already" on a unit. A texture bound to a high GL texture unit
+ * by an EARLIER `runInto`/`runPass` survives physically. When a later pass
+ * does `setRenderTarget(dst); render()` and that stale texture IS `dst`'s
+ * color attachment, Chrome/ANGLE flags "Feedback loop formed between
+ * Framebuffer and active Texture" and DISCARDS the draw → the erosion field
+ * degenerates.
  *
- * Fix: AFTER `setRenderTarget(dst)` and BEFORE `render()`, physically bind
- * `null` to EVERY texture unit via the raw context. The SELF-ALIAS detector
- * already proved none of this pass's own sampler uniforms === `dst.texture`;
- * combined with every other unit now being physically null, NO bound texture
- * can alias the dst FBO ⇒ the feedback loop is impossible by construction.
+ * TWO contrasting runtime results pinned the exact fix (not theory):
  *
- * Why NOT `renderer.resetState()` here (three r0.169, source-verified):
- * `resetState()` → `state.reset()` raw-issues
- * `gl.bindFramebuffer(FRAMEBUFFER/DRAW/READ, null)` + `gl.viewport(0,0,
- * canvas.w,canvas.h)` and sets `_currentRenderTarget = null`
- * (three.module.js resetState @31537, state.reset bindFramebuffer @23826-
- * 23828 / viewport @23835). `renderer.render()` (@29852-30011) contains NO
- * `bindFramebuffer`/`setRenderTarget` — only `renderer.setRenderTarget()`
- * binds the dst FBO. So calling `resetState()` AFTER `setRenderTarget(dst)`
- * and BEFORE `render()` UNBINDS the dst FBO mid-pass: every bake draw lands
- * on the default framebuffer (canvas) and the dst RT stays zero → erosion
- * produces nothing. The per-unit null-bind loop ALONE kills the stale
- * alias; three re-binds THIS material's samplers from scratch each draw via
- * `setProgram` → `textures.resetTextureUnits()` (@30501/@30505), so dropping
- * `resetState()` does NOT leave samplers unbound. NEVER call `resetState()`
- * (or any framebuffer-touching reset) per-pass between setRenderTarget and
- * render.
+ *  • Commit 9ebde89 (per-unit null-bind + `resetState()` AFTER
+ *    setRenderTarget(dst), BEFORE render): ZERO "Feedback loop" GL errors —
+ *    so `resetState()` IS what actually kills the loop (it wipes three's
+ *    `currentBoundTextures` cache so three re-binds THIS material's samplers
+ *    fresh on render → nothing aliases the FBO). BUT `resetState()` also
+ *    raw-unbinds the dst FBO + sets canvas viewport, and `render()` does NOT
+ *    re-bind the RT, so every bake draw hit the canvas → all bake RTs (incl.
+ *    the returned equiRT) stayed zero → erosion produced nothing.
+ *  • Commit 7b386c0 (per-unit null-bind ONLY, `resetState()` removed): the
+ *    "Feedback loop … (×25)" GL errors RETURNED and STALE-UNIT-ALIAS still
+ *    fired — so the per-unit null-bind loop ALONE does NOT prevent the loop
+ *    (three re-binds the aliasing sampler on `render()` from its still-warm
+ *    cache); field still wrong.
+ *
+ * SYNTHESIS — we need BOTH effects, in this exact order:
+ *   1. physically `bindTexture(null)` every unit (defensive: drops any stale
+ *      physical binding; restore the active unit so three's unit-0 invariant
+ *      holds);
+ *   2. `renderer.resetState()` — REQUIRED. This is what actually kills the
+ *      feedback loop: `resetState()` → `state.reset()` wipes
+ *      `currentBoundTextures = {}` (three.module.js @23842) so three's
+ *      `setProgram` re-binds THIS pass's own samplers from scratch on the
+ *      next `render()` → no stale sampler can alias the dst FBO. Per-unit
+ *      null-bind alone is insufficient because three re-binds the aliasing
+ *      sampler from its un-cleared JS cache on render (7b386c0 proved this).
+ *   3. `renderer.setRenderTarget(dst)` AGAIN — `state.reset()` also raw-issues
+ *      `gl.bindFramebuffer(FRAMEBUFFER/DRAW/READ,null)` + `gl.viewport(0,0,
+ *      canvas.w,canvas.h)` and wipes `currentBoundFramebuffers = {}`
+ *      (three.module.js resetState @31537, state.reset @23826-23828/@23835/
+ *      @23844). So after step 2 the dst FBO is UNBOUND. Re-calling
+ *      `setRenderTarget(dst)` re-binds it: because `currentBoundFramebuffers`
+ *      was wiped, `state.bindFramebuffer` (@23097-23121) sees
+ *      `undefined !== framebuffer` and ACTUALLY issues `gl.bindFramebuffer`
+ *      (the cache-skip cannot suppress it), and `state.viewport(@31097)`
+ *      re-applies the RT viewport. The caller's immediate `render()` then
+ *      writes to dst, not the canvas (9ebde89's zero-field bug). This
+ *      re-bind is the step BOTH prior attempts lacked.
  *
  * Must be called with the dst RT already bound (renderer.setRenderTarget(dst)
- * done) and before renderer.render(...).
+ * done) and before renderer.render(...); this helper ends with
+ * `setRenderTarget(dst)` so the caller's next `render()` targets dst.
  *
  * Phase-3 perf note: the per-pass full-unit unbind + per-pass
  * `getParameter(MAX_TEXTURE_IMAGE_UNITS)` is heavy at high resolution
@@ -225,22 +242,34 @@ function physicallyIsolateUnits(
     }
   }
 
-  // Physically unbind ALL texture units. This ALONE kills the stale
-  // physical alias (a texture bound to a high unit by an earlier pass that
-  // is also this pass's dst FBO attachment). Do NOT call
-  // `renderer.resetState()` here: it raw-unbinds the dst framebuffer
-  // mid-pass (see the "Why NOT resetState()" block above) so the bake draw
-  // would hit the canvas instead of the RT. three re-binds this material's
-  // own samplers from scratch on the next `render()` via
-  // `setProgram`→`textures.resetTextureUnits()`, so no resync is needed.
-  // Save/restore the active texture unit so this hygiene loop leaves the
-  // active-unit GL state exactly as three left it (three expects unit 0).
+  // Step 1 — physically unbind ALL texture units (defensive: drop any
+  // stale physical binding from an earlier pass). Save/restore the active
+  // texture unit so this loop leaves the active-unit GL state exactly as
+  // three left it (three's invariant expects unit 0).
   const savedActiveUnit = g.getParameter(g.ACTIVE_TEXTURE) as number;
   for (let u = 0; u < maxUnits; u++) {
     g.activeTexture(g.TEXTURE0 + u);
     g.bindTexture(g.TEXTURE_2D, null);
   }
   g.activeTexture(savedActiveUnit);
+
+  // Step 2 — resetState() is what ACTUALLY kills the feedback loop: it
+  // wipes three's `currentBoundTextures` cache so `setProgram` re-binds
+  // THIS pass's own samplers fresh on the caller's next render() (nothing
+  // stale can alias the dst FBO). Per-unit null-bind ALONE is insufficient:
+  // three re-binds the aliasing sampler from its un-cleared JS cache on
+  // render — commit 7b386c0 proved the loop returns without this; commit
+  // 9ebde89 proved with this the loop is gone (zero "Feedback loop" errors).
+  renderer.resetState();
+
+  // Step 3 — resetState() ALSO raw-unbinds the dst framebuffer and sets the
+  // canvas viewport (and wipes `currentBoundFramebuffers`), so re-bind dst
+  // here. Because the FBO cache was just wiped, this setRenderTarget DOES
+  // issue the real gl.bindFramebuffer + re-applies the RT viewport (the
+  // cache-skip cannot suppress it). The caller's immediate render() then
+  // writes to dst, not the canvas (the 9ebde89 zero-field bug). This
+  // re-bind is the step both prior attempts lacked.
+  renderer.setRenderTarget(dst);
 }
 
 /** TODO(bake-debug): remove after feedback-loop root-caused. */
@@ -535,28 +564,26 @@ export function runPass(
   _checkSelfAlias("runPass", fragmentShader, uniforms, dst);
 
   // FEEDBACK-LOOP KILL (manual multi-pass ping-pong, three r0.169).
-  // Runtime evidence narrowed this to a STALE PHYSICAL GL texture-unit
-  // binding (NOT a same-pass uniform alias — SELF-ALIAS never fired — and
-  // NOT a competing external render — rAF guard airtight). three only
-  // tracks bound samplers in a JS cache and skips re-binding; a texture
-  // bound by an EARLIER runInto/runPass survives physically, and when a
+  // Runtime evidence narrowed this to a STALE three.js texture-unit binding
+  // (NOT a same-pass uniform alias — SELF-ALIAS never fired — and NOT a
+  // competing external render — rAF guard airtight): three caches bound
+  // samplers in JS and re-binds the aliasing sampler on render(), so when a
   // later pass binds that very RT as its draw-FBO color attachment the
   // texture is simultaneously a sampler source AND the active framebuffer
   // attachment → Chrome/ANGLE "Feedback loop formed between Framebuffer
-  // and active Texture" → the draw is DISCARDED → degenerate field. A
-  // bare resetState() (an earlier attempt) had ZERO effect because it only
-  // clears three's JS cache, never issuing gl.bindTexture(unit, null) — and
-  // calling it per-pass is actively HARMFUL (it raw-unbinds the dst FBO
-  // mid-pass so the draw hits the canvas; see physicallyIsolateUnits).
+  // and active Texture" → the draw is DISCARDED → degenerate field. The
+  // fix, synthesized from TWO contrasting runtime results (9ebde89 had
+  // resetState → zero feedback errors but zero field; 7b386c0 dropped it →
+  // feedback errors returned), lives in physicallyIsolateUnits: unbind
+  // units → resetState() (kills the loop) → setRenderTarget(dst) (re-bind
+  // the FBO resetState cleared, so render() hits dst not the canvas).
   //
-  // 5-step ordering (exact): getRenderTarget → setRenderTarget(dst) →
-  // physically unbind ALL units (before render, NO resetState) → render →
-  // setRenderTarget(prev) → book.swap. After the physical unbind every
-  // other unit is physically null and three re-binds ONLY this pass's own
-  // samplers from scratch on the next render (setProgram →
-  // resetTextureUnits); the SELF-ALIAS detector already proved none of
-  // this pass's own sampler uniforms === dst.texture ⇒ no bound texture
-  // can alias the dst FBO ⇒ feedback loop impossible by construction.
+  // Ordering (exact): getRenderTarget → setRenderTarget(dst) →
+  // physicallyIsolateUnits (unbind units → resetState → re-setRenderTarget
+  // dst) → render → setRenderTarget(prev) → book.swap. The helper ends
+  // bound to dst so this render() targets dst; the SELF-ALIAS detector
+  // already proved none of this pass's own sampler uniforms === dst.texture
+  // ⇒ no bound texture can alias the dst FBO ⇒ loop impossible.
   const prevTarget = renderer.getRenderTarget();
   renderer.setRenderTarget(dst);
   physicallyIsolateUnits(renderer, "runPass", fragmentShader, dst);
