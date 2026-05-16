@@ -9,6 +9,7 @@
 //! construction for every (face, direction), and the geometric-continuity
 //! test below pins it empirically.
 
+use glam::Vec3;
 use super::cubesphere::CubeSphere;
 
 #[allow(dead_code)] // fields/methods wired in A5+ (rasterize/erosion)
@@ -83,6 +84,50 @@ impl Field {
             4
         }
     }
+}
+
+/// Rasterize a sparse set of painted Goldberg cells onto an `n×n`-per-face
+/// cube-sphere `Field`.
+///
+/// For each cube-sphere texel the nearest input cell is found by maximum
+/// dot-product (great-circle nearest on the unit sphere). The texel elevation
+/// `h` is set to the matched cell's elevation value, and `ocean` is set to
+/// `h < 0.0`. All other `Field` arrays (`water`, `sed`) are left at zero.
+///
+/// Brute-force O(texels × cells) — correct for the test fixture. The
+/// production path (Task A11) will supply a kd-tree; this function's
+/// signature is the stable contract.
+pub fn rasterize_from_cells(n: u32, cells: &[(Vec3, f32)]) -> Field {
+    let mut field = Field::flat(n, 0.0);
+    let cs = CubeSphere::new(n);
+    let inv = 1.0 / n as f32;
+
+    for face in 0u8..6 {
+        for j in 0..n {
+            for i in 0..n {
+                // Centre of this texel on the unit sphere.
+                let u = (i as f32 + 0.5) * inv;
+                let v = (j as f32 + 0.5) * inv;
+                let pos = cs.face_uv_to_sphere(face, u, v);
+
+                // Nearest cell = maximum dot-product (both are unit vectors).
+                let elev = cells
+                    .iter()
+                    .max_by(|(a, _), (b, _)| {
+                        let da = a.dot(pos);
+                        let db = b.dot(pos);
+                        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .map(|(_, e)| *e)
+                    .unwrap_or(0.0);
+
+                let idx = field.idx(face, i, j);
+                field.h[idx] = elev;
+                field.ocean[idx] = elev < 0.0;
+            }
+        }
+    }
+    field
 }
 
 #[cfg(test)]
@@ -236,5 +281,16 @@ mod tests {
             }
         }
         assert_eq!(three, 4, "exactly 4 corner texels per face");
+    }
+
+    #[test]
+    fn rasterize_samples_nearest_cell_elevation_and_flags_ocean() {
+        // 2 fake cells: +Z pole land 0.5, -Z pole ocean -1.0.
+        let cells = vec![(glam::Vec3::Z, 0.5f32), (glam::Vec3::NEG_Z, -1.0)];
+        let f = rasterize_from_cells(8, &cells);
+        let zc = f.idx(4, 4, 4); // mid +Z face
+        assert!((f.h[zc] - 0.5).abs() < 1e-3 && !f.ocean[zc]);
+        let nc = f.idx(5, 4, 4); // mid -Z face
+        assert!(f.h[nc] < 0.0 && f.ocean[nc]);
     }
 }
