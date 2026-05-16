@@ -710,8 +710,8 @@ pub struct ErodeResultV2 {
 /// the legacy graph erosion.
 fn painted_cells_from_draft(draft: &WizardDraft) -> Vec<(Vec3, f32)> {
     // Same brush / painter floors as `bake_impl` Step 4.
-    const CONTINENTAL_BRUSH_FLOOR: f32 = 0.05;
-    const DEEP_OCEAN_FLOOR: f32 = -1.0;
+    const CONTINENTAL_BRUSH_FLOOR: f32 = 0.05; // MUST mirror bake_impl Step 4's elevation precedence/floors — if those change, change these too (kept separate to avoid touching bake_impl's tests).
+    const DEEP_OCEAN_FLOOR: f32 = -1.0; // MUST mirror bake_impl Step 4's elevation precedence/floors — if those change, change these too (kept separate to avoid touching bake_impl's tests).
 
     // `Model::new` gives us the icosphere grid + per-cell sphere positions
     // (`grid.position`) without stepping the sim — identical geometry to
@@ -735,7 +735,7 @@ fn painted_cells_from_draft(draft: &WizardDraft) -> Vec<(Vec3, f32)> {
             .unwrap_or(0)
             == 1;
         let elevation = if painted {
-            draft.painted_elevations[fid as usize].clamp(-1.0, 1.0)
+            draft.painted_elevations.get(fid as usize).copied().unwrap_or(0.0).clamp(-1.0, 1.0)
         } else if user_continental[fid as usize] {
             CONTINENTAL_BRUSH_FLOOR
         } else {
