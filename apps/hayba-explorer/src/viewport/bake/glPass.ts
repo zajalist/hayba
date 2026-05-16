@@ -413,8 +413,84 @@ export function runRawPass(
 
   // 6. Upload uniforms by parsed GLSL type. Track sampler units bound so
   //    they can be explicitly unbound after the draw.
+  //
+  // SAMPLERS ARE TWO-PHASE (load-bearing — do NOT inline phase 2 into
+  // phase 1). resolveRtGlTexture/resolveTexGlHandle call three's
+  // renderer.initRenderTarget / renderer.initTexture, which on a
+  // texture/RT's FIRST use run textures.setupRenderTarget /
+  // textures.setTexture2D. Those go through three's WebGLState and issue
+  // REAL gl.activeTexture(TEXTURE0+slot)/gl.bindTexture (slot defaults to
+  // 0) plus a state.texImage2D upload. If we resolved+raw-bound samplers
+  // one-by-one, the resolve of sampler N (e.g. uPrecip, a DataTexture's
+  // first upload) would clobber the raw bind we already did for sampler
+  // N-1 on its unit (e.g. uA on unit 0) — three's setTexture2D rebinds
+  // unit 0. The shader then samples the wrong texture for the earlier unit
+  // (uA reads zeros while only the later sampler is correct → the exact
+  // "terrain/ocean collapse, water-only updates" failure). So: PHASE 1
+  // resolves EVERY sampler handle (all three-state touches happen here,
+  // before any raw unit bind); PHASE 2 raw-binds the resolved handles to
+  // units with NO three call interleaved, so nothing can clobber a unit
+  // after it is bound.
   let unit = 0;
   const boundUnits: number[] = [];
+  // Phase 1: resolve all sampler GL handles + assign units (three's lazy
+  // init/upload may bind textures on its own units here — harmless now,
+  // because no raw unit binds have happened yet).
+  const samplerBinds: {
+    loc: WebGLUniformLocation;
+    handle: WebGLTexture;
+    unit: number;
+  }[] = [];
+  for (const name of Object.keys(uniforms)) {
+    const u = uniforms[name];
+    if (!u) continue;
+    const value = u.value as unknown;
+    const loc = uniformLoc(gl, entry, name);
+    if (loc == null) continue; // not present / optimized out
+    const rt = asRenderTarget(value);
+    if (rt != null) {
+      // CRITICAL: resolve an RT *source* via initRenderTarget (the same
+      // path the dst uses), NOT initTexture(rt.texture). An RT's color
+      // texture is GL-created exclusively by textures.setupRenderTarget
+      // (three.module.js:25842), which sets `__webglTexture` + `__version`
+      // but NOT `__cacheKey` and never registers the texture in three's
+      // `_sources` map. Routing rt.texture through initTexture →
+      // setTexture2D → initTexture(props,tex) (three.module.js:24784) then
+      // sees `textureCacheKey !== props.__cacheKey` (undefined), so it
+      // CREATES A FRESH EMPTY gl.createTexture() and OVERWRITES
+      // props.__webglTexture (three.module.js:24821/24856) — binding an
+      // empty never-rendered texture → the shader samples all zeros.
+      // initRenderTarget is idempotent and returns the RT's real
+      // color-attachment handle.
+      samplerBinds.push({
+        loc,
+        handle: resolveRtGlTexture(renderer, rt),
+        unit,
+      });
+      boundUnits.push(unit);
+      unit++;
+      continue;
+    }
+    if (value instanceof THREE.Texture) {
+      samplerBinds.push({
+        loc,
+        handle: resolveTexGlHandle(renderer, value),
+        unit,
+      });
+      boundUnits.push(unit);
+      unit++;
+      continue;
+    }
+  }
+  // Phase 2: raw-bind every resolved sampler handle to its unit. No three
+  // call runs between these binds, so a unit, once bound, stays bound
+  // through the draw.
+  for (const sb of samplerBinds) {
+    gl.activeTexture(gl.TEXTURE0 + sb.unit);
+    gl.bindTexture(gl.TEXTURE_2D, sb.handle);
+    gl.uniform1i(sb.loc, sb.unit);
+  }
+  // Non-sampler uniforms (no three-state interaction — order-independent).
   for (const name of Object.keys(uniforms)) {
     const u = uniforms[name];
     if (!u) continue;
@@ -423,24 +499,8 @@ export function runRawPass(
     if (loc == null) continue; // not present / optimized out
     const gType = entry.type.get(name) ?? "unknown";
 
-    // Sampler: a THREE.Texture, or a RT (use its .texture).
-    const rt = asRenderTarget(value);
-    if (rt != null) {
-      const handle = resolveTexGlHandle(renderer, rt.texture);
-      gl.activeTexture(gl.TEXTURE0 + unit);
-      gl.bindTexture(gl.TEXTURE_2D, handle);
-      gl.uniform1i(loc, unit);
-      boundUnits.push(unit);
-      unit++;
-      continue;
-    }
-    if (value instanceof THREE.Texture) {
-      const handle = resolveTexGlHandle(renderer, value);
-      gl.activeTexture(gl.TEXTURE0 + unit);
-      gl.bindTexture(gl.TEXTURE_2D, handle);
-      gl.uniform1i(loc, unit);
-      boundUnits.push(unit);
-      unit++;
+    // Samplers were handled in the two-phase block above.
+    if (asRenderTarget(value) != null || value instanceof THREE.Texture) {
       continue;
     }
 
