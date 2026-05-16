@@ -585,29 +585,67 @@ git commit -m "feat(erosion): mass-conserving area-weighted x2 upsample (Σd_fin
 ```rust
 #[test]
 fn pyramid_adds_detail_but_preserves_macro_shape() {
-    // smooth dome macro on +Z; after erosion the LOW-PASS must match h0,
-    // while high-freq variance must increase (detail added).
-    let n0=8; let mut src=Field::flat(n0,0.0);
-    for j in 0..n0 { for i in 0..n0 {
-        let k=src.idx(4,i,j);
-        src.h[k]= 0.6 - 0.02*(((i as f32-3.5).powi(2)+(j as f32-3.5).powi(2))); }}
-    src.ocean.iter_mut().for_each(|o|*o=false);
-    let cfg=super::ErosionConfig{ base_face_res:n0, pyramid_levels:3, beta:0.2, ..Default::default()};
-    let out=run_pyramid(&src,&cfg);                 // returns finest Field
-    let macro_err = lowpass_l2_diff(&out, &src);    // helper: compare low-freq bands
-    assert!(macro_err < 0.05, "macro relief preserved (frequency-sep)");
-    assert!(highfreq_energy(&out) > highfreq_energy_upsampled(&src), "detail added");
+    // Macro = a SMOOTH, FACE-CONTINUOUS continent: a raised-cosine bump keyed
+    // on great-circle angle from +Z, evaluated at each cell's 3D sphere
+    // CENTRE. Being a smooth function of world position it is continuous
+    // across all 6 cube faces (NO face-boundary step), so a no-erosion
+    // bilinear upsample has ~0 high-freq energy — the baseline genuinely
+    // measures "smooth", and highfreq_energy(out) then measures
+    // erosion-ADDED detail, not a fixture discontinuity. The flanks carry
+    // real slope so detail injection + fluvial incision actually engage.
+    // (The earlier single-+Z-face dome with a hard step to flat-0 made the
+    //  baseline measure that macro discontinuity, which a correct
+    //  frequency-separation blend *smooths* — making the old assertion
+    //  unsatisfiable for ANY correct implementation. This fixture fixes that.)
+    let n0 = 8;
+    let mut src = Field::flat(n0, 0.0);
+    for face in 0u8..6 { for j in 0..n0 { for i in 0..n0 {
+        let k = src.idx(face, i, j);
+        let p = src.cs.face_uv_to_sphere(
+            face, (i as f32 + 0.5) / n0 as f32, (j as f32 + 0.5) / n0 as f32);
+        let ang = p.dot(glam::Vec3::Z).clamp(-1.0, 1.0).acos(); // 0 at +Z
+        let t = (ang / 1.2).clamp(0.0, 1.0);
+        src.h[k] = 0.05 + 0.65 * 0.5 * (1.0 + (std::f32::consts::PI * t).cos());
+    }}}
+    src.ocean.iter_mut().for_each(|o| *o = false); // all land — isolate erosion
+    let cfg = super::ErosionConfig {
+        base_face_res: n0, pyramid_levels: 3, beta: 0.2, ..Default::default() };
+    let out = run_pyramid(&src, &cfg);              // returns finest Field
+    let macro_err = lowpass_l2_diff(&out, &src);
+    assert!(macro_err < 0.05, "macro relief preserved (frequency-sep), got {macro_err}");
+    let hf_out  = highfreq_energy(&out);
+    let hf_base = highfreq_energy_upsampled(&src);
+    assert!(hf_out > 1.5 * hf_base.max(1e-9),
+        "erosion added genuine sub-macro detail: hf_out={hf_out} > 1.5*hf_base={}",
+        1.5 * hf_base);
     assert!(out.h.iter().all(|v| v.is_finite()));
 }
 ```
 
-(Add small private helpers `lowpass_l2_diff`, `highfreq_energy*` under `#[cfg(test)]`.)
+**Helper definitions (NORMATIVE — implement EXACTLY these under `#[cfg(test)]`; do
+not redefine to make the test pass).** All operate over land cells only and the
+two high-freq helpers MUST measure the *same band* (the only intended difference
+is erosion vs a plain no-erosion upsample of `src`):
+
+- `lowpass_l2_diff(out, src) -> f32`: resample `src.h` to `out`'s resolution
+  (bilinear via the same cube-sphere mapping the impl uses), box-blur BOTH
+  `out.h` and the resampled `src.h` to the macro scale (a few `neighbour`
+  box passes ~ the base-cell radius re-expressed on the fine grid), return
+  `sqrt(mean((blur_out - blur_srcRes)^2))` over land. Measures macro drift.
+- `highfreq_energy(f) -> f32`: `mean_over_land( (f.h[k] - mean_of_land_neighbours(k))^2 )`
+  — variance of the 1-ring high-pass (h minus its local neighbour mean).
+- `highfreq_energy_upsampled(src) -> f32`: bilinear-upsample `src` to the FINAL
+  pyramid resolution **with NO erosion** (the conservative `upsample2x` chain or
+  the same bilinear resample, no `inject_detail_band`/`stream_power`/`thermal`),
+  then `highfreq_energy(...)` of that. For a face-continuous smooth fixture this
+  is ~1e-6 (truly smooth), so the `1.5×` assertion cleanly isolates real
+  erosion detail rather than a fixture artefact.
 
 - [ ] **Step 2: Run, verify fails** — FAIL.
 
 - [ ] **Step 3: Implement** `run_pyramid`: from `base_face_res`, per level `{ inject_detail_band → for k in K { stream_power_step; thermal_step; deposition (Davy-Lague G) } → upsample2x }`; after the loop `h_final = h_eroded + beta*(h0_resampled_to_final - lowpass(h_eroded))`. `lowpass` = separable box/gaussian over `neighbour`s sized to `base` scale. Deposition: add the transport-limited term `+ G·Qs/A` (sediment carried downstream, deposited where capacity drops).
 
-- [ ] **Step 4: Run, verify pass** — PASS (tune `beta`/kernel only to satisfy the macro-preservation assertion).
+- [ ] **Step 4: Run, verify pass** — PASS. The macro-preservation assertion is satisfied by the frequency-separation blend (tune ONLY the lowpass kernel size / β application, never the 0.05 threshold). The detail-added assertion passes because the face-continuous smooth fixture makes `highfreq_energy_upsampled` ≈ 0 while real flank erosion (detail injection + fluvial incision on the raised-cosine flanks) produces high-freq energy ≫ 1.5× that — it is NOT a tunable knob; if it fails, erosion is genuinely not engaging on the flanks (a real implementation bug to fix, not a threshold to relax).
 
 - [ ] **Step 5: Commit**
 
