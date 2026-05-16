@@ -445,13 +445,29 @@ fn stream_power_incises_channels_clamped_and_never_below_receiver() {
     for k in 0..f.h.len() {
         assert!(f.h[k] <= h0[k] + 1e-6, "U=0 ⇒ only lowers");
         assert!(h0[k]-f.h[k] <= 1e-3 + 1e-6, "per-step incision clamp ε respected");
+        assert!(f.h[k].is_finite(), "no NaN/inf (incl. at cube corners)");
     }
+}
+
+#[test]
+fn stream_power_slope_at_cube_corner_is_finite() {
+    // The 8 cube corners are 3-way junctions; a naïve dx/dy gradient there
+    // collapses → NaN/∞. Put relief straddling a +Z corner and assert finite.
+    let n=8; let mut f=Field::flat(n,0.0);
+    for j in 0..n { for i in 0..n { let k=f.idx(4,i,j);
+        f.h[k]= (i+j) as f32 * 0.05; }}
+    f.ocean.iter_mut().for_each(|o|*o=false);
+    let cfg=super::ErosionConfig::default();
+    stream_power_step(&mut f,&cfg);
+    let corner=f.idx(4,n-1,n-1);
+    assert!(f.h[corner].is_finite(), "corner slope must use the 3-vertex plane fit");
 }
 ```
 
 - [ ] **Step 2: Run, verify fails** — FAIL.
 
 - [ ] **Step 3: Implement** `stream_power_step`: per land cell find steepest-descent receiver via `neighbour` (great-circle distance from `face_uv_to_sphere`), single-flow drainage accumulation (topological by elevation, Braun–Willett O(N) like `hydrology::drainage_area`), `dz = -(K·A^m·S^n)`, clamp `|dz| ≤ ε`, never below receiver, never below 0. `U=0`.
+  **HARDENING — 3-way corner gradient (NORMATIVE):** the 4 face-corner texels that coincide with the 8 cube corners have only 3 neighbours; the standard symmetric finite-difference dx/dy collapses there (NaN/∞ slope). Add a dedicated branch: when `corner_neighbour_count==3`, compute slope/receiver from the **least-squares plane through the 3 available adjacent vertices** (their sphere positions + heights), not the axis-aligned difference. Same exception is reused by A8.
 
 - [ ] **Step 4: Run, verify pass** — PASS.
 
@@ -482,12 +498,14 @@ fn thermal_relaxes_oversteep_slopes_only_and_is_mass_conserving() {
     assert!(f.h[kc] < 1.0, "oversteep spike relaxed");
     assert!((f.h[kf]-before_flat).abs() < 1e-7, "gentle slope untouched (talus clamp)");
     assert!((f.h.iter().sum::<f32>()-sum0).abs() < 1e-3, "diffusion conserves mass");
+    assert!(f.h.iter().all(|v| v.is_finite()), "no NaN at the 8 cube corners");
 }
 ```
 
 - [ ] **Step 2: Run, verify fails** — FAIL.
 
 - [ ] **Step 3: Implement** finite-volume Laplacian over `neighbour`s with `D(S)=0 if S<talus else D·(1−talus/S)`; symmetric flux (mass-conserving); CFL-safe (clamp effective `D·dt`).
+  **HARDENING — 3-way corner Laplacian (NORMATIVE):** at the 8 cube-corner texels (`corner_neighbour_count==3`) the finite-volume Laplacian must sum over **only the 3 real neighbour fluxes** (the missing 4th is not zero-filled — zero-filling injects a phantom flux). Reuse the A7 3-vertex plane-fit for the slope term feeding `D(S)`. Verified by the corner-finiteness assertion above.
 
 - [ ] **Step 4: Run, verify pass** — PASS.
 
@@ -519,11 +537,30 @@ fn upsample_conserves_water_and_sediment_exactly() {
     assert!((acc - f.water[kc]).abs() < 1e-6, "Σ d_fine == d_coarse");
     assert!((g.water.iter().sum::<f32>()-sum_w0).abs() < 1e-4, "global water conserved");
 }
+
+#[test]
+fn upsample_h_introduces_no_spurious_pits() {
+    // A coarse strictly-monotone valley; bilinear h alone manufactures
+    // local minima between coarse samples → conserved water would pool
+    // there and break rivers. Post-fill must keep a downhill path.
+    let n=4; let mut f=Field::flat(n,0.0);
+    for j in 0..n { for i in 0..n { let k=f.idx(4,i,j);
+        f.h[k]= 1.0 - j as f32 * 0.2; }} // strictly descends in +j
+    f.ocean.iter_mut().for_each(|o|*o=false);
+    let g=upsample2x(&f);
+    // every fine land cell (except the global min) has a strictly-lower neighbour
+    for j in 0..g.cs.n-1 { for i in 0..g.cs.n {
+        let k=g.idx(4,i,j);
+        let down=g.idx(4,i,j+1);
+        assert!(g.h[down] <= g.h[k] + 1e-6, "no upstream-facing pit after upsample fill");
+    }}
+}
 ```
 
 - [ ] **Step 2: Run, verify fails** — FAIL.
 
 - [ ] **Step 3: Implement** `upsample2x`: `h` bilinear; `water`/`sed` split so each coarse texel's value is distributed area-weighted across its 4 children with exact sum preservation (`child = parent * area_child/area_parent`, areas from `cell_solid_angle`; for ~uniform cells ≈ parent/4).
+  **HARDENING — post-upsample pit removal (NORMATIVE):** bilinear `h` of a coarse valley manufactures artificial local minima between coarse samples; the (correctly) conserved water then pools in those phantom pits on the next iteration and severs river networks. After bilinear `h` and **before** the carried `water`/`sed` are placed, run a **fast local depression-fill / monotonic-downhill enforcement** on the new fine `h` (a few Priority-Flood-lite sweeps on land texels, ocean fixed) so every fine land cell retains a strictly-downhill path. Order is mandatory: upsample h → pit-fill h → apply conserved water/sed.
 
 - [ ] **Step 4: Run, verify pass** — PASS.
 
@@ -657,6 +694,7 @@ console.log("ok");
 - [ ] **Step 2: Run, verify fails** — `cd apps/hayba-explorer && npx tsx src/viewport/bake/pingpong.test.ts` → FAIL.
 
 - [ ] **Step 3: Implement** `pingpong.ts`: `PingPongBook` (per-channel read/write index bookkeeping — testable logic) **and** `createPingPong(renderer, w, h, channels)` that allocates paired `THREE.WebGLRenderTarget` (`type: THREE.FloatType`, `format: THREE.RGBAFormat`), throws a clear `Error("RGBA32F render targets unsupported (EXT_color_buffer_float)")` if `renderer.getContext().getExtension("EXT_color_buffer_float")` is null, and a `runPass(fragmentShader, uniforms, outChannel)` fullscreen-quad helper (orthographic quad scene, render to the write RT, then `book.swap`).
+  **HARDENING — float-linear trap (NORMATIVE):** `EXT_color_buffer_float` only enables *rendering* to float; it does **not** guarantee hardware **bilinear** sampling of float textures (`OES_texture_float_linear`, missing on some Apple-Silicon/mobile). If absent, `linearFilter` silently degrades to nearest → stair-stepped rivers in the upsample/resample. Implement: probe `getExtension("OES_texture_float_linear")`; export a boolean `FLOAT_LINEAR_OK`. If true, RTs use `THREE.LinearFilter`; if false, RTs use `THREE.NearestFilter` **and** A14's upsample + A19's resample shaders take a `uManualBilinear` define and do an explicit **4-tap bilinear** in GLSL. The framework must expose `FLOAT_LINEAR_OK` so A14/A15/A19 select the path. Add a `pingpong.test.ts` assertion that `createPingPong` (when given a fake ctx whose `getExtension` returns null for `OES_texture_float_linear`) sets `manualBilinear===true`.
 
 - [ ] **Step 4: Run, verify pass** — tsx test PASS.
 
@@ -717,7 +755,10 @@ console.log("ok");
 
 - [ ] **Step 2: Run, verify fails** — FAIL (module missing).
 
-- [ ] **Step 3: Implement** `passes.glsl.ts` exporting GLSL ES 3.0 fragment strings, each a faithful port of the corresponding Rust function (A4/A6/A7/A8/A9 + resample A11), operating on a **6-faces-in-one-2D-atlas** layout (faces tiled 3×2). Include a shared `vec3 faceTexelToSpherePos(...)` and seam/corner-correct `neighbourTexel(...)` chunk mirroring `Field::neighbour`/corner rules.
+- [ ] **Step 3: Implement** `passes.glsl.ts` exporting GLSL ES 3.0 fragment strings, each a faithful port of the corresponding Rust function (A4/A6/A7/A8/A9 + resample A11), operating on a **6-faces-in-one-2D-atlas** layout (faces tiled 3×2). Include a shared `vec3 faceTexelToSpherePos(...)` and seam/corner-correct `neighbourTexel(...)` chunk mirroring `Field::neighbour`/corner rules. Also include these shared chunks (consumed by the upsample + resample passes):
+  - `vec4 tap2D(sampler2D t, vec2 uv, vec2 texel)` — explicit **4-tap manual bilinear**, compiled in when `uManualBilinear` is set (the `OES_texture_float_linear` fallback from A12). All upsample/resample fetches go through `tap2D` (it reduces to a single `texture()` when manual bilinear is off).
+  - `cornerSlope3(...)` — the **3-vertex plane-fit** slope used by the stream-power (A7) and thermal (A8) ports at the 8 cube corners (`neighbourCount==3`); never the symmetric difference there.
+  - `fillPits(...)` — the post-bilinear monotonic-downhill enforcement (A9 HARDENING) applied to `h` before the conserved water/sed are placed in the upsample pass.
 
 - [ ] **Step 4: Run, verify pass** — tsx shape-test PASS.
 
@@ -856,7 +897,9 @@ git commit -m "docs(bake): Subsystem A visual-validation results + sign-off"
 
 ## Self-Review (run before declaring the plan done)
 
-**Spec coverage:** §5.1 cube-sphere+corners → A1,A3,A14; §5.2 rasterize → A5,A11,A16; §5.3 C_proxy → *deferred:* the orographic proxy steers detail amplitude; A6 takes a `slope01` input as the hook — **add note:** wire real `C_proxy` in Subsystem B (climate) and feed it into A6 then (A6's signature already accepts a per-texel modulation array). §5.4 pyramid/detail/erode/thermal/conservative-upsample → A6,A7,A8,A9,A10 (incl. A1.1 hardening in A9, U=0 in A2/A7, ε-clamp A7); §5.5 frequency-sep → A10; §5.6 resample → A11; §5.7 bake-UX/oracle/determinism → A11 (oracle), A15 (`runBake`/bake-then-watch), seeds throughout; §11 testing → CPU oracle TDD + A18 parity + A19 visual; §12 risks 6/7/8 → A3/A14 (corners), A9 (conservative upsample), A7/A10 (no naïve flood — stream-power is O(N) Braun–Willett, hierarchical by construction). **Gap noted & assigned:** C_proxy real wiring belongs to Subsystem B; A6 is built C_proxy-ready.
+**Spec coverage:** §5.1 cube-sphere+corners → A1,A3,A14; §5.2 rasterize → A5,A11,A16; §5.3 C_proxy → *deferred:* the orographic proxy steers detail amplitude; A6 takes a `slope01` input as the hook — **add note:** wire real `C_proxy` in Subsystem B (climate) and feed it into A6 then (A6's signature already accepts a per-texel modulation array). §5.4 pyramid/detail/erode/thermal/conservative-upsample → A6,A7,A8,A9,A10 (incl. A1.1 hardening in A9, U=0 in A2/A7, ε-clamp A7); §5.5 frequency-sep → A10; §5.6 resample → A11; §5.7 bake-UX/oracle/determinism → A11 (oracle), A15 (`runBake`/bake-then-watch), seeds throughout; §11 testing → CPU oracle TDD + A18 parity + A19 visual; §12 risks 6/7/8 → A3/A14 (corners), A9 (conservative upsample), A7/A10 (no naïve flood — stream-power is O(N) Braun–Willett, hierarchical by construction). **Gap noted & assigned:** C_proxy is computed by Subsystem B's *isolated* `compute_cproxy(h0)` and evaluated on the **pre-erosion macro `h0`** (spec §5.3), then passed into A6 *before* the pyramid runs — it is NOT derived from `h_final` (that would be circular: A needs C_proxy to erode). A6 is built C_proxy-ready (per-texel modulation array).
+
+**Hardening folded in (from architecture review):** (i) A12/A14 — `OES_texture_float_linear` is probed separately from `EXT_color_buffer_float`; absent ⇒ `NearestFilter` RTs + explicit 4-tap `tap2D` manual bilinear in the upsample/resample GLSL (silent nearest-fallback would stair-step rivers). (ii) A7/A8/A14 — the 8 three-way cube corners use a 3-vertex plane-fit slope/Laplacian (`cornerSlope3`), never the symmetric finite difference (which NaNs there); corner tests assert finiteness. (iii) A9/A14 — after bilinear-upsampling `h`, a `fillPits` monotonic-downhill pass runs **before** the conserved water/sed are placed, or the conserved water pools in bilinear-manufactured phantom pits and severs rivers.
 
 **Placeholder scan:** GLSL bodies in A14 are specified as "faithful port of the named Rust function" with the exact source enumerated (A4/A6/A7/A8/A9/A11) and a compile-shape test — not a TODO. The Rust `neighbour` edge-wrap table (A3) is described as "explicit per `FACE_NEI` with standard cube-face axis transforms"; acceptable (concrete, test-pinned) but the implementer must fill the 24-entry table — flagged here, test `neighbour_crossing_a_face_edge_is_continuous` pins it.
 
