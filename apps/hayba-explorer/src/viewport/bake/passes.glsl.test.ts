@@ -88,9 +88,9 @@ for (const [name, src] of [
 }
 
 // tap2D: the manual 4-tap bilinear fallback gated by uManualBilinear (A12).
+// Required in UPSAMPLE_FRAG (genuinely used for coarse-atlas bilinear fetch).
 for (const [name, src] of [
   ["UPSAMPLE_FRAG", UPSAMPLE_FRAG],
-  ["RESAMPLE_FRAG", RESAMPLE_FRAG],
 ] as const) {
   assert.ok(
     src.includes("tap2D"),
@@ -101,6 +101,13 @@ for (const [name, src] of [
     `${name}: tap2D gated by uManualBilinear`,
   );
 }
+
+// RESAMPLE_FRAG uses bilinearFace (face-clamped 4-tap via fetchH) as the
+// normative resampling path, matching resample.rs::bilinear_face.
+assert.ok(
+  RESAMPLE_FRAG.includes("bilinearFace"),
+  "RESAMPLE_FRAG: contains bilinearFace (face-clamped 4-tap, matches resample.rs::bilinear_face)",
+);
 
 // fillPits: the A9 §5.4 monotonic-downhill enforcement, applied to h in the
 // upsample pass before conserved water/sed are placed.

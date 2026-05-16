@@ -104,6 +104,9 @@ const GLSL_U64 = [
   "  uint p11 = a1 * b1;",
   "  uint mid = (p00 >> 16) + (p01 & 0xFFFFu) + (p10 & 0xFFFFu);",
   "  uint lo  = (p00 & 0xFFFFu) | (mid << 16);",
+  "  /* a = a1*2^16 + a0, b = b1*2^16 + b0 (16-bit halves of the LOW 32-bit word). */",
+  "  /* a*b low-64 = p00 + 2^16*(p01+p10) + 2^32*p11, plus the cross-word terms */",
+  "  /* a.x*b.y + a.y*b.x (low 32 only); a.y*b.y is >=2^64 so dropped (low-64 wrap). */",
   "  uint hiLL = p11 + (p01 >> 16) + (p10 >> 16) + (mid >> 16);",
   "  /* + (a.x*b.y + a.y*b.x) in the high word (low 32 bits only). */",
   "  uint hi = hiLL + a.x * b.y + a.y * b.x;",
@@ -127,7 +130,7 @@ const GLSL_U64 = [
   "  uint hi = (v < 0) ? 0xFFFFFFFFu : 0u;",
   "  return uvec2(lo, hi);",
   "}",
-  "uvec2 u64_const(uint hi, uint lo){ return uvec2(lo, hi); }",
+  "uvec2 u64_const(uint hi, uint lo){ return uvec2(lo, hi); } /* returns uvec2(x=lo32, y=hi32) -- note the swap vs arg order */",
   "",
   "/* hash3(ix,iy,iz,seed) -> u32  (noise.rs, verbatim mixing). */",
   "uint hash3(int ix, int iy, int iz, uvec2 seed){",
@@ -675,6 +678,11 @@ export const DETAIL_BAND_FRAG: string =
  *  Identical formula/constants/signs — only the global A prefix-sum is
  *  delegated upstream (it cannot exist in one fragment invocation).
  *
+ *  A15 MUST: (1) per-cell steepest-descent receiver (same formula as recv_and_slope
+ *    / pyramid.rs Pass-1), then (2) Braun-Willett O(N) topological-sort uphill
+ *    accumulation (pyramid.rs Pass-2) -> per-cell drainage area written to uState.b.
+ *    A flood-fill / iterative area estimate is NOT sufficient (A18 RMSE gate).
+ *
  *  uState channels for this pass: r=h, g=slope01(unused here), b=A
  *  (drainage area, orchestrator-supplied), a=ocean.
  * =================================================================== */
@@ -1017,10 +1025,6 @@ export const RESAMPLE_FRAG: string =
     "  int face; float fu; float fv;",
     "  sphereToFaceUv(pos, face, fu, fv);",
     "  float hOut = bilinearFace(face, fu, fv);",
-    "  /* tap2D referenced so the manual-bilinear path is wired in even",
-    "     though bilinearFace does the face-clamped 4-tap explicitly via",
-    "     fetchH; this keeps the uManualBilinear contract uniform. */",
-    "  if (uManualBilinear == 99){ hOut += tap2D(uState, vec2(0.0), uAtlasTexel).r; }",
     "  fragColor = vec4(hOut, 0.0, 0.0, hOut < 0.0 ? 1.0 : 0.0);",
     "}",
   ].join("\n");
