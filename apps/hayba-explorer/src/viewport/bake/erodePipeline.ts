@@ -1003,6 +1003,13 @@ function runInto(
   // TODO(bake-debug): remove after feedback-loop root-caused. Dev-only:
   // catch a true same-pass structural alias (a uniform sampling `dst`).
   _bakeDebug.checkSelfAlias("runInto", frag, uniforms, dst);
+  // TODO(bake-debug): remove after feedback-loop root-caused. Dev-only:
+  // GL-texture-identity alias — names the EXACT (frag,uniform) whose
+  // sampler resolves to the SAME __webglTexture as this pass's dst RT
+  // (the accumulation/scratch/PD/lowpass passes reuse makeRT-churned RTs;
+  // a disposed scratch RT's GL texture name can be recycled for a new RT
+  // while a stale uniform ref lingers — this names that pass+uniform).
+  _bakeDebug.checkGlAlias(renderer, "runInto", frag, uniforms, dst);
   // FEEDBACK-LOOP KILL — identical mechanism + fix as pingpong.ts/runPass
   // (stale three.js sampler binding from an earlier runInto/runPass that
   // three re-binds on render(); the accumulation/upsample passes here
