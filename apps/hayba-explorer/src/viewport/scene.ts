@@ -98,17 +98,30 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
   // True while a bake owns the renderer; the tick must not reschedule
   // itself (and a stray in-flight tick must not render) until resumed.
   let baking = false;
-  const tick = () => {
-    if (baking) return;
-    const now = performance.now();
-    const dt = Math.min(0.1, (now - prevTime) / 1000);
-    prevTime = now;
-    starfield.tick(dt);
-    controls.update();
-    renderer.render(scene, camera);
-    raf = requestAnimationFrame(tick);
+  // Monotonic loop epoch. Each `tick` captures the epoch it was scheduled
+  // under; `runBake` bumps the epoch so ANY callback queued before the
+  // bake started (or that somehow slipped through) is provably inert when
+  // it finally fires — it neither renders nor reschedules. This makes the
+  // suspension robust across the Phase-1 `await yieldToLoop()` macrotask
+  // gaps: the render loop cannot touch the renderer while bake RTs are
+  // bound, independent of rAF/cancel timing races.
+  let loopEpoch = 0;
+  const scheduleTick = () => {
+    const myEpoch = loopEpoch;
+    raf = requestAnimationFrame(() => {
+      // Drop if a bake is running or this callback belongs to a
+      // superseded epoch (cancelled/replaced loop generation).
+      if (baking || myEpoch !== loopEpoch) return;
+      const now = performance.now();
+      const dt = Math.min(0.1, (now - prevTime) / 1000);
+      prevTime = now;
+      starfield.tick(dt);
+      controls.update();
+      renderer.render(scene, camera);
+      scheduleTick();
+    });
   };
-  raf = requestAnimationFrame(tick);
+  scheduleTick();
 
   return {
     renderer,
@@ -129,21 +142,32 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
       if (object) scene.add(object);
     },
     async runBake(fn) {
-      // Pause the live loop: cancel the pending frame and flag the tick
-      // so any already-queued callback returns without rendering.
+      // Pause the live loop: flag the tick, bump the epoch (so any
+      // callback already queued under the old epoch is inert when it
+      // fires — it won't render or reschedule even across the bake's
+      // `await yieldToLoop()` macrotask gaps), and cancel the pending
+      // frame. With the epoch guard the render loop provably cannot
+      // render the globe while bake render targets are bound.
       baking = true;
+      loopEpoch++;
       cancelAnimationFrame(raf);
       try {
         await fn(renderer);
       } finally {
-        // Resume exactly as before. Reset prevTime so the first resumed
-        // frame's dt is a normal step, not a multi-second spike.
+        // Resume "bake-then-watch": reset prevTime so the first resumed
+        // frame's dt is a normal step (not a multi-second spike), bump
+        // the epoch again so the resumed loop is the sole live
+        // generation, then re-arm a single fresh tick.
         baking = false;
+        loopEpoch++;
         prevTime = performance.now();
-        raf = requestAnimationFrame(tick);
+        scheduleTick();
       }
     },
     dispose() {
+      // Bump the epoch so any in-flight rAF callback is inert, then
+      // cancel the pending frame.
+      loopEpoch++;
       cancelAnimationFrame(raf);
       ro.disconnect();
       controls.dispose();
