@@ -579,11 +579,16 @@ pub fn stream_power_step(field: &mut Field, cfg: &super::ErosionConfig) {
 ///
 /// ## Mass conservation (NORMATIVE)
 /// The pass is exactly mass-conserving over land. We build the set of
-/// **unordered** real land–land edges once (an edge exists if *either*
-/// endpoint lists the other through the seam-correct `Field::neighbour`,
-/// deduped by `(min,max)` flat index — robust to any non-reciprocal seam
-/// adjacency), compute a single flux per edge from the OLD field into a
-/// scratch `delta` buffer, and apply it antisymmetrically
+/// **unordered** real land–land edges once. Each physical edge is discovered
+/// from *both* endpoints by `gather_neighbours` (the geometry is reciprocal
+/// because `Field::neighbour` round-trips through the real cube-sphere
+/// projection), so keeping only the canonical `k < nk` direction emits each
+/// edge exactly once with no per-call `HashSet`. A `sort_unstable` +
+/// `dedup_by_key` on `(min,max)` flat index is then applied as a
+/// belt-and-braces guard against any float-drift non-reciprocity at seams
+/// (any duplicate is collapsed; an edge missed from one endpoint is still
+/// found from the other). We then compute a single flux per edge from the OLD
+/// field into a scratch `delta` buffer, and apply it antisymmetrically
 /// (`delta[i] += F`, `delta[j] −= F`). Because every edge contributes `+F`
 /// to one cell and exactly `−F` to the other, `Σ delta == 0` *by
 /// construction* — independent of the seam/corner topology. The new field is
@@ -647,16 +652,20 @@ pub fn thermal_step(field: &mut Field, cfg: &super::ErosionConfig) {
     let is_land: Vec<bool> = field.ocean.iter().map(|&o| !o).collect();
 
     // --- Build the unordered land–land edge set once. -------------------
-    // An edge exists if EITHER endpoint lists the other through the
-    // seam-correct `neighbour`; dedup by (min,max) flat index so each
-    // physical edge is processed exactly once regardless of any
-    // non-reciprocal seam adjacency. Storing the 3-way flag of the
-    // *source-of-record* endpoint lets the slope term use the A7 plane fit.
+    // Each physical edge is discovered from BOTH endpoints by
+    // `gather_neighbours` (the geometry is reciprocal because
+    // `Field::neighbour` round-trips through the real cube-sphere
+    // projection), so keeping only the canonical `k < nk` direction emits
+    // each edge exactly once with NO per-call `HashSet` (which at n=2048
+    // would hash ~50M edges K×/level). A trailing `sort_unstable` +
+    // `dedup_by_key` on the `(a, b)` flat-index pair is a belt-and-braces
+    // guard against any float-drift non-reciprocity at seams: a duplicate is
+    // collapsed, and an edge missed from one endpoint is still found from
+    // the other. The stored per-endpoint 3-way flags let the slope term use
+    // the A7 plane fit when either end is a cube corner.
     let mut nbuf: Vec<usize> = Vec::with_capacity(4);
     // (a, b, a_is_corner, b_is_corner) with a < b.
     let mut edges: Vec<(usize, usize, bool, bool)> = Vec::with_capacity(total * 2);
-    let mut seen: std::collections::HashSet<(usize, usize)> =
-        std::collections::HashSet::with_capacity(total * 2);
     for face in 0u8..6 {
         for j in 0..n {
             for i in 0..n {
@@ -670,22 +679,19 @@ pub fn thermal_step(field: &mut Field, cfg: &super::ErosionConfig) {
                     if !is_land[nk] {
                         continue; // edge only when BOTH ends are land
                     }
-                    let (a, b) = if k < nk { (k, nk) } else { (nk, k) };
-                    if !seen.insert((a, b)) {
-                        continue; // physical edge already recorded
+                    if k >= nk {
+                        continue; // canonical single discovery (k < nk only)
                     }
                     let (nf, ni, nj) = unflatten(field, nk);
                     let nk_corner = field.corner_neighbour_count(nf, ni, nj) == 3;
-                    let (a_c, b_c) = if k < nk {
-                        (k_corner, nk_corner)
-                    } else {
-                        (nk_corner, k_corner)
-                    };
-                    edges.push((a, b, a_c, b_c));
+                    // k < nk here, so (a, b) = (k, nk) and the flags map 1:1.
+                    edges.push((k, nk, k_corner, nk_corner));
                 }
             }
         }
     }
+    edges.sort_unstable_by_key(|&(a, b, _, _)| (a, b));
+    edges.dedup_by_key(|e| (e.0, e.1));
 
     // --- Single flux per edge from the OLD field → scratch delta. -------
     // Antisymmetric application (`+F` to a, `−F` to b) ⇒ Σ delta == 0 by
@@ -1091,21 +1097,33 @@ mod tests {
         let mut f = Field::flat(n, 0.0);
         let kc = f.idx(4, 4, 4);
         f.h[kc] = 1.0; // a spike steeper than talus
+        // Also spike a true cube-CORNER texel (+Z face, (7,7) →
+        // corner_neighbour_count == 3) so mass conservation is exercised
+        // through the 3-way junction, where the FV Laplacian sums only the
+        // 3 real fluxes and the slope comes from the A7 plane fit.
+        let kcorner = f.idx(4, 7, 7);
+        f.h[kcorner] = 1.0;
         let kf = f.idx(4, 1, 1);
         f.h[kf] = 0.001; // gentle ≪ talus
         f.ocean.iter_mut().for_each(|o| *o = false);
         let before_flat = f.h[kf];
+        // sum0 AFTER all spikes are set — the conservation check must be
+        // against the correct initial total (incl. the corner spike).
         let sum0: f32 = f.h.iter().sum();
         let cfg = super::super::ErosionConfig::default();
         thermal_step(&mut f, &cfg);
         assert!(f.h[kc] < 1.0, "oversteep spike relaxed");
+        assert!(
+            f.h[kcorner] < 1.0,
+            "oversteep cube-corner spike relaxed (3-way junction flux)"
+        );
         assert!(
             (f.h[kf] - before_flat).abs() < 1e-7,
             "gentle slope untouched (talus clamp)"
         );
         assert!(
             (f.h.iter().sum::<f32>() - sum0).abs() < 1e-3,
-            "diffusion conserves mass"
+            "diffusion conserves mass (incl. flux through a cube corner)"
         );
         assert!(
             f.h.iter().all(|v| v.is_finite()),
