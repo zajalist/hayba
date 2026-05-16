@@ -803,6 +803,85 @@ pub fn bake_erode_v2(
     bake_erode_v2_impl(&draft, &cfg)
 }
 
+/// Source `h0` cube-sphere atlas for the GPU erode pipeline (Task A16).
+///
+/// `atlas` is the rasterised macro height field serialised into the SAME
+/// 6-faces-in-one-2D-texture, 3-wide × 2-tall tile layout the bake GLSL
+/// (`passes.glsl.ts`) addresses. `face_res` is `n` (texels per face edge);
+/// the texture is `3·n` wide × `2·n` tall and `atlas.len() == 6·n·n`.
+///
+/// **Atlas layout (NORMATIVE — must stay in lockstep with
+/// `passes.glsl.ts` GLSL_ATLAS / `srcFaceUvToAtlas`).** Quoting GLSL:
+///
+/// ```text
+///   tileX = face % 3 ; tileY = face / 3   (face 0..5)
+///   atlas uv = ( (tileX + faceU) / 3 , (tileY + faceV) / 2 )
+///   faceU = (i + 0.5) / n   faceV = (j + 0.5) / n
+/// ```
+///
+/// So face → tile is `face 0→(0,0) 1→(1,0) 2→(2,0) 3→(0,1) 4→(1,1)
+/// 5→(2,1)`, and cube cell `(face,i,j)` lands at atlas pixel
+/// `x = tileX·n + i`, `y = tileY·n + j`. We serialise ROW-MAJOR
+/// (`atlas[y*(3n) + x]`) with row 0 at atlas-UV v=0. `THREE.DataTexture`
+/// and the bake render targets both default to `flipY = false`, so the
+/// JS `uploadH0` reads element `(y·3n + x)` at UV `((x+0.5)/3n,
+/// (y+0.5)/2n)` — identical to the GLSL `texture(uSrc, srcFaceUvToAtlas)`
+/// sample, giving CPU↔GPU h0 parity (the A18 load-bearing property).
+///
+/// Only the height channel is serialised here (this is the macro `h0`
+/// reference + start field; `RESTRICT_FRAG` reads `.r`); `uploadH0`
+/// expands it into the RGBA32F (r=h, g=water, b=sed, a=ocean) texture
+/// `runErodeBake` expects. `Field::idx(f,i,j) = f·n·n + j·n + i` is
+/// exactly this `(tileX·n+i, tileY·n+j)` pixel address, so the mapping is
+/// a direct reindex (no resampling).
+#[derive(serde::Serialize)]
+pub struct H0Atlas {
+    pub face_res: u32,
+    pub atlas: Vec<f32>,
+}
+
+/// Task A16: rasterise the wizard draft's painted macro elevations onto
+/// the cube-sphere at `face_res` and serialise the height field into the
+/// 3×2 face-tile atlas `runErodeBake` consumes as `srcH0Tex`.
+///
+/// Reuses Task A11's `painted_cells_from_draft` (identical painter
+/// precedence to `bake_impl` Step 4) → `rasterize_from_cells`. It does
+/// NOT step the tectonic sim or the legacy graph erosion (same constraint
+/// as `bake_erode_v2_impl` — the v2 path is the new cube-sphere oracle).
+pub(crate) fn bake_h0_v2_impl(draft: &WizardDraft, face_res: u32) -> H0Atlas {
+    let n = face_res.max(1);
+    let cells = painted_cells_from_draft(draft);
+    let field = crate::erosion::pyramid::rasterize_from_cells(n, &cells);
+
+    // Serialise ROW-MAJOR over the 3·n × 2·n atlas. For atlas pixel
+    // (x, y): tileX = x/n, tileY = y/n → face = tileY*3 + tileX;
+    // i = x%n, j = y%n. This is the exact inverse of the GLSL
+    // `srcFaceUvToAtlas` (tileX=face%3, tileY=face/3, faceU=(i+.5)/n)
+    // and equals `Field::idx(face,i,j)` after the (tileX,tileY) split.
+    let w = (3 * n) as usize;
+    let h_rows = (2 * n) as usize;
+    let mut atlas = vec![0.0f32; w * h_rows];
+    for y in 0..h_rows {
+        let tile_y = (y as u32) / n;
+        let j = (y as u32) % n;
+        for x in 0..w {
+            let tile_x = (x as u32) / n;
+            let i = (x as u32) % n;
+            let face = (tile_y * 3 + tile_x) as u8;
+            atlas[y * w + x] = field.h[field.idx(face, i, j)];
+        }
+    }
+    H0Atlas { face_res: n, atlas }
+}
+
+/// Tauri entry point for the A16 source-`h0` atlas. `face_res` is
+/// optional — a missing arg falls back to a sane default (64), mirroring
+/// `bake_erode_v2`'s `Option` pattern.
+#[tauri::command]
+pub fn bake_h0_v2(draft: WizardDraft, face_res: Option<u32>) -> H0Atlas {
+    bake_h0_v2_impl(&draft, face_res.unwrap_or(64))
+}
+
 /// Return the triangle index list for the icosphere at the given divisions.
 /// Each consecutive triple of u32s is one triangle, indexing into the
 /// per-cell position list. Used by the renderer to build the planet mesh.
@@ -979,5 +1058,14 @@ mod tests {
         assert_eq!(r.equirect_w * r.equirect_h, r.h_final.len() as u32);
         assert!(r.h_final.iter().all(|v| v.is_finite()));
         assert!(r.h_final.iter().any(|&v| v > 0.0), "has land");
+    }
+
+    #[test]
+    fn bake_h0_v2_returns_cube_atlas_sized_correctly() {
+        let d = draft_for("plates2");
+        let a = bake_h0_v2_impl(&d, 64);
+        assert_eq!(a.face_res, 64);
+        assert_eq!(a.atlas.len(), (6 * 64 * 64) as usize);
+        assert!(a.atlas.iter().all(|v| v.is_finite()));
     }
 }
