@@ -28,7 +28,7 @@ to `Saved/HaybaMCP/instances/<pid>.json` for multi-editor setups.
 Every destructive command is wrapped in `GEditor->BeginTransaction` (Plan
 Mode) so `Ctrl+Z` works.
 
-## Command-handler domains (34)
+## Command-handler domains (33)
 
 Each domain implements `IHaybaMCPHandler` (`GetCommands()` / `Handle()`),
 registered in `HaybaMCPModule`:
