@@ -166,8 +166,9 @@ valleys (Gaea Rivers, GPU-side).
 
 A single `detailMask = clamp(elevGate(z_m) * slopeGate(slope), 0, 1)` where
 `elevGate` rises above a mid-elevation threshold and `slopeGate` rises with
-steepness. **All high-frequency contributions** — the rasteriser FBM amplitude
-(S6), the detail-band erosion intensity (S2.5), thermal `strength` — are
+steepness. **All high-frequency contributions** — the rasteriser
+sub-cell FBM amplitude, the detail-band erosion intensity (S2.5),
+thermal `strength` — are
 multiplied by `detailMask`. Effect: micro detail is strong on steep high
 terrain (mountains), ~zero on ocean floor and flat lowlands. Directly the
 user's "mask at mountain heights; spare ocean/flatlands".
@@ -210,12 +211,34 @@ macro+tile composite), `src/App.tsx` (camera-settle hook, wiring).
   tile `dx ≈ featureScale / k` (finer the closer you are). Skip if a cached
   tile already covers the view at adequate resolution.
 - **Async, no freeze.** Run rasterise + S1+S2 sim via the existing
-  `scene.runBake` (bake-then-watch pauses the live loop; the load-bearing
-  raw-WebGL2 + single end-of-bake `resetState()` discipline is retained).
-- **Seam blend.** The tile shares the macro band with the base (S2.5), so
-  only the detail band differs. Composite in the shader: sample macro base
-  everywhere, add the tile's detail where it covers, with a feathered alpha
-  ramped to 0 across the apron. No discontinuity at the tile edge.
+  `scene.runBake` (bake-then-watch; the load-bearing raw-WebGL2 + single
+  end-of-bake `resetState()` discipline is retained). The sim is chunked
+  with event-loop yields (existing infra) so it never holds the main
+  thread across a long stretch.
+- **Interaction safety (single-flight + abort).** Tile re-bake is
+  **single-flight**: at most one in flight; the camera-settle trigger
+  fires only on true idle (debounced), and any camera movement while a
+  tile bake is pending or running **supersedes** it — a pending request
+  is dropped, a running one is cancelled at the next chunk yield (cheap,
+  no partial composite shown) and re-evaluated once idle again. Rapid
+  panning therefore enqueues *zero* extra bakes; it just keeps deferring
+  the single next one. The **macro base stays rendered and interactive
+  the entire time** (pan/zoom never blocks on a tile bake); a tile only
+  ever *adds* detail on top once it lands.
+- **Seam blend (derivative-continuous).** The tile shares the macro band
+  with the base (S2.5), so only the **detail band** differs. Composite in
+  the shader: sample macro base everywhere, add the tile's detail where it
+  covers, scaled by an apron weight `w(d)` that goes 1→0 across the apron
+  using the **quintic fade** `x³(6x²−15x+10)` (zero first *and* second
+  derivative at both ends) — not a linear alpha. A linear ramp leaves a
+  slope kink: even with C0-continuous height, the detail band's
+  high-frequency derivative ramps in abruptly and the recomputed shading
+  normal shows the seam as a lighting line. The quintic ramp makes the
+  blended field C1 across the apron. **Normals are derived once from the
+  final composited height field** (never macro-normals and tile-normals
+  computed separately then mixed), so the gradient is consistent through
+  the apron. Asserted by the seam metric (§9 / §10) measured on the
+  *normal* field, not just height.
 - **Cache + invalidate.** LRU cache keyed by (quantised lat/lon AABB, res).
   Invalidate **all** tiles + macro on any draft/paint/param change. Bounded
   tile resolution (VRAM) and a small LRU count.
@@ -261,6 +284,15 @@ Outputs: reshaped height + `water` / `depth` / `shore` masks (consumed by the
 renderer; also retires the parked coastline-hex pain, task #177). S4 runs
 **before** S1/S2 so erosion acts on the shore-shaped coast.
 
+**S4 runs on the macro base *and* on every focused tile** (not macro-only).
+`shoreSize` / `shoreHeight` and the cliff-noise frequency are expressed in
+**metres** and converted via the S1 `dx`, so the shore profile is the same
+real-world shape at every resolution: the macro base gives the coarse
+shelf/beach, and a zoomed tile resolves the *same* coast with finer cliff
+and shore detail (consistent material, not a smooth low-res coastline
+revealed up close). The shared macro band still carries the coast position,
+so the S3 seam blend stays continuous across the apron.
+
 ## 8. Data flow
 
 ```
@@ -281,8 +313,17 @@ draft + precip
 - **Ocean sign.** `base.r < 0 ⇒ ocean` must survive S4 + band split + blend.
   S4 clamps shore output sign-preserving; S2.5 recombination cannot flip
   sign (macro band carries it). Asserted numerically.
-- **Seam continuity.** Guaranteed by the shared macro band + apron feather;
-  asserted by a low seam-ratio metric across the ±180° wrap and tile edges.
+- **Seam continuity (C1).** Guaranteed by the shared macro band + a
+  quintic (derivative-continuous) apron feather + normals derived from the
+  single composited field (S3). Asserted by a low seam-ratio metric
+  measured on the **normal/slope field** (not just height) across the
+  ±180° wrap and tile edges — a height-only metric would miss the
+  lighting-line artifact.
+- **Interaction never blocks.** Tile re-bake is single-flight and
+  abortable; camera movement supersedes a pending/running tile; the macro
+  base stays live and interactive throughout (S3). Asserted by: rapid-pan
+  stress in the real-app gate triggers ≤1 in-flight bake and no frame
+  lock.
 - **Longitude wrap / poles.** Retained from the hydraulic core (integer
   `(x%W+W)%W`, pole-band damping); windowed tiles crossing ±180° handle the
   wrap in the Rust loop.
@@ -334,6 +375,7 @@ draft + precip
 ## 13. Open decisions (resolve in the plan, not blocking)
 
 - Exact band count (1 vs 2 detail bands) — start with 1, measure.
-- Tile apron width and camera-settle debounce — start 10 % AABB / 150 ms.
-- Whether S4 runs per-tile or only on the macro base — start macro-only,
-  add per-tile if coastlines look under-detailed when zoomed in.
+- Tile apron width and camera-settle debounce — start 10 % AABB / 150 ms;
+  the abort/supersede logic (S3) makes the debounce value non-critical.
+- (Resolved per review) S4 runs on macro **and** per tile, scale-aware —
+  see §7. No longer open.
