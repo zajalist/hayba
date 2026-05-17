@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![UE 5.7](https://img.shields.io/badge/Unreal_Engine-5.7-blue.svg)](https://www.unrealengine.com/)
 [![MCP](https://img.shields.io/badge/Model_Context_Protocol-✓-7A8AB8.svg)](https://modelcontextprotocol.io)
-[![Tools](https://img.shields.io/badge/Tools-100+_across_34_domains-green.svg)](#features)
+[![Tools](https://img.shields.io/badge/Tools-100+_across_33_domains-green.svg)](#features)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.5-339933.svg)](.nvmrc)
 
 </div>
@@ -20,7 +20,7 @@ This is a **monorepo**: the MCP server, the UE5 C++ plugin, the Tauri desktop ex
 
 ## Features
 
-- **100+ tools across 34 domains** — Actor / Level / Scene / Asset / Blueprint / Material / Foliage / Spline / World Partition / ISM / Physics / Python / Editor / Docs / PCG / Sequencer / Animation / Niagara / Audio / MetaSound / GAS / Behavior Tree / Input / UI / Net / Mesh / Texture / Data / Project / Build / Test / Memory / Plan / Conventions
+- **100+ tools across 33 domains** — Actor / Level / Scene / Asset / Blueprint / Material / Foliage / Spline / World Partition / ISM / Physics / Python / Editor / Docs / PCG / Sequencer / Animation / Niagara / Audio / MetaSound / GAS / Behavior Tree / Input / UI / Net / Mesh / Texture / Data / Project / Build / Test / Memory / Plan / Conventions
 - **PCG SQLite registry** — 344 PCGEx nodes / 356 pins / 2270 properties scraped from C++ headers, queryable with semantic + structural intent
 - **Cognitive Map** — 2D top-down semantic clustering of every actor in the level, force-directed mindmap renderer
 - **Visual sidecar** — FastAPI + CLIP / SpatialCLIP / OWL-ViT for deep physics validation and spatial grounding
@@ -36,8 +36,8 @@ This is a **monorepo**: the MCP server, the UE5 C++ plugin, the Tauri desktop ex
 | [`mcp-tools/hayba-mcp`](mcp-tools/hayba-mcp) | **Core product** — the Node/TypeScript MCP server (tool surface, schema registry, TCP client to UE) |
 | [`mcp-tools/hayba-mcp/addons/visual-embeddings`](mcp-tools/hayba-mcp/addons/visual-embeddings) | Python FastAPI visual sidecar (CLIP / SpatialCLIP / OWL-ViT) |
 | [`mcp-tools/gaea-server`](mcp-tools/gaea-server) | TCP bridge between UE5 and Gaea terrain generation |
-| `mcp-tools/gaea`, `mcp-tools/pcgex` | Supporting MCP tooling |
-| [`unreal/HaybaMCPToolkit`](unreal/HaybaMCPToolkit) | The UE5 C++ editor plugin — 34 command-handler domains, Slate panels, the TCP server half of the protocol |
+| `mcp-tools/gaea` · `mcp-tools/pcgex` | Locator / parked supporting tooling (see their READMEs) |
+| [`unreal/HaybaMCPToolkit`](unreal/HaybaMCPToolkit) | The UE5 C++ editor plugin — 33 command-handler domains, Slate panels, the TCP server half of the protocol |
 | [`apps/hayba-explorer`](apps/hayba-explorer) | Tauri + React + Rust desktop explorer (the long-term viewer) |
 | `apps/hayba-explorer/packages/*` | Worldbuilding libs consumed by the explorer: `linguistics`, `planet-physics`, `tectonics`, `frame-stream`, `seeds`, `fixedpoint` |
 | [`packages/architecture`](packages/architecture) | Procedural architecture engine (cultures, style schema, validation) |
@@ -83,7 +83,7 @@ Then ask Claude: *"Search the PCG node catalog for voronoi, propose a 3-step pla
 │  Agent Host      │ ◄────►  │  Node MCP Server │ ◄────► │  UE5 Plugin    │
 │  (Claude / GPT)  │         │  mcp-tools/      │ :52342 │  unreal/       │
 └──────────────────┘         │  hayba-mcp       │        │  HaybaMCP...   │
-                             │  Zod · PCGEx DB  │        │  34 handlers   │
+                             │  Zod · PCGEx DB  │        │  33 handlers   │
                              └──────────────────┘        └────────────────┘
 ```
 
