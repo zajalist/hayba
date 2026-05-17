@@ -299,6 +299,50 @@ git commit -m "feat(erode): metre-denominated incision replaces per-step clamp"
 - [ ] **Step 1:** Update memory `project_baking_pipeline_redesign.md`: S1 (metre-scale model) landed, clamp/uplift removed, gentler verified. Commit only that memory file is N/A (memory dir is outside the repo — just write it, no git).
 - [ ] **Step 2:** Append the Phase S2 detailed task plan to this file (authored now that S1 exists), then proceed.
 
+### Task 10: Rasterizer performance — parallelize (rayon) + non-blocking + streamed progress
+
+**Why:** the continuous IDW+FBM rasteriser (`bake_inputs_equirect_impl`, commit `03fc40f7`) is single-threaded → ~tens of seconds at 2048×1024, pegging one core and freezing the webview during "Rasterising…". The GPU sim already streams; this CPU stage does not. User-reported blocker.
+
+**Files:** `apps/hayba-explorer/src-tauri/src/bake_equirect.rs`; `apps/hayba-explorer/src-tauri/Cargo.toml` (rayon dep — NOTE: Cargo.toml is a pre-existing-dirty protected file; this task is the *one* sanctioned exception that may stage it, and ONLY the rayon dependency line).
+
+- [ ] **Step 1: Failing determinism test** — add to `bake_equirect.rs` tests: a `rayon`-parallel `bake_inputs_equirect_impl` must be **byte-identical** to a serial reference on the `earthish_draft()` fixture at 256×128 (parallelism must not change output — the per-texel function is pure; parallelize the outer row loop, each row writes a disjoint slice).
+
+```rust
+#[test]
+fn parallel_rasterise_is_byte_identical_to_serial() {
+    let d = test_support::earthish_draft();
+    let par = bake_inputs_equirect_impl(&d, 256, 128);
+    let ser = bake_inputs_equirect_serial(&d, 256, 128); // kept #[cfg(test)] serial ref
+    assert_eq!(par.height, ser.height);
+    assert_eq!(par.precip, ser.precip);
+}
+```
+
+- [ ] **Step 2:** Run it — FAIL (no parallel impl / no serial ref yet).
+- [ ] **Step 3:** Add `rayon` to `Cargo.toml` (workspace-consistent version). Parallelise the outer latitude-row loop with `par_chunks_mut` over the `height`/`precip` output slices (one chunk = one row of `w`), capturing `&CellGrid`/`&cells` by shared ref (read-only — `Sync`). Keep a `#[cfg(test)] fn bake_inputs_equirect_serial` as the byte-equal oracle. The `CellGrid` query is read-only and order-independent → output is deterministic regardless of thread scheduling.
+- [ ] **Step 4:** Run `cargo test --lib` — the new test + all existing `spatial_eq_bruteforce_*`/continuity/determinism PASS (parallel ≡ serial ≡ prior output).
+- [ ] **Step 5: Walltime assertion** — extend the existing `rasterizer_walltime_*` test (or add one) asserting 2048×1024 completes in `< 4 s` in `--release` (was ~tens of s single-thread; rayon across N cores must beat this comfortably — set the bound from the measured release number, non-flaky).
+- [ ] **Step 6: Non-blocking** — confirm the `#[tauri::command] bake_inputs_equirect` does not block the webview UI thread: it must be an `async` command (Tauri runs it on its async runtime / `spawn_blocking`), and `handleDebugBake` already `await`s it. If it is a sync command on the main thread, convert to `async fn` + `tauri::async_runtime::spawn_blocking`. (Inspect `bake_equirect.rs` + the command registration; no behaviour change, only threading.)
+- [ ] **Step 7: Commit**
+
+```bash
+git add apps/hayba-explorer/src-tauri/src/bake_equirect.rs apps/hayba-explorer/src-tauri/Cargo.toml
+git commit -m "perf(bake): parallelise equirect rasteriser (rayon), keep off UI thread"
+```
+
+(Run order: execute Task 10 immediately after the S1 visual gate, before Phase S2 — a frozen page makes every later visual gate unreliable.)
+
+### Tracked follow-up (not S1): ocean "circle/disc" rasterise artefacts
+
+**Observed at S1 gate (user, Image #31):** deep ocean shows overlapping circular disc patches — the k=6 IDW blend (`bake_equirect.rs`, commit `03fc40f7`) renders each painted Goldberg cell's influence as a soft disc, so cell footprints read as circles. Continents/erosion unaffected; cosmetic on the seafloor.
+**Root cause:** nearest-k inverse-distance weighting with hard k cutoff → visible per-cell footprints. Higher texel resolution does NOT fix it (upsamples the same discs).
+**Fix path (defer — fold into Phase S4 boundary, since S4 already touches the rasterised seafloor):** replace the hard-k IDW with a smoother kernel — Gaussian angular falloff and/or larger k / natural-neighbour weighting so cell footprints blend out; S4's Sea-node SDF shelf-smoothing further cleans deep ocean. Add a Rust test: adjacent-texel curvature/Laplacian variance over a flat painted region must drop below an artefact threshold vs the current kernel. Do NOT do this during S1/S2; revisit when authoring S4.
+
+### Tracked follow-up (not S1): poles not perfectly clean
+
+**Observed at S1 gate (user):** the polar regions are not perfectly clean (minor — equirect lat→texel convergence + `poleBand` damp; not a blowup). Acceptable for now per user.
+**Fix path (defer):** revisit pole handling when authoring S3 (windowed tiles never include the poles at zoom, so this only affects the global macro view) — options: stronger `poleBand` taper, polar-cap mask, or a small cosine-lat area weighting in the rasterise/erode. Add a headless assert that polar rows stay finite and within macro-band bounds. Do NOT address during S1/S2.
+
 ---
 
 ## Later Phases (authored at each phase boundary, after the prior visual gate)
