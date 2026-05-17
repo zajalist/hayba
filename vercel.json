@@ -1,3 +1,10 @@
 {
-  "outputDirectory": "website"
+  "outputDirectory": "website",
+  "rewrites": [
+    { "source": "/app/:path*", "destination": "/app/index.html" },
+    { "source": "/lang/:id", "destination": "/app/index.html" },
+    { "source": "/waitlist", "destination": "/waitlist/index.html" },
+    { "source": "/login", "destination": "/login/index.html" },
+    { "source": "/admin", "destination": "/admin/index.html" }
+  ]
 }

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hayba — Admin · Waitlist</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/config.js"></script>
+<script type="module" src="/admin/queue.js" defer></script>
+</head>
+<body class="page-admin">
+  <header class="admin-header">
+    <a href="/" class="brand-link">Hayba</a>
+    <h1>Waitlist queue</h1>
+    <button class="btn" id="admin-signout">Sign out</button>
+  </header>
+
+  <section class="admin-counts">
+    <div><div class="label">Pending</div><div class="count pending" id="count-pending">—</div></div>
+    <div><div class="label">Approved</div><div class="count approved" id="count-approved">—</div></div>
+    <div><div class="label">Slots left</div><div class="count" id="count-slots">—</div></div>
+    <select id="filter">
+      <option value="pending">Pending</option>
+      <option value="approved">Approved</option>
+      <option value="all">All</option>
+    </select>
+  </section>
+
+  <main class="admin-list" id="admin-list">
+    Loading…
+  </main>
+</body>
+</html>
