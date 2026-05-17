@@ -6,6 +6,7 @@ mod sim_state;
 mod climate;
 mod hydrology;
 mod bake_equirect;
+mod scale;
 
 #[tauri::command]
 fn bake_demo_planet() -> planet::PlanetSnapshot {
