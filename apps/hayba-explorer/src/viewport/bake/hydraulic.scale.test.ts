@@ -133,18 +133,35 @@ describe("#218 accumulation passes", () => {
     expect(INIT_ACC_FRAG).toMatch(/uniform float uAccMin;/);
     expect(INIT_ACC_FRAG).toMatch(/a\.a > 0\.5/);
   });
-  it("ACCUM_FRAG is an 8-neighbour slope-weighted MFD gather", () => {
+  it("ACCUM_FRAG is an 8-neighbour single-flow (D8) gather with jitter (R1b)", () => {
     expect(typeof ACCUM_FRAG).toBe("string");
     expect(ACCUM_FRAG).toMatch(/uniform sampler2D uA;/);
     expect(ACCUM_FRAG).toMatch(/uniform sampler2D uAcc;/);
     expect(ACCUM_FRAG).toMatch(/uniform sampler2D uPrecip;/);
-    expect(ACCUM_FRAG).toMatch(/uniform float uMfdExponent;/);
+    expect(ACCUM_FRAG).toMatch(/uniform float uSfdJitter;/);
+    expect(ACCUM_FRAG).not.toMatch(/uMfdExponent/);
     expect(ACCUM_FRAG).toMatch(/uniform float uPoleBand;/);
     expect(ACCUM_FRAG).toMatch(/uniform float uAccMin;/);
     expect(ACCUM_FRAG).toMatch(/a\.a > 0\.5/);
-    expect(ACCUM_FRAG).toMatch(/pow\(/);
+    // single steepest-descent direction selector + jitter
+    expect(ACCUM_FRAG).toMatch(/int sdir\(/);
+    expect(ACCUM_FRAG).toMatch(/uSfdJitter \* \(jit\(/);
     expect(ACCUM_FRAG).toMatch(/ivec2\[8\]/);
     expect((ACCUM_FRAG.match(/ivec2\(/g) ?? []).length).toBeGreaterThanOrEqual(8);
+  });
+});
+
+describe("#218 R2 ERODE discharge-weighted capacity", () => {
+  it("ERODE capacity is multiplied by Q^uSpM from the SFD ACC field", () => {
+    expect(ERODE_FRAG).toMatch(/uniform sampler2D uAcc;/);
+    expect(ERODE_FRAG).toMatch(/uniform float uAccResScale;/);
+    expect(ERODE_FRAG).toMatch(/uniform float uSpM;/);
+    expect(ERODE_FRAG).toMatch(
+      /float C = uStrength \* \(vmag \* uResScale\) \* slope \* pow\(max\(Q, 0\.0\), uSpM\)/,
+    );
+    // ERODE keeps its #217 resolution + base-level-clamp machinery.
+    expect(ERODE_FRAG).toMatch(/vmag \* uResScale/);
+    expect(ERODE_FRAG).toMatch(/max\(b, minNb - 1\.0e-3\)/);
   });
 });
 
@@ -161,7 +178,12 @@ describe("#218 CARVE_RIVERS stream-power on accumulation", () => {
     expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uTerrainScale;/);
     expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uSinMin;/);
     expect(CARVE_RIVERS_FRAG).toMatch(/smoothstep\(0\.0, uConcaveScale, lap\)/);
-    expect(CARVE_RIVERS_FRAG).toMatch(/max\(nb, minNb - 1\.0e-3\)/);
+    // R1a: Q-proportional incision budget (1e-3 floor + channelDepth term)
+    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uChannelDepth;/);
+    expect(CARVE_RIVERS_FRAG).toMatch(
+      /float budget = 1\.0e-3 \+ uChannelDepth \* concave \* pow\(max\(Q, 0\.0\), uSpM\)/,
+    );
+    expect(CARVE_RIVERS_FRAG).toMatch(/max\(nb, minNb - budget\)/);
     expect(CARVE_RIVERS_FRAG).toMatch(/a\.a > 0\.5/);
     expect(CARVE_RIVERS_FRAG).not.toMatch(/uRiverThreshold0/);
     expect(CARVE_RIVERS_FRAG).not.toMatch(/uRiverThreshold1/);

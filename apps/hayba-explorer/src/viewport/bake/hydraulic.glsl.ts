@@ -195,6 +195,13 @@ export const ERODE_FRAG = [
   // already made `slope` W-invariant; this is the flux-side counterpart.
   // uResScale = (W/REF)^0.89 restores capacity to the calibration res.
   "uniform float uResScale;",
+  // R2: SFD drainage discharge drives the DOMINANT incision term.
+  // Capacity is multiplied by Q^uSpM so high-discharge channels incise
+  // hard while low-Q interfluves fall to the deposition branch and stand
+  // as ridges -> dendritic. Q is the SFD ACC field (W-stable, #218 R1b).
+  "uniform sampler2D uAcc;",
+  "uniform float uAccResScale;",
+  "uniform float uSpM;",
   "uniform sampler2D uDetailMask;",
   "void main(){",
   "  ivec2 rc = fragRC();",
@@ -227,7 +234,8 @@ export const ERODE_FRAG = [
   "  float dzM = gh * uVerticality;",
   "  float slope = max(uSinMin, dzM / max(1.0e-6, dx));",
   // vmag*uResScale = resolution-invariant velocity (see uResScale comment).
-  "  float C = uStrength * (vmag * uResScale) * slope;",
+  "  float Q = loadF(uAcc, uGrid, rc.x, rc.y).r * uAccResScale;",
+  "  float C = uStrength * (vmag * uResScale) * slope * pow(max(Q, 0.0), uSpM);",
   "  float b = a.r;",
   "  float s = a.b;",
   "  if (ocean) {",
@@ -512,37 +520,42 @@ export const ACCUM_FRAG = [
   "uniform sampler2D uAcc;",
   "uniform sampler2D uPrecip;",
   "uniform vec2 uGrid;",
-  "uniform float uMfdExponent;",
+  "uniform float uSfdJitter;",
   "uniform float uPoleBand;",
   "uniform float uAccMin;",
   "float hgt(vec2 g, int x, int y){ vec4 q = loadA(uA, g, x, y); return q.a > 0.5 ? -1.0e30 : q.r; }",
+  "float jit(int x, int y, int j){ return fract(sin(float(x)*12.9898 + float(y)*78.233 + float(j)*37.719) * 43758.5453); }",
+  // n's single steepest-descent neighbour index 0..7 (ocean = sink, so a
+  // coastal cell drains to sea); -1 if n is a pit (no positive descent).
+  // A tiny deterministic jitter breaks exact ties / D8 axis-locking.
+  "int sdir(vec2 g, int x, int y, float bn){",
+  "  int best = -1;",
+  "  float bestM = 0.0;",
+  "  for (int j = 0; j < 8; j++){",
+  "    float drop = bn - hgt(g, x + NB[j].x, y + NB[j].y);",
+  "    if (drop <= 0.0) continue;",
+  "    float m = drop / ND[j] + uSfdJitter * (jit(x, y, j) - 0.5);",
+  "    if (best < 0 || m > bestM){ bestM = m; best = j; }",
+  "  }",
+  "  return best;",
+  "}",
   "void main(){",
   "  ivec2 rc = fragRC();",
   "  vec4 a = loadA(uA, uGrid, rc.x, rc.y);",
   "  if (a.a > 0.5) { fragColor = vec4(0.0); return; }",
-  "  float bc = a.r;",
   "  float wLat = wLatOf(rc.y, uGrid, uPoleBand);",
   "  float acc = max(uAccMin, loadF(uPrecip, uGrid, rc.x, rc.y).r) * wLat;",
+  // Single-flow gather: neighbour n contributes its FULL accumulation iff
+  // n's steepest-descent target is THIS cell -> Q is a true drainage tree.
   "  for (int i = 0; i < 8; i++){",
   "    int nx = rc.x + NB[i].x;",
   "    int ny = rc.y + NB[i].y;",
   "    float bn = hgt(uGrid, nx, ny);",
-  "    if (bn <= bc || bn < -1.0e29) continue;",
-  "    float den = 0.0;",
-  "    float wToC = 0.0;",
-  "    for (int j = 0; j < 8; j++){",
-  "      int mx = nx + NB[j].x;",
-  "      int my = ny + NB[j].y;",
-  "      float bm = hgt(uGrid, mx, my);",
-  "      float drop = bn - bm;",
-  "      if (drop <= 0.0) continue;",
-  "      float wgt = pow(drop / ND[j], uMfdExponent);",
-  "      den += wgt;",
-  "      if (mx == rc.x && my == rc.y) wToC = wgt;",
-  "    }",
-  "    if (den > 1.0e-12 && wToC > 0.0){",
-  "      float accN = loadF(uAcc, uGrid, nx, ny).r;",
-  "      acc += accN * (wToC / den);",
+  "    if (bn < -1.0e29) continue;",
+  "    int sd = sdir(uGrid, nx, ny, bn);",
+  "    if (sd < 0) continue;",
+  "    if (nx + NB[sd].x == rc.x && ny + NB[sd].y == rc.y){",
+  "      acc += loadF(uAcc, uGrid, nx, ny).r;",
   "    }",
   "  }",
   "  fragColor = vec4(fin(acc), 0.0, 0.0, 0.0);",
@@ -564,6 +577,7 @@ export const CARVE_RIVERS_FRAG = [
   "uniform float uTerrainScale;",
   "uniform float uSinMin;",
   "uniform float uConcaveScale;",
+  "uniform float uChannelDepth;",
   "uniform float uPoleBand;",
   "void main(){",
   "  ivec2 rc = fragRC();",
@@ -593,7 +607,12 @@ export const CARVE_RIVERS_FRAG = [
   "  if (!(aR.a > 0.5)) minNb = min(minNb, aR.r);",
   "  if (!(aB.a > 0.5)) minNb = min(minNb, aB.r);",
   "  if (!(aT.a > 0.5)) minNb = min(minNb, aT.r);",
-  "  nb = fin(max(nb, minNb - 1.0e-3));",
+  // R1a: per-step incision budget — 1e-3 floor everywhere (anti-moat on
+  // convex/rim cells where concave~0), opened up on concave valley cells
+  // in proportion to discharge so high-Q channels cut DEEP while
+  // interfluves barely move -> channel/ridge contrast (dendritic).
+  "  float budget = 1.0e-3 + uChannelDepth * concave * pow(max(Q, 0.0), uSpM);",
+  "  nb = fin(max(nb, minNb - budget));",
   "  fragColor = vec4(nb, a.g, a.b, a.a);",
   "}",
 ].join("\n");

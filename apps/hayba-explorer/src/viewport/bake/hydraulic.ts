@@ -119,6 +119,14 @@ export interface HydraulicConfig {
   spN: number;
   accMin: number;
   accResScale: number;
+  /** R1a: per-step incision budget on concave valley cells =
+   *  1e-3 + channelDepth·concave·Q^spM, so high-discharge channels cut
+   *  deep while interfluves stay (channel/ridge contrast). Convex/rim
+   *  cells keep the 1e-3 floor (anti-moat). */
+  channelDepth: number;
+  /** R1b: deterministic jitter added to the single-flow steepest-descent
+   *  metric to break exact ties / D8 axis-locking (0 = pure D8). */
+  sfdJitter: number;
   /** S2.3 concavity gate: river carve is multiplied by
    *  `smoothstep(0, concaveScale, laplacian(b))` so incision only bites
    *  CONCAVE valley floors, not CONVEX plateau/range shoulders (kills the
@@ -188,10 +196,12 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   elevMid: 0.4,
   slopeFloor: 0.0003,
   slopeMid: 0.001,
-  // #218: provisional — set from the oracle gate later. K large (budget
-  // allows it), refresh ~6x over 100 steps, p sharpens channels,
-  // stream-power m≈0.5/n≈1. accResScale=1 (exponent fit later).
-  accumIters: 96,
+  // #218 R1: provisional — set from the oracle gate. SFD (single-flow)
+  // accumulation so K is the headwater→mouth propagation length: large
+  // (warm 2M bake ~0.5s leaves headroom). accResScale=1 (measured
+  // resolution-invariant, no W-scaling needed). channelDepth/sfdJitter
+  // are the R1 dendritic knobs (tuned at the gate).
+  accumIters: 256,
   accumEveryN: 16,
   mfdExponent: 1.3,
   streamK: 0.02,
@@ -199,6 +209,8 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   spN: 1.0,
   accMin: 0.05,
   accResScale: 1.0,
+  channelDepth: 0.02,
+  sfdJitter: 0.002,
   // Concave valleys reach full carve by lap≈0.003; every convex shoulder
   // (lap≤0) gets exactly 0 → the Tibet/Andes rim moat is removed while
   // the concave dendritic valleys (Afghanistan) keep their strong carve.
@@ -406,7 +418,7 @@ export async function runHydraulicBake(
           uAcc: u(accReadRT()),
           uPrecip: u(precip),
           uGrid: u(uGrid),
-          uMfdExponent: u(cfg.mfdExponent),
+          uSfdJitter: u(cfg.sfdJitter),
           uPoleBand: u(cfg.poleBand),
           uAccMin: u(cfg.accMin),
         },
@@ -480,10 +492,11 @@ export async function runHydraulicBake(
       refreshAccumulation();
     }
 
-    // S2.3-> CARVE_RIVERS (#218): stream-power on the drainage
-    // accumulation. declares uA,uAcc,uDetailMask,uGrid,uDt,uStreamK,
-    // uSpM,uSpN,uAccResScale,uVerticality,uTerrainScale,uSinMin,
-    // uConcaveScale,uPoleBand. reads A,ACC,M -> writes A.
+    // S2.3-> CARVE_RIVERS (#218 R1): stream-power on the drainage
+    // accumulation, Q-proportional incision budget. declares uA,uAcc,
+    // uDetailMask,uGrid,uDt,uStreamK,uSpM,uSpN,uAccResScale,uVerticality,
+    // uTerrainScale,uSinMin,uConcaveScale,uChannelDepth,uPoleBand.
+    // reads A,ACC,M -> writes A.
     runRawPass(
       renderer,
       CARVE_RIVERS_FRAG,
@@ -501,6 +514,7 @@ export async function runHydraulicBake(
         uTerrainScale: u(cfg.scale.terrainScale),
         uSinMin: u(cfg.sinMin),
         uConcaveScale: u(cfg.concaveScale),
+        uChannelDepth: u(cfg.channelDepth),
         uPoleBand: u(cfg.poleBand),
       },
       aWriteRT(),
@@ -509,7 +523,7 @@ export async function runHydraulicBake(
 
     // ERODE: declares uA,uF,uGrid,uDt,uCellL,uKd,uSinMin,uStrength,
     // uDowncutting,uVerticality,uTerrainScale,uPoleBand,uResScale,
-    // uDetailMask. reads A,F ->
+    // uAcc,uAccResScale,uSpM,uDetailMask. reads A,F,ACC ->
     // writes A. S1: metre-denominated incision (true slope =
     // Δh*uVerticality / (uTerrainScale/uGrid.x)) replaces the old
     // per-step uMaxDeltaB clamp + uUplift; capacity is uStrength-driven
@@ -531,6 +545,9 @@ export async function runHydraulicBake(
         uTerrainScale: u(cfg.scale.terrainScale),
         uPoleBand: u(cfg.poleBand),
         uResScale: u(resScale),
+        uAcc: u(accReadRT()),
+        uAccResScale: u(cfg.accResScale),
+        uSpM: u(cfg.spM),
         uDetailMask: u(M[0]),
       },
       aWriteRT(),
