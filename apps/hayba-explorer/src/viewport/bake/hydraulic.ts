@@ -168,7 +168,7 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   kd: 0.2,
   ke: 0.015,
   sinMin: 0.02,
-  strength: 0.04,
+  strength: 0.06,
   downcutting: 0.25,
   // S2.2 thermal = GENTLE TALUS LIMITER, PHYSICALLY GROUNDED (corrected
   // 2026-05-17 per user: "base it on real science, not no-unit").
@@ -205,7 +205,7 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   accumEveryN: 16,
   mfdExponent: 1.3,
   streamK: 0.02,
-  spM: 0.5,
+  spM: 0.9,
   spN: 1.0,
   accMin: 0.05,
   accResScale: 1.0,
