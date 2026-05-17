@@ -31,14 +31,39 @@
 
 import * as THREE from "three";
 
+// The vertex shader EXTRUDES the smooth SphereGeometry by the BAKED
+// equirect height (sampled in-vertex), so erosion reads as real geometry
+// (land bulges out, ocean basins sink in) and the no-erosion toggle is a
+// true 3D before/after — not a faint hillshade on a featureless ball.
+// `sphereToEquirectUv` is duplicated from FRAG and MUST stay byte-identical
+// to it (same orientation: v = 0.5 - asin(n.y)/PI) or the displacement and
+// the shaded relief desync. WebGL2 (three r169) guarantees vertex texture
+// fetch, so texture2D() in the vertex stage is safe.
 const VERT: string = [
+  "precision highp float;",
   "varying vec3 vSpherePos;",
+  "uniform sampler2D uHeight;",
+  "uniform sampler2D uHeight0;",
+  "uniform float uMapMode;",
+  "uniform float uDisplace;",
+  "const float PI = 3.141592653589793;",
+  "vec2 sphereToEquirectUv(vec3 n){",
+  "  float lam = atan(n.z, n.x);",
+  "  float u = lam / (2.0 * PI) + 0.5;",
+  "  float v = 0.5 - asin(clamp(n.y, -1.0, 1.0)) / PI;",
+  "  return vec2(u, v);",
+  "}",
   "void main(){",
-  "  /* Object-space position of a unit-ish SphereGeometry vertex; the",
-  "     equirect uv is derived per-fragment from its normalized form so",
-  "     the mapping is independent of the sphere radius. */",
+  "  /* vSpherePos stays the UNDISPLACED unit position so the FRAG equirect",
+  "     uv + hillshade are unaffected; gl_Position is the extruded vertex. */",
   "  vSpherePos = position;",
-  "  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);",
+  "  vec3 nrm = normalize(position);",
+  "  vec2 uv = sphereToEquirectUv(nrm);",
+  "  float hE = texture2D(uHeight,  uv).r;",
+  "  float hR = texture2D(uHeight0, uv).r;",
+  "  float hh = mix(hE, hR, step(0.5, uMapMode));",
+  "  vec3 dispPos = position + nrm * (hh * uDisplace);",
+  "  gl_Position = projectionMatrix * modelViewMatrix * vec4(dispPos, 1.0);",
   "}",
 ].join("\n");
 
@@ -166,6 +191,10 @@ const FRAG: string = [
  *  - `uMapMode` — 0 shows `uHeight` (eroded), 1 shows `uHeight0` (raw).
  *  - `uReliefStrength` — hillshade gain (0 = flat hypsometric, 1 = full).
  *  - `uSunDir`  — light direction for the screen-space slope hillshade.
+ *  - `uDisplace` — vertex-extrusion gain: each vertex is pushed along its
+ *    normal by `bakedHeight * uDisplace` so erosion is real geometry.
+ *    Default 0.12 on a unit-radius sphere ([-1,1] height → ±0.12 relief:
+ *    land bulges, ocean sinks). Tune with {@link setDebugDisplace}.
  */
 export function makeDebugReliefMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
@@ -182,6 +211,10 @@ export function makeDebugReliefMaterial(): THREE.ShaderMaterial {
       // bound texture's image / RT size) — a degenerate but safe value
       // until a real texture is bound.
       uTexSize: { value: new THREE.Vector2(1, 1) },
+      // Vertex-extrusion gain (see header). 0.12 = strong, clearly-3D
+      // relief on a unit sphere; the no-erosion toggle then visibly
+      // changes the SHAPE, not just the shading.
+      uDisplace: { value: 0.12 },
     },
     // dFdx/dFdy are core in WebGL2 (Three r169) — no extension flag needed.
   });
@@ -216,5 +249,11 @@ export function setDebugTexture(
 /** 0 = show `h_final` (eroded); non-zero = show `h0` (no-erosion). */
 export function setDebugMapMode(mat: THREE.ShaderMaterial, n: number): void {
   mat.uniforms.uMapMode.value = n;
+  mat.uniformsNeedUpdate = true;
+}
+
+/** Vertex-extrusion gain (height -> radial displacement). Default 0.12. */
+export function setDebugDisplace(mat: THREE.ShaderMaterial, n: number): void {
+  mat.uniforms.uDisplace.value = n;
   mat.uniformsNeedUpdate = true;
 }
