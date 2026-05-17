@@ -42,6 +42,7 @@ import {
   RAIN_FRAG,
   FLUX_FRAG,
   WATER_FRAG,
+  CARVE_RIVERS_FRAG,
   ERODE_FRAG,
   ADVECT_FRAG,
   EVAP_FRAG,
@@ -101,6 +102,12 @@ export interface HydraulicConfig {
    *  (planet terrainScale ⇒ small metre slopes); S3 tiles revisit. */
   slopeFloor: number;
   slopeMid: number;
+  /** S2.3 flow-mask rivers: flux-magnitude `smoothstep(t0,t1)` → river
+   *  mask; channel incision `riverDepth·river·downcutting·detailMask·dt`.
+   *  The interfluves between incised channels become the ridgelines. */
+  riverThreshold0: number;
+  riverThreshold1: number;
+  riverDepth: number;
   /** Run THERMAL when step % thermalEvery === 0 (<=0 disables it). */
   thermalEvery: number;
   /** Polar-cap damp fraction (rain/erosion -> 0 within this band). */
@@ -138,18 +145,22 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   sinMin: 0.02,
   strength: 0.04,
   downcutting: 0.25,
-  // S2.2 thermal = GENTLE TALUS LIMITER (corrected 2026-05-17). Thermal
-  // is a smoothing operator: it relaxes slopes toward the talus angle, so
-  // running it hard PLANES mountains flat + terraces them (the prior
-  // "make ridges more pronounced" attempts did exactly that). Ridgelines
-  // come from S2.3 fluvial incision carving valleys (interfluves = the
-  // ridges), NOT from thermal. So thermal is dialled to a gentle
-  // limiter + faint anisotropic striation: low strength, sparse cadence.
-  // talusAngle stays LOW (tan(0.07°)≈1.2e-3) — correct for the macro
-  // terrainScale (S3 tiles restore physical angles). The CFL net-clamp
-  // keeps it unconditionally stable regardless.
-  thermalStrength: 0.15,
-  talusAngle: 0.07,
+  // S2.2 thermal = GENTLE TALUS LIMITER, PHYSICALLY GROUNDED (corrected
+  // 2026-05-17 per user: "base it on real science, not no-unit").
+  // talusAngle is now the REAL dry-rock/scree ANGLE OF REPOSE — 33°
+  // (geology: cohesionless coarse debris reposes at ~30–37°; 33° is a
+  // standard mid value). It is compared (as tan 33° ≈ 0.649) against the
+  // TRUE metre slope Δ(h·verticality)/(terrainScale/W) — S1-consistent,
+  // dimensionally honest. Physical consequence at the PLANET macro bake:
+  // one texel ≈ 20 km, so a 33° talus face is far sub-pixel and the test
+  // rarely fires — which is *correct*: you don't see scree slopes from
+  // orbit. So macro relief is shaped by ERODE + S2.3 river incision;
+  // thermal is only a faint anisotropic limiter on the steepest resolved
+  // macro slopes (strength low). On S3 zoom-tiles (small terrainScale ⇒
+  // metres-per-texel small) the same real 33° becomes fully meaningful.
+  // The CFL net-clamp keeps it unconditionally stable regardless.
+  thermalStrength: 0.05,
+  talusAngle: 33,
   anisotropy: 0.5,
   sedimentRemoval: 0.0,
   // S2.4 detail-mask gates (macro-slope regime; see HydraulicConfig).
@@ -157,6 +168,12 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   elevMid: 0.4,
   slopeFloor: 0.0003,
   slopeMid: 0.002,
+  // S2.3 flow-mask river incision (the ridge-maker: carves valleys, the
+  // interfluves stand as ridges). Thresholds/depth are first-guess —
+  // visually tuned at the S2 gate.
+  riverThreshold0: 0.0,
+  riverThreshold1: 0.02,
+  riverDepth: 0.02,
   thermalEvery: 20,
   poleBand: 0.04,
   scale: {
@@ -367,6 +384,29 @@ export async function runHydraulicBake(
     );
     swapA();
 
+    // S2.3 CARVE_RIVERS: after WATER (flux current), before ERODE.
+    // Thresholds flux magnitude into a river mask and incises channels
+    // (detailMask-gated) — the un-incised interfluves become ridges.
+    // reads A,F,M -> writes A.
+    runRawPass(
+      renderer,
+      CARVE_RIVERS_FRAG,
+      {
+        uA: u(aReadRT()),
+        uF: u(fReadRT()),
+        uDetailMask: u(M[0]),
+        uGrid: u(uGrid),
+        uDt: u(cfg.dt),
+        uRiverThreshold0: u(cfg.riverThreshold0),
+        uRiverThreshold1: u(cfg.riverThreshold1),
+        uRiverDepth: u(cfg.riverDepth),
+        uDowncutting: u(cfg.downcutting),
+        uPoleBand: u(cfg.poleBand),
+      },
+      aWriteRT(),
+    );
+    swapA();
+
     // ERODE: declares uA,uF,uGrid,uDt,uCellL,uKd,uSinMin,uStrength,
     // uDowncutting,uVerticality,uTerrainScale,uPoleBand. reads A,F ->
     // writes A. S1: metre-denominated incision (true slope =
@@ -428,9 +468,10 @@ export async function runHydraulicBake(
     // detailMask gate. declares uA,uGrid,uStrengthThermal,uTanTalus,
     // uAnisotropy,uSedimentRemoval,uVerticality,uTerrainScale,uPoleBand,
     // uDetailMask. reads A,M -> writes A. Runs only on the scheduled
-    // cadence. uTanTalus = tan(talusAngle°) compared to the true metre
-    // slope (S1-consistent); talusAngle is tuned LOW for the macro-bake
-    // dm (see DEFAULT_HYDRAULIC) so moderate ranges ridge.
+    // cadence. uTanTalus = tan(talusAngle°) — talusAngle is the REAL
+    // rock angle of repose (33°), compared against the true metre slope
+    // (S1-consistent, dimensionally honest; see DEFAULT_HYDRAULIC for the
+    // macro-scale physical consequence).
     if (doThermal) {
       runRawPass(
         renderer,

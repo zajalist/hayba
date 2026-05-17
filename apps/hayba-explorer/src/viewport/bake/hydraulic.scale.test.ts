@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { DEFAULT_HYDRAULIC } from "./hydraulic";
-import { ERODE_FRAG, THERMAL_FRAG, DETAIL_MASK_FRAG } from "./hydraulic.glsl";
+import {
+  ERODE_FRAG,
+  THERMAL_FRAG,
+  DETAIL_MASK_FRAG,
+  CARVE_RIVERS_FRAG,
+} from "./hydraulic.glsl";
 
 describe("S1 scale config", () => {
   it("DEFAULT_HYDRAULIC drops the ad-hoc clamp/uplift and adds scale knobs", () => {
@@ -79,5 +84,32 @@ describe("S2.4 elevation/slope detailMask (gate relief to mountains)", () => {
     expect(typeof DEFAULT_HYDRAULIC.slopeMid).toBe("number");
     expect(DEFAULT_HYDRAULIC.elevFloor).toBeLessThan(DEFAULT_HYDRAULIC.elevMid);
     expect(DEFAULT_HYDRAULIC.slopeFloor).toBeLessThan(DEFAULT_HYDRAULIC.slopeMid);
+  });
+});
+
+describe("S2.3 flow-mask river incision (the valley/ridge maker)", () => {
+  it("CARVE_RIVERS_FRAG thresholds flux into a river mask and only lowers b", () => {
+    expect(typeof CARVE_RIVERS_FRAG).toBe("string");
+    expect(CARVE_RIVERS_FRAG).toMatch(/uniform sampler2D uF;/);
+    expect(CARVE_RIVERS_FRAG).toMatch(/uniform sampler2D uDetailMask;/);
+    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uRiverThreshold0;/);
+    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uRiverThreshold1;/);
+    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uRiverDepth;/);
+    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uDowncutting;/);
+    expect(CARVE_RIVERS_FRAG).toMatch(/smoothstep\(/);
+    // ocean early-return byte-identical (load-bearing invariant)
+    expect(CARVE_RIVERS_FRAG).toMatch(/a\.a > 0\.5/);
+    expect(CARVE_RIVERS_FRAG).toMatch(/fragColor = a; return;/);
+    // carve only ever subtracts (never raises b)
+    expect(CARVE_RIVERS_FRAG).toMatch(/a\.r - /);
+  });
+  it("DEFAULT_HYDRAULIC carries the S2.3 river knobs", () => {
+    expect(typeof DEFAULT_HYDRAULIC.riverThreshold0).toBe("number");
+    expect(typeof DEFAULT_HYDRAULIC.riverThreshold1).toBe("number");
+    expect(typeof DEFAULT_HYDRAULIC.riverDepth).toBe("number");
+    expect(DEFAULT_HYDRAULIC.riverThreshold0).toBeLessThan(
+      DEFAULT_HYDRAULIC.riverThreshold1,
+    );
+    expect(DEFAULT_HYDRAULIC.riverDepth).toBeGreaterThan(0);
   });
 });
