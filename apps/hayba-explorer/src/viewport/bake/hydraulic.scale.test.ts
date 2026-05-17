@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { DEFAULT_HYDRAULIC } from "./hydraulic";
+import { ERODE_FRAG } from "./hydraulic.glsl";
 
 describe("S1 scale config", () => {
   it("DEFAULT_HYDRAULIC drops the ad-hoc clamp/uplift and adds scale knobs", () => {
@@ -11,5 +12,14 @@ describe("S1 scale config", () => {
     expect(typeof DEFAULT_HYDRAULIC.downcutting).toBe("number");
     expect(DEFAULT_HYDRAULIC.strength).toBeGreaterThan(0);
     expect(DEFAULT_HYDRAULIC.strength).toBeLessThan(0.2); // "not way too strong"
+  });
+
+  it("ERODE_FRAG is metre-denominated, no clamp/uplift uniforms", () => {
+    expect(ERODE_FRAG).not.toMatch(/uMaxDeltaB/);
+    expect(ERODE_FRAG).not.toMatch(/uUplift/);
+    expect(ERODE_FRAG).toMatch(/uniform float uStrength;/);
+    expect(ERODE_FRAG).toMatch(/uniform float uDowncutting;/);
+    expect(ERODE_FRAG).toMatch(/uniform float uVerticality;/);
+    expect(ERODE_FRAG).toMatch(/uniform float uTerrainScale;/);
   });
 });
