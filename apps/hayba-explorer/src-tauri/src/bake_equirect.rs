@@ -231,20 +231,155 @@ impl<'a> CellGrid<'a> {
         }
         (best_idx, best_dot)
     }
+
+    /// The `k` nearest cells to `dir` (smallest angular distance), each as
+    /// `(cell_idx, angular_dist)` where `angular_dist = 1 - dot` (a
+    /// monotonic, cheap proxy for the great-circle angle — exact ordering,
+    /// no `acos`). Generalizes `nearest`: it uses the SAME ring-expanding
+    /// `lat_band ± 1` / polar-convergence-widened lon scan that `nearest`
+    /// proves is sufficient to contain the global single-NN. Since the true
+    /// k-nearest all lie no farther than progressively-farther cells in the
+    /// same neighborhood, and that neighborhood already provably contains
+    /// the #1 NN within ±1 lat band, we widen the lat scan to `±2` bands
+    /// here (one extra band of slack beyond `nearest`'s ±1) so the first
+    /// `k` (k ≤ 6 ≪ cells/band) closest are guaranteed captured for a
+    /// quasi-uniform Goldberg grid. The result is sorted ascending by
+    /// distance and truncated to `k`.
+    #[inline]
+    fn k_nearest(&self, dir: Vec3, lat: f32, k: usize) -> Vec<(usize, f32)> {
+        let (band0, bin0) = Self::bucket_of(dir, self.n_lat, self.n_lon);
+
+        let cos_lat = lat.cos().abs().max(1e-4);
+        // One extra bin of lon slack vs `nearest` (3/cos_lat instead of
+        // 2/cos_lat) to match the widened ±2 lat scan.
+        let lon_half = (((3.0 / cos_lat).ceil()) as isize)
+            .clamp(1, self.n_lon as isize);
+        let full_lon = lon_half * 2 + 1 >= self.n_lon as isize;
+
+        // ±2 bands (one more than `nearest`'s ±1) so the k-th nearest is
+        // safely inside the scanned neighborhood for a Goldberg grid.
+        let band_lo = (band0 as isize - 2).max(0) as usize;
+        let band_hi = ((band0 as isize + 2).min(self.n_lat as isize - 1)) as usize;
+
+        // Collect candidates; k is tiny so a sort of the (modest) candidate
+        // set is cheaper than maintaining a heap and keeps determinism
+        // trivial (stable sort by (dist, idx)).
+        let mut cand: Vec<(usize, f32)> = Vec::new();
+        for band in band_lo..=band_hi {
+            let row = band * self.n_lon;
+            if full_lon {
+                for bin in 0..self.n_lon {
+                    for &ci in &self.buckets[row + bin] {
+                        let cpos = self.cells[ci as usize].0;
+                        let d = 1.0 - cpos.dot(dir);
+                        cand.push((ci as usize, d));
+                    }
+                }
+            } else {
+                for off in -lon_half..=lon_half {
+                    let bin = (bin0 as isize + off)
+                        .rem_euclid(self.n_lon as isize)
+                        as usize;
+                    for &ci in &self.buckets[row + bin] {
+                        let cpos = self.cells[ci as usize].0;
+                        let d = 1.0 - cpos.dot(dir);
+                        cand.push((ci as usize, d));
+                    }
+                }
+            }
+        }
+        // Deterministic order: by distance, tie-break by cell index.
+        cand.sort_by(|a, b| {
+            a.1
+                .partial_cmp(&b.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.0.cmp(&b.0))
+        });
+        cand.truncate(k);
+        cand
+    }
 }
+
+/// Deterministic 4-octave fractal Brownian motion built on
+/// `crate::climate::value_noise` (kept LOCAL so climate.rs is untouched —
+/// `climate::fbm3` is private and this task must not widen its API).
+/// Returns roughly `[0, 1]` (mean ~0.5). `value_noise` floors its input,
+/// so callers must pre-scale `p` by a frequency. Mirrors `climate::fbm3`'s
+/// octave/lacunarity/gain pattern (freq ×2.03, amp ×0.5) with an extra
+/// 5th octave for finer sub-cell detail.
+#[inline]
+fn fbm(p: Vec3, seed: u64) -> f32 {
+    let mut f = 0.0f32;
+    let mut amp = 0.5f32;
+    let mut freq = 1.0f32;
+    for o in 0..5u64 {
+        f += amp * crate::climate::value_noise(p * freq, seed.wrapping_add(o * 1013));
+        freq *= 2.03;
+        amp *= 0.5;
+    }
+    f
+}
+
+// ── Continuous-bake tuning constants ───────────────────────────────────
+// All judgement calls; tunable, visually validated next on the real GPU.
+//
+/// k-nearest cells used for the inverse-distance macro blend. 6 ≈ the
+/// Goldberg 1-ring (hexagonal) — enough to smooth the per-cell plateau
+/// without washing out the painted macro shape.
+const IDW_K: usize = 6;
+/// IDW weight epsilon — guards the `1/d²` singularity when a texel sits
+/// exactly on a cell centre. Small so off-centre weighting is unaffected.
+const IDW_EPS: f32 = 1e-6;
+/// Fixed relief seed → byte-deterministic output (no RNG, no threads).
+const RELIEF_SEED: u64 = 0x4159_BA00_5EED_0001;
+/// Domain-warp seed (decorrelated low-freq vector offset → less
+/// grid-aligned ridges).
+const WARP_SEED: u64 = 0x4159_BA00_5EED_0002;
+/// Base 3D noise frequency (on the unit `dir` sphere). ~12 reads as
+/// crisp sub-cell detail at 1024–2048 equirect width.
+const RELIEF_FREQ: f32 = 12.0;
+/// Low-frequency domain-warp scale and displacement magnitude.
+const WARP_FREQ: f32 = 2.5;
+const WARP_AMP: f32 = 0.15;
+/// Baseline relief amplitude added EVERYWHERE (flat plains / Tibet /
+/// ocean floor) so the sim always has erodable micro-slope. A few % of
+/// the painted land range (~[0,1]).
+const RELIEF_BASE_AMP: f32 = 0.018;
+/// Extra amplitude scaled by |elevation| — mountains get richer dendritic
+/// carving (up to ~+18% of range at |elev|≈1).
+const RELIEF_ELEV_AMP: f32 = 0.18;
+/// Sign-preserving clamp epsilons — final land ≥ +LAND_EPS, ocean ≤
+/// −OCEAN_EPS, so blend+relief can NEVER move a texel across 0 (the GPU
+/// sim's `base.r < 0` ocean flag is load-bearing). LAND_EPS is well below
+/// `CONTINENTAL_BRUSH_FLOOR` (0.05) so it never lifts a coast visibly.
+const LAND_EPS: f32 = 1e-3;
+const OCEAN_EPS: f32 = 1e-3;
 
 /// Rasterize the painted draft + climate precipitation onto one
 /// equirectangular `w × h` grid. For each texel, the FIXED convention
-/// (row 0 = North pole) gives `(lat, lon)`; that maps to a unit-sphere
-/// direction; the nearest painted Goldberg cell (max dot product) supplies
-/// `height` (its elevation) and `precip` (its climate precipitation,
-/// clamped to `[0, 2]`).
+/// (row 0 = North pole) gives `(lat, lon)` → a unit-sphere direction
+/// `dir`. Then, per texel:
+///
+/// 1. **Class from nearest** — the single nearest cell (`grid.nearest`)
+///    decides the texel CLASS (land if `nearest_elev >= 0`, else ocean).
+///    The land/ocean boundary stays EXACTLY where nearest-cell
+///    classification puts it (the GPU sim derives ocean from `base.r < 0`).
+/// 2. **Continuous macro elevation** — inverse-distance-weighted mean of
+///    the `IDW_K` nearest cells whose elevation sign matches the class
+///    (opposite-class neighbors skipped so the coast stays crisp and
+///    ocean depth never bleeds into land). `precip` blended the same way.
+/// 3. **Seeded fractal sub-cell relief** — 5-octave `fbm` of `dir`
+///    (3D ⇒ seamless across the ±180° wrap and at the poles), with a cheap
+///    low-freq domain warp, elevation-modulated amplitude (baseline
+///    everywhere + more on high ground). Added to the blended elevation.
+/// 4. **Sign-preserving clamp** — land → `max(+LAND_EPS)`, ocean →
+///    `min(-OCEAN_EPS)`; non-finite → class-appropriate fallback.
 ///
 /// The nearest-cell lookup is accelerated by a `CellGrid` directional
-/// bucket index (≈O(1) per texel) instead of the original O(cells) scan;
-/// the SELECTED cell is provably identical to the brute-force result
-/// (see `spatial_eq_bruteforce_*` tests) — only the search is pruned, the
-/// elevation/precip/ocean-sign semantics are unchanged.
+/// bucket index. Output is byte-deterministic for identical `(draft,w,h)`
+/// (fixed seed, no RNG, single-threaded). The land/ocean MASK is
+/// byte-identical to the old nearest-cell reference (see
+/// `spatial_eq_bruteforce_*` / `ocean_coast_sign_invariant_*` tests).
 pub fn bake_inputs_equirect_impl(draft: &WizardDraft, w: u32, h: u32) -> EquirectInputs {
     let cells = painted_cells(draft);
     let precip_per_cell = painted_precip(draft, &cells);
@@ -267,15 +402,80 @@ pub fn bake_inputs_equirect_impl(draft: &WizardDraft, w: u32, h: u32) -> Equirec
             let (sin_lon, cos_lon) = lon.sin_cos();
             let dir = Vec3::new(cos_lat * cos_lon, sin_lat, cos_lat * sin_lon);
 
-            // Nearest painted cell by max dot product (spatial-pruned but
-            // result-identical to the brute-force scan).
+            // (1) CLASS from the single nearest cell — load-bearing: the
+            // GPU sim's ocean flag is `base.r < 0`, so the land/ocean
+            // boundary must stay EXACTLY where nearest-cell puts it.
             let (best_idx, _) = grid.nearest(dir, lat);
-            let best_elev = cells.get(best_idx).map(|&(_, e)| e).unwrap_or(DEEP_OCEAN_FLOOR);
+            let nearest_elev =
+                cells.get(best_idx).map(|&(_, e)| e).unwrap_or(DEEP_OCEAN_FLOOR);
+            let is_land = nearest_elev >= 0.0;
+
+            // (2) CONTINUOUS macro elevation — IDW over the k-nearest
+            // SAME-CLASS cells only (skip opposite-class so the coast stays
+            // crisp and ocean depth never bleeds into land or vice-versa).
+            let knn = grid.k_nearest(dir, lat, IDW_K);
+            let mut wsum = 0.0f32;
+            let mut elev_acc = 0.0f32;
+            let mut precip_acc = 0.0f32;
+            for &(ci, d) in &knn {
+                let (_, ce) = cells[ci];
+                if (ce >= 0.0) != is_land {
+                    continue; // opposite class — preserve crisp coast
+                }
+                let wt = 1.0 / (d * d + IDW_EPS);
+                wsum += wt;
+                elev_acc += wt * ce;
+                precip_acc += wt * precip_per_cell.get(ci).copied().unwrap_or(0.0);
+            }
+            let (mut macro_elev, blended_precip) = if wsum > 0.0 {
+                (elev_acc / wsum, precip_acc / wsum)
+            } else {
+                // Degenerate: no same-class neighbor in k → fall back to
+                // the nearest cell exactly.
+                (
+                    nearest_elev,
+                    precip_per_cell.get(best_idx).copied().unwrap_or(0.0),
+                )
+            };
+            if !macro_elev.is_finite() {
+                macro_elev = nearest_elev;
+            }
+
+            // (3) SEEDED FRACTAL SUB-CELL RELIEF — sampled in 3D on `dir`
+            // (seamless across the ±180° wrap and continuous at the poles;
+            // a uv-space seam would become a visible erosion seam). Cheap
+            // low-freq domain warp for less grid-aligned ridges.
+            let warp = Vec3::new(
+                fbm(dir * WARP_FREQ, WARP_SEED) - 0.5,
+                fbm(dir * WARP_FREQ, WARP_SEED ^ 0xA5A5) - 0.5,
+                fbm(dir * WARP_FREQ, WARP_SEED ^ 0x5A5A) - 0.5,
+            ) * WARP_AMP;
+            // fbm ≈ [0,1]; centre to ≈[-0.5,0.5] so relief is signed.
+            let n = fbm((dir + warp) * RELIEF_FREQ, RELIEF_SEED) - 0.5;
+            // Baseline everywhere + more amplitude on high ground so flat
+            // plains/ocean floor still get erodable micro-slope while
+            // mountains get richer dendritic carving.
+            let amp = RELIEF_BASE_AMP + RELIEF_ELEV_AMP * macro_elev.abs().min(1.0);
+            let mut final_elev = macro_elev + n * amp;
+
+            // (4) SIGN-PRESERVING CLAMP — class is NEVER violated; deep
+            // ocean stays ≤ its floor sign; result is finite.
+            if !final_elev.is_finite() {
+                final_elev = if is_land { LAND_EPS } else { -OCEAN_EPS };
+            }
+            final_elev = if is_land {
+                final_elev.max(LAND_EPS)
+            } else {
+                final_elev.min(-OCEAN_EPS)
+            };
 
             let texel = (ry as usize) * (w as usize) + (rx as usize);
-            height[texel] = best_elev;
-            let p = precip_per_cell.get(best_idx).copied().unwrap_or(0.0);
-            precip[texel] = if p.is_finite() { p.clamp(0.0, 2.0) } else { 0.0 };
+            height[texel] = final_elev;
+            precip[texel] = if blended_precip.is_finite() {
+                blended_precip.clamp(0.0, 2.0)
+            } else {
+                0.0
+            };
         }
     }
 
@@ -284,7 +484,14 @@ pub fn bake_inputs_equirect_impl(draft: &WizardDraft, w: u32, h: u32) -> Equirec
 
 /// Brute-force reference nearest-cell scan — kept ONLY for the
 /// `spatial_eq_bruteforce_*` equivalence tests. Identical math to the
-/// pre-optimization rasterizer inner loop.
+/// pre-optimization rasterizer inner loop. NOTE: this is the OLD
+/// nearest-cell semantic (one flat constant per cell). The production
+/// `bake_inputs_equirect_impl` no longer matches it byte-for-byte — it now
+/// IDW-blends + adds fractal relief. The equivalence the tests assert is
+/// CLASSIFICATION equivalence: `sign(fast.height) == sign(slow.height)`
+/// for every texel (the land/ocean mask is byte-identical to this
+/// nearest-cell reference — a load-bearing invariant for the GPU sim's
+/// `base.r < 0` ocean flag).
 #[cfg(test)]
 fn bake_inputs_equirect_bruteforce(draft: &WizardDraft, w: u32, h: u32) -> EquirectInputs {
     let cells = painted_cells(draft);
@@ -592,13 +799,21 @@ mod tests {
         assert!(out.height[..64].iter().all(|v| v.is_finite()));
     }
 
-    /// SPATIAL-INDEX EQUIVALENCE — the `CellGrid`-pruned nearest-cell
-    /// search must return a BYTE-IDENTICAL `EquirectInputs` to the
-    /// brute-force O(cells×texels) reference for EVERY texel. Run on a
-    /// representative multi-continent draft at a small grid so the
-    /// brute-force reference is cheap; if a single texel differs the
-    /// pruning is unsound. Also re-asserts the land>0 / ocean<0 /
-    /// finite-precip invariants on the spatial result.
+    /// Sign class of an elevation: the load-bearing invariant the GPU sim
+    /// derives its ocean flag from (`base.r < 0` ⇒ ocean). `>= 0.0` ⇒ land.
+    #[inline]
+    fn is_land(v: f32) -> bool {
+        v >= 0.0
+    }
+
+    /// CLASSIFICATION EQUIVALENCE — the IDW+relief `bake_inputs_equirect_impl`
+    /// no longer matches the nearest-cell brute force byte-for-byte (that
+    /// semantic is intentionally GONE). What MUST still hold byte-for-byte
+    /// is the land/ocean MASK: for every texel `sign(fast.height)` ==
+    /// `sign(slow.height)` (nearest-cell classification). The GPU hydraulic
+    /// sim flags ocean from `base.r < 0`, so a single flipped texel would
+    /// move the coast / mis-flag a cell. Run on a representative
+    /// multi-continent draft at a small grid so the reference is cheap.
     #[test]
     fn spatial_eq_bruteforce_small() {
         let draft = super::test_support::earthish_draft();
@@ -608,18 +823,17 @@ mod tests {
         assert_eq!(fast.w, slow.w);
         assert_eq!(fast.h, slow.h);
         assert_eq!(fast.height.len(), slow.height.len());
-        // Byte-identical nearest-cell result (exact f32 equality — the
-        // chosen cell, hence its elevation/precip, must be the same).
+        // Land/ocean mask must be byte-identical to the nearest-cell
+        // reference (the coast/ocean-flag invariant).
         for i in 0..fast.height.len() {
             assert_eq!(
-                fast.height[i], slow.height[i],
-                "height mismatch at texel {i} (ry={}, rx={})",
+                is_land(fast.height[i]),
+                is_land(slow.height[i]),
+                "class mismatch at texel {i} (ry={}, rx={}): fast={} slow={}",
                 i / 96,
-                i % 96
-            );
-            assert_eq!(
-                fast.precip[i], slow.precip[i],
-                "precip mismatch at texel {i}"
+                i % 96,
+                fast.height[i],
+                slow.height[i]
             );
         }
         // Invariants still hold on the spatial result.
@@ -631,10 +845,10 @@ mod tests {
             .all(|&v| v.is_finite() && (0.0..=2.0).contains(&v)));
     }
 
-    /// Same equivalence check on the `one_continent_draft` (a single
-    /// low-index polar-ish cap) at an asymmetric small grid — guards the
-    /// pole / lon-wrap handling specifically (the cap straddles a pole
-    /// where lon bins converge and the search must widen / full-wrap).
+    /// Same classification-equivalence check on the `one_continent_draft`
+    /// (a single low-index polar-ish cap) at an asymmetric small grid —
+    /// guards the pole / lon-wrap handling specifically (the cap straddles
+    /// a pole where lon bins converge and the search must widen / wrap).
     #[test]
     fn spatial_eq_bruteforce_one_continent() {
         let draft = super::test_support::one_continent_draft();
@@ -642,16 +856,18 @@ mod tests {
         let slow = bake_inputs_equirect_bruteforce(&draft, 90, 45);
         for i in 0..fast.height.len() {
             assert_eq!(
-                fast.height[i], slow.height[i],
-                "height mismatch at texel {i}"
+                is_land(fast.height[i]),
+                is_land(slow.height[i]),
+                "class mismatch at texel {i}: fast={} slow={}",
+                fast.height[i],
+                slow.height[i]
             );
-            assert_eq!(fast.precip[i], slow.precip[i]);
         }
     }
 
-    /// Equivalence on the TRUE DEM-like draft (every cell painted, smooth
-    /// negative bathymetry) — the exact field shape the user's real
-    /// Task-8 bake feeds the GPU. 128×64 keeps the brute-force reference
+    /// Classification equivalence on the TRUE DEM-like draft (every cell
+    /// painted, smooth negative bathymetry) — the exact field shape the
+    /// user's real Task-8 bake feeds the GPU. 128×64 keeps the reference
     /// affordable while covering a dense all-cells-painted partition.
     #[test]
     fn spatial_eq_bruteforce_dem_like() {
@@ -660,20 +876,142 @@ mod tests {
         let slow = bake_inputs_equirect_bruteforce(&draft, 128, 64);
         for i in 0..fast.height.len() {
             assert_eq!(
-                fast.height[i], slow.height[i],
-                "height mismatch at texel {i} (ry={}, rx={})",
+                is_land(fast.height[i]),
+                is_land(slow.height[i]),
+                "class mismatch at texel {i} (ry={}, rx={}): fast={} slow={}",
                 i / 128,
-                i % 128
+                i % 128,
+                fast.height[i],
+                slow.height[i]
             );
-            assert_eq!(fast.precip[i], slow.precip[i]);
         }
     }
 
-    /// Rasterizer wall-time at the production 1024×512 grid (the size
-    /// that froze the UI for ~5 min — the brute force was ~77s here).
-    /// With the spatial index this must complete in well under ~2s.
-    /// Prints the measured time so the freeze-gone claim is backed by a
-    /// real number from `cargo test --release`.
+    /// CONTINUITY — the whole point of the rework. Old nearest-cell output
+    /// was ~94% bit-identical between horizontally-adjacent land texels
+    /// (each Goldberg cell = one flat constant → blocky hex plateau). After
+    /// IDW blend + fractal relief the field must be CONTINUOUS: very few
+    /// adjacent land pairs are bit-equal, AND no single-texel jump inside a
+    /// land region is a hard cliff. Prints the measured bit-equal fraction.
+    #[test]
+    fn continuity_land_field_is_not_piecewise_constant() {
+        let draft = super::test_support::earth_dem_like_draft();
+        let w = 512usize;
+        let h = 256usize;
+        let out = bake_inputs_equirect_impl(&draft, w as u32, h as u32);
+
+        let mut pairs = 0usize;
+        let mut bit_equal = 0usize;
+        let mut max_jump = 0.0f32;
+        for ry in 0..h {
+            for rx in 0..(w - 1) {
+                let a = out.height[ry * w + rx];
+                let b = out.height[ry * w + rx + 1];
+                // Only consider adjacent pairs that are BOTH land (the old
+                // failure mode was flat land hexes; coast steps are fine).
+                if a > 0.0 && b > 0.0 {
+                    pairs += 1;
+                    if a.to_bits() == b.to_bits() {
+                        bit_equal += 1;
+                    }
+                    let j = (a - b).abs();
+                    if j > max_jump {
+                        max_jump = j;
+                    }
+                }
+            }
+        }
+        assert!(pairs > 1000, "need a substantial land sample, got {pairs}");
+        let frac = bit_equal as f64 / pairs as f64;
+        eprintln!(
+            "[continuity] adjacent-land bit-equal fraction = {:.4} \
+             ({bit_equal}/{pairs}) | max single-texel land jump = {max_jump:.5} \
+             (old nearest-cell intent ≈ 0.94)",
+            frac
+        );
+        assert!(
+            frac < 0.20,
+            "land field still piecewise-constant: {:.4} of adjacent land \
+             pairs are bit-equal (expected < 0.20 after IDW+relief)",
+            frac
+        );
+        // Continuity, not cliffs: the land elevation range is ~[0,1]; a
+        // single-texel jump should stay well under a fraction of that.
+        assert!(
+            max_jump < 0.30,
+            "hard cliff inside land region: max adjacent jump {max_jump:.4} \
+             (expected continuous, < 0.30)"
+        );
+    }
+
+    /// DETERMINISM — fixed seed, no RNG, single-threaded loop ⇒ two calls
+    /// with identical args must be byte-identical in BOTH channels.
+    #[test]
+    fn determinism_byte_identical_repeat() {
+        let draft = super::test_support::earth_dem_like_draft();
+        let a = bake_inputs_equirect_impl(&draft, 200, 100);
+        let b = bake_inputs_equirect_impl(&draft, 200, 100);
+        assert_eq!(a.height.len(), b.height.len());
+        for i in 0..a.height.len() {
+            assert_eq!(
+                a.height[i].to_bits(),
+                b.height[i].to_bits(),
+                "height nondeterministic at texel {i}"
+            );
+            assert_eq!(
+                a.precip[i].to_bits(),
+                b.precip[i].to_bits(),
+                "precip nondeterministic at texel {i}"
+            );
+        }
+    }
+
+    /// OCEAN/COAST INVARIANT — blend + relief must NEVER flip a texel
+    /// across the 0 boundary set by nearest-cell classification. Every
+    /// texel the nearest-cell reference calls ocean (sign < 0) is `< 0`
+    /// here, every land texel is `> 0`; the mask is byte-identical and
+    /// strictly non-zero (no exactly-0.0 texels that `base.r < 0` would
+    /// ambiguously class). Also a finite / precip-range check.
+    #[test]
+    fn ocean_coast_sign_invariant_and_finite() {
+        let draft = super::test_support::earth_dem_like_draft();
+        let w = 256u32;
+        let h = 128u32;
+        let fast = bake_inputs_equirect_impl(&draft, w, h);
+        let slow = bake_inputs_equirect_bruteforce(&draft, w, h);
+        for i in 0..fast.height.len() {
+            let v = fast.height[i];
+            assert!(v.is_finite(), "non-finite height at texel {i}: {v}");
+            assert_ne!(v, 0.0, "exactly-0.0 height at texel {i} (ambiguous class)");
+            if slow.height[i] >= 0.0 {
+                assert!(
+                    v > 0.0,
+                    "land texel {i} went non-positive: {v} (nearest={})",
+                    slow.height[i]
+                );
+            } else {
+                assert!(
+                    v < 0.0,
+                    "ocean texel {i} went non-negative: {v} (nearest={}) — \
+                     would mis-flag as land",
+                    slow.height[i]
+                );
+            }
+        }
+        assert!(
+            fast.precip.iter().all(|&p| p.is_finite() && (0.0..=2.0).contains(&p)),
+            "precip must be finite and within [0,2]"
+        );
+        assert!(fast.height.iter().any(|&v| v > 0.0), "expected some land");
+        assert!(fast.height.iter().any(|&v| v < 0.0), "expected some ocean");
+    }
+
+    /// Rasterizer wall-time at the production 1024×512 grid. The IDW
+    /// k-nearest blend + 4-octave fractal relief is heavier per texel than
+    /// the old single nearest-cell pick, so the budget is set generously
+    /// vs the ~77s brute force this replaced. Prints the measured time so
+    /// the freeze-gone claim is backed by a real number; the assertion is
+    /// a non-flaky ceiling, not a tight target.
     #[test]
     fn rasterizer_walltime_1024x512() {
         use std::time::Instant;
