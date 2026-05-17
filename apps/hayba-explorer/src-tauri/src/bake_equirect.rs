@@ -19,6 +19,7 @@ use hayba_tectonics_v2::field::Crust;
 use hayba_tectonics_v2::model::Model;
 
 use crate::climate::{compute_climate, ClimateParams};
+use crate::scale::WorldScale;
 use crate::wizard::WizardDraft;
 
 /// Equirectangular bake inputs handed to the TS hydraulic pipeline.
@@ -33,6 +34,9 @@ pub struct EquirectInputs {
     pub height: Vec<f32>,
     /// Per-texel climate precipitation, normalized and clamped to `[0, 2]`.
     pub precip: Vec<f32>,
+    /// Metre-denominated world scale for the GPU hydraulic sim (Gaea §10).
+    /// Planet macro default here; S3 overrides per zoom-tile.
+    pub scale: WorldScale,
 }
 
 // Painter precedence floors — these MUST mirror `wizard.rs::bake_impl`
@@ -479,7 +483,7 @@ pub fn bake_inputs_equirect_impl(draft: &WizardDraft, w: u32, h: u32) -> Equirec
         }
     }
 
-    EquirectInputs { w, h, height, precip }
+    EquirectInputs { w, h, height, precip, scale: WorldScale::planet_default() }
 }
 
 /// Brute-force reference nearest-cell scan — kept ONLY for the
@@ -530,7 +534,7 @@ fn bake_inputs_equirect_bruteforce(draft: &WizardDraft, w: u32, h: u32) -> Equir
         }
     }
 
-    EquirectInputs { w, h, height, precip }
+    EquirectInputs { w, h, height, precip, scale: WorldScale::planet_default() }
 }
 
 /// Tauri entry point: rasterize the painted draft + climate precip to one
@@ -797,6 +801,17 @@ mod tests {
             .all(|&v| v.is_finite() && (0.0..=2.0).contains(&v)));
         // North-pole row (ry=0) exists and is finite.
         assert!(out.height[..64].iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn equirect_inputs_carry_world_scale() {
+        // Reuse the same draft the `spatial_eq_bruteforce_small` test
+        // constructs (no new fixture).
+        let draft = super::test_support::earthish_draft();
+        let out = bake_inputs_equirect_impl(&draft, 64, 32);
+        // planet macro default until S3 overrides per-tile
+        assert!(out.scale.terrain_scale > 1_000_000.0);
+        assert!((out.scale.dx(64.0) - out.scale.terrain_scale / 64.0).abs() < 1e-1);
     }
 
     /// Sign class of an elevation: the load-bearing invariant the GPU sim
