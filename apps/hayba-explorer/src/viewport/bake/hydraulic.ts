@@ -50,6 +50,7 @@ import {
   DETAIL_MASK_FRAG,
   INIT_ACC_FRAG,
   ACCUM_FRAG,
+  CONTROLS_FRAG,
 } from "./hydraulic.glsl";
 import { runRawPass } from "./glPass";
 import { createPingPong, type PingPongTargets } from "./pingpong";
@@ -343,7 +344,7 @@ export async function runHydraulicBake(
   // FAILS if EXT_color_buffer_float is missing. We drive the read/write
   // slots explicitly below (NOT pp.book) so the discipline is local and
   // unambiguous.
-  const pp: PingPongTargets = createPingPong(renderer, w, h, ["A", "F", "M", "ACC"]);
+  const pp: PingPongTargets = createPingPong(renderer, w, h, ["A", "F", "M", "ACC", "CTRL"]);
   const A = pp.rt.A; // [slot0, slot1]
   const F = pp.rt.F; // [slot0, slot1]
   // S2.4 detail mask: a ONE-TIME single-channel field (computed pre-loop
@@ -354,6 +355,10 @@ export async function runHydraulicBake(
   // #218 drainage accumulation (discharge in .r). Ping-pong like A: the
   // refresh burst writes it; CARVE reads it. Both slots freed at teardown.
   const ACC = pp.rt.ACC;
+  // #226 control channels (slope-azimuth/uniformity/curvature/endorheic).
+  // Single-buffered: CONTROLS writes CTRL[0], ACCUM reads it; CTRL[1]
+  // is allocated by the pair helper and just disposed at teardown.
+  const CTRL = pp.rt.CTRL;
   let accRead = 0;
   const swapAcc = (): void => {
     accRead ^= 1;
@@ -425,6 +430,18 @@ export async function runHydraulicBake(
   const refreshAccumulation = (): void => {
     runRawPass(
       renderer,
+      CONTROLS_FRAG,
+      {
+        uA: u(aReadRT()),
+        uGrid: u(uGrid),
+        uCtrlRadius: u(cfg.ctrlRadius),
+        uEndorheicSteps: u(cfg.endorheicSteps),
+        uCurvatureScale: u(cfg.curvatureScale),
+      },
+      CTRL[0],
+    );
+    runRawPass(
+      renderer,
       INIT_ACC_FRAG,
       {
         uA: u(aReadRT()),
@@ -448,6 +465,13 @@ export async function runHydraulicBake(
           uSfdJitter: u(cfg.sfdJitter),
           uPoleBand: u(cfg.poleBand),
           uAccMin: u(cfg.accMin),
+          uCtrl: u(CTRL[0]),
+          uRadialStrength: u(cfg.radialStrength),
+          uParallelStrength: u(cfg.parallelStrength),
+          uCentripetalStrength: u(cfg.centripetalStrength),
+          uUniformityThreshold: u(cfg.uniformityThreshold),
+          uCurvatureScale: u(cfg.curvatureScale),
+          uPatternMax: u(cfg.patternMax),
         },
         accWriteRT(),
       );
@@ -687,5 +711,7 @@ export async function runHydraulicBake(
   M[1].dispose();
   ACC[0].dispose();
   ACC[1].dispose();
+  CTRL[0].dispose();
+  CTRL[1].dispose();
   return result;
 }
