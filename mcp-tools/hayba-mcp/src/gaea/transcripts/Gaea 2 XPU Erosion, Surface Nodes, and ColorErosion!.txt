@@ -1,0 +1,2122 @@
+00:02 hey guys so as we are getting very close
+00:05 
+
+00:05 to the final release for Gaia 2 I
+00:07 
+
+00:07 figured hey let's look at some of the
+00:10 
+
+00:10 cool things that we added and some of my
+00:13 
+
+00:13 favorite new features that I like to
+00:14 
+
+00:14 work with so I'm want to start a new
+00:17 
+
+00:17 project and um if you're not familiar
+00:20 
+
+00:20 with Gaia it's a node based procedural
+00:22 
+
+00:22 terrain design tool but with a very
+00:25 
+
+00:25 heavy focus on being artist friendly um
+00:28 
+
+00:28 it's been used in a bunch of games and
+00:31 
+
+00:31 films and things you'll know like the
+00:34 
+
+00:34 Star Wars franchise do gun Allen wake
+00:37 
+
+00:37 and so on so um now this is a primitive
+00:43 
+
+00:43 so this is a simple Mountain primitive
+00:46 
+
+00:46 and if you used Gaia one you'll notice
+00:48 
+
+00:48 it's a bit different than what it used
+00:50 
+
+00:50 to be and this is because it has erosion
+00:53 
+
+00:53 built in so if you just want a quick
+00:56 
+
+00:56 Mountain this is a great way to get it
+00:59 
+
+00:59 now if you want something different like
+01:01 
+
+01:01 let's say one of those cool Alpine
+01:02 
+
+01:02 mountains with those sharp flowing
+01:05 
+
+01:05 curves then you just switch the style to
+01:07 
+
+01:07 Alpine and you get a mountain like that
+01:10 
+
+01:10 and um you get the erosion and
+01:12 
+
+01:12 everything in it for free so there's no
+01:14 
+
+01:14 extra uh rendering time or processing
+01:17 
+
+01:17 time you can change the bulk make it
+01:20 
+
+01:20 however you like and you can even have
+01:23 
+
+01:23 it be stratified um this is one of my
+01:26 
+
+01:26 personal favorites because this is how
+01:28 
+
+01:28 certain mountains tend to be uh high up
+01:31 
+
+01:31 let me try a few different seeds just to
+01:34 
+
+01:34 show you like so you get that tilted
+01:36 
+
+01:36 strata it's like you this is what
+01:38 
+
+01:38 happens in real life with a mountain
+01:40 
+
+01:40 undergoing
+01:42 
+
+01:42 uplift uh so yeah like this I'm going to
+01:46 
+
+01:46 go back to the eroded style the normal
+01:49 
+
+01:49 one uh and I'm going to make it a bit
+01:53 
+
+01:53 taller so this is cool but the erosion
+01:56 
+
+01:56 is lightweight I need more so I'm just
+01:59 
+
+01:59 going to drag out line and there's
+02:01 
+
+02:01 erosion 2 so gu likes to learn um no AI
+02:06 
+
+02:06 nothing creepy like that no it's just a
+02:08 
+
+02:08 simple um built-in thing so it keeps
+02:11 
+
+02:11 track of what kind of nodes you use and
+02:13 
+
+02:13 then it suggests uh what it things you
+02:17 
+
+02:17 might want to use um or you can just
+02:19 
+
+02:19 type whatever you need so I've added our
+02:21 
+
+02:21 new erosion 2o and so this is now uh
+02:25 
+
+02:25 running both on the CPU and GPU can give
+02:28 
+
+02:28 you like pretty fast performance
+02:31 
+
+02:31 uh but anyways uh the main thing here is
+02:34 
+
+02:34 that this is by far the most advanced
+02:37 
+
+02:37 erosion that's been seen in CG and so
+02:41 
+
+02:41 let me show you um like uh I'm going to
+02:45 
+
+02:45 increase course sediments so we get lots
+02:47 
+
+02:47 of deposition going and I'm going to
+02:50 
+
+02:50 increase the duration time frame you can
+02:53 
+
+02:53 see it's responding pretty much in real
+02:55 
+
+02:55 time uh no matter how high I go on the
+02:58 
+
+02:58 duration so this is looking cool I like
+02:60 
+
+03:00 this mountain um I think I would like a
+03:03 
+
+03:03 little less detail so I don't want all
+03:06 
+
+03:06 those sharp bits there there that's
+03:09 
+
+03:09 looking
+03:11 
+
+03:11 cool uh and then now I want to add some
+03:15 
+
+03:15 um Rocky outcrops to this so I'm going
+03:17 
+
+03:17 to drag this out I'm going to type in
+03:23 
+
+03:23 outcrops and that's really cool but way
+03:26 
+
+03:26 too much so what I'm going to do is I'm
+03:29 
+
+03:29 going to reduce the size a little bit
+03:31 
+
+03:31 and I'm going to reduce the height a
+03:33 
+
+03:33 little bit but I will increase the
+03:36 
+
+03:36 density so I get more of these and then
+03:39 
+
+03:39 down here in the modifiers panel which
+03:41 
+
+03:41 is the successor to the postprocess
+03:43 
+
+03:43 stack from Gaia one I'm going to add
+03:46 
+
+03:46 mask by height and so this lets me
+03:49 
+
+03:49 control where I want this effect to show
+03:51 
+
+03:51 up
+03:52 
+
+03:52 so uh if I move it down
+03:57 
+
+03:57 here it can be like just restrict to
+04:00 
+
+04:00 this area I'm going to increase the fall
+04:02 
+
+04:02 off a little bit and the Distortion
+04:04 
+
+04:04 because I don't want it to be too
+04:06 
+
+04:06 even and let me reduce this even more
+04:10 
+
+04:10 since we have a nice fall
+04:12 
+
+04:12 off it's like this and then I'm going to
+04:15 
+
+04:15 add another erosion on top of this so
+04:18 
+
+04:18 kind of like starts melding everything
+04:20 
+
+04:20 together uh more core
+04:23 
+
+04:23 sediments and more
+04:27 
+
+04:27 duration so now I have like this nice
+04:29 
+
+04:29 Mountain coming out of this rocky
+04:32 
+
+04:32 area um couple of other cool new things
+04:35 
+
+04:35 that we've added
+04:37 
+
+04:37 so you know previously it would be like
+04:41 
+
+04:41 a fair bit of work to get like textures
+04:43 
+
+04:43 right for this but now like I'm not even
+04:46 
+
+04:46 going to add a texture note I'm just
+04:48 
+
+04:48 going to add a SAT map
+04:50 
+
+04:50 straight and let's pick something okay
+04:53 
+
+04:53 there random whatever and then I'll just
+04:56 
+
+04:56 add a color erosion
+04:58 
+
+04:58 node and color erosion works just like
+05:03 
+
+05:03 erosion it uses the same kind of physics
+05:06 
+
+05:06 but it flows the colors like they were
+05:09 
+
+05:09 minerals so you can already see this is
+05:12 
+
+05:12 becoming this I'm going to mess a little
+05:14 
+
+05:14 bit with the set settings to uh increase
+05:18 
+
+05:18 certain aspects of it you can see it in
+05:21 
+
+05:21 action so this gives you um color maps
+05:26 
+
+05:26 that are way more believable than ever
+05:28 
+
+05:28 before because this is what happened in
+05:30 
+
+05:30 real life with um sedimentary flows and
+05:33 
+
+05:33 so as uh rain falls uh you know uh
+05:38 
+
+05:38 different kinds of materials with
+05:40 
+
+05:40 different colors whatever they get
+05:42 
+
+05:42 dragged along with it down slope and
+05:45 
+
+05:45 then this is how we get um uh uh colored
+05:49 
+
+05:49 slopes and um flow systems so that looks
+05:53 
+
+05:53 pretty cool and I can just go back and
+05:56 
+
+05:56 switch it to anything else I can see it
+05:59 
+
+05:59 being maintained DED uh it's pretty
+06:02 
+
+06:02 fast uh so I think I like the first one
+06:08 
+
+06:08 better this one that's cool however I
+06:11 
+
+06:11 wish I had like a little different
+06:13 
+
+06:13 coloration down at the bottom and so
+06:15 
+
+06:15 previously this is what I've done I've
+06:18 
+
+06:18 gone okay let's make another set map and
+06:22 
+
+06:22 let's find something for that oh that
+06:24 
+
+06:24 looks cool now I'm going to make a
+06:26 
+
+06:26 height
+06:28 
+
+06:28 node and I'm going create oops I'm going
+06:31 
+
+06:31 to create uh a combine node
+06:35 
+
+06:35 and and get this and then put this in
+06:38 
+
+06:38 the mask
+06:40 
+
+06:40 and okay that kind of works now I have
+06:43 
+
+06:43 to go change this so that uh I can set
+06:47 
+
+06:47 the
+06:48 
+
+06:48 mask God that's a lot of work and plus I
+06:50 
+
+06:50 have to go back and forth to see what
+06:51 
+
+06:51 I'm doing so let's not do any of that
+06:55 
+
+06:55 delete this I'm going to have this I'm
+06:57 
+
+06:57 going to make one more
+07:01 
+
+07:01 that's cool I'm going to select all
+07:02 
+
+07:02 three I'm going to hit contrl f8 and
+07:06 
+
+07:06 voila the new mixer node so well you can
+07:10 
+
+07:10 also drag into it but I wanted to be
+07:12 
+
+07:12 fancy and be able to say voila so I
+07:14 
+
+07:14 press contrl
+07:15 
+
+07:15 f8 so uh here's what's happening the
+07:19 
+
+07:19 first s map is now the base it's the
+07:22 
+
+07:22 ground layer the second one and the uh
+07:25 
+
+07:25 third one they became additional layers
+07:27 
+
+07:27 on top so all I have to do is change the
+07:32 
+
+07:32 range just do that so you can now see
+07:35 
+
+07:35 this
+07:36 
+
+07:36 one is here and then the top one's here
+07:41 
+
+07:41 and I can add a little bit of
+07:43 
+
+07:43 fallof and again this is a bit do
+07:46 
+
+07:46 uniform for my day so I'm just going to
+07:48 
+
+07:48 expand this and add a bit of
+07:50 
+
+07:50 warping increase the size I'll do the
+07:53 
+
+07:53 same up
+07:55 
+
+07:55 here it's warped and a different size so
+07:59 
+
+07:59 there it makes it very
+08:02 
+
+08:02 uneven
+08:03 
+
+08:03 uh you know I think I want the darker
+08:06 
+
+08:06 color down here I don't want this
+08:07 
+
+08:07 turning into like snow so I'm just going
+08:09 
+
+08:09 to move this down here and I'm going to
+08:13 
+
+08:13 change the settings
+08:16 
+
+08:16 so there we go oh I like this we have
+08:18 
+
+08:18 the light rock up here then dark and
+08:20 
+
+08:20 then this multi stret up coloration up
+08:24 
+
+08:24 here so with this ready all I have to do
+08:27 
+
+08:27 is go create a new note so so here's a a
+08:31 
+
+08:31 fun and fast way of creating this select
+08:34 
+
+08:34 um the note I want hit Tab and type in
+08:37 
+
+08:37 the short code which is CX for this
+08:39 
+
+08:39 color erosion node and you have it like
+08:42 
+
+08:42 in fact you can do it with anything
+08:43 
+
+08:43 everything has a short Cod down here and
+08:46 
+
+08:46 so if you remember it you can just make
+08:48 
+
+08:48 whatever you want uh so let me show you
+08:51 
+
+08:51 so I can just right click and go M comma
+08:55 
+
+08:55 E2 comma D2 comma snow
+09:00 
+
+09:00 and that's just me typing something like
+09:02 
+
+09:02 just the beginning and then once it
+09:04 
+
+09:04 shows up in the list I can hit comma and
+09:05 
+
+09:05 it automatically selects it's pretty
+09:07 
+
+09:07 fast once you know the short codes it's
+09:09 
+
+09:09 so fast to create like complex graphs so
+09:13 
+
+09:13 okay I have this I hit enter it just
+09:16 
+
+09:16 created this entire graph for me so
+09:18 
+
+09:18 saves a lot of time um anyways uh we're
+09:22 
+
+09:22 forgetting our main thing let me go back
+09:24 
+
+09:24 to our color erosion and so with this
+09:27 
+
+09:27 I'm going to um again I'm going to
+09:29 
+
+09:29 increase the set density just a little
+09:31 
+
+09:31 bit so from afar we can see these cool
+09:34 
+
+09:34 Rivers increase the transport distance a
+09:37 
+
+09:37 little bit and maybe also the color hold
+09:40 
+
+09:40 a little bit so the rivers can maintain
+09:43 
+
+09:43 their color for much
+09:45 
+
+09:45 longer this is cool I think I still
+09:48 
+
+09:48 would like to adjust the uh edges of all
+09:51 
+
+09:51 this so all I have to do is I can just
+09:54 
+
+09:54 lock my preview to color erosion just
+09:56 
+
+09:56 press F then I can go back to mixer
+10:00 
+
+10:00 and then I can
+10:02 
+
+10:02 change uh this and be able to see what's
+10:07 
+
+10:07 happening
+10:09 
+
+10:09 so yeah
+10:12 
+
+10:12 that's more like this oops no not that
+10:16 
+
+10:16 much this bring this down
+10:20 
+
+10:20 further there you go and then we have
+10:23 
+
+10:23 our full color
+10:26 
+
+10:26 system uh so that is one of the cooler
+10:29 
+
+10:29 ways you you can actually get a Terrain
+10:31 
+
+10:31 going quickly and then you can just
+10:33 
+
+10:33 export all of it and use it wherever you
+10:36 
+
+10:36 like uh we also have lots of cool new
+10:39 
+
+10:39 shapes so let me um show you one of
+10:42 
+
+10:42 those I'm going to go here and create a
+10:44 
+
+10:44 mountain side so here again you can see
+10:46 
+
+10:46 I'm just using a short Cod Ms for
+10:49 
+
+10:49 mountain
+10:50 
+
+10:50 side um gave me this pretty basic pretty
+10:54 
+
+10:54 eroded whatever cool I'm going to add a
+10:58 
+
+10:58 stratify node to it so this is not like
+11:01 
+
+11:01 the stratify node from guia one this is
+11:03 
+
+11:03 way more advanced way more
+11:05 
+
+11:05 powerful and so it adds
+11:09 
+
+11:09 multifaceted um you know whether it's
+11:11 
+
+11:11 Sandstone like or Limestone like uh
+11:14 
+
+11:14 layering and you can change the
+11:19 
+
+11:19 spacing and it's you can see it retains
+11:21 
+
+11:21 its uh nice balance of uniformity versus
+11:25 
+
+11:25 non-uniformity uh we can also tilt the
+11:28 
+
+11:28 strata as much as we want we can change
+11:30 
+
+11:30 the direction a little bit oh that's
+11:32 
+
+11:32 cool I like that and so then I'm going
+11:36 
+
+11:36 to get the layers map and just hook it
+11:39 
+
+11:39 up to a SAT map and let's get good SAT
+11:42 
+
+11:42 map going somewhere going to find
+11:43 
+
+11:43 something a bit
+11:46 
+
+11:46 noisy
+11:48 
+
+11:48 uh oh that's cool so it's actually
+11:51 
+
+11:51 mapping it to the different
+11:53 
+
+11:53 layers and yeah that's cool uh but
+11:58 
+
+11:58 anyways I think I want to develop this
+11:60 
+
+11:60 more first of all I'm going to go to a
+12:02 
+
+12:02 higher resolution so we can um see more
+12:05 
+
+12:05 details there we go and then uh let me
+12:10 
+
+12:10 add a little bit of erosion on
+12:14 
+
+12:14 this that's the kind of down cutting I
+12:16 
+
+12:16 don't want here so I'm going to reduce
+12:18 
+
+12:18 that oh that's cool I'm going to
+12:20 
+
+12:20 increase bed load and course sediment so
+12:22 
+
+12:22 I get more flow down
+12:25 
+
+12:25 here and then on top of this I will add
+12:29 
+
+12:29 another
+12:31 
+
+12:31 stratify but this time I'm going to go
+12:33 
+
+12:33 and mask it by height and restrict it to
+12:37 
+
+12:37 a certain
+12:39 
+
+12:39 part
+12:41 
+
+12:41 so
+12:42 
+
+12:42 something um maybe a bit higher
+12:46 
+
+12:46 up so like this and again I can come
+12:49 
+
+12:49 back and move this whenever I want I
+12:51 
+
+12:51 think yeah a bit more fall off will work
+12:54 
+
+12:54 and I'm going to adjust the
+12:56 
+
+12:56 shape and this time because it's a
+12:58 
+
+12:58 different direction it's going against
+12:60 
+
+12:60 well not exactly against but it's a bit
+13:03 
+
+13:03 um you know offset to the previous one
+13:06 
+
+13:06 so that's cool
+13:09 
+
+13:09 uh change the spacing to make it more
+13:15 
+
+13:15 Canyon
+13:17 
+
+13:17 and let's see if I can change the
+13:19 
+
+13:19 direction of this a little bit as
+13:23 
+
+13:23 well because when you go perpendicular
+13:25 
+
+13:25 you also get some pretty cool shapes
+13:28 
+
+13:28 okay something like that that's cool
+13:31 
+
+13:31 now I'm going to add one more pass of
+13:33 
+
+13:33 erosion uh but this time I'm going to
+13:35 
+
+13:35 just reduce down cutting
+13:38 
+
+13:38 completely and I am going to go mask
+13:41 
+
+13:41 this by height
+13:43 
+
+13:43 again and have it be more for the bottom
+13:47 
+
+13:47 and because we already eroded it before
+13:50 
+
+13:50 then we added this on top you can see it
+13:52 
+
+13:52 just merges seamlessly we don't have to
+13:54 
+
+13:54 worry about this so with all these
+13:56 
+
+13:56 simulations we made sure that they tend
+13:58 
+
+13:58 to create shapes that
+14:00 
+
+14:00 as um coherent and
+14:03 
+
+14:03 um uh blend friendly as possible so okay
+14:08 
+
+14:08 we have this going on this is pretty
+14:10 
+
+14:10 cool I think I'm going to add one more
+14:12 
+
+14:12 layer to this uh which is sandstone so
+14:15 
+
+14:15 one of my favorite nodes uh
+14:19 
+
+14:19 it's very delicate when you think about
+14:21 
+
+14:21 it it creates look at that it created
+14:24 
+
+14:24 all that fine stratification and
+14:26 
+
+14:26 layering here uh I think I want to move
+14:29 
+
+14:29 the sunlight just a little bit so we can
+14:33 
+
+14:33 see okay that's a bit flat lighting but
+14:35 
+
+14:35 at least you can see what kind of shapes
+14:37 
+
+14:37 it's creating and if I go back you can
+14:39 
+
+14:39 see we had these and that's what we tend
+14:41 
+
+14:41 to get a lot with um CG terrains it's
+14:45 
+
+14:45 like everything can become quite Blobby
+14:48 
+
+14:48 if you're not careful and with erosion
+14:50 
+
+14:50 and other things as it's creating these
+14:53 
+
+14:53 it does what it's supposed to do which
+14:55 
+
+14:55 is smooth things out which is what
+14:57 
+
+14:57 erosion does but then you want some
+14:59 
+
+14:59 rocket structure and so nodes like
+15:01 
+
+15:01 Sandstone can help you do that so here
+15:02 
+
+15:02 you can see it's creating these sharp
+15:05 
+
+15:05 crevices and these adjacent
+15:08 
+
+15:08 cracks and just like um stratification
+15:11 
+
+15:11 you can also change the
+15:13 
+
+15:13 spacing um and the shaping so or that's
+15:18 
+
+15:18 the convexity just a little bit there
+15:21 
+
+15:21 smoother
+15:23 
+
+15:23 strata you know you want it to be where
+15:25 
+
+15:25 if you're up here and you fall you only
+15:27 
+
+15:27 get a few stitches not a lot of Stitch
+15:31 
+
+15:31 anyways so okay this is looking cool I
+15:34 
+
+15:34 think what I want to do is I want to
+15:35 
+
+15:35 make this way more complex so I'm going
+15:37 
+
+15:37 to change the number of passes so this
+15:39 
+
+15:39 will now undergo a slightly longer
+15:41 
+
+15:41 simulation but then it's also going to
+15:43 
+
+15:43 create way more detail so like
+15:47 
+
+15:47 this this is very very cool so we're
+15:50 
+
+15:50 going from here to here it's using
+15:54 
+
+15:54 everything that's there it helps build
+15:55 
+
+15:55 the foundation but now we have this so
+15:59 
+
+15:59 so let me do two things first I'm going
+16:03 
+
+16:03 to add another
+16:05 
+
+16:05 mask and
+16:07 
+
+16:07 let's restrict this to the
+16:10 
+
+16:10 top with a very distorted
+16:14 
+
+16:14 fallof don't have something smoother
+16:16 
+
+16:16 down here uh while um you'll see just a
+16:21 
+
+16:21 moment
+16:22 
+
+16:22 but again uh there something like this
+16:26 
+
+16:26 so it's a bit closer to this slope the
+16:29 
+
+16:29 reason is I want to add one final touch
+16:31 
+
+16:31 on this which is erosion
+16:33 
+
+16:33 Tobe there you go that's cool but let's
+16:36 
+
+16:36 do a couple of things first I'm going to
+16:38 
+
+16:38 increase the course sediments and I'm
+16:40 
+
+16:40 also increasing the bed load a little
+16:43 
+
+16:43 bit and then taking away down cutting
+16:45 
+
+16:45 let's just go completely so then we left
+16:48 
+
+16:48 at this and you go like hey you just
+16:50 
+
+16:50 ruin something completely fine no what
+16:53 
+
+16:53 we're going to do is we're going to go
+16:55 
+
+16:55 and turn on Min mode and now we get the
+16:58 
+
+16:58 best of both work
+16:59 
+
+16:59 we get this exposed strata and we get
+17:02 
+
+17:02 the smooth curves or sorry the smooth um
+17:05 
+
+17:05 slopes with sediments coming down and
+17:07 
+
+17:07 then if I increase the
+17:10 
+
+17:10 duration these parts flatten out I can
+17:12 
+
+17:12 get a little bit of both however I did
+17:15 
+
+17:15 love the shapes up here I'm going to
+17:18 
+
+17:18 lose them so let's go add mask by height
+17:21 
+
+17:21 again um okay just because I'm using
+17:24 
+
+17:24 that that's not like the only modifier
+17:26 
+
+17:26 they're like a bunch of other things
+17:27 
+
+17:27 here and so feel free to use them play
+17:29 
+
+17:29 with them they're like pretty
+17:31 
+
+17:31 helpful uh they function like basically
+17:34 
+
+17:34 micro nodes they are nodes that are
+17:36 
+
+17:36 inside your node so you don't have to
+17:38 
+
+17:38 create like lots of little adjustments
+17:40 
+
+17:40 or something and it does like doesn't
+17:42 
+
+17:42 clutter up your graph and then you can
+17:44 
+
+17:44 go in and change anything quickly and
+17:46 
+
+17:46 because they're a
+17:47 
+
+17:47 modifier um they will work very quickly
+17:50 
+
+17:50 instead of normal masking where often if
+17:52 
+
+17:52 you change the mask or the shape of the
+17:54 
+
+17:54 Mask then the entire node has to
+17:57 
+
+17:57 reprocess now here it just does it very
+17:59 
+
+17:59 quickly um on its own anyways okay let's
+18:03 
+
+18:03 I'm G to have like less fall off on this
+18:05 
+
+18:05 one because I want a sharp uh break and
+18:09 
+
+18:09 so let's go um trying to go this this
+18:14 
+
+18:14 much yeah so then we're getting some
+18:17 
+
+18:17 stuff down
+18:19 
+
+18:19 here
+18:20 
+
+18:20 um I might increase the
+18:23 
+
+18:23 duration maybe I'll decrease the
+18:25 
+
+18:25 duration because I do want some of that
+18:28 
+
+18:28 um
+18:30 
+
+18:30 get more bed
+18:32 
+
+18:32 load ah maybe just higher erosion
+18:36 
+
+18:36 scale okay we get some which means I
+18:40 
+
+18:40 should go and increase the height a
+18:43 
+
+18:43 little
+18:44 
+
+18:44 bit there we go I can always do a second
+18:48 
+
+18:48 pass why
+18:50 
+
+18:50 not this time I'll
+18:53 
+
+18:53 go very high with the bed load and
+18:59 
+
+18:59 less
+19:00 
+
+19:00 sharpness less detail and again mid
+19:05 
+
+19:05 mode uh mass by
+19:09 
+
+19:09 height bring it
+19:14 
+
+19:14 down uh little bit to the heat here
+19:17 
+
+19:17 anyways okay so this is now looking
+19:21 
+
+19:21 cool um let's see I think this deserves
+19:25 
+
+19:25 a bit of color so what I'm going to do
+19:28 
+
+19:28 is I'm going to take take uh well first
+19:30 
+
+19:30 I'm going to create a texture based node
+19:34 
+
+19:34 so that's going to be like uh a
+19:37 
+
+19:37 foundation uh give it like a little bit
+19:39 
+
+19:39 of flow and then I'm also going to get
+19:43 
+
+19:43 um I'm going to drag this out to the out
+19:46 
+
+19:46 for layers in the Sandstone so we get
+19:50 
+
+19:50 both
+19:52 
+
+19:52 um yeah a little bit of both cuz I do
+19:54 
+
+19:54 like the layering there and that's going
+19:56 
+
+19:56 to help us uh differentiate certain
+19:58 
+
+19:58 parts of the
+19:60 
+
+19:60 terrain and then let's create a s
+20:04 
+
+20:04 map um I think something Rocky deserty
+20:08 
+
+20:08 would be good hey there's that map again
+20:11 
+
+20:11 well this served us well the first time
+20:13 
+
+20:13 I'll stick to it I do like how it's dark
+20:16 
+
+20:16 at the top a little bright in the middle
+20:18 
+
+20:18 and it goes dark
+20:19 
+
+20:19 again uh and that's partly because of
+20:23 
+
+20:23 the uh the layers that we're getting
+20:26 
+
+20:26 because they go from top to bottom um if
+20:29 
+
+20:29 um let me actually show you wait oops if
+20:32 
+
+20:32 I create a FX
+20:35 
+
+20:35 node there that's what it does it's
+20:37 
+
+20:37 actually it contains all these layers
+20:41 
+
+20:41 and if you want to um shuffle them a bit
+20:44 
+
+20:44 you can actually add a filter such as
+20:47 
+
+20:47 the fold so it um starts you know
+20:51 
+
+20:51 repeating the textures a little bit and
+20:54 
+
+20:54 then you can uh connect it here and that
+20:58 
+
+20:58 gives us this but I'm not sure if that's
+21:02 
+
+21:02 too much or
+21:04 
+
+21:04 not uh that's okay let's let's keep it
+21:08 
+
+21:08 for now that does looks nice so that's
+21:12 
+
+21:12 done but let's add color erosion do this
+21:17 
+
+21:17 so what what what we're going to do is
+21:20 
+
+21:20 instead of the fine um flows that we had
+21:24 
+
+21:24 with the mountain before this time we're
+21:26 
+
+21:26 going to focus on something a bit more
+21:27 
+
+21:27 rough so I'm going to increase the flow
+21:30 
+
+21:30 volume and I'm going to increase the
+21:32 
+
+21:32 color hold so color can seep down and
+21:36 
+
+21:36 I'm going to increase the sediment
+21:37 
+
+21:37 density these are very aggressive
+21:39 
+
+21:39 settings you don't normally need them to
+21:41 
+
+21:41 be like this but in this case it's kind
+21:43 
+
+21:43 of working
+21:45 
+
+21:45 well and then let's oh what the heck uh
+21:50 
+
+21:50 let's add one more mixer or sorry one
+21:53 
+
+21:53 more s map so I can use the mixer uh I
+21:56 
+
+21:56 want a little bit of a reddish stone in
+21:58 
+
+21:58 there just a little bit so well that's
+22:02 
+
+22:02 not
+22:03 
+
+22:03 bad and this is uh this already has
+22:05 
+
+22:05 color erosion so what I can do is I can
+22:08 
+
+22:08 have that become the base for the mixer
+22:11 
+
+22:11 and have this be on top we just add
+22:14 
+
+22:14 there one and change it so it's kind of
+22:17 
+
+22:17 like this little bit of fall off a
+22:20 
+
+22:20 little bit of warping so it doesn't look
+22:21 
+
+22:21 too
+22:23 
+
+22:23 uniform uh yeah feels feels more natural
+22:27 
+
+22:27 here let me see how how far I can push
+22:29 
+
+22:29 the warp and the warp size because there
+22:33 
+
+22:33 sometimes with these larger warp size
+22:34 
+
+22:34 you'll get this wave created and uh so
+22:38 
+
+22:38 with this shape it's going uneven on
+22:41 
+
+22:41 multiple axes and that looks much much
+22:44 
+
+22:44 cooler than just something that's
+22:47 
+
+22:47 flat and so with this in place what I
+22:49 
+
+22:49 can do is add another color erosion to
+22:52 
+
+22:52 this do the same thing again that I did
+22:55 
+
+22:55 with the previous settings
+22:59 
+
+22:59 you can see I have some of that red
+23:00 
+
+23:00 seeping down when you go close you can
+23:03 
+
+23:03 see it's a very usable
+23:07 
+
+23:07 texture I think the final thing left is
+23:10 
+
+23:10 the little cherry on top I'm going to
+23:11 
+
+23:11 add a weathering
+23:13 
+
+23:13 node so weathering it's uh it's still uh
+23:16 
+
+23:16 in beta so it should be finished pretty
+23:18 
+
+23:18 soon but what it does is it adds little
+23:23 
+
+23:23 weathering to the edges uh found in all
+23:26 
+
+23:26 kinds of uh terrains
+23:29 
+
+23:29 so this
+23:31 
+
+23:31 one I'm going to reduce the creep and so
+23:35 
+
+23:35 here you can see it's ex um accentuating
+23:38 
+
+23:38 all the crevices and so I can reduce the
+23:42 
+
+23:42 dirt um increase it a
+23:46 
+
+23:46 bit increase the scale of the weathering
+23:50 
+
+23:50 that and Heck if I was being blut us let
+23:53 
+
+23:53 me just add one more color erosion to
+23:56 
+
+23:56 that and
+24:02 
+
+24:02 this really I'm just just this is uh
+24:06 
+
+24:06 insane but hey it still looks good
+24:09 
+
+24:09 that's how cool this note
+24:11 
+
+24:11 is so okay no that's too much I'm going
+24:14 
+
+24:14 to
+24:15 
+
+24:15 reduce um all of this in fact I'm going
+24:17 
+
+24:17 to reduce the the transport
+24:20 
+
+24:20 distance so anyways but here's
+24:24 
+
+24:24 our um finished dur and if I go back to
+24:28 
+
+24:28 wherever you were with the actual
+24:30 
+
+24:30 shape you can see just how detailed this
+24:34 
+
+24:34 is
+24:37 
+
+24:37 um and um it's actually great for uh you
+24:41 
+
+24:41 know creating different kind of looks
+24:44 
+
+24:44 now so the Sandstone node is actually
+24:47 
+
+24:47 what's known as a surface node so if you
+24:50 
+
+24:50 look at the new toolbox here you'll see
+24:52 
+
+24:52 there are
+24:53 
+
+24:53 Primitives uh we have all these we
+24:56 
+
+24:56 have uh
+24:59 
+
+24:59 you know Landscapes of different types
+25:02 
+
+25:02 and we have lots of
+25:05 
+
+25:05 modifications and we have uh surfaces
+25:08 
+
+25:08 and the job of surfaces is to create a
+25:11 
+
+25:11 superficial identity for your um uh for
+25:15 
+
+25:15 your terrain without actually changing
+25:17 
+
+25:17 or altering the volume of it so you
+25:19 
+
+25:19 don't lose your Heights not much really
+25:22 
+
+25:22 so for example I could go to this last
+25:25 
+
+25:25 bit here drag it out add CR
+25:30 
+
+25:30 Cy it'll turn my entire landscape into a
+25:34 
+
+25:34 craggy Rocky thing uh in fact it's part
+25:37 
+
+25:37 of the as you can see from the icon it's
+25:40 
+
+25:40 part of our Rocky family of
+25:43 
+
+25:43 notes so
+25:46 
+
+25:46 oops now this is what happens when you
+25:48 
+
+25:48 work with a beta there you go it added
+25:51 
+
+25:51 this now obviously you would look at
+25:52 
+
+25:52 this and go like hey that's not useful
+25:55 
+
+25:55 at all but it is when you do it with
+25:58 
+
+25:58 with masking so again I'm going to go
+26:01 
+
+26:01 mask this by he I promise I'll stop
+26:04 
+
+26:04 using this it's it's it's become an
+26:06 
+
+26:06 addiction but hey you use it and tell me
+26:09 
+
+26:09 how much fun it is and why you can't
+26:14 
+
+26:14 stop using it
+26:15 
+
+26:15 either so once you use it I'm sure you
+26:17 
+
+26:17 won't be able to anyways okay so I did
+26:20 
+
+26:20 this that's like a surface note uh I'm
+26:23 
+
+26:23 not going to use it uh it's not part of
+26:26 
+
+26:26 what I was thinking for this train but
+26:27 
+
+26:27 it gives you an idea
+26:29 
+
+26:29 I'm going to delete that so there are
+26:30 
+
+26:30 many of those nodes and then we also
+26:33 
+
+26:33 have uh oh yeah let me show you one more
+26:36 
+
+26:36 thing so uh there's a new node called
+26:40 
+
+26:40 transpose and what it does is it can
+26:42 
+
+26:42 actually transplant uh or transpose
+26:45 
+
+26:45 details from one terrain to another so
+26:48 
+
+26:48 I'm going to create a ridge so you can
+26:51 
+
+26:51 see this has a distinct shape of its own
+26:55 
+
+26:55 and then I'm going to create a slum
+26:59 
+
+26:59 and the slump is softer this is like
+27:01 
+
+27:01 more sharp lines and everything in the
+27:03 
+
+27:03 slump it's like taller it has smooth
+27:05 
+
+27:05 slopes and so
+27:07 
+
+27:07 on uh I'm going to take this Ridge I'm
+27:10 
+
+27:10 going to add Sandstone to
+27:13 
+
+27:13 this uh so it can get like that yeah
+27:16 
+
+27:16 that shape going I'm going to give it
+27:18 
+
+27:18 four passes just like we did before with
+27:20 
+
+27:20 the other one uh I do like how it ends
+27:24 
+
+27:24 up with these slightly staggered shapes
+27:28 
+
+27:28 that's really like um what happens with
+27:31 
+
+27:31 Sandstone also with
+27:33 
+
+27:33 Limestone so it's pretty cool um
+27:37 
+
+27:37 anyways uh with this and this maybe this
+27:42 
+
+27:42 should be doller so I'm going to show
+27:44 
+
+27:44 you one more trick we have it's the
+27:45 
+
+27:45 height remap down here so you can just
+27:48 
+
+27:48 increase the height of whatever you
+27:51 
+
+27:51 want uh or compress it down like a clamp
+27:55 
+
+27:55 I just going to apply the Sandstone
+27:56 
+
+27:56 again so there oh yeah there we go this
+27:59 
+
+27:59 time it's a bit more distinctive and
+28:01 
+
+28:01 it's not that flattened however this is
+28:05 
+
+28:05 the look that I want on
+28:10 
+
+28:10 this and sometimes it can be difficult
+28:12 
+
+28:12 to Wrangle a specific shape like for
+28:15 
+
+28:15 example let's say I have erosion on top
+28:18 
+
+28:18 of this and my erosion instead of
+28:21 
+
+28:21 creating sediment like last time it's
+28:23 
+
+28:23 actually created lots of down cutting
+28:26 
+
+28:26 and I want to apply this there and it's
+28:28 
+
+28:28 a bit difficult if I just do it directly
+28:30 
+
+28:30 or I don't know how for example well all
+28:33 
+
+28:33 I have to do is just go create a
+28:35 
+
+28:35 transpose
+28:36 
+
+28:36 node and give it a reference so I'm
+28:39 
+
+28:39 going to give it our Sandstone as a
+28:43 
+
+28:43 reference move these down here so they
+28:45 
+
+28:45 make sense and so here you can see it
+28:48 
+
+28:48 took this
+28:50 
+
+28:50 shape and transposed everything from
+28:53 
+
+28:53 here even though this has completely
+28:56 
+
+28:56 different uh volumetric profile it's
+28:59 
+
+28:59 able to understand what these shapes do
+29:01 
+
+29:01 and how they spread across that surface
+29:04 
+
+29:04 and then it can do it here now let's
+29:07 
+
+29:07 imagine that I got a note from
+29:10 
+
+29:10 my um supervisor and they're saying okay
+29:14 
+
+29:14 this is great but you know we just need
+29:16 
+
+29:16 a whole different kind of shape so I can
+29:17 
+
+29:17 just go here change it to this go and
+29:22 
+
+29:22 the same things apply or I can go and do
+29:25 
+
+29:25 this this this maybe something this in
+29:28 
+
+29:28 mod
+29:30 
+
+29:30 be different
+29:34 
+
+29:34 scale that something went wrong there
+29:37 
+
+29:37 okay there like
+29:38 
+
+29:38 that it's now applied to
+29:41 
+
+29:41 this so no matter what kind of shape
+29:44 
+
+29:44 you're working with uh you can just
+29:46 
+
+29:46 transpose one thing on top of another
+29:48 
+
+29:48 and not just this like um let's say I
+29:50 
+
+29:50 just created a radial
+29:52 
+
+29:52 gradient and I'm just going to have that
+29:56 
+
+29:56 as the main input
+29:58 
+
+29:58 it's able to give it that same kind of
+30:01 
+
+30:01 surface texture so this is actually very
+30:05 
+
+30:05 useful because you can bring in shapes
+30:07 
+
+30:07 from anywhere whether you're are
+30:08 
+
+30:08 painting them or like for example
+30:11 
+
+30:11 someone uh let's say you're working
+30:14 
+
+30:14 durin design someone in level design
+30:16 
+
+30:16 using Unreal Engine they just went in
+30:18 
+
+30:18 and they used the built-in stuff to
+30:21 
+
+30:21 create like this generalized uh not so
+30:24 
+
+30:24 realistic terrain just so they can get
+30:27 
+
+30:27 level design going and Quest design
+30:29 
+
+30:29 going and whatnot then they send you
+30:31 
+
+30:31 that and say hey this is the kind of
+30:33 
+
+30:33 terrain we want make it look great but
+30:35 
+
+30:35 don't change anything CU we like where
+30:38 
+
+30:38 we put stuff and we don't like you can't
+30:40 
+
+30:40 move where the village is you can well
+30:42 
+
+30:42 in those situations you can take a map
+30:44 
+
+30:44 like that and then alter it or for
+30:47 
+
+30:47 example if you're not comfortable with
+30:48 
+
+30:48 procedural shapes for getting that exact
+30:51 
+
+30:51 overall shape you want you feel like hey
+30:53 
+
+30:53 I'm going to go into zbrush I'm going to
+30:54 
+
+30:54 just like quickly knock out this overall
+30:57 
+
+30:57 shape well great you can then export
+30:59 
+
+30:59 that as a height map uh and then you can
+31:02 
+
+31:02 just bring that in and uh apply
+31:05 
+
+31:05 something like you know for lack of a
+31:08 
+
+31:08 better word a recipe that's created
+31:10 
+
+31:10 elsewhere and then just apply it here
+31:13 
+
+31:13 and so that's actually one of our big
+31:15 
+
+31:15 improvements in workflow for terrain
+31:17 
+
+31:17 design is like separating the concerns
+31:20 
+
+31:20 between uh what the overall shape should
+31:22 
+
+31:22 be and where things should go and then
+31:25 
+
+31:25 what each individual portion should look
+31:27 
+
+31:27 like
+31:29 
+
+31:29 so with that um you can have different
+31:32 
+
+31:32 artists work on different things and
+31:34 
+
+31:34 then merge it together or whatnot um the
+31:37 
+
+31:37 bottom line being it's a flexible new
+31:40 
+
+31:40 workflow uh based on what we have been
+31:45 
+
+31:45 uh told from Studios over the last five
+31:48 
+
+31:48 years well five plus years uh you know
+31:52 
+
+31:52 listening to where it's difficult when
+31:54 
+
+31:54 you do terrain design and so this uh is
+31:57 
+
+31:57 supposed to make it a lot
+31:60 
+
+31:60 easier and um with that uh thank you so
+32:04 
+
+32:04 much for joining me for this quick
+32:05 
+
+32:05 little video uh as we get closer to the
+32:08 
+
+32:08 final release we'll be releasing uh you
+32:11 
+
+32:11 know lots more videos and going into
+32:13 
+
+32:13 individual features and drilling down
+32:15 
+
+32:15 and doing a lot more uh trust me what
+32:18 
+
+32:18 I've shown you today is really just the
+32:21 
+
+32:21 tip of the iceberg we have so much more
+32:23 
+
+32:23 to show you and most of all we hope
+32:25 
+
+32:25 it'll make your life easier when you're
+32:27 
+
+32:27 working with terrains you can get things
+32:29 
+
+32:29 done faster and uh maybe even have a
+32:32 
+
+32:32 little bit of fun while you're doing it
+32:34 
+
+32:34 so thanks again and we'll see you soon

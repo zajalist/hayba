@@ -5,14 +5,33 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./culture": {
+      "import": "./dist/culture/index.js",
+      "types": "./dist/culture/index.d.ts"
+    },
+    "./schema-v2": {
+      "import": "./dist/schema-v2.js",
+      "types": "./dist/schema-v2.d.ts"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "serve": "node demo/serve.mjs"
+    "serve": "tsc && node demo/serve.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.96.0",
+    "three": "^0.169.0"
   },
   "devDependencies": {
     "@types/node": "^24.12.2",
+    "@types/three": "^0.169.0",
     "@vitest/coverage-v8": "^2.1.9",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"

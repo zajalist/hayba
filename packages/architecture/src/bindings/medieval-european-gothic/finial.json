@@ -1,0 +1,15 @@
+{
+  "elementId": "finial",
+  "styleSheetId": "medieval-european-gothic",
+  "seed": "0x66696e6c",
+  "profiles": {
+    "profile": "<svg viewBox=\"0 0 200 600\"><path d=\"M 30 0 L 50 0 L 50 40 L 80 60 L 80 90 L 60 120 L 70 140 L 50 180 L 60 220 L 40 270 L 50 320 L 35 380 L 25 440 L 18 490 L 12 530 L 7 565 L 3 590 L 0 600 L 0 0 Z\"/></svg>"
+  },
+  "params": {
+    "revolve_segments": 32
+  },
+  "provenance": {
+    "source": "human",
+    "createdAt": "2026-05-13T00:00:00Z"
+  }
+}

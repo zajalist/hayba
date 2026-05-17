@@ -1,0 +1,41 @@
+{
+  "id": "column",
+  "category": "connector",
+  "graph": {
+    "kind": "kernel-fn",
+    "module": "./kernel/elements/column.js",
+    "export": "columnGraph"
+  },
+  "profileSlots": [
+    {
+      "name": "shaft",
+      "description": "Vertical half-profile of the column shaft. x ≥ 0 (revolved around Y axis). Encodes fluting, taper, entasis.",
+      "hint": "symmetric-half",
+      "bbox": [0, 0, 200, 1000]
+    },
+    {
+      "name": "base",
+      "description": "Half-profile of the column base (plinth + torus + scotia). x ≥ 0.",
+      "hint": "symmetric-half",
+      "bbox": [0, 0, 300, 80]
+    },
+    {
+      "name": "capital_bottom",
+      "description": "Top-of-shaft cross-section (closed polygon). Usually circular for round shafts.",
+      "hint": "closed-path",
+      "bbox": [-100, -100, 200, 200]
+    },
+    {
+      "name": "capital_top",
+      "description": "Under-abacus cross-section (closed polygon). Usually wider than capital_bottom.",
+      "hint": "closed-path",
+      "bbox": [-150, -150, 300, 300]
+    }
+  ],
+  "paramSchema": [
+    { "name": "base_height_m",    "kind": "number", "range": [0.05, 0.5], "default": 0.2 },
+    { "name": "shaft_height_m",   "kind": "number", "range": [1.5, 8.0],  "default": 3.0 },
+    { "name": "capital_height_m", "kind": "number", "range": [0.1, 0.8],  "default": 0.3 },
+    { "name": "revolve_segments", "kind": "integer", "range": [16, 64],   "default": 32 }
+  ]
+}

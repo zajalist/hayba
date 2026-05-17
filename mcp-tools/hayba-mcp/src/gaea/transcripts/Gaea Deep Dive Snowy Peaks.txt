@@ -1,0 +1,1315 @@
+00:04 Hey, everybody.
+00:05 Maarten from Quadspinner here.
+00:07 And today we're going to be breaking down
+this cool, snowy peak.
+00:10 This is a setup that is quite versatile.
+00:14 However, it's not the end
+all. Be all of snowy mountains.
+00:17 So too cool way of getting rock detail
+with this cool slope snow.
+00:22 However,
+there will be many other ways to do this
+00:24 and there's even new notes
+coming out in the future.
+00:28 Updates which will totally change the game
+when it comes to snow.
+00:32 So for now, let's get into this
+and check out this pretty cool setup
+00:36 I built here.
+00:37 I kind of base it off of really high
+altitude mountains where snow
+00:41 is really caked on on steep areas and,
+you know, clinging on because it's frozen.
+00:47 But there's also, you know, rocky areas
+that are protruding from it
+00:51 either due to these steep, you know,
+cliffs or just, you know, maybe wind
+00:55 hitting this particular area
+and blowing off snow.
+00:59 Yeah, let's get started.
+01:00 I'll turn down the resolution to to. Okay.
+01:02 So we can just quickly go through this
+and it doesn't have to load every time.
+01:06 All right.
+01:07 To start off, we're going to start
+with a mountain primitive.
+01:10 I used a height of two and I kind of,
+you know, seed farmed in a sense,
+01:15 until I found a nice seed where I got this
+nice bulky, large shape.
+01:20 Some will be different than others.
+01:21 You know,
+you kind of have to look for something
+01:24 that you like when you start off.
+01:26 Now, this is a very cool, bulky shape.
+01:28 However, we're still missing
+these really defining peaks that
+01:32 I want to do in my in my mouth and shape.
+01:34 So to get that, we're going to use
+the very noisy for noise and amazing note.
+01:38 You can get a lot of detail out of it.
+01:39 And in our case, we're going to use it
+to create that pool craggy peak look.
+01:44 So we're going to put it to a scale
+of point eight, which is a little smaller.
+01:48 So we have more individual
+little peaks coming out.
+01:51 I put it to a deep Manhattan function.
+01:54 It differs from the Euclidean function
+because Euclidean is a bit
+01:57 more exponential, has a bit more steep
+rising slopes I can show you right here.
+02:03 So you can see it has these very tiny,
+sharp peaks
+02:07 that kind of raise exponentially
+while Manhattan is a lot more
+02:12 equal in shape
+and all the slopes seem to be
+02:15 quite straight,
+you know, like a linear growth in a sense.
+02:19 I put the shape function or form
+function to P,
+02:22 and I don't think I touched any other
+settings.
+02:25 You can, if you want, turn down the game
+clamped to hide a bit,
+02:29 maybe the lower to jitter
+if you're getting a really jittery look.
+02:34 I would recommend just
+02:35 playing around with the seed,
+you know, see whatever seed works best.
+02:39 After I got this one,
+I get a radial gradient and put a
+02:43 shaper of point five to it, which I
+then multiply onto the board annoying.
+02:47 So the edge node can do
+this as well for you quite quickly.
+02:50 However, I like this setup because I have
+a bit more control on the actual falloff.
+02:54 So if I go here and then change the shape,
+02:59 you can see that I have a lot of control
+03:03 and it's, yeah, I just like this
+this timer setup.
+03:06 It will always be zero borders,
+you know, it won't overshoot the edge.
+03:10 It will always have a zero at the edge.
+03:14 However, I'm very much able
+to control this fall off until I like it.
+03:18 In my case, 4.5 work really well.
+03:21 I felt like that was kind of aligning
+with the slope of the var
+03:25 noise itself,
+so I have to have combined over.
+03:28 So after I've multiplied that to
+get a zero borders edge here,
+03:32 I transposed
+it on top of my mouth in shape.
+03:36 So Transpose is kind of
+like the new embed function.
+03:38 So in Guy one, we had the embed inside
+of the combined node.
+03:42 Now we get transpose,
+which also has the embed function,
+03:46 but transpose is pretty much
+just a better option too.
+03:49 Yeah, I'm transposing this Vaughan
+on top of my primitive
+03:53 getting a very nice cool shape right here.
+03:58 And again, if you don't like certain
+parts of it, just go so far
+04:01 on the var annoy or your primitive
+and you know, see what you get.
+04:05 It's very important
+that you like your base shape.
+04:08 If you don't like your base shape,
+you're not going to like your mountain.
+04:11 So yeah,
+04:13 now that we have established
+this cool shape,
+04:16 we're going to actually get into erosion.
+04:18 So I opted not to have any erosion
+of my primitive.
+04:21 I just use the basic function.
+04:23 So we're going to have adding
+04:24 we're going to add our own erosion
+to quite early in the stack.
+04:27 And I'm doing this because this will very
+much be a shaping node in a sense.
+04:31 So erosion too is very versatile,
+very strong,
+04:35 and it has a lot of effects on your shape.
+04:37 So I personally like to put it more early
+in the stack in what I call
+04:42 the shaping area, because it creates
+these big changes in my mountain.
+04:47 If I have the erosion scale set higher,
+you will get big valleys,
+04:51 you know,
+big river kind of details, big flows.
+04:55 So you can, of course,
+04:57 adjust the node to be very minimal
+and very light effects.
+04:60 But, you know, I love the erosion
+to look in state creates a very believable
+05:05 shape off of any, you know, primitives
+that you threw together.
+05:08 It's just that it's a very strong one,
+a very strong notes.
+05:11 I like to have it more earlier my stack
+so it doesn't override any cool details
+05:16 that have at it.
+05:16 You know, if I added very cool cliffs
+to this mountain already and then added
+05:20 an erosion to note at the very end,
+which then remove that cliff by,
+05:25 you know, a flow going over it,
+I would have been quite sad about it.
+05:29 So I opt to put it
+quite early in the stack.
+05:33 And now let's talk about every setting.
+05:35 I feel like the best way to cover
+05:36 erosion too, is if I first explained
+the settings individually
+05:40 and then go over why I chose each one
+for this specific mountain.
+05:46 So what I'm going
+05:46 to do is just add an erosion to right here
+05:50 and we'll see base erosion to output.
+05:53 So duration,
+duration is quite self-explanatory.
+05:57 It is pretty much how long this simulation
+is running in erosion.
+06:01 One we normally don't touch duration
+as much since it's quite a heavy node,
+06:05 and if we crank up the duration, we
+are going to be waiting forever for that.
+06:08 Note Finish duration in erosion
+two is very, very manageable
+06:13 because the node is just so quick.
+06:14 So we can turn this up to 77
+and we're going to get a super cool result
+06:19 in no time.
+06:21 It almost doesn't feel like you have to
+wait any, you know,
+06:23 any longer or a higher duration down
+cutting.
+06:27 Again, quite self-explanatory.
+06:28 It is just how deep the grooves
+will be from the erosion itself.
+06:33 Erosion scale?
+06:34 No, this is a very interesting
+setting that a lot of people maybe
+06:37 don't really touch or don't really know
+what to do with erosion.
+06:41 Scale kind of dictates
+06:42 how much space is between each valley
+or groove from the erosive flows.
+06:47 So if we have it to a scale of a thousand,
+it means that like, let's say
+06:51 at a distance of every thousand,
+06:53 we're going to have a large groove
+come into our mountain.
+06:55 Now, if we turn this down, we're
+actually going to see a lot more grooves
+06:59 start appearing.
+07:00 You can see, especially in this Low
+Valley area,
+07:02 we're going to see
+so many more small grooves.
+07:05 And if we just keep cranking this down,
+you're going
+07:08 to get so much more detail now
+and it's rain like this.
+07:12 I think staying between the ranges of 1000
+to 250 is probably your best bet.
+07:18 Once you get around 200,
+you're going to get a lot of cool detail.
+07:22 Still, However,
+if we go below 200 on a train
+07:26 like this, it could be more
+of a rock detailing effect.
+07:29 So if we turn down to down cutting,
+07:31 maybe we could see this as like
+slabs of rock being cut into our terrain.
+07:34 All in all, it's a very powerful setting.
+07:37 Definitely play around
+with the erosion scale.
+07:39 You're going to get so many different
+variants of your terrain.
+07:42 In my case, I use 250.
+07:44 I really like the effect that I got
+with that.
+07:47 And yeah, all I can say
+07:49 is kind of recommend playing around
+with this setting specifically enough.
+07:53 So now I'm going to cover the sediment
+07:54 discharge settings correctly suspended
+load by load and course sediments.
+07:58 So to summarize it, suspended
+load is the lightest sediments.
+08:02 They move very quickly over the terrain
+and they don't really settle quickly.
+08:06 So you won't really get big volume
+of debris from this sediment discharge.
+08:11 However, this sediment discharge
+does have the greatest effect
+08:14 on your terrain,
+so that's why it's maxed out by default.
+08:17 So this sediment, if you want to see it,
+08:20 the best way to describe it is
+it has a lot of effects on these grooves.
+08:24 If we turn down the amount,
+you'll see that
+08:27 the grooves become less intense
+and there'll be less of them.
+08:30 The suspended angle is
+kind of the threshold at which it starts.
+08:34 So let's say a suspended angle of 24.
+08:36 That means that the erosion
+kind of starts at any slope
+08:40 that is more than 24 degrees
+and steepness.
+08:43 If we turn this down to four,
+you'll see there's actually a lot more
+08:46 intense effect
+of these small little grooves.
+08:49 And if we turn it up, you'll see it's less
+because there will be just less of that
+08:54 flow happening.
+08:55 I think right here
+is probably a good way of showcasing it.
+09:02 Okay,
+so I'm just going to turn this off for now
+09:03 and then we're going to cover the bed
+load.
+09:05 So the bed load is the
+09:06 slightly less mobile, but still quite,
+you know, pervasive sediments.
+09:10 It creates sediments easily, but
+these sediments only travel moderately.
+09:14 Increasing this sedimentation
+can help you create like tallis, you know,
+09:18 these big talus flows
+and other like deposits on your three.
+09:22 It should be used kind of with care
+because it can quickly become quite
+09:25 overpowering, especially with the bed
+angle being higher.
+09:29 It can kind of cover your whole terrain.
+09:30 Same as the core seven.
+09:32 So that's increases
+to one to be very noticeable.
+09:37 It will be most noticeable
+right down here.
+09:39 Yeah.
+09:40 So you'll see instantly
+these valleys are filled with large flows
+09:44 and if we increase the angle,
+09:46 we'll see that the angle
+of like these flows storing will increase
+09:51 and you'll see that basically
+09:52 the whole bottom of her mountain
+at this point it's just becoming
+09:55 very much a big pile of sediments
+because it's very strong.
+09:59 However, the next sediment setting
+of course sediments really gives you
+10:03 the rock flow or this big tallis scree,
+as you can call it.
+10:08 It kind of represents loose
+soil, rocks, boulders and other loose
+10:11 materials on it's rain that can create
+these big impressive screens of tallis or,
+10:17 you know, scree coming down.
+10:19 These sediments kind of settle quickly
+so they could stick onto your terrain,
+10:23 you know, on a quite steep angle.
+10:25 And yeah, they give you very interesting
+sedimentation patterns.
+10:29 So I'm just going to turn this up
+all the way to one.
+10:32 And right now it's not very noticeable
+because the course angle is set to ten.
+10:36 But if we increase this,
+we're going to get more
+10:40 and more of that showing up
+10:45 and you'll notice that it settles quickly.
+10:47 And what we mean by that
+is that you can see that down here
+10:51 there is no sedimentation,
+there is no debris.
+10:54 Right. There's no big pile of debris.
+10:56 However, up here now
+10:57 with this very steep angle, it's
+almost all sticking to these cliffs.
+11:01 So this is a very cool way of adding that
+like rock flow that's
+11:05 directly under a cliff.
+11:08 So, yeah, if I turn this down again a bit,
+11:12 there we go.
+11:12 It's it's giving us the atlas right here
+again, down below in the valleys.
+11:18 It is not visible. It's up here.
+11:20 So the difference between bed load
+and coarse
+11:23 sediments would really be the distance
+it travels.
+11:25 If we add some bed load to this now
+we're going to get flows
+11:29 running all the way into the valleys down
+below the bed load will travel further
+11:34 and thus, you know, end up down here
+on the bottom of the mountain.
+11:37 While the coarse sediments are
+very sticky, they don't travel very far.
+11:43 However, I would recommend not going over
+11:47 30 on most cases
+when you're using coarse sediments
+11:50 because at that point
+they start clinging a bit to like very,
+11:53 very,
+you know, almost impossibly steep slopes.
+11:57 If that's what you want to have,
+then absolutely go for it.
+11:60 However, 30
+normally gives you these very impressive
+12:04 like talus flows on
+pretty steep areas in my case.
+12:07 Now, something to note here
+is that the actual
+12:09 strength of each sediment
+discharge is not maxing out at one.
+12:13 When you put them all to one,
+it is actually a percentage thing where
+12:18 if we set them all to one, each single
+12:21 discharge will only be at a 33% strength.
+12:25 So if we want to have a lot more bed load,
+12:30 then we should
+12:30 turn down the suspended load a little bit
+and of course sediments a little bit
+12:33 and that will then give our bed load
+more space and a sense of more strength.
+12:39 If we have everything set to one,
+it will all be one third of the strength
+12:43 in this sense. So hope that makes sense.
+12:45 So to shape
+controls are quite interesting.
+12:47 They're basically a thermal effect that is
+then thrown on top of your mountain
+12:51 and helps blend your mountain
+with the actual erosion a lot better.
+12:54 However, you could turn it off
+12:56 if you don't want it
+to have a lot of effects.
+12:58 Or you could just play around
+with the settings
+12:60 to make the effects lower
+or just work for you.
+13:04 There's quite a lot of controls
+and you can really push it.
+13:07 You can get some really wonky shapes
+happening
+13:10 when you push
+these settings around the lot.
+13:13 So a shape's at the zero
+and wall sharpness and detail scale
+13:17 to one, we'll just make sure
+that it has no effect.
+13:20 There's no effect here.
+13:21 It is the base shape
+just with your erosion added.
+13:25 However, if we didn't
+13:26 turn up this effect,
+we can kind of see what happens.
+13:30 It really is kind of like a thermal
+erosion that is just kind of running down
+13:34 your mountain shape
+and smoothing it out a lot.
+13:37 Now we have a lot of control,
+so we'll just keep the shape at point five
+13:40 and let's turn the sharpness down
+2.1 or 2.11.
+13:45 And yeah, we can see that
+it has actually a lot less effect.
+13:48 Now it is a lot more close
+to our original terrain.
+13:57 Just going to run three settings like this
+so you can really visualize it.
+14:00 There we go.
+14:03 Okay, I'll just keep that at point
+five as well now
+14:06 and the detail scale.
+14:08 So really and lower this
+14:09 and you'll see that becomes
+a lot more smooth out of its frame.
+14:12 And of course, the higher it is, the more
+of the details you're preserving as well.
+14:16 So you could get
+some pretty interesting settings
+14:19 if we actually turn this up
+and then lower the detail scale,
+14:27 you can
+kind of get these low poly mountains.
+14:29 In a sense, this already looks very cool.
+14:32 You get kind of like cliff detail here.
+14:34 So this is what I mean
+when I use the erosion
+14:38 to as a shape or node, sometimes
+in a sense, like I use it to create shapes
+14:42 because again, it's very strong in erosion
+and it can just give you
+14:46 erosive detail on your mountain
+like I did up here.
+14:49 However, you can also get your primitive
+and turn it into something
+14:53 completely different.
+14:54 This could be a very good primitive
+as well, in a sense.
+14:58 And then we can add
+details on top of this again
+15:00 and then add another erosion to actually
+get some realistic shapes out of this.
+15:05 Right now,
+this is very smooth out, of course, and
+15:09 it would
+need a little bit of detailing to work.
+15:12 However,
+you can get these really cool shapes
+15:15 just by playing with these shape
+settings down here.
+15:18 If I turn this up, what happens?
+15:20 It becomes even more smoothed out
+with Crazy Cliffs.
+15:25 Yeah, I love it.
+15:26 These are these little fun
+little settings down here are very much
+15:32 something you should try out
+and play around with, because altogether
+15:36 it can give you really cool
+alpine shapes like this.
+15:40 Yeah, very neat. Very neat.
+15:43 However,
+15:44 now that we've covered all the settings,
+let's go into the settings I used.
+15:49 So I turn down the duration to eight.
+15:51 I just didn't need like as much erosion
+on this terrain in the beginning just yet.
+15:55 The down got into point
+to the erosion scale to 250.
+15:60 So I have a bit more different grooves
+and stuff going on the suspended load.
+16:04 I turn down 2.25
+and I kept the angle at 15.
+16:09 It just made the actual individual grooves
+less deep and less aggressive.
+16:13 I turned up the bed load
+and bit angled a little bit
+16:16 and just creating these tallis flows
+and of course sediments.
+16:19 I didn't need it because I was going
+to add a layer of snow.
+16:22 So adding a whole layer of scree
+and tallis was not necessary.
+16:26 The shape I kept it at zero point too,
+however, did turn up the shape
+16:30 sharpness and the shape detail scale
+2.7 and point eight respectively.
+16:34 So those are two settings
+I'm using on this terrain.
+16:38 I would say it's very much depending
+on the actual primitive you have, how much
+16:43 you know you want to be down cutting
+and how deep you want the grooves to be.
+16:47 So I play around with it.
+16:48 I explain every setting now,
+16:49 so I hope you actually are able
+to kind of figure it out and
+16:53 if you have any questions,
+leave them in the comments.
+16:55 But also there will be a separate video
+on erosion to where we will
+16:59 just deep dive
+specifically into that node.
+17:02 It might already be up on the channel
+so you can check.
+17:05 Otherwise
+it will be coming soon after erosion.
+17:07 Two, we're going to add a distance node.
+17:10 I'm doing this just to kind of sharpen
+down and grind down some of the peaks.
+17:14 After adding this primitive,
+17:16 there was a very steep cliffs over here
+and this little peak is very pronounced.
+17:22 And I kind of just wanted
+to have everything kind of sharpened down.
+17:26 So I added this distance node direction
+set 24
+17:32 and I turn to fall off down to 0.4.
+17:34 And after that
+17:36 I just made sure to set the influence 2.5
+if I keep the influence that way.
+17:40 And you can see it's a very,
+very strong effect.
+17:42 And of course this would be very hard
+to work with afterwards.
+17:46 It looks a little too mathematical, right?
+17:48 So turning now to influence,
+which is a setting we can add here,
+17:52 2.5 kind of helps it blend with the actual
+rocky terrain we have below it.
+17:58 So let's get started
+with this rock detail, a way to get rocky.
+18:01 So I really like as the sandstone
+node is very strong.
+18:05 However, I do change a few things.
+18:07 I upped the spacing to point to
+it doesn't really work
+18:11 the same way as fractal terracing,
+where that will be very noticeable.
+18:14 It still stays very detailed
+with like micro details.
+18:17 Well, the convexity I added
+18:20 or the convexity I changed it 2.5.
+18:24 It made the ridges a little sharper
+and less bulgy and smooth,
+18:28 a bit sharper, pronounced,
+and then I turned to chaos.
+18:32 So 2.4 I wish I could turn it up to one.
+18:35 All of chaos.
+18:36 The chaos is kind of like
+this kind of crisscross pattern.
+18:39 It's happening with the sandstone.
+18:41 I really love it. It really
+18:44 creates very, very cool rock detail.
+18:47 And you're on your mountain afterwards.
+18:49 It I worked at a tiny bit.
+18:50 I actually had played around with the warp
+strength a bit higher,
+18:54 but I really do just like the detail
+that the sandstone provided.
+18:57 So just a tiny bit of warp roughness
+at 2.6 strength.
+19:02 So at the .05 in the size 2.01.
+19:05 So it's a very light work.
+19:07 I did turn the iterations to four,
+so kind of walks
+19:10 it four times in the sense
+in different directions,
+19:14 gives you quite interesting shapes.
+19:16 It's more pronounced
+on higher resolutions.
+19:17 Of course,
+19:19 at that point I select the slope.
+19:22 I set it to a range of 50.
+19:24 I invert it.
+19:25 So again, in these settings right here
+I choose and here I choose the invert.
+19:30 And I had a blur of points.
+19:31 One, I kind of do this
+because if you don't blur your selection
+19:36 or your mask, you can get
+a lot of artifacts on the edges
+19:40 When you like a lot of detail like this.
+19:42 On a less detailed terrain,
+you kind of want to blur the edges
+19:45 so it blends well and you don't see
+very noticeable Artifacting
+19:50 between the areas where it is
+and it isn't.
+19:53 So you can really notice where it starts
+and stops.
+19:56 It's very smooth fall off.
+19:58 So that
+is our first little bit of rock detail.
+20:02 So we're adding and then again,
+same set up with the slope,
+20:05 only a bit more blur right here
+because the actual shape
+20:10 that we're going to be
+adding is a bit larger,
+20:12 so we need a bit more fall off
+so there's less Artifacting again,
+20:16 the warp, we're going to add a warp
+20:18 at a size of point 0 to 5
+20:22 and then a strength of point five.
+20:25 Pretty much everything is basic
+except for the iterations we add four.
+20:29 Again, I like four.
+20:31 It seems that it then warps in every axis
+and make sure that like, you know,
+20:35 it's not like pushing
+in one certain direction,
+20:37 which can sometimes kind of happen
+with warp.
+20:40 Yeah, a size of .205 is quite large.
+20:44 You'll get these big rock shapes
+and the reason
+20:49 why it's not all over two three
+is because I set it to Max.
+20:53 So it's not like denting our three
+and it's only adding to it.
+20:57 You can see
+it's only adding these outcrops.
+20:60 I really like using this
+21:01 as a way to add outcrops
+because it looks a lot more natural.
+21:05 Yeah, this is a very natural way of
+just getting outcrop
+21:08 and cliff detail
+and stuff in your terrain.
+21:11 Again, if you have a terrain like this,
+there is a very much
+21:14 a recognizable pattern to it.
+21:16 And using a warp like this will break up
+that pattern as well.
+21:20 You know like we don't have
+just only got this very clean sandstone.
+21:24 There's also a cliff here and there.
+21:27 It's just popping up.
+21:28 So that's how I did that.
+21:31 And then I added a choke point.
+21:33 So choke points you can add.
+21:36 And then I named it shaping.
+21:38 You can also add choke points
+within the known here.
+21:40 If you right click and insert choke point.
+21:43 Choke points are very good.
+21:44 They keep your graph
+just kind of like organized.
+21:46 You can move stuff around.
+21:47 You can,
+21:48 you know, if you have a lot of connections
+to a choke point,
+21:51 like at the texturing area,
+it kind of helps if you have a choke point
+21:55 because you can easily add stuff
+behind it.
+21:57 It's just a good way of of organizing
+and keeping your graph manageable,
+22:02 especially if you get to larger
+graphs like this.
+22:05 So that's the shaping done for this thing.
+22:07 So let's move on to like the simulation
+erosion area of our of our graph.
+22:12 We're going to start off with snow.
+22:14 So still love it.
+22:17 We're actually going to get a new snow
+node as well that will probably do
+22:20 a lot more of the work
+we'll do now with thermal to
+22:24 not saying that this is now a outdated
+workflow.
+22:28 It's still very much
+22:28 a interesting workflow and you can use it
+in a lot of different ways.
+22:32 But yeah, the new snow
+node will will be very interesting
+22:35 and could definitely be used
+as well in this, in this kind of terrain.
+22:40 However, using the old snow node,
+22:43 we're going to set a few settings
+to make sure that this snow sticks.
+22:46 So normally when we have snow, it
+kind of fills up these gully areas, right?
+22:51 It doesn't really stick
+to the peaks of your terrain.
+22:54 We're going to fix this
+by changing the slip off angle
+22:57 and the adhered Snowmass.
+22:59 So these slip off angles
+normally set to 38.
+23:01 I set at the 50
+and the adhered Snowmass is set to 50
+23:05 or 12 or something and I turn it to 20.
+23:09 This will just give us a lot more
+build up on steeper areas
+23:12 and especially on kind of the ridges
+on top of the mountain.
+23:17 The intensity is turned up
+a little bit. 2.3
+23:21 the melt is very much something you have
+to dial in specific to your terrain.
+23:26 So the melt,
+23:29 if I turn it off, you can see a lot
+more of the rock is covered.
+23:33 And if I put it 2.22,
+which is where I was, it just exposes
+23:37 a bit more of the rock.
+23:39 So I would say play around with it,
+see how your terrain looks and if you want
+23:42 more or less rain covered by snow, there
+you go.
+23:45 Use the malfunction and the intensity
+and that kind of stuff.
+23:48 In my case, see that this snow line, 2.15.
+23:51 So just kind of ends here.
+23:53 Again, very much depends on your terrain
+and whatever you need.
+23:58 So moving on from that
+24:00 series, two ways we can go about this.
+24:04 So you can use slope
+24:06 or we can use the actual snow
+map and blur it.
+24:09 So this is for thermal.
+24:12 At this point,
+Snow looks very cool, right?
+24:15 However, it is a bit bulgy.
+24:17 It's just a bit blobby.
+24:20 I guess It just looks like a big, thick
+layer of snow.
+24:23 I want that high altitude
+look where it's very much frozen
+24:28 and the wind has been like blowing it
+so much
+24:31 that it freezes into these ice sheets
+and it breaks it almost looks rocky.
+24:35 It's very sharp looking.
+24:37 And the way to get that is where thermal.
+24:38 So right now on to Kate
+doesn't look as sharp.
+24:41 But trust me, a K 16
+K, you'll have very nice sharp ridges
+24:45 and a very nice
+like yes, steep look to your snow.
+24:50 However, there's different ways
+we can go around this
+24:52 because the thermal will also of course,
+smooth out your rocky detail.
+24:56 So if we use this snow
+and then use a snow mask,
+24:60 we can say that the thermal
+should only work on the snow area.
+25:03 Right. The snow area.
+25:05 However, we do need to blur it.
+25:06 Otherwise, we're going to get
+a very obvious falloff between
+25:09 the two, between the rock and the snow.
+25:13 However, t is also a different way
+you could do this.
+25:15 You could use the slope,
+25:18 which is also very much
+25:19 a viable way of masking rocky areas.
+25:22 There is something I should say is noting
+that it will kind of expose any pattern.
+25:28 So because we have the sandstone,
+for example, the sandstone gives us
+25:33 kind of like a terracing pattern,
+which looks very cool.
+25:36 But we also have, you know, these cool
+like from the distance snow,
+25:41 we have these cool kind of pillars
+almost coming down from this cliff area.
+25:47 If we use it,
+doesn't really catch those pillars.
+25:49 It only catches the Yeah,
+fractal terracing from the sandstone node,
+25:54 which if we then go in here,
+we kind of lose that pillar.
+25:58 It's still a little bit noticeable,
+but you're losing a bit of detail there.
+26:02 I would
+26:03 say slope works quite well though
+in a lot of cases.
+26:06 However, for me this time
+I chose to just take the snow mask
+26:10 and set up the slope mask
+and this kind of just
+26:14 makes sure
+that the actual rock detail is preserved
+26:18 a little bit better and again, higher Rez
+it will be a lot more detailed.
+26:22 Yeah, this is this is the mask amusing.
+26:25 And I'm putting that into the area.
+26:26 Mask of thermal too.
+26:28 So thermal two very interesting.
+26:31 If we get to the base thermal
+26:34 then we just connect these and then
+26:37 you can kind of see
+26:38 that it's not that strong,
+26:41 you know, it doesn't have a big effect
+if we just look at the base,
+26:44 the base settings.
+26:45 However, if we then turn up the duration,
+the string
+26:49 and the angle,
+we're going to get a lot of effects here.
+26:51 So strength, don't be scared.
+26:53 Very go turned out up way high duration,
+turn it up as well.
+26:58 And now all of a sudden we're
+26:59 getting really weird effects
+and that's because the angle is quite low.
+27:03 So the palace that it's creating
+is laying really flat on our terrain,
+27:08 which is kind of now carving out this
+this mask.
+27:11 It's becoming very noticeable
+27:12 if we turn this up all the way
+to 96, blending a bit better.
+27:16 You can also turn down the anisotropy
+27:20 and yeah, you'll see
+27:23 it's already quite good.
+27:24 And then we can remove some of the
+sediments and turn down the feature scale
+27:31 and we already have the look we want.
+27:33 So duration quite self-explanatory,
+just the length of the actual simulation,
+27:38 it is somewhat like strength
+27:40 in a sense that it, you know, amplifies
+the effect of the simulation.
+27:44 So anisotropy is quite interesting
+as the setting.
+27:46 It kind of governs how drastically
+your underlying terrain is being affected.
+27:52 In a sense, it also gives you more
+27:55 callus
+or more debris coming off of your terrain.
+27:58 Yeah, if I turn this very low,
+28:00 you'll see that
+a lot more details will kind of stay.
+28:04 I mean, maybe it's hard to see
+with this lower resolution, but
+28:10 you'll definitely see it
+when I turn it up.
+28:12 So, yeah, you can see that most of
+my underlying terrain is pretty safe.
+28:17 It's it stays pretty similar.
+28:19 Return is all the way to one.
+28:21 You can see it almost looks blurry.
+28:23 It's basically very much just eroding
+the terrain, smoothing it out a lot more.
+28:29 I would say in most cases
+you want to keep this quite low.
+28:33 Otherwise we're going to lose
+a lot of detail in our terrain,
+28:35 even if we use an area mask.
+28:37 But yeah, it's basically
+the amount of stress, the terrain
+28:40 that is being eroded is experiencing
+and at very high levels, very high stress,
+28:44 your terrain will lose
+basically all its shape
+28:47 and just get absolutely
+crumbled and destroyed.
+28:51 But yeah, very, very cool setting.
+28:52 Definitely play around
+normally kind of in the point
+28:56 for two zero values
+and when you do that you
+29:01 yeah you can
+you can get some interesting results.
+29:04 I normally keep it quite low as here
+I have it at point one.
+29:08 Let's let's continue though so the angle
+is going to be quite interesting.
+29:12 I turn it all the way down.
+29:13 If we turn it up, you can kind of see
+29:16 the effect happening
+29:20 is basically just the angle
+which details this lame set of removal.
+29:24 It's very sensitive.
+29:25 So even if you have it at point
+one of our move quite a lot
+29:29 and then
+29:32 yeah,
+29:33 you can see what happens if I remove more.
+29:36 The settings are all very much up to
+your own
+29:39 needs here when it comes to your terrain,
+it might work
+29:42 at a different angle
+or might need less sediment to be removed.
+29:47 So yeah, just play around with that.
+29:49 Really have fun with it
+so thermal can be quite strong.
+29:52 And if we have a feature scale
+set to like something like 25,
+29:57 I think it might be better.
+29:58 If we use this,
+29:60 we can lose a lot of detail.
+30:02 As you can see here, we're going to
+just kind of maintain the large details.
+30:05 Now, if we set the feature scale to five,
+it's actually going to just allow a lot
+30:10 more of that micro detail to kind of be
+taken into account for the simulation.
+30:15 In some cases, you might not want that.
+30:17 Who knows? Maybe you would like,
+30:20 you know, only the larger features
+of your terrain to be be visible.
+30:23 However,
+30:25 in my case, I think the feature scale five
+is very much necessary,
+30:31 so I can keep all the micro detail
+I can keep.
+30:34 It is noted that if you feature scales
+30:37 higher, you should probably lower
+the duration a little bit
+30:41 because yeah, the effect
+just becomes stronger as you can see.
+30:44 Like it down, cuts the whole terrain
+a lot more.
+30:48 So yeah,
+30:49 just keep in mind that all these settings
+kind of work together.
+30:52 You can look at my settings
+and try these ones out on your training
+30:55 and see how it works for you.
+30:58 Next up, we're going to go to Erosion.
+31:00 And this is erosion, one,
+you don't have to.
+31:03 But after my thermal,
+I like to add erosion.
+31:05 One very low duration,
+very low rock softness, low strength,
+31:11 very high inhibition, no down cutting,
+31:14 high base level one, number one volume.
+31:17 I'm just doing this to add break
+as much detail in like these snow flows
+31:22 in a sense, like as if this large
+amount of snow or sediment is coming down.
+31:27 And at the same time, I'm
+31:27 putting the inhibition
+as high as it can be because I want to
+31:31 avoid some of the more gimmicky stuff
+that can happen with erosion.
+31:35 One which you will.
+31:37 Sally See one of them here?
+31:39 It's where it will create this
+very deep groove in certain areas.
+31:44 Yeah, inhibition.
+31:46 Okay, well, not sadly.
+31:48 I'm putting all these quite high
+to avoid as much as I can the deep grooves
+31:53 that erosion one can create,
+which you'll see one here on this area.
+31:57 There's still a little bit of a deep proof
+that is popping through.
+32:01 But yeah, with these settings
+that should be minimized
+32:03 and you probably only will have kind of
+like the very light flow,
+32:08 almost texture that you get,
+but not the actual deep flow lines.
+32:12 That erosion one would normally give you.
+32:14 Now we're going to get
+a little interesting.
+32:16 This might look very intense,
+32:19 but let's explain it.
+32:20 So first, I'm just getting a selection.
+32:22 I'm getting a peak selection.
+32:24 So here
+you can see I'm just inverting it, though,
+32:27 just so you know, that I'm getting
+a very basic selection of the peaks.
+32:31 I'm getting a slope selection
+set in these settings, 25 and 15.
+32:35 Again,
+just kind of selecting the more flat areas
+32:38 and then multiplying these together
+and then with a curve
+32:42 making this a lot more contrasty
+just so we have a really nice mask
+32:47 and now and the erosion node.
+32:49 Another cool thing is that we can
+take this flow from the erosion node
+32:53 and make a mask.
+32:55 So I just put it into an effect.
+32:57 Snow Just so I can visualize it
+32:60 again, you
+32:60 can visualize of
+t you can change the style of a node. So
+33:04 this is of course a terrain visualization
+and this a mask visualization.
+33:09 And then I put it in a warp.
+33:11 So we're going to work this
+with a very low size
+33:15 and a bit of more roughness set 2.6.
+33:18 And then I multiply that with the mask.
+33:21 We create it, and this will create
+this mask for us right here.
+33:27 What I do after that is I take an effects
+node, I plug in this mask we've created
+33:33 and I run de multiply with .995,
+and this will kind of create
+33:40 this look,
+which maybe it's more pronounced
+33:42 if I take this five way, but
+you really want to be very light with it.
+33:46 There you go.
+33:47 We're actually going
+to get a glacier node as well.
+33:50 But I thought this was like a cool
+kind of like tricky way
+33:53 of getting this glacial crack
+to look on your terrain
+33:58 After that, just the simple shaping
+changes, multiplying it
+34:02 by 1.1 during the shape or down a bit
+so it's a bit more pointy.
+34:07 And I add another two points.
+34:09 This time I call it erosion,
+34:11 and at that point I start connecting
+all the texturing parts.
+34:15 You might
+34:15 notice that the slope is connected
+straight to this right here, this erosion.
+34:19 And that's because I don't want the rock
+or wall Slope
+34:23 to be showing up on these cracks
+in this kind of glacial area
+34:28 right here.
+34:29 I don't want that to accidentally
+get like a rock texture.
+34:32 It should just all be snow.
+34:33 So I took this slope, which
+will be our rock mask in a sense, right?
+34:38 I took that straight
+from the erosion of it back here.
+34:41 Anyway, let me just mark this
+34:43 and ask about the texturing
+because it's quite interesting
+34:47 and yeah, so first again, just getting
+the height map here, just in effects.
+34:52 Now just to be sure
+34:52 if I want to make any changes
+and then plug that into a height export.
+34:57 So it's and these are export nodes
+I've just renamed each one
+35:01 so we export
+its file will be named correctly.
+35:04 This is our height map EXR
+and there you go.
+35:09 Then we start.
+35:10 In my case, right now
+I'm using a quick saw texture.
+35:13 It's just a quick, slow rock texture with
+a bunch of lichen, lichen, lichen on it.
+35:19 And I had this utter sap map right here,
+35:23 which I could combine it with, you know,
+just to get kind of a different look.
+35:27 But I just opted
+just to use the file right now.
+35:31 Yeah, each cell is just a color, you know,
+we're just adjusting the color a bit,
+35:35 turn down the saturation, change hue
+a little bit, use the weathering node.
+35:39 And as you can see right here,
+35:40 I'm using a portal connected
+to this choke point right here.
+35:43 So portals press P on a node
+and you can add portals out.
+35:47 Portals will become portals
+you can use on the in sections right here.
+35:52 So have those.
+35:52 H So using your weathering node
+and then the weathering, we're
+35:56 just basically adding
+some like rocky caps to our terrain.
+36:00 It will just help
+kind of mixing the quicksilver texture
+36:04 we're using together
+with the actual terrain shape.
+36:06 And I find that before
+using color erosion, adding
+36:09 to weathering kind of, yeah, it helps
+and helps along with the rock detail.
+36:13 Of course,
+most of the rock detail in this case
+36:15 will be masked by the snow,
+so it's not very noticeable in the end.
+36:18 Rain, but still good tip after this
+color erosion.
+36:22 So the settings here are all basically
+point five except for the blend.
+36:27 I normally like to keep the blend at one
+or very low.
+36:31 If I want to keep the underlying layer,
+I'll probably have to blend at point one.
+36:34 But if I'm you
+36:36 if I'm doing a regular color
+erosion, normally I turn to blend to one.
+36:41 This basically
+makes it completely focused on the flow.
+36:44 If you don't, I feel like the
+36:47 texture becomes a bit
+blurry and I love how crunchy details are.
+36:52 When you turn it to one,
+you get a lot more sharp detail
+36:55 because it's not blending
+two maps together.
+36:57 In this case, color hole point
+five Sediment density point
+37:00 five transfer distance point
+five flow volume.
+37:03 I've left that zero.
+37:05 If you turn this up,
+you'll just getting more diffused.
+37:07 Kind of look on the actual flows
+have become a lot more big and spread out.
+37:13 So this kind of the rocky underlying,
+you're not going to see much of this.
+37:17 The most important part
+will be the actual snow.
+37:20 So let's get through the snow the way
+I did snow is I get a height selection.
+37:25 I use a fall off of point three.
+37:28 So it's quite a big fall off
+and I warped that.
+37:31 So I got the warped on this right here.
+37:33 Warped.
+37:34 And then I put it 2.5 and a strength 2.3.
+37:39 After this I
+37:40 adding noise, this is a Perlin noise.
+37:44 You go curling.
+37:45 It's the bone motors
+just set to add nothing different air.
+37:49 I combine this with the Dodge function
+and this kind of creates
+37:53 a custom dusting node in a in a sense,
+37:56 the dusting node is working on its own
+very well, but it's a quite a heavy node
+38:00 and I just wanted my builds
+to be a little faster, especially on 16 K
+38:04 So this was my way of having a height
+based selection
+38:08 that then kind of falls off and has kind
+of like a dusting pattern to it as well.
+38:13 On the fall off.
+38:14 And I then put this into a color erosion,
+38:17 again using a portal
+to connect the height input.
+38:20 Very important.
+38:23 Now here I really lowered the transfer
+distance.
+38:25 I don't want this snow to flow
+very far down.
+38:29 You could turn it up
+and kind of have like sort of like
+38:32 a, I don't know, glacial look.
+38:35 However, the terrain didn't reflect
+like a glacier there,
+38:38 so I kept a very low sediment density,
+one blending set, 2.1
+38:44 if you set this really high,
+would look like this again.
+38:48 I wanted to keep that kind of dusting
+look visible,
+38:51 so I mostly blend the actual base layer.
+38:55 As you can see,
+38:57 color hold and flow volume
+set to one and very important
+39:00 for kind of like fluid flows,
+you should turn on laminar flow.
+39:04 If it has that kind of more fluid
+look rather than a more sedimentary look.
+39:09 So after this color erosion, sorry,
+I had another no connect it,
+39:12 but it was nothing.
+39:13 So yeah, we're
+just exporting this as a jpeg
+39:17 because it's pretty much
+just a black and white mask.
+39:20 And you might be thinking,
+shouldn't you take off the slope?
+39:23 And I'm actually going to do that
+inside of blender.
+39:25 So I'm exporting this slope selection
+right here.
+39:28 I set the range to zero and 50
+and the actual falloff 15.
+39:32 This falloff gives me a bit of space
+in Blender to, you know, push around,
+39:37 maybe more or less
+so you could turn it up a lot more.
+39:40 But I think 15
+is enough to play around with.
+39:44 And just for the actual
+sake of the final color
+39:47 map, I multiplied that on the actual
+snow map.
+39:50 So you can see here the slopes are being
+taken out at this point.
+39:54 I combine it with the color
+erosion, the color.
+39:58 So the rocky, you know,
+part of the mountain,
+40:01 we finish off
+just for the final export jpeg.
+40:05 Normally I just export my masks
+and my color outputs in a JPEG file.
+40:09 You know, it gets really heavy
+and normally you don't really need
+40:12 the data on that,
+on a mask to have like 16 bit.
+40:15 But if you do need it then you know, you
+can, I think for this slope
+40:19 because I'm using a 15 falloff
+which is quite high,
+40:23 I use a PNG g 16 as my export setting
+40:26 because then I have more play room
+or wiggle room in blender.
+40:29 Now we're going to have
+a little bit of an interesting,
+40:32 maybe a little tricky way
+of getting a normal.
+40:35 It's not 100% necessary.
+40:36 You could just use the regular normal
+and it into world space
+40:41 or object space in blender
+sort of detail normal right now
+40:44 in blender Blender specifically, I'm
+not 100% sure about our software.
+40:49 They're not as functional right now.
+40:52 I don't know why.
+40:53 I think Blender
+just is a bit weird with it.
+40:55 So this is kind of a way I get detailed
+normals that will work in Blender
+40:59 so normals and then I use RGV split
+to get the red, green and blue channels.
+41:05 So D Red and green channels.
+41:07 I use a high pass
+set with 0.99 as the actual frequency
+41:14 and then the actual blue channel.
+41:16 I set to a constant of one.
+41:18 So it is just white.
+41:20 When I merge this together,
+I get this very interesting normal
+41:25 and I export that, you know, PG 16
+or you could use a tier four EXR,
+41:30 whatever you want to export this
+and basically
+41:34 it will give you very manageable
+tangent space normals.
+41:37 They don't have any height
+41:38 data connected into them,
+but they pretty much work very well
+41:41 and are able to add a lot of extra detail,
+especially at high res Mountain 16 K
+41:46 because your mesh probably
+won't be as high detail as a 16 K output,
+41:51 especially in Blender.
+41:52 I don't think Blender would appreciate
+the vertically count.
+41:55 I really like using normal
+when I'm using it.
+41:57 Terrain with a lot of snow because again,
+snow is not very detailed, right.
+42:01 It's pretty much just white.
+42:03 So you really need your shape
+to shine through when it comes to snow.
+42:07 So yeah,
+I love to use normals in this case
+42:09 and then I like normal set
+I can really push,
+42:11 which this kind of setup
+gives you a lot of leeway.
+42:16 You can really push
+42:17 the strength on the normals
+and it won't bug out in blender at least.
+42:20 So yeah, there's a little trick here and
+that's pretty much covering this terrain.
+42:26 I will now expect this in 16 K
+42:29 and maybe like to show you guys
+a little animation of it in action.

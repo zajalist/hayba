@@ -1,0 +1,15 @@
+{
+  "elementId": "cornice",
+  "styleSheetId": "medieval-european-gothic",
+  "seed": "0x636f726e",
+  "profiles": {
+    "profile": "<svg viewBox=\"-100 -100 200 200\"><path d=\"M -80 -60 L 80 -60 L 80 -40 L 60 -20 L 70 0 L 50 20 L 60 40 L 40 60 L -40 60 L -60 40 L -50 20 L -70 0 L -60 -20 L -80 -40 Z\"/></svg>"
+  },
+  "params": {
+    "length_m": 2.5
+  },
+  "provenance": {
+    "source": "human",
+    "createdAt": "2026-05-13T00:00:00Z"
+  }
+}

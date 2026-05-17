@@ -1,0 +1,158 @@
+00:01 I'm going to show you how to create
+an asymmetrical effect
+00:05 on a mountain,
+and then use that for texturing purposes.
+00:08 So we will start off
+by creating a Ridge node.
+00:13 And let's play with the Seed
+00:16 a little bit
+so we can get a very clear mountain range.
+00:21 There it is. And that looks pretty cool.
+00:23 And I'm going to increase the Height
+so that we get,
+00:27 a bit more area down here to play with.
+00:30 Now, on top of this,
+I'm going to apply Erosion
+00:34 then increase the Duration and the Coarse
+Sediments so we can get these nice flows.
+00:40 I think I'm going to increase
+the Sediments even more
+00:43 just to make these flows stronger.
+00:45 And I'm going to reduce the Coarse Angle
+00:48 just so it brings down these sediments
+even further.
+00:52 So that's looking good.
+00:55 Now what I want to do is I want to leave
+00:57 this side of the ridge alone, but
+I want to create some effect on this side.
+01:02 So what I'll do
+is I'll first create a Stratify node
+01:08 which is creating this effect.
+01:11 And then next, I don't think
+01:14 I'm going to change this to much,
+at least not yet.
+01:17 But what I want to do is apply it
+just to that one specific area.
+01:22 And so for that,
+01:24 let me go down here to the Modifiers
+01:27 for the Stratify node
+and add Mask by Height.
+01:31 This is now creating an instant height
+mask for this effect.
+01:36 And so let me bring that down lower
+01:39 and lower still I'm
+01:41 going to reduce the Falloff
+but increase the Distortion.
+01:45 So the edges are a little bit distorted.
+01:48 And so here you can see 
+there's not much going on
+01:51 on the back
+or up here on the main ridgeline.
+01:54 But down here
+we have this, stratified look.
+02:00 So the next thing I want to do
+02:03 is, change the stratification
+a little bit.
+02:07 So right now we have a very high Spacing.
+02:09 I want to reduce that
+02:11 just so we can get more detail out here.
+02:15 And I'm going to leave the Falloff
+to be very low
+02:18 because I don't want like smooth blending.
+02:20 I like how this is, looking,
+02:23 like it's, you know,
+jutting out from the main landscape.
+02:27 So let's say this is pretty much
+what we want for our terrain.
+02:31 So now I want to texture this.
+02:33 And so to do that
+first I'm going to create a TextureBase.
+02:39 And I'm going to have very high Slope
+02:43 and a little higher value for Soil.
+02:46 And then to that I add, a SatMap.
+02:50 And so
+02:51 I want to create two different, 
+color maps, one that's going to be
+02:56 for all of the terrain, and then one
+that's just for the exposed strata.
+03:01 So to do that, first
+let me create something that looks nice.
+03:06 That's simple enough.
+03:08 And let me make another one.
+03:11 And this one will make it
+slightly different
+03:14 so that it shows
+that we have that, exposed strata
+03:18 which should look like there's
+some minerals or whatnot coming out.
+03:22 So I want to find a color map
+that can do it justice.
+03:27 Maybe something like this,
+03:28 because it will go hand in hand with this
+and then we can adjust it later.
+03:32 So first thing I want to do,
+I want to select both of these
+03:36 right click and Combine
+into Mixer as Color Layers.
+03:41 So I now have these two colored layers.
+03:44 Now this one is being distributed
+by height.
+03:46 But I just want it very specifically
+to go where this effect is.
+03:50 And so to do that
+I'm going to create a DataExtractor node.
+03:54 The DataExtractor node
+will then plug into Stratify.
+03:59 And since it's set to Modifier
+04:01 mask by default,
+it will look at where that effect
+04:05 is being applied
+and extract that exact mask.
+04:09 So we now have this ready
+04:11 which I can
+then plug into mask one for layer one.
+04:16 And then go to layer one.
+04:18 And instead of Height
+I will switch it to Custom.
+04:22 So here you can see
+it's being applied right here.
+04:26 What I'll do is I will right click
+and Lock Preview to the Mixer output.
+04:31 Go to this other SatMap
+and maybe change it a little bit.
+04:36 Play around with it.
+04:40 Oh. Maybe that's too much.
+04:42 I can also Equalize to get more,
+04:46 mileage out of that masked area.
+04:49 This is looking good.
+04:51 And do not cement this look
+because it still looks like it's separate.
+04:55 I'm going to unlock the Preview from here.
+04:59 I'm going to create ColorErosion
+05:02 and ColorErosion.
+05:03 The Height will go
+all the way back to our strata
+05:07 because it needs a Height input.
+05:09 And so here I'll increase
+the Sediment Density a little bit.
+05:12 Reduce the Color Hold,
+but increase the Flow Volume
+05:18 maybe a little bit
+more Blend and Transport Distance.
+05:22 And you can see it's starting to seep in.
+05:24 I think maybe what I would like to have
+is a bit more texture
+05:28 on the rest of
+the terrain. So go back here,
+05:33 and maybe Equalize this one as well,
+05:36 and then use the Bias
+to bring in some color way up here.
+05:41 Going back.
+05:41 That's our Mixer.
+05:42 You can see this fits more nicely.
+05:45 And then now when we blend them
+they blend together well.
+05:49 So this is a great example
+of how you can quickly create,
+05:52 masked area effects
+and use them however you like.

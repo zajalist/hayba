@@ -1,0 +1,1210 @@
+00:00 Hey friends, finally it's time. We're
+00:03 
+
+00:03 kicking off part one of our Gaia height
+00:05 
+
+00:05 map exercises and diving into creating
+00:08 
+
+00:08 ultra realistic scenes. This tutorial
+00:10 
+
+00:10 will consist of two videos. First, we'll
+00:14 
+
+00:14 go over creating a height map in Gaia
+00:17 
+
+00:17 and then import it into Unreal. Next,
+00:19 
+
+00:19 we'll work on creating a professional
+00:21 
+
+00:21 material for the landscape and solve the
+00:23 
+
+00:23 related issues. We'll work on adjusting
+00:25 
+
+00:25 the textures with Gaia height maps.
+00:28 
+
+00:28 Next, we'll try to use PCG to align
+00:30 
+
+00:30 trees or meshes with the textures. So,
+00:33 
+
+00:33 stay with us because this tutorial is
+00:36 
+
+00:36 the best and most complete landscape
+00:38 
+
+00:38 tutorial on our channel.
+00:44 
+
+00:44 First, let's review the nodes we created
+00:46 
+
+00:46 for this height map. As you can see,
+00:48 
+
+00:48 this scene is made up of three main
+00:50 
+
+00:50 mountains. The back mountain has a
+00:52 
+
+00:52 greater height and I made the left
+00:54 
+
+00:54 mountain a bit shorter and smoother
+00:56 
+
+00:56 using shaper and curve. Then with the
+00:59 
+
+00:59 help of hillify and erosion we bring it
+01:01 
+
+01:01 closer to our reference.
+01:03 
+
+01:03 [Music]
+01:11 
+
+01:11 [Music]
+01:16 
+
+01:16 The right mountain was combined with a
+01:18 
+
+01:18 weaker mountain that was rotated using
+01:20 
+
+01:20 the transform node.
+01:26 
+
+01:26 Then with the clip node, its edges were
+01:28 
+
+01:28 tightened. And afterward, I applied a
+01:30 
+
+01:30 slow blur with a pearl and noise effect.
+01:43 
+
+01:43 I also used hillify and wizard on them
+01:46 
+
+01:46 so they resemble the left mountain
+01:49 
+
+01:49 allowing us to combine them together.
+01:59 
+
+01:59 [Music]
+02:10 
+
+02:10 Finally, I combined the three mountains
+02:12 
+
+02:12 together along with a mountain range for
+02:14 
+
+02:14 the ground and exported the height maps.
+02:17 
+
+02:17 If you don't know how to export them,
+02:19 
+
+02:19 check out the previous videos available
+02:20 
+
+02:20 on the channel.
+02:25 
+
+02:25 [Music]
+02:44 
+
+02:44 [Music]
+02:54 
+
+02:54 Heat. Heat.
+02:57 
+
+02:57 [Music]
+03:17 
+
+03:17 in Unreal. I created an empty space,
+03:20 
+
+03:20 then switched to landscape mode. From
+03:22 
+
+03:22 the manage tab, I selected import from
+03:25 
+
+03:25 file and imported the total height map.
+03:27 
+
+03:27 I changed the Zscale to 300 so that the
+03:30 
+
+03:30 landscape would be built similar to GIA.
+03:33 
+
+03:33 Of course, this number isn't always the
+03:35 
+
+03:35 same. You need to reduce the amount of
+03:37 
+
+03:37 fog in Unreal to the lowest level, but
+03:40 
+
+03:40 don't set it to zero. Otherwise, you'll
+03:42 
+
+03:42 see black in the background.
+03:46 
+
+03:46 [Music]
+03:56 
+
+03:56 [Music]
+04:03 
+
+04:03 Now let's move on to creating the
+04:05 
+
+04:05 material. First, we create a material,
+04:08 
+
+04:08 open it, and convert it into a material
+04:10 
+
+04:10 attribute.
+04:12 
+
+04:12 [Music]
+04:14 
+
+04:14 Next, we need to use a landscape layer
+04:16 
+
+04:16 blend since we want to assign multiple
+04:18 
+
+04:18 textures to our landscape using height
+04:21 
+
+04:21 maps. So we create four layers for it
+04:24 
+
+04:24 and assign a custom name to each one.
+04:27 
+
+04:27 [Music]
+04:44 
+
+04:44 Heat. Heat.
+04:52 
+
+04:52 [Music]
+05:02 
+
+05:02 [Music]
+05:19 
+
+05:19 Yeah.
+05:20 
+
+05:20 [Music]
+05:32 
+
+05:32 Next, we open QuixleBridge and import
+05:34 
+
+05:34 the desired textures into Unreal.
+05:38 
+
+05:38 [Music]
+05:58 
+
+05:58 creep.
+06:01 
+
+06:01 [Music]
+06:19 
+
+06:19 [Music]
+06:21 
+
+06:21 I can't.
+06:24 
+
+06:24 [Music]
+06:31 
+
+06:31 I
+06:33 
+
+06:33 [Music]
+06:55 
+
+06:55 don't know.
+06:57 
+
+06:57 [Music]
+07:11 
+
+07:11 [Music]
+07:21 
+
+07:21 Hey.
+07:24 
+
+07:24 [Music]
+07:27 
+
+07:27 Hey. Hey.
+07:30 
+
+07:30 For the first material, I want to use
+07:32 
+
+07:32 forest floor. So I import the albido.
+07:34 
+
+07:34 But before that, we create a landscape
+07:36 
+
+07:36 coordinate along with a color node by
+07:39 
+
+07:39 pressing the three key and clicking.
+07:42 
+
+07:42 [Music]
+07:57 
+
+07:57 We then convert it into a parameter
+07:59 
+
+07:59 because we want to use the channels to
+08:01 
+
+08:01 control the scale and normal.
+08:15 
+
+08:15 [Music]
+08:17 
+
+08:17 We add a flatten normal to the normal
+08:19 
+
+08:19 map and connect the normal parameter
+08:22 
+
+08:22 channel to it.
+08:35 
+
+08:35 [Music]
+08:42 
+
+08:42 In the last texture, we first connect
+08:44 
+
+08:44 the R channel to roughness, the G
+08:47 
+
+08:47 channel to ambient occlusion, and the B
+08:49 
+
+08:49 channel to displacement through a
+08:51 
+
+08:51 multiply node with the other branch
+08:53 
+
+08:53 coming from our parameter.
+08:58 
+
+08:58 [Music]
+09:12 
+
+09:12 [Music]
+09:17 
+
+09:17 Follow the same process for the other
+09:19 
+
+09:19 materials as well.
+09:25 
+
+09:25 [Music]
+09:33 
+
+09:33 [Music]
+09:49 
+
+09:49 Woo!
+09:52 
+
+09:52 Hey,
+10:02 
+
+10:02 [Music]
+10:05 
+
+10:05 hey,
+10:08 
+
+10:08 [Music]
+10:12 
+
+10:12 hey.
+10:16 
+
+10:16 Heat.
+10:18 
+
+10:18 [Music]
+10:30 
+
+10:30 Heat.
+10:34 
+
+10:34 [Music]
+10:44 
+
+10:44 [Music]
+10:53 
+
+10:53 Heat. Hey, Heat.
+10:57 
+
+10:57 [Music]
+11:03 
+
+11:03 [Music]
+11:20 
+
+11:20 Hey, hey, hey.
+11:23 
+
+11:23 [Music]
+11:29 
+
+11:29 behind
+11:34 
+
+11:34 [Music]
+11:49 
+
+11:49 me. Maybe
+11:60 
+
+11:60 [Music]
+12:05 
+
+12:05 Heat. Heat.
+12:14 
+
+12:14 [Music]
+12:28 
+
+12:28 beat
+12:30 
+
+12:30 [Music]
+12:37 
+
+12:37 beep beep beep beep beep beep beep beep
+12:37 
+
+12:37 beep beep beep beep beep beep beep
+12:40 
+
+12:40 [Music]
+12:52 
+
+12:52 [Applause]
+12:52 
+
+12:52 [Music]
+12:60 
+
+12:60 up.
+13:03 
+
+13:03 That one back up.
+13:07 
+
+13:07 [Music]
+13:20 
+
+13:20 In the end, create a material instance
+13:22 
+
+13:22 from your material and assign it to the
+13:25 
+
+13:25 landscape. Now, go to the landscape menu
+13:27 
+
+13:27 and open the paint section. Click on all
+13:29 
+
+13:29 material layers created.
+13:35 
+
+13:35 Then press the plus icon next to each
+13:38 
+
+13:38 material so they're ready for the step
+13:40 
+
+13:40 where we assign them to the height maps.
+13:54 
+
+13:54 Now go to the manage section, open the
+13:57 
+
+13:57 layers and assign each material its own
+13:60 
+
+13:60 specific height map.
+14:07 
+
+14:07 [Music]
+14:31 
+
+14:31 [Music]
+14:42 
+
+14:42 Now click on import. And as you can see,
+14:44 
+
+14:44 the materials are correctly matched with
+14:47 
+
+14:47 our masks.
+14:50 
+
+14:50 [Music]
+14:54 
+
+14:54 You can adjust the scale and normal maps
+14:57 
+
+14:57 to see them more clearly.
+15:21 
+
+15:21 If you run into issues with the edges,
+15:23 
+
+15:23 you can reduce the sharpness somewhat by
+15:26 
+
+15:26 painting manually and using smoothing.
+15:33 
+
+15:33 [Music]
+15:58 
+
+15:58 Heat.
+16:02 
+
+16:02 Hey, heat. Hey, heat.
+16:11 
+
+16:11 [Music]
+16:22 
+
+16:22 fixing texture repetition issues.
+16:27 
+
+16:27 As you can see, even though we increase
+16:30 
+
+16:30 the texture size, the repetition issue
+16:32 
+
+16:32 is still very noticeable. We want to
+16:35 
+
+16:35 solve this problem using the texture
+16:37 
+
+16:37 variation node. The texture variation
+16:39 
+
+16:39 node. The texture variation node in
+16:41 
+
+16:41 Unreal Engine material editor is one of
+16:44 
+
+16:44 the nodes used to diversify the
+16:46 
+
+16:46 appearance of a texture and helps reduce
+16:48 
+
+16:48 texture repetition on a surface. This is
+16:51 
+
+16:51 especially important in environments
+16:52 
+
+16:52 such as terrain, walls, or any surface
+16:55 
+
+16:55 where a texture is repeated frequently.
+16:58 
+
+16:58 Height map. You need to connect your own
+16:60 
+
+16:60 RDP texture here and convert it into an
+17:03 
+
+17:03 object texture. UV, this is where you
+17:06 
+
+17:06 plug in the texture coordinate.
+17:07 
+
+17:07 Variation scale defines the scale at
+17:10 
+
+17:10 which the variations are applied.
+17:12 
+
+17:12 Variation level controls the intensity
+17:15 
+
+17:15 of the variation in the texture. Height
+17:17 
+
+17:17 map influence determines how much the
+17:20 
+
+17:20 height map affects the variation
+17:22 
+
+17:22 process. Mass channel specifies whether
+17:25 
+
+17:25 to use your own blue map. the height
+17:27 
+
+17:27 map. Use dither, a graphics technique
+17:30 
+
+17:30 that creates a fine pattern similar to
+17:32 
+
+17:32 noise to soften the border between two
+17:35 
+
+17:35 textures, making the transition look
+17:37 
+
+17:37 more natural to the viewer. Random
+17:40 
+
+17:40 applies a random variation to rotation
+17:42 
+
+17:42 and scale. HD edge compression. When
+17:45 
+
+17:45 textures are blended together,
+17:48 
+
+17:48 especially in cases where height map
+17:50 
+
+17:50 influence or variation level is high,
+17:52 
+
+17:52 the borders between different sections
+17:54 
+
+17:54 can become too sharp, creating unwanted
+17:57 
+
+17:57 patterns or artifacts. The HD edge
+17:60 
+
+17:60 compression option solves this problem
+18:02 
+
+18:02 by applying a type of edge compression.
+18:05 
+
+18:05 You can see this change compared to the
+18:07 
+
+18:07 previous image. Even though the scale
+18:09 
+
+18:09 has been reduced, the quality of the
+18:11 
+
+18:11 highlighted area is much higher. I
+18:14 
+
+18:14 previously set up a sample of this node
+18:16 
+
+18:16 so I can show you the result.
+18:21 
+
+18:21 [Music]
+18:32 
+
+18:32 To be able to use the height map, we use
+18:34 
+
+18:34 our ORDP node and convert that to a
+18:36 
+
+18:36 texture object.
+18:39 
+
+18:39 [Music]
+18:48 
+
+18:48 For variation scale, variation level and
+18:51 
+
+18:51 height influence, we create a color node
+18:54 
+
+18:54 and convert it into a parameter.
+19:07 
+
+19:07 [Music]
+19:12 
+
+19:12 Then we assign the name of each input to
+19:15 
+
+19:15 the channels and connect them
+19:16 
+
+19:16 accordingly.
+19:29 
+
+19:29 [Music]
+19:35 
+
+19:35 [Music]
+19:40 
+
+19:40 [Music]
+19:49 
+
+19:49 [Music]
+19:50 
+
+19:50 For the mass channel, we create a color
+19:53 
+
+19:53 and set it to blue since we want to use
+19:55 
+
+19:55 the height map channel we set up above.
+20:01 
+
+20:01 [Music]
+20:15 
+
+20:15 Next, you can connect the node to the
+20:17 
+
+20:17 textures and as you'll see, the problem
+20:19 
+
+20:19 will be resolved. Do the same for the
+20:21 
+
+20:21 other materials as well.
+20:25 
+
+20:25 [Music]
+20:33 
+
+20:33 [Music]
+20:42 
+
+20:42 Dick.
+20:47 
+
+20:47 [Music]
+20:50 
+
+20:50 Hey. Hey.
+20:54 
+
+20:54 [Music]
+21:05 
+
+21:05 [Music]
+21:14 
+
+21:14 behind
+21:17 
+
+21:17 [Music]
+21:32 
+
+21:32 [Music]
+21:45 
+
+21:45 [Music]
+21:52 
+
+21:52 Now. Now, if you don't want the scales
+21:54 
+
+21:54 and parameters to be the same for all
+21:56 
+
+21:56 textures, it's better to assign a
+21:58 
+
+21:58 separate name for each parameter. This
+22:00 
+
+22:00 way, you can have individual control
+22:02 
+
+22:02 over each one in the material instance.
+22:05 
+
+22:05 [Music]
+22:13 
+
+22:13 [Music]
+22:19 
+
+22:20 [Music]
+22:44 
+
+22:44 [Music]
+22:50 
+
+22:50 [Music]
+23:33 
+
+23:33 [Music]
+23:35 
+
+23:35 PCG.
+23:38 
+
+23:38 Now, we want to use PCG in a few
+23:40 
+
+23:40 different ways. First, we activate the
+23:43 
+
+23:43 plugin. And after saving our level, we
+23:46 
+
+23:46 restart Unreal.
+23:53 
+
+23:53 We create a folder with the same name
+23:55 
+
+23:55 and add an empty PCG inside it.
+24:10 
+
+24:10 Now I want to link our height map to the
+24:12 
+
+24:12 PCG. So we add a get texture data node.
+24:18 
+
+24:18 Then we bring our piece G into the scene
+24:21 
+
+24:21 and match its size with our map.
+24:27 
+
+24:27 [Music]
+24:34 
+
+24:34 [Music]
+24:44 
+
+24:44 [Music]
+24:57 
+
+24:57 [Music]
+25:12 
+
+25:12 Now I want points to appear on the
+25:14 
+
+25:14 ground. So I need a projection node. But
+25:16 
+
+25:16 I only want the points to appear on the
+25:18 
+
+25:18 hills and on our green colored texture.
+25:20 
+
+25:20 So I assign the hill height map to the
+25:22 
+
+25:22 get texture data node.
+25:37 
+
+25:37 After pressing D on the node, as you can
+25:39 
+
+25:39 see, the points are generated, but
+25:42 
+
+25:42 they're not on the ground. So, we need a
+25:44 
+
+25:44 get landscape data node, and we connect
+25:46 
+
+25:46 it to the projection node to fix the
+25:48 
+
+25:48 issue.
+25:50 
+
+25:50 [Music]
+26:08 
+
+26:08 I can't wait.
+26:16 
+
+26:16 [Music]
+26:26 
+
+26:26 But we didn't want all the points to
+26:27 
+
+26:27 appear on the ground. We only wanted
+26:29 
+
+26:29 them on the hills. So we convert the
+26:31 
+
+26:31 alpha to red and the problem is solved.
+26:34 
+
+26:34 If you want to remove the black points
+26:36 
+
+26:36 around, you can use the density filter.
+26:40 
+
+26:40 [Music]
+26:59 
+
+26:59 Next, by adding a noise attribute and
+27:02 
+
+27:02 then applying another density filter, we
+27:04 
+
+27:04 can reduce the number of points to make
+27:06 
+
+27:06 the scene lighter.
+27:13 
+
+27:13 We add the transform node to create
+27:15 
+
+27:15 variation in size, rotation, and
+27:18 
+
+27:18 location, and the self-p pruning node to
+27:20 
+
+27:20 prevent them from intersecting each
+27:22 
+
+27:22 other.
+27:25 
+
+27:25 [Music]
+27:31 
+
+27:31 [Music]
+27:48 
+
+27:48 Now we can add a static mesh spawner to
+27:50 
+
+27:50 place our meshes into the scene.
+27:52 
+
+27:52 However, since our landscape is very
+27:54 
+
+27:54 large, the meshes appear small.
+28:12 
+
+28:12 [Music]
+28:16 
+
+28:16 Now I want to import a few free samples
+28:18 
+
+28:18 from Sketch Fab, but this is just for
+28:20 
+
+28:20 testing. In the final version, I'll be
+28:22 
+
+28:22 using different meshes.
+28:26 
+
+28:26 [Music]
+28:32 
+
+28:32 To make sure the models are correct, I
+28:34 
+
+28:34 first import them into Blender, adjust
+28:36 
+
+28:36 their size, and then bring them into
+28:38 
+
+28:38 Unreal.
+28:45 
+
+28:45 [Music]
+29:06 
+
+29:06 [Music]
+29:21 
+
+29:21 [Music]
+29:28 
+
+29:28 Now we test them in Unreal and if
+29:30 
+
+29:30 everything looks fine, we also add the
+29:32 
+
+29:32 textures to their material.
+29:35 
+
+29:35 Now we replace the cones with trees in
+29:37 
+
+29:37 the PCG and by adjusting the values in
+29:40 
+
+29:40 the density filter, we increase their
+29:42 
+
+29:42 number.
+29:43 
+
+29:43 [Music]
+29:47 
+
+29:47 Hey,
+29:53 
+
+29:53 [Music]
+30:06 
+
+30:06 hey, hey.
+30:09 
+
+30:09 [Music]
+30:32 
+
+30:32 [Music]
+30:43 
+
+30:43 [Music]
+30:48 
+
+30:48 Hey,
+30:51 
+
+30:51 [Music]
+30:58 
+
+30:58 [Music]
+31:01 
+
+31:01 hey, hey.
+31:04 
+
+31:04 [Music]
+31:18 
+
+31:18 Down
+31:22 
+
+31:22 [Music]
+31:26 
+
+31:26 behind
+31:30 
+
+31:30 me.
+31:32 
+
+31:32 Heat. Heat.
+31:34 
+
+31:34 [Music]
+31:40 
+
+31:40 [Music]
+31:58 
+
+31:58 [Music]
+32:16 
+
+32:16 Hey,
+32:20 
+
+32:20 beep.
+32:22 
+
+32:22 [Music]
+32:34 
+
+32:34 [Music]
+32:47 
+
+32:47 [Music]
+32:51 
+
+32:51 I'll add another tree for the one closer
+32:53 
+
+32:53 to the camera. And I'll explain later
+32:55 
+
+32:55 why I don't want to keep using them.
+33:02 
+
+33:02 In this tutorial, as a special gift for
+33:04 
+
+33:04 all my amazing subscribers, I've
+33:07 
+
+33:07 included three highquality lowpoly trees
+33:10 
+
+33:10 in a folder. You can easily find a link
+33:13 
+
+33:13 in the description of this video and
+33:15 
+
+33:15 download them for free. Evergreen tree
+33:17 
+
+33:17 sparkles. I created these trees myself a
+33:20 
+
+33:20 while back and now I'm sharing them with
+33:22 
+
+33:22 you so you can use them in your own
+33:24 
+
+33:24 projects.
+33:31 
+
+33:31 [Music]
+33:50 
+
+33:50 I'll replace the previous trees with
+33:52 
+
+33:52 these new ones.
+33:58 
+
+33:58 [Music]
+34:23 
+
+34:23 [Music]
+34:37 
+
+34:37 Fixing the issue of leaves not being
+34:39 
+
+34:39 visible. visible from a distance.
+34:48 
+
+34:48 You can create a material instance for
+34:49 
+
+34:49 the distant trees and by lowering the
+34:52 
+
+34:52 opacity mass clip value reduce this
+34:55 
+
+34:55 issue to some extent.
+34:60 
+
+34:60 [Music]
+35:08 
+
+35:08 Heat. Heat.
+35:10 
+
+35:10 [Music]
+35:24 
+
+35:24 [Music]
+35:57 
+
+35:57 Heat. Heat.
+35:59 
+
+35:59 [Music]
+36:20 
+
+36:20 Another
+36:22 
+
+36:22 [Music]
+36:44 
+
+36:44 solution is to enable two-sided in the
+36:47 
+
+36:47 leaf material.
+37:22 
+
+37:22 You can also adjust the MIP gen settings
+37:25 
+
+37:25 to find the best option for fixing this
+37:27 
+
+37:27 issue.

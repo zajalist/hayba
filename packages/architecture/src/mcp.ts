@@ -1,33 +1,8 @@
 import {
-  listStyleGuideMeta,
-  getStyleGuide as registryGetStyleGuide,
   getTypology as registryGetTypology,
-  type StyleGuideMeta,
 } from './registry.js';
 import { validateStyleGuide, type ValidationError } from './validate.js';
 import type { StyleGuide, Typology } from './schema.js';
-
-// ─── list_style_guides ──────────────────────────────────────────────────────
-
-export interface ListStyleGuidesResult {
-  guides: StyleGuideMeta[];
-}
-
-export function listStyleGuides(): ListStyleGuidesResult {
-  return { guides: listStyleGuideMeta() };
-}
-
-// ─── get_style_guide ────────────────────────────────────────────────────────
-
-export type GetStyleGuideResult =
-  | { guide: StyleGuide }
-  | { error: 'not_found'; id: string };
-
-export function getStyleGuideTool(args: { id: string }): GetStyleGuideResult {
-  const g = registryGetStyleGuide(args.id);
-  if (!g) return { error: 'not_found', id: args.id };
-  return { guide: g };
-}
 
 // ─── get_typology ────────────────────────────────────────────────────────────
 

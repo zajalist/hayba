@@ -1,0 +1,748 @@
+00:00 Hey everybody, Martin Quad Spinner here
+00:02 
+
+00:02 and today we'll be focusing on two nodes
+00:04 
+
+00:04 that have recently gotten some fancy new
+00:06 
+
+00:06 improvements. The thermal shaper and the
+00:09 
+
+00:09 shaper node. These two nodes are
+00:11 
+
+00:11 probably less used than some of the
+00:13 
+
+00:13 major ones discussed previously because
+00:15 
+
+00:15 they aren't designed to give you end
+00:17 
+
+00:17 results, but are actually there to help
+00:19 
+
+00:19 you lock in the base shape that you will
+00:21 
+
+00:21 be working with. We'll start with the
+00:22 
+
+00:22 shaper node. It has quite a simple
+00:24 
+
+00:24 effect on the shape of your mountain.
+00:27 
+
+00:27 You can basically turn a linear rising
+00:29 
+
+00:29 slope into one that rises exponentially
+00:31 
+
+00:31 or logarithmically. So for the sake of
+00:34 
+
+00:34 an example here that's very simple. I
+00:36 
+
+00:36 got a cone that is just a linear rising
+00:38 
+
+00:38 slope and we can use the shaper to then
+00:42 
+
+00:42 make it logarithmic or bulky or we'll
+00:46 
+
+00:46 make it more exponential or more pointy.
+00:50 
+
+00:50 So those would be the simple terms I
+00:51 
+
+00:51 would say. It either makes your mountain
+00:53 
+
+00:53 more bulky or pointy. Now the node has
+00:56 
+
+00:56 gotten some improvements on the actual
+00:58 
+
+00:58 level of control you get with these two
+01:00 
+
+01:00 settings right here local effect and
+01:02 
+
+01:02 maintain fine details. What we can see
+01:05 
+
+01:05 here is that when we have this local
+01:08 
+
+01:08 area it finds the actual peak or the
+01:11 
+
+01:11 sharp areas and then actually applies
+01:13 
+
+01:13 the shaper to that area.
+01:16 
+
+01:16 Now we can here using this we can
+01:19 
+
+01:19 actually select the size of the local
+01:21 
+
+01:21 area. So you can see how this little
+01:23 
+
+01:23 peak has become a little bigger or it
+01:26 
+
+01:26 becomes a little smaller. The detail
+01:28 
+
+01:28 size is not really noticeable here as we
+01:30 
+
+01:30 don't really have a lot of details um to
+01:33 
+
+01:33 maintain. But when we actually take a
+01:35 
+
+01:35 mountain range, we'll be able to see a
+01:37 
+
+01:37 bit more. So what I think Shaper and
+01:39 
+
+01:39 also thermal shaper is good at is
+01:41 
+
+01:41 reigning in a lot of the extreme shapes
+01:43 
+
+01:43 that these primitives, the noise
+01:46 
+
+01:46 primitives can give you. So we can use
+01:48 
+
+01:48 the actual shaper to kind of rein in the
+01:52 
+
+01:52 uh the whole shape and make it a bit
+01:54 
+
+01:54 more useful. So here we're actually just
+01:56 
+
+01:56 bulking up by point4. Um we're not using
+01:58 
+
+01:58 any of the local or maintain fine detail
+02:01 
+
+02:01 effects. And you can see it just bulks
+02:02 
+
+02:02 up the whole terrain. Those peaks become
+02:04 
+
+02:04 a lot more rounded out and we get a lot
+02:07 
+
+02:07 more kind of like a fill in the body of
+02:10 
+
+02:10 the mountain. So you can see here, for
+02:12 
+
+02:12 example, it's a very steep pointy peak
+02:14 
+
+02:14 and now it's just a lot more of this
+02:17 
+
+02:17 like full bulky terrain. Now when we
+02:20 
+
+02:20 enable the local effect setting, we'll
+02:23 
+
+02:23 see that a lot of that bulk in the
+02:24 
+
+02:24 center areas is going down again and we
+02:26 
+
+02:26 actually do maintain the peaks. Uh and
+02:29 
+
+02:29 we're just affecting the peaks like
+02:31 
+
+02:31 width and like bulkiness rather than the
+02:33 
+
+02:33 whole terrain. And when we do detail
+02:36 
+
+02:36 size, you'll see that we actually
+02:37 
+
+02:37 maintain a lot of that cool rocky
+02:40 
+
+02:40 sharpness on top of these peaks. So you
+02:43 
+
+02:43 can see that those don't change, but the
+02:46 
+
+02:46 actual overall terrain does get more
+02:48 
+
+02:48 bulky. Now, let's head over to the
+02:50 
+
+02:50 thermal shaper. I personally believe
+02:51 
+
+02:51 that the thermal shaper is probably
+02:54 
+
+02:54 going to be used a bit more as it can
+02:57 
+
+02:57 give you very cool results now with the
+02:59 
+
+02:59 new improvements. So, we're just going
+03:00 
+
+03:00 to run down all the different types of
+03:02 
+
+03:02 settings and uh go with it. So, we got
+03:05 
+
+03:05 this mountain range here and we're going
+03:08 
+
+03:08 to throw on the thermal shaper. Now, it
+03:11 
+
+03:11 is kind of an effect similar to thermal
+03:14 
+
+03:14 erosion. However, it is more of a filter
+03:17 
+
+03:17 rather than a real simulation. So, here
+03:19 
+
+03:19 with the influence, we can actually
+03:21 
+
+03:21 control the strength. The shape is
+03:23 
+
+03:23 actually similar to the shape control
+03:25 
+
+03:25 where it can bulk or slim down your
+03:27 
+
+03:27 mountain. And then we have two new
+03:29 
+
+03:29 options on this new node which are scale
+03:31 
+
+03:31 and micro detail preservation which
+03:33 
+
+03:33 we'll get into later. So we see here
+03:35 
+
+03:35 that with an influence of 75 and a
+03:38 
+
+03:38 slight slimming down of the shape here
+03:41 
+
+03:41 uh we get these cool awesome like
+03:43 
+
+03:43 triangular peaks that we kind of know
+03:45 
+
+03:45 and love from thermal erosion. So you
+03:48 
+
+03:48 can really see how it's affecting our
+03:50 
+
+03:50 terrain. And this is where I mean that
+03:52 
+
+03:52 this node could actually be very useful
+03:54 
+
+03:54 for a lot of people. Um, especially with
+03:56 
+
+03:56 this micro detail preservation, we can
+03:59 
+
+03:59 actually create very cool shapes while
+04:02 
+
+04:02 at the same time maintaining all that
+04:04 
+
+04:04 cool detail from the, you know,
+04:07 
+
+04:07 primitive underneath.
+04:09 
+
+04:09 Here's the opposite, but bulked up. So,
+04:12 
+
+04:12 you can see this also is very useful for
+04:14 
+
+04:14 creating maybe rolling hills or that
+04:16 
+
+04:16 kind of, you know, very soft looking
+04:19 
+
+04:19 terrain.
+04:22 
+
+04:22 And here we're actually going to turn up
+04:23 
+
+04:23 the scale. So when we turn up the scale,
+04:25 
+
+04:25 we'll actually see that the um the
+04:28 
+
+04:28 thermal kind of gets applied at a bigger
+04:30 
+
+04:30 level. So when we turn down the scale
+04:32 
+
+04:32 again, um the thermal is kind of
+04:35 
+
+04:35 sharpening individual ridges. And then
+04:37 
+
+04:37 when we turn up the scale to a higher
+04:40 
+
+04:40 and higher amount, it starts not
+04:42 
+
+04:42 focusing on these individual ridges as
+04:44 
+
+04:44 much as it just starts, you know,
+04:46 
+
+04:46 thermal roading these whole mountain
+04:48 
+
+04:48 ranges down. So that's kind of what
+04:50 
+
+04:50 scale does. it is focusing on the larger
+04:53 
+
+04:53 um actual shapes and now it's focusing
+04:55 
+
+04:55 on the smaller shapes. So you can see I
+04:58 
+
+04:58 personally think that this setting alone
+04:60 
+
+04:60 is making such a massive difference. Um
+05:03 
+
+05:03 the thermal shaper is now absolutely a
+05:06 
+
+05:06 powerhouse in creating cool mountain
+05:08 
+
+05:08 shapes. I mean this is straight up just
+05:11 
+
+05:11 a primitive and the thermal shaper and
+05:14 
+
+05:14 we have already gotten like very useful
+05:17 
+
+05:17 almost usable results pretty much. Uh, I
+05:20 
+
+05:20 would say they're usable. I would say
+05:22 
+
+05:22 you don't have to change too much to
+05:23 
+
+05:23 this terrain to already create a pretty
+05:25 
+
+05:25 realistic render. Now, let's go and turn
+05:29 
+
+05:29 up the micro detail preservation. So,
+05:32 
+
+05:32 you can see all those rocky details from
+05:34 
+
+05:34 the primitives
+05:36 
+
+05:36 which are here uh become visible again.
+05:39 
+
+05:39 Basically, just it's a it's very
+05:42 
+
+05:42 interesting. I I I couldn't tell you
+05:43 
+
+05:43 exactly the math behind it, but it's
+05:45 
+
+05:45 almost like there's like a sort of
+05:46 
+
+05:46 highpass that gets maintained by using
+05:50 
+
+05:50 this micro detail preservation. So, all
+05:52 
+
+05:52 the little tiny shapes uh stay in there.
+05:55 
+
+05:55 If we turn that off completely, of
+05:57 
+
+05:57 course, it becomes very smooth and still
+05:59 
+
+05:59 pretty cool. Then we have the actual
+06:02 
+
+06:02 intensity input right here, which is
+06:04 
+
+06:04 pretty much just a mask. Um it could
+06:07 
+
+06:07 actually be useful for mountains that
+06:08 
+
+06:08 have a lot of cliff detail. you want to
+06:11 
+
+06:11 kind of add some thermal, you know,
+06:13 
+
+06:13 shaping. However, you want to maintain
+06:15 
+
+06:15 the cliff detail. Now, in my case, I
+06:17 
+
+06:17 took this like slope map. So, let me
+06:19 
+
+06:19 just create this under layer here. So,
+06:22 
+
+06:22 I'm basically saying these slopes
+06:23 
+
+06:23 shouldn't be affected. Of course, the
+06:25 
+
+06:25 slopes on this terrain are kind of
+06:27 
+
+06:27 ridiculous. So, you get this huge uh
+06:30 
+
+06:30 peak that like doesn't get changed. So,
+06:32 
+
+06:32 you can see right here, everything
+06:33 
+
+06:33 becomes kind of thermal roaded. However,
+06:36 
+
+06:36 this area right here,
+06:38 
+
+06:38 this area um does not. So, you get this
+06:42 
+
+06:42 huge peak sticking out of the terrain.
+06:44 
+
+06:44 Not very realistic. But for actual
+06:46 
+
+06:46 mountains with like nice cliff detail
+06:48 
+
+06:48 and you just want to add a little bit of
+06:49 
+
+06:49 thermal erosion, this intensity input
+06:52 
+
+06:52 right here can really help you um get
+06:56 
+
+06:56 nice results. Uh because if we mask it
+06:58 
+
+06:58 simply, uh you'll see that you know it
+07:01 
+
+07:01 doesn't mask very nicely. putting it
+07:03 
+
+07:03 into the intensity, however, does work
+07:05 
+
+07:05 very nicely and it blends smoothly
+07:07 
+
+07:07 between the two like areas in a sense.
+07:10 
+
+07:10 So, for this example, I'm just going to
+07:12 
+
+07:12 create something that I was inspired by
+07:14 
+
+07:14 B National Park. Um, it's these really
+07:18 
+
+07:18 bulky mountains over there and it's uh
+07:20 
+
+07:20 it's really cool. It's part of the
+07:21 
+
+07:21 Rockies and um yeah, Shaper is going to
+07:24 
+
+07:24 kind of help me set up my base shape
+07:26 
+
+07:26 here before adding erosion and coloring.
+07:29 
+
+07:29 So, at first I'm using a shaper to bulk
+07:31 
+
+07:31 up the mountain a bit, using local
+07:33 
+
+07:33 effect to kind of rein in those pointy
+07:36 
+
+07:36 details on top. Then I'm using the
+07:38 
+
+07:38 thermal shaper to further wither down
+07:40 
+
+07:40 the mountain into more of a bulky shape.
+07:43 
+
+07:43 As you can see here, we're kind of
+07:45 
+
+07:45 withering down a lot of that foroid
+07:46 
+
+07:46 that's mixed into that primitive, making
+07:49 
+
+07:49 sure we don't have like huge cliff faces
+07:51 
+
+07:51 like here.
+07:54 
+
+07:54 Now, I'm going to have my erosion. I'm
+07:56 
+
+07:56 going to add some cliff detailing with
+07:59 
+
+07:59 sandstone and warp. Just going to add
+08:01 
+
+08:01 that on top on this slope mask. Should
+08:04 
+
+08:04 probably do this. There you go. Um, then
+08:06 
+
+08:06 we're going to add another erosion. This
+08:08 
+
+08:08 set to max. Um, this will fill in the
+08:10 
+
+08:10 gullies with debris as you can see here.
+08:14 
+
+08:14 Then we're going to add a rivers which
+08:15 
+
+08:15 will add some cool river detail running
+08:17 
+
+08:17 down the mountain. Super cool. And
+08:21 
+
+08:21 finally, we're here to actually texture
+08:23 
+
+08:23 this thing. So, very quickly, just going
+08:26 
+
+08:26 to have
+08:28 
+
+08:28 my rock and grass texture situated.
+08:31 
+
+08:31 Going to have dusting as my main snow.
+08:34 
+
+08:34 Going to add that all together here with
+08:36 
+
+08:36 some uh actual greenery added via trees,
+08:40 
+
+08:40 which I'm kind of liking to do now. Just
+08:43 
+
+08:43 get a tree output, get the mask, warp it
+08:46 
+
+08:46 a bit, and then use that as your uh
+08:49 
+
+08:49 green that you stick on the mountain.
+08:53 
+
+08:53 And then we have our color. We can also
+08:55 
+
+08:55 add our snow. And here I'm going to
+08:57 
+
+08:57 actually make this the underlay. Voila.
+09:01 
+
+09:01 It's really easy to work with the shaper
+09:02 
+
+09:02 and thermal shaper nodes now and get
+09:05 
+
+09:05 like super quick like adjustments to
+09:07 
+
+09:07 your base shape. If I wanted to make
+09:09 
+
+09:09 this mountain a bit more, let's say
+09:12 
+
+09:12 pointy and a little less bulky, I could
+09:14 
+
+09:14 just go back and just change the shaper
+09:17 
+
+09:17 and then I would have that effect
+09:19 
+
+09:19 instantly. It's just um very fun to see
+09:23 
+
+09:23 how these nodes that are, you know,
+09:25 
+
+09:25 meant to really help you in the
+09:26 
+
+09:26 beginning get that base like the base
+09:29 
+
+09:29 shape situated. It's really fun to see
+09:31 
+
+09:31 those nodes now get some more control
+09:34 
+
+09:34 and you can actually control very
+09:36 
+
+09:36 specific points and like the micro
+09:38 
+
+09:38 detail and stuff that you maintain. So
+09:41 
+
+09:41 definitely go check out the shaper node
+09:43 
+
+09:43 and the thermal shaper node on Gaia
+09:45 
+
+09:45 2.203 guys. Hope you enjoyed this video.
+09:48 
+
+09:48 We hope it was helpful and let us know
+09:50 
+
+09:50 in the comments what you'd like to see
+09:51 
+
+09:51 next.

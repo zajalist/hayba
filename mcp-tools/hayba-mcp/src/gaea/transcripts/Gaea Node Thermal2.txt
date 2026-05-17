@@ -1,0 +1,796 @@
+00:00 Hey everybody, Martin from Quad Spinner
+00:02 
+
+00:02 here and today we're going to be
+00:03 
+
+00:03 discussing the thermal node. Thermal 2
+00:05 
+
+00:05 is a node that controls purely thermal
+00:08 
+
+00:08 erosion. Now thermal erosion is
+00:10 
+
+00:10 something that happens when there is
+00:12 
+
+00:12 differences in temperatures in a
+00:13 
+
+00:13 climate. So you can think of daytime and
+00:15 
+
+00:15 nighttime temperature shifting or even
+00:17 
+
+00:17 seasonal temperatures. It is something
+00:19 
+
+00:19 that breaks apart terrain by the rock
+00:22 
+
+00:22 expanding in the heat and shrinking in
+00:24 
+
+00:24 the cold. It can also be exacerbated by
+00:26 
+
+00:26 water getting into the cracks and then
+00:28 
+
+00:28 expanding as it freezes which then makes
+00:30 
+
+00:30 the rock break apart even faster. This
+00:32 
+
+00:32 kind of erosion is often seen in
+00:35 
+
+00:35 mountain ranges like the Alps or the
+00:37 
+
+00:37 Rocky Mountains and it causes a lot of
+00:39 
+
+00:39 cliff formation, a lot of talis flows
+00:42 
+
+00:42 and it will kind of break your mountain
+00:43 
+
+00:43 down from every side. And we're just
+00:46 
+
+00:46 going to cover all the settings and then
+00:47 
+
+00:47 and further on I will give you some
+00:48 
+
+00:48 examples of use cases. So, we're just
+00:50 
+
+00:50 going to add a base thermal 2 node here.
+00:53 
+
+00:53 And this is our bedrock, our base
+00:55 
+
+00:55 terrain. We're going to add this thermal
+00:58 
+
+00:58 2 right here. And let's talk about
+01:00 
+
+01:00 sliders. Duration is of course the
+01:02 
+
+01:02 duration of the simulation. If we
+01:04 
+
+01:04 increase this, the effects of the
+01:06 
+
+01:06 simulation will be enhanced. Strength,
+01:08 
+
+01:08 very simple. It is the strength of the
+01:10 
+
+01:10 actual erosion. So, if we turn this up,
+01:12 
+
+01:12 we'll just see more strong effects from
+01:15 
+
+01:15 the erosion happening without a longer
+01:17 
+
+01:17 build time. Anisotropy is very
+01:19 
+
+01:19 interesting. It is basically controlling
+01:21 
+
+01:21 the level of irregularity of the thermal
+01:23 
+
+01:23 stress that your mountain is receiving.
+01:25 
+
+01:25 So when your mountain is receiving a
+01:28 
+
+01:28 very regular thermal stress, it will
+01:30 
+
+01:30 maintain a lot of the details that the
+01:31 
+
+01:31 terrain has. However, when the stress is
+01:34 
+
+01:34 more irregular, it focuses more on
+01:36 
+
+01:36 locations of interest like rocky
+01:38 
+
+01:38 outcrops and that kind of stuff which
+01:40 
+
+01:40 causes them to be eroded more as there's
+01:42 
+
+01:42 more thermal stress happening in that
+01:44 
+
+01:44 area. basically eroding your terrain
+01:46 
+
+01:46 until there's not much interesting shape
+01:48 
+
+01:48 left and it's actually very equalized.
+01:50 
+
+01:50 The best way to showcase this is when I
+01:52 
+
+01:52 remove all the sediment. So, let me just
+01:54 
+
+01:54 turn that up to one and let's turn off
+01:56 
+
+01:56 the anastropy.
+01:59 
+
+01:59 As you can see, major details like
+02:01 
+
+02:01 cliffs and stuff as we see in the base
+02:03 
+
+02:03 shape here will still be preserved. Uh
+02:06 
+
+02:06 the mountain is still somewhat the shape
+02:08 
+
+02:08 that you uh kind of recognize from the
+02:10 
+
+02:10 underlying node. If we turn it all the
+02:13 
+
+02:13 way up, this is what we get. The
+02:15 
+
+02:15 mountain has been absolutely eroded.
+02:17 
+
+02:17 It's just completely chipped off every
+02:20 
+
+02:20 angle. And uh what we get is a very
+02:23 
+
+02:23 smooth, sharp, interesting shape. Uh you
+02:26 
+
+02:26 would probably keep the anastropy
+02:27 
+
+02:27 slightly lower so you maintain your
+02:29 
+
+02:29 shape. Um and then we can actually play
+02:31 
+
+02:31 around with some talis.
+02:34 
+
+02:34 Now the talis is not directly connected
+02:36 
+
+02:36 to the simulation like erosion 2. It is
+02:39 
+
+02:39 actually more of an added sediment on
+02:41 
+
+02:41 top to just have artistic control over
+02:43 
+
+02:43 these flows. But down below, I will show
+02:46 
+
+02:46 you a combination of thermal tube
+02:47 
+
+02:47 together with erosion to get very
+02:50 
+
+02:50 realistic talis flows. So the talis we
+02:52 
+
+02:52 get from the thermal tune node is
+02:53 
+
+02:53 actually pretty cool because we can
+02:55 
+
+02:55 easily art direct the uh slope angle and
+02:57 
+
+02:57 stuff of this talis. So if I turn this
+02:59 
+
+02:59 down, it will lay down very flatly on
+03:02 
+
+03:02 the terrain turning it very rounded as
+03:05 
+
+03:05 it's just piling up and kind of rolling
+03:06 
+
+03:06 off. If I turn it a bit higher, it will
+03:09 
+
+03:09 be a bit more sharp as it's more angled.
+03:11 
+
+03:11 As you can see, the best way to control
+03:14 
+
+03:14 this is by removing a little bit of it,
+03:16 
+
+03:16 especially if you are really using a
+03:18 
+
+03:18 higher duration and higher strength of
+03:20 
+
+03:20 the erosion. Um, because at that point,
+03:22 
+
+03:22 you're starting to build up a lot of
+03:23 
+
+03:23 talis flow, which might cover a lot of
+03:26 
+
+03:26 cool details. So, if we remove a bit
+03:29 
+
+03:29 more,
+03:31 
+
+03:31 we can turn up the angle to something
+03:33 
+
+03:33 like 60. And now you're getting these
+03:36 
+
+03:36 really cool talis flows. And you'll see
+03:38 
+
+03:38 some cliff detail appearing. We want to
+03:41 
+
+03:41 save a bit more of that. Let's turn the
+03:43 
+
+03:43 anastropy down. And then we arrive at
+03:45 
+
+03:45 the last setting right here, which is
+03:46 
+
+03:46 the feature scale. So the simulation is
+03:49 
+
+03:49 looking at your mountain. And at a
+03:50 
+
+03:50 feature scale of 25, all the features
+03:52 
+
+03:52 that are smaller than 25 will kind of be
+03:56 
+
+03:56 washed away by the erosion. However, if
+03:58 
+
+03:58 we turn it down, we preserve a lot more
+03:60 
+
+03:60 of the base shape because a lot more of
+04:02 
+
+04:02 the smaller details are kind of are kind
+04:04 
+
+04:04 of inhibiting the simulation from
+04:06 
+
+04:06 happening there. But I think a sweet
+04:08 
+
+04:08 spot is often like something like 10,
+04:11 
+
+04:11 uh, which would preserve quite a bit of
+04:12 
+
+04:12 detail as you can see in the cliffs, um,
+04:14 
+
+04:14 but still give you cool talis flows
+04:16 
+
+04:16 coming down. If you watch the snowy
+04:18 
+
+04:18 peaks tutorial, you'll see that I
+04:19 
+
+04:19 actually used this kind of technique to
+04:22 
+
+04:22 create cool, very sharp uh high altitude
+04:25 
+
+04:25 snow, which you know is something that
+04:27 
+
+04:27 thermal 2 does really well. So, now that
+04:30 
+
+04:30 we're done looking at all the features,
+04:31 
+
+04:31 we can see how it affects a mountain
+04:33 
+
+04:33 like this. See, if we plug this in, you
+04:37 
+
+04:37 can see that we're getting a really cool
+04:39 
+
+04:39 um very recognizable shape. And this is
+04:41 
+
+04:41 why I say kind of thermal 2 is that
+04:43 
+
+04:43 classic mountain shape where if you
+04:46 
+
+04:46 think of a mountain icon in a sense, you
+04:48 
+
+04:48 would just think of kind of triangular
+04:50 
+
+04:50 shape, right? That's like the universal
+04:52 
+
+04:52 mountain uh shape. And I think that's
+04:55 
+
+04:55 basically what thermal 2 can really give
+04:57 
+
+04:57 you. It can give you very uh very eroded
+04:60 
+
+04:60 sharp peaks with a cool talis fall off
+05:02 
+
+05:02 at the bottom. So now let's look at
+05:04 
+
+05:04 other ways of thermal. Right? So we have
+05:07 
+
+05:07 the thermal 2. Um, we have an example
+05:10 
+
+05:10 here. I'm using thermal 2 with a slope
+05:13 
+
+05:13 inhibition. So, the heavy slopes like
+05:15 
+
+05:15 the cliffs are only 50% thermal roaded
+05:17 
+
+05:17 compared to the rest of the terrain. And
+05:20 
+
+05:20 that gives us this kind of shape. Very
+05:21 
+
+05:21 cool, you know, rocky peak with big
+05:24 
+
+05:24 talis flows combined with some erosion 2
+05:27 
+
+05:27 for the hydraulic erosion. And you have
+05:29 
+
+05:29 yourself a very easily art directionable
+05:32 
+
+05:32 shape here. Now, you could also use
+05:33 
+
+05:33 erosion 2 completely because erosion 2
+05:36 
+
+05:36 also has thermal erosion controls in the
+05:38 
+
+05:38 form of the shape settings right here.
+05:41 
+
+05:41 Erosion 2 is really a powerhouse when it
+05:43 
+
+05:43 comes to this because it can give you
+05:44 
+
+05:44 extremely realistic results within one
+05:47 
+
+05:47 node. However, you do need to give it a
+05:48 
+
+05:48 lot of care as it's kind of an ecosystem
+05:50 
+
+05:50 where everything ties in together and
+05:53 
+
+05:53 you don't really get to isolate one
+05:54 
+
+05:54 specific, you know, shape control here.
+05:57 
+
+05:57 So, another way of getting a thermal
+05:59 
+
+05:59 shape is the thermal shaper node. Uh
+06:02 
+
+06:02 yeah, quite obvious. The thermal shaper
+06:04 
+
+06:04 is actually more of a filter. Uh it kind
+06:06 
+
+06:06 of uses math to calculate what the shape
+06:09 
+
+06:09 would look like. It's a very easy and
+06:10 
+
+06:10 quick way of getting that classic
+06:12 
+
+06:12 thermal shape with those sharp peaks and
+06:14 
+
+06:14 that classic triangular look. Distance.
+06:17 
+
+06:17 This might be a bit of a weird one. Uh
+06:18 
+
+06:18 it is a very mathematical note. Again,
+06:20 
+
+06:20 kind of a filter here, but I put it in
+06:22 
+
+06:22 here because you can get that cool
+06:24 
+
+06:24 triangular shape as well. I just think
+06:26 
+
+06:26 that this is a cool way of getting that
+06:28 
+
+06:28 shape. Um, and yeah, you can play around
+06:30 
+
+06:30 with it and see what you can get. Let's
+06:33 
+
+06:33 move down to the actual use cases. I'm
+06:35 
+
+06:35 going to create a mountain here. I'm
+06:36 
+
+06:36 going to add some hydraulic erosion and
+06:38 
+
+06:38 thermal erosion using erosion 2 and the
+06:40 
+
+06:40 shape controls. This will give us that
+06:43 
+
+06:43 classic, you know, triangular mountain
+06:45 
+
+06:45 look. We're going to add some rock
+06:46 
+
+06:46 detail with sandstone. And now we'll
+06:48 
+
+06:48 just look at all the thermal two nodes
+06:50 
+
+06:50 and different settings how it will
+06:52 
+
+06:52 affect this this mountain right here.
+06:53 
+
+06:53 So, we'll just start with the kind of
+06:55 
+
+06:55 basic settings here. a high strength 45
+06:58 
+
+06:58 angle no sediment removal feature scale
+07:01 
+
+07:01 15. It will remove a lot of the cool
+07:04 
+
+07:04 details that we had like the micro
+07:06 
+
+07:06 details. However, we do get those nice
+07:08 
+
+07:08 cool sharp edges on our convexes and
+07:11 
+
+07:11 yeah, it's a very nice effect. However,
+07:13 
+
+07:13 you're losing a bit of rock detail,
+07:15 
+
+07:15 right? In case you want to keep the rock
+07:17 
+
+07:17 detail and just have the actual sediment
+07:19 
+
+07:19 added on top of your terrain, you can
+07:21 
+
+07:21 use the max setting, the max blend mode
+07:24 
+
+07:24 down below. This will just add the
+07:26 
+
+07:26 extras we're getting, which is the
+07:27 
+
+07:27 sediment buildup. And we will preserve
+07:30 
+
+07:30 our rock detail from the underlying
+07:32 
+
+07:32 layer. If we only want to see the
+07:34 
+
+07:34 effects of the erosion and not the
+07:36 
+
+07:36 actual sediment buildup, we'll just
+07:37 
+
+07:37 remove all the sediment. And this gives
+07:39 
+
+07:39 us this very cool sharp look right here
+07:43 
+
+07:43 that we can then add more details on top
+07:45 
+
+07:45 of. Now, an accurate way of using this
+07:46 
+
+07:46 node in tangent with erosion 2 would be
+07:49 
+
+07:49 to use a slope mask to preserve some of
+07:51 
+
+07:51 the rock detail. As you can see here, I
+07:53 
+
+07:53 am removing all the sediment because
+07:55 
+
+07:55 I'll use erosion 2 to actually add very
+07:57 
+
+07:57 realistic talis flows. I'm keeping the
+07:60 
+
+07:60 feature scale 15. Uh the anastropia is
+08:03 
+
+08:03 zero to preserve as much detail. Maybe
+08:05 
+
+08:05 50 would be a good angle to start at.
+08:08 
+
+08:08 And then we'll take the wear output and
+08:11 
+
+08:11 I'll auto level it just to keep it easy
+08:13 
+
+08:13 and visible. And we're going to use that
+08:15 
+
+08:15 as the precipitation mask in erosion 2,
+08:18 
+
+08:18 which is a new thing we have in Gaia
+08:20 
+
+08:20 2.2. And in erosion 2 here, I will have
+08:23 
+
+08:23 the max filter mode enabled because I
+08:25 
+
+08:25 only want to add sediment. I don't want
+08:28 
+
+08:28 to have the actual erosion cut down on
+08:30 
+
+08:30 my terrain. Like so. I want to keep all
+08:32 
+
+08:32 that raw detail. I'm turning the
+08:34 
+
+08:34 duration up so we build up more
+08:36 
+
+08:36 sediment. I'm turning the down cutting
+08:38 
+
+08:38 from 0.25 to 0.1. This will minimize the
+08:41 
+
+08:41 amount of down cutting we're getting,
+08:42 
+
+08:42 but still cut enough of the terrain off
+08:44 
+
+08:44 to actually create these talis flows.
+08:46 
+
+08:46 I'm turning off suspended load. I'm
+08:48 
+
+08:48 making sure the erosion skill is also
+08:50 
+
+08:50 quite small. Um, so we get, you know,
+08:52 
+
+08:52 the talis and all these little gullies.
+08:55 
+
+08:55 And then I am going to turn up the bed
+08:57 
+
+08:57 load and core sediment, find a good
+08:59 
+
+08:59 angle and have it there. As you can see,
+09:01 
+
+09:01 this works very nicely in conjunction
+09:03 
+
+09:03 with the thermal 2 node. We're getting
+09:04 
+
+09:04 the erosion, cutting down on the base
+09:06 
+
+09:06 layer terrain, making it look like the
+09:09 
+
+09:09 actual talis flows are coming from
+09:11 
+
+09:11 these, you know, are coming from this
+09:14 
+
+09:14 rocky stratification.
+09:17 
+
+09:17 making it look like these talis flows
+09:18 
+
+09:18 are really, you know, the result of rock
+09:21 
+
+09:21 being broken off these cool
+09:23 
+
+09:23 stratification details right here. So,
+09:26 
+
+09:26 yeah, I hope this is a good introduction
+09:27 
+
+09:27 to thermal 2 and the use cases of this
+09:29 
+
+09:29 node and just a better understanding of
+09:31 
+
+09:31 what thermal erosion does and what shape
+09:33 
+
+09:33 you get from it. Hope you guys will have
+09:35 
+
+09:35 a good time in Gaia 2.2 and thanks for
+09:37 
+
+09:37 watching.

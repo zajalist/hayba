@@ -1,0 +1,1930 @@
+00:01 [music]
+00:05 
+
+00:05 Hello everyone. Welcome to high
+00:07 
+
+00:07 performance terrain simulations innet.
+00:10 
+
+00:10 My name is Dak Pandi and I'm the
+00:12 
+
+00:12 co-founder and chief architect of quad
+00:14 
+
+00:14 spinner. Uh I'm a former uh Microsoft
+00:17 
+
+00:17 MVP and I've been working innet for
+00:21 
+
+00:21 nearly 20 years. Uh maybe a little bit
+00:23 
+
+00:23 more. So today we're going to talk about
+00:27 
+
+00:27 a topic that's slightly different from
+00:29 
+
+00:29 what you might see in other
+00:30 
+
+00:30 presentations.
+00:31 
+
+00:31 So uh let's start with this image. So
+00:35 
+
+00:35 what you see here is completely
+00:37 
+
+00:37 synthetic. This is a a computerenerated
+00:40 
+
+00:40 image. Uh no AI. This is all generated
+00:43 
+
+00:43 procedurally.
+00:44 
+
+00:44 And uh the really cool thing is the
+00:46 
+
+00:46 mountains which are the focus of our
+00:48 
+
+00:48 talk today. These terrains, these
+00:50 
+
+00:50 mountains, they are generated in C inn
+00:54 
+
+00:54 net. So this is all created through our
+00:58 
+
+00:58 software called Gaia. Now Gaia has been
+01:00 
+
+01:00 around since about 2018. Um, and it's a
+01:04 
+
+01:04 nodebased terrain generator that's
+01:06 
+
+01:06 extensively used in visual effects,
+01:08 
+
+01:08 games, and so forth. It's written in C
+01:11 
+
+01:11 uh with a WPF user interface, and it has
+01:14 
+
+01:14 a 3D viewport that runs Unity. Both the
+01:17 
+
+01:17 car and the WPF aspects of the software
+01:20 
+
+01:20 have been deeply customized uh and
+01:23 
+
+01:23 optimized to be very performant and
+01:26 
+
+01:26 flexible for a number of use cases that
+01:29 
+
+01:29 are quite out of the ordinary. So we're
+01:31 
+
+01:31 going to take a look at some of that
+01:33 
+
+01:33 today. Now before we do that, just to
+01:35 
+
+01:35 give you some context of how all this
+01:37 
+
+01:37 works, let's take a look at the software
+01:38 
+
+01:38 itself. So this is Gaia and users drag
+01:43 
+
+01:43 and drop nodes and create these node
+01:45 
+
+01:45 graphs to direct the software to create
+01:48 
+
+01:48 process and then eventually output a
+01:50 
+
+01:50 digital landscape. So um each node is
+01:53 
+
+01:53 basically a distinct uh powerful
+01:55 
+
+01:55 function or a program. Uh some create
+01:58 
+
+01:58 shapes, others create create complex
+01:60 
+
+02:00 simulations uh and so forth. The goal of
+02:04 
+
+02:04 the interface is to be very artist
+02:05 
+
+02:05 friendly and to expose these complex
+02:07 
+
+02:07 algorithms and sim simulations uh via
+02:10 
+
+02:10 simple uh controls.
+02:13 
+
+02:13 So
+02:15 
+
+02:15 we are basically going to focus on uh
+02:19 
+
+02:19 one narrow aspect of the whole um the
+02:21 
+
+02:21 software and the and the task that it
+02:24 
+
+02:24 does. We're going to look at procedural
+02:26 
+
+02:26 terrains and how we work with them under
+02:29 
+
+02:29 the hood um and the challenges that we
+02:31 
+
+02:31 faced and the solutions that we were
+02:33 
+
+02:33 able to come up with. So first of all,
+02:36 
+
+02:36 what is a procedural terrain? So a
+02:38 
+
+02:38 procedural terrain is basically a
+02:41 
+
+02:41 nonlinear editable terrain. So rather
+02:44 
+
+02:44 than sculpting something by hand, you
+02:46 
+
+02:46 generate it using algorithms and
+02:48 
+
+02:48 mathematics and then you are able to go
+02:51 
+
+02:51 in and change it however you want. So um
+02:56 
+
+02:56 these procedural terrains at its core
+02:58 
+
+02:58 they are made up of height fields. Uh a
+03:01 
+
+03:01 height field is basically a grid of
+03:03 
+
+03:03 32-bit floats such as uh you know 2048
+03:07 
+
+03:07 by 2048. They always are square. Um at
+03:10 
+
+03:10 least as far as guy is concerned.
+03:13 
+
+03:13 They are rep like each float by its XY
+03:17 
+
+03:17 position within the grid represents
+03:19 
+
+03:19 where it is. But the number itself, the
+03:21 
+
+03:21 value of the float sets its height,
+03:24 
+
+03:24 which you can see in this example where
+03:26 
+
+03:26 you have all these dots represented by
+03:28 
+
+03:28 its height coming up. Um, and uh, unlike
+03:32 
+
+03:32 a mesh, they're quite lightweight since
+03:34 
+
+03:34 they don't carry vertex, face, or UV
+03:36 
+
+03:36 data. Uh, in case you're familiar with
+03:38 
+
+03:38 those. But so when we take these height
+03:41 
+
+03:41 map uh, and we turn it into a 3D
+03:43 
+
+03:43 surface, you can see it looks like this.
+03:46 
+
+03:46 And so the way we create procedural
+03:49 
+
+03:49 terrains is we have a library of nodes u
+03:52 
+
+03:52 that provide these shapes that the user
+03:54 
+
+03:54 can tweak certain settings and get
+03:56 
+
+03:56 different results. Um they can also art
+03:58 
+
+03:58 direct it quite heavily and so they have
+04:00 
+
+04:00 options such as mountain um or surfaces
+04:03 
+
+04:03 such as sandstone uh physical uh uh
+04:08 
+
+04:08 items such as lakes, rivers and so on.
+04:11 
+
+04:11 Then they can also run erosion
+04:13 
+
+04:13 simulations and other simulations that
+04:15 
+
+04:15 show the passage of time by creating
+04:17 
+
+04:17 eons worth of uh sequences of rainfall,
+04:20 
+
+04:20 soil erosion, sediment accumulation and
+04:23 
+
+04:23 so forth. And then finally using the
+04:26 
+
+04:26 metadata generated by these processes,
+04:28 
+
+04:28 we can also synthesize color textures
+04:31 
+
+04:31 that look very realistic and that can be
+04:34 
+
+04:34 then taken to other software or um
+04:37 
+
+04:37 however and then used in larger
+04:39 
+
+04:39 productions.
+04:40 
+
+04:40 Now I mentioned that everything is run
+04:42 
+
+04:42 by nodes. So what are these nodes? Well,
+04:46 
+
+04:46 at its simplest, it's like the first
+04:48 
+
+04:48 example. It's just basically inverting
+04:50 
+
+04:50 whatever value you give them. So um if
+04:53 
+
+04:53 it's a mountain, it becomes a valley for
+04:54 
+
+04:54 example. Or it can be something more
+04:56 
+
+04:56 complex like this. Uh second piece uh of
+04:59 
+
+04:59 code is an example of uh what we use to
+05:03 
+
+05:03 mask off a specific uh range of altitude
+05:07 
+
+05:07 with a decent falloff.
+05:10 
+
+05:10 Now um you may have actually already
+05:13 
+
+05:13 experienced uh Gaia terrains. So if you
+05:17 
+
+05:17 have played Death Stranding one or two
+05:19 
+
+05:19 or Alan Wake 2 um or maybe Star Wars
+05:24 
+
+05:24 Jedi Fall in Order or Jedi Survivor um
+05:27 
+
+05:27 all of these games used terrains uh
+05:29 
+
+05:29 generated with Gaia um in different
+05:32 
+
+05:32 forms and so uh that's some of the
+05:37 
+
+05:37 examples of how these terrains get used.
+05:40 
+
+05:40 Another example is a BBC documentary
+05:42 
+
+05:42 called Solar System which was um I
+05:44 
+
+05:44 believe uh broadcast in the US on PBS.
+05:47 
+
+05:47 Uh so Luxerna, a studio working with BBC
+05:52 
+
+05:52 in the UK. They used Gaia to create lots
+05:56 
+
+05:56 of different exoplanets and other
+05:58 
+
+05:58 celestial bodies in our solar system. uh
+06:01 
+
+06:01 and they were able to uh use our uh
+06:05 
+
+06:05 level of uh like a a balance of uh uh
+06:09 
+
+06:09 scientific accuracy versus art direct
+06:11 
+
+06:11 ability to create these other worlds and
+06:14 
+
+06:14 show the processes that happen on these
+06:17 
+
+06:17 um other places like for example
+06:19 
+
+06:19 Jupiter's moon Europa.
+06:22 
+
+06:22 Um another really really cool project is
+06:24 
+
+06:24 with NASA. So the conceptual image lab
+06:28 
+
+06:28 at NASA's Godard Space Flight Center has
+06:30 
+
+06:30 been using Gaia to create uh Venusian
+06:33 
+
+06:33 surfaces and we have very little data on
+06:36 
+
+06:36 Venus and so by simulating uh new
+06:40 
+
+06:40 synthetic terrains based on the the
+06:42 
+
+06:42 general knowledge that we have of those
+06:44 
+
+06:44 surfaces they're able to create uh new
+06:48 
+
+06:48 um aspects and parameters of testing
+06:49 
+
+06:49 within their within their systems. And
+06:52 
+
+06:52 so that's one of the uh uh very uh cool
+06:56 
+
+06:56 uses of Gaia that we've seen out there.
+06:59 
+
+06:59 Now in creating all these terrains and
+07:02 
+
+07:02 creating all these nodes uh we're faced
+07:04 
+
+07:04 some challenges and as I mentioned today
+07:06 
+
+07:06 we'll be focusing just on one
+07:08 
+
+07:08 cross-section of it which is um working
+07:12 
+
+07:12 with height fields. So the main um
+07:15 
+
+07:15 challenges that we had were uh the
+07:18 
+
+07:18 requirements were we had to be really
+07:20 
+
+07:20 fast. We had to have processing that's
+07:23 
+
+07:23 real time or near real time when
+07:25 
+
+07:25 possible. Uh but we also needed to have
+07:28 
+
+07:28 very high code standards because we
+07:29 
+
+07:29 needed readable code. Uh the algorithms
+07:32 
+
+07:32 that we would work with would become
+07:34 
+
+07:34 quite complex and they would need to be
+07:36 
+
+07:36 maintained over a long period of time.
+07:39 
+
+07:39 Um sometimes they also needed to be
+07:40 
+
+07:40 customizable because sometimes for
+07:42 
+
+07:42 example a movie studio will come back to
+07:44 
+
+07:44 us and say we have this uh very specific
+07:47 
+
+07:47 need within this existing uh tool that
+07:50 
+
+07:50 you've created and so we should be able
+07:52 
+
+07:52 to implement something like that without
+07:54 
+
+07:54 actually uh breaking other things. And
+07:58 
+
+07:58 then finally we deal with very very
+08:01 
+
+08:01 large data sets and we had to make sure
+08:02 
+
+08:02 that computers don't run out of memory.
+08:05 
+
+08:05 So we had to make sure basically that we
+08:07 
+
+08:07 manage memory very very smartly whether
+08:10 
+
+08:10 the user has 32 gigs or 128 gigs. So um
+08:16 
+
+08:16 these are our primary requirements and
+08:18 
+
+08:18 challenges. Now it might seem that
+08:22 
+
+08:22 choosing net may be uh slightly strange
+08:24 
+
+08:24 option uh for higher uh performance
+08:27 
+
+08:27 computing or HPC but actually it isn't.
+08:30 
+
+08:30 It's actually a a very good choice as
+08:33 
+
+08:33 we've experienced because well first of
+08:35 
+
+08:35 all given that we have um 20ome years of
+08:38 
+
+08:38 experience here uh withn net we knew
+08:42 
+
+08:42 that it's robust and safe like the
+08:44 
+
+08:44 managed runtime and the type system it
+08:47 
+
+08:47 uh reduces the kind of errors that we
+08:49 
+
+08:49 would encounter memory leaks and so
+08:51 
+
+08:51 forth. Uh it would help us create things
+08:54 
+
+08:54 very very quickly because it's a mature
+08:55 
+
+08:55 ecosystem.
+08:57 
+
+08:57 Uh and then also the framework
+08:59 
+
+08:59 especially in these last uh three four
+09:01 
+
+09:01 releases has become so deep and powerful
+09:04 
+
+09:04 that when we get to a lower level and it
+09:07 
+
+09:07 feels like it's um we're hitting some
+09:09 
+
+09:09 sort of limit, we're able to go in and
+09:12 
+
+09:12 create customizations or alternatives or
+09:14 
+
+09:14 or even overrides when needed and
+09:17 
+
+09:17 implement our own system. Um which is
+09:20 
+
+09:20 actually one of the key focuses of what
+09:22 
+
+09:22 we'll see in a moment. And then lastly,
+09:24 
+
+09:24 it's um a widewide ecosystem. Um there
+09:28 
+
+09:28 are so many libraries and tools that
+09:30 
+
+09:30 help us write this software. Uh we don't
+09:33 
+
+09:33 have to worry about writing everything
+09:34 
+
+09:34 ourselves for little helpers here and
+09:36 
+
+09:36 there. We can always reach out and use
+09:38 
+
+09:38 different libraries. Um so it makes it
+09:41 
+
+09:41 really easy for us to go from all the
+09:42 
+
+09:42 way from prototyping to the final
+09:44 
+
+09:44 stages.
+09:46 
+
+09:46 Now when it came to the actual code, one
+09:50 
+
+09:50 of the problems was like when we deal
+09:53 
+
+09:53 with height fields in the language, we
+09:56 
+
+09:56 needed them to be more than just data.
+09:58 
+
+09:58 As you saw, it's just really uh an area
+10:01 
+
+10:01 of floats, but we needed it to be more
+10:03 
+
+10:03 than just data. We needed it to be more
+10:06 
+
+10:06 than just um an object. We needed it to
+10:09 
+
+10:09 be really kind of like a u when we deal
+10:11 
+
+10:11 with complex scenarios like in a graph
+10:14 
+
+10:14 that there should be some sort of
+10:16 
+
+10:16 identity and relationship between
+10:17 
+
+10:17 terrains of different kinds. And so we
+10:20 
+
+10:20 needed like uh our our terrain object to
+10:23 
+
+10:23 become uh practically an idiom and have
+10:26 
+
+10:26 a language develop around it. And so our
+10:30 
+
+10:30 solution was that since this is what
+10:32 
+
+10:32 we're going to create everything on, we
+10:34 
+
+10:34 needed a hero object and that became the
+10:37 
+
+10:37 map class. So at its core, the map class
+10:40 
+
+10:40 is a container for raster data. Uh it
+10:43 
+
+10:43 can be a height map, it can be a color
+10:45 
+
+10:45 texture, it can hold more than one
+10:47 
+
+10:47 channel. So we can have RGB textures. Uh
+10:50 
+
+10:50 but then we also wanted to have custom
+10:53 
+
+10:53 memory management so we could reduce the
+10:55 
+
+10:55 allocations.
+10:56 
+
+10:56 um cuz as I mentioned these data sets
+10:59 
+
+10:59 can grow quite large and we also needed
+11:01 
+
+11:01 to deterministically release memory when
+11:04 
+
+11:04 needed so that we could have uh precise
+11:06 
+
+11:06 control over how everything worked
+11:09 
+
+11:09 within a given algorithm. Uh and then uh
+11:12 
+
+11:12 possibly most importantly, we wanted to
+11:16 
+
+11:16 emphasize massive parallelism so that
+11:19 
+
+11:19 we're using every CPU thread available,
+11:22 
+
+11:22 every SIMD lane. Um and then as I
+11:26 
+
+11:26 mentioned, we needed to have a very
+11:29 
+
+11:29 elegant but uh high standard of code
+11:32 
+
+11:32 writing and so the map gave us an
+11:35 
+
+11:35 arithmetic syntax that we could use for
+11:37 
+
+11:37 fast prototyping.
+11:39 
+
+11:39 Uh but then we also got SPMD style API
+11:43 
+
+11:43 so we could create kernels that could
+11:46 
+
+11:46 run efficiently and save us a lot of
+11:48 
+
+11:48 time. Um before I move forward so just
+11:51 
+
+11:51 in case you haven't encountered these
+11:53 
+
+11:53 terms before SIMD or single instruction
+11:57 
+
+11:57 multiple data is where you execute the
+11:60 
+
+11:60 same operation on multiple data elements
+12:03 
+
+12:03 simultaneously. So for example adding
+12:05 
+
+12:05 two numbers together or like adding two
+12:07 
+
+12:07 arrays together whereas SPMD or single
+12:10 
+
+12:10 program multiple data where instead of
+12:13 
+
+12:13 just a single operation you run a whole
+12:15 
+
+12:15 program across multiple processors or
+12:17 
+
+12:17 threads and you're able to make it work
+12:20 
+
+12:20 across all these different pieces of
+12:22 
+
+12:22 data simultaneously.
+12:25 
+
+12:25 Now the arithmetic operations um are
+12:28 
+
+12:28 very simple. You can see the big example
+12:30 
+
+12:30 on the on the right where it's creating
+12:32 
+
+12:32 a new map. It can be as simple as B + C
+12:35 
+
+12:35 * D or you could blend two ratios of
+12:38 
+
+12:38 different maps to create a blended map
+12:41 
+
+12:41 uh like in the second line. Now, so the
+12:43 
+
+12:43 pros of this is that the arithmetic
+12:45 
+
+12:45 operations are great for quickly writing
+12:47 
+
+12:47 code. The syntax is natural. It it you
+12:50 
+
+12:50 know it's really uh simple to write. Um
+12:53 
+
+12:53 and that enhanced readability goes a
+12:55 
+
+12:55 long way when you're writing complex
+12:56 
+
+12:56 algorithms. Um another cool thing is
+12:59 
+
+12:59 that similar to numpy forran and several
+13:02 
+
+13:02 scientific uh libraries out there uh it
+13:05 
+
+13:05 uses that same kind of uh syntax. So
+13:08 
+
+13:08 it's very simple and fast and easy to
+13:10 
+
+13:10 understand.
+13:12 
+
+13:12 Uh then we have a few drawbacks. So when
+13:16 
+
+13:16 we're using these arithmetic operators
+13:18 
+
+13:18 we end up with um uh temporaries that we
+13:21 
+
+13:21 can't dispose uh or at least we can't
+13:24 
+
+13:24 dispose manually. So let's say if we did
+13:27 
+
+13:27 a equals b * c plus d then it would
+13:30 
+
+13:30 generate multiple intermediaries and
+13:33 
+
+13:33 then we would have to wait for garbage
+13:35 
+
+13:35 collection to get them. So we don't
+13:37 
+
+13:37 control the timing of when that happens.
+13:40 
+
+13:40 Um and then this also leads to ram
+13:43 
+
+13:43 bloating uh pressure on the garbage
+13:45 
+
+13:45 collection and so on. So we were able to
+13:47 
+
+13:47 mitigate a lot of it by adding heristic
+13:50 
+
+13:50 tracking in the maps. Uh so if the pool
+13:53 
+
+13:53 uh imbalance grows and the overall maps
+13:56 
+
+13:56 are using up u a lot of RAM then we can
+13:59 
+
+13:59 just trigger garbage collection and then
+14:02 
+
+14:02 have them be any temporaries and
+14:04 
+
+14:04 everything be uh quickly swept up. Now
+14:07 
+
+14:07 the counterpart to this is the SPMD
+14:10 
+
+14:10 style API where we can just write entire
+14:13 
+
+14:13 kernels. So this is designed
+14:15 
+
+14:15 specifically to avoid temporaries and
+14:17 
+
+14:17 fuse all operations together. Um it's
+14:20 
+
+14:20 inspired by shader like SPMD
+14:22 
+
+14:22 programming. So we could just write a
+14:24 
+
+14:24 small program um or sometimes even
+14:26 
+
+14:26 larger programs. Uh it allows multi-
+14:29 
+
+14:29 channelannel operations as well. So when
+14:30 
+
+14:30 we're dealing with the color maps and so
+14:32 
+
+14:32 on, that's a big plus. It's powered by
+14:35 
+
+14:35 intrinsics or you know um exposed as
+14:37 
+
+14:37 vector of T which is SIMD uh in uh or
+14:41 
+
+14:41 SIMD implementation inn net and uh
+14:43 
+
+14:43 multi-threading.
+14:45 
+
+14:45 we have performance that is sometimes on
+14:48 
+
+14:48 par with manually vectorized C++ thanks
+14:52 
+
+14:52 to these kernels. So um one example of a
+14:55 
+
+14:55 kernel uh here is or the SPMD style API
+14:58 
+
+14:58 rather is when we're generating a new
+14:60 
+
+14:60 map. So in this first example on the
+15:02 
+
+15:02 left we're basically creating a cone uh
+15:05 
+
+15:05 we're quickly just uh uh running this
+15:08 
+
+15:08 program on the entire 2048x 2048 pixel
+15:13 
+
+15:13 or float map.
+15:15 
+
+15:15 Whereas in the second one, we're taking
+15:17 
+
+15:17 existing data and then using a couple of
+15:19 
+
+15:19 other maps such as map A and map B and
+15:22 
+
+15:22 then running an inline uh process u or
+15:26 
+
+15:26 in place process rather of the current
+15:28 
+
+15:28 map and then creating a new uh
+15:30 
+
+15:30 modification on top of it.
+15:33 
+
+15:33 So um with these two we have a nice
+15:37 
+
+15:37 balance of ergonomics where the
+15:39 
+
+15:39 arithmetic operators have this great
+15:42 
+
+15:42 natural syntax although with a trade-off
+15:44 
+
+15:44 of creating temporaries then we have the
+15:46 
+
+15:46 SPMD API where we could write these
+15:48 
+
+15:48 complex kernels um although they can get
+15:50 
+
+15:50 a bit verbose but we can mix and match
+15:53 
+
+15:53 both uh within uh a larger algorithm and
+15:57 
+
+15:57 get the best of both worlds. uh
+15:59 
+
+15:59 sometimes we'll end up using arithmetic
+16:01 
+
+16:01 operators for say quickly prototyping a
+16:04 
+
+16:04 new idea and then later go back in and
+16:06 
+
+16:06 then rewrite it using proper SPMD API to
+16:10 
+
+16:10 make it more performant.
+16:12 
+
+16:12 Um, another advantage this has given us
+16:14 
+
+16:14 because we now have this singular
+16:16 
+
+16:16 language of talking terrains and
+16:18 
+
+16:18 processes within terrains that we've
+16:21 
+
+16:21 ended up creating our own SPMDbased
+16:24 
+
+16:24 library of math, physics and other
+16:26 
+
+16:26 helpful helpful methods. So, we now have
+16:29 
+
+16:29 this built-in u system that we can
+16:32 
+
+16:32 leverage anywhere in any new algorithm
+16:35 
+
+16:35 without having to replicate code. um we
+16:37 
+
+16:37 can improve it centrally and of course
+16:40 
+
+16:40 um uh uh uh anything that uses this
+16:43 
+
+16:43 library gets builtin uh performance
+16:46 
+
+16:46 that's uh available across the board. So
+16:49 
+
+16:49 here's a a very quick sample of a
+16:53 
+
+16:53 composite algorithm. So first we create
+16:56 
+
+16:56 a mountain map and then a crater map and
+16:59 
+
+16:59 you can see both of them are using the
+17:01 
+
+17:01 using statement. So in the next line
+17:04 
+
+17:04 when we create the volcano map where we
+17:07 
+
+17:07 take mountain and subtract crater from
+17:09 
+
+17:09 it that's when the the scope ends for
+17:14 
+
+17:14 both mountain and crater and they're
+17:15 
+
+17:15 disposed. So that's memory management
+17:18 
+
+17:18 right there. We don't have to worry
+17:19 
+
+17:19 about them. Uh these are two large
+17:21 
+
+17:21 chunks of data that have now been
+17:22 
+
+17:22 recycled and then we can then work on
+17:26 
+
+17:26 volcano going forward. Add erosion to it
+17:29 
+
+17:29 and so forth.
+17:31 
+
+17:31 Now the custom memory management that
+17:33 
+
+17:33 I've been talking about comes through
+17:35 
+
+17:35 spawning pool of T. This is uh in some
+17:39 
+
+17:39 way similar to uh the concept of area
+17:41 
+
+17:41 poolool of D but it's our own
+17:43 
+
+17:43 implementation. And so let me tell you
+17:46 
+
+17:46 why we had to create our own
+17:47 
+
+17:47 implementation. So this is how memory
+17:50 
+
+17:50 consumption happens with height fields.
+17:52 
+
+17:52 So when you're dealing with something as
+17:54 
+
+17:54 small as like 1K like 1,024 x024
+17:57 
+
+17:57 you're dealing with about 4 MB of memory
+18:00 
+
+18:00 but then the user because this is
+18:02 
+
+18:02 procedural and they can go back and
+18:03 
+
+18:03 forth they might choose to view it at a
+18:06 
+
+18:06 higher fidelity. So they go I want to
+18:07 
+
+18:07 see it in 4K and then suddenly your 4 MB
+18:10 
+
+18:10 height field is 64 MB instead. And if
+18:13 
+
+18:13 you have like 10 20 50 60 height fields
+18:16 
+
+18:16 then you can see how quickly you can run
+18:18 
+
+18:18 out of RAM. So uh to manage all of this
+18:22 
+
+18:22 and to manage it um smartly we had to
+18:25 
+
+18:25 actually go beyond um arrayool. So there
+18:30 
+
+18:30 are certain limitations of arpool or um
+18:33 
+
+18:33 at least when we were starting with net
+18:35 
+
+18:35 8 um these were the limitations that we
+18:37 
+
+18:37 had where uh the area poolool would not
+18:40 
+
+18:40 release memory on its own. uh buckets
+18:42 
+
+18:42 can only shrink if all arrays are
+18:45 
+
+18:45 returned and the pool itself is
+18:46 
+
+18:46 collected and then of course the buckets
+18:48 
+
+18:48 have fixed capacity whereas uh for us it
+18:51 
+
+18:51 was important that we could have like
+18:52 
+
+18:52 different capacities.
+18:54 
+
+18:54 Uh one of the other uh side effects was
+18:57 
+
+18:57 that it could overallocate memory like
+18:59 
+
+18:59 uh next bucket fallback could take twice
+19:01 
+
+19:01 the amount of RAM just to be like uh uh
+19:04 
+
+19:04 it's for safety. We understand that but
+19:06 
+
+19:06 that was kind of like a uh a something
+19:09 
+
+19:09 we we wanted to have finer control over.
+19:12 
+
+19:12 We also wanted to have finer control
+19:13 
+
+19:13 over how memory lived in our engine and
+19:16 
+
+19:16 what we could do with it. So um for that
+19:20 
+
+19:20 we created spawning pool of t. So
+19:23 
+
+19:23 spawning pool has dynamic trimable
+19:25 
+
+19:25 buckets. It can release unused arrays
+19:28 
+
+19:28 without killing the pool. Uh and then
+19:30 
+
+19:30 whenever an array is released or freed,
+19:33 
+
+19:33 we track it through weak reference. So
+19:36 
+
+19:36 um if the garbage collector hasn't
+19:39 
+
+19:39 reclaimed them, we can then kind of
+19:41 
+
+19:41 resurrect them like zombies and reuse
+19:44 
+
+19:44 them. Uh it reduces pressure overall and
+19:46 
+
+19:46 it avoids stalling on the GC in certain
+19:49 
+
+19:49 cycles. Um, and then of course we can
+19:51 
+
+19:51 silently release memory back when we
+19:53 
+
+19:53 don't need it back to GC so that uh the
+19:56 
+
+19:56 computer has access to that memory. So
+19:58 
+
+19:58 it's not like we're hogging all of it.
+20:00 
+
+20:00 Now um let's see how that all this works
+20:04 
+
+20:04 in the real world. So I'll show you a
+20:06 
+
+20:06 couple of um benchmarks. So the first
+20:09 
+
+20:09 one is simply adding maps. we have on
+20:13 
+
+20:13 the left uh a traditional piece of code
+20:15 
+
+20:15 where we're just doing a loop to go and
+20:17 
+
+20:17 add two maps in and store the result in
+20:20 
+
+20:20 the third one. And whereas with our
+20:22 
+
+20:22 arithmetic operators uh we could just
+20:24 
+
+20:24 write a= b + c.
+20:27 
+
+20:27 And so when we run this addition using
+20:32 
+
+20:32 our vectorzed code with spawning pool is
+20:34 
+
+20:34 almost four times faster than scalar
+20:37 
+
+20:37 code that relies on net standard memory
+20:39 
+
+20:39 allocation. So this is where we get a
+20:43 
+
+20:43 lot of uh speed boosts just across the
+20:46 
+
+20:46 board because simple operations such as
+20:49 
+
+20:49 adding maps happen quite frequently
+20:52 
+
+20:52 within our larger uh algorithms.
+20:55 
+
+20:55 So um that's a a simple one. Let's take
+20:58 
+
+20:58 something slightly more complex. So u we
+21:01 
+
+21:01 talked about generating a cone. Well,
+21:02 
+
+21:02 here's generating a cone again. And so
+21:05 
+
+21:05 on the scalar code and in the vectorzed
+21:08 
+
+21:08 code, you can see that that there aren't
+21:09 
+
+21:09 that many differences, but in the
+21:12 
+
+21:12 vectorzed code, it's basically creating
+21:14 
+
+21:14 a kernel rather than a loop. So it'll
+21:16 
+
+21:16 then run across the board
+21:18 
+
+21:18 simultaneously.
+21:20 
+
+21:20 So
+21:21 
+
+21:21 when we execute this, we'll see that uh
+21:25 
+
+21:25 with the backing again of spawning pool,
+21:27 
+
+21:27 we have nearly five times faster
+21:29 
+
+21:29 results. uh the SPMD code works faster
+21:32 
+
+21:32 because it allows the code to take full
+21:34 
+
+21:34 advantage of um SIMD lanes and CPU
+21:38 
+
+21:38 threads. Uh and so compared to something
+21:41 
+
+21:41 as simple as say just adding to maps
+21:43 
+
+21:43 when we have uh a larger more complex uh
+21:47 
+
+21:47 process then we can take full advantage
+21:49 
+
+21:49 of what modern CPUs have to offer
+21:52 
+
+21:52 and uh and of course the advances in
+21:55 
+
+21:55 vectorization that we get with each new
+21:57 
+
+21:57 release of
+21:59 
+
+21:59 uh definitely helps in making this that
+22:01 
+
+22:01 much faster.
+22:03 
+
+22:03 Now um I want to talk a little bit about
+22:06 
+
+22:06 some of the engineering lessons that we
+22:08 
+
+22:08 learned and uh other things we observed
+22:10 
+
+22:10 along the way. So for example I said
+22:12 
+
+22:12 like .NET may not seem like the obvious
+22:14 
+
+22:14 choice for high performance computing
+22:16 
+
+22:16 but in our experience it can compete
+22:19 
+
+22:19 fiercely and we basically bet everything
+22:21 
+
+22:21 on it. So you know we're serious about
+22:23 
+
+22:23 this statement. um uh the the intrinsics
+22:28 
+
+22:28 that we get from system.numericics
+22:31 
+
+22:31 have become really really powerful. We
+22:33 
+
+22:33 don't have to worry about dabbling with
+22:35 
+
+22:35 unsafe code and still be able to get
+22:37 
+
+22:37 like JIT optimized intrinsics that work
+22:40 
+
+22:40 according to different CPU widths like
+22:42 
+
+22:42 whether it's SSE, AVX, AVX2. Um we're
+22:46 
+
+22:46 looking forward to getting more native
+22:48 
+
+22:48 support for AVX 512 as well. Um
+22:53 
+
+22:53 and and then uh being able to utilize
+22:56 
+
+22:56 things like span of T and parallel 4 uh
+22:59 
+
+22:59 but uh in our SPMD API and then also be
+23:03 
+
+23:03 able to hide that kind of plumbing so
+23:05 
+
+23:05 that our programmers can focus more on
+23:08 
+
+23:08 writing just the pure algorithms and uh
+23:10 
+
+23:10 focus on solving those problems rather
+23:12 
+
+23:12 than dealing with the nitty-gritty
+23:14 
+
+23:14 plumbing. So it's um we can get that ele
+23:17 
+
+23:17 elegant solution uh thanks to these
+23:20 
+
+23:20 additions inn net. Uh and then um of
+23:25 
+
+23:25 course we're no longer worried about
+23:27 
+
+23:27 unsafe blocks uh and you know that's
+23:30 
+
+23:30 what's been a great thing about the new
+23:32 
+
+23:32 JIT compiler that allows us to uh use
+23:36 
+
+23:36 SMD and SPMD patterns and make them
+23:38 
+
+23:38 viable.
+23:40 
+
+23:40 uh I disposable which was originally
+23:42 
+
+23:42 introduced for managing unmanaged memory
+23:46 
+
+23:46 uh resources and it's like our usage is
+23:48 
+
+23:48 a bit um
+23:50 
+
+23:50 uh different but it's definitely
+23:52 
+
+23:52 practical because it's giving us
+23:53 
+
+23:53 deterministic control over uh the
+23:56 
+
+23:56 lifetime of our objects especially
+23:57 
+
+23:57 larger buffers and then um the way it's
+24:00 
+
+24:00 been implemented with spawning pool and
+24:03 
+
+24:03 uh memory balancing and huristics it's
+24:05 
+
+24:05 it's quite semantic to the C++ uh rai
+24:11 
+
+24:11 uh concept and so we were able to
+24:13 
+
+24:13 implement some of that int net which is
+24:15 
+
+24:15 cool and so now our heavy algorithms can
+24:18 
+
+24:18 be written with memory management in
+24:20 
+
+24:20 mind where we can do a certain type of
+24:22 
+
+24:22 process uh uh first and then release
+24:25 
+
+24:25 memory before taking the results of that
+24:28 
+
+24:28 process uh to the next step so the
+24:30 
+
+24:30 buffers are freed
+24:32 
+
+24:32 uh it it takes a little bit of time to
+24:34 
+
+24:34 adapt to this kind of thinking because
+24:36 
+
+24:36 traditional C# programmers have a little
+24:39 
+
+24:39 bit of trouble
+24:40 
+
+24:40 working with vectorzed code but so we
+24:42 
+
+24:42 had to document that properly and once
+24:43 
+
+24:43 it's implemented um it works great
+24:47 
+
+24:47 now garbage collection can seem lazy for
+24:50 
+
+24:50 HPC out of the box but you can nudge it
+24:53 
+
+24:53 uh so our use case went beyond the
+24:55 
+
+24:55 typical scenarios that garbage
+24:56 
+
+24:56 collection inn net is designed for but
+24:59 
+
+24:59 becausen net is now flexible enough we
+25:02 
+
+25:02 were able to go in and create um our own
+25:05 
+
+25:05 um uh semi-overriding processes where we
+25:08 
+
+25:08 can manage memory as needed for for our
+25:11 
+
+25:11 use case. And so that's where also we're
+25:14 
+
+25:14 exploiting temporal locality. So with
+25:16 
+
+25:16 the weak reference, we can have like
+25:18 
+
+25:18 this controlled soft resurrection
+25:21 
+
+25:21 uh which we call uh formally call zombie
+25:23 
+
+25:23 memory. So it's not been collected uh
+25:26 
+
+25:26 you know it's it's shortlived so it'll
+25:28 
+
+25:28 persist for a little while and if it's
+25:30 
+
+25:30 not been collected then we can grab it
+25:31 
+
+25:31 back and then put it to use rather than
+25:34 
+
+25:34 letting it go or creating uh a new
+25:37 
+
+25:37 allocation. So it just works uh from all
+25:40 
+
+25:40 angles and it's very safe because the
+25:42 
+
+25:42 reference is weak. So uh it's not like
+25:45 
+
+25:45 we're fighting with garbage collector to
+25:47 
+
+25:47 to keep it. So it's like that like a
+25:50 
+
+25:50 pinned object. So again it's a a
+25:53 
+
+25:53 win-win.
+25:55 
+
+25:55 Uh we've now started working on the next
+25:58 
+
+25:58 generation of Gaia. The current
+25:59 
+
+25:59 generation which is 2.0 was written for
+26:02 
+
+26:02 .NET 8. Uh the new generation is now
+26:05 
+
+26:05 targeting .NET 10. And so we're actually
+26:07 
+
+26:07 quite excited about the improved
+26:09 
+
+26:09 vectorization and other performance
+26:10 
+
+26:10 improvements that are in the framework.
+26:12 
+
+26:12 So that's kind of a free upgrade for us
+26:14 
+
+26:14 where we don't have to work at all to
+26:16 
+
+26:16 get that advantage. Uh we're also going
+26:18 
+
+26:18 to take the lessons that we learned um
+26:21 
+
+26:21 both from our own work and from what
+26:23 
+
+26:23 users have said over the last four years
+26:25 
+
+26:25 to improve our architecture and then
+26:28 
+
+26:28 with the higher goal being to expose all
+26:31 
+
+26:31 these objects that we've talked about
+26:33 
+
+26:33 and then our node library through uh a
+26:36 
+
+26:36 new SDK so that others can build on top
+26:38 
+
+26:38 of what we have created.
+26:41 
+
+26:41 So lastly uh the community edition of
+26:44 
+
+26:44 Gaia is free for everyone. So, if you're
+26:46 
+
+26:46 interested, uh, if you just want to have
+26:47 
+
+26:47 like a little bit of fun, you can
+26:49 
+
+26:49 download it. It's not that hard to use,
+26:51 
+
+26:51 uh, make your own terrains, have fun,
+26:53 
+
+26:53 and see this code in action. You can
+26:55 
+
+26:55 download it from this link. And then, if
+26:57 
+
+26:57 you're interested in learning more about
+26:59 
+
+26:59 the nitty-gritty of some of the topics
+27:00 
+
+27:00 that we've covered, um, unfortunately,
+27:02 
+
+27:02 it's only a halfhour session, so we
+27:04 
+
+27:04 can't go too deep in some of these
+27:06 
+
+27:06 things. Uh, uh, do visit our blog and
+27:08 
+
+27:08 you can read more about, uh, uh, the
+27:11 
+
+27:11 Gaia engine.
+27:13 
+
+27:13 So, thank you so much for joining us.
+27:15 
+
+27:15 Um, you can follow us online on social
+27:18 
+
+27:18 media or take a look at our GitHub.
+27:20 
+
+27:20 We've uh open sourced a bunch of things
+27:23 
+
+27:23 that we use to make our tools and we try
+27:24 
+
+27:24 to open source as much as we can. Um,
+27:28 
+
+27:28 and again, thank you for joining us. We
+27:30 
+
+27:30 hope that this has been an informative
+27:32 
+
+27:32 presentation for you. And then um we
+27:35 
+
+27:35 look forward to seeing you again
+27:36 
+
+27:36 sometime in the future with the next
+27:40 
+
+27:40 generation of tech that we're able to
+27:42 
+
+27:42 create. Thank you so much.

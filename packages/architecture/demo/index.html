@@ -7,6 +7,15 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&family=Noto+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./studio.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
 <style>
   /* —— Hayba UE plugin design language — shared with linguistics workbench —— */
   :root {
@@ -235,13 +244,119 @@
   }
 
   /* —— ornamentation tag list —— */
-  .orn-list { display: flex; flex-wrap: wrap; gap: 5px; }
+  .orn-list { display: flex; flex-wrap: wrap; gap: 8px; }
   .orn-tag {
-    padding: 3px 9px; border-radius: 3px;
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 3px 9px 3px 3px; border-radius: 3px;
     background: var(--bg-panel);
     border: 1px solid var(--border-soft);
     color: var(--text-secondary); font-size: 11.5px;
     font-family: var(--font-mono);
+  }
+  .orn-sphere {
+    width: 22px; height: 22px; border-radius: 50%;
+    display: inline-block; flex-shrink: 0;
+    background: var(--bg-deep);
+  }
+
+  /* —— material chip sphere preview —— */
+  .chip .sphere-preview {
+    width: 26px; height: 26px; border-radius: 50%;
+    display: inline-block; flex-shrink: 0;
+    background: var(--bg-deep);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  }
+
+  /* —— click-affordance for inspectable chips/tags —— */
+  .chip-clickable { cursor: pointer; transition: border-color .12s, background .12s; }
+  .chip-clickable:hover { border-color: var(--accent); background: var(--bg-elevated); }
+  .chip-active {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 1px var(--accent-glow) inset;
+  }
+
+  /* —— inspector (right pane material/ornament editor) —— */
+  .inspector { display: flex; flex-direction: column; gap: 14px; padding-bottom: 30px; }
+  .inspector-h {
+    display: flex; align-items: center; gap: 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border-mid);
+  }
+  .inspector-back {
+    background: transparent; border: 1px solid var(--border-soft);
+    color: var(--text-secondary); cursor: pointer;
+    padding: 4px 9px; border-radius: 4px;
+    font: 11.5px var(--font-ui);
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .inspector-back:hover { background: var(--bg-elevated); color: var(--text-primary); border-color: var(--accent); }
+  .inspector-title { display: flex; flex-direction: column; }
+  .inspector-name { font-size: 16px; font-weight: 600; text-transform: capitalize; color: var(--text-primary); }
+  .inspector-sphere-wrap {
+    background: radial-gradient(circle at 30% 30%, var(--bg-panel) 0%, var(--bg-deep) 80%);
+    border: 1px solid var(--border-mid);
+    border-radius: 6px;
+    padding: 4px;
+    aspect-ratio: 1; max-width: 100%;
+    position: relative; overflow: hidden;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45) inset;
+  }
+  .inspector-sphere-wrap canvas {
+    width: 100% !important;
+    height: 100% !important;
+    display: block;
+    border-radius: 4px;
+    cursor: grab;
+  }
+  .inspector-sphere-wrap canvas:active { cursor: grabbing; }
+  .inspector-hint {
+    font: 10px var(--font-mono); color: var(--text-muted);
+    text-align: center; padding: 2px 0;
+    letter-spacing: 0.3px;
+  }
+  .inspector-desc {
+    font-size: 11.5px; color: var(--text-secondary);
+    line-height: 1.55; padding: 0 2px;
+  }
+  .inspector-section { display: flex; flex-direction: column; gap: 7px; }
+  .inspector-section-h {
+    font-size: 10.5px; letter-spacing: 0.7px; text-transform: uppercase;
+    color: var(--text-muted); font-weight: 700;
+    padding-bottom: 2px;
+    border-bottom: 1px solid var(--border-mid);
+  }
+  .prop-grid {
+    display: grid; grid-template-columns: max-content max-content 1fr;
+    gap: 5px 12px; align-items: center;
+    font-size: 11.5px;
+  }
+  .prop-k { color: var(--text-muted); font-family: var(--font-mono); }
+  .prop-v { color: var(--text-primary); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .prop-bar {
+    height: 5px; background: var(--bg-deep); border-radius: 2.5px;
+    overflow: hidden; min-width: 60px;
+  }
+  .prop-bar-fill { display: block; height: 100%; background: var(--accent); }
+  .map-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .map-tile {
+    background: var(--bg-base); border: 1px solid var(--border-mid);
+    border-radius: 4px; padding: 6px;
+    display: flex; flex-direction: column; gap: 5px;
+  }
+  .map-img {
+    width: 100%; aspect-ratio: 1; object-fit: cover;
+    border-radius: 2px;
+    image-rendering: -webkit-optimize-contrast;
+  }
+  .map-label {
+    font: 10px var(--font-mono); color: var(--text-muted);
+    text-align: center;
+  }
+  .inspector-foot {
+    margin-top: 4px;
+    font-size: 10px; text-align: center;
+    padding: 6px 0;
+    border-top: 1px solid var(--border-mid);
   }
 
   /* —— era timeline (horizontal bar w/ tick markers) —— */
@@ -341,8 +456,15 @@
     background: var(--bg-deep);
   }
   .footprint-svg .lot      { fill: none; stroke: var(--border-soft); stroke-dasharray: 3 3; }
-  .footprint-svg .building { fill: var(--accent-dim); stroke: var(--accent); stroke-width: 1.4; }
-  .footprint-svg .window   { fill: var(--cream); opacity: 0.55; }
+  .footprint-svg .building {
+    fill: rgba(181, 106, 29, 0.22);    /* accent-dim, slightly stronger */
+    stroke: var(--accent); stroke-width: 1.6;
+  }
+  .footprint-svg .window   {
+    fill: var(--cream);
+    stroke: var(--accent); stroke-width: 0.4;
+    opacity: 0.92;
+  }
   .footprint-svg .label    { fill: var(--text-muted); font-size: 9px; font-family: var(--font-mono); }
 
   .meta-row {
@@ -384,6 +506,244 @@
     color: var(--text-muted); text-align: center; padding: 40px 20px;
     font-style: italic;
   }
+
+  /* —— bound elements panel —— */
+  .bound-elements-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+  }
+  .bound-element-card {
+    background: var(--bg-base); border: 1px solid var(--border-mid);
+    border-radius: 6px; padding: 12px;
+    display: flex; flex-direction: column; gap: 6px;
+    cursor: pointer;
+    transition: border-color .12s, transform .12s;
+  }
+  .bound-element-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .bec-name { font-weight: 600; font-size: 13px; text-transform: capitalize; }
+  .bec-thumb {
+    background: var(--bg-deep); border-radius: 3px;
+    height: 140px; display: flex; align-items: center; justify-content: center;
+  }
+  .bec-meta { font-size: 10.5px; }
+
+  /* —— viewer modal —— */
+  .viewer-modal { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; }
+  .viewer-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.6); }
+  .viewer-modal-card {
+    position: relative; width: 720px; max-width: 90vw; max-height: 90vh;
+    background: var(--bg-base); border: 1px solid var(--border-soft);
+    border-radius: 8px; padding: 16px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .viewer-modal-h { display: flex; align-items: center; justify-content: space-between; }
+  .viewer-modal-h span { font-size: 14px; font-weight: 600; }
+  .viewer-modal-close {
+    background: transparent; border: none; color: var(--text-secondary);
+    cursor: pointer; font-size: 18px;
+  }
+  .viewer-stage {
+    width: 100%; height: 480px; background: var(--bg-deep);
+    border-radius: 4px;
+  }
+  .viewer-stats {
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);
+  }
+
+  /* —— settings button + settings modal —— */
+  .settings-btn {
+    height: 26px; padding: 0 10px;
+    background: transparent; border: 1px solid var(--border-soft);
+    color: var(--text-secondary); border-radius: 4px;
+    font: 11.5px var(--font-ui); cursor: pointer;
+    margin-left: 8px;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .settings-btn:hover { background: var(--bg-panel); color: var(--text-primary); border-color: var(--accent); }
+  .settings-label {
+    font-size: 10.5px; letter-spacing: 0.6px; text-transform: uppercase;
+    color: var(--text-muted); font-weight: 700; margin-bottom: 6px;
+  }
+  .settings-input {
+    width: 100%; padding: 6px 10px;
+    background: var(--bg-deep); color: var(--text-primary);
+    border: 1px solid var(--border-soft); border-radius: 4px;
+    font: 12px var(--font-mono); outline: none;
+    transition: border-color .12s;
+  }
+  .settings-input:focus { border-color: var(--accent); }
+  .settings-hint { font-size: 10.5px; color: var(--text-muted); margin-top: 4px; }
+  .settings-action {
+    height: 28px; padding: 0 14px; border-radius: 4px;
+    background: var(--bg-elevated); border: 1px solid var(--border-soft);
+    color: var(--text-primary); font: 12px var(--font-ui); cursor: pointer;
+  }
+  .settings-action:hover { background: var(--bg-raised); border-color: var(--accent); }
+  .settings-action-primary {
+    background: var(--accent); color: #0e1219; border-color: var(--accent); font-weight: 600;
+  }
+  .settings-action-primary:hover { background: var(--accent-hover); }
+  .bec-regen {
+    align-self: flex-start; margin-top: 4px;
+    background: transparent; border: 1px solid var(--border-soft);
+    color: var(--text-secondary); padding: 3px 8px;
+    border-radius: 3px; cursor: pointer;
+    font: 10.5px var(--font-ui);
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .bec-regen:hover { background: var(--bg-elevated); color: var(--text-primary); border-color: var(--accent); }
+  .bec-regen:disabled { opacity: 0.5; cursor: wait; }
+
+  /* —— Editor view —— */
+  .editor-view {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-rows: 44px 1fr;
+    overflow: hidden;
+    background: var(--bg-deep);
+  }
+  .editor-topbar {
+    background: var(--bg-base);
+    border-bottom: 1px solid var(--border-mid);
+    padding: 0 18px;
+    display: flex; align-items: center; gap: 16px;
+  }
+  .editor-crumb { display: flex; align-items: center; gap: 8px; }
+  .editor-crumb-prefix { font-size: 11px; }
+  .editor-crumb-name { font-weight: 600; font-size: 13px; }
+  .editor-slot-tabs { display: flex; flex: 1; gap: 0; align-self: flex-end; }
+  .editor-slot-tab {
+    padding: 8px 14px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    font: 12px var(--font-ui);
+    cursor: pointer;
+    transition: color .12s, border-color .12s;
+  }
+  .editor-slot-tab:hover { color: var(--text-primary); }
+  .editor-slot-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+  .editor-slot-tab .dirty-dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    background: var(--accent);
+    border-radius: 50%;
+    margin-left: 4px;
+    vertical-align: middle;
+  }
+  .editor-save-btn {
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+    border: 1px solid var(--border-soft);
+    padding: 6px 18px;
+    font: 700 11px var(--font-ui);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    cursor: not-allowed;
+    border-radius: 3px;
+    transition: background .12s, color .12s;
+  }
+  .editor-save-btn:not(:disabled) {
+    background: var(--accent);
+    color: #0e1219;
+    cursor: pointer;
+    border-color: var(--accent);
+  }
+  .editor-save-btn:not(:disabled):hover { background: var(--accent-hover); }
+
+  .editor-body {
+    display: grid;
+    grid-template-columns: 1fr 280px;
+    gap: 0;
+    overflow: hidden;
+  }
+  .editor-canvas-wrap {
+    background: var(--bg-deep);
+    position: relative;
+    overflow: hidden;
+  }
+  .editor-canvas-wrap canvas {
+    width: 100%; height: 100%;
+    display: block;
+    background: var(--bg-deep);
+    cursor: crosshair;
+  }
+  .editor-toolpalette {
+    position: absolute;
+    top: 10px; left: 10px;
+    display: flex; flex-direction: column; gap: 4px;
+    background: rgba(34, 38, 46, 0.92);
+    padding: 4px; border-radius: 4px;
+    border: 1px solid var(--border-soft);
+    backdrop-filter: blur(8px);
+    z-index: 5;
+  }
+  .editor-tool-btn {
+    width: 30px; height: 30px;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 14px;
+    border-radius: 3px;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .editor-tool-btn:hover { background: var(--bg-panel); color: var(--text-primary); }
+  .editor-tool-btn.active {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .editor-statusbar {
+    position: absolute;
+    bottom: 8px; left: 12px;
+    font: 11px var(--font-mono);
+    color: var(--text-muted);
+    background: rgba(27, 30, 36, 0.7);
+    padding: 4px 8px; border-radius: 3px;
+    pointer-events: none;
+    z-index: 5;
+  }
+  .editor-preview {
+    background: var(--bg-base);
+    border-left: 1px solid var(--border-mid);
+    padding: 14px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .editor-preview-h {
+    font: 700 10px var(--font-ui);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .editor-preview-stage {
+    height: 240px;
+    background: var(--bg-deep);
+    border: 1px solid var(--border-mid);
+    border-radius: 3px;
+  }
+  .editor-preview-stats { font-size: 10.5px; }
+  .editor-preview-meta {
+    font-size: 11px; color: var(--text-secondary); line-height: 1.6;
+  }
+
+  /* —— ✎ edit button on bound-element cards (used by Batch 6) —— */
+  .bec-edit {
+    align-self: flex-start; margin-top: 4px; margin-left: 6px;
+    background: transparent;
+    border: 1px solid var(--border-soft);
+    color: var(--text-secondary);
+    padding: 3px 8px;
+    border-radius: 3px;
+    font: 10.5px var(--font-ui);
+    cursor: pointer;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .bec-edit:hover { background: var(--bg-elevated); color: var(--text-primary); border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -396,7 +756,7 @@
   </div>
   <div class="divider"></div>
   <div class="tabs" id="tabs">
-    <button class="tab active" data-view="guides">Style guides</button>
+    <button class="tab active" data-view="cultures">Cultures</button>
     <button class="tab" data-view="typologies">Typologies</button>
   </div>
   <div class="divider"></div>
@@ -405,36 +765,95 @@
   <span class="mono muted" style="font-size:11px;">A1 · style-data explorer</span>
 </div>
 
+<!-- ─── cultures studio shell ─────────────────────────────── -->
+<div id="cultures-app" class="active">
+  <aside class="studio-list">
+    <button id="culture-create" class="studio-create">+ Create culture</button>
+    <ul id="culture-list"></ul>
+  </aside>
+  <main class="studio-main">
+    <header id="culture-header" class="studio-header">
+      <div class="studio-header-fields">
+        <h2 id="culture-name">—</h2>
+        <div class="studio-header-meta"><span id="culture-region">—</span> · <span id="culture-climate">—</span> · <span id="culture-counts">0 eras</span></div>
+      </div>
+      <button id="culture-delete" class="studio-delete" disabled>× Delete</button>
+    </header>
+    <nav class="studio-subtabs" id="studio-subtabs">
+      <button data-subtab="materials" class="active">Materials</button>
+      <button data-subtab="ornaments">Ornaments</button>
+      <button data-subtab="tag-axes">Tag axes</button>
+      <button data-subtab="culture-rules">Culture rules</button>
+    </nav>
+    <div id="subtab-body" class="studio-subtab-body"><p class="placeholder">Materials editor lands in Task 11.</p></div>
+    <section id="culture-timeline" class="culture-timeline"><p class="placeholder">Timeline lands in Task 12.</p></section>
+    <section id="era-detail" class="era-detail" hidden></section>
+  </main>
+</div>
+
 <!-- ─── app shell ─────────────────────────────────────────── -->
-<div class="app" id="app">
+<div class="app" id="app" style="display:none;">
   <div class="pane left"  id="leftPane"></div>
   <div class="pane center"><div class="center-wrap" id="centerPane"></div></div>
   <div class="pane right" id="rightPane"><div class="right-wrap" id="rightWrap"></div></div>
 </div>
 
+<script type="module" src="./studio.js"></script>
+
+<div id="viewerModal" class="viewer-modal" style="display:none;">
+  <div class="viewer-modal-backdrop"></div>
+  <div class="viewer-modal-card">
+    <div class="viewer-modal-h">
+      <span id="viewerModalTitle">Element preview</span>
+      <button class="viewer-modal-close" id="viewerModalClose">✕</button>
+    </div>
+    <div id="viewerStage" class="viewer-stage"></div>
+    <div id="viewerStats" class="viewer-stats"></div>
+  </div>
+</div>
+
 <script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
 'use strict';
 
 /* ─── data loading ─────────────────────────────────────── */
 
-const GUIDE_FILES = [
-  'medieval-european-carolingian',
-  'medieval-european-romanesque',
-  'medieval-european-gothic',
-  'tang-chinese-7c',
-  'tang-chinese-9c',
-  'andean-pre-inca',
-  'andean-inca',
-  'edo-japanese-early',
-  'edo-japanese-late',
-  'hausa-classical',
-  'industrial-revolution-english',
+// Start with a dynamic listing from the server. If the listing endpoint is
+// unavailable (e.g. the user is serving static files from a non-Hayba server),
+// fall back to a hardcoded set so the page still works.
+const FALLBACK_BOUND_PAIRS = [
+  { styleSheetId: 'medieval-european-gothic', elementId: 'column' },
+  { styleSheetId: 'medieval-european-gothic', elementId: 'cornice' },
+  { styleSheetId: 'medieval-european-gothic', elementId: 'finial' },
 ];
 
-const [typologyFile, ...guides] = await Promise.all([
+let BOUND_PAIRS;
+try {
+  const list = await fetch('/api/bindings/list').then(r => r.json());
+  BOUND_PAIRS = Array.isArray(list) && list.length > 0 ? list : FALLBACK_BOUND_PAIRS;
+} catch {
+  BOUND_PAIRS = FALLBACK_BOUND_PAIRS;
+}
+
+
+// Style-guides data removed in Task 11 — style-guide view is retired.
+const [typologyFile] = await Promise.all([
   fetch('../src/data/typologies.json').then(r => r.json()),
-  ...GUIDE_FILES.map(n => fetch(`../src/data/style-guides/${n}.json`).then(r => r.json())),
 ]);
+const guides = [];
+
+const bindings = {};
+await Promise.all(BOUND_PAIRS.map(async ({ styleSheetId, elementId }) => {
+  try {
+    bindings[`${styleSheetId}::${elementId}`] =
+      await fetch(`../src/bindings/${styleSheetId}/${elementId}.json`).then(r => r.json());
+  } catch (err) {
+    console.warn(`Failed to load binding ${styleSheetId}/${elementId}:`, err);
+  }
+}));
 
 const typologies = typologyFile.typologies;
 const typologyById = Object.fromEntries(typologies.map(t => [t.id, t]));
@@ -456,9 +875,12 @@ for (const g of guides) for (const k of Object.keys(g.styleSheet.extras || {})) 
 /* ─── state ─────────────────────────────────────────────── */
 
 const state = {
-  view: 'guides',
+  view: 'cultures',
   guideId: 'medieval-european-gothic',
   typologyId: null,
+  // When set, the right pane displays a material-editor-style inspector
+  // for that material or ornament instead of typology weights / across-cultures.
+  inspecting: null,  // null | { kind: 'material' | 'ornament', id: string }
 };
 
 /* ─── stats bar ─────────────────────────────────────────── */
@@ -575,7 +997,10 @@ function renderCenter() {
         </div>
         <div class="panel-h" style="margin-top:18px;">Ornamentation</div>
         <div class="orn-list">
-          ${s.core.ornamentation.map(o => `<span class="orn-tag">${o}</span>`).join('') || '<span class="muted">—</span>'}
+          ${s.core.ornamentation.map(o => {
+            const a = state.inspecting && state.inspecting.kind === 'ornament' && state.inspecting.id === o;
+            return `<span class="orn-tag chip-clickable ${a ? 'chip-active' : ''}" data-inspect-ornament="${o}" title="Click to inspect"><img class="orn-sphere" src="${getOrnamentPreviewUrl(o)}" alt="${o}">${o}</span>`;
+          }).join('') || '<span class="muted">—</span>'}
         </div>
       </div>
 
@@ -583,6 +1008,28 @@ function renderCenter() {
         <div class="panel-h">Extras · ${Object.keys(s.extras || {}).length} key${Object.keys(s.extras || {}).length !== 1 ? 's' : ''}</div>
         ${renderExtras(s.extras)}
       </div>
+
+      ${BOUND_PAIRS.filter(p => p.styleSheetId === g.id).length === 0 ? '' : `
+        <div class="panel">
+          <div class="panel-h">Bound elements · ${BOUND_PAIRS.filter(p => p.styleSheetId === g.id).length}</div>
+          <div class="bound-elements-grid">
+            ${BOUND_PAIRS.filter(p => p.styleSheetId === g.id).map(p => {
+              const b = bindings[`${p.styleSheetId}::${p.elementId}`];
+              return `
+                <div class="bound-element-card" data-element="${p.elementId}" data-style="${p.styleSheetId}">
+                  <div class="bec-name">${humanize(p.elementId)}</div>
+                  <div class="bec-thumb">
+                    <span class="muted" style="font-size:11px;">click to view 3D</span>
+                  </div>
+                  <div class="bec-meta">
+                    <span class="mono muted">${Object.entries(b.params).slice(0, 2).map(([k, v]) => `${k.replace(/_m$/,'')} ${v}`).join(' · ')} · seed ${String(b.seed).slice(0, 10)}…</span>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `}
     `;
     wrap.querySelectorAll('.timeline .seg').forEach(el => {
       el.addEventListener('click', () => {
@@ -676,9 +1123,10 @@ function renderTimeline(cultureId, activeGuideId) {
 /* ─── chips ─────────────────────────────────────────────── */
 
 function materialChip(role, material) {
-  const v = `var(--mat-${material})`;
-  return `<div class="chip" title="${material}">
-    <span class="swatch" style="background:${v}"></span>
+  const previewUrl = getMaterialPreviewUrl(material);
+  const active = state.inspecting && state.inspecting.kind === 'material' && state.inspecting.id === material;
+  return `<div class="chip chip-clickable ${active ? 'chip-active' : ''}" data-inspect-material="${material}" title="Click to inspect">
+    <img class="sphere-preview" src="${previewUrl}" alt="${material}">
     <span class="kind">${role}</span>
     <span class="label">${material}</span>
   </div>`;
@@ -817,28 +1265,306 @@ function fitToBox(aspect, W, H) {
 }
 
 function windowDots(x, y, w, h, density) {
+  // Edge-aligned window slits on the building perimeter, sized as a fraction
+  // of the building so they stay visible at any zoom level. Higher density
+  // produces more windows (smaller gap).
   const d = mid(density);
   if (d <= 0) return '';
-  const cols = Math.max(2, Math.round(w / 18));
-  const rows = Math.max(1, Math.round(h / 22));
-  const sw = 3, sh = 3.5;
-  let svg = '';
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      // place ~d fraction of slots
-      if ((c + r * cols) % Math.max(1, Math.round(1 / Math.max(d, 0.02))) !== 0) continue;
-      const cx = x + (c + 0.5) * (w / cols) - sw/2;
-      const cy = y + (r + 0.5) * (h / rows) - sh/2;
-      svg += `<rect class="window" x="${cx}" y="${cy}" width="${sw}" height="${sh}" rx="0.5"/>`;
-    }
+  const minSide = Math.min(w, h);
+  const slitDepth  = Math.max(3, minSide * 0.07);   // perpendicular to the edge
+  const slitLength = Math.max(6, minSide * 0.13);   // along the edge
+  const inset      = Math.max(2, minSide * 0.045);  // distance from wall
+  const baseGap    = Math.max(slitLength * 1.1, minSide * 0.18);
+  const gap = baseGap * (0.04 / Math.max(d, 0.04));
+
+  const slits = [];
+  for (let cx = x + gap; cx + slitLength < x + w - gap; cx += gap + slitLength) {
+    slits.push({ x: cx, y: y + inset, w: slitLength, h: slitDepth });
+    slits.push({ x: cx, y: y + h - inset - slitDepth, w: slitLength, h: slitDepth });
   }
-  return svg;
+  for (let cy = y + gap; cy + slitLength < y + h - gap; cy += gap + slitLength) {
+    slits.push({ x: x + inset, y: cy, w: slitDepth, h: slitLength });
+    slits.push({ x: x + w - inset - slitDepth, y: cy, w: slitDepth, h: slitLength });
+  }
+
+  return slits
+    .map(s => `<rect class="window" x="${s.x}" y="${s.y}" width="${s.w}" height="${s.h}" rx="0.5"/>`)
+    .join('');
+}
+
+/* ─── inspector (material / ornament editor) ──────────────────────────────── */
+
+let _inspectorTeardown = null;
+
+function teardownInspectorSphere() {
+  if (_inspectorTeardown) {
+    try { _inspectorTeardown(); } catch (_) { /* swallow */ }
+    _inspectorTeardown = null;
+  }
+}
+
+function mountLiveSphere(container, material) {
+  teardownInspectorSphere();
+  container.innerHTML = '';
+
+  const scene = new THREE.Scene();
+  scene.background = null;
+
+  const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 10);
+  camera.position.set(0, 0.15, 3.6);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  const updateSize = () => {
+    const w = Math.max(80, container.clientWidth);
+    const h = Math.max(80, container.clientHeight || w);
+    renderer.setSize(w, h, true);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  };
+  container.appendChild(renderer.domElement);
+  updateSize();
+
+  // Match the cached preview lighting.
+  const key = new THREE.DirectionalLight(0xfff2dd, 1.7);
+  key.position.set(1.4, 1.6, 2.0); scene.add(key);
+  const fill = new THREE.DirectionalLight(0xa0b0c4, 0.55);
+  fill.position.set(-1.4, 0.6, -0.8); scene.add(fill);
+  const rim = new THREE.DirectionalLight(0xffffff, 0.25);
+  rim.position.set(0, -1.2, -2.0); scene.add(rim);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.10));
+
+  const geo = new THREE.SphereGeometry(1, 64, 64);
+  const sphere = new THREE.Mesh(geo, material);
+  scene.add(sphere);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.target.set(0, 0, 0);
+  controls.minDistance = 2.6;
+  controls.maxDistance = 6;
+  controls.enablePan = false;
+  controls.rotateSpeed = 0.7;
+
+  let stopped = false;
+  let rafId = 0;
+  const animate = () => {
+    if (stopped) return;
+    rafId = requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  };
+  animate();
+
+  let ro = null;
+  if (typeof ResizeObserver !== 'undefined') {
+    ro = new ResizeObserver(updateSize);
+    ro.observe(container);
+  }
+
+  _inspectorTeardown = () => {
+    stopped = true;
+    cancelAnimationFrame(rafId);
+    if (ro) ro.disconnect();
+    controls.dispose();
+    geo.dispose();
+    if (material.map)        material.map.dispose();
+    if (material.normalMap)  material.normalMap.dispose();
+    material.dispose();
+    renderer.dispose();
+    renderer.forceContextLoss?.();
+    if (renderer.domElement.parentNode === container) {
+      container.removeChild(renderer.domElement);
+    }
+  };
+}
+
+function renderInspector(wrap) {
+  const insp = state.inspecting;
+  if (!insp) { teardownInspectorSphere(); wrap.innerHTML = ''; return; }
+  if (insp.kind === 'material') {
+    renderMaterialInspector(wrap, insp.id);
+  } else if (insp.kind === 'ornament') {
+    renderOrnamentInspector(wrap, insp.id);
+  }
+}
+
+function _humanizeRoughness(materialId) {
+  const r = ROUGHNESS_BY_MATERIAL[materialId] ?? 0.85;
+  if (r > 0.9) return 'matte';
+  if (r > 0.8) return 'rough';
+  if (r > 0.65) return 'satin';
+  return 'smooth';
+}
+
+function _materialDescription(materialId) {
+  const desc = {
+    'stone':         'Quarried sedimentary or igneous rock. Heavy, durable, weatherable. The default for monumental Mediaeval and Andean work.',
+    'timber':        'Dimensional or hewn wood (oak, cedar, cypress, cryptomeria). Light, workable, anisotropic grain. Tang-Chinese and Edo-Japanese vernacular default.',
+    'mudbrick':      'Sun-dried clay loaf with straw binder. Cheap, thermal-mass-rich, requires roof overhang protection. Sub-Saharan and Andean default.',
+    'adobe':         'Smoothed mud-clay render over rammed-earth or mudbrick core. Sandy warm color, soft surface.',
+    'rammed-earth':  'Compacted earth in horizontal lifts inside formwork. Striated visible bands record each pour.',
+    'brick':         'Fired clay unit, mortar-bedded. Industrial-Revolution-English default; high compressive strength, machine-regular.',
+    'concrete':      'Cementitious paste with aggregate. Cast in formwork; monolithic. Industrial era onward.',
+    'wattle-daub':   'Woven wood lattice (wattle) packed with clay/straw mix (daub). Lightweight infill between timber frame.',
+  };
+  return desc[materialId] ?? 'Material in the schema enum.';
+}
+
+function renderMaterialInspector(wrap, materialId) {
+  const { diffuseCanvas, normalCanvas } = getMaterialCanvases(materialId);
+  const roughness = ROUGHNESS_BY_MATERIAL[materialId] ?? 0.85;
+  const dDataUrl = diffuseCanvas.toDataURL('image/png');
+  const nDataUrl = normalCanvas.toDataURL('image/png');
+
+  wrap.innerHTML = `
+    <div class="inspector">
+      <div class="inspector-h">
+        <button class="inspector-back" id="inspectorBack">◀ back</button>
+        <div class="inspector-title">
+          <span class="muted" style="font-size:10.5px;">MATERIAL</span>
+          <div class="inspector-name">${materialId}</div>
+        </div>
+      </div>
+
+      <div class="inspector-sphere-wrap" id="inspectorSphereHost"></div>
+      <div class="inspector-hint">drag to rotate · scroll to zoom</div>
+
+      <div class="inspector-desc">${_materialDescription(materialId)}</div>
+
+      <div class="inspector-section">
+        <div class="inspector-section-h">PBR properties</div>
+        <div class="prop-grid">
+          <span class="prop-k">roughness</span><span class="prop-v">${roughness.toFixed(2)}</span><span class="prop-bar"><span class="prop-bar-fill" style="width:${roughness*100}%"></span></span>
+          <span class="prop-k">metalness</span><span class="prop-v">0.02</span>          <span class="prop-bar"><span class="prop-bar-fill" style="width:2%"></span></span>
+          <span class="prop-k">normal·z</span><span class="prop-v">0.70</span>            <span class="prop-bar"><span class="prop-bar-fill" style="width:70%"></span></span>
+          <span class="prop-k">surface</span><span class="prop-v" style="grid-column: span 2;">${_humanizeRoughness(materialId)}</span>
+        </div>
+      </div>
+
+      <div class="inspector-section">
+        <div class="inspector-section-h">Texture maps</div>
+        <div class="map-grid">
+          <div class="map-tile">
+            <img class="map-img" src="${dDataUrl}" alt="diffuse">
+            <div class="map-label">diffuse · 256²</div>
+          </div>
+          <div class="map-tile">
+            <img class="map-img" src="${nDataUrl}" alt="normal">
+            <div class="map-label">normal · 256²</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="inspector-foot">
+        <span class="muted">procedural · canvas-generated · ${materialId}</span>
+      </div>
+    </div>
+  `;
+
+  const host = wrap.querySelector('#inspectorSphereHost');
+  if (host) {
+    const data = _ensureMaterialData(materialId);
+    mountLiveSphere(host, _materialFromData(data));
+  }
+
+  wrap.querySelector('#inspectorBack')?.addEventListener('click', () => {
+    state.inspecting = null;
+    renderCenter(); renderRight();
+  });
+}
+
+function _ornamentDescription(ornament) {
+  const desc = {
+    'pointed-arch':    'The structural and visual signature of Gothic. A two-centred arch carrying the wall thrust outward and upward, allowing thinner walls and larger glazed openings.',
+    'flying-buttress': 'External diagonal masonry strut transferring vault thrust to a free-standing pier. Lets the nave wall be opened up with windows.',
+    'rose-window':     'Circular stained-glass aperture in a gable wall, typically with radial tracery dividing it into petal-shaped lights.',
+    'gargoyle':        'Carved waterspout in the form of a grotesque human or animal, projecting from the cornice to throw rainwater clear of the wall.',
+    'tracery':         'Ornamental stonework dividing window openings into geometric patterns. Plate, bar, or curvilinear depending on period.',
+    'pediment-relief': 'Sculptural fill in the triangular gable above a portico, typically narrative or heraldic.',
+    'frieze':          'Horizontal band of ornamental carving, often repeating a motif, running between architrave and cornice.',
+  };
+  return desc[ornament] ?? 'Ornamental motif. Procedural pattern shown is a generic carved-relief approximation; future versions will use AI-generated culture-specific references.';
+}
+
+function renderOrnamentInspector(wrap, ornament) {
+  const { diffuseCanvas, normalCanvas } = getOrnamentCanvases(ornament);
+  const dDataUrl = diffuseCanvas.toDataURL('image/png');
+  const nDataUrl = normalCanvas.toDataURL('image/png');
+
+  wrap.innerHTML = `
+    <div class="inspector">
+      <div class="inspector-h">
+        <button class="inspector-back" id="inspectorBack">◀ back</button>
+        <div class="inspector-title">
+          <span class="muted" style="font-size:10.5px;">ORNAMENT</span>
+          <div class="inspector-name">${ornament}</div>
+        </div>
+      </div>
+
+      <div class="inspector-sphere-wrap" id="inspectorSphereHost"></div>
+      <div class="inspector-hint">drag to rotate · scroll to zoom</div>
+
+      <div class="inspector-desc">${_ornamentDescription(ornament)}</div>
+
+      <div class="inspector-section">
+        <div class="inspector-section-h">Relief properties</div>
+        <div class="prop-grid">
+          <span class="prop-k">base material</span><span class="prop-v" style="grid-column: span 2;">stone</span>
+          <span class="prop-k">carving depth</span><span class="prop-v">strong</span><span class="prop-bar"><span class="prop-bar-fill" style="width:80%"></span></span>
+          <span class="prop-k">tileable</span><span class="prop-v" style="grid-column: span 2;">yes (256² repeating)</span>
+        </div>
+      </div>
+
+      <div class="inspector-section">
+        <div class="inspector-section-h">Texture maps</div>
+        <div class="map-grid">
+          <div class="map-tile">
+            <img class="map-img" src="${dDataUrl}" alt="diffuse">
+            <div class="map-label">diffuse · 256²</div>
+          </div>
+          <div class="map-tile">
+            <img class="map-img" src="${nDataUrl}" alt="normal">
+            <div class="map-label">normal · 256²</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="inspector-foot">
+        <span class="muted">procedural placeholder · AI-generated references arrive in plan 3</span>
+      </div>
+    </div>
+  `;
+
+  const host = wrap.querySelector('#inspectorSphereHost');
+  if (host) {
+    const data = _ensureOrnamentData(ornament);
+    mountLiveSphere(host, _ornamentMaterial(data));
+  }
+
+  wrap.querySelector('#inspectorBack')?.addEventListener('click', () => {
+    state.inspecting = null;
+    renderCenter(); renderRight();
+  });
 }
 
 /* ─── right pane (typology weights for the active guide, or footprint detail) ── */
 
 function renderRight() {
   const wrap = document.getElementById('rightWrap');
+
+  // Inspector mode takes precedence over the default right-pane views.
+  if (state.inspecting) {
+    renderInspector(wrap);
+    return;
+  }
+
+  // Leaving inspector → tear down live sphere if it was mounted.
+  teardownInspectorSphere();
+
   if (state.view === 'guides') {
     const g = guideById[state.guideId];
     if (!g) { wrap.innerHTML = ''; return; }
@@ -945,19 +1671,725 @@ function hexA(hex, a) {
 document.getElementById('tabs').addEventListener('click', e => {
   const t = e.target.closest('.tab');
   if (!t) return;
+
   document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
   t.classList.add('active');
-  state.view = t.dataset.view;
+  const view = t.dataset.view;
+  state.view = view;
+
+  const culturesApp = document.getElementById('cultures-app');
+  const legacyApp   = document.getElementById('app');
+
+  if (view === 'cultures') {
+    if (culturesApp) culturesApp.classList.add('active');
+    if (legacyApp)   legacyApp.style.display = 'none';
+    return;
+  }
+
+  if (culturesApp) culturesApp.classList.remove('active');
+  if (legacyApp)   legacyApp.style.display = '';
+
   if (state.view === 'typologies' && !state.typologyId) state.typologyId = typologies[0].id;
-  renderLeftPane(); renderCenter(); renderRight();
+  renderLeftPane();
+  renderCenter();
+  renderRight();
 });
+
+/* ─── kernel + 3D viewer ─────────────────────────────────── */
+
+async function loadKernel() {
+  try {
+    const mod = await import('../dist/index.js');
+    return mod;
+  } catch (e) {
+    console.error('Kernel import failed (did you run `npm run build`?):', e);
+    return null;
+  }
+}
+
+const kernelMod = await loadKernel();
+
+
+function emitGLBForBinding(styleSheetId, elementId) {
+  if (!kernelMod) throw new Error('Kernel not loaded — run `npm run build --workspace=@hayba/architecture`');
+  const result = kernelMod.emitElementMesh(styleSheetId, elementId);
+  if (!result.ok) throw new Error(result.message);
+  return result;
+}
+
+/* —— procedural stone texture + normal map (CanvasTexture, no external assets) —— */
+function makeStoneTexture(size = 512) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  // Base warm-grey
+  ctx.fillStyle = '#a89c8a';
+  ctx.fillRect(0, 0, size, size);
+  // Stochastic stippling for surface noise
+  const id = ctx.getImageData(0, 0, size, size);
+  for (let i = 0; i < id.data.length; i += 4) {
+    const n = (Math.random() - 0.5) * 36;
+    id.data[i]     = Math.max(0, Math.min(255, id.data[i]     + n));
+    id.data[i + 1] = Math.max(0, Math.min(255, id.data[i + 1] + n * 0.95));
+    id.data[i + 2] = Math.max(0, Math.min(255, id.data[i + 2] + n * 0.85));
+  }
+  ctx.putImageData(id, 0, 0);
+  // Soft veining (a few low-opacity strokes)
+  ctx.strokeStyle = 'rgba(70, 60, 50, 0.18)';
+  ctx.lineWidth = 1.2;
+  for (let k = 0; k < 30; k++) {
+    ctx.beginPath();
+    ctx.moveTo(Math.random() * size, Math.random() * size);
+    for (let s = 0; s < 5; s++) {
+      ctx.lineTo(Math.random() * size, Math.random() * size);
+    }
+    ctx.stroke();
+  }
+  const t = new THREE.CanvasTexture(canvas);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(2, 4);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+function makeStoneNormalMap(size = 512) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  // Compute a tiny height field from noise, then convert to normals.
+  const h = new Float32Array(size * size);
+  for (let i = 0; i < h.length; i++) h[i] = Math.random();
+  // Blur (3x3 box) once for smoother normals
+  const blurred = new Float32Array(h.length);
+  for (let y = 1; y < size - 1; y++) {
+    for (let x = 1; x < size - 1; x++) {
+      let s = 0;
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++)
+          s += h[(y + dy) * size + (x + dx)];
+      blurred[y * size + x] = s / 9;
+    }
+  }
+  const id = ctx.createImageData(size, size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = y * size + x;
+      const xL = blurred[Math.max(0, y * size + (x - 1))] ?? 0.5;
+      const xR = blurred[Math.min(size - 1, y * size + (x + 1))] ?? 0.5;
+      const yD = blurred[Math.max(0, (y - 1) * size + x)] ?? 0.5;
+      const yU = blurred[Math.min(size - 1, (y + 1) * size + x)] ?? 0.5;
+      const dx = (xR - xL) * 4;
+      const dy = (yU - yD) * 4;
+      const dz = 1;
+      const len = Math.hypot(dx, dy, dz) || 1;
+      const r = ((-dx / len) * 0.5 + 0.5) * 255;
+      const g = ((-dy / len) * 0.5 + 0.5) * 255;
+      const b = ((dz / len) * 0.5 + 0.5) * 255;
+      id.data[i * 4]     = r;
+      id.data[i * 4 + 1] = g;
+      id.data[i * 4 + 2] = b;
+      id.data[i * 4 + 3] = 255;
+    }
+  }
+  ctx.putImageData(id, 0, 0);
+  const t = new THREE.CanvasTexture(canvas);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(2, 4);
+  return t;
+}
+
+let STONE_DIFFUSE_TEXTURE = null;
+let STONE_NORMAL_TEXTURE = null;
+function getStoneMaterial() {
+  if (!STONE_DIFFUSE_TEXTURE) STONE_DIFFUSE_TEXTURE = makeStoneTexture();
+  if (!STONE_NORMAL_TEXTURE)  STONE_NORMAL_TEXTURE  = makeStoneNormalMap();
+  return new THREE.MeshStandardMaterial({
+    map: STONE_DIFFUSE_TEXTURE,
+    normalMap: STONE_NORMAL_TEXTURE,
+    normalScale: new THREE.Vector2(0.7, 0.7),
+    roughness: 0.92,
+    metalness: 0.02,
+  });
+}
+
+function openViewer(styleSheetId, elementId) {
+  document.getElementById('viewerModal').style.display = 'flex';
+  document.getElementById('viewerModalTitle').textContent = `${humanize(elementId)} · ${cultureLabel(styleSheetId)}`;
+  const stage = document.getElementById('viewerStage');
+  stage.innerHTML = '';
+  const stats = document.getElementById('viewerStats');
+  stats.textContent = 'loading…';
+
+  let result;
+  try {
+    result = emitGLBForBinding(styleSheetId, elementId);
+  } catch (e) {
+    stage.innerHTML = `<div style="padding:24px;color:var(--status-red);">Kernel error: ${e.message}</div>`;
+    return;
+  }
+  stats.textContent = `triangles ${result.stats.triangles} · vertices ${result.stats.vertices} · ${(result.stats.sizeBytes/1024).toFixed(1)} KB`;
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x1b1e24);
+  const camera = new THREE.PerspectiveCamera(45, stage.clientWidth / stage.clientHeight, 0.01, 100);
+  camera.position.set(2.5, 3, 4);
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(stage.clientWidth, stage.clientHeight);
+  stage.appendChild(renderer.domElement);
+
+  const keyLight = new THREE.DirectionalLight(0xfff2dd, 1.6);
+  keyLight.position.set(5, 8, 6);
+  scene.add(keyLight);
+  const fillLight = new THREE.DirectionalLight(0xa0b0c4, 0.6);
+  fillLight.position.set(-4, 3, -2);
+  scene.add(fillLight);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.18));
+  const grid = new THREE.GridHelper(10, 10, 0x3d434e, 0x2a2e36);
+  scene.add(grid);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+
+  const loader = new GLTFLoader();
+  loader.parse(result.glb, '', (gltf) => {
+    const stoneMat = getStoneMaterial();
+    gltf.scene.traverse((o) => {
+      if (o.isMesh) o.material = stoneMat;
+    });
+    scene.add(gltf.scene);
+    const box = new THREE.Box3().setFromObject(gltf.scene);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z, 0.5);
+    camera.position.set(center.x + maxDim * 1.6, center.y + maxDim * 0.6, center.z + maxDim * 1.6);
+    controls.target.copy(center);
+    controls.update();
+  }, (err) => {
+    stage.innerHTML = `<div style="padding:24px;color:var(--status-red);">GLB load error: ${err}</div>`;
+  });
+
+  (function animate() {
+    if (document.getElementById('viewerModal').style.display === 'none') return;
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  })();
+}
+
+document.getElementById('viewerModalClose').addEventListener('click', () => {
+  document.getElementById('viewerModal').style.display = 'none';
+  document.getElementById('viewerStage').innerHTML = '';
+});
+
+
+document.addEventListener('click', (e) => {
+  const card = e.target.closest('.bound-element-card');
+  if (card) { openViewer(card.dataset.style, card.dataset.element); return; }
+
+  // Material / ornament inspector — click any chip / orn-tag with a data-inspect-* attribute.
+  const matEl = e.target.closest('[data-inspect-material]');
+  if (matEl) {
+    state.inspecting = { kind: 'material', id: matEl.dataset.inspectMaterial };
+    renderCenter(); renderRight();
+    return;
+  }
+  const ornEl = e.target.closest('[data-inspect-ornament]');
+  if (ornEl) {
+    state.inspecting = { kind: 'ornament', id: ornEl.dataset.inspectOrnament };
+    renderCenter(); renderRight();
+    return;
+  }
+});
+
+/* ─── PBR sphere material previews ──────────────────────────
+ * Pre-renders a small (96 px) sphere preview for each material + each
+ * ornament tag at app boot. Uses a single shared three.js renderer +
+ * scene + sphere mesh; swap the material between renders and capture
+ * each frame to a data URL. Cached forever for the session.
+ *
+ * Each preview is a real-PBR render — diffuse + normal map procedurally
+ * generated from canvas noise / hatching / pattern primitives. No external
+ * texture assets; everything ships in this single HTML.
+ */
+
+const PREVIEW_SIZE = 96;
+let _previewRenderer = null;
+let _previewScene = null;
+let _previewCamera = null;
+let _previewSphere = null;
+
+function _setupPreviewer() {
+  if (_previewRenderer) return;
+  _previewRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, premultipliedAlpha: false });
+  _previewRenderer.setSize(PREVIEW_SIZE, PREVIEW_SIZE);
+  _previewRenderer.setPixelRatio(2);
+  _previewRenderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  _previewScene = new THREE.Scene();
+  _previewCamera = new THREE.PerspectiveCamera(28, 1, 0.1, 10);
+  _previewCamera.position.set(0, 0.15, 3.6);
+  _previewCamera.lookAt(0, 0, 0);
+
+  const key = new THREE.DirectionalLight(0xfff2dd, 1.7);
+  key.position.set(1.4, 1.6, 2.0);
+  _previewScene.add(key);
+  const fill = new THREE.DirectionalLight(0xa0b0c4, 0.55);
+  fill.position.set(-1.4, 0.6, -0.8);
+  _previewScene.add(fill);
+  const rim = new THREE.DirectionalLight(0xffffff, 0.25);
+  rim.position.set(0, -1.2, -2.0);
+  _previewScene.add(rim);
+  _previewScene.add(new THREE.AmbientLight(0xffffff, 0.10));
+
+  _previewSphere = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 48, 48),
+    new THREE.MeshStandardMaterial(),
+  );
+  _previewScene.add(_previewSphere);
+}
+
+function _renderSphereWithMaterial(material, size = PREVIEW_SIZE) {
+  _setupPreviewer();
+  if (_previewRenderer.domElement.width !== size * 2) {
+    _previewRenderer.setSize(size, size);
+  }
+  _previewSphere.material = material;
+  _previewRenderer.render(_previewScene, _previewCamera);
+  return _previewRenderer.domElement.toDataURL('image/png');
+}
+
+/* ── procedural canvas pattern generators ── */
+
+function _noisyFill(ctx, size, baseColor, jitter) {
+  ctx.fillStyle = baseColor;
+  ctx.fillRect(0, 0, size, size);
+  const id = ctx.getImageData(0, 0, size, size);
+  for (let i = 0; i < id.data.length; i += 4) {
+    const n = (Math.random() - 0.5) * jitter;
+    id.data[i]     = Math.max(0, Math.min(255, id.data[i]     + n));
+    id.data[i + 1] = Math.max(0, Math.min(255, id.data[i + 1] + n * 0.95));
+    id.data[i + 2] = Math.max(0, Math.min(255, id.data[i + 2] + n * 0.9));
+  }
+  ctx.putImageData(id, 0, 0);
+}
+
+function _heightToNormal(heights, size, strength = 4) {
+  const out = new Uint8ClampedArray(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const xL = heights[y * size + Math.max(0, x - 1)];
+      const xR = heights[y * size + Math.min(size - 1, x + 1)];
+      const yD = heights[Math.max(0, y - 1) * size + x];
+      const yU = heights[Math.min(size - 1, y + 1) * size + x];
+      const dx = (xR - xL) * strength;
+      const dy = (yU - yD) * strength;
+      const dz = 1;
+      const len = Math.hypot(dx, dy, dz) || 1;
+      const i = (y * size + x) * 4;
+      out[i]     = ((-dx / len) * 0.5 + 0.5) * 255;
+      out[i + 1] = ((-dy / len) * 0.5 + 0.5) * 255;
+      out[i + 2] = ((dz / len) * 0.5 + 0.5) * 255;
+      out[i + 3] = 255;
+    }
+  }
+  return out;
+}
+
+function _normalFromHeightFn(nctx, size, heightFn, strength = 4) {
+  const heights = new Float32Array(size * size);
+  for (let y = 0; y < size; y++)
+    for (let x = 0; x < size; x++)
+      heights[y * size + x] = heightFn(x / size, y / size);
+  const buf = _heightToNormal(heights, size, strength);
+  const id = new ImageData(buf, size, size);
+  nctx.putImageData(id, 0, 0);
+}
+
+function _paintMaterial(materialId, dctx, nctx, size) {
+  switch (materialId) {
+    case 'stone': {
+      _noisyFill(dctx, size, '#9aa0a8', 50);
+      // Subtle banding
+      dctx.fillStyle = 'rgba(70, 65, 60, 0.07)';
+      for (let i = 0; i < 4; i++) dctx.fillRect(0, Math.random() * size, size, 2 + Math.random() * 4);
+      _normalFromHeightFn(nctx, size, () => Math.random(), 3.5);
+      break;
+    }
+    case 'timber': {
+      // Vertical wood grain
+      for (let x = 0; x < size; x++) {
+        const t = (x / size) * 11;
+        const grain = Math.sin(t * 2) * 0.4 + Math.sin(t * 5.3 + 1) * 0.15 + (Math.random() - 0.5) * 0.18;
+        const base = 152 + grain * 32;
+        dctx.fillStyle = `rgb(${Math.round(base + 32)}, ${Math.round(base - 10)}, ${Math.round(base - 42)})`;
+        dctx.fillRect(x, 0, 1, size);
+      }
+      // dark streaks
+      for (let k = 0; k < 4; k++) {
+        const x0 = Math.random() * size;
+        dctx.strokeStyle = 'rgba(60, 35, 18, 0.42)';
+        dctx.lineWidth = 0.6 + Math.random() * 1.5;
+        dctx.beginPath();
+        dctx.moveTo(x0, 0);
+        for (let y = 0; y <= size; y += 8) dctx.lineTo(x0 + (Math.random() - 0.5) * 6, y);
+        dctx.stroke();
+      }
+      _normalFromHeightFn(nctx, size, (u, v) => 0.5 + Math.sin(u * 70) * 0.35 + (Math.random() - 0.5) * 0.05, 5);
+      break;
+    }
+    case 'mudbrick': {
+      _noisyFill(dctx, size, '#a06a3e', 32);
+      // hairline cracks
+      dctx.strokeStyle = 'rgba(40, 20, 10, 0.45)';
+      dctx.lineWidth = 0.8;
+      for (let i = 0; i < 14; i++) {
+        dctx.beginPath();
+        dctx.moveTo(Math.random() * size, Math.random() * size);
+        for (let s = 0; s < 3; s++) dctx.lineTo(Math.random() * size, Math.random() * size);
+        dctx.stroke();
+      }
+      _normalFromHeightFn(nctx, size, () => Math.random() * 0.5 + 0.5, 4);
+      break;
+    }
+    case 'adobe': {
+      _noisyFill(dctx, size, '#c89060', 22);
+      _normalFromHeightFn(nctx, size, () => Math.random() * 0.3 + 0.5, 2.5);
+      break;
+    }
+    case 'rammed-earth': {
+      // Horizontal bands of varying colors
+      const bandH = size / 8;
+      for (let i = 0; i < 8; i++) {
+        const t = i / 8;
+        const r = 130 + Math.round(Math.sin(t * 12) * 22 + (Math.random() - 0.5) * 10);
+        const g = 95  + Math.round(Math.sin(t * 12 + 0.4) * 16);
+        const b = 65  + Math.round(Math.sin(t * 12 + 0.8) * 12);
+        dctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+        dctx.fillRect(0, i * bandH, size, bandH);
+      }
+      // Stipple over
+      const id = dctx.getImageData(0, 0, size, size);
+      for (let i = 0; i < id.data.length; i += 4) {
+        const n = (Math.random() - 0.5) * 18;
+        id.data[i]     += n;
+        id.data[i + 1] += n * 0.9;
+        id.data[i + 2] += n * 0.8;
+      }
+      dctx.putImageData(id, 0, 0);
+      _normalFromHeightFn(nctx, size, (u, v) => 0.5 + Math.sin(v * 50) * 0.2, 3);
+      break;
+    }
+    case 'brick': {
+      // Brick coursing with mortar
+      const brickH = size / 5, brickW = size / 2.5;
+      dctx.fillStyle = '#7a7066';   // mortar
+      dctx.fillRect(0, 0, size, size);
+      for (let row = 0; row < 5; row++) {
+        const offset = (row % 2) * (brickW / 2);
+        for (let col = -1; col < 4; col++) {
+          const x = col * brickW + offset + 2;
+          const y = row * brickH + 2;
+          const r = 175 + Math.random() * 25;
+          const g = 70 + Math.random() * 20;
+          const b = 55 + Math.random() * 15;
+          dctx.fillStyle = `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
+          dctx.fillRect(x, y, brickW - 4, brickH - 4);
+        }
+      }
+      _normalFromHeightFn(nctx, size, (u, v) => {
+        const row = Math.floor(v * 5);
+        const off = (row % 2) * 0.2;
+        const inCol = ((u + off) * 2.5) % 1;
+        const inRow = (v * 5) % 1;
+        // Brick faces high, mortar low
+        return (inCol > 0.04 && inCol < 0.96 && inRow > 0.04 && inRow < 0.96) ? 0.9 : 0.3;
+      }, 7);
+      break;
+    }
+    case 'concrete': {
+      _noisyFill(dctx, size, '#8a8e95', 18);
+      // sparse pebble specks
+      for (let i = 0; i < 80; i++) {
+        dctx.fillStyle = `rgba(50, 50, 50, ${0.3 + Math.random() * 0.4})`;
+        dctx.beginPath();
+        dctx.arc(Math.random() * size, Math.random() * size, 0.5 + Math.random() * 1.5, 0, Math.PI * 2);
+        dctx.fill();
+      }
+      _normalFromHeightFn(nctx, size, () => Math.random() * 0.15 + 0.5, 1.4);
+      break;
+    }
+    case 'wattle-daub': {
+      // Cross-hatched weave
+      _noisyFill(dctx, size, '#c4a96a', 18);
+      dctx.strokeStyle = 'rgba(90, 65, 35, 0.4)';
+      dctx.lineWidth = 1.2;
+      for (let y = 4; y < size; y += 8) {
+        dctx.beginPath(); dctx.moveTo(0, y); dctx.lineTo(size, y); dctx.stroke();
+      }
+      for (let x = 4; x < size; x += 8) {
+        dctx.beginPath(); dctx.moveTo(x, 0); dctx.lineTo(x, size); dctx.stroke();
+      }
+      _normalFromHeightFn(nctx, size, (u, v) => {
+        const a = Math.sin(v * 32) * 0.4 + 0.5;
+        const b = Math.sin(u * 32) * 0.4 + 0.5;
+        return Math.max(a, b);
+      }, 5);
+      break;
+    }
+    default:
+      _noisyFill(dctx, size, '#888', 30);
+      _normalFromHeightFn(nctx, size, () => Math.random(), 3);
+  }
+}
+
+const ROUGHNESS_BY_MATERIAL = {
+  stone: 0.92, timber: 0.78, mudbrick: 0.95, adobe: 0.88,
+  'rammed-earth': 0.96, brick: 0.88, concrete: 0.86, 'wattle-daub': 0.90,
+};
+
+/** Cached per-material data: { diffuseCanvas, normalCanvas, smallSphereUrl, largeSphereUrl? } */
+const MATERIAL_DATA = {};
+
+function _ensureMaterialData(materialId) {
+  if (MATERIAL_DATA[materialId]) return MATERIAL_DATA[materialId];
+  const size = 256;
+  const diffuse = document.createElement('canvas');
+  diffuse.width = diffuse.height = size;
+  const dctx = diffuse.getContext('2d');
+  const normal = document.createElement('canvas');
+  normal.width = normal.height = size;
+  const nctx = normal.getContext('2d');
+  _paintMaterial(materialId, dctx, nctx, size);
+  MATERIAL_DATA[materialId] = {
+    materialId,
+    diffuseCanvas: diffuse,
+    normalCanvas: normal,
+    smallSphereUrl: null,
+    largeSphereUrl: null,
+  };
+  return MATERIAL_DATA[materialId];
+}
+
+function _materialFromData(data) {
+  const dT = new THREE.CanvasTexture(data.diffuseCanvas);
+  dT.wrapS = dT.wrapT = THREE.RepeatWrapping;
+  dT.colorSpace = THREE.SRGBColorSpace;
+  const nT = new THREE.CanvasTexture(data.normalCanvas);
+  nT.wrapS = nT.wrapT = THREE.RepeatWrapping;
+  return new THREE.MeshStandardMaterial({
+    map: dT, normalMap: nT,
+    normalScale: new THREE.Vector2(0.7, 0.7),
+    roughness: ROUGHNESS_BY_MATERIAL[data.materialId] ?? 0.85,
+    metalness: 0.02,
+  });
+}
+
+function getMaterialPreviewUrl(materialId) {
+  const data = _ensureMaterialData(materialId);
+  if (!data.smallSphereUrl) {
+    data.smallSphereUrl = _renderSphereWithMaterial(_materialFromData(data), PREVIEW_SIZE);
+  }
+  return data.smallSphereUrl;
+}
+
+function getMaterialLargeSphereUrl(materialId) {
+  const data = _ensureMaterialData(materialId);
+  if (!data.largeSphereUrl) {
+    data.largeSphereUrl = _renderSphereWithMaterial(_materialFromData(data), 260);
+  }
+  return data.largeSphereUrl;
+}
+
+function getMaterialCanvases(materialId) {
+  const data = _ensureMaterialData(materialId);
+  return { diffuseCanvas: data.diffuseCanvas, normalCanvas: data.normalCanvas };
+}
+
+/* ── ornament textures: 2D patterns rendered as carved relief on stone ── */
+
+function _drawOrnamentPattern(dctx, nctx, size, ornament) {
+  // Base: stone-tinted
+  _noisyFill(dctx, size, '#9aa0a8', 26);
+  // Pattern overlay (darker = carved deeper)
+  dctx.strokeStyle = 'rgba(40, 35, 30, 0.55)';
+  dctx.lineWidth = 1.2;
+
+  let heightFn;
+  switch (ornament) {
+    case 'pointed-arch':
+    case 'pointed_arch':
+      // Repeating tall pointed arches
+      for (let i = 0; i < 4; i++) {
+        const x = i * (size / 4) + (size / 8);
+        const top = size * 0.25;
+        const w = size / 4 * 0.7;
+        dctx.beginPath();
+        dctx.moveTo(x - w / 2, size * 0.95);
+        dctx.lineTo(x - w / 2, size * 0.55);
+        dctx.lineTo(x, top);
+        dctx.lineTo(x + w / 2, size * 0.55);
+        dctx.lineTo(x + w / 2, size * 0.95);
+        dctx.stroke();
+      }
+      heightFn = (u, v) => {
+        const inX = (u * 4) % 1;
+        const inArch = Math.abs(inX - 0.5) < 0.32 && v > 0.18;
+        return inArch ? 0.9 : 0.3;
+      };
+      break;
+
+    case 'flying-buttress':
+    case 'flying_buttress':
+      // Angled diagonal struts
+      for (let i = 0; i < 6; i++) {
+        dctx.beginPath();
+        dctx.moveTo(i * size / 6, size);
+        dctx.lineTo(i * size / 6 + size * 0.25, 0);
+        dctx.stroke();
+      }
+      heightFn = (u, v) => {
+        const d = (u + v * 0.4) % (1 / 6);
+        return d < 0.04 ? 1.0 : 0.3;
+      };
+      break;
+
+    case 'rose-window':
+    case 'rose_window':
+      // Radial petals
+      dctx.strokeStyle = 'rgba(40, 35, 30, 0.5)';
+      const cx = size / 2, cy = size / 2;
+      dctx.beginPath();
+      dctx.arc(cx, cy, size * 0.4, 0, Math.PI * 2);
+      dctx.stroke();
+      for (let i = 0; i < 8; i++) {
+        const ang = (i / 8) * Math.PI * 2;
+        dctx.beginPath();
+        dctx.moveTo(cx + Math.cos(ang) * 5, cy + Math.sin(ang) * 5);
+        dctx.lineTo(cx + Math.cos(ang) * size * 0.4, cy + Math.sin(ang) * size * 0.4);
+        dctx.stroke();
+      }
+      heightFn = (u, v) => {
+        const dx = u - 0.5, dy = v - 0.5;
+        const r = Math.hypot(dx, dy);
+        const ang = Math.atan2(dy, dx);
+        const spoke = Math.abs((ang * 4) % 1 - 0.5) < 0.1;
+        return (r < 0.42 && (spoke || Math.abs(r - 0.4) < 0.02)) ? 0.95 : 0.4;
+      };
+      break;
+
+    case 'tracery':
+      // Lattice
+      for (let x = 0; x < size; x += size / 8) {
+        for (let y = 0; y < size; y += size / 8) {
+          dctx.strokeRect(x, y, size / 8, size / 8);
+        }
+      }
+      heightFn = (u, v) => {
+        const a = ((u * 8) % 1);
+        const b = ((v * 8) % 1);
+        return (Math.min(a, 1 - a) < 0.06 || Math.min(b, 1 - b) < 0.06) ? 0.95 : 0.45;
+      };
+      break;
+
+    case 'gargoyle':
+    case 'pediment-relief':
+    case 'pediment_relief':
+    case 'frieze':
+      // Generic carved-relief — noisy bumps
+      for (let i = 0; i < 30; i++) {
+        const x = Math.random() * size, y = Math.random() * size;
+        const r = 3 + Math.random() * 8;
+        dctx.fillStyle = `rgba(40, 35, 30, ${0.4 + Math.random() * 0.3})`;
+        dctx.beginPath();
+        dctx.arc(x, y, r, 0, Math.PI * 2);
+        dctx.fill();
+      }
+      heightFn = () => Math.random();
+      break;
+
+    default:
+      // Subtle hatching
+      dctx.strokeStyle = 'rgba(50, 45, 40, 0.4)';
+      for (let i = 0; i < 8; i++) {
+        dctx.beginPath();
+        dctx.moveTo(0, (i + 0.5) * size / 8);
+        dctx.lineTo(size, (i + 0.5) * size / 8);
+        dctx.stroke();
+      }
+      heightFn = (u, v) => Math.sin(v * 24) * 0.5 + 0.5;
+  }
+
+  _normalFromHeightFn(nctx, size, heightFn, 8);
+}
+
+/** Cached per-ornament data: { diffuseCanvas, normalCanvas, smallSphereUrl, largeSphereUrl }. */
+const ORNAMENT_DATA = {};
+
+function _ensureOrnamentData(ornament) {
+  if (ORNAMENT_DATA[ornament]) return ORNAMENT_DATA[ornament];
+  const size = 256;
+  const diffuse = document.createElement('canvas');
+  diffuse.width = diffuse.height = size;
+  const dctx = diffuse.getContext('2d');
+  const normal = document.createElement('canvas');
+  normal.width = normal.height = size;
+  const nctx = normal.getContext('2d');
+  _drawOrnamentPattern(dctx, nctx, size, ornament);
+  ORNAMENT_DATA[ornament] = {
+    ornament,
+    diffuseCanvas: diffuse,
+    normalCanvas: normal,
+    smallSphereUrl: null,
+    largeSphereUrl: null,
+  };
+  return ORNAMENT_DATA[ornament];
+}
+
+function _ornamentMaterial(data) {
+  const dT = new THREE.CanvasTexture(data.diffuseCanvas);
+  dT.wrapS = dT.wrapT = THREE.RepeatWrapping;
+  dT.colorSpace = THREE.SRGBColorSpace;
+  const nT = new THREE.CanvasTexture(data.normalCanvas);
+  nT.wrapS = nT.wrapT = THREE.RepeatWrapping;
+  return new THREE.MeshStandardMaterial({
+    map: dT, normalMap: nT,
+    normalScale: new THREE.Vector2(1.0, 1.0),
+    roughness: 0.9, metalness: 0.02,
+  });
+}
+
+function getOrnamentPreviewUrl(ornament) {
+  const data = _ensureOrnamentData(ornament);
+  if (!data.smallSphereUrl) {
+    data.smallSphereUrl = _renderSphereWithMaterial(_ornamentMaterial(data), PREVIEW_SIZE);
+  }
+  return data.smallSphereUrl;
+}
+
+function getOrnamentLargeSphereUrl(ornament) {
+  const data = _ensureOrnamentData(ornament);
+  if (!data.largeSphereUrl) {
+    data.largeSphereUrl = _renderSphereWithMaterial(_ornamentMaterial(data), 260);
+  }
+  return data.largeSphereUrl;
+}
+
+function getOrnamentCanvases(ornament) {
+  const data = _ensureOrnamentData(ornament);
+  return { diffuseCanvas: data.diffuseCanvas, normalCanvas: data.normalCanvas };
+}
+
 
 /* ─── boot ──────────────────────────────────────────────── */
 
 renderStats();
-renderLeftPane();
-renderCenter();
-renderRight();
+// Only render the legacy three-pane views when not on the Cultures tab.
+if (state.view !== 'cultures') {
+  renderLeftPane();
+  renderCenter();
+  renderRight();
+}
 </script>
 
 </body>
