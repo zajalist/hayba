@@ -479,6 +479,76 @@ export const DETAIL_MASK_FRAG = [
   "}",
 ].join("\n");
 
+// #218 INIT_ACC - per-cell runoff seed. ocean->0; land = precip (pole-
+// damped) floored at uAccMin so every land cell contributes discharge.
+export const INIT_ACC_FRAG = [
+  H,
+  "uniform sampler2D uA;",
+  "uniform sampler2D uPrecip;",
+  "uniform vec2 uGrid;",
+  "uniform float uPoleBand;",
+  "uniform float uAccMin;",
+  "void main(){",
+  "  ivec2 rc = fragRC();",
+  "  vec4 a = loadA(uA, uGrid, rc.x, rc.y);",
+  "  if (a.a > 0.5) { fragColor = vec4(0.0); return; }",
+  "  float wLat = wLatOf(rc.y, uGrid, uPoleBand);",
+  "  float p = loadF(uPrecip, uGrid, rc.x, rc.y).r;",
+  "  float seed = max(uAccMin, p) * wLat;",
+  "  fragColor = vec4(fin(seed), 0.0, 0.0, 0.0);",
+  "}",
+].join("\n");
+
+// #218 ACCUM - one MFD gather iteration (ping-pong on ACC). For this land
+// cell c: acc = seed(c) + sum over the 8 neighbours n HIGHER than c of
+// Acc(n)*share(n->c), share = n's slope-weighted MFD split toward its
+// lower neighbours (donor-normalised). Ocean = infinitely-low sink.
+// Longitude wraps / poles clamp via loadA. finite-guarded; ocean->0.
+export const ACCUM_FRAG = [
+  H,
+  "const ivec2 NB[8] = ivec2[8](ivec2(-1,0),ivec2(1,0),ivec2(0,-1),ivec2(0,1),ivec2(-1,-1),ivec2(1,-1),ivec2(-1,1),ivec2(1,1));",
+  "const float ND[8] = float[8](1.0,1.0,1.0,1.0,1.41421356,1.41421356,1.41421356,1.41421356);",
+  "uniform sampler2D uA;",
+  "uniform sampler2D uAcc;",
+  "uniform sampler2D uPrecip;",
+  "uniform vec2 uGrid;",
+  "uniform float uMfdExponent;",
+  "uniform float uPoleBand;",
+  "uniform float uAccMin;",
+  "float hgt(vec2 g, int x, int y){ vec4 q = loadA(uA, g, x, y); return q.a > 0.5 ? -1.0e30 : q.r; }",
+  "void main(){",
+  "  ivec2 rc = fragRC();",
+  "  vec4 a = loadA(uA, uGrid, rc.x, rc.y);",
+  "  if (a.a > 0.5) { fragColor = vec4(0.0); return; }",
+  "  float bc = a.r;",
+  "  float wLat = wLatOf(rc.y, uGrid, uPoleBand);",
+  "  float acc = max(uAccMin, loadF(uPrecip, uGrid, rc.x, rc.y).r) * wLat;",
+  "  for (int i = 0; i < 8; i++){",
+  "    int nx = rc.x + NB[i].x;",
+  "    int ny = rc.y + NB[i].y;",
+  "    float bn = hgt(uGrid, nx, ny);",
+  "    if (bn <= bc || bn < -1.0e29) continue;",
+  "    float den = 0.0;",
+  "    float wToC = 0.0;",
+  "    for (int j = 0; j < 8; j++){",
+  "      int mx = nx + NB[j].x;",
+  "      int my = ny + NB[j].y;",
+  "      float bm = hgt(uGrid, mx, my);",
+  "      float drop = bn - bm;",
+  "      if (drop <= 0.0) continue;",
+  "      float wgt = pow(drop / ND[j], uMfdExponent);",
+  "      den += wgt;",
+  "      if (mx == rc.x && my == rc.y) wToC = wgt;",
+  "    }",
+  "    if (den > 1.0e-12 && wToC > 0.0){",
+  "      float accN = loadF(uAcc, uGrid, nx, ny).r;",
+  "      acc += accN * (wToC / den);",
+  "    }",
+  "  }",
+  "  fragColor = vec4(fin(acc), 0.0, 0.0, 0.0);",
+  "}",
+].join("\n");
+
 // S2.3 FLOW-MASK RIVER INCISION — the actual VALLEY/RIDGE maker. Runs
 // after WATER (flux up to date), before ERODE. Thresholds the local
 // virtual-pipe flux magnitude into a soft river mask and carves channel

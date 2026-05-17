@@ -5,6 +5,8 @@ import {
   THERMAL_FRAG,
   DETAIL_MASK_FRAG,
   CARVE_RIVERS_FRAG,
+  INIT_ACC_FRAG,
+  ACCUM_FRAG,
 } from "./hydraulic.glsl";
 
 describe("S1 scale config", () => {
@@ -125,5 +127,28 @@ describe("S2.3→ flow-accumulation drainage + stream-power (#218)", () => {
     expect(DEFAULT_HYDRAULIC.spN).toBeGreaterThan(0);
     expect("riverThreshold0" in DEFAULT_HYDRAULIC).toBe(false);
     expect("riverThreshold1" in DEFAULT_HYDRAULIC).toBe(false);
+  });
+});
+
+describe("#218 accumulation passes", () => {
+  it("INIT_ACC_FRAG seeds precip runoff, ocean->0", () => {
+    expect(typeof INIT_ACC_FRAG).toBe("string");
+    expect(INIT_ACC_FRAG).toMatch(/uniform sampler2D uA;/);
+    expect(INIT_ACC_FRAG).toMatch(/uniform sampler2D uPrecip;/);
+    expect(INIT_ACC_FRAG).toMatch(/uniform float uAccMin;/);
+    expect(INIT_ACC_FRAG).toMatch(/a\.a > 0\.5/);
+  });
+  it("ACCUM_FRAG is an 8-neighbour slope-weighted MFD gather", () => {
+    expect(typeof ACCUM_FRAG).toBe("string");
+    expect(ACCUM_FRAG).toMatch(/uniform sampler2D uA;/);
+    expect(ACCUM_FRAG).toMatch(/uniform sampler2D uAcc;/);
+    expect(ACCUM_FRAG).toMatch(/uniform sampler2D uPrecip;/);
+    expect(ACCUM_FRAG).toMatch(/uniform float uMfdExponent;/);
+    expect(ACCUM_FRAG).toMatch(/uniform float uPoleBand;/);
+    expect(ACCUM_FRAG).toMatch(/uniform float uAccMin;/);
+    expect(ACCUM_FRAG).toMatch(/a\.a > 0\.5/);
+    expect(ACCUM_FRAG).toMatch(/pow\(/);
+    expect(ACCUM_FRAG).toMatch(/ivec2\[8\]/);
+    expect((ACCUM_FRAG.match(/ivec2\(/g) ?? []).length).toBeGreaterThanOrEqual(8);
   });
 });
