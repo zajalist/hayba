@@ -103,13 +103,26 @@ describe("S2.3 flow-mask river incision (the valley/ridge maker)", () => {
     // carve only ever subtracts (never raises b)
     expect(CARVE_RIVERS_FRAG).toMatch(/a\.r - /);
   });
-  it("DEFAULT_HYDRAULIC carries the S2.3 river knobs", () => {
+  it("CARVE_RIVERS_FRAG has the concavity gate + base-level clamp (anti-moat)", () => {
+    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uConcaveScale;/);
+    // discrete Laplacian (mean of 4 nbrs - self) → concave factor
+    expect(CARVE_RIVERS_FRAG).toMatch(/\* 0\.25 - a\.r/);
+    expect(CARVE_RIVERS_FRAG).toMatch(
+      /smoothstep\(0\.0, uConcaveScale, lap\)/,
+    );
+    expect(CARVE_RIVERS_FRAG).toMatch(/river \* concave/);
+    // base-level clamp: don't incise below the lowest land neighbour
+    expect(CARVE_RIVERS_FRAG).toMatch(/max\(nb, minNb/);
+  });
+  it("DEFAULT_HYDRAULIC carries the S2.3 river + concavity knobs", () => {
     expect(typeof DEFAULT_HYDRAULIC.riverThreshold0).toBe("number");
     expect(typeof DEFAULT_HYDRAULIC.riverThreshold1).toBe("number");
     expect(typeof DEFAULT_HYDRAULIC.riverDepth).toBe("number");
+    expect(typeof DEFAULT_HYDRAULIC.concaveScale).toBe("number");
     expect(DEFAULT_HYDRAULIC.riverThreshold0).toBeLessThan(
       DEFAULT_HYDRAULIC.riverThreshold1,
     );
     expect(DEFAULT_HYDRAULIC.riverDepth).toBeGreaterThan(0);
+    expect(DEFAULT_HYDRAULIC.concaveScale).toBeGreaterThan(0);
   });
 });
