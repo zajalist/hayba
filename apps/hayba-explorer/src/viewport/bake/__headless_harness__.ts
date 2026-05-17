@@ -1091,11 +1091,55 @@ function _demLikeField(
   return { base, precip };
 }
 
+// #226 oracle fixtures. Continuous in (x,y) like _demLikeField so the
+// field is resolution-stable. Ramp: uniform tilt -> parallel drainage.
+// Basin: high rim, low centre, ocean ring -> centripetal/endorheic.
+function _rampField(w: number, h: number): { base: Float32Array; precip: Float32Array } {
+  const base = new Float32Array(w * h);
+  const precip = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const u = x / w;
+      base[i] =
+        u < 0.12 || u > 0.88
+          ? -0.4
+          : 0.06 +
+            0.9 * (0.88 - u) +
+            0.02 * Math.sin(y * 0.7) +
+            0.02 * Math.sin(x * 0.31);
+      precip[i] = 0.6;
+    }
+  }
+  return { base, precip };
+}
+function _basinField(w: number, h: number): { base: Float32Array; precip: Float32Array } {
+  const base = new Float32Array(w * h);
+  const precip = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const nx = (x / w - 0.5) * 2;
+      const ny = (y / h - 0.5) * 2;
+      const r = Math.hypot(nx, ny);
+      base[i] =
+        r > 0.92
+          ? -0.5
+          : 0.05 +
+            0.85 * r * r +
+            0.015 * Math.sin(x * 0.4) +
+            0.015 * Math.cos(y * 0.45);
+      precip[i] = 0.6;
+    }
+  }
+  return { base, precip };
+}
+
 /** Real-GPU bake on the self-contained DEM-like field at arbitrary
  *  resolution (default 1024×512 — production scale, where dendritic
  *  drainage can actually resolve). The honest CP0 dendritic-quality gate. */
 export async function runSyntheticDemRelief(
-  res?: { w: number; h: number },
+  res?: { w: number; h: number; fixture?: "dome" | "ramp" | "basin" },
   overrideCfg?: Record<string, number>,
   injectedRenderer?: THREE.WebGLRenderer,
 ): Promise<ErosionReliefResult> {
@@ -1111,7 +1155,13 @@ export async function runSyntheticDemRelief(
     const gp = await import("./glPass");
     const w = res?.w ?? 1024;
     const h = res?.h ?? 512;
-    const { base, precip } = _demLikeField(w, h);
+    const fixture = res?.fixture ?? "dome";
+    const { base, precip } =
+      fixture === "ramp"
+        ? _rampField(w, h)
+        : fixture === "basin"
+          ? _basinField(w, h)
+          : _demLikeField(w, h);
     const r = await _bakeAndRenderRelief(
       hyd,
       eq,
