@@ -27,7 +27,7 @@ export const haybaCompareClipScoreHandler: ToolHandler = async (args) => {
     ]);
     const score = cosineSimilarity(a.embedding, b.embedding);
     return { content: [{ type: 'text', text: JSON.stringify({ cosine_similarity: score, dim: a.dim }, null, 2) }] };
-  } catch (e) {
-    return { content: [{ type: 'text', text: `hayba_compare_clip_score error: ${(e as Error).message}` }], isError: true };
+  } catch (e: unknown) {
+    return { content: [{ type: 'text', text: `hayba_compare_clip_score error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
   }
 };

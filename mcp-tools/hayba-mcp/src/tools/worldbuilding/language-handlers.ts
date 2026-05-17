@@ -169,8 +169,8 @@ export function languageApplySoundChanges(params: z.infer<typeof soundChangesSch
   let rules: SoundChangeRule[];
   try {
     rules = parseRules(params.rules_text);
-  } catch (e) {
-    return { ok: false as const, message: (e as Error).message };
+  } catch (e: unknown) {
+    return { ok: false as const, message: e instanceof Error ? e.message : String(e) };
   }
   const entries = lexicon.all(params.language_id).map(({ concept, entry }) => ({
     concept, lemma: entry.lemma,

@@ -29,7 +29,7 @@ export const actorListHandler: ToolHandler = async (args) => {
       return { content: [{ type: 'text', text: `actor_list failed: ${resp.error ?? 'unknown error'}` }], isError: true };
     }
     return { content: [{ type: 'text', text: JSON.stringify(resp.data, null, 2) }] };
-  } catch (e) {
-    return { content: [{ type: 'text', text: `actor_list error: ${(e as Error).message}` }], isError: true };
+  } catch (e: unknown) {
+    return { content: [{ type: 'text', text: `actor_list error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
   }
 };
