@@ -458,3 +458,41 @@ export const DETAIL_MASK_FRAG = [
   "  fragColor = vec4(m, 0.0, 0.0, 1.0);",
   "}",
 ].join("\n");
+
+// S2.3 FLOW-MASK RIVER INCISION — the actual VALLEY/RIDGE maker. Runs
+// after WATER (flux up to date), before ERODE. Thresholds the local
+// virtual-pipe flux magnitude into a soft river mask and carves channel
+// depth where water concentrates; the un-incised land BETWEEN channels
+// is left standing = dendritic valleys with ridge interfluves (this,
+// not thermal, is what produces ridgelines). detailMask-gated (mountain
+// channels, spare flats) + dt/wLat-integrated. Only ever LOWERS b
+// (carve >= 0) so it cannot blow up. Ocean (a.a > 0.5) skips
+// byte-identically. Reads uA, uF, uDetailMask; writes A (b lowered).
+export const CARVE_RIVERS_FRAG = [
+  H,
+  "uniform sampler2D uA;",
+  "uniform sampler2D uF;",
+  "uniform sampler2D uDetailMask;",
+  "uniform vec2 uGrid;",
+  "uniform float uDt;",
+  "uniform float uRiverThreshold0;",
+  "uniform float uRiverThreshold1;",
+  "uniform float uRiverDepth;",
+  "uniform float uDowncutting;",
+  "uniform float uPoleBand;",
+  "void main(){",
+  "  ivec2 rc = fragRC();",
+  "  vec4 a = loadA(uA, uGrid, rc.x, rc.y);",
+  "  bool ocean = a.a > 0.5;",
+  "  if (ocean) { fragColor = a; return; }",
+  "  vec4 f = loadF(uF, uGrid, rc.x, rc.y);",
+  "  float flowMag = length(f);",
+  "  float river = smoothstep(uRiverThreshold0, uRiverThreshold1, flowMag);",
+  "  float dm = loadA(uDetailMask, uGrid, rc.x, rc.y).r;",
+  "  float wLat = wLatOf(rc.y, uGrid, uPoleBand);",
+  "  float carve = uRiverDepth * river * uDowncutting * dm * uDt * wLat;",
+  "  carve = max(0.0, fin(carve));",
+  "  float nb = fin(a.r - carve);",
+  "  fragColor = vec4(nb, a.g, a.b, a.a);",
+  "}",
+].join("\n");
