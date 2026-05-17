@@ -322,6 +322,19 @@ export async function runHydraulicBake(
 
   const uGrid = new THREE.Vector2(w, h);
 
+  // Resolution invariance (measured, not assumed). S1 made `slope`
+  // W-invariant, but virtual-pipe flux ∝ per-texel Δ(b+d) so every
+  // flux-derived erosion term (ERODE capacity via vmag; CARVE_RIVERS river
+  // mask via flowMag) weakens with W. An apples-to-apples study (same
+  // continuous field at 256/512/1024, oracle) measured interior |Δ| =
+  // 0.0408 / 0.0247 / 0.0118 ⇒ erosion ∝ W^-0.89. resScale = (W/REF)^0.89
+  // exactly cancels that so the SAME physical erosion happens at any W
+  // (the flux-side counterpart of S1's metre-slope fix). REF = the
+  // debug/oracle resolution the strength knobs are calibrated at; at
+  // W=REF resScale=1 (unchanged).
+  const EROSION_REF_W = 256;
+  const resScale = Math.pow(w / EROSION_REF_W, 0.89);
+
   // ---- SEED: A := (base.r, 0, 0, base.r<0?1:0) ; F := 0 ----------------
   // Seed writes into the READ slot of each channel (A[0]/F[0]) so the
   // first step's RAIN/FLUX read the seeded state.
@@ -423,13 +436,15 @@ export async function runHydraulicBake(
         uDowncutting: u(cfg.downcutting),
         uConcaveScale: u(cfg.concaveScale),
         uPoleBand: u(cfg.poleBand),
+        uResScale: u(resScale),
       },
       aWriteRT(),
     );
     swapA();
 
     // ERODE: declares uA,uF,uGrid,uDt,uCellL,uKd,uSinMin,uStrength,
-    // uDowncutting,uVerticality,uTerrainScale,uPoleBand. reads A,F ->
+    // uDowncutting,uVerticality,uTerrainScale,uPoleBand,uResScale,
+    // uDetailMask. reads A,F ->
     // writes A. S1: metre-denominated incision (true slope =
     // Δh*uVerticality / (uTerrainScale/uGrid.x)) replaces the old
     // per-step uMaxDeltaB clamp + uUplift; capacity is uStrength-driven
@@ -450,6 +465,7 @@ export async function runHydraulicBake(
         uVerticality: u(cfg.scale.verticality),
         uTerrainScale: u(cfg.scale.terrainScale),
         uPoleBand: u(cfg.poleBand),
+        uResScale: u(resScale),
         uDetailMask: u(M[0]),
       },
       aWriteRT(),

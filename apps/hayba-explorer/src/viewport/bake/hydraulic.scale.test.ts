@@ -19,6 +19,18 @@ describe("S1 scale config", () => {
     expect(DEFAULT_HYDRAULIC.strength).toBeLessThan(0.2); // "not way too strong"
   });
 
+  it("flux-derived terms are resolution-invariant via uResScale (#217)", () => {
+    // Measured (same-input oracle, 256/512/1024): erosion ∝ W^-0.89
+    // because virtual-pipe flux ∝ ~1/W. Both flux-derived drivers must be
+    // normalised by uResScale = (W/REF)^0.89 so erosion is W-invariant.
+    expect(ERODE_FRAG).toMatch(/uniform float uResScale;/);
+    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uResScale;/);
+    // ERODE capacity uses the rescaled velocity, not raw vmag.
+    expect(ERODE_FRAG).toMatch(/vmag \* uResScale/);
+    // CARVE_RIVERS rescales flux BEFORE the river smoothstep.
+    expect(CARVE_RIVERS_FRAG).toMatch(/length\(f\) \* uResScale/);
+  });
+
   it("ERODE_FRAG is metre-denominated, no clamp/uplift uniforms", () => {
     expect(ERODE_FRAG).not.toMatch(/uMaxDeltaB/);
     expect(ERODE_FRAG).not.toMatch(/uUplift/);
