@@ -48,3 +48,16 @@ tools/peels-audit/world-*.bin
 tools/peels-audit/world-*.bin.json
 apps/hayba/dist/
 apps/hayba/node_modules/
+
+# --- build outputs ---
+**/target/
+
+# --- local dev / agent scratch (never commit) ---
+**/cdp-*.mjs
+**/cdp_drive.*
+**/.cdp-*.log
+**/.cdp_console.log
+**/vite-*.log
+*.output
+/_*.png
+/_*.mp4
