@@ -65,6 +65,11 @@ apps/hayba/node_modules/
 # Local development artifacts
 KEYGAP.docx
 
+# Supabase CLI local state (linked-project metadata, never commit)
+supabase/.temp/
+supabase/.branches/
+.vercel/
+
 # Private design / process notes — kept on disk for the maintainer,
 # not redistributed (same policy as the parked feature surface above).
 docs/superpowers/
