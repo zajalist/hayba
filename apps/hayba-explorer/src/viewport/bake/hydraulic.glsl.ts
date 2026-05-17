@@ -14,7 +14,8 @@
 //   - ONE uniform per line, NO "//" comment on any uniform-decl line
 //   - GLSL ES 3.00 only (texture(), no texture2D, no three built-ins)
 //   - ZERO backticks anywhere (strings are array-joined with "\n")
-//   - vec2 uniforms (uGrid, uTexel) <- THREE.Vector2 (glPass uniform2f);
+//   - vec2 uniforms (uGrid) <- THREE.Vector2 (glPass uniform2f); uTexel is
+//     intentionally unused (all sampling is integer texelFetch);
 //     all sampler2D <- a THREE.Texture / RT; all float <- number
 //
 // STATE TEXTURE LAYOUT (fixed):
@@ -160,17 +161,21 @@ export const WATER_FRAG = [
   "}",
 ].join("\n");
 
-// PASS 4 - ERODE / DEPOSIT.  Spec eq.3 (velocity) + eq.4:
-//   vx = ( f_R(left) - fL + fR - f_L(right) ) / 2
-//   vy = ( f_T(below) - fB + fT - f_B(above) ) / 2
-//   v  = (vx, vy) / max(eps, l * 0.5*(d_old + d))     [d already post-water]
-//   sinA = max(sinMin, |grad b| / sqrt(1 + |grad b|^2))   (grad b wrapped central diff)
-//   C    = Kc * sinA * |v|
-//   if C > s: m = min(maxDeltaB, Ks*(C-s)); b -= m; s += m
-//   else      m = min(maxDeltaB, Kd*(s-C)); b += m; s -= m
-//   then if NOT ocean: b += upliftRate*dt*wLat
-//   ocean cells (a.a > 0.5): skip erosion (b unchanged, s = 0)
-// Reads uA, uF; writes A (b,s updated).
+// PASS 4 - ERODE / DEPOSIT.  S1 metre-denominated model (spec §4 + §5.1).
+// Velocity is Mei2007 as before. The pixel-space `grad b` slope and the
+// per-step uMaxDeltaB clamp + uUplift are REMOVED. Strength is physical:
+//   dx     = uTerrainScale / uGrid.x        (metres per texel; resX=gridW)
+//   dz_m   = |grad h| * uVerticality        (metre rise over one texel)
+//   slope  = dz_m / dx                      (TRUE dimensionless slope)
+//   slope  = max(uSinMin, slope)            (flats still slowly carve)
+//   C      = uStrength * |v| * slope        (single-class capacity, §5.1
+//                                            with velocity as the S1 flow
+//                                            proxy; flowAccum is S2.3)
+//   if C > s: m = uDowncutting*(C-s)*dt*wLat ; b -= m ; s += m   (incise)
+//   else      m = uKd*(s-C)*dt*wLat        ; b += m ; s -= m   (deposit)
+// Integrated by dt over `steps`, pole-damped by wLat - no clamp. Ocean
+// cells (a.a > 0.5): early-return unchanged b, s=0 (load-bearing ocean
+// invariant). Reads uA, uF; writes A (b,s updated).
 export const ERODE_FRAG = [
   H,
   "uniform sampler2D uA;",
@@ -178,12 +183,12 @@ export const ERODE_FRAG = [
   "uniform vec2 uGrid;",
   "uniform float uDt;",
   "uniform float uCellL;",
-  "uniform float uKc;",
-  "uniform float uKs;",
   "uniform float uKd;",
   "uniform float uSinMin;",
-  "uniform float uUplift;",
-  "uniform float uMaxDeltaB;",
+  "uniform float uStrength;",
+  "uniform float uDowncutting;",
+  "uniform float uVerticality;",
+  "uniform float uTerrainScale;",
   "uniform float uPoleBand;",
   "void main(){",
   "  ivec2 rc = fragRC();",
@@ -207,29 +212,31 @@ export const ERODE_FRAG = [
   "  float dMean = max(1.0e-6, uCellL * a.g);",
   "  vec2 vel = vec2(vx, vy) / dMean;",
   "  float vmag = length(vel);",
-  // grad b via wrapped/clamped central difference, then clamp magnitude
+  // normalised-height gradient (wrapped/clamped central diff), then the
+  // TRUE metre slope: dz_m / dx with dx = terrainScale / resX (resX=gridW).
   "  float dbx = (aR.r - aL.r) * 0.5;",
   "  float dby = (aT.r - aB.r) * 0.5;",
-  "  float gb = clamp(length(vec2(dbx, dby)), 0.0, 1.0e4);",
-  "  float sinA = max(uSinMin, gb / sqrt(1.0 + gb * gb));",
-  "  float C = uKc * sinA * vmag;",
+  "  float gh = clamp(length(vec2(dbx, dby)), 0.0, 1.0e4);",
+  "  float dx = uTerrainScale / max(1.0, uGrid.x);",
+  "  float dzM = gh * uVerticality;",
+  "  float slope = max(uSinMin, dzM / max(1.0e-6, dx));",
+  "  float C = uStrength * vmag * slope;",
   "  float b = a.r;",
   "  float s = a.b;",
   "  if (ocean) {",
   "    fragColor = vec4(a.r, a.g, 0.0, a.a);",
   "    return;",
   "  }",
+  "  float wLat = wLatOf(rc.y, uGrid, uPoleBand);",
   "  if (C > s) {",
-  "    float m = min(uMaxDeltaB, uKs * (C - s));",
+  "    float m = uDowncutting * (C - s) * uDt * wLat;",
   "    m = max(0.0, fin(m));",
   "    b -= m; s += m;",
   "  } else {",
-  "    float m = min(uMaxDeltaB, uKd * (s - C));",
+  "    float m = uKd * (s - C) * uDt * wLat;",
   "    m = max(0.0, fin(m));",
   "    b += m; s -= m;",
   "  }",
-  "  float wLat = wLatOf(rc.y, uGrid, uPoleBand);",
-  "  b += uUplift * uDt * wLat;",
   "  s = max(0.0, fin(s));",
   "  b = fin(b);",
   "  fragColor = vec4(b, a.g, s, a.a);",
@@ -258,6 +265,9 @@ export const ADVECT_FRAG = [
   "  vec4 fTn = loadF(uF, uGrid, rc.x,     rc.y + 1);",
   "  float vx = (fLn.g - f.r + f.g - fRn.r) * 0.5;",
   "  float vy = (fBn.a - f.b + f.a - fTn.b) * 0.5;",
+  // velocity divisor uses l·d' (post-water depth), not l·0.5·(d+d') — same
+  // minimal-state deviation as ERODE_FRAG; see ERODE_FRAG comment + spec
+  // §"The simulation step" eq.3 impl footnote.
   "  float dMean = max(1.0e-6, uCellL * a.g);",
   "  vec2 vel = vec2(vx, vy) / dMean;",
   // back-trace source position in texel space, then 4-tap bilinear

@@ -312,11 +312,12 @@ export async function runHydraulicBake(
     );
     swapA();
 
-    // ERODE: declares uA,uF,uGrid,uDt,uCellL,uKc,uKs,uKd,uSinMin,
-    // uStrength,uDowncutting,uVerticality,uTerrainScale,uPoleBand.
-    // reads A,F -> writes A. S1: metre-denominated incision (true slope
-    // = Δh*uVerticality / (uTerrainScale/uGrid.x)) replaces the old
-    // per-step uMaxDeltaB clamp + uUplift.
+    // ERODE: declares uA,uF,uGrid,uDt,uCellL,uKd,uSinMin,uStrength,
+    // uDowncutting,uVerticality,uTerrainScale,uPoleBand. reads A,F ->
+    // writes A. S1: metre-denominated incision (true slope =
+    // Δh*uVerticality / (uTerrainScale/uGrid.x)) replaces the old
+    // per-step uMaxDeltaB clamp + uUplift; capacity is uStrength-driven
+    // and incision uDowncutting-driven (uKc/uKs no longer used here).
     runRawPass(
       renderer,
       ERODE_FRAG,
@@ -326,8 +327,6 @@ export async function runHydraulicBake(
         uGrid: u(uGrid),
         uDt: u(cfg.dt),
         uCellL: u(cfg.cellL),
-        uKc: u(cfg.kc),
-        uKs: u(cfg.ks),
         uKd: u(cfg.kd),
         uSinMin: u(cfg.sinMin),
         uStrength: u(cfg.strength),
