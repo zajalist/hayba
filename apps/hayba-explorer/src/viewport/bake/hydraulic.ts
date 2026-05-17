@@ -108,6 +108,12 @@ export interface HydraulicConfig {
   riverThreshold0: number;
   riverThreshold1: number;
   riverDepth: number;
+  /** S2.3 concavity gate: river carve is multiplied by
+   *  `smoothstep(0, concaveScale, laplacian(b))` so incision only bites
+   *  CONCAVE valley floors, not CONVEX plateau/range shoulders (kills the
+   *  escarpment "moat" around Tibet/Andes). Laplacian is in normalised
+   *  height units; smaller ⇒ valleys reach full carve sooner. */
+  concaveScale: number;
   /** Run THERMAL when step % thermalEvery === 0 (<=0 disables it). */
   thermalEvery: number;
   /** Polar-cap damp fraction (rain/erosion -> 0 within this band). */
@@ -184,6 +190,10 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   riverThreshold0: 0.0,
   riverThreshold1: 0.005,
   riverDepth: 0.6,
+  // Concave valleys reach full carve by lap≈0.003; every convex shoulder
+  // (lap≤0) gets exactly 0 → the Tibet/Andes rim moat is removed while
+  // the concave dendritic valleys (Afghanistan) keep their strong carve.
+  concaveScale: 0.003,
   thermalEvery: 20,
   poleBand: 0.04,
   scale: {
@@ -411,6 +421,7 @@ export async function runHydraulicBake(
         uRiverThreshold1: u(cfg.riverThreshold1),
         uRiverDepth: u(cfg.riverDepth),
         uDowncutting: u(cfg.downcutting),
+        uConcaveScale: u(cfg.concaveScale),
         uPoleBand: u(cfg.poleBand),
       },
       aWriteRT(),
