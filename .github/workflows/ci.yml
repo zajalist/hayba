@@ -54,11 +54,3 @@ jobs:
       - name: Lint
         working-directory: packages/hayba/addons/visual-embeddings
         run: ruff check . || true   # don't fail CI until we adopt a style baseline
-
-  spec:
-    name: Spec doc — link sanity
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Ensure design spec exists
-        run: test -f docs/superpowers/specs/2026-05-06-hayba-ue-expansion-design.md
