@@ -31,6 +31,15 @@ describe("S1 scale config", () => {
     expect(CARVE_RIVERS_FRAG).toMatch(/length\(f\) \* uResScale/);
   });
 
+  it("ERODE_FRAG base-level clamp keeps incision stable under uResScale (#217)", () => {
+    // Unbounded ERODE capacity + a large uResScale boost (high W) could
+    // over-incise an isolated high-flux cell far below base level
+    // (minB ≪ -1). A base-level clamp vs the lowest land neighbour (as in
+    // CARVE_RIVERS) bounds it without flattening dendritic valleys.
+    expect(ERODE_FRAG).toMatch(/max\(b, minNb - 1\.0e-3\)/);
+    expect(ERODE_FRAG).toMatch(/if \(!\(aL\.a > 0\.5\)\) minNb = min/);
+  });
+
   it("ERODE_FRAG is metre-denominated, no clamp/uplift uniforms", () => {
     expect(ERODE_FRAG).not.toMatch(/uMaxDeltaB/);
     expect(ERODE_FRAG).not.toMatch(/uUplift/);

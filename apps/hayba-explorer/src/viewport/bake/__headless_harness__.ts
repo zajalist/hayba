@@ -957,20 +957,37 @@ async function _bakeAndRenderRelief(
       interiorMeanAbsDelta: +intMean.toFixed(6),
       moatRatio: +(rimMean / Math.max(1e-7, intMean)).toFixed(3),
     },
-    images: {
-      before: fieldToReliefDataURL(baseArr, w, h, { exaggeration: 6 }),
-      after: fieldToReliefDataURL(eroded, w, h, { exaggeration: 6 }),
-      delta: fieldToReliefDataURL(eroded, w, h, { mode: "delta", ref: baseArr }),
-      afterZoom: cropReliefDataURL(eroded, w, h, cx, cy, cw, ch, {
-        exaggeration: 7,
-        scale: 8,
-      }),
-      deltaZoom: cropReliefDataURL(eroded, w, h, cx, cy, cw, ch, {
-        mode: "delta",
-        ref: baseArr,
-        scale: 8,
-      }),
-    },
+    // Adaptive upscale so PNG payloads stay bounded at any bake W (a 2048
+    // bake at fixed scale=4 would be an ~8k×4k multi-MB image): aim for
+    // ~1500 px full / ~2200 px zoom regardless of resolution.
+    images: (() => {
+      const fullScale = Math.max(1, Math.round(1500 / w));
+      const zoomScale = Math.max(2, Math.round(2200 / Math.max(1, cw)));
+      return {
+        before: fieldToReliefDataURL(baseArr, w, h, {
+          exaggeration: 6,
+          scale: fullScale,
+        }),
+        after: fieldToReliefDataURL(eroded, w, h, {
+          exaggeration: 6,
+          scale: fullScale,
+        }),
+        delta: fieldToReliefDataURL(eroded, w, h, {
+          mode: "delta",
+          ref: baseArr,
+          scale: fullScale,
+        }),
+        afterZoom: cropReliefDataURL(eroded, w, h, cx, cy, cw, ch, {
+          exaggeration: 7,
+          scale: zoomScale,
+        }),
+        deltaZoom: cropReliefDataURL(eroded, w, h, cx, cy, cw, ch, {
+          mode: "delta",
+          ref: baseArr,
+          scale: zoomScale,
+        }),
+      };
+    })(),
   };
 }
 

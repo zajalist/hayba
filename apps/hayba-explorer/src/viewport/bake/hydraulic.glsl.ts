@@ -250,6 +250,20 @@ export const ERODE_FRAG = [
   "  }",
   "  s = max(0.0, fin(s));",
   "  b = fin(b);",
+  // STABILITY (base-level clamp, mirrors CARVE_RIVERS): incision may not
+  // gouge below the lowest LAND neighbour (a hair lower for the channel
+  // floor). ERODE capacity is unbounded, so without this the uResScale
+  // boost at very high W lets an isolated high-flux cell over-incise far
+  // below base level (minB ≪ -1 spike). In a real valley the downstream
+  // neighbour is also carving, so the whole profile still lowers —
+  // dendritic incision preserved, runaway pit removed. (ocean already
+  // early-returned above, so these neighbour reads are land-or-ocean.)
+  "  float minNb = a.r;",
+  "  if (!(aL.a > 0.5)) minNb = min(minNb, aL.r);",
+  "  if (!(aR.a > 0.5)) minNb = min(minNb, aR.r);",
+  "  if (!(aB.a > 0.5)) minNb = min(minNb, aB.r);",
+  "  if (!(aT.a > 0.5)) minNb = min(minNb, aT.r);",
+  "  b = fin(max(b, minNb - 1.0e-3));",
   "  fragColor = vec4(b, a.g, s, a.a);",
   "}",
 ].join("\n");
