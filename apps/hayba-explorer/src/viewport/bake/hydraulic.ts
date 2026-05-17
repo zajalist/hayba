@@ -83,10 +83,14 @@ export interface HydraulicConfig {
   strength: number;
   /** Vertical incision rate against the true metre slope. */
   downcutting: number;
-  /** Thermal (talus) transport rate Kt. */
-  kt: number;
-  /** Talus slope threshold tan(angle). */
-  tanTalus: number;
+  /** S2.2 anisotropic thermal/talus transport rate (was Kt). */
+  thermalStrength: number;
+  /** Talus angle of repose, DEGREES (tan() taken in TS at the call site). */
+  talusAngle: number;
+  /** Talus direction-bias 0..1 (0 = isotropic, 1 = max striation/ridging). */
+  anisotropy: number;
+  /** Fraction of slid material lost to suspension, 0..1. */
+  sedimentRemoval: number;
   /** Run THERMAL when step % thermalEvery === 0 (<=0 disables it). */
   thermalEvery: number;
   /** Polar-cap damp fraction (rain/erosion -> 0 within this band). */
@@ -124,8 +128,10 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   sinMin: 0.02,
   strength: 0.04,
   downcutting: 0.25,
-  kt: 0.3,
-  tanTalus: 0.6,
+  thermalStrength: 0.3,
+  talusAngle: 32,
+  anisotropy: 0.5,
+  sedimentRemoval: 0.0,
   thermalEvery: 8,
   poleBand: 0.04,
   scale: {
@@ -368,8 +374,11 @@ export async function runHydraulicBake(
     );
     swapA();
 
-    // THERMAL (optional): declares uA,uGrid,uCellL,uKt,uTanTalus.
-    // reads A -> writes A. Runs only on the scheduled cadence.
+    // THERMAL (optional): S2.2 anisotropic metre-scale talus. declares
+    // uA,uGrid,uStrengthThermal,uTanTalus,uAnisotropy,uSedimentRemoval,
+    // uVerticality,uTerrainScale,uPoleBand. reads A -> writes A. Runs
+    // only on the scheduled cadence. uTanTalus = tan(talusAngle°) so the
+    // GLSL compares it against the true metre slope (S1-consistent).
     if (doThermal) {
       runRawPass(
         renderer,
@@ -377,9 +386,13 @@ export async function runHydraulicBake(
         {
           uA: u(aReadRT()),
           uGrid: u(uGrid),
-          uCellL: u(cfg.cellL),
-          uKt: u(cfg.kt),
-          uTanTalus: u(cfg.tanTalus),
+          uStrengthThermal: u(cfg.thermalStrength),
+          uTanTalus: u(Math.tan((cfg.talusAngle * Math.PI) / 180)),
+          uAnisotropy: u(cfg.anisotropy),
+          uSedimentRemoval: u(cfg.sedimentRemoval),
+          uVerticality: u(cfg.scale.verticality),
+          uTerrainScale: u(cfg.scale.terrainScale),
+          uPoleBand: u(cfg.poleBand),
         },
         aWriteRT(),
       );
