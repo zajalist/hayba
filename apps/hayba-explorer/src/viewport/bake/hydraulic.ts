@@ -102,12 +102,21 @@ export interface HydraulicConfig {
    *  (planet terrainScale ⇒ small metre slopes); S3 tiles revisit. */
   slopeFloor: number;
   slopeMid: number;
-  /** S2.3 flow-mask rivers: flux-magnitude `smoothstep(t0,t1)` → river
-   *  mask; channel incision `riverDepth·river·downcutting·detailMask·dt`.
-   *  The interfluves between incised channels become the ridgelines. */
-  riverThreshold0: number;
-  riverThreshold1: number;
-  riverDepth: number;
+  /** #218 flow-accumulation drainage. `accumIters` (K) MFD gather
+   *  iterations per refresh; refresh runs every `accumEveryN` sim steps
+   *  (co-evolution). `mfdExponent` (p) sharpens the slope-weighted split.
+   *  Incision = `streamK · Q^spM · S^spN` (Q = accumulation discharge,
+   *  S = true metre slope). `accMin` = per-cell runoff floor.
+   *  `accResScale` = (W/REF)^q resolution-normalisation of Q (measured
+   *  via the oracle, NOT assumed — set later). */
+  accumIters: number;
+  accumEveryN: number;
+  mfdExponent: number;
+  streamK: number;
+  spM: number;
+  spN: number;
+  accMin: number;
+  accResScale: number;
   /** S2.3 concavity gate: river carve is multiplied by
    *  `smoothstep(0, concaveScale, laplacian(b))` so incision only bites
    *  CONCAVE valley floors, not CONVEX plateau/range shoulders (kills the
@@ -177,19 +186,17 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   elevMid: 0.4,
   slopeFloor: 0.0003,
   slopeMid: 0.001,
-  // S2.3 flow-mask river incision = the ridge-maker. CRANKED HARD
-  // (2026-05-17): user confirmed ridges still faint even at 1M cells, so
-  // resolution wasn't the limiter — the per-step carve
-  // (riverDepth·river·downcutting·dm·dt·wLat) was ~0.01 cumulative vs
-  // ~0.5 mountain relief. riverDepth 0.02→0.6 + threshold1 0.02→0.005
-  // (far more of the flux field qualifies as river) ⇒ deep valleys, so
-  // the interfluves stand as pronounced ridges. CARVE only LOWERS b
-  // (gated to mountains by detailMask) so it cannot blow up — worst
-  // case is over-deep valleys, visually tunable. Bias strong: the user
-  // has said "too faint" across many iterations.
-  riverThreshold0: 0.0,
-  riverThreshold1: 0.005,
-  riverDepth: 0.6,
+  // #218: provisional — set from the oracle gate later. K large (budget
+  // allows it), refresh ~6x over 100 steps, p sharpens channels,
+  // stream-power m≈0.5/n≈1. accResScale=1 (exponent fit later).
+  accumIters: 96,
+  accumEveryN: 16,
+  mfdExponent: 1.3,
+  streamK: 0.02,
+  spM: 0.5,
+  spN: 1.0,
+  accMin: 0.05,
+  accResScale: 1.0,
   // Concave valleys reach full carve by lap≈0.003; every convex shoulder
   // (lap≤0) gets exactly 0 → the Tibet/Andes rim moat is removed while
   // the concave dendritic valleys (Afghanistan) keep their strong carve.
