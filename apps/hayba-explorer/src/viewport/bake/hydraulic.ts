@@ -138,25 +138,26 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   sinMin: 0.02,
   strength: 0.04,
   downcutting: 0.25,
-  // S2.2 ridge tuning (2026-05-17, user: "ridges too subtle"): the
-  // metre-true talus compares tan(talusAngle) against the macro slope
-  // Δb*verticality/(terrainScale/W). At the planet terrainScale a
-  // physical 32° (tan 0.62) is unreachable (macro slopes ~1e-3), so the
-  // pass barely triggered. talusAngle is tuned LOW (tan(0.07°)≈1.2e-3)
-  // to the FIXED 2048-wide macro-bake dm so moderate ranges (Afghanistan)
-  // ridge too; anisotropy/strength up + cadence tighter for a pronounced
-  // effect. (The metre model stays physically correct — S3 zoom-tiles
-  // have small terrainScale ⇒ realistic angles become meaningful there.)
-  thermalStrength: 0.45,
+  // S2.2 thermal = GENTLE TALUS LIMITER (corrected 2026-05-17). Thermal
+  // is a smoothing operator: it relaxes slopes toward the talus angle, so
+  // running it hard PLANES mountains flat + terraces them (the prior
+  // "make ridges more pronounced" attempts did exactly that). Ridgelines
+  // come from S2.3 fluvial incision carving valleys (interfluves = the
+  // ridges), NOT from thermal. So thermal is dialled to a gentle
+  // limiter + faint anisotropic striation: low strength, sparse cadence.
+  // talusAngle stays LOW (tan(0.07°)≈1.2e-3) — correct for the macro
+  // terrainScale (S3 tiles restore physical angles). The CFL net-clamp
+  // keeps it unconditionally stable regardless.
+  thermalStrength: 0.15,
   talusAngle: 0.07,
-  anisotropy: 0.7,
+  anisotropy: 0.5,
   sedimentRemoval: 0.0,
   // S2.4 detail-mask gates (macro-slope regime; see HydraulicConfig).
   elevFloor: 0.15,
   elevMid: 0.4,
   slopeFloor: 0.0003,
   slopeMid: 0.002,
-  thermalEvery: 5,
+  thermalEvery: 20,
   poleBand: 0.04,
   scale: {
     terrainScale: 2 * Math.PI * 6371000,
