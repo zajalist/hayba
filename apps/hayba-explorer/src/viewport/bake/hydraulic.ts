@@ -77,10 +77,12 @@ export interface HydraulicConfig {
   ke: number;
   /** Minimum tilt sinα floor (keeps flats slowly carving). */
   sinMin: number;
-  /** Land uplift rate (macro-preservation, with maxDeltaB). */
-  uplift: number;
-  /** Per-step incision/deposition clamp (macro-preservation). */
-  maxDeltaB: number;
+  /** Erosion/thermal rate (dimensionless, integrated over `steps`).
+   *  Drives incision against the true metre slope (Gaea §10) — replaces
+   *  the old per-step `maxDeltaB` clamp + `uplift` mechanism. */
+  strength: number;
+  /** Vertical incision rate against the true metre slope. */
+  downcutting: number;
   /** Thermal (talus) transport rate Kt. */
   kt: number;
   /** Talus slope threshold tan(angle). */
@@ -89,29 +91,24 @@ export interface HydraulicConfig {
   thermalEvery: number;
   /** Polar-cap damp fraction (rain/erosion -> 0 within this band). */
   poleBand: number;
+  /** Metre-denominated world scale (Gaea §10). Mirrors the Rust
+   *  `WorldScale` (camelCase here, snake_case on the wire); the App.tsx
+   *  call site maps `EquirectInputs.scale` into this. Planet macro
+   *  default; S3 overrides per zoom-tile. */
+  scale: { terrainScale: number; verticality: number; featureScale: number };
 }
 
 /** Pinned numeric defaults (authoritative — plan Task 4).
  *
- * MACRO-PRESERVATION TUNING (2026-05-16). The spec's macro-preservation
- * mechanism is the per-step `maxDeltaB` incision clamp + land `uplift`;
- * the worst-case cumulative bedrock travel is bounded by
- * `steps * maxDeltaB`. The prior defaults (steps 200, maxDeltaB 0.004)
- * gave a bound of 0.80 height units — equal to the painted continent's
- * peak relief, so 200 steps could (and visibly did) plane the entire
- * landmass flat into a ring/crater basin (verified real-GPU before/after).
- *
- * The fix keeps the spec's erosion equations and per-step clamp untouched
- * and only retunes the bound: steps 100 * maxDeltaB 0.0020 = 0.20, i.e.
- * ~25% of the ~0.8 peak. The continent therefore mathematically retains
- * ~75–85% of its elevation (real-GPU: landMaxAbsDelta 0.196 vs maxB 0.88)
- * — macro silhouette preserved — while the full-strength incision rates
- * (kc 0.18 / ks 0.30, restored) still carve visible flow-concentrated
- * valley/ridge detail. `uplift` is raised 0.0008 -> 0.0018 to counter the
- * net land lowering over the (now fewer) steps without growing mountains
- * (cumulative uplift add ~ 100*0.0018*dt*wLat << the relief). Ocean is
- * untouched (ERODE early-returns on ocean cells). Real-GPU corePass: true
- * (0 NaN/Inf, ocean fully preserved, land erodes 99.8%, no seam break). */
+ * S1 METRE-DENOMINATED MODEL (2026-05-16). The old per-step `maxDeltaB`
+ * incision clamp + land `uplift` are removed. Erosion strength is now
+ * physical: ERODE computes the true metre slope `slope = Δh*verticality /
+ * (terrainScale/resolution)` and drives incision by `strength`/
+ * `downcutting` integrated by `dt` over `steps`. Macro preservation in S1
+ * is interim — gentle metre-scale physics + the ocean early-return (ERODE
+ * skips `base.r < 0` cells, pole-damped) — until S2's Laplacian band split
+ * takes over silhouette preservation. `strength` is small ("not way too
+ * strong") and is the tunable the controller's visual gate adjusts. */
 export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   steps: 100,
   chunk: 16,
@@ -125,12 +122,17 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   kd: 0.2,
   ke: 0.015,
   sinMin: 0.02,
-  uplift: 0.0018,
-  maxDeltaB: 0.002,
+  strength: 0.04,
+  downcutting: 0.25,
   kt: 0.3,
   tanTalus: 0.6,
   thermalEvery: 8,
   poleBand: 0.04,
+  scale: {
+    terrainScale: 2 * Math.PI * 6371000,
+    verticality: 9000,
+    featureScale: 2000,
+  },
 };
 
 /**
@@ -311,7 +313,10 @@ export async function runHydraulicBake(
     swapA();
 
     // ERODE: declares uA,uF,uGrid,uDt,uCellL,uKc,uKs,uKd,uSinMin,
-    // uUplift,uMaxDeltaB,uPoleBand. reads A,F -> writes A.
+    // uStrength,uDowncutting,uVerticality,uTerrainScale,uPoleBand.
+    // reads A,F -> writes A. S1: metre-denominated incision (true slope
+    // = Δh*uVerticality / (uTerrainScale/uGrid.x)) replaces the old
+    // per-step uMaxDeltaB clamp + uUplift.
     runRawPass(
       renderer,
       ERODE_FRAG,
@@ -325,8 +330,10 @@ export async function runHydraulicBake(
         uKs: u(cfg.ks),
         uKd: u(cfg.kd),
         uSinMin: u(cfg.sinMin),
-        uUplift: u(cfg.uplift),
-        uMaxDeltaB: u(cfg.maxDeltaB),
+        uStrength: u(cfg.strength),
+        uDowncutting: u(cfg.downcutting),
+        uVerticality: u(cfg.scale.verticality),
+        uTerrainScale: u(cfg.scale.terrainScale),
         uPoleBand: u(cfg.poleBand),
       },
       aWriteRT(),

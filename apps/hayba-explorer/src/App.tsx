@@ -51,6 +51,9 @@ interface EquirectInputs {
   h: number;
   height: number[];
   precip: number[];
+  /** Metre-denominated world scale (Rust `WorldScale`, serde snake_case).
+   *  Planet macro default; S3 overrides per zoom-tile. */
+  scale: { terrain_scale: number; verticality: number; feature_scale: number };
 }
 
 export interface PlanetSnapshot {
@@ -1068,7 +1071,15 @@ export default function App() {
           precip,
           w,
           h,
-          DEFAULT_HYDRAULIC,
+          {
+            ...DEFAULT_HYDRAULIC,
+            // Rust serde snake_case -> HydraulicConfig camelCase.
+            scale: {
+              terrainScale: inp.scale.terrain_scale,
+              verticality: inp.scale.verticality,
+              featureScale: inp.scale.feature_scale,
+            },
+          },
           (done, total) => {
             setDebugBakeProgress(`Eroding — step ${done}/${total}`);
           },
