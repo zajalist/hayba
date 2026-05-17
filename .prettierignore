@@ -1,0 +1,6 @@
+node_modules/
+dist/
+*.js.map
+*.tsbuildinfo
+package-lock.json
+CHANGELOG.md

@@ -62,6 +62,9 @@ apps/hayba/node_modules/
 /_*.png
 /_*.mp4
 
+# Local development artifacts
+KEYGAP.docx
+
 # Private design / process notes — kept on disk for the maintainer,
 # not redistributed (same policy as the parked feature surface above).
 docs/superpowers/

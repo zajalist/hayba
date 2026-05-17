@@ -56,6 +56,19 @@ Scopes: `mcp` (Node server), `ue` (UE plugin), `sidecar` (visual-embeddings), `d
 
 **Don't include a Claude / AI co-author trailer.** Per project policy, those are omitted.
 
+## Linting & formatting
+
+Hayba uses **ESLint** (flat config) for TypeScript linting and **Prettier** for code formatting:
+
+```bash
+npm run lint          # Check for lint errors
+npm run lint:fix      # Auto-fix lint errors
+npm run format        # Check formatting
+npm run format:fix    # Auto-format all files
+```
+
+These run in CI on every push/PR. Make sure `npm run lint` passes with zero warnings.
+
 ## Pre-commit
 
 The `.githooks/pre-commit` hook runs `tsc` and restages `packages/hayba/dist/` whenever `packages/hayba/src/` is part of the commit. Activated by `npm install` via the `prepare` script — if your hooks aren't firing, run:
@@ -68,9 +81,11 @@ git config core.hooksPath .githooks
 
 Before requesting review:
 - [ ] `npm run build` is clean.
+- [ ] `npm run lint` passes with zero warnings.
 - [ ] If you added a TS file, it's registered with the Zod schema registry so `get_tool_signature` returns derived params.
 - [ ] If you added a C++ command, it's listed in the handler's `GetCommands()` AND dispatched in `Handle()`.
 - [ ] If you added a destructive command, it's classified in `IsDestructiveCommand()` in `HaybaMCPCommandHandler.cpp` so transactions wrap it.
+- [ ] Tests added or updated for any new/modified TS modules.
 - [ ] Docs updated if behaviour changes.
 - [ ] CHANGELOG.md has an entry under `[Unreleased]`.
 
