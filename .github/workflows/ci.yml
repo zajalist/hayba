@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  node:
-    name: Node MCP server — typecheck + build
+  lint:
+    name: TypeScript lint + format check (mcp-tools/hayba-mcp)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,12 +20,40 @@ jobs:
       - name: Install
         run: npm install
 
-      - name: Typecheck + build
-        working-directory: packages/hayba
+      # Scoped to the Node MCP server and non-blocking (like the sidecar ruff
+      # step). The restructured tree carries large pre-existing subsystems that
+      # predate this config and were never linted/formatted; enforcing repo-wide
+      # or even subtree-wide would brick CI on code untouched by current work.
+      # Kept as a visible signal until a formatting baseline is adopted.
+      - name: Lint
+        run: npx eslint mcp-tools/hayba-mcp || true
+
+      - name: Format check
+        run: npx prettier --check "mcp-tools/hayba-mcp/**/*.{ts,js,json,md}" --ignore-path .prettierignore || true
+
+  node:
+    name: Node MCP server — typecheck + build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install
+        run: npm install
+
+      - name: Typecheck
+        working-directory: mcp-tools/hayba-mcp
+        run: npx tsc --noEmit
+
+      - name: Build
+        working-directory: mcp-tools/hayba-mcp
         run: npx tsc
 
-      - name: Test (if present)
-        working-directory: packages/hayba
+      - name: Test
+        working-directory: mcp-tools/hayba-mcp
         run: |
           if [ -f vitest.config.ts ] || [ -f jest.config.ts ]; then
             npm test
@@ -43,7 +71,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install sidecar
-        working-directory: packages/hayba/addons/visual-embeddings
+        working-directory: mcp-tools/hayba-mcp/addons/visual-embeddings
         run: |
           if [ -f pyproject.toml ]; then
             python -m pip install --upgrade pip
@@ -52,5 +80,5 @@ jobs:
           fi
 
       - name: Lint
-        working-directory: packages/hayba/addons/visual-embeddings
-        run: ruff check . || true   # don't fail CI until we adopt a style baseline
+        working-directory: mcp-tools/hayba-mcp/addons/visual-embeddings
+        run: ruff check . || true   # non-blocking until a style baseline is adopted
