@@ -193,8 +193,9 @@ const FRAG: string = [
  *  - `uSunDir`  — light direction for the screen-space slope hillshade.
  *  - `uDisplace` — vertex-extrusion gain: each vertex is pushed along its
  *    normal by `bakedHeight * uDisplace` so erosion is real geometry.
- *    Default 0.12 on a unit-radius sphere ([-1,1] height → ±0.12 relief:
- *    land bulges, ocean sinks). Tune with {@link setDebugDisplace}.
+ *    Default 0.05 on a unit-radius sphere ([-1,1] height → ±0.05 relief:
+ *    land bulges, ocean sinks) — readable 3D without over-dramatising.
+ *    Tune with {@link setDebugDisplace}.
  */
 export function makeDebugReliefMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
@@ -211,10 +212,12 @@ export function makeDebugReliefMaterial(): THREE.ShaderMaterial {
       // bound texture's image / RT size) — a degenerate but safe value
       // until a real texture is bound.
       uTexSize: { value: new THREE.Vector2(1, 1) },
-      // Vertex-extrusion gain (see header). 0.12 = strong, clearly-3D
-      // relief on a unit sphere; the no-erosion toggle then visibly
-      // changes the SHAPE, not just the shading.
-      uDisplace: { value: 0.12 },
+      // Vertex-extrusion gain (see header). 0.05 on a unit-radius sphere
+      // ([-1,1] height -> ±0.05 relief): clearly 3D / the no-erosion
+      // toggle still changes the SHAPE, but no longer the exaggerated
+      // ±0.12 bulge that over-dramatised the relief. Tune live with
+      // setDebugDisplace.
+      uDisplace: { value: 0.05 },
     },
     // dFdx/dFdy are core in WebGL2 (Three r169) — no extension flag needed.
   });
@@ -252,7 +255,7 @@ export function setDebugMapMode(mat: THREE.ShaderMaterial, n: number): void {
   mat.uniformsNeedUpdate = true;
 }
 
-/** Vertex-extrusion gain (height -> radial displacement). Default 0.12. */
+/** Vertex-extrusion gain (height -> radial displacement). Default 0.05. */
 export function setDebugDisplace(mat: THREE.ShaderMaterial, n: number): void {
   mat.uniforms.uDisplace.value = n;
   mat.uniformsNeedUpdate = true;

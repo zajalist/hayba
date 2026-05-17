@@ -747,6 +747,16 @@ export default function App() {
         triangles,
         initialElevations: painter.elevations,
       });
+      // Rebuilding the paint view supersedes any hydraulic debug-relief
+      // globe from a prior bake: drop it (setGlobe(null) disposes its
+      // geometry+material) and clear the ready flag so a fresh, visible
+      // painter mesh is the only thing on screen — never the relief sphere
+      // overlaying it. The bound RT/Base textures are owned by the
+      // prevDebug*Ref disposal chain, not by the material, so this does not
+      // double-free them.
+      scene.setGlobe(null);
+      setDebugBakeReady(false);
+
       painterMeshRef.current = pmesh;
       scene.scene.add(pmesh.object);
       if (globeRef.current) globeRef.current.object.visible = false;
@@ -801,6 +811,18 @@ export default function App() {
       if (ev.button !== 0) return;
       const painter = heightPainterRef.current;
       if (!painter) return;
+      // A hidden painter mesh means a hydraulic debug-relief globe is on
+      // screen (handleDebugBake hides it so it can't poke through the
+      // relief's sunken ocean). Starting a stroke returns to the editable
+      // paint view: drop the relief globe and reveal the painter mesh.
+      // `.object.visible` is read live off the ref (no stale-closure risk
+      // like a captured state value would have).
+      const pm = painterMeshRef.current;
+      if (pm && pm.object.visible === false) {
+        scene.setGlobe(null);
+        pm.object.visible = true;
+        setDebugBakeReady(false);
+      }
       const hit = raycast(ev);
       if (!hit) return;
       const effectiveBrush = ev.shiftKey ? invertBrushMode(paintBrush) : paintBrush;
@@ -1074,6 +1096,19 @@ export default function App() {
       const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 256, 128), mat);
       mesh.name = "hayba-debug-relief";
       scene.setGlobe(mesh);
+
+      // The painter (compose pre-bake) mesh is added to the scene
+      // independently of the globe slot (scene.scene.add, not setGlobe), so
+      // setGlobe() above does NOT remove it. The relief sphere extrudes
+      // ocean INWARD (h<0 -> radius < 1) while the painter mesh sits at the
+      // paint surface, so a still-visible painter mesh depth-wins in every
+      // sea basin and the coarse pre-bake terrain pokes through the eroded
+      // ocean. Hide it: the painter mesh and the debug-relief globe must
+      // never co-render. It is revealed again when the user resumes
+      // painting (onPointerDown) or the paint view is rebuilt.
+      if (painterMeshRef.current) {
+        painterMeshRef.current.object.visible = false;
+      }
 
       setDebugBakeReady(true);
       setDebugBakeProgress(null);
