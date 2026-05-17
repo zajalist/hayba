@@ -46,6 +46,7 @@ import {
   ADVECT_FRAG,
   EVAP_FRAG,
   THERMAL_FRAG,
+  DETAIL_MASK_FRAG,
 } from "./hydraulic.glsl";
 import { runRawPass } from "./glPass";
 import { createPingPong, type PingPongTargets } from "./pingpong";
@@ -91,6 +92,15 @@ export interface HydraulicConfig {
   anisotropy: number;
   /** Fraction of slid material lost to suspension, 0..1. */
   sedimentRemoval: number;
+  /** S2.4 detailMask elevation gate, normalised-height fractions: mask
+   *  rises from `elevFloor`*V to `elevMid`*V metres (V = verticality). */
+  elevFloor: number;
+  elevMid: number;
+  /** S2.4 detailMask slope gate, TRUE metre slope: mask rises from
+   *  `slopeFloor` to `slopeMid`. Tuned to the macro-bake slope regime
+   *  (planet terrainScale ⇒ small metre slopes); S3 tiles revisit. */
+  slopeFloor: number;
+  slopeMid: number;
   /** Run THERMAL when step % thermalEvery === 0 (<=0 disables it). */
   thermalEvery: number;
   /** Polar-cap damp fraction (rain/erosion -> 0 within this band). */
@@ -128,11 +138,25 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   sinMin: 0.02,
   strength: 0.04,
   downcutting: 0.25,
-  thermalStrength: 0.3,
-  talusAngle: 32,
-  anisotropy: 0.5,
+  // S2.2 ridge tuning (2026-05-17, user: "ridges too subtle"): the
+  // metre-true talus compares tan(talusAngle) against the macro slope
+  // Δb*verticality/(terrainScale/W). At the planet terrainScale a
+  // physical 32° (tan 0.62) is unreachable (macro slopes ~1e-3), so the
+  // pass barely triggered. talusAngle is tuned LOW (tan(0.07°)≈1.2e-3)
+  // to the FIXED 2048-wide macro-bake dm so moderate ranges (Afghanistan)
+  // ridge too; anisotropy/strength up + cadence tighter for a pronounced
+  // effect. (The metre model stays physically correct — S3 zoom-tiles
+  // have small terrainScale ⇒ realistic angles become meaningful there.)
+  thermalStrength: 0.55,
+  talusAngle: 0.07,
+  anisotropy: 0.9,
   sedimentRemoval: 0.0,
-  thermalEvery: 8,
+  // S2.4 detail-mask gates (macro-slope regime; see HydraulicConfig).
+  elevFloor: 0.15,
+  elevMid: 0.4,
+  slopeFloor: 0.0003,
+  slopeMid: 0.002,
+  thermalEvery: 5,
   poleBand: 0.04,
   scale: {
     terrainScale: 2 * Math.PI * 6371000,
@@ -233,9 +257,13 @@ export async function runHydraulicBake(
   // FAILS if EXT_color_buffer_float is missing. We drive the read/write
   // slots explicitly below (NOT pp.book) so the discipline is local and
   // unambiguous.
-  const pp: PingPongTargets = createPingPong(renderer, w, h, ["A", "F"]);
+  const pp: PingPongTargets = createPingPong(renderer, w, h, ["A", "F", "M"]);
   const A = pp.rt.A; // [slot0, slot1]
   const F = pp.rt.F; // [slot0, slot1]
+  // S2.4 detail mask: a ONE-TIME single-channel field (computed pre-loop
+  // from the seeded base, then read-only). Only M[0] is used (no swap);
+  // M[1] is allocated by the pair helper and just disposed at teardown.
+  const M = pp.rt.M;
 
   // Per-channel current read index (0|1); write is always the OPPOSITE
   // slot, so a pass never samples the RT it draws into. swap*() flips the
@@ -261,6 +289,26 @@ export async function runHydraulicBake(
   // first step's RAIN/FLUX read the seeded state.
   runRawPass(renderer, SEED_A_FRAG, { uBase: u(base) }, aReadRT());
   runRawPass(renderer, SEED_F_FRAG, {}, fReadRT());
+
+  // ---- S2.4 DETAIL MASK (ONE-TIME): from the seeded base height, write
+  // M[0] = elevGate*slopeGate (ocean -> 0). Read every step by ERODE
+  // (gates incision) and THERMAL (gates net move) so high-freq detail is
+  // concentrated on steep/high terrain and spared on ocean & flatland.
+  runRawPass(
+    renderer,
+    DETAIL_MASK_FRAG,
+    {
+      uA: u(aReadRT()),
+      uGrid: u(uGrid),
+      uVerticality: u(cfg.scale.verticality),
+      uTerrainScale: u(cfg.scale.terrainScale),
+      uElevFloor: u(cfg.elevFloor),
+      uElevMid: u(cfg.elevMid),
+      uSlopeFloor: u(cfg.slopeFloor),
+      uSlopeMid: u(cfg.slopeMid),
+    },
+    M[0],
+  );
 
   // ---- One simulation step: the fixed pass order. ---------------------
   // Each pass's uniforms object lists EXACTLY the uniforms that frag
@@ -340,6 +388,7 @@ export async function runHydraulicBake(
         uVerticality: u(cfg.scale.verticality),
         uTerrainScale: u(cfg.scale.terrainScale),
         uPoleBand: u(cfg.poleBand),
+        uDetailMask: u(M[0]),
       },
       aWriteRT(),
     );
@@ -374,11 +423,13 @@ export async function runHydraulicBake(
     );
     swapA();
 
-    // THERMAL (optional): S2.2 anisotropic metre-scale talus. declares
-    // uA,uGrid,uStrengthThermal,uTanTalus,uAnisotropy,uSedimentRemoval,
-    // uVerticality,uTerrainScale,uPoleBand. reads A -> writes A. Runs
-    // only on the scheduled cadence. uTanTalus = tan(talusAngle°) so the
-    // GLSL compares it against the true metre slope (S1-consistent).
+    // THERMAL (optional): S2.2 anisotropic metre-scale talus + S2.4
+    // detailMask gate. declares uA,uGrid,uStrengthThermal,uTanTalus,
+    // uAnisotropy,uSedimentRemoval,uVerticality,uTerrainScale,uPoleBand,
+    // uDetailMask. reads A,M -> writes A. Runs only on the scheduled
+    // cadence. uTanTalus = tan(talusAngle°) compared to the true metre
+    // slope (S1-consistent); talusAngle is tuned LOW for the macro-bake
+    // dm (see DEFAULT_HYDRAULIC) so moderate ranges ridge.
     if (doThermal) {
       runRawPass(
         renderer,
@@ -393,6 +444,7 @@ export async function runHydraulicBake(
           uVerticality: u(cfg.scale.verticality),
           uTerrainScale: u(cfg.scale.terrainScale),
           uPoleBand: u(cfg.poleBand),
+          uDetailMask: u(M[0]),
         },
         aWriteRT(),
       );
@@ -443,5 +495,7 @@ export async function runHydraulicBake(
   stale.dispose();
   F[0].dispose();
   F[1].dispose();
+  M[0].dispose();
+  M[1].dispose();
   return result;
 }
