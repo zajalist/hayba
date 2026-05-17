@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { ToolHandler } from '../hayba-bake-terrain.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
-import { embedImage } from './sidecar-client.js';
+import { embedImage, SidecarUnavailableError } from './sidecar-client.js';
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 
@@ -42,7 +42,10 @@ export const haybaFetchReferencesHandler: ToolHandler = async (args) => {
       const { embedding } = await embedImage(base64);
       return { source: 'local', path: p, clip_embedding: embedding };
     } catch (e: unknown) {
-      return { source: 'local', path: p, clip_embedding: null, error: e instanceof Error ? e.message : String(e) };
+      const msg = e instanceof SidecarUnavailableError
+        ? `sidecar offline — embedding skipped (${e.message})`
+        : (e instanceof Error ? e.message : String(e));
+      return { source: 'local', path: p, clip_embedding: null, error: msg };
     }
   }));
 

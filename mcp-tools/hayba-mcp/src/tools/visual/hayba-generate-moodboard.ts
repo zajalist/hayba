@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { ToolHandler } from '../hayba-bake-terrain.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
-import { embedImage } from './sidecar-client.js';
+import { embedImage, SidecarUnavailableError } from './sidecar-client.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'high',
@@ -47,7 +47,10 @@ export const haybaGenerateMoodboardHandler: ToolHandler = async (args) => {
         const { embedding } = await embedImage(img.base64);
         return { ...img, clip_embedding: embedding };
       } catch (e: unknown) {
-        return { ...img, clip_embedding: null, embedding_error: e instanceof Error ? e.message : String(e) };
+        const msg = e instanceof SidecarUnavailableError
+          ? `sidecar offline — embedding skipped (${e.message})`
+          : (e instanceof Error ? e.message : String(e));
+        return { ...img, clip_embedding: null, embedding_error: msg };
       }
     }));
 
