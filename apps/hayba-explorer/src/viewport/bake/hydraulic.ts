@@ -165,15 +165,25 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   sedimentRemoval: 0.0,
   // S2.4 detail-mask gates (macro-slope regime; see HydraulicConfig).
   elevFloor: 0.15,
+  // slopeMid lowered so the detailMask SATURATES at gentle mountain
+  // slopes — moderate ranges (Afghanistan) get FULL incision, not a
+  // throttled fraction (was a hidden cause of "ridges too faint").
   elevMid: 0.4,
   slopeFloor: 0.0003,
-  slopeMid: 0.002,
-  // S2.3 flow-mask river incision (the ridge-maker: carves valleys, the
-  // interfluves stand as ridges). Thresholds/depth are first-guess —
-  // visually tuned at the S2 gate.
+  slopeMid: 0.001,
+  // S2.3 flow-mask river incision = the ridge-maker. CRANKED HARD
+  // (2026-05-17): user confirmed ridges still faint even at 1M cells, so
+  // resolution wasn't the limiter — the per-step carve
+  // (riverDepth·river·downcutting·dm·dt·wLat) was ~0.01 cumulative vs
+  // ~0.5 mountain relief. riverDepth 0.02→0.6 + threshold1 0.02→0.005
+  // (far more of the flux field qualifies as river) ⇒ deep valleys, so
+  // the interfluves stand as pronounced ridges. CARVE only LOWERS b
+  // (gated to mountains by detailMask) so it cannot blow up — worst
+  // case is over-deep valleys, visually tunable. Bias strong: the user
+  // has said "too faint" across many iterations.
   riverThreshold0: 0.0,
-  riverThreshold1: 0.02,
-  riverDepth: 0.02,
+  riverThreshold1: 0.005,
+  riverDepth: 0.6,
   thermalEvery: 20,
   poleBand: 0.04,
   scale: {
