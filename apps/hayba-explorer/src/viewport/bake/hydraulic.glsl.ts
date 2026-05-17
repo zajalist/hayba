@@ -190,6 +190,7 @@ export const ERODE_FRAG = [
   "uniform float uVerticality;",
   "uniform float uTerrainScale;",
   "uniform float uPoleBand;",
+  "uniform sampler2D uDetailMask;",
   "void main(){",
   "  ivec2 rc = fragRC();",
   "  vec4 a  = loadA(uA, uGrid, rc.x,     rc.y);",
@@ -228,8 +229,12 @@ export const ERODE_FRAG = [
   "    return;",
   "  }",
   "  float wLat = wLatOf(rc.y, uGrid, uPoleBand);",
+  // S2.4: gate INCISION by the detail mask (strong on steep/high terrain,
+  // ~0 on ocean & flatland). Deposition is left ungated so sediment still
+  // settles naturally in lowlands/valleys.
+  "  float dm = loadA(uDetailMask, uGrid, rc.x, rc.y).r;",
   "  if (C > s) {",
-  "    float m = uDowncutting * (C - s) * uDt * wLat;",
+  "    float m = uDowncutting * (C - s) * uDt * wLat * dm;",
   "    m = max(0.0, fin(m));",
   "    b -= m; s += m;",
   "  } else {",
@@ -341,6 +346,7 @@ export const THERMAL_FRAG = [
   "uniform float uVerticality;",
   "uniform float uTerrainScale;",
   "uniform float uPoleBand;",
+  "uniform sampler2D uDetailMask;",
   "/* One talus edge: this cell's shed (outFlow) toward a lower",
   "   super-talus neighbour + received (inFlow) from a higher one, with",
   "   the anisotropic direction-biased strength. Uniforms are GLSL",
@@ -392,8 +398,47 @@ export const THERMAL_FRAG = [
   "  talusEdge(b, aLT, vec2(-1.0,  1.0), gN, sq2dx, outFlow, inFlow);",
   "  talusEdge(b, aRT, vec2( 1.0,  1.0), gN, sq2dx, outFlow, inFlow);",
   "  float wLat = wLatOf(rc.y, uGrid, uPoleBand);",
-  "  float net = (inFlow * (1.0 - uSedimentRemoval) - outFlow) * wLat;",
+  "  float dm = loadA(uDetailMask, uGrid, rc.x, rc.y).r;",
+  "  float net = (inFlow * (1.0 - uSedimentRemoval) - outFlow) * wLat * dm;",
   "  float nb = fin(b + net);",
   "  fragColor = vec4(nb, a.g, a.b, a.a);",
+  "}",
+].join("\n");
+
+// S2.4 DETAIL MASK (one-time, pre-loop). Gates ALL high-freq erosion/relief
+// to steep, high terrain so the user's "mask at mountain heights; spare
+// ocean & flatlands" holds: detail = elevGate * slopeGate, ocean -> 0.
+// elevGate rises from uElevFloor*V to uElevMid*V metres; slopeGate from
+// uSlopeFloor to uSlopeMid (true metre slope, S1-consistent). Reads the
+// SEEDed A (b in .r, ocean in .a); writes the mask in .r (single channel).
+// ERODE multiplies its incision by this; THERMAL multiplies its net move.
+export const DETAIL_MASK_FRAG = [
+  H,
+  "uniform sampler2D uA;",
+  "uniform vec2 uGrid;",
+  "uniform float uVerticality;",
+  "uniform float uTerrainScale;",
+  "uniform float uElevFloor;",
+  "uniform float uElevMid;",
+  "uniform float uSlopeFloor;",
+  "uniform float uSlopeMid;",
+  "void main(){",
+  "  ivec2 rc = fragRC();",
+  "  vec4 a  = loadA(uA, uGrid, rc.x,     rc.y);",
+  "  if (a.a > 0.5) { fragColor = vec4(0.0); return; }",
+  "  vec4 aL = loadA(uA, uGrid, rc.x - 1, rc.y);",
+  "  vec4 aR = loadA(uA, uGrid, rc.x + 1, rc.y);",
+  "  vec4 aB = loadA(uA, uGrid, rc.x,     rc.y - 1);",
+  "  vec4 aT = loadA(uA, uGrid, rc.x,     rc.y + 1);",
+  "  float zM = a.r * uVerticality;",
+  "  float elevGate = smoothstep(uElevFloor * uVerticality, uElevMid * uVerticality, zM);",
+  "  float dbx = (aR.r - aL.r) * 0.5;",
+  "  float dby = (aT.r - aB.r) * 0.5;",
+  "  float gh = clamp(length(vec2(dbx, dby)), 0.0, 1.0e4);",
+  "  float dx = uTerrainScale / max(1.0, uGrid.x);",
+  "  float slope = (gh * uVerticality) / max(1.0e-6, dx);",
+  "  float slopeGate = smoothstep(uSlopeFloor, uSlopeMid, slope);",
+  "  float m = clamp(elevGate * slopeGate, 0.0, 1.0);",
+  "  fragColor = vec4(m, 0.0, 0.0, 1.0);",
   "}",
 ].join("\n");

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { DEFAULT_HYDRAULIC } from "./hydraulic";
-import { ERODE_FRAG, THERMAL_FRAG } from "./hydraulic.glsl";
+import { ERODE_FRAG, THERMAL_FRAG, DETAIL_MASK_FRAG } from "./hydraulic.glsl";
 
 describe("S1 scale config", () => {
   it("DEFAULT_HYDRAULIC drops the ad-hoc clamp/uplift and adds scale knobs", () => {
@@ -49,5 +49,35 @@ describe("S2.2 anisotropic thermal/talus (ridgeline pass)", () => {
     expect(DEFAULT_HYDRAULIC.anisotropy).toBeLessThanOrEqual(1);
     expect("kt" in DEFAULT_HYDRAULIC).toBe(false);
     expect("tanTalus" in DEFAULT_HYDRAULIC).toBe(false);
+  });
+});
+
+describe("S2.4 elevation/slope detailMask (gate relief to mountains)", () => {
+  it("DETAIL_MASK_FRAG has an elevation gate AND a slope gate, ocean→0, 1-channel", () => {
+    expect(typeof DETAIL_MASK_FRAG).toBe("string");
+    // Two smoothstep gates: elevation (vs verticality) and slope.
+    const gates = DETAIL_MASK_FRAG.match(/smoothstep\(/g) ?? [];
+    expect(gates.length).toBeGreaterThanOrEqual(2);
+    expect(DETAIL_MASK_FRAG).toMatch(/uniform float uElevFloor;/);
+    expect(DETAIL_MASK_FRAG).toMatch(/uniform float uElevMid;/);
+    expect(DETAIL_MASK_FRAG).toMatch(/uniform float uSlopeFloor;/);
+    expect(DETAIL_MASK_FRAG).toMatch(/uniform float uSlopeMid;/);
+    expect(DETAIL_MASK_FRAG).toMatch(/uniform float uVerticality;/);
+    expect(DETAIL_MASK_FRAG).toMatch(/uniform float uTerrainScale;/);
+    // ocean writes 0 mask; output packs the mask in .r.
+    expect(DETAIL_MASK_FRAG).toMatch(/a\.a > 0\.5/);
+    expect(DETAIL_MASK_FRAG).toMatch(/fragColor = vec4\(/);
+  });
+  it("ERODE_FRAG and THERMAL_FRAG sample uDetailMask", () => {
+    expect(ERODE_FRAG).toMatch(/uniform sampler2D uDetailMask;/);
+    expect(THERMAL_FRAG).toMatch(/uniform sampler2D uDetailMask;/);
+  });
+  it("DEFAULT_HYDRAULIC carries the S2.4 gate knobs", () => {
+    expect(typeof DEFAULT_HYDRAULIC.elevFloor).toBe("number");
+    expect(typeof DEFAULT_HYDRAULIC.elevMid).toBe("number");
+    expect(typeof DEFAULT_HYDRAULIC.slopeFloor).toBe("number");
+    expect(typeof DEFAULT_HYDRAULIC.slopeMid).toBe("number");
+    expect(DEFAULT_HYDRAULIC.elevFloor).toBeLessThan(DEFAULT_HYDRAULIC.elevMid);
+    expect(DEFAULT_HYDRAULIC.slopeFloor).toBeLessThan(DEFAULT_HYDRAULIC.slopeMid);
   });
 });
