@@ -1,15 +1,20 @@
 // Run: npx tsx src/viewport/bake/hydraulic.test.ts
 import { strict as assert } from "node:assert";
 import { DEFAULT_HYDRAULIC, planSteps } from "./hydraulic";
-// Macro-preserving tuning (2026-05-16): the worst-case cumulative bedrock
-// travel is bounded by steps*maxDeltaB; it MUST stay well below the painted
-// continent's ~0.8 peak relief so erosion carves valleys without planing the
-// macro silhouette (was 200*0.004=0.80 = full relief -> ring-basin bug).
+// S1 metre-denominated model (2026-05-16): the old per-step maxDeltaB
+// clamp + uplift are removed. Strength is now physical (incision against
+// the true metre slope, integrated over `steps`). `strength` is small so
+// the bake is gentle ("not way too strong"); macro preservation in S1 is
+// the gentle physics + ocean early-return until S2's band split lands.
 assert.equal(DEFAULT_HYDRAULIC.steps, 100);
-assert.ok(DEFAULT_HYDRAULIC.kc > 0 && DEFAULT_HYDRAULIC.maxDeltaB > 0);
+assert.ok(DEFAULT_HYDRAULIC.kc > 0 && DEFAULT_HYDRAULIC.strength > 0);
 assert.ok(
-  DEFAULT_HYDRAULIC.steps * DEFAULT_HYDRAULIC.maxDeltaB <= 0.25,
-  "steps*maxDeltaB must stay <= ~25% of peak relief (macro-preservation)",
+  !("maxDeltaB" in DEFAULT_HYDRAULIC) && !("uplift" in DEFAULT_HYDRAULIC),
+  "S1 removes the maxDeltaB clamp + uplift term",
+);
+assert.ok(
+  DEFAULT_HYDRAULIC.strength < 0.2,
+  "strength must stay small (not way too strong)",
 );
 const p = planSteps({ ...DEFAULT_HYDRAULIC, steps: 50, chunk: 16 });
 assert.equal(p.totalSteps, 50);
