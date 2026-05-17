@@ -10,4 +10,3 @@ ADRs. One decision per file. Status: `Accepted` · `Superseded` ·
 | [0002](0002-website-at-top-level.md) | Website lives at top-level `website/` | Accepted |
 | [0003](0003-defer-linguistics-explorer-integration.md) | Defer the linguistics workbench → Hayba Explorer integration | Accepted |
 | [0004](0004-ue-plugin-location.md) | UE plugin lives at `unreal/HaybaMCPToolkit/` | Accepted |
-| [0005](0005-github-actions-nonfunctional-local-gate.md) | GitHub Actions is non-functional; local gate is authoritative | Accepted |

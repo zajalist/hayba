@@ -5,8 +5,7 @@
 We as members, contributors, and maintainers pledge to make participation
 in the Hayba project a harassment-free experience for everyone, regardless
 of age, body size, disability, ethnicity, gender identity and expression,
-level of experience, nationality, personal appearance, race, religion, or
-sexual identity and orientation.
+level of experience, nationality, personal appearance, race, or religion.
 
 ## Our standards
 
@@ -24,10 +23,10 @@ publishing others' private information without permission.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the project maintainers via a private GitHub security advisory
-or the contact in [`SECURITY.md`](SECURITY.md). All complaints will be
-reviewed and investigated promptly and fairly. Maintainers are obligated
-to respect the privacy and security of the reporter of any incident.
+reported to the project maintainer at **zejbadr@gmail.com**, or via a
+private GitHub security advisory. All complaints will be reviewed and
+investigated promptly and fairly. The maintainer is obligated to respect
+the privacy and security of the reporter of any incident.
 
 ## Attribution
 
