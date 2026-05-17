@@ -70,6 +70,13 @@ supabase/.temp/
 supabase/.branches/
 .vercel/
 
+# Unreal build artifacts (UBT regenerates these)
+unreal/**/Binaries/
+unreal/**/Intermediate/
+unreal/**/Saved/
+unreal/**/DerivedDataCache/
+unreal/**/.vs/
+
 # Private design / process notes — kept on disk for the maintainer,
 # not redistributed (same policy as the parked feature surface above).
 docs/superpowers/

@@ -1,0 +1,499 @@
+#include "HaybaMCPAssetHandler.h"
+#include "Json.h"
+#include "Editor.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/IAssetRegistry.h"
+#include "AssetRegistry/AssetData.h"
+#include "AssetToolsModule.h"
+#include "IAssetTools.h"
+#include "AutomatedAssetImportData.h"
+#include "EditorAssetLibrary.h"
+#include "EditorValidatorSubsystem.h"
+#include "DataValidationModule.h"
+#include "Misc/DataValidation.h"
+#include "Logging/MessageLog.h"
+#include "Logging/TokenizedMessage.h"
+#include "Misc/UObjectToken.h"
+#include "FileHelpers.h"
+#include "Misc/PackageName.h"
+#include "ObjectTools.h"
+#include "AssetRegistry/AssetRegistryHelpers.h"
+#include "Misc/Base64.h"
+#include "IImageWrapperModule.h"
+#include "IImageWrapper.h"
+#include "Modules/ModuleManager.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPAsset, Log, All);
+
+TArray<FString> FHaybaMCPAssetHandler::GetCommands() const
+{
+    return {
+        TEXT("asset_search"),
+        TEXT("asset_get_info"),
+        TEXT("asset_import"),
+        TEXT("asset_duplicate"),
+        TEXT("asset_delete"),
+        TEXT("asset_get_references"),
+        TEXT("asset_validate"),
+        TEXT("asset_rename"),
+        TEXT("asset_move"),
+        TEXT("asset_fix_redirectors"),
+        TEXT("asset_get_dependencies"),
+        TEXT("asset_get_referencers"),
+    };
+}
+
+FHaybaHandlerResult FHaybaMCPAssetHandler::Handle(const FString& Cmd, const TSharedPtr<FJsonObject>& P)
+{
+    if (Cmd == TEXT("asset_search"))         return AssetSearch(P);
+    if (Cmd == TEXT("asset_get_info"))       return AssetGetInfo(P);
+    if (Cmd == TEXT("asset_import"))         return AssetImport(P);
+    if (Cmd == TEXT("asset_duplicate"))      return AssetDuplicate(P);
+    if (Cmd == TEXT("asset_delete"))         return AssetDelete(P);
+    if (Cmd == TEXT("asset_get_references")) return AssetGetReferences(P);
+    if (Cmd == TEXT("asset_validate"))       return AssetValidate(P);
+    if (Cmd == TEXT("asset_rename"))         return AssetRename(P);
+    if (Cmd == TEXT("asset_move"))           return AssetMove(P);
+    if (Cmd == TEXT("asset_fix_redirectors"))return AssetFixRedirectors(P);
+    if (Cmd == TEXT("asset_get_dependencies"))return AssetGetDependencies(P);
+    if (Cmd == TEXT("asset_get_referencers"))return AssetGetReferencers(P);
+    return FHaybaHandlerResult::Err(FString::Printf(TEXT("AssetHandler: unknown command %s"), *Cmd));
+}
+
+FHaybaHandlerResult FHaybaMCPAssetHandler::AssetSearch(const TSharedPtr<FJsonObject>& P)
+{
+    FString Path = TEXT("/Game");
+    P->TryGetStringField(TEXT("path"), Path);
+    FString NameFilter, ClassFilter;
+    P->TryGetStringField(TEXT("name_filter"), NameFilter);
+    P->TryGetStringField(TEXT("class_filter"), ClassFilter);
+
+    // gh#15: optional thumbnail preview (base64 PNG). Off by default; capped at 50.
+    bool bIncludeThumbnails = false;
+    P->TryGetBoolField(TEXT("include_thumbnails"), bIncludeThumbnails);
+    int32 ThumbSize = 256;
+    {
+        int32 ReqSize = 0;
+        if (P->TryGetNumberField(TEXT("thumbnail_size"), ReqSize) && ReqSize > 0)
+            ThumbSize = FMath::Clamp(ReqSize, 32, 1024);
+    }
+    const int32 ThumbnailCap = 50;
+    int32 ThumbnailsEmitted = 0;
+
+    IAssetRegistry& AR = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+    TArray<FAssetData> Assets;
+    AR.GetAssetsByPath(FName(*Path), Assets, /*Recursive*/true);
+
+    const int32 Cap = 200;
+    TArray<TSharedPtr<FJsonValue>> Out;
+    bool bCapped = false;
+    for (const FAssetData& A : Assets)
+    {
+        if (!NameFilter.IsEmpty() && !A.PackageName.ToString().Contains(NameFilter)) continue;
+        if (!ClassFilter.IsEmpty()
+            && A.AssetClassPath.GetAssetName().ToString() != ClassFilter
+            && A.AssetClassPath.ToString() != ClassFilter) continue;
+
+        if (Out.Num() >= Cap) { bCapped = true; break; }
+
+        TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+        Entry->SetStringField(TEXT("name"),  A.AssetName.ToString());
+        Entry->SetStringField(TEXT("path"),  A.GetObjectPathString());
+        Entry->SetStringField(TEXT("class"), A.AssetClassPath.GetAssetName().ToString());
+        if (bIncludeThumbnails && ThumbnailsEmitted < ThumbnailCap)
+        {
+            const FString B64 = GetAssetThumbnailBase64Png(A, ThumbSize);
+            if (!B64.IsEmpty())
+            {
+                Entry->SetStringField(TEXT("thumbnail_b64"), B64);
+                ++ThumbnailsEmitted;
+            }
+        }
+        Out.Add(MakeShared<FJsonValueObject>(Entry.ToSharedRef()));
+    }
+
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetArrayField(TEXT("assets"), Out);
+    Result->SetNumberField(TEXT("count"), Out.Num());
+    Result->SetBoolField(TEXT("capped"), bCapped);
+    if (bIncludeThumbnails)
+    {
+        Result->SetNumberField(TEXT("thumbnails_emitted"), ThumbnailsEmitted);
+        Result->SetBoolField(TEXT("thumbnails_capped"), ThumbnailsEmitted >= ThumbnailCap);
+    }
+    return FHaybaHandlerResult::Ok(Result);
+}
+
+FHaybaHandlerResult FHaybaMCPAssetHandler::AssetGetInfo(const TSharedPtr<FJsonObject>& P)
+{
+    FString Path;
+    if (!P->TryGetStringField(TEXT("path"), Path) || Path.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("asset_get_info: missing path"));
+
+    IAssetRegistry& AR = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+    FAssetData Data = AR.GetAssetByObjectPath(FSoftObjectPath(Path));
+    if (!Data.IsValid())
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("asset_get_info: asset not found: %s"), *Path));
+
+    TSharedPtr<FJsonObject> Tags = MakeShared<FJsonObject>();
+    for (const auto& Pair : Data.TagsAndValues)
+    {
+        Tags->SetStringField(Pair.Key.ToString(), Pair.Value.GetValue());
+    }
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("name"),         Data.AssetName.ToString());
+    Out->SetStringField(TEXT("package_name"), Data.PackageName.ToString());
+    Out->SetStringField(TEXT("asset_class"),  Data.AssetClassPath.GetAssetName().ToString());
+    Out->SetObjectField(TEXT("tags"),         Tags);
+
+    // gh#15: optional thumbnail preview (base64 PNG).
+    bool bIncludeThumbnails = false;
+    P->TryGetBoolField(TEXT("include_thumbnails"), bIncludeThumbnails);
+    if (bIncludeThumbnails)
+    {
+        int32 ThumbSize = 256;
+        int32 ReqSize = 0;
+        if (P->TryGetNumberField(TEXT("thumbnail_size"), ReqSize) && ReqSize > 0)
+            ThumbSize = FMath::Clamp(ReqSize, 32, 1024);
+        const FString B64 = GetAssetThumbnailBase64Png(Data, ThumbSize);
+        if (!B64.IsEmpty())
+            Out->SetStringField(TEXT("thumbnail_b64"), B64);
+    }
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPAssetHandler::AssetImport(const TSharedPtr<FJsonObject>& P)
+{
+    FString SourceFile, DestPath;
+    if (!P->TryGetStringField(TEXT("source_file"), SourceFile) || SourceFile.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("asset_import: missing source_file"));
+    if (!P->TryGetStringField(TEXT("destination_path"), DestPath) || DestPath.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("asset_import: missing destination_path"));
+
+    UAutomatedAssetImportData* ImportData = NewObject<UAutomatedAssetImportData>();
+    ImportData->Filenames.Add(SourceFile);
+    ImportData->DestinationPath = DestPath;
+    ImportData->bReplaceExisting = true;
+
+    IAssetTools& Tools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
+    TArray<UObject*> Imported = Tools.ImportAssetsAutomated(ImportData);
+    if (Imported.Num() == 0)
+        return FHaybaHandlerResult::Err(TEXT("asset_import: ImportAssetsAutomated returned no assets"));
+
+    TArray<TSharedPtr<FJsonValue>> Paths;
+    for (UObject* Obj : Imported)
+    {
+        if (Obj) Paths.Add(MakeShared<FJsonValueString>(Obj->GetPathName()));
+    }
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetArrayField(TEXT("imported"), Paths);
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPAssetHandler::AssetDuplicate(const TSharedPtr<FJsonObject>& P)
+{
+    FString Src, Dst;
+    if (!P->TryGetStringField(TEXT("source_path"), Src) || Src.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("asset_duplicate: missing source_path"));
+    if (!P->TryGetStringField(TEXT("destination_path"), Dst) || Dst.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("asset_duplicate: missing destination_path"));
+
+    UObject* New = UEditorAssetLibrary::DuplicateAsset(Src, Dst);
+    if (!New)
+        return FHaybaHandlerResult::Err(TEXT("asset_duplicate: DuplicateAsset failed"));
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("new_path"), New->GetPathName());
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPAssetHandler::AssetDelete(const TSharedPtr<FJsonObject>& P)
+{
+    FString Path;
+    if (!P->TryGetStringField(TEXT("path"), Path) || Path.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("asset_delete: missing path"));
+
+    bool bDeleted = UEditorAssetLibrary::DeleteAsset(Path);
+    if (!bDeleted)
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("asset_delete: failed for %s"), *Path));
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetBoolField(TEXT("deleted"), true);
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPAssetHandler::AssetGetReferences(const TSharedPtr<FJsonObject>& P)
+{
+    FString Path;
+    if (!P->TryGetStringField(TEXT("path"), Path) || Path.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("asset_get_references: missing path"));
+
+    IAssetRegistry& AR = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+
+    // Convert object path -> package name
+    FString PackageName = Path;
+    int32 Dot;
+    if (PackageName.FindChar('.', Dot)) PackageName = PackageName.Left(Dot);
+
+    TArray<FName> Referencers;
+    AR.GetReferencers(FName(*PackageName), Referencers);
+    TArray<FName> Dependencies;
+    AR.GetDependencies(FName(*PackageName), Dependencies);
+
+    const int32 Cap = 100;
+    TArray<TSharedPtr<FJsonValue>> RefArr, DepArr;
+    const bool bRefCapped = Referencers.Num() > Cap;
+    const bool bDepCapped = Dependencies.Num() > Cap;
+    for (int32 i = 0; i < Referencers.Num() && i < Cap; ++i)
+        RefArr.Add(MakeShared<FJsonValueString>(Referencers[i].ToString()));
+    for (int32 i = 0; i < Dependencies.Num() && i < Cap; ++i)
+        DepArr.Add(MakeShared<FJsonValueString>(Dependencies[i].ToString()));
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetArrayField(TEXT("referencers"),  RefArr);
+    Out->SetArrayField(TEXT("dependencies"), DepArr);
+    Out->SetBoolField(TEXT("capped"), bRefCapped || bDepCapped);
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPAssetHandler::AssetValidate(const TSharedPtr<FJsonObject>& P)
+{
+    FString Path;
+    if (!P->TryGetStringField(TEXT("path"), Path) || Path.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("asset_validate: missing path"));
+
+    if (!GEditor)
+        return FHaybaHandlerResult::Err(TEXT("asset_validate: GEditor unavailable"));
+
+    UEditorValidatorSubsystem* Validator = GEditor->GetEditorSubsystem<UEditorValidatorSubsystem>();
+    if (!Validator)
+        return FHaybaHandlerResult::Err(TEXT("asset_validate: EditorValidatorSubsystem unavailable"));
+
+    IAssetRegistry& AR = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+    FAssetData Data = AR.GetAssetByObjectPath(FSoftObjectPath(Path));
+    if (!Data.IsValid())
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("asset_validate: asset not found: %s"), *Path));
+
+    TArray<FAssetData> ToValidate = { Data };
+    FValidateAssetsSettings Settings;
+    Settings.bSkipExcludedDirectories = true;
+    Settings.ValidationUsecase = EDataValidationUsecase::Manual;
+
+    // Spin up a fresh AssetCheck message-log page so we can capture per-message
+    // results emitted by validators (the FValidateAssetsResults summary only
+    // exposes counts in this UE version).
+    FMessageLog AssetCheckLog("AssetCheck");
+    AssetCheckLog.NewPage(FText::FromString(TEXT("Hayba asset_validate")));
+
+    FValidateAssetsResults Results;
+    Validator->ValidateAssetsWithSettings(ToValidate, Settings, Results);
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetBoolField(TEXT("valid"), Results.NumInvalid == 0);
+    Out->SetNumberField(TEXT("num_valid"),   Results.NumValid);
+    Out->SetNumberField(TEXT("num_invalid"), Results.NumInvalid);
+    Out->SetNumberField(TEXT("num_warnings"), Results.NumWarnings);
+
+    // FMessageLog::GetMessages is not part of the public API across UE 5.x, so
+    // we cannot portably extract individual tokenized messages here. Surface a
+    // hint so callers know to consult the editor's Message Log → Asset Check.
+    // TODO(v1.1): wire up message capture when the API stabilizes (e.g. via a
+    // custom IMessageLogListing or by iterating Results.AssetsResults once that
+    // surface is consistently available).
+    Out->SetArrayField(TEXT("errors"),   TArray<TSharedPtr<FJsonValue>>());
+    Out->SetArrayField(TEXT("warnings"), TArray<TSharedPtr<FJsonValue>>());
+    Out->SetBoolField(TEXT("details_available"), false);
+    Out->SetBoolField(TEXT("details_in_message_log"),
+        Results.NumInvalid > 0 || Results.NumWarnings > 0);
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPAssetHandler::AssetRename(const TSharedPtr<FJsonObject>& P)
+{
+    FString Path, NewName;
+    if (!P->TryGetStringField(TEXT("path"), Path) || Path.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("asset_rename: missing path"));
+    if (!P->TryGetStringField(TEXT("new_name"), NewName) || NewName.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("asset_rename: missing new_name"));
+
+    // Build new path = directory + / + new_name
+    FString PackageName = Path;
+    int32 Dot;
+    if (PackageName.FindChar('.', Dot)) PackageName = PackageName.Left(Dot);
+
+    FString Dir = FPackageName::GetLongPackagePath(PackageName);
+    FString NewPath = Dir + TEXT("/") + NewName;
+
+    bool bRenamed = UEditorAssetLibrary::RenameAsset(Path, NewPath);
+    if (!bRenamed)
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("asset_rename: RenameAsset failed (%s -> %s)"), *Path, *NewPath));
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("old_path"), Path);
+    Out->SetStringField(TEXT("new_path"), NewPath);
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+// Initiative #6: reference-preserving move using IAssetTools::RenameAssets.
+// Unlike UEditorAssetLibrary::RenameAsset, IAssetTools updates referencers
+// in-place so the project doesn't leak redirectors after every AI mutation.
+FHaybaHandlerResult FHaybaMCPAssetHandler::AssetMove(const TSharedPtr<FJsonObject>& P)
+{
+    FString Path, TargetDir;
+    if (!P->TryGetStringField(TEXT("path"), Path) || Path.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("asset_move: missing path"));
+    if (!P->TryGetStringField(TEXT("target_dir"), TargetDir) || TargetDir.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("asset_move: missing target_dir"));
+
+    FString PackageName = Path;
+    int32 Dot;
+    if (PackageName.FindChar('.', Dot)) PackageName = PackageName.Left(Dot);
+
+    UObject* Asset = UEditorAssetLibrary::LoadAsset(Path);
+    if (!Asset)
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("asset_move: could not load %s"), *Path));
+
+    const FString AssetName  = FPackageName::GetShortName(PackageName);
+    const FString NewPackage = TargetDir / AssetName;
+
+    FAssetToolsModule& M = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
+    TArray<FAssetRenameData> Renames;
+    Renames.Emplace(Asset, TargetDir, AssetName);
+    const bool bOk = M.Get().RenameAssets(Renames);
+
+    auto Out = MakeShared<FJsonObject>();
+    Out->SetBoolField(TEXT("ok"), bOk);
+    Out->SetStringField(TEXT("old_path"), Path);
+    Out->SetStringField(TEXT("new_path"), NewPackage);
+    if (!bOk) return FHaybaHandlerResult::Err(FString::Printf(TEXT("asset_move: RenameAssets failed (%s)"), *Path));
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPAssetHandler::AssetFixRedirectors(const TSharedPtr<FJsonObject>& P)
+{
+    FString Path = TEXT("/Game");
+    P->TryGetStringField(TEXT("path"), Path);
+
+    IAssetRegistry& Reg = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+    FARFilter Filter;
+    Filter.bRecursivePaths = true;
+    Filter.bRecursiveClasses = true;
+    Filter.PackagePaths.Add(*Path);
+    Filter.ClassPaths.Add(UObjectRedirector::StaticClass()->GetClassPathName());
+    TArray<FAssetData> Redirectors;
+    Reg.GetAssets(Filter, Redirectors);
+
+    TArray<UObjectRedirector*> Objs;
+    for (const FAssetData& AD : Redirectors)
+        if (UObjectRedirector* R = Cast<UObjectRedirector>(AD.GetAsset())) Objs.Add(R);
+
+    if (Objs.Num() > 0)
+    {
+        FAssetToolsModule& M = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
+        M.Get().FixupReferencers(Objs);
+    }
+
+    auto Out = MakeShared<FJsonObject>();
+    Out->SetNumberField(TEXT("fixed_count"), Objs.Num());
+    Out->SetStringField(TEXT("path"), Path);
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+// Initiative #10: asset dependency graph. Returns assets THIS asset depends on
+// (its includes) — useful for AI to assess what edits to a base material would
+// ripple to.
+FHaybaHandlerResult FHaybaMCPAssetHandler::AssetGetDependencies(const TSharedPtr<FJsonObject>& P)
+{
+    FString Path;
+    if (!P->TryGetStringField(TEXT("path"), Path) || Path.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("asset_get_dependencies: missing path"));
+
+    FString PackageName = Path;
+    int32 Dot;
+    if (PackageName.FindChar('.', Dot)) PackageName = PackageName.Left(Dot);
+
+    IAssetRegistry& Reg = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+    TArray<FName> Deps;
+    Reg.GetDependencies(FName(*PackageName), Deps);
+
+    TArray<TSharedPtr<FJsonValue>> Items;
+    for (const FName& D : Deps) Items.Add(MakeShared<FJsonValueString>(D.ToString()));
+
+    auto Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("path"), Path);
+    Out->SetArrayField(TEXT("dependencies"), Items);
+    Out->SetNumberField(TEXT("count"), Items.Num());
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+// gh#15: render an asset's stored/generated thumbnail as a base64-encoded PNG.
+// Uses ThumbnailTools to load from the package; falls back to generating one
+// if the package has no cached thumbnail. Returns "" on any failure.
+FString FHaybaMCPAssetHandler::GetAssetThumbnailBase64Png(const FAssetData& AssetData, int32 Size)
+{
+    if (!AssetData.IsValid()) return FString();
+
+    // Render an in-memory thumbnail from the loaded asset. We deliberately avoid
+    // ThumbnailTools::LoadThumbnailsFromPackage / ConditionallyLoadThumbnailsForObjects
+    // (API surface drifts between UE 5.x minor versions) and just always render —
+    // mirrors the pattern used by McpAutomationBridge in this same project.
+    UObject* Asset = AssetData.GetAsset();
+    if (!Asset) return FString();
+
+    FObjectThumbnail Generated;
+    ThumbnailTools::RenderThumbnail(
+        Asset,
+        Size, Size,
+        ThumbnailTools::EThumbnailTextureFlushMode::NeverFlush,
+        nullptr,
+        &Generated);
+
+    const TArray<uint8>& Raw = Generated.GetUncompressedImageData();
+    const int32 W = Generated.GetImageWidth();
+    const int32 H = Generated.GetImageHeight();
+    if (Raw.Num() == 0 || W <= 0 || H <= 0) return FString();
+
+    IImageWrapperModule& ImageWrapperModule =
+        FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
+    TSharedPtr<IImageWrapper> PngWrapper =
+        ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
+    if (!PngWrapper.IsValid()) return FString();
+
+    // FObjectThumbnail stores BGRA8 (per engine convention).
+    if (!PngWrapper->SetRaw(Raw.GetData(), Raw.Num(), W, H, ERGBFormat::BGRA, 8))
+        return FString();
+
+    const TArray64<uint8>& Compressed = PngWrapper->GetCompressed(85);
+    if (Compressed.Num() == 0) return FString();
+
+    // FBase64::Encode wants TArray<uint8>; copy from 64-bit array.
+    TArray<uint8> Compressed32;
+    Compressed32.Append(Compressed.GetData(), Compressed.Num());
+    return FBase64::Encode(Compressed32);
+}
+
+// Reverse direction — who references THIS asset. The blast-radius query.
+FHaybaHandlerResult FHaybaMCPAssetHandler::AssetGetReferencers(const TSharedPtr<FJsonObject>& P)
+{
+    FString Path;
+    if (!P->TryGetStringField(TEXT("path"), Path) || Path.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("asset_get_referencers: missing path"));
+
+    FString PackageName = Path;
+    int32 Dot;
+    if (PackageName.FindChar('.', Dot)) PackageName = PackageName.Left(Dot);
+
+    IAssetRegistry& Reg = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+    TArray<FName> Refs;
+    Reg.GetReferencers(FName(*PackageName), Refs);
+
+    TArray<TSharedPtr<FJsonValue>> Items;
+    for (const FName& R : Refs) Items.Add(MakeShared<FJsonValueString>(R.ToString()));
+
+    auto Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("path"), Path);
+    Out->SetArrayField(TEXT("referencers"), Items);
+    Out->SetNumberField(TEXT("count"), Items.Num());
+    return FHaybaHandlerResult::Ok(Out);
+}
