@@ -361,6 +361,25 @@ draft + precip
 | `src/App.tsx` | wire tileBake to camera + bake view |
 | shared types | `EquirectInputs` + window/params (replace ad-hoc inline types) |
 
+## 11b. Future direction (tracked, NOT this spec): live-streamed planetary evolution
+
+Watching the planet evolve in real time during the planetary-evolution
+phase (vs. bake-then-view) is **feasible on this architecture and a natural
+capstone after S3** — do NOT pull it into S1–S4 scope. Enablers already in
+place: the GPU ping-pong sim is incremental (an RT per step); the Tauri
+`bake_inputs_equirect` command is async + `spawn_blocking` (Task 10) so the
+backend can step + `emit` without freezing the UI; S3's async/single-flight/
+abortable/macro-stays-live re-bake is ~80% of the streaming plumbing.
+Design sketch: keep the evolving field GPU-resident and let the display
+material sample the live ping-pong RT each frame (no pixel IPC); stream only
+deltas/downsampled previews over IPC (a full 2048×1024 RGBA32F frame ≈ 33 MB
+is too much); run K sim steps per displayed frame. **Load-bearing risk:**
+interleaving raw-WebGL2 `glPass` compute with three.js render frames
+per-frame re-enters the GL-state-contamination class behind the historical
+feedback-loop saga — needs the per-pass isolation + a single controlled
+`resetState()` resync applied once per displayed frame, not naively mixed.
+Revisit only after S3 lands.
+
 ## 12. Out of scope (YAGNI)
 
 - Porting Gaea's SYCL/ISPC kernels literally — we reimplement the *algorithms*
