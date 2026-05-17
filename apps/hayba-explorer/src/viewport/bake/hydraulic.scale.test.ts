@@ -7,6 +7,7 @@ import {
   CARVE_RIVERS_FRAG,
   INIT_ACC_FRAG,
   ACCUM_FRAG,
+  CONTROLS_FRAG,
 } from "./hydraulic.glsl";
 
 describe("S1 scale config", () => {
@@ -202,5 +203,17 @@ describe("#226 multi-pattern drainage config", () => {
     expect(DEFAULT_HYDRAULIC.patternMax).toBeLessThan(1);
     expect(DEFAULT_HYDRAULIC.ctrlRadius).toBeGreaterThanOrEqual(1);
     expect(DEFAULT_HYDRAULIC.uniformityThreshold).toBeGreaterThan(0);
+  });
+});
+
+describe("#226 CONTROLS_FRAG", () => {
+  it("derives slope-azimuth / uniformity / curvature / endorheic", () => {
+    expect(typeof CONTROLS_FRAG).toBe("string");
+    expect(CONTROLS_FRAG).toMatch(/uniform sampler2D uA;/);
+    expect(CONTROLS_FRAG).toMatch(/uniform float uCtrlRadius;/);
+    expect(CONTROLS_FRAG).toMatch(/uniform float uEndorheicSteps;/);
+    expect(CONTROLS_FRAG).toMatch(/atan/);
+    expect(CONTROLS_FRAG).toMatch(/a\.a > 0\.5/);
+    expect(CONTROLS_FRAG).toMatch(/fragColor = vec4\(/);
   });
 });
