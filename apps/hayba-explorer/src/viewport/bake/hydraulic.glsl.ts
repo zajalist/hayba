@@ -333,8 +333,10 @@ export const EVAP_FRAG = [
 // suspension); net pole-damped by wLat. Ocean (a.a > 0.5) skips
 // byte-identically. Single-pass approximation: out/in use the LOCAL
 // gradient so with anisotropy the scatter is approximately — not exactly
-// — conservative; per-edge moves capped at 0.45*Δ for stability, whole
-// field fin()-guarded. Reads uA; writes A (b updated).
+// — conservative; the per-cell net is HARD-CLAMPED to ±0.5× the local
+// relief (explicit-talus CFL bound) so ANY strength/anisotropy/cadence is
+// unconditionally stable (no overshoot/oscillation/blowup); fin()-guarded.
+// Reads uA; writes A (b updated).
 export const THERMAL_FRAG = [
   H,
   "uniform sampler2D uA;",
@@ -352,19 +354,22 @@ export const THERMAL_FRAG = [
   "   the anisotropic direction-biased strength. Uniforms are GLSL",
   "   globals so the signature stays small. */",
   "void talusEdge(float b, vec4 anb, vec2 o, vec2 gN, float dm,",
-  "               inout float outFlow, inout float inFlow){",
+  "               inout float outFlow, inout float inFlow,",
+  "               inout float maxDown, inout float maxUp){",
   "  if (anb.a > 0.5) return;",
+  "  float dnb = b - anb.r;",
+  "  if (dnb > 0.0) maxDown = max(maxDown, dnb);",
+  "  else           maxUp   = max(maxUp,  -dnb);",
   "  vec2 od = o / max(1.0e-6, length(o));",
   "  float dirBias = dot(od, gN);",
   "  float eff = uStrengthThermal * max(0.0, 1.0 + uAnisotropy * dirBias);",
-  "  float dz = (b - anb.r) * uVerticality;",
+  "  float dz = dnb * uVerticality;",
   "  if (dz > 0.0 && dz / dm > uTanTalus) {",
-  "    float dnb = b - anb.r;",
   "    outFlow += min(eff * dnb * 0.5, 0.45 * dnb);",
   "  }",
-  "  float uz = (anb.r - b) * uVerticality;",
+  "  float uz = -dz;",
   "  if (uz > 0.0 && uz / dm > uTanTalus) {",
-  "    float unb = anb.r - b;",
+  "    float unb = -dnb;",
   "    inFlow += min(eff * unb * 0.5, 0.45 * unb);",
   "  }",
   "}",
@@ -389,17 +394,28 @@ export const THERMAL_FRAG = [
   "  vec2 gN = normalize(g + vec2(1.0e-6));",
   "  float outFlow = 0.0;",
   "  float inFlow = 0.0;",
-  "  talusEdge(b, aL , vec2(-1.0,  0.0), gN, dx,    outFlow, inFlow);",
-  "  talusEdge(b, aR , vec2( 1.0,  0.0), gN, dx,    outFlow, inFlow);",
-  "  talusEdge(b, aB , vec2( 0.0, -1.0), gN, dx,    outFlow, inFlow);",
-  "  talusEdge(b, aT , vec2( 0.0,  1.0), gN, dx,    outFlow, inFlow);",
-  "  talusEdge(b, aLB, vec2(-1.0, -1.0), gN, sq2dx, outFlow, inFlow);",
-  "  talusEdge(b, aRB, vec2( 1.0, -1.0), gN, sq2dx, outFlow, inFlow);",
-  "  talusEdge(b, aLT, vec2(-1.0,  1.0), gN, sq2dx, outFlow, inFlow);",
-  "  talusEdge(b, aRT, vec2( 1.0,  1.0), gN, sq2dx, outFlow, inFlow);",
+  "  float maxDown = 0.0;",
+  "  float maxUp = 0.0;",
+  "  talusEdge(b, aL , vec2(-1.0,  0.0), gN, dx,    outFlow, inFlow, maxDown, maxUp);",
+  "  talusEdge(b, aR , vec2( 1.0,  0.0), gN, dx,    outFlow, inFlow, maxDown, maxUp);",
+  "  talusEdge(b, aB , vec2( 0.0, -1.0), gN, dx,    outFlow, inFlow, maxDown, maxUp);",
+  "  talusEdge(b, aT , vec2( 0.0,  1.0), gN, dx,    outFlow, inFlow, maxDown, maxUp);",
+  "  talusEdge(b, aLB, vec2(-1.0, -1.0), gN, sq2dx, outFlow, inFlow, maxDown, maxUp);",
+  "  talusEdge(b, aRB, vec2( 1.0, -1.0), gN, sq2dx, outFlow, inFlow, maxDown, maxUp);",
+  "  talusEdge(b, aLT, vec2(-1.0,  1.0), gN, sq2dx, outFlow, inFlow, maxDown, maxUp);",
+  "  talusEdge(b, aRT, vec2( 1.0,  1.0), gN, sq2dx, outFlow, inFlow, maxDown, maxUp);",
   "  float wLat = wLatOf(rc.y, uGrid, uPoleBand);",
   "  float dm = loadA(uDetailMask, uGrid, rc.x, rc.y).r;",
   "  float net = (inFlow * (1.0 - uSedimentRemoval) - outFlow) * wLat * dm;",
+  // UNCONDITIONAL STABILITY (textbook explicit-talus CFL bound): a cell
+  // may shed at most HALF the drop to its lowest land neighbour and gain
+  // at most HALF the rise to its highest, per pass. This guarantees
+  // monotone relaxation toward the talus equilibrium — no overshoot /
+  // checkerboard oscillation / blowup — for ANY strength/anisotropy/
+  // cadence (the prior aggressive tuning exploded without this). The
+  // anisotropy still biases WHICH direction within the bound, so ridges
+  // still form; they just cannot diverge.
+  "  net = clamp(net, -0.5 * maxDown, 0.5 * maxUp);",
   "  float nb = fin(b + net);",
   "  fragColor = vec4(nb, a.g, a.b, a.a);",
   "}",

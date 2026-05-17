@@ -147,9 +147,9 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   // ridge too; anisotropy/strength up + cadence tighter for a pronounced
   // effect. (The metre model stays physically correct — S3 zoom-tiles
   // have small terrainScale ⇒ realistic angles become meaningful there.)
-  thermalStrength: 0.55,
+  thermalStrength: 0.45,
   talusAngle: 0.07,
-  anisotropy: 0.9,
+  anisotropy: 0.7,
   sedimentRemoval: 0.0,
   // S2.4 detail-mask gates (macro-slope regime; see HydraulicConfig).
   elevFloor: 0.15,
