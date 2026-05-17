@@ -29,8 +29,6 @@ here — the outline below only frames the prerequisites.
 
 ## The local gate
 
-GitHub Actions is non-functional repo-wide; the authoritative gate is local
-(see [Troubleshooting](Troubleshooting.md) and
-[`../adr/0005-github-actions-nonfunctional-local-gate.md`](../adr/0005-github-actions-nonfunctional-local-gate.md)):
-build the workspace deps, then `tsc --noEmit` + vitest in
-`mcp-tools/hayba-mcp`.
+The authoritative gate is local (see
+[Troubleshooting](Troubleshooting.md)): build the workspace deps, then
+`tsc --noEmit` + vitest in `mcp-tools/hayba-mcp`. Run it before pushing.

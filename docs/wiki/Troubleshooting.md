@@ -26,15 +26,9 @@ coexist. Each instance publishes its actual port to
 - **Fix:** upgrade to Node ≥ 22.5. (`@hayba/gaea-server` only needs
   Node ≥ 20.)
 
-## GitHub Actions is non-functional
+## Verify locally before pushing
 
-Every Actions run for this repo fails with zero step output — an
-account/runner/billing condition, not a code defect. "CI green" is
-unachievable here.
-
-- **Do not** block work on red GitHub checks.
-- The **authoritative gate is local** — see
-  [`../adr/0005-github-actions-nonfunctional-local-gate.md`](../adr/0005-github-actions-nonfunctional-local-gate.md):
+The **authoritative gate is local**:
 
 ```bash
 npm install

@@ -58,9 +58,7 @@ host can launch it directly once built.
 
 > Workspace dependencies (`@hayba/architecture`, `@hayba/linguistics`,
 > `@hayba/planet-physics`) must be **built before** `npm test` here — this is
-> the authoritative local gate. See
-> [`../../docs/adr/0005-github-actions-nonfunctional-local-gate.md`](../../docs/adr/0005-github-actions-nonfunctional-local-gate.md)
-> (GitHub Actions is non-functional repo-wide; verify locally).
+> the authoritative local gate. Run it before pushing.
 
 ### Configuration
 

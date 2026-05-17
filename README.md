@@ -142,7 +142,7 @@ Deletion-test-positive opportunities from the friction walk (tectonic excluded) 
 
 ### Known constraints
 
-- GitHub Actions is **non-functional repo-wide** (runners never execute steps; `main` is red even on merge commits). The authoritative gate is **local**: build `@hayba/*` deps, then `tsc` + `npm test` in `mcp-tools/hayba-mcp`.
+- The authoritative gate is **local**: build `@hayba/*` deps, then `tsc` + `npm test` in `mcp-tools/hayba-mcp`. Run it before pushing.
 - Tectonic plate-sim work is **out of scope** for this initiative.
 
 The full backlog with priority/effort lives in [open issues](https://github.com/zajalist/hayba/issues).
@@ -156,7 +156,7 @@ npm run -w @hayba/architecture build          # …(also @hayba/planet-physics)
 npm --prefix mcp-tools/hayba-mcp test         # the authoritative gate (tsc + vitest)
 ```
 
-CI cannot be relied on here (see *Known constraints*) — run the gate locally before pushing.
+Run the gate locally before pushing.
 
 ## License
 

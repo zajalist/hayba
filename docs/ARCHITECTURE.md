@@ -60,8 +60,7 @@ the Node client discovers the live instance. Ports auto-allocate in
 
 ## Build & verify
 
-GitHub Actions is non-functional here (ADR-0005). The authoritative gate
-is local:
+The authoritative gate is local — run it before pushing:
 
 ```bash
 npm install

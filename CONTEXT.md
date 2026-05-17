@@ -69,8 +69,7 @@ re-litigate a recorded decision without reopening its ADR.
 
 ## Hard constraints
 
-- GitHub Actions is **non-functional repo-wide**; the authoritative gate
-  is local (`build @hayba/* deps → tsc + npm test` in
-  `mcp-tools/hayba-mcp`). See ADR-0005.
+- The authoritative gate is **local**: `build @hayba/* deps → tsc +
+  npm test` in `mcp-tools/hayba-mcp`. Run it before pushing.
 - Tectonic plate-sim work is out of scope for current initiatives.
 - No `Co-Authored-By`/AI trailer in commits.

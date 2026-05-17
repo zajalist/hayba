@@ -25,7 +25,7 @@ reproduce effect, not diffs.
 
 - Incorporation is content re-emulation + verification, never a 4-way
   merge. Slower per-PR but keeps the restructure intact.
-- Each re-emulation must be verified by the local gate (ADR-0005), not by
-  diffing against the original (paths differ by design).
+- Each re-emulation must be verified by the local gate, not by diffing
+  against the original (paths differ by design).
 - Surfaced, superseded behaviour is documented (here / in commit
   messages) rather than silently dropped.

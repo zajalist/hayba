@@ -18,8 +18,7 @@ npm install
 
 ## Step 1 — Build & verify the MCP server
 
-GitHub Actions is non-functional here ([ADR-0005](adr/0005-github-actions-nonfunctional-local-gate.md));
-verify locally:
+Verify locally before pushing:
 
 ```bash
 npm run -w @hayba/linguistics build      # workspace deps the server imports…
