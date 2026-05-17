@@ -2,7 +2,6 @@
 
 Desktop viewer for the Hayba tectonic simulation. Tauri + Rust backend + React/Three.js frontend.
 
-**Design spec:** `docs/superpowers/specs/2026-05-14-hayba-explorer-design.md`
 **Current milestone:** v0.2 — "Wizard + Painter"
 
 ## Run

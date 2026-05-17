@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![UE 5.7](https://img.shields.io/badge/Unreal_Engine-5.7-blue.svg)](https://www.unrealengine.com/)
 [![MCP](https://img.shields.io/badge/Model_Context_Protocol-✓-7A8AB8.svg)](https://modelcontextprotocol.io)
-[![Tools](https://img.shields.io/badge/Tools-100+_across_34_domains-green.svg)](docs/superpowers/specs/2026-05-06-hayba-ue-expansion-design.md)
+[![Tools](https://img.shields.io/badge/Tools-100+_across_34_domains-green.svg)](#features)
 
 </div>
 
@@ -76,14 +76,13 @@ Two language boundaries, one protocol. The TCP envelope on `:52342` (auto-fallba
 
 ## Documentation
 
-- **[Full design spec](docs/superpowers/specs/2026-05-06-hayba-ue-expansion-design.md)** — 34-domain command catalog, sidecar architecture, swarm agents, spatial intelligence system
-- **[Market positioning & gap analysis](docs/superpowers/specs/2026-05-06-hayba-ue-expansion-design.md#9-market-positioning--gap-analysis-2026-update)** — competitor matrix, defensibility ranking, 10 prioritized engineering initiatives
+- **[Getting started](docs/getting-started.md)** — local dev setup and first run
 - **[Contributing](CONTRIBUTING.md)** — dev setup, commit conventions, PR checklist
 - **[Changelog](CHANGELOG.md)** — release notes
 
 ## Roadmap
 
-Every initiative from the [market-research roadmap](docs/superpowers/specs/2026-05-06-hayba-ue-expansion-design.md#9-market-positioning--gap-analysis-2026-update) is tracked as a GitHub issue. Highlights in flight:
+The roadmap is tracked as GitHub issues. Highlights in flight:
 
 - 🚧 PIE test harness assertions
 - 🚧 UE documentation RAG (SQLite of UE 5.7 C++ API)
