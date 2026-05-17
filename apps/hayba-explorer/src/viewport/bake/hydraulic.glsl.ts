@@ -317,48 +317,83 @@ export const EVAP_FRAG = [
 // moves is identical regardless of which endpoint computes it, so the
 // scatter is conservative). Ocean cells (a.a > 0.5) skip. Reads uA; writes
 // A (b updated).
+// S2.2 ANISOTROPIC THERMAL / TALUS — the ridgeline maker. 8-neighbour
+// talus on a TRUE METRE slope (S1-consistent: slope =
+// Δ(h*uVerticality)/(uTerrainScale/W); diagonals use sqrt2*dx). Per-edge
+// transfer strength is direction-dependent: effStrength =
+// uStrengthThermal * (1.0 + uAnisotropy*dirBias), dirBias = the edge
+// direction projected on the local height gradient — settling biased
+// along slope gives striated faces + sharp ridgelines, not smooth
+// conical talus. Received inFlow scaled by (1-uSedimentRemoval) (lost to
+// suspension); net pole-damped by wLat. Ocean (a.a > 0.5) skips
+// byte-identically. Single-pass approximation: out/in use the LOCAL
+// gradient so with anisotropy the scatter is approximately — not exactly
+// — conservative; per-edge moves capped at 0.45*Δ for stability, whole
+// field fin()-guarded. Reads uA; writes A (b updated).
 export const THERMAL_FRAG = [
   H,
   "uniform sampler2D uA;",
   "uniform vec2 uGrid;",
-  "uniform float uCellL;",
-  "uniform float uKt;",
+  "uniform float uStrengthThermal;",
   "uniform float uTanTalus;",
+  "uniform float uAnisotropy;",
+  "uniform float uSedimentRemoval;",
+  "uniform float uVerticality;",
+  "uniform float uTerrainScale;",
+  "uniform float uPoleBand;",
+  "/* One talus edge: this cell's shed (outFlow) toward a lower",
+  "   super-talus neighbour + received (inFlow) from a higher one, with",
+  "   the anisotropic direction-biased strength. Uniforms are GLSL",
+  "   globals so the signature stays small. */",
+  "void talusEdge(float b, vec4 anb, vec2 o, vec2 gN, float dm,",
+  "               inout float outFlow, inout float inFlow){",
+  "  if (anb.a > 0.5) return;",
+  "  vec2 od = o / max(1.0e-6, length(o));",
+  "  float dirBias = dot(od, gN);",
+  "  float eff = uStrengthThermal * max(0.0, 1.0 + uAnisotropy * dirBias);",
+  "  float dz = (b - anb.r) * uVerticality;",
+  "  if (dz > 0.0 && dz / dm > uTanTalus) {",
+  "    float dnb = b - anb.r;",
+  "    outFlow += min(eff * dnb * 0.5, 0.45 * dnb);",
+  "  }",
+  "  float uz = (anb.r - b) * uVerticality;",
+  "  if (uz > 0.0 && uz / dm > uTanTalus) {",
+  "    float unb = anb.r - b;",
+  "    inFlow += min(eff * unb * 0.5, 0.45 * unb);",
+  "  }",
+  "}",
   "void main(){",
   "  ivec2 rc = fragRC();",
   "  vec4 a  = loadA(uA, uGrid, rc.x,     rc.y);",
-  "  vec4 aL = loadA(uA, uGrid, rc.x - 1, rc.y);",
-  "  vec4 aR = loadA(uA, uGrid, rc.x + 1, rc.y);",
-  "  vec4 aB = loadA(uA, uGrid, rc.x,     rc.y - 1);",
-  "  vec4 aT = loadA(uA, uGrid, rc.x,     rc.y + 1);",
   "  bool ocean = a.a > 0.5;",
   "  if (ocean) { fragColor = a; return; }",
+  "  vec4 aL  = loadA(uA, uGrid, rc.x - 1, rc.y);",
+  "  vec4 aR  = loadA(uA, uGrid, rc.x + 1, rc.y);",
+  "  vec4 aB  = loadA(uA, uGrid, rc.x,     rc.y - 1);",
+  "  vec4 aT  = loadA(uA, uGrid, rc.x,     rc.y + 1);",
+  "  vec4 aLB = loadA(uA, uGrid, rc.x - 1, rc.y - 1);",
+  "  vec4 aRB = loadA(uA, uGrid, rc.x + 1, rc.y - 1);",
+  "  vec4 aLT = loadA(uA, uGrid, rc.x - 1, rc.y + 1);",
+  "  vec4 aRT = loadA(uA, uGrid, rc.x + 1, rc.y + 1);",
   "  float b = a.r;",
-  "  float invL = 1.0 / max(1.0e-6, uCellL);",
-  // mass this cell sheds to a strictly-lower neighbour over a super-talus
-  // edge: Kt*(b - bnb)*0.5 (only when (b-bnb)/l > tanTalus and bnb < b).
+  "  ivec2 wh = gridWH(uGrid);",
+  "  float dx = uTerrainScale / max(1.0, float(wh.x));",
+  "  float sq2dx = 1.41421356 * dx;",
+  "  vec2 g = vec2(aR.r - aL.r, aT.r - aB.r) * 0.5;",
+  "  vec2 gN = normalize(g + vec2(1.0e-6));",
   "  float outFlow = 0.0;",
-  "  float dL = b - aL.r;",
-  "  if (!(aL.a > 0.5) && dL > 0.0 && dL * invL > uTanTalus) outFlow += uKt * dL * 0.5;",
-  "  float dR = b - aR.r;",
-  "  if (!(aR.a > 0.5) && dR > 0.0 && dR * invL > uTanTalus) outFlow += uKt * dR * 0.5;",
-  "  float dB = b - aB.r;",
-  "  if (!(aB.a > 0.5) && dB > 0.0 && dB * invL > uTanTalus) outFlow += uKt * dB * 0.5;",
-  "  float dT = b - aT.r;",
-  "  if (!(aT.a > 0.5) && dT > 0.0 && dT * invL > uTanTalus) outFlow += uKt * dT * 0.5;",
-  // mass received from each uphill neighbour: same per-edge formula seen
-  // from that neighbour's side (its height higher, this cell lower).
   "  float inFlow = 0.0;",
-  "  float uL = aL.r - b;",
-  "  if (!(aL.a > 0.5) && uL > 0.0 && uL * invL > uTanTalus) inFlow += uKt * uL * 0.5;",
-  "  float uR = aR.r - b;",
-  "  if (!(aR.a > 0.5) && uR > 0.0 && uR * invL > uTanTalus) inFlow += uKt * uR * 0.5;",
-  "  float uB = aB.r - b;",
-  "  if (!(aB.a > 0.5) && uB > 0.0 && uB * invL > uTanTalus) inFlow += uKt * uB * 0.5;",
-  "  float uT = aT.r - b;",
-  "  if (!(aT.a > 0.5) && uT > 0.0 && uT * invL > uTanTalus) inFlow += uKt * uT * 0.5;",
-  "  float nb = b - outFlow + inFlow;",
-  "  nb = fin(nb);",
+  "  talusEdge(b, aL , vec2(-1.0,  0.0), gN, dx,    outFlow, inFlow);",
+  "  talusEdge(b, aR , vec2( 1.0,  0.0), gN, dx,    outFlow, inFlow);",
+  "  talusEdge(b, aB , vec2( 0.0, -1.0), gN, dx,    outFlow, inFlow);",
+  "  talusEdge(b, aT , vec2( 0.0,  1.0), gN, dx,    outFlow, inFlow);",
+  "  talusEdge(b, aLB, vec2(-1.0, -1.0), gN, sq2dx, outFlow, inFlow);",
+  "  talusEdge(b, aRB, vec2( 1.0, -1.0), gN, sq2dx, outFlow, inFlow);",
+  "  talusEdge(b, aLT, vec2(-1.0,  1.0), gN, sq2dx, outFlow, inFlow);",
+  "  talusEdge(b, aRT, vec2( 1.0,  1.0), gN, sq2dx, outFlow, inFlow);",
+  "  float wLat = wLatOf(rc.y, uGrid, uPoleBand);",
+  "  float net = (inFlow * (1.0 - uSedimentRemoval) - outFlow) * wLat;",
+  "  float nb = fin(b + net);",
   "  fragColor = vec4(nb, a.g, a.b, a.a);",
   "}",
 ].join("\n");
