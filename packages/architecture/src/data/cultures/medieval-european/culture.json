@@ -1,0 +1,393 @@
+{
+  "climate": "temperate",
+  "eras": [
+    {
+      "dateRange": [
+        750,
+        1000
+      ],
+      "defaults": {
+        "ornamentDensity": "moderate",
+        "palette": [],
+        "proportions": {
+          "columnSlenderness": 1,
+          "doorAspect": 1,
+          "storyHeight": 1
+        },
+        "roofType": "gable",
+        "technique": ""
+      },
+      "id": "medieval-european-carolingian",
+      "name": "Medieval European Carolingian",
+      "rules": [],
+      "typologyMix": {
+        "granary": 5,
+        "manor": 2,
+        "market_stall": 1,
+        "peasant_home": 7,
+        "temple": 2,
+        "watchtower": 4
+      }
+    },
+    {
+      "dateRange": [
+        1000,
+        1200
+      ],
+      "defaults": {
+        "ornamentDensity": "moderate",
+        "palette": [],
+        "proportions": {
+          "columnSlenderness": 1,
+          "doorAspect": 1,
+          "storyHeight": 1
+        },
+        "roofType": "gable",
+        "technique": ""
+      },
+      "id": "medieval-european-romanesque",
+      "name": "Medieval European Romanesque",
+      "rules": [],
+      "typologyMix": {
+        "granary": 2,
+        "manor": 2,
+        "market_stall": 1,
+        "peasant_home": 6,
+        "temple": 4,
+        "townhouse": 5,
+        "watchtower": 4
+      }
+    },
+    {
+      "dateRange": [
+        1140,
+        1400
+      ],
+      "defaults": {
+        "ornamentDensity": "moderate",
+        "palette": [],
+        "proportions": {
+          "columnSlenderness": 1,
+          "doorAspect": 1,
+          "storyHeight": 1
+        },
+        "roofType": "gable",
+        "technique": ""
+      },
+      "id": "medieval-european-gothic",
+      "name": "Medieval European Gothic",
+      "rules": [],
+      "typologyMix": {
+        "civic_hall": 1,
+        "manor": 1,
+        "market_stall": 2,
+        "peasant_home": 6,
+        "temple": 1,
+        "townhouse": 4,
+        "watchtower": 1
+      }
+    }
+  ],
+  "id": "medieval-european",
+  "materials": [
+    {
+      "id": "limestone",
+      "name": "Limestone"
+    },
+    {
+      "id": "granite",
+      "name": "Granite"
+    },
+    {
+      "id": "sandstone",
+      "name": "Sandstone"
+    },
+    {
+      "id": "marble",
+      "name": "Marble"
+    },
+    {
+      "id": "oak",
+      "name": "Oak"
+    },
+    {
+      "id": "pine",
+      "name": "Pine"
+    },
+    {
+      "id": "mudbrick",
+      "name": "Mudbrick"
+    },
+    {
+      "id": "fired-brick",
+      "name": "Fired Brick"
+    },
+    {
+      "id": "slate",
+      "name": "Slate"
+    },
+    {
+      "id": "terracotta",
+      "name": "Terracotta"
+    },
+    {
+      "id": "lime-plaster",
+      "name": "Lime Plaster"
+    },
+    {
+      "id": "iron",
+      "name": "Iron"
+    },
+    {
+      "id": "timber",
+      "name": "Timber"
+    },
+    {
+      "id": "stone",
+      "name": "Stone"
+    }
+  ],
+  "name": "Medieval European",
+  "ornaments": [
+    {
+      "id": "acanthus-leaf",
+      "name": "Acanthus Leaf"
+    },
+    {
+      "id": "interlace-knot",
+      "name": "Interlace Knot"
+    },
+    {
+      "id": "dentil",
+      "name": "Dentil"
+    },
+    {
+      "id": "egg-and-dart",
+      "name": "Egg and Dart"
+    },
+    {
+      "id": "rosette",
+      "name": "Rosette"
+    },
+    {
+      "id": "palmette",
+      "name": "Palmette"
+    },
+    {
+      "id": "meander",
+      "name": "Meander"
+    },
+    {
+      "id": "guilloche",
+      "name": "Guilloche"
+    },
+    {
+      "id": "fleur-de-lis",
+      "name": "Fleur-de-lis"
+    },
+    {
+      "id": "quatrefoil",
+      "name": "Quatrefoil"
+    },
+    {
+      "id": "trefoil",
+      "name": "Trefoil"
+    },
+    {
+      "id": "floral-spray",
+      "name": "Floral Spray"
+    },
+    {
+      "id": "geometric-arabesque",
+      "name": "Geometric Arabesque"
+    },
+    {
+      "id": "dragon-scroll",
+      "name": "Dragon Scroll"
+    },
+    {
+      "id": "cloud-motif",
+      "name": "Cloud Motif"
+    },
+    {
+      "id": "lotus-pad",
+      "name": "Lotus Pad"
+    },
+    {
+      "id": "wave-crest",
+      "name": "Wave Crest"
+    },
+    {
+      "id": "corbel-head",
+      "name": "Corbel Head"
+    },
+    {
+      "id": "gargoyle-face",
+      "name": "Gargoyle Face"
+    },
+    {
+      "id": "chevron-band",
+      "name": "Chevron Band"
+    },
+    {
+      "id": "corner-quoins",
+      "name": "corner-quoins"
+    },
+    {
+      "id": "rounded-arch",
+      "name": "rounded-arch"
+    },
+    {
+      "id": "decorative-shingles",
+      "name": "decorative-shingles"
+    },
+    {
+      "id": "round-arch",
+      "name": "round-arch"
+    },
+    {
+      "id": "blind-arcade",
+      "name": "blind-arcade"
+    },
+    {
+      "id": "tympanum-carving",
+      "name": "tympanum-carving"
+    },
+    {
+      "id": "pointed-arch",
+      "name": "pointed-arch"
+    },
+    {
+      "id": "flying-buttress",
+      "name": "flying-buttress"
+    },
+    {
+      "id": "rose-window",
+      "name": "rose-window"
+    },
+    {
+      "id": "gargoyle",
+      "name": "gargoyle"
+    }
+  ],
+  "region": "Western Europe",
+  "rules": [],
+  "tagAxes": [
+    {
+      "id": "climate",
+      "label": "Climate",
+      "values": [
+        {
+          "id": "arid",
+          "label": "Arid"
+        },
+        {
+          "id": "temperate",
+          "label": "Temperate"
+        },
+        {
+          "id": "alpine",
+          "label": "Alpine"
+        },
+        {
+          "id": "coastal",
+          "label": "Coastal"
+        }
+      ]
+    },
+    {
+      "id": "terrain",
+      "label": "Terrain",
+      "values": [
+        {
+          "id": "lowland",
+          "label": "Lowland"
+        },
+        {
+          "id": "highland",
+          "label": "Highland"
+        },
+        {
+          "id": "coastal-cliff",
+          "label": "Coastal Cliff"
+        }
+      ]
+    },
+    {
+      "id": "wealth",
+      "label": "Wealth",
+      "values": [
+        {
+          "id": "peasant",
+          "label": "Peasant"
+        },
+        {
+          "id": "merchant",
+          "label": "Merchant"
+        },
+        {
+          "id": "noble",
+          "label": "Noble"
+        },
+        {
+          "id": "royal",
+          "label": "Royal"
+        }
+      ]
+    },
+    {
+      "id": "defensive-posture",
+      "label": "Defensive Posture",
+      "values": [
+        {
+          "id": "peaceful",
+          "label": "Peaceful"
+        },
+        {
+          "id": "borderland",
+          "label": "Borderland"
+        },
+        {
+          "id": "wartime",
+          "label": "Wartime"
+        }
+      ]
+    },
+    {
+      "id": "water-access",
+      "label": "Water Access",
+      "values": [
+        {
+          "id": "riverine",
+          "label": "Riverine"
+        },
+        {
+          "id": "lakeside",
+          "label": "Lakeside"
+        },
+        {
+          "id": "dry",
+          "label": "Dry"
+        }
+      ]
+    },
+    {
+      "id": "trade",
+      "label": "Trade",
+      "values": [
+        {
+          "id": "isolated",
+          "label": "Isolated"
+        },
+        {
+          "id": "local",
+          "label": "Local"
+        },
+        {
+          "id": "long-distance",
+          "label": "Long-Distance"
+        }
+      ]
+    }
+  ]
+}

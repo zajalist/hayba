@@ -1,0 +1,925 @@
+00:01 Hey everybody, Martin from Quad Spinner
+00:02 
+
+00:02 here and today we're going to be
+00:04 
+
+00:04 covering dusting. Dusting is one of my
+00:06 
+
+00:06 favorite nodes for snow in Gaia. It can
+00:09 
+
+00:09 give you extremely nice micro detail
+00:11 
+
+00:11 that truly enhances the texture of the
+00:13 
+
+00:13 mountain and you get a bunch of controls
+00:14 
+
+00:14 so you can dial it in perfectly to your
+00:17 
+
+00:17 needs. So without further ado, let's
+00:19 
+
+00:19 jump straight into the node and
+00:20 
+
+00:20 afterwards I'll kind of run down how I
+00:22 
+
+00:22 made this kind of cool mineralrich
+00:24 
+
+00:24 looking rocky hill/ mountain with a
+00:28 
+
+00:28 bunch of snow on top. So, when we get
+00:29 
+
+00:29 into this node, this is kind of what
+00:31 
+
+00:31 you'll see. We'll get into the settings
+00:33 
+
+00:33 right away. The snowfall settings are
+00:35 
+
+00:35 quite simple. The strength, of course,
+00:37 
+
+00:37 is the strength of the snowfall. So, if
+00:39 
+
+00:39 we lower it, you'll get a lot less snow.
+00:41 
+
+00:41 And if you turn it up, you'll get more
+00:42 
+
+00:42 snow. The snow line controls the height
+00:45 
+
+00:45 of the snow. So, if you want the snow to
+00:47 
+
+00:47 be purely placed on your upper peak
+00:49 
+
+00:49 areas, you'll just turn it up. And
+00:51 
+
+00:51 lowering it will make sure the snow
+00:52 
+
+00:52 becomes visible at lower areas, too. The
+00:54 
+
+00:54 fall-off works a little bit differently
+00:56 
+
+00:56 than your regular gradient fall-off. It
+00:58 
+
+00:58 actually kind of controls the strength
+01:00 
+
+01:00 instead of just having a gradient
+01:02 
+
+01:02 fall-off where it just kind of fades
+01:04 
+
+01:04 out. You'll notice that the upper areas
+01:06 
+
+01:06 are a lot more full and dense than the
+01:08 
+
+01:08 lower areas where it's a lot more kind
+01:09 
+
+01:09 of scattered and see-through. Normally,
+01:12 
+
+01:12 I work with a fall-off of around.5,
+01:14 
+
+01:14 which is the default setting. Now, if we
+01:17 
+
+01:17 want to have our mountain with a lot of
+01:19 
+
+01:19 snow on top, but we also want to keep a
+01:22 
+
+01:22 little bit of like scattered sprinkled
+01:24 
+
+01:24 snow in the valley, we can just turn up
+01:26 
+
+01:26 the falloff and you'll get that snow
+01:29 
+
+01:29 down there very lightly. The cool thing
+01:31 
+
+01:31 about this fall-off is that it really
+01:33 
+
+01:33 looks natural because it will have some
+01:35 
+
+01:35 really dense bits even at lower areas,
+01:38 
+
+01:38 just less of them, while the top area of
+01:40 
+
+01:40 course is just completely covered in a
+01:42 
+
+01:42 denser layer. Now for the distribution,
+01:44 
+
+01:44 we'll see that the base setting is set
+01:46 
+
+01:46 directional. This means that the snow
+01:48 
+
+01:48 will only be on one side of the
+01:49 
+
+01:49 mountain. You could use this to mimic
+01:52 
+
+01:52 sunlight hitting a mountain from a
+01:53 
+
+01:53 certain angle. You can think that the
+01:55 
+
+01:55 dusted snow is quite thin, so when the
+01:57 
+
+01:57 sun comes up and hits one side of the
+01:58 
+
+01:58 mountain, it melts on that side.
+02:00 
+
+02:00 However, it stays on these shadowy
+02:02 
+
+02:02 areas. If you look at a lot of reference
+02:04 
+
+02:04 imagery, you'll see that this is quite
+02:05 
+
+02:05 common. We can control the direction of
+02:08 
+
+02:08 the snow by just playing with the
+02:10 
+
+02:10 direction slider. If we lower the
+02:12 
+
+02:12 coverage, the angle at which the snow is
+02:13 
+
+02:13 appearing becomes smaller and smaller.
+02:15 
+
+02:15 And if we increase it, you'll see that
+02:17 
+
+02:17 the snow kind of starts creeping over
+02:19 
+
+02:19 and you'll see that the snow becomes
+02:21 
+
+02:21 more visible at more angles of the
+02:22 
+
+02:22 mountain. If we turn it all the way up,
+02:24 
+
+02:24 you can almost get like a full coverage.
+02:26 
+
+02:26 You only see that the density is a
+02:28 
+
+02:28 slightly different. So you'll see on
+02:30 
+
+02:30 this side is completely dense and on
+02:32 
+
+02:32 this small side it's a little bit less
+02:34 
+
+02:34 dense. If you just want your mountain to
+02:36 
+
+02:36 be fully covered in snow, you can also
+02:38 
+
+02:38 just turn off the directional setting
+02:39 
+
+02:39 and you'll have an even spread all
+02:41 
+
+02:41 across your terrain. The coverage slider
+02:44 
+
+02:44 does not impact the snow distribution
+02:46 
+
+02:46 anymore once the directional setting is
+02:48 
+
+02:48 turned off. At this point, you just use
+02:50 
+
+02:50 your strength and melt settings to kind
+02:51 
+
+02:51 of dial in that density. The peak
+02:54 
+
+02:54 setting will actually distribute more
+02:56 
+
+02:56 snow along the peaks. So, if you want
+02:58 
+
+02:58 your peak of the mountain to be
+02:60 
+
+02:60 completely covered, then you can just
+03:02 
+
+03:02 turn this up and you'll see that you'll
+03:04 
+
+03:04 get extremely white, densely packed snow
+03:07 
+
+03:07 on the peaks of your terrain. Slope
+03:09 
+
+03:09 coverage kind of speaks for itself. It
+03:11 
+
+03:11 masks the snow from the slope. So, if we
+03:13 
+
+03:13 lower this, you'll see that the slopes
+03:15 
+
+03:15 become a lot less affected by the
+03:17 
+
+03:17 dusting. And if we turn it up, you'll
+03:19 
+
+03:19 see a lot more of the dusting all over
+03:21 
+
+03:21 the terrain. Now, if we turn off flow,
+03:24 
+
+03:24 you actually see it more accurately.
+03:29 
+
+03:29 I would say that slope coverage is a
+03:31 
+
+03:31 great way to kind of mask out your cliff
+03:33 
+
+03:33 areas. But if you want to be more
+03:34 
+
+03:34 precise, you can always just use a
+03:36 
+
+03:36 multiply with the actual slope selection
+03:39 
+
+03:39 like so on top of your dusting just to
+03:42 
+
+03:42 make sure that you really don't get any
+03:43 
+
+03:43 dusting on cliff areas. Flow will kind
+03:46 
+
+03:46 of create a flow texture on top of the
+03:48 
+
+03:48 dusting. It also kind of blurs out the
+03:50 
+
+03:50 dusting. So you'll see that it's less
+03:52 
+
+03:52 intense. So if we turn it all the way
+03:54 
+
+03:54 off, you see it's quite sharp. And if we
+03:56 
+
+03:56 turn it up a bit, it blurs the actual
+03:58 
+
+03:58 distribution a little bit, but you'll
+03:60 
+
+04:00 also get these little flow lines running
+04:02 
+
+04:02 down your mountain. I personally turn it
+04:04 
+
+04:04 off and use color erosion just to have a
+04:06 
+
+04:06 little bit more control. But if you just
+04:08 
+
+04:08 only want to use dusting, you can easily
+04:10 
+
+04:10 use the flow setting inside of the node.
+04:13 
+
+04:13 Melt works a little bit differently from
+04:15 
+
+04:15 strength. Uh whereas strength actually
+04:17 
+
+04:17 controls kind of the overall density.
+04:19 
+
+04:19 Melt really dials in kind of the faded
+04:22 
+
+04:22 areas. So dusting is not just a one and
+04:25 
+
+04:25 zero value. There's a bit of a fade in
+04:28 
+
+04:28 between. You'll see this a lot in real
+04:29 
+
+04:29 life imagery where the snow is not dense
+04:32 
+
+04:32 enough to completely turn the terrain
+04:35 
+
+04:35 white. You'll kind of get this grayish
+04:37 
+
+04:37 looking effect uh of the dusting laying
+04:39 
+
+04:39 on top of the terrain. And we can get
+04:41 
+
+04:41 that by turning down the melt. You'll
+04:43 
+
+04:43 see a bit of this grayish like half
+04:46 
+
+04:46 dense area appearing. Now the base value
+04:49 
+
+04:49 is set to 0 4 where it's less visible.
+04:52 
+
+04:52 But basically lowering the melt can just
+04:54 
+
+04:54 kind of make your dusting look a bit
+04:56 
+
+04:56 more soft rather than a very sharp
+04:60 
+
+04:60 falloff. If we turn up the melt, as you
+05:02 
+
+05:02 can see here, it becomes very contrasty.
+05:04 
+
+05:04 Gritty is just a very light contrasty
+05:07 
+
+05:07 effect. If we turn it off, it's a very
+05:09 
+
+05:09 slight difference, but you'll see that
+05:11 
+
+05:11 the brighter areas are becoming a little
+05:13 
+
+05:13 bit less bright. It's a very light
+05:15 
+
+05:15 effect and it's better seen at higher
+05:17 
+
+05:17 resolution. If we use include existing
+05:20 
+
+05:20 snow, it will take the snow from the
+05:21 
+
+05:21 previous snow nodes and add it on top.
+05:24 
+
+05:24 This way you don't have to use a
+05:25 
+
+05:25 combined node to combine the two
+05:26 
+
+05:26 together if you'd like to keep your node
+05:29 
+
+05:29 stack quite compact. We also have se
+05:31 
+
+05:31 controls and then we have artistic
+05:33 
+
+05:33 control which actually masks out flat
+05:35 
+
+05:35 areas of your terrain. It's just an
+05:37 
+
+05:37 interesting control in case you need it.
+05:39 
+
+05:39 However, most of the time you'll
+05:40 
+
+05:40 probably keep this at zero. The texture
+05:42 
+
+05:42 input is quite useful for people who
+05:43 
+
+05:43 don't want to create a very large
+05:45 
+
+05:45 texturing node stack. You can actually
+05:47 
+
+05:47 just plug in your color texture right
+05:49 
+
+05:49 into this texture input and you get it
+05:51 
+
+05:51 all together at once. However, doing it
+05:54 
+
+05:54 this way, you do lose the include
+05:56 
+
+05:56 existing snow option. So, be aware of
+05:58 
+
+05:58 that. All right. So, now I'm going to
+05:59 
+
+05:59 actually showcase to you guys how I
+06:00 
+
+06:00 created this kind of sandstone
+06:03 
+
+06:03 mineralrich looking hill with a bunch of
+06:06 
+
+06:06 detail and the snow is really making
+06:08 
+
+06:08 sure that those details pop. Let's start
+06:11 
+
+06:11 from the beginning. I use a voronoi just
+06:13 
+
+06:13 to get an interesting base shape and
+06:15 
+
+06:15 then use an edge node set to round style
+06:18 
+
+06:18 to create this singular terrain.
+06:20 
+
+06:20 Afterwards, I use rivers to make the
+06:22 
+
+06:22 terrain a bit more natural looking and
+06:23 
+
+06:23 create these natural valleys which first
+06:26 
+
+06:26 were just, you know, the classic voronoi
+06:28 
+
+06:28 where you have this very sharp concave.
+06:30 
+
+06:30 Rivers will make sure that turns into a
+06:32 
+
+06:32 bit more of a natural looking valley. At
+06:34 
+
+06:34 this point, I use a thermal shaper with
+06:36 
+
+06:36 a 66 shape. So, it's actually going to
+06:38 
+
+06:38 bulk up our terrain. And I set the scale
+06:40 
+
+06:40 to 60. This scale is going to bulk up
+06:42 
+
+06:42 some of the individual elements, but
+06:44 
+
+06:44 also bulk up the whole terrain together.
+06:47 
+
+06:47 I use a warp set to the max blend mode
+06:49 
+
+06:49 to just create some rock detail. As you
+06:51 
+
+06:51 can see, it's starting to pop some rock
+06:53 
+
+06:53 details out here. You'll get some cool
+06:55 
+
+06:55 cliff details on top of your terrain
+06:57 
+
+06:57 without really changing the base shape
+06:59 
+
+06:59 too much because it's set to the max
+07:00 
+
+07:00 blend mode. Now, I'm going to hop into
+07:02 
+
+07:02 erosion 2. Eosion scale set to 500,
+07:05 
+
+07:05 duration 25. So, quite a bit. I also
+07:08 
+
+07:08 make sure that there's a decent amount
+07:09 
+
+07:09 of bed load and coarse sediments being
+07:12 
+
+07:12 added. So we get this rocky detail, but
+07:14 
+
+07:14 then afterwards also a kind of a smooth,
+07:17 
+
+07:17 very sedimented slope, turning this into
+07:19 
+
+07:19 a rocky hill rather than like a mountain
+07:22 
+
+07:22 with deep valleys. At this point, I take
+07:24 
+
+07:24 the slope and add a sandstone on top.
+07:27 
+
+07:27 This is just going to bring back some of
+07:28 
+
+07:28 the detail that we may be losing from
+07:30 
+
+07:30 the erosion and make this, you know,
+07:33 
+
+07:33 rocky cliff detail really pop out. And
+07:36 
+
+07:36 lastly, I use a snow snow line set to.16
+07:40 
+
+07:40 and melt 24. This way, we're going to
+07:42 
+
+07:42 get these small little pockets of deep
+07:44 
+
+07:44 snow added on top. After this, I use a
+07:48 
+
+07:48 choke point and we start the texturing
+07:50 
+
+07:50 process. For the ground texture, I use a
+07:52 
+
+07:52 texture base set to equalize and a
+07:54 
+
+07:54 texturizer. And I combine them together.
+07:58 
+
+07:58 I get a sap map like this and use a
+08:00 
+
+08:00 medium roughness. There's not much
+08:02 
+
+08:02 detail on this sap map because I'm going
+08:03 
+
+08:03 to use color erosion to really make this
+08:06 
+
+08:06 look like a very sediment heavy
+08:07 
+
+08:07 mineralrich terrain.
+08:09 
+
+08:09 Here I'm using color erosion just to get
+08:12 
+
+08:12 those flows in there. And at this point
+08:14 
+
+08:14 we're going to add the snow. So I'm
+08:16 
+
+08:16 using dusting here. No direction used.
+08:19 
+
+08:19 Quite a high snow line but a lot of
+08:21 
+
+08:21 falloff. So you'll see that the top of
+08:23 
+
+08:23 the mountain is very dense but the snow
+08:25 
+
+08:25 runs all the way down to the bottom
+08:27 
+
+08:27 areas here. And there's still some
+08:28 
+
+08:28 sprinkle down here. I'm using a 0.25 025
+08:31 
+
+08:31 on the peak. So I'm making sure that the
+08:32 
+
+08:32 peaks are really covered in quite a
+08:35 
+
+08:35 thick layer of snow. I'm using the 0.5
+08:38 
+
+08:38 like the base snow coverage. This will
+08:40 
+
+08:40 make sure that the cliff areas are not
+08:43 
+
+08:43 covered with snow. I turned the meltdown
+08:45 
+
+08:45 to 2. This way I kind of get the faded
+08:47 
+
+08:47 snow at the lower areas that's still
+08:49 
+
+08:49 very visible. And I also opted to keep
+08:51 
+
+08:51 the flow set to zero because this way I
+08:54 
+
+08:54 really maintain that sandstone detail
+08:56 
+
+08:56 that you can see through the slope here.
+08:58 
+
+08:58 If I turn the flow up a bit, you'll
+08:60 
+
+08:60 start losing that detail because it
+09:01 
+
+09:01 starts flowing over these small ridges.
+09:03 
+
+09:03 However, because the flow is off, this
+09:05 
+
+09:05 snow mask is going to be very contrasty,
+09:07 
+
+09:07 and you might actually spot the pixels a
+09:09 
+
+09:09 little bit too easy if you actually
+09:10 
+
+09:10 render this out. So, I'm going to use a
+09:12 
+
+09:12 color erosion here with a diffusion set
+09:14 
+
+09:14 to one and a transfer distance of 01.
+09:16 
+
+09:16 What this will do is slightly blur out
+09:18 
+
+09:18 the snow. You can see it right here. The
+09:21 
+
+09:21 diffusion kind of warps and blurs the
+09:23 
+
+09:23 actual snow mask, and this way it looks
+09:25 
+
+09:25 a bit more natural and soft. I also use
+09:27 
+
+09:27 a min blend mode. This will make sure
+09:29 
+
+09:29 that the cliffs or the really dark areas
+09:31 
+
+09:31 are maintained and you don't get the
+09:34 
+
+09:34 snow blurring over areas you don't want
+09:36 
+
+09:36 it. At this point, I use a combine node.
+09:38 
+
+09:38 Set the screen with the actual snow
+09:41 
+
+09:41 output. From here, I use a portal to get
+09:43 
+
+09:43 the snow and I combine it together.
+09:47 
+
+09:47 And then lastly, I use another combine
+09:49 
+
+09:49 node to combine the snow and the actual
+09:51 
+
+09:51 color map using screen. It's very
+09:54 
+
+09:54 important you use screen because if you
+09:56 
+
+09:56 use add, you will actually get this
+09:58 
+
+09:58 effect where it brightens up the color
+09:60 
+
+09:60 map at these lower values. So this kind
+10:01 
+
+10:01 of gray value will be added on top of
+10:04 
+
+10:04 this color map which will kind of create
+10:06 
+
+10:06 this weird saturation issue/ brightness
+10:09 
+
+10:09 issue.
+10:10 
+
+10:10 If you use screen, you avoid this and
+10:12 
+
+10:12 you maintain your original color map
+10:14 
+
+10:14 without being affected too much by the
+10:16 
+
+10:16 snow. Lastly, I'm just using a light X
+10:18 
+
+10:18 node to showcase this terrain in all its
+10:20 
+
+10:20 glory. So, there's dusting for you. And
+10:23 
+
+10:23 I think we can all agree that dusting
+10:25 
+
+10:25 really adds so much detail and
+10:27 
+
+10:27 threedimensionality to this terrain. And
+10:29 
+
+10:29 it especially really pops those details
+10:31 
+
+10:31 you get from the sandstone by kind of
+10:33 
+
+10:33 like showing them. You can really see
+10:34 
+
+10:34 those ridges in this terrain. Now, so
+10:36 
+
+10:36 yeah, dusting is an amazing node to add
+10:38 
+
+10:38 snow onto your terrain and it's pretty
+10:40 
+
+10:40 much a must for every snowy terrain out
+10:43 
+
+10:43 there. I hope this was a very useful
+10:44 
+
+10:44 video for you guys and I hope you guys
+10:46 
+
+10:46 will use dusting a lot. It's an amazing
+10:48 
+
+10:48 node and it gives you such great micro
+10:50 
+
+10:50 detail. Anyway guys, hope this helped a
+10:53 
+
+10:53 lot. Let me know what you guys think and
+10:55 
+
+10:55 I'll see you guys in the next one.

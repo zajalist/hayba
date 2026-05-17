@@ -16,15 +16,32 @@ export {
   isFootprintShape, isTypology, isStyleSheet, isStyleGuide,
 } from './validate.js';
 
-export type { Registry, StyleGuideMeta } from './registry.js';
+export type { Registry } from './registry.js';
 export {
   ArchitectureRegistryError,
-  loadRegistry, listStyleGuideMeta, getStyleGuide, getTypology,
+  loadRegistry, getTypology,
 } from './registry.js';
 
 export type {
-  ListStyleGuidesResult, GetStyleGuideResult, GetTypologyResult, ValidateStyleGuideResult,
+  GetTypologyResult, ValidateStyleGuideResult,
 } from './mcp.js';
 export {
-  listStyleGuides, getStyleGuideTool, getTypologyTool, validateStyleGuideTool,
+  getTypologyTool, validateStyleGuideTool,
 } from './mcp.js';
+
+// Element catalog + kernel surface
+export type {
+  ProfileHint, ProfileSlot, ParamSlot, ParamSlotKind,
+  ElementCategory, ElementGraphRef, Element,
+  ProvenanceSource, BindingProvenance, ElementBinding,
+} from './schema.js';
+export { validateElement, validateElementBinding, isElement } from './validate.js';
+export type { ElementCatalog, BindingCatalog, EmitResult, EmitError } from './element-registry.js';
+export {
+  loadElementCatalog, loadBinding, emitElementMesh,
+} from './element-registry.js';
+
+export { registerBinding } from './element-registry.js';
+
+// Culture system (v2)
+export * from './culture/index.js';

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   validateFootprintShape, validateTypology, validateStyleSheet,
   validateStyleGuide, validateStyleGuideRefs,
+  validateElement, validateElementBinding,
 } from './validate.js';
 
 describe('validateFootprintShape', () => {
@@ -191,5 +192,93 @@ describe('validateStyleGuideRefs', () => {
     expect(errs).toHaveLength(1);
     expect(errs[0].path).toBe('/g/typologyWeights/0/typologyId');
     expect(errs[0].message).toMatch(/peasant_home/);
+  });
+});
+
+describe('validateElement', () => {
+  const valid = {
+    id: 'column',
+    category: 'connector',
+    graph: { kind: 'kernel-fn', module: './kernel/elements/column.js', export: 'columnGraph' },
+    profileSlots: [
+      { name: 'shaft', description: 'half-profile', hint: 'symmetric-half' },
+    ],
+    paramSchema: [
+      { name: 'shaft_height_m', kind: 'number', range: [1.5, 8.0], default: 3.0 },
+    ],
+  };
+
+  it('accepts a well-formed element', () => {
+    expect(validateElement(valid, '/element')).toEqual([]);
+  });
+
+  it('rejects unknown category', () => {
+    const errs = validateElement({ ...valid, category: 'mystery' }, '/element');
+    expect(errs.some(e => e.path === '/element/category')).toBe(true);
+  });
+
+  it('rejects unknown profile hint', () => {
+    const bad = { ...valid, profileSlots: [{ name: 'x', description: '', hint: 'wonky' }] };
+    const errs = validateElement(bad, '/element');
+    expect(errs.some(e => e.path === '/element/profileSlots/0/hint')).toBe(true);
+  });
+
+  it('rejects param range with min > max', () => {
+    const bad = { ...valid, paramSchema: [{ name: 'h', kind: 'number', range: [8, 1], default: 3 }] };
+    const errs = validateElement(bad, '/element');
+    expect(errs.some(e => e.path.startsWith('/element/paramSchema/0/range'))).toBe(true);
+  });
+
+  it('rejects enum slot with no choices', () => {
+    const bad = { ...valid, paramSchema: [{ name: 'fluting', kind: 'enum', default: 'shallow' }] };
+    const errs = validateElement(bad, '/element');
+    expect(errs.some(e => e.path === '/element/paramSchema/0/choices')).toBe(true);
+  });
+});
+
+describe('validateElementBinding', () => {
+  const element = {
+    id: 'column',
+    category: 'connector',
+    graph: { kind: 'kernel-fn', module: './kernel/elements/column.js', export: 'columnGraph' },
+    profileSlots: [{ name: 'shaft', description: '', hint: 'symmetric-half' }],
+    paramSchema: [{ name: 'shaft_height_m', kind: 'number', range: [1.5, 8.0], default: 3.0 }],
+  } as const;
+
+  const valid = {
+    elementId: 'column',
+    styleSheetId: 'medieval-european-gothic',
+    seed: 0x1234n,
+    profiles: { shaft: '<svg viewBox="0 0 200 1000"><path d="M0 0L100 0L100 1000L0 1000Z"/></svg>' },
+    params: { shaft_height_m: 4.5 },
+    provenance: { source: 'human', createdAt: '2026-05-13T00:00:00Z' },
+  };
+
+  it('accepts a well-formed binding', () => {
+    expect(validateElementBinding(valid, element as never, '/b')).toEqual([]);
+  });
+
+  it('rejects missing required profile slot', () => {
+    const bad = { ...valid, profiles: {} };
+    const errs = validateElementBinding(bad, element as never, '/b');
+    expect(errs.some(e => e.path === '/b/profiles/shaft')).toBe(true);
+  });
+
+  it('rejects param out of declared range', () => {
+    const bad = { ...valid, params: { shaft_height_m: 100 } };
+    const errs = validateElementBinding(bad, element as never, '/b');
+    expect(errs.some(e => e.path === '/b/params/shaft_height_m')).toBe(true);
+  });
+
+  it('rejects elementId mismatch', () => {
+    const bad = { ...valid, elementId: 'cornice' };
+    const errs = validateElementBinding(bad, element as never, '/b');
+    expect(errs.some(e => e.path === '/b/elementId')).toBe(true);
+  });
+
+  it('rejects unknown provenance source', () => {
+    const bad = { ...valid, provenance: { ...valid.provenance, source: 'unicorn' } };
+    const errs = validateElementBinding(bad, element as never, '/b');
+    expect(errs.some(e => e.path === '/b/provenance/source')).toBe(true);
   });
 });

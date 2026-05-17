@@ -7,7 +7,14 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary'],
-      include: ['src/validate.ts', 'src/registry.ts', 'src/mcp.ts'],
+      include: [
+        'src/validate.ts',
+        'src/registry.ts',
+        'src/mcp.ts',
+        'src/element-registry.ts',
+        'src/kernel/**/*.ts',
+      ],
+      exclude: ['**/*.test.ts', 'src/kernel/elements/index.ts'],
     },
   },
 });

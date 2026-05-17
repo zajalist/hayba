@@ -1,0 +1,10 @@
+{
+  "name": "@hayba/frame-stream",
+  "version": "0.1.0",
+  "description": "Canonical decoder + tag registry for the Hayba tectonic-sim binary frame stream. Used by viz/ and tectonic-explorer.",
+  "type": "module",
+  "main": "./index.js",
+  "exports": "./index.js",
+  "private": true,
+  "license": "MIT"
+}

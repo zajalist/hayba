@@ -1,0 +1,1099 @@
+00:00 Ready to unlock the true power of
+00:03 
+
+00:03 terrain shaping? The modify nodes in
+00:05 
+
+00:05 Gaia are your secret weapon. And today
+00:08 
+
+00:08 we're diving deep. And finally, by
+00:11 
+
+00:11 building a landscape with the new nodes,
+00:13 
+
+00:13 we'll do a practice exercise together.
+00:16 
+
+00:16 The adjust node. The adjust node is a
+00:19 
+
+00:19 lightweight and flexible tool used to
+00:21 
+
+00:21 quickly fine-tune the shape and volume
+00:23 
+
+00:23 of your terrain. It allows you to subtly
+00:25 
+
+00:25 reduce or enhance the overall bulk of a
+00:28 
+
+00:28 terrain without altering its
+00:30 
+
+00:30 foundational structure. This is
+00:32 
+
+00:32 especially useful during the early
+00:34 
+
+00:34 stages of landscape design when you need
+00:36 
+
+00:36 quick corrections without redoing your
+00:38 
+
+00:38 entire node setup. For example, if we
+00:41 
+
+00:41 add the adjust node to the mountain
+00:43 
+
+00:43 node, we can control the amount of
+00:45 
+
+00:45 elevation and give it some interesting
+00:47 
+
+00:47 variations.
+00:49 
+
+00:49 [Music]
+01:08 
+
+01:08 The auto level node. The auto level node
+01:11 
+
+01:11 automatically remaps the height values
+01:13 
+
+01:13 of your terrain to use the full zero to
+01:16 
+
+01:16 one elevation range. This enhances
+01:18 
+
+01:18 contrast, detail, visibility, and helps
+01:21 
+
+01:21 normalize terrains after combining or
+01:24 
+
+01:24 distorting them. For example, let's add
+01:26 
+
+01:26 a mountain range and then apply the
+01:29 
+
+01:29 autole node to it. As you can see, it
+01:31 
+
+01:31 makes all the details extremely sharp.
+01:34 
+
+01:34 Of course, in the settings, you can
+01:36 
+
+01:36 control this by adjusting the influence
+01:38 
+
+01:38 value. The clamp node. The clamp node
+01:41 
+
+01:41 limits the height values of your terrain
+01:43 
+
+01:43 within a specific minimum and maximum
+01:46 
+
+01:46 range. It essentially clips the
+01:48 
+
+01:48 elevation to prevent unwanted spikes or
+01:50 
+
+01:50 deep pits.
+02:02 
+
+02:02 The clip node. The clip node removes all
+02:05 
+
+02:05 height data below or above a specific
+02:07 
+
+02:07 threshold, essentially cutting off parts
+02:10 
+
+02:10 of the terrain. Unlike clamp which
+02:12 
+
+02:12 limits values, clip completely deletes
+02:15 
+
+02:15 everything outside the chosen range. The
+02:18 
+
+02:18 way this node works is that by lowering
+02:20 
+
+02:20 the max value, it cuts down the higher
+02:22 
+
+02:22 elevations and by raising the min value,
+02:25 
+
+02:25 it clips the lower areas.
+02:28 
+
+02:28 For example, you can combine it with a
+02:30 
+
+02:30 lake node to achieve this kind of
+02:32 
+
+02:32 result.
+02:37 
+
+02:37 The denoise node. The den noiseise node
+02:40 
+
+02:40 smooths out unwanted noise and
+02:42 
+
+02:42 highfrequency artifact from your
+02:44 
+
+02:44 terrain, making the surface cleaner and
+02:46 
+
+02:46 more natural. It's like a terrain
+02:48 
+
+02:48 softener without losing too much detail.
+02:51 
+
+02:51 Let's say you've created a scene with
+02:53 
+
+02:53 noise and now you want to smooth or
+02:55 
+
+02:55 soften that noise. This node allows you
+02:58 
+
+02:58 to achieve exactly that.
+03:02 
+
+03:02 The next node is equalize. The equalize
+03:05 
+
+03:05 node redistributes elevation values
+03:08 
+
+03:08 across your terrain to create a more
+03:10 
+
+03:10 balanced, even spread of heights. It's
+03:13 
+
+03:13 useful for enhancing midtones and making
+03:16 
+
+03:16 terrains look more uniform without
+03:18 
+
+03:18 flattening. As you can see, you can
+03:20 
+
+03:20 either reduce or amplify the existing
+03:23 
+
+03:23 details, giving you solid control over
+03:25 
+
+03:25 the scene.
+03:29 
+
+03:29 The extend node. The extend node
+03:31 
+
+03:31 increases the terrain size by
+03:33 
+
+03:33 duplicating and blending its edges
+03:35 
+
+03:35 outward. It's useful for filling gaps,
+03:38 
+
+03:38 extending borders, or preparing terrains
+03:41 
+
+03:41 for tiling. Overall, it's a strange
+03:43 
+
+03:43 node. It randomly adds height while also
+03:46 
+
+03:46 flattening the surface at the same time.
+03:49 
+
+03:49 The flip node. The flip node mirrors
+03:51 
+
+03:51 your terrain along the X or Y-axis. It's
+03:54 
+
+03:54 a quick way to reverse layouts or create
+03:57 
+
+03:57 symmetrical designs without manually
+03:59 
+
+03:59 rebuilding terrain shapes. Let's say
+04:02 
+
+04:02 you've created a mountain range with a
+04:03 
+
+04:03 mountain node and now you want to invert
+04:05 
+
+04:05 it. With the flip node, you can easily
+04:08 
+
+04:08 flip it along the x-axis, y-axis, or
+04:11 
+
+04:11 even both. You can also combine two
+04:13 
+
+04:13 nodes to have them mirrored in different
+04:15 
+
+04:15 directions at the same time. The match
+04:18 
+
+04:18 node aligns the elevation range of one
+04:21 
+
+04:21 terrain to match another. It's perfect
+04:23 
+
+04:23 when blending multiple terrains and you
+04:26 
+
+04:26 want their heights to be consistent. For
+04:28 
+
+04:28 example, let's create two mountains with
+04:30 
+
+04:30 different heights and shapes, one on the
+04:32 
+
+04:32 left and one on the right. Now, if we
+04:35 
+
+04:35 want both to match in height, we can
+04:37 
+
+04:37 simply add a match node. Connect the
+04:39 
+
+04:39 first mountain to the main input and the
+04:42 
+
+04:42 second mountain to the reference input.
+04:44 
+
+04:44 And now they're aligned at the same
+04:46 
+
+04:46 height. To better visualize the result,
+04:49 
+
+04:49 we can combine them.
+04:51 
+
+04:51 [Music]
+05:01 
+
+05:01 The sharpen node. The sharpen node
+05:03 
+
+05:03 enhances the edges and fine details of
+05:06 
+
+05:06 your terrain, making features like
+05:08 
+
+05:08 ridges, cliffs, and slopes appear more
+05:11 
+
+05:11 defined and dramatic.
+05:14 
+
+05:14 The next node is transpose, which also
+05:17 
+
+05:17 works by combining two nodes. For
+05:19 
+
+05:19 example, if we feed it two different
+05:21 
+
+05:21 mountain types, then adjust the amount,
+05:24 
+
+05:24 it tries to blend the shapes of the
+05:26 
+
+05:26 second mountain into the first one. To
+05:28 
+
+05:28 make this effect clearer, we can also
+05:30 
+
+05:30 add a crater node, which really shows
+05:32 
+
+05:32 the difference.
+05:53 
+
+05:53 [Music]
+06:04 
+
+06:04 Now let's move on to the blur subgroup.
+06:09 
+
+06:09 The first node is blur. Overall, it
+06:13 
+
+06:13 smooths out the terrain and essentially
+06:15 
+
+06:15 removes some of the finer details.
+06:20 
+
+06:20 The median node. The median node smooths
+06:23 
+
+06:23 your terrain by replacing each point's
+06:25 
+
+06:25 height with a median value of its
+06:27 
+
+06:27 neighbors. Overall, it's a heavy node,
+06:30 
+
+06:30 and it might even cause your system to
+06:31 
+
+06:31 crash.
+06:33 
+
+06:33 The slope blur. The slope blur node
+06:36 
+
+06:36 blurs your terrain along the slope
+06:38 
+
+06:38 direction rather than uniformly. It adds
+06:41 
+
+06:41 a natural eroded look by pushing the
+06:43 
+
+06:43 blur based on terrain angles. Perfect
+06:46 
+
+06:46 for stylized erosion effects.
+06:56 
+
+06:56 [Music]
+07:10 
+
+07:10 The variable blur. The variable blur
+07:12 
+
+07:12 node applies a blur with varying
+07:14 
+
+07:14 intensity across the terrain based on a
+07:17 
+
+07:17 mask or secondary input. This gives you
+07:19 
+
+07:19 localized control. Some areas stay
+07:22 
+
+07:22 sharp, others get blurred. For example,
+07:25 
+
+07:25 let's mix it with pllin to see it more
+07:27 
+
+07:27 clearly. We press F to lock the viewport
+07:30 
+
+07:30 onto it. As you can see, in some areas,
+07:33 
+
+07:33 the blur takes effect, while in others,
+07:35 
+
+07:35 the pearl and noise is layered on top.
+07:51 
+
+07:51 Now, let's move on to the effects
+07:53 
+
+07:53 subgroup. The first node is origami. It
+07:56 
+
+07:56 gives us an origami- like effect and is
+07:58 
+
+07:58 mostly useful for stylized or more
+08:01 
+
+08:01 unique projects. The next node is
+08:04 
+
+08:04 pixelate. This node transforms the
+08:06 
+
+08:06 entire terrain into a pixelated or
+08:09 
+
+08:09 blocky form, reminding us of Minecraft.
+08:12 
+
+08:12 You can increase or decrease the size of
+08:15 
+
+08:15 the pixels. And by using anti-alias, you
+08:18 
+
+08:18 can break up the uniformity of the
+08:19 
+
+08:19 blocks. The next node is swirl. It adds
+08:22 
+
+08:22 a twisting effect to the terrain and by
+08:25 
+
+08:25 adjusting the scale or shifting it
+08:27 
+
+08:27 around, you can achieve some really
+08:29 
+
+08:29 interesting results.
+08:33 
+
+08:33 The world node. The whirl node creates
+08:36 
+
+08:36 swirling spiral-like distortions in your
+08:39 
+
+08:39 terrain, similar to a vortex effect.
+08:42 
+
+08:42 It's ideal for fantasy style landscapes,
+08:44 
+
+08:44 alien worlds, or adding dramatic twists
+08:47 
+
+08:47 to otherwise natural terrains.
+09:01 
+
+09:01 The next node is curve, which you'll
+09:03 
+
+09:03 also find in most other programs. Here
+09:06 
+
+09:06 we can use control points along the axis
+09:08 
+
+09:08 to decrease or increase height or even
+09:10 
+
+09:10 add more points along the line to give
+09:12 
+
+09:12 the terrain different shapes.
+09:16 
+
+09:16 [Music]
+09:21 
+
+09:21 The filter node. The filter node is a
+09:23 
+
+09:23 flexible post-processing tool that
+09:25 
+
+09:25 allows you to apply a variety of effects
+09:28 
+
+09:28 like smoothing, sharpening, or contrast
+09:31 
+
+09:31 adjustment to your terrain using a
+09:33 
+
+09:33 single node.
+09:43 
+
+09:43 The fold node bends and compresses
+09:46 
+
+09:46 terrain features to simulate geological
+09:49 
+
+09:49 folding like layered rock formations or
+09:51 
+
+09:51 compacted mountains. It gives a natural
+09:54 
+
+09:54 organic deformation to the terrain. As
+09:57 
+
+09:57 you can see, it turns a mountain into a
+09:59 
+
+09:59 layered formation and it gives us three
+10:02 
+
+10:02 different modes to choose from.
+10:08 
+
+10:08 The graphic EQ node. The graphic EQ node
+10:11 
+
+10:11 applies frequency based adjustments to
+10:13 
+
+10:13 the terrain's height data. Acting much
+10:16 
+
+10:16 like an audio equalizer, but for
+10:18 
+
+10:18 elevation. It allows you to amplify or
+10:20 
+
+10:20 attenuate specific elevation frequencies
+10:23 
+
+10:23 such as small bumps, rolling hills, or
+10:26 
+
+10:26 broad mountain forms by adjusting them
+10:28 
+
+10:28 via a graphical equalizer interface.
+10:33 
+
+10:33 The next node is recurve. As you can
+10:36 
+
+10:36 see, it affects the details along the
+10:38 
+
+10:38 edges, allowing you to make them
+10:40 
+
+10:40 sharper, stretched, or even wider by
+10:43 
+
+10:43 lowering its strength. You can also
+10:45 
+
+10:45 achieve some interesting results.
+10:59 
+
+10:59 The sharper node. The sharper node
+11:01 
+
+11:01 increases the definition and contrast of
+11:03 
+
+11:03 your terrain by boosting mid to high
+11:06 
+
+11:06 frequency details. As you can see, this
+11:09 
+
+11:09 node either intensifies or softens the
+11:12 
+
+11:12 details. You can also use local area to
+11:14 
+
+11:14 sharpen the terrain overall. And with
+11:17 
+
+11:17 detail size, you can control the scale
+11:19 
+
+11:19 of the details. The next node is soft
+11:22 
+
+11:22 clip. Imagine you want to carve a flat
+11:24 
+
+11:24 cut into the side of a mountain, but
+11:26 
+
+11:26 still keep the details.
+11:29 
+
+11:29 So you could design a village on top of
+11:30 
+
+11:30 it. This node works perfectly for that.
+11:33 
+
+11:33 You can even use the below mode to
+11:35 
+
+11:35 reduce the slope as well.
+11:44 
+
+11:44 [Music]
+11:51 
+
+11:51 The thermal sharpen node enhances
+11:53 
+
+11:53 terrain details specifically in areas
+11:56 
+
+11:56 affected by thermal erosion. As you can
+11:59 
+
+11:59 see with its useful features, this node
+12:01 
+
+12:01 can really help in creating eroded
+12:03 
+
+12:03 surfaces. The Meshify node. The Meshify
+12:07 
+
+12:07 node converts your terrain height map
+12:09 
+
+12:09 into a 3D mesh within GIA. This is
+12:12 
+
+12:12 useful for exporting terrains as
+12:14 
+
+12:14 geometry for use in external 3D
+12:17 
+
+12:17 applications or game engines. As you can
+12:19 
+
+12:19 see, with its useful features, this node
+12:22 
+
+12:22 can really help in creating eroded
+12:24 
+
+12:24 surfaces.
+12:29 
+
+12:29 Now let's move on to the transform
+12:31 
+
+12:31 subgroup. The next node is aperture
+12:34 
+
+12:34 which comes with five modes. The first
+12:36 
+
+12:36 one is disk where adjusting the size
+12:39 
+
+12:39 gives us different results.
+12:45 
+
+12:45 The second is polygon which transforms
+12:48 
+
+12:48 the surface into a polygonal shape. You
+12:51 
+
+12:51 can control it by changing the vertex
+12:53 
+
+12:53 count and direction.
+12:56 
+
+12:56 The third is stricks which by default
+12:59 
+
+12:59 divides the surface into four corners
+13:02 
+
+13:02 though you can increase that number.
+13:07 
+
+13:07 If you've enjoyed the video so far and
+13:09 
+
+13:09 found it useful, don't forget to support
+13:11 
+
+13:11 us with a like and a comment. It really
+13:13 
+
+13:13 helps the channel grow.
+13:20 
+
+13:20 The fourth mode is line which stretches
+13:23 
+
+13:23 the surface in a linear way and the
+13:25 
+
+13:25 fifth turns the surface into corners
+13:28 
+
+13:28 where you can control the angle and even
+13:30 
+
+13:30 rotate it.
+13:34 
+
+13:34 At first glance, these modes might not
+13:37 
+
+13:37 seem very practical, but if you combine
+13:39 
+
+13:39 them with nodes like adjust, you can
+13:41 
+
+13:41 achieve some really interesting results.
+13:49 
+
+13:49 The dilate node. The dilate node expands
+13:52 
+
+13:52 or grows features in your terrain by
+13:54 
+
+13:54 spreading out high areas into lower
+13:56 
+
+13:56 ones. It's often used to enlarge masks,
+13:59 
+
+13:59 flatten narrow gaps, or merge
+14:01 
+
+14:01 disconnected features. As you can see,
+14:04 
+
+14:04 it offers features similar to the
+14:06 
+
+14:06 previous node. The distance node. The
+14:09 
+
+14:09 distance node calculates the distance of
+14:11 
+
+14:11 each point in your terrain from a
+14:13 
+
+14:13 specific feature, like a mask or shape,
+14:16 
+
+14:16 and outputs a grayscale gradient based
+14:18 
+
+14:18 on that distance. It's commonly used for
+14:20 
+
+14:20 fall-offs, blending, or terrain effects
+14:23 
+
+14:23 based on proximity. For example, it can
+14:26 
+
+14:26 be very useful when working with masks.
+14:29 
+
+14:29 The next node is transform. It allows us
+14:32 
+
+14:32 to move the terrain along the X, Y, and
+14:35 
+
+14:35 Z axis, rotate it, or even scale it.
+14:42 
+
+14:42 The next node is heel. Imagine you've
+14:45 
+
+14:45 created an effect with a node like
+14:46 
+
+14:46 whirl, but along the edges or raised
+14:49 
+
+14:49 surfaces, the details don't look right,
+14:51 
+
+14:51 and in some spots, you're even getting
+14:53 
+
+14:53 artifacts. To fix those issues, you can
+14:55 
+
+14:55 use the heel node. Now, let's move on to
+14:58 
+
+14:58 the warp subgroup, the directional warp.
+15:00 
+
+15:00 The directional warp node distorts your
+15:03 
+
+15:03 terrain in a specific direction using
+15:05 
+
+15:05 another input as a guide. It creates
+15:08 
+
+15:08 stretched, twisted or wind eroded
+15:10 
+
+15:10 effects based on directional flow. For
+15:13 
+
+15:13 example, if we run it once with a
+15:15 
+
+15:15 gradient, we get stretching and shifting
+15:18 
+
+15:18 as we adjust the values. Now, if we feed
+15:20 
+
+15:20 it a pearl instead, we'll get a
+15:22 
+
+15:22 completely different type of
+15:24 
+
+15:24 displacement.
+15:27 
+
+15:27 [Music]
+15:49 
+
+15:49 Heat. Hey, Heat.
+15:53 
+
+15:53 [Music]
+16:00 
+
+16:00 The slope warp. The slope warp node
+16:03 
+
+16:03 distorts terrain based on its slope
+16:05 
+
+16:05 angle. Warping features more strongly in
+16:08 
+
+16:08 steeper areas. It adds natural weathered
+16:11 
+
+16:11 irregularities to cliffs, ridges, and
+16:14 
+
+16:14 slopes. For example, if we add a voronoi
+16:17 
+
+16:17 to it, we'll get these fractured rock
+16:19 
+
+16:19 formations. And we can control their
+16:21 
+
+16:21 intensity as well. Next, we'll also test
+16:24 
+
+16:24 the noise node. The last node is warp.
+16:28 
+
+16:28 As you can see, it distorts the
+16:30 
+
+16:30 surfaces, shifting or warping them into
+16:33 
+
+16:33 wavy patterns. With its options, you can
+16:36 
+
+16:36 generate all kinds of detail variations
+16:38 
+
+16:38 across your terrain.
+17:01 
+
+17:01 Now, let's build a simple landscape
+17:03 
+
+17:03 using the nodes we've learned so far.
+17:06 
+
+17:06 First, we'll create a mountain and then
+17:08 
+
+17:08 use the adjust node to increase its
+17:10 
+
+17:10 intensity. Now, we can use either the
+17:13 
+
+17:13 transform or transform 3D node to move
+17:16 
+
+17:16 it over to the corner.
+17:19 
+
+17:19 [Music]
+17:44 
+
+17:44 Now using the flip node, we can
+17:46 
+
+17:46 duplicate the same mountain and place it
+17:48 
+
+17:48 on The opposite corner.
+18:29 
+
+18:29 Now I'll add a canyon node and using a
+18:32 
+
+18:32 transform combine into our scene. As you
+18:35 
+
+18:35 can see, the transform node is extremely
+18:38 
+
+18:38 useful.
+19:11 
+
+19:11 Now I want to add a shorter mountain
+19:13 
+
+19:13 with a soft cut. So I'll use the soft
+19:15 
+
+19:15 clip node and place in the corner.
+19:29 
+
+19:29 [Music]
+19:53 
+
+19:53 [Music]
+19:59 
+
+19:59 [Music]
+20:10 
+
+20:10 [Music]
+20:33 
+
+20:33 [Music]
+21:03 
+
+21:03 As you can see, our river path is
+21:05 
+
+21:05 blocked. To preserve the original flow,
+21:08 
+
+21:08 we'll create a heightened mask from the
+21:10 
+
+21:10 canyon and subtract it from the new
+21:12 
+
+21:12 mountain.
+21:34 
+
+21:34 [Music]
+21:42 
+
+21:42 [Music]
+21:46 
+
+21:46 Now to make the edges look more natural,
+21:49 
+
+21:49 we'll use the slope blur node. Then by
+21:52 
+
+21:52 adding Voronoi and applying wizard 2,
+21:54 
+
+21:54 which we'll cover more detail in future
+21:56 
+
+21:56 tutorials, we can give the edges a much
+21:59 
+
+21:59 better effect.
+22:09 
+
+22:09 [Music]
+22:12 
+
+22:12 Finally, by adding a lake, we'll wrap up
+22:14 
+
+22:14 this example.
+22:21 
+
+22:21 [Music]
+22:25 
+
+22:25 Thanks so much for watching. If you
+22:27 
+
+22:27 enjoyed this video and found it helpful,
+22:30 
+
+22:30 please support the channel by liking,
+22:32 
+
+22:32 commenting, and subscribing. Your
+22:34 
+
+22:34 support really keeps me motivated to
+22:36 
+
+22:36 make more tutorials like this.

@@ -1,0 +1,790 @@
+00:00 Let's unlock the power of GIA 2.2 and
+00:04 
+
+00:04 start building terrains from scratch
+00:06 
+
+00:06 with the core primitive nodes. In this
+00:08 
+
+00:08 tutorial, besides learning about the
+00:10 
+
+00:10 nodes, we'll also go through practical
+00:12 
+
+00:12 examples. This helps break away from
+00:15 
+
+00:15 monotony and gives us results that are
+00:17 
+
+00:17 closer to realworld scenarios. Hello
+00:20 
+
+00:20 friends and welcome to the GN nodes
+00:22 
+
+00:22 tutorial series. This series will be
+00:25 
+
+00:25 divided into eight parts where we'll go
+00:27 
+
+00:27 step by step through the different
+00:29 
+
+00:29 categories of GN nodes. For example,
+00:32 
+
+00:32 we'll start by creating a simple cone
+00:34 
+
+00:34 and then learn about the nodes by
+00:36 
+
+00:36 applying them to it. The first node is
+00:38 
+
+00:38 constant which allows us to control the
+00:41 
+
+00:41 height intensity of the cone. The
+00:43 
+
+00:43 constant node. The constant node in Gaia
+00:46 
+
+00:46 is just a fixed value generator mainly
+00:49 
+
+00:49 used for controlling, scaling, or
+00:51 
+
+00:51 providing stable input to more complex
+00:53 
+
+00:53 procedural nodes in your terrain/biome
+00:56 
+
+00:56 workflows. The second node is cracks.
+01:01 
+
+01:01 The cracks node in GIA generates cracked
+01:04 
+
+01:04 patterns on flat terrain. You can use
+01:06 
+
+01:06 this output as a mask or subtract it
+01:09 
+
+01:09 from other terrain shapes using the
+01:10 
+
+01:10 combine node. It's ideal for simulating
+01:13 
+
+01:13 features like dried river beds, cracked
+01:15 
+
+01:15 soil, crevices, or airid terrain
+01:18 
+
+01:18 details. As you can see, it comes in
+01:21 
+
+01:21 three modes: normal, hard, and classic.
+01:24 
+
+01:24 By adjusting parameters such as octaves,
+01:27 
+
+01:27 scale, or depth, we can achieve some
+01:30 
+
+01:30 very interesting results. For example,
+01:33 
+
+01:33 if we apply a wizard effect to our cone
+01:35 
+
+01:35 to make it look like a mountain, then
+01:37 
+
+01:37 combine it with cracks, we can create
+01:39 
+
+01:39 some very unique outcomes. The next node
+01:42 
+
+01:42 is draw, which can be extremely useful.
+02:00 
+
+02:00 [Music]
+02:05 
+
+02:05 The draw node in Gaia is used to create
+02:07 
+
+02:07 hand painted masks directly inside the
+02:10 
+
+02:10 graph system. Unlike procedural nodes
+02:12 
+
+02:12 like noise or constant, the draw node
+02:15 
+
+02:15 depends on your manual input. You use a
+02:17 
+
+02:17 brush to paint areas where you want
+02:19 
+
+02:19 things to happen. White equals active,
+02:21 
+
+02:21 black equals inactive. As you can see,
+02:24 
+
+02:24 it opens a window called open painter.
+02:27 
+
+02:27 In this window, you can draw the ridges
+02:29 
+
+02:29 or elevations you want simply by
+02:31 
+
+02:31 sketching lines. It also provides
+02:33 
+
+02:33 settings like hardness, size, and
+02:36 
+
+02:36 height, which allow you to introduce
+02:38 
+
+02:38 variations in your landscape.
+02:48 
+
+02:48 For example, let's say you want to
+02:50 
+
+02:50 create a prominent mountain in the
+02:52 
+
+02:52 corner of your map. You can easily
+02:54 
+
+02:54 sketch it out here and then combine it
+02:56 
+
+02:56 with an effect like wizard, which we'll
+02:58 
+
+02:58 cover in detail later, to achieve the
+02:60 
+
+02:60 result you're aiming for.
+03:13 
+
+03:13 The next node is Gabbor.
+03:19 
+
+03:19 Gabbor noise node provides directional
+03:22 
+
+03:22 textured noise with fine control. Useful
+03:25 
+
+03:25 for realistic terrain detailing. As you
+03:27 
+
+03:27 can see, this node allows you to add
+03:29 
+
+03:29 fine noise to your landscape, whether
+03:32 
+
+03:32 subtle or intense, giving you a wide
+03:34 
+
+03:34 range of detail variations.
+03:50 
+
+03:50 The next node is line noise.
+03:57 
+
+03:57 Line noise in Gaia is a noise function
+03:60 
+
+03:60 that introduces striped or banded
+04:02 
+
+04:02 patterns across your terrain or mask.
+04:05 
+
+04:05 Unlike standard plland/fractal noise
+04:08 
+
+04:08 that looks cloudy and isotropic, line
+04:11 
+
+04:11 noise produces directional linear
+04:13 
+
+04:13 features. With this node, you can create
+04:16 
+
+04:16 mountains like the one shown in these
+04:18 
+
+04:18 two images.
+04:26 
+
+04:26 By using clamp, you can control the
+04:28 
+
+04:28 intensity and with direction, you can
+04:30 
+
+04:30 adjust the orientation of lines. This
+04:33 
+
+04:33 node comes with four modes, sharp, soft,
+04:36 
+
+04:36 flat, and blurred. Each of which can
+04:39 
+
+04:39 give you unique and interesting results.
+04:55 
+
+04:55 The next node is noise. The noise node
+04:58 
+
+04:58 is one of the most fundamental building
+04:59 
+
+04:59 blocks in GIA. It generates procedural
+05:02 
+
+05:02 noise patterns, grayscale maps that can
+05:05 
+
+05:05 be used to shape terrain, create masks,
+05:08 
+
+05:08 or add natural variation. With this
+05:10 
+
+05:10 node, you can add detailed noise
+05:12 
+
+05:12 patterns to the surface of your
+05:14 
+
+05:14 landscape. By carefully adjusting its
+05:16 
+
+05:16 values and choosing from the five
+05:18 
+
+05:18 available noise types and three blending
+05:20 
+
+05:20 modes, it can become extremely useful.
+05:25 
+
+05:25 [Music]
+05:36 
+
+05:36 As you can see here, using pearl and
+05:38 
+
+05:38 noise with a subtract mode at a low
+05:40 
+
+05:40 percentage gave us a very suitable
+05:42 
+
+05:42 texture for our terrain.
+05:45 
+
+05:45 The next node is pattern.
+05:49 
+
+05:49 The pattern node generates geometric
+05:52 
+
+05:52 repeating patterns inside GIA. Unlike
+05:55 
+
+05:55 the noise node which is organic and
+05:57 
+
+05:57 random pattern produces structured
+05:60 
+
+05:60 shapes such as grids, stripes or radial
+06:03 
+
+06:03 patterns, the output is a grayscale map
+06:05 
+
+06:05 that can be used as a mask or as a base
+06:08 
+
+06:08 layer for shaping terrain, blending with
+06:10 
+
+06:10 noise or stylized design. As you can
+06:13 
+
+06:13 see, it generates different patterns for
+06:15 
+
+06:15 us such as linear or dotted ones. By
+06:18 
+
+06:18 combining it with the previous nodes,
+06:21 
+
+06:21 you can achieve some unique results.
+06:44 
+
+06:44 My suggestion is to first connect it to
+06:46 
+
+06:46 the previous node and then combine it
+06:48 
+
+06:48 again with that same node. This way, its
+06:51 
+
+06:51 effect will only be applied to the
+06:52 
+
+06:52 specific volume you want.
+06:59 
+
+06:59 [Music]
+07:13 
+
+07:13 [Music]
+07:23 
+
+07:23 [Music]
+07:26 
+
+07:26 The next node is pllin. This is one of
+07:28 
+
+07:28 the most useful nodes as it brings us
+07:31 
+
+07:31 much closer to realistic results. With
+07:34 
+
+07:34 the options it provides, you can
+07:36 
+
+07:36 generate different kinds of noise and
+07:38 
+
+07:38 even shift them around. In the end, you
+07:41 
+
+07:41 can clearly see the changes it makes
+07:43 
+
+07:43 compared to the previous node.
+07:47 
+
+07:47 [Music]
+08:02 
+
+08:02 Heat.
+08:04 
+
+08:04 [Music]
+08:17 
+
+08:17 Heat.
+08:20 
+
+08:20 [Music]
+08:48 
+
+08:48 If you are enjoying this tutorial so
+08:50 
+
+08:50 far, don't forget to hit that like
+08:51 
+
+08:51 button. It really helps the channel
+08:53 
+
+08:53 grow.
+08:57 
+
+08:57 [Music]
+09:09 
+
+09:09 The next node is shape. This node
+09:11 
+
+09:11 generates forms like a cylinder or a
+09:14 
+
+09:14 hollow rectangle. And you can easily
+09:16 
+
+09:16 control its size, thickness, or even
+09:18 
+
+09:18 move it around.
+09:22 
+
+09:22 [Music]
+09:25 
+
+09:25 With a bit of creativity, you can turn
+09:27 
+
+09:27 this cylinder into something like an
+09:29 
+
+09:29 erupting volcano peak opening at the
+09:32 
+
+09:32 top. The next node is Voronoi. On its
+09:35 
+
+09:35 own, this node can generate a full
+09:37 
+
+09:37 mountain range. With its features, you
+09:40 
+
+09:40 can create large rugged formations like
+09:42 
+
+09:42 vast mountains, deserts, or even
+09:45 
+
+09:45 stylized mountain landscapes. It also
+09:47 
+
+09:47 has its own warp option to twist and add
+09:50 
+
+09:50 more variation. Of course, you can also
+09:53 
+
+09:53 move and scale it as needed.
+09:57 
+
+09:57 [Music]
+10:10 
+
+10:10 [Music]
+10:28 
+
+10:28 feel.
+10:37 
+
+10:37 Hey
+10:45 
+
+10:45 Now imagine we want to place a lake
+10:47 
+
+10:47 right in the middle. Using the draw
+10:49 
+
+10:49 node, I paint a triangle shape, then
+10:51 
+
+10:51 soften it with a blur node.
+11:03 
+
+11:03 After that, I combine it with the
+11:05 
+
+11:05 mountain using subtract mode and by
+11:08 
+
+11:08 adding a lake node, which we'll cover in
+11:10 
+
+11:10 detail in future tutorials, we can
+11:12 
+
+11:12 achieve the desired result.
+11:17 
+
+11:17 The cellular node. The cellular node in
+11:20 
+
+11:20 GIA generates procedural cell-like
+11:22 
+
+11:22 patterns that are perfect for cracked
+11:24 
+
+11:24 ground, rock formations, or stylized
+11:27 
+
+11:27 masking. Its real power comes when you
+11:29 
+
+11:29 blend it with noise or erosion for
+11:32 
+
+11:32 natural looking results.
+11:49 
+
+11:49 [Music]
+12:02 
+
+12:02 The cellular 3D. The cellular 3D node in
+12:06 
+
+12:06 GIA is a volutric cell generator that
+12:08 
+
+12:08 creates much more natural fracture-like
+12:11 
+
+12:11 patterns than a flat 2D cellular. It's
+12:14 
+
+12:14 ideal for cracked ground, basalt
+12:16 
+
+12:16 columns, and erosion mass that look
+12:18 
+
+12:18 integrated into the terrain rather than
+12:20 
+
+12:20 just surface details.
+12:44 
+
+12:44 The dot noise node. The dot noise node
+12:47 
+
+12:47 in GIA creates speckled grainy patterns
+12:50 
+
+12:50 that are perfect for fine surface
+12:51 
+
+12:51 details, sand, gravel, porous rock, or
+12:55 
+
+12:55 scattered masks. It's usually not used
+12:57 
+
+12:57 for large terrain shapes, but rather as
+12:60 
+
+12:60 a detail layer to make terrains more
+13:02 
+
+13:02 realistic.
+13:05 
+
+13:05 Another thing you could do with this
+13:06 
+
+13:06 node is create landscapes similar to
+13:09 
+
+13:09 Minecraft style worlds.
+13:14 
+
+13:14 [Music]
+13:26 
+
+13:26 [Music]
+13:35 
+
+13:35 The drift noise nod. The drift noise
+13:38 
+
+13:38 node in GIA generates elongated
+13:41 
+
+13:41 directional noise that looks like
+13:43 
+
+13:43 natural streaking or drifting. It's
+13:45 
+
+13:45 ideal for deserts, glaciers, or any
+13:48 
+
+13:48 terrain shaped by continuous directional
+13:51 
+
+13:51 forces like wind or water.
+13:55 
+
+13:55 Hey. Hey. Hey.
+14:10 
+
+14:10 [Music]
+14:22 
+
+14:22 [Music]
+14:26 
+
+14:26 The multifractal node. The multifractal
+14:28 
+
+14:28 node in GIA generates rugged fractal
+14:31 
+
+14:31 terrain patterns by layering multiple
+14:33 
+
+14:33 octaves of noise. It's perfect for
+14:36 
+
+14:36 mountains, cliffs, and rocky terrain
+14:38 
+
+14:38 bases, especially when combined with
+14:41 
+
+14:41 erosion for natural realism.
+14:59 
+
+14:59 Don't
+15:09 
+
+15:09 down.
+15:26 
+
+15:26 Quick reminder, friends. Make sure to
+15:28 
+
+15:28 subscribe and turn on the notification
+15:30 
+
+15:30 bell so you won't miss the rest of this
+15:32 
+
+15:32 series.
+15:44 
+
+15:44 The wave shine node. The wave shine node
+15:47 
+
+15:47 in GIA generates wavelike interference
+15:50 
+
+15:50 patterns that resemble ripples, dunes,
+15:52 
+
+15:52 or banded rock. It's mainly used as a
+15:55 
+
+15:55 mask or detail enhancer to give terrains
+15:58 
+
+15:58 more variation and visual richness.
+16:10 
+
+16:10 [Music]
+16:20 
+
+16:20 To better understand it, let's combine
+16:22 
+
+16:22 it with another node and use subtract.
+16:25 
+
+16:25 As you can see, the result looks like a
+16:27 
+
+16:27 snow-covered mountain range.
+16:47 
+
+16:47 The last category is gradients which we
+16:50 
+
+16:50 were first introduced to with a cone.
+16:52 
+
+16:52 The next node here is hemisphere. With
+16:55 
+
+16:55 this node, we can create a half sphere
+16:57 
+
+16:57 and we can even mix it with the cone to
+16:59 
+
+16:59 achieve the final result we want.
+17:15 
+
+17:15 [Music]
+17:29 
+
+17:29 [Music]
+17:34 
+
+17:34 linear gradient and radial gradient. The
+17:36 
+
+17:36 linear node generates a flat plane for
+17:39 
+
+17:39 us and by combining multiple planes
+17:41 
+
+17:41 together we can adjust their angles to
+17:43 
+
+17:43 create variations. The radial node on
+17:46 
+
+17:46 the other hand gives us a soft raw
+17:49 
+
+17:49 elevation that could be shaped further.
+17:52 
+
+17:52 [Music]
+18:18 
+
+18:18 All right, friends. That brings us to
+18:20 
+
+18:20 the end of this video. This was the
+18:22 
+
+18:22 first episode out of a total of eight in
+18:24 
+
+18:24 this series. If you enjoyed it and found
+18:26 
+
+18:26 it helpful, don't forget to support us
+18:28 
+
+18:28 by liking the video, leaving a comment,
+18:31 
+
+18:31 and subscribing to the channel. Your
+18:33 
+
+18:33 support really helps us continue making
+18:35 
+
+18:35 more tutorials for

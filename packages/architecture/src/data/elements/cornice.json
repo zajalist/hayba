@@ -1,0 +1,20 @@
+{
+  "id": "cornice",
+  "category": "connector",
+  "graph": {
+    "kind": "kernel-fn",
+    "module": "./kernel/elements/cornice.js",
+    "export": "corniceGraph"
+  },
+  "profileSlots": [
+    {
+      "name": "profile",
+      "description": "Cross-section of the cornice moulding. Closed polygon. The cornice will be lofted along the X axis using this profile.",
+      "hint": "closed-path",
+      "bbox": [-100, -100, 200, 200]
+    }
+  ],
+  "paramSchema": [
+    { "name": "length_m", "kind": "number", "range": [0.5, 6.0], "default": 2.0 }
+  ]
+}

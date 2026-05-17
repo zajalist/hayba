@@ -1,0 +1,838 @@
+00:01 Build an epic mountain range in Gaia
+00:03 
+
+00:03 using just a few simple nodes. Let's go.
+00:07 
+
+00:07 The simulate nodes are designed to
+00:08 
+
+00:08 simulate natural phenomena such as
+00:11 
+
+00:11 erosion, sedimentation, water flow,
+00:14 
+
+00:14 wind, and gravity. These nodes transform
+00:17 
+
+00:17 terrain from an artificial look into
+00:20 
+
+00:20 something natural and believable. The
+00:22 
+
+00:22 first node is anatomies.
+00:25 
+
+00:25 The anatomies node simulates predefined
+00:28 
+
+00:28 terrain types based on realworld
+00:30 
+
+00:30 landform archetypes. It acts like a
+00:32 
+
+00:32 terrain generator with built-in natural
+00:35 
+
+00:35 logic, letting you build highly
+00:37 
+
+00:37 realistic base terrains with minimal
+00:40 
+
+00:40 setup. As you can see, it can add more
+00:43 
+
+00:43 depth to the existing details and
+00:45 
+
+00:45 enhance them with different modes.
+00:53 
+
+00:53 [Music]
+00:57 
+
+00:57 The crumble node. The crumble node
+01:00 
+
+01:00 simulates natural collapse and breakage
+01:02 
+
+01:02 in terrain like cliffs eroding and
+01:05 
+
+01:05 falling apart, rock slides or broken
+01:08 
+
+01:08 canyon walls. It introduces a sense of
+01:10 
+
+01:10 decay, age and drama to the terrain
+01:13 
+
+01:13 surface by fresh kungit in realistic
+01:16 
+
+01:16 ways. As you can see, it can create
+01:19 
+
+01:19 erosion or landslides along with
+01:21 
+
+01:21 depressions on our mountain just like in
+01:24 
+
+01:24 the image you see. At the same time, you
+01:27 
+
+01:27 can also simulate the area where the
+01:29 
+
+01:29 mountain connects with the ground. The
+01:32 
+
+01:32 easy erosion. The easy erosion node
+01:35 
+
+01:35 provides a quick and user-friendly way
+01:38 
+
+01:38 to apply erosion effects to your
+01:40 
+
+01:40 terrain. It's designed for artists who
+01:43 
+
+01:43 want fast results without needing to
+01:45 
+
+01:45 tweak complex erosion parameters. As you
+01:48 
+
+01:48 can see, with just one node, you can
+01:50 
+
+01:50 apply such strong details like rocky or
+01:54 
+
+01:54 exposed surfaces to the entire terrain,
+01:57 
+
+01:57 offering a wide variety for different
+01:59 
+
+01:59 scenes.
+02:03 
+
+02:03 The erosion node. The erosion node is
+02:07 
+
+02:07 one of Gaia's most powerful and
+02:09 
+
+02:09 essential simulation tools. It mimics
+02:12 
+
+02:12 the realworld processes of water flow,
+02:14 
+
+02:14 sediment displacement, and thermal
+02:17 
+
+02:17 erosion to create stunningly realistic
+02:19 
+
+02:19 terrain details. As you can see in the
+02:23 
+
+02:23 erosion section, you adjust the hardness
+02:25 
+
+02:25 percentage along with the depth of the
+02:27 
+
+02:27 rocks and erosion. By using the down
+02:29 
+
+02:29 cutting option, you create a cut with
+02:31 
+
+02:31 eroded details at the lower surface.
+02:34 
+
+02:34 Then by adding the flow features, you
+02:36 
+
+02:36 can achieve results that resemble this
+02:39 
+
+02:39 image.
+02:41 
+
+02:41 Erosion node two. The erosion node and
+02:45 
+
+02:45 erosion node 2 in GIA are generally
+02:48 
+
+02:48 similar in functionality. Both are used
+02:50 
+
+02:50 to simulate natural erosion, but they
+02:53 
+
+02:53 differ in accuracy, performance, and
+02:56 
+
+02:56 controllability.
+02:57 
+
+02:57 The second generation is hover than the
+02:59 
+
+02:59 previous one because it uses more
+03:02 
+
+03:02 advanced algorithms, but it provides
+03:04 
+
+03:04 greater accuracy. As you can see, it
+03:07 
+
+03:07 includes more precise algorithms. So,
+03:09 
+
+03:09 it's better to use this one for final
+03:12 
+
+03:12 work.
+03:14 
+
+03:14 The Halifer node. The Hullifer node
+03:17 
+
+03:17 enhances or creates ridgelike elevated
+03:20 
+
+03:20 landforms across your terrain. It's used
+03:23 
+
+03:23 to accentuate or simulate hill
+03:25 
+
+03:25 formations, giving the elevation
+03:27 
+
+03:27 structure before or after erosion for
+03:29 
+
+03:29 more balanced, readable terrain.
+03:32 
+
+03:32 Overall, it softens sharp details and
+03:35 
+
+03:35 makes the terrain smoother.
+03:37 
+
+03:37 Lutton bug node. This node is
+03:40 
+
+03:40 responsible for generating branching
+03:42 
+
+03:42 patterns and both connected and
+03:45 
+
+03:45 scattered flows similar to the effect of
+03:47 
+
+03:47 power lines or small rivers. As you can
+03:51 
+
+03:51 see, it creates scattered lines that by
+03:53 
+
+03:53 increasing the depth and spacing between
+03:56 
+
+03:56 the rocks can even be used to create
+03:58 
+
+03:58 fantasy-like scenes such as this one.
+04:01 
+
+04:01 The sediments node. The sediments node
+04:04 
+
+04:04 simulates the deposition of materials
+04:07 
+
+04:07 like sand, mud, or debris that are
+04:10 
+
+04:10 carried and deposited by natural erosion
+04:12 
+
+04:12 processes. It adds layers of realism by
+04:15 
+
+04:15 mimicking how terrain naturally builds
+04:17 
+
+04:17 up over time in lower areas. You can
+04:21 
+
+04:21 create mountains sunk in sand, buried in
+04:23 
+
+04:23 snow, or even a scene with piles of
+04:26 
+
+04:26 debris.
+04:31 
+
+04:31 The thermal node. The thermal node
+04:34 
+
+04:34 simulates thermal erosion, also known as
+04:37 
+
+04:37 creep. This process models how material
+04:39 
+
+04:39 from steep slopes collapses and slides
+04:42 
+
+04:42 downward due to gravity over time
+04:44 
+
+04:44 leading to softer rounded shapes. As you
+04:48 
+
+04:48 can see here, we can simulate the flow
+04:50 
+
+04:50 of materials such as water, lava, or mud
+04:53 
+
+04:53 within the surface depressions.
+04:58 
+
+04:58 [Music]
+05:10 
+
+05:10 thermal 2 node. Compared to the first
+05:13 
+
+05:13 node, it's lighter and can even affect
+05:16 
+
+05:16 surfaces. Using the remove sediment
+05:19 
+
+05:19 option, you can control its percentage
+05:21 
+
+05:21 or even remove it entirely.
+05:26 
+
+05:26 [Music]
+05:30 
+
+05:30 The wizard node. The wizard node is a
+05:34 
+
+05:34 multi-function simulation assistant that
+05:36 
+
+05:36 helps you quickly generate complex
+05:38 
+
+05:38 terrains using preconfigured erosion and
+05:41 
+
+05:41 shaping logic. It's perfect for rapid
+05:44 
+
+05:44 prototyping, concept terrain design, or
+05:47 
+
+05:47 when you want a quick starting point
+05:49 
+
+05:49 without manually chaining multiple
+05:51 
+
+05:51 nodes. As you can see, you can control
+05:54 
+
+05:54 the intensity, spacing, material, and
+05:57 
+
+05:57 its strength, the distance between the
+05:59 
+
+05:59 grooves, and even the shape of the
+06:01 
+
+06:01 peaks.
+06:11 
+
+06:11 [Music]
+06:34 
+
+06:34 Hey,
+06:38 
+
+06:38 hey, hey.
+06:45 
+
+06:45 [Music]
+07:11 
+
+07:11 The Wizard Two, the wizard and wizard 2
+07:14 
+
+07:14 nodes in Gaia seem to have similar
+07:17 
+
+07:17 functionality. Both are used for quickly
+07:20 
+
+07:20 generating terrain with combined
+07:22 
+
+07:22 algorithms, but there are some
+07:24 
+
+07:24 differences between the two. Wizard 2
+07:27 
+
+07:27 comes improved with higher quality and
+07:30 
+
+07:30 variety.
+07:32 
+
+07:32 More natural results, suitable for final
+07:35 
+
+07:35 projects. Advanced and more flexible
+07:38 
+
+07:38 settings. Slightly hover but optimized
+07:41 
+
+07:41 for quality. Perfect for starting a
+07:44 
+
+07:44 professional project with production
+07:46 
+
+07:46 ready output.
+07:53 
+
+07:53 [Music]
+08:02 
+
+08:02 The debris node. The debris node
+08:04 
+
+08:04 simulates the accumulation of small
+08:06 
+
+08:06 rocks, gravel, and fragments at the base
+08:09 
+
+08:09 of slopes and cliffs, replicating how
+08:12 
+
+08:12 natural debris collects over time
+08:14 
+
+08:14 through erosion and rockfall.
+08:32 
+
+08:32 the screen node. This node is also
+08:35 
+
+08:35 similar to the previous one. The screen
+08:38 
+
+08:38 node simulates loose rock fragments and
+08:40 
+
+08:40 slope debris that typically form scree
+08:43 
+
+08:43 fields. Those layered gravel-like piles
+08:46 
+
+08:46 you often see at the base of cliffs or
+08:48 
+
+08:48 steep mountains.
+08:55 
+
+08:55 [Music]
+08:59 
+
+08:59 The dusting node. The dusting node
+09:02 
+
+09:02 simulates fine dust or sediment
+09:05 
+
+09:05 accumulation on flat or semiflat areas
+09:08 
+
+09:08 of terrain. It adds a soft layer of
+09:10 
+
+09:10 micro deposition similar to how real
+09:13 
+
+09:13 dust settles over time in crevices and
+09:16 
+
+09:16 lows slope areas making it feel highly
+09:18 
+
+09:18 realistic and controllable. As you can
+09:21 
+
+09:21 see, it actually gives us a mask and we
+09:24 
+
+09:24 can easily use this mask in Gaia or
+09:26 
+
+09:26 export it and use it in Unreal.
+09:38 
+
+09:38 [Music]
+09:44 
+
+09:44 [Music]
+09:46 
+
+09:46 The snow node. The snow node simulates
+09:49 
+
+09:49 snow accumulation on terrain, adding a
+09:52 
+
+09:52 layer of soft, elevated buildup that
+09:54 
+
+09:54 mimics natural snowfall. It's based on
+09:57 
+
+09:57 angle, elevation, and direction, making
+10:00 
+
+10:00 it feel highly realistic and
+10:02 
+
+10:02 controllable.
+10:04 
+
+10:04 As you can see, with its options, it can
+10:06 
+
+10:06 generate smooth, uniform snow, snow with
+10:09 
+
+10:09 scattered depressions, or even melted
+10:12 
+
+10:12 snow.
+10:14 
+
+10:14 [Music]
+10:16 
+
+10:16 The snowfield node. The snowfield node
+10:19 
+
+10:19 simulates broad snow-covered terrain as
+10:22 
+
+10:22 a primary landform rather than just
+10:24 
+
+10:24 layering snow on existing terrain. It is
+10:27 
+
+10:27 used to generate entire snowy
+10:29 
+
+10:29 landscapes, not just snow accumulation
+10:32 
+
+10:32 on surfaces.
+10:35 
+
+10:35 [Music]
+10:43 
+
+10:43 [Music]
+10:52 
+
+10:52 The shrubs node. The shrubs node
+10:55 
+
+10:55 generates a distribution mask for low
+10:58 
+
+10:58 vegetation like bushes, shrubs, and
+11:00 
+
+11:00 undergrowth. It simulates how such
+11:03 
+
+11:03 vegetation tends to grow in specific
+11:05 
+
+11:05 elevation, slope, and erosion protected
+11:08 
+
+11:08 areas. As you can see, you can increase
+11:11 
+
+11:11 or decrease the masks intensity,
+11:14 
+
+11:14 subtract it from the height or from the
+11:16 
+
+11:16 surface, and many other options.
+11:33 
+
+11:33 [Music]
+11:35 
+
+11:35 Down.
+11:38 
+
+11:38 [Music]
+11:41 
+
+11:41 Down.
+11:44 
+
+11:44 [Music]
+11:53 
+
+11:53 [Music]
+11:54 
+
+11:54 The trees node generates a mask for tree
+11:57 
+
+11:57 distribution, simulating natural growth
+11:59 
+
+11:59 conditions for various forest types.
+12:02 
+
+12:02 It's highly customizable and helps
+12:04 
+
+12:04 define where trees would grow
+12:06 
+
+12:06 realistically based on terrain features.
+12:10 
+
+12:10 This node also works similarly to the
+12:12 
+
+12:12 previous one, and you can fully control
+12:14 
+
+12:14 it in every way. Feel
+12:18 
+
+12:18 [Music]
+12:32 
+
+12:32 free.
+12:34 
+
+12:34 [Music]
+12:49 
+
+12:49 [Music]
+12:57 
+
+12:57 The lake node. The lake node simulates
+12:60 
+
+12:60 the natural accumulation of water in
+13:02 
+
+13:02 low-lying areas of the terrain,
+13:04 
+
+13:04 essentially identifying and filling
+13:06 
+
+13:06 basins and valleys where water would
+13:09 
+
+13:09 logically collect. It's used to create
+13:11 
+
+13:11 realistic lake beds and water body masks
+13:14 
+
+13:14 for further use in rendering or game
+13:17 
+
+13:17 engines.
+13:27 
+
+13:27 The river node. The river node
+13:30 
+
+13:30 procedurally generates natural river
+13:32 
+
+13:32 paths across your terrain, simulating
+13:35 
+
+13:35 how rivers cut through landscapes over
+13:37 
+
+13:37 time. It intelligently follows elevation
+13:40 
+
+13:40 flow and erosion patterns creating
+13:42 
+
+13:42 realistic river beds, banks and deltas.
+13:53 
+
+13:53 [Music]
+14:08 
+
+14:08 [Music]
+14:14 
+
+14:14 [Music]
+14:19 
+
+14:19 The sea node adds a global sea level to
+14:21 
+
+14:21 your terrain, simulating the presence of
+14:24 
+
+14:24 oceans or large bodies of water. It
+14:27 
+
+14:27 works by flooding low-lying areas based
+14:29 
+
+14:29 on a defined elevation threshold and
+14:32 
+
+14:32 gives you a clean mask for sea regions.
+14:35 
+
+14:35 As you can see, by adding erosion to a
+14:37 
+
+14:37 hillside, we can create a good base for
+14:40 
+
+14:40 applying this node. And by adding
+14:42 
+
+14:42 debris, we can bring even more detail to
+14:45 
+
+14:45 the scene.
+14:46 
+
+14:46 [Music]
+15:24 
+
+15:24 [Music]
+15:31 
+
+15:31 [Music]
+15:41 
+
+15:41 Now let's take this simple mountain
+15:43 
+
+15:43 example that I made and you can practice
+15:46 
+
+15:46 it as well. First, I created a mountain
+15:49 
+
+15:49 and made a copy of it since I wanted the
+15:51 
+
+15:51 second one to be placed a bit farther
+15:53 
+
+15:53 back. Then, I moved them around. I added
+15:57 
+
+15:57 adjust to them to increase their
+15:59 
+
+15:59 intensity. And then, to give them a more
+16:02 
+
+16:02 spherical shape relative to the ground,
+16:04 
+
+16:04 I used the shaper node. I also added a
+16:07 
+
+16:07 mountain range node to create surface
+16:10 
+
+16:10 irregularities and an erosion node to
+16:13 
+
+16:13 give our mountains better detail. I
+16:16 
+
+16:16 combined all the nodes together. For the
+16:18 
+
+16:18 side mountains, I also created two more
+16:21 
+
+16:21 mountains, moved them around, and
+16:23 
+
+16:23 finally combined them with the other
+16:25 
+
+16:25 nodes. Finally, by adding a snowfall
+16:28 
+
+16:28 node, I achieved this result. You can
+16:31 
+
+16:31 even simulate the mountains in the
+16:33 
+
+16:33 background in the same way. So, don't
+16:35 
+
+16:35 wait. Start practicing and test out the
+16:38 
+
+16:38 nodes you've learned.

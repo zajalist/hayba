@@ -1,0 +1,179 @@
+{
+  "ornaments": [
+    {
+      "description": "Stylised Mediterranean thistle leaf used in Corinthian capitals and friezes.",
+      "id": "acanthus-leaf",
+      "name": "Acanthus Leaf",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "Continuous interwoven ribbon forming endless knot patterns.",
+      "id": "interlace-knot",
+      "name": "Interlace Knot",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "Row of small rectangular blocks below a cornice, common in classical orders.",
+      "id": "dentil",
+      "name": "Dentil",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "Alternating ovoid and dart shapes used on classical mouldings.",
+      "id": "egg-and-dart",
+      "name": "Egg and Dart",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "Circular flower-like motif with radiating petals, widely used across cultures.",
+      "id": "rosette",
+      "name": "Rosette",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "Fan-shaped palm frond ornament, common in Near Eastern and Greek friezes.",
+      "id": "palmette",
+      "name": "Palmette",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "Greek key pattern of continuous right-angled spirals forming a border band.",
+      "id": "meander",
+      "name": "Meander",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "Braided or twisted rope pattern of two or more interlocking bands.",
+      "id": "guilloche",
+      "name": "Guilloche",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "Stylised lily heraldic charge used extensively in Gothic and French architecture.",
+      "id": "fleur-de-lis",
+      "name": "Fleur-de-lis",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "Four-lobed Gothic tracery form used in windows and stone screens.",
+      "id": "quatrefoil",
+      "name": "Quatrefoil",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "Three-lobed clover shape common in Gothic arches and tracery.",
+      "id": "trefoil",
+      "name": "Trefoil",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "Naturalistic bunch of flowers and foliage used in spandrels and panels.",
+      "id": "floral-spray",
+      "name": "Floral Spray",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "Repeating star polygon and interlace pattern from Islamic architectural tradition.",
+      "id": "geometric-arabesque",
+      "name": "Geometric Arabesque",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "Sinuous dragon silhouette winding through a scrolling cloud or wave band.",
+      "id": "dragon-scroll",
+      "name": "Dragon Scroll",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "Stylised ruyi-cloud form used in East Asian bracket sets and painted ceilings.",
+      "id": "cloud-motif",
+      "name": "Cloud Motif",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "Inverted lotus petal band used on column bases and bracket capitals in South Asia.",
+      "id": "lotus-pad",
+      "name": "Lotus Pad",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "Repeating curling wave border evoking ocean movement, used in friezes and tile.",
+      "id": "wave-crest",
+      "name": "Wave Crest",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "Human or animal head carved as a projecting corbel supporting a beam or arch.",
+      "id": "corbel-head",
+      "name": "Corbel Head",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "Grotesque water-spouting beast face projecting from a parapet or gutter.",
+      "id": "gargoyle-face",
+      "name": "Gargoyle Face",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "Zigzag band of V-shapes used in Norman and Romanesque arch decoration.",
+      "id": "chevron-band",
+      "name": "Chevron Band",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "",
+      "id": "adobe-fresco",
+      "name": "adobe-fresco",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "",
+      "id": "geometric-frieze",
+      "name": "geometric-frieze",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "",
+      "id": "polygonal-stonework",
+      "name": "polygonal-stonework",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "",
+      "id": "trapezoidal-niche",
+      "name": "trapezoidal-niche",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    },
+    {
+      "description": "",
+      "id": "double-jamb-doorway",
+      "name": "double-jamb-doorway",
+      "referenceImagePaths": [],
+      "scenarioWeights": {}
+    }
+  ]
+}

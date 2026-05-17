@@ -2,6 +2,7 @@ import {
   FOOTPRINT_KINDS, PRIMARY_MATERIALS, ROOF_TYPES,
   type FootprintShape, type FootprintKind,
   type Typology, type StyleSheet, type StyleGuide,
+  type Element, type ElementBinding, type ProfileHint, type ParamSlotKind, type ProvenanceSource,
 } from './schema.js';
 
 export interface ValidationError {
@@ -249,4 +250,152 @@ export function validateStyleGuideRefs(
     }
   });
   return errs;
+}
+
+/* ─────────────────  Element catalog validators  ───────────────── */
+
+const PROFILE_HINTS = ['closed-path', 'open-path', 'symmetric-half', 'tileable'] as const satisfies readonly ProfileHint[];
+const PARAM_KINDS  = ['number', 'integer', 'enum']           as const satisfies readonly ParamSlotKind[];
+const PROVENANCE   = ['ai', 'human']                          as const satisfies readonly ProvenanceSource[];
+const CATEGORIES   = ['connector', 'ornament']                as const;
+
+function validateProfileSlot(value: unknown, path: string): ValidationError[] {
+  if (!isPlainObject(value)) return [{ path, message: 'expected an object' }];
+  const errs: ValidationError[] = [];
+  if (typeof value.name !== 'string' || value.name.length === 0) {
+    errs.push({ path: `${path}/name`, message: 'name must be a non-empty string' });
+  }
+  if (typeof value.description !== 'string') {
+    errs.push({ path: `${path}/description`, message: 'description must be a string' });
+  }
+  if (!(PROFILE_HINTS as readonly string[]).includes(value.hint as string)) {
+    errs.push({ path: `${path}/hint`, message: `expected one of ${PROFILE_HINTS.join(', ')}` });
+  }
+  if (value.bbox !== undefined) {
+    if (!Array.isArray(value.bbox) || value.bbox.length !== 4 || !value.bbox.every((n: unknown) => typeof n === 'number')) {
+      errs.push({ path: `${path}/bbox`, message: 'bbox must be [x, y, w, h]' });
+    }
+  }
+  return errs;
+}
+
+function validateParamSlot(value: unknown, path: string): ValidationError[] {
+  if (!isPlainObject(value)) return [{ path, message: 'expected an object' }];
+  const errs: ValidationError[] = [];
+  if (typeof value.name !== 'string' || value.name.length === 0) {
+    errs.push({ path: `${path}/name`, message: 'name must be a non-empty string' });
+  }
+  if (!(PARAM_KINDS as readonly string[]).includes(value.kind as string)) {
+    errs.push({ path: `${path}/kind`, message: `expected one of ${PARAM_KINDS.join(', ')}` });
+  }
+  if (value.kind === 'number' || value.kind === 'integer') {
+    errs.push(...validateRange(value.range, `${path}/range`));
+  }
+  if (value.kind === 'enum') {
+    if (!Array.isArray(value.choices) || value.choices.length === 0 || !value.choices.every((c: unknown) => typeof c === 'string')) {
+      errs.push({ path: `${path}/choices`, message: 'enum kind requires non-empty string[] of choices' });
+    }
+  }
+  if (value.default === undefined) {
+    errs.push({ path: `${path}/default`, message: 'default is required' });
+  }
+  return errs;
+}
+
+export function validateElement(value: unknown, path: string): ValidationError[] {
+  if (!isPlainObject(value)) return [{ path, message: 'expected an object' }];
+  const errs: ValidationError[] = [];
+  if (typeof value.id !== 'string' || value.id.length === 0) {
+    errs.push({ path: `${path}/id`, message: 'id must be a non-empty string' });
+  }
+  if (!(CATEGORIES as readonly string[]).includes(value.category as string)) {
+    errs.push({ path: `${path}/category`, message: `expected one of ${CATEGORIES.join(', ')}` });
+  }
+  if (!isPlainObject(value.graph) || value.graph.kind !== 'kernel-fn' ||
+      typeof value.graph.module !== 'string' || typeof value.graph.export !== 'string') {
+    errs.push({ path: `${path}/graph`, message: 'graph must be { kind: "kernel-fn", module, export }' });
+  }
+  if (!Array.isArray(value.profileSlots) || value.profileSlots.length === 0) {
+    errs.push({ path: `${path}/profileSlots`, message: 'must list at least one profile slot' });
+  } else {
+    value.profileSlots.forEach((s, i) => errs.push(...validateProfileSlot(s, `${path}/profileSlots/${i}`)));
+  }
+  if (!Array.isArray(value.paramSchema)) {
+    errs.push({ path: `${path}/paramSchema`, message: 'expected array' });
+  } else {
+    value.paramSchema.forEach((s, i) => errs.push(...validateParamSlot(s, `${path}/paramSchema/${i}`)));
+  }
+  return errs;
+}
+
+export function validateElementBinding(
+  value: unknown, element: Element, path: string,
+): ValidationError[] {
+  if (!isPlainObject(value)) return [{ path, message: 'expected an object' }];
+  const errs: ValidationError[] = [];
+  if (typeof value.elementId !== 'string' || value.elementId.length === 0) {
+    errs.push({ path: `${path}/elementId`, message: 'elementId must be a non-empty string' });
+  } else if (value.elementId !== element.id) {
+    errs.push({ path: `${path}/elementId`, message: `mismatch: binding says ${JSON.stringify(value.elementId)} but element is ${JSON.stringify(element.id)}` });
+  }
+  if (typeof value.styleSheetId !== 'string' || value.styleSheetId.length === 0) {
+    errs.push({ path: `${path}/styleSheetId`, message: 'styleSheetId must be a non-empty string' });
+  }
+  if (typeof value.seed !== 'bigint') {
+    errs.push({ path: `${path}/seed`, message: 'seed must be a bigint' });
+  }
+
+  if (!isPlainObject(value.profiles)) {
+    errs.push({ path: `${path}/profiles`, message: 'expected an object' });
+  } else {
+    for (const slot of element.profileSlots) {
+      const v = value.profiles[slot.name];
+      if (typeof v !== 'string' || v.length === 0) {
+        errs.push({ path: `${path}/profiles/${slot.name}`, message: 'required SVG profile missing or empty' });
+      }
+    }
+  }
+
+  if (!isPlainObject(value.params)) {
+    errs.push({ path: `${path}/params`, message: 'expected an object' });
+  } else {
+    for (const slot of element.paramSchema) {
+      const v = value.params[slot.name];
+      const ppath = `${path}/params/${slot.name}`;
+      if (v === undefined) {
+        errs.push({ path: ppath, message: 'required param missing' });
+        continue;
+      }
+      if (slot.kind === 'number' || slot.kind === 'integer') {
+        if (typeof v !== 'number' || !Number.isFinite(v)) {
+          errs.push({ path: ppath, message: 'expected finite number' });
+        } else if (slot.kind === 'integer' && !Number.isInteger(v)) {
+          errs.push({ path: ppath, message: 'expected integer' });
+        } else if (slot.range && (v < slot.range[0] || v > slot.range[1])) {
+          errs.push({ path: ppath, message: `value ${v} out of range [${slot.range[0]}, ${slot.range[1]}]` });
+        }
+      } else if (slot.kind === 'enum') {
+        if (typeof v !== 'string' || !(slot.choices ?? []).includes(v)) {
+          errs.push({ path: ppath, message: `expected one of ${(slot.choices ?? []).join(', ')}` });
+        }
+      }
+    }
+  }
+
+  if (!isPlainObject(value.provenance)) {
+    errs.push({ path: `${path}/provenance`, message: 'expected an object' });
+  } else {
+    if (!(PROVENANCE as readonly string[]).includes(value.provenance.source as string)) {
+      errs.push({ path: `${path}/provenance/source`, message: `expected one of ${PROVENANCE.join(', ')}` });
+    }
+    if (typeof value.provenance.createdAt !== 'string' || value.provenance.createdAt.length === 0) {
+      errs.push({ path: `${path}/provenance/createdAt`, message: 'createdAt required (ISO 8601 string)' });
+    }
+  }
+
+  return errs;
+}
+
+export function isElement(v: unknown): v is Element {
+  return validateElement(v, '/').length === 0;
 }

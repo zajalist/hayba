@@ -1,0 +1,341 @@
+00:01 Let's create the top of a mountain.
+00:03 Not just a standalone mountain,
+but actually something really, tall and.
+00:08 Rugged.
+And you can see, like, the top part of it.
+00:11 Let me show you what I mean.
+00:12 So I'm going to create a Mountain node,
+00:14 and I'm gonna set it to Strata mode
+so I can get some of these.
+00:18 Cool uplifts on the top of the mountain.
+00:22 Which.
+00:22 Fun fact
+this is how most mountains are made.
+00:25 Especially the big tall ones.
+00:26 So they uplift like this.
+00:29 Now, what I'm going to do
+is I'm going to increase the Height,
+00:31 and I'm going to increase the Scale.
+00:34 But then at the same time
+I'm going to reduce the Bulk.
+00:37 So what happens is
+we get these amazing pinnacles
+00:41 like these cool looking, sharp mountains.
+00:45 But I want to adjust this a little bit.
+00:46 So I'm going to
+increase the Scale even more.
+00:51 So it's yeah, it's really high.
+00:53 And I'm going to see
+if I can maybe reduce the Height
+00:56 a little bit
+and then also try a different Seed.
+00:60 If it's not, you know better than this,
+we can always come back.
+01:04 It's easy to remember it's 6000.
+01:06 So rare to get a round number. So.
+01:11 Now you can see we have
+01:14 all these cool, different shapes. Ooh!
+01:17 I like this one.
+01:18 Let's stick with this one for now.
+01:20 So the next step is
+I want to actually smooth out
+01:24 some of these really sharper,
+taller, peaks.
+01:29 So I am going to create Thermal
+Erosion 2.
+01:34 And it's going to help me
+shave off some of this stuff.
+01:37 So let's increase the Duration.
+01:39 You can see it's also creating this
+beautiful, Talus out here on everything.
+01:45 Next step we add erosion.
+01:47 So I'll add Erosion.
+01:48 2 increase the Duration.
+01:51 I'm going to also
+increase the Erosion Scale,
+01:55 just because I want to have larger,
+01:59 flow networks being generated here,
+02:03 and then I'll increase
+the Coarse Sediments
+02:05 all the way.
+02:08 So it's creating
+all these beautiful flows,
+02:11 and then I'll increase the Coarse Angle
+just a little bit
+02:14 so that we can have more of this sediment
+high up on these slopes.
+02:19 Now I'm going to create
+one more Erosion pass.
+02:22 And this time I'm going to have again
+the Sediments, but then have them
+02:26 be very low
+02:29 and let me increase
+the Erosion Scale and Duration.
+02:32 So we get more of this.
+02:35 And so, let me see.
+02:39 I'll probably reduce the Downcutting
+just a little bit.
+02:42 So now with these two passes
+we have this whole mountain.
+02:47 I think one of the things that happened
+02:49 was we lost a little bit of the peaks
+that we had up here.
+02:54 So to prevent that from happening,
+I'll cheat a little bit.
+03:00 And I'm going to turn on a Mask by Height
+03:04 and mask out.
+03:07 All this area, I'm
+going to increase the Falloff.
+03:11 So it's a gentle effect
+and a little bit of Distortion.
+03:16 Then come back down here like so.
+03:21 And then here in this one,
+instead of masking it, I'm
+03:25 just going to reduce the Erosion Duration
+a little bit and play with the Shape
+03:30 so I can maybe retain
+some of the original.
+03:35 Although I like the high Sharpness.
+03:37 But okay. This will do.
+03:40 So that's now a cool,
+03:42 complex mountain scape.
+03:46 To add even more detail to it,
+what I'll do is I'll add,
+03:49 a level of Outcrops
+03:52 so you can see it's
+starting to create all this rocky detail.
+03:55 But I'm going to reduce the
+height of this rocky detail.
+04:02 Like so.
+04:05 And then I'll run
+04:06 another Erosion pass on top of this.
+04:09 This time again
+we'll have lots of Coarse Sediments.
+04:12 Let's increase the Bed Load as well.
+04:15 I'm going to reduce the Down
+Cutting and increase the Duration.
+04:19 So it does this.
+04:21 And then I will switch to Min mode.
+04:25 So then we get all this beautiful exposed
+04:27 strata right there.
+04:31 This is looking cool.
+04:32 So now,
+I am going to create an Adjust node
+04:37 and artificially increase the height
+04:41 like so.
+04:43 Normally I wouldn't do that for terrains,
+but just because we're dealing
+04:46 with a mountain peak
+and we lost a little bit of the original,
+04:50 peak down, here or up here.
+04:54 I want to bring some of it back.
+04:55 It was artificially high because, when
+we started, we had, you know, Low Bulk.
+05:01 Now, again, if I switch to Medium Bulk,
+you can see we get something like this.
+05:06 And going through the rest of the process,
+we would end up with something
+05:09 like this.
+05:10 So we don't have that peak at all.
+05:13 So I'm going to go back, switch to Low,
+05:16 go to the Erosion and Outcrops
+05:20 and then Erosion again
+and then artificially raise this.
+05:24 So that's our mountain.
+05:26 And now there's artificially raised.
+05:28 Let's add one more pass of Erosion.
+05:30 So in this
+05:33 because we have the stronger slopes
+because of the added height,
+05:37 the Erosion process has new,
+05:41 angles literally to play with.
+05:44 So when we have a Bed Load
+05:47 or Suspended Load or Coarse Sediment,
+any of these,
+05:51 they have a lot more slope to play with.
+05:53 And so we're
+now getting all this beautiful detail.
+05:56 If you don't want it to be so detailed,
+you can reduce the detail size,
+06:01 because then you want to have more focus
+on the flows.
+06:03 For example, I'm going to reduce Down
+Cutting just a tad
+06:08 and increase Duration
+so that we get, again these bigger flows.
+06:13 We can adjust the Coarse Angle
+to bring the flow
+06:17 further down here than up here
+or inversely bring it way more,
+06:22 up the slope to give it
+that bulkier feeling.
+06:26 Personally, though,
+I like it a little bit down here.
+06:29 There's something interesting going on.
+06:31 So this is now turning into a cool
+mountain peak.
+06:34 And, I'm tempted
+06:37 to add a bit more, just a little bit more.
+06:40 So I'm going to add Sandstone,
+which is not generally
+06:44 what we would think of on, a landscape
+like this.
+06:48 But I'm going to go here,
+I'm going to turn off Chipped.
+06:51 And what I want to do is
+06:52 create all this beautiful striations.
+06:55 Because you do find them
+a lot on these tall mountains.
+06:59 So I'm going to increase the spacing
+between these,
+07:02 these strata.
+07:04 And I'm going to set the Passes to four.
+07:07 So that repeats many times.
+07:10 Okay. That's way too many.
+07:11 I'm going to switch down to two.
+07:13 And then I'm going to reduce the Intensity
+a bit.
+07:17 And finally lots of Chaos.
+07:20 Always a lot of Chaos like so.
+07:23 But since we don't want this dominating
+07:26 the whole mountain,
+I'm going to Mask this by Height.
+07:30 Bring it.
+07:31 Down here.
+07:33 Little high Falloff, lots of Distortion.
+07:37 So there's some unevenness.
+07:39 Now, I think I will bring up the Intensity
+07:42 a little bit
+just so the effect plays better.
+07:46 I can now reduce the
+07:47 actual height
+since we have a very high Falloff.
+07:51 So something like this
+07:53 maybe change the Convexity of it
+07:57 and then I'll have one more pass of 
+Erosion.
+08:01 Again high sedimentation
+08:05 like so.
+08:06 But then I will also go back to Min mode
+08:10 so that some of this exposed
+08:12 strata can creep through like out here.
+08:16 So I think this is really good and ready.
+08:20 Last thing we need to do is texture this.
+08:23 And so rather than setting up
+a whole TextureBase system
+08:26 and whatnot, I'm going to be lazy.
+08:28 I'm just going to have a single SatMap
+directly hooked up to Erosion.
+08:32 And now I'm just going to spend a little
+bit of time trying to find the right,
+08:37 SatMap that will work on this,
+because I would like to have variation
+08:41 in the colors based on the different
+levels of altitude. So
+08:47 something like this, for example.
+08:49 Or if we were to reverse it like so,
+08:53 let's try it.
+08:55 We can always change this.
+08:56 And so I'll go straight to ColorErosion
+after this.
+08:59 Feed it the erosion.
+09:01 The last erosion has the height.
+09:03 And then really just amp up
+all the settings.
+09:07 Well not all the settings,
+but most of the settings.
+09:11 And so you can see
+that's already giving us
+09:13 this beautiful, texture.
+09:17 But I think these colors may be just a
+tad too stark.
+09:21 So another thing we can do
+is let's mix and match.
+09:23 I'm going to add one more SatMap
+and let's
+09:27 so this one was 189.
+09:30 Funny.
+09:31 This is also 189.
+09:32 But let's go for a different tone.
+09:34 Like, maybe this one or this one or
+09:38 let's go for
+09:39 this one, but instead of having it
+be just plain, strata lines like this,
+09:44 I'm going to have Medium roughness,
+which will just jitter the,
+09:49 the, the shapes around a little bit and,
+and create noise.
+09:53 I'm going to combine these two
+09:56 and then I'm going to feed
+that to the ColorErosion.
+09:59 And there you can see we're kind of now
+getting a better palette.
+10:02 It's not so stark like this.
+10:04 And it's like this.
+10:06 We can also play around a bit
+with Blend mode.
+10:08 I'm not sure what exactly we will get,
+but if we switch to Min,
+10:12 we get more of the previous,
+10:13 one dominating
+because of course, that's a darker shade.
+10:17 If we go Max, it's the other way around.
+10:19 And then we have Blend, but.
+10:22 What I liked in Max is we get to keep
+some of the stronger, brighter peaks,
+10:27 as compared to Blend
+where they become dull.
+10:30 So let's go with Max for now.
+10:32 And it's only 50%.
+10:33 We could probably make it higher,
+but now 50% is fine.
+10:38 And then when we feed this to our Color
+Erosion, you can see we get this
+10:43 beautiful map.
+10:45 I think my Flow Volume is
+10:47 a bit high,
+so I'm going to reduce that a little bit.
+10:51 And now if we go here, you know what.
+10:55 In fact let me switch this to 4K
+so we can see this in great detail.
+11:01 And there.
+11:01 Now we have our terrain
+in really high definition.
+11:04 So you can see we have all these beautiful
+shapes up here.
+11:08 There's all the flows coming down.
+11:11 We have that stratification that we added
+11:14 and all kinds of beautiful mountain
+structures up here.
+11:18 So there you have it.
+11:19 That's a tall mountain range
+that we can play with it further.
+11:23 You can easily add snow.
+11:24 Like just go here, add Snow
+11:28 and we'll have lots of beautiful snow.
+11:31 You can play with Melt
+11:33 and just create some cool shapes on this
+on a snowy mountain.
+11:37 Play it with however you like.
+11:38 And so yeah,
+this is a great way to get like a mountain
+11:43 that you might want to use
+as a background asset.
+11:46 Maybe in a Skybox, maybe in a VFX shot,
+11:49 you can easily create
+multiple different variations.
+11:52 So for example, if I switch back to one k,
+just so it processes a bit faster
+11:57 and I go back to our original mountain.
+11:59 And so instead of this Seed, I'm
+going to randomly select something else
+12:04 like this where, oh, we have split peaks.
+12:07 And then using this same process
+just go back all the way to the end.
+12:14 And you can see how well this works.
+12:17 We have that same setting,
+just a whole different, landscape.
+12:22 So you can play with this,
+create multiple, variations
+12:25 assets however you want to play with them
+and then set them up in your scene.

@@ -63,3 +63,60 @@ export interface StyleGuide {
   styleSheet: StyleSheet;
   typologyWeights: ReadonlyArray<{ typologyId: string; weight: number }>;
 }
+
+/* ─────────────────  Element catalog (vertical slice 1)  ───────────────── */
+
+export type ProfileHint = 'closed-path' | 'open-path' | 'symmetric-half' | 'tileable';
+
+export interface ProfileSlot {
+  name: string;
+  description: string;
+  hint: ProfileHint;
+  bbox?: readonly [number, number, number, number];
+}
+
+export type ParamSlotKind = 'number' | 'integer' | 'enum';
+
+export interface ParamSlot {
+  name: string;
+  kind: ParamSlotKind;
+  range?: readonly [number, number];
+  choices?: readonly string[];
+  default: number | string;
+}
+
+export type ElementCategory = 'connector' | 'ornament';
+
+export interface ElementGraphRef {
+  kind: 'kernel-fn';
+  module: string;
+  export: string;
+}
+
+export interface Element {
+  id: string;
+  category: ElementCategory;
+  graph: ElementGraphRef;
+  profileSlots: readonly ProfileSlot[];
+  paramSchema: readonly ParamSlot[];
+}
+
+export type ProvenanceSource = 'ai' | 'human';
+
+export interface BindingProvenance {
+  source: ProvenanceSource;
+  aiProvider?: 'anthropic' | 'openai' | 'fal' | 'local';
+  aiModel?: string;
+  promptHash?: string;
+  createdAt: string;
+  referenceImageHashes?: readonly string[];
+}
+
+export interface ElementBinding {
+  elementId: string;
+  styleSheetId: string;
+  seed: bigint;
+  profiles: Readonly<Record<string, string>>;
+  params: Readonly<Record<string, number | string>>;
+  provenance: BindingProvenance;
+}
