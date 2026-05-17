@@ -190,3 +190,17 @@ describe("#218 CARVE_RIVERS stream-power on accumulation", () => {
     expect(CARVE_RIVERS_FRAG).not.toMatch(/uResScale/);
   });
 });
+
+describe("#226 multi-pattern drainage config", () => {
+  it("DEFAULT_HYDRAULIC carries the Phase-A pattern knobs", () => {
+    for (const k of ["radialStrength","parallelStrength","centripetalStrength",
+      "uniformityThreshold","curvatureScale","ctrlRadius","endorheicSteps",
+      "patternMax"] as const) {
+      expect(typeof DEFAULT_HYDRAULIC[k]).toBe("number");
+    }
+    expect(DEFAULT_HYDRAULIC.patternMax).toBeGreaterThan(0);
+    expect(DEFAULT_HYDRAULIC.patternMax).toBeLessThan(1);
+    expect(DEFAULT_HYDRAULIC.ctrlRadius).toBeGreaterThanOrEqual(1);
+    expect(DEFAULT_HYDRAULIC.uniformityThreshold).toBeGreaterThan(0);
+  });
+});

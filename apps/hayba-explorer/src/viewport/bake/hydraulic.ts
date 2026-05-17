@@ -127,6 +127,22 @@ export interface HydraulicConfig {
   /** R1b: deterministic jitter added to the single-flow steepest-descent
    *  metric to break exact ties / D8 axis-locking (0 = pure D8). */
   sfdJitter: number;
+  /** #226 Phase-A multi-pattern drainage. Per-operator routing-bias
+   *  strengths (0 ⇒ that operator off; ALL 0 ⇒ byte-identical to the
+   *  #218 SFD baseline — the degradation gate). `uniformityThreshold`
+   *  = min slope-coherence for the parallel operator; `curvatureScale`
+   *  = normaliser for the peak/basin signal; `ctrlRadius` = control
+   *  box half-width in texels; `endorheicSteps` = max sdir hops for
+   *  closed-basin detection; `patternMax` (<1) caps the summed
+   *  non-dendritic weight so dendritic always has a floor. */
+  radialStrength: number;
+  parallelStrength: number;
+  centripetalStrength: number;
+  uniformityThreshold: number;
+  curvatureScale: number;
+  ctrlRadius: number;
+  endorheicSteps: number;
+  patternMax: number;
   /** S2.3 concavity gate: river carve is multiplied by
    *  `smoothstep(0, concaveScale, laplacian(b))` so incision only bites
    *  CONCAVE valley floors, not CONVEX plateau/range shoulders (kills the
@@ -209,6 +225,17 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   spN: 1.0,
   accMin: 0.05,
   accResScale: 1.0,
+  // #226: gentle nonzero so patterns read while dendritic stays
+  // dominant; oracle-tuned in the gate task. All-zero override is the
+  // degradation regression gate (≡ #218 8ecba5b).
+  radialStrength: 0.15,
+  parallelStrength: 0.15,
+  centripetalStrength: 0.15,
+  uniformityThreshold: 0.55,
+  curvatureScale: 0.02,
+  ctrlRadius: 3,
+  endorheicSteps: 64,
+  patternMax: 0.75,
   channelDepth: 0.02,
   sfdJitter: 0.002,
   // Concave valleys reach full carve by lap≈0.003; every convex shoulder
