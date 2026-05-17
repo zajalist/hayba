@@ -57,3 +57,9 @@ export function listDisabledTools(): string[] {
   ensureWatcher();
   return Array.from(cached).sort();
 }
+
+/** Reset internal cache — used in tests. Not part of the public API. */
+export function __resetDisabledToolsCache(): void {
+  cached = new Set();
+  watcherInstalled = false;
+}
