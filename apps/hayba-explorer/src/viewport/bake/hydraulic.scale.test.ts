@@ -192,6 +192,21 @@ describe("#218 CARVE_RIVERS stream-power on accumulation", () => {
   });
 });
 
+describe("#226 ACCUM pattern blend", () => {
+  it("ACCUM_FRAG has patternWeights + ctrl-biased sdir, zero-weight reduces to #218", () => {
+    expect(ACCUM_FRAG).toMatch(/uniform sampler2D uCtrl;/);
+    expect(ACCUM_FRAG).toMatch(/uniform float uRadialStrength;/);
+    expect(ACCUM_FRAG).toMatch(/uniform float uParallelStrength;/);
+    expect(ACCUM_FRAG).toMatch(/uniform float uCentripetalStrength;/);
+    expect(ACCUM_FRAG).toMatch(/uniform float uUniformityThreshold;/);
+    expect(ACCUM_FRAG).toMatch(/uniform float uPatternMax;/);
+    expect(ACCUM_FRAG).toMatch(/vec4 patternW\(/);
+    expect(ACCUM_FRAG).toMatch(/drop \/ ND\[j\]/);
+    expect(ACCUM_FRAG).toMatch(/patternBias/);
+    expect(ACCUM_FRAG).toMatch(/1\.0 - ctrl\.a/);
+  });
+});
+
 describe("#226 multi-pattern drainage config", () => {
   it("DEFAULT_HYDRAULIC carries the Phase-A pattern knobs", () => {
     for (const k of ["radialStrength","parallelStrength","centripetalStrength",
