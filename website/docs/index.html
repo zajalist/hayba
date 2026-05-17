@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hayba — Documentation</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&family=Charis+SIL:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" type="image/svg+xml" href="/assets/Logo.svg">
+</head>
+<body class="page-docs">
+  <aside class="docs-sidebar">
+    <a href="/" class="brand-link brand-link-compact">
+      <img src="/assets/Logo-white.svg" alt="" class="brand-mark" />
+      <span>Hayba</span>
+    </a>
+    <nav class="docs-toc" aria-label="Documentation sections">
+      <div class="docs-toc-group">
+        <div class="docs-toc-title">Getting started</div>
+        <a href="#overview" class="docs-toc-link is-active">Overview</a>
+        <a href="#install" class="docs-toc-link">Install</a>
+        <a href="#first-run" class="docs-toc-link">First run</a>
+      </div>
+      <div class="docs-toc-group">
+        <div class="docs-toc-title">Linguistics</div>
+        <a href="#linguistics-workbench" class="docs-toc-link">Workbench</a>
+        <a href="#phonology" class="docs-toc-link">Phonology</a>
+        <a href="#sound-changes" class="docs-toc-link">Sound changes</a>
+        <a href="#lexicon" class="docs-toc-link">Lexicon</a>
+        <a href="#share-links" class="docs-toc-link">Share links</a>
+      </div>
+      <div class="docs-toc-group">
+        <div class="docs-toc-title">Tectonics</div>
+        <a href="#tectonics-pillars" class="docs-toc-link">Pillars</a>
+        <a href="#plates" class="docs-toc-link">Plate lifecycle</a>
+        <a href="#invariants" class="docs-toc-link">Invariants</a>
+      </div>
+      <div class="docs-toc-group">
+        <div class="docs-toc-title">UE5 plugin</div>
+        <a href="#mcp-overview" class="docs-toc-link">MCP overview</a>
+        <a href="#tools-reference" class="docs-toc-link">Tools reference</a>
+        <a href="#scene" class="docs-toc-link">Scene</a>
+        <a href="#editor" class="docs-toc-link">Editor</a>
+        <a href="#pcgex" class="docs-toc-link">PCGEx</a>
+        <a href="#zone-painter" class="docs-toc-link">Zone Painter</a>
+      </div>
+      <div class="docs-toc-group">
+        <div class="docs-toc-title">Self-hosting</div>
+        <a href="#self-host" class="docs-toc-link">Bring up Supabase</a>
+        <a href="#admin" class="docs-toc-link">Admin queue</a>
+        <a href="#backups" class="docs-toc-link">Backups</a>
+      </div>
+      <div class="docs-toc-group">
+        <div class="docs-toc-title">FAQ</div>
+        <a href="/#faq" class="docs-toc-link">Common questions</a>
+      </div>
+    </nav>
+  </aside>
+
+  <main class="docs-main">
+    <div class="docs-eyebrow">DOCUMENTATION</div>
+    <h1 id="overview">Hayba 0.5.0</h1>
+    <p class="docs-lead">
+      A worldbuilding toolset — tectonics, conlangs, architecture, wired together by an
+      MCP your LLM can drive. The documentation below tracks the current 0.5 series.
+    </p>
+
+    <section class="docs-section">
+      <h2 id="install">Install</h2>
+      <p>
+        Local toolset: clone <code>github.com/zajalist/hayba</code> and run
+        <code>npm install</code>. The linguistics workbench builds with
+        <code>npm run dev --workspace @hayba/linguistics</code>.
+      </p>
+      <p class="docs-status">
+        <span class="docs-status-tag">WIP</span>
+        Full install guide is being written.  In the meantime, see the
+        <a href="https://github.com/zajalist/hayba#readme" target="_blank">repo README</a>
+        for the canonical setup.
+      </p>
+    </section>
+
+    <section class="docs-section">
+      <h2 id="first-run">First run</h2>
+      <p>
+        Hayba opens to the conlang workbench by default. Pick a starter phonology, watch
+        the legality heatmap update as you toggle phonemes, then move on to sound changes
+        and lexicon. Everything persists locally; signed-in users get cloud sync and
+        share-links.
+      </p>
+    </section>
+
+    <section class="docs-section">
+      <h2 id="linguistics-workbench">Linguistics workbench</h2>
+      <p>
+        The conlang workbench covers phonology (IPA chart + phonotactic legality heatmap),
+        sound changes (rule stacks with regex selectors), paradigms, and family trees.
+        Built on PHOIBLE co-occurrence data so suggestions reflect what actually appears
+        in human languages.
+      </p>
+      <p class="docs-status"><span class="docs-status-tag">WIP</span> Per-feature pages in progress.</p>
+    </section>
+
+    <section class="docs-section">
+      <h2 id="tectonics-pillars">Tectonics pillars</h2>
+      <p>
+        The 0.5 series ships M0-M3 of the tectonics pillar: plate seeding, rift opening,
+        collision/subduction, and the dynamic-plate lifecycle. Visualised at each step
+        with real per-tile invariants (plate area, drift, divergence regime) rather than
+        abstracted summaries.
+      </p>
+      <p class="docs-status"><span class="docs-status-tag">WIP</span> Algorithm references in progress.</p>
+    </section>
+
+    <section class="docs-section">
+      <h2 id="mcp-overview">UE5 MCP plugin</h2>
+      <p>
+        Hayba speaks Model Context Protocol. Any LLM with MCP support — Claude Desktop,
+        Cursor, Continue, local Llama via Ollama-MCP — can author terrain, place actors,
+        apply conventions, and orchestrate the full toolset directly in Unreal.
+      </p>
+      <p>
+        35 tools across 8 domains: Code mode (meta-tools), Actor, Scene, Editor, PCGEx,
+        Conventions, Landscape &amp; Zone Painter, and others. Per-domain toggles let you
+        scope what the agent sees.
+      </p>
+      <p class="docs-status"><span class="docs-status-tag">WIP</span> Full tools reference rolls out per-domain.</p>
+    </section>
+
+    <section class="docs-section">
+      <h2 id="self-host">Self-hosting</h2>
+      <p>
+        The hosted tier is one self-hosted Supabase plus a static Vercel front-end.
+        See <code>infra/README.md</code> in the repo for the full bring-up sequence —
+        docker-compose, Caddy, Cloudflare Tunnel, nightly pg_dump rotation.
+      </p>
+    </section>
+
+    <p class="docs-footer-link">
+      <a href="/">← Back to landing</a>
+    </p>
+  </main>
+</body>
+</html>

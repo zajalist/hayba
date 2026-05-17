@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hayba — Join the waitlist</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/config.js"></script>
+<script type="module" src="/waitlist/submit.js" defer></script>
+</head>
+<body class="page-form">
+  <main class="form-shell">
+    <a href="/" class="brand-link">← Hayba</a>
+    <div class="eyebrow">JOIN THE WAITLIST</div>
+    <h1>A toolset for rigorous worldbuilding.</h1>
+    <p class="lead">We're letting in 50 people while the tools find their feet.</p>
+
+    <form id="waitlist-form" class="form">
+      <label>Email *
+        <input type="email" name="email" required>
+      </label>
+
+      <label>What are you making? *
+        <select name="making" required>
+          <option value="game">Game (indie / studio / mod)</option>
+          <option value="novel">Novel / fiction / comics</option>
+          <option value="ttrpg">TTRPG / setting book</option>
+          <option value="animation">Animation / film / visual project</option>
+          <option value="hobby">Worldbuilding as a hobby</option>
+          <option value="academic">Academic / research</option>
+          <option value="curious">Just curious</option>
+        </select>
+      </label>
+
+      <fieldset>
+        <legend>Which tools sound most useful? (pick any)</legend>
+        <div class="chip-group" data-group="geology">
+          <span class="chip-label">Geology &middot; planet</span>
+          <label class="chip"><input type="checkbox" name="tools" value="planet-physics"> Planet physics</label>
+          <label class="chip"><input type="checkbox" name="tools" value="tectonics"> Tectonics</label>
+          <label class="chip"><input type="checkbox" name="tools" value="terrain"> Terrain</label>
+          <label class="chip"><input type="checkbox" name="tools" value="hydrology"> Hydrology</label>
+          <label class="chip"><input type="checkbox" name="tools" value="atmosphere"> Atmosphere</label>
+          <label class="chip"><input type="checkbox" name="tools" value="cartography"> Cartography</label>
+        </div>
+        <div class="chip-group">
+          <span class="chip-label">Life &middot; societies</span>
+          <label class="chip"><input type="checkbox" name="tools" value="biomes"> Biomes</label>
+          <label class="chip"><input type="checkbox" name="tools" value="flora-fauna"> Flora &amp; fauna</label>
+          <label class="chip"><input type="checkbox" name="tools" value="linguistics"> Linguistics</label>
+          <label class="chip"><input type="checkbox" name="tools" value="cultures"> Cultures</label>
+          <label class="chip"><input type="checkbox" name="tools" value="history"> History</label>
+          <label class="chip"><input type="checkbox" name="tools" value="religion"> Religion</label>
+          <label class="chip"><input type="checkbox" name="tools" value="naming"> Naming</label>
+        </div>
+        <div class="chip-group">
+          <span class="chip-label">Built environment</span>
+          <label class="chip"><input type="checkbox" name="tools" value="architecture"> Architecture</label>
+          <label class="chip"><input type="checkbox" name="tools" value="economy"> Economy</label>
+          <label class="chip"><input type="checkbox" name="tools" value="politics"> Politics</label>
+          <label class="chip"><input type="checkbox" name="tools" value="magic"> Magic systems</label>
+        </div>
+        <div class="chip-group">
+          <span class="chip-label">Pipelines</span>
+          <label class="chip"><input type="checkbox" name="tools" value="ue5-plugin"> UE5 plugin &middot; MCP toolkit</label>
+          <label class="chip"><input type="checkbox" name="tools" value="gaea"> Gaea integration</label>
+          <label class="chip"><input type="checkbox" name="tools" value="houdini-blender"> Houdini / Blender</label>
+          <label class="chip"><input type="checkbox" name="tools" value="ai-agents"> AI agents &middot; MCP for LLMs</label>
+          <label class="chip"><input type="checkbox" name="tools" value="other"> Other</label>
+        </div>
+      </fieldset>
+
+      <label>Tell us about your project (optional)
+        <textarea name="notes" rows="4" placeholder="One paragraph is plenty."></textarea>
+      </label>
+
+      <button type="submit" class="btn primary">Request access</button>
+      <p class="muted">We'll email you when a spot opens. No spam, no list-sale.</p>
+    </form>
+
+    <div id="waitlist-success" hidden>
+      <h2>Got it.</h2>
+      <p>We'll reach out at the email above when a spot opens.</p>
+    </div>
+  </main>
+</body>
+</html>

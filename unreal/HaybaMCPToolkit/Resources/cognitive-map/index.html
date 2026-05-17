@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Hayba — Cognitive Map</title>
+  <style>
+    :root {
+      --bg:      #1c1f24;
+      --panel:   #23272e;
+      --stroke:  #3d4350;
+      --muted:   #8d93a1;
+      --text:    #d8dae0;
+      --edge:    rgba(180, 188, 210, 0.22);
+      --edge-hi: rgba(180, 188, 210, 0.55);
+    }
+    html, body {
+      margin: 0; padding: 0; height: 100%; width: 100%;
+      background: var(--bg); color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px;
+      overflow: hidden; user-select: none;
+    }
+    #stage { position: absolute; inset: 0; }
+    svg    { width: 100%; height: 100%; display: block; cursor: grab; }
+    svg.dragging { cursor: grabbing; }
+
+    .edge { stroke: var(--edge); stroke-width: 1.2; fill: none; }
+    .edge.hi { stroke: var(--edge-hi); }
+
+    .node circle.halo {
+      fill: currentColor; fill-opacity: 0.0;
+      transition: fill-opacity .12s;
+    }
+    .node:hover circle.halo { fill-opacity: 0.18; }
+    .node circle.body {
+      stroke: currentColor; stroke-width: 1.5;
+      fill: #2a2f37;
+    }
+    .node.root circle.body { fill: #34394a; stroke-width: 2; }
+    .node text {
+      fill: var(--text);
+      pointer-events: none;
+      paint-order: stroke;
+      stroke: var(--bg); stroke-width: 3px; stroke-linejoin: round;
+    }
+    .node.root text { font-weight: 700; }
+
+    .tooltip {
+      position: absolute; pointer-events: none;
+      background: var(--panel); border: 1px solid var(--stroke);
+      padding: 8px 10px; border-radius: 4px;
+      max-width: 280px; opacity: 0; transition: opacity .1s;
+      box-shadow: 0 4px 16px rgba(0,0,0,.5);
+      z-index: 10; font-size: 11px;
+    }
+    .tooltip .t { font-weight: 600; margin-bottom: 4px; font-size: 12px; }
+    .tooltip .c { color: var(--muted); }
+    .tooltip ul { margin: 4px 0 0 0; padding-left: 16px; color: var(--muted); }
+
+    .empty {
+      position: absolute; inset: 0; display: flex; align-items: center;
+      justify-content: center; color: var(--muted); pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <svg id="svg">
+      <g id="g-world">
+        <g id="g-edges"></g>
+        <g id="g-nodes"></g>
+      </g>
+    </svg>
+    <div class="empty" id="empty">No cells. Click Refresh to scan the level.</div>
+    <div class="tooltip" id="tooltip"></div>
+  </div>
+  <script>
+    // Mindmap-style cognitive map. Three-tier hierarchy:
+    //   root  ── semantic-category hub  ── cell leaf
+    // Force-directed layout, drag-able nodes, responsive resize.
+
+    const PALETTE = {
+      forest:     '#4caf6c',
+      meadow:     '#7bb867',
+      brush:      '#5fa462',
+      urban:      '#8c93b0',
+      lighting:   '#e6c155',
+      triggers:   '#5cb6ee',
+      characters: '#f57777',
+      geology:    '#b58e6a',
+      terrain:    '#a98a5e',
+      water:      '#4d9ed6',
+      mixed:      '#9aa0ad',
+    };
+    const fallbackColor = '#9aa0ad';
+    function semanticOf(label) {
+      // Map a cell's label back to its broad semantic family for coloring.
+      for (const k of Object.keys(PALETTE)) if (label === k) return k;
+      // Heuristic fallback by substring (matches the C++ name table).
+      const map = [
+        [['tree','foliage'], 'forest'], [['grass'], 'meadow'], [['bush'], 'brush'],
+        [['building','wall','floor','house'], 'urban'],
+        [['light','lamp'], 'lighting'],
+        [['character','pawn'], 'characters'],
+        [['trigger','volume'], 'triggers'],
+        [['rock','cliff','boulder'], 'geology'],
+        [['water','river','ocean'], 'water'],
+        [['landscape','terrain'], 'terrain'],
+      ];
+      for (const [keys, sem] of map) for (const k of keys)
+        if (label.toLowerCase().includes(k)) return sem;
+      return 'mixed';
+    }
+
+    const svg     = document.getElementById('svg');
+    const world   = document.getElementById('g-world');
+    const gEdges  = document.getElementById('g-edges');
+    const gNodes  = document.getElementById('g-nodes');
+    const empty   = document.getElementById('empty');
+    const tooltip = document.getElementById('tooltip');
+
+    // View transform
+    let view = { tx: 0, ty: 0, scale: 1 };
+    function applyView() {
+      world.setAttribute('transform', `translate(${view.tx},${view.ty}) scale(${view.scale})`);
+    }
+
+    // Graph data
+    let nodes = []; // {id, kind:'root'|'hub'|'cell', label, color, r, x, y, vx, vy, fx?, fy?, data?}
+    let edges = []; // {source, target}
+    let cells = [];
+
+    // ── Build graph from cells ─────────────────────────────────────────────
+    function buildGraph(cellsIn) {
+      cells = cellsIn || [];
+      nodes = [];
+      edges = [];
+      if (!cells.length) return;
+
+      // 1. Root
+      const root = { id: 'root', kind: 'root', label: 'level', color: '#cfd5e6', r: 30, x: 0, y: 0, vx: 0, vy: 0 };
+      nodes.push(root);
+
+      // 2. Hubs per semantic family.
+      const families = new Map(); // semantic → {node, cells:[]}
+      for (const c of cells) {
+        const sem = semanticOf(c.label);
+        if (!families.has(sem)) {
+          const hub = {
+            id: 'hub:' + sem, kind: 'hub', label: sem,
+            color: PALETTE[sem] || fallbackColor,
+            r: 16, x: 0, y: 0, vx: 0, vy: 0, data: { cellCount: 0, actorCount: 0 },
+          };
+          nodes.push(hub);
+          edges.push({ source: 'root', target: hub.id });
+          families.set(sem, { node: hub, cells: [] });
+        }
+        families.get(sem).cells.push(c);
+      }
+
+      // 3. Cell leaves under each hub.
+      for (const [sem, fam] of families) {
+        fam.node.data.cellCount = fam.cells.length;
+        for (const c of fam.cells) {
+          fam.node.data.actorCount += c.count;
+          const cellNode = {
+            id: 'cell:' + sem + ':' + c.label + ':' + (c.bounds.min[0]) + ':' + (c.bounds.min[1]),
+            kind: 'cell', label: c.label, color: PALETTE[sem] || fallbackColor,
+            // Radius scales with sqrt(actor count) so a 100-actor cell is
+            // ~10× a 1-actor cell but big areas don't dominate.
+            r: 6 + Math.sqrt(c.count) * 1.5,
+            x: 0, y: 0, vx: 0, vy: 0,
+            data: c,
+          };
+          nodes.push(cellNode);
+          edges.push({ source: fam.node.id, target: cellNode.id });
+        }
+      }
+
+      // Seed positions radially so the simulation starts well-distributed.
+      const w = svg.clientWidth || 800;
+      const h = svg.clientHeight || 600;
+      const cx = w / 2, cy = h / 2;
+      root.fx = cx; root.fy = cy; // pin root to center
+      let i = 0;
+      for (const n of nodes) {
+        if (n === root) { n.x = cx; n.y = cy; continue; }
+        const a = (i++ / Math.max(1, nodes.length - 1)) * Math.PI * 2;
+        const radius = n.kind === 'hub' ? 140 : 240;
+        n.x = cx + Math.cos(a) * radius;
+        n.y = cy + Math.sin(a) * radius;
+      }
+    }
+
+    // ── Force simulation ──────────────────────────────────────────────────
+    let alpha = 1.0;
+    let raf = 0;
+    function step() {
+      if (alpha < 0.001) { alpha = 0; raf = 0; return; }
+
+      const w = svg.clientWidth, h = svg.clientHeight;
+      const cx = w / 2, cy = h / 2;
+      const linkDist = 90;
+
+      // Apply forces.
+      // 1. Repulsion (Coulomb-ish).
+      for (let i = 0; i < nodes.length; i++) {
+        const a = nodes[i];
+        for (let j = i + 1; j < nodes.length; j++) {
+          const b = nodes[j];
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const distSq = Math.max(dx*dx + dy*dy, 0.01);
+          const dist = Math.sqrt(distSq);
+          const repulse = 1200 / distSq;     // strength
+          const fx = (dx / dist) * repulse;
+          const fy = (dy / dist) * repulse;
+          a.vx -= fx; a.vy -= fy;
+          b.vx += fx; b.vy += fy;
+        }
+      }
+      // 2. Spring along edges.
+      for (const e of edges) {
+        const a = nodeById(e.source);
+        const b = nodeById(e.target);
+        if (!a || !b) continue;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dist = Math.sqrt(dx*dx + dy*dy) || 0.01;
+        const desired = a.kind === 'root' || b.kind === 'root' ? linkDist : linkDist * 0.8;
+        const k = 0.06;
+        const f = (dist - desired) * k;
+        const fx = (dx / dist) * f;
+        const fy = (dy / dist) * f;
+        a.vx += fx; a.vy += fy;
+        b.vx -= fx; b.vy -= fy;
+      }
+      // 3. Gentle centering pull.
+      for (const n of nodes) {
+        n.vx += (cx - n.x) * 0.002;
+        n.vy += (cy - n.y) * 0.002;
+      }
+      // Integrate with damping.
+      for (const n of nodes) {
+        if (n.fx !== undefined) { n.x = n.fx; n.vx = 0; }
+        else { n.vx *= 0.78 * alpha; n.x += n.vx; }
+        if (n.fy !== undefined) { n.y = n.fy; n.vy = 0; }
+        else { n.vy *= 0.78 * alpha; n.y += n.vy; }
+      }
+      alpha *= 0.99;
+      updatePositions();
+      raf = requestAnimationFrame(step);
+    }
+    function reheat(a = 1.0) {
+      alpha = a;
+      if (!raf) raf = requestAnimationFrame(step);
+    }
+    function nodeById(id) {
+      // Linear lookup is fine; node count is small (tens to hundreds).
+      for (const n of nodes) if (n.id === id) return n;
+      return null;
+    }
+
+    // ── Render ────────────────────────────────────────────────────────────
+    let edgeEls = new Map(); // id pair → <line>
+    let nodeEls = new Map(); // node.id → <g>
+
+    function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+
+    function render() {
+      clear(gEdges); clear(gNodes);
+      edgeEls.clear(); nodeEls.clear();
+      empty.style.display = cells.length ? 'none' : 'flex';
+
+      for (const e of edges) {
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('class', 'edge');
+        gEdges.appendChild(line);
+        edgeEls.set(e.source + '|' + e.target, line);
+      }
+      for (const n of nodes) {
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.setAttribute('class', 'node ' + n.kind);
+        g.style.color = n.color;
+
+        const halo = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        halo.setAttribute('class', 'halo');
+        halo.setAttribute('r', n.r + 6);
+        g.appendChild(halo);
+
+        const body = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        body.setAttribute('class', 'body');
+        body.setAttribute('r', n.r);
+        g.appendChild(body);
+
+        const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        txt.setAttribute('text-anchor', 'middle');
+        txt.setAttribute('dy', n.r + 14);
+        txt.setAttribute('font-size', n.kind === 'root' ? 14 : (n.kind === 'hub' ? 12 : 10));
+        txt.textContent = n.kind === 'cell'
+          ? `${n.data.count}`     // tight leaves: just the count, hover for detail
+          : n.label;
+        g.appendChild(txt);
+
+        if (n.kind === 'hub') {
+          const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          sub.setAttribute('text-anchor', 'middle');
+          sub.setAttribute('dy', n.r + 28);
+          sub.setAttribute('font-size', 10);
+          sub.setAttribute('fill', '#8d93a1');
+          sub.textContent = `${n.data.cellCount} cells · ${n.data.actorCount} actors`;
+          g.appendChild(sub);
+        }
+
+        // Drag.
+        g.addEventListener('mousedown', (ev) => {
+          ev.stopPropagation();
+          dragNode = n;
+          const pt = clientToWorld(ev.clientX, ev.clientY);
+          dragOffset = { dx: pt.x - n.x, dy: pt.y - n.y };
+          n.fx = n.x; n.fy = n.y;
+        });
+        g.addEventListener('mouseenter', () => showTip(n));
+        g.addEventListener('mousemove', moveTip);
+        g.addEventListener('mouseleave', hideTip);
+        g.addEventListener('click', () => {
+          if (n.kind === 'cell') {
+            try { if (window.hayba && window.hayba.selectCell) window.hayba.selectCell(n.label); } catch (e) {}
+          }
+        });
+
+        gNodes.appendChild(g);
+        nodeEls.set(n.id, g);
+      }
+      updatePositions();
+    }
+
+    function updatePositions() {
+      for (const e of edges) {
+        const a = nodeById(e.source);
+        const b = nodeById(e.target);
+        if (!a || !b) continue;
+        const line = edgeEls.get(e.source + '|' + e.target);
+        if (!line) continue;
+        line.setAttribute('x1', a.x); line.setAttribute('y1', a.y);
+        line.setAttribute('x2', b.x); line.setAttribute('y2', b.y);
+      }
+      for (const n of nodes) {
+        const g = nodeEls.get(n.id);
+        if (g) g.setAttribute('transform', `translate(${n.x},${n.y})`);
+      }
+    }
+
+    // ── Tooltip ───────────────────────────────────────────────────────────
+    function showTip(n) {
+      let html = `<div class="t">${n.label}</div>`;
+      if (n.kind === 'cell') {
+        const c = n.data;
+        html += `<div class="c">${c.count} actor${c.count === 1 ? '' : 's'}</div>`;
+        if (c.dominant && c.dominant.length) {
+          html += `<div class="c">Top classes:</div><ul>${c.dominant.slice(0,5).map(s => `<li>${s}</li>`).join('')}</ul>`;
+        }
+      } else if (n.kind === 'hub') {
+        html += `<div class="c">${n.data.cellCount} cells · ${n.data.actorCount} actors</div>`;
+      } else {
+        html += `<div class="c">${cells.length} cells</div>`;
+      }
+      tooltip.innerHTML = html;
+      tooltip.style.opacity = 1;
+    }
+    function moveTip(ev) {
+      tooltip.style.left = (ev.clientX + 12) + 'px';
+      tooltip.style.top  = (ev.clientY + 12) + 'px';
+    }
+    function hideTip() { tooltip.style.opacity = 0; }
+
+    // ── Pan / zoom / drag ─────────────────────────────────────────────────
+    let panning = false, lastX = 0, lastY = 0;
+    let dragNode = null, dragOffset = { dx: 0, dy: 0 };
+    function clientToWorld(cx, cy) {
+      const rect = svg.getBoundingClientRect();
+      return { x: (cx - rect.left - view.tx) / view.scale, y: (cy - rect.top - view.ty) / view.scale };
+    }
+    svg.addEventListener('mousedown', (e) => {
+      if (dragNode) return;          // node drag started in node handler
+      panning = true;
+      lastX = e.clientX; lastY = e.clientY;
+      svg.classList.add('dragging');
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (dragNode) {
+        const pt = clientToWorld(e.clientX, e.clientY);
+        dragNode.fx = pt.x - dragOffset.dx;
+        dragNode.fy = pt.y - dragOffset.dy;
+        reheat(0.3);
+        return;
+      }
+      if (!panning) return;
+      view.tx += (e.clientX - lastX);
+      view.ty += (e.clientY - lastY);
+      lastX = e.clientX; lastY = e.clientY;
+      applyView();
+    });
+    window.addEventListener('mouseup', () => {
+      panning = false; svg.classList.remove('dragging');
+      if (dragNode && dragNode.kind !== 'root') {
+        // Release pin so the node can settle into the simulation again.
+        dragNode.fx = undefined; dragNode.fy = undefined;
+      }
+      dragNode = null;
+    });
+    svg.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const factor = Math.pow(1.1, -e.deltaY / 100);
+      const rect = svg.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const wx = (cx - view.tx) / view.scale;
+      const wy = (cy - view.ty) / view.scale;
+      view.scale = Math.max(0.1, Math.min(8, view.scale * factor));
+      view.tx = cx - wx * view.scale;
+      view.ty = cy - wy * view.scale;
+      applyView();
+    }, { passive: false });
+
+    // ── Responsive ────────────────────────────────────────────────────────
+    function onResize() {
+      // Re-center root pin on resize so the layout doesn't drift off-canvas.
+      const root = nodeById('root');
+      if (root) {
+        root.fx = svg.clientWidth / 2;
+        root.fy = svg.clientHeight / 2;
+      }
+      reheat(0.2);
+    }
+    window.addEventListener('resize', onResize);
+    if (window.ResizeObserver) new ResizeObserver(onResize).observe(document.getElementById('stage'));
+
+    // ── Public API ────────────────────────────────────────────────────────
+    window.haybaLoadCells = function(jsonStr) {
+      try {
+        const data = JSON.parse(jsonStr);
+        buildGraph(Array.isArray(data.cells) ? data.cells : []);
+        render();
+        reheat(1.0);
+      } catch (e) {
+        console.error('haybaLoadCells parse error:', e);
+      }
+    };
+    window.haybaFit = function() {
+      // Reset view + reheat the simulation so things re-settle nicely.
+      view = { tx: 0, ty: 0, scale: 1 }; applyView();
+      reheat(0.7);
+    };
+    window.haybaReset = function() {
+      view = { tx: 0, ty: 0, scale: 1 }; applyView();
+      // Clear all pins so layout fully recomputes.
+      for (const n of nodes) { if (n.kind !== 'root') { n.fx = undefined; n.fy = undefined; } }
+      reheat(1.0);
+    };
+
+    // Initial empty.
+    render();
+  </script>
+</body>
+</html>
