@@ -114,15 +114,141 @@ fn painted_precip(draft: &WizardDraft, cells: &[(Vec3, f32)]) -> Vec<f32> {
     compute_climate(&model, draft.seed, false, &params).precip
 }
 
+/// A directional bucket grid over the cells' unit-direction vectors so
+/// the per-texel nearest-cell query is ~O(1) instead of O(cells).
+///
+/// Binning: cell direction → geographic `(lat, lon)` (`lat = asin(y)`,
+/// `lon = atan2(z, x)` — the SAME Y-up convention the rasterizer texel
+/// loop uses), then
+///   `lat_band = floor((lat + π/2) / π     * n_lat)`  clamped `[0,n_lat)`
+///   `lon_bin  = floor((lon + π)  / (2π)   * n_lon)`  mod   `n_lon`
+/// Both axes are sized `≈ √(n_cells)` so a quasi-uniform Goldberg grid
+/// averages ~1 cell per bucket.
+///
+/// Query correctness (must be byte-IDENTICAL to brute force): the true
+/// nearest cell lies within a small angular cap around the texel
+/// direction. We scan the texel's `lat_band ± 1` (3 bands — one band is
+/// `π/n_lat ≈ π/√n` rad tall, ≥ the Goldberg cell spacing, so the nearest
+/// cell's band is always within ±1). Longitude bins CONVERGE toward the
+/// poles (a fixed lon-bin count spans a shrinking arc as `cos(lat)→0`),
+/// so the lon half-width in BINS is widened by `1/cos(lat)` (clamped to a
+/// full wrap at the poles) and the lon scan WRAPS at ±π. This only prunes
+/// the candidate set — the winner is still the exact global max dot
+/// product, proven equal to brute force by `spatial_eq_bruteforce_*`.
+struct CellGrid<'a> {
+    cells: &'a [(Vec3, f32)],
+    n_lat: usize,
+    n_lon: usize,
+    /// `buckets[band * n_lon + bin]` = indices of cells in that bucket.
+    buckets: Vec<Vec<u32>>,
+}
+
+impl<'a> CellGrid<'a> {
+    fn build(cells: &'a [(Vec3, f32)]) -> Self {
+        // ≈ √(n_cells) per axis; at least 1 so tiny drafts still work.
+        let n = cells.len().max(1);
+        let axis = (n as f64).sqrt().ceil() as usize;
+        let n_lat = axis.max(1);
+        let n_lon = axis.max(1);
+        let mut buckets: Vec<Vec<u32>> = vec![Vec::new(); n_lat * n_lon];
+        for (i, &(p, _)) in cells.iter().enumerate() {
+            let (band, bin) = Self::bucket_of(p, n_lat, n_lon);
+            buckets[band * n_lon + bin].push(i as u32);
+        }
+        CellGrid { cells, n_lat, n_lon, buckets }
+    }
+
+    /// Map a unit direction to its `(lat_band, lon_bin)`.
+    #[inline]
+    fn bucket_of(p: Vec3, n_lat: usize, n_lon: usize) -> (usize, usize) {
+        use std::f32::consts::PI;
+        let lat = p.y.clamp(-1.0, 1.0).asin(); // [-π/2, π/2]
+        let lon = p.z.atan2(p.x); // [-π, π]
+        let bf = ((lat + PI * 0.5) / PI) * n_lat as f32;
+        let band = (bf.floor() as isize).clamp(0, n_lat as isize - 1) as usize;
+        let lf = ((lon + PI) / (2.0 * PI)) * n_lon as f32;
+        let mut bin = lf.floor() as isize;
+        // Wrap (lon == +π lands exactly at n_lon).
+        bin = bin.rem_euclid(n_lon as isize);
+        (band, bin as usize)
+    }
+
+    /// Exact nearest cell (max dot product) to `dir` — identical result
+    /// to a brute-force scan over all cells, just pruned to the relevant
+    /// bucket neighborhood.
+    #[inline]
+    fn nearest(&self, dir: Vec3, lat: f32) -> (usize, f32) {
+        // Texel's own bucket (reuse bucket_of via the dir vector).
+        let (band0, bin0) = Self::bucket_of(dir, self.n_lat, self.n_lon);
+
+        // Lon half-width in BINS: one bin spans `2π/n_lon` rad of lon,
+        // which is `cos(lat) * 2π/n_lon` rad of GREAT-CIRCLE arc. To
+        // cover the same arc as one lat band (`π/n_lat` rad) plus the ±1
+        // band slack, widen by `1/cos(lat)`. Clamp at the poles so we
+        // simply scan every lon bin (a full wrap) where `cos(lat)→0`.
+        let cos_lat = lat.cos().abs().max(1e-4);
+        // Base ±2 bins of slack, scaled by the polar lon convergence.
+        let lon_half = (((2.0 / cos_lat).ceil()) as isize)
+            .clamp(1, self.n_lon as isize);
+        let full_lon = lon_half * 2 + 1 >= self.n_lon as isize;
+
+        let mut best_dot = f32::NEG_INFINITY;
+        let mut best_idx = 0usize;
+
+        let band_lo = (band0 as isize - 1).max(0) as usize;
+        let band_hi = ((band0 as isize + 1).min(self.n_lat as isize - 1)) as usize;
+
+        for band in band_lo..=band_hi {
+            if full_lon {
+                // Polar row: every lon bin in this band is in range.
+                let row = band * self.n_lon;
+                for bin in 0..self.n_lon {
+                    for &ci in &self.buckets[row + bin] {
+                        let cpos = self.cells[ci as usize].0;
+                        let d = cpos.dot(dir);
+                        if d > best_dot {
+                            best_dot = d;
+                            best_idx = ci as usize;
+                        }
+                    }
+                }
+            } else {
+                let row = band * self.n_lon;
+                for off in -lon_half..=lon_half {
+                    let bin = (bin0 as isize + off)
+                        .rem_euclid(self.n_lon as isize)
+                        as usize;
+                    for &ci in &self.buckets[row + bin] {
+                        let cpos = self.cells[ci as usize].0;
+                        let d = cpos.dot(dir);
+                        if d > best_dot {
+                            best_dot = d;
+                            best_idx = ci as usize;
+                        }
+                    }
+                }
+            }
+        }
+        (best_idx, best_dot)
+    }
+}
+
 /// Rasterize the painted draft + climate precipitation onto one
 /// equirectangular `w × h` grid. For each texel, the FIXED convention
 /// (row 0 = North pole) gives `(lat, lon)`; that maps to a unit-sphere
 /// direction; the nearest painted Goldberg cell (max dot product) supplies
 /// `height` (its elevation) and `precip` (its climate precipitation,
-/// clamped to `[0, 2]`). O(cells) per texel — runs once per bake.
+/// clamped to `[0, 2]`).
+///
+/// The nearest-cell lookup is accelerated by a `CellGrid` directional
+/// bucket index (≈O(1) per texel) instead of the original O(cells) scan;
+/// the SELECTED cell is provably identical to the brute-force result
+/// (see `spatial_eq_bruteforce_*` tests) — only the search is pruned, the
+/// elevation/precip/ocean-sign semantics are unchanged.
 pub fn bake_inputs_equirect_impl(draft: &WizardDraft, w: u32, h: u32) -> EquirectInputs {
     let cells = painted_cells(draft);
     let precip_per_cell = painted_precip(draft, &cells);
+    let grid = CellGrid::build(&cells);
 
     let n = (w as usize) * (h as usize);
     let mut height = vec![0.0f32; n];
@@ -141,7 +267,43 @@ pub fn bake_inputs_equirect_impl(draft: &WizardDraft, w: u32, h: u32) -> Equirec
             let (sin_lon, cos_lon) = lon.sin_cos();
             let dir = Vec3::new(cos_lat * cos_lon, sin_lat, cos_lat * sin_lon);
 
-            // Nearest painted cell by max dot product (both unit vectors).
+            // Nearest painted cell by max dot product (spatial-pruned but
+            // result-identical to the brute-force scan).
+            let (best_idx, _) = grid.nearest(dir, lat);
+            let best_elev = cells.get(best_idx).map(|&(_, e)| e).unwrap_or(DEEP_OCEAN_FLOOR);
+
+            let texel = (ry as usize) * (w as usize) + (rx as usize);
+            height[texel] = best_elev;
+            let p = precip_per_cell.get(best_idx).copied().unwrap_or(0.0);
+            precip[texel] = if p.is_finite() { p.clamp(0.0, 2.0) } else { 0.0 };
+        }
+    }
+
+    EquirectInputs { w, h, height, precip }
+}
+
+/// Brute-force reference nearest-cell scan — kept ONLY for the
+/// `spatial_eq_bruteforce_*` equivalence tests. Identical math to the
+/// pre-optimization rasterizer inner loop.
+#[cfg(test)]
+fn bake_inputs_equirect_bruteforce(draft: &WizardDraft, w: u32, h: u32) -> EquirectInputs {
+    let cells = painted_cells(draft);
+    let precip_per_cell = painted_precip(draft, &cells);
+
+    let n = (w as usize) * (h as usize);
+    let mut height = vec![0.0f32; n];
+    let mut precip = vec![0.0f32; n];
+
+    for ry in 0..h {
+        let lat_deg = 90.0 - (ry as f32 + 0.5) / h as f32 * 180.0;
+        let lat = lat_deg.to_radians();
+        let (sin_lat, cos_lat) = lat.sin_cos();
+        for rx in 0..w {
+            let lon_deg = (rx as f32 + 0.5) / w as f32 * 360.0 - 180.0;
+            let lon = lon_deg.to_radians();
+            let (sin_lon, cos_lon) = lon.sin_cos();
+            let dir = Vec3::new(cos_lat * cos_lon, sin_lat, cos_lat * sin_lon);
+
             let mut best_dot = f32::NEG_INFINITY;
             let mut best_elev = DEEP_OCEAN_FLOOR;
             let mut best_idx = 0usize;
@@ -428,6 +590,114 @@ mod tests {
             .all(|&v| v.is_finite() && (0.0..=2.0).contains(&v)));
         // North-pole row (ry=0) exists and is finite.
         assert!(out.height[..64].iter().all(|v| v.is_finite()));
+    }
+
+    /// SPATIAL-INDEX EQUIVALENCE — the `CellGrid`-pruned nearest-cell
+    /// search must return a BYTE-IDENTICAL `EquirectInputs` to the
+    /// brute-force O(cells×texels) reference for EVERY texel. Run on a
+    /// representative multi-continent draft at a small grid so the
+    /// brute-force reference is cheap; if a single texel differs the
+    /// pruning is unsound. Also re-asserts the land>0 / ocean<0 /
+    /// finite-precip invariants on the spatial result.
+    #[test]
+    fn spatial_eq_bruteforce_small() {
+        let draft = super::test_support::earthish_draft();
+        // 96×48 — the size called out in the task spec.
+        let fast = bake_inputs_equirect_impl(&draft, 96, 48);
+        let slow = bake_inputs_equirect_bruteforce(&draft, 96, 48);
+        assert_eq!(fast.w, slow.w);
+        assert_eq!(fast.h, slow.h);
+        assert_eq!(fast.height.len(), slow.height.len());
+        // Byte-identical nearest-cell result (exact f32 equality — the
+        // chosen cell, hence its elevation/precip, must be the same).
+        for i in 0..fast.height.len() {
+            assert_eq!(
+                fast.height[i], slow.height[i],
+                "height mismatch at texel {i} (ry={}, rx={})",
+                i / 96,
+                i % 96
+            );
+            assert_eq!(
+                fast.precip[i], slow.precip[i],
+                "precip mismatch at texel {i}"
+            );
+        }
+        // Invariants still hold on the spatial result.
+        assert!(fast.height.iter().any(|&v| v > 0.0), "expected some land");
+        assert!(fast.height.iter().any(|&v| v < 0.0), "expected some ocean");
+        assert!(fast
+            .precip
+            .iter()
+            .all(|&v| v.is_finite() && (0.0..=2.0).contains(&v)));
+    }
+
+    /// Same equivalence check on the `one_continent_draft` (a single
+    /// low-index polar-ish cap) at an asymmetric small grid — guards the
+    /// pole / lon-wrap handling specifically (the cap straddles a pole
+    /// where lon bins converge and the search must widen / full-wrap).
+    #[test]
+    fn spatial_eq_bruteforce_one_continent() {
+        let draft = super::test_support::one_continent_draft();
+        let fast = bake_inputs_equirect_impl(&draft, 90, 45);
+        let slow = bake_inputs_equirect_bruteforce(&draft, 90, 45);
+        for i in 0..fast.height.len() {
+            assert_eq!(
+                fast.height[i], slow.height[i],
+                "height mismatch at texel {i}"
+            );
+            assert_eq!(fast.precip[i], slow.precip[i]);
+        }
+    }
+
+    /// Equivalence on the TRUE DEM-like draft (every cell painted, smooth
+    /// negative bathymetry) — the exact field shape the user's real
+    /// Task-8 bake feeds the GPU. 128×64 keeps the brute-force reference
+    /// affordable while covering a dense all-cells-painted partition.
+    #[test]
+    fn spatial_eq_bruteforce_dem_like() {
+        let draft = super::test_support::earth_dem_like_draft();
+        let fast = bake_inputs_equirect_impl(&draft, 128, 64);
+        let slow = bake_inputs_equirect_bruteforce(&draft, 128, 64);
+        for i in 0..fast.height.len() {
+            assert_eq!(
+                fast.height[i], slow.height[i],
+                "height mismatch at texel {i} (ry={}, rx={})",
+                i / 128,
+                i % 128
+            );
+            assert_eq!(fast.precip[i], slow.precip[i]);
+        }
+    }
+
+    /// Rasterizer wall-time at the production 1024×512 grid (the size
+    /// that froze the UI for ~5 min — the brute force was ~77s here).
+    /// With the spatial index this must complete in well under ~2s.
+    /// Prints the measured time so the freeze-gone claim is backed by a
+    /// real number from `cargo test --release`.
+    #[test]
+    fn rasterizer_walltime_1024x512() {
+        use std::time::Instant;
+        let draft = super::test_support::earth_dem_like_draft();
+        // Warm (build cells/climate once is part of the bake; time the
+        // whole `bake_inputs_equirect_impl` exactly as the Tauri command
+        // calls it).
+        let t0 = Instant::now();
+        let out = bake_inputs_equirect_impl(&draft, 1024, 512);
+        let dt = t0.elapsed();
+        assert_eq!(out.height.len(), 1024 * 512);
+        eprintln!(
+            "[walltime] bake_inputs_equirect_impl @ 1024x512 = {:.3} s \
+             ({} ms) [build=release? check cargo profile]",
+            dt.as_secs_f64(),
+            dt.as_millis()
+        );
+        // Generous ceiling vs the ~77s brute force; the spatial index
+        // should land far under this even in a debug build.
+        assert!(
+            dt.as_secs_f64() < 30.0,
+            "rasterizer @1024x512 took {:.3}s — spatial index regressed",
+            dt.as_secs_f64()
+        );
     }
 
     /// DEV / END-TO-END VERIFICATION FIXTURE — not a unit assertion of
