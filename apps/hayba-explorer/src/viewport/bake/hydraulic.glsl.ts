@@ -190,6 +190,11 @@ export const ERODE_FRAG = [
   "uniform float uVerticality;",
   "uniform float uTerrainScale;",
   "uniform float uPoleBand;",
+  // Resolution invariance: virtual-pipe flux (hence `vmag`) ∝ per-texel
+  // Δ(b+d), so erosion measured ∝ W^-0.89 (same-input oracle study). S1
+  // already made `slope` W-invariant; this is the flux-side counterpart.
+  // uResScale = (W/REF)^0.89 restores capacity to the calibration res.
+  "uniform float uResScale;",
   "uniform sampler2D uDetailMask;",
   "void main(){",
   "  ivec2 rc = fragRC();",
@@ -221,7 +226,8 @@ export const ERODE_FRAG = [
   "  float dx = uTerrainScale / max(1.0, uGrid.x);",
   "  float dzM = gh * uVerticality;",
   "  float slope = max(uSinMin, dzM / max(1.0e-6, dx));",
-  "  float C = uStrength * vmag * slope;",
+  // vmag*uResScale = resolution-invariant velocity (see uResScale comment).
+  "  float C = uStrength * (vmag * uResScale) * slope;",
   "  float b = a.r;",
   "  float s = a.b;",
   "  if (ocean) {",
@@ -481,6 +487,10 @@ export const CARVE_RIVERS_FRAG = [
   "uniform float uDowncutting;",
   "uniform float uConcaveScale;",
   "uniform float uPoleBand;",
+  // Resolution invariance: scale flux by (W/REF)^0.89 BEFORE the river
+  // smoothstep so the mask sees the same discharge distribution at any W
+  // (raw flux ∝ ~1/W collapses the mask nonlinearly at high W).
+  "uniform float uResScale;",
   "void main(){",
   "  ivec2 rc = fragRC();",
   "  vec4 a = loadA(uA, uGrid, rc.x, rc.y);",
@@ -491,7 +501,7 @@ export const CARVE_RIVERS_FRAG = [
   "  vec4 aB = loadA(uA, uGrid, rc.x,     rc.y - 1);",
   "  vec4 aT = loadA(uA, uGrid, rc.x,     rc.y + 1);",
   "  vec4 f = loadF(uF, uGrid, rc.x, rc.y);",
-  "  float flowMag = length(f);",
+  "  float flowMag = length(f) * uResScale;",
   "  float river = smoothstep(uRiverThreshold0, uRiverThreshold1, flowMag);",
   // CONCAVITY GATE — rivers incise CONCAVE terrain (valley floors), not
   // CONVEX shoulders. Discrete Laplacian lap = mean(4-nbr) - self:
