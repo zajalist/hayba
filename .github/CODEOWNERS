@@ -1,0 +1,20 @@
+# Default owner for everything in the repo.
+*                       @zajalist
+
+# Core product — the MCP server (the protocol's Node adapter)
+/mcp-tools/             @zajalist
+
+# UE plugin — the protocol's C++ adapter
+/unreal/                @zajalist
+
+# Desktop explorer + worldbuilding packages
+/apps/                  @zajalist
+
+# Website / backend / infra
+/website/               @zajalist
+/supabase/              @zajalist
+/infra/                 @zajalist
+
+# Docs & decisions
+/docs/                  @zajalist
+/CONTEXT.md             @zajalist

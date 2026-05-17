@@ -1,0 +1,18 @@
+# Unreal Engine house style (Allman braces, tabs, 4-wide).
+BasedOnStyle: LLVM
+Language: Cpp
+Standard: Cpp17
+UseTab: ForIndentation
+TabWidth: 4
+IndentWidth: 4
+ColumnLimit: 120
+BreakBeforeBraces: Allman
+AllowShortFunctionsOnASingleLine: InlineOnly
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+PointerAlignment: Left
+AccessModifierOffset: -4
+NamespaceIndentation: All
+SortIncludes: false
+KeepEmptyLinesAtTheStartOfBlocks: false
+SpaceBeforeParens: ControlStatements
