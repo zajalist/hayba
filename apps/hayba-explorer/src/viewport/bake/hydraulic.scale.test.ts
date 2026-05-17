@@ -108,42 +108,22 @@ describe("S2.4 elevation/slope detailMask (gate relief to mountains)", () => {
   });
 });
 
-describe("S2.3 flow-mask river incision (the valley/ridge maker)", () => {
-  it("CARVE_RIVERS_FRAG thresholds flux into a river mask and only lowers b", () => {
-    expect(typeof CARVE_RIVERS_FRAG).toBe("string");
-    expect(CARVE_RIVERS_FRAG).toMatch(/uniform sampler2D uF;/);
-    expect(CARVE_RIVERS_FRAG).toMatch(/uniform sampler2D uDetailMask;/);
-    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uRiverThreshold0;/);
-    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uRiverThreshold1;/);
-    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uRiverDepth;/);
-    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uDowncutting;/);
-    expect(CARVE_RIVERS_FRAG).toMatch(/smoothstep\(/);
-    // ocean early-return byte-identical (load-bearing invariant)
-    expect(CARVE_RIVERS_FRAG).toMatch(/a\.a > 0\.5/);
-    expect(CARVE_RIVERS_FRAG).toMatch(/fragColor = a; return;/);
-    // carve only ever subtracts (never raises b)
-    expect(CARVE_RIVERS_FRAG).toMatch(/a\.r - /);
-  });
-  it("CARVE_RIVERS_FRAG has the concavity gate + base-level clamp (anti-moat)", () => {
-    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uConcaveScale;/);
-    // discrete Laplacian (mean of 4 nbrs - self) → concave factor
-    expect(CARVE_RIVERS_FRAG).toMatch(/\* 0\.25 - a\.r/);
-    expect(CARVE_RIVERS_FRAG).toMatch(
-      /smoothstep\(0\.0, uConcaveScale, lap\)/,
-    );
-    expect(CARVE_RIVERS_FRAG).toMatch(/river \* concave/);
-    // base-level clamp: don't incise below the lowest land neighbour
-    expect(CARVE_RIVERS_FRAG).toMatch(/max\(nb, minNb/);
-  });
-  it("DEFAULT_HYDRAULIC carries the S2.3 river + concavity knobs", () => {
-    expect(typeof DEFAULT_HYDRAULIC.riverThreshold0).toBe("number");
-    expect(typeof DEFAULT_HYDRAULIC.riverThreshold1).toBe("number");
-    expect(typeof DEFAULT_HYDRAULIC.riverDepth).toBe("number");
-    expect(typeof DEFAULT_HYDRAULIC.concaveScale).toBe("number");
-    expect(DEFAULT_HYDRAULIC.riverThreshold0).toBeLessThan(
-      DEFAULT_HYDRAULIC.riverThreshold1,
-    );
-    expect(DEFAULT_HYDRAULIC.riverDepth).toBeGreaterThan(0);
-    expect(DEFAULT_HYDRAULIC.concaveScale).toBeGreaterThan(0);
+describe("S2.3→ flow-accumulation drainage + stream-power (#218)", () => {
+  it("DEFAULT_HYDRAULIC carries the accumulation/stream-power knobs", () => {
+    expect(typeof DEFAULT_HYDRAULIC.accumIters).toBe("number");
+    expect(typeof DEFAULT_HYDRAULIC.accumEveryN).toBe("number");
+    expect(typeof DEFAULT_HYDRAULIC.mfdExponent).toBe("number");
+    expect(typeof DEFAULT_HYDRAULIC.streamK).toBe("number");
+    expect(typeof DEFAULT_HYDRAULIC.spM).toBe("number");
+    expect(typeof DEFAULT_HYDRAULIC.spN).toBe("number");
+    expect(typeof DEFAULT_HYDRAULIC.accMin).toBe("number");
+    expect(typeof DEFAULT_HYDRAULIC.accResScale).toBe("number");
+    expect(DEFAULT_HYDRAULIC.accumIters).toBeGreaterThan(0);
+    expect(DEFAULT_HYDRAULIC.accumEveryN).toBeGreaterThan(0);
+    expect(DEFAULT_HYDRAULIC.mfdExponent).toBeGreaterThan(0);
+    expect(DEFAULT_HYDRAULIC.spM).toBeGreaterThan(0);
+    expect(DEFAULT_HYDRAULIC.spN).toBeGreaterThan(0);
+    expect("riverThreshold0" in DEFAULT_HYDRAULIC).toBe(false);
+    expect("riverThreshold1" in DEFAULT_HYDRAULIC).toBe(false);
   });
 });
