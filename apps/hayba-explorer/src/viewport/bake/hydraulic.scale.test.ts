@@ -152,3 +152,24 @@ describe("#218 accumulation passes", () => {
     expect((ACCUM_FRAG.match(/ivec2\(/g) ?? []).length).toBeGreaterThanOrEqual(8);
   });
 });
+
+describe("#218 CARVE_RIVERS stream-power on accumulation", () => {
+  it("drives off uAcc with Q^spM*S^spN, keeps anti-moat + base clamp", () => {
+    expect(CARVE_RIVERS_FRAG).toMatch(/uniform sampler2D uAcc;/);
+    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uStreamK;/);
+    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uSpM;/);
+    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uSpN;/);
+    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uAccResScale;/);
+    expect(CARVE_RIVERS_FRAG).toMatch(/pow\(.*uSpM\)/);
+    expect(CARVE_RIVERS_FRAG).toMatch(/pow\(.*uSpN\)/);
+    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uVerticality;/);
+    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uTerrainScale;/);
+    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uSinMin;/);
+    expect(CARVE_RIVERS_FRAG).toMatch(/smoothstep\(0\.0, uConcaveScale, lap\)/);
+    expect(CARVE_RIVERS_FRAG).toMatch(/max\(nb, minNb - 1\.0e-3\)/);
+    expect(CARVE_RIVERS_FRAG).toMatch(/a\.a > 0\.5/);
+    expect(CARVE_RIVERS_FRAG).not.toMatch(/uRiverThreshold0/);
+    expect(CARVE_RIVERS_FRAG).not.toMatch(/uRiverThreshold1/);
+    expect(CARVE_RIVERS_FRAG).not.toMatch(/uResScale/);
+  });
+});

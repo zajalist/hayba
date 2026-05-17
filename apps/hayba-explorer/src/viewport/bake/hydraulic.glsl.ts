@@ -549,32 +549,22 @@ export const ACCUM_FRAG = [
   "}",
 ].join("\n");
 
-// S2.3 FLOW-MASK RIVER INCISION — the actual VALLEY/RIDGE maker. Runs
-// after WATER (flux up to date), before ERODE. Thresholds the local
-// virtual-pipe flux magnitude into a soft river mask and carves channel
-// depth where water concentrates; the un-incised land BETWEEN channels
-// is left standing = dendritic valleys with ridge interfluves (this,
-// not thermal, is what produces ridgelines). detailMask-gated (mountain
-// channels, spare flats) + dt/wLat-integrated. Only ever LOWERS b
-// (carve >= 0) so it cannot blow up. Ocean (a.a > 0.5) skips
-// byte-identically. Reads uA, uF, uDetailMask; writes A (b lowered).
 export const CARVE_RIVERS_FRAG = [
   H,
   "uniform sampler2D uA;",
-  "uniform sampler2D uF;",
+  "uniform sampler2D uAcc;",
   "uniform sampler2D uDetailMask;",
   "uniform vec2 uGrid;",
   "uniform float uDt;",
-  "uniform float uRiverThreshold0;",
-  "uniform float uRiverThreshold1;",
-  "uniform float uRiverDepth;",
-  "uniform float uDowncutting;",
+  "uniform float uStreamK;",
+  "uniform float uSpM;",
+  "uniform float uSpN;",
+  "uniform float uAccResScale;",
+  "uniform float uVerticality;",
+  "uniform float uTerrainScale;",
+  "uniform float uSinMin;",
   "uniform float uConcaveScale;",
   "uniform float uPoleBand;",
-  // Resolution invariance: scale flux by (W/REF)^0.89 BEFORE the river
-  // smoothstep so the mask sees the same discharge distribution at any W
-  // (raw flux ∝ ~1/W collapses the mask nonlinearly at high W).
-  "uniform float uResScale;",
   "void main(){",
   "  ivec2 rc = fragRC();",
   "  vec4 a = loadA(uA, uGrid, rc.x, rc.y);",
@@ -584,28 +574,20 @@ export const CARVE_RIVERS_FRAG = [
   "  vec4 aR = loadA(uA, uGrid, rc.x + 1, rc.y);",
   "  vec4 aB = loadA(uA, uGrid, rc.x,     rc.y - 1);",
   "  vec4 aT = loadA(uA, uGrid, rc.x,     rc.y + 1);",
-  "  vec4 f = loadF(uF, uGrid, rc.x, rc.y);",
-  "  float flowMag = length(f) * uResScale;",
-  "  float river = smoothstep(uRiverThreshold0, uRiverThreshold1, flowMag);",
-  // CONCAVITY GATE — rivers incise CONCAVE terrain (valley floors), not
-  // CONVEX shoulders. Discrete Laplacian lap = mean(4-nbr) - self:
-  // lap > 0 ⇒ cell sits below its neighbours = valley/channel (carve);
-  // lap < 0 ⇒ convex plateau-rim shoulder = the 'moat' artefact
-  // (suppress). This removes the continuous escarpment trench around
-  // plateaus (Tibet/Tarim) while keeping the concave dendritic valleys
-  // the user likes (Afghanistan).
+  "  float Q = loadF(uAcc, uGrid, rc.x, rc.y).r * uAccResScale;",
+  "  float dbx = (aR.r - aL.r) * 0.5;",
+  "  float dby = (aT.r - aB.r) * 0.5;",
+  "  float gh = clamp(length(vec2(dbx, dby)), 0.0, 1.0e4);",
+  "  float dx = uTerrainScale / max(1.0, uGrid.x);",
+  "  float S = max(uSinMin, (gh * uVerticality) / max(1.0e-6, dx));",
+  "  float sp = uStreamK * pow(max(Q, 0.0), uSpM) * pow(max(S, 0.0), uSpN);",
   "  float lap = (aL.r + aR.r + aB.r + aT.r) * 0.25 - a.r;",
   "  float concave = smoothstep(0.0, uConcaveScale, lap);",
   "  float dm = loadA(uDetailMask, uGrid, rc.x, rc.y).r;",
   "  float wLat = wLatOf(rc.y, uGrid, uPoleBand);",
-  "  float carve = uRiverDepth * river * concave * uDowncutting * dm * uDt * wLat;",
+  "  float carve = sp * concave * dm * uDt * wLat;",
   "  carve = max(0.0, fin(carve));",
   "  float nb = a.r - carve;",
-  // BASE-LEVEL CLAMP — a channel cannot incise below what it drains into:
-  // the lowest LAND neighbour (a hair lower for the channel floor). Stops
-  // a rim cut from gouging a deep moat below the basin it feeds; in a
-  // real valley each cell's downstream neighbour is also carving, so the
-  // whole profile still lowers (dendritic incision preserved).
   "  float minNb = a.r;",
   "  if (!(aL.a > 0.5)) minNb = min(minNb, aL.r);",
   "  if (!(aR.a > 0.5)) minNb = min(minNb, aR.r);",
