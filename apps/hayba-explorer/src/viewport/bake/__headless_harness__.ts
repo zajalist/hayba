@@ -974,10 +974,50 @@ async function _bakeAndRenderRelief(
   };
 }
 
+/** Deterministic integer-lattice value noise, smoothstep-interpolated. */
+function _vnoise(x: number, y: number): number {
+  const xi = Math.floor(x);
+  const yi = Math.floor(y);
+  const xf = x - xi;
+  const yf = y - yi;
+  const hsh = (a: number, b: number): number => {
+    const n = Math.sin(a * 127.1 + b * 311.7) * 43758.5453;
+    return n - Math.floor(n);
+  };
+  const u = xf * xf * (3 - 2 * xf);
+  const v = yf * yf * (3 - 2 * yf);
+  const a = hsh(xi, yi);
+  const b = hsh(xi + 1, yi);
+  const c = hsh(xi, yi + 1);
+  const d = hsh(xi + 1, yi + 1);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+
+/** 5-octave fbm in (lon,lat) DEGREES — a CONTINUOUS field, so it is
+ *  byte-identical regardless of the equirect sampling resolution. This is
+ *  what makes the synthetic oracle a valid apples-to-apples resolution
+ *  probe (texel-index noise would differ per W and re-contaminate it). */
+function _fbm(lon: number, lat: number): number {
+  let amp = 1;
+  let freq = 0.06;
+  let sum = 0;
+  let norm = 0;
+  for (let o = 0; o < 5; o++) {
+    sum += amp * _vnoise(lon * freq + 13.7, lat * freq + 7.3);
+    norm += amp;
+    amp *= 0.5;
+    freq *= 2.07;
+  }
+  return sum / norm; // ~0..1
+}
+
 /** JS port of `earth_dem_like_draft` (bake_equirect.rs): 6 cosine-dome
  *  continents over continuous negative bathymetry, evaluated directly per
  *  equirect texel so the oracle is resolution-flexible and fixture-free.
- *  Lets dendritic structure be judged at production resolution headlessly. */
+ *  Land carries continuous fbm micro-relief (drainage seeds) so erosion
+ *  actually engages — the bare analytic dome is too smooth to erode and
+ *  is useless as an erosion oracle. Lets dendritic structure + the true
+ *  resolution behaviour be judged at production resolution headlessly. */
 function _demLikeField(
   w: number,
   h: number,
@@ -1014,8 +1054,15 @@ function _demLikeField(
         }
       }
       let elev: number;
-      if (best > 0) elev = best;
-      else {
+      if (best > 0) {
+        // Continuous multi-scale micro-relief (drainage seeds). Amplitude
+        // scales with elevation so peaks/flanks roughen but the macro dome
+        // silhouette and the 0.06 coastal floor are preserved.
+        const micro =
+          0.16 * (_fbm(lon, lat) - 0.5) +
+          0.06 * (_vnoise(lon * 0.55 + 5.0, lat * 0.55 + 9.0) - 0.5);
+        elev = Math.max(0.06, Math.min(1, best + micro * (0.35 + 0.65 * best)));
+      } else {
         const dt = Math.min(1, Math.max(0, (minND - 1) * 0.6));
         elev = Math.max(-1, Math.min(1, -(0.02 + 0.98 * dt)));
       }
