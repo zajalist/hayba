@@ -22,15 +22,10 @@ describe("S1 scale config", () => {
   });
 
   it("flux-derived terms are resolution-invariant via uResScale (#217)", () => {
-    // Measured (same-input oracle, 256/512/1024): erosion ∝ W^-0.89
-    // because virtual-pipe flux ∝ ~1/W. Both flux-derived drivers must be
-    // normalised by uResScale = (W/REF)^0.89 so erosion is W-invariant.
+    // ERODE keeps uResScale (#217); CARVE moved to accumulation/stream-power (#218).
     expect(ERODE_FRAG).toMatch(/uniform float uResScale;/);
-    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uResScale;/);
     // ERODE capacity uses the rescaled velocity, not raw vmag.
     expect(ERODE_FRAG).toMatch(/vmag \* uResScale/);
-    // CARVE_RIVERS rescales flux BEFORE the river smoothstep.
-    expect(CARVE_RIVERS_FRAG).toMatch(/length\(f\) \* uResScale/);
   });
 
   it("ERODE_FRAG base-level clamp keeps incision stable under uResScale (#217)", () => {

@@ -48,6 +48,8 @@ import {
   EVAP_FRAG,
   THERMAL_FRAG,
   DETAIL_MASK_FRAG,
+  INIT_ACC_FRAG,
+  ACCUM_FRAG,
 } from "./hydraulic.glsl";
 import { runRawPass } from "./glPass";
 import { createPingPong, type PingPongTargets } from "./pingpong";
@@ -302,13 +304,23 @@ export async function runHydraulicBake(
   // FAILS if EXT_color_buffer_float is missing. We drive the read/write
   // slots explicitly below (NOT pp.book) so the discipline is local and
   // unambiguous.
-  const pp: PingPongTargets = createPingPong(renderer, w, h, ["A", "F", "M"]);
+  const pp: PingPongTargets = createPingPong(renderer, w, h, ["A", "F", "M", "ACC"]);
   const A = pp.rt.A; // [slot0, slot1]
   const F = pp.rt.F; // [slot0, slot1]
   // S2.4 detail mask: a ONE-TIME single-channel field (computed pre-loop
   // from the seeded base, then read-only). Only M[0] is used (no swap);
   // M[1] is allocated by the pair helper and just disposed at teardown.
   const M = pp.rt.M;
+
+  // #218 drainage accumulation (discharge in .r). Ping-pong like A: the
+  // refresh burst writes it; CARVE reads it. Both slots freed at teardown.
+  const ACC = pp.rt.ACC;
+  let accRead = 0;
+  const swapAcc = (): void => {
+    accRead ^= 1;
+  };
+  const accReadRT = (): THREE.WebGLRenderTarget => ACC[accRead];
+  const accWriteRT = (): THREE.WebGLRenderTarget => ACC[accRead ^ 1];
 
   // Per-channel current read index (0|1); write is always the OPPOSITE
   // slot, so a pass never samples the RT it draws into. swap*() flips the
@@ -368,12 +380,49 @@ export async function runHydraulicBake(
     M[0],
   );
 
+  // #218 accumulation refresh: INIT_ACC then K MFD-gather iterations,
+  // reading the CURRENT A (co-evolution). Leaves the converged field in
+  // accReadRT(). Called once pre-loop (seed) and every accumEveryN steps.
+  const refreshAccumulation = (): void => {
+    runRawPass(
+      renderer,
+      INIT_ACC_FRAG,
+      {
+        uA: u(aReadRT()),
+        uPrecip: u(precip),
+        uGrid: u(uGrid),
+        uPoleBand: u(cfg.poleBand),
+        uAccMin: u(cfg.accMin),
+      },
+      accReadRT(),
+    );
+    const K = Math.max(1, Math.floor(cfg.accumIters));
+    for (let k = 0; k < K; k++) {
+      runRawPass(
+        renderer,
+        ACCUM_FRAG,
+        {
+          uA: u(aReadRT()),
+          uAcc: u(accReadRT()),
+          uPrecip: u(precip),
+          uGrid: u(uGrid),
+          uMfdExponent: u(cfg.mfdExponent),
+          uPoleBand: u(cfg.poleBand),
+          uAccMin: u(cfg.accMin),
+        },
+        accWriteRT(),
+      );
+      swapAcc();
+    }
+  };
+  refreshAccumulation();
+
   // ---- One simulation step: the fixed pass order. ---------------------
   // Each pass's uniforms object lists EXACTLY the uniforms that frag
   // declares in hydraulic.glsl.ts (verified 1:1 — see the per-pass
   // comments). glPass dispatches by the GLSL type it parses from the frag
   // (vec2<-Vector2, sampler2D<-Texture/RT, float<-number).
-  const step = (doThermal: boolean): void => {
+  const step = (doThermal: boolean, stepIdx: number): void => {
     // RAIN: declares uA,uPrecip,uGrid,uDt,uRainScale,uPoleBand.
     // reads A,Precip -> writes A.
     runRawPass(
@@ -424,26 +473,35 @@ export async function runHydraulicBake(
     );
     swapA();
 
-    // S2.3 CARVE_RIVERS: after WATER (flux current), before ERODE.
-    // Thresholds flux magnitude into a river mask and incises channels
-    // (detailMask-gated) — the un-incised interfluves become ridges.
-    // reads A,F,M -> writes A.
+    // #218 co-evolution: rebuild the drainage network from the live
+    // terrain every accumEveryN steps; CARVE reads the cached ACC
+    // between refreshes.
+    if (cfg.accumEveryN > 0 && stepIdx % cfg.accumEveryN === 0) {
+      refreshAccumulation();
+    }
+
+    // S2.3-> CARVE_RIVERS (#218): stream-power on the drainage
+    // accumulation. declares uA,uAcc,uDetailMask,uGrid,uDt,uStreamK,
+    // uSpM,uSpN,uAccResScale,uVerticality,uTerrainScale,uSinMin,
+    // uConcaveScale,uPoleBand. reads A,ACC,M -> writes A.
     runRawPass(
       renderer,
       CARVE_RIVERS_FRAG,
       {
         uA: u(aReadRT()),
-        uF: u(fReadRT()),
+        uAcc: u(accReadRT()),
         uDetailMask: u(M[0]),
         uGrid: u(uGrid),
         uDt: u(cfg.dt),
-        uRiverThreshold0: u(cfg.riverThreshold0),
-        uRiverThreshold1: u(cfg.riverThreshold1),
-        uRiverDepth: u(cfg.riverDepth),
-        uDowncutting: u(cfg.downcutting),
+        uStreamK: u(cfg.streamK),
+        uSpM: u(cfg.spM),
+        uSpN: u(cfg.spN),
+        uAccResScale: u(cfg.accResScale),
+        uVerticality: u(cfg.scale.verticality),
+        uTerrainScale: u(cfg.scale.terrainScale),
+        uSinMin: u(cfg.sinMin),
         uConcaveScale: u(cfg.concaveScale),
         uPoleBand: u(cfg.poleBand),
-        uResScale: u(resScale),
       },
       aWriteRT(),
     );
@@ -554,7 +612,7 @@ export async function runHydraulicBake(
       const stepIdx = done + i + 1;
       const doThermal =
         cfg.thermalEvery > 0 && stepIdx % cfg.thermalEvery === 0;
-      step(doThermal);
+      step(doThermal, stepIdx);
     }
     done += c;
     await yieldToLoop();
@@ -583,5 +641,7 @@ export async function runHydraulicBake(
   F[1].dispose();
   M[0].dispose();
   M[1].dispose();
+  ACC[0].dispose();
+  ACC[1].dispose();
   return result;
 }
