@@ -568,3 +568,502 @@ export async function runHeadlessErosionVerification(
     };
   }
 }
+
+// =============================================================================
+// VISUAL ORACLE (dev only) — render the eroded equirect field to hillshaded
+// hypsometric relief + a signed before/after DELTA image, so a checkpoint can
+// be judged BY EYE headlessly (no Tauri). The numeric verifier above proves the
+// pipeline is sane; this answers the aesthetic CP0 questions: does the macro
+// continent silhouette survive, are interior valleys dendritic (not ring-basin
+// planed), and is there a rim "moat" at the massif base? Returns base64 PNG
+// data-URLs; the driver writes them to disk and a human/agent inspects them.
+// =============================================================================
+
+interface ReliefOpts {
+  exaggeration?: number;
+  scale?: number;
+  mode?: "relief" | "delta";
+  ref?: Float32Array;
+}
+
+/** Hypsometric land ramp: lowland green → tan → brown → grey rock → snow. */
+function hypso(t: number): [number, number, number] {
+  const stops: Array<[number, [number, number, number]]> = [
+    [0.0, [60, 110, 50]],
+    [0.25, [120, 150, 70]],
+    [0.5, [170, 150, 110]],
+    [0.72, [140, 110, 85]],
+    [0.88, [150, 150, 150]],
+    [1.0, [245, 245, 250]],
+  ];
+  let a = stops[0];
+  let b = stops[stops.length - 1];
+  for (let s = 0; s < stops.length - 1; s++) {
+    if (t >= stops[s][0] && t <= stops[s + 1][0]) {
+      a = stops[s];
+      b = stops[s + 1];
+      break;
+    }
+  }
+  const f = (t - a[0]) / Math.max(1e-6, b[0] - a[0]);
+  return [
+    a[1][0] + (b[1][0] - a[1][0]) * f,
+    a[1][1] + (b[1][1] - a[1][1]) * f,
+    a[1][2] + (b[1][2] - a[1][2]) * f,
+  ];
+}
+
+/** Render an equirect height field to a (scale×) PNG data-URL. `relief` =
+ *  hillshaded hypsometric; `delta` = signed (after-ref) diverging colormap
+ *  (warm = carved DOWN, cool = raised) — moats/incision pop instantly. */
+function fieldToReliefDataURL(
+  field: Float32Array,
+  w: number,
+  h: number,
+  opts: ReliefOpts = {},
+): string {
+  const scale = opts.scale ?? 4;
+  const exg = opts.exaggeration ?? 1.0;
+  const cv = document.createElement("canvas");
+  cv.width = w;
+  cv.height = h;
+  const ctx = cv.getContext("2d")!;
+  const img = ctx.createImageData(w, h);
+
+  let landMax = 1e-6;
+  for (let i = 0; i < w * h; i++) if (field[i] > landMax) landMax = field[i];
+
+  const at = (x: number, y: number): number => {
+    const xx = ((x % w) + w) % w; // wrap longitude
+    const yy = Math.min(h - 1, Math.max(0, y));
+    return field[yy * w + xx];
+  };
+
+  if (opts.mode === "delta" && opts.ref) {
+    const ref = opts.ref;
+    const ds: number[] = [];
+    for (let i = 0; i < w * h; i++)
+      if (ref[i] > 0 || field[i] > 0) ds.push(Math.abs(field[i] - ref[i]));
+    ds.sort((p, q) => p - q);
+    const dmax = Math.max(1e-5, ds[Math.floor(ds.length * 0.98)] || 1e-5);
+    for (let i = 0; i < w * h; i++) {
+      const land = ref[i] > 0 || field[i] > 0;
+      let r = 18,
+        g = 22,
+        b = 30;
+      if (land) {
+        const t = Math.max(-1, Math.min(1, (field[i] - ref[i]) / dmax));
+        if (t < 0) {
+          r = 255;
+          g = Math.round(245 * (1 + t));
+          b = Math.round(110 * (1 + t));
+        } else {
+          r = Math.round(110 * (1 - t));
+          g = Math.round(200 * (1 - t));
+          b = 255;
+        }
+      }
+      const o = i * 4;
+      img.data[o] = r;
+      img.data[o + 1] = g;
+      img.data[o + 2] = b;
+      img.data[o + 3] = 255;
+    }
+  } else {
+    const ae = Math.PI * 0.25;
+    const el = Math.PI * 0.3;
+    const sun = [
+      Math.cos(el) * Math.cos(ae),
+      Math.cos(el) * Math.sin(ae),
+      Math.sin(el),
+    ];
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        const z = field[i];
+        let r: number, g: number, b: number;
+        if (z < 0) {
+          const t = Math.max(0, Math.min(1, 1 + z)); // -1..0 → 0..1
+          r = 12 + 40 * t;
+          g = 28 + 70 * t;
+          b = 70 + 120 * t;
+        } else {
+          const c = hypso(Math.max(0, Math.min(1, z / landMax)));
+          const dzdx = (at(x + 1, y) - at(x - 1, y)) * exg * 0.5;
+          const dzdy = (at(x, y + 1) - at(x, y - 1)) * exg * 0.5;
+          let nx = -dzdx,
+            ny = -dzdy,
+            nz = 1.0;
+          const il = 1 / Math.sqrt(nx * nx + ny * ny + nz * nz);
+          nx *= il;
+          ny *= il;
+          nz *= il;
+          let sh = nx * sun[0] + ny * sun[1] + nz * sun[2];
+          sh = Math.max(0.25, Math.min(1.15, 0.55 + 0.75 * sh));
+          r = Math.min(255, c[0] * sh);
+          g = Math.min(255, c[1] * sh);
+          b = Math.min(255, c[2] * sh);
+        }
+        const o = i * 4;
+        img.data[o] = r;
+        img.data[o + 1] = g;
+        img.data[o + 2] = b;
+        img.data[o + 3] = 255;
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const out = document.createElement("canvas");
+  out.width = w * scale;
+  out.height = h * scale;
+  const octx = out.getContext("2d")!;
+  octx.imageSmoothingEnabled = false;
+  octx.drawImage(cv, 0, 0, out.width, out.height);
+  return out.toDataURL("image/png");
+}
+
+/** Extract a longitude-wrapping sub-rect and render it (zoom crop). */
+function cropReliefDataURL(
+  field: Float32Array,
+  w: number,
+  h: number,
+  cx: number,
+  cy: number,
+  cw: number,
+  ch: number,
+  opts: ReliefOpts = {},
+): string {
+  const sub = new Float32Array(cw * ch);
+  const refSub = opts.ref ? new Float32Array(cw * ch) : undefined;
+  for (let y = 0; y < ch; y++)
+    for (let x = 0; x < cw; x++) {
+      const sx = (((cx + x) % w) + w) % w;
+      const sy = Math.min(h - 1, Math.max(0, cy + y));
+      sub[y * cw + x] = field[sy * w + sx];
+      if (refSub && opts.ref) refSub[y * cw + x] = opts.ref[sy * w + sx];
+    }
+  return fieldToReliefDataURL(sub, cw, ch, { ...opts, ref: refSub });
+}
+
+export interface ErosionReliefResult {
+  ran: boolean;
+  error?: string;
+  unmaskedRenderer?: string;
+  ms?: number;
+  w?: number;
+  h?: number;
+  consoleErrs?: string[];
+  stats?: {
+    minB: number;
+    maxB: number;
+    landChangedPct: number;
+    oceanLost: number;
+    /** mean |Δ| in a thin annulus just inside each massif coastline vs the
+     *  deep interior — a moat shows as rim≫interior. */
+    rimMeanAbsDelta: number;
+    interiorMeanAbsDelta: number;
+    moatRatio: number;
+  };
+  images?: {
+    before: string; // hillshade, pre-erosion
+    after: string; // hillshade, post-erosion
+    delta: string; // signed after-before
+    afterZoom: string; // dominant-massif crop, post-erosion
+    deltaZoom: string; // dominant-massif crop, signed delta
+  };
+}
+
+/** Real-GPU bake on the DEM-like multi-continent fixture, then emit relief +
+ *  delta PNGs (full + dominant-massif zoom) and a numeric moat metric. The
+ *  reusable eyes-on oracle for CP0.a … CP0.GATE. */
+export async function runRealInputErosionRelief(
+  injectedRenderer?: THREE.WebGLRenderer,
+  overrideCfg?: Record<string, number>,
+): Promise<ErosionReliefResult> {
+  const consoleErrs: string[] = [];
+  const origErr = console.error;
+  console.error = (...a: unknown[]) => {
+    consoleErrs.push("ERR " + a.map(String).join(" "));
+    origErr.apply(console, a as []);
+  };
+  try {
+    const hyd = await import("./hydraulic");
+    const eq = await import("./equirectInput");
+    const gp = await import("./glPass");
+
+    const resp = await fetch("/erosion_real_inputs.json");
+    if (!resp.ok)
+      throw new Error(
+        `fetch /erosion_real_inputs.json -> ${resp.status}; run the ` +
+          `write_real_equirect_inputs_fixture Rust test first`,
+      );
+    const inp = (await resp.json()) as {
+      w: number;
+      h: number;
+      height: number[];
+      precip: number[];
+    };
+    const w = inp.w;
+    const h = inp.h;
+    const baseArr = new Float32Array(inp.height);
+    const precipArr = new Float32Array(inp.precip);
+
+    const r = await _bakeAndRenderRelief(
+      hyd,
+      eq,
+      gp,
+      baseArr,
+      precipArr,
+      w,
+      h,
+      overrideCfg,
+      injectedRenderer,
+    );
+    console.error = origErr;
+    r.consoleErrs = consoleErrs;
+    return r;
+  } catch (e) {
+    console.error = origErr;
+    return { ran: false, error: String(e), consoleErrs };
+  }
+}
+
+/** Shared: bake an equirect base/precip field on a real GPU and emit the
+ *  relief + delta PNGs and the moat metric. Caller owns console capture. */
+async function _bakeAndRenderRelief(
+  hyd: typeof import("./hydraulic"),
+  eq: typeof import("./equirectInput"),
+  gp: typeof import("./glPass"),
+  baseArr: Float32Array,
+  precipArr: Float32Array,
+  w: number,
+  h: number,
+  overrideCfg?: Record<string, number>,
+  injectedRenderer?: THREE.WebGLRenderer,
+): Promise<ErosionReliefResult> {
+  let renderer = injectedRenderer;
+  if (!renderer) {
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+  }
+  const gl = renderer.getContext() as WebGL2RenderingContext;
+  const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+  const unmaskedRenderer = dbg
+    ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL))
+    : "n/a";
+  if (gl.getExtension("EXT_color_buffer_float") == null) {
+    return {
+      ran: false,
+      error: "EXT_color_buffer_float ABSENT — need a real GPU (not SwiftShader)",
+      unmaskedRenderer,
+      consoleErrs: [],
+    };
+  }
+
+  const baseTex = eq.uploadEquirect(baseArr, w, h);
+  const precipTex = eq.uploadEquirect(precipArr, w, h);
+  const cfg = { ...hyd.DEFAULT_HYDRAULIC, ...(overrideCfg ?? {}) };
+
+  const t0 = performance.now();
+  const rt = await hyd.runHydraulicBake(renderer, baseTex, precipTex, w, h, cfg);
+  const t1 = performance.now();
+
+  const buf = new Float32Array(w * h * 4);
+  gp.readRawPixels(renderer, rt, 0, 0, w, h, buf);
+  const eroded = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) eroded[i] = buf[i * 4];
+
+  // Moat metric: |Δ| in a thin coastal annulus ("rim", ≤2 px from ocean) vs
+  // deep-interior land (>4 px from any ocean). moatRatio ≫ 1.5 ⇒ a coastal
+  // erosion moat; ≪ 1 ⇒ rim spared, interior carved (the desired regime).
+  let minB = Infinity,
+    maxB = -Infinity,
+    landChanged = 0,
+    landTotal = 0,
+    oceanLost = 0;
+  let rimSum = 0,
+    rimN = 0,
+    intSum = 0,
+    intN = 0;
+  const isOcean = (x: number, y: number) =>
+    baseArr[Math.min(h - 1, Math.max(0, y)) * w + (((x % w) + w) % w)] < 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const bF = eroded[i];
+      const bB = baseArr[i];
+      if (Number.isFinite(bF)) {
+        if (bF < minB) minB = bF;
+        if (bF > maxB) maxB = bF;
+      }
+      if (bB > 0) {
+        landTotal++;
+        const d = Math.abs(bF - bB);
+        if (d > 1e-4) landChanged++;
+        let nearCoast = false;
+        for (let r = 1; r <= 2 && !nearCoast; r++)
+          if (
+            isOcean(x + r, y) ||
+            isOcean(x - r, y) ||
+            isOcean(x, y + r) ||
+            isOcean(x, y - r)
+          )
+            nearCoast = true;
+        if (nearCoast) {
+          rimSum += d;
+          rimN++;
+        } else {
+          let deep = true;
+          for (let r = 1; r <= 4 && deep; r++)
+            if (
+              isOcean(x + r, y) ||
+              isOcean(x - r, y) ||
+              isOcean(x, y + r) ||
+              isOcean(x, y - r)
+            )
+              deep = false;
+          if (deep) {
+            intSum += d;
+            intN++;
+          }
+        }
+      } else if (bB < 0 && bF >= 0) oceanLost++;
+    }
+  }
+  const rimMean = rimN ? rimSum / rimN : 0;
+  const intMean = intN ? intSum / intN : 0;
+
+  // Dominant massif (continent 0: lon 40, lat 45, rlon 70, rlat 32).
+  const cx = Math.round(((40 + 180) / 360) * w) - Math.round((70 / 360) * w);
+  const cy = Math.round(((90 - 45) / 180) * h) - Math.round((32 / 180) * h);
+  const cw = Math.min(w, Math.round((140 / 360) * w));
+  const ch = Math.min(h, Math.round((68 / 180) * h));
+
+  return {
+    ran: true,
+    unmaskedRenderer,
+    ms: Math.round(t1 - t0),
+    w,
+    h,
+    consoleErrs: [],
+    stats: {
+      minB: +minB.toFixed(5),
+      maxB: +maxB.toFixed(5),
+      landChangedPct: +((100 * landChanged) / Math.max(1, landTotal)).toFixed(2),
+      oceanLost,
+      rimMeanAbsDelta: +rimMean.toFixed(6),
+      interiorMeanAbsDelta: +intMean.toFixed(6),
+      moatRatio: +(rimMean / Math.max(1e-7, intMean)).toFixed(3),
+    },
+    images: {
+      before: fieldToReliefDataURL(baseArr, w, h, { exaggeration: 6 }),
+      after: fieldToReliefDataURL(eroded, w, h, { exaggeration: 6 }),
+      delta: fieldToReliefDataURL(eroded, w, h, { mode: "delta", ref: baseArr }),
+      afterZoom: cropReliefDataURL(eroded, w, h, cx, cy, cw, ch, {
+        exaggeration: 7,
+        scale: 8,
+      }),
+      deltaZoom: cropReliefDataURL(eroded, w, h, cx, cy, cw, ch, {
+        mode: "delta",
+        ref: baseArr,
+        scale: 8,
+      }),
+    },
+  };
+}
+
+/** JS port of `earth_dem_like_draft` (bake_equirect.rs): 6 cosine-dome
+ *  continents over continuous negative bathymetry, evaluated directly per
+ *  equirect texel so the oracle is resolution-flexible and fixture-free.
+ *  Lets dendritic structure be judged at production resolution headlessly. */
+function _demLikeField(
+  w: number,
+  h: number,
+): { base: Float32Array; precip: Float32Array } {
+  const cont: Array<[number, number, number, number, number]> = [
+    [40, 45, 70, 32, 0.92],
+    [-55, 5, 38, 45, 0.7],
+    [135, -28, 30, 20, 0.55],
+    [-110, 42, 32, 26, 0.85],
+    [95, -68, 26, 14, 0.97],
+    [160, 18, 12, 9, 0.3],
+  ];
+  const base = new Float32Array(w * h);
+  const precip = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const lat = 90 - ((y + 0.5) / h) * 180;
+    const cl = Math.cos((lat * Math.PI) / 180);
+    for (let x = 0; x < w; x++) {
+      const lon = ((x + 0.5) / w) * 360 - 180;
+      let best = 0;
+      let minND = Infinity;
+      for (const [clon, clat, rlon, rlat, peak] of cont) {
+        let dlon = lon - clon;
+        while (dlon > 180) dlon -= 360;
+        while (dlon < -180) dlon += 360;
+        const dlat = lat - clat;
+        const d = Math.sqrt((dlon / rlon) ** 2 + (dlat / rlat) ** 2);
+        if (d < minND) minND = d;
+        if (d < 1) {
+          const dome = peak * (0.5 + 0.5 * Math.cos(d * Math.PI));
+          const rip = 0.05 * Math.sin(lon * 0.13) * Math.cos(lat * 0.17);
+          const e = Math.min(1, Math.max(0.06, dome + rip));
+          if (e > best) best = e;
+        }
+      }
+      let elev: number;
+      if (best > 0) elev = best;
+      else {
+        const dt = Math.min(1, Math.max(0, (minND - 1) * 0.6));
+        elev = Math.max(-1, Math.min(1, -(0.02 + 0.98 * dt)));
+      }
+      const i = y * w + x;
+      base[i] = elev;
+      precip[i] = 0.35 + 0.65 * cl * cl;
+    }
+  }
+  return { base, precip };
+}
+
+/** Real-GPU bake on the self-contained DEM-like field at arbitrary
+ *  resolution (default 1024×512 — production scale, where dendritic
+ *  drainage can actually resolve). The honest CP0 dendritic-quality gate. */
+export async function runSyntheticDemRelief(
+  res?: { w: number; h: number },
+  overrideCfg?: Record<string, number>,
+  injectedRenderer?: THREE.WebGLRenderer,
+): Promise<ErosionReliefResult> {
+  const consoleErrs: string[] = [];
+  const origErr = console.error;
+  console.error = (...a: unknown[]) => {
+    consoleErrs.push("ERR " + a.map(String).join(" "));
+    origErr.apply(console, a as []);
+  };
+  try {
+    const hyd = await import("./hydraulic");
+    const eq = await import("./equirectInput");
+    const gp = await import("./glPass");
+    const w = res?.w ?? 1024;
+    const h = res?.h ?? 512;
+    const { base, precip } = _demLikeField(w, h);
+    const r = await _bakeAndRenderRelief(
+      hyd,
+      eq,
+      gp,
+      base,
+      precip,
+      w,
+      h,
+      overrideCfg,
+      injectedRenderer,
+    );
+    console.error = origErr;
+    r.consoleErrs = consoleErrs;
+    return r;
+  } catch (e) {
+    console.error = origErr;
+    return { ran: false, error: String(e), consoleErrs };
+  }
+}
