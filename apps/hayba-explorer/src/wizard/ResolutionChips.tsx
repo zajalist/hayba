@@ -16,6 +16,15 @@ export const PRESETS: Preset[] = [
   { label: "Ultra",         divisions: 128, cellsLabel: "164K", hint: "~2s per bake"  },
   { label: "Extreme",       divisions: 160, cellsLabel: "256K", hint: "~5s per bake"  },
   { label: "Insane",        divisions: 192, cellsLabel: "370K", hint: "~10s per bake — painter still snappy" },
+  // Higher tiers (added 2026-05-17 — the rasterised base was too coarse
+  // for the S2 river/ridge detail to read). The equirect bake is fixed
+  // 2048×1024 ≈ 2.1M texels, so detail saturates around ~1–1.5M cells
+  // (≈1–2 cells/texel); beyond that needs a higher DEBUG_BAKE too.
+  // Brushing the painter mesh gets sluggish here (full-buffer resync per
+  // stroke) — Load Earth + Bake is the intended flow at these tiers.
+  { label: "Massive",       divisions: 256, cellsLabel: "655K", hint: "Load Earth + Bake (brush sluggish)" },
+  { label: "Colossal",      divisions: 320, cellsLabel: "1.0M", hint: "Load Earth + Bake (brush sluggish)" },
+  { label: "Planetary",     divisions: 384, cellsLabel: "1.5M", hint: "near the 2048² equirect limit" },
 ];
 
 export interface ResolutionChipsProps {
