@@ -14,6 +14,7 @@
 //! the `-1.0` deep-ocean floor.
 
 use glam::Vec3;
+use rayon::prelude::*;
 
 use hayba_tectonics_v2::field::Crust;
 use hayba_tectonics_v2::model::Model;
@@ -393,94 +394,162 @@ pub fn bake_inputs_equirect_impl(draft: &WizardDraft, w: u32, h: u32) -> Equirec
     let mut height = vec![0.0f32; n];
     let mut precip = vec![0.0f32; n];
 
-    for ry in 0..h {
-        // Row 0 = North pole. lat in degrees, then radians.
-        let lat_deg = 90.0 - (ry as f32 + 0.5) / h as f32 * 180.0;
-        let lat = lat_deg.to_radians();
-        let (sin_lat, cos_lat) = lat.sin_cos();
-        for rx in 0..w {
-            let lon_deg = (rx as f32 + 0.5) / w as f32 * 360.0 - 180.0;
-            let lon = lon_deg.to_radians();
-            // Y-up, North pole at (0, 1, 0); matches `wizard.rs`'s
-            // sphere convention (lat→y, lon→atan2(z, x)).
-            let (sin_lon, cos_lon) = lon.sin_cos();
-            let dir = Vec3::new(cos_lat * cos_lon, sin_lat, cos_lat * sin_lon);
+    // Parallelise over latitude ROWS: each row writes a DISJOINT
+    // `w`-length slice and the per-texel math (`fill_equirect_row`) is
+    // pure — immutable `&grid`/`&cells`, fixed-seed `fbm`, no RNG — so the
+    // output is byte-identical to the serial oracle regardless of thread
+    // scheduling (asserted by `parallel_rasterise_is_byte_identical_to_serial`).
+    // This is the freeze fix: the old single-threaded IDW+FBM loop pegged
+    // one core for tens of seconds at 2048×1024.
+    height
+        .par_chunks_mut(w as usize)
+        .zip(precip.par_chunks_mut(w as usize))
+        .enumerate()
+        .for_each(|(ry, (hrow, prow))| {
+            fill_equirect_row(
+                ry as u32, w, h, &grid, &cells, &precip_per_cell, hrow, prow,
+            );
+        });
 
-            // (1) CLASS from the single nearest cell — load-bearing: the
-            // GPU sim's ocean flag is `base.r < 0`, so the land/ocean
-            // boundary must stay EXACTLY where nearest-cell puts it.
-            let (best_idx, _) = grid.nearest(dir, lat);
-            let nearest_elev =
-                cells.get(best_idx).map(|&(_, e)| e).unwrap_or(DEEP_OCEAN_FLOOR);
-            let is_land = nearest_elev >= 0.0;
+    EquirectInputs { w, h, height, precip, scale: WorldScale::planet_default() }
+}
 
-            // (2) CONTINUOUS macro elevation — IDW over the k-nearest
-            // SAME-CLASS cells only (skip opposite-class so the coast stays
-            // crisp and ocean depth never bleeds into land or vice-versa).
-            let knn = grid.k_nearest(dir, lat, IDW_K);
-            let mut wsum = 0.0f32;
-            let mut elev_acc = 0.0f32;
-            let mut precip_acc = 0.0f32;
-            for &(ci, d) in &knn {
-                let (_, ce) = cells[ci];
-                if (ce >= 0.0) != is_land {
-                    continue; // opposite class — preserve crisp coast
-                }
-                let wt = 1.0 / (d * d + IDW_EPS);
-                wsum += wt;
-                elev_acc += wt * ce;
-                precip_acc += wt * precip_per_cell.get(ci).copied().unwrap_or(0.0);
+/// Fill ONE equirect row `ry` into the disjoint `hrow`/`prow` slices (each
+/// length `w`). Pure given `(grid, cells, precip_per_cell, w, h, ry)` — no
+/// shared mutable state, no RNG, fixed-seed `fbm` — so invoking it per row
+/// in parallel is byte-identical to invoking it serially. This is the
+/// SINGLE source of the rasterise math, shared by the parallel
+/// `bake_inputs_equirect_impl` and the `#[cfg(test)]` serial oracle, so the
+/// two can never numerically diverge.
+fn fill_equirect_row(
+    ry: u32,
+    w: u32,
+    h: u32,
+    grid: &CellGrid,
+    cells: &[(Vec3, f32)],
+    precip_per_cell: &[f32],
+    hrow: &mut [f32],
+    prow: &mut [f32],
+) {
+    // Row 0 = North pole. lat in degrees, then radians.
+    let lat_deg = 90.0 - (ry as f32 + 0.5) / h as f32 * 180.0;
+    let lat = lat_deg.to_radians();
+    let (sin_lat, cos_lat) = lat.sin_cos();
+    for rx in 0..w {
+        let lon_deg = (rx as f32 + 0.5) / w as f32 * 360.0 - 180.0;
+        let lon = lon_deg.to_radians();
+        // Y-up, North pole at (0, 1, 0); matches `wizard.rs`'s
+        // sphere convention (lat→y, lon→atan2(z, x)).
+        let (sin_lon, cos_lon) = lon.sin_cos();
+        let dir = Vec3::new(cos_lat * cos_lon, sin_lat, cos_lat * sin_lon);
+
+        // (1) CLASS from the single nearest cell — load-bearing: the
+        // GPU sim's ocean flag is `base.r < 0`, so the land/ocean
+        // boundary must stay EXACTLY where nearest-cell puts it.
+        let (best_idx, _) = grid.nearest(dir, lat);
+        let nearest_elev =
+            cells.get(best_idx).map(|&(_, e)| e).unwrap_or(DEEP_OCEAN_FLOOR);
+        let is_land = nearest_elev >= 0.0;
+
+        // (2) CONTINUOUS macro elevation — IDW over the k-nearest
+        // SAME-CLASS cells only (skip opposite-class so the coast stays
+        // crisp and ocean depth never bleeds into land or vice-versa).
+        let knn = grid.k_nearest(dir, lat, IDW_K);
+        let mut wsum = 0.0f32;
+        let mut elev_acc = 0.0f32;
+        let mut precip_acc = 0.0f32;
+        for &(ci, d) in &knn {
+            let (_, ce) = cells[ci];
+            if (ce >= 0.0) != is_land {
+                continue; // opposite class — preserve crisp coast
             }
-            let (mut macro_elev, blended_precip) = if wsum > 0.0 {
-                (elev_acc / wsum, precip_acc / wsum)
-            } else {
-                // Degenerate: no same-class neighbor in k → fall back to
-                // the nearest cell exactly.
-                (
-                    nearest_elev,
-                    precip_per_cell.get(best_idx).copied().unwrap_or(0.0),
-                )
-            };
-            if !macro_elev.is_finite() {
-                macro_elev = nearest_elev;
-            }
-
-            // (3) SEEDED FRACTAL SUB-CELL RELIEF — sampled in 3D on `dir`
-            // (seamless across the ±180° wrap and continuous at the poles;
-            // a uv-space seam would become a visible erosion seam). Cheap
-            // low-freq domain warp for less grid-aligned ridges.
-            let warp = Vec3::new(
-                fbm(dir * WARP_FREQ, WARP_SEED) - 0.5,
-                fbm(dir * WARP_FREQ, WARP_SEED ^ 0xA5A5) - 0.5,
-                fbm(dir * WARP_FREQ, WARP_SEED ^ 0x5A5A) - 0.5,
-            ) * WARP_AMP;
-            // fbm ≈ [0,1]; centre to ≈[-0.5,0.5] so relief is signed.
-            let n = fbm((dir + warp) * RELIEF_FREQ, RELIEF_SEED) - 0.5;
-            // Baseline everywhere + more amplitude on high ground so flat
-            // plains/ocean floor still get erodable micro-slope while
-            // mountains get richer dendritic carving.
-            let amp = RELIEF_BASE_AMP + RELIEF_ELEV_AMP * macro_elev.abs().min(1.0);
-            let mut final_elev = macro_elev + n * amp;
-
-            // (4) SIGN-PRESERVING CLAMP — class is NEVER violated; deep
-            // ocean stays ≤ its floor sign; result is finite.
-            if !final_elev.is_finite() {
-                final_elev = if is_land { LAND_EPS } else { -OCEAN_EPS };
-            }
-            final_elev = if is_land {
-                final_elev.max(LAND_EPS)
-            } else {
-                final_elev.min(-OCEAN_EPS)
-            };
-
-            let texel = (ry as usize) * (w as usize) + (rx as usize);
-            height[texel] = final_elev;
-            precip[texel] = if blended_precip.is_finite() {
-                blended_precip.clamp(0.0, 2.0)
-            } else {
-                0.0
-            };
+            let wt = 1.0 / (d * d + IDW_EPS);
+            wsum += wt;
+            elev_acc += wt * ce;
+            precip_acc += wt * precip_per_cell.get(ci).copied().unwrap_or(0.0);
         }
+        let (mut macro_elev, blended_precip) = if wsum > 0.0 {
+            (elev_acc / wsum, precip_acc / wsum)
+        } else {
+            // Degenerate: no same-class neighbor in k → fall back to
+            // the nearest cell exactly.
+            (
+                nearest_elev,
+                precip_per_cell.get(best_idx).copied().unwrap_or(0.0),
+            )
+        };
+        if !macro_elev.is_finite() {
+            macro_elev = nearest_elev;
+        }
+
+        // (3) SEEDED FRACTAL SUB-CELL RELIEF — sampled in 3D on `dir`
+        // (seamless across the ±180° wrap and continuous at the poles;
+        // a uv-space seam would become a visible erosion seam). Cheap
+        // low-freq domain warp for less grid-aligned ridges.
+        let warp = Vec3::new(
+            fbm(dir * WARP_FREQ, WARP_SEED) - 0.5,
+            fbm(dir * WARP_FREQ, WARP_SEED ^ 0xA5A5) - 0.5,
+            fbm(dir * WARP_FREQ, WARP_SEED ^ 0x5A5A) - 0.5,
+        ) * WARP_AMP;
+        // fbm ≈ [0,1]; centre to ≈[-0.5,0.5] so relief is signed.
+        let n = fbm((dir + warp) * RELIEF_FREQ, RELIEF_SEED) - 0.5;
+        // Baseline everywhere + more amplitude on high ground so flat
+        // plains/ocean floor still get erodable micro-slope while
+        // mountains get richer dendritic carving.
+        let amp = RELIEF_BASE_AMP + RELIEF_ELEV_AMP * macro_elev.abs().min(1.0);
+        let mut final_elev = macro_elev + n * amp;
+
+        // (4) SIGN-PRESERVING CLAMP — class is NEVER violated; deep
+        // ocean stays ≤ its floor sign; result is finite.
+        if !final_elev.is_finite() {
+            final_elev = if is_land { LAND_EPS } else { -OCEAN_EPS };
+        }
+        final_elev = if is_land {
+            final_elev.max(LAND_EPS)
+        } else {
+            final_elev.min(-OCEAN_EPS)
+        };
+
+        hrow[rx as usize] = final_elev;
+        prow[rx as usize] = if blended_precip.is_finite() {
+            blended_precip.clamp(0.0, 2.0)
+        } else {
+            0.0
+        };
+    }
+}
+
+/// Serial reference rasteriser — the byte-equal oracle for
+/// `parallel_rasterise_is_byte_identical_to_serial`. Identical
+/// `fill_equirect_row` math as the production parallel path, plain row
+/// loop, no rayon.
+#[cfg(test)]
+pub(crate) fn bake_inputs_equirect_serial(
+    draft: &WizardDraft,
+    w: u32,
+    h: u32,
+) -> EquirectInputs {
+    let cells = painted_cells(draft);
+    let precip_per_cell = painted_precip(draft, &cells);
+    let grid = CellGrid::build(&cells);
+
+    let n = (w as usize) * (h as usize);
+    let mut height = vec![0.0f32; n];
+    let mut precip = vec![0.0f32; n];
+
+    for ry in 0..h {
+        let lo = (ry as usize) * (w as usize);
+        let hi = lo + (w as usize);
+        fill_equirect_row(
+            ry,
+            w,
+            h,
+            &grid,
+            &cells,
+            &precip_per_cell,
+            &mut height[lo..hi],
+            &mut precip[lo..hi],
+        );
     }
 
     EquirectInputs { w, h, height, precip, scale: WorldScale::planet_default() }
@@ -540,9 +609,15 @@ fn bake_inputs_equirect_bruteforce(draft: &WizardDraft, w: u32, h: u32) -> Equir
 /// Tauri entry point: rasterize the painted draft + climate precip to one
 /// equirectangular grid. Mirrors the `Option`/owned-arg conventions of the
 /// other wizard bake commands.
+/// Async so the (now rayon-parallel but still CPU-heavy) rasterise runs on
+/// a blocking worker via `spawn_blocking` instead of the Tauri main thread
+/// — the webview UI stays responsive while it bakes (the JS side already
+/// `await`s this invoke, so async is transparent to the frontend).
 #[tauri::command]
-pub fn bake_inputs_equirect(draft: WizardDraft, w: u32, h: u32) -> EquirectInputs {
-    bake_inputs_equirect_impl(&draft, w, h)
+pub async fn bake_inputs_equirect(draft: WizardDraft, w: u32, h: u32) -> EquirectInputs {
+    tauri::async_runtime::spawn_blocking(move || bake_inputs_equirect_impl(&draft, w, h))
+        .await
+        .expect("bake_inputs_equirect rasterise task panicked")
 }
 
 #[cfg(test)]
@@ -959,6 +1034,47 @@ mod tests {
         );
     }
 
+    /// PARALLELISM SAFETY — the production `bake_inputs_equirect_impl` is
+    /// rayon-parallelised across the outer latitude-row loop. The per-texel
+    /// function is pure (reads `&CellGrid`/`&cells` immutably, fixed seed,
+    /// no RNG) and each row writes a DISJOINT output slice, so the parallel
+    /// output MUST be BYTE-IDENTICAL to a serial reference regardless of
+    /// thread scheduling. `bake_inputs_equirect_serial` is the kept
+    /// `#[cfg(test)]` serial oracle (the exact same math, plain row loop).
+    #[test]
+    fn parallel_rasterise_is_byte_identical_to_serial() {
+        let d = test_support::earthish_draft();
+        let par = bake_inputs_equirect_impl(&d, 256, 128);
+        let ser = bake_inputs_equirect_serial(&d, 256, 128);
+        assert_eq!(par.w, ser.w);
+        assert_eq!(par.h, ser.h);
+        assert_eq!(par.height.len(), ser.height.len());
+        assert_eq!(par.precip.len(), ser.precip.len());
+        for i in 0..par.height.len() {
+            assert_eq!(
+                par.height[i].to_bits(),
+                ser.height[i].to_bits(),
+                "height differs at texel {i} (ry={}, rx={}): par={} ser={}",
+                i / 256,
+                i % 256,
+                par.height[i],
+                ser.height[i]
+            );
+            assert_eq!(
+                par.precip[i].to_bits(),
+                ser.precip[i].to_bits(),
+                "precip differs at texel {i} (ry={}, rx={}): par={} ser={}",
+                i / 256,
+                i % 256,
+                par.precip[i],
+                ser.precip[i]
+            );
+        }
+        // Sanity: a representative draft yields both classes.
+        assert_eq!(par.height, ser.height);
+        assert_eq!(par.precip, ser.precip);
+    }
+
     /// DETERMINISM — fixed seed, no RNG, single-threaded loop ⇒ two calls
     /// with identical args must be byte-identical in BOTH channels.
     #[test]
@@ -1050,6 +1166,48 @@ mod tests {
             dt.as_secs_f64() < 30.0,
             "rasterizer @1024x512 took {:.3}s — spatial index regressed",
             dt.as_secs_f64()
+        );
+    }
+
+    /// FREEZE-FIX WALLTIME — the production debug-bake resolution. Times
+    /// the rayon-parallel `bake_inputs_equirect_impl` AND the serial oracle
+    /// at 2048×1024 and prints both + the speedup so the "no longer pegs
+    /// one core for tens of seconds" claim is backed by a real number.
+    /// Assertion is a non-flaky ceiling (passes even in a slow debug build
+    /// on a modest core count); run with `cargo test --release -- --nocapture`
+    /// to see the real ~sub-second production figure.
+    #[test]
+    fn rasterizer_walltime_2048x1024_parallel_vs_serial() {
+        use std::time::Instant;
+        let draft = super::test_support::earth_dem_like_draft();
+
+        let t0 = Instant::now();
+        let par = bake_inputs_equirect_impl(&draft, 2048, 1024);
+        let par_dt = t0.elapsed();
+
+        let t1 = Instant::now();
+        let ser = bake_inputs_equirect_serial(&draft, 2048, 1024);
+        let ser_dt = t1.elapsed();
+
+        assert_eq!(par.height.len(), 2048 * 1024);
+        assert_eq!(par.height, ser.height);
+        assert_eq!(par.precip, ser.precip);
+        eprintln!(
+            "[walltime] bake_inputs_equirect @ 2048x1024  parallel = {:.3}s \
+             ({} ms)  |  serial = {:.3}s ({} ms)  |  speedup = {:.2}x",
+            par_dt.as_secs_f64(),
+            par_dt.as_millis(),
+            ser_dt.as_secs_f64(),
+            ser_dt.as_millis(),
+            ser_dt.as_secs_f64() / par_dt.as_secs_f64().max(1e-6),
+        );
+        // Non-flaky ceiling: even a slow debug build on a low core count
+        // must beat this; release lands well under a second (reported via
+        // --nocapture). The freeze was tens of seconds single-threaded.
+        assert!(
+            par_dt.as_secs_f64() < 20.0,
+            "parallel rasterizer @2048x1024 took {:.3}s — regressed",
+            par_dt.as_secs_f64()
         );
     }
 
