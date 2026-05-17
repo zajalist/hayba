@@ -51,8 +51,28 @@ const FRAG: string = [
   "uniform float uMapMode;      /* 0 = h_final (eroded), 1 = h0 (raw)      */",
   "uniform float uReliefStrength; /* hillshade contribution gain           */",
   "uniform vec3  uSunDir;       /* light direction for the slope hillshade */",
+  "uniform vec2  uTexSize;      /* equirect texel size = (1/W, 1/H)        */",
   "",
   "const float PI = 3.141592653589793;",
+  "",
+  "/* Manual 4-tap bilinear of the equirect height texture. The eroded RT",
+  "   and the base DataTexture are RGBA32F with NearestFilter (and",
+  "   OES_texture_float_linear is not guaranteed), so hardware linear",
+  "   filtering can't be relied on — a single texture2D() tap makes the",
+  "   smooth debug sphere show hard texel stair-steps. This reconstructs",
+  "   bilinear in-shader from uTexSize so the relief reads smoothly",
+  "   regardless of the sampler's filter mode. */",
+  "vec4 biTap(sampler2D t, vec2 uv){",
+  "  vec2 res = 1.0 / uTexSize;            /* texel grid resolution (W,H)   */",
+  "  vec2 p = uv * res - 0.5;              /* sample pos in texel space     */",
+  "  vec2 f = fract(p);",
+  "  vec2 base = (floor(p) + 0.5) * uTexSize;",
+  "  vec4 s00 = texture2D(t, base);",
+  "  vec4 s10 = texture2D(t, base + vec2(uTexSize.x, 0.0));",
+  "  vec4 s01 = texture2D(t, base + vec2(0.0, uTexSize.y));",
+  "  vec4 s11 = texture2D(t, base + uTexSize);",
+  "  return mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);",
+  "}",
   "",
   "/* sphere unit normal -> equirect uv (hydraulic-rework convention). */",
   "vec2 sphereToEquirectUv(vec3 n){",
@@ -95,12 +115,13 @@ const FRAG: string = [
   "  vec3 n = normalize(vSpherePos);",
   "  vec2 uv = sphereToEquirectUv(n);",
   "",
-  "  /* Pick the eroded vs raw view. Sample both with explicit-LOD-free",
-  "     texture2D() (RGBA32F, NearestFilter targets) — the relief shading",
-  "     uses screen-space derivatives of the SAMPLED height, which works",
-  "     regardless of the texture filter. */",
-  "  float hEroded = texture2D(uHeight,  uv).r;",
-  "  float hRaw    = texture2D(uHeight0, uv).r;",
+  "  /* Pick the eroded vs raw view. biTap() does manual 4-tap bilinear",
+  "     (RGBA32F NearestFilter targets — hardware linear isn't guaranteed)",
+  "     so the smooth sphere doesn't show texel stair-steps; the relief",
+  "     hillshade then uses screen-space derivatives of this filtered",
+  "     height. */",
+  "  float hEroded = biTap(uHeight,  uv).r;",
+  "  float hRaw    = biTap(uHeight0, uv).r;",
   "  float h = mix(hEroded, hRaw, step(0.5, uMapMode));",
   "",
   "  vec3 base = hypsometric(h);",
@@ -156,6 +177,11 @@ export function makeDebugReliefMaterial(): THREE.ShaderMaterial {
       uMapMode: { value: 0 },
       uReliefStrength: { value: 1.0 },
       uSunDir: { value: new THREE.Vector3(0.5, 0.7, 0.4).normalize() },
+      // Equirect texel size (1/W, 1/H) for the in-shader bilinear. The
+      // 1,1 default is overwritten by setDebugTexture (derived from the
+      // bound texture's image / RT size) — a degenerate but safe value
+      // until a real texture is bound.
+      uTexSize: { value: new THREE.Vector2(1, 1) },
     },
     // dFdx/dFdy are core in WebGL2 (Three r169) — no extension flag needed.
   });
@@ -174,6 +200,16 @@ export function setDebugTexture(
 ): void {
   mat.uniforms.uHeight.value = hFinalTex;
   mat.uniforms.uHeight0.value = h0Tex ?? hFinalTex;
+  // Derive the equirect texel size (1/W, 1/H) for the in-shader bilinear
+  // straight from the bound eroded texture. A RenderTarget texture and a
+  // DataTexture both expose dimensions via `.image` ({width,height}); the
+  // eroded RT and the base DataTexture are the same W×H equirect grid.
+  const img = hFinalTex.image as
+    | { width?: number; height?: number }
+    | undefined;
+  const w = img?.width && img.width > 0 ? img.width : 1;
+  const h = img?.height && img.height > 0 ? img.height : 1;
+  (mat.uniforms.uTexSize.value as THREE.Vector2).set(1 / w, 1 / h);
   mat.uniformsNeedUpdate = true;
 }
 

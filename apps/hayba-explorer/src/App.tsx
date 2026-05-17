@@ -975,12 +975,18 @@ export default function App() {
     }
   }, [draft]);
 
-  // Debug-globe hydraulic-bake resolution. 1024×512 equirect — the
-  // spec's debug default (W=1024, H=512); large enough for dendritic
-  // detail, small enough to bake in seconds. Production-res tuning is a
-  // deferred follow-up (out of scope per the rework spec).
-  const DEBUG_BAKE_W = 1024;
-  const DEBUG_BAKE_H = 512;
+  // Debug-globe hydraulic-bake resolution. 256×128 equirect. The sim
+  // itself is trivial at any of these sizes (the real-GPU harness proved
+  // corePass + land-erodes at 256×128); the bottleneck is the Rust
+  // `bake_inputs_equirect` rasteriser, which is an O(cells × texels)
+  // nearest-cell search — ~77s single-threaded at 1024×512 (it blocks the
+  // Tauri command + UI for ~5 min end-to-end). 256×128 is ~16× fewer
+  // texels so the rasteriser returns fast. FOLLOW-UP: to restore 1024+
+  // final resolution without the freeze, `bake_equirect.rs` needs a
+  // spatial index (grid/kd-tree) or a rayon-parallelised cell loop — a
+  // separate optimization task, not this change.
+  const DEBUG_BAKE_W = 256;
+  const DEBUG_BAKE_H = 128;
 
   // Hydraulic equirect bake — ADDITIVE debug path. Does NOT touch the
   // Rust `bake_from_wizard` sim flow above: it rasterises the painter-
