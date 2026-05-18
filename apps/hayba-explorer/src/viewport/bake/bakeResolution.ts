@@ -15,7 +15,10 @@ export const BAKE_RES_TIERS: readonly BakeRes[] = [
   { w: 2560, h: 1280 },
 ] as const;
 
-export const DEFAULT_BAKE_RES: BakeRes = BAKE_RES_TIERS[1];
+// NX-1: default to the cheapest tier (1024×512). The user can pick a
+// higher tier in-app (App bake-tier selector); every pass is
+// resolution-invariant (#217) so quality, not correctness, scales.
+export const DEFAULT_BAKE_RES: BakeRes = BAKE_RES_TIERS[0];
 
 /** Snap an arbitrary (w,h) to a valid tier: exact tier match wins;
  *  anything non-2:1, unknown, or oversize falls back to the max tier
