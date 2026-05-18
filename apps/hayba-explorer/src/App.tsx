@@ -803,7 +803,13 @@ export default function App() {
         painterMeshRef.current.dispose();
         painterMeshRef.current = null;
       }
-      if (globeRef.current) globeRef.current.object.visible = true;
+      if (globeRef.current) {
+        // Only un-hide the point-cloud globe when going back to a
+        // paint-editable state. In `explore` the eroded equirect sphere
+        // is the globe (via setGlobe) and the point cloud must stay
+        // hidden or it double-renders over it.
+        globeRef.current.object.visible = interactRef.current === "compose";
+      }
       return;
     }
 
@@ -873,7 +879,13 @@ export default function App() {
         painterMeshRef.current.dispose();
         painterMeshRef.current = null;
       }
-      if (globeRef.current) globeRef.current.object.visible = true;
+      if (globeRef.current) {
+        // Only un-hide the point-cloud globe when going back to a
+        // paint-editable state. In `explore` the eroded equirect sphere
+        // is the globe (via setGlobe) and the point cloud must stay
+        // hidden or it double-renders over it.
+        globeRef.current.object.visible = interactRef.current === "compose";
+      }
     };
   }, [panelCategory, mode, draft?.divisions, interact]);
 
@@ -1174,6 +1186,30 @@ export default function App() {
   const handleEditWizard = useCallback(() => {
     previewRef.current = [];
     invoke("reset_sim").catch(() => {});
+    // SP-A: the ONLY path explore → compose. Tear down the eroded globe
+    // + its 4 caller-owned stack RTs (setGlobe(null) disposes the sphere
+    // geometry+material; the RTs are NOT owned by the material so are
+    // freed explicitly here, mirroring the pre-bake dispose discipline),
+    // then re-enter compose — the painter-lifecycle effect (gated on
+    // interact==="compose") rebuilds the paint view.
+    const scene = sceneRef.current;
+    if (scene) scene.setGlobe(null);
+    prevDebugHFinalRef.current?.dispose();
+    prevDebugClimRef.current?.dispose();
+    prevDebugTerrRef.current?.dispose();
+    prevDebugHydroRef.current?.dispose();
+    prevDebugBaseRef.current?.dispose();
+    prevDebugPrecipRef.current?.dispose();
+    prevDebugHFinalRef.current = null;
+    prevDebugClimRef.current = null;
+    prevDebugTerrRef.current = null;
+    prevDebugHydroRef.current = null;
+    prevDebugBaseRef.current = null;
+    prevDebugPrecipRef.current = null;
+    debugStackRef.current = null;
+    debugMatRef.current = null;
+    setDebugBakeReady(false);
+    setInteract(nextInteract(interactRef.current, "edit"));
     setMode("wizard");
     setPlaying(false);
     if (draft) globeRef.current?.recolorFromDraft(draft, cellCountRef.current);
