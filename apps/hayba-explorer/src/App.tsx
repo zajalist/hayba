@@ -38,6 +38,7 @@ import { buildPainterMesh, type PainterMeshHandle } from "./viewport/painterMesh
 // debug/validation surface gated behind its own button.
 import { uploadEquirect } from "./viewport/bake/equirectInput";
 import { runHydraulicBake, DEFAULT_HYDRAULIC } from "./viewport/bake/hydraulic";
+import { DEFAULT_BAKE_RES } from "./viewport/bake/bakeResolution";
 import {
   makeDebugReliefMaterial,
   setDebugTexture,
@@ -1000,21 +1001,11 @@ export default function App() {
     }
   }, [draft]);
 
-  // Debug-globe hydraulic-bake resolution. 2048×1024 equirect — high
-  // enough to carry dendritic erosion channels. The old 256×128 was a
-  // workaround for the SLOW Rust `bake_inputs_equirect` rasteriser
-  // (an O(cells × texels) brute-force nearest-cell search: ~77s at
-  // 1024×512, the sole cause of the ~5-min UI freeze). `bake_equirect.rs`
-  // now spatial-indexes that lookup (a directional bucket grid, ≈O(1)
-  // per texel, result PROVEN byte-identical to brute force by the
-  // `spatial_eq_bruteforce_*` cargo tests), so the rasteriser is
-  // ~0.1s @1024×512 and ~0.32s @2048×1024 (measured, `cargo test
-  // --release`). Budget @2048×1024: ~0.32s rasterise + ~0.6–1.1s GPU sim
-  // (the sim was ~280ms @1024×512/200 steps, scales with texels) ≈ a
-  // couple of seconds total — no freeze, and 16× the detail of 256×128
-  // so dendritic incision actually resolves.
-  const DEBUG_BAKE_W = 2048;
-  const DEBUG_BAKE_H = 1024;
+  // Phase-2 P2.1: resolution comes from the tier module (default
+  // 2048x1024 ≈ 2.1M; ceiling tier ≈ 3.3M). A UI chip to choose the
+  // tier is P2.5; selecting here keeps the ceiling/guard shipping now.
+  const DEBUG_BAKE_W = DEFAULT_BAKE_RES.w;
+  const DEBUG_BAKE_H = DEFAULT_BAKE_RES.h;
 
   // Hydraulic equirect bake — ADDITIVE debug path. Does NOT touch the
   // Rust `bake_from_wizard` sim flow above: it rasterises the painter-
