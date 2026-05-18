@@ -208,8 +208,18 @@ pub fn bake_from_wizard(
     // sends `erosionParams` (Plan A Task 9). A missing arg → None →
     // default erosion (Tauri deserializes an absent command arg as None).
     let erosion_params = erosion_params.unwrap_or_default();
+    let bake_t0 = std::time::Instant::now();
     let model = bake_impl(&draft, &erosion_params);
+    let compute_el = bake_t0.elapsed();
+    let snap_t0 = std::time::Instant::now();
     let snap = snapshot_model(&model, draft.divisions, want_climate_debug, &climate_params);
+    let snap_el = snap_t0.elapsed();
+    eprintln!(
+        "[bake_from_wizard] compute={:.3}s snapshot={:.3}s total={:.3}s",
+        compute_el.as_secs_f64(),
+        snap_el.as_secs_f64(),
+        (compute_el + snap_el).as_secs_f64()
+    );
     let mut guard = sim.0.lock().expect("sim mutex poisoned");
     *guard = Some(SimState {
         model,
@@ -229,9 +239,15 @@ pub fn step_planet(
 ) -> Result<PlanetSnapshot, String> {
     let mut guard = sim.0.lock().map_err(|_| "sim mutex poisoned".to_string())?;
     let state = guard.as_mut().ok_or_else(|| "no baked planet".to_string())?;
+    let step_t0 = std::time::Instant::now();
     for _ in 0..n_steps {
         state.model.step(state.dt_ma);
     }
+    eprintln!(
+        "[step_planet] step={:.3}s ({} steps)",
+        step_t0.elapsed().as_secs_f64(),
+        n_steps
+    );
     Ok(snapshot_model(&state.model, state.divisions, want_climate_debug, &climate_params))
 }
 
