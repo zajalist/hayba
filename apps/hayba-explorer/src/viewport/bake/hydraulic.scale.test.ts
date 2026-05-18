@@ -9,6 +9,7 @@ import {
   ACCUM_FRAG,
   CONTROLS_FRAG,
   CLIMATE_NOOP_FRAG,
+  CLIMATE_FRAG,
 } from "./hydraulic.glsl";
 import { BAKE_RES_TIERS, clampBakeRes } from "./bakeResolution";
 
@@ -276,5 +277,26 @@ describe("#234 P2.1 climate stack scaffold", () => {
       ).length,
     ).toBe(0);
     expect(CLIMATE_NOOP_FRAG).not.toMatch(/`/);
+  });
+});
+
+describe("#234 P2.2 CLIMATE_FRAG", () => {
+  it("computes temp/precip/wind-az/glaciation from height+lat", () => {
+    expect(typeof CLIMATE_FRAG).toBe("string");
+    expect(CLIMATE_FRAG).toMatch(/uniform sampler2D uA;/);
+    expect(CLIMATE_FRAG).toMatch(/uniform float uTEquatorC;/);
+    expect(CLIMATE_FRAG).toMatch(/uniform float uTLatDropC;/);
+    expect(CLIMATE_FRAG).toMatch(/uniform float uItczWidthDeg;/);
+    expect(CLIMATE_FRAG).toMatch(/uniform float uGlacOnsetC;/);
+    expect(CLIMATE_FRAG).toMatch(/uniform float uElevKmScale;/);
+    expect(CLIMATE_FRAG).toMatch(/uTLatDropC \* \(s \* s\)/);
+    expect(CLIMATE_FRAG).toMatch(/0\.85/);
+    expect(CLIMATE_FRAG).toMatch(/fragColor = vec4\(/);
+    expect(
+      CLIMATE_FRAG.split("\n").filter(
+        (l) => /^\s*"?uniform /.test(l) && l.includes("//"),
+      ).length,
+    ).toBe(0);
+    expect(CLIMATE_FRAG).not.toMatch(/`/);
   });
 });
