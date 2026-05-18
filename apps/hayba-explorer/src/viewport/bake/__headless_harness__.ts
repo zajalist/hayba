@@ -221,14 +221,13 @@ export async function runRealInputErosionVerification(
 
     const webglErrPre = gl.getError();
     const t0 = performance.now();
-    const rt = await hyd.runHydraulicBake(
-      renderer,
-      baseTex,
-      precipTex,
-      w,
-      h,
-      cfg,
-    );
+    const { eroded: rt, clim: _c, terr: _t, hydro: _h } =
+      await hyd.runHydraulicBake(renderer, baseTex, precipTex, w, h, cfg);
+    // Oracle never reads the stack RTs; dispose immediately so the
+    // many-bake harness doesn't leak 3 RTs/bake (fatal at 3M).
+    _c.dispose();
+    _t.dispose();
+    _h.dispose();
     const t1 = performance.now();
     const webglErrPost = gl.getError();
 
@@ -432,14 +431,13 @@ export async function runHeadlessErosionVerification(
 
     const webglErrPre = gl.getError();
     const t0 = performance.now();
-    const rt = await hyd.runHydraulicBake(
-      renderer,
-      baseTex,
-      precipTex,
-      w,
-      h,
-      cfg,
-    );
+    const { eroded: rt, clim: _c, terr: _t, hydro: _h } =
+      await hyd.runHydraulicBake(renderer, baseTex, precipTex, w, h, cfg);
+    // Oracle never reads the stack RTs; dispose immediately so the
+    // many-bake harness doesn't leak 3 RTs/bake (fatal at 3M).
+    _c.dispose();
+    _t.dispose();
+    _h.dispose();
     const t1 = performance.now();
     const webglErrPost = gl.getError();
 
@@ -951,7 +949,13 @@ async function _bakeAndRenderRelief(
   const cfg = { ...hyd.DEFAULT_HYDRAULIC, ...(overrideCfg ?? {}) };
 
   const t0 = performance.now();
-  const rt = await hyd.runHydraulicBake(renderer, baseTex, precipTex, w, h, cfg);
+  const { eroded: rt, clim: _c, terr: _t, hydro: _h } =
+    await hyd.runHydraulicBake(renderer, baseTex, precipTex, w, h, cfg);
+  // Oracle never reads the stack RTs; dispose immediately so the
+  // many-bake harness doesn't leak 3 RTs/bake (fatal at 3M).
+  _c.dispose();
+  _t.dispose();
+  _h.dispose();
   const t1 = performance.now();
 
   const buf = new Float32Array(w * h * 4);

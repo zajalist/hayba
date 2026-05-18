@@ -352,6 +352,21 @@ const u = (value: unknown): THREE.IUniform => ({ value });
  * Float support is hard-guarded by `createPingPong` (it throws if
  * `EXT_color_buffer_float` is absent — RGBA32F RTs impossible).
  */
+/**
+ * What {@link runHydraulicBake} hands back. `eroded` is today's owned
+ * result (A's current read slot). `clim/terr/hydro` are the CLIM/TERR/
+ * HYDRO[0] stack slots — they used to be disposed at teardown; now
+ * ownership transfers to the caller, which disposes all four exactly as
+ * it already tracks/disposes the previous eroded RT. Read-only: nothing
+ * feeds them back into the sim (the Phase-2 #218 degradation contract).
+ */
+export interface HydraulicBakeResult {
+  eroded: THREE.WebGLRenderTarget;
+  clim: THREE.WebGLRenderTarget;
+  terr: THREE.WebGLRenderTarget;
+  hydro: THREE.WebGLRenderTarget;
+}
+
 export async function runHydraulicBake(
   renderer: THREE.WebGLRenderer,
   base: THREE.DataTexture,
@@ -360,7 +375,7 @@ export async function runHydraulicBake(
   h: number,
   cfg: HydraulicConfig,
   onProgress?: (done: number, total: number) => void,
-): Promise<THREE.WebGLRenderTarget> {
+): Promise<HydraulicBakeResult> {
   // A and F each get a pair of RGBA32F RTs. createPingPong is the reused
   // float-probe + RGBA32F allocation helper (pingpong.ts:448) — it HARD
   // FAILS if EXT_color_buffer_float is missing. We drive the read/write
@@ -752,10 +767,12 @@ export async function runHydraulicBake(
   //      sampler unit + the FBO unbound, so this is a clean resync only.
   renderer.resetState();
 
-  // ---- Teardown. The eroded state lives in A's current read slot;
-  //      return that RT (caller owns + disposes it). Dispose every other
-  //      transient RT (the other A slot + both F slots) — don't leak,
-  //      don't dispose the returned one. -------------------------------
+  // ---- Teardown. FOUR RTs escape this function (caller owns + disposes
+  //      all four): the eroded state (A's current read slot) plus the
+  //      CLIM/TERR/HYDRO[0] stack slots, which the in-app stack map-mode
+  //      reads. Dispose every OTHER transient RT (the other A slot, both
+  //      F/M/ACC/CTRL slots, and the transient [1] stack slots) — don't
+  //      leak, don't dispose any of the four returned ones. -----------
   const result = A[aRead];
   const stale = A[aRead ^ 1];
   stale.dispose();
@@ -767,11 +784,8 @@ export async function runHydraulicBake(
   ACC[1].dispose();
   CTRL[0].dispose();
   CTRL[1].dispose();
-  CLIM[0].dispose();
   CLIM[1].dispose();
-  TERR[0].dispose();
   TERR[1].dispose();
-  HYDRO[0].dispose();
   HYDRO[1].dispose();
-  return result;
+  return { eroded: result, clim: CLIM[0], terr: TERR[0], hydro: HYDRO[0] };
 }
