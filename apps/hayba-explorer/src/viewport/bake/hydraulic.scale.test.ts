@@ -8,6 +8,7 @@ import {
   INIT_ACC_FRAG,
   ACCUM_FRAG,
   CONTROLS_FRAG,
+  CLIMATE_NOOP_FRAG,
 } from "./hydraulic.glsl";
 import { BAKE_RES_TIERS, clampBakeRes } from "./bakeResolution";
 
@@ -250,5 +251,18 @@ describe("#234 P2.1 resolution tier", () => {
     expect(clampBakeRes(99999, 99999)).toEqual(max);
     expect(clampBakeRes(2048, 1024)).toEqual({ w: 2048, h: 1024 });
     expect(clampBakeRes(2048, 999)).toEqual(max);
+  });
+});
+
+describe("#234 P2.1 climate stack scaffold", () => {
+  it("CLIMATE_NOOP_FRAG is a glPass-clean zero fill", () => {
+    expect(typeof CLIMATE_NOOP_FRAG).toBe("string");
+    expect(CLIMATE_NOOP_FRAG).toMatch(/fragColor = vec4\(0\.0\)/);
+    expect(
+      CLIMATE_NOOP_FRAG.split("\n").filter(
+        (l) => /^\s*"?uniform /.test(l) && l.includes("//"),
+      ).length,
+    ).toBe(0);
+    expect(CLIMATE_NOOP_FRAG).not.toMatch(/`/);
   });
 });

@@ -708,3 +708,12 @@ export const CONTROLS_FRAG = [
   "  fragColor = vec4(fin(azN), fin(uniformity), fin(curvN), endo);",
   "}",
 ].join("\n");
+
+// Phase-2 P2.1 — placeholder fill for the climate/mask stack targets.
+// P2.1 only proves alloc/co-evolution/dispose wiring at up to ~3M and
+// that an UNCONSUMED stack is byte-transparent to #218 erosion. P2.2+
+// replace this with the real climate/mask passes.
+export const CLIMATE_NOOP_FRAG = [
+  H,
+  "void main(){ fragColor = vec4(0.0); }",
+].join("\n");

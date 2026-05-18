@@ -51,6 +51,7 @@ import {
   INIT_ACC_FRAG,
   ACCUM_FRAG,
   CONTROLS_FRAG,
+  CLIMATE_NOOP_FRAG,
 } from "./hydraulic.glsl";
 import { runRawPass } from "./glPass";
 import { createPingPong, type PingPongTargets } from "./pingpong";
@@ -344,7 +345,7 @@ export async function runHydraulicBake(
   // FAILS if EXT_color_buffer_float is missing. We drive the read/write
   // slots explicitly below (NOT pp.book) so the discipline is local and
   // unambiguous.
-  const pp: PingPongTargets = createPingPong(renderer, w, h, ["A", "F", "M", "ACC", "CTRL"]);
+  const pp: PingPongTargets = createPingPong(renderer, w, h, ["A", "F", "M", "ACC", "CTRL", "CLIM", "TERR", "HYDRO"]);
   const A = pp.rt.A; // [slot0, slot1]
   const F = pp.rt.F; // [slot0, slot1]
   // S2.4 detail mask: a ONE-TIME single-channel field (computed pre-loop
@@ -359,6 +360,18 @@ export async function runHydraulicBake(
   // Single-buffered: CONTROLS writes CTRL[0], ACCUM reads it; CTRL[1]
   // is allocated by the pair helper and just disposed at teardown.
   const CTRL = pp.rt.CTRL;
+  // #234 P2.1 unified climate/mask stack (scaffold). CLIM/TERR/HYDRO
+  // are the named substrate P2.2+ fills; P2.1 zero-fills them and
+  // NOTHING consumes them, so erosion is provably unchanged (the
+  // Phase-2 degradation contract).
+  const CLIM = pp.rt.CLIM;
+  const TERR = pp.rt.TERR;
+  const HYDRO = pp.rt.HYDRO;
+  const refreshClimate = (): void => {
+    runRawPass(renderer, CLIMATE_NOOP_FRAG, {}, CLIM[0]);
+    runRawPass(renderer, CLIMATE_NOOP_FRAG, {}, TERR[0]);
+    runRawPass(renderer, CLIMATE_NOOP_FRAG, {}, HYDRO[0]);
+  };
   let accRead = 0;
   const swapAcc = (): void => {
     accRead ^= 1;
@@ -479,6 +492,7 @@ export async function runHydraulicBake(
     }
   };
   refreshAccumulation();
+  refreshClimate();
 
   // ---- One simulation step: the fixed pass order. ---------------------
   // Each pass's uniforms object lists EXACTLY the uniforms that frag
@@ -541,6 +555,9 @@ export async function runHydraulicBake(
     // between refreshes.
     if (cfg.accumEveryN > 0 && stepIdx % cfg.accumEveryN === 0) {
       refreshAccumulation();
+    }
+    if (cfg.accumEveryN > 0 && stepIdx % cfg.accumEveryN === 0) {
+      refreshClimate();
     }
 
     // S2.3-> CARVE_RIVERS (#218 R1): stream-power on the drainage
@@ -713,5 +730,11 @@ export async function runHydraulicBake(
   ACC[1].dispose();
   CTRL[0].dispose();
   CTRL[1].dispose();
+  CLIM[0].dispose();
+  CLIM[1].dispose();
+  TERR[0].dispose();
+  TERR[1].dispose();
+  HYDRO[0].dispose();
+  HYDRO[1].dispose();
   return result;
 }
