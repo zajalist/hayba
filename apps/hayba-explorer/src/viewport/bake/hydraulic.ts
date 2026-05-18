@@ -53,6 +53,9 @@ import {
   CONTROLS_FRAG,
   CLIMATE_NOOP_FRAG,
   CLIMATE_FRAG,
+  MSLP_FRAG,
+  BLUR_H_FRAG,
+  BLUR_V_FRAG,
 } from "./hydraulic.glsl";
 import { runRawPass } from "./glPass";
 import { createPingPong, type PingPongTargets } from "./pingpong";
@@ -158,6 +161,13 @@ export interface HydraulicConfig {
   itczWidthDeg: number;
   glacOnsetC: number;
   glacFullC: number;
+  /** NX-2a geostrophic-wind knobs (MdGBWG annual-mean MSLP). */
+  mslpLandBase: number;
+  mslpLandAmp: number;
+  mslpOceanBase: number;
+  mslpOceanAmp: number;
+  mslpBlurSigma: number;
+  coriolisGain: number;
   /** S2.3 concavity gate: river carve is multiplied by
    *  `smoothstep(0, concaveScale, laplacian(b))` so incision only bites
    *  CONCAVE valley floors, not CONVEX plateau/range shoulders (kills the
@@ -259,6 +269,12 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   itczWidthDeg: 16.0,
   glacOnsetC: -2.0,
   glacFullC: -12.0,
+  mslpLandBase: 1012.5,
+  mslpLandAmp: 6.0,
+  mslpOceanBase: 1014.5,
+  mslpOceanAmp: 20.0,
+  mslpBlurSigma: 6.0,
+  coriolisGain: 15.0,
   channelDepth: 0.02,
   sfdJitter: 0.002,
   // Concave valleys reach full carve by lap≈0.003; every convex shoulder
@@ -381,7 +397,7 @@ export async function runHydraulicBake(
   // FAILS if EXT_color_buffer_float is missing. We drive the read/write
   // slots explicitly below (NOT pp.book) so the discipline is local and
   // unambiguous.
-  const pp: PingPongTargets = createPingPong(renderer, w, h, ["A", "F", "M", "ACC", "CTRL", "CLIM", "TERR", "HYDRO"]);
+  const pp: PingPongTargets = createPingPong(renderer, w, h, ["A", "F", "M", "ACC", "CTRL", "CLIM", "TERR", "HYDRO", "MSLP"]);
   const A = pp.rt.A; // [slot0, slot1]
   const F = pp.rt.F; // [slot0, slot1]
   // S2.4 detail mask: a ONE-TIME single-channel field (computed pre-loop
@@ -403,6 +419,10 @@ export async function runHydraulicBake(
   const CLIM = pp.rt.CLIM;
   const TERR = pp.rt.TERR;
   const HYDRO = pp.rt.HYDRO;
+  // NX-2a climate-internal scratch: allocated once per bake with every
+  // other channel (no per-tick alloc), reused every refreshClimate
+  // tick, disposed once at teardown; never escapes, never feeds erosion.
+  const MSLP = pp.rt.MSLP;
   let accRead = 0;
   const swapAcc = (): void => {
     accRead ^= 1;
@@ -432,10 +452,37 @@ export async function runHydraulicBake(
   const refreshClimate = (): void => {
     runRawPass(
       renderer,
+      MSLP_FRAG,
+      {
+        uA: u(aReadRT()),
+        uGrid: u(uGrid),
+        uMslpLandBase: u(cfg.mslpLandBase),
+        uMslpLandAmp: u(cfg.mslpLandAmp),
+        uMslpOceanBase: u(cfg.mslpOceanBase),
+        uMslpOceanAmp: u(cfg.mslpOceanAmp),
+      },
+      MSLP[0],
+    );
+    runRawPass(
+      renderer,
+      BLUR_H_FRAG,
+      { uMSLP: u(MSLP[0]), uGrid: u(uGrid), uBlurSigma: u(cfg.mslpBlurSigma) },
+      MSLP[1],
+    );
+    runRawPass(
+      renderer,
+      BLUR_V_FRAG,
+      { uMSLP: u(MSLP[1]), uGrid: u(uGrid), uBlurSigma: u(cfg.mslpBlurSigma) },
+      MSLP[0],
+    );
+    runRawPass(
+      renderer,
       CLIMATE_FRAG,
       {
         uA: u(aReadRT()),
         uGrid: u(uGrid),
+        uMSLP: u(MSLP[0]),
+        uCoriolisGain: u(cfg.coriolisGain),
         uTEquatorC: u(cfg.tEquatorC),
         uTLatDropC: u(cfg.tLatDropC),
         uLapseCPerKm: u(cfg.lapseCPerKm),
@@ -787,5 +834,7 @@ export async function runHydraulicBake(
   CLIM[1].dispose();
   TERR[1].dispose();
   HYDRO[1].dispose();
+  MSLP[0].dispose();
+  MSLP[1].dispose();
   return { eroded: result, clim: CLIM[0], terr: TERR[0], hydro: HYDRO[0] };
 }
