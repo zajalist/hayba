@@ -43,6 +43,7 @@ import {
   makeDebugReliefMaterial,
   setDebugTexture,
   setDebugMapMode,
+  setDebugStack,
 } from "./viewport/bake/debugMaterial";
 
 /** `EquirectInputs` as serialized by the Rust `bake_inputs_equirect`
@@ -111,6 +112,30 @@ interface WizardInit {
 type Mode = "wizard" | "baking" | "boundaries" | "densities" | "simulating";
 
 const INITIAL_DIVISIONS = 64;
+
+// In-app debug stack map-mode registry. Static + future-proof: TERR/HYDRO
+// entries are present now and simply render flat (channels read 0) until
+// Phase-2 P2.3 fills those RTs. `ramp` ids match debugMaterial.ts ramp().
+type DebugStackKind = "relief" | "clim" | "terr" | "hydro";
+interface DebugChannelEntry {
+  label: string;
+  kind: DebugStackKind;
+  channel: number; // RGBA lane (ignored for relief)
+  ramp: number; // 0 grey | 1 temp | 2 precip | 3 hue | 4 grey-elev
+}
+const DEBUG_CHANNELS: DebugChannelEntry[] = [
+  { label: "Relief", kind: "relief", channel: 0, ramp: 0 },
+  { label: "Temp", kind: "clim", channel: 0, ramp: 1 },
+  { label: "Precip", kind: "clim", channel: 1, ramp: 2 },
+  { label: "Wind", kind: "clim", channel: 2, ramp: 3 },
+  { label: "Glaciation", kind: "clim", channel: 3, ramp: 4 },
+  { label: "Slope", kind: "terr", channel: 0, ramp: 0 },
+  { label: "Aspect", kind: "terr", channel: 1, ramp: 3 },
+  { label: "Curvature", kind: "terr", channel: 2, ramp: 0 },
+  { label: "Flow", kind: "hydro", channel: 0, ramp: 0 },
+  { label: "Elevation", kind: "hydro", channel: 1, ramp: 4 },
+  { label: "Endorheic", kind: "hydro", channel: 2, ramp: 0 },
+];
 
 function angularToChord(rad: number): number {
   return 2 * Math.sin(rad / 2);
@@ -331,15 +356,75 @@ export default function App() {
   const prevDebugHFinalRef = useRef<THREE.WebGLRenderTarget | null>(null);
   const prevDebugBaseRef = useRef<THREE.DataTexture | null>(null);
   const prevDebugPrecipRef = useRef<THREE.DataTexture | null>(null);
+  // Stack RTs from the latest bake (caller-owned per HydraulicBakeResult).
+  // Disposed on the NEXT bake exactly like prevDebugHFinalRef — mirrors
+  // the existing eroded-RT discipline (no unmount cleanup is added; that
+  // matches how the eroded RT is already handled).
+  const prevDebugClimRef = useRef<THREE.WebGLRenderTarget | null>(null);
+  const prevDebugTerrRef = useRef<THREE.WebGLRenderTarget | null>(null);
+  const prevDebugHydroRef = useRef<THREE.WebGLRenderTarget | null>(null);
+  // Live stack handles for the mounted material's selector.
+  const debugStackRef = useRef<{
+    clim: THREE.WebGLRenderTarget;
+    terr: THREE.WebGLRenderTarget;
+    hydro: THREE.WebGLRenderTarget;
+  } | null>(null);
   const [debugBaking, setDebugBaking] = useState(false);
   const [debugBakeProgress, setDebugBakeProgress] = useState<string | null>(null);
   const [debugBakeReady, setDebugBakeReady] = useState(false);
   const [debugMapMode, setDebugMapModeState] = useState(0);
+  const [debugChannelIdx, setDebugChannelIdx] = useState(0); // 0 = Relief
+  const [debugDraped, setDebugDraped] = useState(true); // draped vs flat
 
   // Playback speed (steps per rAF tick). 1× is the wizard's dt_ma per frame.
   const [speedMult, setSpeedMult] = useState<1 | 2 | 4 | 8>(1);
   const speedRef = useRef<1 | 2 | 4 | 8>(1);
   useEffect(() => { speedRef.current = speedMult; }, [speedMult]);
+
+  // Push a registry entry onto the live material. No re-bake — instant.
+  // Relief (or no stack yet) => the exact relief path (uStackMode 0).
+  const applyDebugChannel = useCallback(
+    (idx: number, draped: boolean) => {
+      const mat = debugMatRef.current;
+      if (!mat) return;
+      const e = DEBUG_CHANNELS[idx] ?? DEBUG_CHANNELS[0];
+      const stack = debugStackRef.current;
+      if (e.kind === "relief" || !stack) {
+        setDebugStack(mat, { tex: null, channel: 0, mode: 0, ramp: 0 });
+        return;
+      }
+      const tex =
+        e.kind === "clim"
+          ? stack.clim.texture
+          : e.kind === "terr"
+            ? stack.terr.texture
+            : stack.hydro.texture;
+      setDebugStack(mat, {
+        tex,
+        channel: e.channel,
+        mode: draped ? 1 : 2,
+        ramp: e.ramp,
+      });
+    },
+    [],
+  );
+
+  // `F` flips draped<->flat for the active non-relief stack channel.
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.key !== "f" && ev.key !== "F") return;
+      const tag = (ev.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (!debugBakeReady) return;
+      setDebugDraped((d) => {
+        const next = !d;
+        applyDebugChannel(debugChannelIdx, next);
+        return next;
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [debugBakeReady, debugChannelIdx, applyDebugChannel]);
 
   useEffect(() => {
     activeToolRef.current = activeTool;
@@ -1050,13 +1135,19 @@ export default function App() {
       prevDebugBaseRef.current?.dispose();
       prevDebugPrecipRef.current?.dispose();
       prevDebugHFinalRef.current?.dispose();
+      prevDebugClimRef.current?.dispose();
+      prevDebugTerrRef.current?.dispose();
+      prevDebugHydroRef.current?.dispose();
 
       const base = uploadEquirect(new Float32Array(inp.height), w, h);
       const precip = uploadEquirect(new Float32Array(inp.precip), w, h);
 
       let rt!: THREE.WebGLRenderTarget;
+      let climRT!: THREE.WebGLRenderTarget;
+      let terrRT!: THREE.WebGLRenderTarget;
+      let hydroRT!: THREE.WebGLRenderTarget;
       await scene.runBake(async (renderer) => {
-        rt = await runHydraulicBake(
+        const out = await runHydraulicBake(
           renderer,
           base,
           precip,
@@ -1075,6 +1166,10 @@ export default function App() {
             setDebugBakeProgress(`Eroding — step ${done}/${total}`);
           },
         );
+        rt = out.eroded;
+        climRT = out.clim;
+        terrRT = out.terr;
+        hydroRT = out.hydro;
       });
 
       // Record the new resources so the NEXT bake can dispose them.
@@ -1086,6 +1181,10 @@ export default function App() {
       prevDebugHFinalRef.current = rt;
       prevDebugBaseRef.current = base;
       prevDebugPrecipRef.current = precip;
+      prevDebugClimRef.current = climRT;
+      prevDebugTerrRef.current = terrRT;
+      prevDebugHydroRef.current = hydroRT;
+      debugStackRef.current = { clim: climRT, terr: terrRT, hydro: hydroRT };
 
       const mat = makeDebugReliefMaterial();
       // Eroded view = the hydraulic result RT (A.r); no-erosion view =
@@ -1094,6 +1193,9 @@ export default function App() {
       setDebugTexture(mat, rt.texture, base);
       setDebugMapMode(mat, debugMapMode);
       debugMatRef.current = mat;
+      // Honour the current selector/toggle on the new material (no
+      // re-bake). Relief idx 0 => byte-identical to today.
+      applyDebugChannel(debugChannelIdx, debugDraped);
 
       const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 256, 128), mat);
       mesh.name = "hayba-debug-relief";
@@ -1123,7 +1225,7 @@ export default function App() {
     } finally {
       setDebugBaking(false);
     }
-  }, [draft, debugBaking, debugMapMode]);
+  }, [draft, debugBaking, debugMapMode, applyDebugChannel, debugChannelIdx, debugDraped]);
 
   const handleToggleDebugMapMode = useCallback(() => {
     setDebugMapModeState((m) => {
@@ -1397,23 +1499,49 @@ export default function App() {
               </span>
             )}
             {debugBakeReady && (
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  fontSize: 11,
-                  color: "#a8aeb8",
-                  cursor: "pointer",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={debugMapMode === 1}
-                  onChange={handleToggleDebugMapMode}
-                />
-                Show base (no-erosion) view
-              </label>
+              <>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 11,
+                    color: "#a8aeb8",
+                    cursor: "pointer",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={debugMapMode === 1}
+                    onChange={handleToggleDebugMapMode}
+                  />
+                  Show base (no-erosion) view
+                </label>
+                <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <span>Channel</span>
+                  <select
+                    value={debugChannelIdx}
+                    onChange={(ev) => {
+                      const idx = Number(ev.target.value);
+                      setDebugChannelIdx(idx);
+                      applyDebugChannel(idx, debugDraped);
+                    }}
+                  >
+                    {DEBUG_CHANNELS.map((c, i) => (
+                      <option key={c.label} value={i}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                  <span style={{ opacity: 0.7 }}>
+                    {debugChannelIdx === 0
+                      ? "(relief)"
+                      : debugDraped
+                        ? "draped — F=flat"
+                        : "flat — F=draped"}
+                  </span>
+                </label>
+              </>
             )}
           </div>
         )}
