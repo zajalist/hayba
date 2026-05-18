@@ -28,6 +28,13 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
+/** Decoded grayscale heightmap: `lum[y*w + x]` = R channel / 255. */
+export interface EarthLum {
+  lum: Float32Array;
+  w: number;
+  h: number;
+}
+
 // --- Deterministic value-noise -------------------------------------------
 // Small integer hash → [0,1). Stable for a given (x,y,z) lattice point so the
 // whole template is reproducible run-to-run.
@@ -147,6 +154,44 @@ function regionMembership(r: Region, lonDeg: number, latDeg: number): number {
   return 1 - smoothstep(0.55, 1.0, dist);
 }
 
+// ── LE: in-memory Load-Earth cache (session-scoped) ───────────────────
+// Both public elevation fns are pure in (positions, n); within a session
+// `divisions` ↔ `n` ↔ `positions` are 1:1, so `n` alone is a correct,
+// sufficient key. Hits return a `.slice()` so the canonical cached
+// buffer is never aliased/mutated by callers (loadField etc.). Cleared
+// only on full reload (or `__resetEarthCache`, test-only).
+const _analyticCache = new Map<number, Float32Array>();
+// Declared here so __resetEarthCache compiles; populated/consumed by
+// the image path in a later task.
+const _fromImageCache = new Map<number, Float32Array>();
+let _earthLumPromise: Promise<EarthLum> | null = null;
+
+/** Test-only: drop every Load-Earth cache + the decoded-image promise
+ *  so a test starts cold. Not used by app code. */
+export function __resetEarthCache(): void {
+  _analyticCache.clear();
+  _fromImageCache.clear();
+  _earthLumPromise = null;
+}
+
+/**
+ * Build an Earth-like elevation field, one value per cell, in [-1, 1].
+ * Memoized by `n` (session-scoped). See {@link computeEarthElevations}.
+ *
+ * @param positions Flat unit-sphere xyz, 3 floats per cell (x,y,z).
+ * @param n         Cell count.
+ */
+export function earthElevations(
+  positions: Float32Array,
+  n: number,
+): Float32Array {
+  const hit = _analyticCache.get(n);
+  if (hit) return hit.slice();
+  const out = computeEarthElevations(positions, n);
+  _analyticCache.set(n, out);
+  return out.slice();
+}
+
 /**
  * Build an Earth-like elevation field, one value per cell, in [-1, 1].
  *
@@ -155,7 +200,7 @@ function regionMembership(r: Region, lonDeg: number, latDeg: number): number {
  * @returns Float32Array(n): deep ocean ≈ -1.0, continental shelf small
  *          negative, land ≈ +0.04 .. ~+0.85, a few mountain belts up to ~0.9.
  */
-export function earthElevations(positions: Float32Array, n: number): Float32Array {
+function computeEarthElevations(positions: Float32Array, n: number): Float32Array {
   const out = new Float32Array(n);
 
   for (let i = 0; i < n; i++) {
