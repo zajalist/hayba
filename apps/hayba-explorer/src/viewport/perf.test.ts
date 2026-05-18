@@ -105,3 +105,37 @@ describe("default bake tier (NX-1)", () => {
     expect(DEFAULT_BAKE_RES).toEqual({ w: 1024, h: 512 });
   });
 });
+
+import { emptyBakeSplit, type BakeSplit, type PerfSnapshot } from "./perf";
+
+describe("BakeSplit (BP-1)", () => {
+  it("emptyBakeSplit() is the 5 stage keys, all zero", () => {
+    const b = emptyBakeSplit();
+    expect(b).toEqual({
+      wizard: 0,
+      equirect: 0,
+      upload: 0,
+      gpuSim: 0,
+      total: 0,
+    });
+  });
+
+  it("PerfSnapshot carries bakeSplit (object or null)", () => {
+    const withSplit: PerfSnapshot = {
+      fps: 0,
+      ms: 0,
+      emaMs: 0,
+      calls: 0,
+      triangles: 0,
+      scale: 1,
+      gpuMs: null,
+      bakeMs: null,
+      bakeSplit: emptyBakeSplit(),
+    };
+    const withNull: PerfSnapshot = { ...withSplit, bakeSplit: null };
+    expect(withSplit.bakeSplit?.total).toBe(0);
+    expect(withNull.bakeSplit).toBeNull();
+    const b: BakeSplit = { wizard: 1, equirect: 2, upload: 3, gpuSim: 4, total: 10 };
+    expect(b.total).toBe(10);
+  });
+});

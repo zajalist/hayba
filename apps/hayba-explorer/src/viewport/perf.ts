@@ -2,6 +2,22 @@
 // hysteresis and the on-demand render gate are unit-tested without a
 // WebGL context. scene.ts is the only integrator.
 
+/** BP-1: per-stage bake wall-time split (ms), set by App.handleBake.
+ *  `total` is the handleBake end-to-end (≈ the four stages); the
+ *  compute-vs-IPC split inside `wizard` is BP-2. */
+export interface BakeSplit {
+  wizard: number; // bake_from_wizard invoke (Rust compute + snapshot IPC)
+  equirect: number; // bake_inputs_equirect invoke
+  upload: number; // the two uploadEquirect DataTexture builds
+  gpuSim: number; // runHydraulicBake (scene.runBake block)
+  total: number; // handleBake end-to-end
+}
+
+/** All-zero split (default / test fixture). */
+export function emptyBakeSplit(): BakeSplit {
+  return { wizard: 0, equirect: 0, upload: 0, gpuSim: 0, total: 0 };
+}
+
 export interface PerfSnapshot {
   fps: number;
   ms: number; // last frame ms
@@ -11,6 +27,7 @@ export interface PerfSnapshot {
   scale: number; // current adaptive render scale (× clamped DPR)
   gpuMs: number | null; // EXT_disjoint_timer_query, or null
   bakeMs: number | null; // last bake wall time, or null
+  bakeSplit: BakeSplit | null; // BP-1 per-stage bake split, or null
 }
 
 export interface FrameMeter {
