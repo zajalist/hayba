@@ -46,6 +46,16 @@ export default function PerfHud(props: {
       {row("render scale", s.scale.toFixed(2))}
       {row("gpu ms", s.gpuMs == null ? "—" : s.gpuMs.toFixed(1))}
       {row("bake ms", s.bakeMs == null ? "—" : s.bakeMs.toFixed(0))}
+      {s.bakeSplit && (
+        <div style={{ marginTop: 4, borderTop: "1px solid #2f343d", paddingTop: 4 }}>
+          <div style={{ opacity: 0.6, marginBottom: 2 }}>bake split (ms)</div>
+          {row("wizard", s.bakeSplit.wizard.toFixed(0))}
+          {row("equirect", s.bakeSplit.equirect.toFixed(0))}
+          {row("upload", s.bakeSplit.upload.toFixed(0))}
+          {row("gpuSim", s.bakeSplit.gpuSim.toFixed(0))}
+          {row("total", s.bakeSplit.total.toFixed(0))}
+        </div>
+      )}
     </div>
   );
 }

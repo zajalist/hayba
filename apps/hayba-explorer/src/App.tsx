@@ -1088,6 +1088,8 @@ export default function App() {
         ? heightPainterRef.current.toDraftFields()
         : { painted_elevations: [], painted_mask: [] };
       const finalDraft: WizardDraft = { ...draft, ...paintedFields };
+      const __tStart = performance.now();
+      const __tW0 = performance.now();
 
       // SP-A: Bake runs BOTH. (1) Rust bake_from_wizard → PlanetSnapshot
       // (kept for later-stage migration; the boundaries/densities/
@@ -1100,6 +1102,8 @@ export default function App() {
         climateParams: climateParamsRef.current,
       });
       setSnapshot(snap);
+      const __wizardMs = performance.now() - __tW0;
+      const __tE0 = performance.now();
 
       // ONE (w,h) drives the Rust raster invoke AND both uploadEquirect
       // calls AND runHydraulicBake — they must match exactly.
@@ -1110,6 +1114,7 @@ export default function App() {
         w,
         h,
       });
+      const __equirectMs = performance.now() - __tE0;
 
       // Dispose the PREVIOUS bake's GPU resources before allocating new
       // ones (the only escape from runHydraulicBake is the 4 RTs; the
@@ -1122,8 +1127,11 @@ export default function App() {
       prevDebugTerrRef.current?.dispose();
       prevDebugHydroRef.current?.dispose();
 
+      const __tU0 = performance.now();
       const base = uploadEquirect(new Float32Array(inp.height), w, h);
       const precip = uploadEquirect(new Float32Array(inp.precip), w, h);
+      const __uploadMs = performance.now() - __tU0;
+      const __tG0 = performance.now();
 
       let rt!: THREE.WebGLRenderTarget;
       let climRT!: THREE.WebGLRenderTarget;
@@ -1153,6 +1161,14 @@ export default function App() {
         climRT = out.clim;
         terrRT = out.terr;
         hydroRT = out.hydro;
+      });
+      const __gpuMs = performance.now() - __tG0;
+      sceneRef.current?.setBakeSplit({
+        wizard: __wizardMs,
+        equirect: __equirectMs,
+        upload: __uploadMs,
+        gpuSim: __gpuMs,
+        total: performance.now() - __tStart,
       });
 
       prevDebugHFinalRef.current = rt;
