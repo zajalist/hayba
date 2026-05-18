@@ -770,23 +770,30 @@ export interface ErosionReliefResult {
     delta: string; // signed after-before
     afterZoom: string; // dominant-massif crop, post-erosion
     deltaZoom: string; // dominant-massif crop, signed delta
-    // CP2.a CLIM debug overlays — computed on the FINAL eroded terrain
-    clim_temp: string;   // temperature °C ramp (blue→white→red)
-    clim_precip: string; // precipitation 0..1 (white→blue)
-    clim_wind: string;   // wind azimuth turns (HSV hue)
-    clim_glac: string;   // glaciation 0..1 (greyscale)
+    // CP2.a CLIM debug overlays — OPT-IN (globalThis.__HAYBA_CLIM===true)
+    // only; the readback + 4 per-texel renders are too heavy to run on
+    // every erosion smoke (timed out the harness at 3M). Absent unless
+    // explicitly requested for a CP2.a gate.
+    clim_temp?: string;   // temperature °C ramp (blue→white→red)
+    clim_precip?: string; // precipitation 0..1 (white→blue)
+    clim_wind?: string;   // wind azimuth turns (HSV hue)
+    clim_glac?: string;   // glaciation 0..1 (greyscale)
   };
 }
 
 /** Render a CLIM buffer (RGBA32F, stride 4 per texel) into a PNG data-URL.
- *  Mirrors `fieldToReliefDataURL`'s canvas/encode pattern (same scale=4). */
+ *  Mirrors `fieldToReliefDataURL`'s canvas/encode pattern, with the SAME
+ *  bounded adaptive upscale (~1500 px target) so the overlay stays cheap
+ *  at any bake W — a fixed scale=4 made a 2560 bake a 10k×5k canvas ×4
+ *  and timed out the harness at 3M. Climate is low-frequency: a ≤~1500 px
+ *  overlay shows the global bands perfectly. */
 function climOverlayPNG(
   buf: Float32Array,
   w: number,
   h: number,
   mode: "temp" | "precip" | "wind" | "glac",
 ): string {
-  const scale = 4;
+  const scale = Math.max(1, Math.round(1500 / w));
   const cv = document.createElement("canvas");
   cv.width = w;
   cv.height = h;
@@ -1018,34 +1025,43 @@ async function _bakeAndRenderRelief(
   const cw = Math.min(w, Math.round((140 / 360) * w));
   const ch = Math.min(h, Math.round((68 / 180) * h));
 
-  // CP2.a CLIM debug overlays — re-run CLIMATE_FRAG once on the FINAL
-  // eroded terrain to get the co-evolved climate field for eyeball gating.
-  const glsl = await import("./hydraulic.glsl");
-  const climRT = new THREE.WebGLRenderTarget(w, h, {
-    type: THREE.FloatType,
-    format: THREE.RGBAFormat,
-    minFilter: THREE.NearestFilter,
-    magFilter: THREE.NearestFilter,
-    wrapS: THREE.ClampToEdgeWrapping,
-    wrapT: THREE.ClampToEdgeWrapping,
-    depthBuffer: false,
-    stencilBuffer: false,
-    generateMipmaps: false,
-  });
-  gp.runRawPass(renderer, glsl.CLIMATE_FRAG, {
-    uA: { value: rt },
-    uGrid: { value: new THREE.Vector2(w, h) },
-    uTEquatorC: { value: cfg.tEquatorC },
-    uTLatDropC: { value: cfg.tLatDropC },
-    uLapseCPerKm: { value: cfg.lapseCPerKm },
-    uElevKmScale: { value: cfg.elevKmScale },
-    uItczWidthDeg: { value: cfg.itczWidthDeg },
-    uGlacOnsetC: { value: cfg.glacOnsetC },
-    uGlacFullC: { value: cfg.glacFullC },
-  }, climRT);
-  const climBuf = new Float32Array(w * h * 4);
-  gp.readRawPixels(renderer, climRT, 0, 0, w, h, climBuf);
-  climRT.dispose();
+  // CP2.a CLIM debug overlays — OPT-IN only. The extra CLIMATE_FRAG
+  // pass + a w*h*4 float readback + 4 per-texel canvas renders is far
+  // too heavy to run on every erosion smoke (it timed out the harness
+  // at 3M and would silently break all high-res erosion gates that use
+  // this oracle). A CP2.a driver sets globalThis.__HAYBA_CLIM=true to
+  // request them; default erosion runs skip this entirely.
+  const wantClim =
+    (globalThis as { __HAYBA_CLIM?: boolean }).__HAYBA_CLIM === true;
+  let climBuf: Float32Array | null = null;
+  if (wantClim) {
+    const glsl = await import("./hydraulic.glsl");
+    const climRT = new THREE.WebGLRenderTarget(w, h, {
+      type: THREE.FloatType,
+      format: THREE.RGBAFormat,
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
+      wrapS: THREE.ClampToEdgeWrapping,
+      wrapT: THREE.ClampToEdgeWrapping,
+      depthBuffer: false,
+      stencilBuffer: false,
+      generateMipmaps: false,
+    });
+    gp.runRawPass(renderer, glsl.CLIMATE_FRAG, {
+      uA: { value: rt },
+      uGrid: { value: new THREE.Vector2(w, h) },
+      uTEquatorC: { value: cfg.tEquatorC },
+      uTLatDropC: { value: cfg.tLatDropC },
+      uLapseCPerKm: { value: cfg.lapseCPerKm },
+      uElevKmScale: { value: cfg.elevKmScale },
+      uItczWidthDeg: { value: cfg.itczWidthDeg },
+      uGlacOnsetC: { value: cfg.glacOnsetC },
+      uGlacFullC: { value: cfg.glacFullC },
+    }, climRT);
+    climBuf = new Float32Array(w * h * 4);
+    gp.readRawPixels(renderer, climRT, 0, 0, w, h, climBuf);
+    climRT.dispose();
+  }
 
   return {
     ran: true,
@@ -1069,7 +1085,17 @@ async function _bakeAndRenderRelief(
     images: (() => {
       const fullScale = Math.max(1, Math.round(1500 / w));
       const zoomScale = Math.max(2, Math.round(2200 / Math.max(1, cw)));
-      return {
+      const img: {
+        before: string;
+        after: string;
+        delta: string;
+        afterZoom: string;
+        deltaZoom: string;
+        clim_temp?: string;
+        clim_precip?: string;
+        clim_wind?: string;
+        clim_glac?: string;
+      } = {
         before: fieldToReliefDataURL(baseArr, w, h, {
           exaggeration: 6,
           scale: fullScale,
@@ -1092,11 +1118,14 @@ async function _bakeAndRenderRelief(
           ref: baseArr,
           scale: zoomScale,
         }),
-        clim_temp: climOverlayPNG(climBuf, w, h, "temp"),
-        clim_precip: climOverlayPNG(climBuf, w, h, "precip"),
-        clim_wind: climOverlayPNG(climBuf, w, h, "wind"),
-        clim_glac: climOverlayPNG(climBuf, w, h, "glac"),
       };
+      if (climBuf) {
+        img.clim_temp = climOverlayPNG(climBuf, w, h, "temp");
+        img.clim_precip = climOverlayPNG(climBuf, w, h, "precip");
+        img.clim_wind = climOverlayPNG(climBuf, w, h, "wind");
+        img.clim_glac = climOverlayPNG(climBuf, w, h, "glac");
+      }
+      return img;
     })(),
   };
 }
