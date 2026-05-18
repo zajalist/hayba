@@ -7,6 +7,7 @@ import {
   adaptiveScale,
   createRenderGate,
   type PerfSnapshot,
+  type BakeSplit,
 } from "./perf";
 
 export interface SceneHandle {
@@ -36,6 +37,8 @@ export interface SceneHandle {
   /** Latest perf counters for the HUD (cheap getter; no allocation
    *  hot-path). */
   perfSnapshot: () => PerfSnapshot;
+  /** BP-1: store the latest per-stage bake timing split for the HUD. */
+  setBakeSplit: (s: BakeSplit) => void;
 }
 
 function hexToColor(hex: string): THREE.Color {
@@ -152,6 +155,7 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
   let perfScale = 1;
   let perfHold = 0;
   let lastBakeMs: number | null = null;
+  let lastBakeSplit: BakeSplit | null = null;
   let perfSnap: PerfSnapshot = {
     fps: 0,
     ms: 0,
@@ -161,6 +165,7 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
     scale: 1,
     gpuMs: null,
     bakeMs: null,
+    bakeSplit: null,
   };
 
   const ro = new ResizeObserver((entries) => {
@@ -233,6 +238,7 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
         scale: perfScale,
         gpuMs: null,
         bakeMs: lastBakeMs,
+        bakeSplit: lastBakeSplit,
       };
       scheduleTick();
     });
@@ -277,6 +283,14 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
     },
     perfSnapshot() {
       return perfSnap;
+    },
+    setBakeSplit(s: BakeSplit) {
+      lastBakeSplit = s;
+      // Fold into the current snapshot immediately so perfSnapshot()
+      // reflects it even before the next rendered frame rebuilds
+      // perfSnap (bake-end markDirty guarantees a frame, but the HUD
+      // poll may read in between).
+      perfSnap = { ...perfSnap, bakeSplit: s };
     },
     async runBake(fn) {
       // Pause the live loop: flag the tick, bump the epoch (so any
