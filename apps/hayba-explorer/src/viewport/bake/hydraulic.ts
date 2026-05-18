@@ -52,6 +52,7 @@ import {
   ACCUM_FRAG,
   CONTROLS_FRAG,
   CLIMATE_NOOP_FRAG,
+  CLIMATE_FRAG,
 } from "./hydraulic.glsl";
 import { runRawPass } from "./glPass";
 import { createPingPong, type PingPongTargets } from "./pingpong";
@@ -387,11 +388,6 @@ export async function runHydraulicBake(
   const CLIM = pp.rt.CLIM;
   const TERR = pp.rt.TERR;
   const HYDRO = pp.rt.HYDRO;
-  const refreshClimate = (): void => {
-    runRawPass(renderer, CLIMATE_NOOP_FRAG, {}, CLIM[0]);
-    runRawPass(renderer, CLIMATE_NOOP_FRAG, {}, TERR[0]);
-    runRawPass(renderer, CLIMATE_NOOP_FRAG, {}, HYDRO[0]);
-  };
   let accRead = 0;
   const swapAcc = (): void => {
     accRead ^= 1;
@@ -417,6 +413,27 @@ export async function runHydraulicBake(
   const fWriteRT = (): THREE.WebGLRenderTarget => F[fRead ^ 1];
 
   const uGrid = new THREE.Vector2(w, h);
+
+  const refreshClimate = (): void => {
+    runRawPass(
+      renderer,
+      CLIMATE_FRAG,
+      {
+        uA: u(aReadRT()),
+        uGrid: u(uGrid),
+        uTEquatorC: u(cfg.tEquatorC),
+        uTLatDropC: u(cfg.tLatDropC),
+        uLapseCPerKm: u(cfg.lapseCPerKm),
+        uElevKmScale: u(cfg.elevKmScale),
+        uItczWidthDeg: u(cfg.itczWidthDeg),
+        uGlacOnsetC: u(cfg.glacOnsetC),
+        uGlacFullC: u(cfg.glacFullC),
+      },
+      CLIM[0],
+    );
+    runRawPass(renderer, CLIMATE_NOOP_FRAG, {}, TERR[0]);
+    runRawPass(renderer, CLIMATE_NOOP_FRAG, {}, HYDRO[0]);
+  };
 
   // Resolution invariance (measured, not assumed). S1 made `slope`
   // W-invariant, but virtual-pipe flux ∝ per-texel Δ(b+d) so every
