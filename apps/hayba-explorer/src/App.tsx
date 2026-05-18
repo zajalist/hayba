@@ -1410,12 +1410,11 @@ export default function App() {
           })}
         </div>
 
-        {/* Hydraulic equirect bake — debug/validation affordance
-            (bottom-right). Purely additive: it does not alter the wizard
-            bake_from_wizard flow; it swaps the displayed globe for a
-            relief-shaded debug sphere driven by the hydraulic erosion
-            sim so we can eyeball erosion-vs-no-erosion. */}
-        {draft && (
+        {/* SP-A: post-bake stack viewer. The unified Bake (compose
+            panel) produces the eroded equirect planet; this panel only
+            switches which stack channel is shown. No separate/"debug"
+            bake trigger — that path was deleted. */}
+        {draft && debugBakeReady && (
           <div
             style={{
               position: "absolute",
@@ -1428,7 +1427,7 @@ export default function App() {
               padding: "8px 10px",
               maxWidth: 260,
               background: "rgba(20, 22, 28, 0.82)",
-              border: `1px solid ${debugBakeReady ? "#B56A1D" : "#2f343d"}`,
+              border: "1px solid #B56A1D",
               borderRadius: 5,
               backdropFilter: "blur(4px)",
               zIndex: 50,
@@ -1444,83 +1443,32 @@ export default function App() {
                 color: "#9aa0aa",
               }}
             >
-              Hydraulic Bake (debug)
+              View
             </span>
-            <button
-              type="button"
-              onClick={handleBake}
-              disabled={debugBaking}
-              title="Rasterise → hydraulic erosion → relief-shaded debug globe"
-              style={{
-                padding: "5px 9px",
-                fontSize: 11,
-                borderRadius: 3,
-                cursor: debugBaking ? "default" : "pointer",
-                background: debugBaking
-                  ? "rgba(100,104,112,0.18)"
-                  : "rgba(181,106,29,0.22)",
-                border: `1px solid ${debugBaking ? "#3d434e" : "#B56A1D"}`,
-                color: debugBaking ? "#7e848e" : "#DED4C3",
-              }}
-            >
-              {debugBaking ? "Baking…" : "Bake (hydraulic equirect)"}
-            </button>
-            {debugBakeProgress && (
-              <span style={{ fontSize: 10, color: "#a8aeb8" }}>
-                {debugBakeProgress}
+            <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <span style={{ fontSize: 11, color: "#a8aeb8" }}>Channel</span>
+              <select
+                value={debugChannelIdx}
+                onChange={(ev) => {
+                  const idx = Number(ev.target.value);
+                  setDebugChannelIdx(idx);
+                  applyDebugChannel(idx, debugDraped);
+                }}
+              >
+                {DEBUG_CHANNELS.map((c, i) => (
+                  <option key={c.label} value={i}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+              <span style={{ fontSize: 11, opacity: 0.7 }}>
+                {debugChannelIdx === 0
+                  ? "(relief)"
+                  : debugDraped
+                    ? "draped — F=flat"
+                    : "flat — F=draped"}
               </span>
-            )}
-            {debugBakeReady && (
-              <>
-                <label
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    fontSize: 11,
-                    color: "#a8aeb8",
-                    cursor: "pointer",
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={debugMapMode === 1}
-                    onChange={() => {
-                      setDebugMapModeState((m) => {
-                        const next = m === 0 ? 1 : 0;
-                        if (debugMatRef.current) setDebugMapMode(debugMatRef.current, next);
-                        return next;
-                      });
-                    }}
-                  />
-                  Show base (no-erosion) view
-                </label>
-                <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <span>Channel</span>
-                  <select
-                    value={debugChannelIdx}
-                    onChange={(ev) => {
-                      const idx = Number(ev.target.value);
-                      setDebugChannelIdx(idx);
-                      applyDebugChannel(idx, debugDraped);
-                    }}
-                  >
-                    {DEBUG_CHANNELS.map((c, i) => (
-                      <option key={c.label} value={i}>
-                        {c.label}
-                      </option>
-                    ))}
-                  </select>
-                  <span style={{ opacity: 0.7 }}>
-                    {debugChannelIdx === 0
-                      ? "(relief)"
-                      : debugDraped
-                        ? "draped — F=flat"
-                        : "flat — F=draped"}
-                  </span>
-                </label>
-              </>
-            )}
+            </label>
           </div>
         )}
       </div>
