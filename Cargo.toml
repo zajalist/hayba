@@ -22,3 +22,22 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 overflow-checks = true
+
+# BR: tauri dev was building the Rust core unoptimized (no [profile.dev]
+# ⇒ opt-level 0) → ~157× slowdown (126 s bake @1.5M). opt-level=2
+# globally optimizes ALL crates incl. the src-tauri hot code
+# (bake_impl/hydrology/snapshot/equirect rasteriser); the 99%-hot
+# tectonics crate gets full opt-3. Only opt-level/codegen-units — no
+# lto/panic/overflow/fast-math (fixed-point sim determinism unperturbed).
+[profile.dev]
+opt-level = 2
+
+[profile.dev.package."hayba-tectonics-v2"]
+opt-level = 3
+codegen-units = 1
+
+[profile.dev.package."hayba-fixedpoint"]
+opt-level = 3
+
+[profile.dev.package."hayba-seeds"]
+opt-level = 3
