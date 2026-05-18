@@ -46,6 +46,10 @@ import {
   setDebugStack,
 } from "./viewport/bake/debugMaterial";
 import { nextInteract, type InteractState } from "./viewport/interact";
+import {
+  EQUIRECT_MAP_MODES,
+  resolveEquirectMode,
+} from "./viewport/equirectMapModes";
 
 /** `EquirectInputs` as serialized by the Rust `bake_inputs_equirect`
  *  command (`Vec<f32>` arrives over Tauri as a JSON `number[]`). */
@@ -391,29 +395,31 @@ export default function App() {
   const speedRef = useRef<1 | 2 | 4 | 8>(1);
   useEffect(() => { speedRef.current = speedMult; }, [speedMult]);
 
-  // Push a registry entry onto the live material. No re-bake — instant.
-  // Relief (or no stack yet) => the exact relief path (uStackMode 0).
+  // SP-B: push the selected equirect map-mode onto the live material.
+  // No re-bake — instant. Relief→uStackMode 0, Normal→3 (no tex),
+  // clim→stack channel + ramp, draped(1)/flat(2) per the F toggle.
   const applyDebugChannel = useCallback(
     (idx: number, draped: boolean) => {
       const mat = debugMatRef.current;
       if (!mat) return;
-      const e = DEBUG_CHANNELS[idx] ?? DEBUG_CHANNELS[0];
+      const sel = resolveEquirectMode(idx, draped);
       const stack = debugStackRef.current;
-      if (e.kind === "relief" || !stack) {
-        setDebugStack(mat, { tex: null, channel: 0, mode: 0, ramp: 0 });
+      if (sel.kind === "relief" || sel.kind === "normal" || !stack) {
+        // Height-derived modes need no stack texture; if the stack
+        // isn't ready yet, relief is the safe fallback.
+        setDebugStack(mat, {
+          tex: null,
+          channel: 0,
+          mode: sel.kind === "normal" ? 3 : 0,
+          ramp: 0,
+        });
         return;
       }
-      const tex =
-        e.kind === "clim"
-          ? stack.clim.texture
-          : e.kind === "terr"
-            ? stack.terr.texture
-            : stack.hydro.texture;
       setDebugStack(mat, {
-        tex,
-        channel: e.channel,
-        mode: draped ? 1 : 2,
-        ramp: e.ramp,
+        tex: stack.clim.texture,
+        channel: sel.channel,
+        mode: sel.mode,
+        ramp: sel.ramp,
       });
     },
     [],
@@ -1353,7 +1359,11 @@ export default function App() {
 
         <RecenterButton getScene={getScene} />
 
-        {/* EU5-style on-canvas map-mode bar (bottom-left, not in sidebar) */}
+        {/* SP-B: equirect map-mode bar (bottom-left). Drives the live
+            eroded-planet material via applyDebugChannel — no re-bake.
+            Shown only once a bake is ready (where the SP-A View panel
+            was). The cell MAP_MODES/setMapMode path is untouched. */}
+        {draft && debugBakeReady && (
         <div
           style={{
             position: "absolute",
@@ -1366,7 +1376,7 @@ export default function App() {
             gap: 3,
             padding: "5px 7px",
             background: "rgba(20, 22, 28, 0.82)",
-            border: `1px solid ${mapMode !== 0 ? "#B56A1D" : "#2f343d"}`,
+            border: `1px solid ${debugChannelIdx !== 0 ? "#B56A1D" : "#2f343d"}`,
             borderRadius: 5,
             backdropFilter: "blur(4px)",
             zIndex: 50,
@@ -1385,12 +1395,15 @@ export default function App() {
           >
             Map
           </span>
-          {MAP_MODES.map((m) => {
-            const on = m.value === mapMode;
+          {EQUIRECT_MAP_MODES.map((m, i) => {
+            const on = i === debugChannelIdx;
             return (
               <button
-                key={m.value}
-                onClick={() => setMapMode(m.value)}
+                key={m.label}
+                onClick={() => {
+                  setDebugChannelIdx(i);
+                  applyDebugChannel(i, debugDraped);
+                }}
                 title={m.label}
                 style={{
                   padding: "3px 7px",
@@ -1408,69 +1421,24 @@ export default function App() {
               </button>
             );
           })}
-        </div>
-
-        {/* SP-A: post-bake stack viewer. The unified Bake (compose
-            panel) produces the eroded equirect planet; this panel only
-            switches which stack channel is shown. No separate/"debug"
-            bake trigger — that path was deleted. */}
-        {draft && debugBakeReady && (
-          <div
+          <span
             style={{
-              position: "absolute",
-              bottom: 12,
-              right: 12,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "stretch",
-              gap: 6,
-              padding: "8px 10px",
-              maxWidth: 260,
-              background: "rgba(20, 22, 28, 0.82)",
-              border: "1px solid #B56A1D",
-              borderRadius: 5,
-              backdropFilter: "blur(4px)",
-              zIndex: 50,
-              pointerEvents: "auto",
+              fontSize: 10,
+              opacity: 0.6,
+              marginLeft: 4,
               fontFamily: '"Segoe UI", system-ui, sans-serif',
+              color: "#9aa0aa",
             }}
           >
-            <span
-              style={{
-                fontSize: 10,
-                letterSpacing: 0.5,
-                textTransform: "uppercase",
-                color: "#9aa0aa",
-              }}
-            >
-              View
-            </span>
-            <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <span style={{ fontSize: 11, color: "#a8aeb8" }}>Channel</span>
-              <select
-                value={debugChannelIdx}
-                onChange={(ev) => {
-                  const idx = Number(ev.target.value);
-                  setDebugChannelIdx(idx);
-                  applyDebugChannel(idx, debugDraped);
-                }}
-              >
-                {DEBUG_CHANNELS.map((c, i) => (
-                  <option key={c.label} value={i}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
-              <span style={{ fontSize: 11, opacity: 0.7 }}>
-                {debugChannelIdx === 0
-                  ? "(relief)"
-                  : debugDraped
-                    ? "draped — F=flat"
-                    : "flat — F=draped"}
-              </span>
-            </label>
-          </div>
+            {debugChannelIdx <= 1
+              ? ""
+              : debugDraped
+                ? "F = flat"
+                : "F = draped"}
+          </span>
+        </div>
         )}
+
       </div>
 
       <RightPanel
