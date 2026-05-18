@@ -60,3 +60,25 @@ describe("debugMaterial generalized stack uniforms (Task 2)", () => {
     expect(m.uniforms.uStackTex.value).not.toBeNull(); // null -> placeholder
   });
 });
+
+describe("debugMaterial Normal map mode (SP-B, uStackMode 3)", () => {
+  it("FRAG has an additive uStackMode>2.5 Normal branch emitting sn*0.5+0.5", () => {
+    const m = makeDebugReliefMaterial();
+    const f = m.fragmentShader;
+    expect(f).toContain("if (uStackMode > 2.5){");
+    expect(f).toContain("gl_FragColor = vec4(sn * 0.5 + 0.5, 1.0);");
+  });
+  it("relief gate + stack ramp paths are still byte-present (regression pin)", () => {
+    const f = makeDebugReliefMaterial().fragmentShader;
+    expect(f).toContain("if (uStackMode < 0.5){");
+    expect(f).toContain("vec3 rc = ramp(uRamp, chv);");
+    expect(f).toContain("if (uStackMode > 1.5){");
+  });
+  it("VERT skips displacement ONLY for flat (uStackMode 2), not Normal(3)", () => {
+    const v = makeDebugReliefMaterial().vertexShader;
+    expect(v).toContain(
+      "float dispGain = (uStackMode > 1.5 && uStackMode < 2.5) ? 0.0 : 1.0;",
+    );
+    expect(v).not.toContain("float dispGain = (uStackMode > 1.5) ? 0.0 : 1.0;");
+  });
+});
