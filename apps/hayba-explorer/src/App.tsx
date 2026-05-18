@@ -45,6 +45,7 @@ import {
   setDebugMapMode,
   setDebugStack,
 } from "./viewport/bake/debugMaterial";
+import { nextInteract, type InteractState } from "./viewport/interact";
 
 /** `EquirectInputs` as serialized by the Rust `bake_inputs_equirect`
  *  command (`Vec<f32>` arrives over Tauri as a JSON `number[]`). */
@@ -372,6 +373,15 @@ export default function App() {
   const [debugBaking, setDebugBaking] = useState(false);
   const [debugBakeProgress, setDebugBakeProgress] = useState<string | null>(null);
   const [debugBakeReady, setDebugBakeReady] = useState(false);
+  // SP-A: the single authority for globe interactivity. `compose` =
+  // paint strokes editable; `explore` = orbit + stack view only. A ref
+  // mirror so pointer/effect closures read the live value with no
+  // stale-closure risk. Replaces the painter-visibility hack.
+  const [interact, setInteract] = useState<InteractState>("compose");
+  const interactRef = useRef<InteractState>("compose");
+  useEffect(() => {
+    interactRef.current = interact;
+  }, [interact]);
   const [debugMapMode, setDebugMapModeState] = useState(0);
   const [debugChannelIdx, setDebugChannelIdx] = useState(0); // 0 = Relief
   const [debugDraped, setDebugDraped] = useState(true); // draped vs flat
@@ -784,7 +794,8 @@ export default function App() {
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
-    const active = panelCategory === "compose" && mode === "wizard";
+    const active =
+      panelCategory === "compose" && mode === "wizard" && interact === "compose";
 
     if (!active) {
       if (painterMeshRef.current) {
@@ -864,12 +875,13 @@ export default function App() {
       }
       if (globeRef.current) globeRef.current.object.visible = true;
     };
-  }, [panelCategory, mode, draft?.divisions]);
+  }, [panelCategory, mode, draft?.divisions, interact]);
 
   // Height-painter pointer interactions. Gated on the compose panel pre-bake
   // in wizard mode. Shift inverts raise<->lower.
   useEffect(() => {
     if (panelCategory !== "compose" || mode !== "wizard") return;
+    if (interactRef.current !== "compose") return;
     const scene = sceneRef.current;
     if (!scene) return;
     const canvas = scene.canvas;
@@ -900,18 +912,6 @@ export default function App() {
       if (ev.button !== 0) return;
       const painter = heightPainterRef.current;
       if (!painter) return;
-      // A hidden painter mesh means a hydraulic debug-relief globe is on
-      // screen (handleDebugBake hides it so it can't poke through the
-      // relief's sunken ocean). Starting a stroke returns to the editable
-      // paint view: drop the relief globe and reveal the painter mesh.
-      // `.object.visible` is read live off the ref (no stale-closure risk
-      // like a captured state value would have).
-      const pm = painterMeshRef.current;
-      if (pm && pm.object.visible === false) {
-        scene.setGlobe(null);
-        pm.object.visible = true;
-        setDebugBakeReady(false);
-      }
       const hit = raycast(ev);
       if (!hit) return;
       const effectiveBrush = ev.shiftKey ? invertBrushMode(paintBrush) : paintBrush;
@@ -947,7 +947,7 @@ export default function App() {
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);
     };
-  }, [panelCategory, mode, paintBrush]);
+  }, [panelCategory, mode, paintBrush, interact]);
 
   // Live-apply boundary assignments — Rust rewrites plate omegas on the
   // running model so the change is visible immediately. No re-bake.
