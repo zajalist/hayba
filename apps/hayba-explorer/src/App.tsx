@@ -20,6 +20,7 @@ import TexturingPanel from "./components/panels/TexturingPanel";
 import ClimateLabPanel, { DEFAULT_CLIMATE_PARAMS, type ClimateParams } from "./components/panels/ClimateLabPanel";
 import DockToolbar, { type ToolName } from "./components/DockToolbar";
 import RecenterButton from "./components/RecenterButton";
+import PerfHud from "./components/PerfHud";
 import ConfirmDialog from "./components/ConfirmDialog";
 import BoundaryPopover from "./components/BoundaryPopover";
 import { IconPlay, IconPause, IconReset } from "./components/icons";
@@ -38,7 +39,7 @@ import { buildPainterMesh, type PainterMeshHandle } from "./viewport/painterMesh
 // debug/validation surface gated behind its own button.
 import { uploadEquirect } from "./viewport/bake/equirectInput";
 import { runHydraulicBake, DEFAULT_HYDRAULIC } from "./viewport/bake/hydraulic";
-import { DEFAULT_BAKE_RES } from "./viewport/bake/bakeResolution";
+import { DEFAULT_BAKE_RES, BAKE_RES_TIERS } from "./viewport/bake/bakeResolution";
 import {
   makeDebugReliefMaterial,
   setDebugTexture,
@@ -388,6 +389,9 @@ export default function App() {
   }, [interact]);
   const [debugMapMode, setDebugMapModeState] = useState(0);
   const [debugChannelIdx, setDebugChannelIdx] = useState(0); // 0 = Relief
+  const [perfHudOn, setPerfHudOn] = useState(false);
+  // NX-1: user-selectable bake resolution tier (0=1024² default).
+  const [bakeTier, setBakeTier] = useState(0);
   const [debugDraped, setDebugDraped] = useState(true); // draped vs flat
 
   // Playback speed (steps per rAF tick). 1× is the wizard's dt_ma per frame.
@@ -413,6 +417,7 @@ export default function App() {
           mode: sel.kind === "normal" ? 3 : 0,
           ramp: 0,
         });
+        sceneRef.current?.markDirty();
         return;
       }
       setDebugStack(mat, {
@@ -421,6 +426,7 @@ export default function App() {
         mode: sel.mode,
         ramp: sel.ramp,
       });
+      sceneRef.current?.markDirty();
     },
     [],
   );
@@ -441,6 +447,18 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [debugBakeReady, debugChannelIdx, applyDebugChannel]);
+
+  // NX-1: `P` toggles the perf HUD (ignored while typing in a field).
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.key !== "p" && ev.key !== "P") return;
+      const tag = (ev.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      setPerfHudOn((v) => !v);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     activeToolRef.current = activeTool;
@@ -1185,8 +1203,11 @@ export default function App() {
   // Phase-2 P2.1: resolution comes from the tier module (default
   // 2048x1024 ≈ 2.1M; ceiling tier ≈ 3.3M). A UI chip to choose the
   // tier is P2.5; selecting here keeps the ceiling/guard shipping now.
-  const DEBUG_BAKE_W = DEFAULT_BAKE_RES.w;
-  const DEBUG_BAKE_H = DEFAULT_BAKE_RES.h;
+  // NX-1: the selector drives the next bake's resolution; default tier
+  // 0 (1024×512) = DEFAULT_BAKE_RES. clampBakeRes already guards range.
+  const tier = BAKE_RES_TIERS[bakeTier] ?? DEFAULT_BAKE_RES;
+  const DEBUG_BAKE_W = tier.w;
+  const DEBUG_BAKE_H = tier.h;
 
 
   const handleEditWizard = useCallback(() => {
@@ -1358,6 +1379,10 @@ export default function App() {
         )}
 
         <RecenterButton getScene={getScene} />
+        <PerfHud
+          visible={perfHudOn}
+          getSnapshot={() => sceneRef.current?.perfSnapshot()}
+        />
 
         {/* SP-B: equirect map-mode bar (bottom-left). Drives the live
             eroded-planet material via applyDebugChannel — no re-bake.
@@ -1395,6 +1420,25 @@ export default function App() {
           >
             Map
           </span>
+          <select
+            title="Bake resolution tier"
+            value={bakeTier}
+            onChange={(ev) => setBakeTier(Number(ev.target.value))}
+            style={{
+              fontSize: 10,
+              marginRight: 4,
+              background: "transparent",
+              color: "#a8aeb8",
+              border: "1px solid #3d434e",
+              borderRadius: 3,
+            }}
+          >
+            {BAKE_RES_TIERS.map((t, i) => (
+              <option key={`${t.w}x${t.h}`} value={i}>
+                {t.w}×{t.h}
+              </option>
+            ))}
+          </select>
           {EQUIRECT_MAP_MODES.map((m, i) => {
             const on = i === debugChannelIdx;
             return (
