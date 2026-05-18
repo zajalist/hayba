@@ -718,6 +718,75 @@ export const CLIMATE_NOOP_FRAG = [
   "void main(){ fragColor = vec4(0.0); }",
 ].join("\n");
 
+// NX-2a — mean-sea-level pressure (MdGBWG annual-mean). Land/ocean from
+// the eroded height sign (a.r < 0 = ocean), same ocean derivation as
+// erosion. `lat` in radians; MdGBWG used degrees: cos(latDeg·π/45) ==
+// cos(lat·4.0), cos(latDeg·π/30) == cos(lat·6.0). MSLP-only scratch
+// (climate-internal); never consumed by erosion.
+export const MSLP_FRAG = [
+  H,
+  "uniform sampler2D uA;",
+  "uniform vec2 uGrid;",
+  "uniform float uMslpLandBase;",
+  "uniform float uMslpLandAmp;",
+  "uniform float uMslpOceanBase;",
+  "uniform float uMslpOceanAmp;",
+  "void main(){",
+  "  ivec2 rc = fragRC();",
+  "  ivec2 wh = gridWH(uGrid);",
+  "  vec4 a = loadA(uA, uGrid, rc.x, rc.y);",
+  "  float vrow = (float(rc.y) + 0.5) / float(wh.y);",
+  "  float lat = (0.5 - vrow) * 3.14159265;",
+  "  float p = (a.r < 0.0)",
+  "    ? uMslpOceanBase - uMslpOceanAmp * cos(lat * 6.0)",
+  "    : uMslpLandBase  - uMslpLandAmp  * cos(lat * 4.0);",
+  "  fragColor = vec4(fin(p), 0.0, 0.0, 0.0);",
+  "}",
+].join("\n");
+
+// NX-2a — separable Gaussian blur of MSLP (.r). H wraps longitude
+// (xw — equirect periodic), V clamps latitude (yc — poles). RADIUS is
+// a portable compile-time constant; sigma is a uniform knob.
+export const BLUR_H_FRAG = [
+  H,
+  "uniform sampler2D uMSLP;",
+  "uniform vec2 uGrid;",
+  "uniform float uBlurSigma;",
+  "const int R = 16;",
+  "void main(){",
+  "  ivec2 rc = fragRC();",
+  "  ivec2 wh = gridWH(uGrid);",
+  "  float acc = 0.0; float wsum = 0.0;",
+  "  for (int i = -R; i <= R; i++){",
+  "    float fi = float(i) / max(uBlurSigma, 1e-3);",
+  "    float wt = exp(-0.5 * fi * fi);",
+  "    acc += wt * texelFetch(uMSLP, ivec2(xw(rc.x + i, wh.x), yc(rc.y, wh.y)), 0).r;",
+  "    wsum += wt;",
+  "  }",
+  "  fragColor = vec4(fin(acc / max(wsum, 1e-6)), 0.0, 0.0, 0.0);",
+  "}",
+].join("\n");
+
+export const BLUR_V_FRAG = [
+  H,
+  "uniform sampler2D uMSLP;",
+  "uniform vec2 uGrid;",
+  "uniform float uBlurSigma;",
+  "const int R = 16;",
+  "void main(){",
+  "  ivec2 rc = fragRC();",
+  "  ivec2 wh = gridWH(uGrid);",
+  "  float acc = 0.0; float wsum = 0.0;",
+  "  for (int i = -R; i <= R; i++){",
+  "    float fi = float(i) / max(uBlurSigma, 1e-3);",
+  "    float wt = exp(-0.5 * fi * fi);",
+  "    acc += wt * texelFetch(uMSLP, ivec2(xw(rc.x, wh.x), yc(rc.y + i, wh.y)), 0).r;",
+  "    wsum += wt;",
+  "  }",
+  "  fragColor = vec4(fin(acc / max(wsum, 1e-6)), 0.0, 0.0, 0.0);",
+  "}",
+].join("\n");
+
 // #234 P2.2 — annual-mean analytic climate (climate.rs transcription).
 // CLIM.r=temperature °C, .g=precip 0..1, .b=wind azimuth (turns),
 // .a=glaciation 0..1. Topography-only; continentality / orographic /
@@ -734,6 +803,8 @@ export const CLIMATE_FRAG = [
   "uniform float uItczWidthDeg;",
   "uniform float uGlacOnsetC;",
   "uniform float uGlacFullC;",
+  "uniform sampler2D uMSLP;",
+  "uniform float uCoriolisGain;",
   "void main(){",
   "  ivec2 rc = fragRC();",
   "  vec4 a = loadA(uA, uGrid, rc.x, rc.y);",
@@ -750,10 +821,14 @@ export const CLIMATE_FRAG = [
   "  float midlat  = 1.0 - smoothstep(0.0, 14.0, abs(dDeg - 58.0));",
   "  float polar   = smoothstep(62.0, 82.0, dDeg);",
   "  float P = clamp(0.85*itcz - 0.6*subtrop + 0.55*midlat - 0.4*polar + 0.35, 0.0, 1.0);",
-  "  float zsign = (dDeg < 30.0) ? -1.0 : ((dDeg < 60.0) ? 1.0 : -1.0);",
-  "  float towardEq = (lat >= 0.0) ? -1.0 : 1.0;",
-  "  vec2 wv = normalize(vec2(zsign, towardEq * 0.15));",
-  "  float windAz = (atan(wv.y, wv.x) + 3.14159265) / 6.28318530;",
+  "  float pL = texelFetch(uMSLP, ivec2(xw(rc.x - 1, wh.x), yc(rc.y, wh.y)), 0).r;",
+  "  float pR = texelFetch(uMSLP, ivec2(xw(rc.x + 1, wh.x), yc(rc.y, wh.y)), 0).r;",
+  "  float pN = texelFetch(uMSLP, ivec2(xw(rc.x, wh.x), yc(rc.y - 1, wh.y)), 0).r;",
+  "  float pS = texelFetch(uMSLP, ivec2(xw(rc.x, wh.x), yc(rc.y + 1, wh.y)), 0).r;",
+  "  float coslat = max(cos(lat), 1e-3);",
+  "  vec2 gp = vec2((pR - pL) * 0.5 / coslat, (pN - pS) * 0.5);",
+  "  vec2 wvec = uCoriolisGain * s * vec2(-gp.y, gp.x) - gp;",
+  "  float windAz = fract(atan(wvec.y, wvec.x) / 6.28318530 + 0.5);",
   // SPEC-SAFE: GLSL ES 3.00 smoothstep is UNDEFINED if edge0 >= edge1.
   // uGlacOnsetC (-2) > uGlacFullC (-12), so keep edges ASCENDING
   // (uGlacFullC, uGlacOnsetC) and invert the result: T >= -2 -> 1 ->
