@@ -145,6 +145,18 @@ export interface HydraulicConfig {
   ctrlRadius: number;
   endorheicSteps: number;
   patternMax: number;
+  /** #234 P2.2 analytic climate (climate.rs reference values).
+   *  Temperature = tEquatorC − tLatDropC·sin²lat − lapseCPerKm·elevKm
+   *  (elevKm = max(0,h)·elevKmScale). Zonal precip ITCZ half-width
+   *  itczWidthDeg. Glaciation ramps 0→1 as T falls glacOnsetC→glacFullC
+   *  (long-term ice; NOT seasonal snow). */
+  tEquatorC: number;
+  tLatDropC: number;
+  lapseCPerKm: number;
+  elevKmScale: number;
+  itczWidthDeg: number;
+  glacOnsetC: number;
+  glacFullC: number;
   /** S2.3 concavity gate: river carve is multiplied by
    *  `smoothstep(0, concaveScale, laplacian(b))` so incision only bites
    *  CONCAVE valley floors, not CONVEX plateau/range shoulders (kills the
@@ -238,6 +250,14 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   ctrlRadius: 3,
   endorheicSteps: 64,
   patternMax: 0.75,
+  // #234 P2.2 — climate.rs defaults; glac isotherm −2→−12 °C (LGM-ish).
+  tEquatorC: 30.0,
+  tLatDropC: 50.0,
+  lapseCPerKm: 4.46,
+  elevKmScale: 8.0,
+  itczWidthDeg: 16.0,
+  glacOnsetC: -2.0,
+  glacFullC: -12.0,
   channelDepth: 0.02,
   sfdJitter: 0.002,
   // Concave valleys reach full carve by lap≈0.003; every convex shoulder

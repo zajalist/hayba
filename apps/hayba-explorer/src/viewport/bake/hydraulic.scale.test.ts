@@ -235,6 +235,18 @@ describe("#226 CONTROLS_FRAG", () => {
   });
 });
 
+describe("#234 P2.2 climate config", () => {
+  it("DEFAULT_HYDRAULIC carries the analytic climate knobs", () => {
+    for (const k of ["tEquatorC","tLatDropC","lapseCPerKm","elevKmScale",
+      "itczWidthDeg","glacOnsetC","glacFullC"] as const) {
+      expect(typeof DEFAULT_HYDRAULIC[k]).toBe("number");
+    }
+    expect(DEFAULT_HYDRAULIC.tEquatorC).toBeGreaterThan(0);
+    expect(DEFAULT_HYDRAULIC.glacFullC).toBeLessThan(DEFAULT_HYDRAULIC.glacOnsetC);
+    expect(DEFAULT_HYDRAULIC.itczWidthDeg).toBeGreaterThan(0);
+  });
+});
+
 describe("#234 P2.1 resolution tier", () => {
   it("tiers are 2:1, ascending, capped at ~3.3M", () => {
     expect(BAKE_RES_TIERS.length).toBeGreaterThanOrEqual(3);
