@@ -770,7 +770,84 @@ export interface ErosionReliefResult {
     delta: string; // signed after-before
     afterZoom: string; // dominant-massif crop, post-erosion
     deltaZoom: string; // dominant-massif crop, signed delta
+    // CP2.a CLIM debug overlays — computed on the FINAL eroded terrain
+    clim_temp: string;   // temperature °C ramp (blue→white→red)
+    clim_precip: string; // precipitation 0..1 (white→blue)
+    clim_wind: string;   // wind azimuth turns (HSV hue)
+    clim_glac: string;   // glaciation 0..1 (greyscale)
   };
+}
+
+/** Render a CLIM buffer (RGBA32F, stride 4 per texel) into a PNG data-URL.
+ *  Mirrors `fieldToReliefDataURL`'s canvas/encode pattern (same scale=4). */
+function climOverlayPNG(
+  buf: Float32Array,
+  w: number,
+  h: number,
+  mode: "temp" | "precip" | "wind" | "glac",
+): string {
+  const scale = 4;
+  const cv = document.createElement("canvas");
+  cv.width = w;
+  cv.height = h;
+  const ctx = cv.getContext("2d")!;
+  const img = ctx.createImageData(w, h);
+
+  for (let i = 0; i < w * h; i++) {
+    const T = buf[i * 4];     // temperature °C
+    const P = buf[i * 4 + 1]; // precip 0..1
+    const W = buf[i * 4 + 2]; // wind azimuth turns 0..1
+    const G = buf[i * 4 + 3]; // glaciation 0..1
+    let r = 0, g = 0, b = 0;
+
+    if (mode === "temp") {
+      // normalise t=(T+30)/65 clamped 0..1; blue(cold)→white→red(hot)
+      const t = Math.max(0, Math.min(1, (T + 30) / 65));
+      const s = t * t * (3 - 2 * t); // smoothstep
+      r = Math.round(255 * s);
+      b = Math.round(255 * (1 - s));
+      g = Math.round(255 * (1 - Math.abs(2 * t - 1)));
+    } else if (mode === "precip") {
+      // white→blue: r=g=255*(1-p), b=255
+      const p = Math.max(0, Math.min(1, P));
+      r = Math.round(255 * (1 - p));
+      g = Math.round(255 * (1 - p));
+      b = 255;
+    } else if (mode === "wind") {
+      // HSV hue=az (turns 0..1), S=1, V=1 → RGB
+      const h6 = ((W % 1 + 1) % 1) * 6;
+      const hi = Math.floor(h6);
+      const f = h6 - hi;
+      const q = 1 - f;
+      switch (hi % 6) {
+        case 0: r = 255; g = Math.round(255 * f); b = 0; break;
+        case 1: r = Math.round(255 * q); g = 255; b = 0; break;
+        case 2: r = 0; g = 255; b = Math.round(255 * f); break;
+        case 3: r = 0; g = Math.round(255 * q); b = 255; break;
+        case 4: r = Math.round(255 * f); g = 0; b = 255; break;
+        default: r = 255; g = 0; b = Math.round(255 * q); break;
+      }
+    } else {
+      // glac: greyscale 255*g
+      const v = Math.round(255 * Math.max(0, Math.min(1, G)));
+      r = v; g = v; b = v;
+    }
+
+    const o = i * 4;
+    img.data[o] = r;
+    img.data[o + 1] = g;
+    img.data[o + 2] = b;
+    img.data[o + 3] = 255;
+  }
+
+  ctx.putImageData(img, 0, 0);
+  const out = document.createElement("canvas");
+  out.width = w * scale;
+  out.height = h * scale;
+  const octx = out.getContext("2d")!;
+  octx.imageSmoothingEnabled = false;
+  octx.drawImage(cv, 0, 0, out.width, out.height);
+  return out.toDataURL("image/png");
 }
 
 /** Real-GPU bake on the DEM-like multi-continent fixture, then emit relief +
@@ -941,6 +1018,35 @@ async function _bakeAndRenderRelief(
   const cw = Math.min(w, Math.round((140 / 360) * w));
   const ch = Math.min(h, Math.round((68 / 180) * h));
 
+  // CP2.a CLIM debug overlays — re-run CLIMATE_FRAG once on the FINAL
+  // eroded terrain to get the co-evolved climate field for eyeball gating.
+  const glsl = await import("./hydraulic.glsl");
+  const climRT = new THREE.WebGLRenderTarget(w, h, {
+    type: THREE.FloatType,
+    format: THREE.RGBAFormat,
+    minFilter: THREE.NearestFilter,
+    magFilter: THREE.NearestFilter,
+    wrapS: THREE.ClampToEdgeWrapping,
+    wrapT: THREE.ClampToEdgeWrapping,
+    depthBuffer: false,
+    stencilBuffer: false,
+    generateMipmaps: false,
+  });
+  gp.runRawPass(renderer, glsl.CLIMATE_FRAG, {
+    uA: { value: rt },
+    uGrid: { value: new THREE.Vector2(w, h) },
+    uTEquatorC: { value: cfg.tEquatorC },
+    uTLatDropC: { value: cfg.tLatDropC },
+    uLapseCPerKm: { value: cfg.lapseCPerKm },
+    uElevKmScale: { value: cfg.elevKmScale },
+    uItczWidthDeg: { value: cfg.itczWidthDeg },
+    uGlacOnsetC: { value: cfg.glacOnsetC },
+    uGlacFullC: { value: cfg.glacFullC },
+  }, climRT);
+  const climBuf = new Float32Array(w * h * 4);
+  gp.readRawPixels(renderer, climRT, 0, 0, w, h, climBuf);
+  climRT.dispose();
+
   return {
     ran: true,
     unmaskedRenderer,
@@ -986,6 +1092,10 @@ async function _bakeAndRenderRelief(
           ref: baseArr,
           scale: zoomScale,
         }),
+        clim_temp: climOverlayPNG(climBuf, w, h, "temp"),
+        clim_precip: climOverlayPNG(climBuf, w, h, "precip"),
+        clim_wind: climOverlayPNG(climBuf, w, h, "wind"),
+        clim_glac: climOverlayPNG(climBuf, w, h, "glac"),
       };
     })(),
   };
