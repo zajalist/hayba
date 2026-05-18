@@ -9,6 +9,7 @@ import {
   ACCUM_FRAG,
   CONTROLS_FRAG,
 } from "./hydraulic.glsl";
+import { BAKE_RES_TIERS, clampBakeRes } from "./bakeResolution";
 
 describe("S1 scale config", () => {
   it("DEFAULT_HYDRAULIC drops the ad-hoc clamp/uplift and adds scale knobs", () => {
@@ -230,5 +231,24 @@ describe("#226 CONTROLS_FRAG", () => {
     expect(CONTROLS_FRAG).toMatch(/atan/);
     expect(CONTROLS_FRAG).toMatch(/a\.a > 0\.5/);
     expect(CONTROLS_FRAG).toMatch(/fragColor = vec4\(/);
+  });
+});
+
+describe("#234 P2.1 resolution tier", () => {
+  it("tiers are 2:1, ascending, capped at ~3.3M", () => {
+    expect(BAKE_RES_TIERS.length).toBeGreaterThanOrEqual(3);
+    for (const t of BAKE_RES_TIERS) {
+      expect(t.w).toBe(t.h * 2);
+      expect(t.w * t.h).toBeLessThanOrEqual(3_300_000);
+    }
+    const px = BAKE_RES_TIERS.map((t) => t.w * t.h);
+    expect([...px].sort((a, b) => a - b)).toEqual(px);
+    expect(Math.max(...px)).toBeGreaterThanOrEqual(3_000_000);
+  });
+  it("clampBakeRes rejects oversize / non-2:1 to the max tier", () => {
+    const max = BAKE_RES_TIERS[BAKE_RES_TIERS.length - 1];
+    expect(clampBakeRes(99999, 99999)).toEqual(max);
+    expect(clampBakeRes(2048, 1024)).toEqual({ w: 2048, h: 1024 });
+    expect(clampBakeRes(2048, 999)).toEqual(max);
   });
 });
