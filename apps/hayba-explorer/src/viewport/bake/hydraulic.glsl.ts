@@ -754,7 +754,12 @@ export const CLIMATE_FRAG = [
   "  float towardEq = (lat >= 0.0) ? -1.0 : 1.0;",
   "  vec2 wv = normalize(vec2(zsign, towardEq * 0.15));",
   "  float windAz = (atan(wv.y, wv.x) + 3.14159265) / 6.28318530;",
-  "  float glac = smoothstep(uGlacOnsetC, uGlacFullC, T);",
+  // SPEC-SAFE: GLSL ES 3.00 smoothstep is UNDEFINED if edge0 >= edge1.
+  // uGlacOnsetC (-2) > uGlacFullC (-12), so keep edges ASCENDING
+  // (uGlacFullC, uGlacOnsetC) and invert the result: T >= -2 -> 1 ->
+  // glac 0 (no ice); T <= -12 -> 0 -> glac 1 (full ice). Identical
+  // curve to the intended colder=>more-ice ramp, portable on all WebGL.
+  "  float glac = 1.0 - smoothstep(uGlacFullC, uGlacOnsetC, T);",
   "  fragColor = vec4(fin(T), fin(P), fin(windAz), clamp(fin(glac), 0.0, 1.0));",
   "}",
 ].join("\n");
