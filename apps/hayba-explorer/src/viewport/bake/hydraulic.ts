@@ -168,6 +168,12 @@ export interface HydraulicConfig {
   mslpOceanAmp: number;
   mslpBlurSigma: number;
   coriolisGain: number;
+  /** NX-2c MdGBWG seasonality. `seasonAmp` master-scales the Jan/July
+   *  MSLP delta (0 = annual mean = deep-time freeze; the tectonics sim
+   *  bakes at 0 — seasons are meaningless over Myr). `seasonPhase` is
+   *  the simulated month in [0,12) (0=Jan, 6=Jul); inert while amp 0. */
+  seasonAmp: number;
+  seasonPhase: number;
   /** S2.3 concavity gate: river carve is multiplied by
    *  `smoothstep(0, concaveScale, laplacian(b))` so incision only bites
    *  CONCAVE valley floors, not CONVEX plateau/range shoulders (kills the
@@ -275,6 +281,8 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   mslpOceanAmp: 20.0,
   mslpBlurSigma: 6.0,
   coriolisGain: 15.0,
+  seasonAmp: 0.0,
+  seasonPhase: 0.0,
   channelDepth: 0.02,
   sfdJitter: 0.002,
   // Concave valleys reach full carve by lap≈0.003; every convex shoulder
@@ -460,6 +468,8 @@ export async function runHydraulicBake(
         uMslpLandAmp: u(cfg.mslpLandAmp),
         uMslpOceanBase: u(cfg.mslpOceanBase),
         uMslpOceanAmp: u(cfg.mslpOceanAmp),
+        uSeasonAmp: u(cfg.seasonAmp),
+        uSeasonPhase: u(cfg.seasonPhase),
       },
       MSLP[0],
     );

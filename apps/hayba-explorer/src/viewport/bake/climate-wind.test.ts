@@ -48,3 +48,23 @@ describe("NX-2a geostrophic wind GLSL", () => {
     );
   });
 });
+
+describe("NX-2c seasonality (MdGBWG Jan/July MSLP delta)", () => {
+  it("MSLP_FRAG adds season uniforms + land/ocean delta + dfac blend", () => {
+    expect(MSLP_FRAG).toContain("uniform float uSeasonAmp;");
+    expect(MSLP_FRAG).toContain("uniform float uSeasonPhase;");
+    expect(MSLP_FRAG).toContain("15.0 * sin(lat * 2.0)");
+    expect(MSLP_FRAG).toContain("36.0 / 7.0");
+    expect(MSLP_FRAG).toContain("smoothstep(1.5, 4.5,");
+    expect(MSLP_FRAG).toContain("smoothstep(7.5, 10.5,");
+    expect(MSLP_FRAG).toContain("uSeasonAmp * dfac * delta");
+  });
+  it("MSLP_FRAG annual mean byte-preserved (NX-2a regression pin)", () => {
+    expect(MSLP_FRAG).toContain(
+      "uMslpOceanBase - uMslpOceanAmp * cos(lat * 6.0)",
+    );
+    expect(MSLP_FRAG).toContain(
+      "uMslpLandBase  - uMslpLandAmp  * cos(lat * 4.0)",
+    );
+  });
+});
