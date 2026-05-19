@@ -16,9 +16,11 @@ const HASH = [
   "}",
 ].join("\n");
 
-const LIFE_DECL = "const float LIFE = 4.0;";
+const LIFE_DECL = "const float LIFE = 2.5;";
 const STEP_K_DECL = "const float STEP_K = 0.10;";
 const SPD_REF_DECL = "const float SPD_REF = 0.55;";
+const V_REF_DECL = "const float V_REF = 1.0;";
+const STALL_THRESH_DECL = "const float STALL_THRESH = 0.15;";
 
 export const INIT_FRAG = [
   "uniform vec2 uGrid;",
@@ -43,6 +45,8 @@ export const ADVECT_FRAG = [
   "uniform float uTime;",
   LIFE_DECL,
   STEP_K_DECL,
+  V_REF_DECL,
+  STALL_THRESH_DECL,
   "out vec4 fragColor;",
   HASH,
   "void main(){",
@@ -53,12 +57,16 @@ export const ADVECT_FRAG = [
   "  float seed = s.w;",
   "  vec2 v = texture(uWind, pos).xy;",
   "  float vlen = length(v);",
-  "  vec2 dir = vlen > 1e-4 ? v / vlen : vec2(0.0);",
-  "  pos += dir * uDt * STEP_K;",
+  "  // Magnitude-aware advection with soft cap: at |v|>=V_REF particles",
+  "  // move at full STEP_K (the old direction-normalised speed); at",
+  "  // |v|<V_REF they slow proportionally so stagnation points produce",
+  "  // ~zero motion (which the STALL_THRESH respawn then catches).",
+  "  vec2 motion = v * (STEP_K / max(vlen, V_REF));",
+  "  pos += motion * uDt;",
   "  pos.x = fract(pos.x);",
   "  pos.y = clamp(pos.y, 0.0, 1.0);",
   "  age += uDt;",
-  "  if (age > LIFE || vlen < 1e-4) {",
+  "  if (age > LIFE || vlen < STALL_THRESH) {",
   "    seed = hash(seed + uTime * 7.0);",
   "    pos = vec2(hash(seed + 1.0), hash(seed + 2.0));",
   "    age = 0.0;",

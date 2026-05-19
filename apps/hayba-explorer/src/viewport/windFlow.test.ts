@@ -29,7 +29,7 @@ describe("NX-3-v2c INIT_FRAG", () => {
 });
 
 describe("NX-3-v2c ADVECT_FRAG", () => {
-  it("advects particle state along normalised wind dir + age + respawn", () => {
+  it("advects particle state with magnitude-aware soft cap + stall respawn", () => {
     expect(typeof ADVECT_FRAG).toBe("string");
     expect(ADVECT_FRAG).toMatch(/uniform sampler2D uPrev;/);
     expect(ADVECT_FRAG).toMatch(/uniform sampler2D uWind;/);
@@ -37,7 +37,16 @@ describe("NX-3-v2c ADVECT_FRAG", () => {
     expect(ADVECT_FRAG).toMatch(/uniform float uDt;/);
     expect(ADVECT_FRAG).toMatch(/uniform float uTime;/);
     expect(ADVECT_FRAG).toMatch(/texelFetch\(uPrev/);
-    expect(ADVECT_FRAG).toMatch(/v \/ vlen/);
+    // Retune #3: magnitude-aware advection (slow areas slow, capped
+    // at STEP_K when |v|>=V_REF) + STALL_THRESH respawn (kills the
+    // pile-up at stagnation centers from the direction-normalised
+    // form). The teleport guard `not /uDt \* ADV_K/` from retune #1
+    // also stays asserted.
+    expect(ADVECT_FRAG).toMatch(/STEP_K \/ max\(vlen, V_REF\)/);
+    expect(ADVECT_FRAG).toMatch(/pos \+= motion \* uDt/);
+    expect(ADVECT_FRAG).toMatch(/vlen < STALL_THRESH/);
+    expect(ADVECT_FRAG).not.toMatch(/v \/ vlen/);
+    expect(ADVECT_FRAG).not.toMatch(/uDt \* ADV_K/);
     expect(ADVECT_FRAG).toMatch(/fract\(pos\.x\)/);
     expect(ADVECT_FRAG).toMatch(/clamp\(pos\.y, 0\.0, 1\.0\)/);
     expect(ADVECT_FRAG).toMatch(/age > LIFE/);
