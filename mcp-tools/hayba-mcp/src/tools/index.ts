@@ -159,6 +159,33 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
   );
 
   server.tool(
+    'hayba_mark_plan_step',
+    'Update the status of a single step in the proposed plan shown in the UE Plan panel. Marking a step "completed" auto-advances the next step to "running". Call this as you work through an approved plan so the user sees live progress.',
+    {
+      index: z.number().int().min(0)
+        .describe('Zero-based index of the plan step to update'),
+      status: z.enum(['running', 'completed', 'failed']).default('completed')
+        .describe('New status for the step (default "completed")'),
+    },
+    async (params) => {
+      try {
+        const { ensureConnected } = await import('../tcp-client.js');
+        const c = await ensureConnected();
+        const res = await c.send('plan_mark_step', params as Record<string, unknown>, 5000);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(res.data ?? { ok: res.ok }, null, 2) }],
+          isError: !res.ok,
+        };
+      } catch (e) {
+        return {
+          content: [{ type: 'text', text: `Error marking plan step in UE: ${(e as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.tool(
     'list_tool_categories',
     appendMeta('List all HaybaOS command domains and their commands. Call this first to discover what is available before requesting a specific schema.', listMeta),
     {},
