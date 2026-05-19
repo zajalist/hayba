@@ -432,6 +432,7 @@ export default function App() {
         });
         sceneRef.current?.setWindSource(
           sel.kind === "wind" ? (prevDebugWindRef.current ?? null) : null,
+          sel.kind === "wind" ? (stack?.clim ?? null) : null,
         );
         sceneRef.current?.setWindAnim(sel.kind === "wind" && debugBakeReady);
         sceneRef.current?.markDirty();
@@ -445,6 +446,7 @@ export default function App() {
       });
       sceneRef.current?.setWindSource(
         sel.kind === "wind" ? (prevDebugWindRef.current ?? null) : null,
+        sel.kind === "wind" ? stack.clim : null,
       );
       sceneRef.current?.setWindAnim(sel.kind === "wind" && debugBakeReady);
       sceneRef.current?.markDirty();
