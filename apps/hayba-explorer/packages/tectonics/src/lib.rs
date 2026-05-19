@@ -23,4 +23,5 @@ pub mod export;
 pub mod determinism;
 pub mod wizard;
 pub mod model;
+pub mod perf_timing;
 pub mod save;

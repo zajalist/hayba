@@ -49,6 +49,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::field::Field;
 use crate::mantle::PlumeRegistry;
+use crate::perf_timing::{Phase, PhaseTimer};
 use crate::plate::plate::{Plate, OCEAN_DENSITY};
 use crate::plate::plate_group::PlateGroup;
 use crate::sphere::Grid;
@@ -172,8 +173,10 @@ impl Model {
     }
 
     pub fn step(&mut self, dt: f32) {
+        let mut t = PhaseTimer::start();
         // ── PHASE A: verlet integrate all plates (TE step 1) ───────────
         self.step_verlet(dt);
+        t.lap(Phase::Verlet);
 
         // ── PHASE B: speed-clamp (TE step 2, `model.ts:268-272`) ───────
         // Applied to every plate after the integrator regardless of mass.
@@ -237,9 +240,11 @@ impl Model {
         for p in self.plates.iter_mut() {
             p.reset_force_accumulator();
         }
+        t.lap(Phase::Other);
         let optimize = self.optimized_collision_detection;
         let collisions =
             detect_field_collisions_opt(&self.plates, &self.grid, &self.fields, optimize);
+        t.lap(Phase::Collisions);
 
         // ── PHASE D: resolve each collision (Hayba addition) ───────────
         let plates_snapshot: Vec<Plate> = self.plates.clone();
@@ -261,10 +266,12 @@ impl Model {
                 f.mor_age_steps = f.mor_age_steps.saturating_add(1);
             }
         }
+        t.lap(Phase::Resolve);
 
         // ── PHASE E: advance subduction (Hayba addition) ───────────────
         let field_diam = self.grid.field_diameter();
         self.advance_subduction(dt, field_diam);
+        t.lap(Phase::Subduction);
 
         // ── PHASE F: try-detach loop. TODO Phase 4 — needs the slab
         // gradient calculator. Skipped for now.
@@ -273,6 +280,7 @@ impl Model {
         self.step_count += 1;
         self.sim_time_ma += dt;
         self.optimized_collision_detection = true;
+        t.report(self.step_count);
     }
 
     /// Faithful port of TE's `verletStep` over all plates simultaneously.
