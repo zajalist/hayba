@@ -37,8 +37,14 @@ describe("NX-2a geostrophic wind GLSL", () => {
     expect(CLIMATE_FRAG).toContain(
       "float T = uTEquatorC - uTLatDropC * (s * s) - uLapseCPerKm * elevKm;",
     );
+    // NX-2b: precip curve intentionally retuned (kill flat +0.35 floor,
+    // widen subtropical-dry band) so the Sahara/subtropics read dry.
+    // This pin now guards the NEW zonal curve against future drift.
     expect(CLIMATE_FRAG).toContain(
-      "float P = clamp(0.85*itcz - 0.6*subtrop + 0.55*midlat - 0.4*polar + 0.35, 0.0, 1.0);",
+      "float P = clamp(0.95*itcz + 0.55*midlat - 0.70*subtrop - 0.30*polar + 0.12, 0.0, 1.0);",
+    );
+    expect(CLIMATE_FRAG).toContain(
+      "1.0 - smoothstep(0.0, 20.0, abs(dDeg - 28.0))",
     );
     expect(CLIMATE_FRAG).toContain(
       "float glac = 1.0 - smoothstep(uGlacFullC, uGlacOnsetC, T);",
