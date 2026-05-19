@@ -8,10 +8,10 @@ const hydraulicSrc = readFileSync(
 );
 
 describe("runHydraulicBake return-shape (Task 1)", () => {
-  it("declares the 4-RT HydraulicBakeResult and returns it", () => {
+  it("declares the 5-RT HydraulicBakeResult and returns it", () => {
     expect(hydraulicSrc).toContain("export interface HydraulicBakeResult");
     expect(hydraulicSrc).toMatch(
-      /return\s*\{\s*eroded:\s*result,\s*clim:\s*CLIM\[0\],\s*terr:\s*TERR\[0\],\s*hydro:\s*HYDRO\[0\]\s*\}/,
+      /return\s*\{\s*eroded:\s*result,\s*clim:\s*CLIM\[0\],\s*terr:\s*TERR\[0\],\s*hydro:\s*HYDRO\[0\],\s*wind:\s*WIND\[0\]\s*\}/,
     );
     expect(hydraulicSrc).toContain(
       "): Promise<HydraulicBakeResult> {",
