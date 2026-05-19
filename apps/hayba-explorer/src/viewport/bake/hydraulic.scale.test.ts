@@ -292,7 +292,9 @@ describe("#234 P2.2 CLIMATE_FRAG", () => {
     expect(CLIMATE_FRAG).toMatch(/uniform float uGlacOnsetC;/);
     expect(CLIMATE_FRAG).toMatch(/uniform float uElevKmScale;/);
     expect(CLIMATE_FRAG).toMatch(/uTLatDropC \* \(s \* s\)/);
-    expect(CLIMATE_FRAG).toMatch(/0\.85/);
+    // NX-2b retuned the zonal precip curve (0.85*itcz -> 0.95*itcz,
+    // killed the flat +0.35 floor). Pin the new dominant coefficient.
+    expect(CLIMATE_FRAG).toMatch(/0\.95\*itcz/);
     expect(CLIMATE_FRAG).toMatch(/fragColor = vec4\(/);
     expect(
       CLIMATE_FRAG.split("\n").filter(
