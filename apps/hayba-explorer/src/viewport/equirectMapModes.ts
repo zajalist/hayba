@@ -13,7 +13,7 @@
 //              (uStackMode 1) or flat (uStackMode 2) per the F toggle
 // `channel`/`ramp` are ignored for relief/normal.
 
-export type EquirectModeKind = "relief" | "normal" | "clim";
+export type EquirectModeKind = "relief" | "normal" | "clim" | "wind";
 
 export interface EquirectMapMode {
   label: string;
@@ -27,13 +27,14 @@ export const EQUIRECT_MAP_MODES: EquirectMapMode[] = [
   { label: "Normal", kind: "normal", channel: 0, ramp: 0 },
   { label: "Temperature", kind: "clim", channel: 0, ramp: 1 },
   { label: "Precipitation", kind: "clim", channel: 1, ramp: 2 },
-  { label: "Wind", kind: "clim", channel: 2, ramp: 3 },
+  { label: "Wind", kind: "wind", channel: 2, ramp: 3 },
   { label: "Glaciation", kind: "clim", channel: 3, ramp: 4 },
 ];
 
 /** Resolved selection for `setDebugStack`. `mode` is the debugMaterial
- *  `uStackMode`: relief→0, clim draped→1, clim flat→2, normal→3. The
- *  caller resolves the actual stack texture (clim RT) for clim modes. */
+ *  `uStackMode`: relief→0, clim draped→1, clim flat→2, normal→3,
+ *  wind-anim draped→4, wind-anim flat→5. The caller resolves the actual
+ *  stack texture (clim RT) for clim/wind modes. */
 export interface EquirectStackSel {
   kind: EquirectModeKind;
   channel: number;
@@ -51,6 +52,10 @@ export function resolveEquirectMode(
   }
   if (e.kind === "normal") {
     return { kind: "normal", channel: 0, ramp: 0, mode: 3 };
+  }
+  if (e.kind === "wind") {
+    // NX-3: animated wind-streak shader (uStackMode 4 draped / 5 flat).
+    return { kind: "wind", channel: e.channel, ramp: e.ramp, mode: draped ? 4 : 5 };
   }
   return {
     kind: "clim",
