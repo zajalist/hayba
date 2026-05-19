@@ -326,6 +326,20 @@ describe("#234 P2.3a TERRAIN/HYDRO frags", () => {
     expect(HYDRO_FRAG).toMatch(/uniform sampler2D uA;/);
     expect(HYDRO_FRAG).toMatch(/uniform sampler2D uCtrl;/);
     expect(HYDRO_FRAG).toMatch(/a\.a > 0\.5/);
+    expect(HYDRO_FRAG).toMatch(/uniform sampler2D uClim;/);
+    expect(HYDRO_FRAG).toMatch(/uniform float uBiomeColdC;/);
+    expect(HYDRO_FRAG).toMatch(/uniform float uBiomeHotC;/);
+    expect(HYDRO_FRAG).toMatch(/classifyBiome\(/);
+    expect(HYDRO_FRAG).toMatch(/t < -15\.0/);
+    expect(HYDRO_FRAG).toMatch(/t < -2\.0/);
+    expect(HYDRO_FRAG).toMatch(/t < uBiomeColdC/);
+    expect(HYDRO_FRAG).toMatch(/t < uBiomeHotC/);
+    expect(HYDRO_FRAG).toMatch(/p > 0\.7/);
+    expect(HYDRO_FRAG).toMatch(/p > 0\.6/);
+    expect(HYDRO_FRAG).toMatch(/classifyBiome\(cl\.r, cl\.g\)/);
+    expect(HYDRO_FRAG).not.toMatch(
+      /clamp\(fin\(endo\), 0\.0, 1\.0\), 0\.0\)/,
+    );
     expect(HYDRO_FRAG).toMatch(/fragColor = vec4\(/);
     expect(HYDRO_FRAG.split("\n").filter(
       (l)=>/^\s*"?uniform /.test(l)&&l.includes("//")).length).toBe(0);
