@@ -51,3 +51,13 @@ Massive expansion from a PCG/landscape-only plugin into a 34-domain agentic leve
 
 - Existing legacy commands (`ping`, `list_node_classes`, `get_node_details`, `list_pcg_assets`, `export_graph`, `create_graph`, `validate_graph`, `execute_graph`, `import_landscape`, `read_node_output`, `wizard_chat`) keep working unchanged. Each also has a namespaced alias (`pcg_*`, `landscape_*`).
 - Auth: when `CapabilityToken` is set in Project Settings, every TCP request must include matching `auth` field. Empty token disables auth (default).
+
+## Unreleased
+
+### Added
+
+- TCP response envelope: optional `code` field for machine-readable rejection
+  reasons. Only set on plan-gate and tool-disabled paths today. Older TS
+  clients ignore the field (wire-compatible). The TS ToolExecutor maps
+  `code` onto `UeToolError.code` so callers can branch without
+  string-matching error text. **Requires a plugin recompile.**
