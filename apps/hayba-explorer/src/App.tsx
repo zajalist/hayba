@@ -1571,7 +1571,7 @@ export default function App() {
         {panelCategory === "compose" && draft && (
           <ComposePanel
             draft={draft}
-            busy={mode === "baking"}
+            busy={mode === "baking" || initializingGrid}
             onChangeDivisions={handleChangeDivisions}
             onChangePreset={handleChangePreset}
             onReroll={handleReroll}
