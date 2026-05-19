@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { WINDFLOW_FRAG } from "./windFlow.glsl";
-import { windFlowSize } from "./windFlow";
+import { windFlowSize, __clampStepDt } from "./windFlow";
 
 describe("NX-3-v2b WINDFLOW_FRAG", () => {
   it("is a semi-Lagrangian advected-dye fragment", () => {
@@ -35,5 +35,14 @@ describe("NX-3-v2b windFlowSize", () => {
     expect(Number.isInteger(s.w)).toBe(true);
     expect(s.w).toBeGreaterThan(0);
     expect(s.h).toBeGreaterThan(0);
+  });
+});
+
+describe("NX-3-v2b step dt clamp", () => {
+  it("clamps the per-step dt to <= 1/15 s and floors at 0", () => {
+    expect(__clampStepDt(0.5)).toBeCloseTo(1 / 15, 6);
+    expect(__clampStepDt(0.001)).toBeCloseTo(0.001, 6);
+    expect(__clampStepDt(-3)).toBe(0);
+    expect(__clampStepDt(NaN)).toBe(0);
   });
 });
