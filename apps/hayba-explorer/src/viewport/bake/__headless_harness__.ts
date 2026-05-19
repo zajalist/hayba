@@ -776,6 +776,15 @@ export interface ErosionReliefResult {
     clim_precip?: string; // precipitation 0..1 (white→blue)
     clim_wind?: string;   // wind azimuth turns (HSV hue)
     clim_glac?: string;   // glaciation 0..1 (greyscale)
+    // CP2.c TERR/HYDRO mask overlays — OPT-IN (same __HAYBA_CLIM gate).
+    // The REAL baked masks (refreshClimate's TERRAIN/HYDRO passes),
+    // read back before the stack RTs are disposed; no re-derivation.
+    terr_slope?: string;  // TERR.r metre-slope, grey (fixed 0..2)
+    terr_aspect?: string; // TERR.g aspect turns (HSV hue)
+    terr_curv?: string;   // TERR.b curvature, diverging blue/white/red
+    hydro_flow?: string;  // HYDRO.r discharge Q, log-grey
+    hydro_elev?: string;  // HYDRO.g elevNorm, grey
+    hydro_endo?: string;  // HYDRO.b endorheic, binary
   };
 }
 
@@ -835,6 +844,94 @@ function climOverlayPNG(
     } else {
       // glac: greyscale 255*g
       const v = Math.round(255 * Math.max(0, Math.min(1, G)));
+      r = v; g = v; b = v;
+    }
+
+    const o = i * 4;
+    img.data[o] = r;
+    img.data[o + 1] = g;
+    img.data[o + 2] = b;
+    img.data[o + 3] = 255;
+  }
+
+  ctx.putImageData(img, 0, 0);
+  const out = document.createElement("canvas");
+  out.width = w * scale;
+  out.height = h * scale;
+  const octx = out.getContext("2d")!;
+  octx.imageSmoothingEnabled = false;
+  octx.drawImage(cv, 0, 0, out.width, out.height);
+  return out.toDataURL("image/png");
+}
+
+/** Render a TERR/HYDRO mask buffer (RGBA32F, stride 4 per texel) into a PNG
+ *  data-URL. Mirrors `climOverlayPNG` EXACTLY — same canvas/encode pattern
+ *  and the SAME bounded adaptive upscale (~1500 px target) so the overlay
+ *  stays cheap at any bake W. Modes decode the packed TERR/HYDRO channels:
+ *  TERR=(r:slopeMag, g:aspect, b:curvature, a:0);
+ *  HYDRO=(r:Q discharge, g:elevNorm, b:endorheic, a:0). */
+function maskOverlayPNG(
+  buf: Float32Array,
+  w: number,
+  h: number,
+  mode: "slope" | "aspect" | "curv" | "flow" | "elev" | "endo",
+): string {
+  const scale = Math.max(1, Math.round(1500 / w));
+  const cv = document.createElement("canvas");
+  cv.width = w;
+  cv.height = h;
+  const ctx = cv.getContext("2d")!;
+  const img = ctx.createImageData(w, h);
+
+  for (let i = 0; i < w * h; i++) {
+    const C0 = buf[i * 4];     // TERR.r slope | HYDRO.r discharge Q
+    const C1 = buf[i * 4 + 1]; // TERR.g aspect turns | HYDRO.g elevNorm
+    const C2 = buf[i * 4 + 2]; // TERR.b curvature | HYDRO.b endorheic
+    let r = 0, g = 0, b = 0;
+
+    if (mode === "slope") {
+      // greyscale slope magnitude over a fixed 0..2 range
+      const v = Math.round(255 * Math.max(0, Math.min(1, C0 / 2)));
+      r = v; g = v; b = v;
+    } else if (mode === "aspect") {
+      // HSV hue = aspect (turns 0..1), S=1, V=1 → RGB
+      const h6 = ((C1 % 1 + 1) % 1) * 6;
+      const hi = Math.floor(h6);
+      const f = h6 - hi;
+      const q = 1 - f;
+      switch (hi % 6) {
+        case 0: r = 255; g = Math.round(255 * f); b = 0; break;
+        case 1: r = Math.round(255 * q); g = 255; b = 0; break;
+        case 2: r = 0; g = 255; b = Math.round(255 * f); break;
+        case 3: r = 0; g = Math.round(255 * q); b = 255; break;
+        case 4: r = Math.round(255 * f); g = 0; b = 255; break;
+        default: r = 255; g = 0; b = Math.round(255 * q); break;
+      }
+    } else if (mode === "curv") {
+      // diverging blue/white/red around curvature=0.5 (CTRL.b normalised)
+      const t = Math.max(-1, Math.min(1, (C2 - 0.5) * 2));
+      if (t < 0) {
+        r = Math.round(255 * (1 + t));
+        g = Math.round(255 * (1 + t));
+        b = 255;
+      } else {
+        r = 255;
+        g = Math.round(255 * (1 - t));
+        b = Math.round(255 * (1 - t));
+      }
+    } else if (mode === "flow") {
+      // log-scaled greyscale discharge Q (huge dynamic range)
+      const v = Math.round(
+        255 * Math.max(0, Math.min(1, Math.log1p(Math.max(0, C0)) / Math.log(1e5))),
+      );
+      r = v; g = v; b = v;
+    } else if (mode === "elev") {
+      // greyscale elevation-normalised 0..1
+      const v = Math.round(255 * Math.max(0, Math.min(1, C1)));
+      r = v; g = v; b = v;
+    } else {
+      // endo: binary endorheic flag (HYDRO.b)
+      const v = C2 > 0.5 ? 255 : 0;
       r = v; g = v; b = v;
     }
 
@@ -951,6 +1048,20 @@ async function _bakeAndRenderRelief(
   const t0 = performance.now();
   const { eroded: rt, clim: _c, terr: _t, hydro: _h } =
     await hyd.runHydraulicBake(renderer, baseTex, precipTex, w, h, cfg);
+  // CP2.c (#234 P2.3a): OPT-IN only — read the REAL baked TERR/HYDRO
+  // masks (refreshClimate's TERRAIN/HYDRO passes) before disposal so
+  // the overlay is the actual baked mask, not a re-derivation. Default
+  // (no __HAYBA_CLIM) path is byte-unchanged: still disposes at once.
+  const wantMasks =
+    (globalThis as { __HAYBA_CLIM?: boolean }).__HAYBA_CLIM === true;
+  let terrBuf: Float32Array | null = null;
+  let hydroBuf: Float32Array | null = null;
+  if (wantMasks) {
+    terrBuf = new Float32Array(w * h * 4);
+    gp.readRawPixels(renderer, _t, 0, 0, w, h, terrBuf);
+    hydroBuf = new Float32Array(w * h * 4);
+    gp.readRawPixels(renderer, _h, 0, 0, w, h, hydroBuf);
+  }
   // Oracle never reads the stack RTs; dispose immediately so the
   // many-bake harness doesn't leak 3 RTs/bake (fatal at 3M).
   _c.dispose();
@@ -1099,6 +1210,12 @@ async function _bakeAndRenderRelief(
         clim_precip?: string;
         clim_wind?: string;
         clim_glac?: string;
+        terr_slope?: string;
+        terr_aspect?: string;
+        terr_curv?: string;
+        hydro_flow?: string;
+        hydro_elev?: string;
+        hydro_endo?: string;
       } = {
         before: fieldToReliefDataURL(baseArr, w, h, {
           exaggeration: 6,
@@ -1128,6 +1245,16 @@ async function _bakeAndRenderRelief(
         img.clim_precip = climOverlayPNG(climBuf, w, h, "precip");
         img.clim_wind = climOverlayPNG(climBuf, w, h, "wind");
         img.clim_glac = climOverlayPNG(climBuf, w, h, "glac");
+      }
+      if (terrBuf) {
+        img.terr_slope = maskOverlayPNG(terrBuf, w, h, "slope");
+        img.terr_aspect = maskOverlayPNG(terrBuf, w, h, "aspect");
+        img.terr_curv = maskOverlayPNG(terrBuf, w, h, "curv");
+      }
+      if (hydroBuf) {
+        img.hydro_flow = maskOverlayPNG(hydroBuf, w, h, "flow");
+        img.hydro_elev = maskOverlayPNG(hydroBuf, w, h, "elev");
+        img.hydro_endo = maskOverlayPNG(hydroBuf, w, h, "endo");
       }
       return img;
     })(),
