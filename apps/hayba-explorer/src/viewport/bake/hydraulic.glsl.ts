@@ -877,6 +877,31 @@ export const TERRAIN_FRAG = [
   "}",
 ].join("\n");
 
+// NX-3-v2a WIND — faithful geostrophic wind VECTOR (recompute the
+// exact wvec CLIMATE_FRAG computes but discards). r=vx g=vy b=|v|
+// a=0. Reads the blurred MSLP. Defined everywhere (atmospheric).
+export const WIND_FRAG = [
+  H,
+  "uniform sampler2D uMSLP;",
+  "uniform vec2 uGrid;",
+  "uniform float uCoriolisGain;",
+  "void main(){",
+  "  ivec2 rc = fragRC();",
+  "  ivec2 wh = gridWH(uGrid);",
+  "  float v = (float(rc.y) + 0.5) / float(wh.y);",
+  "  float lat = (0.5 - v) * 3.14159265;",
+  "  float s = sin(lat);",
+  "  float pL = texelFetch(uMSLP, ivec2(xw(rc.x - 1, wh.x), yc(rc.y, wh.y)), 0).r;",
+  "  float pR = texelFetch(uMSLP, ivec2(xw(rc.x + 1, wh.x), yc(rc.y, wh.y)), 0).r;",
+  "  float pN = texelFetch(uMSLP, ivec2(xw(rc.x, wh.x), yc(rc.y - 1, wh.y)), 0).r;",
+  "  float pS = texelFetch(uMSLP, ivec2(xw(rc.x, wh.x), yc(rc.y + 1, wh.y)), 0).r;",
+  "  float coslat = max(cos(lat), 1e-3);",
+  "  vec2 gp = vec2((pR - pL) * 0.5 / coslat, (pN - pS) * 0.5);",
+  "  vec2 wvec = uCoriolisGain * s * vec2(-gp.y, gp.x) - gp;",
+  "  fragColor = vec4(fin(wvec.x), fin(wvec.y), fin(length(wvec)), 0.0);",
+  "}",
+].join("\n");
+
 // #234 P2.3a HYDRO — packed hydrology mask. r=discharge Q (#218 ACC),
 // g=elevation-normalised (max(0,h) clamped), b=endorheic (CTRL.a),
 // a=0 (biome-id is P2.3b). Ocean -> all 0.
