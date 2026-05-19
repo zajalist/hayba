@@ -82,3 +82,14 @@ describe("debugMaterial Normal map mode (SP-B, uStackMode 3)", () => {
     expect(v).not.toContain("float dispGain = (uStackMode > 1.5) ? 0.0 : 1.0;");
   });
 });
+
+describe("NX-3 wind-anim shader branch", () => {
+  it("adds uStackMode>3.5 wind branch + uWindTime, 0-3 byte-pinned", () => {
+    const f = makeDebugReliefMaterial().fragmentShader;
+    expect(f).toContain("uniform float uWindTime;");
+    expect(f).toContain("uStackMode > 3.5");
+    expect(f).toContain("if (uStackMode < 0.5){");
+    expect(f).toContain("if (uStackMode > 2.5){");
+    expect(f).toContain("gl_FragColor = vec4(sn * 0.5 + 0.5, 1.0);");
+  });
+});
