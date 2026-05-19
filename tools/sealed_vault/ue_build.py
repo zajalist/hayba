@@ -195,8 +195,14 @@ for ac in list(eas.get_all_level_actors()):
         lbl = ac.get_actor_label()
         if lbl.startswith('SVx_') or lbl.startswith('SVlight_'):
             eas.destroy_actor(ac)
+        elif 'Landscape' in ac.get_class().get_name() or lbl.startswith('Floor'):
+            # reversible: hide the World-Partition landscape/default floor so the
+            # dark backdrop shows. Un-hide via the Outliner eye icon.
+            ac.set_is_temporarily_hidden_in_editor(True)
     except Exception:
         pass
+# fixed exposure so emissive colors read crisp (no auto-exposure wash)
+unreal.SystemLibrary.execute_console_command(unreal.EditorLevelLibrary.get_editor_world(), 'r.EyeAdaptationQuality 0')
 CUBE = unreal.load_asset('/Engine/BasicShapes/Cube.Cube')
 CYL = unreal.load_asset('/Engine/BasicShapes/Cylinder.Cylinder')
 
@@ -216,8 +222,14 @@ def box(mesh, cx, cy, cz, sx, sy, sz, mat, label, yaw=0.0):
 
 xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
 cx, cy = (min(xs)+max(xs))/2.0, (min(ys)+max(ys))/2.0
-span = max(max(xs)-min(xs), max(ys)-min(ys)) + 2000
-box(CUBE, cx, cy, -40, span*2.6, span*2.6, 50, MAT['ground'], 'SVx_ground')
+# true content extent incl. room footprints, small margin
+ext = max(max(xs)-min(xs), max(ys)-min(ys)) + max(ROOM.values()) + 350
+# straight-down cam: editor hFOV ~90deg, shot is 4:3 so vertical FOV limits.
+# half-vFOV ~ 36.9deg (tan ~0.75) => H = (ext/2)/0.75, *1.18 for margin
+cam_h = (ext / 2.0) / 0.75 * 1.18
+# dark backdrop sized to fully cover the top-down frustum (kills default grid)
+GROUND = cam_h * 2.6
+box(CUBE, cx, cy, -25, GROUND, GROUND, 40, MAT['ground'], 'SVx_ground')
 
 CORR_W = 150
 # corridors: clipped to stop at each room's edge (no shooting through rooms)
@@ -267,9 +279,8 @@ try:
 except Exception:
     pass
 
-cam_h = span * 0.92 + 1400
 unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).set_level_viewport_camera_info(
-    unreal.Vector(cx, cy - span*0.16, cam_h), unreal.Rotator(0, -76, 0))
+    unreal.Vector(cx, cy, cam_h), unreal.Rotator(0, -90, 0))
 
 R["dungeon"] = {"rooms": N, "edges": len(edges), "locked": len(locks), "entrance": ent,
                 "boss": boss, "max_rank": max(rank.values()),
