@@ -277,7 +277,7 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   tLatDropC: 50.0,
   lapseCPerKm: 4.46,
   elevKmScale: 8.0,
-  itczWidthDeg: 16.0,
+  itczWidthDeg: 22.0,
   glacOnsetC: -2.0,
   glacFullC: -12.0,
   mslpLandBase: 1012.5,
