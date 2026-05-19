@@ -46,6 +46,7 @@ export interface WindFlow {
 export function createWindFlow(
   renderer: THREE.WebGLRenderer,
   windRT: THREE.WebGLRenderTarget,
+  climRT: THREE.WebGLRenderTarget,
 ): WindFlow {
   const { w, h } = windFlowSize(windRT.width, windRT.height, WINDFLOW_MAX);
 
@@ -126,6 +127,7 @@ export function createWindFlow(
           uPart: { value: part[pRead].texture },
           uPartDim: { value: new THREE.Vector2(PARTICLE_DIM, PARTICLE_DIM) },
           uWind: { value: windRT.texture },
+          uClim: { value: climRT.texture },
         },
         trail[tRead],
         { additive: true },

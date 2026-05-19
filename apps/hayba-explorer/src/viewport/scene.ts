@@ -39,9 +39,10 @@ export interface SceneHandle {
    *  the NX-1 on-demand gate) and advance the displayed globe's
    *  `uWindTime`. false → loop returns to NX-1 idle. */
   setWindAnim: (active: boolean) => void;
-  /** NX-3-v2b: the WIND equirect RT (vx,vy,|v|) the flow-map advects.
-   *  null tears the flow engine down. */
-  setWindSource: (windRT: THREE.WebGLRenderTarget | null) => void;
+  /** NX-3-v2b/v2c: the WIND equirect RT (vx,vy,|v|) the flow-map advects,
+   *  and the CLIM equirect RT (T,P,windAz,glac) used to tint particles by
+   *  temperature. Either null tears the flow engine down. */
+  setWindSource: (windRT: THREE.WebGLRenderTarget | null, climRT: THREE.WebGLRenderTarget | null) => void;
   /** Latest perf counters for the HUD (cheap getter; no allocation
    *  hot-path). */
   perfSnapshot: () => PerfSnapshot;
@@ -205,6 +206,7 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
   let windAnimActive = false;
   let windTime = 0;
   let windSource: THREE.WebGLRenderTarget | null = null;
+  let climSource: THREE.WebGLRenderTarget | null = null;
   let windFlow: WindFlow | null = null;
   const disposeWindFlow = (): void => {
     if (windFlow) {
@@ -213,8 +215,8 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
     }
   };
   const ensureWindFlow = (): void => {
-    if (windAnimActive && windSource && !windFlow) {
-      windFlow = createWindFlow(renderer, windSource);
+    if (windAnimActive && windSource && climSource && !windFlow) {
+      windFlow = createWindFlow(renderer, windSource, climSource);
     }
   };
   const scheduleTick = () => {
@@ -323,10 +325,14 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
     markDirty() {
       gate.markDirty(performance.now());
     },
-    setWindSource(windRT: THREE.WebGLRenderTarget | null) {
-      if (windRT === windSource) return;
+    setWindSource(
+      windRT: THREE.WebGLRenderTarget | null,
+      climRT: THREE.WebGLRenderTarget | null,
+    ) {
+      if (windRT === windSource && climRT === climSource) return;
       windSource = windRT;
-      disposeWindFlow(); // rebuilt against the new source on next tick
+      climSource = climRT;
+      disposeWindFlow(); // rebuilt against the new source(s) on next tick
       if (windAnimActive) gate.markDirty(performance.now());
     },
     setWindAnim(active: boolean) {

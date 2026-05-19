@@ -58,27 +58,32 @@ describe("NX-3-v2c FADE_FRAG", () => {
 });
 
 describe("NX-3-v2c SPLAT_VERT", () => {
-  it("positions points by gl_VertexID into a particle texture", () => {
+  it("positions points by gl_VertexID + emits temp-coloured intensity", () => {
     expect(typeof SPLAT_VERT).toBe("string");
     expect(SPLAT_VERT).toMatch(/uniform sampler2D uPart;/);
     expect(SPLAT_VERT).toMatch(/uniform vec2 uPartDim;/);
     expect(SPLAT_VERT).toMatch(/uniform sampler2D uWind;/);
+    expect(SPLAT_VERT).toMatch(/uniform sampler2D uClim;/);
     expect(SPLAT_VERT).toMatch(/out float v_intensity;/);
+    expect(SPLAT_VERT).toMatch(/out vec3 v_color;/);
     expect(SPLAT_VERT).toMatch(/gl_VertexID/);
     expect(SPLAT_VERT).toMatch(/texelFetch\(uPart/);
     expect(SPLAT_VERT).toMatch(/gl_Position = vec4\(/);
     expect(SPLAT_VERT).toMatch(/gl_PointSize/);
     expect(SPLAT_VERT).toMatch(/smoothstep\(0\.0, SPD_REF/);
+    expect(SPLAT_VERT).toMatch(/texture\(uClim, pos\)/);
+    expect(SPLAT_VERT).toMatch(/v_color = mix\(/);
     expect(SPLAT_VERT).not.toMatch(/`/);
   });
 });
 
 describe("NX-3-v2c SPLAT_FRAG", () => {
-  it("renders point with v_intensity + radial falloff", () => {
+  it("renders point with v_color * v_intensity + radial falloff", () => {
     expect(typeof SPLAT_FRAG).toBe("string");
     expect(SPLAT_FRAG).toMatch(/in float v_intensity;/);
+    expect(SPLAT_FRAG).toMatch(/in vec3 v_color;/);
     expect(SPLAT_FRAG).toMatch(/gl_PointCoord/);
-    expect(SPLAT_FRAG).toMatch(/fragColor = vec4\(vec3\(/);
+    expect(SPLAT_FRAG).toMatch(/v_color \* v_intensity \* falloff/);
     expect(SPLAT_FRAG).not.toMatch(/`/);
   });
 });
