@@ -46,6 +46,8 @@
 //! For deterministic builds we never call `Quat::from_xyzw` with random data;
 //! every operation is a pure function of the prior state.
 
+use std::collections::HashMap;
+
 use glam::{Mat3, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -409,6 +411,63 @@ impl Plate {
             // `field.ts:221-223`).
             if let Some(other_id) = f.dragging_plate {
                 if let Some(other) = other_plates.iter().find(|p| p.id == other_id) {
+                    let v_other = other.linear_velocity(abs);
+                    force += f.orogenic_drag(
+                        v_self,
+                        v_other,
+                        field_area_km2,
+                        OROGENY_FORCE_MOD,
+                        CONSTANT_HOT_SPOTS,
+                    );
+                }
+            }
+            total += abs.cross(force);
+        }
+        total
+    }
+
+    /// Identical semantics to `compute_total_torque` but takes a pre-built
+    /// `id_to_idx` map (plate.id → index in `plates`) for O(1) drag-target
+    /// lookup, eliminating the per-call O(P) `iter().find` scan. The
+    /// `self_idx` parameter is the caller's index of `self` in `plates`;
+    /// looking up `dragging_plate.id == self.id` is suppressed (preserves
+    /// the exclude-self semantics of the filtered-slice form that
+    /// `step_verlet` uses). All other behaviour BYTE-IDENTICAL.
+    ///
+    /// SV (architecture-review #2 + #4): used by `Model::step_verlet` to
+    /// kill per-plate `Vec<Plate>::clone`. The existing
+    /// `compute_total_torque` stays for the other 8 callers (tests +
+    /// `plate_group.rs`).
+    pub fn compute_total_torque_indexed(
+        &self,
+        fields: &[Field],
+        plates: &[Plate],
+        self_idx: usize,
+        id_to_idx: &HashMap<u32, usize>,
+        field_area_km2: f32,
+    ) -> Vec3 {
+        // Hot-spot torque term (TE `plate.ts:142`).
+        let mut total = self.hot_spot.position.cross(self.hot_spot.force);
+        // Cross-plate / orchestrator-staged torque accumulator. The
+        // accumulator stores torques already in plate-local frame; we rotate
+        // them back into world space so they compose with the field-pass
+        // torque (which is computed in world space).
+        total += self.quaternion * self.force_accumulator;
+        for &fid in &self.fields {
+            let Some(f) = fields.get(fid as usize) else {
+                continue;
+            };
+            let abs = self.compute_field_position(f.local_pos);
+            let v_self = self.linear_velocity(abs);
+            // Basic drag — always present (TE `field.ts:220`).
+            let mut force = f.basic_drag(v_self, field_area_km2, BASIC_DRAG_FORCE_MOD, CONSTANT_HOT_SPOTS);
+            // Orogenic drag when this field is dragging another plate (TE
+            // `field.ts:221-223`).
+            if let Some(other_id) = f.dragging_plate {
+                if let Some(other) = id_to_idx
+                    .get(&other_id)
+                    .and_then(|&idx| if idx == self_idx { None } else { plates.get(idx) })
+                {
                     let v_other = other.linear_velocity(abs);
                     force += f.orogenic_drag(
                         v_self,

@@ -44,6 +44,8 @@
 //! * Frame-stream emission is owned by the caller (`run_steps` writes one
 //!   frame per call); the encoder is not stored on the Model.
 
+use std::collections::HashMap;
+
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
@@ -291,16 +293,24 @@ impl Model {
             return;
         }
 
+        // SV: build id→index map ONCE; reused by both predictor + corrector.
+        let id_to_idx: HashMap<u32, usize> = self
+            .plates
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.id, i))
+            .collect();
+
         // a1 = torques at current state for ALL plates.
         let mut a1: Vec<Vec3> = Vec::with_capacity(n);
         for i in 0..n {
-            let other_plates: Vec<Plate> = self
-                .plates
-                .iter()
-                .enumerate()
-                .filter_map(|(j, p)| if j != i { Some(p.clone()) } else { None })
-                .collect();
-            let t = self.plates[i].compute_total_torque(&self.fields, &other_plates, area);
+            let t = self.plates[i].compute_total_torque_indexed(
+                &self.fields,
+                &self.plates,
+                i,
+                &id_to_idx,
+                area,
+            );
             a1.push(acceleration_for(&self.plates[i], t));
         }
 
@@ -320,13 +330,13 @@ impl Model {
         // a2 = torques at NEW state for ALL plates.
         let mut a2: Vec<Vec3> = Vec::with_capacity(n);
         for i in 0..n {
-            let other_plates: Vec<Plate> = self
-                .plates
-                .iter()
-                .enumerate()
-                .filter_map(|(j, p)| if j != i { Some(p.clone()) } else { None })
-                .collect();
-            let t = self.plates[i].compute_total_torque(&self.fields, &other_plates, area);
+            let t = self.plates[i].compute_total_torque_indexed(
+                &self.fields,
+                &self.plates,
+                i,
+                &id_to_idx,
+                area,
+            );
             a2.push(acceleration_for(&self.plates[i], t));
         }
 
