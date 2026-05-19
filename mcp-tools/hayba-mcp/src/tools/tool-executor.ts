@@ -20,6 +20,12 @@ export class UeToolError extends Error {
   }
 }
 
+const KNOWN_UE_CODES = new Set<UeToolErrorCode>(['plan_gate', 'tool_disabled']);
+function mapUeCode(raw: string | undefined): UeToolErrorCode {
+  if (raw && KNOWN_UE_CODES.has(raw as UeToolErrorCode)) return raw as UeToolErrorCode;
+  return 'ue_error';
+}
+
 const COST_TIMEOUTS_MS: Record<HaybaToolCost, number> = {
   low:    2_000,
   medium: 10_000,
@@ -60,5 +66,6 @@ export async function executeCommand<T = Record<string, unknown>>(
   const timeout = opts.timeout ?? costToTimeoutMs(getToolMeta(cmd)?.cost);
   const resp = await sender(cmd, params, timeout);
   if (resp.ok) return (resp.data ?? {}) as T;
-  throw new UeToolError(resp.error ?? 'unknown UE error', { code: 'ue_error', uePayload: resp });
+  const code = mapUeCode(resp.code);
+  throw new UeToolError(resp.error ?? 'unknown UE error', { code, uePayload: resp });
 }

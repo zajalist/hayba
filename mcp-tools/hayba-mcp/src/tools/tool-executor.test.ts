@@ -69,3 +69,35 @@ describe('executeCommand — happy path', () => {
     expect(seen[0]).toBe(1234);
   });
 });
+
+describe('executeCommand — error code mapping', () => {
+  it('throws UeToolError with code "plan_gate" when UE response carries that code', async () => {
+    const sender: Sender = async () => ({ id: 't', ok: false, error: 'needs approval', code: 'plan_gate' });
+    await expect(executeCommand('actor_delete', {}, { sender }))
+      .rejects.toMatchObject({ name: 'UeToolError', code: 'plan_gate', message: 'needs approval' });
+  });
+
+  it('throws UeToolError with code "tool_disabled" likewise', async () => {
+    const sender: Sender = async () => ({ id: 't', ok: false, error: 'off', code: 'tool_disabled' });
+    await expect(executeCommand('x', {}, { sender }))
+      .rejects.toMatchObject({ code: 'tool_disabled' });
+  });
+
+  it('defaults to "ue_error" when response has ok:false but no code', async () => {
+    const sender: Sender = async () => ({ id: 't', ok: false, error: 'something' });
+    await expect(executeCommand('x', {}, { sender }))
+      .rejects.toMatchObject({ code: 'ue_error', message: 'something' });
+  });
+
+  it('passes through unrecognised codes as "ue_error" but preserves UE payload', async () => {
+    const sender: Sender = async () => ({ id: 't', ok: false, error: 'novel', code: 'something_new' });
+    try {
+      await executeCommand('x', {}, { sender });
+      throw new Error('should have thrown');
+    } catch (e: unknown) {
+      const u = e as InstanceType<typeof UeToolError>;
+      expect(u.code).toBe('ue_error');
+      expect((u.uePayload as TcpResponse).code).toBe('something_new');
+    }
+  });
+});
