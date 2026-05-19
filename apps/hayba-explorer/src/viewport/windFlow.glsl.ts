@@ -110,6 +110,3 @@ export const SPLAT_FRAG = [
   "  fragColor = vec4(vec3(v_intensity * falloff), 1.0);",
   "}",
 ].join("\n");
-
-/** @deprecated v2b compat alias — replaced by FADE_FRAG in v2c; removed in T3. */
-export const WINDFLOW_FRAG = FADE_FRAG;

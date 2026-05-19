@@ -103,3 +103,11 @@ describe("NX-3-v2b step dt clamp", () => {
     expect(__clampStepDt(NaN)).toBe(0);
   });
 });
+
+describe("NX-3-v2c particle dimensions", () => {
+  it("exports PARTICLE_DIM and PARTICLE_COUNT consistent with each other", () => {
+    expect(PARTICLE_DIM).toBe(64);
+    expect(PARTICLE_COUNT).toBe(4096);
+    expect(PARTICLE_COUNT).toBe(PARTICLE_DIM * PARTICLE_DIM);
+  });
+});
