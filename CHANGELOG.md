@@ -5,6 +5,9 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 ## [Unreleased]
 
 ### Added
+- Scene Map panels (native + web) auto-refresh on level actor add/delete. Subscribes to `GEngine->OnLevelActorAdded` and `OnLevelActorDeleted`; debounced 0.5s so spawn bursts coalesce into a single rebuild. Native panel piggybacks on its existing `Tick`; web panel uses an `FTSTicker` poll (it has no Tick). Currently always-on — a `bSceneMapAutoRefresh` settings toggle is the follow-up. **Requires a plugin recompile** to take effect.
+
+### Added (existing)
 - **Initiative #1** — Native editor transaction wrapping. Every destructive AI op runs inside `GEditor->BeginTransaction` / `EndTransaction`, so Ctrl+Z reverts AI mutations natively.
 - **Initiative #3** — Dynamic TCP port allocation (52342-52350) + heartbeat registry at `Saved/HaybaMCP/instances/<pid>.json`. Multiple UE editors can run side-by-side without port collisions; Node MCP client picks the most recently started.
 - **Initiative #6** — `asset_move` and `asset_fix_redirectors` via `IAssetTools::RenameAssets`. Updates referencers in place instead of leaving redirectors.
