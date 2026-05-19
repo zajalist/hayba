@@ -25,7 +25,8 @@ use hayba_tectonics_v2::sphere::Grid;
 
 use crate::climate::{self, ClimateParams};
 use crate::planet::{snapshot_model, PlanetSnapshot};
-use crate::sim_state::{ManagedSim, SimState};
+use crate::sim_state::{BakeProgress, ManagedSim, SimState, BAKE_COMPUTE, BAKE_DONE, BAKE_IDLE, BAKE_SNAPSHOT};
+use std::sync::atomic::Ordering;
 use tauri::State;
 
 #[derive(Debug, Deserialize)]
@@ -197,36 +198,67 @@ pub fn roll_seed() -> u64 {
 }
 
 #[tauri::command]
-pub fn bake_from_wizard(
+pub async fn bake_from_wizard(
     draft: WizardDraft,
     want_climate_debug: bool,
     climate_params: climate::ClimateParams,
     erosion_params: Option<crate::hydrology::ErosionParams>,
     sim: State<'_, ManagedSim>,
-) -> PlanetSnapshot {
+    progress: State<'_, BakeProgress>,
+) -> Result<PlanetSnapshot, String> {
+    progress.0.store(BAKE_IDLE, Ordering::Relaxed);
     // Optional: the bake command must keep working before the frontend
     // sends `erosionParams` (Plan A Task 9). A missing arg → None →
     // default erosion (Tauri deserializes an absent command arg as None).
     let erosion_params = erosion_params.unwrap_or_default();
-    let bake_t0 = std::time::Instant::now();
-    let model = bake_impl(&draft, &erosion_params);
-    let compute_el = bake_t0.elapsed();
-    let snap_t0 = std::time::Instant::now();
-    let snap = snapshot_model(&model, draft.divisions, want_climate_debug, &climate_params);
-    let snap_el = snap_t0.elapsed();
-    eprintln!(
-        "[bake_from_wizard] compute={:.3}s snapshot={:.3}s total={:.3}s",
-        compute_el.as_secs_f64(),
-        snap_el.as_secs_f64(),
-        (compute_el + snap_el).as_secs_f64()
-    );
-    let mut guard = sim.0.lock().expect("sim mutex poisoned");
-    *guard = Some(SimState {
-        model,
-        divisions: draft.divisions,
-        dt_ma: draft.dt_ma,
-    });
-    snap
+    // Scalars captured before `draft` moves into the blocking closure.
+    let divisions = draft.divisions;
+    let dt_ma = draft.dt_ma;
+    // Send + 'static handle for the blocking thread; State keeps the other.
+    let pc = progress.0.clone();
+    // Heavy compute off the IPC thread so the WebView stays responsive.
+    let (model, snap) = tauri::async_runtime::spawn_blocking(move || {
+        pc.store(BAKE_COMPUTE, Ordering::Relaxed);
+        let bake_t0 = std::time::Instant::now();
+        let model = bake_impl(&draft, &erosion_params);
+        let compute_el = bake_t0.elapsed();
+        pc.store(BAKE_SNAPSHOT, Ordering::Relaxed);
+        let snap_t0 = std::time::Instant::now();
+        let snap =
+            snapshot_model(&model, divisions, want_climate_debug, &climate_params);
+        let snap_el = snap_t0.elapsed();
+        eprintln!(
+            "[bake_from_wizard] compute={:.3}s snapshot={:.3}s total={:.3}s",
+            compute_el.as_secs_f64(),
+            snap_el.as_secs_f64(),
+            (compute_el + snap_el).as_secs_f64()
+        );
+        (model, snap)
+    })
+    .await
+    .map_err(|e| format!("bake task failed: {e}"))?;
+    {
+        // Brief lock AFTER the await — the std MutexGuard (!Send) never
+        // crosses an `.await`.
+        let mut guard = sim
+            .0
+            .lock()
+            .map_err(|_| "sim mutex poisoned".to_string())?;
+        *guard = Some(SimState {
+            model,
+            divisions,
+            dt_ma,
+        });
+    }
+    progress.0.store(BAKE_DONE, Ordering::Relaxed);
+    Ok(snap)
+}
+
+/// Frontend polls this (cheap, non-blocking) while a bake runs to show
+/// a coarse phase. 0 idle · 1 compute · 2 snapshot · 3 done.
+#[tauri::command]
+pub fn poll_bake_progress(progress: State<'_, BakeProgress>) -> u32 {
+    progress.0.load(Ordering::Relaxed)
 }
 
 /// Advance the persisted sim by `n_steps` and return a fresh snapshot.
