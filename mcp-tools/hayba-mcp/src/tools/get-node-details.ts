@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { getNodeByClass } from '../catalog.js';
-import { ensureConnected } from '../tcp-client.js';
+import { executeCommand } from './tool-executor.js';
 
 const schema = z.object({
   class: z.string().min(1).describe('PCGEx node class name (e.g., PCGExBuildDelaunayGraph2D)')
@@ -17,12 +17,8 @@ export async function getNodeDetails(params: GetNodeDetailsParams) {
   }
 
   try {
-    const client = await ensureConnected();
-    const response = await client.send('get_node_details', { class: className });
-    if (response.ok && response.data) {
-      return { source: 'ue_runtime', ...response.data };
-    }
-    throw new Error(response.error || 'Unknown error from UE');
+    const data = await executeCommand<Record<string, unknown>>('get_node_details', { class: className });
+    return { source: 'ue_runtime', ...data };
   } catch (err) {
     throw new Error(`Node class '${className}' not found in catalog or UE. ${err instanceof Error ? err.message : ''}`);
   }

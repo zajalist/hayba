@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ensureConnected } from '../tcp-client.js';
+import { executeCommand } from './tool-executor.js';
 import type { PCGGraphJSON } from '../types.js';
 
 const schema = z.object({
@@ -23,12 +23,7 @@ export async function validatePcgGraph(params: ValidatePcgGraphParams) {
   }
 
   try {
-    const client = await ensureConnected();
-    const response = await client.send('validate_graph', { graph });
-    if (response.ok && response.data) {
-      return response.data;
-    }
-    return { valid: false, errors: [{ type: 'connection', detail: response.error || 'UE validation failed' }] };
+    return await executeCommand('validate_graph', { graph });
   } catch (err) {
     return { valid: false, errors: [{ type: 'connection', detail: `Cannot reach UE for validation: ${err instanceof Error ? err.message : 'unknown'}` }] };
   }

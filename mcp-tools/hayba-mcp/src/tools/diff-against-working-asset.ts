@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ensureConnected } from '../tcp-client.js';
+import { executeCommand } from './tool-executor.js';
 import type { PCGGraphJSON, PCGNode, PCGEdge } from '../types.js';
 
 const schema = z.object({
@@ -55,12 +55,10 @@ export async function diffAgainstWorkingAsset(params: DiffAgainstWorkingAssetPar
     throw new Error('Invalid JSON for wipGraph');
   }
 
-  const client = await ensureConnected();
-  const response = await client.send('export_graph', { assetPath: referenceAssetPath });
-  if (!response.ok) throw new Error(response.error || 'Failed to export reference graph');
+  const exportData = await executeCommand<Record<string, unknown>>('export_graph', { assetPath: referenceAssetPath });
 
   // BUG-D7: response.data is Record<string, unknown>; UE export_graph wraps graph in { graph: ... }
-  const refGraph: PCGGraphJSON = (response.data as any)?.graph ?? (response.data as unknown as PCGGraphJSON);
+  const refGraph: PCGGraphJSON = (exportData as any)?.graph ?? (exportData as unknown as PCGGraphJSON);
 
   const wipNodeMap = buildNodeKeyMap(wipGraph.nodes);
   const refNodeMap = buildNodeKeyMap(refGraph.nodes);
