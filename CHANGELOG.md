@@ -21,6 +21,7 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 - Market analysis section (§9) appended to design spec with competitor matrix, moat ranking, and 10 prioritized initiatives.
 
 ### Fixed
+- Plan panel clipped each step to a single line. The step **title** `STextBlock` in `SHaybaMCPPlanPanel::BuildStepRow` was missing `.AutoWrapText(true)` (its description/header siblings already had it), so long step titles were truncated with no wrap. Title now wraps like the description.
 - `hayba_search_node_catalog` returned `[]` for every multi-word query. `searchCatalog` matched the entire query as one contiguous substring of the node's joined searchable text, so phrases like `"Delaunay 2D cluster"` never matched (the literal phrase never appears verbatim) while single words worked. Query is now tokenized on whitespace with AND semantics (every token must be a substring of the searchable text); single-token queries are unchanged. Matching logic extracted into a pure, unit-tested `searchNodes(nodes, query)` helper.
 - HLOD instancing actors no longer flagged as floating in `scene_validate_physics` (filter both sides of the overlap pair).
 - `scene_validate_physics` reports `scanned_actors` / `checked_count` / `skipped_system_actors` for visibility into the filter.
