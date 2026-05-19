@@ -34,6 +34,10 @@ export interface SceneHandle {
   runBake: (fn: (renderer: THREE.WebGLRenderer) => Promise<void> | void) => Promise<void>;
   /** Mark the scene dirty so the on-demand loop renders a frame. */
   markDirty: () => void;
+  /** NX-3: while active, keep the render loop alive (cooperating with
+   *  the NX-1 on-demand gate) and advance the displayed globe's
+   *  `uWindTime`. false → loop returns to NX-1 idle. */
+  setWindAnim: (active: boolean) => void;
   /** Latest perf counters for the HUD (cheap getter; no allocation
    *  hot-path). */
   perfSnapshot: () => PerfSnapshot;
@@ -194,6 +198,8 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
   // gaps: the render loop cannot touch the renderer while bake RTs are
   // bound, independent of rAF/cancel timing races.
   let loopEpoch = 0;
+  let windAnimActive = false;
+  let windTime = 0;
   const scheduleTick = () => {
     const myEpoch = loopEpoch;
     raf = requestAnimationFrame(() => {
@@ -240,6 +246,14 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
         bakeMs: lastBakeMs,
         bakeSplit: lastBakeSplit,
       };
+      if (windAnimActive && !baking) {
+        windTime += dt;
+        const wm = (currentGlobe as unknown as { material?: { uniforms?: Record<string, { value: number }> } } | null)?.material;
+        if (wm && wm.uniforms && wm.uniforms.uWindTime) {
+          wm.uniforms.uWindTime.value = windTime;
+        }
+        gate.markDirty(now);
+      }
       scheduleTick();
     });
   };
@@ -280,6 +294,10 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
     },
     markDirty() {
       gate.markDirty(performance.now());
+    },
+    setWindAnim(active: boolean) {
+      windAnimActive = active;
+      if (active) gate.markDirty(performance.now());
     },
     perfSnapshot() {
       return perfSnap;
