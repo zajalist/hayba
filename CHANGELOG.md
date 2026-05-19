@@ -20,6 +20,9 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 - Schema registry — `get_tool_signature` derives params live from Zod shapes; hand-maintained dict removed.
 - Market analysis section (§9) appended to design spec with competitor matrix, moat ranking, and 10 prioritized initiatives.
 
+### Known Issues
+- Plan panel step status never advances. `SHaybaMCPPlanPanel::MarkStepCompleted()` is implemented but has **no callers** — there is no TCP command or MCP tool for the agent to report per-step progress. After Approve, step 0 shows `Running` and all steps stay frozen regardless of execution. Proper fix needs: a `plan_mark_step` TCP command + C++ handler routing to `MarkStepCompleted`/Running/Failed, an MCP tool (or auto-emit on tool completion), and the agent calling it per step. Requires a plugin recompile.
+
 ### Fixed
 - Plan panel clipped each step to a single line. The step **title** `STextBlock` in `SHaybaMCPPlanPanel::BuildStepRow` was missing `.AutoWrapText(true)` (its description/header siblings already had it), so long step titles were truncated with no wrap. Title now wraps like the description.
 - `hayba_search_node_catalog` returned `[]` for every multi-word query. `searchCatalog` matched the entire query as one contiguous substring of the node's joined searchable text, so phrases like `"Delaunay 2D cluster"` never matched (the literal phrase never appears verbatim) while single words worked. Query is now tokenized on whitespace with AND semantics (every token must be a substring of the searchable text); single-token queries are unchanged. Matching logic extracted into a pure, unit-tested `searchNodes(nodes, query)` helper.
