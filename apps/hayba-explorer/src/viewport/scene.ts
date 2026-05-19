@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { colors } from "@hayba/design-tokens";
 import { createStarfield, type StarfieldHandle } from "./starfield";
+import { createWindFlow, type WindFlow } from "./windFlow";
 import {
   createFrameMeter,
   adaptiveScale,
@@ -38,6 +39,9 @@ export interface SceneHandle {
    *  the NX-1 on-demand gate) and advance the displayed globe's
    *  `uWindTime`. false → loop returns to NX-1 idle. */
   setWindAnim: (active: boolean) => void;
+  /** NX-3-v2b: the WIND equirect RT (vx,vy,|v|) the flow-map advects.
+   *  null tears the flow engine down. */
+  setWindSource: (windRT: THREE.WebGLRenderTarget | null) => void;
   /** Latest perf counters for the HUD (cheap getter; no allocation
    *  hot-path). */
   perfSnapshot: () => PerfSnapshot;
@@ -200,6 +204,19 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
   let loopEpoch = 0;
   let windAnimActive = false;
   let windTime = 0;
+  let windSource: THREE.WebGLRenderTarget | null = null;
+  let windFlow: WindFlow | null = null;
+  const disposeWindFlow = (): void => {
+    if (windFlow) {
+      windFlow.dispose();
+      windFlow = null;
+    }
+  };
+  const ensureWindFlow = (): void => {
+    if (windAnimActive && windSource && !windFlow) {
+      windFlow = createWindFlow(renderer, windSource);
+    }
+  };
   const scheduleTick = () => {
     const myEpoch = loopEpoch;
     raf = requestAnimationFrame(() => {
@@ -226,6 +243,17 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
       prevTime = now;
       starfield.tick(dt);
       controls.update();
+      if (windAnimActive && !baking) {
+        ensureWindFlow();
+        if (windFlow) {
+          windFlow.step(dt);
+          const wmf = (currentGlobe as unknown as { material?: { uniforms?: Record<string, { value: unknown }> } } | null)?.material;
+          if (wmf && wmf.uniforms && wmf.uniforms.uStackTex) {
+            wmf.uniforms.uStackTex.value = windFlow.trailTexture();
+          }
+          renderer.resetState();
+        }
+      }
       renderer.render(scene, camera);
       // NX-1 sampling + adaptive resolution (only on rendered frames).
       const fm = meter.push(dt > 0 ? dt * 1000 : 0.0001);
@@ -295,9 +323,19 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
     markDirty() {
       gate.markDirty(performance.now());
     },
+    setWindSource(windRT: THREE.WebGLRenderTarget | null) {
+      if (windRT === windSource) return;
+      windSource = windRT;
+      disposeWindFlow(); // rebuilt against the new source on next tick
+      if (windAnimActive) gate.markDirty(performance.now());
+    },
     setWindAnim(active: boolean) {
       windAnimActive = active;
-      if (active) gate.markDirty(performance.now());
+      if (active) {
+        gate.markDirty(performance.now());
+      } else {
+        disposeWindFlow();
+      }
     },
     perfSnapshot() {
       return perfSnap;
@@ -365,6 +403,7 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
       // cancel the pending frame.
       loopEpoch++;
       cancelAnimationFrame(raf);
+      disposeWindFlow();
       ro.disconnect();
       document.removeEventListener("visibilitychange", onVisibility);
       controls.dispose();
