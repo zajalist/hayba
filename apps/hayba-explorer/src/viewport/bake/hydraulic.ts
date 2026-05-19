@@ -54,6 +54,7 @@ import {
   CLIMATE_FRAG,
   TERRAIN_FRAG,
   HYDRO_FRAG,
+  WIND_FRAG,
   MSLP_FRAG,
   BLUR_H_FRAG,
   BLUR_V_FRAG,
@@ -396,6 +397,7 @@ export interface HydraulicBakeResult {
   clim: THREE.WebGLRenderTarget;
   terr: THREE.WebGLRenderTarget;
   hydro: THREE.WebGLRenderTarget;
+  wind: THREE.WebGLRenderTarget;
 }
 
 export async function runHydraulicBake(
@@ -412,7 +414,7 @@ export async function runHydraulicBake(
   // FAILS if EXT_color_buffer_float is missing. We drive the read/write
   // slots explicitly below (NOT pp.book) so the discipline is local and
   // unambiguous.
-  const pp: PingPongTargets = createPingPong(renderer, w, h, ["A", "F", "M", "ACC", "CTRL", "CLIM", "TERR", "HYDRO", "MSLP"]);
+  const pp: PingPongTargets = createPingPong(renderer, w, h, ["A", "F", "M", "ACC", "CTRL", "CLIM", "TERR", "HYDRO", "MSLP", "WIND"]);
   const A = pp.rt.A; // [slot0, slot1]
   const F = pp.rt.F; // [slot0, slot1]
   // S2.4 detail mask: a ONE-TIME single-channel field (computed pre-loop
@@ -438,6 +440,7 @@ export async function runHydraulicBake(
   // other channel (no per-tick alloc), reused every refreshClimate
   // tick, disposed once at teardown; never escapes, never feeds erosion.
   const MSLP = pp.rt.MSLP;
+  const WIND = pp.rt.WIND;
   let accRead = 0;
   const swapAcc = (): void => {
     accRead ^= 1;
@@ -509,6 +512,16 @@ export async function runHydraulicBake(
         uGlacFullC: u(cfg.glacFullC),
       },
       CLIM[0],
+    );
+    runRawPass(
+      renderer,
+      WIND_FRAG,
+      {
+        uMSLP: u(MSLP[0]),
+        uGrid: u(uGrid),
+        uCoriolisGain: u(cfg.coriolisGain),
+      },
+      WIND[0],
     );
     runRawPass(
       renderer,
@@ -878,5 +891,6 @@ export async function runHydraulicBake(
   HYDRO[1].dispose();
   MSLP[0].dispose();
   MSLP[1].dispose();
-  return { eroded: result, clim: CLIM[0], terr: TERR[0], hydro: HYDRO[0] };
+  WIND[1].dispose();
+  return { eroded: result, clim: CLIM[0], terr: TERR[0], hydro: HYDRO[0], wind: WIND[0] };
 }
