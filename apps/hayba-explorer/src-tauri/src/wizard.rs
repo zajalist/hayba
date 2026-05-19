@@ -529,6 +529,7 @@ pub(crate) fn bake_impl(
     draft: &WizardDraft,
     erosion_params: &crate::hydrology::ErosionParams,
 ) -> Model {
+    let _bp3a_t0 = std::time::Instant::now();
     let preset = image::load_from_memory(preset_bytes(&draft.preset))
         .expect("preset PNG should decode")
         .to_rgba8();
@@ -544,6 +545,8 @@ pub(crate) fn bake_impl(
         }
     }
 
+    let bp3a_grid = _bp3a_t0.elapsed();
+    let _bp3a_t1 = std::time::Instant::now();
     // ── Step 1: bucket cells by HSV-hue (rounded to nearest 10°), TE-style.
     // Each bucket becomes a plate. Also retain per-cell elevation from HSV.
     struct CellInfo {
@@ -576,6 +579,8 @@ pub(crate) fn bake_impl(
     cell_plate_ids = majority_smooth(&model.grid, cell_plate_ids);
     cell_plate_ids = majority_smooth(&model.grid, cell_plate_ids);
 
+    let bp3a_partition = _bp3a_t1.elapsed();
+    let _bp3a_t2 = std::time::Instant::now();
     // ── Step 2: build per-plate cell buckets in plate-id order.
     let plate_count = hue_to_plate.len() as u32;
     let mut buckets: Vec<Vec<u32>> = (0..plate_count).map(|_| Vec::new()).collect();
@@ -710,9 +715,13 @@ pub(crate) fn bake_impl(
         p.update_inertia_tensor(&fields_ref, area);
     }
 
+    let bp3a_plates = _bp3a_t2.elapsed();
+    let _bp3a_t3 = std::time::Instant::now();
     for _ in 0..draft.run_length_steps {
         model.step(draft.dt_ma);
     }
+    let bp3a_tect_step = _bp3a_t3.elapsed();
+    let _bp3a_t4 = std::time::Instant::now();
 
     // ── Bake-phase fluvial erosion (coarse graph) ───────────────────────
     let n_h = model.grid.n_fields() as usize;
@@ -723,8 +732,12 @@ pub(crate) fn bake_impl(
     let mut elev: Vec<f32> = (0..n_h).map(|i| model.fields[i].elevation).collect();
     let is_ocean: Vec<bool> = elev.iter().map(|&e| e < 0.0).collect();
     let cell_area = model.grid.field_area_km2();
+    let bp3a_erode_prep = _bp3a_t4.elapsed();
+    let _bp3a_t5 = std::time::Instant::now();
     crate::hydrology::erode(&neighbours, &pos, &mut elev, &is_ocean,
                             cell_area, erosion_params);
+    let bp3a_erode = _bp3a_t5.elapsed();
+    let _bp3a_t6 = std::time::Instant::now();
     for i in 0..n_h {
         if let Some(f) = model.fields.get_mut(i) {
             // fluvial only sculpts land; never moves a cell across sea level.
@@ -732,6 +745,20 @@ pub(crate) fn bake_impl(
         }
     }
 
+    let bp3a_writeback = _bp3a_t6.elapsed();
+    eprintln!(
+        "[bake_impl] grid={:.3}s partition={:.3}s plates={:.3}s \
+         tect_step={:.3}s(x{}) erode_prep={:.3}s erode={:.3}s \
+         writeback={:.3}s",
+        bp3a_grid.as_secs_f64(),
+        bp3a_partition.as_secs_f64(),
+        bp3a_plates.as_secs_f64(),
+        bp3a_tect_step.as_secs_f64(),
+        draft.run_length_steps,
+        bp3a_erode_prep.as_secs_f64(),
+        bp3a_erode.as_secs_f64(),
+        bp3a_writeback.as_secs_f64(),
+    );
     let _ = n_cells;
     model
 }
