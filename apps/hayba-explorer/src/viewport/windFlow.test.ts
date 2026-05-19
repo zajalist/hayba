@@ -1,33 +1,85 @@
 import { describe, it, expect } from "vitest";
-import { WINDFLOW_FRAG } from "./windFlow.glsl";
-import { windFlowSize, __clampStepDt } from "./windFlow";
+import {
+  INIT_FRAG,
+  ADVECT_FRAG,
+  FADE_FRAG,
+  SPLAT_VERT,
+  SPLAT_FRAG,
+} from "./windFlow.glsl";
+import {
+  windFlowSize,
+  __clampStepDt,
+  PARTICLE_DIM,
+  PARTICLE_COUNT,
+} from "./windFlow";
 
-describe("NX-3-v2b WINDFLOW_FRAG", () => {
-  it("is a semi-Lagrangian advected-dye fragment", () => {
-    expect(typeof WINDFLOW_FRAG).toBe("string");
-    expect(WINDFLOW_FRAG).toMatch(/uniform sampler2D uPrevTrail;/);
-    expect(WINDFLOW_FRAG).toMatch(/uniform sampler2D uWind;/);
-    expect(WINDFLOW_FRAG).toMatch(/uniform vec2 uGrid;/);
-    expect(WINDFLOW_FRAG).toMatch(/uniform float uDt;/);
-    expect(WINDFLOW_FRAG).toMatch(/uniform float uTime;/);
-    // Scale-robust advection: normalised direction, bounded per-frame
-    // step (NOT the raw |wvec| — that teleported the dye).
-    expect(WINDFLOW_FRAG).toMatch(/v \/ vlen/);
-    expect(WINDFLOW_FRAG).toMatch(/uv - dir \* stepUv/);
-    expect(WINDFLOW_FRAG).toMatch(/STEP_TEX/);
-    expect(WINDFLOW_FRAG).not.toMatch(/uDt \* ADV_K/);
-    expect(WINDFLOW_FRAG).toMatch(/fract\(prevUv\.x\)/);
-    expect(WINDFLOW_FRAG).toMatch(/clamp\(prevUv\.y, 0\.0, 1\.0\)/);
-    expect(WINDFLOW_FRAG).toMatch(/\* 0\.9/);
-    expect(WINDFLOW_FRAG).toMatch(/texture\(uWind, uv\)/);
-    expect(WINDFLOW_FRAG).toMatch(/smoothstep\(0\.0, SPD_REF/);
-    expect(WINDFLOW_FRAG).toMatch(/fragColor = vec4\(vec3\(/);
-    expect(WINDFLOW_FRAG).not.toMatch(/`/);
+describe("NX-3-v2c INIT_FRAG", () => {
+  it("seeds the particle state texture with hashed pos + age + seed", () => {
+    expect(typeof INIT_FRAG).toBe("string");
+    expect(INIT_FRAG).toMatch(/uniform vec2 uGrid;/);
+    expect(INIT_FRAG).toMatch(/hash\(/);
+    expect(INIT_FRAG).toMatch(/fragColor = vec4\(/);
+    expect(INIT_FRAG).not.toMatch(/`/);
     expect(
-      WINDFLOW_FRAG.split("\n").filter(
+      INIT_FRAG.split("\n").filter(
         (l) => /^\s*uniform /.test(l) && l.includes("//"),
       ).length,
     ).toBe(0);
+  });
+});
+
+describe("NX-3-v2c ADVECT_FRAG", () => {
+  it("advects particle state along normalised wind dir + age + respawn", () => {
+    expect(typeof ADVECT_FRAG).toBe("string");
+    expect(ADVECT_FRAG).toMatch(/uniform sampler2D uPrev;/);
+    expect(ADVECT_FRAG).toMatch(/uniform sampler2D uWind;/);
+    expect(ADVECT_FRAG).toMatch(/uniform vec2 uGrid;/);
+    expect(ADVECT_FRAG).toMatch(/uniform float uDt;/);
+    expect(ADVECT_FRAG).toMatch(/uniform float uTime;/);
+    expect(ADVECT_FRAG).toMatch(/texelFetch\(uPrev/);
+    expect(ADVECT_FRAG).toMatch(/v \/ vlen/);
+    expect(ADVECT_FRAG).toMatch(/fract\(pos\.x\)/);
+    expect(ADVECT_FRAG).toMatch(/clamp\(pos\.y, 0\.0, 1\.0\)/);
+    expect(ADVECT_FRAG).toMatch(/age > LIFE/);
+    expect(ADVECT_FRAG).toMatch(/fragColor = vec4\(pos/);
+    expect(ADVECT_FRAG).not.toMatch(/`/);
+  });
+});
+
+describe("NX-3-v2c FADE_FRAG", () => {
+  it("samples the trail and writes prev * 0.9", () => {
+    expect(typeof FADE_FRAG).toBe("string");
+    expect(FADE_FRAG).toMatch(/uniform sampler2D uPrevTrail;/);
+    expect(FADE_FRAG).toMatch(/uniform vec2 uGrid;/);
+    expect(FADE_FRAG).toMatch(/\* 0\.9/);
+    expect(FADE_FRAG).toMatch(/fragColor = vec4\(/);
+    expect(FADE_FRAG).not.toMatch(/`/);
+  });
+});
+
+describe("NX-3-v2c SPLAT_VERT", () => {
+  it("positions points by gl_VertexID into a particle texture", () => {
+    expect(typeof SPLAT_VERT).toBe("string");
+    expect(SPLAT_VERT).toMatch(/uniform sampler2D uPart;/);
+    expect(SPLAT_VERT).toMatch(/uniform vec2 uPartDim;/);
+    expect(SPLAT_VERT).toMatch(/uniform sampler2D uWind;/);
+    expect(SPLAT_VERT).toMatch(/out float v_intensity;/);
+    expect(SPLAT_VERT).toMatch(/gl_VertexID/);
+    expect(SPLAT_VERT).toMatch(/texelFetch\(uPart/);
+    expect(SPLAT_VERT).toMatch(/gl_Position = vec4\(/);
+    expect(SPLAT_VERT).toMatch(/gl_PointSize/);
+    expect(SPLAT_VERT).toMatch(/smoothstep\(0\.0, SPD_REF/);
+    expect(SPLAT_VERT).not.toMatch(/`/);
+  });
+});
+
+describe("NX-3-v2c SPLAT_FRAG", () => {
+  it("renders point with v_intensity + radial falloff", () => {
+    expect(typeof SPLAT_FRAG).toBe("string");
+    expect(SPLAT_FRAG).toMatch(/in float v_intensity;/);
+    expect(SPLAT_FRAG).toMatch(/gl_PointCoord/);
+    expect(SPLAT_FRAG).toMatch(/fragColor = vec4\(vec3\(/);
+    expect(SPLAT_FRAG).not.toMatch(/`/);
   });
 });
 
