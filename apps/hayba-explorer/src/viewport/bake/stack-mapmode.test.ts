@@ -93,3 +93,13 @@ describe("NX-3 wind-anim shader branch", () => {
     expect(f).toContain("gl_FragColor = vec4(sn * 0.5 + 0.5, 1.0);");
   });
 });
+
+describe("NX-3-v2b wind branch", () => {
+  it("samples pure flow trail (texture2D r-channel), drops stateless streak", () => {
+    const f = makeDebugReliefMaterial().fragmentShader;
+    expect(f).toMatch(/if \(uStackMode > 3\.5\)\{/);
+    expect(f).toContain("texture2D(uStackTex, uv)");
+    expect(f).not.toMatch(/pow\(0\.5 \+ 0\.5 \* sin/);
+    expect(f).not.toMatch(/hsv2rgb\(fract\(az\)\)/);
+  });
+});
