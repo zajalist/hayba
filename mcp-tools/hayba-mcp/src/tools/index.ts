@@ -5,7 +5,7 @@ import { appendMeta } from './hayba-tool-meta.js';
 import type { HaybaToolMeta } from './hayba-tool-meta.js';
 import { recordSchema, type Cost } from './schema-registry.js';
 import { installToolStreamMirror } from './tool-stream-mirror.js';
-import { installLiveSender } from './tool-executor.js';
+import { installLiveSender, executeCommand } from './tool-executor.js';
 import { registerToolMeta } from './tool-meta-registry.js';
 
 // ── Code Mode meta-tools (always-on) ──────────────────────────────────────────
@@ -156,12 +156,9 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
     },
     async (params) => {
       try {
-        const { ensureConnected } = await import('../tcp-client.js');
-        const c = await ensureConnected();
-        const res = await c.send('hayba_propose_plan', params as Record<string, unknown>, 5000);
+        const data = await executeCommand('hayba_propose_plan', params as Record<string, unknown>, { timeout: 5000 });
         return {
-          content: [{ type: 'text', text: JSON.stringify(res.data ?? { ok: res.ok }, null, 2) }],
-          isError: !res.ok,
+          content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
         };
       } catch (e) {
         return {
@@ -184,12 +181,9 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
     },
     async (params) => {
       try {
-        const { ensureConnected } = await import('../tcp-client.js');
-        const c = await ensureConnected();
-        const res = await c.send('plan_mark_step', params as Record<string, unknown>, 5000);
+        const data = await executeCommand('plan_mark_step', params as Record<string, unknown>, { timeout: 5000 });
         return {
-          content: [{ type: 'text', text: JSON.stringify(res.data ?? { ok: res.ok }, null, 2) }],
-          isError: !res.ok,
+          content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
         };
       } catch (e) {
         return {

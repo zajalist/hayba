@@ -1,13 +1,9 @@
-import { ensureConnected } from '../tcp-client.js';
+import { executeCommand } from './tool-executor.js';
 
 export async function checkUeStatus() {
   try {
-    const client = await ensureConnected();
-    const response = await client.send('ping', {}, 5000);
-    if (response.ok && response.data) {
-      return { connected: true, ...response.data };
-    }
-    return { connected: false, error: response.error };
+    const data = await executeCommand<Record<string, unknown>>('ping', {}, { timeout: 5000 });
+    return { connected: true, ...data };
   } catch (err) {
     return { connected: false, error: err instanceof Error ? err.message : 'Unknown error' };
   }
