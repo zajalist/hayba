@@ -1083,11 +1083,31 @@ export default function App() {
     setDebugBaking(true);
     setMode("baking");
     setDebugBakeProgress("Rasterising inputs…");
+    let __pollId: number | undefined;
     try {
       const paintedFields = heightPainterRef.current
         ? heightPainterRef.current.toDraftFields()
         : { painted_elevations: [], painted_mask: [] };
       const finalDraft: WizardDraft = { ...draft, ...paintedFields };
+      // NB: poll the Rust bake phase so the (now non-blocking) bake
+      // shows progress instead of a frozen UI.
+      __pollId = window.setInterval(() => {
+        void (async () => {
+          try {
+            const ph = await invoke<number>("poll_bake_progress");
+            setDebugBakeProgress(
+              [
+                "Preparing…",
+                "Tectonic + erosion bake…",
+                "Building snapshot…",
+                "Finalising…",
+              ][ph] ?? null,
+            );
+          } catch {
+            /* poll best-effort; ignore */
+          }
+        })();
+      }, 250);
       const __tStart = performance.now();
       const __tW0 = performance.now();
 
@@ -1205,6 +1225,7 @@ export default function App() {
       setDebugBakeProgress(null);
       setMode("wizard");
     } finally {
+      if (__pollId !== undefined) window.clearInterval(__pollId);
       setDebugBaking(false);
     }
   }, [
