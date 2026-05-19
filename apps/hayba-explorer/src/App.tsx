@@ -385,6 +385,7 @@ export default function App() {
   const [debugBaking, setDebugBaking] = useState(false);
   const [debugBakeProgress, setDebugBakeProgress] = useState<string | null>(null);
   const [debugBakeReady, setDebugBakeReady] = useState(false);
+  const [initializingGrid, setInitializingGrid] = useState(false);
   // SP-A: the single authority for globe interactivity. `compose` =
   // paint strokes editable; `explore` = orbit + stack view only. A ref
   // mirror so pointer/effect closures read the live value with no
@@ -534,7 +535,13 @@ export default function App() {
     divisions: number,
     carry?: { preset?: PresetName; seed?: number },
   ) => {
-    const init = await invoke<WizardInit>("start_wizard", { divisions });
+    let init!: WizardInit;
+    setInitializingGrid(true);
+    try {
+      init = await invoke<WizardInit>("start_wizard", { divisions });
+    } finally {
+      setInitializingGrid(false);
+    }
     const positions = new Float32Array(init.cell_positions);
     kdTreeRef.current = buildCellKdTree(positions);
     cellCountRef.current = init.n_cells;
@@ -1556,10 +1563,15 @@ export default function App() {
         disabledReason={categoryDisabledReason}
         onPick={setPanelCategory}
       >
+        {initializingGrid && (
+          <div style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>
+            Building grid…
+          </div>
+        )}
         {panelCategory === "compose" && draft && (
           <ComposePanel
             draft={draft}
-            busy={mode === "baking"}
+            busy={mode === "baking" || initializingGrid}
             onChangeDivisions={handleChangeDivisions}
             onChangePreset={handleChangePreset}
             onReroll={handleReroll}

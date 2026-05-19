@@ -173,17 +173,19 @@ pub struct WizardInit {
 }
 
 #[tauri::command]
-pub fn start_wizard(divisions: u32) -> WizardInit {
-    let grid = Grid::new(divisions);
-    let n = grid.n_fields();
-    let mut cell_positions = Vec::with_capacity((n * 3) as usize);
-    for fid in 0..n {
-        let p = grid.position(fid);
-        cell_positions.push(p.x);
-        cell_positions.push(p.y);
-        cell_positions.push(p.z);
-    }
-    WizardInit { divisions, n_cells: n, cell_positions }
+pub async fn start_wizard(divisions: u32) -> Result<WizardInit, String> {
+    // Heavy Grid::new (Voronoi + NearestRaster build, ~3s at 384 div)
+    // moved off the IPC thread via spawn_blocking — mirrors the NB
+    // pattern used by `bake_from_wizard`. The cached `Grid::for_divisions`
+    // makes repeat selections of the same tier microseconds.
+    let grid = tauri::async_runtime::spawn_blocking(move || {
+        Grid::for_divisions(divisions)
+    })
+    .await
+    .map_err(|e| format!("[start_wizard] join: {e}"))?;
+    let n_cells = grid.n_fields();
+    let cell_positions = grid.flat_positions().to_vec();
+    Ok(WizardInit { divisions, n_cells, cell_positions })
 }
 
 #[tauri::command]

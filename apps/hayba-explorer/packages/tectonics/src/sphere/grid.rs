@@ -18,6 +18,8 @@
 
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use super::voronoi::VoronoiSphere;
 
@@ -27,6 +29,10 @@ pub const EARTH_AREA_KM2: f64 = 510_072_000.0;
 
 /// Mean Earth radius in km (matches TE `constants.earthRadius`).
 pub const EARTH_RADIUS_KM: f64 = 6_371.0;
+
+fn empty_flat_positions() -> Arc<OnceLock<Vec<f32>>> {
+    Arc::new(OnceLock::new())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Grid {
@@ -41,6 +47,8 @@ pub struct Grid {
     /// Coarse lat/lon raster: each cell stores the nearest field id at that
     /// grid centre. Used for O(1) nearest-field lookups.
     raster: NearestRaster,
+    #[serde(skip, default = "empty_flat_positions")]
+    flat_positions: Arc<OnceLock<Vec<f32>>>,
 }
 
 impl Grid {
@@ -59,6 +67,7 @@ impl Grid {
             field_diameter_km,
             field_area_km2,
             raster,
+            flat_positions: empty_flat_positions(),
         }
     }
 
@@ -144,6 +153,24 @@ impl Grid {
                 None => return best,
             }
         }
+    }
+
+    /// Lazy flat XYZ position buffer `[x0,y0,z0, x1,y1,z1, …]` built
+    /// once per `Grid` instance via `OnceLock`. Reused across IPC calls
+    /// when `Grid` is cached by `Grid::for_divisions`. Length = `3 *
+    /// n_fields()`.
+    pub fn flat_positions(&self) -> &[f32] {
+        self.flat_positions.get_or_init(|| {
+            let n = self.n_fields();
+            let mut v = Vec::with_capacity((n as usize) * 3);
+            for fid in 0..n {
+                let p = self.position(fid);
+                v.push(p.x);
+                v.push(p.y);
+                v.push(p.z);
+            }
+            v
+        })
     }
 }
 
@@ -260,6 +287,41 @@ fn hill_climb(sphere: &VoronoiSphere, seed: u32, target: Vec3) -> u32 {
             Some(nb) => best = nb,
             None => return best,
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Process-global Grid cache
+// ---------------------------------------------------------------------------
+
+static GRID_CACHE: OnceLock<Mutex<HashMap<u32, Arc<Grid>>>> = OnceLock::new();
+
+fn grid_cache() -> &'static Mutex<HashMap<u32, Arc<Grid>>> {
+    GRID_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+impl Grid {
+    /// Cached constructor. Returns the shared `Arc<Grid>` for this
+    /// `divisions`, building once via `Grid::new` and memoising for
+    /// process lifetime. Thread-safe; the actual `Grid::new` runs
+    /// OUTSIDE the cache mutex so concurrent cold requests for
+    /// different tiers do not serialise.
+    pub fn for_divisions(divisions: u32) -> Arc<Grid> {
+        // Fast path: lock, look up, clone the Arc.
+        {
+            let map = grid_cache()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some(g) = map.get(&divisions) {
+                return Arc::clone(g);
+            }
+        }
+        // Cold path: build OUTSIDE the lock, then double-checked insert.
+        let built = Arc::new(Grid::new(divisions));
+        let mut map = grid_cache()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        Arc::clone(map.entry(divisions).or_insert(built))
     }
 }
 
