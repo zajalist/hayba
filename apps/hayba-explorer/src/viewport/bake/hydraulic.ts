@@ -51,8 +51,9 @@ import {
   INIT_ACC_FRAG,
   ACCUM_FRAG,
   CONTROLS_FRAG,
-  CLIMATE_NOOP_FRAG,
   CLIMATE_FRAG,
+  TERRAIN_FRAG,
+  HYDRO_FRAG,
   MSLP_FRAG,
   BLUR_H_FRAG,
   BLUR_V_FRAG,
@@ -503,8 +504,30 @@ export async function runHydraulicBake(
       },
       CLIM[0],
     );
-    runRawPass(renderer, CLIMATE_NOOP_FRAG, {}, TERR[0]);
-    runRawPass(renderer, CLIMATE_NOOP_FRAG, {}, HYDRO[0]);
+    runRawPass(
+      renderer,
+      TERRAIN_FRAG,
+      {
+        uA: u(aReadRT()),
+        uCtrl: u(CTRL[0]),
+        uGrid: u(uGrid),
+        uVerticality: u(cfg.scale.verticality),
+        uTerrainScale: u(cfg.scale.terrainScale),
+        uSinMin: u(cfg.sinMin),
+      },
+      TERR[0],
+    );
+    runRawPass(
+      renderer,
+      HYDRO_FRAG,
+      {
+        uA: u(aReadRT()),
+        uAcc: u(accReadRT()),
+        uCtrl: u(CTRL[0]),
+        uGrid: u(uGrid),
+      },
+      HYDRO[0],
+    );
   };
 
   // Resolution invariance (measured, not assumed). S1 made `slope`
