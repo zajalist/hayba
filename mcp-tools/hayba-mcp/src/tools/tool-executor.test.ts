@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { UeToolError, costToTimeoutMs } from './tool-executor.js';
+import { UeToolError, costToTimeoutMs, executeCommand, type Sender } from './tool-executor.js';
+import type { TcpResponse } from '../tcp-client.js';
+import { registerToolMeta, resetToolMetaRegistry } from './tool-meta-registry.js';
 
 describe('UeToolError', () => {
   it('carries a code discriminator and optional uePayload', () => {
@@ -28,5 +30,42 @@ describe('costToTimeoutMs', () => {
     expect(costToTimeoutMs(undefined)).toBe(10_000);
     // @ts-expect-error — runtime safety for bad input
     expect(costToTimeoutMs('garbage')).toBe(10_000);
+  });
+});
+
+const okSender: Sender = async (cmd, params, _timeout) => ({
+  id: 't',
+  ok: true,
+  data: { echoed: { cmd, params } },
+});
+
+describe('executeCommand — happy path', () => {
+  it('returns response.data object on ok:true', async () => {
+    const data = await executeCommand('actor_list', { tag: 'x' }, { sender: okSender });
+    expect(data).toEqual({ echoed: { cmd: 'actor_list', params: { tag: 'x' } } });
+  });
+
+  it('passes timeout-from-cost to the sender when meta is registered', async () => {
+    const seen: number[] = [];
+    const spy: Sender = async (_c, _p, t) => { seen.push(t); return { id: 't', ok: true, data: {} }; };
+    resetToolMetaRegistry();
+    registerToolMeta('build_project', { cost: 'high', effects: [], when: '', not_when: '' });
+    await executeCommand('build_project', {}, { sender: spy });
+    expect(seen[0]).toBe(60_000);
+  });
+
+  it('defaults timeout to medium (10s) when meta is missing', async () => {
+    resetToolMetaRegistry();
+    const seen: number[] = [];
+    const spy: Sender = async (_c, _p, t) => { seen.push(t); return { id: 't', ok: true, data: {} }; };
+    await executeCommand('unknown', {}, { sender: spy });
+    expect(seen[0]).toBe(10_000);
+  });
+
+  it('honors an explicit opts.timeout override', async () => {
+    const seen: number[] = [];
+    const spy: Sender = async (_c, _p, t) => { seen.push(t); return { id: 't', ok: true, data: {} }; };
+    await executeCommand('x', {}, { sender: spy, timeout: 1234 });
+    expect(seen[0]).toBe(1234);
   });
 });
