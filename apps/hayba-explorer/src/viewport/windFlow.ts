@@ -1,7 +1,13 @@
 import * as THREE from "three";
-import { runRawPass } from "./bake/glPass";
+import { runRawPass, runPointPass } from "./bake/glPass";
 import { createPingPong } from "./bake/pingpong";
-import { WINDFLOW_FRAG } from "./windFlow.glsl";
+import {
+  INIT_FRAG,
+  ADVECT_FRAG,
+  FADE_FRAG,
+  SPLAT_VERT,
+  SPLAT_FRAG,
+} from "./windFlow.glsl";
 
 /** Cap the long side to `max`, preserving the source aspect, integer,
  *  always >= 1. Equirect WIND is 2:1 but this works for any aspect. */
@@ -19,6 +25,8 @@ export function windFlowSize(
 }
 
 export const WINDFLOW_MAX = 1024;
+export const PARTICLE_DIM = 64;
+export const PARTICLE_COUNT = 4096;
 
 /** Clamp a frame dt to a sane sim step (<= 1/15 s; NaN/negative -> 0). */
 export function __clampStepDt(dt: number): number {
@@ -32,15 +40,34 @@ export interface WindFlow {
   dispose(): void;
 }
 
-/** Display-only Eulerian wind flow-map engine. Owns a PRIVATE 2-RT
- *  trail ping-pong; never touches bake/erosion RTs. */
+/** Display-only Lagrangian wind flow-map engine (NX-3-v2c). Owns PRIVATE
+ *  particle state ping-pong (64x64) + trail ping-pong; never touches
+ *  bake/erosion RTs. */
 export function createWindFlow(
   renderer: THREE.WebGLRenderer,
   windRT: THREE.WebGLRenderTarget,
 ): WindFlow {
   const { w, h } = windFlowSize(windRT.width, windRT.height, WINDFLOW_MAX);
-  const pp = createPingPong(renderer, w, h, ["TRAIL"]);
-  const trail = pp.rt["TRAIL"]; // [RT0, RT1]
+
+  // Particle state ping-pong (64x64 RGBA32F = 4096 particles).
+  const partPP = createPingPong(renderer, PARTICLE_DIM, PARTICLE_DIM, ["P"]);
+  const part = partPP.rt["P"];
+
+  // Trail ping-pong (capped equirect, accumulates point splats + fades).
+  const trailPP = createPingPong(renderer, w, h, ["T"]);
+  const trail = trailPP.rt["T"];
+
+  // Seed initial particle state via a one-shot INIT pass into part[0].
+  runRawPass(
+    renderer,
+    INIT_FRAG,
+    {
+      uGrid: { value: new THREE.Vector2(PARTICLE_DIM, PARTICLE_DIM) },
+    },
+    part[0],
+  );
+
+  // Clear both trail halves to black so the first frames aren't garbage.
   const prevTarget = renderer.getRenderTarget();
   for (const rt of trail) {
     renderer.setRenderTarget(rt);
@@ -48,36 +75,68 @@ export function createWindFlow(
     renderer.clear(true, false, false);
   }
   renderer.setRenderTarget(prevTarget);
-  let read = 0;
+
+  let pRead = 0;
+  let tRead = 0;
   let acc = 0;
 
   return {
     trailTexture(): THREE.Texture {
-      return trail[read].texture;
+      return trail[tRead].texture;
     },
     step(dtSec: number): void {
-      const dt = __clampStepDt(dtSec);
-      if (dt === 0) return;
-      acc += dt;
-      const src = trail[read];
-      const dst = trail[read ^ 1];
+      const cdt = __clampStepDt(dtSec);
+      if (cdt === 0) return;
+      acc += cdt;
+
+      // (a) ADVECT particles: part[pRead] -> part[pRead ^ 1].
       runRawPass(
         renderer,
-        WINDFLOW_FRAG,
+        ADVECT_FRAG,
         {
-          uPrevTrail: { value: src.texture },
+          uPrev: { value: part[pRead].texture },
           uWind: { value: windRT.texture },
-          uGrid: { value: new THREE.Vector2(w, h) },
-          uDt: { value: dt },
+          uGrid: { value: new THREE.Vector2(PARTICLE_DIM, PARTICLE_DIM) },
+          uDt: { value: cdt },
           uTime: { value: acc },
         },
-        dst,
+        part[pRead ^ 1],
       );
-      read ^= 1;
+      pRead ^= 1;
+
+      // (b) FADE the trail: trail[tRead] * 0.9 -> trail[tRead ^ 1].
+      runRawPass(
+        renderer,
+        FADE_FRAG,
+        {
+          uPrevTrail: { value: trail[tRead].texture },
+          uGrid: { value: new THREE.Vector2(w, h) },
+        },
+        trail[tRead ^ 1],
+      );
+      tRead ^= 1;
+
+      // (c) SPLAT particles additively onto the just-faded trail.
+      runPointPass(
+        renderer,
+        SPLAT_VERT,
+        SPLAT_FRAG,
+        PARTICLE_COUNT,
+        {
+          uPart: { value: part[pRead].texture },
+          uPartDim: { value: new THREE.Vector2(PARTICLE_DIM, PARTICLE_DIM) },
+          uWind: { value: windRT.texture },
+        },
+        trail[tRead],
+        { additive: true },
+      );
     },
     dispose(): void {
+      part[0].dispose();
+      part[1].dispose();
       trail[0].dispose();
       trail[1].dispose();
+      // NEVER call disposeGlPassCache — that frees the shared bake cache.
     },
   };
 }

@@ -106,6 +106,15 @@ function buildFragmentSource(frag: string): string {
   );
 }
 
+function buildVertexSource(vert: string): string {
+  return (
+    "#version 300 es\n" +
+    "precision highp float;\n" +
+    "precision highp int;\n" +
+    vert
+  );
+}
+
 type Gl = WebGL2RenderingContext;
 
 /** Per-program compiled+linked state + caches. */
@@ -135,6 +144,7 @@ type UniformGlType =
 let _gl: Gl | null = null;
 let _fbo: WebGLFramebuffer | null = null;
 let _vao: WebGLVertexArrayObject | null = null;
+let _pointVao: WebGLVertexArrayObject | null = null;
 let _vbo: WebGLBuffer | null = null;
 const _programs = new Map<string, ProgramEntry>();
 /* Resolved GL texture handle per three Texture/RT, keyed by the three
@@ -193,6 +203,9 @@ function parseUniformTypes(src: string): Map<string, UniformGlType> {
   }
   return out;
 }
+
+/** Test-only re-export. Do not depend on this from production code. */
+export const __parseUniformTypesForTest = parseUniformTypes;
 
 function compileShader(
   gl: Gl,
@@ -284,6 +297,49 @@ function ensureProgram(gl: Gl, frag: string): ProgramEntry {
     type: parseUniformTypes(frag),
   };
   _programs.set(frag, entry);
+  return entry;
+}
+
+/** Compile+link (once) and cache the program for a vertex+fragment source pair. */
+function ensureProgramVF(gl: Gl, vert: string, frag: string): ProgramEntry {
+  const key = "P|" + vert + "\n" + frag;
+  let entry = _programs.get(key);
+  if (entry) return entry;
+
+  const vs = compileShader(gl, gl.VERTEX_SHADER, buildVertexSource(vert), "vertex");
+  const fsSrc = buildFragmentSource(frag);
+  const fs = compileShader(gl, gl.FRAGMENT_SHADER, fsSrc, "fragment");
+
+  const program = gl.createProgram();
+  if (!program) throw new Error("glPass: createProgram failed");
+  gl.attachShader(program, vs);
+  gl.attachShader(program, fs);
+  // Bind the VS `position` attribute to location 0 (matches the VAO).
+  gl.bindAttribLocation(program, 0, "position");
+  gl.linkProgram(program);
+  // Shaders can be detached/deleted after a successful link.
+  gl.detachShader(program, vs);
+  gl.detachShader(program, fs);
+  gl.deleteShader(vs);
+  gl.deleteShader(fs);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    const log = gl.getProgramInfoLog(program);
+    gl.deleteProgram(program);
+    // Loud — a shader-prefix mismatch must NOT be silent. Name the frag
+    // by its first signature-ish token so the failing pass is clear.
+    const idMatch = frag.match(/[A-Za-z_]\w*\s*\(/);
+    const fid = idMatch ? idMatch[0].replace(/\s+/g, "") : frag.slice(0, 32);
+    throw new Error(
+      `glPass: program link failed for frag "${fid}":\n${log ?? "(no log)"}`,
+    );
+  }
+
+  entry = {
+    program,
+    loc: new Map(),
+    type: parseUniformTypes(vert + "\n" + frag),
+  };
+  _programs.set(key, entry);
   return entry;
 }
 
@@ -576,6 +632,238 @@ export function runRawPass(
 }
 
 /**
+ * Run ONE POINTS-primitive pass on the raw WebGL2 context into `dstRT`,
+ * using a caller-supplied vertex shader (typically gl_VertexID-driven) and
+ * `count` point sprites. Mirrors runRawPass's discipline byte-for-byte
+ * (same two-phase sampler bind, same explicit cleanup) and differs only in
+ * the 7 named ways: vert param, ensureProgramVF, _pointVao, optional
+ * additive blend, POINTS draw call, blend restore, and count param.
+ */
+export function runPointPass(
+  renderer: THREE.WebGLRenderer,
+  vert: string,
+  frag: string,
+  count: number,
+  uniforms: Record<string, THREE.IUniform>,
+  dstRT: THREE.WebGLRenderTarget,
+  opts?: { additive?: boolean },
+): void {
+  const gl = ensureGl(renderer);
+  const entry = ensureProgramVF(gl, vert, frag);
+  const fbo = _fbo as WebGLFramebuffer;
+  if (_pointVao === null) _pointVao = gl.createVertexArray();
+  const vao = _pointVao as WebGLVertexArrayObject;
+
+  const dstGlTex = resolveRtGlTexture(renderer, dstRT);
+
+  // 1-2. Bind our own FBO and (re)attach the dst's GL texture each pass.
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.framebufferTexture2D(
+    gl.FRAMEBUFFER,
+    gl.COLOR_ATTACHMENT0,
+    gl.TEXTURE_2D,
+    dstGlTex,
+    0,
+  );
+
+  // 3. (dev-gated) framebuffer completeness assert — a misconfigured
+  // attachment should be loud, not a silently black pass.
+  if (
+    (import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV === true
+  ) {
+    const fbStatus = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    if (fbStatus !== gl.FRAMEBUFFER_COMPLETE) {
+      throw new Error(
+        `glPass: framebuffer incomplete (0x${fbStatus.toString(16)})`,
+      );
+    }
+  }
+
+  // 4. Fixed-function state for an offscreen compute pass.
+  gl.viewport(0, 0, dstRT.width, dstRT.height);
+  gl.disable(gl.DEPTH_TEST);
+  gl.disable(gl.BLEND);
+  gl.disable(gl.SCISSOR_TEST);
+  gl.disable(gl.CULL_FACE);
+  gl.colorMask(true, true, true, true);
+  if (opts?.additive) {
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE);
+  }
+
+  // 5. Program + geometry.
+  gl.useProgram(entry.program);
+  gl.bindVertexArray(vao);
+
+  // 6. Upload uniforms by parsed GLSL type. Track sampler units bound so
+  //    they can be explicitly unbound after the draw.
+  //
+  // SAMPLERS ARE TWO-PHASE (load-bearing — do NOT inline phase 2 into
+  // phase 1). resolveRtGlTexture/resolveTexGlHandle call three's
+  // renderer.initRenderTarget / renderer.initTexture, which on a
+  // texture/RT's FIRST use run textures.setupRenderTarget /
+  // textures.setTexture2D. Those go through three's WebGLState and issue
+  // REAL gl.activeTexture(TEXTURE0+slot)/gl.bindTexture (slot defaults to
+  // 0) plus a state.texImage2D upload. If we resolved+raw-bound samplers
+  // one-by-one, the resolve of sampler N (e.g. uPrecip, a DataTexture's
+  // first upload) would clobber the raw bind we already did for sampler
+  // N-1 on its unit (e.g. uA on unit 0) — three's setTexture2D rebinds
+  // unit 0. The shader then samples the wrong texture for the earlier unit
+  // (uA reads zeros while only the later sampler is correct → the exact
+  // "terrain/ocean collapse, water-only updates" failure). So: PHASE 1
+  // resolves EVERY sampler handle (all three-state touches happen here,
+  // before any raw unit bind); PHASE 2 raw-binds the resolved handles to
+  // units with NO three call interleaved, so nothing can clobber a unit
+  // after it is bound.
+  let unit = 0;
+  const boundUnits: number[] = [];
+  // Phase 1: resolve all sampler GL handles + assign units (three's lazy
+  // init/upload may bind textures on its own units here — harmless now,
+  // because no raw unit binds have happened yet).
+  const samplerBinds: {
+    loc: WebGLUniformLocation;
+    handle: WebGLTexture;
+    unit: number;
+  }[] = [];
+  for (const name of Object.keys(uniforms)) {
+    const u = uniforms[name];
+    if (!u) continue;
+    const value = u.value as unknown;
+    const loc = uniformLoc(gl, entry, name);
+    if (loc == null) continue; // not present / optimized out
+    const rt = asRenderTarget(value);
+    if (rt != null) {
+      // CRITICAL: resolve an RT *source* via initRenderTarget (the same
+      // path the dst uses), NOT initTexture(rt.texture). An RT's color
+      // texture is GL-created exclusively by textures.setupRenderTarget
+      // (three.module.js:25842), which sets `__webglTexture` + `__version`
+      // but NOT `__cacheKey` and never registers the texture in three's
+      // `_sources` map. Routing rt.texture through initTexture →
+      // setTexture2D → initTexture(props,tex) (three.module.js:24784) then
+      // sees `textureCacheKey !== props.__cacheKey` (undefined), so it
+      // CREATES A FRESH EMPTY gl.createTexture() and OVERWRITES
+      // props.__webglTexture (three.module.js:24821/24856) — binding an
+      // empty never-rendered texture → the shader samples all zeros.
+      // initRenderTarget is idempotent and returns the RT's real
+      // color-attachment handle.
+      samplerBinds.push({
+        loc,
+        handle: resolveRtGlTexture(renderer, rt),
+        unit,
+      });
+      boundUnits.push(unit);
+      unit++;
+      continue;
+    }
+    if (value instanceof THREE.Texture) {
+      samplerBinds.push({
+        loc,
+        handle: resolveTexGlHandle(renderer, value),
+        unit,
+      });
+      boundUnits.push(unit);
+      unit++;
+      continue;
+    }
+  }
+  // Phase 2: raw-bind every resolved sampler handle to its unit. No three
+  // call runs between these binds, so a unit, once bound, stays bound
+  // through the draw.
+  for (const sb of samplerBinds) {
+    gl.activeTexture(gl.TEXTURE0 + sb.unit);
+    gl.bindTexture(gl.TEXTURE_2D, sb.handle);
+    gl.uniform1i(sb.loc, sb.unit);
+  }
+  // Non-sampler uniforms (no three-state interaction — order-independent).
+  for (const name of Object.keys(uniforms)) {
+    const u = uniforms[name];
+    if (!u) continue;
+    const value = u.value as unknown;
+    const loc = uniformLoc(gl, entry, name);
+    if (loc == null) continue; // not present / optimized out
+    const gType = entry.type.get(name) ?? "unknown";
+
+    // Samplers were handled in the two-phase block above.
+    if (asRenderTarget(value) != null || value instanceof THREE.Texture) {
+      continue;
+    }
+
+    // Vectors.
+    if (value instanceof THREE.Vector2) {
+      if (gType === "uvec2") {
+        // The u64 hash seed: .x = lo32, .y = hi32 as uint bit-patterns.
+        // MUST be uniform2ui — uniform2f would silently corrupt the bake.
+        gl.uniform2ui(loc, value.x >>> 0, value.y >>> 0);
+      } else if (gType === "ivec2") {
+        gl.uniform2i(loc, value.x | 0, value.y | 0);
+      } else {
+        gl.uniform2f(loc, value.x, value.y);
+      }
+      continue;
+    }
+    if (value instanceof THREE.Vector3) {
+      gl.uniform3f(loc, value.x, value.y, value.z);
+      continue;
+    }
+    if (value instanceof THREE.Vector4) {
+      gl.uniform4f(loc, value.x, value.y, value.z, value.w);
+      continue;
+    }
+
+    // Scalars: int/uint vs float driven by the PARSED GLSL type.
+    if (typeof value === "number") {
+      if (gType === "int") {
+        gl.uniform1i(loc, value | 0);
+      } else if (gType === "uint") {
+        gl.uniform1ui(loc, value >>> 0);
+      } else {
+        // float (default) — uFaceRes, uErodibility, …
+        gl.uniform1f(loc, value);
+      }
+      continue;
+    }
+    if (typeof value === "boolean") {
+      gl.uniform1i(loc, value ? 1 : 0);
+      continue;
+    }
+    // Any other type is unexpected for the bake frags — skip silently
+    // (a real type error would surface as a wrong-looking field, and the
+    // parsed-type path above covers every uniform the bake actually uses).
+  }
+
+  // 7. Draw the point sprites.
+  gl.drawArrays(gl.POINTS, 0, count);
+
+  // 8. EXPLICIT cleanup — the whole point. Unbind every sampler unit we
+  //    bound, then the FBO. dst was only ever a COLOR_ATTACHMENT0, never a
+  //    sampler (GL-ALIAS proved no uniform == dst). With all sampler units
+  //    null and the FBO unbound, no texture can be simultaneously a
+  //    sampler source and the active framebuffer attachment on any
+  //    subsequent pass → the "Feedback loop formed between Framebuffer and
+  //    active Texture" condition cannot arise. Structurally impossible.
+  for (const bu of boundUnits) {
+    gl.activeTexture(gl.TEXTURE0 + bu);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+  }
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindVertexArray(null);
+  // Detach the dst texture from the FBO before unbinding (so the dst GL
+  // texture is not even referenced by our FBO between passes).
+  gl.framebufferTexture2D(
+    gl.FRAMEBUFFER,
+    gl.COLOR_ATTACHMENT0,
+    gl.TEXTURE_2D,
+    null,
+    0,
+  );
+  if (opts?.additive) {
+    gl.disable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ZERO);
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+
+/**
  * Read RGBA32F pixels from a three RenderTarget on the raw WebGL2 context,
  * via OUR own FBO — NOT three's `readRenderTargetPixels`.
  *
@@ -639,10 +927,12 @@ export function disposeGlPassCache(): void {
     if (_fbo) gl.deleteFramebuffer(_fbo);
     if (_vbo) gl.deleteBuffer(_vbo);
     if (_vao) gl.deleteVertexArray(_vao);
+    if (_pointVao) gl.deleteVertexArray(_pointVao);
   }
   _programs.clear();
   _fbo = null;
   _vbo = null;
   _vao = null;
+  _pointVao = null;
   _gl = null;
 }
