@@ -175,6 +175,10 @@ export interface HydraulicConfig {
    *  the simulated month in [0,12) (0=Jan, 6=Jul); inert while amp 0. */
   seasonAmp: number;
   seasonPhase: number;
+  /** P2.3b-i Whittaker biome thermal cuts (°C) — mirrors
+   *  ClimateParams.biome_cold_c / biome_hot_c. */
+  biomeColdC: number;
+  biomeHotC: number;
   /** S2.3 concavity gate: river carve is multiplied by
    *  `smoothstep(0, concaveScale, laplacian(b))` so incision only bites
    *  CONCAVE valley floors, not CONVEX plateau/range shoulders (kills the
@@ -284,6 +288,8 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   coriolisGain: 15.0,
   seasonAmp: 0.0,
   seasonPhase: 0.0,
+  biomeColdC: 6.0,
+  biomeHotC: 18.0,
   channelDepth: 0.02,
   sfdJitter: 0.002,
   // Concave valleys reach full carve by lap≈0.003; every convex shoulder
@@ -524,7 +530,10 @@ export async function runHydraulicBake(
         uA: u(aReadRT()),
         uAcc: u(accReadRT()),
         uCtrl: u(CTRL[0]),
+        uClim: u(CLIM[0]),
         uGrid: u(uGrid),
+        uBiomeColdC: u(cfg.biomeColdC),
+        uBiomeHotC: u(cfg.biomeHotC),
       },
       HYDRO[0],
     );
