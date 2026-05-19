@@ -12,6 +12,7 @@ import {
   CLIMATE_FRAG,
   TERRAIN_FRAG,
   HYDRO_FRAG,
+  WIND_FRAG,
 } from "./hydraulic.glsl";
 import { BAKE_RES_TIERS, clampBakeRes } from "./bakeResolution";
 
@@ -344,5 +345,22 @@ describe("#234 P2.3a TERRAIN/HYDRO frags", () => {
     expect(HYDRO_FRAG.split("\n").filter(
       (l)=>/^\s*"?uniform /.test(l)&&l.includes("//")).length).toBe(0);
     expect(HYDRO_FRAG).not.toMatch(/`/);
+  });
+});
+
+describe("NX-3-v2a WIND_FRAG", () => {
+  it("packs geostrophic wind vector (vx,vy,|v|) from blurred MSLP", () => {
+    expect(typeof WIND_FRAG).toBe("string");
+    expect(WIND_FRAG).toMatch(/uniform sampler2D uMSLP;/);
+    expect(WIND_FRAG).toMatch(/uniform float uCoriolisGain;/);
+    expect(WIND_FRAG).toMatch(/uCoriolisGain \* s \* vec2\(-gp\.y, gp\.x\) - gp/);
+    expect(WIND_FRAG).toMatch(/length\(wvec\)/);
+    expect(WIND_FRAG).toMatch(/fragColor = vec4\(/);
+    expect(
+      WIND_FRAG.split("\n").filter(
+        (l) => /^\s*"?uniform /.test(l) && l.includes("//"),
+      ).length,
+    ).toBe(0);
+    expect(WIND_FRAG).not.toMatch(/`/);
   });
 });
