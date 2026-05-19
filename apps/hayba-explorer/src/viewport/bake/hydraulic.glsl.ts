@@ -847,3 +847,52 @@ export const CLIMATE_FRAG = [
   "  fragColor = vec4(fin(T), fin(P), fin(windAz), clamp(fin(glac), 0.0, 1.0));",
   "}",
 ].join("\n");
+
+// #234 P2.3a TERRAIN — packed terrain mask. r=true metre slope
+// (ERODE transcription), g=aspect (CTRL.r slope azimuth, turns),
+// b=curvature (CTRL.b), a=0 (coast-SDF is P2.3b). Ocean -> all 0.
+export const TERRAIN_FRAG = [
+  H,
+  "uniform sampler2D uA;",
+  "uniform sampler2D uCtrl;",
+  "uniform vec2 uGrid;",
+  "uniform float uVerticality;",
+  "uniform float uTerrainScale;",
+  "uniform float uSinMin;",
+  "void main(){",
+  "  ivec2 rc = fragRC();",
+  "  vec4 a = loadA(uA, uGrid, rc.x, rc.y);",
+  "  if (a.a > 0.5) { fragColor = vec4(0.0); return; }",
+  "  vec4 aL = loadA(uA, uGrid, rc.x - 1, rc.y);",
+  "  vec4 aR = loadA(uA, uGrid, rc.x + 1, rc.y);",
+  "  vec4 aB = loadA(uA, uGrid, rc.x,     rc.y - 1);",
+  "  vec4 aT = loadA(uA, uGrid, rc.x,     rc.y + 1);",
+  "  float dbx = (aR.r - aL.r) * 0.5;",
+  "  float dby = (aT.r - aB.r) * 0.5;",
+  "  float gh = clamp(length(vec2(dbx, dby)), 0.0, 1.0e4);",
+  "  float dx = uTerrainScale / max(1.0, uGrid.x);",
+  "  float slope = max(uSinMin, (gh * uVerticality) / max(1.0e-6, dx));",
+  "  vec4 c = loadF(uCtrl, uGrid, rc.x, rc.y);",
+  "  fragColor = vec4(fin(slope), fin(c.r), fin(c.b), 0.0);",
+  "}",
+].join("\n");
+
+// #234 P2.3a HYDRO — packed hydrology mask. r=discharge Q (#218 ACC),
+// g=elevation-normalised (max(0,h) clamped), b=endorheic (CTRL.a),
+// a=0 (biome-id is P2.3b). Ocean -> all 0.
+export const HYDRO_FRAG = [
+  H,
+  "uniform sampler2D uA;",
+  "uniform sampler2D uAcc;",
+  "uniform sampler2D uCtrl;",
+  "uniform vec2 uGrid;",
+  "void main(){",
+  "  ivec2 rc = fragRC();",
+  "  vec4 a = loadA(uA, uGrid, rc.x, rc.y);",
+  "  if (a.a > 0.5) { fragColor = vec4(0.0); return; }",
+  "  float Q = loadF(uAcc, uGrid, rc.x, rc.y).r;",
+  "  float elevN = clamp(max(0.0, a.r), 0.0, 1.0);",
+  "  float endo = loadF(uCtrl, uGrid, rc.x, rc.y).a;",
+  "  fragColor = vec4(fin(Q), fin(elevN), clamp(fin(endo), 0.0, 1.0), 0.0);",
+  "}",
+].join("\n");

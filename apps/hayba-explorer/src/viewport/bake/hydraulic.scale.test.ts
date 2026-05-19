@@ -10,6 +10,8 @@ import {
   CONTROLS_FRAG,
   CLIMATE_NOOP_FRAG,
   CLIMATE_FRAG,
+  TERRAIN_FRAG,
+  HYDRO_FRAG,
 } from "./hydraulic.glsl";
 import { BAKE_RES_TIERS, clampBakeRes } from "./bakeResolution";
 
@@ -298,5 +300,33 @@ describe("#234 P2.2 CLIMATE_FRAG", () => {
       ).length,
     ).toBe(0);
     expect(CLIMATE_FRAG).not.toMatch(/`/);
+  });
+});
+
+describe("#234 P2.3a TERRAIN/HYDRO frags", () => {
+  it("TERRAIN_FRAG packs slope/aspect/curvature, ocean->0", () => {
+    expect(typeof TERRAIN_FRAG).toBe("string");
+    expect(TERRAIN_FRAG).toMatch(/uniform sampler2D uA;/);
+    expect(TERRAIN_FRAG).toMatch(/uniform sampler2D uCtrl;/);
+    expect(TERRAIN_FRAG).toMatch(/uniform float uVerticality;/);
+    expect(TERRAIN_FRAG).toMatch(/uniform float uTerrainScale;/);
+    expect(TERRAIN_FRAG).toMatch(/uniform float uSinMin;/);
+    expect(TERRAIN_FRAG).toMatch(/max\(uSinMin/);
+    expect(TERRAIN_FRAG).toMatch(/a\.a > 0\.5/);
+    expect(TERRAIN_FRAG).toMatch(/fragColor = vec4\(/);
+    expect(TERRAIN_FRAG.split("\n").filter(
+      (l)=>/^\s*"?uniform /.test(l)&&l.includes("//")).length).toBe(0);
+    expect(TERRAIN_FRAG).not.toMatch(/`/);
+  });
+  it("HYDRO_FRAG packs discharge/elev/endorheic, ocean->0", () => {
+    expect(typeof HYDRO_FRAG).toBe("string");
+    expect(HYDRO_FRAG).toMatch(/uniform sampler2D uAcc;/);
+    expect(HYDRO_FRAG).toMatch(/uniform sampler2D uA;/);
+    expect(HYDRO_FRAG).toMatch(/uniform sampler2D uCtrl;/);
+    expect(HYDRO_FRAG).toMatch(/a\.a > 0\.5/);
+    expect(HYDRO_FRAG).toMatch(/fragColor = vec4\(/);
+    expect(HYDRO_FRAG.split("\n").filter(
+      (l)=>/^\s*"?uniform /.test(l)&&l.includes("//")).length).toBe(0);
+    expect(HYDRO_FRAG).not.toMatch(/`/);
   });
 });
