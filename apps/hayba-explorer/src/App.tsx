@@ -375,6 +375,7 @@ export default function App() {
   const prevDebugClimRef = useRef<THREE.WebGLRenderTarget | null>(null);
   const prevDebugTerrRef = useRef<THREE.WebGLRenderTarget | null>(null);
   const prevDebugHydroRef = useRef<THREE.WebGLRenderTarget | null>(null);
+  const prevDebugWindRef = useRef<THREE.WebGLRenderTarget | null>(null);
   // Live stack handles for the mounted material's selector.
   const debugStackRef = useRef<{
     clim: THREE.WebGLRenderTarget;
@@ -1160,6 +1161,7 @@ export default function App() {
       prevDebugClimRef.current?.dispose();
       prevDebugTerrRef.current?.dispose();
       prevDebugHydroRef.current?.dispose();
+      prevDebugWindRef.current?.dispose();
 
       const __tU0 = performance.now();
       const base = uploadEquirect(new Float32Array(inp.height), w, h);
@@ -1171,6 +1173,7 @@ export default function App() {
       let climRT!: THREE.WebGLRenderTarget;
       let terrRT!: THREE.WebGLRenderTarget;
       let hydroRT!: THREE.WebGLRenderTarget;
+      let windRT!: THREE.WebGLRenderTarget;
       await scene.runBake(async (renderer) => {
         const out = await runHydraulicBake(
           renderer,
@@ -1195,6 +1198,7 @@ export default function App() {
         climRT = out.clim;
         terrRT = out.terr;
         hydroRT = out.hydro;
+        windRT = out.wind;
       });
       const __gpuMs = performance.now() - __tG0;
       sceneRef.current?.setBakeSplit({
@@ -1211,6 +1215,7 @@ export default function App() {
       prevDebugClimRef.current = climRT;
       prevDebugTerrRef.current = terrRT;
       prevDebugHydroRef.current = hydroRT;
+      prevDebugWindRef.current = windRT;
       debugStackRef.current = { clim: climRT, terr: terrRT, hydro: hydroRT };
 
       const mat = makeDebugReliefMaterial();
