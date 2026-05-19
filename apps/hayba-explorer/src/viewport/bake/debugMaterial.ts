@@ -31,6 +31,21 @@
 
 import * as THREE from "three";
 
+// A 1x1 opaque-black RGBA32F texture so `uStackTex` is never null before a
+// stack RT is bound (a null sampler binds three's default white texture and
+// warns). Module-shared + immutable — every material reuses this one.
+const STACK_PLACEHOLDER_TEX: THREE.DataTexture = (() => {
+  const t = new THREE.DataTexture(
+    new Float32Array([0, 0, 0, 1]),
+    1,
+    1,
+    THREE.RGBAFormat,
+    THREE.FloatType,
+  );
+  t.needsUpdate = true;
+  return t;
+})();
+
 // The vertex shader EXTRUDES the smooth SphereGeometry by the BAKED
 // equirect height (sampled in-vertex), so erosion reads as real geometry
 // (land bulges out, ocean basins sink in) and the no-erosion toggle is a
@@ -45,6 +60,7 @@ const VERT: string = [
   "uniform sampler2D uHeight;",
   "uniform sampler2D uHeight0;",
   "uniform float uMapMode;",
+  "uniform float uStackMode;",
   "uniform float uDisplace;",
   "const float PI = 3.141592653589793;",
   "vec2 sphereToEquirectUv(vec3 n){",
@@ -62,7 +78,10 @@ const VERT: string = [
   "  float hE = texture2D(uHeight,  uv).r;",
   "  float hR = texture2D(uHeight0, uv).r;",
   "  float hh = mix(hE, hR, step(0.5, uMapMode));",
-  "  vec3 dispPos = position + nrm * (hh * uDisplace);",
+  "  /* Only FLAT (uStackMode 2) renders UNdisplaced; relief(0)/draped(1)/",
+  "     normal(3) all extrude as before. */",
+  "  float dispGain = (uStackMode > 1.5 && uStackMode < 2.5) ? 0.0 : 1.0;",
+  "  vec3 dispPos = position + nrm * (hh * uDisplace * dispGain);",
   "  gl_Position = projectionMatrix * modelViewMatrix * vec4(dispPos, 1.0);",
   "}",
 ].join("\n");
@@ -77,6 +96,12 @@ const FRAG: string = [
   "uniform float uReliefStrength; /* hillshade contribution gain           */",
   "uniform vec3  uSunDir;       /* light direction for the slope hillshade */",
   "uniform vec2  uTexSize;      /* equirect texel size = (1/W, 1/H)        */",
+  "",
+  "uniform sampler2D uStackTex; /* selected stack RT (clim|terr|hydro)      */",
+  "uniform float uChannel;      /* which RGBA lane of uStackTex (0..3)      */",
+  "uniform float uStackMode;    /* 0 relief 1 draped 2 flat 3 normal-map  */",
+  "uniform float uWindTime;",
+  "uniform float uRamp;         /* 0 grey 1 temp 2 precip 3 hue 4 grey-elev */",
   "",
   "const float PI = 3.141592653589793;",
   "",
@@ -136,6 +161,31 @@ const FRAG: string = [
   "  return mix(rock, snow, (t - 0.78) / 0.22);",
   "}",
   "",
+  "/* HSV hue wheel (saturated, full value) from a turn fraction in [0,1). */",
+  "vec3 hsv2rgb(float hh){",
+  "  vec3 c = abs(mod(hh * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0;",
+  "  return clamp(c, 0.0, 1.0);",
+  "}",
+  "",
+  "/* Map a raw stack-channel value to a debug colour. ids:",
+  "   0 grey (raw clamp 0..1) · 1 temp diverging (deg C, -30..+35) ·",
+  "   2 precip white->blue (0..1) · 3 hue (turns, for wind/aspect) ·",
+  "   4 grey-elev (0..1). Calibration of climate units is downstream",
+  "   tuning; this is a deterministic debug visualiser. */",
+  "vec3 ramp(float id, float x){",
+  "  if (id < 0.5) return vec3(clamp(x, 0.0, 1.0));",
+  "  if (id < 1.5){",
+  "    float t = clamp((x + 30.0) / 65.0, 0.0, 1.0);",
+  "    vec3 cold = vec3(0.13, 0.30, 0.75);",
+  "    vec3 midw = vec3(0.96, 0.96, 0.92);",
+  "    vec3 hot  = vec3(0.78, 0.16, 0.13);",
+  "    return (t < 0.5) ? mix(cold, midw, t / 0.5) : mix(midw, hot, (t - 0.5) / 0.5);",
+  "  }",
+  "  if (id < 2.5) return mix(vec3(0.97), vec3(0.10, 0.35, 0.70), clamp(x, 0.0, 1.0));",
+  "  if (id < 3.5) return hsv2rgb(fract(x));",
+  "  return vec3(clamp(x, 0.0, 1.0));",
+  "}",
+  "",
   "void main(){",
   "  vec3 n = normalize(vSpherePos);",
   "  vec2 uv = sphereToEquirectUv(n);",
@@ -176,7 +226,66 @@ const FRAG: string = [
   "  /* Subtle ocean specular-ish lift so water/land separation is crisp. */",
   "  if (h < 0.0) col += vec3(0.02, 0.03, 0.05) * (1.0 + h);",
   "",
-  "  gl_FragColor = vec4(col, 1.0);",
+  "  /* RELIEF (uStackMode 0): byte-identical to the original — `col` above",
+  "     is unchanged; only the write is now gated so non-relief modes can't",
+  "     reach it. */",
+  "  if (uStackMode < 0.5){",
+  "    gl_FragColor = vec4(col, 1.0);",
+  "    return;",
+  "  }",
+  "",
+  "  /* WIND (uStackMode 4 draped / 5 flat, NX-3): stateless animated",
+  "     flow streaks from CLIM.b azimuth advanced by uWindTime. Taken",
+  "     before the normal(>2.5) branch so relief(0)/draped(1)/flat(2)/",
+  "     normal(3) are byte-unchanged (4/5 return here first). No RT/",
+  "     ping-pong — display-only, zero feedback-loop surface. */",
+  "  if (uStackMode > 3.5){",
+  "    vec4 wTex = texture2D(uStackTex, uv);",
+  "    float az = wTex.b;",
+  "    float ang = (az - 0.5) * 6.28318530;",
+  "    vec2 wdir = vec2(cos(ang), sin(ang));",
+  "    vec2 sp = uv * vec2(220.0, 110.0);",
+  "    float tw = mod(uWindTime, 1000.0);",
+  "    float sCoord = dot(sp, wdir) - tw * 6.0;",
+  "    float streak = pow(0.5 + 0.5 * sin(sCoord), 8.0);",
+  "    float perp = dot(sp, vec2(-wdir.y, wdir.x));",
+  "    streak *= 0.6 + 0.4 * sin(perp * 0.7);",
+  "    vec3 wc = hsv2rgb(fract(az));",
+  "    vec3 wind = mix(wc * 0.25, wc, clamp(streak, 0.0, 1.0));",
+  "    if (uStackMode > 4.5){",
+  "      gl_FragColor = vec4(wind, 1.0);",
+  "    } else {",
+  "      vec3 dcol = mix(col, wind, 0.85) * shade;",
+  "      dcol = mix(dcol, dcol * 0.62, steep * 0.5);",
+  "      gl_FragColor = vec4(dcol, 1.0);",
+  "    }",
+  "    return;",
+  "  }",
+  "",
+  "  /* NORMAL (uStackMode 3, SP-B): classic RGB normal map of the eroded",
+  "     heightfield. `sn` is the screen-space height-gradient normal already",
+  "     built above for the hillshade; encode it [-1,1]->[0,1]. Additive —",
+  "     taken before the stack-channel branch so relief(<0.5)/draped(1)/",
+  "     flat(2) are byte-unchanged. */",
+  "  if (uStackMode > 2.5){",
+  "    gl_FragColor = vec4(sn * 0.5 + 0.5, 1.0);",
+  "    return;",
+  "  }",
+  "",
+  "  /* STACK (draped 1 / flat 2): pick the selected RGBA lane, ramp it. */",
+  "  vec4 sTex = texture2D(uStackTex, uv);",
+  "  float chv = sTex.r;",
+  "  if (uChannel > 2.5) chv = sTex.a;",
+  "  else if (uChannel > 1.5) chv = sTex.b;",
+  "  else if (uChannel > 0.5) chv = sTex.g;",
+  "  vec3 rc = ramp(uRamp, chv);",
+  "  if (uStackMode > 1.5){",
+  "    gl_FragColor = vec4(rc, 1.0);            /* flat: pure ramp        */",
+  "  } else {",
+  "    vec3 dcol = rc * shade;                  /* draped: ramp x relief  */",
+  "    dcol = mix(dcol, dcol * 0.62, steep * 0.5);",
+  "    gl_FragColor = vec4(dcol, 1.0);",
+  "  }",
   "}",
 ].join("\n");
 
@@ -218,6 +327,14 @@ export function makeDebugReliefMaterial(): THREE.ShaderMaterial {
       // ±0.12 bulge that over-dramatised the relief. Tune live with
       // setDebugDisplace.
       uDisplace: { value: 0.05 },
+      // Stack map-mode uniforms. Defaults select the RELIEF path
+      // (uStackMode 0), so a freshly-built material is byte-identical to
+      // the pre-feature behaviour until App calls setDebugStack.
+      uStackTex: { value: STACK_PLACEHOLDER_TEX as THREE.Texture },
+      uChannel: { value: 0 },
+      uStackMode: { value: 0 },
+      uRamp: { value: 0 },
+      uWindTime: { value: 0 },
     },
     // dFdx/dFdy are core in WebGL2 (Three r169) — no extension flag needed.
   });
@@ -258,5 +375,29 @@ export function setDebugMapMode(mat: THREE.ShaderMaterial, n: number): void {
 /** Vertex-extrusion gain (height -> radial displacement). Default 0.05. */
 export function setDebugDisplace(mat: THREE.ShaderMaterial, n: number): void {
   mat.uniforms.uDisplace.value = n;
+  mat.uniformsNeedUpdate = true;
+}
+
+/** A selected stack channel + how to render it. `tex` null → placeholder. */
+export interface DebugStackSel {
+  tex: THREE.Texture | null;
+  channel: number; // 0..3 — RGBA lane of `tex`
+  mode: number; // 0 relief | 1 draped | 2 flat
+  ramp: number; // 0 grey | 1 temp | 2 precip | 3 hue | 4 grey-elev
+}
+
+/**
+ * Live-swap the stack channel/mode/ramp on an already-mounted material
+ * (no re-bake). Mirrors {@link setDebugMapMode}. `mode 0` restores the
+ * exact relief path regardless of the other fields.
+ */
+export function setDebugStack(
+  mat: THREE.ShaderMaterial,
+  sel: DebugStackSel,
+): void {
+  mat.uniforms.uStackTex.value = sel.tex ?? STACK_PLACEHOLDER_TEX;
+  mat.uniforms.uChannel.value = sel.channel;
+  mat.uniforms.uStackMode.value = sel.mode;
+  mat.uniforms.uRamp.value = sel.ramp;
   mat.uniformsNeedUpdate = true;
 }

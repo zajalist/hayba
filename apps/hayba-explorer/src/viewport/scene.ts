@@ -2,6 +2,13 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { colors } from "@hayba/design-tokens";
 import { createStarfield, type StarfieldHandle } from "./starfield";
+import {
+  createFrameMeter,
+  adaptiveScale,
+  createRenderGate,
+  type PerfSnapshot,
+  type BakeSplit,
+} from "./perf";
 
 export interface SceneHandle {
   renderer: THREE.WebGLRenderer;
@@ -25,6 +32,17 @@ export interface SceneHandle {
    * The tick always resumes even if `fn` throws/rejects (try/finally).
    */
   runBake: (fn: (renderer: THREE.WebGLRenderer) => Promise<void> | void) => Promise<void>;
+  /** Mark the scene dirty so the on-demand loop renders a frame. */
+  markDirty: () => void;
+  /** NX-3: while active, keep the render loop alive (cooperating with
+   *  the NX-1 on-demand gate) and advance the displayed globe's
+   *  `uWindTime`. false → loop returns to NX-1 idle. */
+  setWindAnim: (active: boolean) => void;
+  /** Latest perf counters for the HUD (cheap getter; no allocation
+   *  hot-path). */
+  perfSnapshot: () => PerfSnapshot;
+  /** BP-1: store the latest per-stage bake timing split for the HUD. */
+  setBakeSplit: (s: BakeSplit) => void;
 }
 
 function hexToColor(hex: string): THREE.Color {
@@ -53,7 +71,10 @@ const _bakeDbgScene =
 
 export function createScene(canvas: HTMLCanvasElement): SceneHandle {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
-  renderer.setPixelRatio(window.devicePixelRatio);
+  // NX-1: clamp DPR — hi-DPI was multiplying fragment count 4–6×.
+  // `baseDpr` is the ceiling; adaptive scaling multiplies it (≤1).
+  const baseDpr = Math.min(window.devicePixelRatio, 1.5);
+  renderer.setPixelRatio(baseDpr);
   renderer.setClearColor(hexToColor(colors.bgDeep), 1.0);
 
   const scene = new THREE.Scene();
@@ -130,6 +151,27 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
     RIGHT:  THREE.MOUSE.ROTATE,
   };
 
+  // NX-1 perf core — declared before ResizeObserver so the closure can
+  // reference `gate` without a TDZ hazard.
+  const gate = createRenderGate();
+  const meter = createFrameMeter();
+  const markDirtyNow = (): void => gate.markDirty(performance.now());
+  let perfScale = 1;
+  let perfHold = 0;
+  let lastBakeMs: number | null = null;
+  let lastBakeSplit: BakeSplit | null = null;
+  let perfSnap: PerfSnapshot = {
+    fps: 0,
+    ms: 0,
+    emaMs: 0,
+    calls: 0,
+    triangles: 0,
+    scale: 1,
+    gpuMs: null,
+    bakeMs: null,
+    bakeSplit: null,
+  };
+
   const ro = new ResizeObserver((entries) => {
     for (const entry of entries) {
       const { width, height } = entry.contentRect;
@@ -138,6 +180,7 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
       renderer.setSize(w, h, false);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
+      gate.markDirty(performance.now());
     }
   });
   ro.observe(canvas);
@@ -155,6 +198,8 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
   // gaps: the render loop cannot touch the renderer while bake RTs are
   // bound, independent of rAF/cancel timing races.
   let loopEpoch = 0;
+  let windAnimActive = false;
+  let windTime = 0;
   const scheduleTick = () => {
     const myEpoch = loopEpoch;
     raf = requestAnimationFrame(() => {
@@ -169,14 +214,63 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
         return;
       }
       const now = performance.now();
+      // NX-1 on-demand: skip the heavy work entirely when nothing
+      // changed and we're past the post-interaction settle window.
+      // Still reschedule (cheap) so a later markDirty() repaints.
+      if (!gate.tick(now)) {
+        scheduleTick();
+        return;
+      }
+      gate.clear();
       const dt = Math.min(0.1, (now - prevTime) / 1000);
       prevTime = now;
       starfield.tick(dt);
       controls.update();
       renderer.render(scene, camera);
+      // NX-1 sampling + adaptive resolution (only on rendered frames).
+      const fm = meter.push(dt > 0 ? dt * 1000 : 0.0001);
+      const a = adaptiveScale(fm.emaMs, perfScale, perfHold);
+      perfHold = a.hold;
+      if (a.scale !== perfScale) {
+        perfScale = a.scale;
+        renderer.setPixelRatio(baseDpr * perfScale);
+      }
+      perfSnap = {
+        fps: fm.fps,
+        ms: fm.ms,
+        emaMs: fm.emaMs,
+        calls: renderer.info.render.calls,
+        triangles: renderer.info.render.triangles,
+        scale: perfScale,
+        gpuMs: null,
+        bakeMs: lastBakeMs,
+        bakeSplit: lastBakeSplit,
+      };
+      if (windAnimActive && !baking) {
+        windTime += dt;
+        const wm = (currentGlobe as unknown as { material?: { uniforms?: Record<string, { value: number }> } } | null)?.material;
+        if (wm && wm.uniforms && wm.uniforms.uWindTime) {
+          wm.uniforms.uWindTime.value = windTime;
+        }
+        gate.markDirty(now);
+      }
       scheduleTick();
     });
   };
+  // Anything visible that is NOT a per-frame animation must repaint:
+  // user interaction (controls), layout (resize), globe swap, bake end.
+  controls.addEventListener("start", markDirtyNow);
+  controls.addEventListener("change", markDirtyNow);
+  controls.addEventListener("end", markDirtyNow);
+  const onVisibility = (): void => {
+    if (document.hidden) {
+      cancelAnimationFrame(raf);
+    } else if (!baking) {
+      prevTime = performance.now();
+      scheduleTick();
+    }
+  };
+  document.addEventListener("visibilitychange", onVisibility);
   scheduleTick();
 
   return {
@@ -196,6 +290,25 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
       }
       currentGlobe = object;
       if (object) scene.add(object);
+      gate.markDirty(performance.now());
+    },
+    markDirty() {
+      gate.markDirty(performance.now());
+    },
+    setWindAnim(active: boolean) {
+      windAnimActive = active;
+      if (active) gate.markDirty(performance.now());
+    },
+    perfSnapshot() {
+      return perfSnap;
+    },
+    setBakeSplit(s: BakeSplit) {
+      lastBakeSplit = s;
+      // Fold into the current snapshot immediately so perfSnapshot()
+      // reflects it even before the next rendered frame rebuilds
+      // perfSnap (bake-end markDirty guarantees a frame, but the HUD
+      // poll may read in between).
+      perfSnap = { ...perfSnap, bakeSplit: s };
     },
     async runBake(fn) {
       // Pause the live loop: flag the tick, bump the epoch (so any
@@ -212,9 +325,11 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
       _sceneBaking = true;
       _bakeExternalRenderLogged = false;
       _bakeGuardBlocks = 0;
+      const bakeT0 = performance.now();
       try {
         await fn(renderer);
       } finally {
+        lastBakeMs = performance.now() - bakeT0;
         // Resume "bake-then-watch": reset prevTime so the first resumed
         // frame's dt is a normal step (not a multi-second spike), bump
         // the epoch again so the resumed loop is the sole live
@@ -223,6 +338,7 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
         loopEpoch++;
         prevTime = performance.now();
         scheduleTick();
+        gate.markDirty(performance.now());
         // TODO(bake-debug): remove after feedback-loop root-caused.
         // Per-bake summary — ALWAYS prints once so the user has a
         // definitive line whether or not a competing render fired:
@@ -250,6 +366,7 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
       loopEpoch++;
       cancelAnimationFrame(raf);
       ro.disconnect();
+      document.removeEventListener("visibilitychange", onVisibility);
       controls.dispose();
       starfield.dispose();
       renderer.dispose();

@@ -7,7 +7,13 @@ import {
   CARVE_RIVERS_FRAG,
   INIT_ACC_FRAG,
   ACCUM_FRAG,
+  CONTROLS_FRAG,
+  CLIMATE_NOOP_FRAG,
+  CLIMATE_FRAG,
+  TERRAIN_FRAG,
+  HYDRO_FRAG,
 } from "./hydraulic.glsl";
+import { BAKE_RES_TIERS, clampBakeRes } from "./bakeResolution";
 
 describe("S1 scale config", () => {
   it("DEFAULT_HYDRAULIC drops the ad-hoc clamp/uplift and adds scale knobs", () => {
@@ -133,18 +139,35 @@ describe("#218 accumulation passes", () => {
     expect(INIT_ACC_FRAG).toMatch(/uniform float uAccMin;/);
     expect(INIT_ACC_FRAG).toMatch(/a\.a > 0\.5/);
   });
-  it("ACCUM_FRAG is an 8-neighbour slope-weighted MFD gather", () => {
+  it("ACCUM_FRAG is an 8-neighbour single-flow (D8) gather with jitter (R1b)", () => {
     expect(typeof ACCUM_FRAG).toBe("string");
     expect(ACCUM_FRAG).toMatch(/uniform sampler2D uA;/);
     expect(ACCUM_FRAG).toMatch(/uniform sampler2D uAcc;/);
     expect(ACCUM_FRAG).toMatch(/uniform sampler2D uPrecip;/);
-    expect(ACCUM_FRAG).toMatch(/uniform float uMfdExponent;/);
+    expect(ACCUM_FRAG).toMatch(/uniform float uSfdJitter;/);
+    expect(ACCUM_FRAG).not.toMatch(/uMfdExponent/);
     expect(ACCUM_FRAG).toMatch(/uniform float uPoleBand;/);
     expect(ACCUM_FRAG).toMatch(/uniform float uAccMin;/);
     expect(ACCUM_FRAG).toMatch(/a\.a > 0\.5/);
-    expect(ACCUM_FRAG).toMatch(/pow\(/);
+    // single steepest-descent direction selector + jitter
+    expect(ACCUM_FRAG).toMatch(/int sdir\(/);
+    expect(ACCUM_FRAG).toMatch(/uSfdJitter \* \(jit\(/);
     expect(ACCUM_FRAG).toMatch(/ivec2\[8\]/);
     expect((ACCUM_FRAG.match(/ivec2\(/g) ?? []).length).toBeGreaterThanOrEqual(8);
+  });
+});
+
+describe("#218 R2 ERODE discharge-weighted capacity", () => {
+  it("ERODE capacity is multiplied by Q^uSpM from the SFD ACC field", () => {
+    expect(ERODE_FRAG).toMatch(/uniform sampler2D uAcc;/);
+    expect(ERODE_FRAG).toMatch(/uniform float uAccResScale;/);
+    expect(ERODE_FRAG).toMatch(/uniform float uSpM;/);
+    expect(ERODE_FRAG).toMatch(
+      /float C = uStrength \* \(vmag \* uResScale\) \* slope \* pow\(max\(Q, 0\.0\), uSpM\)/,
+    );
+    // ERODE keeps its #217 resolution + base-level-clamp machinery.
+    expect(ERODE_FRAG).toMatch(/vmag \* uResScale/);
+    expect(ERODE_FRAG).toMatch(/max\(b, minNb - 1\.0e-3\)/);
   });
 });
 
@@ -161,10 +184,165 @@ describe("#218 CARVE_RIVERS stream-power on accumulation", () => {
     expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uTerrainScale;/);
     expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uSinMin;/);
     expect(CARVE_RIVERS_FRAG).toMatch(/smoothstep\(0\.0, uConcaveScale, lap\)/);
-    expect(CARVE_RIVERS_FRAG).toMatch(/max\(nb, minNb - 1\.0e-3\)/);
+    // R1a: Q-proportional incision budget (1e-3 floor + channelDepth term)
+    expect(CARVE_RIVERS_FRAG).toMatch(/uniform float uChannelDepth;/);
+    expect(CARVE_RIVERS_FRAG).toMatch(
+      /float budget = 1\.0e-3 \+ uChannelDepth \* concave \* pow\(max\(Q, 0\.0\), uSpM\)/,
+    );
+    expect(CARVE_RIVERS_FRAG).toMatch(/max\(nb, minNb - budget\)/);
     expect(CARVE_RIVERS_FRAG).toMatch(/a\.a > 0\.5/);
     expect(CARVE_RIVERS_FRAG).not.toMatch(/uRiverThreshold0/);
     expect(CARVE_RIVERS_FRAG).not.toMatch(/uRiverThreshold1/);
     expect(CARVE_RIVERS_FRAG).not.toMatch(/uResScale/);
+  });
+});
+
+describe("#226 ACCUM pattern blend", () => {
+  it("ACCUM_FRAG has patternWeights + ctrl-biased sdir, zero-weight reduces to #218", () => {
+    expect(ACCUM_FRAG).toMatch(/uniform sampler2D uCtrl;/);
+    expect(ACCUM_FRAG).toMatch(/uniform float uRadialStrength;/);
+    expect(ACCUM_FRAG).toMatch(/uniform float uParallelStrength;/);
+    expect(ACCUM_FRAG).toMatch(/uniform float uCentripetalStrength;/);
+    expect(ACCUM_FRAG).toMatch(/uniform float uUniformityThreshold;/);
+    expect(ACCUM_FRAG).toMatch(/uniform float uPatternMax;/);
+    expect(ACCUM_FRAG).toMatch(/vec4 patternW\(/);
+    expect(ACCUM_FRAG).toMatch(/drop \/ ND\[j\]/);
+    expect(ACCUM_FRAG).toMatch(/patternBias/);
+    expect(ACCUM_FRAG).toMatch(/1\.0 - ctrl\.a/);
+  });
+});
+
+describe("#226 multi-pattern drainage config", () => {
+  it("DEFAULT_HYDRAULIC carries the Phase-A pattern knobs", () => {
+    for (const k of ["radialStrength","parallelStrength","centripetalStrength",
+      "uniformityThreshold","curvatureScale","ctrlRadius","endorheicSteps",
+      "patternMax"] as const) {
+      expect(typeof DEFAULT_HYDRAULIC[k]).toBe("number");
+    }
+    expect(DEFAULT_HYDRAULIC.patternMax).toBeGreaterThan(0);
+    expect(DEFAULT_HYDRAULIC.patternMax).toBeLessThan(1);
+    expect(DEFAULT_HYDRAULIC.ctrlRadius).toBeGreaterThanOrEqual(1);
+    expect(DEFAULT_HYDRAULIC.uniformityThreshold).toBeGreaterThan(0);
+  });
+});
+
+describe("#226 CONTROLS_FRAG", () => {
+  it("derives slope-azimuth / uniformity / curvature / endorheic", () => {
+    expect(typeof CONTROLS_FRAG).toBe("string");
+    expect(CONTROLS_FRAG).toMatch(/uniform sampler2D uA;/);
+    expect(CONTROLS_FRAG).toMatch(/uniform float uCtrlRadius;/);
+    expect(CONTROLS_FRAG).toMatch(/uniform float uEndorheicSteps;/);
+    expect(CONTROLS_FRAG).toMatch(/atan/);
+    expect(CONTROLS_FRAG).toMatch(/a\.a > 0\.5/);
+    expect(CONTROLS_FRAG).toMatch(/fragColor = vec4\(/);
+  });
+});
+
+describe("#234 P2.2 climate config", () => {
+  it("DEFAULT_HYDRAULIC carries the analytic climate knobs", () => {
+    for (const k of ["tEquatorC","tLatDropC","lapseCPerKm","elevKmScale",
+      "itczWidthDeg","glacOnsetC","glacFullC"] as const) {
+      expect(typeof DEFAULT_HYDRAULIC[k]).toBe("number");
+    }
+    expect(DEFAULT_HYDRAULIC.tEquatorC).toBeGreaterThan(0);
+    expect(DEFAULT_HYDRAULIC.glacFullC).toBeLessThan(DEFAULT_HYDRAULIC.glacOnsetC);
+    expect(DEFAULT_HYDRAULIC.itczWidthDeg).toBeGreaterThan(0);
+  });
+});
+
+describe("#234 P2.1 resolution tier", () => {
+  it("tiers are 2:1, ascending, capped at ~3.3M", () => {
+    expect(BAKE_RES_TIERS.length).toBeGreaterThanOrEqual(3);
+    for (const t of BAKE_RES_TIERS) {
+      expect(t.w).toBe(t.h * 2);
+      expect(t.w * t.h).toBeLessThanOrEqual(3_300_000);
+    }
+    const px = BAKE_RES_TIERS.map((t) => t.w * t.h);
+    expect([...px].sort((a, b) => a - b)).toEqual(px);
+    expect(Math.max(...px)).toBeGreaterThanOrEqual(3_000_000);
+  });
+  it("clampBakeRes rejects oversize / non-2:1 to the max tier", () => {
+    const max = BAKE_RES_TIERS[BAKE_RES_TIERS.length - 1];
+    expect(clampBakeRes(99999, 99999)).toEqual(max);
+    expect(clampBakeRes(2048, 1024)).toEqual({ w: 2048, h: 1024 });
+    expect(clampBakeRes(2048, 999)).toEqual(max);
+  });
+});
+
+describe("#234 P2.1 climate stack scaffold", () => {
+  it("CLIMATE_NOOP_FRAG is a glPass-clean zero fill", () => {
+    expect(typeof CLIMATE_NOOP_FRAG).toBe("string");
+    expect(CLIMATE_NOOP_FRAG).toMatch(/fragColor = vec4\(0\.0\)/);
+    expect(
+      CLIMATE_NOOP_FRAG.split("\n").filter(
+        (l) => /^\s*"?uniform /.test(l) && l.includes("//"),
+      ).length,
+    ).toBe(0);
+    expect(CLIMATE_NOOP_FRAG).not.toMatch(/`/);
+  });
+});
+
+describe("#234 P2.2 CLIMATE_FRAG", () => {
+  it("computes temp/precip/wind-az/glaciation from height+lat", () => {
+    expect(typeof CLIMATE_FRAG).toBe("string");
+    expect(CLIMATE_FRAG).toMatch(/uniform sampler2D uA;/);
+    expect(CLIMATE_FRAG).toMatch(/uniform float uTEquatorC;/);
+    expect(CLIMATE_FRAG).toMatch(/uniform float uTLatDropC;/);
+    expect(CLIMATE_FRAG).toMatch(/uniform float uItczWidthDeg;/);
+    expect(CLIMATE_FRAG).toMatch(/uniform float uGlacOnsetC;/);
+    expect(CLIMATE_FRAG).toMatch(/uniform float uElevKmScale;/);
+    expect(CLIMATE_FRAG).toMatch(/uTLatDropC \* \(s \* s\)/);
+    // NX-2b retuned the zonal precip curve (0.85*itcz -> 0.95*itcz,
+    // killed the flat +0.35 floor). Pin the new dominant coefficient.
+    expect(CLIMATE_FRAG).toMatch(/0\.95\*itcz/);
+    expect(CLIMATE_FRAG).toMatch(/fragColor = vec4\(/);
+    expect(
+      CLIMATE_FRAG.split("\n").filter(
+        (l) => /^\s*"?uniform /.test(l) && l.includes("//"),
+      ).length,
+    ).toBe(0);
+    expect(CLIMATE_FRAG).not.toMatch(/`/);
+  });
+});
+
+describe("#234 P2.3a TERRAIN/HYDRO frags", () => {
+  it("TERRAIN_FRAG packs slope/aspect/curvature, ocean->0", () => {
+    expect(typeof TERRAIN_FRAG).toBe("string");
+    expect(TERRAIN_FRAG).toMatch(/uniform sampler2D uA;/);
+    expect(TERRAIN_FRAG).toMatch(/uniform sampler2D uCtrl;/);
+    expect(TERRAIN_FRAG).toMatch(/uniform float uVerticality;/);
+    expect(TERRAIN_FRAG).toMatch(/uniform float uTerrainScale;/);
+    expect(TERRAIN_FRAG).toMatch(/uniform float uSinMin;/);
+    expect(TERRAIN_FRAG).toMatch(/max\(uSinMin/);
+    expect(TERRAIN_FRAG).toMatch(/a\.a > 0\.5/);
+    expect(TERRAIN_FRAG).toMatch(/fragColor = vec4\(/);
+    expect(TERRAIN_FRAG.split("\n").filter(
+      (l)=>/^\s*"?uniform /.test(l)&&l.includes("//")).length).toBe(0);
+    expect(TERRAIN_FRAG).not.toMatch(/`/);
+  });
+  it("HYDRO_FRAG packs discharge/elev/endorheic, ocean->0", () => {
+    expect(typeof HYDRO_FRAG).toBe("string");
+    expect(HYDRO_FRAG).toMatch(/uniform sampler2D uAcc;/);
+    expect(HYDRO_FRAG).toMatch(/uniform sampler2D uA;/);
+    expect(HYDRO_FRAG).toMatch(/uniform sampler2D uCtrl;/);
+    expect(HYDRO_FRAG).toMatch(/a\.a > 0\.5/);
+    expect(HYDRO_FRAG).toMatch(/uniform sampler2D uClim;/);
+    expect(HYDRO_FRAG).toMatch(/uniform float uBiomeColdC;/);
+    expect(HYDRO_FRAG).toMatch(/uniform float uBiomeHotC;/);
+    expect(HYDRO_FRAG).toMatch(/classifyBiome\(/);
+    expect(HYDRO_FRAG).toMatch(/t < -15\.0/);
+    expect(HYDRO_FRAG).toMatch(/t < -2\.0/);
+    expect(HYDRO_FRAG).toMatch(/t < uBiomeColdC/);
+    expect(HYDRO_FRAG).toMatch(/t < uBiomeHotC/);
+    expect(HYDRO_FRAG).toMatch(/p > 0\.7/);
+    expect(HYDRO_FRAG).toMatch(/p > 0\.6/);
+    expect(HYDRO_FRAG).toMatch(/classifyBiome\(cl\.r, cl\.g\)/);
+    expect(HYDRO_FRAG).not.toMatch(
+      /clamp\(fin\(endo\), 0\.0, 1\.0\), 0\.0\)/,
+    );
+    expect(HYDRO_FRAG).toMatch(/fragColor = vec4\(/);
+    expect(HYDRO_FRAG.split("\n").filter(
+      (l)=>/^\s*"?uniform /.test(l)&&l.includes("//")).length).toBe(0);
+    expect(HYDRO_FRAG).not.toMatch(/`/);
   });
 });

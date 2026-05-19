@@ -1,6 +1,7 @@
 import React from "react";
 import PropertyRow from "../PropertyRow";
 import PropertySection from "../PropertySection";
+import type { Fidelity } from "../../viewport/bake/fidelity";
 
 export const MAP_MODES: { value: number; label: string }[] = [
   { value: 0,  label: "Final render" },
@@ -25,11 +26,30 @@ export interface SettingsPanelProps {
   onToggleArrows: (v: boolean) => void;
   mapMode: number;
   onChangeMapMode: (n: number) => void;
+  fidelity: Fidelity;
+  onChangeFidelity: (f: Fidelity) => void;
 }
 
 export default function SettingsPanel(p: SettingsPanelProps) {
   return (
     <div style={{ flex: 1, overflowY: "auto" }}>
+      <PropertySection heading="Performance">
+        <PropertyRow
+          label="Fidelity"
+          noSeparator
+          value={
+            <select
+              aria-label="Bake fidelity"
+              value={p.fidelity}
+              onChange={(e) => p.onChangeFidelity(e.target.value as Fidelity)}
+            >
+              <option value="low">Low — fastest (1024²)</option>
+              <option value="medium">Medium (2048²)</option>
+              <option value="high">High — slowest (2560²)</option>
+            </select>
+          }
+        />
+      </PropertySection>
       <PropertySection heading="Viewport overlays">
         <PropertyRow
           label="Plate labels"

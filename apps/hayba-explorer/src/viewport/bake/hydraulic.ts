@@ -50,6 +50,13 @@ import {
   DETAIL_MASK_FRAG,
   INIT_ACC_FRAG,
   ACCUM_FRAG,
+  CONTROLS_FRAG,
+  CLIMATE_FRAG,
+  TERRAIN_FRAG,
+  HYDRO_FRAG,
+  MSLP_FRAG,
+  BLUR_H_FRAG,
+  BLUR_V_FRAG,
 } from "./hydraulic.glsl";
 import { runRawPass } from "./glPass";
 import { createPingPong, type PingPongTargets } from "./pingpong";
@@ -119,6 +126,59 @@ export interface HydraulicConfig {
   spN: number;
   accMin: number;
   accResScale: number;
+  /** R1a: per-step incision budget on concave valley cells =
+   *  1e-3 + channelDepth·concave·Q^spM, so high-discharge channels cut
+   *  deep while interfluves stay (channel/ridge contrast). Convex/rim
+   *  cells keep the 1e-3 floor (anti-moat). */
+  channelDepth: number;
+  /** R1b: deterministic jitter added to the single-flow steepest-descent
+   *  metric to break exact ties / D8 axis-locking (0 = pure D8). */
+  sfdJitter: number;
+  /** #226 Phase-A multi-pattern drainage. Per-operator routing-bias
+   *  strengths (0 ⇒ that operator off; ALL 0 ⇒ byte-identical to the
+   *  #218 SFD baseline — the degradation gate). `uniformityThreshold`
+   *  = min slope-coherence for the parallel operator; `curvatureScale`
+   *  = normaliser for the peak/basin signal; `ctrlRadius` = control
+   *  box half-width in texels; `endorheicSteps` = max sdir hops for
+   *  closed-basin detection; `patternMax` (<1) caps the summed
+   *  non-dendritic weight so dendritic always has a floor. */
+  radialStrength: number;
+  parallelStrength: number;
+  centripetalStrength: number;
+  uniformityThreshold: number;
+  curvatureScale: number;
+  ctrlRadius: number;
+  endorheicSteps: number;
+  patternMax: number;
+  /** #234 P2.2 analytic climate (climate.rs reference values).
+   *  Temperature = tEquatorC − tLatDropC·sin²lat − lapseCPerKm·elevKm
+   *  (elevKm = max(0,h)·elevKmScale). Zonal precip ITCZ half-width
+   *  itczWidthDeg. Glaciation ramps 0→1 as T falls glacOnsetC→glacFullC
+   *  (long-term ice; NOT seasonal snow). */
+  tEquatorC: number;
+  tLatDropC: number;
+  lapseCPerKm: number;
+  elevKmScale: number;
+  itczWidthDeg: number;
+  glacOnsetC: number;
+  glacFullC: number;
+  /** NX-2a geostrophic-wind knobs (MdGBWG annual-mean MSLP). */
+  mslpLandBase: number;
+  mslpLandAmp: number;
+  mslpOceanBase: number;
+  mslpOceanAmp: number;
+  mslpBlurSigma: number;
+  coriolisGain: number;
+  /** NX-2c MdGBWG seasonality. `seasonAmp` master-scales the Jan/July
+   *  MSLP delta (0 = annual mean = deep-time freeze; the tectonics sim
+   *  bakes at 0 — seasons are meaningless over Myr). `seasonPhase` is
+   *  the simulated month in [0,12) (0=Jan, 6=Jul); inert while amp 0. */
+  seasonAmp: number;
+  seasonPhase: number;
+  /** P2.3b-i Whittaker biome thermal cuts (°C) — mirrors
+   *  ClimateParams.biome_cold_c / biome_hot_c. */
+  biomeColdC: number;
+  biomeHotC: number;
   /** S2.3 concavity gate: river carve is multiplied by
    *  `smoothstep(0, concaveScale, laplacian(b))` so incision only bites
    *  CONCAVE valley floors, not CONVEX plateau/range shoulders (kills the
@@ -160,7 +220,7 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   kd: 0.2,
   ke: 0.015,
   sinMin: 0.02,
-  strength: 0.04,
+  strength: 0.06,
   downcutting: 0.25,
   // S2.2 thermal = GENTLE TALUS LIMITER, PHYSICALLY GROUNDED (corrected
   // 2026-05-17 per user: "base it on real science, not no-unit").
@@ -188,17 +248,50 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   elevMid: 0.4,
   slopeFloor: 0.0003,
   slopeMid: 0.001,
-  // #218: provisional — set from the oracle gate later. K large (budget
-  // allows it), refresh ~6x over 100 steps, p sharpens channels,
-  // stream-power m≈0.5/n≈1. accResScale=1 (exponent fit later).
-  accumIters: 96,
+  // #218 R1: provisional — set from the oracle gate. SFD (single-flow)
+  // accumulation so K is the headwater→mouth propagation length: large
+  // (warm 2M bake ~0.5s leaves headroom). accResScale=1 (measured
+  // resolution-invariant, no W-scaling needed). channelDepth/sfdJitter
+  // are the R1 dendritic knobs (tuned at the gate).
+  accumIters: 256,
   accumEveryN: 16,
   mfdExponent: 1.3,
   streamK: 0.02,
-  spM: 0.5,
+  spM: 0.9,
   spN: 1.0,
   accMin: 0.05,
   accResScale: 1.0,
+  // #226: gentle nonzero so patterns read while dendritic stays
+  // dominant; oracle-tuned in the gate task. All-zero override is the
+  // degradation regression gate (≡ #218 8ecba5b).
+  radialStrength: 0.15,
+  parallelStrength: 0.15,
+  centripetalStrength: 0.15,
+  uniformityThreshold: 0.55,
+  curvatureScale: 0.02,
+  ctrlRadius: 3,
+  endorheicSteps: 64,
+  patternMax: 0.75,
+  // #234 P2.2 — climate.rs defaults; glac isotherm −2→−12 °C (LGM-ish).
+  tEquatorC: 30.0,
+  tLatDropC: 50.0,
+  lapseCPerKm: 4.46,
+  elevKmScale: 8.0,
+  itczWidthDeg: 16.0,
+  glacOnsetC: -2.0,
+  glacFullC: -12.0,
+  mslpLandBase: 1012.5,
+  mslpLandAmp: 6.0,
+  mslpOceanBase: 1014.5,
+  mslpOceanAmp: 20.0,
+  mslpBlurSigma: 6.0,
+  coriolisGain: 15.0,
+  seasonAmp: 0.0,
+  seasonPhase: 0.0,
+  biomeColdC: 6.0,
+  biomeHotC: 18.0,
+  channelDepth: 0.02,
+  sfdJitter: 0.002,
   // Concave valleys reach full carve by lap≈0.003; every convex shoulder
   // (lap≤0) gets exactly 0 → the Tibet/Andes rim moat is removed while
   // the concave dendritic valleys (Afghanistan) keep their strong carve.
@@ -290,6 +383,21 @@ const u = (value: unknown): THREE.IUniform => ({ value });
  * Float support is hard-guarded by `createPingPong` (it throws if
  * `EXT_color_buffer_float` is absent — RGBA32F RTs impossible).
  */
+/**
+ * What {@link runHydraulicBake} hands back. `eroded` is today's owned
+ * result (A's current read slot). `clim/terr/hydro` are the CLIM/TERR/
+ * HYDRO[0] stack slots — they used to be disposed at teardown; now
+ * ownership transfers to the caller, which disposes all four exactly as
+ * it already tracks/disposes the previous eroded RT. Read-only: nothing
+ * feeds them back into the sim (the Phase-2 #218 degradation contract).
+ */
+export interface HydraulicBakeResult {
+  eroded: THREE.WebGLRenderTarget;
+  clim: THREE.WebGLRenderTarget;
+  terr: THREE.WebGLRenderTarget;
+  hydro: THREE.WebGLRenderTarget;
+}
+
 export async function runHydraulicBake(
   renderer: THREE.WebGLRenderer,
   base: THREE.DataTexture,
@@ -298,13 +406,13 @@ export async function runHydraulicBake(
   h: number,
   cfg: HydraulicConfig,
   onProgress?: (done: number, total: number) => void,
-): Promise<THREE.WebGLRenderTarget> {
+): Promise<HydraulicBakeResult> {
   // A and F each get a pair of RGBA32F RTs. createPingPong is the reused
   // float-probe + RGBA32F allocation helper (pingpong.ts:448) — it HARD
   // FAILS if EXT_color_buffer_float is missing. We drive the read/write
   // slots explicitly below (NOT pp.book) so the discipline is local and
   // unambiguous.
-  const pp: PingPongTargets = createPingPong(renderer, w, h, ["A", "F", "M", "ACC"]);
+  const pp: PingPongTargets = createPingPong(renderer, w, h, ["A", "F", "M", "ACC", "CTRL", "CLIM", "TERR", "HYDRO", "MSLP"]);
   const A = pp.rt.A; // [slot0, slot1]
   const F = pp.rt.F; // [slot0, slot1]
   // S2.4 detail mask: a ONE-TIME single-channel field (computed pre-loop
@@ -315,6 +423,21 @@ export async function runHydraulicBake(
   // #218 drainage accumulation (discharge in .r). Ping-pong like A: the
   // refresh burst writes it; CARVE reads it. Both slots freed at teardown.
   const ACC = pp.rt.ACC;
+  // #226 control channels (slope-azimuth/uniformity/curvature/endorheic).
+  // Single-buffered: CONTROLS writes CTRL[0], ACCUM reads it; CTRL[1]
+  // is allocated by the pair helper and just disposed at teardown.
+  const CTRL = pp.rt.CTRL;
+  // #234 P2.1 unified climate/mask stack (scaffold). CLIM/TERR/HYDRO
+  // are the named substrate P2.2+ fills; P2.1 zero-fills them and
+  // NOTHING consumes them, so erosion is provably unchanged (the
+  // Phase-2 degradation contract).
+  const CLIM = pp.rt.CLIM;
+  const TERR = pp.rt.TERR;
+  const HYDRO = pp.rt.HYDRO;
+  // NX-2a climate-internal scratch: allocated once per bake with every
+  // other channel (no per-tick alloc), reused every refreshClimate
+  // tick, disposed once at teardown; never escapes, never feeds erosion.
+  const MSLP = pp.rt.MSLP;
   let accRead = 0;
   const swapAcc = (): void => {
     accRead ^= 1;
@@ -340,6 +463,81 @@ export async function runHydraulicBake(
   const fWriteRT = (): THREE.WebGLRenderTarget => F[fRead ^ 1];
 
   const uGrid = new THREE.Vector2(w, h);
+
+  const refreshClimate = (): void => {
+    runRawPass(
+      renderer,
+      MSLP_FRAG,
+      {
+        uA: u(aReadRT()),
+        uGrid: u(uGrid),
+        uMslpLandBase: u(cfg.mslpLandBase),
+        uMslpLandAmp: u(cfg.mslpLandAmp),
+        uMslpOceanBase: u(cfg.mslpOceanBase),
+        uMslpOceanAmp: u(cfg.mslpOceanAmp),
+        uSeasonAmp: u(cfg.seasonAmp),
+        uSeasonPhase: u(cfg.seasonPhase),
+      },
+      MSLP[0],
+    );
+    runRawPass(
+      renderer,
+      BLUR_H_FRAG,
+      { uMSLP: u(MSLP[0]), uGrid: u(uGrid), uBlurSigma: u(cfg.mslpBlurSigma) },
+      MSLP[1],
+    );
+    runRawPass(
+      renderer,
+      BLUR_V_FRAG,
+      { uMSLP: u(MSLP[1]), uGrid: u(uGrid), uBlurSigma: u(cfg.mslpBlurSigma) },
+      MSLP[0],
+    );
+    runRawPass(
+      renderer,
+      CLIMATE_FRAG,
+      {
+        uA: u(aReadRT()),
+        uGrid: u(uGrid),
+        uMSLP: u(MSLP[0]),
+        uCoriolisGain: u(cfg.coriolisGain),
+        uTEquatorC: u(cfg.tEquatorC),
+        uTLatDropC: u(cfg.tLatDropC),
+        uLapseCPerKm: u(cfg.lapseCPerKm),
+        uElevKmScale: u(cfg.elevKmScale),
+        uItczWidthDeg: u(cfg.itczWidthDeg),
+        uGlacOnsetC: u(cfg.glacOnsetC),
+        uGlacFullC: u(cfg.glacFullC),
+      },
+      CLIM[0],
+    );
+    runRawPass(
+      renderer,
+      TERRAIN_FRAG,
+      {
+        uA: u(aReadRT()),
+        uCtrl: u(CTRL[0]),
+        uGrid: u(uGrid),
+        uVerticality: u(cfg.scale.verticality),
+        uTerrainScale: u(cfg.scale.terrainScale),
+        uSinMin: u(cfg.sinMin),
+      },
+      TERR[0],
+    );
+    runRawPass(
+      renderer,
+      HYDRO_FRAG,
+      {
+        uA: u(aReadRT()),
+        uAcc: u(accReadRT()),
+        uCtrl: u(CTRL[0]),
+        uClim: u(CLIM[0]),
+        uGrid: u(uGrid),
+        uBiomeColdC: u(cfg.biomeColdC),
+        uBiomeHotC: u(cfg.biomeHotC),
+      },
+      HYDRO[0],
+    );
+  };
 
   // Resolution invariance (measured, not assumed). S1 made `slope`
   // W-invariant, but virtual-pipe flux ∝ per-texel Δ(b+d) so every
@@ -386,6 +584,18 @@ export async function runHydraulicBake(
   const refreshAccumulation = (): void => {
     runRawPass(
       renderer,
+      CONTROLS_FRAG,
+      {
+        uA: u(aReadRT()),
+        uGrid: u(uGrid),
+        uCtrlRadius: u(cfg.ctrlRadius),
+        uEndorheicSteps: u(cfg.endorheicSteps),
+        uCurvatureScale: u(cfg.curvatureScale),
+      },
+      CTRL[0],
+    );
+    runRawPass(
+      renderer,
       INIT_ACC_FRAG,
       {
         uA: u(aReadRT()),
@@ -406,9 +616,16 @@ export async function runHydraulicBake(
           uAcc: u(accReadRT()),
           uPrecip: u(precip),
           uGrid: u(uGrid),
-          uMfdExponent: u(cfg.mfdExponent),
+          uSfdJitter: u(cfg.sfdJitter),
           uPoleBand: u(cfg.poleBand),
           uAccMin: u(cfg.accMin),
+          uCtrl: u(CTRL[0]),
+          uRadialStrength: u(cfg.radialStrength),
+          uParallelStrength: u(cfg.parallelStrength),
+          uCentripetalStrength: u(cfg.centripetalStrength),
+          uUniformityThreshold: u(cfg.uniformityThreshold),
+          uCurvatureScale: u(cfg.curvatureScale),
+          uPatternMax: u(cfg.patternMax),
         },
         accWriteRT(),
       );
@@ -416,6 +633,7 @@ export async function runHydraulicBake(
     }
   };
   refreshAccumulation();
+  refreshClimate();
 
   // ---- One simulation step: the fixed pass order. ---------------------
   // Each pass's uniforms object lists EXACTLY the uniforms that frag
@@ -479,11 +697,15 @@ export async function runHydraulicBake(
     if (cfg.accumEveryN > 0 && stepIdx % cfg.accumEveryN === 0) {
       refreshAccumulation();
     }
+    if (cfg.accumEveryN > 0 && stepIdx % cfg.accumEveryN === 0) {
+      refreshClimate();
+    }
 
-    // S2.3-> CARVE_RIVERS (#218): stream-power on the drainage
-    // accumulation. declares uA,uAcc,uDetailMask,uGrid,uDt,uStreamK,
-    // uSpM,uSpN,uAccResScale,uVerticality,uTerrainScale,uSinMin,
-    // uConcaveScale,uPoleBand. reads A,ACC,M -> writes A.
+    // S2.3-> CARVE_RIVERS (#218 R1): stream-power on the drainage
+    // accumulation, Q-proportional incision budget. declares uA,uAcc,
+    // uDetailMask,uGrid,uDt,uStreamK,uSpM,uSpN,uAccResScale,uVerticality,
+    // uTerrainScale,uSinMin,uConcaveScale,uChannelDepth,uPoleBand.
+    // reads A,ACC,M -> writes A.
     runRawPass(
       renderer,
       CARVE_RIVERS_FRAG,
@@ -501,6 +723,7 @@ export async function runHydraulicBake(
         uTerrainScale: u(cfg.scale.terrainScale),
         uSinMin: u(cfg.sinMin),
         uConcaveScale: u(cfg.concaveScale),
+        uChannelDepth: u(cfg.channelDepth),
         uPoleBand: u(cfg.poleBand),
       },
       aWriteRT(),
@@ -509,7 +732,7 @@ export async function runHydraulicBake(
 
     // ERODE: declares uA,uF,uGrid,uDt,uCellL,uKd,uSinMin,uStrength,
     // uDowncutting,uVerticality,uTerrainScale,uPoleBand,uResScale,
-    // uDetailMask. reads A,F ->
+    // uAcc,uAccResScale,uSpM,uDetailMask. reads A,F,ACC ->
     // writes A. S1: metre-denominated incision (true slope =
     // Δh*uVerticality / (uTerrainScale/uGrid.x)) replaces the old
     // per-step uMaxDeltaB clamp + uUplift; capacity is uStrength-driven
@@ -531,6 +754,9 @@ export async function runHydraulicBake(
         uTerrainScale: u(cfg.scale.terrainScale),
         uPoleBand: u(cfg.poleBand),
         uResScale: u(resScale),
+        uAcc: u(accReadRT()),
+        uAccResScale: u(cfg.accResScale),
+        uSpM: u(cfg.spM),
         uDetailMask: u(M[0]),
       },
       aWriteRT(),
@@ -630,10 +856,12 @@ export async function runHydraulicBake(
   //      sampler unit + the FBO unbound, so this is a clean resync only.
   renderer.resetState();
 
-  // ---- Teardown. The eroded state lives in A's current read slot;
-  //      return that RT (caller owns + disposes it). Dispose every other
-  //      transient RT (the other A slot + both F slots) — don't leak,
-  //      don't dispose the returned one. -------------------------------
+  // ---- Teardown. FOUR RTs escape this function (caller owns + disposes
+  //      all four): the eroded state (A's current read slot) plus the
+  //      CLIM/TERR/HYDRO[0] stack slots, which the in-app stack map-mode
+  //      reads. Dispose every OTHER transient RT (the other A slot, both
+  //      F/M/ACC/CTRL slots, and the transient [1] stack slots) — don't
+  //      leak, don't dispose any of the four returned ones. -----------
   const result = A[aRead];
   const stale = A[aRead ^ 1];
   stale.dispose();
@@ -643,5 +871,12 @@ export async function runHydraulicBake(
   M[1].dispose();
   ACC[0].dispose();
   ACC[1].dispose();
-  return result;
+  CTRL[0].dispose();
+  CTRL[1].dispose();
+  CLIM[1].dispose();
+  TERR[1].dispose();
+  HYDRO[1].dispose();
+  MSLP[0].dispose();
+  MSLP[1].dispose();
+  return { eroded: result, clim: CLIM[0], terr: TERR[0], hydro: HYDRO[0] };
 }

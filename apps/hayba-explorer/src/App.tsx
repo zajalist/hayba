@@ -20,6 +20,7 @@ import TexturingPanel from "./components/panels/TexturingPanel";
 import ClimateLabPanel, { DEFAULT_CLIMATE_PARAMS, type ClimateParams } from "./components/panels/ClimateLabPanel";
 import DockToolbar, { type ToolName } from "./components/DockToolbar";
 import RecenterButton from "./components/RecenterButton";
+import PerfHud from "./components/PerfHud";
 import ConfirmDialog from "./components/ConfirmDialog";
 import BoundaryPopover from "./components/BoundaryPopover";
 import { IconPlay, IconPause, IconReset } from "./components/icons";
@@ -38,11 +39,24 @@ import { buildPainterMesh, type PainterMeshHandle } from "./viewport/painterMesh
 // debug/validation surface gated behind its own button.
 import { uploadEquirect } from "./viewport/bake/equirectInput";
 import { runHydraulicBake, DEFAULT_HYDRAULIC } from "./viewport/bake/hydraulic";
+import { DEFAULT_BAKE_RES, BAKE_RES_TIERS } from "./viewport/bake/bakeResolution";
+import {
+  loadFidelity,
+  saveFidelity,
+  fidelityToTier,
+  type Fidelity,
+} from "./viewport/bake/fidelity";
 import {
   makeDebugReliefMaterial,
   setDebugTexture,
   setDebugMapMode,
+  setDebugStack,
 } from "./viewport/bake/debugMaterial";
+import { nextInteract, type InteractState } from "./viewport/interact";
+import {
+  EQUIRECT_MAP_MODES,
+  resolveEquirectMode,
+} from "./viewport/equirectMapModes";
 
 /** `EquirectInputs` as serialized by the Rust `bake_inputs_equirect`
  *  command (`Vec<f32>` arrives over Tauri as a JSON `number[]`). */
@@ -110,6 +124,30 @@ interface WizardInit {
 type Mode = "wizard" | "baking" | "boundaries" | "densities" | "simulating";
 
 const INITIAL_DIVISIONS = 64;
+
+// In-app debug stack map-mode registry. Static + future-proof: TERR/HYDRO
+// entries are present now and simply render flat (channels read 0) until
+// Phase-2 P2.3 fills those RTs. `ramp` ids match debugMaterial.ts ramp().
+type DebugStackKind = "relief" | "clim" | "terr" | "hydro";
+interface DebugChannelEntry {
+  label: string;
+  kind: DebugStackKind;
+  channel: number; // RGBA lane (ignored for relief)
+  ramp: number; // 0 grey | 1 temp | 2 precip | 3 hue | 4 grey-elev
+}
+const DEBUG_CHANNELS: DebugChannelEntry[] = [
+  { label: "Relief", kind: "relief", channel: 0, ramp: 0 },
+  { label: "Temp", kind: "clim", channel: 0, ramp: 1 },
+  { label: "Precip", kind: "clim", channel: 1, ramp: 2 },
+  { label: "Wind", kind: "clim", channel: 2, ramp: 3 },
+  { label: "Glaciation", kind: "clim", channel: 3, ramp: 4 },
+  { label: "Slope", kind: "terr", channel: 0, ramp: 0 },
+  { label: "Aspect", kind: "terr", channel: 1, ramp: 3 },
+  { label: "Curvature", kind: "terr", channel: 2, ramp: 0 },
+  { label: "Flow", kind: "hydro", channel: 0, ramp: 0 },
+  { label: "Elevation", kind: "hydro", channel: 1, ramp: 4 },
+  { label: "Endorheic", kind: "hydro", channel: 2, ramp: 0 },
+];
 
 function angularToChord(rad: number): number {
   return 2 * Math.sin(rad / 2);
@@ -330,15 +368,111 @@ export default function App() {
   const prevDebugHFinalRef = useRef<THREE.WebGLRenderTarget | null>(null);
   const prevDebugBaseRef = useRef<THREE.DataTexture | null>(null);
   const prevDebugPrecipRef = useRef<THREE.DataTexture | null>(null);
+  // Stack RTs from the latest bake (caller-owned per HydraulicBakeResult).
+  // Disposed on the NEXT bake exactly like prevDebugHFinalRef — mirrors
+  // the existing eroded-RT discipline (no unmount cleanup is added; that
+  // matches how the eroded RT is already handled).
+  const prevDebugClimRef = useRef<THREE.WebGLRenderTarget | null>(null);
+  const prevDebugTerrRef = useRef<THREE.WebGLRenderTarget | null>(null);
+  const prevDebugHydroRef = useRef<THREE.WebGLRenderTarget | null>(null);
+  // Live stack handles for the mounted material's selector.
+  const debugStackRef = useRef<{
+    clim: THREE.WebGLRenderTarget;
+    terr: THREE.WebGLRenderTarget;
+    hydro: THREE.WebGLRenderTarget;
+  } | null>(null);
   const [debugBaking, setDebugBaking] = useState(false);
   const [debugBakeProgress, setDebugBakeProgress] = useState<string | null>(null);
   const [debugBakeReady, setDebugBakeReady] = useState(false);
+  // SP-A: the single authority for globe interactivity. `compose` =
+  // paint strokes editable; `explore` = orbit + stack view only. A ref
+  // mirror so pointer/effect closures read the live value with no
+  // stale-closure risk. Replaces the painter-visibility hack.
+  const [interact, setInteract] = useState<InteractState>("compose");
+  const interactRef = useRef<InteractState>("compose");
+  useEffect(() => {
+    interactRef.current = interact;
+  }, [interact]);
   const [debugMapMode, setDebugMapModeState] = useState(0);
+  const [debugChannelIdx, setDebugChannelIdx] = useState(0); // 0 = Relief
+  const [perfHudOn, setPerfHudOn] = useState(false);
+  // NX-1: user-selectable bake resolution tier (0=1024² default).
+  const [bakeTier, setBakeTier] = useState(() => fidelityToTier(loadFidelity()));
+  const [fidelity, setFidelity] = useState<Fidelity>(() => loadFidelity());
+  const [debugDraped, setDebugDraped] = useState(true); // draped vs flat
+  const handleChangeFidelity = useCallback((f: Fidelity) => {
+    setFidelity(f);
+    setBakeTier(fidelityToTier(f));
+    saveFidelity(f);
+  }, []);
 
   // Playback speed (steps per rAF tick). 1× is the wizard's dt_ma per frame.
   const [speedMult, setSpeedMult] = useState<1 | 2 | 4 | 8>(1);
   const speedRef = useRef<1 | 2 | 4 | 8>(1);
   useEffect(() => { speedRef.current = speedMult; }, [speedMult]);
+
+  // SP-B: push the selected equirect map-mode onto the live material.
+  // No re-bake — instant. Relief→uStackMode 0, Normal→3 (no tex),
+  // clim→stack channel + ramp, draped(1)/flat(2) per the F toggle.
+  const applyDebugChannel = useCallback(
+    (idx: number, draped: boolean) => {
+      const mat = debugMatRef.current;
+      if (!mat) return;
+      const sel = resolveEquirectMode(idx, draped);
+      const stack = debugStackRef.current;
+      if (sel.kind === "relief" || sel.kind === "normal" || !stack) {
+        // Height-derived modes need no stack texture; if the stack
+        // isn't ready yet, relief is the safe fallback.
+        setDebugStack(mat, {
+          tex: null,
+          channel: 0,
+          mode: sel.kind === "normal" ? 3 : 0,
+          ramp: 0,
+        });
+        sceneRef.current?.setWindAnim(sel.kind === "wind" && debugBakeReady);
+        sceneRef.current?.markDirty();
+        return;
+      }
+      setDebugStack(mat, {
+        tex: stack.clim.texture,
+        channel: sel.channel,
+        mode: sel.mode,
+        ramp: sel.ramp,
+      });
+      sceneRef.current?.setWindAnim(sel.kind === "wind" && debugBakeReady);
+      sceneRef.current?.markDirty();
+    },
+    [debugBakeReady],
+  );
+
+  // `F` flips draped<->flat for the active non-relief stack channel.
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.key !== "f" && ev.key !== "F") return;
+      const tag = (ev.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (!debugBakeReady) return;
+      setDebugDraped((d) => {
+        const next = !d;
+        applyDebugChannel(debugChannelIdx, next);
+        return next;
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [debugBakeReady, debugChannelIdx, applyDebugChannel]);
+
+  // NX-1: `P` toggles the perf HUD (ignored while typing in a field).
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.key !== "p" && ev.key !== "P") return;
+      const tag = (ev.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      setPerfHudOn((v) => !v);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     activeToolRef.current = activeTool;
@@ -698,7 +832,8 @@ export default function App() {
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
-    const active = panelCategory === "compose" && mode === "wizard";
+    const active =
+      panelCategory === "compose" && mode === "wizard" && interact === "compose";
 
     if (!active) {
       if (painterMeshRef.current) {
@@ -706,7 +841,13 @@ export default function App() {
         painterMeshRef.current.dispose();
         painterMeshRef.current = null;
       }
-      if (globeRef.current) globeRef.current.object.visible = true;
+      if (globeRef.current) {
+        // Only un-hide the point-cloud globe when going back to a
+        // paint-editable state. In `explore` the eroded equirect sphere
+        // is the globe (via setGlobe) and the point cloud must stay
+        // hidden or it double-renders over it.
+        globeRef.current.object.visible = interactRef.current === "compose";
+      }
       return;
     }
 
@@ -776,14 +917,21 @@ export default function App() {
         painterMeshRef.current.dispose();
         painterMeshRef.current = null;
       }
-      if (globeRef.current) globeRef.current.object.visible = true;
+      if (globeRef.current) {
+        // Only un-hide the point-cloud globe when going back to a
+        // paint-editable state. In `explore` the eroded equirect sphere
+        // is the globe (via setGlobe) and the point cloud must stay
+        // hidden or it double-renders over it.
+        globeRef.current.object.visible = interactRef.current === "compose";
+      }
     };
-  }, [panelCategory, mode, draft?.divisions]);
+  }, [panelCategory, mode, draft?.divisions, interact]);
 
   // Height-painter pointer interactions. Gated on the compose panel pre-bake
   // in wizard mode. Shift inverts raise<->lower.
   useEffect(() => {
     if (panelCategory !== "compose" || mode !== "wizard") return;
+    if (interactRef.current !== "compose") return;
     const scene = sceneRef.current;
     if (!scene) return;
     const canvas = scene.canvas;
@@ -814,18 +962,6 @@ export default function App() {
       if (ev.button !== 0) return;
       const painter = heightPainterRef.current;
       if (!painter) return;
-      // A hidden painter mesh means a hydraulic debug-relief globe is on
-      // screen (handleDebugBake hides it so it can't poke through the
-      // relief's sunken ocean). Starting a stroke returns to the editable
-      // paint view: drop the relief globe and reveal the painter mesh.
-      // `.object.visible` is read live off the ref (no stale-closure risk
-      // like a captured state value would have).
-      const pm = painterMeshRef.current;
-      if (pm && pm.object.visible === false) {
-        scene.setGlobe(null);
-        pm.object.visible = true;
-        setDebugBakeReady(false);
-      }
       const hit = raycast(ev);
       if (!hit) return;
       const effectiveBrush = ev.shiftKey ? invertBrushMode(paintBrush) : paintBrush;
@@ -861,7 +997,7 @@ export default function App() {
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);
     };
-  }, [panelCategory, mode, paintBrush]);
+  }, [panelCategory, mode, paintBrush, interact]);
 
   // Live-apply boundary assignments — Rust rewrites plate omegas on the
   // running model so the change is visible immediately. No re-bake.
@@ -956,85 +1092,54 @@ export default function App() {
   }, [draft]);
 
   const handleBake = useCallback(async () => {
-    if (!draft) return;
+    const scene = sceneRef.current;
+    if (!draft || !scene || debugBaking) return;
+    setDebugBaking(true);
     setMode("baking");
+    setDebugBakeProgress("Rasterising inputs…");
+    let __pollId: number | undefined;
     try {
       const paintedFields = heightPainterRef.current
         ? heightPainterRef.current.toDraftFields()
         : { painted_elevations: [], painted_mask: [] };
       const finalDraft: WizardDraft = { ...draft, ...paintedFields };
+      // NB: poll the Rust bake phase so the (now non-blocking) bake
+      // shows progress instead of a frozen UI.
+      __pollId = window.setInterval(() => {
+        void (async () => {
+          try {
+            const ph = await invoke<number>("poll_bake_progress");
+            setDebugBakeProgress(
+              [
+                "Preparing…",
+                "Tectonic + erosion bake…",
+                "Building snapshot…",
+                "Finalising…",
+              ][ph] ?? null,
+            );
+          } catch {
+            /* poll best-effort; ignore */
+          }
+        })();
+      }, 250);
+      const __tStart = performance.now();
+      const __tW0 = performance.now();
+
+      // SP-A: Bake runs BOTH. (1) Rust bake_from_wizard → PlanetSnapshot
+      // (kept for later-stage migration; the boundaries/densities/
+      // simulating code is byte-untouched but not entered from Bake in
+      // SP-A). (2) The GPU equirect erosion pipeline, whose eroded
+      // relief sphere is the displayed post-bake planet.
       const snap = await invoke<PlanetSnapshot>("bake_from_wizard", {
         draft: finalDraft,
         wantClimateDebug: true,
         climateParams: climateParamsRef.current,
       });
       setSnapshot(snap);
-      // After bake → land on the Boundaries phase (the next step in the
-      // wizard sequence). User clicks Next/Start to advance to densities
-      // and finally simulating.
-      setMode("boundaries");
-      const bm = BoundaryModel.fromSnapshot(snap);
-      boundaryModelRef.current = bm;
+      const __wizardMs = performance.now() - __tW0;
+      const __tE0 = performance.now();
 
-      // Swap point-cloud globe for triangulated mesh with SatMap shading.
-      // Wrapped in its own try so a mesh-build failure doesn't undo the
-      // successful bake (user can still proceed with the old point-cloud
-      // renderer if the new mesh path errors out).
-      try {
-        const tris = await invoke<number[]>("get_grid_triangles", { divisions: snap.divisions });
-        if (globeMeshRef.current) globeMeshRef.current.dispose();
-        const mesh = buildGlobeMesh(snap, new Uint32Array(tris));
-        mesh.setSatMap(satMap);
-        mesh.setExaggeration(exaggeration);
-        mesh.setShowPlateOutlines(showPlateOutlines);
-        mesh.setShowBoundaryGlow(showBoundaryGlow);
-        sceneRef.current?.setGlobe(mesh.object);
-        globeMeshRef.current = mesh;
-        console.log(`[mesh] ✓ built triangulated planet — ${snap.n_cells} cells, ${tris.length / 3} triangles, satmap='${satMap}'`);
-      } catch (meshErr) {
-        console.warn("[mesh] could not build triangulated mesh — falling back to point cloud:", meshErr);
-      }
-    } catch (e) {
-      setError(String(e));
-      setMode("wizard");
-    }
-  }, [draft]);
-
-  // Debug-globe hydraulic-bake resolution. 2048×1024 equirect — high
-  // enough to carry dendritic erosion channels. The old 256×128 was a
-  // workaround for the SLOW Rust `bake_inputs_equirect` rasteriser
-  // (an O(cells × texels) brute-force nearest-cell search: ~77s at
-  // 1024×512, the sole cause of the ~5-min UI freeze). `bake_equirect.rs`
-  // now spatial-indexes that lookup (a directional bucket grid, ≈O(1)
-  // per texel, result PROVEN byte-identical to brute force by the
-  // `spatial_eq_bruteforce_*` cargo tests), so the rasteriser is
-  // ~0.1s @1024×512 and ~0.32s @2048×1024 (measured, `cargo test
-  // --release`). Budget @2048×1024: ~0.32s rasterise + ~0.6–1.1s GPU sim
-  // (the sim was ~280ms @1024×512/200 steps, scales with texels) ≈ a
-  // couple of seconds total — no freeze, and 16× the detail of 256×128
-  // so dendritic incision actually resolves.
-  const DEBUG_BAKE_W = 2048;
-  const DEBUG_BAKE_H = 1024;
-
-  // Hydraulic equirect bake — ADDITIVE debug path. Does NOT touch the
-  // Rust `bake_from_wizard` sim flow above: it rasterises the painter-
-  // merged draft + climate precip to one equirect grid
-  // (`bake_inputs_equirect`), uploads Base/Precip DataTextures, runs the
-  // virtual-pipes hydraulic sim with the live render loop paused
-  // (`scene.runBake` — bake-then-watch), then shows the eroded equirect
-  // on a relief-shaded debug sphere with a no-erosion (Base) toggle.
-  const handleDebugBake = useCallback(async () => {
-    const scene = sceneRef.current;
-    if (!scene || !draft || debugBaking) return;
-    setDebugBaking(true);
-    setDebugBakeProgress("Rasterising inputs…");
-    try {
-      const paintedFields = heightPainterRef.current
-        ? heightPainterRef.current.toDraftFields()
-        : { painted_elevations: [], painted_mask: [] };
-      const finalDraft: WizardDraft = { ...draft, ...paintedFields };
-
-      // ONE (w,h) pair drives the Rust invoke AND both uploadEquirect
+      // ONE (w,h) drives the Rust raster invoke AND both uploadEquirect
       // calls AND runHydraulicBake — they must match exactly.
       const w = DEBUG_BAKE_W;
       const h = DEBUG_BAKE_H;
@@ -1043,29 +1148,31 @@ export default function App() {
         w,
         h,
       });
+      const __equirectMs = performance.now() - __tE0;
 
-      // Dispose the PREVIOUS bake's resources before allocating new
-      // ones. runHydraulicBake ownership-transfers the eroded equirect
-      // WebGLRenderTarget to the caller (its .dispose() frees BOTH the
-      // GL framebuffer AND its .texture); uploadEquirect hands back the
-      // static Base/Precip DataTextures (the pipeline disposes neither).
-      // Three.js ShaderMaterial.dispose() does NOT free bound uniform
-      // textures or the source RT's FBO, so without this each re-bake
-      // leaks the RT + both DataTextures. On first bake the refs are
-      // null — ?. no-ops. Only the strictly-previous run's resources are
-      // freed here; the currently mounted material's RT/Base are never
-      // the ones being disposed (this runs before the new bake allocates
-      // / binds anything, and the new `rt`/`base` are fresh objects).
+      // Dispose the PREVIOUS bake's GPU resources before allocating new
+      // ones (the only escape from runHydraulicBake is the 4 RTs; the
+      // Base/Precip DataTextures are caller-owned). On first bake the
+      // refs are null — ?. no-ops.
       prevDebugBaseRef.current?.dispose();
       prevDebugPrecipRef.current?.dispose();
       prevDebugHFinalRef.current?.dispose();
+      prevDebugClimRef.current?.dispose();
+      prevDebugTerrRef.current?.dispose();
+      prevDebugHydroRef.current?.dispose();
 
+      const __tU0 = performance.now();
       const base = uploadEquirect(new Float32Array(inp.height), w, h);
       const precip = uploadEquirect(new Float32Array(inp.precip), w, h);
+      const __uploadMs = performance.now() - __tU0;
+      const __tG0 = performance.now();
 
       let rt!: THREE.WebGLRenderTarget;
+      let climRT!: THREE.WebGLRenderTarget;
+      let terrRT!: THREE.WebGLRenderTarget;
+      let hydroRT!: THREE.WebGLRenderTarget;
       await scene.runBake(async (renderer) => {
-        rt = await runHydraulicBake(
+        const out = await runHydraulicBake(
           renderer,
           base,
           precip,
@@ -1084,67 +1191,104 @@ export default function App() {
             setDebugBakeProgress(`Eroding — step ${done}/${total}`);
           },
         );
+        rt = out.eroded;
+        climRT = out.clim;
+        terrRT = out.terr;
+        hydroRT = out.hydro;
+      });
+      const __gpuMs = performance.now() - __tG0;
+      sceneRef.current?.setBakeSplit({
+        wizard: __wizardMs,
+        equirect: __equirectMs,
+        upload: __uploadMs,
+        gpuSim: __gpuMs,
+        total: performance.now() - __tStart,
       });
 
-      // Record the new resources so the NEXT bake can dispose them.
-      // Assignment is on the success path only — a throw mid-bake leaves
-      // the previous refs intact (already disposed above, so no
-      // double-dispose). `precip` is sim-only input; `base` doubles as
-      // the live no-erosion toggle texture, so it (and `rt`) stay alive
-      // until the next bake supersedes them.
       prevDebugHFinalRef.current = rt;
       prevDebugBaseRef.current = base;
       prevDebugPrecipRef.current = precip;
+      prevDebugClimRef.current = climRT;
+      prevDebugTerrRef.current = terrRT;
+      prevDebugHydroRef.current = hydroRT;
+      debugStackRef.current = { clim: climRT, terr: terrRT, hydro: hydroRT };
 
       const mat = makeDebugReliefMaterial();
-      // Eroded view = the hydraulic result RT (A.r); no-erosion view =
-      // the raw rasterised Base DataTexture. The checkbox flips between
-      // them via setDebugMapMode (0 = eroded, 1 = no-erosion).
       setDebugTexture(mat, rt.texture, base);
       setDebugMapMode(mat, debugMapMode);
       debugMatRef.current = mat;
+      applyDebugChannel(debugChannelIdx, debugDraped);
 
       const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 256, 128), mat);
-      mesh.name = "hayba-debug-relief";
+      mesh.name = "hayba-eroded-planet";
       scene.setGlobe(mesh);
 
-      // The painter (compose pre-bake) mesh is added to the scene
-      // independently of the globe slot (scene.scene.add, not setGlobe), so
-      // setGlobe() above does NOT remove it. The relief sphere extrudes
-      // ocean INWARD (h<0 -> radius < 1) while the painter mesh sits at the
-      // paint surface, so a still-visible painter mesh depth-wins in every
-      // sea basin and the coarse pre-bake terrain pokes through the eroded
-      // ocean. Hide it: the painter mesh and the debug-relief globe must
-      // never co-render. It is revealed again when the user resumes
-      // painting (onPointerDown) or the paint view is rebuilt.
-      if (painterMeshRef.current) {
-        painterMeshRef.current.object.visible = false;
-      }
+      // SP-A: explicit state — no painter-visibility games. The painter-
+      // lifecycle effect is now gated on interact==="compose"; flipping
+      // to "explore" deactivates it (its cleanup removes+disposes the
+      // painter mesh) so the eroded sphere is the only globe. Back to
+      // "wizard" mode (NOT boundaries — resolved SP-A decision).
+      setMode("wizard");
+      setInteract(nextInteract(interactRef.current, "bake"));
 
       setDebugBakeReady(true);
       setDebugBakeProgress(null);
-      console.log(
-        `[debug-bake] ✓ hydraulic equirect bake — ${w}×${h}`,
-      );
+      console.log(`[bake] ✓ unified equirect bake — ${w}×${h}`);
     } catch (e) {
       setError(String(e));
       setDebugBakeProgress(null);
+      setMode("wizard");
     } finally {
+      if (__pollId !== undefined) window.clearInterval(__pollId);
       setDebugBaking(false);
     }
-  }, [draft, debugBaking, debugMapMode]);
+  }, [
+    draft,
+    debugBaking,
+    debugMapMode,
+    applyDebugChannel,
+    debugChannelIdx,
+    debugDraped,
+  ]);
 
-  const handleToggleDebugMapMode = useCallback(() => {
-    setDebugMapModeState((m) => {
-      const next = m === 0 ? 1 : 0;
-      if (debugMatRef.current) setDebugMapMode(debugMatRef.current, next);
-      return next;
-    });
-  }, []);
+  // Phase-2 P2.1: resolution comes from the tier module (default
+  // 2048x1024 ≈ 2.1M; ceiling tier ≈ 3.3M). A UI chip to choose the
+  // tier is P2.5; selecting here keeps the ceiling/guard shipping now.
+  // NX-1: the selector drives the next bake's resolution; default tier
+  // 0 (1024×512) = DEFAULT_BAKE_RES. clampBakeRes already guards range.
+  const tier = BAKE_RES_TIERS[bakeTier] ?? DEFAULT_BAKE_RES;
+  const DEBUG_BAKE_W = tier.w;
+  const DEBUG_BAKE_H = tier.h;
+
 
   const handleEditWizard = useCallback(() => {
     previewRef.current = [];
     invoke("reset_sim").catch(() => {});
+    // SP-A: the ONLY path explore → compose. Tear down the eroded globe
+    // + its 4 caller-owned stack RTs (setGlobe(null) disposes the sphere
+    // geometry+material; the RTs are NOT owned by the material so are
+    // freed explicitly here, mirroring the pre-bake dispose discipline),
+    // then re-enter compose — the painter-lifecycle effect (gated on
+    // interact==="compose") rebuilds the paint view.
+    const scene = sceneRef.current;
+    if (scene) scene.setGlobe(null);
+    sceneRef.current?.setWindAnim(false);
+    prevDebugHFinalRef.current?.dispose();
+    prevDebugClimRef.current?.dispose();
+    prevDebugTerrRef.current?.dispose();
+    prevDebugHydroRef.current?.dispose();
+    prevDebugBaseRef.current?.dispose();
+    prevDebugPrecipRef.current?.dispose();
+    prevDebugHFinalRef.current = null;
+    prevDebugClimRef.current = null;
+    prevDebugTerrRef.current = null;
+    prevDebugHydroRef.current = null;
+    prevDebugBaseRef.current = null;
+    prevDebugPrecipRef.current = null;
+    debugStackRef.current = null;
+    debugMatRef.current = null;
+    setDebugBakeReady(false);
+    setInteract(nextInteract(interactRef.current, "edit"));
     setMode("wizard");
     setPlaying(false);
     if (draft) globeRef.current?.recolorFromDraft(draft, cellCountRef.current);
@@ -1287,8 +1431,16 @@ export default function App() {
         )}
 
         <RecenterButton getScene={getScene} />
+        <PerfHud
+          visible={perfHudOn}
+          getSnapshot={() => sceneRef.current?.perfSnapshot()}
+        />
 
-        {/* EU5-style on-canvas map-mode bar (bottom-left, not in sidebar) */}
+        {/* SP-B: equirect map-mode bar (bottom-left). Drives the live
+            eroded-planet material via applyDebugChannel — no re-bake.
+            Shown only once a bake is ready (where the SP-A View panel
+            was). The cell MAP_MODES/setMapMode path is untouched. */}
+        {draft && debugBakeReady && (
         <div
           style={{
             position: "absolute",
@@ -1301,7 +1453,7 @@ export default function App() {
             gap: 3,
             padding: "5px 7px",
             background: "rgba(20, 22, 28, 0.82)",
-            border: `1px solid ${mapMode !== 0 ? "#B56A1D" : "#2f343d"}`,
+            border: `1px solid ${debugChannelIdx !== 0 ? "#B56A1D" : "#2f343d"}`,
             borderRadius: 5,
             backdropFilter: "blur(4px)",
             zIndex: 50,
@@ -1320,12 +1472,34 @@ export default function App() {
           >
             Map
           </span>
-          {MAP_MODES.map((m) => {
-            const on = m.value === mapMode;
+          <select
+            title="Bake resolution tier"
+            value={bakeTier}
+            onChange={(ev) => setBakeTier(Number(ev.target.value))}
+            style={{
+              fontSize: 10,
+              marginRight: 4,
+              background: "transparent",
+              color: "#a8aeb8",
+              border: "1px solid #3d434e",
+              borderRadius: 3,
+            }}
+          >
+            {BAKE_RES_TIERS.map((t, i) => (
+              <option key={`${t.w}x${t.h}`} value={i}>
+                {t.w}×{t.h}
+              </option>
+            ))}
+          </select>
+          {EQUIRECT_MAP_MODES.map((m, i) => {
+            const on = i === debugChannelIdx;
             return (
               <button
-                key={m.value}
-                onClick={() => setMapMode(m.value)}
+                key={m.label}
+                onClick={() => {
+                  setDebugChannelIdx(i);
+                  applyDebugChannel(i, debugDraped);
+                }}
                 title={m.label}
                 style={{
                   padding: "3px 7px",
@@ -1343,89 +1517,24 @@ export default function App() {
               </button>
             );
           })}
-        </div>
-
-        {/* Hydraulic equirect bake — debug/validation affordance
-            (bottom-right). Purely additive: it does not alter the wizard
-            bake_from_wizard flow; it swaps the displayed globe for a
-            relief-shaded debug sphere driven by the hydraulic erosion
-            sim so we can eyeball erosion-vs-no-erosion. */}
-        {draft && (
-          <div
+          <span
             style={{
-              position: "absolute",
-              bottom: 12,
-              right: 12,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "stretch",
-              gap: 6,
-              padding: "8px 10px",
-              maxWidth: 260,
-              background: "rgba(20, 22, 28, 0.82)",
-              border: `1px solid ${debugBakeReady ? "#B56A1D" : "#2f343d"}`,
-              borderRadius: 5,
-              backdropFilter: "blur(4px)",
-              zIndex: 50,
-              pointerEvents: "auto",
+              fontSize: 10,
+              opacity: 0.6,
+              marginLeft: 4,
               fontFamily: '"Segoe UI", system-ui, sans-serif',
+              color: "#9aa0aa",
             }}
           >
-            <span
-              style={{
-                fontSize: 10,
-                letterSpacing: 0.5,
-                textTransform: "uppercase",
-                color: "#9aa0aa",
-              }}
-            >
-              Hydraulic Bake (debug)
-            </span>
-            <button
-              type="button"
-              onClick={handleDebugBake}
-              disabled={debugBaking}
-              title="Rasterise → hydraulic erosion → relief-shaded debug globe"
-              style={{
-                padding: "5px 9px",
-                fontSize: 11,
-                borderRadius: 3,
-                cursor: debugBaking ? "default" : "pointer",
-                background: debugBaking
-                  ? "rgba(100,104,112,0.18)"
-                  : "rgba(181,106,29,0.22)",
-                border: `1px solid ${debugBaking ? "#3d434e" : "#B56A1D"}`,
-                color: debugBaking ? "#7e848e" : "#DED4C3",
-              }}
-            >
-              {debugBaking ? "Baking…" : "Bake (hydraulic equirect)"}
-            </button>
-            {debugBakeProgress && (
-              <span style={{ fontSize: 10, color: "#a8aeb8" }}>
-                {debugBakeProgress}
-              </span>
-            )}
-            {debugBakeReady && (
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  fontSize: 11,
-                  color: "#a8aeb8",
-                  cursor: "pointer",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={debugMapMode === 1}
-                  onChange={handleToggleDebugMapMode}
-                />
-                Show base (no-erosion) view
-              </label>
-            )}
-          </div>
+            {debugChannelIdx <= 1
+              ? ""
+              : debugDraped
+                ? "F = flat"
+                : "F = draped"}
+          </span>
+        </div>
         )}
+
       </div>
 
       <RightPanel
@@ -1549,6 +1658,8 @@ export default function App() {
             onToggleArrows={setShowForceArrows}
             mapMode={mapMode}
             onChangeMapMode={setMapMode}
+            fidelity={fidelity}
+            onChangeFidelity={handleChangeFidelity}
           />
         )}
       </RightPanel>

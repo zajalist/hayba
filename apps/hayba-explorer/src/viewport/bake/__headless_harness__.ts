@@ -221,14 +221,13 @@ export async function runRealInputErosionVerification(
 
     const webglErrPre = gl.getError();
     const t0 = performance.now();
-    const rt = await hyd.runHydraulicBake(
-      renderer,
-      baseTex,
-      precipTex,
-      w,
-      h,
-      cfg,
-    );
+    const { eroded: rt, clim: _c, terr: _t, hydro: _h } =
+      await hyd.runHydraulicBake(renderer, baseTex, precipTex, w, h, cfg);
+    // Oracle never reads the stack RTs; dispose immediately so the
+    // many-bake harness doesn't leak 3 RTs/bake (fatal at 3M).
+    _c.dispose();
+    _t.dispose();
+    _h.dispose();
     const t1 = performance.now();
     const webglErrPost = gl.getError();
 
@@ -432,14 +431,13 @@ export async function runHeadlessErosionVerification(
 
     const webglErrPre = gl.getError();
     const t0 = performance.now();
-    const rt = await hyd.runHydraulicBake(
-      renderer,
-      baseTex,
-      precipTex,
-      w,
-      h,
-      cfg,
-    );
+    const { eroded: rt, clim: _c, terr: _t, hydro: _h } =
+      await hyd.runHydraulicBake(renderer, baseTex, precipTex, w, h, cfg);
+    // Oracle never reads the stack RTs; dispose immediately so the
+    // many-bake harness doesn't leak 3 RTs/bake (fatal at 3M).
+    _c.dispose();
+    _t.dispose();
+    _h.dispose();
     const t1 = performance.now();
     const webglErrPost = gl.getError();
 
@@ -770,7 +768,188 @@ export interface ErosionReliefResult {
     delta: string; // signed after-before
     afterZoom: string; // dominant-massif crop, post-erosion
     deltaZoom: string; // dominant-massif crop, signed delta
+    // CP2.a CLIM debug overlays — OPT-IN (globalThis.__HAYBA_CLIM===true)
+    // only; the readback + 4 per-texel renders are too heavy to run on
+    // every erosion smoke (timed out the harness at 3M). Absent unless
+    // explicitly requested for a CP2.a gate.
+    clim_temp?: string;   // temperature °C ramp (blue→white→red)
+    clim_precip?: string; // precipitation 0..1 (white→blue)
+    clim_wind?: string;   // wind azimuth turns (HSV hue)
+    clim_glac?: string;   // glaciation 0..1 (greyscale)
+    // CP2.c TERR/HYDRO mask overlays — OPT-IN (same __HAYBA_CLIM gate).
+    // The REAL baked masks (refreshClimate's TERRAIN/HYDRO passes),
+    // read back before the stack RTs are disposed; no re-derivation.
+    terr_slope?: string;  // TERR.r metre-slope, grey (fixed 0..2)
+    terr_aspect?: string; // TERR.g aspect turns (HSV hue)
+    terr_curv?: string;   // TERR.b curvature, diverging blue/white/red
+    hydro_flow?: string;  // HYDRO.r discharge Q, log-grey
+    hydro_elev?: string;  // HYDRO.g elevNorm, grey
+    hydro_endo?: string;  // HYDRO.b endorheic, binary
   };
+}
+
+/** Render a CLIM buffer (RGBA32F, stride 4 per texel) into a PNG data-URL.
+ *  Mirrors `fieldToReliefDataURL`'s canvas/encode pattern, with the SAME
+ *  bounded adaptive upscale (~1500 px target) so the overlay stays cheap
+ *  at any bake W — a fixed scale=4 made a 2560 bake a 10k×5k canvas ×4
+ *  and timed out the harness at 3M. Climate is low-frequency: a ≤~1500 px
+ *  overlay shows the global bands perfectly. */
+function climOverlayPNG(
+  buf: Float32Array,
+  w: number,
+  h: number,
+  mode: "temp" | "precip" | "wind" | "glac",
+): string {
+  const scale = Math.max(1, Math.round(1500 / w));
+  const cv = document.createElement("canvas");
+  cv.width = w;
+  cv.height = h;
+  const ctx = cv.getContext("2d")!;
+  const img = ctx.createImageData(w, h);
+
+  for (let i = 0; i < w * h; i++) {
+    const T = buf[i * 4];     // temperature °C
+    const P = buf[i * 4 + 1]; // precip 0..1
+    const W = buf[i * 4 + 2]; // wind azimuth turns 0..1
+    const G = buf[i * 4 + 3]; // glaciation 0..1
+    let r = 0, g = 0, b = 0;
+
+    if (mode === "temp") {
+      // normalise t=(T+30)/65 clamped 0..1; blue(cold)→white→red(hot)
+      const t = Math.max(0, Math.min(1, (T + 30) / 65));
+      const s = t * t * (3 - 2 * t); // smoothstep
+      r = Math.round(255 * s);
+      b = Math.round(255 * (1 - s));
+      g = Math.round(255 * (1 - Math.abs(2 * t - 1)));
+    } else if (mode === "precip") {
+      // white→blue: r=g=255*(1-p), b=255
+      const p = Math.max(0, Math.min(1, P));
+      r = Math.round(255 * (1 - p));
+      g = Math.round(255 * (1 - p));
+      b = 255;
+    } else if (mode === "wind") {
+      // HSV hue=az (turns 0..1), S=1, V=1 → RGB
+      const h6 = ((W % 1 + 1) % 1) * 6;
+      const hi = Math.floor(h6);
+      const f = h6 - hi;
+      const q = 1 - f;
+      switch (hi % 6) {
+        case 0: r = 255; g = Math.round(255 * f); b = 0; break;
+        case 1: r = Math.round(255 * q); g = 255; b = 0; break;
+        case 2: r = 0; g = 255; b = Math.round(255 * f); break;
+        case 3: r = 0; g = Math.round(255 * q); b = 255; break;
+        case 4: r = Math.round(255 * f); g = 0; b = 255; break;
+        default: r = 255; g = 0; b = Math.round(255 * q); break;
+      }
+    } else {
+      // glac: greyscale 255*g
+      const v = Math.round(255 * Math.max(0, Math.min(1, G)));
+      r = v; g = v; b = v;
+    }
+
+    const o = i * 4;
+    img.data[o] = r;
+    img.data[o + 1] = g;
+    img.data[o + 2] = b;
+    img.data[o + 3] = 255;
+  }
+
+  ctx.putImageData(img, 0, 0);
+  const out = document.createElement("canvas");
+  out.width = w * scale;
+  out.height = h * scale;
+  const octx = out.getContext("2d")!;
+  octx.imageSmoothingEnabled = false;
+  octx.drawImage(cv, 0, 0, out.width, out.height);
+  return out.toDataURL("image/png");
+}
+
+/** Render a TERR/HYDRO mask buffer (RGBA32F, stride 4 per texel) into a PNG
+ *  data-URL. Mirrors `climOverlayPNG` EXACTLY — same canvas/encode pattern
+ *  and the SAME bounded adaptive upscale (~1500 px target) so the overlay
+ *  stays cheap at any bake W. Modes decode the packed TERR/HYDRO channels:
+ *  TERR=(r:slopeMag, g:aspect, b:curvature, a:0);
+ *  HYDRO=(r:Q discharge, g:elevNorm, b:endorheic, a:0). */
+function maskOverlayPNG(
+  buf: Float32Array,
+  w: number,
+  h: number,
+  mode: "slope" | "aspect" | "curv" | "flow" | "elev" | "endo",
+): string {
+  const scale = Math.max(1, Math.round(1500 / w));
+  const cv = document.createElement("canvas");
+  cv.width = w;
+  cv.height = h;
+  const ctx = cv.getContext("2d")!;
+  const img = ctx.createImageData(w, h);
+
+  for (let i = 0; i < w * h; i++) {
+    const C0 = buf[i * 4];     // TERR.r slope | HYDRO.r discharge Q
+    const C1 = buf[i * 4 + 1]; // TERR.g aspect turns | HYDRO.g elevNorm
+    const C2 = buf[i * 4 + 2]; // TERR.b curvature | HYDRO.b endorheic
+    let r = 0, g = 0, b = 0;
+
+    if (mode === "slope") {
+      // greyscale slope magnitude over a fixed 0..2 range
+      const v = Math.round(255 * Math.max(0, Math.min(1, C0 / 2)));
+      r = v; g = v; b = v;
+    } else if (mode === "aspect") {
+      // HSV hue = aspect (turns 0..1), S=1, V=1 → RGB
+      const h6 = ((C1 % 1 + 1) % 1) * 6;
+      const hi = Math.floor(h6);
+      const f = h6 - hi;
+      const q = 1 - f;
+      switch (hi % 6) {
+        case 0: r = 255; g = Math.round(255 * f); b = 0; break;
+        case 1: r = Math.round(255 * q); g = 255; b = 0; break;
+        case 2: r = 0; g = 255; b = Math.round(255 * f); break;
+        case 3: r = 0; g = Math.round(255 * q); b = 255; break;
+        case 4: r = Math.round(255 * f); g = 0; b = 255; break;
+        default: r = 255; g = 0; b = Math.round(255 * q); break;
+      }
+    } else if (mode === "curv") {
+      // diverging blue/white/red around curvature=0.5 (CTRL.b normalised)
+      const t = Math.max(-1, Math.min(1, (C2 - 0.5) * 2));
+      if (t < 0) {
+        r = Math.round(255 * (1 + t));
+        g = Math.round(255 * (1 + t));
+        b = 255;
+      } else {
+        r = 255;
+        g = Math.round(255 * (1 - t));
+        b = Math.round(255 * (1 - t));
+      }
+    } else if (mode === "flow") {
+      // log-scaled greyscale discharge Q (huge dynamic range)
+      const v = Math.round(
+        255 * Math.max(0, Math.min(1, Math.log1p(Math.max(0, C0)) / Math.log(1e5))),
+      );
+      r = v; g = v; b = v;
+    } else if (mode === "elev") {
+      // greyscale elevation-normalised 0..1
+      const v = Math.round(255 * Math.max(0, Math.min(1, C1)));
+      r = v; g = v; b = v;
+    } else {
+      // endo: binary endorheic flag (HYDRO.b)
+      const v = C2 > 0.5 ? 255 : 0;
+      r = v; g = v; b = v;
+    }
+
+    const o = i * 4;
+    img.data[o] = r;
+    img.data[o + 1] = g;
+    img.data[o + 2] = b;
+    img.data[o + 3] = 255;
+  }
+
+  ctx.putImageData(img, 0, 0);
+  const out = document.createElement("canvas");
+  out.width = w * scale;
+  out.height = h * scale;
+  const octx = out.getContext("2d")!;
+  octx.imageSmoothingEnabled = false;
+  octx.drawImage(cv, 0, 0, out.width, out.height);
+  return out.toDataURL("image/png");
 }
 
 /** Real-GPU bake on the DEM-like multi-continent fixture, then emit relief +
@@ -867,7 +1046,27 @@ async function _bakeAndRenderRelief(
   const cfg = { ...hyd.DEFAULT_HYDRAULIC, ...(overrideCfg ?? {}) };
 
   const t0 = performance.now();
-  const rt = await hyd.runHydraulicBake(renderer, baseTex, precipTex, w, h, cfg);
+  const { eroded: rt, clim: _c, terr: _t, hydro: _h } =
+    await hyd.runHydraulicBake(renderer, baseTex, precipTex, w, h, cfg);
+  // CP2.c (#234 P2.3a): OPT-IN only — read the REAL baked TERR/HYDRO
+  // masks (refreshClimate's TERRAIN/HYDRO passes) before disposal so
+  // the overlay is the actual baked mask, not a re-derivation. Default
+  // (no __HAYBA_CLIM) path is byte-unchanged: still disposes at once.
+  const wantMasks =
+    (globalThis as { __HAYBA_CLIM?: boolean }).__HAYBA_CLIM === true;
+  let terrBuf: Float32Array | null = null;
+  let hydroBuf: Float32Array | null = null;
+  if (wantMasks) {
+    terrBuf = new Float32Array(w * h * 4);
+    gp.readRawPixels(renderer, _t, 0, 0, w, h, terrBuf);
+    hydroBuf = new Float32Array(w * h * 4);
+    gp.readRawPixels(renderer, _h, 0, 0, w, h, hydroBuf);
+  }
+  // Oracle never reads the stack RTs; dispose immediately so the
+  // many-bake harness doesn't leak 3 RTs/bake (fatal at 3M).
+  _c.dispose();
+  _t.dispose();
+  _h.dispose();
   const t1 = performance.now();
 
   const buf = new Float32Array(w * h * 4);
@@ -941,6 +1140,44 @@ async function _bakeAndRenderRelief(
   const cw = Math.min(w, Math.round((140 / 360) * w));
   const ch = Math.min(h, Math.round((68 / 180) * h));
 
+  // CP2.a CLIM debug overlays — OPT-IN only. The extra CLIMATE_FRAG
+  // pass + a w*h*4 float readback + 4 per-texel canvas renders is far
+  // too heavy to run on every erosion smoke (it timed out the harness
+  // at 3M and would silently break all high-res erosion gates that use
+  // this oracle). A CP2.a driver sets globalThis.__HAYBA_CLIM=true to
+  // request them; default erosion runs skip this entirely.
+  const wantClim =
+    (globalThis as { __HAYBA_CLIM?: boolean }).__HAYBA_CLIM === true;
+  let climBuf: Float32Array | null = null;
+  if (wantClim) {
+    const glsl = await import("./hydraulic.glsl");
+    const climRT = new THREE.WebGLRenderTarget(w, h, {
+      type: THREE.FloatType,
+      format: THREE.RGBAFormat,
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
+      wrapS: THREE.ClampToEdgeWrapping,
+      wrapT: THREE.ClampToEdgeWrapping,
+      depthBuffer: false,
+      stencilBuffer: false,
+      generateMipmaps: false,
+    });
+    gp.runRawPass(renderer, glsl.CLIMATE_FRAG, {
+      uA: { value: rt },
+      uGrid: { value: new THREE.Vector2(w, h) },
+      uTEquatorC: { value: cfg.tEquatorC },
+      uTLatDropC: { value: cfg.tLatDropC },
+      uLapseCPerKm: { value: cfg.lapseCPerKm },
+      uElevKmScale: { value: cfg.elevKmScale },
+      uItczWidthDeg: { value: cfg.itczWidthDeg },
+      uGlacOnsetC: { value: cfg.glacOnsetC },
+      uGlacFullC: { value: cfg.glacFullC },
+    }, climRT);
+    climBuf = new Float32Array(w * h * 4);
+    gp.readRawPixels(renderer, climRT, 0, 0, w, h, climBuf);
+    climRT.dispose();
+  }
+
   return {
     ran: true,
     unmaskedRenderer,
@@ -963,7 +1200,23 @@ async function _bakeAndRenderRelief(
     images: (() => {
       const fullScale = Math.max(1, Math.round(1500 / w));
       const zoomScale = Math.max(2, Math.round(2200 / Math.max(1, cw)));
-      return {
+      const img: {
+        before: string;
+        after: string;
+        delta: string;
+        afterZoom: string;
+        deltaZoom: string;
+        clim_temp?: string;
+        clim_precip?: string;
+        clim_wind?: string;
+        clim_glac?: string;
+        terr_slope?: string;
+        terr_aspect?: string;
+        terr_curv?: string;
+        hydro_flow?: string;
+        hydro_elev?: string;
+        hydro_endo?: string;
+      } = {
         before: fieldToReliefDataURL(baseArr, w, h, {
           exaggeration: 6,
           scale: fullScale,
@@ -987,6 +1240,23 @@ async function _bakeAndRenderRelief(
           scale: zoomScale,
         }),
       };
+      if (climBuf) {
+        img.clim_temp = climOverlayPNG(climBuf, w, h, "temp");
+        img.clim_precip = climOverlayPNG(climBuf, w, h, "precip");
+        img.clim_wind = climOverlayPNG(climBuf, w, h, "wind");
+        img.clim_glac = climOverlayPNG(climBuf, w, h, "glac");
+      }
+      if (terrBuf) {
+        img.terr_slope = maskOverlayPNG(terrBuf, w, h, "slope");
+        img.terr_aspect = maskOverlayPNG(terrBuf, w, h, "aspect");
+        img.terr_curv = maskOverlayPNG(terrBuf, w, h, "curv");
+      }
+      if (hydroBuf) {
+        img.hydro_flow = maskOverlayPNG(hydroBuf, w, h, "flow");
+        img.hydro_elev = maskOverlayPNG(hydroBuf, w, h, "elev");
+        img.hydro_endo = maskOverlayPNG(hydroBuf, w, h, "endo");
+      }
+      return img;
     })(),
   };
 }
@@ -1091,11 +1361,55 @@ function _demLikeField(
   return { base, precip };
 }
 
+// #226 oracle fixtures. Continuous in (x,y) like _demLikeField so the
+// field is resolution-stable. Ramp: uniform tilt -> parallel drainage.
+// Basin: high rim, low centre, ocean ring -> centripetal/endorheic.
+function _rampField(w: number, h: number): { base: Float32Array; precip: Float32Array } {
+  const base = new Float32Array(w * h);
+  const precip = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const u = x / w;
+      base[i] =
+        u < 0.12 || u > 0.88
+          ? -0.4
+          : 0.06 +
+            0.9 * (0.88 - u) +
+            0.02 * Math.sin(y * 0.7) +
+            0.02 * Math.sin(x * 0.31);
+      precip[i] = 0.6;
+    }
+  }
+  return { base, precip };
+}
+function _basinField(w: number, h: number): { base: Float32Array; precip: Float32Array } {
+  const base = new Float32Array(w * h);
+  const precip = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const nx = (x / w - 0.5) * 2;
+      const ny = (y / h - 0.5) * 2;
+      const r = Math.hypot(nx, ny);
+      base[i] =
+        r > 0.92
+          ? -0.5
+          : 0.05 +
+            0.85 * r * r +
+            0.015 * Math.sin(x * 0.4) +
+            0.015 * Math.cos(y * 0.45);
+      precip[i] = 0.6;
+    }
+  }
+  return { base, precip };
+}
+
 /** Real-GPU bake on the self-contained DEM-like field at arbitrary
  *  resolution (default 1024×512 — production scale, where dendritic
  *  drainage can actually resolve). The honest CP0 dendritic-quality gate. */
 export async function runSyntheticDemRelief(
-  res?: { w: number; h: number },
+  res?: { w: number; h: number; fixture?: "dome" | "ramp" | "basin" },
   overrideCfg?: Record<string, number>,
   injectedRenderer?: THREE.WebGLRenderer,
 ): Promise<ErosionReliefResult> {
@@ -1111,7 +1425,13 @@ export async function runSyntheticDemRelief(
     const gp = await import("./glPass");
     const w = res?.w ?? 1024;
     const h = res?.h ?? 512;
-    const { base, precip } = _demLikeField(w, h);
+    const fixture = res?.fixture ?? "dome";
+    const { base, precip } =
+      fixture === "ramp"
+        ? _rampField(w, h)
+        : fixture === "basin"
+          ? _basinField(w, h)
+          : _demLikeField(w, h);
     const r = await _bakeAndRenderRelief(
       hyd,
       eq,
