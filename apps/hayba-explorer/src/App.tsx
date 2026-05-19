@@ -417,6 +417,7 @@ export default function App() {
           mode: sel.kind === "normal" ? 3 : 0,
           ramp: 0,
         });
+        sceneRef.current?.setWindAnim(sel.kind === "wind" && debugBakeReady);
         sceneRef.current?.markDirty();
         return;
       }
@@ -426,9 +427,10 @@ export default function App() {
         mode: sel.mode,
         ramp: sel.ramp,
       });
+      sceneRef.current?.setWindAnim(sel.kind === "wind" && debugBakeReady);
       sceneRef.current?.markDirty();
     },
-    [],
+    [debugBakeReady],
   );
 
   // `F` flips draped<->flat for the active non-relief stack channel.
@@ -1258,6 +1260,7 @@ export default function App() {
     // interact==="compose") rebuilds the paint view.
     const scene = sceneRef.current;
     if (scene) scene.setGlobe(null);
+    sceneRef.current?.setWindAnim(false);
     prevDebugHFinalRef.current?.dispose();
     prevDebugClimRef.current?.dispose();
     prevDebugTerrRef.current?.dispose();
