@@ -101,3 +101,32 @@ describe('executeCommand — error code mapping', () => {
     }
   });
 });
+
+describe('executeCommand — transport retry', () => {
+  it('retries once when sender throws (transport failure)', async () => {
+    let attempts = 0;
+    const flaky: Sender = async () => {
+      attempts++;
+      if (attempts === 1) throw new Error('ECONNRESET');
+      return { id: 't', ok: true, data: { attempts } };
+    };
+    const data = await executeCommand<{ attempts: number }>('x', {}, { sender: flaky });
+    expect(data.attempts).toBe(2);
+  });
+
+  it('throws UeToolError with code "transport" after retry budget exhausted', async () => {
+    const always: Sender = async () => { throw new Error('ECONNRESET'); };
+    await expect(executeCommand('x', {}, { sender: always }))
+      .rejects.toMatchObject({ name: 'UeToolError', code: 'transport' });
+  });
+
+  it('does NOT retry on UE error responses (ok:false)', async () => {
+    let attempts = 0;
+    const sender: Sender = async () => {
+      attempts++;
+      return { id: 't', ok: false, error: 'no' };
+    };
+    await expect(executeCommand('x', {}, { sender })).rejects.toMatchObject({ code: 'ue_error' });
+    expect(attempts).toBe(1);
+  });
+});

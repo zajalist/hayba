@@ -64,7 +64,22 @@ export async function executeCommand<T = Record<string, unknown>>(
   const sender = opts.sender ?? DEFAULT_SENDER;
   if (!sender) throw new UeToolError('No sender configured', { code: 'transport' });
   const timeout = opts.timeout ?? costToTimeoutMs(getToolMeta(cmd)?.cost);
-  const resp = await sender(cmd, params, timeout);
+
+  const attemptOnce = async (): Promise<TcpResponse> => sender(cmd, params, timeout);
+
+  let resp: TcpResponse;
+  try {
+    resp = await attemptOnce();
+  } catch (firstErr) {
+    // transport-level failure — one retry
+    try {
+      resp = await attemptOnce();
+    } catch (secondErr) {
+      const msg = (secondErr as Error)?.message ?? String(secondErr);
+      throw new UeToolError(msg, { code: 'transport', uePayload: firstErr });
+    }
+  }
+
   if (resp.ok) return (resp.data ?? {}) as T;
   const code = mapUeCode(resp.code);
   throw new UeToolError(resp.error ?? 'unknown UE error', { code, uePayload: resp });
