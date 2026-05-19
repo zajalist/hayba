@@ -41,6 +41,12 @@ import { uploadEquirect } from "./viewport/bake/equirectInput";
 import { runHydraulicBake, DEFAULT_HYDRAULIC } from "./viewport/bake/hydraulic";
 import { DEFAULT_BAKE_RES, BAKE_RES_TIERS } from "./viewport/bake/bakeResolution";
 import {
+  loadFidelity,
+  saveFidelity,
+  fidelityToTier,
+  type Fidelity,
+} from "./viewport/bake/fidelity";
+import {
   makeDebugReliefMaterial,
   setDebugTexture,
   setDebugMapMode,
@@ -391,8 +397,14 @@ export default function App() {
   const [debugChannelIdx, setDebugChannelIdx] = useState(0); // 0 = Relief
   const [perfHudOn, setPerfHudOn] = useState(false);
   // NX-1: user-selectable bake resolution tier (0=1024² default).
-  const [bakeTier, setBakeTier] = useState(0);
+  const [bakeTier, setBakeTier] = useState(() => fidelityToTier(loadFidelity()));
+  const [fidelity, setFidelity] = useState<Fidelity>(() => loadFidelity());
   const [debugDraped, setDebugDraped] = useState(true); // draped vs flat
+  const handleChangeFidelity = useCallback((f: Fidelity) => {
+    setFidelity(f);
+    setBakeTier(fidelityToTier(f));
+    saveFidelity(f);
+  }, []);
 
   // Playback speed (steps per rAF tick). 1× is the wizard's dt_ma per frame.
   const [speedMult, setSpeedMult] = useState<1 | 2 | 4 | 8>(1);
@@ -1646,6 +1658,8 @@ export default function App() {
             onToggleArrows={setShowForceArrows}
             mapMode={mapMode}
             onChangeMapMode={setMapMode}
+            fidelity={fidelity}
+            onChangeFidelity={handleChangeFidelity}
           />
         )}
       </RightPanel>
