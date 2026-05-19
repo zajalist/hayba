@@ -13,6 +13,10 @@ export interface TcpResponse {
   ok: boolean;
   data?: Record<string, unknown>;
   error?: string;
+  /** Optional machine-readable failure code from the UE side. Set on plan-gate
+   *  and tool-disabled rejections so the TS ToolExecutor can map them onto a
+   *  UeToolError code without string-matching UE's `error` text. */
+  code?: string;
 }
 
 export class UETcpClient extends EventEmitter {
