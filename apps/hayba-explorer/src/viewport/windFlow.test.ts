@@ -10,7 +10,12 @@ describe("NX-3-v2b WINDFLOW_FRAG", () => {
     expect(WINDFLOW_FRAG).toMatch(/uniform vec2 uGrid;/);
     expect(WINDFLOW_FRAG).toMatch(/uniform float uDt;/);
     expect(WINDFLOW_FRAG).toMatch(/uniform float uTime;/);
-    expect(WINDFLOW_FRAG).toMatch(/uv - v \* uDt \* ADV_K/);
+    // Scale-robust advection: normalised direction, bounded per-frame
+    // step (NOT the raw |wvec| — that teleported the dye).
+    expect(WINDFLOW_FRAG).toMatch(/v \/ vlen/);
+    expect(WINDFLOW_FRAG).toMatch(/uv - dir \* stepUv/);
+    expect(WINDFLOW_FRAG).toMatch(/STEP_TEX/);
+    expect(WINDFLOW_FRAG).not.toMatch(/uDt \* ADV_K/);
     expect(WINDFLOW_FRAG).toMatch(/fract\(prevUv\.x\)/);
     expect(WINDFLOW_FRAG).toMatch(/clamp\(prevUv\.y, 0\.0, 1\.0\)/);
     expect(WINDFLOW_FRAG).toMatch(/\* 0\.9/);
