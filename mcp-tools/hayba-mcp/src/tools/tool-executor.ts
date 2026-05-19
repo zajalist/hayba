@@ -84,3 +84,39 @@ export async function executeCommand<T = Record<string, unknown>>(
   const code = mapUeCode(resp.code);
   throw new UeToolError(resp.error ?? 'unknown UE error', { code, uePayload: resp });
 }
+
+/** In-memory test adapter. Each registered command name maps to a function
+ *  that returns the `(ok|error)` half of a `TcpResponse`. Send shape: arrow
+ *  property so callers can destructure `exec.send` without losing `this`. */
+export class InMemoryToolExecutor {
+  private handlers = new Map<
+    string,
+    (params: Record<string, unknown>) => Omit<TcpResponse, 'id'> | Promise<Omit<TcpResponse, 'id'>>
+  >();
+
+  on(
+    cmd: string,
+    fn: (params: Record<string, unknown>) => Omit<TcpResponse, 'id'> | Promise<Omit<TcpResponse, 'id'>>,
+  ): this {
+    this.handlers.set(cmd, fn);
+    return this;
+  }
+
+  send: Sender = async (cmd, params, _timeoutMs) => {
+    const fn = this.handlers.get(cmd);
+    if (!fn) throw new Error(`InMemoryToolExecutor: no handler registered for "${cmd}"`);
+    const partial = await fn(params);
+    return { id: 'inmem', ...partial };
+  };
+}
+
+/** Install the live (TCP) sender. Call once at startup, before any handler
+ *  invokes executeCommand. Lazy-imports tcp-client so this module can be
+ *  unit-tested without the network. */
+export async function installLiveSender(): Promise<void> {
+  const { ensureConnected } = await import('../tcp-client.js');
+  setDefaultSender(async (cmd, params, timeoutMs) => {
+    const client = await ensureConnected();
+    return client.send(cmd, params, timeoutMs);
+  });
+}

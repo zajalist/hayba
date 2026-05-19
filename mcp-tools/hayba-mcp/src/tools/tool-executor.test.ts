@@ -130,3 +130,25 @@ describe('executeCommand — transport retry', () => {
     expect(attempts).toBe(1);
   });
 });
+
+import { InMemoryToolExecutor } from './tool-executor.js';
+
+describe('InMemoryToolExecutor', () => {
+  it('returns canned ok responses', async () => {
+    const exec = new InMemoryToolExecutor();
+    exec.on('actor_list', () => ({ ok: true, data: { actors: [], count: 0 } }));
+    const data = await executeCommand<{ count: number }>('actor_list', {}, { sender: exec.send });
+    expect(data.count).toBe(0);
+  });
+  it('returns canned ok:false with code', async () => {
+    const exec = new InMemoryToolExecutor();
+    exec.on('x', () => ({ ok: false, error: 'nope', code: 'plan_gate' }));
+    await expect(executeCommand('x', {}, { sender: exec.send }))
+      .rejects.toMatchObject({ code: 'plan_gate' });
+  });
+  it('throws "no handler registered" when called for an unregistered command', async () => {
+    const exec = new InMemoryToolExecutor();
+    await expect(executeCommand('missing', {}, { sender: exec.send }))
+      .rejects.toMatchObject({ code: 'transport' }); // sender throws => retry once also throws => mapped to transport
+  });
+});
