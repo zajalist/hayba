@@ -55,6 +55,33 @@ describe("NX-2a geostrophic wind GLSL", () => {
   });
 });
 
+describe("P2.2-oro orographic precipitation", () => {
+  it("CLIMATE_FRAG declares uOrographicGain + uRainShadow uniforms", () => {
+    expect(CLIMATE_FRAG).toContain("uniform float uOrographicGain;");
+    expect(CLIMATE_FRAG).toContain("uniform float uRainShadow;");
+  });
+  it("CLIMATE_FRAG samples 4-neighbour terrain to build a gradient", () => {
+    expect(CLIMATE_FRAG).toContain("vec4 aLh = loadA(uA, uGrid, rc.x - 1, rc.y);");
+    expect(CLIMATE_FRAG).toContain("vec4 aRh = loadA(uA, uGrid, rc.x + 1, rc.y);");
+    expect(CLIMATE_FRAG).toContain("vec4 aNh = loadA(uA, uGrid, rc.x, rc.y - 1);");
+    expect(CLIMATE_FRAG).toContain("vec4 aSh = loadA(uA, uGrid, rc.x, rc.y + 1);");
+    expect(CLIMATE_FRAG).toContain(
+      "vec2 gradH = vec2(aRh.r - aLh.r, aNh.r - aSh.r) * 0.5;",
+    );
+  });
+  it("CLIMATE_FRAG modulates P by wind · grad(h) with shadow split", () => {
+    // Upslope = cos angle between wind dir and gradient dir, guarded
+    // against zero magnitudes so flats / ocean produce oro=1.0 (no-op).
+    expect(CLIMATE_FRAG).toContain(
+      "float upslope = (ghlen > 1e-6 && wmag > 1e-6) ? dot(wvec / wmag, gradH / ghlen) : 0.0;",
+    );
+    expect(CLIMATE_FRAG).toContain(
+      "float oro = 1.0 + uOrographicGain * max(upslope, 0.0) - uRainShadow * max(-upslope, 0.0);",
+    );
+    expect(CLIMATE_FRAG).toContain("P = clamp(P * oro, 0.05, 1.0);");
+  });
+});
+
 describe("NX-2c seasonality (MdGBWG Jan/July MSLP delta)", () => {
   it("MSLP_FRAG adds season uniforms + land/ocean delta + dfac blend", () => {
     expect(MSLP_FRAG).toContain("uniform float uSeasonAmp;");

@@ -814,6 +814,8 @@ export const CLIMATE_FRAG = [
   "uniform float uGlacFullC;",
   "uniform sampler2D uMSLP;",
   "uniform float uCoriolisGain;",
+  "uniform float uOrographicGain;",
+  "uniform float uRainShadow;",
   "void main(){",
   "  ivec2 rc = fragRC();",
   "  vec4 a = loadA(uA, uGrid, rc.x, rc.y);",
@@ -837,6 +839,20 @@ export const CLIMATE_FRAG = [
   "  float coslat = max(cos(lat), 1e-3);",
   "  vec2 gp = vec2((pR - pL) * 0.5 / coslat, (pN - pS) * 0.5);",
   "  vec2 wvec = uCoriolisGain * s * vec2(-gp.y, gp.x) - gp;",
+  // P2.2-oro: orographic precipitation. Wind dotted with the normalised
+  // terrain gradient gives an "upslope" cosine in [-1, 1]: windward
+  // (positive) lifts the air -> more rain (gain), leeward (negative) sinks
+  // it -> drier (rain shadow). Ocean cells have ~zero gradient -> oro=1.0.
+  "  vec4 aLh = loadA(uA, uGrid, rc.x - 1, rc.y);",
+  "  vec4 aRh = loadA(uA, uGrid, rc.x + 1, rc.y);",
+  "  vec4 aNh = loadA(uA, uGrid, rc.x, rc.y - 1);",
+  "  vec4 aSh = loadA(uA, uGrid, rc.x, rc.y + 1);",
+  "  vec2 gradH = vec2(aRh.r - aLh.r, aNh.r - aSh.r) * 0.5;",
+  "  float ghlen = length(gradH);",
+  "  float wmag = length(wvec);",
+  "  float upslope = (ghlen > 1e-6 && wmag > 1e-6) ? dot(wvec / wmag, gradH / ghlen) : 0.0;",
+  "  float oro = 1.0 + uOrographicGain * max(upslope, 0.0) - uRainShadow * max(-upslope, 0.0);",
+  "  P = clamp(P * oro, 0.05, 1.0);",
   "  float windAz = fract(atan(wvec.y, wvec.x) / 6.28318530 + 0.5);",
   // SPEC-SAFE: GLSL ES 3.00 smoothstep is UNDEFINED if edge0 >= edge1.
   // uGlacOnsetC (-2) > uGlacFullC (-12), so keep edges ASCENDING
