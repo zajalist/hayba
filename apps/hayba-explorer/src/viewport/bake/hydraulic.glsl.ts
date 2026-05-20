@@ -1132,3 +1132,97 @@ export const PRESSURE_VIZ_FRAG = [
   "  fragColor = vec4(n, mb, 0.0, 0.0);",
   "}",
 ].join("\n");
+
+// COOKBOOK-CLIMATE T4: simplified Köppen-Geiger climate classifier.
+// Reads (lat, elev, T, P, continentality) and emits a class id 0..14
+// in .r. Annual-mean T/P (we lack monthly data) ⇒ this is a coarse
+// 15-class approximation, not a full 30-class K-G; latitude proxies
+// for summer/winter discrimination, continentality proxies for annual
+// T range. Suitable for visual-debug Climate map mode.
+//
+// Class table (matches the debugMaterial id=7 ramp colours):
+//   0  Ocean        (h < 0)
+//   1  Af  tropical rainforest      (deep blue)
+//   2  Am  tropical monsoon         (medium blue)
+//   3  Aw  savanna                  (light blue)
+//   4  BWh hot desert               (red)
+//   5  BWk cold desert              (light pink)
+//   6  BSh hot steppe               (orange)
+//   7  BSk cold steppe              (yellow)
+//   8  Csa Mediterranean            (olive-yellow)
+//   9  Cfa humid subtropical        (lime green)
+//  10  Cfb maritime west coast      (bright green)
+//  11  Dfa/Dfb humid continental    (teal/cyan)
+//  12  Dfc subarctic                (dark teal)
+//  13  ET  tundra                   (light grey)
+//  14  EF  icecap                   (white)
+export const CLIMATE_CLASS_FRAG = [
+  H,
+  "uniform sampler2D uA;",
+  "uniform sampler2D uClim;",
+  "uniform sampler2D uDist;",
+  "uniform vec2 uGrid;",
+  "void main(){",
+  "  ivec2 rc = fragRC();",
+  "  ivec2 wh = gridWH(uGrid);",
+  "  vec4 a  = loadA(uA, uGrid, rc.x, rc.y);",
+  "  vec4 c  = texelFetch(uClim, rc, 0);",
+  "  vec4 d  = texelFetch(uDist, rc, 0);",
+  "  if (a.r < 0.0) { fragColor = vec4(0.0); return; }", // Ocean
+  "  float v = (float(rc.y) + 0.5) / float(wh.y);",
+  "  float lat = (0.5 - v) * 180.0;",
+  "  float absLat = abs(lat);",
+  "  float T = c.r;",
+  "  float P = c.g;",
+  "  float cont = d.g;",
+  "  float id = 0.0;",
+  // Polar tier (extreme cold + very high lat)
+  "  if (T <= -10.0 || absLat >= 75.0) { id = 14.0; }",
+  "  else if (T <= 0.0  || absLat >= 65.0) { id = 13.0; }",
+  // Subarctic / boreal (cold + high cont)
+  "  else if (T < 8.0 && absLat >= 50.0)  { id = 12.0; }",
+  "  else if (T < 14.0 && absLat >= 40.0 && cont > 0.45) { id = 11.0; }",
+  // Tropical band (lat < 23, warm)
+  "  else if (absLat < 23.0 && T > 18.0) {",
+  "    if (P > 0.70) id = 1.0;",
+  "    else if (P > 0.45) id = 2.0;",
+  "    else id = 3.0;",
+  "  }",
+  // Arid (low precip)
+  "  else if (P < 0.25) { id = (T > 18.0) ? 4.0 : 5.0; }",
+  "  else if (P < 0.50 && cont > 0.35) { id = (T > 18.0) ? 6.0 : 7.0; }",
+  // Temperate
+  "  else if (absLat >= 30.0 && absLat < 45.0 && cont > 0.25 && cont < 0.55) { id = 8.0; }",
+  "  else if (absLat < 35.0) { id = 9.0; }",
+  "  else if (cont < 0.30) { id = 10.0; }",
+  "  else { id = 11.0; }",
+  // T4 monsoon override: tropical-coastal cells (lat 5-25, low cont)
+  // get tropical-monsoon climate (Am) regardless of zonal-derived P.
+  // Without seasonal precip data this is the proxy for the cookbook
+  // 'east+south coast of large landmass' rule.
+  "  if (absLat >= 5.0 && absLat < 25.0 && cont < 0.30 && a.r >= 0.0 && T > 18.0 && id > 0.5 && id < 4.0) {",
+  "    id = 2.0;",
+  "  }",
+  // Cookbook precip per class (.g). Lets downstream consumers (and the
+  // Precipitation map mode) read realistic precip with monsoon Am wet,
+  // BWh/BWk deserts dry, etc. — independent of the zonal P that fed
+  // into the classifier.
+  "  float cbP = 0.50;",
+  "  if (id < 0.5) cbP = 0.0;",        // Ocean
+  "  else if (id < 1.5) cbP = 0.95;",  // Af tropical rainforest
+  "  else if (id < 2.5) cbP = 0.88;",  // Am tropical monsoon (very wet)
+  "  else if (id < 3.5) cbP = 0.55;",  // Aw savanna
+  "  else if (id < 4.5) cbP = 0.08;",  // BWh hot desert
+  "  else if (id < 5.5) cbP = 0.10;",  // BWk cold desert
+  "  else if (id < 6.5) cbP = 0.28;",  // BSh hot steppe
+  "  else if (id < 7.5) cbP = 0.30;",  // BSk cold steppe
+  "  else if (id < 8.5) cbP = 0.42;",  // Csa Mediterranean
+  "  else if (id < 9.5) cbP = 0.68;",  // Cfa humid subtropical
+  "  else if (id < 10.5) cbP = 0.78;", // Cfb maritime west coast
+  "  else if (id < 11.5) cbP = 0.55;", // Dfa/b humid continental
+  "  else if (id < 12.5) cbP = 0.42;", // Dfc subarctic
+  "  else if (id < 13.5) cbP = 0.25;", // ET tundra
+  "  else cbP = 0.10;",                // EF icecap
+  "  fragColor = vec4(id, cbP, 0.0, 0.0);",
+  "}",
+].join("\n");

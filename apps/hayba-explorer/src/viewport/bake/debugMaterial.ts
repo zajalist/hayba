@@ -101,7 +101,7 @@ const FRAG: string = [
   "uniform float uChannel;      /* which RGBA lane of uStackTex (0..3)      */",
   "uniform float uStackMode;    /* 0 relief 1 draped 2 flat 3 normal-map  */",
   "uniform float uWindTime;",
-  "uniform float uRamp;         /* 0 grey 1 temp 2 precip 3 hue 4 grey-elev 5 continentality 6 pressure */",
+  "uniform float uRamp;         /* 0 grey 1 temp 2 precip 3 hue 4 grey-elev 5 continentality 6 pressure 7 KG-discrete */",
   "",
   "const float PI = 3.141592653589793;",
   "",
@@ -171,7 +171,8 @@ const FRAG: string = [
   "   0 grey (raw clamp 0..1) · 1 temp diverging (deg C, -30..+35) ·",
   "   2 precip white->blue (0..1) · 3 hue (turns, for wind/aspect) ·",
   "   4 grey-elev (0..1) · 5 continentality-index (Conrad-style green→yellow→red) ·",
-  "   6 pressure diverging (low=blue, mid=cream, high=red). Calibration of",
+  "   6 pressure diverging (low=blue, mid=cream, high=red) ·",
+  "   7 Köppen-Geiger discrete (15-class id 0..14 → categorical colour). Calibration of",
   "   climate units is downstream tuning; this is a deterministic debug",
   "   visualiser. */",
   "vec3 ramp(float id, float x){",
@@ -223,6 +224,28 @@ const FRAG: string = [
   "    vec3 midP  = vec3(0.97, 0.96, 0.88);",
   "    vec3 highP = vec3(0.78, 0.13, 0.13);",
   "    return (t < 0.5) ? mix(lowP, midP, t / 0.5) : mix(midP, highP, (t - 0.5) / 0.5);",
+  "  }",
+  // T4 id=7: Köppen-Geiger discrete palette (15 classes). x = raw class
+  // id (0..14) emitted by CLIMATE_CLASS_FRAG. Colours roughly mirror
+  // the Beck et al. 2023 KG colour key (blue tropics, red deserts,
+  // green humid temperate, teal humid continental, grey/white polar).
+  "  if (id < 7.5){",
+  "    float c = floor(clamp(x, 0.0, 14.0) + 0.5);",
+  "    if (c < 0.5) return vec3(0.05, 0.10, 0.20);",  // 0 Ocean (dark — usually not drawn)
+  "    if (c < 1.5) return vec3(0.00, 0.00, 0.85);",  // 1 Af deep blue
+  "    if (c < 2.5) return vec3(0.00, 0.50, 0.95);",  // 2 Am medium blue
+  "    if (c < 3.5) return vec3(0.45, 0.75, 1.00);",  // 3 Aw light blue
+  "    if (c < 4.5) return vec3(0.95, 0.10, 0.10);",  // 4 BWh red
+  "    if (c < 5.5) return vec3(0.95, 0.55, 0.55);",  // 5 BWk pink
+  "    if (c < 6.5) return vec3(0.96, 0.60, 0.15);",  // 6 BSh orange
+  "    if (c < 7.5) return vec3(1.00, 0.85, 0.30);",  // 7 BSk yellow
+  "    if (c < 8.5) return vec3(0.70, 0.65, 0.05);",  // 8 Csa olive
+  "    if (c < 9.5) return vec3(0.75, 1.00, 0.30);",  // 9 Cfa lime
+  "    if (c < 10.5) return vec3(0.35, 0.85, 0.30);", // 10 Cfb green
+  "    if (c < 11.5) return vec3(0.20, 0.85, 0.85);", // 11 Dfa/b cyan
+  "    if (c < 12.5) return vec3(0.05, 0.55, 0.55);", // 12 Dfc teal
+  "    if (c < 13.5) return vec3(0.70, 0.70, 0.70);", // 13 ET grey
+  "    return vec3(0.98, 0.98, 0.98);",               // 14 EF icecap
   "  }",
   "  return vec3(clamp(x, 0.0, 1.0));",
   "}",
