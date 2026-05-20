@@ -262,6 +262,75 @@ pub fn poll_bake_progress(progress: State<'_, BakeProgress>) -> u32 {
     progress.0.load(Ordering::Relaxed)
 }
 
+/// Compact result for the wizard-mode Play/Step UI. Returns only what the
+/// frontend needs to recolor the painter sphere by plate membership — no
+/// climate, no elevation, no snapshot serialisation. `plate_ids[i]` is the
+/// plate id of cell `i` (0 for unassigned). `step` is the model's absolute
+/// step counter so the UI can label the play head.
+#[derive(Debug, Serialize)]
+pub struct TectStepResult {
+    pub plate_ids: Vec<u8>,
+    pub step: u32,
+}
+
+/// Build a fresh tectonic `Model` from the wizard draft WITHOUT running the
+/// initial `run_length_steps` loop and WITHOUT erosion. This is the live
+/// play state: same partition/plate-assignment logic as `bake_impl`, just
+/// frozen at step 0 so the user can drive it interactively. The sim then
+/// replaces any previously baked model — wizard Play and post-bake step are
+/// mutually exclusive flows.
+#[tauri::command]
+pub fn start_tect_sim(
+    draft: WizardDraft,
+    sim: State<'_, ManagedSim>,
+) -> Result<TectStepResult, String> {
+    let divisions = draft.divisions;
+    let dt_ma = draft.dt_ma;
+    let model = build_initial_model(&draft);
+    let plate_ids = read_plate_ids(&model);
+    let step = model.step_count;
+    let mut guard = sim.0.lock().map_err(|_| "sim mutex poisoned".to_string())?;
+    *guard = Some(SimState { model, divisions, dt_ma });
+    Ok(TectStepResult { plate_ids, step })
+}
+
+/// Advance the live wizard-mode sim by `n_steps` and return the compact
+/// plate-id buffer + step counter. Errors if no sim is loaded — the
+/// frontend must call `start_tect_sim` first.
+#[tauri::command]
+pub fn tect_step_n(
+    steps: u32,
+    sim: State<'_, ManagedSim>,
+) -> Result<TectStepResult, String> {
+    let mut guard = sim.0.lock().map_err(|_| "sim mutex poisoned".to_string())?;
+    let state = guard.as_mut().ok_or_else(|| "no sim loaded".to_string())?;
+    for _ in 0..steps {
+        state.model.step(state.dt_ma);
+    }
+    Ok(TectStepResult {
+        plate_ids: read_plate_ids(&state.model),
+        step: state.model.step_count,
+    })
+}
+
+/// Encode current per-cell plate membership as one byte per cell. Cells with
+/// no plate (subducted / freshly spawned mid-step) become 0. Plate ids are
+/// already 1-based in our generator, and `bake_impl` keeps them below the
+/// PALETTE length × small multiples — they fit comfortably in u8 for the
+/// playable range. Larger ids are clamped to 255 (visual fallback rather
+/// than a hard error).
+fn read_plate_ids(model: &Model) -> Vec<u8> {
+    let n = model.fields.len();
+    let mut out = vec![0u8; n];
+    for (i, f) in model.fields.iter().enumerate() {
+        out[i] = match f.plate_id {
+            Some(pid) => pid.min(255) as u8,
+            None => 0,
+        };
+    }
+    out
+}
+
 /// Advance the persisted sim by `n_steps` and return a fresh snapshot.
 #[tauri::command]
 pub fn step_planet(
@@ -522,15 +591,12 @@ fn omega_for_plate(plate_id: u32, seed: u64) -> Vec3 {
     Vec3::new(r1 as f32, r2 as f32, r3 as f32).normalize_or_zero() * 0.01
 }
 
-/// Build the baked `Model` from a wizard draft: preset partition →
-/// continental brush/painter crust override → tectonic step loop →
-/// bake-phase fluvial erosion. The Tauri command and the tests both go
-/// through this one path so they cannot diverge.
-pub(crate) fn bake_impl(
-    draft: &WizardDraft,
-    erosion_params: &crate::hydrology::ErosionParams,
-) -> Model {
-    let _bp3a_t0 = std::time::Instant::now();
+/// Build the initial tectonic `Model` from a wizard draft: preset partition
+/// → continental brush/painter crust override → plate registration with
+/// boundary-type biased omegas. Does NOT run `draft.run_length_steps` and
+/// does NOT erode. Shared between the bake path (which then steps & erodes)
+/// and the new live-Play path (which steps interactively in the UI).
+pub(crate) fn build_initial_model(draft: &WizardDraft) -> Model {
     let preset = image::load_from_memory(preset_bytes(&draft.preset))
         .expect("preset PNG should decode")
         .to_rgba8();
@@ -546,8 +612,6 @@ pub(crate) fn bake_impl(
         }
     }
 
-    let bp3a_grid = _bp3a_t0.elapsed();
-    let _bp3a_t1 = std::time::Instant::now();
     // ── Step 1: bucket cells by HSV-hue (rounded to nearest 10°), TE-style.
     // Each bucket becomes a plate. Also retain per-cell elevation from HSV.
     struct CellInfo {
@@ -580,8 +644,6 @@ pub(crate) fn bake_impl(
     cell_plate_ids = majority_smooth(&model.grid, cell_plate_ids);
     cell_plate_ids = majority_smooth(&model.grid, cell_plate_ids);
 
-    let bp3a_partition = _bp3a_t1.elapsed();
-    let _bp3a_t2 = std::time::Instant::now();
     // ── Step 2: build per-plate cell buckets in plate-id order.
     let plate_count = hue_to_plate.len() as u32;
     let mut buckets: Vec<Vec<u32>> = (0..plate_count).map(|_| Vec::new()).collect();
@@ -615,11 +677,6 @@ pub(crate) fn bake_impl(
     }
 
     // ── Step 3b: per-plate force accumulator from the user's boundary types.
-    // For each (a, b) assignment:
-    //   convergent — plate a wants to move toward b, plate b toward a
-    //   divergent  — plate a wants to move away from b, plate b away from a
-    // Translate "movement toward direction d" into an angular velocity around
-    // axis (d × position) so the rotation actually drifts the plate that way.
     let mut force_dir: Vec<Vec3> = vec![Vec3::ZERO; n_plates];
     for (pair_key, ty) in &draft.boundary_types {
         let mut it = pair_key.split('-');
@@ -649,14 +706,9 @@ pub(crate) fn bake_impl(
         let density = if plate_continental[i] { 0.35 } else { 1.05 };
         let mut omega = omega_for_plate(pid, draft.seed);
 
-        // If the user assigned any boundaries to this plate, override the
-        // random omega with one that points the plate along the user's force
-        // direction. Translate desired linear velocity at the centroid into
-        // an angular velocity: omega = pos × velocity / |pos|^2.
         let f = force_dir[i];
         if f.length_squared() > 1e-6 {
-            let v = f.normalize() * 0.01; // target tangential speed
-            // Project v onto the tangent plane of plate_centroids[i].
+            let v = f.normalize() * 0.01;
             let p = plate_centroids[i];
             let tangent = v - p * v.dot(p);
             if tangent.length_squared() > 1e-6 {
@@ -672,15 +724,8 @@ pub(crate) fn bake_impl(
     }
 
     // ── Step 4: per-cell crust override. Precedence: painter > continental
-    //  brush > preset HSV. Continental brush "lowland" floor drops from 0.5
-    //  to 0.05 — barely above sea level, leaves room for the painter to
-    //  sculpt mountains on top. Continentality is derived: elev > 0.
+    //  brush > preset HSV. Continentality is derived: elev > 0.
     const CONTINENTAL_BRUSH_FLOOR: f32 = 0.05;
-    // Baseline is now uniform EXTREME DEEP OCEAN: an unpainted planet is
-    // all deep water (-1), so the user paints continents + shallow water
-    // up from a clean deep floor. The preset HSV still defines the plate
-    // partition (above), but no longer leaves varying shallow ocean depths
-    // that read as a smooth water gradient.
     const DEEP_OCEAN_FLOOR: f32 = -1.0;
     for fid in 0..n_cells {
         let painted = draft
@@ -701,9 +746,33 @@ pub(crate) fn bake_impl(
     }
 
     model.refresh_plate_inertias();
+    model
+}
 
-    let bp3a_plates = _bp3a_t2.elapsed();
+/// Build the baked `Model` from a wizard draft: preset partition →
+/// continental brush/painter crust override → tectonic step loop →
+/// bake-phase fluvial erosion. The Tauri command and the tests both go
+/// through this one path so they cannot diverge.
+pub(crate) fn bake_impl(
+    draft: &WizardDraft,
+    erosion_params: &crate::hydrology::ErosionParams,
+) -> Model {
+    let _bp3a_t0 = std::time::Instant::now();
+    // PLAY-1 refactor: the partition + plate-init phase is shared with the
+    // wizard-mode live Play state. The tectonic step loop and bake-phase
+    // erosion below remain bake-only.
+    let mut model = build_initial_model(draft);
+    let n_cells = model.grid.n_fields();
+    // Preserve the original eprintln categories — we no longer track the
+    // sub-phase timings inside build_initial_model, but the existing log
+    // format expects grid/partition/plates fields. Use zeros so callers
+    // don't have to change.
+    let bp3a_grid: std::time::Duration = std::time::Duration::ZERO;
+    let bp3a_partition: std::time::Duration = std::time::Duration::ZERO;
+    let bp3a_plates: std::time::Duration = _bp3a_t0.elapsed();
     let _bp3a_t3 = std::time::Instant::now();
+    // PLAY-1: model partition + plate registration + per-cell crust override
+    // is now in `build_initial_model`. Remaining bake-specific phases follow.
     for _ in 0..draft.run_length_steps {
         model.step(draft.dt_ma);
     }
@@ -777,6 +846,35 @@ mod tests {
             painted_elevations: vec![],
             painted_mask: vec![],
         }
+    }
+
+    #[test]
+    fn build_initial_model_has_step_zero_and_plate_ids() {
+        // PLAY-1: live-play sim entrypoint. Sanity-check that the initial
+        // model has step 0 and assigns plate ids on the painted partition.
+        let model = build_initial_model(&draft_for("plates3"));
+        assert_eq!(model.step_count, 0);
+        let ids = read_plate_ids(&model);
+        assert_eq!(ids.len(), model.fields.len());
+        let mut distinct: Vec<u8> = ids.iter().copied().filter(|&p| p > 0).collect();
+        distinct.sort();
+        distinct.dedup();
+        assert!(distinct.len() >= 2, "expected ≥2 plates, got {distinct:?}");
+    }
+
+    #[test]
+    fn read_plate_ids_is_byte_stable_for_unchanged_model() {
+        // Read twice without stepping — must be byte-identical.
+        let model = build_initial_model(&draft_for("plates4"));
+        assert_eq!(read_plate_ids(&model), read_plate_ids(&model));
+    }
+
+    #[test]
+    fn stepping_advances_step_count() {
+        let mut model = build_initial_model(&draft_for("plates3"));
+        let before = model.step_count;
+        for _ in 0..3 { model.step(0.5); }
+        assert_eq!(model.step_count, before + 3);
     }
 
     #[test]
