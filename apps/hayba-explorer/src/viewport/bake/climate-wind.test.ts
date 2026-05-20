@@ -95,15 +95,18 @@ describe("CLIM-MONSOON onshore moisture transport", () => {
   it("CLIMATE_FRAG declares uOnshoreGain uniform", () => {
     expect(CLIMATE_FRAG).toContain("uniform float uOnshoreGain;");
   });
-  it("CLIMATE_FRAG walks K=4 cells upwind to measure ocean fraction", () => {
+  it("CLIMATE_FRAG walks K=8 cells upwind to measure ocean fraction", () => {
+    // CLIM-MONSOON-TUNE widened the scan from K=4 (≈5°) to K=8 (≈11°)
+    // so interior cells can reach distant coasts (Europe→Atlantic,
+    // N India→Arabian Sea).
     expect(CLIMATE_FRAG).toContain("vec2 wdir = (wmag > 1e-6) ? wvec / wmag : vec2(0.0);");
     expect(CLIMATE_FRAG).toContain("float oceanFrac = 0.0;");
-    expect(CLIMATE_FRAG).toContain("for (int k = 1; k <= 4; k++) {");
+    expect(CLIMATE_FRAG).toContain("for (int k = 1; k <= 8; k++) {");
     expect(CLIMATE_FRAG).toContain("int dx = int(-wdir.x * float(k) * 4.0);");
     expect(CLIMATE_FRAG).toContain("int dy = int(-wdir.y * float(k) * 4.0);");
     expect(CLIMATE_FRAG).toContain("float upH = texelFetch(uA, ivec2(ux, uy), 0).r;");
     expect(CLIMATE_FRAG).toContain("oceanFrac += float(upH < 0.0);");
-    expect(CLIMATE_FRAG).toContain("oceanFrac *= 0.25;");
+    expect(CLIMATE_FRAG).toContain("oceanFrac *= 0.125;");
   });
   it("CLIMATE_FRAG adds onshore moisture additively then applies orographic", () => {
     // Additive bonus (lifts dry zonal areas) only above 50% ocean upwind.
