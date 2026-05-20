@@ -1200,32 +1200,11 @@ export const CLIMATE_CLASS_FRAG = [
   "  float latFrac = absLat / 90.0;",
   "  float elevKm = max(a.r, 0.0) * 8.0;",
   "  float Tann = 27.0 - latFrac * latFrac * 50.0 - 6.5 * elevKm;",
-  // T4-TUNE-15: simplified ocean-current temperature anomaly. Real
-  // Earth's Gulf Stream / Kuroshio / N Pacific Current warm mid-lat
-  // east-facing-ocean coasts (i.e. land cells with OPEN OCEAN to the
-  // WEST in NH westerly latitudes). This warms Western Europe / British
-  // Isles / Iceland / Norway / Japan / Pacific NW — fixing the user's
-  // 'Scotland too cold' complaint. Detected by scanning west for ocean
-  // up to ~12 texels; warm boost decays linearly with inland distance.
-  // Sub-tropical west coasts (California, Peru, Namibia) get a smaller
-  // *cold* anomaly from polar-equatorward currents (Humboldt etc.).
-  "  ivec2 wh2 = gridWH(uGrid);",
-  "  float westOceanDist = 999.0;",
-  "  for (int k = 1; k <= 12; k++) {",
-  "    int sx = xw(rc.x - k, wh2.x);",
-  "    vec4 sa = loadA(uA, uGrid, sx, rc.y);",
-  "    if (sa.r < 0.0) { westOceanDist = float(k); break; }",
-  "  }",
-  "  float warmBoost = 0.0;",
-  "  float coldDip = 0.0;",
-  "  if (westOceanDist < 12.0) {",
-  "    float decay = 1.0 - westOceanDist / 12.0;",
-  // Maritime mid-high lat westerlies warmed by gulf-stream-like currents.
-  "    if (absLat >= 35.0 && absLat <= 70.0) warmBoost = decay * 7.0;",
-  // Subtropical west coasts cooled by polar-equatorward currents.
-  "    if (absLat >= 15.0 && absLat <  35.0) coldDip   = decay * 3.5;",
-  "  }",
-  "  Tann += warmBoost - coldDip;",
+  // (T4-TUNE-15 arbitrary "+7°C if west of ocean" boost reverted —
+  // user correctly called it out as not science. Proper Gulf-Stream
+  // warming requires a real ocean circulation pass: Sverdrup transport
+  // driven by wind-stress curl + heat advection along streamlines.
+  // That's the next sub-project, not a one-liner.)
   // T_amp must shrink at the equator regardless of continentality.
   // Real Manaus (Amazon interior, cont≈0.74) annual range ≈ 3°C
   // because sun is overhead year-round. Lat-driven base + small
