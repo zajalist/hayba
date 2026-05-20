@@ -368,7 +368,7 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   distMaxKm: 5000.0,
   pressureMbLow: 985.0,
   pressureMbHigh: 1030.0,
-  seaLevel: 0.10,
+  seaLevel: 0.05,
   biomeColdC: 6.0,
   biomeHotC: 18.0,
   channelDepth: 0.02,
