@@ -45,20 +45,22 @@ describe("COOKBOOK-CLIMATE T3 — Distance/Continentality/Pressure modes", () =>
     });
     expect(resolveEquirectMode(idx, false).mode).toBe(2);
   });
-  it("Continentality resolves to dist ch1 (cont 0..1)", () => {
+  it("Continentality resolves to dist ch1 (cont 0..1) with Köppen-D ramp 5", () => {
     const idx = EQUIRECT_MAP_MODES.findIndex((m) => m.label === "Continentality");
     expect(idx).toBe(7);
     expect(resolveEquirectMode(idx, true)).toMatchObject({
       kind: "dist",
       channel: 1,
+      ramp: 5,
     });
   });
-  it("Pressure resolves to pressure ch0 (MSLP mb)", () => {
+  it("Pressure resolves to pressure ch0 with diverging ramp 6", () => {
     const idx = EQUIRECT_MAP_MODES.findIndex((m) => m.label === "Pressure");
     expect(idx).toBe(8);
     expect(resolveEquirectMode(idx, true)).toMatchObject({
       kind: "pressure",
       channel: 0,
+      ramp: 6,
     });
   });
 });
