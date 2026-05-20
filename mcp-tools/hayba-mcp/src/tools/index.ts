@@ -108,9 +108,8 @@ type SessionManagerStub = Record<string, unknown>;
 
 export function registerTools(server: McpServer, session: SessionManagerStub): void {
 
-  // Wire the live (TCP) sender so handlers calling executeCommand reach UE.
-  // Fire-and-forget — sender becomes available before the first tool call
-  // because the agent host hands tools to the user after registration.
+  // Fire-and-forget: dynamic import resolves in <1ms; MCP handshake takes longer
+  // so any tool call is guaranteed to find DEFAULT_SENDER set.
   void installLiveSender();
 
   // Local helper: pushes the tool's meta into the registry so the ToolExecutor
