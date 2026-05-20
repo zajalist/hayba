@@ -121,7 +121,7 @@ import { analyzeConventionsHandler } from './hayba-analyze-conventions.js';
 // as a typed shim so registerTools' signature doesn't churn for callers.
 type SessionManagerStub = Record<string, unknown>;
 
-export function registerTools(server: McpServer, session: SessionManagerStub): void {
+export async function registerTools(server: McpServer, session: SessionManagerStub): Promise<void> {
   const settings = readSettings();
   if (settings.toolRouting === 'deferred') {
     // γ-hybrid: capture every server.tool(...) call into a descriptor map
@@ -169,10 +169,11 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
     // capturing shim above suppressed the mirror's wrapper during capture.
     installToolStreamMirror(server);
 
-    // Now register meta-tools + alwaysLoadPacks. Async; we don't await — the
-    // MCP handshake completes before any tool call, and the registration
-    // happens within microtasks here.
-    void registerDeferredRouting(server, captured);
+    // Now register meta-tools + alwaysLoadPacks. Awaited so the caller can
+    // sequence server.connect() after every server.tool() call has happened
+    // — McpServer rejects late registrations with "Cannot register
+    // capabilities after connecting to transport".
+    await registerDeferredRouting(server, captured);
     return;
   }
 

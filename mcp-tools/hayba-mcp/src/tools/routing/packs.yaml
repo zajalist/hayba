@@ -3,13 +3,13 @@ packs:
     kind: workflow
     description: Generate dense ecological PCG biomes from intent.
     tools:
-      - create_pcg_graph
-      - validate_pcg_graph
-      - execute_pcg_graph
-      - export_pcg_graph
-      - list_pcg_assets
-      - search_node_catalog
-      - get_node_details
+      - hayba_create_pcg_graph
+      - hayba_validate_pcg_graph
+      - hayba_execute_pcg_graph
+      - hayba_export_pcg_graph
+      - hayba_list_pcg_assets
+      - hayba_search_node_catalog
+      - hayba_get_node_details
       - hayba_polyhaven_search
       - hayba_polyhaven_download
       - hayba_ambientcg_search

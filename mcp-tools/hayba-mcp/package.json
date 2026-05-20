@@ -8,9 +8,10 @@
   },
   "main": "./dist/index.js",
   "scripts": {
-    "build": "npm run build:dashboard && tsc",
+    "build": "npm run build:dashboard && tsc && npm run build:assets",
     "build:dashboard": "cd dashboard && npm install && npm run build && cd ..",
-    "build:server": "tsc",
+    "build:server": "tsc && npm run build:assets",
+    "build:assets": "node -e \"import('node:fs').then(fs=>{fs.mkdirSync('dist/tools/routing',{recursive:true});fs.copyFileSync('src/tools/routing/packs.yaml','dist/tools/routing/packs.yaml');console.error('[build:assets] copied packs.yaml')})\"",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "test": "vitest run",
