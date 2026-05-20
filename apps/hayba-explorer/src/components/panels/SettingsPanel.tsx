@@ -28,6 +28,8 @@ export interface SettingsPanelProps {
   onChangeMapMode: (n: number) => void;
   fidelity: Fidelity;
   onChangeFidelity: (f: Fidelity) => void;
+  seaLevel: number;
+  onChangeSeaLevel: (v: number) => void;
 }
 
 export default function SettingsPanel(p: SettingsPanelProps) {
@@ -36,7 +38,6 @@ export default function SettingsPanel(p: SettingsPanelProps) {
       <PropertySection heading="Performance">
         <PropertyRow
           label="Fidelity"
-          noSeparator
           value={
             <select
               aria-label="Bake fidelity"
@@ -47,6 +48,21 @@ export default function SettingsPanel(p: SettingsPanelProps) {
               <option value="medium">Medium (2048²)</option>
               <option value="high">High — slowest (2560²)</option>
             </select>
+          }
+        />
+        <PropertyRow
+          label={`Sea level (${p.seaLevel.toFixed(3)})`}
+          noSeparator
+          value={
+            <input
+              type="range"
+              min={-0.2}
+              max={0.3}
+              step={0.005}
+              value={p.seaLevel}
+              onChange={(e) => p.onChangeSeaLevel(parseFloat(e.target.value))}
+              aria-label="Sea level offset (applied at next bake)"
+            />
           }
         />
       </PropertySection>

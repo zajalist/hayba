@@ -413,6 +413,21 @@ export default function App() {
     setBakeTier(fidelityToTier(f));
     saveFidelity(f);
   }, []);
+  // T4-TUNE-15: user-tunable sea level (applied at next bake). Persists
+  // across reloads via localStorage so the user's chosen shoreline
+  // sticks. Default matches DEFAULT_HYDRAULIC.seaLevel.
+  const [seaLevel, setSeaLevel] = useState<number>(() => {
+    try {
+      const v = parseFloat(localStorage.getItem("hayba.seaLevel") ?? "");
+      return Number.isFinite(v) ? v : DEFAULT_HYDRAULIC.seaLevel;
+    } catch {
+      return DEFAULT_HYDRAULIC.seaLevel;
+    }
+  });
+  const handleChangeSeaLevel = useCallback((v: number) => {
+    setSeaLevel(v);
+    try { localStorage.setItem("hayba.seaLevel", String(v)); } catch {}
+  }, []);
 
   // Playback speed (steps per rAF tick). 1× is the wizard's dt_ma per frame.
   const [speedMult, setSpeedMult] = useState<1 | 2 | 4 | 8>(1);
@@ -1224,6 +1239,7 @@ export default function App() {
           h,
           {
             ...DEFAULT_HYDRAULIC,
+            seaLevel,
             // Rust serde snake_case -> HydraulicConfig camelCase.
             scale: {
               terrainScale: inp.scale.terrain_scale,
@@ -1723,6 +1739,8 @@ export default function App() {
             onChangeMapMode={setMapMode}
             fidelity={fidelity}
             onChangeFidelity={handleChangeFidelity}
+            seaLevel={seaLevel}
+            onChangeSeaLevel={handleChangeSeaLevel}
           />
         )}
       </RightPanel>
