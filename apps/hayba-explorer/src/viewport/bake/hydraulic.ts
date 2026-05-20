@@ -320,19 +320,30 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   mslpOceanAmp: 20.0,
   mslpBlurSigma: 6.0,
   coriolisGain: 15.0,
-  // CLIM-MONSOON: seasonality enabled by default so continental
-  // summer-low / oceanic-summer-high pressure swap can drive monsoon
-  // winds. seasonPhase=6.0 picks the NH summer (July) snapshot, peak
-  // Asian monsoon. This is the cookbook's "summer pressure" picture.
-  seasonAmp: 0.5,
+  // CLIM-MONSOON-TUNE: seasonAmp bumped 0.5 → 0.7 so the continental
+  // thermal low (Asia in July) is strong enough to flip the wind
+  // direction over India from zonal NE trades to actual SW monsoon
+  // flow. Below ~0.6 the trade-wind component still dominated and the
+  // upwind ocean scan couldn't find moisture for monsoon coasts.
+  seasonAmp: 0.7,
   seasonPhase: 6.0,
   orographicGain: 0.6,
   rainShadow: 0.5,
   onshoreGain: 0.5,
   continentalGain: 0.3,
   continentalT: 8.0,
+  // CLIM-MONSOON-TUNE: itczLandAmp disabled (was 2.0, originally 7.0).
+  // Per-cell land-amplified ITCZ shift had the wrong granularity:
+  // - it pushed Indonesia LAND cells off the equatorial ITCZ band
+  //   (Indonesia is the wettest place on Earth, must NOT shift)
+  // - it pulled the wet band onto Sahara/Arabia LAND cells
+  // - it under-shifted oceanic monsoon regions
+  // Real ITCZ migration is REGIONAL (driven by broad continental heat
+  // sinks), not per-cell. We get monsoon via the continental thermal
+  // low → SW wind flip → onshore moisture transport, all already
+  // wired. itczShift=5 alone gives a uniform ~2.5° NH-summer shift.
   itczShift: 5.0,
-  itczLandAmp: 7.0,
+  itczLandAmp: 0.0,
   biomeColdC: 6.0,
   biomeHotC: 18.0,
   channelDepth: 0.02,

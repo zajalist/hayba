@@ -879,9 +879,13 @@ export const CLIMATE_FRAG = [
   // ocean"). Combined with the existing orographic factor `oro`, this
   // produces wet windward slopes near coasts (Western Ghats, Himalayan
   // S-slope) without making continental interiors wet.
+  // CLIM-MONSOON-TUNE: widened scan from K=4 stride=4 (≈5°) to K=8
+  // stride=4 (≈11°) so interior cells > 5° from coast can still detect
+  // upwind ocean. Europe interior can now reach the Atlantic; central
+  // India can reach Arabian Sea given correct SW wind direction.
   "  vec2 wdir = (wmag > 1e-6) ? wvec / wmag : vec2(0.0);",
   "  float oceanFrac = 0.0;",
-  "  for (int k = 1; k <= 4; k++) {",
+  "  for (int k = 1; k <= 8; k++) {",
   "    int dx = int(-wdir.x * float(k) * 4.0);",
   "    int dy = int(-wdir.y * float(k) * 4.0);",
   "    int ux = xw(rc.x + dx, wh.x);",
@@ -889,7 +893,7 @@ export const CLIMATE_FRAG = [
   "    float upH = texelFetch(uA, ivec2(ux, uy), 0).r;",
   "    oceanFrac += float(upH < 0.0);",
   "  }",
-  "  oceanFrac *= 0.25;",
+  "  oceanFrac *= 0.125;",
   // CLIM-CONTINENTALITY: symmetric counterpart of the onshore boost.
   // When oceanFrac < 0.5 the upwind path is mostly LAND — wind has
   // exhausted its moisture before reaching this cell (cookbook:
