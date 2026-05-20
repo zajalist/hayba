@@ -51,3 +51,31 @@ describe('ToolIndex hybrid', () => {
     expect(hits.some(h => h.name === 'hayba_planet_dynamo_field')).toBe(true);
   });
 });
+
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+describe('ToolIndex cache', () => {
+  it('writes cache files and survives a corrupted cache', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hayba-idx-'));
+    try {
+      const a = await ToolIndex.build(docs, { embeddings: null, cacheDir: dir });
+      expect(existsSync(join(dir, 'tool-index.meta.json'))).toBe(true);
+
+      // Build again with identical docs — should load from cache; results equivalent.
+      const b = await ToolIndex.build(docs, { embeddings: null, cacheDir: dir });
+      expect((await b.search('spawn')).map(h => h.name)).toEqual(
+        (await a.search('spawn')).map(h => h.name),
+      );
+
+      // Corrupt the meta file — next build should rebuild from scratch, not crash.
+      writeFileSync(join(dir, 'tool-index.meta.json'), '{not json');
+      const c = await ToolIndex.build(docs, { embeddings: null, cacheDir: dir });
+      const hits = await c.search('spawn');
+      expect(hits[0]?.name).toBe('actor_spawn');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

@@ -1,4 +1,7 @@
 import MiniSearch from 'minisearch';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 export interface ToolDoc {
   name: string;
@@ -28,6 +31,7 @@ export interface EmbeddingBackend {
 
 export interface BuildOpts {
   embeddings: EmbeddingBackend | null;
+  cacheDir?: string;
 }
 
 export class ToolIndex {
@@ -39,6 +43,45 @@ export class ToolIndex {
   ) {}
 
   static async build(docs: ToolDoc[], opts: BuildOpts): Promise<ToolIndex> {
+    // Try to load from cache
+    if (opts.cacheDir) {
+      mkdirSync(opts.cacheDir, { recursive: true });
+      const metaPath = join(opts.cacheDir, 'tool-index.meta.json');
+      const bm25Path = join(opts.cacheDir, 'tool-index.bm25.json');
+      const hash = hashDocs(docs);
+      const backendId = opts.embeddings?.id ?? 'none';
+      let cached: { hash?: string; backendId?: string } | null = null;
+      try {
+        if (existsSync(metaPath)) cached = JSON.parse(readFileSync(metaPath, 'utf-8'));
+      } catch {
+        cached = null;
+      }
+      if (cached?.hash === hash && cached?.backendId === backendId && existsSync(bm25Path)) {
+        try {
+          const bm25Cached = MiniSearch.loadJSON<ToolDoc>(readFileSync(bm25Path, 'utf-8'), {
+            fields: ['name', 'summary', 'description', 'tags'],
+            storeFields: ['name', 'summary', 'packs'],
+            idField: 'name',
+          });
+          const docMap = new Map(docs.map(d => [d.name, d]));
+          // Note: embedding vectors are NOT persisted in v1 — they're cheap to
+          // recompute and avoid binary format complexity. Re-embed if needed.
+          let vectors: Map<string, Float32Array> | null = null;
+          if (opts.embeddings) {
+            vectors = new Map();
+            const texts = docs.map(d =>
+              `${d.name}. ${d.summary}. ${d.description}. tags: ${d.tags.join(', ')}`,
+            );
+            const embedded = await opts.embeddings.embed(texts);
+            docs.forEach((d, i) => vectors!.set(d.name, embedded[i]));
+          }
+          return new ToolIndex(bm25Cached, docMap, vectors, opts.embeddings);
+        } catch {
+          // Fall through to rebuild — never block startup on cache.
+        }
+      }
+    }
+
     const bm25 = new MiniSearch<ToolDoc>({
       fields: ['name', 'summary', 'description', 'tags'],
       storeFields: ['name', 'summary', 'packs'],
@@ -58,6 +101,15 @@ export class ToolIndex {
       );
       const embedded = await opts.embeddings.embed(texts);
       docs.forEach((d, i) => vectors!.set(d.name, embedded[i]));
+    }
+
+    // Write cache after successful build
+    if (opts.cacheDir) {
+      writeFileSync(join(opts.cacheDir, 'tool-index.bm25.json'), JSON.stringify(bm25));
+      writeFileSync(
+        join(opts.cacheDir, 'tool-index.meta.json'),
+        JSON.stringify({ hash: hashDocs(docs), backendId: opts.embeddings?.id ?? 'none' }),
+      );
     }
 
     return new ToolIndex(
@@ -106,6 +158,14 @@ export class ToolIndex {
       .filter(h => !opts.filterPack || h.packs.includes(opts.filterPack))
       .slice(0, k);
   }
+}
+
+function hashDocs(docs: ToolDoc[]): string {
+  const h = createHash('sha256');
+  for (const d of [...docs].sort((a, b) => a.name.localeCompare(b.name))) {
+    h.update(`${d.name} ${d.summary} ${d.description} ${d.tags.join(',')} ${d.packs.join(',')}\n`);
+  }
+  return h.digest('hex');
 }
 
 function cosine(a: Float32Array, b: Float32Array): number {
