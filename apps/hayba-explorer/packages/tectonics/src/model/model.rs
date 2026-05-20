@@ -91,6 +91,15 @@ pub struct Model {
     /// integrator passes.
     #[serde(default)]
     pub plume_registry: PlumeRegistry,
+
+    /// SD — reused scratch buffer for `advance_subduction`'s per-field
+    /// min-neighbour-distance pass. Hoisted out of the function body to
+    /// eliminate the per-step `Vec<f32>` allocation (was the dominant
+    /// `subduction` phase cost per the TS+1 measurement). Reset to
+    /// `Vec::new()` on deserialize so save/load is byte-equal; the next
+    /// `advance_subduction` call resize()s it to `fields.len()`.
+    #[serde(skip, default)]
+    subduction_scratch: Vec<f32>,
 }
 
 impl Model {
@@ -112,6 +121,7 @@ impl Model {
             master_seed,
             optimized_collision_detection: false,
             plume_registry,
+            subduction_scratch: Vec::new(),
         }
     }
 
@@ -522,8 +532,14 @@ impl Model {
         // Precompute neighbour-min dist for every field (TE: `update`'s
         // `min_neighbour_dist` argument — derived from neighbour subduction
         // records). Iterate in id order for determinism.
+        //
+        // SD: scratch buffer hoisted to `self.subduction_scratch` to avoid a
+        // per-step allocation. Take it out via mem::take, write into the
+        // local, swap back at end — preserves capacity across calls.
         let n = self.fields.len();
-        let mut min_neighbour: Vec<f32> = vec![0.0; n];
+        let mut scratch = std::mem::take(&mut self.subduction_scratch);
+        scratch.clear();
+        scratch.resize(n, 0.0);
         for fid in 0..n {
             let mut m = f32::INFINITY;
             for &nid in self.grid.neighbours(fid as u32) {
@@ -535,13 +551,14 @@ impl Model {
                     }
                 }
             }
-            min_neighbour[fid] = if m.is_finite() { m } else { 0.0 };
+            scratch[fid] = if m.is_finite() { m } else { 0.0 };
         }
         for (i, f) in self.fields.iter_mut().enumerate() {
             if let Some(s) = f.subduction.as_mut() {
-                let _ = s.update(dt, min_neighbour[i], field_diameter);
+                let _ = s.update(dt, scratch[i], field_diameter);
             }
         }
+        self.subduction_scratch = scratch;
     }
 }
 
