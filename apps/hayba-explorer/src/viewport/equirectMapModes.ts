@@ -37,9 +37,11 @@ export const EQUIRECT_MAP_MODES: EquirectMapMode[] = [
   { label: "Glaciation", kind: "clim", channel: 3, ramp: 4 },
   // COOKBOOK-CLIMATE T3: new geographic-debug map modes for the
   // cookbook-classification redesign. All three sample a non-CLIM RT.
+  // Ramps: 0=grey (distKm normalised), 5=Köppen-D (continentality),
+  // 6=meteorological diverging (pressure).
   { label: "Distance", kind: "dist", channel: 0, ramp: 0 },
-  { label: "Continentality", kind: "dist", channel: 1, ramp: 0 },
-  { label: "Pressure", kind: "pressure", channel: 0, ramp: 0 },
+  { label: "Continentality", kind: "dist", channel: 1, ramp: 5 },
+  { label: "Pressure", kind: "pressure", channel: 0, ramp: 6 },
 ];
 
 /** Resolved selection for `setDebugStack`. `mode` is the debugMaterial
