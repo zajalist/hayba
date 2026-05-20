@@ -13,7 +13,13 @@
 //              (uStackMode 1) or flat (uStackMode 2) per the F toggle
 // `channel`/`ramp` are ignored for relief/normal.
 
-export type EquirectModeKind = "relief" | "normal" | "clim" | "wind";
+export type EquirectModeKind =
+  | "relief"
+  | "normal"
+  | "clim"
+  | "wind"
+  | "dist"
+  | "pressure";
 
 export interface EquirectMapMode {
   label: string;
@@ -29,6 +35,11 @@ export const EQUIRECT_MAP_MODES: EquirectMapMode[] = [
   { label: "Precipitation", kind: "clim", channel: 1, ramp: 2 },
   { label: "Wind", kind: "wind", channel: 2, ramp: 3 },
   { label: "Glaciation", kind: "clim", channel: 3, ramp: 4 },
+  // COOKBOOK-CLIMATE T3: new geographic-debug map modes for the
+  // cookbook-classification redesign. All three sample a non-CLIM RT.
+  { label: "Distance", kind: "dist", channel: 0, ramp: 0 },
+  { label: "Continentality", kind: "dist", channel: 1, ramp: 0 },
+  { label: "Pressure", kind: "pressure", channel: 0, ramp: 0 },
 ];
 
 /** Resolved selection for `setDebugStack`. `mode` is the debugMaterial
@@ -56,6 +67,13 @@ export function resolveEquirectMode(
   if (e.kind === "wind") {
     // NX-3: animated wind-streak shader (uStackMode 4 draped / 5 flat).
     return { kind: "wind", channel: e.channel, ramp: e.ramp, mode: draped ? 4 : 5 };
+  }
+  // COOKBOOK-CLIMATE T3: dist & pressure use the SAME uStackMode as clim
+  // (1 draped / 2 flat) because debugMaterial just samples uStackTex.r/.g
+  // and applies the same ramp. Only the source RT differs (App.tsx routes
+  // DIST/MSLP into uStackTex when these modes are selected).
+  if (e.kind === "dist" || e.kind === "pressure") {
+    return { kind: e.kind, channel: e.channel, ramp: e.ramp, mode: draped ? 1 : 2 };
   }
   return {
     kind: "clim",

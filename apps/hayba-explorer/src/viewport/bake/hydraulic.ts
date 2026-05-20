@@ -464,6 +464,11 @@ export interface HydraulicBakeResult {
    *  (0 over ocean; 1−exp(−d/L), L=cfg.contScaleKm), .b=isLand,
    *  .a=0. Read-only — never feeds back into erosion. */
   dist: THREE.WebGLRenderTarget;
+  /** COOKBOOK-CLIMATE T3: mean sea-level pressure field (mb).
+   *  Direct exposure of the existing MSLP_FRAG output (was previously
+   *  internal-only and disposed at teardown). Channels: .r=pressure
+   *  in mb (≈990–1020 typical), .gba unused. Read-only. */
+  pressure: THREE.WebGLRenderTarget;
 }
 
 export async function runHydraulicBake(
@@ -1015,7 +1020,9 @@ export async function runHydraulicBake(
   CLIM[1].dispose();
   TERR[1].dispose();
   HYDRO[1].dispose();
-  MSLP[0].dispose();
+  // COOKBOOK-CLIMATE T3: MSLP[0] is NO LONGER disposed here — it's
+  // returned as `pressure` for the new "Pressure" map mode. Caller
+  // owns + disposes (App.tsx prevDebugPressureRef).
   MSLP[1].dispose();
   WIND[1].dispose();
   // DIST[1] is the JFA ping-pong scratch (final pass writes to DIST[0]).
@@ -1027,5 +1034,6 @@ export async function runHydraulicBake(
     hydro: HYDRO[0],
     wind: WIND[0],
     dist: DIST[0],
+    pressure: MSLP[0],
   };
 }

@@ -378,6 +378,8 @@ export default function App() {
   const prevDebugWindRef = useRef<THREE.WebGLRenderTarget | null>(null);
   // COOKBOOK-CLIMATE T2: distance-to-ocean + continentality RT (JFA).
   const prevDebugDistRef = useRef<THREE.WebGLRenderTarget | null>(null);
+  // COOKBOOK-CLIMATE T3: mean-sea-level pressure RT (MSLP_FRAG output).
+  const prevDebugPressureRef = useRef<THREE.WebGLRenderTarget | null>(null);
   // Live stack handles for the mounted material's selector.
   const debugStackRef = useRef<{
     clim: THREE.WebGLRenderTarget;
@@ -441,8 +443,19 @@ export default function App() {
         sceneRef.current?.markDirty();
         return;
       }
+      // COOKBOOK-CLIMATE T3: route DIST/PRESSURE modes to their dedicated
+      // RTs (App-owned refs, set by handleBake). Falls back to clim if
+      // the dedicated RT isn't ready yet.
+      let stackTex: THREE.Texture = stack.clim.texture;
+      if (sel.kind === "dist") {
+        const rt = prevDebugDistRef.current;
+        if (rt) stackTex = rt.texture;
+      } else if (sel.kind === "pressure") {
+        const rt = prevDebugPressureRef.current;
+        if (rt) stackTex = rt.texture;
+      }
       setDebugStack(mat, {
-        tex: stack.clim.texture,
+        tex: stackTex,
         channel: sel.channel,
         mode: sel.mode,
         ramp: sel.ramp,
@@ -1180,6 +1193,7 @@ export default function App() {
       prevDebugHydroRef.current?.dispose();
       prevDebugWindRef.current?.dispose();
       prevDebugDistRef.current?.dispose();
+      prevDebugPressureRef.current?.dispose();
 
       const __tU0 = performance.now();
       const base = uploadEquirect(new Float32Array(inp.height), w, h);
@@ -1193,6 +1207,7 @@ export default function App() {
       let hydroRT!: THREE.WebGLRenderTarget;
       let windRT!: THREE.WebGLRenderTarget;
       let distRT!: THREE.WebGLRenderTarget;
+      let pressureRT!: THREE.WebGLRenderTarget;
       await scene.runBake(async (renderer) => {
         const out = await runHydraulicBake(
           renderer,
@@ -1219,6 +1234,7 @@ export default function App() {
         hydroRT = out.hydro;
         windRT = out.wind;
         distRT = out.dist;
+        pressureRT = out.pressure;
       });
       const __gpuMs = performance.now() - __tG0;
       sceneRef.current?.setBakeSplit({
@@ -1237,6 +1253,7 @@ export default function App() {
       prevDebugHydroRef.current = hydroRT;
       prevDebugWindRef.current = windRT;
       prevDebugDistRef.current = distRT;
+      prevDebugPressureRef.current = pressureRT;
       debugStackRef.current = { clim: climRT, terr: terrRT, hydro: hydroRT };
 
       const mat = makeDebugReliefMaterial();
@@ -1311,6 +1328,7 @@ export default function App() {
     prevDebugTerrRef.current = null;
     prevDebugHydroRef.current = null;
     prevDebugDistRef.current = null;
+    prevDebugPressureRef.current = null;
     prevDebugBaseRef.current = null;
     prevDebugPrecipRef.current = null;
     debugStackRef.current = null;
