@@ -51,3 +51,14 @@ Massive expansion from a PCG/landscape-only plugin into a 34-domain agentic leve
 
 - Existing legacy commands (`ping`, `list_node_classes`, `get_node_details`, `list_pcg_assets`, `export_graph`, `create_graph`, `validate_graph`, `execute_graph`, `import_landscape`, `read_node_output`, `wizard_chat`) keep working unchanged. Each also has a namespaced alias (`pcg_*`, `landscape_*`).
 - Auth: when `CapabilityToken` is set in Project Settings, every TCP request must include matching `auth` field. Empty token disables auth (default).
+
+## Unreleased
+
+### Added
+
+- TCP response envelope: optional `code` field for machine-readable rejection
+  reasons. Only set on plan-gate and tool-disabled paths today. Older TS
+  clients ignore the field (wire-compatible). The TS ToolExecutor maps
+  `code` onto `UeToolError.code` so callers can branch without
+  string-matching error text. **Requires a plugin recompile.**
+- **ToolExecutor seam** (`src/tools/tool-executor.ts`): a single `executeCommand(cmd, params, opts?)` API behind which lives connection management, 1× auto-retry on transport failure, timeout-from-cost (low=2s / med=10s / high=60s), and a uniform `UeToolError` with `code` discriminator (`transport | timeout | plan_gate | tool_disabled | ue_error`). 15 handlers shed their `ensureConnected + client.send + bespoke error throw` boilerplate (4 files retain direct TCP usage for documented reasons: editor_capture_viewport / scene_validate_physics sidecar relay, python_run tier-3 branching, tool-stream-mirror observability). Two adapters ship: the live (TCP) sender used in production, and an `InMemoryToolExecutor` that lets handler tests run without a live UE on `:52342`. The companion `tool-meta-registry` populates from `src/tools/index.ts` at startup so the executor can look up cost by command name (12 tools metaed today; remaining default to medium=10s).

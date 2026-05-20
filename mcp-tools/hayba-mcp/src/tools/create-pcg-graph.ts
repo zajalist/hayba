@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ensureConnected } from '../tcp-client.js';
+import { executeCommand } from './tool-executor.js';
 import { getGraphPatterns } from '../graph-patterns.js';
 import type { PCGGraphJSON } from '../types.js';
 
@@ -23,12 +23,5 @@ export async function createPcgGraph(params: CreatePcgGraphParams) {
     throw new Error('Invalid JSON graph payload');
   }
 
-  const client = await ensureConnected();
-  const response = await client.send('create_graph', { graph, name });
-
-  if (!response.ok) {
-    throw new Error(response.error || 'Failed to create graph in UE');
-  }
-
-  return response.data;
+  return executeCommand('create_graph', { graph, name });
 }

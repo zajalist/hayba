@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolHandler } from '../types.js';
-import { ensureConnected } from '../../tcp-client.js';
+import { executeCommand } from '../tool-executor.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 
 // TODO: wire into registerTools with RateLimiter + ToolCache + appendMeta wrapper
@@ -21,14 +21,6 @@ export const editorStartPieHandler: ToolHandler = async (args) => {
   if (!parsed.success) {
     return { content: [{ type: 'text', text: `Validation error: ${parsed.error.message}` }], isError: true };
   }
-  try {
-    const client = await ensureConnected();
-    const resp = await client.send('editor_start_pie', parsed.data as Record<string, unknown>);
-    if (!resp.ok) {
-      return { content: [{ type: 'text', text: `editor_start_pie failed: ${resp.error ?? 'unknown error'}` }], isError: true };
-    }
-    return { content: [{ type: 'text', text: JSON.stringify(resp.data, null, 2) }] };
-  } catch (e: unknown) {
-    return { content: [{ type: 'text', text: `editor_start_pie error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
-  }
+  const data = await executeCommand('editor_start_pie', parsed.data as Record<string, unknown>);
+  return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
 };

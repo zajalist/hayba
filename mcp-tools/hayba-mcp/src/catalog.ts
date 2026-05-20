@@ -74,11 +74,24 @@ export function loadCatalog(): NodeCatalog {
   return catalog;
 }
 
-export function searchCatalog(query: string): CatalogNode[] {
-  const cat = loadCatalog();
-  const q = query.toLowerCase();
+/**
+ * Pure, catalog-independent node search.
+ *
+ * The query is tokenized on whitespace and matched with AND semantics: a node
+ * matches when EVERY token is a substring of its joined searchable text
+ * (class + category + description + patterns + pin/property names).
+ *
+ * Previously this did `searchable.includes(query)` on the *whole* query, which
+ * silently returned `[]` for any multi-word query (e.g. "Delaunay 2D cluster")
+ * because the literal phrase never appears contiguously in the joined text.
+ * Single-token queries are unaffected (one token => identical to the old
+ * `includes` behavior).
+ */
+export function searchNodes(nodes: CatalogNode[], query: string): CatalogNode[] {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return [];
 
-  return cat.nodes.filter(node => {
+  return nodes.filter(node => {
     const searchable = [
       node.class,
       node.category,
@@ -89,8 +102,12 @@ export function searchCatalog(query: string): CatalogNode[] {
       ...node.key_properties.map(p => p.name),
     ].join(' ').toLowerCase();
 
-    return searchable.includes(q);
+    return terms.every(term => searchable.includes(term));
   });
+}
+
+export function searchCatalog(query: string): CatalogNode[] {
+  return searchNodes(loadCatalog().nodes, query);
 }
 
 export function getNodeByClass(className: string): CatalogNode | undefined {

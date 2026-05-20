@@ -2,8 +2,11 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { appendMeta } from './hayba-tool-meta.js';
+import type { HaybaToolMeta } from './hayba-tool-meta.js';
 import { recordSchema, type Cost } from './schema-registry.js';
 import { installToolStreamMirror } from './tool-stream-mirror.js';
+import { installLiveSender, executeCommand } from './tool-executor.js';
+import { registerToolMeta } from './tool-meta-registry.js';
 
 // ── Code Mode meta-tools (always-on) ──────────────────────────────────────────
 import { listToolCategoriesHandler, meta as listMeta } from './code-mode/list-tool-categories.js';
@@ -20,16 +23,6 @@ import { sceneValidatePhysicsHandler, meta as scenePhysicsMeta } from './scene/s
 import { editorCaptureViewportHandler, meta as captureMeta } from './editor/editor-capture-viewport.js';
 import { editorStartPieHandler, meta as pieMeta } from './editor/editor-start-pie.js';
 import { editorStreamLogHandler, meta as streamLogMeta } from './editor/editor-stream-log.js';
-import {
-  haybaRequestInputHandler,
-  meta as requestInputMeta,
-  requestInputSchema,
-} from './prompts/hayba-request-input.js';
-import {
-  haybaGetUserResponseHandler,
-  meta as getUserResponseMeta,
-  getUserResponseSchema,
-} from './prompts/hayba-get-user-response.js';
 
 // ── PCGEx tool handlers ───────────────────────────────────────────────────────
 import { searchNodeCatalog } from './search-node-catalog.js';
@@ -115,6 +108,16 @@ type SessionManagerStub = Record<string, unknown>;
 
 export function registerTools(server: McpServer, session: SessionManagerStub): void {
 
+  // Fire-and-forget: dynamic import resolves in <1ms; MCP handshake takes longer
+  // so any tool call is guaranteed to find DEFAULT_SENDER set.
+  void installLiveSender();
+
+  // Local helper: pushes the tool's meta into the registry so the ToolExecutor
+  // can look up cost by command name. Keeps registration sites one-liner.
+  const remember = (name: string, meta: HaybaToolMeta | undefined): void => {
+    if (meta) registerToolMeta(name, meta);
+  };
+
   // Wrap server.tool BEFORE any registration so every tool is captured in the
   // UE Tool Stream panel, including pure TS-side handlers (PCGEx catalog, etc).
   installToolStreamMirror(server);
@@ -152,47 +155,44 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
     },
     async (params) => {
       try {
-        const { ensureConnected } = await import('../tcp-client.js');
-        const c = await ensureConnected();
-        const res = await c.send('hayba_propose_plan', params as Record<string, unknown>, 5000);
+        const data = await executeCommand('hayba_propose_plan', params as Record<string, unknown>, { timeout: 5000 });
         return {
-          content: [{ type: 'text', text: JSON.stringify(res.data ?? { ok: res.ok }, null, 2) }],
-          isError: !res.ok,
+          content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
         };
-      } catch (e: unknown) {
+      } catch (e) {
         return {
-          content: [{ type: 'text', text: `Error pushing plan to UE: ${e instanceof Error ? e.message : String(e)}` }],
+          content: [{ type: 'text', text: `Error pushing plan to UE: ${(e as Error).message}` }],
           isError: true,
         };
       }
     },
   );
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // Generic input-request system (Plan tab AI monitor, issue #11).
-  // hayba_request_input pushes a prompt to UE; hayba_get_user_response polls
-  // for the user's answer. UE handlers maintain the prompt/response queues.
-  // ──────────────────────────────────────────────────────────────────────────
+  // no meta registered (plan control tool)
 
   server.tool(
-    'hayba_request_input',
-    appendMeta('Push a prompt to the UE Plan tab — approve / choose_one / choose_many / text / form / progress kinds. Returns prompt_id; poll hayba_get_user_response to retrieve the answer.', requestInputMeta),
-    requestInputSchema.shape,
+    'hayba_mark_plan_step',
+    'Update the status of a single step in the proposed plan shown in the UE Plan panel. Marking a step "completed" auto-advances the next step to "running". Call this as you work through an approved plan so the user sees live progress.',
+    {
+      index: z.number().int().min(0)
+        .describe('Zero-based index of the plan step to update'),
+      status: z.enum(['running', 'completed', 'failed']).default('completed')
+        .describe('New status for the step (default "completed")'),
+    },
     async (params) => {
-      const r = await haybaRequestInputHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      try {
+        const data = await executeCommand('plan_mark_step', params as Record<string, unknown>, { timeout: 5000 });
+        return {
+          content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
+        };
+      } catch (e) {
+        return {
+          content: [{ type: 'text', text: `Error marking plan step in UE: ${(e as Error).message}` }],
+          isError: true,
+        };
+      }
     },
   );
-
-  server.tool(
-    'hayba_get_user_response',
-    appendMeta('Poll for the user response to a prompt previously pushed via hayba_request_input. Returns {prompt_id, status: pending|answered|rejected|timeout|unknown, value?}.', getUserResponseMeta),
-    getUserResponseSchema.shape,
-    async (params) => {
-      const r = await haybaGetUserResponseHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
-    },
-  );
+  // no meta registered (plan control tool)
 
   server.tool(
     'list_tool_categories',
@@ -203,6 +203,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: r.content, isError: r.isError };
     }
   );
+  remember('list_tool_categories', listMeta);
 
   server.tool(
     'get_tool_signature',
@@ -213,6 +214,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: r.content, isError: r.isError };
     }
   );
+  remember('get_tool_signature', sigMeta);
 
   server.tool(
     'python_run',
@@ -226,6 +228,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: r.content, isError: r.isError };
     }
   );
+  remember('python_run', pyMeta);
 
   // Record schemas for tools whose shapes we want get_tool_signature to derive
   // live. Runs regardless of Code Mode so the registry stays in sync.
@@ -273,6 +276,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: r.content, isError: r.isError };
     }
   );
+  remember('actor_spawn', actorSpawnMeta);
 
   server.tool(
     'actor_list',
@@ -286,6 +290,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: r.content, isError: r.isError };
     }
   );
+  remember('actor_list', actorListMeta);
 
   server.tool(
     'actor_delete',
@@ -296,6 +301,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: r.content, isError: r.isError };
     }
   );
+  remember('actor_delete', actorDeleteMeta);
 
   server.tool(
     'actor_transform',
@@ -311,6 +317,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: r.content, isError: r.isError };
     }
   );
+  remember('actor_transform', actorTransformMeta);
 
   // ── Scene domain ────────────────────────────────────────────────────────────
 
@@ -327,6 +334,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: r.content, isError: r.isError };
     }
   );
+  remember('scene_export', sceneExportMeta);
 
   server.tool(
     'scene_validate_physics',
@@ -340,6 +348,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: r.content, isError: r.isError };
     }
   );
+  remember('scene_validate_physics', scenePhysicsMeta);
 
   // ── Editor domain ───────────────────────────────────────────────────────────
 
@@ -355,6 +364,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: r.content, isError: r.isError };
     }
   );
+  remember('editor_capture_viewport', captureMeta);
 
   server.tool(
     'editor_start_pie',
@@ -365,6 +375,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: r.content, isError: r.isError };
     }
   );
+  remember('editor_start_pie', pieMeta);
 
   server.tool(
     'editor_stream_log',
@@ -378,6 +389,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: r.content, isError: r.isError };
     }
   );
+  remember('editor_stream_log', streamLogMeta);
 
   // ── PCGEx tools ─────────────────────────────────────────────────────────────
 
@@ -389,6 +401,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (PCGEx pure-TS handler)
 
   server.tool(
     'hayba_get_node_details',
@@ -398,6 +411,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (PCGEx pure-TS handler)
 
   server.tool(
     'hayba_create_pcg_graph',
@@ -410,6 +424,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (PCGEx pure-TS handler)
 
   server.tool(
     'hayba_validate_pcg_graph',
@@ -419,6 +434,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (PCGEx pure-TS handler)
 
   server.tool(
     'hayba_list_pcg_assets',
@@ -428,6 +444,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (PCGEx pure-TS handler)
 
   server.tool(
     'hayba_export_pcg_graph',
@@ -437,6 +454,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (PCGEx pure-TS handler)
 
   server.tool(
     'hayba_execute_pcg_graph',
@@ -446,6 +464,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (PCGEx pure-TS handler)
 
   server.tool(
     'hayba_check_ue_status',
@@ -455,6 +474,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (PCGEx pure-TS handler)
 
   server.tool(
     'hayba_scrape_node_registry',
@@ -468,6 +488,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (PCGEx pure-TS handler)
 
   server.tool(
     'hayba_match_pin_names',
@@ -481,6 +502,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (PCGEx pure-TS handler)
 
   server.tool(
     'hayba_validate_attribute_flow',
@@ -493,6 +515,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (PCGEx pure-TS handler)
 
   server.tool(
     'hayba_diff_against_working_asset',
@@ -506,6 +529,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (PCGEx pure-TS handler)
 
   server.tool(
     'hayba_format_graph_topology',
@@ -527,6 +551,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: result }] };
     }
   );
+  // no meta registered (PCGEx pure-TS handler)
 
   server.tool(
     'hayba_abstract_to_subgraph',
@@ -540,6 +565,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (PCGEx pure-TS handler)
 
   server.tool(
     'hayba_parameterize_graph_inputs',
@@ -556,6 +582,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (PCGEx pure-TS handler)
 
   server.tool(
     'hayba_query_pcgex_docs',
@@ -568,6 +595,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (PCGEx pure-TS handler)
 
   server.tool(
     'hayba_initiate_infrastructure_brainstorm',
@@ -590,6 +618,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       };
     }
   );
+  // no meta registered (PCGEx pure-TS handler)
 
   // ── Worldbuilding hub — linguistics + planet physics packages ───────────────
   server.tool(
@@ -606,6 +635,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (worldbuilding pure-TS handler)
 
   server.tool(
     'language_word_for',
@@ -621,6 +651,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (worldbuilding pure-TS handler)
 
   server.tool(
     'language_generate_name',
@@ -636,6 +667,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (worldbuilding pure-TS handler)
 
   server.tool(
     'language_apply_sound_changes',
@@ -646,6 +678,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (worldbuilding pure-TS handler)
 
   server.tool(
     'language_propose_derivation',
@@ -656,6 +689,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (worldbuilding pure-TS handler)
 
   server.tool(
     'language_remix_phonologies',
@@ -666,6 +700,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (worldbuilding pure-TS handler)
 
   // ── Architecture Culture Studio ─────────────────────────────────────────────
 
@@ -683,6 +718,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_get_culture',
@@ -698,6 +734,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_resolve_rules',
@@ -723,6 +760,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_validate_culture',
@@ -738,6 +776,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_create_culture',
@@ -759,6 +798,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_update_culture',
@@ -777,6 +817,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_delete_culture',
@@ -792,6 +833,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_add_era',
@@ -807,6 +849,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_update_era',
@@ -822,6 +865,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_delete_era',
@@ -837,6 +881,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_add_material',
@@ -852,6 +897,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_update_material',
@@ -867,6 +913,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_delete_material',
@@ -882,6 +929,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_add_ornament',
@@ -897,6 +945,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_update_ornament',
@@ -912,6 +961,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_delete_ornament',
@@ -927,6 +977,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_add_tag_axis',
@@ -942,6 +993,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_update_tag_axis',
@@ -957,6 +1009,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_delete_tag_axis',
@@ -972,6 +1025,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_add_rule',
@@ -991,6 +1045,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_update_rule',
@@ -1011,6 +1066,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'architecture_delete_rule',
@@ -1030,6 +1086,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       }
     }
   );
+  // no meta registered (architecture pure-TS handler)
 
   server.tool(
     'hayba_planet_habitable_zone',
@@ -1040,6 +1097,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (worldbuilding pure-TS handler)
 
   server.tool(
     'hayba_planet_tidal_locking',
@@ -1050,6 +1108,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (worldbuilding pure-TS handler)
 
   server.tool(
     'hayba_planet_dynamo_field',
@@ -1060,6 +1119,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (worldbuilding pure-TS handler)
 
   server.tool(
     'hayba_planet_escape_regime',
@@ -1070,6 +1130,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (worldbuilding pure-TS handler)
 
   server.tool(
     'hayba_planet_stability_schema',
@@ -1080,6 +1141,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  // no meta registered (worldbuilding pure-TS handler)
 
   // Gaea / terrain feature surface intentionally disabled — kept out of the
   // build by removing imports + registrations. Will return when the
@@ -1327,6 +1389,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: result.content, isError: result.isError };
     }
   );
+  // no meta registered (conventions pure-TS handler)
 
   server.tool(
     'hayba_analyze_conventions',
@@ -1341,6 +1404,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: result.content, isError: result.isError };
     }
   );
+  // no meta registered (conventions pure-TS handler)
 
   // Landscape import surface intentionally disabled with the rest of the
   // terrain features. See note above.
@@ -1386,6 +1450,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: result.content, isError: result.isError };
     }
   );
+  // no meta registered (zone painter pure-TS handler)
 
   server.tool(
     'hayba_read_zones',
@@ -1398,6 +1463,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: result.content, isError: result.isError };
     }
   );
+  // no meta registered (zone painter pure-TS handler)
 
   server.tool(
     'hayba_set_painter_heightmap',
@@ -1410,6 +1476,7 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
       return { content: result.content, isError: result.isError };
     }
   );
+  // no meta registered (zone painter pure-TS handler)
 }
 
 // Schema registry seeding. Mirrors the Zod shapes used by the eager
@@ -1428,10 +1495,6 @@ function recordEagerSchemas(
     if (typeof v === 'string') { try { return JSON.parse(v); } catch { return v; } }
     return v;
   }, vec3);
-
-  // ── Plan tab prompts (issue #11) ──────────────────────────────────────────
-  reg('hayba_request_input', requestInputSchema.shape, 'low', '{prompt_id, status:"pushed"|"push_failed", error?}');
-  reg('hayba_get_user_response', getUserResponseSchema.shape, 'low', '{prompt_id, status, value?, error?}');
 
   // ── Code Mode meta ────────────────────────────────────────────────────────
   reg('list_tool_categories', {}, 'low', '{categories:[{domain,commands:[string]}]}');
