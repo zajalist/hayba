@@ -1183,8 +1183,14 @@ export const CLIMATE_CLASS_FRAG = [
   //   lat 80 → -2.5  (real -20 — still too warm but discriminates ET)
   // Elevation lapse subtracted so Tibet/Andes/Rockies get cooler classes.
   // CLIM RT's Tann is unchanged (wind/MSLP paths byte-equal).
-  "  float P = c.g;",
+  "  float Pzonal = c.g;",
   "  float cont = d.g;",
+  // T4-TUNE-5: continental aridity. Our P is lat-only; without this
+  // every cell at lat 25° has the same P, so Sahara (deep continental,
+  // no moisture source) reads as wet as the coast. Suppress P by
+  // continentality for the classifier only (CLIM RT unchanged).
+  // Calibrated so Sahara (cont≈0.4) drops from 0.30→0.22 → BWh red.
+  "  float P = Pzonal * (1.0 - 0.7 * clamp(cont, 0.0, 1.0));",
   "  float latFrac = absLat / 90.0;",
   "  float elevKm = max(a.r, 0.0) * 8.0;",
   "  float Tann = 27.0 - latFrac * latFrac * 50.0 - 6.5 * elevKm;",
@@ -1230,9 +1236,10 @@ export const CLIMATE_CLASS_FRAG = [
   "  }",
   // Cold-but-not-warm-summer fall-through → tundra.
   "  else { id = 13.0; }",
-  // Monsoon override — coastal tropical (T_min > 18 + cont<0.18 +
-  // lat 5-15) bumped to Am even when zonal P was too low to qualify.
-  "  if (absLat >= 5.0 && absLat < 15.0 && cont < 0.18 && a.r >= 0.0 && Tmin > 16.0 && P > 0.40 && id > 0.5 && id < 4.0) {",
+  // Monsoon override — widened to lat 5-25 so India / Bangladesh coast
+  // (lat ~20°N) and N Australia (lat ~15°S) get tropical-monsoon Am
+  // rather than Aw/BSh. cont<0.20 keeps it coastal-only.
+  "  if (absLat >= 5.0 && absLat < 25.0 && cont < 0.20 && a.r >= 0.0 && Tmin > 14.0 && Pzonal > 0.30 && (id > 0.5 && id < 8.0)) {",
   "    id = 2.0;",
   "  }",
   // Cookbook precip per class (.g). Lets downstream consumers (and the
@@ -1256,5 +1263,35 @@ export const CLIMATE_CLASS_FRAG = [
   "  else if (id < 13.5) cbP = 0.25;", // ET tundra
   "  else cbP = 0.10;",                // EF icecap
   "  fragColor = vec4(id, cbP, 0.0, 0.0);",
+  "}",
+].join("\n");
+
+// T4-TUNE-5: 7x7 box-blur for the DIST RT (distance + continentality)
+// to smooth the JFA quantization noise. User feedback: real Earth
+// continentality maps are smooth gradients; JFA produces pixel-level
+// stair-stepping because seeds are texel-aligned. A single 49-tap box
+// blur removes most of that without losing the underlying gradient.
+// Bleeds slightly across coasts (a few pixels of isLand=1 become 0.6)
+// but the classifier downstream tests cont as a continuous scalar
+// anyway, so the soft border helps natural-look transitions.
+export const CONT_BLUR_FRAG = [
+  H,
+  "uniform sampler2D uDist;",
+  "uniform vec2 uGrid;",
+  "void main(){",
+  "  ivec2 rc = fragRC();",
+  "  ivec2 wh = gridWH(uGrid);",
+  "  vec4 sum = vec4(0.0);",
+  "  float n = 0.0;",
+  "  for (int dy = -3; dy <= 3; dy++) {",
+  "    for (int dx = -3; dx <= 3; dx++) {",
+  "      int nx = xw(rc.x + dx, wh.x);",
+  "      int ny = yc(rc.y + dy, wh.y);",
+  "      vec4 s = texelFetch(uDist, ivec2(nx, ny), 0);",
+  "      sum += s;",
+  "      n += 1.0;",
+  "    }",
+  "  }",
+  "  fragColor = sum / max(n, 1.0);",
   "}",
 ].join("\n");
