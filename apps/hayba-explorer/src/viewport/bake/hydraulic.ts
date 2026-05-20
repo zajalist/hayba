@@ -435,10 +435,9 @@ const SEED_A_FRAG = [
   "precision highp int;",
   "out vec4 fragColor;",
   "uniform sampler2D uBase;",
-  "uniform float uSeaLevel;",
   "void main(){",
   "  ivec2 rc = ivec2(int(gl_FragCoord.x), int(gl_FragCoord.y));",
-  "  float b = texelFetch(uBase, rc, 0).r - uSeaLevel;",
+  "  float b = texelFetch(uBase, rc, 0).r;",
   "  float ocean = b < 0.0 ? 1.0 : 0.0;",
   "  fragColor = vec4(b, 0.0, 0.0, ocean);",
   "}",
@@ -725,7 +724,7 @@ export async function runHydraulicBake(
   // ---- SEED: A := (base.r, 0, 0, base.r<0?1:0) ; F := 0 ----------------
   // Seed writes into the READ slot of each channel (A[0]/F[0]) so the
   // first step's RAIN/FLUX read the seeded state.
-  runRawPass(renderer, SEED_A_FRAG, { uBase: u(base), uSeaLevel: u(cfg.seaLevel) }, aReadRT());
+  runRawPass(renderer, SEED_A_FRAG, { uBase: u(base) }, aReadRT());
   runRawPass(renderer, SEED_F_FRAG, {}, fReadRT());
 
   // ---- COOKBOOK-CLIMATE T2: distance-to-ocean via JFA ------------------
