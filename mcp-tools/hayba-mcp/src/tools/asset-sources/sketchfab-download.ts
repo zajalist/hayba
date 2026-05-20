@@ -3,11 +3,12 @@ import { z } from 'zod';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 import { cachePathFor, downloadToFile, ensureDir, extractZip, importIntoUe, type DownloadedAsset } from './shared.js';
 import { tokenMissingMessage } from './sketchfab-search.js';
+import { getTokenWithEnvFallback } from './get-setting.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'high',
   effects: ['filesystem_write', 'asset_create'],
-  when: 'downloading a Sketchfab model into the active UE project (requires SKETCHFAB_API_TOKEN env var)',
+  when: 'downloading a Sketchfab model into the active UE project (token from Project Settings → Plugins → Hayba MCP Toolkit → Asset Connectors, or SKETCHFAB_API_TOKEN env var)',
   not_when: 'you only need metadata — use sketchfab_search',
 };
 
@@ -34,7 +35,7 @@ export async function handleSketchfabDownload(params: SketchfabDownloadParams) {
   if (!parsed.success) {
     return { content: [{ type: 'text' as const, text: 'Invalid params: ' + parsed.error.message }], isError: true };
   }
-  const token = process.env.SKETCHFAB_API_TOKEN;
+  const token = await getTokenWithEnvFallback('sketchfab_api_token', 'SKETCHFAB_API_TOKEN');
   if (!token) {
     return { content: [{ type: 'text' as const, text: tokenMissingMessage() }], isError: true };
   }

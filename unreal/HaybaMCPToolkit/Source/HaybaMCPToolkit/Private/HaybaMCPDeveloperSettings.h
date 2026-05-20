@@ -58,6 +58,10 @@ public:
     UPROPERTY(VisibleAnywhere, Category="Visual Sidecar")
     FString VRAMEstimate;
 
+    UPROPERTY(EditAnywhere, Config, Category="Asset Connectors", meta=(PasswordField=true,
+        ToolTip="Sketchfab API token (https://sketchfab.com/settings/password). Required for hayba_sketchfab_* tools. Leave empty to disable Sketchfab."))
+    FString SketchfabApiToken;
+
     // UDeveloperSettings overrides
     virtual FName GetCategoryName() const override { return TEXT("Plugins"); }
 

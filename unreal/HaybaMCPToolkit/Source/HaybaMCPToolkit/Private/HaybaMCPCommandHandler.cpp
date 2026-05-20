@@ -3,6 +3,7 @@
 #include "HaybaMCPSecurityManager.h"
 #include "HaybaMCPResponseBuilder.h"
 #include "HaybaMCPSettings.h"
+#include "HaybaMCPDeveloperSettings.h"
 #include "HaybaMCPModule.h"
 #include "HaybaMCPPlanPanel.h"
 #include "HaybaMCPToolStreamPanel.h"
@@ -585,6 +586,40 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         S.PlanModeToolCallCount++;
         S.Save();
         MaybeShowPlanModePrompt();
+    }
+
+    // get_setting: allowlisted read of UHaybaMCPDeveloperSettings fields so
+    // the Node MCP server can pick up tokens (e.g. SketchfabApiToken) the user
+    // entered in Project Settings → Plugins → Hayba MCP Toolkit, without env vars.
+    if (Cmd == TEXT("get_setting"))
+    {
+        FString Key;
+        if (!Params.IsValid() || !Params->TryGetStringField(TEXT("key"), Key))
+        {
+            return MakeErrorResponse(Id, TEXT("get_setting requires { key: string }"));
+        }
+        static const TSet<FString> Allow = { TEXT("sketchfab_api_token") };
+        if (!Allow.Contains(Key))
+        {
+            return MakeErrorResponse(Id,
+                FString::Printf(TEXT("Setting '%s' is not exposed via get_setting"), *Key));
+        }
+        const UHaybaMCPDeveloperSettings* DS = GetDefault<UHaybaMCPDeveloperSettings>();
+        FString Value;
+        if (Key == TEXT("sketchfab_api_token")) Value = DS->SketchfabApiToken;
+        TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+        Data->SetStringField(TEXT("key"), Key);
+        if (Value.IsEmpty())
+        {
+            Data->SetField(TEXT("value"), MakeShared<FJsonValueNull>());
+            Data->SetBoolField(TEXT("set"), false);
+        }
+        else
+        {
+            Data->SetStringField(TEXT("value"), Value);
+            Data->SetBoolField(TEXT("set"), true);
+        }
+        return MakeOkResponse(Id, Data);
     }
 
     auto* Found = CommandToHandler.Find(Cmd);

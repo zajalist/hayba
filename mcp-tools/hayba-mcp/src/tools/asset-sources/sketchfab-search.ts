@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
+import { getTokenWithEnvFallback } from './get-setting.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'medium',
   effects: [],
-  when: 'searching Sketchfab for downloadable 3D models (requires SKETCHFAB_API_TOKEN env var)',
+  when: 'searching Sketchfab for downloadable 3D models (token from Project Settings → Plugins → Hayba MCP Toolkit → Asset Connectors, or SKETCHFAB_API_TOKEN env var)',
   not_when: 'you already have a Sketchfab uid — go straight to sketchfab_download',
 };
 
@@ -28,7 +29,7 @@ export function buildSearchUrl(p: SketchfabSearchParams): string {
 }
 
 export function tokenMissingMessage(): string {
-  return 'SKETCHFAB_API_TOKEN env var is not set. Get a token at https://sketchfab.com/settings/password (API tokens section) and export SKETCHFAB_API_TOKEN before invoking this tool.';
+  return 'Sketchfab API token not configured. Open Project Settings → Plugins → Hayba MCP Toolkit → Asset Connectors and paste a token from https://sketchfab.com/settings/password. (Falls back to SKETCHFAB_API_TOKEN env var if UE is headless.)';
 }
 
 export async function handleSketchfabSearch(params: SketchfabSearchParams) {
@@ -36,7 +37,7 @@ export async function handleSketchfabSearch(params: SketchfabSearchParams) {
   if (!parsed.success) {
     return { content: [{ type: 'text' as const, text: 'Invalid params: ' + parsed.error.message }], isError: true };
   }
-  const token = process.env.SKETCHFAB_API_TOKEN;
+  const token = await getTokenWithEnvFallback('sketchfab_api_token', 'SKETCHFAB_API_TOKEN');
   if (!token) {
     return { content: [{ type: 'text' as const, text: tokenMissingMessage() }], isError: true };
   }
