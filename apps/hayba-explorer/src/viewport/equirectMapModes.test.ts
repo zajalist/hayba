@@ -4,8 +4,8 @@ import {
   resolveEquirectMode,
 } from "./equirectMapModes";
 
-describe("EQUIRECT_MAP_MODES registry (SP-B)", () => {
-  it("is exactly the 6 data-backed modes in order", () => {
+describe("EQUIRECT_MAP_MODES registry (SP-B + COOKBOOK-CLIMATE T3)", () => {
+  it("is exactly the 9 data-backed modes in order", () => {
     expect(EQUIRECT_MAP_MODES.map((m) => m.label)).toEqual([
       "Relief",
       "Normal",
@@ -13,9 +13,12 @@ describe("EQUIRECT_MAP_MODES registry (SP-B)", () => {
       "Precipitation",
       "Wind",
       "Glaciation",
+      "Distance",
+      "Continentality",
+      "Pressure",
     ]);
   });
-  it("kinds: relief, normal, 3 clim, wind, clim", () => {
+  it("kinds (SP-B + cookbook-T3 dist/pressure)", () => {
     expect(EQUIRECT_MAP_MODES.map((m) => m.kind)).toEqual([
       "relief",
       "normal",
@@ -23,7 +26,40 @@ describe("EQUIRECT_MAP_MODES registry (SP-B)", () => {
       "clim",
       "wind",
       "clim",
+      "dist",
+      "dist",
+      "pressure",
     ]);
+  });
+});
+
+describe("COOKBOOK-CLIMATE T3 — Distance/Continentality/Pressure modes", () => {
+  it("Distance resolves to dist ch0 (distKm), uStackMode 1 draped / 2 flat", () => {
+    const idx = EQUIRECT_MAP_MODES.findIndex((m) => m.label === "Distance");
+    expect(idx).toBe(6);
+    expect(resolveEquirectMode(idx, true)).toEqual({
+      kind: "dist",
+      channel: 0,
+      ramp: 0,
+      mode: 1,
+    });
+    expect(resolveEquirectMode(idx, false).mode).toBe(2);
+  });
+  it("Continentality resolves to dist ch1 (cont 0..1)", () => {
+    const idx = EQUIRECT_MAP_MODES.findIndex((m) => m.label === "Continentality");
+    expect(idx).toBe(7);
+    expect(resolveEquirectMode(idx, true)).toMatchObject({
+      kind: "dist",
+      channel: 1,
+    });
+  });
+  it("Pressure resolves to pressure ch0 (MSLP mb)", () => {
+    const idx = EQUIRECT_MAP_MODES.findIndex((m) => m.label === "Pressure");
+    expect(idx).toBe(8);
+    expect(resolveEquirectMode(idx, true)).toMatchObject({
+      kind: "pressure",
+      channel: 0,
+    });
   });
 });
 
