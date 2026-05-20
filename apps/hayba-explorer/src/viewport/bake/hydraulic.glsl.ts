@@ -1168,7 +1168,13 @@ export const CLIMATE_CLASS_FRAG = [
   "  vec4 a  = loadA(uA, uGrid, rc.x, rc.y);",
   "  vec4 c  = texelFetch(uClim, rc, 0);",
   "  vec4 d  = texelFetch(uDist, rc, 0);",
-  "  if (a.r < 0.0) { fragColor = vec4(0.0); return; }", // Ocean
+  // T4-TUNE-6: raise sea-level cutoff. User: 'what gets categorized as
+  // continent is slightly below irl sealevel'. Raw heightfield (a.r)
+  // has many cells in [-0.05, 0.05] that are below real sea level but
+  // were currently classifying as land — producing the spotty cyan
+  // patches inside continents. CLIM/TERR/HYDRO still see the raw 0.0
+  // shoreline; only the Climate viz uses the higher cutoff.
+  "  if (a.r < 0.05) { fragColor = vec4(0.0); return; }", // Ocean
   "  float v = (float(rc.y) + 0.5) / float(wh.y);",
   "  float lat = (0.5 - v) * 180.0;",
   "  float absLat = abs(lat);",
@@ -1266,14 +1272,10 @@ export const CLIMATE_CLASS_FRAG = [
   "}",
 ].join("\n");
 
-// T4-TUNE-5: 7x7 box-blur for the DIST RT (distance + continentality)
-// to smooth the JFA quantization noise. User feedback: real Earth
-// continentality maps are smooth gradients; JFA produces pixel-level
-// stair-stepping because seeds are texel-aligned. A single 49-tap box
-// blur removes most of that without losing the underlying gradient.
-// Bleeds slightly across coasts (a few pixels of isLand=1 become 0.6)
-// but the classifier downstream tests cont as a continuous scalar
-// anyway, so the soft border helps natural-look transitions.
+// T4-TUNE-6: widened to 11x11 (121-tap) from 7x7 (49). User: real
+// Earth continentality maps are very smooth; 7x7 wasn't enough — JFA
+// stair-stepping was still visible. Single wider pass is cheaper than
+// two narrower passes and gives a properly smooth gradient.
 export const CONT_BLUR_FRAG = [
   H,
   "uniform sampler2D uDist;",
@@ -1283,8 +1285,8 @@ export const CONT_BLUR_FRAG = [
   "  ivec2 wh = gridWH(uGrid);",
   "  vec4 sum = vec4(0.0);",
   "  float n = 0.0;",
-  "  for (int dy = -3; dy <= 3; dy++) {",
-  "    for (int dx = -3; dx <= 3; dx++) {",
+  "  for (int dy = -5; dy <= 5; dy++) {",
+  "    for (int dx = -5; dx <= 5; dx++) {",
   "      int nx = xw(rc.x + dx, wh.x);",
   "      int ny = yc(rc.y + dy, wh.y);",
   "      vec4 s = texelFetch(uDist, ivec2(nx, ny), 0);",
