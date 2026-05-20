@@ -176,6 +176,12 @@ export interface HydraulicConfig {
    *  the simulated month in [0,12) (0=Jan, 6=Jul); inert while amp 0. */
   seasonAmp: number;
   seasonPhase: number;
+  /** P2.2-oro orographic precipitation. `orographicGain` multiplies the
+   *  windward (upslope, wind·∇h>0) precip boost; `rainShadow` multiplies
+   *  the leeward (downslope, wind·∇h<0) precip cut. Both clamped to keep
+   *  P in [0.05, 1.0]. Defaults mirror climate.rs ClimateParams. */
+  orographicGain: number;
+  rainShadow: number;
   /** P2.3b-i Whittaker biome thermal cuts (°C) — mirrors
    *  ClimateParams.biome_cold_c / biome_hot_c. */
   biomeColdC: number;
@@ -289,6 +295,8 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   coriolisGain: 15.0,
   seasonAmp: 0.0,
   seasonPhase: 0.0,
+  orographicGain: 0.6,
+  rainShadow: 0.5,
   biomeColdC: 6.0,
   biomeHotC: 18.0,
   channelDepth: 0.02,
@@ -510,6 +518,8 @@ export async function runHydraulicBake(
         uItczWidthDeg: u(cfg.itczWidthDeg),
         uGlacOnsetC: u(cfg.glacOnsetC),
         uGlacFullC: u(cfg.glacFullC),
+        uOrographicGain: u(cfg.orographicGain),
+        uRainShadow: u(cfg.rainShadow),
       },
       CLIM[0],
     );
