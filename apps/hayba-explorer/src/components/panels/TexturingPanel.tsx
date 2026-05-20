@@ -1,5 +1,7 @@
 import React from "react";
 import { colors, fonts } from "@hayba/design-tokens";
+import PropertySection from "../PropertySection";
+import PropertyStack from "../PropertyStack";
 import {
   SATMAP_NAMES,
   SATMAP_FAMILIES,
@@ -59,19 +61,15 @@ export default function TexturingPanel(p: TexturingPanelProps): React.ReactEleme
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      {/* Global surface controls (not per-biome) */}
-      <div style={{ padding: "10px 12px", borderBottom: `1px solid ${colors.borderMid}` }}>
-        <div style={{ fontSize: 11, color: colors.textMuted, marginBottom: 8 }}>
-          Surface
-        </div>
-
-        <div style={{ marginBottom: 8 }}>
-          <div style={labelStyle}>
-            <span>Surface brightness</span>
-            <span style={{ color: colors.beige, fontFamily: fonts.mono }}>
-              {p.brightness.toFixed(2)}
-            </span>
-          </div>
+      {/* Global surface controls — collapsible so the per-biome SatMap
+          library below gets more vertical room when these are tuned. */}
+      <PropertySection
+        heading="Surface"
+        collapsible
+        panelId="texturing"
+        sectionId="surface"
+      >
+        <PropertyStack label="Surface brightness" value={p.brightness.toFixed(2)}>
           <input
             type="range"
             min={0.6}
@@ -81,15 +79,8 @@ export default function TexturingPanel(p: TexturingPanelProps): React.ReactEleme
             onChange={(e) => p.onBrightness(Number(e.target.value))}
             style={sliderStyle}
           />
-        </div>
-
-        <div>
-          <div style={labelStyle}>
-            <span>Smoothing</span>
-            <span style={{ color: colors.beige, fontFamily: fonts.mono }}>
-              {p.smooth.toFixed(2)}
-            </span>
-          </div>
+        </PropertyStack>
+        <PropertyStack label="Smoothing" value={p.smooth.toFixed(2)}>
           <input
             type="range"
             min={0}
@@ -99,15 +90,8 @@ export default function TexturingPanel(p: TexturingPanelProps): React.ReactEleme
             onChange={(e) => p.onSmooth(Number(e.target.value))}
             style={sliderStyle}
           />
-        </div>
-
-        <div style={{ marginTop: 8 }}>
-          <div style={labelStyle}>
-            <span>Saturation</span>
-            <span style={{ color: colors.beige, fontFamily: fonts.mono }}>
-              {p.saturation.toFixed(2)}
-            </span>
-          </div>
+        </PropertyStack>
+        <PropertyStack label="Saturation" value={p.saturation.toFixed(2)} noSeparator>
           <input
             type="range"
             min={0}
@@ -117,8 +101,8 @@ export default function TexturingPanel(p: TexturingPanelProps): React.ReactEleme
             onChange={(e) => p.onSaturation(Number(e.target.value))}
             style={sliderStyle}
           />
-        </div>
-      </div>
+        </PropertyStack>
+      </PropertySection>
 
       {/* Biome selector chips */}
       <div style={{ padding: "10px 12px 6px", borderBottom: `1px solid ${colors.borderMid}` }}>
