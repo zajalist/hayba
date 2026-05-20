@@ -25,5 +25,6 @@ export const sceneExportHandler: ToolHandler = async (args) => {
   if (!parsed.success) {
     return { content: [{ type: 'text', text: `Validation error: ${parsed.error.message}` }], isError: true };
   }
-  return executeCommand('scene_export', parsed.data as Record<string, unknown>);
+  const data = await executeCommand('scene_export', parsed.data as Record<string, unknown>);
+  return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
 };

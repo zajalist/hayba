@@ -21,5 +21,6 @@ export const editorStartPieHandler: ToolHandler = async (args) => {
   if (!parsed.success) {
     return { content: [{ type: 'text', text: `Validation error: ${parsed.error.message}` }], isError: true };
   }
-  return executeCommand('editor_start_pie', parsed.data as Record<string, unknown>);
+  const data = await executeCommand('editor_start_pie', parsed.data as Record<string, unknown>);
+  return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
 };
