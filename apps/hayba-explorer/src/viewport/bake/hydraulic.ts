@@ -63,6 +63,7 @@ import {
   DIST_FINAL_FRAG,
   PRESSURE_VIZ_FRAG,
   CLIMATE_CLASS_FRAG,
+  CONT_BLUR_FRAG,
 } from "./hydraulic.glsl";
 import { runRawPass } from "./glPass";
 import { createPingPong, type PingPongTargets } from "./pingpong";
@@ -762,6 +763,16 @@ export async function runHydraulicBake(
       },
       DIST[distFinalSlot],
     );
+    // T4-TUNE-5: smooth the JFA stair-stepping with a 7x7 box blur so
+    // the Continentality map mode reads as a continuous gradient. Ping-
+    // pongs back into the other DIST slot and flips distFinalSlot.
+    runRawPass(
+      renderer,
+      CONT_BLUR_FRAG,
+      { uDist: u(DIST[distFinalSlot]), uGrid: u(uGrid) },
+      DIST[distFinalSlot ^ 1],
+    );
+    distFinalSlot ^= 1;
   }
 
   // ---- S2.4 DETAIL MASK (ONE-TIME): from the seeded base height, write
