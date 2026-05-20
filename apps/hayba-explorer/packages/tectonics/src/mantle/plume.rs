@@ -280,8 +280,16 @@ impl PlumeRegistry {
             // whose great-circle distance from `centre` is ≤ radius.
             let seed = grid.nearest_field(centre);
             let mut frontier: Vec<u32> = vec![seed];
-            let mut visited: std::collections::BTreeSet<u32> =
-                std::collections::BTreeSet::new();
+            // SD-PR (Plume Record): HashSet instead of BTreeSet — visited is
+            // only used for membership tests (.insert returns bool), never
+            // iterated, so the sorted-order semantics of BTreeSet bought us
+            // nothing while paying O(log N) per insert. HashSet gives O(1)
+            // amortised; for 50-500 cells/plume × 10-20 plumes/step this
+            // shaves several ms off the plume phase. Byte-equality preserved:
+            // identical seed, identical BFS pop order, identical
+            // affected.sort_unstable() output.
+            let mut visited: std::collections::HashSet<u32> =
+                std::collections::HashSet::with_capacity(512);
             visited.insert(seed);
             let mut affected: Vec<u32> = Vec::new();
 
