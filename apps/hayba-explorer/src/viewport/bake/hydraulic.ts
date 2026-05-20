@@ -194,6 +194,12 @@ export interface HydraulicConfig {
    *  area of land". 0.3 default = moderate continental drying without
    *  blanking interiors. */
   continentalGain: number;
+  /** CLIM-T-CONTINENTALITY (memory #193): max continental T anomaly
+   *  from zonal mean, °C. At seasonPhase=6 (NH July) deep continental
+   *  interiors swing +uContinentalT in NH, -uContinentalT in SH.
+   *  Coastal cells unaffected. Inert when seasonAmp=0. Cookbook
+   *  principle: "T variations highest in interiors, lowest on coasts". */
+  continentalT: number;
   /** P2.3b-i Whittaker biome thermal cuts (°C) — mirrors
    *  ClimateParams.biome_cold_c / biome_hot_c. */
   biomeColdC: number;
@@ -315,6 +321,7 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   rainShadow: 0.5,
   onshoreGain: 0.5,
   continentalGain: 0.3,
+  continentalT: 8.0,
   biomeColdC: 6.0,
   biomeHotC: 18.0,
   channelDepth: 0.02,
@@ -540,6 +547,9 @@ export async function runHydraulicBake(
         uRainShadow: u(cfg.rainShadow),
         uOnshoreGain: u(cfg.onshoreGain),
         uContinentalGain: u(cfg.continentalGain),
+        uContinentalT: u(cfg.continentalT),
+        uSeasonAmp: u(cfg.seasonAmp),
+        uSeasonPhase: u(cfg.seasonPhase),
       },
       CLIM[0],
     );

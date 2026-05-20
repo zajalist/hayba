@@ -818,6 +818,9 @@ export const CLIMATE_FRAG = [
   "uniform float uRainShadow;",
   "uniform float uOnshoreGain;",
   "uniform float uContinentalGain;",
+  "uniform float uContinentalT;",
+  "uniform float uSeasonAmp;",
+  "uniform float uSeasonPhase;",
   "void main(){",
   "  ivec2 rc = fragRC();",
   "  vec4 a = loadA(uA, uGrid, rc.x, rc.y);",
@@ -883,6 +886,18 @@ export const CLIMATE_FRAG = [
   "  float onshoreBonus = uOnshoreGain * max(oceanFrac - 0.5, 0.0);",
   "  float interiorDry = uContinentalGain * max(0.5 - oceanFrac, 0.0);",
   "  P = clamp((P + onshoreBonus - interiorDry) * oro, 0.05, 1.0);",
+  // CLIM-T-CONTINENTALITY (memory ticket #193): land cells away from
+  // ocean swing further from zonal mean in temperature. At seasonPhase=6
+  // (NH July) and seasonAmp > 0, NH continental interiors are HOTTER
+  // than zonal (summer heating), SH continental interiors COLDER
+  // (their winter). Reuses oceanFrac as continentality strength —
+  // deep-interior (oceanFrac→0) gets the full ±uContinentalT swing;
+  // coastal cells (oceanFrac→1) get ~zero shift.
+  "  float isJulyish = cos((uSeasonPhase - 6.0) * 0.52359877);", // 2π/12
+  "  float hemSign = sign(lat);",
+  "  float landMask = step(0.0, a.r);",
+  "  float continentalT = uContinentalT * uSeasonAmp * isJulyish * hemSign * landMask * (1.0 - oceanFrac);",
+  "  T += continentalT;",
   "  float windAz = fract(atan(wvec.y, wvec.x) / 6.28318530 + 0.5);",
   // SPEC-SAFE: GLSL ES 3.00 smoothstep is UNDEFINED if edge0 >= edge1.
   // uGlacOnsetC (-2) > uGlacFullC (-12), so keep edges ASCENDING
