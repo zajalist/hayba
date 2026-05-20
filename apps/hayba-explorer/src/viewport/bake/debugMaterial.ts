@@ -232,9 +232,12 @@ const FRAG: string = [
   "  if (id < 7.5){",
   "    float c = floor(clamp(x, 0.0, 14.0) + 0.5);",
   "    if (c < 0.5) return vec3(0.05, 0.10, 0.20);",  // 0 Ocean (dark — usually not drawn)
+  // Beck et al. 2023 Köppen palette: Af deep blue, Am medium blue,
+  // Aw is YELLOW-cream (savanna), not light blue. Light blue for Aw
+  // made the three A-classes visually indistinguishable.
   "    if (c < 1.5) return vec3(0.00, 0.00, 0.85);",  // 1 Af deep blue
-  "    if (c < 2.5) return vec3(0.00, 0.50, 0.95);",  // 2 Am medium blue
-  "    if (c < 3.5) return vec3(0.45, 0.75, 1.00);",  // 3 Aw light blue
+  "    if (c < 2.5) return vec3(0.00, 0.55, 0.95);",  // 2 Am medium blue
+  "    if (c < 3.5) return vec3(0.98, 0.85, 0.40);",  // 3 Aw yellow-cream
   "    if (c < 4.5) return vec3(0.95, 0.10, 0.10);",  // 4 BWh red
   "    if (c < 5.5) return vec3(0.95, 0.55, 0.55);",  // 5 BWk pink
   "    if (c < 6.5) return vec3(0.96, 0.60, 0.15);",  // 6 BSh orange
