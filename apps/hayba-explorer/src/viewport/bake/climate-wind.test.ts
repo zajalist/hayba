@@ -174,8 +174,14 @@ describe("COOKBOOK-CLIMATE T2 — JFA distance-to-ocean", () => {
     expect(DIST_FINAL_FRAG).toContain(
       "float cont = isLand ? (1.0 - exp(-distKm / uContScaleKm)) : 0.0;",
     );
+    // T3-FIX: .r is now NORMALIZED distance (distKm / uDistMaxKm) for the
+    // viz ramp (raw km would saturate any 0..1 ramp).
+    expect(DIST_FINAL_FRAG).toContain("uniform float uDistMaxKm;");
     expect(DIST_FINAL_FRAG).toContain(
-      "fragColor = vec4(distKm, cont, isLand ? 1.0 : 0.0, 0.0);",
+      "float distNorm = clamp(distKm / uDistMaxKm, 0.0, 1.0);",
+    );
+    expect(DIST_FINAL_FRAG).toContain(
+      "fragColor = vec4(distNorm, cont, isLand ? 1.0 : 0.0, 0.0);",
     );
   });
 });

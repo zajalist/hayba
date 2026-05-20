@@ -1090,6 +1090,7 @@ export const DIST_FINAL_FRAG = [
   "uniform vec2 uGrid;",
   "uniform float uContScaleKm;",
   "uniform float uEarthCircKm;",
+  "uniform float uDistMaxKm;",
   "float wrapDistFinal(vec2 a, vec2 b, float wx) {",
   "  float dx = abs(a.x - b.x);",
   "  dx = min(dx, wx - dx);",
@@ -1105,6 +1106,29 @@ export const DIST_FINAL_FRAG = [
   "  float distKm = texDist * kmPerTex;",
   "  bool isLand = a.r >= 0.0;",
   "  float cont = isLand ? (1.0 - exp(-distKm / uContScaleKm)) : 0.0;",
-  "  fragColor = vec4(distKm, cont, isLand ? 1.0 : 0.0, 0.0);",
+  // T3-FIX: .r is NORMALIZED distance for viz (raw km would saturate the
+  // 0..1 ramp). Continentality in .g is already 0..1.
+  "  float distNorm = clamp(distKm / uDistMaxKm, 0.0, 1.0);",
+  "  fragColor = vec4(distNorm, cont, isLand ? 1.0 : 0.0, 0.0);",
+  "}",
+].join("\n");
+
+// COOKBOOK-CLIMATE T3-FIX: pressure normalization for viz. MSLP_FRAG
+// emits raw mb (~990-1030); any 0..1 ramp saturates → all white. This
+// pass reads the final MSLP and writes a normalized 0..1 field to a
+// separate slot so the "Pressure" map mode reads as a real gradient.
+//   normalized = clamp((mb - uMbLow) / (uMbHigh - uMbLow), 0, 1)
+// Defaults uMbLow=985, uMbHigh=1030 cover annual+seasonal swings.
+// .r = normalized; .g = raw mb (preserved for future inspection).
+export const PRESSURE_VIZ_FRAG = [
+  H,
+  "uniform sampler2D uMSLP;",
+  "uniform float uMbLow;",
+  "uniform float uMbHigh;",
+  "void main(){",
+  "  ivec2 rc = fragRC();",
+  "  float mb = texelFetch(uMSLP, rc, 0).r;",
+  "  float n = clamp((mb - uMbLow) / max(uMbHigh - uMbLow, 1e-3), 0.0, 1.0);",
+  "  fragColor = vec4(n, mb, 0.0, 0.0);",
   "}",
 ].join("\n");

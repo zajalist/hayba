@@ -61,6 +61,7 @@ import {
   DIST_INIT_FRAG,
   DIST_JFA_FRAG,
   DIST_FINAL_FRAG,
+  PRESSURE_VIZ_FRAG,
 } from "./hydraulic.glsl";
 import { runRawPass } from "./glPass";
 import { createPingPong, type PingPongTargets } from "./pingpong";
@@ -218,6 +219,16 @@ export interface HydraulicConfig {
    *  approximate continental-interior threshold (Sahel↔Sahara, central
    *  Eurasia start of strong continental winters). */
   contScaleKm: number;
+  /** COOKBOOK-CLIMATE T3-FIX: saturation distance for the Distance map
+   *  mode (km). distNorm = clamp(distKm / distMaxKm, 0, 1). Default
+   *  5000km — central Asia / central Antarctica ≈ 4000-5000km from any
+   *  ocean, so this normalisation paints the brightest interiors. */
+  distMaxKm: number;
+  /** COOKBOOK-CLIMATE T3-FIX: pressure normalisation range for the
+   *  Pressure map mode (mb). Annual+seasonal MSLP swings on Earth are
+   *  ~985..1030 mb; this range saturates outliers. */
+  pressureMbLow: number;
+  pressureMbHigh: number;
   /** P2.3b-i Whittaker biome thermal cuts (°C) — mirrors
    *  ClimateParams.biome_cold_c / biome_hot_c. */
   biomeColdC: number;
@@ -349,6 +360,9 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   itczShift: 0.0,
   itczLandAmp: 0.0,
   contScaleKm: 1500.0,
+  distMaxKm: 5000.0,
+  pressureMbLow: 985.0,
+  pressureMbHigh: 1030.0,
   biomeColdC: 6.0,
   biomeHotC: 18.0,
   channelDepth: 0.02,
@@ -485,7 +499,7 @@ export async function runHydraulicBake(
   // FAILS if EXT_color_buffer_float is missing. We drive the read/write
   // slots explicitly below (NOT pp.book) so the discipline is local and
   // unambiguous.
-  const pp: PingPongTargets = createPingPong(renderer, w, h, ["A", "F", "M", "ACC", "CTRL", "CLIM", "TERR", "HYDRO", "MSLP", "WIND", "DIST"]);
+  const pp: PingPongTargets = createPingPong(renderer, w, h, ["A", "F", "M", "ACC", "CTRL", "CLIM", "TERR", "HYDRO", "MSLP", "WIND", "DIST", "PVIZ"]);
   const A = pp.rt.A; // [slot0, slot1]
   const F = pp.rt.F; // [slot0, slot1]
   // S2.4 detail mask: a ONE-TIME single-channel field (computed pre-loop
@@ -512,11 +526,17 @@ export async function runHydraulicBake(
   // tick, disposed once at teardown; never escapes, never feeds erosion.
   const MSLP = pp.rt.MSLP;
   const WIND = pp.rt.WIND;
-  // COOKBOOK-CLIMATE T2: DIST ping-pong for JFA distance-to-ocean.
-  // INIT fills DIST[0]; each JFA jump alternates slots; DIST_FINAL
-  // writes the converted distKm/continentality into DIST[0] (so the
-  // returned RT slot is stable regardless of how many jumps run).
+  // COOKBOOK-CLIMATE T2/T3-FIX: DIST ping-pong for JFA distance-to-ocean.
+  // INIT fills DIST[0]; each JFA jump alternates slots; DIST_FINAL reads
+  // the JFA result and writes the normalized distance + continentality
+  // into the OPPOSITE slot (NOT the same — reading+writing the same RT
+  // in raw GL is undefined and was producing all-white maps). The result
+  // slot index is tracked in `distFinalSlot` for the return + dispose.
   const DIST = pp.rt.DIST;
+  // PVIZ: normalized pressure render-target for the "Pressure" map mode.
+  // Slot 0 is the viz output; slot 1 is allocated by the pair helper and
+  // disposed at teardown.
+  const PVIZ = pp.rt.PVIZ;
   let accRead = 0;
   const swapAcc = (): void => {
     accRead ^= 1;
@@ -635,6 +655,20 @@ export async function runHydraulicBake(
       },
       HYDRO[0],
     );
+    // T3-FIX: normalize MSLP for the Pressure map mode. Reads MSLP[0],
+    // writes to a separate PVIZ slot so the wind/climate paths that
+    // sampled raw MSLP above are unaffected. Output: .r = normalized
+    // 0..1, .g = raw mb.
+    runRawPass(
+      renderer,
+      PRESSURE_VIZ_FRAG,
+      {
+        uMSLP: u(MSLP[0]),
+        uMbLow: u(cfg.pressureMbLow),
+        uMbHigh: u(cfg.pressureMbHigh),
+      },
+      PVIZ[0],
+    );
   };
 
   // Resolution invariance (measured, not assumed). S1 made `slope`
@@ -666,6 +700,7 @@ export async function runHydraulicBake(
   //      nearest-ocean seed for every cell.
   //   3. FINAL converts seed coords → distKm + continentality, writes
   //      into DIST[0] so the returned RT slot is stable.
+  let distFinalSlot = 0;
   {
     runRawPass(
       renderer,
@@ -686,8 +721,10 @@ export async function runHydraulicBake(
       );
       distRead ^= 1;
     }
-    // Land final pass into DIST[0] (the returned slot), reading whichever
-    // slot the JFA ended in.
+    // T3-FIX: final pass writes to the OPPOSITE slot of distRead (the slot
+    // holding the JFA result). Reading and writing the same RT in raw GL
+    // is undefined and was producing garbage seeds → saturated distance.
+    distFinalSlot = distRead ^ 1;
     runRawPass(
       renderer,
       DIST_FINAL_FRAG,
@@ -697,8 +734,9 @@ export async function runHydraulicBake(
         uGrid: u(uGrid),
         uContScaleKm: u(cfg.contScaleKm),
         uEarthCircKm: u(2 * Math.PI * 6371),
+        uDistMaxKm: u(cfg.distMaxKm),
       },
-      DIST[0],
+      DIST[distFinalSlot],
     );
   }
 
@@ -1020,20 +1058,24 @@ export async function runHydraulicBake(
   CLIM[1].dispose();
   TERR[1].dispose();
   HYDRO[1].dispose();
-  // COOKBOOK-CLIMATE T3: MSLP[0] is NO LONGER disposed here — it's
-  // returned as `pressure` for the new "Pressure" map mode. Caller
-  // owns + disposes (App.tsx prevDebugPressureRef).
+  // COOKBOOK-CLIMATE T3-FIX: MSLP[0] is back to being disposed here —
+  // the user-visible "pressure" RT is now the PVIZ slot (normalized
+  // 0..1 + raw mb), not the raw MSLP. MSLP[0] is internal only.
+  MSLP[0].dispose();
   MSLP[1].dispose();
   WIND[1].dispose();
-  // DIST[1] is the JFA ping-pong scratch (final pass writes to DIST[0]).
-  DIST[1].dispose();
+  // T3-FIX: DIST final pass writes to `distFinalSlot`; the OTHER slot is
+  // disposed here. `distFinalSlot` may be 0 or 1 depending on JFA jump
+  // parity, so disposal is dynamic.
+  DIST[distFinalSlot ^ 1].dispose();
+  PVIZ[1].dispose();
   return {
     eroded: result,
     clim: CLIM[0],
     terr: TERR[0],
     hydro: HYDRO[0],
     wind: WIND[0],
-    dist: DIST[0],
-    pressure: MSLP[0],
+    dist: DIST[distFinalSlot],
+    pressure: PVIZ[0],
   };
 }
