@@ -79,9 +79,10 @@ describe("P2.2-oro orographic precipitation", () => {
       "float oro = 1.0 + uOrographicGain * max(upslope, 0.0) - uRainShadow * max(-upslope, 0.0);",
     );
     // CLIM-MONSOON replaced the original `P = clamp(P * oro, …)` with a
-    // form that composes onshore moisture additively before oro:
+    // form that composes onshore moisture and continentality additively
+    // before oro:
     expect(CLIMATE_FRAG).toContain(
-      "P = clamp((P + onshoreBonus) * oro, 0.05, 1.0);",
+      "P = clamp((P + onshoreBonus - interiorDry) * oro, 0.05, 1.0);",
     );
   });
 });
@@ -107,8 +108,13 @@ describe("CLIM-MONSOON onshore moisture transport", () => {
     expect(CLIMATE_FRAG).toContain(
       "float onshoreBonus = uOnshoreGain * max(oceanFrac - 0.5, 0.0);",
     );
+    // CLIM-CONTINENTALITY pair: symmetric suppression below 0.5
+    expect(CLIMATE_FRAG).toContain("uniform float uContinentalGain;");
     expect(CLIMATE_FRAG).toContain(
-      "P = clamp((P + onshoreBonus) * oro, 0.05, 1.0);",
+      "float interiorDry = uContinentalGain * max(0.5 - oceanFrac, 0.0);",
+    );
+    expect(CLIMATE_FRAG).toContain(
+      "P = clamp((P + onshoreBonus - interiorDry) * oro, 0.05, 1.0);",
     );
   });
 });
