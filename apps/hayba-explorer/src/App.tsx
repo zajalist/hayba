@@ -273,6 +273,15 @@ export default function App() {
 
   const [draft, setDraft] = useState<WizardDraft | null>(null);
   const [mode, setMode] = useState<Mode>("wizard");
+  // TECT-PLAY: live wizard-mode tectonic playback state. `tectStep` is the
+  // absolute step counter from the Rust sim; `tectPlaying` drives the
+  // setInterval loop. Reset to step 0 on Edit / divisions change.
+  const [tectStep, setTectStep] = useState(0);
+  const [tectPlaying, setTectPlaying] = useState(false);
+  const tectPlayingRef = useRef(false);
+  useEffect(() => { tectPlayingRef.current = tectPlaying; }, [tectPlaying]);
+  const tectSimReadyRef = useRef(false);
+  const tectBusyRef = useRef(false);
   const [snapshot, setSnapshot] = useState<PlanetSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<ToolName>("brush");
@@ -1053,6 +1062,135 @@ export default function App() {
     };
   }, [panelCategory, mode, paintBrush, interact]);
 
+  // TECT-PLAY: wizard-mode live tectonic playback. Init builds a fresh sim
+  // from the current draft (no run_length_steps, no erosion) and switches
+  // the visible globe to the point-cloud colored by plate ids. Subsequent
+  // step() calls just recolor — the painter mesh stays hidden until the
+  // user stops playback.
+  type TectStepResult = { plate_ids: number[]; step: number };
+
+  const applyTectResult = useCallback((res: TectStepResult) => {
+    const ids = res.plate_ids;
+    const buf = ids instanceof Uint8Array ? ids : new Uint8Array(ids);
+    globeRef.current?.recolorFromPlateIds(buf, PLATE_PALETTE);
+    setTectStep(res.step);
+    sceneRef.current?.markDirty();
+  }, []);
+
+  // Show the points globe + recolor with plate ids. Painter mesh is hidden
+  // so plate colors are unobscured. The painter cursor ring stays available
+  // (it lives on the painter group object); but since pointer events are
+  // disabled during play, it never appears.
+  const showPlateView = useCallback(() => {
+    if (painterMeshRef.current) painterMeshRef.current.object.visible = false;
+    if (globeRef.current) globeRef.current.object.visible = true;
+  }, []);
+
+  const showPaintView = useCallback(() => {
+    if (painterMeshRef.current) painterMeshRef.current.object.visible = true;
+    // When the height-painter mesh is mounted the points globe must be
+    // hidden again (mirrors the painter-lifecycle effect's invariant).
+    if (globeRef.current && painterMeshRef.current) {
+      globeRef.current.object.visible = false;
+    }
+  }, []);
+
+  const ensureTectSim = useCallback(async (): Promise<boolean> => {
+    if (tectSimReadyRef.current) return true;
+    const drft = draftRef.current;
+    if (!drft) return false;
+    // Build the live sim from the CURRENT draft (continents + painter
+    // overrides included via toDraftFields, matching bake_from_wizard).
+    const paintedFields = heightPainterRef.current
+      ? heightPainterRef.current.toDraftFields()
+      : { painted_elevations: [], painted_mask: [] };
+    const finalDraft: WizardDraft = { ...drft, ...paintedFields };
+    try {
+      const res = await invoke<TectStepResult>("start_tect_sim", { draft: finalDraft });
+      tectSimReadyRef.current = true;
+      showPlateView();
+      applyTectResult(res);
+      return true;
+    } catch (e) {
+      setError(String(e));
+      return false;
+    }
+  }, [applyTectResult, showPlateView]);
+
+  const handleTectStep = useCallback(async () => {
+    if (tectBusyRef.current) return;
+    tectBusyRef.current = true;
+    try {
+      const ok = await ensureTectSim();
+      if (!ok) return;
+      const res = await invoke<TectStepResult>("tect_step_n", { steps: 1 });
+      applyTectResult(res);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      tectBusyRef.current = false;
+    }
+  }, [applyTectResult, ensureTectSim]);
+
+  const handleTectPlayPause = useCallback(async () => {
+    if (tectPlayingRef.current) {
+      setTectPlaying(false);
+      return;
+    }
+    const ok = await ensureTectSim();
+    if (!ok) return;
+    setTectPlaying(true);
+  }, [ensureTectSim]);
+
+  const handleTectReset = useCallback(() => {
+    setTectPlaying(false);
+    tectSimReadyRef.current = false;
+    setTectStep(0);
+    invoke("reset_sim").catch(() => {});
+    showPaintView();
+    // Repaint the points globe to the pre-play colour scheme so a stale
+    // plate-coloured cloud doesn't ghost behind the painter mesh.
+    const drft = draftRef.current;
+    if (drft) globeRef.current?.recolorFromDraft(drft, cellCountRef.current);
+  }, [showPaintView]);
+
+  // Drive the live sim via setInterval — ~12 FPS matches the ~80ms/step
+  // perf budget. A re-entrancy guard (tectBusyRef) prevents pile-up when a
+  // step takes longer than the interval at high resolutions.
+  useEffect(() => {
+    if (!tectPlaying) return;
+    let cancelled = false;
+    const id = window.setInterval(async () => {
+      if (cancelled || !tectPlayingRef.current) return;
+      if (tectBusyRef.current) return;
+      tectBusyRef.current = true;
+      try {
+        const res = await invoke<TectStepResult>("tect_step_n", { steps: 1 });
+        if (!cancelled && tectPlayingRef.current) applyTectResult(res);
+      } catch (e) {
+        if (!cancelled) {
+          setError(String(e));
+          setTectPlaying(false);
+        }
+      } finally {
+        tectBusyRef.current = false;
+      }
+    }, 85);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [tectPlaying, applyTectResult]);
+
+  // TECT-PLAY: when the user changes draft inputs (preset, painted cells,
+  // brush, divisions) the live sim is no longer in sync. Reset cheaply so
+  // the next Play / Step rebuilds. Excludes brush_radius (visual-only).
+  useEffect(() => {
+    if (!tectSimReadyRef.current) return;
+    handleTectReset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft?.preset, draft?.seed, draft?.divisions, draft?.continental_cells.length]);
+
   // Live-apply boundary assignments — Rust rewrites plate omegas on the
   // running model so the change is visible immediately. No re-bake.
   const applyBoundaryTypesLive = useCallback(async (types: Record<string, BoundaryType>) => {
@@ -1148,6 +1286,12 @@ export default function App() {
   const handleBake = useCallback(async () => {
     const scene = sceneRef.current;
     if (!draft || !scene || debugBaking) return;
+    // TECT-PLAY: stop the live preview before bake. The bake rebuilds the
+    // sim from the draft anyway, so the play state must not leak into the
+    // baked planet.
+    setTectPlaying(false);
+    tectSimReadyRef.current = false;
+    setTectStep(0);
     setDebugBaking(true);
     setMode("baking");
     setDebugBakeProgress("Rasterising inputs…");
@@ -1368,6 +1512,9 @@ export default function App() {
     setInteract(nextInteract(interactRef.current, "edit"));
     setMode("wizard");
     setPlaying(false);
+    setTectPlaying(false);
+    tectSimReadyRef.current = false;
+    setTectStep(0);
     if (draft) globeRef.current?.recolorFromDraft(draft, cellCountRef.current);
   }, [draft]);
 
@@ -1629,6 +1776,14 @@ export default function App() {
           <ComposePanel
             draft={draft}
             busy={mode === "baking" || initializingGrid}
+            tectPlay={{
+              playing: tectPlaying,
+              step: tectStep,
+              onPlayPause: handleTectPlayPause,
+              onStep: handleTectStep,
+              onReset: handleTectReset,
+              disabled: mode === "baking" || initializingGrid,
+            }}
             onChangeDivisions={handleChangeDivisions}
             onChangePreset={handleChangePreset}
             onReroll={handleReroll}

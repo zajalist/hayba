@@ -17,6 +17,16 @@ export interface ComposePanelProps {
   /** Extra sections rendered in the scroll area, below Continents and above
    *  the Bake action strip. Used to host the height-painter controls. */
   children?: React.ReactNode;
+  /** TECT-PLAY: optional live-sim controls shown above the Bake button.
+   *  When omitted, the Tectonic preview row is hidden. */
+  tectPlay?: {
+    playing: boolean;
+    step: number;
+    onPlayPause: () => void;
+    onStep: () => void;
+    onReset: () => void;
+    disabled?: boolean;
+  };
 }
 
 export default function ComposePanel(p: ComposePanelProps) {
@@ -92,6 +102,54 @@ export default function ComposePanel(p: ComposePanelProps) {
         </PropertySection>
 
         {p.children}
+
+        {p.tectPlay && (
+          <PropertySection heading="Tectonic preview">
+            <PropertyRow
+              label="Step"
+              value={
+                <span style={{ fontFamily: "Consolas, monospace", color: colors.beige }}>
+                  {p.tectPlay.step}
+                </span>
+              }
+            />
+            <PropertyRow
+              label="Play"
+              noSeparator
+              value={
+                <div style={{ display: "inline-flex", gap: 6 }}>
+                  <button
+                    type="button"
+                    onClick={p.tectPlay.onPlayPause}
+                    disabled={p.tectPlay.disabled}
+                    title={p.tectPlay.playing ? "Pause (Space)" : "Play (Space)"}
+                    style={tectButtonStyle(p.tectPlay.playing)}
+                  >
+                    {p.tectPlay.playing ? "Pause" : "Play"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={p.tectPlay.onStep}
+                    disabled={p.tectPlay.disabled || p.tectPlay.playing}
+                    title="Advance one step"
+                    style={tectButtonStyle(false)}
+                  >
+                    Step
+                  </button>
+                  <button
+                    type="button"
+                    onClick={p.tectPlay.onReset}
+                    disabled={p.tectPlay.disabled || p.tectPlay.step === 0}
+                    title="Reset to step 0"
+                    style={tectButtonStyle(false)}
+                  >
+                    Reset
+                  </button>
+                </div>
+              }
+            />
+          </PropertySection>
+        )}
       </div>
 
       <div style={bottomActionStripStyle}>
@@ -129,6 +187,19 @@ const bottomActionStripStyle: React.CSSProperties = {
   borderTop: `1px solid ${colors.borderMid}`,
   background: colors.bgPanelHeader,
 };
+
+function tectButtonStyle(active: boolean): React.CSSProperties {
+  return {
+    padding: "3px 10px",
+    background: active ? "rgba(181,106,29,0.22)" : "transparent",
+    border: `1px solid ${active ? "#B56A1D" : colors.borderMid}`,
+    borderRadius: 3,
+    color: active ? colors.beige : colors.textSecondary,
+    fontFamily: fonts.sans,
+    fontSize: 11,
+    cursor: "pointer",
+  };
+}
 
 const primaryActionButtonStyle: React.CSSProperties = {
   width: "100%",
