@@ -181,24 +181,13 @@ pub fn bake_demo() -> PlanetSnapshot {
     for (i, &pid) in ocean_plate_ids.iter().enumerate() {
         // Mutate the existing plate's field assignments by re-adding (idempotent for ids).
         for &fid in &ocean_buckets[i] {
-            if let Some(f) = model.fields.get_mut(fid as usize) {
-                f.plate_id = Some(pid);
-                f.crust = hayba_tectonics_v2::field::Crust::new_oceanic();
-                f.elevation = -0.3;
-                f.refresh_oceanic_lithosphere();
-            }
-            if let Some(p) = model.plates.iter_mut().find(|p| p.id == pid) {
-                p.add_field(fid);
-            }
+            model.apply_field_initial_state(fid as usize, -0.3, false);
+            model.assign_field_to_plate(fid as usize, pid);
         }
     }
 
     // Refresh inertia after the ocean fill.
-    let area = model.grid.field_area_km2();
-    let fields_ref = model.fields.clone();
-    for p in model.plates.iter_mut() {
-        p.update_inertia_tensor(&fields_ref, area);
-    }
+    model.refresh_plate_inertias();
 
     // Run a short step loop so plates start moving.
     for _ in 0..DEMO_STEPS {

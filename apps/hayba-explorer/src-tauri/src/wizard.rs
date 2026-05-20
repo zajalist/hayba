@@ -19,7 +19,6 @@ use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 use hayba_tectonics_v2::determinism::split_mix_64;
-use hayba_tectonics_v2::field::Crust;
 use hayba_tectonics_v2::model::{Model, MAX_PLATE_SPEED};
 use hayba_tectonics_v2::sphere::Grid;
 
@@ -339,9 +338,9 @@ pub fn apply_boundary_types(
     }
 
     let seed = state.model.master_seed;
-    for plate in state.model.plates.iter_mut() {
+    let pairs: Vec<(u32, Vec3)> = state.model.plates.iter().filter_map(|plate| {
         let pid = plate.id;
-        let pos = match centroids.get(&pid) { Some(p) => *p, None => continue };
+        let pos = centroids.get(&pid).copied()?;
         let f = force_dir.get(&pid).copied().unwrap_or(Vec3::ZERO);
         let mut omega = if f.length_squared() > 1e-6 {
             let v = f.normalize() * 0.01;
@@ -358,8 +357,9 @@ pub fn apply_boundary_types(
         if len > MAX_PLATE_SPEED {
             omega *= MAX_PLATE_SPEED / len;
         }
-        plate.angular_velocity = omega;
-    }
+        Some((pid, omega))
+    }).collect();
+    for (pid, omega) in pairs { state.model.set_plate_angular_velocity(pid, omega); }
 
     let _ = counts; // silence unused; kept for future inertia recompute
     Ok(snapshot_model(&state.model, state.divisions, false, &ClimateParams::default()))
@@ -378,13 +378,12 @@ pub fn apply_density_rank(
     let mut guard = sim.0.lock().map_err(|_| "sim mutex poisoned".to_string())?;
     let state = guard.as_mut().ok_or_else(|| "no baked planet".to_string())?;
     let n = order.len().max(1) as f32;
-    for (i, pid) in order.iter().enumerate() {
+    let pairs: Vec<(u32, f32)> = order.iter().enumerate().map(|(i, &pid)| {
         let t = if n <= 1.0 { 0.5 } else { i as f32 / (n - 1.0) };
         let d = MIN_DENSITY + t * (MAX_DENSITY - MIN_DENSITY);
-        if let Some(plate) = state.model.plates.iter_mut().find(|p| p.id == *pid) {
-            plate.density = d;
-        }
-    }
+        (pid, d)
+    }).collect();
+    for (pid, d) in pairs { state.model.set_plate_density(pid, d); }
     Ok(snapshot_model(&state.model, state.divisions, false, &ClimateParams::default()))
 }
 
@@ -698,24 +697,10 @@ pub(crate) fn bake_impl(
             DEEP_OCEAN_FLOOR
         };
         let cont = elevation > 0.0;
-        if let Some(f) = model.fields.get_mut(fid as usize) {
-            if cont {
-                f.crust = Crust::new_continental();
-                f.elevation = elevation.max(0.0);
-                f.become_continental_lithosphere(200.0);
-            } else {
-                f.crust = Crust::new_oceanic();
-                f.elevation = elevation.min(-0.0001);
-                f.refresh_oceanic_lithosphere();
-            }
-        }
+        model.apply_field_initial_state(fid as usize, elevation, cont);
     }
 
-    let area = model.grid.field_area_km2();
-    let fields_ref = model.fields.clone();
-    for p in model.plates.iter_mut() {
-        p.update_inertia_tensor(&fields_ref, area);
-    }
+    model.refresh_plate_inertias();
 
     let bp3a_plates = _bp3a_t2.elapsed();
     let _bp3a_t3 = std::time::Instant::now();
@@ -740,12 +725,7 @@ pub(crate) fn bake_impl(
                             cell_area, erosion_params);
     let bp3a_erode = _bp3a_t5.elapsed();
     let _bp3a_t6 = std::time::Instant::now();
-    for i in 0..n_h {
-        if let Some(f) = model.fields.get_mut(i) {
-            // fluvial only sculpts land; never moves a cell across sea level.
-            if !is_ocean[i] { f.elevation = elev[i].max(0.0); }
-        }
-    }
+    model.apply_eroded_elevation(&elev, &is_ocean);
 
     let bp3a_writeback = _bp3a_t6.elapsed();
     eprintln!(

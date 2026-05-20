@@ -16,7 +16,6 @@
 use glam::Vec3;
 use rayon::prelude::*;
 
-use hayba_tectonics_v2::field::Crust;
 use hayba_tectonics_v2::model::Model;
 
 use crate::climate::{compute_climate, ClimateParams};
@@ -103,17 +102,7 @@ fn painted_precip(draft: &WizardDraft, cells: &[(Vec3, f32)]) -> Vec<f32> {
     let n_cells = model.grid.n_fields() as usize;
     for (fid, &(_, elevation)) in cells.iter().enumerate().take(n_cells) {
         let cont = elevation > 0.0;
-        if let Some(f) = model.fields.get_mut(fid) {
-            if cont {
-                f.crust = Crust::new_continental();
-                f.elevation = elevation.max(0.0);
-                f.become_continental_lithosphere(200.0);
-            } else {
-                f.crust = Crust::new_oceanic();
-                f.elevation = elevation.min(-0.0001);
-                f.refresh_oceanic_lithosphere();
-            }
-        }
+        model.apply_field_initial_state(fid, elevation, cont);
     }
     let params = ClimateParams::default();
     compute_climate(&model, draft.seed, false, &params).precip

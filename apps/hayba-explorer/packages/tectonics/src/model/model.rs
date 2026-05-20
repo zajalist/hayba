@@ -444,6 +444,75 @@ impl Model {
         }
     }
 
+    /// Initialize a field's elevation + crust + lithosphere from the
+    /// painted/preset wizard input. `continental` selects the branch;
+    /// elevation is clamped to land (≥0) or ocean (<0) as appropriate.
+    /// Mirrors wizard.rs:701-711 / bake_equirect.rs:106-116 byte-for-byte.
+    pub fn apply_field_initial_state(&mut self, fid: usize, elevation: f32, continental: bool) {
+        if let Some(f) = self.fields.get_mut(fid) {
+            if continental {
+                f.crust = crate::field::Crust::new_continental();
+                f.elevation = elevation.max(0.0);
+                f.become_continental_lithosphere(200.0);
+            } else {
+                f.crust = crate::field::Crust::new_oceanic();
+                f.elevation = elevation.min(-0.0001);
+                f.refresh_oceanic_lithosphere();
+            }
+        }
+    }
+
+    /// Assign a field to a plate: sets `f.plate_id` and calls
+    /// `plate.add_field(fid)`. Used by `planet.rs::demo_model` to bucket
+    /// unclaimed ocean cells into ocean plates.
+    pub fn assign_field_to_plate(&mut self, fid: usize, pid: u32) {
+        if let Some(f) = self.fields.get_mut(fid) {
+            f.plate_id = Some(pid);
+        }
+        if let Some(p) = self.plates.iter_mut().find(|p| p.id == pid) {
+            p.add_field(fid as u32);
+        }
+    }
+
+    /// Recompute inertia for every plate using the current `fields` snapshot
+    /// and grid area. Mirrors wizard.rs:714-718 / planet.rs:197-201 byte-for-byte
+    /// (the clone is load-bearing: `update_inertia_tensor` borrows `&[Field]`
+    /// while iterating `&mut self.plates`).
+    pub fn refresh_plate_inertias(&mut self) {
+        let area = self.grid.field_area_km2();
+        let fields_ref = self.fields.clone();
+        for p in self.plates.iter_mut() {
+            p.update_inertia_tensor(&fields_ref, area);
+        }
+    }
+
+    /// Set a single plate's angular velocity by id. Used by
+    /// `apply_boundary_types` (wizard.rs:342-362).
+    pub fn set_plate_angular_velocity(&mut self, pid: u32, omega: Vec3) {
+        if let Some(p) = self.plates.iter_mut().find(|p| p.id == pid) {
+            p.angular_velocity = omega;
+        }
+    }
+
+    /// Set a single plate's density by id. Used by `apply_density_rank`
+    /// (wizard.rs:384-386).
+    pub fn set_plate_density(&mut self, pid: u32, density: f32) {
+        if let Some(p) = self.plates.iter_mut().find(|p| p.id == pid) {
+            p.density = density;
+        }
+    }
+
+    /// Write back a slice of eroded elevations (land only — ocean cells
+    /// untouched). Mirrors wizard.rs:743-748 byte-for-byte: applies
+    /// `.max(0.0)` clamp and the `if !is_ocean[i]` predicate.
+    pub fn apply_eroded_elevation(&mut self, elev: &[f32], is_ocean: &[bool]) {
+        for i in 0..elev.len() {
+            if let Some(f) = self.fields.get_mut(i) {
+                if !is_ocean[i] { f.elevation = elev[i].max(0.0); }
+            }
+        }
+    }
+
     /// Advance the `Subduction.dist` on each subducting field by one timestep.
     /// Mirrors the per-field call to `Subduction.update` that TE does inside
     /// `simulatePlatesInteractions` via `performGeologicalProcesses`.
