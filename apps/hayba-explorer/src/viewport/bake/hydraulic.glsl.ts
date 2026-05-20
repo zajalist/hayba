@@ -1182,11 +1182,14 @@ export const CLIMATE_CLASS_FRAG = [
   // Subarctic / boreal (cold + high cont)
   "  else if (T < 8.0 && absLat >= 50.0)  { id = 12.0; }",
   "  else if (T < 14.0 && absLat >= 40.0 && cont > 0.45) { id = 11.0; }",
-  // Tropical band (lat < 23, warm)
-  "  else if (absLat < 23.0 && T > 18.0) {",
-  "    if (P > 0.70) id = 1.0;",
-  "    else if (P > 0.45) id = 2.0;",
-  "    else id = 3.0;",
+  // Tropical band — narrowed to lat < 15 (real Köppen-A requires T_cold
+  // month > 18°C; with our annual mean only, lat<15 is the conservative
+  // proxy that keeps Sahel / outback / N Australia OUT of the A-zone
+  // where they belong in BSh/BWh).
+  "  else if (absLat < 15.0 && T > 18.0) {",
+  "    if (P > 0.75) id = 1.0;",   // Af tropical rainforest
+  "    else if (P > 0.55) id = 2.0;",  // Am tropical monsoon
+  "    else id = 3.0;",                // Aw savanna
   "  }",
   // Arid (low precip)
   "  else if (P < 0.25) { id = (T > 18.0) ? 4.0 : 5.0; }",
@@ -1196,11 +1199,12 @@ export const CLIMATE_CLASS_FRAG = [
   "  else if (absLat < 35.0) { id = 9.0; }",
   "  else if (cont < 0.30) { id = 10.0; }",
   "  else { id = 11.0; }",
-  // T4 monsoon override: tropical-coastal cells (lat 5-25, low cont)
-  // get tropical-monsoon climate (Am) regardless of zonal-derived P.
-  // Without seasonal precip data this is the proxy for the cookbook
-  // 'east+south coast of large landmass' rule.
-  "  if (absLat >= 5.0 && absLat < 25.0 && cont < 0.30 && a.r >= 0.0 && T > 18.0 && id > 0.5 && id < 4.0) {",
+  // T4 monsoon override — TIGHTENED. Real Am is a narrow coastal belt
+  // (Mumbai/Bangladesh/SE-Asia/W-African/NE-Brazil) — not all tropical
+  // coast. Restrict to: lat 5-15 (real monsoon latitudes), very close
+  // to ocean (cont<0.18), and already moderately wet from zonal
+  // (P>0.45) so dry-belt cells stay BWh.
+  "  if (absLat >= 5.0 && absLat < 15.0 && cont < 0.18 && a.r >= 0.0 && T > 18.0 && P > 0.45 && id > 0.5 && id < 4.0) {",
   "    id = 2.0;",
   "  }",
   // Cookbook precip per class (.g). Lets downstream consumers (and the
