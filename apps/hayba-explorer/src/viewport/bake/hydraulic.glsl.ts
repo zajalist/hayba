@@ -1182,18 +1182,22 @@ export const CLIMATE_CLASS_FRAG = [
   // Subarctic / boreal (cold + high cont)
   "  else if (T < 8.0 && absLat >= 50.0)  { id = 12.0; }",
   "  else if (T < 14.0 && absLat >= 40.0 && cont > 0.45) { id = 11.0; }",
-  // Tropical band — narrowed to lat < 15 (real Köppen-A requires T_cold
-  // month > 18°C; with our annual mean only, lat<15 is the conservative
-  // proxy that keeps Sahel / outback / N Australia OUT of the A-zone
-  // where they belong in BSh/BWh).
+  // T4-TUNE-2: B (arid) tier MOVED BEFORE A (tropical) — matches the
+  // canonical Köppen-Geiger algorithm where the aridity test trumps
+  // the temperature test. Eliminates the "all tropical lat = Af/Aw"
+  // overflow by funneling dry-zone cells (P < 0.20) into BWh/BWk first.
+  // Steppe (semi-arid) belt also moved before tropical.
+  "  else if (P < 0.20) { id = (T > 18.0) ? 4.0 : 5.0; }",
+  "  else if (P < 0.45 && cont > 0.30) { id = (T > 18.0) ? 6.0 : 7.0; }",
+  // Tropical band — narrowed to lat<15 AND we already filtered B-zone
+  // cells out above, so only TRUE-wet tropics reach here. Af requires
+  // P>0.85 (rainforest core only — Amazon/Congo basin/Indonesia/Bay
+  // of Bengal); Am 0.60..0.85; Aw 0.45..0.60 (above Sahel-steppe cut).
   "  else if (absLat < 15.0 && T > 18.0) {",
-  "    if (P > 0.75) id = 1.0;",   // Af tropical rainforest
-  "    else if (P > 0.55) id = 2.0;",  // Am tropical monsoon
+  "    if (P > 0.85) id = 1.0;",      // Af tropical rainforest
+  "    else if (P > 0.60) id = 2.0;", // Am tropical monsoon
   "    else id = 3.0;",                // Aw savanna
   "  }",
-  // Arid (low precip)
-  "  else if (P < 0.25) { id = (T > 18.0) ? 4.0 : 5.0; }",
-  "  else if (P < 0.50 && cont > 0.35) { id = (T > 18.0) ? 6.0 : 7.0; }",
   // Temperate
   "  else if (absLat >= 30.0 && absLat < 45.0 && cont > 0.25 && cont < 0.55) { id = 8.0; }",
   "  else if (absLat < 35.0) { id = 9.0; }",
