@@ -100,6 +100,14 @@ pub struct Model {
     /// `advance_subduction` call resize()s it to `fields.len()`.
     #[serde(skip, default)]
     subduction_scratch: Vec<f32>,
+
+    /// SD T2 — reused list of field ids with an active subduction record.
+    /// Only ~5–10% of fields have one; iterating sparsely instead of
+    /// scanning all F fields × 6 neighbours per step cuts inner-loop
+    /// body executions by ~95%. Rebuilt each `advance_subduction` call
+    /// from the current `fields` slice (cheap O(F) scan).
+    #[serde(skip, default)]
+    subduction_active_fids: Vec<u32>,
 }
 
 impl Model {
@@ -122,6 +130,7 @@ impl Model {
             optimized_collision_detection: false,
             plume_registry,
             subduction_scratch: Vec::new(),
+            subduction_active_fids: Vec::new(),
         }
     }
 
@@ -529,20 +538,35 @@ impl Model {
     /// Mirrors the per-field call to `Subduction.update` that TE does inside
     /// `simulatePlatesInteractions` via `performGeologicalProcesses`.
     fn advance_subduction(&mut self, dt: f32, field_diameter: f32) {
-        // Precompute neighbour-min dist for every field (TE: `update`'s
-        // `min_neighbour_dist` argument — derived from neighbour subduction
-        // records). Iterate in id order for determinism.
+        // Precompute neighbour-min dist for every field with an active
+        // subduction record (TE: `update`'s `min_neighbour_dist` argument
+        // — derived from neighbour subduction records). Iterate in id
+        // order for determinism.
         //
         // SD: scratch buffer hoisted to `self.subduction_scratch` to avoid a
         // per-step allocation. Take it out via mem::take, write into the
         // local, swap back at end — preserves capacity across calls.
+        //
+        // SD T2: sparse outer iteration. Only fields where `f.subduction
+        // .is_some()` need their scratch[fid] computed (Loop 2 only reads
+        // scratch[fid] for those same fields). Building active_fids is a
+        // single O(F) scan; both subsequent loops become O(active) instead
+        // of O(F·6). Byte-equal: same arithmetic, same iteration order,
+        // scratch values for inactive fields are never read.
         let n = self.fields.len();
         let mut scratch = std::mem::take(&mut self.subduction_scratch);
         scratch.clear();
         scratch.resize(n, 0.0);
-        for fid in 0..n {
+        let mut active_fids = std::mem::take(&mut self.subduction_active_fids);
+        active_fids.clear();
+        for i in 0..n {
+            if self.fields[i].subduction.is_some() {
+                active_fids.push(i as u32);
+            }
+        }
+        for &fid in &active_fids {
             let mut m = f32::INFINITY;
-            for &nid in self.grid.neighbours(fid as u32) {
+            for &nid in self.grid.neighbours(fid) {
                 if let Some(nf) = self.fields.get(nid as usize) {
                     if let Some(s) = &nf.subduction {
                         if s.dist < m {
@@ -551,14 +575,16 @@ impl Model {
                     }
                 }
             }
-            scratch[fid] = if m.is_finite() { m } else { 0.0 };
+            scratch[fid as usize] = if m.is_finite() { m } else { 0.0 };
         }
-        for (i, f) in self.fields.iter_mut().enumerate() {
-            if let Some(s) = f.subduction.as_mut() {
+        for &fid in &active_fids {
+            let i = fid as usize;
+            if let Some(s) = self.fields[i].subduction.as_mut() {
                 let _ = s.update(dt, scratch[i], field_diameter);
             }
         }
         self.subduction_scratch = scratch;
+        self.subduction_active_fids = active_fids;
     }
 }
 
