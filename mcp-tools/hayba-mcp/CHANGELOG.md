@@ -1,5 +1,14 @@
 # HaybaMCPToolkit Changelog
 
+## Unreleased
+
+### Asset-source connectors (pure-Node, no UE C++ bridge)
+
+- **Poly Haven** — `hayba_polyhaven_search` (HDRIs / textures / models, CC0) and `hayba_polyhaven_download` (resolution-selectable, downloads individual map files for textures, prefers HDR for HDRIs, glTF for models). No auth.
+- **ambientCG** — `hayba_ambientcg_search` and `hayba_ambientcg_download` (CC0 PBR material zips; default attribute `2K-JPG`, falls back to first available zip). No auth.
+- **Sketchfab** — `hayba_sketchfab_search` and `hayba_sketchfab_download` (gltf / usdz / source flavours). **Requires `SKETCHFAB_API_TOKEN` env var** — obtain at https://sketchfab.com/settings/password (API tokens section). Missing-token error message is actionable.
+- Shared cache at `<os.tmpdir>/hayba-asset-connectors/<source>/<assetId>/`. Zip extraction via `adm-zip`. UE import is invoked via the existing `python_run` MCP command (build_import_data + import_asset_tasks); no new C++ handler. Failed imports surface as `imported: false` with an `importNote`.
+
 ## v0.3.0 — 2026-05-06
 
 Massive expansion from a PCG/landscape-only plugin into a 34-domain agentic level-design system.

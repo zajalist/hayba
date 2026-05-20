@@ -17,12 +17,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@distube/ytdl-core": "^4.16.12",
     "@hayba/architecture": "*",
     "@hayba/linguistics": "*",
     "@hayba/planet-physics": "*",
-    "@distube/ytdl-core": "^4.16.12",
     "@huggingface/transformers": "^4.0.1",
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "adm-zip": "^0.5.17",
     "better-sqlite3": "^11.0.0",
     "cheerio": "^1.2.0",
     "express": "^4.21.0",
@@ -31,6 +32,7 @@
     "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.5",
     "@types/better-sqlite3": "^7.6.0",
     "@types/express": "^5.0.0",
     "@types/node": "^24.12.2",
