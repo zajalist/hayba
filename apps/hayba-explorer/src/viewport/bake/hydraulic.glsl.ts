@@ -1174,7 +1174,7 @@ export const CLIMATE_CLASS_FRAG = [
   // were currently classifying as land — producing the spotty cyan
   // patches inside continents. CLIM/TERR/HYDRO still see the raw 0.0
   // shoreline; only the Climate viz uses the higher cutoff.
-  "  if (a.r < 0.08) { fragColor = vec4(0.0); return; }", // Ocean (T4-TUNE-7)
+  "  if (a.r < 0.12) { fragColor = vec4(0.0); return; }", // Ocean (T4-TUNE-8)
   "  float v = (float(rc.y) + 0.5) / float(wh.y);",
   "  float lat = (0.5 - v) * 180.0;",
   "  float absLat = abs(lat);",
