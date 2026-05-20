@@ -254,16 +254,19 @@ const FRAG: string = [
   // Reads Q discharge (.r) for Rivers OR endorheic flag (.b) for Lakes.
   // Both are 0..1-ish intensity fields so the same ramp serves both.
   "  if (id < 8.5){",
+  // Rivers/Lakes — log-compress the discharge / endo field then apply a
+  // sharp 0.65 step so MOST of land stays tan and only true river
+  // trunks / lake basins show blue. Without the log compression every
+  // cell with any drainage lit up blue (Q has huge dynamic range).
+  // NOTE: `tan` is a GLSL builtin (tangent); local must NOT shadow it
+  // or some drivers fail-to-link the whole material → relief breaks.
   "    float t = clamp(x, 0.0, 1.0);",
-  // NOTE: `tan` is a GLSL builtin (tangent), so the dry-land swatch
-  // colour must NOT be named `tan` — some drivers reject the shadow
-  // and silently fail-to-compile the relief shader (= bake appears
-  // to do nothing visually). Renamed to `tanCol`.
+  "    float tLog = log(1.0 + 100.0 * t) / log(101.0);",
   "    vec3 tanCol = vec3(0.85, 0.78, 0.55);",
   "    vec3 cyan   = vec3(0.35, 0.78, 0.95);",
   "    vec3 deep   = vec3(0.05, 0.20, 0.55);",
-  "    if (t < 0.15) return mix(tanCol, cyan, t / 0.15);",
-  "    return mix(cyan, deep, (t - 0.15) / 0.85);",
+  "    if (tLog < 0.65) return tanCol;",
+  "    return mix(cyan, deep, (tLog - 0.65) / 0.35);",
   "  }",
   "  return vec3(clamp(x, 0.0, 1.0));",
   "}",
