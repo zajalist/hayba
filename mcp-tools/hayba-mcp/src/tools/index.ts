@@ -24,6 +24,10 @@ import { editorCaptureViewportHandler, meta as captureMeta } from './editor/edit
 import { editorStartPieHandler, meta as pieMeta } from './editor/editor-start-pie.js';
 import { editorStreamLogHandler, meta as streamLogMeta } from './editor/editor-stream-log.js';
 import { handleWaitForShaders, meta as waitForShadersMeta } from './wait-for-shaders.js';
+import { handleFabLoginStatus, meta as fabLoginStatusMeta } from './fab/login-status.js';
+import { handleFabLibraryList, meta as fabLibraryListMeta } from './fab/library-list.js';
+import { handleFabMarketplaceSearch, meta as fabMarketplaceSearchMeta } from './fab/marketplace-search.js';
+import { handleFabDownload, meta as fabDownloadMeta } from './fab/download.js';
 
 // ── PCGEx tool handlers ───────────────────────────────────────────────────────
 import { searchNodeCatalog } from './search-node-catalog.js';
@@ -406,6 +410,52 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
     async (args, _extra) => handleWaitForShaders(args as any)
   );
   remember('wait_for_shaders', waitForShadersMeta);
+
+  // ── Fab connector tools ─────────────────────────────────────────────────────
+
+  server.tool(
+    'hayba_fab_login_status',
+    appendMeta('Check whether the user is currently logged into Fab through the UE editor.', fabLoginStatusMeta),
+    {},
+    async () => handleFabLoginStatus({})
+  );
+  remember('hayba_fab_login_status', fabLoginStatusMeta);
+
+  server.tool(
+    'hayba_fab_library_list',
+    appendMeta('List a page of the user\'s Fab library (assets they own).', fabLibraryListMeta),
+    {
+      count: z.number().int().min(1).max(100).optional().describe('Number of results per page (default 20).'),
+      page: z.string().optional().describe('Pagination cursor from previous call.'),
+    },
+    async (params) => handleFabLibraryList(params as any)
+  );
+  remember('hayba_fab_library_list', fabLibraryListMeta);
+
+  server.tool(
+    'hayba_fab_marketplace_search',
+    appendMeta('Search the public Fab marketplace for assets matching a query.', fabMarketplaceSearchMeta),
+    {
+      query: z.string().min(1).describe('Search query string.'),
+      type: z.string().optional().describe('Filter by asset type (e.g. "Material", "StaticMesh").'),
+      page: z.string().optional().describe('Pagination cursor from previous call.'),
+    },
+    async (params) => handleFabMarketplaceSearch(params as any)
+  );
+  remember('hayba_fab_marketplace_search', fabMarketplaceSearchMeta);
+
+  server.tool(
+    'hayba_fab_download',
+    appendMeta('Download a Fab asset into the active UE project.', fabDownloadMeta),
+    {
+      asset_id: z.string().min(1).describe('Fab asset identifier.'),
+      download_url: z.string().url().describe('Signed download URL from library_list / search result item.'),
+      target_dir: z.string().optional().describe('Project content path, e.g. /Game/Fab/MyAsset. Defaults to /Game/Fab/<asset_id>.'),
+      wait: z.boolean().optional().describe('If true, blocks until download completes (up to 10min cap on the C++ side). Default true.'),
+    },
+    async (params) => handleFabDownload(params as any)
+  );
+  remember('hayba_fab_download', fabDownloadMeta);
 
   // ── PCGEx tools ─────────────────────────────────────────────────────────────
 
