@@ -41,3 +41,15 @@ opt-level = 3
 
 [profile.dev.package."hayba-seeds"]
 opt-level = 3
+
+# Pin hayba-explorer (the Tauri cdylib) to single codegen unit. At
+# opt-level=2 (inherited from [profile.dev]) with rustc's default
+# multi-CGU codegen, LLVM emits per-CGU anon-symbol helpers that the
+# MSVC linker's /OPT:REF,ICF then folds inconsistently — manifesting
+# as LNK2019 "unresolved external symbol anon.*.llvm.*" referenced
+# from monomorphized serde_json::Number::serialize. Single CGU
+# eliminates the cross-CGU symbol collision. (Same reason
+# hayba-tectonics-v2 pins codegen-units = 1 above.)
+[profile.dev.package."hayba-explorer"]
+opt-level = 2
+codegen-units = 1
