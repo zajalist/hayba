@@ -1172,27 +1172,35 @@ export const CLIMATE_CLASS_FRAG = [
   "  float v = (float(rc.y) + 0.5) / float(wh.y);",
   "  float lat = (0.5 - v) * 180.0;",
   "  float absLat = abs(lat);",
-  "  float Tann = c.r;",
+  // T4-TUNE-4: override Tann with an Earth-fit profile. CLIMATE_FRAG's
+  // sin²(lat) over-cools mid-lats (real Stockholm ≈-2°C, sin² model
+  // gives -10°C → cascades into wrong KG everywhere). Parabolic
+  // (lat/90)² matches observed annual means more closely:
+  //   lat 0  → 27.0  (real 27)
+  //   lat 30 → 21.4  (real 22)
+  //   lat 45 → 14.5  (real 12)
+  //   lat 60 →  5.4  (real -2)
+  //   lat 80 → -2.5  (real -20 — still too warm but discriminates ET)
+  // Elevation lapse subtracted so Tibet/Andes/Rockies get cooler classes.
+  // CLIM RT's Tann is unchanged (wind/MSLP paths byte-equal).
   "  float P = c.g;",
   "  float cont = d.g;",
-  // T4-TUNE-3: canonical Köppen-Geiger needs T_max (warmest month) and
-  // T_min (coldest month), not annual mean. Without those Canada-with-
-  // warm-summer (Dfb) and Greenland-cold-always (EF) collapse to the
-  // same class. Estimate amplitude from continentality (maritime ~8°C
-  // swing, deep continental ~35°C). Annual mean stays unchanged; only
-  // the amplitude window varies spatially — this breaks the straight
-  // lat-bands by giving same-lat cells different KG class based on
-  // continentality.
-  "  float Tamp = mix(8.0, 35.0, clamp(cont, 0.0, 1.0));",
+  "  float latFrac = absLat / 90.0;",
+  "  float elevKm = max(a.r, 0.0) * 8.0;",
+  "  float Tann = 27.0 - latFrac * latFrac * 50.0 - 6.5 * elevKm;",
+  // T_amp must shrink at the equator regardless of continentality.
+  // Real Manaus (Amazon interior, cont≈0.74) annual range ≈ 3°C
+  // because sun is overhead year-round. Lat-driven base + small
+  // continentality boost. Result: lat 0 ≈ 4°C, lat 45 ≈ 14°C,
+  // lat 60 ≈ 22°C, lat 80 ≈ 36°C — matches Earth.
+  "  float TampLat = absLat * absLat * 0.005;",
+  "  float Tamp = 3.0 + TampLat * (0.4 + 0.6 * cont);",
   "  float Tmax = Tann + Tamp * 0.5;",
   "  float Tmin = Tann - Tamp * 0.5;",
-  // KG aridity threshold scaled by annual mean T (hot = more evap =
-  // higher precip needed to escape arid). Canonical KG: arid if
-  // MAP_mm < (20·MAAT_°C + offset). Calibrated to our normalised P so
-  // Sahara (Tann≈22, P≈0.30) lands in BWh and Sahel (Tann≈25, P≈0.55)
-  // in BSh; cold deserts (Gobi, Patagonia) caught by Tmin<0 branch.
-  "  float aridBW = clamp(0.04 + 0.013 * Tann, 0.05, 0.55);",  // BW threshold
-  "  float aridBS = clamp(0.08 + 0.026 * Tann, 0.10, 1.00);",  // BS threshold
+  // Aridity Index — raised so Sahara (Tann≈22, P≈0.30) lands in BWh
+  // (was BSh). Outback / Arabia / Sahara all need this.
+  "  float aridBW = clamp(0.10 + 0.018 * Tann, 0.12, 0.65);",  // BW threshold
+  "  float aridBS = clamp(0.20 + 0.030 * Tann, 0.22, 1.20);",  // BS threshold
   "  float id = 0.0;",
   // E polar — based on T_MAX (warmest month). EF = icecap (no month
   // above 0); ET = tundra (warmest 0..10).
