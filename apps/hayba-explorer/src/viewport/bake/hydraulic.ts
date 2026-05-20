@@ -320,29 +320,24 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   mslpOceanAmp: 20.0,
   mslpBlurSigma: 6.0,
   coriolisGain: 15.0,
-  // CLIM-MONSOON-TUNE: seasonAmp bumped 0.5 → 0.7 so the continental
-  // thermal low (Asia in July) is strong enough to flip the wind
-  // direction over India from zonal NE trades to actual SW monsoon
-  // flow. Below ~0.6 the trade-wind component still dominated and the
-  // upwind ocean scan couldn't find moisture for monsoon coasts.
-  seasonAmp: 0.7,
-  seasonPhase: 6.0,
+  // COOKBOOK-CLIMATE T1: heuristic precip-modulator knobs all disabled
+  // by default. The wrong-granularity per-cell upwind-scan + ITCZ-shift
+  // heuristics produced visible artifacts (line at wind-direction
+  // boundaries, Sahara-wet leak, Indonesia-dry). We're replacing them
+  // with a principled approach: JFA distance-to-ocean → continentality
+  // map → cookbook-table climate classification. The knobs remain in
+  // the type so they can be re-enabled experimentally, but defaults
+  // are now physics-neutral (annual mean, no fake monsoon physics).
+  // Orographic (#164) is the only one kept active — it's local and
+  // physically sound. continentalT also OFF until T1 redesign lands.
+  seasonAmp: 0.0,
+  seasonPhase: 0.0,
   orographicGain: 0.6,
   rainShadow: 0.5,
-  onshoreGain: 0.5,
-  continentalGain: 0.3,
-  continentalT: 8.0,
-  // CLIM-MONSOON-TUNE: itczLandAmp disabled (was 2.0, originally 7.0).
-  // Per-cell land-amplified ITCZ shift had the wrong granularity:
-  // - it pushed Indonesia LAND cells off the equatorial ITCZ band
-  //   (Indonesia is the wettest place on Earth, must NOT shift)
-  // - it pulled the wet band onto Sahara/Arabia LAND cells
-  // - it under-shifted oceanic monsoon regions
-  // Real ITCZ migration is REGIONAL (driven by broad continental heat
-  // sinks), not per-cell. We get monsoon via the continental thermal
-  // low → SW wind flip → onshore moisture transport, all already
-  // wired. itczShift=5 alone gives a uniform ~2.5° NH-summer shift.
-  itczShift: 5.0,
+  onshoreGain: 0.0,
+  continentalGain: 0.0,
+  continentalT: 0.0,
+  itczShift: 0.0,
   itczLandAmp: 0.0,
   biomeColdC: 6.0,
   biomeHotC: 18.0,
