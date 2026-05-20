@@ -473,6 +473,9 @@ export default function App() {
       } else if (sel.kind === "climate") {
         const rt = prevDebugClimateRef.current;
         if (rt) stackTex = rt.texture;
+      } else if (sel.kind === "hydro") {
+        // Rivers / Lakes map modes sample the HYDRO RT directly.
+        stackTex = stack.hydro.texture;
       }
       setDebugStack(mat, {
         tex: stackTex,

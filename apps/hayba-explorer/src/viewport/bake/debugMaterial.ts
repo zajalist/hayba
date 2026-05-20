@@ -250,6 +250,17 @@ const FRAG: string = [
   "    if (c < 13.5) return vec3(0.70, 0.70, 0.70);", // 13 ET grey
   "    return vec3(0.98, 0.98, 0.98);",               // 14 EF icecap
   "  }",
+  // RIVERS/LAKES id=8: tan below threshold, bright cyan→deep blue above.
+  // Reads Q discharge (.r) for Rivers OR endorheic flag (.b) for Lakes.
+  // Both are 0..1-ish intensity fields so the same ramp serves both.
+  "  if (id < 8.5){",
+  "    float t = clamp(x, 0.0, 1.0);",
+  "    vec3 tan  = vec3(0.85, 0.78, 0.55);",
+  "    vec3 cyan = vec3(0.35, 0.78, 0.95);",
+  "    vec3 deep = vec3(0.05, 0.20, 0.55);",
+  "    if (t < 0.15) return mix(tan, cyan, t / 0.15);",
+  "    return mix(cyan, deep, (t - 0.15) / 0.85);",
+  "  }",
   "  return vec3(clamp(x, 0.0, 1.0));",
   "}",
   "",
