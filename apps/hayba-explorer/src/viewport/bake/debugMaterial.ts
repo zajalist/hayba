@@ -101,7 +101,7 @@ const FRAG: string = [
   "uniform float uChannel;      /* which RGBA lane of uStackTex (0..3)      */",
   "uniform float uStackMode;    /* 0 relief 1 draped 2 flat 3 normal-map  */",
   "uniform float uWindTime;",
-  "uniform float uRamp;         /* 0 grey 1 temp 2 precip 3 hue 4 grey-elev 5 Koppen-D 6 pressure */",
+  "uniform float uRamp;         /* 0 grey 1 temp 2 precip 3 hue 4 grey-elev 5 continentality 6 pressure */",
   "",
   "const float PI = 3.141592653589793;",
   "",
@@ -170,7 +170,7 @@ const FRAG: string = [
   "/* Map a raw stack-channel value to a debug colour. ids:",
   "   0 grey (raw clamp 0..1) · 1 temp diverging (deg C, -30..+35) ·",
   "   2 precip white->blue (0..1) · 3 hue (turns, for wind/aspect) ·",
-  "   4 grey-elev (0..1) · 5 Koppen-D continentality (pale → cyan → teal → navy) ·",
+  "   4 grey-elev (0..1) · 5 continentality-index (Conrad-style green→yellow→red) ·",
   "   6 pressure diverging (low=blue, mid=cream, high=red). Calibration of",
   "   climate units is downstream tuning; this is a deterministic debug",
   "   visualiser. */",
@@ -186,20 +186,25 @@ const FRAG: string = [
   "  if (id < 2.5) return mix(vec3(0.97), vec3(0.10, 0.35, 0.70), clamp(x, 0.0, 1.0));",
   "  if (id < 3.5) return hsv2rgb(fract(x));",
   "  if (id < 4.5) return vec3(clamp(x, 0.0, 1.0));",
-  // T3-RAMPS id=5: Köppen-D continentality palette. Mirrors the standard
-  // continental-climate atlas legend (Dfa → Dfb → Dfc → Dfd):
-  //   0.00 pale cream (coast / non-continental)
-  //   0.25 light cyan (Dfa — hot-summer humid continental)
-  //   0.50 medium teal (Dfb — warm-summer humid continental)
-  //   0.75 dark teal (Dfc — subarctic)
-  //   1.00 deep navy (Dfd — extreme cold subarctic / interior)
+  // T3-RAMPS id=5: continentality-index palette (Conrad/Gorczyński-style).
+  // Sequential GREEN → YELLOW → RED, matching the standard meteorological
+  // continentality-index atlas (NOT Köppen-D climate zones — those are
+  // categorical, blue-leaning, and indicate COLD continental specifically;
+  // continentality index is a scalar annual-T-amplitude proxy that runs
+  // hot in the Sahara/Australia interior just as it runs cold in
+  // Mongolia/Siberia interior).
+  //   0.00 cool green-blue (oceanic, mild)
+  //   0.25 yellow-green (slightly continental)
+  //   0.50 yellow (transitional)
+  //   0.75 orange (continental)
+  //   1.00 dark red-brown (extreme continental amplitude)
   "  if (id < 5.5){",
   "    float t = clamp(x, 0.0, 1.0);",
-  "    vec3 c0 = vec3(0.95, 0.94, 0.82);",
-  "    vec3 c1 = vec3(0.42, 0.85, 0.90);",
-  "    vec3 c2 = vec3(0.10, 0.62, 0.70);",
-  "    vec3 c3 = vec3(0.04, 0.32, 0.48);",
-  "    vec3 c4 = vec3(0.00, 0.08, 0.22);",
+  "    vec3 c0 = vec3(0.20, 0.55, 0.45);",
+  "    vec3 c1 = vec3(0.65, 0.80, 0.30);",
+  "    vec3 c2 = vec3(0.98, 0.88, 0.20);",
+  "    vec3 c3 = vec3(0.90, 0.45, 0.10);",
+  "    vec3 c4 = vec3(0.55, 0.10, 0.05);",
   "    if (t < 0.25) return mix(c0, c1, t / 0.25);",
   "    if (t < 0.50) return mix(c1, c2, (t - 0.25) / 0.25);",
   "    if (t < 0.75) return mix(c2, c3, (t - 0.50) / 0.25);",
