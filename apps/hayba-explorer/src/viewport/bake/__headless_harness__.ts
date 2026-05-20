@@ -221,7 +221,7 @@ export async function runRealInputErosionVerification(
 
     const webglErrPre = gl.getError();
     const t0 = performance.now();
-    const { eroded: rt, clim: _c, terr: _t, hydro: _h, wind: _w, dist: _d } =
+    const { eroded: rt, clim: _c, terr: _t, hydro: _h, wind: _w, dist: _d, pressure: _p, climate: _cl } =
       await hyd.runHydraulicBake(renderer, baseTex, precipTex, w, h, cfg);
     // Oracle never reads the stack RTs; dispose immediately so the
     // many-bake harness doesn't leak 3 RTs/bake (fatal at 3M).
@@ -230,6 +230,8 @@ export async function runRealInputErosionVerification(
     _h.dispose();
     _w.dispose();
     _d.dispose();
+    _p.dispose();
+    _cl.dispose();
     const t1 = performance.now();
     const webglErrPost = gl.getError();
 
@@ -433,7 +435,7 @@ export async function runHeadlessErosionVerification(
 
     const webglErrPre = gl.getError();
     const t0 = performance.now();
-    const { eroded: rt, clim: _c, terr: _t, hydro: _h, wind: _w, dist: _d } =
+    const { eroded: rt, clim: _c, terr: _t, hydro: _h, wind: _w, dist: _d, pressure: _p, climate: _cl } =
       await hyd.runHydraulicBake(renderer, baseTex, precipTex, w, h, cfg);
     // Oracle never reads the stack RTs; dispose immediately so the
     // many-bake harness doesn't leak 3 RTs/bake (fatal at 3M).
@@ -442,6 +444,8 @@ export async function runHeadlessErosionVerification(
     _h.dispose();
     _w.dispose();
     _d.dispose();
+    _p.dispose();
+    _cl.dispose();
     const t1 = performance.now();
     const webglErrPost = gl.getError();
 
@@ -1050,7 +1054,7 @@ async function _bakeAndRenderRelief(
   const cfg = { ...hyd.DEFAULT_HYDRAULIC, ...(overrideCfg ?? {}) };
 
   const t0 = performance.now();
-  const { eroded: rt, clim: _c, terr: _t, hydro: _h, wind: _w, dist: _d } =
+  const { eroded: rt, clim: _c, terr: _t, hydro: _h, wind: _w, dist: _d, pressure: _p, climate: _cl } =
     await hyd.runHydraulicBake(renderer, baseTex, precipTex, w, h, cfg);
   // CP2.c (#234 P2.3a): OPT-IN only — read the REAL baked TERR/HYDRO
   // masks (refreshClimate's TERRAIN/HYDRO passes) before disposal so
