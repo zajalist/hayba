@@ -68,30 +68,40 @@ export async function listFilesRecursive(dir: string): Promise<string[]> {
 export async function importIntoUe(localDir: string, gamePath: string): Promise<{ ok: boolean; note?: string }> {
   const normalized = localDir.replace(/\\/g, '/');
   const dest = gamePath.startsWith('/Game/') ? gamePath : `/Game/AssetConnectors/${gamePath}`;
-  const script = `
-import os, unreal
-src_dir = r"${normalized}"
-dest_path = "${dest}"
-files = []
-for root, _dirs, fnames in os.walk(src_dir):
-    for fn in fnames:
-        files.append(os.path.join(root, fn))
-if not files:
-    print("HAYBA_IMPORT_RESULT: no files to import")
-else:
-    asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
-    task = unreal.AssetImportTask()
-    task.filenames = files
-    task.destination_path = dest_path
-    task.automated = True
-    task.save = True
-    task.replace_existing = True
-    asset_tools.import_asset_tasks([task])
-    print("HAYBA_IMPORT_RESULT: imported %d file(s) to %s" % (len(files), dest_path))
-`.trim();
+  // python_run accepts a single statement only, so wrap the whole body in exec(...).
+  // One AssetImportTask per file (UE5.7 chokes on a single task with many filenames).
+  // save=False — the user can save when ready; saving inline on a fresh import burst
+  // has crashed UE in practice when stacked on top of other heavy work.
+  const body = [
+    'import os',
+    'import unreal',
+    `src_dir = r"${normalized}"`,
+    `dest_path = "${dest}"`,
+    'files = []',
+    'for root, _dirs, fnames in os.walk(src_dir):',
+    '    for fn in fnames:',
+    '        files.append(os.path.join(root, fn))',
+    'asset_tools = unreal.AssetToolsHelpers.get_asset_tools()',
+    'tasks = []',
+    'for f in files:',
+    '    t = unreal.AssetImportTask()',
+    '    t.filename = f',
+    '    t.destination_path = dest_path',
+    '    t.automated = True',
+    '    t.save = False',
+    '    t.replace_existing = True',
+    '    tasks.append(t)',
+    'if tasks:',
+    '    asset_tools.import_asset_tasks(tasks)',
+    `unreal.log("HAYBA_IMPORT_RESULT: imported %d file(s) to %s" % (len(tasks), dest_path))`,
+  ].join('\n');
+  const script = `exec(${JSON.stringify(body)})`;
 
   try {
     const data = await executeCommand('python_run', { script });
+    if (data && typeof data === 'object' && (data as any).ok === false) {
+      return { ok: false, note: JSON.stringify(data).slice(0, 280) };
+    }
     return { ok: true, note: typeof data === 'object' && data ? JSON.stringify(data).slice(0, 240) : undefined };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
