@@ -19,7 +19,8 @@ export type EquirectModeKind =
   | "clim"
   | "wind"
   | "dist"
-  | "pressure";
+  | "pressure"
+  | "climate";
 
 export interface EquirectMapMode {
   label: string;
@@ -32,16 +33,20 @@ export const EQUIRECT_MAP_MODES: EquirectMapMode[] = [
   { label: "Relief", kind: "relief", channel: 0, ramp: 0 },
   { label: "Normal", kind: "normal", channel: 0, ramp: 0 },
   { label: "Temperature", kind: "clim", channel: 0, ramp: 1 },
-  { label: "Precipitation", kind: "clim", channel: 1, ramp: 2 },
+  // COOKBOOK-CLIMATE T4: Precipitation now reads CLASS.g (cookbook
+  // precip per Köppen-Geiger class), NOT CLIM.g (zonal). Monsoon
+  // coasts get wet, deserts get dry, etc. — the cookbook table.
+  { label: "Precipitation", kind: "climate", channel: 1, ramp: 2 },
   { label: "Wind", kind: "wind", channel: 2, ramp: 3 },
   { label: "Glaciation", kind: "clim", channel: 3, ramp: 4 },
-  // COOKBOOK-CLIMATE T3: new geographic-debug map modes for the
-  // cookbook-classification redesign. All three sample a non-CLIM RT.
-  // Ramps: 0=grey (distKm normalised), 5=Köppen-D (continentality),
-  // 6=meteorological diverging (pressure).
+  // COOKBOOK-CLIMATE T3/T4 geographic-debug modes.
+  // Ramps: 0=grey (distKm), 5=continentality (Conrad green→red),
+  // 6=meteorological diverging (pressure),
+  // 7=Köppen-Geiger discrete (climate class id).
   { label: "Distance", kind: "dist", channel: 0, ramp: 0 },
   { label: "Continentality", kind: "dist", channel: 1, ramp: 5 },
   { label: "Pressure", kind: "pressure", channel: 0, ramp: 6 },
+  { label: "Climate", kind: "climate", channel: 0, ramp: 7 },
 ];
 
 /** Resolved selection for `setDebugStack`. `mode` is the debugMaterial
@@ -70,11 +75,11 @@ export function resolveEquirectMode(
     // NX-3: animated wind-streak shader (uStackMode 4 draped / 5 flat).
     return { kind: "wind", channel: e.channel, ramp: e.ramp, mode: draped ? 4 : 5 };
   }
-  // COOKBOOK-CLIMATE T3: dist & pressure use the SAME uStackMode as clim
-  // (1 draped / 2 flat) because debugMaterial just samples uStackTex.r/.g
-  // and applies the same ramp. Only the source RT differs (App.tsx routes
-  // DIST/MSLP into uStackTex when these modes are selected).
-  if (e.kind === "dist" || e.kind === "pressure") {
+  // COOKBOOK-CLIMATE T3/T4: dist/pressure/climate all use the SAME
+  // uStackMode as clim (1 draped / 2 flat) because debugMaterial just
+  // samples uStackTex and applies the indexed ramp. Only the source RT
+  // differs (App.tsx routes DIST/MSLP/CLASS into uStackTex per kind).
+  if (e.kind === "dist" || e.kind === "pressure" || e.kind === "climate") {
     return { kind: e.kind, channel: e.channel, ramp: e.ramp, mode: draped ? 1 : 2 };
   }
   return {

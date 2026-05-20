@@ -4,8 +4,8 @@ import {
   resolveEquirectMode,
 } from "./equirectMapModes";
 
-describe("EQUIRECT_MAP_MODES registry (SP-B + COOKBOOK-CLIMATE T3)", () => {
-  it("is exactly the 9 data-backed modes in order", () => {
+describe("EQUIRECT_MAP_MODES registry (SP-B + COOKBOOK-CLIMATE T3/T4)", () => {
+  it("is exactly the 10 data-backed modes in order", () => {
     expect(EQUIRECT_MAP_MODES.map((m) => m.label)).toEqual([
       "Relief",
       "Normal",
@@ -16,19 +16,22 @@ describe("EQUIRECT_MAP_MODES registry (SP-B + COOKBOOK-CLIMATE T3)", () => {
       "Distance",
       "Continentality",
       "Pressure",
+      "Climate",
     ]);
   });
-  it("kinds (SP-B + cookbook-T3 dist/pressure)", () => {
+  it("kinds (SP-B + cookbook T3/T4 dist/pressure/climate)", () => {
     expect(EQUIRECT_MAP_MODES.map((m) => m.kind)).toEqual([
       "relief",
       "normal",
       "clim",
-      "clim",
+      // T4: Precipitation repointed from CLIM.g (zonal) to CLASS.g (cookbook).
+      "climate",
       "wind",
       "clim",
       "dist",
       "dist",
       "pressure",
+      "climate",
     ]);
   });
 });
@@ -110,11 +113,12 @@ describe("NX-3 Wind animated mode", () => {
     expect(resolveEquirectMode(windIdx, true)).toEqual({ kind: "wind", channel: 2, ramp: 3, mode: 4 });
     expect(resolveEquirectMode(windIdx, false)).toEqual({ kind: "wind", channel: 2, ramp: 3, mode: 5 });
   });
-  it("other modes' resolution byte-unchanged (regression pin)", () => {
+  it("other modes' resolution byte-unchanged (post T4 — Precip is climate kind)", () => {
     expect(resolveEquirectMode(0, true)).toEqual({ kind: "relief", channel: 0, ramp: 0, mode: 0 });
     expect(resolveEquirectMode(1, true)).toEqual({ kind: "normal", channel: 0, ramp: 0, mode: 3 });
     expect(resolveEquirectMode(2, true)).toEqual({ kind: "clim", channel: 0, ramp: 1, mode: 1 });
-    expect(resolveEquirectMode(3, false)).toEqual({ kind: "clim", channel: 1, ramp: 2, mode: 2 });
+    // Precipitation moved to kind=climate (samples CLASS.g cookbook precip)
+    expect(resolveEquirectMode(3, false)).toEqual({ kind: "climate", channel: 1, ramp: 2, mode: 2 });
     expect(resolveEquirectMode(5, true)).toEqual({ kind: "clim", channel: 3, ramp: 4, mode: 1 });
   });
 });

@@ -62,6 +62,7 @@ import {
   DIST_JFA_FRAG,
   DIST_FINAL_FRAG,
   PRESSURE_VIZ_FRAG,
+  CLIMATE_CLASS_FRAG,
 } from "./hydraulic.glsl";
 import { runRawPass } from "./glPass";
 import { createPingPong, type PingPongTargets } from "./pingpong";
@@ -481,6 +482,13 @@ export interface HydraulicBakeResult {
    *  internal-only and disposed at teardown). Channels: .r=pressure
    *  in mb (≈990–1020 typical), .gba unused. Read-only. */
   pressure: THREE.WebGLRenderTarget;
+  /** COOKBOOK-CLIMATE T4: simplified Köppen-Geiger climate classifier.
+   *  Channel .r holds an integer class id 0..14:
+   *    0 Ocean · 1 Af · 2 Am · 3 Aw · 4 BWh · 5 BWk · 6 BSh · 7 BSk
+   *    8 Csa · 9 Cfa · 10 Cfb · 11 Dfa/b · 12 Dfc · 13 ET · 14 EF
+   *  Class id matched by the debugMaterial ramp id=7 (Köppen-Geiger
+   *  discrete palette, matching the Beck et al. 2023 colour scheme). */
+  climate: THREE.WebGLRenderTarget;
 }
 
 export async function runHydraulicBake(
@@ -497,7 +505,7 @@ export async function runHydraulicBake(
   // FAILS if EXT_color_buffer_float is missing. We drive the read/write
   // slots explicitly below (NOT pp.book) so the discipline is local and
   // unambiguous.
-  const pp: PingPongTargets = createPingPong(renderer, w, h, ["A", "F", "M", "ACC", "CTRL", "CLIM", "TERR", "HYDRO", "MSLP", "WIND", "DIST", "PVIZ"]);
+  const pp: PingPongTargets = createPingPong(renderer, w, h, ["A", "F", "M", "ACC", "CTRL", "CLIM", "TERR", "HYDRO", "MSLP", "WIND", "DIST", "PVIZ", "CLASS"]);
   const A = pp.rt.A; // [slot0, slot1]
   const F = pp.rt.F; // [slot0, slot1]
   // S2.4 detail mask: a ONE-TIME single-channel field (computed pre-loop
@@ -535,6 +543,9 @@ export async function runHydraulicBake(
   // Slot 0 is the viz output; slot 1 is allocated by the pair helper and
   // disposed at teardown.
   const PVIZ = pp.rt.PVIZ;
+  // COOKBOOK-CLIMATE T4: CLASS holds the simplified Köppen-Geiger class
+  // id (0..14) in .r for the "Climate" map mode. Single-buffered.
+  const CLASS = pp.rt.CLASS;
   let accRead = 0;
   const swapAcc = (): void => {
     accRead ^= 1;
@@ -666,6 +677,21 @@ export async function runHydraulicBake(
         uMbHigh: u(cfg.pressureMbHigh),
       },
       PVIZ[0],
+    );
+    // T4: simplified Köppen-Geiger climate classifier. Reads finalized
+    // CLIM (T/P) + DIST (continentality) + uA (land/elev/lat-from-rc),
+    // emits class id 0..14 in .r. Runs once per bake at the END so it
+    // sees the post-orographic precip etc.
+    runRawPass(
+      renderer,
+      CLIMATE_CLASS_FRAG,
+      {
+        uA: u(aReadRT()),
+        uClim: u(CLIM[0]),
+        uDist: u(DIST[distFinalSlot]),
+        uGrid: u(uGrid),
+      },
+      CLASS[0],
     );
   };
 
@@ -1067,6 +1093,7 @@ export async function runHydraulicBake(
   // parity, so disposal is dynamic.
   DIST[distFinalSlot ^ 1].dispose();
   PVIZ[1].dispose();
+  CLASS[1].dispose();
   return {
     eroded: result,
     clim: CLIM[0],
@@ -1075,5 +1102,6 @@ export async function runHydraulicBake(
     wind: WIND[0],
     dist: DIST[distFinalSlot],
     pressure: PVIZ[0],
+    climate: CLASS[0],
   };
 }
