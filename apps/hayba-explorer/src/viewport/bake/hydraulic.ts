@@ -188,6 +188,12 @@ export interface HydraulicConfig {
    *  along wind direction). 0.0 = off (no moisture transport); 0.5 =
    *  monsoon coasts can override the subtropical-dry zonal band. */
   onshoreGain: number;
+  /** CLIM-CONTINENTALITY symmetric counterpart of onshoreGain. Suppresses
+   *  precip when upwind path is mostly LAND (oceanFrac < 0.5), modelling
+   *  the cookbook's "wind will become dry after blowing across a large
+   *  area of land". 0.3 default = moderate continental drying without
+   *  blanking interiors. */
+  continentalGain: number;
   /** P2.3b-i Whittaker biome thermal cuts (°C) — mirrors
    *  ClimateParams.biome_cold_c / biome_hot_c. */
   biomeColdC: number;
@@ -308,6 +314,7 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   orographicGain: 0.6,
   rainShadow: 0.5,
   onshoreGain: 0.5,
+  continentalGain: 0.3,
   biomeColdC: 6.0,
   biomeHotC: 18.0,
   channelDepth: 0.02,
@@ -532,6 +539,7 @@ export async function runHydraulicBake(
         uOrographicGain: u(cfg.orographicGain),
         uRainShadow: u(cfg.rainShadow),
         uOnshoreGain: u(cfg.onshoreGain),
+        uContinentalGain: u(cfg.continentalGain),
       },
       CLIM[0],
     );

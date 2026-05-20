@@ -817,6 +817,7 @@ export const CLIMATE_FRAG = [
   "uniform float uOrographicGain;",
   "uniform float uRainShadow;",
   "uniform float uOnshoreGain;",
+  "uniform float uContinentalGain;",
   "void main(){",
   "  ivec2 rc = fragRC();",
   "  vec4 a = loadA(uA, uGrid, rc.x, rc.y);",
@@ -873,8 +874,15 @@ export const CLIMATE_FRAG = [
   "    oceanFrac += float(upH < 0.0);",
   "  }",
   "  oceanFrac *= 0.25;",
+  // CLIM-CONTINENTALITY: symmetric counterpart of the onshore boost.
+  // When oceanFrac < 0.5 the upwind path is mostly LAND — wind has
+  // exhausted its moisture before reaching this cell (cookbook:
+  // "wind will become dry after blowing across a large area of land").
+  // Suppress precip proportionally. Two knobs so monsoon coasts and
+  // interior dryness can be tuned independently.
   "  float onshoreBonus = uOnshoreGain * max(oceanFrac - 0.5, 0.0);",
-  "  P = clamp((P + onshoreBonus) * oro, 0.05, 1.0);",
+  "  float interiorDry = uContinentalGain * max(0.5 - oceanFrac, 0.0);",
+  "  P = clamp((P + onshoreBonus - interiorDry) * oro, 0.05, 1.0);",
   "  float windAz = fract(atan(wvec.y, wvec.x) / 6.28318530 + 0.5);",
   // SPEC-SAFE: GLSL ES 3.00 smoothstep is UNDEFINED if edge0 >= edge1.
   // uGlacOnsetC (-2) > uGlacFullC (-12), so keep edges ASCENDING
