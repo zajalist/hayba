@@ -1,6 +1,7 @@
 import React from "react";
 import { colors, fonts } from "@hayba/design-tokens";
 import PropertySection from "../PropertySection";
+import PropertyStack from "../PropertyStack";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Climate parameters — 1:1 with the Rust `ClimateParams` struct. Every
@@ -183,14 +184,6 @@ export default function ClimateLabPanel(p: ClimateLabPanelProps): React.ReactEle
     if (preset) p.onChange({ ...preset });
   };
 
-  const labelStyle: React.CSSProperties = {
-    display: "flex",
-    justifyContent: "space-between",
-    fontSize: 11,
-    color: colors.textMuted,
-    fontFamily: fonts.sans,
-    marginBottom: 3,
-  };
   const sliderStyle: React.CSSProperties = { flex: 1, accentColor: colors.accent };
 
   return (
@@ -240,18 +233,30 @@ export default function ClimateLabPanel(p: ClimateLabPanelProps): React.ReactEle
         </div>
       </div>
 
-      {/* Grouped sliders (scrollable) */}
+      {/* Grouped sliders (scrollable). Each section is collapsible — the
+          first group (Temperature) defaults open, the rest collapsed, to
+          shorten the panel since Climate Lab has 6+ sections. */}
       <div style={{ flex: 1, overflowY: "auto" }}>
-        {GROUPS.map((g) => (
+        {GROUPS.map((g, gi) => (
           <PropertySection
             key={g.heading}
+            collapsible
+            panelId="climate"
+            sectionId={g.heading.toLowerCase()}
+            defaultCollapsed={gi !== 0}
             heading={
               <span
                 role="button"
                 tabIndex={0}
                 title={`Show the ${g.heading} diagnostic mask on the planet`}
                 onFocus={() => p.onFocusGroup(g.mapMode)}
-                onClick={() => p.onFocusGroup(g.mapMode)}
+                onClick={(e) => {
+                  // Emit the map-mode side-effect, then let the click
+                  // bubble to the surrounding header button so the
+                  // section still toggles collapse.
+                  p.onFocusGroup(g.mapMode);
+                  e.stopPropagation();
+                }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") p.onFocusGroup(g.mapMode);
                 }}
@@ -261,55 +266,53 @@ export default function ClimateLabPanel(p: ClimateLabPanelProps): React.ReactEle
               </span>
             }
           >
-            <div style={{ padding: "2px 16px 8px" }}>
-              {g.fields.map((f) => {
-                const v = p.params[f.key];
-                const def = DEFAULT_CLIMATE_PARAMS[f.key];
-                const fmt = f.fmt ?? ((x: number) => x.toFixed(2));
-                return (
-                  <div key={f.key} style={{ marginBottom: 8 }}>
-                    <div style={labelStyle}>
-                      <span>{f.label}</span>
-                      <span style={{ color: colors.beige, fontFamily: fonts.mono }}>{fmt(v)}</span>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <input
-                        type="range"
-                        min={f.min}
-                        max={f.max}
-                        step={f.step}
-                        value={v}
-                        onFocus={() => p.onFocusGroup(g.mapMode)}
-                        onChange={(e) => set(f.key, Number(e.target.value))}
-                        style={sliderStyle}
-                        aria-label={f.label}
-                      />
-                      <button
-                        type="button"
-                        title={`Reset ${f.label} to ${fmt(def)}`}
-                        onClick={() => set(f.key, def)}
-                        disabled={v === def}
-                        style={{
-                          width: 18,
-                          height: 18,
-                          padding: 0,
-                          fontSize: 10,
-                          lineHeight: "16px",
-                          background: "transparent",
-                          color: v === def ? colors.textMuted : colors.beige,
-                          border: `1px solid ${colors.borderSoft}`,
-                          borderRadius: 2,
-                          cursor: v === def ? "default" : "pointer",
-                          opacity: v === def ? 0.4 : 1,
-                        }}
-                      >
-                        ↺
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            {g.fields.map((f, fi) => {
+              const v = p.params[f.key];
+              const def = DEFAULT_CLIMATE_PARAMS[f.key];
+              const fmt = f.fmt ?? ((x: number) => x.toFixed(2));
+              return (
+                <PropertyStack
+                  key={f.key}
+                  label={f.label}
+                  value={fmt(v)}
+                  noSeparator={fi === g.fields.length - 1}
+                >
+                  <input
+                    type="range"
+                    min={f.min}
+                    max={f.max}
+                    step={f.step}
+                    value={v}
+                    onFocus={() => p.onFocusGroup(g.mapMode)}
+                    onChange={(e) => set(f.key, Number(e.target.value))}
+                    style={sliderStyle}
+                    aria-label={f.label}
+                  />
+                  <button
+                    type="button"
+                    title={`Reset ${f.label} to ${fmt(def)}`}
+                    onClick={() => set(f.key, def)}
+                    disabled={v === def}
+                    style={{
+                      width: 18,
+                      height: 18,
+                      marginLeft: 6,
+                      padding: 0,
+                      fontSize: 10,
+                      lineHeight: "16px",
+                      background: "transparent",
+                      color: v === def ? colors.textMuted : colors.beige,
+                      border: `1px solid ${colors.borderSoft}`,
+                      borderRadius: 2,
+                      cursor: v === def ? "default" : "pointer",
+                      opacity: v === def ? 0.4 : 1,
+                    }}
+                  >
+                    ↺
+                  </button>
+                </PropertyStack>
+              );
+            })}
           </PropertySection>
         ))}
 
