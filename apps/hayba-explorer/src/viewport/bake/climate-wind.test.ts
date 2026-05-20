@@ -78,7 +78,38 @@ describe("P2.2-oro orographic precipitation", () => {
     expect(CLIMATE_FRAG).toContain(
       "float oro = 1.0 + uOrographicGain * max(upslope, 0.0) - uRainShadow * max(-upslope, 0.0);",
     );
-    expect(CLIMATE_FRAG).toContain("P = clamp(P * oro, 0.05, 1.0);");
+    // CLIM-MONSOON replaced the original `P = clamp(P * oro, …)` with a
+    // form that composes onshore moisture additively before oro:
+    expect(CLIMATE_FRAG).toContain(
+      "P = clamp((P + onshoreBonus) * oro, 0.05, 1.0);",
+    );
+  });
+});
+
+describe("CLIM-MONSOON onshore moisture transport", () => {
+  it("CLIMATE_FRAG declares uOnshoreGain uniform", () => {
+    expect(CLIMATE_FRAG).toContain("uniform float uOnshoreGain;");
+  });
+  it("CLIMATE_FRAG walks K=4 cells upwind to measure ocean fraction", () => {
+    expect(CLIMATE_FRAG).toContain("vec2 wdir = (wmag > 1e-6) ? wvec / wmag : vec2(0.0);");
+    expect(CLIMATE_FRAG).toContain("float oceanFrac = 0.0;");
+    expect(CLIMATE_FRAG).toContain("for (int k = 1; k <= 4; k++) {");
+    expect(CLIMATE_FRAG).toContain("int dx = int(-wdir.x * float(k) * 4.0);");
+    expect(CLIMATE_FRAG).toContain("int dy = int(-wdir.y * float(k) * 4.0);");
+    expect(CLIMATE_FRAG).toContain("float upH = texelFetch(uA, ivec2(ux, uy), 0).r;");
+    expect(CLIMATE_FRAG).toContain("oceanFrac += float(upH < 0.0);");
+    expect(CLIMATE_FRAG).toContain("oceanFrac *= 0.25;");
+  });
+  it("CLIMATE_FRAG adds onshore moisture additively then applies orographic", () => {
+    // Additive bonus (lifts dry zonal areas) only above 50% ocean upwind.
+    // Combined with the orographic multiplier so wet wind + windward
+    // slope = monsoon-intense rain.
+    expect(CLIMATE_FRAG).toContain(
+      "float onshoreBonus = uOnshoreGain * max(oceanFrac - 0.5, 0.0);",
+    );
+    expect(CLIMATE_FRAG).toContain(
+      "P = clamp((P + onshoreBonus) * oro, 0.05, 1.0);",
+    );
   });
 });
 

@@ -816,6 +816,7 @@ export const CLIMATE_FRAG = [
   "uniform float uCoriolisGain;",
   "uniform float uOrographicGain;",
   "uniform float uRainShadow;",
+  "uniform float uOnshoreGain;",
   "void main(){",
   "  ivec2 rc = fragRC();",
   "  vec4 a = loadA(uA, uGrid, rc.x, rc.y);",
@@ -852,7 +853,28 @@ export const CLIMATE_FRAG = [
   "  float wmag = length(wvec);",
   "  float upslope = (ghlen > 1e-6 && wmag > 1e-6) ? dot(wvec / wmag, gradH / ghlen) : 0.0;",
   "  float oro = 1.0 + uOrographicGain * max(upslope, 0.0) - uRainShadow * max(-upslope, 0.0);",
-  "  P = clamp(P * oro, 0.05, 1.0);",
+  // CLIM-MONSOON: onshore moisture transport. Walk K=4 cells upwind along
+  // the geostrophic wind direction; count how many are ocean (a.r < 0).
+  // High ocean fraction = wind is freshly off the sea, carrying moisture
+  // → additive precip bonus that LIFTS the zonal-band baseline (so the
+  // subtropical-dry belt can be overridden on monsoon coasts, matching
+  // the cookbook: "summer low-pressure pulls moisture-laden air from
+  // ocean"). Combined with the existing orographic factor `oro`, this
+  // produces wet windward slopes near coasts (Western Ghats, Himalayan
+  // S-slope) without making continental interiors wet.
+  "  vec2 wdir = (wmag > 1e-6) ? wvec / wmag : vec2(0.0);",
+  "  float oceanFrac = 0.0;",
+  "  for (int k = 1; k <= 4; k++) {",
+  "    int dx = int(-wdir.x * float(k) * 4.0);",
+  "    int dy = int(-wdir.y * float(k) * 4.0);",
+  "    int ux = xw(rc.x + dx, wh.x);",
+  "    int uy = yc(rc.y + dy, wh.y);",
+  "    float upH = texelFetch(uA, ivec2(ux, uy), 0).r;",
+  "    oceanFrac += float(upH < 0.0);",
+  "  }",
+  "  oceanFrac *= 0.25;",
+  "  float onshoreBonus = uOnshoreGain * max(oceanFrac - 0.5, 0.0);",
+  "  P = clamp((P + onshoreBonus) * oro, 0.05, 1.0);",
   "  float windAz = fract(atan(wvec.y, wvec.x) / 6.28318530 + 0.5);",
   // SPEC-SAFE: GLSL ES 3.00 smoothstep is UNDEFINED if edge0 >= edge1.
   // uGlacOnsetC (-2) > uGlacFullC (-12), so keep edges ASCENDING

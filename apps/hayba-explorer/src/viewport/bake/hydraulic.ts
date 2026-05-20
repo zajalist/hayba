@@ -182,6 +182,12 @@ export interface HydraulicConfig {
    *  P in [0.05, 1.0]. Defaults mirror climate.rs ClimateParams. */
   orographicGain: number;
   rainShadow: number;
+  /** CLIM-MONSOON onshore moisture transport (cookbook principle:
+   *  "summer low pulls moisture-laden air from ocean"). Scales the
+   *  ADDITIVE precip boost driven by upwind ocean fraction (4 samples
+   *  along wind direction). 0.0 = off (no moisture transport); 0.5 =
+   *  monsoon coasts can override the subtropical-dry zonal band. */
+  onshoreGain: number;
   /** P2.3b-i Whittaker biome thermal cuts (°C) — mirrors
    *  ClimateParams.biome_cold_c / biome_hot_c. */
   biomeColdC: number;
@@ -293,10 +299,15 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   mslpOceanAmp: 20.0,
   mslpBlurSigma: 6.0,
   coriolisGain: 15.0,
-  seasonAmp: 0.0,
-  seasonPhase: 0.0,
+  // CLIM-MONSOON: seasonality enabled by default so continental
+  // summer-low / oceanic-summer-high pressure swap can drive monsoon
+  // winds. seasonPhase=6.0 picks the NH summer (July) snapshot, peak
+  // Asian monsoon. This is the cookbook's "summer pressure" picture.
+  seasonAmp: 0.5,
+  seasonPhase: 6.0,
   orographicGain: 0.6,
   rainShadow: 0.5,
+  onshoreGain: 0.5,
   biomeColdC: 6.0,
   biomeHotC: 18.0,
   channelDepth: 0.02,
@@ -520,6 +531,7 @@ export async function runHydraulicBake(
         uGlacFullC: u(cfg.glacFullC),
         uOrographicGain: u(cfg.orographicGain),
         uRainShadow: u(cfg.rainShadow),
+        uOnshoreGain: u(cfg.onshoreGain),
       },
       CLIM[0],
     );
