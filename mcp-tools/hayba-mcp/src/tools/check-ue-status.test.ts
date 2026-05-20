@@ -45,3 +45,23 @@ describe('checkUeStatus / sidecar fields', () => {
     expect(status.sidecar_error).toMatch(/ECONNREFUSED/);
   });
 });
+
+describe('checkUeStatus / onConnected hook', () => {
+  beforeEach(async () => {
+    const mod = await import('./check-ue-status.js');
+    mod.__resetConnectedLatch();
+    setCachedSidecarHealth({
+      available: false, url: '', models: {}, active_models: [], checked_at: Date.now(),
+    });
+  });
+  afterEach(() => setCachedSidecarHealth(null));
+
+  it('fires onConnected exactly once across multiple successful polls', async () => {
+    const onConnected = vi.fn(async () => {});
+    const { checkUeStatus } = await import('./check-ue-status.js');
+    await checkUeStatus({ onConnected });
+    await checkUeStatus({ onConnected });
+    await checkUeStatus({ onConnected });
+    expect(onConnected).toHaveBeenCalledTimes(1);
+  });
+});
