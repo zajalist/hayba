@@ -198,6 +198,7 @@ impl Model {
         self.remove_empty_plates();
         // ── PHASE 3d: spawn new fields (MOR) ────────────────────────────
         self.generate_new_fields(dt);
+        t.lap(Phase::Geo);
         // ── PHASE 3e: refresh per-plate inertia tensors ─────────────────
         self.update_inertia_tensors();
         // ── PHASE 3f: refresh per-plate geographic centers ──────────────
@@ -212,6 +213,7 @@ impl Model {
         self.group_and_split_plates();
         // ── PHASE 3i: divide plates by age ──────────────────────────────
         self.divide_plates_by_age();
+        t.lap(Phase::Inertia);
         // ── PHASE 3j (Hayba) — mantle dynamics ──────────────────────────
         // Lithospheric column refresh + plume ageing / track recording.
         // Lives at the end of `simulatePlatesInteractions` so plates have
@@ -242,7 +244,7 @@ impl Model {
         for p in self.plates.iter_mut() {
             p.reset_force_accumulator();
         }
-        t.lap(Phase::Other);
+        t.lap(Phase::Plume);
         let optimize = self.optimized_collision_detection;
         let collisions =
             detect_field_collisions_opt(&self.plates, &self.grid, &self.fields, optimize);
