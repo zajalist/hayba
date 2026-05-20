@@ -25,6 +25,8 @@ pub fn run() {
             wizard::bake_from_wizard,
             wizard::compute_partition,
             wizard::step_planet,
+            wizard::start_tect_sim,
+            wizard::tect_step_n,
             wizard::reset_sim,
             wizard::poll_bake_progress,
             wizard::apply_boundary_types,
