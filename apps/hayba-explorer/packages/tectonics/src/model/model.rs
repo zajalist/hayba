@@ -423,11 +423,19 @@ impl Model {
         // PlateGroup-level recompute (TE updates group first, then any
         // ungrouped plates). Group bookkeeping is Phase 4 — we just iterate
         // standalone plates here.
-        for p in self.plates.iter_mut() {
+        //
+        // INE-RAY: each plate's update_inertia_tensor is independent —
+        // it sums over the plate's OWN field-id list (no cross-plate
+        // mutation) and reads only &self.fields immutably. Rayon
+        // par_iter_mut splits the &mut self.plates safely; result is
+        // byte-equal because per-plate sums are in fixed Vec order.
+        use rayon::prelude::*;
+        let fields_ref = &self.fields;
+        self.plates.par_iter_mut().for_each(|p| {
             if p.group.is_none() {
-                p.update_inertia_tensor(&self.fields, area);
+                p.update_inertia_tensor(fields_ref, area);
             }
-        }
+        });
         // TODO Phase 4: group.updateInertiaTensor() once PlateGroup carries
         // member plates.
     }
