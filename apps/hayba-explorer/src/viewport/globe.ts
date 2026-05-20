@@ -42,6 +42,13 @@ export interface GlobeHandle {
     palette: ReadonlyArray<[number, number, number]>,
     boundary?: { model: BoundaryModel; assignments: BoundaryAssignments },
   ): void;
+  /** TECT-PLAY: paint by raw plate-id buffer (one byte per cell, 0 = no plate).
+   *  Used by the wizard-mode Play loop so the user can watch plates drift on
+   *  the painted globe without needing a full PlanetSnapshot from the bake. */
+  recolorFromPlateIds(
+    plateIds: Uint8Array | number[],
+    palette: ReadonlyArray<[number, number, number]>,
+  ): void;
 }
 
 export function buildGlobe(cellPositions: Float32Array): GlobeHandle {
@@ -130,6 +137,22 @@ export function buildGlobe(cellPositions: Float32Array): GlobeHandle {
         }
       }
       void BOUNDARY_HOVER_COLOR;
+      colorAttr.needsUpdate = true;
+    },
+    recolorFromPlateIds(plateIds, palette) {
+      // Plate ids are 1-based in the Rust sim; 0 = unassigned cell (e.g.
+      // freshly subducted). Unassigned cells paint as ocean for legibility;
+      // every other cell takes its plate's palette colour.
+      const len = Math.min(plateIds.length, n);
+      for (let i = 0; i < len; i++) {
+        const pid = plateIds[i];
+        if (pid <= 0) {
+          paintCell(i, OCEAN_COLOR);
+          continue;
+        }
+        const c = palette[(pid - 1) % palette.length] ?? CONTINENT_COLOR;
+        paintCell(i, c);
+      }
       colorAttr.needsUpdate = true;
     },
   };
