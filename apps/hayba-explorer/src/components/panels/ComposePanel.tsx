@@ -114,16 +114,6 @@ export default function ComposePanel(p: ComposePanelProps) {
   );
 }
 
-const inlineActionStyle: React.CSSProperties = {
-  marginLeft: 8,
-  background: "transparent",
-  border: "none",
-  color: colors.accent,
-  cursor: "pointer",
-  fontSize: 14,
-  lineHeight: 1,
-};
-
 const bottomActionStripStyle: React.CSSProperties = {
   padding: "10px 14px",
   borderTop: `1px solid ${colors.borderMid}`,
