@@ -119,6 +119,23 @@ describe("CLIM-MONSOON onshore moisture transport", () => {
   });
 });
 
+describe("CLIM-T-CONTINENTALITY (#193: interiors swing more)", () => {
+  it("CLIMATE_FRAG declares uContinentalT + season uniforms", () => {
+    expect(CLIMATE_FRAG).toContain("uniform float uContinentalT;");
+    expect(CLIMATE_FRAG).toContain("uniform float uSeasonAmp;");
+    expect(CLIMATE_FRAG).toContain("uniform float uSeasonPhase;");
+  });
+  it("CLIMATE_FRAG offsets T by hemisphere × season × continentality", () => {
+    expect(CLIMATE_FRAG).toContain("float isJulyish = cos((uSeasonPhase - 6.0) * 0.52359877);");
+    expect(CLIMATE_FRAG).toContain("float hemSign = sign(lat);");
+    expect(CLIMATE_FRAG).toContain("float landMask = step(0.0, a.r);");
+    expect(CLIMATE_FRAG).toContain(
+      "float continentalT = uContinentalT * uSeasonAmp * isJulyish * hemSign * landMask * (1.0 - oceanFrac);",
+    );
+    expect(CLIMATE_FRAG).toContain("T += continentalT;");
+  });
+});
+
 describe("NX-2c seasonality (MdGBWG Jan/July MSLP delta)", () => {
   it("MSLP_FRAG adds season uniforms + land/ocean delta + dfac blend", () => {
     expect(MSLP_FRAG).toContain("uniform float uSeasonAmp;");
