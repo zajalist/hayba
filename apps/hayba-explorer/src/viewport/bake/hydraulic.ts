@@ -231,6 +231,11 @@ export interface HydraulicConfig {
    *  ~985..1030 mb; this range saturates outliers. */
   pressureMbLow: number;
   pressureMbHigh: number;
+  /** T4-TUNE-10: global sea-level offset subtracted from base heights
+   *  at SEED time. All downstream passes (relief, erosion, climate,
+   *  biome) see consistent shoreline. 0 = no shift (raw heights);
+   *  0.10 lifts roughly the lowest 10% of land into ocean. */
+  seaLevel: number;
   /** P2.3b-i Whittaker biome thermal cuts (°C) — mirrors
    *  ClimateParams.biome_cold_c / biome_hot_c. */
   biomeColdC: number;
@@ -363,6 +368,7 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   distMaxKm: 5000.0,
   pressureMbLow: 985.0,
   pressureMbHigh: 1030.0,
+  seaLevel: 0.10,
   biomeColdC: 6.0,
   biomeHotC: 18.0,
   channelDepth: 0.02,
@@ -418,14 +424,21 @@ const yieldToLoop = (): Promise<void> =>
 //   r = b = base.r , g = d = 0 , b = s = 0 , a = ocean = base.r<0 ? 1 : 0
 // Row 0 = North (DataTextures uploaded flipY=false) so the framebuffer
 // row index == the data row index: rc = ivec2(gl_FragCoord.xy).
+// T4-TUNE-10: uSeaLevel subtracted at seed time so EVERY downstream
+// pass (relief, erosion, climate, terrain, biome) sees the same
+// shoreline. Previously the Climate FRAG raised its own cutoff,
+// producing the incoherent "globe with relief continents but
+// Climate-classifies-them-as-ocean" picture. Default 0.10 lifts
+// roughly the lowest 10% of land into ocean — matches user's eyeball.
 const SEED_A_FRAG = [
   "precision highp float;",
   "precision highp int;",
   "out vec4 fragColor;",
   "uniform sampler2D uBase;",
+  "uniform float uSeaLevel;",
   "void main(){",
   "  ivec2 rc = ivec2(int(gl_FragCoord.x), int(gl_FragCoord.y));",
-  "  float b = texelFetch(uBase, rc, 0).r;",
+  "  float b = texelFetch(uBase, rc, 0).r - uSeaLevel;",
   "  float ocean = b < 0.0 ? 1.0 : 0.0;",
   "  fragColor = vec4(b, 0.0, 0.0, ocean);",
   "}",
@@ -712,7 +725,7 @@ export async function runHydraulicBake(
   // ---- SEED: A := (base.r, 0, 0, base.r<0?1:0) ; F := 0 ----------------
   // Seed writes into the READ slot of each channel (A[0]/F[0]) so the
   // first step's RAIN/FLUX read the seeded state.
-  runRawPass(renderer, SEED_A_FRAG, { uBase: u(base) }, aReadRT());
+  runRawPass(renderer, SEED_A_FRAG, { uBase: u(base), uSeaLevel: u(cfg.seaLevel) }, aReadRT());
   runRawPass(renderer, SEED_F_FRAG, {}, fReadRT());
 
   // ---- COOKBOOK-CLIMATE T2: distance-to-ocean via JFA ------------------
