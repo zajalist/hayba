@@ -23,6 +23,7 @@ import { sceneValidatePhysicsHandler, meta as scenePhysicsMeta } from './scene/s
 import { editorCaptureViewportHandler, meta as captureMeta } from './editor/editor-capture-viewport.js';
 import { editorStartPieHandler, meta as pieMeta } from './editor/editor-start-pie.js';
 import { editorStreamLogHandler, meta as streamLogMeta } from './editor/editor-stream-log.js';
+import { handleWaitForShaders, meta as waitForShadersMeta } from './wait-for-shaders.js';
 
 // ── PCGEx tool handlers ───────────────────────────────────────────────────────
 import { searchNodeCatalog } from './search-node-catalog.js';
@@ -358,8 +359,12 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
     {
       width: z.coerce.number().int().optional(),
       height: z.coerce.number().int().optional(),
+      wait_for_shaders: z.boolean().optional().describe('If true, calls wait_for_shaders first (max_seconds=60, poll_seconds=1).'),
     },
     async (params) => {
+      if ((params as any).wait_for_shaders === true) {
+        await handleWaitForShaders({ max_seconds: 60, poll_seconds: 1 });
+      }
       const r = await editorCaptureViewportHandler(params as Record<string, unknown>, session);
       return { content: r.content, isError: r.isError };
     }
@@ -390,6 +395,17 @@ export function registerTools(server: McpServer, session: SessionManagerStub): v
     }
   );
   remember('editor_stream_log', streamLogMeta);
+
+  server.tool(
+    'wait_for_shaders',
+    appendMeta('Wait for UE shader compilation to settle (or timeout).', waitForShadersMeta),
+    {
+      max_seconds: z.number().int().min(1).max(600).optional().describe('Upper bound in seconds (default 60).'),
+      poll_seconds: z.number().min(0.05).max(10).optional().describe('Poll interval in seconds (default 1).'),
+    },
+    async (args, _extra) => handleWaitForShaders(args as any)
+  );
+  remember('wait_for_shaders', waitForShadersMeta);
 
   // ── PCGEx tools ─────────────────────────────────────────────────────────────
 
