@@ -1172,43 +1172,59 @@ export const CLIMATE_CLASS_FRAG = [
   "  float v = (float(rc.y) + 0.5) / float(wh.y);",
   "  float lat = (0.5 - v) * 180.0;",
   "  float absLat = abs(lat);",
-  "  float T = c.r;",
+  "  float Tann = c.r;",
   "  float P = c.g;",
   "  float cont = d.g;",
+  // T4-TUNE-3: canonical Köppen-Geiger needs T_max (warmest month) and
+  // T_min (coldest month), not annual mean. Without those Canada-with-
+  // warm-summer (Dfb) and Greenland-cold-always (EF) collapse to the
+  // same class. Estimate amplitude from continentality (maritime ~8°C
+  // swing, deep continental ~35°C). Annual mean stays unchanged; only
+  // the amplitude window varies spatially — this breaks the straight
+  // lat-bands by giving same-lat cells different KG class based on
+  // continentality.
+  "  float Tamp = mix(8.0, 35.0, clamp(cont, 0.0, 1.0));",
+  "  float Tmax = Tann + Tamp * 0.5;",
+  "  float Tmin = Tann - Tamp * 0.5;",
+  // KG aridity threshold scaled by annual mean T (hot = more evap =
+  // higher precip needed to escape arid). Canonical KG: arid if
+  // MAP_mm < (20·MAAT_°C + offset). Calibrated to our normalised P so
+  // Sahara (Tann≈22, P≈0.30) lands in BWh and Sahel (Tann≈25, P≈0.55)
+  // in BSh; cold deserts (Gobi, Patagonia) caught by Tmin<0 branch.
+  "  float aridBW = clamp(0.04 + 0.013 * Tann, 0.05, 0.55);",  // BW threshold
+  "  float aridBS = clamp(0.08 + 0.026 * Tann, 0.10, 1.00);",  // BS threshold
   "  float id = 0.0;",
-  // Polar tier (extreme cold + very high lat)
-  "  if (T <= -10.0 || absLat >= 75.0) { id = 14.0; }",
-  "  else if (T <= 0.0  || absLat >= 65.0) { id = 13.0; }",
-  // Subarctic / boreal (cold + high cont)
-  "  else if (T < 8.0 && absLat >= 50.0)  { id = 12.0; }",
-  "  else if (T < 14.0 && absLat >= 40.0 && cont > 0.45) { id = 11.0; }",
-  // T4-TUNE-2: B (arid) tier MOVED BEFORE A (tropical) — matches the
-  // canonical Köppen-Geiger algorithm where the aridity test trumps
-  // the temperature test. Eliminates the "all tropical lat = Af/Aw"
-  // overflow by funneling dry-zone cells (P < 0.20) into BWh/BWk first.
-  // Steppe (semi-arid) belt also moved before tropical.
-  "  else if (P < 0.20) { id = (T > 18.0) ? 4.0 : 5.0; }",
-  "  else if (P < 0.45 && cont > 0.30) { id = (T > 18.0) ? 6.0 : 7.0; }",
-  // Tropical band — narrowed to lat<15 AND we already filtered B-zone
-  // cells out above, so only TRUE-wet tropics reach here. Af requires
-  // P>0.85 (rainforest core only — Amazon/Congo basin/Indonesia/Bay
-  // of Bengal); Am 0.60..0.85; Aw 0.45..0.60 (above Sahel-steppe cut).
-  "  else if (absLat < 15.0 && T > 18.0) {",
-  "    if (P > 0.85) id = 1.0;",      // Af tropical rainforest
-  "    else if (P > 0.60) id = 2.0;", // Am tropical monsoon
-  "    else id = 3.0;",                // Aw savanna
+  // E polar — based on T_MAX (warmest month). EF = icecap (no month
+  // above 0); ET = tundra (warmest 0..10).
+  "  if (Tmax < 0.0) { id = 14.0; }",
+  "  else if (Tmax < 10.0) { id = 13.0; }",
+  // B arid — canonical KG runs BEFORE A/C/D temperature checks.
+  "  else if (P < aridBW * 0.5) { id = (Tmin > 0.0) ? 4.0 : 5.0; }",
+  "  else if (P < aridBS * 0.5) { id = (Tmin > 0.0) ? 6.0 : 7.0; }",
+  // A tropical — T_MIN > 18°C means every month warm (no cold winter).
+  // Already filtered dry tropics into B above.
+  "  else if (Tmin > 18.0) {",
+  "    if (P > 0.80) id = 1.0;",       // Af tropical rainforest
+  "    else if (P > 0.55) id = 2.0;",  // Am tropical monsoon
+  "    else id = 3.0;",                 // Aw savanna
   "  }",
-  // Temperate
-  "  else if (absLat >= 30.0 && absLat < 45.0 && cont > 0.25 && cont < 0.55) { id = 8.0; }",
-  "  else if (absLat < 35.0) { id = 9.0; }",
-  "  else if (cont < 0.30) { id = 10.0; }",
-  "  else { id = 11.0; }",
-  // T4 monsoon override — TIGHTENED. Real Am is a narrow coastal belt
-  // (Mumbai/Bangladesh/SE-Asia/W-African/NE-Brazil) — not all tropical
-  // coast. Restrict to: lat 5-15 (real monsoon latitudes), very close
-  // to ocean (cont<0.18), and already moderately wet from zonal
-  // (P>0.45) so dry-belt cells stay BWh.
-  "  if (absLat >= 5.0 && absLat < 15.0 && cont < 0.18 && a.r >= 0.0 && T > 18.0 && P > 0.45 && id > 0.5 && id < 4.0) {",
+  // D continental — coldest < -3, warmest > 10 (cold winter + warm
+  // summer). This is where Canada / N Europe / Russia BELONG (not EF).
+  "  else if (Tmin < -3.0 && Tmax > 10.0) {",
+  "    id = (Tmax > 22.0) ? 11.0 : 12.0;", // Dfa/b vs Dfc
+  "  }",
+  // C temperate — coldest -3..18, warmest > 10.
+  "  else if (Tmin > -3.0 && Tmax > 10.0) {",
+  // Csa Mediterranean (lat-band 30-45, low cont — west-coast proxy).
+  "    if (absLat >= 30.0 && absLat < 45.0 && cont < 0.30) id = 8.0;",
+  "    else if (absLat < 35.0) id = 9.0;",   // Cfa humid subtropical
+  "    else id = 10.0;",                      // Cfb maritime
+  "  }",
+  // Cold-but-not-warm-summer fall-through → tundra.
+  "  else { id = 13.0; }",
+  // Monsoon override — coastal tropical (T_min > 18 + cont<0.18 +
+  // lat 5-15) bumped to Am even when zonal P was too low to qualify.
+  "  if (absLat >= 5.0 && absLat < 15.0 && cont < 0.18 && a.r >= 0.0 && Tmin > 16.0 && P > 0.40 && id > 0.5 && id < 4.0) {",
   "    id = 2.0;",
   "  }",
   // Cookbook precip per class (.g). Lets downstream consumers (and the
