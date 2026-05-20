@@ -340,18 +340,16 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   mslpOceanAmp: 20.0,
   mslpBlurSigma: 6.0,
   coriolisGain: 15.0,
-  // COOKBOOK-CLIMATE T1: heuristic precip-modulator knobs all disabled
-  // by default. The wrong-granularity per-cell upwind-scan + ITCZ-shift
-  // heuristics produced visible artifacts (line at wind-direction
-  // boundaries, Sahara-wet leak, Indonesia-dry). We're replacing them
-  // with a principled approach: JFA distance-to-ocean → continentality
-  // map → cookbook-table climate classification. The knobs remain in
-  // the type so they can be re-enabled experimentally, but defaults
-  // are now physics-neutral (annual mean, no fake monsoon physics).
-  // Orographic (#164) is the only one kept active — it's local and
-  // physically sound. continentalT also OFF until T1 redesign lands.
-  seasonAmp: 0.0,
-  seasonPhase: 0.0,
+  // COOKBOOK-CLIMATE T3-SEASONS: seasonality back ON so the PRESSURE
+  // map shows continental thermal lows/highs (Tibetan low, Saharan
+  // heat low, etc.) matching the Shadertoy MdGBWG reference, and so
+  // WIND direction flips correctly to monsoon SW over India in July.
+  // All precip MODULATORS still disabled (onshoreGain=0 etc.), so the
+  // previous Sahara-wet / Indonesia-dry / line-artifact overshoots
+  // cannot recur. Precip stays annual-mean zonal until T4's cookbook
+  // classifier overrides specific zones (tropical monsoon, etc.).
+  seasonAmp: 0.5,
+  seasonPhase: 6.0,
   orographicGain: 0.6,
   rainShadow: 0.5,
   onshoreGain: 0.0,
