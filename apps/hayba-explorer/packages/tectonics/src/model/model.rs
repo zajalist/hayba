@@ -322,18 +322,26 @@ impl Model {
             .map(|(i, p)| (p.id, i))
             .collect();
 
-        // a1 = torques at current state for ALL plates.
-        let mut a1: Vec<Vec3> = Vec::with_capacity(n);
-        for i in 0..n {
-            let t = self.plates[i].compute_total_torque_indexed(
-                &self.fields,
-                &self.plates,
-                i,
-                &id_to_idx,
-                area,
-            );
-            a1.push(acceleration_for(&self.plates[i], t));
-        }
+        // a1 = torques at current state for ALL plates. SV-RAY: parallel
+        // via rayon. Each plate's torque depends only on shared immutable
+        // references (&fields, &plates, &id_to_idx, area) — no cross-plate
+        // mutation, no shared accumulator. `collect::<Vec<_>>()` preserves
+        // index order, so a1[i] is bit-identical to the serial version
+        // (each plate's compute_total_torque_indexed sums over its OWN
+        // fields in the SAME order on any thread).
+        use rayon::prelude::*;
+        let fields_ref = &self.fields;
+        let plates_ref = &self.plates;
+        let idx_ref = &id_to_idx;
+        let a1: Vec<Vec3> = (0..n)
+            .into_par_iter()
+            .map(|i| {
+                let t = plates_ref[i].compute_total_torque_indexed(
+                    fields_ref, plates_ref, i, idx_ref, area,
+                );
+                acceleration_for(&plates_ref[i], t)
+            })
+            .collect();
 
         // v1, q1 saved per plate.
         let v1: Vec<Vec3> = self.plates.iter().map(|p| p.angular_velocity).collect();
@@ -348,18 +356,22 @@ impl Model {
             self.plates[i].angular_velocity = v_prov;
         }
 
-        // a2 = torques at NEW state for ALL plates.
-        let mut a2: Vec<Vec3> = Vec::with_capacity(n);
-        for i in 0..n {
-            let t = self.plates[i].compute_total_torque_indexed(
-                &self.fields,
-                &self.plates,
-                i,
-                &id_to_idx,
-                area,
-            );
-            a2.push(acceleration_for(&self.plates[i], t));
-        }
+        // a2 = torques at NEW state for ALL plates. SV-RAY: same rayon
+        // pattern as a1 above. Re-bind the references because the
+        // intermediate `for i in 0..n` provisional-update loop took
+        // &mut self.plates[i].
+        let fields_ref = &self.fields;
+        let plates_ref = &self.plates;
+        let idx_ref = &id_to_idx;
+        let a2: Vec<Vec3> = (0..n)
+            .into_par_iter()
+            .map(|i| {
+                let t = plates_ref[i].compute_total_torque_indexed(
+                    fields_ref, plates_ref, i, idx_ref, area,
+                );
+                acceleration_for(&plates_ref[i], t)
+            })
+            .collect();
 
         // Apply the corrector + hot-spot decay per plate.
         for i in 0..n {
