@@ -19,13 +19,13 @@ use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 use hayba_tectonics_v2::determinism::split_mix_64;
-use hayba_tectonics_v2::field::Crust;
 use hayba_tectonics_v2::model::{Model, MAX_PLATE_SPEED};
 use hayba_tectonics_v2::sphere::Grid;
 
 use crate::climate::{self, ClimateParams};
 use crate::planet::{snapshot_model, PlanetSnapshot};
-use crate::sim_state::{ManagedSim, SimState};
+use crate::sim_state::{BakeProgress, ManagedSim, SimState, BAKE_COMPUTE, BAKE_DONE, BAKE_IDLE, BAKE_SNAPSHOT};
+use std::sync::atomic::Ordering;
 use tauri::State;
 
 #[derive(Debug, Deserialize)]
@@ -172,17 +172,19 @@ pub struct WizardInit {
 }
 
 #[tauri::command]
-pub fn start_wizard(divisions: u32) -> WizardInit {
-    let grid = Grid::new(divisions);
-    let n = grid.n_fields();
-    let mut cell_positions = Vec::with_capacity((n * 3) as usize);
-    for fid in 0..n {
-        let p = grid.position(fid);
-        cell_positions.push(p.x);
-        cell_positions.push(p.y);
-        cell_positions.push(p.z);
-    }
-    WizardInit { divisions, n_cells: n, cell_positions }
+pub async fn start_wizard(divisions: u32) -> Result<WizardInit, String> {
+    // Heavy Grid::new (Voronoi + NearestRaster build, ~3s at 384 div)
+    // moved off the IPC thread via spawn_blocking — mirrors the NB
+    // pattern used by `bake_from_wizard`. The cached `Grid::for_divisions`
+    // makes repeat selections of the same tier microseconds.
+    let grid = tauri::async_runtime::spawn_blocking(move || {
+        Grid::for_divisions(divisions)
+    })
+    .await
+    .map_err(|e| format!("[start_wizard] join: {e}"))?;
+    let n_cells = grid.n_fields();
+    let cell_positions = grid.flat_positions().to_vec();
+    Ok(WizardInit { divisions, n_cells, cell_positions })
 }
 
 #[tauri::command]
@@ -197,26 +199,67 @@ pub fn roll_seed() -> u64 {
 }
 
 #[tauri::command]
-pub fn bake_from_wizard(
+pub async fn bake_from_wizard(
     draft: WizardDraft,
     want_climate_debug: bool,
     climate_params: climate::ClimateParams,
     erosion_params: Option<crate::hydrology::ErosionParams>,
     sim: State<'_, ManagedSim>,
-) -> PlanetSnapshot {
+    progress: State<'_, BakeProgress>,
+) -> Result<PlanetSnapshot, String> {
+    progress.0.store(BAKE_IDLE, Ordering::Relaxed);
     // Optional: the bake command must keep working before the frontend
     // sends `erosionParams` (Plan A Task 9). A missing arg → None →
     // default erosion (Tauri deserializes an absent command arg as None).
     let erosion_params = erosion_params.unwrap_or_default();
-    let model = bake_impl(&draft, &erosion_params);
-    let snap = snapshot_model(&model, draft.divisions, want_climate_debug, &climate_params);
-    let mut guard = sim.0.lock().expect("sim mutex poisoned");
-    *guard = Some(SimState {
-        model,
-        divisions: draft.divisions,
-        dt_ma: draft.dt_ma,
-    });
-    snap
+    // Scalars captured before `draft` moves into the blocking closure.
+    let divisions = draft.divisions;
+    let dt_ma = draft.dt_ma;
+    // Send + 'static handle for the blocking thread; State keeps the other.
+    let pc = progress.0.clone();
+    // Heavy compute off the IPC thread so the WebView stays responsive.
+    let (model, snap) = tauri::async_runtime::spawn_blocking(move || {
+        pc.store(BAKE_COMPUTE, Ordering::Relaxed);
+        let bake_t0 = std::time::Instant::now();
+        let model = bake_impl(&draft, &erosion_params);
+        let compute_el = bake_t0.elapsed();
+        pc.store(BAKE_SNAPSHOT, Ordering::Relaxed);
+        let snap_t0 = std::time::Instant::now();
+        let snap =
+            snapshot_model(&model, divisions, want_climate_debug, &climate_params);
+        let snap_el = snap_t0.elapsed();
+        eprintln!(
+            "[bake_from_wizard] compute={:.3}s snapshot={:.3}s total={:.3}s",
+            compute_el.as_secs_f64(),
+            snap_el.as_secs_f64(),
+            (compute_el + snap_el).as_secs_f64()
+        );
+        (model, snap)
+    })
+    .await
+    .map_err(|e| format!("bake task failed: {e}"))?;
+    {
+        // Brief lock AFTER the await — the std MutexGuard (!Send) never
+        // crosses an `.await`.
+        let mut guard = sim
+            .0
+            .lock()
+            .map_err(|_| "sim mutex poisoned".to_string())?;
+        *guard = Some(SimState {
+            model,
+            divisions,
+            dt_ma,
+        });
+    }
+    progress.0.store(BAKE_DONE, Ordering::Relaxed);
+    Ok(snap)
+}
+
+/// Frontend polls this (cheap, non-blocking) while a bake runs to show
+/// a coarse phase. 0 idle · 1 compute · 2 snapshot · 3 done.
+#[tauri::command]
+pub fn poll_bake_progress(progress: State<'_, BakeProgress>) -> u32 {
+    progress.0.load(Ordering::Relaxed)
 }
 
 /// Advance the persisted sim by `n_steps` and return a fresh snapshot.
@@ -229,9 +272,15 @@ pub fn step_planet(
 ) -> Result<PlanetSnapshot, String> {
     let mut guard = sim.0.lock().map_err(|_| "sim mutex poisoned".to_string())?;
     let state = guard.as_mut().ok_or_else(|| "no baked planet".to_string())?;
+    let step_t0 = std::time::Instant::now();
     for _ in 0..n_steps {
         state.model.step(state.dt_ma);
     }
+    eprintln!(
+        "[step_planet] step={:.3}s ({} steps)",
+        step_t0.elapsed().as_secs_f64(),
+        n_steps
+    );
     Ok(snapshot_model(&state.model, state.divisions, want_climate_debug, &climate_params))
 }
 
@@ -289,9 +338,9 @@ pub fn apply_boundary_types(
     }
 
     let seed = state.model.master_seed;
-    for plate in state.model.plates.iter_mut() {
+    let pairs: Vec<(u32, Vec3)> = state.model.plates.iter().filter_map(|plate| {
         let pid = plate.id;
-        let pos = match centroids.get(&pid) { Some(p) => *p, None => continue };
+        let pos = centroids.get(&pid).copied()?;
         let f = force_dir.get(&pid).copied().unwrap_or(Vec3::ZERO);
         let mut omega = if f.length_squared() > 1e-6 {
             let v = f.normalize() * 0.01;
@@ -308,8 +357,9 @@ pub fn apply_boundary_types(
         if len > MAX_PLATE_SPEED {
             omega *= MAX_PLATE_SPEED / len;
         }
-        plate.angular_velocity = omega;
-    }
+        Some((pid, omega))
+    }).collect();
+    for (pid, omega) in pairs { state.model.set_plate_angular_velocity(pid, omega); }
 
     let _ = counts; // silence unused; kept for future inertia recompute
     Ok(snapshot_model(&state.model, state.divisions, false, &ClimateParams::default()))
@@ -328,13 +378,12 @@ pub fn apply_density_rank(
     let mut guard = sim.0.lock().map_err(|_| "sim mutex poisoned".to_string())?;
     let state = guard.as_mut().ok_or_else(|| "no baked planet".to_string())?;
     let n = order.len().max(1) as f32;
-    for (i, pid) in order.iter().enumerate() {
+    let pairs: Vec<(u32, f32)> = order.iter().enumerate().map(|(i, &pid)| {
         let t = if n <= 1.0 { 0.5 } else { i as f32 / (n - 1.0) };
         let d = MIN_DENSITY + t * (MAX_DENSITY - MIN_DENSITY);
-        if let Some(plate) = state.model.plates.iter_mut().find(|p| p.id == *pid) {
-            plate.density = d;
-        }
-    }
+        (pid, d)
+    }).collect();
+    for (pid, d) in pairs { state.model.set_plate_density(pid, d); }
     Ok(snapshot_model(&state.model, state.divisions, false, &ClimateParams::default()))
 }
 
@@ -481,6 +530,7 @@ pub(crate) fn bake_impl(
     draft: &WizardDraft,
     erosion_params: &crate::hydrology::ErosionParams,
 ) -> Model {
+    let _bp3a_t0 = std::time::Instant::now();
     let preset = image::load_from_memory(preset_bytes(&draft.preset))
         .expect("preset PNG should decode")
         .to_rgba8();
@@ -496,6 +546,8 @@ pub(crate) fn bake_impl(
         }
     }
 
+    let bp3a_grid = _bp3a_t0.elapsed();
+    let _bp3a_t1 = std::time::Instant::now();
     // ── Step 1: bucket cells by HSV-hue (rounded to nearest 10°), TE-style.
     // Each bucket becomes a plate. Also retain per-cell elevation from HSV.
     struct CellInfo {
@@ -528,6 +580,8 @@ pub(crate) fn bake_impl(
     cell_plate_ids = majority_smooth(&model.grid, cell_plate_ids);
     cell_plate_ids = majority_smooth(&model.grid, cell_plate_ids);
 
+    let bp3a_partition = _bp3a_t1.elapsed();
+    let _bp3a_t2 = std::time::Instant::now();
     // ── Step 2: build per-plate cell buckets in plate-id order.
     let plate_count = hue_to_plate.len() as u32;
     let mut buckets: Vec<Vec<u32>> = (0..plate_count).map(|_| Vec::new()).collect();
@@ -643,28 +697,18 @@ pub(crate) fn bake_impl(
             DEEP_OCEAN_FLOOR
         };
         let cont = elevation > 0.0;
-        if let Some(f) = model.fields.get_mut(fid as usize) {
-            if cont {
-                f.crust = Crust::new_continental();
-                f.elevation = elevation.max(0.0);
-                f.become_continental_lithosphere(200.0);
-            } else {
-                f.crust = Crust::new_oceanic();
-                f.elevation = elevation.min(-0.0001);
-                f.refresh_oceanic_lithosphere();
-            }
-        }
+        model.apply_field_initial_state(fid as usize, elevation, cont);
     }
 
-    let area = model.grid.field_area_km2();
-    let fields_ref = model.fields.clone();
-    for p in model.plates.iter_mut() {
-        p.update_inertia_tensor(&fields_ref, area);
-    }
+    model.refresh_plate_inertias();
 
+    let bp3a_plates = _bp3a_t2.elapsed();
+    let _bp3a_t3 = std::time::Instant::now();
     for _ in 0..draft.run_length_steps {
         model.step(draft.dt_ma);
     }
+    let bp3a_tect_step = _bp3a_t3.elapsed();
+    let _bp3a_t4 = std::time::Instant::now();
 
     // ── Bake-phase fluvial erosion (coarse graph) ───────────────────────
     let n_h = model.grid.n_fields() as usize;
@@ -675,15 +719,28 @@ pub(crate) fn bake_impl(
     let mut elev: Vec<f32> = (0..n_h).map(|i| model.fields[i].elevation).collect();
     let is_ocean: Vec<bool> = elev.iter().map(|&e| e < 0.0).collect();
     let cell_area = model.grid.field_area_km2();
+    let bp3a_erode_prep = _bp3a_t4.elapsed();
+    let _bp3a_t5 = std::time::Instant::now();
     crate::hydrology::erode(&neighbours, &pos, &mut elev, &is_ocean,
                             cell_area, erosion_params);
-    for i in 0..n_h {
-        if let Some(f) = model.fields.get_mut(i) {
-            // fluvial only sculpts land; never moves a cell across sea level.
-            if !is_ocean[i] { f.elevation = elev[i].max(0.0); }
-        }
-    }
+    let bp3a_erode = _bp3a_t5.elapsed();
+    let _bp3a_t6 = std::time::Instant::now();
+    model.apply_eroded_elevation(&elev, &is_ocean);
 
+    let bp3a_writeback = _bp3a_t6.elapsed();
+    eprintln!(
+        "[bake_impl] grid={:.3}s partition={:.3}s plates={:.3}s \
+         tect_step={:.3}s(x{}) erode_prep={:.3}s erode={:.3}s \
+         writeback={:.3}s",
+        bp3a_grid.as_secs_f64(),
+        bp3a_partition.as_secs_f64(),
+        bp3a_plates.as_secs_f64(),
+        bp3a_tect_step.as_secs_f64(),
+        draft.run_length_steps,
+        bp3a_erode_prep.as_secs_f64(),
+        bp3a_erode.as_secs_f64(),
+        bp3a_writeback.as_secs_f64(),
+    );
     let _ = n_cells;
     model
 }

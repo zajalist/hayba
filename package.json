@@ -2,13 +2,31 @@
   "name": "hayba",
   "version": "1.0.0",
   "private": true,
-  "description": "Hayba MCP Toolkit — AI-powered terrain and PCG authoring for Unreal Engine",
+  "description": "Agentic spatial & procedural world-building for Unreal Engine 5 — MCP server + UE5 plugin + desktop explorer + worldbuilding packages.",
+  "keywords": ["mcp", "unreal-engine", "ue5", "procedural-generation", "pcg", "worldbuilding", "ai-agents", "conlang"],
+  "homepage": "https://github.com/zajalist/hayba#readme",
+  "repository": { "type": "git", "url": "https://github.com/zajalist/hayba.git" },
+  "bugs": { "url": "https://github.com/zajalist/hayba/issues" },
+  "author": "zajalist",
+  "engines": { "node": ">=22.5.0" },
   "workspaces": ["packages/*", "mcp-tools/*", "apps/*", "apps/*/packages/*"],
   "scripts": {
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces --if-present",
     "dev": "npm run dev --workspaces --if-present",
-    "prepare": "git config core.hooksPath .githooks || true"
+    "prepare": "git config core.hooksPath .githooks || true",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --check \"**/*.{ts,js,json,md}\"",
+    "format:fix": "prettier --write \"**/*.{ts,js,json,md}\"",
+    "typecheck": "tsc -b --noEmit"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.20.0",
+    "eslint": "^9.20.0",
+    "eslint-config-prettier": "^10.0.0",
+    "prettier": "^3.5.0",
+    "typescript-eslint": "^8.24.0"
   },
   "license": "MIT"
 }

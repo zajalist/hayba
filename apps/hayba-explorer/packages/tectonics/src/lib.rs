@@ -7,6 +7,7 @@
 //! during later phases. See the megasprint plan for details.
 
 pub mod sphere;
+pub use sphere::{Grid, VoronoiSphere};
 pub mod field;
 pub mod plate;
 pub mod subduction;
@@ -22,4 +23,5 @@ pub mod export;
 pub mod determinism;
 pub mod wizard;
 pub mod model;
+pub mod perf_timing;
 pub mod save;

@@ -39,7 +39,7 @@ export const sceneValidatePhysicsHandler: ToolHandler = async (args) => {
       text += `\n\nDeep check requested — relay payload to visual sidecar at SidecarURL/validate (not implemented in this version)`;
     }
     return { content: [{ type: 'text', text }] };
-  } catch (e) {
-    return { content: [{ type: 'text', text: `scene_validate_physics error: ${(e as Error).message}` }], isError: true };
+  } catch (e: unknown) {
+    return { content: [{ type: 'text', text: `scene_validate_physics error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
   }
 };

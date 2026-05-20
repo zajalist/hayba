@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="/config.js"></script>
+  <title>Hayba — Workbench</title>
+  <meta name="description" content="The conlang workbench is being integrated into Hayba Explorer." />
+  <meta name="robots" content="noindex" />
+  <link rel="icon" type="image/svg+xml" href="/assets/Logo.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+  <style>
+    .wb-wrap {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1.25rem;
+      text-align: center;
+      padding: 2rem;
+    }
+    .wb-wrap img { width: 64px; height: 64px; opacity: 0.9; }
+    .wb-wrap h1 { font-size: 1.6rem; margin: 0; }
+    .wb-wrap p { max-width: 34rem; color: var(--muted, #9aa); line-height: 1.6; }
+    .wb-wrap a { color: var(--accent, #7A8AB8); }
+  </style>
+</head>
+<body>
+  <main class="wb-wrap">
+    <img src="/assets/Logo.svg" alt="Hayba" />
+    <h1>The conlang workbench is moving</h1>
+    <p>
+      The interactive linguistics workbench (served here at <code>/app</code>
+      and <code>/lang/:id</code>) is being integrated into
+      <strong>Hayba Explorer</strong>, the desktop world-building app. This
+      route is a placeholder until that integration step lands — see the
+      roadmap in the <a href="https://github.com/zajalist/hayba">repository</a>.
+    </p>
+    <p><a href="/">← Back to hayba</a></p>
+  </main>
+</body>
+</html>

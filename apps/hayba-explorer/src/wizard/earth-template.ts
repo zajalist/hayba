@@ -28,6 +28,13 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
+/** Decoded grayscale heightmap: `lum[y*w + x]` = R channel / 255. */
+export interface EarthLum {
+  lum: Float32Array;
+  w: number;
+  h: number;
+}
+
 // --- Deterministic value-noise -------------------------------------------
 // Small integer hash → [0,1). Stable for a given (x,y,z) lattice point so the
 // whole template is reproducible run-to-run.
@@ -147,6 +154,44 @@ function regionMembership(r: Region, lonDeg: number, latDeg: number): number {
   return 1 - smoothstep(0.55, 1.0, dist);
 }
 
+// ── LE: in-memory Load-Earth cache (session-scoped) ───────────────────
+// Both public elevation fns are pure in (positions, n); within a session
+// `divisions` ↔ `n` ↔ `positions` are 1:1, so `n` alone is a correct,
+// sufficient key. Hits return a `.slice()` so the canonical cached
+// buffer is never aliased/mutated by callers (loadField etc.). Cleared
+// only on full reload (or `__resetEarthCache`, test-only).
+const _analyticCache = new Map<number, Float32Array>();
+// Declared here so __resetEarthCache compiles; populated/consumed by
+// the image path in a later task.
+const _fromImageCache = new Map<number, Float32Array>();
+let _earthLumPromise: Promise<EarthLum> | null = null;
+
+/** Test-only: drop every Load-Earth cache + the decoded-image promise
+ *  so a test starts cold. Not used by app code. */
+export function __resetEarthCache(): void {
+  _analyticCache.clear();
+  _fromImageCache.clear();
+  _earthLumPromise = null;
+}
+
+/**
+ * Build an Earth-like elevation field, one value per cell, in [-1, 1].
+ * Memoized by `n` (session-scoped). See {@link computeEarthElevations}.
+ *
+ * @param positions Flat unit-sphere xyz, 3 floats per cell (x,y,z).
+ * @param n         Cell count.
+ */
+export function earthElevations(
+  positions: Float32Array,
+  n: number,
+): Float32Array {
+  const hit = _analyticCache.get(n);
+  if (hit) return hit.slice();
+  const out = computeEarthElevations(positions, n);
+  _analyticCache.set(n, out);
+  return out.slice();
+}
+
 /**
  * Build an Earth-like elevation field, one value per cell, in [-1, 1].
  *
@@ -155,7 +200,7 @@ function regionMembership(r: Region, lonDeg: number, latDeg: number): number {
  * @returns Float32Array(n): deep ocean ≈ -1.0, continental shelf small
  *          negative, land ≈ +0.04 .. ~+0.85, a few mountain belts up to ~0.9.
  */
-export function earthElevations(positions: Float32Array, n: number): Float32Array {
+function computeEarthElevations(positions: Float32Array, n: number): Float32Array {
   const out = new Float32Array(n);
 
   for (let i = 0; i < n; i++) {
@@ -261,10 +306,9 @@ const SEA_GRAY = 0.46;
 const LAND_GAIN = 0.85;
 const LAND_EXP = 1.6;
 
-export async function earthElevationsFromImage(
-  positions: Float32Array,
-  n: number,
-): Promise<Float32Array> {
+/** The real browser decode of `/earth-heightmap.png` → an EarthLum
+ *  (R-channel/255). Replaceable in tests via `loadEarthLum(load)`. */
+async function defaultEarthImageData(): Promise<EarthLum> {
   const img = await new Promise<HTMLImageElement>((resolve, reject) => {
     const im = new Image();
     im.onload = () => resolve(im);
@@ -274,7 +318,6 @@ export async function earthElevationsFromImage(
   const W = img.naturalWidth;
   const H = img.naturalHeight;
   if (W === 0 || H === 0) throw new Error("earth-heightmap.png has zero size");
-
   const canvas = document.createElement("canvas");
   canvas.width = W;
   canvas.height = H;
@@ -282,10 +325,40 @@ export async function earthElevationsFromImage(
   if (!ctx) throw new Error("2D canvas context unavailable");
   ctx.drawImage(img, 0, 0);
   const data = ctx.getImageData(0, 0, W, H).data;
+  // Pre-normalize the R channel once (grayscale DEM ⇒ R=G=B). Bilinear
+  // of (R/255) == (bilinear of R)/255 exactly in float, so moving the
+  // /255 here is byte-equivalent to the old per-sample divide.
+  const lum = new Float32Array(W * H);
+  for (let i = 0; i < W * H; i++) lum[i] = data[i * 4] / 255;
+  return { lum, w: W, h: H };
+}
 
-  // Bilinear luminance (R channel — the DEM is grayscale so R=G=B). x wraps
-  // (longitude is periodic); y clamps (poles).
-  const lum = (px: number, py: number): number => {
+/** Decode the heightmap at most ONCE per session (shared promise; the
+ *  promise is reset on rejection so a transient failure can retry). */
+export async function loadEarthLum(
+  load: () => Promise<EarthLum> = defaultEarthImageData,
+): Promise<EarthLum> {
+  if (_earthLumPromise) return _earthLumPromise;
+  const p = load().catch((err) => {
+    _earthLumPromise = null;
+    throw err;
+  });
+  _earthLumPromise = p;
+  return p;
+}
+
+/** Pure: sample a decoded EarthLum into a per-cell elevation field.
+ *  Bilinear luminance (x wraps — longitude periodic; y clamps — poles)
+ *  then the SEA_GRAY/LAND_EXP/LAND_GAIN curve. Math moved verbatim from
+ *  the old earthElevationsFromImage; byte-equivalent (pinned by test). */
+export function sampleEarthField(
+  el: EarthLum,
+  positions: Float32Array,
+  n: number,
+): Float32Array {
+  const W = el.w;
+  const H = el.h;
+  const lumAt = (px: number, py: number): number => {
     const x0 = Math.floor(px);
     const y0 = Math.floor(py);
     const fx = px - x0;
@@ -297,12 +370,11 @@ export async function earthElevationsFromImage(
     const xb = wrap(x0 + 1, W);
     const ya = clampi(y0, H);
     const yb = clampi(y0 + 1, H);
-    const g = (xi: number, yi: number): number => data[(yi * W + xi) * 4];
+    const g = (xi: number, yi: number): number => el.lum[yi * W + xi];
     const top = g(xa, ya) + (g(xb, ya) - g(xa, ya)) * fx;
     const bot = g(xa, yb) + (g(xb, yb) - g(xa, yb)) * fx;
-    return (top + (bot - top) * fy) / 255;
+    return top + (bot - top) * fy;
   };
-
   const out = new Float32Array(n);
   for (let i = 0; i < n; i++) {
     const x = positions[3 * i];
@@ -310,11 +382,9 @@ export async function earthElevationsFromImage(
     const z = positions[3 * i + 2];
     const latDeg = Math.asin(clamp(y, -1, 1)) * RAD2DEG; // +90 N .. -90 S
     const lonDeg = Math.atan2(z, x) * RAD2DEG; // -180 .. 180
-    // Flip longitude: our sphere's atan2(z,x) runs opposite the image's
-    // west→east, so the un-flipped sample rendered a mirror-image Earth.
     const u = 1 - (lonDeg + 180) / 360; // 0..1, east-west corrected
     const v = (90 - latDeg) / 180; // 0 = north (top row)
-    const L = lum(u * W, v * H);
+    const L = lumAt(u * W, v * H);
     let elev: number;
     if (L >= SEA_GRAY) {
       const landN = (L - SEA_GRAY) / (1 - SEA_GRAY); // 0 coast .. 1 peak
@@ -325,4 +395,22 @@ export async function earthElevationsFromImage(
     out[i] = clamp(elev, -1, 1);
   }
   return out;
+}
+
+/**
+ * Real-Earth elevation field, memoized by `n` (session-scoped). The
+ * heightmap is decoded once; repeat presses at the same cell count are
+ * near-instant. Public signature unchanged; `load` is test-only.
+ */
+export async function earthElevationsFromImage(
+  positions: Float32Array,
+  n: number,
+  load: () => Promise<EarthLum> = defaultEarthImageData,
+): Promise<Float32Array> {
+  const hit = _fromImageCache.get(n);
+  if (hit) return hit.slice();
+  const el = await loadEarthLum(load);
+  const out = sampleEarthField(el, positions, n);
+  _fromImageCache.set(n, out);
+  return out.slice();
 }

@@ -33,7 +33,7 @@ export const editorCaptureViewportHandler: ToolHandler = async (args) => {
       text += `\n\nSidecar embedding integration pending (Task 20)`;
     }
     return { content: [{ type: 'text', text }] };
-  } catch (e) {
-    return { content: [{ type: 'text', text: `editor_capture_viewport error: ${(e as Error).message}` }], isError: true };
+  } catch (e: unknown) {
+    return { content: [{ type: 'text', text: `editor_capture_viewport error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
   }
 };

@@ -44,11 +44,14 @@
 //! * Frame-stream emission is owned by the caller (`run_steps` writes one
 //!   frame per call); the encoder is not stored on the Model.
 
+use std::collections::HashMap;
+
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 use crate::field::Field;
 use crate::mantle::PlumeRegistry;
+use crate::perf_timing::{Phase, PhaseTimer};
 use crate::plate::plate::{Plate, OCEAN_DENSITY};
 use crate::plate::plate_group::PlateGroup;
 use crate::sphere::Grid;
@@ -88,6 +91,23 @@ pub struct Model {
     /// integrator passes.
     #[serde(default)]
     pub plume_registry: PlumeRegistry,
+
+    /// SD — reused scratch buffer for `advance_subduction`'s per-field
+    /// min-neighbour-distance pass. Hoisted out of the function body to
+    /// eliminate the per-step `Vec<f32>` allocation (was the dominant
+    /// `subduction` phase cost per the TS+1 measurement). Reset to
+    /// `Vec::new()` on deserialize so save/load is byte-equal; the next
+    /// `advance_subduction` call resize()s it to `fields.len()`.
+    #[serde(skip, default)]
+    subduction_scratch: Vec<f32>,
+
+    /// SD T2 — reused list of field ids with an active subduction record.
+    /// Only ~5–10% of fields have one; iterating sparsely instead of
+    /// scanning all F fields × 6 neighbours per step cuts inner-loop
+    /// body executions by ~95%. Rebuilt each `advance_subduction` call
+    /// from the current `fields` slice (cheap O(F) scan).
+    #[serde(skip, default)]
+    subduction_active_fids: Vec<u32>,
 }
 
 impl Model {
@@ -109,6 +129,8 @@ impl Model {
             master_seed,
             optimized_collision_detection: false,
             plume_registry,
+            subduction_scratch: Vec::new(),
+            subduction_active_fids: Vec::new(),
         }
     }
 
@@ -172,8 +194,10 @@ impl Model {
     }
 
     pub fn step(&mut self, dt: f32) {
+        let mut t = PhaseTimer::start();
         // ── PHASE A: verlet integrate all plates (TE step 1) ───────────
         self.step_verlet(dt);
+        t.lap(Phase::Verlet);
 
         // ── PHASE B: speed-clamp (TE step 2, `model.ts:268-272`) ───────
         // Applied to every plate after the integrator regardless of mass.
@@ -193,6 +217,7 @@ impl Model {
         self.remove_empty_plates();
         // ── PHASE 3d: spawn new fields (MOR) ────────────────────────────
         self.generate_new_fields(dt);
+        t.lap(Phase::Geo);
         // ── PHASE 3e: refresh per-plate inertia tensors ─────────────────
         self.update_inertia_tensors();
         // ── PHASE 3f: refresh per-plate geographic centers ──────────────
@@ -207,6 +232,7 @@ impl Model {
         self.group_and_split_plates();
         // ── PHASE 3i: divide plates by age ──────────────────────────────
         self.divide_plates_by_age();
+        t.lap(Phase::Inertia);
         // ── PHASE 3j (Hayba) — mantle dynamics ──────────────────────────
         // Lithospheric column refresh + plume ageing / track recording.
         // Lives at the end of `simulatePlatesInteractions` so plates have
@@ -237,9 +263,11 @@ impl Model {
         for p in self.plates.iter_mut() {
             p.reset_force_accumulator();
         }
+        t.lap(Phase::Plume);
         let optimize = self.optimized_collision_detection;
         let collisions =
             detect_field_collisions_opt(&self.plates, &self.grid, &self.fields, optimize);
+        t.lap(Phase::Collisions);
 
         // ── PHASE D: resolve each collision (Hayba addition) ───────────
         let plates_snapshot: Vec<Plate> = self.plates.clone();
@@ -261,10 +289,12 @@ impl Model {
                 f.mor_age_steps = f.mor_age_steps.saturating_add(1);
             }
         }
+        t.lap(Phase::Resolve);
 
         // ── PHASE E: advance subduction (Hayba addition) ───────────────
         let field_diam = self.grid.field_diameter();
         self.advance_subduction(dt, field_diam);
+        t.lap(Phase::Subduction);
 
         // ── PHASE F: try-detach loop. TODO Phase 4 — needs the slab
         // gradient calculator. Skipped for now.
@@ -273,6 +303,7 @@ impl Model {
         self.step_count += 1;
         self.sim_time_ma += dt;
         self.optimized_collision_detection = true;
+        t.report(self.step_count);
     }
 
     /// Faithful port of TE's `verletStep` over all plates simultaneously.
@@ -283,16 +314,24 @@ impl Model {
             return;
         }
 
+        // SV: build id→index map ONCE; reused by both predictor + corrector.
+        let id_to_idx: HashMap<u32, usize> = self
+            .plates
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.id, i))
+            .collect();
+
         // a1 = torques at current state for ALL plates.
         let mut a1: Vec<Vec3> = Vec::with_capacity(n);
         for i in 0..n {
-            let other_plates: Vec<Plate> = self
-                .plates
-                .iter()
-                .enumerate()
-                .filter_map(|(j, p)| if j != i { Some(p.clone()) } else { None })
-                .collect();
-            let t = self.plates[i].compute_total_torque(&self.fields, &other_plates, area);
+            let t = self.plates[i].compute_total_torque_indexed(
+                &self.fields,
+                &self.plates,
+                i,
+                &id_to_idx,
+                area,
+            );
             a1.push(acceleration_for(&self.plates[i], t));
         }
 
@@ -312,13 +351,13 @@ impl Model {
         // a2 = torques at NEW state for ALL plates.
         let mut a2: Vec<Vec3> = Vec::with_capacity(n);
         for i in 0..n {
-            let other_plates: Vec<Plate> = self
-                .plates
-                .iter()
-                .enumerate()
-                .filter_map(|(j, p)| if j != i { Some(p.clone()) } else { None })
-                .collect();
-            let t = self.plates[i].compute_total_torque(&self.fields, &other_plates, area);
+            let t = self.plates[i].compute_total_torque_indexed(
+                &self.fields,
+                &self.plates,
+                i,
+                &id_to_idx,
+                area,
+            );
             a2.push(acceleration_for(&self.plates[i], t));
         }
 
@@ -426,18 +465,108 @@ impl Model {
         }
     }
 
+    /// Initialize a field's elevation + crust + lithosphere from the
+    /// painted/preset wizard input. `continental` selects the branch;
+    /// elevation is clamped to land (≥0) or ocean (<0) as appropriate.
+    /// Mirrors wizard.rs:701-711 / bake_equirect.rs:106-116 byte-for-byte.
+    pub fn apply_field_initial_state(&mut self, fid: usize, elevation: f32, continental: bool) {
+        if let Some(f) = self.fields.get_mut(fid) {
+            if continental {
+                f.crust = crate::field::Crust::new_continental();
+                f.elevation = elevation.max(0.0);
+                f.become_continental_lithosphere(200.0);
+            } else {
+                f.crust = crate::field::Crust::new_oceanic();
+                f.elevation = elevation.min(-0.0001);
+                f.refresh_oceanic_lithosphere();
+            }
+        }
+    }
+
+    /// Assign a field to a plate: sets `f.plate_id` and calls
+    /// `plate.add_field(fid)`. Used by `planet.rs::demo_model` to bucket
+    /// unclaimed ocean cells into ocean plates.
+    pub fn assign_field_to_plate(&mut self, fid: usize, pid: u32) {
+        if let Some(f) = self.fields.get_mut(fid) {
+            f.plate_id = Some(pid);
+        }
+        if let Some(p) = self.plates.iter_mut().find(|p| p.id == pid) {
+            p.add_field(fid as u32);
+        }
+    }
+
+    /// Recompute inertia for every plate using the current `fields` snapshot
+    /// and grid area. Mirrors wizard.rs:714-718 / planet.rs:197-201 byte-for-byte
+    /// (the clone is load-bearing: `update_inertia_tensor` borrows `&[Field]`
+    /// while iterating `&mut self.plates`).
+    pub fn refresh_plate_inertias(&mut self) {
+        let area = self.grid.field_area_km2();
+        let fields_ref = self.fields.clone();
+        for p in self.plates.iter_mut() {
+            p.update_inertia_tensor(&fields_ref, area);
+        }
+    }
+
+    /// Set a single plate's angular velocity by id. Used by
+    /// `apply_boundary_types` (wizard.rs:342-362).
+    pub fn set_plate_angular_velocity(&mut self, pid: u32, omega: Vec3) {
+        if let Some(p) = self.plates.iter_mut().find(|p| p.id == pid) {
+            p.angular_velocity = omega;
+        }
+    }
+
+    /// Set a single plate's density by id. Used by `apply_density_rank`
+    /// (wizard.rs:384-386).
+    pub fn set_plate_density(&mut self, pid: u32, density: f32) {
+        if let Some(p) = self.plates.iter_mut().find(|p| p.id == pid) {
+            p.density = density;
+        }
+    }
+
+    /// Write back a slice of eroded elevations (land only — ocean cells
+    /// untouched). Mirrors wizard.rs:743-748 byte-for-byte: applies
+    /// `.max(0.0)` clamp and the `if !is_ocean[i]` predicate.
+    pub fn apply_eroded_elevation(&mut self, elev: &[f32], is_ocean: &[bool]) {
+        for i in 0..elev.len() {
+            if let Some(f) = self.fields.get_mut(i) {
+                if !is_ocean[i] { f.elevation = elev[i].max(0.0); }
+            }
+        }
+    }
+
     /// Advance the `Subduction.dist` on each subducting field by one timestep.
     /// Mirrors the per-field call to `Subduction.update` that TE does inside
     /// `simulatePlatesInteractions` via `performGeologicalProcesses`.
     fn advance_subduction(&mut self, dt: f32, field_diameter: f32) {
-        // Precompute neighbour-min dist for every field (TE: `update`'s
-        // `min_neighbour_dist` argument — derived from neighbour subduction
-        // records). Iterate in id order for determinism.
+        // Precompute neighbour-min dist for every field with an active
+        // subduction record (TE: `update`'s `min_neighbour_dist` argument
+        // — derived from neighbour subduction records). Iterate in id
+        // order for determinism.
+        //
+        // SD: scratch buffer hoisted to `self.subduction_scratch` to avoid a
+        // per-step allocation. Take it out via mem::take, write into the
+        // local, swap back at end — preserves capacity across calls.
+        //
+        // SD T2: sparse outer iteration. Only fields where `f.subduction
+        // .is_some()` need their scratch[fid] computed (Loop 2 only reads
+        // scratch[fid] for those same fields). Building active_fids is a
+        // single O(F) scan; both subsequent loops become O(active) instead
+        // of O(F·6). Byte-equal: same arithmetic, same iteration order,
+        // scratch values for inactive fields are never read.
         let n = self.fields.len();
-        let mut min_neighbour: Vec<f32> = vec![0.0; n];
-        for fid in 0..n {
+        let mut scratch = std::mem::take(&mut self.subduction_scratch);
+        scratch.clear();
+        scratch.resize(n, 0.0);
+        let mut active_fids = std::mem::take(&mut self.subduction_active_fids);
+        active_fids.clear();
+        for i in 0..n {
+            if self.fields[i].subduction.is_some() {
+                active_fids.push(i as u32);
+            }
+        }
+        for &fid in &active_fids {
             let mut m = f32::INFINITY;
-            for &nid in self.grid.neighbours(fid as u32) {
+            for &nid in self.grid.neighbours(fid) {
                 if let Some(nf) = self.fields.get(nid as usize) {
                     if let Some(s) = &nf.subduction {
                         if s.dist < m {
@@ -446,13 +575,16 @@ impl Model {
                     }
                 }
             }
-            min_neighbour[fid] = if m.is_finite() { m } else { 0.0 };
+            scratch[fid as usize] = if m.is_finite() { m } else { 0.0 };
         }
-        for (i, f) in self.fields.iter_mut().enumerate() {
-            if let Some(s) = f.subduction.as_mut() {
-                let _ = s.update(dt, min_neighbour[i], field_diameter);
+        for &fid in &active_fids {
+            let i = fid as usize;
+            if let Some(s) = self.fields[i].subduction.as_mut() {
+                let _ = s.update(dt, scratch[i], field_diameter);
             }
         }
+        self.subduction_scratch = scratch;
+        self.subduction_active_fids = active_fids;
     }
 }
 

@@ -5,6 +5,8 @@ mod wizard;
 mod sim_state;
 mod climate;
 mod hydrology;
+mod bake_equirect;
+mod scale;
 
 #[tauri::command]
 fn bake_demo_planet() -> planet::PlanetSnapshot {
@@ -15,6 +17,7 @@ fn bake_demo_planet() -> planet::PlanetSnapshot {
 pub fn run() {
     tauri::Builder::default()
         .manage(sim_state::ManagedSim::empty())
+        .manage(sim_state::BakeProgress::empty())
         .invoke_handler(tauri::generate_handler![
             bake_demo_planet,
             wizard::start_wizard,
@@ -23,9 +26,11 @@ pub fn run() {
             wizard::compute_partition,
             wizard::step_planet,
             wizard::reset_sim,
+            wizard::poll_bake_progress,
             wizard::apply_boundary_types,
             wizard::apply_density_rank,
             wizard::get_grid_triangles,
+            bake_equirect::bake_inputs_equirect,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hayba Explorer");

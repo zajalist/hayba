@@ -34,8 +34,8 @@ export function loadManifest(projectRoot: string): AgentsManifest {
   try {
     const raw = readFileSync(p, 'utf-8');
     return JSON.parse(raw) as AgentsManifest;
-  } catch (e) {
-    console.error(`[hayba] hayba.agents.json malformed (${(e as Error).message}); using bundled defaults`);
+  } catch (e: unknown) {
+    console.error(`[hayba] hayba.agents.json malformed (${e instanceof Error ? e.message : String(e)}); using bundled defaults`);
     return DEFAULT_MANIFEST;
   }
 }

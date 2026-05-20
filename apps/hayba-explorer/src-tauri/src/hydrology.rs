@@ -76,13 +76,19 @@ fn order_key(e: f32) -> u32 {
     if b & 0x8000_0000 != 0 { !b } else { b | 0x8000_0000 }
 }
 
-pub fn priority_flood(
+/// Barnes Priority-Flood depression fill, writing the filled elevation
+/// into the reused `filled` buffer (cleared and refilled from `elev`).
+/// Splitting the body out of `priority_flood` lets `erode`'s iteration
+/// loop reuse one allocation instead of `elev.to_vec()` every pass.
+fn priority_flood_into(
     neighbours: &[Vec<u32>],
     elev: &[f32],
     is_ocean: &[bool],
-) -> Vec<f32> {
+    filled: &mut Vec<f32>,
+) {
     let n = elev.len();
-    let mut filled = elev.to_vec();
+    filled.clear();
+    filled.extend_from_slice(elev);
     let mut closed = vec![false; n];
     // Min-heap keyed on the *filled* elevation (Reverse over order_key).
     let mut heap: BinaryHeap<Reverse<(u32, u32)>> = BinaryHeap::new();
@@ -106,6 +112,17 @@ pub fn priority_flood(
             heap.push(Reverse((order_key(filled[j]), nb)));
         }
     }
+}
+
+/// Allocating wrapper preserving the original public API. Hot callers
+/// (`erode`) should call `priority_flood_into` with a reused buffer.
+pub fn priority_flood(
+    neighbours: &[Vec<u32>],
+    elev: &[f32],
+    is_ocean: &[bool],
+) -> Vec<f32> {
+    let mut filled = Vec::new();
+    priority_flood_into(neighbours, elev, is_ocean, &mut filled);
     filled
 }
 
@@ -200,10 +217,12 @@ fn hillslope_diffuse(
     elev: &mut [f32],
     is_ocean: &[bool],
     d: f32,
+    prev: &mut Vec<f32>,
 ) {
     if d <= 0.0 { return; }
     let k = d.min(0.45);
-    let prev: Vec<f32> = elev.to_vec();
+    prev.clear();
+    prev.extend_from_slice(elev);
     for i in 0..elev.len() {
         if is_ocean[i] { continue; }
         let nbs = &neighbours[i];
@@ -237,12 +256,20 @@ pub fn erode(
     if p.iterations == 0 || p.strength <= 0.0 { return; }
     let h0: Vec<f32> = elev.to_vec(); // fixed reference DEM (macro shape)
     let dt = 1.0_f32;
+    // Reused across iterations — replaces a per-pass `elev.to_vec()` in
+    // both priority_flood and hillslope_diffuse (~2·iterations ~6 MB
+    // allocations/bake at N≈1.5M). Algorithm output is bit-identical;
+    // only the buffers' lifetime changes (per-call → per-erode).
+    let mut pf_filled: Vec<f32> = Vec::new();
+    let mut hs_prev: Vec<f32> = Vec::new();
     for _ in 0..p.iterations {
-        let filled = priority_flood(neighbours, elev, is_ocean);
-        let recv = flow_receivers(neighbours, pos, &filled);
+        priority_flood_into(neighbours, elev, is_ocean, &mut pf_filled);
+        let recv = flow_receivers(neighbours, pos, &pf_filled);
         let area = drainage_area(&recv, cell_area);
         stream_power_step(&recv, pos, &area, elev, is_ocean, dt, p);
-        hillslope_diffuse(neighbours, pos, elev, is_ocean, p.hillslope_diffusion);
+        hillslope_diffuse(
+            neighbours, pos, elev, is_ocean, p.hillslope_diffusion, &mut hs_prev,
+        );
     }
     // Macro-preserving blend: the carried detail is (eroded - h0); add
     // back only `strength` of it so the real DEM dominates.
@@ -364,6 +391,69 @@ mod tests {
         assert!(elev[1] <= 1.0 + 1e-6 && elev[2] <= 1.0 + 1e-6,
                 "land not raised above start by net erosion");
         assert!(elev[1] >= 0.0, "land not eroded below sea level by fluvial");
+    }
+
+    #[test]
+    fn priority_flood_into_reused_buffer_is_bit_identical_to_fresh() {
+        // Same pit fixture as priority_flood_fills_a_pit_to_its_lowest_rim.
+        let neighbours = vec![vec![1u32], vec![0, 2], vec![1, 3], vec![2]];
+        let elev = vec![0.0_f32, 5.0, 1.0, 6.0];
+        let is_ocean = vec![true, false, false, false];
+        let fresh = priority_flood(&neighbours, &elev, &is_ocean);
+        // Pre-seed the reused buffer with garbage AND a different length to
+        // prove clear()+extend_from_slice fully overwrites it.
+        let mut reused: Vec<f32> =
+            vec![f32::NAN, -1.0, 12345.6, 7.0, 8.0, 9.0, 10.0];
+        priority_flood_into(&neighbours, &elev, &is_ocean, &mut reused);
+        assert_eq!(reused.len(), fresh.len(), "length must match fresh alloc");
+        for (a, b) in reused.iter().zip(fresh.iter()) {
+            assert_eq!(a.to_bits(), b.to_bits(), "bit-identical to fresh");
+        }
+    }
+
+    #[test]
+    fn hillslope_diffuse_output_independent_of_incoming_buffer() {
+        let neighbours = vec![vec![1u32], vec![0, 2], vec![1, 3], vec![2]];
+        // pos is unused by hillslope_diffuse; any vec of the right length.
+        let pos = vec![Vec3::X, Vec3::X, Vec3::X, Vec3::X];
+        let is_ocean = vec![true, false, false, false];
+        let base = vec![0.0_f32, 4.0, 1.0, 6.0];
+        let mut e1 = base.clone();
+        let mut fresh_buf: Vec<f32> = Vec::new();
+        hillslope_diffuse(&neighbours, &pos, &mut e1, &is_ocean, 0.3, &mut fresh_buf);
+        let mut e2 = base.clone();
+        let mut dirty_buf: Vec<f32> = vec![f32::NAN; 2];
+        hillslope_diffuse(&neighbours, &pos, &mut e2, &is_ocean, 0.3, &mut dirty_buf);
+        assert_eq!(e1.len(), e2.len());
+        for (x, y) in e1.iter().zip(e2.iter()) {
+            assert_eq!(x.to_bits(), y.to_bits(),
+                       "hillslope result must not depend on buffer residue");
+        }
+    }
+
+    #[test]
+    fn erode_is_bit_identical_across_independent_runs() {
+        // ErosionParams::default().iterations is large (>3) so the reused
+        // pf_filled / hs_prev buffers are exercised across many passes.
+        let neighbours = vec![vec![1u32], vec![0, 2], vec![1, 3], vec![2]];
+        let pos = vec![
+            Vec3::X,
+            Vec3::new(1.0, 0.1, 0.0).normalize(),
+            Vec3::new(1.0, 0.2, 0.0).normalize(),
+            Vec3::new(1.0, 0.3, 0.0).normalize(),
+        ];
+        let start = vec![0.0_f32, 3.0, 5.0, 2.0];
+        let is_ocean = vec![true, false, false, false];
+        let p = ErosionParams::default();
+        let mut a = start.clone();
+        erode(&neighbours, &pos, &mut a, &is_ocean, 1.0, &p);
+        let mut b = start.clone();
+        erode(&neighbours, &pos, &mut b, &is_ocean, 1.0, &p);
+        assert_eq!(a.len(), b.len());
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert_eq!(x.to_bits(), y.to_bits(),
+                       "buffer reuse must not perturb erosion output");
+        }
     }
 
     #[test]

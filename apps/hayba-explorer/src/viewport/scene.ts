@@ -2,6 +2,14 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { colors } from "@hayba/design-tokens";
 import { createStarfield, type StarfieldHandle } from "./starfield";
+import { createWindFlow, type WindFlow } from "./windFlow";
+import {
+  createFrameMeter,
+  adaptiveScale,
+  createRenderGate,
+  type PerfSnapshot,
+  type BakeSplit,
+} from "./perf";
 
 export interface SceneHandle {
   renderer: THREE.WebGLRenderer;
@@ -14,18 +22,96 @@ export interface SceneHandle {
   dispose: () => void;
   /** Replace the current globe object (point cloud or future mesh). */
   setGlobe: (object: THREE.Object3D | null) => void;
+  /**
+   * Run an offline GPU job (the A15 erosion bake) with the live render
+   * loop PAUSED — "bake-then-watch". Erosion is a heavy multi-pass
+   * offscreen job; sharing the renderer with the per-frame `tick`
+   * (render-target thrash + GPU contention) would both slow the bake and
+   * stutter the viewport. So: cancel the pending `requestAnimationFrame`,
+   * await `fn(renderer)`, then resume the tick exactly as before
+   * (`prevTime` is reset so the resumed frame's `dt` is not a huge spike).
+   * The tick always resumes even if `fn` throws/rejects (try/finally).
+   */
+  runBake: (fn: (renderer: THREE.WebGLRenderer) => Promise<void> | void) => Promise<void>;
+  /** Mark the scene dirty so the on-demand loop renders a frame. */
+  markDirty: () => void;
+  /** NX-3: while active, keep the render loop alive (cooperating with
+   *  the NX-1 on-demand gate) and advance the displayed globe's
+   *  `uWindTime`. false → loop returns to NX-1 idle. */
+  setWindAnim: (active: boolean) => void;
+  /** NX-3-v2b/v2c: the WIND equirect RT (vx,vy,|v|) the flow-map advects,
+   *  and the CLIM equirect RT (T,P,windAz,glac) used to tint particles by
+   *  temperature. Either null tears the flow engine down. */
+  setWindSource: (windRT: THREE.WebGLRenderTarget | null, climRT: THREE.WebGLRenderTarget | null) => void;
+  /** Latest perf counters for the HUD (cheap getter; no allocation
+   *  hot-path). */
+  perfSnapshot: () => PerfSnapshot;
+  /** BP-1: store the latest per-stage bake timing split for the HUD. */
+  setBakeSplit: (s: BakeSplit) => void;
 }
 
 function hexToColor(hex: string): THREE.Color {
   return new THREE.Color(hex);
 }
 
+// TODO(bake-debug): remove after feedback-loop root-caused.
+// Dev-only EXTERNAL-RENDER-DURING-BAKE detector. The GPU bake runs with
+// the live render loop paused (`runBake`: baking=true + loopEpoch bump).
+// If ANY code path issues a main-scene `renderer.render(...)` while a bake
+// owns the renderer (a competing rAF, OrbitControls, ResizeObserver, a
+// React state-driven render, three.js internals — anything the static
+// audit could not see), it aliases the bake's bound RTs/textures and
+// causes the "Feedback loop formed between Framebuffer and active
+// Texture" GL spam. We do NOT suppress the render (we want the diagnostic
+// and to confirm causation) — we monkey-patch `renderer.render` to log
+// the FIRST such call per bake WITH its stack, so the trigger is named.
+// Gated by an explicit const AND import.meta.env.DEV so prod is
+// byte-for-byte unaffected (Vite tree-shakes the dead branch).
+const BAKE_DEBUG_SCENE = true;
+// See pingpong.ts for the `unknown`-cast rationale (Vite-injected env,
+// undefined under bare Node — keeps tsc + headless tests both happy).
+const _bakeDbgScene =
+  BAKE_DEBUG_SCENE &&
+  (import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV === true;
+
 export function createScene(canvas: HTMLCanvasElement): SceneHandle {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
-  renderer.setPixelRatio(window.devicePixelRatio);
+  // NX-1: clamp DPR — hi-DPI was multiplying fragment count 4–6×.
+  // `baseDpr` is the ceiling; adaptive scaling multiplies it (≤1).
+  const baseDpr = Math.min(window.devicePixelRatio, 1.5);
+  renderer.setPixelRatio(baseDpr);
   renderer.setClearColor(hexToColor(colors.bgDeep), 1.0);
 
   const scene = new THREE.Scene();
+
+  // TODO(bake-debug): remove after feedback-loop root-caused.
+  // Bake-scoped diagnostic state for the EXTERNAL-RENDER detector. `baking`
+  // (declared further down) flips true while a bake owns the renderer; the
+  // monkey-patched `render` below logs the first competing call per bake.
+  let _bakeExternalRenderLogged = false;
+  let _bakeGuardBlocks = 0;
+  if (_bakeDbgScene) {
+    const origRender = renderer.render.bind(renderer);
+    renderer.render = ((sc: THREE.Object3D, cam: THREE.Camera) => {
+      // `baking` is hoisted (function-scoped `let` below); read lazily.
+      if (_sceneBaking && sc === scene) {
+        if (!_bakeExternalRenderLogged) {
+          _bakeExternalRenderLogged = true;
+          // eslint-disable-next-line no-console
+          console.error(
+            "[bake-feedback] EXTERNAL RENDER during bake (main scene) from: " +
+              (new Error().stack ?? "(no stack)"),
+          );
+        }
+        // Do NOT suppress — render anyway so causation is confirmed by the
+        // GL feedback-loop spam appearing right after this log line.
+      }
+      return origRender(sc as THREE.Scene, cam as THREE.PerspectiveCamera);
+    }) as typeof renderer.render;
+  }
+  // Mirror of `baking` readable by the patched render above (set/reset in
+  // runBake). TODO(bake-debug): remove with the rest of this block.
+  let _sceneBaking = false;
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
   camera.position.set(0, 0, 3.5);
@@ -70,6 +156,27 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
     RIGHT:  THREE.MOUSE.ROTATE,
   };
 
+  // NX-1 perf core — declared before ResizeObserver so the closure can
+  // reference `gate` without a TDZ hazard.
+  const gate = createRenderGate();
+  const meter = createFrameMeter();
+  const markDirtyNow = (): void => gate.markDirty(performance.now());
+  let perfScale = 1;
+  let perfHold = 0;
+  let lastBakeMs: number | null = null;
+  let lastBakeSplit: BakeSplit | null = null;
+  let perfSnap: PerfSnapshot = {
+    fps: 0,
+    ms: 0,
+    emaMs: 0,
+    calls: 0,
+    triangles: 0,
+    scale: 1,
+    gpuMs: null,
+    bakeMs: null,
+    bakeSplit: null,
+  };
+
   const ro = new ResizeObserver((entries) => {
     for (const entry of entries) {
       const { width, height } = entry.contentRect;
@@ -78,22 +185,123 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
       renderer.setSize(w, h, false);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
+      gate.markDirty(performance.now());
     }
   });
   ro.observe(canvas);
 
   let raf = 0;
   let prevTime = performance.now();
-  const tick = () => {
-    const now = performance.now();
-    const dt = Math.min(0.1, (now - prevTime) / 1000);
-    prevTime = now;
-    starfield.tick(dt);
-    controls.update();
-    renderer.render(scene, camera);
-    raf = requestAnimationFrame(tick);
+  // True while a bake owns the renderer; the tick must not reschedule
+  // itself (and a stray in-flight tick must not render) until resumed.
+  let baking = false;
+  // Monotonic loop epoch. Each `tick` captures the epoch it was scheduled
+  // under; `runBake` bumps the epoch so ANY callback queued before the
+  // bake started (or that somehow slipped through) is provably inert when
+  // it finally fires — it neither renders nor reschedules. This makes the
+  // suspension robust across the Phase-1 `await yieldToLoop()` macrotask
+  // gaps: the render loop cannot touch the renderer while bake RTs are
+  // bound, independent of rAF/cancel timing races.
+  let loopEpoch = 0;
+  let windAnimActive = false;
+  let windTime = 0;
+  let windSource: THREE.WebGLRenderTarget | null = null;
+  let climSource: THREE.WebGLRenderTarget | null = null;
+  let windFlow: WindFlow | null = null;
+  const disposeWindFlow = (): void => {
+    if (windFlow) {
+      windFlow.dispose();
+      windFlow = null;
+    }
   };
-  raf = requestAnimationFrame(tick);
+  const ensureWindFlow = (): void => {
+    if (windAnimActive && windSource && climSource && !windFlow) {
+      windFlow = createWindFlow(renderer, windSource, climSource);
+    }
+  };
+  const scheduleTick = () => {
+    const myEpoch = loopEpoch;
+    raf = requestAnimationFrame(() => {
+      // Drop if a bake is running or this callback belongs to a
+      // superseded epoch (cancelled/replaced loop generation).
+      if (baking || myEpoch !== loopEpoch) {
+        // TODO(bake-debug): remove after feedback-loop root-caused.
+        // Count how often the rAF tick was correctly suppressed during a
+        // bake — proves the loopEpoch/baking guard is actually engaging
+        // (vs. the competing render coming from a NON-rAF path).
+        if (_bakeDbgScene && baking) _bakeGuardBlocks++;
+        return;
+      }
+      const now = performance.now();
+      // NX-1 on-demand: skip the heavy work entirely when nothing
+      // changed and we're past the post-interaction settle window.
+      // Still reschedule (cheap) so a later markDirty() repaints.
+      if (!gate.tick(now)) {
+        scheduleTick();
+        return;
+      }
+      gate.clear();
+      const dt = Math.min(0.1, (now - prevTime) / 1000);
+      prevTime = now;
+      starfield.tick(dt);
+      controls.update();
+      if (windAnimActive && !baking) {
+        ensureWindFlow();
+        if (windFlow) {
+          windFlow.step(dt);
+          const wmf = (currentGlobe as unknown as { material?: { uniforms?: Record<string, { value: unknown }> } } | null)?.material;
+          if (wmf && wmf.uniforms && wmf.uniforms.uStackTex) {
+            wmf.uniforms.uStackTex.value = windFlow.trailTexture();
+          }
+          renderer.resetState();
+        }
+      }
+      renderer.render(scene, camera);
+      // NX-1 sampling + adaptive resolution (only on rendered frames).
+      const fm = meter.push(dt > 0 ? dt * 1000 : 0.0001);
+      const a = adaptiveScale(fm.emaMs, perfScale, perfHold);
+      perfHold = a.hold;
+      if (a.scale !== perfScale) {
+        perfScale = a.scale;
+        renderer.setPixelRatio(baseDpr * perfScale);
+      }
+      perfSnap = {
+        fps: fm.fps,
+        ms: fm.ms,
+        emaMs: fm.emaMs,
+        calls: renderer.info.render.calls,
+        triangles: renderer.info.render.triangles,
+        scale: perfScale,
+        gpuMs: null,
+        bakeMs: lastBakeMs,
+        bakeSplit: lastBakeSplit,
+      };
+      if (windAnimActive && !baking) {
+        windTime += dt;
+        const wm = (currentGlobe as unknown as { material?: { uniforms?: Record<string, { value: number }> } } | null)?.material;
+        if (wm && wm.uniforms && wm.uniforms.uWindTime) {
+          wm.uniforms.uWindTime.value = windTime;
+        }
+        gate.markDirty(now);
+      }
+      scheduleTick();
+    });
+  };
+  // Anything visible that is NOT a per-frame animation must repaint:
+  // user interaction (controls), layout (resize), globe swap, bake end.
+  controls.addEventListener("start", markDirtyNow);
+  controls.addEventListener("change", markDirtyNow);
+  controls.addEventListener("end", markDirtyNow);
+  const onVisibility = (): void => {
+    if (document.hidden) {
+      cancelAnimationFrame(raf);
+    } else if (!baking) {
+      prevTime = performance.now();
+      scheduleTick();
+    }
+  };
+  document.addEventListener("visibilitychange", onVisibility);
+  scheduleTick();
 
   return {
     renderer,
@@ -112,10 +320,98 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
       }
       currentGlobe = object;
       if (object) scene.add(object);
+      gate.markDirty(performance.now());
+    },
+    markDirty() {
+      gate.markDirty(performance.now());
+    },
+    setWindSource(
+      windRT: THREE.WebGLRenderTarget | null,
+      climRT: THREE.WebGLRenderTarget | null,
+    ) {
+      if (windRT === windSource && climRT === climSource) return;
+      windSource = windRT;
+      climSource = climRT;
+      disposeWindFlow(); // rebuilt against the new source(s) on next tick
+      if (windAnimActive) gate.markDirty(performance.now());
+    },
+    setWindAnim(active: boolean) {
+      windAnimActive = active;
+      if (active) {
+        gate.markDirty(performance.now());
+      } else {
+        disposeWindFlow();
+      }
+    },
+    perfSnapshot() {
+      return perfSnap;
+    },
+    setBakeSplit(s: BakeSplit) {
+      lastBakeSplit = s;
+      // Fold into the current snapshot immediately so perfSnapshot()
+      // reflects it even before the next rendered frame rebuilds
+      // perfSnap (bake-end markDirty guarantees a frame, but the HUD
+      // poll may read in between).
+      perfSnap = { ...perfSnap, bakeSplit: s };
+    },
+    async runBake(fn) {
+      // Pause the live loop: flag the tick, bump the epoch (so any
+      // callback already queued under the old epoch is inert when it
+      // fires — it won't render or reschedule even across the bake's
+      // `await yieldToLoop()` macrotask gaps), and cancel the pending
+      // frame. With the epoch guard the render loop provably cannot
+      // render the globe while bake render targets are bound.
+      baking = true;
+      loopEpoch++;
+      cancelAnimationFrame(raf);
+      // TODO(bake-debug): remove after feedback-loop root-caused. Mirror
+      // `baking` for the patched render + reset per-bake diagnostics.
+      _sceneBaking = true;
+      _bakeExternalRenderLogged = false;
+      _bakeGuardBlocks = 0;
+      const bakeT0 = performance.now();
+      try {
+        await fn(renderer);
+      } finally {
+        lastBakeMs = performance.now() - bakeT0;
+        // Resume "bake-then-watch": reset prevTime so the first resumed
+        // frame's dt is a normal step (not a multi-second spike), bump
+        // the epoch again so the resumed loop is the sole live
+        // generation, then re-arm a single fresh tick.
+        baking = false;
+        loopEpoch++;
+        prevTime = performance.now();
+        scheduleTick();
+        gate.markDirty(performance.now());
+        // TODO(bake-debug): remove after feedback-loop root-caused.
+        // Per-bake summary — ALWAYS prints once so the user has a
+        // definitive line whether or not a competing render fired:
+        //  - externalRender=NO  → no main-scene render slipped through;
+        //    the GL feedback spam (if any) is a true intra-bake texture
+        //    self-alias → look for [bake-feedback] SELF-ALIAS lines.
+        //  - externalRender=YES → a competing render fired; the stack
+        //    above names the trigger (rAF/controls/resize/React).
+        // guardBlocks counts rAF ticks correctly suppressed during the
+        // bake (proves the loopEpoch/baking guard engaged).
+        if (_bakeDbgScene) {
+          _sceneBaking = false;
+          // eslint-disable-next-line no-console
+          console.error(
+            `[bake-feedback] bake summary: externalRender=` +
+              `${_bakeExternalRenderLogged ? "YES" : "NO"} ` +
+              `rafGuardBlocks=${_bakeGuardBlocks}`,
+          );
+        }
+      }
     },
     dispose() {
+      // Bump the epoch so any in-flight rAF callback is inert, then
+      // cancel the pending frame.
+      loopEpoch++;
       cancelAnimationFrame(raf);
+      disposeWindFlow();
       ro.disconnect();
+      document.removeEventListener("visibilitychange", onVisibility);
       controls.dispose();
       starfield.dispose();
       renderer.dispose();

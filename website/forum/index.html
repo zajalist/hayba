@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hayba — Forum</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&family=Charis+SIL:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" type="image/svg+xml" href="/assets/Logo.svg">
+<script src="/config.js"></script>
+<script type="module" src="/forum/forum.js" defer></script>
+</head>
+<body class="page-forum">
+  <main class="forum-shell">
+    <a href="/" class="brand-link">
+      <img src="/assets/Logo-white.svg" alt="" class="brand-mark" />
+      <span>Hayba</span>
+    </a>
+    <div class="forum-eyebrow">FORUM</div>
+    <h1>Community.</h1>
+    <p class="forum-lead">
+      Share what you're building. Ask phonotactics questions. Compare tectonic invariants.
+    </p>
+
+    <section id="composer" class="forum-composer" hidden>
+      <h2 class="forum-composer-title">New topic</h2>
+      <form id="topic-form" class="form">
+        <label>Title
+          <input type="text" name="title" required minlength="3" maxlength="200" placeholder="Short, descriptive">
+        </label>
+        <label>Body
+          <textarea name="body" rows="6" required minlength="1" maxlength="10000" placeholder="What's on your mind?"></textarea>
+        </label>
+        <div class="composer-actions">
+          <button type="submit" class="btn primary">Post topic</button>
+          <span class="muted small" id="composer-status"></span>
+        </div>
+      </form>
+    </section>
+
+    <section id="signed-out" class="forum-signed-out" hidden>
+      <p>
+        <a href="/login/" class="forum-cta">Sign in</a> to start a topic.
+        Reading is open to everyone.
+      </p>
+    </section>
+
+    <section class="forum-topics">
+      <div class="forum-topics-header">
+        <h2>Recent topics</h2>
+        <span class="muted small" id="topics-count"></span>
+      </div>
+      <div id="topics-list" class="forum-topics-list">
+        <p class="muted">Loading…</p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

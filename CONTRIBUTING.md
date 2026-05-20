@@ -30,7 +30,6 @@ packages/hayba/
     Resources/                      # icons, SVGs, HTML for cognitive map
     ThirdParty/mcp_server/dist/     # bundled Node server
   addons/visual-embeddings/         # Python sidecar (FastAPI + CLIP / SpatialCLIP / OWL-ViT)
-docs/superpowers/specs/             # design documents
 website/                            # landing page
 ```
 
@@ -57,6 +56,19 @@ Scopes: `mcp` (Node server), `ue` (UE plugin), `sidecar` (visual-embeddings), `d
 
 **Don't include a Claude / AI co-author trailer.** Per project policy, those are omitted.
 
+## Linting & formatting
+
+Hayba uses **ESLint** (flat config) for TypeScript linting and **Prettier** for code formatting:
+
+```bash
+npm run lint          # Check for lint errors
+npm run lint:fix      # Auto-fix lint errors
+npm run format        # Check formatting
+npm run format:fix    # Auto-format all files
+```
+
+These run in CI on every push/PR. Make sure `npm run lint` passes with zero warnings.
+
 ## Pre-commit
 
 The `.githooks/pre-commit` hook runs `tsc` and restages `packages/hayba/dist/` whenever `packages/hayba/src/` is part of the commit. Activated by `npm install` via the `prepare` script — if your hooks aren't firing, run:
@@ -69,17 +81,19 @@ git config core.hooksPath .githooks
 
 Before requesting review:
 - [ ] `npm run build` is clean.
+- [ ] `npm run lint` passes with zero warnings.
 - [ ] If you added a TS file, it's registered with the Zod schema registry so `get_tool_signature` returns derived params.
 - [ ] If you added a C++ command, it's listed in the handler's `GetCommands()` AND dispatched in `Handle()`.
 - [ ] If you added a destructive command, it's classified in `IsDestructiveCommand()` in `HaybaMCPCommandHandler.cpp` so transactions wrap it.
-- [ ] Spec doc updated if behaviour changes (`docs/superpowers/specs/2026-05-06-hayba-ue-expansion-design.md`).
+- [ ] Tests added or updated for any new/modified TS modules.
+- [ ] Docs updated if behaviour changes.
 - [ ] CHANGELOG.md has an entry under `[Unreleased]`.
 
 ## Adding a new MCP tool
 
 1. **Node side** — register the tool in `packages/hayba/src/tools/index.ts` with a Zod shape. The schema registry will derive its docs automatically.
 2. **UE side** — add the command name to a handler's `GetCommands()` array, route in `Handle()`, implement the method.
-3. **Spec doc** — list the command under the relevant `4.X Domain` table in the design spec.
+3. **Changelog** — add an entry under `[Unreleased]` in `CHANGELOG.md`.
 4. **Test** — fire the tool through Claude or via the MCP CLI; verify it appears in the Tool Stream panel and (if destructive) is undoable.
 
 ## Adding a new domain handler
@@ -89,7 +103,7 @@ Use one of the existing handlers as a template (e.g., `HaybaMCPProjectHandler` f
 ## Issue conventions
 
 - **Bug reports** — please include the UE version, plugin version, and a reproducer. Attach the editor crash dump if applicable.
-- **Feature requests** — explain the use case and any relevant competitor benchmark from the [market analysis](docs/superpowers/specs/2026-05-06-hayba-ue-expansion-design.md#9-market-positioning--gap-analysis-2026-update).
+- **Feature requests** — explain the use case and the problem it solves.
 
 ## License of contributions
 

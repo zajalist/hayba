@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { ToolHandler } from '../hayba-bake-terrain.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
-import { embedImage, cosineSimilarity } from './sidecar-client.js';
+import { embedImage, cosineSimilarity, SidecarUnavailableError } from './sidecar-client.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'medium',
@@ -27,7 +27,10 @@ export const haybaCompareClipScoreHandler: ToolHandler = async (args) => {
     ]);
     const score = cosineSimilarity(a.embedding, b.embedding);
     return { content: [{ type: 'text', text: JSON.stringify({ cosine_similarity: score, dim: a.dim }, null, 2) }] };
-  } catch (e) {
-    return { content: [{ type: 'text', text: `hayba_compare_clip_score error: ${(e as Error).message}` }], isError: true };
+  } catch (e: unknown) {
+    if (e instanceof SidecarUnavailableError) {
+      return { content: [{ type: 'text', text: `visual sidecar offline — CLIP comparison unavailable. ${e.message}. Start the sidecar (uv run --project mcp-tools/hayba-mcp/addons/visual-embeddings -- uvicorn hayba_sidecar.server:app --port 7821) or unset HAYBA_SIDECAR_URL.` }], isError: true };
+    }
+    return { content: [{ type: 'text', text: `hayba_compare_clip_score error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
   }
 };
