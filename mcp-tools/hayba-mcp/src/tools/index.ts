@@ -7,6 +7,8 @@ import { recordSchema, type Cost } from './schema-registry.js';
 import { installToolStreamMirror } from './tool-stream-mirror.js';
 import { installLiveSender, executeCommand } from './tool-executor.js';
 import { registerToolMeta } from './tool-meta-registry.js';
+import { readSettings } from './routing/settings-watcher.js';
+import { registerDeferredRouting, ALWAYS_ON_META, type CapturedTool } from './routing/register.js';
 
 // ── Code Mode meta-tools (always-on) ──────────────────────────────────────────
 import { listToolCategoriesHandler, meta as listMeta } from './code-mode/list-tool-categories.js';
@@ -120,6 +122,84 @@ import { analyzeConventionsHandler } from './hayba-analyze-conventions.js';
 type SessionManagerStub = Record<string, unknown>;
 
 export function registerTools(server: McpServer, session: SessionManagerStub): void {
+  const settings = readSettings();
+  if (settings.toolRouting === 'deferred') {
+    // γ-hybrid: capture every server.tool(...) call into a descriptor map
+    // without registering it. registerDeferredRouting wires the always-on
+    // meta-tools and packs against the captured set.
+    const captured = new Map<string, CapturedTool>();
+    const realTool = server.tool.bind(server);
+
+    type ToolArgs = [string, ...unknown[]];
+    (server as unknown as { tool: (...a: ToolArgs) => void }).tool = (name, ...rest) => {
+      let description: string | undefined;
+      let schema: z.ZodRawShape;
+      let handler: (...args: unknown[]) => unknown;
+      if (typeof rest[0] === 'string') {
+        description = rest[0] as string;
+        schema = rest[1] as z.ZodRawShape;
+        handler = rest[2] as (...args: unknown[]) => unknown;
+      } else {
+        schema = rest[0] as z.ZodRawShape;
+        handler = rest[1] as (...args: unknown[]) => unknown;
+      }
+      const dir = inferDir(name);
+      captured.set(name, { description, schema, handler, dir });
+      // Don't forward to realTool — registerDeferredRouting re-registers only
+      // the always-on subset + alwaysLoadPacks tools.
+    };
+
+    // Force the eager registration block to run so we capture every tool,
+    // not just the codeMode always-on five. Restore on exit.
+    const origCodeMode = config.codeMode;
+    (config as { codeMode: boolean }).codeMode = false;
+    try {
+      registerToolsCore(server, session);
+    } finally {
+      (config as { codeMode: boolean }).codeMode = origCodeMode;
+      (server as unknown as { tool: typeof realTool }).tool = realTool;
+    }
+
+    // Note: ALWAYS_ON_META is imported but used implicitly via
+    // registerDeferredRouting's always-on registrations.
+    void ALWAYS_ON_META;
+
+    // Re-install the tool-stream mirror on the (now restored) real server.tool
+    // so newly-registered meta-tools and pack-loaded tools get mirrored. The
+    // capturing shim above suppressed the mirror's wrapper during capture.
+    installToolStreamMirror(server);
+
+    // Now register meta-tools + alwaysLoadPacks. Async; we don't await — the
+    // MCP handshake completes before any tool call, and the registration
+    // happens within microtasks here.
+    void registerDeferredRouting(server, captured);
+    return;
+  }
+
+  registerToolsCore(server, session);
+}
+
+/**
+ * Infer the pack-source directory for a tool name by matching against the
+ * known top-level dirs under src/tools/. Root-level tools return null.
+ */
+function inferDir(name: string): string | null {
+  if (name.startsWith('actor_'))          return 'actor';
+  if (name.startsWith('scene_'))          return 'scene';
+  if (name.startsWith('editor_'))         return 'editor';
+  if (name.startsWith('hayba_fab_'))      return 'fab';
+  if (name.startsWith('hayba_polyhaven_'))return 'asset-sources';
+  if (name.startsWith('hayba_ambientcg_'))return 'asset-sources';
+  if (name.startsWith('hayba_sketchfab_'))return 'asset-sources';
+  if (name.startsWith('architecture_'))   return 'worldbuilding';
+  if (name.startsWith('language_'))       return 'worldbuilding';
+  if (name.startsWith('hayba_planet_'))   return 'worldbuilding';
+  if (name === 'python_run')              return 'python';
+  if (name === 'list_tool_categories' || name === 'get_tool_signature') return 'code-mode';
+  return null;
+}
+
+function registerToolsCore(server: McpServer, session: SessionManagerStub): void {
 
   // Fire-and-forget: dynamic import resolves in <1ms; MCP handshake takes longer
   // so any tool call is guaranteed to find DEFAULT_SENDER set.
