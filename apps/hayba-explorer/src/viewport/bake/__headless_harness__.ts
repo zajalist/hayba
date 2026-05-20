@@ -221,7 +221,7 @@ export async function runRealInputErosionVerification(
 
     const webglErrPre = gl.getError();
     const t0 = performance.now();
-    const { eroded: rt, clim: _c, terr: _t, hydro: _h, wind: _w } =
+    const { eroded: rt, clim: _c, terr: _t, hydro: _h, wind: _w, dist: _d } =
       await hyd.runHydraulicBake(renderer, baseTex, precipTex, w, h, cfg);
     // Oracle never reads the stack RTs; dispose immediately so the
     // many-bake harness doesn't leak 3 RTs/bake (fatal at 3M).
@@ -229,6 +229,7 @@ export async function runRealInputErosionVerification(
     _t.dispose();
     _h.dispose();
     _w.dispose();
+    _d.dispose();
     const t1 = performance.now();
     const webglErrPost = gl.getError();
 
@@ -432,7 +433,7 @@ export async function runHeadlessErosionVerification(
 
     const webglErrPre = gl.getError();
     const t0 = performance.now();
-    const { eroded: rt, clim: _c, terr: _t, hydro: _h, wind: _w } =
+    const { eroded: rt, clim: _c, terr: _t, hydro: _h, wind: _w, dist: _d } =
       await hyd.runHydraulicBake(renderer, baseTex, precipTex, w, h, cfg);
     // Oracle never reads the stack RTs; dispose immediately so the
     // many-bake harness doesn't leak 3 RTs/bake (fatal at 3M).
@@ -440,6 +441,7 @@ export async function runHeadlessErosionVerification(
     _t.dispose();
     _h.dispose();
     _w.dispose();
+    _d.dispose();
     const t1 = performance.now();
     const webglErrPost = gl.getError();
 
@@ -1048,7 +1050,7 @@ async function _bakeAndRenderRelief(
   const cfg = { ...hyd.DEFAULT_HYDRAULIC, ...(overrideCfg ?? {}) };
 
   const t0 = performance.now();
-  const { eroded: rt, clim: _c, terr: _t, hydro: _h, wind: _w } =
+  const { eroded: rt, clim: _c, terr: _t, hydro: _h, wind: _w, dist: _d } =
     await hyd.runHydraulicBake(renderer, baseTex, precipTex, w, h, cfg);
   // CP2.c (#234 P2.3a): OPT-IN only — read the REAL baked TERR/HYDRO
   // masks (refreshClimate's TERRAIN/HYDRO passes) before disposal so
@@ -1070,6 +1072,7 @@ async function _bakeAndRenderRelief(
   _t.dispose();
   _h.dispose();
   _w.dispose();
+  _d.dispose();
   const t1 = performance.now();
 
   const buf = new Float32Array(w * h * 4);
