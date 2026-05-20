@@ -58,6 +58,9 @@ import {
   MSLP_FRAG,
   BLUR_H_FRAG,
   BLUR_V_FRAG,
+  DIST_INIT_FRAG,
+  DIST_JFA_FRAG,
+  DIST_FINAL_FRAG,
 } from "./hydraulic.glsl";
 import { runRawPass } from "./glPass";
 import { createPingPong, type PingPongTargets } from "./pingpong";
@@ -209,6 +212,12 @@ export interface HydraulicConfig {
    *  seasonAmp=0. */
   itczShift: number;
   itczLandAmp: number;
+  /** COOKBOOK-CLIMATE T2: e-folding scale in km for continentality.
+   *  continentality = 1 - exp(-distKm / contScaleKm). At distKm =
+   *  contScaleKm, continentality ≈ 0.63. Default 1500km is the
+   *  approximate continental-interior threshold (Sahel↔Sahara, central
+   *  Eurasia start of strong continental winters). */
+  contScaleKm: number;
   /** P2.3b-i Whittaker biome thermal cuts (°C) — mirrors
    *  ClimateParams.biome_cold_c / biome_hot_c. */
   biomeColdC: number;
@@ -339,6 +348,7 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   continentalT: 0.0,
   itczShift: 0.0,
   itczLandAmp: 0.0,
+  contScaleKm: 1500.0,
   biomeColdC: 6.0,
   biomeHotC: 18.0,
   channelDepth: 0.02,
@@ -448,6 +458,12 @@ export interface HydraulicBakeResult {
   terr: THREE.WebGLRenderTarget;
   hydro: THREE.WebGLRenderTarget;
   wind: THREE.WebGLRenderTarget;
+  /** COOKBOOK-CLIMATE T2: distance-to-ocean SDF + continentality.
+   *  Computed once per bake via Jump Flooding (log2(max(w,h)) jumps).
+   *  Channels: .r=distKm (0 over ocean), .g=continentality 0..1
+   *  (0 over ocean; 1−exp(−d/L), L=cfg.contScaleKm), .b=isLand,
+   *  .a=0. Read-only — never feeds back into erosion. */
+  dist: THREE.WebGLRenderTarget;
 }
 
 export async function runHydraulicBake(
@@ -464,7 +480,7 @@ export async function runHydraulicBake(
   // FAILS if EXT_color_buffer_float is missing. We drive the read/write
   // slots explicitly below (NOT pp.book) so the discipline is local and
   // unambiguous.
-  const pp: PingPongTargets = createPingPong(renderer, w, h, ["A", "F", "M", "ACC", "CTRL", "CLIM", "TERR", "HYDRO", "MSLP", "WIND"]);
+  const pp: PingPongTargets = createPingPong(renderer, w, h, ["A", "F", "M", "ACC", "CTRL", "CLIM", "TERR", "HYDRO", "MSLP", "WIND", "DIST"]);
   const A = pp.rt.A; // [slot0, slot1]
   const F = pp.rt.F; // [slot0, slot1]
   // S2.4 detail mask: a ONE-TIME single-channel field (computed pre-loop
@@ -491,6 +507,11 @@ export async function runHydraulicBake(
   // tick, disposed once at teardown; never escapes, never feeds erosion.
   const MSLP = pp.rt.MSLP;
   const WIND = pp.rt.WIND;
+  // COOKBOOK-CLIMATE T2: DIST ping-pong for JFA distance-to-ocean.
+  // INIT fills DIST[0]; each JFA jump alternates slots; DIST_FINAL
+  // writes the converted distKm/continentality into DIST[0] (so the
+  // returned RT slot is stable regardless of how many jumps run).
+  const DIST = pp.rt.DIST;
   let accRead = 0;
   const swapAcc = (): void => {
     accRead ^= 1;
@@ -629,6 +650,52 @@ export async function runHydraulicBake(
   // first step's RAIN/FLUX read the seeded state.
   runRawPass(renderer, SEED_A_FRAG, { uBase: u(base) }, aReadRT());
   runRawPass(renderer, SEED_F_FRAG, {}, fReadRT());
+
+  // ---- COOKBOOK-CLIMATE T2: distance-to-ocean via JFA ------------------
+  // Runs ONCE per bake on the seeded land/ocean partition (a.r<0 = ocean,
+  // i.e. the post-paint world before erosion). Reads aReadRT()'s ocean
+  // flag; writes nothing back into A/F.
+  //   1. INIT seeds DIST[0]: ocean cells store own (x,y); land = (-1,-1).
+  //   2. JFA jumps log2(max(w,h)) times, halving stride each pass; ping-
+  //      pong DIST[0]↔DIST[1]. After convergence the read slot holds the
+  //      nearest-ocean seed for every cell.
+  //   3. FINAL converts seed coords → distKm + continentality, writes
+  //      into DIST[0] so the returned RT slot is stable.
+  {
+    runRawPass(
+      renderer,
+      DIST_INIT_FRAG,
+      { uA: u(aReadRT()), uGrid: u(uGrid) },
+      DIST[0],
+    );
+    let distRead = 0;
+    const nMax = Math.max(w, h);
+    const jumps = Math.max(1, Math.ceil(Math.log2(nMax)));
+    for (let k = 0; k < jumps; k++) {
+      const step = Math.max(1, Math.floor(nMax / Math.pow(2, k + 1)));
+      runRawPass(
+        renderer,
+        DIST_JFA_FRAG,
+        { uSeed: u(DIST[distRead]), uGrid: u(uGrid), uStep: u(step) },
+        DIST[distRead ^ 1],
+      );
+      distRead ^= 1;
+    }
+    // Land final pass into DIST[0] (the returned slot), reading whichever
+    // slot the JFA ended in.
+    runRawPass(
+      renderer,
+      DIST_FINAL_FRAG,
+      {
+        uA: u(aReadRT()),
+        uSeed: u(DIST[distRead]),
+        uGrid: u(uGrid),
+        uContScaleKm: u(cfg.contScaleKm),
+        uEarthCircKm: u(2 * Math.PI * 6371),
+      },
+      DIST[0],
+    );
+  }
 
   // ---- S2.4 DETAIL MASK (ONE-TIME): from the seeded base height, write
   // M[0] = elevGate*slopeGate (ocean -> 0). Read every step by ERODE
@@ -951,5 +1018,14 @@ export async function runHydraulicBake(
   MSLP[0].dispose();
   MSLP[1].dispose();
   WIND[1].dispose();
-  return { eroded: result, clim: CLIM[0], terr: TERR[0], hydro: HYDRO[0], wind: WIND[0] };
+  // DIST[1] is the JFA ping-pong scratch (final pass writes to DIST[0]).
+  DIST[1].dispose();
+  return {
+    eroded: result,
+    clim: CLIM[0],
+    terr: TERR[0],
+    hydro: HYDRO[0],
+    wind: WIND[0],
+    dist: DIST[0],
+  };
 }

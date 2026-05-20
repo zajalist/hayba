@@ -1016,3 +1016,95 @@ export const HYDRO_FRAG = [
   "  fragColor = vec4(fin(Q), fin(elevN), clamp(fin(endo), 0.0, 1.0), fin(classifyBiome(cl.r, cl.g)));",
   "}",
 ].join("\n");
+
+// COOKBOOK-CLIMATE T2: distance-to-ocean field via Jump Flooding Algorithm.
+// Three passes:
+//   DIST_INIT_FRAG : seed RT with each ocean cell's own (x,y); land cells
+//                    sentinel (-1,-1, valid=0).
+//   DIST_JFA_FRAG  : run log2(max(w,h)) times with halving stride;
+//                    each cell adopts the nearest valid seed from its
+//                    8-neighborhood at offset `uStep`.
+//   DIST_FINAL_FRAG: convert the seed coord to distance-km (using
+//                    Earth circumference at equator) + continentality
+//                    (1 - exp(-d/L), L = uContScaleKm), output:
+//                       .r = distKm (ocean → 0)
+//                       .g = continentality 0..1 (ocean → 0)
+//                       .b = isLand (1 land, 0 ocean)
+//                       .a = 0
+// Longitude wrap is honoured in the distance metric (the world is a
+// torus in x). Latitude is clamped (no wrap, sphere caps at poles).
+
+export const DIST_INIT_FRAG = [
+  H,
+  "uniform sampler2D uA;",
+  "uniform vec2 uGrid;",
+  "void main(){",
+  "  ivec2 rc = fragRC();",
+  "  vec4 a = loadA(uA, uGrid, rc.x, rc.y);",
+  "  bool isOcean = a.r < 0.0;",
+  "  if (isOcean) {",
+  "    fragColor = vec4(float(rc.x), float(rc.y), 1.0, 0.0);",
+  "  } else {",
+  "    fragColor = vec4(-1.0, -1.0, 0.0, 0.0);",
+  "  }",
+  "}",
+].join("\n");
+
+export const DIST_JFA_FRAG = [
+  H,
+  "uniform sampler2D uSeed;",
+  "uniform vec2 uGrid;",
+  "uniform float uStep;",
+  "float wrapDistJfa(vec2 a, vec2 b, float wx) {",
+  "  float dx = abs(a.x - b.x);",
+  "  dx = min(dx, wx - dx);",
+  "  float dy = a.y - b.y;",
+  "  return sqrt(dx * dx + dy * dy);",
+  "}",
+  "void main(){",
+  "  ivec2 rc = fragRC();",
+  "  ivec2 wh = gridWH(uGrid);",
+  "  vec4 best = texelFetch(uSeed, rc, 0);",
+  "  float bestDist = (best.z > 0.5) ? wrapDistJfa(vec2(rc), best.xy, uGrid.x) : 1.0e9;",
+  "  int s = int(uStep);",
+  "  for (int dy = -1; dy <= 1; dy++) {",
+  "    for (int dx = -1; dx <= 1; dx++) {",
+  "      if (dx == 0 && dy == 0) continue;",
+  "      int nx = xw(rc.x + dx * s, wh.x);",
+  "      int ny = yc(rc.y + dy * s, wh.y);",
+  "      vec4 c = texelFetch(uSeed, ivec2(nx, ny), 0);",
+  "      if (c.z > 0.5) {",
+  "        float d = wrapDistJfa(vec2(rc), c.xy, uGrid.x);",
+  "        if (d < bestDist) { bestDist = d; best = c; }",
+  "      }",
+  "    }",
+  "  }",
+  "  fragColor = best;",
+  "}",
+].join("\n");
+
+export const DIST_FINAL_FRAG = [
+  H,
+  "uniform sampler2D uA;",
+  "uniform sampler2D uSeed;",
+  "uniform vec2 uGrid;",
+  "uniform float uContScaleKm;",
+  "uniform float uEarthCircKm;",
+  "float wrapDistFinal(vec2 a, vec2 b, float wx) {",
+  "  float dx = abs(a.x - b.x);",
+  "  dx = min(dx, wx - dx);",
+  "  float dy = a.y - b.y;",
+  "  return sqrt(dx * dx + dy * dy);",
+  "}",
+  "void main(){",
+  "  ivec2 rc = fragRC();",
+  "  vec4 a = loadA(uA, uGrid, rc.x, rc.y);",
+  "  vec4 seed = texelFetch(uSeed, rc, 0);",
+  "  float texDist = (seed.z > 0.5) ? wrapDistFinal(vec2(rc), seed.xy, uGrid.x) : 0.0;",
+  "  float kmPerTex = uEarthCircKm / uGrid.x;",
+  "  float distKm = texDist * kmPerTex;",
+  "  bool isLand = a.r >= 0.0;",
+  "  float cont = isLand ? (1.0 - exp(-distKm / uContScaleKm)) : 0.0;",
+  "  fragColor = vec4(distKm, cont, isLand ? 1.0 : 0.0, 0.0);",
+  "}",
+].join("\n");

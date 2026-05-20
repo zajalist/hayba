@@ -4,6 +4,9 @@ import {
   BLUR_H_FRAG,
   BLUR_V_FRAG,
   CLIMATE_FRAG,
+  DIST_INIT_FRAG,
+  DIST_JFA_FRAG,
+  DIST_FINAL_FRAG,
 } from "./hydraulic.glsl";
 
 describe("NX-2a geostrophic wind GLSL", () => {
@@ -142,6 +145,38 @@ describe("CLIM-T-CONTINENTALITY (#193: interiors swing more)", () => {
       "float continentalT = uContinentalT * uSeasonAmp * isJulyish * hemSign * landMask * (1.0 - oceanFrac);",
     );
     expect(CLIMATE_FRAG).toContain("T += continentalT;");
+  });
+});
+
+describe("COOKBOOK-CLIMATE T2 — JFA distance-to-ocean", () => {
+  it("DIST_INIT_FRAG seeds ocean cells with own (x,y), land with (-1,-1,0)", () => {
+    expect(typeof DIST_INIT_FRAG).toBe("string");
+    expect(DIST_INIT_FRAG).toContain("uniform sampler2D uA;");
+    expect(DIST_INIT_FRAG).toContain("bool isOcean = a.r < 0.0;");
+    expect(DIST_INIT_FRAG).toContain(
+      "fragColor = vec4(float(rc.x), float(rc.y), 1.0, 0.0);",
+    );
+    expect(DIST_INIT_FRAG).toContain("fragColor = vec4(-1.0, -1.0, 0.0, 0.0);");
+  });
+  it("DIST_JFA_FRAG honours longitude wrap in the distance metric", () => {
+    expect(DIST_JFA_FRAG).toContain("uniform float uStep;");
+    expect(DIST_JFA_FRAG).toContain("float wrapDistJfa(vec2 a, vec2 b, float wx)");
+    expect(DIST_JFA_FRAG).toContain("dx = min(dx, wx - dx);");
+    expect(DIST_JFA_FRAG).toContain("for (int dy = -1; dy <= 1; dy++) {");
+    expect(DIST_JFA_FRAG).toContain("for (int dx = -1; dx <= 1; dx++) {");
+    expect(DIST_JFA_FRAG).toContain("if (c.z > 0.5) {");
+  });
+  it("DIST_FINAL_FRAG converts texel distance to km + continentality", () => {
+    expect(DIST_FINAL_FRAG).toContain("uniform float uContScaleKm;");
+    expect(DIST_FINAL_FRAG).toContain("uniform float uEarthCircKm;");
+    expect(DIST_FINAL_FRAG).toContain("float kmPerTex = uEarthCircKm / uGrid.x;");
+    expect(DIST_FINAL_FRAG).toContain("float distKm = texDist * kmPerTex;");
+    expect(DIST_FINAL_FRAG).toContain(
+      "float cont = isLand ? (1.0 - exp(-distKm / uContScaleKm)) : 0.0;",
+    );
+    expect(DIST_FINAL_FRAG).toContain(
+      "fragColor = vec4(distKm, cont, isLand ? 1.0 : 0.0, 0.0);",
+    );
   });
 });
 

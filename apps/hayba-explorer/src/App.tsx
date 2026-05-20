@@ -376,6 +376,8 @@ export default function App() {
   const prevDebugTerrRef = useRef<THREE.WebGLRenderTarget | null>(null);
   const prevDebugHydroRef = useRef<THREE.WebGLRenderTarget | null>(null);
   const prevDebugWindRef = useRef<THREE.WebGLRenderTarget | null>(null);
+  // COOKBOOK-CLIMATE T2: distance-to-ocean + continentality RT (JFA).
+  const prevDebugDistRef = useRef<THREE.WebGLRenderTarget | null>(null);
   // Live stack handles for the mounted material's selector.
   const debugStackRef = useRef<{
     clim: THREE.WebGLRenderTarget;
@@ -1177,6 +1179,7 @@ export default function App() {
       prevDebugTerrRef.current?.dispose();
       prevDebugHydroRef.current?.dispose();
       prevDebugWindRef.current?.dispose();
+      prevDebugDistRef.current?.dispose();
 
       const __tU0 = performance.now();
       const base = uploadEquirect(new Float32Array(inp.height), w, h);
@@ -1189,6 +1192,7 @@ export default function App() {
       let terrRT!: THREE.WebGLRenderTarget;
       let hydroRT!: THREE.WebGLRenderTarget;
       let windRT!: THREE.WebGLRenderTarget;
+      let distRT!: THREE.WebGLRenderTarget;
       await scene.runBake(async (renderer) => {
         const out = await runHydraulicBake(
           renderer,
@@ -1214,6 +1218,7 @@ export default function App() {
         terrRT = out.terr;
         hydroRT = out.hydro;
         windRT = out.wind;
+        distRT = out.dist;
       });
       const __gpuMs = performance.now() - __tG0;
       sceneRef.current?.setBakeSplit({
@@ -1231,6 +1236,7 @@ export default function App() {
       prevDebugTerrRef.current = terrRT;
       prevDebugHydroRef.current = hydroRT;
       prevDebugWindRef.current = windRT;
+      prevDebugDistRef.current = distRT;
       debugStackRef.current = { clim: climRT, terr: terrRT, hydro: hydroRT };
 
       const mat = makeDebugReliefMaterial();
@@ -1297,12 +1303,14 @@ export default function App() {
     prevDebugClimRef.current?.dispose();
     prevDebugTerrRef.current?.dispose();
     prevDebugHydroRef.current?.dispose();
+    prevDebugDistRef.current?.dispose();
     prevDebugBaseRef.current?.dispose();
     prevDebugPrecipRef.current?.dispose();
     prevDebugHFinalRef.current = null;
     prevDebugClimRef.current = null;
     prevDebugTerrRef.current = null;
     prevDebugHydroRef.current = null;
+    prevDebugDistRef.current = null;
     prevDebugBaseRef.current = null;
     prevDebugPrecipRef.current = null;
     debugStackRef.current = null;
