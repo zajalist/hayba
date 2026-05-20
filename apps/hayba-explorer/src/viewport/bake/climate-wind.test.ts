@@ -43,6 +43,10 @@ describe("NX-2a geostrophic wind GLSL", () => {
     expect(CLIMATE_FRAG).toContain(
       "float P = clamp(0.55 + 0.45*itcz + 0.30*midlat - 0.35*subtrop - 0.22*polar, 0.05, 1.0);",
     );
+    // CLIM-ITCZ-MIGRATION: bands still measured via `abs(dDeg - X)` but
+    // dDeg is now derived from the seasonally-migrating solar latitude
+    // (see the migration test below); the band offsets (25/50/66/88)
+    // are unchanged.
     expect(CLIMATE_FRAG).toContain(
       "1.0 - smoothstep(0.0, 14.0, abs(dDeg - 25.0))",
     );
@@ -126,13 +130,29 @@ describe("CLIM-T-CONTINENTALITY (#193: interiors swing more)", () => {
     expect(CLIMATE_FRAG).toContain("uniform float uSeasonPhase;");
   });
   it("CLIMATE_FRAG offsets T by hemisphere × season × continentality", () => {
+    // isJulyish / hemSign / landMask hoisted to the CLIM-ITCZ-MIGRATION
+    // block (used by both ITCZ shift and T continentality).
     expect(CLIMATE_FRAG).toContain("float isJulyish = cos((uSeasonPhase - 6.0) * 0.52359877);");
     expect(CLIMATE_FRAG).toContain("float hemSign = sign(lat);");
-    expect(CLIMATE_FRAG).toContain("float landMask = step(0.0, a.r);");
+    expect(CLIMATE_FRAG).toContain("float landMask = step(0.0, h);");
     expect(CLIMATE_FRAG).toContain(
       "float continentalT = uContinentalT * uSeasonAmp * isJulyish * hemSign * landMask * (1.0 - oceanFrac);",
     );
     expect(CLIMATE_FRAG).toContain("T += continentalT;");
+  });
+});
+
+describe("CLIM-ITCZ-MIGRATION (5° ocean, ~40° land)", () => {
+  it("CLIMATE_FRAG declares uItczShift + uItczLandAmp uniforms", () => {
+    expect(CLIMATE_FRAG).toContain("uniform float uItczShift;");
+    expect(CLIMATE_FRAG).toContain("uniform float uItczLandAmp;");
+  });
+  it("CLIMATE_FRAG shifts ALL zonal bands by a land-amplified solar latitude", () => {
+    expect(CLIMATE_FRAG).toContain("float latDeg = lat * 57.2957795;");
+    expect(CLIMATE_FRAG).toContain(
+      "float solarLat = uItczShift * uSeasonAmp * isJulyish * (1.0 + uItczLandAmp * landMask);",
+    );
+    expect(CLIMATE_FRAG).toContain("float dDeg = abs(latDeg - solarLat);");
   });
 });
 

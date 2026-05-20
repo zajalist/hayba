@@ -821,6 +821,8 @@ export const CLIMATE_FRAG = [
   "uniform float uContinentalT;",
   "uniform float uSeasonAmp;",
   "uniform float uSeasonPhase;",
+  "uniform float uItczShift;",
+  "uniform float uItczLandAmp;",
   "void main(){",
   "  ivec2 rc = fragRC();",
   "  vec4 a = loadA(uA, uGrid, rc.x, rc.y);",
@@ -828,10 +830,21 @@ export const CLIMATE_FRAG = [
   "  float v = (float(rc.y) + 0.5) / float(wh.y);",
   "  float lat = (0.5 - v) * 3.14159265;",
   "  float s = sin(lat);",
-  "  float dDeg = abs(lat) * 57.2957795;",
   "  float h = a.r;",
   "  float elevKm = max(0.0, h) * uElevKmScale;",
   "  float T = uTEquatorC - uTLatDropC * (s * s) - uLapseCPerKm * elevKm;",
+  // CLIM-ITCZ-MIGRATION (cookbook: ITCZ moves ~5° over ocean, ~40° over
+  // land seasonally). All zonal bands (ITCZ / STHZ / midlat / polar)
+  // co-migrate by shifting the abs-latitude they're measured from.
+  // `solarLat` is positive in NH summer, negative in NH winter, and is
+  // land-amplified to mimic continental thermal lows pulling the ITCZ
+  // poleward over Africa/Asia in their summer.
+  "  float latDeg = lat * 57.2957795;",
+  "  float isJulyish = cos((uSeasonPhase - 6.0) * 0.52359877);",
+  "  float hemSign = sign(lat);",
+  "  float landMask = step(0.0, h);",
+  "  float solarLat = uItczShift * uSeasonAmp * isJulyish * (1.0 + uItczLandAmp * landMask);",
+  "  float dDeg = abs(latDeg - solarLat);",
   "  float itcz    = 1.0 - smoothstep(0.0, uItczWidthDeg, dDeg);",
   "  float subtrop = 1.0 - smoothstep(0.0, 14.0, abs(dDeg - 25.0));",
   "  float midlat  = 1.0 - smoothstep(0.0, 18.0, abs(dDeg - 50.0));",
@@ -893,9 +906,8 @@ export const CLIMATE_FRAG = [
   // (their winter). Reuses oceanFrac as continentality strength —
   // deep-interior (oceanFrac→0) gets the full ±uContinentalT swing;
   // coastal cells (oceanFrac→1) get ~zero shift.
-  "  float isJulyish = cos((uSeasonPhase - 6.0) * 0.52359877);", // 2π/12
-  "  float hemSign = sign(lat);",
-  "  float landMask = step(0.0, a.r);",
+  // CLIM-T-CONTINENTALITY: isJulyish / hemSign / landMask hoisted into
+  // the band-shift block above (CLIM-ITCZ-MIGRATION) — reused here.
   "  float continentalT = uContinentalT * uSeasonAmp * isJulyish * hemSign * landMask * (1.0 - oceanFrac);",
   "  T += continentalT;",
   "  float windAz = fract(atan(wvec.y, wvec.x) / 6.28318530 + 0.5);",

@@ -200,6 +200,15 @@ export interface HydraulicConfig {
    *  Coastal cells unaffected. Inert when seasonAmp=0. Cookbook
    *  principle: "T variations highest in interiors, lowest on coasts". */
   continentalT: number;
+  /** CLIM-ITCZ-MIGRATION (cookbook: "ITCZ moves ~5° over oceans, ~40°
+   *  over land seasonally"). `itczShift` is the base oceanic seasonal
+   *  shift in degrees; `itczLandAmp` is the land-amplification factor
+   *  applied multiplicatively over land cells. Effective continental
+   *  shift = itczShift × (1 + itczLandAmp). All zonal precip bands
+   *  (ITCZ / subtropics / midlatitudes / polar) co-migrate. Inert when
+   *  seasonAmp=0. */
+  itczShift: number;
+  itczLandAmp: number;
   /** P2.3b-i Whittaker biome thermal cuts (°C) — mirrors
    *  ClimateParams.biome_cold_c / biome_hot_c. */
   biomeColdC: number;
@@ -322,6 +331,8 @@ export const DEFAULT_HYDRAULIC: HydraulicConfig = {
   onshoreGain: 0.5,
   continentalGain: 0.3,
   continentalT: 8.0,
+  itczShift: 5.0,
+  itczLandAmp: 7.0,
   biomeColdC: 6.0,
   biomeHotC: 18.0,
   channelDepth: 0.02,
@@ -550,6 +561,8 @@ export async function runHydraulicBake(
         uContinentalT: u(cfg.continentalT),
         uSeasonAmp: u(cfg.seasonAmp),
         uSeasonPhase: u(cfg.seasonPhase),
+        uItczShift: u(cfg.itczShift),
+        uItczLandAmp: u(cfg.itczLandAmp),
       },
       CLIM[0],
     );
