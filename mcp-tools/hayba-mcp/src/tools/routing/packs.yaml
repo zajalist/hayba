@@ -1,0 +1,75 @@
+packs:
+  - name: biome
+    kind: workflow
+    description: Generate dense ecological PCG biomes from intent.
+    tools:
+      - create_pcg_graph
+      - validate_pcg_graph
+      - execute_pcg_graph
+      - export_pcg_graph
+      - list_pcg_assets
+      - search_node_catalog
+      - get_node_details
+      - hayba_polyhaven_search
+      - hayba_polyhaven_download
+      - hayba_ambientcg_search
+      - hayba_ambientcg_download
+      - architecture_resolve_rules
+      - actor_spawn
+
+  - name: planet-sim
+    kind: workflow
+    description: Planet-scale physics (tectonics, climate, habitability, tidal locking).
+    tools:
+      - hayba_planet_dynamo_field
+      - hayba_planet_escape_regime
+      - hayba_planet_habitable_zone
+      - hayba_planet_stability_schema
+      - hayba_planet_tidal_locking
+
+  - name: architecture
+    kind: workflow
+    description: Author cultural architecture rule sets and resolve them.
+    tools:
+      - architecture_list_cultures
+      - architecture_get_culture
+      - architecture_resolve_rules
+      - architecture_validate_culture
+      - architecture_create_culture
+      - architecture_update_culture
+      - architecture_add_era
+      - architecture_add_material
+      - architecture_add_ornament
+      - architecture_add_tag_axis
+      - architecture_add_rule
+
+  - name: connectors
+    kind: workflow
+    description: All third-party asset connector tools.
+    tools:
+      - hayba_polyhaven_search
+      - hayba_polyhaven_download
+      - hayba_ambientcg_search
+      - hayba_ambientcg_download
+      - hayba_sketchfab_search
+      - hayba_sketchfab_download
+      - hayba_fab_login_status
+      - hayba_fab_library_list
+      - hayba_fab_marketplace_search
+      - hayba_fab_download
+
+  - name: editor
+    kind: workflow
+    description: Live UE editor introspection and PIE control.
+    autoLoadOn: ue_connected
+    tools:
+      - editor_capture_viewport
+      - editor_stream_log
+      - editor_start_pie
+      - wait_for_shaders
+
+  - name: python
+    kind: workflow
+    description: Run arbitrary Python in the UE editor. Powerful; load explicitly.
+    tools:
+      - python_run
