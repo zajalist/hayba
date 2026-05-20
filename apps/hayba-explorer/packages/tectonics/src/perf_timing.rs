@@ -6,8 +6,15 @@
 //! steps (default 100) with the per-phase wall time:
 //!
 //! ```text
-//! [tect-step 100] verlet=12.3ms collisions=4.1ms resolve=0.8ms subduction=2.7ms other=1.4ms total=21.3ms
+//! [tect-step 100] verlet=12.3ms collisions=4.1ms resolve=0.8ms subduction=2.7ms geo=0.6ms inertia=0.5ms plume=0.3ms total=21.3ms
 //! ```
+//!
+//! TS+1 (2026-05-19): the original `other` bucket was split into three
+//! finer sub-buckets — `geo` (speed-clamp + 3a–3d geological processes),
+//! `inertia` (3e–3i inertia/centers/group-split/age-divide), and `plume`
+//! (3j lithosphere/plume-registry + 4a continent-buffers + collision
+//! reset). This narrowed down which sub-phase of the legacy `other`
+//! actually dominates.
 //!
 //! Determinism: this module reads only its env vars and `Instant::now`;
 //! it never mutates sim state. Simulation byte-equality is preserved
@@ -40,7 +47,9 @@ fn sample_every() -> u32 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
     Verlet,
-    Other,
+    Geo,
+    Inertia,
+    Plume,
     Collisions,
     Resolve,
     Subduction,
@@ -52,7 +61,9 @@ pub struct PhaseTimer {
     start: Instant,
     last: Instant,
     pub verlet: Duration,
-    pub other: Duration,
+    pub geo: Duration,
+    pub inertia: Duration,
+    pub plume: Duration,
     pub collisions: Duration,
     pub resolve: Duration,
     pub subduction: Duration,
@@ -66,7 +77,9 @@ impl PhaseTimer {
             start: now,
             last: now,
             verlet: Duration::ZERO,
-            other: Duration::ZERO,
+            geo: Duration::ZERO,
+            inertia: Duration::ZERO,
+            plume: Duration::ZERO,
             collisions: Duration::ZERO,
             resolve: Duration::ZERO,
             subduction: Duration::ZERO,
@@ -82,7 +95,9 @@ impl PhaseTimer {
         }
         match bucket {
             Phase::Verlet => self.verlet += dt,
-            Phase::Other => self.other += dt,
+            Phase::Geo => self.geo += dt,
+            Phase::Inertia => self.inertia += dt,
+            Phase::Plume => self.plume += dt,
             Phase::Collisions => self.collisions += dt,
             Phase::Resolve => self.resolve += dt,
             Phase::Subduction => self.subduction += dt,
@@ -98,13 +113,15 @@ impl PhaseTimer {
         }
         let total = self.start.elapsed();
         eprintln!(
-            "[tect-step {}] verlet={:.1}ms collisions={:.1}ms resolve={:.1}ms subduction={:.1}ms other={:.1}ms total={:.1}ms",
+            "[tect-step {}] verlet={:.1}ms collisions={:.1}ms resolve={:.1}ms subduction={:.1}ms geo={:.1}ms inertia={:.1}ms plume={:.1}ms total={:.1}ms",
             step_idx,
             self.verlet.as_secs_f64() * 1000.0,
             self.collisions.as_secs_f64() * 1000.0,
             self.resolve.as_secs_f64() * 1000.0,
             self.subduction.as_secs_f64() * 1000.0,
-            self.other.as_secs_f64() * 1000.0,
+            self.geo.as_secs_f64() * 1000.0,
+            self.inertia.as_secs_f64() * 1000.0,
+            self.plume.as_secs_f64() * 1000.0,
             total.as_secs_f64() * 1000.0,
         );
     }
@@ -127,7 +144,9 @@ mod tests {
     fn timer_start_has_zero_buckets() {
         let t = PhaseTimer::start();
         assert_eq!(t.verlet, Duration::ZERO);
-        assert_eq!(t.other, Duration::ZERO);
+        assert_eq!(t.geo, Duration::ZERO);
+        assert_eq!(t.inertia, Duration::ZERO);
+        assert_eq!(t.plume, Duration::ZERO);
         assert_eq!(t.collisions, Duration::ZERO);
         assert_eq!(t.resolve, Duration::ZERO);
         assert_eq!(t.subduction, Duration::ZERO);
@@ -141,7 +160,9 @@ mod tests {
             start: now,
             last: now,
             verlet: Duration::ZERO,
-            other: Duration::ZERO,
+            geo: Duration::ZERO,
+            inertia: Duration::ZERO,
+            plume: Duration::ZERO,
             collisions: Duration::ZERO,
             resolve: Duration::ZERO,
             subduction: Duration::ZERO,
@@ -149,7 +170,7 @@ mod tests {
         sleep(StdDur::from_millis(2));
         t.lap(Phase::Verlet);
         assert!(t.verlet >= StdDur::from_millis(1));
-        assert_eq!(t.other, Duration::ZERO);
+        assert_eq!(t.geo, Duration::ZERO);
     }
 
     #[test]
@@ -160,7 +181,9 @@ mod tests {
             start: now,
             last: now,
             verlet: Duration::ZERO,
-            other: Duration::ZERO,
+            geo: Duration::ZERO,
+            inertia: Duration::ZERO,
+            plume: Duration::ZERO,
             collisions: Duration::ZERO,
             resolve: Duration::ZERO,
             subduction: Duration::ZERO,
@@ -177,7 +200,9 @@ mod tests {
             start: Instant::now(),
             last: Instant::now(),
             verlet: Duration::ZERO,
-            other: Duration::ZERO,
+            geo: Duration::ZERO,
+            inertia: Duration::ZERO,
+            plume: Duration::ZERO,
             collisions: Duration::ZERO,
             resolve: Duration::ZERO,
             subduction: Duration::ZERO,
