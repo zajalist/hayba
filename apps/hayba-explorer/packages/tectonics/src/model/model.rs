@@ -277,68 +277,8 @@ impl Model {
         }
 
         // ── PHASE C-pre-2: SINGLE-CELL POCKET CLEANUP ─────────────────
-        //
-        // Geometric (topology) repair, not collision logic. A cell with
-        // 0 same-plate neighbours is an "island pocket" — a single cell
-        // marooned inside another plate's territory. The boundary-line
-        // drawer correctly draws a closed loop around it (since all 6
-        // edges are cross-plate), producing the ghost-island artifact the
-        // user keeps screenshotting.
-        //
-        // Source of pockets: (1) bake-time voronoi noise near triple
-        // junctions, (2) sim-time stranding when a cell's neighbours all
-        // transfer plates but the cell itself doesn't qualify under the
-        // edge guard.
-        //
-        // Fix: a stranded cell gets absorbed into the majority neighbour
-        // plate (deterministic tie-break = smaller plate_id wins). 3-pass
-        // sweep to also catch 2-cell and 3-cell pockets which can't be
-        // cleaned in a single pass.
-        //
-        // O(n_fields × 6 × 3 passes) — trivial at 1.5M cells (~30M ops).
-        for _pass in 0..3 {
-            let plate_snap: Vec<Option<u32>> = self
-                .fields
-                .iter()
-                .map(|f| f.plate_id)
-                .collect();
-            let mut any_change = false;
-            for fid in 0..n_fields {
-                let Some(owner_pid) = plate_snap[fid] else { continue };
-                let mut same_count = 0u32;
-                let mut votes: std::collections::HashMap<u32, u32> =
-                    std::collections::HashMap::new();
-                for &n in self.grid.neighbours(fid as u32) {
-                    if let Some(np) = plate_snap.get(n as usize).copied().flatten() {
-                        if np == owner_pid {
-                            same_count += 1;
-                        } else {
-                            *votes.entry(np).or_insert(0) += 1;
-                        }
-                    }
-                }
-                if same_count == 0 {
-                    if let Some((&winner, _)) = votes
-                        .iter()
-                        .max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0)))
-                    {
-                        if let Some(p) = self.plates.iter_mut().find(|p| p.id == owner_pid) {
-                            p.remove_field(fid as u32);
-                        }
-                        if let Some(p) = self.plates.iter_mut().find(|p| p.id == winner) {
-                            p.add_field(fid as u32);
-                        }
-                        if let Some(f) = self.fields.get_mut(fid) {
-                            f.plate_id = Some(winner);
-                        }
-                        any_change = true;
-                    }
-                }
-            }
-            if !any_change {
-                break;
-            }
-        }
+        // Topology repair (NOT collision logic). See cleanup_isolated_pockets.
+        self.cleanup_isolated_pockets(3);
         // Re-recompute boundary flag after the cleanup so the optimized
         // collision detector sees the post-cleanup state.
         for fid in 0..n_fields {
@@ -780,6 +720,65 @@ impl Model {
     /// and grid area. Mirrors wizard.rs:714-718 / planet.rs:197-201 byte-for-byte
     /// (the clone is load-bearing: `update_inertia_tensor` borrows `&[Field]`
     /// while iterating `&mut self.plates`).
+    /// Absorb any cell that has 0 same-plate neighbours into the most-
+    /// represented neighbour plate (tie-break: smaller plate_id wins). 3-pass
+    /// sweep catches 1-cell, 2-cell, and 3-cell pockets that can't be
+    /// resolved in a single pass. Idempotent — running twice is harmless.
+    ///
+    /// Called from:
+    ///   - `Model::step` (after subduction transfers, to clean stranded cells)
+    ///   - `wizard.rs::bake_impl` (after voronoi plate assignment, to clean
+    ///     bake-time noise — the source of the "first-frame ghost loops"
+    ///     the user screenshotted)
+    ///
+    /// O(n_fields × 6 × passes). Trivial at 1.5M cells (~30M ops at 3 passes).
+    pub fn cleanup_isolated_pockets(&mut self, max_passes: usize) {
+        let n_fields = self.fields.len();
+        for _ in 0..max_passes {
+            let plate_snap: Vec<Option<u32>> = self
+                .fields
+                .iter()
+                .map(|f| f.plate_id)
+                .collect();
+            let mut any_change = false;
+            for fid in 0..n_fields {
+                let Some(owner_pid) = plate_snap[fid] else { continue };
+                let mut same_count = 0u32;
+                let mut votes: std::collections::HashMap<u32, u32> =
+                    std::collections::HashMap::new();
+                for &n in self.grid.neighbours(fid as u32) {
+                    if let Some(np) = plate_snap.get(n as usize).copied().flatten() {
+                        if np == owner_pid {
+                            same_count += 1;
+                        } else {
+                            *votes.entry(np).or_insert(0) += 1;
+                        }
+                    }
+                }
+                if same_count == 0 {
+                    if let Some((&winner, _)) = votes
+                        .iter()
+                        .max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0)))
+                    {
+                        if let Some(p) = self.plates.iter_mut().find(|p| p.id == owner_pid) {
+                            p.remove_field(fid as u32);
+                        }
+                        if let Some(p) = self.plates.iter_mut().find(|p| p.id == winner) {
+                            p.add_field(fid as u32);
+                        }
+                        if let Some(f) = self.fields.get_mut(fid) {
+                            f.plate_id = Some(winner);
+                        }
+                        any_change = true;
+                    }
+                }
+            }
+            if !any_change {
+                break;
+            }
+        }
+    }
+
     pub fn refresh_plate_inertias(&mut self) {
         let area = self.grid.field_area_km2();
         let fields_ref = self.fields.clone();

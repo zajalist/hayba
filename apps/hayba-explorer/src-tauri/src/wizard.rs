@@ -745,6 +745,15 @@ pub(crate) fn build_initial_model(draft: &WizardDraft) -> Model {
         model.add_plate(pid, packed, density, cells, plate_continental[i], omega);
     }
 
+    // ── Step 3b: clean up single-cell pockets from voronoi assignment.
+    // The voronoi plate-id seeding can leave isolated cells near triple
+    // junctions — a single cell of plate X surrounded by plate Y cells.
+    // Without this, the very first boundary computation (before sim runs)
+    // already draws closed-loop "ghost islands" around those pockets.
+    // The same cleanup runs per-step inside `Model::step` for sim-time
+    // pockets, but it MUST also run here so the bake snapshot is clean.
+    model.cleanup_isolated_pockets(5);
+
     // ── Step 4: per-cell crust override. Precedence: painter > continental
     //  brush > preset HSV. Continentality is derived: elev > 0.
     const CONTINENTAL_BRUSH_FLOOR: f32 = 0.05;
