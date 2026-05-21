@@ -78,6 +78,34 @@
     //   root  ── semantic-category hub  ── cell leaf
     // Force-directed layout, drag-able nodes, responsive resize.
 
+    // ── Tag-based coloring ───────────────────────────────────────────────
+    // Tag overrides are hand-pinned in tag-overrides.json (broad families
+    // like "maritime", "foliage", etc.). Anything not in the overrides
+    // table is hashed deterministically so the same tag string always
+    // resolves to the same hue across runs and cells.
+    let TAG_OVERRIDES = {};
+    fetch('tag-overrides.json')
+      .then(r => r.ok ? r.json() : {})
+      .then(o => { TAG_OVERRIDES = o; render(); })
+      .catch(() => { /* tolerate missing overrides — fall back to hash */ });
+
+    // FNV-1a 32-bit hash. Deterministic per tag string.
+    function fnv1a(str) {
+      let h = 2166136261 >>> 0;
+      for (let i = 0; i < str.length; ++i) {
+        h ^= str.charCodeAt(i);
+        h = Math.imul(h, 16777619) >>> 0;
+      }
+      return h;
+    }
+
+    function colorForTag(tag) {
+      if (!tag) return 'hsl(0, 0%, 60%)';      // muted gray for tagless cells
+      if (TAG_OVERRIDES[tag]) return TAG_OVERRIDES[tag];
+      const hue = fnv1a(tag) % 360;
+      return `hsl(${hue}, 55%, 55%)`;
+    }
+
     const PALETTE = {
       forest:     '#4caf6c',
       meadow:     '#7bb867',
@@ -140,31 +168,36 @@
       const root = { id: 'root', kind: 'root', label: 'level', color: '#cfd5e6', r: 30, x: 0, y: 0, vx: 0, vy: 0 };
       nodes.push(root);
 
-      // 2. Hubs per semantic family.
-      const families = new Map(); // semantic → {node, cells:[]}
+      // 2. Hubs per tag family. Cells are keyed by their first (mode) tag;
+      //    anything without tags lands in a single '_untagged' hub. Once
+      //    Task 5 wires cell.tags through the JSON payload this groups
+      //    cells by real tag families instead of the old hardcoded semantic
+      //    table.
+      const families = new Map(); // tag → {node, cells:[]}
       for (const c of cells) {
-        const sem = semanticOf(c.label);
-        if (!families.has(sem)) {
+        const key = (c.tags && c.tags[0]) ? c.tags[0] : '_untagged';
+        if (!families.has(key)) {
           const hub = {
-            id: 'hub:' + sem, kind: 'hub', label: sem,
-            color: PALETTE[sem] || fallbackColor,
+            id: 'hub:' + key, kind: 'hub', label: key,
+            color: colorForTag(key === '_untagged' ? null : key),
             r: 16, x: 0, y: 0, vx: 0, vy: 0, data: { cellCount: 0, actorCount: 0 },
           };
           nodes.push(hub);
           edges.push({ source: 'root', target: hub.id });
-          families.set(sem, { node: hub, cells: [] });
+          families.set(key, { node: hub, cells: [] });
         }
-        families.get(sem).cells.push(c);
+        families.get(key).cells.push(c);
       }
 
       // 3. Cell leaves under each hub.
-      for (const [sem, fam] of families) {
+      for (const [key, fam] of families) {
         fam.node.data.cellCount = fam.cells.length;
         for (const c of fam.cells) {
           fam.node.data.actorCount += c.count;
           const cellNode = {
-            id: 'cell:' + sem + ':' + c.label + ':' + (c.bounds.min[0]) + ':' + (c.bounds.min[1]),
-            kind: 'cell', label: c.label, color: PALETTE[sem] || fallbackColor,
+            id: 'cell:' + key + ':' + c.label + ':' + (c.bounds.min[0]) + ':' + (c.bounds.min[1]),
+            kind: 'cell', label: c.label,
+            color: colorForTag((c.tags && c.tags[0]) || null),
             // Radius scales with sqrt(actor count) so a 100-actor cell is
             // ~10× a 1-actor cell but big areas don't dominate.
             r: 6 + Math.sqrt(c.count) * 1.5,
@@ -290,11 +323,46 @@
         const body = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         body.setAttribute('class', 'body');
         body.setAttribute('r', n.r);
+        // Fill leaf cells with their tag color. Root/hub keep the dark
+        // panel fill from CSS so the colored stroke reads as a ring.
+        if (n.kind === 'cell') body.setAttribute('fill', n.color);
         g.appendChild(body);
+
+        // Per-cell chip strip: up to 5 small dots, one per tag, colored
+        // with the same deterministic tag palette. Renders as a horizontal
+        // row centered just below the cell circle. Tooltips on each chip
+        // show the tag name. Tagless cells get no chips.
+        if (n.kind === 'cell') {
+          const chips = (n.data && n.data.tags) ? n.data.tags.slice(0, 5) : [];
+          if (chips.length) {
+            const chipR = 3;
+            const chipGap = 2;
+            const totalW = chips.length * (chipR * 2 + chipGap) - chipGap;
+            const startX = -totalW / 2;
+            const chipY  = n.r + chipR + 4;
+            for (let i = 0; i < chips.length; ++i) {
+              const t = chips[i];
+              const chip = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+              chip.setAttribute('class', 'chip');
+              chip.setAttribute('cx', startX + i * (chipR * 2 + chipGap) + chipR);
+              chip.setAttribute('cy', chipY);
+              chip.setAttribute('r', chipR);
+              chip.setAttribute('fill', colorForTag(t));
+              const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+              title.textContent = t;
+              chip.appendChild(title);
+              g.appendChild(chip);
+            }
+          }
+        }
 
         const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         txt.setAttribute('text-anchor', 'middle');
-        txt.setAttribute('dy', n.r + 14);
+        // Cells reserve ~14px below for the chip strip; nudge the label down
+        // so the count doesn't collide with the chips.
+        const labelDy = (n.kind === 'cell' && n.data && n.data.tags && n.data.tags.length)
+          ? n.r + 24 : n.r + 14;
+        txt.setAttribute('dy', labelDy);
         txt.setAttribute('font-size', n.kind === 'root' ? 14 : (n.kind === 'hub' ? 12 : 10));
         txt.textContent = n.kind === 'cell'
           ? `${n.data.count}`     // tight leaves: just the count, hover for detail

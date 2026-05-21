@@ -1,0 +1,17 @@
+{
+  "maritime":   "hsl(210, 60%, 50%)",
+  "foliage":    "hsl(120, 50%, 45%)",
+  "urban":      "hsl(280, 30%, 55%)",
+  "light":      "hsl(50, 75%, 60%)",
+  "character":  "hsl(15, 65%, 55%)",
+  "vehicle":    "hsl(0, 60%, 50%)",
+  "interior":   "hsl(30, 40%, 50%)",
+  "industrial": "hsl(200, 20%, 45%)",
+  "natural":    "hsl(95, 45%, 50%)",
+  "rock":       "hsl(25, 25%, 45%)",
+  "water":      "hsl(195, 70%, 55%)",
+  "sky":        "hsl(220, 70%, 70%)",
+  "tech":       "hsl(180, 55%, 50%)",
+  "magic":      "hsl(290, 70%, 60%)",
+  "weapon":     "hsl(355, 50%, 45%)"
+}
