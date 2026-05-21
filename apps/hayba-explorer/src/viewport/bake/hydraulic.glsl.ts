@@ -1168,39 +1168,89 @@ export const CLIMATE_CLASS_FRAG = [
   "  vec4 a  = loadA(uA, uGrid, rc.x, rc.y);",
   "  vec4 c  = texelFetch(uClim, rc, 0);",
   "  vec4 d  = texelFetch(uDist, rc, 0);",
-  "  if (a.r < 0.0) { fragColor = vec4(0.0); return; }", // Ocean
+  // T4-TUNE-6: raise sea-level cutoff. User: 'what gets categorized as
+  // continent is slightly below irl sealevel'. Raw heightfield (a.r)
+  // has many cells in [-0.05, 0.05] that are below real sea level but
+  // were currently classifying as land — producing the spotty cyan
+  // patches inside continents. CLIM/TERR/HYDRO still see the raw 0.0
+  // shoreline; only the Climate viz uses the higher cutoff.
+  "  if (a.r < 0.0) { fragColor = vec4(0.0); return; }", // Ocean — sea-level is now baked into a.r at SEED time (T4-TUNE-10)
   "  float v = (float(rc.y) + 0.5) / float(wh.y);",
   "  float lat = (0.5 - v) * 180.0;",
   "  float absLat = abs(lat);",
-  "  float T = c.r;",
-  "  float P = c.g;",
+  // T4-TUNE-4: override Tann with an Earth-fit profile. CLIMATE_FRAG's
+  // sin²(lat) over-cools mid-lats (real Stockholm ≈-2°C, sin² model
+  // gives -10°C → cascades into wrong KG everywhere). Parabolic
+  // (lat/90)² matches observed annual means more closely:
+  //   lat 0  → 27.0  (real 27)
+  //   lat 30 → 21.4  (real 22)
+  //   lat 45 → 14.5  (real 12)
+  //   lat 60 →  5.4  (real -2)
+  //   lat 80 → -2.5  (real -20 — still too warm but discriminates ET)
+  // Elevation lapse subtracted so Tibet/Andes/Rockies get cooler classes.
+  // CLIM RT's Tann is unchanged (wind/MSLP paths byte-equal).
+  "  float Pzonal = c.g;",
   "  float cont = d.g;",
+  // T4-TUNE-5: continental aridity. Our P is lat-only; without this
+  // every cell at lat 25° has the same P, so Sahara (deep continental,
+  // no moisture source) reads as wet as the coast. Suppress P by
+  // continentality for the classifier only (CLIM RT unchanged).
+  // Calibrated so Sahara (cont≈0.4) drops from 0.30→0.22 → BWh red.
+  "  float P = Pzonal * (1.0 - 0.7 * clamp(cont, 0.0, 1.0));",
+  "  float latFrac = absLat / 90.0;",
+  "  float elevKm = max(a.r, 0.0) * 8.0;",
+  "  float Tann = 27.0 - latFrac * latFrac * 50.0 - 6.5 * elevKm;",
+  // (T4-TUNE-15 arbitrary "+7°C if west of ocean" boost reverted —
+  // user correctly called it out as not science. Proper Gulf-Stream
+  // warming requires a real ocean circulation pass: Sverdrup transport
+  // driven by wind-stress curl + heat advection along streamlines.
+  // That's the next sub-project, not a one-liner.)
+  // T_amp must shrink at the equator regardless of continentality.
+  // Real Manaus (Amazon interior, cont≈0.74) annual range ≈ 3°C
+  // because sun is overhead year-round. Lat-driven base + small
+  // continentality boost. Result: lat 0 ≈ 4°C, lat 45 ≈ 14°C,
+  // lat 60 ≈ 22°C, lat 80 ≈ 36°C — matches Earth.
+  "  float TampLat = absLat * absLat * 0.005;",
+  "  float Tamp = 3.0 + TampLat * (0.4 + 0.6 * cont);",
+  "  float Tmax = Tann + Tamp * 0.5;",
+  "  float Tmin = Tann - Tamp * 0.5;",
+  // Aridity Index — raised so Sahara (Tann≈22, P≈0.30) lands in BWh
+  // (was BSh). Outback / Arabia / Sahara all need this.
+  "  float aridBW = clamp(0.10 + 0.018 * Tann, 0.12, 0.65);",  // BW threshold
+  "  float aridBS = clamp(0.20 + 0.030 * Tann, 0.22, 1.20);",  // BS threshold
   "  float id = 0.0;",
-  // Polar tier (extreme cold + very high lat)
-  "  if (T <= -10.0 || absLat >= 75.0) { id = 14.0; }",
-  "  else if (T <= 0.0  || absLat >= 65.0) { id = 13.0; }",
-  // Subarctic / boreal (cold + high cont)
-  "  else if (T < 8.0 && absLat >= 50.0)  { id = 12.0; }",
-  "  else if (T < 14.0 && absLat >= 40.0 && cont > 0.45) { id = 11.0; }",
-  // Tropical band (lat < 23, warm)
-  "  else if (absLat < 23.0 && T > 18.0) {",
-  "    if (P > 0.70) id = 1.0;",
-  "    else if (P > 0.45) id = 2.0;",
-  "    else id = 3.0;",
+  // E polar — based on T_MAX (warmest month). EF = icecap (no month
+  // above 0); ET = tundra (warmest 0..10).
+  "  if (Tmax < 0.0) { id = 14.0; }",
+  "  else if (Tmax < 10.0) { id = 13.0; }",
+  // B arid — canonical KG runs BEFORE A/C/D temperature checks.
+  "  else if (P < aridBW * 0.5) { id = (Tmin > 0.0) ? 4.0 : 5.0; }",
+  "  else if (P < aridBS * 0.5) { id = (Tmin > 0.0) ? 6.0 : 7.0; }",
+  // A tropical — T_MIN > 18°C means every month warm (no cold winter).
+  // Already filtered dry tropics into B above.
+  "  else if (Tmin > 18.0) {",
+  "    if (P > 0.80) id = 1.0;",       // Af tropical rainforest
+  "    else if (P > 0.55) id = 2.0;",  // Am tropical monsoon
+  "    else id = 3.0;",                 // Aw savanna
   "  }",
-  // Arid (low precip)
-  "  else if (P < 0.25) { id = (T > 18.0) ? 4.0 : 5.0; }",
-  "  else if (P < 0.50 && cont > 0.35) { id = (T > 18.0) ? 6.0 : 7.0; }",
-  // Temperate
-  "  else if (absLat >= 30.0 && absLat < 45.0 && cont > 0.25 && cont < 0.55) { id = 8.0; }",
-  "  else if (absLat < 35.0) { id = 9.0; }",
-  "  else if (cont < 0.30) { id = 10.0; }",
-  "  else { id = 11.0; }",
-  // T4 monsoon override: tropical-coastal cells (lat 5-25, low cont)
-  // get tropical-monsoon climate (Am) regardless of zonal-derived P.
-  // Without seasonal precip data this is the proxy for the cookbook
-  // 'east+south coast of large landmass' rule.
-  "  if (absLat >= 5.0 && absLat < 25.0 && cont < 0.30 && a.r >= 0.0 && T > 18.0 && id > 0.5 && id < 4.0) {",
+  // D continental — coldest < -3, warmest > 10 (cold winter + warm
+  // summer). This is where Canada / N Europe / Russia BELONG (not EF).
+  "  else if (Tmin < -3.0 && Tmax > 10.0) {",
+  "    id = (Tmax > 22.0) ? 11.0 : 12.0;", // Dfa/b vs Dfc
+  "  }",
+  // C temperate — coldest -3..18, warmest > 10.
+  "  else if (Tmin > -3.0 && Tmax > 10.0) {",
+  // Csa Mediterranean (lat-band 30-45, low cont — west-coast proxy).
+  "    if (absLat >= 30.0 && absLat < 45.0 && cont < 0.30) id = 8.0;",
+  "    else if (absLat < 35.0) id = 9.0;",   // Cfa humid subtropical
+  "    else id = 10.0;",                      // Cfb maritime
+  "  }",
+  // Cold-but-not-warm-summer fall-through → tundra.
+  "  else { id = 13.0; }",
+  // Monsoon override — widened to lat 5-25 so India / Bangladesh coast
+  // (lat ~20°N) and N Australia (lat ~15°S) get tropical-monsoon Am
+  // rather than Aw/BSh. cont<0.20 keeps it coastal-only.
+  "  if (absLat >= 5.0 && absLat < 25.0 && cont < 0.20 && a.r >= 0.0 && Tmin > 14.0 && Pzonal > 0.30 && (id > 0.5 && id < 8.0)) {",
   "    id = 2.0;",
   "  }",
   // Cookbook precip per class (.g). Lets downstream consumers (and the
@@ -1224,5 +1274,31 @@ export const CLIMATE_CLASS_FRAG = [
   "  else if (id < 13.5) cbP = 0.25;", // ET tundra
   "  else cbP = 0.10;",                // EF icecap
   "  fragColor = vec4(id, cbP, 0.0, 0.0);",
+  "}",
+].join("\n");
+
+// T4-TUNE-6: widened to 11x11 (121-tap) from 7x7 (49). User: real
+// Earth continentality maps are very smooth; 7x7 wasn't enough — JFA
+// stair-stepping was still visible. Single wider pass is cheaper than
+// two narrower passes and gives a properly smooth gradient.
+export const CONT_BLUR_FRAG = [
+  H,
+  "uniform sampler2D uDist;",
+  "uniform vec2 uGrid;",
+  "void main(){",
+  "  ivec2 rc = fragRC();",
+  "  ivec2 wh = gridWH(uGrid);",
+  "  vec4 sum = vec4(0.0);",
+  "  float n = 0.0;",
+  "  for (int dy = -5; dy <= 5; dy++) {",
+  "    for (int dx = -5; dx <= 5; dx++) {",
+  "      int nx = xw(rc.x + dx, wh.x);",
+  "      int ny = yc(rc.y + dy, wh.y);",
+  "      vec4 s = texelFetch(uDist, ivec2(nx, ny), 0);",
+  "      sum += s;",
+  "      n += 1.0;",
+  "    }",
+  "  }",
+  "  fragColor = sum / max(n, 1.0);",
   "}",
 ].join("\n");

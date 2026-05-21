@@ -20,7 +20,8 @@ export type EquirectModeKind =
   | "wind"
   | "dist"
   | "pressure"
-  | "climate";
+  | "climate"
+  | "hydro";
 
 export interface EquirectMapMode {
   label: string;
@@ -47,6 +48,11 @@ export const EQUIRECT_MAP_MODES: EquirectMapMode[] = [
   { label: "Continentality", kind: "dist", channel: 1, ramp: 5 },
   { label: "Pressure", kind: "pressure", channel: 0, ramp: 6 },
   { label: "Climate", kind: "climate", channel: 0, ramp: 7 },
+  // HYDRO RT (already baked): .r = flow discharge (rivers), .b =
+  // endorheic flag (lake basins). Both rendered with ramp 8 (river-blue
+  // threshold gradient — bright cyan above threshold, tan below).
+  { label: "Rivers", kind: "hydro", channel: 0, ramp: 8 },
+  { label: "Lakes", kind: "hydro", channel: 2, ramp: 8 },
 ];
 
 /** Resolved selection for `setDebugStack`. `mode` is the debugMaterial
@@ -79,7 +85,12 @@ export function resolveEquirectMode(
   // uStackMode as clim (1 draped / 2 flat) because debugMaterial just
   // samples uStackTex and applies the indexed ramp. Only the source RT
   // differs (App.tsx routes DIST/MSLP/CLASS into uStackTex per kind).
-  if (e.kind === "dist" || e.kind === "pressure" || e.kind === "climate") {
+  if (
+    e.kind === "dist" ||
+    e.kind === "pressure" ||
+    e.kind === "climate" ||
+    e.kind === "hydro"
+  ) {
     return { kind: e.kind, channel: e.channel, ramp: e.ramp, mode: draped ? 1 : 2 };
   }
   return {

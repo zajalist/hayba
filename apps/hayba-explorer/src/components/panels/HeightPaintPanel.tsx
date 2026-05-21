@@ -1,6 +1,7 @@
 import React from "react";
 import { colors, fonts } from "@hayba/design-tokens";
 import PropertyRow from "../PropertyRow";
+import PropertyStack from "../PropertyStack";
 import PropertySection from "../PropertySection";
 import Select from "../Select";
 import type { BrushConfig } from "../../wizard/paint/HeightPainter";
@@ -54,34 +55,34 @@ export default function HeightPaintPanel(p: HeightPaintPanelProps): React.ReactE
             ))}
           </div>
         </div>
-        <PropertyRow
+        <PropertyStack
           label="Radius"
-          value={
-            <input
-              type="range"
-              min={0.02}
-              max={0.30}
-              step={0.005}
-              value={p.brush.radiusRad}
-              onChange={(e) => set("radiusRad", Number(e.target.value))}
-              style={{ width: "100%" }}
-            />
-          }
-        />
-        <PropertyRow
+          value={p.brush.radiusRad.toFixed(3)}
+        >
+          <input
+            type="range"
+            min={0.02}
+            max={0.30}
+            step={0.005}
+            value={p.brush.radiusRad}
+            onChange={(e) => set("radiusRad", Number(e.target.value))}
+            style={{ width: "100%" }}
+          />
+        </PropertyStack>
+        <PropertyStack
           label="Strength"
-          value={
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={p.brush.strength}
-              onChange={(e) => set("strength", Number(e.target.value))}
-              style={{ width: "100%" }}
-            />
-          }
-        />
+          value={p.brush.strength.toFixed(2)}
+        >
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={p.brush.strength}
+            onChange={(e) => set("strength", Number(e.target.value))}
+            style={{ width: "100%" }}
+          />
+        </PropertyStack>
         <PropertyRow
           label="Falloff"
           value={
@@ -108,21 +109,21 @@ export default function HeightPaintPanel(p: HeightPaintPanelProps): React.ReactE
           }
         />
         {p.brush.mode === "flatten" && (
-          <PropertyRow
+          <PropertyStack
             label="Target"
+            value={p.brush.flattenTarget.toFixed(2)}
             noSeparator
-            value={
-              <input
-                type="range"
-                min={-1}
-                max={1}
-                step={0.05}
-                value={p.brush.flattenTarget}
-                onChange={(e) => set("flattenTarget", Number(e.target.value))}
-                style={{ width: "100%" }}
-              />
-            }
-          />
+          >
+            <input
+              type="range"
+              min={-1}
+              max={1}
+              step={0.05}
+              value={p.brush.flattenTarget}
+              onChange={(e) => set("flattenTarget", Number(e.target.value))}
+              style={{ width: "100%" }}
+            />
+          </PropertyStack>
         )}
       </PropertySection>
 
@@ -133,7 +134,7 @@ export default function HeightPaintPanel(p: HeightPaintPanelProps): React.ReactE
             world for validating the debug map modes. Bake to apply.
           </div>
           <button onClick={p.onLoadEarth} style={historyButtonStyle(true)}>
-            🌍 Load Earth
+            Load Earth
           </button>
         </div>
       </PropertySection>

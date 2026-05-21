@@ -26,6 +26,7 @@ import BoundaryPopover from "./components/BoundaryPopover";
 import { IconPlay, IconPause, IconReset } from "./components/icons";
 import { buildPlateLabels, type PlateLabelsHandle } from "./viewport/overlays/plateLabels";
 import { buildForceArrows, type ForceArrowsHandle } from "./viewport/overlays/forceArrows";
+import { buildBoundaryLines, type BoundaryLinesHandle } from "./viewport/overlays/boundaryLines";
 import { buildPoleLabels,  type PoleLabelsHandle  } from "./viewport/overlays/poleLabels";
 import { createDefaultDraft, pairKey, type WizardDraft, type PresetName, type BoundaryType } from "./wizard/state";
 import { BoundaryModel, setBoundary, clearBoundary } from "./wizard/boundary-model";
@@ -270,6 +271,7 @@ export default function App() {
   const plateLabelsRef = useRef<PlateLabelsHandle | null>(null);
   const forceArrowsRef = useRef<ForceArrowsHandle | null>(null);
   const poleLabelsRef  = useRef<PoleLabelsHandle  | null>(null);
+  const boundaryLinesRef = useRef<BoundaryLinesHandle | null>(null);
 
   const [draft, setDraft] = useState<WizardDraft | null>(null);
   const [mode, setMode] = useState<Mode>("wizard");
@@ -413,6 +415,21 @@ export default function App() {
     setBakeTier(fidelityToTier(f));
     saveFidelity(f);
   }, []);
+  // T4-TUNE-15: user-tunable sea level (applied at next bake). Persists
+  // across reloads via localStorage so the user's chosen shoreline
+  // sticks. Default matches DEFAULT_HYDRAULIC.seaLevel.
+  const [seaLevel, setSeaLevel] = useState<number>(() => {
+    try {
+      const v = parseFloat(localStorage.getItem("hayba.seaLevel") ?? "");
+      return Number.isFinite(v) ? v : DEFAULT_HYDRAULIC.seaLevel;
+    } catch {
+      return DEFAULT_HYDRAULIC.seaLevel;
+    }
+  });
+  const handleChangeSeaLevel = useCallback((v: number) => {
+    setSeaLevel(v);
+    try { localStorage.setItem("hayba.seaLevel", String(v)); } catch {}
+  }, []);
 
   // Playback speed (steps per rAF tick). 1× is the wizard's dt_ma per frame.
   const [speedMult, setSpeedMult] = useState<1 | 2 | 4 | 8>(1);
@@ -458,6 +475,9 @@ export default function App() {
       } else if (sel.kind === "climate") {
         const rt = prevDebugClimateRef.current;
         if (rt) stackTex = rt.texture;
+      } else if (sel.kind === "hydro") {
+        // Rivers / Lakes map modes sample the HYDRO RT directly.
+        stackTex = stack.hydro.texture;
       }
       setDebugStack(mat, {
         tex: stackTex,
@@ -1224,6 +1244,7 @@ export default function App() {
           h,
           {
             ...DEFAULT_HYDRAULIC,
+            seaLevel,
             // Rust serde snake_case -> HydraulicConfig camelCase.
             scale: {
               terrainScale: inp.scale.terrain_scale,
@@ -1278,9 +1299,14 @@ export default function App() {
       // SP-A: explicit state — no painter-visibility games. The painter-
       // lifecycle effect is now gated on interact==="compose"; flipping
       // to "explore" deactivates it (its cleanup removes+disposes the
-      // painter mesh) so the eroded sphere is the only globe. Back to
-      // "wizard" mode (NOT boundaries — resolved SP-A decision).
-      setMode("wizard");
+      // painter mesh) so the eroded sphere is the only globe.
+      //
+      // Post-bake → boundaries: user picks plate boundary types (click
+      // any pink seam → convergent / divergent) before advancing to
+      // densities and Play. Replaces the old "stay in wizard after bake"
+      // SP-A decision — the bake → boundaries → densities → simulate
+      // pipeline mirrors the TectonicsExplorer flow the user wants.
+      setMode("boundaries");
       setInteract(nextInteract(interactRef.current, "bake"));
 
       setDebugBakeReady(true);
@@ -1346,6 +1372,13 @@ export default function App() {
     debugStackRef.current = null;
     debugMatRef.current = null;
     setDebugBakeReady(false);
+    // Tear down the pink-seam overlay — its geometry is built from the
+    // current snapshot and would point at stale cells after Edit.
+    if (boundaryLinesRef.current) {
+      scene?.scene.remove(boundaryLinesRef.current.object);
+      boundaryLinesRef.current.dispose();
+      boundaryLinesRef.current = null;
+    }
     setInteract(nextInteract(interactRef.current, "edit"));
     setMode("wizard");
     setPlaying(false);
@@ -1462,6 +1495,54 @@ export default function App() {
       arrows.update(snap, new Map());
     }
   }, [snapshot, mode, showPlateLabels, showForceArrows]);
+
+  // Pink-seam overlay (BoundaryLines). Lazily built on first snapshot
+  // (needs adjacency, which itself is lazily built inside the painter
+  // lifecycle effect — we trigger it here by reading trianglesRef and
+  // building adj if missing). Visible whenever the user is on the
+  // boundaries / densities / simulating stage so the seams stay readable
+  // throughout the post-bake flow; coloured by the user's per-pair
+  // assignments (red = convergent, blue = divergent, pink = unset).
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const snap = snapshot;
+    if (!scene || !snap || !draft) return;
+
+    // Triangles + adjacency might not have been built yet (e.g. the user
+    // never opened the compose panel before baking). Build them on demand
+    // so the overlay always has the adjacency map it needs.
+    let cancelled = false;
+    void (async () => {
+      if (!trianglesRef.current) {
+        try {
+          const tris = await invoke<number[]>("get_grid_triangles", { divisions: draft.divisions });
+          if (cancelled) return;
+          trianglesRef.current = new Uint32Array(tris);
+        } catch (e) {
+          setError(String(e));
+          return;
+        }
+      }
+      if (!adjRef.current && trianglesRef.current) {
+        adjRef.current = buildAdjacency(trianglesRef.current, snap.n_cells);
+      }
+      const adj = adjRef.current;
+      if (!adj) return;
+
+      if (!boundaryLinesRef.current) {
+        const handle = buildBoundaryLines(adj);
+        boundaryLinesRef.current = handle;
+        scene.scene.add(handle.object);
+      }
+      const lines = boundaryLinesRef.current;
+      lines.update(snap, draft.boundary_types);
+      const show = mode === "boundaries" || mode === "densities" || mode === "simulating";
+      lines.setVisible(show);
+      scene.markDirty();
+    })();
+
+    return () => { cancelled = true; };
+  }, [snapshot, draft, mode]);
 
   return (
     <div style={{
@@ -1723,6 +1804,8 @@ export default function App() {
             onChangeMapMode={setMapMode}
             fidelity={fidelity}
             onChangeFidelity={handleChangeFidelity}
+            seaLevel={seaLevel}
+            onChangeSeaLevel={handleChangeSeaLevel}
           />
         )}
       </RightPanel>

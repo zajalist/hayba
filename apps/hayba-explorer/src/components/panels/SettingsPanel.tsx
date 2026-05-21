@@ -1,8 +1,16 @@
 import React from "react";
 import PropertyRow from "../PropertyRow";
 import PropertySection from "../PropertySection";
+import PropertyStack from "../PropertyStack";
+import Select from "../Select";
+import Toggle from "../Toggle";
 import type { Fidelity } from "../../viewport/bake/fidelity";
 
+/**
+ * @deprecated Map-mode UI now lives in the bottom-bar (`equirectMapModes.ts`).
+ * The export is retained because `App.tsx` still imports the symbol; once
+ * that import is removed this entire constant can be deleted.
+ */
 export const MAP_MODES: { value: number; label: string }[] = [
   { value: 0,  label: "Final render" },
   { value: 1,  label: "Temperature" },
@@ -24,10 +32,14 @@ export interface SettingsPanelProps {
   showForceArrows: boolean;
   onToggleLabels: (v: boolean) => void;
   onToggleArrows: (v: boolean) => void;
+  /** @deprecated kept for App.tsx compatibility; no longer surfaced in the UI. */
   mapMode: number;
+  /** @deprecated kept for App.tsx compatibility; no longer surfaced in the UI. */
   onChangeMapMode: (n: number) => void;
   fidelity: Fidelity;
   onChangeFidelity: (f: Fidelity) => void;
+  seaLevel: number;
+  onChangeSeaLevel: (v: number) => void;
 }
 
 export default function SettingsPanel(p: SettingsPanelProps) {
@@ -36,29 +48,43 @@ export default function SettingsPanel(p: SettingsPanelProps) {
       <PropertySection heading="Performance">
         <PropertyRow
           label="Fidelity"
-          noSeparator
           value={
-            <select
-              aria-label="Bake fidelity"
+            <Select<Fidelity>
               value={p.fidelity}
-              onChange={(e) => p.onChangeFidelity(e.target.value as Fidelity)}
-            >
-              <option value="low">Low — fastest (1024²)</option>
-              <option value="medium">Medium (2048²)</option>
-              <option value="high">High — slowest (2560²)</option>
-            </select>
+              onChange={p.onChangeFidelity}
+              options={[
+                { value: "low",    label: "Low (1024²)" },
+                { value: "medium", label: "Medium (2048²)" },
+                { value: "high",   label: "High (2560²)" },
+              ]}
+            />
           }
         />
+        <PropertyStack
+          label="Sea level"
+          value={p.seaLevel.toFixed(3)}
+          noSeparator
+        >
+          <input
+            type="range"
+            min={-0.2}
+            max={0.3}
+            step={0.005}
+            value={p.seaLevel}
+            onChange={(e) => p.onChangeSeaLevel(parseFloat(e.target.value))}
+            aria-label="Sea level offset (applied at next bake)"
+            style={{ width: "100%" }}
+          />
+        </PropertyStack>
       </PropertySection>
       <PropertySection heading="Viewport overlays">
         <PropertyRow
           label="Plate labels"
           value={
-            <input
-              type="checkbox"
+            <Toggle
               checked={p.showPlateLabels}
-              onChange={(e) => p.onToggleLabels(e.target.checked)}
-              aria-label="Toggle plate labels"
+              onChange={p.onToggleLabels}
+              ariaLabel="Toggle plate labels"
             />
           }
         />
@@ -66,11 +92,10 @@ export default function SettingsPanel(p: SettingsPanelProps) {
           label="Force arrows"
           noSeparator
           value={
-            <input
-              type="checkbox"
+            <Toggle
               checked={p.showForceArrows}
-              onChange={(e) => p.onToggleArrows(e.target.checked)}
-              aria-label="Toggle force arrows"
+              onChange={p.onToggleArrows}
+              ariaLabel="Toggle force arrows"
             />
           }
         />
