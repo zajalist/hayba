@@ -3,9 +3,23 @@ import type { PlanetSnapshot } from "../App";
 import { loadSatMap, SATMAP_NAMES, type SatMapName } from "./satmap-loader";
 import { VERTEX_SHADER, FRAGMENT_SHADER } from "./shaders/planet.glsl";
 
+/** Minimal per-tick snapshot — positions + elevation only. The simulate
+ *  loop calls this every rAF; everything else (climate/biome/slope) refreshes
+ *  via {@link GlobeMeshHandle.updateFromSnapshot} on pause/stop. */
+export interface TickSnapshot {
+  sim_time_ma: number;
+  n_cells: number;
+  cell_positions: number[];
+  cell_elevation: number[];
+}
+
 export interface GlobeMeshHandle {
   object: THREE.Mesh;
   updateFromSnapshot(snap: PlanetSnapshot): void;
+  /** Fast per-tick path: rewrites position attribute + pack0.x (elevation)
+   *  only. Skips the 25-write loop over biome/climate/slope/etc. attrs that
+   *  haven't changed. */
+  updateFromTickSnapshot(tick: TickSnapshot): void;
   setSatMap(name: SatMapName): void;
   /** Reassign the SatMap for one biome slot (0..9). */
   setBiomeSatMap(biomeIndex: number, name: SatMapName): void;
@@ -193,12 +207,36 @@ export function buildGlobeMesh(
     for (const a of ["aPack0", "aPack1", "aPack2", "aPack3", "aPack4", "aPack5", "aSeed", "aBiomeW0", "aBiomeW1", "aBiomeW2"]) {
       (geom.getAttribute(a) as THREE.BufferAttribute).needsUpdate = true;
     }
+    // cell_positions can also drift between bakes — keep the position
+    // attribute in sync via the full-snapshot path too.
+    const posAttr = geom.getAttribute("position") as THREE.BufferAttribute;
+    const posSrc = snap.cell_positions;
+    if (positions.length === posSrc.length) {
+      for (let i = 0; i < posSrc.length; i++) positions[i] = posSrc[i];
+      posAttr.needsUpdate = true;
+    }
   };
+
+  /** Per-tick fast path: only positions + elevation. */
+  const updateFromTickSnapshot = (tick: TickSnapshot) => {
+    if (tick.n_cells !== n) {
+      console.warn("[mesh] tick snapshot n_cells changed — rebuild required");
+      return;
+    }
+    const posSrc = tick.cell_positions;
+    for (let i = 0; i < posSrc.length; i++) positions[i] = posSrc[i];
+    const elev = tick.cell_elevation;
+    for (let i = 0; i < n; i++) pack0[i * 4] = elev[i];
+    (geom.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
+    (geom.getAttribute("aPack0") as THREE.BufferAttribute).needsUpdate = true;
+  };
+
   updateFromSnapshot(initialSnap);
 
   return {
     object: mesh,
     updateFromSnapshot,
+    updateFromTickSnapshot,
     setSatMap: (name) => { mat.uniforms.uSatMap.value = loadSatMap(name); },
     setBiomeSatMap: (biomeIndex, name) => {
       const key = "uBiome" + biomeIndex;

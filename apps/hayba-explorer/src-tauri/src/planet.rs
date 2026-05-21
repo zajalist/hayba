@@ -18,6 +18,19 @@ const DEMO_STEPS: u32 = 5;
 const DEMO_DT_MA: f32 = 0.5;
 const DEMO_SEED: u64 = 42;
 
+/// Per-tick minimal snapshot — the ONLY data that meaningfully changes each
+/// sim step at the visual level: where each cell is (positions rotate with
+/// the plate) and how high it is (elevation changes via orogeny/subduction).
+/// Skips the full ~17-array PlanetSnapshot + the entire `compute_climate`
+/// pass which dominates per-tick cost.
+#[derive(Serialize)]
+pub struct TickSnapshot {
+    pub sim_time_ma: f32,
+    pub n_cells: u32,
+    pub cell_positions: Vec<f32>,
+    pub cell_elevation: Vec<f32>,
+}
+
 #[derive(Debug, Serialize, Default)]
 pub struct ClimateDebugWire {
     pub insolation: Vec<f32>,
@@ -268,6 +281,29 @@ fn collision_kind(field: &hayba_tectonics_v2::field::Field) -> u8 {
     if field.orogenic_uplift > 0.0 { return 2; }
     if field.is_continent_buffer { return 3; }
     4
+}
+
+/// Build a minimal `TickSnapshot` — positions + elevation only. Used per
+/// rAF frame during the simulate loop. Climate/biomes/slope/age don't
+/// change visibly tick-to-tick; they refresh from the full `snapshot_model`
+/// path on pause/stop or panel changes.
+pub fn tick_snapshot_model(model: &Model) -> TickSnapshot {
+    let n_cells = model.grid.n_fields();
+    let mut cell_positions: Vec<f32> = Vec::with_capacity((n_cells * 3) as usize);
+    let mut cell_elevation: Vec<f32> = Vec::with_capacity(n_cells as usize);
+    for fid in 0..n_cells {
+        let p = model.grid.position(fid);
+        cell_positions.push(p.x);
+        cell_positions.push(p.y);
+        cell_positions.push(p.z);
+        cell_elevation.push(model.fields[fid as usize].elevation);
+    }
+    TickSnapshot {
+        sim_time_ma: model.sim_time_ma,
+        n_cells,
+        cell_positions,
+        cell_elevation,
+    }
 }
 
 /// Build a `PlanetSnapshot` from a stepped model. Boundary detection matches

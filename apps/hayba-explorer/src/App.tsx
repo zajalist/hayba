@@ -4,7 +4,7 @@ import * as THREE from "three";
 import Viewport from "./viewport/Viewport";
 import type { SceneHandle } from "./viewport/scene";
 import { buildGlobe, PLATE_PALETTE, type GlobeHandle } from "./viewport/globe";
-import { buildGlobeMesh, type GlobeMeshHandle } from "./viewport/mesh";
+import { buildGlobeMesh, type GlobeMeshHandle, type TickSnapshot } from "./viewport/mesh";
 import { SATMAP_NAMES, SATMAP_FAMILIES, METADATA as SATMAP_METADATA, type SatMapName } from "./viewport/satmap-loader";
 import { attachPainter, type PainterHandle } from "./viewport/painter";
 import StatusBar, { Mono } from "./components/StatusBar";
@@ -769,32 +769,23 @@ export default function App() {
   }, [mode, snapshot, draft?.boundary_types]);
 
   // Animation tick — advance the Rust sim on rAF cadence while `playing`.
-  // step_planet(1) per tick = dt_ma per tick, so the visual delta stays
-  // gentle. Cancellation flag bridges the async gap.
+  // Uses the MINIMAL tick path (positions + elevation only). The full
+  // PlanetSnapshot pipeline (climate, biomes, slope, age, ~17 per-cell
+  // arrays + compute_climate compute) is too expensive per tick at 1.5M
+  // cells. The visible per-tick change is plates rotating + relief
+  // adjusting from collisions; climate/biome refreshes happen on pause
+  // via the existing snapshot-driven effects.
   useEffect(() => {
     if (!playing) return;
     let cancelled = false;
     const tick = () => {
       if (cancelled || !playingRef.current) return;
-      invoke<PlanetSnapshot>("step_planet", {
+      invoke<TickSnapshot>("step_planet_tick", {
         nSteps: speedRef.current,
-        wantClimateDebug: true,
-        climateParams: climateParamsRef.current,
       })
-        .then((snap) => {
+        .then((tickSnap) => {
           if (cancelled || !playingRef.current) return;
-          setSnapshot(snap);
-          const bm = BoundaryModel.fromSnapshot(snap);
-          boundaryModelRef.current = bm;
-          const drft = draftRef.current;
-          if (drft) {
-            globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE, {
-              model: bm, assignments: drft.boundary_types,
-            });
-          } else {
-            globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE);
-          }
-          globeMeshRef.current?.updateFromSnapshot(snap);
+          globeMeshRef.current?.updateFromTickSnapshot(tickSnap);
           if (!cancelled && playingRef.current) requestAnimationFrame(tick);
         })
         .catch((e) => {

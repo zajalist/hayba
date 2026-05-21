@@ -331,6 +331,25 @@ fn read_plate_ids(model: &Model) -> Vec<u8> {
     out
 }
 
+/// Advance the persisted sim by `n_steps` and return a MINIMAL tick
+/// snapshot — positions + elevation only. Used per rAF frame during the
+/// simulate loop. Skips the full PlanetSnapshot build + the entire
+/// `compute_climate` pass which dominated per-tick cost (~hundreds of ms
+/// at 1.5M cells). Climate/biomes/slope refresh via the full `step_planet`
+/// path when the user pauses or re-enters a panel that depends on them.
+#[tauri::command]
+pub fn step_planet_tick(
+    n_steps: u32,
+    sim: State<'_, ManagedSim>,
+) -> Result<crate::planet::TickSnapshot, String> {
+    let mut guard = sim.0.lock().map_err(|_| "sim mutex poisoned".to_string())?;
+    let state = guard.as_mut().ok_or_else(|| "no baked planet".to_string())?;
+    for _ in 0..n_steps {
+        state.model.step(state.dt_ma);
+    }
+    Ok(crate::planet::tick_snapshot_model(&state.model))
+}
+
 /// Advance the persisted sim by `n_steps` and return a fresh snapshot.
 #[tauri::command]
 pub fn step_planet(

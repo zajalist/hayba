@@ -25,6 +25,7 @@ pub fn run() {
             wizard::bake_from_wizard,
             wizard::compute_partition,
             wizard::step_planet,
+            wizard::step_planet_tick,
             wizard::start_tect_sim,
             wizard::tect_step_n,
             wizard::reset_sim,
