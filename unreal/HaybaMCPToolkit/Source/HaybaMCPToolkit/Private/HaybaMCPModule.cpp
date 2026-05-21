@@ -52,6 +52,7 @@
 #include "handlers/HaybaMCPBuildHandler.h"
 #include "handlers/HaybaMCPTestHandler.h"
 #include "handlers/HaybaMCPPerfHandler.h"
+#include "handlers/HaybaMCPIdleHandler.h"
 #include "HaybaMCPCaptureActor.h"
 #include "HaybaMCPSettings.h"
 #include "Json.h"
@@ -116,6 +117,7 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPBuildHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPTestHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPPerfHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPIdleHandler>());
 
     // Auto-start the TCP listener so external MCP clients (Claude Code, Cline,
     // OpenCode, …) can connect as soon as the editor is up. The MCP node
