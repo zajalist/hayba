@@ -21,6 +21,10 @@ import { isToolDisabled } from '../disabled-tools-watcher.js';
 import { executeCommand } from '../tool-executor.js';
 import { getToolMeta } from '../tool-meta-registry.js';
 import { checkUeStatus } from '../check-ue-status.js';
+import { AssetRetriever, setDefaultRetriever } from '../asset-retriever/asset-retriever.js';
+import { assetSearchHandler, assetSearchSchema } from '../asset-retriever/meta-tools/search.js';
+import { assetBrowseHandler, assetBrowseSchema } from '../asset-retriever/meta-tools/browse.js';
+import { assetReindexHandler, assetReindexSchema } from '../asset-retriever/meta-tools/reindex.js';
 
 /** Tools registered by registerDeferredRouting itself — skip in shim re-register. */
 export const ALWAYS_ON_META = new Set<string>([
@@ -31,6 +35,9 @@ export const ALWAYS_ON_META = new Set<string>([
   'hayba_check_ue_status',
   'list_tool_categories',
   'get_tool_signature',
+  'hayba_asset_search',
+  'hayba_asset_browse',
+  'hayba_asset_reindex',
 ]);
 
 export interface CapturedTool {
@@ -47,6 +54,7 @@ export interface CapturedTool {
 export interface RoutingHandle {
   registry: PackRegistry;
   index: ToolIndex;
+  retriever: AssetRetriever;
   /** Trigger autoload — wire to `check_ue_status.onConnected`. */
   onUeConnected: () => Promise<void>;
 }
@@ -236,6 +244,43 @@ export async function registerDeferredRouting(
     registeredNames.add('hayba_check_ue_status');
   }
 
+  // ── Asset retriever (Layer 3a) ─────────────────────────────────────────────
+  const retriever = new AssetRetriever(
+    (cmd, params) => executeCommand(cmd, params ?? {}),
+    { cacheDir: effectiveCacheDir },
+  );
+  setDefaultRetriever(retriever);
+
+  server.tool(
+    'hayba_asset_search',
+    'Find an asset in the user\'s UE Content Browser by semantic intent or keyword. Hybrid BM25 + embedding search.',
+    assetSearchSchema,
+    async (args: { query: string; k?: number; filterClass?: string; filterSource?: 'project' | 'polyhaven' | 'ambientcg' | 'sketchfab' | 'fab' | 'unknown' }) => {
+      const r = await assetSearchHandler(args, { retriever });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    'hayba_asset_browse',
+    'Enumerate assets by filter (path/class/tag/source) without semantic ranking. Paginated.',
+    assetBrowseSchema,
+    async (args: { filter?: { path?: string; class?: string; tag?: string; source?: 'project' | 'polyhaven' | 'ambientcg' | 'sketchfab' | 'fab' | 'unknown' }; offset?: number; limit?: number }) => {
+      const r = await assetBrowseHandler(args, { retriever });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    'hayba_asset_reindex',
+    'Force a rebuild of the asset index. Use after a batch import outside the MCP-tracked download flow.',
+    assetReindexSchema,
+    async () => {
+      const r = await assetReindexHandler({}, { retriever });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
   // ── Always-load packs from settings ────────────────────────────────────────
   for (const name of settings.alwaysLoadPacks) {
     const r = await registry.loadPack(name);
@@ -247,6 +292,7 @@ export async function registerDeferredRouting(
   return {
     registry,
     index,
+    retriever,
     onUeConnected: () => registry.maybeAutoLoad('ue_connected'),
   };
 }
