@@ -37,6 +37,7 @@ struct FHaybaCogMapCell
     int32 ActorCount = 0;
     TArray<FString> DominantClasses;       // top 5 class names by count
     TArray<FString> ActorLabels;           // for click-to-select
+    TArray<FString> Tags;                  // NEW — top-5 tags by frequency across the cell's actors
 };
 
 /** Minimal quadtree storing node index + position so splits can redistribute. */
