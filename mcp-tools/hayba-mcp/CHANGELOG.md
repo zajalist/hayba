@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Asset Retriever (Layer 3a, since 2026-05-20)
+
+- New always-on meta-tools: `hayba_asset_search` (hybrid BM25+embedding semantic search over the UE Content Browser), `hayba_asset_browse` (paginated filtered enumeration — escape hatch for the LLM when search isn't the right operation), `hayba_asset_reindex` (manual refresh).
+- Embedding backend auto-selected: Ollama → `@huggingface/transformers` → BM25-only fallback (works without GPU/Ollama).
+- Lazy first-call build; index persisted to `Saved/HaybaMCP/asset-index.{meta.json,bm25.json,vectors.bin}` and invalidated by a sha256 of `(path, lastModified)` per asset.
+- **Closes silent-success hole in connectors (mcp-architectural-issues #4):** `hayba_polyhaven_download`, `hayba_ambientcg_download`, `hayba_sketchfab_download` now route their post-import claim through `AssetVerifier`. `DownloadedAsset` gains `verified: boolean` and `verifyReason?: string`; `imported` is now true only when the asset registry confirms the import. On verified success, the retriever's index is marked stale for that path so the next `hayba_asset_search` delta-merges without a full reindex.
+
+### Pending (UE plugin sub-PR)
+
+- `describe_assets` TCP command — returns `{assets: AssetDoc[]}` for paths under a root or for an explicit list. Once shipped, the asset retriever picks up full tag metadata; until then it gracefully falls back to `list_pcg_assets` (path-only).
+
 ### Asset-source connectors (pure-Node, no UE C++ bridge)
 
 - **Poly Haven** — `hayba_polyhaven_search` (HDRIs / textures / models, CC0) and `hayba_polyhaven_download` (resolution-selectable, downloads individual map files for textures, prefers HDR for HDRIs, glTF for models). No auth.
