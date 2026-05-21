@@ -16,11 +16,23 @@ export const schema = z.object({
 
 export type WaitForShadersParams = z.infer<typeof schema>;
 
+let pollWarned = false;
+
 export async function handleWaitForShaders(params: WaitForShadersParams) {
   const parsed = schema.safeParse(params);
   if (!parsed.success) {
     return { content: [{ type: 'text' as const, text: 'Invalid params: ' + parsed.error.message }], isError: true };
   }
-  const data = await executeCommand('wait_for_shaders', parsed.data as Record<string, unknown>);
+  // poll_seconds is no longer honoured — UE-side polling is fixed at 250ms in
+  // the new wait_for_idle handler. Warn once per process for callers that
+  // still pass it.
+  if (params.poll_seconds !== undefined && !pollWarned) {
+    pollWarned = true;
+    console.warn('[wait-for-shaders] poll_seconds is ignored; UE-side polling is fixed at 250ms.');
+  }
+  const data = await executeCommand('wait_for_idle', {
+    subsystems: ['shaders'],
+    timeout_s: parsed.data.max_seconds,
+  }, { timeout: parsed.data.max_seconds * 1000 + 5000 });
   return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
 }
