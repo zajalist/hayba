@@ -26,6 +26,7 @@ import { editorCaptureViewportHandler, meta as captureMeta } from './editor/edit
 import { editorStartPieHandler, meta as pieMeta } from './editor/editor-start-pie.js';
 import { editorStreamLogHandler, meta as streamLogMeta } from './editor/editor-stream-log.js';
 import { handleWaitForShaders, meta as waitForShadersMeta } from './wait-for-shaders.js';
+import { handleWaitForIdle, meta as waitForIdleMeta, schema as waitForIdleSchema } from './wait-for-idle.js';
 import { handleFabLoginStatus, meta as fabLoginStatusMeta } from './fab/login-status.js';
 import { handleFabLibraryList, meta as fabLibraryListMeta } from './fab/library-list.js';
 import { handleFabMarketplaceSearch, meta as fabMarketplaceSearchMeta } from './fab/marketplace-search.js';
@@ -491,14 +492,22 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
 
   server.tool(
     'wait_for_shaders',
-    appendMeta('Wait for UE shader compilation to settle (or timeout).', waitForShadersMeta),
+    appendMeta('Wait for UE shader compilation to settle (or timeout). Thin wrapper around wait_for_idle({subsystems:["shaders"]}).', waitForShadersMeta),
     {
       max_seconds: z.number().int().min(1).max(600).optional().describe('Upper bound in seconds (default 60).'),
-      poll_seconds: z.number().min(0.05).max(10).optional().describe('Poll interval in seconds (default 1).'),
+      poll_seconds: z.number().min(0.05).max(10).optional().describe('Poll interval in seconds (default 1). NOTE: ignored — UE-side polling is fixed at 250ms.'),
     },
     async (args, _extra) => handleWaitForShaders(args as any)
   );
   remember('wait_for_shaders', waitForShadersMeta);
+
+  server.tool(
+    'wait_for_idle',
+    appendMeta('Wait for UE subsystems (shaders/assets/gc/pcg/world_tick) to settle before reading back or rendering. Default = all five.', waitForIdleMeta),
+    waitForIdleSchema.shape,
+    async (args, _extra) => handleWaitForIdle(args as never),
+  );
+  remember('wait_for_idle', waitForIdleMeta);
 
   // ── Fab connector tools ─────────────────────────────────────────────────────
 
