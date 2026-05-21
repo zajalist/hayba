@@ -14,7 +14,6 @@ AHaybaMCPCaptureActor::AHaybaMCPCaptureActor()
     // the screenshot pipeline, not user-facing content. Without this the
     // actor shows up as a visible "blue spray bottle" in hero shots taken
     // from other angles (see mcp-architectural-issues #13).
-    bHidden = true;
     SetHidden(true);
     SetActorHiddenInGame(true);
     // Strip from cooked builds — we only need this in the editor.
