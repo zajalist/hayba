@@ -247,6 +247,35 @@ impl Model {
         // ── PHASE 4a: continent-buffer flag refresh ─────────────────────
         self.calculate_continent_buffers();
 
+        // ── PHASE C-pre: recompute per-cell `boundary` flag. A cell is
+        // on a plate boundary if ANY of its grid neighbours is owned by a
+        // different plate. Required by detect_field_collisions_opt's
+        // "considered" set (TE maintains this incrementally in
+        // plate.ts::addField/deleteField; we recompute each step instead
+        // because our plate-ownership graph is stable until plate
+        // lifecycle ships).
+        //
+        // Without this, after step 1 `optimize=true` + colliding cleared
+        // + boundary never set ⇒ considered set is empty ⇒ ZERO
+        // collisions detected forever. This is the documented
+        // root-cause of issue #6 (sim works but no orogeny).
+        let n_fields = self.fields.len();
+        for fid in 0..n_fields {
+            let owner = self.fields[fid].plate_id;
+            let mut is_boundary = false;
+            if owner.is_some() {
+                for &n in self.grid.neighbours(fid as u32) {
+                    if let Some(nf) = self.fields.get(n as usize) {
+                        if nf.plate_id != owner {
+                            is_boundary = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            self.fields[fid].boundary = is_boundary;
+        }
+
         // ── PHASE C (TE step 4b — detectCollisions): per-field collision
         // state reset happens INSIDE detectCollisions in TE
         // (`model.ts:336 → field.resetCollisions()`), BEFORE scanning. We

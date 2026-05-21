@@ -439,6 +439,143 @@ mod tests {
         assert_eq!(c.top_field, 5);
     }
 
+    /// END-TO-END REGRESSION for issue #6 (no orogeny under play). The
+    /// scenario: full Model with two continental plates + non-zero omega
+    /// on plate B, step for many ticks, assert that at least one cell
+    /// reports orogenic_uplift > 0 AND elevation grew. Pre-fix this was
+    /// 0 across the board (the optimize-after-step-1 short-circuit kept
+    /// the detector blind to subsequent collisions).
+    #[test]
+    fn orogeny_actually_fires_when_continents_collide() {
+        use crate::model::Model;
+
+        let mut m = Model::new(4, 7); // ~162 cells, plenty for a 2-plate test
+        let n = m.grid.n_fields();
+
+        // Carve two continental plates from the partition: A = northern
+        // hemisphere (Y > 0), B = southern (Y <= 0). Continental crust so
+        // collisions trigger Orogeny branch.
+        let mut a_ids = Vec::new();
+        let mut b_ids = Vec::new();
+        for fid in 0..n {
+            let p = m.grid.position(fid);
+            m.fields[fid as usize].crust = crate::field::Crust::new_continental();
+            m.fields[fid as usize].become_continental_lithosphere(200.0);
+            m.fields[fid as usize].elevation = 0.1;
+            if p.y > 0.0 {
+                a_ids.push(fid);
+            } else {
+                b_ids.push(fid);
+            }
+        }
+
+        // Give plate B a non-zero omega around X so it rotates the southern
+        // continent into the northern continent over many sim steps. omega
+        // magnitude tuned so cells sweep ~one cell-diameter per step.
+        m.add_plate(0, 0, 3.0, &a_ids, true, Vec3::ZERO);
+        m.add_plate(
+            1, 1, 3.0, &b_ids, true,
+            Vec3::new(0.02, 0.0, 0.0),
+        );
+
+        // Snapshot pre-step max elevation.
+        let pre_max: f32 = m.fields.iter().map(|f| f.elevation).fold(0.0, f32::max);
+
+        // Step the model. With omega=0.02 around X, plate B rotates at
+        // 0.02 rad/Ma. After dt=1, 50 steps = 1 rad = ~57° rotation —
+        // plenty to push southern cells into the northern plate.
+        for _ in 0..50 {
+            m.step(1.0);
+        }
+
+        // Verify collisions fired AND orogeny ran.
+        let n_colliding = m.fields.iter().filter(|f| f.colliding).count();
+        let n_orog = m.fields.iter().filter(|f| f.orogenic_uplift > 0.0).count();
+        let post_max: f32 = m.fields.iter().map(|f| f.elevation).fold(0.0, f32::max);
+
+        assert!(
+            n_colliding > 0,
+            "after 50 steps with non-zero plate B omega, expected colliding cells > 0 (got 0); \
+             this means the optimize-mode short-circuit is still blocking collision detection",
+        );
+        assert!(
+            n_orog > 0,
+            "expected orogenic_uplift to be set on at least one cell (got 0)",
+        );
+        assert!(
+            post_max > pre_max + 0.01,
+            "expected max elevation to grow by > 0.01 from orogeny (pre={}, post={}); \
+             this means orogeny → elevation conversion is not lifting cells",
+            pre_max, post_max,
+        );
+    }
+
+    /// REGRESSION TEST FOR PRODUCTION TOPOLOGY: when plates fully partition
+    /// the sphere (every cell owned by exactly one plate, no overlap) and
+    /// then rotate by ~180° relative to each other, do collisions fire?
+    ///
+    /// This is the case the wizard produces — plates collectively cover
+    /// the sphere via voronoi assignment, then drift via integrated
+    /// angular velocity. The 2026-05-21 sim playtest showed ZERO
+    /// collisions detected over 630 Ma at this topology; this test
+    /// reproduces that scenario at small scale.
+    #[test]
+    fn collisions_fire_under_180deg_rotation_with_partitioned_plates() {
+        use glam::Quat;
+        let grid = small_grid();
+        let mut fields = fresh_fields(&grid);
+        let n = grid.n_fields();
+
+        // Two plates partition the sphere: A owns first half, B owns
+        // second half. Every cell is owned by exactly one plate — the
+        // realistic case.
+        let mut a = Plate::new(0, 0, 3.0);
+        let mut b = Plate::new(1, 0, 3.0);
+        for fid in 0..n {
+            if fid % 2 == 0 {
+                a.add_field(fid);
+                fields[fid as usize].plate_id = Some(0);
+            } else {
+                b.add_field(fid);
+                fields[fid as usize].plate_id = Some(1);
+            }
+        }
+        // Pre-rotation, all cells of A live at world positions of plate-A
+        // cells; B at B's. Plate A and B own DIFFERENT field ids, so a
+        // straight collision check at identity finds nothing (as for the
+        // wizard's initial state).
+        let before = detect_field_collisions(
+            &[a.clone(), b.clone()], &grid, &fields,
+        );
+        assert!(
+            before.is_empty(),
+            "at identity, partitioned plates own disjoint cells → expected 0 collisions, got {}",
+            before.len(),
+        );
+
+        // Rotate plate B by 180° around the Y axis. Now B's cells (in
+        // world space) land where A's cells used to be — every B cell at
+        // world W means there's an A cell at world W too. So detection
+        // should find LOTS of collisions.
+        b.quaternion = Quat::from_axis_angle(Vec3::Y, std::f32::consts::PI);
+
+        let after = detect_field_collisions(&[a, b], &grid, &fields);
+        assert!(
+            !after.is_empty(),
+            "after 180° rotation of plate B around Y, collisions MUST be \
+             detected — every B cell now occupies A territory in world \
+             space, got {} (this means detect_field_collisions is broken \
+             for the realistic partitioned-plate topology)",
+            after.len(),
+        );
+        // Sanity: at least 10% of cells should be flagged at full 180°.
+        assert!(
+            after.len() > (n / 10) as usize,
+            "expected hundreds of collisions at 180°, got only {}",
+            after.len(),
+        );
+    }
+
     #[test]
     fn oceanic_subducts_under_continental() {
         // Bottom plate denser (oceanic = 3.3); top plate less dense (continental = 2.8).
