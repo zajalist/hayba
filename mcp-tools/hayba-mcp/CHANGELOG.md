@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### wait_for_idle (UE subsystem readiness, since 2026-05-21)
+
+- New `wait_for_idle(subsystems?, timeout_s, pcg_actors?, world_ticks?)` MCP tool covering `shaders`, `assets`, `gc`, `pcg`, `world_tick`. Default `subsystems` unset = wait for all five. Structured `{ok, durationMs, settled, timedOut?}` response distinguishes settled-in-time vs. partial-timeout per subsystem.
+- `wait_for_shaders` now delegates to `wait_for_idle({subsystems:['shaders']})` with a per-process capability-flag fallback to the legacy `wait_for_shaders` command if the plugin doesn't yet know `wait_for_idle` — so live editors running an older plugin build keep working. `poll_seconds` parameter is ignored (UE-side polling is fixed at 250ms); a one-time warning is logged.
+- C++ side ships in `unreal/HaybaMCPToolkit/Private/handlers/HaybaMCPIdleHandler.{h,cpp}` — synchronous `IHaybaMCPHandler` that schedules `FTSTicker` polling on the game thread and blocks the TCP-handler thread on an `FEvent` until all requested subsystems settle. Handles both `wait_for_idle` and `wait_for_shaders` commands.
+- Closes `.scratch/mcp-architectural-issues.md` #3.
+
 ### Asset Retriever (Layer 3a, since 2026-05-20)
 
 - New always-on meta-tools: `hayba_asset_search` (hybrid BM25+embedding semantic search over the UE Content Browser), `hayba_asset_browse` (paginated filtered enumeration — escape hatch for the LLM when search isn't the right operation), `hayba_asset_reindex` (manual refresh).

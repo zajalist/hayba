@@ -67,6 +67,7 @@ packs:
       - editor_stream_log
       - editor_start_pie
       - wait_for_shaders
+      - wait_for_idle
 
   - name: python
     kind: workflow
