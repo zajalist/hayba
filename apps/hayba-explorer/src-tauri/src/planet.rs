@@ -773,4 +773,63 @@ mod tests {
             "extreme gradient clamps to 1.0 (got {steeper})"
         );
     }
+
+    /// Regression test for the plate-rotation bug: model.step() advances
+    /// each plate's quaternion, but if tick_snapshot_model returns
+    /// grid.position(fid) directly (the immutable icosphere coordinate),
+    /// the JS side never sees plates move. The fix applies
+    /// plate.quaternion to each cell's grid.position before serializing.
+    ///
+    /// Uses bake_demo() as the fixture (real plates, real omegas) then
+    /// steps it and verifies snapshot positions move.
+    #[test]
+    fn tick_snapshot_positions_move_with_plate_rotation() {
+        // Build the same model bake_demo builds, but keep a handle so we
+        // can call tick_snapshot_model + step. Inline the minimal subset:
+        let mut model = hayba_tectonics_v2::model::Model::new(DEMO_DIVISIONS, DEMO_SEED);
+        // Mirror bake_demo's plate seeding (omitting elevation/painting
+        // detail since we only care about position rotation).
+        for pid in 0..4u32 {
+            let centre_fid = (pid as usize * 7919) % (model.grid.n_fields() as usize);
+            let mut members: Vec<u32> = Vec::new();
+            members.push(centre_fid as u32);
+            for &n in model.grid.neighbours(centre_fid as u32) {
+                members.push(n);
+            }
+            let omega = Vec3::new(
+                (pid as f32 * 0.7).sin() * 0.02,
+                ((pid + 1) as f32 * 0.5).cos() * 0.02,
+                (pid as f32 * 1.1).sin() * 0.02,
+            );
+            // Mark members as plate-assigned in the fields vec.
+            for &fid in &members {
+                model.fields[fid as usize].plate_id = Some(pid);
+            }
+            model.add_plate(pid, pid, 3.0, &members, pid % 2 == 0, omega);
+        }
+
+        let snap_before = tick_snapshot_model(&model);
+        for _ in 0..DEMO_STEPS {
+            model.step(DEMO_DT_MA);
+        }
+        let snap_after = tick_snapshot_model(&model);
+
+        // At least one cell on a non-zero-omega plate must have moved.
+        let mut max_dx: f32 = 0.0;
+        let n_pos = (snap_before.cell_positions.len() / 3) as u32;
+        for i in 0..n_pos {
+            let dx = snap_after.cell_positions[(i * 3) as usize]
+                - snap_before.cell_positions[(i * 3) as usize];
+            let dy = snap_after.cell_positions[(i * 3 + 1) as usize]
+                - snap_before.cell_positions[(i * 3 + 1) as usize];
+            let dz = snap_after.cell_positions[(i * 3 + 2) as usize]
+                - snap_before.cell_positions[(i * 3 + 2) as usize];
+            let d = (dx * dx + dy * dy + dz * dz).sqrt();
+            if d > max_dx { max_dx = d; }
+        }
+        assert!(
+            max_dx > 1e-4,
+            "expected at least one cell to drift after plate rotation, got max_dx = {max_dx}"
+        );
+    }
 }
