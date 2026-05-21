@@ -1,21 +1,25 @@
-// BoundaryLines — TE-style pink seam overlay drawn between adjacent cells
-// that belong to different plates. Lives as a separate THREE.LineSegments
-// Object3D so it sits on top of whatever globe is currently displayed
-// (point cloud during compose, eroded sphere post-bake). One overlay per
-// baked snapshot — rebuild via `update()` when the snapshot or
-// assignments change.
+// BoundaryLines — TE-style pink seam overlay drawn ALONG the boundary
+// between adjacent cells of different plates (not cross-stitched between
+// cell centers — that produced a zigzag with stray "spurs" pointing into
+// neighbouring cells).
+//
+// Algorithm (along-seam, per triangle):
+//   Each triangle in the icosphere has 3 corner cells. Classify by plate:
+//     - all 3 same   → no segment (triangle is interior to a plate)
+//     - 2 same + 1 different → ONE segment crossing this triangle, from
+//       the midpoint of one cross-plate edge to the midpoint of the other.
+//     - 3 different   → triple junction; 3 segments from each cross-plate
+//       edge midpoint to the triangle centroid (skipped for now — rare
+//       and visually messy; we draw the three perimeter midpoints joined
+//       pairwise as approximation).
+//
+// Endpoints are midpoints of TWO cell positions each, projected back onto
+// `RADIUS` so the seam sits on the sphere.
 //
 // Coloring per segment:
 //   - none        → BOUNDARY_PINK
 //   - convergent  → red
 //   - divergent   → blue
-//   - transform   → yellow (reserved; current sim only supports convergent
-//                   and divergent, but the segment lookup falls back to
-//                   pink for any unknown assignment).
-//
-// Endpoints are pushed slightly off the unit sphere (RADIUS) so the lines
-// are not z-fought into the surface texture. The overlay is drawn after
-// the globe (`renderOrder = 5`).
 
 import * as THREE from "three";
 import type { PlanetSnapshot } from "../../App";
@@ -33,98 +37,131 @@ export interface BoundaryLinesHandle {
   /** Recompute geometry from the snapshot + per-pair assignments. */
   update: (snap: PlanetSnapshot, assignments: BoundaryAssignments) => void;
   /** Per-tick fast path: re-stream the position buffer from new cell
-   *  positions while keeping the (a,b) segment topology + colors from the
-   *  last full {@link update}. */
+   *  positions while keeping the segment topology + colors. */
   updatePositions: (cellPositions: ArrayLike<number>) => void;
   dispose: () => void;
 }
 
-export function buildBoundaryLines(adjacency: number[][]): BoundaryLinesHandle {
+/** Each segment's two endpoints are midpoints of cell pairs. We cache the
+ *  four cell indices (a1, b1, a2, b2) per segment so the per-tick fast path
+ *  can re-stream the position buffer from updated cell positions. */
+type SegmentEndpoints = Int32Array;
+
+export function buildBoundaryLines(triangles: Uint32Array): BoundaryLinesHandle {
   const geo = new THREE.BufferGeometry();
-  // Start with an empty buffer; the first update() fills it. Vertex-coloured
-  // lines so each segment can carry its own (pink / red / blue) tint.
   const mat = new THREE.LineBasicMaterial({
     vertexColors: true,
     transparent: true,
     opacity: 0.95,
     depthWrite: false,
     depthTest: true,
-    linewidth: 1.5, // ignored by most WebGL impls but keeps the intent
+    linewidth: 1.5,
   });
   const lines = new THREE.LineSegments(geo, mat);
   lines.name = "hayba-boundary-lines";
   lines.renderOrder = 5;
   lines.visible = false;
 
-  // Cache of (a,b) cell index pairs for each segment in the last `update()`,
-  // so the per-tick `updatePositions` fast path can re-stream just the
-  // position attribute from new cell_positions without re-walking adjacency
-  // or recomputing colors.
-  let segmentPairs: Int32Array = new Int32Array(0);
+  let segmentEndpoints: SegmentEndpoints = new Int32Array(0);
+
+  /** Midpoint of two unit-sphere positions, renormalised and pushed to RADIUS. */
+  const midOnSphere = (
+    cells: ArrayLike<number>, a: number, b: number,
+    out: [number, number, number],
+  ): void => {
+    let x = cells[a * 3 + 0] + cells[b * 3 + 0];
+    let y = cells[a * 3 + 1] + cells[b * 3 + 1];
+    let z = cells[a * 3 + 2] + cells[b * 3 + 2];
+    const r = Math.hypot(x, y, z) || 1;
+    const s = RADIUS / r;
+    out[0] = x * s; out[1] = y * s; out[2] = z * s;
+  };
 
   const update = (snap: PlanetSnapshot, assignments: BoundaryAssignments): void => {
     const positions: number[] = [];
     const colors:    number[] = [];
-    const pairs:     number[] = [];
-    const n = snap.n_cells;
-    const seen = new Set<number>(); // encoded edge (min, max) -> min * n + max
+    const ends:      number[] = []; // 4 indices per segment: a1, b1, a2, b2
+    const cells = snap.cell_positions;
+    const plates = snap.cell_plate_ids;
+    const tri = triangles;
+    const m1: [number, number, number] = [0, 0, 0];
+    const m2: [number, number, number] = [0, 0, 0];
 
-    const pushSegment = (a: number, b: number, c: THREE.Color): void => {
-      const ax = snap.cell_positions[a * 3 + 0] * RADIUS;
-      const ay = snap.cell_positions[a * 3 + 1] * RADIUS;
-      const az = snap.cell_positions[a * 3 + 2] * RADIUS;
-      const bx = snap.cell_positions[b * 3 + 0] * RADIUS;
-      const by = snap.cell_positions[b * 3 + 1] * RADIUS;
-      const bz = snap.cell_positions[b * 3 + 2] * RADIUS;
-      positions.push(ax, ay, az, bx, by, bz);
+    const pushSegment = (
+      a1: number, b1: number, a2: number, b2: number,
+      c: THREE.Color,
+    ): void => {
+      midOnSphere(cells, a1, b1, m1);
+      midOnSphere(cells, a2, b2, m2);
+      positions.push(m1[0], m1[1], m1[2], m2[0], m2[1], m2[2]);
       colors.push(c.r, c.g, c.b, c.r, c.g, c.b);
-      pairs.push(a, b);
+      ends.push(a1, b1, a2, b2);
     };
 
-    for (let i = 0; i < n; i++) {
-      if (!snap.cell_is_boundary[i]) continue;
-      const pidA = snap.cell_plate_ids[i];
-      if (pidA < 0) continue;
-      const neighbours = adjacency[i];
-      if (!neighbours) continue;
-      for (const j of neighbours) {
-        if (j <= i) continue; // skip dupes — each unordered edge fires once
-        if (!snap.cell_is_boundary[j]) continue;
-        const pidB = snap.cell_plate_ids[j];
-        if (pidB < 0 || pidB === pidA) continue;
-        const key = i * n + j;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        const pk = pairKey(pidA, pidB);
-        const t = assignments[pk];
-        const c = t === "convergent" ? COLOR_CONVERGENT
-                : t === "divergent"  ? COLOR_DIVERGENT
-                : COLOR_PINK;
-        pushSegment(i, j, c);
+    const colorFor = (pidX: number, pidY: number): THREE.Color => {
+      const pk = pairKey(pidX, pidY);
+      const t = assignments[pk];
+      return t === "convergent" ? COLOR_CONVERGENT
+           : t === "divergent"  ? COLOR_DIVERGENT
+           : COLOR_PINK;
+    };
+
+    // Triangle list is flat: every 3 indices is one triangle (a, b, c).
+    for (let t = 0; t + 2 < tri.length; t += 3) {
+      const a = tri[t];
+      const b = tri[t + 1];
+      const c = tri[t + 2];
+      const pa = plates[a];
+      const pb = plates[b];
+      const pc = plates[c];
+      if (pa < 0 || pb < 0 || pc < 0) continue;
+      if (pa === pb && pb === pc) continue; // interior triangle
+
+      if (pa === pb) {
+        // c is the odd one. Cross-plate edges: (a,c) and (b,c).
+        pushSegment(a, c, b, c, colorFor(pa, pc));
+      } else if (pa === pc) {
+        // b is the odd one. Cross-plate edges: (a,b) and (c,b).
+        pushSegment(a, b, c, b, colorFor(pa, pb));
+      } else if (pb === pc) {
+        // a is the odd one. Cross-plate edges: (a,b) and (a,c).
+        pushSegment(a, b, a, c, colorFor(pb, pa));
+      } else {
+        // Triple junction — all 3 different. Draw the three perimeter
+        // midpoints joined pairwise (forms a triangle inside the triangle,
+        // a reasonable visual stand-in for the three-way Y meeting at the
+        // centroid). Uses pair colors per edge.
+        pushSegment(a, b, b, c, colorFor(pa, pb));
+        pushSegment(b, c, a, c, colorFor(pb, pc));
+        pushSegment(a, c, a, b, colorFor(pa, pc));
       }
     }
 
     geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     geo.setAttribute("color",    new THREE.Float32BufferAttribute(colors, 3));
     geo.computeBoundingSphere();
-    segmentPairs = Int32Array.from(pairs);
+    segmentEndpoints = Int32Array.from(ends);
   };
 
   const updatePositions = (cellPositions: ArrayLike<number>): void => {
-    if (segmentPairs.length === 0) return;
+    if (segmentEndpoints.length === 0) return;
     const posAttr = geo.getAttribute("position") as THREE.BufferAttribute | undefined;
     if (!posAttr) return;
     const buf = posAttr.array as Float32Array;
-    for (let s = 0; s < segmentPairs.length; s += 2) {
-      const a = segmentPairs[s];
-      const b = segmentPairs[s + 1];
-      const o = s * 3; // 6 floats per segment = 3 floats per endpoint × 2
-      buf[o + 0] = cellPositions[a * 3 + 0] * RADIUS;
-      buf[o + 1] = cellPositions[a * 3 + 1] * RADIUS;
-      buf[o + 2] = cellPositions[a * 3 + 2] * RADIUS;
-      buf[o + 3] = cellPositions[b * 3 + 0] * RADIUS;
-      buf[o + 4] = cellPositions[b * 3 + 1] * RADIUS;
-      buf[o + 5] = cellPositions[b * 3 + 2] * RADIUS;
+    const m1: [number, number, number] = [0, 0, 0];
+    const m2: [number, number, number] = [0, 0, 0];
+    const n = segmentEndpoints.length / 4;
+    for (let i = 0; i < n; i++) {
+      const off = i * 4;
+      const a1 = segmentEndpoints[off];
+      const b1 = segmentEndpoints[off + 1];
+      const a2 = segmentEndpoints[off + 2];
+      const b2 = segmentEndpoints[off + 3];
+      midOnSphere(cellPositions, a1, b1, m1);
+      midOnSphere(cellPositions, a2, b2, m2);
+      const o = i * 6;
+      buf[o + 0] = m1[0]; buf[o + 1] = m1[1]; buf[o + 2] = m1[2];
+      buf[o + 3] = m2[0]; buf[o + 4] = m2[1]; buf[o + 5] = m2[2];
     }
     posAttr.needsUpdate = true;
   };

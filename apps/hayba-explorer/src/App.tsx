@@ -1560,12 +1560,20 @@ export default function App() {
       const adj = adjRef.current;
       if (!adj) return;
 
-      if (!boundaryLinesRef.current) {
-        const handle = buildBoundaryLines(adj);
+      if (!boundaryLinesRef.current && trianglesRef.current) {
+        // Along-seam polyline algorithm needs the raw triangle list (not
+        // the derived cell-cell adjacency we used for the old cross-stitch
+        // overlay). `adj` is still built above for any other callers.
+        const handle = buildBoundaryLines(trianglesRef.current);
         boundaryLinesRef.current = handle;
         scene.scene.add(handle.object);
       }
+      // Silence unused-var lint for the unused adjacency variable. The
+      // adjacency build is still needed to populate `adjRef` for other
+      // overlays / inspectors that key on cell-cell neighbours.
+      void adj;
       const lines = boundaryLinesRef.current;
+      if (!lines) return;
       lines.update(snap, draft.boundary_types);
       const show = mode === "boundaries" || mode === "densities" || mode === "simulating";
       lines.setVisible(show);

@@ -253,11 +253,11 @@ const FRAG: string = [
   // RIVERS/LAKES id=8: tan below threshold, bright cyan→deep blue above.
   // Reads Q discharge (.r) for Rivers OR endorheic flag (.b) for Lakes.
   // Both are 0..1-ish intensity fields so the same ramp serves both.
+  // Threshold raised from 0.65 → 0.92: at 0.65 most of every continent
+  // lit up because log-compressed Q discharge crosses 0.65 on any cell
+  // with non-trivial drainage. 0.92 restricts the blue ramp to the
+  // dendritic trunk channels + true closed-basin sinks.
   "  if (id < 8.5){",
-  // Rivers/Lakes — log-compress the discharge / endo field then apply a
-  // sharp 0.65 step so MOST of land stays tan and only true river
-  // trunks / lake basins show blue. Without the log compression every
-  // cell with any drainage lit up blue (Q has huge dynamic range).
   // NOTE: `tan` is a GLSL builtin (tangent); local must NOT shadow it
   // or some drivers fail-to-link the whole material → relief breaks.
   "    float t = clamp(x, 0.0, 1.0);",
@@ -265,8 +265,8 @@ const FRAG: string = [
   "    vec3 tanCol = vec3(0.85, 0.78, 0.55);",
   "    vec3 cyan   = vec3(0.35, 0.78, 0.95);",
   "    vec3 deep   = vec3(0.05, 0.20, 0.55);",
-  "    if (tLog < 0.65) return tanCol;",
-  "    return mix(cyan, deep, (tLog - 0.65) / 0.35);",
+  "    if (tLog < 0.92) return tanCol;",
+  "    return mix(cyan, deep, (tLog - 0.92) / 0.08);",
   "  }",
   "  return vec3(clamp(x, 0.0, 1.0));",
   "}",
