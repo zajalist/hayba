@@ -5,6 +5,7 @@ import Viewport from "./viewport/Viewport";
 import type { SceneHandle } from "./viewport/scene";
 import { buildGlobe, PLATE_PALETTE, type GlobeHandle } from "./viewport/globe";
 import { buildGlobeMesh, type GlobeMeshHandle, type TickSnapshot } from "./viewport/mesh";
+import { buildSimMesh, type SimMeshHandle } from "./viewport/simMesh";
 import { SATMAP_NAMES, SATMAP_FAMILIES, METADATA as SATMAP_METADATA, type SatMapName } from "./viewport/satmap-loader";
 import { attachPainter, type PainterHandle } from "./viewport/painter";
 import StatusBar, { Mono } from "./components/StatusBar";
@@ -261,6 +262,9 @@ export default function App() {
   const sceneRef = useRef<SceneHandle | null>(null);
   const globeRef = useRef<GlobeHandle | null>(null);
   const globeMeshRef = useRef<GlobeMeshHandle | null>(null);
+  // Sim-mode per-cell mesh — minimal relief-ramp shader, no biome textures.
+  // Built at bake; swapped in as the visible globe on simulation start.
+  const simMeshRef = useRef<SimMeshHandle | null>(null);
   const painterRef = useRef<PainterHandle | null>(null);
   const kdTreeRef = useRef<KdTree | null>(null);
   const cellCountRef = useRef(0);
@@ -815,8 +819,8 @@ export default function App() {
           if (cancelled || !playingRef.current) return;
           // Mesh/overlay updates run in try/catch so a single bad frame
           // can't kill the whole loop — next interval keeps the sim alive.
-          try { globeMeshRef.current?.updateFromTickSnapshot(tickSnap); }
-          catch (e) { console.error("[sim] mesh update failed", e); }
+          try { simMeshRef.current?.update(tickSnap.cell_positions, tickSnap.cell_elevation); }
+          catch (e) { console.error("[sim] sim-mesh update failed", e); }
           try { boundaryLinesRef.current?.updatePositions(tickSnap.cell_positions); }
           catch (e) { console.error("[sim] boundary update failed", e); }
           setLiveSimTimeMa(tickSnap.sim_time_ma);
@@ -1371,19 +1375,24 @@ export default function App() {
       mesh.name = "hayba-eroded-planet";
       scene.setGlobe(mesh);
 
-      // Build the per-cell triangulated globe mesh now, stash it in
-      // globeMeshRef offstage. handleConfirmStartSimulation swaps it in
-      // as the visible globe when the user enters simulating mode — the
-      // play loop's updateFromTickSnapshot then animates real per-cell
-      // positions instead of a static equirect-baked sphere.
-      if (globeMeshRef.current) {
-        try { globeMeshRef.current.object.geometry.dispose(); } catch {}
+      // Build the sim-mode per-cell mesh (relief-ramp shader, no biome
+      // textures — texturing pipeline is WIP). Stays offstage during
+      // compose/boundaries/densities. handleConfirmStartSimulation swaps
+      // it in as the visible globe; the play loop animates per-cell
+      // positions + elevation directly on this mesh.
+      if (simMeshRef.current) {
+        try { simMeshRef.current.dispose(); } catch {}
+        simMeshRef.current = null;
       }
       const _tris = trianglesRef.current;
       if (_tris) {
-        globeMeshRef.current = buildGlobeMesh(snap, _tris);
+        simMeshRef.current = buildSimMesh({
+          positions: snap.cell_positions,
+          triangles: _tris,
+          elevations: snap.cell_elevation,
+        });
       } else {
-        console.warn("[bake] no triangles cached — globeMesh build deferred");
+        console.warn("[bake] no triangles cached — simMesh build deferred");
       }
 
       // SP-A: explicit state — no painter-visibility games. The painter-
@@ -1511,12 +1520,12 @@ export default function App() {
     // scene — sim advances invisibly. Drops map-mode overlays for the sim
     // phase (relief-only, lighter rendering load per user request).
     const sc = sceneRef.current;
-    const gm = globeMeshRef.current;
-    if (sc && gm) {
-      sc.setGlobe(gm.object);
-      console.warn("[sim] swapped to per-cell globe mesh — sim is live");
+    const sm = simMeshRef.current;
+    if (sc && sm) {
+      sc.setGlobe(sm.object);
+      console.warn("[sim] swapped to per-cell sim mesh — sim is live");
     } else {
-      console.error("[sim] cannot enter sim mode — scene or globeMesh missing", { scene: !!sc, globeMesh: !!gm });
+      console.error("[sim] cannot enter sim mode — scene or simMesh missing", { scene: !!sc, simMesh: !!sm });
     }
   }, []);
 
