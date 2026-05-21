@@ -113,6 +113,12 @@ FString SHaybaMCPSceneMapWebPanel::CellsToJson() const
             if (d) J += TEXT(",");
             J += TEXT("\"") + EscStr(C.DominantClasses[d]) + TEXT("\"");
         }
+        J += TEXT("],\"tags\":[");
+        for (int32 t = 0; t < C.Tags.Num(); ++t)
+        {
+            if (t) J += TEXT(",");
+            J += TEXT("\"") + EscStr(C.Tags[t]) + TEXT("\"");
+        }
         J += TEXT("]}");
     }
     J += TEXT("]}");
