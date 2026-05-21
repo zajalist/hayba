@@ -1,0 +1,46 @@
+import { z } from 'zod';
+import type { HaybaToolMeta } from './hayba-tool-meta.js';
+import { executeCommand } from './tool-executor.js';
+
+export const schema = z.object({
+  camera: z.discriminatedUnion('kind', [
+    z.object({
+      kind: z.literal('actor'),
+      actor: z.string().describe('Full actor path, e.g. /Game/Maps/L1.L1:PersistentLevel.HeroCamera'),
+    }),
+    z.object({
+      kind: z.literal('transform'),
+      location: z.tuple([z.number(), z.number(), z.number()]),
+      rotation: z.tuple([z.number(), z.number(), z.number()]).describe('[pitch, yaw, roll] in UE order'),
+      fov: z.number().min(5).max(170).optional().default(90),
+    }),
+  ]),
+  output_path: z.string().optional()
+    .describe('Absolute or project-relative path. Default: Saved/Screenshots/Hayba/hayba_<ts>_<uuid>.<ext>'),
+  width: z.number().int().min(64).max(8192).optional().default(1920),
+  height: z.number().int().min(64).max(8192).optional().default(1080),
+  format: z.enum(['png', 'exr', 'jpg']).optional().default('png'),
+  wait_for_subsystems: z.array(z.enum(['shaders', 'assets', 'gc', 'pcg', 'world_tick'])).optional()
+    .default(['shaders', 'assets', 'world_tick']),
+  wait_timeout_s: z.number().int().min(0).max(300).optional().default(30),
+});
+
+export type RenderCameraParams = z.infer<typeof schema>;
+
+export const meta: HaybaToolMeta = {
+  cost: 'high',
+  effects: ['filesystem_write'],
+  when: 'You need to see what the level looks like from a camera. Returns a disk path you read separately if you need pixels.',
+  not_when: 'Pure metadata read — no scene change to visualize.',
+};
+
+export async function handleRenderCamera(params: RenderCameraParams) {
+  const parsed = schema.safeParse(params);
+  if (!parsed.success) {
+    return { content: [{ type: 'text' as const, text: 'Invalid params: ' + parsed.error.message }], isError: true };
+  }
+  const data = await executeCommand('render_camera', parsed.data as Record<string, unknown>, {
+    timeout: (parsed.data.wait_timeout_s + 30) * 1000,
+  });
+  return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
+}

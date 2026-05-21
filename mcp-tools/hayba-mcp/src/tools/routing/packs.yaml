@@ -68,6 +68,7 @@ packs:
       - editor_start_pie
       - wait_for_shaders
       - wait_for_idle
+      - render_camera
 
   - name: python
     kind: workflow

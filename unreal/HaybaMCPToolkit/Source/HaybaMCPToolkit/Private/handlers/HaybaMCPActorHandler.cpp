@@ -220,14 +220,22 @@ FHaybaHandlerResult FHaybaMCPActorHandler::List(const TSharedPtr<FJsonObject>& P
     P->TryGetStringField(TEXT("class_filter"), ClassFilter);
     P->TryGetStringField(TEXT("tag"), TagFilter);
 
+    // Opt-in flag to include Hayba internal plumbing actors (capture rig, etc.).
+    // Default false — most callers don't want to see them.
+    bool bIncludeInternal = false;
+    P->TryGetBoolField(TEXT("include_internal"), bIncludeInternal);
+
     TArray<TSharedPtr<FJsonValue>> Actors;
     for (TActorIterator<AActor> It(World); It; ++It)
     {
         AActor* Actor = *It;
         if (!Actor) continue;
 
-        // Skip internal capture actors
-        if (Actor->ActorHasTag(TEXT("HaybaMCPCaptureActor"))) continue;
+        // Skip internal Hayba plumbing unless explicitly requested.
+        if (!bIncludeInternal && (Actor->ActorHasTag(TEXT("HaybaMCPCaptureActor")) || Actor->ActorHasTag(TEXT("HaybaMCP_Internal"))))
+        {
+            continue;
+        }
 
         // Class filter
         if (!ClassFilter.IsEmpty() && Actor->GetClass()->GetName() != ClassFilter)
