@@ -518,6 +518,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
   );
   remember('render_camera', renderCameraMeta);
 
+
   // ── Fab connector tools ─────────────────────────────────────────────────────
 
   server.tool(

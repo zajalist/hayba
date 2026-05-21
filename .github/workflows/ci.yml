@@ -11,7 +11,7 @@ jobs:
     name: TypeScript lint + format check (mcp-tools/hayba-mcp)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
@@ -35,7 +35,7 @@ jobs:
     name: Node MCP server — typecheck + build + test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
@@ -75,7 +75,7 @@ jobs:
     name: Visual sidecar — import + lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
