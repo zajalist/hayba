@@ -25,6 +25,11 @@ import { AssetRetriever, setDefaultRetriever } from '../asset-retriever/asset-re
 import { assetSearchHandler, assetSearchSchema } from '../asset-retriever/meta-tools/search.js';
 import { assetBrowseHandler, assetBrowseSchema } from '../asset-retriever/meta-tools/browse.js';
 import { assetReindexHandler, assetReindexSchema } from '../asset-retriever/meta-tools/reindex.js';
+import { setupSliverSystem, type SliverSystem } from '../../slivers/index.js';
+import { sliverListHandler, sliverListSchema } from '../sliver/list.js';
+import { sliverGetHandler,  sliverGetSchema  } from '../sliver/get.js';
+import { sliverRunHandler,  sliverRunSchema  } from '../sliver/run.js';
+import { sliverImportHandler, sliverImportSchema } from '../sliver/import.js';
 
 /** Tools registered by registerDeferredRouting itself — skip in shim re-register. */
 export const ALWAYS_ON_META = new Set<string>([
@@ -38,6 +43,10 @@ export const ALWAYS_ON_META = new Set<string>([
   'hayba_asset_search',
   'hayba_asset_browse',
   'hayba_asset_reindex',
+  'hayba_sliver_list',
+  'hayba_sliver_get',
+  'hayba_sliver_run',
+  'hayba_sliver_import',
 ]);
 
 export interface CapturedTool {
@@ -55,6 +64,7 @@ export interface RoutingHandle {
   registry: PackRegistry;
   index: ToolIndex;
   retriever: AssetRetriever;
+  slivers: SliverSystem;
   /** Trigger autoload — wire to `check_ue_status.onConnected`. */
   onUeConnected: () => Promise<void>;
 }
@@ -281,6 +291,52 @@ export async function registerDeferredRouting(
     },
   );
 
+  // ── Slivers (Layer 2 — deterministic abstractions) ─────────────────────────
+  const slivers = await setupSliverSystem();
+  for (const err of slivers.loader.errors()) {
+    console.warn(`[slivers] load error: ${err}`);
+  }
+
+  server.tool(
+    'hayba_sliver_list',
+    'List installed Slivers (deterministic abstractions). Optional category or namespace filter.',
+    sliverListSchema,
+    async (args: { category?: string; namespace?: string }) => {
+      const r = await sliverListHandler(args, { loader: slivers.loader });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    'hayba_sliver_get',
+    'Get the full spec (params + determinism + executor) of an installed sliver by id.',
+    sliverGetSchema,
+    async (args: { id: string }) => {
+      const r = await sliverGetHandler(args, { loader: slivers.loader });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    'hayba_sliver_run',
+    'Execute a sliver with concrete parameter values. Returns outputs + declared side_effects + durationMs.',
+    sliverRunSchema,
+    async (args: { id: string; params: Record<string, unknown> }) => {
+      const r = await sliverRunHandler(args, { runtime: slivers.runtime });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    'hayba_sliver_import',
+    'Install a sliver from a local file path or an http(s) URL into the user sliver library.',
+    sliverImportSchema,
+    async (args: { source: string }) => {
+      const r = await sliverImportHandler(args, { loader: slivers.loader });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
   // ── Always-load packs from settings ────────────────────────────────────────
   for (const name of settings.alwaysLoadPacks) {
     const r = await registry.loadPack(name);
@@ -293,6 +349,7 @@ export async function registerDeferredRouting(
     registry,
     index,
     retriever,
+    slivers,
     onUeConnected: () => registry.maybeAutoLoad('ue_connected'),
   };
 }
