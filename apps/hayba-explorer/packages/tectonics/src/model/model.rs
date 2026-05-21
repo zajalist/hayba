@@ -304,31 +304,98 @@ impl Model {
             resolve_field_collision(c, &plates_snapshot, &mut self.fields);
         }
 
-        // ── PHASE D-end: orogeny → elevation, then uplift decay ────
-        // resolve_field_collision flags `orogenic_uplift = 1.0` on convergent
-        // contact but never touches elevation. Without this loop the
-        // collision is invisible — plates clash but no mountains rise.
+        // ── PHASE D-mid: orogeny → elevation, with band-shaped lift ────
         //
-        // TE precedent: subduction.ts sets `topField.elevation += dt * 0.15 *
-        // relativeVelocity` during ongoing orogeny; we approximate with
-        // uplift × rate × dt, capped at a Himalaya-class ceiling.
-        const OROGENY_UPLIFT_RATE: f32 = 0.005; // elev units per Ma at uplift=1
+        // `resolve_field_collision` sets `orogenic_uplift = 1.0` at the exact
+        // contact cell. Naively integrating that lift produces ISOLATED
+        // SPIKES at the contact points — exactly the "delayed + unnatural,
+        // inorganic" look the user reported.
+        //
+        // Real orogeny produces a 100-200km wide belt because the lithosphere
+        // is stiff: stress at the contact gets distributed across many cells.
+        // TE achieves this implicitly via `subduction.avgProgress` averaging
+        // over neighbours + cumulative crust thickness driving elevation.
+        //
+        // We approximate the effect in a 3-step phase:
+        //   1. SPREAD: blur orogenic_uplift one step into neighbours (0.55
+        //      coupling). This widens the belt — a single contact cell
+        //      seeds uplift across 7 cells (itself + 6 neighbours) the
+        //      first step, growing more on subsequent steps as decay
+        //      lags spread.
+        //   2. LIFT:   integrate uplift × rate × dt into elevation, capped.
+        //   3. SMOOTH: one pass of (0.5 self + 0.5 neighbour-mean) on
+        //      cells with active uplift — removes per-cell spikiness so
+        //      the band reads as a connected ridge.
+        //
+        // Decay slowed from 0.92 → 0.97 (uplift half-life ~22 steps vs 8)
+        // so a single collision sustains lift over the time it takes a
+        // mountain belt to build (~50-100 Ma at our scale).
+        const OROGENY_UPLIFT_RATE: f32 = 0.012; // elev units per Ma at uplift=1
         const OROGENY_ELEV_CAP: f32 = 1.0;       // ≈ 9km, Himalaya ceiling
+        const SPREAD_COUPLING: f32 = 0.55;       // 0..1, how much neighbour avg pulls up
+        const UPLIFT_DECAY: f32 = 0.97;          // per-step (slower than before)
+
+        // Step 1: SPREAD uplift to neighbours.
+        let n_fields = self.fields.len();
+        let mut spread: Vec<f32> = Vec::with_capacity(n_fields);
+        for fid in 0..n_fields {
+            let self_u = self.fields[fid].orogenic_uplift;
+            let mut neigh_sum: f32 = 0.0;
+            let mut count: u32 = 0;
+            for &n in self.grid.neighbours(fid as u32) {
+                if let Some(nf) = self.fields.get(n as usize) {
+                    neigh_sum += nf.orogenic_uplift;
+                    count += 1;
+                }
+            }
+            let neigh_avg = if count > 0 { neigh_sum / count as f32 } else { 0.0 };
+            // max(self, coupling × neigh_avg): never pulls a cell ABOVE
+            // its existing uplift, only adds to cells with smaller values.
+            // Result: tall central peak, broad shoulders.
+            spread.push(self_u.max(SPREAD_COUPLING * neigh_avg));
+        }
+        for (i, v) in spread.iter().enumerate() {
+            self.fields[i].orogenic_uplift = *v;
+        }
+
+        // Step 2: LIFT.
         for f in self.fields.iter_mut() {
             if f.orogenic_uplift > 0.0 {
                 let lift = f.orogenic_uplift * OROGENY_UPLIFT_RATE * dt;
                 f.elevation = (f.elevation + lift).min(OROGENY_ELEV_CAP);
             }
-            // orogenic_uplift decays by 8% per step; floored to exactly 0.0
-            // once negligible so the renderer can fast-path zeros.
-            f.orogenic_uplift *= 0.92;
+            f.orogenic_uplift *= UPLIFT_DECAY;
             if f.orogenic_uplift < 0.005 {
                 f.orogenic_uplift = 0.0;
             }
-            // mor_age_steps counts steps each plate-assigned cell has lived
-            // since MOR spawning (saturating at u16::MAX).
             if f.plate_id.is_some() {
                 f.mor_age_steps = f.mor_age_steps.saturating_add(1);
+            }
+        }
+
+        // Step 3: SMOOTH elevation across the orogenic band. Only touches
+        // cells with active uplift (above a small threshold) so the rest
+        // of the planet is unaffected. Equal-weight average of self +
+        // neighbour-mean → softens spikes into a rolling ridge.
+        let elev_snapshot: Vec<f32> = self.fields.iter().map(|f| f.elevation).collect();
+        for fid in 0..n_fields {
+            if self.fields[fid].orogenic_uplift > 0.05 {
+                let mut sum = elev_snapshot[fid];
+                let mut count: u32 = 1;
+                for &n in self.grid.neighbours(fid as u32) {
+                    if let Some(nf) = self.fields.get(n as usize) {
+                        // Only blend with continental cells so the smooth
+                        // doesn't drag mountain elevation back toward
+                        // adjacent ocean.
+                        if nf.elevation > 0.0 {
+                            sum += nf.elevation;
+                            count += 1;
+                        }
+                    }
+                }
+                let neigh_mean = sum / count as f32;
+                self.fields[fid].elevation =
+                    0.5 * elev_snapshot[fid] + 0.5 * neigh_mean;
             }
         }
         t.lap(Phase::Resolve);
