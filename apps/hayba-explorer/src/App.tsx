@@ -1849,7 +1849,13 @@ export default function App() {
           mode={statusMode(mode)}
           chips={statusChips(mode, draft, snapshot, cellCountRef.current)}
           hint={statusHint(mode)}
-          busy={initializingGrid ? "Building grid…" : mode === "baking" ? "Baking…" : undefined}
+          busy={
+            initializingGrid
+              ? "Building grid…"
+              : mode === "baking"
+              ? (debugBakeProgress ?? "Baking…")
+              : undefined
+          }
           rightSlot={mode === "simulating" && snapshot ? (
             <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
               <button
