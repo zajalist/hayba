@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import { z } from 'zod';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
-import { cachePathFor, downloadToFile, ensureDir, importIntoUe, type DownloadedAsset } from './shared.js';
+import { cachePathFor, downloadToFile, ensureDir, importIntoUe, verifyAndMarkDelta, type DownloadedAsset } from './shared.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'high',
@@ -88,14 +88,17 @@ export async function handlePolyhavenDownload(params: PolyhavenDownloadParams) {
     }
     const gamePath = target_dir ?? `/Game/AssetConnectors/polyhaven/${asset_id}`;
     const importResult = await importIntoUe(cacheDir, gamePath);
+    const verify = importResult.ok ? await verifyAndMarkDelta(gamePath) : { verified: false, reason: 'import_failed' };
     const data: DownloadedAsset = {
       assetId: asset_id,
       source: 'polyhaven',
       cachePath: cacheDir,
       files: written,
-      imported: importResult.ok,
+      imported: importResult.ok && verify.verified,
       importGamePath: gamePath,
       importNote: importResult.note,
+      verified: verify.verified,
+      verifyReason: verify.reason,
     };
     return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
   } catch (e: unknown) {

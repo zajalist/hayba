@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import { z } from 'zod';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
-import { cachePathFor, downloadToFile, ensureDir, extractZip, importIntoUe, type DownloadedAsset } from './shared.js';
+import { cachePathFor, downloadToFile, ensureDir, extractZip, importIntoUe, verifyAndMarkDelta, type DownloadedAsset } from './shared.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'high',

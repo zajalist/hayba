@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import { z } from 'zod';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
-import { cachePathFor, downloadToFile, ensureDir, extractZip, importIntoUe, type DownloadedAsset } from './shared.js';
+import { cachePathFor, downloadToFile, ensureDir, extractZip, importIntoUe, verifyAndMarkDelta, type DownloadedAsset } from './shared.js';
 import { tokenMissingMessage } from './sketchfab-search.js';
 import { getTokenWithEnvFallback } from './get-setting.js';
 
@@ -58,14 +58,17 @@ export async function handleSketchfabDownload(params: SketchfabDownloadParams) {
     const files = await extractZip(zipPath, extractDir);
     const gamePath = target_dir ?? `/Game/AssetConnectors/sketchfab/${uid}`;
     const importResult = await importIntoUe(extractDir, gamePath);
+    const verify = importResult.ok ? await verifyAndMarkDelta(gamePath) : { verified: false, reason: 'import_failed' };
     const data: DownloadedAsset = {
       assetId: uid,
       source: 'sketchfab',
       cachePath: cacheDir,
       files,
-      imported: importResult.ok,
+      imported: importResult.ok && verify.verified,
       importGamePath: gamePath,
       importNote: importResult.note,
+      verified: verify.verified,
+      verifyReason: verify.reason,
     };
     return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
   } catch (e: unknown) {

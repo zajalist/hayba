@@ -5,6 +5,8 @@ import * as os from 'node:os';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { executeCommand } from '../tool-executor.js';
+import { AssetVerifier } from '../asset-retriever/asset-verifier.js';
+import { getDefaultRetriever } from '../asset-retriever/asset-retriever.js';
 
 export interface DownloadedAsset {
   assetId: string;
@@ -14,6 +16,10 @@ export interface DownloadedAsset {
   imported: boolean;
   importGamePath?: string;
   importNote?: string;
+  /** True iff the UE asset registry confirms the import landed at importGamePath. */
+  verified?: boolean;
+  /** Set when verified===false; one of: not_in_registry|path_mismatch|registry_unavailable. */
+  verifyReason?: string;
 }
 
 export function cachePathFor(source: string, assetId: string): string {
@@ -107,4 +113,43 @@ export async function importIntoUe(localDir: string, gamePath: string): Promise<
     const msg = e instanceof Error ? e.message : String(e);
     return { ok: false, note: `python_run unavailable: ${msg}` };
   }
+}
+
+/**
+ * Confirm a downloaded asset actually landed in the UE asset registry, and
+ * tag it stale on the default AssetRetriever so the next search delta-merges.
+ * Returns `{ verified, reason? }` to populate the connector's response.
+ *
+ * Why: closes the silent-success hole (mcp-architectural-issues #4). The
+ * pre-existing connectors returned `imported:true` whenever python_run did
+ * not throw, even when the import script silently SyntaxError'd. This
+ * helper insists on a registry round-trip before claiming success.
+ */
+export async function verifyAndMarkDelta(
+  gamePath: string,
+): Promise<{ verified: boolean; reason?: string }> {
+  // verifyPath expects the full asset path (e.g. /Game/.../Asset.Asset). The
+  // import lands files under a directory; UE's describe_assets resolution
+  // returns each asset under that dir. We probe the directory by querying
+  // describe_assets with a path filter and treating a non-empty response as
+  // success — the verifier API is single-path so we use it for that idiom.
+  const verifier = new AssetVerifier((cmd, params) => executeCommand(cmd, params ?? {}));
+  // First try directory-as-path (verifier returns path_mismatch if registry
+  // resolves to a child asset under that dir — treat path_mismatch as
+  // "directory exists, asset(s) inside" = verified).
+  const r = await verifier.verifyPath(gamePath);
+  let verified = r.exists;
+  let reason: string | undefined;
+  if (!r.exists) {
+    if (r.reason === 'path_mismatch') {
+      // describe_assets returned an asset under the dir — treat as verified.
+      verified = true;
+    } else {
+      reason = r.reason;
+    }
+  }
+  if (verified) {
+    getDefaultRetriever()?.markDeltaStale([gamePath]);
+  }
+  return { verified, reason };
 }
