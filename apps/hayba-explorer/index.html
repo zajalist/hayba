@@ -21,30 +21,88 @@
         overflow: hidden;
         -webkit-font-smoothing: antialiased;
       }
+      /* Atmospheric splash — radial gradient backdrop with a single soft
+         accent halo; staged entrance (logo first, then wordmark, then
+         rule expanding, then tagline) so the mark feels considered, not
+         dumped on screen. 600ms fade-out matches the in-app easing. */
+      @keyframes hayba-fade-up {
+        from { opacity: 0; transform: translateY(8px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes hayba-rule-grow {
+        from { width: 0;  opacity: 0; }
+        to   { width: 56px; opacity: 1; }
+      }
+      @keyframes hayba-halo-pulse {
+        0%, 100% { opacity: 0.55; transform: translate(-50%, -50%) scale(1); }
+        50%      { opacity: 0.80; transform: translate(-50%, -50%) scale(1.08); }
+      }
       #hayba-splash {
         position: fixed; inset: 0; z-index: 9999;
         display: flex; align-items: center; justify-content: center;
-        background: var(--bg-deep);
-        transition: opacity 450ms ease;
+        background:
+          radial-gradient(ellipse at 50% 52%, #21262e 0%, #14171c 60%, #0c0e12 100%);
+        transition: opacity 600ms cubic-bezier(0.16, 1, 0.3, 1);
+        overflow: hidden;
       }
       #hayba-splash.fading { opacity: 0; pointer-events: none; }
+      #hayba-splash .halo {
+        position: absolute; left: 50%; top: 50%;
+        width: 420px; height: 420px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(181, 106, 29, 0.16) 0%, rgba(181, 106, 29, 0) 65%);
+        transform: translate(-50%, -50%);
+        animation: hayba-halo-pulse 4.5s ease-in-out infinite;
+        pointer-events: none;
+      }
       #hayba-splash .stack {
-        display: flex; flex-direction: column; align-items: center; gap: 18px;
+        position: relative;
+        display: flex; flex-direction: column; align-items: center; gap: 22px;
       }
-      #hayba-splash .logo { width: 64px; height: auto; }
+      #hayba-splash .logo {
+        width: 92px; height: auto;
+        filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.55));
+        animation: hayba-fade-up 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
+      }
       #hayba-splash .name {
-        font-size: 28px; letter-spacing: 0.28em; text-transform: uppercase;
-        font-weight: 500; color: var(--text-primary);
+        font-size: 32px; letter-spacing: 0.38em; text-transform: uppercase;
+        font-weight: 400; color: var(--text-primary);
+        margin-right: -0.38em; /* compensate trailing letter-spacing */
+        animation: hayba-fade-up 700ms cubic-bezier(0.16, 1, 0.3, 1) 180ms both;
       }
-      #hayba-splash .rule { width: 48px; height: 1px; background: var(--accent); }
+      #hayba-splash .rule {
+        height: 1px; background: var(--accent);
+        animation: hayba-rule-grow 700ms cubic-bezier(0.16, 1, 0.3, 1) 340ms both;
+      }
       #hayba-splash .tagline {
-        color: var(--text-muted); font-size: 10px;
-        letter-spacing: 0.32em; text-transform: uppercase; font-weight: 400;
+        color: #8b95a3; font-size: 11px;
+        letter-spacing: 0.42em; text-transform: uppercase; font-weight: 400;
+        margin-right: -0.42em;
+        animation: hayba-fade-up 700ms cubic-bezier(0.16, 1, 0.3, 1) 460ms both;
+      }
+      #hayba-splash .progress {
+        position: absolute; bottom: -120px; left: 50%;
+        transform: translateX(-50%);
+        width: 80px; height: 1px;
+        background: rgba(222, 212, 195, 0.10);
+        overflow: hidden;
+        animation: hayba-fade-up 700ms cubic-bezier(0.16, 1, 0.3, 1) 580ms both;
+      }
+      #hayba-splash .progress::after {
+        content: ""; display: block;
+        width: 30%; height: 100%;
+        background: linear-gradient(90deg, transparent, #B56A1D, transparent);
+        animation: hayba-progress-sweep 1.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+      }
+      @keyframes hayba-progress-sweep {
+        0%   { transform: translateX(-100%); }
+        100% { transform: translateX(400%); }
       }
     </style>
   </head>
   <body>
     <div id="hayba-splash">
+      <div class="halo" aria-hidden="true"></div>
       <div class="stack">
         <svg class="logo" viewBox="0 0 166 201" xmlns="http://www.w3.org/2000/svg" fill="none">
           <path d="M139.816 56L142.492 61.8262C148.517 74.9439 153.452 94.8289 156.582 102.254C159.859 110.024 161.945 116.804 161.882 124.527C161.821 131.993 159.746 139.456 156.613 148.542C153.556 157.405 148.7 169.92 142.827 186.371L140.456 193.009H98.6381L104.123 179.295C109.128 166.783 113.266 155.9 115.863 146.185C118.465 136.45 119.297 128.661 118.294 122.227C116.597 111.336 108.943 100.707 82.9418 91.4414C56.9412 100.707 49.2868 111.336 47.5893 122.227C46.5863 128.661 47.4197 136.45 50.0219 146.185C52.619 155.9 56.7553 166.783 61.7602 179.295L67.2455 193.009H25.4272L23.058 186.371C17.1851 169.92 12.3284 157.405 9.27189 148.542C6.13864 139.456 4.06224 131.993 4.00139 124.527C3.93844 116.804 6.02502 110.024 9.30119 102.254C12.4319 94.8288 17.3679 74.944 23.393 61.8262L26.0688 56H139.816Z" fill="#DED4C3"/>
@@ -56,6 +114,7 @@
         <div class="name">Hayba</div>
         <div class="rule"></div>
         <div class="tagline">Worldbuilding tectonics</div>
+        <div class="progress" aria-hidden="true"></div>
       </div>
     </div>
     <div id="root"></div>
