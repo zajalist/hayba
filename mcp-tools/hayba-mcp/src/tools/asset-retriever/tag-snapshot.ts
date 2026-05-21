@@ -5,7 +5,7 @@
 // diff-friendliness; assets with zero tags are omitted to keep the file
 // small.
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 export interface TagSnapshotHit {
@@ -21,6 +21,13 @@ export function writeTagSnapshot(outPath: string, hits: TagSnapshotHit[]): void 
   const sortedKeys = Object.keys(map).sort();
   const ordered: Record<string, string[]> = {};
   for (const k of sortedKeys) ordered[k] = map[k];
-  mkdirSync(dirname(outPath), { recursive: true });
-  writeFileSync(outPath, JSON.stringify(ordered, null, 2) + '\n', 'utf8');
+  const payload = JSON.stringify(ordered, null, 2) + '\n';
+  const tmpPath = outPath + '.tmp';
+  try {
+    mkdirSync(dirname(outPath), { recursive: true });
+    writeFileSync(tmpPath, payload, 'utf8');
+    renameSync(tmpPath, outPath);
+  } catch (err) {
+    throw new Error(`writeTagSnapshot: failed to write ${outPath}: ${(err as Error).message}`);
+  }
 }
