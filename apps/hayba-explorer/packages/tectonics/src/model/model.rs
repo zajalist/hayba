@@ -275,16 +275,29 @@ impl Model {
             resolve_field_collision(c, &plates_snapshot, &mut self.fields);
         }
 
-        // ── PHASE D-end: orogenic-uplift decay + MOR age increment ────
-        // orogenic_uplift decays toward 0 by 8% each step; floored to
-        // exactly 0.0 once negligible so the renderer can fast-path zeros.
-        // mor_age_steps counts how many steps each plate-assigned cell has
-        // existed since MOR spawning (saturating at u16::MAX).
+        // ── PHASE D-end: orogeny → elevation, then uplift decay ────
+        // resolve_field_collision flags `orogenic_uplift = 1.0` on convergent
+        // contact but never touches elevation. Without this loop the
+        // collision is invisible — plates clash but no mountains rise.
+        //
+        // TE precedent: subduction.ts sets `topField.elevation += dt * 0.15 *
+        // relativeVelocity` during ongoing orogeny; we approximate with
+        // uplift × rate × dt, capped at a Himalaya-class ceiling.
+        const OROGENY_UPLIFT_RATE: f32 = 0.005; // elev units per Ma at uplift=1
+        const OROGENY_ELEV_CAP: f32 = 1.0;       // ≈ 9km, Himalaya ceiling
         for f in self.fields.iter_mut() {
+            if f.orogenic_uplift > 0.0 {
+                let lift = f.orogenic_uplift * OROGENY_UPLIFT_RATE * dt;
+                f.elevation = (f.elevation + lift).min(OROGENY_ELEV_CAP);
+            }
+            // orogenic_uplift decays by 8% per step; floored to exactly 0.0
+            // once negligible so the renderer can fast-path zeros.
             f.orogenic_uplift *= 0.92;
             if f.orogenic_uplift < 0.005 {
                 f.orogenic_uplift = 0.0;
             }
+            // mor_age_steps counts steps each plate-assigned cell has lived
+            // since MOR spawning (saturating at u16::MAX).
             if f.plate_id.is_some() {
                 f.mor_age_steps = f.mor_age_steps.saturating_add(1);
             }
