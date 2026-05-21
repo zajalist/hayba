@@ -1371,6 +1371,21 @@ export default function App() {
       mesh.name = "hayba-eroded-planet";
       scene.setGlobe(mesh);
 
+      // Build the per-cell triangulated globe mesh now, stash it in
+      // globeMeshRef offstage. handleConfirmStartSimulation swaps it in
+      // as the visible globe when the user enters simulating mode — the
+      // play loop's updateFromTickSnapshot then animates real per-cell
+      // positions instead of a static equirect-baked sphere.
+      if (globeMeshRef.current) {
+        try { globeMeshRef.current.object.geometry.dispose(); } catch {}
+      }
+      const _tris = trianglesRef.current;
+      if (_tris) {
+        globeMeshRef.current = buildGlobeMesh(snap, _tris);
+      } else {
+        console.warn("[bake] no triangles cached — globeMesh build deferred");
+      }
+
       // SP-A: explicit state — no painter-visibility games. The painter-
       // lifecycle effect is now gated on interact==="compose"; flipping
       // to "explore" deactivates it (its cleanup removes+disposes the
@@ -1490,6 +1505,19 @@ export default function App() {
   const handleConfirmStartSimulation = useCallback(() => {
     setShowStartConfirm(false);
     setMode("simulating");
+    // Swap the visible globe from the equirect-baked relief sphere to the
+    // per-cell triangulated mesh built at bake time. Without this swap, the
+    // play loop's updateFromTickSnapshot lands on a mesh that isn't in the
+    // scene — sim advances invisibly. Drops map-mode overlays for the sim
+    // phase (relief-only, lighter rendering load per user request).
+    const sc = sceneRef.current;
+    const gm = globeMeshRef.current;
+    if (sc && gm) {
+      sc.setGlobe(gm.object);
+      console.warn("[sim] swapped to per-cell globe mesh — sim is live");
+    } else {
+      console.error("[sim] cannot enter sim mode — scene or globeMesh missing", { scene: !!sc, globeMesh: !!gm });
+    }
   }, []);
 
   const handleSaveConfiguration = useCallback(async () => {
