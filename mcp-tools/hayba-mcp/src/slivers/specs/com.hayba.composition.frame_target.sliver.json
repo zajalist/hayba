@@ -1,0 +1,22 @@
+{
+  "id": "com.hayba.composition.frame_target",
+  "version": "1.0.0",
+  "category": "composition",
+  "title": "Frame Target",
+  "description": "Compute a camera transform that frames a target actor from a given orbit angle, distance, and height offset.",
+  "author": "core",
+  "params": [
+    { "id": "target",   "type": "actor_ref", "label": "Target",            "required": true },
+    { "id": "distance", "type": "float",     "label": "Distance (m)",      "range": [1, 100],  "default": 10 },
+    { "id": "height",   "type": "float",     "label": "Height offset (m)", "range": [-10, 50], "default": 2 },
+    { "id": "fov",      "type": "float",     "label": "Field of view (deg)","range": [20, 120], "default": 70 },
+    { "id": "yaw_deg",  "type": "float",     "label": "Orbit angle (deg)", "range": [0, 360],  "default": 45 }
+  ],
+  "executor": { "kind": "composition.frame_target" },
+  "determinism": {
+    "pure": true,
+    "declared_outputs": ["camera_transform"],
+    "side_effects": [],
+    "seed_param": null
+  }
+}
