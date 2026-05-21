@@ -276,6 +276,87 @@ impl Model {
             self.fields[fid].boundary = is_boundary;
         }
 
+        // ── PHASE C-pre-2: SINGLE-CELL POCKET CLEANUP ─────────────────
+        //
+        // Geometric (topology) repair, not collision logic. A cell with
+        // 0 same-plate neighbours is an "island pocket" — a single cell
+        // marooned inside another plate's territory. The boundary-line
+        // drawer correctly draws a closed loop around it (since all 6
+        // edges are cross-plate), producing the ghost-island artifact the
+        // user keeps screenshotting.
+        //
+        // Source of pockets: (1) bake-time voronoi noise near triple
+        // junctions, (2) sim-time stranding when a cell's neighbours all
+        // transfer plates but the cell itself doesn't qualify under the
+        // edge guard.
+        //
+        // Fix: a stranded cell gets absorbed into the majority neighbour
+        // plate (deterministic tie-break = smaller plate_id wins). 3-pass
+        // sweep to also catch 2-cell and 3-cell pockets which can't be
+        // cleaned in a single pass.
+        //
+        // O(n_fields × 6 × 3 passes) — trivial at 1.5M cells (~30M ops).
+        for _pass in 0..3 {
+            let plate_snap: Vec<Option<u32>> = self
+                .fields
+                .iter()
+                .map(|f| f.plate_id)
+                .collect();
+            let mut any_change = false;
+            for fid in 0..n_fields {
+                let Some(owner_pid) = plate_snap[fid] else { continue };
+                let mut same_count = 0u32;
+                let mut votes: std::collections::HashMap<u32, u32> =
+                    std::collections::HashMap::new();
+                for &n in self.grid.neighbours(fid as u32) {
+                    if let Some(np) = plate_snap.get(n as usize).copied().flatten() {
+                        if np == owner_pid {
+                            same_count += 1;
+                        } else {
+                            *votes.entry(np).or_insert(0) += 1;
+                        }
+                    }
+                }
+                if same_count == 0 {
+                    if let Some((&winner, _)) = votes
+                        .iter()
+                        .max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0)))
+                    {
+                        if let Some(p) = self.plates.iter_mut().find(|p| p.id == owner_pid) {
+                            p.remove_field(fid as u32);
+                        }
+                        if let Some(p) = self.plates.iter_mut().find(|p| p.id == winner) {
+                            p.add_field(fid as u32);
+                        }
+                        if let Some(f) = self.fields.get_mut(fid) {
+                            f.plate_id = Some(winner);
+                        }
+                        any_change = true;
+                    }
+                }
+            }
+            if !any_change {
+                break;
+            }
+        }
+        // Re-recompute boundary flag after the cleanup so the optimized
+        // collision detector sees the post-cleanup state.
+        for fid in 0..n_fields {
+            let owner = self.fields[fid].plate_id;
+            let mut is_boundary = false;
+            if owner.is_some() {
+                for &n in self.grid.neighbours(fid as u32) {
+                    if let Some(nf) = self.fields.get(n as usize) {
+                        if nf.plate_id != owner {
+                            is_boundary = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            self.fields[fid].boundary = is_boundary;
+        }
+
         // ── PHASE C (TE step 4b — detectCollisions): per-field collision
         // state reset happens INSIDE detectCollisions in TE
         // (`model.ts:336 → field.resetCollisions()`), BEFORE scanning. We
