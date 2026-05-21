@@ -48,6 +48,45 @@ This needs a targeted Rust test: build a 2-plate model with deliberately
 overlapping cell ownership (force the topology), step once, assert
 `detect_field_collisions` returns a non-empty Vec.
 
+## FIX VERIFIED (5f82e63)
+
+Root cause was the optimized-mode short-circuit. `model.step()` ends with
+`self.optimized_collision_detection = true`. Step 1 runs full-scan
+(works). Steps 2+ use `optimize=true` which only scans cells where
+`field.boundary || field.colliding` is true. `colliding` was reset at
+top of every step, and **`field.boundary` was declared but never
+assigned anywhere in the codebase**. So from step 2 onwards, the
+detector's "considered" set was empty → zero collisions detected
+forever → orogeny never fires → no mountains rise.
+
+TE maintains `field.boundary` incrementally in `plate.ts::addField` /
+`deleteField`. We never ported that wiring.
+
+**Fix:** at the start of every `model.step()` (before collision reset),
+walk all cells and set `field.boundary = (any neighbour has a different
+plate_id)`. O(n × 6) per step, trivial at 1.5M cells.
+
+**Verified by 2 new Rust tests:**
+
+```
+test subduction::collision::tests::
+    collisions_fire_under_180deg_rotation_with_partitioned_plates ... ok
+test subduction::collision::tests::
+    orogeny_actually_fires_when_continents_collide                ... ok
+```
+
+The E2E test:
+- Builds a Model::new(4, 7) with two continental plates partitioning
+  the sphere (Y > 0 vs Y <= 0).
+- Plate B gets ω = (0.02, 0, 0) so it rotates southern continent into
+  northern.
+- Steps 50× at dt=1.
+- Asserts: n_colliding > 0, n_orog > 0, post_max_elev > pre_max + 0.01.
+- Pre-fix: all three assertions fail (counts = 0, no elevation change).
+- Post-fix: all three pass.
+
+Full tectonics suite: 217 passed, 0 failed.
+
 ## CONFIRMED BUGS
 
 ### 1. [SHIPPED THIS BRANCH] globeMeshRef never assigned → sim invisible
