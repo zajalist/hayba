@@ -11,3 +11,77 @@ body {
 /* Prevent default focus outlines on the canvas; we'll handle focus a11y per
    component when interactive widgets land in later milestones. */
 canvas:focus { outline: none; }
+
+/* ── Range sliders ───────────────────────────────────────────────────────
+   Bespoke styling for <input type="range"> so sliders match the Hayba
+   chrome instead of looking like default Chromium controls.
+   Track height 4px, thumb 14px circular beige with accent ring on hover. */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 18px;
+  background: transparent;
+  cursor: pointer;
+  outline: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* Webkit/Blink (Chromium → Tauri) */
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    #B56A1D var(--hayba-range-progress, 0%),
+    #3d434e var(--hayba-range-progress, 0%)
+  );
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.4);
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;        /* center 14px thumb on 4px track */
+  border-radius: 50%;
+  background: #DED4C3;
+  border: 1px solid #1b1e24;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+  transition: transform 100ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+input[type="range"]:hover::-webkit-slider-thumb {
+  background: #ffffff;
+  box-shadow: 0 0 0 4px rgba(181, 106, 29, 0.18), 0 1px 3px rgba(0, 0, 0, 0.55);
+}
+input[type="range"]:active::-webkit-slider-thumb {
+  transform: scale(1.12);
+  box-shadow: 0 0 0 6px rgba(181, 106, 29, 0.28), 0 1px 3px rgba(0, 0, 0, 0.55);
+}
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px rgba(181, 106, 29, 0.45), 0 1px 3px rgba(0, 0, 0, 0.55);
+}
+input[type="range"]:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Firefox (kept in case anyone runs the web build) */
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: #3d434e;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.4);
+}
+input[type="range"]::-moz-range-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: #B56A1D;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #DED4C3;
+  border: 1px solid #1b1e24;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+  transition: transform 100ms ease, box-shadow 140ms ease, background 140ms ease;
+}

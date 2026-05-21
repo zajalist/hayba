@@ -11,14 +11,18 @@ export interface ToggleProps {
 }
 
 /**
- * UE5-style boolean checkbox: 14×14 box with 2px corners. When unchecked,
- * shows a thin border on a dark inset. When checked, the box is filled with
- * the amber accent and a small white check is drawn inside.
+ * Pill-style switch with a travelling knob. 26×14 with 7px radius; the knob
+ * slides from left (unchecked) to right (checked) and the track flips from
+ * dark inset to amber accent with a soft glow.
  *
- * Implemented as `role="switch"` for backwards compatibility with existing
- * tests that look for the aria-checked switch role.
+ * Keeps role="switch" for backward compatibility with existing tests.
  */
 export default function Toggle({ checked, onChange, ariaLabel, disabled }: ToggleProps) {
+  const [hover, setHover] = React.useState(false);
+  const trackW = 26;
+  const trackH = 14;
+  const knob = 10;
+  const inset = 2;
   return (
     <button
       type="button"
@@ -27,37 +31,44 @@ export default function Toggle({ checked, onChange, ariaLabel, disabled }: Toggl
       aria-label={ariaLabel}
       disabled={disabled}
       onClick={() => !disabled && onChange(!checked)}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       style={{
-        width: 14,
-        height: 14,
-        borderRadius: 2,
-        border: `1px solid ${checked ? colors.accent : colors.borderSoft}`,
-        background: checked ? colors.accent : "rgba(0,0,0,0.35)",
+        width: trackW,
+        height: trackH,
+        borderRadius: trackH / 2,
+        border: "none",
+        background: checked
+          ? colors.accent
+          : "rgba(0, 0, 0, 0.45)",
+        boxShadow: checked
+          ? `0 0 0 1px ${colors.accent}, 0 0 8px rgba(181, 106, 29, 0.45), inset 0 1px 1px rgba(0, 0, 0, 0.25)`
+          : `inset 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 0 1px ${hover ? colors.borderSoft : colors.borderMid}`,
         padding: 0,
         position: "relative",
         cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.5 : 1,
-        transition: `background 140ms ${easings.out}, border-color 140ms ${easings.out}`,
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
+        opacity: disabled ? 0.45 : 1,
+        transition: `background 160ms ${easings.out}, box-shadow 160ms ${easings.out}`,
+        display: "inline-block",
+        verticalAlign: "middle",
       }}
     >
-      {checked && (
-        <svg
-          aria-hidden
-          width={10}
-          height={10}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="#ffffff"
-          strokeWidth={3.5}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
-      )}
+      <span
+        aria-hidden
+        style={{
+          position: "absolute",
+          top: inset,
+          left: checked ? trackW - knob - inset : inset,
+          width: knob,
+          height: knob,
+          borderRadius: "50%",
+          background: checked ? "#FFFFFF" : colors.beige,
+          boxShadow: checked
+            ? "0 1px 2px rgba(0, 0, 0, 0.5)"
+            : "0 1px 2px rgba(0, 0, 0, 0.6)",
+          transition: `left 180ms ${easings.spring}, background 160ms ${easings.out}`,
+        }}
+      />
     </button>
   );
 }
