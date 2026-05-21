@@ -5,6 +5,7 @@ import { config } from './config.js';
 import { listCatalogResources, readCatalogResource } from './resources.js';
 import { registerTools } from './tools/index.js';
 import { startDashboard } from './dashboard/server.js';
+import { startHttpServer } from './http/server.js';
 import { pingSidecar } from './tools/visual/sidecar-client.js';
 
 // ── MCP server setup ─────────────────────────────────────────────────────────
@@ -34,10 +35,16 @@ async function main() {
   // until the worldbuilding-hub roadmap reaches the terrain integration phase.
   // Must complete before server.connect — γ-hybrid routing registers its
   // meta-tools asynchronously and the MCP SDK rejects post-connect registration.
-  await registerTools(server, {});
+  const routing = await registerTools(server, {});
 
   await startDashboard(config.dashboardPort, '127.0.0.1');
   console.error(`Dashboard: http://127.0.0.1:${config.dashboardPort}`);
+
+  // HTTP server for the UE plugin (Slivers panel). Stdio remains the primary
+  // MCP transport — this is a parallel surface for the same SliverSystem.
+  if (routing?.slivers) {
+    startHttpServer(routing.slivers);
+  }
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
