@@ -27,6 +27,7 @@ import { editorStartPieHandler, meta as pieMeta } from './editor/editor-start-pi
 import { editorStreamLogHandler, meta as streamLogMeta } from './editor/editor-stream-log.js';
 import { handleWaitForShaders, meta as waitForShadersMeta } from './wait-for-shaders.js';
 import { handleWaitForIdle, meta as waitForIdleMeta, schema as waitForIdleSchema } from './wait-for-idle.js';
+import { handleRenderCamera, meta as renderCameraMeta, schema as renderCameraSchema } from './render-camera.js';
 import { handleFabLoginStatus, meta as fabLoginStatusMeta } from './fab/login-status.js';
 import { handleFabLibraryList, meta as fabLibraryListMeta } from './fab/library-list.js';
 import { handleFabMarketplaceSearch, meta as fabMarketplaceSearchMeta } from './fab/marketplace-search.js';
@@ -508,6 +509,14 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     async (args, _extra) => handleWaitForIdle(args as never),
   );
   remember('wait_for_idle', waitForIdleMeta);
+
+  server.tool(
+    'render_camera',
+    appendMeta('Render a camera view to disk and VERIFY the file landed (magic bytes + dimensions). Accepts either an actor reference or an inline transform. Calls wait_for_idle internally before capture.', renderCameraMeta),
+    renderCameraSchema.shape,
+    async (args, _extra) => handleRenderCamera(args as never),
+  );
+  remember('render_camera', renderCameraMeta);
 
   // ── Fab connector tools ─────────────────────────────────────────────────────
 

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### render_camera (verified single-file screenshot pipeline, since 2026-05-21)
+
+- New `render_camera({camera, output_path?, width, height, format, wait_for_subsystems, wait_timeout_s})` MCP tool. Camera accepts either an actor reference (`{kind:'actor', actor}`) or an inline transform (`{kind:'transform', location, rotation, fov?}`).
+- Writes to disk + **verifies** the file landed (magic bytes per format + PNG dimensions check) before returning ok. Closes the 17KB-blank-PNG class of silent failure from `mcp-architectural-issues #2`.
+- Output defaults to `Saved/Screenshots/Hayba/hayba_<timestamp>_<uuid>.<ext>`. Returns `{ok, path, width, height, fileBytes, renderDurationMs, waitMs}` or structured `{ok:false, error:{kind, ...}}` for actor_not_found / file_not_written / file_invalid / wait_timeout.
+- Internally consumes the same per-subsystem readiness predicates as `wait_for_idle` (shaders/assets/world_tick by default) so half-loaded scenes don't render.
+- C++ side ships `FHaybaMCPRenderHandler` (`unreal/.../handlers/HaybaMCPRenderHandler.{h,cpp}`) and rebuilds `AHaybaMCPCaptureActor` with `bHidden=true`, `bIsEditorOnlyActor=true`, `Tags=[HaybaMCPCaptureActor, HaybaMCP_Internal]` — no more "blue spray bottle" in hero shots (closes #13).
+- `actor_list` now filters Hayba internal actors by default; pass `include_internal: true` to see them.
+
 ### wait_for_idle (UE subsystem readiness, since 2026-05-21)
 
 - New `wait_for_idle(subsystems?, timeout_s, pcg_actors?, world_ticks?)` MCP tool covering `shaders`, `assets`, `gc`, `pcg`, `world_tick`. Default `subsystems` unset = wait for all five. Structured `{ok, durationMs, settled, timedOut?}` response distinguishes settled-in-time vs. partial-timeout per subsystem.
