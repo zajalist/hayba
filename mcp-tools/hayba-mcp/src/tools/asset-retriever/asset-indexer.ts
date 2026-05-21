@@ -1,5 +1,13 @@
 import { createHash } from 'node:crypto';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { inferSource, type AssetDoc } from './types.js';
+import { writeTagSnapshot } from './tag-snapshot.js';
+
+function tagSnapshotPath(): string {
+  return process.env.HAYBA_TAG_SNAPSHOT_PATH
+    ?? join(homedir(), '.hayba', 'cache', 'retriever-tags.json');
+}
 
 export type Dispatch = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 
@@ -24,10 +32,11 @@ export class AssetIndexer {
 
   async build(opts: { forceRefresh?: boolean } = {}): Promise<BuildResult> {
     void opts.forceRefresh;
+    let result: BuildResult;
     try {
       const r = await this.dispatch('describe_assets', { path: '/Game/' }) as DescribeAssetsResponse;
       const docs = r.assets.map(a => normalize(a));
-      return { docs, snapshotHash: hashDocs(docs), fallbackUsed: false };
+      result = { docs, snapshotHash: hashDocs(docs), fallbackUsed: false };
     } catch (e) {
       if (/unknown_command/i.test((e as Error).message)) {
         if (!this.fallbackWarned) {
@@ -39,10 +48,18 @@ export class AssetIndexer {
           const path = typeof a === 'string' ? a : a.path;
           return normalize({ path });
         });
-        return { docs, snapshotHash: hashDocs(docs), fallbackUsed: true };
+        result = { docs, snapshotHash: hashDocs(docs), fallbackUsed: true };
+      } else {
+        throw e;
       }
-      throw e;
     }
+    const snapshotHits = result.docs.map(d => ({ path: d.path, tags: d.tags ?? [] }));
+    try {
+      writeTagSnapshot(tagSnapshotPath(), snapshotHits);
+    } catch (err) {
+      console.error('[cogmap] failed to write tag snapshot:', err);
+    }
+    return result;
   }
 
   async describeDelta(paths: string[]): Promise<AssetDoc[]> {
