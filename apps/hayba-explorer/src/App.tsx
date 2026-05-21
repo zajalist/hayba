@@ -336,7 +336,13 @@ export default function App() {
   useEffect(() => { climateParamsRef.current = climateParams; }, [climateParams]);
 
   useEffect(() => { globeMeshRef.current?.setSatMap(satMap); }, [satMap]);
-  useEffect(() => { globeMeshRef.current?.setExaggeration(exaggeration); }, [exaggeration]);
+  // In boundaries mode, flatten the planet (no vertex extrusion) so plate
+  // boundary lines aren't occluded by mountain ranges. Exaggeration restores
+  // on exit from the boundaries phase.
+  useEffect(() => {
+    const eff = mode === "boundaries" ? 0 : exaggeration;
+    globeMeshRef.current?.setExaggeration(eff);
+  }, [exaggeration, mode]);
   useEffect(() => { globeMeshRef.current?.setSurfaceBrightness(surfaceBrightness); }, [surfaceBrightness]);
   useEffect(() => { globeMeshRef.current?.setTextureSmooth(textureSmooth); }, [textureSmooth]);
   useEffect(() => { globeMeshRef.current?.setSurfaceSaturation(surfaceSaturation); }, [surfaceSaturation]);
@@ -833,14 +839,39 @@ export default function App() {
         return;
       }
       const p = hits[0].point.clone().normalize();
-      const cell = nearestCell(tree, p.x, p.y, p.z);
-      const key = bm.pairKeyForCell(cell);
-      console.log(`[boundary-click] cell=${cell} pairKey=${key ?? "(interior)"}`);
-      if (!key) {
+      // Proximity pick — at high cell counts boundary cells are a thin
+      // strip and direct hits are unreliable. We snap to the closest
+      // boundary cell within a small angular radius around the cursor.
+      // Chord 0.015 ≈ 0.86° on the unit sphere (~5 cells at 1.5M).
+      const PROX_CHORD = 0.015;
+      const candidates = cellsWithinRadius(tree, p.x, p.y, p.z, PROX_CHORD);
+      let bestCell = -1;
+      let bestKey: string | null = null;
+      let bestD2 = Infinity;
+      const pos = tree.positions;
+      for (const c of candidates) {
+        const k = bm.pairKeyForCell(c);
+        if (!k) continue;
+        const ix = c * 3;
+        const dx = pos[ix] - p.x;
+        const dy = pos[ix + 1] - p.y;
+        const dz = pos[ix + 2] - p.z;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < bestD2) { bestD2 = d2; bestCell = c; bestKey = k; }
+      }
+      // Fallback: direct hit cell (in case the cell itself IS a boundary
+      // but is somehow outside the candidate radius — defensive).
+      if (!bestKey) {
+        const directCell = nearestCell(tree, p.x, p.y, p.z);
+        const directKey = bm.pairKeyForCell(directCell);
+        if (directKey) { bestCell = directCell; bestKey = directKey; }
+      }
+      console.log(`[boundary-click] cell=${bestCell} pairKey=${bestKey ?? "(none-near)"}`);
+      if (!bestKey) {
         setBoundaryPopover(null);
         return;
       }
-      const members = bm.membersFor(key);
+      const members = bm.membersFor(bestKey);
       if (!members) return;
       setBoundaryPopover({
         screenX: ev.clientX,
@@ -1056,15 +1087,20 @@ export default function App() {
   }, [panelCategory, mode, paintBrush, interact]);
 
   // Live-apply boundary assignments — Rust rewrites plate omegas on the
-  // running model so the change is visible immediately. No re-bake.
+  // running model. No snapshot returned: cells/biomes haven't moved, only
+  // future-step omegas changed. The boundary-lines overlay re-tints from
+  // the draft.boundary_types change, and the GPU mesh state is unchanged.
   const applyBoundaryTypesLive = useCallback(async (types: Record<string, BoundaryType>) => {
     try {
-      const snap = await invoke<PlanetSnapshot>("apply_boundary_types", { boundaryTypes: types });
-      setSnapshot(snap);
-      const bm = BoundaryModel.fromSnapshot(snap);
-      boundaryModelRef.current = bm;
-      globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE, { model: bm, assignments: types });
-      globeMeshRef.current?.updateFromSnapshot(snap);
+      await invoke<void>("apply_boundary_types", { boundaryTypes: types });
+      // Recolor plate outlines using the EXISTING snapshot — assignment
+      // types changed but cell→plate mapping is identical.
+      const snap = snapshotRef.current;
+      if (snap) {
+        const bm = boundaryModelRef.current ?? BoundaryModel.fromSnapshot(snap);
+        boundaryModelRef.current = bm;
+        globeRef.current?.recolorFromSnapshot(snap, PLATE_PALETTE, { model: bm, assignments: types });
+      }
     } catch (e) {
       setError(String(e));
     }

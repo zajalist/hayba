@@ -368,7 +368,7 @@ pub fn reset_sim(sim: State<'_, ManagedSim>) {
 pub fn apply_boundary_types(
     boundary_types: std::collections::HashMap<String, String>,
     sim: State<'_, ManagedSim>,
-) -> Result<PlanetSnapshot, String> {
+) -> Result<(), String> {
     let mut guard = sim.0.lock().map_err(|_| "sim mutex poisoned".to_string())?;
     let state = guard.as_mut().ok_or_else(|| "no baked planet".to_string())?;
 
@@ -431,7 +431,10 @@ pub fn apply_boundary_types(
     for (pid, omega) in pairs { state.model.set_plate_angular_velocity(pid, omega); }
 
     let _ = counts; // silence unused; kept for future inertia recompute
-    Ok(snapshot_model(&state.model, state.divisions, false, &ClimateParams::default()))
+    // Skip snapshot rebuild — cell positions/biomes haven't changed, only
+    // plate omegas (which affect the *next* sim step). Returning a 1.5M-cell
+    // snapshot here was the root cause of the freeze-on-assign.
+    Ok(())
 }
 
 /// Apply a plate density rank to the running model. The frontend ships a
