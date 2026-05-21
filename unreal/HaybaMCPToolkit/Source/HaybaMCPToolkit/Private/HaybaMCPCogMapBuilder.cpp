@@ -12,6 +12,9 @@
 #include "HaybaTagIndex.h"
 #include "Landscape.h"
 #include "LandscapeStreamingProxy.h"
+#include "Misc/PackageName.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 
 namespace
 {
@@ -139,12 +142,33 @@ namespace
             for (const FName& T : A->Tags) { Bump(T.ToString()); bHadUETag = true; }
             if (bHadUETag) continue;
 
-            // Fallback: resolve the actor's source-asset path via its root component's UObject, if any.
+            // For BP actors, GetClass()->GetPathName() returns "/Game/Foo/BP_X.BP_X_C".
+            // Convert back to the asset path the retriever indexed ("/Game/Foo/BP_X").
             FString AssetPath;
-            if (UObject* SrcAsset = A->GetClass()) AssetPath = SrcAsset->GetPathName();
-            if (!AssetPath.IsEmpty())
+            if (UClass* Cls = A->GetClass())
+            {
+                AssetPath = Cls->GetPathName();
+                if (AssetPath.EndsWith(TEXT("_C")))
+                {
+                    AssetPath = FPackageName::ObjectPathToPackageName(AssetPath);
+                }
+            }
+            // Native classes resolve to "/Script/Engine.X" — Lookup will simply miss for those.
+            // v1 accepts the miss; v2 may walk components for the underlying mesh asset.
+            if (!AssetPath.IsEmpty() && !AssetPath.StartsWith(TEXT("/Script/")))
             {
                 for (const FString& T : Index.Lookup(AssetPath)) Bump(T);
+            }
+
+            // Additional fallback: look up the static mesh asset on the actor's mesh
+            // component, if any. Catches AStaticMeshActor and similar where the class
+            // path lives in /Script/ but the content asset is the mesh.
+            if (UStaticMeshComponent* SMC = A->FindComponentByClass<UStaticMeshComponent>())
+            {
+                if (UStaticMesh* Mesh = SMC->GetStaticMesh())
+                {
+                    for (const FString& T : Index.Lookup(Mesh->GetPathName())) Bump(T);
+                }
             }
         }
 
