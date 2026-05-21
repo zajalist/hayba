@@ -170,10 +170,18 @@ void FHaybaMCPModule::StartupModule()
                 true));
         }
     }));
+
+    extern void HaybaSliver_RegisterTab();
+    extern void HaybaSliver_RegisterBuiltinParamWidgets();
+    HaybaSliver_RegisterBuiltinParamWidgets();
+    HaybaSliver_RegisterTab();
 }
 
 void FHaybaMCPModule::ShutdownModule()
 {
+    extern void HaybaSliver_UnregisterTab();
+    HaybaSliver_UnregisterTab();
+
     auto& TM = FGlobalTabmanager::Get();
     TM->UnregisterNomadTabSpawner(TabMain);
     StopTcpServer();

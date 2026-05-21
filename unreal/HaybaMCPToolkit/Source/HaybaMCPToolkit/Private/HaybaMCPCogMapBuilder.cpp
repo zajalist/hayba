@@ -8,8 +8,13 @@
 #include "Engine/Brush.h"
 #include "EngineUtils.h"
 #include "GameFramework/Actor.h"
+#include "Components/ActorComponent.h"
+#include "HaybaTagIndex.h"
 #include "Landscape.h"
 #include "LandscapeStreamingProxy.h"
+#include "Misc/PackageName.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 
 namespace
 {
@@ -116,6 +121,71 @@ namespace
         return Out;
     }
 
+    // Aggregate up to Limit tags across the cell's actors, sorted by frequency
+    // then alphabetically for stability. Prefers UE Actor->Tags; falls back to
+    // the retriever snapshot indexed by the actor's primary asset path.
+    TArray<FString> AggregateTagsForCell(const TArray<AActor*>& Actors, int32 Limit)
+    {
+        TMap<FString, int32> Counts;
+
+        auto Bump = [&Counts](const FString& Tag)
+        {
+            if (!Tag.IsEmpty()) Counts.FindOrAdd(Tag)++;
+        };
+
+        const FHaybaTagIndex& Index = FHaybaTagIndex::Get();
+
+        for (AActor* A : Actors)
+        {
+            if (!A) continue;
+            bool bHadUETag = false;
+            for (const FName& T : A->Tags) { Bump(T.ToString()); bHadUETag = true; }
+            if (bHadUETag) continue;
+
+            // For BP actors, GetClass()->GetPathName() returns "/Game/Foo/BP_X.BP_X_C".
+            // Convert back to the asset path the retriever indexed ("/Game/Foo/BP_X").
+            FString AssetPath;
+            if (UClass* Cls = A->GetClass())
+            {
+                AssetPath = Cls->GetPathName();
+                if (AssetPath.EndsWith(TEXT("_C")))
+                {
+                    AssetPath = FPackageName::ObjectPathToPackageName(AssetPath);
+                }
+            }
+            // Native classes resolve to "/Script/Engine.X" — Lookup will simply miss for those.
+            // v1 accepts the miss; v2 may walk components for the underlying mesh asset.
+            if (!AssetPath.IsEmpty() && !AssetPath.StartsWith(TEXT("/Script/")))
+            {
+                for (const FString& T : Index.Lookup(AssetPath)) Bump(T);
+            }
+
+            // Additional fallback: look up the static mesh asset on the actor's mesh
+            // component, if any. Catches AStaticMeshActor and similar where the class
+            // path lives in /Script/ but the content asset is the mesh.
+            if (UStaticMeshComponent* SMC = A->FindComponentByClass<UStaticMeshComponent>())
+            {
+                if (UStaticMesh* Mesh = SMC->GetStaticMesh())
+                {
+                    for (const FString& T : Index.Lookup(Mesh->GetPathName())) Bump(T);
+                }
+            }
+        }
+
+        TArray<TPair<FString, int32>> Sorted;
+        for (const auto& KV : Counts) Sorted.Add(KV);
+        Sorted.Sort([](const TPair<FString,int32>& A, const TPair<FString,int32>& B)
+        {
+            if (A.Value != B.Value) return A.Value > B.Value;
+            return A.Key < B.Key;
+        });
+
+        TArray<FString> Out;
+        Out.Reserve(Limit);
+        for (int32 i = 0; i < FMath::Min(Limit, Sorted.Num()); ++i) Out.Add(Sorted[i].Key);
+        return Out;
+    }
+
     // Uniform 2D grid fallback. Divides the bounding XY of all actors into a
     // GridSize × GridSize lattice and keeps non-empty bins as cells.
     TArray<FHaybaCogMapCell> BuildUniformGrid(const TArray<AActor*>& Actors, int32 GridSize)
@@ -162,6 +232,7 @@ namespace
                 FVector2D(Bounds.Min.X + (GX+1) * CellSize.X, Bounds.Min.Y + (GY+1) * CellSize.Y));
             Cell.ActorCount = Bin.Num();
             Cell.DominantClasses = DominantClasses(Bin, /*Limit=*/5);
+            Cell.Tags = AggregateTagsForCell(Bin, /*Limit=*/5);
             ClassifyDominant(Cell.DominantClasses, Cell.Label, Cell.Semantic);
             for (AActor* A : Bin) Cell.ActorLabels.Add(A->GetActorLabel());
             Cells.Add(MoveTemp(Cell));

@@ -15,7 +15,7 @@ public class HaybaMCPToolkit : ModuleRules
 
         PublicDependencyModuleNames.AddRange(new string[] {
             "Core", "CoreUObject", "Engine", "Slate", "SlateCore",
-            "EditorStyle", "InputCore", "EnhancedInput",
+            "EditorStyle", "EditorWidgets", "InputCore", "EnhancedInput",
             "UMG"
         });
 

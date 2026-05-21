@@ -1,5 +1,22 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { AssetIndexer } from './asset-indexer.js';
+
+let tmpDir: string;
+let snapPath: string;
+
+beforeEach(() => {
+  tmpDir = mkdtempSync(join(tmpdir(), 'hayba-tagsnap-'));
+  snapPath = join(tmpDir, 'retriever-tags.json');
+  process.env.HAYBA_TAG_SNAPSHOT_PATH = snapPath;
+});
+
+afterEach(() => {
+  delete process.env.HAYBA_TAG_SNAPSHOT_PATH;
+  try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+});
 
 describe('AssetIndexer', () => {
   it('uses describe_assets when available', async () => {
@@ -46,5 +63,22 @@ describe('AssetIndexer', () => {
     const r1 = await idx.build();
     const r2 = await idx.build();
     expect(r1.snapshotHash).toBe(r2.snapshotHash);
+  });
+
+  it('writes retriever-tags snapshot after build', async () => {
+    const dispatch = vi.fn(async () => ({
+      assets: [
+        { path: '/Game/Foo/SM_Rock', name: 'SM_Rock', class: 'StaticMesh', tags: ['rock', 'nature'], lastModified: 1 },
+        { path: '/Game/Bar/SM_Tree', name: 'SM_Tree', class: 'StaticMesh', tags: ['tree'], lastModified: 2 },
+        { path: '/Game/Baz/SM_Empty', name: 'SM_Empty', class: 'StaticMesh', tags: [], lastModified: 3 },
+      ],
+    }));
+    const idx = new AssetIndexer(dispatch);
+    await idx.build();
+    expect(existsSync(snapPath)).toBe(true);
+    const parsed = JSON.parse(readFileSync(snapPath, 'utf8'));
+    expect(parsed['/Game/Foo/SM_Rock']).toEqual(['rock', 'nature']);
+    expect(parsed['/Game/Bar/SM_Tree']).toEqual(['tree']);
+    expect(parsed['/Game/Baz/SM_Empty']).toBeUndefined();
   });
 });

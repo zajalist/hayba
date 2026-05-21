@@ -8,7 +8,7 @@ import { installToolStreamMirror } from './tool-stream-mirror.js';
 import { installLiveSender, executeCommand } from './tool-executor.js';
 import { registerToolMeta } from './tool-meta-registry.js';
 import { readSettings } from './routing/settings-watcher.js';
-import { registerDeferredRouting, ALWAYS_ON_META, type CapturedTool } from './routing/register.js';
+import { registerDeferredRouting, ALWAYS_ON_META, type CapturedTool, type RoutingHandle } from './routing/register.js';
 
 // ── Code Mode meta-tools (always-on) ──────────────────────────────────────────
 import { listToolCategoriesHandler, meta as listMeta } from './code-mode/list-tool-categories.js';
@@ -123,7 +123,7 @@ import { analyzeConventionsHandler } from './hayba-analyze-conventions.js';
 // as a typed shim so registerTools' signature doesn't churn for callers.
 type SessionManagerStub = Record<string, unknown>;
 
-export async function registerTools(server: McpServer, session: SessionManagerStub): Promise<void> {
+export async function registerTools(server: McpServer, session: SessionManagerStub): Promise<RoutingHandle | null> {
   const settings = readSettings();
   if (settings.toolRouting === 'deferred') {
     // γ-hybrid: capture every server.tool(...) call into a descriptor map
@@ -175,11 +175,12 @@ export async function registerTools(server: McpServer, session: SessionManagerSt
     // sequence server.connect() after every server.tool() call has happened
     // — McpServer rejects late registrations with "Cannot register
     // capabilities after connecting to transport".
-    await registerDeferredRouting(server, captured);
-    return;
+    const handle = await registerDeferredRouting(server, captured);
+    return handle;
   }
 
   registerToolsCore(server, session);
+  return null;
 }
 
 /**
