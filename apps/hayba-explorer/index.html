@@ -43,40 +43,23 @@
         width: 100%; height: 100%;
         display: block;
       }
-      /* Vertical shine — a single soft pass that runs once and stops, so
-         the splash settles instead of fidgeting forever. Clipped to the
-         logo's bounding rect so the band doesn't bleed into the dark
-         field. */
-      #hayba-splash .shine {
-        position: absolute; inset: 0;
-        pointer-events: none;
-        overflow: hidden;
-        opacity: 0;
-        animation: hayba-shine-fade 1500ms cubic-bezier(0.4, 0, 0.6, 1) 280ms forwards;
-      }
-      #hayba-splash .shine::after {
-        content: "";
-        position: absolute;
-        left: -10%; right: -10%;
-        height: 32%;
-        top: -32%;
-        background: linear-gradient(180deg,
-          transparent 0%,
-          rgba(255, 255, 255, 0.18) 45%,
-          rgba(255, 255, 255, 0.28) 50%,
-          rgba(255, 255, 255, 0.18) 55%,
-          transparent 100%);
+      /* Shine — the white-fade rect inside the SVG (.shine-band) is
+         clipped to the logo silhouette by <clipPath>, so the band paints
+         only inside the artwork. We animate it via transform: translateY
+         from above the viewBox down past the bottom. */
+      #hayba-splash .shine-band {
+        transform: translateY(0);
         animation: hayba-shine-sweep 1500ms cubic-bezier(0.45, 0, 0.55, 1) 280ms forwards;
       }
       @keyframes hayba-fade-in {
         to { opacity: 1; }
       }
-      @keyframes hayba-shine-fade {
-        0%, 100% { opacity: 1; }
-      }
       @keyframes hayba-shine-sweep {
-        0%   { top: -32%; }
-        100% { top: 100%; }
+        /* viewBox y range is 0..201, band sits at y=-100 height 100, so
+           translateY(0) starts the band fully above the artwork and
+           translateY(301) ends it fully below. */
+        0%   { transform: translateY(0); }
+        100% { transform: translateY(301px); }
       }
     </style>
   </head>
@@ -84,11 +67,6 @@
     <div id="hayba-splash">
       <div class="logo-wrap">
         <svg class="logo" viewBox="0 0 166 201" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <g filter="url(#hayba-splash-shadow)">
-            <path d="M139.816 56L142.492 61.8262C148.517 74.9439 153.452 94.8289 156.582 102.254C159.859 110.024 161.945 116.804 161.882 124.527C161.821 131.993 159.746 139.456 156.613 148.542C153.556 157.405 148.7 169.92 142.827 186.371L140.456 193.009H98.6381L104.123 179.295C109.128 166.783 113.266 155.9 115.863 146.185C118.465 136.45 119.297 128.661 118.294 122.227C116.597 111.336 108.943 100.707 82.9418 91.4414C56.9412 100.707 49.2868 111.336 47.5893 122.227C46.5863 128.661 47.4197 136.45 50.0219 146.185C52.619 155.9 56.7553 166.783 61.7602 179.295L67.2455 193.009H25.4272L23.058 186.371C17.1851 169.92 12.3284 157.405 9.27189 148.542C6.13864 139.456 4.06224 131.993 4.00139 124.527C3.93844 116.804 6.02502 110.024 9.30119 102.254C12.4319 94.8288 17.3679 74.944 23.393 61.8262L26.0688 56H139.816Z" fill="#DED4C3"/>
-          </g>
-          <path d="M19 23.9739V48.5937V73.2135C68.859 83.6886 96.4476 83.502 147 73.2135V48.5937V23.9739C115.541 -4.12899 48.9011 -3.85329 19 23.9739Z" fill="#B56A1D"/>
-          <path d="M82.748 0C86.0616 0.000172138 88.748 2.6864 88.748 6L97.9375 11.75L103.911 20.3926L93.4385 19.542L87.2451 15.9668V22.499L82.7451 31.9941L78.248 22.499V15.6309L71.4727 19.542L61 20.3926L66.9746 11.75L76.748 6C76.748 2.68629 79.4343 0 82.748 0Z" fill="#DED4C3"/>
           <defs>
             <filter id="hayba-splash-shadow" x="0" y="56" width="165.883" height="145.009" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
               <feFlood flood-opacity="0" result="BackgroundImageFix"/>
@@ -100,9 +78,39 @@
               <feBlend mode="normal" in2="BackgroundImageFix" result="shadow"/>
               <feBlend mode="normal" in="SourceGraphic" in2="shadow" result="shape"/>
             </filter>
+            <!-- Clip path matches the logo silhouette so the shine band
+                 only paints inside the visible artwork, never as a
+                 rectangle bleeding into the dark background. -->
+            <clipPath id="hayba-logo-clip">
+              <path d="M139.816 56L142.492 61.8262C148.517 74.9439 153.452 94.8289 156.582 102.254C159.859 110.024 161.945 116.804 161.882 124.527C161.821 131.993 159.746 139.456 156.613 148.542C153.556 157.405 148.7 169.92 142.827 186.371L140.456 193.009H98.6381L104.123 179.295C109.128 166.783 113.266 155.9 115.863 146.185C118.465 136.45 119.297 128.661 118.294 122.227C116.597 111.336 108.943 100.707 82.9418 91.4414C56.9412 100.707 49.2868 111.336 47.5893 122.227C46.5863 128.661 47.4197 136.45 50.0219 146.185C52.619 155.9 56.7553 166.783 61.7602 179.295L67.2455 193.009H25.4272L23.058 186.371C17.1851 169.92 12.3284 157.405 9.27189 148.542C6.13864 139.456 4.06224 131.993 4.00139 124.527C3.93844 116.804 6.02502 110.024 9.30119 102.254C12.4319 94.8288 17.3679 74.944 23.393 61.8262L26.0688 56H139.816Z"/>
+              <path d="M19 23.9739V48.5937V73.2135C68.859 83.6886 96.4476 83.502 147 73.2135V48.5937V23.9739C115.541 -4.12899 48.9011 -3.85329 19 23.9739Z"/>
+              <path d="M82.748 0C86.0616 0.000172138 88.748 2.6864 88.748 6L97.9375 11.75L103.911 20.3926L93.4385 19.542L87.2451 15.9668V22.499L82.7451 31.9941L78.248 22.499V15.6309L71.4727 19.542L61 20.3926L66.9746 11.75L76.748 6C76.748 2.68629 79.4343 0 82.748 0Z"/>
+            </clipPath>
+            <linearGradient id="hayba-shine-grad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%"   stop-color="white" stop-opacity="0"/>
+              <stop offset="45%"  stop-color="white" stop-opacity="0.30"/>
+              <stop offset="50%"  stop-color="white" stop-opacity="0.45"/>
+              <stop offset="55%"  stop-color="white" stop-opacity="0.30"/>
+              <stop offset="100%" stop-color="white" stop-opacity="0"/>
+            </linearGradient>
           </defs>
+          <!-- Hat body (cream) with built-in drop shadow. -->
+          <g filter="url(#hayba-splash-shadow)">
+            <path d="M139.816 56L142.492 61.8262C148.517 74.9439 153.452 94.8289 156.582 102.254C159.859 110.024 161.945 116.804 161.882 124.527C161.821 131.993 159.746 139.456 156.613 148.542C153.556 157.405 148.7 169.92 142.827 186.371L140.456 193.009H98.6381L104.123 179.295C109.128 166.783 113.266 155.9 115.863 146.185C118.465 136.45 119.297 128.661 118.294 122.227C116.597 111.336 108.943 100.707 82.9418 91.4414C56.9412 100.707 49.2868 111.336 47.5893 122.227C46.5863 128.661 47.4197 136.45 50.0219 146.185C52.619 155.9 56.7553 166.783 61.7602 179.295L67.2455 193.009H25.4272L23.058 186.371C17.1851 169.92 12.3284 157.405 9.27189 148.542C6.13864 139.456 4.06224 131.993 4.00139 124.527C3.93844 116.804 6.02502 110.024 9.30119 102.254C12.4319 94.8288 17.3679 74.944 23.393 61.8262L26.0688 56H139.816Z" fill="#DED4C3"/>
+          </g>
+          <!-- Crown (amber). -->
+          <path d="M19 23.9739V48.5937V73.2135C68.859 83.6886 96.4476 83.502 147 73.2135V48.5937V23.9739C115.541 -4.12899 48.9011 -3.85329 19 23.9739Z" fill="#B56A1D"/>
+          <!-- Star (cream). -->
+          <path d="M82.748 0C86.0616 0.000172138 88.748 2.6864 88.748 6L97.9375 11.75L103.911 20.3926L93.4385 19.542L87.2451 15.9668V22.499L82.7451 31.9941L78.248 22.499V15.6309L71.4727 19.542L61 20.3926L66.9746 11.75L76.748 6C76.748 2.68629 79.4343 0 82.748 0Z" fill="#DED4C3"/>
+          <!-- Shine band — a vertical white-fade rectangle, clipped to the
+               logo silhouette so it only paints inside the artwork. The
+               band height is 100 (≈ half the viewBox) and sweeps from
+               y=-100 (above) to y=201 (below) over the animation. -->
+          <g clip-path="url(#hayba-logo-clip)">
+            <rect class="shine-band" x="0" y="-100" width="166" height="100"
+                  fill="url(#hayba-shine-grad)"/>
+          </g>
         </svg>
-        <div class="shine" aria-hidden="true"></div>
       </div>
     </div>
     <div id="root"></div>
