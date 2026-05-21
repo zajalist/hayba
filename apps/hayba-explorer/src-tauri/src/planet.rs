@@ -291,12 +291,31 @@ pub fn tick_snapshot_model(model: &Model) -> TickSnapshot {
     let n_cells = model.grid.n_fields();
     let mut cell_positions: Vec<f32> = Vec::with_capacity((n_cells * 3) as usize);
     let mut cell_elevation: Vec<f32> = Vec::with_capacity(n_cells as usize);
+    // Build a plate-id → quaternion lookup once, so per-cell rotation is an
+    // O(1) hashmap probe instead of an O(P) linear scan. P is small (≤16
+    // typically) but n_cells can be 1.5M, so the saving matters.
+    let plate_q: std::collections::HashMap<u32, glam::Quat> = model
+        .plates
+        .iter()
+        .map(|p| (p.id, p.quaternion))
+        .collect();
+    let identity = glam::Quat::IDENTITY;
     for fid in 0..n_cells {
-        let p = model.grid.position(fid);
-        cell_positions.push(p.x);
-        cell_positions.push(p.y);
-        cell_positions.push(p.z);
-        cell_elevation.push(model.fields[fid as usize].elevation);
+        let local = model.grid.position(fid);
+        // Apply the cell's plate's accumulated rotation. Cells with no plate
+        // (None) stay at their base icosphere position. Without this step
+        // model.step() advanced sim_time + plate quaternions but the rendered
+        // cell positions never moved → plates appeared frozen.
+        let f = &model.fields[fid as usize];
+        let q = match f.plate_id {
+            Some(pid) => plate_q.get(&pid).copied().unwrap_or(identity),
+            None => identity,
+        };
+        let world = q * local;
+        cell_positions.push(world.x);
+        cell_positions.push(world.y);
+        cell_positions.push(world.z);
+        cell_elevation.push(f.elevation);
     }
     TickSnapshot {
         sim_time_ma: model.sim_time_ma,
@@ -333,13 +352,30 @@ pub fn snapshot_model(
     let mut cell_orogenic_uplift: Vec<f32> = Vec::with_capacity(n_cells as usize);
     let mut cell_mor_age_steps: Vec<u16> = Vec::with_capacity(n_cells as usize);
 
+    // Plate-id → quaternion lookup. Required to map each cell's BASE icosphere
+    // position into its current WORLD position (i.e. rotated by the plate's
+    // accumulated quaternion from sim time = 0 to now). Without applying this
+    // rotation, `cell_positions` stays at the bake-time icosphere coordinates
+    // forever and plates appear motionless in the simulate phase.
+    let plate_q: std::collections::HashMap<u32, glam::Quat> = model
+        .plates
+        .iter()
+        .map(|p| (p.id, p.quaternion))
+        .collect();
+    let identity = glam::Quat::IDENTITY;
+
     for fid in 0..n_cells {
-        let p = model.grid.position(fid);
+        let local = model.grid.position(fid);
+        let f = &model.fields[fid as usize];
+        let my_plate = f.plate_id;
+        let q = match my_plate {
+            Some(pid) => plate_q.get(&pid).copied().unwrap_or(identity),
+            None => identity,
+        };
+        let p = q * local;
         cell_positions.push(p.x);
         cell_positions.push(p.y);
         cell_positions.push(p.z);
-        let f = &model.fields[fid as usize];
-        let my_plate = f.plate_id;
         cell_plate_ids.push(match my_plate { Some(pid) => pid as i32, None => -1 });
         cell_elevation.push(f.elevation);
         cell_continental.push(if f.is_continent_crust() { 1 } else { 0 });
