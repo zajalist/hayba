@@ -48,6 +48,8 @@ export class SliverRuntime {
   /**
    * Root frame: wraps _runFrame in a try/catch that converts ALL errors
    * (including cycle/depth that bubble up from deep frames) into a result.
+   * A shared `effects` array is passed down through the call tree so all
+   * frames (root + children) accumulate into a single list.
    */
   private async runRoot(
     id: string,
@@ -55,12 +57,13 @@ export class SliverRuntime {
     stack: string[],
   ): Promise<SliverRunResult> {
     const t0 = performance.now();
+    const effects: string[] = [];
     try {
-      const outputs = await this._runFrame(id, params, stack);
+      const outputs = await this._runFrame(id, params, stack, effects);
       return {
         ok: true,
         outputs,
-        side_effects: this._getSideEffects(id, stack),
+        side_effects: dedup(effects),
         durationMs: Math.round(performance.now() - t0),
       };
     } catch (e) {
@@ -78,11 +81,14 @@ export class SliverRuntime {
    * Inner frame: throws on all errors (structural and non-structural).
    * Structural errors (cycle/depth) bubble through executor awaits unchanged.
    * Non-structural errors bubble up to the nearest runRoot catch.
+   * Pushes this spec's side_effects into the shared `effects` array before
+   * executing, so they are recorded even if the executor triggers a child.
    */
   private async _runFrame(
     id: string,
     params: SliverParamValues,
     stack: string[],
+    effects: string[],
   ): Promise<Record<string, unknown>> {
     if (stack.length >= this.maxDepth) throw new SliverDepthError(this.maxDepth);
     if (stack.includes(id)) throw new SliverCycleError(id, [...stack, id]);
@@ -96,12 +102,15 @@ export class SliverRuntime {
     const v = validateAndCoerceParams(spec.params, params);
     if (!v.ok) throw new SliverValidationError(v.reason);
 
+    // Record this frame's side_effects into the shared accumulator.
+    for (const e of spec.determinism.side_effects) effects.push(e);
+
     const newStack = [...stack, id];
     const ctx: SliverContext = {
       stack: newStack,
       maxDepth: this.maxDepth,
       runSliver: (childId, childParams) =>
-        this._runChildSliver(childId, childParams, newStack),
+        this._runChildSliver(childId, childParams, newStack, effects),
     };
 
     return await executor(v.values, ctx);
@@ -111,15 +120,18 @@ export class SliverRuntime {
    * Called by ctx.runSliver inside executors. Structural errors (cycle/depth)
    * are re-thrown so they escape the executor's try/catch and reach the root.
    * Non-structural errors are wrapped in a SliverRunResult.
+   * The shared `effects` array is threaded through so child side_effects are
+   * collected into the root accumulator.
    */
   private async _runChildSliver(
     id: string,
     params: SliverParamValues,
     stack: string[],
+    effects: string[],
   ): Promise<SliverRunResult> {
     const t0 = performance.now();
     try {
-      const outputs = await this._runFrame(id, params, stack);
+      const outputs = await this._runFrame(id, params, stack, effects);
       const spec = this.getSpec(id);
       return {
         ok: true,
@@ -140,10 +152,14 @@ export class SliverRuntime {
       };
     }
   }
+}
 
-  /** Retrieves side_effects from the spec after a successful run. */
-  private _getSideEffects(id: string, _stack: string[]): string[] {
-    const spec = this.getSpec(id);
-    return spec ? [...spec.determinism.side_effects] : [];
+/** Deduplicate a string array preserving first-seen order. */
+function dedup(arr: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const s of arr) {
+    if (!seen.has(s)) { seen.add(s); out.push(s); }
   }
+  return out;
 }

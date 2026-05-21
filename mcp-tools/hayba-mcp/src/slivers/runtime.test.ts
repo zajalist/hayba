@@ -128,4 +128,20 @@ describe('SliverRuntime.runSliver', () => {
     expect(r.ok).toBe(true);
     expect(r.outputs).toEqual({ a: 1, b: 1 });
   });
+
+  it('aggregates side_effects across the call tree (parent + child) and dedupes', async () => {
+    specs.set('com.t.parent', makeSpec('com.t.parent', 'k.parent', {
+      determinism: { pure: false, declared_outputs: [], side_effects: ['actor_spawn'], seed_param: null },
+    }));
+    specs.set('com.t.child', makeSpec('com.t.child', 'k.child', {
+      determinism: { pure: false, declared_outputs: [], side_effects: ['lighting_change', 'actor_spawn'], seed_param: null },
+    }));
+    registry.register('k.parent', async (_p, ctx) => { await ctx.runSliver('com.t.child', {}); return {}; });
+    registry.register('k.child', async () => ({}));
+
+    const r = await runtime.runSliver('com.t.parent', {});
+    expect(r.ok).toBe(true);
+    expect(r.side_effects).toEqual(['actor_spawn', 'lighting_change']);
+    // 'actor_spawn' appears in both parent and child — should appear once, in first-seen order
+  });
 });
