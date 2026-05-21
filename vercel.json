@@ -1,4 +1,6 @@
 {
+  "buildCommand": null,
+  "installCommand": "echo skip",
   "outputDirectory": "website",
   "rewrites": [
     { "source": "/app/:path*", "destination": "/app/index.html" },
