@@ -45,3 +45,27 @@ TSharedRef<SSliverParamWidget> FSliverParamWidgetRegistry::Create(const FHaybaSl
     if (const FFactory* F = Factories.Find(Param.Type)) return (*F)(Param);
     return SNew(SUnsupportedParamWidget).Param(Param);
 }
+
+#include "Slivers/SSliverParamFloat.h"
+#include "Slivers/SSliverParamInt.h"
+#include "Slivers/SSliverParamBool.h"
+#include "Slivers/SSliverParamString.h"
+#include "Slivers/SSliverParamEnum.h"
+#include "Slivers/SSliverParamActorRef.h"
+
+void HaybaSliver_RegisterBuiltinParamWidgets()
+{
+    FSliverParamWidgetRegistry& R = FSliverParamWidgetRegistry::Get();
+    R.Register(EHaybaSliverParamType::Float,    [](const FHaybaSliverParam& P) -> TSharedRef<SSliverParamWidget>
+        { return SNew(SSliverParamFloat).Param(P); });
+    R.Register(EHaybaSliverParamType::Int,      [](const FHaybaSliverParam& P) -> TSharedRef<SSliverParamWidget>
+        { return SNew(SSliverParamInt).Param(P); });
+    R.Register(EHaybaSliverParamType::Bool,     [](const FHaybaSliverParam& P) -> TSharedRef<SSliverParamWidget>
+        { return SNew(SSliverParamBool).Param(P); });
+    R.Register(EHaybaSliverParamType::String,   [](const FHaybaSliverParam& P) -> TSharedRef<SSliverParamWidget>
+        { return SNew(SSliverParamString).Param(P); });
+    R.Register(EHaybaSliverParamType::Enum,     [](const FHaybaSliverParam& P) -> TSharedRef<SSliverParamWidget>
+        { return SNew(SSliverParamEnum).Param(P); });
+    R.Register(EHaybaSliverParamType::ActorRef, [](const FHaybaSliverParam& P) -> TSharedRef<SSliverParamWidget>
+        { return SNew(SSliverParamActorRef).Param(P); });
+}
