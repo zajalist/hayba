@@ -55,7 +55,7 @@ export default function PropertySection({
   const [collapsed, setCollapsed] = React.useState<boolean>(() => {
     const persisted = readPersisted(panelId, sectionId);
     if (persisted !== null) return persisted;
-    return collapsible ? !!defaultCollapsed : false;
+    return !!defaultCollapsed;
   });
   const [hover, setHover] = React.useState(false);
   const { query } = usePropertySearch();
@@ -135,22 +135,6 @@ export default function PropertySection({
   );
 
   if (hiddenByFilter) return <>{body}</>;
-
-  if (!collapsible) {
-    return (
-      <div>
-        <div
-          style={baseHeader}
-          onMouseEnter={() => setHover(true)}
-          onMouseLeave={() => setHover(false)}
-        >
-          {chevron}
-          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{heading}</span>
-        </div>
-        {body}
-      </div>
-    );
-  }
 
   return (
     <div>
