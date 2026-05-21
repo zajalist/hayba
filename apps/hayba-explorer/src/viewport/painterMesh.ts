@@ -70,6 +70,9 @@ export interface PainterMeshHandle {
   syncFromPainter(painter: HeightPainter): void;
   /** Update brush cursor position + radius. Pass null hit to hide. */
   setCursor(hit: [number, number, number] | null, radiusRad: number, pressed: boolean): void;
+  /** Recolor the brush preview (rings + dot) by hex string. Photoshop-style
+   *  mode tint: amber=Raise, ice=Lower, beige=Smooth, pink=Flatten, etc. */
+  setCursorColor(hex: string): void;
   dispose(): void;
 }
 
@@ -100,32 +103,58 @@ export function buildPainterMesh(args: {
   const mesh = new THREE.Mesh(geom, mat);
   mesh.name = "hayba-painter-mesh";
 
-  // Brush cursor ring — 64-segment circle on unit sphere, transformed each frame.
-  const ringGeom = new THREE.BufferGeometry();
-  const ringSegments = 64;
-  const ringPositions = new Float32Array((ringSegments + 1) * 3);
-  for (let i = 0; i <= ringSegments; i++) {
-    const t = (i / ringSegments) * Math.PI * 2;
-    ringPositions[i * 3 + 0] = Math.cos(t);
-    ringPositions[i * 3 + 1] = 0;
-    ringPositions[i * 3 + 2] = Math.sin(t);
-  }
-  ringGeom.setAttribute("position", new THREE.BufferAttribute(ringPositions, 3));
-  const ringMat = new THREE.LineBasicMaterial({
+  // Photoshop-style brush preview — outer ring (full radius) + inner
+  // dashed-feel ring (45% radius, dim) for falloff hint + a centre dot.
+  // All three live on a single transform; setCursor() positions the parent.
+  const ringSegments = 96;
+  const buildCircleGeom = (): THREE.BufferGeometry => {
+    const g = new THREE.BufferGeometry();
+    const pts = new Float32Array((ringSegments + 1) * 3);
+    for (let i = 0; i <= ringSegments; i++) {
+      const t = (i / ringSegments) * Math.PI * 2;
+      pts[i * 3 + 0] = Math.cos(t);
+      pts[i * 3 + 1] = 0;
+      pts[i * 3 + 2] = Math.sin(t);
+    }
+    g.setAttribute("position", new THREE.BufferAttribute(pts, 3));
+    return g;
+  };
+  const outerGeom = buildCircleGeom();
+  const innerGeom = buildCircleGeom();
+  const outerMat = new THREE.LineBasicMaterial({
     color: new THREE.Color("#DED4C3"),
-    transparent: true,
-    opacity: 0.85,
-    depthTest: false,
+    transparent: true, opacity: 0.95, depthTest: false, depthWrite: false,
   });
-  const cursorRing = new THREE.Line(ringGeom, ringMat);
-  cursorRing.renderOrder = 20;
-  cursorRing.visible = false;
-  cursorRing.frustumCulled = false;
+  const innerMat = new THREE.LineBasicMaterial({
+    color: new THREE.Color("#DED4C3"),
+    transparent: true, opacity: 0.40, depthTest: false, depthWrite: false,
+  });
+  const outerRing = new THREE.Line(outerGeom, outerMat);
+  const innerRing = new THREE.Line(innerGeom, innerMat);
+  innerRing.scale.setScalar(0.45);
+  // Centre dot — a single point at the brush centre for precise targeting.
+  const dotGeom = new THREE.BufferGeometry();
+  dotGeom.setAttribute("position", new THREE.Float32BufferAttribute([0, 0, 0], 3));
+  const dotMat = new THREE.PointsMaterial({
+    color: new THREE.Color("#DED4C3"),
+    size: 5,
+    sizeAttenuation: false,
+    transparent: true, opacity: 0.95, depthTest: false, depthWrite: false,
+  });
+  const centreDot = new THREE.Points(dotGeom, dotMat);
+  const cursorPivot = new THREE.Group();
+  cursorPivot.name = "brush-cursor";
+  cursorPivot.add(outerRing, innerRing, centreDot);
+  cursorPivot.renderOrder = 20;
+  cursorPivot.visible = false;
+  cursorPivot.frustumCulled = false;
+  // Back-compat: callers still reference handle.cursorRing.
+  const cursorRing = outerRing as unknown as THREE.Line;
 
   const group = new THREE.Group();
   group.name = "painter-group";
   group.add(mesh);
-  group.add(cursorRing);
+  group.add(cursorPivot);
 
   const syncFromPainter = (painter: HeightPainter): void => {
     if (!painter.dirty) return;
@@ -139,24 +168,38 @@ export function buildPainterMesh(args: {
     radiusRad: number,
     pressed: boolean,
   ): void => {
-    if (!hit) { cursorRing.visible = false; return; }
-    cursorRing.visible = true;
-    ringMat.opacity = pressed ? 0.95 : 0.6;
+    if (!hit) { cursorPivot.visible = false; return; }
+    cursorPivot.visible = true;
+    // Slight opacity lift while pressed so the brush feels "engaged".
+    outerMat.opacity = pressed ? 1.0  : 0.85;
+    innerMat.opacity = pressed ? 0.55 : 0.35;
+    dotMat.opacity   = pressed ? 1.0  : 0.85;
+    // Geodesic radius → chord radius on tangent plane.
     const r = Math.sin(radiusRad);
-    cursorRing.scale.set(r, r, r);
+    outerRing.scale.set(r, r, r);
+    innerRing.scale.set(r * 0.45, r * 0.45, r * 0.45);
     const dist = Math.cos(radiusRad) * 1.001;
-    cursorRing.position.set(hit[0] * dist, hit[1] * dist, hit[2] * dist);
+    cursorPivot.position.set(hit[0] * dist, hit[1] * dist, hit[2] * dist);
     const up = new THREE.Vector3(hit[0], hit[1], hit[2]);
     const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), up);
-    cursorRing.quaternion.copy(quat);
+    cursorPivot.quaternion.copy(quat);
+  };
+
+  /** Tint the brush preview by mode — Photoshop-style colour-coded cursor. */
+  const setCursorColor = (hex: string): void => {
+    const c = new THREE.Color(hex);
+    outerMat.color.copy(c);
+    innerMat.color.copy(c);
+    dotMat.color.copy(c);
   };
 
   const dispose = (): void => {
     geom.dispose();
     mat.dispose();
-    ringGeom.dispose();
-    ringMat.dispose();
+    outerGeom.dispose(); outerMat.dispose();
+    innerGeom.dispose(); innerMat.dispose();
+    dotGeom.dispose();   dotMat.dispose();
   };
 
-  return { object: group, cursorRing, syncFromPainter, setCursor, dispose };
+  return { object: group, cursorRing, syncFromPainter, setCursor, setCursorColor, dispose };
 }

@@ -243,6 +243,20 @@ function invertBrushMode(b: BrushConfig): BrushConfig {
   return b;
 }
 
+/** Photoshop-style mode-coded cursor colour. The brush preview overlay
+ *  (outer ring + inner falloff hint + centre dot) reads this at every
+ *  pointermove so the user knows what they're about to paint without
+ *  glancing back to the toolbar. */
+function brushModeColor(mode: BrushConfig["mode"]): string {
+  switch (mode) {
+    case "raise":   return "#F2A040"; // amber — adds elevation
+    case "lower":   return "#8BC5F2"; // ice blue — removes
+    case "smooth":  return "#DED4C3"; // beige neutral
+    case "flatten": return "#D86699"; // pink — locks to target
+    case "noise":   return "#F2E08C"; // pale yellow — adds variance
+  }
+}
+
 export default function App() {
   const sceneRef = useRef<SceneHandle | null>(null);
   const globeRef = useRef<GlobeHandle | null>(null);
@@ -1068,6 +1082,10 @@ export default function App() {
       const pmesh = painterMeshRef.current;
       if (!painter || !pmesh) return;
       const hit = raycast(ev);
+      // Photoshop-style: tint the cursor by the active (or shift-inverted)
+      // brush mode so the user sees at a glance what they're about to paint.
+      const activeBrush = ev.shiftKey ? invertBrushMode(paintBrush) : paintBrush;
+      pmesh.setCursorColor(brushModeColor(activeBrush.mode));
       pmesh.setCursor(hit?.point ?? null, paintBrush.radiusRad, (ev.buttons & 1) === 1);
       if ((ev.buttons & 1) === 1 && hit) {
         painter.tickStroke({ seedCellId: hit.cellId, hit: hit.point });

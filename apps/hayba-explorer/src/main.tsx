@@ -10,12 +10,11 @@ function dismissSplash() {
   const splash = document.getElementById("hayba-splash");
   if (!splash) return;
   splash.classList.add("fading");
-  setTimeout(() => splash.remove(), 700);
+  setTimeout(() => splash.remove(), 500);
 }
-// Hold the splash for ~1.2s minimum so the staged entrance animation
-// (logo → wordmark → rule expand → tagline → progress shimmer) actually
-// completes — otherwise the splash flashes by before the user can read it.
-window.addEventListener("load", () => setTimeout(dismissSplash, 1200));
+// Minimal splash — just the logo + shine. Hold long enough for one
+// shine pass (~600ms) then fade out.
+window.addEventListener("load", () => setTimeout(dismissSplash, 600));
 
 // Wire up the --hayba-range-progress CSS var on every <input type="range">
 // so the track shows a fill from min → current value. WebKit has no native
