@@ -76,7 +76,7 @@ export type SliverExecutor = (
 export class SliverCycleError extends Error {
   readonly name = 'SliverCycleError';
   constructor(public readonly id: string, public readonly stack_ids: string[]) {
-    super(`Sliver "${id}" re-entered its own call stack: ${stack_ids.join(' → ')}`);
+    super(`Sliver cycle detected — "${id}" re-entered its own call stack: ${stack_ids.join(' → ')}`);
   }
 }
 
