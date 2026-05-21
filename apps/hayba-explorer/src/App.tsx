@@ -187,6 +187,7 @@ function statusChips(
   draft: WizardDraft | null,
   snap: PlanetSnapshot | null,
   cellCount: number,
+  liveSimTimeMa: number | null = null,
 ): { label: string; value: React.ReactNode }[] {
   if (mode === "wizard" || mode === "baking") {
     if (!draft) return [];
@@ -205,9 +206,12 @@ function statusChips(
     return [{ label: "Plates", value: snap ? new Set(snap.cell_plate_ids.filter((p) => p >= 0)).size : 0 }];
   }
   if (snap) {
+    // Prefer the live tick sim_time during play so the status bar reads
+    // current time, not bake-completion time.
+    const t = liveSimTimeMa ?? snap.sim_time_ma;
     return [
-      { label: "Era",   value: eraForMa(snap.sim_time_ma) },
-      { label: "Time",  value: `${snap.sim_time_ma.toFixed(1)} Ma` },
+      { label: "Era",   value: eraForMa(t) },
+      { label: "Time",  value: `${t.toFixed(1)} Ma` },
     ];
   }
   return [];
@@ -400,6 +404,10 @@ export default function App() {
   const [debugBakeProgress, setDebugBakeProgress] = useState<string | null>(null);
   const [debugBakeReady, setDebugBakeReady] = useState(false);
   const [initializingGrid, setInitializingGrid] = useState(false);
+  // Live sim-time-Ma surfaced from each TickSnapshot during play. Decoupled
+  // from `snapshot.sim_time_ma` (which only refreshes on pause/bake) so the
+  // SimulatePanel "Time" readout actually advances during play.
+  const [liveSimTimeMa, setLiveSimTimeMa] = useState<number | null>(null);
   // SP-A: the single authority for globe interactivity. `compose` =
   // paint strokes editable; `explore` = orbit + stack view only. A ref
   // mirror so pointer/effect closures read the live value with no
@@ -790,6 +798,10 @@ export default function App() {
           // — without this they stay frozen at the pre-play positions and
           // the user perceives "no plate movement".
           boundaryLinesRef.current?.updatePositions(tickSnap.cell_positions);
+          // Push the new sim-time into a separate state so the SimulatePanel
+          // readout advances during play. Doing this every rAF is cheap (one
+          // number) and avoids the full setSnapshot reconciliation cost.
+          setLiveSimTimeMa(tickSnap.sim_time_ma);
           if (!cancelled && playingRef.current) requestAnimationFrame(tick);
         })
         .catch((e) => {
@@ -1820,8 +1832,8 @@ export default function App() {
 
         {panelCategory === "simulate" && snapshot && (
           <SimulatePanel
-            era={eraForMa(snapshot.sim_time_ma)}
-            simTimeMa={snapshot.sim_time_ma}
+            era={eraForMa(liveSimTimeMa ?? snapshot.sim_time_ma)}
+            simTimeMa={liveSimTimeMa ?? snapshot.sim_time_ma}
             steps={0}
             selectedCell={selectedCell}
             snapshot={snapshot}
@@ -1847,7 +1859,7 @@ export default function App() {
       <div style={{ gridColumn: "1 / span 2" }}>
         <StatusBar
           mode={statusMode(mode)}
-          chips={statusChips(mode, draft, snapshot, cellCountRef.current)}
+          chips={statusChips(mode, draft, snapshot, cellCountRef.current, liveSimTimeMa)}
           hint={statusHint(mode)}
           busy={
             initializingGrid
