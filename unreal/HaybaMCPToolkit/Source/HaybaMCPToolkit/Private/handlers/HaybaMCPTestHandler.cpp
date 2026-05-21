@@ -207,7 +207,9 @@ namespace
             FAutomationTestExecutionInfo ExecInfo;
             const int32 RoleIndex = 0;
 
-            const bool bStarted = Framework.StartTestByName(Name, RoleIndex);
+            // UE 5.7: StartTestByName returns void. Detect failure via GetCurrentTest().
+            Framework.StartTestByName(Name, RoleIndex);
+            const bool bStarted = Framework.GetCurrentTest() != nullptr;
             if (!bStarted)
             {
                 SkippedArr.Add(MakeStr(Name));
