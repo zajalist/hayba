@@ -336,6 +336,31 @@ impl Model {
             if !still_bottom {
                 continue;
             }
+            // EDGE-ONLY GUARD: only transfer if `fid` already has at least
+            // one grid neighbour owned by the TOP plate. This ensures the
+            // cell joins the edge of the receiving plate — extending its
+            // boundary by one cell — rather than appearing as an island
+            // marooned inside bottom-plate territory.
+            //
+            // Without this guard, collisions reported at the *interior* of
+            // the bottom plate (which can happen when a fast plate's
+            // rotation projects a far-away cell into the top plate's
+            // frame) create disconnected single-cell pockets. Visually:
+            // tiny closed-loop boundaries floating in the ocean, like the
+            // "islands around Hawaii" reported.
+            let has_top_neighbour = self
+                .grid
+                .neighbours(fid)
+                .iter()
+                .any(|&n| {
+                    self.fields
+                        .get(n as usize)
+                        .and_then(|f| f.plate_id)
+                        .is_some_and(|pid| pid == c.top_plate)
+                });
+            if !has_top_neighbour {
+                continue;
+            }
             // Remove from bottom plate.
             if let Some(p) = self.plates.iter_mut().find(|p| p.id == c.bottom_plate) {
                 p.remove_field(fid);

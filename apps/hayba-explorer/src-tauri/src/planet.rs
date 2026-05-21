@@ -29,6 +29,12 @@ pub struct TickSnapshot {
     pub n_cells: u32,
     pub cell_positions: Vec<f32>,
     pub cell_elevation: Vec<f32>,
+    /// Plate ownership per cell (-1 = no plate). Required so the sim mesh
+    /// can drop triangles that span multiple plates — without this filter,
+    /// when plates drift apart, the triangle connecting one plate's cell
+    /// to its neighbour on another plate stretches across the gap, smearing
+    /// the mesh visually.
+    pub cell_plate_ids: Vec<i32>,
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -291,6 +297,7 @@ pub fn tick_snapshot_model(model: &Model) -> TickSnapshot {
     let n_cells = model.grid.n_fields();
     let mut cell_positions: Vec<f32> = Vec::with_capacity((n_cells * 3) as usize);
     let mut cell_elevation: Vec<f32> = Vec::with_capacity(n_cells as usize);
+    let mut cell_plate_ids: Vec<i32> = Vec::with_capacity(n_cells as usize);
     // Build a plate-id → quaternion lookup once, so per-cell rotation is an
     // O(1) hashmap probe instead of an O(P) linear scan. P is small (≤16
     // typically) but n_cells can be 1.5M, so the saving matters.
@@ -316,12 +323,14 @@ pub fn tick_snapshot_model(model: &Model) -> TickSnapshot {
         cell_positions.push(world.y);
         cell_positions.push(world.z);
         cell_elevation.push(f.elevation);
+        cell_plate_ids.push(match f.plate_id { Some(pid) => pid as i32, None => -1 });
     }
     TickSnapshot {
         sim_time_ma: model.sim_time_ma,
         n_cells,
         cell_positions,
         cell_elevation,
+        cell_plate_ids,
     }
 }
 

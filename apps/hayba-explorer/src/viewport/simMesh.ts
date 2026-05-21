@@ -65,8 +65,16 @@ void main() {
 
 export interface SimMeshHandle {
   object: THREE.Mesh;
-  /** Update vertex positions + elevation from a TickSnapshot-shaped payload. */
-  update(cellPositions: ArrayLike<number>, cellElevation: ArrayLike<number>): void;
+  /** Update vertex positions + elevation + plate ownership. When plate
+   *  ownership changes (cells transferred between plates by subduction),
+   *  the index buffer is rebuilt to drop triangles that span multiple
+   *  plates — without that, the triangle stretches across the drift gap
+   *  and the mesh smears. */
+  update(
+    cellPositions: ArrayLike<number>,
+    cellElevation: ArrayLike<number>,
+    cellPlateIds: ArrayLike<number>,
+  ): void;
   dispose(): void;
 }
 
@@ -74,8 +82,9 @@ export function buildSimMesh(args: {
   positions: ArrayLike<number>; // length n*3, unit sphere coords
   triangles: Uint32Array;
   elevations: ArrayLike<number>;
+  plateIds: ArrayLike<number>; // length n
 }): SimMeshHandle {
-  const { positions, triangles, elevations } = args;
+  const { positions, triangles, elevations, plateIds } = args;
   const n = elevations.length;
 
   const geom = new THREE.BufferGeometry();
@@ -91,7 +100,39 @@ export function buildSimMesh(args: {
   elevBuf.setUsage(THREE.DynamicDrawUsage);
   geom.setAttribute("elevation", elevBuf);
 
-  geom.setIndex(new THREE.BufferAttribute(triangles, 1));
+  // Cache plate ids per cell and a current filtered index buffer. We
+  // rebuild the index only when plate ownership changes between frames.
+  const plateIdCache = new Int32Array(n);
+  for (let i = 0; i < n; i++) plateIdCache[i] = plateIds[i] | 0;
+
+  // Build the filtered index buffer: include only triangles whose 3
+  // vertices share a plate_id (including all-three == -1, the "no plate"
+  // ocean filler). This is what drops the cross-plate stretched
+  // triangles that smear the mesh as plates drift apart.
+  const filterTriangles = (out: Uint32Array): number => {
+    let write = 0;
+    for (let i = 0; i < triangles.length; i += 3) {
+      const a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
+      const pa = plateIdCache[a], pb = plateIdCache[b], pc = plateIdCache[c];
+      if (pa === pb && pb === pc) {
+        out[write++] = a;
+        out[write++] = b;
+        out[write++] = c;
+      }
+    }
+    return write;
+  };
+
+  // Allocate a reusable index buffer at the full triangles size — the
+  // filtered count is always ≤ triangles.length. We track the actual
+  // draw count via geom.setDrawRange so unused tail entries are ignored.
+  const indexBuf = new Uint32Array(triangles.length);
+  const indexAttr = new THREE.BufferAttribute(indexBuf, 1);
+  indexAttr.setUsage(THREE.DynamicDrawUsage);
+  geom.setIndex(indexAttr);
+  let drawCount = filterTriangles(indexBuf);
+  indexAttr.needsUpdate = true;
+  geom.setDrawRange(0, drawCount);
   geom.computeBoundingSphere();
 
   const mat = new THREE.ShaderMaterial({
@@ -106,17 +147,40 @@ export function buildSimMesh(args: {
   const mesh = new THREE.Mesh(geom, mat);
   mesh.name = "hayba-sim-mesh";
 
-  const update = (cellPositions: ArrayLike<number>, cellElevation: ArrayLike<number>): void => {
+  const update = (
+    cellPositions: ArrayLike<number>,
+    cellElevation: ArrayLike<number>,
+    cellPlateIds: ArrayLike<number>,
+  ): void => {
     if (cellElevation.length !== n) {
       console.warn(`[simMesh] n_cells changed (${n} → ${cellElevation.length}); rebuild required`);
       return;
     }
+    // Vertex positions + elevations: always update.
     const pos = posBuf.array as Float32Array;
     for (let i = 0; i < cellPositions.length; i++) pos[i] = cellPositions[i];
     posBuf.needsUpdate = true;
     const el = elevBuf.array as Float32Array;
     for (let i = 0; i < n; i++) el[i] = cellElevation[i];
     elevBuf.needsUpdate = true;
+
+    // Plate ownership: only rebuild the filtered index buffer if it
+    // actually changed (rare event — subduction transfers happen at a
+    // few cells per step at most).
+    let plateChanged = false;
+    for (let i = 0; i < n; i++) {
+      const newPid = cellPlateIds[i] | 0;
+      if (plateIdCache[i] !== newPid) {
+        plateIdCache[i] = newPid;
+        plateChanged = true;
+      }
+    }
+    if (plateChanged) {
+      const newCount = filterTriangles(indexBuf);
+      indexAttr.needsUpdate = true;
+      geom.setDrawRange(0, newCount);
+      drawCount = newCount;
+    }
   };
 
   const dispose = (): void => {

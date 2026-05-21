@@ -819,7 +819,7 @@ export default function App() {
           if (cancelled || !playingRef.current) return;
           // Mesh/overlay updates run in try/catch so a single bad frame
           // can't kill the whole loop — next interval keeps the sim alive.
-          try { simMeshRef.current?.update(tickSnap.cell_positions, tickSnap.cell_elevation); }
+          try { simMeshRef.current?.update(tickSnap.cell_positions, tickSnap.cell_elevation, tickSnap.cell_plate_ids); }
           catch (e) { console.error("[sim] sim-mesh update failed", e); }
           try { boundaryLinesRef.current?.updatePositions(tickSnap.cell_positions); }
           catch (e) { console.error("[sim] boundary update failed", e); }
@@ -1390,6 +1390,7 @@ export default function App() {
           positions: snap.cell_positions,
           triangles: _tris,
           elevations: snap.cell_elevation,
+          plateIds: snap.cell_plate_ids,
         });
       } else {
         console.warn("[bake] no triangles cached — simMesh build deferred");

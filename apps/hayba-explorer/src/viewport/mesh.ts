@@ -11,6 +11,11 @@ export interface TickSnapshot {
   n_cells: number;
   cell_positions: number[];
   cell_elevation: number[];
+  /** Plate id per cell (-1 = no plate). Needed so per-tick mesh updates
+   *  can drop triangles spanning multiple plates (those triangles smear
+   *  visually when plates drift apart since one vertex follows one plate
+   *  and the other follows a different one). */
+  cell_plate_ids: number[];
 }
 
 export interface GlobeMeshHandle {
