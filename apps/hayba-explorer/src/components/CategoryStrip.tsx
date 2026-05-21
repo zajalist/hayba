@@ -92,9 +92,16 @@ export default function CategoryStrip({ active, enabled, disabledReason, onPick 
           alignItems: "center",
           justifyContent: "center",
           gap: 3,
-          background: isActive ? colors.accentDim : "transparent",
+          // accentDim (#B56A1D22 = ~13% alpha) was too faint — the active
+          // chip read as nearly identical to inactive at typical viewing
+          // distance. Bumping the active bg to #B56A1D40 (~25%) makes the
+          // selection unambiguous without losing the muted-amber tone.
+          background: isActive ? "rgba(181, 106, 29, 0.22)" : "transparent",
           border: "none",
           borderLeft: `3px solid ${isActive ? colors.accent : "transparent"}`,
+          // Subtle inner glow on the active chip so it reads as a *pressed*
+          // tab, not just a coloured rectangle.
+          boxShadow: isActive ? "inset 1px 0 0 rgba(181, 106, 29, 0.45)" : "none",
           color: isActive ? colors.textValue : colors.textSecondary,
           opacity: isEnabled ? 1 : 0.4,
           cursor: isEnabled ? "pointer" : "not-allowed",
