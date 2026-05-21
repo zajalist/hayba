@@ -14,7 +14,12 @@ The TypeScript MCP server that bridges agent hosts (Claude Code, Claude Desktop,
 - **Tool meta** — `src/tools/hayba-tool-meta.ts`. Per-Tool metadata: `cost: low|medium|high`, `effects`, `when`, `not_when`. Cost drives the executor's default timeout (`low=2s, medium=10s, high=60s`).
 - **PCG node catalog** / **node registry** — the SQLite registry of PCGEx node metadata (`pcgex_registry.db`, 344 nodes / 356 pins / 2270 properties) loaded via `src/catalog.ts`. The companion JSON `node_catalog.json` is the file form.
 - **Plan Mode** — the destructive-op gate. State lives in C++ (`FHaybaMCPModule::bPlanApproved`). The agent calls `hayba_propose_plan` to push steps to the panel; user approves; UE then accepts destructive ops. The executor surfaces plan-mode rejections as `UeToolError` with `code: "plan_gate"`.
-- **Code Mode** — the meta-tool pattern: `list_tool_categories` / `get_tool_signature` / `python_run` let the agent discover tools on demand instead of receiving all 88 tool schemas up front. The disabled-tools set filters what Code Mode reveals.
+- **Code Mode** — the *legacy* meta-tool pattern (superseded by Tool Routing below, kept as `toolRouting: "full"` fallback): `list_tool_categories` / `get_tool_signature` / `python_run` let the agent discover tools on demand instead of receiving all tool schemas up front.
+- **Tool Routing (γ hybrid)** — current default. Replaces Code Mode for clients that honor `notifications/tools/list_changed`. `src/tools/routing/`. Six always-on meta-tools (`hayba_search_tools`, `hayba_pack_list`, `hayba_pack_load`, `hayba_invoke`, `hayba_check_ue_status`, plus legacy `list_tool_categories`+`get_tool_signature`) keep the session-start footprint tiny; everything else is loaded on demand through named **Packs**. Switched via `Saved/HaybaMCP/settings.json#toolRouting`.
+- **Asset Retriever (Layer 3a, since 2026-05-20)** — `src/tools/asset-retriever/`. Local semantic+keyword search over the UE Content Browser. Three always-on meta-tools: `hayba_asset_search` (hybrid BM25+embedding), `hayba_asset_browse` (paginated filtered enumeration), `hayba_asset_reindex` (manual refresh). Auto-fallback through Ollama → `@huggingface/transformers` → BM25-only. Lazy first-call build; auto-delta on MCP-dispatched downloads via `markDeltaStale`. Cache at `Saved/HaybaMCP/asset-index.{meta.json,bm25.json,vectors.bin}` keyed by registry-snapshot hash.
+- **AssetVerifier** — `src/tools/asset-retriever/asset-verifier.ts`. Single-path lookup against the UE asset registry via `describe_assets`. The polyhaven/ambientcg/sketchfab downloaders now route every claimed import through this verifier; `DownloadedAsset.imported` is true only when the registry confirms.
+- **Pack** — a named bundle of tools the agent can load to add typed registrations natively (firing `list_changed` for clients to refresh). Two kinds: *domain packs* auto-derived from `src/tools/*/` subdirectories (or the optional `pack` field on `HaybaToolMeta` for root-level tools), and *workflow packs* curated in `src/tools/routing/packs.yaml` (`biome`, `planet-sim`, `architecture`, `connectors`, `editor`, `python`). The `editor` pack auto-loads on first successful `hayba_check_ue_status`.
+- **ToolIndex** — `src/tools/routing/tool-index.ts`. Hybrid BM25 (always) + embedding (Ollama → `@huggingface/transformers` → BM25-only fallback) tool catalog. Reciprocal-rank-fusion merge. Disk-cached at `Saved/HaybaMCP/tool-index.{bm25.json,meta.json}` and rebuilt on hash mismatch.
 - **Disabled-tools set** — `Saved/HaybaMCP/disabled-tools.json`. The MCP Capabilities panel writes it; both TS server and C++ plugin read it. Filtered at the meta-tool boundary so disabled tools are invisible to the agent.
 - **Cognitive map** / **Scene Map** — top-down semantic clustering of the level rendered in the Hayba plugin panel. Cells are spatial bins; each cell is labelled by `ClassifyDominant` in `HaybaMCPCogMapBuilder.cpp` (C++ side).
 
@@ -25,8 +30,23 @@ The TypeScript MCP server that bridges agent hosts (Claude Code, Claude Desktop,
 - **Wire compatibility.** New optional fields on the TCP envelope (`code`) are additive; older clients ignore them.
 - **Plan Mode is C++-authoritative.** TS doesn't decide what's destructive; UE rejects with `code: "plan_gate"` and the executor surfaces it.
 
+## Tool routing — quick switching
+
+`Saved/HaybaMCP/settings.json`:
+
+```json
+{ "toolRouting": "deferred", "alwaysLoadPacks": ["biome"] }
+```
+
+- `toolRouting`: `"deferred"` (default — γ hybrid; pack-on-demand) or `"full"` (legacy — every non-disabled tool registered at start). Changes require an MCP restart.
+- `alwaysLoadPacks`: array of pack names to load at MCP boot for users who only ever do one kind of work. The `editor` pack auto-loads regardless when the UE editor connects.
+
+To add a tool: drop the handler in `src/tools/<pack-name>/` and the auto-derived domain pack picks it up. For root-level handlers, set `pack: "<name>"` in their `HaybaToolMeta`. To slot the tool into a curated workflow pack (e.g. `biome`), add its name to `src/tools/routing/packs.yaml`. Pack references in YAML that don't resolve to a captured tool log a startup warning.
+
 ## See also
 
 - `README.md` — top-level project description.
 - `docs/superpowers/specs/2026-05-06-hayba-ue-expansion-design.md` — full architectural spec (UE plugin + TS server + sidecar).
+- `docs/superpowers/specs/2026-05-20-mcp-tool-routing-design.md` — γ hybrid tool routing design.
+- `docs/superpowers/plans/2026-05-20-mcp-tool-routing.md` — implementation plan.
 - `CHANGELOG.md` — recent Fixed/Added under `[Unreleased]`.

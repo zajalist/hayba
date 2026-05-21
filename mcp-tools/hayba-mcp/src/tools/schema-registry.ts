@@ -91,3 +91,7 @@ function shapeToParamDoc(shape: ZodRawShape): Record<string, string> {
   }
   return out;
 }
+
+export function getRawShape(name: string): ZodRawShape | null {
+  return REGISTRY.get(name)?.shape ?? null;
+}

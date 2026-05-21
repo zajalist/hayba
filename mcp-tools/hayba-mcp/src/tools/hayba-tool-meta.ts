@@ -5,6 +5,12 @@ export interface HaybaToolMeta {
   effects: string[];
   when: string;
   not_when: string;
+  /**
+   * Optional domain pack assignment for tools NOT organized into a subdirectory
+   * of src/tools/. Tools in subdirs derive their pack from the directory name.
+   * Unset for root-level tools = joins the `core` default pack with a warning.
+   */
+  pack?: string;
 }
 
 export function describeMeta(m: HaybaToolMeta): string {

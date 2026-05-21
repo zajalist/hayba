@@ -28,12 +28,14 @@ server.resource('pcgex_catalog', catalogTemplate, async (uri, { category }) => {
   };
 });
 
-// Register all tools. The legacy SessionManager arg is a typed-shim no-op until
-// the worldbuilding-hub roadmap reaches the terrain integration phase.
-registerTools(server, {});
-
 // ── Start ─────────────────────────────────────────────────────────────────────
 async function main() {
+  // Register all tools. The legacy SessionManager arg is a typed-shim no-op
+  // until the worldbuilding-hub roadmap reaches the terrain integration phase.
+  // Must complete before server.connect — γ-hybrid routing registers its
+  // meta-tools asynchronously and the MCP SDK rejects post-connect registration.
+  await registerTools(server, {});
+
   await startDashboard(config.dashboardPort, '127.0.0.1');
   console.error(`Dashboard: http://127.0.0.1:${config.dashboardPort}`);
 
