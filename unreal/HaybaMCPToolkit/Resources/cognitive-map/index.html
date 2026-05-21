@@ -86,7 +86,7 @@
     let TAG_OVERRIDES = {};
     fetch('tag-overrides.json')
       .then(r => r.ok ? r.json() : {})
-      .then(o => { TAG_OVERRIDES = o; render(); })
+      .then(o => { TAG_OVERRIDES = o; if (cells && cells.length) { buildGraph(cells); render(); } })
       .catch(() => { /* tolerate missing overrides — fall back to hash */ });
 
     // FNV-1a 32-bit hash. Deterministic per tag string.
@@ -104,39 +104,6 @@
       if (TAG_OVERRIDES[tag]) return TAG_OVERRIDES[tag];
       const hue = fnv1a(tag) % 360;
       return `hsl(${hue}, 55%, 55%)`;
-    }
-
-    const PALETTE = {
-      forest:     '#4caf6c',
-      meadow:     '#7bb867',
-      brush:      '#5fa462',
-      urban:      '#8c93b0',
-      lighting:   '#e6c155',
-      triggers:   '#5cb6ee',
-      characters: '#f57777',
-      geology:    '#b58e6a',
-      terrain:    '#a98a5e',
-      water:      '#4d9ed6',
-      mixed:      '#9aa0ad',
-    };
-    const fallbackColor = '#9aa0ad';
-    function semanticOf(label) {
-      // Map a cell's label back to its broad semantic family for coloring.
-      for (const k of Object.keys(PALETTE)) if (label === k) return k;
-      // Heuristic fallback by substring (matches the C++ name table).
-      const map = [
-        [['tree','foliage'], 'forest'], [['grass'], 'meadow'], [['bush'], 'brush'],
-        [['building','wall','floor','house'], 'urban'],
-        [['light','lamp'], 'lighting'],
-        [['character','pawn'], 'characters'],
-        [['trigger','volume'], 'triggers'],
-        [['rock','cliff','boulder'], 'geology'],
-        [['water','river','ocean'], 'water'],
-        [['landscape','terrain'], 'terrain'],
-      ];
-      for (const [keys, sem] of map) for (const k of keys)
-        if (label.toLowerCase().includes(k)) return sem;
-      return 'mixed';
     }
 
     const svg     = document.getElementById('svg');
