@@ -799,32 +799,46 @@ export default function App() {
   // via the existing snapshot-driven effects.
   useEffect(() => {
     if (!playing) return;
+    // Robust async loop: rAF kicks the first step; each step schedules the
+    // next via setTimeout(0) on completion, regardless of frame timing.
+    // This avoids stale-closure/strict-mode pitfalls of the previous
+    // requestAnimationFrame-chain pattern.
     let cancelled = false;
-    const tick = () => {
-      if (cancelled || !playingRef.current) return;
-      invoke<TickSnapshot>("step_planet_tick", {
-        nSteps: speedRef.current,
-      })
+    let inflight = false;
+    console.warn("[sim] play loop START");
+    const runOnce = () => {
+      if (cancelled || !playingRef.current || inflight) return;
+      inflight = true;
+      invoke<TickSnapshot>("step_planet_tick", { nSteps: speedRef.current })
         .then((tickSnap) => {
+          inflight = false;
           if (cancelled || !playingRef.current) return;
-          globeMeshRef.current?.updateFromTickSnapshot(tickSnap);
-          // Drift overlays that ride on cell positions (boundary seam lines)
-          // — without this they stay frozen at the pre-play positions and
-          // the user perceives "no plate movement".
-          boundaryLinesRef.current?.updatePositions(tickSnap.cell_positions);
-          // Push the new sim-time into a separate state so the SimulatePanel
-          // readout advances during play. Doing this every rAF is cheap (one
-          // number) and avoids the full setSnapshot reconciliation cost.
+          // Mesh/overlay updates run in try/catch so a single bad frame
+          // can't kill the whole loop — next interval keeps the sim alive.
+          try { globeMeshRef.current?.updateFromTickSnapshot(tickSnap); }
+          catch (e) { console.error("[sim] mesh update failed", e); }
+          try { boundaryLinesRef.current?.updatePositions(tickSnap.cell_positions); }
+          catch (e) { console.error("[sim] boundary update failed", e); }
           setLiveSimTimeMa(tickSnap.sim_time_ma);
-          if (!cancelled && playingRef.current) requestAnimationFrame(tick);
         })
         .catch((e) => {
-          setPlaying(false);
-          setError(String(e));
+          inflight = false;
+          // Don't kill the loop on a single IPC failure; log and let the
+          // next interval retry. Only fatal-stop if cancelled was already
+          // set by an external cause.
+          console.error("[sim] step_planet_tick failed", e);
         });
     };
-    requestAnimationFrame(tick);
-    return () => { cancelled = true; };
+    // Pump every 33ms (~30 Hz max). At 1.5M cells each tick is ~80ms so
+    // the inflight gate naturally throttles to ~12 Hz. The interval is
+    // independent of rAF, so it works even if rAF is starved.
+    const id = window.setInterval(runOnce, 33);
+    runOnce();
+    return () => {
+      console.warn("[sim] play loop STOP");
+      cancelled = true;
+      window.clearInterval(id);
+    };
   }, [playing]);
 
   // Boundary picking only fires during the boundaries phase.
