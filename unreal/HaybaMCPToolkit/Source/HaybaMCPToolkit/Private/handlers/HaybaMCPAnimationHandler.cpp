@@ -217,7 +217,10 @@ FHaybaHandlerResult FHaybaMCPAnimationHandler::AddState(const TSharedPtr<FJsonOb
     UAnimStateNode* StateNode = Creator.CreateNode(/*bSelectNewNode*/false);
     if (!StateNode)
         return FHaybaHandlerResult::Err(TEXT("anim_blueprint_add_state: CreateNode failed"));
-    StateNode->StateType = EAnimStateType::AST_State;
+    // UE 5.7: EAnimStateType::AST_State was removed; the enum now has only
+    // AST_SingleAnimation and AST_BlendGraph. We always allocate a bound
+    // sub-graph below, so AST_BlendGraph is the correct replacement.
+    StateNode->StateType = EAnimStateType::AST_BlendGraph;
     Creator.Finalize();
 
     StateNode->NodePosX = 0;
