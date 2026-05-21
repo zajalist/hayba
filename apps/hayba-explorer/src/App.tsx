@@ -821,8 +821,13 @@ export default function App() {
           // can't kill the whole loop — next interval keeps the sim alive.
           try { simMeshRef.current?.update(tickSnap.cell_positions, tickSnap.cell_elevation, tickSnap.cell_plate_ids); }
           catch (e) { console.error("[sim] sim-mesh update failed", e); }
-          try { boundaryLinesRef.current?.updatePositions(tickSnap.cell_positions); }
-          catch (e) { console.error("[sim] boundary update failed", e); }
+          try {
+            boundaryLinesRef.current?.updatePositions(
+              tickSnap.cell_positions,
+              tickSnap.cell_plate_ids,
+              draftRef.current?.boundary_types ?? {},
+            );
+          } catch (e) { console.error("[sim] boundary update failed", e); }
           setLiveSimTimeMa(tickSnap.sim_time_ma);
         })
         .catch((e) => {

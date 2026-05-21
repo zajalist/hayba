@@ -36,9 +36,16 @@ export interface BoundaryLinesHandle {
   setVisible: (v: boolean) => void;
   /** Recompute geometry from the snapshot + per-pair assignments. */
   update: (snap: PlanetSnapshot, assignments: BoundaryAssignments) => void;
-  /** Per-tick fast path: re-stream the position buffer from new cell
-   *  positions while keeping the segment topology + colors. */
-  updatePositions: (cellPositions: ArrayLike<number>) => void;
+  /** Per-tick fast path: stream new positions; if plate ownership has
+   *  changed since the last call, also rebuild the segment topology so
+   *  newly-cross-plate triangles emit segments and newly-mono-plate
+   *  triangles drop them (without this, ghost-loop islands appear at
+   *  cells that transferred plates). */
+  updatePositions: (
+    cellPositions: ArrayLike<number>,
+    cellPlateIds: ArrayLike<number>,
+    assignments: BoundaryAssignments,
+  ) => void;
   dispose: () => void;
 }
 
@@ -63,6 +70,13 @@ export function buildBoundaryLines(triangles: Uint32Array): BoundaryLinesHandle 
   lines.visible = false;
 
   let segmentEndpoints: SegmentEndpoints = new Int32Array(0);
+  /** Last seen plate-id assignment. Used to detect ownership changes per
+   *  tick and trigger a segment-topology rebuild (the segment list is
+   *  determined by which triangles span multiple plates — that changes
+   *  whenever cells transfer plates). */
+  let lastPlateIds: Int32Array = new Int32Array(0);
+  /** Cached assignments → rebuild can re-color without an external arg. */
+  let lastAssignments: BoundaryAssignments = {} as BoundaryAssignments;
 
   /** Midpoint of two unit-sphere positions, renormalised and pushed to RADIUS. */
   const midOnSphere = (
@@ -77,12 +91,20 @@ export function buildBoundaryLines(triangles: Uint32Array): BoundaryLinesHandle 
     out[0] = x * s; out[1] = y * s; out[2] = z * s;
   };
 
-  const update = (snap: PlanetSnapshot, assignments: BoundaryAssignments): void => {
+  /** Full segment-topology rebuild. Walks every triangle, classifies it
+   *  by the plate-ids of its 3 vertices, and emits segments where 2+
+   *  plates touch. Cached assignments + plate-ids are updated so the
+   *  per-tick path can skip rebuilds when nothing changed. */
+  const rebuildSegments = (
+    cellPositions: ArrayLike<number>,
+    cellPlateIds: ArrayLike<number>,
+    assignments: BoundaryAssignments,
+  ): void => {
     const positions: number[] = [];
     const colors:    number[] = [];
     const ends:      number[] = []; // 4 indices per segment: a1, b1, a2, b2
-    const cells = snap.cell_positions;
-    const plates = snap.cell_plate_ids;
+    const cells = cellPositions;
+    const plates = cellPlateIds;
     const tri = triangles;
     const m1: [number, number, number] = [0, 0, 0];
     const m2: [number, number, number] = [0, 0, 0];
@@ -141,9 +163,41 @@ export function buildBoundaryLines(triangles: Uint32Array): BoundaryLinesHandle 
     geo.setAttribute("color",    new THREE.Float32BufferAttribute(colors, 3));
     geo.computeBoundingSphere();
     segmentEndpoints = Int32Array.from(ends);
+    // Cache plate-id snapshot for per-tick change detection.
+    const n = plates.length;
+    if (lastPlateIds.length !== n) lastPlateIds = new Int32Array(n);
+    for (let i = 0; i < n; i++) lastPlateIds[i] = plates[i] | 0;
+    lastAssignments = assignments;
   };
 
-  const updatePositions = (cellPositions: ArrayLike<number>): void => {
+  /** Original bake-time API: rebuild from a full PlanetSnapshot. */
+  const update = (snap: PlanetSnapshot, assignments: BoundaryAssignments): void => {
+    rebuildSegments(snap.cell_positions, snap.cell_plate_ids, assignments);
+  };
+
+  const updatePositions = (
+    cellPositions: ArrayLike<number>,
+    cellPlateIds: ArrayLike<number>,
+    assignments: BoundaryAssignments,
+  ): void => {
+    // Detect plate-id change since last call. If ANY cell's owner
+    // changed, segment topology is stale (some triangles flipped
+    // between cross-plate and mono-plate) — full rebuild required.
+    let topologyChanged = lastPlateIds.length !== cellPlateIds.length
+                       || lastAssignments !== assignments;
+    if (!topologyChanged) {
+      for (let i = 0; i < cellPlateIds.length; i++) {
+        if (lastPlateIds[i] !== (cellPlateIds[i] | 0)) {
+          topologyChanged = true;
+          break;
+        }
+      }
+    }
+    if (topologyChanged) {
+      rebuildSegments(cellPositions, cellPlateIds, assignments);
+      return;
+    }
+    // Topology unchanged: cheap stream of endpoint positions.
     if (segmentEndpoints.length === 0) return;
     const posAttr = geo.getAttribute("position") as THREE.BufferAttribute | undefined;
     if (!posAttr) return;
