@@ -21,9 +21,10 @@
         overflow: hidden;
         -webkit-font-smoothing: antialiased;
       }
-      /* Minimal splash — just the logo on a flat field, with a vertical
-         metallic shimmer sweep + a very subtle warp. No backlight, no
-         wordmark, no tagline. */
+      /* Minimal splash — flat dark field, logo centered. One slow shine
+         pass on entry; no looping wobble, no backlight, no banding-prone
+         gradients. The logo's own SVG drop-shadow filter gives the only
+         depth cue. */
       #hayba-splash {
         position: fixed; inset: 0; z-index: 9999;
         display: flex; align-items: center; justify-content: center;
@@ -34,58 +35,72 @@
       #hayba-splash.fading { opacity: 0; pointer-events: none; }
       #hayba-splash .logo-wrap {
         position: relative;
-        width: 120px; height: 145px;
-        animation: hayba-warp 5.5s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+        width: 132px; height: 160px;
+        opacity: 0;
+        animation: hayba-fade-in 600ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
       }
       #hayba-splash .logo {
         width: 100%; height: 100%;
         display: block;
       }
-      /* Vertical shine — a soft band that sweeps top→bottom across the
-         logo bounds. mix-blend-mode: screen brightens the logo paint as
-         the band passes; the dark background stays unaffected. Slight
-         blur softens the edges so it reads as a polished-metal shimmer
-         rather than a hard sliding bar. */
+      /* Vertical shine — a single soft pass that runs once and stops, so
+         the splash settles instead of fidgeting forever. Clipped to the
+         logo's bounding rect so the band doesn't bleed into the dark
+         field. */
       #hayba-splash .shine {
-        position: absolute; inset: -10%;
+        position: absolute; inset: 0;
         pointer-events: none;
-        background:
-          linear-gradient(180deg,
-            transparent 0%,
-            transparent 42%,
-            rgba(255, 255, 255, 0.45) 50%,
-            transparent 58%,
-            transparent 100%);
-        mix-blend-mode: screen;
-        filter: blur(2px);
-        animation: hayba-shine 2.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        overflow: hidden;
+        opacity: 0;
+        animation: hayba-shine-fade 1500ms cubic-bezier(0.4, 0, 0.6, 1) 280ms forwards;
       }
-      @keyframes hayba-shine {
-        0%   { transform: translateY(-110%); opacity: 0; }
-        15%  { opacity: 1; }
-        85%  { opacity: 1; }
-        100% { transform: translateY( 110%); opacity: 0; }
+      #hayba-splash .shine::after {
+        content: "";
+        position: absolute;
+        left: -10%; right: -10%;
+        height: 32%;
+        top: -32%;
+        background: linear-gradient(180deg,
+          transparent 0%,
+          rgba(255, 255, 255, 0.18) 45%,
+          rgba(255, 255, 255, 0.28) 50%,
+          rgba(255, 255, 255, 0.18) 55%,
+          transparent 100%);
+        animation: hayba-shine-sweep 1500ms cubic-bezier(0.45, 0, 0.55, 1) 280ms forwards;
       }
-      /* Subtle warp — a gentle perspective tilt + scale wobble. Not a
-         turbulence-filter distortion (that would be expensive and prone
-         to banding); just enough motion that the logo feels alive. */
-      @keyframes hayba-warp {
-        0%, 100% { transform: perspective(800px) rotateX(0deg)   rotateY(0deg)   scale(1);     }
-        25%      { transform: perspective(800px) rotateX(1.2deg) rotateY(-1deg)  scale(1.012); }
-        50%      { transform: perspective(800px) rotateX(0deg)   rotateY(1deg)   scale(1);     }
-        75%      { transform: perspective(800px) rotateX(-1deg)  rotateY(-0.4deg) scale(0.992); }
+      @keyframes hayba-fade-in {
+        to { opacity: 1; }
+      }
+      @keyframes hayba-shine-fade {
+        0%, 100% { opacity: 1; }
+      }
+      @keyframes hayba-shine-sweep {
+        0%   { top: -32%; }
+        100% { top: 100%; }
       }
     </style>
   </head>
   <body>
     <div id="hayba-splash">
       <div class="logo-wrap">
-        <svg class="logo" viewBox="0 0 166 201" xmlns="http://www.w3.org/2000/svg" fill="none">
-          <path d="M139.816 56L142.492 61.8262C148.517 74.9439 153.452 94.8289 156.582 102.254C159.859 110.024 161.945 116.804 161.882 124.527C161.821 131.993 159.746 139.456 156.613 148.542C153.556 157.405 148.7 169.92 142.827 186.371L140.456 193.009H98.6381L104.123 179.295C109.128 166.783 113.266 155.9 115.863 146.185C118.465 136.45 119.297 128.661 118.294 122.227C116.597 111.336 108.943 100.707 82.9418 91.4414C56.9412 100.707 49.2868 111.336 47.5893 122.227C46.5863 128.661 47.4197 136.45 50.0219 146.185C52.619 155.9 56.7553 166.783 61.7602 179.295L67.2455 193.009H25.4272L23.058 186.371C17.1851 169.92 12.3284 157.405 9.27189 148.542C6.13864 139.456 4.06224 131.993 4.00139 124.527C3.93844 116.804 6.02502 110.024 9.30119 102.254C12.4319 94.8288 17.3679 74.944 23.393 61.8262L26.0688 56H139.816Z" fill="#DED4C3"/>
-          <path d="M19 23.9102V48.4551H83.5H148V23.9102C113.042 48.4551 53.958 48.4551 19 23.9102Z" fill="#B56A1D"/>
-          <path d="M19 73C69.2485 83.4432 97.0527 83.2572 148 73V48.4551H83.5H19V73Z" fill="#B56A1D"/>
-          <path d="M19 23.9102C53.958 48.4551 113.042 48.4551 148 23.9102C116.295 -4.10732 49.1347 -3.83245 19 23.9102Z" fill="#B56A1D"/>
+        <svg class="logo" viewBox="0 0 166 201" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <g filter="url(#hayba-splash-shadow)">
+            <path d="M139.816 56L142.492 61.8262C148.517 74.9439 153.452 94.8289 156.582 102.254C159.859 110.024 161.945 116.804 161.882 124.527C161.821 131.993 159.746 139.456 156.613 148.542C153.556 157.405 148.7 169.92 142.827 186.371L140.456 193.009H98.6381L104.123 179.295C109.128 166.783 113.266 155.9 115.863 146.185C118.465 136.45 119.297 128.661 118.294 122.227C116.597 111.336 108.943 100.707 82.9418 91.4414C56.9412 100.707 49.2868 111.336 47.5893 122.227C46.5863 128.661 47.4197 136.45 50.0219 146.185C52.619 155.9 56.7553 166.783 61.7602 179.295L67.2455 193.009H25.4272L23.058 186.371C17.1851 169.92 12.3284 157.405 9.27189 148.542C6.13864 139.456 4.06224 131.993 4.00139 124.527C3.93844 116.804 6.02502 110.024 9.30119 102.254C12.4319 94.8288 17.3679 74.944 23.393 61.8262L26.0688 56H139.816Z" fill="#DED4C3"/>
+          </g>
+          <path d="M19 23.9739V48.5937V73.2135C68.859 83.6886 96.4476 83.502 147 73.2135V48.5937V23.9739C115.541 -4.12899 48.9011 -3.85329 19 23.9739Z" fill="#B56A1D"/>
           <path d="M82.748 0C86.0616 0.000172138 88.748 2.6864 88.748 6L97.9375 11.75L103.911 20.3926L93.4385 19.542L87.2451 15.9668V22.499L82.7451 31.9941L78.248 22.499V15.6309L71.4727 19.542L61 20.3926L66.9746 11.75L76.748 6C76.748 2.68629 79.4343 0 82.748 0Z" fill="#DED4C3"/>
+          <defs>
+            <filter id="hayba-splash-shadow" x="0" y="56" width="165.883" height="145.009" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+              <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+              <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+              <feOffset dy="4"/>
+              <feGaussianBlur stdDeviation="2"/>
+              <feComposite in2="hardAlpha" operator="out"/>
+              <feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/>
+              <feBlend mode="normal" in2="BackgroundImageFix" result="shadow"/>
+              <feBlend mode="normal" in="SourceGraphic" in2="shadow" result="shape"/>
+            </filter>
+          </defs>
         </svg>
         <div class="shine" aria-hidden="true"></div>
       </div>

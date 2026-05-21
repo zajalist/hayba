@@ -12,9 +12,9 @@ function dismissSplash() {
   splash.classList.add("fading");
   setTimeout(() => splash.remove(), 500);
 }
-// Minimal splash — just the logo + shine. Hold long enough for one
-// shine pass (~600ms) then fade out.
-window.addEventListener("load", () => setTimeout(dismissSplash, 600));
+// Minimal splash — single shine pass starts at 280ms, runs for 1500ms,
+// so hold ~1900ms before fading.
+window.addEventListener("load", () => setTimeout(dismissSplash, 1900));
 
 // Wire up the --hayba-range-progress CSS var on every <input type="range">
 // so the track shows a fill from min → current value. WebKit has no native
