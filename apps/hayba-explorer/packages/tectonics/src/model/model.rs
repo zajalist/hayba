@@ -304,6 +304,52 @@ impl Model {
             resolve_field_collision(c, &plates_snapshot, &mut self.fields);
         }
 
+        // ── PHASE D-late: subducted-cell ownership transfer (★) ────────
+        // For Subduction collisions, hand the bottom (denser, sinking) cell
+        // to the overriding plate. This is the minimum-viable plate
+        // lifecycle: plate boundaries breathe over time as cells migrate
+        // from subducting → over-riding plate. Without this, the cell-to-
+        // plate map is frozen at bake time and boundary shapes stay rigid
+        // forever — the "boundaries look static" feel.
+        //
+        // Limit to one transfer per (top_plate, bottom_field) per step
+        // (collisions can be reported from both directions; dedupe handles
+        // that, but we still guard against re-removing).
+        //
+        // Skip Orogeny — both cells stay on their own plates so the
+        // contact continues to register on subsequent steps and the
+        // mountain belt sustains uplift. Skip DragOnly + KillBottomOcean
+        // — neither transfers ownership in TE either.
+        for c in &collisions {
+            use crate::subduction::collision::CollisionKind;
+            if !matches!(c.kind, CollisionKind::Subduction) {
+                continue;
+            }
+            let fid = c.bottom_field;
+            // Sanity: is the bottom cell still owned by the bottom plate?
+            // (resolve_field_collision may have flipped it via subduction
+            // setup. Only transfer if ownership is still the original.)
+            let still_bottom = matches!(
+                self.fields.get(fid as usize).and_then(|f| f.plate_id),
+                Some(pid) if pid == c.bottom_plate
+            );
+            if !still_bottom {
+                continue;
+            }
+            // Remove from bottom plate.
+            if let Some(p) = self.plates.iter_mut().find(|p| p.id == c.bottom_plate) {
+                p.remove_field(fid);
+            }
+            // Add to top plate.
+            if let Some(p) = self.plates.iter_mut().find(|p| p.id == c.top_plate) {
+                p.add_field(fid);
+            }
+            // Update the field's plate_id pointer.
+            if let Some(f) = self.fields.get_mut(fid as usize) {
+                f.plate_id = Some(c.top_plate);
+            }
+        }
+
         // ── PHASE D-mid: orogeny → elevation, with band-shaped lift ────
         //
         // `resolve_field_collision` sets `orogenic_uplift = 1.0` at the exact

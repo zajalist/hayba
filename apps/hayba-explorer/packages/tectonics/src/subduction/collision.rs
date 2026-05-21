@@ -510,6 +510,73 @@ mod tests {
         );
     }
 
+    /// Regression for ★ boundary-breathe: after subduction collisions
+    /// fire across many sim steps, the cell-to-plate ownership map must
+    /// have changed (some bottom cells transferred to the top plate).
+    /// Without this, plate boundaries are frozen at bake time.
+    #[test]
+    fn subduction_transfers_cells_to_overriding_plate() {
+        use crate::model::Model;
+        let mut m = Model::new(4, 7);
+        let n = m.grid.n_fields();
+
+        // Set up an oceanic plate (low density 1.0) over a continental
+        // plate (high density 3.0) — the oceanic side will subduct.
+        // Partition by hemisphere. Bottom = denser = oceanic-ish; in
+        // reality TE assigns higher density to oceanic plates so they
+        // sink, which is what we replicate here.
+        let mut top_ids = Vec::new();
+        let mut bot_ids = Vec::new();
+        for fid in 0..n {
+            let p = m.grid.position(fid);
+            if p.y > 0.0 {
+                m.fields[fid as usize].crust = crate::field::Crust::new_continental();
+                m.fields[fid as usize].become_continental_lithosphere(200.0);
+                m.fields[fid as usize].elevation = 0.1;
+                top_ids.push(fid);
+            } else {
+                m.fields[fid as usize].crust = crate::field::Crust::new_oceanic();
+                m.fields[fid as usize].refresh_oceanic_lithosphere();
+                m.fields[fid as usize].elevation = -0.3;
+                bot_ids.push(fid);
+            }
+        }
+        // Top plate = lower density (continental, lighter); Bottom = higher
+        // density (oceanic, denser → subducts).
+        m.add_plate(0, 0, 2.5, &top_ids, true, Vec3::ZERO);
+        m.add_plate(
+            1, 1, 3.5, &bot_ids, false,
+            Vec3::new(0.02, 0.0, 0.0),
+        );
+
+        let pre_bottom_size = m.plates.iter().find(|p| p.id == 1).map(|p| p.size()).unwrap_or(0);
+        let pre_top_size = m.plates.iter().find(|p| p.id == 0).map(|p| p.size()).unwrap_or(0);
+
+        for _ in 0..50 {
+            m.step(1.0);
+        }
+
+        let post_bottom_size = m.plates.iter().find(|p| p.id == 1).map(|p| p.size()).unwrap_or(0);
+        let post_top_size = m.plates.iter().find(|p| p.id == 0).map(|p| p.size()).unwrap_or(0);
+
+        assert!(
+            post_bottom_size < pre_bottom_size,
+            "bottom (oceanic) plate should LOSE cells via subduction: pre={}, post={}",
+            pre_bottom_size, post_bottom_size,
+        );
+        assert!(
+            post_top_size > pre_top_size,
+            "top (continental) plate should GAIN cells from subducted oceanic: pre={}, post={}",
+            pre_top_size, post_top_size,
+        );
+        // Conservation: total cells assigned to plates should be unchanged.
+        assert_eq!(
+            pre_bottom_size + pre_top_size,
+            post_bottom_size + post_top_size,
+            "subduction must conserve total cell count (no cells lost in the void)",
+        );
+    }
+
     /// REGRESSION TEST FOR PRODUCTION TOPOLOGY: when plates fully partition
     /// the sphere (every cell owned by exactly one plate, no overlap) and
     /// then rotate by ~180° relative to each other, do collisions fire?
