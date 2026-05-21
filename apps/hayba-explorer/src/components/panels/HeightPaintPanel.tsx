@@ -134,7 +134,7 @@ export default function HeightPaintPanel(p: HeightPaintPanelProps): React.ReactE
             world for validating the debug map modes. Bake to apply.
           </div>
           <button onClick={p.onLoadEarth} style={historyButtonStyle(true)}>
-            🌍 Load Earth
+            Load Earth
           </button>
         </div>
       </PropertySection>

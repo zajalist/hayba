@@ -1,10 +1,11 @@
 import React from "react";
-import { colors, fonts } from "@hayba/design-tokens";
+import { colors, fonts, space, fontSize } from "@hayba/design-tokens";
+import { rowMatches, usePropertySearch, useSectionVisibility } from "./propertySearch";
 
 export interface PropertyStackProps {
   label: string;
   /** Optional readout shown right-aligned on the label row (e.g. the current
-   *  slider value). Strings render in Consolas beige. Pass `null` to hide. */
+   *  slider value). Strings render in white value-style. Pass `null` to hide. */
   value?: React.ReactNode;
   /** Full-width control rendered below the label row — typically a slider. */
   children: React.ReactNode;
@@ -13,25 +14,31 @@ export interface PropertyStackProps {
 }
 
 /**
- * Stacked-layout counterpart to PropertyRow: a label (+ optional readout)
- * sits on its own line, with the actual control rendered full-width
- * underneath. Used for sliders and other controls that need horizontal
- * room — putting them in PropertyRow's tiny value cell crushes the track.
+ * UE5-style stacked row: 18px label row + ~24-28px control row, 8px hpad,
+ * row-hover background, same separator rule as PropertyRow.
  *
  *   LABEL                                value
  *   █▒░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  ← full-width control here
- *
- * Spacing, separator rule, and typography match PropertyRow so the
- * sections read as a single column.
  */
 export default function PropertyStack({ label, value, children, noSeparator }: PropertyStackProps) {
+  const [hover, setHover] = React.useState(false);
+  const { query } = usePropertySearch();
+  const section = useSectionVisibility();
+  const matched = rowMatches(label, query);
+  const id = React.useId();
+  React.useEffect(() => { section?.register(id, matched); }, [section, id, matched]);
+  React.useEffect(() => () => { section?.register(id, false); }, [section, id]);
+  if (!matched) return null;
   return (
     <div
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       style={{
-        padding: "6px 16px 8px",
-        borderBottom: noSeparator ? "none" : `1px solid ${colors.rule}`,
+        padding: `2px ${space.rowPadX}px 4px`,
+        background: hover ? colors.bgRowHover : "transparent",
+        borderBottom: noSeparator ? "none" : `1px solid ${colors.borderSubtle}`,
         fontFamily: fonts.sans,
-        fontSize: 12,
+        fontSize: fontSize.label,
       }}
     >
       <div
@@ -39,15 +46,15 @@ export default function PropertyStack({ label, value, children, noSeparator }: P
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          marginBottom: 4,
+          height: 18,
         }}
       >
-        <span style={{ color: colors.beigeMuted }}>{label}</span>
+        <span style={{ color: colors.textLabel }}>{label}</span>
         {value != null && (
-          <span style={{ color: colors.beige, fontFamily: fonts.mono }}>{value}</span>
+          <span style={{ color: colors.textValue, fontFamily: fonts.mono, fontSize: fontSize.value }}>{value}</span>
         )}
       </div>
-      <div style={{ display: "flex", alignItems: "center" }}>
+      <div style={{ display: "flex", alignItems: "center", height: 24 }}>
         {children}
       </div>
     </div>

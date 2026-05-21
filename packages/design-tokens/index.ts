@@ -6,38 +6,53 @@
 // stack are the marketing site's verbatim.
 
 export const colors = {
-  bgDeep:         "#1b1e24",
-  bgBase:         "#22262e",
-  bgPanel:        "#2a2e36",
-  bgRaised:       "#303540",
-  bgElevated:     "#353a45",
-  bgPanelHeader:  "#1d2129",
-  /** Hayba accent — matches the logo exactly (#B56A1D). */
-  accent:         "#B56A1D",
-  accentHover:    "#d27a25",
-  accentText:     "#B56A1D",
-  accentDim:      "#B56A1D22",
-  accentGlow:     "#B56A1D55",
-  textPrimary:    "#e5e8eb",
-  textSecondary:  "#a8aeb8",
-  textMuted:      "#6b7280",
-  borderMid:      "#2f343d",
-  borderSoft:     "#3d434e",
-  /** Top-bar background — one notch darker than bgDeep. */
-  bgTopBar:       "#16191f",
-  /** Status-bar background — same family as bgPanelHeader. */
-  bgStatusBar:    "#1d2129",
+  // UE5-aligned panel palette — tuned to match Unreal Engine 5.7's Details
+  // panel (dark band header + flat row body, amber accent).
+  bgDeep:         "#171717",
+  bgBase:         "#1e1e1e",
+  bgPanel:        "#1e1e1e",
+  bgRaised:       "#252525",
+  bgElevated:     "#2a2a2a",
+  bgPanelHeader:  "#1a1a1a",
+  /** Row hover background — barely-perceptible lighten. */
+  bgRowHover:     "#303030",
+  /** Section-band background — the thin header strip with chevron + label. */
+  bgSectionBand:  "#2a2a2a",
+  /** UE5 amber accent — used for selected category + primary actions only. */
+  accent:         "#ff8c00",
+  accentHover:    "#ffa128",
+  accentText:     "#ff8c00",
+  accentDim:      "#ff8c0022",
+  accentGlow:     "#ff8c0055",
+  textPrimary:    "#ffffff",
+  textSecondary:  "#c8c8c8",
+  textMuted:      "#7a7a7a",
+  borderMid:      "#2a2a2a",
+  borderSoft:     "#333333",
+  /** Subtle 1px separator — barely visible. */
+  borderSubtle:   "#2a2a2a",
+  /** Top-bar background. */
+  bgTopBar:       "#141414",
+  /** Status-bar background. */
+  bgStatusBar:    "#1a1a1a",
   /** Right-panel category strip background. */
-  bgCategoryStrip:"#1d2129",
-  /** Primary beige foreground (action labels, mode names). */
-  beige:          "#DED4C3",
-  /** Muted beige — property-row labels. */
-  beigeMuted:     "#a8aeb8",
-  /** 1px property-row separator (lighter than borderMid). */
-  rule:           "#2a2e36",
-  // Optional reserved second tone — used only on a few legacy paths.
+  bgCategoryStrip:"#1a1a1a",
+  /** Primary foreground — row values (white). */
+  beige:          "#ffffff",
+  /** Muted label color — row labels. */
+  beigeMuted:     "#c8c8c8",
+  /** Property-row separator. */
+  rule:           "#2a2a2a",
+  // Reserved second tone — used only on a few legacy paths.
   secondary:      "#6a9fdc",
   secondaryHover: "#8ab5e6",
+  // Semantic UE5 aliases (re-export by intent).
+  /** Row hover background. */
+  rowHover:       "#303030",
+  /** Label text color. */
+  textLabel:      "#c8c8c8",
+  /** Value text color. */
+  textValue:      "#ffffff",
 } as const;
 
 export const fonts = {
@@ -60,6 +75,21 @@ export const radii = {
 export const shadows = {
   sm: "0 1px 2px rgba(0, 0, 0, 0.35)",
   md: "0 4px 12px rgba(0, 0, 0, 0.45)",
+} as const;
+
+/** UE5-aligned spacing + sizing primitives for the Details panel. */
+export const space = {
+  rowHeight:    28,
+  rowHeightTall:46,
+  sectionBandH: 24,
+  rowPadX:      8,
+} as const;
+
+/** Typography sizes tuned to UE5's compact density. */
+export const fontSize = {
+  label:   11,
+  value:   11,
+  section: 10,
 } as const;
 
 export const easings = {
