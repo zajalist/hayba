@@ -6,7 +6,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Dom/JsonObject.h"
-#include "UObject/Enum.h"
+#include "UObject/Class.h"
 
 TArray<FString> FHaybaMCPTextureHandler::GetCommands() const
 {

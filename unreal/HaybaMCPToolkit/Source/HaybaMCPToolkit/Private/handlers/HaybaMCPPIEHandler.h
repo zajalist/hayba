@@ -40,5 +40,8 @@ private:
     // Set when EndPIE/CancelPIE fires while a wait loop is running — checked
     // each iteration to abort cleanly.
     bool bCancelPending = false;
+
+    friend FHaybaHandlerResult FHaybaMCPPIEHandler_WaitLoop(
+        FHaybaMCPPIEHandler& Self, const TSharedPtr<class FJsonObject>& P, const FString& Comparator);
 #endif
 };

@@ -130,7 +130,7 @@ FHaybaHandlerResult FHaybaMCPGASHandler::GasGrantAbility(const TSharedPtr<FJsonO
     FGameplayAbilitySpecHandle Handle = ASC->GiveAbility(Spec);
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-    Out->SetNumberField(TEXT("handle"), Handle.Handle);
+    Out->SetStringField(TEXT("handle"), Handle.ToString());
     Out->SetStringField(TEXT("ability"), AbilityClass->GetPathName());
     return FHaybaHandlerResult::Ok(Out);
 }

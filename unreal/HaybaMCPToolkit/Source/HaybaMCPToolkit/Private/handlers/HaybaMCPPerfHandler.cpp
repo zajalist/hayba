@@ -4,6 +4,8 @@
 #include "HAL/PlatformMemory.h"
 #include "RHI.h"
 #include "RHIGlobals.h"
+#include "RHIStats.h"
+#include "DynamicRHI.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Engine/Texture.h"
@@ -44,12 +46,10 @@ FHaybaHandlerResult FHaybaMCPPerfHandler::GetPerfStats(const TSharedPtr<FJsonObj
     Out->SetNumberField(TEXT("avg_frame_ms"), GAverageMS);
     Out->SetNumberField(TEXT("last_delta_ms"), DeltaMs);
 
-    // RHI counters: NumDrawCallsRHI / NumPrimitivesDrawnRHI are tracked per frame
-    // via the GRHIGlobals struct in UE 5.7. Field names verified against UE 5.7
-    // public RHI headers; if these names changed, build will fail with a clear
-    // unresolved-symbol error here.
-    Out->SetNumberField(TEXT("draw_calls"), (double)GRHIGlobals.NumDrawCallsRHI);
-    Out->SetNumberField(TEXT("primitives_drawn"), (double)GRHIGlobals.NumPrimitivesDrawnRHI);
+    // RHI counters: in UE 5.7 GNumDrawCallsRHI / GNumPrimitivesDrawnRHI are
+    // per-GPU global int32 arrays declared in RHIStats.h. Index 0 == primary GPU.
+    Out->SetNumberField(TEXT("draw_calls"), (double)GNumDrawCallsRHI[0]);
+    Out->SetNumberField(TEXT("primitives_drawn"), (double)GNumPrimitivesDrawnRHI[0]);
 
     // Memory
     const FPlatformMemoryStats MemStats = FPlatformMemory::GetStats();
@@ -58,11 +58,18 @@ FHaybaHandlerResult FHaybaMCPPerfHandler::GetPerfStats(const TSharedPtr<FJsonObj
     Out->SetNumberField(TEXT("cpu_peak_physical_mb"), (double)(MemStats.PeakUsedPhysical / (1024.0 * 1024.0)));
     Out->SetNumberField(TEXT("cpu_avail_physical_mb"),(double)(MemStats.AvailablePhysical / (1024.0 * 1024.0)));
 
-    // GPU memory (best-effort; not all RHIs report it)
+    // GPU memory (best-effort; not all RHIs report it).
+    // In UE 5.7 DedicatedVideoMemory lives on FTextureMemoryStats, queried via
+    // RHIGetTextureMemoryStats. Value is -1 when the RHI can't report it.
     uint64 GpuDedicatedMB = 0;
-    if (GRHIGlobals.DedicatedVideoMemory > 0)
+    if (GDynamicRHI)
     {
-        GpuDedicatedMB = GRHIGlobals.DedicatedVideoMemory / (1024 * 1024);
+        FTextureMemoryStats TexMemStats;
+        RHIGetTextureMemoryStats(TexMemStats);
+        if (TexMemStats.DedicatedVideoMemory > 0)
+        {
+            GpuDedicatedMB = (uint64)TexMemStats.DedicatedVideoMemory / (1024 * 1024);
+        }
     }
     Out->SetNumberField(TEXT("gpu_dedicated_mb"), (double)GpuDedicatedMB);
 
