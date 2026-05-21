@@ -13,16 +13,6 @@ bool IsReverseDnsId(const FString& Id)
     return M.FindNext();
 }
 
-static bool ParseRange(const TSharedPtr<FJsonValue>& V, TOptional<double>& OutMin, TOptional<double>& OutMax)
-{
-    if (!V.IsValid() || V->Type != EJson::Array) return false;
-    const TArray<TSharedPtr<FJsonValue>>& A = V->AsArray();
-    if (A.Num() != 2) return false;
-    OutMin = A[0]->AsNumber();
-    OutMax = A[1]->AsNumber();
-    return true;
-}
-
 static EHaybaSliverParamType ParamTypeFromString(const FString& S)
 {
     if (S == TEXT("float"))     return EHaybaSliverParamType::Float;

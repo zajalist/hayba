@@ -3,6 +3,8 @@
 
 #include "Dom/JsonObject.h"
 #include "HAL/PlatformProcess.h"
+#include "HAL/FileManager.h"
+#include "HAL/PlatformMisc.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Serialization/JsonReader.h"
