@@ -786,6 +786,10 @@ export default function App() {
         .then((tickSnap) => {
           if (cancelled || !playingRef.current) return;
           globeMeshRef.current?.updateFromTickSnapshot(tickSnap);
+          // Drift overlays that ride on cell positions (boundary seam lines)
+          // — without this they stay frozen at the pre-play positions and
+          // the user perceives "no plate movement".
+          boundaryLinesRef.current?.updatePositions(tickSnap.cell_positions);
           if (!cancelled && playingRef.current) requestAnimationFrame(tick);
         })
         .catch((e) => {

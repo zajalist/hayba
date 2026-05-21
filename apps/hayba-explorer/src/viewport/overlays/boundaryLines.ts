@@ -32,6 +32,10 @@ export interface BoundaryLinesHandle {
   setVisible: (v: boolean) => void;
   /** Recompute geometry from the snapshot + per-pair assignments. */
   update: (snap: PlanetSnapshot, assignments: BoundaryAssignments) => void;
+  /** Per-tick fast path: re-stream the position buffer from new cell
+   *  positions while keeping the (a,b) segment topology + colors from the
+   *  last full {@link update}. */
+  updatePositions: (cellPositions: ArrayLike<number>) => void;
   dispose: () => void;
 }
 
@@ -52,9 +56,16 @@ export function buildBoundaryLines(adjacency: number[][]): BoundaryLinesHandle {
   lines.renderOrder = 5;
   lines.visible = false;
 
+  // Cache of (a,b) cell index pairs for each segment in the last `update()`,
+  // so the per-tick `updatePositions` fast path can re-stream just the
+  // position attribute from new cell_positions without re-walking adjacency
+  // or recomputing colors.
+  let segmentPairs: Int32Array = new Int32Array(0);
+
   const update = (snap: PlanetSnapshot, assignments: BoundaryAssignments): void => {
     const positions: number[] = [];
     const colors:    number[] = [];
+    const pairs:     number[] = [];
     const n = snap.n_cells;
     const seen = new Set<number>(); // encoded edge (min, max) -> min * n + max
 
@@ -67,6 +78,7 @@ export function buildBoundaryLines(adjacency: number[][]): BoundaryLinesHandle {
       const bz = snap.cell_positions[b * 3 + 2] * RADIUS;
       positions.push(ax, ay, az, bx, by, bz);
       colors.push(c.r, c.g, c.b, c.r, c.g, c.b);
+      pairs.push(a, b);
     };
 
     for (let i = 0; i < n; i++) {
@@ -95,12 +107,33 @@ export function buildBoundaryLines(adjacency: number[][]): BoundaryLinesHandle {
     geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     geo.setAttribute("color",    new THREE.Float32BufferAttribute(colors, 3));
     geo.computeBoundingSphere();
+    segmentPairs = Int32Array.from(pairs);
+  };
+
+  const updatePositions = (cellPositions: ArrayLike<number>): void => {
+    if (segmentPairs.length === 0) return;
+    const posAttr = geo.getAttribute("position") as THREE.BufferAttribute | undefined;
+    if (!posAttr) return;
+    const buf = posAttr.array as Float32Array;
+    for (let s = 0; s < segmentPairs.length; s += 2) {
+      const a = segmentPairs[s];
+      const b = segmentPairs[s + 1];
+      const o = s * 3; // 6 floats per segment = 3 floats per endpoint × 2
+      buf[o + 0] = cellPositions[a * 3 + 0] * RADIUS;
+      buf[o + 1] = cellPositions[a * 3 + 1] * RADIUS;
+      buf[o + 2] = cellPositions[a * 3 + 2] * RADIUS;
+      buf[o + 3] = cellPositions[b * 3 + 0] * RADIUS;
+      buf[o + 4] = cellPositions[b * 3 + 1] * RADIUS;
+      buf[o + 5] = cellPositions[b * 3 + 2] * RADIUS;
+    }
+    posAttr.needsUpdate = true;
   };
 
   return {
     object: lines,
     setVisible: (v: boolean) => { lines.visible = v; },
     update,
+    updatePositions,
     dispose: () => {
       geo.dispose();
       mat.dispose();
