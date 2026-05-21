@@ -6,6 +6,48 @@ Honest playthrough audit based on Rust code-reading + IPC probes. I can't
 reliably playtest visually (HMR keeps wiping React state); the issues
 below are derived from reading the simulation code paths.
 
+## LIVE PLAYTEST EVIDENCE (post-3713372)
+
+Drove the running app via browser-harness end-to-end:
+Compose → Load Earth → Bake → Next: Densities → Start simulation →
+Save & start. Then sampled `step_planet_tick` + `step_planet` IPC
+directly for 630 Ma of sim time.
+
+**Headline metrics:**
+
+| Metric | Value |
+|---|---|
+| Sim time advance rate | ~30 Hz (16 Ma per real second at speed 1×) |
+| max cell drift | 0.237 over 100 steps (plates DO rotate) |
+| `[sim] swapped to per-cell sim mesh` log | ✅ fires |
+| Visible relief during play | ✅ continents drift visibly |
+| Tick IPC counter sniff | ⚠️  Reports 0 even when sim advances — my window.invoke hook gets overwritten somehow, but sim_time + position deltas confirm real ticks. |
+| max elevation pre-play | 0.69229287 |
+| max elevation +500 Ma | 0.69229287 (IDENTICAL — zero growth) |
+| cells with elevation > 0.5 | 167 → 167 (zero new mountains) |
+| `n_orog` (cells with orogenic_uplift > 0) | **0** |
+| `collision_kind_hist` after 5 steps | `{0: 40962}` (ALL cells non-colliding) |
+
+**Root cause for "no orogeny":** It's not the orogeny→elevation conversion
+(my fix in `2fbbebe` is correctly wired). It's that
+`detect_field_collisions_opt` returns **empty** every step — no
+collisions are ever firing despite plates rotating freely for 630 Ma.
+
+So the orogeny fix is *correct* but downstream of a dead upstream signal.
+Continents drift past each other without ever flagging a contact event.
+
+This is suspected bug #6 (no drag-on-collision) compounded with what
+appears to be a collision-detection threshold or topology issue. The
+`detect_field_collisions_opt` logic projects each plate's cells into
+every other plate's local frame and asks `grid.nearest_field`+
+`plate.contains_field` — but this never resolves true. Worth checking
+whether `grid.nearest_field` is finding the right index, or whether
+`plate.contains_field` is testing a stale ownership map.
+
+This needs a targeted Rust test: build a 2-plate model with deliberately
+overlapping cell ownership (force the topology), step once, assert
+`detect_field_collisions` returns a non-empty Vec.
+
 ## CONFIRMED BUGS
 
 ### 1. [SHIPPED THIS BRANCH] globeMeshRef never assigned → sim invisible
