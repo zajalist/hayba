@@ -1682,11 +1682,6 @@ export default function App() {
         disabledReason={categoryDisabledReason}
         onPick={setPanelCategory}
       >
-        {initializingGrid && (
-          <div style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>
-            Building grid…
-          </div>
-        )}
         {panelCategory === "compose" && draft && (
           <ComposePanel
             draft={draft}
@@ -1815,6 +1810,7 @@ export default function App() {
           mode={statusMode(mode)}
           chips={statusChips(mode, draft, snapshot, cellCountRef.current)}
           hint={statusHint(mode)}
+          busy={initializingGrid ? "Building grid…" : mode === "baking" ? "Baking…" : undefined}
           rightSlot={mode === "simulating" && snapshot ? (
             <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
               <button

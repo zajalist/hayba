@@ -16,6 +16,8 @@ export interface StatusBarProps {
   hint?: string;
   /** Right-aligned slot (Simulate uses this for the Play/Pause + Era cluster). */
   rightSlot?: React.ReactNode;
+  /** Exclusive busy slot — spinner + label (e.g. "Building grid…", "Baking…"). */
+  busy?: string;
 }
 
 const MODE_META: Record<StatusMode, { label: string; icon: string }> = {
@@ -30,7 +32,7 @@ export function Mono({ children }: { children: React.ReactNode }) {
   return <span style={{ fontFamily: fonts.mono, color: colors.beige }}>{children}</span>;
 }
 
-export default function StatusBar({ mode, chips, hint, rightSlot }: StatusBarProps) {
+export default function StatusBar({ mode, chips, hint, rightSlot, busy }: StatusBarProps) {
   const meta = MODE_META[mode];
   return (
     <div style={{
@@ -43,6 +45,7 @@ export default function StatusBar({ mode, chips, hint, rightSlot }: StatusBarPro
       fontFamily: fonts.sans,
       fontSize: 12,
     }}>
+      <style>{`@keyframes hayba-status-spin{to{transform:rotate(360deg)}}`}</style>
       {/* Mode badge */}
       <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "0 18px", color: colors.beige }}>
         <img
@@ -56,6 +59,27 @@ export default function StatusBar({ mode, chips, hint, rightSlot }: StatusBarPro
       </div>
 
       <Divider />
+
+      {busy && (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 14px", color: colors.beige }}>
+            <span
+              aria-hidden
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: "50%",
+                border: `2px solid ${colors.accent}`,
+                borderTopColor: "transparent",
+                animation: "hayba-status-spin 0.8s linear infinite",
+                display: "inline-block",
+              }}
+            />
+            <span>{busy}</span>
+          </div>
+          <Divider />
+        </>
+      )}
 
       {/* Telemetry */}
       <div style={{ display: "flex", alignItems: "center", gap: 24, padding: "0 18px", flex: 1, minWidth: 0 }}>
