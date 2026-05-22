@@ -150,6 +150,27 @@ export async function verifyAndMarkDelta(
   }
   if (verified) {
     getDefaultRetriever()?.markDeltaStale([gamePath]);
+    emitAssetWrite(gamePath);
   }
   return { verified, reason };
+}
+
+// ── DAG hook ────────────────────────────────────────────────────────────────
+// The DAG system registers a sink here; every verified asset write is
+// forwarded as a "ue://" node so imports/generations land in the journal.
+// Decoupled by a module-level sink so asset-sources keeps no DAG import.
+
+export type AssetDagSink = (writeUri: string) => void;
+
+let assetDagSink: AssetDagSink | null = null;
+
+export function setAssetDagSink(sink: AssetDagSink | null): void {
+  assetDagSink = sink;
+}
+
+/** Forward a verified asset write (a UE content path) to the DAG sink. */
+export function emitAssetWrite(assetPath: string): void {
+  if (!assetDagSink) return;
+  const clean = assetPath.startsWith('/') ? assetPath.slice(1) : assetPath;
+  assetDagSink(`ue://${clean}`);
 }
