@@ -21,6 +21,8 @@ void SSliverParamFloat::Construct(const FArguments& InArgs)
     [
         SNew(SSpinBox<float>)
         .MinDesiredWidth(110.f)
+        .MinFractionalDigits(0)
+        .MaxFractionalDigits(2)
         .Value_Lambda([this]() { return Value; })
         .OnValueChanged_Lambda([this](float V) { Value = V; })
         .OnValueCommitted_Lambda([this](float V, ETextCommit::Type) { Value = V; })
