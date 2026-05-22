@@ -30,6 +30,12 @@ import { sliverListHandler, sliverListSchema } from '../sliver/list.js';
 import { sliverGetHandler,  sliverGetSchema  } from '../sliver/get.js';
 import { sliverRunHandler,  sliverRunSchema  } from '../sliver/run.js';
 import { sliverImportHandler, sliverImportSchema } from '../sliver/import.js';
+import { setupDagSystem, type DagSystem } from '../../dag/index.js';
+import { dagStatusHandler, dagStatusSchema } from '../dag/status.js';
+import { dagRecordHandler, dagRecordSchema } from '../dag/record.js';
+import { dagRebuildHandler, dagRebuildSchema } from '../dag/rebuild.js';
+import { journalTailHandler, journalTailSchema } from '../dag/journal-tail.js';
+import { setAssetDagSink } from '../asset-sources/shared.js';
 
 /** Tools registered by registerDeferredRouting itself — skip in shim re-register. */
 export const ALWAYS_ON_META = new Set<string>([
@@ -47,6 +53,10 @@ export const ALWAYS_ON_META = new Set<string>([
   'hayba_sliver_get',
   'hayba_sliver_run',
   'hayba_sliver_import',
+  'hayba_dag_status',
+  'hayba_dag_record',
+  'hayba_dag_rebuild',
+  'hayba_journal_tail',
 ]);
 
 export interface CapturedTool {
@@ -65,6 +75,7 @@ export interface RoutingHandle {
   index: ToolIndex;
   retriever: AssetRetriever;
   slivers: SliverSystem;
+  dag: DagSystem;
   /** Trigger autoload — wire to `check_ue_status.onConnected`. */
   onUeConnected: () => Promise<void>;
 }
@@ -291,8 +302,26 @@ export async function registerDeferredRouting(
     },
   );
 
+  // ── DAG + journal (Layer 2 — operation tracking) ───────────────────────────
+  const dag = setupDagSystem();
+
+  // Asset-source verified writes feed the journal.
+  setAssetDagSink((writeUri) => {
+    dag.recordMutation({ actor: 'asset', reads: [], writes: [writeUri], paramsHash: '', ok: true });
+  });
+
   // ── Slivers (Layer 2 — deterministic abstractions) ─────────────────────────
-  const slivers = await setupSliverSystem();
+  const slivers = await setupSliverSystem({
+    onRun: (info) => {
+      dag.recordSliverRun({
+        sliverId: info.sliverId,
+        params: info.params,
+        declaredReads: info.declaredReads,
+        writes: info.writes,
+        ok: info.ok,
+      });
+    },
+  });
   for (const err of slivers.loader.errors()) {
     console.warn(`[slivers] load error: ${err}`);
   }
@@ -337,6 +366,53 @@ export async function registerDeferredRouting(
     },
   );
 
+  server.tool(
+    'hayba_dag_status',
+    'Show the dependency graph of generated artifacts and which are stale (dirty).',
+    dagStatusSchema,
+    async (args: { namespace?: string; dirtyOnly?: boolean }) => {
+      const r = await dagStatusHandler(args, { dag });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    'hayba_dag_record',
+    'Record a mutation Hayba did not instrument (editor-side edits, manual writes) so the DAG stays accurate.',
+    dagRecordSchema,
+    async (args: { reads?: string[]; writes: string[]; actor?: string; note?: string }) => {
+      const r = await dagRecordHandler(args, { dag });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    'hayba_dag_rebuild',
+    'Re-run stale (dirty) artifacts. Optionally restrict to the subtree under a target URI.',
+    dagRebuildSchema,
+    async (args: { target?: string }) => {
+      const r = await dagRebuildHandler(args, {
+        dag,
+        runSliverNode: async (uri: string) => {
+          return { ok: false, reason: uri.startsWith('sliver://')
+            ? 'sliver re-run from node id is v2'
+            : 'no executor for this node type' };
+        },
+      });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    'hayba_journal_tail',
+    'Return the most recent mutation operations from the journal.',
+    journalTailSchema,
+    async (args: { limit?: number }) => {
+      const r = await journalTailHandler(args, { dag });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
   // ── Always-load packs from settings ────────────────────────────────────────
   for (const name of settings.alwaysLoadPacks) {
     const r = await registry.loadPack(name);
@@ -350,6 +426,7 @@ export async function registerDeferredRouting(
     index,
     retriever,
     slivers,
+    dag,
     onUeConnected: () => registry.maybeAutoLoad('ue_connected'),
   };
 }
