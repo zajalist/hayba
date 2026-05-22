@@ -81,6 +81,7 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
     Style->Set("Hayba.Icon.Setup",      new IMAGE_BRUSH_SVG(TEXT("IconSetup"),       IconSize));
     Style->Set("Hayba.Icon.Settings",   new IMAGE_BRUSH_SVG(TEXT("IconSettings"),    IconSize));
     Style->Set("Hayba.Icon.MCP",        new IMAGE_BRUSH_SVG(TEXT("IconMCP"),         IconSize));
+    Style->Set("Hayba.Icon.Slivers",    new IMAGE_BRUSH_SVG(TEXT("IconSlivers"),     IconSize));
     Style->Set("Hayba.MCP.Hero",        new IMAGE_BRUSH_SVG(TEXT("MCPHero"),         FVector2D(72.f, 72.f)));
 
     // Typography — bigger, more breathing room

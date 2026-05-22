@@ -16,13 +16,15 @@ public:
     SLATE_END_ARGS()
     void Construct(const FArguments& InArgs);
 
+    /** Re-scan the installed slivers directory and rebuild the list. */
+    void Refresh();
+
 private:
     FHaybaSliverLoader Loader;
     TArray<TSharedPtr<FHaybaSliverSpec>> ListItems;
     TSharedPtr<SListView<TSharedPtr<FHaybaSliverSpec>>> ListView;
     TSharedPtr<SSliverDetailPanel> DetailPanel;
 
-    void Refresh();
     FReply OnRefreshClicked() { Refresh(); return FReply::Handled(); }
     TSharedRef<ITableRow> OnGenerateRow(TSharedPtr<FHaybaSliverSpec> Item, const TSharedRef<STableViewBase>& Owner);
     void OnSelectionChanged(TSharedPtr<FHaybaSliverSpec> Item, ESelectInfo::Type);

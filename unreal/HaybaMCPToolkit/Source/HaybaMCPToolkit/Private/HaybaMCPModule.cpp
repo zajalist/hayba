@@ -171,17 +171,14 @@ void FHaybaMCPModule::StartupModule()
         }
     }));
 
-    extern void HaybaSliver_RegisterTab();
+    // Slivers live as a page inside the main toolkit panel (EHaybaPanel::Slivers).
+    // Only the param-widget factory registry needs module-level init.
     extern void HaybaSliver_RegisterBuiltinParamWidgets();
     HaybaSliver_RegisterBuiltinParamWidgets();
-    HaybaSliver_RegisterTab();
 }
 
 void FHaybaMCPModule::ShutdownModule()
 {
-    extern void HaybaSliver_UnregisterTab();
-    HaybaSliver_UnregisterTab();
-
     auto& TM = FGlobalTabmanager::Get();
     TM->UnregisterNomadTabSpawner(TabMain);
     StopTcpServer();

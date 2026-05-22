@@ -13,6 +13,7 @@
 #include "HaybaMCPOnboardingWidget.h"
 #include "HaybaMCPSettingsPanel.h"
 #include "HaybaMCPSettings.h"
+#include "Slivers/SSliversPanel.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SSeparator.h"
@@ -33,6 +34,7 @@ namespace
         {
             case EHaybaPanel::Chat:       return NSLOCTEXT("Hayba", "Tab.Chat",       "Chat");
             case EHaybaPanel::MCP:        return NSLOCTEXT("Hayba", "Tab.MCP",        "MCP");
+            case EHaybaPanel::Slivers:    return NSLOCTEXT("Hayba", "Tab.Slivers",    "Slivers");
             case EHaybaPanel::ToolStream: return NSLOCTEXT("Hayba", "Tab.ToolStream", "Tool Stream");
             case EHaybaPanel::SceneMap:   return NSLOCTEXT("Hayba", "Tab.SceneMap",   "Scene Map");
             case EHaybaPanel::Plan:       return NSLOCTEXT("Hayba", "Tab.Plan",       "Plan");
@@ -50,6 +52,7 @@ namespace
         {
             case EHaybaPanel::Chat:       return TEXT("Hayba.Icon.Chat");
             case EHaybaPanel::MCP:        return TEXT("Hayba.Icon.MCP");
+            case EHaybaPanel::Slivers:    return TEXT("Hayba.Icon.Slivers");
             case EHaybaPanel::ToolStream: return TEXT("Hayba.Icon.ToolStream");
             case EHaybaPanel::SceneMap:   return TEXT("Hayba.Icon.SceneMap");
             case EHaybaPanel::Plan:       return TEXT("Hayba.Icon.Plan");
@@ -177,7 +180,7 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildSidebar()
     TArray<EHaybaPanel> Items;
     if (!bIntegrated) Items.Add(EHaybaPanel::Chat);
     Items.Append({
-        EHaybaPanel::MCP, EHaybaPanel::ToolStream, EHaybaPanel::SceneMap,
+        EHaybaPanel::MCP, EHaybaPanel::Slivers, EHaybaPanel::ToolStream, EHaybaPanel::SceneMap,
         EHaybaPanel::Plan, EHaybaPanel::Diff, EHaybaPanel::Validation,
         EHaybaPanel::Memory, EHaybaPanel::Settings,
     });
@@ -309,6 +312,16 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaPanel Panel)
             Subtitle = NSLOCTEXT("Hayba", "MCP.Sub", "Pick which tools your AI agent can see.");
             Body = SNew(SHaybaMCPCapabilitiesPanel).Module(Module);
             break;
+        case EHaybaPanel::Slivers:
+        {
+            Subtitle = NSLOCTEXT("Hayba", "Slivers.Sub",
+                "Deterministic abstractions — pick a sliver, set its parameters, run it.");
+            auto Panel2 = SNew(SSliversPanel);
+            // Re-shown from cache → re-scan the installed slivers directory.
+            PanelRefreshHook.Add(EHaybaPanel::Slivers, [Panel2]() { Panel2->Refresh(); });
+            Body = Panel2;
+            break;
+        }
         case EHaybaPanel::ToolStream:
         {
             Subtitle = NSLOCTEXT("Hayba", "Stream.Sub", "Live trace of every tool call.");

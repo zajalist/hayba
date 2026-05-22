@@ -10,7 +10,7 @@ class SHorizontalBox;
 
 enum class EHaybaPanel : uint8
 {
-    Chat, MCP, ToolStream, SceneMap, Plan, Diff, Validation, Memory, Settings
+    Chat, MCP, Slivers, ToolStream, SceneMap, Plan, Diff, Validation, Memory, Settings
 };
 
 class SHaybaMCPMainPanel : public SCompoundWidget
