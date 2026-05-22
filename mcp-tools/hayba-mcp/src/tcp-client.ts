@@ -1,6 +1,7 @@
 // mcp_server/src/tcp-client.ts
 import { createConnection, Socket } from 'node:net';
 import { EventEmitter } from 'node:events';
+import { FrameDecoder } from './tcp-frame-decoder.js';
 
 export interface TcpCommand {
   cmd: string;
@@ -28,7 +29,7 @@ export class UETcpClient extends EventEmitter {
     reject: (reason: Error) => void;
     timer: ReturnType<typeof setTimeout>;
   }>();
-  private receiveBuffer = Buffer.alloc(0);
+  private decoder = new FrameDecoder();
   private requestCounter = 0;
   private connected = false;
 
@@ -51,6 +52,7 @@ export class UETcpClient extends EventEmitter {
       this.socket.on('data', (data: Buffer) => this.onData(data));
       this.socket.on('close', () => {
         this.connected = false;
+        this.decoder.reset(); // drop any half-received frame so the next connection starts clean
         this.emit('disconnected');
         for (const [id, pending] of this.pendingRequests) {
           clearTimeout(pending.timer);
@@ -104,22 +106,8 @@ export class UETcpClient extends EventEmitter {
   }
 
   private onData(data: Buffer): void {
-    this.receiveBuffer = Buffer.concat([this.receiveBuffer, data]);
-
-    while (this.receiveBuffer.length >= 4) {
-      const messageLength = this.receiveBuffer.readUInt32BE(0);
-      if (messageLength === 0 || messageLength > 1024 * 1024) {
-        this.receiveBuffer = Buffer.alloc(0);
-        return;
-      }
-
-      if (this.receiveBuffer.length < 4 + messageLength) {
-        return;
-      }
-
-      const messageBytes = this.receiveBuffer.subarray(4, 4 + messageLength);
-      this.receiveBuffer = this.receiveBuffer.subarray(4 + messageLength);
-
+    // Framing lives in FrameDecoder; here we only parse + route payloads.
+    for (const messageBytes of this.decoder.push(data)) {
       try {
         const response: TcpResponse = JSON.parse(messageBytes.toString('utf-8'));
         const pending = this.pendingRequests.get(response.id);
