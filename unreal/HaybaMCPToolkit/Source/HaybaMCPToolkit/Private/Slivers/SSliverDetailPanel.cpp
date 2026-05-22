@@ -18,43 +18,42 @@ void SSliverDetailPanel::Construct(const FArguments& InArgs)
     ChildSlot
     [
         SNew(SVerticalBox)
-        // Title — wraps so long sliver ids never clip.
-        + SVerticalBox::Slot().AutoHeight().Padding(8, 6, 8, 2)
+        // Title — the sliver's description shows on hover as a tooltip,
+        // so it doesn't eat vertical space the param list needs.
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 6, 8, 4)
         [
             SAssignNew(TitleText, STextBlock)
             .AutoWrapText(true)
         ]
-        // Description — wraps; muted so it reads as secondary.
-        + SVerticalBox::Slot().AutoHeight().Padding(8, 0, 8, 6)
-        [
-            SAssignNew(DescriptionText, STextBlock)
-            .AutoWrapText(true)
-            .ColorAndOpacity(FSlateColor(FLinearColor(0.60f, 0.62f, 0.69f)))
-        ]
-        // Params — scrollable so a sliver with many params never overflows.
+        // Params — gets the bulk of the panel; scrollable for long lists.
         + SVerticalBox::Slot().FillHeight(1.0f).Padding(4, 2)
         [
             SNew(SScrollBox)
             + SScrollBox::Slot()
             [ SAssignNew(ParamBox, SVerticalBox) ]
         ]
-        + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
+        // Output (fills) with a compact Run button to its right.
+        + SVerticalBox::Slot().FillHeight(0.4f).Padding(8, 4, 8, 8)
         [
-            SNew(SButton)
-            .HAlign(HAlign_Center)
-            .ContentPadding(FMargin(12, 5))
-            .Text(FText::FromString(TEXT("Run")))
-            .OnClicked(this, &SSliverDetailPanel::OnRunClicked)
-        ]
-        + SVerticalBox::Slot().FillHeight(1.0f).Padding(8, 2, 8, 8)
-        [
-            SNew(SBorder)
-            .Padding(FMargin(4))
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().FillWidth(1.0f)
             [
-                SAssignNew(OutputBox, SMultiLineEditableTextBox)
-                .IsReadOnly(true)
-                .AutoWrapText(true)
-                .Text(FText::FromString(TEXT("(no run yet)")))
+                SNew(SBorder)
+                .Padding(FMargin(4))
+                [
+                    SAssignNew(OutputBox, SMultiLineEditableTextBox)
+                    .IsReadOnly(true)
+                    .AutoWrapText(true)
+                    .Text(FText::FromString(TEXT("(no run yet)")))
+                ]
+            ]
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Top).Padding(6, 0, 0, 0)
+            [
+                SNew(SButton)
+                .ContentPadding(FMargin(14, 4))
+                .ToolTipText(FText::FromString(TEXT("Run this sliver with the parameters above.")))
+                .Text(FText::FromString(TEXT("Run")))
+                .OnClicked(this, &SSliverDetailPanel::OnRunClicked)
             ]
         ]
     ];
@@ -63,8 +62,12 @@ void SSliverDetailPanel::Construct(const FArguments& InArgs)
 void SSliverDetailPanel::SetSpec(const FHaybaSliverSpec& InSpec)
 {
     Spec = InSpec;
-    if (TitleText)       TitleText->SetText(FText::FromString(Spec.Title + TEXT("  (") + Spec.Id + TEXT(")")));
-    if (DescriptionText) DescriptionText->SetText(FText::FromString(Spec.Description));
+    if (TitleText)
+    {
+        TitleText->SetText(FText::FromString(Spec.Title + TEXT("  (") + Spec.Id + TEXT(")")));
+        // Description shows on hover instead of taking a fixed block.
+        TitleText->SetToolTipText(FText::FromString(Spec.Description));
+    }
     if (OutputBox)       OutputBox->SetText(FText::FromString(TEXT("(no run yet)")));
     RebuildParamUI();
 }

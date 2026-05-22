@@ -1,5 +1,5 @@
-// SSliverDetailPanel.h — Shows a single sliver: title, description,
-// generated param widgets, Run button, output text box.
+// SSliverDetailPanel.h — Shows a single sliver: title (description on
+// hover), generated param widgets, output box, and a Run button.
 
 #pragma once
 
@@ -26,7 +26,6 @@ private:
     TSharedPtr<SMultiLineEditableTextBox> OutputBox;
     TSharedPtr<class SVerticalBox> ParamBox;
     TSharedPtr<class STextBlock> TitleText;
-    TSharedPtr<class STextBlock> DescriptionText;
     bool bRunning = false;
 
     FReply OnRunClicked();
