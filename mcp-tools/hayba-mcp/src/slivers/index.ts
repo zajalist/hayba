@@ -21,6 +21,7 @@ export interface SetupOpts {
   userDir?: string;
   bundledDir?: string;
   maxDepth?: number;
+  onRun?: import('./runtime.js').SliverOnRun;
 }
 
 export async function setupSliverSystem(opts: SetupOpts = {}): Promise<SliverSystem> {
@@ -38,6 +39,7 @@ export async function setupSliverSystem(opts: SetupOpts = {}): Promise<SliverSys
     registry,
     getSpec: (id) => loader.get(id),
     maxDepth: opts.maxDepth ?? 8,
+    onRun: opts.onRun,
   });
 
   return { registry, loader, runtime };
