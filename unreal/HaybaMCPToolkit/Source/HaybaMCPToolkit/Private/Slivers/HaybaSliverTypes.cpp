@@ -21,6 +21,7 @@ static EHaybaSliverParamType ParamTypeFromString(const FString& S)
     if (S == TEXT("string"))    return EHaybaSliverParamType::String;
     if (S == TEXT("enum"))      return EHaybaSliverParamType::Enum;
     if (S == TEXT("actor_ref")) return EHaybaSliverParamType::ActorRef;
+    if (S == TEXT("vector3"))   return EHaybaSliverParamType::Vector3;
     return EHaybaSliverParamType::Unsupported;
 }
 
@@ -77,6 +78,17 @@ static bool ParseParam(const TSharedPtr<FJsonObject>& Obj, FHaybaSliverParam& Ou
     if (Out.Type == EHaybaSliverParamType::ActorRef)
     {
         Obj->TryGetStringField(TEXT("class_filter"), Out.ClassFilter);
+    }
+    if (Out.Type == EHaybaSliverParamType::Vector3)
+    {
+        const TArray<TSharedPtr<FJsonValue>>* VecArr = nullptr;
+        if (Obj->TryGetArrayField(TEXT("default"), VecArr) && VecArr && VecArr->Num() == 3)
+        {
+            Out.DefaultVector = FVector(
+                (*VecArr)[0]->AsNumber(),
+                (*VecArr)[1]->AsNumber(),
+                (*VecArr)[2]->AsNumber());
+        }
     }
     return true;
 }

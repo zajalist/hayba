@@ -1,0 +1,55 @@
+// SSliverParamVector3.cpp
+#include "Slivers/SSliverParamVector3.h"
+#include "Widgets/Input/SSpinBox.h"
+#include "Widgets/SBoxPanel.h"
+#include "Widgets/Text/STextBlock.h"
+
+void SSliverParamVector3::Construct(const FArguments& InArgs)
+{
+    SSliverParamWidget::FArguments BaseArgs;
+    BaseArgs._Param = InArgs._Param;
+    SSliverParamWidget::Construct(BaseArgs);
+
+    const FVector Def = Param.DefaultVector.Get(FVector::ZeroVector);
+    X = Def.X; Y = Def.Y; Z = Def.Z;
+
+    // One labelled spin box per axis. Components are unbounded — vector3
+    // params are world coordinates, not ranged sliders.
+    auto Axis = [](const TCHAR* Label, double* Ref) -> TSharedRef<SWidget>
+    {
+        return SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 3, 0)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(Label))
+                .ColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.57f, 0.65f)))
+            ]
+            + SHorizontalBox::Slot().FillWidth(1.0f)
+            [
+                SNew(SSpinBox<double>)
+                .MinFractionalDigits(0)
+                .MaxFractionalDigits(2)
+                .Value_Lambda([Ref]() { return *Ref; })
+                .OnValueChanged_Lambda([Ref](double V) { *Ref = V; })
+                .OnValueCommitted_Lambda([Ref](double V, ETextCommit::Type) { *Ref = V; })
+            ];
+    };
+
+    ChildSlot
+    [
+        SNew(SHorizontalBox)
+        + SHorizontalBox::Slot().FillWidth(1.0f).Padding(0, 0, 4, 0) [ Axis(TEXT("X"), &X) ]
+        + SHorizontalBox::Slot().FillWidth(1.0f).Padding(0, 0, 4, 0) [ Axis(TEXT("Y"), &Y) ]
+        + SHorizontalBox::Slot().FillWidth(1.0f)                     [ Axis(TEXT("Z"), &Z) ]
+    ];
+}
+
+void SSliverParamVector3::SetVector(const FVector& V)
+{
+    X = V.X; Y = V.Y; Z = V.Z;
+}
+
+FString SSliverParamVector3::GetValueAsJson() const
+{
+    return FString::Printf(TEXT("[%.3f,%.3f,%.3f]"), X, Y, Z);
+}

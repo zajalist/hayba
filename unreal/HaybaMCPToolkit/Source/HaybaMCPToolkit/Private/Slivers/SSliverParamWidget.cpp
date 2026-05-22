@@ -52,6 +52,7 @@ TSharedRef<SSliverParamWidget> FSliverParamWidgetRegistry::Create(const FHaybaSl
 #include "Slivers/SSliverParamString.h"
 #include "Slivers/SSliverParamEnum.h"
 #include "Slivers/SSliverParamActorRef.h"
+#include "Slivers/SSliverParamVector3.h"
 
 void HaybaSliver_RegisterBuiltinParamWidgets()
 {
@@ -68,4 +69,6 @@ void HaybaSliver_RegisterBuiltinParamWidgets()
         { return SNew(SSliverParamEnum).Param(P); });
     R.Register(EHaybaSliverParamType::ActorRef, [](const FHaybaSliverParam& P) -> TSharedRef<SSliverParamWidget>
         { return SNew(SSliverParamActorRef).Param(P); });
+    R.Register(EHaybaSliverParamType::Vector3,  [](const FHaybaSliverParam& P) -> TSharedRef<SSliverParamWidget>
+        { return SNew(SSliverParamVector3).Param(P); });
 }

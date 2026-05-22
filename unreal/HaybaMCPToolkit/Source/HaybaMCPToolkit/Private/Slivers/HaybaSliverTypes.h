@@ -1,6 +1,6 @@
 // HaybaSliverTypes.h — C++ mirror of the on-disk SliverSpec JSON shape.
-// Only the v1 param types are decoded (Float, Int, Bool, String, Enum,
-// ActorRef); other type strings parse into FHaybaSliverParam with
+// The decoded param types are Float, Int, Bool, String, Enum, ActorRef
+// and Vector3; other type strings parse into FHaybaSliverParam with
 // Type=Unsupported and are surfaced by the panel as "not yet supported".
 
 #pragma once
@@ -18,6 +18,7 @@ enum class EHaybaSliverParamType : uint8
     String,
     Enum,
     ActorRef,
+    Vector3,
     Unsupported,
 };
 
@@ -49,6 +50,9 @@ struct FHaybaSliverParam
 
     // ActorRef
     FString ClassFilter;
+
+    // Vector3
+    TOptional<FVector> DefaultVector;
 };
 
 struct FHaybaSliverDeterminism

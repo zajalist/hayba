@@ -84,10 +84,25 @@ export class SliverLoader {
     if (!statSync(this.bundledDir).isDirectory()) return;
     for (const name of readdirSync(this.bundledDir)) {
       if (!name.endsWith(SUFFIX)) continue;
+      const source = join(this.bundledDir, name);
       const target = join(this.userDir, name);
-      if (existsSync(target)) continue;
-      copyFileSync(join(this.bundledDir, name), target);
+      // Absent → seed. Present → re-seed only when the bundled spec's
+      // version differs from the installed copy, so shipped updates to
+      // core slivers reach existing installs. A corrupt installed file
+      // (version unreadable) is also re-seeded, self-healing it.
+      if (existsSync(target) && readSpecVersion(target) === readSpecVersion(source)) continue;
+      copyFileSync(source, target);
     }
+  }
+}
+
+/** Best-effort read of a spec file's `version` field; null if unreadable. */
+function readSpecVersion(path: string): string | null {
+  try {
+    const v = (JSON.parse(readFileSync(path, 'utf8')) as { version?: unknown }).version;
+    return typeof v === 'string' ? v : null;
+  } catch {
+    return null;
   }
 }
 

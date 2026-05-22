@@ -51,6 +51,36 @@ describe('frameTargetExecutor', () => {
     expect(out.camera_transform.rotation[1]).toBeCloseTo(180, 1);
   });
 
+  it('orbits around target_location when supplied (not the world origin)', async () => {
+    const out = await frameTargetExecutor({
+      target: '/Game/X.X', target_location: [5000, 2000, 300],
+      distance: 10, height: 0, fov: 70, yaw_deg: 0,
+    }, ctxStub) as { camera_transform: { location: [number, number, number] } };
+    // pivot + orbit offset: yaw=0 → +1000 on X, height 0 keeps pivot Z.
+    expect(out.camera_transform.location[0]).toBeCloseTo(6000, 1);
+    expect(out.camera_transform.location[1]).toBeCloseTo(2000, 1);
+    expect(out.camera_transform.location[2]).toBeCloseTo(300, 1);
+  });
+
+  it('adds the height offset on top of the pivot Z', async () => {
+    const out = await frameTargetExecutor({
+      target: '/Game/X.X', target_location: [0, 0, 1000],
+      distance: 10, height: 3, fov: 70, yaw_deg: 0,
+    }, ctxStub) as { camera_transform: { location: [number, number, number] } };
+    expect(out.camera_transform.location[2]).toBeCloseTo(1300, 1); // 1000 pivot + 300 offset
+  });
+
+  it('omitting target_location frames the world origin (backward compatible)', async () => {
+    const without = await frameTargetExecutor({
+      target: '/Game/X.X', distance: 10, height: 2, fov: 70, yaw_deg: 45,
+    }, ctxStub) as { camera_transform: { location: number[] } };
+    const withZero = await frameTargetExecutor({
+      target: '/Game/X.X', target_location: [0, 0, 0],
+      distance: 10, height: 2, fov: 70, yaw_deg: 45,
+    }, ctxStub) as { camera_transform: { location: number[] } };
+    expect(without.camera_transform.location).toEqual(withZero.camera_transform.location);
+  });
+
   it('exports the registry kind as a constant', () => {
     expect(COMPOSITION_FRAME_TARGET_KIND).toBe('composition.frame_target');
   });

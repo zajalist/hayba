@@ -45,6 +45,16 @@ describe('SliverLoader', () => {
     expect(loader.get('com.test.demo')).toBeDefined();
   });
 
+  it('re-seeds from bundledDir when the bundled spec version differs from the installed copy', async () => {
+    writeFileSync(join(userDir, 'com.test.demo.sliver.json'),
+      JSON.stringify({ ...validSpec, version: '1.0.0', title: 'Old' }));
+    writeFileSync(join(bundledDir, 'com.test.demo.sliver.json'),
+      JSON.stringify({ ...validSpec, version: '1.1.0', title: 'New' }));
+    const loader = new SliverLoader({ userDir, bundledDir });
+    await loader.reload();
+    expect(loader.get('com.test.demo')?.title).toBe('New');
+  });
+
   it('userDir wins over bundledDir when both have the same id', async () => {
     writeFileSync(join(bundledDir, 'com.test.demo.sliver.json'), JSON.stringify(validSpec));
     writeFileSync(join(userDir, 'com.test.demo.sliver.json'), JSON.stringify({ ...validSpec, title: 'User Override' }));

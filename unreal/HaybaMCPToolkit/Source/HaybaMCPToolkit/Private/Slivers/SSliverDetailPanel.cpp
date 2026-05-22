@@ -3,6 +3,8 @@
 
 #include "Slivers/HaybaSliverClient.h"
 #include "Slivers/HaybaSliverSettings.h"
+#include "Slivers/SSliverParamActorRef.h"
+#include "Slivers/SSliverParamVector3.h"
 #include "Async/Async.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SMultiLineEditableTextBox.h"
@@ -91,6 +93,33 @@ void SSliverDetailPanel::RebuildParamUI()
             + SHorizontalBox::Slot().FillWidth(0.58f).VAlign(VAlign_Center)
             [ W ]
         ];
+    }
+
+    // Auto-fill wiring: an actor_ref param "X" mirrors the picked actor's
+    // world location into a sibling vector3 param "X_location", so a sliver
+    // like frame_target actually frames the chosen actor.
+    for (const TSharedRef<SSliverParamWidget>& W : ParamWidgets)
+    {
+        if (W->GetParam().Type != EHaybaSliverParamType::ActorRef) continue;
+        const FString LocId = W->GetParam().Id + TEXT("_location");
+
+        TSharedPtr<SSliverParamVector3> VecW;
+        for (const TSharedRef<SSliverParamWidget>& V : ParamWidgets)
+        {
+            if (V->GetParam().Type == EHaybaSliverParamType::Vector3 && V->GetParam().Id == LocId)
+            {
+                VecW = StaticCastSharedRef<SSliverParamVector3>(V);
+                break;
+            }
+        }
+        if (!VecW.IsValid()) continue;
+
+        TWeakPtr<SSliverParamVector3> WeakVec = VecW;
+        StaticCastSharedRef<SSliverParamActorRef>(W)->OnActorPicked.BindLambda(
+            [WeakVec](const FVector& Loc)
+            {
+                if (TSharedPtr<SSliverParamVector3> V = WeakVec.Pin()) V->SetVector(Loc);
+            });
     }
 }
 

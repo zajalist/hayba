@@ -48,7 +48,13 @@ FReply SSliverParamActorRef::OnPickFromSelection()
     if (!GEditor) return FReply::Handled();
     TArray<AActor*> Sel;
     GEditor->GetSelectedActors()->GetSelectedObjects<AActor>(Sel);
-    if (Sel.Num() > 0 && Sel[0]) Value = Sel[0]->GetPathName();
+    if (Sel.Num() > 0 && Sel[0])
+    {
+        Value = Sel[0]->GetPathName();
+        // Let the panel mirror the world location into a sibling
+        // "<id>_location" vector3 param so the sliver frames this actor.
+        OnActorPicked.ExecuteIfBound(Sel[0]->GetActorLocation());
+    }
     return FReply::Handled();
 }
 
