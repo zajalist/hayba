@@ -11,6 +11,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Dom/JsonObject.h"
+#include "HaybaMCPJsonParams.h"
 
 TArray<FString> FHaybaMCPAudioHandler::GetCommands() const
 {
@@ -23,15 +24,12 @@ TArray<FString> FHaybaMCPAudioHandler::GetCommands() const
 
 static FHaybaHandlerResult AudioPlay(const TSharedPtr<FJsonObject>& P)
 {
-    if (!P.IsValid()) return FHaybaHandlerResult::Err(TEXT("audio_play: missing params"));
-    FString Path;
-    if (!P->TryGetStringField(TEXT("path"), Path))
-        return FHaybaHandlerResult::Err(TEXT("audio_play: missing arg path"));
+    FHaybaJsonParams Args(P);
+    const FString Path = Args.RequireString(TEXT("path"));
+    if (Args.HasError()) return Args.Error();
 
-    double Volume = 1.0;
-    double Pitch  = 1.0;
-    P->TryGetNumberField(TEXT("volume"), Volume);
-    P->TryGetNumberField(TEXT("pitch"),  Pitch);
+    const double Volume = Args.GetNumber(TEXT("volume"), 1.0);
+    const double Pitch  = Args.GetNumber(TEXT("pitch"),  1.0);
 
     USoundBase* Sound = Cast<USoundBase>(FSoftObjectPath(Path).TryLoad());
     if (!Sound) return FHaybaHandlerResult::Err(FString::Printf(TEXT("audio_play: failed to load %s"), *Path));
@@ -52,8 +50,8 @@ static FHaybaHandlerResult AudioPlay(const TSharedPtr<FJsonObject>& P)
 
 static FHaybaHandlerResult AudioList(const TSharedPtr<FJsonObject>& P)
 {
-    FString Prefix;
-    if (P.IsValid()) P->TryGetStringField(TEXT("path_prefix"), Prefix);
+    FHaybaJsonParams Args(P);
+    const FString Prefix = Args.GetString(TEXT("path_prefix"));
 
     FAssetRegistryModule& ARM = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
     IAssetRegistry& AR = ARM.Get();
@@ -94,13 +92,10 @@ static FHaybaHandlerResult AudioList(const TSharedPtr<FJsonObject>& P)
 
 static FHaybaHandlerResult AudioSetVolume(const TSharedPtr<FJsonObject>& P)
 {
-    if (!P.IsValid()) return FHaybaHandlerResult::Err(TEXT("audio_set_volume: missing params"));
-    FString Category;
-    if (!P->TryGetStringField(TEXT("category"), Category))
-        return FHaybaHandlerResult::Err(TEXT("audio_set_volume: missing arg category"));
-    double Volume = 1.0;
-    if (!P->TryGetNumberField(TEXT("volume"), Volume))
-        return FHaybaHandlerResult::Err(TEXT("audio_set_volume: missing arg volume"));
+    FHaybaJsonParams Args(P);
+    const FString Category = Args.RequireString(TEXT("category"));
+    const double Volume    = Args.RequireNumber(TEXT("volume"));
+    if (Args.HasError()) return Args.Error();
 
     if (!GEngine) return FHaybaHandlerResult::Err(TEXT("audio_set_volume: no GEngine"));
     FAudioDeviceHandle Dev = GEngine->GetMainAudioDevice();
