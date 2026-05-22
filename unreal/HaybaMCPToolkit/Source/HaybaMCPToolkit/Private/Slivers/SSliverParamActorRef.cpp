@@ -1,6 +1,7 @@
 // SSliverParamActorRef.cpp
 #include "Slivers/SSliverParamActorRef.h"
 #include "Editor.h"
+#include "Selection.h"
 #include "GameFramework/Actor.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SEditableTextBox.h"
