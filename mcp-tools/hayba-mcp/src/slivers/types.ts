@@ -30,6 +30,7 @@ export interface SliverDeterminism {
   pure: boolean;
   declared_outputs: string[];
   side_effects: string[];
+  reads: string[];
   seed_param: string | null;
 }
 

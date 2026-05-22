@@ -16,10 +16,21 @@ import {
 import type { ExecutorRegistry } from './registry.js';
 import { validateAndCoerceParams } from './param-validator.js';
 
+export interface SliverRunInfo {
+  sliverId: string;
+  params: SliverParamValues;
+  declaredReads: string[];
+  writes: string[];
+  ok: boolean;
+}
+
+export type SliverOnRun = (info: SliverRunInfo) => void;
+
 export interface SliverRuntimeOpts {
   registry: ExecutorRegistry;
   getSpec: (id: string) => SliverSpec | undefined;
   maxDepth?: number;
+  onRun?: SliverOnRun;
 }
 
 /** Marker so the root catch knows these should remain unhandled at inner frames. */
@@ -33,11 +44,13 @@ export class SliverRuntime {
   private readonly registry: ExecutorRegistry;
   private readonly getSpec: (id: string) => SliverSpec | undefined;
   private readonly maxDepth: number;
+  private readonly onRun?: SliverOnRun;
 
   constructor(opts: SliverRuntimeOpts) {
     this.registry = opts.registry;
     this.getSpec = opts.getSpec;
     this.maxDepth = opts.maxDepth ?? 8;
+    this.onRun = opts.onRun;
   }
 
   /** Public entry point. Always resolves (never rejects). */
@@ -58,16 +71,17 @@ export class SliverRuntime {
   ): Promise<SliverRunResult> {
     const t0 = performance.now();
     const effects: string[] = [];
+    let result: SliverRunResult;
     try {
       const outputs = await this._runFrame(id, params, stack, effects);
-      return {
+      result = {
         ok: true,
         outputs,
         side_effects: dedup(effects),
         durationMs: Math.round(performance.now() - t0),
       };
     } catch (e) {
-      return {
+      result = {
         ok: false,
         outputs: {},
         side_effects: [],
@@ -75,6 +89,18 @@ export class SliverRuntime {
         error: e instanceof Error ? e.message : String(e),
       };
     }
+
+    if (this.onRun) {
+      const spec = this.getSpec(id);
+      this.onRun({
+        sliverId: id,
+        params,
+        declaredReads: spec ? spec.determinism.reads : [],
+        writes: result.side_effects,
+        ok: result.ok,
+      });
+    }
+    return result;
   }
 
   /**

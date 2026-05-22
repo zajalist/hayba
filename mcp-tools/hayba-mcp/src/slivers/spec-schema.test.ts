@@ -57,4 +57,24 @@ describe('sliver spec schema', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/duplicate/i);
   });
+
+  it('accepts an optional determinism.reads[] and defaults it to []', () => {
+    const base = {
+      id: 'com.test.reads', version: '1.0.0', category: 'test', title: 'R',
+      description: '', author: 't', params: [], executor: { kind: 'test.r' },
+    };
+    const withReads = parseSliverSpec({
+      ...base,
+      determinism: { pure: true, declared_outputs: [], side_effects: [], reads: ['ue://*'], seed_param: null },
+    });
+    expect(withReads.ok).toBe(true);
+    if (withReads.ok) expect(withReads.spec.determinism.reads).toEqual(['ue://*']);
+
+    const withoutReads = parseSliverSpec({
+      ...base,
+      determinism: { pure: true, declared_outputs: [], side_effects: [], seed_param: null },
+    });
+    expect(withoutReads.ok).toBe(true);
+    if (withoutReads.ok) expect(withoutReads.spec.determinism.reads).toEqual([]);
+  });
 });

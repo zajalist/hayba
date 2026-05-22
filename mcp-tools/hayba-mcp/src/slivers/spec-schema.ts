@@ -35,6 +35,7 @@ const determinism = z.object({
   pure: z.boolean(),
   declared_outputs: z.array(z.string()),
   side_effects: z.array(z.string()),
+  reads: z.array(z.string()).default([]),
   seed_param: z.string().nullable(),
 });
 
