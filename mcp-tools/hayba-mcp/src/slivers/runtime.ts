@@ -95,7 +95,7 @@ export class SliverRuntime {
       this.onRun({
         sliverId: id,
         params,
-        declaredReads: spec ? spec.determinism.reads ?? [] : [],
+        declaredReads: spec ? spec.determinism.reads : [],
         writes: result.side_effects,
         ok: result.ok,
       });

@@ -14,7 +14,7 @@ function makeSpec(id: string, kind: string, extra: Partial<SliverSpec> = {}): Sl
     author: 'test',
     params: [],
     executor: { kind },
-    determinism: { pure: true, declared_outputs: ['v'], side_effects: [], seed_param: null },
+    determinism: { pure: true, declared_outputs: ['v'], side_effects: [], reads: [], seed_param: null },
     ...extra,
   };
 }
@@ -68,7 +68,7 @@ describe('SliverRuntime.runSliver', () => {
 
   it('aggregates declared side_effects into the result', async () => {
     specs.set('com.t.s', makeSpec('com.t.s', 'k.s', {
-      determinism: { pure: false, declared_outputs: [], side_effects: ['lighting_change'], seed_param: null },
+      determinism: { pure: false, declared_outputs: [], side_effects: ['lighting_change'], reads: [], seed_param: null },
     }));
     registry.register('k.s', async () => ({}));
     const r = await runtime.runSliver('com.t.s', {});
@@ -147,10 +147,10 @@ describe('SliverRuntime.runSliver', () => {
 
   it('aggregates side_effects across the call tree (parent + child) and dedupes', async () => {
     specs.set('com.t.parent', makeSpec('com.t.parent', 'k.parent', {
-      determinism: { pure: false, declared_outputs: [], side_effects: ['actor_spawn'], seed_param: null },
+      determinism: { pure: false, declared_outputs: [], side_effects: ['actor_spawn'], reads: [], seed_param: null },
     }));
     specs.set('com.t.child', makeSpec('com.t.child', 'k.child', {
-      determinism: { pure: false, declared_outputs: [], side_effects: ['lighting_change', 'actor_spawn'], seed_param: null },
+      determinism: { pure: false, declared_outputs: [], side_effects: ['lighting_change', 'actor_spawn'], reads: [], seed_param: null },
     }));
     registry.register('k.parent', async (_p, ctx) => { await ctx.runSliver('com.t.child', {}); return {}; });
     registry.register('k.child', async () => ({}));
