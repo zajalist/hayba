@@ -10,13 +10,25 @@ void SSliverParamFloat::Construct(const FArguments& InArgs)
 
     Value = static_cast<float>(Param.DefaultNumber.Get(0.0));
 
-    auto Spin = SNew(SSpinBox<float>)
-        .Value_Lambda([this]() { return Value; })
-        .OnValueChanged_Lambda([this](float V) { Value = V; });
-    if (Param.RangeMin.IsSet()) Spin->SetMinValue(static_cast<float>(Param.RangeMin.GetValue()));
-    if (Param.RangeMax.IsSet()) Spin->SetMaxValue(static_cast<float>(Param.RangeMax.GetValue()));
+    // MinValue/MaxValue clamp typed entry; MinSliderValue/MaxSliderValue are
+    // what give the SSpinBox a draggable slider track. Both pairs must be set
+    // for the bar to scrub — clamp bounds alone leave it in unbounded mode.
+    TOptional<float> Min, Max;
+    if (Param.RangeMin.IsSet()) Min = static_cast<float>(Param.RangeMin.GetValue());
+    if (Param.RangeMax.IsSet()) Max = static_cast<float>(Param.RangeMax.GetValue());
 
-    ChildSlot [ Spin ];
+    ChildSlot
+    [
+        SNew(SSpinBox<float>)
+        .MinDesiredWidth(110.f)
+        .Value_Lambda([this]() { return Value; })
+        .OnValueChanged_Lambda([this](float V) { Value = V; })
+        .OnValueCommitted_Lambda([this](float V, ETextCommit::Type) { Value = V; })
+        .MinValue(Min)
+        .MaxValue(Max)
+        .MinSliderValue(Min)
+        .MaxSliderValue(Max)
+    ];
 }
 
 FString SSliverParamFloat::GetValueAsJson() const

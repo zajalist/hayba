@@ -7,6 +7,7 @@
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SMultiLineEditableTextBox.h"
 #include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
 
@@ -15,24 +16,42 @@ void SSliverDetailPanel::Construct(const FArguments& InArgs)
     ChildSlot
     [
         SNew(SVerticalBox)
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
-        [ SAssignNew(TitleText, STextBlock) ]
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
-        [ SAssignNew(DescriptionText, STextBlock) ]
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
-        [ SAssignNew(ParamBox, SVerticalBox) ]
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        // Title — wraps so long sliver ids never clip.
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 6, 8, 2)
+        [
+            SAssignNew(TitleText, STextBlock)
+            .AutoWrapText(true)
+        ]
+        // Description — wraps; muted so it reads as secondary.
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 0, 8, 6)
+        [
+            SAssignNew(DescriptionText, STextBlock)
+            .AutoWrapText(true)
+            .ColorAndOpacity(FSlateColor(FLinearColor(0.60f, 0.62f, 0.69f)))
+        ]
+        // Params — scrollable so a sliver with many params never overflows.
+        + SVerticalBox::Slot().FillHeight(1.0f).Padding(4, 2)
+        [
+            SNew(SScrollBox)
+            + SScrollBox::Slot()
+            [ SAssignNew(ParamBox, SVerticalBox) ]
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
         [
             SNew(SButton)
+            .HAlign(HAlign_Center)
+            .ContentPadding(FMargin(12, 5))
             .Text(FText::FromString(TEXT("Run")))
             .OnClicked(this, &SSliverDetailPanel::OnRunClicked)
         ]
-        + SVerticalBox::Slot().FillHeight(1.0f).Padding(4)
+        + SVerticalBox::Slot().FillHeight(1.0f).Padding(8, 2, 8, 8)
         [
             SNew(SBorder)
+            .Padding(FMargin(4))
             [
                 SAssignNew(OutputBox, SMultiLineEditableTextBox)
                 .IsReadOnly(true)
+                .AutoWrapText(true)
                 .Text(FText::FromString(TEXT("(no run yet)")))
             ]
         ]
@@ -60,12 +79,16 @@ void SSliverDetailPanel::RebuildParamUI()
         ParamWidgets.Add(W);
 
         const FString LabelText = (!P.Label.IsEmpty() ? P.Label : P.Id) + (P.bRequired ? TEXT(" *") : TEXT(""));
-        ParamBox->AddSlot().AutoHeight().Padding(2)
+        ParamBox->AddSlot().AutoHeight().Padding(6, 4)
         [
             SNew(SHorizontalBox)
-            + SHorizontalBox::Slot().FillWidth(0.4f).VAlign(VAlign_Center)
-            [ SNew(STextBlock).Text(FText::FromString(LabelText)) ]
-            + SHorizontalBox::Slot().FillWidth(0.6f)
+            + SHorizontalBox::Slot().FillWidth(0.42f).VAlign(VAlign_Center).Padding(0, 0, 8, 0)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(LabelText))
+                .AutoWrapText(true)
+            ]
+            + SHorizontalBox::Slot().FillWidth(0.58f).VAlign(VAlign_Center)
             [ W ]
         ];
     }

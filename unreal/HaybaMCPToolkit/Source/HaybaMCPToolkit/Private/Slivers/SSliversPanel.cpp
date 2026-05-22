@@ -23,7 +23,14 @@ void SSliversPanel::Construct(const FArguments& InArgs)
             ]
             + SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center).Padding(8, 0)
             [
-                SNew(STextBlock).Text(FText::FromString(TEXT("Slivers (deterministic abstractions)")))
+                SNew(STextBlock)
+                .ColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.57f, 0.65f)))
+                .Text_Lambda([this]()
+                {
+                    const int32 N = ListItems.Num();
+                    return FText::FromString(FString::Printf(TEXT("%d sliver%s installed"),
+                        N, N == 1 ? TEXT("") : TEXT("s")));
+                })
             ]
         ]
         + SVerticalBox::Slot().FillHeight(1.0f)
@@ -62,7 +69,12 @@ TSharedRef<ITableRow> SSliversPanel::OnGenerateRow(TSharedPtr<FHaybaSliverSpec> 
         ? FString::Printf(TEXT("%s   [%s]"), *Item->Title, *Item->Category)
         : FString();
     return SNew(STableRow<TSharedPtr<FHaybaSliverSpec>>, Owner)
-        [ SNew(STextBlock).Text(FText::FromString(DisplayText)) ];
+        [
+            SNew(STextBlock)
+            .Margin(FMargin(6, 4))
+            .Text(FText::FromString(DisplayText))
+            .AutoWrapText(true)
+        ];
 }
 
 void SSliversPanel::OnSelectionChanged(TSharedPtr<FHaybaSliverSpec> Item, ESelectInfo::Type)
