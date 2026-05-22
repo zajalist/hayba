@@ -36,6 +36,7 @@ import { dagRecordHandler, dagRecordSchema } from '../dag/record.js';
 import { dagRebuildHandler, dagRebuildSchema } from '../dag/rebuild.js';
 import { journalTailHandler, journalTailSchema } from '../dag/journal-tail.js';
 import { setAssetDagSink } from '../asset-sources/shared.js';
+import { toMcpResponse, registerJsonTool } from '../mcp-response.js';
 
 /** Tools registered by registerDeferredRouting itself — skip in shim re-register. */
 export const ALWAYS_ON_META = new Set<string>([
@@ -173,55 +174,43 @@ export async function registerDeferredRouting(
   const index = await ToolIndex.build(docs, { embeddings, cacheDir: effectiveCacheDir });
 
   // ── Register the 4 new meta-tools ──────────────────────────────────────────
-  server.tool(
+  registerJsonTool(server,
     'hayba_search_tools',
     'Find Hayba tools by capability before loading their pack. Hybrid BM25 + embedding search over the full tool catalog.',
     searchToolsSchema,
-    async (args: { query: string; k?: number; filterPack?: string }) => {
-      const r = await searchToolsHandler(args, { index });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { query: string; k?: number; filterPack?: string }) => searchToolsHandler(args, { index }),
   );
 
-  server.tool(
+  registerJsonTool(server,
     'hayba_pack_list',
     'List available Hayba tool packs (domain + workflow), with loaded flag and tool count.',
     packListSchema,
-    async () => {
-      const r = await packListHandler({}, { registry });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    () => packListHandler({}, { registry }),
   );
 
-  server.tool(
+  registerJsonTool(server,
     'hayba_pack_load',
     'Load a Hayba tool pack — registers its tools natively so the client sees them on the next list refresh.',
     packLoadSchema,
-    async (args: { name: string }) => {
-      const r = await packLoadHandler(args, { registry });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { name: string }) => packLoadHandler(args, { registry }),
   );
 
-  server.tool(
+  registerJsonTool(server,
     'hayba_invoke',
     'Polymorphic dispatcher: call any Hayba tool by name without loading its pack. Best for one-off calls; load the pack for repeated use.',
     invokeSchema,
-    async (args: { name: string; args: Record<string, unknown> }) => {
-      const r = await invokeHandler(args, {
-        dispatch: async (cmd, params) => {
-          // Prefer the captured handler if present — covers TS-side tools.
-          const t = captured.get(cmd);
-          if (t) {
-            return await Promise.resolve(t.handler(params));
-          }
-          // Otherwise dispatch via UE bridge.
-          return await executeCommand(cmd, params);
-        },
-        isDisabled: isToolDisabled,
-      });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { name: string; args: Record<string, unknown> }) => invokeHandler(args, {
+      dispatch: async (cmd, params) => {
+        // Prefer the captured handler if present — covers TS-side tools.
+        const t = captured.get(cmd);
+        if (t) {
+          return await Promise.resolve(t.handler(params));
+        }
+        // Otherwise dispatch via UE bridge.
+        return await executeCommand(cmd, params);
+      },
+      isDisabled: isToolDisabled,
+    }),
   );
 
   // ── Re-register the always-on tools from the captured set ─────────────────
@@ -252,15 +241,14 @@ export async function registerDeferredRouting(
   // wires onConnected → maybeAutoLoad('ue_connected'). The captured handler
   // calls checkUeStatus() with no args, missing the autoload trigger.
   if (captured.has('hayba_check_ue_status')) {
-    server.tool(
+    // Escape-hatched like the registry path below: this tool takes no
+    // description (2-arg schema form), which registerJsonTool doesn't model.
+    (server as unknown as { tool: (...a: unknown[]) => void }).tool(
       'hayba_check_ue_status',
       {},
-      async () => {
-        const status = await checkUeStatus({
-          onConnected: () => registry.maybeAutoLoad('ue_connected'),
-        });
-        return { content: [{ type: 'text' as const, text: JSON.stringify(status, null, 2) }] };
-      },
+      async () => toMcpResponse(await checkUeStatus({
+        onConnected: () => registry.maybeAutoLoad('ue_connected'),
+      })),
     );
     registeredNames.add('hayba_check_ue_status');
   }
@@ -272,34 +260,27 @@ export async function registerDeferredRouting(
   );
   setDefaultRetriever(retriever);
 
-  server.tool(
+  registerJsonTool(server,
     'hayba_asset_search',
     'Find an asset in the user\'s UE Content Browser by semantic intent or keyword. Hybrid BM25 + embedding search.',
     assetSearchSchema,
-    async (args: { query: string; k?: number; filterClass?: string; filterSource?: 'project' | 'polyhaven' | 'ambientcg' | 'sketchfab' | 'fab' | 'unknown' }) => {
-      const r = await assetSearchHandler(args, { retriever });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { query: string; k?: number; filterClass?: string; filterSource?: 'project' | 'polyhaven' | 'ambientcg' | 'sketchfab' | 'fab' | 'unknown' }) =>
+      assetSearchHandler(args, { retriever }),
   );
 
-  server.tool(
+  registerJsonTool(server,
     'hayba_asset_browse',
     'Enumerate assets by filter (path/class/tag/source) without semantic ranking. Paginated.',
     assetBrowseSchema,
-    async (args: { filter?: { path?: string; class?: string; tag?: string; source?: 'project' | 'polyhaven' | 'ambientcg' | 'sketchfab' | 'fab' | 'unknown' }; offset?: number; limit?: number }) => {
-      const r = await assetBrowseHandler(args, { retriever });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { filter?: { path?: string; class?: string; tag?: string; source?: 'project' | 'polyhaven' | 'ambientcg' | 'sketchfab' | 'fab' | 'unknown' }; offset?: number; limit?: number }) =>
+      assetBrowseHandler(args, { retriever }),
   );
 
-  server.tool(
+  registerJsonTool(server,
     'hayba_asset_reindex',
     'Force a rebuild of the asset index. Use after a batch import outside the MCP-tracked download flow.',
     assetReindexSchema,
-    async () => {
-      const r = await assetReindexHandler({}, { retriever });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    () => assetReindexHandler({}, { retriever }),
   );
 
   // ── DAG + journal (Layer 2 — operation tracking) ───────────────────────────
@@ -326,91 +307,67 @@ export async function registerDeferredRouting(
     console.warn(`[slivers] load error: ${err}`);
   }
 
-  server.tool(
+  registerJsonTool(server,
     'hayba_sliver_list',
     'List installed Slivers (deterministic abstractions). Optional category or namespace filter.',
     sliverListSchema,
-    async (args: { category?: string; namespace?: string }) => {
-      const r = await sliverListHandler(args, { loader: slivers.loader });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { category?: string; namespace?: string }) => sliverListHandler(args, { loader: slivers.loader }),
   );
 
-  server.tool(
+  registerJsonTool(server,
     'hayba_sliver_get',
     'Get the full spec (params + determinism + executor) of an installed sliver by id.',
     sliverGetSchema,
-    async (args: { id: string }) => {
-      const r = await sliverGetHandler(args, { loader: slivers.loader });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { id: string }) => sliverGetHandler(args, { loader: slivers.loader }),
   );
 
-  server.tool(
+  registerJsonTool(server,
     'hayba_sliver_run',
     'Execute a sliver with concrete parameter values. Returns outputs + declared side_effects + durationMs.',
     sliverRunSchema,
-    async (args: { id: string; params: Record<string, unknown> }) => {
-      const r = await sliverRunHandler(args, { runtime: slivers.runtime });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { id: string; params: Record<string, unknown> }) => sliverRunHandler(args, { runtime: slivers.runtime }),
   );
 
-  server.tool(
+  registerJsonTool(server,
     'hayba_sliver_import',
     'Install a sliver from a local file path or an http(s) URL into the user sliver library.',
     sliverImportSchema,
-    async (args: { source: string }) => {
-      const r = await sliverImportHandler(args, { loader: slivers.loader });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { source: string }) => sliverImportHandler(args, { loader: slivers.loader }),
   );
 
-  server.tool(
+  registerJsonTool(server,
     'hayba_dag_status',
     'Show the dependency graph of generated artifacts and which are stale (dirty).',
     dagStatusSchema,
-    async (args: { namespace?: string; dirtyOnly?: boolean }) => {
-      const r = await dagStatusHandler(args, { dag });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { namespace?: string; dirtyOnly?: boolean }) => dagStatusHandler(args, { dag }),
   );
 
-  server.tool(
+  registerJsonTool(server,
     'hayba_dag_record',
     'Record a mutation Hayba did not instrument (editor-side edits, manual writes) so the DAG stays accurate.',
     dagRecordSchema,
-    async (args: { reads?: string[]; writes: string[]; actor?: string; note?: string }) => {
-      const r = await dagRecordHandler(args, { dag });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { reads?: string[]; writes: string[]; actor?: string; note?: string }) => dagRecordHandler(args, { dag }),
   );
 
-  server.tool(
+  registerJsonTool(server,
     'hayba_dag_rebuild',
     'Re-run stale (dirty) artifacts. Optionally restrict to the subtree under a target URI.',
     dagRebuildSchema,
-    async (args: { target?: string }) => {
-      const r = await dagRebuildHandler(args, {
-        dag,
-        runSliverNode: async (uri: string) => {
-          return { ok: false, reason: uri.startsWith('sliver://')
-            ? 'sliver re-run from node id is v2'
-            : 'no executor for this node type' };
-        },
-      });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { target?: string }) => dagRebuildHandler(args, {
+      dag,
+      runSliverNode: async (uri: string) => {
+        return { ok: false, reason: uri.startsWith('sliver://')
+          ? 'sliver re-run from node id is v2'
+          : 'no executor for this node type' };
+      },
+    }),
   );
 
-  server.tool(
+  registerJsonTool(server,
     'hayba_journal_tail',
     'Return the most recent mutation operations from the journal.',
     journalTailSchema,
-    async (args: { limit?: number }) => {
-      const r = await journalTailHandler(args, { dag });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { limit?: number }) => journalTailHandler(args, { dag }),
   );
 
   // ── Always-load packs from settings ────────────────────────────────────────
