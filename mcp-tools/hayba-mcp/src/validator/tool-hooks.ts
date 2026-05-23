@@ -299,6 +299,118 @@ async function evaluateActorSpawnNotOnLandscape(ctx: ValidatorContext): Promise<
   };
 }
 
+// ── actor_tilted_but_not_buried ─────────────────────────────────────────────
+//
+// Fires when an agent snaps a tilted static-mesh prop flat onto the
+// landscape with z_offset >= 0. The pillar in the user's first screenshot
+// (BrokenPillar_06, pitch=78°) was the perfect example: snap_to_landscape
+// placed its pivot at the surface, but a real fallen pillar would have
+// cracked off its base and embedded into the dirt. The fix is a negative
+// z_offset to bury the base under the surface — the top stays visible
+// and tilted, but the prop reads as "fell here" instead of "floating".
+//
+// Triggers on both actor_spawn and actor_transform.
+async function evaluateActorTiltedNotBuried(ctx: ValidatorContext): Promise<ValidatorFinding | null> {
+  const args = asRecord(ctx.toolArgs);
+  const result = asRecord(ctx.toolResult);
+
+  // Only fire for mesh-style class_paths (actor_spawn) or once we know
+  // the actor exists (actor_transform). UClass spawns like
+  // DirectionalLight rotate by design — exclude those.
+  if (ctx.toolName === 'actor_spawn') {
+    const classPath = String(args.class_path ?? '');
+    if (!classPath.startsWith('/Game/')) return null;
+  }
+
+  const rot = Array.isArray(args.rotation) ? args.rotation as unknown[] : null;
+  if (!rot || rot.length !== 3) return null;
+  const pitch = Number(rot[0]);
+  const yaw = Number(rot[1]);
+  const roll = Number(rot[2]);
+  void yaw; // yaw is rotation about vertical — never causes float-on-surface issues.
+
+  function distFromStable(angleDeg: number): number {
+    if (!Number.isFinite(angleDeg)) return 0;
+    const norm = ((angleDeg % 360) + 360) % 360;
+    return Math.min(
+      Math.abs(norm - 0),
+      Math.abs(norm - 90),
+      Math.abs(norm - 180),
+      Math.abs(norm - 270),
+      Math.abs(norm - 360),
+    );
+  }
+  const pitchOff = distFromStable(pitch);
+  const rollOff = distFromStable(roll);
+  const tilted = pitchOff >= 10 || rollOff >= 10;
+  if (!tilted) return null;
+
+  // Snap-on-surface OR a positive z_offset both qualify as "not buried".
+  // The plugin's snap_to_landscape with z_offset:0 (or unset) lands the
+  // pivot on the surface — for a tilted prop that means floating.
+  const snapped = result.snapped_to_landscape === true || args.snap_to_landscape === true;
+  const zOffset = typeof args.z_offset === 'number' ? args.z_offset : 0;
+  if (!snapped) return null;        // not snapped → user controls Z directly
+  if (zOffset < -20) return null;   // already buried meaningfully
+
+  const label = String(args.label ?? result.label ?? args.actor_id ?? result.actor_id ?? '<unlabeled>');
+  return {
+    ruleId: 'actor_tilted_but_not_buried',
+    severity: 'warning',
+    message: `Tilted "${label}" (pitch=${pitch.toFixed(0)}° roll=${roll.toFixed(0)}°) snapped to surface with z_offset=${zOffset} — looks mid-fall instead of fallen`,
+    hint: 'For a tilted broken prop, pair snap_to_landscape:true with a negative z_offset (~-60 to -120 for stone) so the base embeds into the dirt. The top stays visible and tilted; the silhouette reads as "fell and embedded" rather than balanced on an edge.',
+    refs: ['[[actor-tilted-needs-burial]]'],
+    timestamp: nowIso(),
+    toolName: ctx.toolName,
+    context: {
+      label,
+      actor_id: typeof result.actor_id === 'string' ? result.actor_id : (typeof args.actor_id === 'string' ? args.actor_id : undefined),
+      pitch, yaw, roll,
+      pitch_off_cardinal: pitchOff,
+      roll_off_cardinal: rollOff,
+      z_offset: zOffset,
+    },
+  };
+}
+
+// ── actor_snap_to_landscape_silently_failed ─────────────────────────────────
+//
+// Fires when the agent passed snap_to_landscape:true but the plugin
+// response does NOT include snapped_to_landscape:true. Means the line
+// trace missed the LandscapeProxy (typically because other actors are
+// stacked above the spawn XY and intercepted a LineTraceSingle hit).
+// The 2026-05-23 Palestine scene shipped a CorbelSadness + several
+// rocks at z=0 (below the visible ground) for exactly this reason —
+// the agent thought the snap had worked because no error came back.
+async function evaluateActorSnapSilentFailure(ctx: ValidatorContext): Promise<ValidatorFinding | null> {
+  const args = asRecord(ctx.toolArgs);
+  const result = asRecord(ctx.toolResult);
+  if (args.snap_to_landscape !== true) return null;
+  // If the plugin DID snap, response carries snapped_to_landscape:true
+  // (and snapped_z). Absence of that key after asking for snap = silent
+  // failure.
+  if (result.snapped_to_landscape === true) return null;
+  // If the response is an error / plan-mode rejection, skip — the spawn
+  // didn't happen and a separate failure path will surface it.
+  if (result.status === 'plan_mode_required' || result.error) return null;
+
+  const label = String(args.label ?? result.label ?? args.actor_id ?? result.actor_id ?? '<unlabeled>');
+  return {
+    ruleId: 'actor_snap_to_landscape_silently_failed',
+    severity: 'warning',
+    message: `"${label}" requested snap_to_landscape but the response shows it did not snap — actor is likely floating or buried`,
+    hint: 'The line trace probably hit another actor stacked above this XY before reaching the landscape. Rebuild the plugin to pick up PR #232 commit 12 (LineTraceMulti + IgnoredActor) which fixes this, OR transform the actor explicitly to a Z that matches nearby snapped neighbours.',
+    refs: ['[[actor-snap-silent-failure]]'],
+    timestamp: nowIso(),
+    toolName: ctx.toolName,
+    context: {
+      label,
+      actor_id: typeof result.actor_id === 'string' ? result.actor_id : (typeof args.actor_id === 'string' ? args.actor_id : undefined),
+      requested_snap: true,
+    },
+  };
+}
+
 // ── installer ───────────────────────────────────────────────────────────────
 
 let INSTALLED = false;
@@ -313,6 +425,8 @@ export function installToolHooks(): void {
   attachEvaluator('asset_browse_describe_assets_missing',   evaluateAssetBrowseDescribeMissing);
   attachEvaluator('tcp_socket_to_self_in_python_run',       evaluatePythonRunSelfSocket);
   attachEvaluator('actor_spawn_not_on_landscape',           evaluateActorSpawnNotOnLandscape);
+  attachEvaluator('actor_tilted_but_not_buried',            evaluateActorTiltedNotBuried);
+  attachEvaluator('actor_snap_to_landscape_silently_failed', evaluateActorSnapSilentFailure);
 }
 
 /** Re-export so the test suite can reset between runs. */

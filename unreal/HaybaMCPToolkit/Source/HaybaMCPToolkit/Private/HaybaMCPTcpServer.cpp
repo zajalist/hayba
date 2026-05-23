@@ -1,6 +1,8 @@
 #include "HaybaMCPTcpServer.h"
 #include "HaybaMCPCommandHandler.h"
 #include "Async/Async.h"
+#include "Async/Future.h"
+#include "Misc/ScopeExit.h"
 #include "Serialization/JsonSerializer.h"
 #include "SocketSubsystem.h"
 #include "IPAddress.h"
@@ -176,23 +178,44 @@ void FHaybaMCPTcpServer::HandleClientConnection(FSocket* ClientSocket)
         }
 
         // Capture the SHARED REF (not the raw socket pointer) into the
-        // game-thread lambda by value. This is the load-bearing fix:
-        // SendMessage can then unwrap the strong ref and know the FSocket
-        // is alive for the duration of its write, even if the worker thread
-        // observed disconnect and unregistered in the meantime.
+        // game-thread lambda by value — the lambda owns a strong ref so
+        // the FSocket can't be freed under it even if the worker observes
+        // disconnect in the meantime.
         TSharedPtr<FHaybaMCPConnection> ConnForLambda = ConnRef;
-        AsyncTask(ENamedThreads::GameThread, [this, Message, ConnForLambda]()
+
+        // Serialize PER CONNECTION: block this worker thread on a future
+        // until the game-thread task finishes before reading the next
+        // message. Without this, multiple TCP messages from the same
+        // client can pipeline into the game-thread task queue while a
+        // previous command's heavy work (e.g. set_editor_property on a
+        // Landscape) is still executing. UE's task graph asserts on
+        // re-entrant queue push (TaskGraph.cpp:689
+        // ++Queue(QueueIndex).RecursionGuard == 1) and the editor
+        // crashes. Per-connection serialization makes this impossible;
+        // cross-connection work still runs in parallel because each
+        // connection has its own worker thread.
+        TSharedRef<TPromise<void>, ESPMode::ThreadSafe> Done =
+            MakeShared<TPromise<void>, ESPMode::ThreadSafe>();
+        TFuture<void> WaitDone = Done->GetFuture();
+        AsyncTask(ENamedThreads::GameThread, [this, Message, ConnForLambda, Done]()
         {
+            // SetValue must be called exactly once even on early returns —
+            // wrap the body so the worker is always unblocked.
+            ON_SCOPE_EXIT { Done->SetValue(); };
             if (!CommandHandler.IsValid()) return;
-            // ConnForLambda is the strong ref. ConnForLambda->Socket is the
-            // raw FSocket* we'll pass to SendMessage (ABI-stable param).
-            // The shared ref keeps the FSocket alive throughout this lambda.
             FString ResponseString = CommandHandler->ProcessCommand(Message);
             if (ConnForLambda.IsValid() && ConnForLambda->bAlive && ConnForLambda->Socket)
             {
                 SendMessage(ConnForLambda->Socket, ResponseString);
             }
         });
+        // Block this worker thread until the game-thread task drains.
+        // No timeout — the operation might be a slow editor mutation like
+        // landscape material reassignment (multi-second) and a timeout
+        // here would leak a pending task into the game-thread queue and
+        // re-introduce the very race we're guarding against. The worker
+        // is per-connection, so blocking it only affects this client.
+        WaitDone.Wait();
     }
 }
 

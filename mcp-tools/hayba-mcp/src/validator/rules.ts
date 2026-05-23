@@ -151,10 +151,26 @@ export const RULES: ValidatorRule[] = [
   {
     id: 'actor_spawn_not_on_landscape',
     severity: 'warning',
-    message: 'actor_spawn placed a mesh actor with no snap_to_landscape — props will float or bury',
-    hint: 'You called actor_spawn with a StaticMesh class_path and an explicit Z, but did not pass snap_to_landscape: true. If the landscape height at the spawn XY is not what you guessed, the actor will float in the sky or sink under the ground. Pass snap_to_landscape: true (and z_offset for pivot-shifted assets like SM_GiantTree_01 which needs -380) so the plugin line-traces the landscape for you. The 2026-05-23 Palestine scene session spent ten minutes round-tripping through python_run because this parameter did not exist — it does now.',
-    refs: ['[[actor-spawn-snap-to-landscape]]'],
+    message: 'Mesh was placed with an explicit Z and snap_to_landscape was not set — likely floats or buries',
+    hint: 'Pass snap_to_landscape:true so the plugin line-traces the landscape and puts the actor on the surface. For meshes whose pivot is not at their visible base (e.g. SM_GiantTree_01, whose roots stick 380 units above the pivot), pair with z_offset:-380 so the visible base sits on the ground instead of floating above it.',
+    refs: [],
     trigger: { after_tool: 'actor_spawn' },
+  },
+  {
+    id: 'actor_tilted_but_not_buried',
+    severity: 'warning',
+    message: 'Tilted prop snapped flat to the surface — reads as floating mid-fall',
+    hint: 'A heavy prop (pillar, wall, stone) tilted more than ~10° off vertical/horizontal but sitting exactly on the surface looks balanced impossibly. Real fallen stones embed into the dirt as they hit. Pair snap_to_landscape:true with a negative z_offset around -60 to -120 so the base sinks slightly under the ground; the top stays visible and tilted, and the silhouette reads as fallen instead of mid-tip.',
+    refs: [],
+    trigger: { after_tool: ['actor_spawn', 'actor_transform'] },
+  },
+  {
+    id: 'actor_snap_to_landscape_silently_failed',
+    severity: 'warning',
+    message: 'snap_to_landscape was requested but the trace did not find the landscape',
+    hint: 'The line trace under the actor did not hit a landscape — usually because another actor was stacked above the spawn point and intercepted the trace, OR the XY is outside the landscape extent. Result: the actor stays at whatever Z you passed (often 0), which is typically under the ground. Move the actor (actor_transform with snap_to_landscape:true once the obstruction is gone, or with an explicit Z matching nearby snapped actors) and re-check the response for snapped_to_landscape:true.',
+    refs: [],
+    trigger: { after_tool: ['actor_spawn', 'actor_transform'] },
   },
 ];
 
