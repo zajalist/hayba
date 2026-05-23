@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hayba.dev/schemas/legacy-commands-sidecar.json",
+  "title": "Hayba MCP legacy command sidecar",
+  "description": "Hand-authored schema for every UE-side command in HaybaMCPLegacyHandler::ProcessCommand. Used by get_tool_signature to surface parameter docs for commands that have no TS Zod registration, and by hayba_invoke (via:'ue_legacy') to gate which commands are agent-callable.",
+  "type": "object",
+  "required": ["version", "commands"],
+  "additionalProperties": true,
+  "properties": {
+    "_doc": { "type": "string" },
+    "version": { "type": "integer", "minimum": 1 },
+    "commands": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/definitions/command" }
+    }
+  },
+  "definitions": {
+    "command": {
+      "type": "object",
+      "required": ["handler_cpp", "params", "returns", "agent_callable", "has_ts_wrapper"],
+      "additionalProperties": true,
+      "properties": {
+        "aliases": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "handler_cpp": { "type": "string" },
+        "params": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/param" }
+        },
+        "returns": { "$ref": "#/definitions/returns" },
+        "agent_callable": { "type": "boolean" },
+        "has_ts_wrapper": { "type": "boolean" },
+        "notes": { "type": "string" }
+      }
+    },
+    "param": {
+      "type": "object",
+      "required": ["name", "type", "required"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "type": {
+          "type": "string",
+          "enum": ["string", "number", "integer", "boolean", "object", "array", "any"]
+        },
+        "required": { "type": "boolean" },
+        "default": {},
+        "description": { "type": "string" }
+      }
+    },
+    "returns": {
+      "type": "object",
+      "required": ["shape"],
+      "additionalProperties": true,
+      "properties": {
+        "shape": {
+          "type": "string",
+          "enum": ["object", "array", "string", "number", "boolean", "any"]
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "type"],
+            "additionalProperties": true,
+            "properties": {
+              "name": { "type": "string" },
+              "type": { "type": "string" },
+              "description": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

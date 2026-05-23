@@ -1,31 +1,30 @@
 import { z, type ZodRawShape } from 'zod';
 import { getRawShape } from '../../schema-registry.js';
+import { listAgentCallableLegacyCommands } from '../../../legacy-commands/index.js';
 
 /**
- * Legacy UE commands that are safe to call via `hayba_invoke({ via: 'ue_legacy' })`.
+ * Built once at module load from sidecar.json. Every entry with
+ * agent_callable:true is admitted; aliases are first-class names in the
+ * sidecar so we don't need to flatten them here. Update the sidecar to
+ * change the allowlist — there is intentionally no other knob.
  *
- * These are dispatched directly to the UE plugin via the TCP bridge, bypassing
- * the TS captured-tools map. Add a command here only when it is known to be
- * game-thread-safe (or marshals to the game thread internally) and has stable
- * params. See the postmortem at
- * `docs/superpowers/specs/2026-05-23-pcg-landscape-mcp-postmortem.md` §3.3.
+ * See the postmortem at
+ * `docs/superpowers/specs/2026-05-23-pcg-landscape-mcp-postmortem.md` §3.3
+ * for the rationale behind the ue_legacy fallthrough.
  */
-export const UE_LEGACY_ALLOWLIST = new Set<string>([
-  'landscape_import',
-  'describe_assets',
-  'pcg_create_graph',
-  'pcg_execute_graph',
-  'pcg_export_graph',
-  'pcg_list_assets',
-  'pcg_validate_graph',
-  'pcg_read_node_output',
-]);
+const LEGACY_ALLOWLIST: ReadonlySet<string> = listAgentCallableLegacyCommands();
+
+/**
+ * Back-compat re-export. The hardcoded set was the original PR #228 surface;
+ * it now derives from sidecar.json so the schema authoring loop is single-source.
+ */
+export const UE_LEGACY_ALLOWLIST: ReadonlySet<string> = LEGACY_ALLOWLIST;
 
 export const invokeSchema = {
   name: z.string().min(1),
   args: z.record(z.unknown()).default({}),
   via: z.enum(['ts', 'ue_legacy']).optional().default('ts')
-    .describe('Dispatch route. "ts" (default) looks the tool up in the TS captured map. "ue_legacy" calls executeCommand(name, args) directly against the UE plugin — only allowlisted commands accepted (see UE_LEGACY_ALLOWLIST).'),
+    .describe('Dispatch route. "ts" (default) looks the tool up in the TS captured map. "ue_legacy" calls executeCommand(name, args) directly against the UE plugin — only commands marked agent_callable:true in legacy-commands/sidecar.json are accepted.'),
 };
 
 export type InvokeResult =
@@ -49,8 +48,14 @@ export async function invokeHandler(
   if (ctx.isDisabled(args.name)) {
     return { ok: false, error: { kind: 'tool_disabled', name: args.name } };
   }
+  // UE-legacy route: when via:'ue_legacy' is set, dispatch the raw command
+  // through the UE bridge. This is the safety hatch that makes a legacy
+  // command reachable from hayba_invoke even when no TS wrapper has been
+  // written yet — without it, the agent would hit unknown_tool and reach
+  // for python_run, which was the trigger for the 2026-05-23 PCG/landscape
+  // postmortem.
   if (via === 'ue_legacy') {
-    if (!UE_LEGACY_ALLOWLIST.has(args.name)) {
+    if (!LEGACY_ALLOWLIST.has(args.name)) {
       return { ok: false, error: { kind: 'legacy_not_allowlisted', name: args.name } };
     }
     const legacy = ctx.dispatchLegacy ?? ctx.dispatch;

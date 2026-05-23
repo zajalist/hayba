@@ -22,6 +22,7 @@ The TypeScript MCP server that bridges agent hosts (Claude Code, Claude Desktop,
 - **ToolIndex** — `src/tools/routing/tool-index.ts`. Hybrid BM25 (always) + embedding (Ollama → `@huggingface/transformers` → BM25-only fallback) tool catalog. Reciprocal-rank-fusion merge. Disk-cached at `Saved/HaybaMCP/tool-index.{bm25.json,meta.json}` and rebuilt on hash mismatch.
 - **Disabled-tools set** — `Saved/HaybaMCP/disabled-tools.json`. The MCP Capabilities panel writes it; both TS server and C++ plugin read it. Filtered at the meta-tool boundary so disabled tools are invisible to the agent.
 - **Cognitive map** / **Scene Map** — top-down semantic clustering of the level rendered in the Hayba plugin panel. Cells are spatial bins; each cell is labelled by `ClassifyDominant` in `HaybaMCPCogMapBuilder.cpp` (C++ side).
+- **Legacy command sidecar** — `src/legacy-commands/sidecar.json`. Hand-authored source of truth for every UE-side command in `HaybaMCPLegacyHandler::Handle`. Fed into `get_tool_signature` (so legacy commands surface real param docs instead of `no_schema_available`) and into the `hayba_invoke` `via:'ue_legacy'` allowlist. Invariants are enforced by `scripts/check-legacy-wrappers.mjs` (npm run lint:legacy-wrappers, CI step "Legacy command wrapper lint"). Adding a legacy command: register in the .cpp dispatch table, add a sidecar entry, run the lint.
 
 ## Architectural principles in force
 

@@ -1,0 +1,911 @@
+{
+  "$schema": "./sidecar.schema.json",
+  "_doc": "Hand-authored sidecar for UE-side commands routed through HaybaMCPLegacyHandler::Handle (see unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPLegacyHandler.cpp). This file is the single source of truth for: (a) the parameter docs surfaced by get_tool_signature for legacy commands that have no TS Zod registration, and (b) the allowlist that hayba_invoke consults when called with via:'ue_legacy'. INVARIANTS (enforced by scripts/check-legacy-wrappers.ts and CI): every dispatch-table command in the .cpp MUST have an entry here (including aliases); every entry with has_ts_wrapper:true MUST have a corresponding executeCommand('<name>', ...) or dispatch('<name>', ...) call somewhere under src/tools/**; every entry with has_ts_wrapper:false MUST NOT have such a call. To add a new legacy command: register it in the .cpp dispatch table, add an entry here (with aliases array if any), set has_ts_wrapper to whatever's true, run `npm run lint:legacy-wrappers`. Marking agent_callable:false hides it from hayba_invoke via:'ue_legacy' while still letting get_tool_signature document it (e.g. ping, wizard_chat — internal/diagnostic).",
+  "version": 1,
+  "commands": {
+    "ping": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_Ping",
+      "params": [],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "status",
+            "type": "string",
+            "description": "always 'ok'"
+          },
+          {
+            "name": "ueVersion",
+            "type": "string",
+            "description": "e.g. '5.7'"
+          },
+          {
+            "name": "plugin",
+            "type": "string",
+            "description": "'HaybaMCPToolkit'"
+          },
+          {
+            "name": "pluginVersion",
+            "type": "string",
+            "description": "semver string"
+          }
+        ]
+      },
+      "agent_callable": false,
+      "has_ts_wrapper": false,
+      "notes": "Diagnostic ping used by sidecar discovery handshake. Not exposed to agents via hayba_invoke — call check_ue_status instead."
+    },
+    "list_node_classes": {
+      "aliases": [
+        "pcg_list_node_classes"
+      ],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_ListNodeClasses",
+      "params": [
+        {
+          "name": "category",
+          "type": "string",
+          "required": false,
+          "description": "Substring filter on derived category (Pathfinding, Clusters, Paths, Sampling, Topology, Tensors, Shapes, Layout, Spatial, Meta, FloodFill, Misc, PCG/Vanilla)"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "classes",
+            "type": "array",
+            "description": "Array of {class, category, inputs[], outputs[]}"
+          },
+          {
+            "name": "count",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Prefer hayba_search_node_catalog for ranked search; this is the raw enumeration."
+    },
+    "pcg_list_node_classes": {
+      "aliases": [
+        "list_node_classes"
+      ],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_ListNodeClasses",
+      "params": [
+        {
+          "name": "category",
+          "type": "string",
+          "required": false,
+          "description": "Substring filter on derived category"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "classes",
+            "type": "array"
+          },
+          {
+            "name": "count",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Alias of list_node_classes."
+    },
+    "get_node_details": {
+      "aliases": [
+        "pcg_get_node_details"
+      ],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_GetNodeDetails",
+      "params": [
+        {
+          "name": "class",
+          "type": "string",
+          "required": true,
+          "description": "PCG settings class name; leading U/A prefix is stripped"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "class",
+            "type": "string"
+          },
+          {
+            "name": "inputs",
+            "type": "array",
+            "description": "Pin info: [{label, type, required, allowMultipleConnections}]"
+          },
+          {
+            "name": "outputs",
+            "type": "array"
+          },
+          {
+            "name": "properties",
+            "type": "array",
+            "description": "[{name, type, default, enum_values?}]"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Wrapped by hayba_get_node_details (src/tools/get-node-details.ts) which prefers the cached catalog and falls back to this command."
+    },
+    "pcg_get_node_details": {
+      "aliases": [
+        "get_node_details"
+      ],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_GetNodeDetails",
+      "params": [
+        {
+          "name": "class",
+          "type": "string",
+          "required": true,
+          "description": "PCG settings class name"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "class",
+            "type": "string"
+          },
+          {
+            "name": "inputs",
+            "type": "array"
+          },
+          {
+            "name": "outputs",
+            "type": "array"
+          },
+          {
+            "name": "properties",
+            "type": "array"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Alias of get_node_details (the get-node-details.ts wrapper dispatches the non-aliased form)."
+    },
+    "list_pcg_assets": {
+      "aliases": [
+        "pcg_list_assets"
+      ],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_ListPCGAssets",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": false,
+          "default": "/Game/",
+          "description": "Recursive package path filter"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "assets",
+            "type": "array",
+            "description": "[{name, path, nodeCount?, edgeCount?}]"
+          },
+          {
+            "name": "count",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Wrapped by hayba_list_pcg_assets (src/tools/list-pcg-assets.ts). Game-thread marshaled."
+    },
+    "pcg_list_assets": {
+      "aliases": [
+        "list_pcg_assets"
+      ],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_ListPCGAssets",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": false,
+          "default": "/Game/"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "assets",
+            "type": "array"
+          },
+          {
+            "name": "count",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Alias of list_pcg_assets (the list-pcg-assets.ts wrapper dispatches the non-aliased form)."
+    },
+    "export_graph": {
+      "aliases": [
+        "pcg_export_graph"
+      ],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_ExportGraph",
+      "params": [
+        {
+          "name": "assetPath",
+          "type": "string",
+          "required": true,
+          "description": "UE object path to the PCGGraph asset (e.g. /Game/PCG/MyGraph.MyGraph)"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "graph",
+            "type": "object",
+            "description": "Full graph JSON: {version, meta, nodes[], edges[], metadata}"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Wrapped by hayba_export_pcg_graph (src/tools/export-pcg-graph.ts). Game-thread marshaled."
+    },
+    "pcg_export_graph": {
+      "aliases": [
+        "export_graph"
+      ],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_ExportGraph",
+      "params": [
+        {
+          "name": "assetPath",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "graph",
+            "type": "object"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Alias of export_graph (the export-pcg-graph.ts wrapper dispatches the non-aliased form)."
+    },
+    "create_graph": {
+      "aliases": [
+        "pcg_create_graph"
+      ],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_CreateGraph",
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "description": "Asset name; non-alnum chars are collapsed to '_'. Saved under /Game/Hayba/Generated/<name>"
+        },
+        {
+          "name": "graph",
+          "type": "object",
+          "required": true,
+          "description": "Graph payload: {nodes:[{id, class, position?:{x,y}, properties:{...}}], edges:[{fromNode|from, fromPin, toNode|to, toPin}]}"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "created",
+            "type": "boolean"
+          },
+          {
+            "name": "assetPath",
+            "type": "string",
+            "description": "/Game/Hayba/Generated/<sanitized-name> (only when created:true)"
+          },
+          {
+            "name": "nodeCount",
+            "type": "number"
+          },
+          {
+            "name": "errors",
+            "type": "array",
+            "description": "Present when created:false — same shape as validate_graph errors"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Wrapped by hayba_create_pcg_graph (src/tools/create-pcg-graph.ts). Validates before creating; on validation failure returns {created:false, errors:[...]}."
+    },
+    "pcg_create_graph": {
+      "aliases": [
+        "create_graph"
+      ],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_CreateGraph",
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "graph",
+          "type": "object",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "created",
+            "type": "boolean"
+          },
+          {
+            "name": "assetPath",
+            "type": "string"
+          },
+          {
+            "name": "nodeCount",
+            "type": "number"
+          },
+          {
+            "name": "errors",
+            "type": "array"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Alias of create_graph (the create-pcg-graph.ts wrapper dispatches the non-aliased form)."
+    },
+    "validate_graph": {
+      "aliases": [
+        "pcg_validate_graph"
+      ],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_ValidateGraph",
+      "params": [
+        {
+          "name": "graph",
+          "type": "object",
+          "required": true,
+          "description": "Same graph payload shape as create_graph"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "valid",
+            "type": "boolean"
+          },
+          {
+            "name": "errors",
+            "type": "array",
+            "description": "[{type, node?, pin?, detail}]"
+          },
+          {
+            "name": "errorCount",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Wrapped by hayba_validate_pcg_graph (src/tools/validate-pcg-graph.ts). Pure validation — does not touch UE world state."
+    },
+    "pcg_validate_graph": {
+      "aliases": [
+        "validate_graph"
+      ],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_ValidateGraph",
+      "params": [
+        {
+          "name": "graph",
+          "type": "object",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "valid",
+            "type": "boolean"
+          },
+          {
+            "name": "errors",
+            "type": "array"
+          },
+          {
+            "name": "errorCount",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Alias of validate_graph (the validate-pcg-graph.ts wrapper dispatches the non-aliased form)."
+    },
+    "execute_graph": {
+      "aliases": [
+        "pcg_execute_graph"
+      ],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_ExecuteGraph",
+      "params": [
+        {
+          "name": "assetPath",
+          "type": "string",
+          "required": true,
+          "description": "UE object path to the PCGGraph asset"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "success",
+            "type": "boolean"
+          },
+          {
+            "name": "componentsExecuted",
+            "type": "number",
+            "description": "Count of PCGComponents in the world that reference this graph and were triggered. ZERO means the graph runs no instances — verify HISM counts before claiming success (see verify-by-viewport skill)."
+          },
+          {
+            "name": "note",
+            "type": "string",
+            "description": "Present only when componentsExecuted is 0"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Wrapped by hayba_execute_pcg_graph (src/tools/execute-pcg-graph.ts). Game-thread marshaled. Returning success:true with componentsExecuted>0 is NOT proof that instances were placed — see the 2026-05-23 PCG/landscape postmortem."
+    },
+    "pcg_execute_graph": {
+      "aliases": [
+        "execute_graph"
+      ],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_ExecuteGraph",
+      "params": [
+        {
+          "name": "assetPath",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "success",
+            "type": "boolean"
+          },
+          {
+            "name": "componentsExecuted",
+            "type": "number"
+          },
+          {
+            "name": "note",
+            "type": "string"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Alias of execute_graph (the execute-pcg-graph.ts wrapper dispatches the non-aliased form)."
+    },
+    "wizard_chat": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_WizardChat",
+      "params": [
+        {
+          "name": "sessionId",
+          "type": "string",
+          "required": false,
+          "description": "Opaque session identifier maintained by the caller"
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "required": false,
+          "description": "Free-form user message. Prefix with '[INIT]' to start a session (uses goal to pick a step list) or '[FINALIZE]' to end it."
+        },
+        {
+          "name": "goal",
+          "type": "string",
+          "required": false,
+          "description": "Used during [INIT] to choose the step list: keywords city/urban, dungeon/room, forest/path map to specialized step lists; anything else gets a generic 4-step plan."
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "message",
+            "type": "string",
+            "description": "Human-readable chat response"
+          },
+          {
+            "name": "steps",
+            "type": "array",
+            "description": "Present only on [INIT]: [{name}]"
+          }
+        ]
+      },
+      "agent_callable": false,
+      "has_ts_wrapper": false,
+      "notes": "Hardcoded wizard-style chat for the in-editor panel. Not useful from agents — use hayba_initiate_infrastructure_brainstorm instead."
+    },
+    "import_landscape": {
+      "aliases": [
+        "landscape_import"
+      ],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_ImportLandscape",
+      "params": [
+        {
+          "name": "heightmapPath",
+          "type": "string",
+          "required": true,
+          "description": "Absolute path to PNG or R16 heightmap on disk"
+        },
+        {
+          "name": "worldSizeKm",
+          "type": "number",
+          "required": false,
+          "default": 8,
+          "description": "Landscape XY size in km"
+        },
+        {
+          "name": "maxHeightM",
+          "type": "number",
+          "required": false,
+          "default": 600,
+          "description": "Max height in meters (uint16 sample 65535 maps to maxHeightM)"
+        },
+        {
+          "name": "actorLabel",
+          "type": "string",
+          "required": false,
+          "default": "Hayba_Terrain",
+          "description": "Spawned actor label"
+        },
+        {
+          "name": "landscapeMaterial",
+          "type": "string",
+          "required": false,
+          "description": "UE material object path (e.g. /Game/Materials/M_Landscape.M_Landscape); empty assigns no material"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "actorLabel",
+            "type": "string"
+          },
+          {
+            "name": "heightmapPath",
+            "type": "string"
+          },
+          {
+            "name": "worldSizeKm",
+            "type": "number"
+          },
+          {
+            "name": "maxHeightM",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Wrapped by hayba_import_landscape (src/tools/index.ts). Game-thread marshaled in the plugin (see PR #229). Also reachable via hayba_invoke({ via: 'ue_legacy' }). See the 2026-05-23 PCG/landscape postmortem."
+    },
+    "landscape_import": {
+      "aliases": [
+        "import_landscape"
+      ],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_ImportLandscape",
+      "params": [
+        {
+          "name": "heightmapPath",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "worldSizeKm",
+          "type": "number",
+          "required": false,
+          "default": 8
+        },
+        {
+          "name": "maxHeightM",
+          "type": "number",
+          "required": false,
+          "default": 600
+        },
+        {
+          "name": "actorLabel",
+          "type": "string",
+          "required": false,
+          "default": "Hayba_Terrain"
+        },
+        {
+          "name": "landscapeMaterial",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "actorLabel",
+            "type": "string"
+          },
+          {
+            "name": "heightmapPath",
+            "type": "string"
+          },
+          {
+            "name": "worldSizeKm",
+            "type": "number"
+          },
+          {
+            "name": "maxHeightM",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Alias of import_landscape — the name discoverable in list_tool_categories under the 'pcg' domain. Wrapped by hayba_import_landscape (src/tools/index.ts uses this exact name as the dispatch target). See PR #229 for the game-thread marshal fix."
+    },
+    "read_node_output": {
+      "aliases": [
+        "pcg_read_node_output"
+      ],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_ReadNodeOutput",
+      "params": [
+        {
+          "name": "assetPath",
+          "type": "string",
+          "required": true,
+          "description": "UE object path to the PCGGraph asset"
+        },
+        {
+          "name": "nodeId",
+          "type": "string",
+          "required": true,
+          "description": "Node id from the export_graph payload (e.g. 'node_003')"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "geometry_type",
+            "type": "string",
+            "description": "point|spline|polyline|unknown"
+          },
+          {
+            "name": "point_count",
+            "type": "number"
+          },
+          {
+            "name": "attributes",
+            "type": "array",
+            "description": "Attribute names present on the cached output"
+          },
+          {
+            "name": "value_ranges",
+            "type": "object",
+            "description": "Per-attribute {min, max} where numeric"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Reads cached output data from the PCGComponent's last Generate() call. Returns zero counts if the graph has not been executed."
+    },
+    "pcg_read_node_output": {
+      "aliases": [
+        "read_node_output"
+      ],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_ReadNodeOutput",
+      "params": [
+        {
+          "name": "assetPath",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "nodeId",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "geometry_type",
+            "type": "string"
+          },
+          {
+            "name": "point_count",
+            "type": "number"
+          },
+          {
+            "name": "attributes",
+            "type": "array"
+          },
+          {
+            "name": "value_ranges",
+            "type": "object"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Alias of read_node_output."
+    },
+    "describe_assets": {
+      "aliases": [
+        "asset_browse"
+      ],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_DescribeAssets",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": false,
+          "default": "/Game",
+          "description": "Single recursive package path to enumerate"
+        },
+        {
+          "name": "paths",
+          "type": "array",
+          "required": false,
+          "description": "Explicit list of package directories or object paths. If supplied, overrides 'path' and disables recursion."
+        },
+        {
+          "name": "class",
+          "type": "string",
+          "required": false,
+          "description": "Substring filter on the asset class name (case-insensitive)"
+        },
+        {
+          "name": "tag",
+          "type": "string",
+          "required": false,
+          "description": "Substring filter on tag key OR value (case-insensitive)"
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "required": false,
+          "default": 200,
+          "description": "Max assets to return per call (1..2000)"
+        },
+        {
+          "name": "offset",
+          "type": "integer",
+          "required": false,
+          "default": 0,
+          "description": "Pagination offset"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "assets",
+            "type": "array",
+            "description": "[{path, name, class, tags[], lastModified, package_name, asset_name, asset_class}]"
+          },
+          {
+            "name": "total",
+            "type": "number"
+          },
+          {
+            "name": "offset",
+            "type": "number"
+          },
+          {
+            "name": "limit",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Wrapped indirectly by the asset-retriever (src/tools/asset-retriever/asset-indexer.ts) which dispatches describe_assets and falls back to list_pcg_assets on unknown_command. Game-thread marshaled."
+    },
+    "asset_browse": {
+      "aliases": [
+        "describe_assets"
+      ],
+      "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_DescribeAssets",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": false,
+          "default": "/Game"
+        },
+        {
+          "name": "paths",
+          "type": "array",
+          "required": false
+        },
+        {
+          "name": "class",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "tag",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "required": false,
+          "default": 200
+        },
+        {
+          "name": "offset",
+          "type": "integer",
+          "required": false,
+          "default": 0
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "assets",
+            "type": "array"
+          },
+          {
+            "name": "total",
+            "type": "number"
+          },
+          {
+            "name": "offset",
+            "type": "number"
+          },
+          {
+            "name": "limit",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Alias of describe_assets — the agent-friendly name surfaced as the hayba_asset_browse routing tool."
+    }
+  }
+}

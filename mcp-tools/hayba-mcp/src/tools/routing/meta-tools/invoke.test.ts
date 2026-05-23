@@ -104,5 +104,18 @@ describe('hayba_invoke', () => {
         expect(UE_LEGACY_ALLOWLIST.has(cmd)).toBe(true);
       }
     });
+
+    it('rejects an agent_callable:false sidecar entry (e.g. ping)', async () => {
+      // ping is in the sidecar but marked agent_callable:false because
+      // it's a discovery handshake, not an agent-driven tool.
+      const dispatch = vi.fn();
+      const res = await invokeHandler(
+        { name: 'ping', args: {}, via: 'ue_legacy' },
+        { dispatch, isDisabled: () => false },
+      );
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.error.kind).toBe('legacy_not_allowlisted');
+      expect(dispatch).not.toHaveBeenCalled();
+    });
   });
 });
