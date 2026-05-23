@@ -90,6 +90,18 @@ Extends Part 3 of the parent spec. Rules below are added to `scene_validate v2` 
 | `non_hism_when_foliage_capable` | StaticMeshActor uses a mesh that has a FoliageType variant in the project — should be a foliage instance, not an actor | Cross-reference mesh paths |
 | `actor_in_unloaded_wp_cell` | Spawned actor in a cell that is not currently loaded in the editor view — invisible to the agent during build | Read WP streaming state |
 
+### F. Postmortem-driven rules (2026-05-23 PCG/landscape session)
+
+Added from `docs/superpowers/specs/2026-05-23-pcg-landscape-mcp-postmortem.md` §6. These five rules close the loopholes exposed in the session where PCG returned `componentsExecuted: 1` with zero instances, a `LandscapePlaceholder` stub got mistaken for a real Landscape, and a TCP-socket workaround crashed the editor.
+
+| Rule | Detect | Fix |
+|---|---|---|
+| `pcg_zero_instances_after_execute` | `hayba_execute_pcg_graph` returned `componentsExecuted > 0` but no HISM instances spawned within 5s of completion | Warning: surface the affected component output, suggest checking the `Surface` input type (likely not a `LandscapeProxy`) |
+| `pcg_surface_source_not_landscape` | `PCGSurfaceSamplerSettings.Surface` is fed by `PCGDataFromActorSettings` whose actor selector targets a non-`Landscape` class | Hard error — known not to work; suggest `PCGGetLandscapeSettings(ActorSelection=ByClass, ActorSelectionClass=LandscapeProxy)` |
+| `unreal_landscape_placeholder` | World contains a `LandscapePlaceholder` actor with no `LandscapeProxy` within proximity | Hint: use `hayba_import_landscape` instead of `spawn_actor_from_class(unreal.Landscape, ...)` (which only produces a stub in UE 5.7) |
+| `tcp_socket_to_self_in_python_run` | A script passed to `python_run` calls `socket.connect(('127.0.0.1', <port>))` where port ∈ 52342..52350 | Hard reject — guaranteed crash; instruct the agent to add the missing TS wrapper instead of smuggling through a side channel |
+| `actor_position_drift_after_user_edit` | `actor_list` diff between consecutive calls shows an isolated actor with a single-axis, round-number change (matches a user-style edit profile) | Don't auto-correct; surface as "user edit detected, preserving" and require explicit agent confirmation before any re-write |
+
 All rules surface `autofix` when mechanical:
 
 | Rule | Autofix |
