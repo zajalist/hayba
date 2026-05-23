@@ -165,6 +165,14 @@ export const RULES: ValidatorRule[] = [
     trigger: { after_tool: ['actor_spawn', 'actor_transform'] },
   },
   {
+    id: 'pcg_generate_likely_overload',
+    severity: 'warning',
+    message: 'PCG generation about to trigger many instances over a large surface — likely to overload the editor',
+    hint: 'When PCGSurfaceSampler is configured with PointsPerSquaredMeter above ~0.0001 AND the source is an unbounded LandscapeProxy, the total instance count scales with the landscape area and can hit hundreds of thousands to millions of HISM instances. Combined with concurrent shader compilation (e.g. a freshly-applied landscape material), the editor can hang or crash with no diagnostic plugin frame in the callstack. Mitigations: lower the density, scope the sampler to a small PCGVolume, or wait for shaders to finish compiling before triggering Generate.',
+    refs: [],
+    trigger: { after_tool: ['hayba_execute_pcg_graph', 'pcg_execute_graph'] },
+  },
+  {
     id: 'actor_snap_to_landscape_silently_failed',
     severity: 'warning',
     message: 'snap_to_landscape was requested but the trace did not find the landscape',
