@@ -56,6 +56,22 @@ export interface SliverRunResult {
   error?: string;
 }
 
+/** Structured return shape for an executor's dispatched UE command — always
+ *  resolved (never throws), so a side-effecting executor can branch on `ok`. */
+export interface SliverDispatchResult {
+  ok: boolean;
+  data?: Record<string, unknown>;
+  error?: string;
+}
+
+/** Bridge wired by setupSliverSystem when the host has a live UE connection
+ *  (the production wiring adapts `executeCommand`). Pure executors leave
+ *  ctx.dispatch undefined; side-effecting ones use it. */
+export type SliverUeBridge = (
+  cmd: string,
+  params: Record<string, unknown>,
+) => Promise<SliverDispatchResult>;
+
 /** Context threaded through a runSliver call. Mostly the runtime needs it; executors may read it. */
 export interface SliverContext {
   /** Reverse-DNS ids in the current call stack (oldest → newest). */
@@ -64,6 +80,10 @@ export interface SliverContext {
   maxDepth: number;
   /** Lets executors call other slivers. */
   runSliver: (id: string, params: SliverParamValues) => Promise<SliverRunResult>;
+  /** Optional UE bridge for side-effecting executors. Undefined when the
+   *  runtime was constructed without a bridge (the default — keeps pure
+   *  slivers unit-testable without UE). */
+  dispatch?: SliverUeBridge;
 }
 
 /** Executor function signature. Pure or mutating per the spec's determinism block. */

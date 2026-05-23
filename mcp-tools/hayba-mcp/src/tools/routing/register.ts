@@ -321,6 +321,17 @@ export async function registerDeferredRouting(
         ok: info.ok,
       });
     },
+    // Side-effecting executors reach the UE bridge through ctx.dispatch.
+    // executeCommand throws on transport/UE error; we convert to the
+    // structured SliverDispatchResult so executors can branch on `ok`.
+    ueBridge: async (cmd, params) => {
+      try {
+        const data = await executeCommand(cmd, params);
+        return { ok: true, data: data as Record<string, unknown> };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
   });
   for (const err of slivers.loader.errors()) {
     console.warn(`[slivers] load error: ${err}`);

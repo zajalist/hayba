@@ -1,8 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <rect x="10" y="13" width="44" height="9" rx="2.5" fill="#E8ECF5" stroke="#7A8AB8" stroke-width="2"/>
-  <rect x="10" y="27.5" width="44" height="9" rx="2.5" fill="#C7D8CC" stroke="#88C0A0" stroke-width="2"/>
-  <rect x="10" y="42" width="44" height="9" rx="2.5" fill="#E8ECF5" stroke="#7A8AB8" stroke-width="2"/>
-  <circle cx="18" cy="17.5" r="2" fill="#7A8AB8"/>
-  <circle cx="18" cy="32" r="2" fill="#88C0A0"/>
-  <circle cx="18" cy="46.5" r="2" fill="#7A8AB8"/>
+  <!-- the whole -->
+  <circle cx="32" cy="33" r="20" fill="#E8ECF5" stroke="#7A8AB8" stroke-width="2"/>
+  <!-- one sliver: a thin slice of it -->
+  <path d="M32 33 L32 13 A20 20 0 0 1 43.6 16.5 Z"
+        fill="#88C0A0" stroke="#5E8C72" stroke-width="2" stroke-linejoin="round"/>
+  <!-- pivot -->
+  <circle cx="32" cy="33" r="2.6" fill="#7A8AB8"/>
 </svg>
