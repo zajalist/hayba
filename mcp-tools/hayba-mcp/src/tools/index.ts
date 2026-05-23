@@ -1822,6 +1822,33 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
       return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
     },
   );
+
+  // ── Landscape import (TS wrapper for UE-side landscape_import handler) ────
+  server.tool(
+    'hayba_import_landscape',
+    'Import a heightmap (PNG or R16) as an UE Landscape actor. Wraps the UE-side landscape_import handler. The heightmap is sampled 0..uint16-max -> 0..maxHeightM (m). Spawns one Landscape covering worldSizeKm x worldSizeKm.',
+    {
+      heightmapPath: z.string().describe('Absolute path to a PNG or R16 heightmap file'),
+      worldSizeKm: z.number().optional().default(8.0).describe('Landscape XY size in km'),
+      maxHeightM: z.number().optional().default(600.0).describe('Maximum height in m (0..maxHeightM mapped from uint16)'),
+      actorLabel: z.string().optional().default('Hayba_Terrain').describe('Label for the spawned Landscape actor'),
+      landscapeMaterial: z.string().optional().describe('UE material path; empty = no material'),
+    },
+    async (params) => {
+      try {
+        const data = await executeCommand('landscape_import', params as Record<string, unknown>);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
+        };
+      } catch (e) {
+        return {
+          content: [{ type: 'text', text: `Error importing landscape: ${(e as Error).message}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+  // no meta registered (thin UE bridge wrapper)
 }
 
 // Schema registry seeding. Mirrors the Zod shapes used by the eager
@@ -2035,7 +2062,13 @@ function recordEagerSchemas(
   reg('hayba_planet_stability_schema', {}, 'low', '{schema_json, example}');
 
   // ── Landscape import ──────────────────────────────────────────────────────
-  // hayba_import_landscape schema parked with the rest of the terrain stack.
+  reg('hayba_import_landscape', {
+    heightmapPath: z.string().describe('Absolute path to a PNG or R16 heightmap file'),
+    worldSizeKm: z.number().optional().default(8.0).describe('Landscape XY size in km'),
+    maxHeightM: z.number().optional().default(600.0).describe('Maximum height in m (0..maxHeightM mapped from uint16)'),
+    actorLabel: z.string().optional().default('Hayba_Terrain').describe('Label for the spawned Landscape actor'),
+    landscapeMaterial: z.string().optional().describe('UE material path; empty = no material'),
+  }, 'high', '{actorLabel, heightmapPath, worldSizeKm, maxHeightM}');
 
   // ── Zone painter domain ───────────────────────────────────────────────────
   reg('hayba_open_zone_painter', {
