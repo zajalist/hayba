@@ -17,8 +17,13 @@
 #include "UObject/UObjectIterator.h"
 #include "UObject/SavePackage.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/IAssetRegistry.h"
+#include "AssetRegistry/AssetData.h"
 #include "Editor.h"
 #include "EngineUtils.h"
+#include "Async/Async.h"
+#include "HAL/Event.h"
+#include "HAL/PlatformProcess.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPLegacy, Log, All);
 
@@ -38,32 +43,91 @@ TArray<FString> FHaybaMCPLegacyHandler::GetCommands() const
         TEXT("wizard_chat"),
         TEXT("import_landscape"),        TEXT("landscape_import"),
         TEXT("read_node_output"),        TEXT("pcg_read_node_output"),
+        TEXT("describe_assets"),         TEXT("asset_browse"),
     };
+}
+
+FHaybaHandlerResult FHaybaMCPLegacyHandler::RunOnGameThread(TFunction<FHaybaHandlerResult()> Work)
+{
+    if (IsInGameThread())
+    {
+        return Work();
+    }
+
+    // Shared state so the marshaled lambda and the waiting caller both keep
+    // it alive across the thread hop — by-reference capture would be a
+    // use-after-free risk if the wait timed out and the caller frame unwound.
+    //
+    // We deliberately do NOT return the FEvent to the pool on timeout: if the
+    // marshaled lambda eventually runs after we've given up, it would trigger
+    // a recycled event and clobber unrelated waiters. Leaking one event per
+    // (rare) timeout is the lesser evil. The shared Box and event ownership
+    // are passed into the lambda by-value so they outlive the waiter.
+    struct FState
+    {
+        FHaybaHandlerResult Result;
+        FEvent* Done = nullptr;
+    };
+    TSharedRef<FState, ESPMode::ThreadSafe> State = MakeShared<FState, ESPMode::ThreadSafe>();
+    State->Done = FPlatformProcess::GetSynchEventFromPool(/*bIsManualReset=*/true);
+
+    AsyncTask(ENamedThreads::GameThread, [Work = MoveTemp(Work), State]()
+    {
+        State->Result = Work();
+        if (State->Done) State->Done->Trigger();
+    });
+
+    // 30s ceiling: long enough for landscape import (~5-10s on big heightmaps)
+    // and PCG execution, short enough to surface a real deadlock instead of
+    // hanging the TS client forever.
+    const bool bSignalled = State->Done->Wait(FTimespan::FromSeconds(30));
+
+    if (bSignalled)
+    {
+        FPlatformProcess::ReturnSynchEventToPool(State->Done);
+        State->Done = nullptr;
+        return State->Result;
+    }
+
+    // Timeout: leak the event (see comment above). The shared State outlives
+    // this frame because the AsyncTask lambda still holds a reference.
+    return FHaybaHandlerResult::Err(
+        TEXT("Game-thread marshal timed out after 30s — editor may be stalled "
+             "or running a long blocking task. Try again once the editor is idle."));
 }
 
 FHaybaHandlerResult FHaybaMCPLegacyHandler::Handle(const FString& Cmd,
     const TSharedPtr<FJsonObject>& Params)
 {
+    // Read-only / thread-safe commands run inline.
     if (Cmd == TEXT("ping")) return Cmd_Ping(Params);
     if (Cmd == TEXT("list_node_classes") || Cmd == TEXT("pcg_list_node_classes"))
         return Cmd_ListNodeClasses(Params);
     if (Cmd == TEXT("get_node_details") || Cmd == TEXT("pcg_get_node_details"))
         return Cmd_GetNodeDetails(Params);
-    if (Cmd == TEXT("list_pcg_assets") || Cmd == TEXT("pcg_list_assets"))
-        return Cmd_ListPCGAssets(Params);
-    if (Cmd == TEXT("export_graph") || Cmd == TEXT("pcg_export_graph"))
-        return Cmd_ExportGraph(Params);
-    if (Cmd == TEXT("create_graph") || Cmd == TEXT("pcg_create_graph"))
-        return Cmd_CreateGraph(Params);
     if (Cmd == TEXT("validate_graph") || Cmd == TEXT("pcg_validate_graph"))
         return Cmd_ValidateGraph(Params);
-    if (Cmd == TEXT("execute_graph") || Cmd == TEXT("pcg_execute_graph"))
-        return Cmd_ExecuteGraph(Params);
     if (Cmd == TEXT("wizard_chat")) return Cmd_WizardChat(Params);
+
+    // World-mutating or LoadObject-touching commands MUST run on the game
+    // thread. The TCP server already marshals before dispatch today, but we
+    // re-marshal here defensively so any future direct caller (python_run,
+    // sliver runtime, another handler) can't hit the race that crashed UE
+    // in the 2026-05-23 postmortem.
+    if (Cmd == TEXT("list_pcg_assets") || Cmd == TEXT("pcg_list_assets"))
+        return RunOnGameThread([this, Params]() { return Cmd_ListPCGAssets(Params); });
+    if (Cmd == TEXT("export_graph") || Cmd == TEXT("pcg_export_graph"))
+        return RunOnGameThread([this, Params]() { return Cmd_ExportGraph(Params); });
+    if (Cmd == TEXT("create_graph") || Cmd == TEXT("pcg_create_graph"))
+        return RunOnGameThread([this, Params]() { return Cmd_CreateGraph(Params); });
+    if (Cmd == TEXT("execute_graph") || Cmd == TEXT("pcg_execute_graph"))
+        return RunOnGameThread([this, Params]() { return Cmd_ExecuteGraph(Params); });
     if (Cmd == TEXT("import_landscape") || Cmd == TEXT("landscape_import"))
-        return Cmd_ImportLandscape(Params);
+        return RunOnGameThread([this, Params]() { return Cmd_ImportLandscape(Params); });
     if (Cmd == TEXT("read_node_output") || Cmd == TEXT("pcg_read_node_output"))
-        return Cmd_ReadNodeOutput(Params);
+        return RunOnGameThread([this, Params]() { return Cmd_ReadNodeOutput(Params); });
+    if (Cmd == TEXT("describe_assets") || Cmd == TEXT("asset_browse"))
+        return RunOnGameThread([this, Params]() { return Cmd_DescribeAssets(Params); });
 
     return FHaybaHandlerResult::Err(
         FString::Printf(TEXT("Legacy handler: unknown command %s"), *Cmd));
@@ -303,6 +367,9 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_GetNodeDetails(const TSharedPtr<
 
 FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_ListPCGAssets(const TSharedPtr<FJsonObject>& Params)
 {
+    // Asset->GetAsset() force-loads UObjects; must run on the game thread.
+    check(IsInGameThread());
+
     FString PathFilter = TEXT("/Game/");
     Params->TryGetStringField(TEXT("path"), PathFilter);
 
@@ -351,6 +418,9 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_ListPCGAssets(const TSharedPtr<F
 
 FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_ExportGraph(const TSharedPtr<FJsonObject>& Params)
 {
+    // LoadObject + UPCGGraph traversal must run on the game thread.
+    check(IsInGameThread());
+
     FString AssetPath;
     if (!Params->TryGetStringField(TEXT("assetPath"), AssetPath))
     {
@@ -486,6 +556,10 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_ExportGraph(const TSharedPtr<FJs
 
 FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJsonObject>& Params)
 {
+    // CreatePackage / NewObject / SavePackage / AssetCreated all require
+    // the game thread. Dispatcher marshals via RunOnGameThread.
+    check(IsInGameThread());
+
     FString Name;
     if (!Params->TryGetStringField(TEXT("name"), Name))
     {
@@ -994,6 +1068,10 @@ TArray<TSharedPtr<FJsonValue>> FHaybaMCPLegacyHandler::ValidateGraphJson(const T
 
 FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_ExecuteGraph(const TSharedPtr<FJsonObject>& Params)
 {
+    // LoadObject, TActorIterator on the editor world, and UPCGComponent::Generate
+    // all require the game thread. Dispatcher marshals via RunOnGameThread.
+    check(IsInGameThread());
+
     FString AssetPath;
     if (!Params->TryGetStringField(TEXT("assetPath"), AssetPath))
     {
@@ -1121,6 +1199,13 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_WizardChat(const TSharedPtr<FJso
 
 FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_ImportLandscape(const TSharedPtr<FJsonObject>& Params)
 {
+    // Hard guarantee: this command calls World->SpawnActor + LoadObject +
+    // ALandscape::Import, all of which require the game thread. The dispatch
+    // in Handle() marshals via RunOnGameThread, so a fail here would mean a
+    // future regression broke that contract — better to die loudly than
+    // silently corrupt UObject state (as in the 2026-05-23 crash).
+    check(IsInGameThread());
+
     FHaybaMCPImportParams ImportParams;
 
     // Required
@@ -1169,6 +1254,9 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_ImportLandscape(const TSharedPtr
 // not been executed yet, the output data will be empty and point_count will be 0.
 FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_ReadNodeOutput(const TSharedPtr<FJsonObject>& Params)
 {
+    // LoadObject + TActorIterator on the editor world must run on the game thread.
+    check(IsInGameThread());
+
     FString AssetPath;
     FString NodeId;
 
@@ -1265,5 +1353,193 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_ReadNodeOutput(const TSharedPtr<
     Data->SetBoolField(TEXT("success"), true);
     Data->SetObjectField(TEXT("features"), Features);
 
+    return FHaybaHandlerResult::Ok(Data);
+}
+
+// Cmd_DescribeAssets
+// Lists assets from the AssetRegistry under one or more package paths.
+//
+// Params (all optional):
+//   path:   string    — single root, default "/Game" (recursive)
+//   paths:  string[]  — explicit object-path list; each entry queried
+//                       individually. Takes precedence over `path`.
+//   class:  string    — case-insensitive class-name substring filter
+//                       (e.g. "StaticMesh", "Material", "PCGGraph")
+//   tag:    string    — case-insensitive substring filter on asset tags
+//                       (matches any tag key or value)
+//   limit:  int       — default 200, max 2000
+//   offset: int       — default 0
+//
+// Response shape matches what the TS asset-retriever expects:
+//   { assets: [{ path, name, class, tags[], lastModified, package_name,
+//                asset_name, asset_class }], total, offset, limit }
+//
+// AssetRegistry reads are documented thread-safe, but the dispatcher routes
+// this through RunOnGameThread so any future caller pattern stays safe.
+FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_DescribeAssets(const TSharedPtr<FJsonObject>& Params)
+{
+    check(IsInGameThread());
+
+    FString SinglePath = TEXT("/Game");
+    FString ClassFilter;
+    FString TagFilter;
+    int32 Limit = 200;
+    int32 Offset = 0;
+
+    if (Params.IsValid())
+    {
+        Params->TryGetStringField(TEXT("path"), SinglePath);
+        Params->TryGetStringField(TEXT("class"), ClassFilter);
+        Params->TryGetStringField(TEXT("tag"), TagFilter);
+        int32 RawLimit = 0;
+        if (Params->TryGetNumberField(TEXT("limit"), RawLimit) && RawLimit > 0)
+        {
+            Limit = FMath::Clamp(RawLimit, 1, 2000);
+        }
+        int32 RawOffset = 0;
+        if (Params->TryGetNumberField(TEXT("offset"), RawOffset) && RawOffset >= 0)
+        {
+            Offset = RawOffset;
+        }
+    }
+
+    // Normalize "/Game/" -> "/Game" so AssetRegistry accepts it as a package path
+    auto NormalizePath = [](const FString& In) -> FString
+    {
+        FString P = In;
+        while (P.Len() > 1 && P.EndsWith(TEXT("/")))
+        {
+            P = P.LeftChop(1);
+        }
+        if (P.IsEmpty()) P = TEXT("/Game");
+        return P;
+    };
+
+    TArray<FString> QueryPaths;
+    bool bExplicitPaths = false;
+    if (Params.IsValid())
+    {
+        const TArray<TSharedPtr<FJsonValue>>* PathsArr = nullptr;
+        if (Params->TryGetArrayField(TEXT("paths"), PathsArr) && PathsArr)
+        {
+            bExplicitPaths = true;
+            for (const TSharedPtr<FJsonValue>& V : *PathsArr)
+            {
+                FString S;
+                if (V.IsValid() && V->TryGetString(S) && !S.IsEmpty())
+                {
+                    QueryPaths.Add(NormalizePath(S));
+                }
+            }
+        }
+    }
+    if (QueryPaths.Num() == 0)
+    {
+        QueryPaths.Add(NormalizePath(SinglePath));
+    }
+
+    FAssetRegistryModule& ARM = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+    IAssetRegistry& Registry = ARM.Get();
+
+    TArray<FAssetData> Collected;
+    for (const FString& Q : QueryPaths)
+    {
+        if (bExplicitPaths)
+        {
+            // Explicit-paths form: each entry may be either an object path
+            // ("/Game/Foo/Bar.Bar") or a package directory ("/Game/Foo").
+            // Try object lookup first, then fall back to non-recursive
+            // directory listing so the caller gets exactly what they asked
+            // for rather than a recursive dump.
+            FAssetData Hit = Registry.GetAssetByObjectPath(FSoftObjectPath(Q));
+            if (Hit.IsValid())
+            {
+                Collected.Add(MoveTemp(Hit));
+            }
+            else
+            {
+                TArray<FAssetData> Bucket;
+                Registry.GetAssetsByPath(FName(*Q), Bucket, /*bRecursive=*/false);
+                Collected.Append(MoveTemp(Bucket));
+            }
+        }
+        else
+        {
+            TArray<FAssetData> Bucket;
+            Registry.GetAssetsByPath(FName(*Q), Bucket, /*bRecursive=*/true);
+            Collected.Append(MoveTemp(Bucket));
+        }
+    }
+
+    // Filter by class name (substring, case-insensitive)
+    if (!ClassFilter.IsEmpty())
+    {
+        Collected.RemoveAll([&ClassFilter](const FAssetData& A)
+        {
+            return !A.AssetClassPath.GetAssetName().ToString().Contains(
+                ClassFilter, ESearchCase::IgnoreCase);
+        });
+    }
+
+    // Filter by tag (substring, case-insensitive) — checks both key and value
+    if (!TagFilter.IsEmpty())
+    {
+        Collected.RemoveAll([&TagFilter](const FAssetData& A)
+        {
+            for (const auto& Pair : A.TagsAndValues)
+            {
+                if (Pair.Key.ToString().Contains(TagFilter, ESearchCase::IgnoreCase)
+                    || Pair.Value.GetValue().Contains(TagFilter, ESearchCase::IgnoreCase))
+                {
+                    return false; // keep
+                }
+            }
+            return true; // drop
+        });
+    }
+
+    const int32 Total = Collected.Num();
+    const int32 Start = FMath::Clamp(Offset, 0, Total);
+    const int32 End   = FMath::Clamp(Start + Limit, Start, Total);
+
+    TArray<TSharedPtr<FJsonValue>> AssetsJson;
+    AssetsJson.Reserve(End - Start);
+    for (int32 i = Start; i < End; ++i)
+    {
+        const FAssetData& A = Collected[i];
+        TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+
+        // TS-side asset-retriever expects: path, name, class, tags[], lastModified.
+        // package_name + asset_name + asset_class are also surfaced so future
+        // TS consumers can avoid re-parsing the object path.
+        Entry->SetStringField(TEXT("path"), A.GetObjectPathString());
+        Entry->SetStringField(TEXT("name"), A.AssetName.ToString());
+        Entry->SetStringField(TEXT("class"), A.AssetClassPath.GetAssetName().ToString());
+        Entry->SetStringField(TEXT("package_name"), A.PackageName.ToString());
+        Entry->SetStringField(TEXT("asset_name"), A.AssetName.ToString());
+        Entry->SetStringField(TEXT("asset_class"), A.AssetClassPath.GetAssetName().ToString());
+
+        TArray<TSharedPtr<FJsonValue>> TagsJson;
+        for (const auto& Pair : A.TagsAndValues)
+        {
+            const FString Combined = FString::Printf(TEXT("%s=%s"),
+                *Pair.Key.ToString(), *Pair.Value.GetValue());
+            TagsJson.Add(MakeShared<FJsonValueString>(Combined));
+        }
+        Entry->SetArrayField(TEXT("tags"), TagsJson);
+
+        // lastModified is not directly tracked by AssetRegistry; emit 0 so the
+        // TS normalizer's default kicks in cleanly. (Could be wired up via
+        // IFileManager::GetTimeStamp on the package filename if needed later.)
+        Entry->SetNumberField(TEXT("lastModified"), 0);
+
+        AssetsJson.Add(MakeShared<FJsonValueObject>(Entry.ToSharedRef()));
+    }
+
+    TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+    Data->SetArrayField(TEXT("assets"), AssetsJson);
+    Data->SetNumberField(TEXT("total"), Total);
+    Data->SetNumberField(TEXT("offset"), Start);
+    Data->SetNumberField(TEXT("limit"), Limit);
     return FHaybaHandlerResult::Ok(Data);
 }

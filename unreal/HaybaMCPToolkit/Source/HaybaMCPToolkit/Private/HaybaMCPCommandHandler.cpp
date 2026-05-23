@@ -484,9 +484,38 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         return MakeErrorResponse(TEXT(""), TEXT("Invalid JSON"));
     }
 
-    const FString Cmd = Parsed->GetStringField(TEXT("cmd"));
-    const FString Id = Parsed->GetStringField(TEXT("id"));
-    TSharedPtr<FJsonObject> Params = Parsed->GetObjectField(TEXT("params"));
+    // Use TryGet* so a missing field doesn't spam LogJson warnings, and so
+    // we can reject malformed frames explicitly below.
+    FString Cmd;
+    FString Id;
+    Parsed->TryGetStringField(TEXT("cmd"), Cmd);
+    Parsed->TryGetStringField(TEXT("id"), Id);
+
+    // Empty / missing id was silently processed before, which masked client-
+    // side request/response mismatches (the 2026-05-23 postmortem traced
+    // several "unreliable" outcomes back to frames whose ack the TS client
+    // could never correlate). Reject early with a framed error so the caller
+    // notices instead of waiting on a response that will never arrive.
+    if (Id.IsEmpty())
+    {
+        UE_LOG(LogHaybaMCPCmd, Warning,
+            TEXT("Rejected request with missing/empty id (cmd='%s')"), *Cmd);
+        return MakeErrorResponse(TEXT(""),
+            TEXT("Request rejected: 'id' field is required and must be non-empty"));
+    }
+
+    if (Cmd.IsEmpty())
+    {
+        return MakeErrorResponse(Id,
+            TEXT("Request rejected: 'cmd' field is required and must be non-empty"));
+    }
+
+    TSharedPtr<FJsonObject> Params;
+    const TSharedPtr<FJsonObject>* ParamsObj = nullptr;
+    if (Parsed->TryGetObjectField(TEXT("params"), ParamsObj) && ParamsObj && ParamsObj->IsValid())
+    {
+        Params = *ParamsObj;
+    }
     if (!Params.IsValid()) Params = MakeShared<FJsonObject>();
 
     UE_LOG(LogHaybaMCPCmd, Log, TEXT("Processing command: %s (id: %s)"), *Cmd, *Id);

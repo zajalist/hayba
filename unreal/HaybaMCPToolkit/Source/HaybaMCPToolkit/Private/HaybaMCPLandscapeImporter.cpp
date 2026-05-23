@@ -14,6 +14,14 @@ DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPImporter, Log, All);
 
 bool FHaybaMCPLandscapeImporter::ImportHeightmap(const FHaybaMCPImportParams& Params)
 {
+    // Hard guarantee: SpawnActor, LoadObject, ALandscape::Import, and the
+    // GEditor editor-world handle are all game-thread-only. The 2026-05-23
+    // postmortem traced the editor crash to this function running on the TCP
+    // worker thread. Dispatcher now marshals to the game thread; check here
+    // so any future regression dies loudly instead of silently corrupting
+    // UObject state.
+    check(IsInGameThread());
+
     if (!FPlatformFileManager::Get().GetPlatformFile().FileExists(*Params.HeightmapPath))
     {
         UE_LOG(LogHaybaMCPImporter, Error, TEXT("Heightmap not found: %s"), *Params.HeightmapPath);
@@ -42,6 +50,21 @@ bool FHaybaMCPLandscapeImporter::ImportHeightmap(const FHaybaMCPImportParams& Pa
     if (OutDescriptor.ImportResolutions.Num() == 0)
     {
         UE_LOG(LogHaybaMCPImporter, Error, TEXT("Heightmap has no valid resolutions: %s"), *Params.HeightmapPath);
+        return false;
+    }
+
+    // Reject pathological dimensions early — UE's landscape system caps quads
+    // per side around 8193 (8192 quads + 1 vertex row), and a zero/negative
+    // width slipping through ChooseBestComponentSizeForImport produces a
+    // degenerate SizeX/SizeY that crashes ALandscape::Import deep in the
+    // streaming proxy code.
+    const int32 DescW = OutDescriptor.ImportResolutions[0].Width;
+    const int32 DescH = OutDescriptor.ImportResolutions[0].Height;
+    if (DescW <= 0 || DescH <= 0 || DescW > 8193 || DescH > 8193)
+    {
+        UE_LOG(LogHaybaMCPImporter, Error,
+            TEXT("Heightmap dimensions out of range: %dx%d (must be 1..8193 per side): %s"),
+            DescW, DescH, *Params.HeightmapPath);
         return false;
     }
 
