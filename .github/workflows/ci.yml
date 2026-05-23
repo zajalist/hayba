@@ -71,6 +71,15 @@ jobs:
             echo "no test runner configured, skipping"
           fi
 
+      # Separate step so a sidecar/cpp/wrapper drift shows up with its
+      # own clearly-labeled failure in the GitHub UI instead of getting
+      # buried in vitest output. The script is also exposed as a vitest
+      # test (scripts/__tests__/check-legacy-wrappers.test.ts) so local
+      # `npm test` runs surface the same drift.
+      - name: Legacy command wrapper lint
+        working-directory: mcp-tools/hayba-mcp
+        run: npm run lint:legacy-wrappers
+
   sidecar:
     name: Visual sidecar — import + lint
     runs-on: ubuntu-latest

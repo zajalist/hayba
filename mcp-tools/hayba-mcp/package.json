@@ -11,11 +11,12 @@
     "build": "npm run build:dashboard && tsc && npm run build:assets",
     "build:dashboard": "cd dashboard && npm install && npm run build && cd ..",
     "build:server": "tsc && npm run build:assets",
-    "build:assets": "node -e \"import('node:fs').then(fs=>{fs.mkdirSync('dist/tools/routing',{recursive:true});fs.copyFileSync('src/tools/routing/packs.yaml','dist/tools/routing/packs.yaml');fs.mkdirSync('dist/slivers/specs',{recursive:true});for(const f of fs.readdirSync('src/slivers/specs')){if(f.endsWith('.sliver.json'))fs.copyFileSync('src/slivers/specs/'+f,'dist/slivers/specs/'+f)}console.error('[build:assets] copied packs.yaml + sliver specs')})\"",
+    "build:assets": "node -e \"import('node:fs').then(fs=>{fs.mkdirSync('dist/tools/routing',{recursive:true});fs.copyFileSync('src/tools/routing/packs.yaml','dist/tools/routing/packs.yaml');fs.mkdirSync('dist/slivers/specs',{recursive:true});for(const f of fs.readdirSync('src/slivers/specs')){if(f.endsWith('.sliver.json'))fs.copyFileSync('src/slivers/specs/'+f,'dist/slivers/specs/'+f)}fs.mkdirSync('dist/legacy-commands',{recursive:true});fs.copyFileSync('src/legacy-commands/sidecar.json','dist/legacy-commands/sidecar.json');fs.copyFileSync('src/legacy-commands/sidecar.schema.json','dist/legacy-commands/sidecar.schema.json');console.error('[build:assets] copied packs.yaml + sliver specs + legacy sidecar')})\"",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint:legacy-wrappers": "node scripts/check-legacy-wrappers.mjs"
   },
   "dependencies": {
     "@distube/ytdl-core": "^4.16.12",
