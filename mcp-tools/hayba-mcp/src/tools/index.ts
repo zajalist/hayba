@@ -119,6 +119,19 @@ import { setPainterHeightmapHandler } from './hayba-set-painter-heightmap.js';
 import { setupConventionsHandler } from './hayba-setup-conventions.js';
 import { analyzeConventionsHandler } from './hayba-analyze-conventions.js';
 
+// ── Validator (runtime rule system + history panel feed) ────────────────────
+import { installToolHooks } from '../validator/index.js';
+import {
+  validatorRunSchema, validatorRunHandler,
+  validatorHistorySchema, validatorHistoryHandler,
+  validatorResolveSchema, validatorResolveHandler,
+  validatorClearSchema, validatorClearHandler,
+  validatorRulesSchema, validatorRulesHandler,
+  validatorSetRuleEnabledSchema, validatorSetRuleEnabledHandler,
+  defaultScratchDir as validatorScratchDir,
+} from './validator/tools.js';
+import { ensureConnected as ensureUeForValidator } from '../tcp-client.js';
+
 // SessionManager (Gaea session) parked while terrain features are off — kept
 // as a typed shim so registerTools' signature doesn't churn for callers.
 type SessionManagerStub = Record<string, unknown>;
@@ -1727,6 +1740,88 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     }
   );
   // no meta registered (zone painter pure-TS handler)
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // ── Validator (runtime rule system + history) ───────────────────────────
+  //
+  // Five MCP tools that expose the validator surface to agents and to the
+  // UE plugin's Validator panel:
+  //   - validator_run      : manual evaluation pass
+  //   - validator_history  : read persisted findings
+  //   - validator_resolve  : mark a finding resolved / unresolved
+  //   - validator_clear    : wipe history
+  //   - validator_rules    : list the rule catalog (+ disabled state)
+  //
+  // Rule definitions live in src/validator/rules.ts; evaluators in
+  // src/validator/tool-hooks.ts (auto-installed below).
+  // ──────────────────────────────────────────────────────────────────────────
+  // Install evaluator hooks once — wires actual logic onto rules catalog.
+  installToolHooks();
+
+  const getUe = async () => {
+    try { return await ensureUeForValidator().catch(() => null); } catch { return null; }
+  };
+
+  server.tool(
+    'validator_run',
+    'Manually evaluate validator rules. Pass scope=\'all\' or { rule_ids: [...] }. Persists findings to history.',
+    validatorRunSchema,
+    async (args: { scope?: 'all' | { rule_ids?: string[] }; persist?: boolean }) => {
+      const ue = await getUe();
+      const r = await validatorRunHandler(args, { ue, scratchDir: validatorScratchDir() });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    'validator_history',
+    'Read persisted validator findings. Filter by limit / since_iso / include_resolved / rule_ids.',
+    validatorHistorySchema,
+    async (args: { limit?: number; since_iso?: string; include_resolved?: boolean; rule_ids?: string[] }) => {
+      const r = await validatorHistoryHandler(args);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    'validator_resolve',
+    'Mark a validator finding as resolved (or restore it). Identifies the finding by its ISO timestamp.',
+    validatorResolveSchema,
+    async (args: { timestamp: string; resolved: boolean }) => {
+      const r = await validatorResolveHandler(args);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    'validator_clear',
+    'Clear the validator history. Requires { confirm: true } to actually wipe.',
+    validatorClearSchema,
+    async (args: { confirm: boolean }) => {
+      const r = await validatorClearHandler(args);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    'validator_rules',
+    'Return the validator rule catalog. Include each rule\'s message, hint, refs, and disabled state.',
+    validatorRulesSchema,
+    async (args: { include_disabled_state?: boolean }) => {
+      const r = await validatorRulesHandler(args);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    'validator_set_rule_enabled',
+    'Enable or disable a validator rule by id. Persists to .scratch/validator-config.json.',
+    validatorSetRuleEnabledSchema,
+    async (args: { rule_id: string; enabled: boolean }) => {
+      const r = await validatorSetRuleEnabledHandler(args);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
 
   // ── Landscape import (TS wrapper for UE-side landscape_import handler) ────
   server.tool(

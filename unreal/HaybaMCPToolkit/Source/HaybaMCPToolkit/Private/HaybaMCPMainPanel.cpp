@@ -7,6 +7,7 @@
 #include "HaybaMCPPlanPanel.h"
 #include "HaybaMCPDiffPanel.h"
 #include "HaybaMCPValidationPanel.h"
+#include "Slate/SHaybaValidatorPanel.h"
 #include "HaybaMCPMemoryPanel.h"
 #include "HaybaMCPCapabilitiesPanel.h"
 #include "HaybaMCPSceneMapWebPanel.h"
@@ -443,9 +444,11 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaPanel Panel)
         }
         case EHaybaPanel::Validation:
         {
-            Subtitle = NSLOCTEXT("Hayba", "Val.Sub", "Physics overlaps and scene issues.");
-            auto Panel2 = SNew(SHaybaMCPValidationPanel);
-            if (Module) Module->ValidationPanel = Panel2;
+            Subtitle = NSLOCTEXT("Hayba", "Val.Sub",
+                "Runtime validator: post-condition findings and AI-floppy hints. Findings persist in .scratch/validator-history.jsonl.");
+            auto Panel2 = SNew(SHaybaValidatorPanel);
+            // Re-shown from cache → re-read the JSONL file.
+            PanelRefreshHook.Add(EHaybaPanel::Validation, [Panel2]() { Panel2->Refresh(); });
             Body = Panel2;
             break;
         }

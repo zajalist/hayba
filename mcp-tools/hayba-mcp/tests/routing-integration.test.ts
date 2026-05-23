@@ -21,6 +21,14 @@ function fixtureCaptured(): Map<string, CapturedTool> {
     ['get_tool_signature',          'code-mode'],
     ['hayba_check_ue_status',       null],
     ['editor_capture_viewport',     'editor'],
+    // Validator tools — captured under the validator dir so deferred routing
+    // can re-register them as always-on via passthrough.
+    ['validator_run',               'validator'],
+    ['validator_history',           'validator'],
+    ['validator_resolve',           'validator'],
+    ['validator_clear',             'validator'],
+    ['validator_rules',             'validator'],
+    ['validator_set_rule_enabled',  'validator'],
   ];
   for (const [name, dir] of tools) {
     const schema: z.ZodRawShape = { foo: z.string().optional() };
