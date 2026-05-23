@@ -14,6 +14,7 @@
 #include "HaybaMCPDiffPanel.h"
 #include "Json.h"
 #include "Async/Async.h"
+#include "Async/Future.h"
 #include "Editor.h"
 #include "EngineUtils.h"
 #include "GameFramework/Actor.h"
@@ -426,20 +427,59 @@ static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject
     int32 AwaitSecs = 30;
     if (Params.IsValid()) Params->TryGetNumberField(TEXT("await_seconds"), AwaitSecs);
 
-    AsyncTask(ENamedThreads::GameThread, [Steps, AwaitSecs]()
+    // Always buffer first — the Plan tab might not be constructed yet (it's
+    // lazy; the panel weak-ref stays null until the user opens the tab).
+    // Without this buffer, plans proposed before first tab visit were silently
+    // dropped on the floor and the handler still returned received:true.
+    FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit");
+    if (M)
     {
-        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        M->StashPendingPlan(Steps, AwaitSecs);
+    }
+
+    // Try to deliver to a live panel immediately too — if it's alive RIGHT
+    // NOW, the user sees the plan without having to switch tabs. The buffer
+    // is consumed in lockstep so the next tab open doesn't show a stale copy.
+    // Use a TPromise on the response side so the response shape honestly
+    // reflects whether the user can see the plan or has to open the tab.
+    TSharedRef<TPromise<bool>> PanelOpenPromise = MakeShared<TPromise<bool>>();
+    TFuture<bool> PanelOpenFuture = PanelOpenPromise->GetFuture();
+    AsyncTask(ENamedThreads::GameThread, [Steps, AwaitSecs, PanelOpenPromise]()
+    {
+        bool bDelivered = false;
+        if (FHaybaMCPModule* M2 = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
         {
-            if (TSharedPtr<SHaybaMCPPlanPanel> Panel = M->PlanPanel.Pin())
+            if (TSharedPtr<SHaybaMCPPlanPanel> Panel = M2->PlanPanel.Pin())
             {
                 Panel->LoadPlan(Steps, AwaitSecs);
+                // Mark the buffer consumed — the panel already has it. If we
+                // didn't, a subsequent tab open would re-load the same plan.
+                TArray<FHaybaPlanStep> _DiscardSteps; int32 _DiscardAwait;
+                M2->ConsumePendingPlan(_DiscardSteps, _DiscardAwait);
+                bDelivered = true;
             }
         }
+        PanelOpenPromise->SetValue(bDelivered);
     });
+
+    // Wait briefly for the game-thread task to report back so the response is
+    // accurate. 2s is far more than enough — the AsyncTask is a single Pin()
+    // call. If we time out, the plan is still buffered; we just can't tell
+    // the caller whether the panel was open.
+    const bool bPanelOpen = PanelOpenFuture.WaitFor(FTimespan::FromSeconds(2.0))
+        ? PanelOpenFuture.Get()
+        : false;
 
     auto Data = MakeShared<FJsonObject>();
     Data->SetBoolField(TEXT("received"), true);
     Data->SetNumberField(TEXT("step_count"), Steps.Num());
+    Data->SetBoolField(TEXT("buffered"), M != nullptr);
+    Data->SetBoolField(TEXT("panel_visible"), bPanelOpen);
+    if (!bPanelOpen)
+    {
+        Data->SetStringField(TEXT("hint"),
+            TEXT("Plan was buffered but the Plan tab isn't open yet. Open Hayba → Plan to see it; the buffered plan is consumed on first construction."));
+    }
     return FHaybaMCPCommandHandler::MakeOkResponse(Id, Data);
 }
 

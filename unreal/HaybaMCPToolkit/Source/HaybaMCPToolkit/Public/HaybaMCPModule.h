@@ -2,6 +2,8 @@
 #include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
 #include "Dom/JsonObject.h"
+#include "HAL/CriticalSection.h"
+#include "HaybaMCPPlanTypes.h"
 
 class FHaybaMCPTcpServer;
 class FHaybaMCPCommandHandler;
@@ -63,6 +65,23 @@ public:
     // destructive command so each plan must be approved exactly once.
     bool bPlanApproved = false;
 
+    // Pending-plan buffer — survives the gap between the agent's
+    // hayba_propose_plan TCP call and the user actually opening the Plan
+    // tab. Without this, plans proposed before first tab visit silently
+    // dropped on the floor because Module->PlanPanel.Pin() returned null.
+    //
+    // Flow:
+    //   - HandleProposePlan() always calls StashPendingPlan().
+    //   - If PlanPanel is alive RIGHT NOW, HandleProposePlan also calls
+    //     LoadPlan() on it and marks ConsumePendingPlan() — the buffer
+    //     stays in sync with the panel's current view.
+    //   - When MainPanel constructs the Plan tab (lazy), it calls
+    //     ConsumePendingPlan() right after wiring PlanPanel — any plan
+    //     proposed before the tab existed becomes visible.
+    void StashPendingPlan(const TArray<FHaybaPlanStep>& Steps, int32 AwaitSecs);
+    bool ConsumePendingPlan(TArray<FHaybaPlanStep>& OutSteps, int32& OutAwaitSecs);
+    bool HasPendingPlan() const;
+
     // Multicast — fires on the GameThread every time a tool call is recorded.
     // Subscribers: Chat panel's in-flight trace, future agent observability.
     DECLARE_MULTICAST_DELEGATE_OneParam(FOnToolCallRecorded, const FHaybaToolCallRecord&);
@@ -71,6 +90,11 @@ public:
 private:
     mutable FCriticalSection ToolCallHistoryLock;
     TArray<FHaybaToolCallRecord> ToolCallHistory;
+
+    mutable FCriticalSection PendingPlanLock;
+    TArray<FHaybaPlanStep> PendingPlanSteps;
+    int32 PendingPlanAwaitSecs = 30;
+    bool bPendingPlanConsumed = true;
 
     TSharedRef<class SDockTab> OnSpawnTab(const class FSpawnTabArgs& Args);
     TSharedRef<class SDockTab> SpawnMainTab(const class FSpawnTabArgs& Args);

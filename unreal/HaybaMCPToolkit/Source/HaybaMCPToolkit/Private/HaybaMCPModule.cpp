@@ -427,4 +427,31 @@ void FHaybaMCPModule::ClearToolCallHistory()
     ToolCallHistory.Empty();
 }
 
+void FHaybaMCPModule::StashPendingPlan(const TArray<FHaybaPlanStep>& Steps, int32 AwaitSecs)
+{
+    FScopeLock Lock(&PendingPlanLock);
+    PendingPlanSteps = Steps;
+    PendingPlanAwaitSecs = AwaitSecs;
+    bPendingPlanConsumed = false;
+}
+
+bool FHaybaMCPModule::ConsumePendingPlan(TArray<FHaybaPlanStep>& OutSteps, int32& OutAwaitSecs)
+{
+    FScopeLock Lock(&PendingPlanLock);
+    if (bPendingPlanConsumed || PendingPlanSteps.Num() == 0)
+    {
+        return false;
+    }
+    OutSteps = PendingPlanSteps;
+    OutAwaitSecs = PendingPlanAwaitSecs;
+    bPendingPlanConsumed = true;
+    return true;
+}
+
+bool FHaybaMCPModule::HasPendingPlan() const
+{
+    FScopeLock Lock(&PendingPlanLock);
+    return !bPendingPlanConsumed && PendingPlanSteps.Num() > 0;
+}
+
 IMPLEMENT_MODULE(FHaybaMCPModule, HaybaMCPToolkit)

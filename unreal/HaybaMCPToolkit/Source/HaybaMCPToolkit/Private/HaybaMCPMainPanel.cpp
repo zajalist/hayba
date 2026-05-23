@@ -430,7 +430,18 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaPanel Panel)
         {
             Subtitle = NSLOCTEXT("Hayba", "Plan.Sub", "AI-proposed plan steps before destructive actions.");
             auto Panel2 = SNew(SHaybaMCPPlanPanel);
-            if (Module) Module->PlanPanel = Panel2;
+            if (Module)
+            {
+                Module->PlanPanel = Panel2;
+                // Consume any plan that arrived before this tab existed.
+                // The propose_plan handler always buffers; without this
+                // pickup, plans proposed pre-first-visit show as empty.
+                TArray<FHaybaPlanStep> PendingSteps; int32 PendingAwait = 30;
+                if (Module->ConsumePendingPlan(PendingSteps, PendingAwait))
+                {
+                    Panel2->LoadPlan(PendingSteps, PendingAwait);
+                }
+            }
             Body = Panel2;
             break;
         }

@@ -1,24 +1,10 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "Widgets/SCompoundWidget.h"
+#include "HaybaMCPPlanTypes.h"
 
 class SVerticalBox;
 class SScrollBox;
-
-struct FHaybaPlanStep
-{
-    int32   Index = 0;
-    FString Title;
-    FString Description;   // optional explainer
-    FString Tool;          // optional: which tool will execute this step
-
-    enum class EStatus : uint8 { Pending, Running, Completed, Failed };
-    EStatus Status = EStatus::Pending;
-
-    // Compat shim — old callers set bCompleted / bPending directly.
-    bool bCompleted = false;
-    bool bPending = true;
-};
 
 class SHaybaMCPPlanPanel : public SCompoundWidget
 {
