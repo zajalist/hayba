@@ -207,7 +207,7 @@ export async function registerDeferredRouting(
     'hayba_invoke',
     'Polymorphic dispatcher: call any Hayba tool by name without loading its pack. Best for one-off calls; load the pack for repeated use.',
     invokeSchema,
-    async (args: { name: string; args: Record<string, unknown> }) => {
+    async (args: { name: string; args: Record<string, unknown>; via?: 'ts' | 'ue_legacy' }) => {
       const r = await invokeHandler(args, {
         dispatch: async (cmd, params) => {
           // Prefer the captured handler if present — covers TS-side tools.
@@ -216,6 +216,12 @@ export async function registerDeferredRouting(
             return await Promise.resolve(t.handler(params));
           }
           // Otherwise dispatch via UE bridge.
+          return await executeCommand(cmd, params);
+        },
+        // ue_legacy route — always goes straight to the UE plugin TCP bridge,
+        // skipping the captured map. Used to reach C++ handlers that have no
+        // TS wrapper (e.g. landscape_import before its TS wrapper landed).
+        dispatchLegacy: async (cmd, params) => {
           return await executeCommand(cmd, params);
         },
         isDisabled: isToolDisabled,
