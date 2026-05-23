@@ -1948,6 +1948,27 @@ function recordEagerSchemas(
   }, 'high', '{ok, generated_count, duration_ms}');
   reg('hayba_check_ue_status', {}, 'low', '{connected, status, ueVersion, plugin, pluginVersion}');
 
+  // Plan Mode meta — schemas registered so hayba_invoke can dispatch them even
+  // before the operator has them surfaced as direct tools. Mirrors the
+  // server.tool() shapes above. Pair with ALWAYS_ON_META entries in
+  // routing/register.ts so they're also callable directly.
+  reg('hayba_propose_plan', {
+    steps: z.array(z.union([
+      z.string(),
+      z.object({
+        title: z.string(),
+        description: z.string().optional(),
+        tool: z.string().optional(),
+      }),
+    ])).describe('Ordered list of plan steps'),
+    await_seconds: z.number().int().min(0).max(600).optional()
+      .describe('Seconds to wait for approval (informational; default 30)'),
+  }, 'low', '{received, step_count, buffered, panel_visible, hint?}');
+  reg('hayba_mark_plan_step', {
+    index: z.number().int().min(0).describe('Zero-based plan step index'),
+    status: z.enum(['running', 'completed', 'failed']).default('completed'),
+  }, 'low', '{ok, index, status}');
+
   // ── Asset domain — added Initiative #6 + #10 (ref-preserving move, deps) ─
   reg('asset_move', {
     path: z.string().describe('Source asset path, e.g. "/Game/Foo/Bar.Bar"'),
