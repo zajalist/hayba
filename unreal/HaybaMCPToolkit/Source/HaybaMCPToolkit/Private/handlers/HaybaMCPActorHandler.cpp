@@ -38,34 +38,40 @@ AActor* FHaybaMCPActorHandler::FindActorByName(UWorld* World, const FString& Nam
 /**
  * Snap a world XY to the landscape surface Z via a vertical line trace.
  *
- * Why this lives in the plugin: every agent doing scene composition needs
- * "place this on the ground" semantics. Without it, the agent reaches for
- * python_run + unreal.SystemLibrary.line_trace_single — which is the wrong
- * tool for scene composition (see the 2026-05-23 postmortem). Bake it into
- * actor_spawn / actor_transform so the agent never has to leave the
- * native actor surface.
+ * Uses LineTraceMulti and filters across all hits to find the first
+ * ALandscapeProxy — so the trace works even when an actor is being
+ * snapped while there are other actors stacked above it (their collision
+ * would otherwise short-circuit a LineTraceSingle and return "no
+ * landscape found" — the 2026-05-23 batch snap failed on 4 of 10 actors
+ * for exactly this reason).
  *
- * Returns true if the trace hit a LandscapeProxy and writes the impact
- * Z to OutZ. Returns false otherwise (no landscape, or trace missed).
+ * IgnoredActor is the actor being snapped — its own collision is excluded
+ * from the trace so it can't intercept its own snap probe.
+ *
+ * Returns true if any hit in the trace was a LandscapeProxy and writes
+ * that impact Z to OutZ. Returns false otherwise.
  */
-static bool SnapZToLandscape(UWorld* World, float X, float Y, float& OutZ)
+static bool SnapZToLandscape(UWorld* World, float X, float Y, float& OutZ, AActor* IgnoredActor = nullptr)
 {
     if (!World) return false;
     const FVector Start(X, Y, 1000000.0); // start 10km up — works for any
                                           // landscape height we care about
     const FVector End(X, Y, -1000000.0);
-    FHitResult Hit;
     FCollisionQueryParams Params(SCENE_QUERY_STAT(HaybaSnapToLandscape), false);
     Params.bTraceComplex = true;
-    // Trace against WorldStatic — landscape's collision is WorldStatic.
-    const bool bHit = World->LineTraceSingleByChannel(Hit, Start, End, ECC_WorldStatic, Params);
-    if (!bHit) return false;
-    if (!Hit.GetActor() || !Hit.GetActor()->IsA(ALandscapeProxy::StaticClass()))
+    if (IgnoredActor) Params.AddIgnoredActor(IgnoredActor);
+
+    TArray<FHitResult> Hits;
+    World->LineTraceMultiByChannel(Hits, Start, End, ECC_WorldStatic, Params);
+    for (const FHitResult& Hit : Hits)
     {
-        return false; // hit something else — don't pretend it's the ground
+        if (Hit.GetActor() && Hit.GetActor()->IsA(ALandscapeProxy::StaticClass()))
+        {
+            OutZ = Hit.ImpactPoint.Z;
+            return true;
+        }
     }
-    OutZ = Hit.ImpactPoint.Z;
-    return true;
+    return false;
 }
 
 /** Parse snap_to_landscape from params. Returns true if the caller asked. */
@@ -259,7 +265,7 @@ FHaybaHandlerResult FHaybaMCPActorHandler::Spawn(const TSharedPtr<FJsonObject>& 
     {
         UWorld* World = NewActor->GetWorld();
         float HitZ = 0.f;
-        if (SnapZToLandscape(World, Location.X, Location.Y, HitZ))
+        if (SnapZToLandscape(World, Location.X, Location.Y, HitZ, NewActor))
         {
             double ZOffset = 0.0;
             P->TryGetNumberField(TEXT("z_offset"), ZOffset);
@@ -344,7 +350,7 @@ FHaybaHandlerResult FHaybaMCPActorHandler::Transform(const TSharedPtr<FJsonObjec
     {
         const FVector CurLoc = Actor->GetActorLocation();
         float HitZ = 0.f;
-        if (SnapZToLandscape(Actor->GetWorld(), CurLoc.X, CurLoc.Y, HitZ))
+        if (SnapZToLandscape(Actor->GetWorld(), CurLoc.X, CurLoc.Y, HitZ, Actor))
         {
             double ZOffset = 0.0;
             P->TryGetNumberField(TEXT("z_offset"), ZOffset);
