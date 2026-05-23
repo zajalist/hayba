@@ -57,6 +57,12 @@ export const ALWAYS_ON_META = new Set<string>([
   'hayba_dag_record',
   'hayba_dag_rebuild',
   'hayba_journal_tail',
+  'validator_run',
+  'validator_history',
+  'validator_resolve',
+  'validator_clear',
+  'validator_rules',
+  'validator_set_rule_enabled',
 ]);
 
 export interface CapturedTool {
@@ -247,6 +253,14 @@ export async function registerDeferredRouting(
   };
   passthrough('list_tool_categories');
   passthrough('get_tool_signature');
+  // Validator tools — always-on so the UE plugin's Validator panel and any
+  // agent can read/manage history without loading a pack.
+  passthrough('validator_run');
+  passthrough('validator_history');
+  passthrough('validator_resolve');
+  passthrough('validator_clear');
+  passthrough('validator_rules');
+  passthrough('validator_set_rule_enabled');
 
   // For hayba_check_ue_status: REPLACE the captured handler with one that
   // wires onConnected → maybeAutoLoad('ue_connected'). The captured handler
