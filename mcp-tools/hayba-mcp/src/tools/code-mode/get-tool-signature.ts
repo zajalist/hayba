@@ -10,6 +10,69 @@ export const meta: HaybaToolMeta = {
   not_when: 'you only need a list of command names — use list_tool_categories instead',
 };
 
+/**
+ * Manual stubs for UE legacy command param shapes.
+ *
+ * These are commands handled by `FHaybaMCPLegacyHandler` (C++ side) that have
+ * no Zod-registered TS wrapper, so `deriveSignature` returns null for them.
+ * Mirrors the `Params->TryGet*Field` calls in
+ * `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPLegacyHandler.cpp`.
+ *
+ * This is the stop-gap before the schema-sidecar approach (postmortem 5.2)
+ * lands. Keep entries narrow: just the fields the C++ handler actually reads.
+ *
+ * To invoke any of these via MCP, call
+ * `hayba_invoke({ name: '<cmd>', via: 'ue_legacy', args: {...} })`.
+ */
+type LegacySig = {
+  params: Record<string, string>;
+  returns: string;
+  cost: 'low' | 'medium' | 'high';
+  hint?: string;
+};
+const LEGACY_SIGNATURES: Record<string, LegacySig> = {
+  landscape_import: {
+    params: {
+      heightmapPath: 'string (required) — Absolute path to a PNG or R16 heightmap file',
+      worldSizeKm: 'number (optional, default 8.0) — Landscape XY size in km',
+      maxHeightM: 'number (optional, default 600.0) — Maximum height in m (0..maxHeightM mapped from uint16)',
+      actorLabel: 'string (optional, default "Hayba_Terrain") — Label for the spawned Landscape actor',
+      landscapeMaterial: 'string (optional) — UE material path; empty = no material',
+    },
+    returns: '{actorLabel, heightmapPath, worldSizeKm, maxHeightM}',
+    cost: 'high',
+    hint: 'TS wrapper exists as hayba_import_landscape; prefer that. Otherwise call via hayba_invoke({ via: "ue_legacy" }).',
+  },
+  describe_assets: {
+    params: {
+      paths: 'string[] (optional) — list of /Game asset paths to describe',
+      classPaths: 'string[] (optional) — list of /Script class paths to describe',
+    },
+    returns: '{assets:[{path,class,size,tags}]}',
+    cost: 'medium',
+    hint: 'Used by hayba_asset_browse / hayba_asset_search. May not be implemented in all plugin builds — fall back to AssetRegistryHelpers via python_run.',
+  },
+  pcg_create_graph: {
+    params: {
+      assetPath: 'string (required) — /Game path where the new PCGGraph asset is saved',
+      nodes: 'object[] (optional) — node specs ({type, id, params})',
+      edges: 'object[] (optional) — edge specs ({from:{nodeId,pin}, to:{nodeId,pin}})',
+    },
+    returns: '{assetPath, ok}',
+    cost: 'medium',
+    hint: 'Prefer hayba_create_pcg_graph (TS wrapper).',
+  },
+  pcg_execute_graph: {
+    params: {
+      assetPath: 'string (required) — /Game path of the PCGGraph asset to execute',
+      sourceActorLabel: 'string (optional) — label of the actor that hosts the PCGComponent',
+    },
+    returns: '{componentsExecuted, hism_counts}',
+    cost: 'high',
+    hint: 'Prefer hayba_execute_pcg_graph (TS wrapper). Verify hism_counts > 0; componentsExecuted alone does not prove instances spawned.',
+  },
+};
+
 function suggestClose(name: string, all: string[]): string[] {
   // Lightweight Levenshtein-like score so an LLM that guessed a wrong name
   // still gets a "did you mean" hint instead of a dead end.
@@ -49,14 +112,32 @@ export const getToolSignatureHandler: ToolHandler = async (args) => {
   }
   const sig = deriveSignature(command);
   if (!sig) {
-    const did_you_mean = suggestClose(command, listRecordedCommands());
+    // Stop-gap: manual stubs for UE legacy handlers that aren't Zod-registered.
+    const legacy = LEGACY_SIGNATURES[command];
+    if (legacy) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            command,
+            params: legacy.params,
+            returns: legacy.returns,
+            cost: legacy.cost,
+            source: 'ue_legacy_stub',
+            ...(legacy.hint ? { hint: legacy.hint } : {}),
+          }, null, 2),
+        }],
+      };
+    }
+    const allKnown = [...listRecordedCommands(), ...Object.keys(LEGACY_SIGNATURES)];
+    const did_you_mean = suggestClose(command, allKnown);
     return {
       content: [{
         type: 'text',
         text: JSON.stringify({
           status: 'no_schema_available',
           command,
-          hint: 'use list_tool_categories to discover commands, or python_run to invoke via UE Python',
+          hint: 'use list_tool_categories to discover commands, or hayba_invoke({ via: "ue_legacy" }) for UE-side handlers',
           did_you_mean,
         }, null, 2),
       }],

@@ -16,10 +16,21 @@ describe('python_run', () => {
     const r = await pythonRunHandler({ script: '' }, fakeSession);
     expect(r.isError).toBe(true);
   });
-  it('forwards correct cmd name', async () => {
+  it('forwards correct cmd name and wraps the script for print->log_warning redirect', async () => {
     mockSend.mockResolvedValue({ id: '1', ok: true, data: { stdout: 'hi' } });
     await pythonRunHandler({ script: 'print(1)' }, fakeSession);
-    expect(mockSend).toHaveBeenCalledWith('python_run', expect.objectContaining({ script: 'print(1)' }));
+    // The handler now wraps user source in a Python exec() shim that binds
+    // builtin print to unreal.log_warning, so prints surface in
+    // editor_stream_log instead of the swallowed UE stdout. See postmortem
+    // §3.4 (2026-05-23-pcg-landscape-mcp-postmortem.md).
+    expect(mockSend).toHaveBeenCalledWith(
+      'python_run',
+      expect.objectContaining({
+        script: expect.stringContaining('_hayba_user_src = """print(1)"""'),
+      }),
+    );
+    const payload = mockSend.mock.calls[0][1] as { script: string };
+    expect(payload.script).toContain('unreal.log_warning');
   });
   it('surfaces tier-3 blocked error specifically', async () => {
     mockSend.mockResolvedValue({ id: '2', ok: false, error: 'unsafe', data: { tier: 3 } });
