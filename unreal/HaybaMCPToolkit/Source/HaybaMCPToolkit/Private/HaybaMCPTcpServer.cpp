@@ -7,6 +7,16 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPTCP, Log, All);
 
+FHaybaMCPConnection::~FHaybaMCPConnection()
+{
+    if (Socket)
+    {
+        Socket->Close();
+        ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Socket);
+        Socket = nullptr;
+    }
+}
+
 FHaybaMCPTcpServer::FHaybaMCPTcpServer(int32 InPort)
     : Port(InPort)
 {
@@ -91,9 +101,17 @@ uint32 FHaybaMCPTcpServer::Run()
             {
                 const int32 NewCount = ClientCount.Increment();
                 UE_LOG(LogHaybaMCPTCP, Log, TEXT("Client accepted (active: %d)"), NewCount);
-                AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this, ClientSocket]()
+
+                // Wrap the raw FSocket* in a shared connection state. The
+                // worker thread loop holds the first strong ref; every
+                // dispatched game-thread response lambda will pin its own
+                // strong ref by value. The socket survives until the last
+                // ref drops — closing the use-after-free hole that crashed
+                // UE in the 2026-05-23 landscape_import session.
+                TSharedPtr<FHaybaMCPConnection> Conn = MakeShared<FHaybaMCPConnection>(ClientSocket);
+                AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this, Conn]()
                 {
-                    HandleClientConnection(ClientSocket);
+                    HandleClientConnection(Conn);
                 });
             }
         }
@@ -101,33 +119,44 @@ uint32 FHaybaMCPTcpServer::Run()
     return 0;
 }
 
-void FHaybaMCPTcpServer::HandleClientConnection(FSocket* ClientSocket)
+void FHaybaMCPTcpServer::HandleClientConnection(TSharedPtr<FHaybaMCPConnection> Conn)
 {
-    while (bIsRunning)
+    while (bIsRunning && Conn.IsValid() && Conn->bAlive)
     {
         FString Message;
-        if (!ReadMessage(ClientSocket, Message))
+        if (!ReadMessage(Conn, Message))
         {
             const int32 NewCount = ClientCount.Decrement();
             UE_LOG(LogHaybaMCPTCP, Log, TEXT("Client disconnected (active: %d)"), NewCount);
-            ClientSocket->Close();
-            ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ClientSocket);
+            // Mark dead so any in-flight game-thread response lambdas
+            // skip SendMessage instead of writing into a half-closed
+            // socket. The socket itself is destroyed by ~FHaybaMCPConnection
+            // when the last strong ref drops (this worker's `Conn` going out
+            // of scope, plus any pending response lambdas releasing theirs).
+            Conn->bAlive = false;
             return;
         }
 
-        AsyncTask(ENamedThreads::GameThread, [this, Message, ClientSocket]()
+        // Capture the shared_ptr BY VALUE — this is the load-bearing fix.
+        // The lambda now owns a strong ref to the connection state for the
+        // entire duration of the game-thread work. If the worker thread
+        // observes a disconnect and returns (releasing its own ref), the
+        // socket stays alive until this lambda finishes and releases its
+        // copy of the shared_ptr.
+        AsyncTask(ENamedThreads::GameThread, [this, Message, Conn]()
         {
-            if (CommandHandler.IsValid())
-            {
-                FString ResponseString = CommandHandler->ProcessCommand(Message);
-                SendMessage(ClientSocket, ResponseString);
-            }
+            if (!CommandHandler.IsValid()) return;
+            FString ResponseString = CommandHandler->ProcessCommand(Message);
+            SendMessage(Conn, ResponseString);
         });
     }
 }
 
-bool FHaybaMCPTcpServer::ReadMessage(FSocket* Socket, FString& OutMessage)
+bool FHaybaMCPTcpServer::ReadMessage(const TSharedPtr<FHaybaMCPConnection>& Conn, FString& OutMessage)
 {
+    if (!Conn.IsValid() || !Conn->Socket) return false;
+    FSocket* Socket = Conn->Socket;
+
     uint8 Header[4];
     int32 HeaderBytesRead = 0;
 
@@ -170,8 +199,28 @@ bool FHaybaMCPTcpServer::ReadMessage(FSocket* Socket, FString& OutMessage)
     return true;
 }
 
-void FHaybaMCPTcpServer::SendMessage(FSocket* Socket, const FString& Message)
+void FHaybaMCPTcpServer::SendMessage(const TSharedPtr<FHaybaMCPConnection>& Conn, const FString& Message)
 {
+    // Three guard clauses before touching the socket:
+    //   1. Shared ref is still valid (always true on game thread — the lambda
+    //      owns it — but defensive).
+    //   2. bAlive flag wasn't flipped by the worker (client disconnected
+    //      while game thread was busy).
+    //   3. Socket pointer non-null (defensive against partial-init).
+    // With these, a use-after-free is no longer possible: even if every other
+    // ref were gone, the lambda's own ref keeps the socket alive long enough
+    // for our send attempt; even if the client is gone, we no-op instead of
+    // poking a freed pointer.
+    if (!Conn.IsValid() || !Conn->bAlive || !Conn->Socket) return;
+
+    // Serialize concurrent writes. Game-thread lambdas for the same
+    // connection could in principle be queued back-to-back; without this
+    // lock the 4-byte header + body of a response could interleave with
+    // another response's header.
+    FScopeLock WriteLock(&Conn->SendLock);
+    if (!Conn->bAlive || !Conn->Socket) return; // re-check after acquiring lock
+
+    FSocket* Socket = Conn->Socket;
     FTCHARToUTF8 Utf8Msg(*Message);
     uint32 Length = Utf8Msg.Length();
 
@@ -181,10 +230,20 @@ void FHaybaMCPTcpServer::SendMessage(FSocket* Socket, const FString& Message)
     Header[2] = (Length >> 8) & 0xFF;
     Header[3] = Length & 0xFF;
 
-    int32 BytesSent;
-    Socket->Send(Header, 4, BytesSent);
-    if (BytesSent == 4)
+    int32 BytesSent = 0;
+    const bool bHeaderOk = Socket->Send(Header, 4, BytesSent) && BytesSent == 4;
+    if (!bHeaderOk)
     {
-        Socket->Send(reinterpret_cast<const uint8*>(Utf8Msg.Get()), Length, BytesSent);
+        // The peer is gone or the OS write buffer is shut. Mark dead so the
+        // next read loop iteration tears down cleanly instead of stalling.
+        UE_LOG(LogHaybaMCPTCP, Verbose, TEXT("SendMessage: header write failed; marking conn dead"));
+        Conn->bAlive = false;
+        return;
+    }
+    const bool bBodyOk = Socket->Send(reinterpret_cast<const uint8*>(Utf8Msg.Get()), Length, BytesSent) && BytesSent == static_cast<int32>(Length);
+    if (!bBodyOk)
+    {
+        UE_LOG(LogHaybaMCPTCP, Verbose, TEXT("SendMessage: body write failed; marking conn dead"));
+        Conn->bAlive = false;
     }
 }
