@@ -15,6 +15,7 @@
 #include "Json.h"
 #include "Async/Async.h"
 #include "Async/Future.h"
+#include "HaybaMCPThreading.h"
 #include "Editor.h"
 #include "EngineUtils.h"
 #include "GameFramework/Actor.h"
@@ -46,7 +47,7 @@ static void MaybeShowPlanModePrompt()
 
     S.bShownPlanModePrompt = true;
     S.Save();
-    AsyncTask(ENamedThreads::GameThread, []()
+    HaybaThreading::ExecuteOnGameThread([]()
     {
         FNotificationInfo Info(NSLOCTEXT("Hayba", "PlanModePrompt",
             "You've been using Plan Mode for a while — consider disabling it from the toolbar if you trust your workflow."));
@@ -123,7 +124,7 @@ static void PushSceneGraphToPanel(const TSharedPtr<FJsonObject>& Data)
         }
     }
 
-    AsyncTask(ENamedThreads::GameThread, [Nodes = MoveTemp(Nodes), Edges = MoveTemp(Edges)]()
+    HaybaThreading::ExecuteOnGameThread([Nodes = MoveTemp(Nodes), Edges = MoveTemp(Edges)]()
     {
         if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
         {
@@ -157,7 +158,7 @@ static void PushPhysicsResultsToPanel(const TSharedPtr<FJsonObject>& Data)
             Issues.Add(MoveTemp(I));
         }
     }
-    AsyncTask(ENamedThreads::GameThread, [Issues = MoveTemp(Issues)]()
+    HaybaThreading::ExecuteOnGameThread([Issues = MoveTemp(Issues)]()
     {
         if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
         {
@@ -188,7 +189,7 @@ static void PushMemoryResultsToPanel(const TSharedPtr<FJsonObject>& Data)
             Entries.Add(FString::Printf(TEXT("[%s/%s] %s"), *Scope, *Role, *Content));
         }
     }
-    AsyncTask(ENamedThreads::GameThread, [Entries = MoveTemp(Entries)]()
+    HaybaThreading::ExecuteOnGameThread([Entries = MoveTemp(Entries)]()
     {
         if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
         {
@@ -237,8 +238,7 @@ static TMap<FString, FString> CaptureBeforeState(const FString& Cmd, const TShar
     FString PropertyName;
     if (bWantProperty) Params->TryGetStringField(TEXT("property"), PropertyName);
 
-    FEvent* Done = FPlatformProcess::GetSynchEventFromPool(true);
-    AsyncTask(ENamedThreads::GameThread, [&Before, ActorId, Cmd, PropertyName, Done, bWantTransform, bWantTags, bWantProperty, bWantDelete]()
+    HaybaThreading::RunOnGameThreadAndWait([&Before, ActorId, Cmd, PropertyName, bWantTransform, bWantTags, bWantProperty, bWantDelete]()
     {
         if (AActor* Actor = FindActorByLabel_GameThread(ActorId))
         {
@@ -279,10 +279,7 @@ static TMap<FString, FString> CaptureBeforeState(const FString& Cmd, const TShar
         {
             Before.Add(TEXT("__missing__"), TEXT("(actor not found)"));
         }
-        Done->Trigger();
-    });
-    Done->Wait(2000);   // 2-second timeout to avoid deadlock if game thread is stalled
-    FPlatformProcess::ReturnSynchEventToPool(Done);
+    }, /*TimeoutSeconds=*/ 2.0);
     return Before;
 }
 
@@ -384,7 +381,7 @@ static void PushDiffEntries(const FString& Cmd, const TSharedPtr<FJsonObject>& P
 
     if (Entries.IsEmpty()) return;
 
-    AsyncTask(ENamedThreads::GameThread, [Entries = MoveTemp(Entries)]()
+    HaybaThreading::ExecuteOnGameThread([Entries = MoveTemp(Entries)]()
     {
         if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
         {
@@ -437,17 +434,14 @@ static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject
         M->StashPendingPlan(Steps, AwaitSecs);
     }
 
-    // Try to deliver to a live panel immediately too — if it's alive RIGHT
-    // NOW, the user sees the plan without having to switch tabs. The buffer
-    // is consumed in lockstep so the next tab open doesn't show a stale copy.
-    //
-    // CRITICAL: this function may be invoked synchronously on the game
-    // thread (when called from ProcessCommand under the TCP server's
-    // serialized AsyncTask). Using AsyncTask(GameThread, ...) + Wait
-    // FROM the game thread re-enters UE's task graph queue and triggers
-    // `++Queue(QueueIndex).RecursionGuard == 1` in TaskGraph.cpp:689 →
-    // editor crash. Always check IsInGameThread() and inline the work.
-    auto DoDeliver = [&]() -> bool
+    // Try to deliver to a live panel immediately too — if it's alive
+    // RIGHT NOW, the user sees the plan without having to switch tabs.
+    // The buffer is consumed in lockstep so the next tab open does not
+    // show a stale copy. Goes through HaybaThreading so the inline-if-
+    // on-game-thread path is handled centrally — no per-handler
+    // IsInGameThread sprinkle.
+    bool bPanelOpen = false;
+    HaybaThreading::RunOnGameThreadAndWait([&bPanelOpen, &Steps, AwaitSecs]()
     {
         if (FHaybaMCPModule* M2 = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
         {
@@ -456,45 +450,10 @@ static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject
                 Panel->LoadPlan(Steps, AwaitSecs);
                 TArray<FHaybaPlanStep> _DiscardSteps; int32 _DiscardAwait;
                 M2->ConsumePendingPlan(_DiscardSteps, _DiscardAwait);
-                return true;
+                bPanelOpen = true;
             }
         }
-        return false;
-    };
-
-    bool bPanelOpen = false;
-    if (IsInGameThread())
-    {
-        // Already on the game thread (this is the common case under the
-        // serialized TCP path) — run inline. No queue push, no wait, no
-        // re-entry.
-        bPanelOpen = DoDeliver();
-    }
-    else
-    {
-        // Off-thread invocation (e.g. a direct test harness call) —
-        // marshal and wait. Same TPromise/TFuture as before.
-        TSharedRef<TPromise<bool>> PanelOpenPromise = MakeShared<TPromise<bool>>();
-        TFuture<bool> PanelOpenFuture = PanelOpenPromise->GetFuture();
-        AsyncTask(ENamedThreads::GameThread, [Steps, AwaitSecs, PanelOpenPromise]()
-        {
-            bool bDelivered = false;
-            if (FHaybaMCPModule* M2 = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
-            {
-                if (TSharedPtr<SHaybaMCPPlanPanel> Panel = M2->PlanPanel.Pin())
-                {
-                    Panel->LoadPlan(Steps, AwaitSecs);
-                    TArray<FHaybaPlanStep> _DiscardSteps; int32 _DiscardAwait;
-                    M2->ConsumePendingPlan(_DiscardSteps, _DiscardAwait);
-                    bDelivered = true;
-                }
-            }
-            PanelOpenPromise->SetValue(bDelivered);
-        });
-        bPanelOpen = PanelOpenFuture.WaitFor(FTimespan::FromSeconds(2.0))
-            ? PanelOpenFuture.Get()
-            : false;
-    }
+    }, /*TimeoutSeconds=*/ 2.0);
 
     auto Data = MakeShared<FJsonObject>();
     Data->SetBoolField(TEXT("received"), true);
@@ -614,7 +573,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     // a fresh collapsible turn group.
     if (Cmd == TEXT("ui_tool_stream_new_turn"))
     {
-        AsyncTask(ENamedThreads::GameThread, []()
+        HaybaThreading::ExecuteOnGameThread([]()
         {
             if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
             {
@@ -643,7 +602,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
         {
             M->RecordToolCall(TName, PStr, RStr);
-            AsyncTask(ENamedThreads::GameThread, [TName, PStr, RStr]()
+            HaybaThreading::ExecuteOnGameThread([TName, PStr, RStr]()
             {
                 if (FHaybaMCPModule* Mod = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
                 {
@@ -785,7 +744,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
             M->RecordToolCall(Cmd, ParamsStr, ResultStr);
         }
 
-        AsyncTask(ENamedThreads::GameThread, [Cmd, ParamsStr, ResultStr]()
+        HaybaThreading::ExecuteOnGameThread([Cmd, ParamsStr, ResultStr]()
         {
             if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
             {

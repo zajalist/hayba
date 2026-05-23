@@ -8,6 +8,7 @@
 
 #include "HaybaMCPIdleHandler.h"
 
+#include "HaybaMCPThreading.h"
 #include "Containers/Ticker.h"
 #include "Editor.h"
 #include "Editor/EditorEngine.h"
@@ -286,7 +287,7 @@ FHaybaHandlerResult FHaybaMCPIdleHandler::Handle(const FString& Command,
     TSharedRef<FWaitState, ESPMode::ThreadSafe> SharedState =
         MakeShared<FWaitState, ESPMode::ThreadSafe>(MoveTemp(State));
 
-    AsyncTask(ENamedThreads::GameThread, [SharedState]()
+    HaybaThreading::ExecuteOnGameThread([SharedState]()
     {
         // GC nudge — only when gc requested. Queue once, before the first poll,
         // so IsGCBusyImpl observes the pending pass briefly then sees it settle.

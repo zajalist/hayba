@@ -7,6 +7,7 @@
 
 #include "HaybaMCPRenderHandler.h"
 #include "HaybaMCPCaptureActor.h"
+#include "HaybaMCPThreading.h"
 
 #include "Async/Async.h"
 #include "Containers/Ticker.h"
@@ -452,7 +453,7 @@ FHaybaHandlerResult FHaybaMCPRenderHandler::Handle(const FString& /*Command*/,
         return FHaybaHandlerResult::Err(TEXT("render_camera: failed to allocate FEvent"));
     }
 
-    AsyncTask(ENamedThreads::GameThread, [S]() { RunOnGameThread(S); });
+    HaybaThreading::ExecuteOnGameThread([S]() { RunOnGameThread(S); });
 
     // Allow the wait phase + render + headroom.
     const uint32 BlockTimeoutMs = (uint32)((S->TimeoutSeconds + 60.0) * 1000.0);

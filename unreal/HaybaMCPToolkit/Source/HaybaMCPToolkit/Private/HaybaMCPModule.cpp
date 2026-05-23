@@ -1,5 +1,6 @@
 #include "HaybaMCPModule.h"
 #include "Async/Async.h"
+#include "HaybaMCPThreading.h"
 #include "HaybaMCPMainPanel.h"
 #include "HaybaMCPChatPanel.h"
 #include "HaybaMCPToolStreamPanel.h"
@@ -78,6 +79,13 @@ void FHaybaMCPModule::StartupModule()
 {
     PluginBaseDir = IPluginManager::Get().FindPlugin(TEXT("HaybaMCPToolkit"))->GetBaseDir();
     UE_LOG(LogHaybaMCP, Log, TEXT("HaybaMCPToolkit module started. Base dir: %s"), *PluginBaseDir);
+
+    // Start the game-thread dispatcher BEFORE anything that might
+    // marshal work onto it. Subscribes to FCoreDelegates::OnEndFrame
+    // so per-frame Drain runs outside any TaskGraph queue-processing
+    // context — the only safe place to invoke handlers that may
+    // themselves enqueue more game-thread work.
+    HaybaThreading::Startup();
 
     FHaybaMCPStyle::Initialize();
     FHaybaMCPSettings::Get().Load();
@@ -183,6 +191,10 @@ void FHaybaMCPModule::ShutdownModule()
     TM->UnregisterNomadTabSpawner(TabMain);
     StopTcpServer();
     StopMCPServer();
+    // Stop the dispatcher AFTER TCP/MCP servers so any final closures
+    // those servers queued during shutdown still drain. Final Drain
+    // happens inside HaybaThreading::Shutdown.
+    HaybaThreading::Shutdown();
     FHaybaMCPStyle::Shutdown();
     UE_LOG(LogHaybaMCP, Log, TEXT("HaybaMCPToolkit module shut down."));
 }
@@ -409,7 +421,7 @@ void FHaybaMCPModule::RecordToolCall(const FString& ToolName, const FString& Par
 
     // Marshal to GameThread before firing so Slate subscribers don't have to
     // worry about thread-safety in their handlers.
-    AsyncTask(ENamedThreads::GameThread, [this, Rec]()
+    HaybaThreading::ExecuteOnGameThread([this, Rec]()
     {
         OnToolCallRecorded.Broadcast(Rec);
     });

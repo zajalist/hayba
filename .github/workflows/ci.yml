@@ -80,6 +80,14 @@ jobs:
         working-directory: mcp-tools/hayba-mcp
         run: npm run lint:legacy-wrappers
 
+      # Forbids raw AsyncTask(ENamedThreads::GameThread, ...) in plugin
+      # code outside the dispatcher itself — the RecursionGuard crash
+      # class is architecturally prevented and the lint keeps it from
+      # regressing. Allowlist lives in the script.
+      - name: No raw AsyncTask(GameThread) lint
+        working-directory: mcp-tools/hayba-mcp
+        run: npm run lint:no-raw-asynctask-gamethread
+
   sidecar:
     name: Visual sidecar — import + lint
     runs-on: ubuntu-latest

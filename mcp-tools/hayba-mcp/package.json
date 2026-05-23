@@ -16,7 +16,8 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "lint:legacy-wrappers": "node scripts/check-legacy-wrappers.mjs"
+    "lint:legacy-wrappers": "node scripts/check-legacy-wrappers.mjs",
+    "lint:no-raw-asynctask-gamethread": "node scripts/check-no-raw-asynctask-gamethread.mjs"
   },
   "dependencies": {
     "@distube/ytdl-core": "^4.16.12",

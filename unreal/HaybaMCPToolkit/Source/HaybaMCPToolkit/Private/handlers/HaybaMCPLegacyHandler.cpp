@@ -1,6 +1,7 @@
 #include "HaybaMCPLegacyHandler.h"
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPLandscapeImporter.h"
+#include "HaybaMCPThreading.h"
 #include "Json.h"
 #include "JsonUtilities.h"
 #include "PCGSettings.h"
@@ -49,48 +50,25 @@ TArray<FString> FHaybaMCPLegacyHandler::GetCommands() const
 
 FHaybaHandlerResult FHaybaMCPLegacyHandler::RunOnGameThread(TFunction<FHaybaHandlerResult()> Work)
 {
-    if (IsInGameThread())
-    {
-        return Work();
-    }
-
-    // Shared state so the marshaled lambda and the waiting caller both keep
-    // it alive across the thread hop — by-reference capture would be a
-    // use-after-free risk if the wait timed out and the caller frame unwound.
-    //
-    // We deliberately do NOT return the FEvent to the pool on timeout: if the
-    // marshaled lambda eventually runs after we've given up, it would trigger
-    // a recycled event and clobber unrelated waiters. Leaking one event per
-    // (rare) timeout is the lesser evil. The shared Box and event ownership
-    // are passed into the lambda by-value so they outlive the waiter.
-    struct FState
-    {
-        FHaybaHandlerResult Result;
-        FEvent* Done = nullptr;
-    };
+    // Delegate to the unified dispatcher. The inline-when-on-game-thread
+    // pattern lives there, so this wrapper just adapts the FHaybaHandlerResult
+    // signature: capture the result by shared ref, signal completion via
+    // RunOnGameThreadAndWait's TPromise, return on either completion or
+    // timeout. Same 30s ceiling we used before.
+    struct FState { FHaybaHandlerResult Result; };
     TSharedRef<FState, ESPMode::ThreadSafe> State = MakeShared<FState, ESPMode::ThreadSafe>();
-    State->Done = FPlatformProcess::GetSynchEventFromPool(/*bIsManualReset=*/true);
 
-    AsyncTask(ENamedThreads::GameThread, [Work = MoveTemp(Work), State]()
+    const bool bCompleted = HaybaThreading::RunOnGameThreadAndWait(
+        [Work = MoveTemp(Work), State]()
+        {
+            State->Result = Work();
+        },
+        /*TimeoutSeconds=*/ 30.0);
+
+    if (bCompleted)
     {
-        State->Result = Work();
-        if (State->Done) State->Done->Trigger();
-    });
-
-    // 30s ceiling: long enough for landscape import (~5-10s on big heightmaps)
-    // and PCG execution, short enough to surface a real deadlock instead of
-    // hanging the TS client forever.
-    const bool bSignalled = State->Done->Wait(FTimespan::FromSeconds(30));
-
-    if (bSignalled)
-    {
-        FPlatformProcess::ReturnSynchEventToPool(State->Done);
-        State->Done = nullptr;
         return State->Result;
     }
-
-    // Timeout: leak the event (see comment above). The shared State outlives
-    // this frame because the AsyncTask lambda still holds a reference.
     return FHaybaHandlerResult::Err(
         TEXT("Game-thread marshal timed out after 30s — editor may be stalled "
              "or running a long blocking task. Try again once the editor is idle."));

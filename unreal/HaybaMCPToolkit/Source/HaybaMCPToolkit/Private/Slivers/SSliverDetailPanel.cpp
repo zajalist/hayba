@@ -1,6 +1,7 @@
 // SSliverDetailPanel.cpp
 #include "Slivers/SSliverDetailPanel.h"
 
+#include "HaybaMCPThreading.h"
 #include "Slivers/HaybaSliverClient.h"
 #include "Slivers/HaybaSliverSettings.h"
 #include "Slivers/SSliverParamActorRef.h"
@@ -152,7 +153,7 @@ FReply SSliverDetailPanel::OnRunClicked()
     FHaybaSliverRunCallback OnDone = FHaybaSliverRunCallback::CreateLambda(
         [this](bool bOk, const FString& Body)
         {
-            AsyncTask(ENamedThreads::GameThread, [this, bOk, Body]()
+            HaybaThreading::ExecuteOnGameThread([this, bOk, Body]()
             {
                 bRunning = false;
                 if (OutputBox)
