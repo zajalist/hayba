@@ -11,9 +11,12 @@
 #include "GameFramework/Actor.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/HitResult.h"
 #include "Engine/World.h"
+#include "LandscapeProxy.h"
 #include "UObject/Class.h"
 #include "UObject/UnrealType.h"
+#include "WorldCollision.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPActor, Log, All);
 
@@ -30,6 +33,50 @@ AActor* FHaybaMCPActorHandler::FindActorByName(UWorld* World, const FString& Nam
             return *It;
     }
     return nullptr;
+}
+
+/**
+ * Snap a world XY to the landscape surface Z via a vertical line trace.
+ *
+ * Why this lives in the plugin: every agent doing scene composition needs
+ * "place this on the ground" semantics. Without it, the agent reaches for
+ * python_run + unreal.SystemLibrary.line_trace_single — which is the wrong
+ * tool for scene composition (see the 2026-05-23 postmortem). Bake it into
+ * actor_spawn / actor_transform so the agent never has to leave the
+ * native actor surface.
+ *
+ * Returns true if the trace hit a LandscapeProxy and writes the impact
+ * Z to OutZ. Returns false otherwise (no landscape, or trace missed).
+ */
+static bool SnapZToLandscape(UWorld* World, float X, float Y, float& OutZ)
+{
+    if (!World) return false;
+    const FVector Start(X, Y, 1000000.0); // start 10km up — works for any
+                                          // landscape height we care about
+    const FVector End(X, Y, -1000000.0);
+    FHitResult Hit;
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(HaybaSnapToLandscape), false);
+    Params.bTraceComplex = true;
+    // Trace against WorldStatic — landscape's collision is WorldStatic.
+    const bool bHit = World->LineTraceSingleByChannel(Hit, Start, End, ECC_WorldStatic, Params);
+    if (!bHit) return false;
+    if (!Hit.GetActor() || !Hit.GetActor()->IsA(ALandscapeProxy::StaticClass()))
+    {
+        return false; // hit something else — don't pretend it's the ground
+    }
+    OutZ = Hit.ImpactPoint.Z;
+    return true;
+}
+
+/** Parse snap_to_landscape from params. Returns true if the caller asked. */
+static bool ShouldSnapZ(const TSharedPtr<FJsonObject>& P)
+{
+    bool b = false;
+    if (P.IsValid() && P->TryGetBoolField(TEXT("snap_to_landscape"), b))
+    {
+        return b;
+    }
+    return false;
 }
 
 FVector FHaybaMCPActorHandler::ParseVec3(const TArray<TSharedPtr<FJsonValue>>& Arr, const FVector& Default) const
@@ -201,6 +248,27 @@ FHaybaHandlerResult FHaybaMCPActorHandler::Spawn(const TSharedPtr<FJsonObject>& 
     if (P->TryGetArrayField(TEXT("scale"), ScaleArr))
         NewActor->SetActorScale3D(ParseVec3(*ScaleArr, FVector::OneVector));
 
+    // Snap-to-landscape: if the caller asked, line-trace from way above the
+    // spawn XY down and use the landscape impact Z, then add `z_offset`
+    // (defaults 0) for pivot-offset assets like trees whose pivot sits well
+    // above the visible base. Falls back to keeping the original Z if no
+    // landscape was hit.
+    bool bSnapped = false;
+    float SnappedZ = 0.f;
+    if (ShouldSnapZ(P))
+    {
+        UWorld* World = NewActor->GetWorld();
+        float HitZ = 0.f;
+        if (SnapZToLandscape(World, Location.X, Location.Y, HitZ))
+        {
+            double ZOffset = 0.0;
+            P->TryGetNumberField(TEXT("z_offset"), ZOffset);
+            SnappedZ = HitZ + static_cast<float>(ZOffset);
+            NewActor->SetActorLocation(FVector(Location.X, Location.Y, SnappedZ));
+            bSnapped = true;
+        }
+    }
+
     // Label
     FString Label;
     if (P->TryGetStringField(TEXT("label"), Label) && !Label.IsEmpty())
@@ -210,6 +278,11 @@ FHaybaHandlerResult FHaybaMCPActorHandler::Spawn(const TSharedPtr<FJsonObject>& 
     Out->SetStringField(TEXT("actor_id"), NewActor->GetName());
     Out->SetStringField(TEXT("label"),    NewActor->GetActorLabel());
     Out->SetStringField(TEXT("class"),    SpawnedClass->GetName());
+    if (bSnapped)
+    {
+        Out->SetBoolField(TEXT("snapped_to_landscape"), true);
+        Out->SetNumberField(TEXT("snapped_z"), SnappedZ);
+    }
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -262,11 +335,35 @@ FHaybaHandlerResult FHaybaMCPActorHandler::Transform(const TSharedPtr<FJsonObjec
     if (P->TryGetArrayField(TEXT("scale"), ScaleArr))
         Actor->SetActorScale3D(ParseVec3(*ScaleArr, FVector::OneVector));
 
+    // Snap-to-landscape: applies to the actor's CURRENT (post-update) XY.
+    // Useful for batch alignment without the agent having to round-trip
+    // through python_run with a line trace.
+    bool bSnapped = false;
+    float SnappedZ = 0.f;
+    if (ShouldSnapZ(P))
+    {
+        const FVector CurLoc = Actor->GetActorLocation();
+        float HitZ = 0.f;
+        if (SnapZToLandscape(Actor->GetWorld(), CurLoc.X, CurLoc.Y, HitZ))
+        {
+            double ZOffset = 0.0;
+            P->TryGetNumberField(TEXT("z_offset"), ZOffset);
+            SnappedZ = HitZ + static_cast<float>(ZOffset);
+            Actor->SetActorLocation(FVector(CurLoc.X, CurLoc.Y, SnappedZ));
+            bSnapped = true;
+        }
+    }
+
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("actor_id"), ActorId);
     Out->SetObjectField(TEXT("location"), VecToJson(Actor->GetActorLocation()));
     Out->SetObjectField(TEXT("rotation"), RotToJson(Actor->GetActorRotation()));
     Out->SetObjectField(TEXT("scale"),    VecToJson(Actor->GetActorScale3D()));
+    if (bSnapped)
+    {
+        Out->SetBoolField(TEXT("snapped_to_landscape"), true);
+        Out->SetNumberField(TEXT("snapped_z"), SnappedZ);
+    }
     return FHaybaHandlerResult::Ok(Out);
 }
 

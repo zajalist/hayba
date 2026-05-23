@@ -1880,12 +1880,14 @@ function recordEagerSchemas(
 
   // ── Actor domain ──────────────────────────────────────────────────────────
   reg('actor_spawn', {
-    class_path: z.string().describe('UE class path, e.g. "/Script/Engine.StaticMeshActor"'),
+    class_path: z.string().describe('UClass path OR /Game StaticMesh/SkeletalMesh asset path (auto-wraps in StaticMeshActor)'),
     location: coerceVec3.optional(),
     rotation: coerceVec3.optional(),
     scale: coerceVec3.optional(),
     label: z.string().optional(),
-  }, 'medium', '{actor_id, label, class}');
+    snap_to_landscape: z.boolean().optional().describe('Line-trace to landscape surface and set Z to the hit (plus z_offset). Use this for props on terrain instead of guessing Z.'),
+    z_offset: z.number().optional().describe('Added to snapped Z. For pivot-shifted assets (e.g. SM_GiantTree_01 needs -380).'),
+  }, 'medium', '{actor_id, label, class, snapped_to_landscape?, snapped_z?, validator?}');
   reg('actor_list', {
     class_filter: z.string().optional().describe('Exact class name filter'),
     tag: z.string().optional().describe('Tag filter'),
@@ -1896,7 +1898,9 @@ function recordEagerSchemas(
     location: coerceVec3.optional(),
     rotation: coerceVec3.optional(),
     scale: coerceVec3.optional(),
-  }, 'low', '{ok, actor_id, before, after}');
+    snap_to_landscape: z.boolean().optional().describe('After applying location/rotation/scale, line-trace to landscape surface and set Z. Batch-align props to terrain without python_run.'),
+    z_offset: z.number().optional().describe('Added to snapped Z. For pivot-shifted assets.'),
+  }, 'low', '{ok, actor_id, before, after, snapped_to_landscape?, snapped_z?}');
 
   // ── Scene domain ──────────────────────────────────────────────────────────
   reg('scene_export', {

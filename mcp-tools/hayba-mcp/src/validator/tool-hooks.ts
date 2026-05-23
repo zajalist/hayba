@@ -247,6 +247,58 @@ export function isSelfSocketScript(script: string): boolean {
   return false;
 }
 
+// ── actor_spawn_not_on_landscape ────────────────────────────────────────────
+//
+// Fires when an agent spawns a StaticMesh asset with an explicit Z but
+// without `snap_to_landscape: true`. The 2026-05-23 Palestine scene session
+// produced two batches of pillars at z=-50 floating below the landscape
+// surface because the agent guessed Z instead of asking the plugin to
+// snap. The plugin now ships a snap parameter on actor_spawn — this rule
+// surfaces "you forgot to use it" before the user notices in a screenshot.
+async function evaluateActorSpawnNotOnLandscape(ctx: ValidatorContext): Promise<ValidatorFinding | null> {
+  const args = asRecord(ctx.toolArgs);
+  const result = asRecord(ctx.toolResult);
+
+  // Only fire for mesh-style class_paths (/Game/...). UClass spawns
+  // (DirectionalLight, PostProcessVolume, blueprint actor classes) aren't
+  // expected to sit on the landscape and would be noise.
+  const classPath = String(args.class_path ?? '');
+  if (!classPath.startsWith('/Game/')) return null;
+
+  // If the agent already passed snap_to_landscape:true, the plugin handled
+  // it — nothing to warn about.
+  if (args.snap_to_landscape === true) return null;
+
+  // If the response includes snapped_to_landscape:true, the snap happened
+  // server-side — also nothing to warn about. (Defensive in case the
+  // plugin starts snapping by default.)
+  if (result.snapped_to_landscape === true) return null;
+
+  // Only fire when the agent supplied an explicit location with a Z that
+  // looks "guessed" (not aligned to a landscape value). We don't know the
+  // landscape height here without round-tripping, but we DO know that the
+  // agent didn't ask the plugin to figure it out — surface that.
+  const loc = Array.isArray(args.location) ? args.location as unknown[] : null;
+  if (!loc || loc.length !== 3) return null;
+
+  const label = String(args.label ?? result.label ?? '<unlabeled>');
+  return {
+    ruleId: 'actor_spawn_not_on_landscape',
+    severity: 'warning',
+    message: `actor_spawn "${label}" placed a mesh with explicit Z and no snap_to_landscape — may float or bury`,
+    hint: 'Pass snap_to_landscape:true (and z_offset for pivot-shifted assets like SM_GiantTree_01 which needs -380). The plugin will line-trace the landscape and set Z for you. No python_run round-trip needed.',
+    refs: ['[[actor-spawn-snap-to-landscape]]'],
+    timestamp: nowIso(),
+    toolName: ctx.toolName,
+    context: {
+      label,
+      actor_id: typeof result.actor_id === 'string' ? result.actor_id : undefined,
+      class_path: classPath,
+      location: loc,
+    },
+  };
+}
+
 // ── installer ───────────────────────────────────────────────────────────────
 
 let INSTALLED = false;
@@ -260,6 +312,7 @@ export function installToolHooks(): void {
   attachEvaluator('landscape_import_no_landscape_in_world', evaluateLandscapeImportSilentFailure);
   attachEvaluator('asset_browse_describe_assets_missing',   evaluateAssetBrowseDescribeMissing);
   attachEvaluator('tcp_socket_to_self_in_python_run',       evaluatePythonRunSelfSocket);
+  attachEvaluator('actor_spawn_not_on_landscape',           evaluateActorSpawnNotOnLandscape);
 }
 
 /** Re-export so the test suite can reset between runs. */

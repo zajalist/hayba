@@ -148,6 +148,14 @@ export const RULES: ValidatorRule[] = [
     refs: ['[[asset-browse-plugin-out-of-date]]'],
     trigger: { after_tool: ['hayba_asset_browse', 'hayba_asset_search'] },
   },
+  {
+    id: 'actor_spawn_not_on_landscape',
+    severity: 'warning',
+    message: 'actor_spawn placed a mesh actor with no snap_to_landscape — props will float or bury',
+    hint: 'You called actor_spawn with a StaticMesh class_path and an explicit Z, but did not pass snap_to_landscape: true. If the landscape height at the spawn XY is not what you guessed, the actor will float in the sky or sink under the ground. Pass snap_to_landscape: true (and z_offset for pivot-shifted assets like SM_GiantTree_01 which needs -380) so the plugin line-traces the landscape for you. The 2026-05-23 Palestine scene session spent ten minutes round-tripping through python_run because this parameter did not exist — it does now.',
+    refs: ['[[actor-spawn-snap-to-landscape]]'],
+    trigger: { after_tool: 'actor_spawn' },
+  },
 ];
 
 /** Build an id → rule lookup (rebuilt on each call so tests can mutate). */

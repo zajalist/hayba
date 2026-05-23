@@ -19,6 +19,10 @@ export const schema = z.object({
   location: vec3.optional(),
   rotation: vec3.optional(),
   scale: vec3.optional(),
+  snap_to_landscape: z.boolean().optional()
+    .describe('After applying location/rotation/scale, line-trace from above the actor XY down to the landscape surface and set Z to that hit (plus z_offset). Lets you batch-align props to terrain without a python_run round-trip.'),
+  z_offset: z.number().optional()
+    .describe('Added to the snapped Z. For pivot-offset assets like SM_GiantTree_01 (needs -380). Ignored when snap_to_landscape is false.'),
 });
 
 export const actorTransformHandler: ToolHandler = async (args) => {
