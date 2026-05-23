@@ -75,10 +75,16 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
         return FHaybaHandlerResult::Err(TEXT("Python plugin not loaded — enable the PythonScriptPlugin in your project"));
     }
 
-    // Execute
+    // Execute. ExecuteFile (not ExecuteStatement) so the script can contain
+    // multiple top-level statements — imports, function defs, loops, etc.
+    // ExecuteStatement compiles in `single` mode, which raises
+    //   SyntaxError: multiple statements found while compiling a single statement
+    // on the second line of any non-trivial script. Confirmed in the
+    // 2026-05-23 Palestine scene session: every print-redirect wrapper
+    // ever shipped was unusable because the wrapper itself is multi-line.
     FPythonCommandEx Cmd;
     Cmd.Command = Code;
-    Cmd.ExecutionMode = EPythonCommandExecutionMode::ExecuteStatement;
+    Cmd.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
 
     const bool bOk = PythonPlugin->ExecPythonCommandEx(Cmd);
 

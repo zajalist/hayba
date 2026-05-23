@@ -4,6 +4,10 @@
 #include "EngineUtils.h"
 #include "Subsystems/EditorActorSubsystem.h"
 #include "Engine/OverlapResult.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/StaticMeshActor.h"
+#include "Engine/SkeletalMesh.h"
+#include "Animation/SkeletalMeshActor.h"
 #include "GameFramework/Actor.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -109,31 +113,90 @@ FHaybaHandlerResult FHaybaMCPActorHandler::Spawn(const TSharedPtr<FJsonObject>& 
     if (!P->TryGetStringField(TEXT("class_path"), ClassPath) || ClassPath.IsEmpty())
         return FHaybaHandlerResult::Err(TEXT("actor_spawn: missing class_path"));
 
-    UClass* ActorClass = LoadClass<AActor>(nullptr, *ClassPath);
-    if (!ActorClass)
-        return FHaybaHandlerResult::Err(FString::Printf(TEXT("actor_spawn: class not found: %s"), *ClassPath));
-
     UEditorActorSubsystem* EAS = GEditor ? GEditor->GetEditorSubsystem<UEditorActorSubsystem>() : nullptr;
     if (!EAS)
         return FHaybaHandlerResult::Err(TEXT("actor_spawn: EditorActorSubsystem unavailable"));
 
-    // Location
+    // Resolve location / rotation up front since both spawn paths need them.
     FVector Location = FVector::ZeroVector;
     const TArray<TSharedPtr<FJsonValue>>* LocArr;
     if (P->TryGetArrayField(TEXT("location"), LocArr))
         Location = ParseVec3(*LocArr);
 
-    // Rotation
     FRotator Rotation = FRotator::ZeroRotator;
     const TArray<TSharedPtr<FJsonValue>>* RotArr;
     if (P->TryGetArrayField(TEXT("rotation"), RotArr) && RotArr->Num() >= 3)
         Rotation = FRotator((*RotArr)[0]->AsNumber(), (*RotArr)[1]->AsNumber(), (*RotArr)[2]->AsNumber());
 
-    AActor* NewActor = EAS->SpawnActorFromClass(ActorClass, Location, Rotation);
-    if (!NewActor)
-        return FHaybaHandlerResult::Err(TEXT("actor_spawn: SpawnActorFromClass failed"));
+    AActor* NewActor = nullptr;
+    UClass*  SpawnedClass = nullptr;
 
-    // Scale
+    // 1) UClass path — the original behaviour (e.g. /Script/Engine.DirectionalLight,
+    //    Blueprint generated classes ending in _C, etc.)
+    UClass* ActorClass = LoadClass<AActor>(nullptr, *ClassPath);
+    if (ActorClass)
+    {
+        NewActor = EAS->SpawnActorFromClass(ActorClass, Location, Rotation);
+        if (!NewActor)
+            return FHaybaHandlerResult::Err(TEXT("actor_spawn: SpawnActorFromClass failed"));
+        SpawnedClass = ActorClass;
+    }
+    else
+    {
+        // 2) Mesh-asset path — accept what every agent reaches for first:
+        //      /Game/JungleRuins/Meshes/SM_GiantTree_01
+        //    Auto-wraps in the appropriate actor type (StaticMeshActor /
+        //    SkeletalMeshActor) so callers don't have to know the difference
+        //    between a UClass path and a content path.
+        //    This eliminated a whole class of "agent reaches for python_run"
+        //    fallbacks during the 2026-05-23 Palestine scene session.
+        UObject* AssetObj = LoadObject<UObject>(nullptr, *ClassPath);
+        if (!AssetObj)
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("actor_spawn: class_path resolves to neither a UClass nor a loadable asset: %s"),
+                *ClassPath));
+        }
+
+        if (UStaticMesh* SM = Cast<UStaticMesh>(AssetObj))
+        {
+            AStaticMeshActor* SMA = Cast<AStaticMeshActor>(
+                EAS->SpawnActorFromClass(AStaticMeshActor::StaticClass(), Location, Rotation));
+            if (!SMA)
+                return FHaybaHandlerResult::Err(TEXT("actor_spawn: failed to spawn StaticMeshActor for mesh asset"));
+            if (UStaticMeshComponent* SMC = SMA->GetStaticMeshComponent())
+            {
+                // Mobility must be Movable to let the agent transform the actor
+                // afterwards; default Static is read-only after spawn.
+                SMC->SetMobility(EComponentMobility::Movable);
+                SMC->SetStaticMesh(SM);
+            }
+            NewActor = SMA;
+            SpawnedClass = AStaticMeshActor::StaticClass();
+        }
+        else if (USkeletalMesh* SK = Cast<USkeletalMesh>(AssetObj))
+        {
+            ASkeletalMeshActor* SKA = Cast<ASkeletalMeshActor>(
+                EAS->SpawnActorFromClass(ASkeletalMeshActor::StaticClass(), Location, Rotation));
+            if (!SKA)
+                return FHaybaHandlerResult::Err(TEXT("actor_spawn: failed to spawn SkeletalMeshActor for mesh asset"));
+            if (USkeletalMeshComponent* SKC = SKA->GetSkeletalMeshComponent())
+            {
+                SKC->SetMobility(EComponentMobility::Movable);
+                SKC->SetSkeletalMeshAsset(SK);
+            }
+            NewActor = SKA;
+            SpawnedClass = ASkeletalMeshActor::StaticClass();
+        }
+        else
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("actor_spawn: asset is neither UClass nor StaticMesh/SkeletalMesh: %s (class=%s)"),
+                *ClassPath, *AssetObj->GetClass()->GetName()));
+        }
+    }
+
+    // Scale (post-spawn so it applies to both paths)
     const TArray<TSharedPtr<FJsonValue>>* ScaleArr;
     if (P->TryGetArrayField(TEXT("scale"), ScaleArr))
         NewActor->SetActorScale3D(ParseVec3(*ScaleArr, FVector::OneVector));
@@ -146,7 +209,7 @@ FHaybaHandlerResult FHaybaMCPActorHandler::Spawn(const TSharedPtr<FJsonObject>& 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("actor_id"), NewActor->GetName());
     Out->SetStringField(TEXT("label"),    NewActor->GetActorLabel());
-    Out->SetStringField(TEXT("class"),    ActorClass->GetName());
+    Out->SetStringField(TEXT("class"),    SpawnedClass->GetName());
     return FHaybaHandlerResult::Ok(Out);
 }
 
