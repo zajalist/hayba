@@ -107,8 +107,11 @@ namespace
             }
             if (Column == ColActions)
             {
-                TSharedRef<SHorizontalBox> Box = SNew(SHorizontalBox);
-                Box->AddSlot().AutoWidth().Padding(2)
+                // Local name `ActionBox` (not `Box`) to avoid shadowing the
+                // protected SMultiColumnTableRow::Box member (UE 5.7 promotes
+                // C4458 to error in plugin builds).
+                TSharedRef<SHorizontalBox> ActionBox = SNew(SHorizontalBox);
+                ActionBox->AddSlot().AutoWidth().Padding(2)
                 [
                     SNew(SButton)
                     .ContentPadding(FMargin(6, 2))
@@ -121,7 +124,7 @@ namespace
                 ];
                 if (!Item->ActorLabel.IsEmpty() || !Item->ActorId.IsEmpty())
                 {
-                    Box->AddSlot().AutoWidth().Padding(2)
+                    ActionBox->AddSlot().AutoWidth().Padding(2)
                     [
                         SNew(SButton)
                         .ContentPadding(FMargin(6, 2))
@@ -133,7 +136,7 @@ namespace
                         [ SNew(STextBlock).Text(FText::FromString(TEXT("Jump"))) ]
                     ];
                 }
-                return Box;
+                return ActionBox;
             }
             return SNullWidget::NullWidget;
         }
