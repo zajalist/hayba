@@ -440,35 +440,61 @@ static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject
     // Try to deliver to a live panel immediately too — if it's alive RIGHT
     // NOW, the user sees the plan without having to switch tabs. The buffer
     // is consumed in lockstep so the next tab open doesn't show a stale copy.
-    // Use a TPromise on the response side so the response shape honestly
-    // reflects whether the user can see the plan or has to open the tab.
-    TSharedRef<TPromise<bool>> PanelOpenPromise = MakeShared<TPromise<bool>>();
-    TFuture<bool> PanelOpenFuture = PanelOpenPromise->GetFuture();
-    AsyncTask(ENamedThreads::GameThread, [Steps, AwaitSecs, PanelOpenPromise]()
+    //
+    // CRITICAL: this function may be invoked synchronously on the game
+    // thread (when called from ProcessCommand under the TCP server's
+    // serialized AsyncTask). Using AsyncTask(GameThread, ...) + Wait
+    // FROM the game thread re-enters UE's task graph queue and triggers
+    // `++Queue(QueueIndex).RecursionGuard == 1` in TaskGraph.cpp:689 →
+    // editor crash. Always check IsInGameThread() and inline the work.
+    auto DoDeliver = [&]() -> bool
     {
-        bool bDelivered = false;
         if (FHaybaMCPModule* M2 = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
         {
             if (TSharedPtr<SHaybaMCPPlanPanel> Panel = M2->PlanPanel.Pin())
             {
                 Panel->LoadPlan(Steps, AwaitSecs);
-                // Mark the buffer consumed — the panel already has it. If we
-                // didn't, a subsequent tab open would re-load the same plan.
                 TArray<FHaybaPlanStep> _DiscardSteps; int32 _DiscardAwait;
                 M2->ConsumePendingPlan(_DiscardSteps, _DiscardAwait);
-                bDelivered = true;
+                return true;
             }
         }
-        PanelOpenPromise->SetValue(bDelivered);
-    });
+        return false;
+    };
 
-    // Wait briefly for the game-thread task to report back so the response is
-    // accurate. 2s is far more than enough — the AsyncTask is a single Pin()
-    // call. If we time out, the plan is still buffered; we just can't tell
-    // the caller whether the panel was open.
-    const bool bPanelOpen = PanelOpenFuture.WaitFor(FTimespan::FromSeconds(2.0))
-        ? PanelOpenFuture.Get()
-        : false;
+    bool bPanelOpen = false;
+    if (IsInGameThread())
+    {
+        // Already on the game thread (this is the common case under the
+        // serialized TCP path) — run inline. No queue push, no wait, no
+        // re-entry.
+        bPanelOpen = DoDeliver();
+    }
+    else
+    {
+        // Off-thread invocation (e.g. a direct test harness call) —
+        // marshal and wait. Same TPromise/TFuture as before.
+        TSharedRef<TPromise<bool>> PanelOpenPromise = MakeShared<TPromise<bool>>();
+        TFuture<bool> PanelOpenFuture = PanelOpenPromise->GetFuture();
+        AsyncTask(ENamedThreads::GameThread, [Steps, AwaitSecs, PanelOpenPromise]()
+        {
+            bool bDelivered = false;
+            if (FHaybaMCPModule* M2 = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+            {
+                if (TSharedPtr<SHaybaMCPPlanPanel> Panel = M2->PlanPanel.Pin())
+                {
+                    Panel->LoadPlan(Steps, AwaitSecs);
+                    TArray<FHaybaPlanStep> _DiscardSteps; int32 _DiscardAwait;
+                    M2->ConsumePendingPlan(_DiscardSteps, _DiscardAwait);
+                    bDelivered = true;
+                }
+            }
+            PanelOpenPromise->SetValue(bDelivered);
+        });
+        bPanelOpen = PanelOpenFuture.WaitFor(FTimespan::FromSeconds(2.0))
+            ? PanelOpenFuture.Get()
+            : false;
+    }
 
     auto Data = MakeShared<FJsonObject>();
     Data->SetBoolField(TEXT("received"), true);
