@@ -375,11 +375,13 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     'actor_spawn',
     appendMeta('Spawn a new actor in the active level.', actorSpawnMeta),
     {
-      class_path: z.string().describe('UE class path, e.g. "/Script/Engine.StaticMeshActor"'),
+      class_path: z.string().describe('UClass path (/Script/...) OR /Game StaticMesh/SkeletalMesh asset path (auto-wraps in Static/SkeletalMeshActor).'),
       location: coerceVec3.optional(),
       rotation: coerceVec3.optional(),
       scale: coerceVec3.optional(),
       label: z.string().optional(),
+      snap_to_landscape: z.boolean().optional().describe('Line-trace from above the spawn XY down to the landscape surface and set Z to that hit (plus z_offset). Prefer this over python_run line traces when placing props on terrain.'),
+      z_offset: z.number().optional().describe('Added to snapped Z. For pivot-shifted assets like SM_GiantTree_01 (needs -380). Ignored when snap_to_landscape is false.'),
     },
     async (params) => {
       const r = await actorSpawnHandler(params as Record<string, unknown>, session);
@@ -421,6 +423,8 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
       location: coerceVec3.optional(),
       rotation: coerceVec3.optional(),
       scale: coerceVec3.optional(),
+      snap_to_landscape: z.boolean().optional().describe('After applying location/rotation/scale, line-trace to landscape surface and set Z. Batch-align props to terrain without python_run.'),
+      z_offset: z.number().optional().describe('Added to snapped Z. For pivot-shifted assets like SM_GiantTree_01 (needs -380).'),
     },
     async (params) => {
       const r = await actorTransformHandler(params as Record<string, unknown>, session);
