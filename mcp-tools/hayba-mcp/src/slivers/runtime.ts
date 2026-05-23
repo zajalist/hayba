@@ -12,6 +12,7 @@
 import {
   SliverCycleError, SliverDepthError, SliverNotFoundError, SliverValidationError,
   type SliverParamValues, type SliverRunResult, type SliverSpec, type SliverContext,
+  type SliverUeBridge,
 } from './types.js';
 import type { ExecutorRegistry } from './registry.js';
 import { validateAndCoerceParams } from './param-validator.js';
@@ -31,6 +32,11 @@ export interface SliverRuntimeOpts {
   getSpec: (id: string) => SliverSpec | undefined;
   maxDepth?: number;
   onRun?: SliverOnRun;
+  /** Bridge that side-effecting executors use to call UE commands via
+   *  ctx.dispatch. Undefined → ctx.dispatch is undefined and only pure
+   *  executors are usable. The production wiring adapts `executeCommand`;
+   *  tests pass mock bridges. */
+  ueBridge?: SliverUeBridge;
 }
 
 /** Marker so the root catch knows these should remain unhandled at inner frames. */
@@ -45,12 +51,14 @@ export class SliverRuntime {
   private readonly getSpec: (id: string) => SliverSpec | undefined;
   private readonly maxDepth: number;
   private readonly onRun?: SliverOnRun;
+  private readonly ueBridge?: SliverUeBridge;
 
   constructor(opts: SliverRuntimeOpts) {
     this.registry = opts.registry;
     this.getSpec = opts.getSpec;
     this.maxDepth = opts.maxDepth ?? 8;
     this.onRun = opts.onRun;
+    this.ueBridge = opts.ueBridge;
   }
 
   /** Public entry point. Always resolves (never rejects). */
@@ -137,6 +145,7 @@ export class SliverRuntime {
       maxDepth: this.maxDepth,
       runSliver: (childId, childParams) =>
         this._runChildSliver(childId, childParams, newStack, effects),
+      dispatch: this.ueBridge,
     };
 
     return await executor(v.values, ctx);
