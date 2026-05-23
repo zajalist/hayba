@@ -89,6 +89,19 @@ namespace HaybaIdle
         // Filled on the game thread, read on the TCP thread after DoneEvent fires.
         bool                     bAllSettled      = false;
         double                   FinalDurationMs  = 0.0;
+
+        // The FEvent is pool-allocated and must be returned exactly once
+        // when the last shared owner releases. Doing it here ties the
+        // pool return to the state's lifetime so neither thread can
+        // double-free or leak it.
+        ~FWaitState()
+        {
+            if (DoneEvent)
+            {
+                FPlatformProcess::ReturnSynchEventToPool(DoneEvent);
+                DoneEvent = nullptr;
+            }
+        }
     };
 
     static bool IsBusy(const FString& Sub, const FWaitState& S)
@@ -223,53 +236,66 @@ FHaybaHandlerResult FHaybaMCPIdleHandler::Handle(const FString& Command,
     if (!State.DoneEvent) return FHaybaHandlerResult::Err(TEXT("Failed to allocate FEvent"));
 
     // ── Schedule polling on the game thread ───────────────────────────────
-    // Capture pointer to a heap-allocated copy so the lambda can mutate it
-    // across ticks. The TCP thread frees it after DoneEvent fires.
-    FWaitState* HeapState = new FWaitState(MoveTemp(State));
+    // Shared ownership: the TCP thread (this scope) holds one ref, the
+    // game-thread ticker lambda holds another. Whichever releases last
+    // destructs FWaitState, which returns DoneEvent to the pool. This
+    // fixes a use-after-free where the TCP thread's FEvent wait could
+    // expire while the ticker was still polling, freeing the state out
+    // from under the next tick (crash: PollOnce reading freed Subsystems).
+    TSharedRef<FWaitState, ESPMode::ThreadSafe> SharedState =
+        MakeShared<FWaitState, ESPMode::ThreadSafe>(MoveTemp(State));
 
-    AsyncTask(ENamedThreads::GameThread, [HeapState]()
+    AsyncTask(ENamedThreads::GameThread, [SharedState]()
     {
         // GC nudge — only when gc requested. Queue once, before the first poll,
         // so IsGCBusyImpl observes the pending pass briefly then sees it settle.
-        if (HeapState->Subsystems.Contains(TEXT("gc")) && GEngine)
+        if (SharedState->Subsystems.Contains(TEXT("gc")) && GEngine)
         {
             GEngine->ForceGarbageCollection(/*bFullPurge=*/ false);
         }
         // Capture busyOnEntry on the game thread (predicates are not thread-safe).
-        for (const FString& Sub : HeapState->Subsystems)
+        for (const FString& Sub : SharedState->Subsystems)
         {
-            HeapState->BusyOnEntry.Add(Sub, IsBusy(Sub, *HeapState));
+            SharedState->BusyOnEntry.Add(Sub, IsBusy(Sub, *SharedState));
         }
-        HeapState->TickHandle = FTSTicker::GetCoreTicker().AddTicker(
-            FTickerDelegate::CreateLambda([HeapState](float Dt) { return PollOnce(Dt, HeapState); }),
+        SharedState->TickHandle = FTSTicker::GetCoreTicker().AddTicker(
+            FTickerDelegate::CreateLambda([SharedState](float Dt) { return PollOnce(Dt, &SharedState.Get()); }),
             POLL_INTERVAL_SECONDS);
     });
 
     // ── Block this thread until polling completes or timeout fires ─────────
     // FEvent wait timeout is in milliseconds. Allow timeout_s + 1s slack so
-    // the game-thread poller always fires Done first.
-    const uint32 WaitTimeoutMs = (uint32)(HeapState->TimeoutSeconds * 1000.0) + 1000;
-    const bool bSignaled = HeapState->DoneEvent->Wait(WaitTimeoutMs);
+    // the game-thread poller normally fires Done first.
+    const uint32 WaitTimeoutMs = (uint32)(SharedState->TimeoutSeconds * 1000.0) + 1000;
+    const bool bSignaled = SharedState->DoneEvent->Wait(WaitTimeoutMs);
 
     // Build response (read game-thread-filled state — safe because the event
     // signal serializes the write).
     TSharedPtr<FJsonObject> Resp;
     if (bSignaled)
     {
-        Resp = BuildResponse(*HeapState);
+        Resp = BuildResponse(*SharedState);
     }
     else
     {
-        // FEvent timed out before the game-thread poller — shouldn't happen
-        // given the +1s slack, but degrade gracefully.
-        HeapState->FinalDurationMs = (FPlatformTime::Seconds() - HeapState->T0Seconds) * 1000.0;
-        HeapState->bAllSettled = false;
-        Resp = BuildResponse(*HeapState);
+        // FEvent timed out before the game-thread poller. Stop the ticker
+        // first so it cannot keep mutating SharedState while we read it;
+        // RemoveTicker is safe from any thread but does not wait on an
+        // in-flight tick — the shared ownership above is what makes that
+        // safe (no use-after-free regardless of in-flight ticks).
+        if (SharedState->TickHandle.IsValid())
+        {
+            FTSTicker::GetCoreTicker().RemoveTicker(SharedState->TickHandle);
+            SharedState->TickHandle.Reset();
+        }
+        SharedState->FinalDurationMs = (FPlatformTime::Seconds() - SharedState->T0Seconds) * 1000.0;
+        SharedState->bAllSettled = false;
+        Resp = BuildResponse(*SharedState);
     }
 
-    FPlatformProcess::ReturnSynchEventToPool(HeapState->DoneEvent);
-    HeapState->DoneEvent = nullptr;
-    delete HeapState;
+    // No manual cleanup: when this scope's SharedState ref drops and the
+    // game-thread ticker drops its lambda ref (whichever happens last),
+    // FWaitState's destructor returns DoneEvent to the pool.
 
     return FHaybaHandlerResult::Ok(Resp);
 }
