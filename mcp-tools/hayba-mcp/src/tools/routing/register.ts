@@ -46,6 +46,15 @@ export const ALWAYS_ON_META = new Set<string>([
   'hayba_check_ue_status',
   'list_tool_categories',
   'get_tool_signature',
+  // Plan Mode handshake. When Plan Mode is on (the default for fresh
+  // sessions), the UE plugin's destructive-op gate rejects spawn / delete /
+  // set_property until the agent calls hayba_propose_plan and the user
+  // clicks Approve. Forcing the agent to reach this through hayba_invoke
+  // adds friction for a flow that is, by definition, on the critical path.
+  // Pair: hayba_mark_plan_step lets the agent stream progress back to the
+  // Plan tab as each step completes.
+  'hayba_propose_plan',
+  'hayba_mark_plan_step',
   'hayba_asset_search',
   'hayba_asset_browse',
   'hayba_asset_reindex',
@@ -259,6 +268,11 @@ export async function registerDeferredRouting(
   };
   passthrough('list_tool_categories');
   passthrough('get_tool_signature');
+  // Plan Mode meta — see ALWAYS_ON_META comment above for the rationale.
+  // Passthrough means the agent calls them with the same shape as the
+  // captured handler, which already wraps executeCommand(<UE-side cmd>).
+  passthrough('hayba_propose_plan');
+  passthrough('hayba_mark_plan_step');
   // Validator tools — always-on so the UE plugin's Validator panel and any
   // agent can read/manage history without loading a pack.
   passthrough('validator_run');
