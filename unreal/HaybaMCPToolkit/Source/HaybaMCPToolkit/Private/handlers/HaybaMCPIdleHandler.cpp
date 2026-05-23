@@ -146,11 +146,44 @@ namespace HaybaIdle
         return Out;
     }
 
-    /** Runs on the game thread via FTSTicker. Returns false to unregister. */
+    /** Runs on the game thread via FTSTicker. Returns false to unregister.
+     *
+     *  Defensive sanity checks: this used to crash with EXCEPTION_ACCESS_VIOLATION
+     *  at the S->DoneEvent->Trigger() line when S pointed to freed memory
+     *  poisoned with 0xff... — observed during the 2026-05-23 session after
+     *  Live Coding patched the plugin while a ticker was still queued from
+     *  the previous binary's struct layout. We now validate the state pointer
+     *  before dereferencing anything: NaN-checking T0Seconds catches memory
+     *  that's been pattern-filled with 0xff (which interprets as NaN as a
+     *  double), and the FEvent pointer is sanity-checked too so a corrupt
+     *  vtable can never be invoked.
+     *
+     *  These checks are O(1) and run every tick — cheap insurance.
+     */
     static bool PollOnce(float /*Dt*/, FWaitState* S)
     {
+        if (!S) return false;
+        // Pattern-filled (0xff...) freed memory has T0Seconds = NaN. A live
+        // state always has a real timestamp set in Handle() before the ticker
+        // is registered. NaN-check is the cheapest "is this still alive?"
+        // probe we can do without adding an ABI-breaking magic field.
+        if (!FMath::IsFinite(S->T0Seconds) || S->T0Seconds <= 0.0)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("HaybaIdle::PollOnce: state looks freed (T0=%f); bailing"), S->T0Seconds);
+            return false;
+        }
+
         const double Now = FPlatformTime::Seconds();
         const double DurationMs = (Now - S->T0Seconds) * 1000.0;
+
+        // Defensive against a corrupt Subsystems TArray — if Num() reads
+        // garbage (negative or huge), the for-range below would crash.
+        const int32 NumSubs = S->Subsystems.Num();
+        if (NumSubs < 0 || NumSubs > 32)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("HaybaIdle::PollOnce: Subsystems.Num()=%d looks bad; bailing"), NumSubs);
+            return false;
+        }
 
         for (const FString& Sub : S->Subsystems)
         {
@@ -168,7 +201,15 @@ namespace HaybaIdle
         {
             S->bAllSettled = bAllSettled;
             S->FinalDurationMs = DurationMs;
-            if (S->DoneEvent) S->DoneEvent->Trigger();
+            // Sanity-check the FEvent pointer before dispatching the virtual
+            // Trigger() — the crash that motivated all of these checks was
+            // exactly a virtual call on a freed FEvent vtable.
+            FEvent* Ev = S->DoneEvent;
+            const uintptr_t EvAddr = reinterpret_cast<uintptr_t>(Ev);
+            if (Ev && EvAddr != UINTPTR_MAX && (EvAddr & 0xFFFF000000000000ull) != 0xFFFF000000000000ull)
+            {
+                Ev->Trigger();
+            }
             return false;
         }
         return true;
