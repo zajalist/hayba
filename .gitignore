@@ -11,48 +11,12 @@ Saved/
 .claude/worktrees/
 __pycache__/
 *.pyc
-tools/derive_satmaps/cache/
-
-# Gaea / terrain feature surface is parked. Keep on disk for the maintainer
-# but do not redistribute. Will return when the worldbuilding-hub roadmap
-# reaches the terrain integration phase.
-packages/hayba/src/gaea/
-packages/hayba/src/tools/hayba-bake-terrain.ts
-packages/hayba/src/tools/hayba-create-terrain.ts
-packages/hayba/src/tools/hayba-open-in-gaea.ts
-packages/hayba/src/tools/hayba-read-terrain-variables.ts
-packages/hayba/src/tools/hayba-set-terrain-variables.ts
-packages/hayba/src/tools/hayba-brainstorm-gaea.ts
-packages/hayba/src/tools/hayba-open-session.ts
-packages/hayba/src/tools/hayba-close-session.ts
-packages/hayba/src/tools/hayba-add-node.ts
-packages/hayba/src/tools/hayba-remove-node.ts
-packages/hayba/src/tools/hayba-connect-nodes.ts
-packages/hayba/src/tools/hayba-get-graph-state.ts
-packages/hayba/src/tools/hayba-get-parameters.ts
-packages/hayba/src/tools/hayba-set-parameter.ts
-packages/hayba/src/tools/hayba-list-node-types.ts
-packages/hayba/src/tools/hayba-cook-graph.ts
-packages/hayba/src/tools/hayba-import-landscape.ts
-packages/hayba/src/tools/hayba-ue-landscape-pipeline.ts
-packages/hayba/src/tools/search-gaea-archetypes.ts
-packages/hayba/src/tools/get-full-archetype-graph.ts
-packages/hayba/src/tools/query-gaea-knowledge.ts
-packages/hayba/tests/tools/hayba-add-node.test.ts
-packages/hayba/tests/tools/hayba-connect-nodes.test.ts
-packages/hayba/tests/tools/hayba-remove-node.test.ts
 .superpowers/
-tools/peels-audit/ts-peels-*.json
-tools/peels-audit/rust-peels-*.json
-tools/peels-audit/world-*.bin
-tools/peels-audit/world-*.bin.json
-apps/hayba/dist/
-apps/hayba/node_modules/
-
-# --- build outputs ---
-**/target/
 
 # --- local dev / agent scratch (never commit) ---
+.scratch/
+.clone/
+.playwright-mcp/
 **/cdp-*.mjs
 **/cdp_drive.*
 **/.cdp-*.log
@@ -68,7 +32,6 @@ KEYGAP.docx
 # Supabase CLI local state (linked-project metadata, never commit)
 supabase/.temp/
 supabase/.branches/
-.vercel/
 
 # Unreal build artifacts (UBT regenerates these)
 unreal/**/Binaries/
