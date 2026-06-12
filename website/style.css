@@ -191,11 +191,14 @@ nav.subnav {
   display: block;
 }
 
+/* Watery ripple overlay — must stay out of layout flow: gl-quad sizes the
+   canvas buffer from the hero's rect, so an in-flow canvas feeds its own
+   height back into the hero (unbounded growth). */
 #heroRipples {
   position: absolute; inset: 0;
   width: 100%; height: 100%;
   pointer-events: none;
-  z-index: 1;
+  z-index: 0;
   display: block;
   mix-blend-mode: overlay;
 }

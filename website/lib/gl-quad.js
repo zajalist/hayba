@@ -53,11 +53,24 @@ export function mountQuad(canvas, { fragmentShader, onFrame }) {
     return uniformCache.get(name);
   }
 
+  // The canvas must sit out of layout flow: resize() derives the buffer
+  // size from the parent rect, so an in-flow canvas feeds its own size back
+  // into the parent — unbounded growth via the ResizeObserver below.
+  if (getComputedStyle(canvas).position === 'static') {
+    console.warn('gl-quad: canvas is in layout flow; forcing absolute fill');
+    Object.assign(canvas.style, {
+      position: 'absolute', inset: '0', width: '100%', height: '100%',
+    });
+  }
+
   function resize() {
     const r = canvas.parentElement.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.max(2, Math.round(r.width * dpr));
-    canvas.height = Math.max(2, Math.round(r.height * dpr));
+    const w = Math.max(2, Math.round(r.width * dpr));
+    const h = Math.max(2, Math.round(r.height * dpr));
+    if (w === canvas.width && h === canvas.height) return;
+    canvas.width = w;
+    canvas.height = h;
     gl.viewport(0, 0, canvas.width, canvas.height);
   }
   resize();
