@@ -53,8 +53,7 @@ the Node client discovers the live instance. Ports auto-allocate in
 | Visual grounding sidecar | Python (FastAPI) | `mcp-tools/hayba-mcp/addons/visual-embeddings` |
 | Terrain bridge | TypeScript | `mcp-tools/gaea-server` |
 | Editor plugin, handlers, panels | C++ (UE 5.7) | `unreal/HaybaMCPToolkit` |
-| Desktop explorer | Rust + React (Tauri) | `apps/hayba-explorer` |
-| Worldbuilding libs | TypeScript | `apps/hayba-explorer/packages/*`, `packages/architecture` |
+| Worldbuilding libs | TypeScript | `packages/{linguistics,planet-physics,architecture}` |
 | Website | static HTML/CSS/JS | `website/` |
 | Backend / self-host | SQL + Docker | `supabase/`, `infra/` |
 
