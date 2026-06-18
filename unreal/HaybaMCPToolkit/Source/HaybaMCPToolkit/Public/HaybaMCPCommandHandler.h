@@ -13,6 +13,13 @@ public:
     /** Register a handler for its commands. Called at startup. */
     void RegisterHandler(TSharedRef<IHaybaMCPHandler> Handler);
 
+    /**
+     * Remove a previously-registered handler (and all its command mappings).
+     * Used by satellite modules (GAS/Niagara/MetaSound/Sequencer) that register
+     * into the core at their StartupModule and must cleanly detach on shutdown.
+     */
+    void UnregisterHandler(const TSharedRef<IHaybaMCPHandler>& Handler);
+
     /** Parse incoming TCP JSON, auth, dispatch, journal, return response JSON. */
     FString ProcessCommand(const FString& CommandJson);
 

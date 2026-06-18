@@ -5,6 +5,7 @@
 
 class FHaybaMCPTcpServer;
 class FHaybaMCPCommandHandler;
+class IHaybaMCPHandler;
 
 // Lightweight tool-call record kept in the module so it survives tab
 // navigations. The Tool Stream panel hydrates from this buffer on Construct.
@@ -62,6 +63,14 @@ public:
     // Plan Mode handshake — set by Plan panel's Approve click, reset by every
     // destructive command so each plan must be approved exactly once.
     bool bPlanApproved = false;
+
+    // Satellite modules (HaybaMCPGAS/Niagara/MetaSound/Sequencer) register their
+    // command handlers into the core router at their own StartupModule, so an
+    // optional-plugin module that fails to load simply leaves its commands
+    // unregistered (the router returns a clean "unknown command" instead of the
+    // whole plugin failing to load). No-ops safely if the core router isn't up.
+    HAYBAMCPTOOLKIT_API void RegisterExternalHandler(TSharedRef<IHaybaMCPHandler> Handler);
+    HAYBAMCPTOOLKIT_API void UnregisterExternalHandler(const TSharedRef<IHaybaMCPHandler>& Handler);
 
     // Multicast — fires on the GameThread every time a tool call is recorded.
     // Subscribers: Chat panel's in-flight trace, future agent observability.

@@ -18,6 +18,14 @@
     }
   ],
   "Plugins": [
-    { "Name": "PCG", "Enabled": true }
+    { "Name": "PCG", "Enabled": true },
+    { "Name": "PythonScriptPlugin", "Enabled": true },
+    { "Name": "Niagara", "Enabled": true, "Optional": true },
+    { "Name": "WebBrowserWidget", "Enabled": true, "Optional": true },
+    { "Name": "Metasound", "Enabled": true, "Optional": true },
+    { "Name": "MovieRenderPipeline", "Enabled": true, "Optional": true },
+    { "Name": "LevelSequenceEditor", "Enabled": true, "Optional": true },
+    { "Name": "DataValidation", "Enabled": true, "Optional": true },
+    { "Name": "EnhancedInput", "Enabled": true, "Optional": true }
   ]
 }

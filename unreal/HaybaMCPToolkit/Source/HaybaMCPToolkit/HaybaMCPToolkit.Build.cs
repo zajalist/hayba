@@ -41,7 +41,8 @@ public class HaybaMCPToolkit : ModuleRules
             "WebBrowser", "WebBrowserWidget",
             "EngineSettings",
             "SourceControl",
-            "GameplayAbilities",
+            // GameplayAbilities moved to the optional HaybaMCPGAS satellite plugin
+            // so the core loads even when GameplayAbilities is disabled.
             "GameplayTags",
             "GameplayTasks"
         });

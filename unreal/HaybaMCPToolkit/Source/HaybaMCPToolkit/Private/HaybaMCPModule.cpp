@@ -18,6 +18,7 @@
 #include "Widgets/Notifications/SNotificationList.h"
 #include "HaybaMCPTcpServer.h"
 #include "HaybaMCPCommandHandler.h"
+#include "IHaybaMCPHandler.h"
 #include "handlers/HaybaMCPLegacyHandler.h"
 #include "handlers/HaybaMCPActorHandler.h"
 #include "handlers/HaybaMCPLevelHandler.h"
@@ -40,7 +41,6 @@
 #include "handlers/HaybaMCPNiagaraHandler.h"
 #include "handlers/HaybaMCPAudioHandler.h"
 #include "handlers/HaybaMCPMetaSoundHandler.h"
-#include "handlers/HaybaMCPGASHandler.h"
 #include "handlers/HaybaMCPBehaviorTreeHandler.h"
 #include "handlers/HaybaMCPInputHandler.h"
 #include "handlers/HaybaMCPUIHandler.h"
@@ -106,7 +106,8 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPNiagaraHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPAudioHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPMetaSoundHandler>());
-    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPGASHandler>());
+    // gas_* commands now live in the optional HaybaMCPGAS satellite plugin,
+    // which self-registers via FHaybaMCPModule::RegisterExternalHandler.
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPBehaviorTreeHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPInputHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPUIHandler>());
@@ -317,6 +318,16 @@ void FHaybaMCPModule::StopMCPServer()
 bool FHaybaMCPModule::IsMCPServerRunning() const
 {
     return MCPProcessHandle.IsValid() && FPlatformProcess::IsProcRunning(MCPProcessHandle);
+}
+
+void FHaybaMCPModule::RegisterExternalHandler(TSharedRef<IHaybaMCPHandler> Handler)
+{
+    if (CommandHandler.IsValid()) CommandHandler->RegisterHandler(Handler);
+}
+
+void FHaybaMCPModule::UnregisterExternalHandler(const TSharedRef<IHaybaMCPHandler>& Handler)
+{
+    if (CommandHandler.IsValid()) CommandHandler->UnregisterHandler(Handler);
 }
 
 FString FHaybaMCPModule::GetDashboardURL() const

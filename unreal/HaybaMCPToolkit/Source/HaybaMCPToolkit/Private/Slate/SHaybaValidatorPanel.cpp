@@ -107,8 +107,8 @@ namespace
             }
             if (Column == ColActions)
             {
-                TSharedRef<SHorizontalBox> Box = SNew(SHorizontalBox);
-                Box->AddSlot().AutoWidth().Padding(2)
+                TSharedRef<SHorizontalBox> ActionsBox = SNew(SHorizontalBox);
+                ActionsBox->AddSlot().AutoWidth().Padding(2)
                 [
                     SNew(SButton)
                     .ContentPadding(FMargin(6, 2))
@@ -121,7 +121,7 @@ namespace
                 ];
                 if (!Item->ActorLabel.IsEmpty() || !Item->ActorId.IsEmpty())
                 {
-                    Box->AddSlot().AutoWidth().Padding(2)
+                    ActionsBox->AddSlot().AutoWidth().Padding(2)
                     [
                         SNew(SButton)
                         .ContentPadding(FMargin(6, 2))
@@ -133,7 +133,7 @@ namespace
                         [ SNew(STextBlock).Text(FText::FromString(TEXT("Jump"))) ]
                     ];
                 }
-                return Box;
+                return ActionsBox;
             }
             return SNullWidget::NullWidget;
         }

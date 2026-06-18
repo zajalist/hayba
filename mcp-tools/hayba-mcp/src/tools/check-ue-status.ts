@@ -1,5 +1,41 @@
+import { execFile } from 'node:child_process';
 import { ensureConnected } from '../tcp-client.js';
 import { getCachedSidecarHealth, pingSidecar } from './visual/sidecar-client.js';
+
+/**
+ * Best-effort check for a running UnrealEditor process, so a failed TCP connect
+ * can distinguish "editor not running" from "editor up but plugin listener
+ * closed" (plugin failed to load / still booting / shutting down). Cross-platform,
+ * short timeout, never throws — resolves null when detection itself fails.
+ */
+function detectEditorProcess(): Promise<boolean | null> {
+  const isWin = process.platform === 'win32';
+  const cmd = isWin ? 'tasklist' : 'pgrep';
+  const args = isWin
+    ? ['/FI', 'IMAGENAME eq UnrealEditor.exe', '/NH']
+    : ['-f', 'UnrealEditor'];
+  return new Promise((resolve) => {
+    try {
+      execFile(cmd, args, { timeout: 2000, windowsHide: true }, (err, stdout) => {
+        if (err && (err as NodeJS.ErrnoException).code === 'ENOENT') return resolve(null);
+        const out = (stdout || '').toLowerCase();
+        resolve(isWin ? out.includes('unrealeditor.exe') : out.trim().length > 0);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+function diagnoseDisconnect(editorRunning: boolean | null): string | undefined {
+  if (editorRunning === true) {
+    return 'UnrealEditor process is running but the plugin TCP port is closed — the HaybaMCPToolkit plugin likely failed to load (check the editor log for a module load error / missing dependency), is still booting, or is shutting down.';
+  }
+  if (editorRunning === false) {
+    return 'No UnrealEditor process found — launch the editor with the HaybaMCPToolkit plugin enabled.';
+  }
+  return undefined;
+}
 
 export interface UeStatus {
   connected: boolean;
@@ -46,11 +82,21 @@ export async function checkUeStatus(opts: CheckUeStatusOpts = {}): Promise<UeSta
       }
       return { connected: true, ...sidecarFields, ...(response.data as Record<string, unknown>) };
     }
-    return { connected: false, error: response.error, ...sidecarFields };
+    const editorRunning = await detectEditorProcess();
+    return {
+      connected: false,
+      error: response.error,
+      editor_process_detected: editorRunning ?? undefined,
+      diagnostic: diagnoseDisconnect(editorRunning),
+      ...sidecarFields,
+    };
   } catch (err) {
+    const editorRunning = await detectEditorProcess();
     return {
       connected: false,
       error: err instanceof Error ? err.message : 'Unknown error',
+      editor_process_detected: editorRunning ?? undefined,
+      diagnostic: diagnoseDisconnect(editorRunning),
       ...sidecarFields,
     };
   }
