@@ -36,11 +36,8 @@
 #include "handlers/HaybaMCPPhysicsHandler.h"
 #include "handlers/HaybaMCPDocsHandler.h"
 // ===== Stub handlers (advertise commands; return not_implemented) =====
-#include "handlers/HaybaMCPSequencerHandler.h"
 #include "handlers/HaybaMCPAnimationHandler.h"
-#include "handlers/HaybaMCPNiagaraHandler.h"
 #include "handlers/HaybaMCPAudioHandler.h"
-#include "handlers/HaybaMCPMetaSoundHandler.h"
 #include "handlers/HaybaMCPBehaviorTreeHandler.h"
 #include "handlers/HaybaMCPInputHandler.h"
 #include "handlers/HaybaMCPUIHandler.h"
@@ -101,11 +98,11 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPDocsHandler>());
 
     // ===== Stub handlers (advertise commands; return not_implemented) =====
-    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPSequencerHandler>());
+    // seq_* commands now live in the optional HaybaMCPSequencer satellite plugin.
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPAnimationHandler>());
-    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPNiagaraHandler>());
+    // niagara_* commands now live in the optional HaybaMCPNiagara satellite plugin.
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPAudioHandler>());
-    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPMetaSoundHandler>());
+    // metasound_* commands now live in the optional HaybaMCPMetaSound satellite plugin.
     // gas_* commands now live in the optional HaybaMCPGAS satellite plugin,
     // which self-registers via FHaybaMCPModule::RegisterExternalHandler.
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPBehaviorTreeHandler>());
