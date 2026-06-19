@@ -27,6 +27,7 @@ private:
     TSharedRef<SWidget> BuildEmptyState();
     TSharedRef<SWidget> BuildStudio();
     TSharedRef<SWidget> BuildMaskList();
+    TSharedRef<SWidget> BuildViewport();
     TSharedRef<SWidget> BuildInspector();
     TSharedRef<ITableRow> GenerateMaskRow(TSharedPtr<FHaybaStudioMask> Mask, const TSharedRef<STableViewBase>& Owner);
     void OnMaskSelected(TSharedPtr<FHaybaStudioMask> Mask, ESelectInfo::Type);
@@ -38,4 +39,5 @@ private:
     TSharedPtr<FHaybaStudioMask> SelectedMask;
     TSharedPtr<SListView<TSharedPtr<FHaybaStudioMask>>> MaskListView;
     TSharedPtr<class SBox> InspectorBox;
+    TSharedPtr<class SHaybaStudioViewport> Viewport;
 };

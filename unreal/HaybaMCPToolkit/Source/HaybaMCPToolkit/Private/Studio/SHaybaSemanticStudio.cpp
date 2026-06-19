@@ -11,6 +11,9 @@
 #include "Widgets/Colors/SColorBlock.h"
 #include "Widgets/Views/STableRow.h"
 #include "Styling/AppStyle.h"
+#include "Studio/SHaybaStudioViewport.h"
+#include "Engine/StaticMesh.h"
+#include "UObject/SoftObjectPath.h"
 
 #define LOCTEXT_NAMESPACE "HaybaSemanticStudio"
 
@@ -86,7 +89,7 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildStudio()
         [
             SNew(SSplitter).Orientation(Orient_Horizontal)
             + SSplitter::Slot().Value(0.22f)[ BuildMaskList() ]
-            + SSplitter::Slot().Value(0.53f)[ SNew(SBorder).Padding(6)[ SNew(STextBlock).Text(LOCTEXT("Viewport", "VIEWPORT")) ] ]
+            + SSplitter::Slot().Value(0.53f)[ BuildViewport() ]
             + SSplitter::Slot().Value(0.25f)[ SAssignNew(InspectorBox, SBox)[ BuildInspector() ] ]
         ]
 
@@ -111,6 +114,15 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildMaskList()
             .SelectionMode(ESelectionMode::Single)
         ]
     ];
+}
+
+TSharedRef<SWidget> SHaybaSemanticStudio::BuildViewport()
+{
+    TSharedRef<SHaybaStudioViewport> V = SNew(SHaybaStudioViewport);
+    Viewport = V;
+    UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *AssetPath);
+    V->SetPreviewMesh(Mesh);
+    return V;
 }
 
 TSharedRef<ITableRow> SHaybaSemanticStudio::GenerateMaskRow(TSharedPtr<FHaybaStudioMask> Mask, const TSharedRef<STableViewBase>& Owner)
