@@ -119,6 +119,42 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPIdleHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPRenderHandler>());
 
+    // Optional-capability check: warn (log + editor notification) for any
+    // satellite plugin that is disabled, so the user understands why a command
+    // domain is missing. IPluginManager knows enablement even before the
+    // satellite's own module loads, so this is safe here at core startup.
+    {
+        const TPair<const TCHAR*, const TCHAR*> Satellites[] = {
+            { TEXT("HaybaMCPGAS"),       TEXT("gas_*") },
+            { TEXT("HaybaMCPNiagara"),   TEXT("niagara_*") },
+            { TEXT("HaybaMCPMetaSound"), TEXT("metasound_*") },
+            { TEXT("HaybaMCPSequencer"), TEXT("seq_*") },
+        };
+        TArray<FString> Missing;
+        for (const auto& S : Satellites)
+        {
+            TSharedPtr<IPlugin> P = IPluginManager::Get().FindPlugin(S.Key);
+            if (!P.IsValid() || !P->IsEnabled())
+            {
+                Missing.Add(FString::Printf(TEXT("%s (%s)"), S.Value, S.Key));
+            }
+        }
+        if (Missing.Num() > 0)
+        {
+            const FString List = FString::Join(Missing, TEXT(", "));
+            UE_LOG(LogHaybaMCP, Warning,
+                TEXT("Optional command domains unavailable — satellite plugin(s) disabled: %s. Enable the plugin (and its backing engine plugin) to use these commands."),
+                *List);
+            AsyncTask(ENamedThreads::GameThread, [List]()
+            {
+                FNotificationInfo Info(FText::FromString(FString::Printf(
+                    TEXT("Hayba MCP: optional command domains disabled — %s. Enable the matching plugins to use them."), *List)));
+                Info.ExpireDuration = 8.f;
+                FSlateNotificationManager::Get().AddNotification(Info);
+            });
+        }
+    }
+
     // Auto-start the TCP listener so external MCP clients (Claude Code, Cline,
     // OpenCode, …) can connect as soon as the editor is up. The MCP node
     // server itself can still be started/stopped independently via the panel.
