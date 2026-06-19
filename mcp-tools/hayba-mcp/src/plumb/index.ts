@@ -17,7 +17,7 @@ export {
 export type { ValidationError } from './constraint-store.js';
 export {
   loadProfiles, getProfile, profileMap, putProfile, annotateProfile, removeProfile,
-  getProfilesPath, setProfilesPath,
+  getProfilesPath, setProfilesPath, addMask, getMask, removeMask,
 } from './profile-store.js';
 export { bakeProfile } from './bake.js';
 export type { UeBoundsInput } from './bake.js';

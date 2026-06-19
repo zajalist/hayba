@@ -7,7 +7,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { Profile } from './contracts.js';
+import type { Profile, Mask } from './contracts.js';
 
 let PATH_OVERRIDE: string | null = null;
 
@@ -86,6 +86,34 @@ export function removeProfile(assetId: string): boolean {
   const all = readAll();
   if (!(assetId in all)) return false;
   delete all[assetId];
+  writeAll(all);
+  return true;
+}
+
+export function getMask(assetId: string, maskId: string): Mask | null {
+  const p = getProfile(assetId);
+  return p?.masks?.find(m => m.id === maskId) ?? null;
+}
+
+export function addMask(assetId: string, mask: Mask): Profile | null {
+  const all = readAll();
+  const base = all[assetId];
+  if (!base) return null;
+  const masks = (base.masks ?? []).filter(m => m.id !== mask.id);
+  masks.push(mask);
+  const merged: Profile = { ...base, masks };
+  all[assetId] = merged;
+  writeAll(all);
+  return merged;
+}
+
+export function removeMask(assetId: string, maskId: string): boolean {
+  const all = readAll();
+  const base = all[assetId];
+  if (!base?.masks) return false;
+  const next = base.masks.filter(m => m.id !== maskId);
+  if (next.length === base.masks.length) return false;
+  all[assetId] = { ...base, masks: next };
   writeAll(all);
   return true;
 }

@@ -8,7 +8,7 @@ import {
   polygonMargin, bakeProfile,
   upsertConstraint, loadConstraints, removeConstraint, validateConstraint,
   setConstraintsPath, putProfile, getProfile, annotateProfile, setProfilesPath, profileMap,
-  identityTransform,
+  identityTransform, addMask, getMask, removeMask,
   type Constraint, type InstanceState, type Profile,
 } from './index.js';
 
@@ -215,5 +215,22 @@ describe('end-to-end: tag-bound grounded enforced across instances', () => {
     const byAsset: Constraint = { id: 'a', primitive: 'grounded', params: {}, binding: { asset: '/Game/Tree' } };
     expect(bindingMatches(byAsset, inst('x', [0, 0, 0], { asset: '/Game/Tree' }))).toBe(true);
     expect(bindingMatches(byAsset, inst('x', [0, 0, 0], { asset: '/Game/Rock' }))).toBe(false);
+  });
+});
+
+describe('mask store', () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'mask-')); setProfilesPath(join(dir, 'p.json')); putProfile(bakeProfile({ asset_id: '/Game/Door', origin_cm: [0,0,0], extent_cm: [50,10,100] }, 'now')); });
+  afterEach(() => { setProfilesPath(null); rmSync(dir, { recursive: true, force: true }); });
+
+  it('adds, gets and removes a volume mask', () => {
+    const m = { id: 'swing_front', type: 'volume' as const, color: '#48f', source: 'ai' as const, confidence: 0.8, locked: false, shape: { kind: 'box' as const, transform: identityTransform(), extents: [1,1,2] as [number,number,number] } };
+    expect(addMask('/Game/Door', m)!.masks!.length).toBe(1);
+    expect(getMask('/Game/Door', 'swing_front')!.type).toBe('volume');
+    expect(removeMask('/Game/Door', 'swing_front')).toBe(true);
+    expect(getMask('/Game/Door', 'swing_front')).toBe(null);
+  });
+  it('addMask returns null with no base profile', () => {
+    expect(addMask('/Game/Nope', { id: 'x', type: 'surface', color: '#fff', source: 'human', confidence: 1, locked: false, triangles: [1,2,3] })).toBe(null);
   });
 });

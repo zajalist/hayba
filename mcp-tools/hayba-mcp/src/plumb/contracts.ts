@@ -97,6 +97,24 @@ export interface Affordance {
   detail?: string;
 }
 
+export interface Mask {
+  id: string;
+  type: 'surface' | 'volume';
+  color: string;            // overlay color, '#RRGGBB'
+  source: 'ai' | 'human';
+  confidence: number;       // 0..1
+  locked: boolean;          // gates whether qualitative primitives may hard-gate
+  triangles?: number[];     // surface: mesh triangle indices (deterministic v1)
+  shape?: {                 // volume:
+    kind: 'box' | 'sphere' | 'capsule' | 'convex';
+    transform: Transform;
+    extents?: [number, number, number];
+    radius?: number;
+    points?: [number, number, number][];
+  };
+  detail?: string;          // free-text semantic note
+}
+
 export interface ProfileSemantics {
   cls?: string;
   up: [number, number, number];     // local up, default world-up
@@ -136,6 +154,7 @@ export interface Profile {
   regions: Array<Record<string, unknown>>;
   provenance: Provenance;
   baked_at: string;       // ISO8601
+  masks?: Mask[];
 }
 
 // ── Constraint language (hayba-only) ─────────────────────────────────────────
