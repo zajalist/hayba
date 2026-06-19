@@ -3,6 +3,7 @@
 #include "SEditorViewport.h"
 #include "UObject/GCObject.h"
 #include "AdvancedPreviewScene.h"
+#include "Studio/HaybaStudioModel.h"
 
 class UStaticMesh;
 class UStaticMeshComponent;
@@ -22,6 +23,11 @@ public:
     /** Set (or clear) the mesh shown in the preview. */
     void SetPreviewMesh(UStaticMesh* Mesh);
 
+    /** Rebuild the volume-mask overlays from the profile masks (resolved to
+     *  world space via the seated component). Hidden ids are skipped; the
+     *  selected id draws emphasised. */
+    void SetMasks(const TArray<FHaybaStudioMask>& Masks, const TSet<FString>& Hidden, const FString& SelectedId);
+
     // FGCObject
     virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
     virtual FString GetReferencerName() const override { return TEXT("SHaybaStudioViewport"); }
@@ -35,4 +41,5 @@ private:
     TSharedPtr<class FAssetEditorModeManager> ModeManager;
     TSharedPtr<FHaybaStudioViewportClient> ViewportClient;
     TObjectPtr<UStaticMeshComponent> PreviewComponent = nullptr;
+    TObjectPtr<class UMaterialInstanceDynamic> FillMaterial = nullptr;
 };

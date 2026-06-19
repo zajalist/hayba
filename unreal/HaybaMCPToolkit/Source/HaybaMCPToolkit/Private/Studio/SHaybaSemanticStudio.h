@@ -32,10 +32,12 @@ private:
     TSharedRef<ITableRow> GenerateMaskRow(TSharedPtr<FHaybaStudioMask> Mask, const TSharedRef<STableViewBase>& Owner);
     void OnMaskSelected(TSharedPtr<FHaybaStudioMask> Mask, ESelectInfo::Type);
     void ReloadProfile();
+    void PushMasksToViewport();
 
     FString AssetPath;
     FHaybaStudioProfile Profile;
     TArray<TSharedPtr<FHaybaStudioMask>> MaskItems;
+    TSet<FString> HiddenMaskIds;
     TSharedPtr<FHaybaStudioMask> SelectedMask;
     TSharedPtr<SListView<TSharedPtr<FHaybaStudioMask>>> MaskListView;
     TSharedPtr<class SBox> InspectorBox;

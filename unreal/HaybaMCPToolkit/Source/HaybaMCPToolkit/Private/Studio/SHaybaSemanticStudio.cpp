@@ -122,7 +122,15 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildViewport()
     Viewport = V;
     UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *AssetPath);
     V->SetPreviewMesh(Mesh);
+    PushMasksToViewport();
     return V;
+}
+
+void SHaybaSemanticStudio::PushMasksToViewport()
+{
+    if (!Viewport.IsValid()) return;
+    const FString SelId = SelectedMask.IsValid() ? SelectedMask->Id : FString();
+    Viewport->SetMasks(Profile.Masks, HiddenMaskIds, SelId);
 }
 
 TSharedRef<ITableRow> SHaybaSemanticStudio::GenerateMaskRow(TSharedPtr<FHaybaStudioMask> Mask, const TSharedRef<STableViewBase>& Owner)
@@ -137,8 +145,20 @@ TSharedRef<ITableRow> SHaybaSemanticStudio::GenerateMaskRow(TSharedPtr<FHaybaStu
         + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2)
         [ SNew(STextBlock).Text(FText::FromString(Mask->Type)).ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f))) ]
         + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2)
-        [ SNew(SImage).Image(FAppStyle::Get().GetBrush(Mask->bLocked ? "Icons.Lock" : "Icons.Unlock"))
+        [ SNew(SImage).Image(FAppStyle::Get().GetBrush("Icons.Lock"))
                       .Visibility(Mask->bLocked ? EVisibility::Visible : EVisibility::Collapsed) ]
+        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2)
+        [
+            SNew(SCheckBox)
+            .ToolTipText(LOCTEXT("MaskVisible", "Show this mask in the viewport"))
+            .IsChecked_Lambda([this, Mask]() { return HiddenMaskIds.Contains(Mask->Id) ? ECheckBoxState::Unchecked : ECheckBoxState::Checked; })
+            .OnCheckStateChanged_Lambda([this, Mask](ECheckBoxState S)
+            {
+                if (S == ECheckBoxState::Checked) HiddenMaskIds.Remove(Mask->Id);
+                else HiddenMaskIds.Add(Mask->Id);
+                PushMasksToViewport();
+            })
+        ]
     ];
 }
 
@@ -146,6 +166,7 @@ void SHaybaSemanticStudio::OnMaskSelected(TSharedPtr<FHaybaStudioMask> Mask, ESe
 {
     SelectedMask = Mask;
     if (InspectorBox.IsValid()) InspectorBox->SetContent(BuildInspector());
+    PushMasksToViewport();
 }
 
 TSharedRef<SWidget> SHaybaSemanticStudio::BuildInspector()
