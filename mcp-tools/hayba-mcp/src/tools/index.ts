@@ -132,6 +132,20 @@ import {
 } from './validator/tools.js';
 import { ensureConnected as ensureUeForValidator } from '../tcp-client.js';
 
+// ── PLUMB constraint subsystem (quantified validator + constraint language) ──
+import {
+  plumbPrimitivesSchema, plumbPrimitivesHandler,
+  plumbProfileBakeSchema, plumbProfileBakeHandler,
+  plumbProfileAnnotateSchema, plumbProfileAnnotateHandler,
+  plumbProfileListSchema, plumbProfileListHandler,
+  plumbProfileGetSchema, plumbProfileGetHandler,
+  plumbConstraintDefineSchema, plumbConstraintDefineHandler,
+  plumbConstraintListSchema, plumbConstraintListHandler,
+  plumbConstraintRemoveSchema, plumbConstraintRemoveHandler,
+  plumbConstraintProposeSchema, plumbConstraintProposeHandler,
+  plumbValidateSchema, plumbValidateHandler,
+} from './plumb/tools.js';
+
 // SessionManager (Gaea session) parked while terrain features are off — kept
 // as a typed shim so registerTools' signature doesn't churn for callers.
 type SessionManagerStub = Record<string, unknown>;
@@ -1823,6 +1837,53 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
   );
 
+  // ── PLUMB constraint subsystem ──────────────────────────────────────────
+  //
+  // Quantified, directional validator + a tiny CLOSED constraint language bound
+  // to assets/tags, plus baked physical profiles. Authoring fills values; the
+  // grammar (10 primitives) never grows. See src/plumb/.
+  const j = (r: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] });
+
+  server.tool('plumb_primitives',
+    'List the COMPLETE closed constraint grammar — the 10 primitives, their gate, hard/soft default, params, and docs. Author constraints by picking one and filling params.',
+    plumbPrimitivesSchema, async () => j(await plumbPrimitivesHandler()));
+
+  server.tool('plumb_profile_bake',
+    'Bake the deterministic geometry/physics half of a Physical Asset Profile from UE bounds (cm). Pass origin_cm + extent_cm (+ optional pivot_to_base_cm for pivot offsets like SM_GiantTree_01). Persists to the profile store.',
+    plumbProfileBakeSchema, async (a) => j(await plumbProfileBakeHandler(a, new Date().toISOString())));
+
+  server.tool('plumb_profile_annotate',
+    'Layer AI/human qualitative semantics (class, up/front vectors, named affordance regions) onto a baked profile, with optional field locks. Qualitative constraints can only hard-gate on locked fields.',
+    plumbProfileAnnotateSchema, async (a) => j(await plumbProfileAnnotateHandler(a)));
+
+  server.tool('plumb_profile_list',
+    'List baked profiles (asset_id, archetype, affordance count, locked fields). Feeds the Memory tab.',
+    plumbProfileListSchema, async () => j(await plumbProfileListHandler()));
+
+  server.tool('plumb_profile_get',
+    'Fetch one full Physical Asset Profile by asset path.',
+    plumbProfileGetSchema, async (a) => j(await plumbProfileGetHandler(a)));
+
+  server.tool('plumb_constraint_define',
+    'Author/upsert a bound constraint: a primitive id + params + a binding (exactly one of {asset, tag}). Validated against the closed primitive set — invalid primitives/params/bindings are rejected.',
+    plumbConstraintDefineSchema, async (a) => j(await plumbConstraintDefineHandler(a)));
+
+  server.tool('plumb_constraint_list',
+    'List the constraint library (optionally filtered to an asset binding).',
+    plumbConstraintListSchema, async (a) => j(await plumbConstraintListHandler(a)));
+
+  server.tool('plumb_constraint_remove',
+    'Remove a constraint from the library by id.',
+    plumbConstraintRemoveSchema, async (a) => j(await plumbConstraintRemoveHandler(a)));
+
+  server.tool('plumb_constraint_propose',
+    'Draft (does not save) constraints for an asset from its baked profile, using only closed primitives. Review/edit then call plumb_constraint_define.',
+    plumbConstraintProposeSchema, async (a) => j(await plumbConstraintProposeHandler(a)));
+
+  server.tool('plumb_validate',
+    'Run library constraints over a set of instances and return a PLUMB Verdict (gated, directional: per-gate ok + signed value_m + FixVector; hard fails set stopped_at, soft fails accumulate soft_cost).',
+    plumbValidateSchema, async (a) => j(await plumbValidateHandler(a)));
+
   // ── Landscape import (TS wrapper for UE-side landscape_import handler) ────
   server.tool(
     'hayba_import_landscape',
@@ -2084,4 +2145,16 @@ function recordEagerSchemas(
     projectId: z.string(),
     heightmapPath: z.string(),
   }, 'low', '{ok}');
+
+  // ── PLUMB constraint subsystem ────────────────────────────────────────────
+  reg('plumb_primitives', plumbPrimitivesSchema, 'low', '{primitives:[{id,gate,default_hard,qualitative,params,doc}]}');
+  reg('plumb_profile_bake', plumbProfileBakeSchema, 'low', '{ok, profile}');
+  reg('plumb_profile_annotate', plumbProfileAnnotateSchema, 'low', '{ok, profile|error}');
+  reg('plumb_profile_list', plumbProfileListSchema, 'low', '{profiles:[{asset_id,profile,affordances,locked}]}');
+  reg('plumb_profile_get', plumbProfileGetSchema, 'low', '{ok, profile|error}');
+  reg('plumb_constraint_define', plumbConstraintDefineSchema, 'low', '{ok, errors?}');
+  reg('plumb_constraint_list', plumbConstraintListSchema, 'low', '{constraints:[Constraint]}');
+  reg('plumb_constraint_remove', plumbConstraintRemoveSchema, 'low', '{ok, removed}');
+  reg('plumb_constraint_propose', plumbConstraintProposeSchema, 'low', '{ok, proposals:[Partial<Constraint>]|error}');
+  reg('plumb_validate', plumbValidateSchema, 'low', '{verdict:Verdict}');
 }

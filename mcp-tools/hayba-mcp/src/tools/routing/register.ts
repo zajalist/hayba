@@ -63,6 +63,16 @@ export const ALWAYS_ON_META = new Set<string>([
   'validator_clear',
   'validator_rules',
   'validator_set_rule_enabled',
+  'plumb_primitives',
+  'plumb_profile_bake',
+  'plumb_profile_annotate',
+  'plumb_profile_list',
+  'plumb_profile_get',
+  'plumb_constraint_define',
+  'plumb_constraint_list',
+  'plumb_constraint_remove',
+  'plumb_constraint_propose',
+  'plumb_validate',
 ]);
 
 export interface CapturedTool {
@@ -267,6 +277,19 @@ export async function registerDeferredRouting(
   passthrough('validator_clear');
   passthrough('validator_rules');
   passthrough('validator_set_rule_enabled');
+  // PLUMB constraint subsystem — always-on so the Validator/Memory panels and
+  // any agent can bake profiles, author constraints, and run Verdicts without
+  // loading a pack.
+  passthrough('plumb_primitives');
+  passthrough('plumb_profile_bake');
+  passthrough('plumb_profile_annotate');
+  passthrough('plumb_profile_list');
+  passthrough('plumb_profile_get');
+  passthrough('plumb_constraint_define');
+  passthrough('plumb_constraint_list');
+  passthrough('plumb_constraint_remove');
+  passthrough('plumb_constraint_propose');
+  passthrough('plumb_validate');
 
   // For hayba_check_ue_status: REPLACE the captured handler with one that
   // wires onConnected → maybeAutoLoad('ue_connected'). The captured handler
