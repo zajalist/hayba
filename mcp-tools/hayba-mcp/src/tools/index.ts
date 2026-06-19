@@ -1848,9 +1848,18 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     'List the COMPLETE closed constraint grammar — the 10 primitives, their gate, hard/soft default, params, and docs. Author constraints by picking one and filling params.',
     plumbPrimitivesSchema, async () => j(await plumbPrimitivesHandler()));
 
+  // Auto-fetch StaticMesh bounds (cm) via the UE mesh_get_info command when the
+  // caller omits origin_cm/extent_cm — "point at an SM and bake".
+  const fetchMeshBounds = async (asset: string) => {
+    const data = await executeCommand('mesh_get_info', { path: asset }) as { bounds?: { min: Record<string, number>; max: Record<string, number>; extents: Record<string, number> } };
+    const b = data?.bounds;
+    if (!b) throw new Error('mesh_get_info returned no bounds');
+    const v = (o: Record<string, number>): [number, number, number] => [o.x ?? 0, o.y ?? 0, o.z ?? 0];
+    return { min: v(b.min), max: v(b.max), extents: v(b.extents) };
+  };
   server.tool('plumb_profile_bake',
-    'Bake the deterministic geometry/physics half of a Physical Asset Profile from UE bounds (cm). Pass origin_cm + extent_cm (+ optional pivot_to_base_cm for pivot offsets like SM_GiantTree_01). Persists to the profile store.',
-    plumbProfileBakeSchema, async (a) => j(await plumbProfileBakeHandler(a, new Date().toISOString())));
+    'Bake the deterministic geometry/physics half of a Physical Asset Profile. Pass just the asset to auto-fetch bounds from UE (mesh_get_info), or supply origin_cm + extent_cm (+ optional pivot_to_base_cm) explicitly. Persists to the profile store.',
+    plumbProfileBakeSchema, async (a) => j(await plumbProfileBakeHandler(a, new Date().toISOString(), fetchMeshBounds)));
 
   server.tool('plumb_profile_annotate',
     'Layer AI/human qualitative semantics (class, up/front vectors, named affordance regions) onto a baked profile, with optional field locks. Qualitative constraints can only hard-gate on locked fields.',

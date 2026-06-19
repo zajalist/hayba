@@ -44,22 +44,47 @@ export async function plumbPrimitivesHandler(): Promise<{ primitives: unknown[];
 
 export const plumbProfileBakeSchema = {
   asset: z.string().describe('Asset path, e.g. /Game/Meshes/SM_GiantTree_01'),
-  origin_cm: vec3.describe('AABB centre in cm (UE world units)'),
-  extent_cm: vec3.describe('AABB half-extent in cm'),
-  pivot_to_base_cm: z.number().optional().describe('Pivot→base offset in cm (negative when pivot is above the visible base, e.g. SM_GiantTree_01 ≈ -380). Defaults to -extent.z.'),
+  origin_cm: vec3.optional().describe('AABB centre in cm (UE units). Omit to auto-fetch via mesh_get_info.'),
+  extent_cm: vec3.optional().describe('AABB half-extent in cm. Omit to auto-fetch via mesh_get_info.'),
+  pivot_to_base_cm: z.number().optional().describe('Pivot→base offset in cm (negative when the pivot is above the visible base, e.g. SM_GiantTree_01 ≈ -380). Auto-derived from bounds.min.z when omitted.'),
   mass_kg: z.number().optional(),
   com_cm: vec3.optional().describe('Local centre of mass in cm'),
   footprint_cm: z.array(z.tuple([z.number(), z.number()])).optional().describe('Convex base footprint, local XY in cm; defaults to the AABB box'),
   profile_archetype: z.string().optional().describe('Archetype tag, default "rigid_prop"'),
 };
+
+/** Fetches a StaticMesh's local bounds (cm) for auto-bake. Injected so the
+ *  handler stays unit-testable without UE. */
+export type MeshBoundsFetcher = (asset: string) => Promise<{
+  min: [number, number, number]; max: [number, number, number]; extents: [number, number, number];
+}>;
+
 export async function plumbProfileBakeHandler(args: {
-  asset: string; origin_cm: [number, number, number]; extent_cm: [number, number, number];
+  asset: string; origin_cm?: [number, number, number]; extent_cm?: [number, number, number];
   pivot_to_base_cm?: number; mass_kg?: number; com_cm?: [number, number, number];
   footprint_cm?: [number, number][]; profile_archetype?: string;
-}, nowIso: string): Promise<{ ok: boolean; profile: unknown }> {
+}, nowIso: string, fetchBounds?: MeshBoundsFetcher): Promise<{ ok: boolean; profile?: unknown; error?: string }> {
+  let origin = args.origin_cm;
+  let extent = args.extent_cm;
+  let pivotToBase = args.pivot_to_base_cm;
+
+  if (!origin || !extent) {
+    if (!fetchBounds) return { ok: false, error: 'origin_cm/extent_cm omitted and no UE connection to auto-fetch bounds — pass them explicitly or connect the editor' };
+    try {
+      const b = await fetchBounds(args.asset);
+      origin = [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
+      extent = b.extents;
+      // Pivot is the mesh local origin (0,0,0); the base contact surface is the
+      // box bottom, so its z relative to the pivot is bounds.min.z.
+      if (pivotToBase === undefined) pivotToBase = b.min[2];
+    } catch (e) {
+      return { ok: false, error: `mesh_get_info bounds fetch failed for "${args.asset}": ${(e as Error).message}` };
+    }
+  }
+
   const profile = bakeProfile({
-    asset_id: args.asset, origin_cm: args.origin_cm, extent_cm: args.extent_cm,
-    pivot_to_base_cm: args.pivot_to_base_cm, mass_kg: args.mass_kg,
+    asset_id: args.asset, origin_cm: origin, extent_cm: extent,
+    pivot_to_base_cm: pivotToBase, mass_kg: args.mass_kg,
     com_cm: args.com_cm, footprint_cm: args.footprint_cm,
   }, nowIso, args.profile_archetype);
   putProfile(profile);
