@@ -1,4 +1,4 @@
-// MCP tool handlers for the PLUMB constraint subsystem.
+﻿// MCP tool handlers for the PLUMB constraint subsystem.
 //
 // Surface (all `plumb_`-prefixed so the catalog groups them):
 //   plumb_primitives        → the closed grammar (discovery)
@@ -20,8 +20,8 @@ import {
   PRIMITIVES, primitivesById,
   bakeProfile, putProfile, getProfile, loadProfiles, annotateProfile, profileMap,
   upsertConstraint, loadConstraints, removeConstraint, constraintsFor,
-  evaluate,
-  type Constraint, type InstanceState, type Transform,
+  evaluate, addMask, removeMask,
+  type Constraint, type InstanceState, type Transform, type Mask,
 } from '../../plumb/index.js';
 
 const vec3 = z.tuple([z.number(), z.number(), z.number()]);
@@ -267,4 +267,45 @@ export async function plumbValidateHandler(args: {
   return { verdict };
 }
 
+// ── plumb_mask_add / plumb_mask_remove ───────────────────────────────────────
+
+const maskShapeSchema = z.object({
+  kind: z.enum(['box', 'sphere', 'capsule', 'convex']),
+  transform: z.object({ pos: vec3, quat: vec4, scale: vec3 }),
+  extents: vec3.optional(),
+  radius: z.number().optional(),
+  points: z.array(vec3).optional(),
+});
+
+export const plumbMaskAddSchema = {
+  asset: z.string(),
+  id: z.string(),
+  type: z.enum(['surface', 'volume']),
+  color: z.string().optional(),
+  source: z.enum(['ai', 'human']).optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  locked: z.boolean().optional(),
+  triangles: z.array(z.number().int()).optional(),
+  shape: maskShapeSchema.optional(),
+  detail: z.string().optional(),
+};
+export async function plumbMaskAddHandler(args: {
+  asset: string; id: string; type: 'surface' | 'volume'; color?: string;
+  source?: 'ai' | 'human'; confidence?: number; locked?: boolean;
+  triangles?: number[]; shape?: Mask['shape']; detail?: string;
+}): Promise<{ ok: boolean; profile?: unknown; error?: string }> {
+  const mask: Mask = {
+    id: args.id, type: args.type, color: args.color ?? '#4488ff',
+    source: args.source ?? 'human', confidence: args.confidence ?? (args.source === 'ai' ? 0.7 : 1),
+    locked: args.locked ?? false, triangles: args.triangles, shape: args.shape, detail: args.detail,
+  };
+  const merged = addMask(args.asset, mask);
+  if (!merged) return { ok: false, error: `no baked profile for "${args.asset}" — run plumb_profile_bake first` };
+  return { ok: true, profile: merged };
+}
+
+export const plumbMaskRemoveSchema = { asset: z.string(), mask_id: z.string() };
+export async function plumbMaskRemoveHandler(args: { asset: string; mask_id: string }): Promise<{ ok: boolean; removed: boolean }> {
+  return { ok: true, removed: removeMask(args.asset, args.mask_id) };
+}
 void constraintsFor; void primitivesById; // re-exported helpers, kept for tool growth

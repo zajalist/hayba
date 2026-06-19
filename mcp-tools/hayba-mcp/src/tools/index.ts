@@ -1,4 +1,4 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+﻿import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { appendMeta } from './hayba-tool-meta.js';
@@ -144,6 +144,8 @@ import {
   plumbConstraintRemoveSchema, plumbConstraintRemoveHandler,
   plumbConstraintProposeSchema, plumbConstraintProposeHandler,
   plumbValidateSchema, plumbValidateHandler,
+  plumbMaskAddSchema, plumbMaskAddHandler,
+  plumbMaskRemoveSchema, plumbMaskRemoveHandler,
 } from './plumb/tools.js';
 
 // SessionManager (Gaea session) parked while terrain features are off — kept
@@ -1893,6 +1895,13 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     'Run library constraints over a set of instances and return a PLUMB Verdict (gated, directional: per-gate ok + signed value_m + FixVector; hard fails set stopped_at, soft fails accumulate soft_cost).',
     plumbValidateSchema, async (a) => j(await plumbValidateHandler(a)));
 
+  server.tool('plumb_mask_add',
+    'Add or update a mask (surface = triangle set; volume = translucent shape) on a baked profile. Surface/volume masks are the regions constraints reference.',
+    plumbMaskAddSchema, async (a) => j(await plumbMaskAddHandler(a)));
+  server.tool('plumb_mask_remove',
+    'Remove a mask from a profile by id.',
+    plumbMaskRemoveSchema, async (a) => j(await plumbMaskRemoveHandler(a)));
+
   // ── Landscape import (TS wrapper for UE-side landscape_import handler) ────
   server.tool(
     'hayba_import_landscape',
@@ -2166,4 +2175,6 @@ function recordEagerSchemas(
   reg('plumb_constraint_remove', plumbConstraintRemoveSchema, 'low', '{ok, removed}');
   reg('plumb_constraint_propose', plumbConstraintProposeSchema, 'low', '{ok, proposals:[Partial<Constraint>]|error}');
   reg('plumb_validate', plumbValidateSchema, 'low', '{verdict:Verdict}');
+  reg('plumb_mask_add', plumbMaskAddSchema, 'low', '{ok, profile|error}');
+  reg('plumb_mask_remove', plumbMaskRemoveSchema, 'low', '{ok, removed}');
 }

@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+﻿import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { plumbProfileBakeHandler, plumbConstraintProposeHandler } from './tools.js';
-import { setProfilesPath } from '../../plumb/index.js';
+import { plumbProfileBakeHandler, plumbConstraintProposeHandler, plumbMaskAddHandler, plumbMaskRemoveHandler } from './tools.js';
+import { putProfile, bakeProfile, setProfilesPath } from '../../plumb/index.js';
 
 describe('plumb_profile_bake auto-fetch', () => {
   let dir: string;
@@ -37,5 +37,18 @@ describe('plumb_profile_bake auto-fetch', () => {
   it('propose then needs a baked profile', async () => {
     const miss = await plumbConstraintProposeHandler({ asset: '/Game/Nope' });
     expect(miss.ok).toBe(false);
+  });
+
+  it('adds and removes a volume mask via the tool', async () => {
+    putProfile(bakeProfile({ asset_id: '/Game/Door', origin_cm: [0,0,0], extent_cm: [50,10,100] }, 'now'));
+    const add = await plumbMaskAddHandler({ asset: '/Game/Door', id: 'swing_front', type: 'volume', shape: { kind: 'box', transform: { pos: [0,1,0], quat: [0,0,0,1], scale: [1,1,1] }, extents: [1,1,2] } });
+    expect(add.ok).toBe(true);
+    const rm = await plumbMaskRemoveHandler({ asset: '/Game/Door', mask_id: 'swing_front' });
+    expect(rm.removed).toBe(true);
+  });
+
+  it('mask_add errors with no base profile', async () => {
+    const r = await plumbMaskAddHandler({ asset: '/Game/Nope', id: 'm', type: 'surface', triangles: [1] });
+    expect(r.ok).toBe(false);
   });
 });

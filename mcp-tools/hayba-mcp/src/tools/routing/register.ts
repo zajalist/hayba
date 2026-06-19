@@ -1,4 +1,4 @@
-// Wiring for γ-hybrid tool routing. Called from tools/index.ts when
+﻿// Wiring for γ-hybrid tool routing. Called from tools/index.ts when
 // settings.toolRouting === 'deferred'. Expects the caller to have already
 // captured every original server.tool(...) registration into `captured` via
 // a shim, and to have populated `schema-registry` via the existing `reg(...)`
@@ -73,6 +73,8 @@ export const ALWAYS_ON_META = new Set<string>([
   'plumb_constraint_remove',
   'plumb_constraint_propose',
   'plumb_validate',
+  'plumb_mask_add',
+  'plumb_mask_remove',
 ]);
 
 export interface CapturedTool {
@@ -290,6 +292,8 @@ export async function registerDeferredRouting(
   passthrough('plumb_constraint_remove');
   passthrough('plumb_constraint_propose');
   passthrough('plumb_validate');
+  passthrough('plumb_mask_add');
+  passthrough('plumb_mask_remove');
 
   // For hayba_check_ue_status: REPLACE the captured handler with one that
   // wires onConnected → maybeAutoLoad('ue_connected'). The captured handler

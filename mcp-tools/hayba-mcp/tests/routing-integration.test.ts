@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+﻿import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -41,6 +41,8 @@ function fixtureCaptured(): Map<string, CapturedTool> {
     ['plumb_constraint_remove',     'plumb'],
     ['plumb_constraint_propose',    'plumb'],
     ['plumb_validate',              'plumb'],
+    ['plumb_mask_add',              'plumb'],
+    ['plumb_mask_remove',           'plumb'],
   ];
   for (const [name, dir] of tools) {
     const schema: z.ZodRawShape = { foo: z.string().optional() };
