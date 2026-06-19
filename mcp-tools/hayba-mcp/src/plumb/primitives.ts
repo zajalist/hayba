@@ -103,7 +103,7 @@ function matchFilter(scene: SceneContext, self: string, filter: { asset?: string
   });
 }
 
-// ── the closed set (10 primitives) ───────────────────────────────────────────
+// ── the closed set (11 primitives) ───────────────────────────────────────────
 
 export const PRIMITIVES: Primitive[] = [
   {
@@ -334,6 +334,36 @@ export const PRIMITIVES: Primitive[] = [
       const value_m = others.length === 0 ? 1 : worst;
       const locked = !!profile?.provenance?.locked?.includes(`affordance:${affId}`);
       return { value_m, confidence: 0.6, detail: `affordance "${affId}" ${value_m < 0 ? 'occluded' : 'clear'} (${locked ? 'locked' : 'unlocked'})` };
+    },
+  },
+  {
+    id: 'surface_contact',
+    gate: 'stability',
+    defaultHard: true,
+    qualitative: false,
+    doc: 'Inverse of clearance: a glue surface must sit WITHIN max_gap_m of another surface (proper anchoring, e.g. a door against a wall). Centre-to-centre proxy until a scene-time surface trace is wired (UE).',
+    params: ['max_gap_m', 'asset', 'tag_axis', 'tag_value'],
+    evaluate: ({ constraint, instance, scene }) => {
+      const gap = num(constraint.params.max_gap_m, 0.1);
+      const others = matchFilter(scene, instance.object, {
+        asset: str(constraint.params.asset),
+        axis: str(constraint.params.tag_axis),
+        value: str(constraint.params.tag_value),
+      });
+      if (others.length === 0) return SKIP('no candidate surfaces match filter');
+      let nearest = others[0], best = Infinity;
+      for (const o of others) {
+        const d = dist(instance.transform.pos, o.transform.pos);
+        if (d < best) { best = d; nearest = o; }
+      }
+      const value_m = gap - best;          // >=0 when within the gap (in contact)
+      let fix: FixVector | undefined;
+      if (value_m < 0) {
+        const toward = norm(sub(nearest.transform.pos, instance.transform.pos));
+        const pull = -value_m;
+        fix = { translate: [toward[0] * pull, toward[1] * pull, toward[2] * pull] };
+      }
+      return { value_m, fix, detail: `nearest surface ${best.toFixed(2)}m vs gap ${gap}m` };
     },
   },
 ];

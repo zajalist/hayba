@@ -17,10 +17,10 @@ function inst(object: string, pos: [number, number, number], opts: Partial<Insta
 }
 
 describe('closed primitive set', () => {
-  it('has exactly 10 primitives with unique ids and valid gates', () => {
-    expect(PRIMITIVES.length).toBe(10);
+  it('has exactly 11 primitives with unique ids and valid gates', () => {
+    expect(PRIMITIVES.length).toBe(11);
     const ids = new Set(PRIMITIVES.map(p => p.id));
-    expect(ids.size).toBe(10);
+    expect(ids.size).toBe(11);
     const gates = new Set(['collision', 'stability', 'constraints', 'reach']);
     for (const p of PRIMITIVES) expect(gates.has(p.gate)).toBe(true);
   });
@@ -69,6 +69,25 @@ describe('clearance primitive', () => {
   it('skips when no other instances match', () => {
     const a = inst('a', [0, 0, 0]);
     const out = prim.evaluate({ constraint: { id: 'c', primitive: 'clearance', params: { min_m: 3 }, binding: { asset: 'x' } }, instance: a, profile: null, scene: { instances: [a] } });
+    expect(out.skip).toBe(true);
+  });
+});
+
+describe('surface_contact primitive', () => {
+  const prim = primitivesById().get('surface_contact')!;
+  it('passes when a surface is within the gap and fails when too far', () => {
+    const a = inst('door', [0, 0, 0]);
+    const near = inst('wall', [0.05, 0, 0]);
+    const far = inst('wall', [3, 0, 0]);
+    const pass = prim.evaluate({ constraint: { id: 's', primitive: 'surface_contact', params: { max_gap_m: 0.1 }, binding: { asset: 'x' } }, instance: a, profile: null, scene: { instances: [a, near] } });
+    expect(pass.value_m).toBeGreaterThanOrEqual(0);
+    const fail = prim.evaluate({ constraint: { id: 's', primitive: 'surface_contact', params: { max_gap_m: 0.1 }, binding: { asset: 'x' } }, instance: a, profile: null, scene: { instances: [a, far] } });
+    expect(fail.value_m).toBeLessThan(0);
+    expect(fail.fix!.translate[0]).toBeGreaterThan(0); // pulled toward the wall (+x)
+  });
+  it('skips when no candidate surfaces match', () => {
+    const a = inst('door', [0, 0, 0]);
+    const out = prim.evaluate({ constraint: { id: 's', primitive: 'surface_contact', params: {}, binding: { asset: 'x' } }, instance: a, profile: null, scene: { instances: [a] } });
     expect(out.skip).toBe(true);
   });
 });
