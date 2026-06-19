@@ -6,6 +6,7 @@
 // memory for the design rationale.
 
 export * from './contracts.js';
+export type { Mask } from './contracts.js';
 export { PRIMITIVES, primitivesById, polygonMargin, resolveHard } from './primitives.js';
 export type { Primitive, PrimitiveContext, PrimitiveOutcome } from './primitives.js';
 export { evaluate, assembleVerdict, bindingMatches, evalConstraint } from './evaluate.js';
