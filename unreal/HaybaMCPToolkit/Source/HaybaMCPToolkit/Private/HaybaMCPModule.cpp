@@ -1,6 +1,7 @@
 #include "HaybaMCPModule.h"
 #include "Async/Async.h"
 #include "HaybaMCPMainPanel.h"
+#include "Studio/SHaybaSemanticStudio.h"
 #include "HaybaMCPChatPanel.h"
 #include "HaybaMCPToolStreamPanel.h"
 #include "HaybaMCPSceneMapPanel.h"
@@ -70,6 +71,7 @@
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCP, Log, All);
 
 const FName FHaybaMCPModule::TabMain(TEXT("HaybaMCP_Main"));
+const FName FHaybaMCPModule::TabStudio(TEXT("HaybaSemanticStudio"));
 
 void FHaybaMCPModule::StartupModule()
 {
@@ -182,6 +184,22 @@ void FHaybaMCPModule::StartupModule()
         ECVF_Default
     );
 
+    // Semantic Studio — per-asset mask + constraint authoring window.
+    TM->RegisterNomadTabSpawner(TabStudio, FOnSpawnTab::CreateRaw(this, &FHaybaMCPModule::SpawnStudioTab))
+        .SetDisplayName(NSLOCTEXT("Hayba", "StudioTab", "Hayba Semantic Studio"))
+        .SetGroup(ToolsGroup)
+        .SetIcon(FSlateIcon(FHaybaMCPStyle::GetStyleSetName(), "Hayba.Icon.Toolkit"));
+
+    IConsoleManager::Get().RegisterConsoleCommand(
+        TEXT("Hayba.Studio.Open"),
+        TEXT("Opens the Hayba Semantic Studio"),
+        FConsoleCommandDelegate::CreateLambda([]()
+        {
+            FGlobalTabmanager::Get()->TryInvokeTab(FHaybaMCPModule::TabStudio);
+        }),
+        ECVF_Default
+    );
+
     // Auto-open the panel on first run (Setup sidebar item handles onboarding inline).
     if (!FHaybaMCPSettings::Get().bHasSeenOnboarding && GEditor)
     {
@@ -215,6 +233,7 @@ void FHaybaMCPModule::ShutdownModule()
 {
     auto& TM = FGlobalTabmanager::Get();
     TM->UnregisterNomadTabSpawner(TabMain);
+    TM->UnregisterNomadTabSpawner(TabStudio);
     StopTcpServer();
     StopMCPServer();
     FHaybaMCPStyle::Shutdown();
@@ -432,6 +451,12 @@ TSharedRef<SDockTab> FHaybaMCPModule::SpawnMainTab(const FSpawnTabArgs&)
 {
     return SNew(SDockTab).TabRole(ETabRole::NomadTab)
         [ SNew(SHaybaMCPMainPanel, this) ];
+}
+
+TSharedRef<SDockTab> FHaybaMCPModule::SpawnStudioTab(const FSpawnTabArgs&)
+{
+    return SNew(SDockTab).TabRole(ETabRole::NomadTab)
+        [ SNew(SHaybaSemanticStudio) ];
 }
 
 void FHaybaMCPModule::RecordToolCall(const FString& ToolName, const FString& ParamsJson, const FString& ResultJson)

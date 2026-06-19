@@ -44,6 +44,9 @@ public:
     // Single unified panel tab.
     static const FName TabMain;
 
+    // Semantic Studio window tab (per-asset mask + constraint authoring).
+    static const FName TabStudio;
+
     // Weak references to live sub-panels (set by SHaybaMCPMainPanel as it builds them).
     TWeakPtr<class SHaybaMCPToolStreamPanel> ToolStreamPanel;
     TWeakPtr<class SHaybaMCPSceneMapPanel>   SceneMapPanel;
@@ -83,6 +86,7 @@ private:
 
     TSharedRef<class SDockTab> OnSpawnTab(const class FSpawnTabArgs& Args);
     TSharedRef<class SDockTab> SpawnMainTab(const class FSpawnTabArgs& Args);
+    TSharedRef<class SDockTab> SpawnStudioTab(const class FSpawnTabArgs& Args);
 
     FString FindNodeExecutable() const;
     FString GetMCPServerPath() const;
