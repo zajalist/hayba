@@ -39,6 +39,17 @@ const determinism = z.object({
   seed_param: z.string().nullable(),
 });
 
+const requirement = z.object({
+  primitive: z.string().min(1),
+  params: z.record(z.unknown()).optional(),
+  binding: z.object({
+    asset: z.string().optional(),
+    tag: z.object({ axis: z.string(), value: z.string() }).optional(),
+  }),
+  hard: z.boolean().optional(),
+  note: z.string().optional(),
+});
+
 export const sliverSpecSchema = z.object({
   id: z.string().regex(reverseDns, 'id must be reverse-DNS like com.hayba.composition.frame_target'),
   version: z.string().regex(/^\d+\.\d+\.\d+$/, 'version must be semver MAJOR.MINOR.PATCH'),
@@ -57,6 +68,7 @@ export const sliverSpecSchema = z.object({
   }),
   executor: z.object({ kind: z.string().min(1) }),
   determinism,
+  requires: z.array(requirement).optional(),
 });
 
 export type ParseResult =

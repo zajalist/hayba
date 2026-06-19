@@ -34,6 +34,19 @@ export interface SliverDeterminism {
   seed_param: string | null;
 }
 
+/** A single PLUMB constraint a sliver requires to hold. Mirrors a plumb
+ *  Constraint minus the library id (one is derived per requirement). Binds to
+ *  an asset path or a tag — "this tree must have these values when using this
+ *  sliver". Evaluated (unioned with the asset's profile constraints) before the
+ *  sliver's side effects are allowed to commit. */
+export interface SliverRequirement {
+  primitive: string;                  // a plumb closed-set primitive id
+  params?: Record<string, unknown>;
+  binding: { asset?: string; tag?: { axis: string; value: string } };
+  hard?: boolean;
+  note?: string;
+}
+
 export interface SliverSpec {
   id: string;
   version: string;
@@ -44,6 +57,8 @@ export interface SliverSpec {
   params: SliverParam[];
   executor: { kind: string };
   determinism: SliverDeterminism;
+  /** PLUMB constraints this sliver requires (optional). */
+  requires?: SliverRequirement[];
 }
 
 export type SliverParamValues = Record<string, unknown>;
