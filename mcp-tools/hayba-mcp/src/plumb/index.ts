@@ -22,3 +22,5 @@ export {
 } from './profile-store.js';
 export { bakeProfile } from './bake.js';
 export type { UeBoundsInput } from './bake.js';
+export { compileGraph, constraintsToGraph } from './graph.js';
+export type { ConstraintGraph, GraphNode, GraphEdge } from './graph.js';
