@@ -109,8 +109,8 @@ FReply SHaybaMCPMemoryPanel::OnRefresh()
             {
                 FString Asset;
                 if (B->TryGetStringField(TEXT("asset"), Asset)) Bind = Asset;
-                else if (const TSharedPtr<FJsonObject> Tag = B->GetObjectField(TEXT("tag")))
-                    Bind = FString::Printf(TEXT("#%s=%s"), *Tag->GetStringField(TEXT("axis")), *Tag->GetStringField(TEXT("value")));
+                else if (const TSharedPtr<FJsonObject> TagObj = B->GetObjectField(TEXT("tag")))
+                    Bind = FString::Printf(TEXT("#%s=%s"), *TagObj->GetStringField(TEXT("axis")), *TagObj->GetStringField(TEXT("value")));
             }
             bool bHard = false; C->TryGetBoolField(TEXT("hard"), bHard);
             Lines.Add(FString::Printf(TEXT("⚖ %s: %s%s → %s"), *Pair.Key, *Primitive, bHard ? TEXT(" (hard)") : TEXT(""), *Bind));
