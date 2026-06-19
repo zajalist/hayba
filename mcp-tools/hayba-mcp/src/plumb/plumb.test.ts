@@ -234,3 +234,20 @@ describe('mask store', () => {
     expect(addMask('/Game/Nope', { id: 'x', type: 'surface', color: '#fff', source: 'human', confidence: 1, locked: false, triangles: [1,2,3] })).toBe(null);
   });
 });
+
+describe('mask-referencing primitives', () => {
+  it('inside_outside resolves a volume mask region from the profile', () => {
+    let profile = bakeProfile({ asset_id: '/Game/Zone', origin_cm: [0,0,0], extent_cm: [10,10,10] }, 'now');
+    profile = { ...profile, masks: [{ id: 'keep_in', type: 'volume', color: '#0f0', source: 'human', confidence: 1, locked: true, shape: { kind: 'box', transform: { pos: [0,0,0], quat: [0,0,0,1], scale: [1,1,1] }, extents: [2,2,2] } }] };
+    const prim = primitivesById().get('inside_outside')!;
+    const inside = prim.evaluate({ constraint: { id: 'c', primitive: 'inside_outside', params: { mask: 'keep_in', mode: 'inside' }, binding: { asset: '/Game/Zone' } }, instance: { object: 'p', asset: '/Game/Zone', transform: { pos: [0,0,0], quat: [0,0,0,1], scale: [1,1,1] } }, profile, scene: { instances: [] } });
+    expect(inside.value_m).toBeCloseTo(2, 5);   // at centre, inside the 2m box → margin = 2m
+  });
+
+  it('inside_outside falls back to inline center/extents when mask is absent (back-compat)', () => {
+    const profile = bakeProfile({ asset_id: '/Game/Zone', origin_cm: [0,0,0], extent_cm: [10,10,10] }, 'now');
+    const prim = primitivesById().get('inside_outside')!;
+    const inside = prim.evaluate({ constraint: { id: 'c', primitive: 'inside_outside', params: { center: [0, 0, 0], extents: [2, 2, 2], mode: 'inside' }, binding: { asset: '/Game/Zone' } }, instance: { object: 'p', asset: '/Game/Zone', transform: { pos: [0,0,0], quat: [0,0,0,1], scale: [1,1,1] } }, profile, scene: { instances: [] } });
+    expect(inside.value_m).toBeCloseTo(2, 5);   // same result without mask parameter
+  });
+});

@@ -103,6 +103,23 @@ function matchFilter(scene: SceneContext, self: string, filter: { asset?: string
   });
 }
 
+/** Resolve an axis-aligned region {center,extents} (metres, world) from a mask
+ *  on the instance's profile. Returns null when the mask/shape is absent. */
+function maskRegion(profile: Profile | null, maskId: string | undefined, inst: InstanceState): { center: V3; extents: V3 } | null {
+  if (!maskId) return null;
+  const m = profile?.masks?.find(x => x.id === maskId);
+  if (!m) return null;
+  if (m.type === 'volume' && m.shape) {
+    const t = m.shape.transform;
+    const ext = m.shape.extents ?? [m.shape.radius ?? 0.5, m.shape.radius ?? 0.5, m.shape.radius ?? 0.5];
+    return {
+      center: [inst.transform.pos[0] + t.pos[0], inst.transform.pos[1] + t.pos[1], inst.transform.pos[2] + t.pos[2]],
+      extents: ext as V3,
+    };
+  }
+  return null; // surface masks are handled by surface_contact / affordance_clear paths
+}
+
 // ── the closed set (11 primitives) ───────────────────────────────────────────
 
 export const PRIMITIVES: Primitive[] = [
@@ -260,11 +277,12 @@ export const PRIMITIVES: Primitive[] = [
     gate: 'constraints',
     defaultHard: false,
     qualitative: false,
-    doc: 'Instance must be inside (mode=inside) or outside (mode=outside) an axis-aligned region box {center,extents}.',
-    params: ['center', 'extents', 'mode'],
-    evaluate: ({ constraint, instance }) => {
-      const center = (constraint.params.center as V3) ?? [0, 0, 0];
-      const extents = (constraint.params.extents as V3) ?? [1, 1, 1];
+    doc: 'Instance must be inside (mode=inside) or outside (mode=outside) an axis-aligned region box {center,extents} or a referenced volume mask.',
+    params: ['center', 'extents', 'mode', 'mask'],
+    evaluate: ({ constraint, instance, profile }) => {
+      const region = maskRegion(profile, str(constraint.params.mask), instance);
+      const center = region?.center ?? ((constraint.params.center as V3) ?? [0, 0, 0]);
+      const extents = region?.extents ?? ((constraint.params.extents as V3) ?? [1, 1, 1]);
       const mode = str(constraint.params.mode) === 'outside' ? 'outside' : 'inside';
       // signed distance to box surface, +inside
       const p = instance.transform.pos;
