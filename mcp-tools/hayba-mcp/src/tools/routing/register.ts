@@ -1,4 +1,4 @@
-﻿// Wiring for γ-hybrid tool routing. Called from tools/index.ts when
+// Wiring for γ-hybrid tool routing. Called from tools/index.ts when
 // settings.toolRouting === 'deferred'. Expects the caller to have already
 // captured every original server.tool(...) registration into `captured` via
 // a shim, and to have populated `schema-registry` via the existing `reg(...)`

@@ -1,4 +1,4 @@
-﻿// MCP tool handlers for the PLUMB constraint subsystem.
+// MCP tool handlers for the PLUMB constraint subsystem.
 //
 // Surface (all `plumb_`-prefixed so the catalog groups them):
 //   plumb_primitives        → the closed grammar (discovery)
