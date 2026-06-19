@@ -32,6 +32,7 @@ protected:
 
 private:
     TSharedPtr<FAdvancedPreviewScene> PreviewScene;
+    TSharedPtr<class FAssetEditorModeManager> ModeManager;
     TSharedPtr<FHaybaStudioViewportClient> ViewportClient;
     TObjectPtr<UStaticMeshComponent> PreviewComponent = nullptr;
 };

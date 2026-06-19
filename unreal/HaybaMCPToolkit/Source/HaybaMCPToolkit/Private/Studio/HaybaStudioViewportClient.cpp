@@ -3,9 +3,10 @@
 #include "AdvancedPreviewScene.h"
 #include "EditorModeManager.h"
 
-FHaybaStudioViewportClient::FHaybaStudioViewportClient(FAdvancedPreviewScene* InPreviewScene,
+FHaybaStudioViewportClient::FHaybaStudioViewportClient(FEditorModeTools* InModeTools,
+                                                       FAdvancedPreviewScene* InPreviewScene,
                                                        const TSharedRef<SHaybaStudioViewport>& InViewport)
-    : FEditorViewportClient(nullptr, InPreviewScene, StaticCastSharedRef<SEditorViewport>(InViewport))
+    : FEditorViewportClient(InModeTools, InPreviewScene, StaticCastSharedRef<SEditorViewport>(InViewport))
 {
     SetViewMode(VMI_Lit);
     SetRealtime(true);

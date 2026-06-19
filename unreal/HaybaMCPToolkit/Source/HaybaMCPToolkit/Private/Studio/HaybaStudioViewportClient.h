@@ -3,6 +3,7 @@
 #include "EditorViewportClient.h"
 
 class FAdvancedPreviewScene;
+class FEditorModeTools;
 class SHaybaStudioViewport;
 
 // Viewport client for the Semantic Studio preview. B3 just renders the mesh;
@@ -10,6 +11,7 @@ class SHaybaStudioViewport;
 class FHaybaStudioViewportClient : public FEditorViewportClient
 {
 public:
-    FHaybaStudioViewportClient(FAdvancedPreviewScene* InPreviewScene,
+    FHaybaStudioViewportClient(FEditorModeTools* InModeTools,
+                               FAdvancedPreviewScene* InPreviewScene,
                                const TSharedRef<SHaybaStudioViewport>& InViewport);
 };
