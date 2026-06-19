@@ -194,9 +194,17 @@ void FHaybaMCPModule::StartupModule()
 
     IConsoleManager::Get().RegisterConsoleCommand(
         TEXT("Hayba.Studio.Open"),
-        TEXT("Opens the Hayba Semantic Studio"),
-        FConsoleCommandDelegate::CreateLambda([]()
+        TEXT("Opens the Hayba Semantic Studio. Optional arg: an asset path to target."),
+        FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
         {
+            if (Args.Num() > 0)
+            {
+                if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+                {
+                    M->OpenStudioForAsset(Args[0]);
+                    return;
+                }
+            }
             FGlobalTabmanager::Get()->TryInvokeTab(FHaybaMCPModule::TabStudio);
         }),
         ECVF_Default

@@ -2,9 +2,14 @@
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Layout/SSplitter.h"
 #include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SBox.h"
+#include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Input/SButton.h"
+#include "Widgets/Input/SCheckBox.h"
+#include "Widgets/Colors/SColorBlock.h"
+#include "Widgets/Views/STableRow.h"
 #include "Styling/AppStyle.h"
 
 #define LOCTEXT_NAMESPACE "HaybaSemanticStudio"
@@ -12,43 +17,43 @@
 void SHaybaSemanticStudio::Construct(const FArguments& InArgs)
 {
     AssetPath = InArgs._AssetPath;
+    ReloadProfile();
     ChildSlot [ AssetPath.IsEmpty() ? BuildEmptyState() : BuildStudio() ];
 }
 
 void SHaybaSemanticStudio::SetAsset(const FString& InAssetPath)
 {
     AssetPath = InAssetPath;
+    ReloadProfile();
     ChildSlot [ AssetPath.IsEmpty() ? BuildEmptyState() : BuildStudio() ];
 }
 
-// Shown until the user targets a mesh — explicit instruction on HOW to enter.
+void SHaybaSemanticStudio::ReloadProfile()
+{
+    SelectedMask.Reset();
+    MaskItems.Reset();
+    Profile = FHaybaStudioProfile();
+    if (AssetPath.IsEmpty()) return;
+    HaybaStudio::LoadProfile(AssetPath, Profile);
+    for (const FHaybaStudioMask& M : Profile.Masks)
+    {
+        MaskItems.Add(MakeShared<FHaybaStudioMask>(M));
+    }
+}
+
 TSharedRef<SWidget> SHaybaSemanticStudio::BuildEmptyState()
 {
-    return SNew(SBox)
-        .HAlign(HAlign_Center)
-        .VAlign(VAlign_Center)
-        [
-            SNew(SVerticalBox)
-            + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center).Padding(8)
-            [
-                SNew(SImage).Image(FAppStyle::Get().GetBrush("ClassIcon.StaticMesh"))
-                            .DesiredSizeOverride(FVector2D(48, 48))
-            ]
-            + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center).Padding(8)
-            [
-                SNew(STextBlock)
-                .Font(FAppStyle::Get().GetFontStyle("HeadingExtraSmall"))
-                .Text(LOCTEXT("EmptyTitle", "No mesh open in the Semantic Studio"))
-            ]
-            + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center).Padding(8)
-            [
-                SNew(STextBlock)
-                .AutoWrapText(true)
-                .Justification(ETextJustify::Center)
-                .Text(LOCTEXT("EmptyBody",
-                    "Right-click a Static Mesh in the Content Browser and choose\n\"Open with Hayba\" to author its masks and constraints here."))
-            ]
-        ];
+    return SNew(SBox).HAlign(HAlign_Center).VAlign(VAlign_Center)
+    [
+        SNew(SVerticalBox)
+        + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center).Padding(8)
+        [ SNew(SImage).Image(FAppStyle::Get().GetBrush("ClassIcon.StaticMesh")).DesiredSizeOverride(FVector2D(48, 48)) ]
+        + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center).Padding(8)
+        [ SNew(STextBlock).Font(FAppStyle::Get().GetFontStyle("HeadingExtraSmall")).Text(LOCTEXT("EmptyTitle", "No mesh open in the Semantic Studio")) ]
+        + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center).Padding(8)
+        [ SNew(STextBlock).AutoWrapText(true).Justification(ETextJustify::Center)
+            .Text(LOCTEXT("EmptyBody", "Right-click a Static Mesh in the Content Browser and choose\n\"Open with Hayba\" to author its masks and constraints here.")) ]
+    ];
 }
 
 TSharedRef<SWidget> SHaybaSemanticStudio::BuildStudio()
@@ -80,19 +85,94 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildStudio()
         + SVerticalBox::Slot().FillHeight(0.7f)
         [
             SNew(SSplitter).Orientation(Orient_Horizontal)
-            + SSplitter::Slot().Value(0.2f)
-            [ SNew(SBorder).Padding(6)[ SNew(STextBlock).Text(LOCTEXT("Masks", "MASKS")) ] ]
-            + SSplitter::Slot().Value(0.55f)
-            [ SNew(SBorder).Padding(6)[ SNew(STextBlock).Text(LOCTEXT("Viewport", "VIEWPORT")) ] ]
-            + SSplitter::Slot().Value(0.25f)
-            [ SNew(SBorder).Padding(6)[ SNew(STextBlock).Text(LOCTEXT("Inspector", "INSPECTOR")) ] ]
+            + SSplitter::Slot().Value(0.22f)[ BuildMaskList() ]
+            + SSplitter::Slot().Value(0.53f)[ SNew(SBorder).Padding(6)[ SNew(STextBlock).Text(LOCTEXT("Viewport", "VIEWPORT")) ] ]
+            + SSplitter::Slot().Value(0.25f)[ SAssignNew(InspectorBox, SBox)[ BuildInspector() ] ]
         ]
 
         // ── Bottom: constraint node graph ────────────────────────────────
         + SVerticalBox::Slot().FillHeight(0.3f)
+        [ SNew(SBorder).Padding(6)[ SNew(STextBlock).Text(LOCTEXT("Graph", "CONSTRAINT GRAPH")) ] ];
+}
+
+TSharedRef<SWidget> SHaybaSemanticStudio::BuildMaskList()
+{
+    return SNew(SBorder).Padding(4)
+    [
+        SNew(SVerticalBox)
+        + SVerticalBox::Slot().AutoHeight().Padding(2)
+        [ SNew(STextBlock).Text(FText::Format(LOCTEXT("MasksHeader", "MASKS ({0})"), FText::AsNumber(MaskItems.Num()))) ]
+        + SVerticalBox::Slot().FillHeight(1.f)
         [
-            SNew(SBorder).Padding(6)[ SNew(STextBlock).Text(LOCTEXT("Graph", "CONSTRAINT GRAPH")) ]
-        ];
+            SAssignNew(MaskListView, SListView<TSharedPtr<FHaybaStudioMask>>)
+            .ListItemsSource(&MaskItems)
+            .OnGenerateRow(this, &SHaybaSemanticStudio::GenerateMaskRow)
+            .OnSelectionChanged(this, &SHaybaSemanticStudio::OnMaskSelected)
+            .SelectionMode(ESelectionMode::Single)
+        ]
+    ];
+}
+
+TSharedRef<ITableRow> SHaybaSemanticStudio::GenerateMaskRow(TSharedPtr<FHaybaStudioMask> Mask, const TSharedRef<STableViewBase>& Owner)
+{
+    return SNew(STableRow<TSharedPtr<FHaybaStudioMask>>, Owner)
+    [
+        SNew(SHorizontalBox)
+        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2)
+        [ SNew(SColorBlock).Color(Mask->Color).Size(FVector2D(14, 14)) ]
+        + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(4, 0)
+        [ SNew(STextBlock).Text(FText::FromString(Mask->Id)) ]
+        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2)
+        [ SNew(STextBlock).Text(FText::FromString(Mask->Type)).ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f))) ]
+        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2)
+        [ SNew(SImage).Image(FAppStyle::Get().GetBrush(Mask->bLocked ? "Icons.Lock" : "Icons.Unlock"))
+                      .Visibility(Mask->bLocked ? EVisibility::Visible : EVisibility::Collapsed) ]
+    ];
+}
+
+void SHaybaSemanticStudio::OnMaskSelected(TSharedPtr<FHaybaStudioMask> Mask, ESelectInfo::Type)
+{
+    SelectedMask = Mask;
+    if (InspectorBox.IsValid()) InspectorBox->SetContent(BuildInspector());
+}
+
+TSharedRef<SWidget> SHaybaSemanticStudio::BuildInspector()
+{
+    if (!SelectedMask.IsValid())
+    {
+        return SNew(SBorder).Padding(8)
+        [ SNew(STextBlock).Text(LOCTEXT("NoSelection", "Select a mask")).ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f))) ];
+    }
+
+    const FHaybaStudioMask& M = *SelectedMask;
+    auto Field = [](const FText& Label, const FString& Value)
+    {
+        return SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().FillWidth(0.4f)[ SNew(STextBlock).Text(Label).ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f))) ]
+            + SHorizontalBox::Slot().FillWidth(0.6f)[ SNew(STextBlock).Text(FText::FromString(Value)).AutoWrapText(true) ];
+    };
+
+    return SNew(SBorder).Padding(8)
+    [
+        SNew(SScrollBox)
+        + SScrollBox::Slot().Padding(2)[ SNew(STextBlock).Font(FAppStyle::Get().GetFontStyle("HeadingExtraSmall")).Text(FText::FromString(M.Id)) ]
+        + SScrollBox::Slot().Padding(2)[ Field(LOCTEXT("FType", "type"), M.Type) ]
+        + SScrollBox::Slot().Padding(2)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().FillWidth(0.4f)[ SNew(STextBlock).Text(LOCTEXT("FColor", "color")).ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f))) ]
+            + SHorizontalBox::Slot().AutoWidth()[ SNew(SColorBlock).Color(M.Color).Size(FVector2D(28, 14)) ]
+        ]
+        + SScrollBox::Slot().Padding(2)[ Field(LOCTEXT("FSource", "source"), M.Source) ]
+        + SScrollBox::Slot().Padding(2)[ Field(LOCTEXT("FConf", "confidence"), FString::SanitizeFloat(M.Confidence)) ]
+        + SScrollBox::Slot().Padding(2)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().FillWidth(0.4f)[ SNew(STextBlock).Text(LOCTEXT("FLock", "locked")).ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f))) ]
+            + SHorizontalBox::Slot().AutoWidth()[ SNew(SCheckBox).IsChecked(M.bLocked ? ECheckBoxState::Checked : ECheckBoxState::Unchecked).IsEnabled(false) ]
+        ]
+        + SScrollBox::Slot().Padding(2)[ Field(LOCTEXT("FDetail", "detail"), M.Detail) ]
+    ];
 }
 
 #undef LOCTEXT_NAMESPACE
