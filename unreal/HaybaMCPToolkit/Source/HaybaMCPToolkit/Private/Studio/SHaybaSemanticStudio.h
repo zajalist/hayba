@@ -15,6 +15,12 @@ public:
 
     void Construct(const FArguments& InArgs);
 
+    /** Retarget an already-open Studio to a different mesh. */
+    void SetAsset(const FString& InAssetPath);
+
 private:
+    TSharedRef<SWidget> BuildEmptyState();
+    TSharedRef<SWidget> BuildStudio();
+
     FString AssetPath;
 };

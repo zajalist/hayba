@@ -88,6 +88,15 @@ private:
     TSharedRef<class SDockTab> SpawnMainTab(const class FSpawnTabArgs& Args);
     TSharedRef<class SDockTab> SpawnStudioTab(const class FSpawnTabArgs& Args);
 
+public:
+    /** Open (or retarget) the Semantic Studio on a specific asset path. */
+    void OpenStudioForAsset(const FString& AssetPath);
+private:
+    /** Adds the "Open with Hayba" entry to the StaticMesh content-browser menu. */
+    void RegisterStudioContentMenu();
+    FString PendingStudioAsset;
+    TWeakPtr<class SHaybaSemanticStudio> StudioWidget;
+
     FString FindNodeExecutable() const;
     FString GetMCPServerPath() const;
 

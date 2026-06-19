@@ -21,6 +21,7 @@ public class HaybaMCPToolkit : ModuleRules
 
         PrivateDependencyModuleNames.AddRange(new string[] {
             "UnrealEd", "EditorFramework", "Projects", "ToolMenus", "WorkspaceMenuStructure",
+            "ContentBrowser",
             "Sockets", "Networking", "Json", "JsonUtilities",
             "PCG", "HTTP",
             "DirectoryWatcher", "DesktopPlatform",

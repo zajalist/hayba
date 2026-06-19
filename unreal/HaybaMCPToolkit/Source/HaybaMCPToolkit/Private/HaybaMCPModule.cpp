@@ -2,6 +2,8 @@
 #include "Async/Async.h"
 #include "HaybaMCPMainPanel.h"
 #include "Studio/SHaybaSemanticStudio.h"
+#include "ToolMenus.h"
+#include "ContentBrowserMenuContexts.h"
 #include "HaybaMCPChatPanel.h"
 #include "HaybaMCPToolStreamPanel.h"
 #include "HaybaMCPSceneMapPanel.h"
@@ -200,6 +202,10 @@ void FHaybaMCPModule::StartupModule()
         ECVF_Default
     );
 
+    // "Open with Hayba" content-browser action — registered once ToolMenus is up.
+    UToolMenus::RegisterStartupCallback(
+        FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FHaybaMCPModule::RegisterStudioContentMenu));
+
     // Auto-open the panel on first run (Setup sidebar item handles onboarding inline).
     if (!FHaybaMCPSettings::Get().bHasSeenOnboarding && GEditor)
     {
@@ -234,6 +240,8 @@ void FHaybaMCPModule::ShutdownModule()
     auto& TM = FGlobalTabmanager::Get();
     TM->UnregisterNomadTabSpawner(TabMain);
     TM->UnregisterNomadTabSpawner(TabStudio);
+    UToolMenus::UnRegisterStartupCallback(this);
+    UToolMenus::UnregisterOwner(this);
     StopTcpServer();
     StopMCPServer();
     FHaybaMCPStyle::Shutdown();
@@ -455,8 +463,49 @@ TSharedRef<SDockTab> FHaybaMCPModule::SpawnMainTab(const FSpawnTabArgs&)
 
 TSharedRef<SDockTab> FHaybaMCPModule::SpawnStudioTab(const FSpawnTabArgs&)
 {
-    return SNew(SDockTab).TabRole(ETabRole::NomadTab)
-        [ SNew(SHaybaSemanticStudio) ];
+    TSharedRef<SHaybaSemanticStudio> Studio = SNew(SHaybaSemanticStudio).AssetPath(PendingStudioAsset);
+    StudioWidget = Studio;
+    return SNew(SDockTab).TabRole(ETabRole::NomadTab) [ Studio ];
+}
+
+void FHaybaMCPModule::OpenStudioForAsset(const FString& AssetPath)
+{
+    PendingStudioAsset = AssetPath;
+    // If the Studio is already open, retarget it in place; otherwise invoking
+    // the tab spawns a fresh one seeded with PendingStudioAsset.
+    if (TSharedPtr<SHaybaSemanticStudio> Live = StudioWidget.Pin())
+    {
+        Live->SetAsset(AssetPath);
+    }
+    FGlobalTabmanager::Get()->TryInvokeTab(TabStudio);
+}
+
+void FHaybaMCPModule::RegisterStudioContentMenu()
+{
+    UToolMenus* ToolMenus = UToolMenus::Get();
+    if (!ToolMenus) return;
+
+    UToolMenu* Menu = ToolMenus->ExtendMenu("ContentBrowser.AssetContextMenu.StaticMesh");
+    if (!Menu) return;
+
+    FToolMenuSection& Section = Menu->FindOrAddSection("GetAssetActions");
+    Section.AddMenuEntry(
+        "OpenWithHayba",
+        NSLOCTEXT("Hayba", "OpenWithHayba", "Open with Hayba"),
+        NSLOCTEXT("Hayba", "OpenWithHaybaTip", "Open this Static Mesh in the Hayba Semantic Studio"),
+        FSlateIcon(FHaybaMCPStyle::GetStyleSetName(), "Hayba.Icon.Toolkit"),
+        FToolMenuExecuteAction::CreateLambda([](const FToolMenuContext& Context)
+        {
+            const UContentBrowserAssetContextMenuContext* Ctx =
+                Context.FindContext<UContentBrowserAssetContextMenuContext>();
+            if (!Ctx || Ctx->SelectedAssets.Num() == 0) return;
+            const FString AssetPath = Ctx->SelectedAssets[0].GetObjectPathString();
+            if (FHaybaMCPModule* Module = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+            {
+                Module->OpenStudioForAsset(AssetPath);
+            }
+        })
+    );
 }
 
 void FHaybaMCPModule::RecordToolCall(const FString& ToolName, const FString& ParamsJson, const FString& ResultJson)
