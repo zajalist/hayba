@@ -5,6 +5,7 @@
 #include "Widgets/Views/STableRow.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SWrapBox.h"
 #include "Styling/AppStyle.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
@@ -103,16 +104,36 @@ void SHaybaLessonsPanel::OnSearchChanged(const FText& Text) { Filter = Text.ToSt
 
 TSharedRef<ITableRow> SHaybaLessonsPanel::GenerateRow(TSharedPtr<FHaybaLessonEntry> Entry, const TSharedRef<STableViewBase>& Owner)
 {
-    const FString Refs = Entry->Refs.Num() > 0 ? FString::Printf(TEXT("refs: %s"), *FString::Join(Entry->Refs, TEXT(", "))) : FString();
+    const FLinearColor LinkColor(0.36f, 0.66f, 1.0f);   // link-style accent
+
+    // Title row: the slug as a coloured link-style token (no literal "[[ ]]") + the title.
+    TSharedRef<SHorizontalBox> TitleRow = SNew(SHorizontalBox)
+        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+        [ SNew(STextBlock).Text(FText::FromString(Entry->Slug)).ColorAndOpacity(FSlateColor(LinkColor)) ]
+        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8, 0, 0, 0)
+        [ SNew(STextBlock).TextStyle(FAppStyle::Get(), "ButtonText").Text(FText::FromString(Entry->Title)) ];
+
+    // Refs as individual coloured link tokens in a wrap box.
+    TSharedRef<SWrapBox> RefsBox = SNew(SWrapBox).UseAllottedSize(true);
+    if (Entry->Refs.Num() > 0)
+    {
+        RefsBox->AddSlot().Padding(0, 0, 6, 0).VAlign(VAlign_Center)
+        [ SNew(STextBlock).Text(NSLOCTEXT("HaybaLessons", "RefsLabel", "refs:")).ColorAndOpacity(FSlateColor::UseSubduedForeground()) ];
+        for (const FString& Ref : Entry->Refs)
+        {
+            RefsBox->AddSlot().Padding(0, 0, 8, 0).VAlign(VAlign_Center)
+            [ SNew(STextBlock).Text(FText::FromString(Ref)).ColorAndOpacity(FSlateColor(LinkColor)) ];
+        }
+    }
+
     return SNew(STableRow<TSharedPtr<FHaybaLessonEntry>>, Owner).Padding(2)
     [
         SNew(SVerticalBox)
-        + SVerticalBox::Slot().AutoHeight().Padding(4, 2, 4, 0)
-        [ SNew(STextBlock).TextStyle(FAppStyle::Get(), "ButtonText").Text(FText::FromString(FString::Printf(TEXT("[[%s]]  %s"), *Entry->Slug, *Entry->Title))) ]
-        + SVerticalBox::Slot().AutoHeight().Padding(4, 0)
+        + SVerticalBox::Slot().AutoHeight().Padding(4, 3, 4, 0)[ TitleRow ]
+        + SVerticalBox::Slot().AutoHeight().Padding(4, 1)
         [ SNew(STextBlock).AutoWrapText(true).Text(FText::FromString(Entry->Body)) ]
-        + SVerticalBox::Slot().AutoHeight().Padding(4, 0, 4, 4)
-        [ SNew(STextBlock).Visibility(Refs.IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible).ColorAndOpacity(FSlateColor::UseSubduedForeground()).Text(FText::FromString(Refs)) ]
+        + SVerticalBox::Slot().AutoHeight().Padding(4, 1, 4, 5)
+        [ SNew(SBox).Visibility(Entry->Refs.Num() > 0 ? EVisibility::Visible : EVisibility::Collapsed)[ RefsBox ] ]
     ];
 }
 

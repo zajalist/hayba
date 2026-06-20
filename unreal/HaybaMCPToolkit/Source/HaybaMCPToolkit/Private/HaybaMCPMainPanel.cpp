@@ -61,7 +61,7 @@ namespace
             case EHaybaPanel::Plan:       return TEXT("Hayba.Icon.Plan");
             case EHaybaPanel::Diff:       return TEXT("Hayba.Icon.Diff");
             case EHaybaPanel::Validation: return TEXT("Hayba.Icon.Validation");
-            case EHaybaPanel::Memory:     return TEXT("Hayba.Icon.Memory");
+            case EHaybaPanel::Memory:     return TEXT("Hayba.Icon.SceneMap"); // Library — distinct from Lessons
             case EHaybaPanel::Lessons:    return TEXT("Hayba.Icon.Memory");
             case EHaybaPanel::Settings:   return TEXT("Hayba.Icon.Settings");
         }
