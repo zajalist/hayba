@@ -5,6 +5,7 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/Engine.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "StaticMeshResources.h"
 
 void SHaybaStudioViewport::Construct(const FArguments& InArgs)
 {
@@ -17,14 +18,6 @@ void SHaybaStudioViewport::Construct(const FArguments& InArgs)
 
     PreviewComponent = NewObject<UStaticMeshComponent>();
     PreviewScene->AddComponent(PreviewComponent, FTransform::Identity);
-
-    // Translucent fill material for the volume-mask overlays (so a box reads as a
-    // volume from inside). EditorBrushMaterial is the engine's translucent brush
-    // material — a safe, always-present parent.
-    if (GEngine && GEngine->EditorBrushMaterial)
-    {
-        FillMaterial = UMaterialInstanceDynamic::Create(GEngine->EditorBrushMaterial, GetTransientPackage());
-    }
 
     SEditorViewport::Construct(SEditorViewport::FArguments());
 }
@@ -60,6 +53,25 @@ void SHaybaStudioViewport::SetPreviewMesh(UStaticMesh* Mesh)
     PreviewComponent->MarkRenderStateDirty();
 }
 
+UMaterialInstanceDynamic* SHaybaStudioViewport::GetColorFill(const FLinearColor& Color)
+{
+    const FString Key = Color.ToFColor(true).ToHex();
+    if (TObjectPtr<UMaterialInstanceDynamic>* Found = FillMaterials.Find(Key))
+    {
+        return *Found;
+    }
+    if (!GEngine || !GEngine->GeomMaterial) return nullptr;
+    UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(GEngine->GeomMaterial, GetTransientPackage());
+    if (MID)
+    {
+        // GeomMaterial is the engine's translucent debug material; its "Color"
+        // vector param drives both tint and (alpha) translucency.
+        MID->SetVectorParameterValue(TEXT("Color"), FLinearColor(Color.R, Color.G, Color.B, 0.35f));
+        FillMaterials.Add(Key, MID);
+    }
+    return MID;
+}
+
 void SHaybaStudioViewport::SetMasks(const TArray<FHaybaStudioMask>& Masks, const TSet<FString>& Hidden, const FString& SelectedId)
 {
     if (!ViewportClient.IsValid()) return;
@@ -76,6 +88,7 @@ void SHaybaStudioViewport::SetMasks(const TArray<FHaybaStudioMask>& Masks, const
         FHaybaMaskDrawItem Item;
         Item.Color = M.Color;
         Item.bSelected = (M.Id == SelectedId);
+        if (UMaterialInstanceDynamic* Fill = GetColorFill(M.Color)) Item.FillProxy = Fill->GetRenderProxy();
         Item.Center = Base + M.Shape.Pos * M_TO_CM;
         if (M.Shape.Kind == TEXT("sphere"))
         {
@@ -89,13 +102,52 @@ void SHaybaStudioViewport::SetMasks(const TArray<FHaybaStudioMask>& Masks, const
         Items.Add(Item);
     }
 
-    ViewportClient->SetFillMaterial(FillMaterial ? FillMaterial->GetRenderProxy() : nullptr);
+    // ── Surface masks → highlighted mesh triangles ──────────────────────────
+    TArray<FHaybaSurfaceTri> Tris;
+    UStaticMesh* Mesh = PreviewComponent ? PreviewComponent->GetStaticMesh() : nullptr;
+    if (Mesh && Mesh->GetRenderData() && Mesh->GetRenderData()->LODResources.Num() > 0)
+    {
+        const FTransform CompXf = PreviewComponent->GetComponentTransform();
+        const FStaticMeshLODResources& LOD = Mesh->GetRenderData()->LODResources[0];
+        const FPositionVertexBuffer& PosBuf = LOD.VertexBuffers.PositionVertexBuffer;
+        FIndexArrayView IndexView = LOD.IndexBuffer.GetArrayView();
+        const int32 TriCount = IndexView.Num() / 3;
+
+        auto WorldPos = [&](uint32 VertIdx) -> FVector
+        {
+            return CompXf.TransformPosition(FVector(PosBuf.VertexPosition(VertIdx)));
+        };
+
+        for (const FHaybaStudioMask& M : Masks)
+        {
+            if (M.Type != TEXT("surface")) continue;
+            if (Hidden.Contains(M.Id)) continue;
+            const bool bSel = (M.Id == SelectedId);
+            for (int32 T : M.Triangles)
+            {
+                if (T < 0 || T >= TriCount) continue;
+                FHaybaSurfaceTri Tri;
+                Tri.A = WorldPos(IndexView[T * 3 + 0]);
+                Tri.B = WorldPos(IndexView[T * 3 + 1]);
+                Tri.C = WorldPos(IndexView[T * 3 + 2]);
+                Tri.Color = M.Color;
+                Tri.bSelected = bSel;
+                if (UMaterialInstanceDynamic* Fill = GetColorFill(M.Color)) Tri.FillProxy = Fill->GetRenderProxy();
+                Tris.Add(Tri);
+            }
+        }
+    }
+
     ViewportClient->SetMaskDrawItems(MoveTemp(Items));
+    ViewportClient->SetSurfaceTris(MoveTemp(Tris));
     ViewportClient->Invalidate();
 }
 
 void SHaybaStudioViewport::AddReferencedObjects(FReferenceCollector& Collector)
 {
     Collector.AddReferencedObject(PreviewComponent);
-    Collector.AddReferencedObject(FillMaterial);
+    for (auto& Pair : FillMaterials)
+    {
+        Collector.AddReferencedObject(Pair.Value);
+    }
 }

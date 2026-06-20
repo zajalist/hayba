@@ -17,6 +17,18 @@ struct FHaybaMaskDrawItem
     float        Radius = 0.f;                   // world, cm (sphere)
     FLinearColor Color = FLinearColor::White;
     bool         bSelected = false;
+    const FMaterialRenderProxy* FillProxy = nullptr; // per-mask translucent fill
+};
+
+// One mesh triangle highlighted by a surface mask (world-space, cm).
+struct FHaybaSurfaceTri
+{
+    FVector      A = FVector::ZeroVector;
+    FVector      B = FVector::ZeroVector;
+    FVector      C = FVector::ZeroVector;
+    FLinearColor Color = FLinearColor::White;
+    bool         bSelected = false;
+    const FMaterialRenderProxy* FillProxy = nullptr; // per-mask translucent fill
 };
 
 // Viewport client for the Semantic Studio preview. Renders the mesh plus the
@@ -29,12 +41,12 @@ public:
                                const TSharedRef<SHaybaStudioViewport>& InViewport);
 
     void SetMaskDrawItems(TArray<FHaybaMaskDrawItem> InItems) { MaskItems = MoveTemp(InItems); }
-    void SetFillMaterial(const FMaterialRenderProxy* InProxy) { FillProxy = InProxy; }
+    void SetSurfaceTris(TArray<FHaybaSurfaceTri> InTris) { SurfaceTris = MoveTemp(InTris); }
 
     // FEditorViewportClient
     virtual void Draw(const FSceneView* View, FPrimitiveDrawInterface* PDI) override;
 
 private:
     TArray<FHaybaMaskDrawItem> MaskItems;
-    const FMaterialRenderProxy* FillProxy = nullptr;
+    TArray<FHaybaSurfaceTri> SurfaceTris;
 };

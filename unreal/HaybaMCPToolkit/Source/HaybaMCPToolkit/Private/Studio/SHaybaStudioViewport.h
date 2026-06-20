@@ -39,7 +39,10 @@ protected:
 private:
     TSharedPtr<FAdvancedPreviewScene> PreviewScene;
     TSharedPtr<class FAssetEditorModeManager> ModeManager;
+    /** A translucent GeomMaterial instance tinted to `Color`, cached by hex. */
+    class UMaterialInstanceDynamic* GetColorFill(const FLinearColor& Color);
+
     TSharedPtr<FHaybaStudioViewportClient> ViewportClient;
     TObjectPtr<UStaticMeshComponent> PreviewComponent = nullptr;
-    TObjectPtr<class UMaterialInstanceDynamic> FillMaterial = nullptr;
+    TMap<FString, TObjectPtr<class UMaterialInstanceDynamic>> FillMaterials;
 };
