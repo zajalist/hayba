@@ -146,6 +146,9 @@ import {
   plumbValidateSchema, plumbValidateHandler,
   plumbMaskAddSchema, plumbMaskAddHandler,
   plumbMaskRemoveSchema, plumbMaskRemoveHandler,
+  plumbLessonAddSchema, plumbLessonAddHandler,
+  plumbLessonListSchema, plumbLessonListHandler,
+  plumbLessonRemoveSchema, plumbLessonRemoveHandler,
 } from './plumb/tools.js';
 
 // SessionManager (Gaea session) parked while terrain features are off — kept
@@ -1902,6 +1905,16 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     'Remove a mask from a profile by id.',
     plumbMaskRemoveSchema, async (a) => j(await plumbMaskRemoveHandler(a)));
 
+  server.tool('plumb_lesson_add',
+    'Add/update a lesson — the durable [[slug]] knowledge that explains WHY a constraint exists (browsed in the Studio Lessons panel; cited by constraint/validator refs).',
+    plumbLessonAddSchema, async (a) => j(await plumbLessonAddHandler(a, new Date().toISOString())));
+  server.tool('plumb_lesson_list',
+    'List lessons (slug + title + refs).',
+    plumbLessonListSchema, async () => j(await plumbLessonListHandler()));
+  server.tool('plumb_lesson_remove',
+    'Remove a lesson by slug.',
+    plumbLessonRemoveSchema, async (a) => j(await plumbLessonRemoveHandler(a)));
+
   // ── Landscape import (TS wrapper for UE-side landscape_import handler) ────
   server.tool(
     'hayba_import_landscape',
@@ -2177,4 +2190,7 @@ function recordEagerSchemas(
   reg('plumb_validate', plumbValidateSchema, 'low', '{verdict:Verdict}');
   reg('plumb_mask_add', plumbMaskAddSchema, 'low', '{ok, profile|error}');
   reg('plumb_mask_remove', plumbMaskRemoveSchema, 'low', '{ok, removed}');
+  reg('plumb_lesson_add', plumbLessonAddSchema, 'low', '{ok, errors?}');
+  reg('plumb_lesson_list', plumbLessonListSchema, 'low', '{lessons:[{slug,title,refs}]}');
+  reg('plumb_lesson_remove', plumbLessonRemoveSchema, 'low', '{ok, removed}');
 }

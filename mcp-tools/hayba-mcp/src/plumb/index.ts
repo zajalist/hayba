@@ -24,3 +24,8 @@ export { bakeProfile } from './bake.js';
 export type { UeBoundsInput } from './bake.js';
 export { compileGraph, constraintsToGraph } from './graph.js';
 export type { ConstraintGraph, GraphNode, GraphEdge } from './graph.js';
+export {
+  loadLessons, getLesson, upsertLesson, removeLesson, validateLesson,
+  getLessonsPath, setLessonsPath,
+} from './lesson-store.js';
+export type { Lesson, LessonValidationError } from './lesson-store.js';

@@ -21,6 +21,7 @@ import {
   bakeProfile, putProfile, getProfile, loadProfiles, annotateProfile, profileMap,
   upsertConstraint, loadConstraints, removeConstraint, constraintsFor,
   evaluate, addMask, removeMask,
+  loadLessons, getLesson, upsertLesson, removeLesson,
   type Constraint, type InstanceState, type Transform, type Mask,
 } from '../../plumb/index.js';
 
@@ -308,4 +309,28 @@ export const plumbMaskRemoveSchema = { asset: z.string(), mask_id: z.string() };
 export async function plumbMaskRemoveHandler(args: { asset: string; mask_id: string }): Promise<{ ok: boolean; removed: boolean }> {
   return { ok: true, removed: removeMask(args.asset, args.mask_id) };
 }
-void constraintsFor; void primitivesById; // re-exported helpers, kept for tool growth
+// ── Lessons (the [[slug]] knowledge constraints cite) ────────────────────────
+
+export const plumbLessonAddSchema = {
+  slug: z.string().describe('kebab/snake-case id, matches [[slug]] refs'),
+  title: z.string(),
+  body: z.string().describe('Human-readable explanation of the lesson'),
+  refs: z.array(z.string()).optional().describe('Related slugs or asset paths'),
+  tags: z.array(z.string()).optional(),
+};
+export async function plumbLessonAddHandler(args: { slug: string; title: string; body: string; refs?: string[]; tags?: string[] }, nowIso: string): Promise<{ ok: boolean; errors?: unknown[] }> {
+  const r = upsertLesson({ slug: args.slug, title: args.title, body: args.body, refs: args.refs, tags: args.tags }, nowIso);
+  return r.ok ? { ok: true } : { ok: false, errors: r.errors };
+}
+
+export const plumbLessonListSchema = {};
+export async function plumbLessonListHandler(): Promise<{ lessons: Array<{ slug: string; title: string; refs?: string[] }> }> {
+  return { lessons: loadLessons().map(l => ({ slug: l.slug, title: l.title, refs: l.refs })) };
+}
+
+export const plumbLessonRemoveSchema = { slug: z.string() };
+export async function plumbLessonRemoveHandler(args: { slug: string }): Promise<{ ok: boolean; removed: boolean }> {
+  return { ok: true, removed: removeLesson(args.slug) };
+}
+
+void constraintsFor; void primitivesById; void getLesson; // re-exported helpers, kept for tool growth
