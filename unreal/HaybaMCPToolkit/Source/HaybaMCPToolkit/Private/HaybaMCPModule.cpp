@@ -2,6 +2,7 @@
 #include "Async/Async.h"
 #include "HaybaMCPMainPanel.h"
 #include "Studio/SHaybaSemanticStudio.h"
+#include "HaybaMCPPlanOverlay.h"
 #include "ToolMenus.h"
 #include "ContentBrowserMenuContexts.h"
 #include "HaybaMCPChatPanel.h"
@@ -214,6 +215,10 @@ void FHaybaMCPModule::StartupModule()
     UToolMenus::RegisterStartupCallback(
         FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FHaybaMCPModule::RegisterStudioContentMenu));
 
+    // Green/red plan-mode viewport overlay (reads .scratch/verdicts.json).
+    PlanOverlay = MakeUnique<FHaybaPlanOverlay>();
+    PlanOverlay->Register();
+
     // Auto-open the panel on first run (Setup sidebar item handles onboarding inline).
     if (!FHaybaMCPSettings::Get().bHasSeenOnboarding && GEditor)
     {
@@ -246,6 +251,7 @@ void FHaybaMCPModule::StartupModule()
 void FHaybaMCPModule::ShutdownModule()
 {
     auto& TM = FGlobalTabmanager::Get();
+    if (PlanOverlay) { PlanOverlay->Unregister(); PlanOverlay.Reset(); }
     TM->UnregisterNomadTabSpawner(TabMain);
     TM->UnregisterNomadTabSpawner(TabStudio);
     UToolMenus::UnRegisterStartupCallback(this);

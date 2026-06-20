@@ -6,6 +6,7 @@
 class FHaybaMCPTcpServer;
 class FHaybaMCPCommandHandler;
 class IHaybaMCPHandler;
+class FHaybaPlanOverlay;
 
 // Lightweight tool-call record kept in the module so it survives tab
 // navigations. The Tool Stream panel hydrates from this buffer on Construct.
@@ -96,6 +97,7 @@ private:
     void RegisterStudioContentMenu();
     FString PendingStudioAsset;
     TWeakPtr<class SHaybaSemanticStudio> StudioWidget;
+    TUniquePtr<FHaybaPlanOverlay> PlanOverlay;
 
     FString FindNodeExecutable() const;
     FString GetMCPServerPath() const;
