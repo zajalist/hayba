@@ -19,7 +19,11 @@
 #include "UObject/SoftObjectPath.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphPin.h"
+#include "EdGraphUtilities.h"
 #include "GraphEditor.h"
+#include "Framework/Commands/GenericCommands.h"
+#include "Framework/Commands/UICommandList.h"
+#include "HAL/PlatformApplicationMisc.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -147,6 +151,8 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildGraph()
     ConstraintGraph->Schema = UHaybaConstraintGraphSchema::StaticClass();
     ConstraintGraph->GetSchema()->CreateDefaultNodesForGraph(*ConstraintGraph);
 
+    BindGraphCommands();
+
     SGraphEditor::FGraphEditorEvents Events;
     Events.OnSelectionChanged = SGraphEditor::FOnSelectionChanged::CreateSP(this, &SHaybaSemanticStudio::OnGraphSelectionChanged);
 
@@ -175,6 +181,7 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildGraph()
                 SAssignNew(GraphEditorWidget, SGraphEditor)
                 .GraphToEdit(ConstraintGraph)
                 .GraphEvents(Events)
+                .AdditionalCommands(GraphCommands)
             ]
         ]
         + SSplitter::Slot().Value(0.20f)
@@ -225,6 +232,118 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildGraphPalette()
         + SVerticalBox::Slot().FillHeight(1.f)
         [ SNew(SScrollBox) + SScrollBox::Slot()[ List ] ]
     ];
+}
+
+void SHaybaSemanticStudio::BindGraphCommands()
+{
+    if (GraphCommands.IsValid()) return;
+    GraphCommands = MakeShared<FUICommandList>();
+    const FGenericCommands& G = FGenericCommands::Get();
+
+    GraphCommands->MapAction(G.Delete,
+        FExecuteAction::CreateSP(this, &SHaybaSemanticStudio::DeleteSelectedGraphNodes),
+        FCanExecuteAction::CreateSP(this, &SHaybaSemanticStudio::CanDeleteGraphNodes));
+    GraphCommands->MapAction(G.Copy,
+        FExecuteAction::CreateSP(this, &SHaybaSemanticStudio::CopySelectedGraphNodes),
+        FCanExecuteAction::CreateSP(this, &SHaybaSemanticStudio::CanCopyGraphNodes));
+    GraphCommands->MapAction(G.Cut,
+        FExecuteAction::CreateSP(this, &SHaybaSemanticStudio::CutSelectedGraphNodes),
+        FCanExecuteAction::CreateSP(this, &SHaybaSemanticStudio::CanCopyGraphNodes));
+    GraphCommands->MapAction(G.Paste,
+        FExecuteAction::CreateSP(this, &SHaybaSemanticStudio::PasteGraphNodes),
+        FCanExecuteAction::CreateSP(this, &SHaybaSemanticStudio::CanPasteGraphNodes));
+    GraphCommands->MapAction(G.Duplicate,
+        FExecuteAction::CreateSP(this, &SHaybaSemanticStudio::DuplicateGraphNodes),
+        FCanExecuteAction::CreateSP(this, &SHaybaSemanticStudio::CanCopyGraphNodes));
+    GraphCommands->MapAction(G.SelectAll,
+        FExecuteAction::CreateSP(this, &SHaybaSemanticStudio::SelectAllGraphNodes));
+}
+
+void SHaybaSemanticStudio::DeleteSelectedGraphNodes()
+{
+    if (!GraphEditorWidget.IsValid()) return;
+    const FGraphPanelSelectionSet Selected = GraphEditorWidget->GetSelectedNodes();
+    GraphEditorWidget->ClearSelectionSet();
+    for (UObject* Obj : Selected)
+    {
+        if (UEdGraphNode* Node = Cast<UEdGraphNode>(Obj))
+        {
+            if (Node->CanUserDeleteNode()) { Node->Modify(); Node->DestroyNode(); }
+        }
+    }
+    GraphEditorWidget->NotifyGraphChanged();
+}
+
+bool SHaybaSemanticStudio::CanDeleteGraphNodes() const
+{
+    if (!GraphEditorWidget.IsValid()) return false;
+    for (UObject* Obj : GraphEditorWidget->GetSelectedNodes())
+        if (UEdGraphNode* Node = Cast<UEdGraphNode>(Obj)) if (Node->CanUserDeleteNode()) return true;
+    return false;
+}
+
+void SHaybaSemanticStudio::CopySelectedGraphNodes()
+{
+    if (!GraphEditorWidget.IsValid()) return;
+    const FGraphPanelSelectionSet Selected = GraphEditorWidget->GetSelectedNodes();
+    for (UObject* Obj : Selected) if (UEdGraphNode* Node = Cast<UEdGraphNode>(Obj)) Node->PrepareForCopying();
+    FString Exported;
+    FEdGraphUtilities::ExportNodesToText(Selected, Exported);
+    FPlatformApplicationMisc::ClipboardCopy(*Exported);
+}
+
+bool SHaybaSemanticStudio::CanCopyGraphNodes() const
+{
+    return GraphEditorWidget.IsValid() && GraphEditorWidget->GetSelectedNodes().Num() > 0;
+}
+
+void SHaybaSemanticStudio::CutSelectedGraphNodes()
+{
+    CopySelectedGraphNodes();
+    DeleteSelectedGraphNodes();
+}
+
+void SHaybaSemanticStudio::PasteGraphNodes()
+{
+    if (!GraphEditorWidget.IsValid() || !ConstraintGraph) return;
+    FString TextToImport;
+    FPlatformApplicationMisc::ClipboardPaste(TextToImport);
+    if (!FEdGraphUtilities::CanImportNodesFromText(ConstraintGraph, TextToImport)) return;
+
+    TSet<UEdGraphNode*> Imported;
+    FEdGraphUtilities::ImportNodesFromText(ConstraintGraph, TextToImport, Imported);
+
+    GraphEditorWidget->ClearSelectionSet();
+    for (UEdGraphNode* Node : Imported)
+    {
+        Node->NodePosX += 40;
+        Node->NodePosY += 40;
+        Node->CreateNewGuid();
+        GraphEditorWidget->SetNodeSelection(Node, true);
+    }
+    GraphEditorWidget->NotifyGraphChanged();
+}
+
+bool SHaybaSemanticStudio::CanPasteGraphNodes() const
+{
+    if (!ConstraintGraph) return false;
+    FString Text;
+    FPlatformApplicationMisc::ClipboardPaste(Text);
+    return FEdGraphUtilities::CanImportNodesFromText(ConstraintGraph, Text);
+}
+
+void SHaybaSemanticStudio::DuplicateGraphNodes()
+{
+    CopySelectedGraphNodes();
+    PasteGraphNodes();
+}
+
+void SHaybaSemanticStudio::SelectAllGraphNodes()
+{
+    if (!GraphEditorWidget.IsValid() || !ConstraintGraph) return;
+    GraphEditorWidget->ClearSelectionSet();
+    for (UEdGraphNode* Node : ConstraintGraph->Nodes)
+        if (Node) GraphEditorWidget->SetNodeSelection(Node, true);
 }
 
 void SHaybaSemanticStudio::AddGraphNode(uint8 Kind, const FString& Id)

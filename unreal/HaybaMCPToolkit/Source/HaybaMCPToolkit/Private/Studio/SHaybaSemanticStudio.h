@@ -43,6 +43,19 @@ private:
     void OnGraphSelectionChanged(const TSet<class UObject*>& NewSelection);
     void AddGraphNode(uint8 Kind, const FString& Id);
     int32 PaletteSpawnCount = 0;
+
+    // Graph keyboard commands (Delete / Copy / Cut / Paste / Duplicate / Select-All).
+    void BindGraphCommands();
+    void DeleteSelectedGraphNodes();
+    bool CanDeleteGraphNodes() const;
+    void CopySelectedGraphNodes();
+    bool CanCopyGraphNodes() const;
+    void CutSelectedGraphNodes();
+    void PasteGraphNodes();
+    bool CanPasteGraphNodes() const;
+    void DuplicateGraphNodes();
+    void SelectAllGraphNodes();
+    TSharedPtr<class FUICommandList> GraphCommands;
     TSharedRef<ITableRow> GenerateMaskRow(TSharedPtr<FHaybaStudioMask> Mask, const TSharedRef<STableViewBase>& Owner);
     void OnMaskSelected(TSharedPtr<FHaybaStudioMask> Mask, ESelectInfo::Type);
     void ReloadProfile();
