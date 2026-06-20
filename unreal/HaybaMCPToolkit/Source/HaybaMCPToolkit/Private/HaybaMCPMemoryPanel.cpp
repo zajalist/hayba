@@ -1,28 +1,32 @@
 #include "HaybaMCPMemoryPanel.h"
+#include "HaybaMCPModule.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Input/SButton.h"
+#include "Widgets/Input/SSearchBox.h"
+#include "Widgets/Views/STableRow.h"
 #include "Widgets/SBoxPanel.h"
+#include "Widgets/Layout/SBorder.h"
+#include "Styling/AppStyle.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "HAL/PlatformMisc.h"
+#include "Modules/ModuleManager.h"
 
-// The Memory tab browses the PLUMB stores the MCP server writes under the
-// project's .scratch/ — the same no-bridge, file-tail convention the Validator
-// panel uses. profiles.json = baked Physical Asset Profiles; constraints.json =
-// the bound constraint library.
+#define LOCTEXT_NAMESPACE "HaybaLibrary"
+
 namespace
 {
-    FString ScratchDir()
+    FString LibScratchDir()
     {
         const FString Override = FPlatformMisc::GetEnvironmentVariable(TEXT("HAYBA_PROFILES"));
         if (!Override.IsEmpty()) return FPaths::GetPath(Override);
         return FPaths::Combine(FPaths::ProjectDir(), TEXT(".scratch"));
     }
 
-    TSharedPtr<FJsonObject> ReadJsonObject(const FString& Path)
+    TSharedPtr<FJsonObject> LibReadObject(const FString& Path)
     {
         FString Raw;
         if (!FFileHelper::LoadFileToString(Raw, *Path)) return nullptr;
@@ -38,96 +42,133 @@ void SHaybaMCPMemoryPanel::Construct(const FArguments& InArgs)
     ChildSlot
     [
         SNew(SVerticalBox)
-        + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Right).Padding(8)
+        + SVerticalBox::Slot().AutoHeight().Padding(6, 6, 6, 2)
         [
-            SNew(SButton)
-            .Text(NSLOCTEXT("Hayba", "MemRefresh", "Refresh"))
-            .OnClicked(this, &SHaybaMCPMemoryPanel::OnRefresh)
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+            [ SNew(SSearchBox).HintText(LOCTEXT("SearchHint", "Filter assets...")).OnTextChanged(this, &SHaybaMCPMemoryPanel::OnSearchChanged) ]
+            + SHorizontalBox::Slot().AutoWidth().Padding(4, 0, 0, 0)
+            [ SNew(SButton).Text(LOCTEXT("Refresh", "Refresh")).OnClicked(this, &SHaybaMCPMemoryPanel::OnRefresh) ]
         ]
-        + SVerticalBox::Slot().FillHeight(1.f)
+        + SVerticalBox::Slot().FillHeight(1.f).Padding(6, 2)
         [
-            SAssignNew(EntryList, SListView<TSharedPtr<FString>>)
-            .ListItemsSource(&Entries)
-            .OnGenerateRow(this, &SHaybaMCPMemoryPanel::GenerateRow)
+            SNew(SBorder).BorderImage(FAppStyle::Get().GetBrush("ToolPanel.GroupBorder"))
+            [
+                SAssignNew(EntryList, SListView<TSharedPtr<FHaybaLibraryEntry>>)
+                .ListItemsSource(&Entries)
+                .OnGenerateRow(this, &SHaybaMCPMemoryPanel::GenerateRow)
+                .SelectionMode(ESelectionMode::Single)
+            ]
         ]
     ];
+
+    Reload();
 }
 
-void SHaybaMCPMemoryPanel::SetResults(const TArray<FString>& InEntries)
+void SHaybaMCPMemoryPanel::Reload()
+{
+    AllEntries.Reset();
+
+    const FString Dir = LibScratchDir();
+
+    // constraint counts per asset, from constraints.json
+    TMap<FString, int32> ConstraintCounts;
+    if (const TSharedPtr<FJsonObject> Constraints = LibReadObject(FPaths::Combine(Dir, TEXT("constraints.json"))))
+    {
+        for (const auto& Pair : Constraints->Values)
+        {
+            const TSharedPtr<FJsonObject> C = Pair.Value->AsObject();
+            if (!C.IsValid()) continue;
+            const TSharedPtr<FJsonObject>* B = nullptr;
+            if (C->TryGetObjectField(TEXT("binding"), B) && B)
+            {
+                FString Asset;
+                if ((*B)->TryGetStringField(TEXT("asset"), Asset)) ConstraintCounts.FindOrAdd(Asset)++;
+            }
+        }
+    }
+
+    if (const TSharedPtr<FJsonObject> Profiles = LibReadObject(FPaths::Combine(Dir, TEXT("profiles.json"))))
+    {
+        for (const auto& Pair : Profiles->Values)
+        {
+            const TSharedPtr<FJsonObject> P = Pair.Value->AsObject();
+            if (!P.IsValid()) continue;
+            TSharedPtr<FHaybaLibraryEntry> E = MakeShared<FHaybaLibraryEntry>();
+            E->AssetId = Pair.Key;
+            P->TryGetStringField(TEXT("profile"), E->Archetype);
+
+            const TArray<TSharedPtr<FJsonValue>>* Masks = nullptr;
+            if (P->TryGetArrayField(TEXT("masks"), Masks)) E->MaskCount = Masks->Num();
+
+            if (const TSharedPtr<FJsonObject>* Prov = nullptr; P->TryGetObjectField(TEXT("provenance"), Prov) && Prov)
+            {
+                const TArray<TSharedPtr<FJsonValue>>* Locked = nullptr;
+                if ((*Prov)->TryGetArrayField(TEXT("locked"), Locked)) E->LockedCount = Locked->Num();
+            }
+            E->ConstraintCount = ConstraintCounts.FindRef(E->AssetId);
+            AllEntries.Add(E);
+        }
+    }
+
+    AllEntries.Sort([](const TSharedPtr<FHaybaLibraryEntry>& A, const TSharedPtr<FHaybaLibraryEntry>& B)
+    { return A->AssetId < B->AssetId; });
+
+    ApplyFilter();
+}
+
+void SHaybaMCPMemoryPanel::ApplyFilter()
 {
     Entries.Reset();
-    for (const auto& E : InEntries) Entries.Add(MakeShared<FString>(E));
+    for (const TSharedPtr<FHaybaLibraryEntry>& E : AllEntries)
+    {
+        if (Filter.IsEmpty() || E->AssetId.Contains(Filter)) Entries.Add(E);
+    }
     if (EntryList.IsValid()) EntryList->RequestListRefresh();
 }
 
 FReply SHaybaMCPMemoryPanel::OnRefresh()
 {
-    const FString Dir = ScratchDir();
-    TArray<FString> Lines;
-
-    // ── Profiles ────────────────────────────────────────────────────────────
-    if (const TSharedPtr<FJsonObject> Profiles = ReadJsonObject(FPaths::Combine(Dir, TEXT("profiles.json"))))
-    {
-        Lines.Add(FString::Printf(TEXT("── Profiles (%d) ──"), Profiles->Values.Num()));
-        for (const auto& Pair : Profiles->Values)
-        {
-            const TSharedPtr<FJsonObject> P = Pair.Value->AsObject();
-            if (!P.IsValid()) continue;
-            FString Archetype = P->GetStringField(TEXT("profile"));
-            int32 AffCount = 0;
-            if (const TSharedPtr<FJsonObject> Sem = P->GetObjectField(TEXT("semantics")))
-            {
-                const TArray<TSharedPtr<FJsonValue>>* Aff;
-                if (Sem->TryGetArrayField(TEXT("affordances"), Aff)) AffCount = Aff->Num();
-            }
-            FString Locked;
-            if (const TSharedPtr<FJsonObject> Prov = P->GetObjectField(TEXT("provenance")))
-            {
-                const TArray<TSharedPtr<FJsonValue>>* LockedArr;
-                if (Prov->TryGetArrayField(TEXT("locked"), LockedArr) && LockedArr->Num() > 0)
-                {
-                    TArray<FString> L;
-                    for (const auto& V : *LockedArr) L.Add(V->AsString());
-                    Locked = FString::Printf(TEXT("  locked:[%s]"), *FString::Join(L, TEXT(", ")));
-                }
-            }
-            Lines.Add(FString::Printf(TEXT("📦 %s  [%s]  affordances:%d%s"), *Pair.Key, *Archetype, AffCount, *Locked));
-        }
-    }
-
-    // ── Constraints ─────────────────────────────────────────────────────────
-    if (const TSharedPtr<FJsonObject> Constraints = ReadJsonObject(FPaths::Combine(Dir, TEXT("constraints.json"))))
-    {
-        Lines.Add(FString::Printf(TEXT("── Constraints (%d) ──"), Constraints->Values.Num()));
-        for (const auto& Pair : Constraints->Values)
-        {
-            const TSharedPtr<FJsonObject> C = Pair.Value->AsObject();
-            if (!C.IsValid()) continue;
-            const FString Primitive = C->GetStringField(TEXT("primitive"));
-            FString Bind = TEXT("?");
-            if (const TSharedPtr<FJsonObject> B = C->GetObjectField(TEXT("binding")))
-            {
-                FString Asset;
-                if (B->TryGetStringField(TEXT("asset"), Asset)) Bind = Asset;
-                else if (const TSharedPtr<FJsonObject> TagObj = B->GetObjectField(TEXT("tag")))
-                    Bind = FString::Printf(TEXT("#%s=%s"), *TagObj->GetStringField(TEXT("axis")), *TagObj->GetStringField(TEXT("value")));
-            }
-            bool bHard = false; C->TryGetBoolField(TEXT("hard"), bHard);
-            Lines.Add(FString::Printf(TEXT("⚖ %s: %s%s → %s"), *Pair.Key, *Primitive, bHard ? TEXT(" (hard)") : TEXT(""), *Bind));
-        }
-    }
-
-    if (Lines.Num() == 0)
-    {
-        Lines.Add(FString::Printf(TEXT("No PLUMB profiles or constraints found under %s"), *Dir));
-        Lines.Add(TEXT("Use plumb_profile_bake / plumb_constraint_define to populate."));
-    }
-    SetResults(Lines);
+    Reload();
     return FReply::Handled();
 }
 
-TSharedRef<ITableRow> SHaybaMCPMemoryPanel::GenerateRow(TSharedPtr<FString> Entry, const TSharedRef<STableViewBase>& Owner)
+void SHaybaMCPMemoryPanel::OnSearchChanged(const FText& Text)
 {
-    return SNew(STableRow<TSharedPtr<FString>>, Owner)
-        [ SNew(STextBlock).AutoWrapText(true).Text(FText::FromString(*Entry)) ];
+    Filter = Text.ToString();
+    ApplyFilter();
 }
+
+TSharedRef<ITableRow> SHaybaMCPMemoryPanel::GenerateRow(TSharedPtr<FHaybaLibraryEntry> Entry, const TSharedRef<STableViewBase>& Owner)
+{
+    const FString AssetId = Entry->AssetId;
+    const FString Name = FPaths::GetBaseFilename(AssetId);
+    const FString Counts = FString::Printf(TEXT("%d masks  ·  %d constraints%s"),
+        Entry->MaskCount, Entry->ConstraintCount, Entry->LockedCount > 0 ? *FString::Printf(TEXT("  ·  %d locked"), Entry->LockedCount) : TEXT(""));
+
+    return SNew(STableRow<TSharedPtr<FHaybaLibraryEntry>>, Owner).Padding(2)
+    [
+        SNew(SHorizontalBox)
+        + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(4, 2)
+        [
+            SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight()
+            [ SNew(STextBlock).Text(FText::FromString(Name)).TextStyle(FAppStyle::Get(), "ButtonText") ]
+            + SVerticalBox::Slot().AutoHeight()
+            [ SNew(STextBlock).Text(FText::FromString(Counts)).ColorAndOpacity(FSlateColor::UseSubduedForeground()) ]
+        ]
+        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)
+        [
+            SNew(SButton)
+            .Text(LOCTEXT("OpenInStudio", "Open in Studio"))
+            .OnClicked_Lambda([AssetId]()
+            {
+                if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+                    M->OpenStudioForAsset(AssetId);
+                return FReply::Handled();
+            })
+        ]
+    ];
+}
+
+#undef LOCTEXT_NAMESPACE

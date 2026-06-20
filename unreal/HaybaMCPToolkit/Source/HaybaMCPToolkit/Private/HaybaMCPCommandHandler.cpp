@@ -171,29 +171,15 @@ static void PushPhysicsResultsToPanel(const TSharedPtr<FJsonObject>& Data)
 
 static void PushMemoryResultsToPanel(const TSharedPtr<FJsonObject>& Data)
 {
-    if (!Data.IsValid()) return;
-    TArray<FString> Entries;
-    const TArray<TSharedPtr<FJsonValue>>* ResultsArr = nullptr;
-    if (Data->TryGetArrayField(TEXT("results"), ResultsArr))
-    {
-        for (const auto& V : *ResultsArr)
-        {
-            const TSharedPtr<FJsonObject> R = V->AsObject();
-            if (!R.IsValid()) continue;
-            FString Role, Content, Scope;
-            R->TryGetStringField(TEXT("agentRole"), Role);
-            R->TryGetStringField(TEXT("scope"),     Scope);
-            R->TryGetStringField(TEXT("content"),   Content);
-            Entries.Add(FString::Printf(TEXT("[%s/%s] %s"), *Scope, *Role, *Content));
-        }
-    }
-    AsyncTask(ENamedThreads::GameThread, [Entries = MoveTemp(Entries)]()
+    // The Semantic Library now reads the PLUMB stores directly; a memory_query
+    // just asks it to refresh from disk on the game thread.
+    AsyncTask(ENamedThreads::GameThread, []()
     {
         if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
         {
             if (TSharedPtr<SHaybaMCPMemoryPanel> Panel = M->MemoryPanel.Pin())
             {
-                Panel->SetResults(Entries);
+                Panel->RefreshLibrary();
             }
         }
     });
