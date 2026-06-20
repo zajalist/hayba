@@ -9,8 +9,8 @@ export * from './contracts.js';
 export type { Mask } from './contracts.js';
 export { PRIMITIVES, primitivesById, polygonMargin, resolveHard } from './primitives.js';
 export type { Primitive, PrimitiveContext, PrimitiveOutcome } from './primitives.js';
-export { evaluate, assembleVerdict, bindingMatches, evalConstraint } from './evaluate.js';
-export type { EvaluateOptions } from './evaluate.js';
+export { evaluate, evaluatePerInstance, assembleVerdict, bindingMatches, evalConstraint } from './evaluate.js';
+export type { EvaluateOptions, InstanceVerdict } from './evaluate.js';
 export {
   loadConstraints, upsertConstraint, removeConstraint, constraintsFor,
   validateConstraint, getConstraintsPath, setConstraintsPath,

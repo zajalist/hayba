@@ -60,6 +60,41 @@ function isFieldLocked(prim: Primitive, c: Constraint, profile: Profile | null):
   return false;
 }
 
+export interface InstanceVerdict {
+  object: string;
+  asset?: string;
+  ok: boolean;              // no hard failure
+  stopped_at: GateName | null;
+  fix: [number, number, number]; // worst hard-fail fix translate (0,0,0 if none)
+  soft_cost: number;
+}
+
+/** Per-instance pass/fail + fix vector — drives the green/red viewport overlay.
+ *  Each instance is validated against the constraints bound to it. */
+export function evaluatePerInstance(
+  instances: InstanceState[],
+  constraints: Constraint[],
+  opts: EvaluateOptions = {},
+): InstanceVerdict[] {
+  const profiles = opts.profiles ?? new Map<string, Profile>();
+  const active = constraints.filter(c => c.enabled !== false);
+  const out: InstanceVerdict[] = [];
+
+  for (const inst of instances) {
+    const bound = active.filter(c => bindingMatches(c, inst));
+    const v = evaluate([inst, ...instances.filter(i => i !== inst)], bound, { profiles });
+    // The verdict above includes other instances for scene context, but only
+    // `inst`'s bound constraints were passed, so failures are inst's.
+    let fix: [number, number, number] = [0, 0, 0];
+    if (!v.ok && v.stopped_at) {
+      const gate = v.gates.find(g => g.gate === v.stopped_at);
+      if (gate?.fix) fix = gate.fix.translate;
+    }
+    out.push({ object: inst.object, asset: inst.asset, ok: v.ok, stopped_at: v.stopped_at, fix, soft_cost: v.soft_cost });
+  }
+  return out;
+}
+
 /** Run every applicable constraint over every instance and build one Verdict. */
 export function evaluate(
   instances: InstanceState[],

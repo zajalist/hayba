@@ -16,14 +16,21 @@
 // bounds is a follow-up (the agent supplies origin/extent for now).
 
 import { z } from 'zod';
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import {
   PRIMITIVES, primitivesById,
   bakeProfile, putProfile, getProfile, loadProfiles, annotateProfile, profileMap,
   upsertConstraint, loadConstraints, removeConstraint, constraintsFor,
-  evaluate, addMask, removeMask,
+  evaluate, evaluatePerInstance, addMask, removeMask,
   loadLessons, getLesson, upsertLesson, removeLesson,
   type Constraint, type InstanceState, type Transform, type Mask,
 } from '../../plumb/index.js';
+
+function verdictsPath(): string {
+  return process.env.HAYBA_VERDICTS
+    ?? join(dirname(process.env.HAYBA_PROFILES ?? join(process.cwd(), '.scratch', 'x')), 'verdicts.json');
+}
 
 const vec3 = z.tuple([z.number(), z.number(), z.number()]);
 const vec4 = z.tuple([z.number(), z.number(), z.number(), z.number()]);
@@ -246,11 +253,13 @@ const instanceSchema = z.object({
 export const plumbValidateSchema = {
   instances: z.array(instanceSchema).describe('Instances to validate (object id + optional asset/tags + transform)'),
   constraint_ids: z.array(z.string()).optional().describe('Restrict to these library constraint ids; default = all enabled'),
+  write_overlay: z.boolean().optional().describe('Also write per-instance results to .scratch/verdicts.json for the plan-mode viewport overlay'),
 };
 export async function plumbValidateHandler(args: {
   instances: Array<{ object: string; asset?: string; tags?: Record<string, string>; transform: { pos: [number, number, number]; quat?: [number, number, number, number]; scale?: [number, number, number] } }>;
   constraint_ids?: string[];
-}): Promise<{ verdict: unknown }> {
+  write_overlay?: boolean;
+}): Promise<{ verdict: unknown; per_instance?: unknown; overlay_written?: string }> {
   const instances: InstanceState[] = args.instances.map(i => ({
     object: i.object, asset: i.asset, tags: i.tags,
     transform: {
@@ -264,8 +273,40 @@ export async function plumbValidateHandler(args: {
     const set = new Set(args.constraint_ids);
     constraints = constraints.filter(c => set.has(c.id));
   }
-  const verdict = evaluate(instances, constraints, { profiles: profileMap() });
+  const profiles = profileMap();
+  const verdict = evaluate(instances, constraints, { profiles });
+
+  if (args.write_overlay) {
+    const per = evaluatePerInstance(instances, constraints, { profiles });
+    const path = verdictsPath();
+    const obj: Record<string, unknown> = {};
+    for (const v of per) obj[v.object] = { ok: v.ok, stopped_at: v.stopped_at, fix: v.fix, soft_cost: v.soft_cost };
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify(obj, null, 2), 'utf-8');
+    return { verdict, per_instance: per, overlay_written: path };
+  }
   return { verdict };
+}
+
+// ── plumb_study ──────────────────────────────────────────────────────────────
+// AI-orchestration entry point: hands the agent the asset's profile (if baked) +
+// the closed grammar so it can propose masks (plumb_mask_add) + a constraint
+// graph. The "Study with AI" button signals this.
+
+export const plumbStudySchema = { asset: z.string() };
+export async function plumbStudyHandler(args: { asset: string }): Promise<{
+  asset: string; has_profile: boolean; profile?: unknown;
+  primitives: unknown[]; mask_kinds: string[]; guidance: string;
+}> {
+  const p = getProfile(args.asset);
+  return {
+    asset: args.asset,
+    has_profile: !!p,
+    profile: p ?? undefined,
+    primitives: PRIMITIVES.map(pr => ({ id: pr.id, gate: pr.gate, qualitative: pr.qualitative, params: pr.params, doc: pr.doc })),
+    mask_kinds: ['surface', 'volume'],
+    guidance: 'Study this asset: 1) ensure a baked profile (plumb_profile_bake). 2) add masks for its affordances/contact regions with plumb_mask_add (surface = triangle set, volume = shape). 3) propose constraints from the closed primitives bound to the asset, then plumb_constraint_define. Qualitative primitives (facing, affordance_clear) stay soft until the backing field is locked.',
+  };
 }
 
 // ── plumb_mask_add / plumb_mask_remove ───────────────────────────────────────
