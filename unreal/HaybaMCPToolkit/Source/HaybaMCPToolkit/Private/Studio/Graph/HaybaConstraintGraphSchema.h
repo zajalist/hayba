@@ -4,6 +4,19 @@
 #include "Studio/Graph/HaybaConstraintGraphNode.h"
 #include "HaybaConstraintGraphSchema.generated.h"
 
+// One entry in the closed palette — shared by the right-click menu and the
+// left palette panel so there is a single source of truth for the grammar.
+struct FHaybaPaletteEntry
+{
+    EHaybaNodeKind Kind;
+    FString Id;        // primitive id or gate name
+    FString Category;  // "Sources" | "Primitives" | "Gates"
+    FString Label;
+};
+
+// The complete closed palette (Mask, Geometry, 11 primitives, 3 gates, Verdict).
+void HaybaGetClosedPalette(TArray<FHaybaPaletteEntry>& Out);
+
 // Context-menu action that spawns one closed-set node.
 USTRUCT()
 struct FHaybaSchemaAction_NewNode : public FEdGraphSchemaAction

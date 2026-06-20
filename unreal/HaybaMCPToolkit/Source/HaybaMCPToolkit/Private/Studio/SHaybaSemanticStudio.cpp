@@ -150,24 +150,97 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildGraph()
     SGraphEditor::FGraphEditorEvents Events;
     Events.OnSelectionChanged = SGraphEditor::FOnSelectionChanged::CreateSP(this, &SHaybaSemanticStudio::OnGraphSelectionChanged);
 
+    // [ palette | (navbar / graph) | node inspector ]
     return SNew(SSplitter).Orientation(Orient_Horizontal)
-        + SSplitter::Slot().Value(0.78f)
+        + SSplitter::Slot().Value(0.18f)
+        [ BuildGraphPalette() ]
+        + SSplitter::Slot().Value(0.62f)
         [
-            SAssignNew(GraphEditorWidget, SGraphEditor)
-            .GraphToEdit(ConstraintGraph)
-            .GraphEvents(Events)
+            SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight()
+            [
+                SNew(SBorder).BorderImage(FAppStyle::Get().GetBrush("Brushes.Header")).Padding(FMargin(8, 3))
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                    [ SNew(SImage).Image(FAppStyle::Get().GetBrush("GraphEditor.EventGraph_16x")) ]
+                    + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(6, 0, 0, 0)
+                    [ SNew(STextBlock).TextStyle(FAppStyle::Get(), "ButtonText").Text(LOCTEXT("GraphTitle", "Constraint Graph")) ]
+                    + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).HAlign(HAlign_Right)
+                    [ SNew(STextBlock).ColorAndOpacity(FSlateColor::UseSubduedForeground()).Text(LOCTEXT("GraphHint", "right-click or use the palette to add nodes")) ]
+                ]
+            ]
+            + SVerticalBox::Slot().FillHeight(1.f)
+            [
+                SAssignNew(GraphEditorWidget, SGraphEditor)
+                .GraphToEdit(ConstraintGraph)
+                .GraphEvents(Events)
+            ]
         ]
-        + SSplitter::Slot().Value(0.22f)
+        + SSplitter::Slot().Value(0.20f)
         [
-            SNew(SBorder).Padding(6)
+            SNew(SBorder).BorderImage(FAppStyle::Get().GetBrush("ToolPanel.GroupBorder")).Padding(0)
             [
                 SNew(SVerticalBox)
-                + SVerticalBox::Slot().AutoHeight().Padding(2)
-                [ SNew(STextBlock).Text(LOCTEXT("NodeInsp", "NODE INSPECTOR")) ]
-                + SVerticalBox::Slot().FillHeight(1.f)
+                + SVerticalBox::Slot().AutoHeight()
+                [ StudioPanelHeader(LOCTEXT("NodeInsp", "NODE INSPECTOR")) ]
+                + SVerticalBox::Slot().FillHeight(1.f).Padding(4)
                 [ SAssignNew(NodeInspectorBox, SBox)[ BuildNodeInspector() ] ]
             ]
         ];
+}
+
+TSharedRef<SWidget> SHaybaSemanticStudio::BuildGraphPalette()
+{
+    TArray<FHaybaPaletteEntry> Palette;
+    HaybaGetClosedPalette(Palette);
+
+    TSharedRef<SVerticalBox> List = SNew(SVerticalBox);
+    FString CurrentCategory;
+    for (const FHaybaPaletteEntry& E : Palette)
+    {
+        if (E.Category != CurrentCategory)
+        {
+            CurrentCategory = E.Category;
+            List->AddSlot().AutoHeight().Padding(4, 6, 4, 2)
+            [ SNew(STextBlock).ColorAndOpacity(FSlateColor::UseSubduedForeground()).Text(FText::FromString(CurrentCategory.ToUpper())) ];
+        }
+        const uint8 Kind = (uint8)E.Kind;
+        const FString Id = E.Id;
+        List->AddSlot().AutoHeight().Padding(2, 1)
+        [
+            SNew(SButton)
+            .HAlign(HAlign_Left)
+            .ToolTipText(LOCTEXT("PaletteAddTip", "Add this node to the graph"))
+            .OnClicked_Lambda([this, Kind, Id]() { AddGraphNode(Kind, Id); return FReply::Handled(); })
+            [ SNew(STextBlock).Text(FText::FromString(E.Label)) ]
+        ];
+    }
+
+    return SNew(SBorder).BorderImage(FAppStyle::Get().GetBrush("ToolPanel.GroupBorder")).Padding(0)
+    [
+        SNew(SVerticalBox)
+        + SVerticalBox::Slot().AutoHeight()
+        [ StudioPanelHeader(LOCTEXT("Palette", "PALETTE")) ]
+        + SVerticalBox::Slot().FillHeight(1.f)
+        [ SNew(SScrollBox) + SScrollBox::Slot()[ List ] ]
+    ];
+}
+
+void SHaybaSemanticStudio::AddGraphNode(uint8 Kind, const FString& Id)
+{
+    if (!ConstraintGraph) return;
+    UHaybaConstraintGraphNode* Node = NewObject<UHaybaConstraintGraphNode>(ConstraintGraph);
+    Node->Kind = (EHaybaNodeKind)Kind;
+    if (Node->Kind == EHaybaNodeKind::Primitive) Node->PrimitiveId = Id;
+    else if (Node->Kind == EHaybaNodeKind::Gate) Node->GateName = Id;
+    Node->CreateNewGuid();
+    Node->NodePosX = 40 + (PaletteSpawnCount % 4) * 40;
+    Node->NodePosY = 40 + (PaletteSpawnCount % 8) * 30;
+    ++PaletteSpawnCount;
+    ConstraintGraph->AddNode(Node, true, false);
+    Node->AllocateDefaultPins();
+    if (GraphEditorWidget.IsValid()) GraphEditorWidget->NotifyGraphChanged();
 }
 
 void SHaybaSemanticStudio::OnGraphSelectionChanged(const TSet<UObject*>& NewSelection)

@@ -38,8 +38,11 @@ private:
     TSharedRef<SWidget> BuildViewport();
     TSharedRef<SWidget> BuildInspector();
     TSharedRef<SWidget> BuildGraph();
+    TSharedRef<SWidget> BuildGraphPalette();
     TSharedRef<SWidget> BuildNodeInspector();
     void OnGraphSelectionChanged(const TSet<class UObject*>& NewSelection);
+    void AddGraphNode(uint8 Kind, const FString& Id);
+    int32 PaletteSpawnCount = 0;
     TSharedRef<ITableRow> GenerateMaskRow(TSharedPtr<FHaybaStudioMask> Mask, const TSharedRef<STableViewBase>& Owner);
     void OnMaskSelected(TSharedPtr<FHaybaStudioMask> Mask, ESelectInfo::Type);
     void ReloadProfile();

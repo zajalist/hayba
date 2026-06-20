@@ -13,6 +13,16 @@ static const TCHAR* GPrimitives[] = {
 };
 static const TCHAR* GGates[] = { TEXT("collision"), TEXT("stability"), TEXT("constraints") };
 
+void HaybaGetClosedPalette(TArray<FHaybaPaletteEntry>& Out)
+{
+    Out.Reset();
+    Out.Add({ EHaybaNodeKind::Mask,     FString(), TEXT("Sources"), TEXT("Mask") });
+    Out.Add({ EHaybaNodeKind::Geometry, FString(), TEXT("Sources"), TEXT("Geometry") });
+    for (const TCHAR* P : GPrimitives) Out.Add({ EHaybaNodeKind::Primitive, FString(P), TEXT("Primitives"), FString(P) });
+    for (const TCHAR* G : GGates)      Out.Add({ EHaybaNodeKind::Gate, FString(G), TEXT("Gates"), FString::Printf(TEXT("Gate: %s"), G) });
+    Out.Add({ EHaybaNodeKind::Verdict,  FString(), TEXT("Gates"), TEXT("Verdict") });
+}
+
 UEdGraphNode* FHaybaSchemaAction_NewNode::PerformAction(UEdGraph* ParentGraph, UEdGraphPin* FromPin, const FVector2D Location, bool bSelectNewNode)
 {
     UHaybaConstraintGraphNode* Node = NewObject<UHaybaConstraintGraphNode>(ParentGraph);
@@ -30,35 +40,12 @@ UEdGraphNode* FHaybaSchemaAction_NewNode::PerformAction(UEdGraph* ParentGraph, U
 
 void UHaybaConstraintGraphSchema::GetGraphContextActions(FGraphContextMenuBuilder& ContextMenuBuilder) const
 {
-    const FText GeoCat   = LOCTEXT("CatSource", "Sources");
-    const FText PrimCat  = LOCTEXT("CatPrim", "Primitives");
-    const FText GateCat  = LOCTEXT("CatGate", "Gates");
-
+    TArray<FHaybaPaletteEntry> Palette;
+    HaybaGetClosedPalette(Palette);
+    for (const FHaybaPaletteEntry& E : Palette)
     {
         TSharedPtr<FHaybaSchemaAction_NewNode> A = MakeShared<FHaybaSchemaAction_NewNode>(
-            EHaybaNodeKind::Mask, FString(), GeoCat, LOCTEXT("NewMask", "Mask"), LOCTEXT("NewMaskTip", "A mask region — pick which mask in the node inspector"));
-        ContextMenuBuilder.AddAction(A);
-    }
-    {
-        TSharedPtr<FHaybaSchemaAction_NewNode> A = MakeShared<FHaybaSchemaAction_NewNode>(
-            EHaybaNodeKind::Geometry, FString(), GeoCat, LOCTEXT("NewGeo", "Geometry"), LOCTEXT("NewGeoTip", "The asset's baked geometry (base, up/front, bounds)"));
-        ContextMenuBuilder.AddAction(A);
-    }
-    for (const TCHAR* P : GPrimitives)
-    {
-        TSharedPtr<FHaybaSchemaAction_NewNode> A = MakeShared<FHaybaSchemaAction_NewNode>(
-            EHaybaNodeKind::Primitive, FString(P), PrimCat, FText::FromString(P), LOCTEXT("NewPrimTip", "A closed-set constraint primitive"));
-        ContextMenuBuilder.AddAction(A);
-    }
-    for (const TCHAR* G : GGates)
-    {
-        TSharedPtr<FHaybaSchemaAction_NewNode> A = MakeShared<FHaybaSchemaAction_NewNode>(
-            EHaybaNodeKind::Gate, FString(G), GateCat, FText::FromString(FString::Printf(TEXT("Gate: %s"), G)), LOCTEXT("NewGateTip", "A verdict gate"));
-        ContextMenuBuilder.AddAction(A);
-    }
-    {
-        TSharedPtr<FHaybaSchemaAction_NewNode> A = MakeShared<FHaybaSchemaAction_NewNode>(
-            EHaybaNodeKind::Verdict, FString(), GateCat, LOCTEXT("NewVerdict", "Verdict"), LOCTEXT("NewVerdictTip", "The final gated verdict output"));
+            E.Kind, E.Id, FText::FromString(E.Category), FText::FromString(E.Label), LOCTEXT("NewNodeTip", "Add a closed-set node"));
         ContextMenuBuilder.AddAction(A);
     }
 }
