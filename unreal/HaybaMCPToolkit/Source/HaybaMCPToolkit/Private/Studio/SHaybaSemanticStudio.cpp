@@ -12,8 +12,12 @@
 #include "Widgets/Views/STableRow.h"
 #include "Styling/AppStyle.h"
 #include "Studio/SHaybaStudioViewport.h"
+#include "Studio/Graph/HaybaConstraintGraphNode.h"
+#include "Studio/Graph/HaybaConstraintGraphSchema.h"
 #include "Engine/StaticMesh.h"
 #include "UObject/SoftObjectPath.h"
+#include "EdGraph/EdGraph.h"
+#include "GraphEditor.h"
 
 #define LOCTEXT_NAMESPACE "HaybaSemanticStudio"
 
@@ -95,7 +99,34 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildStudio()
 
         // ── Bottom: constraint node graph ────────────────────────────────
         + SVerticalBox::Slot().FillHeight(0.3f)
-        [ SNew(SBorder).Padding(6)[ SNew(STextBlock).Text(LOCTEXT("Graph", "CONSTRAINT GRAPH")) ] ];
+        [ BuildGraph() ];
+}
+
+TSharedRef<SWidget> SHaybaSemanticStudio::BuildGraph()
+{
+    // Fresh transient graph per asset, schema = the closed constraint schema.
+    ConstraintGraph = NewObject<UEdGraph>(GetTransientPackage(), UEdGraph::StaticClass(), NAME_None, RF_Transient);
+    ConstraintGraph->Schema = UHaybaConstraintGraphSchema::StaticClass();
+    ConstraintGraph->GetSchema()->CreateDefaultNodesForGraph(*ConstraintGraph);
+
+    // One mask node per profile mask, down the left edge.
+    int32 Row = 0;
+    for (const FHaybaStudioMask& M : Profile.Masks)
+    {
+        UHaybaConstraintGraphNode* Node = NewObject<UHaybaConstraintGraphNode>(ConstraintGraph);
+        Node->Kind = EHaybaNodeKind::Mask;
+        Node->MaskId = M.Id;
+        Node->CreateNewGuid();
+        Node->NodePosX = -200;
+        Node->NodePosY = 150 + (Row++ * 90);
+        ConstraintGraph->AddNode(Node, true, false);
+        Node->AllocateDefaultPins();
+    }
+
+    SGraphEditor::FGraphEditorEvents Events;
+    return SAssignNew(GraphEditorWidget, SGraphEditor)
+        .GraphToEdit(ConstraintGraph)
+        .GraphEvents(Events);
 }
 
 TSharedRef<SWidget> SHaybaSemanticStudio::BuildMaskList()
@@ -124,6 +155,11 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildViewport()
     V->SetPreviewMesh(Mesh);
     PushMasksToViewport();
     return V;
+}
+
+void SHaybaSemanticStudio::AddReferencedObjects(FReferenceCollector& Collector)
+{
+    Collector.AddReferencedObject(ConstraintGraph);
 }
 
 void SHaybaSemanticStudio::PushMasksToViewport()

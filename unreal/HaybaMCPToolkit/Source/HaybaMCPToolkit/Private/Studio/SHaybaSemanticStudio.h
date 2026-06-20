@@ -2,16 +2,19 @@
 #include "CoreMinimal.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/Views/SListView.h"
+#include "UObject/GCObject.h"
 #include "Studio/HaybaStudioModel.h"
 
 class ITableRow;
 class STableViewBase;
+class UEdGraph;
+class SGraphEditor;
 
 // The Hayba Semantic Studio — a Material-Editor-style window with a StaticMesh
 // as the canvas, for authoring masks + constraints on that mesh. Plan B builds
 // this incrementally; B2 adds profile loading + mask list + inspector. See
 // docs/superpowers/specs/2026-06-19-semantic-studio-design.md.
-class SHaybaSemanticStudio : public SCompoundWidget
+class SHaybaSemanticStudio : public SCompoundWidget, public FGCObject
 {
 public:
     SLATE_BEGIN_ARGS(SHaybaSemanticStudio) {}
@@ -23,12 +26,17 @@ public:
     /** Retarget an already-open Studio to a different mesh. */
     void SetAsset(const FString& InAssetPath);
 
+    // FGCObject — keep the constraint graph + its nodes alive.
+    virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
+    virtual FString GetReferencerName() const override { return TEXT("SHaybaSemanticStudio"); }
+
 private:
     TSharedRef<SWidget> BuildEmptyState();
     TSharedRef<SWidget> BuildStudio();
     TSharedRef<SWidget> BuildMaskList();
     TSharedRef<SWidget> BuildViewport();
     TSharedRef<SWidget> BuildInspector();
+    TSharedRef<SWidget> BuildGraph();
     TSharedRef<ITableRow> GenerateMaskRow(TSharedPtr<FHaybaStudioMask> Mask, const TSharedRef<STableViewBase>& Owner);
     void OnMaskSelected(TSharedPtr<FHaybaStudioMask> Mask, ESelectInfo::Type);
     void ReloadProfile();
@@ -42,4 +50,6 @@ private:
     TSharedPtr<SListView<TSharedPtr<FHaybaStudioMask>>> MaskListView;
     TSharedPtr<class SBox> InspectorBox;
     TSharedPtr<class SHaybaStudioViewport> Viewport;
+    TObjectPtr<UEdGraph> ConstraintGraph = nullptr;
+    TSharedPtr<SGraphEditor> GraphEditorWidget;
 };
