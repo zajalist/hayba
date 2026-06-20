@@ -24,8 +24,36 @@ import {
   upsertConstraint, loadConstraints, removeConstraint, constraintsFor,
   evaluate, evaluatePerInstance, addMask, removeMask,
   loadLessons, getLesson, upsertLesson, removeLesson,
-  type Constraint, type InstanceState, type Transform, type Mask,
+  type Constraint, type InstanceState, type Transform, type Mask, type Verdict,
 } from '../../plumb/index.js';
+import { replaceFindingsWithPrefix, type ValidatorFinding } from '../../validator/index.js';
+
+/** Convert a PLUMB Verdict's failing constraints into unified validator
+ *  findings — so PLUMB violations show in the one Validation tab alongside the
+ *  legacy rule findings. */
+function verdictToFindings(verdict: Verdict, constraints: Constraint[], nowIso: string): ValidatorFinding[] {
+  const byId = new Map(constraints.map(c => [c.id, c]));
+  const out: ValidatorFinding[] = [];
+  for (const gate of verdict.gates) {
+    for (const r of gate.constraints) {
+      if (r.ok) continue;
+      const [cid, object = ''] = r.name.split('@');
+      const c = byId.get(cid);
+      const fix = r.fix ? `move by [${r.fix.translate.map(n => n.toFixed(2)).join(', ')}] m` : `value_m ${r.value_m.toFixed(2)}`;
+      out.push({
+        ruleId: `plumb:${r.name}`,
+        severity: r.hard ? 'error' : 'warning',
+        message: `[${gate.gate}] ${r.primitive} failed${object ? ` on ${object}` : ''}${r.detail ? ` — ${r.detail}` : ''}`,
+        hint: `Suggested fix: ${fix}.${r.locked === false && r.confidence !== undefined ? ' (qualitative — lock the field to hard-gate)' : ''}`,
+        refs: c?.refs,
+        context: { value_m: r.value_m, fix: r.fix?.translate, gate: gate.gate, object, primitive: r.primitive, hard: r.hard },
+        timestamp: nowIso,
+        toolName: 'plumb_validate',
+      });
+    }
+  }
+  return out;
+}
 
 function verdictsPath(): string {
   return process.env.HAYBA_VERDICTS
@@ -254,11 +282,13 @@ export const plumbValidateSchema = {
   instances: z.array(instanceSchema).describe('Instances to validate (object id + optional asset/tags + transform)'),
   constraint_ids: z.array(z.string()).optional().describe('Restrict to these library constraint ids; default = all enabled'),
   write_overlay: z.boolean().optional().describe('Also write per-instance results to .scratch/verdicts.json for the plan-mode viewport overlay'),
+  record_findings: z.boolean().optional().describe('Record constraint failures as validator findings in the unified Validation surface (default true)'),
 };
 export async function plumbValidateHandler(args: {
   instances: Array<{ object: string; asset?: string; tags?: Record<string, string>; transform: { pos: [number, number, number]; quat?: [number, number, number, number]; scale?: [number, number, number] } }>;
   constraint_ids?: string[];
   write_overlay?: boolean;
+  record_findings?: boolean;
 }): Promise<{ verdict: unknown; per_instance?: unknown; overlay_written?: string }> {
   const instances: InstanceState[] = args.instances.map(i => ({
     object: i.object, asset: i.asset, tags: i.tags,
@@ -275,6 +305,13 @@ export async function plumbValidateHandler(args: {
   }
   const profiles = profileMap();
   const verdict = evaluate(instances, constraints, { profiles });
+
+  // One validator: PLUMB constraint failures become findings in the same store
+  // the Validation tab reads (alongside the advisory "floppy" rule findings).
+  if (args.record_findings !== false) {
+    const findings = verdictToFindings(verdict, constraints, new Date().toISOString());
+    await replaceFindingsWithPrefix('plumb:', findings);
+  }
 
   if (args.write_overlay) {
     const per = evaluatePerInstance(instances, constraints, { profiles });
