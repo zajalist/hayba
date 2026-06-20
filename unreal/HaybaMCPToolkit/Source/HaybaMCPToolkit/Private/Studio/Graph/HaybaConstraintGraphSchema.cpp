@@ -36,6 +36,11 @@ void UHaybaConstraintGraphSchema::GetGraphContextActions(FGraphContextMenuBuilde
 
     {
         TSharedPtr<FHaybaSchemaAction_NewNode> A = MakeShared<FHaybaSchemaAction_NewNode>(
+            EHaybaNodeKind::Mask, FString(), GeoCat, LOCTEXT("NewMask", "Mask"), LOCTEXT("NewMaskTip", "A mask region — pick which mask in the node inspector"));
+        ContextMenuBuilder.AddAction(A);
+    }
+    {
+        TSharedPtr<FHaybaSchemaAction_NewNode> A = MakeShared<FHaybaSchemaAction_NewNode>(
             EHaybaNodeKind::Geometry, FString(), GeoCat, LOCTEXT("NewGeo", "Geometry"), LOCTEXT("NewGeoTip", "The asset's baked geometry (base, up/front, bounds)"));
         ContextMenuBuilder.AddAction(A);
     }

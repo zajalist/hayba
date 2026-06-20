@@ -40,7 +40,7 @@ FText UHaybaConstraintGraphNode::GetNodeTitle(ENodeTitleType::Type) const
 {
     switch (Kind)
     {
-    case EHaybaNodeKind::Mask:      return FText::FromString(FString::Printf(TEXT("Mask: %s"), *MaskId));
+    case EHaybaNodeKind::Mask:      return FText::FromString(MaskId.IsEmpty() ? TEXT("Mask (unset)") : FString::Printf(TEXT("Mask: %s"), *MaskId));
     case EHaybaNodeKind::Geometry:  return FText::FromString(TEXT("Geometry"));
     case EHaybaNodeKind::Primitive: return FText::FromString(PrimitiveId);
     case EHaybaNodeKind::Gate:      return FText::FromString(FString::Printf(TEXT("Gate: %s"), *GateName));

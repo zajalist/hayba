@@ -37,10 +37,13 @@ private:
     TSharedRef<SWidget> BuildViewport();
     TSharedRef<SWidget> BuildInspector();
     TSharedRef<SWidget> BuildGraph();
+    TSharedRef<SWidget> BuildNodeInspector();
+    void OnGraphSelectionChanged(const TSet<class UObject*>& NewSelection);
     TSharedRef<ITableRow> GenerateMaskRow(TSharedPtr<FHaybaStudioMask> Mask, const TSharedRef<STableViewBase>& Owner);
     void OnMaskSelected(TSharedPtr<FHaybaStudioMask> Mask, ESelectInfo::Type);
     void ReloadProfile();
     void PushMasksToViewport();
+    FReply OnSaveConstraints();   // compile the graph -> constraints.json
 
     FString AssetPath;
     FHaybaStudioProfile Profile;
@@ -52,4 +55,6 @@ private:
     TSharedPtr<class SHaybaStudioViewport> Viewport;
     TObjectPtr<UEdGraph> ConstraintGraph = nullptr;
     TSharedPtr<SGraphEditor> GraphEditorWidget;
+    TSharedPtr<class SBox> NodeInspectorBox;
+    TWeakObjectPtr<class UHaybaConstraintGraphNode> SelectedGraphNode;
 };

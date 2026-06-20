@@ -17,7 +17,13 @@
 #include "Engine/StaticMesh.h"
 #include "UObject/SoftObjectPath.h"
 #include "EdGraph/EdGraph.h"
+#include "EdGraph/EdGraphPin.h"
 #include "GraphEditor.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 
 #define LOCTEXT_NAMESPACE "HaybaSemanticStudio"
 
@@ -84,6 +90,13 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildStudio()
             ]
             + SHorizontalBox::Slot().AutoWidth().Padding(2)
             [ SNew(SButton).Text(LOCTEXT("BakeGeo", "Bake Geometry")) ]
+            + SHorizontalBox::Slot().AutoWidth().Padding(2)
+            [
+                SNew(SButton)
+                .ToolTipText(LOCTEXT("SaveTip", "Compile the node graph to PLUMB constraints (.scratch/constraints.json)"))
+                .Text(LOCTEXT("SaveConstraints", "Save Constraints"))
+                .OnClicked(this, &SHaybaSemanticStudio::OnSaveConstraints)
+            ]
             + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(8, 0)
             [ SNew(STextBlock).Text(FText::FromString(AssetPath)) ]
         ]
@@ -109,24 +122,88 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildGraph()
     ConstraintGraph->Schema = UHaybaConstraintGraphSchema::StaticClass();
     ConstraintGraph->GetSchema()->CreateDefaultNodesForGraph(*ConstraintGraph);
 
-    // One mask node per profile mask, down the left edge.
-    int32 Row = 0;
-    for (const FHaybaStudioMask& M : Profile.Masks)
+    SGraphEditor::FGraphEditorEvents Events;
+    Events.OnSelectionChanged = SGraphEditor::FOnSelectionChanged::CreateSP(this, &SHaybaSemanticStudio::OnGraphSelectionChanged);
+
+    return SNew(SSplitter).Orientation(Orient_Horizontal)
+        + SSplitter::Slot().Value(0.78f)
+        [
+            SAssignNew(GraphEditorWidget, SGraphEditor)
+            .GraphToEdit(ConstraintGraph)
+            .GraphEvents(Events)
+        ]
+        + SSplitter::Slot().Value(0.22f)
+        [
+            SNew(SBorder).Padding(6)
+            [
+                SNew(SVerticalBox)
+                + SVerticalBox::Slot().AutoHeight().Padding(2)
+                [ SNew(STextBlock).Text(LOCTEXT("NodeInsp", "NODE INSPECTOR")) ]
+                + SVerticalBox::Slot().FillHeight(1.f)
+                [ SAssignNew(NodeInspectorBox, SBox)[ BuildNodeInspector() ] ]
+            ]
+        ];
+}
+
+void SHaybaSemanticStudio::OnGraphSelectionChanged(const TSet<UObject*>& NewSelection)
+{
+    SelectedGraphNode.Reset();
+    for (UObject* Obj : NewSelection)
     {
-        UHaybaConstraintGraphNode* Node = NewObject<UHaybaConstraintGraphNode>(ConstraintGraph);
-        Node->Kind = EHaybaNodeKind::Mask;
-        Node->MaskId = M.Id;
-        Node->CreateNewGuid();
-        Node->NodePosX = -200;
-        Node->NodePosY = 150 + (Row++ * 90);
-        ConstraintGraph->AddNode(Node, true, false);
-        Node->AllocateDefaultPins();
+        if (UHaybaConstraintGraphNode* N = Cast<UHaybaConstraintGraphNode>(Obj)) { SelectedGraphNode = N; break; }
+    }
+    if (NodeInspectorBox.IsValid()) NodeInspectorBox->SetContent(BuildNodeInspector());
+}
+
+TSharedRef<SWidget> SHaybaSemanticStudio::BuildNodeInspector()
+{
+    UHaybaConstraintGraphNode* Node = SelectedGraphNode.Get();
+    if (!Node)
+    {
+        return SNew(STextBlock).Text(LOCTEXT("NoNode", "Select a node")).ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f)));
     }
 
-    SGraphEditor::FGraphEditorEvents Events;
-    return SAssignNew(GraphEditorWidget, SGraphEditor)
-        .GraphToEdit(ConstraintGraph)
-        .GraphEvents(Events);
+    TSharedRef<SVerticalBox> Box = SNew(SVerticalBox)
+        + SVerticalBox::Slot().AutoHeight().Padding(2)
+        [ SNew(STextBlock).Font(FAppStyle::Get().GetFontStyle("HeadingExtraSmall")).Text(Node->GetNodeTitle(ENodeTitleType::ListView)) ];
+
+    if (Node->Kind == EHaybaNodeKind::Mask)
+    {
+        // Pick which profile mask this node references.
+        for (const FHaybaStudioMask& M : Profile.Masks)
+        {
+            const FString MaskId = M.Id;
+            const bool bCurrent = (Node->MaskId == MaskId);
+            Box->AddSlot().AutoHeight().Padding(2)
+            [
+                SNew(SButton)
+                .Text(FText::FromString(MaskId))
+                .ButtonColorAndOpacity(bCurrent ? FLinearColor(0.2f, 0.5f, 0.9f) : FLinearColor(0.25f, 0.25f, 0.25f))
+                .OnClicked_Lambda([this, MaskId]()
+                {
+                    if (UHaybaConstraintGraphNode* N = SelectedGraphNode.Get())
+                    {
+                        N->MaskId = MaskId;
+                        N->ReconstructNode();
+                        if (GraphEditorWidget.IsValid()) GraphEditorWidget->NotifyGraphChanged();
+                        if (NodeInspectorBox.IsValid()) NodeInspectorBox->SetContent(BuildNodeInspector());
+                    }
+                    return FReply::Handled();
+                })
+            ];
+        }
+        if (Profile.Masks.Num() == 0)
+        {
+            Box->AddSlot().AutoHeight().Padding(2)[ SNew(STextBlock).Text(LOCTEXT("NoMasks", "No masks on this profile")) ];
+        }
+    }
+    else
+    {
+        Box->AddSlot().AutoHeight().Padding(2)
+        [ SNew(STextBlock).AutoWrapText(true).Text(LOCTEXT("NodeNoProps", "No editable properties for this node yet.")) ];
+    }
+
+    return Box;
 }
 
 TSharedRef<SWidget> SHaybaSemanticStudio::BuildMaskList()
@@ -160,6 +237,80 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildViewport()
 void SHaybaSemanticStudio::AddReferencedObjects(FReferenceCollector& Collector)
 {
     Collector.AddReferencedObject(ConstraintGraph);
+}
+
+FReply SHaybaSemanticStudio::OnSaveConstraints()
+{
+    if (!ConstraintGraph || AssetPath.IsEmpty()) return FReply::Handled();
+
+    const FString Path = FPaths::Combine(HaybaStudio::ScratchDir(), TEXT("constraints.json"));
+
+    // Merge: keep constraints bound to OTHER assets, replace this asset's.
+    TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
+    {
+        FString Existing;
+        if (FFileHelper::LoadFileToString(Existing, *Path))
+        {
+            TSharedPtr<FJsonObject> Old;
+            const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Existing);
+            if (FJsonSerializer::Deserialize(Reader, Old) && Old.IsValid())
+            {
+                for (const auto& Pair : Old->Values)
+                {
+                    const TSharedPtr<FJsonObject> C = Pair.Value->AsObject();
+                    FString BoundAsset;
+                    if (C.IsValid())
+                    {
+                        const TSharedPtr<FJsonObject>* B = nullptr;
+                        if (C->TryGetObjectField(TEXT("binding"), B) && B)
+                            (*B)->TryGetStringField(TEXT("asset"), BoundAsset);
+                    }
+                    if (BoundAsset != AssetPath && C.IsValid()) Root->SetObjectField(Pair.Key, C);
+                }
+            }
+        }
+    }
+
+    const FString Base = FPaths::GetBaseFilename(AssetPath);
+    int32 Index = 0;
+    for (UEdGraphNode* N : ConstraintGraph->Nodes)
+    {
+        UHaybaConstraintGraphNode* HN = Cast<UHaybaConstraintGraphNode>(N);
+        if (!HN || HN->Kind != EHaybaNodeKind::Primitive) continue;
+
+        // A mask wired into the primitive's input becomes params.mask.
+        FString MaskId;
+        for (UEdGraphPin* Pin : HN->Pins)
+        {
+            if (Pin->Direction != EGPD_Input) continue;
+            for (UEdGraphPin* Linked : Pin->LinkedTo)
+            {
+                if (UHaybaConstraintGraphNode* Src = Cast<UHaybaConstraintGraphNode>(Linked->GetOwningNode()))
+                    if (Src->Kind == EHaybaNodeKind::Mask) MaskId = Src->MaskId;
+            }
+        }
+
+        const FString Id = FString::Printf(TEXT("%s_%s_%d"), *Base, *HN->PrimitiveId, Index++);
+        TSharedPtr<FJsonObject> C = MakeShared<FJsonObject>();
+        C->SetStringField(TEXT("id"), Id);
+        C->SetStringField(TEXT("primitive"), HN->PrimitiveId);
+        TSharedPtr<FJsonObject> Params = MakeShared<FJsonObject>();
+        if (!MaskId.IsEmpty()) Params->SetStringField(TEXT("mask"), MaskId);
+        C->SetObjectField(TEXT("params"), Params);
+        TSharedPtr<FJsonObject> Binding = MakeShared<FJsonObject>();
+        Binding->SetStringField(TEXT("asset"), AssetPath);
+        C->SetObjectField(TEXT("binding"), Binding);
+        C->SetBoolField(TEXT("enabled"), true);
+        Root->SetObjectField(Id, C);
+    }
+
+    FString Out;
+    const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+    FJsonSerializer::Serialize(Root.ToSharedRef(), Writer);
+    FFileHelper::SaveStringToFile(Out, *Path);
+
+    UE_LOG(LogTemp, Log, TEXT("[Hayba Studio] compiled %d primitive node(s) -> %s"), Index, *Path);
+    return FReply::Handled();
 }
 
 void SHaybaSemanticStudio::PushMasksToViewport()
