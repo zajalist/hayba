@@ -33,6 +33,7 @@ public:
 private:
     TSharedRef<SWidget> BuildEmptyState();
     TSharedRef<SWidget> BuildStudio();
+    TSharedRef<SWidget> BuildToolbar();
     TSharedRef<SWidget> BuildMaskList();
     TSharedRef<SWidget> BuildViewport();
     TSharedRef<SWidget> BuildInspector();

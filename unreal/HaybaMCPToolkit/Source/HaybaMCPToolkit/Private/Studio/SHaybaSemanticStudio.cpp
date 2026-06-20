@@ -11,6 +11,7 @@
 #include "Widgets/Colors/SColorBlock.h"
 #include "Widgets/Views/STableRow.h"
 #include "Styling/AppStyle.h"
+#include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "Studio/SHaybaStudioViewport.h"
 #include "Studio/Graph/HaybaConstraintGraphNode.h"
 #include "Studio/Graph/HaybaConstraintGraphSchema.h"
@@ -69,50 +70,74 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildEmptyState()
     ];
 }
 
+TSharedRef<SWidget> SHaybaSemanticStudio::BuildToolbar()
+{
+    FSlimHorizontalToolBarBuilder Builder(TSharedPtr<FUICommandList>(), FMultiBoxCustomization::None);
+    Builder.BeginSection("Studio");
+    Builder.AddToolBarButton(
+        FUIAction(),
+        NAME_None,
+        LOCTEXT("StudyAI", "Study with AI"),
+        LOCTEXT("StudyAITip", "Have the AI study this mesh and propose masks + constraints"),
+        FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Search"));
+    Builder.AddToolBarButton(
+        FUIAction(),
+        NAME_None,
+        LOCTEXT("BakeGeo", "Bake Geometry"),
+        LOCTEXT("BakeGeoTip", "Re-bake the deterministic geometry profile from the mesh bounds"),
+        FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Convert"));
+    Builder.AddSeparator();
+    Builder.AddToolBarButton(
+        FUIAction(FExecuteAction::CreateLambda([this]() { OnSaveConstraints(); })),
+        NAME_None,
+        LOCTEXT("SaveConstraints", "Save Constraints"),
+        LOCTEXT("SaveTip", "Compile the node graph to PLUMB constraints (.scratch/constraints.json)"),
+        FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Save"));
+    Builder.EndSection();
+
+    return SNew(SBorder)
+        .BorderImage(FAppStyle::Get().GetBrush("Brushes.Panel"))
+        .Padding(FMargin(4, 2))
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[ Builder.MakeWidget() ]
+            + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(12, 0)
+            [ SNew(STextBlock).ColorAndOpacity(FSlateColor::UseSubduedForeground()).Text(FText::FromString(AssetPath)) ]
+        ];
+}
+
 TSharedRef<SWidget> SHaybaSemanticStudio::BuildStudio()
 {
     return SNew(SVerticalBox)
 
-        // ── Toolbar row ──────────────────────────────────────────────────
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
-        [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot().AutoWidth().Padding(2)
-            [
-                SNew(SButton).ToolTipText(LOCTEXT("StudyAITip", "Have the AI study this mesh and propose masks + constraints"))
-                [
-                    SNew(SHorizontalBox)
-                    + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 4, 0)
-                    [ SNew(SImage).Image(FAppStyle::Get().GetBrush("Icons.Search")) ]
-                    + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-                    [ SNew(STextBlock).Text(LOCTEXT("StudyAI", "Study with AI")) ]
-                ]
-            ]
-            + SHorizontalBox::Slot().AutoWidth().Padding(2)
-            [ SNew(SButton).Text(LOCTEXT("BakeGeo", "Bake Geometry")) ]
-            + SHorizontalBox::Slot().AutoWidth().Padding(2)
-            [
-                SNew(SButton)
-                .ToolTipText(LOCTEXT("SaveTip", "Compile the node graph to PLUMB constraints (.scratch/constraints.json)"))
-                .Text(LOCTEXT("SaveConstraints", "Save Constraints"))
-                .OnClicked(this, &SHaybaSemanticStudio::OnSaveConstraints)
-            ]
-            + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(8, 0)
-            [ SNew(STextBlock).Text(FText::FromString(AssetPath)) ]
-        ]
+        // ── Toolbar ──────────────────────────────────────────────────────
+        + SVerticalBox::Slot().AutoHeight()
+        [ BuildToolbar() ]
 
-        // ── Middle: mask list | viewport | inspector ─────────────────────
-        + SVerticalBox::Slot().FillHeight(0.7f)
+        // ── Resizable body: (masks | viewport | inspector) over the graph ─
+        + SVerticalBox::Slot().FillHeight(1.f)
         [
-            SNew(SSplitter).Orientation(Orient_Horizontal)
-            + SSplitter::Slot().Value(0.22f)[ BuildMaskList() ]
-            + SSplitter::Slot().Value(0.53f)[ BuildViewport() ]
-            + SSplitter::Slot().Value(0.25f)[ SAssignNew(InspectorBox, SBox)[ BuildInspector() ] ]
-        ]
+            SNew(SSplitter).Orientation(Orient_Vertical)
+            + SSplitter::Slot().Value(0.68f)
+            [
+                SNew(SSplitter).Orientation(Orient_Horizontal)
+                + SSplitter::Slot().Value(0.22f)[ BuildMaskList() ]
+                + SSplitter::Slot().Value(0.53f)[ BuildViewport() ]
+                + SSplitter::Slot().Value(0.25f)[ SAssignNew(InspectorBox, SBox)[ BuildInspector() ] ]
+            ]
+            + SSplitter::Slot().Value(0.32f)
+            [ BuildGraph() ]
+        ];
+}
 
-        // ── Bottom: constraint node graph ────────────────────────────────
-        + SVerticalBox::Slot().FillHeight(0.3f)
-        [ BuildGraph() ];
+// Styled section header used by each panel — group-border feel like the
+// Material Editor's docked tabs.
+static TSharedRef<SWidget> StudioPanelHeader(const FText& Label)
+{
+    return SNew(SBorder)
+        .BorderImage(FAppStyle::Get().GetBrush("Brushes.Header"))
+        .Padding(FMargin(6, 3))
+        [ SNew(STextBlock).TextStyle(FAppStyle::Get(), "ButtonText").Text(Label) ];
 }
 
 TSharedRef<SWidget> SHaybaSemanticStudio::BuildGraph()
@@ -208,12 +233,12 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildNodeInspector()
 
 TSharedRef<SWidget> SHaybaSemanticStudio::BuildMaskList()
 {
-    return SNew(SBorder).Padding(4)
+    return SNew(SBorder).BorderImage(FAppStyle::Get().GetBrush("ToolPanel.GroupBorder")).Padding(0)
     [
         SNew(SVerticalBox)
-        + SVerticalBox::Slot().AutoHeight().Padding(2)
-        [ SNew(STextBlock).Text(FText::Format(LOCTEXT("MasksHeader", "MASKS ({0})"), FText::AsNumber(MaskItems.Num()))) ]
-        + SVerticalBox::Slot().FillHeight(1.f)
+        + SVerticalBox::Slot().AutoHeight()
+        [ StudioPanelHeader(FText::Format(LOCTEXT("MasksHeader", "MASKS  ({0})"), FText::AsNumber(MaskItems.Num()))) ]
+        + SVerticalBox::Slot().FillHeight(1.f).Padding(2)
         [
             SAssignNew(MaskListView, SListView<TSharedPtr<FHaybaStudioMask>>)
             .ListItemsSource(&MaskItems)

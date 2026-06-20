@@ -356,6 +356,13 @@ bool FHaybaMCPModule::StartMCPServer()
     FPlatformMisc::SetEnvironmentVar(TEXT("DASHBOARD_PORT"), TEXT("52341"));
     FPlatformMisc::SetEnvironmentVar(TEXT("UE_TCP_PORT"), *FString::FromInt(TcpPort));
 
+    // Point the PLUMB stores at the project's .scratch so the MCP server and the
+    // plugin's Semantic Studio / Memory panels read & write the same files.
+    const FString ScratchDir = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), TEXT(".scratch")));
+    IFileManager::Get().MakeDirectory(*ScratchDir, true);
+    FPlatformMisc::SetEnvironmentVar(TEXT("HAYBA_PROFILES"), *FPaths::Combine(ScratchDir, TEXT("profiles.json")));
+    FPlatformMisc::SetEnvironmentVar(TEXT("HAYBA_CONSTRAINTS"), *FPaths::Combine(ScratchDir, TEXT("constraints.json")));
+
     FString Params = FString::Printf(TEXT("\"%s\""), *ServerPath);
     uint32 ProcessID = 0;
     MCPProcessHandle = FPlatformProcess::CreateProc(*NodePath, *Params, false, true, true, &ProcessID, 0, nullptr, nullptr, nullptr);
