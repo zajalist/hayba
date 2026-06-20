@@ -78,6 +78,7 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
     Style->Set("Hayba.Icon.Diff",       new IMAGE_BRUSH_SVG(TEXT("IconDiff"),        IconSize));
     Style->Set("Hayba.Icon.Validation", new IMAGE_BRUSH_SVG(TEXT("IconValidation"),  IconSize));
     Style->Set("Hayba.Icon.Memory",     new IMAGE_BRUSH_SVG(TEXT("IconMemory"),      IconSize));
+    Style->Set("Hayba.Icon.Library",    new IMAGE_BRUSH_SVG(TEXT("IconLibrary"),     IconSize));
     Style->Set("Hayba.Icon.Setup",      new IMAGE_BRUSH_SVG(TEXT("IconSetup"),       IconSize));
     Style->Set("Hayba.Icon.Settings",   new IMAGE_BRUSH_SVG(TEXT("IconSettings"),    IconSize));
     Style->Set("Hayba.Icon.MCP",        new IMAGE_BRUSH_SVG(TEXT("IconMCP"),         IconSize));
