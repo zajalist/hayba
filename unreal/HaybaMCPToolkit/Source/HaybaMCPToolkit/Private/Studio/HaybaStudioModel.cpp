@@ -21,7 +21,9 @@ namespace
     FLinearColor ParseColor(const FString& Hex)
     {
         if (Hex.IsEmpty()) return FLinearColor(0.25f, 0.55f, 1.f);
-        return FLinearColor(FColor::FromHex(Hex));
+        // Hex is an sRGB colour — convert sRGB->linear so the swatch/wire/fill
+        // render the exact picked colour (raw FLinearColor(FColor) skips gamma).
+        return FLinearColor::FromSRGBColor(FColor::FromHex(Hex));
     }
 }
 
