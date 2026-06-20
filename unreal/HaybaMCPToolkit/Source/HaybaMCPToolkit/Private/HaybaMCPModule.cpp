@@ -362,6 +362,7 @@ bool FHaybaMCPModule::StartMCPServer()
     IFileManager::Get().MakeDirectory(*ScratchDir, true);
     FPlatformMisc::SetEnvironmentVar(TEXT("HAYBA_PROFILES"), *FPaths::Combine(ScratchDir, TEXT("profiles.json")));
     FPlatformMisc::SetEnvironmentVar(TEXT("HAYBA_CONSTRAINTS"), *FPaths::Combine(ScratchDir, TEXT("constraints.json")));
+    FPlatformMisc::SetEnvironmentVar(TEXT("HAYBA_LESSONS"), *FPaths::Combine(ScratchDir, TEXT("lessons.json")));
 
     FString Params = FString::Printf(TEXT("\"%s\""), *ServerPath);
     uint32 ProcessID = 0;
