@@ -24,6 +24,7 @@ import {
   upsertConstraint, loadConstraints, removeConstraint, constraintsFor,
   evaluate, evaluatePerInstance, addMask, removeMask,
   loadLessons, getLesson, upsertLesson, removeLesson,
+  takeStudyRequests,
   type Constraint, type InstanceState, type Transform, type Mask, type Verdict,
 } from '../../plumb/index.js';
 import { replaceFindingsWithPrefix, type ValidatorFinding } from '../../validator/index.js';
@@ -387,6 +388,19 @@ export const plumbMaskRemoveSchema = { asset: z.string(), mask_id: z.string() };
 export async function plumbMaskRemoveHandler(args: { asset: string; mask_id: string }): Promise<{ ok: boolean; removed: boolean }> {
   return { ok: true, removed: removeMask(args.asset, args.mask_id) };
 }
+// ── plumb_study_take — drain the "Study with AI" button's request queue ──────
+
+export const plumbStudyTakeSchema = {};
+export async function plumbStudyTakeHandler(): Promise<{ requests: Array<{ asset: string; ts: string }>; note: string }> {
+  const requests = takeStudyRequests();
+  return {
+    requests,
+    note: requests.length
+      ? 'For each asset: call plumb_study, then propose masks (plumb_mask_add) + constraints (plumb_constraint_define). The Studio auto-refreshes when the stores change.'
+      : 'No pending study requests. The "Study with AI" button in the Semantic Studio enqueues them.',
+  };
+}
+
 // ── Lessons (the [[slug]] knowledge constraints cite) ────────────────────────
 
 export const plumbLessonAddSchema = {

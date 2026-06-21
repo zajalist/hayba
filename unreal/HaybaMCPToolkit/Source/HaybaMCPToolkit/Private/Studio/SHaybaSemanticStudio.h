@@ -3,6 +3,7 @@
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/Views/SListView.h"
 #include "UObject/GCObject.h"
+#include "Containers/Ticker.h"
 #include "Studio/HaybaStudioModel.h"
 
 class ITableRow;
@@ -22,6 +23,7 @@ public:
     SLATE_END_ARGS()
 
     void Construct(const FArguments& InArgs);
+    virtual ~SHaybaSemanticStudio() override;
 
     /** Retarget an already-open Studio to a different mesh. */
     void SetAsset(const FString& InAssetPath);
@@ -60,6 +62,11 @@ private:
     void OnMaskSelected(TSharedPtr<FHaybaStudioMask> Mask, ESelectInfo::Type);
     void ReloadProfile();
     void PushMasksToViewport();
+    FReply OnStudyWithAI();        // enqueue a study request for the agent
+    void RefreshFromStores();      // re-read profile + refresh mask views (live)
+    bool PollStores(float);        // ticker: auto-refresh when stores change
+    FTSTicker::FDelegateHandle PollTicker;
+    FDateTime LastProfileStamp;
     FReply OnSaveConstraints();   // compile the graph -> constraints.json
 
     FString AssetPath;

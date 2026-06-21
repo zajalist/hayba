@@ -29,3 +29,5 @@ export {
   getLessonsPath, setLessonsPath,
 } from './lesson-store.js';
 export type { Lesson, LessonValidationError } from './lesson-store.js';
+export { enqueueStudyRequest, takeStudyRequests, getStudyRequestsPath, setStudyRequestsPath } from './study-requests.js';
+export type { StudyRequest } from './study-requests.js';

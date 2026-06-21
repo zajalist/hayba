@@ -150,6 +150,7 @@ import {
   plumbLessonListSchema, plumbLessonListHandler,
   plumbLessonRemoveSchema, plumbLessonRemoveHandler,
   plumbStudySchema, plumbStudyHandler,
+  plumbStudyTakeSchema, plumbStudyTakeHandler,
 } from './plumb/tools.js';
 
 // SessionManager (Gaea session) parked while terrain features are off — kept
@@ -1920,6 +1921,10 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     'AI study entry point: returns the asset\'s baked profile (if any) + the closed primitive grammar + mask kinds + guidance, so the agent can propose masks (plumb_mask_add) and constraints (plumb_constraint_define).',
     plumbStudySchema, async (a) => j(await plumbStudyHandler(a)));
 
+  server.tool('plumb_study_take',
+    'Drain pending "Study with AI" requests from the Semantic Studio button. Returns the assets to study (then call plumb_study + author masks/constraints for each).',
+    plumbStudyTakeSchema, async () => j(await plumbStudyTakeHandler()));
+
   // ── Landscape import (TS wrapper for UE-side landscape_import handler) ────
   server.tool(
     'hayba_import_landscape',
@@ -2199,4 +2204,5 @@ function recordEagerSchemas(
   reg('plumb_lesson_list', plumbLessonListSchema, 'low', '{lessons:[{slug,title,refs}]}');
   reg('plumb_lesson_remove', plumbLessonRemoveSchema, 'low', '{ok, removed}');
   reg('plumb_study', plumbStudySchema, 'low', '{asset, has_profile, profile?, primitives, mask_kinds, guidance}');
+  reg('plumb_study_take', plumbStudyTakeSchema, 'low', '{requests:[{asset,ts}], note}');
 }

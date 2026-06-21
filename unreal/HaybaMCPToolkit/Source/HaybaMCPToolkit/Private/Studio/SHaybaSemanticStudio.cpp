@@ -29,14 +29,30 @@
 #include "Serialization/JsonSerializer.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "HAL/FileManager.h"
+#include "Framework/Notifications/NotificationManager.h"
+#include "Widgets/Notifications/SNotificationList.h"
 
 #define LOCTEXT_NAMESPACE "HaybaSemanticStudio"
+
+namespace { FString StudyRequestsFile() { return FPaths::Combine(HaybaStudio::ScratchDir(), TEXT("study-requests.jsonl")); }
+            FString ProfilesStoreFile() { return FPaths::Combine(HaybaStudio::ScratchDir(), TEXT("profiles.json")); } }
 
 void SHaybaSemanticStudio::Construct(const FArguments& InArgs)
 {
     AssetPath = InArgs._AssetPath;
     ReloadProfile();
     ChildSlot [ AssetPath.IsEmpty() ? BuildEmptyState() : BuildStudio() ];
+
+    // Auto-refresh: poll the profiles store mtime so masks the agent authors
+    // (after a "Study with AI" request) appear without a manual reload.
+    LastProfileStamp = IFileManager::Get().GetTimeStamp(*ProfilesStoreFile());
+    PollTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateSP(this, &SHaybaSemanticStudio::PollStores), 1.0f);
+}
+
+SHaybaSemanticStudio::~SHaybaSemanticStudio()
+{
+    if (PollTicker.IsValid()) { FTSTicker::GetCoreTicker().RemoveTicker(PollTicker); PollTicker.Reset(); }
 }
 
 void SHaybaSemanticStudio::SetAsset(const FString& InAssetPath)
@@ -44,6 +60,40 @@ void SHaybaSemanticStudio::SetAsset(const FString& InAssetPath)
     AssetPath = InAssetPath;
     ReloadProfile();
     ChildSlot [ AssetPath.IsEmpty() ? BuildEmptyState() : BuildStudio() ];
+    LastProfileStamp = IFileManager::Get().GetTimeStamp(*ProfilesStoreFile());
+}
+
+FReply SHaybaSemanticStudio::OnStudyWithAI()
+{
+    if (AssetPath.IsEmpty()) return FReply::Handled();
+    const FString Line = FString::Printf(TEXT("{\"asset\":\"%s\",\"ts\":\"%s\"}\n"), *AssetPath, *FDateTime::UtcNow().ToIso8601());
+    FFileHelper::SaveStringToFile(Line, *StudyRequestsFile(), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM,
+        &IFileManager::Get(), FILEWRITE_Append);
+
+    FNotificationInfo Info(LOCTEXT("StudyQueued", "Queued for AI study — masks + constraints will appear here when ready."));
+    Info.ExpireDuration = 4.0f;
+    FSlateNotificationManager::Get().AddNotification(Info);
+    return FReply::Handled();
+}
+
+void SHaybaSemanticStudio::RefreshFromStores()
+{
+    ReloadProfile();
+    if (MaskListView.IsValid()) MaskListView->RequestListRefresh();
+    PushMasksToViewport();
+    if (InspectorBox.IsValid()) InspectorBox->SetContent(BuildInspector());
+}
+
+bool SHaybaSemanticStudio::PollStores(float)
+{
+    if (AssetPath.IsEmpty()) return true;
+    const FDateTime Stamp = IFileManager::Get().GetTimeStamp(*ProfilesStoreFile());
+    if (Stamp != FDateTime() && Stamp != LastProfileStamp)
+    {
+        LastProfileStamp = Stamp;
+        RefreshFromStores();
+    }
+    return true;
 }
 
 void SHaybaSemanticStudio::ReloadProfile()
@@ -79,10 +129,10 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildToolbar()
     FSlimHorizontalToolBarBuilder Builder(TSharedPtr<FUICommandList>(), FMultiBoxCustomization::None);
     Builder.BeginSection("Studio");
     Builder.AddToolBarButton(
-        FUIAction(),
+        FUIAction(FExecuteAction::CreateLambda([this]() { OnStudyWithAI(); })),
         NAME_None,
         LOCTEXT("StudyAI", "Study with AI"),
-        LOCTEXT("StudyAITip", "Have the AI study this mesh and propose masks + constraints"),
+        LOCTEXT("StudyAITip", "Queue this mesh for the AI to study — it proposes masks + constraints; the Studio refreshes automatically"),
         FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Search"));
     Builder.AddToolBarButton(
         FUIAction(),
