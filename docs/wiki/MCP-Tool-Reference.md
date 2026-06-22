@@ -52,7 +52,7 @@ implementations dispatched by `HaybaMCPModule`. Each implements
 
 > The Node-side `list_tool_categories` groups commands into agent-facing
 > categories (e.g. `actor`, `pcg`, `seq`) that map onto these handlers plus
-> Node-only meta/worldbuilding tools. Treat the running server's
+> Node-only meta tools. Treat the running server's
 > `list_tool_categories` output as authoritative for command names.
 
 See also: [UE-Plugin](UE-Plugin.md), [Architecture](Architecture.md),

@@ -29,8 +29,8 @@ Read [`../../CONTEXT.md`](../../CONTEXT.md) first for the domain language.
 
 - [`mcp-tools/hayba-mcp`](../../mcp-tools/hayba-mcp/README.md) — the core MCP
   server
-- [`mcp-tools/gaea-server`](../../mcp-tools/gaea-server/README.md) — UE ⇄ Gaea
-  bridge
+- [`mcp-tools/visual-sidecar`](../../mcp-tools/visual-sidecar/README.md) — the
+  Python visual sidecar (CLIP / SpatialCLIP / SAM)
 - [`mcp-tools/pcgex`](../../mcp-tools/pcgex/README.md) — PCGEx debug tooling
   (parked)
 - [`website`](../../website/README.md) — public static site

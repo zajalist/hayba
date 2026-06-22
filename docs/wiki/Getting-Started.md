@@ -13,8 +13,6 @@ here — the outline below only frames the prerequisites.
 | Unreal Engine | **5.7** | The `HaybaMCPToolkit` plugin targets UE 5.7.0 and depends on the `PCG` plugin |
 | Visual Studio | **2022** | Required to rebuild the UE C++ plugin |
 
-`@hayba/gaea-server` only needs **Node ≥ 20** and is optional.
-
 ## Shape of setup
 
 1. **Tier 1 (core, required)** — install the UE plugin into your project's

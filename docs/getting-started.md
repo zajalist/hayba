@@ -21,8 +21,7 @@ npm install
 Verify locally before pushing:
 
 ```bash
-npm run -w @hayba/linguistics build      # workspace deps the server imports…
-npm run -w @hayba/architecture build     # …(also @hayba/planet-physics)
+npm install                               # all workspaces (Node ≥ 22.5)
 npm --prefix mcp-tools/hayba-mcp test     # tsc --noEmit + vitest (the gate)
 npm --prefix mcp-tools/hayba-mcp run build
 ```
