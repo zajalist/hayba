@@ -21,6 +21,27 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const indexSrc = readFileSync(join(__dirname, '..', 'index.ts'), 'utf-8');
 
+// As of the registrar refactor, standard tools (incl. all material_*) are
+// declared ONCE in the STANDARD_DESCRIPTORS list and registered/recorded via
+// loops (registerTool + recordToolSchema). A descriptor `name: 'X'` is the
+// single source of truth that drives BOTH server.tool(X) and reg(X). These
+// helpers accept either the legacy literal form (for un-migrated tools) or the
+// descriptor form, so the tests assert the real guarantee, not a code shape.
+const REGISTRAR_LOOP = /for\s*\(\s*const\s+d\s+of\s+STANDARD_DESCRIPTORS\s*\)\s*registerTool\(/;
+const SCHEMA_LOOP = /for\s*\(\s*const\s+d\s+of\s+STANDARD_DESCRIPTORS\s*\)\s*recordToolSchema\(/;
+/** True when `name` is registered as a tool: literal server.tool OR a descriptor consumed by the registerTool loop. */
+function isToolRegistered(name: string): boolean {
+  const literal = new RegExp(`server\\.tool\\(\\s*['"]${name}['"]`);
+  const descriptor = new RegExp(`name:\\s*['"]${name}['"]`);
+  return literal.test(indexSrc) || (descriptor.test(indexSrc) && REGISTRAR_LOOP.test(indexSrc));
+}
+/** True when `name`'s schema is recorded: literal reg() OR a descriptor consumed by the recordToolSchema loop. */
+function isSchemaRecorded(name: string): boolean {
+  const literal = new RegExp(`reg\\(\\s*['"]${name}['"]`);
+  const descriptor = new RegExp(`name:\\s*['"]${name}['"]`);
+  return literal.test(indexSrc) || (descriptor.test(indexSrc) && SCHEMA_LOOP.test(indexSrc));
+}
+
 // Read handler files to check for executeCommand calls
 const materialCreateSrc = readFileSync(join(__dirname, 'material-create.ts'), 'utf-8');
 const materialCreateInstanceSrc = readFileSync(join(__dirname, 'material-create-instance.ts'), 'utf-8');
@@ -37,7 +58,7 @@ const materialFunctionCreateSrc = readFileSync(join(__dirname, 'material-functio
 describe('material instance-layer wrappers', () => {
   describe('material_create', () => {
     it('has a server.tool registration', () => {
-      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_create['"]/);
+      expect(isToolRegistered('material_create')).toBe(true);
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
@@ -45,7 +66,7 @@ describe('material instance-layer wrappers', () => {
     });
 
     it('registers the schema in the eager schema-registry block', () => {
-      expect(indexSrc).toMatch(/reg\(\s*['"]material_create['"]/);
+      expect(isSchemaRecorded('material_create')).toBe(true);
     });
 
     it('has package_path and name schema fields', () => {
@@ -56,7 +77,7 @@ describe('material instance-layer wrappers', () => {
 
   describe('material_create_instance', () => {
     it('has a server.tool registration', () => {
-      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_create_instance['"]/);
+      expect(isToolRegistered('material_create_instance')).toBe(true);
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
@@ -64,7 +85,7 @@ describe('material instance-layer wrappers', () => {
     });
 
     it('registers the schema in the eager schema-registry block', () => {
-      expect(indexSrc).toMatch(/reg\(\s*['"]material_create_instance['"]/);
+      expect(isSchemaRecorded('material_create_instance')).toBe(true);
     });
 
     it('has parent_material_path, package_path, and name schema fields', () => {
@@ -76,7 +97,7 @@ describe('material instance-layer wrappers', () => {
 
   describe('material_set_param', () => {
     it('has a server.tool registration', () => {
-      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_set_param['"]/);
+      expect(isToolRegistered('material_set_param')).toBe(true);
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
@@ -84,7 +105,7 @@ describe('material instance-layer wrappers', () => {
     });
 
     it('registers the schema in the eager schema-registry block', () => {
-      expect(indexSrc).toMatch(/reg\(\s*['"]material_set_param['"]/);
+      expect(isSchemaRecorded('material_set_param')).toBe(true);
     });
 
     it('has instance_path, param_name, and value schema fields', () => {
@@ -96,7 +117,7 @@ describe('material instance-layer wrappers', () => {
 
   describe('material_apply', () => {
     it('has a server.tool registration', () => {
-      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_apply['"]/);
+      expect(isToolRegistered('material_apply')).toBe(true);
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
@@ -104,7 +125,7 @@ describe('material instance-layer wrappers', () => {
     });
 
     it('registers the schema in the eager schema-registry block', () => {
-      expect(indexSrc).toMatch(/reg\(\s*['"]material_apply['"]/);
+      expect(isSchemaRecorded('material_apply')).toBe(true);
     });
 
     it('has actor_id and material_path schema fields', () => {
@@ -115,7 +136,7 @@ describe('material instance-layer wrappers', () => {
 
   describe('material_list', () => {
     it('has a server.tool registration', () => {
-      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_list['"]/);
+      expect(isToolRegistered('material_list')).toBe(true);
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
@@ -123,7 +144,7 @@ describe('material instance-layer wrappers', () => {
     });
 
     it('registers the schema in the eager schema-registry block', () => {
-      expect(indexSrc).toMatch(/reg\(\s*['"]material_list['"]/);
+      expect(isSchemaRecorded('material_list')).toBe(true);
     });
 
     it('has path as optional schema field', () => {
@@ -133,7 +154,7 @@ describe('material instance-layer wrappers', () => {
 
   describe('material_get_info', () => {
     it('has a server.tool registration', () => {
-      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_get_info['"]/);
+      expect(isToolRegistered('material_get_info')).toBe(true);
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
@@ -141,7 +162,7 @@ describe('material instance-layer wrappers', () => {
     });
 
     it('registers the schema in the eager schema-registry block', () => {
-      expect(indexSrc).toMatch(/reg\(\s*['"]material_get_info['"]/);
+      expect(isSchemaRecorded('material_get_info')).toBe(true);
     });
 
     it('has path schema field', () => {
@@ -165,7 +186,7 @@ describe('material instance-layer wrappers', () => {
 describe('material graph-layer wrappers', () => {
   describe('material_add_node', () => {
     it('has a server.tool registration', () => {
-      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_add_node['"]/);
+      expect(isToolRegistered('material_add_node')).toBe(true);
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
@@ -173,7 +194,7 @@ describe('material graph-layer wrappers', () => {
     });
 
     it('registers the schema in the eager schema-registry block', () => {
-      expect(indexSrc).toMatch(/reg\(\s*['"]material_add_node['"]/);
+      expect(isSchemaRecorded('material_add_node')).toBe(true);
     });
 
     it('has material_path and function_path optional fields', () => {
@@ -192,7 +213,7 @@ describe('material graph-layer wrappers', () => {
 
   describe('material_connect_nodes', () => {
     it('has a server.tool registration', () => {
-      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_connect_nodes['"]/);
+      expect(isToolRegistered('material_connect_nodes')).toBe(true);
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
@@ -200,7 +221,7 @@ describe('material graph-layer wrappers', () => {
     });
 
     it('registers the schema in the eager schema-registry block', () => {
-      expect(indexSrc).toMatch(/reg\(\s*['"]material_connect_nodes['"]/);
+      expect(isSchemaRecorded('material_connect_nodes')).toBe(true);
     });
 
     it('has material_path and function_path optional fields', () => {
@@ -226,7 +247,7 @@ describe('material graph-layer wrappers', () => {
 
   describe('material_function_create', () => {
     it('has a server.tool registration', () => {
-      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_function_create['"]/);
+      expect(isToolRegistered('material_function_create')).toBe(true);
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
@@ -234,7 +255,7 @@ describe('material graph-layer wrappers', () => {
     });
 
     it('registers the schema in the eager schema-registry block', () => {
-      expect(indexSrc).toMatch(/reg\(\s*['"]material_function_create['"]/);
+      expect(isSchemaRecorded('material_function_create')).toBe(true);
     });
 
     it('has package_path and name required fields with min(1)', () => {
@@ -251,13 +272,13 @@ describe('material comment + named-reroute wrappers', () => {
 
   describe('material_add_comment', () => {
     it('has a server.tool registration', () => {
-      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_add_comment['"]/);
+      expect(isToolRegistered('material_add_comment')).toBe(true);
     });
     it('calls executeCommand with the correct command name', () => {
       expect(addCommentSrc).toMatch(/executeCommand\(\s*['"]material_add_comment['"]/);
     });
     it('registers the schema in the eager schema-registry block', () => {
-      expect(indexSrc).toMatch(/reg\(\s*['"]material_add_comment['"]/);
+      expect(isSchemaRecorded('material_add_comment')).toBe(true);
     });
     it('has a required text field', () => {
       expect(addCommentSrc).toMatch(/text:\s*z\.string\(\)/);
@@ -266,13 +287,13 @@ describe('material comment + named-reroute wrappers', () => {
 
   describe('material_add_reroute_declaration', () => {
     it('has a server.tool registration', () => {
-      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_add_reroute_declaration['"]/);
+      expect(isToolRegistered('material_add_reroute_declaration')).toBe(true);
     });
     it('calls executeCommand with the correct command name', () => {
       expect(rerouteDeclSrc).toMatch(/executeCommand\(\s*['"]material_add_reroute_declaration['"]/);
     });
     it('registers the schema in the eager schema-registry block', () => {
-      expect(indexSrc).toMatch(/reg\(\s*['"]material_add_reroute_declaration['"]/);
+      expect(isSchemaRecorded('material_add_reroute_declaration')).toBe(true);
     });
     it('has a required name field', () => {
       expect(rerouteDeclSrc).toMatch(/name:\s*z\.string\(\)\.min\(1\)/);
@@ -281,13 +302,13 @@ describe('material comment + named-reroute wrappers', () => {
 
   describe('material_add_reroute_usage', () => {
     it('has a server.tool registration', () => {
-      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_add_reroute_usage['"]/);
+      expect(isToolRegistered('material_add_reroute_usage')).toBe(true);
     });
     it('calls executeCommand with the correct command name', () => {
       expect(rerouteUsageSrc).toMatch(/executeCommand\(\s*['"]material_add_reroute_usage['"]/);
     });
     it('registers the schema in the eager schema-registry block', () => {
-      expect(indexSrc).toMatch(/reg\(\s*['"]material_add_reroute_usage['"]/);
+      expect(isSchemaRecorded('material_add_reroute_usage')).toBe(true);
     });
     it('has a required declaration_id field', () => {
       expect(rerouteUsageSrc).toMatch(/declaration_id:\s*z\.string\(\)\.min\(1\)/);

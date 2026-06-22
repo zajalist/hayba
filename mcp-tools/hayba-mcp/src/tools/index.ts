@@ -9,6 +9,7 @@ import { installLiveSender, executeCommand } from './tool-executor.js';
 import { registerToolMeta } from './tool-meta-registry.js';
 import { readSettings } from './routing/settings-watcher.js';
 import { registerDeferredRouting, ALWAYS_ON_META, type CapturedTool, type RoutingHandle } from './routing/register.js';
+import { registerTool, recordToolSchema, type ToolDescriptor } from './register-tool.js';
 
 // ── Code Mode meta-tools (always-on) ──────────────────────────────────────────
 import { listToolCategoriesHandler, meta as listMeta } from './code-mode/list-tool-categories.js';
@@ -135,6 +136,395 @@ type SessionManagerStub = {
   briefNicheOnce?(domain: string): boolean;
   [key: string]: unknown;
 };
+
+// ── Shared Zod coercion helpers (module scope) ───────────────────────────────
+// Hoisted so the single descriptor list (buildStandardDescriptors) is the only
+// place each tool's shape is declared — consumed both by recordToolSchema
+// (always) and registerTool (eager block). Previously these were defined twice:
+// once in registerToolsCore and once in recordEagerSchemas, identically.
+const dVec3 = z.tuple([z.number(), z.number(), z.number()]);
+// Some MCP clients (incl. Claude Code's tool harness) JSON-stringify nested
+// arrays/booleans before they hit Zod. Wrap so we accept both raw and the
+// stringified form for params we know are commonly affected.
+const dCoerceBool = z.preprocess(
+  (v) => typeof v === 'string' ? v.toLowerCase() === 'true' : v,
+  z.boolean(),
+);
+const dCoerceVec3 = z.preprocess((v) => {
+  if (typeof v === 'string') {
+    try { return JSON.parse(v); } catch { return v; }
+  }
+  return v;
+}, dVec3);
+
+/**
+ * The single source of truth for every tool that follows the STANDARD
+ * registration shape (server.tool + remember + reg + pass-through handler).
+ * Tools with custom closures or schema drift between their eager server.tool
+ * shape and their reg shape are NOT included here — they stay hand-written.
+ *
+ * Both phases iterate this list:
+ *   - recordEagerSchemas → recordToolSchema(d)   (always, Code Mode on/off)
+ *   - registerToolsCore eager block → registerTool(server, session, d)
+ */
+const M = 'material'; // niche domain for the material toolset
+const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
+    // ── Actor domain ────────────────────────────────────────────────────────
+    {
+      name: 'actor_spawn',
+      description: 'Spawn a new actor in the active level.',
+      meta: actorSpawnMeta,
+      handler: actorSpawnHandler,
+      cost: 'medium',
+      returns: '{actor_id, label, class}',
+      schema: {
+        class_path: z.string().describe('UE class path, e.g. "/Script/Engine.StaticMeshActor"'),
+        location: dCoerceVec3.optional(),
+        rotation: dCoerceVec3.optional(),
+        scale: dCoerceVec3.optional(),
+        label: z.string().optional(),
+      },
+    },
+    {
+      name: 'actor_list',
+      description: 'Enumerate actors in the active level.',
+      meta: actorListMeta,
+      handler: actorListHandler,
+      cost: 'low',
+      returns: '{actors:[{id,label,class,location}], count}',
+      schema: {
+        class_filter: z.string().optional().describe('Exact class name filter'),
+        tag: z.string().optional().describe('Tag filter'),
+      },
+    },
+    {
+      name: 'actor_delete',
+      description: 'Destroy an actor in the active level.',
+      meta: actorDeleteMeta,
+      handler: actorDeleteHandler,
+      cost: 'low',
+      returns: '{ok, actor_id}',
+      schema: { actor_id: z.string() },
+    },
+    {
+      name: 'actor_transform',
+      description: 'Reposition, rotate, or scale an existing actor.',
+      meta: actorTransformMeta,
+      handler: actorTransformHandler,
+      cost: 'low',
+      returns: '{ok, actor_id, before, after}',
+      schema: {
+        actor_id: z.string(),
+        location: dCoerceVec3.optional(),
+        rotation: dCoerceVec3.optional(),
+        scale: dCoerceVec3.optional(),
+      },
+    },
+
+    // ── Material instance-layer domain ────────────────────────────────────────
+    {
+      name: 'material_create',
+      description: 'Create a new material asset.',
+      meta: materialCreateMeta,
+      handler: materialCreateHandler,
+      cost: 'low',
+      returns: '{path, name}',
+      niche: M,
+      schema: {
+        package_path: z.string().min(1).describe('UE content path for the new material'),
+        name: z.string().min(1).describe('Name of the material asset'),
+      },
+    },
+    {
+      name: 'material_create_instance',
+      description: 'Create a new material instance derived from a parent material.',
+      meta: materialCreateInstanceMeta,
+      handler: materialCreateInstanceHandler,
+      cost: 'low',
+      returns: '{path, name}',
+      niche: M,
+      schema: {
+        parent_material_path: z.string().min(1).describe('Path to the parent material asset'),
+        package_path: z.string().min(1).describe('UE content path for the new material instance'),
+        name: z.string().min(1).describe('Name of the material instance asset'),
+      },
+    },
+    {
+      name: 'material_set_param',
+      description: 'Set a scalar, vector (rgba), or texture parameter on a material instance.',
+      meta: materialSetParamMeta,
+      handler: materialSetParamHandler,
+      cost: 'low',
+      returns: '{ok}',
+      niche: M,
+      schema: {
+        instance_path: z.string().min(1).describe('Path to the material instance'),
+        param_name: z.string().min(1).describe('Name of the parameter to set'),
+        value: z.union([
+          z.number().describe('Scalar value'),
+          z.array(z.number()).min(1).max(4).describe('Vector value (1-4 components for rgba)'),
+          z.string().describe('Texture asset path'),
+        ]).describe('Parameter value: scalar, vector (1-4 elements), or texture asset path'),
+      },
+    },
+    {
+      name: 'material_apply',
+      description: 'Apply a material to an actor in the level (optionally specifying a material slot).',
+      meta: materialApplyMeta,
+      handler: materialApplyHandler,
+      cost: 'medium',
+      returns: '{ok, actor_id, material_path, slot}',
+      niche: M,
+      schema: {
+        actor_id: z.string().min(1).describe('ID of the actor to apply the material to'),
+        material_path: z.string().min(1).describe('Path to the material asset to apply'),
+        slot_index: z.number().int().nonnegative().optional().describe('Material slot index (default 0)'),
+      },
+    },
+    {
+      name: 'material_list',
+      description: 'List materials and material instances in the project or a specific path.',
+      meta: materialListMeta,
+      handler: materialListHandler,
+      cost: 'low',
+      returns: '{materials:[{path,type,is_instance}]}',
+      niche: M,
+      schema: {
+        path: z.string().optional().describe('UE content path filter (default: list all)'),
+      },
+    },
+    {
+      name: 'material_get_info',
+      description: 'Inspect a material or material instance: its properties, parameters, and connected expressions.',
+      meta: materialGetInfoMeta,
+      handler: materialGetInfoHandler,
+      cost: 'low',
+      returns: '{path, type, parameters:[{name,type,value}], expressions}',
+      niche: M,
+      schema: {
+        path: z.string().min(1).describe('Path to the material or material instance to inspect'),
+      },
+    },
+
+    // ── Material graph-layer domain ───────────────────────────────────────────
+    {
+      name: 'material_add_node',
+      description: 'Add a new expression node to a material graph.',
+      meta: materialAddNodeMeta,
+      handler: materialAddNodeHandler,
+      cost: 'low',
+      returns: '{node_id, expression_class, position}',
+      niche: M,
+      schema: {
+        material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+        function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+        expression_class: z.string().min(1).describe('UE expression class name, e.g. "MaterialExpressionVectorParameter"'),
+        node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y] for the new node'),
+        properties: z.record(z.string(), z.unknown()).optional().describe('Initial properties for the node'),
+      },
+    },
+    {
+      name: 'material_set_node',
+      description: 'Move and/or set properties on an existing node in a material graph.',
+      meta: materialSetNodeMeta,
+      handler: materialSetNodeHandler,
+      cost: 'low',
+      returns: '{node_id}',
+      niche: M,
+      schema: {
+        material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+        function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+        node_id: z.string().min(1).describe('ID/name of the existing node to update'),
+        node_pos: z.tuple([z.number(), z.number()]).optional().describe('New graph position [x, y]'),
+        properties: z.record(z.string(), z.unknown()).optional().describe('Properties to set on the node'),
+      },
+    },
+    {
+      name: 'material_delete_node',
+      description: 'Delete an existing node from a material graph.',
+      meta: materialDeleteNodeMeta,
+      handler: materialDeleteNodeHandler,
+      cost: 'low',
+      returns: '{deleted}',
+      niche: M,
+      schema: {
+        material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+        function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+        node_id: z.string().min(1).describe('ID/name of the node to delete'),
+      },
+    },
+    {
+      name: 'material_set_property',
+      description: 'Set master-material settings (blend mode, domain, shading model, two-sided, opacity mask clip).',
+      meta: materialSetMaterialPropertyMeta,
+      handler: materialSetMaterialPropertyHandler,
+      cost: 'low',
+      returns: '{applied:[keys]}',
+      niche: M,
+      schema: {
+        material_path: z.string().min(1).describe('Path to the master material asset'),
+        properties: z.record(z.string(), z.unknown()).describe('Settings; aliases: domain, blend_mode, shading_model, two_sided, opacity_mask_clip_value'),
+      },
+    },
+    {
+      name: 'material_compile',
+      description: 'Explicitly compile a material (apply staged settings + surface translator errors). Graph edits auto-save and defer compilation; call this once the graph is complete.',
+      meta: materialCompileMeta,
+      handler: materialCompileHandler,
+      cost: 'medium',
+      returns: '{errors:[string], has_errors, saved}',
+      niche: M,
+      schema: {
+        material_path: z.string().min(1).describe('Path to the master material asset to compile'),
+      },
+    },
+    {
+      name: 'material_add_comment',
+      description: 'Add a titled comment box around a group of nodes in a material or function graph.',
+      meta: materialAddCommentMeta,
+      handler: materialAddCommentHandler,
+      cost: 'low',
+      returns: '{comment_id}',
+      niche: M,
+      schema: {
+        material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+        function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+        text: z.string().describe('Comment title/text shown on the box'),
+        node_pos: z.tuple([z.number(), z.number()]).optional().describe('Top-left graph position [x, y]'),
+        size: z.tuple([z.number(), z.number()]).optional().describe('Box size [width, height]'),
+        color: z.array(z.number()).min(3).max(4).optional().describe('Box color [r, g, b] or [r, g, b, a] (0..1)'),
+        font_size: z.number().int().optional().describe('Title font size (default 18)'),
+      },
+    },
+    {
+      name: 'material_add_reroute_declaration',
+      description: 'Create a named-reroute declaration (source anchor) so a value can be referenced by name instead of long wires.',
+      meta: materialAddRerouteDeclarationMeta,
+      handler: materialAddRerouteDeclarationHandler,
+      cost: 'low',
+      returns: '{node_id}',
+      niche: M,
+      schema: {
+        material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+        function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+        name: z.string().min(1).describe('The reroute name (what usages bind to)'),
+        node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y]'),
+        color: z.array(z.number()).min(3).max(4).optional().describe('Node color [r, g, b] or [r, g, b, a] (0..1)'),
+      },
+    },
+    {
+      name: 'material_add_reroute_usage',
+      description: 'Create a named-reroute usage bound to a declaration by name (replaces a long wire).',
+      meta: materialAddRerouteUsageMeta,
+      handler: materialAddRerouteUsageHandler,
+      cost: 'low',
+      returns: '{node_id}',
+      niche: M,
+      schema: {
+        material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+        function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+        declaration_id: z.string().min(1).describe('node_id of the reroute declaration to bind to'),
+        node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y]'),
+      },
+    },
+    {
+      name: 'asset_delete',
+      description: 'Permanently delete a content asset by object path.',
+      meta: assetDeleteMeta,
+      handler: assetDeleteHandler,
+      cost: 'low',
+      returns: '{deleted}',
+      schema: {
+        path: z.string().min(1).describe('Object path of the asset to delete, e.g. /Game/Foo/MF_X.MF_X'),
+      },
+    },
+    {
+      name: 'material_connect_nodes',
+      description: 'Connect two nodes in a material graph or connect a node output to a material property.',
+      meta: materialConnectNodesMeta,
+      handler: materialConnectNodesHandler,
+      cost: 'low',
+      returns: '{ok, from_node, to_node, to_property, connection_made}',
+      niche: M,
+      schema: {
+        material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+        function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+        from_node: z.string().min(1).describe('ID or name of the source node'),
+        from_output: z.string().optional().describe('Output pin name on the source node'),
+        to_node: z.string().optional().describe('ID or name of the target node'),
+        to_input: z.string().optional().describe('Input pin name on the target node'),
+        to_input_index: z.number().int().optional().describe('Target input pin by index (unnamed pins, e.g. Substrate slab inputs)'),
+        from_output_index: z.number().int().optional().describe('Source output pin by index (default 0)'),
+        to_property: z.string().optional().describe('Target material property, e.g. base_color or front_material (Substrate)'),
+      },
+    },
+    {
+      name: 'material_function_create',
+      description: 'Create a new material function asset in the project.',
+      meta: materialFunctionCreateMeta,
+      handler: materialFunctionCreateHandler,
+      cost: 'low',
+      returns: '{path, name}',
+      niche: M,
+      schema: {
+        package_path: z.string().min(1).describe('UE content path for the new material function'),
+        name: z.string().min(1).describe('Name of the material function asset'),
+      },
+    },
+    {
+      name: 'material_disconnect',
+      description: 'Break a connection in a material graph — clear a node input or a material output property.',
+      meta: materialDisconnectMeta,
+      handler: materialDisconnectHandler,
+      cost: 'low',
+      returns: '{disconnected}',
+      niche: M,
+      schema: {
+        material_path: z.string().min(1).describe('Path to the material asset'),
+        to_node: z.string().optional().describe('ID or name of the target node whose input should be disconnected'),
+        to_input: z.string().optional().describe('Input pin name on the target node (defaults to first input)'),
+        to_input_index: z.number().int().nonnegative().optional().describe('Zero-based input pin index (alternative to to_input)'),
+        to_property: z.string().optional().describe('Material output property name to disconnect (e.g. base_color, normal)'),
+      },
+    },
+
+    // ── Scene domain ──────────────────────────────────────────────────────────
+    {
+      name: 'scene_export',
+      description: 'Export a 3D scene graph for LLM reasoning (flat / relational / hierarchical).',
+      meta: sceneExportMeta,
+      handler: sceneExportHandler,
+      cost: 'medium',
+      returns: 'mode-specific shape',
+      schema: {
+        mode: z.enum(['flat', 'relational', 'hierarchical']).optional(),
+        window: z.object({ min: dVec3, max: dVec3 }).optional(),
+        max_items: z.coerce.number().int().optional(),
+      },
+    },
+    {
+      name: 'scene_validate_physics',
+      description: 'Detect floating / interpenetrating actors in the level.',
+      meta: scenePhysicsMeta,
+      handler: sceneValidatePhysicsHandler,
+      cost: 'medium',
+      returns: '{valid, floating, interpenetrating, checked_count, scanned_actors, skipped_system_actors}',
+      schema: {
+        deep_check: dCoerceBool.optional(),
+        window: z.object({ min: dVec3, max: dVec3 }).optional(),
+      },
+    },
+
+    // ── Editor domain ─────────────────────────────────────────────────────────
+    // NOTE: the entire editor domain stays hand-written below to preserve its
+    // exact registration order and per-tool quirks:
+    //   - editor_capture_viewport has a custom wait_for_shaders pre-step closure
+    //     and a server.tool-vs-reg schema divergence (wait_for_shaders field).
+    //   - editor_stream_log has a server.tool-vs-reg schema divergence
+    //     (reg adds regex_filter/severity_filter/format).
+    //   - editor_start_pie is standard but kept hand-written so the editor
+    //     domain registers contiguously in its original order.
+];
 
 export async function registerTools(server: McpServer, session: SessionManagerStub): Promise<RoutingHandle | null> {
   const settings = readSettings();
@@ -360,398 +750,20 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
   // Eager registrations (Code Mode disabled) — every domain tool below here.
   // ──────────────────────────────────────────────────────────────────────────
 
-  // ── Actor domain ────────────────────────────────────────────────────────────
-
-  const vec3 = z.tuple([z.number(), z.number(), z.number()]);
-
   // Some MCP clients (incl. Claude Code's tool harness) JSON-stringify nested
-  // arrays/booleans before they hit Zod. Wrap so we accept both raw and the
-  // stringified form for params we know are commonly affected.
+  // booleans before they hit Zod. Wrap so we accept both raw and the
+  // stringified form for params we know are commonly affected. (vec3/coerceVec3
+  // now live at module scope as dVec3/dCoerceVec3, used by the descriptor list.)
   const coerceBool = z.preprocess(
     (v) => typeof v === 'string' ? v.toLowerCase() === 'true' : v,
     z.boolean()
   );
-  const coerceVec3 = z.preprocess((v) => {
-    if (typeof v === 'string') {
-      try { return JSON.parse(v); } catch { return v; }
-    }
-    return v;
-  }, vec3);
 
-  server.tool(
-    'actor_spawn',
-    appendMeta('Spawn a new actor in the active level.', actorSpawnMeta),
-    {
-      class_path: z.string().describe('UE class path, e.g. "/Script/Engine.StaticMeshActor"'),
-      location: coerceVec3.optional(),
-      rotation: coerceVec3.optional(),
-      scale: coerceVec3.optional(),
-      label: z.string().optional(),
-    },
-    async (params) => {
-      const r = await actorSpawnHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
-    }
-  );
-  remember('actor_spawn', actorSpawnMeta);
-
-  server.tool(
-    'actor_list',
-    appendMeta('Enumerate actors in the active level.', actorListMeta),
-    {
-      class_filter: z.string().optional().describe('Exact class name filter'),
-      tag: z.string().optional().describe('Tag filter'),
-    },
-    async (params) => {
-      const r = await actorListHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
-    }
-  );
-  remember('actor_list', actorListMeta);
-
-  server.tool(
-    'actor_delete',
-    appendMeta('Destroy an actor in the active level.', actorDeleteMeta),
-    { actor_id: z.string() },
-    async (params) => {
-      const r = await actorDeleteHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
-    }
-  );
-  remember('actor_delete', actorDeleteMeta);
-
-  server.tool(
-    'actor_transform',
-    appendMeta('Reposition, rotate, or scale an existing actor.', actorTransformMeta),
-    {
-      actor_id: z.string(),
-      location: coerceVec3.optional(),
-      rotation: coerceVec3.optional(),
-      scale: coerceVec3.optional(),
-    },
-    async (params) => {
-      const r = await actorTransformHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
-    }
-  );
-  remember('actor_transform', actorTransformMeta);
-
-  // ── Material instance-layer domain ──────────────────────────────────────────
-
-  server.tool(
-    'material_create',
-    appendMeta('Create a new material asset.', materialCreateMeta),
-    {
-      package_path: z.string().min(1).describe('UE content path for the new material'),
-      name: z.string().min(1).describe('Name of the material asset'),
-    },
-    async (params) => {
-      const r = await materialCreateHandler(params as Record<string, unknown>, session);
-      return withNicheBriefing('material', session, r);
-    }
-  );
-  remember('material_create', materialCreateMeta);
-
-  server.tool(
-    'material_create_instance',
-    appendMeta('Create a new material instance derived from a parent material.', materialCreateInstanceMeta),
-    {
-      parent_material_path: z.string().min(1).describe('Path to the parent material asset'),
-      package_path: z.string().min(1).describe('UE content path for the new material instance'),
-      name: z.string().min(1).describe('Name of the material instance asset'),
-    },
-    async (params) => {
-      const r = await materialCreateInstanceHandler(params as Record<string, unknown>, session);
-      return withNicheBriefing('material', session, r);
-    }
-  );
-  remember('material_create_instance', materialCreateInstanceMeta);
-
-  server.tool(
-    'material_set_param',
-    appendMeta('Set a scalar, vector (rgba), or texture parameter on a material instance.', materialSetParamMeta),
-    {
-      instance_path: z.string().min(1).describe('Path to the material instance'),
-      param_name: z.string().min(1).describe('Name of the parameter to set'),
-      value: z.union([
-        z.number().describe('Scalar value'),
-        z.array(z.number()).min(1).max(4).describe('Vector value (1-4 components for rgba)'),
-        z.string().describe('Texture asset path'),
-      ]).describe('Parameter value: scalar, vector (1-4 elements), or texture asset path'),
-    },
-    async (params) => {
-      const r = await materialSetParamHandler(params as Record<string, unknown>, session);
-      return withNicheBriefing('material', session, r);
-    }
-  );
-  remember('material_set_param', materialSetParamMeta);
-
-  server.tool(
-    'material_apply',
-    appendMeta('Apply a material to an actor in the level (optionally specifying a material slot).', materialApplyMeta),
-    {
-      actor_id: z.string().min(1).describe('ID of the actor to apply the material to'),
-      material_path: z.string().min(1).describe('Path to the material asset to apply'),
-      slot_index: z.number().int().nonnegative().optional().describe('Material slot index (default 0)'),
-    },
-    async (params) => {
-      const r = await materialApplyHandler(params as Record<string, unknown>, session);
-      return withNicheBriefing('material', session, r);
-    }
-  );
-  remember('material_apply', materialApplyMeta);
-
-  server.tool(
-    'material_list',
-    appendMeta('List materials and material instances in the project or a specific path.', materialListMeta),
-    {
-      path: z.string().optional().describe('UE content path filter (default: list all)'),
-    },
-    async (params) => {
-      const r = await materialListHandler(params as Record<string, unknown>, session);
-      return withNicheBriefing('material', session, r);
-    }
-  );
-  remember('material_list', materialListMeta);
-
-  server.tool(
-    'material_get_info',
-    appendMeta('Inspect a material or material instance: its properties, parameters, and connected expressions.', materialGetInfoMeta),
-    {
-      path: z.string().min(1).describe('Path to the material or material instance to inspect'),
-    },
-    async (params) => {
-      const r = await materialGetInfoHandler(params as Record<string, unknown>, session);
-      return withNicheBriefing('material', session, r);
-    }
-  );
-  remember('material_get_info', materialGetInfoMeta);
-
-  // ── Material graph-layer domain ─────────────────────────────────────────────
-
-  server.tool(
-    'material_add_node',
-    appendMeta('Add a new expression node to a material graph.', materialAddNodeMeta),
-    {
-      material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-      function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-      expression_class: z.string().min(1).describe('UE expression class name, e.g. "MaterialExpressionVectorParameter"'),
-      node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y] for the new node'),
-      properties: z.record(z.string(), z.unknown()).optional().describe('Initial properties for the node'),
-    },
-    async (params) => {
-      const r = await materialAddNodeHandler(params as Record<string, unknown>, session);
-      return withNicheBriefing('material', session, r);
-    }
-  );
-  remember('material_add_node', materialAddNodeMeta);
-
-  server.tool(
-    'material_set_node',
-    appendMeta('Move and/or set properties on an existing node in a material graph.', materialSetNodeMeta),
-    {
-      material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-      function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-      node_id: z.string().min(1).describe('ID/name of the existing node to update'),
-      node_pos: z.tuple([z.number(), z.number()]).optional().describe('New graph position [x, y]'),
-      properties: z.record(z.string(), z.unknown()).optional().describe('Properties to set on the node'),
-    },
-    async (params) => {
-      const r = await materialSetNodeHandler(params as Record<string, unknown>, session);
-      return withNicheBriefing('material', session, r);
-    }
-  );
-  remember('material_set_node', materialSetNodeMeta);
-
-  server.tool(
-    'material_delete_node',
-    appendMeta('Delete an existing node from a material graph.', materialDeleteNodeMeta),
-    {
-      material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-      function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-      node_id: z.string().min(1).describe('ID/name of the node to delete'),
-    },
-    async (params) => {
-      const r = await materialDeleteNodeHandler(params as Record<string, unknown>, session);
-      return withNicheBriefing('material', session, r);
-    }
-  );
-  remember('material_delete_node', materialDeleteNodeMeta);
-
-  server.tool(
-    'material_set_property',
-    appendMeta('Set master-material settings (blend mode, domain, shading model, two-sided, opacity mask clip).', materialSetMaterialPropertyMeta),
-    {
-      material_path: z.string().min(1).describe('Path to the master material asset'),
-      properties: z.record(z.string(), z.unknown()).describe('Settings; aliases: domain, blend_mode, shading_model, two_sided, opacity_mask_clip_value'),
-    },
-    async (params) => {
-      const r = await materialSetMaterialPropertyHandler(params as Record<string, unknown>, session);
-      return withNicheBriefing('material', session, r);
-    }
-  );
-  remember('material_set_property', materialSetMaterialPropertyMeta);
-
-  server.tool(
-    'material_compile',
-    appendMeta('Explicitly compile a material (apply staged settings + surface translator errors). Graph edits auto-save and defer compilation; call this once the graph is complete.', materialCompileMeta),
-    {
-      material_path: z.string().min(1).describe('Path to the master material asset to compile'),
-    },
-    async (params) => {
-      const r = await materialCompileHandler(params as Record<string, unknown>, session);
-      return withNicheBriefing('material', session, r);
-    }
-  );
-  remember('material_compile', materialCompileMeta);
-
-  server.tool(
-    'material_add_comment',
-    appendMeta('Add a titled comment box around a group of nodes in a material or function graph.', materialAddCommentMeta),
-    {
-      material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-      function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-      text: z.string().describe('Comment title/text shown on the box'),
-      node_pos: z.tuple([z.number(), z.number()]).optional().describe('Top-left graph position [x, y]'),
-      size: z.tuple([z.number(), z.number()]).optional().describe('Box size [width, height]'),
-      color: z.array(z.number()).min(3).max(4).optional().describe('Box color [r, g, b] or [r, g, b, a] (0..1)'),
-      font_size: z.number().int().optional().describe('Title font size (default 18)'),
-    },
-    async (params) => {
-      const r = await materialAddCommentHandler(params as Record<string, unknown>, session);
-      return withNicheBriefing('material', session, r);
-    }
-  );
-  remember('material_add_comment', materialAddCommentMeta);
-
-  server.tool(
-    'material_add_reroute_declaration',
-    appendMeta('Create a named-reroute declaration (source anchor) so a value can be referenced by name instead of long wires.', materialAddRerouteDeclarationMeta),
-    {
-      material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-      function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-      name: z.string().min(1).describe('The reroute name (what usages bind to)'),
-      node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y]'),
-      color: z.array(z.number()).min(3).max(4).optional().describe('Node color [r, g, b] or [r, g, b, a] (0..1)'),
-    },
-    async (params) => {
-      const r = await materialAddRerouteDeclarationHandler(params as Record<string, unknown>, session);
-      return withNicheBriefing('material', session, r);
-    }
-  );
-  remember('material_add_reroute_declaration', materialAddRerouteDeclarationMeta);
-
-  server.tool(
-    'material_add_reroute_usage',
-    appendMeta('Create a named-reroute usage bound to a declaration by name (replaces a long wire).', materialAddRerouteUsageMeta),
-    {
-      material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-      function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-      declaration_id: z.string().min(1).describe('node_id of the reroute declaration to bind to'),
-      node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y]'),
-    },
-    async (params) => {
-      const r = await materialAddRerouteUsageHandler(params as Record<string, unknown>, session);
-      return withNicheBriefing('material', session, r);
-    }
-  );
-  remember('material_add_reroute_usage', materialAddRerouteUsageMeta);
-
-  server.tool(
-    'asset_delete',
-    appendMeta('Permanently delete a content asset by object path.', assetDeleteMeta),
-    {
-      path: z.string().min(1).describe('Object path of the asset to delete, e.g. /Game/Foo/MF_X.MF_X'),
-    },
-    async (params) => {
-      const r = await assetDeleteHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
-    }
-  );
-  remember('asset_delete', assetDeleteMeta);
-
-  server.tool(
-    'material_connect_nodes',
-    appendMeta('Connect two nodes in a material graph or connect a node output to a material property.', materialConnectNodesMeta),
-    {
-      material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-      function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-      from_node: z.string().min(1).describe('ID or name of the source node'),
-      from_output: z.string().optional().describe('Output pin name on the source node'),
-      to_node: z.string().optional().describe('ID or name of the target node'),
-      to_input: z.string().optional().describe('Input pin name on the target node'),
-      to_input_index: z.number().int().optional().describe('Target input pin by index (unnamed pins, e.g. Substrate slab inputs)'),
-      from_output_index: z.number().int().optional().describe('Source output pin by index (default 0)'),
-      to_property: z.string().optional().describe('Target material property, e.g. base_color or front_material (Substrate)'),
-    },
-    async (params) => {
-      const r = await materialConnectNodesHandler(params as Record<string, unknown>, session);
-      return withNicheBriefing('material', session, r);
-    }
-  );
-  remember('material_connect_nodes', materialConnectNodesMeta);
-
-  server.tool(
-    'material_function_create',
-    appendMeta('Create a new material function asset in the project.', materialFunctionCreateMeta),
-    {
-      package_path: z.string().min(1).describe('UE content path for the new material function'),
-      name: z.string().min(1).describe('Name of the material function asset'),
-    },
-    async (params) => {
-      const r = await materialFunctionCreateHandler(params as Record<string, unknown>, session);
-      return withNicheBriefing('material', session, r);
-    }
-  );
-  remember('material_function_create', materialFunctionCreateMeta);
-
-  server.tool(
-    'material_disconnect',
-    appendMeta('Break a connection in a material graph — clear a node input or a material output property.', materialDisconnectMeta),
-    {
-      material_path: z.string().min(1).describe('Path to the material asset'),
-      to_node: z.string().optional().describe('ID or name of the target node whose input should be disconnected'),
-      to_input: z.string().optional().describe('Input pin name on the target node (defaults to first input)'),
-      to_input_index: z.number().int().nonnegative().optional().describe('Zero-based input pin index (alternative to to_input)'),
-      to_property: z.string().optional().describe('Material output property name to disconnect (e.g. base_color, normal)'),
-    },
-    async (params) => {
-      const r = await materialDisconnectHandler(params as Record<string, unknown>, session);
-      return withNicheBriefing('material', session, r);
-    }
-  );
-  remember('material_disconnect', materialDisconnectMeta);
-
-  // ── Scene domain ────────────────────────────────────────────────────────────
-
-  server.tool(
-    'scene_export',
-    appendMeta('Export a 3D scene graph for LLM reasoning (flat / relational / hierarchical).', sceneExportMeta),
-    {
-      mode: z.enum(['flat', 'relational', 'hierarchical']).optional(),
-      window: z.object({ min: vec3, max: vec3 }).optional(),
-      max_items: z.coerce.number().int().optional(),
-    },
-    async (params) => {
-      const r = await sceneExportHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
-    }
-  );
-  remember('scene_export', sceneExportMeta);
-
-  server.tool(
-    'scene_validate_physics',
-    appendMeta('Detect floating / interpenetrating actors in the level.', scenePhysicsMeta),
-    {
-      deep_check: coerceBool.optional(),
-      window: z.object({ min: vec3, max: vec3 }).optional(),
-    },
-    async (params) => {
-      const r = await sceneValidatePhysicsHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
-    }
-  );
-  remember('scene_validate_physics', scenePhysicsMeta);
+  // ── Standard tools (actor / material / scene) ───────────────────────────────
+  // Registered from the single descriptor list. Each descriptor declares the
+  // tool once; registerTool does server.tool(appendMeta(...)) + remember(...),
+  // and recordEagerSchemas already recorded the schema (always, above).
+  for (const d of STANDARD_DESCRIPTORS) registerTool(server, session, d);
 
   // ── Editor domain ───────────────────────────────────────────────────────────
 
@@ -1713,15 +1725,17 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
 function recordEagerSchemas(
   reg: (name: string, shape: z.ZodRawShape, cost: Cost, returns: string) => void,
 ): void {
-  const vec3 = z.tuple([z.number(), z.number(), z.number()]);
+  // coerceBool kept for editor_start_pie's reg below. vec3/coerceVec3 moved to
+  // module scope (dVec3/dCoerceVec3) and are now consumed via STANDARD_DESCRIPTORS.
   const coerceBool = z.preprocess(
     (v) => typeof v === 'string' ? v.toLowerCase() === 'true' : v,
     z.boolean(),
   );
-  const coerceVec3 = z.preprocess((v) => {
-    if (typeof v === 'string') { try { return JSON.parse(v); } catch { return v; } }
-    return v;
-  }, vec3);
+
+  // ── Standard tools (actor / material / scene) ──────────────────────────────
+  // Schema recording from the single descriptor list. recordToolSchema mirrors
+  // the old reg(name, shape, cost, returns) calls exactly, one per descriptor.
+  for (const d of STANDARD_DESCRIPTORS) recordToolSchema(d);
 
   // ── Code Mode meta ────────────────────────────────────────────────────────
   reg('list_tool_categories', {}, 'low', '{categories:[{domain,commands:[string]}]}');
@@ -1732,143 +1746,6 @@ function recordEagerSchemas(
     script: z.string().describe('Python source to execute'),
     allow_unsafe: z.boolean().optional().describe('Override Tier 3 filesystem/subprocess block (DANGEROUS)'),
   }, 'high', '{ok, tier, stdout, stderr}');
-
-  // ── Actor domain ──────────────────────────────────────────────────────────
-  reg('actor_spawn', {
-    class_path: z.string().describe('UE class path, e.g. "/Script/Engine.StaticMeshActor"'),
-    location: coerceVec3.optional(),
-    rotation: coerceVec3.optional(),
-    scale: coerceVec3.optional(),
-    label: z.string().optional(),
-  }, 'medium', '{actor_id, label, class}');
-  reg('actor_list', {
-    class_filter: z.string().optional().describe('Exact class name filter'),
-    tag: z.string().optional().describe('Tag filter'),
-  }, 'low', '{actors:[{id,label,class,location}], count}');
-  reg('actor_delete', { actor_id: z.string() }, 'low', '{ok, actor_id}');
-  reg('actor_transform', {
-    actor_id: z.string(),
-    location: coerceVec3.optional(),
-    rotation: coerceVec3.optional(),
-    scale: coerceVec3.optional(),
-  }, 'low', '{ok, actor_id, before, after}');
-
-  // ── Material instance-layer domain ──────────────────────────────────────────
-  reg('material_create', {
-    package_path: z.string().min(1).describe('UE content path for the new material'),
-    name: z.string().min(1).describe('Name of the material asset'),
-  }, 'low', '{path, name}');
-  reg('material_create_instance', {
-    parent_material_path: z.string().min(1).describe('Path to the parent material asset'),
-    package_path: z.string().min(1).describe('UE content path for the new material instance'),
-    name: z.string().min(1).describe('Name of the material instance asset'),
-  }, 'low', '{path, name}');
-  reg('material_set_param', {
-    instance_path: z.string().min(1).describe('Path to the material instance'),
-    param_name: z.string().min(1).describe('Name of the parameter to set'),
-    value: z.union([
-      z.number().describe('Scalar value'),
-      z.array(z.number()).min(1).max(4).describe('Vector value (1-4 components for rgba)'),
-      z.string().describe('Texture asset path'),
-    ]).describe('Parameter value: scalar, vector (1-4 elements), or texture asset path'),
-  }, 'low', '{ok}');
-  reg('material_apply', {
-    actor_id: z.string().min(1).describe('ID of the actor to apply the material to'),
-    material_path: z.string().min(1).describe('Path to the material asset to apply'),
-    slot_index: z.number().int().nonnegative().optional().describe('Material slot index (default 0)'),
-  }, 'medium', '{ok, actor_id, material_path, slot}');
-  reg('material_list', {
-    path: z.string().optional().describe('UE content path filter (default: list all)'),
-  }, 'low', '{materials:[{path,type,is_instance}]}');
-  reg('material_get_info', {
-    path: z.string().min(1).describe('Path to the material or material instance to inspect'),
-  }, 'low', '{path, type, parameters:[{name,type,value}], expressions}');
-
-  // ── Material graph-layer domain ─────────────────────────────────────────────
-  reg('material_add_node', {
-    material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-    function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-    expression_class: z.string().min(1).describe('UE expression class name, e.g. "MaterialExpressionVectorParameter"'),
-    node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y] for the new node'),
-    properties: z.record(z.string(), z.unknown()).optional().describe('Initial properties for the node'),
-  }, 'low', '{node_id, expression_class, position}');
-  reg('material_set_node', {
-    material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-    function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-    node_id: z.string().min(1).describe('ID/name of the existing node to update'),
-    node_pos: z.tuple([z.number(), z.number()]).optional().describe('New graph position [x, y]'),
-    properties: z.record(z.string(), z.unknown()).optional().describe('Properties to set on the node'),
-  }, 'low', '{node_id}');
-  reg('material_delete_node', {
-    material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-    function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-    node_id: z.string().min(1).describe('ID/name of the node to delete'),
-  }, 'low', '{deleted}');
-  reg('material_set_property', {
-    material_path: z.string().min(1).describe('Path to the master material asset'),
-    properties: z.record(z.string(), z.unknown()).describe('Settings; aliases: domain, blend_mode, shading_model, two_sided, opacity_mask_clip_value'),
-  }, 'low', '{applied:[keys]}');
-  reg('material_compile', {
-    material_path: z.string().min(1).describe('Path to the master material asset to compile'),
-  }, 'medium', '{errors:[string], has_errors, saved}');
-  reg('material_add_comment', {
-    material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-    function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-    text: z.string().describe('Comment title/text shown on the box'),
-    node_pos: z.tuple([z.number(), z.number()]).optional().describe('Top-left graph position [x, y]'),
-    size: z.tuple([z.number(), z.number()]).optional().describe('Box size [width, height]'),
-    color: z.array(z.number()).min(3).max(4).optional().describe('Box color [r, g, b] or [r, g, b, a] (0..1)'),
-    font_size: z.number().int().optional().describe('Title font size (default 18)'),
-  }, 'low', '{comment_id}');
-  reg('material_add_reroute_declaration', {
-    material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-    function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-    name: z.string().min(1).describe('The reroute name (what usages bind to)'),
-    node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y]'),
-    color: z.array(z.number()).min(3).max(4).optional().describe('Node color [r, g, b] or [r, g, b, a] (0..1)'),
-  }, 'low', '{node_id}');
-  reg('material_add_reroute_usage', {
-    material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-    function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-    declaration_id: z.string().min(1).describe('node_id of the reroute declaration to bind to'),
-    node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y]'),
-  }, 'low', '{node_id}');
-  reg('asset_delete', {
-    path: z.string().min(1).describe('Object path of the asset to delete, e.g. /Game/Foo/MF_X.MF_X'),
-  }, 'low', '{deleted}');
-  reg('material_connect_nodes', {
-    material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-    function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-    from_node: z.string().min(1).describe('ID or name of the source node'),
-    from_output: z.string().optional().describe('Output pin name on the source node'),
-    to_node: z.string().optional().describe('ID or name of the target node'),
-    to_input: z.string().optional().describe('Input pin name on the target node'),
-    to_input_index: z.number().int().optional().describe('Target input pin by index (unnamed pins, e.g. Substrate slab inputs)'),
-    from_output_index: z.number().int().optional().describe('Source output pin by index (default 0)'),
-    to_property: z.string().optional().describe('Target material property, e.g. base_color or front_material (Substrate)'),
-  }, 'low', '{ok, from_node, to_node, to_property, connection_made}');
-  reg('material_function_create', {
-    package_path: z.string().min(1).describe('UE content path for the new material function'),
-    name: z.string().min(1).describe('Name of the material function asset'),
-  }, 'low', '{path, name}');
-  reg('material_disconnect', {
-    material_path: z.string().min(1).describe('Path to the material asset'),
-    to_node: z.string().optional().describe('ID or name of the target node whose input should be disconnected'),
-    to_input: z.string().optional().describe('Input pin name on the target node (defaults to first input)'),
-    to_input_index: z.number().int().nonnegative().optional().describe('Zero-based input pin index (alternative to to_input)'),
-    to_property: z.string().optional().describe('Material output property name to disconnect (e.g. base_color, normal)'),
-  }, 'low', '{disconnected}');
-
-  // ── Scene domain ──────────────────────────────────────────────────────────
-  reg('scene_export', {
-    mode: z.enum(['flat', 'relational', 'hierarchical']).optional(),
-    window: z.object({ min: vec3, max: vec3 }).optional(),
-    max_items: z.coerce.number().int().optional(),
-  }, 'medium', 'mode-specific shape');
-  reg('scene_validate_physics', {
-    deep_check: coerceBool.optional(),
-    window: z.object({ min: vec3, max: vec3 }).optional(),
-  }, 'medium', '{valid, floating, interpenetrating, checked_count, scanned_actors, skipped_system_actors}');
 
   // ── Editor domain ─────────────────────────────────────────────────────────
   reg('editor_capture_viewport', {
