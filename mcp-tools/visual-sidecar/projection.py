@@ -12,10 +12,55 @@ Shapes:
 """
 from __future__ import annotations
 
+import json
+import os
 from collections import defaultdict
 
 import numpy as np
 import trimesh
+
+
+def read_exr(path):
+    """Read a float EXR to (H, W, C). Uses the freeimage backend (downloaded on
+    demand). Returns None if the file is missing."""
+    if not os.path.exists(path):
+        return None
+    import imageio.v2 as iio
+    try:
+        return np.asarray(iio.imread(path, format="EXR-FI"), dtype=np.float32)
+    except Exception:
+        return np.asarray(iio.imread(path), dtype=np.float32)
+
+
+def read_worldpos_exr(path):
+    """Read the world-position pass; background (alpha < 0.5, when present) → NaN.
+    Returns (H, W, 3) world XYZ or None if missing."""
+    arr = read_exr(path)
+    if arr is None:
+        return None
+    if arr.ndim == 2:
+        arr = arr[..., None].repeat(3, axis=2)
+    rgb = arr[..., :3].copy()
+    if arr.shape[-1] >= 4:
+        rgb[arr[..., 3] < 0.5] = np.nan
+    return rgb
+
+
+def read_uv_exr(path):
+    """Read the UV pass to (H, W, 2), or None if missing."""
+    arr = read_exr(path)
+    if arr is None:
+        return None
+    return arr[..., :2].astype(np.float32)
+
+
+def load_mesh(mesh_json_path):
+    """Build a trimesh.Trimesh from a `mesh_lod0.json` ({positions, indices})."""
+    with open(mesh_json_path, "r") as f:
+        d = json.load(f)
+    verts = np.asarray(d["positions"], dtype=float)
+    idx = np.asarray(d["indices"], dtype=np.int64).reshape(-1, 3)
+    return trimesh.Trimesh(vertices=verts, faces=idx, process=False)
 
 
 def assign_triangles(worldpos_views, masks_views, mesh, vote_threshold: int = 1):
@@ -75,6 +120,8 @@ def bake_uv_texture(uv_views, mask_views, res: int = 512) -> np.ndarray:
         if m is None or not np.any(m):
             continue
         uv = uv_views[i]
+        if uv is None:
+            continue
         ys, xs = np.nonzero(m)
         for y, x in zip(ys, xs):
             u, v = uv[y, x, 0], uv[y, x, 1]
