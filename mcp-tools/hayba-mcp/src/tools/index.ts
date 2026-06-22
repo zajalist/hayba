@@ -53,6 +53,7 @@ import { materialConnectNodesHandler, meta as materialConnectNodesMeta } from '.
 import { materialFunctionCreateHandler, meta as materialFunctionCreateMeta } from './material/material-function-create.js';
 import { materialSetMaterialPropertyHandler, meta as materialSetMaterialPropertyMeta } from './material/material-set-material-property.js';
 import { materialCompileHandler, meta as materialCompileMeta } from './material/material-compile.js';
+import { materialDisconnectHandler, meta as materialDisconnectMeta } from './material/material-disconnect.js';
 
 // ── Asset-source connectors (pure Node — no UE bridge except python_run) ──────
 import { handlePolyhavenSearch, meta as polyhavenSearchMeta } from './asset-sources/polyhaven-search.js';
@@ -687,6 +688,23 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     }
   );
   remember('material_function_create', materialFunctionCreateMeta);
+
+  server.tool(
+    'material_disconnect',
+    appendMeta('Break a connection in a material graph — clear a node input or a material output property.', materialDisconnectMeta),
+    {
+      material_path: z.string().min(1).describe('Path to the material asset'),
+      to_node: z.string().optional().describe('ID or name of the target node whose input should be disconnected'),
+      to_input: z.string().optional().describe('Input pin name on the target node (defaults to first input)'),
+      to_input_index: z.number().int().nonnegative().optional().describe('Zero-based input pin index (alternative to to_input)'),
+      to_property: z.string().optional().describe('Material output property name to disconnect (e.g. base_color, normal)'),
+    },
+    async (params) => {
+      const r = await materialDisconnectHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_disconnect', materialDisconnectMeta);
 
   // ── Scene domain ────────────────────────────────────────────────────────────
 
@@ -1815,6 +1833,13 @@ function recordEagerSchemas(
     package_path: z.string().min(1).describe('UE content path for the new material function'),
     name: z.string().min(1).describe('Name of the material function asset'),
   }, 'low', '{path, name}');
+  reg('material_disconnect', {
+    material_path: z.string().min(1).describe('Path to the material asset'),
+    to_node: z.string().optional().describe('ID or name of the target node whose input should be disconnected'),
+    to_input: z.string().optional().describe('Input pin name on the target node (defaults to first input)'),
+    to_input_index: z.number().int().nonnegative().optional().describe('Zero-based input pin index (alternative to to_input)'),
+    to_property: z.string().optional().describe('Material output property name to disconnect (e.g. base_color, normal)'),
+  }, 'low', '{disconnected}');
 
   // ── Scene domain ──────────────────────────────────────────────────────────
   reg('scene_export', {

@@ -68,6 +68,7 @@ TArray<FString> FHaybaMCPMaterialHandler::GetCommands() const
         TEXT("material_apply"),
         TEXT("material_list"),
         TEXT("material_get_info"),
+        TEXT("material_disconnect"),
     };
 }
 
@@ -89,6 +90,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::Handle(const FString& Cmd, const T
     if (Cmd == TEXT("material_apply"))          return MatApply(P);
     if (Cmd == TEXT("material_list"))           return MatList(P);
     if (Cmd == TEXT("material_get_info"))       return MatGetInfo(P);
+    if (Cmd == TEXT("material_disconnect"))     return MatDisconnect(P);
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("MaterialHandler: unknown command %s"), *Cmd));
 }
 
@@ -1113,5 +1115,91 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
     Out->SetBoolField(TEXT("has_errors"), Errs.Num() > 0);
     Out->SetBoolField(TEXT("saved"), bSaved);
     if (!bSaved) Out->SetStringField(TEXT("save_error"), SaveErr);
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+// Task 4: material_disconnect — clear an input connection on a node or a
+// material-output property connection. Mirrors material_connect_nodes in
+// param shape; requires either to_node (+ optional to_input/to_input_index)
+// or to_property.
+FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDisconnect(const TSharedPtr<FJsonObject>& P)
+{
+    FString MatPath;
+    if (!P->TryGetStringField(TEXT("material_path"), MatPath))
+        return FHaybaHandlerResult::Err(TEXT("material_disconnect: missing material_path"));
+    UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
+    if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_disconnect: material not found"));
+
+    FString ToNode, ToInput, PropStr;
+    const bool bHasNode = P->TryGetStringField(TEXT("to_node"), ToNode);
+    P->TryGetStringField(TEXT("to_input"), ToInput);
+    const bool bHasProp = P->TryGetStringField(TEXT("to_property"), PropStr);
+
+    if (!bHasNode && !bHasProp)
+        return FHaybaHandlerResult::Err(TEXT("material_disconnect: missing to_node or to_property"));
+
+    if (bHasProp)
+    {
+        // Disconnect a material-output property (e.g. base_color, normal, etc.)
+        EMaterialProperty Prop;
+        if (!TryParseProperty(PropStr, Prop))
+            return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_disconnect: unknown to_property: %s"), *PropStr));
+        FExpressionInput* Input = Mat->GetExpressionInputForProperty(Prop);
+        if (!Input)
+            return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_disconnect: property has no ExpressionInput: %s"), *PropStr));
+        Input->Expression = nullptr;
+        Input->OutputIndex = 0;
+    }
+    else
+    {
+        // Disconnect a specific input pin on a node.
+        UMaterialExpression* ToExpr = FindExprByName(Mat, ToNode);
+        if (!ToExpr)
+            return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_disconnect: to_node not found: %s"), *ToNode));
+
+        // Find the matching input by name or index.
+        int32 InputIndex = 0;
+        int32 NamedIdx = INDEX_NONE;
+        double IndexVal = 0.0;
+        if (!ToInput.IsEmpty())
+        {
+            // Try named match first
+            for (FExpressionInputIterator It{ToExpr}; It; ++It)
+            {
+                if (!It->InputName.IsNone() && It->InputName.ToString().Equals(ToInput, ESearchCase::IgnoreCase))
+                { NamedIdx = InputIndex; break; }
+                ++InputIndex;
+            }
+        }
+        else if (P->TryGetNumberField(TEXT("to_input_index"), IndexVal))
+        {
+            NamedIdx = (int32)IndexVal;
+        }
+        else
+        {
+            NamedIdx = 0; // default: first input
+        }
+
+        // Walk to NamedIdx and clear
+        int32 Cur = 0;
+        bool bCleared = false;
+        for (FExpressionInputIterator It{ToExpr}; It; ++It)
+        {
+            if (Cur == NamedIdx)
+            {
+                It->Expression = nullptr;
+                It->OutputIndex = 0;
+                bCleared = true;
+                break;
+            }
+            ++Cur;
+        }
+        if (!bCleared)
+            return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_disconnect: input index %d out of range on %s"), NamedIdx, *ToNode));
+    }
+
+    { FString SaveErr; HaybaPersistAsset(Mat, SaveErr); }
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetBoolField(TEXT("disconnected"), true);
     return FHaybaHandlerResult::Ok(Out);
 }

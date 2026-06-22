@@ -24,4 +24,5 @@ private:
     FHaybaHandlerResult MatGetInfo(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult MatSetProperty(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult MatCompile(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult MatDisconnect(const TSharedPtr<FJsonObject>& P);
 };
