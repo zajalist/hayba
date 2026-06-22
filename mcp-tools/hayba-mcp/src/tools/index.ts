@@ -680,7 +680,9 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
       from_output: z.string().optional().describe('Output pin name on the source node'),
       to_node: z.string().optional().describe('ID or name of the target node'),
       to_input: z.string().optional().describe('Input pin name on the target node'),
-      to_property: z.string().optional().describe('Target material property name (instead of to_node/to_input)'),
+      to_input_index: z.number().int().optional().describe('Target input pin by index (unnamed pins, e.g. Substrate slab inputs)'),
+      from_output_index: z.number().int().optional().describe('Source output pin by index (default 0)'),
+      to_property: z.string().optional().describe('Target material property, e.g. base_color or front_material (Substrate)'),
     },
     async (params) => {
       const r = await materialConnectNodesHandler(params as Record<string, unknown>, session);
@@ -1841,7 +1843,9 @@ function recordEagerSchemas(
     from_output: z.string().optional().describe('Output pin name on the source node'),
     to_node: z.string().optional().describe('ID or name of the target node'),
     to_input: z.string().optional().describe('Input pin name on the target node'),
-    to_property: z.string().optional().describe('Target material property name (instead of to_node/to_input)'),
+    to_input_index: z.number().int().optional().describe('Target input pin by index (unnamed pins, e.g. Substrate slab inputs)'),
+    from_output_index: z.number().int().optional().describe('Source output pin by index (default 0)'),
+    to_property: z.string().optional().describe('Target material property, e.g. base_color or front_material (Substrate)'),
   }, 'low', '{ok, from_node, to_node, to_property, connection_made}');
   reg('material_function_create', {
     package_path: z.string().min(1).describe('UE content path for the new material function'),
