@@ -27,3 +27,12 @@ at all) the web exposes it.
 - `/app` + `/lang/:id` are placeholders until the integration step;
   tracked in the README roadmap.
 - Revisit (supersede this ADR) when the explorer integration is scoped.
+
+## Addendum (2026-06-12, post repo split — see ADR-0005)
+
+`@hayba/linguistics` now lives at `packages/linguistics` (it stayed in
+this repo because `mcp-tools/hayba-mcp` imports it), while Hayba
+Explorer moved to <https://github.com/zajalist/hayba-explorer>. The
+deferred workbench integration is therefore **cross-repo**: when scoped,
+the explorer will consume `@hayba/linguistics` as a published package
+rather than a workspace sibling.

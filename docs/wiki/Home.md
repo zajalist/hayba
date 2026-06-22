@@ -33,8 +33,6 @@ Read [`../../CONTEXT.md`](../../CONTEXT.md) first for the domain language.
   bridge
 - [`mcp-tools/pcgex`](../../mcp-tools/pcgex/README.md) — PCGEx debug tooling
   (parked)
-- [`packages/design-tokens`](../../packages/design-tokens/README.md) — shared
-  design tokens
 - [`website`](../../website/README.md) — public static site
 - [`unreal/HaybaMCPToolkit`](../../unreal/HaybaMCPToolkit/README.md) — the UE5
   plugin

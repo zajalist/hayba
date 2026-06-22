@@ -49,9 +49,10 @@ Agent host ──stdio──▶ Node MCP server ──TCP──▶ UE5 C++ plugi
   (conlang/phonology), `planet-physics`, `architecture` (cultures).
 - **Conlang workbench** — the interactive linguistics UI. Currently a
   website route placeholder; destined to live inside **Hayba Explorer**
-  (see ADR-0003).
-- **Hayba Explorer** — the Tauri desktop app (`apps/hayba-explorer`); the
-  long-term viewer.
+  (see ADR-0003 + ADR-0005 — that integration is now cross-repo).
+- **Hayba Explorer** — the Tauri desktop viewer for the tectonic
+  simulation; lives in its own repo:
+  <https://github.com/zajalist/hayba-explorer> (see ADR-0005).
 - **Re-emulation doctrine** — when a pre-restructure branch's behaviour
   must land on the restructured layout, reproduce its *effect* as fresh
   commits; never git-merge the old layout back in (see ADR-0001).
@@ -59,8 +60,10 @@ Agent host ──stdio──▶ Node MCP server ──TCP──▶ UE5 C++ plugi
 ## Repo shape
 
 `mcp-tools/` (Node servers) · `unreal/` (UE plugin) ·
-`apps/hayba-explorer` (+ its worldbuilding `packages/*`) ·
-`packages/` (shared libs) · `website/` + `supabase/` + `infra/` (web/back).
+`packages/` (worldbuilding libs: `linguistics`, `planet-physics`,
+`architecture`) · `website/` + `supabase/` + `infra/` (web/back).
+The tectonic sim + desktop viewer live in the separate
+[hayba-explorer](https://github.com/zajalist/hayba-explorer) repo.
 
 ## Decisions
 
@@ -71,5 +74,5 @@ re-litigate a recorded decision without reopening its ADR.
 
 - The authoritative gate is **local**: `build @hayba/* deps → tsc +
   npm test` in `mcp-tools/hayba-mcp`. Run it before pushing.
-- Tectonic plate-sim work is out of scope for current initiatives.
+- Tectonic plate-sim work lives in the `hayba-explorer` repo, not here.
 - No `Co-Authored-By`/AI trailer in commits.

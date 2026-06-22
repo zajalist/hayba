@@ -2,7 +2,7 @@
 
 # Hayba
 
-**The agentic engine for spatial and procedural world-building in Unreal Engine 5 — plus the worldbuilding packages, desktop explorer, and web front-end around it.**
+**The agentic engine for spatial and procedural world-building in Unreal Engine 5 — plus the worldbuilding packages and web front-end around it.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![UE 5.7](https://img.shields.io/badge/Unreal_Engine-5.7-blue.svg)](https://www.unrealengine.com/)
@@ -16,7 +16,7 @@
 
 Hayba lets your AI agent (Claude / GPT / any MCP host) author UE5 scenes directly: spawn actors, build PCG graphs, validate physics, generate terrain, run sandboxed Python, and more — over a single MCP connection. **Spatial-first**: where every other MCP server treats UE as a 2D code repository, Hayba ships a PCG SQLite registry, a native 2D Slate cognitive map, and a SpatialCLIP visual grounding sidecar.
 
-This is a **monorepo**: the MCP server, the UE5 C++ plugin, the Tauri desktop explorer, the worldbuilding libraries, and the public website all live here.
+This repo holds the MCP server, the UE5 C++ plugin, the worldbuilding libraries, and the public website. The tectonic simulation and its Tauri desktop viewer live in their own repo: [hayba-explorer](https://github.com/zajalist/hayba-explorer).
 
 ## Features
 
@@ -38,10 +38,8 @@ This is a **monorepo**: the MCP server, the UE5 C++ plugin, the Tauri desktop ex
 | [`mcp-tools/gaea-server`](mcp-tools/gaea-server) | TCP bridge between UE5 and Gaea terrain generation |
 | `mcp-tools/gaea` · `mcp-tools/pcgex` | Locator / parked supporting tooling (see their READMEs) |
 | [`unreal/HaybaMCPToolkit`](unreal/HaybaMCPToolkit) | The UE5 C++ editor plugin — 33 command-handler domains, Slate panels, the TCP server half of the protocol |
-| [`apps/hayba-explorer`](apps/hayba-explorer) | Tauri + React + Rust desktop explorer (the long-term viewer) |
-| `apps/hayba-explorer/packages/*` | Worldbuilding libs consumed by the explorer: `linguistics`, `planet-physics`, `tectonics`, `frame-stream`, `seeds`, `fixedpoint` |
+| `packages/linguistics` · `packages/planet-physics` | Worldbuilding libs consumed by the MCP server (conlang/phonology, planet habitability) |
 | [`packages/architecture`](packages/architecture) | Procedural architecture engine (cultures, style schema, validation) |
-| `packages/design-tokens` | Shared design tokens |
 | [`website/`](website) | Public website (static HTML/CSS/JS) — landing, waitlist, login, admin |
 | `infra/`, `supabase/` | Self-host infra (docker-compose, Caddy, Cloudflare tunnel) + Supabase backend (auth, migrations, edge functions) |
 
@@ -114,7 +112,7 @@ Status of everything planned. `[x]` done · `[~]` in progress · `[ ]` not start
 - [~] Website → top-level `website/` (re-emulated from `feat/website-integration`, not merged)
 - [~] `supabase/` (auth, migrations, edge functions) + reconcile `infra/`
 - [~] UE plugin → `unreal/HaybaMCPToolkit/` (snapshot; build artifacts gitignored)
-- [ ] **Deferred: linguistics workbench as the website `/app` + `/lang/:id`** — to be wired during a dedicated *linguistics → `apps/hayba-explorer` integration* step (not now). Until then `/app` and `/lang/:id` are graceful placeholders, no `@hayba/linguistics` build coupling.
+- [ ] **Deferred: linguistics workbench as the website `/app` + `/lang/:id`** — to be wired during a dedicated *linguistics → Hayba Explorer integration* step (now cross-repo; see ADR-0005). Until then `/app` and `/lang/:id` are graceful placeholders, no `@hayba/linguistics` build coupling.
 - [ ] Vercel deploy verified end-to-end (env-var injection, rewrites)
 
 ### Documentation & professionalism
@@ -122,7 +120,7 @@ Status of everything planned. `[x]` done · `[~]` in progress · `[ ]` not start
 - [~] `CONTEXT.md` (domain glossary)
 - [~] `docs/adr/` seeded (re-emulation doctrine, website location, plugin location, deferred linguistics integration)
 - [~] `docs/ARCHITECTURE.md`
-- [~] Per-workspace READMEs (`mcp-tools/hayba-mcp`, `gaea-server`, `design-tokens`, `website`, `unreal/HaybaMCPToolkit`)
+- [~] Per-workspace READMEs (`mcp-tools/hayba-mcp`, `gaea-server`, `website`, `unreal/HaybaMCPToolkit`)
 - [~] `docs/wiki/` scaffold (glossary, setup, MCP tool reference, UE handler map, troubleshooting)
 - [~] Hygiene: `CODE_OF_CONDUCT.md`, `.nvmrc`, `.github/CODEOWNERS`, `.github/dependabot.yml`, root `package.json` metadata
 - [ ] Expand `docs/getting-started.md` (prerequisites → MCP host registration → UE connect → sidecar)
@@ -143,7 +141,7 @@ Deletion-test-positive opportunities from the friction walk (tectonic excluded) 
 ### Known constraints
 
 - The authoritative gate is **local**: build `@hayba/*` deps, then `tsc` + `npm test` in `mcp-tools/hayba-mcp`. Run it before pushing.
-- Tectonic plate-sim work is **out of scope** for this initiative.
+- Tectonic plate-sim work lives in [hayba-explorer](https://github.com/zajalist/hayba-explorer), not here.
 
 The full backlog with priority/effort lives in [open issues](https://github.com/zajalist/hayba/issues).
 

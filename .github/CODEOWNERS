@@ -7,8 +7,8 @@
 # UE plugin — the protocol's C++ adapter
 /unreal/                @zajalist
 
-# Desktop explorer + worldbuilding packages
-/apps/                  @zajalist
+# Worldbuilding packages (linguistics, planet-physics, architecture)
+/packages/              @zajalist
 
 # Website / backend / infra
 /website/               @zajalist
