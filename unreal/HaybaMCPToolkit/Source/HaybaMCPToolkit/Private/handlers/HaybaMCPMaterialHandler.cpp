@@ -46,6 +46,9 @@
 #include "Materials/MaterialExpressionComment.h"
 #include "Materials/MaterialExpressionNamedReroute.h"
 #include "MaterialShared.h"  // FMaterialResource, GetCompileErrors (material_compile)
+#include "MaterialStatsCommon.h" // FMaterialStatsUtils::ExtractMatertialStatsInfo (material_compile optimization feedback)
+#include "MaterialStats.h"       // FShaderStatsInfo (MaterialEditor private; include path added in Build.cs)
+#include "RHI.h"                 // GetExpectedFeatureLevelMaxTextureSamplers, GMaxRHIShaderPlatform
 #include "UObject/SavePackage.h"
 #include "HaybaMCPReflection.h"  // HaybaReflection::SetProp / SetStructField (generic, extracted from this handler)
 #include "HaybaMCPParams.h"      // HaybaParams::GetString / GetNumber / GetBool / GetVec3
@@ -1127,7 +1130,8 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
     UMaterialEditingLibrary::RecompileMaterial(Mat);
 
     TArray<TSharedPtr<FJsonValue>> Errs;
-    if (FMaterialResource* Res = Mat->GetMaterialResource(GMaxRHIShaderPlatform))
+    FMaterialResource* Res = Mat->GetMaterialResource(GMaxRHIShaderPlatform);
+    if (Res)
         for (const FString& E : Res->GetCompileErrors())
             Errs.Add(MakeShared<FJsonValueString>(E));
 
@@ -1139,6 +1143,96 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
     Out->SetBoolField(TEXT("has_errors"), Errs.Num() > 0);
     Out->SetBoolField(TEXT("saved"), bSaved);
     if (!bSaved) Out->SetStringField(TEXT("save_error"), SaveErr);
+
+    // ── Optimization feedback ────────────────────────────────────────────────
+    // After a clean recompile, read shader cost off the recompiled
+    // FMaterialResource — the same numbers the Material Editor Stats panel shows
+    // — so the AI building this material via MCP gets instruction counts,
+    // texture samples, samplers, and interpolator usage as actionable feedback.
+    if (Res && Errs.Num() == 0)
+    {
+        TSharedPtr<FJsonObject> Stats = MakeShared<FJsonObject>();
+
+        // Instruction counts per representative shader permutation.
+        // ExtractMatertialStatsInfo is MATERIALEDITOR_API-exported; it internally
+        // calls GetRepresentativeInstructionCounts (which is not exported).
+        FShaderStatsInfo Info;
+        FMaterialStatsUtils::ExtractMatertialStatsInfo(GMaxRHIShaderPlatform, Info, Res);
+
+        // Local name map — FMaterialStatsUtils::RepresentativeShaderTypeToString is
+        // not exported to plugins (link error), so map the (small, stable) enum here.
+        auto RepShaderName = [](ERepresentativeShader S) -> FString
+        {
+            switch (S)
+            {
+                case ERepresentativeShader::StationarySurface:            return TEXT("Stationary surface");
+                case ERepresentativeShader::StationarySurfaceCSM:         return TEXT("Stationary surface + CSM");
+                case ERepresentativeShader::StationarySurfaceNPointLights:return TEXT("Stationary surface + N point lights");
+                case ERepresentativeShader::DynamicallyLitObject:         return TEXT("Dynamically lit object");
+                case ERepresentativeShader::RuntimeVirtualTextureOutput:  return TEXT("Runtime virtual texture output");
+                case ERepresentativeShader::UIDefaultFragmentShader:      return TEXT("UI pixel shader");
+                case ERepresentativeShader::StaticMesh:                   return TEXT("Static mesh vertex shader");
+                case ERepresentativeShader::SkeletalMesh:                 return TEXT("Skeletal mesh vertex shader");
+                case ERepresentativeShader::SkinnedCloth:                 return TEXT("Skinned cloth vertex shader");
+                case ERepresentativeShader::UIDefaultVertexShader:        return TEXT("UI vertex shader");
+                case ERepresentativeShader::UIInstancedVertexShader:      return TEXT("UI instanced vertex shader");
+                case ERepresentativeShader::NaniteMesh:                   return TEXT("Nanite mesh shader");
+                default:                                                  return FString::Printf(TEXT("shader_%d"), (int32)S);
+            }
+        };
+
+        TArray<TSharedPtr<FJsonValue>> Shaders;
+        int32 PeakInstructions = 0;
+        for (const TPair<ERepresentativeShader, FShaderStatsInfo::FContent>& Pair : Info.ShaderInstructionCount)
+        {
+            // StrDescription is the bare instruction count (e.g. "142") or "n/a".
+            const FString& Desc = Pair.Value.StrDescription;
+            int32 Count = 0;
+            const bool bNumeric = Desc.IsNumeric() && (Count = FCString::Atoi(*Desc)) >= 0;
+            if (!bNumeric) continue;
+            PeakInstructions = FMath::Max(PeakInstructions, Count);
+
+            TSharedPtr<FJsonObject> ShaderObj = MakeShared<FJsonObject>();
+            ShaderObj->SetStringField(TEXT("name"), RepShaderName(Pair.Key));
+            ShaderObj->SetNumberField(TEXT("instructions"), Count);
+            Shaders.Add(MakeShared<FJsonValueObject>(ShaderObj));
+        }
+        Stats->SetArrayField(TEXT("shaders"), Shaders);
+        Stats->SetNumberField(TEXT("peak_instructions"), PeakInstructions);
+
+        // Numeric stats straight off the exported FMaterialResource getters.
+        uint32 NumVSTextureSamples = 0, NumPSTextureSamples = 0;
+        Res->GetEstimatedNumTextureSamples(NumVSTextureSamples, NumPSTextureSamples);
+        Stats->SetNumberField(TEXT("texture_samples"), (double)(NumVSTextureSamples + NumPSTextureSamples));
+        Stats->SetNumberField(TEXT("texture_samples_vs"), (double)NumVSTextureSamples);
+        Stats->SetNumberField(TEXT("texture_samples_ps"), (double)NumPSTextureSamples);
+        // Lookups: estimated samples + virtual-texture lookups.
+        const uint32 NumVTLookups = Res->GetEstimatedNumVirtualTextureLookups();
+        Stats->SetNumberField(TEXT("virtual_texture_lookups"), (double)NumVTLookups);
+        Stats->SetNumberField(TEXT("texture_lookups"), (double)(NumVSTextureSamples + NumPSTextureSamples + NumVTLookups));
+
+        const int32 SamplersUsed = FMath::Max(Res->GetSamplerUsage(), 0);
+        const int32 MaxSamplers = GetExpectedFeatureLevelMaxTextureSamplers(Res->GetFeatureLevel());
+        Stats->SetNumberField(TEXT("samplers"), SamplersUsed);
+        Stats->SetNumberField(TEXT("max_samplers"), MaxSamplers);
+
+        uint32 UVScalars = 0, CustomScalars = 0;
+        Res->GetUserInterpolatorUsage(UVScalars, CustomScalars);
+        const uint32 TotalScalars = UVScalars + CustomScalars;
+        const uint32 MaxScalars = FMath::DivideAndRoundUp(TotalScalars, 4u) * 4;
+        Stats->SetNumberField(TEXT("interpolators_used"), (double)TotalScalars);
+        Stats->SetNumberField(TEXT("interpolators_max"), (double)MaxScalars);
+
+        // Context echo. UMaterial::GetBlendModeString isn't exported to plugins;
+        // EBlendMode is a UENUM, so resolve the name via reflection (linkable).
+        FString BlendModeName = FString::Printf(TEXT("%d"), (int32)Mat->GetBlendMode());
+        if (const UEnum* BlendEnum = StaticEnum<EBlendMode>())
+            BlendModeName = BlendEnum->GetNameStringByValue((int64)Mat->GetBlendMode());
+        Stats->SetStringField(TEXT("blend_mode"), BlendModeName);
+
+        Out->SetObjectField(TEXT("stats"), Stats);
+    }
+
     return FHaybaHandlerResult::Ok(Out);
 }
 

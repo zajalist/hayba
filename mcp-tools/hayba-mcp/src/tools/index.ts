@@ -368,11 +368,11 @@ const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     },
     {
       name: 'material_compile',
-      description: 'Explicitly compile a material (apply staged settings + surface translator errors). Graph edits auto-save and defer compilation; call this once the graph is complete.',
+      description: 'Explicitly compile a material (apply staged settings + surface translator errors) and return shader optimization stats. Graph edits auto-save and defer compilation; call this once the graph is complete. The result includes a stats block (per-shader instruction counts, texture samples, samplers, interpolators) plus an OPTIMIZATION FEEDBACK summary with hints.',
       meta: materialCompileMeta,
       handler: materialCompileHandler,
       cost: 'medium',
-      returns: '{errors:[string], has_errors, saved}',
+      returns: '{errors:[string], has_errors, saved, stats:{shaders:[{name,instructions}], texture_samples, texture_lookups, virtual_texture_lookups, samplers, max_samplers, interpolators_used, interpolators_max}}',
       niche: M,
       schema: {
         material_path: z.string().min(1).describe('Path to the master material asset to compile'),

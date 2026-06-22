@@ -12,6 +12,12 @@ public class HaybaMCPToolkit : ModuleRules
         PublicSystemIncludePaths.Add(
             Path.Combine(EngineDir, "Source/Editor/LandscapeEditor/Private")
         );
+        // FShaderStatsInfo (material_compile optimization feedback) lives in
+        // MaterialEditor's private headers; FMaterialStatsUtils::ExtractMatertialStatsInfo
+        // is MATERIALEDITOR_API-exported and fills it.
+        PublicSystemIncludePaths.Add(
+            Path.Combine(EngineDir, "Source/Editor/MaterialEditor/Private")
+        );
 
         PublicDependencyModuleNames.AddRange(new string[] {
             "Core", "CoreUObject", "Engine", "Slate", "SlateCore",
