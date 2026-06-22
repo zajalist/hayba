@@ -17,6 +17,7 @@ describe('material_set_material_property', () => {
     });
     expect(executeCommand).toHaveBeenCalledWith('material_set_property', expect.objectContaining({
       material_path: '/Game/M_Test',
+      properties: expect.objectContaining({ blend_mode: 'BLEND_Translucent', two_sided: true }),
     }));
     expect(r.isError).toBeFalsy();
   });
