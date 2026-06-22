@@ -46,6 +46,10 @@ import { materialAddNodeHandler, meta as materialAddNodeMeta } from './material/
 import { materialConnectNodesHandler, meta as materialConnectNodesMeta } from './material/material-connect-nodes.js';
 import { materialFunctionCreateHandler, meta as materialFunctionCreateMeta } from './material/material-function-create.js';
 
+import { assetDeleteHandler, meta as assetDeleteMeta } from './asset/asset-delete.js';
+import { assetMoveHandler, meta as assetMoveMeta } from './asset/asset-move.js';
+import { assetRenameHandler, meta as assetRenameMeta } from './asset/asset-rename.js';
+
 // ── Asset-source connectors (pure Node — no UE bridge except python_run) ──────
 import { handlePolyhavenSearch, meta as polyhavenSearchMeta } from './asset-sources/polyhaven-search.js';
 import { handlePolyhavenDownload, meta as polyhavenDownloadMeta } from './asset-sources/polyhaven-download.js';
@@ -607,6 +611,48 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     }
   );
   remember('material_function_create', materialFunctionCreateMeta);
+
+  // ── Asset domain ────────────────────────────────────────────────────────────
+  server.tool(
+    'asset_delete',
+    appendMeta('Permanently delete a content asset by object path.', assetDeleteMeta),
+    {
+      path: z.string().min(1).describe('Object path of the asset to delete, e.g. /Game/Foo/MF_X.MF_X'),
+    },
+    async (params) => {
+      const r = await assetDeleteHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('asset_delete', assetDeleteMeta);
+
+  server.tool(
+    'asset_move',
+    appendMeta('Move a content asset to a different folder, keeping its name (references/redirectors handled).', assetMoveMeta),
+    {
+      path: z.string().min(1).describe('Object path of the asset to move, e.g. /Game/Foo/MF_X.MF_X'),
+      target_dir: z.string().min(1).describe('Destination folder path (no asset name), e.g. /Game/MaterialLibrary/functions/primitives'),
+    },
+    async (params) => {
+      const r = await assetMoveHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('asset_move', assetMoveMeta);
+
+  server.tool(
+    'asset_rename',
+    appendMeta('Rename a content asset in place (same folder, new name).', assetRenameMeta),
+    {
+      path: z.string().min(1).describe('Object path of the asset to rename, e.g. /Game/Foo/MF_X.MF_X'),
+      new_name: z.string().min(1).describe('New asset name only (not a path), e.g. MF_Y'),
+    },
+    async (params) => {
+      const r = await assetRenameHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('asset_rename', assetRenameMeta);
 
   // ── Scene domain ────────────────────────────────────────────────────────────
 
@@ -2214,6 +2260,19 @@ function recordEagerSchemas(
     package_path: z.string().min(1).describe('UE content path for the new material function'),
     name: z.string().min(1).describe('Name of the material function asset'),
   }, 'low', '{path, name}');
+
+  // ── Asset domain ────────────────────────────────────────────────────────────
+  reg('asset_delete', {
+    path: z.string().min(1).describe('Object path of the asset to delete, e.g. /Game/Foo/MF_X.MF_X'),
+  }, 'low', '{deleted:true}');
+  reg('asset_move', {
+    path: z.string().min(1).describe('Object path of the asset to move, e.g. /Game/Foo/MF_X.MF_X'),
+    target_dir: z.string().min(1).describe('Destination folder path (no asset name)'),
+  }, 'low', '{ok, old_path, new_path}');
+  reg('asset_rename', {
+    path: z.string().min(1).describe('Object path of the asset to rename, e.g. /Game/Foo/MF_X.MF_X'),
+    new_name: z.string().min(1).describe('New asset name only (not a path)'),
+  }, 'low', '{old_path, new_path}');
 
   // ── Scene domain ──────────────────────────────────────────────────────────
   reg('scene_export', {
