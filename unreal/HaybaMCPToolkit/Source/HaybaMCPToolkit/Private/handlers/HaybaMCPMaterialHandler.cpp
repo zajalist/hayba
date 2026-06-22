@@ -54,6 +54,7 @@ TArray<FString> FHaybaMCPMaterialHandler::GetCommands() const
         TEXT("material_function_create"),
         TEXT("material_add_node"),
         TEXT("material_set_node"),
+        TEXT("material_set_property"),
         TEXT("material_delete_node"),
         TEXT("material_add_comment"),
         TEXT("material_add_reroute_declaration"),
@@ -73,6 +74,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::Handle(const FString& Cmd, const T
     if (Cmd == TEXT("material_function_create")) return MatFunctionCreate(P);
     if (Cmd == TEXT("material_add_node"))       return MatAddNode(P);
     if (Cmd == TEXT("material_set_node"))       return MatSetNode(P);
+    if (Cmd == TEXT("material_set_property"))   return MatSetProperty(P);
     if (Cmd == TEXT("material_delete_node"))    return MatDeleteNode(P);
     if (Cmd == TEXT("material_add_comment"))    return MatAddComment(P);
     if (Cmd == TEXT("material_add_reroute_declaration")) return MatAddRerouteDeclaration(P);
@@ -132,12 +134,12 @@ static bool TryParseProperty(const FString& In, EMaterialProperty& Out)
 // (e.g. InputType="FunctionInput_Scalar"), bool bitfields (ComponentMask R/G/B/A),
 // numerics, FName/FString, struct-from-array (LinearColor/Vector/Vector4f/Vector2D/Color),
 // and object refs by asset path. Returns true if the property existed.
-static bool SetPropByReflection(UMaterialExpression* Expr, const FString& Name, const TSharedPtr<FJsonValue>& V)
+static bool SetPropByReflection(UObject* Target, const FString& Name, const TSharedPtr<FJsonValue>& V)
 {
-    if (!Expr || !V.IsValid()) return false;
-    FProperty* Prop = Expr->GetClass()->FindPropertyByName(FName(*Name));
+    if (!Target || !V.IsValid()) return false;
+    FProperty* Prop = Target->GetClass()->FindPropertyByName(FName(*Name));
     if (!Prop) return false;
-    void* Owner = Expr;
+    void* Owner = Target;
 
     if (FBoolProperty* B = CastField<FBoolProperty>(Prop))
     {
@@ -908,5 +910,44 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddRerouteUsage(const TSharedPt
     UMaterialEditingLibrary::RecompileMaterial(Mat);
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("node_id"), U->GetName());
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJsonObject>& P)
+{
+    FString MatPath;
+    if (!P->TryGetStringField(TEXT("material_path"), MatPath))
+        return FHaybaHandlerResult::Err(TEXT("material_set_property: missing material_path"));
+    UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
+    if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_set_property: material not found"));
+
+    const TSharedPtr<FJsonObject>* PropsObj = nullptr;
+    if (!P->TryGetObjectField(TEXT("properties"), PropsObj) || !PropsObj)
+        return FHaybaHandlerResult::Err(TEXT("material_set_property: missing properties"));
+
+    // Friendly alias -> real UMaterial UPROPERTY name.
+    static const TMap<FString, FString> Aliases = {
+        { TEXT("domain"),                  TEXT("MaterialDomain") },
+        { TEXT("blend_mode"),              TEXT("BlendMode") },
+        { TEXT("shading_model"),           TEXT("ShadingModel") },
+        { TEXT("two_sided"),               TEXT("TwoSided") },
+        { TEXT("opacity_mask_clip_value"), TEXT("OpacityMaskClipValue") },
+    };
+
+    TArray<TSharedPtr<FJsonValue>> Applied;
+    for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*PropsObj)->Values)
+    {
+        const FString* Real = Aliases.Find(Pair.Key);
+        const FString RealName = Real ? *Real : Pair.Key;
+        if (SetPropByReflection(Mat, RealName, Pair.Value))
+            Applied.Add(MakeShared<FJsonValueString>(Pair.Key));
+    }
+
+    Mat->PostEditChange();
+    Mat->MarkPackageDirty();
+    UMaterialEditingLibrary::RecompileMaterial(Mat);
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetArrayField(TEXT("applied"), Applied);
     return FHaybaHandlerResult::Ok(Out);
 }
