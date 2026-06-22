@@ -906,6 +906,1154 @@
       "agent_callable": true,
       "has_ts_wrapper": true,
       "notes": "Alias of describe_assets — the agent-friendly name surfaced as the hayba_asset_browse routing tool."
+    },
+    "actor_get_properties": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPActorHandler::Handle",
+      "params": [
+        {
+          "name": "actor_id",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "properties",
+            "type": "object"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Reflect all properties on an actor."
+    },
+    "actor_set_properties": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPActorHandler::Handle",
+      "params": [
+        {
+          "name": "actor_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "properties",
+          "type": "object",
+          "required": true,
+          "description": "name->value map; structs/enums/vectors supported"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": []
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Set actor properties from a name->value map."
+    },
+    "actor_get_components": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPActorHandler::Handle",
+      "params": [
+        {
+          "name": "actor_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "include_internal",
+          "type": "boolean",
+          "required": false
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "components",
+            "type": "array"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "actor_call_function": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPActorHandler::Handle",
+      "params": [
+        {
+          "name": "actor_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "function_name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "args",
+          "type": "object",
+          "required": false
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "called",
+            "type": "boolean"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Call a BlueprintCallable UFunction on the actor."
+    },
+    "actor_duplicate": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPActorHandler::Handle",
+      "params": [
+        {
+          "name": "actor_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "location",
+          "type": "array",
+          "required": false
+        },
+        {
+          "name": "rotation",
+          "type": "array",
+          "required": false
+        },
+        {
+          "name": "scale",
+          "type": "array",
+          "required": false
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "id",
+            "type": "string"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "actor_tag": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPActorHandler::Handle",
+      "params": [
+        {
+          "name": "actor_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "add",
+          "type": "array",
+          "required": false
+        },
+        {
+          "name": "remove",
+          "type": "array",
+          "required": false
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": []
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "actor_set_visibility": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPActorHandler::Handle",
+      "params": [
+        {
+          "name": "actor_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "visible",
+          "type": "boolean",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": []
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "actor_snap_to_socket": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPActorHandler::Handle",
+      "params": [
+        {
+          "name": "actor_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "target_actor_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "socket_name",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": []
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "actor_batch_spawn": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPActorHandler::Handle",
+      "params": [
+        {
+          "name": "actors",
+          "type": "array",
+          "required": true,
+          "description": "array of {class_path, location?, rotation?, scale?, label?}"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "actors",
+            "type": "array"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "spline_create": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPSplineHandler::Handle",
+      "params": [
+        {
+          "name": "label",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "location",
+          "type": "array",
+          "required": false
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "actor_id",
+            "type": "string"
+          },
+          {
+            "name": "label",
+            "type": "string"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "spline_add_point": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPSplineHandler::Handle",
+      "params": [
+        {
+          "name": "actor_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "location",
+          "type": "array",
+          "required": true
+        },
+        {
+          "name": "index",
+          "type": "integer",
+          "required": false
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "point_count",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "spline_set_point": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPSplineHandler::Handle",
+      "params": [
+        {
+          "name": "actor_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "index",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "location",
+          "type": "array",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "updated",
+            "type": "boolean"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "spline_remove_point": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPSplineHandler::Handle",
+      "params": [
+        {
+          "name": "actor_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "index",
+          "type": "integer",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "point_count",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "spline_get_info": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPSplineHandler::Handle",
+      "params": [
+        {
+          "name": "actor_id",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "point_count",
+            "type": "number"
+          },
+          {
+            "name": "length",
+            "type": "number"
+          },
+          {
+            "name": "points",
+            "type": "array"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "ism_create_actor": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPISMHandler::Handle",
+      "params": [
+        {
+          "name": "static_mesh_path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "location",
+          "type": "array",
+          "required": false
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "actor_id",
+            "type": "string"
+          },
+          {
+            "name": "label",
+            "type": "string"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Spawns an actor whose root is an ISM component named \"ISM\"."
+    },
+    "ism_add_instance": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPISMHandler::Handle",
+      "params": [
+        {
+          "name": "actor_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "transform",
+          "type": "object",
+          "required": true,
+          "description": "{location?:[x,y,z], rotation?:[pitch,yaw,roll], scale?:[x,y,z]}"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "instance_index",
+            "type": "number"
+          },
+          {
+            "name": "total_count",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "ism_add_instances": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPISMHandler::Handle",
+      "params": [
+        {
+          "name": "actor_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "transforms",
+          "type": "array",
+          "required": true,
+          "description": "array of transform objects (cap 1000)"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "added",
+            "type": "number"
+          },
+          {
+            "name": "total_count",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "ism_clear_instances": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPISMHandler::Handle",
+      "params": [
+        {
+          "name": "actor_id",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "cleared",
+            "type": "boolean"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "blueprint_create": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPBlueprintHandler::Handle",
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "package_path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "parent_class_path",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "path",
+            "type": "string"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "blueprint_get_info": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPBlueprintHandler::Handle",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "components",
+            "type": "array"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "blueprint_add_component": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPBlueprintHandler::Handle",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "component_class_path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "component_name",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": []
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "blueprint_add_variable": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPBlueprintHandler::Handle",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "variable_name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "variable_type",
+          "type": "string",
+          "required": true,
+          "description": "bool/int/float/string/name/vector or a class/struct path"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": []
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "blueprint_compile": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPBlueprintHandler::Handle",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "compiled",
+            "type": "boolean"
+          },
+          {
+            "name": "errors",
+            "type": "array"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "blueprint_set_defaults": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPBlueprintHandler::Handle",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "properties",
+          "type": "object",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": []
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "data_create": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPDataAssetHandler::Handle",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "class_name",
+          "type": "string",
+          "required": true,
+          "description": "must inherit UDataAsset"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "path",
+            "type": "string"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "data_get": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPDataAssetHandler::Handle",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "properties",
+            "type": "object"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "data_set": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPDataAssetHandler::Handle",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "property_name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "value",
+          "type": "any",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "ok",
+            "type": "boolean"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "level_create": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPLevelHandler::Handle",
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "created",
+            "type": "boolean"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "level_save": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPLevelHandler::Handle",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "saved",
+            "type": "boolean"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "level_load": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPLevelHandler::Handle",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "loaded",
+            "type": "boolean"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "level_list": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPLevelHandler::Handle",
+      "params": [],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "levels",
+            "type": "array"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "level_get_info": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPLevelHandler::Handle",
+      "params": [],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "map_name",
+            "type": "string"
+          },
+          {
+            "name": "actor_count",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "asset_search": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPAssetHandler::Handle",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "name_filter",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "class_filter",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "include_thumbnails",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "thumbnail_size",
+          "type": "integer",
+          "required": false
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "assets",
+            "type": "array"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "asset_get_info": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPAssetHandler::Handle",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "include_thumbnails",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "thumbnail_size",
+          "type": "integer",
+          "required": false
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": []
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "asset_import": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPAssetHandler::Handle",
+      "params": [
+        {
+          "name": "source_file",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "destination_path",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "path",
+            "type": "string"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "asset_duplicate": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPAssetHandler::Handle",
+      "params": [
+        {
+          "name": "source_path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "destination_path",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "path",
+            "type": "string"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "editor_set_camera": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPEditorHandler::Handle",
+      "params": [
+        {
+          "name": "location",
+          "type": "array",
+          "required": false
+        },
+        {
+          "name": "rotation",
+          "type": "array",
+          "required": false
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": []
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Position the editor viewport camera for deterministic captures."
+    },
+    "editor_run_console_command": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPEditorHandler::Handle",
+      "params": [
+        {
+          "name": "command",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": []
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Run an editor console command (stat unit, r.* toggles, etc)."
+    },
+    "editor_get_output_log": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPEditorHandler::Handle",
+      "params": [
+        {
+          "name": "lines",
+          "type": "integer",
+          "required": false
+        },
+        {
+          "name": "since_line",
+          "type": "integer",
+          "required": false
+        },
+        {
+          "name": "severity_filter",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "regex_filter",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "lines",
+            "type": "array"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "editor_stop_pie": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPEditorHandler::Handle",
+      "params": [],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "is_pie_running",
+            "type": "boolean"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
+    },
+    "scene_get_actor_relations": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPSceneGraphHandler::Handle",
+      "params": [
+        {
+          "name": "actor_id",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "relations",
+            "type": "array"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": ""
     }
   }
 }
