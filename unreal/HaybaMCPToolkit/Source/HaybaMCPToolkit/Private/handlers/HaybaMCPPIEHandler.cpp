@@ -324,6 +324,7 @@ FHaybaHandlerResult FHaybaMCPPIEHandler_WaitLoop(
 
     int32 TimeoutMs = 2000;
     P->TryGetNumberField(TEXT("timeout_ms"), TimeoutMs);
+    TimeoutMs = FMath::Clamp(TimeoutMs, 0, 600000);  // reject negative (instant/underflow deadline) and cap the game-thread block at 10 min
     double Tolerance = 0.0;
     P->TryGetNumberField(TEXT("tolerance"), Tolerance);
 

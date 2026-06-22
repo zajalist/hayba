@@ -13,6 +13,24 @@
 #include "Internationalization/Regex.h"
 // IHotReloadModule removed in UE 5.4+; LiveCoding replaces it
 
+// Safely resolve a viewport's client to an FEditorViewportClient. FViewportClient
+// has no RTTI, so the old StaticCast<FEditorViewportClient*>(VP->GetClient())
+// blindly reinterpreted whatever client the viewport had — for a PIE or a
+// non-level editor viewport (material/BP preview) that is NOT an
+// FEditorViewportClient, and the first virtual call crashed. Confirm identity
+// against the engine's registered editor viewport clients before trusting it.
+static FEditorViewportClient* AsEditorViewportClient(FViewport* VP)
+{
+    if (!VP || !GEditor) return nullptr;
+    FViewportClient* Raw = VP->GetClient();
+    if (!Raw) return nullptr;
+    for (FEditorViewportClient* EVC : GEditor->GetAllViewportClients())
+    {
+        if (EVC == Raw) return EVC;  // pointer identity: Raw really is this editor client
+    }
+    return nullptr;
+}
+
 TArray<FString> FHaybaMCPEditorHandler::GetCommands() const
 {
     return {
@@ -102,7 +120,7 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::SetCamera(const TSharedPtr<FJsonObje
     if (!VP)
         return FHaybaHandlerResult::Err(TEXT("No active viewport"));
 
-    FEditorViewportClient* Client = StaticCast<FEditorViewportClient*>(VP->GetClient());
+    FEditorViewportClient* Client = AsEditorViewportClient(VP);
     if (!Client)
         return FHaybaHandlerResult::Err(TEXT("No editor viewport client"));
 
@@ -158,7 +176,7 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::CaptureViewport(const TSharedPtr<FJs
 
     if (VP)
     {
-        FEditorViewportClient* Client = StaticCast<FEditorViewportClient*>(VP->GetClient());
+        FEditorViewportClient* Client = AsEditorViewportClient(VP);
         if (Client)
         {
             CamLoc = Client->GetViewLocation();
@@ -316,11 +334,21 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::StreamLog(const TSharedPtr<FJsonObje
             return FHaybaHandlerResult::Err(FString::Printf(
                 TEXT("editor_stream_log: failed to open log file: %s"), *MostRecentFile));
         }
-        const int64 Size = Reader->TotalSize();
+        // Cap the read: a multi-GB log would (a) overflow TArray's int32 size in
+        // SetNumUninitialized(Size+1) -> one-past-end write, and (b) block the
+        // game thread for seconds. Read at most the last 16MB.
+        const int64 FullSize = Reader->TotalSize();
+        const int64 MaxBytes = 16 * 1024 * 1024;
+        int64 Size = FullSize;
+        if (FullSize > MaxBytes)
+        {
+            Reader->Seek(FullSize - MaxBytes);
+            Size = MaxBytes;
+        }
         TArray<uint8> Buf;
-        Buf.SetNumUninitialized(Size + 1);
+        Buf.SetNumUninitialized((int32)Size + 1);
         Reader->Serialize(Buf.GetData(), Size);
-        Buf[Size] = 0;
+        Buf[(int32)Size] = 0;
         const FString Content(UTF8_TO_TCHAR(Buf.GetData()));
         Content.ParseIntoArrayLines(AllLines, /*InCullEmpty=*/false);
     }
@@ -450,7 +478,7 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::SetViewportMode(const TSharedPtr<FJs
     if (!VP)
         return FHaybaHandlerResult::Err(TEXT("No active viewport"));
 
-    FEditorViewportClient* Client = StaticCast<FEditorViewportClient*>(VP->GetClient());
+    FEditorViewportClient* Client = AsEditorViewportClient(VP);
     if (!Client)
         return FHaybaHandlerResult::Err(TEXT("No editor viewport client"));
 

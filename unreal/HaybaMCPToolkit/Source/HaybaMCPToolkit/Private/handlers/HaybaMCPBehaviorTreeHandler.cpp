@@ -261,6 +261,32 @@ static FHaybaHandlerResult BTConnect(const TSharedPtr<FJsonObject>& P)
     else
         return FHaybaHandlerResult::Err(TEXT("bt_connect: child must be composite or task"));
 
+    // Reject cycles. Appending Child under Parent must not make Parent reachable
+    // from Child — a cycle (A->B->A) makes FindNodeByGuidRecursive / tree walks
+    // recurse without bound on any later bt_* command -> stack-overflow crash.
+    if (Child == Parent)
+        return FHaybaHandlerResult::Err(TEXT("bt_connect: cannot connect a node to itself"));
+    {
+        TArray<UBTNode*> Stack; Stack.Add(Child);
+        TSet<UBTNode*> Seen;
+        while (Stack.Num() > 0)
+        {
+            UBTNode* N = Stack.Pop();
+            if (!N || Seen.Contains(N)) continue;
+            Seen.Add(N);
+            if (N == Parent)
+                return FHaybaHandlerResult::Err(TEXT("bt_connect: would create a cycle (child already contains parent)"));
+            if (UBTCompositeNode* C = Cast<UBTCompositeNode>(N))
+            {
+                for (const FBTCompositeChild& Ch : C->Children)
+                {
+                    if (Ch.ChildComposite) Stack.Add(Ch.ChildComposite);
+                    if (Ch.ChildTask)      Stack.Add(Ch.ChildTask);
+                }
+            }
+        }
+    }
+
     ParentComp->Children.Add(Entry);
     BT->MarkPackageDirty();
 
