@@ -156,6 +156,10 @@ FHaybaHandlerResult FHaybaMCPSplineHandler::SplineSetPoint(const TSharedPtr<FJso
     USplineComponent* Spline = GetSpline(Actor);
     if (!Spline) return FHaybaHandlerResult::Err(TEXT("spline_set_point: no spline component"));
 
+    // Bounds-check before calling the engine API, which asserts on out-of-range.
+    if (Index < 0 || Index >= Spline->GetNumberOfSplinePoints())
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("spline_set_point: index %d out of range [0, %d)"), Index, Spline->GetNumberOfSplinePoints()));
+
     Spline->SetLocationAtSplinePoint(Index, Loc, ESplineCoordinateSpace::World, true);
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
@@ -180,6 +184,10 @@ FHaybaHandlerResult FHaybaMCPSplineHandler::SplineRemovePoint(const TSharedPtr<F
     if (!Actor) return FHaybaHandlerResult::Err(TEXT("spline_remove_point: actor not found"));
     USplineComponent* Spline = GetSpline(Actor);
     if (!Spline) return FHaybaHandlerResult::Err(TEXT("spline_remove_point: no spline component"));
+
+    // Bounds-check before calling the engine API, which asserts on out-of-range.
+    if (Index < 0 || Index >= Spline->GetNumberOfSplinePoints())
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("spline_remove_point: index %d out of range [0, %d)"), Index, Spline->GetNumberOfSplinePoints()));
 
     Spline->RemoveSplinePoint(Index, true);
 

@@ -210,6 +210,9 @@ FHaybaHandlerResult FHaybaMCPIdleHandler::Handle(const FString& Command,
             {
                 State.TimeoutSeconds = Params->GetNumberField(TEXT("timeout_s"));
             }
+            // Clamp: large timeout_s overflows the uint32 ms wait below (UB cast
+            // -> near-zero wait, silent false timeout); negatives are nonsense.
+            State.TimeoutSeconds = FMath::Clamp(State.TimeoutSeconds, 0.0, 3600.0);
             const TArray<TSharedPtr<FJsonValue>>* SubsArr = nullptr;
             if (Params->TryGetArrayField(TEXT("subsystems"), SubsArr) && SubsArr)
             {
@@ -266,7 +269,7 @@ FHaybaHandlerResult FHaybaMCPIdleHandler::Handle(const FString& Command,
     // ── Block this thread until polling completes or timeout fires ─────────
     // FEvent wait timeout is in milliseconds. Allow timeout_s + 1s slack so
     // the game-thread poller normally fires Done first.
-    const uint32 WaitTimeoutMs = (uint32)(SharedState->TimeoutSeconds * 1000.0) + 1000;
+    const uint32 WaitTimeoutMs = (uint32)FMath::Clamp(SharedState->TimeoutSeconds * 1000.0 + 1000.0, 1.0, (double)MAX_uint32);
     const bool bSignaled = SharedState->DoneEvent->Wait(WaitTimeoutMs);
 
     // Build response (read game-thread-filled state — safe because the event

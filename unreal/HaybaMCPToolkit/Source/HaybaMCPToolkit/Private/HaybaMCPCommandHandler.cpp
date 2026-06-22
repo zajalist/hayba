@@ -1,4 +1,5 @@
 #include "HaybaMCPCommandHandler.h"
+#include "HaybaMCPGameThread.h"
 #include "IHaybaMCPHandler.h"
 #include "HaybaMCPSecurityManager.h"
 #include "HaybaMCPResponseBuilder.h"
@@ -222,8 +223,13 @@ static TMap<FString, FString> CaptureBeforeState(const FString& Cmd, const TShar
     FString PropertyName;
     if (bWantProperty) Params->TryGetStringField(TEXT("property"), PropertyName);
 
-    FEvent* Done = FPlatformProcess::GetSynchEventFromPool(true);
-    AsyncTask(ENamedThreads::GameThread, [&Before, ActorId, Cmd, PropertyName, Done, bWantTransform, bWantTags, bWantProperty, bWantDelete]()
+    // Runs INLINE — ProcessCommand (hence this) already executes on the game
+    // thread, so the old AsyncTask(GameThread)+Wait(2s) self-deadlocked (the
+    // queued task could never run while this blocked), always timed out after
+    // 2s, and — capturing &Before by reference — risked a use-after-free when
+    // the late task wrote into the unwound frame. The seam runs the snapshot
+    // directly on the game thread.
+    HaybaGameThread::RunSyncVoid([&Before, ActorId, PropertyName, bWantTransform, bWantTags, bWantProperty, bWantDelete]()
     {
         if (AActor* Actor = FindActorByLabel_GameThread(ActorId))
         {
@@ -264,10 +270,7 @@ static TMap<FString, FString> CaptureBeforeState(const FString& Cmd, const TShar
         {
             Before.Add(TEXT("__missing__"), TEXT("(actor not found)"));
         }
-        Done->Trigger();
-    });
-    Done->Wait(2000);   // 2-second timeout to avoid deadlock if game thread is stalled
-    FPlatformProcess::ReturnSynchEventToPool(Done);
+    }, /*TimeoutSeconds=*/2.0);
     return Before;
 }
 

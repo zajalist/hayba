@@ -1,4 +1,5 @@
 #include "HaybaMCPLegacyHandler.h"
+#include "HaybaMCPGameThread.h"
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPLandscapeImporter.h"
 #include "Interfaces/IPluginManager.h"
@@ -50,51 +51,17 @@ TArray<FString> FHaybaMCPLegacyHandler::GetCommands() const
 
 FHaybaHandlerResult FHaybaMCPLegacyHandler::RunOnGameThread(TFunction<FHaybaHandlerResult()> Work)
 {
-    if (IsInGameThread())
-    {
-        return Work();
-    }
-
-    // Shared state so the marshaled lambda and the waiting caller both keep
-    // it alive across the thread hop — by-reference capture would be a
-    // use-after-free risk if the wait timed out and the caller frame unwound.
-    //
-    // We deliberately do NOT return the FEvent to the pool on timeout: if the
-    // marshaled lambda eventually runs after we've given up, it would trigger
-    // a recycled event and clobber unrelated waiters. Leaking one event per
-    // (rare) timeout is the lesser evil. The shared Box and event ownership
-    // are passed into the lambda by-value so they outlive the waiter.
-    struct FState
-    {
-        FHaybaHandlerResult Result;
-        FEvent* Done = nullptr;
-    };
-    TSharedRef<FState, ESPMode::ThreadSafe> State = MakeShared<FState, ESPMode::ThreadSafe>();
-    State->Done = FPlatformProcess::GetSynchEventFromPool(/*bIsManualReset=*/true);
-
-    AsyncTask(ENamedThreads::GameThread, [Work = MoveTemp(Work), State]()
-    {
-        State->Result = Work();
-        if (State->Done) State->Done->Trigger();
-    });
-
-    // 30s ceiling: long enough for landscape import (~5-10s on big heightmaps)
-    // and PCG execution, short enough to surface a real deadlock instead of
-    // hanging the TS client forever.
-    const bool bSignalled = State->Done->Wait(FTimespan::FromSeconds(30));
-
-    if (bSignalled)
-    {
-        FPlatformProcess::ReturnSynchEventToPool(State->Done);
-        State->Done = nullptr;
-        return State->Result;
-    }
-
-    // Timeout: leak the event (see comment above). The shared State outlives
-    // this frame because the AsyncTask lambda still holds a reference.
-    return FHaybaHandlerResult::Err(
-        TEXT("Game-thread marshal timed out after 30s — editor may be stalled "
-             "or running a long blocking task. Try again once the editor is idle."));
+    // Delegates to the shared HaybaGameThread::RunSync seam (this used to be a
+    // hand-rolled copy; the seam is the single correct implementation every
+    // handler shares). Inline when already on the game thread (the common case);
+    // 30s ceiling on the off-thread marshal-and-wait path — long enough for
+    // landscape import / PCG execution, short enough to surface a real deadlock.
+    return HaybaGameThread::RunSync<FHaybaHandlerResult>(
+        MoveTemp(Work),
+        /*TimeoutSeconds=*/30.0,
+        FHaybaHandlerResult::Err(
+            TEXT("Game-thread marshal timed out after 30s — editor may be stalled "
+                 "or running a long blocking task. Try again once the editor is idle.")));
 }
 
 FHaybaHandlerResult FHaybaMCPLegacyHandler::Handle(const FString& Cmd,
