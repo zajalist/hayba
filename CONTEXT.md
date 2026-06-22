@@ -7,7 +7,7 @@ depth, seam, adapter) is used deliberately — keep it consistent.
 ## What Hayba is
 
 An **agentic world-building toolset**. An AI agent authors Unreal Engine 5
-scenes — and worlds (languages, planets, architecture) — through one
+scenes — through one
 **Model Context Protocol (MCP)** connection. Spatial-first: UE is treated
 as a 3D world, not a 2D code repo.
 
@@ -43,27 +43,17 @@ Agent host ──stdio──▶ Node MCP server ──TCP──▶ UE5 C++ plugi
 - **Code Mode meta-tools** — `list_tool_categories` / `get_tool_signature`
   / `python_run`: the small interface that hides the full ~100-tool
   catalog until needed (a deliberately **deep** module).
-- **Visual sidecar** — Python FastAPI (CLIP/SpatialCLIP/OWL-ViT) for
-  spatial grounding & physics validation; degraded-mode aware.
-- **Worldbuilding packages** — deterministic libraries: `linguistics`
-  (conlang/phonology), `planet-physics`, `architecture` (cultures).
-- **Conlang workbench** — the interactive linguistics UI. Currently a
-  website route placeholder; destined to live inside **Hayba Explorer**
-  (see ADR-0003 + ADR-0005 — that integration is now cross-repo).
-- **Hayba Explorer** — the Tauri desktop viewer for the tectonic
-  simulation; lives in its own repo:
-  <https://github.com/zajalist/hayba-explorer> (see ADR-0005).
+- **Visual sidecar** — Python FastAPI (CLIP/SpatialCLIP/OWL-ViT + SAM)
+  for spatial grounding, physics validation, and AI mask generation;
+  degraded-mode aware.
 - **Re-emulation doctrine** — when a pre-restructure branch's behaviour
   must land on the restructured layout, reproduce its *effect* as fresh
   commits; never git-merge the old layout back in (see ADR-0001).
 
 ## Repo shape
 
-`mcp-tools/` (Node servers) · `unreal/` (UE plugin) ·
-`packages/` (worldbuilding libs: `linguistics`, `planet-physics`,
-`architecture`) · `website/` + `supabase/` + `infra/` (web/back).
-The tectonic sim + desktop viewer live in the separate
-[hayba-explorer](https://github.com/zajalist/hayba-explorer) repo.
+`mcp-tools/` (Node MCP server + Python visual sidecar) · `unreal/`
+(UE plugin) · `website/` + `supabase/` + `infra/` (web/back).
 
 ## Decisions
 
@@ -72,7 +62,6 @@ re-litigate a recorded decision without reopening its ADR.
 
 ## Hard constraints
 
-- The authoritative gate is **local**: `build @hayba/* deps → tsc +
-  npm test` in `mcp-tools/hayba-mcp`. Run it before pushing.
-- Tectonic plate-sim work lives in the `hayba-explorer` repo, not here.
+- The authoritative gate is **local**: `tsc + npm test` in
+  `mcp-tools/hayba-mcp`. Run it before pushing.
 - No `Co-Authored-By`/AI trailer in commits.

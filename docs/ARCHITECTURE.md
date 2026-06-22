@@ -50,10 +50,8 @@ the Node client discovers the live instance. Ports auto-allocate in
 | Layer | Language | Where |
 |---|---|---|
 | Tool surface, schemas, TCP client | TypeScript (Node ≥22.5) | `mcp-tools/hayba-mcp` |
-| Visual grounding sidecar | Python (FastAPI) | `mcp-tools/hayba-mcp/addons/visual-embeddings` |
-| Terrain bridge | TypeScript | `mcp-tools/gaea-server` |
+| Visual sidecar (CLIP / SpatialCLIP / SAM) | Python (FastAPI) | `mcp-tools/visual-sidecar` |
 | Editor plugin, handlers, panels | C++ (UE 5.7) | `unreal/HaybaMCPToolkit` |
-| Worldbuilding libs | TypeScript | `packages/{linguistics,planet-physics,architecture}` |
 | Website | static HTML/CSS/JS | `website/` |
 | Backend / self-host | SQL + Docker | `supabase/`, `infra/` |
 
@@ -63,18 +61,11 @@ The authoritative gate is local — run it before pushing:
 
 ```bash
 npm install
-npm run -w @hayba/linguistics build     # + @hayba/architecture, @hayba/planet-physics
 npm --prefix mcp-tools/hayba-mcp test    # tsc --noEmit + vitest
 ```
-
-`mcp-tools/hayba-mcp` imports `@hayba/{linguistics,architecture,planet-physics}`
-whose `package.json` `main`/`exports` point at built `dist/`, so those
-deps must be built before the server typechecks/tests.
 
 ## Surfaced deepening opportunities
 
 Friction points flagged for future grilling (see README roadmap): the
-1606-line tool-registration surface, config duplication
-(hayba-mcp ↔ gaea-server), thin worldbuilding wrappers, the manual
-schema-registry bottleneck, the un-versioned TCP envelope, the
-dashboard-vs-Tauri ambiguity.
+large tool-registration surface, the manual schema-registry bottleneck,
+and the un-versioned TCP envelope.

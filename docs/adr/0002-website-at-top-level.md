@@ -20,6 +20,4 @@ Keep the website at **top-level `website/`**. It is *not* a JS workspace
 - Zero Vercel reconfiguration; deploy stays trivial.
 - `website/` is not covered by the workspace globs — intentional; it has
   no build/test of its own.
-- The previous branch coupled the Vercel build to `@hayba/linguistics`
-  (its `/app`); that coupling is removed here and deferred — see
-  ADR-0003.
+- The website build has no coupling to any workspace package.

@@ -56,9 +56,8 @@ Scripts ([`package.json`](package.json)):
 The package also exposes a `hayba-mcp` bin (`./dist/index.js`), so an MCP
 host can launch it directly once built.
 
-> Workspace dependencies (`@hayba/architecture`, `@hayba/linguistics`,
-> `@hayba/planet-physics`) must be **built before** `npm test` here — this is
-> the authoritative local gate. Run it before pushing.
+> `npm test` here (`tsc --noEmit` + vitest) is the authoritative local
+> gate. Run it before pushing.
 
 ### Configuration
 
@@ -166,13 +165,13 @@ src/
     schema-registry.ts Zod-shape registry feeding get_tool_signature
     code-mode/        list_tool_categories, get_tool_signature
     python/           python_run
-    actor|scene|editor|visual|worldbuilding/ … domain tool modules
-  gaea/               in-process Gaea knowledge/layout/terrain pipeline
+    actor|scene|editor|visual|material|plumb/ … domain tool modules
   agents/ dashboard/ … supporting modules
-addons/visual-embeddings  Python FastAPI visual sidecar
 addons/workflows          SKILL.md workflow guides
 dashboard/                Vite/React local dashboard
 ```
+
+The Python visual sidecar lives at [`../visual-sidecar`](../visual-sidecar).
 
 ## See also
 
@@ -180,4 +179,4 @@ dashboard/                Vite/React local dashboard
 - [`../../docs/adr/`](../../docs/adr/) — recorded architectural decisions
 - [`../../unreal/HaybaMCPToolkit/README.md`](../../unreal/HaybaMCPToolkit/README.md)
   — the UE5 plugin (the other adapter on the seam)
-- [`../gaea-server/README.md`](../gaea-server/README.md) — the Gaea TCP bridge
+- [`../visual-sidecar/README.md`](../visual-sidecar/README.md) — the Python visual sidecar

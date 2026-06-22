@@ -23,8 +23,7 @@ coexist. Each instance publishes its actual port to
 `node:sqlite`-adjacent native dependencies.
 
 - **Symptom:** the server crashes on startup with a native/sqlite error.
-- **Fix:** upgrade to Node ≥ 22.5. (`@hayba/gaea-server` only needs
-  Node ≥ 20.)
+- **Fix:** upgrade to Node ≥ 22.5.
 
 ## Verify locally before pushing
 
@@ -32,19 +31,8 @@ The **authoritative gate is local**:
 
 ```bash
 npm install
-npm run -w @hayba/linguistics build   # + @hayba/architecture, @hayba/planet-physics
 npm --prefix mcp-tools/hayba-mcp test  # tsc --noEmit + vitest
 ```
-
-## Workspace deps must be built before testing hayba-mcp
-
-`@hayba/mcp` depends on `@hayba/architecture`, `@hayba/linguistics`, and
-`@hayba/planet-physics`. Running `npm test -w @hayba/mcp` (or the local
-gate) **before those packages are built** fails with unresolved-import /
-missing-`dist` errors.
-
-- **Fix:** build the workspace deps first (the gate command above does this),
-  then run the hayba-mcp test.
 
 ## Visual sidecar unavailable
 

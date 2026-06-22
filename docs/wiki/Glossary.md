@@ -19,8 +19,6 @@ full domain language.
   implementing `IHaybaMCPHandler` (`GetCommands()` / `Handle()`).
 - **Visual sidecar** — optional, degraded-mode-aware Python FastAPI service
   (CLIP / SpatialCLIP / OWL-ViT) for spatial grounding & physics validation.
-- **Conlang workbench** — the interactive linguistics UI; currently a
-  website-route placeholder, destined for Hayba Explorer (ADR-0003).
 - **The TCP seam** — the length-prefixed JSON envelope `{ cmd, id, params,
   auth? }` on `:52342` (fallback `:52343–52350`) between the Node MCP server
   and the UE plugin; the repo's single most important invariant.

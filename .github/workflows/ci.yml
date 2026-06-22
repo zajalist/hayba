@@ -44,16 +44,6 @@ jobs:
       - name: Install
         run: npm install
 
-      # hayba-mcp imports @hayba/linguistics, @hayba/architecture and
-      # @hayba/planet-physics, which resolve via their package.json
-      # "main"/"exports" to ./dist. Build those workspace TS deps so the
-      # bundler (vitest/vite) and runtime can resolve them.
-      - name: Build workspace deps
-        run: |
-          npm run -w @hayba/linguistics build
-          npm run -w @hayba/architecture build
-          npm run -w @hayba/planet-physics build
-
       - name: Typecheck
         working-directory: mcp-tools/hayba-mcp
         run: npx tsc --noEmit
