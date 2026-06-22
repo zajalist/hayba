@@ -427,9 +427,17 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCreate(const TSharedPtr<FJsonOb
     UObject* Created = Tools.CreateAsset(Name, Dir, UMaterial::StaticClass(), Factory);
     if (!Created) return FHaybaHandlerResult::Err(TEXT("material_create: CreateAsset failed"));
 
+    // Persist immediately: CreateAsset only makes the asset in memory, so a
+    // crash (or session end) before the first edit would lose it and later
+    // material_get_info would report "no UMaterial at path".
+    FString SaveErr;
+    const bool bSaved = HaybaPersistAsset(Created, SaveErr);
+
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("path"), Created->GetPathName());
     Out->SetStringField(TEXT("name"), Name);
+    Out->SetBoolField(TEXT("saved"), bSaved);
+    if (!bSaved) Out->SetStringField(TEXT("save_error"), SaveErr);
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -447,9 +455,16 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatFunctionCreate(const TSharedPtr
     UObject* Created = Tools.CreateAsset(Name, Dir, UMaterialFunction::StaticClass(), Factory);
     if (!Created) return FHaybaHandlerResult::Err(TEXT("material_function_create: CreateAsset failed"));
 
+    // Persist immediately (see material_create) so the function survives a crash
+    // before its first edit.
+    FString SaveErr;
+    const bool bSaved = HaybaPersistAsset(Created, SaveErr);
+
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("path"), Created->GetPathName());
     Out->SetStringField(TEXT("name"), Name);
+    Out->SetBoolField(TEXT("saved"), bSaved);
+    if (!bSaved) Out->SetStringField(TEXT("save_error"), SaveErr);
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -635,8 +650,15 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCreateInstance(const TSharedPtr
     UObject* Created = Tools.CreateAsset(Name, Dir, UMaterialInstanceConstant::StaticClass(), Factory);
     if (!Created) return FHaybaHandlerResult::Err(TEXT("material_create_instance: CreateAsset failed"));
 
+    // Persist immediately (see material_create) so the instance survives a crash
+    // before its first parameter is set.
+    FString SaveErr;
+    const bool bSaved = HaybaPersistAsset(Created, SaveErr);
+
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("path"), Created->GetPathName());
+    Out->SetBoolField(TEXT("saved"), bSaved);
+    if (!bSaved) Out->SetStringField(TEXT("save_error"), SaveErr);
     return FHaybaHandlerResult::Ok(Out);
 }
 
