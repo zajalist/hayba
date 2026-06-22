@@ -124,6 +124,7 @@ static bool TryParseProperty(const FString& In, EMaterialProperty& Out)
     if (S == TEXT("world_position_offset")) { Out = MP_WorldPositionOffset; return true; }
     if (S == TEXT("ambient_occlusion"))     { Out = MP_AmbientOcclusion; return true; }
     if (S == TEXT("subsurface"))            { Out = MP_SubsurfaceColor; return true; }
+    if (S == TEXT("front_material"))        { Out = MP_FrontMaterial; return true; }
     return false;
 }
 
@@ -427,6 +428,19 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
     P->TryGetStringField(TEXT("to_input"), ToInput);       // "" => first input
     const bool bHasProp = P->TryGetStringField(TEXT("to_property"), PropStr);
 
+    // Index-based connection for pins that have no addressable name (Substrate
+    // slab/operator inputs report as input_N). to_input_index targets the Nth
+    // input; from_output_index picks the source output (default 0).
+    int32 ToInputIndex = -1, FromOutputIndex = 0;
+    { double D; if (P->TryGetNumberField(TEXT("to_input_index"), D)) ToInputIndex = (int32)D; }
+    { double D; if (P->TryGetNumberField(TEXT("from_output_index"), D)) FromOutputIndex = (int32)D; }
+    auto ConnectByIndex = [&](UMaterialExpression* From, UMaterialExpression* To) -> bool {
+        FExpressionInput* In = To->GetInput(ToInputIndex);
+        if (!In) return false;
+        In->Connect(FromOutputIndex, From);
+        return true;
+    };
+
     // Material-Function target (Task 4).
     FString FuncPath;
     if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())
@@ -438,7 +452,11 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
         if (!bHasTo) return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: function connections require to_node"));
         UMaterialExpression* To = FindExprByNameInFunction(Fn, ToNode);
         if (!To) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: to_node not found: %s"), *ToNode));
-        if (!UMaterialEditingLibrary::ConnectMaterialExpressions(From, FromOutput, To, ToInput))
+        if (ToInputIndex >= 0)
+        {
+            if (!ConnectByIndex(From, To)) return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: to_input_index out of range"));
+        }
+        else if (!UMaterialEditingLibrary::ConnectMaterialExpressions(From, FromOutput, To, ToInput))
             return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: ConnectMaterialExpressions failed"));
         UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
 
@@ -468,7 +486,11 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
         if (!bHasTo) return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: missing to_node or to_property"));
         UMaterialExpression* To = FindExprByName(Mat, ToNode);
         if (!To) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: to_node not found: %s"), *ToNode));
-        if (!UMaterialEditingLibrary::ConnectMaterialExpressions(From, FromOutput, To, ToInput))
+        if (ToInputIndex >= 0)
+        {
+            if (!ConnectByIndex(From, To)) return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: to_input_index out of range"));
+        }
+        else if (!UMaterialEditingLibrary::ConnectMaterialExpressions(From, FromOutput, To, ToInput))
             return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: ConnectMaterialExpressions failed"));
     }
 
@@ -628,10 +650,15 @@ static TArray<TSharedPtr<FJsonValue>> SerializeMaterialExpressions(const TExprRa
         for (FExpressionInputIterator It{Expr}; It; ++It)
         {
             TSharedPtr<FJsonObject> InEntry = MakeShared<FJsonObject>();
-            const FString InputName = It->InputName.IsNone()
-                ? FString::Printf(TEXT("input_%d"), InputIdx)
-                : It->InputName.ToString();
+            // Prefer the expression's display name (GetInputName) so Substrate
+            // slab/operator pins report real names (Diffuse, Roughness, Normal,
+            // ...) instead of falling back to the empty FExpressionInput name.
+            const FName RealName = Expr->GetInputName(InputIdx);
+            const FString InputName = !RealName.IsNone()
+                ? RealName.ToString()
+                : (It->InputName.IsNone() ? FString::Printf(TEXT("input_%d"), InputIdx) : It->InputName.ToString());
             InEntry->SetStringField(TEXT("name"), InputName);
+            InEntry->SetNumberField(TEXT("index"), InputIdx);
             InEntry->SetBoolField(TEXT("connected"), It->Expression != nullptr);
             ++InputIdx;
             Inputs.Add(MakeShared<FJsonValueObject>(InEntry.ToSharedRef()));
