@@ -33,6 +33,14 @@ import { handleFabLibraryList, meta as fabLibraryListMeta } from './fab/library-
 import { handleFabMarketplaceSearch, meta as fabMarketplaceSearchMeta } from './fab/marketplace-search.js';
 import { handleFabDownload, meta as fabDownloadMeta } from './fab/download.js';
 
+// ── Material instance-layer tool handlers ───────────────────────────────────
+import { materialCreateHandler, meta as materialCreateMeta } from './material/material-create.js';
+import { materialCreateInstanceHandler, meta as materialCreateInstanceMeta } from './material/material-create-instance.js';
+import { materialSetParamHandler, meta as materialSetParamMeta } from './material/material-set-param.js';
+import { materialApplyHandler, meta as materialApplyMeta } from './material/material-apply.js';
+import { materialListHandler, meta as materialListMeta } from './material/material-list.js';
+import { materialGetInfoHandler, meta as materialGetInfoMeta } from './material/material-get-info.js';
+
 // ── Asset-source connectors (pure Node — no UE bridge except python_run) ──────
 import { handlePolyhavenSearch, meta as polyhavenSearchMeta } from './asset-sources/polyhaven-search.js';
 import { handlePolyhavenDownload, meta as polyhavenDownloadMeta } from './asset-sources/polyhaven-download.js';
@@ -226,6 +234,7 @@ function inferDir(name: string): string | null {
   if (name.startsWith('actor_'))          return 'actor';
   if (name.startsWith('scene_'))          return 'scene';
   if (name.startsWith('editor_'))         return 'editor';
+  if (name.startsWith('material_'))       return 'material';
   if (name.startsWith('hayba_fab_'))      return 'fab';
   if (name.startsWith('hayba_polyhaven_'))return 'asset-sources';
   if (name.startsWith('hayba_ambientcg_'))return 'asset-sources';
@@ -450,6 +459,97 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     }
   );
   remember('actor_transform', actorTransformMeta);
+
+  // ── Material instance-layer domain ──────────────────────────────────────────
+
+  server.tool(
+    'material_create',
+    appendMeta('Create a new material asset.', materialCreateMeta),
+    {
+      package_path: z.string().min(1).describe('UE content path for the new material'),
+      name: z.string().min(1).describe('Name of the material asset'),
+    },
+    async (params) => {
+      const r = await materialCreateHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_create', materialCreateMeta);
+
+  server.tool(
+    'material_create_instance',
+    appendMeta('Create a new material instance derived from a parent material.', materialCreateInstanceMeta),
+    {
+      parent_material_path: z.string().min(1).describe('Path to the parent material asset'),
+      package_path: z.string().min(1).describe('UE content path for the new material instance'),
+      name: z.string().min(1).describe('Name of the material instance asset'),
+    },
+    async (params) => {
+      const r = await materialCreateInstanceHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_create_instance', materialCreateInstanceMeta);
+
+  server.tool(
+    'material_set_param',
+    appendMeta('Set a scalar, vector (rgba), or texture parameter on a material instance.', materialSetParamMeta),
+    {
+      instance_path: z.string().min(1).describe('Path to the material instance'),
+      param_name: z.string().min(1).describe('Name of the parameter to set'),
+      value: z.union([
+        z.number().describe('Scalar value'),
+        z.array(z.number()).min(1).max(4).describe('Vector value (1-4 components for rgba)'),
+        z.string().describe('Texture asset path'),
+      ]).describe('Parameter value: scalar, vector (1-4 elements), or texture asset path'),
+    },
+    async (params) => {
+      const r = await materialSetParamHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_set_param', materialSetParamMeta);
+
+  server.tool(
+    'material_apply',
+    appendMeta('Apply a material to an actor in the level (optionally specifying a material slot).', materialApplyMeta),
+    {
+      actor_id: z.string().min(1).describe('ID of the actor to apply the material to'),
+      material_path: z.string().min(1).describe('Path to the material asset to apply'),
+      slot_index: z.number().int().nonnegative().optional().describe('Material slot index (default 0)'),
+    },
+    async (params) => {
+      const r = await materialApplyHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_apply', materialApplyMeta);
+
+  server.tool(
+    'material_list',
+    appendMeta('List materials and material instances in the project or a specific path.', materialListMeta),
+    {
+      path: z.string().optional().describe('UE content path filter (default: list all)'),
+    },
+    async (params) => {
+      const r = await materialListHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_list', materialListMeta);
+
+  server.tool(
+    'material_get_info',
+    appendMeta('Inspect a material or material instance: its properties, parameters, and connected expressions.', materialGetInfoMeta),
+    {
+      path: z.string().min(1).describe('Path to the material or material instance to inspect'),
+    },
+    async (params) => {
+      const r = await materialGetInfoHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_get_info', materialGetInfoMeta);
 
   // ── Scene domain ────────────────────────────────────────────────────────────
 
@@ -2004,6 +2104,37 @@ function recordEagerSchemas(
     rotation: coerceVec3.optional(),
     scale: coerceVec3.optional(),
   }, 'low', '{ok, actor_id, before, after}');
+
+  // ── Material instance-layer domain ──────────────────────────────────────────
+  reg('material_create', {
+    package_path: z.string().min(1).describe('UE content path for the new material'),
+    name: z.string().min(1).describe('Name of the material asset'),
+  }, 'low', '{path, name}');
+  reg('material_create_instance', {
+    parent_material_path: z.string().min(1).describe('Path to the parent material asset'),
+    package_path: z.string().min(1).describe('UE content path for the new material instance'),
+    name: z.string().min(1).describe('Name of the material instance asset'),
+  }, 'low', '{path, name}');
+  reg('material_set_param', {
+    instance_path: z.string().min(1).describe('Path to the material instance'),
+    param_name: z.string().min(1).describe('Name of the parameter to set'),
+    value: z.union([
+      z.number().describe('Scalar value'),
+      z.array(z.number()).min(1).max(4).describe('Vector value (1-4 components for rgba)'),
+      z.string().describe('Texture asset path'),
+    ]).describe('Parameter value: scalar, vector (1-4 elements), or texture asset path'),
+  }, 'low', '{ok}');
+  reg('material_apply', {
+    actor_id: z.string().min(1).describe('ID of the actor to apply the material to'),
+    material_path: z.string().min(1).describe('Path to the material asset to apply'),
+    slot_index: z.number().int().nonnegative().optional().describe('Material slot index (default 0)'),
+  }, 'medium', '{ok, actor_id, material_path, slot}');
+  reg('material_list', {
+    path: z.string().optional().describe('UE content path filter (default: list all)'),
+  }, 'low', '{materials:[{path,type,is_instance}]}');
+  reg('material_get_info', {
+    path: z.string().min(1).describe('Path to the material or material instance to inspect'),
+  }, 'low', '{path, type, parameters:[{name,type,value}], expressions}');
 
   // ── Scene domain ──────────────────────────────────────────────────────────
   reg('scene_export', {
