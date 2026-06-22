@@ -23,6 +23,7 @@
 #include "UObject/EnumProperty.h"
 // Graph authoring (Tasks 2-4): connections, node properties, material functions
 #include "MaterialEditingLibrary.h"
+#include "Materials/MaterialStaticParameters.h"  // FStaticParameterSet, FStaticSwitchParameter (Task 5)
 #include "MaterialTypes.h"
 #include "Materials/MaterialFunction.h"
 #include "Factories/MaterialFunctionFactoryNew.h"
@@ -656,6 +657,35 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetParam(const TSharedPtr<FJson
         MIC->SetTextureParameterValueEditorOnly(PName, Tex);
         Out->SetStringField(TEXT("value"), TexPath);
     }
+    else if (Val->Type == EJson::Boolean)
+    {
+        // Task 5: static-switch parameter — uses StaticParameterSet + UpdateStaticPermutation.
+        const bool bSwitch = Val->AsBool();
+        FStaticParameterSet StaticParams;
+        MIC->GetStaticParameterValues(StaticParams);
+        bool bFound = false;
+        for (FStaticSwitchParameter& SP : StaticParams.StaticSwitchParameters)
+        {
+            if (SP.ParameterInfo.Name == PName)
+            {
+                SP.Value = bSwitch;
+                SP.bOverride = true;
+                bFound = true;
+                break;
+            }
+        }
+        if (!bFound)
+        {
+            // Parameter not yet in the override set — add it.
+            FStaticSwitchParameter NewSP;
+            NewSP.ParameterInfo.Name = PName;
+            NewSP.Value = bSwitch;
+            NewSP.bOverride = true;
+            StaticParams.StaticSwitchParameters.Add(NewSP);
+        }
+        MIC->UpdateStaticPermutation(StaticParams);
+        Out->SetBoolField(TEXT("value"), bSwitch);
+    }
     else return FHaybaHandlerResult::Err(TEXT("material_set_param: unsupported value type"));
 
     // Instances carry no master graph, so PostEditChange here only updates the
@@ -782,6 +812,84 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatGetInfo(const TSharedPtr<FJsonO
         Out->SetStringField(TEXT("name"), Fn->GetName());
         Out->SetStringField(TEXT("description"), Fn->Description);
         Out->SetArrayField(TEXT("expressions"), SerializeMaterialExpressions(Fn->GetExpressions()));
+        return FHaybaHandlerResult::Ok(Out);
+    }
+
+    // Task 5: UMaterialInstanceConstant — return kind, name, parent, and all parameters.
+    if (UMaterialInstanceConstant* MIC = LoadObject<UMaterialInstanceConstant>(nullptr, *Path))
+    {
+        TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+        Out->SetStringField(TEXT("kind"), TEXT("instance"));
+        Out->SetStringField(TEXT("name"), MIC->GetName());
+        Out->SetStringField(TEXT("parent"), MIC->Parent ? MIC->Parent->GetPathName() : TEXT(""));
+
+        TArray<TSharedPtr<FJsonValue>> Params;
+
+        // Scalar parameters
+        TArray<FMaterialParameterInfo> ScalarInfos;
+        TArray<FGuid> ScalarGuids;
+        MIC->GetAllScalarParameterInfo(ScalarInfos, ScalarGuids);
+        for (const FMaterialParameterInfo& Info : ScalarInfos)
+        {
+            float Val = 0.f;
+            MIC->GetScalarParameterValue(Info, Val);
+            TSharedPtr<FJsonObject> E = MakeShared<FJsonObject>();
+            E->SetStringField(TEXT("name"), Info.Name.ToString());
+            E->SetStringField(TEXT("type"), TEXT("scalar"));
+            E->SetNumberField(TEXT("value"), Val);
+            Params.Add(MakeShared<FJsonValueObject>(E.ToSharedRef()));
+        }
+
+        // Vector parameters
+        TArray<FMaterialParameterInfo> VecInfos;
+        TArray<FGuid> VecGuids;
+        MIC->GetAllVectorParameterInfo(VecInfos, VecGuids);
+        for (const FMaterialParameterInfo& Info : VecInfos)
+        {
+            FLinearColor Val;
+            MIC->GetVectorParameterValue(Info, Val);
+            TSharedPtr<FJsonObject> E = MakeShared<FJsonObject>();
+            E->SetStringField(TEXT("name"), Info.Name.ToString());
+            E->SetStringField(TEXT("type"), TEXT("vector"));
+            TArray<TSharedPtr<FJsonValue>> RGBA = {
+                MakeShared<FJsonValueNumber>(Val.R), MakeShared<FJsonValueNumber>(Val.G),
+                MakeShared<FJsonValueNumber>(Val.B), MakeShared<FJsonValueNumber>(Val.A),
+            };
+            E->SetArrayField(TEXT("value"), RGBA);
+            Params.Add(MakeShared<FJsonValueObject>(E.ToSharedRef()));
+        }
+
+        // Texture parameters
+        TArray<FMaterialParameterInfo> TexInfos;
+        TArray<FGuid> TexGuids;
+        MIC->GetAllTextureParameterInfo(TexInfos, TexGuids);
+        for (const FMaterialParameterInfo& Info : TexInfos)
+        {
+            UTexture* Tex = nullptr;
+            MIC->GetTextureParameterValue(Info, Tex);
+            TSharedPtr<FJsonObject> E = MakeShared<FJsonObject>();
+            E->SetStringField(TEXT("name"), Info.Name.ToString());
+            E->SetStringField(TEXT("type"), TEXT("texture"));
+            E->SetStringField(TEXT("value"), Tex ? Tex->GetPathName() : TEXT(""));
+            Params.Add(MakeShared<FJsonValueObject>(E.ToSharedRef()));
+        }
+
+        // Static switch parameters
+        TArray<FMaterialParameterInfo> SwitchInfos;
+        TArray<FGuid> SwitchGuids;
+        MIC->GetAllStaticSwitchParameterInfo(SwitchInfos, SwitchGuids);
+        for (int32 i = 0; i < SwitchInfos.Num(); ++i)
+        {
+            bool bVal = false; FGuid SwitchGuid;
+            MIC->GetStaticSwitchParameterValue(SwitchInfos[i], bVal, SwitchGuid);
+            TSharedPtr<FJsonObject> E = MakeShared<FJsonObject>();
+            E->SetStringField(TEXT("name"), SwitchInfos[i].Name.ToString());
+            E->SetStringField(TEXT("type"), TEXT("static_switch"));
+            E->SetBoolField(TEXT("value"), bVal);
+            Params.Add(MakeShared<FJsonValueObject>(E.ToSharedRef()));
+        }
+
+        Out->SetArrayField(TEXT("parameters"), Params);
         return FHaybaHandlerResult::Ok(Out);
     }
 
