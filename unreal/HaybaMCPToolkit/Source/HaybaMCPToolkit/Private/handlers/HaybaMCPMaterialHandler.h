@@ -14,6 +14,7 @@ private:
     FHaybaHandlerResult MatSetNode(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult MatDeleteNode(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult MatAddComment(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult MatDeleteComment(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult MatAddRerouteDeclaration(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult MatAddRerouteUsage(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult MatConnectNodes(const TSharedPtr<FJsonObject>& P);

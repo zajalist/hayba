@@ -47,6 +47,7 @@ import { materialAddNodeHandler, meta as materialAddNodeMeta } from './material/
 import { materialSetNodeHandler, meta as materialSetNodeMeta } from './material/material-set-node.js';
 import { materialDeleteNodeHandler, meta as materialDeleteNodeMeta } from './material/material-delete-node.js';
 import { materialAddCommentHandler, meta as materialAddCommentMeta } from './material/material-add-comment.js';
+import { materialDeleteCommentHandler, meta as materialDeleteCommentMeta } from './material/material-delete-comment.js';
 import { materialAddRerouteDeclarationHandler, meta as materialAddRerouteDeclarationMeta } from './material/material-add-reroute-declaration.js';
 import { materialAddRerouteUsageHandler, meta as materialAddRerouteUsageMeta } from './material/material-add-reroute-usage.js';
 import { assetDeleteHandler, meta as assetDeleteMeta } from './asset/asset-delete.js';
@@ -394,6 +395,20 @@ const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
         size: z.tuple([z.number(), z.number()]).optional().describe('Box size [width, height]'),
         color: z.array(z.number()).min(3).max(4).optional().describe('Box color [r, g, b] or [r, g, b, a] (0..1)'),
         font_size: z.number().int().optional().describe('Title font size (default 18)'),
+      },
+    },
+    {
+      name: 'material_delete_comment',
+      description: 'Delete a comment box from a material or function graph (comment_id from material_get_info.comments[].id). Named reroutes are nodes — use material_delete_node for those.',
+      meta: materialDeleteCommentMeta,
+      handler: materialDeleteCommentHandler,
+      cost: 'low',
+      returns: '{deleted}',
+      niche: M,
+      schema: {
+        material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+        function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+        comment_id: z.string().min(1).describe('Comment id to delete (from material_get_info.comments[].id)'),
       },
     },
     {
