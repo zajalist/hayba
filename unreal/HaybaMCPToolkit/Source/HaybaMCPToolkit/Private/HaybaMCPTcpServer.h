@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 #include "HAL/Runnable.h"
 #include "HAL/ThreadSafeBool.h"
+#include "Containers/Queue.h"
+#include "Containers/Ticker.h"
 #include "Networking.h"
 
 class FHaybaMCPCommandHandler;
@@ -25,6 +27,13 @@ struct FHaybaMCPClientConnection
 };
 
 using FHaybaMCPClientConnectionPtr = TSharedPtr<FHaybaMCPClientConnection, ESPMode::ThreadSafe>;
+
+/** A received command awaiting execution on the game thread. */
+struct FHaybaMCPPendingCommand
+{
+	FString Message;
+	FHaybaMCPClientConnectionPtr Conn;
+};
 
 class FHaybaMCPTcpServer : public FRunnable
 {
@@ -61,6 +70,16 @@ private:
 	// data race the compiler may hoist, never seeing shutdown).
 	FThreadSafeBool bIsRunning{ false };
 	FThreadSafeCounter ClientCount;
+
+	// Commands run on the game thread via a TICKER drain (not AsyncTask). Running
+	// inside an AsyncTask(GameThread) *task* makes any handler that itself pumps
+	// the game-thread task graph (e.g. python_run -> Interchange asset import)
+	// re-enter task-graph processing -> check(RecursionGuard==1) crash. A ticker
+	// runs in the normal engine tick, outside task-graph task execution, so such
+	// work is safe. Connection (background) threads enqueue; the ticker drains.
+	TQueue<FHaybaMCPPendingCommand, EQueueMode::Mpsc> PendingCommands;
+	FTSTicker::FDelegateHandle DrainTickerHandle;
+	bool DrainPendingCommands(float DeltaTime);
 
 	void HandleClientConnection(FHaybaMCPClientConnectionPtr Conn);
 	bool ReadMessage(FSocket* Socket, FString& OutMessage);
