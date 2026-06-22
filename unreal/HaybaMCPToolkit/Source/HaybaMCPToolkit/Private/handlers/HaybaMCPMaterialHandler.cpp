@@ -47,6 +47,8 @@
 #include "Materials/MaterialExpressionNamedReroute.h"
 #include "MaterialShared.h"  // FMaterialResource, GetCompileErrors (material_compile)
 #include "UObject/SavePackage.h"
+#include "HaybaMCPReflection.h"  // HaybaReflection::SetProp / SetStructField (generic, extracted from this handler)
+#include "HaybaMCPParams.h"      // HaybaParams::GetString / GetNumber / GetBool / GetVec3
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPMaterial, Log, All);
 
@@ -184,145 +186,10 @@ static bool TryParseProperty(const FString& In, EMaterialProperty& Out)
     return false;
 }
 
-// Task 3: Set a single named field on an arbitrary struct instance by reflection.
-// Covers the subset of field types needed for FCustomInput (FName/FString/bool/numeric).
-static bool SetStructFieldByReflection(UScriptStruct* Struct, void* StructPtr, const FString& FieldName, const TSharedPtr<FJsonValue>& V)
-{
-    if (!Struct || !StructPtr || !V.IsValid()) return false;
-    FProperty* Prop = Struct->FindPropertyByName(FName(*FieldName));
-    if (!Prop) return false;
-
-    if (FNameProperty* Nm = CastField<FNameProperty>(Prop)) { Nm->SetPropertyValue_InContainer(StructPtr, FName(*V->AsString())); return true; }
-    if (FStrProperty* S = CastField<FStrProperty>(Prop)) { S->SetPropertyValue_InContainer(StructPtr, V->AsString()); return true; }
-    if (FBoolProperty* B = CastField<FBoolProperty>(Prop))
-    {
-        const bool bVal = (V->Type == EJson::Boolean) ? V->AsBool() : (V->AsNumber() != 0.0);
-        B->SetPropertyValue_InContainer(StructPtr, bVal);
-        return true;
-    }
-    if (FNumericProperty* N = CastField<FNumericProperty>(Prop))
-    {
-        void* Ptr = N->ContainerPtrToValuePtr<void>(StructPtr);
-        if (N->IsFloatingPoint()) N->SetFloatingPointPropertyValue(Ptr, V->AsNumber());
-        else N->SetIntPropertyValue(Ptr, (int64)V->AsNumber());
-        return true;
-    }
-    return false;
-}
-
-// Generic reflection setter: set ANY UPROPERTY on the expression by its real
-// name, coercing from the JSON value by property type. Covers enums-by-string
-// (e.g. InputType="FunctionInput_Scalar"), bool bitfields (ComponentMask R/G/B/A),
-// numerics, FName/FString, struct-from-array (LinearColor/Vector/Vector4f/Vector2D/Color),
-// and object refs by asset path. Returns true if the property existed.
-static bool SetPropByReflection(UObject* Target, const FString& Name, const TSharedPtr<FJsonValue>& V)
-{
-    if (!Target || !V.IsValid()) return false;
-    FProperty* Prop = Target->GetClass()->FindPropertyByName(FName(*Name));
-    if (!Prop) return false;
-    void* Owner = Target;
-
-    if (FBoolProperty* B = CastField<FBoolProperty>(Prop))
-    {
-        const bool bVal = (V->Type == EJson::Boolean) ? V->AsBool() : (V->AsNumber() != 0.0);
-        B->SetPropertyValue_InContainer(Owner, bVal);
-        return true;
-    }
-    if (FByteProperty* By = CastField<FByteProperty>(Prop))
-    {
-        if (V->Type == EJson::String && By->Enum)
-        {
-            int64 E = By->Enum->GetValueByNameString(V->AsString());
-            if (E == INDEX_NONE)
-            {
-                const FString First = By->Enum->GetNameStringByIndex(0);
-                int32 Underscore;
-                if (First.FindChar('_', Underscore))
-                    E = By->Enum->GetValueByNameString(First.Left(Underscore) + TEXT("_") + V->AsString());
-            }
-            if (E != INDEX_NONE) By->SetIntPropertyValue(By->ContainerPtrToValuePtr<void>(Owner), E);
-        }
-        else By->SetIntPropertyValue(By->ContainerPtrToValuePtr<void>(Owner), (int64)V->AsNumber());
-        return true;
-    }
-    if (FEnumProperty* En = CastField<FEnumProperty>(Prop))
-    {
-        int64 Val = 0;
-        if (V->Type == EJson::String && En->GetEnum())
-        {
-            Val = En->GetEnum()->GetValueByNameString(V->AsString());
-            if (Val == INDEX_NONE) Val = 0;
-        }
-        else Val = (int64)V->AsNumber();
-        En->GetUnderlyingProperty()->SetIntPropertyValue(En->ContainerPtrToValuePtr<void>(Owner), Val);
-        return true;
-    }
-    if (FNumericProperty* N = CastField<FNumericProperty>(Prop))
-    {
-        void* Ptr = N->ContainerPtrToValuePtr<void>(Owner);
-        if (N->IsFloatingPoint()) N->SetFloatingPointPropertyValue(Ptr, V->AsNumber());
-        else N->SetIntPropertyValue(Ptr, (int64)V->AsNumber());
-        return true;
-    }
-    if (FNameProperty* Nm = CastField<FNameProperty>(Prop)) { Nm->SetPropertyValue_InContainer(Owner, FName(*V->AsString())); return true; }
-    if (FStrProperty* S = CastField<FStrProperty>(Prop)) { S->SetPropertyValue_InContainer(Owner, V->AsString()); return true; }
-    if (FObjectProperty* O = CastField<FObjectProperty>(Prop))
-    {
-        if (V->Type == EJson::String)
-            if (UObject* Obj = LoadObject<UObject>(nullptr, *V->AsString()))
-                if (Obj->IsA(O->PropertyClass)) O->SetObjectPropertyValue_InContainer(Owner, Obj);
-        return true;
-    }
-    if (FStructProperty* St = CastField<FStructProperty>(Prop))
-    {
-        if (V->Type == EJson::Array)
-        {
-            const TArray<TSharedPtr<FJsonValue>>& A = V->AsArray();
-            auto Num = [&A](int32 i) { return A.IsValidIndex(i) ? (float)A[i]->AsNumber() : 0.f; };
-            void* Ptr = St->ContainerPtrToValuePtr<void>(Owner);
-            const FString SN = St->Struct->GetName();
-            if (SN == TEXT("LinearColor"))                        *(FLinearColor*)Ptr = FLinearColor(Num(0), Num(1), Num(2), A.Num() > 3 ? Num(3) : 1.f);
-            else if (SN == TEXT("Vector"))                        *(FVector*)Ptr      = FVector(Num(0), Num(1), Num(2));
-            else if (SN == TEXT("Vector4") || SN == TEXT("Vector4f")) *(FVector4f*)Ptr = FVector4f(Num(0), Num(1), Num(2), Num(3));
-            else if (SN == TEXT("Vector2D"))                      *(FVector2D*)Ptr    = FVector2D(Num(0), Num(1));
-            else if (SN == TEXT("Color"))                         *(FColor*)Ptr       = FColor((uint8)Num(0), (uint8)Num(1), (uint8)Num(2), A.Num() > 3 ? (uint8)Num(3) : 255);
-        }
-        return true;
-    }
-    // Task 3: TArray support — each element is a JSON object whose keys are set
-    // via SetStructFieldByReflection. Primary use: MaterialExpressionCustom.Inputs
-    // where each element is an FCustomInput struct with an InputName FName field.
-    if (FArrayProperty* Arr = CastField<FArrayProperty>(Prop))
-    {
-        if (V->Type != EJson::Array) return false;  // don't claim success on a non-array value
-        {
-            FScriptArrayHelper Helper(Arr, Arr->ContainerPtrToValuePtr<void>(Owner));
-            const TArray<TSharedPtr<FJsonValue>>& JArr = V->AsArray();
-            Helper.Resize(JArr.Num());
-            if (FStructProperty* InnerSt = CastField<FStructProperty>(Arr->Inner))
-            {
-                for (int32 i = 0; i < JArr.Num(); ++i)
-                {
-                    void* ElemPtr = Helper.GetRawPtr(i);
-                    InnerSt->Struct->InitializeStruct(ElemPtr);
-                    if (JArr[i].IsValid() && JArr[i]->Type == EJson::Object)
-                    {
-                        const TSharedPtr<FJsonObject>& ElemObj = JArr[i]->AsObject();
-                        for (const TPair<FString, TSharedPtr<FJsonValue>>& F : ElemObj->Values)
-                            SetStructFieldByReflection(InnerSt->Struct, ElemPtr, F.Key, F.Value);
-                    }
-                }
-            }
-        }
-        return true;
-    }
-    return false;
-}
-
 // Apply optional per-node properties. Friendly aliases (parameter_name/default_value/
 // texture/const/function/coordinate_index/u_tiling/v_tiling) are handled first for
 // back-compat; every other key is treated as a real UPROPERTY name and set via
-// reflection (SetPropByReflection) — so callers can set InputType, ComponentMask
+// reflection (HaybaReflection::SetProp) — so callers can set InputType, ComponentMask
 // R/G/B/A, SortPriority, SamplerType, Desc, etc. with no per-type code here.
 static void ApplyNodeProps(UMaterialExpression* Expr, const TSharedPtr<FJsonObject>& Props)
 {
@@ -407,7 +274,7 @@ static void ApplyNodeProps(UMaterialExpression* Expr, const TSharedPtr<FJsonObje
     for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Props->Values)
     {
         if (Aliases.Contains(Pair.Key)) continue;
-        SetPropByReflection(Expr, Pair.Key, Pair.Value);
+        HaybaReflection::SetProp(Expr, Pair.Key, Pair.Value);
     }
 
     Expr->PostEditChange();
@@ -416,9 +283,9 @@ static void ApplyNodeProps(UMaterialExpression* Expr, const TSharedPtr<FJsonObje
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCreate(const TSharedPtr<FJsonObject>& P)
 {
     FString PkgPath, Name;
-    if (!P->TryGetStringField(TEXT("package_path"), PkgPath) || PkgPath.IsEmpty())
+    if (!HaybaParams::GetString(P, TEXT("package_path"), PkgPath) || PkgPath.IsEmpty())
         return FHaybaHandlerResult::Err(TEXT("material_create: missing package_path"));
-    if (!P->TryGetStringField(TEXT("name"), Name) || Name.IsEmpty())
+    if (!HaybaParams::GetString(P, TEXT("name"), Name) || Name.IsEmpty())
         return FHaybaHandlerResult::Err(TEXT("material_create: missing name"));
 
     IAssetTools& Tools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
@@ -444,9 +311,9 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCreate(const TSharedPtr<FJsonOb
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatFunctionCreate(const TSharedPtr<FJsonObject>& P)
 {
     FString PkgPath, Name;
-    if (!P->TryGetStringField(TEXT("package_path"), PkgPath) || PkgPath.IsEmpty())
+    if (!HaybaParams::GetString(P, TEXT("package_path"), PkgPath) || PkgPath.IsEmpty())
         return FHaybaHandlerResult::Err(TEXT("material_function_create: missing package_path"));
-    if (!P->TryGetStringField(TEXT("name"), Name) || Name.IsEmpty())
+    if (!HaybaParams::GetString(P, TEXT("name"), Name) || Name.IsEmpty())
         return FHaybaHandlerResult::Err(TEXT("material_function_create: missing name"));
 
     IAssetTools& Tools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
@@ -523,7 +390,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddNode(const TSharedPtr<FJsonO
     }
 
     FString MatPath;
-    if (!P->TryGetStringField(TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_add_node: missing material_path or function_path"));
+    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_add_node: missing material_path or function_path"));
 
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_add_node: material not found"));
@@ -594,7 +461,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
     }
 
     FString MatPath;
-    if (!P->TryGetStringField(TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: missing material_path or function_path"));
+    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: missing material_path or function_path"));
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: material not found"));
 
@@ -635,9 +502,9 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCreateInstance(const TSharedPtr<FJsonObject>& P)
 {
     FString ParentPath, PkgPath, Name;
-    if (!P->TryGetStringField(TEXT("parent_material_path"), ParentPath)) return FHaybaHandlerResult::Err(TEXT("material_create_instance: missing parent_material_path"));
-    if (!P->TryGetStringField(TEXT("package_path"), PkgPath)) return FHaybaHandlerResult::Err(TEXT("material_create_instance: missing package_path"));
-    if (!P->TryGetStringField(TEXT("name"), Name)) return FHaybaHandlerResult::Err(TEXT("material_create_instance: missing name"));
+    if (!HaybaParams::GetString(P, TEXT("parent_material_path"), ParentPath)) return FHaybaHandlerResult::Err(TEXT("material_create_instance: missing parent_material_path"));
+    if (!HaybaParams::GetString(P, TEXT("package_path"), PkgPath)) return FHaybaHandlerResult::Err(TEXT("material_create_instance: missing package_path"));
+    if (!HaybaParams::GetString(P, TEXT("name"), Name)) return FHaybaHandlerResult::Err(TEXT("material_create_instance: missing name"));
 
     UMaterialInterface* Parent = LoadObject<UMaterialInterface>(nullptr, *ParentPath);
     if (!Parent) return FHaybaHandlerResult::Err(TEXT("material_create_instance: parent material not found"));
@@ -665,7 +532,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCreateInstance(const TSharedPtr
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetParam(const TSharedPtr<FJsonObject>& P)
 {
     FString InstPath, ParamName;
-    if (!P->TryGetStringField(TEXT("instance_path"), InstPath)) return FHaybaHandlerResult::Err(TEXT("material_set_param: missing instance_path"));
+    if (!HaybaParams::GetString(P, TEXT("instance_path"), InstPath)) return FHaybaHandlerResult::Err(TEXT("material_set_param: missing instance_path"));
     if (!P->TryGetStringField(TEXT("param_name"), ParamName)) return FHaybaHandlerResult::Err(TEXT("material_set_param: missing param_name"));
 
     UMaterialInstanceConstant* MIC = LoadObject<UMaterialInstanceConstant>(nullptr, *InstPath);
@@ -745,8 +612,8 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatApply(const TSharedPtr<FJsonObj
 {
     FString ActorId, MatPath;
     int32 SlotIndex = 0;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId)) return FHaybaHandlerResult::Err(TEXT("material_apply: missing actor_id"));
-    if (!P->TryGetStringField(TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_apply: missing material_path"));
+    if (!HaybaParams::GetString(P, TEXT("actor_id"), ActorId)) return FHaybaHandlerResult::Err(TEXT("material_apply: missing actor_id"));
+    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_apply: missing material_path"));
     P->TryGetNumberField(TEXT("slot_index"), SlotIndex);
 
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
@@ -841,7 +708,7 @@ static TArray<TSharedPtr<FJsonValue>> SerializeMaterialExpressions(const TExprRa
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatGetInfo(const TSharedPtr<FJsonObject>& P)
 {
     FString Path;
-    if (!P->TryGetStringField(TEXT("path"), Path)) return FHaybaHandlerResult::Err(TEXT("material_get_info: missing path"));
+    if (!HaybaParams::GetString(P, TEXT("path"), Path)) return FHaybaHandlerResult::Err(TEXT("material_get_info: missing path"));
 
     // UMaterial first, then fall back to UMaterialFunction (same GetExpressions()
     // graph API). Material instances are not handled here (they have no graph).
@@ -984,7 +851,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetNode(const TSharedPtr<FJsonO
     }
 
     FString MatPath;
-    if (!P->TryGetStringField(TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_set_node: missing material_path or function_path"));
+    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_set_node: missing material_path or function_path"));
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_set_node: material not found"));
     UMaterialExpression* Expr = FindExprByName(Mat, NodeId);
@@ -1021,7 +888,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDeleteNode(const TSharedPtr<FJs
     }
 
     FString MatPath;
-    if (!P->TryGetStringField(TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_delete_node: missing material_path or function_path"));
+    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_delete_node: missing material_path or function_path"));
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_delete_node: material not found"));
     UMaterialExpression* Expr = FindExprByName(Mat, NodeId);
@@ -1074,7 +941,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddComment(const TSharedPtr<FJs
     }
 
     FString MatPath;
-    if (!P->TryGetStringField(TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_add_comment: missing material_path or function_path"));
+    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_add_comment: missing material_path or function_path"));
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_add_comment: material not found"));
     UMaterialExpressionComment* C = NewObject<UMaterialExpressionComment>(Mat);
@@ -1130,7 +997,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddRerouteDeclaration(const TSh
     }
 
     FString MatPath;
-    if (!P->TryGetStringField(TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_declaration: missing material_path or function_path"));
+    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_declaration: missing material_path or function_path"));
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_declaration: material not found"));
     if (!bHasPos) HaybaAutoNodePos(Mat->GetExpressions().Num(), X, Y);
@@ -1180,7 +1047,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddRerouteUsage(const TSharedPt
     }
 
     FString MatPath;
-    if (!P->TryGetStringField(TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_usage: missing material_path or function_path"));
+    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_usage: missing material_path or function_path"));
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_usage: material not found"));
     UMaterialExpressionNamedRerouteDeclaration* D = Cast<UMaterialExpressionNamedRerouteDeclaration>(FindExprByName(Mat, DeclId));
@@ -1202,7 +1069,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddRerouteUsage(const TSharedPt
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJsonObject>& P)
 {
     FString MatPath;
-    if (!P->TryGetStringField(TEXT("material_path"), MatPath))
+    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath))
         return FHaybaHandlerResult::Err(TEXT("material_set_property: missing material_path"));
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_set_property: material not found"));
@@ -1225,7 +1092,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
     {
         const FString* Real = Aliases.Find(Pair.Key);
         const FString RealName = Real ? *Real : Pair.Key;
-        if (SetPropByReflection(Mat, RealName, Pair.Value))
+        if (HaybaReflection::SetProp(Mat, RealName, Pair.Value))
             Applied.Add(MakeShared<FJsonValueString>(Pair.Key));
     }
 
@@ -1251,7 +1118,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonObject>& P)
 {
     FString MatPath;
-    if (!P->TryGetStringField(TEXT("material_path"), MatPath))
+    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath))
         return FHaybaHandlerResult::Err(TEXT("material_compile: missing material_path"));
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_compile: material not found"));
@@ -1282,7 +1149,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDisconnect(const TSharedPtr<FJsonObject>& P)
 {
     FString MatPath;
-    if (!P->TryGetStringField(TEXT("material_path"), MatPath))
+    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath))
         return FHaybaHandlerResult::Err(TEXT("material_disconnect: missing material_path"));
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_disconnect: material not found"));
