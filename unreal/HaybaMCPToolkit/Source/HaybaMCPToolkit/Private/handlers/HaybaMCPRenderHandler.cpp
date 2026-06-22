@@ -464,14 +464,22 @@ FHaybaHandlerResult FHaybaMCPRenderHandler::Handle(const FString& /*Command*/,
         return FHaybaHandlerResult::Err(TEXT("render_camera: failed to allocate FEvent"));
     }
 
-    // The lambda captures the shared ref, so S (and its FEvent) outlive this
-    // function even if the wait below times out — RunOnGameThread can never
-    // touch freed state.
-    AsyncTask(ENamedThreads::GameThread, [S]() { RunOnGameThread(S); });
-
-    // Allow the wait phase + render + headroom.
-    const uint32 BlockTimeoutMs = (uint32)((S->TimeoutSeconds + 60.0) * 1000.0);
-    const bool bSignaled = S->DoneEvent->Wait(BlockTimeoutMs);
+    // ProcessCommand already runs on the game thread, so run INLINE. The old
+    // AsyncTask(GameThread)+Wait queued a task the blocked game thread could
+    // never run -> deadlock -> always timed out (render never produced output).
+    // Only marshal when genuinely called from off the game thread; the shared
+    // ref keeps S alive across that hop even if the wait times out.
+    bool bSignaled = true;
+    if (IsInGameThread())
+    {
+        RunOnGameThread(S);
+    }
+    else
+    {
+        AsyncTask(ENamedThreads::GameThread, [S]() { RunOnGameThread(S); });
+        const uint32 BlockTimeoutMs = (uint32)((S->TimeoutSeconds + 60.0) * 1000.0);
+        bSignaled = S->DoneEvent->Wait(BlockTimeoutMs);
+    }
 
     // ── Build response ────────────────────────────────────────────────────
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();

@@ -106,7 +106,11 @@ static FGuid FindOrCreateBinding(ULevelSequence* Seq, UObject* Object)
 {
     if (!Seq || !Object) return FGuid();
     UMovieScene* MS = Seq->GetMovieScene();
+    if (!MS) return FGuid();
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    // BindPossessableObject dereferences World to resolve the possessable's
+    // context — a null world (no level loaded) would crash inside Sequencer.
+    if (!World) return FGuid();
 
     // search existing possessables (name-based; cheap idempotency)
     const FString ObjName = Object->GetName();
