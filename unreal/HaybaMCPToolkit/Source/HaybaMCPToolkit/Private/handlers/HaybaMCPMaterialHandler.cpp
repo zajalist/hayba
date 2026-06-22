@@ -65,6 +65,7 @@ TArray<FString> FHaybaMCPMaterialHandler::GetCommands() const
         TEXT("material_set_property"),
         TEXT("material_delete_node"),
         TEXT("material_add_comment"),
+        TEXT("material_delete_comment"),
         TEXT("material_add_reroute_declaration"),
         TEXT("material_add_reroute_usage"),
         TEXT("material_connect_nodes"),
@@ -87,6 +88,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::Handle(const FString& Cmd, const T
     if (Cmd == TEXT("material_set_property"))   return MatSetProperty(P);
     if (Cmd == TEXT("material_delete_node"))    return MatDeleteNode(P);
     if (Cmd == TEXT("material_add_comment"))    return MatAddComment(P);
+    if (Cmd == TEXT("material_delete_comment")) return MatDeleteComment(P);
     if (Cmd == TEXT("material_add_reroute_declaration")) return MatAddRerouteDeclaration(P);
     if (Cmd == TEXT("material_add_reroute_usage"))       return MatAddRerouteUsage(P);
     if (Cmd == TEXT("material_connect_nodes"))  return MatConnectNodes(P);
@@ -708,6 +710,26 @@ static TArray<TSharedPtr<FJsonValue>> SerializeMaterialExpressions(const TExprRa
     return Exprs;
 }
 
+// Serialize the comment boxes (id/text/pos/size) so callers can discover
+// comment ids to pass to material_delete_comment.
+static TArray<TSharedPtr<FJsonValue>> SerializeComments(TConstArrayView<TObjectPtr<UMaterialExpressionComment>> InComments)
+{
+    TArray<TSharedPtr<FJsonValue>> Out;
+    for (const TObjectPtr<UMaterialExpressionComment>& C : InComments)
+    {
+        if (!C) continue;
+        TSharedPtr<FJsonObject> E = MakeShared<FJsonObject>();
+        E->SetStringField(TEXT("id"), C->GetName());
+        E->SetStringField(TEXT("text"), C->Text);
+        E->SetNumberField(TEXT("x"), C->MaterialExpressionEditorX);
+        E->SetNumberField(TEXT("y"), C->MaterialExpressionEditorY);
+        E->SetNumberField(TEXT("size_x"), C->SizeX);
+        E->SetNumberField(TEXT("size_y"), C->SizeY);
+        Out.Add(MakeShared<FJsonValueObject>(E.ToSharedRef()));
+    }
+    return Out;
+}
+
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatGetInfo(const TSharedPtr<FJsonObject>& P)
 {
     FString Path;
@@ -721,6 +743,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatGetInfo(const TSharedPtr<FJsonO
         Out->SetStringField(TEXT("kind"), TEXT("material"));
         Out->SetStringField(TEXT("name"), Mat->GetName());
         Out->SetArrayField(TEXT("expressions"), SerializeMaterialExpressions(Mat->GetExpressions()));
+        Out->SetArrayField(TEXT("comments"), SerializeComments(Mat->GetEditorComments()));
         Out->SetNumberField(TEXT("shading_model"), (int32)Mat->GetShadingModels().GetFirstShadingModel());
         return FHaybaHandlerResult::Ok(Out);
     }
@@ -732,6 +755,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatGetInfo(const TSharedPtr<FJsonO
         Out->SetStringField(TEXT("name"), Fn->GetName());
         Out->SetStringField(TEXT("description"), Fn->Description);
         Out->SetArrayField(TEXT("expressions"), SerializeMaterialExpressions(Fn->GetExpressions()));
+        Out->SetArrayField(TEXT("comments"), SerializeComments(Fn->GetEditorComments()));
         return FHaybaHandlerResult::Ok(Out);
     }
 
@@ -956,6 +980,55 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddComment(const TSharedPtr<FJs
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("comment_id"), C->GetName());
     return FHaybaHandlerResult::Ok(Out);
+}
+
+// Delete a comment BOX by id. Comments live in the expression collection's
+// EditorComments array (not Expressions), so material_delete_node can't reach
+// them — this is the dedicated remover. (Named-reroute declaration/usage nodes
+// ARE expressions, so material_delete_node already deletes those.)
+FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDeleteComment(const TSharedPtr<FJsonObject>& P)
+{
+    FString CommentId;
+    if (!P->TryGetStringField(TEXT("comment_id"), CommentId) || CommentId.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("material_delete_comment: missing comment_id"));
+
+    FString FuncPath;
+    if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())
+    {
+        UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
+        if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_delete_comment: function not found"));
+        for (const TObjectPtr<UMaterialExpressionComment>& C : Fn->GetEditorComments())
+        {
+            if (C && C->GetName() == CommentId)
+            {
+                Fn->GetExpressionCollection().RemoveComment(C);
+                UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+                { FString SaveErr; HaybaPersistAsset(Fn, SaveErr); }
+                TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+                Out->SetBoolField(TEXT("deleted"), true);
+                return FHaybaHandlerResult::Ok(Out);
+            }
+        }
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_delete_comment: comment not found: %s"), *CommentId));
+    }
+
+    FString MatPath;
+    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath))
+        return FHaybaHandlerResult::Err(TEXT("material_delete_comment: missing material_path or function_path"));
+    UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
+    if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_delete_comment: material not found"));
+    for (const TObjectPtr<UMaterialExpressionComment>& C : Mat->GetEditorComments())
+    {
+        if (C && C->GetName() == CommentId)
+        {
+            Mat->GetExpressionCollection().RemoveComment(C);
+            Mat->MarkPackageDirty();  // comments don't affect compilation; in-memory per the deferred-compile model
+            TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+            Out->SetBoolField(TEXT("deleted"), true);
+            return FHaybaHandlerResult::Ok(Out);
+        }
+    }
+    return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_delete_comment: comment not found: %s"), *CommentId));
 }
 
 // Create a Named-Reroute DECLARATION node (the source anchor). Lands in the
