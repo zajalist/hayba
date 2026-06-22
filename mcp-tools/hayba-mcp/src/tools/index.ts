@@ -43,6 +43,9 @@ import { materialGetInfoHandler, meta as materialGetInfoMeta } from './material/
 
 // ── Material graph-layer tool handlers ───────────────────────────────────────
 import { materialAddNodeHandler, meta as materialAddNodeMeta } from './material/material-add-node.js';
+import { materialSetNodeHandler, meta as materialSetNodeMeta } from './material/material-set-node.js';
+import { materialDeleteNodeHandler, meta as materialDeleteNodeMeta } from './material/material-delete-node.js';
+import { assetDeleteHandler, meta as assetDeleteMeta } from './asset/asset-delete.js';
 import { materialConnectNodesHandler, meta as materialConnectNodesMeta } from './material/material-connect-nodes.js';
 import { materialFunctionCreateHandler, meta as materialFunctionCreateMeta } from './material/material-function-create.js';
 
@@ -73,55 +76,6 @@ import { parameterizeGraphInputs } from './parameterize-graph-inputs.js';
 import { queryPcgexDocs, type QueryPcgexDocsParams } from './query-pcgex-docs.js';
 import { initiateInfrastructureBrainstorm } from './initiate-infrastructure-brainstorm.js';
 
-import {
-  definePhonology,
-  definePhonologySchema,
-  generateNameSchema,
-  languageApplySoundChanges,
-  languageGenerateName,
-  languageProposeDerivation,
-  languageRemixPhonologies,
-  languageWordFor,
-  proposeDerivationSchema,
-  remixPhonologiesSchema,
-  soundChangesSchema,
-  wordForSchema,
-} from './worldbuilding/language-handlers.js';
-import {
-  architecture_list_cultures,
-  architecture_get_culture,
-  architecture_resolve_rules,
-  architecture_validate_culture,
-  architecture_create_culture,
-  architecture_update_culture,
-  architecture_delete_culture,
-  architecture_add_era,
-  architecture_update_era,
-  architecture_delete_era,
-  architecture_add_material,
-  architecture_update_material,
-  architecture_delete_material,
-  architecture_add_ornament,
-  architecture_update_ornament,
-  architecture_delete_ornament,
-  architecture_add_tag_axis,
-  architecture_update_tag_axis,
-  architecture_delete_tag_axis,
-  architecture_add_rule,
-  architecture_update_rule,
-  architecture_delete_rule,
-} from './worldbuilding/architecture-handlers.js';
-import {
-  dynamoSchema,
-  escapeSchema,
-  hzSchema,
-  planetDynamoField,
-  planetEscapeRegime,
-  planetHabitableZone,
-  planetStabilityReportPayload,
-  planetTidalLocking,
-  tidalSchema,
-} from './worldbuilding/planet-handlers.js';
 
 // ── Zone painter tool handlers ────────────────────────────────────────────────
 import { openZonePainterHandler } from './hayba-open-zone-painter.js';
@@ -244,9 +198,6 @@ function inferDir(name: string): string | null {
   if (name.startsWith('hayba_polyhaven_'))return 'asset-sources';
   if (name.startsWith('hayba_ambientcg_'))return 'asset-sources';
   if (name.startsWith('hayba_sketchfab_'))return 'asset-sources';
-  if (name.startsWith('architecture_'))   return 'worldbuilding';
-  if (name.startsWith('language_'))       return 'worldbuilding';
-  if (name.startsWith('hayba_planet_'))   return 'worldbuilding';
   if (name === 'python_run')              return 'python';
   if (name === 'list_tool_categories' || name === 'get_tool_signature') return 'code-mode';
   return null;
@@ -574,6 +525,51 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     }
   );
   remember('material_add_node', materialAddNodeMeta);
+
+  server.tool(
+    'material_set_node',
+    appendMeta('Move and/or set properties on an existing node in a material graph.', materialSetNodeMeta),
+    {
+      material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+      function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+      node_id: z.string().min(1).describe('ID/name of the existing node to update'),
+      node_pos: z.tuple([z.number(), z.number()]).optional().describe('New graph position [x, y]'),
+      properties: z.record(z.string(), z.unknown()).optional().describe('Properties to set on the node'),
+    },
+    async (params) => {
+      const r = await materialSetNodeHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_set_node', materialSetNodeMeta);
+
+  server.tool(
+    'material_delete_node',
+    appendMeta('Delete an existing node from a material graph.', materialDeleteNodeMeta),
+    {
+      material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+      function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+      node_id: z.string().min(1).describe('ID/name of the node to delete'),
+    },
+    async (params) => {
+      const r = await materialDeleteNodeHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_delete_node', materialDeleteNodeMeta);
+
+  server.tool(
+    'asset_delete',
+    appendMeta('Permanently delete a content asset by object path.', assetDeleteMeta),
+    {
+      path: z.string().min(1).describe('Object path of the asset to delete, e.g. /Game/Foo/MF_X.MF_X'),
+    },
+    async (params) => {
+      const r = await assetDeleteHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('asset_delete', assetDeleteMeta);
 
   server.tool(
     'material_connect_nodes',
@@ -1061,529 +1057,6 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     }
   );
   // no meta registered (PCGEx pure-TS handler)
-
-  // ── Worldbuilding hub — linguistics + planet physics packages ───────────────
-  server.tool(
-    'language_define_phonology',
-    'Persist phoneme inventory (+ optional phonotactics) for deterministic validation / naming.',
-    definePhonologySchema.shape,
-    async (params) => {
-      try {
-        const result = definePhonology(params as z.infer<typeof definePhonologySchema>);
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (worldbuilding pure-TS handler)
-
-  server.tool(
-    'language_word_for',
-    'Deterministic lexeme lookup for (language_id, concept_id); optionally seed the lexicon inline.',
-    wordForSchema.shape,
-    async (params) => {
-      try {
-        const result = languageWordFor(params as z.infer<typeof wordForSchema>);
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (worldbuilding pure-TS handler)
-
-  server.tool(
-    'language_generate_name',
-    'Seeded phonotactic name generation using phonology + phonotactics registered for the language.',
-    generateNameSchema.shape,
-    async (params) => {
-      try {
-        const result = languageGenerateName(params as z.infer<typeof generateNameSchema>);
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (worldbuilding pure-TS handler)
-
-  server.tool(
-    'language_apply_sound_changes',
-    'Placeholder for Lexurgy-style ordered rules (L5).',
-    soundChangesSchema.shape,
-    async (params) => {
-      const result = languageApplySoundChanges(params as z.infer<typeof soundChangesSchema>);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
-  );
-  // no meta registered (worldbuilding pure-TS handler)
-
-  server.tool(
-    'language_propose_derivation',
-    'Placeholder for LLM-assisted constrained derivations (L7).',
-    proposeDerivationSchema.shape,
-    async (params) => {
-      const result = languageProposeDerivation(params as z.infer<typeof proposeDerivationSchema>);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
-  );
-  // no meta registered (worldbuilding pure-TS handler)
-
-  server.tool(
-    'language_remix_phonologies',
-    'Placeholder for creole / substrate blending (L9).',
-    remixPhonologiesSchema.shape,
-    async (params) => {
-      const result = languageRemixPhonologies(params as z.infer<typeof remixPhonologiesSchema>);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
-  );
-  // no meta registered (worldbuilding pure-TS handler)
-
-  // ── Architecture Culture Studio ─────────────────────────────────────────────
-
-  server.tool(
-    'architecture_list_cultures',
-    'List all architecture cultures (id, name, eraCount).',
-    {},
-    async () => {
-      try {
-        const result = await architecture_list_cultures({});
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_get_culture',
-    'Fetch a full Culture object by id.',
-    { id: z.string().describe('Culture id') },
-    async (params) => {
-      try {
-        const result = await architecture_get_culture(params);
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_resolve_rules',
-    'Resolve the highest-priority matching rule assigns for (cultureId, eraId, scenario, tagState).',
-    {
-      cultureId: z.string(),
-      eraId: z.string(),
-      scenario: z.string().optional().default(''),
-      tagState: z.record(z.string()).optional().default({}),
-    },
-    async (params) => {
-      try {
-        const result = await architecture_resolve_rules({
-          cultureId: params.cultureId,
-          eraId: params.eraId,
-          scenario: params.scenario ?? '',
-          tagState: params.tagState ?? {},
-        });
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_validate_culture',
-    'Validate a culture and return {ok, issues}.',
-    { id: z.string() },
-    async (params) => {
-      try {
-        const result = await architecture_validate_culture(params);
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_create_culture',
-    'Create a new culture, optionally seeding from presets.',
-    {
-      id: z.string().describe('kebab-case culture id'),
-      name: z.string(),
-      region: z.string(),
-      climate: z.string(),
-      seedFromPresets: z.boolean().optional(),
-    },
-    async (params) => {
-      try {
-        await architecture_create_culture(params);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_update_culture',
-    'Top-level field merge on a culture; arrays replaced wholesale.',
-    {
-      id: z.string(),
-      partial: z.record(z.unknown()).describe('Partial culture fields to merge'),
-    },
-    async (params) => {
-      try {
-        await architecture_update_culture({ id: params.id, partial: params.partial as never });
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_delete_culture',
-    'Delete a culture and all its files.',
-    { id: z.string() },
-    async (params) => {
-      try {
-        await architecture_delete_culture(params);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_add_era',
-    'Add an era to a culture.',
-    { cultureId: z.string(), era: z.record(z.unknown()).describe('Era object') },
-    async (params) => {
-      try {
-        await architecture_add_era({ cultureId: params.cultureId, era: params.era as never });
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_update_era',
-    'Patch fields on an existing era.',
-    { cultureId: z.string(), eraId: z.string(), partial: z.record(z.unknown()) },
-    async (params) => {
-      try {
-        await architecture_update_era({ cultureId: params.cultureId, eraId: params.eraId, partial: params.partial as never });
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_delete_era',
-    'Remove an era from a culture.',
-    { cultureId: z.string(), eraId: z.string() },
-    async (params) => {
-      try {
-        await architecture_delete_era(params);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_add_material',
-    'Add a material to a culture.',
-    { cultureId: z.string(), material: z.record(z.unknown()) },
-    async (params) => {
-      try {
-        await architecture_add_material({ cultureId: params.cultureId, material: params.material as never });
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_update_material',
-    'Patch fields on a material.',
-    { cultureId: z.string(), materialId: z.string(), partial: z.record(z.unknown()) },
-    async (params) => {
-      try {
-        await architecture_update_material({ cultureId: params.cultureId, materialId: params.materialId, partial: params.partial as never });
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_delete_material',
-    'Remove a material from a culture.',
-    { cultureId: z.string(), materialId: z.string() },
-    async (params) => {
-      try {
-        await architecture_delete_material(params);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_add_ornament',
-    'Add an ornament to a culture.',
-    { cultureId: z.string(), ornament: z.record(z.unknown()) },
-    async (params) => {
-      try {
-        await architecture_add_ornament({ cultureId: params.cultureId, ornament: params.ornament as never });
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_update_ornament',
-    'Patch fields on an ornament.',
-    { cultureId: z.string(), ornamentId: z.string(), partial: z.record(z.unknown()) },
-    async (params) => {
-      try {
-        await architecture_update_ornament({ cultureId: params.cultureId, ornamentId: params.ornamentId, partial: params.partial as never });
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_delete_ornament',
-    'Remove an ornament from a culture.',
-    { cultureId: z.string(), ornamentId: z.string() },
-    async (params) => {
-      try {
-        await architecture_delete_ornament(params);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_add_tag_axis',
-    'Add a tag axis to a culture.',
-    { cultureId: z.string(), axis: z.record(z.unknown()) },
-    async (params) => {
-      try {
-        await architecture_add_tag_axis({ cultureId: params.cultureId, axis: params.axis as never });
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_update_tag_axis',
-    'Patch fields on a tag axis.',
-    { cultureId: z.string(), axisId: z.string(), partial: z.record(z.unknown()) },
-    async (params) => {
-      try {
-        await architecture_update_tag_axis({ cultureId: params.cultureId, axisId: params.axisId, partial: params.partial as never });
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_delete_tag_axis',
-    'Remove a tag axis from a culture.',
-    { cultureId: z.string(), axisId: z.string() },
-    async (params) => {
-      try {
-        await architecture_delete_tag_axis(params);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_add_rule',
-    'Add a rule to culture scope or a specific era scope.',
-    {
-      cultureId: z.string(),
-      rule: z.record(z.unknown()),
-      scope: z.union([z.literal('culture'), z.object({ era: z.string() })]),
-    },
-    async (params) => {
-      try {
-        await architecture_add_rule({ cultureId: params.cultureId, rule: params.rule as never, scope: params.scope as never });
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_update_rule',
-    'Patch fields on a rule (search by id, optional scope hint).',
-    {
-      cultureId: z.string(),
-      ruleId: z.string(),
-      partial: z.record(z.unknown()),
-      scope: z.union([z.literal('culture'), z.object({ era: z.string() })]).optional(),
-    },
-    async (params) => {
-      try {
-        await architecture_update_rule({ cultureId: params.cultureId, ruleId: params.ruleId, partial: params.partial as never, scope: params.scope as never });
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'architecture_delete_rule',
-    'Remove a rule (search by id, optional scope hint).',
-    {
-      cultureId: z.string(),
-      ruleId: z.string(),
-      scope: z.union([z.literal('culture'), z.object({ era: z.string() })]).optional(),
-    },
-    async (params) => {
-      try {
-        await architecture_delete_rule({ cultureId: params.cultureId, ruleId: params.ruleId, scope: params.scope as never });
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }], isError: true };
-      }
-    }
-  );
-  // no meta registered (architecture pure-TS handler)
-
-  server.tool(
-    'hayba_planet_habitable_zone',
-    'Kopparapu et al. (2014) HZ distances with Ramirez-style inner-edge mass correction.',
-    hzSchema.shape,
-    async (params) => {
-      const result = planetHabitableZone(params as z.infer<typeof hzSchema>);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
-  );
-  // no meta registered (worldbuilding pure-TS handler)
-
-  server.tool(
-    'hayba_planet_tidal_locking',
-    'Darwin-style tidal locking timescale with constant Q.',
-    tidalSchema.shape,
-    async (params) => {
-      const result = planetTidalLocking(params as z.infer<typeof tidalSchema>);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
-  );
-  // no meta registered (worldbuilding pure-TS handler)
-
-  server.tool(
-    'hayba_planet_dynamo_field',
-    'Christensen–Aubert-style dipole scaling diagnostic.',
-    dynamoSchema.shape,
-    async (params) => {
-      const result = planetDynamoField(params as z.infer<typeof dynamoSchema>);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
-  );
-  // no meta registered (worldbuilding pure-TS handler)
-
-  server.tool(
-    'hayba_planet_escape_regime',
-    'Jeans parameter vs energy-limited escape heuristic.',
-    escapeSchema.shape,
-    async (params) => {
-      const result = planetEscapeRegime(params as z.infer<typeof escapeSchema>);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
-  );
-  // no meta registered (worldbuilding pure-TS handler)
-
-  server.tool(
-    'hayba_planet_stability_schema',
-    'Returns stability-report JSON Schema + example fixture (planet-sim P8).',
-    {},
-    async () => {
-      const result = planetStabilityReportPayload();
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
-  );
-  // no meta registered (worldbuilding pure-TS handler)
 
   // Gaea / terrain feature surface intentionally disabled — kept out of the
   // build by removing imports + registrations. Will return when the
@@ -2201,6 +1674,21 @@ function recordEagerSchemas(
     node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y] for the new node'),
     properties: z.record(z.string(), z.unknown()).optional().describe('Initial properties for the node'),
   }, 'low', '{node_id, expression_class, position}');
+  reg('material_set_node', {
+    material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+    function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+    node_id: z.string().min(1).describe('ID/name of the existing node to update'),
+    node_pos: z.tuple([z.number(), z.number()]).optional().describe('New graph position [x, y]'),
+    properties: z.record(z.string(), z.unknown()).optional().describe('Properties to set on the node'),
+  }, 'low', '{node_id}');
+  reg('material_delete_node', {
+    material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+    function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+    node_id: z.string().min(1).describe('ID/name of the node to delete'),
+  }, 'low', '{deleted}');
+  reg('asset_delete', {
+    path: z.string().min(1).describe('Object path of the asset to delete, e.g. /Game/Foo/MF_X.MF_X'),
+  }, 'low', '{deleted}');
   reg('material_connect_nodes', {
     material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
     function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
@@ -2344,39 +1832,6 @@ function recordEagerSchemas(
     target: z.enum(['global', 'project']).optional(),
   }, 'medium', '{inferred:{folders, naming, workflow}, saved_to?}');
 
-  reg('language_define_phonology', definePhonologySchema.shape, 'low', '{ok, language_id, phoneme_count}');
-  reg('language_word_for', wordForSchema.shape, 'low', '{lexeme}');
-  reg('language_generate_name', generateNameSchema.shape, 'low', '{name}');
-  reg('language_apply_sound_changes', soundChangesSchema.shape, 'low', '{ok, message}');
-  reg('language_propose_derivation', proposeDerivationSchema.shape, 'low', '{ok, message}');
-  reg('language_remix_phonologies', remixPhonologiesSchema.shape, 'low', '{ok, message}');
-  reg('architecture_list_cultures',  {}, 'low', '{id,name,eraCount}[]');
-  reg('architecture_get_culture',    { id: z.string() }, 'low', 'Culture');
-  reg('architecture_resolve_rules',  { cultureId: z.string(), eraId: z.string(), scenario: z.string().optional(), tagState: z.record(z.string()).optional() }, 'low', 'Rule assigns object');
-  reg('architecture_validate_culture', { id: z.string() }, 'low', '{ok,issues:[{path,message,severity}]}');
-  reg('architecture_create_culture', { id: z.string(), name: z.string(), region: z.string(), climate: z.string(), seedFromPresets: z.boolean().optional() }, 'low', '{ok}');
-  reg('architecture_update_culture', { id: z.string(), partial: z.record(z.unknown()) }, 'low', '{ok}');
-  reg('architecture_delete_culture', { id: z.string() }, 'low', '{ok}');
-  reg('architecture_add_era',    { cultureId: z.string(), era: z.record(z.unknown()) }, 'low', '{ok}');
-  reg('architecture_update_era', { cultureId: z.string(), eraId: z.string(), partial: z.record(z.unknown()) }, 'low', '{ok}');
-  reg('architecture_delete_era', { cultureId: z.string(), eraId: z.string() }, 'low', '{ok}');
-  reg('architecture_add_material',    { cultureId: z.string(), material: z.record(z.unknown()) }, 'low', '{ok}');
-  reg('architecture_update_material', { cultureId: z.string(), materialId: z.string(), partial: z.record(z.unknown()) }, 'low', '{ok}');
-  reg('architecture_delete_material', { cultureId: z.string(), materialId: z.string() }, 'low', '{ok}');
-  reg('architecture_add_ornament',    { cultureId: z.string(), ornament: z.record(z.unknown()) }, 'low', '{ok}');
-  reg('architecture_update_ornament', { cultureId: z.string(), ornamentId: z.string(), partial: z.record(z.unknown()) }, 'low', '{ok}');
-  reg('architecture_delete_ornament', { cultureId: z.string(), ornamentId: z.string() }, 'low', '{ok}');
-  reg('architecture_add_tag_axis',    { cultureId: z.string(), axis: z.record(z.unknown()) }, 'low', '{ok}');
-  reg('architecture_update_tag_axis', { cultureId: z.string(), axisId: z.string(), partial: z.record(z.unknown()) }, 'low', '{ok}');
-  reg('architecture_delete_tag_axis', { cultureId: z.string(), axisId: z.string() }, 'low', '{ok}');
-  reg('architecture_add_rule',    { cultureId: z.string(), rule: z.record(z.unknown()), scope: z.union([z.literal('culture'), z.object({ era: z.string() })]) }, 'low', '{ok}');
-  reg('architecture_update_rule', { cultureId: z.string(), ruleId: z.string(), partial: z.record(z.unknown()), scope: z.union([z.literal('culture'), z.object({ era: z.string() })]).optional() }, 'low', '{ok}');
-  reg('architecture_delete_rule', { cultureId: z.string(), ruleId: z.string(), scope: z.union([z.literal('culture'), z.object({ era: z.string() })]).optional() }, 'low', '{ok}');
-  reg('hayba_planet_habitable_zone', hzSchema.shape, 'low', 'HabitableZoneResult JSON');
-  reg('hayba_planet_tidal_locking', tidalSchema.shape, 'low', 'TidalLockingResult JSON');
-  reg('hayba_planet_dynamo_field', dynamoSchema.shape, 'low', 'DynamoScalingResult JSON');
-  reg('hayba_planet_escape_regime', escapeSchema.shape, 'low', 'AtmosphericEscapeResult JSON');
-  reg('hayba_planet_stability_schema', {}, 'low', '{schema_json, example}');
 
   // ── Landscape import ──────────────────────────────────────────────────────
   reg('hayba_import_landscape', {

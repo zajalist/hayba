@@ -51,6 +51,8 @@ TArray<FString> FHaybaMCPMaterialHandler::GetCommands() const
         TEXT("material_create"),
         TEXT("material_function_create"),
         TEXT("material_add_node"),
+        TEXT("material_set_node"),
+        TEXT("material_delete_node"),
         TEXT("material_connect_nodes"),
         TEXT("material_create_instance"),
         TEXT("material_set_param"),
@@ -65,6 +67,8 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::Handle(const FString& Cmd, const T
     if (Cmd == TEXT("material_create"))         return MatCreate(P);
     if (Cmd == TEXT("material_function_create")) return MatFunctionCreate(P);
     if (Cmd == TEXT("material_add_node"))       return MatAddNode(P);
+    if (Cmd == TEXT("material_set_node"))       return MatSetNode(P);
+    if (Cmd == TEXT("material_delete_node"))    return MatDeleteNode(P);
     if (Cmd == TEXT("material_connect_nodes"))  return MatConnectNodes(P);
     if (Cmd == TEXT("material_create_instance")) return MatCreateInstance(P);
     if (Cmd == TEXT("material_set_param"))      return MatSetParam(P);
@@ -331,6 +335,21 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatFunctionCreate(const TSharedPtr
     return FHaybaHandlerResult::Ok(Out);
 }
 
+// Spread auto-placed nodes (no explicit node_pos) over a grid keyed off the
+// count of existing expressions, instead of stacking every new node at (0,0).
+// Inputs flow left->right toward the output, so new nodes start far left and
+// wrap into rows. Explicit node_pos always overrides this.
+static void HaybaAutoNodePos(int32 ExistingCount, int32& X, int32& Y)
+{
+    constexpr int32 Cols = 6;
+    constexpr int32 DX = 320;   // horizontal spacing (wider than a typical node)
+    constexpr int32 DY = 260;   // vertical spacing (taller than a texture-sample node)
+    constexpr int32 OriginX = -1700;
+    constexpr int32 OriginY = -600;
+    X = OriginX + (ExistingCount % Cols) * DX;
+    Y = OriginY + (ExistingCount / Cols) * DY;
+}
+
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddNode(const TSharedPtr<FJsonObject>& P)
 {
     FString ExprClass;
@@ -340,11 +359,13 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddNode(const TSharedPtr<FJsonO
     if (!ExprCls) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_add_node: class not found: %s"), *ExprClass));
 
     int32 X = 0, Y = 0;
+    bool bHasPos = false;
     const TArray<TSharedPtr<FJsonValue>>* Pos;
     if (P->TryGetArrayField(TEXT("node_pos"), Pos) && Pos->Num() >= 2)
     {
         X = (int32)(*Pos)[0]->AsNumber();
         Y = (int32)(*Pos)[1]->AsNumber();
+        bHasPos = true;
     }
 
     const TSharedPtr<FJsonObject>* PropsObj = nullptr;
@@ -356,6 +377,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddNode(const TSharedPtr<FJsonO
     {
         UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
         if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_add_node: function not found"));
+        if (!bHasPos) HaybaAutoNodePos(Fn->GetExpressions().Num(), X, Y);
         UMaterialExpression* Expr = UMaterialEditingLibrary::CreateMaterialExpressionInFunction(Fn, ExprCls, X, Y);
         if (!Expr) return FHaybaHandlerResult::Err(TEXT("material_add_node: CreateMaterialExpressionInFunction failed"));
         if (PropsObj) ApplyNodeProps(Expr, *PropsObj);
@@ -372,6 +394,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddNode(const TSharedPtr<FJsonO
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_add_node: material not found"));
 
+    if (!bHasPos) HaybaAutoNodePos(Mat->GetExpressions().Num(), X, Y);
     UMaterialExpression* Expr = UMaterialEditingLibrary::CreateMaterialExpression(Mat, ExprCls, X, Y);
     if (!Expr) return FHaybaHandlerResult::Err(TEXT("material_add_node: CreateMaterialExpression failed"));
     if (PropsObj) ApplyNodeProps(Expr, *PropsObj);
@@ -576,21 +599,21 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatList(const TSharedPtr<FJsonObje
     return FHaybaHandlerResult::Ok(Result);
 }
 
-FHaybaHandlerResult FHaybaMCPMaterialHandler::MatGetInfo(const TSharedPtr<FJsonObject>& P)
+// Serialize a material/function expression list to JSON (id, class, inputs).
+// Templated so it works for both UMaterial::GetExpressions() and
+// UMaterialFunction::GetExpressions() regardless of their exact return type.
+template <typename TExprRange>
+static TArray<TSharedPtr<FJsonValue>> SerializeMaterialExpressions(const TExprRange& InExprs)
 {
-    FString Path;
-    if (!P->TryGetStringField(TEXT("path"), Path)) return FHaybaHandlerResult::Err(TEXT("material_get_info: missing path"));
-
-    UMaterial* Mat = LoadObject<UMaterial>(nullptr, *Path);
-    if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_get_info: material not found"));
-
     TArray<TSharedPtr<FJsonValue>> Exprs;
-    for (UMaterialExpression* Expr : Mat->GetExpressions())
+    for (UMaterialExpression* Expr : InExprs)
     {
         if (!Expr) continue;
         TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
         Entry->SetStringField(TEXT("id"),    Expr->GetName());
         Entry->SetStringField(TEXT("class"), Expr->GetClass()->GetName());
+        Entry->SetNumberField(TEXT("x"), Expr->MaterialExpressionEditorX);
+        Entry->SetNumberField(TEXT("y"), Expr->MaterialExpressionEditorY);
 
         TArray<TSharedPtr<FJsonValue>> Inputs;
         int32 InputIdx = 0;
@@ -608,10 +631,119 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatGetInfo(const TSharedPtr<FJsonO
         Entry->SetArrayField(TEXT("inputs"), Inputs);
         Exprs.Add(MakeShared<FJsonValueObject>(Entry.ToSharedRef()));
     }
+    return Exprs;
+}
 
+FHaybaHandlerResult FHaybaMCPMaterialHandler::MatGetInfo(const TSharedPtr<FJsonObject>& P)
+{
+    FString Path;
+    if (!P->TryGetStringField(TEXT("path"), Path)) return FHaybaHandlerResult::Err(TEXT("material_get_info: missing path"));
+
+    // UMaterial first, then fall back to UMaterialFunction (same GetExpressions()
+    // graph API). Material instances are not handled here (they have no graph).
+    if (UMaterial* Mat = LoadObject<UMaterial>(nullptr, *Path))
+    {
+        TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+        Out->SetStringField(TEXT("kind"), TEXT("material"));
+        Out->SetStringField(TEXT("name"), Mat->GetName());
+        Out->SetArrayField(TEXT("expressions"), SerializeMaterialExpressions(Mat->GetExpressions()));
+        Out->SetNumberField(TEXT("shading_model"), (int32)Mat->GetShadingModels().GetFirstShadingModel());
+        return FHaybaHandlerResult::Ok(Out);
+    }
+
+    if (UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *Path))
+    {
+        TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+        Out->SetStringField(TEXT("kind"), TEXT("function"));
+        Out->SetStringField(TEXT("name"), Fn->GetName());
+        Out->SetStringField(TEXT("description"), Fn->Description);
+        Out->SetArrayField(TEXT("expressions"), SerializeMaterialExpressions(Fn->GetExpressions()));
+        return FHaybaHandlerResult::Ok(Out);
+    }
+
+    return FHaybaHandlerResult::Err(TEXT("material_get_info: no UMaterial or UMaterialFunction at path"));
+}
+
+// Move and/or re-property an existing node by id, in a material or function.
+FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetNode(const TSharedPtr<FJsonObject>& P)
+{
+    FString NodeId;
+    if (!P->TryGetStringField(TEXT("node_id"), NodeId)) return FHaybaHandlerResult::Err(TEXT("material_set_node: missing node_id"));
+
+    int32 X = 0, Y = 0; bool bHasPos = false;
+    const TArray<TSharedPtr<FJsonValue>>* Pos;
+    if (P->TryGetArrayField(TEXT("node_pos"), Pos) && Pos->Num() >= 2)
+    {
+        X = (int32)(*Pos)[0]->AsNumber();
+        Y = (int32)(*Pos)[1]->AsNumber();
+        bHasPos = true;
+    }
+    const TSharedPtr<FJsonObject>* PropsObj = nullptr;
+    P->TryGetObjectField(TEXT("properties"), PropsObj);
+
+    auto ApplyTo = [&](UMaterialExpression* Expr) {
+        if (bHasPos) { Expr->MaterialExpressionEditorX = X; Expr->MaterialExpressionEditorY = Y; }
+        if (PropsObj) ApplyNodeProps(Expr, *PropsObj);
+    };
+
+    FString FuncPath;
+    if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())
+    {
+        UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
+        if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_set_node: function not found"));
+        UMaterialExpression* Expr = FindExprByNameInFunction(Fn, NodeId);
+        if (!Expr) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_set_node: node not found: %s"), *NodeId));
+        ApplyTo(Expr);
+        UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+        Out->SetStringField(TEXT("node_id"), NodeId);
+        return FHaybaHandlerResult::Ok(Out);
+    }
+
+    FString MatPath;
+    if (!P->TryGetStringField(TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_set_node: missing material_path or function_path"));
+    UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
+    if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_set_node: material not found"));
+    UMaterialExpression* Expr = FindExprByName(Mat, NodeId);
+    if (!Expr) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_set_node: node not found: %s"), *NodeId));
+    ApplyTo(Expr);
+    Mat->MarkPackageDirty();
+    UMaterialEditingLibrary::RecompileMaterial(Mat);
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-    Out->SetStringField(TEXT("name"), Mat->GetName());
-    Out->SetArrayField(TEXT("expressions"), Exprs);
-    Out->SetNumberField(TEXT("shading_model"), (int32)Mat->GetShadingModels().GetFirstShadingModel());
+    Out->SetStringField(TEXT("node_id"), NodeId);
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+// Delete an existing node by id, in a material or function.
+FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDeleteNode(const TSharedPtr<FJsonObject>& P)
+{
+    FString NodeId;
+    if (!P->TryGetStringField(TEXT("node_id"), NodeId)) return FHaybaHandlerResult::Err(TEXT("material_delete_node: missing node_id"));
+
+    FString FuncPath;
+    if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())
+    {
+        UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
+        if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_delete_node: function not found"));
+        UMaterialExpression* Expr = FindExprByNameInFunction(Fn, NodeId);
+        if (!Expr) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_delete_node: node not found: %s"), *NodeId));
+        UMaterialEditingLibrary::DeleteMaterialExpressionInFunction(Fn, Expr);
+        UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+        Out->SetBoolField(TEXT("deleted"), true);
+        return FHaybaHandlerResult::Ok(Out);
+    }
+
+    FString MatPath;
+    if (!P->TryGetStringField(TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_delete_node: missing material_path or function_path"));
+    UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
+    if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_delete_node: material not found"));
+    UMaterialExpression* Expr = FindExprByName(Mat, NodeId);
+    if (!Expr) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_delete_node: node not found: %s"), *NodeId));
+    UMaterialEditingLibrary::DeleteMaterialExpression(Mat, Expr);
+    Mat->MarkPackageDirty();
+    UMaterialEditingLibrary::RecompileMaterial(Mat);
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetBoolField(TEXT("deleted"), true);
     return FHaybaHandlerResult::Ok(Out);
 }
