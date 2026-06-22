@@ -32,17 +32,21 @@ def read_exr(path):
         return np.asarray(iio.imread(path), dtype=np.float32)
 
 
-def read_worldpos_exr(path):
-    """Read the world-position pass; background (alpha < 0.5, when present) → NaN.
-    Returns (H, W, 3) world XYZ or None if missing."""
+def read_worldpos_exr(path, bg_eps: float = 1e-3):
+    """Read the world-position pass; background (rendered pure black by
+    study_render, i.e. RGB ~= 0) → NaN. Returns (H, W, 3) world XYZ or None.
+
+    The alpha channel from SCS_SceneColorHDR is unreliable as a sentinel (sky vs
+    geometry varies), so study_render disables atmosphere/fog and the background
+    is clean black — `|R|+|G|+|B| < bg_eps` marks it."""
     arr = read_exr(path)
     if arr is None:
         return None
     if arr.ndim == 2:
         arr = arr[..., None].repeat(3, axis=2)
-    rgb = arr[..., :3].copy()
-    if arr.shape[-1] >= 4:
-        rgb[arr[..., 3] < 0.5] = np.nan
+    rgb = arr[..., :3].astype(np.float64).copy()
+    bg = np.abs(rgb).sum(axis=2) < bg_eps
+    rgb[bg] = np.nan
     return rgb
 
 
