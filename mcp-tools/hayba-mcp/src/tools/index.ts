@@ -93,6 +93,7 @@ import { setupConventionsHandler } from './hayba-setup-conventions.js';
 import { analyzeConventionsHandler } from './hayba-analyze-conventions.js';
 
 // ── Validator (runtime rule system + history panel feed) ────────────────────
+import { appendNicheBriefing } from './niche-briefing.js';
 import { installToolHooks } from '../validator/index.js';
 import {
   validatorRunSchema, validatorRunHandler,
@@ -129,7 +130,11 @@ import {
 
 // SessionManager (Gaea session) parked while terrain features are off — kept
 // as a typed shim so registerTools' signature doesn't churn for callers.
-type SessionManagerStub = Record<string, unknown>;
+// briefNicheOnce is used by the first-touch niche briefing system.
+type SessionManagerStub = {
+  briefNicheOnce?(domain: string): boolean;
+  [key: string]: unknown;
+};
 
 export async function registerTools(server: McpServer, session: SessionManagerStub): Promise<RoutingHandle | null> {
   const settings = readSettings();
@@ -207,6 +212,15 @@ function inferDir(name: string): string | null {
   if (name === 'python_run')              return 'python';
   if (name === 'list_tool_categories' || name === 'get_tool_signature') return 'code-mode';
   return null;
+}
+
+/** Attach a first-touch niche briefing to a ToolResult when appropriate. */
+function withNicheBriefing(
+  domain: string,
+  session: SessionManagerStub,
+  r: { content: Array<{ type: 'text'; text: string }>; isError?: boolean },
+): { content: Array<{ type: 'text'; text: string }>; isError?: boolean } {
+  return appendNicheBriefing(domain, session, { content: r.content, isError: r.isError });
 }
 
 function registerToolsCore(server: McpServer, session: SessionManagerStub): void {
@@ -433,7 +447,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialCreateHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_create', materialCreateMeta);
@@ -448,7 +462,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialCreateInstanceHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_create_instance', materialCreateInstanceMeta);
@@ -467,7 +481,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialSetParamHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_set_param', materialSetParamMeta);
@@ -482,7 +496,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialApplyHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_apply', materialApplyMeta);
@@ -495,7 +509,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialListHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_list', materialListMeta);
@@ -508,7 +522,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialGetInfoHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_get_info', materialGetInfoMeta);
@@ -527,7 +541,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialAddNodeHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_add_node', materialAddNodeMeta);
@@ -544,7 +558,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialSetNodeHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_set_node', materialSetNodeMeta);
@@ -559,7 +573,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialDeleteNodeHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_delete_node', materialDeleteNodeMeta);
@@ -573,7 +587,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialSetMaterialPropertyHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_set_property', materialSetMaterialPropertyMeta);
@@ -586,7 +600,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialCompileHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_compile', materialCompileMeta);
@@ -605,7 +619,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialAddCommentHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_add_comment', materialAddCommentMeta);
@@ -622,7 +636,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialAddRerouteDeclarationHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_add_reroute_declaration', materialAddRerouteDeclarationMeta);
@@ -638,7 +652,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialAddRerouteUsageHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_add_reroute_usage', materialAddRerouteUsageMeta);
@@ -670,7 +684,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialConnectNodesHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_connect_nodes', materialConnectNodesMeta);
@@ -684,7 +698,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialFunctionCreateHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_function_create', materialFunctionCreateMeta);
@@ -701,7 +715,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialDisconnectHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_disconnect', materialDisconnectMeta);
