@@ -600,6 +600,21 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
         return FHaybaHandlerResult::Err(TEXT("Failed to create package"));
     }
 
+    // If this asset already exists on disk, CreatePackage returns the existing
+    // package which may be only PARTIALLY loaded — and UPackage::SavePackage
+    // refuses a partially-loaded package ("cannot be saved as it has only been
+    // partially loaded"). Fully load it, then move any existing object of the
+    // same name out of the way so we cleanly create-or-overwrite.
+    if (!Package->IsFullyLoaded())
+    {
+        Package->FullyLoad();
+    }
+    if (UObject* Existing = StaticFindObject(UObject::StaticClass(), Package, *SafeName))
+    {
+        Existing->Rename(nullptr, GetTransientPackage(),
+            REN_DontCreateRedirectors | REN_NonTransactional | REN_DoNotDirty);
+    }
+
     UPCGGraph* NewGraph = NewObject<UPCGGraph>(Package, *SafeName, RF_Public | RF_Standalone);
     if (!NewGraph)
     {
