@@ -159,15 +159,15 @@ def study_render(asset, views=8, res=512, out_root=None):
         c.clear_show_only_components()
         c.show_only_actor_components(cube)
         c.set_editor_property("fov_angle", 50.0)
-        # Clean black background so RGB~=0 is a reliable sentinel for the
-        # worldpos/uv passes (alpha from SceneColorHDR is unreliable).
-        c.set_editor_property("show_flag_settings", [
+        # Per-pass show flags: the worldpos/uv passes need a clean black
+        # background (RGB~=0 sentinel; SceneColorHDR alpha is unreliable), so
+        # atmosphere/fog/skylight are disabled for them. The grounding (color)
+        # pass keeps lighting + auto-exposure so the agent/SAM see a bright mesh.
+        FLAGS_RAW = [
             unreal.EngineShowFlagsSetting(show_flag_name="Atmosphere", enabled=False),
             unreal.EngineShowFlagsSetting(show_flag_name="Fog", enabled=False),
             unreal.EngineShowFlagsSetting(show_flag_name="VolumetricFog", enabled=False),
-            unreal.EngineShowFlagsSetting(show_flag_name="SkyLighting", enabled=False),
-            unreal.EngineShowFlagsSetting(show_flag_name="EyeAdaptation", enabled=False),
-        ])
+        ]
 
         wp_mid = smc.create_dynamic_material_instance(0, mat_wp)
         uv_mid = smc.create_dynamic_material_instance(0, mat_uv)
@@ -181,12 +181,16 @@ def study_render(asset, views=8, res=512, out_root=None):
             views_meta.append({"view": i, "pos": [pos.x, pos.y, pos.z],
                                "rot": [rot.roll, rot.pitch, rot.yaw], "fov": 50.0})
 
-            # 1) color — real materials, tonemapped LDR (looks normal to the agent)
+            # 1) grounding image — lit LDR with lighting + auto-exposure ON so the
+            # mesh is bright/legible for the agent + SAM.
             smc.set_material(0, mesh.get_material(0) or unreal.load_object(None, "/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"))
+            c.set_editor_property("show_flag_settings", [])
             c.set_editor_property("texture_target", rt_c)
             c.set_editor_property("capture_source", unreal.SceneCaptureSource.SCS_FINAL_COLOR_LDR)
             c.capture_scene(); c.capture_scene()
             RL.export_render_target(world, rt_c, out_dir, f"color_v{i}.png")
+            # raw passes need the clean black background
+            c.set_editor_property("show_flag_settings", FLAGS_RAW)
 
             # 2) calibration — measure the scene pre-exposure k on an object pixel
             smc.set_material(0, mat_const)

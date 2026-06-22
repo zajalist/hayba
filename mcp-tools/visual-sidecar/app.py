@@ -55,7 +55,13 @@ def _run_sam(image, box=None, points=None):
     """Refine an agent box/points into a binary mask via SAM. Monkeypatched in
     tests so projection can be exercised without the weights."""
     predictor = _load_sam()
-    predictor.set_image(image)
+    img = np.asarray(image)
+    if img.ndim == 2:
+        img = np.stack([img] * 3, axis=-1)
+    img = img[..., :3]                       # drop alpha — SAM wants HxWx3 RGB
+    if img.dtype != np.uint8:
+        img = np.clip(img, 0, 255).astype(np.uint8)
+    predictor.set_image(np.ascontiguousarray(img))
     box_arr = np.asarray(box, dtype=float) if box is not None else None
     pts = lbls = None
     if points:
