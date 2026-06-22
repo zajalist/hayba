@@ -190,3 +190,18 @@ export interface InstanceState {
 export interface SceneContext {
   instances: InstanceState[];         // every instance (clearance/proximity/count)
 }
+
+/**
+ * Normalize a UE content path to its full OBJECT path (`<package>.<assetName>`),
+ * matching how the in-editor Semantic Studio keys its lookups
+ * (LoadProfile does an exact TryGetObjectField on the suffixed object path).
+ * A package path like "/Game/Foo/Bar" becomes "/Game/Foo/Bar.Bar"; a path that
+ * already carries a ".Name" suffix (or isn't a /-content path) is returned as-is.
+ */
+export function toObjectPath(assetPath: string): string {
+  if (typeof assetPath !== 'string' || !assetPath.startsWith('/')) return assetPath;
+  const lastSlash = assetPath.lastIndexOf('/');
+  const tail = assetPath.slice(lastSlash + 1);
+  if (tail.length === 0 || tail.includes('.')) return assetPath; // already an object path
+  return `${assetPath}.${tail}`;
+}

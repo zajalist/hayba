@@ -8,6 +8,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Profile, Mask } from './contracts.js';
+import { toObjectPath } from './contracts.js';
 
 let PATH_OVERRIDE: string | null = null;
 
@@ -43,7 +44,7 @@ export function loadProfiles(): Profile[] {
 }
 
 export function getProfile(assetId: string): Profile | null {
-  return readAll()[assetId] ?? null;
+  return readAll()[toObjectPath(assetId)] ?? null;
 }
 
 export function profileMap(): Map<string, Profile> {
@@ -52,7 +53,11 @@ export function profileMap(): Map<string, Profile> {
 
 export function putProfile(profile: Profile): void {
   const all = readAll();
-  all[profile.asset_id] = profile;
+  // Key (and store) by the full object path so the in-editor Studio's exact
+  // object-path lookup finds it; package-path keys silently miss.
+  const objectPath = toObjectPath(profile.asset_id);
+  const stored: Profile = { ...profile, asset_id: objectPath };
+  all[objectPath] = stored;
   writeAll(all);
 }
 
@@ -64,6 +69,7 @@ export function annotateProfile(
   opts: { lock?: string[]; auto?: boolean } = {},
 ): Profile | null {
   const all = readAll();
+  assetId = toObjectPath(assetId);
   const base = all[assetId];
   if (!base) return null;
   const edited: string[] = [...base.provenance.edited_fields];
@@ -84,6 +90,7 @@ export function annotateProfile(
 
 export function removeProfile(assetId: string): boolean {
   const all = readAll();
+  assetId = toObjectPath(assetId);
   if (!(assetId in all)) return false;
   delete all[assetId];
   writeAll(all);
@@ -97,6 +104,7 @@ export function getMask(assetId: string, maskId: string): Mask | null {
 
 export function addMask(assetId: string, mask: Mask): Profile | null {
   const all = readAll();
+  assetId = toObjectPath(assetId);
   const base = all[assetId];
   if (!base) return null;
   const masks = (base.masks ?? []).filter(m => m.id !== mask.id);
@@ -109,6 +117,7 @@ export function addMask(assetId: string, mask: Mask): Profile | null {
 
 export function removeMask(assetId: string, maskId: string): boolean {
   const all = readAll();
+  assetId = toObjectPath(assetId);
   const base = all[assetId];
   if (!base?.masks) return false;
   const next = base.masks.filter(m => m.id !== maskId);
