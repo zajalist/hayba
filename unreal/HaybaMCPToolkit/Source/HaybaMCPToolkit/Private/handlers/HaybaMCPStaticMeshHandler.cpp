@@ -115,6 +115,21 @@ static FHaybaHandlerResult MeshSetLOD(const TSharedPtr<FJsonObject>& P)
     if (LodIndex < 0 || LodIndex >= Mesh->GetNumSourceModels())
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("mesh_set_lod: lod_index %d out of range"), LodIndex));
 
+    // Guard the engine-killing assert: PostEditChange() below rebuilds the mesh,
+    // and the lightmap-UV setup asserts check(NumUVs > 0) (StaticMesh.cpp) if any
+    // LOD has zero UV channels — an uncatchable crash. Refuse up front. Use the
+    // built render data's UV count (no MeshDescription module dependency); a
+    // loaded asset always has render data.
+    if (FStaticMeshRenderData* RD = Mesh->GetRenderData())
+    {
+        for (int32 LOD = 0; LOD < RD->LODResources.Num(); ++LOD)
+        {
+            if (RD->LODResources[LOD].GetNumTexCoords() == 0)
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("mesh_set_lod: LOD %d has no UV channels; rebuilding this mesh would crash the editor (check(NumUVs>0)). Add UVs to the mesh before changing LOD settings."), LOD));
+        }
+    }
+
     Mesh->Modify();
     FStaticMeshSourceModel& SM = Mesh->GetSourceModel(LodIndex);
     SM.ScreenSize = (float)ScreenSize;
