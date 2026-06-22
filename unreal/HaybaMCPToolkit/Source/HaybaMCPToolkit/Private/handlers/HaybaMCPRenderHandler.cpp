@@ -162,7 +162,21 @@ namespace HaybaRender
         double RenderMs = 0.0;
         // FEvent:
         FEvent* DoneEvent = nullptr;
+
+        // Returned to the pool only when the LAST owner (caller OR the async
+        // game-thread task, whichever finishes last) drops its shared ref — so
+        // the event is never recycled while the task may still Trigger() it.
+        ~FRenderState()
+        {
+            if (DoneEvent)
+            {
+                FPlatformProcess::ReturnSynchEventToPool(DoneEvent);
+                DoneEvent = nullptr;
+            }
+        }
     };
+
+    using FRenderStatePtr = TSharedPtr<FRenderState, ESPMode::ThreadSafe>;
 
     static AHaybaMCPCaptureActor* GetOrSpawnCaptureActor(UWorld* World)
     {
@@ -174,8 +188,9 @@ namespace HaybaRender
         return World->SpawnActor<AHaybaMCPCaptureActor>(AHaybaMCPCaptureActor::StaticClass());
     }
 
-    /** Game-thread render execution. */
-    static void RunOnGameThread(FRenderState* S)
+    /** Game-thread render execution. Takes a shared ref so the state stays
+     *  alive for the whole task even if the caller's bounded wait timed out. */
+    static void RunOnGameThread(FRenderStatePtr S)
     {
         const double T0 = FPlatformTime::Seconds();
         UWorld* World = ActiveEditorWorld();
@@ -375,13 +390,12 @@ FHaybaHandlerResult FHaybaMCPRenderHandler::Handle(const FString& /*Command*/,
         return FHaybaHandlerResult::Err(TEXT("render_camera: missing params"));
     }
 
-    FRenderState* S = new FRenderState();
+    FRenderStatePtr S = MakeShared<FRenderState, ESPMode::ThreadSafe>();
 
     // ── Parse camera ──────────────────────────────────────────────────────
     const TSharedPtr<FJsonObject>* CameraObj = nullptr;
     if (!Params->TryGetObjectField(TEXT("camera"), CameraObj) || !CameraObj || !(*CameraObj).IsValid())
     {
-        delete S;
         return FHaybaHandlerResult::Err(TEXT("render_camera: missing camera object"));
     }
     FString Kind;
@@ -411,7 +425,6 @@ FHaybaHandlerResult FHaybaMCPRenderHandler::Handle(const FString& /*Command*/,
     }
     else
     {
-        delete S;
         return FHaybaHandlerResult::Err(TEXT("render_camera: camera.kind must be 'actor' or 'transform'"));
     }
 
@@ -448,18 +461,34 @@ FHaybaHandlerResult FHaybaMCPRenderHandler::Handle(const FString& /*Command*/,
     S->DoneEvent = FPlatformProcess::GetSynchEventFromPool(/*bIsManualReset=*/ false);
     if (!S->DoneEvent)
     {
-        delete S;
         return FHaybaHandlerResult::Err(TEXT("render_camera: failed to allocate FEvent"));
     }
 
+    // The lambda captures the shared ref, so S (and its FEvent) outlive this
+    // function even if the wait below times out — RunOnGameThread can never
+    // touch freed state.
     AsyncTask(ENamedThreads::GameThread, [S]() { RunOnGameThread(S); });
 
     // Allow the wait phase + render + headroom.
     const uint32 BlockTimeoutMs = (uint32)((S->TimeoutSeconds + 60.0) * 1000.0);
-    S->DoneEvent->Wait(BlockTimeoutMs);
+    const bool bSignaled = S->DoneEvent->Wait(BlockTimeoutMs);
 
     // ── Build response ────────────────────────────────────────────────────
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+
+    if (!bSignaled)
+    {
+        // The game-thread task is still running (busy/hitched/deadlocked). Do
+        // NOT read S's task-written fields here — that would race the game
+        // thread. The task keeps its own shared ref and will free S when it
+        // finishes; we just report the timeout.
+        Out->SetBoolField(TEXT("ok"), false);
+        TSharedPtr<FJsonObject> Err = MakeShared<FJsonObject>();
+        Err->SetStringField(TEXT("kind"), TEXT("render_timeout"));
+        Err->SetStringField(TEXT("engineHint"), TEXT("render did not complete within wait_timeout_s + 60s; the game thread may be blocked"));
+        Out->SetObjectField(TEXT("error"), Err);
+        return FHaybaHandlerResult::Ok(Out);
+    }
 
     if (S->bWaitTimedOut)
     {
@@ -528,8 +557,9 @@ FHaybaHandlerResult FHaybaMCPRenderHandler::Handle(const FString& /*Command*/,
         }
     }
 
-    FPlatformProcess::ReturnSynchEventToPool(S->DoneEvent);
-    S->DoneEvent = nullptr;
-    delete S;
+    // No manual cleanup: when this function's shared ref to S drops (and the
+    // async task's ref, whichever is last), ~FRenderState returns the FEvent to
+    // the pool. This is safe because we reached here only after the event was
+    // signaled, i.e. the task is done with S.
     return FHaybaHandlerResult::Ok(Out);
 }
