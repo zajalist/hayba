@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+﻿import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -29,6 +29,26 @@ function fixtureCaptured(): Map<string, CapturedTool> {
     ['validator_clear',             'validator'],
     ['validator_rules',             'validator'],
     ['validator_set_rule_enabled',  'validator'],
+    // PLUMB constraint subsystem — captured under the plumb dir, re-registered
+    // as always-on via passthrough.
+    ['plumb_primitives',            'plumb'],
+    ['plumb_profile_bake',          'plumb'],
+    ['plumb_profile_annotate',      'plumb'],
+    ['plumb_profile_list',          'plumb'],
+    ['plumb_profile_get',           'plumb'],
+    ['plumb_constraint_define',     'plumb'],
+    ['plumb_constraint_list',       'plumb'],
+    ['plumb_constraint_remove',     'plumb'],
+    ['plumb_constraint_propose',    'plumb'],
+    ['plumb_validate',              'plumb'],
+    ['plumb_mask_add',              'plumb'],
+    ['plumb_mask_remove',           'plumb'],
+    ['plumb_lesson_add',            'plumb'],
+    ['plumb_lesson_list',           'plumb'],
+    ['plumb_lesson_remove',         'plumb'],
+    ['plumb_study',                 'plumb'],
+    ['plumb_study_take',            'plumb'],
+    ['plumb_segment',               'plumb'],
   ];
   for (const [name, dir] of tools) {
     const schema: z.ZodRawShape = { foo: z.string().optional() };

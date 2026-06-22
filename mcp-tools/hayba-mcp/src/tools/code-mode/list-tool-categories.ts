@@ -1,6 +1,8 @@
 import type { ToolHandler } from '../types.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 import { isToolDisabled } from '../disabled-tools-watcher.js';
+import { listRecordedCommands } from '../schema-registry.js';
+import { listAgentCallableLegacyCommands } from '../../legacy-commands/index.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'low',
@@ -44,21 +46,57 @@ const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: 
   { domain: 'test', command_count: 3, commands: ['test_list','test_run','test_get_log'] },
 ];
 
+/**
+ * A command is *agent-callable right now* iff it has a TS wrapper in the schema
+ * registry OR it is allow-listed for the ue_legacy route. The DOMAINS array
+ * above is the plugin's full *capability* surface (what the C++ dispatch table
+ * can do); this set is the much smaller surface an agent can actually reach via
+ * hayba_invoke. Surfacing both — instead of advertising all 154 as equal — stops
+ * the agent burning turns on unknown_tool/legacy_not_allowlisted. See the MCP UX
+ * review (2026-06-18).
+ */
+function callableCommandSet(): ReadonlySet<string> {
+  const set = new Set<string>(listRecordedCommands());
+  for (const name of listAgentCallableLegacyCommands()) set.add(name);
+  return set;
+}
+
 export const listToolCategoriesHandler: ToolHandler = async () => {
-  // Filter out tools the user has disabled in the MCP panel. Drop categories
-  // that end up empty so the agent doesn't see "actor: 0 commands" noise.
-  const filtered = DOMAINS
+  const callable = callableCommandSet();
+
+  // Filter out tools the user has disabled in the MCP panel, then annotate each
+  // remaining command with whether it is callable now. Drop categories that end
+  // up empty so the agent doesn't see "actor: 0 commands" noise.
+  const domains = DOMAINS
     .map(d => ({
       domain: d.domain,
       commands: d.commands.filter(c => !isToolDisabled(c)),
     }))
     .filter(d => d.commands.length > 0)
-    .map(d => ({ domain: d.domain, command_count: d.commands.length, commands: d.commands }));
+    .map(d => {
+      const callableNames = d.commands.filter(c => callable.has(c));
+      const unavailableNames = d.commands.filter(c => !callable.has(c));
+      return {
+        domain: d.domain,
+        command_count: d.commands.length,
+        callable_count: callableNames.length,
+        callable: callableNames,
+        // Advertised by the plugin but not yet wrapped for agents — calling these
+        // returns unknown_tool. Listed so the agent knows the capability exists
+        // (e.g. to ask the user / use python_run) without trying to invoke them.
+        unavailable: unavailableNames,
+      };
+    });
+
+  const totalAdvertised = domains.reduce((n, d) => n + d.command_count, 0);
+  const totalCallable = domains.reduce((n, d) => n + d.callable_count, 0);
 
   return {
     content: [{ type: 'text', text: JSON.stringify({
-      domains: filtered,
-      total_commands: filtered.reduce((n, d) => n + d.command_count, 0),
+      _legend: 'callable = invokable now via hayba_invoke. unavailable = plugin supports it but no agent wrapper exists yet (calling it errors).',
+      domains,
+      total_commands: totalAdvertised,
+      total_callable: totalCallable,
     }, null, 2) }],
   };
 };

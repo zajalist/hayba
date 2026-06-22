@@ -59,10 +59,14 @@ export const pythonRunHandler: ToolHandler = async (args) => {
   }
   try {
     const client = await ensureConnected();
-    const wrapped = wrapScriptForPrintRedirect(parsed.data.script);
+    // Send the raw script. The UE handler now captures print()/stderr itself
+    // (it injects a capturing print into the user code's exec globals) and
+    // returns them in the stdout/stderr fields. Wrapping here too would
+    // double-exec and route print to the log stream instead of the return value
+    // — see the 2026-06-18 python_run stdout investigation. wrapScriptForPrintRedirect
+    // stays exported for callers that explicitly want log-stream routing.
     const payload: Record<string, unknown> = {
       ...(parsed.data as Record<string, unknown>),
-      script: wrapped,
     };
     const resp = await client.send('python_run', payload);
     const data = (resp.data ?? {}) as Record<string, unknown>;

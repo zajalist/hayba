@@ -18,6 +18,10 @@
     }
   ],
   "Plugins": [
-    { "Name": "PCG", "Enabled": true }
+    { "Name": "PCG", "Enabled": true },
+    { "Name": "PythonScriptPlugin", "Enabled": true },
+    { "Name": "WebBrowserWidget", "Enabled": true },
+    { "Name": "DataValidation", "Enabled": true },
+    { "Name": "EnhancedInput", "Enabled": true }
   ]
 }

@@ -21,6 +21,7 @@ import {
   type ValidatorRule,
 } from '../../validator/index.js';
 import type { UETcpClient } from '../../tcp-client.js';
+import { loadConstraints, primitivesById } from '../../plumb/index.js';
 
 export const validatorRunSchema = {
   scope: z.union([
@@ -124,18 +125,37 @@ export async function validatorRulesHandler(args: { include_disabled_state?: boo
   rules: RuleCatalogEntry[];
 }> {
   const includeState = args.include_disabled_state !== false;
-  return {
-    rules: RULES.map(r => ({
-      id: r.id,
-      severity: r.severity,
-      message: r.message,
-      hint: r.hint,
-      refs: r.refs,
-      trigger: r.trigger,
-      has_evaluator: typeof r.evaluate === 'function',
-      ...(includeState ? { disabled: isRuleDisabled(r.id) } : {}),
-    })),
-  };
+  // One validator catalog: the advisory "floppy" rules + the active PLUMB
+  // constraint checks, listed together.
+  const floppy: RuleCatalogEntry[] = RULES.map(r => ({
+    id: r.id,
+    severity: r.severity,
+    message: r.message,
+    hint: r.hint,
+    refs: r.refs,
+    trigger: r.trigger,
+    has_evaluator: typeof r.evaluate === 'function',
+    ...(includeState ? { disabled: isRuleDisabled(r.id) } : {}),
+  }));
+
+  const prims = primitivesById();
+  const constraintRules: RuleCatalogEntry[] = loadConstraints().map(c => {
+    const prim = prims.get(c.primitive);
+    const bind = c.binding.asset ?? (c.binding.tag ? `#${c.binding.tag.axis}=${c.binding.tag.value}` : '?');
+    const hard = c.hard ?? prim?.defaultHard ?? false;
+    return {
+      id: `plumb:${c.id}`,
+      severity: (hard ? 'error' : 'warning') as ValidatorRule['severity'],
+      message: `PLUMB constraint: ${c.primitive} on ${bind}`,
+      hint: c.note ?? prim?.doc ?? 'A bound PLUMB constraint check.',
+      refs: c.refs,
+      trigger: 'manual' as ValidatorRule['trigger'],
+      has_evaluator: true,
+      ...(includeState ? { disabled: c.enabled === false } : {}),
+    };
+  });
+
+  return { rules: [...floppy, ...constraintRules] };
 }
 
 export const validatorSetRuleEnabledSchema = {

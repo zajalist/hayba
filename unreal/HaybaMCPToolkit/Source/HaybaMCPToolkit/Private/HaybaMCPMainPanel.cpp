@@ -9,6 +9,7 @@
 #include "HaybaMCPValidationPanel.h"
 #include "Slate/SHaybaValidatorPanel.h"
 #include "HaybaMCPMemoryPanel.h"
+#include "HaybaMCPLessonsPanel.h"
 #include "HaybaMCPCapabilitiesPanel.h"
 #include "HaybaMCPSceneMapWebPanel.h"
 #include "HaybaMCPOnboardingWidget.h"
@@ -41,7 +42,8 @@ namespace
             case EHaybaPanel::Plan:       return NSLOCTEXT("Hayba", "Tab.Plan",       "Plan");
             case EHaybaPanel::Diff:       return NSLOCTEXT("Hayba", "Tab.Diff",       "Diff");
             case EHaybaPanel::Validation: return NSLOCTEXT("Hayba", "Tab.Validation", "Validation");
-            case EHaybaPanel::Memory:     return NSLOCTEXT("Hayba", "Tab.Memory",     "Memory");
+            case EHaybaPanel::Memory:     return NSLOCTEXT("Hayba", "Tab.Library",     "Library");
+            case EHaybaPanel::Lessons:    return NSLOCTEXT("Hayba", "Tab.Lessons",     "Lessons");
             case EHaybaPanel::Settings:   return NSLOCTEXT("Hayba", "Tab.Settings",   "Settings");
         }
         return FText::GetEmpty();
@@ -59,7 +61,8 @@ namespace
             case EHaybaPanel::Plan:       return TEXT("Hayba.Icon.Plan");
             case EHaybaPanel::Diff:       return TEXT("Hayba.Icon.Diff");
             case EHaybaPanel::Validation: return TEXT("Hayba.Icon.Validation");
-            case EHaybaPanel::Memory:     return TEXT("Hayba.Icon.Memory");
+            case EHaybaPanel::Memory:     return TEXT("Hayba.Icon.Library"); // Library — custom icon
+            case EHaybaPanel::Lessons:    return TEXT("Hayba.Icon.Memory");
             case EHaybaPanel::Settings:   return TEXT("Hayba.Icon.Settings");
         }
         return NAME_None;
@@ -183,7 +186,7 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildSidebar()
     Items.Append({
         EHaybaPanel::MCP, EHaybaPanel::Slivers, EHaybaPanel::ToolStream, EHaybaPanel::SceneMap,
         EHaybaPanel::Plan, EHaybaPanel::Diff, EHaybaPanel::Validation,
-        EHaybaPanel::Memory, EHaybaPanel::Settings,
+        EHaybaPanel::Memory, EHaybaPanel::Lessons, EHaybaPanel::Settings,
     });
     for (EHaybaPanel P : Items)
     {
@@ -454,10 +457,16 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaPanel Panel)
         }
         case EHaybaPanel::Memory:
         {
-            Subtitle = NSLOCTEXT("Hayba", "Mem.Sub", "Shared collaborative memory across runs.");
+            Subtitle = NSLOCTEXT("Hayba", "Lib.Sub", "Semantic Library — every profiled asset, its masks/constraints, and Open-in-Studio.");
             auto Panel2 = SNew(SHaybaMCPMemoryPanel);
             if (Module) Module->MemoryPanel = Panel2;
             Body = Panel2;
+            break;
+        }
+        case EHaybaPanel::Lessons:
+        {
+            Subtitle = NSLOCTEXT("Hayba", "Lessons.Sub", "Accumulated [[slug]] lessons that explain why constraints exist.");
+            Body = SNew(SHaybaLessonsPanel);
             break;
         }
         case EHaybaPanel::Settings:

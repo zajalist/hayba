@@ -21,6 +21,7 @@ public class HaybaMCPToolkit : ModuleRules
 
         PrivateDependencyModuleNames.AddRange(new string[] {
             "UnrealEd", "EditorFramework", "Projects", "ToolMenus", "WorkspaceMenuStructure",
+            "ContentBrowser", "AdvancedPreviewScene", "RenderCore", "GraphEditor",
             "Sockets", "Networking", "Json", "JsonUtilities",
             "PCG", "HTTP",
             "DirectoryWatcher", "DesktopPlatform",
@@ -36,12 +37,13 @@ public class HaybaMCPToolkit : ModuleRules
             "LevelEditor",
             "WorldPartitionEditor",
             "MaterialEditor",
-            "Niagara", "NiagaraCore",
-            "MovieScene",
+            // Niagara / MovieScene moved to satellite plugins (HaybaMCPNiagara,
+            // HaybaMCPSequencer).
             "WebBrowser", "WebBrowserWidget",
             "EngineSettings",
             "SourceControl",
-            "GameplayAbilities",
+            // GameplayAbilities moved to the optional HaybaMCPGAS satellite plugin
+            // so the core loads even when GameplayAbilities is disabled.
             "GameplayTags",
             "GameplayTasks"
         });
@@ -62,29 +64,8 @@ public class HaybaMCPToolkit : ModuleRules
             });
         }
 
-        // MetaSound (gh#18) — runtime + frontend graph
-        PrivateDependencyModuleNames.AddRange(new string[] {
-            "MetasoundEngine", "MetasoundFrontend", "MetasoundGraphCore"
-        });
-
-        if (Target.bBuildEditor)
-        {
-            PrivateDependencyModuleNames.Add("MetasoundEditor");
-        }
-
-        // Sequencer (gh#9)
-        if (Target.bBuildEditor)
-        {
-            PrivateDependencyModuleNames.AddRange(new string[] {
-                "LevelSequence",
-                "LevelSequenceEditor",
-                "MovieSceneTracks",
-                "MovieSceneTools",
-                "Sequencer",
-                "MovieRenderPipelineCore",
-                "MovieRenderPipelineEditor",
-                "MovieRenderPipelineSettings",
-            });
-        }
+        // MetaSound (gh#18) and Sequencer (gh#9) moved to optional satellite
+        // plugins (HaybaMCPMetaSound, HaybaMCPSequencer) so the core loads when
+        // those plugins are disabled.
     }
 }

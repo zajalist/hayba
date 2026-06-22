@@ -1,6 +1,7 @@
 #include "HaybaMCPLegacyHandler.h"
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPLandscapeImporter.h"
+#include "Interfaces/IPluginManager.h"
 #include "Json.h"
 #include "JsonUtilities.h"
 #include "PCGSettings.h"
@@ -141,7 +142,38 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_Ping(const TSharedPtr<FJsonObjec
 	Data->SetStringField(TEXT("status"), TEXT("ok"));
 	Data->SetStringField(TEXT("ueVersion"), TEXT("5.7"));
 	Data->SetStringField(TEXT("plugin"), TEXT("HaybaMCPToolkit"));
-	Data->SetStringField(TEXT("pluginVersion"), TEXT("0.2.0"));
+
+	// Read the real version from the plugin descriptor instead of a hardcoded
+	// string that drifted (was "0.2.0" while the .uplugin says 0.3.0).
+	{
+		FString PluginVersion = TEXT("unknown");
+		if (TSharedPtr<IPlugin> Self = IPluginManager::Get().FindPlugin(TEXT("HaybaMCPToolkit")))
+		{
+			PluginVersion = Self->GetDescriptor().VersionName;
+		}
+		Data->SetStringField(TEXT("pluginVersion"), PluginVersion);
+	}
+
+	// Optional-capability report: which satellite plugins (and thus command
+	// domains) are present. A satellite is auto-disabled by UE when its backing
+	// engine plugin is off, so this tells the agent/panel which domains are live
+	// and which are unavailable because the plugin/satellite is disabled.
+	{
+		TSharedPtr<FJsonObject> Caps = MakeShareable(new FJsonObject());
+		const TPair<const TCHAR*, const TCHAR*> Satellites[] = {
+			{ TEXT("gas"),       TEXT("HaybaMCPGAS") },
+			{ TEXT("niagara"),   TEXT("HaybaMCPNiagara") },
+			{ TEXT("metasound"), TEXT("HaybaMCPMetaSound") },
+			{ TEXT("seq"),       TEXT("HaybaMCPSequencer") },
+		};
+		for (const auto& S : Satellites)
+		{
+			TSharedPtr<IPlugin> P = IPluginManager::Get().FindPlugin(S.Value);
+			const bool bEnabled = P.IsValid() && P->IsEnabled();
+			Caps->SetBoolField(S.Key, bEnabled);
+		}
+		Data->SetObjectField(TEXT("capabilities"), Caps);
+	}
 
 	UE_LOG(LogHaybaMCPLegacy, Log, TEXT("Ping command processed"));
 	return FHaybaHandlerResult::Ok(Data);

@@ -64,6 +64,16 @@ export async function invokeHandler(
   }
   const shape: ZodRawShape | null = getRawShape(args.name);
   if (!shape) {
+    // ts → ue_legacy fallthrough: the caller asked for the default route but no
+    // TS wrapper exists. Rather than dead-end on unknown_tool (which historically
+    // pushed agents toward python_run — see the 2026-05-23 PCG/landscape
+    // postmortem), transparently try the legacy route when the command is
+    // allow-listed. Only when neither route knows the command do we error.
+    if (LEGACY_ALLOWLIST.has(args.name)) {
+      const legacy = ctx.dispatchLegacy ?? ctx.dispatch;
+      const result = await legacy(args.name, args.args ?? {});
+      return { ok: true, result };
+    }
     return { ok: false, error: { kind: 'unknown_tool', name: args.name } };
   }
   const parse = z.object(shape).safeParse(args.args);

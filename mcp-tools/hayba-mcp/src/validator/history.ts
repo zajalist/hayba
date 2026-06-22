@@ -111,6 +111,18 @@ export async function markResolved(timestamp: string, resolved: boolean): Promis
   return changed;
 }
 
+/** Replace every finding whose ruleId starts with `prefix` with `replacement`,
+ *  keeping all other findings. Used to merge a fresh PLUMB validation pass into
+ *  the single findings store without accumulating stale entries. */
+export async function replaceFindingsWithPrefix(prefix: string, replacement: ValidatorFinding[]): Promise<void> {
+  const path = getHistoryPath();
+  ensureDir(path);
+  const existing = await listFindings({ includeResolved: true });
+  const kept = existing.filter(f => !f.ruleId.startsWith(prefix));
+  const all = [...kept, ...replacement];
+  writeFileSync(path, all.map(f => JSON.stringify(f)).join('\n') + (all.length ? '\n' : ''), 'utf-8');
+}
+
 export async function clearHistory(): Promise<{ removed: number }> {
   const path = getHistoryPath();
   if (!existsSync(path)) return { removed: 0 };

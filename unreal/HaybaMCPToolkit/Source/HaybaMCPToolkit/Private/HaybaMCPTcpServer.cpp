@@ -7,6 +7,16 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPTCP, Log, All);
 
+FHaybaMCPClientConnection::~FHaybaMCPClientConnection()
+{
+    if (Socket)
+    {
+        Socket->Close();
+        ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Socket);
+        Socket = nullptr;
+    }
+}
+
 FHaybaMCPTcpServer::FHaybaMCPTcpServer(int32 InPort)
     : Port(InPort)
 {
@@ -91,9 +101,10 @@ uint32 FHaybaMCPTcpServer::Run()
             {
                 const int32 NewCount = ClientCount.Increment();
                 UE_LOG(LogHaybaMCPTCP, Log, TEXT("Client accepted (active: %d)"), NewCount);
-                AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this, ClientSocket]()
+                FHaybaMCPClientConnectionPtr Conn = MakeShared<FHaybaMCPClientConnection, ESPMode::ThreadSafe>(ClientSocket);
+                AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this, Conn]()
                 {
-                    HandleClientConnection(ClientSocket);
+                    HandleClientConnection(Conn);
                 });
             }
         }
@@ -101,29 +112,38 @@ uint32 FHaybaMCPTcpServer::Run()
     return 0;
 }
 
-void FHaybaMCPTcpServer::HandleClientConnection(FSocket* ClientSocket)
+void FHaybaMCPTcpServer::HandleClientConnection(FHaybaMCPClientConnectionPtr Conn)
 {
     while (bIsRunning)
     {
         FString Message;
-        if (!ReadMessage(ClientSocket, Message))
+        if (!ReadMessage(Conn->Socket, Message))
         {
+            // Client disconnected. Mark dead so any in-flight response task
+            // skips its send; the socket is destroyed once the last shared
+            // reference (this loop + any queued game-thread task) drops.
+            Conn->bAlive = false;
             const int32 NewCount = ClientCount.Decrement();
             UE_LOG(LogHaybaMCPTCP, Log, TEXT("Client disconnected (active: %d)"), NewCount);
-            ClientSocket->Close();
-            ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ClientSocket);
             return;
         }
 
-        AsyncTask(ENamedThreads::GameThread, [this, Message, ClientSocket]()
+        // Capture Conn by value so the socket outlives this read loop; the
+        // task bails if the client disconnected before the command finished.
+        AsyncTask(ENamedThreads::GameThread, [this, Message, Conn]()
         {
-            if (CommandHandler.IsValid())
+            if (!Conn->bAlive || !CommandHandler.IsValid())
             {
-                FString ResponseString = CommandHandler->ProcessCommand(Message);
-                SendMessage(ClientSocket, ResponseString);
+                return;
             }
+            FString ResponseString = CommandHandler->ProcessCommand(Message);
+            SendMessage(Conn, ResponseString);
         });
     }
+
+    // Server is shutting down while this client is still connected.
+    Conn->bAlive = false;
+    ClientCount.Decrement();
 }
 
 bool FHaybaMCPTcpServer::ReadMessage(FSocket* Socket, FString& OutMessage)
@@ -170,8 +190,23 @@ bool FHaybaMCPTcpServer::ReadMessage(FSocket* Socket, FString& OutMessage)
     return true;
 }
 
-void FHaybaMCPTcpServer::SendMessage(FSocket* Socket, const FString& Message)
+void FHaybaMCPTcpServer::SendMessage(const FHaybaMCPClientConnectionPtr& Conn, const FString& Message)
 {
+    if (!Conn.IsValid())
+    {
+        return;
+    }
+
+    // Serialize sends and re-check liveness under the lock: the read loop may
+    // have flagged the client dead between the task's guard and here. The
+    // shared Conn keeps the socket alive for the duration of this call.
+    FScopeLock Lock(&Conn->SendMutex);
+    if (!Conn->bAlive || Conn->Socket == nullptr)
+    {
+        return;
+    }
+    FSocket* Socket = Conn->Socket;
+
     FTCHARToUTF8 Utf8Msg(*Message);
     uint32 Length = Utf8Msg.Length();
 

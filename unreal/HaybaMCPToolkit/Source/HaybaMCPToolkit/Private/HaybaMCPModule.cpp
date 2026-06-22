@@ -1,6 +1,10 @@
 #include "HaybaMCPModule.h"
 #include "Async/Async.h"
 #include "HaybaMCPMainPanel.h"
+#include "Studio/SHaybaSemanticStudio.h"
+#include "HaybaMCPPlanOverlay.h"
+#include "ToolMenus.h"
+#include "ContentBrowserMenuContexts.h"
 #include "HaybaMCPChatPanel.h"
 #include "HaybaMCPToolStreamPanel.h"
 #include "HaybaMCPSceneMapPanel.h"
@@ -18,6 +22,7 @@
 #include "Widgets/Notifications/SNotificationList.h"
 #include "HaybaMCPTcpServer.h"
 #include "HaybaMCPCommandHandler.h"
+#include "IHaybaMCPHandler.h"
 #include "handlers/HaybaMCPLegacyHandler.h"
 #include "handlers/HaybaMCPActorHandler.h"
 #include "handlers/HaybaMCPLevelHandler.h"
@@ -35,12 +40,8 @@
 #include "handlers/HaybaMCPPhysicsHandler.h"
 #include "handlers/HaybaMCPDocsHandler.h"
 // ===== Stub handlers (advertise commands; return not_implemented) =====
-#include "handlers/HaybaMCPSequencerHandler.h"
 #include "handlers/HaybaMCPAnimationHandler.h"
-#include "handlers/HaybaMCPNiagaraHandler.h"
 #include "handlers/HaybaMCPAudioHandler.h"
-#include "handlers/HaybaMCPMetaSoundHandler.h"
-#include "handlers/HaybaMCPGASHandler.h"
 #include "handlers/HaybaMCPBehaviorTreeHandler.h"
 #include "handlers/HaybaMCPInputHandler.h"
 #include "handlers/HaybaMCPUIHandler.h"
@@ -73,6 +74,7 @@
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCP, Log, All);
 
 const FName FHaybaMCPModule::TabMain(TEXT("HaybaMCP_Main"));
+const FName FHaybaMCPModule::TabStudio(TEXT("HaybaSemanticStudio"));
 
 void FHaybaMCPModule::StartupModule()
 {
@@ -101,12 +103,13 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPDocsHandler>());
 
     // ===== Stub handlers (advertise commands; return not_implemented) =====
-    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPSequencerHandler>());
+    // seq_* commands now live in the optional HaybaMCPSequencer satellite plugin.
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPAnimationHandler>());
-    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPNiagaraHandler>());
+    // niagara_* commands now live in the optional HaybaMCPNiagara satellite plugin.
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPAudioHandler>());
-    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPMetaSoundHandler>());
-    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPGASHandler>());
+    // metasound_* commands now live in the optional HaybaMCPMetaSound satellite plugin.
+    // gas_* commands now live in the optional HaybaMCPGAS satellite plugin,
+    // which self-registers via FHaybaMCPModule::RegisterExternalHandler.
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPBehaviorTreeHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPInputHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPUIHandler>());
@@ -120,6 +123,42 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPPerfHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPIdleHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPRenderHandler>());
+
+    // Optional-capability check: warn (log + editor notification) for any
+    // satellite plugin that is disabled, so the user understands why a command
+    // domain is missing. IPluginManager knows enablement even before the
+    // satellite's own module loads, so this is safe here at core startup.
+    {
+        const TPair<const TCHAR*, const TCHAR*> Satellites[] = {
+            { TEXT("HaybaMCPGAS"),       TEXT("gas_*") },
+            { TEXT("HaybaMCPNiagara"),   TEXT("niagara_*") },
+            { TEXT("HaybaMCPMetaSound"), TEXT("metasound_*") },
+            { TEXT("HaybaMCPSequencer"), TEXT("seq_*") },
+        };
+        TArray<FString> Missing;
+        for (const auto& S : Satellites)
+        {
+            TSharedPtr<IPlugin> P = IPluginManager::Get().FindPlugin(S.Key);
+            if (!P.IsValid() || !P->IsEnabled())
+            {
+                Missing.Add(FString::Printf(TEXT("%s (%s)"), S.Value, S.Key));
+            }
+        }
+        if (Missing.Num() > 0)
+        {
+            const FString List = FString::Join(Missing, TEXT(", "));
+            UE_LOG(LogHaybaMCP, Warning,
+                TEXT("Optional command domains unavailable — satellite plugin(s) disabled: %s. Enable the plugin (and its backing engine plugin) to use these commands."),
+                *List);
+            AsyncTask(ENamedThreads::GameThread, [List]()
+            {
+                FNotificationInfo Info(FText::FromString(FString::Printf(
+                    TEXT("Hayba MCP: optional command domains disabled — %s. Enable the matching plugins to use them."), *List)));
+                Info.ExpireDuration = 8.f;
+                FSlateNotificationManager::Get().AddNotification(Info);
+            });
+        }
+    }
 
     // Auto-start the TCP listener so external MCP clients (Claude Code, Cline,
     // OpenCode, …) can connect as soon as the editor is up. The MCP node
@@ -147,6 +186,38 @@ void FHaybaMCPModule::StartupModule()
         }),
         ECVF_Default
     );
+
+    // Semantic Studio — per-asset mask + constraint authoring window.
+    TM->RegisterNomadTabSpawner(TabStudio, FOnSpawnTab::CreateRaw(this, &FHaybaMCPModule::SpawnStudioTab))
+        .SetDisplayName(NSLOCTEXT("Hayba", "StudioTab", "Hayba Semantic Studio"))
+        .SetGroup(ToolsGroup)
+        .SetIcon(FSlateIcon(FHaybaMCPStyle::GetStyleSetName(), "Hayba.Icon.Toolkit"));
+
+    IConsoleManager::Get().RegisterConsoleCommand(
+        TEXT("Hayba.Studio.Open"),
+        TEXT("Opens the Hayba Semantic Studio. Optional arg: an asset path to target."),
+        FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+        {
+            if (Args.Num() > 0)
+            {
+                if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+                {
+                    M->OpenStudioForAsset(Args[0]);
+                    return;
+                }
+            }
+            FGlobalTabmanager::Get()->TryInvokeTab(FHaybaMCPModule::TabStudio);
+        }),
+        ECVF_Default
+    );
+
+    // "Open with Hayba" content-browser action — registered once ToolMenus is up.
+    UToolMenus::RegisterStartupCallback(
+        FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FHaybaMCPModule::RegisterStudioContentMenu));
+
+    // Green/red plan-mode viewport overlay (reads .scratch/verdicts.json).
+    PlanOverlay = MakeUnique<FHaybaPlanOverlay>();
+    PlanOverlay->Register();
 
     // Auto-open the panel on first run (Setup sidebar item handles onboarding inline).
     if (!FHaybaMCPSettings::Get().bHasSeenOnboarding && GEditor)
@@ -180,7 +251,11 @@ void FHaybaMCPModule::StartupModule()
 void FHaybaMCPModule::ShutdownModule()
 {
     auto& TM = FGlobalTabmanager::Get();
+    if (PlanOverlay) { PlanOverlay->Unregister(); PlanOverlay.Reset(); }
     TM->UnregisterNomadTabSpawner(TabMain);
+    TM->UnregisterNomadTabSpawner(TabStudio);
+    UToolMenus::UnRegisterStartupCallback(this);
+    UToolMenus::UnregisterOwner(this);
     StopTcpServer();
     StopMCPServer();
     FHaybaMCPStyle::Shutdown();
@@ -287,6 +362,14 @@ bool FHaybaMCPModule::StartMCPServer()
     FPlatformMisc::SetEnvironmentVar(TEXT("DASHBOARD_PORT"), TEXT("52341"));
     FPlatformMisc::SetEnvironmentVar(TEXT("UE_TCP_PORT"), *FString::FromInt(TcpPort));
 
+    // Point the PLUMB stores at the project's .scratch so the MCP server and the
+    // plugin's Semantic Studio / Memory panels read & write the same files.
+    const FString ScratchDir = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), TEXT(".scratch")));
+    IFileManager::Get().MakeDirectory(*ScratchDir, true);
+    FPlatformMisc::SetEnvironmentVar(TEXT("HAYBA_PROFILES"), *FPaths::Combine(ScratchDir, TEXT("profiles.json")));
+    FPlatformMisc::SetEnvironmentVar(TEXT("HAYBA_CONSTRAINTS"), *FPaths::Combine(ScratchDir, TEXT("constraints.json")));
+    FPlatformMisc::SetEnvironmentVar(TEXT("HAYBA_LESSONS"), *FPaths::Combine(ScratchDir, TEXT("lessons.json")));
+
     FString Params = FString::Printf(TEXT("\"%s\""), *ServerPath);
     uint32 ProcessID = 0;
     MCPProcessHandle = FPlatformProcess::CreateProc(*NodePath, *Params, false, true, true, &ProcessID, 0, nullptr, nullptr, nullptr);
@@ -317,6 +400,16 @@ void FHaybaMCPModule::StopMCPServer()
 bool FHaybaMCPModule::IsMCPServerRunning() const
 {
     return MCPProcessHandle.IsValid() && FPlatformProcess::IsProcRunning(MCPProcessHandle);
+}
+
+void FHaybaMCPModule::RegisterExternalHandler(TSharedRef<IHaybaMCPHandler> Handler)
+{
+    if (CommandHandler.IsValid()) CommandHandler->RegisterHandler(Handler);
+}
+
+void FHaybaMCPModule::UnregisterExternalHandler(const TSharedRef<IHaybaMCPHandler>& Handler)
+{
+    if (CommandHandler.IsValid()) CommandHandler->UnregisterHandler(Handler);
 }
 
 FString FHaybaMCPModule::GetDashboardURL() const
@@ -388,6 +481,53 @@ TSharedRef<SDockTab> FHaybaMCPModule::SpawnMainTab(const FSpawnTabArgs&)
 {
     return SNew(SDockTab).TabRole(ETabRole::NomadTab)
         [ SNew(SHaybaMCPMainPanel, this) ];
+}
+
+TSharedRef<SDockTab> FHaybaMCPModule::SpawnStudioTab(const FSpawnTabArgs&)
+{
+    TSharedRef<SHaybaSemanticStudio> Studio = SNew(SHaybaSemanticStudio).AssetPath(PendingStudioAsset);
+    StudioWidget = Studio;
+    return SNew(SDockTab).TabRole(ETabRole::NomadTab) [ Studio ];
+}
+
+void FHaybaMCPModule::OpenStudioForAsset(const FString& AssetPath)
+{
+    PendingStudioAsset = AssetPath;
+    // If the Studio is already open, retarget it in place; otherwise invoking
+    // the tab spawns a fresh one seeded with PendingStudioAsset.
+    if (TSharedPtr<SHaybaSemanticStudio> Live = StudioWidget.Pin())
+    {
+        Live->SetAsset(AssetPath);
+    }
+    FGlobalTabmanager::Get()->TryInvokeTab(TabStudio);
+}
+
+void FHaybaMCPModule::RegisterStudioContentMenu()
+{
+    UToolMenus* ToolMenus = UToolMenus::Get();
+    if (!ToolMenus) return;
+
+    UToolMenu* Menu = ToolMenus->ExtendMenu("ContentBrowser.AssetContextMenu.StaticMesh");
+    if (!Menu) return;
+
+    FToolMenuSection& Section = Menu->FindOrAddSection("GetAssetActions");
+    Section.AddMenuEntry(
+        "OpenWithHayba",
+        NSLOCTEXT("Hayba", "OpenWithHayba", "Open with Hayba"),
+        NSLOCTEXT("Hayba", "OpenWithHaybaTip", "Open this Static Mesh in the Hayba Semantic Studio"),
+        FSlateIcon(FHaybaMCPStyle::GetStyleSetName(), "Hayba.Icon.Toolkit"),
+        FToolMenuExecuteAction::CreateLambda([](const FToolMenuContext& Context)
+        {
+            const UContentBrowserAssetContextMenuContext* Ctx =
+                Context.FindContext<UContentBrowserAssetContextMenuContext>();
+            if (!Ctx || Ctx->SelectedAssets.Num() == 0) return;
+            const FString AssetPath = Ctx->SelectedAssets[0].GetObjectPathString();
+            if (FHaybaMCPModule* Module = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+            {
+                Module->OpenStudioForAsset(AssetPath);
+            }
+        })
+    );
 }
 
 void FHaybaMCPModule::RecordToolCall(const FString& ToolName, const FString& ParamsJson, const FString& ResultJson)

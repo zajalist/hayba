@@ -5,6 +5,8 @@
 
 class FHaybaMCPTcpServer;
 class FHaybaMCPCommandHandler;
+class IHaybaMCPHandler;
+class FHaybaPlanOverlay;
 
 // Lightweight tool-call record kept in the module so it survives tab
 // navigations. The Tool Stream panel hydrates from this buffer on Construct.
@@ -43,6 +45,9 @@ public:
     // Single unified panel tab.
     static const FName TabMain;
 
+    // Semantic Studio window tab (per-asset mask + constraint authoring).
+    static const FName TabStudio;
+
     // Weak references to live sub-panels (set by SHaybaMCPMainPanel as it builds them).
     TWeakPtr<class SHaybaMCPToolStreamPanel> ToolStreamPanel;
     TWeakPtr<class SHaybaMCPSceneMapPanel>   SceneMapPanel;
@@ -63,6 +68,14 @@ public:
     // destructive command so each plan must be approved exactly once.
     bool bPlanApproved = false;
 
+    // Satellite modules (HaybaMCPGAS/Niagara/MetaSound/Sequencer) register their
+    // command handlers into the core router at their own StartupModule, so an
+    // optional-plugin module that fails to load simply leaves its commands
+    // unregistered (the router returns a clean "unknown command" instead of the
+    // whole plugin failing to load). No-ops safely if the core router isn't up.
+    HAYBAMCPTOOLKIT_API void RegisterExternalHandler(TSharedRef<IHaybaMCPHandler> Handler);
+    HAYBAMCPTOOLKIT_API void UnregisterExternalHandler(const TSharedRef<IHaybaMCPHandler>& Handler);
+
     // Multicast — fires on the GameThread every time a tool call is recorded.
     // Subscribers: Chat panel's in-flight trace, future agent observability.
     DECLARE_MULTICAST_DELEGATE_OneParam(FOnToolCallRecorded, const FHaybaToolCallRecord&);
@@ -74,6 +87,17 @@ private:
 
     TSharedRef<class SDockTab> OnSpawnTab(const class FSpawnTabArgs& Args);
     TSharedRef<class SDockTab> SpawnMainTab(const class FSpawnTabArgs& Args);
+    TSharedRef<class SDockTab> SpawnStudioTab(const class FSpawnTabArgs& Args);
+
+public:
+    /** Open (or retarget) the Semantic Studio on a specific asset path. */
+    void OpenStudioForAsset(const FString& AssetPath);
+private:
+    /** Adds the "Open with Hayba" entry to the StaticMesh content-browser menu. */
+    void RegisterStudioContentMenu();
+    FString PendingStudioAsset;
+    TWeakPtr<class SHaybaSemanticStudio> StudioWidget;
+    TUniquePtr<FHaybaPlanOverlay> PlanOverlay;
 
     FString FindNodeExecutable() const;
     FString GetMCPServerPath() const;

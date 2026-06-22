@@ -4,7 +4,9 @@
   "description": "HaybaGaea TCP server — bridges UE5 to Gaea terrain generation via AI",
   "type": "module",
   "main": "dist/index.js",
-  "bin": { "hayba-gaea-server": "./dist/index.js" },
+  "bin": {
+    "hayba-gaea-server": "./dist/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
@@ -19,7 +21,9 @@
     "@types/node": "^24.12.2",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0",
-    "vitest": "^1.6.0"
+    "vitest": "^3.2.6"
   },
-  "engines": { "node": ">=20.0.0" }
+  "engines": {
+    "node": ">=20.0.0"
+  }
 }

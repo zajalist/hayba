@@ -27,7 +27,7 @@ static bool IsDestructiveCommand(const FString& Cmd)
 {
     return Cmd == TEXT("actor_delete")
         || Cmd == TEXT("actor_spawn")
-        || Cmd == TEXT("python_exec")
+        || Cmd == TEXT("python_run")   // was "python_exec" — a non-existent name, so python_run (arbitrary code exec) silently bypassed the Plan-Mode gate
         || Cmd == TEXT("memory_clear")
         || Cmd == TEXT("editor_execute_console")
         || Cmd == TEXT("landscape_import")
@@ -171,29 +171,15 @@ static void PushPhysicsResultsToPanel(const TSharedPtr<FJsonObject>& Data)
 
 static void PushMemoryResultsToPanel(const TSharedPtr<FJsonObject>& Data)
 {
-    if (!Data.IsValid()) return;
-    TArray<FString> Entries;
-    const TArray<TSharedPtr<FJsonValue>>* ResultsArr = nullptr;
-    if (Data->TryGetArrayField(TEXT("results"), ResultsArr))
-    {
-        for (const auto& V : *ResultsArr)
-        {
-            const TSharedPtr<FJsonObject> R = V->AsObject();
-            if (!R.IsValid()) continue;
-            FString Role, Content, Scope;
-            R->TryGetStringField(TEXT("agentRole"), Role);
-            R->TryGetStringField(TEXT("scope"),     Scope);
-            R->TryGetStringField(TEXT("content"),   Content);
-            Entries.Add(FString::Printf(TEXT("[%s/%s] %s"), *Scope, *Role, *Content));
-        }
-    }
-    AsyncTask(ENamedThreads::GameThread, [Entries = MoveTemp(Entries)]()
+    // The Semantic Library now reads the PLUMB stores directly; a memory_query
+    // just asks it to refresh from disk on the game thread.
+    AsyncTask(ENamedThreads::GameThread, []()
     {
         if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
         {
             if (TSharedPtr<SHaybaMCPMemoryPanel> Panel = M->MemoryPanel.Pin())
             {
-                Panel->SetResults(Entries);
+                Panel->RefreshLibrary();
             }
         }
     });
@@ -465,6 +451,19 @@ void FHaybaMCPCommandHandler::RegisterHandler(TSharedRef<IHaybaMCPHandler> Handl
     }
     UE_LOG(LogHaybaMCPCmd, Log, TEXT("Registered handler '%s' with %d commands"),
         *Handler->GetDomain(), Handler->GetCommands().Num());
+}
+
+void FHaybaMCPCommandHandler::UnregisterHandler(const TSharedRef<IHaybaMCPHandler>& Handler)
+{
+    for (const FString& Cmd : Handler->GetCommands())
+    {
+        if (const TSharedRef<IHaybaMCPHandler>* Found = CommandToHandler.Find(Cmd))
+        {
+            if (*Found == Handler) CommandToHandler.Remove(Cmd);
+        }
+    }
+    Handlers.Remove(Handler);
+    UE_LOG(LogHaybaMCPCmd, Log, TEXT("Unregistered handler '%s'"), *Handler->GetDomain());
 }
 
 TArray<FString> FHaybaMCPCommandHandler::GetAllCommands() const

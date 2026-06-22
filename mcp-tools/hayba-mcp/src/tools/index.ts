@@ -33,6 +33,19 @@ import { handleFabLibraryList, meta as fabLibraryListMeta } from './fab/library-
 import { handleFabMarketplaceSearch, meta as fabMarketplaceSearchMeta } from './fab/marketplace-search.js';
 import { handleFabDownload, meta as fabDownloadMeta } from './fab/download.js';
 
+// ── Material instance-layer tool handlers ───────────────────────────────────
+import { materialCreateHandler, meta as materialCreateMeta } from './material/material-create.js';
+import { materialCreateInstanceHandler, meta as materialCreateInstanceMeta } from './material/material-create-instance.js';
+import { materialSetParamHandler, meta as materialSetParamMeta } from './material/material-set-param.js';
+import { materialApplyHandler, meta as materialApplyMeta } from './material/material-apply.js';
+import { materialListHandler, meta as materialListMeta } from './material/material-list.js';
+import { materialGetInfoHandler, meta as materialGetInfoMeta } from './material/material-get-info.js';
+
+// ── Material graph-layer tool handlers ───────────────────────────────────────
+import { materialAddNodeHandler, meta as materialAddNodeMeta } from './material/material-add-node.js';
+import { materialConnectNodesHandler, meta as materialConnectNodesMeta } from './material/material-connect-nodes.js';
+import { materialFunctionCreateHandler, meta as materialFunctionCreateMeta } from './material/material-function-create.js';
+
 // ── Asset-source connectors (pure Node — no UE bridge except python_run) ──────
 import { handlePolyhavenSearch, meta as polyhavenSearchMeta } from './asset-sources/polyhaven-search.js';
 import { handlePolyhavenDownload, meta as polyhavenDownloadMeta } from './asset-sources/polyhaven-download.js';
@@ -132,6 +145,28 @@ import {
 } from './validator/tools.js';
 import { ensureConnected as ensureUeForValidator } from '../tcp-client.js';
 
+// ── PLUMB constraint subsystem (quantified validator + constraint language) ──
+import {
+  plumbPrimitivesSchema, plumbPrimitivesHandler,
+  plumbProfileBakeSchema, plumbProfileBakeHandler,
+  plumbProfileAnnotateSchema, plumbProfileAnnotateHandler,
+  plumbProfileListSchema, plumbProfileListHandler,
+  plumbProfileGetSchema, plumbProfileGetHandler,
+  plumbConstraintDefineSchema, plumbConstraintDefineHandler,
+  plumbConstraintListSchema, plumbConstraintListHandler,
+  plumbConstraintRemoveSchema, plumbConstraintRemoveHandler,
+  plumbConstraintProposeSchema, plumbConstraintProposeHandler,
+  plumbValidateSchema, plumbValidateHandler,
+  plumbMaskAddSchema, plumbMaskAddHandler,
+  plumbMaskRemoveSchema, plumbMaskRemoveHandler,
+  plumbLessonAddSchema, plumbLessonAddHandler,
+  plumbLessonListSchema, plumbLessonListHandler,
+  plumbLessonRemoveSchema, plumbLessonRemoveHandler,
+  plumbStudySchema, plumbStudyHandler,
+  plumbStudyTakeSchema, plumbStudyTakeHandler,
+  plumbSegmentSchema, plumbSegmentHandler,
+} from './plumb/tools.js';
+
 // SessionManager (Gaea session) parked while terrain features are off — kept
 // as a typed shim so registerTools' signature doesn't churn for callers.
 type SessionManagerStub = Record<string, unknown>;
@@ -204,6 +239,7 @@ function inferDir(name: string): string | null {
   if (name.startsWith('actor_'))          return 'actor';
   if (name.startsWith('scene_'))          return 'scene';
   if (name.startsWith('editor_'))         return 'editor';
+  if (name.startsWith('material_'))       return 'material';
   if (name.startsWith('hayba_fab_'))      return 'fab';
   if (name.startsWith('hayba_polyhaven_'))return 'asset-sources';
   if (name.startsWith('hayba_ambientcg_'))return 'asset-sources';
@@ -428,6 +464,149 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     }
   );
   remember('actor_transform', actorTransformMeta);
+
+  // ── Material instance-layer domain ──────────────────────────────────────────
+
+  server.tool(
+    'material_create',
+    appendMeta('Create a new material asset.', materialCreateMeta),
+    {
+      package_path: z.string().min(1).describe('UE content path for the new material'),
+      name: z.string().min(1).describe('Name of the material asset'),
+    },
+    async (params) => {
+      const r = await materialCreateHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_create', materialCreateMeta);
+
+  server.tool(
+    'material_create_instance',
+    appendMeta('Create a new material instance derived from a parent material.', materialCreateInstanceMeta),
+    {
+      parent_material_path: z.string().min(1).describe('Path to the parent material asset'),
+      package_path: z.string().min(1).describe('UE content path for the new material instance'),
+      name: z.string().min(1).describe('Name of the material instance asset'),
+    },
+    async (params) => {
+      const r = await materialCreateInstanceHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_create_instance', materialCreateInstanceMeta);
+
+  server.tool(
+    'material_set_param',
+    appendMeta('Set a scalar, vector (rgba), or texture parameter on a material instance.', materialSetParamMeta),
+    {
+      instance_path: z.string().min(1).describe('Path to the material instance'),
+      param_name: z.string().min(1).describe('Name of the parameter to set'),
+      value: z.union([
+        z.number().describe('Scalar value'),
+        z.array(z.number()).min(1).max(4).describe('Vector value (1-4 components for rgba)'),
+        z.string().describe('Texture asset path'),
+      ]).describe('Parameter value: scalar, vector (1-4 elements), or texture asset path'),
+    },
+    async (params) => {
+      const r = await materialSetParamHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_set_param', materialSetParamMeta);
+
+  server.tool(
+    'material_apply',
+    appendMeta('Apply a material to an actor in the level (optionally specifying a material slot).', materialApplyMeta),
+    {
+      actor_id: z.string().min(1).describe('ID of the actor to apply the material to'),
+      material_path: z.string().min(1).describe('Path to the material asset to apply'),
+      slot_index: z.number().int().nonnegative().optional().describe('Material slot index (default 0)'),
+    },
+    async (params) => {
+      const r = await materialApplyHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_apply', materialApplyMeta);
+
+  server.tool(
+    'material_list',
+    appendMeta('List materials and material instances in the project or a specific path.', materialListMeta),
+    {
+      path: z.string().optional().describe('UE content path filter (default: list all)'),
+    },
+    async (params) => {
+      const r = await materialListHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_list', materialListMeta);
+
+  server.tool(
+    'material_get_info',
+    appendMeta('Inspect a material or material instance: its properties, parameters, and connected expressions.', materialGetInfoMeta),
+    {
+      path: z.string().min(1).describe('Path to the material or material instance to inspect'),
+    },
+    async (params) => {
+      const r = await materialGetInfoHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_get_info', materialGetInfoMeta);
+
+  // ── Material graph-layer domain ─────────────────────────────────────────────
+
+  server.tool(
+    'material_add_node',
+    appendMeta('Add a new expression node to a material graph.', materialAddNodeMeta),
+    {
+      material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+      function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+      expression_class: z.string().min(1).describe('UE expression class name, e.g. "MaterialExpressionVectorParameter"'),
+      node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y] for the new node'),
+      properties: z.record(z.string(), z.unknown()).optional().describe('Initial properties for the node'),
+    },
+    async (params) => {
+      const r = await materialAddNodeHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_add_node', materialAddNodeMeta);
+
+  server.tool(
+    'material_connect_nodes',
+    appendMeta('Connect two nodes in a material graph or connect a node output to a material property.', materialConnectNodesMeta),
+    {
+      material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+      function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+      from_node: z.string().min(1).describe('ID or name of the source node'),
+      from_output: z.string().optional().describe('Output pin name on the source node'),
+      to_node: z.string().optional().describe('ID or name of the target node'),
+      to_input: z.string().optional().describe('Input pin name on the target node'),
+      to_property: z.string().optional().describe('Target material property name (instead of to_node/to_input)'),
+    },
+    async (params) => {
+      const r = await materialConnectNodesHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_connect_nodes', materialConnectNodesMeta);
+
+  server.tool(
+    'material_function_create',
+    appendMeta('Create a new material function asset in the project.', materialFunctionCreateMeta),
+    {
+      package_path: z.string().min(1).describe('UE content path for the new material function'),
+      name: z.string().min(1).describe('Name of the material function asset'),
+    },
+    async (params) => {
+      const r = await materialFunctionCreateHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_function_create', materialFunctionCreateMeta);
 
   // ── Scene domain ────────────────────────────────────────────────────────────
 
@@ -1823,6 +2002,91 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
   );
 
+  // ── PLUMB constraint subsystem ──────────────────────────────────────────
+  //
+  // Quantified, directional validator + a tiny CLOSED constraint language bound
+  // to assets/tags, plus baked physical profiles. Authoring fills values; the
+  // grammar (10 primitives) never grows. See src/plumb/.
+  const j = (r: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] });
+
+  server.tool('plumb_primitives',
+    'List the COMPLETE closed constraint grammar — the 10 primitives, their gate, hard/soft default, params, and docs. Author constraints by picking one and filling params.',
+    plumbPrimitivesSchema, async () => j(await plumbPrimitivesHandler()));
+
+  // Auto-fetch StaticMesh bounds (cm) via the UE mesh_get_info command when the
+  // caller omits origin_cm/extent_cm — "point at an SM and bake".
+  const fetchMeshBounds = async (asset: string) => {
+    const data = await executeCommand('mesh_get_info', { path: asset }) as { bounds?: { min: Record<string, number>; max: Record<string, number>; extents: Record<string, number> } };
+    const b = data?.bounds;
+    if (!b) throw new Error('mesh_get_info returned no bounds');
+    const v = (o: Record<string, number>): [number, number, number] => [o.x ?? 0, o.y ?? 0, o.z ?? 0];
+    return { min: v(b.min), max: v(b.max), extents: v(b.extents) };
+  };
+  server.tool('plumb_profile_bake',
+    'Bake the deterministic geometry/physics half of a Physical Asset Profile. Pass just the asset to auto-fetch bounds from UE (mesh_get_info), or supply origin_cm + extent_cm (+ optional pivot_to_base_cm) explicitly. Persists to the profile store.',
+    plumbProfileBakeSchema, async (a) => j(await plumbProfileBakeHandler(a, new Date().toISOString(), fetchMeshBounds)));
+
+  server.tool('plumb_profile_annotate',
+    'Layer AI/human qualitative semantics (class, up/front vectors, named affordance regions) onto a baked profile, with optional field locks. Qualitative constraints can only hard-gate on locked fields.',
+    plumbProfileAnnotateSchema, async (a) => j(await plumbProfileAnnotateHandler(a)));
+
+  server.tool('plumb_profile_list',
+    'List baked profiles (asset_id, archetype, affordance count, locked fields). Feeds the Memory tab.',
+    plumbProfileListSchema, async () => j(await plumbProfileListHandler()));
+
+  server.tool('plumb_profile_get',
+    'Fetch one full Physical Asset Profile by asset path.',
+    plumbProfileGetSchema, async (a) => j(await plumbProfileGetHandler(a)));
+
+  server.tool('plumb_constraint_define',
+    'Author/upsert a bound constraint: a primitive id + params + a binding (exactly one of {asset, tag}). Validated against the closed primitive set — invalid primitives/params/bindings are rejected.',
+    plumbConstraintDefineSchema, async (a) => j(await plumbConstraintDefineHandler(a)));
+
+  server.tool('plumb_constraint_list',
+    'List the constraint library (optionally filtered to an asset binding).',
+    plumbConstraintListSchema, async (a) => j(await plumbConstraintListHandler(a)));
+
+  server.tool('plumb_constraint_remove',
+    'Remove a constraint from the library by id.',
+    plumbConstraintRemoveSchema, async (a) => j(await plumbConstraintRemoveHandler(a)));
+
+  server.tool('plumb_constraint_propose',
+    'Draft (does not save) constraints for an asset from its baked profile, using only closed primitives. Review/edit then call plumb_constraint_define.',
+    plumbConstraintProposeSchema, async (a) => j(await plumbConstraintProposeHandler(a)));
+
+  server.tool('plumb_validate',
+    'Run library constraints over a set of instances and return a PLUMB Verdict (gated, directional: per-gate ok + signed value_m + FixVector; hard fails set stopped_at, soft fails accumulate soft_cost).',
+    plumbValidateSchema, async (a) => j(await plumbValidateHandler(a)));
+
+  server.tool('plumb_mask_add',
+    'Add or update a mask (surface = triangle set; volume = translucent shape) on a baked profile. Surface/volume masks are the regions constraints reference.',
+    plumbMaskAddSchema, async (a) => j(await plumbMaskAddHandler(a)));
+  server.tool('plumb_mask_remove',
+    'Remove a mask from a profile by id.',
+    plumbMaskRemoveSchema, async (a) => j(await plumbMaskRemoveHandler(a)));
+
+  server.tool('plumb_lesson_add',
+    'Add/update a lesson — the durable [[slug]] knowledge that explains WHY a constraint exists (browsed in the Studio Lessons panel; cited by constraint/validator refs).',
+    plumbLessonAddSchema, async (a) => j(await plumbLessonAddHandler(a, new Date().toISOString())));
+  server.tool('plumb_lesson_list',
+    'List lessons (slug + title + refs).',
+    plumbLessonListSchema, async () => j(await plumbLessonListHandler()));
+  server.tool('plumb_lesson_remove',
+    'Remove a lesson by slug.',
+    plumbLessonRemoveSchema, async (a) => j(await plumbLessonRemoveHandler(a)));
+
+  server.tool('plumb_study',
+    'AI study entry point: returns the asset\'s baked profile (if any) + the closed primitive grammar + mask kinds + guidance, so the agent can propose masks (plumb_mask_add) and constraints (plumb_constraint_define).',
+    plumbStudySchema, async (a) => j(await plumbStudyHandler(a)));
+
+  server.tool('plumb_study_take',
+    'Drain pending "Study with AI" requests from the Semantic Studio button. Returns the assets to study (then call plumb_study + author masks/constraints for each).',
+    plumbStudyTakeSchema, async () => j(await plumbStudyTakeHandler()));
+
+  server.tool('plumb_segment',
+    'AI-segment a studied asset: given the study_render color passes, the agent\'s themed part labels + a box/points per view, runs SAM in the visual sidecar and back-projects to geometry-hugging surface masks (triangles via the world-position pass + a UV display texture), written into the profile. Replaces hand-placed blocky masks.',
+    plumbSegmentSchema, async (a) => j(await plumbSegmentHandler(a)));
+
   // ── Landscape import (TS wrapper for UE-side landscape_import handler) ────
   server.tool(
     'hayba_import_landscape',
@@ -1897,6 +2161,59 @@ function recordEagerSchemas(
     rotation: coerceVec3.optional(),
     scale: coerceVec3.optional(),
   }, 'low', '{ok, actor_id, before, after}');
+
+  // ── Material instance-layer domain ──────────────────────────────────────────
+  reg('material_create', {
+    package_path: z.string().min(1).describe('UE content path for the new material'),
+    name: z.string().min(1).describe('Name of the material asset'),
+  }, 'low', '{path, name}');
+  reg('material_create_instance', {
+    parent_material_path: z.string().min(1).describe('Path to the parent material asset'),
+    package_path: z.string().min(1).describe('UE content path for the new material instance'),
+    name: z.string().min(1).describe('Name of the material instance asset'),
+  }, 'low', '{path, name}');
+  reg('material_set_param', {
+    instance_path: z.string().min(1).describe('Path to the material instance'),
+    param_name: z.string().min(1).describe('Name of the parameter to set'),
+    value: z.union([
+      z.number().describe('Scalar value'),
+      z.array(z.number()).min(1).max(4).describe('Vector value (1-4 components for rgba)'),
+      z.string().describe('Texture asset path'),
+    ]).describe('Parameter value: scalar, vector (1-4 elements), or texture asset path'),
+  }, 'low', '{ok}');
+  reg('material_apply', {
+    actor_id: z.string().min(1).describe('ID of the actor to apply the material to'),
+    material_path: z.string().min(1).describe('Path to the material asset to apply'),
+    slot_index: z.number().int().nonnegative().optional().describe('Material slot index (default 0)'),
+  }, 'medium', '{ok, actor_id, material_path, slot}');
+  reg('material_list', {
+    path: z.string().optional().describe('UE content path filter (default: list all)'),
+  }, 'low', '{materials:[{path,type,is_instance}]}');
+  reg('material_get_info', {
+    path: z.string().min(1).describe('Path to the material or material instance to inspect'),
+  }, 'low', '{path, type, parameters:[{name,type,value}], expressions}');
+
+  // ── Material graph-layer domain ─────────────────────────────────────────────
+  reg('material_add_node', {
+    material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+    function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+    expression_class: z.string().min(1).describe('UE expression class name, e.g. "MaterialExpressionVectorParameter"'),
+    node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y] for the new node'),
+    properties: z.record(z.string(), z.unknown()).optional().describe('Initial properties for the node'),
+  }, 'low', '{node_id, expression_class, position}');
+  reg('material_connect_nodes', {
+    material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+    function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+    from_node: z.string().min(1).describe('ID or name of the source node'),
+    from_output: z.string().optional().describe('Output pin name on the source node'),
+    to_node: z.string().optional().describe('ID or name of the target node'),
+    to_input: z.string().optional().describe('Input pin name on the target node'),
+    to_property: z.string().optional().describe('Target material property name (instead of to_node/to_input)'),
+  }, 'low', '{ok, from_node, to_node, to_property, connection_made}');
+  reg('material_function_create', {
+    package_path: z.string().min(1).describe('UE content path for the new material function'),
+    name: z.string().min(1).describe('Name of the material function asset'),
+  }, 'low', '{path, name}');
 
   // ── Scene domain ──────────────────────────────────────────────────────────
   reg('scene_export', {
@@ -2084,4 +2401,24 @@ function recordEagerSchemas(
     projectId: z.string(),
     heightmapPath: z.string(),
   }, 'low', '{ok}');
+
+  // ── PLUMB constraint subsystem ────────────────────────────────────────────
+  reg('plumb_primitives', plumbPrimitivesSchema, 'low', '{primitives:[{id,gate,default_hard,qualitative,params,doc}]}');
+  reg('plumb_profile_bake', plumbProfileBakeSchema, 'low', '{ok, profile}');
+  reg('plumb_profile_annotate', plumbProfileAnnotateSchema, 'low', '{ok, profile|error}');
+  reg('plumb_profile_list', plumbProfileListSchema, 'low', '{profiles:[{asset_id,profile,affordances,locked}]}');
+  reg('plumb_profile_get', plumbProfileGetSchema, 'low', '{ok, profile|error}');
+  reg('plumb_constraint_define', plumbConstraintDefineSchema, 'low', '{ok, errors?}');
+  reg('plumb_constraint_list', plumbConstraintListSchema, 'low', '{constraints:[Constraint]}');
+  reg('plumb_constraint_remove', plumbConstraintRemoveSchema, 'low', '{ok, removed}');
+  reg('plumb_constraint_propose', plumbConstraintProposeSchema, 'low', '{ok, proposals:[Partial<Constraint>]|error}');
+  reg('plumb_validate', plumbValidateSchema, 'low', '{verdict:Verdict}');
+  reg('plumb_mask_add', plumbMaskAddSchema, 'low', '{ok, profile|error}');
+  reg('plumb_mask_remove', plumbMaskRemoveSchema, 'low', '{ok, removed}');
+  reg('plumb_lesson_add', plumbLessonAddSchema, 'low', '{ok, errors?}');
+  reg('plumb_lesson_list', plumbLessonListSchema, 'low', '{lessons:[{slug,title,refs}]}');
+  reg('plumb_lesson_remove', plumbLessonRemoveSchema, 'low', '{ok, removed}');
+  reg('plumb_study', plumbStudySchema, 'low', '{asset, has_profile, profile?, primitives, mask_kinds, guidance}');
+  reg('plumb_study_take', plumbStudyTakeSchema, 'low', '{requests:[{asset,ts}], note}');
+  reg('plumb_segment', plumbSegmentSchema, 'high', '{ok, added:[label], skipped?, error?}');
 }
