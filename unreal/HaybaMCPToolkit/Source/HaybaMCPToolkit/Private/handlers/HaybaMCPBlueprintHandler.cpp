@@ -17,6 +17,7 @@
 #include "K2Node_CallFunction.h"
 #include "UObject/UObjectGlobals.h"
 #include "UObject/Package.h"
+#include "UObject/SavePackage.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Misc/PackageName.h"
 
@@ -190,9 +191,22 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Create(const TSharedPtr<FJsonObje
     FAssetRegistryModule::AssetCreated(BP);
     Package->MarkPackageDirty();
 
+    // Persist immediately: CreateBlueprint only builds the asset in memory, so a
+    // crash before the next edit would lose it. Save the .uasset to disk now.
+    bool bSaved = false;
+    {
+        const FString FileName = FPackageName::LongPackageNameToFilename(
+            Package->GetName(), FPackageName::GetAssetPackageExtension());
+        FSavePackageArgs SaveArgs;
+        SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
+        SaveArgs.SaveFlags = SAVE_NoError;
+        bSaved = UPackage::SavePackage(Package, BP, *FileName, SaveArgs);
+    }
+
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("path"), BP->GetPathName());
     Out->SetStringField(TEXT("name"), Name);
+    Out->SetBoolField(TEXT("saved"), bSaved);
     return FHaybaHandlerResult::Ok(Out);
 }
 
