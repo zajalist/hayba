@@ -9,6 +9,7 @@ public:
     virtual FHaybaHandlerResult Handle(const FString& Cmd, const TSharedPtr<FJsonObject>& Params) override;
 private:
     FHaybaHandlerResult MatCreate(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult MatFunctionCreate(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult MatAddNode(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult MatConnectNodes(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult MatCreateInstance(const TSharedPtr<FJsonObject>& P);
