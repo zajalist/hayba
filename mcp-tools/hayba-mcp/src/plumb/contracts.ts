@@ -113,6 +113,7 @@ export interface Mask {
     points?: [number, number, number][];
   };
   detail?: string;          // free-text semantic note
+  texture?: string;         // surface: path to a baked UV display mask PNG (AI-projected)
 }
 
 export interface ProfileSemantics {

@@ -233,6 +233,11 @@ describe('mask store', () => {
   it('addMask returns null with no base profile', () => {
     expect(addMask('/Game/Nope', { id: 'x', type: 'surface', color: '#fff', source: 'human', confidence: 1, locked: false, triangles: [1,2,3] })).toBe(null);
   });
+  it('surface mask carries an optional projected texture path', () => {
+    const m = { id: 'hull', type: 'surface' as const, color: '#48A0FF', source: 'ai' as const, confidence: 0.7, locked: false, triangles: [1,2,3], texture: '/x/.scratch/study/a/masks/hull.png' };
+    const stored = getMask('/Game/Door', addMask('/Game/Door', m)!.masks!.find(x => x.id === 'hull')!.id)!;
+    expect(stored.texture).toContain('hull.png');
+  });
 });
 
 describe('mask-referencing primitives', () => {
