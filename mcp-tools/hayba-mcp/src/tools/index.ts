@@ -45,6 +45,9 @@ import { materialGetInfoHandler, meta as materialGetInfoMeta } from './material/
 import { materialAddNodeHandler, meta as materialAddNodeMeta } from './material/material-add-node.js';
 import { materialSetNodeHandler, meta as materialSetNodeMeta } from './material/material-set-node.js';
 import { materialDeleteNodeHandler, meta as materialDeleteNodeMeta } from './material/material-delete-node.js';
+import { materialAddCommentHandler, meta as materialAddCommentMeta } from './material/material-add-comment.js';
+import { materialAddRerouteDeclarationHandler, meta as materialAddRerouteDeclarationMeta } from './material/material-add-reroute-declaration.js';
+import { materialAddRerouteUsageHandler, meta as materialAddRerouteUsageMeta } from './material/material-add-reroute-usage.js';
 import { assetDeleteHandler, meta as assetDeleteMeta } from './asset/asset-delete.js';
 import { materialConnectNodesHandler, meta as materialConnectNodesMeta } from './material/material-connect-nodes.js';
 import { materialFunctionCreateHandler, meta as materialFunctionCreateMeta } from './material/material-function-create.js';
@@ -557,6 +560,58 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     }
   );
   remember('material_delete_node', materialDeleteNodeMeta);
+
+  server.tool(
+    'material_add_comment',
+    appendMeta('Add a titled comment box around a group of nodes in a material or function graph.', materialAddCommentMeta),
+    {
+      material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+      function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+      text: z.string().describe('Comment title/text shown on the box'),
+      node_pos: z.tuple([z.number(), z.number()]).optional().describe('Top-left graph position [x, y]'),
+      size: z.tuple([z.number(), z.number()]).optional().describe('Box size [width, height]'),
+      color: z.array(z.number()).min(3).max(4).optional().describe('Box color [r, g, b] or [r, g, b, a] (0..1)'),
+      font_size: z.number().int().optional().describe('Title font size (default 18)'),
+    },
+    async (params) => {
+      const r = await materialAddCommentHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_add_comment', materialAddCommentMeta);
+
+  server.tool(
+    'material_add_reroute_declaration',
+    appendMeta('Create a named-reroute declaration (source anchor) so a value can be referenced by name instead of long wires.', materialAddRerouteDeclarationMeta),
+    {
+      material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+      function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+      name: z.string().min(1).describe('The reroute name (what usages bind to)'),
+      node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y]'),
+      color: z.array(z.number()).min(3).max(4).optional().describe('Node color [r, g, b] or [r, g, b, a] (0..1)'),
+    },
+    async (params) => {
+      const r = await materialAddRerouteDeclarationHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_add_reroute_declaration', materialAddRerouteDeclarationMeta);
+
+  server.tool(
+    'material_add_reroute_usage',
+    appendMeta('Create a named-reroute usage bound to a declaration by name (replaces a long wire).', materialAddRerouteUsageMeta),
+    {
+      material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+      function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+      declaration_id: z.string().min(1).describe('node_id of the reroute declaration to bind to'),
+      node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y]'),
+    },
+    async (params) => {
+      const r = await materialAddRerouteUsageHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_add_reroute_usage', materialAddRerouteUsageMeta);
 
   server.tool(
     'asset_delete',
@@ -1686,6 +1741,28 @@ function recordEagerSchemas(
     function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
     node_id: z.string().min(1).describe('ID/name of the node to delete'),
   }, 'low', '{deleted}');
+  reg('material_add_comment', {
+    material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+    function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+    text: z.string().describe('Comment title/text shown on the box'),
+    node_pos: z.tuple([z.number(), z.number()]).optional().describe('Top-left graph position [x, y]'),
+    size: z.tuple([z.number(), z.number()]).optional().describe('Box size [width, height]'),
+    color: z.array(z.number()).min(3).max(4).optional().describe('Box color [r, g, b] or [r, g, b, a] (0..1)'),
+    font_size: z.number().int().optional().describe('Title font size (default 18)'),
+  }, 'low', '{comment_id}');
+  reg('material_add_reroute_declaration', {
+    material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+    function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+    name: z.string().min(1).describe('The reroute name (what usages bind to)'),
+    node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y]'),
+    color: z.array(z.number()).min(3).max(4).optional().describe('Node color [r, g, b] or [r, g, b, a] (0..1)'),
+  }, 'low', '{node_id}');
+  reg('material_add_reroute_usage', {
+    material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+    function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+    declaration_id: z.string().min(1).describe('node_id of the reroute declaration to bind to'),
+    node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y]'),
+  }, 'low', '{node_id}');
   reg('asset_delete', {
     path: z.string().min(1).describe('Object path of the asset to delete, e.g. /Game/Foo/MF_X.MF_X'),
   }, 'low', '{deleted}');

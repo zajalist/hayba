@@ -42,6 +42,8 @@
 #include "Materials/MaterialExpressionMaterialFunctionCall.h"
 #include "Materials/MaterialExpressionFunctionInput.h"
 #include "Materials/MaterialExpressionFunctionOutput.h"
+#include "Materials/MaterialExpressionComment.h"
+#include "Materials/MaterialExpressionNamedReroute.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPMaterial, Log, All);
 
@@ -53,6 +55,9 @@ TArray<FString> FHaybaMCPMaterialHandler::GetCommands() const
         TEXT("material_add_node"),
         TEXT("material_set_node"),
         TEXT("material_delete_node"),
+        TEXT("material_add_comment"),
+        TEXT("material_add_reroute_declaration"),
+        TEXT("material_add_reroute_usage"),
         TEXT("material_connect_nodes"),
         TEXT("material_create_instance"),
         TEXT("material_set_param"),
@@ -69,6 +74,9 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::Handle(const FString& Cmd, const T
     if (Cmd == TEXT("material_add_node"))       return MatAddNode(P);
     if (Cmd == TEXT("material_set_node"))       return MatSetNode(P);
     if (Cmd == TEXT("material_delete_node"))    return MatDeleteNode(P);
+    if (Cmd == TEXT("material_add_comment"))    return MatAddComment(P);
+    if (Cmd == TEXT("material_add_reroute_declaration")) return MatAddRerouteDeclaration(P);
+    if (Cmd == TEXT("material_add_reroute_usage"))       return MatAddRerouteUsage(P);
     if (Cmd == TEXT("material_connect_nodes"))  return MatConnectNodes(P);
     if (Cmd == TEXT("material_create_instance")) return MatCreateInstance(P);
     if (Cmd == TEXT("material_set_param"))      return MatSetParam(P);
@@ -745,5 +753,160 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDeleteNode(const TSharedPtr<FJs
     UMaterialEditingLibrary::RecompileMaterial(Mat);
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetBoolField(TEXT("deleted"), true);
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+// Add a titled comment BOX (not a graph node). Comment boxes live in the
+// expression collection's EditorComments array, separate from Expressions —
+// CreateMaterialExpression would otherwise drop a stray empty node.
+FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddComment(const TSharedPtr<FJsonObject>& P)
+{
+    FString Text;
+    P->TryGetStringField(TEXT("text"), Text);
+
+    int32 X = 0, Y = 0, W = 400, H = 200, Font = 18;
+    const TArray<TSharedPtr<FJsonValue>>* Arr;
+    if (P->TryGetArrayField(TEXT("node_pos"), Arr) && Arr->Num() >= 2) { X = (int32)(*Arr)[0]->AsNumber(); Y = (int32)(*Arr)[1]->AsNumber(); }
+    if (P->TryGetArrayField(TEXT("size"), Arr) && Arr->Num() >= 2)     { W = (int32)(*Arr)[0]->AsNumber(); H = (int32)(*Arr)[1]->AsNumber(); }
+    FLinearColor Color = FLinearColor::White;
+    if (P->TryGetArrayField(TEXT("color"), Arr) && Arr->Num() >= 3)
+        Color = FLinearColor((*Arr)[0]->AsNumber(), (*Arr)[1]->AsNumber(), (*Arr)[2]->AsNumber(), Arr->Num() >= 4 ? (*Arr)[3]->AsNumber() : 1.0);
+    { int32 F; if (P->TryGetNumberField(TEXT("font_size"), F)) Font = F; }
+
+    auto Setup = [&](UMaterialExpressionComment* C) {
+        C->Text = Text; C->SizeX = W; C->SizeY = H; C->CommentColor = Color; C->FontSize = Font;
+        C->MaterialExpressionEditorX = X; C->MaterialExpressionEditorY = Y;
+    };
+
+    FString FuncPath;
+    if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())
+    {
+        UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
+        if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_add_comment: function not found"));
+        UMaterialExpressionComment* C = NewObject<UMaterialExpressionComment>(Fn);
+        Setup(C);
+        Fn->GetExpressionCollection().AddComment(C);
+        UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+        Out->SetStringField(TEXT("comment_id"), C->GetName());
+        return FHaybaHandlerResult::Ok(Out);
+    }
+
+    FString MatPath;
+    if (!P->TryGetStringField(TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_add_comment: missing material_path or function_path"));
+    UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
+    if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_add_comment: material not found"));
+    UMaterialExpressionComment* C = NewObject<UMaterialExpressionComment>(Mat);
+    Setup(C);
+    Mat->GetExpressionCollection().AddComment(C);
+    Mat->MarkPackageDirty();
+    Mat->PostEditChange();   // comments don't affect compilation — no recompile needed
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("comment_id"), C->GetName());
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+// Create a Named-Reroute DECLARATION node (the source anchor). Lands in the
+// graph like a normal node, then gets its Name + a stable VariableGuid so
+// usages can bind to it. The caller wires the source into its Input pin with
+// material_connect_nodes (to_node = <this id>).
+FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddRerouteDeclaration(const TSharedPtr<FJsonObject>& P)
+{
+    FString Name;
+    if (!P->TryGetStringField(TEXT("name"), Name) || Name.IsEmpty()) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_declaration: missing name"));
+
+    int32 X = 0, Y = 0; bool bHasPos = false;
+    const TArray<TSharedPtr<FJsonValue>>* Arr;
+    if (P->TryGetArrayField(TEXT("node_pos"), Arr) && Arr->Num() >= 2) { X = (int32)(*Arr)[0]->AsNumber(); Y = (int32)(*Arr)[1]->AsNumber(); bHasPos = true; }
+    FLinearColor Color; bool bHasColor = false;
+    if (P->TryGetArrayField(TEXT("color"), Arr) && Arr->Num() >= 3)
+    { Color = FLinearColor((*Arr)[0]->AsNumber(), (*Arr)[1]->AsNumber(), (*Arr)[2]->AsNumber(), Arr->Num() >= 4 ? (*Arr)[3]->AsNumber() : 1.0); bHasColor = true; }
+
+    UClass* Cls = UMaterialExpressionNamedRerouteDeclaration::StaticClass();
+    auto Setup = [&](UMaterialExpressionNamedRerouteDeclaration* D) {
+        D->Name = FName(*Name);
+        if (bHasColor) D->NodeColor = Color;
+        // VariableGuid is auto-generated in PostInitProperties (private
+        // UpdateVariableGuid); guard in case it's empty so usages can bind.
+        if (!D->VariableGuid.IsValid()) D->VariableGuid = FGuid::NewGuid();
+    };
+
+    FString FuncPath;
+    if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())
+    {
+        UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
+        if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_declaration: function not found"));
+        if (!bHasPos) HaybaAutoNodePos(Fn->GetExpressions().Num(), X, Y);
+        UMaterialExpressionNamedRerouteDeclaration* D = Cast<UMaterialExpressionNamedRerouteDeclaration>(UMaterialEditingLibrary::CreateMaterialExpressionInFunction(Fn, Cls, X, Y));
+        if (!D) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_declaration: create failed"));
+        Setup(D);
+        UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+        Out->SetStringField(TEXT("node_id"), D->GetName());
+        return FHaybaHandlerResult::Ok(Out);
+    }
+
+    FString MatPath;
+    if (!P->TryGetStringField(TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_declaration: missing material_path or function_path"));
+    UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
+    if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_declaration: material not found"));
+    if (!bHasPos) HaybaAutoNodePos(Mat->GetExpressions().Num(), X, Y);
+    UMaterialExpressionNamedRerouteDeclaration* D = Cast<UMaterialExpressionNamedRerouteDeclaration>(UMaterialEditingLibrary::CreateMaterialExpression(Mat, Cls, X, Y));
+    if (!D) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_declaration: create failed"));
+    Setup(D);
+    Mat->MarkPackageDirty();
+    UMaterialEditingLibrary::RecompileMaterial(Mat);
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("node_id"), D->GetName());
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+// Create a Named-Reroute USAGE node bound to an existing declaration by object
+// pointer + GUID (not a wire — material_connect_nodes can't express this). Its
+// output is wired to targets with material_connect_nodes (from_node = <this id>).
+FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddRerouteUsage(const TSharedPtr<FJsonObject>& P)
+{
+    FString DeclId;
+    if (!P->TryGetStringField(TEXT("declaration_id"), DeclId) || DeclId.IsEmpty()) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_usage: missing declaration_id"));
+
+    int32 X = 0, Y = 0; bool bHasPos = false;
+    const TArray<TSharedPtr<FJsonValue>>* Arr;
+    if (P->TryGetArrayField(TEXT("node_pos"), Arr) && Arr->Num() >= 2) { X = (int32)(*Arr)[0]->AsNumber(); Y = (int32)(*Arr)[1]->AsNumber(); bHasPos = true; }
+
+    UClass* Cls = UMaterialExpressionNamedRerouteUsage::StaticClass();
+
+    FString FuncPath;
+    if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())
+    {
+        UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
+        if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_usage: function not found"));
+        UMaterialExpressionNamedRerouteDeclaration* D = Cast<UMaterialExpressionNamedRerouteDeclaration>(FindExprByNameInFunction(Fn, DeclId));
+        if (!D) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_add_reroute_usage: declaration not found: %s"), *DeclId));
+        if (!bHasPos) HaybaAutoNodePos(Fn->GetExpressions().Num(), X, Y);
+        UMaterialExpressionNamedRerouteUsage* U = Cast<UMaterialExpressionNamedRerouteUsage>(UMaterialEditingLibrary::CreateMaterialExpressionInFunction(Fn, Cls, X, Y));
+        if (!U) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_usage: create failed"));
+        U->Declaration = D;
+        U->DeclarationGuid = D->VariableGuid;
+        UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+        Out->SetStringField(TEXT("node_id"), U->GetName());
+        return FHaybaHandlerResult::Ok(Out);
+    }
+
+    FString MatPath;
+    if (!P->TryGetStringField(TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_usage: missing material_path or function_path"));
+    UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
+    if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_usage: material not found"));
+    UMaterialExpressionNamedRerouteDeclaration* D = Cast<UMaterialExpressionNamedRerouteDeclaration>(FindExprByName(Mat, DeclId));
+    if (!D) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_add_reroute_usage: declaration not found: %s"), *DeclId));
+    if (!bHasPos) HaybaAutoNodePos(Mat->GetExpressions().Num(), X, Y);
+    UMaterialExpressionNamedRerouteUsage* U = Cast<UMaterialExpressionNamedRerouteUsage>(UMaterialEditingLibrary::CreateMaterialExpression(Mat, Cls, X, Y));
+    if (!U) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_usage: create failed"));
+    U->Declaration = D;
+    U->DeclarationGuid = D->VariableGuid;
+    Mat->MarkPackageDirty();
+    UMaterialEditingLibrary::RecompileMaterial(Mat);
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("node_id"), U->GetName());
     return FHaybaHandlerResult::Ok(Out);
 }
