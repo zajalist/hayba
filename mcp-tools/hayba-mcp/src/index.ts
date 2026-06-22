@@ -35,7 +35,17 @@ async function main() {
   // until the worldbuilding-hub roadmap reaches the terrain integration phase.
   // Must complete before server.connect — γ-hybrid routing registers its
   // meta-tools asynchronously and the MCP SDK rejects post-connect registration.
-  const routing = await registerTools(server, {});
+  // Build a minimal session object that satisfies SessionManager. briefNicheOnce
+  // is used by the first-touch niche briefing to surface domain tool catalogues
+  // on the first call within a session.
+  const briefedDomains = new Set<string>();
+  const routing = await registerTools(server, {
+    briefNicheOnce(domain: string): boolean {
+      if (briefedDomains.has(domain)) return false;
+      briefedDomains.add(domain);
+      return true;
+    },
+  });
 
   await startDashboard(config.dashboardPort, '127.0.0.1');
   console.error(`Dashboard: http://127.0.0.1:${config.dashboardPort}`);

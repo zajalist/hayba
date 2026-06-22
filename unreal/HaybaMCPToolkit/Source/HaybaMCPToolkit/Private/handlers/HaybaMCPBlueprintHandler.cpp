@@ -169,7 +169,15 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Create(const TSharedPtr<FJsonObje
     if (!ParentClass)
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("blueprint_create: parent class not found: %s"), *ParentPath));
 
-    UPackage* Package = CreatePackage(*PkgPath);
+    // package_path follows the same contract as material_create: it is the
+    // full intended asset path (its trailing component is the asset name).
+    // Strip to the directory and re-compose <dir>/<name> so the asset lands at
+    // the standard /Game/Dir/Name.Name — NOT the malformed /Game/Dir.Name that
+    // results from using package_path directly as the package and Name as a
+    // sub-object inside it.
+    const FString Dir = FPackageName::GetLongPackagePath(PkgPath);
+    const FString FullPackageName = Dir / Name;
+    UPackage* Package = CreatePackage(*FullPackageName);
     if (!Package)
         return FHaybaHandlerResult::Err(TEXT("blueprint_create: CreatePackage failed"));
 

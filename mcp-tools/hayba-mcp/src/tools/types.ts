@@ -10,6 +10,10 @@ export type ToolResult = {
 // that don't touch terrain accept it without using it. Gaea handlers (which
 // import the real class directly) live behind the .gitignore and only the
 // maintainer needs the full surface.
-export type SessionManager = Record<string, unknown>;
+export type SessionManager = {
+  /** Returns true the first time `domain` is seen, false thereafter. */
+  briefNicheOnce?: (domain: string) => boolean;
+  [key: string]: unknown;
+};
 
 export type ToolHandler = (args: Record<string, unknown>, session: SessionManager) => Promise<ToolResult>;

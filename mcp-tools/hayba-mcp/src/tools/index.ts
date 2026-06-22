@@ -51,6 +51,9 @@ import { materialAddRerouteUsageHandler, meta as materialAddRerouteUsageMeta } f
 import { assetDeleteHandler, meta as assetDeleteMeta } from './asset/asset-delete.js';
 import { materialConnectNodesHandler, meta as materialConnectNodesMeta } from './material/material-connect-nodes.js';
 import { materialFunctionCreateHandler, meta as materialFunctionCreateMeta } from './material/material-function-create.js';
+import { materialSetMaterialPropertyHandler, meta as materialSetMaterialPropertyMeta } from './material/material-set-material-property.js';
+import { materialCompileHandler, meta as materialCompileMeta } from './material/material-compile.js';
+import { materialDisconnectHandler, meta as materialDisconnectMeta } from './material/material-disconnect.js';
 
 // ── Asset-source connectors (pure Node — no UE bridge except python_run) ──────
 import { handlePolyhavenSearch, meta as polyhavenSearchMeta } from './asset-sources/polyhaven-search.js';
@@ -90,6 +93,7 @@ import { setupConventionsHandler } from './hayba-setup-conventions.js';
 import { analyzeConventionsHandler } from './hayba-analyze-conventions.js';
 
 // ── Validator (runtime rule system + history panel feed) ────────────────────
+import { appendNicheBriefing } from './niche-briefing.js';
 import { installToolHooks } from '../validator/index.js';
 import {
   validatorRunSchema, validatorRunHandler,
@@ -126,7 +130,11 @@ import {
 
 // SessionManager (Gaea session) parked while terrain features are off — kept
 // as a typed shim so registerTools' signature doesn't churn for callers.
-type SessionManagerStub = Record<string, unknown>;
+// briefNicheOnce is used by the first-touch niche briefing system.
+type SessionManagerStub = {
+  briefNicheOnce?(domain: string): boolean;
+  [key: string]: unknown;
+};
 
 export async function registerTools(server: McpServer, session: SessionManagerStub): Promise<RoutingHandle | null> {
   const settings = readSettings();
@@ -204,6 +212,15 @@ function inferDir(name: string): string | null {
   if (name === 'python_run')              return 'python';
   if (name === 'list_tool_categories' || name === 'get_tool_signature') return 'code-mode';
   return null;
+}
+
+/** Attach a first-touch niche briefing to a ToolResult when appropriate. */
+function withNicheBriefing(
+  domain: string,
+  session: SessionManagerStub,
+  r: { content: Array<{ type: 'text'; text: string }>; isError?: boolean },
+): { content: Array<{ type: 'text'; text: string }>; isError?: boolean } {
+  return appendNicheBriefing(domain, session, { content: r.content, isError: r.isError });
 }
 
 function registerToolsCore(server: McpServer, session: SessionManagerStub): void {
@@ -430,7 +447,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialCreateHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_create', materialCreateMeta);
@@ -445,7 +462,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialCreateInstanceHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_create_instance', materialCreateInstanceMeta);
@@ -464,7 +481,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialSetParamHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_set_param', materialSetParamMeta);
@@ -479,7 +496,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialApplyHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_apply', materialApplyMeta);
@@ -492,7 +509,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialListHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_list', materialListMeta);
@@ -505,7 +522,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialGetInfoHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_get_info', materialGetInfoMeta);
@@ -524,7 +541,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialAddNodeHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_add_node', materialAddNodeMeta);
@@ -541,7 +558,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialSetNodeHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_set_node', materialSetNodeMeta);
@@ -556,10 +573,37 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialDeleteNodeHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_delete_node', materialDeleteNodeMeta);
+
+  server.tool(
+    'material_set_property',
+    appendMeta('Set master-material settings (blend mode, domain, shading model, two-sided, opacity mask clip).', materialSetMaterialPropertyMeta),
+    {
+      material_path: z.string().min(1).describe('Path to the master material asset'),
+      properties: z.record(z.string(), z.unknown()).describe('Settings; aliases: domain, blend_mode, shading_model, two_sided, opacity_mask_clip_value'),
+    },
+    async (params) => {
+      const r = await materialSetMaterialPropertyHandler(params as Record<string, unknown>, session);
+      return withNicheBriefing('material', session, r);
+    }
+  );
+  remember('material_set_property', materialSetMaterialPropertyMeta);
+
+  server.tool(
+    'material_compile',
+    appendMeta('Explicitly compile a material (apply staged settings + surface translator errors). Graph edits auto-save and defer compilation; call this once the graph is complete.', materialCompileMeta),
+    {
+      material_path: z.string().min(1).describe('Path to the master material asset to compile'),
+    },
+    async (params) => {
+      const r = await materialCompileHandler(params as Record<string, unknown>, session);
+      return withNicheBriefing('material', session, r);
+    }
+  );
+  remember('material_compile', materialCompileMeta);
 
   server.tool(
     'material_add_comment',
@@ -575,7 +619,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialAddCommentHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_add_comment', materialAddCommentMeta);
@@ -592,7 +636,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialAddRerouteDeclarationHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_add_reroute_declaration', materialAddRerouteDeclarationMeta);
@@ -608,7 +652,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialAddRerouteUsageHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_add_reroute_usage', materialAddRerouteUsageMeta);
@@ -636,11 +680,13 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
       from_output: z.string().optional().describe('Output pin name on the source node'),
       to_node: z.string().optional().describe('ID or name of the target node'),
       to_input: z.string().optional().describe('Input pin name on the target node'),
-      to_property: z.string().optional().describe('Target material property name (instead of to_node/to_input)'),
+      to_input_index: z.number().int().optional().describe('Target input pin by index (unnamed pins, e.g. Substrate slab inputs)'),
+      from_output_index: z.number().int().optional().describe('Source output pin by index (default 0)'),
+      to_property: z.string().optional().describe('Target material property, e.g. base_color or front_material (Substrate)'),
     },
     async (params) => {
       const r = await materialConnectNodesHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_connect_nodes', materialConnectNodesMeta);
@@ -654,10 +700,27 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     },
     async (params) => {
       const r = await materialFunctionCreateHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return withNicheBriefing('material', session, r);
     }
   );
   remember('material_function_create', materialFunctionCreateMeta);
+
+  server.tool(
+    'material_disconnect',
+    appendMeta('Break a connection in a material graph — clear a node input or a material output property.', materialDisconnectMeta),
+    {
+      material_path: z.string().min(1).describe('Path to the material asset'),
+      to_node: z.string().optional().describe('ID or name of the target node whose input should be disconnected'),
+      to_input: z.string().optional().describe('Input pin name on the target node (defaults to first input)'),
+      to_input_index: z.number().int().nonnegative().optional().describe('Zero-based input pin index (alternative to to_input)'),
+      to_property: z.string().optional().describe('Material output property name to disconnect (e.g. base_color, normal)'),
+    },
+    async (params) => {
+      const r = await materialDisconnectHandler(params as Record<string, unknown>, session);
+      return withNicheBriefing('material', session, r);
+    }
+  );
+  remember('material_disconnect', materialDisconnectMeta);
 
   // ── Scene domain ────────────────────────────────────────────────────────────
 
@@ -1741,6 +1804,13 @@ function recordEagerSchemas(
     function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
     node_id: z.string().min(1).describe('ID/name of the node to delete'),
   }, 'low', '{deleted}');
+  reg('material_set_property', {
+    material_path: z.string().min(1).describe('Path to the master material asset'),
+    properties: z.record(z.string(), z.unknown()).describe('Settings; aliases: domain, blend_mode, shading_model, two_sided, opacity_mask_clip_value'),
+  }, 'low', '{applied:[keys]}');
+  reg('material_compile', {
+    material_path: z.string().min(1).describe('Path to the master material asset to compile'),
+  }, 'medium', '{errors:[string], has_errors, saved}');
   reg('material_add_comment', {
     material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
     function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
@@ -1773,12 +1843,21 @@ function recordEagerSchemas(
     from_output: z.string().optional().describe('Output pin name on the source node'),
     to_node: z.string().optional().describe('ID or name of the target node'),
     to_input: z.string().optional().describe('Input pin name on the target node'),
-    to_property: z.string().optional().describe('Target material property name (instead of to_node/to_input)'),
+    to_input_index: z.number().int().optional().describe('Target input pin by index (unnamed pins, e.g. Substrate slab inputs)'),
+    from_output_index: z.number().int().optional().describe('Source output pin by index (default 0)'),
+    to_property: z.string().optional().describe('Target material property, e.g. base_color or front_material (Substrate)'),
   }, 'low', '{ok, from_node, to_node, to_property, connection_made}');
   reg('material_function_create', {
     package_path: z.string().min(1).describe('UE content path for the new material function'),
     name: z.string().min(1).describe('Name of the material function asset'),
   }, 'low', '{path, name}');
+  reg('material_disconnect', {
+    material_path: z.string().min(1).describe('Path to the material asset'),
+    to_node: z.string().optional().describe('ID or name of the target node whose input should be disconnected'),
+    to_input: z.string().optional().describe('Input pin name on the target node (defaults to first input)'),
+    to_input_index: z.number().int().nonnegative().optional().describe('Zero-based input pin index (alternative to to_input)'),
+    to_property: z.string().optional().describe('Material output property name to disconnect (e.g. base_color, normal)'),
+  }, 'low', '{disconnected}');
 
   // ── Scene domain ──────────────────────────────────────────────────────────
   reg('scene_export', {

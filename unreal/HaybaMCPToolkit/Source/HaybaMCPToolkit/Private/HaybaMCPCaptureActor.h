@@ -11,10 +11,10 @@ class AHaybaMCPCaptureActor : public AActor
 public:
     AHaybaMCPCaptureActor();
 
-    UPROPERTY(VisibleAnywhere)
+    UPROPERTY(VisibleAnywhere, Category = "Hayba MCP")
     USceneCaptureComponent2D* Capture;
 
-    UPROPERTY(VisibleAnywhere)
+    UPROPERTY(VisibleAnywhere, Category = "Hayba MCP")
     UTextureRenderTarget2D* RT;
 
     /** Move to match active viewport, capture, return base64-encoded PNG. */

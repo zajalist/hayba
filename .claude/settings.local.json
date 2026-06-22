@@ -130,7 +130,11 @@
       "Bash(cp \"/tmp/Gaea-Docs-master/source/Reference/00-Primitives/Perlin.params.md\" D:/gaea-gnn/tests/fixtures/docs/)",
       "Bash(cp \"/tmp/Gaea-Docs-master/source/Reference/06-Erosion/Erosion.md\" D:/gaea-gnn/tests/fixtures/docs/)",
       "Bash(cp \"/tmp/Gaea-Docs-master/source/Reference/03-Adjustments/Combine.md\" D:/gaea-gnn/tests/fixtures/docs/)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "WebFetch(domain:en.wikipedia.org)",
+      "Bash(cargo check *)",
+      "mcp__hayba-toolkit__get_tool_signature",
+      "mcp__hayba-toolkit__hayba_pack_list"
     ]
   }
 }

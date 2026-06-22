@@ -17,7 +17,9 @@ export const schema = z.object({
   from_output: z.string().optional().describe('Output pin name on the source node'),
   to_node: z.string().optional().describe('ID or name of the target node'),
   to_input: z.string().optional().describe('Input pin name on the target node'),
-  to_property: z.string().optional().describe('Target material property name (instead of to_node/to_input)'),
+  to_input_index: z.number().int().optional().describe('Target input pin by index (unnamed pins, e.g. Substrate slab inputs)'),
+  from_output_index: z.number().int().optional().describe('Source output pin by index (default 0)'),
+  to_property: z.string().optional().describe('Target material property, e.g. base_color or front_material (Substrate)'),
 }).refine((d) => !!d.material_path || !!d.function_path, {
   message: 'one of material_path or function_path is required',
 }).refine((d) => !!d.to_node || !!d.to_property, {
