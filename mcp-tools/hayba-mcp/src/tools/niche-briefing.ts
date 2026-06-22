@@ -24,7 +24,7 @@ GRAPH CONSTRUCTION
   material_add_reroute_usage   Create a named-reroute usage bound to a declaration
 
 COMPILATION & INSPECTION
-  material_compile             Explicitly compile a material — apply staged settings + surface translator errors
+  material_compile             Explicitly compile a material — apply staged settings + surface translator errors + report shader optimization stats (instruction counts, texture samples, samplers) with hints
   material_get_info            Inspect a material or material instance: properties, parameters, connected expressions
   material_list                List materials and material instances in the project or a specific path
 
