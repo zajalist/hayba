@@ -23,7 +23,7 @@
 #include "UObject/EnumProperty.h"
 // Graph authoring (Tasks 2-4): connections, node properties, material functions
 #include "MaterialEditingLibrary.h"
-#include "Materials/MaterialStaticParameters.h"  // FStaticParameterSet, FStaticSwitchParameter (Task 5)
+#include "StaticParameterSet.h"  // FStaticParameterSet, FStaticSwitchParameter (Task 5)
 #include "MaterialTypes.h"
 #include "Materials/MaterialFunction.h"
 #include "Factories/MaterialFunctionFactoryNew.h"
@@ -45,7 +45,7 @@
 #include "Materials/MaterialExpressionFunctionOutput.h"
 #include "Materials/MaterialExpressionComment.h"
 #include "Materials/MaterialExpressionNamedReroute.h"
-#include "Materials/MaterialResource.h"
+#include "MaterialShared.h"  // FMaterialResource, GetCompileErrors (material_compile)
 #include "UObject/SavePackage.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPMaterial, Log, All);
@@ -146,8 +146,8 @@ static bool HaybaPersistAsset(UObject* Asset, FString& OutError)
     FSavePackageArgs Args;
     Args.TopLevelFlags = RF_Public | RF_Standalone;
     Args.SaveFlags = SAVE_NoError;
-    const FSavePackageResultStruct Res = UPackage::SavePackage(Pkg, nullptr, *FileName, Args);
-    if (Res.Result != ESavePackageResult::Success)
+    const bool bOk = UPackage::SavePackage(Pkg, nullptr, *FileName, Args);
+    if (!bOk)
     {
         OutError = FString::Printf(TEXT("SavePackage failed for %s"), *Pkg->GetName());
         return false;
@@ -1239,7 +1239,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
     UMaterialEditingLibrary::RecompileMaterial(Mat);
 
     TArray<TSharedPtr<FJsonValue>> Errs;
-    if (FMaterialResource* Res = Mat->GetMaterialResource(GMaxRHIFeatureLevel))
+    if (FMaterialResource* Res = Mat->GetMaterialResource(GMaxRHIShaderPlatform))
         for (const FString& E : Res->GetCompileErrors())
             Errs.Add(MakeShared<FJsonValueString>(E));
 
