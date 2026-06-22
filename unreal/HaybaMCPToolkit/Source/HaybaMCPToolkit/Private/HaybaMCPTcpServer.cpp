@@ -59,6 +59,15 @@ bool FHaybaMCPTcpServer::Start()
     }
 
     bIsRunning = true;
+
+    // Drain queued commands on the game thread from the engine tick (NOT a
+    // task-graph task) — see header note: running ProcessCommand inside an
+    // AsyncTask(GameThread) task crashes when a handler re-enters the task graph
+    // (python_run -> Interchange import: check(RecursionGuard==1)). AddTicker
+    // must run on the game thread; Start() is called during game-thread plugin init.
+    DrainTickerHandle = FTSTicker::GetCoreTicker().AddTicker(
+        FTickerDelegate::CreateRaw(this, &FHaybaMCPTcpServer::DrainPendingCommands), 0.0f);
+
     Thread = FRunnableThread::Create(this, TEXT("HaybaMCPTCPServer"), 0, TPri_Normal);
 
     UE_LOG(LogHaybaMCPTCP, Log, TEXT("TCP server started on port %d"), Port);
@@ -70,6 +79,12 @@ void FHaybaMCPTcpServer::Shutdown()
     if (!bIsRunning) return;
 
     bIsRunning = false;
+
+    if (DrainTickerHandle.IsValid())
+    {
+        FTSTicker::GetCoreTicker().RemoveTicker(DrainTickerHandle);
+        DrainTickerHandle.Reset();
+    }
 
     if (Thread)
     {
@@ -128,22 +143,35 @@ void FHaybaMCPTcpServer::HandleClientConnection(FHaybaMCPClientConnectionPtr Con
             return;
         }
 
-        // Capture Conn by value so the socket outlives this read loop; the
-        // task bails if the client disconnected before the command finished.
-        AsyncTask(ENamedThreads::GameThread, [this, Message, Conn]()
-        {
-            if (!Conn->bAlive || !CommandHandler.IsValid())
-            {
-                return;
-            }
-            FString ResponseString = CommandHandler->ProcessCommand(Message);
-            SendMessage(Conn, ResponseString);
-        });
+        // Enqueue for the game-thread ticker drain (Conn captured by value so the
+        // socket outlives this read loop). NOT AsyncTask(GameThread) — see header:
+        // running a handler inside a task-graph task crashes when it re-enters the
+        // task graph (python_run -> Interchange import).
+        PendingCommands.Enqueue(FHaybaMCPPendingCommand{ Message, Conn });
     }
 
     // Server is shutting down while this client is still connected.
     Conn->bAlive = false;
     ClientCount.Decrement();
+}
+
+bool FHaybaMCPTcpServer::DrainPendingCommands(float /*DeltaTime*/)
+{
+    // Runs on the game thread from the engine tick (outside task-graph task
+    // execution), so a handler may safely pump the task graph (asset import etc).
+    // Drain all pending commands this tick — each command is one game-thread
+    // command, matching the historical one-task-per-command behaviour.
+    FHaybaMCPPendingCommand Cmd;
+    while (PendingCommands.Dequeue(Cmd))
+    {
+        if (!Cmd.Conn.IsValid() || !Cmd.Conn->bAlive || !CommandHandler.IsValid())
+        {
+            continue;
+        }
+        const FString ResponseString = CommandHandler->ProcessCommand(Cmd.Message);
+        SendMessage(Cmd.Conn, ResponseString);
+    }
+    return true; // keep ticking
 }
 
 bool FHaybaMCPTcpServer::ReadMessage(FSocket* Socket, FString& OutMessage)
