@@ -65,8 +65,10 @@ UMaterialInstanceDynamic* SHaybaStudioViewport::GetColorFill(const FLinearColor&
     if (MID)
     {
         // GeomMaterial is the engine's translucent debug material; its "Color"
-        // vector param drives both tint and (alpha) translucency.
-        MID->SetVectorParameterValue(TEXT("Color"), FLinearColor(Color.R, Color.G, Color.B, 0.35f));
+        // vector param drives both tint and (alpha) translucency. Keep the fill
+        // FAINT (0.15) so the mesh's texture reads through the volume — the
+        // SDPG_Foreground wireframe still marks the mask bounds clearly.
+        MID->SetVectorParameterValue(TEXT("Color"), FLinearColor(Color.R, Color.G, Color.B, 0.15f));
         FillMaterials.Add(Key, MID);
     }
     return MID;
