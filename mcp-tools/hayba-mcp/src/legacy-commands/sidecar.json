@@ -1456,7 +1456,8 @@
         {
           "name": "package_path",
           "type": "string",
-          "required": true
+          "required": true,
+          "description": "Full intended asset path, including the asset name as the final component, e.g. /Game/Underground/Actors/BP_UndergroundRun (same contract as material_create). The handler strips this to its directory and creates <dir>/<name>.<name>; pass the full path, not just the parent folder."
         },
         {
           "name": "parent_class_path",
@@ -1475,7 +1476,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "package_path is the full intended asset path (trailing component = asset name), matching material_create. The handler derives the directory via FPackageName::GetLongPackagePath and re-composes <dir>/<name> so the asset lands at the standard /Game/Dir/Name.Name."
     },
     "blueprint_get_info": {
       "aliases": [],
