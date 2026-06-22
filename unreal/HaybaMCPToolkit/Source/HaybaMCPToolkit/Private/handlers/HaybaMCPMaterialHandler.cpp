@@ -188,6 +188,7 @@ static bool TryParseProperty(const FString& In, EMaterialProperty& Out)
     if (S == TEXT("shading_model_from_node")) { Out = MP_ShadingModel; return true; }
     // Substrate (from fix/ci-test-suite-green)
     if (S == TEXT("front_material"))        { Out = MP_FrontMaterial; return true; }
+    if (S == TEXT("displacement"))          { Out = MP_Displacement; return true; }  // Nanite tessellation (needs material_set_property enable_tessellation=true)
     return false;
 }
 
@@ -1161,6 +1162,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
         { TEXT("shading_model"),           TEXT("ShadingModel") },
         { TEXT("two_sided"),               TEXT("TwoSided") },
         { TEXT("opacity_mask_clip_value"), TEXT("OpacityMaskClipValue") },
+        { TEXT("enable_tessellation"),     TEXT("bEnableTessellation") },  // required for the displacement output to tessellate (Nanite)
     };
 
     TArray<TSharedPtr<FJsonValue>> Applied;

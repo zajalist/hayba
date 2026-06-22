@@ -364,7 +364,7 @@ const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       niche: M,
       schema: {
         material_path: z.string().min(1).describe('Path to the master material asset'),
-        properties: z.record(z.string(), z.unknown()).describe('Settings; aliases: domain, blend_mode, shading_model, two_sided, opacity_mask_clip_value'),
+        properties: z.record(z.string(), z.unknown()).describe('Settings; aliases: domain, blend_mode, shading_model, two_sided, opacity_mask_clip_value, enable_tessellation'),
       },
     },
     {
@@ -470,7 +470,7 @@ const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
         to_input: z.string().optional().describe('Input pin name on the target node'),
         to_input_index: z.number().int().optional().describe('Target input pin by index (unnamed pins, e.g. Substrate slab inputs)'),
         from_output_index: z.number().int().optional().describe('Source output pin by index (default 0)'),
-        to_property: z.string().optional().describe('Target material property, e.g. base_color or front_material (Substrate)'),
+        to_property: z.string().optional().describe('Target material output, e.g. base_color, normal, front_material (Substrate), displacement (Nanite tessellation - needs material_set_property enable_tessellation=true)'),
       },
     },
     {
