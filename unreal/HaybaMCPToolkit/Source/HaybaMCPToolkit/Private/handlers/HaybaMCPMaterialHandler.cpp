@@ -535,7 +535,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddNode(const TSharedPtr<FJsonO
     // Deferred-compile + crash-resilient save: no per-edit RecompileMaterial
     // (avoids translating a half-built graph -> editor-killing assert). Persist
     // to disk now; translate via the explicit material_compile command.
-    { FString SaveErr; HaybaPersistAsset(Mat, SaveErr); }
+    Mat->MarkPackageDirty();  // in-memory only — master materials are written to disk ONLY by material_compile, so a half-built invalid-Normal graph never lands on disk for the editor to thumbnail/open-compile (Substrate check(NormalCodeChunk!=INDEX_NONE) crash)
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("node_id"), Expr->GetName());
@@ -625,7 +625,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
     // Deferred-compile + crash-resilient save: no per-edit RecompileMaterial
     // (avoids translating a half-built graph -> editor-killing assert). Persist
     // to disk now; translate via the explicit material_compile command.
-    { FString SaveErr; HaybaPersistAsset(Mat, SaveErr); }
+    Mat->MarkPackageDirty();  // in-memory only — master materials are written to disk ONLY by material_compile, so a half-built invalid-Normal graph never lands on disk for the editor to thumbnail/open-compile (Substrate check(NormalCodeChunk!=INDEX_NONE) crash)
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetBoolField(TEXT("connected"), true);
@@ -993,7 +993,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetNode(const TSharedPtr<FJsonO
     // Deferred-compile + crash-resilient save: no per-edit RecompileMaterial
     // (avoids translating a half-built graph -> editor-killing assert). Persist
     // to disk now; translate via the explicit material_compile command.
-    { FString SaveErr; HaybaPersistAsset(Mat, SaveErr); }
+    Mat->MarkPackageDirty();  // in-memory only — master materials are written to disk ONLY by material_compile, so a half-built invalid-Normal graph never lands on disk for the editor to thumbnail/open-compile (Substrate check(NormalCodeChunk!=INDEX_NONE) crash)
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("node_id"), NodeId);
     return FHaybaHandlerResult::Ok(Out);
@@ -1030,7 +1030,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDeleteNode(const TSharedPtr<FJs
     // Deferred-compile + crash-resilient save: no per-edit RecompileMaterial
     // (avoids translating a half-built graph -> editor-killing assert). Persist
     // to disk now; translate via the explicit material_compile command.
-    { FString SaveErr; HaybaPersistAsset(Mat, SaveErr); }
+    Mat->MarkPackageDirty();  // in-memory only — master materials are written to disk ONLY by material_compile, so a half-built invalid-Normal graph never lands on disk for the editor to thumbnail/open-compile (Substrate check(NormalCodeChunk!=INDEX_NONE) crash)
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetBoolField(TEXT("deleted"), true);
     return FHaybaHandlerResult::Ok(Out);
@@ -1082,7 +1082,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddComment(const TSharedPtr<FJs
     Mat->GetExpressionCollection().AddComment(C);
     // Comments don't affect compilation; persist to disk (no PostEditChange,
     // which would needlessly translate the material).
-    { FString SaveErr; HaybaPersistAsset(Mat, SaveErr); }
+    Mat->MarkPackageDirty();  // in-memory only — master materials are written to disk ONLY by material_compile, so a half-built invalid-Normal graph never lands on disk for the editor to thumbnail/open-compile (Substrate check(NormalCodeChunk!=INDEX_NONE) crash)
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("comment_id"), C->GetName());
     return FHaybaHandlerResult::Ok(Out);
@@ -1140,7 +1140,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddRerouteDeclaration(const TSh
     // Deferred-compile + crash-resilient save: no per-edit RecompileMaterial
     // (avoids translating a half-built graph -> editor-killing assert). Persist
     // to disk now; translate via the explicit material_compile command.
-    { FString SaveErr; HaybaPersistAsset(Mat, SaveErr); }
+    Mat->MarkPackageDirty();  // in-memory only — master materials are written to disk ONLY by material_compile, so a half-built invalid-Normal graph never lands on disk for the editor to thumbnail/open-compile (Substrate check(NormalCodeChunk!=INDEX_NONE) crash)
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("node_id"), D->GetName());
     return FHaybaHandlerResult::Ok(Out);
@@ -1193,7 +1193,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddRerouteUsage(const TSharedPt
     // Deferred-compile + crash-resilient save: no per-edit RecompileMaterial
     // (avoids translating a half-built graph -> editor-killing assert). Persist
     // to disk now; translate via the explicit material_compile command.
-    { FString SaveErr; HaybaPersistAsset(Mat, SaveErr); }
+    Mat->MarkPackageDirty();  // in-memory only — master materials are written to disk ONLY by material_compile, so a half-built invalid-Normal graph never lands on disk for the editor to thumbnail/open-compile (Substrate check(NormalCodeChunk!=INDEX_NONE) crash)
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("node_id"), U->GetName());
     return FHaybaHandlerResult::Ok(Out);
@@ -1229,16 +1229,15 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
             Applied.Add(MakeShared<FJsonValueString>(Pair.Key));
     }
 
-    // Deferred-compile: persist the changed settings to disk; the translate
-    // (which applies the new BlendMode/Domain/etc. and could assert) happens on
-    // the explicit material_compile call, not here.
-    FString SaveErr;
-    const bool bSaved = HaybaPersistAsset(Mat, SaveErr);
+    // In-memory only: master materials are written to disk solely by
+    // material_compile, so settings changes never leave a half-built material on
+    // disk for the editor to compile-on-open (Substrate Normal-chunk assert).
+    Mat->MarkPackageDirty();
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetArrayField(TEXT("applied"), Applied);
-    Out->SetBoolField(TEXT("saved"), bSaved);
-    if (!bSaved) Out->SetStringField(TEXT("save_error"), SaveErr);
+    Out->SetBoolField(TEXT("saved"), false);
+    Out->SetStringField(TEXT("note"), TEXT("call material_compile to apply settings and write the material to disk"));
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -1356,7 +1355,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDisconnect(const TSharedPtr<FJs
             return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_disconnect: input index %d out of range on %s"), NamedIdx, *ToNode));
     }
 
-    { FString SaveErr; HaybaPersistAsset(Mat, SaveErr); }
+    Mat->MarkPackageDirty();  // in-memory only — master materials are written to disk ONLY by material_compile, so a half-built invalid-Normal graph never lands on disk for the editor to thumbnail/open-compile (Substrate check(NormalCodeChunk!=INDEX_NONE) crash)
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetBoolField(TEXT("disconnected"), true);
     return FHaybaHandlerResult::Ok(Out);
