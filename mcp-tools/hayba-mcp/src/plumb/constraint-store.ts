@@ -7,6 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Constraint } from './contracts.js';
+import { toObjectPath } from './contracts.js';
 import { primitivesById } from './primitives.js';
 
 let PATH_OVERRIDE: string | null = null;
@@ -71,8 +72,13 @@ export function validateConstraint(c: Partial<Constraint>): ValidationError[] {
 export function upsertConstraint(c: Constraint): { ok: boolean; errors: ValidationError[] } {
   const errors = validateConstraint(c);
   if (errors.length) return { ok: false, errors };
-  const list = loadConstraints().filter(x => x.id !== c.id);
-  list.push({ enabled: true, ...c });
+  // Normalize an asset binding to the full object path so the in-editor Studio
+  // (which queries constraints by the suffixed object path) actually matches it.
+  const normalized: Constraint = c.binding?.asset
+    ? { ...c, binding: { ...c.binding, asset: toObjectPath(c.binding.asset) } }
+    : c;
+  const list = loadConstraints().filter(x => x.id !== normalized.id);
+  list.push({ enabled: true, ...normalized });
   writeAll(list);
   return { ok: true, errors: [] };
 }
@@ -87,9 +93,10 @@ export function removeConstraint(id: string): boolean {
 
 /** Constraints whose binding could apply to a given asset/tag set. */
 export function constraintsFor(asset?: string, tags?: Record<string, string>): Constraint[] {
+  const assetObj = asset ? toObjectPath(asset) : asset;
   return loadConstraints().filter(c => {
     if (c.enabled === false) return false;
-    if (c.binding.asset) return c.binding.asset === asset;
+    if (c.binding.asset) return c.binding.asset === assetObj;
     if (c.binding.tag) return tags?.[c.binding.tag.axis] === c.binding.tag.value;
     return false;
   });
