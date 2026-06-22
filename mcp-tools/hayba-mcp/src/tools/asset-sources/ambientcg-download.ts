@@ -22,6 +22,9 @@ const API = 'https://ambientCG.com/api/v2';
 export function assetInfoUrl(assetId: string): string {
   const qs = new URLSearchParams();
   qs.set('id', assetId);
+  // Without include=downloadData the v2 API returns an EMPTY downloadFolders, so
+  // no zip can ever be resolved ("can't resolve its zips"). Request it explicitly.
+  qs.set('include', 'downloadData');
   return `${API}/full_json?${qs.toString()}`;
 }
 
@@ -29,21 +32,27 @@ export function assetInfoUrl(assetId: string): string {
 export function pickZipUrl(assetJson: any, resolution: string): string | null {
   const found = Array.isArray(assetJson?.foundAssets) ? assetJson.foundAssets : [];
   const asset = found[0] ?? assetJson;
-  const folders = asset?.downloadFolders ?? [];
-  for (const folder of folders) {
+  // downloadFolders is an OBJECT keyed by folder name (e.g. "default"), not an
+  // array — Object.values() so `for..of` actually iterates it. Same for the
+  // category map. Path field is fullDownloadPath, with downloadLink as fallback.
+  const folders = Object.values(asset?.downloadFolders ?? {});
+  const pathOf = (d: any): string | null => (d?.fullDownloadPath ?? d?.downloadLink) || null;
+  // Preferred: exact attribute match (case-insensitive).
+  for (const folder of folders as any[]) {
     const cats = folder?.downloadFiletypeCategories ?? {};
     const zip = cats?.zip ?? cats?.Zip;
-    const downloads = zip?.downloads ?? [];
-    for (const d of downloads) {
-      if (d?.attribute === resolution && d?.fullDownloadPath) return d.fullDownloadPath;
+    for (const d of (zip?.downloads ?? [])) {
+      if (typeof d?.attribute === 'string' && d.attribute.toLowerCase() === resolution.toLowerCase() && pathOf(d)) {
+        return pathOf(d);
+      }
     }
   }
-  // Fallback: first available zip
-  for (const folder of folders) {
+  // Fallback: first available zip in any folder.
+  for (const folder of folders as any[]) {
     const cats = folder?.downloadFiletypeCategories ?? {};
     const zip = cats?.zip ?? cats?.Zip;
-    const first = zip?.downloads?.[0];
-    if (first?.fullDownloadPath) return first.fullDownloadPath;
+    const first = (zip?.downloads ?? [])[0];
+    if (pathOf(first)) return pathOf(first);
   }
   return null;
 }
