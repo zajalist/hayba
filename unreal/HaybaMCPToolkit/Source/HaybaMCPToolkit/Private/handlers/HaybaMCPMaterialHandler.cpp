@@ -166,6 +166,16 @@ static bool TryParseProperty(const FString& In, EMaterialProperty& Out)
     if (S == TEXT("world_position_offset")) { Out = MP_WorldPositionOffset; return true; }
     if (S == TEXT("ambient_occlusion"))     { Out = MP_AmbientOcclusion; return true; }
     if (S == TEXT("subsurface"))            { Out = MP_SubsurfaceColor; return true; }
+    // Task 2: extended connectable outputs
+    if (S == TEXT("pixel_depth_offset"))    { Out = MP_PixelDepthOffset; return true; }
+    if (S == TEXT("refraction"))            { Out = MP_Refraction; return true; }
+    if (S == TEXT("clear_coat"))            { Out = MP_CustomData0; return true; }
+    if (S == TEXT("clear_coat_roughness"))  { Out = MP_CustomData1; return true; }
+    if (S == TEXT("custom_data_0"))         { Out = MP_CustomData0; return true; }
+    if (S == TEXT("custom_data_1"))         { Out = MP_CustomData1; return true; }
+    if (S == TEXT("anisotropy"))            { Out = MP_Anisotropy; return true; }
+    if (S == TEXT("tangent"))               { Out = MP_Tangent; return true; }
+    if (S == TEXT("shading_model_from_node")) { Out = MP_ShadingModel; return true; }
     return false;
 }
 
