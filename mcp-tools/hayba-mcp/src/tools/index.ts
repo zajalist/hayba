@@ -52,6 +52,7 @@ import { assetDeleteHandler, meta as assetDeleteMeta } from './asset/asset-delet
 import { materialConnectNodesHandler, meta as materialConnectNodesMeta } from './material/material-connect-nodes.js';
 import { materialFunctionCreateHandler, meta as materialFunctionCreateMeta } from './material/material-function-create.js';
 import { materialSetMaterialPropertyHandler, meta as materialSetMaterialPropertyMeta } from './material/material-set-material-property.js';
+import { materialCompileHandler, meta as materialCompileMeta } from './material/material-compile.js';
 
 // ── Asset-source connectors (pure Node — no UE bridge except python_run) ──────
 import { handlePolyhavenSearch, meta as polyhavenSearchMeta } from './asset-sources/polyhaven-search.js';
@@ -575,6 +576,19 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     }
   );
   remember('material_set_property', materialSetMaterialPropertyMeta);
+
+  server.tool(
+    'material_compile',
+    appendMeta('Explicitly compile a material (apply staged settings + surface translator errors). Graph edits auto-save and defer compilation; call this once the graph is complete.', materialCompileMeta),
+    {
+      material_path: z.string().min(1).describe('Path to the master material asset to compile'),
+    },
+    async (params) => {
+      const r = await materialCompileHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_compile', materialCompileMeta);
 
   server.tool(
     'material_add_comment',
@@ -1760,6 +1774,9 @@ function recordEagerSchemas(
     material_path: z.string().min(1).describe('Path to the master material asset'),
     properties: z.record(z.string(), z.unknown()).describe('Settings; aliases: domain, blend_mode, shading_model, two_sided, opacity_mask_clip_value'),
   }, 'low', '{applied:[keys]}');
+  reg('material_compile', {
+    material_path: z.string().min(1).describe('Path to the master material asset to compile'),
+  }, 'medium', '{errors:[string], has_errors, saved}');
   reg('material_add_comment', {
     material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
     function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),

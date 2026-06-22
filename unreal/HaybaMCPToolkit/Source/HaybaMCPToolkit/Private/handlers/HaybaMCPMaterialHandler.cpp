@@ -44,6 +44,8 @@
 #include "Materials/MaterialExpressionFunctionOutput.h"
 #include "Materials/MaterialExpressionComment.h"
 #include "Materials/MaterialExpressionNamedReroute.h"
+#include "Materials/MaterialResource.h"
+#include "UObject/SavePackage.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPMaterial, Log, All);
 
@@ -60,6 +62,7 @@ TArray<FString> FHaybaMCPMaterialHandler::GetCommands() const
         TEXT("material_add_reroute_declaration"),
         TEXT("material_add_reroute_usage"),
         TEXT("material_connect_nodes"),
+        TEXT("material_compile"),
         TEXT("material_create_instance"),
         TEXT("material_set_param"),
         TEXT("material_apply"),
@@ -80,6 +83,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::Handle(const FString& Cmd, const T
     if (Cmd == TEXT("material_add_reroute_declaration")) return MatAddRerouteDeclaration(P);
     if (Cmd == TEXT("material_add_reroute_usage"))       return MatAddRerouteUsage(P);
     if (Cmd == TEXT("material_connect_nodes"))  return MatConnectNodes(P);
+    if (Cmd == TEXT("material_compile"))        return MatCompile(P);
     if (Cmd == TEXT("material_create_instance")) return MatCreateInstance(P);
     if (Cmd == TEXT("material_set_param"))      return MatSetParam(P);
     if (Cmd == TEXT("material_apply"))          return MatApply(P);
@@ -110,6 +114,42 @@ static UMaterialExpression* FindExprByNameInFunction(UMaterialFunction* Fn, cons
     for (UMaterialExpression* E : Fn->GetExpressions())
         if (E && E->GetName() == NodeId) return E;
     return nullptr;
+}
+
+// Crash-resilient persistence (decision 2026-06-22). Per-edit handlers no
+// longer force a synchronous UMaterialEditingLibrary::RecompileMaterial — that
+// translates the (possibly half-built) graph through the HLSL translator, which
+// asserts (e.g. "NormalCodeChunk != INDEX_NONE") and takes the whole editor
+// down on an invalid intermediate graph. Instead each successful edit marks the
+// package dirty and writes it to disk immediately, so the AI's progress
+// survives a later crash. The expensive/assert-prone translate is deferred to
+// the explicit, guarded material_compile command.
+//
+// NOTE: saving a UMaterial can still trigger shader translation internally; the
+// real assert-avoidance is that routine per-edit translates are gone. A truly
+// pathological graph can still assert when explicitly compiled — that is an
+// engine-level check() we cannot catch from here. Returns false + reason on
+// save failure; never throws.
+static bool HaybaPersistAsset(UObject* Asset, FString& OutError)
+{
+    if (!Asset) { OutError = TEXT("null asset"); return false; }
+    Asset->MarkPackageDirty();
+    UPackage* Pkg = Asset->GetOutermost();
+    if (!Pkg) { OutError = TEXT("no package"); return false; }
+
+    const FString FileName = FPackageName::LongPackageNameToFilename(
+        Pkg->GetName(), FPackageName::GetAssetPackageExtension());
+
+    FSavePackageArgs Args;
+    Args.TopLevelFlags = RF_Public | RF_Standalone;
+    Args.SaveFlags = SAVE_NoError;
+    const FSavePackageResultStruct Res = UPackage::SavePackage(Pkg, nullptr, *FileName, Args);
+    if (Res.Result != ESavePackageResult::Success)
+    {
+        OutError = FString::Printf(TEXT("SavePackage failed for %s"), *Pkg->GetName());
+        return false;
+    }
+    return true;
 }
 
 static bool TryParseProperty(const FString& In, EMaterialProperty& Out)
@@ -392,6 +432,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddNode(const TSharedPtr<FJsonO
         if (!Expr) return FHaybaHandlerResult::Err(TEXT("material_add_node: CreateMaterialExpressionInFunction failed"));
         if (PropsObj) ApplyNodeProps(Expr, *PropsObj);
         UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        { FString SaveErr; HaybaPersistAsset(Fn, SaveErr); }  // crash-resilient: save function graph now
 
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("node_id"), Expr->GetName());
@@ -408,8 +449,10 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddNode(const TSharedPtr<FJsonO
     UMaterialExpression* Expr = UMaterialEditingLibrary::CreateMaterialExpression(Mat, ExprCls, X, Y);
     if (!Expr) return FHaybaHandlerResult::Err(TEXT("material_add_node: CreateMaterialExpression failed"));
     if (PropsObj) ApplyNodeProps(Expr, *PropsObj);
-    Mat->MarkPackageDirty();
-    UMaterialEditingLibrary::RecompileMaterial(Mat);
+    // Deferred-compile + crash-resilient save: no per-edit RecompileMaterial
+    // (avoids translating a half-built graph -> editor-killing assert). Persist
+    // to disk now; translate via the explicit material_compile command.
+    { FString SaveErr; HaybaPersistAsset(Mat, SaveErr); }
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("node_id"), Expr->GetName());
@@ -443,6 +486,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
         if (!UMaterialEditingLibrary::ConnectMaterialExpressions(From, FromOutput, To, ToInput))
             return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: ConnectMaterialExpressions failed"));
         UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        { FString SaveErr; HaybaPersistAsset(Fn, SaveErr); }  // crash-resilient: save function graph now
 
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetBoolField(TEXT("connected"), true);
@@ -474,8 +518,10 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
             return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: ConnectMaterialExpressions failed"));
     }
 
-    Mat->MarkPackageDirty();
-    UMaterialEditingLibrary::RecompileMaterial(Mat);
+    // Deferred-compile + crash-resilient save: no per-edit RecompileMaterial
+    // (avoids translating a half-built graph -> editor-killing assert). Persist
+    // to disk now; translate via the explicit material_compile command.
+    { FString SaveErr; HaybaPersistAsset(Mat, SaveErr); }
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetBoolField(TEXT("connected"), true);
@@ -547,8 +593,11 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetParam(const TSharedPtr<FJson
     }
     else return FHaybaHandlerResult::Err(TEXT("material_set_param: unsupported value type"));
 
+    // Instances carry no master graph, so PostEditChange here only updates the
+    // instance permutation (no assert-prone translate); keep it, then persist
+    // to disk so the param survives a later crash.
     MIC->PostEditChange();
-    MIC->MarkPackageDirty();
+    { FString SaveErr; HaybaPersistAsset(MIC, SaveErr); }
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -705,6 +754,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetNode(const TSharedPtr<FJsonO
         if (!Expr) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_set_node: node not found: %s"), *NodeId));
         ApplyTo(Expr);
         UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        { FString SaveErr; HaybaPersistAsset(Fn, SaveErr); }  // crash-resilient: save function graph now
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("node_id"), NodeId);
         return FHaybaHandlerResult::Ok(Out);
@@ -717,8 +767,10 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetNode(const TSharedPtr<FJsonO
     UMaterialExpression* Expr = FindExprByName(Mat, NodeId);
     if (!Expr) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_set_node: node not found: %s"), *NodeId));
     ApplyTo(Expr);
-    Mat->MarkPackageDirty();
-    UMaterialEditingLibrary::RecompileMaterial(Mat);
+    // Deferred-compile + crash-resilient save: no per-edit RecompileMaterial
+    // (avoids translating a half-built graph -> editor-killing assert). Persist
+    // to disk now; translate via the explicit material_compile command.
+    { FString SaveErr; HaybaPersistAsset(Mat, SaveErr); }
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("node_id"), NodeId);
     return FHaybaHandlerResult::Ok(Out);
@@ -739,6 +791,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDeleteNode(const TSharedPtr<FJs
         if (!Expr) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_delete_node: node not found: %s"), *NodeId));
         UMaterialEditingLibrary::DeleteMaterialExpressionInFunction(Fn, Expr);
         UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        { FString SaveErr; HaybaPersistAsset(Fn, SaveErr); }  // crash-resilient: save function graph now
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetBoolField(TEXT("deleted"), true);
         return FHaybaHandlerResult::Ok(Out);
@@ -751,8 +804,10 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDeleteNode(const TSharedPtr<FJs
     UMaterialExpression* Expr = FindExprByName(Mat, NodeId);
     if (!Expr) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_delete_node: node not found: %s"), *NodeId));
     UMaterialEditingLibrary::DeleteMaterialExpression(Mat, Expr);
-    Mat->MarkPackageDirty();
-    UMaterialEditingLibrary::RecompileMaterial(Mat);
+    // Deferred-compile + crash-resilient save: no per-edit RecompileMaterial
+    // (avoids translating a half-built graph -> editor-killing assert). Persist
+    // to disk now; translate via the explicit material_compile command.
+    { FString SaveErr; HaybaPersistAsset(Mat, SaveErr); }
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetBoolField(TEXT("deleted"), true);
     return FHaybaHandlerResult::Ok(Out);
@@ -789,6 +844,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddComment(const TSharedPtr<FJs
         Setup(C);
         Fn->GetExpressionCollection().AddComment(C);
         UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        { FString SaveErr; HaybaPersistAsset(Fn, SaveErr); }  // crash-resilient: save function graph now
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("comment_id"), C->GetName());
         return FHaybaHandlerResult::Ok(Out);
@@ -801,8 +857,9 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddComment(const TSharedPtr<FJs
     UMaterialExpressionComment* C = NewObject<UMaterialExpressionComment>(Mat);
     Setup(C);
     Mat->GetExpressionCollection().AddComment(C);
-    Mat->MarkPackageDirty();
-    Mat->PostEditChange();   // comments don't affect compilation — no recompile needed
+    // Comments don't affect compilation; persist to disk (no PostEditChange,
+    // which would needlessly translate the material).
+    { FString SaveErr; HaybaPersistAsset(Mat, SaveErr); }
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("comment_id"), C->GetName());
     return FHaybaHandlerResult::Ok(Out);
@@ -843,6 +900,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddRerouteDeclaration(const TSh
         if (!D) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_declaration: create failed"));
         Setup(D);
         UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        { FString SaveErr; HaybaPersistAsset(Fn, SaveErr); }  // crash-resilient: save function graph now
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("node_id"), D->GetName());
         return FHaybaHandlerResult::Ok(Out);
@@ -856,8 +914,10 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddRerouteDeclaration(const TSh
     UMaterialExpressionNamedRerouteDeclaration* D = Cast<UMaterialExpressionNamedRerouteDeclaration>(UMaterialEditingLibrary::CreateMaterialExpression(Mat, Cls, X, Y));
     if (!D) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_declaration: create failed"));
     Setup(D);
-    Mat->MarkPackageDirty();
-    UMaterialEditingLibrary::RecompileMaterial(Mat);
+    // Deferred-compile + crash-resilient save: no per-edit RecompileMaterial
+    // (avoids translating a half-built graph -> editor-killing assert). Persist
+    // to disk now; translate via the explicit material_compile command.
+    { FString SaveErr; HaybaPersistAsset(Mat, SaveErr); }
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("node_id"), D->GetName());
     return FHaybaHandlerResult::Ok(Out);
@@ -890,6 +950,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddRerouteUsage(const TSharedPt
         U->Declaration = D;
         U->DeclarationGuid = D->VariableGuid;
         UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        { FString SaveErr; HaybaPersistAsset(Fn, SaveErr); }  // crash-resilient: save function graph now
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("node_id"), U->GetName());
         return FHaybaHandlerResult::Ok(Out);
@@ -906,8 +967,10 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddRerouteUsage(const TSharedPt
     if (!U) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_usage: create failed"));
     U->Declaration = D;
     U->DeclarationGuid = D->VariableGuid;
-    Mat->MarkPackageDirty();
-    UMaterialEditingLibrary::RecompileMaterial(Mat);
+    // Deferred-compile + crash-resilient save: no per-edit RecompileMaterial
+    // (avoids translating a half-built graph -> editor-killing assert). Persist
+    // to disk now; translate via the explicit material_compile command.
+    { FString SaveErr; HaybaPersistAsset(Mat, SaveErr); }
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("node_id"), U->GetName());
     return FHaybaHandlerResult::Ok(Out);
@@ -943,11 +1006,49 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
             Applied.Add(MakeShared<FJsonValueString>(Pair.Key));
     }
 
-    Mat->PostEditChange();
-    Mat->MarkPackageDirty();
-    UMaterialEditingLibrary::RecompileMaterial(Mat);
+    // Deferred-compile: persist the changed settings to disk; the translate
+    // (which applies the new BlendMode/Domain/etc. and could assert) happens on
+    // the explicit material_compile call, not here.
+    FString SaveErr;
+    const bool bSaved = HaybaPersistAsset(Mat, SaveErr);
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetArrayField(TEXT("applied"), Applied);
+    Out->SetBoolField(TEXT("saved"), bSaved);
+    if (!bSaved) Out->SetStringField(TEXT("save_error"), SaveErr);
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+// Explicit, deferred compile. This is the ONE place the master-material graph
+// is translated (the per-edit handlers only save). PostEditChange applies any
+// settings staged by material_set_property; RecompileMaterial forces the shader
+// translate so compile errors surface. A truly pathological graph can still hit
+// an engine check() here and crash — but every prior edit was already saved to
+// disk, so the AI's progress is recoverable on restart. Returns the translator
+// errors so the agent gets feedback instead of guessing.
+FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonObject>& P)
+{
+    FString MatPath;
+    if (!P->TryGetStringField(TEXT("material_path"), MatPath))
+        return FHaybaHandlerResult::Err(TEXT("material_compile: missing material_path"));
+    UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
+    if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_compile: material not found"));
+
+    Mat->PostEditChange();
+    UMaterialEditingLibrary::RecompileMaterial(Mat);
+
+    TArray<TSharedPtr<FJsonValue>> Errs;
+    if (FMaterialResource* Res = Mat->GetMaterialResource(GMaxRHIFeatureLevel))
+        for (const FString& E : Res->GetCompileErrors())
+            Errs.Add(MakeShared<FJsonValueString>(E));
+
+    FString SaveErr;
+    const bool bSaved = HaybaPersistAsset(Mat, SaveErr);
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetArrayField(TEXT("errors"), Errs);
+    Out->SetBoolField(TEXT("has_errors"), Errs.Num() > 0);
+    Out->SetBoolField(TEXT("saved"), bSaved);
+    if (!bSaved) Out->SetStringField(TEXT("save_error"), SaveErr);
     return FHaybaHandlerResult::Ok(Out);
 }
