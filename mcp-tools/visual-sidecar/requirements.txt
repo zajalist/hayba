@@ -2,6 +2,7 @@ fastapi
 uvicorn
 numpy
 trimesh
+rtree
 imageio
 imageio[freeimage]
 # Heavy, only needed at segmentation runtime (lazy-loaded):
