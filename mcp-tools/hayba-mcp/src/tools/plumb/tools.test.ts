@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { plumbProfileBakeHandler, plumbConstraintProposeHandler, plumbMaskAddHandler, plumbMaskRemoveHandler } from './tools.js';
-import { putProfile, bakeProfile, setProfilesPath } from '../../plumb/index.js';
+import { plumbProfileBakeHandler, plumbConstraintProposeHandler, plumbMaskAddHandler, plumbMaskRemoveHandler, plumbSegmentHandler } from './tools.js';
+import { putProfile, bakeProfile, setProfilesPath, getMask } from '../../plumb/index.js';
 
 describe('plumb_profile_bake auto-fetch', () => {
   let dir: string;
@@ -50,5 +50,40 @@ describe('plumb_profile_bake auto-fetch', () => {
   it('mask_add errors with no base profile', async () => {
     const r = await plumbMaskAddHandler({ asset: '/Game/Nope', id: 'm', type: 'surface', triangles: [1] });
     expect(r.ok).toBe(false);
+  });
+});
+
+describe('plumb_segment (sidecar bridge)', () => {
+  let dir: string;
+  const realFetch = globalThis.fetch;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'pseg-')); setProfilesPath(join(dir, 'p.json')); });
+  afterEach(() => { setProfilesPath(null); rmSync(dir, { recursive: true, force: true }); globalThis.fetch = realFetch; });
+
+  it('writes projected masks (with texture + triangles) returned by the sidecar', async () => {
+    putProfile(bakeProfile({ asset_id: '/Game/Boat', origin_cm: [0,0,0], extent_cm: [100,40,30] }, 'now'));
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      ok: true,
+      masks: [{ label: 'hull', texture: '/s/masks/hull.png', triangles: [3,4,5], color: '#48A0FF', coverage: 0.42 }],
+      skipped: [],
+    }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+
+    const r = await plumbSegmentHandler({
+      asset: '/Game/Boat', study_dir: '/s',
+      parts: [{ label: 'hull', color: '#48A0FF', views: [{ view: 0, box: [1,2,3,4] }] }],
+    });
+    expect(r.ok).toBe(true);
+    expect(r.added).toEqual(['hull']);
+    const m = getMask('/Game/Boat', 'hull')!;
+    expect(m.texture).toBe('/s/masks/hull.png');
+    expect(m.triangles).toEqual([3,4,5]);
+    expect(m.source).toBe('ai');
+  });
+
+  it('returns a clean error when the sidecar is unreachable', async () => {
+    putProfile(bakeProfile({ asset_id: '/Game/Boat', origin_cm: [0,0,0], extent_cm: [100,40,30] }, 'now'));
+    globalThis.fetch = (async () => { throw new Error('ECONNREFUSED'); }) as typeof fetch;
+    const r = await plumbSegmentHandler({ asset: '/Game/Boat', study_dir: '/s', parts: [{ label: 'hull', views: [{ view: 0, box: [0,0,1,1] }] }] });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/sidecar/i);
   });
 });

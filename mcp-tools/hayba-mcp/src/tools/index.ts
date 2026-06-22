@@ -151,6 +151,7 @@ import {
   plumbLessonRemoveSchema, plumbLessonRemoveHandler,
   plumbStudySchema, plumbStudyHandler,
   plumbStudyTakeSchema, plumbStudyTakeHandler,
+  plumbSegmentSchema, plumbSegmentHandler,
 } from './plumb/tools.js';
 
 // SessionManager (Gaea session) parked while terrain features are off — kept
@@ -1925,6 +1926,10 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     'Drain pending "Study with AI" requests from the Semantic Studio button. Returns the assets to study (then call plumb_study + author masks/constraints for each).',
     plumbStudyTakeSchema, async () => j(await plumbStudyTakeHandler()));
 
+  server.tool('plumb_segment',
+    'AI-segment a studied asset: given the study_render color passes, the agent\'s themed part labels + a box/points per view, runs SAM in the visual sidecar and back-projects to geometry-hugging surface masks (triangles via the world-position pass + a UV display texture), written into the profile. Replaces hand-placed blocky masks.',
+    plumbSegmentSchema, async (a) => j(await plumbSegmentHandler(a)));
+
   // ── Landscape import (TS wrapper for UE-side landscape_import handler) ────
   server.tool(
     'hayba_import_landscape',
@@ -2205,4 +2210,5 @@ function recordEagerSchemas(
   reg('plumb_lesson_remove', plumbLessonRemoveSchema, 'low', '{ok, removed}');
   reg('plumb_study', plumbStudySchema, 'low', '{asset, has_profile, profile?, primitives, mask_kinds, guidance}');
   reg('plumb_study_take', plumbStudyTakeSchema, 'low', '{requests:[{asset,ts}], note}');
+  reg('plumb_segment', plumbSegmentSchema, 'high', '{ok, added:[label], skipped?, error?}');
 }

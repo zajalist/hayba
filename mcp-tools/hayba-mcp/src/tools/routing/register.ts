@@ -80,6 +80,7 @@ export const ALWAYS_ON_META = new Set<string>([
   'plumb_lesson_remove',
   'plumb_study',
   'plumb_study_take',
+  'plumb_segment',
 ]);
 
 export interface CapturedTool {
@@ -304,6 +305,7 @@ export async function registerDeferredRouting(
   passthrough('plumb_lesson_remove');
   passthrough('plumb_study');
   passthrough('plumb_study_take');
+  passthrough('plumb_segment');
 
   // For hayba_check_ue_status: REPLACE the captured handler with one that
   // wires onConnected → maybeAutoLoad('ue_connected'). The captured handler

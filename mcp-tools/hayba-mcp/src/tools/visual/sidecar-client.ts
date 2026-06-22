@@ -113,6 +113,37 @@ export async function embedImage(imageBase64: string, opts?: { spatial?: boolean
   return res.json() as Promise<{ embedding: number[]; dim: number }>;
 }
 
+export interface SegmentPart {
+  label: string;
+  color?: string;
+  views: Array<{ view: number; box?: number[]; points?: number[][] }>;
+}
+export interface SegmentedMask {
+  label: string;
+  texture: string | null;
+  triangles: number[];
+  color: string;
+  coverage: number;
+}
+
+/** POST agent-grounded boxes to the sidecar /segment_project endpoint. The
+ * sidecar SAM-segments + back-projects to triangles + bakes a UV display texture. */
+export async function segmentProject(
+  req: { study_dir: string; parts: SegmentPart[]; vote_threshold?: number },
+  timeoutMs: number = 180000,
+): Promise<{ ok: boolean; masks?: SegmentedMask[]; skipped?: string[]; error?: string }> {
+  const res = await fetchWithTimeout(`${sidecarUrl()}/segment_project`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(req),
+    timeoutMs,
+  });
+  if (!res.ok) {
+    return { ok: false, error: `sidecar /segment_project ${res.status}: ${await res.text()}` };
+  }
+  return res.json() as Promise<{ ok: boolean; masks?: SegmentedMask[]; skipped?: string[]; error?: string }>;
+}
+
 export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length || a.length === 0) return 0;
   let dot = 0, na = 0, nb = 0;

@@ -28,6 +28,7 @@ import {
   type Constraint, type InstanceState, type Transform, type Mask, type Verdict,
 } from '../../plumb/index.js';
 import { replaceFindingsWithPrefix, type ValidatorFinding } from '../../validator/index.js';
+import { segmentProject } from '../visual/sidecar-client.js';
 
 /** Convert a PLUMB Verdict's failing constraints into unified validator
  *  findings — so PLUMB violations show in the one Validation tab alongside the
@@ -388,6 +389,54 @@ export const plumbMaskRemoveSchema = { asset: z.string(), mask_id: z.string() };
 export async function plumbMaskRemoveHandler(args: { asset: string; mask_id: string }): Promise<{ ok: boolean; removed: boolean }> {
   return { ok: true, removed: removeMask(args.asset, args.mask_id) };
 }
+// ── plumb_segment — agent-grounded SAM segmentation → projected masks ────────
+// The agent reads the study_render color passes, names parts + a box/points per
+// view, and calls this. The sidecar SAM-masks each box, back-projects to triangles
+// via the world-position pass, and bakes a UV display texture; each result is
+// written into the profile as an AI surface mask (with its `texture`).
+
+export const plumbSegmentSchema = {
+  asset: z.string().describe('Asset whose profile receives the masks (must be baked).'),
+  study_dir: z.string().describe('study_render output dir (.scratch/study/<assetSafe>/).'),
+  parts: z.array(z.object({
+    label: z.string(),
+    color: z.string().optional(),
+    views: z.array(z.object({
+      view: z.number().int(),
+      box: z.array(z.number()).length(4).optional().describe('[x0,y0,x1,y1] in the color image.'),
+      points: z.array(z.array(z.number())).optional().describe('[[x,y,label],...] foreground/background points.'),
+    })).min(1),
+  })).min(1).describe('Themed parts the agent proposes, each with a box/points per view it sees them in.'),
+  vote_threshold: z.number().int().optional().describe('Min per-triangle multi-view votes to keep (default 1).'),
+};
+export async function plumbSegmentHandler(args: {
+  asset: string; study_dir: string;
+  parts: Array<{ label: string; color?: string; views: Array<{ view: number; box?: number[]; points?: number[][] }> }>;
+  vote_threshold?: number;
+}): Promise<{ ok: boolean; added: string[]; skipped?: string[]; error?: string }> {
+  let resp;
+  try {
+    resp = await segmentProject({ study_dir: args.study_dir, parts: args.parts, vote_threshold: args.vote_threshold });
+  } catch (e) {
+    return { ok: false, added: [], error: `visual sidecar unreachable (start mcp-tools/visual-sidecar): ${(e as Error).message}` };
+  }
+  if (!resp.ok) return { ok: false, added: [], error: resp.error ?? 'segment_project failed' };
+  const added: string[] = [];
+  for (const m of resp.masks ?? []) {
+    if (!m.triangles?.length && !m.texture) continue;   // nothing usable for this part
+    const mask: Mask = {
+      id: m.label, type: 'surface', color: m.color ?? '#48A0FF',
+      source: 'ai', confidence: typeof m.coverage === 'number' ? m.coverage : 0.7,
+      locked: false, triangles: m.triangles, texture: m.texture ?? undefined,
+    };
+    if (addMask(args.asset, mask)) added.push(m.label);
+  }
+  if (!added.length) {
+    return { ok: false, added, skipped: resp.skipped, error: `no masks written — profile baked for "${args.asset}"? sidecar returned ${resp.masks?.length ?? 0} masks` };
+  }
+  return { ok: true, added, skipped: resp.skipped };
+}
+
 // ── plumb_study_take — drain the "Study with AI" button's request queue ──────
 
 export const plumbStudyTakeSchema = {};
