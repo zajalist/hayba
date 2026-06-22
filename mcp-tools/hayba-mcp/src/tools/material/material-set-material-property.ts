@@ -8,6 +8,9 @@ export const meta: HaybaToolMeta = {
   effects: ['modifies_asset'],
   when: 'configuring a master material: blend mode, material domain, shading model, two-sided, opacity mask clip value',
   not_when: 'setting parameters on a material instance (use material_set_param) or node properties (use material_set_node)',
+  // Settings are staged + saved to disk but NOT applied to the in-memory shader
+  // permutation until material_compile is called — always material_compile after
+  // changing material-level settings (deferred-compile model).
 };
 
 export const schema = z.object({

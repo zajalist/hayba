@@ -292,7 +292,7 @@ static bool SetPropByReflection(UObject* Target, const FString& Name, const TSha
     // where each element is an FCustomInput struct with an InputName FName field.
     if (FArrayProperty* Arr = CastField<FArrayProperty>(Prop))
     {
-        if (V->Type == EJson::Array)
+        if (V->Type != EJson::Array) return false;  // don't claim success on a non-array value
         {
             FScriptArrayHelper Helper(Arr, Arr->ContainerPtrToValuePtr<void>(Owner));
             const TArray<TSharedPtr<FJsonValue>>& JArr = V->AsArray();
