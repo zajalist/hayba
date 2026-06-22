@@ -17,7 +17,7 @@ export const schema = z.object({
   material_path: z.string().min(1).describe('Path to the master material asset'),
   properties: z.record(z.string(), z.unknown())
     .refine((p) => Object.keys(p).length > 0, { message: 'properties must be non-empty' })
-    .describe('Material settings. Friendly aliases: domain, blend_mode, shading_model, two_sided, opacity_mask_clip_value (e.g. blend_mode: "BLEND_Translucent"). Any UMaterial UPROPERTY name also accepted.'),
+    .describe('Material settings. Friendly aliases: domain, blend_mode, shading_model, two_sided, opacity_mask_clip_value, enable_tessellation (e.g. enable_tessellation: true for Nanite displacement). Any UMaterial UPROPERTY name also accepted.'),
 });
 
 export async function materialSetMaterialPropertyHandler(args: Record<string, unknown>, _session?: SessionManager): Promise<ToolResult> {
