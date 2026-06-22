@@ -41,6 +41,11 @@ import { materialApplyHandler, meta as materialApplyMeta } from './material/mate
 import { materialListHandler, meta as materialListMeta } from './material/material-list.js';
 import { materialGetInfoHandler, meta as materialGetInfoMeta } from './material/material-get-info.js';
 
+// ── Material graph-layer tool handlers ───────────────────────────────────────
+import { materialAddNodeHandler, meta as materialAddNodeMeta } from './material/material-add-node.js';
+import { materialConnectNodesHandler, meta as materialConnectNodesMeta } from './material/material-connect-nodes.js';
+import { materialFunctionCreateHandler, meta as materialFunctionCreateMeta } from './material/material-function-create.js';
+
 // ── Asset-source connectors (pure Node — no UE bridge except python_run) ──────
 import { handlePolyhavenSearch, meta as polyhavenSearchMeta } from './asset-sources/polyhaven-search.js';
 import { handlePolyhavenDownload, meta as polyhavenDownloadMeta } from './asset-sources/polyhaven-download.js';
@@ -550,6 +555,58 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     }
   );
   remember('material_get_info', materialGetInfoMeta);
+
+  // ── Material graph-layer domain ─────────────────────────────────────────────
+
+  server.tool(
+    'material_add_node',
+    appendMeta('Add a new expression node to a material graph.', materialAddNodeMeta),
+    {
+      material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+      function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+      expression_class: z.string().min(1).describe('UE expression class name, e.g. "MaterialExpressionVectorParameter"'),
+      node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y] for the new node'),
+      properties: z.record(z.string(), z.unknown()).optional().describe('Initial properties for the node'),
+    },
+    async (params) => {
+      const r = await materialAddNodeHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_add_node', materialAddNodeMeta);
+
+  server.tool(
+    'material_connect_nodes',
+    appendMeta('Connect two nodes in a material graph or connect a node output to a material property.', materialConnectNodesMeta),
+    {
+      material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+      function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+      from_node: z.string().min(1).describe('ID or name of the source node'),
+      from_output: z.string().optional().describe('Output pin name on the source node'),
+      to_node: z.string().optional().describe('ID or name of the target node'),
+      to_input: z.string().optional().describe('Input pin name on the target node'),
+      to_property: z.string().optional().describe('Target material property name (instead of to_node/to_input)'),
+    },
+    async (params) => {
+      const r = await materialConnectNodesHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_connect_nodes', materialConnectNodesMeta);
+
+  server.tool(
+    'material_function_create',
+    appendMeta('Create a new material function asset in the project.', materialFunctionCreateMeta),
+    {
+      package_path: z.string().min(1).describe('UE content path for the new material function'),
+      name: z.string().min(1).describe('Name of the material function asset'),
+    },
+    async (params) => {
+      const r = await materialFunctionCreateHandler(params as Record<string, unknown>, session);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('material_function_create', materialFunctionCreateMeta);
 
   // ── Scene domain ────────────────────────────────────────────────────────────
 
@@ -2135,6 +2192,28 @@ function recordEagerSchemas(
   reg('material_get_info', {
     path: z.string().min(1).describe('Path to the material or material instance to inspect'),
   }, 'low', '{path, type, parameters:[{name,type,value}], expressions}');
+
+  // ── Material graph-layer domain ─────────────────────────────────────────────
+  reg('material_add_node', {
+    material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+    function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+    expression_class: z.string().min(1).describe('UE expression class name, e.g. "MaterialExpressionVectorParameter"'),
+    node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y] for the new node'),
+    properties: z.record(z.string(), z.unknown()).optional().describe('Initial properties for the node'),
+  }, 'low', '{node_id, expression_class, position}');
+  reg('material_connect_nodes', {
+    material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+    function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+    from_node: z.string().min(1).describe('ID or name of the source node'),
+    from_output: z.string().optional().describe('Output pin name on the source node'),
+    to_node: z.string().optional().describe('ID or name of the target node'),
+    to_input: z.string().optional().describe('Input pin name on the target node'),
+    to_property: z.string().optional().describe('Target material property name (instead of to_node/to_input)'),
+  }, 'low', '{ok, from_node, to_node, to_property, connection_made}');
+  reg('material_function_create', {
+    package_path: z.string().min(1).describe('UE content path for the new material function'),
+    name: z.string().min(1).describe('Name of the material function asset'),
+  }, 'low', '{path, name}');
 
   // ── Scene domain ──────────────────────────────────────────────────────────
   reg('scene_export', {

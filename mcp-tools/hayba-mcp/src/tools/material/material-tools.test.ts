@@ -29,10 +29,15 @@ const materialApplySrc = readFileSync(join(__dirname, 'material-apply.ts'), 'utf
 const materialListSrc = readFileSync(join(__dirname, 'material-list.ts'), 'utf-8');
 const materialGetInfoSrc = readFileSync(join(__dirname, 'material-get-info.ts'), 'utf-8');
 
+// Read handler files for graph-layer commands
+const materialAddNodeSrc = readFileSync(join(__dirname, 'material-add-node.ts'), 'utf-8');
+const materialConnectNodesSrc = readFileSync(join(__dirname, 'material-connect-nodes.ts'), 'utf-8');
+const materialFunctionCreateSrc = readFileSync(join(__dirname, 'material-function-create.ts'), 'utf-8');
+
 describe('material instance-layer wrappers', () => {
   describe('material_create', () => {
     it('has a server.tool registration', () => {
-      expect(indexSrc).toContain("'material_create'");
+      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_create['"]/);
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
@@ -51,7 +56,7 @@ describe('material instance-layer wrappers', () => {
 
   describe('material_create_instance', () => {
     it('has a server.tool registration', () => {
-      expect(indexSrc).toContain("'material_create_instance'");
+      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_create_instance['"]/);
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
@@ -71,7 +76,7 @@ describe('material instance-layer wrappers', () => {
 
   describe('material_set_param', () => {
     it('has a server.tool registration', () => {
-      expect(indexSrc).toContain("'material_set_param'");
+      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_set_param['"]/);
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
@@ -91,7 +96,7 @@ describe('material instance-layer wrappers', () => {
 
   describe('material_apply', () => {
     it('has a server.tool registration', () => {
-      expect(indexSrc).toContain("'material_apply'");
+      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_apply['"]/);
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
@@ -110,7 +115,7 @@ describe('material instance-layer wrappers', () => {
 
   describe('material_list', () => {
     it('has a server.tool registration', () => {
-      expect(indexSrc).toContain("'material_list'");
+      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_list['"]/);
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
@@ -128,7 +133,7 @@ describe('material instance-layer wrappers', () => {
 
   describe('material_get_info', () => {
     it('has a server.tool registration', () => {
-      expect(indexSrc).toContain("'material_get_info'");
+      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_get_info['"]/);
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
@@ -141,6 +146,100 @@ describe('material instance-layer wrappers', () => {
 
     it('has path schema field', () => {
       expect(materialGetInfoSrc).toMatch(/path:\s*z\.string\(\)/);
+    });
+  });
+});
+
+/**
+ * Smoke test for three material graph-layer wrapper tools:
+ * - material_add_node
+ * - material_connect_nodes
+ * - material_function_create
+ *
+ * Tests that all wrappers are:
+ * 1. Registered in index.ts with server.tool()
+ * 2. Wired to executeCommand() calls with the correct command names (in handler files)
+ * 3. Registered in the schema-registry block via reg()
+ * 4. Have the correct handler exports and schemas
+ */
+describe('material graph-layer wrappers', () => {
+  describe('material_add_node', () => {
+    it('has a server.tool registration', () => {
+      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_add_node['"]/);
+    });
+
+    it('calls executeCommand with the correct command name in handler', () => {
+      expect(materialAddNodeSrc).toMatch(/executeCommand\(\s*['"]material_add_node['"]/);
+    });
+
+    it('registers the schema in the eager schema-registry block', () => {
+      expect(indexSrc).toMatch(/reg\(\s*['"]material_add_node['"]/);
+    });
+
+    it('has material_path and function_path optional fields', () => {
+      expect(materialAddNodeSrc).toMatch(/material_path:\s*z\.string\(\)\.optional\(\)/);
+      expect(materialAddNodeSrc).toMatch(/function_path:\s*z\.string\(\)\.optional\(\)/);
+    });
+
+    it('has expression_class required field with min(1)', () => {
+      expect(materialAddNodeSrc).toMatch(/expression_class:\s*z\.string\(\)\.min\(1\)/);
+    });
+
+    it('has .refine for material_path or function_path', () => {
+      expect(materialAddNodeSrc).toMatch(/\.refine\(\s*\(d\)\s*=>\s*!!d\.material_path\s*\|\|\s*!!d\.function_path/);
+    });
+  });
+
+  describe('material_connect_nodes', () => {
+    it('has a server.tool registration', () => {
+      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_connect_nodes['"]/);
+    });
+
+    it('calls executeCommand with the correct command name in handler', () => {
+      expect(materialConnectNodesSrc).toMatch(/executeCommand\(\s*['"]material_connect_nodes['"]/);
+    });
+
+    it('registers the schema in the eager schema-registry block', () => {
+      expect(indexSrc).toMatch(/reg\(\s*['"]material_connect_nodes['"]/);
+    });
+
+    it('has material_path and function_path optional fields', () => {
+      expect(materialConnectNodesSrc).toMatch(/material_path:\s*z\.string\(\)\.optional\(\)/);
+      expect(materialConnectNodesSrc).toMatch(/function_path:\s*z\.string\(\)\.optional\(\)/);
+    });
+
+    it('has from_node required field with min(1)', () => {
+      expect(materialConnectNodesSrc).toMatch(/from_node:\s*z\.string\(\)\.min\(1\)/);
+    });
+
+    it('has to_node, to_input, to_property optional fields', () => {
+      expect(materialConnectNodesSrc).toMatch(/to_node:\s*z\.string\(\)\.optional\(\)/);
+      expect(materialConnectNodesSrc).toMatch(/to_input:\s*z\.string\(\)\.optional\(\)/);
+      expect(materialConnectNodesSrc).toMatch(/to_property:\s*z\.string\(\)\.optional\(\)/);
+    });
+
+    it('has two .refine calls', () => {
+      expect(materialConnectNodesSrc).toMatch(/\.refine\(\s*\(d\)\s*=>\s*!!d\.material_path\s*\|\|\s*!!d\.function_path/);
+      expect(materialConnectNodesSrc).toMatch(/\.refine\(\s*\(d\)\s*=>\s*!!d\.to_node\s*\|\|\s*!!d\.to_property/);
+    });
+  });
+
+  describe('material_function_create', () => {
+    it('has a server.tool registration', () => {
+      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_function_create['"]/);
+    });
+
+    it('calls executeCommand with the correct command name in handler', () => {
+      expect(materialFunctionCreateSrc).toMatch(/executeCommand\(\s*['"]material_function_create['"]/);
+    });
+
+    it('registers the schema in the eager schema-registry block', () => {
+      expect(indexSrc).toMatch(/reg\(\s*['"]material_function_create['"]/);
+    });
+
+    it('has package_path and name required fields with min(1)', () => {
+      expect(materialFunctionCreateSrc).toMatch(/package_path:\s*z\.string\(\)\.min\(1\)/);
+      expect(materialFunctionCreateSrc).toMatch(/name:\s*z\.string\(\)\.min\(1\)/);
     });
   });
 });
