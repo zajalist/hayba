@@ -56,7 +56,10 @@ private:
 	FRunnableThread* Thread = nullptr;
 	FSocket* ListenSocket = nullptr;
 	TSharedPtr<FHaybaMCPCommandHandler> CommandHandler;
-	bool bIsRunning = false;
+	// Read by the listener thread (Run) and connection threads, written by
+	// Shutdown/Stop on the game thread — must be thread-safe (a plain bool is a
+	// data race the compiler may hoist, never seeing shutdown).
+	FThreadSafeBool bIsRunning{ false };
 	FThreadSafeCounter ClientCount;
 
 	void HandleClientConnection(FHaybaMCPClientConnectionPtr Conn);

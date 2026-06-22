@@ -126,6 +126,7 @@ FHaybaHandlerResult FHaybaMCPGASHandler::GasGrantAbility(const TSharedPtr<FJsonO
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("gas_grant_ability: ability class not found: %s"), *AbilityPath));
 
     UGameplayAbility* CDO = AbilityClass->GetDefaultObject<UGameplayAbility>();
+    if (!CDO) return FHaybaHandlerResult::Err(TEXT("gas_grant_ability: ability class has no default object (uncompiled blueprint?)"));
     FGameplayAbilitySpec Spec(CDO, Level, InputId);
     FGameplayAbilitySpecHandle Handle = ASC->GiveAbility(Spec);
 
