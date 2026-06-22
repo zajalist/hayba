@@ -20,9 +20,6 @@
   },
   "dependencies": {
     "@distube/ytdl-core": "^4.16.12",
-    "@hayba/architecture": "*",
-    "@hayba/linguistics": "*",
-    "@hayba/planet-physics": "*",
     "@huggingface/transformers": "^4.0.1",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "adm-zip": "^0.5.17",

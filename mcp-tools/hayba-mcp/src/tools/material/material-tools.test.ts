@@ -243,3 +243,54 @@ describe('material graph-layer wrappers', () => {
     });
   });
 });
+
+describe('material comment + named-reroute wrappers', () => {
+  const addCommentSrc = readFileSync(join(__dirname, 'material-add-comment.ts'), 'utf-8');
+  const rerouteDeclSrc = readFileSync(join(__dirname, 'material-add-reroute-declaration.ts'), 'utf-8');
+  const rerouteUsageSrc = readFileSync(join(__dirname, 'material-add-reroute-usage.ts'), 'utf-8');
+
+  describe('material_add_comment', () => {
+    it('has a server.tool registration', () => {
+      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_add_comment['"]/);
+    });
+    it('calls executeCommand with the correct command name', () => {
+      expect(addCommentSrc).toMatch(/executeCommand\(\s*['"]material_add_comment['"]/);
+    });
+    it('registers the schema in the eager schema-registry block', () => {
+      expect(indexSrc).toMatch(/reg\(\s*['"]material_add_comment['"]/);
+    });
+    it('has a required text field', () => {
+      expect(addCommentSrc).toMatch(/text:\s*z\.string\(\)/);
+    });
+  });
+
+  describe('material_add_reroute_declaration', () => {
+    it('has a server.tool registration', () => {
+      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_add_reroute_declaration['"]/);
+    });
+    it('calls executeCommand with the correct command name', () => {
+      expect(rerouteDeclSrc).toMatch(/executeCommand\(\s*['"]material_add_reroute_declaration['"]/);
+    });
+    it('registers the schema in the eager schema-registry block', () => {
+      expect(indexSrc).toMatch(/reg\(\s*['"]material_add_reroute_declaration['"]/);
+    });
+    it('has a required name field', () => {
+      expect(rerouteDeclSrc).toMatch(/name:\s*z\.string\(\)\.min\(1\)/);
+    });
+  });
+
+  describe('material_add_reroute_usage', () => {
+    it('has a server.tool registration', () => {
+      expect(indexSrc).toMatch(/server\.tool\(\s*['"]material_add_reroute_usage['"]/);
+    });
+    it('calls executeCommand with the correct command name', () => {
+      expect(rerouteUsageSrc).toMatch(/executeCommand\(\s*['"]material_add_reroute_usage['"]/);
+    });
+    it('registers the schema in the eager schema-registry block', () => {
+      expect(indexSrc).toMatch(/reg\(\s*['"]material_add_reroute_usage['"]/);
+    });
+    it('has a required declaration_id field', () => {
+      expect(rerouteUsageSrc).toMatch(/declaration_id:\s*z\.string\(\)\.min\(1\)/);
+    });
+  });
+});
