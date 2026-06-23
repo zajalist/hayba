@@ -7,12 +7,15 @@ import { formatOptimizationFeedback, type MaterialStats } from './material-stats
 export const meta: HaybaToolMeta = {
   cost: 'medium',
   effects: ['modifies_asset'],
-  when: 'explicitly compiling a material after building/editing its graph, to apply staged settings, surface translator errors, and read back shader optimization stats (instruction counts, texture samples)',
-  not_when: 'mid-edit — graph edits (add_node/connect/set_node/...) already auto-save to disk and intentionally DEFER compilation; only compile once the graph is complete',
+  when: 'finalizing a material OR material FUNCTION after building/editing its graph — applies staged settings, writes the asset to disk, surfaces translator errors + shader optimization stats (materials only)',
+  not_when: 'mid-edit — graph edits intentionally DEFER the disk write; only call this once the graph is complete (required for functions too: their edits no longer auto-save, so call material_compile with function_path to persist)',
 };
 
 export const schema = z.object({
-  material_path: z.string().min(1).describe('Path to the master material asset to compile'),
+  material_path: z.string().optional().describe('Path to the master material asset to compile (either this or function_path)'),
+  function_path: z.string().optional().describe('Path to a material FUNCTION to finalize + save (either this or material_path)'),
+}).refine((d) => !!d.material_path || !!d.function_path, {
+  message: 'one of material_path or function_path is required',
 });
 
 export async function materialCompileHandler(args: Record<string, unknown>, _session?: SessionManager): Promise<ToolResult> {

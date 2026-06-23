@@ -375,14 +375,15 @@ const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     },
     {
       name: 'material_compile',
-      description: 'Explicitly compile a material (apply staged settings + surface translator errors) and return shader optimization stats. Graph edits auto-save and defer compilation; call this once the graph is complete. The result includes a stats block (per-shader instruction counts, texture samples, samplers, interpolators) plus an OPTIMIZATION FEEDBACK summary with hints.',
+      description: 'Finalize a material OR material FUNCTION: write it to disk, apply staged settings, surface translator errors + shader optimization stats (materials). Graph edits DEFER the disk write — call this once the graph is complete. NOTE: material functions no longer auto-save either, so after editing a function call material_compile with function_path to persist it (this avoids a half-built function crashing the editor when it is opened/compiled).',
       meta: materialCompileMeta,
       handler: materialCompileHandler,
       cost: 'medium',
-      returns: '{errors:[string], has_errors, saved, stats:{shaders:[{name,instructions}], texture_samples, texture_lookups, virtual_texture_lookups, samplers, max_samplers, interpolators_used, interpolators_max}}',
+      returns: '{errors:[string], has_errors, saved, stats:{shaders:[{name,instructions}], texture_samples, ...}} (materials) | {saved} (functions)',
       niche: M,
       schema: {
-        material_path: z.string().min(1).describe('Path to the master material asset to compile'),
+        material_path: z.string().optional().describe('Path to the master material asset to compile (either this or function_path)'),
+        function_path: z.string().optional().describe('Path to a material FUNCTION to finalize + save (either this or material_path)'),
       },
     },
     {
