@@ -45,6 +45,7 @@
 #include "Materials/MaterialExpressionFunctionOutput.h"
 #include "Materials/MaterialExpressionComment.h"
 #include "Materials/MaterialExpressionNamedReroute.h"
+#include "Materials/MaterialExpressionRerouteBase.h" // TraceInputsToRealExpression — graph validation
 #include "MaterialShared.h"  // FMaterialResource, GetCompileErrors (material_compile)
 #include "MaterialStatsCommon.h" // FMaterialStatsUtils::ExtractMatertialStatsInfo (material_compile optimization feedback)
 #include "MaterialStats.h"       // FShaderStatsInfo (MaterialEditor private; include path added in Build.cs)
@@ -71,6 +72,7 @@ TArray<FString> FHaybaMCPMaterialHandler::GetCommands() const
         TEXT("material_add_reroute_usage"),
         TEXT("material_connect_nodes"),
         TEXT("material_compile"),
+        TEXT("material_validate"),
         TEXT("material_create_instance"),
         TEXT("material_set_param"),
         TEXT("material_apply"),
@@ -95,6 +97,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::Handle(const FString& Cmd, const T
     if (Cmd == TEXT("material_add_reroute_usage"))       return MatAddRerouteUsage(P);
     if (Cmd == TEXT("material_connect_nodes"))  return MatConnectNodes(P);
     if (Cmd == TEXT("material_compile"))        return MatCompile(P);
+    if (Cmd == TEXT("material_validate"))       return MatValidate(P);
     if (Cmd == TEXT("material_create_instance")) return MatCreateInstance(P);
     if (Cmd == TEXT("material_set_param"))      return MatSetParam(P);
     if (Cmd == TEXT("material_apply"))          return MatApply(P);
@@ -1322,6 +1325,108 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
 // an engine check() here and crash — but every prior edit was already saved to
 // disk, so the AI's progress is recoverable on restart. Returns the translator
 // errors so the agent gets feedback instead of guessing.
+// ── Graph validation ─────────────────────────────────────────────────────────
+// The HLSL translator asserts (uncatchable check 'Default != nullptr' in
+// FHLSLMaterialTranslator::GetParameterCodeRaw) when a CONSUMED expression
+// compiles to INDEX_NONE and the consumer reads it without a default. The
+// dominant authoring cause is a reroute / named-reroute that is wired downstream
+// but resolves to no real input (e.g. a named-reroute usage whose declaration's
+// input was never connected). A connection to a non-existent output index is the
+// other. Both are statically detectable BEFORE we ask the engine to translate,
+// so we can refuse instead of letting the editor crash.
+static void CollectMaterialGraphProblems(
+    const TConstArrayView<TObjectPtr<UMaterialExpression>>& Exprs,
+    const TArray<FExpressionInput*>& PropertyInputs,
+    TArray<FString>& Out)
+{
+    // 1. Consumed set: every expression referenced by some input (node or property).
+    TSet<const UMaterialExpression*> Consumed;
+    auto Note = [&Consumed](const FExpressionInput* In)
+    {
+        if (In && In->Expression) Consumed.Add(In->Expression);
+    };
+    for (const TObjectPtr<UMaterialExpression>& EP : Exprs)
+    {
+        UMaterialExpression* E = EP.Get();
+        if (!E) continue;
+        const int32 N = E->CountInputs();
+        for (int32 i = 0; i < N; ++i) Note(E->GetInput(i));
+    }
+    for (const FExpressionInput* In : PropertyInputs) Note(In);
+
+    // 2. Flag the crash-prone shapes.
+    for (const TObjectPtr<UMaterialExpression>& EP : Exprs)
+    {
+        UMaterialExpression* E = EP.Get();
+        if (!E) continue;
+
+        if (UMaterialExpressionRerouteBase* RR = Cast<UMaterialExpressionRerouteBase>(E))
+        {
+            if (Consumed.Contains(E))
+            {
+                int32 OutIdx = 0;
+                if (RR->TraceInputsToRealExpression(OutIdx) == nullptr)
+                {
+                    Out.Add(FString::Printf(TEXT("reroute '%s' is used downstream but resolves to no input — it compiles to an invalid (null) value and crashes the HLSL translator (check 'Default != nullptr'). Connect its input (for a NAMED reroute, connect the matching DECLARATION's input), or delete the reroute and its usages."), *E->GetName()));
+                }
+            }
+        }
+
+        const int32 N = E->CountInputs();
+        for (int32 i = 0; i < N; ++i)
+        {
+            const FExpressionInput* In = E->GetInput(i);
+            if (!In || !In->Expression) continue;
+            const int32 OutCount = In->Expression->GetOutputs().Num();
+            if (OutCount > 0 && (In->OutputIndex < 0 || In->OutputIndex >= OutCount))
+            {
+                Out.Add(FString::Printf(TEXT("'%s' input %d connects to output #%d of '%s', which has only %d output(s) — an out-of-range output index compiles to null and crashes the translator. Reconnect to a valid output (0..%d)."), *E->GetName(), i, In->OutputIndex, *In->Expression->GetName(), OutCount, OutCount - 1));
+            }
+        }
+    }
+}
+
+// Gather the master material's per-property root inputs so reroutes feeding a
+// material property directly (not via another node) still count as consumed.
+static void GatherMaterialPropertyInputs(UMaterial* Mat, TArray<FExpressionInput*>& Out)
+{
+    if (!Mat) return;
+    for (int32 Prop = 0; Prop < MP_MAX; ++Prop)
+        if (FExpressionInput* In = Mat->GetExpressionInputForProperty((EMaterialProperty)Prop))
+            Out.Add(In);
+}
+
+FHaybaHandlerResult FHaybaMCPMaterialHandler::MatValidate(const TSharedPtr<FJsonObject>& P)
+{
+    TArray<FString> Problems;
+
+    FString FuncPath;
+    if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())
+    {
+        UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
+        if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_validate: function not found"));
+        CollectMaterialGraphProblems(Fn->GetExpressions(), {}, Problems);
+    }
+    else
+    {
+        FString MatPath;
+        if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath))
+            return FHaybaHandlerResult::Err(TEXT("material_validate: missing material_path or function_path"));
+        UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
+        if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_validate: material not found"));
+        TArray<FExpressionInput*> PropInputs;
+        GatherMaterialPropertyInputs(Mat, PropInputs);
+        CollectMaterialGraphProblems(Mat->GetExpressions(), PropInputs, Problems);
+    }
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetBoolField(TEXT("ok"), Problems.Num() == 0);
+    TArray<TSharedPtr<FJsonValue>> Arr;
+    for (const FString& Pr : Problems) Arr.Add(MakeShared<FJsonValueString>(Pr));
+    Out->SetArrayField(TEXT("problems"), Arr);
+    return FHaybaHandlerResult::Ok(Out);
+}
+
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonObject>& P)
 {
     // Material FUNCTIONS are no longer auto-saved per edit (a half-built function
@@ -1332,6 +1437,22 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
     {
         UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
         if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_compile: function not found"));
+
+        // Refuse to translate a crash-prone graph (uncatchable translator assert).
+        TArray<FString> Problems;
+        CollectMaterialGraphProblems(Fn->GetExpressions(), {}, Problems);
+        if (Problems.Num() > 0)
+        {
+            TSharedPtr<FJsonObject> Bad = MakeShared<FJsonObject>();
+            Bad->SetBoolField(TEXT("saved"), false);
+            Bad->SetBoolField(TEXT("has_errors"), true);
+            TArray<TSharedPtr<FJsonValue>> Arr;
+            for (const FString& Pr : Problems) Arr.Add(MakeShared<FJsonValueString>(Pr));
+            Bad->SetArrayField(TEXT("errors"), Arr);
+            Bad->SetStringField(TEXT("blocked"), TEXT("graph would crash the HLSL translator; not compiled. Fix the listed problems (or run material_validate) then retry."));
+            return FHaybaHandlerResult::Ok(Bad);
+        }
+
         UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
         FString FnSaveErr;
         const bool bFnSaved = HaybaPersistAsset(Fn, FnSaveErr);
@@ -1346,6 +1467,27 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         return FHaybaHandlerResult::Err(TEXT("material_compile: missing material_path or function_path"));
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_compile: material not found"));
+
+    // Refuse to translate a crash-prone graph: RecompileMaterial below runs the
+    // HLSL translator, whose 'Default != nullptr' assert is uncatchable and kills
+    // the editor. Catch the statically-detectable causes first and report them.
+    {
+        TArray<FExpressionInput*> PropInputs;
+        GatherMaterialPropertyInputs(Mat, PropInputs);
+        TArray<FString> Problems;
+        CollectMaterialGraphProblems(Mat->GetExpressions(), PropInputs, Problems);
+        if (Problems.Num() > 0)
+        {
+            TSharedPtr<FJsonObject> Bad = MakeShared<FJsonObject>();
+            Bad->SetBoolField(TEXT("saved"), false);
+            Bad->SetBoolField(TEXT("has_errors"), true);
+            TArray<TSharedPtr<FJsonValue>> Arr;
+            for (const FString& Pr : Problems) Arr.Add(MakeShared<FJsonValueString>(Pr));
+            Bad->SetArrayField(TEXT("errors"), Arr);
+            Bad->SetStringField(TEXT("blocked"), TEXT("graph would crash the HLSL translator; not compiled. Fix the listed problems (or run material_validate) then retry."));
+            return FHaybaHandlerResult::Ok(Bad);
+        }
+    }
 
     Mat->PostEditChange();
     UMaterialEditingLibrary::RecompileMaterial(Mat);
