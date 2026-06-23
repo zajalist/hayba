@@ -57,6 +57,7 @@ import { materialFunctionCreateHandler, meta as materialFunctionCreateMeta } fro
 import { materialSetMaterialPropertyHandler, meta as materialSetMaterialPropertyMeta } from './material/material-set-material-property.js';
 import { materialCompileHandler, meta as materialCompileMeta } from './material/material-compile.js';
 import { materialDisconnectHandler, meta as materialDisconnectMeta } from './material/material-disconnect.js';
+import { materialValidateHandler, meta as materialValidateMeta } from './material/material-validate.js';
 import {
   textureGetInfoHandler, getInfoMeta as textureGetInfoMeta,
   textureSetCompressionHandler, setCompressionMeta as textureSetCompressionMeta,
@@ -390,6 +391,19 @@ const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       schema: {
         material_path: z.string().optional().describe('Path to the master material asset to compile (either this or function_path)'),
         function_path: z.string().optional().describe('Path to a material FUNCTION to finalize + save (either this or material_path)'),
+      },
+    },
+    {
+      name: 'material_validate',
+      description: 'Statically check a material OR material FUNCTION graph for translator-crash-prone wiring WITHOUT compiling: reroutes/named-reroutes used downstream that resolve to no input, and connections to non-existent output indices — both trigger an uncatchable HLSL-translator assert that kills the editor. material_compile runs these same checks and refuses to compile when any fail, so call this first to fix issues safely.',
+      meta: materialValidateMeta,
+      handler: materialValidateHandler,
+      cost: 'low',
+      returns: '{ok:boolean, problems:[string]}',
+      niche: M,
+      schema: {
+        material_path: z.string().optional().describe('Path to the master material to validate (either this or function_path)'),
+        function_path: z.string().optional().describe('Path to a material FUNCTION to validate (either this or material_path)'),
       },
     },
     {
