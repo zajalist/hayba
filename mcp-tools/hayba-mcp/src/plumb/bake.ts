@@ -45,12 +45,20 @@ export function bakeProfile(input: UeBoundsInput, baked_at: string, profileArche
         [aabb.max[0], aabb.max[1]], [aabb.min[0], aabb.max[1]],
       ];
 
+  const topZ = aabb.max[2];
+  const midZ = (aabb.min[2] + aabb.max[2]) / 2;
+  const sockets = [
+    { id: 'floor_edge', type: 'edge' as const, frame: { pos: [origin[0], origin[1], aabb.min[2]] as [number, number, number], quat: [0, 0, 0, 1] as [number, number, number, number] } },
+    { id: 'wall_mid', type: 'wall' as const, frame: { pos: [origin[0], origin[1], midZ] as [number, number, number], quat: [0, 0, 0, 1] as [number, number, number, number] } },
+    { id: 'arch_crown', type: 'ceiling' as const, frame: { pos: [origin[0], origin[1], topZ] as [number, number, number], quat: [0, 0, 0, 1] as [number, number, number, number] } },
+  ];
+
   return {
     asset_id: input.asset_id,
     bake_version: 1,
     profile: profileArchetype,
     geometry: { aabb, obb: { center: origin, extents: extent, quat: [0, 0, 0, 1] }, volume_m3 },
-    semantics: { up: [0, 0, 1], front: [1, 0, 0], affordances: [] },
+    semantics: { up: [0, 0, 1], front: [1, 0, 0], affordances: [], sockets },
     physical: {
       mass_kg: input.mass_kg,
       com: input.com_cm ? m3(input.com_cm) : origin,

@@ -394,7 +394,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddNode(const TSharedPtr<FJsonO
         if (!Expr) return FHaybaHandlerResult::Err(TEXT("material_add_node: CreateMaterialExpressionInFunction failed"));
         if (PropsObj) ApplyNodeProps(Expr, *PropsObj);
         UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
-        { FString SaveErr; HaybaPersistAsset(Fn, SaveErr); }  // crash-resilient: save function graph now
+        Fn->MarkPackageDirty();  // in-memory only — function written to disk by material_compile(function_path); avoids a half-built function landing on disk and asserting when the editor opens/compiles it
 
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("node_id"), Expr->GetName());
@@ -505,7 +505,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
         else if (!UMaterialEditingLibrary::ConnectMaterialExpressions(From, FromOutput, To, ToInput))
             return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: ConnectMaterialExpressions failed"));
         UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
-        { FString SaveErr; HaybaPersistAsset(Fn, SaveErr); }  // crash-resilient: save function graph now
+        Fn->MarkPackageDirty();  // in-memory only — function written to disk by material_compile(function_path); avoids a half-built function landing on disk and asserting when the editor opens/compiles it
 
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetBoolField(TEXT("connected"), true);
@@ -937,7 +937,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetNode(const TSharedPtr<FJsonO
         if (!Expr) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_set_node: node not found: %s"), *NodeId));
         ApplyTo(Expr);
         UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
-        { FString SaveErr; HaybaPersistAsset(Fn, SaveErr); }  // crash-resilient: save function graph now
+        Fn->MarkPackageDirty();  // in-memory only — function written to disk by material_compile(function_path); avoids a half-built function landing on disk and asserting when the editor opens/compiles it
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("node_id"), NodeId);
         return FHaybaHandlerResult::Ok(Out);
@@ -974,7 +974,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDeleteNode(const TSharedPtr<FJs
         if (!Expr) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_delete_node: node not found: %s"), *NodeId));
         UMaterialEditingLibrary::DeleteMaterialExpressionInFunction(Fn, Expr);
         UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
-        { FString SaveErr; HaybaPersistAsset(Fn, SaveErr); }  // crash-resilient: save function graph now
+        Fn->MarkPackageDirty();  // in-memory only — function written to disk by material_compile(function_path); avoids a half-built function landing on disk and asserting when the editor opens/compiles it
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetBoolField(TEXT("deleted"), true);
         return FHaybaHandlerResult::Ok(Out);
@@ -1027,7 +1027,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddComment(const TSharedPtr<FJs
         Setup(C);
         Fn->GetExpressionCollection().AddComment(C);
         UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
-        { FString SaveErr; HaybaPersistAsset(Fn, SaveErr); }  // crash-resilient: save function graph now
+        Fn->MarkPackageDirty();  // in-memory only — function written to disk by material_compile(function_path); avoids a half-built function landing on disk and asserting when the editor opens/compiles it
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("comment_id"), C->GetName());
         return FHaybaHandlerResult::Ok(Out);
@@ -1196,7 +1196,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddRerouteDeclaration(const TSh
         if (!D) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_declaration: create failed"));
         Setup(D);
         UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
-        { FString SaveErr; HaybaPersistAsset(Fn, SaveErr); }  // crash-resilient: save function graph now
+        Fn->MarkPackageDirty();  // in-memory only — function written to disk by material_compile(function_path); avoids a half-built function landing on disk and asserting when the editor opens/compiles it
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("node_id"), D->GetName());
         return FHaybaHandlerResult::Ok(Out);
@@ -1246,7 +1246,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddRerouteUsage(const TSharedPt
         U->Declaration = D;
         U->DeclarationGuid = D->VariableGuid;
         UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
-        { FString SaveErr; HaybaPersistAsset(Fn, SaveErr); }  // crash-resilient: save function graph now
+        Fn->MarkPackageDirty();  // in-memory only — function written to disk by material_compile(function_path); avoids a half-built function landing on disk and asserting when the editor opens/compiles it
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("node_id"), U->GetName());
         return FHaybaHandlerResult::Ok(Out);
@@ -1324,9 +1324,26 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
 // errors so the agent gets feedback instead of guessing.
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonObject>& P)
 {
+    // Material FUNCTIONS are no longer auto-saved per edit (a half-built function
+    // on disk asserts when the editor opens/compiles it). This is their explicit
+    // save point: refresh + write to disk.
+    FString FuncPath;
+    if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())
+    {
+        UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
+        if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_compile: function not found"));
+        UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        FString FnSaveErr;
+        const bool bFnSaved = HaybaPersistAsset(Fn, FnSaveErr);
+        TSharedPtr<FJsonObject> FnOut = MakeShared<FJsonObject>();
+        FnOut->SetBoolField(TEXT("saved"), bFnSaved);
+        if (!bFnSaved) FnOut->SetStringField(TEXT("save_error"), FnSaveErr);
+        return FHaybaHandlerResult::Ok(FnOut);
+    }
+
     FString MatPath;
     if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath))
-        return FHaybaHandlerResult::Err(TEXT("material_compile: missing material_path"));
+        return FHaybaHandlerResult::Err(TEXT("material_compile: missing material_path or function_path"));
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_compile: material not found"));
 

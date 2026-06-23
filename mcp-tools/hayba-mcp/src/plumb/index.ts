@@ -18,7 +18,7 @@ export {
 export type { ValidationError } from './constraint-store.js';
 export {
   loadProfiles, getProfile, profileMap, putProfile, annotateProfile, removeProfile,
-  getProfilesPath, setProfilesPath, addMask, getMask, removeMask,
+  getProfilesPath, setProfilesPath, addMask, getMask, removeMask, addSocket,
 } from './profile-store.js';
 export { bakeProfile } from './bake.js';
 export type { UeBoundsInput } from './bake.js';
@@ -31,3 +31,11 @@ export {
 export type { Lesson, LessonValidationError } from './lesson-store.js';
 export { enqueueStudyRequest, takeStudyRequests, getStudyRequestsPath, setStudyRequestsPath } from './study-requests.js';
 export type { StudyRequest } from './study-requests.js';
+export {
+  getGrammarPath, setGrammarPath, putProduction, getProduction, listProductions,
+  removeProduction, productionMap, validateProduction,
+} from './grammar-store.js';
+export { matchProductions, expandGrammar } from './grammar.js';
+export type { PlacedItem, PlacementPlan, GuardFn } from './grammar.js';
+export { makeGuardFn } from './grammar-guards.js';
+export type { MakeGuardFnOptions } from './grammar-guards.js';

@@ -120,7 +120,7 @@ function maskRegion(profile: Profile | null, maskId: string | undefined, inst: I
   return null; // surface masks are handled by surface_contact / affordance_clear paths
 }
 
-// ── the closed set (11 primitives) ───────────────────────────────────────────
+// ── the closed set (13 primitives) ───────────────────────────────────────────
 
 export const PRIMITIVES: Primitive[] = [
   {
@@ -382,6 +382,38 @@ export const PRIMITIVES: Primitive[] = [
         fix = { translate: [toward[0] * pull, toward[1] * pull, toward[2] * pull] };
       }
       return { value_m, fix, detail: `nearest surface ${best.toFixed(2)}m vs gap ${gap}m` };
+    },
+  },
+  {
+    id: 'presence',
+    gate: 'constraints',
+    defaultHard: true,
+    qualitative: false,
+    doc: "A named role must (mode=required) or must not (mode=forbidden) exist within the region. Encodes 'every room needs an air solution / two closures'.",
+    params: ['role', 'mode'],
+    evaluate: ({ constraint, scene }) => {
+      if (!scene || !scene.instances) return SKIP('no scene context');
+      const role = str(constraint.params.role);
+      const mode = str(constraint.params.mode) === 'forbidden' ? 'forbidden' : 'required';
+      if (!role) return SKIP('no role param');
+      const found = scene.instances.some(i => i.tags?.['role'] === role);
+      const value_m = mode === 'required'
+        ? (found ? 1 : -1)
+        : (found ? -1 : 1);
+      return { value_m, detail: `role "${role}" ${found ? 'present' : 'absent'} (mode=${mode})` };
+    },
+  },
+  {
+    id: 'max_straight_run',
+    gate: 'collision',
+    defaultHard: true,
+    qualitative: false,
+    doc: "No straight unbroken span longer than max_m along the region/axis. Encodes G-1 sightlines and 'no straight air > 6 m'.",
+    params: ['max_m', 'axis'],
+    evaluate: () => {
+      // Real geometry measurement happens in the C++ PCG node + scene validator.
+      // No geometry context is available in the TS evaluator at this stage.
+      return SKIP('no geometry context');
     },
   },
 ];

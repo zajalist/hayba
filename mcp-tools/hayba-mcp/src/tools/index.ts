@@ -129,6 +129,11 @@ import {
   plumbStudySchema, plumbStudyHandler,
   plumbStudyTakeSchema, plumbStudyTakeHandler,
   plumbSegmentSchema, plumbSegmentHandler,
+  plumbProductionDefineSchema, plumbProductionDefineHandler,
+  plumbProductionListSchema, plumbProductionListHandler,
+  plumbProductionRemoveSchema, plumbProductionRemoveHandler,
+  plumbSocketAddSchema, plumbSocketAddHandler,
+  plumbGrammarExpandSchema, plumbGrammarExpandHandler,
 } from './plumb/tools.js';
 
 // SessionManager (Gaea session) parked while terrain features are off — kept
@@ -370,14 +375,15 @@ const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     },
     {
       name: 'material_compile',
-      description: 'Explicitly compile a material (apply staged settings + surface translator errors) and return shader optimization stats. Graph edits auto-save and defer compilation; call this once the graph is complete. The result includes a stats block (per-shader instruction counts, texture samples, samplers, interpolators) plus an OPTIMIZATION FEEDBACK summary with hints.',
+      description: 'Finalize a material OR material FUNCTION: write it to disk, apply staged settings, surface translator errors + shader optimization stats (materials). Graph edits DEFER the disk write — call this once the graph is complete. NOTE: material functions no longer auto-save either, so after editing a function call material_compile with function_path to persist it (this avoids a half-built function crashing the editor when it is opened/compiled).',
       meta: materialCompileMeta,
       handler: materialCompileHandler,
       cost: 'medium',
-      returns: '{errors:[string], has_errors, saved, stats:{shaders:[{name,instructions}], texture_samples, texture_lookups, virtual_texture_lookups, samplers, max_samplers, interpolators_used, interpolators_max}}',
+      returns: '{errors:[string], has_errors, saved, stats:{shaders:[{name,instructions}], texture_samples, ...}} (materials) | {saved} (functions)',
       niche: M,
       schema: {
-        material_path: z.string().min(1).describe('Path to the master material asset to compile'),
+        material_path: z.string().optional().describe('Path to the master material asset to compile (either this or function_path)'),
+        function_path: z.string().optional().describe('Path to a material FUNCTION to finalize + save (either this or material_path)'),
       },
     },
     {
@@ -1725,6 +1731,26 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     'AI-segment a studied asset: given the study_render color passes, the agent\'s themed part labels + a box/points per view, runs SAM in the visual sidecar and back-projects to geometry-hugging surface masks (triangles via the world-position pass + a UV display texture), written into the profile. Replaces hand-placed blocky masks.',
     plumbSegmentSchema, async (a) => j(await plumbSegmentHandler(a)));
 
+  server.tool('plumb_production_define',
+    'Author/upsert a grammar production rule: an LHS symbol kind (+ optional attribute guards) → an RHS sequence of emit ops (shell/asset/symbol/scatter/decal/fill). Guards are constraint ids that must pass before the production fires.',
+    plumbProductionDefineSchema, async (a) => j(await plumbProductionDefineHandler(a)));
+
+  server.tool('plumb_production_list',
+    'List all grammar productions in the store.',
+    plumbProductionListSchema, async () => j(await plumbProductionListHandler()));
+
+  server.tool('plumb_production_remove',
+    'Remove a grammar production by id.',
+    plumbProductionRemoveSchema, async (a) => j(await plumbProductionRemoveHandler(a)));
+
+  server.tool('plumb_socket_add',
+    'Add or replace a socket (connection point) on a baked profile. Idempotent on socket id.',
+    plumbSocketAddSchema, async (a) => j(await plumbSocketAddHandler(a)));
+
+  server.tool('plumb_grammar_expand',
+    'Expand a seed symbol using the stored production rules + the PLUMB constraint store as guards. Returns a PlacementPlan. In dry-run (no UE scene), geometry-dependent constraints self-skip — rejections only reflect TS-evaluable constraints.',
+    plumbGrammarExpandSchema, async (a) => j(await plumbGrammarExpandHandler(a)));
+
   // ── Landscape import (TS wrapper for UE-side landscape_import handler) ────
   server.tool(
     'hayba_import_landscape',
@@ -1944,4 +1970,9 @@ function recordEagerSchemas(
   reg('plumb_study', plumbStudySchema, 'low', '{asset, has_profile, profile?, primitives, mask_kinds, guidance}');
   reg('plumb_study_take', plumbStudyTakeSchema, 'low', '{requests:[{asset,ts}], note}');
   reg('plumb_segment', plumbSegmentSchema, 'high', '{ok, added:[label], skipped?, error?}');
+  reg('plumb_production_define', plumbProductionDefineSchema, 'low', '{ok, errors?}');
+  reg('plumb_production_list', plumbProductionListSchema, 'low', '{productions:[Production]}');
+  reg('plumb_production_remove', plumbProductionRemoveSchema, 'low', '{ok, removed}');
+  reg('plumb_socket_add', plumbSocketAddSchema, 'low', '{ok, profile|error}');
+  reg('plumb_grammar_expand', plumbGrammarExpandSchema, 'low', '{plan:PlacementPlan, note}');
 }

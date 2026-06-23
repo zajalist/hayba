@@ -17,12 +17,19 @@ function inst(object: string, pos: [number, number, number], opts: Partial<Insta
 }
 
 describe('closed primitive set', () => {
-  it('has exactly 11 primitives with unique ids and valid gates', () => {
-    expect(PRIMITIVES.length).toBe(11);
+  it('has exactly 13 primitives with unique ids and valid gates', () => {
+    expect(PRIMITIVES.length).toBe(13);
     const ids = new Set(PRIMITIVES.map(p => p.id));
-    expect(ids.size).toBe(11);
+    expect(ids.size).toBe(13);
     const gates = new Set(['collision', 'stability', 'constraints', 'reach']);
     for (const p of PRIMITIVES) expect(gates.has(p.gate)).toBe(true);
+  });
+
+  it('exposes presence and max_straight_run in the closed set', () => {
+    const ids = PRIMITIVES.map(p => p.id);
+    expect(ids).toContain('presence');
+    expect(ids).toContain('max_straight_run');
+    expect(ids.length).toBe(13);
   });
 
   it('qualitative primitives are facing + affordance_clear', () => {
@@ -175,6 +182,15 @@ describe('profile store + bake + annotate', () => {
   let dir: string;
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'plumb-')); setProfilesPath(join(dir, 'p.json')); });
   afterEach(() => { setProfilesPath(null); rmSync(dir, { recursive: true, force: true }); });
+
+  it('bakes default sockets from the OBB', () => {
+    const p = bakeProfile({ asset_id: '/Game/X.X', origin_cm: [0,0,0], extent_cm: [50,50,120] }, 'now');
+    const ids = (p.semantics.sockets ?? []).map(s => s.id).sort();
+    expect(ids).toEqual(['arch_crown','floor_edge','wall_mid']);
+    const crown = p.semantics.sockets!.find(s => s.id === 'arch_crown')!;
+    expect(crown.type).toBe('ceiling');
+    expect(crown.frame.pos[2]).toBeCloseTo(1.2);   // top of a 1.2 m half-extent, metres
+  });
 
   it('bake converts cm→m and persists', () => {
     const p = bakeProfile({ asset_id: '/Game/Rock', origin_cm: [0, 0, 50], extent_cm: [100, 100, 50] }, 'now');
