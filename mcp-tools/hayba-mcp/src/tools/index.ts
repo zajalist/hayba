@@ -48,6 +48,7 @@ import { materialSetNodeHandler, meta as materialSetNodeMeta } from './material/
 import { materialDeleteNodeHandler, meta as materialDeleteNodeMeta } from './material/material-delete-node.js';
 import { materialAddCommentHandler, meta as materialAddCommentMeta } from './material/material-add-comment.js';
 import { materialDeleteCommentHandler, meta as materialDeleteCommentMeta } from './material/material-delete-comment.js';
+import { materialSetCommentHandler, meta as materialSetCommentMeta } from './material/material-set-comment.js';
 import { materialAddRerouteDeclarationHandler, meta as materialAddRerouteDeclarationMeta } from './material/material-add-reroute-declaration.js';
 import { materialAddRerouteUsageHandler, meta as materialAddRerouteUsageMeta } from './material/material-add-reroute-usage.js';
 import { assetDeleteHandler, meta as assetDeleteMeta } from './asset/asset-delete.js';
@@ -412,6 +413,25 @@ const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       },
     },
     {
+      name: 'material_set_comment',
+      description: 'Edit an existing comment box (move/resize/retitle/recolor) by id — only the fields you pass change. Completes comment CRUD so comments never need a Python fallback.',
+      meta: materialSetCommentMeta,
+      handler: materialSetCommentHandler,
+      cost: 'low',
+      returns: '{comment_id}',
+      niche: M,
+      schema: {
+        material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
+        function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
+        comment_id: z.string().min(1).describe('Comment id to edit (from material_get_info.comments[].id)'),
+        text: z.string().optional().describe('New title/text'),
+        node_pos: z.tuple([z.number(), z.number()]).optional().describe('New top-left graph position [x, y]'),
+        size: z.tuple([z.number(), z.number()]).optional().describe('New box size [width, height]'),
+        color: z.array(z.number()).min(3).max(4).optional().describe('New color [r, g, b] or [r, g, b, a] (0..1)'),
+        font_size: z.number().int().optional().describe('New title font size'),
+      },
+    },
+    {
       name: 'material_add_reroute_declaration',
       description: 'Create a named-reroute declaration (source anchor) so a value can be referenced by name instead of long wires.',
       meta: materialAddRerouteDeclarationMeta,
@@ -455,11 +475,11 @@ const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     },
     {
       name: 'material_connect_nodes',
-      description: 'Connect two nodes in a material graph or connect a node output to a material property.',
+      description: 'Connect two nodes in a material graph or connect a node output to a material property. May return clutter-prevention suggestions: use named reroutes when a source fans out to 2+ targets, or a reroute knee node when a wire would run backward/over another node.',
       meta: materialConnectNodesMeta,
       handler: materialConnectNodesHandler,
       cost: 'low',
-      returns: '{ok, from_node, to_node, to_property, connection_made}',
+      returns: '{connected, from_node_fanout?, suggestions?[]}',
       niche: M,
       schema: {
         material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
