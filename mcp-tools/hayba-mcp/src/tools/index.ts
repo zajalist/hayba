@@ -57,6 +57,12 @@ import { materialFunctionCreateHandler, meta as materialFunctionCreateMeta } fro
 import { materialSetMaterialPropertyHandler, meta as materialSetMaterialPropertyMeta } from './material/material-set-material-property.js';
 import { materialCompileHandler, meta as materialCompileMeta } from './material/material-compile.js';
 import { materialDisconnectHandler, meta as materialDisconnectMeta } from './material/material-disconnect.js';
+import {
+  textureGetInfoHandler, getInfoMeta as textureGetInfoMeta,
+  textureSetCompressionHandler, setCompressionMeta as textureSetCompressionMeta,
+  textureSetSettingsHandler, setSettingsMeta as textureSetSettingsMeta,
+  textureListHandler, listMeta as textureListMeta,
+} from './texture/texture-tools.js';
 
 // ── Asset-source connectors (pure Node — no UE bridge except python_run) ──────
 import { handlePolyhavenSearch, meta as polyhavenSearchMeta } from './asset-sources/polyhaven-search.js';
@@ -384,6 +390,54 @@ const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       schema: {
         material_path: z.string().optional().describe('Path to the master material asset to compile (either this or function_path)'),
         function_path: z.string().optional().describe('Path to a material FUNCTION to finalize + save (either this or material_path)'),
+      },
+    },
+    {
+      name: 'texture_get_info',
+      description: 'Inspect a Texture2D: dimensions, source/platform format, mip count, compression settings, LOD group, sRGB, never-stream, address modes.',
+      meta: textureGetInfoMeta,
+      handler: textureGetInfoHandler,
+      cost: 'low',
+      returns: '{path, width, height, format, num_mips, compression_settings, lod_group, srgb, never_stream, address_x, address_y}',
+      schema: {
+        path: z.string().min(1).describe('Texture asset path, e.g. /Game/Tex/T_Rock'),
+      },
+    },
+    {
+      name: 'texture_set_compression',
+      description: 'Set a texture\'s compression (TC_*) and optionally LOD group + sRGB. Re-imports the texture resource. For other properties (mip gen, max size, filter, address, ...) use texture_set_settings.',
+      meta: textureSetCompressionMeta,
+      handler: textureSetCompressionHandler,
+      cost: 'low',
+      returns: '{ok, path, compression_settings, lod_group, srgb}',
+      schema: {
+        path: z.string().min(1).describe('Texture asset path'),
+        compression_settings: z.string().min(1).describe('TextureCompressionSettings, e.g. Normalmap / Masks / Default (TC_ prefix optional)'),
+        lod_group: z.string().optional().describe('TextureGroup, e.g. World / WorldNormalMap (TEXTUREGROUP_ prefix optional)'),
+        srgb: z.boolean().optional().describe('sRGB flag'),
+      },
+    },
+    {
+      name: 'texture_set_settings',
+      description: 'Set any texture properties at once via reflection. Aliases: compression_settings, lod_group, srgb, never_stream, address_x, address_y, mip_gen_settings, max_texture_size, flip_green_channel, filter, virtual_texture_streaming, lod_bias. Any raw UTexture UPROPERTY name also works. Re-imports the resource after applying.',
+      meta: textureSetSettingsMeta,
+      handler: textureSetSettingsHandler,
+      cost: 'low',
+      returns: '{ok, path, applied:[string], compression_settings, lod_group, srgb, never_stream}',
+      schema: {
+        path: z.string().min(1).describe('Texture asset path'),
+        properties: z.record(z.string(), z.unknown()).describe('Settings to set, e.g. { compression_settings: "Normalmap", srgb: false, mip_gen_settings: "Sharpen4" }'),
+      },
+    },
+    {
+      name: 'texture_list',
+      description: 'List Texture2D assets, optionally filtered by path prefix.',
+      meta: textureListMeta,
+      handler: textureListHandler,
+      cost: 'low',
+      returns: '{textures:[{path, width, height, compression_settings}], count}',
+      schema: {
+        path_prefix: z.string().optional().describe('Only list textures whose path starts with this, e.g. /Game/Tex'),
       },
     },
     {

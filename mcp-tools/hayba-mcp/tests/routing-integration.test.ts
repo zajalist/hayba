@@ -49,6 +49,11 @@ function fixtureCaptured(): Map<string, CapturedTool> {
     ['plumb_study',                 'plumb'],
     ['plumb_study_take',            'plumb'],
     ['plumb_segment',               'plumb'],
+    ['plumb_production_define',      'plumb'],
+    ['plumb_production_list',        'plumb'],
+    ['plumb_production_remove',      'plumb'],
+    ['plumb_socket_add',            'plumb'],
+    ['plumb_grammar_expand',        'plumb'],
   ];
   for (const [name, dir] of tools) {
     const schema: z.ZodRawShape = { foo: z.string().optional() };
