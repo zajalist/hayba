@@ -25,8 +25,14 @@ import {
   evaluate, evaluatePerInstance, addMask, removeMask,
   loadLessons, getLesson, upsertLesson, removeLesson,
   takeStudyRequests,
+  putProduction, listProductions, removeProduction, validateProduction,
+  expandGrammar,
   type Constraint, type InstanceState, type Transform, type Mask, type Verdict,
+  type Production,
 } from '../../plumb/index.js';
+import { addSocket as addSocketToProfile } from '../../plumb/profile-store.js';
+import { makeGuardFn } from '../../plumb/grammar-guards.js';
+import type { Socket } from '../../plumb/contracts.js';
 import { replaceFindingsWithPrefix, type ValidatorFinding } from '../../validator/index.js';
 import { segmentProject } from '../visual/sidecar-client.js';
 
@@ -472,6 +478,108 @@ export async function plumbLessonListHandler(): Promise<{ lessons: Array<{ slug:
 export const plumbLessonRemoveSchema = { slug: z.string() };
 export async function plumbLessonRemoveHandler(args: { slug: string }): Promise<{ ok: boolean; removed: boolean }> {
   return { ok: true, removed: removeLesson(args.slug) };
+}
+
+// ── plumb_production_define / list / remove ──────────────────────────────────
+
+const emitOpSchema = z.object({
+  emit: z.enum(['shell', 'asset', 'symbol', 'scatter', 'decal', 'fill']),
+  role: z.string().optional(),
+  kind: z.string().optional(),
+  tag: z.string().optional(),
+  at: z.string().optional(),
+  along: z.string().optional(),
+  spacing_m: z.number().optional(),
+  alternate: z.boolean().optional(),
+  len: z.number().optional(),
+  profile_curve: z.string().optional(),
+  thickness_by: z.string().optional(),
+  bend_at_m: z.number().optional(),
+});
+
+export const plumbProductionDefineSchema = {
+  id: z.string(),
+  lhs: z.object({
+    kind: z.string(),
+    when: z.record(z.unknown()).optional(),
+  }),
+  rhs: z.array(emitOpSchema).min(1),
+  guards: z.array(z.string()).optional().describe('Constraint ids that must pass before this production fires'),
+  priority: z.number().describe('Higher priority = tried first when multiple productions match'),
+};
+export async function plumbProductionDefineHandler(args: {
+  id: string;
+  lhs: { kind: string; when?: Record<string, unknown> };
+  rhs: Record<string, unknown>[];
+  guards?: string[];
+  priority: number;
+}): Promise<{ ok: boolean; errors?: string[] }> {
+  const p: Production = {
+    id: args.id,
+    lhs: args.lhs,
+    rhs: args.rhs as Production['rhs'],
+    guards: args.guards ?? [],
+    priority: args.priority,
+  };
+  const errs = validateProduction(p);
+  if (errs.length) return { ok: false, errors: errs };
+  putProduction(p);
+  return { ok: true };
+}
+
+export const plumbProductionListSchema = {};
+export async function plumbProductionListHandler(): Promise<{ productions: Production[] }> {
+  return { productions: listProductions() };
+}
+
+export const plumbProductionRemoveSchema = { id: z.string() };
+export async function plumbProductionRemoveHandler(args: { id: string }): Promise<{ ok: boolean; removed: boolean }> {
+  return { ok: true, removed: removeProduction(args.id) };
+}
+
+// ── plumb_socket_add ─────────────────────────────────────────────────────────
+
+export const plumbSocketAddSchema = {
+  asset: z.string().describe('Asset path the socket belongs to (must have a baked profile)'),
+  socket: z.object({
+    id: z.string(),
+    type: z.enum(['floor', 'ceiling', 'wall', 'edge', 'custom']),
+    frame: z.object({ pos: vec3, quat: vec4 }),
+  }),
+};
+export async function plumbSocketAddHandler(args: {
+  asset: string;
+  socket: Socket;
+}): Promise<{ ok: boolean; profile?: unknown; error?: string }> {
+  try {
+    const merged = addSocketToProfile(args.asset, args.socket);
+    return { ok: true, profile: merged };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+// ── plumb_grammar_expand ──────────────────────────────────────────────────────
+
+export const plumbGrammarExpandSchema = {
+  seed: z.object({
+    kind: z.string(),
+    attrs: z.record(z.union([z.number(), z.string(), z.boolean()])).optional(),
+  }).describe('Seed symbol to expand from'),
+};
+export async function plumbGrammarExpandHandler(args: {
+  seed: { kind: string; attrs?: Record<string, number | string | boolean> };
+}): Promise<{ plan: unknown; note: string }> {
+  const seed = { kind: args.seed.kind, attrs: args.seed.attrs ?? {} };
+  const prods = listProductions();
+  const guard = makeGuardFn();
+  const plan = expandGrammar(seed, prods, guard);
+  return {
+    plan,
+    note: prods.length === 0
+      ? 'No productions defined yet — call plumb_production_define to author rules, then re-expand.'
+      : `Expanded from seed "${seed.kind}" using ${prods.length} production(s). In dry-run, geometry primitives (max_straight_run, presence) self-skip — rejections shown only reflect constraints evaluable without a UE scene.`,
+  };
 }
 
 void constraintsFor; void primitivesById; void getLesson; // re-exported helpers, kept for tool growth

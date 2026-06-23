@@ -115,6 +115,19 @@ export function addMask(assetId: string, mask: Mask): Profile | null {
   return merged;
 }
 
+export function addSocket(assetId: string, socket: import('./contracts.js').Socket): Profile {
+  const all = readAll();
+  assetId = toObjectPath(assetId);
+  const base = all[assetId];
+  if (!base) throw new Error(`no profile: ${assetId}`);
+  const sockets = (base.semantics.sockets ?? []).filter(s => s.id !== socket.id);
+  sockets.push(socket);
+  const merged: Profile = { ...base, semantics: { ...base.semantics, sockets } };
+  all[assetId] = merged;
+  writeAll(all);
+  return merged;
+}
+
 export function removeMask(assetId: string, maskId: string): boolean {
   const all = readAll();
   assetId = toObjectPath(assetId);

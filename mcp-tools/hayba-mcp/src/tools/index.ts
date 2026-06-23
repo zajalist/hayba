@@ -129,6 +129,11 @@ import {
   plumbStudySchema, plumbStudyHandler,
   plumbStudyTakeSchema, plumbStudyTakeHandler,
   plumbSegmentSchema, plumbSegmentHandler,
+  plumbProductionDefineSchema, plumbProductionDefineHandler,
+  plumbProductionListSchema, plumbProductionListHandler,
+  plumbProductionRemoveSchema, plumbProductionRemoveHandler,
+  plumbSocketAddSchema, plumbSocketAddHandler,
+  plumbGrammarExpandSchema, plumbGrammarExpandHandler,
 } from './plumb/tools.js';
 
 // SessionManager (Gaea session) parked while terrain features are off — kept
@@ -1725,6 +1730,26 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     'AI-segment a studied asset: given the study_render color passes, the agent\'s themed part labels + a box/points per view, runs SAM in the visual sidecar and back-projects to geometry-hugging surface masks (triangles via the world-position pass + a UV display texture), written into the profile. Replaces hand-placed blocky masks.',
     plumbSegmentSchema, async (a) => j(await plumbSegmentHandler(a)));
 
+  server.tool('plumb_production_define',
+    'Author/upsert a grammar production rule: an LHS symbol kind (+ optional attribute guards) → an RHS sequence of emit ops (shell/asset/symbol/scatter/decal/fill). Guards are constraint ids that must pass before the production fires.',
+    plumbProductionDefineSchema, async (a) => j(await plumbProductionDefineHandler(a)));
+
+  server.tool('plumb_production_list',
+    'List all grammar productions in the store.',
+    plumbProductionListSchema, async () => j(await plumbProductionListHandler()));
+
+  server.tool('plumb_production_remove',
+    'Remove a grammar production by id.',
+    plumbProductionRemoveSchema, async (a) => j(await plumbProductionRemoveHandler(a)));
+
+  server.tool('plumb_socket_add',
+    'Add or replace a socket (connection point) on a baked profile. Idempotent on socket id.',
+    plumbSocketAddSchema, async (a) => j(await plumbSocketAddHandler(a)));
+
+  server.tool('plumb_grammar_expand',
+    'Expand a seed symbol using the stored production rules + the PLUMB constraint store as guards. Returns a PlacementPlan. In dry-run (no UE scene), geometry-dependent constraints self-skip — rejections only reflect TS-evaluable constraints.',
+    plumbGrammarExpandSchema, async (a) => j(await plumbGrammarExpandHandler(a)));
+
   // ── Landscape import (TS wrapper for UE-side landscape_import handler) ────
   server.tool(
     'hayba_import_landscape',
@@ -1944,4 +1969,9 @@ function recordEagerSchemas(
   reg('plumb_study', plumbStudySchema, 'low', '{asset, has_profile, profile?, primitives, mask_kinds, guidance}');
   reg('plumb_study_take', plumbStudyTakeSchema, 'low', '{requests:[{asset,ts}], note}');
   reg('plumb_segment', plumbSegmentSchema, 'high', '{ok, added:[label], skipped?, error?}');
+  reg('plumb_production_define', plumbProductionDefineSchema, 'low', '{ok, errors?}');
+  reg('plumb_production_list', plumbProductionListSchema, 'low', '{productions:[Production]}');
+  reg('plumb_production_remove', plumbProductionRemoveSchema, 'low', '{ok, removed}');
+  reg('plumb_socket_add', plumbSocketAddSchema, 'low', '{ok, profile|error}');
+  reg('plumb_grammar_expand', plumbGrammarExpandSchema, 'low', '{plan:PlacementPlan, note}');
 }

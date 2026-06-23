@@ -18,7 +18,7 @@ export {
 export type { ValidationError } from './constraint-store.js';
 export {
   loadProfiles, getProfile, profileMap, putProfile, annotateProfile, removeProfile,
-  getProfilesPath, setProfilesPath, addMask, getMask, removeMask,
+  getProfilesPath, setProfilesPath, addMask, getMask, removeMask, addSocket,
 } from './profile-store.js';
 export { bakeProfile } from './bake.js';
 export type { UeBoundsInput } from './bake.js';
@@ -37,3 +37,5 @@ export {
 } from './grammar-store.js';
 export { matchProductions, expandGrammar } from './grammar.js';
 export type { PlacedItem, PlacementPlan, GuardFn } from './grammar.js';
+export { makeGuardFn } from './grammar-guards.js';
+export type { MakeGuardFnOptions } from './grammar-guards.js';
