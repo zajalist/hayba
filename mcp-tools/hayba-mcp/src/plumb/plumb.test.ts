@@ -17,12 +17,19 @@ function inst(object: string, pos: [number, number, number], opts: Partial<Insta
 }
 
 describe('closed primitive set', () => {
-  it('has exactly 11 primitives with unique ids and valid gates', () => {
-    expect(PRIMITIVES.length).toBe(11);
+  it('has exactly 13 primitives with unique ids and valid gates', () => {
+    expect(PRIMITIVES.length).toBe(13);
     const ids = new Set(PRIMITIVES.map(p => p.id));
-    expect(ids.size).toBe(11);
+    expect(ids.size).toBe(13);
     const gates = new Set(['collision', 'stability', 'constraints', 'reach']);
     for (const p of PRIMITIVES) expect(gates.has(p.gate)).toBe(true);
+  });
+
+  it('exposes presence and max_straight_run in the closed set', () => {
+    const ids = PRIMITIVES.map(p => p.id);
+    expect(ids).toContain('presence');
+    expect(ids).toContain('max_straight_run');
+    expect(ids.length).toBe(13);
   });
 
   it('qualitative primitives are facing + affordance_clear', () => {
