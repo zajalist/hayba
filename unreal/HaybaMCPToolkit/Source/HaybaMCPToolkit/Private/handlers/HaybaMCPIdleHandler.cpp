@@ -56,7 +56,13 @@ namespace HaybaIdle
         for (TObjectIterator<UPCGComponent> It; It; ++It)
         {
             UPCGComponent* Comp = *It;
-            if (!Comp || Comp->GetWorld() != World) continue;
+            // TObjectIterator visits CDOs, archetypes, and objects mid-construct or
+            // pending-kill. During PCG generation components churn fast, so a plain
+            // null check is not enough — calling GetWorld()/IsGenerating() on a
+            // garbage object derefs near-null (crash: reading 0x1). Guard hard.
+            if (!IsValid(Comp)) continue;
+            if (Comp->HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject)) continue;
+            if (Comp->GetWorld() != World) continue;
             AActor* Owner = Comp->GetOwner();
             if (!Owner) continue;
             if (ScopedActorPaths.Num() > 0)
