@@ -97,6 +97,13 @@ export interface Affordance {
   detail?: string;
 }
 
+/** A connection point on an asset (floor, ceiling, wall attachment, etc.). */
+export interface Socket {
+  id: string;
+  type: 'floor' | 'ceiling' | 'wall' | 'edge' | 'custom';
+  frame: { pos: [number, number, number]; quat: [number, number, number, number] };
+}
+
 export interface Mask {
   id: string;
   type: 'surface' | 'volume';
@@ -121,6 +128,8 @@ export interface ProfileSemantics {
   up: [number, number, number];     // local up, default world-up
   front: [number, number, number];  // local front, default +X
   affordances: Affordance[];
+  role?: string;
+  sockets?: Socket[];
 }
 
 export interface ProfilePhysical {

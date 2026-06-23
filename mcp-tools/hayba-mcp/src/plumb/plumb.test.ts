@@ -176,6 +176,15 @@ describe('profile store + bake + annotate', () => {
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'plumb-')); setProfilesPath(join(dir, 'p.json')); });
   afterEach(() => { setProfilesPath(null); rmSync(dir, { recursive: true, force: true }); });
 
+  it('bakes default sockets from the OBB', () => {
+    const p = bakeProfile({ asset_id: '/Game/X.X', origin_cm: [0,0,0], extent_cm: [50,50,120] }, 'now');
+    const ids = (p.semantics.sockets ?? []).map(s => s.id).sort();
+    expect(ids).toEqual(['arch_crown','floor_edge','wall_mid']);
+    const crown = p.semantics.sockets!.find(s => s.id === 'arch_crown')!;
+    expect(crown.type).toBe('ceiling');
+    expect(crown.frame.pos[2]).toBeCloseTo(1.2);   // top of a 1.2 m half-extent, metres
+  });
+
   it('bake converts cm→m and persists', () => {
     const p = bakeProfile({ asset_id: '/Game/Rock', origin_cm: [0, 0, 50], extent_cm: [100, 100, 50] }, 'now');
     expect(p.geometry.aabb.max[2]).toBeCloseTo(1, 5);  // 100cm = 1m
