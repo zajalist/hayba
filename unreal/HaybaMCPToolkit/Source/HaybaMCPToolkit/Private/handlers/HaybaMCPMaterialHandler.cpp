@@ -65,6 +65,7 @@ TArray<FString> FHaybaMCPMaterialHandler::GetCommands() const
         TEXT("material_set_property"),
         TEXT("material_delete_node"),
         TEXT("material_add_comment"),
+        TEXT("material_set_comment"),
         TEXT("material_delete_comment"),
         TEXT("material_add_reroute_declaration"),
         TEXT("material_add_reroute_usage"),
@@ -88,6 +89,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::Handle(const FString& Cmd, const T
     if (Cmd == TEXT("material_set_property"))   return MatSetProperty(P);
     if (Cmd == TEXT("material_delete_node"))    return MatDeleteNode(P);
     if (Cmd == TEXT("material_add_comment"))    return MatAddComment(P);
+    if (Cmd == TEXT("material_set_comment"))    return MatSetComment(P);
     if (Cmd == TEXT("material_delete_comment")) return MatDeleteComment(P);
     if (Cmd == TEXT("material_add_reroute_declaration")) return MatAddRerouteDeclaration(P);
     if (Cmd == TEXT("material_add_reroute_usage"))       return MatAddRerouteUsage(P);
@@ -347,11 +349,15 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatFunctionCreate(const TSharedPtr
 // wrap into rows. Explicit node_pos always overrides this.
 static void HaybaAutoNodePos(int32 ExistingCount, int32& X, int32& Y)
 {
-    constexpr int32 Cols = 6;
-    constexpr int32 DX = 320;   // horizontal spacing (wider than a typical node)
-    constexpr int32 DY = 260;   // vertical spacing (taller than a texture-sample node)
-    constexpr int32 OriginX = -1700;
-    constexpr int32 OriginY = -600;
+    // Spacing must clear the LARGEST common nodes (a TextureSample draws a live
+    // preview thumbnail ~256x256 plus pins/labels), so generous gaps — the old
+    // 320x260 grid overlapped texture samples badly. 5 columns keeps the block
+    // from sprawling too wide while feeding rightward into the output node at ~0,0.
+    constexpr int32 Cols = 5;
+    constexpr int32 DX = 480;   // horizontal spacing (clears widest node + pins/labels)
+    constexpr int32 DY = 420;   // vertical spacing (clears a texture-sample preview)
+    constexpr int32 OriginX = -2500;
+    constexpr int32 OriginY = -800;
     X = OriginX + (ExistingCount % Cols) * DX;
     Y = OriginY + (ExistingCount / Cols) * DY;
 }
@@ -415,6 +421,46 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddNode(const TSharedPtr<FJsonO
     return FHaybaHandlerResult::Ok(Out);
 }
 
+// Count how many expression inputs across the graph read From's output (node->node
+// fan-out). Property outputs (base_color etc.) are added by the caller.
+static int32 CountSourceFanout(UMaterial* Mat, UMaterialExpression* From)
+{
+    if (!Mat || !From) return 0;
+    int32 N = 0;
+    for (UMaterialExpression* E : Mat->GetExpressions())
+    {
+        if (!E) continue;
+        for (FExpressionInputIterator It{E}; It; ++It)
+            if (It->Expression == From) ++N;
+    }
+    return N;
+}
+
+// Heuristic: does the straight wire From.output -> To.input pass OVER another
+// node's box (spaghetti / wire crossing a node)? Sampled along the segment vs an
+// approximate per-node box anchored at the editor position. Also flags a wire
+// that runs backward (To left of From) as spaghetti-prone.
+static bool WireLooksLikeSpaghetti(UMaterial* Mat, UMaterialExpression* From, UMaterialExpression* To)
+{
+    if (!Mat || !From || !To) return false;
+    constexpr float NodeW = 280.f, NodeH = 220.f;
+    if (To->MaterialExpressionEditorX < From->MaterialExpressionEditorX) return true; // backward wire
+    const float Ax = From->MaterialExpressionEditorX + NodeW, Ay = From->MaterialExpressionEditorY + 40.f;
+    const float Bx = (float)To->MaterialExpressionEditorX,    By = To->MaterialExpressionEditorY + 40.f;
+    for (UMaterialExpression* E : Mat->GetExpressions())
+    {
+        if (!E || E == From || E == To) continue;
+        const float Ex = (float)E->MaterialExpressionEditorX, Ey = (float)E->MaterialExpressionEditorY;
+        for (int32 i = 1; i < 24; ++i)
+        {
+            const float t = (float)i / 24.f;
+            const float Px = Ax + (Bx - Ax) * t, Py = Ay + (By - Ay) * t;
+            if (Px >= Ex && Px <= Ex + NodeW && Py >= Ey && Py <= Ey + NodeH) return true;
+        }
+    }
+    return false;
+}
+
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<FJsonObject>& P)
 {
     FString FromNode;
@@ -474,6 +520,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
     UMaterialExpression* From = FindExprByName(Mat, FromNode);
     if (!From) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: from_node not found: %s"), *FromNode));
 
+    UMaterialExpression* To = nullptr;  // null when connecting to a material property
     if (bHasProp)
     {
         EMaterialProperty Prop;
@@ -485,7 +532,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
     else
     {
         if (!bHasTo) return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: missing to_node or to_property"));
-        UMaterialExpression* To = FindExprByName(Mat, ToNode);
+        To = FindExprByName(Mat, ToNode);
         if (!To) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: to_node not found: %s"), *ToNode));
         if (ToInputIndex >= 0)
         {
@@ -502,6 +549,24 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetBoolField(TEXT("connected"), true);
+
+    // ── Clutter prevention (non-binding hints) ────────────────────────────────
+    TArray<TSharedPtr<FJsonValue>> Suggestions;
+    const int32 Fanout = CountSourceFanout(Mat, From) + (bHasProp ? 1 : 0);
+    if (Fanout >= 2)
+    {
+        Out->SetNumberField(TEXT("from_node_fanout"), Fanout);
+        Suggestions.Add(MakeShared<FJsonValueString>(FString::Printf(
+            TEXT("'%s' now feeds %d places. Cut wire clutter with a NAMED REROUTE: material_add_reroute_declaration on '%s' once, then material_add_reroute_usage at EACH target (copy one per output) instead of long fan-out wires."),
+            *FromNode, Fanout, *FromNode)));
+    }
+    if (To && WireLooksLikeSpaghetti(Mat, From, To))
+    {
+        Suggestions.Add(MakeShared<FJsonValueString>(FString::Printf(
+            TEXT("the wire '%s'->'%s' runs backward or crosses over another node (spaghetti). Insert a REROUTE knee node (material_add_node expression_class=\"MaterialExpressionReroute\") between them at a clear position to redirect the wire around the obstruction."),
+            *FromNode, *ToNode)));
+    }
+    if (Suggestions.Num() > 0) Out->SetArrayField(TEXT("suggestions"), Suggestions);
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -1030,6 +1095,70 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDeleteComment(const TSharedPtr<
         }
     }
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_delete_comment: comment not found: %s"), *CommentId));
+}
+
+// Edit an existing comment BOX by id — move / resize / retitle / recolor. Only
+// the fields supplied are changed, so callers can e.g. just reposition a box
+// after relocating the nodes it wraps. Completes comment CRUD so comments never
+// need a Python fallback.
+FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetComment(const TSharedPtr<FJsonObject>& P)
+{
+    FString CommentId;
+    if (!P->TryGetStringField(TEXT("comment_id"), CommentId) || CommentId.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("material_set_comment: missing comment_id"));
+
+    // Apply only the provided fields to a found comment.
+    const TArray<TSharedPtr<FJsonValue>>* Arr;
+    auto Apply = [&](UMaterialExpressionComment* C)
+    {
+        FString Text;
+        if (P->TryGetStringField(TEXT("text"), Text)) C->Text = Text;
+        if (P->TryGetArrayField(TEXT("node_pos"), Arr) && Arr->Num() >= 2)
+        { C->MaterialExpressionEditorX = (int32)(*Arr)[0]->AsNumber(); C->MaterialExpressionEditorY = (int32)(*Arr)[1]->AsNumber(); }
+        if (P->TryGetArrayField(TEXT("size"), Arr) && Arr->Num() >= 2)
+        { C->SizeX = (int32)(*Arr)[0]->AsNumber(); C->SizeY = (int32)(*Arr)[1]->AsNumber(); }
+        if (P->TryGetArrayField(TEXT("color"), Arr) && Arr->Num() >= 3)
+            C->CommentColor = FLinearColor((*Arr)[0]->AsNumber(), (*Arr)[1]->AsNumber(), (*Arr)[2]->AsNumber(), Arr->Num() >= 4 ? (*Arr)[3]->AsNumber() : 1.0);
+        { int32 F; if (P->TryGetNumberField(TEXT("font_size"), F)) C->FontSize = F; }
+    };
+
+    FString FuncPath;
+    if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())
+    {
+        UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
+        if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_set_comment: function not found"));
+        for (const TObjectPtr<UMaterialExpressionComment>& C : Fn->GetEditorComments())
+        {
+            if (C && C->GetName() == CommentId)
+            {
+                Apply(C);
+                UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+                { FString SaveErr; HaybaPersistAsset(Fn, SaveErr); }
+                TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+                Out->SetStringField(TEXT("comment_id"), CommentId);
+                return FHaybaHandlerResult::Ok(Out);
+            }
+        }
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_set_comment: comment not found: %s"), *CommentId));
+    }
+
+    FString MatPath;
+    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath))
+        return FHaybaHandlerResult::Err(TEXT("material_set_comment: missing material_path or function_path"));
+    UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
+    if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_set_comment: material not found"));
+    for (const TObjectPtr<UMaterialExpressionComment>& C : Mat->GetEditorComments())
+    {
+        if (C && C->GetName() == CommentId)
+        {
+            Apply(C);
+            Mat->MarkPackageDirty();  // comments don't affect compilation; in-memory per the deferred-compile model
+            TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+            Out->SetStringField(TEXT("comment_id"), CommentId);
+            return FHaybaHandlerResult::Ok(Out);
+        }
+    }
+    return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_set_comment: comment not found: %s"), *CommentId));
 }
 
 // Create a Named-Reroute DECLARATION node (the source anchor). Lands in the
