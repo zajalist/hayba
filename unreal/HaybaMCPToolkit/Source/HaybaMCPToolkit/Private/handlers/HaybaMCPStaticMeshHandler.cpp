@@ -8,13 +8,28 @@
 #include "AssetRegistry/IAssetRegistry.h"
 #include "AssetRegistry/ARFilter.h"
 #include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h"
+// mesh_extract — read back geometry + topology health from a dynamic/static mesh
+#include "DynamicMesh/DynamicMesh3.h"
+#include "Selections/MeshConnectedComponents.h"
+#include "Components/DynamicMeshComponent.h"   // UDynamicMeshComponent (GeometryFramework)
+#include "UDynamicMesh.h"                        // UDynamicMesh::GetMeshRef (GeometryFramework)
+#include "IndexTypes.h"                          // FIndex3i
+#include "GeometryTypes.h"                       // EValidityCheckFailMode
+#if WITH_EDITOR
+#include "Editor.h"                              // GEditor
+#include "EngineUtils.h"                         // TActorIterator
+#include "GameFramework/Actor.h"
+#endif
 
 TArray<FString> FHaybaMCPStaticMeshHandler::GetCommands() const
 {
     return {
         TEXT("mesh_get_info"),
         TEXT("mesh_set_lod"),
-        TEXT("mesh_list")
+        TEXT("mesh_list"),
+        TEXT("mesh_extract"),
+        TEXT("mesh_topology_stats")
     };
 }
 
@@ -181,10 +196,321 @@ static FHaybaHandlerResult MeshList(const TSharedPtr<FJsonObject>& P)
     return FHaybaHandlerResult::Ok(Out);
 }
 
+// ---------------------------------------------------------------------------
+// mesh_extract / mesh_topology_stats
+//
+// Reads back the geometry of a mesh already in the editor and returns
+// topology-quality stats as JSON. Screenshots can't tell whether two rings are
+// welded or merely overlapping — these numbers can: bowtie (non-manifold)
+// vertices, degenerate triangles, connected-component count, and open-boundary
+// edges diagnose broken welds / bad winding / holes. Stats are computed over
+// the WHOLE mesh; raw arrays are opt-in and bounded (region filter +
+// max_elements) so payloads stay small.
+// ---------------------------------------------------------------------------
+namespace
+{
+    TSharedRef<FJsonObject> Box3dToJson(const UE::Geometry::FAxisAlignedBox3d& Box)
+    {
+        auto Bounds = MakeShared<FJsonObject>();
+        Bounds->SetObjectField(TEXT("min"), Vec3ToJson((FVector)Box.Min));
+        Bounds->SetObjectField(TEXT("max"), Vec3ToJson((FVector)Box.Max));
+        Bounds->SetObjectField(TEXT("extents"), Vec3ToJson((FVector)(Box.Diagonal() * 0.5)));
+        return Bounds;
+    }
+
+    // Whole-mesh stats + (optional, bounded) arrays for a FDynamicMesh3.
+    void FillDynamicMeshResult(
+        const UE::Geometry::FDynamicMesh3& Mesh,
+        bool bIncludeTriangles, bool bIncludePositions, bool bIncludeNormals,
+        int32 MaxElements, bool bHasBBox,
+        const FVector3d& BBoxMin, const FVector3d& BBoxMax,
+        const TSharedRef<FJsonObject>& Out)
+    {
+        using namespace UE::Geometry;
+
+        // ── counts ────────────────────────────────────────────────────────────
+        auto Counts = MakeShared<FJsonObject>();
+        Counts->SetNumberField(TEXT("triangles"), Mesh.TriangleCount());
+        Counts->SetNumberField(TEXT("vertices"), Mesh.VertexCount());
+        Counts->SetNumberField(TEXT("edges"), Mesh.EdgeCount());
+        Out->SetObjectField(TEXT("counts"), Counts);
+
+        // ── topology health (whole mesh, never capped) ─────────────────────────
+        int32 BoundaryEdges = 0;
+        for (int32 eid : Mesh.EdgeIndicesItr())
+            if (Mesh.IsBoundaryEdge(eid)) ++BoundaryEdges;
+
+        // FDynamicMesh3 is edge-manifold by construction: true >2-tri fan-ins
+        // surface as BOWTIE vertices, not 3-triangle edges. Bowties are the
+        // honest non-manifold signal for a welded mesh.
+        int32 NonManifoldVerts = 0;
+        for (int32 vid : Mesh.VertexIndicesItr())
+            if (Mesh.IsBowtieVertex(vid)) ++NonManifoldVerts;
+
+        int32 Degenerate = 0;
+        for (int32 tid : Mesh.TriangleIndicesItr())
+        {
+            const FIndex3i T = Mesh.GetTriangle(tid);
+            if (T.A == T.B || T.B == T.C || T.A == T.C) { ++Degenerate; continue; }
+            const FVector3d A = Mesh.GetVertex(T.A);
+            const FVector3d B = Mesh.GetVertex(T.B);
+            const FVector3d C = Mesh.GetVertex(T.C);
+            if ((B - A).Cross(C - A).SquaredLength() < 1e-12) ++Degenerate;
+        }
+
+        FMeshConnectedComponents Components(&Mesh);
+        Components.FindConnectedTriangles();
+        const int32 NumComponents = Components.Num();
+
+        const bool bValid = Mesh.CheckValidity(
+            FDynamicMesh3::FValidityOptions(), EValidityCheckFailMode::ReturnOnly);
+
+        auto Topo = MakeShared<FJsonObject>();
+        Topo->SetNumberField(TEXT("boundary_edges"), BoundaryEdges);
+        Topo->SetNumberField(TEXT("non_manifold_vertices"), NonManifoldVerts);
+        Topo->SetNumberField(TEXT("degenerate_triangles"), Degenerate);
+        Topo->SetNumberField(TEXT("connected_components"), NumComponents);
+        Topo->SetBoolField(TEXT("has_open_boundaries"), BoundaryEdges > 0);
+        Topo->SetBoolField(TEXT("is_valid"), bValid);
+        Out->SetObjectField(TEXT("topology"), Topo);
+
+        Out->SetObjectField(TEXT("bounds"), Box3dToJson(Mesh.GetBounds()));
+
+        // ── optional bounded arrays ────────────────────────────────────────────
+        if (!bIncludeTriangles && !bIncludePositions && !bIncludeNormals) return;
+
+        const FBox FilterBox(bHasBBox ? (FVector)BBoxMin : FVector::ZeroVector,
+                             bHasBBox ? (FVector)BBoxMax : FVector::ZeroVector);
+        bool bTruncated = false;
+
+        if (bIncludeTriangles || bIncludeNormals)
+        {
+            TArray<TSharedPtr<FJsonValue>> Tris, Normals;
+            int32 Emitted = 0;
+            for (int32 tid : Mesh.TriangleIndicesItr())
+            {
+                const FIndex3i T = Mesh.GetTriangle(tid);
+                const FVector3d A = Mesh.GetVertex(T.A);
+                const FVector3d B = Mesh.GetVertex(T.B);
+                const FVector3d C = Mesh.GetVertex(T.C);
+                if (bHasBBox)
+                {
+                    const FVector Centroid = (FVector)((A + B + C) / 3.0);
+                    if (!FilterBox.IsInsideOrOn(Centroid)) continue;
+                }
+                if (Emitted >= MaxElements) { bTruncated = true; break; }
+                if (bIncludeTriangles)
+                {
+                    TArray<TSharedPtr<FJsonValue>> IJK = {
+                        MakeShared<FJsonValueNumber>(T.A),
+                        MakeShared<FJsonValueNumber>(T.B),
+                        MakeShared<FJsonValueNumber>(T.C) };
+                    Tris.Add(MakeShared<FJsonValueArray>(IJK));
+                }
+                if (bIncludeNormals)
+                {
+                    const FVector3d N = (B - A).Cross(C - A);
+                    const FVector3d Nn = N.SquaredLength() > 1e-12 ? N.GetSafeNormal() : FVector3d::ZeroVector;
+                    TArray<TSharedPtr<FJsonValue>> NXYZ = {
+                        MakeShared<FJsonValueNumber>(Nn.X),
+                        MakeShared<FJsonValueNumber>(Nn.Y),
+                        MakeShared<FJsonValueNumber>(Nn.Z) };
+                    Normals.Add(MakeShared<FJsonValueArray>(NXYZ));
+                }
+                ++Emitted;
+            }
+            if (bIncludeTriangles) Out->SetArrayField(TEXT("triangles"), Tris);
+            if (bIncludeNormals)   Out->SetArrayField(TEXT("face_normals"), Normals);
+        }
+
+        if (bIncludePositions)
+        {
+            TArray<TSharedPtr<FJsonValue>> Verts;
+            int32 Emitted = 0;
+            for (int32 vid : Mesh.VertexIndicesItr())
+            {
+                const FVector3d V = Mesh.GetVertex(vid);
+                if (bHasBBox && !FilterBox.IsInsideOrOn((FVector)V)) continue;
+                if (Emitted >= MaxElements) { bTruncated = true; break; }
+                TArray<TSharedPtr<FJsonValue>> XYZ = {
+                    MakeShared<FJsonValueNumber>(V.X),
+                    MakeShared<FJsonValueNumber>(V.Y),
+                    MakeShared<FJsonValueNumber>(V.Z) };
+                Verts.Add(MakeShared<FJsonValueArray>(XYZ));
+                ++Emitted;
+            }
+            Out->SetArrayField(TEXT("vertices"), Verts);
+        }
+
+        Out->SetBoolField(TEXT("truncated"), bTruncated);
+    }
+
+    bool ReadVec3Param(const TSharedPtr<FJsonObject>& P, const TCHAR* Field, FVector3d& Out)
+    {
+        const TArray<TSharedPtr<FJsonValue>>* Arr = nullptr;
+        if (!P->TryGetArrayField(Field, Arr) || !Arr || Arr->Num() < 3) return false;
+        Out = FVector3d((*Arr)[0]->AsNumber(), (*Arr)[1]->AsNumber(), (*Arr)[2]->AsNumber());
+        return true;
+    }
+}
+
+static FHaybaHandlerResult MeshExtract(const TSharedPtr<FJsonObject>& P, bool bStatsOnly)
+{
+    using namespace UE::Geometry;
+    if (!P.IsValid()) return FHaybaHandlerResult::Err(TEXT("mesh_extract: missing params"));
+
+    // Output shaping (alias mesh_topology_stats forces arrays off).
+    bool bIncTris = false, bIncPos = false, bIncNorm = false;
+    if (!bStatsOnly)
+    {
+        P->TryGetBoolField(TEXT("include_triangles"), bIncTris);
+        P->TryGetBoolField(TEXT("include_positions"), bIncPos);
+        P->TryGetBoolField(TEXT("include_normals"), bIncNorm);
+    }
+    int32 MaxElements = 2000;
+    { int32 M; if (P->TryGetNumberField(TEXT("max_elements"), M) && M > 0) MaxElements = M; }
+    FVector3d BBoxMin, BBoxMax;
+    const bool bHasBBox = ReadVec3Param(P, TEXT("bbox_min"), BBoxMin) && ReadVec3Param(P, TEXT("bbox_max"), BBoxMax);
+
+    auto Out = MakeShared<FJsonObject>();
+
+    // ── Source A: a UDynamicMeshComponent on an editor actor (primary path) ────
+    FString ActorLabel;
+    if (P->TryGetStringField(TEXT("actor_label"), ActorLabel) && !ActorLabel.IsEmpty())
+    {
+#if WITH_EDITOR
+        if (!GEditor) return FHaybaHandlerResult::Err(TEXT("mesh_extract: GEditor is null"));
+        UWorld* World = GEditor->GetEditorWorldContext().World();
+        if (!World) return FHaybaHandlerResult::Err(TEXT("mesh_extract: no editor world"));
+
+        AActor* Found = nullptr;
+        for (TActorIterator<AActor> It(World); It; ++It)
+            if (*It && (*It)->GetActorLabel() == ActorLabel) { Found = *It; break; }
+        if (!Found) return FHaybaHandlerResult::Err(FString::Printf(TEXT("mesh_extract: actor not found by label: %s"), *ActorLabel));
+
+        TArray<UDynamicMeshComponent*> Comps;
+        Found->GetComponents(Comps);
+        if (Comps.Num() == 0) return FHaybaHandlerResult::Err(FString::Printf(TEXT("mesh_extract: actor '%s' has no UDynamicMeshComponent"), *ActorLabel));
+
+        UDynamicMeshComponent* DMC = nullptr;
+        FString CompName;
+        if (P->TryGetStringField(TEXT("component_name"), CompName) && !CompName.IsEmpty())
+        {
+            for (UDynamicMeshComponent* C : Comps) if (C && C->GetName() == CompName) { DMC = C; break; }
+            if (!DMC) return FHaybaHandlerResult::Err(FString::Printf(TEXT("mesh_extract: no DynamicMeshComponent named '%s'"), *CompName));
+        }
+        else
+        {
+            int32 Idx = 0; P->TryGetNumberField(TEXT("component_index"), Idx);
+            if (Idx < 0 || Idx >= Comps.Num()) return FHaybaHandlerResult::Err(FString::Printf(TEXT("mesh_extract: component_index %d out of range (%d components)"), Idx, Comps.Num()));
+            DMC = Comps[Idx];
+        }
+
+        UDynamicMesh* DynMeshObj = DMC ? DMC->GetDynamicMesh() : nullptr;
+        if (!DynMeshObj) return FHaybaHandlerResult::Err(TEXT("mesh_extract: component has no UDynamicMesh"));
+        const FDynamicMesh3& Mesh = DynMeshObj->GetMeshRef(); // read-only
+
+        Out->SetStringField(TEXT("source"), TEXT("dynamic_mesh_component"));
+        Out->SetStringField(TEXT("actor_label"), ActorLabel);
+        if (DMC) Out->SetStringField(TEXT("component"), DMC->GetName());
+        FillDynamicMeshResult(Mesh, bIncTris, bIncPos, bIncNorm, MaxElements, bHasBBox, BBoxMin, BBoxMax, Out);
+        return FHaybaHandlerResult::Ok(Out);
+#else
+        return FHaybaHandlerResult::Err(TEXT("mesh_extract: actor_label source is editor-only"));
+#endif
+    }
+
+    // ── Source B: a UStaticMesh asset (render data — counts + bounds + arrays) ─
+    FString Path;
+    if (!P->TryGetStringField(TEXT("path"), Path) || Path.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("mesh_extract: provide exactly one source — actor_label or path"));
+
+    UStaticMesh* SMesh = Cast<UStaticMesh>(FSoftObjectPath(Path).TryLoad());
+    if (!SMesh) return FHaybaHandlerResult::Err(FString::Printf(TEXT("mesh_extract: failed to load %s"), *Path));
+    FStaticMeshRenderData* RD = SMesh->GetRenderData();
+    if (!RD || RD->LODResources.Num() == 0) return FHaybaHandlerResult::Err(TEXT("mesh_extract: static mesh has no render data"));
+
+    int32 Lod = 0; P->TryGetNumberField(TEXT("lod"), Lod);
+    if (Lod < 0 || Lod >= RD->LODResources.Num()) Lod = 0;
+    const FStaticMeshLODResources& LOD = RD->LODResources[Lod];
+
+    Out->SetStringField(TEXT("source"), TEXT("static_mesh"));
+    Out->SetStringField(TEXT("path"), Path);
+    Out->SetNumberField(TEXT("lod"), Lod);
+
+    const int32 NumV = LOD.GetNumVertices();
+    const int32 NumT = LOD.GetNumTriangles();
+    auto Counts = MakeShared<FJsonObject>();
+    Counts->SetNumberField(TEXT("triangles"), NumT);
+    Counts->SetNumberField(TEXT("vertices"), NumV);
+    Out->SetObjectField(TEXT("counts"), Counts);
+
+    // Render vertices are split at UV/normal seams, so manifold topology on them
+    // is unreliable — report counts + bounds here. Use the dynamic-mesh path
+    // (actor_label) for weld/winding verdicts.
+    auto Topo = MakeShared<FJsonObject>();
+    Topo->SetStringField(TEXT("note"), TEXT("topology health (welds/manifold) requires a dynamic-mesh source via actor_label; static render data is vertex-split"));
+    Out->SetObjectField(TEXT("topology"), Topo);
+
+    const FBoxSphereBounds B = SMesh->GetBounds();
+    auto Bounds = MakeShared<FJsonObject>();
+    Bounds->SetObjectField(TEXT("min"), Vec3ToJson(B.Origin - B.BoxExtent));
+    Bounds->SetObjectField(TEXT("max"), Vec3ToJson(B.Origin + B.BoxExtent));
+    Bounds->SetObjectField(TEXT("extents"), Vec3ToJson(B.BoxExtent));
+    Out->SetObjectField(TEXT("bounds"), Bounds);
+
+    if (bIncTris || bIncPos)
+    {
+        TArray<uint32> Indices;
+        LOD.IndexBuffer.GetCopy(Indices);
+        const FPositionVertexBuffer& PosBuf = LOD.VertexBuffers.PositionVertexBuffer;
+        bool bTruncated = false;
+
+        if (bIncTris)
+        {
+            TArray<TSharedPtr<FJsonValue>> Tris;
+            int32 Emitted = 0;
+            for (int32 i = 0; i + 2 < Indices.Num(); i += 3)
+            {
+                if (Emitted >= MaxElements) { bTruncated = true; break; }
+                TArray<TSharedPtr<FJsonValue>> IJK = {
+                    MakeShared<FJsonValueNumber>(Indices[i]),
+                    MakeShared<FJsonValueNumber>(Indices[i + 1]),
+                    MakeShared<FJsonValueNumber>(Indices[i + 2]) };
+                Tris.Add(MakeShared<FJsonValueArray>(IJK));
+                ++Emitted;
+            }
+            Out->SetArrayField(TEXT("triangles"), Tris);
+        }
+        if (bIncPos)
+        {
+            TArray<TSharedPtr<FJsonValue>> Verts;
+            int32 Emitted = 0;
+            for (uint32 i = 0; i < PosBuf.GetNumVertices(); ++i)
+            {
+                if ((int32)Emitted >= MaxElements) { bTruncated = true; break; }
+                const FVector V = (FVector)PosBuf.VertexPosition(i);
+                TArray<TSharedPtr<FJsonValue>> XYZ = {
+                    MakeShared<FJsonValueNumber>(V.X),
+                    MakeShared<FJsonValueNumber>(V.Y),
+                    MakeShared<FJsonValueNumber>(V.Z) };
+                Verts.Add(MakeShared<FJsonValueArray>(XYZ));
+                ++Emitted;
+            }
+            Out->SetArrayField(TEXT("vertices"), Verts);
+        }
+        Out->SetBoolField(TEXT("truncated"), bTruncated);
+    }
+
+    return FHaybaHandlerResult::Ok(Out);
+}
+
 FHaybaHandlerResult FHaybaMCPStaticMeshHandler::Handle(const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
 {
     if (Cmd == TEXT("mesh_get_info")) return MeshGetInfo(Params);
     if (Cmd == TEXT("mesh_set_lod"))  return MeshSetLOD(Params);
     if (Cmd == TEXT("mesh_list"))     return MeshList(Params);
+    if (Cmd == TEXT("mesh_extract"))         return MeshExtract(Params, /*bStatsOnly=*/false);
+    if (Cmd == TEXT("mesh_topology_stats"))  return MeshExtract(Params, /*bStatsOnly=*/true);
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("StaticMeshHandler: unknown command %s"), *Cmd));
 }

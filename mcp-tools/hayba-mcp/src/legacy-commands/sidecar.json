@@ -3,6 +3,61 @@
   "_doc": "Hand-authored sidecar for UE-side commands routed through HaybaMCPLegacyHandler::Handle (see unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPLegacyHandler.cpp). This file is the single source of truth for: (a) the parameter docs surfaced by get_tool_signature for legacy commands that have no TS Zod registration, and (b) the allowlist that hayba_invoke consults when called with via:'ue_legacy'. INVARIANTS (enforced by scripts/check-legacy-wrappers.ts and CI): every dispatch-table command in the .cpp MUST have an entry here (including aliases); every entry with has_ts_wrapper:true MUST have a corresponding executeCommand('<name>', ...) or dispatch('<name>', ...) call somewhere under src/tools/**; every entry with has_ts_wrapper:false MUST NOT have such a call. To add a new legacy command: register it in the .cpp dispatch table, add an entry here (with aliases array if any), set has_ts_wrapper to whatever's true, run `npm run lint:legacy-wrappers`. Marking agent_callable:false hides it from hayba_invoke via:'ue_legacy' while still letting get_tool_signature document it (e.g. ping, wizard_chat — internal/diagnostic).",
   "version": 1,
   "commands": {
+    "mesh_extract": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPStaticMeshHandler::MeshExtract",
+      "params": [
+        { "name": "actor_label", "type": "string", "required": false, "description": "Editor actor label; reads its UDynamicMeshComponent (primary source for PCG dynamic-mesh output). Provide this OR path, not both." },
+        { "name": "component_index", "type": "number", "required": false, "description": "Which UDynamicMeshComponent on the actor (default 0)" },
+        { "name": "component_name", "type": "string", "required": false, "description": "Match the dynamic mesh component by name instead of index" },
+        { "name": "path", "type": "string", "required": false, "description": "UStaticMesh asset path (/Game/...) — alternative source (render data: counts + bounds + optional arrays)" },
+        { "name": "lod", "type": "number", "required": false, "description": "StaticMesh LOD to read (default 0); ignored for dynamic mesh" },
+        { "name": "include_triangles", "type": "boolean", "required": false, "description": "Include the triangles index array [[i,j,k],...] (bounded by max_elements)" },
+        { "name": "include_positions", "type": "boolean", "required": false, "description": "Include the vertices array [[x,y,z],...] (bounded by max_elements)" },
+        { "name": "include_normals", "type": "boolean", "required": false, "description": "Include computed per-triangle face normals (dynamic mesh only)" },
+        { "name": "max_elements", "type": "number", "required": false, "description": "Hard cap on emitted array elements (default 2000); stats are always over the whole mesh" },
+        { "name": "bbox_min", "type": "array", "required": false, "description": "[x,y,z] local-space AABB min; with arrays requested, only emit triangles whose centroid is inside the box" },
+        { "name": "bbox_max", "type": "array", "required": false, "description": "[x,y,z] local-space AABB max" }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          { "name": "source", "type": "string", "description": "'dynamic_mesh_component' | 'static_mesh'" },
+          { "name": "counts", "type": "object", "description": "{triangles, vertices, edges}" },
+          { "name": "topology", "type": "object", "description": "dynamic mesh: {boundary_edges, non_manifold_vertices (bowties), degenerate_triangles, connected_components, has_open_boundaries, is_valid}; static mesh: {note}" },
+          { "name": "bounds", "type": "object", "description": "{min,max,extents}" },
+          { "name": "triangles", "type": "array", "description": "present only when include_triangles" },
+          { "name": "vertices", "type": "array", "description": "present only when include_positions" },
+          { "name": "face_normals", "type": "array", "description": "present only when include_normals (dynamic mesh)" },
+          { "name": "truncated", "type": "boolean", "description": "true if arrays were capped by max_elements/bbox" }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Reads back mesh geometry + topology health numerically (welds/winding/holes a screenshot can't confirm). Primary source is actor_label -> UDynamicMeshComponent (e.g. PCG grammar shell). Stats are over the whole mesh; raw arrays are opt-in and bounded. For a verdict-only call use mesh_topology_stats (arrays forced off)."
+    },
+    "mesh_topology_stats": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPStaticMeshHandler::MeshExtract",
+      "params": [
+        { "name": "actor_label", "type": "string", "required": false, "description": "Editor actor label; reads its UDynamicMeshComponent" },
+        { "name": "component_index", "type": "number", "required": false, "description": "Which UDynamicMeshComponent (default 0)" },
+        { "name": "component_name", "type": "string", "required": false, "description": "Match component by name instead of index" },
+        { "name": "path", "type": "string", "required": false, "description": "UStaticMesh asset path (alternative source)" },
+        { "name": "lod", "type": "number", "required": false, "description": "StaticMesh LOD (default 0)" }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          { "name": "counts", "type": "object", "description": "{triangles, vertices, edges}" },
+          { "name": "topology", "type": "object", "description": "{boundary_edges, non_manifold_vertices, degenerate_triangles, connected_components, has_open_boundaries, is_valid}" },
+          { "name": "bounds", "type": "object" }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Stats-only alias of mesh_extract (raw geometry arrays forced off). Use to get a fast weld/winding/holes verdict: non_manifold_vertices==0 && degenerate_triangles==0 && connected_components==1 && a small explainable boundary_edges == healthy."
+    },
     "ping": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPLegacyHandler::Cmd_Ping",
