@@ -214,3 +214,30 @@ export function toObjectPath(assetPath: string): string {
   if (tail.length === 0 || tail.includes('.')) return assetPath; // already an object path
   return `${assetPath}.${tail}`;
 }
+
+// ── Grammar language (expansions via productions) ────────────────────────────
+
+/** A semantic symbol that can be expanded via production rules. */
+export interface Symbol {
+  kind: string;
+  attrs: Record<string, number | string | boolean>;
+  region?: unknown;
+}
+
+/** An operation in the RHS of a production; the emission target. */
+export type EmitOp =
+  | { emit: 'shell'; role: string; profile_curve?: string; thickness_by?: string; bend_at_m?: number }
+  | { emit: 'asset'; role: string; at?: string; along?: string; spacing_m?: number; alternate?: boolean }
+  | { emit: 'symbol'; kind: string; len?: number }
+  | { emit: 'scatter'; tag: string }
+  | { emit: 'decal'; role: string; along?: string }
+  | { emit: 'fill'; role: string; at?: string };
+
+/** A grammar production rule: match an LHS symbol and emit RHS operations. */
+export interface Production {
+  id: string;
+  lhs: { kind: string; when?: Record<string, unknown> };
+  rhs: EmitOp[];
+  guards: string[];  // constraint ids that must pass
+  priority: number;
+}

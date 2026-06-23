@@ -31,3 +31,7 @@ export {
 export type { Lesson, LessonValidationError } from './lesson-store.js';
 export { enqueueStudyRequest, takeStudyRequests, getStudyRequestsPath, setStudyRequestsPath } from './study-requests.js';
 export type { StudyRequest } from './study-requests.js';
+export {
+  getGrammarPath, setGrammarPath, putProduction, getProduction, listProductions,
+  removeProduction, productionMap, validateProduction,
+} from './grammar-store.js';
