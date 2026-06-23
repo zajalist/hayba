@@ -35,3 +35,5 @@ export {
   getGrammarPath, setGrammarPath, putProduction, getProduction, listProductions,
   removeProduction, productionMap, validateProduction,
 } from './grammar-store.js';
+export { matchProductions, expandGrammar } from './grammar.js';
+export type { PlacedItem, PlacementPlan, GuardFn } from './grammar.js';
