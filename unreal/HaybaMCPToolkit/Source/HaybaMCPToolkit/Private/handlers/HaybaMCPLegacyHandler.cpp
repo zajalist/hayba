@@ -906,7 +906,11 @@ TArray<TSharedPtr<FJsonValue>> FHaybaMCPLegacyHandler::ValidateGraphJson(const T
             if (FromCDO)
             {
                 TArray<FPCGPinProperties> OutPins = FromCDO->OutputPinProperties();
-                bool bFoundPin = false;
+                // PCGGraphInputOutputSettings (the graph Input/Output node) exposes its pins
+                // dynamically per-graph (Input/Actor/Landscape/custom), so the CDO pin list is
+                // empty. Accept any pin on it and skip type-compat instead of false-rejecting.
+                const bool bFromIsIO = (*FromClass)->GetName().Contains(TEXT("GraphInputOutput")); // dynamic-pin I/O node
+                bool bFoundPin = bFromIsIO;
                 FPCGDataTypeIdentifier FromPinType = FPCGDataTypeIdentifier{EPCGDataType::None};
                 for (const FPCGPinProperties& Pin : OutPins)
                 {
@@ -929,8 +933,8 @@ TArray<TSharedPtr<FJsonValue>> FHaybaMCPLegacyHandler::ValidateGraphJson(const T
                         FString::Printf(TEXT("Output pin '%s' does not exist on %s. Available: %s"), *FromPin, *NodeClassMap[FromNode], *AvailablePins));
                 }
 
-                // Pin compatibility
-                if (bFoundPin && ToClass && *ToClass)
+                // Pin compatibility (skip when source is the dynamic I/O node)
+                if (bFoundPin && !bFromIsIO && ToClass && *ToClass)
                 {
                     const UPCGSettings* ToCDO = (*ToClass)->GetDefaultObject<UPCGSettings>();
                     if (ToCDO)
@@ -965,7 +969,9 @@ TArray<TSharedPtr<FJsonValue>> FHaybaMCPLegacyHandler::ValidateGraphJson(const T
             if (ToCDO)
             {
                 TArray<FPCGPinProperties> InPins = ToCDO->InputPinProperties();
-                bool bFoundPin = false;
+                // Same dynamic-pin exception for the graph Input/Output node.
+                const bool bToIsIO = (*ToClass)->GetName().Contains(TEXT("GraphInputOutput"));
+                bool bFoundPin = bToIsIO;
                 for (const FPCGPinProperties& Pin : InPins)
                 {
                     if (Pin.Label.ToString() == ToPin)
