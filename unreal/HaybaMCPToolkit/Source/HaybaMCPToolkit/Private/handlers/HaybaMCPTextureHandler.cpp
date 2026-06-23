@@ -7,12 +7,14 @@
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Dom/JsonObject.h"
 #include "UObject/Class.h"
+#include "HaybaMCPReflection.h" // HaybaReflection::SetProp — generic UPROPERTY setter
 
 TArray<FString> FHaybaMCPTextureHandler::GetCommands() const
 {
     return {
         TEXT("texture_get_info"),
         TEXT("texture_set_compression"),
+        TEXT("texture_set_settings"),
         TEXT("texture_list")
     };
 }
@@ -138,6 +140,66 @@ static FHaybaHandlerResult TexSetCompression(const TSharedPtr<FJsonObject>& P)
 #endif
 }
 
+// Generic texture-settings setter: set ANY UTexture/UTexture2D UPROPERTY by a
+// `properties` map, so callers can change compression, mip-gen, max size,
+// never-stream, filter, address modes, virtual texturing, lod bias, etc. in one
+// call. Friendly snake_case aliases (matching texture_get_info output) map to the
+// real UPROPERTY names; any other key is treated as a real UPROPERTY name.
+static FHaybaHandlerResult TexSetSettings(const TSharedPtr<FJsonObject>& P)
+{
+    if (!P.IsValid()) return FHaybaHandlerResult::Err(TEXT("texture_set_settings: missing params"));
+    FString Path;
+    if (!P->TryGetStringField(TEXT("path"), Path))
+        return FHaybaHandlerResult::Err(TEXT("texture_set_settings: missing arg path"));
+    const TSharedPtr<FJsonObject>* Props = nullptr;
+    if (!P->TryGetObjectField(TEXT("properties"), Props) || !Props || (*Props)->Values.Num() == 0)
+        return FHaybaHandlerResult::Err(TEXT("texture_set_settings: missing non-empty 'properties'"));
+
+    UTexture2D* Tex = Cast<UTexture2D>(FSoftObjectPath(Path).TryLoad());
+    if (!Tex) return FHaybaHandlerResult::Err(FString::Printf(TEXT("texture_set_settings: failed to load %s"), *Path));
+
+#if WITH_EDITOR
+    static const TMap<FString, FString> Aliases = {
+        { TEXT("compression_settings"),      TEXT("CompressionSettings") },
+        { TEXT("lod_group"),                 TEXT("LODGroup") },
+        { TEXT("srgb"),                      TEXT("SRGB") },
+        { TEXT("never_stream"),              TEXT("NeverStream") },
+        { TEXT("address_x"),                 TEXT("AddressX") },
+        { TEXT("address_y"),                 TEXT("AddressY") },
+        { TEXT("mip_gen_settings"),          TEXT("MipGenSettings") },
+        { TEXT("max_texture_size"),          TEXT("MaxTextureSize") },
+        { TEXT("flip_green_channel"),        TEXT("bFlipGreenChannel") },
+        { TEXT("filter"),                    TEXT("Filter") },
+        { TEXT("virtual_texture_streaming"), TEXT("VirtualTextureStreaming") },
+        { TEXT("lod_bias"),                  TEXT("LODBias") },
+    };
+
+    Tex->Modify();
+    TArray<TSharedPtr<FJsonValue>> Applied;
+    for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*Props)->Values)
+    {
+        const FString* Real = Aliases.Find(Pair.Key);
+        const FString RealName = Real ? *Real : Pair.Key;
+        if (HaybaReflection::SetProp(Tex, RealName, Pair.Value))
+            Applied.Add(MakeShared<FJsonValueString>(Pair.Key));
+    }
+    Tex->PostEditChange();
+    Tex->UpdateResource();
+
+    auto Out = MakeShared<FJsonObject>();
+    Out->SetBoolField(TEXT("ok"), true);
+    Out->SetStringField(TEXT("path"), Path);
+    Out->SetArrayField(TEXT("applied"), Applied);
+    Out->SetStringField(TEXT("compression_settings"), CompressionToString(Tex->CompressionSettings));
+    Out->SetStringField(TEXT("lod_group"), LodGroupToString(Tex->LODGroup));
+    Out->SetBoolField(TEXT("srgb"), Tex->SRGB);
+    Out->SetBoolField(TEXT("never_stream"), Tex->NeverStream);
+    return FHaybaHandlerResult::Ok(Out);
+#else
+    return FHaybaHandlerResult::Err(TEXT("texture_set_settings: editor-only command"));
+#endif
+}
+
 static FHaybaHandlerResult TexList(const TSharedPtr<FJsonObject>& P)
 {
     FString Prefix;
@@ -187,6 +249,7 @@ FHaybaHandlerResult FHaybaMCPTextureHandler::Handle(const FString& Cmd, const TS
 {
     if (Cmd == TEXT("texture_get_info"))         return TexGetInfo(Params);
     if (Cmd == TEXT("texture_set_compression"))  return TexSetCompression(Params);
+    if (Cmd == TEXT("texture_set_settings"))     return TexSetSettings(Params);
     if (Cmd == TEXT("texture_list"))             return TexList(Params);
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("TextureHandler: unknown command %s"), *Cmd));
 }

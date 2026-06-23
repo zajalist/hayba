@@ -8,7 +8,7 @@
 // no matching scene targets) are neither ok nor failing — they're dropped.
 
 import {
-  GATE_ORDER, PLUMB_SCHEMA_VERSION,
+  GATE_ORDER, PLUMB_SCHEMA_VERSION, toObjectPath,
   type Constraint, type ConstraintResult, type GateName, type GateResult,
   type InstanceState, type Profile, type SceneContext, type Verdict,
 } from './contracts.js';
@@ -21,7 +21,10 @@ export interface EvaluateOptions {
 
 /** True when a constraint's binding selects this instance. */
 export function bindingMatches(c: Constraint, inst: InstanceState): boolean {
-  if (c.binding.asset) return inst.asset === c.binding.asset;
+  // Compare on the normalized OBJECT path so a constraint bound via the Studio
+  // (which stores the suffixed `/Game/Foo.Foo` form) still matches an instance
+  // reported with the bare package path, and vice-versa.
+  if (c.binding.asset) return !!inst.asset && toObjectPath(inst.asset) === toObjectPath(c.binding.asset);
   if (c.binding.tag) return inst.tags?.[c.binding.tag.axis] === c.binding.tag.value;
   return false;
 }
@@ -108,7 +111,9 @@ export function evaluate(
 
   const results: ConstraintResult[] = [];
   for (const inst of instances) {
-    const profile = inst.asset ? (profiles.get(inst.asset) ?? null) : null;
+    // Profiles are keyed by the full object path (see profile-store); look up
+    // with the normalized form so package-path instances still find their bake.
+    const profile = inst.asset ? (profiles.get(inst.asset) ?? profiles.get(toObjectPath(inst.asset)) ?? null) : null;
     for (const c of active) {
       if (!bindingMatches(c, inst)) continue;
       const prim = prims.get(c.primitive);
