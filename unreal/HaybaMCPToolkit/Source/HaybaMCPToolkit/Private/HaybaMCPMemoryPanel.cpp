@@ -121,6 +121,7 @@ void SHaybaMCPMemoryPanel::Reload()
         }
     }
 
+    TSet<FString> Seen;
     for (const auto& Pair : ReadObj(ProfilesFile())->Values)
     {
         const TSharedPtr<FJsonObject> P = Pair.Value->AsObject();
@@ -137,6 +138,18 @@ void SHaybaMCPMemoryPanel::Reload()
             if ((*Prov)->TryGetArrayField(TEXT("locked"), Locked)) E->LockedCount = Locked->Num();
         }
         E->ConstraintCount = ConstraintCounts.FindRef(E->AssetId);
+        Seen.Add(E->AssetId);
+        AllEntries.Add(E);
+    }
+
+    // Also list assets that have ONLY constraints (no baked profile yet) — they
+    // are still "in the library", so the panel must show every SM with any entry.
+    for (const TPair<FString, int32>& CC : ConstraintCounts)
+    {
+        if (Seen.Contains(CC.Key)) continue;
+        TSharedPtr<FHaybaLibraryEntry> E = MakeShared<FHaybaLibraryEntry>();
+        E->AssetId = CC.Key;
+        E->ConstraintCount = CC.Value;
         AllEntries.Add(E);
     }
     RebuildTree();
