@@ -363,6 +363,18 @@ namespace HaybaGrammar
 			return A.InsertionOrder < B.InsertionOrder;
 		});
 	}
+
+	// ---------------------------------------------------------------------------
+	// Junction-typing rule. Mirrors Task 2 TS rule: imperial+imperial -> Portal,
+	// native+native -> BooleanUnion, mixed -> Clash. Not yet wired (Tasks 8/9).
+	// ---------------------------------------------------------------------------
+	enum class EJunctionType : uint8 { Portal, BooleanUnion, Clash };
+	static EJunctionType JunctionTypeFor(const FString& A, const FString& B)
+	{
+		if (A == TEXT("imperial") && B == TEXT("imperial")) return EJunctionType::Portal;
+		if (A == TEXT("native")   && B == TEXT("native"))   return EJunctionType::BooleanUnion;
+		return EJunctionType::Clash;
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -556,7 +568,7 @@ FText UPCGGrammarSolverSettings::GetNodeTooltipText() const
 TArray<FPCGPinProperties> UPCGGrammarSolverSettings::InputPinProperties() const
 {
 	TArray<FPCGPinProperties> Pins;
-	Pins.Emplace(PCGPinConstants::DefaultInputLabel, EPCGDataType::Spline);
+	Pins.Emplace(PCGPinConstants::DefaultInputLabel, EPCGDataType::PointOrSpline);
 	return Pins;
 }
 
@@ -668,6 +680,154 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 	const TArray<FPCGTaggedData> Inputs = Context->InputData.GetInputsByPin(PCGPinConstants::DefaultInputLabel);
 	for (const FPCGTaggedData& In : Inputs)
 	{
+		// ---- Determine kind early so we can branch to the room path before any
+		// spline cast. Metadata is present on both spline and point data.
+		const UPCGData* InData = In.Data;
+		const FString EarlyKind = ReadStrAttr(InData, FName(TEXT("kind")), TEXT("tunnel"));
+
+		// ====================================================================
+		// ROOM PATH: kind == "room"
+		// Input is a single UPCGBasePointData point whose Transform.Location is
+		// the room center and Transform.Scale3D carries the full box dimensions (cm).
+		// Only "imperial" builder is realized here; "native" is a TODO (Task 7).
+		// ====================================================================
+		if (EarlyKind == TEXT("room"))
+		{
+			const UPCGBasePointData* PointData = Cast<UPCGBasePointData>(InData);
+			if (!PointData || PointData->GetNumPoints() == 0)
+			{
+				// No usable point — skip this input silently.
+				continue;
+			}
+
+			// Read the builder attr from metadata (same helper used by the tunnel path).
+			const FString BuilderAttr = ReadStrAttr(InData, FName(TEXT("builder")), TEXT("native"));
+
+			if (BuilderAttr != TEXT("imperial"))
+			{
+				// TODO(Task 7): native room builder. No-op for now.
+				continue;
+			}
+
+			// ---- Read room geometry from the first point.
+			// UE 5.7 UPCGBasePointData is SoA; GetPoint(int32) lives on the value-range
+			// view, not the data object. The direct per-property accessor is
+			// GetTransform(int32) (PCGBasePointData.h:223).
+			const FTransform RoomXf = PointData->GetTransform(0);
+			const FVector Center   = RoomXf.GetLocation();
+			const FVector FullSize = RoomXf.GetScale3D(); // full box dims (cm)
+
+			// ---- Build the shell mesh (closed inward-facing box).
+			FDynamicMesh3 Mesh;
+			Mesh.EnableAttributes();
+			bool bAnyShell = false;
+
+			// AddRoomShellImperial: appends a CLOSED welded box shell with 8 shared
+			// corner vertices and 12 triangles (6 faces × 2). All faces wind so their
+			// computed normal points INWARD (toward the room centre).
+			//
+			// Winding strategy: for each face we compute the geometric normal of the
+			// first triangle (cross product of edges from the first vertex) and compare
+			// it to the desired inward direction. If the dot product is negative the
+			// natural CCW winding already points inward; otherwise we swap the second and
+			// third indices to flip. This is the same per-face flip used by AddQuad so
+			// the scheme is consistent across the whole file.
+			//
+			// Corner layout (right-hand, Z-up):
+			//   v0 = (-hx, -hy, -hz)  v1 = (+hx, -hy, -hz)
+			//   v2 = (+hx, +hy, -hz)  v3 = (-hx, +hy, -hz)
+			//   v4 = (-hx, -hy, +hz)  v5 = (+hx, -hy, +hz)
+			//   v6 = (+hx, +hy, +hz)  v7 = (-hx, +hy, +hz)
+			//
+			// Each face names its 4 corners in a consistent CCW order when viewed from
+			// the OUTSIDE; the flip then inverts the winding so normals point inward.
+			auto AddRoomShellImperial = [&](const FVector& Ctr, const FVector& Size)
+			{
+				const FVector H = Size * 0.5; // half-extents
+
+				// 8 shared corner vertices. Indices stored for face indexing.
+				const int32 V[8] = {
+					Mesh.AppendVertex(FVector3d(Ctr + FVector(-H.X, -H.Y, -H.Z))), // 0 BLL
+					Mesh.AppendVertex(FVector3d(Ctr + FVector(+H.X, -H.Y, -H.Z))), // 1 BRL
+					Mesh.AppendVertex(FVector3d(Ctr + FVector(+H.X, +H.Y, -H.Z))), // 2 BRR
+					Mesh.AppendVertex(FVector3d(Ctr + FVector(-H.X, +H.Y, -H.Z))), // 3 BLR
+					Mesh.AppendVertex(FVector3d(Ctr + FVector(-H.X, -H.Y, +H.Z))), // 4 TLL
+					Mesh.AppendVertex(FVector3d(Ctr + FVector(+H.X, -H.Y, +H.Z))), // 5 TRL
+					Mesh.AppendVertex(FVector3d(Ctr + FVector(+H.X, +H.Y, +H.Z))), // 6 TRR
+					Mesh.AppendVertex(FVector3d(Ctr + FVector(-H.X, +H.Y, +H.Z)))  // 7 TLR
+				};
+
+				// AddFace: two triangles from a quad, flipped so the normal points
+				// toward InwardDir (into the room). Uses the same cross-product flip
+				// pattern as AddQuad / the vent-tube Wall lambda.
+				auto AddFace = [&](int32 a, int32 b, int32 c, int32 d, const FVector3d& InwardDir)
+				{
+					// Triangle ABC: natural CCW normal = (B-A) x (C-A)
+					const FVector3d pa = Mesh.GetVertex(a);
+					const FVector3d pb = Mesh.GetVertex(b);
+					const FVector3d pc = Mesh.GetVertex(c);
+					const FVector3d n  = (pb - pa).Cross(pc - pa);
+					if (n.Dot(InwardDir) < 0.0)
+					{
+						// Natural winding already faces inward — keep it.
+						Mesh.AppendTriangle(FIndex3i(a, b, c));
+						Mesh.AppendTriangle(FIndex3i(a, c, d));
+					}
+					else
+					{
+						// Natural winding faces outward — flip.
+						Mesh.AppendTriangle(FIndex3i(a, c, b));
+						Mesh.AppendTriangle(FIndex3i(a, d, c));
+					}
+				};
+
+				// 6 faces; inward normal = direction from face toward centre.
+				// Floor   (Z-): inward normal +Z
+				AddFace(V[0], V[1], V[2], V[3], FVector3d( 0,  0, +1));
+				// Ceiling (Z+): inward normal -Z
+				AddFace(V[4], V[5], V[6], V[7], FVector3d( 0,  0, -1));
+				// Front   (Y-): inward normal +Y
+				AddFace(V[0], V[1], V[5], V[4], FVector3d( 0, +1,  0));
+				// Back    (Y+): inward normal -Y
+				AddFace(V[3], V[2], V[6], V[7], FVector3d( 0, -1,  0));
+				// Left    (X-): inward normal +X
+				AddFace(V[0], V[3], V[7], V[4], FVector3d(+1,  0,  0));
+				// Right   (X+): inward normal -X
+				AddFace(V[1], V[2], V[6], V[5], FVector3d(-1,  0,  0));
+			};
+
+			AddRoomShellImperial(Center, FullSize);
+			bAnyShell = true;
+
+			// ---- Weld + normals + emit on Shell pin (same path as the tunnel shell).
+			if (bAnyShell && Mesh.TriangleCount() > 0)
+			{
+				FMergeCoincidentMeshEdges Welder(&Mesh);
+				Welder.Apply();
+
+				FMeshNormals::QuickRecomputeOverlayNormals(Mesh);
+
+				UPCGDynamicMeshData* ShellData = FPCGContext::NewObject_AnyThread<UPCGDynamicMeshData>(Context);
+				TArray<UMaterialInterface*> ShellMaterials;
+				if (ShellMat)
+				{
+					ShellMaterials.Add(ShellMat);
+				}
+				ShellData->Initialize(MoveTemp(Mesh), ShellMaterials);
+
+				FPCGTaggedData& OutShell = Context->OutputData.TaggedData.Emplace_GetRef();
+				OutShell.Data = ShellData;
+				OutShell.Pin = FName(TEXT("Shell"));
+				OutShell.Tags = In.Tags;
+			}
+
+			// Room path does not emit any Out points for now (no grammar expansion).
+			continue; // skip the spline/tunnel path below for this input
+		}
+
+		// ====================================================================
+		// TUNNEL PATH (unchanged): kind != "room" — requires a spline input.
+		// ====================================================================
 		const UPCGSplineData* Spline = Cast<UPCGSplineData>(In.Data);
 		if (!Spline)
 		{
@@ -686,11 +846,10 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 
 		// ---- Seed symbol: read per-primitive attributes from input data metadata,
 		// falling back to the original literals when an attribute is absent.
-		const UPCGData* InData = In.Data;
 		const int32 PrimId = (int32)ReadNumAttr(InData, FName(TEXT("prim_id")),    0.0); // stashed for Task 8/9
 		(void)PrimId; // Task 8/9 will use this; suppress unused-variable warning until then.
 		FSymbol Seed;
-		Seed.Kind = ReadStrAttr(InData, FName(TEXT("kind")),      TEXT("tunnel"));
+		Seed.Kind = EarlyKind; // already read above
 		Seed.Attrs.Add(TEXT("builder"),    FAttr::MakeStr(ReadStrAttr(InData, FName(TEXT("builder")),   TEXT("native"))));
 		Seed.Attrs.Add(TEXT("phase"),      FAttr::MakeStr(ReadStrAttr(InData, FName(TEXT("phase")),     TEXT("I"))));
 		Seed.Attrs.Add(TEXT("importance"), FAttr::MakeNum(ReadNumAttr(InData, FName(TEXT("importance")), 0.3)));
