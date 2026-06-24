@@ -215,6 +215,25 @@ export function toObjectPath(assetPath: string): string {
   return `${assetPath}.${tail}`;
 }
 
+// ── Per-primitive attributes schema ──────────────────────────────────────────
+
+export type PrimitiveAttrs = {
+  primId: number; kind: 'tunnel' | 'room'; builder: 'native' | 'imperial';
+  phase: string; seed: number; w: number; h: number; importance: number;
+};
+
+export function parsePrimitiveAttrs(raw: Record<string, unknown>): PrimitiveAttrs {
+  const kind = raw.kind; const builder = raw.builder;
+  if (kind !== 'tunnel' && kind !== 'room') throw new Error(`bad kind: ${String(kind)}`);
+  if (builder !== 'native' && builder !== 'imperial') throw new Error(`bad builder: ${String(builder)}`);
+  const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+  return {
+    primId: num(raw.primId, 0), kind, builder,
+    phase: typeof raw.phase === 'string' ? raw.phase : 'I',
+    seed: num(raw.seed, 0), w: num(raw.w, 1.8), h: num(raw.h, 2.4), importance: num(raw.importance, 0.3),
+  };
+}
+
 // ── Grammar language (expansions via productions) ────────────────────────────
 
 /** A semantic symbol that can be expanded via production rules. */
