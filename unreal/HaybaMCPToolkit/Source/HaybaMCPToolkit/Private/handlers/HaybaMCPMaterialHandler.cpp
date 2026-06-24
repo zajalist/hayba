@@ -743,7 +743,10 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatList(const TSharedPtr<FJsonObje
 // Templated so it works for both UMaterial::GetExpressions() and
 // UMaterialFunction::GetExpressions() regardless of their exact return type.
 template <typename TExprRange>
-static TArray<TSharedPtr<FJsonValue>> SerializeMaterialExpressions(const TExprRange& InExprs)
+static TArray<TSharedPtr<FJsonValue>> SerializeMaterialExpressions(
+    const TExprRange& InExprs,
+    const TSet<const UMaterialExpression*>* Consumed = nullptr,
+    const TSet<const UMaterialExpression*>* Reachable = nullptr)
 {
     TArray<TSharedPtr<FJsonValue>> Exprs;
     for (UMaterialExpression* Expr : InExprs)
@@ -754,6 +757,13 @@ static TArray<TSharedPtr<FJsonValue>> SerializeMaterialExpressions(const TExprRa
         Entry->SetStringField(TEXT("class"), Expr->GetClass()->GetName());
         Entry->SetNumberField(TEXT("x"), Expr->MaterialExpressionEditorX);
         Entry->SetNumberField(TEXT("y"), Expr->MaterialExpressionEditorY);
+
+        // Output wiring the C++ compiler sees but Python can't: is this node's
+        // output consumed anywhere, and is it reachable from a material output
+        // (i.e. live)? A node not reachable_from_output is provably dead — no
+        // delete-recompile-compare dance needed.
+        if (Consumed)  Entry->SetBoolField(TEXT("output_consumed"), Consumed->Contains(Expr));
+        if (Reachable) Entry->SetBoolField(TEXT("reachable_from_output"), Reachable->Contains(Expr));
 
         TArray<TSharedPtr<FJsonValue>> Inputs;
         int32 InputIdx = 0;
@@ -770,6 +780,12 @@ static TArray<TSharedPtr<FJsonValue>> SerializeMaterialExpressions(const TExprRa
             InEntry->SetStringField(TEXT("name"), InputName);
             InEntry->SetNumberField(TEXT("index"), InputIdx);
             InEntry->SetBoolField(TEXT("connected"), It->Expression != nullptr);
+            // The actual edge: which node/output feeds this input.
+            if (It->Expression)
+            {
+                InEntry->SetStringField(TEXT("from_node"), It->Expression->GetName());
+                InEntry->SetNumberField(TEXT("from_output"), It->OutputIndex);
+            }
             ++InputIdx;
             Inputs.Add(MakeShared<FJsonValueObject>(InEntry.ToSharedRef()));
         }
@@ -777,6 +793,67 @@ static TArray<TSharedPtr<FJsonValue>> SerializeMaterialExpressions(const TExprRa
         Exprs.Add(MakeShared<FJsonValueObject>(Entry.ToSharedRef()));
     }
     return Exprs;
+}
+
+// Forward decl — defined later (used by the validator path too).
+static void GatherMaterialPropertyInputs(UMaterial* Mat, TArray<FExpressionInput*>& Out);
+
+// Build the two graph sets the compiler implicitly knows:
+//   Consumed  — every expression whose output feeds some node input or a root.
+//   Reachable — every expression reachable (backward through inputs) from a
+//               root input (material output pins, or function-output A pins).
+// An expression NOT in Reachable is provably dead: deleting it cannot change
+// the compiled result. RootInputs are the graph's terminal sinks.
+template <typename TExprRange>
+static void BuildMaterialGraphSets(
+    const TExprRange& InExprs,
+    const TArray<FExpressionInput*>& RootInputs,
+    TSet<const UMaterialExpression*>& OutConsumed,
+    TSet<const UMaterialExpression*>& OutReachable)
+{
+    for (UMaterialExpression* E : InExprs)
+    {
+        if (!E) continue;
+        for (FExpressionInputIterator It{E}; It; ++It)
+            if (It->Expression) OutConsumed.Add(It->Expression);
+    }
+    TArray<UMaterialExpression*> Stack;
+    for (const FExpressionInput* In : RootInputs)
+        if (In && In->Expression)
+        {
+            OutConsumed.Add(In->Expression);
+            if (!OutReachable.Contains(In->Expression)) { OutReachable.Add(In->Expression); Stack.Add(In->Expression); }
+        }
+    while (Stack.Num() > 0)
+    {
+        UMaterialExpression* E = Stack.Pop();
+        for (FExpressionInputIterator It{E}; It; ++It)
+        {
+            UMaterialExpression* S = It->Expression;
+            if (S && !OutReachable.Contains(S)) { OutReachable.Add(S); Stack.Add(S); }
+        }
+    }
+}
+
+// Collect the ids of expressions not reachable from any output (dead nodes).
+template <typename TExprRange>
+static TArray<TSharedPtr<FJsonValue>> CollectDeadNodeIds(
+    const TExprRange& InExprs, const TSet<const UMaterialExpression*>& Reachable)
+{
+    TArray<TSharedPtr<FJsonValue>> Dead;
+    for (UMaterialExpression* E : InExprs)
+    {
+        if (!E) continue;
+        if (E->IsA<UMaterialExpressionComment>()) continue; // comments aren't graph nodes
+        if (!Reachable.Contains(E))
+        {
+            TSharedPtr<FJsonObject> D = MakeShared<FJsonObject>();
+            D->SetStringField(TEXT("id"), E->GetName());
+            D->SetStringField(TEXT("class"), E->GetClass()->GetName());
+            Dead.Add(MakeShared<FJsonValueObject>(D.ToSharedRef()));
+        }
+    }
+    return Dead;
 }
 
 // Serialize the comment boxes (id/text/pos/size) so callers can discover
@@ -808,10 +885,17 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatGetInfo(const TSharedPtr<FJsonO
     // graph API). Material instances are not handled here (they have no graph).
     if (UMaterial* Mat = LoadObject<UMaterial>(nullptr, *Path))
     {
+        // Edge graph + reachability: roots are the material's output property pins.
+        TArray<FExpressionInput*> Roots;
+        GatherMaterialPropertyInputs(Mat, Roots);
+        TSet<const UMaterialExpression*> Consumed, Reachable;
+        BuildMaterialGraphSets(Mat->GetExpressions(), Roots, Consumed, Reachable);
+
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("kind"), TEXT("material"));
         Out->SetStringField(TEXT("name"), Mat->GetName());
-        Out->SetArrayField(TEXT("expressions"), SerializeMaterialExpressions(Mat->GetExpressions()));
+        Out->SetArrayField(TEXT("expressions"), SerializeMaterialExpressions(Mat->GetExpressions(), &Consumed, &Reachable));
+        Out->SetArrayField(TEXT("dead_nodes"), CollectDeadNodeIds(Mat->GetExpressions(), Reachable));
         Out->SetArrayField(TEXT("comments"), SerializeComments(Mat->GetEditorComments()));
         Out->SetNumberField(TEXT("shading_model"), (int32)Mat->GetShadingModels().GetFirstShadingModel());
         return FHaybaHandlerResult::Ok(Out);
@@ -819,11 +903,20 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatGetInfo(const TSharedPtr<FJsonO
 
     if (UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *Path))
     {
+        // Roots are the A input of every FunctionOutput node.
+        TArray<FExpressionInput*> Roots;
+        for (UMaterialExpression* E : Fn->GetExpressions())
+            if (UMaterialExpressionFunctionOutput* FO = Cast<UMaterialExpressionFunctionOutput>(E))
+                Roots.Add(&FO->A);
+        TSet<const UMaterialExpression*> Consumed, Reachable;
+        BuildMaterialGraphSets(Fn->GetExpressions(), Roots, Consumed, Reachable);
+
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("kind"), TEXT("function"));
         Out->SetStringField(TEXT("name"), Fn->GetName());
         Out->SetStringField(TEXT("description"), Fn->Description);
-        Out->SetArrayField(TEXT("expressions"), SerializeMaterialExpressions(Fn->GetExpressions()));
+        Out->SetArrayField(TEXT("expressions"), SerializeMaterialExpressions(Fn->GetExpressions(), &Consumed, &Reachable));
+        Out->SetArrayField(TEXT("dead_nodes"), CollectDeadNodeIds(Fn->GetExpressions(), Reachable));
         Out->SetArrayField(TEXT("comments"), SerializeComments(Fn->GetEditorComments()));
         return FHaybaHandlerResult::Ok(Out);
     }
