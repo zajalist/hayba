@@ -27,6 +27,7 @@
 #include "Serialization/JsonSerializer.h"
 
 #include "pcg/HaybaGrammarTypes.h"
+#include "pcg/HaybaDeterminism.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(PCGGrammarSolver)
 
@@ -88,18 +89,8 @@ namespace
 	// reads to pick the per-point mesh. Type MUST be FSoftObjectPath (REFERENCE 2c).
 	static const FName kMeshAttributeName(TEXT("Mesh"));
 
-	// Deterministic 0..1 jitter from (kind + index). NO FMath::Rand.
-	// Mixes the FString hash with two integers via a fixed multiplicative hash
-	// (Knuth's 2654435761) so the result is stable across runs and platforms.
-	static double DeterministicUnit(const FString& Kind, int32 IndexA, int32 IndexB)
-	{
-		uint32 H = GetTypeHash(Kind);
-		H ^= (uint32)IndexA * 2654435761u;
-		H = (H << 13) | (H >> 19); // rotate to spread bits
-		H ^= (uint32)IndexB * 2246822519u;
-		// Map to [0,1): use the top 24 bits for a stable fraction.
-		return (double)(H & 0xFFFFFFu) / (double)0x1000000u;
-	}
+	// DeterministicUnit extracted to Public/pcg/HaybaDeterminism.h as
+	// FHaybaDeterminism::Unit (Phase-0 Task 0.1). Call sites below updated.
 
 	// Resolve the grammar.json path, honoring HAYBA_GRAMMAR / HAYBA_PROFILES env,
 	// then the Settings override, then <ProjectDir>/.scratch/grammar.json.
@@ -645,9 +636,9 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 					const FTransform T = Spline->GetTransformAtAlpha((float)FMath::Clamp(Alpha, 0.0, 1.0));
 
 					// Deterministic jitter from (production index + point index).
-					const double UYaw   = DeterministicUnit(Item.SymbolKind, Item.Index, i);
-					const double UPitch = DeterministicUnit(Item.SymbolKind, Item.Index, i + 7919);
-					const double URoll  = DeterministicUnit(Item.SymbolKind, Item.Index, i + 104729);
+					const double UYaw   = FHaybaDeterminism::Unit(Item.SymbolKind, Item.Index, i);
+					const double UPitch = FHaybaDeterminism::Unit(Item.SymbolKind, Item.Index, i + 7919);
+					const double URoll  = FHaybaDeterminism::Unit(Item.SymbolKind, Item.Index, i + 104729);
 					const double Yaw   = UYaw * 360.0;          // full yaw spread
 					const double Pitch = (UPitch * 2.0 - 1.0) * 3.0; // +/-3 deg
 					const double Roll  = (URoll  * 2.0 - 1.0) * 3.0; // +/-3 deg
@@ -656,7 +647,7 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 					// stack down the centreline. Keep |LatU| inside the walls (bore
 					// half-width minus a 30 cm margin). z=0: the spline transform already
 					// sits on the floor centreline, so we only offset along right (Y).
-					const double ULat = DeterministicUnit(Item.SymbolKind, Item.Index, i + 200);
+					const double ULat = FHaybaDeterminism::Unit(Item.SymbolKind, Item.Index, i + 200);
 					const double LatU = (ULat * 2.0 - 1.0) * FMath::Max(0.0, BoreHalfWcm - 30.0);
 					FTransform Out;
 					Out.SetLocation(T.GetLocation() + T.GetUnitAxis(EAxis::Y) * LatU);
