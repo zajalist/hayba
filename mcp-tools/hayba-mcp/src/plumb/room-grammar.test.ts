@@ -13,7 +13,7 @@ describe('room productions', () => {
     const matched = matchProductions(seed, prods);
     expect(matched.some(p => p.id === 'P_room_imperial')).toBe(true);
     const plan = expandGrammar(seed, prods, noGuards);
-    expect(plan.items.some(i => i.emit === 'shell' && i.role === 'room')).toBe(true);
+    expect(plan.items.some(i => i.kind === 'shell' && i.role === 'room')).toBe(true);
   });
   it('a native room seed matches P_room_native', () => {
     const seed: Symbol = { kind: 'room', attrs: { builder: 'native' } } as Symbol;
