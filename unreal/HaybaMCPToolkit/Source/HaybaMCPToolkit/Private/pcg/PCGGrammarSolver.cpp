@@ -683,7 +683,11 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 		// ---- Determine kind early so we can branch to the room path before any
 		// spline cast. Metadata is present on both spline and point data.
 		const UPCGData* InData = In.Data;
-		const FString EarlyKind = ReadStrAttr(InData, FName(TEXT("kind")), TEXT("tunnel"));
+		// Kind is determined by INPUT DATA TYPE (no 'kind' attribute): point data
+		// => room, spline data => tunnel. Per-primitive attributes (builder/w/h/...)
+		// still come from the DATA-domain metadata via ReadStr/NumAttr.
+		const bool bIsRoom = (Cast<UPCGBasePointData>(InData) != nullptr);
+		const FString EarlyKind = bIsRoom ? TEXT("room") : TEXT("tunnel");
 
 		// ====================================================================
 		// ROOM PATH: kind == "room"
