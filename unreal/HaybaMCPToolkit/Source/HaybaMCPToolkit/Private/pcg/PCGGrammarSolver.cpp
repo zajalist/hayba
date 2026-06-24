@@ -724,6 +724,8 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 			// ---- Build the shell mesh (closed inward-facing box).
 			FDynamicMesh3 Mesh;
 			Mesh.EnableAttributes();
+			Mesh.Attributes()->EnableMaterialID();
+			Mesh.Attributes()->SetNumUVLayers(1);
 			bool bAnyShell = false;
 
 			// AddRoomShellImperial: appends a CLOSED welded box shell with 8 shared
@@ -762,42 +764,64 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 				};
 
 				// AddFace: two triangles from a quad, flipped so the normal points
-				// toward InwardDir (into the room). Uses the same cross-product flip
-				// pattern as AddQuad / the vent-tube Wall lambda.
-				auto AddFace = [&](int32 a, int32 b, int32 c, int32 d, const FVector3d& InwardDir)
+				// toward InwardDir (into the room). Sets per-triangle material ID and
+				// per-wedge planar UVs (dots with UAxis/VAxis, cm→tiles at 1m scale).
+				FDynamicMeshUVOverlay*         UVOv    = Mesh.Attributes()->PrimaryUV();
+				FDynamicMeshMaterialAttribute* MatAttr = Mesh.Attributes()->GetMaterialID();
+				auto AddFace = [&](int32 a, int32 b, int32 c, int32 d,
+				                   const FVector3d& InwardDir,
+				                   int32 MatId,
+				                   const FVector3d& UAxis, const FVector3d& VAxis)
 				{
+					// Planar UV per corner: project world position onto face axes, cm→tiles.
+					auto UVof = [&](int32 vi)
+					{
+						const FVector3d P = Mesh.GetVertex(vi);
+						return FVector2f((float)(P.Dot(UAxis) / 100.0), (float)(P.Dot(VAxis) / 100.0));
+					};
+					const int32 ea = UVOv->AppendElement(UVof(a));
+					const int32 eb = UVOv->AppendElement(UVof(b));
+					const int32 ec = UVOv->AppendElement(UVof(c));
+					const int32 ed = UVOv->AppendElement(UVof(d));
+
 					// Triangle ABC: natural CCW normal = (B-A) x (C-A)
 					const FVector3d pa = Mesh.GetVertex(a);
 					const FVector3d pb = Mesh.GetVertex(b);
 					const FVector3d pc = Mesh.GetVertex(c);
 					const FVector3d n  = (pb - pa).Cross(pc - pa);
+					int32 t0, t1;
 					if (n.Dot(InwardDir) < 0.0)
 					{
 						// Natural winding already faces inward — keep it.
-						Mesh.AppendTriangle(FIndex3i(a, b, c));
-						Mesh.AppendTriangle(FIndex3i(a, c, d));
+						t0 = Mesh.AppendTriangle(FIndex3i(a, b, c));
+						t1 = Mesh.AppendTriangle(FIndex3i(a, c, d));
+						if (t0 >= 0) { UVOv->SetTriangle(t0, FIndex3i(ea, eb, ec)); MatAttr->SetValue(t0, MatId); }
+						if (t1 >= 0) { UVOv->SetTriangle(t1, FIndex3i(ea, ec, ed)); MatAttr->SetValue(t1, MatId); }
 					}
 					else
 					{
 						// Natural winding faces outward — flip.
-						Mesh.AppendTriangle(FIndex3i(a, c, b));
-						Mesh.AppendTriangle(FIndex3i(a, d, c));
+						t0 = Mesh.AppendTriangle(FIndex3i(a, c, b));
+						t1 = Mesh.AppendTriangle(FIndex3i(a, d, c));
+						if (t0 >= 0) { UVOv->SetTriangle(t0, FIndex3i(ea, ec, eb)); MatAttr->SetValue(t0, MatId); }
+						if (t1 >= 0) { UVOv->SetTriangle(t1, FIndex3i(ea, ed, ec)); MatAttr->SetValue(t1, MatId); }
 					}
 				};
 
 				// 6 faces; inward normal = direction from face toward centre.
-				// Floor   (Z-): inward normal +Z
-				AddFace(V[0], V[1], V[2], V[3], FVector3d( 0,  0, +1));
-				// Ceiling (Z+): inward normal -Z
-				AddFace(V[4], V[5], V[6], V[7], FVector3d( 0,  0, -1));
-				// Front   (Y-): inward normal +Y
-				AddFace(V[0], V[1], V[5], V[4], FVector3d( 0, +1,  0));
-				// Back    (Y+): inward normal -Y
-				AddFace(V[3], V[2], V[6], V[7], FVector3d( 0, -1,  0));
-				// Left    (X-): inward normal +X
-				AddFace(V[0], V[3], V[7], V[4], FVector3d(+1,  0,  0));
-				// Right   (X+): inward normal -X
-				AddFace(V[1], V[2], V[6], V[5], FVector3d(-1,  0,  0));
+				// Slot 0 = floor/ceiling, Slot 1 = walls.
+				// Floor   (Z-): inward +Z, planar XY
+				AddFace(V[0], V[1], V[2], V[3], FVector3d( 0,  0, +1), 0, FVector3d(1,0,0), FVector3d(0,1,0));
+				// Ceiling (Z+): inward -Z, planar XY
+				AddFace(V[4], V[5], V[6], V[7], FVector3d( 0,  0, -1), 0, FVector3d(1,0,0), FVector3d(0,1,0));
+				// Front   (Y-): inward +Y, planar XZ
+				AddFace(V[0], V[1], V[5], V[4], FVector3d( 0, +1,  0), 1, FVector3d(1,0,0), FVector3d(0,0,1));
+				// Back    (Y+): inward -Y, planar XZ
+				AddFace(V[3], V[2], V[6], V[7], FVector3d( 0, -1,  0), 1, FVector3d(1,0,0), FVector3d(0,0,1));
+				// Left    (X-): inward +X, planar YZ
+				AddFace(V[0], V[3], V[7], V[4], FVector3d(+1,  0,  0), 1, FVector3d(0,1,0), FVector3d(0,0,1));
+				// Right   (X+): inward -X, planar YZ
+				AddFace(V[1], V[2], V[6], V[5], FVector3d(-1,  0,  0), 1, FVector3d(0,1,0), FVector3d(0,0,1));
 			};
 
 			AddRoomShellImperial(Center, FullSize);
@@ -812,12 +836,14 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 				FMeshNormals::QuickRecomputeOverlayNormals(Mesh);
 
 				UPCGDynamicMeshData* ShellData = FPCGContext::NewObject_AnyThread<UPCGDynamicMeshData>(Context);
-				TArray<UMaterialInterface*> ShellMaterials;
-				if (ShellMat)
-				{
-					ShellMaterials.Add(ShellMat);
-				}
-				ShellData->Initialize(MoveTemp(Mesh), ShellMaterials);
+				// Slot 0 = floor/ceiling material; Slot 1 = wall material.
+				// Fall back to ShellMat for any slot whose asset isn't found at cook time.
+				UMaterialInterface* FCMat   = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, TEXT("/Game/Hayba/Generated/Mat/MI_RoomFloorCeil.MI_RoomFloorCeil")));
+				UMaterialInterface* WallMat = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, TEXT("/Game/Hayba/Generated/Mat/MI_RoomWall.MI_RoomWall")));
+				TArray<UMaterialInterface*> RoomMats;
+				RoomMats.Add(FCMat   ? FCMat   : ShellMat); // slot 0: floor + ceiling
+				RoomMats.Add(WallMat ? WallMat : ShellMat); // slot 1: walls
+				ShellData->Initialize(MoveTemp(Mesh), RoomMats);
 
 				FPCGTaggedData& OutShell = Context->OutputData.TaggedData.Emplace_GetRef();
 				OutShell.Data = ShellData;
@@ -900,6 +926,8 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 		// ====================================================================
 		FDynamicMesh3 Mesh;
 		Mesh.EnableAttributes();
+		Mesh.Attributes()->EnableMaterialID();
+		Mesh.Attributes()->SetNumUVLayers(1);
 		bool bAnyShell = false;
 
 		// AddQuad: UE-correct winding so the front face points toward ND.
@@ -924,6 +952,8 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 
 		// AddSection: 4 welded inner walls for a constant-size run [DStart,DEnd].
 		// Copied verbatim (winding-wise) from the tunnel node. W/H in UE units (cm).
+		// Material IDs: floor (w=0) + ceiling (w=1) -> 0; left (w=2) + right (w=3) -> 1.
+		// UVs: U = spline distance / 100 (metres along), V = cross-distance / 100.
 		auto AddSection = [&](double DStart, double DEnd, double W, double H)
 		{
 			const double Spacing = 60.0; // cm ring spacing (matches tunnel default)
@@ -935,9 +965,13 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 				{ -hw, 0, -hw, H, +1, 1 }, // left    -> +right
 				{  hw, 0,  hw, H, -1, 1 }  // right   -> -right
 			};
+			FDynamicMeshUVOverlay*         UVOv    = Mesh.Attributes()->PrimaryUV();
+			FDynamicMeshMaterialAttribute* MatAttr = Mesh.Attributes()->GetMaterialID();
 			for (int32 w = 0; w < 4; ++w)
 			{
+				const int32 MatId = (w <= 1) ? 0 : 1; // floor+ceil=0, left+right=1
 				int32 prevA = -1, prevB = -1;
+				int32 prevUVA = -1, prevUVB = -1;
 				for (int32 i = 0; i <= N; ++i)
 				{
 					const double D = DStart + (DEnd - DStart) * (double)i / (double)N;
@@ -946,23 +980,35 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 					const FVector P1 = Loc + R * Walls[w][2] + U * Walls[w][3];
 					const int32 A = Mesh.AppendVertex(FVector3d(P0));
 					const int32 B = Mesh.AppendVertex(FVector3d(P1));
+					// UV: U = distance along spline (cm -> metres), V = 0 for P0, cross-width/100 for P1
+					const float UCoord  = (float)(D / 100.0);
+					const float VCoordA = 0.0f;
+					const float VCoordB = (float)(FVector::Dist(P0, P1) / 100.0);
+					const int32 uvA = UVOv->AppendElement(FVector2f(UCoord, VCoordA));
+					const int32 uvB = UVOv->AppendElement(FVector2f(UCoord, VCoordB));
 					if (i > 0)
 					{
 						const FVector ND = (Walls[w][5] == 0) ? (U * Walls[w][4]) : (R * Walls[w][4]);
 						const FVector3d p0 = Mesh.GetVertex(prevA), p1 = Mesh.GetVertex(A), p2 = Mesh.GetVertex(B);
 						const FVector3d g = (p1 - p0).Cross(p2 - p0);
+						int32 t0, t1;
 						if (g.Dot(FVector3d(ND)) < 0)
 						{
-							Mesh.AppendTriangle(FIndex3i(prevA, A, B));
-							Mesh.AppendTriangle(FIndex3i(prevA, B, prevB));
+							t0 = Mesh.AppendTriangle(FIndex3i(prevA, A, B));
+							t1 = Mesh.AppendTriangle(FIndex3i(prevA, B, prevB));
+							if (t0 >= 0) { UVOv->SetTriangle(t0, FIndex3i(prevUVA, uvA, uvB)); MatAttr->SetValue(t0, MatId); }
+							if (t1 >= 0) { UVOv->SetTriangle(t1, FIndex3i(prevUVA, uvB, prevUVB)); MatAttr->SetValue(t1, MatId); }
 						}
 						else
 						{
-							Mesh.AppendTriangle(FIndex3i(prevA, B, A));
-							Mesh.AppendTriangle(FIndex3i(prevA, prevB, B));
+							t0 = Mesh.AppendTriangle(FIndex3i(prevA, B, A));
+							t1 = Mesh.AppendTriangle(FIndex3i(prevA, prevB, B));
+							if (t0 >= 0) { UVOv->SetTriangle(t0, FIndex3i(prevUVA, uvB, uvA)); MatAttr->SetValue(t0, MatId); }
+							if (t1 >= 0) { UVOv->SetTriangle(t1, FIndex3i(prevUVA, prevUVB, uvB)); MatAttr->SetValue(t1, MatId); }
 						}
 					}
 					prevA = A; prevB = B;
+					prevUVA = uvA; prevUVB = uvB;
 				}
 			}
 		};
@@ -1017,17 +1063,31 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 			const FVector3d gTest = (FVector3d(BaseRing[1]) - FVector3d(BaseRing[0]))
 				.Cross(FVector3d(MiterRing[1]) - FVector3d(BaseRing[0]));
 			const bool bFlip = gTest.Dot(FVector3d(Tn)) < 0.0;
+			FDynamicMeshUVOverlay*         VentUVOv    = Mesh.Attributes()->PrimaryUV();
+			FDynamicMeshMaterialAttribute* VentMatAttr = Mesh.Attributes()->GetMaterialID();
+			// Vent walls are all slot 1 (wall material). UVs are flat (0,0) — acceptable
+			// for a small vent shaft; the material tint is what matters.
 			auto Wall = [&](int32 a0, int32 a1, int32 b1, int32 b0) // near a0..a1, far b0..b1
 			{
+				// Append UV elements — all (0,0) flat for vent tris.
+				const int32 uv0 = VentUVOv->AppendElement(FVector2f(0.0f, 0.0f));
+				const int32 uv1 = VentUVOv->AppendElement(FVector2f(0.0f, 0.0f));
+				const int32 uv2 = VentUVOv->AppendElement(FVector2f(0.0f, 0.0f));
+				const int32 uv3 = VentUVOv->AppendElement(FVector2f(0.0f, 0.0f));
+				int32 t0, t1;
 				if (!bFlip)
 				{
-					Mesh.AppendTriangle(FIndex3i(a0, a1, b1));
-					Mesh.AppendTriangle(FIndex3i(a0, b1, b0));
+					t0 = Mesh.AppendTriangle(FIndex3i(a0, a1, b1));
+					t1 = Mesh.AppendTriangle(FIndex3i(a0, b1, b0));
+					if (t0 >= 0) { VentUVOv->SetTriangle(t0, FIndex3i(uv0, uv1, uv2)); VentMatAttr->SetValue(t0, 1); }
+					if (t1 >= 0) { VentUVOv->SetTriangle(t1, FIndex3i(uv0, uv2, uv3)); VentMatAttr->SetValue(t1, 1); }
 				}
 				else
 				{
-					Mesh.AppendTriangle(FIndex3i(a0, b1, a1));
-					Mesh.AppendTriangle(FIndex3i(a0, b0, b1));
+					t0 = Mesh.AppendTriangle(FIndex3i(a0, b1, a1));
+					t1 = Mesh.AppendTriangle(FIndex3i(a0, b0, b1));
+					if (t0 >= 0) { VentUVOv->SetTriangle(t0, FIndex3i(uv0, uv2, uv1)); VentMatAttr->SetValue(t0, 1); }
+					if (t1 >= 0) { VentUVOv->SetTriangle(t1, FIndex3i(uv0, uv3, uv2)); VentMatAttr->SetValue(t1, 1); }
 				}
 			};
 			for (int32 k = 0; k < 4; ++k)
@@ -1164,12 +1224,13 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 			FMeshNormals::QuickRecomputeOverlayNormals(Mesh);
 
 			UPCGDynamicMeshData* ShellData = FPCGContext::NewObject_AnyThread<UPCGDynamicMeshData>(Context);
-			TArray<UMaterialInterface*> ShellMaterials;
-			if (ShellMat)
-			{
-				ShellMaterials.Add(ShellMat);
-			}
-			ShellData->Initialize(MoveTemp(Mesh), ShellMaterials);
+			// Slot 0 = floor/ceiling material; Slot 1 = wall material (same assets as room).
+			UMaterialInterface* FCMat   = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, TEXT("/Game/Hayba/Generated/Mat/MI_RoomFloorCeil.MI_RoomFloorCeil")));
+			UMaterialInterface* WallMat = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, TEXT("/Game/Hayba/Generated/Mat/MI_RoomWall.MI_RoomWall")));
+			TArray<UMaterialInterface*> TunnelMats;
+			TunnelMats.Add(FCMat   ? FCMat   : ShellMat); // slot 0: floor + ceiling
+			TunnelMats.Add(WallMat ? WallMat : ShellMat); // slot 1: walls
+			ShellData->Initialize(MoveTemp(Mesh), TunnelMats);
 
 			FPCGTaggedData& OutShell = Context->OutputData.TaggedData.Emplace_GetRef();
 			OutShell.Data = ShellData;
