@@ -16,7 +16,8 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "lint:legacy-wrappers": "node scripts/check-legacy-wrappers.mjs"
+    "lint:legacy-wrappers": "node scripts/check-legacy-wrappers.mjs",
+    "gen:plumb-enums": "npx tsx scripts/gen-plumb-enums.ts"
   },
   "dependencies": {
     "@distube/ytdl-core": "^4.16.12",
