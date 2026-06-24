@@ -309,11 +309,11 @@ const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     },
     {
       name: 'material_get_info',
-      description: 'Inspect a material or material instance: its properties, parameters, and connected expressions.',
+      description: 'Inspect a material, material function, or material instance: properties, parameters, and the full expression graph. For materials/functions, each expression input includes its source edge (from_node + from_output), each node reports output_consumed + reachable_from_output, and a top-level dead_nodes[] lists every node NOT reachable from any material output — i.e. provably dead, safe to delete (no delete-recompile-compare needed).',
       meta: materialGetInfoMeta,
       handler: materialGetInfoHandler,
       cost: 'low',
-      returns: '{path, type, parameters:[{name,type,value}], expressions}',
+      returns: '{kind, name, expressions:[{id,class,x,y,output_consumed,reachable_from_output,inputs:[{name,index,connected,from_node,from_output}]}], dead_nodes:[{id,class}], comments} | instance:{kind,name,parent,parameters:[{name,type,value}]}',
       niche: M,
       schema: {
         path: z.string().min(1).describe('Path to the material or material instance to inspect'),
