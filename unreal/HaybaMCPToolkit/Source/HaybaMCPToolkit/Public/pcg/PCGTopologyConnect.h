@@ -1,7 +1,8 @@
-// PCGTopologyConnect — collector PCG node that gathers all ARunPrimitive actors
-// in the world and emits one PCG data item per primitive on the "Out" pin:
-//   - Room  (Kind == Room)   -> UPCGBasePointData (single point)
-//   - Tunnel (Kind == Tunnel) -> UPCGSplineData (from the actor's SplineComponent)
+// PCGTopologyConnect — collector PCG node that gathers all ARoomVolume and
+// ATunnelSpline actors in the world and emits one PCG data item per primitive
+// on the "Out" pin:
+//   - ARoomVolume  -> UPCGBasePointData (single point)
+//   - ATunnelSpline -> UPCGSplineData (from the actor's SplineComponent)
 //
 // Per-primitive grammar attributes (builder, phase, seed, w, h, importance,
 // prim_id) are written as METADATA DEFAULT VALUES so PCGGrammarSolver's
@@ -14,10 +15,12 @@
 #pragma once
 
 #include "PCGSettings.h"
+#include "Elements/PCGActorSelector.h"
 #include "PCGTopologyConnect.generated.h"
 
 /**
- * Collects ARunPrimitive actors and emits typed PCG data for the GrammarSolver.
+ * Collects ARoomVolume and ATunnelSpline actors and emits typed PCG data for
+ * the GrammarSolver.
  */
 UCLASS(BlueprintType, ClassGroup = (Procedural))
 class UPCGTopologyConnectSettings : public UPCGSettings
@@ -32,6 +35,17 @@ public:
 	// Generates spatial data (primitives) from the world; no "Generator" enum value
 	// exists — Spawner is the closest (and matches PCGGrammarSolver).
 	virtual EPCGSettingsType GetType() const override { return EPCGSettingsType::Spawner; }
+
+	// Live tracking: re-execute when any actor tagged "hayba.primitive" changes.
+	// FLAG [UNCERTAIN]: GetStaticTrackedKeys signature — in UE 5.4+ the override is:
+	//   virtual void GetStaticTrackedKeys(FPCGSelectionKeyToSettingsMap& OutKeysToSettings,
+	//       TArray<TObjectPtr<const UPCGGraph>>& OutVisitedGraphs) const override;
+	// and FPCGSelectionKey(FName tag) constructs a tag-based key. Verify both the
+	// method signature and FPCGSelectionKey constructor in 5.7. If the tag-based
+	// constructor is not available, use FPCGSelectionKey(EActorFilter::AllWorldActors)
+	// as a broader fallback.
+	virtual void GetStaticTrackedKeys(FPCGSelectionKeyToSettingsMap& OutKeysToSettings,
+		TArray<TObjectPtr<const UPCGGraph>>& OutVisitedGraphs) const override;
 #endif
 
 protected:
