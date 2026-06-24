@@ -28,6 +28,8 @@
 
 #include "pcg/HaybaGrammarTypes.h"
 #include "pcg/HaybaDeterminism.h"
+#include "pcg/HaybaSplineFrame.h"
+#include "pcg/HaybaMeshOps.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(PCGGrammarSolver)
 
@@ -302,10 +304,7 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 			// ---- Weld + normals + emit on Shell pin (same path as the tunnel shell).
 			if (bAnyShell && Mesh.TriangleCount() > 0)
 			{
-				FMergeCoincidentMeshEdges Welder(&Mesh);
-				Welder.Apply();
-
-				FMeshNormals::QuickRecomputeOverlayNormals(Mesh);
+				FHaybaMeshOps::WeldAndNormals(Mesh);
 
 				UPCGDynamicMeshData* ShellData = FPCGContext::NewObject_AnyThread<UPCGDynamicMeshData>(Context);
 				// Slot 0 = floor/ceiling material; Slot 1 = wall material.
@@ -381,17 +380,7 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 		const double BoreHcm = BoreH * 100.0;
 		const double BoreHalfWcm = BoreW * 0.5 * 100.0; // bore half-width (cm)
 
-		// ---- Frame helper (shared by shell + along-edge point placement).
-		// X=tangent, Y=right, Z=up. Distance D is in UE units (cm).
-		auto Frame = [&](double D, FVector& Loc, FVector& Right, FVector& Up, FVector& Tan)
-		{
-			const float A = (float)FMath::Clamp(D / TotalLen, 0.0, 1.0);
-			const FTransform T = Spline->GetTransformAtAlpha(A);
-			Loc = T.GetLocation();
-			Right = T.GetUnitAxis(EAxis::Y);
-			Up = T.GetUnitAxis(EAxis::Z);
-			Tan = T.GetUnitAxis(EAxis::X);
-		};
+		// Frame helper extracted to FHaybaSplineFrame::Sample (Task 0.2, H3).
 
 		// ====================================================================
 		// SHELL MESH (walls + bent vent). Reuses the proven tunnel winding.
@@ -447,7 +436,7 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 				for (int32 i = 0; i <= N; ++i)
 				{
 					const double D = DStart + (DEnd - DStart) * (double)i / (double)N;
-					FVector Loc, R, U, Tn; Frame(D, Loc, R, U, Tn);
+					FVector Loc, R, U, Tn; FHaybaSplineFrame::Sample(Spline, D, TotalLen, Loc, R, U, Tn);
 					const FVector P0 = Loc + R * Walls[w][0] + U * Walls[w][1];
 					const FVector P1 = Loc + R * Walls[w][2] + U * Walls[w][3];
 					const int32 A = Mesh.AppendVertex(FVector3d(P0));
@@ -492,7 +481,7 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 		{
 			// Anchor: ceiling centre at AtAlpha. Lift to the shell ceiling (seed h)
 			// so the shaft springs from the top of the bore, not the floor centreline.
-			FVector Loc, R, U, Tn; Frame(AtAlpha * TotalLen, Loc, R, U, Tn);
+			FVector Loc, R, U, Tn; FHaybaSplineFrame::Sample(Spline, AtAlpha * TotalLen, TotalLen, Loc, R, U, Tn);
 			const double VentW = 120.0;          // cm, square-ish shaft
 			const double CeilingCm = BoreHcm;     // shell H (sourced from seed h)
 			const double BendCm = FMath::Clamp(BendAtM, 0.5, kMaxStraightRunM) * 100.0;
@@ -686,14 +675,8 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 		// ---- Emit the SHELL dynamic mesh (one per input spline) if anything built.
 		if (bAnyShell && Mesh.TriangleCount() > 0)
 		{
-			// Weld co-located edges: AppendVertex never merges duplicates, so the
-			// per-quad/per-ring vertices (shell walls, vent legs, elbow bridge) sit
-			// on top of each other but are topologically separate. Merge coincident
-			// edges so the shell + vent form one welded surface before normals.
-			FMergeCoincidentMeshEdges Welder(&Mesh);
-			Welder.Apply();
-
-			FMeshNormals::QuickRecomputeOverlayNormals(Mesh);
+			// Weld co-located edges + recompute normals via shared util (Task 0.2, H2).
+			FHaybaMeshOps::WeldAndNormals(Mesh);
 
 			UPCGDynamicMeshData* ShellData = FPCGContext::NewObject_AnyThread<UPCGDynamicMeshData>(Context);
 			// Slot 0 = floor/ceiling material; Slot 1 = wall material (same assets as room).
