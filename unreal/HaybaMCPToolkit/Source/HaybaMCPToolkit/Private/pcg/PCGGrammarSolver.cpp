@@ -311,6 +311,36 @@ namespace HaybaGrammar
 		}
 	}
 
+	// ---------------------------------------------------------------------------
+	// PCG metadata attribute read helpers (Task 4).
+	// Both return the Default when: Data is null, ConstMetadata() returns null,
+	// the named attribute does not exist (or has the wrong type), or there are no
+	// metadata entries. The first entry key (PCGInvalidEntryKey == 0 when absent,
+	// PCGFirstEntryKey == 0 for the first real entry) is used — reading entry 0 is
+	// safe because metadata always initialises entry 0 for single-item data.
+	// ---------------------------------------------------------------------------
+	static FString ReadStrAttr(const UPCGData* Data, FName Name, const FString& Default)
+	{
+		if (!Data) { return Default; }
+		const UPCGMetadata* Md = Data->ConstMetadata();
+		if (!Md) { return Default; }
+		// GetConstTypedAttribute<T> does the type-id check; returns null if absent or wrong type.
+		const FPCGMetadataAttribute<FString>* Attr = Md->GetConstTypedAttribute<FString>(Name);
+		if (!Attr) { return Default; }
+		// PCGFirstEntryKey == 0; valid for single-item data (spline input has exactly one entry).
+		return Attr->GetValue(PCGFirstEntryKey);
+	}
+
+	static double ReadNumAttr(const UPCGData* Data, FName Name, double Default)
+	{
+		if (!Data) { return Default; }
+		const UPCGMetadata* Md = Data->ConstMetadata();
+		if (!Md) { return Default; }
+		const FPCGMetadataAttribute<double>* Attr = Md->GetConstTypedAttribute<double>(Name);
+		if (!Attr) { return Default; }
+		return Attr->GetValue(PCGFirstEntryKey);
+	}
+
 	// matchProductions(sym, prods) — filter by kind+when, sort priority DESC,
 	// STABLE for ties (captured TMap traversal order; see InsertionOrder note —
 	// approximates TS file textual order but is not a hard contract). REFERENCE 3 (L35-39).
@@ -654,15 +684,24 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 
 		const double LenMetres = TotalLen / 100.0; // UE units are cm.
 
-		// ---- Seed symbol: a tunnel run with native-builder phase-I attrs.
+		// ---- Seed symbol: read per-primitive attributes from input data metadata,
+		// falling back to the original literals when an attribute is absent.
+		const UPCGData* InData = In.Data;
+		const int32 PrimId = (int32)ReadNumAttr(InData, FName(TEXT("prim_id")),    0.0); // stashed for Task 8/9
+		(void)PrimId; // Task 8/9 will use this; suppress unused-variable warning until then.
 		FSymbol Seed;
-		Seed.Kind = TEXT("tunnel");
-		Seed.Attrs.Add(TEXT("builder"),    FAttr::MakeStr(TEXT("native")));
-		Seed.Attrs.Add(TEXT("phase"),      FAttr::MakeStr(TEXT("I")));
-		Seed.Attrs.Add(TEXT("importance"), FAttr::MakeNum(0.3));
-		Seed.Attrs.Add(TEXT("len"),        FAttr::MakeNum(LenMetres));
-		Seed.Attrs.Add(TEXT("w"),          FAttr::MakeNum(1.8));
-		Seed.Attrs.Add(TEXT("h"),          FAttr::MakeNum(2.4));
+		Seed.Kind = ReadStrAttr(InData, FName(TEXT("kind")),      TEXT("tunnel"));
+		Seed.Attrs.Add(TEXT("builder"),    FAttr::MakeStr(ReadStrAttr(InData, FName(TEXT("builder")),   TEXT("native"))));
+		Seed.Attrs.Add(TEXT("phase"),      FAttr::MakeStr(ReadStrAttr(InData, FName(TEXT("phase")),     TEXT("I"))));
+		Seed.Attrs.Add(TEXT("importance"), FAttr::MakeNum(ReadNumAttr(InData, FName(TEXT("importance")), 0.3)));
+		Seed.Attrs.Add(TEXT("len"),        FAttr::MakeNum(LenMetres)); // always computed from spline length
+		Seed.Attrs.Add(TEXT("w"),          FAttr::MakeNum(ReadNumAttr(InData, FName(TEXT("w")),          1.8)));
+		Seed.Attrs.Add(TEXT("h"),          FAttr::MakeNum(ReadNumAttr(InData, FName(TEXT("h")),          2.4)));
+		// seed (int32 read as double, cast): stored as number attr on the symbol if non-zero.
+		{
+			const int32 SeedVal = (int32)ReadNumAttr(InData, FName(TEXT("seed")), 0.0);
+			Seed.Attrs.Add(TEXT("seed"), FAttr::MakeNum((double)SeedVal));
+		}
 
 		FPlacementPlan Plan;
 		ExpandGrammar(Seed, Prods, Plan);
