@@ -523,7 +523,10 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 			// the far mouth venting to the surface.
 			const FVector3d gTest = (FVector3d(BaseRing[1]) - FVector3d(BaseRing[0]))
 				.Cross(FVector3d(MiterRing[1]) - FVector3d(BaseRing[0]));
-			const bool bFlip = gTest.Dot(FVector3d(Tn)) < 0.0;
+			// NOTE: UE's rendered front-face is the OPPOSITE of the geometric cross-product
+			// (same convention trap the room shell hit). The >0 test orients all vent walls
+			// INWARD (into the shaft bore) so you see the shaft interior, not its outside.
+			const bool bFlip = gTest.Dot(FVector3d(Tn)) > 0.0;
 			FDynamicMeshUVOverlay*         VentUVOv    = Mesh.Attributes()->PrimaryUV();
 			FDynamicMeshMaterialAttribute* VentMatAttr = Mesh.Attributes()->GetMaterialID();
 			// Vent walls are all slot 1 (wall material). UVs are flat (0,0) — acceptable
