@@ -2003,10 +2003,16 @@
           "description": "World-space camera position [x, y, z] in cm."
         },
         {
+          "name": "look_at",
+          "type": "array",
+          "required": false,
+          "description": "BEST way to aim the camera: a world point [x,y,z] to face. The orientation is computed in C++ (correct pitch+yaw, roll always 0 — the horizon never tilts). Use this instead of rotation whenever you know what you want the camera pointed at; you do NOT compute any angles yourself. Takes precedence over rotation."
+        },
+        {
           "name": "rotation",
           "type": "object",
           "required": false,
-          "description": "Camera orientation. PREFERRED: object {pitch, yaw, roll} in degrees — unambiguous. yaw = heading (rotation about the vertical/Z axis, the value you usually want); pitch = look up(+)/down(-); roll = horizon tilt and defaults to 0 (omit it — a non-zero roll is what makes the viewport 'look angled'). Array form is also accepted as [pitch, yaw, roll] but its 3rd element (roll) is IGNORED so the camera never tilts by accident — do NOT pass [x,y,z] euler here, index 2 is roll, not yaw. To turn the camera to face a heading, set rotation.yaw; to look down at the scene, set a negative rotation.pitch."
+          "description": "Manual orientation (only if you are not using look_at). PREFERRED form: object {pitch, yaw, roll} in degrees — unambiguous. yaw = heading (about the vertical/Z axis, the value you usually want); pitch = look up(+)/down(-); roll = horizon tilt and defaults to 0 (omit it — a non-zero roll is what makes the viewport 'look angled'). Array form is accepted as [pitch, yaw, roll] but its 3rd element (roll) is IGNORED so the camera never tilts by accident — do NOT pass [x,y,z] euler here, index 2 is roll, not yaw."
         }
       ],
       "returns": {
@@ -2018,7 +2024,27 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Position the editor viewport camera for deterministic captures. Orientation is UE FRotator (pitch/yaw/roll), NOT xyz-euler. Use {yaw: ...} to turn heading and {pitch: -N} to look down; leave roll at 0 to keep the horizon level (the camera will not tilt even if a stray roll value is passed)."
+      "notes": "Position the editor viewport camera for deterministic captures. To AIM it, prefer look_at:[x,y,z] (orientation computed for you, never tilts). Manual rotation is UE FRotator (pitch/yaw/roll), NOT xyz-euler. To simply frame an actor, use editor_focus_actor instead."
+    },
+    "editor_focus_actor": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPEditorHandler::Handle",
+      "params": [
+        { "name": "actor_label", "type": "string", "required": true, "description": "Label of the actor to frame in the viewport." },
+        { "name": "distance_scale", "type": "number", "required": false, "description": "How far back to sit, as a multiple of the actor's bounds radius (default 2.5; larger = further/more padding)." },
+        { "name": "direction", "type": "array", "required": false, "description": "Optional [x,y,z] view direction (camera→actor). Default is a 3/4 front-right-above view. Need not be normalized." }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          { "name": "actor_label", "type": "string" },
+          { "name": "location", "type": "array", "description": "Resulting camera [x,y,z]" },
+          { "name": "rotation", "type": "array", "description": "Resulting [pitch, yaw, roll] (roll always 0)" }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Frame an actor in the editor viewport by label — computes camera position from the actor's bounds and aims at its centre, entirely in C++. Roll is always 0 so the view never tilts. This is the correct 'framing tool'; do NOT hand-compute camera angles in python_run."
     },
     "editor_run_console_command": {
       "aliases": [],

@@ -26,530 +26,14 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 
+#include "pcg/HaybaGrammarTypes.h"
+#include "pcg/HaybaDeterminism.h"
+#include "pcg/HaybaSplineFrame.h"
+#include "pcg/HaybaMeshOps.h"
+
 #include UE_INLINE_GENERATED_CPP_BY_NAME(PCGGrammarSolver)
 
 #define LOCTEXT_NAMESPACE "PCGGrammarSolver"
-
-// ---------------------------------------------------------------------------
-// Local mirrors of the grammar.json contract (REFERENCE 3). These are minimal
-// PODs sufficient for the expansion port; the full TS types carry more.
-// ---------------------------------------------------------------------------
-namespace HaybaGrammar
-{
-	// A single EmitOp, stored generically. We keep the discriminator (Emit) plus
-	// the fields the geometry slice consumes; the raw JsonObject is retained so
-	// PlacedItem.meta can carry the whole op forward (the {...op} shallow spread).
-	struct FEmitOp
-	{
-		FString Emit;                       // shell | asset | symbol | scatter | decal | fill
-		FString Role;                       // shell/asset/decal/fill
-		FString Tag;                        // scatter
-		FString Kind;                       // symbol (child kind)
-		FString Along;                      // asset/decal
-		FString At;                         // asset/fill
-		bool    bHasLen = false;            // symbol
-		double  Len = 0.0;                  // symbol
-		bool    bHasSpacing = false;        // asset
-		double  SpacingM = 0.0;             // asset
-		bool    bAlternate = false;         // asset
-		bool    bHasBendAt = false;         // shell (vent)
-		double  BendAtM = 0.0;              // shell (vent)
-		TSharedPtr<FJsonObject> Raw;        // the whole op, for meta
-	};
-
-	// when-clause entry: key (already stripped of any _gt suffix), the raw value
-	// (typed), and whether this was a "_gt" greater-than comparison.
-	struct FWhenClause
-	{
-		FString Key;
-		bool    bGreaterThan = false;
-		TSharedPtr<FJsonValue> Value;
-	};
-
-	struct FProduction
-	{
-		FString Id;
-		FString LhsKind;
-		TArray<FWhenClause> When;           // empty => always matches
-		TArray<FEmitOp> Rhs;
-		TArray<FString> Guards;
-		double Priority = 0.0;
-		// Stable tie-break key. Derived from TMap<FString,..> traversal order of the
-		// parsed JSON object. For a freshly parsed object with no removals this
-		// USUALLY equals file textual order (matching the TS reference, which relies
-		// on JS object-key insertion order), but TMap does NOT contractually preserve
-		// insertion order. Equal-priority ties are therefore resolved by this captured
-		// traversal order, which is deterministic within a build but not guaranteed to
-		// equal file textual order across engine/reader versions.
-		int32 InsertionOrder = 0;
-	};
-
-	// Symbol attribute value: a tagged union mirroring JSON (number | string | bool).
-	// Strict equality in whenMatches requires type AND value to match.
-	struct FAttr
-	{
-		enum class EType : uint8 { Number, String, Bool } Type = EType::Number;
-		double  Num = 0.0;
-		FString Str;
-		bool    Bool = false;
-
-		static FAttr MakeNum(double V)  { FAttr A; A.Type = EType::Number; A.Num = V; return A; }
-		static FAttr MakeStr(const FString& V) { FAttr A; A.Type = EType::String; A.Str = V; return A; }
-		static FAttr MakeBool(bool V)   { FAttr A; A.Type = EType::Bool; A.Bool = V; return A; }
-	};
-
-	struct FSymbol
-	{
-		FString Kind;
-		TMap<FString, FAttr> Attrs;
-	};
-
-	// A flattened, emitted placement (mirror of PlacedItem). symbolKind is the
-	// CURRENT symbol's kind; meta is the whole op (kept as the FEmitOp).
-	struct FPlacedItem
-	{
-		FString Kind;        // op.emit
-		FString Role;
-		FString Tag;
-		FString SymbolKind;
-		int32   Index = 0;
-		FEmitOp Op;          // == meta {...op}; carries Along/At/Spacing/etc.
-	};
-}
-
-// ---------------------------------------------------------------------------
-// JSON -> attr/op helpers
-// ---------------------------------------------------------------------------
-namespace HaybaGrammar
-{
-	static FAttr JsonValueToAttr(const TSharedPtr<FJsonValue>& V)
-	{
-		if (!V.IsValid())
-		{
-			return FAttr::MakeNum(0.0);
-		}
-		switch (V->Type)
-		{
-		case EJson::Number:  return FAttr::MakeNum(V->AsNumber());
-		case EJson::Boolean: return FAttr::MakeBool(V->AsBool());
-		case EJson::String:  return FAttr::MakeStr(V->AsString());
-		default:             return FAttr::MakeStr(V->AsString());
-		}
-	}
-
-	// Strict (===) equality of a symbol attr against a JSON when-value: type AND value.
-	static bool AttrStrictEquals(const FAttr* SymAttr, const TSharedPtr<FJsonValue>& WhenVal)
-	{
-		if (!SymAttr || !WhenVal.IsValid())
-		{
-			return false; // missing attr -> never strictly equal
-		}
-		switch (WhenVal->Type)
-		{
-		case EJson::Number:
-			return SymAttr->Type == FAttr::EType::Number && SymAttr->Num == WhenVal->AsNumber();
-		case EJson::Boolean:
-			return SymAttr->Type == FAttr::EType::Bool && SymAttr->Bool == WhenVal->AsBool();
-		case EJson::String:
-			return SymAttr->Type == FAttr::EType::String && SymAttr->Str == WhenVal->AsString();
-		default:
-			return false;
-		}
-	}
-
-	// Numeric greater-than for the _gt suffix. Missing attr or non-number -> false
-	// (mirrors `undefined > v` === false, and only numeric `>` is defined).
-	static bool AttrGreaterThan(const FAttr* SymAttr, const TSharedPtr<FJsonValue>& WhenVal)
-	{
-		if (!SymAttr || !WhenVal.IsValid() || WhenVal->Type != EJson::Number)
-		{
-			return false;
-		}
-		if (SymAttr->Type != FAttr::EType::Number)
-		{
-			return false;
-		}
-		return SymAttr->Num > WhenVal->AsNumber();
-	}
-
-	// whenMatches(sym, when) — REFERENCE 3 (grammar.ts L24-33).
-	static bool WhenMatches(const FSymbol& Sym, const TArray<FWhenClause>& When)
-	{
-		for (const FWhenClause& C : When)
-		{
-			const FAttr* A = Sym.Attrs.Find(C.Key);
-			if (C.bGreaterThan)
-			{
-				if (!AttrGreaterThan(A, C.Value)) { return false; }
-			}
-			else
-			{
-				if (!AttrStrictEquals(A, C.Value)) { return false; }
-			}
-		}
-		return true; // undefined/empty when => always matches
-	}
-
-	// Parse one EmitOp object.
-	static bool ParseEmitOp(const TSharedPtr<FJsonObject>& Obj, FEmitOp& Out)
-	{
-		if (!Obj.IsValid()) { return false; }
-		if (!Obj->TryGetStringField(TEXT("emit"), Out.Emit) || Out.Emit.IsEmpty())
-		{
-			return false;
-		}
-		Obj->TryGetStringField(TEXT("role"), Out.Role);
-		Obj->TryGetStringField(TEXT("tag"), Out.Tag);
-		Obj->TryGetStringField(TEXT("kind"), Out.Kind);
-		Obj->TryGetStringField(TEXT("along"), Out.Along);
-		Obj->TryGetStringField(TEXT("at"), Out.At);
-
-		double Tmp = 0.0;
-		if (Obj->TryGetNumberField(TEXT("len"), Tmp))       { Out.bHasLen = true; Out.Len = Tmp; }
-		if (Obj->TryGetNumberField(TEXT("spacing_m"), Tmp)) { Out.bHasSpacing = true; Out.SpacingM = Tmp; }
-		if (Obj->TryGetNumberField(TEXT("bend_at_m"), Tmp)) { Out.bHasBendAt = true; Out.BendAtM = Tmp; }
-		Obj->TryGetBoolField(TEXT("alternate"), Out.bAlternate);
-
-		Out.Raw = Obj;
-		return true;
-	}
-
-	// Parse the whole grammar.json object: { "<id>": Production, ... }.
-	// InsertionOrder captures TMap traversal order for the stable tie-break. This
-	// approximates (but is NOT contractually) JSON file textual order — see the
-	// FProduction::InsertionOrder note. Equal-priority ties resolve by it deterministically.
-	static void ParseGrammar(const TSharedPtr<FJsonObject>& Root, TArray<FProduction>& OutProds)
-	{
-		if (!Root.IsValid()) { return; }
-
-		int32 Order = 0;
-		for (const TPair<FString, TSharedPtr<FJsonValue>>& Kv : Root->Values)
-		{
-			if (!Kv.Value.IsValid() || Kv.Value->Type != EJson::Object) { continue; }
-			// AsObject() returns a non-null const ref into the FJsonValueObject; only
-			// its validity can fail, so bind a const ref and gate on IsValid().
-			const TSharedPtr<FJsonObject>& ProdObj = Kv.Value->AsObject();
-			if (!ProdObj.IsValid()) { continue; }
-
-			FProduction P;
-			P.InsertionOrder = Order++;
-			// id: prefer the explicit field, fall back to the map key.
-			if (!ProdObj->TryGetStringField(TEXT("id"), P.Id) || P.Id.IsEmpty())
-			{
-				P.Id = Kv.Key;
-			}
-
-			// lhs { kind, when? }
-			const TSharedPtr<FJsonObject>* LhsPtr = nullptr;
-			if (ProdObj->TryGetObjectField(TEXT("lhs"), LhsPtr) && LhsPtr && (*LhsPtr).IsValid())
-			{
-				(*LhsPtr)->TryGetStringField(TEXT("kind"), P.LhsKind);
-				const TSharedPtr<FJsonObject>* WhenPtr = nullptr;
-				if ((*LhsPtr)->TryGetObjectField(TEXT("when"), WhenPtr) && WhenPtr && (*WhenPtr).IsValid())
-				{
-					for (const TPair<FString, TSharedPtr<FJsonValue>>& WKv : (*WhenPtr)->Values)
-					{
-						FWhenClause Clause;
-						FString K = WKv.Key;
-						if (K.EndsWith(TEXT("_gt")))
-						{
-							Clause.bGreaterThan = true;
-							Clause.Key = K.LeftChop(3); // strip last 3 chars
-						}
-						else
-						{
-							Clause.Key = K;
-						}
-						Clause.Value = WKv.Value;
-						P.When.Add(Clause);
-					}
-				}
-			}
-
-			// rhs[] — required non-empty per validateProduction; skip invalid prods.
-			const TArray<TSharedPtr<FJsonValue>>* RhsArr = nullptr;
-			if (ProdObj->TryGetArrayField(TEXT("rhs"), RhsArr) && RhsArr)
-			{
-				for (const TSharedPtr<FJsonValue>& OV : *RhsArr)
-				{
-					if (!OV.IsValid() || OV->Type != EJson::Object) { continue; }
-					FEmitOp Op;
-					if (ParseEmitOp(OV->AsObject(), Op))
-					{
-						P.Rhs.Add(Op);
-					}
-				}
-			}
-
-			// guards[]
-			const TArray<TSharedPtr<FJsonValue>>* GArr = nullptr;
-			if (ProdObj->TryGetArrayField(TEXT("guards"), GArr) && GArr)
-			{
-				for (const TSharedPtr<FJsonValue>& GV : *GArr)
-				{
-					if (GV.IsValid() && GV->Type == EJson::String)
-					{
-						P.Guards.Add(GV->AsString());
-					}
-				}
-			}
-
-			// priority
-			ProdObj->TryGetNumberField(TEXT("priority"), P.Priority);
-
-			// validateProduction: non-empty id, non-empty lhs.kind, non-empty rhs.
-			// NOTE (deliberate asymmetry): C++ is STRICTER than the TS read path here.
-			// TS listProductions() returns the stored objects verbatim (validateProduction
-			// is a WRITE-side guard only), so a malformed/hand-edited production on disk is
-			// still expanded by TS. C++ drops it at load. This is intentional hardening; the
-			// two implementations are byte-identical only for well-formed grammar.json.
-			if (P.Id.IsEmpty() || P.LhsKind.IsEmpty() || P.Rhs.Num() == 0)
-			{
-				continue;
-			}
-			OutProds.Add(MoveTemp(P));
-		}
-	}
-
-	// ---------------------------------------------------------------------------
-	// PCG metadata attribute read helpers (Task 4).
-	// Both return the Default when: Data is null, ConstMetadata() returns null,
-	// the named attribute does not exist (or has the wrong type), or there are no
-	// metadata entries. The first entry key (PCGInvalidEntryKey == 0 when absent,
-	// PCGFirstEntryKey == 0 for the first real entry) is used — reading entry 0 is
-	// safe because metadata always initialises entry 0 for single-item data.
-	// ---------------------------------------------------------------------------
-	static FString ReadStrAttr(const UPCGData* Data, FName Name, const FString& Default)
-	{
-		if (!Data) { return Default; }
-		const UPCGMetadata* Md = Data->ConstMetadata();
-		if (!Md) { return Default; }
-		// GetConstTypedAttribute<T> does the type-id check; returns null if absent or wrong type.
-		const FPCGMetadataAttribute<FString>* Attr = Md->GetConstTypedAttribute<FString>(Name);
-		if (!Attr) { return Default; }
-		// PCGFirstEntryKey == 0; valid for single-item data (spline input has exactly one entry).
-		return Attr->GetValue(PCGFirstEntryKey);
-	}
-
-	static double ReadNumAttr(const UPCGData* Data, FName Name, double Default)
-	{
-		if (!Data) { return Default; }
-		const UPCGMetadata* Md = Data->ConstMetadata();
-		if (!Md) { return Default; }
-		const FPCGMetadataAttribute<double>* Attr = Md->GetConstTypedAttribute<double>(Name);
-		if (!Attr) { return Default; }
-		return Attr->GetValue(PCGFirstEntryKey);
-	}
-
-	// matchProductions(sym, prods) — filter by kind+when, sort priority DESC,
-	// STABLE for ties (captured TMap traversal order; see InsertionOrder note —
-	// approximates TS file textual order but is not a hard contract). REFERENCE 3 (L35-39).
-	static void MatchProductions(const FSymbol& Sym, const TArray<FProduction>& Prods, TArray<const FProduction*>& Out)
-	{
-		for (const FProduction& P : Prods)
-		{
-			if (P.LhsKind == Sym.Kind && WhenMatches(Sym, P.When))
-			{
-				Out.Add(&P);
-			}
-		}
-		// Stable sort: priority DESC, tie -> lower InsertionOrder first.
-		Out.StableSort([](const FProduction& A, const FProduction& B)
-		{
-			if (A.Priority != B.Priority)
-			{
-				return A.Priority > B.Priority; // DESC
-			}
-			return A.InsertionOrder < B.InsertionOrder;
-		});
-	}
-
-	// ---------------------------------------------------------------------------
-	// Junction-typing rule. Mirrors Task 2 TS rule: imperial+imperial -> Portal,
-	// native+native -> BooleanUnion, mixed -> Clash. Not yet wired (Tasks 8/9).
-	// ---------------------------------------------------------------------------
-	enum class EJunctionType : uint8 { Portal, BooleanUnion, Clash };
-	static EJunctionType JunctionTypeFor(const FString& A, const FString& B)
-	{
-		if (A == TEXT("imperial") && B == TEXT("imperial")) return EJunctionType::Portal;
-		if (A == TEXT("native")   && B == TEXT("native"))   return EJunctionType::BooleanUnion;
-		return EJunctionType::Clash;
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Guard hook. SCOPE NOTE (read this): the full constraint engine lives in TS.
-// In C++ we evaluate ONLY the two STRUCTURAL guards the geometry needs:
-//   * "clearance" family -> keep a >=1.2 m walkway when placing columns.
-//   * "max_straight_run" / "no_straight_air" -> force the vent shaft to bend at
-//     <= 6 m, so a straight-shaft shell production HARD-FAILS and the bent one wins.
-// EVERY OTHER guard id PASSES (returns no hard-fail). This mirrors expandGrammar's
-// guards callback: returns { hardFail, softFails }.
-// ---------------------------------------------------------------------------
-namespace HaybaGrammar
-{
-	struct FGuardVerdict
-	{
-		bool bHardFail = false;
-		TArray<FString> SoftFails;
-	};
-
-	// Min walkway we protect when placing floor-edge columns (metres).
-	static constexpr double kClearanceMinM = 1.2;
-	// A "straight run" of unsupported air longer than this must bend (metres).
-	static constexpr double kMaxStraightRunM = 6.0;
-
-	static bool GuardIdIsClearance(const FString& Id)
-	{
-		return Id.Contains(TEXT("clearance"));
-	}
-	static bool GuardIdIsStraightRun(const FString& Id)
-	{
-		return Id.Contains(TEXT("max_straight_run")) || Id.Contains(TEXT("no_straight_air"));
-	}
-
-	// EvalGuards: ops + sym describe the production being tried.
-	// Returns hardFail when a structural guard cannot be satisfied.
-	static FGuardVerdict EvalGuards(const TArray<FString>& Guards, const TArray<FEmitOp>& Ops, const FSymbol& Sym)
-	{
-		FGuardVerdict V;
-		for (const FString& Id : Guards)
-		{
-			if (GuardIdIsClearance(Id))
-			{
-				// Clearance applies to column placement: ensure the bore width leaves
-				// a >=1.2 m walkway between the two staggered column lines. Columns sit
-				// at +/-(w/2 - 0.1) m, so the gap is (w - 0.2) m. If that drops below
-				// the min walkway, the placement is unsafe -> hard fail.
-				const FAttr* W = Sym.Attrs.Find(TEXT("w"));
-				const bool bPlacesColumns = Ops.ContainsByPredicate([](const FEmitOp& O)
-				{
-					return O.Emit == TEXT("asset") && O.Role == TEXT("column");
-				});
-				if (bPlacesColumns && W && W->Type == FAttr::EType::Number)
-				{
-					const double Walkway = W->Num - 0.2;
-					if (Walkway < kClearanceMinM)
-					{
-						V.bHardFail = true;
-						V.SoftFails.Add(FString::Printf(TEXT("clearance:%.2fm<%.2fm"), Walkway, kClearanceMinM));
-						return V;
-					}
-				}
-				// Not a column-placing op, or width OK -> this guard passes.
-			}
-			else if (GuardIdIsStraightRun(Id))
-			{
-				// Straight-air guard applies to vent shells. A shell op WITHOUT a bend
-				// (no bend_at_m), or whose bend is beyond the max straight run, leaves
-				// too much unsupported straight air -> hard fail (so the straight-shaft
-				// production is rejected and the bent variant, which sets bend_at_m
-				// <= 6 m, wins).
-				const FEmitOp* VentShell = Ops.FindByPredicate([](const FEmitOp& O)
-				{
-					return O.Emit == TEXT("shell") && O.Role == TEXT("vent");
-				});
-				if (VentShell)
-				{
-					const bool bBendsInTime = VentShell->bHasBendAt && VentShell->BendAtM <= kMaxStraightRunM;
-					if (!bBendsInTime)
-					{
-						V.bHardFail = true;
-						V.SoftFails.Add(TEXT("no_straight_air:vent-must-bend<=6m"));
-						return V;
-					}
-				}
-				// No vent shell in this production -> guard passes.
-			}
-			// ALL OTHER guard ids: PASS (full eval is in TS). No-op.
-		}
-		return V;
-	}
-}
-
-// ---------------------------------------------------------------------------
-// expandGrammar(seed, prods, guards) — faithful BFS port. REFERENCE 3 (L41-90).
-// MAX_DEPTH=6, MAX_ITEMS=512. FIFO queue. First non-hard-failing production wins;
-// only ONE production commits per symbol; idx increments only for emitted items.
-// ---------------------------------------------------------------------------
-namespace HaybaGrammar
-{
-	struct FPlacementPlan
-	{
-		TArray<FPlacedItem> Items;
-		TArray<FString> Weaknesses;
-		TArray<FString> Rejected;
-	};
-
-	static void ExpandGrammar(const FSymbol& Seed, const TArray<FProduction>& Prods, FPlacementPlan& Plan)
-	{
-		static constexpr int32 MAX_DEPTH = 6;
-		static constexpr int32 MAX_ITEMS = 512;
-
-		struct FWork { FSymbol Sym; int32 Depth; };
-		TArray<FWork> Queue; // used as FIFO: pop front (index 0), push back.
-		Queue.Add({ Seed, 0 });
-
-		int32 Idx = 0;
-		int32 Head = 0; // avoid O(n) RemoveAt(0) churn while preserving FIFO order.
-
-		while (Head < Queue.Num() && Plan.Items.Num() < MAX_ITEMS)
-		{
-			const FWork Work = Queue[Head++];
-			if (Work.Depth > MAX_DEPTH)
-			{
-				continue;
-			}
-
-			TArray<const FProduction*> Matched;
-			MatchProductions(Work.Sym, Prods, Matched);
-
-			bool bCommitted = false;
-			for (const FProduction* Prod : Matched)
-			{
-				const FGuardVerdict Verdict = EvalGuards(Prod->Guards, Prod->Rhs, Work.Sym);
-				if (Verdict.bHardFail)
-				{
-					Plan.Rejected.Add(Prod->Id);
-					continue; // try the next (lower-priority) production
-				}
-
-				// This production commits.
-				Plan.Weaknesses.Append(Verdict.SoftFails);
-				for (const FEmitOp& Op : Prod->Rhs)
-				{
-					if (Op.Emit == TEXT("symbol"))
-					{
-						// Child attrs = parent attrs spread, then len overwritten.
-						FSymbol Child;
-						Child.Kind = Op.Kind;
-						Child.Attrs = Work.Sym.Attrs;
-						Child.Attrs.Add(TEXT("len"), FAttr::MakeNum(Op.bHasLen ? Op.Len : 0.0));
-						Queue.Add({ MoveTemp(Child), Work.Depth + 1 });
-					}
-					else
-					{
-						FPlacedItem Item;
-						Item.Kind = Op.Emit;
-						Item.Role = Op.Role;
-						Item.Tag = Op.Tag;
-						Item.SymbolKind = Work.Sym.Kind;
-						Item.Index = Idx++;
-						Item.Op = Op; // meta = {...op}
-						Plan.Items.Add(MoveTemp(Item));
-					}
-				}
-				bCommitted = true;
-				break; // only ONE production commits per symbol
-			}
-
-			if (!bCommitted)
-			{
-				Plan.Rejected.Add(FString::Printf(TEXT("<no-production:%s>"), *Work.Sym.Kind));
-			}
-		}
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Settings boilerplate
@@ -607,18 +91,8 @@ namespace
 	// reads to pick the per-point mesh. Type MUST be FSoftObjectPath (REFERENCE 2c).
 	static const FName kMeshAttributeName(TEXT("Mesh"));
 
-	// Deterministic 0..1 jitter from (kind + index). NO FMath::Rand.
-	// Mixes the FString hash with two integers via a fixed multiplicative hash
-	// (Knuth's 2654435761) so the result is stable across runs and platforms.
-	static double DeterministicUnit(const FString& Kind, int32 IndexA, int32 IndexB)
-	{
-		uint32 H = GetTypeHash(Kind);
-		H ^= (uint32)IndexA * 2654435761u;
-		H = (H << 13) | (H >> 19); // rotate to spread bits
-		H ^= (uint32)IndexB * 2246822519u;
-		// Map to [0,1): use the top 24 bits for a stable fraction.
-		return (double)(H & 0xFFFFFFu) / (double)0x1000000u;
-	}
+	// DeterministicUnit extracted to Public/pcg/HaybaDeterminism.h as
+	// FHaybaDeterminism::Unit (Phase-0 Task 0.1). Call sites below updated.
 
 	// Resolve the grammar.json path, honoring HAYBA_GRAMMAR / HAYBA_PROFILES env,
 	// then the Settings override, then <ProjectDir>/.scratch/grammar.json.
@@ -724,6 +198,8 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 			// ---- Build the shell mesh (closed inward-facing box).
 			FDynamicMesh3 Mesh;
 			Mesh.EnableAttributes();
+			Mesh.Attributes()->EnableMaterialID();
+			Mesh.Attributes()->SetNumUVLayers(1);
 			bool bAnyShell = false;
 
 			// AddRoomShellImperial: appends a CLOSED welded box shell with 8 shared
@@ -762,42 +238,64 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 				};
 
 				// AddFace: two triangles from a quad, flipped so the normal points
-				// toward InwardDir (into the room). Uses the same cross-product flip
-				// pattern as AddQuad / the vent-tube Wall lambda.
-				auto AddFace = [&](int32 a, int32 b, int32 c, int32 d, const FVector3d& InwardDir)
+				// toward InwardDir (into the room). Sets per-triangle material ID and
+				// per-wedge planar UVs (dots with UAxis/VAxis, cm→tiles at 1m scale).
+				FDynamicMeshUVOverlay*         UVOv    = Mesh.Attributes()->PrimaryUV();
+				FDynamicMeshMaterialAttribute* MatAttr = Mesh.Attributes()->GetMaterialID();
+				auto AddFace = [&](int32 a, int32 b, int32 c, int32 d,
+				                   const FVector3d& InwardDir,
+				                   int32 MatId,
+				                   const FVector3d& UAxis, const FVector3d& VAxis)
 				{
+					// Planar UV per corner: project world position onto face axes, cm→tiles.
+					auto UVof = [&](int32 vi)
+					{
+						const FVector3d P = Mesh.GetVertex(vi);
+						return FVector2f((float)(P.Dot(UAxis) / 100.0), (float)(P.Dot(VAxis) / 100.0));
+					};
+					const int32 ea = UVOv->AppendElement(UVof(a));
+					const int32 eb = UVOv->AppendElement(UVof(b));
+					const int32 ec = UVOv->AppendElement(UVof(c));
+					const int32 ed = UVOv->AppendElement(UVof(d));
+
 					// Triangle ABC: natural CCW normal = (B-A) x (C-A)
 					const FVector3d pa = Mesh.GetVertex(a);
 					const FVector3d pb = Mesh.GetVertex(b);
 					const FVector3d pc = Mesh.GetVertex(c);
 					const FVector3d n  = (pb - pa).Cross(pc - pa);
+					int32 t0, t1;
 					if (n.Dot(InwardDir) < 0.0)
 					{
 						// Natural winding already faces inward — keep it.
-						Mesh.AppendTriangle(FIndex3i(a, b, c));
-						Mesh.AppendTriangle(FIndex3i(a, c, d));
+						t0 = Mesh.AppendTriangle(FIndex3i(a, b, c));
+						t1 = Mesh.AppendTriangle(FIndex3i(a, c, d));
+						if (t0 >= 0) { UVOv->SetTriangle(t0, FIndex3i(ea, eb, ec)); MatAttr->SetValue(t0, MatId); }
+						if (t1 >= 0) { UVOv->SetTriangle(t1, FIndex3i(ea, ec, ed)); MatAttr->SetValue(t1, MatId); }
 					}
 					else
 					{
 						// Natural winding faces outward — flip.
-						Mesh.AppendTriangle(FIndex3i(a, c, b));
-						Mesh.AppendTriangle(FIndex3i(a, d, c));
+						t0 = Mesh.AppendTriangle(FIndex3i(a, c, b));
+						t1 = Mesh.AppendTriangle(FIndex3i(a, d, c));
+						if (t0 >= 0) { UVOv->SetTriangle(t0, FIndex3i(ea, ec, eb)); MatAttr->SetValue(t0, MatId); }
+						if (t1 >= 0) { UVOv->SetTriangle(t1, FIndex3i(ea, ed, ec)); MatAttr->SetValue(t1, MatId); }
 					}
 				};
 
 				// 6 faces; inward normal = direction from face toward centre.
-				// Floor   (Z-): inward normal +Z
-				AddFace(V[0], V[1], V[2], V[3], FVector3d( 0,  0, +1));
-				// Ceiling (Z+): inward normal -Z
-				AddFace(V[4], V[5], V[6], V[7], FVector3d( 0,  0, -1));
-				// Front   (Y-): inward normal +Y
-				AddFace(V[0], V[1], V[5], V[4], FVector3d( 0, +1,  0));
-				// Back    (Y+): inward normal -Y
-				AddFace(V[3], V[2], V[6], V[7], FVector3d( 0, -1,  0));
-				// Left    (X-): inward normal +X
-				AddFace(V[0], V[3], V[7], V[4], FVector3d(+1,  0,  0));
-				// Right   (X+): inward normal -X
-				AddFace(V[1], V[2], V[6], V[5], FVector3d(-1,  0,  0));
+				// Slot 0 = floor/ceiling, Slot 1 = walls.
+				// Floor   (Z-): inward +Z, planar XY
+				AddFace(V[0], V[1], V[2], V[3], FVector3d( 0,  0, +1), 0, FVector3d(1,0,0), FVector3d(0,1,0));
+				// Ceiling (Z+): inward -Z, planar XY
+				AddFace(V[4], V[5], V[6], V[7], FVector3d( 0,  0, -1), 0, FVector3d(1,0,0), FVector3d(0,1,0));
+				// Front   (Y-): inward +Y, planar XZ
+				AddFace(V[0], V[1], V[5], V[4], FVector3d( 0, +1,  0), 1, FVector3d(1,0,0), FVector3d(0,0,1));
+				// Back    (Y+): inward -Y, planar XZ
+				AddFace(V[3], V[2], V[6], V[7], FVector3d( 0, -1,  0), 1, FVector3d(1,0,0), FVector3d(0,0,1));
+				// Left    (X-): inward +X, planar YZ
+				AddFace(V[0], V[3], V[7], V[4], FVector3d(+1,  0,  0), 1, FVector3d(0,1,0), FVector3d(0,0,1));
+				// Right   (X+): inward -X, planar YZ
+				AddFace(V[1], V[2], V[6], V[5], FVector3d(-1,  0,  0), 1, FVector3d(0,1,0), FVector3d(0,0,1));
 			};
 
 			AddRoomShellImperial(Center, FullSize);
@@ -806,18 +304,17 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 			// ---- Weld + normals + emit on Shell pin (same path as the tunnel shell).
 			if (bAnyShell && Mesh.TriangleCount() > 0)
 			{
-				FMergeCoincidentMeshEdges Welder(&Mesh);
-				Welder.Apply();
-
-				FMeshNormals::QuickRecomputeOverlayNormals(Mesh);
+				FHaybaMeshOps::WeldAndNormals(Mesh);
 
 				UPCGDynamicMeshData* ShellData = FPCGContext::NewObject_AnyThread<UPCGDynamicMeshData>(Context);
-				TArray<UMaterialInterface*> ShellMaterials;
-				if (ShellMat)
-				{
-					ShellMaterials.Add(ShellMat);
-				}
-				ShellData->Initialize(MoveTemp(Mesh), ShellMaterials);
+				// Slot 0 = floor/ceiling material; Slot 1 = wall material.
+				// Fall back to ShellMat for any slot whose asset isn't found at cook time.
+				UMaterialInterface* FCMat   = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, TEXT("/Game/Hayba/Generated/Mat/MI_RoomFloorCeil.MI_RoomFloorCeil")));
+				UMaterialInterface* WallMat = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, TEXT("/Game/Hayba/Generated/Mat/MI_RoomWall.MI_RoomWall")));
+				TArray<UMaterialInterface*> RoomMats;
+				RoomMats.Add(FCMat   ? FCMat   : ShellMat); // slot 0: floor + ceiling
+				RoomMats.Add(WallMat ? WallMat : ShellMat); // slot 1: walls
+				ShellData->Initialize(MoveTemp(Mesh), RoomMats);
 
 				FPCGTaggedData& OutShell = Context->OutputData.TaggedData.Emplace_GetRef();
 				OutShell.Data = ShellData;
@@ -883,23 +380,15 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 		const double BoreHcm = BoreH * 100.0;
 		const double BoreHalfWcm = BoreW * 0.5 * 100.0; // bore half-width (cm)
 
-		// ---- Frame helper (shared by shell + along-edge point placement).
-		// X=tangent, Y=right, Z=up. Distance D is in UE units (cm).
-		auto Frame = [&](double D, FVector& Loc, FVector& Right, FVector& Up, FVector& Tan)
-		{
-			const float A = (float)FMath::Clamp(D / TotalLen, 0.0, 1.0);
-			const FTransform T = Spline->GetTransformAtAlpha(A);
-			Loc = T.GetLocation();
-			Right = T.GetUnitAxis(EAxis::Y);
-			Up = T.GetUnitAxis(EAxis::Z);
-			Tan = T.GetUnitAxis(EAxis::X);
-		};
+		// Frame helper extracted to FHaybaSplineFrame::Sample (Task 0.2, H3).
 
 		// ====================================================================
 		// SHELL MESH (walls + bent vent). Reuses the proven tunnel winding.
 		// ====================================================================
 		FDynamicMesh3 Mesh;
 		Mesh.EnableAttributes();
+		Mesh.Attributes()->EnableMaterialID();
+		Mesh.Attributes()->SetNumUVLayers(1);
 		bool bAnyShell = false;
 
 		// AddQuad: UE-correct winding so the front face points toward ND.
@@ -924,6 +413,8 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 
 		// AddSection: 4 welded inner walls for a constant-size run [DStart,DEnd].
 		// Copied verbatim (winding-wise) from the tunnel node. W/H in UE units (cm).
+		// Material IDs: floor (w=0) + ceiling (w=1) -> 0; left (w=2) + right (w=3) -> 1.
+		// UVs: U = spline distance / 100 (metres along), V = cross-distance / 100.
 		auto AddSection = [&](double DStart, double DEnd, double W, double H)
 		{
 			const double Spacing = 60.0; // cm ring spacing (matches tunnel default)
@@ -935,34 +426,50 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 				{ -hw, 0, -hw, H, +1, 1 }, // left    -> +right
 				{  hw, 0,  hw, H, -1, 1 }  // right   -> -right
 			};
+			FDynamicMeshUVOverlay*         UVOv    = Mesh.Attributes()->PrimaryUV();
+			FDynamicMeshMaterialAttribute* MatAttr = Mesh.Attributes()->GetMaterialID();
 			for (int32 w = 0; w < 4; ++w)
 			{
+				const int32 MatId = (w <= 1) ? 0 : 1; // floor+ceil=0, left+right=1
 				int32 prevA = -1, prevB = -1;
+				int32 prevUVA = -1, prevUVB = -1;
 				for (int32 i = 0; i <= N; ++i)
 				{
 					const double D = DStart + (DEnd - DStart) * (double)i / (double)N;
-					FVector Loc, R, U, Tn; Frame(D, Loc, R, U, Tn);
+					FVector Loc, R, U, Tn; FHaybaSplineFrame::Sample(Spline, D, TotalLen, Loc, R, U, Tn);
 					const FVector P0 = Loc + R * Walls[w][0] + U * Walls[w][1];
 					const FVector P1 = Loc + R * Walls[w][2] + U * Walls[w][3];
 					const int32 A = Mesh.AppendVertex(FVector3d(P0));
 					const int32 B = Mesh.AppendVertex(FVector3d(P1));
+					// UV: U = distance along spline (cm -> metres), V = 0 for P0, cross-width/100 for P1
+					const float UCoord  = (float)(D / 100.0);
+					const float VCoordA = 0.0f;
+					const float VCoordB = (float)(FVector::Dist(P0, P1) / 100.0);
+					const int32 uvA = UVOv->AppendElement(FVector2f(UCoord, VCoordA));
+					const int32 uvB = UVOv->AppendElement(FVector2f(UCoord, VCoordB));
 					if (i > 0)
 					{
 						const FVector ND = (Walls[w][5] == 0) ? (U * Walls[w][4]) : (R * Walls[w][4]);
 						const FVector3d p0 = Mesh.GetVertex(prevA), p1 = Mesh.GetVertex(A), p2 = Mesh.GetVertex(B);
 						const FVector3d g = (p1 - p0).Cross(p2 - p0);
+						int32 t0, t1;
 						if (g.Dot(FVector3d(ND)) < 0)
 						{
-							Mesh.AppendTriangle(FIndex3i(prevA, A, B));
-							Mesh.AppendTriangle(FIndex3i(prevA, B, prevB));
+							t0 = Mesh.AppendTriangle(FIndex3i(prevA, A, B));
+							t1 = Mesh.AppendTriangle(FIndex3i(prevA, B, prevB));
+							if (t0 >= 0) { UVOv->SetTriangle(t0, FIndex3i(prevUVA, uvA, uvB)); MatAttr->SetValue(t0, MatId); }
+							if (t1 >= 0) { UVOv->SetTriangle(t1, FIndex3i(prevUVA, uvB, prevUVB)); MatAttr->SetValue(t1, MatId); }
 						}
 						else
 						{
-							Mesh.AppendTriangle(FIndex3i(prevA, B, A));
-							Mesh.AppendTriangle(FIndex3i(prevA, prevB, B));
+							t0 = Mesh.AppendTriangle(FIndex3i(prevA, B, A));
+							t1 = Mesh.AppendTriangle(FIndex3i(prevA, prevB, B));
+							if (t0 >= 0) { UVOv->SetTriangle(t0, FIndex3i(prevUVA, uvB, uvA)); MatAttr->SetValue(t0, MatId); }
+							if (t1 >= 0) { UVOv->SetTriangle(t1, FIndex3i(prevUVA, prevUVB, uvB)); MatAttr->SetValue(t1, MatId); }
 						}
 					}
 					prevA = A; prevB = B;
+					prevUVA = uvA; prevUVB = uvB;
 				}
 			}
 		};
@@ -974,7 +481,7 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 		{
 			// Anchor: ceiling centre at AtAlpha. Lift to the shell ceiling (seed h)
 			// so the shaft springs from the top of the bore, not the floor centreline.
-			FVector Loc, R, U, Tn; Frame(AtAlpha * TotalLen, Loc, R, U, Tn);
+			FVector Loc, R, U, Tn; FHaybaSplineFrame::Sample(Spline, AtAlpha * TotalLen, TotalLen, Loc, R, U, Tn);
 			const double VentW = 120.0;          // cm, square-ish shaft
 			const double CeilingCm = BoreHcm;     // shell H (sourced from seed h)
 			const double BendCm = FMath::Clamp(BendAtM, 0.5, kMaxStraightRunM) * 100.0;
@@ -1016,18 +523,35 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 			// the far mouth venting to the surface.
 			const FVector3d gTest = (FVector3d(BaseRing[1]) - FVector3d(BaseRing[0]))
 				.Cross(FVector3d(MiterRing[1]) - FVector3d(BaseRing[0]));
-			const bool bFlip = gTest.Dot(FVector3d(Tn)) < 0.0;
+			// NOTE: UE's rendered front-face is the OPPOSITE of the geometric cross-product
+			// (same convention trap the room shell hit). The >0 test orients all vent walls
+			// INWARD (into the shaft bore) so you see the shaft interior, not its outside.
+			const bool bFlip = gTest.Dot(FVector3d(Tn)) > 0.0;
+			FDynamicMeshUVOverlay*         VentUVOv    = Mesh.Attributes()->PrimaryUV();
+			FDynamicMeshMaterialAttribute* VentMatAttr = Mesh.Attributes()->GetMaterialID();
+			// Vent walls are all slot 1 (wall material). UVs are flat (0,0) — acceptable
+			// for a small vent shaft; the material tint is what matters.
 			auto Wall = [&](int32 a0, int32 a1, int32 b1, int32 b0) // near a0..a1, far b0..b1
 			{
+				// Append UV elements — all (0,0) flat for vent tris.
+				const int32 uv0 = VentUVOv->AppendElement(FVector2f(0.0f, 0.0f));
+				const int32 uv1 = VentUVOv->AppendElement(FVector2f(0.0f, 0.0f));
+				const int32 uv2 = VentUVOv->AppendElement(FVector2f(0.0f, 0.0f));
+				const int32 uv3 = VentUVOv->AppendElement(FVector2f(0.0f, 0.0f));
+				int32 t0, t1;
 				if (!bFlip)
 				{
-					Mesh.AppendTriangle(FIndex3i(a0, a1, b1));
-					Mesh.AppendTriangle(FIndex3i(a0, b1, b0));
+					t0 = Mesh.AppendTriangle(FIndex3i(a0, a1, b1));
+					t1 = Mesh.AppendTriangle(FIndex3i(a0, b1, b0));
+					if (t0 >= 0) { VentUVOv->SetTriangle(t0, FIndex3i(uv0, uv1, uv2)); VentMatAttr->SetValue(t0, 1); }
+					if (t1 >= 0) { VentUVOv->SetTriangle(t1, FIndex3i(uv0, uv2, uv3)); VentMatAttr->SetValue(t1, 1); }
 				}
 				else
 				{
-					Mesh.AppendTriangle(FIndex3i(a0, b1, a1));
-					Mesh.AppendTriangle(FIndex3i(a0, b0, b1));
+					t0 = Mesh.AppendTriangle(FIndex3i(a0, b1, a1));
+					t1 = Mesh.AppendTriangle(FIndex3i(a0, b0, b1));
+					if (t0 >= 0) { VentUVOv->SetTriangle(t0, FIndex3i(uv0, uv2, uv1)); VentMatAttr->SetValue(t0, 1); }
+					if (t1 >= 0) { VentUVOv->SetTriangle(t1, FIndex3i(uv0, uv3, uv2)); VentMatAttr->SetValue(t1, 1); }
 				}
 			};
 			for (int32 k = 0; k < 4; ++k)
@@ -1104,9 +628,9 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 					const FTransform T = Spline->GetTransformAtAlpha((float)FMath::Clamp(Alpha, 0.0, 1.0));
 
 					// Deterministic jitter from (production index + point index).
-					const double UYaw   = DeterministicUnit(Item.SymbolKind, Item.Index, i);
-					const double UPitch = DeterministicUnit(Item.SymbolKind, Item.Index, i + 7919);
-					const double URoll  = DeterministicUnit(Item.SymbolKind, Item.Index, i + 104729);
+					const double UYaw   = FHaybaDeterminism::Unit(Item.SymbolKind, Item.Index, i);
+					const double UPitch = FHaybaDeterminism::Unit(Item.SymbolKind, Item.Index, i + 7919);
+					const double URoll  = FHaybaDeterminism::Unit(Item.SymbolKind, Item.Index, i + 104729);
 					const double Yaw   = UYaw * 360.0;          // full yaw spread
 					const double Pitch = (UPitch * 2.0 - 1.0) * 3.0; // +/-3 deg
 					const double Roll  = (URoll  * 2.0 - 1.0) * 3.0; // +/-3 deg
@@ -1115,7 +639,7 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 					// stack down the centreline. Keep |LatU| inside the walls (bore
 					// half-width minus a 30 cm margin). z=0: the spline transform already
 					// sits on the floor centreline, so we only offset along right (Y).
-					const double ULat = DeterministicUnit(Item.SymbolKind, Item.Index, i + 200);
+					const double ULat = FHaybaDeterminism::Unit(Item.SymbolKind, Item.Index, i + 200);
 					const double LatU = (ULat * 2.0 - 1.0) * FMath::Max(0.0, BoreHalfWcm - 30.0);
 					FTransform Out;
 					Out.SetLocation(T.GetLocation() + T.GetUnitAxis(EAxis::Y) * LatU);
@@ -1154,22 +678,17 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 		// ---- Emit the SHELL dynamic mesh (one per input spline) if anything built.
 		if (bAnyShell && Mesh.TriangleCount() > 0)
 		{
-			// Weld co-located edges: AppendVertex never merges duplicates, so the
-			// per-quad/per-ring vertices (shell walls, vent legs, elbow bridge) sit
-			// on top of each other but are topologically separate. Merge coincident
-			// edges so the shell + vent form one welded surface before normals.
-			FMergeCoincidentMeshEdges Welder(&Mesh);
-			Welder.Apply();
-
-			FMeshNormals::QuickRecomputeOverlayNormals(Mesh);
+			// Weld co-located edges + recompute normals via shared util (Task 0.2, H2).
+			FHaybaMeshOps::WeldAndNormals(Mesh);
 
 			UPCGDynamicMeshData* ShellData = FPCGContext::NewObject_AnyThread<UPCGDynamicMeshData>(Context);
-			TArray<UMaterialInterface*> ShellMaterials;
-			if (ShellMat)
-			{
-				ShellMaterials.Add(ShellMat);
-			}
-			ShellData->Initialize(MoveTemp(Mesh), ShellMaterials);
+			// Slot 0 = floor/ceiling material; Slot 1 = wall material (same assets as room).
+			UMaterialInterface* FCMat   = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, TEXT("/Game/Hayba/Generated/Mat/MI_RoomFloorCeil.MI_RoomFloorCeil")));
+			UMaterialInterface* WallMat = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, TEXT("/Game/Hayba/Generated/Mat/MI_RoomWall.MI_RoomWall")));
+			TArray<UMaterialInterface*> TunnelMats;
+			TunnelMats.Add(FCMat   ? FCMat   : ShellMat); // slot 0: floor + ceiling
+			TunnelMats.Add(WallMat ? WallMat : ShellMat); // slot 1: walls
+			ShellData->Initialize(MoveTemp(Mesh), TunnelMats);
 
 			FPCGTaggedData& OutShell = Context->OutputData.TaggedData.Emplace_GetRef();
 			OutShell.Data = ShellData;

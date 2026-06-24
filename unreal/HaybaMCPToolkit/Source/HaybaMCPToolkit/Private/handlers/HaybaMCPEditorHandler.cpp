@@ -43,7 +43,8 @@ TArray<FString> FHaybaMCPEditorHandler::GetCommands() const
         TEXT("editor_stream_log"),
         TEXT("editor_live_compile"),
         TEXT("editor_get_performance_stats"),
-        TEXT("editor_set_viewport_mode")
+        TEXT("editor_set_viewport_mode"),
+        TEXT("editor_focus_actor")
     };
 }
 
@@ -59,6 +60,7 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::Handle(const FString& Cmd, const TSh
     if (Cmd == TEXT("editor_live_compile"))      return LiveCompile(Params);
     if (Cmd == TEXT("editor_get_performance_stats")) return GetPerformanceStats(Params);
     if (Cmd == TEXT("editor_set_viewport_mode")) return SetViewportMode(Params);
+    if (Cmd == TEXT("editor_focus_actor"))       return FocusActor(Params);
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("Unknown editor command: %s"), *Cmd));
 }
 
@@ -138,25 +140,46 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::SetCamera(const TSharedPtr<FJsonObje
     bool bRotProvided = false;
     double NewPitch = Rotation.Pitch, NewYaw = Rotation.Yaw, NewRoll = 0.0;
 
+    // HIGHEST PRIORITY: look_at [x,y,z]. The agent gives a world point to face and
+    // we derive the orientation — no manual angles, no axis confusion, and
+    // FVector::Rotation() yields roll=0 by construction (horizon always level).
+    // This is the correct way to "aim" the camera; prefer it over rotation.
+    const TArray<TSharedPtr<FJsonValue>>* LookAtArr = nullptr;
+    if (P->TryGetArrayField(TEXT("look_at"), LookAtArr) && LookAtArr && LookAtArr->Num() >= 3)
+    {
+        const FVector Target(
+            (*LookAtArr)[0]->AsNumber(),
+            (*LookAtArr)[1]->AsNumber(),
+            (*LookAtArr)[2]->AsNumber());
+        const FVector Dir = (Target - Location);
+        if (!Dir.IsNearlyZero())
+        {
+            Rotation = Dir.Rotation();          // pitch+yaw to face Target, roll = 0
+            Client->SetViewRotation(Rotation);
+            bRotProvided = true;
+        }
+    }
+
     const TSharedPtr<FJsonObject>* RotObj = nullptr;
     const TArray<TSharedPtr<FJsonValue>>* RotArr = nullptr;
-    if (P->TryGetObjectField(TEXT("rotation"), RotObj) && RotObj && RotObj->IsValid())
+    if (bRotProvided)
+    {
+        // look_at already set orientation — skip the manual rotation paths.
+    }
+    else if (P->TryGetObjectField(TEXT("rotation"), RotObj) && RotObj && RotObj->IsValid())
     {
         bRotProvided = true;
         (*RotObj)->TryGetNumberField(TEXT("pitch"), NewPitch);
         (*RotObj)->TryGetNumberField(TEXT("yaw"), NewYaw);
         (*RotObj)->TryGetNumberField(TEXT("roll"), NewRoll); // opt-in tilt only
+        Rotation = FRotator(NewPitch, NewYaw, NewRoll);
+        Client->SetViewRotation(Rotation);
     }
     else if (P->TryGetArrayField(TEXT("rotation"), RotArr) && RotArr && RotArr->Num() >= 2)
     {
-        bRotProvided = true;
         NewPitch = (*RotArr)[0]->AsNumber();
         NewYaw   = (*RotArr)[1]->AsNumber();
         // (*RotArr)[2] (roll) intentionally ignored — see guard #2 above.
-    }
-
-    if (bRotProvided)
-    {
         Rotation = FRotator(NewPitch, NewYaw, NewRoll);
         Client->SetViewRotation(Rotation);
     }
@@ -175,6 +198,69 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::SetCamera(const TSharedPtr<FJsonObje
     RotOut.Add(MakeShareable(new FJsonValueNumber(Rotation.Roll)));
     Result->SetArrayField(TEXT("rotation"), RotOut);
 
+    return FHaybaHandlerResult::Ok(Result);
+}
+
+FHaybaHandlerResult FHaybaMCPEditorHandler::FocusActor(const TSharedPtr<FJsonObject>& P)
+{
+    if (!GEditor) return FHaybaHandlerResult::Err(TEXT("GEditor is null"));
+
+    FString Label;
+    if (!P->TryGetStringField(TEXT("actor_label"), Label) || Label.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("editor_focus_actor: actor_label is required"));
+
+    UWorld* World = GEditor->GetEditorWorldContext().World();
+    if (!World) return FHaybaHandlerResult::Err(TEXT("editor_focus_actor: no editor world"));
+
+    AActor* Target = nullptr;
+    for (TActorIterator<AActor> It(World); It; ++It)
+        if (*It && (*It)->GetActorLabel() == Label) { Target = *It; break; }
+    if (!Target) return FHaybaHandlerResult::Err(FString::Printf(TEXT("editor_focus_actor: actor not found by label: %s"), *Label));
+
+    // Frame the actor's world bounds. Camera sits back along a default 3/4 view
+    // direction at a distance derived from the bounds radius, looking AT the
+    // centre. Orientation comes from FVector::Rotation() so roll is always 0 —
+    // the viewport never tilts.
+    FVector Origin, Extent;
+    Target->GetActorBounds(/*bOnlyCollidingComponents=*/false, Origin, Extent);
+    const double Radius = FMath::Max(Extent.Size(), 50.0);
+
+    double DistScale = 2.5;
+    { double D; if (P->TryGetNumberField(TEXT("distance_scale"), D) && D > 0.0) DistScale = D; }
+
+    // Default look direction: front-right-above (a readable perspective), unless
+    // the caller supplies an explicit unit-ish [x,y,z] view direction.
+    FVector ViewDir(-1.0, -1.0, -0.6);
+    const TArray<TSharedPtr<FJsonValue>>* DirArr = nullptr;
+    if (P->TryGetArrayField(TEXT("direction"), DirArr) && DirArr && DirArr->Num() >= 3)
+        ViewDir = FVector((*DirArr)[0]->AsNumber(), (*DirArr)[1]->AsNumber(), (*DirArr)[2]->AsNumber());
+    if (ViewDir.IsNearlyZero()) ViewDir = FVector(-1.0, -1.0, -0.6);
+    ViewDir.Normalize();
+
+    const FVector Location = Origin - ViewDir * (Radius * DistScale);
+    const FRotator Rotation = (Origin - Location).Rotation(); // look at centre, roll = 0
+
+    FViewport* VP = GEditor->GetActiveViewport();
+    if (!VP) return FHaybaHandlerResult::Err(TEXT("editor_focus_actor: no active viewport"));
+    FEditorViewportClient* Client = AsEditorViewportClient(VP);
+    if (!Client) return FHaybaHandlerResult::Err(TEXT("editor_focus_actor: no editor viewport client"));
+
+    Client->SetViewLocation(Location);
+    Client->SetViewRotation(Rotation);
+    Client->Invalidate();
+
+    TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject());
+    Result->SetStringField(TEXT("actor_label"), Label);
+    TArray<TSharedPtr<FJsonValue>> LocOut = {
+        MakeShareable(new FJsonValueNumber(Location.X)),
+        MakeShareable(new FJsonValueNumber(Location.Y)),
+        MakeShareable(new FJsonValueNumber(Location.Z)) };
+    Result->SetArrayField(TEXT("location"), LocOut);
+    TArray<TSharedPtr<FJsonValue>> RotOut = {
+        MakeShareable(new FJsonValueNumber(Rotation.Pitch)),
+        MakeShareable(new FJsonValueNumber(Rotation.Yaw)),
+        MakeShareable(new FJsonValueNumber(Rotation.Roll)) };
+    Result->SetArrayField(TEXT("rotation"), RotOut);
     return FHaybaHandlerResult::Ok(Result);
 }
 

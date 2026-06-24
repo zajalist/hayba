@@ -9,9 +9,11 @@
 #include "PCGPointPropertiesTraits.h" // EPCGPointNativeProperties
 #include "Metadata/PCGMetadata.h"
 #include "Metadata/PCGMetadataAttributeTpl.h"
+#include "Elements/PCGActorSelector.h"
 
-// ARunPrimitive
-#include "RunPrimitive.h"
+// ARoomVolume, ATunnelSpline
+#include "RoomVolume.h"
+#include "TunnelSpline.h"
 
 // TActorIterator
 #include "EngineUtils.h"
@@ -31,10 +33,21 @@ FText UPCGTopologyConnectSettings::GetDefaultNodeTitle() const
 FText UPCGTopologyConnectSettings::GetNodeTooltipText() const
 {
 	return LOCTEXT("Tooltip",
-		"Gathers all ARunPrimitive actors in the world and emits one PCG data item "
-		"per primitive on the Out pin (UPCGBasePointData for rooms, UPCGSplineData "
-		"for tunnels) with grammar attributes written as metadata default values. "
-		"Runs on the game thread; not cacheable.");
+		"Gathers all ARoomVolume and ATunnelSpline actors in the world and emits one "
+		"PCG data item per primitive on the Out pin (UPCGBasePointData for rooms, "
+		"UPCGSplineData for tunnels) with grammar attributes written as metadata "
+		"default values. Runs on the game thread; not cacheable.");
+}
+
+void UPCGTopologyConnectSettings::GetStaticTrackedKeys(
+	FPCGSelectionKeyToSettingsMap& OutKeysToSettings,
+	TArray<TObjectPtr<const UPCGGraph>>& OutVisitedGraphs) const
+{
+	// Re-execute whenever any actor tagged "hayba.primitive" is added, removed,
+	// or modified. FPCGSelectionKey(FName tag) constructs a tag-based tracking key.
+	// FLAG [UNCERTAIN]: FPCGSelectionKey tag-constructor — verify available in UE 5.7.
+	// If not, use FPCGSelectionKey(EActorFilter::AllWorldActors) as a broader fallback.
+	OutKeysToSettings.FindOrAdd(FPCGSelectionKey(FName("hayba.primitive"))).Emplace(this, /*bCulling=*/false);
 }
 #endif
 
@@ -58,7 +71,7 @@ FPCGElementPtr UPCGTopologyConnectSettings::CreateElement() const
 }
 
 // ---------------------------------------------------------------------------
-// Attribute write helper.
+// Attribute write helpers.
 // Writes VALUE as the attribute's DEFAULT VALUE so that reading via
 //   Data->ConstMetadata()->GetConstTypedAttribute<T>(name)->GetValue(PCGFirstEntryKey)
 // returns Value regardless of any per-entry state. Per the task contract we do
@@ -76,24 +89,29 @@ namespace HaybaTopology
 		Metadata->FindOrCreateAttribute<T>(Name, Value, /*bAllowsInterpolation=*/false, /*bOverrideParent=*/true);
 	}
 
-	// Write all per-primitive grammar attributes as default values on Metadata.
-	// builder  : FString (solver reads GetConstTypedAttribute<FString>)
-	// phase    : FString
-	// seed     : double  (int cast)
-	// w        : double
-	// h        : double
-	// importance: double
-	// prim_id  : double
-	static void WriteAttrs(UPCGMetadata* Metadata, const ARunPrimitive* Prim, int32 PrimId)
+	// Write per-room grammar attributes (no w/h — room dimensions come from the BoxComponent).
+	static void WriteRoomAttrs(UPCGMetadata* Metadata, const ARoomVolume* Room, int32 PrimId)
 	{
-		if (!Metadata || !Prim) { return; }
+		if (!Metadata || !Room) { return; }
 
-		WriteDefaultAttr<FString>(Metadata, FName(TEXT("builder")),    Prim->Builder.ToString());
-		WriteDefaultAttr<FString>(Metadata, FName(TEXT("phase")),      Prim->Phase);
-		WriteDefaultAttr<double> (Metadata, FName(TEXT("seed")),       static_cast<double>(Prim->Seed));
-		WriteDefaultAttr<double> (Metadata, FName(TEXT("w")),          Prim->W);
-		WriteDefaultAttr<double> (Metadata, FName(TEXT("h")),          Prim->H);
-		WriteDefaultAttr<double> (Metadata, FName(TEXT("importance")), Prim->Importance);
+		WriteDefaultAttr<FString>(Metadata, FName(TEXT("builder")),    Room->Builder.ToString());
+		WriteDefaultAttr<FString>(Metadata, FName(TEXT("phase")),      Room->Phase);
+		WriteDefaultAttr<double> (Metadata, FName(TEXT("seed")),       static_cast<double>(Room->Seed));
+		WriteDefaultAttr<double> (Metadata, FName(TEXT("importance")), Room->Importance);
+		WriteDefaultAttr<double> (Metadata, FName(TEXT("prim_id")),    static_cast<double>(PrimId));
+	}
+
+	// Write per-tunnel grammar attributes (includes w/h bore dimensions).
+	static void WriteTunnelAttrs(UPCGMetadata* Metadata, const ATunnelSpline* Tunnel, int32 PrimId)
+	{
+		if (!Metadata || !Tunnel) { return; }
+
+		WriteDefaultAttr<FString>(Metadata, FName(TEXT("builder")),    Tunnel->Builder.ToString());
+		WriteDefaultAttr<FString>(Metadata, FName(TEXT("phase")),      Tunnel->Phase);
+		WriteDefaultAttr<double> (Metadata, FName(TEXT("seed")),       static_cast<double>(Tunnel->Seed));
+		WriteDefaultAttr<double> (Metadata, FName(TEXT("w")),          Tunnel->W);
+		WriteDefaultAttr<double> (Metadata, FName(TEXT("h")),          Tunnel->H);
+		WriteDefaultAttr<double> (Metadata, FName(TEXT("importance")), Tunnel->Importance);
 		WriteDefaultAttr<double> (Metadata, FName(TEXT("prim_id")),    static_cast<double>(PrimId));
 	}
 }
@@ -127,104 +145,108 @@ bool FPCGTopologyConnectElement::ExecuteInternal(FPCGContext* Context) const
 		return true;
 	}
 
-	// ---- Iterate ARunPrimitive actors. Must be on the game thread (CanExecuteOnlyOnMainThread).
+	// Shared prim_id counter across both loops — each primitive gets a unique
+	// monotonically-increasing id regardless of type.
 	int32 PrimId = 0;
-	for (TActorIterator<ARunPrimitive> It(World); It; ++It)
+
+	// ---- Loop 1: ARoomVolume actors. Must be on the game thread (CanExecuteOnlyOnMainThread).
+	for (TActorIterator<ARoomVolume> It(World); It; ++It)
 	{
-		ARunPrimitive* Prim = *It;
-		if (!Prim) { continue; }
+		ARoomVolume* Room = *It;
+		if (!Room) { continue; }
 
-		if (Prim->Kind == ERunPrimitiveKind::Room)
+		// ----------------------------------------------------------------
+		// ROOM: emit a single-point UPCGBasePointData.
+		// Transform.Location = box world centre; Transform.Scale3D = full box size (cm).
+		// ----------------------------------------------------------------
+		UPCGBasePointData* PointData = FPCGContext::NewPointData_AnyThread(Context);
+		check(PointData);
+
+		// One point.
+		PointData->SetNumPoints(1, /*bInitializeValues=*/false);
+		PointData->AllocateProperties(EPCGPointNativeProperties::Transform | EPCGPointNativeProperties::MetadataEntry);
+
+		// Build the transform: Location = box world centre, Scale = full box size in cm.
+		// FLAG [UNCERTAIN]: UPCGBasePointData::GetTransform(int32) and SetFromPoint
+		// are used by PCGGrammarSolver (line ~720, ~1213). We mirror that pattern.
+		FTransform RoomXf;
+		if (Room->BoxComponent)
 		{
-			// ----------------------------------------------------------------
-			// ROOM: emit a single-point UPCGBasePointData.
-			// Transform.Location = box world centre; Transform.Scale3D = full box size (cm).
-			// ----------------------------------------------------------------
-			UPCGBasePointData* PointData = FPCGContext::NewPointData_AnyThread(Context);
-			check(PointData);
-
-			// One point.
-			PointData->SetNumPoints(1, /*bInitializeValues=*/false);
-			PointData->AllocateProperties(EPCGPointNativeProperties::Transform | EPCGPointNativeProperties::MetadataEntry);
-
-			// Build the transform: Location = box world centre, Scale = full box size in cm.
-			// FLAG [UNCERTAIN]: UPCGBasePointData::GetTransform(int32) and SetFromPoint
-			// are used by PCGGrammarSolver (line ~720, ~1213). We mirror that pattern.
-			FTransform RoomXf;
-			if (Prim->BoxComponent)
-			{
-				const FVector WorldLoc  = Prim->BoxComponent->GetComponentLocation();
-				// GetScaledBoxExtent() returns HALF-extents; multiply by 2 to get full size.
-				const FVector FullSize  = Prim->BoxComponent->GetScaledBoxExtent() * 2.0;
-				RoomXf.SetLocation(WorldLoc);
-				RoomXf.SetRotation(FQuat::Identity);
-				RoomXf.SetScale3D(FullSize);
-			}
-			else
-			{
-				RoomXf.SetLocation(Prim->GetActorLocation());
-				RoomXf.SetScale3D(FVector(
-					Prim->W * 100.0,
-					Prim->W * 100.0,
-					Prim->H * 100.0));
-			}
-
-			// Write the single point via the same FPCGPointValueRanges pattern used by
-			// PCGGrammarSolver (line ~1199-1213).
-			FPCGPoint RoomPoint;
-			RoomPoint.Transform = RoomXf;
-
-			// Initialize metadata entry for the point (required before SetValue calls).
-			if (PointData->Metadata)
-			{
-				PointData->Metadata->InitializeOnSet(RoomPoint.MetadataEntry);
-			}
-
-			FPCGPointValueRanges OutRanges(PointData, /*bAllocate=*/false);
-			OutRanges.SetFromPoint(0, RoomPoint);
-
-			// Write grammar attributes as metadata default values.
-			HaybaTopology::WriteAttrs(PointData->MutableMetadata(), Prim, PrimId);
-
-			// Emit on "Out".
-			FPCGTaggedData& Out = Context->OutputData.TaggedData.Emplace_GetRef();
-			Out.Data = PointData;
-			Out.Pin  = FName(TEXT("Out"));
+			const FVector WorldLoc = Room->BoxComponent->GetComponentLocation();
+			// GetScaledBoxExtent() returns HALF-extents; multiply by 2 to get full size.
+			const FVector FullSize = Room->BoxComponent->GetScaledBoxExtent() * 2.0;
+			RoomXf.SetLocation(WorldLoc);
+			RoomXf.SetRotation(FQuat::Identity);
+			RoomXf.SetScale3D(FullSize);
 		}
-		else // ERunPrimitiveKind::Tunnel
+		else
 		{
-			// ----------------------------------------------------------------
-			// TUNNEL: emit a UPCGSplineData initialized from the actor's SplineComponent.
-			// FLAG [UNCERTAIN]: In UE 5.7 the cleanest path to initialize UPCGSplineData
-			// from a USplineComponent is UPCGSplineData::Initialize(USplineComponent*).
-			// This overload was present in 5.3+ but the exact signature may differ in 5.7.
-			// Fallback: FPCGSplineStruct::ApplyTo / Initialize(const FSplineStruct&).
-			// We use the direct Initialize(USplineComponent*) path here and flag it.
-			// ----------------------------------------------------------------
-			if (!Prim->SplineComponent)
-			{
-				++PrimId;
-				continue;
-			}
-
-			UPCGSplineData* SplineData = FPCGContext::NewObject_AnyThread<UPCGSplineData>(Context);
-			check(SplineData);
-
-			// Initialize the PCG spline data from the actor's spline component.
-			// FLAG [UNCERTAIN]: UPCGSplineData::Initialize(USplineComponent*) — verify
-			// this overload exists in UE 5.7. If not available, use:
-			//   SplineData->SplineStruct.ApplyToComponent(Prim->SplineComponent, ...);
-			// or copy the FSplineStruct from the component's SplineCurves.
-			SplineData->Initialize(Prim->SplineComponent);
-
-			// Write grammar attributes as metadata default values.
-			HaybaTopology::WriteAttrs(SplineData->MutableMetadata(), Prim, PrimId);
-
-			// Emit on "Out".
-			FPCGTaggedData& Out = Context->OutputData.TaggedData.Emplace_GetRef();
-			Out.Data = SplineData;
-			Out.Pin  = FName(TEXT("Out"));
+			RoomXf.SetLocation(Room->GetActorLocation());
+			RoomXf.SetScale3D(FVector(800.0, 600.0, 350.0)); // fallback: 2x default half-extents in cm
 		}
+
+		// Write the single point via the same FPCGPointValueRanges pattern used by
+		// PCGGrammarSolver (line ~1199-1213).
+		FPCGPoint RoomPoint;
+		RoomPoint.Transform = RoomXf;
+
+		// Initialize metadata entry for the point (required before SetValue calls).
+		if (PointData->Metadata)
+		{
+			PointData->Metadata->InitializeOnSet(RoomPoint.MetadataEntry);
+		}
+
+		FPCGPointValueRanges OutRanges(PointData, /*bAllocate=*/false);
+		OutRanges.SetFromPoint(0, RoomPoint);
+
+		// Write grammar attributes as metadata default values (no w/h for rooms).
+		HaybaTopology::WriteRoomAttrs(PointData->MutableMetadata(), Room, PrimId);
+
+		// Emit on "Out".
+		FPCGTaggedData& Out = Context->OutputData.TaggedData.Emplace_GetRef();
+		Out.Data = PointData;
+		Out.Pin  = FName(TEXT("Out"));
+
+		++PrimId;
+	}
+
+	// ---- Loop 2: ATunnelSpline actors. Must be on the game thread (CanExecuteOnlyOnMainThread).
+	for (TActorIterator<ATunnelSpline> It(World); It; ++It)
+	{
+		ATunnelSpline* Tunnel = *It;
+		if (!Tunnel) { continue; }
+
+		// ----------------------------------------------------------------
+		// TUNNEL: emit a UPCGSplineData initialized from the actor's SplineComponent.
+		// FLAG [UNCERTAIN]: In UE 5.7 the cleanest path to initialize UPCGSplineData
+		// from a USplineComponent is UPCGSplineData::Initialize(USplineComponent*).
+		// This overload was present in 5.3+ but the exact signature may differ in 5.7.
+		// Fallback: FPCGSplineStruct::ApplyTo / Initialize(const FSplineStruct&).
+		// We use the direct Initialize(USplineComponent*) path here and flag it.
+		// ----------------------------------------------------------------
+		if (!Tunnel->SplineComponent)
+		{
+			++PrimId;
+			continue;
+		}
+
+		UPCGSplineData* SplineData = FPCGContext::NewObject_AnyThread<UPCGSplineData>(Context);
+		check(SplineData);
+
+		// Initialize the PCG spline data from the actor's spline component.
+		// FLAG [UNCERTAIN]: UPCGSplineData::Initialize(USplineComponent*) — verify
+		// this overload exists in UE 5.7. If not available, use:
+		//   SplineData->SplineStruct.ApplyToComponent(Tunnel->SplineComponent, ...);
+		// or copy the FSplineStruct from the component's SplineCurves.
+		SplineData->Initialize(Tunnel->SplineComponent);
+
+		// Write grammar attributes as metadata default values (includes w/h for tunnels).
+		HaybaTopology::WriteTunnelAttrs(SplineData->MutableMetadata(), Tunnel, PrimId);
+
+		// Emit on "Out".
+		FPCGTaggedData& Out = Context->OutputData.TaggedData.Emplace_GetRef();
+		Out.Data = SplineData;
+		Out.Pin  = FName(TEXT("Out"));
 
 		++PrimId;
 	}
