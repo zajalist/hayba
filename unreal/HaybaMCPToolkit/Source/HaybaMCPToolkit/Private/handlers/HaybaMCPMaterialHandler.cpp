@@ -464,6 +464,27 @@ static bool WireLooksLikeSpaghetti(UMaterial* Mat, UMaterialExpression* From, UM
     return false;
 }
 
+// A source node with >1 output (most importantly a MaterialFunctionCall) MUST
+// have its output pin chosen explicitly — otherwise both the name path
+// (ConnectMaterialExpressions with "") and the index path (FromOutputIndex=0)
+// silently default to the FIRST output, which mis-wires/swaps function outputs
+// (e.g. Albedo and F0 ending up crossed). Refuse and list the real pins.
+static bool RequireOutputChoice(UMaterialExpression* From, const FString& FromOutput, bool bHasFromOutputIndex, FString& OutErr)
+{
+    if (!From) return true;
+    const TArray<FExpressionOutput>& Outs = From->GetOutputs();
+    if (Outs.Num() <= 1) return true;                 // unambiguous
+    if (!FromOutput.IsEmpty() || bHasFromOutputIndex) return true; // caller chose
+    TArray<FString> Names;
+    for (int32 i = 0; i < Outs.Num(); ++i)
+        Names.Add(FString::Printf(TEXT("[%d] %s"), i,
+            Outs[i].OutputName.IsNone() ? TEXT("(unnamed)") : *Outs[i].OutputName.ToString()));
+    OutErr = FString::Printf(
+        TEXT("material_connect_nodes: '%s' has %d outputs (%s) — specify which with from_output (the pin NAME) or from_output_index. Defaulting to the first output silently swaps multi-output nodes like material functions."),
+        *From->GetName(), Outs.Num(), *FString::Join(Names, TEXT(", ")));
+    return false;
+}
+
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<FJsonObject>& P)
 {
     FString FromNode;
@@ -481,8 +502,9 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
     // slab/operator inputs report as input_N). to_input_index targets the Nth
     // input; from_output_index picks the source output (default 0).
     int32 ToInputIndex = -1, FromOutputIndex = 0;
+    bool bHasFromOutputIndex = false;
     { double D; if (P->TryGetNumberField(TEXT("to_input_index"), D)) ToInputIndex = (int32)D; }
-    { double D; if (P->TryGetNumberField(TEXT("from_output_index"), D)) FromOutputIndex = (int32)D; }
+    { double D; if (P->TryGetNumberField(TEXT("from_output_index"), D)) { FromOutputIndex = (int32)D; bHasFromOutputIndex = true; } }
     auto ConnectByIndex = [&](UMaterialExpression* From, UMaterialExpression* To) -> bool {
         FExpressionInput* In = To->GetInput(ToInputIndex);
         if (!In) return false;
@@ -498,6 +520,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
         if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: function not found"));
         UMaterialExpression* From = FindExprByNameInFunction(Fn, FromNode);
         if (!From) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: from_node not found: %s"), *FromNode));
+        { FString OutErr; if (!RequireOutputChoice(From, FromOutput, bHasFromOutputIndex, OutErr)) return FHaybaHandlerResult::Err(OutErr); }
         if (!bHasTo) return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: function connections require to_node"));
         UMaterialExpression* To = FindExprByNameInFunction(Fn, ToNode);
         if (!To) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: to_node not found: %s"), *ToNode));
@@ -522,6 +545,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
 
     UMaterialExpression* From = FindExprByName(Mat, FromNode);
     if (!From) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: from_node not found: %s"), *FromNode));
+    { FString OutErr; if (!RequireOutputChoice(From, FromOutput, bHasFromOutputIndex, OutErr)) return FHaybaHandlerResult::Err(OutErr); }
 
     UMaterialExpression* To = nullptr;  // null when connecting to a material property
     if (bHasProp)
@@ -790,6 +814,28 @@ static TArray<TSharedPtr<FJsonValue>> SerializeMaterialExpressions(
             Inputs.Add(MakeShared<FJsonValueObject>(InEntry.ToSharedRef()));
         }
         Entry->SetArrayField(TEXT("inputs"), Inputs);
+
+        // OUTPUT pins (name + index). Critical for multi-output nodes — most
+        // importantly MaterialFunctionCall, whose output order follows the
+        // function's FunctionOutput SortPriority, NOT the visual top-to-bottom
+        // order. Without this, a caller guesses the index and silently swaps
+        // wires (e.g. Albedo->F0, F0->Diffuse). Connect with from_output set to
+        // the NAME here (preferred) or from_output_index = this index.
+        TArray<TSharedPtr<FJsonValue>> Outputs;
+        {
+            const TArray<FExpressionOutput>& Outs = Expr->GetOutputs();
+            for (int32 OutIdx = 0; OutIdx < Outs.Num(); ++OutIdx)
+            {
+                TSharedPtr<FJsonObject> OutEntry = MakeShared<FJsonObject>();
+                const FName OutName = Outs[OutIdx].OutputName;
+                OutEntry->SetStringField(TEXT("name"),
+                    OutName.IsNone() ? FString::Printf(TEXT("output_%d"), OutIdx) : OutName.ToString());
+                OutEntry->SetNumberField(TEXT("index"), OutIdx);
+                Outputs.Add(MakeShared<FJsonValueObject>(OutEntry.ToSharedRef()));
+            }
+        }
+        Entry->SetArrayField(TEXT("outputs"), Outputs);
+
         Exprs.Add(MakeShared<FJsonValueObject>(Entry.ToSharedRef()));
     }
     return Exprs;

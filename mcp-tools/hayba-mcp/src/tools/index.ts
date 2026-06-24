@@ -313,7 +313,7 @@ const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       meta: materialGetInfoMeta,
       handler: materialGetInfoHandler,
       cost: 'low',
-      returns: '{kind, name, expressions:[{id,class,x,y,output_consumed,reachable_from_output,inputs:[{name,index,connected,from_node,from_output}]}], dead_nodes:[{id,class}], comments} | instance:{kind,name,parent,parameters:[{name,type,value}]}',
+      returns: "{kind, name, expressions:[{id,class,x,y,output_consumed,reachable_from_output,inputs:[{name,index,connected,from_node,from_output}],outputs:[{name,index}]}], dead_nodes:[{id,class}], comments} | instance:{kind,name,parent,parameters:[{name,type,value}]}. outputs[] gives a node's real output pin order (esp. MaterialFunctionCall, whose order follows FunctionOutput sort priority, NOT the visual layout) — wire from_output by these names/indices so multi-output nodes don't get swapped.",
       niche: M,
       schema: {
         path: z.string().min(1).describe('Path to the material or material instance to inspect'),
@@ -549,7 +549,7 @@ const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     },
     {
       name: 'material_connect_nodes',
-      description: 'Connect two nodes in a material graph or connect a node output to a material property. May return clutter-prevention suggestions: use named reroutes when a source fans out to 2+ targets, or a reroute knee node when a wire would run backward/over another node.',
+      description: "Connect two nodes in a material graph or connect a node output to a material property. IMPORTANT for multi-output sources (esp. MaterialFunctionCall): you MUST pick the output pin with from_output (the pin NAME) or from_output_index — otherwise the call is rejected, because defaulting to the first output silently swaps function outputs (e.g. Albedo<->F0). Get the real pin names/order from material_get_info.expressions[].outputs[]. May return clutter-prevention suggestions: use named reroutes when a source fans out to 2+ targets, or a reroute knee node when a wire would run backward/over another node.",
       meta: materialConnectNodesMeta,
       handler: materialConnectNodesHandler,
       cost: 'low',
@@ -559,7 +559,7 @@ const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
         material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
         function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
         from_node: z.string().min(1).describe('ID or name of the source node'),
-        from_output: z.string().optional().describe('Output pin name on the source node'),
+        from_output: z.string().optional().describe('Output pin NAME on the source node (from material_get_info.expressions[].outputs[].name). REQUIRED when the source has >1 output (e.g. a material function) unless you pass from_output_index.'),
         to_node: z.string().optional().describe('ID or name of the target node'),
         to_input: z.string().optional().describe('Input pin name on the target node'),
         to_input_index: z.number().int().optional().describe('Target input pin by index (unnamed pins, e.g. Substrate slab inputs)'),
