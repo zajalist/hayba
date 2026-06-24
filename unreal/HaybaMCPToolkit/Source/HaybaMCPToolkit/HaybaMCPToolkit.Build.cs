@@ -30,6 +30,9 @@ public class HaybaMCPToolkit : ModuleRules
             "ContentBrowser", "AdvancedPreviewScene", "RenderCore", "GraphEditor",
             "Sockets", "Networking", "Json", "JsonUtilities",
             "PCG", "HTTP",
+            // Underground tunnel PCG node — build a continuous (seamless) swept
+            // dynamic mesh from a spline. FDynamicMesh3 = GeometryCore; UDynamicMesh = GeometryFramework.
+            "GeometryCore", "GeometryFramework",
             "DirectoryWatcher", "DesktopPlatform",
             "Landscape", "LandscapeEditor", "ImageWrapper",
             "Foliage",
