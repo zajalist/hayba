@@ -1999,21 +1999,26 @@
         {
           "name": "location",
           "type": "array",
-          "required": false
+          "required": true,
+          "description": "World-space camera position [x, y, z] in cm."
         },
         {
           "name": "rotation",
-          "type": "array",
-          "required": false
+          "type": "object",
+          "required": false,
+          "description": "Camera orientation. PREFERRED: object {pitch, yaw, roll} in degrees — unambiguous. yaw = heading (rotation about the vertical/Z axis, the value you usually want); pitch = look up(+)/down(-); roll = horizon tilt and defaults to 0 (omit it — a non-zero roll is what makes the viewport 'look angled'). Array form is also accepted as [pitch, yaw, roll] but its 3rd element (roll) is IGNORED so the camera never tilts by accident — do NOT pass [x,y,z] euler here, index 2 is roll, not yaw. To turn the camera to face a heading, set rotation.yaw; to look down at the scene, set a negative rotation.pitch."
         }
       ],
       "returns": {
         "shape": "object",
-        "fields": []
+        "fields": [
+          { "name": "location", "type": "array", "description": "Applied [x,y,z]" },
+          { "name": "rotation", "type": "array", "description": "Applied [pitch, yaw, roll]" }
+        ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Position the editor viewport camera for deterministic captures."
+      "notes": "Position the editor viewport camera for deterministic captures. Orientation is UE FRotator (pitch/yaw/roll), NOT xyz-euler. Use {yaw: ...} to turn heading and {pitch: -N} to look down; leave roll at 0 to keep the horizon level (the camera will not tilt even if a stray roll value is passed)."
     },
     "editor_run_console_command": {
       "aliases": [],

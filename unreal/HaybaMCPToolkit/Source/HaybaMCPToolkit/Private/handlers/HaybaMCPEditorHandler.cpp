@@ -126,15 +126,38 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::SetCamera(const TSharedPtr<FJsonObje
 
     Client->SetViewLocation(Location);
 
+    // Rotation. UE FRotator is (Pitch, Yaw, Roll) — NOT XYZ euler. Agents commonly
+    // think "rotate N about Z" and pass [0,0,N] expecting yaw, but index 2 is ROLL,
+    // which tilts the horizon → the "camera looks angled" bug. Two guards:
+    //   1. Accept an unambiguous object form {pitch, yaw, roll} (recommended).
+    //   2. Keep the editor viewport LEVEL by default: roll is only applied when
+    //      explicitly given via the object's "roll" key. The array form is read as
+    //      [pitch, yaw] and any 3rd (roll) element is ignored, so a stray value can
+    //      never tilt the camera.
     FRotator Rotation = Client->GetViewRotation();
+    bool bRotProvided = false;
+    double NewPitch = Rotation.Pitch, NewYaw = Rotation.Yaw, NewRoll = 0.0;
+
+    const TSharedPtr<FJsonObject>* RotObj = nullptr;
     const TArray<TSharedPtr<FJsonValue>>* RotArr = nullptr;
-    if (P->TryGetArrayField(TEXT("rotation"), RotArr) && RotArr && RotArr->Num() >= 3)
+    if (P->TryGetObjectField(TEXT("rotation"), RotObj) && RotObj && RotObj->IsValid())
     {
-        Rotation = FRotator(
-            (*RotArr)[0]->AsNumber(),
-            (*RotArr)[1]->AsNumber(),
-            (*RotArr)[2]->AsNumber()
-        );
+        bRotProvided = true;
+        (*RotObj)->TryGetNumberField(TEXT("pitch"), NewPitch);
+        (*RotObj)->TryGetNumberField(TEXT("yaw"), NewYaw);
+        (*RotObj)->TryGetNumberField(TEXT("roll"), NewRoll); // opt-in tilt only
+    }
+    else if (P->TryGetArrayField(TEXT("rotation"), RotArr) && RotArr && RotArr->Num() >= 2)
+    {
+        bRotProvided = true;
+        NewPitch = (*RotArr)[0]->AsNumber();
+        NewYaw   = (*RotArr)[1]->AsNumber();
+        // (*RotArr)[2] (roll) intentionally ignored — see guard #2 above.
+    }
+
+    if (bRotProvided)
+    {
+        Rotation = FRotator(NewPitch, NewYaw, NewRoll);
         Client->SetViewRotation(Rotation);
     }
 

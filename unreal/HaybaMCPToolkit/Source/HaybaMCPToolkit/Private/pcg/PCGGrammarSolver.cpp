@@ -311,6 +311,36 @@ namespace HaybaGrammar
 		}
 	}
 
+	// ---------------------------------------------------------------------------
+	// PCG metadata attribute read helpers (Task 4).
+	// Both return the Default when: Data is null, ConstMetadata() returns null,
+	// the named attribute does not exist (or has the wrong type), or there are no
+	// metadata entries. The first entry key (PCGInvalidEntryKey == 0 when absent,
+	// PCGFirstEntryKey == 0 for the first real entry) is used — reading entry 0 is
+	// safe because metadata always initialises entry 0 for single-item data.
+	// ---------------------------------------------------------------------------
+	static FString ReadStrAttr(const UPCGData* Data, FName Name, const FString& Default)
+	{
+		if (!Data) { return Default; }
+		const UPCGMetadata* Md = Data->ConstMetadata();
+		if (!Md) { return Default; }
+		// GetConstTypedAttribute<T> does the type-id check; returns null if absent or wrong type.
+		const FPCGMetadataAttribute<FString>* Attr = Md->GetConstTypedAttribute<FString>(Name);
+		if (!Attr) { return Default; }
+		// PCGFirstEntryKey == 0; valid for single-item data (spline input has exactly one entry).
+		return Attr->GetValue(PCGFirstEntryKey);
+	}
+
+	static double ReadNumAttr(const UPCGData* Data, FName Name, double Default)
+	{
+		if (!Data) { return Default; }
+		const UPCGMetadata* Md = Data->ConstMetadata();
+		if (!Md) { return Default; }
+		const FPCGMetadataAttribute<double>* Attr = Md->GetConstTypedAttribute<double>(Name);
+		if (!Attr) { return Default; }
+		return Attr->GetValue(PCGFirstEntryKey);
+	}
+
 	// matchProductions(sym, prods) — filter by kind+when, sort priority DESC,
 	// STABLE for ties (captured TMap traversal order; see InsertionOrder note —
 	// approximates TS file textual order but is not a hard contract). REFERENCE 3 (L35-39).
@@ -332,6 +362,18 @@ namespace HaybaGrammar
 			}
 			return A.InsertionOrder < B.InsertionOrder;
 		});
+	}
+
+	// ---------------------------------------------------------------------------
+	// Junction-typing rule. Mirrors Task 2 TS rule: imperial+imperial -> Portal,
+	// native+native -> BooleanUnion, mixed -> Clash. Not yet wired (Tasks 8/9).
+	// ---------------------------------------------------------------------------
+	enum class EJunctionType : uint8 { Portal, BooleanUnion, Clash };
+	static EJunctionType JunctionTypeFor(const FString& A, const FString& B)
+	{
+		if (A == TEXT("imperial") && B == TEXT("imperial")) return EJunctionType::Portal;
+		if (A == TEXT("native")   && B == TEXT("native"))   return EJunctionType::BooleanUnion;
+		return EJunctionType::Clash;
 	}
 }
 
@@ -526,7 +568,7 @@ FText UPCGGrammarSolverSettings::GetNodeTooltipText() const
 TArray<FPCGPinProperties> UPCGGrammarSolverSettings::InputPinProperties() const
 {
 	TArray<FPCGPinProperties> Pins;
-	Pins.Emplace(PCGPinConstants::DefaultInputLabel, EPCGDataType::Spline);
+	Pins.Emplace(PCGPinConstants::DefaultInputLabel, EPCGDataType::PointOrSpline);
 	return Pins;
 }
 
@@ -638,6 +680,158 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 	const TArray<FPCGTaggedData> Inputs = Context->InputData.GetInputsByPin(PCGPinConstants::DefaultInputLabel);
 	for (const FPCGTaggedData& In : Inputs)
 	{
+		// ---- Determine kind early so we can branch to the room path before any
+		// spline cast. Metadata is present on both spline and point data.
+		const UPCGData* InData = In.Data;
+		// Kind is determined by INPUT DATA TYPE (no 'kind' attribute): point data
+		// => room, spline data => tunnel. Per-primitive attributes (builder/w/h/...)
+		// still come from the DATA-domain metadata via ReadStr/NumAttr.
+		const bool bIsRoom = (Cast<UPCGBasePointData>(InData) != nullptr);
+		const FString EarlyKind = bIsRoom ? TEXT("room") : TEXT("tunnel");
+
+		// ====================================================================
+		// ROOM PATH: kind == "room"
+		// Input is a single UPCGBasePointData point whose Transform.Location is
+		// the room center and Transform.Scale3D carries the full box dimensions (cm).
+		// Only "imperial" builder is realized here; "native" is a TODO (Task 7).
+		// ====================================================================
+		if (EarlyKind == TEXT("room"))
+		{
+			const UPCGBasePointData* PointData = Cast<UPCGBasePointData>(InData);
+			if (!PointData || PointData->GetNumPoints() == 0)
+			{
+				// No usable point — skip this input silently.
+				continue;
+			}
+
+			// Read the builder attr from metadata (same helper used by the tunnel path).
+			const FString BuilderAttr = ReadStrAttr(InData, FName(TEXT("builder")), TEXT("native"));
+
+			if (BuilderAttr != TEXT("imperial"))
+			{
+				// TODO(Task 7): native room builder. No-op for now.
+				continue;
+			}
+
+			// ---- Read room geometry from the first point.
+			// UE 5.7 UPCGBasePointData is SoA; GetPoint(int32) lives on the value-range
+			// view, not the data object. The direct per-property accessor is
+			// GetTransform(int32) (PCGBasePointData.h:223).
+			const FTransform RoomXf = PointData->GetTransform(0);
+			const FVector Center   = RoomXf.GetLocation();
+			const FVector FullSize = RoomXf.GetScale3D(); // full box dims (cm)
+
+			// ---- Build the shell mesh (closed inward-facing box).
+			FDynamicMesh3 Mesh;
+			Mesh.EnableAttributes();
+			bool bAnyShell = false;
+
+			// AddRoomShellImperial: appends a CLOSED welded box shell with 8 shared
+			// corner vertices and 12 triangles (6 faces × 2). All faces wind so their
+			// computed normal points INWARD (toward the room centre).
+			//
+			// Winding strategy: for each face we compute the geometric normal of the
+			// first triangle (cross product of edges from the first vertex) and compare
+			// it to the desired inward direction. If the dot product is negative the
+			// natural CCW winding already points inward; otherwise we swap the second and
+			// third indices to flip. This is the same per-face flip used by AddQuad so
+			// the scheme is consistent across the whole file.
+			//
+			// Corner layout (right-hand, Z-up):
+			//   v0 = (-hx, -hy, -hz)  v1 = (+hx, -hy, -hz)
+			//   v2 = (+hx, +hy, -hz)  v3 = (-hx, +hy, -hz)
+			//   v4 = (-hx, -hy, +hz)  v5 = (+hx, -hy, +hz)
+			//   v6 = (+hx, +hy, +hz)  v7 = (-hx, +hy, +hz)
+			//
+			// Each face names its 4 corners in a consistent CCW order when viewed from
+			// the OUTSIDE; the flip then inverts the winding so normals point inward.
+			auto AddRoomShellImperial = [&](const FVector& Ctr, const FVector& Size)
+			{
+				const FVector H = Size * 0.5; // half-extents
+
+				// 8 shared corner vertices. Indices stored for face indexing.
+				const int32 V[8] = {
+					Mesh.AppendVertex(FVector3d(Ctr + FVector(-H.X, -H.Y, -H.Z))), // 0 BLL
+					Mesh.AppendVertex(FVector3d(Ctr + FVector(+H.X, -H.Y, -H.Z))), // 1 BRL
+					Mesh.AppendVertex(FVector3d(Ctr + FVector(+H.X, +H.Y, -H.Z))), // 2 BRR
+					Mesh.AppendVertex(FVector3d(Ctr + FVector(-H.X, +H.Y, -H.Z))), // 3 BLR
+					Mesh.AppendVertex(FVector3d(Ctr + FVector(-H.X, -H.Y, +H.Z))), // 4 TLL
+					Mesh.AppendVertex(FVector3d(Ctr + FVector(+H.X, -H.Y, +H.Z))), // 5 TRL
+					Mesh.AppendVertex(FVector3d(Ctr + FVector(+H.X, +H.Y, +H.Z))), // 6 TRR
+					Mesh.AppendVertex(FVector3d(Ctr + FVector(-H.X, +H.Y, +H.Z)))  // 7 TLR
+				};
+
+				// AddFace: two triangles from a quad, flipped so the normal points
+				// toward InwardDir (into the room). Uses the same cross-product flip
+				// pattern as AddQuad / the vent-tube Wall lambda.
+				auto AddFace = [&](int32 a, int32 b, int32 c, int32 d, const FVector3d& InwardDir)
+				{
+					// Triangle ABC: natural CCW normal = (B-A) x (C-A)
+					const FVector3d pa = Mesh.GetVertex(a);
+					const FVector3d pb = Mesh.GetVertex(b);
+					const FVector3d pc = Mesh.GetVertex(c);
+					const FVector3d n  = (pb - pa).Cross(pc - pa);
+					if (n.Dot(InwardDir) < 0.0)
+					{
+						// Natural winding already faces inward — keep it.
+						Mesh.AppendTriangle(FIndex3i(a, b, c));
+						Mesh.AppendTriangle(FIndex3i(a, c, d));
+					}
+					else
+					{
+						// Natural winding faces outward — flip.
+						Mesh.AppendTriangle(FIndex3i(a, c, b));
+						Mesh.AppendTriangle(FIndex3i(a, d, c));
+					}
+				};
+
+				// 6 faces; inward normal = direction from face toward centre.
+				// Floor   (Z-): inward normal +Z
+				AddFace(V[0], V[1], V[2], V[3], FVector3d( 0,  0, +1));
+				// Ceiling (Z+): inward normal -Z
+				AddFace(V[4], V[5], V[6], V[7], FVector3d( 0,  0, -1));
+				// Front   (Y-): inward normal +Y
+				AddFace(V[0], V[1], V[5], V[4], FVector3d( 0, +1,  0));
+				// Back    (Y+): inward normal -Y
+				AddFace(V[3], V[2], V[6], V[7], FVector3d( 0, -1,  0));
+				// Left    (X-): inward normal +X
+				AddFace(V[0], V[3], V[7], V[4], FVector3d(+1,  0,  0));
+				// Right   (X+): inward normal -X
+				AddFace(V[1], V[2], V[6], V[5], FVector3d(-1,  0,  0));
+			};
+
+			AddRoomShellImperial(Center, FullSize);
+			bAnyShell = true;
+
+			// ---- Weld + normals + emit on Shell pin (same path as the tunnel shell).
+			if (bAnyShell && Mesh.TriangleCount() > 0)
+			{
+				FMergeCoincidentMeshEdges Welder(&Mesh);
+				Welder.Apply();
+
+				FMeshNormals::QuickRecomputeOverlayNormals(Mesh);
+
+				UPCGDynamicMeshData* ShellData = FPCGContext::NewObject_AnyThread<UPCGDynamicMeshData>(Context);
+				TArray<UMaterialInterface*> ShellMaterials;
+				if (ShellMat)
+				{
+					ShellMaterials.Add(ShellMat);
+				}
+				ShellData->Initialize(MoveTemp(Mesh), ShellMaterials);
+
+				FPCGTaggedData& OutShell = Context->OutputData.TaggedData.Emplace_GetRef();
+				OutShell.Data = ShellData;
+				OutShell.Pin = FName(TEXT("Shell"));
+				OutShell.Tags = In.Tags;
+			}
+
+			// Room path does not emit any Out points for now (no grammar expansion).
+			continue; // skip the spline/tunnel path below for this input
+		}
+
+		// ====================================================================
+		// TUNNEL PATH (unchanged): kind != "room" — requires a spline input.
+		// ====================================================================
 		const UPCGSplineData* Spline = Cast<UPCGSplineData>(In.Data);
 		if (!Spline)
 		{
@@ -654,15 +848,23 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 
 		const double LenMetres = TotalLen / 100.0; // UE units are cm.
 
-		// ---- Seed symbol: a tunnel run with native-builder phase-I attrs.
+		// ---- Seed symbol: read per-primitive attributes from input data metadata,
+		// falling back to the original literals when an attribute is absent.
+		const int32 PrimId = (int32)ReadNumAttr(InData, FName(TEXT("prim_id")),    0.0); // stashed for Task 8/9
+		(void)PrimId; // Task 8/9 will use this; suppress unused-variable warning until then.
 		FSymbol Seed;
-		Seed.Kind = TEXT("tunnel");
-		Seed.Attrs.Add(TEXT("builder"),    FAttr::MakeStr(TEXT("native")));
-		Seed.Attrs.Add(TEXT("phase"),      FAttr::MakeStr(TEXT("I")));
-		Seed.Attrs.Add(TEXT("importance"), FAttr::MakeNum(0.3));
-		Seed.Attrs.Add(TEXT("len"),        FAttr::MakeNum(LenMetres));
-		Seed.Attrs.Add(TEXT("w"),          FAttr::MakeNum(1.8));
-		Seed.Attrs.Add(TEXT("h"),          FAttr::MakeNum(2.4));
+		Seed.Kind = EarlyKind; // already read above
+		Seed.Attrs.Add(TEXT("builder"),    FAttr::MakeStr(ReadStrAttr(InData, FName(TEXT("builder")),   TEXT("native"))));
+		Seed.Attrs.Add(TEXT("phase"),      FAttr::MakeStr(ReadStrAttr(InData, FName(TEXT("phase")),     TEXT("I"))));
+		Seed.Attrs.Add(TEXT("importance"), FAttr::MakeNum(ReadNumAttr(InData, FName(TEXT("importance")), 0.3)));
+		Seed.Attrs.Add(TEXT("len"),        FAttr::MakeNum(LenMetres)); // always computed from spline length
+		Seed.Attrs.Add(TEXT("w"),          FAttr::MakeNum(ReadNumAttr(InData, FName(TEXT("w")),          1.8)));
+		Seed.Attrs.Add(TEXT("h"),          FAttr::MakeNum(ReadNumAttr(InData, FName(TEXT("h")),          2.4)));
+		// seed (int32 read as double, cast): stored as number attr on the symbol if non-zero.
+		{
+			const int32 SeedVal = (int32)ReadNumAttr(InData, FName(TEXT("seed")), 0.0);
+			Seed.Attrs.Add(TEXT("seed"), FAttr::MakeNum((double)SeedVal));
+		}
 
 		FPlacementPlan Plan;
 		ExpandGrammar(Seed, Prods, Plan);
@@ -772,73 +974,68 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 		{
 			// Anchor: ceiling centre at AtAlpha. Lift to the shell ceiling (seed h)
 			// so the shaft springs from the top of the bore, not the floor centreline.
-			// The vent comment "Faces inward" is honored by the inward ND below.
 			FVector Loc, R, U, Tn; Frame(AtAlpha * TotalLen, Loc, R, U, Tn);
 			const double VentW = 120.0;          // cm, square-ish shaft
 			const double CeilingCm = BoreHcm;     // shell H (sourced from seed h)
 			const double BendCm = FMath::Clamp(BendAtM, 0.5, kMaxStraightRunM) * 100.0;
-			const FVector Base = Loc + U * CeilingCm; // start at the ceiling
-			// Straight leg goes UP (+U) for BendCm, then bends to run along +Tn for BendCm.
-			const FVector PApex = Base + U * BendCm;
-			const FVector PEnd  = PApex + Tn * BendCm;
-
-			// Cross-section offsets (right/forward plane perpendicular to each leg).
+			const FVector Base  = Loc + U * CeilingCm;   // mouth at the ceiling
+			const FVector PApex = Base + U * BendCm;     // bend point
+			const FVector PEnd  = PApex + Tn * BendCm;   // far (capped) end
 			const double h = VentW * 0.5;
-			// Leg 1 (vertical): cross-section spans R and Tn.
-			auto Ring1 = [&](const FVector& Centre, FVector& Q0, FVector& Q1, FVector& Q2, FVector& Q3)
+
+			// Three cross-section rings, each 4 verts appended ONCE. The vertical and
+			// horizontal legs reference the SAME miter-ring indices, so the elbow is
+			// connected BY CONSTRUCTION -- no reliance on FMergeCoincidentMeshEdges,
+			// which won't fuse the same-oriented seam edges a positional miter produces.
+			// Corner order is consistent around the tube so wall k spans corners k..k+1
+			// on both rings. base k -> miter k -> end k map by (R sign, in-plane sign):
+			//   k0:(-R,near) k1:(+R,near) k2:(+R,far) k3:(-R,far)
+			const FVector Inner = U * h + Tn * h;       // inner (concave) corner offset
+			const FVector BaseRing[4] = {               // R/Tn plane (vertical leg, OPEN mouth)
+				Base + R*-h + Tn*-h, Base + R* h + Tn*-h, Base + R* h + Tn* h, Base + R*-h + Tn* h };
+			const FVector MiterRing[4] = {              // shared fold loop (the miter)
+				PApex - Inner + R*-h, PApex - Inner + R* h, PApex + Inner + R* h, PApex + Inner + R*-h };
+			const FVector EndRing[4] = {                // R/U plane (horizontal leg)
+				PEnd + R*-h + U*-h, PEnd + R* h + U*-h, PEnd + R* h + U* h, PEnd + R*-h + U* h };
+
+			int32 B[4], M[4], E[4];
+			for (int32 k = 0; k < 4; ++k)
 			{
-				Q0 = Centre + R * -h + Tn * -h;
-				Q1 = Centre + R *  h + Tn * -h;
-				Q2 = Centre + R *  h + Tn *  h;
-				Q3 = Centre + R * -h + Tn *  h;
-			};
-			// Leg 2 (horizontal along +Tn): cross-section spans R and U.
-			auto Ring2 = [&](const FVector& Centre, FVector& Q0, FVector& Q1, FVector& Q2, FVector& Q3)
+				B[k] = Mesh.AppendVertex(FVector3d(BaseRing[k]));
+				M[k] = Mesh.AppendVertex(FVector3d(MiterRing[k]));
+				E[k] = Mesh.AppendVertex(FVector3d(EndRing[k]));
+			}
+
+			// Uniform tube winding. Wall k spans corner k..n on a (near,far) ring pair.
+			// Because the three rings share corner ordering with NO twist (verified: each
+			// k keeps its R sign and flows its in-plane sign Base->Miter->End), winding
+			// every wall with the SAME scheme makes the whole bent tube consistently
+			// orientable -- which CheckValidity's default options require. A single flip
+			// (decided from wall 0, the -Tn wall, which must face inward +Tn) orients all
+			// walls into the bore. Both ends stay OPEN: the Base mouth into the bore and
+			// the far mouth venting to the surface.
+			const FVector3d gTest = (FVector3d(BaseRing[1]) - FVector3d(BaseRing[0]))
+				.Cross(FVector3d(MiterRing[1]) - FVector3d(BaseRing[0]));
+			const bool bFlip = gTest.Dot(FVector3d(Tn)) < 0.0;
+			auto Wall = [&](int32 a0, int32 a1, int32 b1, int32 b0) // near a0..a1, far b0..b1
 			{
-				Q0 = Centre + R * -h + U * -h;
-				Q1 = Centre + R *  h + U * -h;
-				Q2 = Centre + R *  h + U *  h;
-				Q3 = Centre + R * -h + U *  h;
+				if (!bFlip)
+				{
+					Mesh.AppendTriangle(FIndex3i(a0, a1, b1));
+					Mesh.AppendTriangle(FIndex3i(a0, b1, b0));
+				}
+				else
+				{
+					Mesh.AppendTriangle(FIndex3i(a0, b1, a1));
+					Mesh.AppendTriangle(FIndex3i(a0, b0, b1));
+				}
 			};
-
-			FVector A0, A1, A2, A3, B0, B1, B2, B3;
-			// Vertical leg walls. ND points INWARD (toward the leg centreline), i.e.
-			// the negation of the side each wall's four vertices sit on, matching the
-			// shell's front-face-into-the-bore convention. The wall at Tn*-h faces +Tn.
-			Ring1(Base,  A0, A1, A2, A3);
-			Ring1(PApex, B0, B1, B2, B3);
-			AddQuad(A0, A1, B1, B0, (Tn *  1.0)); // -Tn wall -> inward +Tn
-			AddQuad(A1, A2, B2, B1, (R * -1.0));  // +R wall  -> inward -R
-			AddQuad(A2, A3, B3, B2, (Tn * -1.0)); // +Tn wall -> inward -Tn
-			AddQuad(A3, A0, B0, B3, (R *  1.0));  // -R wall  -> inward +R
-
-			// Elbow: weld the vertical leg's apex ring (Ring1@PApex = B0..B3, in the
-			// R/Tn plane) to the horizontal leg's start ring (Ring2@PApex, in the R/U
-			// plane) with four bridge quads so the mitre is closed, not an open gap.
-			// Bridge faces point inward toward the elbow centre PApex.
-			FVector E0, E1, E2, E3;             // Ring1 @ PApex (apex of vertical leg)
-			FVector F0, F1, F2, F3;             // Ring2 @ PApex (start of horizontal leg)
-			Ring1(PApex, E0, E1, E2, E3);
-			Ring2(PApex, F0, F1, F2, F3);
-			AddQuad(E0, E1, F1, F0, ((PApex - (E0 + E1 + F1 + F0) * 0.25)).GetSafeNormal());
-			AddQuad(E1, E2, F2, F1, ((PApex - (E1 + E2 + F2 + F1) * 0.25)).GetSafeNormal());
-			AddQuad(E2, E3, F3, F2, ((PApex - (E2 + E3 + F3 + F2) * 0.25)).GetSafeNormal());
-			AddQuad(E3, E0, F0, F3, ((PApex - (E3 + E0 + F0 + F3) * 0.25)).GetSafeNormal());
-
-			// Horizontal leg walls. ND inward toward the leg centreline (negation of
-			// each wall's side), same convention as the vertical leg.
-			Ring2(PApex, A0, A1, A2, A3);
-			Ring2(PEnd,  B0, B1, B2, B3);
-			AddQuad(A0, A1, B1, B0, (U *  1.0));  // -U wall  -> inward +U
-			AddQuad(A1, A2, B2, B1, (R * -1.0));  // +R wall  -> inward -R
-			AddQuad(A2, A3, B3, B2, (U * -1.0));  // +U wall  -> inward -U
-			AddQuad(A3, A0, B0, B3, (R *  1.0));  // -R wall  -> inward +R
-
-			// Cap the far (top) end of the horizontal leg so it is not an open hole.
-			// The end cap at PEnd faces inward (-Tn, back toward the elbow) consistent
-			// with the inward-facing wall convention. The Base end is left OPEN so the
-			// shaft mouth opens down into the bore at the ceiling penetration.
-			AddQuad(B0, B1, B2, B3, (Tn * -1.0));
+			for (int32 k = 0; k < 4; ++k)
+			{
+				const int32 n = (k + 1) % 4;
+				Wall(B[k], B[n], M[n], M[k]); // vertical-leg wall, base -> miter
+				Wall(M[k], M[n], E[n], E[k]); // horizontal-leg wall, miter -> end
+			}
 
 			bAnyShell = true;
 		};
@@ -873,8 +1070,13 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 					const FTransform T = Spline->GetTransformAtAlpha((float)FMath::Clamp(Alpha, 0.0, 1.0));
 					const FVector Y = T.GetUnitAxis(EAxis::Y);
 					const double Side = (i % 2 == 0) ? +1.0 : -1.0; // alternate
+					const FVector Up = T.GetUnitAxis(EAxis::Z);
+					// Floor-to-ceiling pillar: scale the unit cube to a slender column the
+					// full bore height and lift its centre to mid-height so it stands on the
+					// floor instead of sitting half-buried as a 1 m cube.
 					FTransform Out = T;
-					Out.SetLocation(T.GetLocation() + Y * (Side * HalfWcm));
+					Out.SetLocation(T.GetLocation() + Y * (Side * HalfWcm) + Up * (BoreHcm * 0.5));
+					Out.SetScale3D(FVector(0.45, 0.45, BoreHcm / 100.0));
 					FStagedPoint SP;
 					SP.Xform = Out;
 					if (!ColumnMeshPath.IsNull())

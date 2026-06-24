@@ -7,6 +7,14 @@ public class HaybaMCPToolkit : ModuleRules
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
+        // Disable unity builds for this module. Several handler .cpp files define
+        // identically-named anonymous-namespace helpers (EditorWorld/ReadVec/
+        // FindActorByName); unity concatenation merges their TUs and these collide
+        // ("function already has a body"). Per-file compilation keeps the helpers
+        // file-local. The adaptive unity build was masking this by excluding
+        // recently-edited files; making it permanent matches that known-good mode.
+        bUseUnity = false;
+
         // FLandscapeImportHelper lives in LandscapeEditor's private headers
         var EngineDir = Path.GetFullPath(Target.RelativeEnginePath);
         PublicSystemIncludePaths.Add(
@@ -30,6 +38,9 @@ public class HaybaMCPToolkit : ModuleRules
             "ContentBrowser", "AdvancedPreviewScene", "RenderCore", "GraphEditor",
             "Sockets", "Networking", "Json", "JsonUtilities",
             "PCG", "HTTP",
+            // Underground tunnel PCG node — build a continuous (seamless) swept
+            // dynamic mesh from a spline. FDynamicMesh3 = GeometryCore; UDynamicMesh = GeometryFramework.
+            "GeometryCore", "GeometryFramework",
             "DirectoryWatcher", "DesktopPlatform",
             "Landscape", "LandscapeEditor", "ImageWrapper",
             "Foliage",
