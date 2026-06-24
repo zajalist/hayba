@@ -772,73 +772,68 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 		{
 			// Anchor: ceiling centre at AtAlpha. Lift to the shell ceiling (seed h)
 			// so the shaft springs from the top of the bore, not the floor centreline.
-			// The vent comment "Faces inward" is honored by the inward ND below.
 			FVector Loc, R, U, Tn; Frame(AtAlpha * TotalLen, Loc, R, U, Tn);
 			const double VentW = 120.0;          // cm, square-ish shaft
 			const double CeilingCm = BoreHcm;     // shell H (sourced from seed h)
 			const double BendCm = FMath::Clamp(BendAtM, 0.5, kMaxStraightRunM) * 100.0;
-			const FVector Base = Loc + U * CeilingCm; // start at the ceiling
-			// Straight leg goes UP (+U) for BendCm, then bends to run along +Tn for BendCm.
-			const FVector PApex = Base + U * BendCm;
-			const FVector PEnd  = PApex + Tn * BendCm;
-
-			// Cross-section offsets (right/forward plane perpendicular to each leg).
+			const FVector Base  = Loc + U * CeilingCm;   // mouth at the ceiling
+			const FVector PApex = Base + U * BendCm;     // bend point
+			const FVector PEnd  = PApex + Tn * BendCm;   // far (capped) end
 			const double h = VentW * 0.5;
-			// Leg 1 (vertical): cross-section spans R and Tn.
-			auto Ring1 = [&](const FVector& Centre, FVector& Q0, FVector& Q1, FVector& Q2, FVector& Q3)
+
+			// Three cross-section rings, each 4 verts appended ONCE. The vertical and
+			// horizontal legs reference the SAME miter-ring indices, so the elbow is
+			// connected BY CONSTRUCTION -- no reliance on FMergeCoincidentMeshEdges,
+			// which won't fuse the same-oriented seam edges a positional miter produces.
+			// Corner order is consistent around the tube so wall k spans corners k..k+1
+			// on both rings. base k -> miter k -> end k map by (R sign, in-plane sign):
+			//   k0:(-R,near) k1:(+R,near) k2:(+R,far) k3:(-R,far)
+			const FVector Inner = U * h + Tn * h;       // inner (concave) corner offset
+			const FVector BaseRing[4] = {               // R/Tn plane (vertical leg, OPEN mouth)
+				Base + R*-h + Tn*-h, Base + R* h + Tn*-h, Base + R* h + Tn* h, Base + R*-h + Tn* h };
+			const FVector MiterRing[4] = {              // shared fold loop (the miter)
+				PApex - Inner + R*-h, PApex - Inner + R* h, PApex + Inner + R* h, PApex + Inner + R*-h };
+			const FVector EndRing[4] = {                // R/U plane (horizontal leg)
+				PEnd + R*-h + U*-h, PEnd + R* h + U*-h, PEnd + R* h + U* h, PEnd + R*-h + U* h };
+
+			int32 B[4], M[4], E[4];
+			for (int32 k = 0; k < 4; ++k)
 			{
-				Q0 = Centre + R * -h + Tn * -h;
-				Q1 = Centre + R *  h + Tn * -h;
-				Q2 = Centre + R *  h + Tn *  h;
-				Q3 = Centre + R * -h + Tn *  h;
-			};
-			// Leg 2 (horizontal along +Tn): cross-section spans R and U.
-			auto Ring2 = [&](const FVector& Centre, FVector& Q0, FVector& Q1, FVector& Q2, FVector& Q3)
+				B[k] = Mesh.AppendVertex(FVector3d(BaseRing[k]));
+				M[k] = Mesh.AppendVertex(FVector3d(MiterRing[k]));
+				E[k] = Mesh.AppendVertex(FVector3d(EndRing[k]));
+			}
+
+			// Uniform tube winding. Wall k spans corner k..n on a (near,far) ring pair.
+			// Because the three rings share corner ordering with NO twist (verified: each
+			// k keeps its R sign and flows its in-plane sign Base->Miter->End), winding
+			// every wall with the SAME scheme makes the whole bent tube consistently
+			// orientable -- which CheckValidity's default options require. A single flip
+			// (decided from wall 0, the -Tn wall, which must face inward +Tn) orients all
+			// walls into the bore. Both ends stay OPEN: the Base mouth into the bore and
+			// the far mouth venting to the surface.
+			const FVector3d gTest = (FVector3d(BaseRing[1]) - FVector3d(BaseRing[0]))
+				.Cross(FVector3d(MiterRing[1]) - FVector3d(BaseRing[0]));
+			const bool bFlip = gTest.Dot(FVector3d(Tn)) < 0.0;
+			auto Wall = [&](int32 a0, int32 a1, int32 b1, int32 b0) // near a0..a1, far b0..b1
 			{
-				Q0 = Centre + R * -h + U * -h;
-				Q1 = Centre + R *  h + U * -h;
-				Q2 = Centre + R *  h + U *  h;
-				Q3 = Centre + R * -h + U *  h;
+				if (!bFlip)
+				{
+					Mesh.AppendTriangle(FIndex3i(a0, a1, b1));
+					Mesh.AppendTriangle(FIndex3i(a0, b1, b0));
+				}
+				else
+				{
+					Mesh.AppendTriangle(FIndex3i(a0, b1, a1));
+					Mesh.AppendTriangle(FIndex3i(a0, b0, b1));
+				}
 			};
-
-			FVector A0, A1, A2, A3, B0, B1, B2, B3;
-			// Vertical leg walls. ND points INWARD (toward the leg centreline), i.e.
-			// the negation of the side each wall's four vertices sit on, matching the
-			// shell's front-face-into-the-bore convention. The wall at Tn*-h faces +Tn.
-			Ring1(Base,  A0, A1, A2, A3);
-			Ring1(PApex, B0, B1, B2, B3);
-			AddQuad(A0, A1, B1, B0, (Tn *  1.0)); // -Tn wall -> inward +Tn
-			AddQuad(A1, A2, B2, B1, (R * -1.0));  // +R wall  -> inward -R
-			AddQuad(A2, A3, B3, B2, (Tn * -1.0)); // +Tn wall -> inward -Tn
-			AddQuad(A3, A0, B0, B3, (R *  1.0));  // -R wall  -> inward +R
-
-			// Elbow: weld the vertical leg's apex ring (Ring1@PApex = B0..B3, in the
-			// R/Tn plane) to the horizontal leg's start ring (Ring2@PApex, in the R/U
-			// plane) with four bridge quads so the mitre is closed, not an open gap.
-			// Bridge faces point inward toward the elbow centre PApex.
-			FVector E0, E1, E2, E3;             // Ring1 @ PApex (apex of vertical leg)
-			FVector F0, F1, F2, F3;             // Ring2 @ PApex (start of horizontal leg)
-			Ring1(PApex, E0, E1, E2, E3);
-			Ring2(PApex, F0, F1, F2, F3);
-			AddQuad(E0, E1, F1, F0, ((PApex - (E0 + E1 + F1 + F0) * 0.25)).GetSafeNormal());
-			AddQuad(E1, E2, F2, F1, ((PApex - (E1 + E2 + F2 + F1) * 0.25)).GetSafeNormal());
-			AddQuad(E2, E3, F3, F2, ((PApex - (E2 + E3 + F3 + F2) * 0.25)).GetSafeNormal());
-			AddQuad(E3, E0, F0, F3, ((PApex - (E3 + E0 + F0 + F3) * 0.25)).GetSafeNormal());
-
-			// Horizontal leg walls. ND inward toward the leg centreline (negation of
-			// each wall's side), same convention as the vertical leg.
-			Ring2(PApex, A0, A1, A2, A3);
-			Ring2(PEnd,  B0, B1, B2, B3);
-			AddQuad(A0, A1, B1, B0, (U *  1.0));  // -U wall  -> inward +U
-			AddQuad(A1, A2, B2, B1, (R * -1.0));  // +R wall  -> inward -R
-			AddQuad(A2, A3, B3, B2, (U * -1.0));  // +U wall  -> inward -U
-			AddQuad(A3, A0, B0, B3, (R *  1.0));  // -R wall  -> inward +R
-
-			// Cap the far (top) end of the horizontal leg so it is not an open hole.
-			// The end cap at PEnd faces inward (-Tn, back toward the elbow) consistent
-			// with the inward-facing wall convention. The Base end is left OPEN so the
-			// shaft mouth opens down into the bore at the ceiling penetration.
-			AddQuad(B0, B1, B2, B3, (Tn * -1.0));
+			for (int32 k = 0; k < 4; ++k)
+			{
+				const int32 n = (k + 1) % 4;
+				Wall(B[k], B[n], M[n], M[k]); // vertical-leg wall, base -> miter
+				Wall(M[k], M[n], E[n], E[k]); // horizontal-leg wall, miter -> end
+			}
 
 			bAnyShell = true;
 		};
@@ -873,8 +868,13 @@ bool FPCGGrammarSolverElement::ExecuteInternal(FPCGContext* Context) const
 					const FTransform T = Spline->GetTransformAtAlpha((float)FMath::Clamp(Alpha, 0.0, 1.0));
 					const FVector Y = T.GetUnitAxis(EAxis::Y);
 					const double Side = (i % 2 == 0) ? +1.0 : -1.0; // alternate
+					const FVector Up = T.GetUnitAxis(EAxis::Z);
+					// Floor-to-ceiling pillar: scale the unit cube to a slender column the
+					// full bore height and lift its centre to mid-height so it stands on the
+					// floor instead of sitting half-buried as a 1 m cube.
 					FTransform Out = T;
-					Out.SetLocation(T.GetLocation() + Y * (Side * HalfWcm));
+					Out.SetLocation(T.GetLocation() + Y * (Side * HalfWcm) + Up * (BoreHcm * 0.5));
+					Out.SetScale3D(FVector(0.45, 0.45, BoreHcm / 100.0));
 					FStagedPoint SP;
 					SP.Xform = Out;
 					if (!ColumnMeshPath.IsNull())
