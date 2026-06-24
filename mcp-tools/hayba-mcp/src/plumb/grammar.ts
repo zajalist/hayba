@@ -2,6 +2,8 @@ import type { Symbol, Production, EmitOp } from './contracts.js';
 
 export interface PlacedItem {
   kind: EmitOp['emit'];
+  /** Alias for kind — the emit operation type (e.g. 'shell', 'asset'). */
+  emit: EmitOp['emit'];
   role?: string;
   tag?: string;
   symbolKind: string;
@@ -71,6 +73,7 @@ export function expandGrammar(
         } else {
           plan.items.push({
             kind: op.emit,
+            emit: op.emit,
             role: (op as any).role,
             tag: (op as any).tag,
             symbolKind: sym.kind,
