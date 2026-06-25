@@ -18,6 +18,7 @@ bool FHaybaTagUnitTest::RunTest(const FString& Parameters)
     // Single segment and empty input.
     TestEqual(TEXT("single segment -> 1"), HaybaTag::ExpandAncestors(TEXT("A")).Num(), 1);
     TestEqual(TEXT("empty -> 0"),          HaybaTag::ExpandAncestors(TEXT("")).Num(), 0);
+    TestEqual(TEXT("double-dot collapses to 2"), HaybaTag::ExpandAncestors(TEXT("A..B")).Num(), 2);
 
     // ExpandAll unions and de-dups overlapping ancestry.
     const TSet<FString> All = HaybaTag::ExpandAll({ TEXT("Style.Imperial.Vent"), TEXT("Style.Imperial") });
@@ -31,6 +32,7 @@ bool FHaybaTagUnitTest::RunTest(const FString& Parameters)
     TestTrue (TEXT("provides Connection.Bore"),  HaybaTag::Provides(Prov, TEXT("Connection.Bore")));
     TestTrue (TEXT("provides Connection (anc.)"), HaybaTag::Provides(Prov, TEXT("Connection")));
     TestFalse(TEXT("does not provide Connection.Road"), HaybaTag::Provides(Prov, TEXT("Connection.Road")));
+    TestFalse(TEXT("empty required tag is not provided"), HaybaTag::Provides(Prov, TEXT("")));
 
     return true;
 }
