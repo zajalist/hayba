@@ -58,6 +58,21 @@
       "has_ts_wrapper": false,
       "notes": "Stats-only alias of mesh_extract (raw geometry arrays forced off). Use to get a fast weld/winding/holes verdict: non_manifold_vertices==0 && degenerate_triangles==0 && connected_components==1 && a small explainable boundary_edges == healthy."
     },
+    "mesh_list_dynamic": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPStaticMeshHandler::MeshListDynamic",
+      "params": [
+        { "name": "label_contains", "type": "string", "required": false, "description": "Only list components on actors whose label contains this substring" }
+      ],
+      "returns": { "shape": "object", "fields": [
+        { "name": "dynamic_meshes", "type": "array", "description": "[{actor_label, component, triangles, vertices, num_materials, empty}]" },
+        { "name": "count", "type": "number" },
+        { "name": "total_triangles", "type": "number" }
+      ] },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Enumerate every UDynamicMeshComponent in the editor level with tri/vert/material counts — replaces the hand-rolled 'loop all actors -> DynamicMeshComponent -> tris' python_run for inspecting PCG/grammar output. Pair with mesh_topology_stats(actor_label=...) for a full weld/manifold verdict on a specific one."
+    },
     "object_get_property": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPAssetHandler::ObjectGetProperty",
