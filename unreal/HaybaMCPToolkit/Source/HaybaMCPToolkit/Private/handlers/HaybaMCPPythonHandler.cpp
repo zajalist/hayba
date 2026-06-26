@@ -3,6 +3,45 @@
 #include "IPythonScriptPlugin.h"
 #include "PythonScriptTypes.h"
 #include "Misc/Base64.h"
+#if PLATFORM_WINDOWS
+#include <excpt.h>   // EXCEPTION_EXECUTE_HANDLER for the SEH guard below
+#endif
+
+// Run one Python command under Structured Exception Handling so a NATIVE access
+// violation inside CPython / the UE Python bindings (a stale or GC'd UObject, a
+// destroyed actor handle, re-entrant editor mutation) is converted into a
+// recoverable error instead of taking down the whole editor. The Python-level
+// try/except in the script wrapper cannot catch a C-level AV — only SEH can.
+//
+// This MUST be its own function with ONLY trivially-destructible params (raw
+// pointers + a bool&): MSVC forbids __try/__except in any function that needs
+// C++ object unwinding (C2712), and the handler is full of FString locals — and
+// even a TFunctionRef parameter trips it. After a caught AV the interpreter may
+// be degraded, so the caller stops and returns rather than issuing follow-ups.
+static bool ExecPythonGuarded(IPythonScriptPlugin* Plugin, FPythonCommandEx* Cmd, bool& bOutCrashed)
+{
+    bOutCrashed = false;
+#if PLATFORM_WINDOWS
+    // Keep the result in a trivially-destructible local and return AFTER the __try.
+    // MSVC 14.50+ raises C2712 if a `return <call>;` lives inside __try (the
+    // returned-value construction counts as object unwinding); the older 14.44
+    // toolchain did not. Capturing to a bool first sidesteps it without changing
+    // the SEH guard's behaviour.
+    bool bResult = false;
+    __try
+    {
+        bResult = Plugin->ExecPythonCommandEx(*Cmd);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        bOutCrashed = true;
+        bResult = false;
+    }
+    return bResult;
+#else
+    return Plugin->ExecPythonCommandEx(*Cmd);
+#endif
+}
 
 TArray<FString> FHaybaMCPPythonHandler::GetCommands() const
 {
@@ -126,7 +165,20 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     // uses 'single' mode and rejects our multi-line wrapper with
     // "SyntaxError: multiple statements found while compiling a single statement".
     RunCmd.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
-    const bool bExecOk = PythonPlugin->ExecPythonCommandEx(RunCmd);
+    // Guard the user-script execution against native access violations so a bad
+    // script returns an error instead of crashing the editor.
+    bool bRunCrashed = false;
+    const bool bExecOk = ExecPythonGuarded(PythonPlugin, &RunCmd, bRunCrashed);
+    if (bRunCrashed)
+    {
+        return FHaybaHandlerResult::Err(TEXT(
+            "python_run: native access violation during script execution. The script "
+            "dereferenced an invalid object — typically a stale/destroyed actor or "
+            "component handle, a garbage-collected UObject held across ticks, or a "
+            "re-entrant editor mutation. The editor was kept alive by the SEH guard; "
+            "re-acquire handles fresh inside the run (do not cache UObject references "
+            "between python_run calls) and avoid mutating the level while iterating it."));
+    }
 
     // Evaluate a base64 expression and decode the result back to a string.
     auto EvalB64 = [PythonPlugin](const FString& Attr) -> FString
