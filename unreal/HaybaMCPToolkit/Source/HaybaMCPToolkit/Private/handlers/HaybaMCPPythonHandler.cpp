@@ -3,6 +3,8 @@
 #include "IPythonScriptPlugin.h"
 #include "PythonScriptTypes.h"
 #include "Misc/Base64.h"
+#include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h"
 #if PLATFORM_WINDOWS
 #include <excpt.h>   // EXCEPTION_EXECUTE_HANDLER for the SEH guard below
 #endif
@@ -46,6 +48,42 @@ static bool ExecPythonGuarded(IPythonScriptPlugin* Plugin, FPythonCommandEx* Cmd
 TArray<FString> FHaybaMCPPythonHandler::GetCommands() const
 {
     return { TEXT("python_run") };
+}
+
+// Detect the registration patterns behind the dangling-delegate crash class
+// (#283/#284): a python_run script binds a UE editor delegate / tick / shutdown
+// callback to a Python callable that later gets garbage-collected, and the next
+// engine broadcast dereferences the freed target -> native access violation at
+// whatever call site triggers it (RecompileMaterial, PostEditChange, …). The
+// SEH guards keep the editor alive, but the fix is to not create the dangling
+// binding in the first place. We WARN (not block — one-shot ops are fine and
+// some callbacks are legitimate if a reference is kept) so the agent stops
+// leaking persistent callbacks across python_run calls.
+static TArray<FString> DetectRiskyDelegatePatterns(const FString& Code)
+{
+    // pattern -> why it's risky
+    static const TArray<TPair<FString, FString>> Patterns = {
+        { TEXT("register_slate_post_tick_callback"), TEXT("per-frame Slate tick callback") },
+        { TEXT("register_slate_pre_tick_callback"),  TEXT("per-frame Slate tick callback") },
+        { TEXT("register_python_shutdown_callback"), TEXT("shutdown callback") },
+        { TEXT("register_post_engine_init_callback"),TEXT("engine-init callback") },
+        { TEXT(".add_callable_unique("),             TEXT("delegate binding (add_callable_unique)") },
+        { TEXT(".add_callable("),                    TEXT("delegate binding (add_callable)") },
+        { TEXT(".add_function("),                    TEXT("delegate binding (add_function)") },
+        { TEXT(".bind_callable("),                   TEXT("delegate binding (bind_callable)") },
+        { TEXT("unreal.register_"),                  TEXT("editor callback registration") },
+    };
+    TArray<FString> Warnings;
+    for (const TPair<FString, FString>& P : Patterns)
+    {
+        if (Code.Contains(P.Key))
+        {
+            Warnings.Add(FString::Printf(
+                TEXT("dangling-delegate risk: '%s' (%s). The Python callable must be kept alive for the editor's lifetime, or it is garbage-collected and the next engine broadcast crashes with an access violation (the #283/#284 crash class). Prefer one-shot operations inside this python_run call; do NOT register persistent editor delegates/tick/shutdown callbacks from python_run. If you must, store the callable on a module-global so it is never collected."),
+                *P.Key, *P.Value));
+        }
+    }
+    return Warnings;
 }
 
 EPythonTier FHaybaMCPPythonHandler::ClassifyScript(const FString& Code)
@@ -214,6 +252,16 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     Out->SetNumberField(TEXT("tier"), static_cast<int32>(Tier));
     Out->SetStringField(TEXT("stdout"), StdOut);
     Out->SetStringField(TEXT("stderr"), StdErr);
+
+    // Surface dangling-delegate registration risks (the root cause behind the
+    // #283/#284 native AVs) so the agent stops leaking persistent callbacks.
+    const TArray<FString> DelegateWarnings = DetectRiskyDelegatePatterns(Code);
+    if (DelegateWarnings.Num() > 0)
+    {
+        TArray<TSharedPtr<FJsonValue>> Warr;
+        for (const FString& W : DelegateWarnings) Warr.Add(MakeShareable(new FJsonValueString(W)));
+        Out->SetArrayField(TEXT("warnings"), Warr);
+    }
 
     return FHaybaHandlerResult::Ok(Out);
 }
