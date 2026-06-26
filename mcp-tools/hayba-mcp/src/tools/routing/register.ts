@@ -39,6 +39,7 @@ import { setAssetDagSink } from '../asset-sources/shared.js';
 
 /** Tools registered by registerDeferredRouting itself — skip in shim re-register. */
 export const ALWAYS_ON_META = new Set<string>([
+  'world_generate',
   'hayba_search_tools',
   'hayba_pack_list',
   'hayba_pack_load',
@@ -282,6 +283,9 @@ export async function registerDeferredRouting(
   };
   passthrough('list_tool_categories');
   passthrough('get_tool_signature');
+  // world_generate — the always-on flagship: describe a biome, get a
+  // PLUMB-validated scene. No pack load required.
+  passthrough('world_generate');
   // Validator tools — always-on so the UE plugin's Validator panel and any
   // agent can read/manage history without loading a pack.
   passthrough('validator_run');

@@ -58,6 +58,7 @@ import { materialSetMaterialPropertyHandler, meta as materialSetMaterialProperty
 import { materialCompileHandler, meta as materialCompileMeta } from './material/material-compile.js';
 import { materialDisconnectHandler, meta as materialDisconnectMeta } from './material/material-disconnect.js';
 import { materialValidateHandler, meta as materialValidateMeta } from './material/material-validate.js';
+import { worldGenerateHandler, meta as worldGenerateMeta } from './world/world-generate.js';
 import {
   textureGetInfoHandler, getInfoMeta as textureGetInfoMeta,
   textureSetCompressionHandler, setCompressionMeta as textureSetCompressionMeta,
@@ -183,6 +184,25 @@ const dCoerceVec3 = z.preprocess((v) => {
  */
 const M = 'material'; // niche domain for the material toolset
 const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
+    // ── World generation (always-on flagship) ────────────────────────────────
+    {
+      name: 'world_generate',
+      description: 'Build an environment from a natural-language biome description. Parses the prompt into layers (canopy/rock/undergrowth/groundcover), resolves one of the PROJECT\'S OWN StaticMeshes per layer, plans a deterministic seeded scatter across an area actor, then PLUMB-VALIDATES and auto-corrects every instance IN MEMORY (grounded, non-interpenetrating) before spawning — "scatter and prove", not scatter-and-hope. Use dry_run to get the validated plan without spawning.',
+      meta: worldGenerateMeta,
+      handler: worldGenerateHandler,
+      cost: 'high',
+      returns: '{ok, center_cm, layers:[{role,keywords,asset}], gaps:[string], planned, validation:{ran,passes,failed_before,failed_after,fixed}, spawned, mesh_set, sample?}',
+      schema: {
+        area_actor: z.string().min(1).describe('Label of an actor whose location centres the biome region'),
+        prompt: z.string().min(1).describe('Natural-language biome description'),
+        radius_cm: z.number().positive().optional().describe('Scatter radius in cm (default 1500)'),
+        count: z.number().int().positive().optional().describe('Total instances across all layers (default 40)'),
+        seed: z.number().int().optional().describe('Deterministic seed (default 1337)'),
+        ground_tolerance_m: z.number().positive().optional().describe('Grounded tolerance in metres (default 0.1)'),
+        dry_run: z.boolean().optional().describe('Plan + validate only; do not spawn'),
+      },
+    },
+
     // ── Actor domain ────────────────────────────────────────────────────────
     {
       name: 'actor_spawn',
