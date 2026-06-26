@@ -12,6 +12,9 @@
 // mesh_extract — read back geometry + topology health from a dynamic/static mesh
 #include "DynamicMesh/DynamicMesh3.h"
 #include "Selections/MeshConnectedComponents.h"
+#include "MeshBoundaryLoops.h"                         // FMeshBoundaryLoops — open-hole loop count
+#include "MeshQueries.h"                               // TMeshQueries::GetVolumeArea
+#include "DynamicMesh/Operations/MergeCoincidentMeshEdges.h" // weld render verts -> real topology
 #include "Components/DynamicMeshComponent.h"   // UDynamicMeshComponent (GeometryFramework)
 #include "UDynamicMesh.h"                        // UDynamicMesh::GetMeshRef (GeometryFramework)
 #include "IndexTypes.h"                          // FIndex3i
@@ -229,11 +232,33 @@ namespace
         using namespace UE::Geometry;
 
         // ── counts ────────────────────────────────────────────────────────────
+        const int32 NumT = Mesh.TriangleCount();
+        const int32 NumV = Mesh.VertexCount();
+        const int32 NumE = Mesh.EdgeCount();
         auto Counts = MakeShared<FJsonObject>();
-        Counts->SetNumberField(TEXT("triangles"), Mesh.TriangleCount());
-        Counts->SetNumberField(TEXT("vertices"), Mesh.VertexCount());
-        Counts->SetNumberField(TEXT("edges"), Mesh.EdgeCount());
+        Counts->SetNumberField(TEXT("triangles"), NumT);
+        Counts->SetNumberField(TEXT("vertices"), NumV);
+        Counts->SetNumberField(TEXT("edges"), NumE);
         Out->SetObjectField(TEXT("counts"), Counts);
+
+        auto Topo = MakeShared<FJsonObject>();
+
+        // Empty-mesh guard: report zeros instead of running loops/measures on nothing.
+        if (NumT == 0)
+        {
+            Topo->SetNumberField(TEXT("boundary_edges"), 0);
+            Topo->SetNumberField(TEXT("boundary_loops"), 0);
+            Topo->SetNumberField(TEXT("non_manifold_vertices"), 0);
+            Topo->SetNumberField(TEXT("degenerate_triangles"), 0);
+            Topo->SetNumberField(TEXT("connected_components"), 0);
+            Topo->SetBoolField(TEXT("has_open_boundaries"), false);
+            Topo->SetBoolField(TEXT("is_closed"), false);
+            Topo->SetBoolField(TEXT("is_valid"), true);
+            Topo->SetStringField(TEXT("note"), TEXT("empty mesh (0 triangles)"));
+            Out->SetObjectField(TEXT("topology"), Topo);
+            Out->SetObjectField(TEXT("bounds"), Box3dToJson(Mesh.GetBounds()));
+            return;
+        }
 
         // ── topology health (whole mesh, never capped) ─────────────────────────
         int32 BoundaryEdges = 0;
@@ -258,20 +283,44 @@ namespace
             if ((B - A).Cross(C - A).SquaredLength() < 1e-12) ++Degenerate;
         }
 
+        // Connected components + per-component triangle counts, so an unwelded
+        // shell ("4 patches, not 1 solid") is diagnosable at a glance.
         FMeshConnectedComponents Components(&Mesh);
         Components.FindConnectedTriangles();
         const int32 NumComponents = Components.Num();
+        TArray<TSharedPtr<FJsonValue>> CompSizes;
+        for (int32 ci = 0; ci < NumComponents; ++ci)
+            CompSizes.Add(MakeShared<FJsonValueNumber>(Components.GetComponent(ci).Indices.Num()));
 
+        // Open-boundary LOOP count (holes), not just edges: 4 loops = 4 holes.
+        FMeshBoundaryLoops Loops(&Mesh, /*bAutoCompute=*/true);
+        const int32 NumBoundaryLoops = Loops.GetLoopCount();
+
+        const bool bClosed = (BoundaryEdges == 0);
         const bool bValid = Mesh.CheckValidity(
             FDynamicMesh3::FValidityOptions(), EValidityCheckFailMode::ReturnOnly);
 
-        auto Topo = MakeShared<FJsonObject>();
+        // Surface area + signed volume (volume only physically meaningful when closed).
+        const FVector2d VolArea = TMeshQueries<FDynamicMesh3>::GetVolumeArea(Mesh);
+
+        // Euler characteristic V-E+F; genus for a clean closed orientable single
+        // shell: X = 2 - 2g - b  =>  g = (2 - b - X) / 2.
+        const int32 Euler = NumV - NumE + NumT;
+
         Topo->SetNumberField(TEXT("boundary_edges"), BoundaryEdges);
+        Topo->SetNumberField(TEXT("boundary_loops"), NumBoundaryLoops);
         Topo->SetNumberField(TEXT("non_manifold_vertices"), NonManifoldVerts);
         Topo->SetNumberField(TEXT("degenerate_triangles"), Degenerate);
         Topo->SetNumberField(TEXT("connected_components"), NumComponents);
+        Topo->SetArrayField(TEXT("component_triangle_counts"), CompSizes);
         Topo->SetBoolField(TEXT("has_open_boundaries"), BoundaryEdges > 0);
+        Topo->SetBoolField(TEXT("is_closed"), bClosed);
         Topo->SetBoolField(TEXT("is_valid"), bValid);
+        Topo->SetNumberField(TEXT("surface_area"), VolArea.Y);
+        Topo->SetNumberField(TEXT("volume"), VolArea.X);
+        Topo->SetNumberField(TEXT("euler_characteristic"), Euler);
+        if (NumComponents == 1 && NonManifoldVerts == 0 && bClosed)
+            Topo->SetNumberField(TEXT("genus"), (2 - NumBoundaryLoops - Euler) / 2);
         Out->SetObjectField(TEXT("topology"), Topo);
 
         Out->SetObjectField(TEXT("bounds"), Box3dToJson(Mesh.GetBounds()));
@@ -438,70 +487,36 @@ static FHaybaHandlerResult MeshExtract(const TSharedPtr<FJsonObject>& P, bool bS
     Out->SetStringField(TEXT("path"), Path);
     Out->SetNumberField(TEXT("lod"), Lod);
 
-    const int32 NumV = LOD.GetNumVertices();
-    const int32 NumT = LOD.GetNumTriangles();
-    auto Counts = MakeShared<FJsonObject>();
-    Counts->SetNumberField(TEXT("triangles"), NumT);
-    Counts->SetNumberField(TEXT("vertices"), NumV);
-    Out->SetObjectField(TEXT("counts"), Counts);
-
-    // Render vertices are split at UV/normal seams, so manifold topology on them
-    // is unreliable — report counts + bounds here. Use the dynamic-mesh path
-    // (actor_label) for weld/winding verdicts.
-    auto Topo = MakeShared<FJsonObject>();
-    Topo->SetStringField(TEXT("note"), TEXT("topology health (welds/manifold) requires a dynamic-mesh source via actor_label; static render data is vertex-split"));
-    Out->SetObjectField(TEXT("topology"), Topo);
-
-    const FBoxSphereBounds B = SMesh->GetBounds();
-    auto Bounds = MakeShared<FJsonObject>();
-    Bounds->SetObjectField(TEXT("min"), Vec3ToJson(B.Origin - B.BoxExtent));
-    Bounds->SetObjectField(TEXT("max"), Vec3ToJson(B.Origin + B.BoxExtent));
-    Bounds->SetObjectField(TEXT("extents"), Vec3ToJson(B.BoxExtent));
-    Out->SetObjectField(TEXT("bounds"), Bounds);
-
-    if (bIncTris || bIncPos)
+    // Build a welded FDynamicMesh3 from the render LOD so static meshes get the
+    // SAME rigorous topology as the dynamic-mesh path. Render vertices are split
+    // at UV/normal seams; FMergeCoincidentMeshEdges re-welds coincident edges to
+    // recover the authoring connectivity (real components / boundaries / genus).
+    using namespace UE::Geometry;
+    FDynamicMesh3 DMesh;
     {
+        const FPositionVertexBuffer& PosBuf = LOD.VertexBuffers.PositionVertexBuffer;
+        const uint32 NV = PosBuf.GetNumVertices();
+        TArray<int32> VMap; VMap.Reserve(NV);
+        for (uint32 i = 0; i < NV; ++i)
+            VMap.Add(DMesh.AppendVertex((FVector3d)(FVector)PosBuf.VertexPosition(i)));
         TArray<uint32> Indices;
         LOD.IndexBuffer.GetCopy(Indices);
-        const FPositionVertexBuffer& PosBuf = LOD.VertexBuffers.PositionVertexBuffer;
-        bool bTruncated = false;
-
-        if (bIncTris)
+        for (int32 i = 0; i + 2 < Indices.Num(); i += 3)
         {
-            TArray<TSharedPtr<FJsonValue>> Tris;
-            int32 Emitted = 0;
-            for (int32 i = 0; i + 2 < Indices.Num(); i += 3)
-            {
-                if (Emitted >= MaxElements) { bTruncated = true; break; }
-                TArray<TSharedPtr<FJsonValue>> IJK = {
-                    MakeShared<FJsonValueNumber>(Indices[i]),
-                    MakeShared<FJsonValueNumber>(Indices[i + 1]),
-                    MakeShared<FJsonValueNumber>(Indices[i + 2]) };
-                Tris.Add(MakeShared<FJsonValueArray>(IJK));
-                ++Emitted;
-            }
-            Out->SetArrayField(TEXT("triangles"), Tris);
+            const int32 A = VMap.IsValidIndex(Indices[i])     ? VMap[Indices[i]]     : INDEX_NONE;
+            const int32 B = VMap.IsValidIndex(Indices[i + 1]) ? VMap[Indices[i + 1]] : INDEX_NONE;
+            const int32 C = VMap.IsValidIndex(Indices[i + 2]) ? VMap[Indices[i + 2]] : INDEX_NONE;
+            if (A != INDEX_NONE && B != INDEX_NONE && C != INDEX_NONE)
+                DMesh.AppendTriangle(FIndex3i(A, B, C));
         }
-        if (bIncPos)
-        {
-            TArray<TSharedPtr<FJsonValue>> Verts;
-            int32 Emitted = 0;
-            for (uint32 i = 0; i < PosBuf.GetNumVertices(); ++i)
-            {
-                if ((int32)Emitted >= MaxElements) { bTruncated = true; break; }
-                const FVector V = (FVector)PosBuf.VertexPosition(i);
-                TArray<TSharedPtr<FJsonValue>> XYZ = {
-                    MakeShared<FJsonValueNumber>(V.X),
-                    MakeShared<FJsonValueNumber>(V.Y),
-                    MakeShared<FJsonValueNumber>(V.Z) };
-                Verts.Add(MakeShared<FJsonValueArray>(XYZ));
-                ++Emitted;
-            }
-            Out->SetArrayField(TEXT("vertices"), Verts);
-        }
-        Out->SetBoolField(TEXT("truncated"), bTruncated);
     }
+    FMergeCoincidentMeshEdges Merger(&DMesh);
+    Merger.Apply();
 
+    // Report the pre-weld render vertex count too, so the UV/normal-split count
+    // is still visible alongside the true (welded) vertex count in counts{}.
+    Out->SetNumberField(TEXT("render_vertices"), LOD.GetNumVertices());
+    FillDynamicMeshResult(DMesh, bIncTris, bIncPos, bIncNorm, MaxElements, bHasBBox, BBoxMin, BBoxMax, Out);
     return FHaybaHandlerResult::Ok(Out);
 }
 

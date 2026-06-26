@@ -24,7 +24,7 @@
         "fields": [
           { "name": "source", "type": "string", "description": "'dynamic_mesh_component' | 'static_mesh'" },
           { "name": "counts", "type": "object", "description": "{triangles, vertices, edges}" },
-          { "name": "topology", "type": "object", "description": "dynamic mesh: {boundary_edges, non_manifold_vertices (bowties), degenerate_triangles, connected_components, has_open_boundaries, is_valid}; static mesh: {note}" },
+          { "name": "topology", "type": "object", "description": "Both dynamic AND static sources (static is welded from the render LOD first): {boundary_edges, boundary_loops (hole count), non_manifold_vertices (bowties), degenerate_triangles, connected_components, component_triangle_counts[], has_open_boundaries, is_closed, is_valid, surface_area, volume, euler_characteristic, genus (only when single closed manifold)}" },
           { "name": "bounds", "type": "object", "description": "{min,max,extents}" },
           { "name": "triangles", "type": "array", "description": "present only when include_triangles" },
           { "name": "vertices", "type": "array", "description": "present only when include_positions" },
@@ -50,13 +50,60 @@
         "shape": "object",
         "fields": [
           { "name": "counts", "type": "object", "description": "{triangles, vertices, edges}" },
-          { "name": "topology", "type": "object", "description": "{boundary_edges, non_manifold_vertices, degenerate_triangles, connected_components, has_open_boundaries, is_valid}" },
+          { "name": "topology", "type": "object", "description": "{boundary_edges, boundary_loops, non_manifold_vertices, degenerate_triangles, connected_components, component_triangle_counts[], has_open_boundaries, is_closed, is_valid, surface_area, volume, euler_characteristic, genus}" },
           { "name": "bounds", "type": "object" }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
       "notes": "Stats-only alias of mesh_extract (raw geometry arrays forced off). Use to get a fast weld/winding/holes verdict: non_manifold_vertices==0 && degenerate_triangles==0 && connected_components==1 && a small explainable boundary_edges == healthy."
+    },
+    "test_list": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPTestHandler::Handle",
+      "params": [
+        { "name": "filter_pattern", "type": "string", "required": false, "description": "Substring filter on display name or full path" },
+        { "name": "category", "type": "string", "required": false, "description": "Full-path prefix filter, e.g. 'Hayba.Socket'" }
+      ],
+      "returns": { "shape": "object", "fields": [
+        { "name": "tests", "type": "array", "description": "[{name, full_test_path, file_name, line_number}]" },
+        { "name": "count", "type": "number" },
+        { "name": "total_discovered", "type": "number" }
+      ] },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Enumerate registered automation tests via FAutomationTestFramework directly (no controller/session-frontend needed)."
+    },
+    "test_run": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPTestHandler::Handle",
+      "params": [
+        { "name": "test_names", "type": "array", "required": false, "description": "Test names/full-paths to run, or the single string 'all'. Accepts a string or array." },
+        { "name": "smoke_only", "type": "boolean", "required": false, "description": "Restrict to SmokeFilter-tagged tests" },
+        { "name": "timeout_seconds", "type": "number", "required": false, "description": "Per-test latent-command drain timeout (default 120)" }
+      ],
+      "returns": { "shape": "object", "fields": [
+        { "name": "passed", "type": "array" },
+        { "name": "failed", "type": "array", "description": "[{name, duration_seconds, errors[]}]" },
+        { "name": "skipped", "type": "array" },
+        { "name": "elapsed_seconds", "type": "number" },
+        { "name": "total", "type": "number" }
+      ] },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Run automation tests INLINE on the calling thread via FAutomationTestFramework::StartTestByName -> ExecuteLatentCommands (drained to completion or timeout) -> StopTest. Bypasses the controller/worker session queue (FAutomationControllerManager::Tick), so it works in a normal GUI editor without opening the Session Frontend / Test Automation tab — the queue that otherwise sits at 'Queued' forever. Use this instead of the console 'Automation RunTests' command."
+    },
+    "test_get_log": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPTestHandler::Handle",
+      "params": [],
+      "returns": { "shape": "object", "fields": [
+        { "name": "tests", "type": "array", "description": "[{name, success, duration_seconds, errors[], warnings[]}] from the most recent test_run" },
+        { "name": "count", "type": "number" }
+      ] },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Full entries (errors + warnings) from the last test_run."
     },
     "ping": {
       "aliases": [],
