@@ -27,6 +27,22 @@ bool FHaybaUnsatCoreUnitTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("human lists provided"),  Human.Contains(TEXT("Connection.Bore")));
     TestTrue(TEXT("human says REJECTED"),   Human.Contains(TEXT("REJECTED")));
 
+    // Clean branch — exact format.
+    {
+        FHaybaBondOutcome Ok; Ok.bOk = true; Ok.bRelaxed = false; Ok.Cost = 0.5;
+        Ok.RequirerName = FName(TEXT("A")); Ok.ProviderName = FName(TEXT("B"));
+        TestEqual(TEXT("clean human exact"), HaybaUnsatCore::BuildHuman(Ok),
+            FString(TEXT("Bond OK  [A] OK [B]  cost 0.50")));
+    }
+    // Relaxed branch — exact format (note: solver guarantees bRelaxed implies bOk).
+    {
+        FHaybaBondOutcome Rx; Rx.bOk = true; Rx.bRelaxed = true; Rx.Cost = 1000.0;
+        Rx.RequirerName = FName(TEXT("A")); Rx.ProviderName = FName(TEXT("B"));
+        Rx.MissingRequired = { TEXT("Tag.X") };
+        TestEqual(TEXT("relaxed human exact"), HaybaUnsatCore::BuildHuman(Rx),
+            FString(TEXT("Bond RELAXED  [A] ~ [B]:  downgraded 'Tag.X'  (seam logged)")));
+    }
+
     // Write + read back the JSON report.
     const FString Tmp = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("HaybaUnsatCoreTest.json"));
     FString Err;
@@ -38,6 +54,9 @@ bool FHaybaUnsatCoreUnitTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("json has ok:false"), Back.Contains(TEXT("\"ok\": false")) || Back.Contains(TEXT("\"ok\":false")));
     TestTrue(TEXT("json has missing tag"), Back.Contains(TEXT("Connection.Road")));
     TestTrue(TEXT("json has human"), Back.Contains(TEXT("REJECTED")));
+    TestTrue(TEXT("json schema_version"), Back.Contains(TEXT("\"schema_version\": \"0.1.0\"")));
+    TestTrue(TEXT("json relaxed:false"), Back.Contains(TEXT("\"relaxed\": false")) || Back.Contains(TEXT("\"relaxed\":false")));
+    TestTrue(TEXT("json frontier field"), Back.Contains(TEXT("\"frontier\"")));
 
     FPlatformFileManager::Get().GetPlatformFile().DeleteFile(*Tmp);
     return true;
