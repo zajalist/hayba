@@ -253,33 +253,35 @@ export async function worldGenerateHandler(args: Record<string, unknown>, _sessi
     return { content: [{ type: 'text', text: JSON.stringify(report, null, 2) }] };
   }
 
-  // 6. spawn corrected transforms (defensive; mesh set best-effort)
-  let spawned = 0; let meshSet = 0; const spawnErrors: string[] = [];
-  for (const p of placements) {
+  // 6. place as Instanced Static Meshes — one ISM actor per resolved mesh, mesh
+  //    set at creation, the VALIDATED transforms added as instances. ISM is the
+  //    right primitive for biome density and composes with pre-spawn validation;
+  //    it also actually renders (actor_set_properties cannot set a component's
+  //    StaticMesh, so the spawn+set path would place empty actors).
+  const byAsset = new Map<string, Placement[]>();
+  for (const p of placements) { const a = byAsset.get(p.asset) ?? []; a.push(p); byAsset.set(p.asset, a); }
+
+  let ismActors = 0; let instances = 0; const placeErrors: string[] = [];
+  for (const [asset, ps] of byAsset) {
     try {
-      const res = await executeCommand<Record<string, unknown>>('actor_spawn', {
-        class_path: '/Script/Engine.StaticMeshActor',
-        location: p.loc_cm,
-        rotation: [0, p.yaw_deg, 0],
-        scale: [p.scale, p.scale, p.scale],
-        label: p.object,
-      });
-      spawned++;
-      const actorId = (res?.actor_id ?? res?.id) as string | undefined;
-      if (actorId) {
-        try {
-          await executeCommand('actor_set_properties', { actor_id: actorId, properties: { 'StaticMeshComponent.StaticMesh': p.asset } });
-          meshSet++;
-        } catch { /* mesh set best-effort; actor still placed at validated transform */ }
+      const leaf = asset.split('/').pop()?.split('.').pop() ?? 'mesh';
+      const created = await executeCommand<Record<string, unknown>>('ism_create_actor', { static_mesh_path: asset, label: `WG_${ps[0].role}_${leaf}`, location: center });
+      const actorId = (created?.actor_id ?? created?.id) as string | undefined;
+      if (!actorId) { placeErrors.push(`${asset}: ism_create_actor returned no actor_id`); continue; }
+      ismActors++;
+      const transforms = ps.map((p) => ({ location: p.loc_cm, rotation: [0, p.yaw_deg, 0], scale: [p.scale, p.scale, p.scale] }));
+      for (let i = 0; i < transforms.length; i += 1000) { // ism_add_instances caps at 1000/call
+        const chunk = transforms.slice(i, i + 1000);
+        const added = await executeCommand<Record<string, unknown>>('ism_add_instances', { actor_id: actorId, transforms: chunk });
+        instances += (added?.added as number | undefined) ?? chunk.length;
       }
     } catch (e) {
-      spawnErrors.push(`${p.object}: ${(e as Error)?.message ?? String(e)}`);
+      placeErrors.push(`${asset}: ${(e as Error)?.message ?? String(e)}`);
     }
   }
-  report.spawned = spawned;
-  report.mesh_set = meshSet;
-  if (spawnErrors.length > 0) report.spawn_errors = spawnErrors.slice(0, 10);
-  if (meshSet < spawned) report.note = 'some/all meshes not set (actor_set_properties path) — actors placed at validated transforms; set StaticMesh manually or via a newer plugin build';
+  report.ism_actors = ismActors;
+  report.instances = instances;
+  if (placeErrors.length > 0) report.place_errors = placeErrors.slice(0, 10);
 
   return { content: [{ type: 'text', text: JSON.stringify(report, null, 2) }] };
 }

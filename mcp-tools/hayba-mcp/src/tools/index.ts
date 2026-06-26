@@ -191,7 +191,7 @@ const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       meta: worldGenerateMeta,
       handler: worldGenerateHandler,
       cost: 'high',
-      returns: '{ok, center_cm, layers:[{role,keywords,asset}], gaps:[string], planned, validation:{ran,passes,failed_before,failed_after,fixed}, spawned, mesh_set, sample?}',
+      returns: '{ok, center_cm, layers:[{role,keywords,asset}], gaps:[string], planned, validation:{ran,passes,failed_before,failed_after,fixed}, ism_actors, instances, place_errors?, sample?}. Places one Instanced-Static-Mesh actor per resolved mesh with the validated transforms as instances.',
       schema: {
         area_actor: z.string().min(1).describe('Label of an actor whose location centres the biome region'),
         prompt: z.string().min(1).describe('Natural-language biome description'),
