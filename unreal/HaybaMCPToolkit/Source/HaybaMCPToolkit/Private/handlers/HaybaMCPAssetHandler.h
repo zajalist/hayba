@@ -22,6 +22,8 @@ private:
     FHaybaHandlerResult AssetFixRedirectors(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult AssetGetDependencies(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult AssetGetReferencers(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult ObjectGetProperty(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult ObjectSetProperty(const TSharedPtr<FJsonObject>& P);
 
     // gh#15: base64-PNG thumbnail preview for an asset. Returns empty string if
     // thumbnail cannot be produced.
