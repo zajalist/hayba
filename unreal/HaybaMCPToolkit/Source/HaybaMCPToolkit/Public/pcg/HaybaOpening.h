@@ -15,12 +15,18 @@ namespace HaybaOpening
         const double HalfW = WidthCm * 0.5;
         const double HalfD = DepthCm * 0.5;
 
+        // Keep all math double-precision: SP-1's real junction sits at world
+        // coordinates, not origin, so narrowing the centroid through float before
+        // the inverse-transform would misclassify boundary triangles. Build the
+        // double-precision bond transform once, outside the loop.
+        const FTransform3d BondXf3d(BondXf);
+
         // Collect first (do not mutate the mesh while iterating its triangle set).
         TArray<int32> ToRemove;
         for (const int32 tid : Mesh.TriangleIndicesItr())
         {
             const FVector3d Cw = Mesh.GetTriCentroid(tid);
-            const FVector L = BondXf.InverseTransformPosition(FVector(Cw));
+            const FVector3d L = BondXf3d.InverseTransformPosition(Cw);
             if (FMath::Abs(L.Y) <= HalfW && L.Z >= 0.0 && L.Z <= HeightCm && FMath::Abs(L.X) <= HalfD)
             {
                 ToRemove.Add(tid);
