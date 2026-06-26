@@ -40,7 +40,9 @@ public class HaybaMCPToolkit : ModuleRules
             "PCG", "HTTP",
             // Underground tunnel PCG node — build a continuous (seamless) swept
             // dynamic mesh from a spline. FDynamicMesh3 = GeometryCore; UDynamicMesh = GeometryFramework.
-            "GeometryCore", "GeometryFramework",
+            // DynamicMesh + GeometryAlgorithms provide the CSG ops (FMeshBoolean, FMeshPlaneCut)
+            // the Socket Bond node uses to cut a clean watertight socket where shells meet.
+            "GeometryCore", "GeometryFramework", "DynamicMesh", "GeometryAlgorithms",
             "DirectoryWatcher", "DesktopPlatform",
             "Landscape", "LandscapeEditor", "ImageWrapper",
             "Foliage",
