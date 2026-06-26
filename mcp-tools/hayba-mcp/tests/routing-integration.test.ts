@@ -13,6 +13,7 @@ import { __resetConnectedLatch } from '../src/tools/check-ue-status.js';
 function fixtureCaptured(): Map<string, CapturedTool> {
   const captured = new Map<string, CapturedTool>();
   const tools: Array<[string, string | null]> = [
+    ['world_generate',              null],
     ['actor_spawn',                 'actor'],
     ['actor_list',                  'actor'],
     ['scene_export',                'scene'],
