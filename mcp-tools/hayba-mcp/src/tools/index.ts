@@ -343,18 +343,18 @@ const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     // ── Material graph-layer domain ───────────────────────────────────────────
     {
       name: 'material_add_node',
-      description: 'Add a new expression node to a material graph.',
+      description: 'Add a new expression node to a material graph. For a MaterialFunctionCall, pass properties.function (asset path) — the node\'s inputs/outputs are rebuilt immediately (UpdateFromFunctionResource), so its output pins are wirable right away and are returned in outputs[]. No recompile/refresh dance needed.',
       meta: materialAddNodeMeta,
       handler: materialAddNodeHandler,
       cost: 'low',
-      returns: '{node_id, expression_class, position}',
+      returns: '{node_id, outputs?:[{name,index}]}  — outputs[] present for MaterialFunctionCall nodes (the pin names to use as from_output)',
       niche: M,
       schema: {
         material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
         function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
         expression_class: z.string().min(1).describe('UE expression class name, e.g. "MaterialExpressionVectorParameter"'),
         node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y] for the new node'),
-        properties: z.record(z.string(), z.unknown()).optional().describe('Initial properties for the node'),
+        properties: z.record(z.string(), z.unknown()).optional().describe('Initial properties for the node. For a MaterialFunctionCall set "function" (or "function_path") to the function asset path — outputs are rebuilt immediately and returned.'),
       },
     },
     {
