@@ -32,7 +32,8 @@ TArray<FString> FHaybaMCPStaticMeshHandler::GetCommands() const
         TEXT("mesh_set_lod"),
         TEXT("mesh_list"),
         TEXT("mesh_extract"),
-        TEXT("mesh_topology_stats")
+        TEXT("mesh_topology_stats"),
+        TEXT("mesh_list_dynamic")
     };
 }
 
@@ -520,6 +521,59 @@ static FHaybaHandlerResult MeshExtract(const TSharedPtr<FJsonObject>& P, bool bS
     return FHaybaHandlerResult::Ok(Out);
 }
 
+// ---------------------------------------------------------------------------
+// mesh_list_dynamic — enumerate every UDynamicMeshComponent in the editor level
+// with tri/vert/material counts. Replaces the hand-rolled "loop all level actors
+// -> get_components_by_class(DynamicMeshComponent) -> print tris" python_run that
+// agents run constantly to inspect PCG / grammar output.
+// ---------------------------------------------------------------------------
+static FHaybaHandlerResult MeshListDynamic(const TSharedPtr<FJsonObject>& P)
+{
+#if WITH_EDITOR
+    if (!GEditor) return FHaybaHandlerResult::Err(TEXT("mesh_list_dynamic: GEditor is null"));
+    UWorld* World = GEditor->GetEditorWorldContext().World();
+    if (!World) return FHaybaHandlerResult::Err(TEXT("mesh_list_dynamic: no editor world"));
+
+    FString LabelContains;
+    if (P.IsValid()) P->TryGetStringField(TEXT("label_contains"), LabelContains);
+
+    TArray<TSharedPtr<FJsonValue>> Items;
+    int32 TotalTris = 0;
+    for (TActorIterator<AActor> It(World); It; ++It)
+    {
+        AActor* A = *It;
+        if (!A) continue;
+        if (!LabelContains.IsEmpty() && !A->GetActorLabel().Contains(LabelContains)) continue;
+        TArray<UDynamicMeshComponent*> Comps;
+        A->GetComponents(Comps);
+        for (UDynamicMeshComponent* C : Comps)
+        {
+            if (!C) continue;
+            UDynamicMesh* DM = C->GetDynamicMesh();
+            const int32 Tris  = DM ? DM->GetMeshRef().TriangleCount() : 0;
+            const int32 Verts = DM ? DM->GetMeshRef().VertexCount()   : 0;
+            TotalTris += Tris;
+            TSharedPtr<FJsonObject> E = MakeShared<FJsonObject>();
+            E->SetStringField(TEXT("actor_label"), A->GetActorLabel());
+            E->SetStringField(TEXT("component"), C->GetName());
+            E->SetNumberField(TEXT("triangles"), Tris);
+            E->SetNumberField(TEXT("vertices"), Verts);
+            E->SetNumberField(TEXT("num_materials"), C->GetNumMaterials());
+            E->SetBoolField(TEXT("empty"), Tris == 0);
+            Items.Add(MakeShared<FJsonValueObject>(E.ToSharedRef()));
+        }
+    }
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetArrayField(TEXT("dynamic_meshes"), Items);
+    Out->SetNumberField(TEXT("count"), Items.Num());
+    Out->SetNumberField(TEXT("total_triangles"), TotalTris);
+    return FHaybaHandlerResult::Ok(Out);
+#else
+    return FHaybaHandlerResult::Err(TEXT("mesh_list_dynamic: editor-only"));
+#endif
+}
+
 FHaybaHandlerResult FHaybaMCPStaticMeshHandler::Handle(const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
 {
     if (Cmd == TEXT("mesh_get_info")) return MeshGetInfo(Params);
@@ -527,5 +581,6 @@ FHaybaHandlerResult FHaybaMCPStaticMeshHandler::Handle(const FString& Cmd, const
     if (Cmd == TEXT("mesh_list"))     return MeshList(Params);
     if (Cmd == TEXT("mesh_extract"))         return MeshExtract(Params, /*bStatsOnly=*/false);
     if (Cmd == TEXT("mesh_topology_stats"))  return MeshExtract(Params, /*bStatsOnly=*/true);
+    if (Cmd == TEXT("mesh_list_dynamic"))    return MeshListDynamic(Params);
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("StaticMeshHandler: unknown command %s"), *Cmd));
 }
