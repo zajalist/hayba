@@ -624,6 +624,14 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
     // Add nodes
     const TArray<TSharedPtr<FJsonValue>>& NodesArray = (*GraphObj)->GetArrayField(TEXT("nodes"));
     TMap<FString, UPCGNode*> CreatedNodes;
+    TArray<FString> NodeOrder;                 // creation order, for stable layout
+    TSet<FString> ExplicitlyPositioned;        // ids the caller positioned itself
+    TArray<TPair<FString, FString>> LayoutEdges; // (fromId, toId) for the layout pass
+    // Auto-layout is ON by default and overrides positions so nodes never stack;
+    // pass "layout":"manual" at the graph root to honour caller-supplied positions.
+    FString LayoutMode = TEXT("auto");
+    (*GraphObj)->TryGetStringField(TEXT("layout"), LayoutMode);
+    const bool bManualLayout = LayoutMode.Equals(TEXT("manual"), ESearchCase::IgnoreCase);
 
     for (const TSharedPtr<FJsonValue>& NodeValue : NodesArray)
     {
@@ -686,13 +694,9 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
             }
 
             CreatedNodes.Add(NodeId, NewNode);
-
-            // Track for auto-layout
-            if (!bHasExplicitPosition)
-            {
-                NewNode->PositionX = CreatedNodes.Num() * 400;
-                NewNode->PositionY = 0;
-            }
+            NodeOrder.Add(NodeId);
+            if (bHasExplicitPosition) ExplicitlyPositioned.Add(NodeId);
+            // Layout is applied AFTER edges are known (see layered pass below).
         }
     }
 
@@ -720,7 +724,44 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
             if (OutputPin && InputPin)
             {
                 OutputPin->AddEdgeTo(InputPin);
+                LayoutEdges.Emplace(FromNode, ToNode);
             }
+        }
+    }
+
+    // ── Layered auto-layout ───────────────────────────────────────────────────
+    // Place nodes by graph DEPTH (column = longest path from a source) and stagger
+    // siblings vertically, so nodes never stack at the same position. Runs after
+    // edges so it reflects real connectivity. Skips caller-positioned nodes only
+    // in "manual" mode; otherwise it lays out everything (the default fix for the
+    // "all nodes at the same position" bug).
+    {
+        TMap<FString, int32> Depth;
+        for (const FString& Id : NodeOrder) Depth.Add(Id, 0);
+        // Longest-path relaxation (graphs are small; bound by node count).
+        for (int32 Pass = 0; Pass < NodeOrder.Num(); ++Pass)
+        {
+            bool bChanged = false;
+            for (const TPair<FString, FString>& E : LayoutEdges)
+            {
+                const int32* DF = Depth.Find(E.Key);
+                int32* DT = Depth.Find(E.Value);
+                if (DF && DT && *DT < *DF + 1) { *DT = *DF + 1; bChanged = true; }
+            }
+            if (!bChanged) break;
+        }
+        TMap<int32, int32> RowInColumn; // depth → next free row
+        const int32 ColW = 384, RowH = 256;
+        for (const FString& Id : NodeOrder)
+        {
+            if (bManualLayout && ExplicitlyPositioned.Contains(Id)) continue;
+            UPCGNode** N = CreatedNodes.Find(Id);
+            if (!N || !*N) continue;
+            const int32 Col = Depth.FindRef(Id);
+            int32& Row = RowInColumn.FindOrAdd(Col);
+            (*N)->PositionX = Col * ColW;
+            (*N)->PositionY = Row * RowH;
+            ++Row;
         }
     }
 
