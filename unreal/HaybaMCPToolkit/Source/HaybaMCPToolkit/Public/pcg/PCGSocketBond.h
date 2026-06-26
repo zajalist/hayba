@@ -1,6 +1,6 @@
 // SP-1 junction node: bonds two shells by socket-contract cost-min, punches
-// the opening on success, and writes/draws the unsat-core on failure.
-// Reads .scratch/sockets.json; writes .scratch/unsat-core.json. Never cached.
+// the opening on success, and always writes/draws the unsat-core report.
+// Reads .scratch/sockets.json; always writes .scratch/unsat-core.json. Never cached.
 #pragma once
 
 #include "PCGSettings.h"

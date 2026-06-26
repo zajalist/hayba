@@ -35,9 +35,10 @@ FText UPCGSocketBondSettings::GetNodeTooltipText() const
 {
     return LOCTEXT("Tooltip",
         "Bonds the Host and Branch shells by socket-contract cost-min (reads "
-        ".scratch/sockets.json). On success, punches an opening in Host at the bond and welds "
-        "Branch in. On failure, writes .scratch/unsat-core.json and draws the human-readable "
-        "tag mismatch at the junction; Host is emitted unchanged (the shells stay sealed).");
+        ".scratch/sockets.json). Always writes .scratch/unsat-core.json (the test oracle) and "
+        "draws the human-readable bond status at the junction. On success, punches an opening in "
+        "Host at the bond and welds Branch in; on failure, Host is emitted unchanged (the shells "
+        "stay sealed).");
 }
 #endif
 
@@ -68,10 +69,16 @@ namespace
         {
             if (const UPCGDynamicMeshData* DM = Cast<UPCGDynamicMeshData>(D.Data))
             {
-                // GetDynamicMesh() returns const UDynamicMesh*; GetMeshRef() copies the
-                // underlying FDynamicMesh3 by value so we can mutate our local copy safely.
-                Out = DM->GetDynamicMesh()->GetMeshRef(); // copy
-                return true;
+                // GetDynamicMesh() returns const UDynamicMesh*; an upstream node can emit a
+                // bare (un-Initialize'd) UPCGDynamicMeshData whose inner UDynamicMesh is null,
+                // so guard it — chaining ->GetMeshRef() on null is a cook-time crash.
+                if (const UDynamicMesh* UM = DM->GetDynamicMesh())
+                {
+                    // GetMeshRef() copies the underlying FDynamicMesh3 by value so we can
+                    // mutate our local copy safely.
+                    Out = UM->GetMeshRef(); // copy
+                    return true;
+                }
             }
         }
         return false;
@@ -138,10 +145,15 @@ bool FPCGSocketBondElement::ExecuteInternal(FPCGContext* Context) const
         BondXf = FTransform(FQuat::Identity, FVector(B.Center()) + Settings->BondLocalOffset);
     }
 
-    // ---- Always write the unsat-core report (the test oracle).
+    // ---- Always write the unsat-core report (the test oracle). The Task 9 gate
+    //      reads this file, so a silent write failure must not pass unnoticed.
     {
         FString WriteErr;
-        HaybaUnsatCore::Write(Outcome, Frontier, Candidate, HaybaUnsatCore::ResolvePath(), WriteErr);
+        if (!HaybaUnsatCore::Write(Outcome, Frontier, Candidate, HaybaUnsatCore::ResolvePath(), WriteErr)
+            || !WriteErr.IsEmpty())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("SocketBond: unsat-core write failed: %s"), *WriteErr);
+        }
     }
 
     // ---- Draw the human line at the junction.
