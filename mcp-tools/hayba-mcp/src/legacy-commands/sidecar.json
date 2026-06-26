@@ -58,6 +58,39 @@
       "has_ts_wrapper": false,
       "notes": "Stats-only alias of mesh_extract (raw geometry arrays forced off). Use to get a fast weld/winding/holes verdict: non_manifold_vertices==0 && degenerate_triangles==0 && connected_components==1 && a small explainable boundary_edges == healthy."
     },
+    "object_get_property": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPAssetHandler::ObjectGetProperty",
+      "params": [
+        { "name": "path", "type": "string", "required": true, "description": "Object/asset path, e.g. /Game/Foo/MyAsset or a sub-object path" },
+        { "name": "names", "type": "array", "required": false, "description": "Optional list of property names to read; omit to dump all editable (CPF_Edit) properties" }
+      ],
+      "returns": { "shape": "object", "fields": [
+        { "name": "path", "type": "string" },
+        { "name": "class", "type": "string" },
+        { "name": "properties", "type": "object", "description": "name -> ExportText string value" }
+      ] },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Generic reflection read on any loadable UObject — replaces get_editor_property python_run pokes. Values are UE ExportText strings."
+    },
+    "object_set_property": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPAssetHandler::ObjectSetProperty",
+      "params": [
+        { "name": "path", "type": "string", "required": true, "description": "Object/asset path" },
+        { "name": "properties", "type": "object", "required": true, "description": "name -> value map (numbers/strings/bools/arrays); set via reflection (HaybaReflection::SetProp)" }
+      ],
+      "returns": { "shape": "object", "fields": [
+        { "name": "path", "type": "string" },
+        { "name": "applied", "type": "array" },
+        { "name": "failed", "type": "array", "description": "property names that did not resolve" },
+        { "name": "ok", "type": "boolean" }
+      ] },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Generic reflection write on any loadable UObject (Modify + PostEditChange + MarkPackageDirty) — replaces set_editor_property python_run pokes. For textures prefer texture_set_settings; for material nodes prefer the material_* tools."
+    },
     "test_list": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPTestHandler::Handle",
@@ -1454,7 +1487,7 @@
         ]
       },
       "agent_callable": true,
-      "has_ts_wrapper": false,
+      "has_ts_wrapper": true,
       "notes": "Spawns an actor whose root is an ISM component named \"ISM\"."
     },
     "ism_add_instance": {
@@ -1520,7 +1553,7 @@
         ]
       },
       "agent_callable": true,
-      "has_ts_wrapper": false,
+      "has_ts_wrapper": true,
       "notes": ""
     },
     "ism_clear_instances": {
@@ -1952,7 +1985,7 @@
         ]
       },
       "agent_callable": true,
-      "has_ts_wrapper": false,
+      "has_ts_wrapper": true,
       "notes": ""
     },
     "asset_get_info": {

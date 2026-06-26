@@ -22,6 +22,8 @@
 #include "IImageWrapperModule.h"
 #include "IImageWrapper.h"
 #include "Modules/ModuleManager.h"
+#include "HaybaMCPReflection.h"  // HaybaReflection::SetProp — generic reflection setter
+#include "UObject/UnrealType.h"  // FProperty::ExportText_InContainer
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPAsset, Log, All);
 
@@ -40,6 +42,8 @@ TArray<FString> FHaybaMCPAssetHandler::GetCommands() const
         TEXT("asset_fix_redirectors"),
         TEXT("asset_get_dependencies"),
         TEXT("asset_get_referencers"),
+        TEXT("object_get_property"),
+        TEXT("object_set_property"),
     };
 }
 
@@ -57,7 +61,81 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::Handle(const FString& Cmd, const TSha
     if (Cmd == TEXT("asset_fix_redirectors"))return AssetFixRedirectors(P);
     if (Cmd == TEXT("asset_get_dependencies"))return AssetGetDependencies(P);
     if (Cmd == TEXT("asset_get_referencers"))return AssetGetReferencers(P);
+    if (Cmd == TEXT("object_get_property"))  return ObjectGetProperty(P);
+    if (Cmd == TEXT("object_set_property"))  return ObjectSetProperty(P);
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("AssetHandler: unknown command %s"), *Cmd));
+}
+
+// ---------------------------------------------------------------------------
+// object_get_property / object_set_property — generic reflection on any loadable
+// UObject (asset) by path. Replaces the scattered get_editor_property /
+// set_editor_property python_run pokes with a first-class, typed tool.
+// ---------------------------------------------------------------------------
+FHaybaHandlerResult FHaybaMCPAssetHandler::ObjectGetProperty(const TSharedPtr<FJsonObject>& P)
+{
+    FString Path;
+    if (!P.IsValid() || !P->TryGetStringField(TEXT("path"), Path) || Path.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("object_get_property: missing path"));
+    UObject* Obj = FSoftObjectPath(Path).TryLoad();
+    if (!Obj) return FHaybaHandlerResult::Err(FString::Printf(TEXT("object_get_property: cannot load %s"), *Path));
+
+    // Optional explicit name list; otherwise dump all editable properties.
+    TArray<FString> Wanted;
+    const TArray<TSharedPtr<FJsonValue>>* NamesArr = nullptr;
+    if (P->TryGetArrayField(TEXT("names"), NamesArr) && NamesArr)
+        for (const TSharedPtr<FJsonValue>& V : *NamesArr) { FString S; if (V->TryGetString(S)) Wanted.Add(S); }
+
+    TSharedPtr<FJsonObject> Props = MakeShared<FJsonObject>();
+    for (TFieldIterator<FProperty> It(Obj->GetClass()); It; ++It)
+    {
+        FProperty* Prop = *It;
+        if (Wanted.Num() == 0 && !Prop->HasAnyPropertyFlags(CPF_Edit)) continue;
+        const FString Name = Prop->GetName();
+        if (Wanted.Num() > 0 && !Wanted.ContainsByPredicate([&](const FString& W){ return W.Equals(Name, ESearchCase::IgnoreCase); })) continue;
+        FString ValueStr;
+        Prop->ExportText_InContainer(0, ValueStr, Obj, Obj, Obj, PPF_None);
+        Props->SetStringField(Name, ValueStr);
+    }
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("path"), Path);
+    Out->SetStringField(TEXT("class"), Obj->GetClass()->GetName());
+    Out->SetObjectField(TEXT("properties"), Props);
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPAssetHandler::ObjectSetProperty(const TSharedPtr<FJsonObject>& P)
+{
+    FString Path;
+    if (!P.IsValid() || !P->TryGetStringField(TEXT("path"), Path) || Path.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("object_set_property: missing path"));
+    const TSharedPtr<FJsonObject>* PropsObj = nullptr;
+    if (!P->TryGetObjectField(TEXT("properties"), PropsObj) || !PropsObj->IsValid())
+        return FHaybaHandlerResult::Err(TEXT("object_set_property: missing properties object"));
+    UObject* Obj = FSoftObjectPath(Path).TryLoad();
+    if (!Obj) return FHaybaHandlerResult::Err(FString::Printf(TEXT("object_set_property: cannot load %s"), *Path));
+
+#if WITH_EDITOR
+    Obj->Modify();
+#endif
+    TArray<TSharedPtr<FJsonValue>> Applied;
+    TArray<TSharedPtr<FJsonValue>> Failed;
+    for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*PropsObj)->Values)
+    {
+        if (HaybaReflection::SetProp(Obj, Pair.Key, Pair.Value)) Applied.Add(MakeShared<FJsonValueString>(Pair.Key));
+        else Failed.Add(MakeShared<FJsonValueString>(Pair.Key));
+    }
+#if WITH_EDITOR
+    Obj->PostEditChange();
+#endif
+    Obj->MarkPackageDirty();
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("path"), Path);
+    Out->SetArrayField(TEXT("applied"), Applied);
+    if (Failed.Num() > 0) Out->SetArrayField(TEXT("failed"), Failed);
+    Out->SetBoolField(TEXT("ok"), Failed.Num() == 0);
+    return FHaybaHandlerResult::Ok(Out);
 }
 
 FHaybaHandlerResult FHaybaMCPAssetHandler::AssetSearch(const TSharedPtr<FJsonObject>& P)
