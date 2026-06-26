@@ -486,6 +486,64 @@ static bool RequireOutputChoice(UMaterialExpression* From, const FString& FromOu
     return false;
 }
 
+// Resolve from_output (name or explicit index) to a concrete output index —
+// AUTHORITATIVELY, so the name path can never silently fall back to output 0.
+// UMaterialEditingLibrary::ConnectMaterialExpressions matches the from-output by
+// name only against GetOutputs().OutputName, which for a MaterialFunctionCall can
+// be empty/stale — so "Normal" silently connected output 0 (the reported bug).
+// We match GetOutputs().OutputName first, then the call's authoritative
+// FunctionOutputs[i].Output.OutputName, and return INDEX_NONE (caller errors)
+// rather than guessing.
+static int32 ResolveFromOutputIndex(UMaterialExpression* From, const FString& Name, bool bHasIdx, int32 Idx, FString& OutErr)
+{
+    const TArray<FExpressionOutput>& Outs = From->GetOutputs();
+    if (bHasIdx)
+    {
+        if (Idx >= 0 && Idx < Outs.Num()) return Idx;
+        OutErr = FString::Printf(TEXT("from_output_index %d out of range (%d outputs)"), Idx, Outs.Num());
+        return INDEX_NONE;
+    }
+    if (Name.IsEmpty()) return 0; // single-output; multi-output already gated by RequireOutputChoice
+    for (int32 i = 0; i < Outs.Num(); ++i)
+        if (Outs[i].OutputName.ToString().Equals(Name, ESearchCase::IgnoreCase)) return i;
+    if (UMaterialExpressionMaterialFunctionCall* Call = Cast<UMaterialExpressionMaterialFunctionCall>(From))
+        for (int32 i = 0; i < Call->FunctionOutputs.Num(); ++i)
+            if (Call->FunctionOutputs[i].Output.OutputName.ToString().Equals(Name, ESearchCase::IgnoreCase)) return i;
+    TArray<FString> Avail;
+    for (int32 i = 0; i < Outs.Num(); ++i)
+    {
+        FString Nm = Outs[i].OutputName.IsNone() ? FString() : Outs[i].OutputName.ToString();
+        if (Nm.IsEmpty())
+            if (UMaterialExpressionMaterialFunctionCall* C = Cast<UMaterialExpressionMaterialFunctionCall>(From))
+                if (C->FunctionOutputs.IsValidIndex(i)) Nm = C->FunctionOutputs[i].Output.OutputName.ToString();
+        Avail.Add(FString::Printf(TEXT("[%d] %s"), i, Nm.IsEmpty() ? TEXT("(unnamed)") : *Nm));
+    }
+    OutErr = FString::Printf(TEXT("from_output '%s' not found on '%s' — available outputs: %s. (Use the exact name or from_output_index.)"),
+        *Name, *From->GetName(), *FString::Join(Avail, TEXT(", ")));
+    return INDEX_NONE;
+}
+
+// Resolve the target input to a concrete FExpressionInput* (by index, then by
+// pin name, else first). Returns null when a named/indexed input doesn't exist.
+static FExpressionInput* ResolveToInput(UMaterialExpression* To, const FString& ToInputName, int32 ToInputIndex)
+{
+    if (ToInputIndex >= 0) return To->GetInput(ToInputIndex);
+    if (!ToInputName.IsEmpty())
+    {
+        const int32 N = To->CountInputs();
+        for (int32 i = 0; i < N; ++i)
+        {
+            FExpressionInput* In = To->GetInput(i);
+            const FName Rn = To->GetInputName(i);
+            const FString Nm = !Rn.IsNone() ? Rn.ToString()
+                : (In && !In->InputName.IsNone() ? In->InputName.ToString() : FString());
+            if (Nm.Equals(ToInputName, ESearchCase::IgnoreCase)) return In;
+        }
+        return nullptr;
+    }
+    return To->GetInput(0);
+}
+
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<FJsonObject>& P)
 {
     FString FromNode;
@@ -506,12 +564,6 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
     bool bHasFromOutputIndex = false;
     { double D; if (P->TryGetNumberField(TEXT("to_input_index"), D)) ToInputIndex = (int32)D; }
     { double D; if (P->TryGetNumberField(TEXT("from_output_index"), D)) { FromOutputIndex = (int32)D; bHasFromOutputIndex = true; } }
-    auto ConnectByIndex = [&](UMaterialExpression* From, UMaterialExpression* To) -> bool {
-        FExpressionInput* In = To->GetInput(ToInputIndex);
-        if (!In) return false;
-        In->Connect(FromOutputIndex, From);
-        return true;
-    };
 
     // Material-Function target (Task 4).
     FString FuncPath;
@@ -525,12 +577,14 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
         if (!bHasTo) return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: function connections require to_node"));
         UMaterialExpression* To = FindExprByNameInFunction(Fn, ToNode);
         if (!To) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: to_node not found: %s"), *ToNode));
-        if (ToInputIndex >= 0)
         {
-            if (!ConnectByIndex(From, To)) return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: to_input_index out of range"));
+            FString OErr;
+            const int32 FromIdx = ResolveFromOutputIndex(From, FromOutput, bHasFromOutputIndex, FromOutputIndex, OErr);
+            if (FromIdx == INDEX_NONE) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: %s"), *OErr));
+            FExpressionInput* In = ResolveToInput(To, ToInput, ToInputIndex);
+            if (!In) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: to_input '%s' (index %d) not found on '%s'"), *ToInput, ToInputIndex, *ToNode));
+            In->Connect(FromIdx, From); // index-resolved — never silently output 0
         }
-        else if (!UMaterialEditingLibrary::ConnectMaterialExpressions(From, FromOutput, To, ToInput))
-            return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: ConnectMaterialExpressions failed"));
         UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
         Fn->MarkPackageDirty();  // in-memory only — function written to disk by material_compile(function_path); avoids a half-built function landing on disk and asserting when the editor opens/compiles it
 
@@ -548,26 +602,29 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
     if (!From) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: from_node not found: %s"), *FromNode));
     { FString OutErr; if (!RequireOutputChoice(From, FromOutput, bHasFromOutputIndex, OutErr)) return FHaybaHandlerResult::Err(OutErr); }
 
+    // Resolve the source output index once (authoritative; never silent-0).
+    FString FromIdxErr;
+    const int32 FromIdx = ResolveFromOutputIndex(From, FromOutput, bHasFromOutputIndex, FromOutputIndex, FromIdxErr);
+    if (FromIdx == INDEX_NONE) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: %s"), *FromIdxErr));
+
     UMaterialExpression* To = nullptr;  // null when connecting to a material property
     if (bHasProp)
     {
         EMaterialProperty Prop;
         if (!TryParseProperty(PropStr, Prop))
             return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: unknown to_property: %s"), *PropStr));
-        if (!UMaterialEditingLibrary::ConnectMaterialProperty(From, FromOutput, Prop))
-            return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: ConnectMaterialProperty failed"));
+        FExpressionInput* In = Mat->GetExpressionInputForProperty(Prop);
+        if (!In) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: material property '%s' has no input (material attributes in use?)"), *PropStr));
+        In->Connect(FromIdx, From); // index-resolved — never silently output 0
     }
     else
     {
         if (!bHasTo) return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: missing to_node or to_property"));
         To = FindExprByName(Mat, ToNode);
         if (!To) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: to_node not found: %s"), *ToNode));
-        if (ToInputIndex >= 0)
-        {
-            if (!ConnectByIndex(From, To)) return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: to_input_index out of range"));
-        }
-        else if (!UMaterialEditingLibrary::ConnectMaterialExpressions(From, FromOutput, To, ToInput))
-            return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: ConnectMaterialExpressions failed"));
+        FExpressionInput* In = ResolveToInput(To, ToInput, ToInputIndex);
+        if (!In) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: to_input '%s' (index %d) not found on '%s'"), *ToInput, ToInputIndex, *ToNode));
+        In->Connect(FromIdx, From); // index-resolved — never silently output 0
     }
 
     // Deferred-compile + crash-resilient save: no per-edit RecompileMaterial
