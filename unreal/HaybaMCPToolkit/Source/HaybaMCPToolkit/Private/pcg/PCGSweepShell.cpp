@@ -57,7 +57,7 @@ bool FPCGSweepShellElement::ExecuteInternal(FPCGContext* Context) const
 	UMaterialInterface* Mat = Settings->Material.LoadSynchronous();
 	const double BaseW = Settings->ProfileWidthCm;
 	const double BaseH = Settings->ProfileHeightCm;
-	const double Spacing = FMath::Max(10.0f, Settings->SampleSpacingCm);
+	const double Spacing = FMath::Max(10.0, Settings->SampleSpacingCm);
 
 	const TArray<FPCGTaggedData> Inputs = Context->InputData.GetInputsByPin(PCGPinConstants::DefaultInputLabel);
 	for (const FPCGTaggedData& In : Inputs)

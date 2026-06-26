@@ -39,15 +39,15 @@ public:
 
 	/** Profile width (cm). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Shell, meta = (ClampMin = "50"))
-	float ProfileWidthCm = 600.f;
+	double ProfileWidthCm = 600.0;
 
 	/** Profile height (cm). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Shell, meta = (ClampMin = "50"))
-	float ProfileHeightCm = 400.f;
+	double ProfileHeightCm = 400.0;
 
 	/** Ring spacing along the spline (cm) — smaller = smoother curve. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Shell, meta = (ClampMin = "10"))
-	float SampleSpacingCm = 60.f;
+	double SampleSpacingCm = 60.0;
 
 	/** Material applied to the generated shell. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Shell)
