@@ -18,7 +18,7 @@
 #if WITH_EDITOR
 FText UPCGSweepShellSettings::GetDefaultNodeTitle() const
 {
-	return LOCTEXT("Title", "Sweep Shell");
+	return LOCTEXT("Title", "Plumb | Sweep Shell");
 }
 FText UPCGSweepShellSettings::GetNodeTooltipText() const
 {

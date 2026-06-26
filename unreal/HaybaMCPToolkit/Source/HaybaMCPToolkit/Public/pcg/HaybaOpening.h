@@ -6,9 +6,85 @@
 
 #include "CoreMinimal.h"
 #include "DynamicMesh/DynamicMesh3.h"
+#include "DynamicMeshEditor.h"            // FDynamicMeshEditor, FMeshIndexMappings (GeometryCore)
+#include "DynamicMesh/MeshNormals.h"      // FMeshNormals::QuickRecomputeOverlayNormals (GeometryCore)
+#include "DynamicMesh/Operations/MergeCoincidentMeshEdges.h"  // FMergeCoincidentMeshEdges (GeometryCore — seam weld)
+#include "Generators/GridBoxMeshGenerator.h"  // FGridBoxMeshGenerator (GeometryCore — clean closed box cutter)
+#include "FrameTypes.h"                   // FFrame3d (GeometryCore)
+#include "BoxTypes.h"                     // FOrientedBox3d / FAxisAlignedBox3d (GeometryCore)
+#include "Operations/MeshBoolean.h"       // FMeshBoolean TrimInside (GeometryCore — carve openings)
 
 namespace HaybaOpening
 {
+    // Seam treatment where the two bonded shells meet. uint8 values match
+    // EHaybaSeamStyle on the Socket Bond node (kept in lockstep by index).
+    enum class ESeamStyle : uint8 { ButtJoint = 0, Welded = 1, Collar = 2 };
+
+    // Knobs handed to CutSocket. (The bond geometry is fully derived from the two
+    // meshes' bounds, so the only authored knob today is the seam treatment.)
+    struct FSocketCut
+    {
+        ESeamStyle Seam = ESeamStyle::Welded;
+    };
+
+    // A clean CLOSED box mesh matching another mesh's axis-aligned bounds, optionally
+    // inflated. TrimInside needs a closed cutter; a shell's bounding box is always one,
+    // unlike the open shell itself (which can't be reliably capped).
+    inline UE::Geometry::FDynamicMesh3 BoundsBox(const UE::Geometry::FDynamicMesh3& M, double Inflate = 0.0)
+    {
+        using namespace UE::Geometry;
+        FAxisAlignedBox3d B = M.GetBounds();
+        FGridBoxMeshGenerator Gen;
+        Gen.Box = FOrientedBox3d(FFrame3d(B.Center()), B.Extents() + FVector3d(Inflate, Inflate, Inflate));
+        Gen.EdgeVertices = FIndex3i(1, 1, 1);
+        Gen.Generate();
+        return FDynamicMesh3(&Gen);
+    }
+
+    // Trim away the part of A that lies inside the closed cutter Cutter (in place).
+    inline void TrimInsideBy(UE::Geometry::FDynamicMesh3& A, const UE::Geometry::FDynamicMesh3& Cutter)
+    {
+        using namespace UE::Geometry;
+        FDynamicMesh3 Out;
+        FMeshBoolean Trim(&A, FTransformSRT3d::Identity(),
+                          &Cutter, FTransformSRT3d::Identity(),
+                          &Out, FMeshBoolean::EBooleanOp::TrimInside);
+        Trim.bWeldSharedEdges = false;        // nothing to weld during the carve
+        Trim.bSimplifyAlongNewEdges = false;  // keep the clean cut edges along the intersection
+        if (Trim.Compute() && Out.TriangleCount() > 0)
+        {
+            A = MoveTemp(Out);
+        }
+    }
+
+    // Bond two open shells into a connected space using each other's BOUNDING BOX as a
+    // clean closed cutter. TrimInside(host, branchBox) carves an opening wherever the
+    // branch's volume crosses the host — automatically once, twice, or N times. TrimInside
+    // (branch, hostBox) drops the branch run inside the host bounds, leaving stubs whose
+    // mouths sit at the host walls, so the two spaces MERGE. Open-mesh-safe (single-sided).
+    inline int32 CutSocket(UE::Geometry::FDynamicMesh3& Host, UE::Geometry::FDynamicMesh3& Branch,
+                           const FSocketCut& S)
+    {
+        using namespace UE::Geometry;
+
+        const FDynamicMesh3 BranchBox = BoundsBox(Branch);
+        const FDynamicMesh3 HostBox   = BoundsBox(Host);
+
+        TrimInsideBy(Host, BranchBox);     // openings in the host at every branch crossing
+        TrimInsideBy(Branch, HostBox);     // drop the branch run inside the host (merge spaces)
+
+        FDynamicMeshEditor Editor(&Host);
+        FMeshIndexMappings Map;
+        Editor.AppendMesh(&Branch, Map);
+        if (S.Seam != ESeamStyle::ButtJoint)
+        {
+            FMergeCoincidentMeshEdges Merge(&Host);
+            Merge.Apply();
+        }
+        FMeshNormals::QuickRecomputeOverlayNormals(Host);
+        return Host.TriangleCount();
+    }
+
     inline int32 PunchDoorway(UE::Geometry::FDynamicMesh3& Mesh, const FTransform& BondXf,
                               double WidthCm, double HeightCm, double DepthCm)
     {

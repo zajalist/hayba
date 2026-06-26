@@ -30,15 +30,15 @@
 #define LOCTEXT_NAMESPACE "PCGSocketBond"
 
 #if WITH_EDITOR
-FText UPCGSocketBondSettings::GetDefaultNodeTitle() const { return LOCTEXT("Title", "Socket Bond"); }
+FText UPCGSocketBondSettings::GetDefaultNodeTitle() const { return LOCTEXT("Title", "Plumb | Socket Bond"); }
 FText UPCGSocketBondSettings::GetNodeTooltipText() const
 {
     return LOCTEXT("Tooltip",
         "Bonds the Host and Branch shells by socket-contract cost-min (reads "
         ".scratch/sockets.json). Always writes .scratch/unsat-core.json (the test oracle) and "
-        "draws the human-readable bond status at the junction. On success, punches an opening in "
-        "Host at the bond and welds Branch in; on failure, Host is emitted unchanged (the shells "
-        "stay sealed).");
+        "draws the human-readable bond status at the junction. On success, cuts openings wherever "
+        "the Branch crosses the Host (once, twice, or N times) and merges the spaces; on failure, "
+        "Host is emitted unchanged (the shells stay sealed).");
 }
 #endif
 
@@ -137,12 +137,18 @@ bool FPCGSocketBondElement::ExecuteInternal(FPCGContext* Context) const
         UE_LOG(LogTemp, Warning, TEXT("SocketBond: %s"), *LoadErr);
     }
 
-    // ---- Derive the bond transform from the branch mouth (SP-1 simplification).
+    // ---- The bond geometry (CutSocket) trims the two shells against each other's
+    //      closed hulls, so it only needs the seam style. We still derive a bond
+    //      position from the branch bounds for the unsat-core viewport overlay.
     FTransform BondXf = FTransform::Identity;
+    HaybaOpening::FSocketCut Cut;
+    bool bHaveFrame = false;
     if (bHasBranch)
     {
-        const FAxisAlignedBox3d B = Branch.GetBounds();
-        BondXf = FTransform(FQuat::Identity, FVector(B.Center()) + Settings->BondLocalOffset);
+        const FAxisAlignedBox3d BB = Branch.GetBounds();
+        BondXf = FTransform(FQuat::Identity, FVector(BB.Center()) + Settings->BondLocalOffset);
+        Cut.Seam = static_cast<HaybaOpening::ESeamStyle>(static_cast<uint8>(Settings->SeamStyle));
+        bHaveFrame = true;
     }
 
     // ---- Always write the unsat-core report (the test oracle). The Task 9 gate
@@ -167,15 +173,12 @@ bool FPCGSocketBondElement::ExecuteInternal(FPCGContext* Context) const
         }
     }
 
-    // ---- Realize geometry.
+    // ---- Realize geometry: openings where the shells cross + merged spaces (CutSocket
+    //      trims each shell by the other's bounds, then welds/normals per SeamStyle).
     FDynamicMesh3 Result = Host;
-    if (Outcome.bOk && bHasBranch)
+    if (Outcome.bOk && bHaveFrame)
     {
-        HaybaOpening::PunchDoorway(Result, BondXf, Settings->DoorWidthCm, Settings->DoorHeightCm, Settings->WallDepthCm);
-        FDynamicMeshEditor Editor(&Result);
-        FMeshIndexMappings Map;
-        Editor.AppendMesh(&Branch, Map);
-        FHaybaMeshOps::WeldAndNormals(Result);
+        HaybaOpening::CutSocket(Result, Branch, Cut);
     }
 
     UPCGDynamicMeshData* OutData = FPCGContext::NewObject_AnyThread<UPCGDynamicMeshData>(Context);

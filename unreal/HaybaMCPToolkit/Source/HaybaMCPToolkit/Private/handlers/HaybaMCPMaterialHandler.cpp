@@ -255,10 +255,20 @@ static void ApplyNodeProps(UMaterialExpression* Expr, const TSharedPtr<FJsonObje
     }
 
     FString FuncPath;
-    if (Props->TryGetStringField(TEXT("function"), FuncPath))
+    if (!Props->TryGetStringField(TEXT("function"), FuncPath))
+        Props->TryGetStringField(TEXT("function_path"), FuncPath); // accept either key
+    if (!FuncPath.IsEmpty())
         if (UMaterialExpressionMaterialFunctionCall* Fc = Cast<UMaterialExpressionMaterialFunctionCall>(Expr))
             if (UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath))
+            {
                 Fc->SetMaterialFunction(Fn);
+                // CRITICAL: rebuild FunctionInputs/FunctionOutputs now. Without this
+                // the call's pins stay empty until the editor opens/recompiles, so
+                // connect-by-name (and material_get_info.outputs[]) see nothing —
+                // the exact footgun that drove the recompile/find_object dances in
+                // the python_run traces.
+                Fc->UpdateFromFunctionResource();
+            }
 
     if (UMaterialExpressionTextureCoordinate* Tc = Cast<UMaterialExpressionTextureCoordinate>(Expr))
     {
@@ -366,6 +376,24 @@ static void HaybaAutoNodePos(int32 ExistingCount, int32& X, int32& Y)
     Y = OriginY + (ExistingCount / Cols) * DY;
 }
 
+// When a newly-added node is a MaterialFunctionCall, emit its (now-rebuilt)
+// output pins so the caller can wire from_output by name immediately — no
+// follow-up material_get_info, no recompile dance.
+static void EmitFunctionCallOutputs(UMaterialExpression* Expr, const TSharedRef<FJsonObject>& Out)
+{
+    UMaterialExpressionMaterialFunctionCall* Fc = Cast<UMaterialExpressionMaterialFunctionCall>(Expr);
+    if (!Fc) return;
+    TArray<TSharedPtr<FJsonValue>> Outs;
+    for (int32 i = 0; i < Fc->FunctionOutputs.Num(); ++i)
+    {
+        TSharedPtr<FJsonObject> O = MakeShared<FJsonObject>();
+        O->SetStringField(TEXT("name"), Fc->FunctionOutputs[i].Output.OutputName.ToString());
+        O->SetNumberField(TEXT("index"), i);
+        Outs.Add(MakeShared<FJsonValueObject>(O.ToSharedRef()));
+    }
+    Out->SetArrayField(TEXT("outputs"), Outs);
+}
+
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddNode(const TSharedPtr<FJsonObject>& P)
 {
     FString ExprClass;
@@ -402,6 +430,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddNode(const TSharedPtr<FJsonO
 
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("node_id"), Expr->GetName());
+        EmitFunctionCallOutputs(Expr, Out.ToSharedRef());
         return FHaybaHandlerResult::Ok(Out);
     }
 
@@ -422,6 +451,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddNode(const TSharedPtr<FJsonO
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("node_id"), Expr->GetName());
+    EmitFunctionCallOutputs(Expr, Out.ToSharedRef());
     return FHaybaHandlerResult::Ok(Out);
 }
 

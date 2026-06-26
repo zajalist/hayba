@@ -1,5 +1,5 @@
-// SP-1 junction node: bonds two shells by socket-contract cost-min, punches
-// the opening on success, and always writes/draws the unsat-core report.
+// SP-1 junction node: bonds two shells by socket-contract cost-min, cuts the
+// openings where they cross on success, and always writes/draws the unsat-core report.
 // Reads .scratch/sockets.json; always writes .scratch/unsat-core.json. Never cached.
 #pragma once
 
@@ -7,6 +7,16 @@
 #include "PCGSocketBond.generated.h"
 
 class UMaterialInterface;
+
+/** How the bonded shells' shared seam is treated. Index order is kept in lockstep with
+ *  HaybaOpening::ESeamStyle (cast by value). */
+UENUM(BlueprintType)
+enum class EHaybaSeamStyle : uint8
+{
+    ButtJoint UMETA(DisplayName = "Butt Joint"),
+    Welded,
+    Collar
+};
 
 UCLASS(BlueprintType, ClassGroup = (Procedural))
 class UPCGSocketBondSettings : public UPCGSettings
@@ -24,21 +34,17 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Bond)
     FString SocketsPath;
 
-    /** Local nudge applied to the derived bond transform (cm). */
+    /** Local nudge applied to the unsat-core overlay position (cm). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Bond)
     FVector BondLocalOffset = FVector::ZeroVector;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Bond, meta = (ClampMin = "20"))
-    double DoorWidthCm = 180.0;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Bond, meta = (ClampMin = "20"))
-    double DoorHeightCm = 220.0;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Bond, meta = (ClampMin = "10"))
-    double WallDepthCm = 80.0;
-
+    /** Material applied to the bonded shell. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Bond)
     TSoftObjectPtr<UMaterialInterface> ShellMaterial;
+
+    /** How the bonded shells' shared seam is treated (ButtJoint = leave it open). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Bond)
+    EHaybaSeamStyle SeamStyle = EHaybaSeamStyle::Welded;
 
 protected:
     virtual TArray<FPCGPinProperties> InputPinProperties() const override;
