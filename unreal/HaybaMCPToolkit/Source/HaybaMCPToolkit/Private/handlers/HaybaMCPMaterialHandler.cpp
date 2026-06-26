@@ -46,6 +46,7 @@
 #include "Materials/MaterialExpressionComment.h"
 #include "Materials/MaterialExpressionNamedReroute.h"
 #include "Materials/MaterialExpressionRerouteBase.h" // TraceInputsToRealExpression — graph validation
+#include "HaybaMCPSeh.h"                              // SEH guard for fault-prone recompile/PostEditChange
 #include "MaterialShared.h"  // FMaterialResource, GetCompileErrors (material_compile)
 #include "MaterialStatsCommon.h" // FMaterialStatsUtils::ExtractMatertialStatsInfo (material_compile optimization feedback)
 #include "MaterialStats.h"       // FShaderStatsInfo (MaterialEditor private; include path added in Build.cs)
@@ -1592,7 +1593,20 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
             return FHaybaHandlerResult::Ok(Bad);
         }
 
-        UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        // UpdateMaterialFunction recompiles the function + broadcasts editor
+        // notifications — same dead-Python-delegate AV risk as material recompile.
+        bool bFnCrashed = false;
+        HaybaSeh::RunGuarded(+[](void* P)
+        {
+            UMaterialEditingLibrary::UpdateMaterialFunction(static_cast<UMaterialFunction*>(P), nullptr);
+        }, Fn, bFnCrashed);
+        if (bFnCrashed)
+        {
+            TSharedPtr<FJsonObject> Bad = MakeShared<FJsonObject>();
+            Bad->SetBoolField(TEXT("saved"), false);
+            Bad->SetStringField(TEXT("crash_guarded"), TEXT("material_compile(function): native access violation during UpdateMaterialFunction — commonly a stale Python-registered editor delegate firing on a GC'd target. Editor kept alive by the SEH guard; function NOT saved."));
+            return FHaybaHandlerResult::Ok(Bad);
+        }
         FString FnSaveErr;
         const bool bFnSaved = HaybaPersistAsset(Fn, FnSaveErr);
         TSharedPtr<FJsonObject> FnOut = MakeShared<FJsonObject>();
@@ -1628,8 +1642,28 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         }
     }
 
-    Mat->PostEditChange();
-    UMaterialEditingLibrary::RecompileMaterial(Mat);
+    // PostEditChange + RecompileMaterial broadcast editor change notifications
+    // (FCoreUObjectDelegates, MaterialEditor). If a Python script registered a
+    // delegate whose target was since garbage-collected/destroyed, that broadcast
+    // dereferences freed memory — a native access violation that would kill the
+    // editor (not a catchable C++/Python exception). Guard it.
+    {
+        bool bCompileCrashed = false;
+        HaybaSeh::RunGuarded(+[](void* P)
+        {
+            UMaterial* M = static_cast<UMaterial*>(P);
+            M->PostEditChange();
+            UMaterialEditingLibrary::RecompileMaterial(M);
+        }, Mat, bCompileCrashed);
+        if (bCompileCrashed)
+        {
+            TSharedPtr<FJsonObject> Bad = MakeShared<FJsonObject>();
+            Bad->SetBoolField(TEXT("saved"), false);
+            Bad->SetBoolField(TEXT("has_errors"), true);
+            Bad->SetStringField(TEXT("crash_guarded"), TEXT("material_compile: native access violation during recompile/PostEditChange — commonly a stale Python-registered editor delegate firing on a garbage-collected target, or a re-entrant property broadcast. The editor was kept alive by the SEH guard and the material was NOT saved. Do not register UE editor delegates from python_run whose targets can be GC'd."));
+            return FHaybaHandlerResult::Ok(Bad);
+        }
+    }
 
     TArray<TSharedPtr<FJsonValue>> Errs;
     FMaterialResource* Res = Mat->GetMaterialResource(GMaxRHIShaderPlatform);
@@ -1659,7 +1693,17 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         // ExtractMatertialStatsInfo is MATERIALEDITOR_API-exported; it internally
         // calls GetRepresentativeInstructionCounts (which is not exported).
         FShaderStatsInfo Info;
-        FMaterialStatsUtils::ExtractMatertialStatsInfo(GMaxRHIShaderPlatform, Info, Res);
+        // Also MaterialEditor — guard it; on a fault Info stays empty and the
+        // loops below just emit empty stats (never crashes the editor).
+        {
+            struct FStatsCtx { FShaderStatsInfo* I; FMaterialResource* R; } Ctx{ &Info, Res };
+            bool bStatsCrashed = false;
+            HaybaSeh::RunGuarded(+[](void* P)
+            {
+                FStatsCtx* C = static_cast<FStatsCtx*>(P);
+                FMaterialStatsUtils::ExtractMatertialStatsInfo(GMaxRHIShaderPlatform, *C->I, C->R);
+            }, &Ctx, bStatsCrashed);
+        }
 
         // Local name map — FMaterialStatsUtils::RepresentativeShaderTypeToString is
         // not exported to plugins (link error), so map the (small, stable) enum here.
