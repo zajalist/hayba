@@ -82,5 +82,38 @@ bool FHaybaSocketSolverUnitTest::RunTest(const FString& Parameters)
         TestEqual(TEXT("choice: picked the clean one (index 1)"), O.ChosenIndex, 1);
         TestEqual(TEXT("choice: cost 0"), O.Cost, 0.0);
     }
+
+    // MULTI-MISS: a relaxable frontier missing TWO required tags costs RelaxablePenalty * 2.
+    {
+        const FHaybaSocketContract F = MakeSocket(TEXT("f"),
+            { TEXT("X") }, { TEXT("A"), TEXT("B") }, /*relaxable=*/true); // requires A,B (relaxable)
+        const FHaybaSocketContract C = MakeSocket(TEXT("c"),
+            { TEXT("X") }, {}, true);                                     // provides neither A nor B; requires nothing
+        const FHaybaBondOutcome O = SolveBond(F, { C });
+        TestTrue (TEXT("multi-miss: ok (relaxed)"), O.bOk);
+        TestTrue (TEXT("multi-miss: relaxed"), O.bRelaxed);
+        TestEqual(TEXT("multi-miss: cost == RelaxablePenalty*2"), O.Cost, RelaxablePenalty * 2.0);
+        TestEqual(TEXT("multi-miss: two missing tags"), O.MissingRequired.Num(), 2);
+    }
+
+    // EMPTY CANDIDATES: no bond, INDEX_NONE.
+    {
+        const FHaybaSocketContract F = MakeSocket(TEXT("f"), { TEXT("X") }, {}, true);
+        const TArray<FHaybaSocketContract> None;
+        const FHaybaBondOutcome O = SolveBond(F, None);
+        TestFalse(TEXT("empty candidates: not ok"), O.bOk);
+        TestEqual(TEXT("empty candidates: INDEX_NONE"), O.ChosenIndex, (int32)INDEX_NONE);
+    }
+
+    // EXCLUDE HIT: a provided excluded tag hard-fails (never relaxed).
+    {
+        FHaybaSocketContract F = MakeSocket(TEXT("f"), { TEXT("X") }, {}, /*relaxable=*/true);
+        F.Requires.Exclude = { TEXT("Style.Native") };                 // exclude
+        const FHaybaSocketContract C = MakeSocket(TEXT("c"),
+            { TEXT("Style.Native") }, {}, true);                       // provides the excluded tag
+        const FHaybaBondOutcome O = SolveBond(F, { C });
+        TestFalse(TEXT("exclude hit: not ok"), O.bOk);
+        TestTrue (TEXT("exclude hit: cost >= HardPenalty"), O.Cost >= HardPenalty);
+    }
     return true;
 }
