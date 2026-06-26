@@ -2,7 +2,7 @@
 
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
-#include "HAL/PlatformProcess.h"
+#include "HAL/PlatformMisc.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Dom/JsonObject.h"
@@ -39,7 +39,7 @@ bool HaybaSocketStore::Load(const FString& Path, FHaybaSocketSet& Out, FString& 
     FString Raw;
     if (!FFileHelper::LoadFileToString(Raw, *Path))
     {
-        OutError = FString::Printf(TEXT("sockets.json not found at %s"), *Path);
+        OutError = FString::Printf(TEXT("sockets.json could not read %s"), *Path);
         return false;
     }
     TSharedPtr<FJsonObject> Root;
