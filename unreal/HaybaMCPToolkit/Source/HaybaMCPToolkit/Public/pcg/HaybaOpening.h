@@ -41,6 +41,17 @@ namespace HaybaOpening
         return FDynamicMesh3(&Gen);
     }
 
+    // A clean CLOSED box mesh from an arbitrary axis-aligned box (TrimInside cutter).
+    inline UE::Geometry::FDynamicMesh3 BoxMeshFromAABB(const UE::Geometry::FAxisAlignedBox3d& B)
+    {
+        using namespace UE::Geometry;
+        FGridBoxMeshGenerator Gen;
+        Gen.Box = FOrientedBox3d(FFrame3d(B.Center()), B.Extents());
+        Gen.EdgeVertices = FIndex3i(1, 1, 1);
+        Gen.Generate();
+        return FDynamicMesh3(&Gen);
+    }
+
     // Trim away the part of A that lies inside the closed cutter Cutter (in place).
     inline void TrimInsideBy(UE::Geometry::FDynamicMesh3& A, const UE::Geometry::FDynamicMesh3& Cutter)
     {
@@ -83,6 +94,58 @@ namespace HaybaOpening
         }
         FMeshNormals::QuickRecomputeOverlayNormals(Host);
         return Host.TriangleCount();
+    }
+
+    // Bond N open shells into one connected space — the host/branch-free generalization
+    // of CutSocket. For every pair whose bounds overlap, trim BOTH shells by the OVERLAP
+    // box (localized to the crossing, unlike CutSocket's full-bounds trim which only
+    // suits a short branch): each shell gets an opening where another crosses it and the
+    // overlapping interiors are removed so the spaces merge. Then append all + weld.
+    // Writes the merged mesh into Out; returns its triangle count.
+    inline int32 BondMeshes(UE::Geometry::FDynamicMesh3& Out,
+                            const TArray<UE::Geometry::FDynamicMesh3>& Meshes, ESeamStyle Seam)
+    {
+        using namespace UE::Geometry;
+        const int32 N = Meshes.Num();
+        if (N == 0) { return 0; }
+        if (N == 1) { Out = Meshes[0]; return Out.TriangleCount(); }
+
+        TArray<FAxisAlignedBox3d> Boxes;
+        Boxes.Reserve(N);
+        for (const FDynamicMesh3& M : Meshes) { Boxes.Add(M.GetBounds()); }
+
+        TArray<FDynamicMesh3> Work = Meshes;   // copies we trim per crossing
+        for (int32 i = 0; i < N; ++i)
+        {
+            for (int32 j = 0; j < N; ++j)
+            {
+                if (i == j) { continue; }
+                const FAxisAlignedBox3d& A  = Boxes[i];
+                const FAxisAlignedBox3d& Bx = Boxes[j];
+                const FVector3d Mn(FMath::Max(A.Min.X, Bx.Min.X), FMath::Max(A.Min.Y, Bx.Min.Y), FMath::Max(A.Min.Z, Bx.Min.Z));
+                const FVector3d Mx(FMath::Min(A.Max.X, Bx.Max.X), FMath::Min(A.Max.Y, Bx.Max.Y), FMath::Min(A.Max.Z, Bx.Max.Z));
+                if (Mn.X < Mx.X && Mn.Y < Mx.Y && Mn.Z < Mx.Z)   // non-empty overlap
+                {
+                    const FDynamicMesh3 OverlapBox = BoxMeshFromAABB(FAxisAlignedBox3d(Mn, Mx));
+                    TrimInsideBy(Work[i], OverlapBox);
+                }
+            }
+        }
+
+        Out = Work[0];
+        FDynamicMeshEditor Editor(&Out);
+        for (int32 i = 1; i < N; ++i)
+        {
+            FMeshIndexMappings Map;
+            Editor.AppendMesh(&Work[i], Map);
+        }
+        if (Seam != ESeamStyle::ButtJoint)
+        {
+            FMergeCoincidentMeshEdges Merge(&Out);
+            Merge.Apply();
+        }
+        FMeshNormals::QuickRecomputeOverlayNormals(Out);
+        return Out.TriangleCount();
     }
 
     inline int32 PunchDoorway(UE::Geometry::FDynamicMesh3& Mesh, const FTransform& BondXf,

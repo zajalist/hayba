@@ -1,6 +1,6 @@
-// Generic mesh primitive: bond two dynamic meshes — cut an opening in each wherever
-// the other passes through (once, twice, or N times) and merge them into one connected
-// space. The geometry half of Socket Bond, decoupled from the constraint solver.
+// Generic mesh primitive: bond N dynamic meshes — cut an opening in each wherever
+// another passes through it (once, twice, N times) and merge them all into one
+// connected space. Host/branch-free N-way geometry; the solver-free half of Socket Bond.
 #pragma once
 
 #include "PCGSettings.h"

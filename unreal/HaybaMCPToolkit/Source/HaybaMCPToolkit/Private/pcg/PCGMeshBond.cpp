@@ -16,17 +16,17 @@ FText UPCGMeshBondSettings::GetDefaultNodeTitle() const { return LOCTEXT("Title"
 FText UPCGMeshBondSettings::GetNodeTooltipText() const
 {
     return LOCTEXT("Tooltip",
-        "Bonds two dynamic meshes: cuts an opening in each wherever the other passes "
-        "through (once, twice, or N times) and merges them into one connected space. "
-        "The geometry half of Socket Bond, without the constraint solver.");
+        "Bonds N dynamic meshes on one pin: cuts an opening in each wherever another "
+        "crosses it (once, twice, N times) and merges them all into one connected space. "
+        "Host/branch-free; the geometry of Socket Bond without the constraint solver.");
 }
 #endif
 
 TArray<FPCGPinProperties> UPCGMeshBondSettings::InputPinProperties() const
 {
     TArray<FPCGPinProperties> Pins;
-    Pins.Emplace(FName(TEXT("A")), EPCGDataType::DynamicMesh, /*bAllowMultiple=*/false, /*bAllowMultipleData=*/false);
-    Pins.Emplace(FName(TEXT("B")), EPCGDataType::DynamicMesh, /*bAllowMultiple=*/false, /*bAllowMultipleData=*/false);
+    // One pin that accepts N shells (every spline's swept mesh) — host/branch-free.
+    Pins.Emplace(FName(TEXT("Meshes")), EPCGDataType::DynamicMesh, /*bAllowMultiple=*/true, /*bAllowMultipleData=*/true);
     return Pins;
 }
 
@@ -45,28 +45,33 @@ bool FPCGMeshBondElement::ExecuteInternal(FPCGContext* Context) const
     TRACE_CPUPROFILER_EVENT_SCOPE(FPCGMeshBondElement::Execute);
     check(Context);
 
-    FDynamicMesh3 A;
+    // Collect every shell on the Meshes pin (one per spline).
+    TArray<FDynamicMesh3> Meshes;
     TArray<UMaterialInterface*> Materials;
     TSet<FString> Tags;
-    if (!HaybaPCGMesh::CopyFirstMesh(Context, FName(TEXT("A")), A, &Materials, &Tags))
+    for (const FPCGTaggedData& D : Context->InputData.GetInputsByPin(FName(TEXT("Meshes"))))
     {
-        // No A to anchor on — pass B through if present so the cook still emits.
-        FDynamicMesh3 B;
-        if (HaybaPCGMesh::CopyFirstMesh(Context, FName(TEXT("B")), B, &Materials, &Tags))
+        const UPCGDynamicMeshData* DM = Cast<UPCGDynamicMeshData>(D.Data);
+        if (!DM) { continue; }
+        const UDynamicMesh* UM = DM->GetDynamicMesh();
+        if (!UM) { continue; }
+        Meshes.Add(UM->GetMeshRef());   // copy
+        if (Materials.IsEmpty())
         {
-            HaybaPCGMesh::Emit(Context, MoveTemp(B), Materials, Tags);
+            for (const TObjectPtr<UMaterialInterface>& M : DM->GetMaterials()) { Materials.Add(M); }
         }
-        return true;
+        Tags.Append(D.Tags);
     }
-
-    FDynamicMesh3 B;
-    if (HaybaPCGMesh::CopyFirstMesh(Context, FName(TEXT("B")), B))
+    if (Meshes.Num() == 0)
     {
-        // Trims each mesh by the other's bounds + merges; A becomes the bonded result.
-        HaybaOpening::CutSocket(A, B, HaybaOpening::FSocketCut{});
+        return true;   // nothing to bond
     }
 
-    HaybaPCGMesh::Emit(Context, MoveTemp(A), Materials, Tags);
+    // Cut openings at every crossing + merge into one connected mesh (N-way).
+    FDynamicMesh3 Out;
+    HaybaOpening::BondMeshes(Out, Meshes, HaybaOpening::ESeamStyle::Welded);
+
+    HaybaPCGMesh::Emit(Context, MoveTemp(Out), Materials, Tags);
     return true;
 }
 
