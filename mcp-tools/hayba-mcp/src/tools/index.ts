@@ -333,7 +333,7 @@ const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       meta: materialGetInfoMeta,
       handler: materialGetInfoHandler,
       cost: 'low',
-      returns: "{kind, name, expressions:[{id,class,x,y,output_consumed,reachable_from_output,inputs:[{name,index,connected,from_node,from_output}],outputs:[{name,index}]}], dead_nodes:[{id,class}], comments} | instance:{kind,name,parent,parameters:[{name,type,value}]}. outputs[] gives a node's real output pin order (esp. MaterialFunctionCall, whose order follows FunctionOutput sort priority, NOT the visual layout) — wire from_output by these names/indices so multi-output nodes don't get swapped.",
+      returns: "{kind, name, expressions:[{id,class,x,y,output_consumed,reachable_from_output,reroute_name?,reroute_kind?,inputs:[{name,index,connected,from_node,from_output}],outputs:[{name,index}]}], dead_nodes:[{id,class}], comments} | instance:{kind,name,parent,parameters:[{name,type,value}]}. Named-reroute nodes report reroute_name + reroute_kind('declaration'|'usage') so you can bind a usage to a declaration WITHOUT scanning expressions in python. outputs[] gives a node's real output pin order (esp. MaterialFunctionCall, whose order follows FunctionOutput sort priority, NOT the visual layout) — wire from_output by these.",
       niche: M,
       schema: {
         path: z.string().min(1).describe('Path to the material or material instance to inspect'),

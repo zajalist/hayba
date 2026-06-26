@@ -790,6 +790,21 @@ static TArray<TSharedPtr<FJsonValue>> SerializeMaterialExpressions(
         if (Consumed)  Entry->SetBoolField(TEXT("output_consumed"), Consumed->Contains(Expr));
         if (Reachable) Entry->SetBoolField(TEXT("reachable_from_output"), Reachable->Contains(Expr));
 
+        // Named-reroute variable name — the single most-hand-rolled thing in
+        // python_run (agents loop expressions reading variable_name to find a
+        // declaration to bind a usage to). Surface it directly: declarations
+        // report their own Name; usages report the name they resolve to.
+        if (const UMaterialExpressionNamedRerouteDeclaration* Decl = Cast<UMaterialExpressionNamedRerouteDeclaration>(Expr))
+        {
+            Entry->SetStringField(TEXT("reroute_name"), Decl->Name.ToString());
+            Entry->SetStringField(TEXT("reroute_kind"), TEXT("declaration"));
+        }
+        else if (const UMaterialExpressionNamedRerouteUsage* Usage = Cast<UMaterialExpressionNamedRerouteUsage>(Expr))
+        {
+            Entry->SetStringField(TEXT("reroute_name"), Usage->Declaration ? Usage->Declaration->Name.ToString() : FString());
+            Entry->SetStringField(TEXT("reroute_kind"), TEXT("usage"));
+        }
+
         TArray<TSharedPtr<FJsonValue>> Inputs;
         int32 InputIdx = 0;
         for (FExpressionInputIterator It{Expr}; It; ++It)
