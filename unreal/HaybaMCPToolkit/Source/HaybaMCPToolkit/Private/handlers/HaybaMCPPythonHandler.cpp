@@ -50,23 +50,56 @@ TArray<FString> FHaybaMCPPythonHandler::GetCommands() const
     return { TEXT("python_run") };
 }
 
-// Detect the registration patterns behind the dangling-delegate crash class
+// The registration patterns behind the dangling-delegate crash class
 // (#283/#284): a python_run script binds a UE editor delegate / tick / shutdown
 // callback to a Python callable that later gets garbage-collected, and the next
 // engine broadcast dereferences the freed target -> native access violation at
 // whatever call site triggers it (RecompileMaterial, PostEditChange, …). The
-// SEH guards keep the editor alive, but the fix is to not create the dangling
-// binding in the first place. We WARN (not block — one-shot ops are fine and
-// some callbacks are legitimate if a reference is kept) so the agent stops
-// leaking persistent callbacks across python_run calls.
+// crash fires on a LATER engine tick/broadcast, OUTSIDE the python_run __try, so
+// the SEH guard around ExecPythonCommandEx cannot catch it — the only way to
+// stop it is to never create the dangling binding in the first place.
+//
+// We split the patterns into two sets:
+//
+//  • BLOCK set — engine-lifetime registrations (Slate tick, shutdown,
+//    post-engine-init). ExecPythonCommandEx does NOT retain the interpreter
+//    namespace between calls, so any callable registered here is GUARANTEED to
+//    be collected once Run() returns, and the next broadcast is GUARANTEED to
+//    dereference freed memory. There is no correct way to use these from a
+//    one-shot python_run, so we refuse to execute the script (unless the caller
+//    explicitly opts into unsafe mode, same gate as Tier 3).
+//
+//  • WARN set — per-object delegate bindings (.add_callable, .bind_callable, …)
+//    that CAN be legitimate if the script keeps a reference alive (e.g. on a
+//    module global), so we surface the risk but still run.
+
+// BLOCK set: pattern -> human description. Matching any of these means the
+// script will deterministically dangle, so we stop before executing it.
+static TArray<FString> DetectDanglingLifetimeRegistrations(const FString& Code)
+{
+    static const TArray<TPair<FString, FString>> Patterns = {
+        { TEXT("register_slate_post_tick_callback"), TEXT("per-frame Slate post-tick callback") },
+        { TEXT("register_slate_pre_tick_callback"),  TEXT("per-frame Slate pre-tick callback") },
+        { TEXT("register_python_shutdown_callback"), TEXT("editor shutdown callback") },
+        { TEXT("register_post_engine_init_callback"),TEXT("engine-init callback") },
+    };
+    TArray<FString> Hits;
+    for (const TPair<FString, FString>& P : Patterns)
+    {
+        if (Code.Contains(P.Key))
+        {
+            Hits.Add(FString::Printf(TEXT("'%s' (%s)"), *P.Key, *P.Value));
+        }
+    }
+    return Hits;
+}
+
+// WARN set: per-object delegate bindings that may be legitimate if a reference
+// is kept alive. We surface the risk but still run.
 static TArray<FString> DetectRiskyDelegatePatterns(const FString& Code)
 {
     // pattern -> why it's risky
     static const TArray<TPair<FString, FString>> Patterns = {
-        { TEXT("register_slate_post_tick_callback"), TEXT("per-frame Slate tick callback") },
-        { TEXT("register_slate_pre_tick_callback"),  TEXT("per-frame Slate tick callback") },
-        { TEXT("register_python_shutdown_callback"), TEXT("shutdown callback") },
-        { TEXT("register_post_engine_init_callback"),TEXT("engine-init callback") },
         { TEXT(".add_callable_unique("),             TEXT("delegate binding (add_callable_unique)") },
         { TEXT(".add_callable("),                    TEXT("delegate binding (add_callable)") },
         { TEXT(".add_function("),                    TEXT("delegate binding (add_function)") },
@@ -146,6 +179,30 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
         }
     }
 
+    // Refuse engine-lifetime callback registrations BEFORE executing. These bind
+    // a Python callable into a delegate the engine broadcasts on a later tick —
+    // but ExecPythonCommandEx does not keep this interpreter namespace alive, so
+    // the callable is collected the moment Run() returns and the next broadcast
+    // dereferences freed memory (the #283/#284 access-violation crash class,
+    // observed as python311 → PythonScriptPlugin → CoreUObject in the call
+    // stack). The crash fires outside any python_run __try, so the SEH guard
+    // below cannot catch it — the only safe place to stop it is here, before the
+    // dangling binding is ever created. Gated by the same unsafe override as
+    // Tier 3 for the rare case a caller genuinely keeps the callable alive.
+    {
+        const TArray<FString> LifetimeRegistrations = DetectDanglingLifetimeRegistrations(Code);
+        if (LifetimeRegistrations.Num() > 0)
+        {
+            const bool bSettingAllows = FHaybaMCPSettings::Get().bAllowUnsafePython;
+            if (!bSettingAllows && !bAllowUnsafeOverride)
+            {
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("python_run blocked: script registers an engine-lifetime callback (%s). From a one-shot python_run the Python callable is garbage-collected as soon as the call returns, and the next engine broadcast crashes the editor with a native access violation (the #283/#284 dangling-delegate crash). This cannot be caught by the editor's crash guard because it fires on a later tick. Do the work inline in this call instead of registering a persistent callback. If you truly need a lifetime callback, store the callable on a module-global so it is never collected and re-run with allow_unsafe=true."),
+                    *FString::Join(LifetimeRegistrations, TEXT(", "))));
+            }
+        }
+    }
+
     // Check Python plugin
     IPythonScriptPlugin* PythonPlugin = IPythonScriptPlugin::Get();
     if (!PythonPlugin)
@@ -219,6 +276,9 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     }
 
     // Evaluate a base64 expression and decode the result back to a string.
+    // Guarded by SEH too: the user script may have left the interpreter in a
+    // degraded state, so even this trivial readback can fault — better to lose
+    // the captured stdout than to take down the editor.
     auto EvalB64 = [PythonPlugin](const FString& Attr) -> FString
     {
         FPythonCommandEx E;
@@ -226,7 +286,9 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
             TEXT("__import__('base64').b64encode((getattr(__import__('builtins'),'%s','') or '').encode('utf-8')).decode('ascii')"),
             *Attr);
         E.ExecutionMode = EPythonCommandExecutionMode::EvaluateStatement;
-        PythonPlugin->ExecPythonCommandEx(E);
+        bool bEvalCrashed = false;
+        ExecPythonGuarded(PythonPlugin, &E, bEvalCrashed);
+        if (bEvalCrashed) return FString();
         FString R = E.CommandResult.TrimStartAndEnd();
         if (R.Len() >= 2 && (R.StartsWith(TEXT("'")) || R.StartsWith(TEXT("\""))))
         {
@@ -244,8 +306,9 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     FPythonCommandEx OkCmd;
     OkCmd.Command = TEXT("repr(getattr(__import__('builtins'),'_hayba_ok',True))");
     OkCmd.ExecutionMode = EPythonCommandExecutionMode::EvaluateStatement;
-    PythonPlugin->ExecPythonCommandEx(OkCmd);
-    const bool bUserOk = !OkCmd.CommandResult.Contains(TEXT("False"));
+    bool bOkReadCrashed = false;
+    ExecPythonGuarded(PythonPlugin, &OkCmd, bOkReadCrashed);
+    const bool bUserOk = !bOkReadCrashed && !OkCmd.CommandResult.Contains(TEXT("False"));
 
     TSharedPtr<FJsonObject> Out = MakeShareable(new FJsonObject());
     Out->SetBoolField(TEXT("ok"), bExecOk && bUserOk);

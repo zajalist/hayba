@@ -234,6 +234,28 @@ async function evaluatePythonRunSelfSocket(ctx: ValidatorContext): Promise<Valid
   };
 }
 
+/** Pre-flight detector for the #283/#284 dangling-delegate crash class.
+ *  Matches engine-lifetime callback registrations that, from a one-shot
+ *  python_run, bind a Python callable the interpreter then garbage-collects —
+ *  so the next engine broadcast dereferences freed memory and crashes the
+ *  editor with a native access violation (python311 → PythonScriptPlugin →
+ *  CoreUObject). These have NO safe use from python_run, so we reject the call
+ *  before it ever reaches UE. Mirrors the authoritative C++ gate in
+ *  HaybaMCPPythonHandler::Run (DetectDanglingLifetimeRegistrations).
+ *  Returns the matched pattern, or null if none. */
+export function danglingLifetimeRegistration(script: string): string | null {
+  const patterns = [
+    'register_slate_post_tick_callback',
+    'register_slate_pre_tick_callback',
+    'register_python_shutdown_callback',
+    'register_post_engine_init_callback',
+  ];
+  for (const p of patterns) {
+    if (script.includes(p)) return p;
+  }
+  return null;
+}
+
 /** Shared by both the post-condition above and the pre-flight wrapper.
  *  Matches any `<name>.connect(("127.0.0.1"|"localhost", PORT))` where
  *  PORT is in the UE plugin range 52342..52350. */

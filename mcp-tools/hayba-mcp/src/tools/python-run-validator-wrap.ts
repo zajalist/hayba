@@ -14,7 +14,7 @@
 import { z } from 'zod';
 import type { ToolHandler } from './types.js';
 import { pythonRunHandler, schema as pythonRunSchema } from './python/python-run.js';
-import { emitDirectFinding, isSelfSocketScript } from '../validator/index.js';
+import { emitDirectFinding, isSelfSocketScript, danglingLifetimeRegistration } from '../validator/index.js';
 import { attachFindingsToResponse } from '../validator/response.js';
 import { runAfterTool } from '../validator/runner.js';
 import { join } from 'node:path';
@@ -54,6 +54,36 @@ export function makeValidatedPythonRunHandler(opts: WrapOpts = {}): ToolHandler 
           content: [{
             type: 'text',
             text: 'python_run rejected by validator: script would open a TCP socket back to the UE plugin port, which deadlocks the game thread.',
+          }],
+          isError: true,
+        },
+        [finding],
+      );
+    }
+
+    // ── Pre-flight: engine-lifetime callback registration → hard reject ──
+    // These bind a Python callable into an engine-lifetime delegate; from a
+    // one-shot python_run the callable is GC'd as soon as the call returns and
+    // the next engine broadcast crashes the editor with a native access
+    // violation (the #283/#284 dangling-delegate crash, which the editor's SEH
+    // guard can't catch because it fires on a later tick). Reject before it
+    // reaches UE — matches the authoritative C++ gate in HaybaMCPPythonHandler.
+    const danglingPattern = danglingLifetimeRegistration(args.script);
+    if (danglingPattern && !args.allow_unsafe) {
+      const finding = await emitDirectFinding({
+        ruleId: 'dangling_lifetime_callback_in_python_run',
+        severity: 'error',
+        message: `python_run script registers an engine-lifetime callback ('${danglingPattern}') that would dangle and crash the editor`,
+        hint: 'Do the work inline in this python_run call instead of registering a persistent tick/shutdown/engine-init callback. If you truly need one, keep the callable on a module-global so it is never garbage-collected and pass allow_unsafe=true.',
+        refs: ['[[python-run-no-dangling-delegate]]'],
+        context: { pattern: danglingPattern, script_preview: args.script.slice(0, 200) },
+        toolName: 'python_run',
+      });
+      return attachFindingsToResponse(
+        {
+          content: [{
+            type: 'text',
+            text: `python_run rejected by validator: script registers an engine-lifetime callback ('${danglingPattern}'). From a one-shot python_run the Python callable is garbage-collected immediately and the next engine broadcast crashes the editor with a native access violation. Do the work inline, or keep the callable on a module-global and re-run with allow_unsafe=true.`,
           }],
           isError: true,
         },

@@ -99,6 +99,14 @@ export const RULES: ValidatorRule[] = [
     trigger: { after_tool: 'python_run' },
   },
   {
+    id: 'dangling_lifetime_callback_in_python_run',
+    severity: 'error',
+    message: 'python_run script registers an engine-lifetime callback that would dangle and crash the editor',
+    hint: 'register_slate_post/pre_tick_callback, register_python_shutdown_callback and register_post_engine_init_callback bind a Python callable into an engine-lifetime delegate. From a one-shot python_run the callable is garbage-collected as soon as the call returns, so the next engine broadcast dereferences freed memory and crashes the editor with a native access violation (#283/#284). Do the work inline, or keep the callable on a module-global and pass allow_unsafe=true.',
+    refs: ['[[python-run-no-dangling-delegate]]'],
+    trigger: 'manual',
+  },
+  {
     id: 'actor_position_drift_after_user_edit',
     severity: 'warning',
     message: 'Actor position differs from the last recorded value (user may have moved it)',
