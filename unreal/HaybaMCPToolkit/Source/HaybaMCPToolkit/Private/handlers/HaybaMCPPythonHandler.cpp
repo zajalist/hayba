@@ -253,6 +253,28 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     Wrapper += TEXT("_hb_b._hayba_out = _hb_out.getvalue()\n");
     Wrapper += TEXT("_hb_b._hayba_err = _hb_err.getvalue()\n");
     Wrapper += TEXT("_hb_b._hayba_ok = _hb_ok\n");
+    // Eagerly drop the script's exec namespace and force a CPython collection
+    // WHILE STILL INSIDE the SEH-guarded ExecPythonCommandEx below. This targets
+    // the python311 -> PythonScriptPlugin -> CoreUObject access-violation class:
+    // a one-shot script creates a Python wrapper for a UObject it spawns/edits,
+    // that UObject is later destroyed (or the wrapper otherwise dangles), and the
+    // wrapper lingers in `_hb_g` long after Run() returns. CPython then collects
+    // it on some LATER allocation/tick — outside any __try — and the stale
+    // reference faults fatally (the engine had no chance to catch it). By clearing
+    // `_hb_g` and calling gc.collect() here, the wrapper is finalised NOW, inside
+    // the guard: if finalisation is going to fault it does so where the SEH guard
+    // converts it to a recoverable error, and if it doesn't fault the dangling
+    // reference is gone before the next engine GC can trip over it. Results were
+    // already stashed on `builtins` (above), and the wrapper-local capture buffers
+    // (_hb_out/_hb_err/_hb_ok) are NOT in `_hb_g`, so the readback is unaffected.
+    // Wrapped in try/except so a degraded interpreter never turns cleanup into the
+    // very failure we are guarding against.
+    Wrapper += TEXT("try:\n");
+    Wrapper += TEXT("    _hb_g.clear()\n");
+    Wrapper += TEXT("    import gc as _hb_gc\n");
+    Wrapper += TEXT("    _hb_gc.collect()\n");
+    Wrapper += TEXT("except Exception:\n");
+    Wrapper += TEXT("    pass\n");
 
     FPythonCommandEx RunCmd;
     RunCmd.Command = Wrapper;
