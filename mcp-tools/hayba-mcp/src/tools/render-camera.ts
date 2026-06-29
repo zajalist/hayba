@@ -23,6 +23,8 @@ export const schema = z.object({
   wait_for_subsystems: z.array(z.enum(['shaders', 'assets', 'gc', 'pcg', 'world_tick'])).optional()
     .default(['shaders', 'assets', 'world_tick']),
   wait_timeout_s: z.number().int().min(0).max(300).optional().default(30),
+  force: z.boolean().optional().default(false)
+    .describe('render_camera is a known editor-crasher; it refuses unless force:true. Prefer set_level_viewport_camera_info + editor_capture_viewport (which now returns a real image block).'),
 });
 
 export type RenderCameraParams = z.infer<typeof schema>;
@@ -38,6 +40,19 @@ export async function handleRenderCamera(params: RenderCameraParams) {
   const parsed = schema.safeParse(params);
   if (!parsed.success) {
     return { content: [{ type: 'text' as const, text: 'Invalid params: ' + parsed.error.message }], isError: true };
+  }
+  if (!parsed.data.force) {
+    return {
+      content: [{
+        type: 'text' as const,
+        text: [
+          'Blocked: render_camera is a known editor-crasher.',
+          'Safe alternative: set the viewport camera with set_level_viewport_camera_info, then call editor_capture_viewport (it now returns a real inline image block).',
+          'If you are certain and accept the risk, re-run with force:true.',
+        ].join('\n'),
+      }],
+      isError: true,
+    };
   }
   const data = await executeCommand('render_camera', parsed.data as Record<string, unknown>, {
     timeout: (parsed.data.wait_timeout_s + 30) * 1000,

@@ -1,5 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { wrapScriptForPrintRedirect } from './python-run.js';
+
+const send = vi.fn();
+vi.mock('../../tcp-client.js', () => ({
+  ensureConnected: async () => ({ send }),
+}));
 
 describe('wrapScriptForPrintRedirect', () => {
   it('injects unreal.log_warning shim for builtin print', () => {
@@ -42,5 +47,43 @@ describe('wrapScriptForPrintRedirect', () => {
       '_hayba_user_src = """print(1)"""',
       'exec(compile(_hayba_user_src, "<python_run>", "exec"), _hayba_user_globals)',
     ]);
+  });
+});
+
+describe('python_run crash guard + spill', () => {
+  it('refuses a known-crasher script without contacting UE', async () => {
+    const { pythonRunHandler } = await import('./python-run.js');
+    send.mockClear();
+    const r = await pythonRunHandler({ script: 'm.build_scale3d(v)' }, {} as never);
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('known editor-crasher');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('allows the crasher through when allow_unsafe is set', async () => {
+    const { pythonRunHandler } = await import('./python-run.js');
+    send.mockClear();
+    send.mockResolvedValueOnce({ ok: true, data: { ok: true, stdout: 'done' } });
+    const r = await pythonRunHandler({ script: 'm.build_scale3d(v)', allow_unsafe: true }, {} as never);
+    expect(r.isError).toBeFalsy();
+    expect(send).toHaveBeenCalled();
+  });
+
+  it('spills oversized output to a temp file and returns a path', async () => {
+    const { pythonRunHandler } = await import('./python-run.js');
+    send.mockClear();
+    send.mockResolvedValueOnce({ ok: true, data: { ok: true, stdout: 'x'.repeat(20_000) } });
+    const r = await pythonRunHandler({ script: 'print("big")' }, {} as never);
+    expect(r.content[0].text).toContain('Full output written to:');
+    expect(r.content[0].text).toContain('output truncated');
+  });
+
+  it('returns small output inline', async () => {
+    const { pythonRunHandler } = await import('./python-run.js');
+    send.mockClear();
+    send.mockResolvedValueOnce({ ok: true, data: { ok: true, stdout: 'small' } });
+    const r = await pythonRunHandler({ script: 'print("small")' }, {} as never);
+    expect(r.content[0].text).toContain('small');
+    expect(r.content[0].text).not.toContain('Full output written to:');
   });
 });

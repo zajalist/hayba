@@ -1,7 +1,18 @@
 import { z } from 'zod';
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { ToolHandler } from '../types.js';
 import { ensureConnected } from '../../tcp-client.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
+import { scanPythonForCrashers, crashGuardMessage } from '../guards/known-crashers.js';
+
+/**
+ * When python_run output exceeds this many characters, spill the full payload
+ * to a temp file and return a head + the path, instead of letting the transport
+ * layer truncate it mid-output. See HANDOFF postmortem P1.
+ */
+const STDOUT_SPILL_THRESHOLD = 12_000;
 
 // TODO: wire into registerTools with RateLimiter + ToolCache + appendMeta wrapper
 
@@ -57,6 +68,14 @@ export const pythonRunHandler: ToolHandler = async (args) => {
   if (!parsed.success) {
     return { content: [{ type: 'text', text: `Validation error: ${parsed.error.message}` }], isError: true };
   }
+  // Crash guardrail: refuse known editor-crashing calls unless explicitly
+  // overridden with allow_unsafe. Returns guidance + a safe alternative.
+  if (!(parsed.data as { allow_unsafe?: boolean }).allow_unsafe) {
+    const hit = scanPythonForCrashers((parsed.data as { script: string }).script);
+    if (hit) {
+      return { content: [{ type: 'text', text: crashGuardMessage(hit) }], isError: true };
+    }
+  }
   try {
     const client = await ensureConnected();
     // Send the raw script. The UE handler now captures print()/stderr itself
@@ -82,7 +101,28 @@ export const pythonRunHandler: ToolHandler = async (args) => {
       }
       return { content: [{ type: 'text', text: `python_run failed: ${resp.error ?? 'unknown error'}` }], isError: true };
     }
-    return { content: [{ type: 'text', text: JSON.stringify(resp.data, null, 2) }] };
+    const text = JSON.stringify(resp.data, null, 2);
+    if (text.length > STDOUT_SPILL_THRESHOLD) {
+      // Auto-spill: write the full payload to a temp file and return a head +
+      // path so large dumps (pin lists, asset inventories) survive intact
+      // instead of being truncated downstream.
+      try {
+        const dir = join(tmpdir(), 'hayba-python');
+        mkdirSync(dir, { recursive: true });
+        const file = join(dir, `python_run-${Date.now()}.json`);
+        writeFileSync(file, text);
+        const head = text.slice(0, STDOUT_SPILL_THRESHOLD);
+        return {
+          content: [{
+            type: 'text',
+            text: `${head}\n\n…[output truncated: ${text.length} chars]\nFull output written to: ${file}\nRead that file to get the complete result.`,
+          }],
+        };
+      } catch {
+        // Spill failed — fall through to returning the (large) text as-is.
+      }
+    }
+    return { content: [{ type: 'text', text }] };
   } catch (e: unknown) {
     return { content: [{ type: 'text', text: `python_run error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
   }
