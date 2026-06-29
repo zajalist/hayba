@@ -1,10 +1,13 @@
 // HaybaMCPIdleHandler.cpp — see header for the design summary.
 //
-// Threading: Handle() is invoked from the TCP server's per-request handler
-// thread (NOT the game thread). We schedule a polling ticker on the core
-// ticker (game-thread ticked) and block the calling thread on an FEvent
-// until the ticker fires Done. Predicates like IsShadersBusy / IsGenerating
-// must be touched on the game thread, so all polling happens there.
+// Threading: Handle() runs on the game thread (the TCP server drains its
+// command queue from the engine tick), so it ensure(IsInGameThread()) and
+// takes a single synchronous snapshot of the busy predicates (shaders,
+// assets, gc, pcg, world_tick) — no waiting, no ticker, no FEvent. Touching
+// these predicates is only safe on the game thread, which the synchronous
+// snapshot guarantees. It deliberately does NOT block-and-wait: blocking the
+// game thread can't let those subsystems make progress. Callers poll this in
+// a loop; the editor ticks between calls, so `ok` flips true once idle.
 
 #include "HaybaMCPIdleHandler.h"
 
