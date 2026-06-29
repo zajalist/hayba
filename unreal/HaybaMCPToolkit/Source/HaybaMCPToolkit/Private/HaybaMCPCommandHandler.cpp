@@ -1,6 +1,7 @@
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPGameThread.h"
 #include "IHaybaMCPHandler.h"
+#include "HaybaMCPSeh.h"
 #include "HaybaMCPSecurityManager.h"
 #include "HaybaMCPResponseBuilder.h"
 #include "HaybaMCPSettings.h"
@@ -687,7 +688,53 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     }
 
     const double Start = FPlatformTime::Seconds();
-    FHaybaHandlerResult Result = (*Found)->Handle(Cmd, Params);
+
+    // SEH-guard the handler-dispatch seam so a NATIVE structured exception
+    // (access violation, etc.) inside ANY of the registered handlers is converted
+    // into a recoverable error envelope instead of taking down the whole editor.
+    // Previously only the python and material handlers self-guarded their
+    // crash-prone calls (ExecPythonGuarded / HaybaSeh::RunGuarded), leaving the
+    // other ~31 handlers unrecoverable; wrapping this single dispatch point makes
+    // the entire handler surface recoverable in one place. Those per-handler
+    // guards are KEPT (a caught fault there yields a clean FHaybaHandlerResult, so
+    // this outer guard never sees it — no double-fault, no behaviour change).
+    //
+    // The thunk MUST be a captureless lambda (-> function pointer) and the result
+    // is written back through a pointer in the context struct, because MSVC forbids
+    // C++ object unwinding across __try (C2712) — RunGuarded isolates the __try in
+    // its own translation unit and only ever invokes a function pointer. Mirrors
+    // the FStatsCtx usage in HaybaMCPMaterialHandler.cpp.
+    FHaybaHandlerResult Result;
+    {
+        struct FDispatchCtx
+        {
+            IHaybaMCPHandler* Handler;
+            const FString* Cmd;
+            const TSharedPtr<FJsonObject>* Params;
+            FHaybaHandlerResult* Out;
+        } Ctx{ &Found->Get(), &Cmd, &Params, &Result };
+
+        bool bHandlerCrashed = false;
+        HaybaSeh::RunGuarded(+[](void* P)
+        {
+            FDispatchCtx* C = static_cast<FDispatchCtx*>(P);
+            *C->Out = C->Handler->Handle(*C->Cmd, *C->Params);
+        }, &Ctx, bHandlerCrashed);
+
+        if (bHandlerCrashed)
+        {
+            UE_LOG(LogHaybaMCPCmd, Error,
+                TEXT("SEH guard caught a structured exception in handler for command '%s' (id: %s) — editor kept alive"),
+                *Cmd, *Id);
+            Result = FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("handler crashed (SEH): command '%s' triggered a native structured exception ")
+                TEXT("(access violation). The editor was kept alive by the SEH guard and the operation ")
+                TEXT("did NOT complete. This is most often a stale Python-registered editor delegate firing ")
+                TEXT("on a garbage-collected target — do not register engine-lifetime UE delegates from python_run."),
+                *Cmd));
+        }
+    }
+
     const int64 DurMs = (int64)((FPlatformTime::Seconds() - Start) * 1000.0);
 
     if (bDestructive && GEditor)
