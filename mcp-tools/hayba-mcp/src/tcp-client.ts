@@ -19,6 +19,12 @@ export interface TcpResponse {
   code?: string;
 }
 
+// ── Injectable types (also used in tests) ────────────────────────────────────
+export type DelayFn = (ms: number) => Promise<void>;
+export type DiscoverPortFn = () => number | null;
+
+const defaultDelay: DelayFn = ms => new Promise(r => setTimeout(r, ms));
+
 export class UETcpClient extends EventEmitter {
   private socket: Socket | null = null;
   private host: string;
@@ -38,6 +44,11 @@ export class UETcpClient extends EventEmitter {
     this.port = port;
     // Prevent unhandled 'error' event from crashing the process
     this.on('error', () => {});
+  }
+
+  /** Update the target port (used by ensureConnected on reconnect). */
+  setPort(port: number): void {
+    this.port = port;
   }
 
   async connect(): Promise<void> {
@@ -138,7 +149,7 @@ export class UETcpClient extends EventEmitter {
 // Singleton instance for the MCP server
 let client: UETcpClient | null = null;
 
-function discoverPortFromInstanceRegistry(): number | null {
+export function discoverPortFromInstanceRegistry(): number | null {
   // Initiative #3: UE writes Saved/HaybaMCP/instances/<pid>.json on startup.
   // Pick the most recently started live entry so the Node side connects to
   // whichever editor is currently running, regardless of port collision.
@@ -173,21 +184,79 @@ function discoverPortFromInstanceRegistry(): number | null {
   return null;
 }
 
+/** Resolve the target port, honouring the UE_TCP_PORT env override.
+ *  Exported so tests can verify port-resolution logic in isolation. */
+export function resolveTargetPort(
+  discoverFn: DiscoverPortFn = discoverPortFromInstanceRegistry,
+): number {
+  const envPort = process.env.UE_TCP_PORT ? parseInt(process.env.UE_TCP_PORT, 10) : NaN;
+  if (Number.isFinite(envPort)) return envPort;
+  return discoverFn() ?? 52342;
+}
+
+/** Attempt a connect with bounded retries and exponential backoff.
+ *  Exported so tests can exercise the retry/backoff logic with injected fakes,
+ *  without needing a real socket. */
+export async function connectWithBackoff(opts: {
+  /** Single connection attempt — throw on failure. */
+  attemptFn: () => Promise<void>;
+  /** Number of attempts before giving up (default 3). */
+  attempts?: number;
+  /** Initial delay between retries in ms — doubles each retry (default 200). */
+  initialMs?: number;
+  /** Delay function — defaults to real setTimeout-based promise. */
+  delayFn?: DelayFn;
+}): Promise<void> {
+  const { attemptFn, attempts = 3, initialMs = 200, delayFn = defaultDelay } = opts;
+  let lastErr: Error | undefined;
+  let waitMs = initialMs;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await attemptFn();
+      return;
+    } catch (err) {
+      lastErr = err as Error;
+      if (i < attempts - 1) {
+        await delayFn(waitMs);
+        waitMs *= 2;
+      }
+    }
+  }
+  throw lastErr ?? new Error('Failed to connect after retries');
+}
+
 export function getUEClient(): UETcpClient {
   if (!client) {
-    const envPort = process.env.UE_TCP_PORT ? parseInt(process.env.UE_TCP_PORT, 10) : NaN;
-    const port = Number.isFinite(envPort)
-      ? envPort
-      : (discoverPortFromInstanceRegistry() ?? 52342);
+    const port = resolveTargetPort();
     client = new UETcpClient('127.0.0.1', port);
   }
   return client;
 }
 
-export async function ensureConnected(): Promise<UETcpClient> {
+export async function ensureConnected(
+  // Optional injection seams — leave undefined in production:
+  _discoverFn?: DiscoverPortFn,
+  _delayFn?: DelayFn,
+): Promise<UETcpClient> {
   const c = getUEClient();
   if (!c.isConnected()) {
-    await c.connect();
+    const discoverFn = _discoverFn ?? discoverPortFromInstanceRegistry;
+    const delayFn = _delayFn ?? defaultDelay;
+    await connectWithBackoff({
+      attemptFn: async () => {
+        // Re-discover port on every attempt so a restarted editor on a new
+        // port is found automatically. UE_TCP_PORT env override stays authoritative.
+        const port = resolveTargetPort(discoverFn);
+        c.setPort(port);
+        await c.connect();
+      },
+      delayFn,
+    });
   }
   return c;
+}
+
+/** Reset the module-level singleton — for testing only. */
+export function _resetClientForTesting(): void {
+  client = null;
 }
