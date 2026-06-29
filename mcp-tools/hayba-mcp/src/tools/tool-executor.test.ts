@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { UeToolError, costToTimeoutMs, executeCommand, type Sender } from './tool-executor.js';
+import { UeToolError, costToTimeoutMs, executeCommand, NON_IDEMPOTENT, type Sender } from './tool-executor.js';
 import type { TcpResponse } from '../tcp-client.js';
 import { registerToolMeta, resetToolMetaRegistry } from './tool-meta-registry.js';
 
@@ -21,10 +21,14 @@ describe('UeToolError', () => {
 });
 
 describe('costToTimeoutMs', () => {
-  it('maps low/medium/high to 2s/10s/60s', () => {
+  it('maps low/medium/high to 2s/10s/120s', () => {
     expect(costToTimeoutMs('low')).toBe(2_000);
     expect(costToTimeoutMs('medium')).toBe(10_000);
-    expect(costToTimeoutMs('high')).toBe(60_000);
+    expect(costToTimeoutMs('high')).toBe(120_000);
+  });
+  it('high cost timeout exceeds the UE test ceiling (120 s)', () => {
+    const UE_TEST_CEILING_MS = 120_000;
+    expect(costToTimeoutMs('high')).toBeGreaterThanOrEqual(UE_TEST_CEILING_MS);
   });
   it('defaults to medium for unknown cost', () => {
     expect(costToTimeoutMs(undefined)).toBe(10_000);
@@ -51,7 +55,7 @@ describe('executeCommand — happy path', () => {
     resetToolMetaRegistry();
     registerToolMeta('build_project', { cost: 'high', effects: [], when: '', not_when: '' });
     await executeCommand('build_project', {}, { sender: spy });
-    expect(seen[0]).toBe(60_000);
+    expect(seen[0]).toBe(120_000);
   });
 
   it('defaults timeout to medium (10s) when meta is missing', async () => {
@@ -128,6 +132,52 @@ describe('executeCommand — transport retry', () => {
     };
     await expect(executeCommand('x', {}, { sender })).rejects.toMatchObject({ code: 'ue_error' });
     expect(attempts).toBe(1);
+  });
+});
+
+describe('executeCommand — idempotency / retry gating', () => {
+  it('does NOT retry a non-idempotent command on transport failure (sender called once)', async () => {
+    let calls = 0;
+    const sender: Sender = async () => {
+      calls++;
+      throw new Error('ECONNRESET');
+    };
+    await expect(executeCommand('actor_spawn', {}, { sender }))
+      .rejects.toMatchObject({ name: 'UeToolError', code: 'transport' });
+    expect(calls).toBe(1);
+  });
+
+  it('surfaces the transport error for non-idempotent commands without retrying', async () => {
+    const errMsg = 'socket hang up';
+    const sender: Sender = async () => { throw new Error(errMsg); };
+    await expect(executeCommand('actor_delete', {}, { sender }))
+      .rejects.toMatchObject({ code: 'transport', message: errMsg });
+  });
+
+  it('NON_IDEMPOTENT covers the required minimum set', () => {
+    for (const cmd of ['actor_spawn', 'actor_delete', 'asset_delete', 'actor_duplicate']) {
+      expect(NON_IDEMPOTENT.has(cmd)).toBe(true);
+    }
+  });
+
+  it('unknown (unlisted) commands are treated as idempotent and DO retry once', async () => {
+    let attempts = 0;
+    const flaky: Sender = async () => {
+      attempts++;
+      if (attempts === 1) throw new Error('ECONNRESET');
+      return { id: 't', ok: true, data: { attempts } };
+    };
+    const data = await executeCommand<{ attempts: number }>('some_read_query', {}, { sender: flaky });
+    expect(data.attempts).toBe(2);
+    expect(attempts).toBe(2);
+  });
+
+  it('actor_batch_spawn (also non-idempotent) does not retry', async () => {
+    let calls = 0;
+    const sender: Sender = async () => { calls++; throw new Error('fail'); };
+    await expect(executeCommand('actor_batch_spawn', {}, { sender }))
+      .rejects.toMatchObject({ code: 'transport' });
+    expect(calls).toBe(1);
   });
 });
 
