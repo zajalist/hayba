@@ -39,7 +39,7 @@ export function errorResult(
   message: string,
   extra?: Record<string, unknown>,
 ): ToolResult {
-  const payload: Record<string, unknown> = { ok: false, error: message, ...extra };
+  const payload: Record<string, unknown> = { ...extra, ok: false, error: message };
   return {
     content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
     isError: true,

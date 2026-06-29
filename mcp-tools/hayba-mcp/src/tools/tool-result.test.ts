@@ -51,10 +51,8 @@ describe('errorResult', () => {
     // ok:false must not be overridable by extra
     const r = errorResult('msg', { ok: true } as Record<string, unknown>);
     const parsed = JSON.parse(r.content[0].text);
-    // The spread order is { ok:false, error, ...extra } so extra's ok wins —
-    // document that behaviour so tests catch any future change to the order.
-    // (If canonical contract changes to always enforce ok:false, update here.)
-    expect(typeof parsed.ok).toBe('boolean');
+    // Verify that extra cannot override ok:false
+    expect(parsed.ok).toBe(false);
     expect(parsed.error).toBe('msg');
   });
 
