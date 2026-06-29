@@ -10,6 +10,7 @@ import { registerToolMeta } from './tool-meta-registry.js';
 import { readSettings } from './routing/settings-watcher.js';
 import { registerDeferredRouting, ALWAYS_ON_META, type CapturedTool, type RoutingHandle } from './routing/register.js';
 import { registerTool, recordToolSchema, type ToolDescriptor } from './register-tool.js';
+import { errorResult } from './tool-result.js';
 
 // ── Code Mode meta-tools (always-on) ──────────────────────────────────────────
 import { listToolCategoriesHandler, meta as listMeta } from './code-mode/list-tool-categories.js';
@@ -807,10 +808,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
           content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
         };
       } catch (e) {
-        return {
-          content: [{ type: 'text', text: `Error pushing plan to UE: ${(e as Error).message}` }],
-          isError: true,
-        };
+        return errorResult(`Error pushing plan to UE: ${(e as Error).message}`);
       }
     },
   );
@@ -832,10 +830,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
           content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
         };
       } catch (e) {
-        return {
-          content: [{ type: 'text', text: `Error marking plan step in UE: ${(e as Error).message}` }],
-          isError: true,
-        };
+        return errorResult(`Error marking plan step in UE: ${(e as Error).message}`);
       }
     },
   );
@@ -1936,10 +1931,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
           content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
         };
       } catch (e) {
-        return {
-          content: [{ type: 'text', text: `Error importing landscape: ${(e as Error).message}` }],
-          isError: true,
-        };
+        return errorResult(`Error importing landscape: ${(e as Error).message}`);
       }
     }
   );

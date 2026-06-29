@@ -6,6 +6,7 @@ import type { ToolHandler } from '../types.js';
 import { ensureConnected } from '../../tcp-client.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 import { scanPythonForCrashers, crashGuardMessage } from '../guards/known-crashers.js';
+import { errorResult } from '../tool-result.js';
 
 /**
  * When python_run output exceeds this many characters, spill the full payload
@@ -66,14 +67,14 @@ export function wrapScriptForPrintRedirect(userScript: string): string {
 export const pythonRunHandler: ToolHandler = async (args) => {
   const parsed = schema.safeParse(args);
   if (!parsed.success) {
-    return { content: [{ type: 'text', text: `Validation error: ${parsed.error.message}` }], isError: true };
+    return errorResult(`Validation error: ${parsed.error.message}`);
   }
   // Crash guardrail: refuse known editor-crashing calls unless explicitly
   // overridden with allow_unsafe. Returns guidance + a safe alternative.
   if (!(parsed.data as { allow_unsafe?: boolean }).allow_unsafe) {
     const hit = scanPythonForCrashers((parsed.data as { script: string }).script);
     if (hit) {
-      return { content: [{ type: 'text', text: crashGuardMessage(hit) }], isError: true };
+      return errorResult(crashGuardMessage(hit));
     }
   }
   try {
@@ -91,15 +92,12 @@ export const pythonRunHandler: ToolHandler = async (args) => {
     const data = (resp.data ?? {}) as Record<string, unknown>;
     if (!resp.ok) {
       if (data.tier === 3) {
-        return {
-          content: [{
-            type: 'text',
-            text: `Tier 3 (filesystem/subprocess) access blocked. Set bAllowUnsafePython=true in plugin settings or pass allow_unsafe:true to override (DANGEROUS). Underlying error: ${resp.error ?? 'unknown'}`,
-          }],
-          isError: true,
-        };
+        return errorResult(
+          `Tier 3 (filesystem/subprocess) access blocked. Set bAllowUnsafePython=true in plugin settings or pass allow_unsafe:true to override (DANGEROUS). Underlying error: ${resp.error ?? 'unknown'}`,
+          { tier: 3 },
+        );
       }
-      return { content: [{ type: 'text', text: `python_run failed: ${resp.error ?? 'unknown error'}` }], isError: true };
+      return errorResult(`python_run failed: ${resp.error ?? 'unknown error'}`);
     }
     const text = JSON.stringify(resp.data, null, 2);
     if (text.length > STDOUT_SPILL_THRESHOLD) {
@@ -124,6 +122,6 @@ export const pythonRunHandler: ToolHandler = async (args) => {
     }
     return { content: [{ type: 'text', text }] };
   } catch (e: unknown) {
-    return { content: [{ type: 'text', text: `python_run error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
+    return errorResult(`python_run error: ${e instanceof Error ? e.message : String(e)}`);
   }
 };

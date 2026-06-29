@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { HaybaToolMeta } from './hayba-tool-meta.js';
 import { executeCommand } from './tool-executor.js';
+import { errorResult } from './tool-result.js';
 
 export const schema = z.object({
   camera: z.discriminatedUnion('kind', [
@@ -39,20 +40,16 @@ export const meta: HaybaToolMeta = {
 export async function handleRenderCamera(params: RenderCameraParams) {
   const parsed = schema.safeParse(params);
   if (!parsed.success) {
-    return { content: [{ type: 'text' as const, text: 'Invalid params: ' + parsed.error.message }], isError: true };
+    return errorResult('Invalid params: ' + parsed.error.message);
   }
   if (!parsed.data.force) {
-    return {
-      content: [{
-        type: 'text' as const,
-        text: [
-          'Blocked: render_camera is a known editor-crasher.',
-          'Safe alternative: set the viewport camera with set_level_viewport_camera_info, then call editor_capture_viewport (it now returns a real inline image block).',
-          'If you are certain and accept the risk, re-run with force:true.',
-        ].join('\n'),
-      }],
-      isError: true,
-    };
+    return errorResult(
+      [
+        'Blocked: render_camera is a known editor-crasher.',
+        'Safe alternative: set the viewport camera with set_level_viewport_camera_info, then call editor_capture_viewport (it now returns a real inline image block).',
+        'If you are certain and accept the risk, re-run with force:true.',
+      ].join('\n'),
+    );
   }
   const data = await executeCommand('render_camera', parsed.data as Record<string, unknown>, {
     timeout: (parsed.data.wait_timeout_s + 30) * 1000,
