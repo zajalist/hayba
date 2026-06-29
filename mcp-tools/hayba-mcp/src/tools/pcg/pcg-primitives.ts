@@ -5,22 +5,31 @@ import { runUePythonJson, pyStr } from '../ue-python.js';
 // ── Shared Python: resolve a node in a PCGGraph by title or index ─────────────
 // PCG nodes have no stable string id, so primitives accept either the node's
 // visible title (exact or substring) or its 0-based index in graph.get_nodes().
+// Verified against UE 5.7: PCGGraph exposes a `nodes` property (NOT
+// get_nodes()), PCGNode exposes `node_title` (often empty -> "None" for default
+// nodes) and `get_settings()`. So the stable display label is the node_title if
+// meaningful, else the settings class name. Pin labels live on
+// pin.properties.label (pin.get_name() returns useless "PCGPin_N").
 const PY_RESOLVE_NODE = [
   'def _load_graph(p):',
   '    g = unreal.load_asset(p)',
   '    if g is None: raise Exception("graph not found: %s" % p)',
   '    return g',
-  'def _node_title(n):',
-  '    try: return str(n.get_node_title())',
-  '    except Exception: return ""',
+  'def _node_label(n):',
+  '    try:',
+  '        t = str(n.node_title)',
+  '        if t and t != "None": return t',
+  '    except Exception: pass',
+  '    try: return type(n.get_settings()).__name__',
+  '    except Exception: return "node"',
   'def _resolve_node(g, ref):',
-  '    nodes = list(g.get_nodes())',
+  '    nodes = list(g.nodes)',
   '    if isinstance(ref, int):',
   '        if ref < 0 or ref >= len(nodes): raise Exception("node index out of range: %d" % ref)',
   '        return nodes[ref]',
-  '    exact = [n for n in nodes if _node_title(n) == ref]',
+  '    exact = [n for n in nodes if _node_label(n) == ref]',
   '    if exact: return exact[0]',
-  '    sub = [n for n in nodes if ref in _node_title(n)]',
+  '    sub = [n for n in nodes if ref in _node_label(n)]',
   '    if len(sub) == 1: return sub[0]',
   '    if len(sub) > 1: raise Exception("ambiguous node ref %r matches %d nodes" % (ref, len(sub)))',
   '    raise Exception("node not found: %r" % ref)',
@@ -50,6 +59,7 @@ function addNodeScript(p: PcgAddNodeParams): string {
     '    cls = getattr(unreal, _cls_name, None) or unreal.load_class(None, _cls_name)',
     '    if cls is None: raise Exception("settings class not found: %s" % _cls_name)',
     '    node = None',
+    '    # add_node_of_type returns a (node, settings) tuple in UE 5.7.',
     '    for attr in ("add_node_of_type", "add_node"):',
     '        fn = getattr(g, attr, None)',
     '        if fn is None: continue',
@@ -60,9 +70,9 @@ function addNodeScript(p: PcgAddNodeParams): string {
     '        except Exception: pass',
     '    if node is None: raise Exception("could not add node of type %s" % _cls_name)',
     '    unreal.EditorAssetLibrary.save_loaded_asset(g)',
-    '    nodes = list(g.get_nodes())',
+    '    nodes = list(g.nodes)',
     '    idx = nodes.index(node) if node in nodes else len(nodes)-1',
-    '    _emit({"ok": True, "node_index": idx, "node_title": _node_title(node), "settings_class": _cls_name})',
+    '    _emit({"ok": True, "node_index": idx, "node_label": _node_label(node), "settings_class": _cls_name})',
     'except Exception as _e:',
     '    _err(_e)',
   ].join('\n');
@@ -103,7 +113,7 @@ function setPropScript(p: PcgSetPropParams): string {
     '    if len(parts) > 1:',
     '        settings.set_editor_property(parts[0], settings.get_editor_property(parts[0]))',
     '    unreal.EditorAssetLibrary.save_loaded_asset(g)',
-    '    _emit({"ok": True, "node_title": _node_title(node), "path": _path})',
+    '    _emit({"ok": True, "node_label": _node_label(node), "path": _path})',
     'except Exception as _e:',
     '    _err(_e)',
   ].join('\n');
@@ -143,9 +153,9 @@ function wireScript(p: PcgWireParams): string {
     '        if fn is None: continue',
     '        try: fn(a, _from_pin, b, _to_pin); ok = True; break',
     '        except Exception: pass',
-    '    if not ok: raise Exception("add_edge failed (%s.%s -> %s.%s)" % (_node_title(a), _from_pin, _node_title(b), _to_pin))',
+    '    if not ok: raise Exception("add_edge failed (%s.%s -> %s.%s)" % (_node_label(a), _from_pin, _node_label(b), _to_pin))',
     '    unreal.EditorAssetLibrary.save_loaded_asset(g)',
-    '    _emit({"ok": True, "from": _node_title(a), "from_pin": _from_pin, "to": _node_title(b), "to_pin": _to_pin})',
+    '    _emit({"ok": True, "from": _node_label(a), "from_pin": _from_pin, "to": _node_label(b), "to_pin": _to_pin})',
     'except Exception as _e:',
     '    _err(_e)',
   ].join('\n');

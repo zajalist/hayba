@@ -1003,7 +1003,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
 
   server.tool(
     'pcg_add_node',
-    appendMeta('Add a node of a given PCG settings class to a graph. Returns node_index + node_title for use with pcg_set_prop / pcg_wire.', pcgPrimitiveMeta),
+    appendMeta('Add a node of a given PCG settings class to a graph. Returns node_index + node_label (settings-class-derived) for use with pcg_set_prop / pcg_wire.', pcgPrimitiveMeta),
     pcgAddNodeSchema.shape,
     async (params) => {
       const r = await pcgAddNodeHandler(params as never);
@@ -1994,8 +1994,8 @@ function recordEagerSchemas(
     '{ok, mode, name?, properties?:[{name,type}], members?:[{name,value}], pins?, input_pins?, output_pins?, settings_class?}');
   reg('pcg_cook_and_wait', pcgCookSchema.shape, 'high',
     '{ok, cook:{components}, idle, result:{ism:[{mesh,count}], total}}');
-  reg('pcg_add_node', pcgAddNodeSchema.shape, 'low', '{ok, node_index, node_title, settings_class}');
-  reg('pcg_set_prop', pcgSetPropSchema.shape, 'low', '{ok, node_title, path}');
+  reg('pcg_add_node', pcgAddNodeSchema.shape, 'low', '{ok, node_index, node_label, settings_class}');
+  reg('pcg_set_prop', pcgSetPropSchema.shape, 'low', '{ok, node_label, path}');
   reg('pcg_wire', pcgWireSchema.shape, 'low', '{ok, from, from_pin, to, to_pin}');
   reg('pcg_inspect_instances', pcgInspectInstancesSchema.shape, 'low', '{ok, actor, ism:[{mesh,count,sample}], total}');
 
