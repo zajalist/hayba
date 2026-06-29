@@ -223,34 +223,43 @@ static TMap<FString, FString> CaptureBeforeState(const FString& Cmd, const TShar
     FString PropertyName;
     if (bWantProperty) Params->TryGetStringField(TEXT("property"), PropertyName);
 
-    // Runs INLINE — ProcessCommand (hence this) already executes on the game
-    // thread, so the old AsyncTask(GameThread)+Wait(2s) self-deadlocked (the
-    // queued task could never run while this blocked), always timed out after
-    // 2s, and — capturing &Before by reference — risked a use-after-free when
-    // the late task wrote into the unwound frame. The seam runs the snapshot
-    // directly on the game thread.
-    HaybaGameThread::RunSyncVoid([&Before, ActorId, PropertyName, bWantTransform, bWantTags, bWantProperty, bWantDelete]()
+    // ProcessCommand (hence this) already executes on the game thread, so the
+    // seam runs the snapshot INLINE — no AsyncTask, no FEvent. The old
+    // AsyncTask(GameThread)+Wait(2s) self-deadlocked (the queued task could
+    // never run while this blocked), always timed out after 2s, and — capturing
+    // &Before by reference — risked a use-after-free (#283/#284) when the late
+    // task wrote into the already-unwound frame.
+    //
+    // Capture-safety: the work lambda OWNS its result map (`Snapshot`) and the
+    // seam returns it BY VALUE. Nothing captures the caller's local by
+    // reference, so even on the (never-taken under the current dispatch model)
+    // off-game-thread timeout path — where the seam keeps the work alive in
+    // shared state past this frame — there is no &-ref to a destroyed TMap and
+    // no pooled FEvent touched after return.
+    Before = HaybaGameThread::RunSync<TMap<FString, FString>>(
+        [ActorId, PropertyName, bWantTransform, bWantTags, bWantProperty, bWantDelete]() -> TMap<FString, FString>
     {
+        TMap<FString, FString> Snapshot;
         if (AActor* Actor = FindActorByLabel_GameThread(ActorId))
         {
             if (bWantDelete)
             {
-                Before.Add(TEXT("exists"), TEXT("true"));
+                Snapshot.Add(TEXT("exists"), TEXT("true"));
             }
             if (bWantTransform)
             {
                 const FVector L  = Actor->GetActorLocation();
                 const FRotator R = Actor->GetActorRotation();
                 const FVector S  = Actor->GetActorScale3D();
-                Before.Add(TEXT("location"), FString::Printf(TEXT("(%.1f, %.1f, %.1f)"), L.X, L.Y, L.Z));
-                Before.Add(TEXT("rotation"), FString::Printf(TEXT("(p=%.1f y=%.1f r=%.1f)"), R.Pitch, R.Yaw, R.Roll));
-                Before.Add(TEXT("scale"),    FString::Printf(TEXT("(%.2f, %.2f, %.2f)"), S.X, S.Y, S.Z));
+                Snapshot.Add(TEXT("location"), FString::Printf(TEXT("(%.1f, %.1f, %.1f)"), L.X, L.Y, L.Z));
+                Snapshot.Add(TEXT("rotation"), FString::Printf(TEXT("(p=%.1f y=%.1f r=%.1f)"), R.Pitch, R.Yaw, R.Roll));
+                Snapshot.Add(TEXT("scale"),    FString::Printf(TEXT("(%.2f, %.2f, %.2f)"), S.X, S.Y, S.Z));
             }
             if (bWantTags)
             {
                 FString Joined;
                 for (const FName& T : Actor->Tags) Joined += (Joined.IsEmpty() ? TEXT("") : TEXT(", ")) + T.ToString();
-                Before.Add(TEXT("tags"), Joined.IsEmpty() ? TEXT("(none)") : Joined);
+                Snapshot.Add(TEXT("tags"), Joined.IsEmpty() ? TEXT("(none)") : Joined);
             }
             if (bWantProperty && !PropertyName.IsEmpty())
             {
@@ -258,19 +267,20 @@ static TMap<FString, FString> CaptureBeforeState(const FString& Cmd, const TShar
                 {
                     FString Out;
                     Prop->ExportText_InContainer(0, Out, Actor, Actor, Actor, PPF_None);
-                    Before.Add(PropertyName, Out);
+                    Snapshot.Add(PropertyName, Out);
                 }
                 else
                 {
-                    Before.Add(PropertyName, TEXT("(no such property)"));
+                    Snapshot.Add(PropertyName, TEXT("(no such property)"));
                 }
             }
         }
         else
         {
-            Before.Add(TEXT("__missing__"), TEXT("(actor not found)"));
+            Snapshot.Add(TEXT("__missing__"), TEXT("(actor not found)"));
         }
-    }, /*TimeoutSeconds=*/2.0);
+        return Snapshot;
+    }, /*TimeoutSeconds=*/2.0, /*TimeoutValue=*/TMap<FString, FString>());
     return Before;
 }
 
