@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
-import { runUePythonJson, pyStr } from '../ue-python.js';
+import { pyStr } from '../ue-python.js';
+import type { PyToolDescriptor } from '../py-tool-factory.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'low',
@@ -138,15 +139,14 @@ function buildScript(p: HaybaIntrospectParams): string {
   ].join('\n');
 }
 
-export async function haybaIntrospectHandler(params: HaybaIntrospectParams) {
-  const parsed = schema.safeParse(params);
-  if (!parsed.success) {
-    return { content: [{ type: 'text' as const, text: 'Invalid params: ' + parsed.error.message }], isError: true };
-  }
-  try {
-    const result = await runUePythonJson(buildScript(parsed.data), 30_000);
-    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-  } catch (e) {
-    return { content: [{ type: 'text' as const, text: `hayba_introspect error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
-  }
-}
+export const introspectDescriptor: PyToolDescriptor<typeof schema.shape> = {
+  name: 'hayba_introspect',
+  description:
+    'Introspect UE reflection: editor-property names+types of a class/struct, member values of an enum, or input/output pin labels of a PCG node (by graph+node) or settings class. Kills trial-and-error API discovery.',
+  cost: 'low',
+  returns: '{ok, mode, name?, properties?:[{name,type}], members?:[{name,value}], pins?, input_pins?, output_pins?, settings_class?}',
+  schema: schema.shape,
+  meta,
+  buildScript,
+  timeoutMs: 30_000,
+};

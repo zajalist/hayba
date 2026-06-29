@@ -11,9 +11,11 @@
  * secondary declaration, adding a reg() call would be caught by test (2) showing
  * stale or duplicate params (if the registry is re-recorded).
  *
- * Tools excluded from this file (reserved for Task 8 python-factory migration):
- *   hayba_introspect, pcg_cook_and_wait, pcg_add_node, pcg_set_prop,
- *   pcg_wire, pcg_inspect_instances.
+ * Note: pcg_cook_and_wait is a 3-step TS orchestrator (python generate →
+ * wait_for_idle → python inspect) and is intentionally left hand-written.
+ * The remaining ergonomics tools (hayba_introspect, pcg_add_node, pcg_set_prop,
+ * pcg_wire, pcg_inspect_instances) are expressed as PyToolDescriptors and
+ * adapted via toToolDescriptor into STANDARD_DESCRIPTORS (Task 8).
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -176,6 +178,91 @@ describe('single-source migration: asset-source tools', () => {
   });
 });
 
+// ── agent-ergonomics tools (pyTemplate factory, Task 8) ────────────────────
+
+describe('single-source migration: hayba_introspect (via pyTemplate factory)', () => {
+  it('is present in STANDARD_DESCRIPTORS', () => {
+    const d = getDescriptor('hayba_introspect');
+    expect(d.schema).toHaveProperty('mode');
+    expect(d.schema).toHaveProperty('settings_class');
+  });
+
+  it('deriveSignature returns expected params', () => {
+    const sig = deriveSignature('hayba_introspect');
+    expect(sig).not.toBeNull();
+    expect(sig!.cost).toBe('low');
+    expect(sig!.params['mode']).toMatch(/\(optional\)/);
+    expect(sig!.params['settings_class']).toMatch(/\(optional\)/);
+    expect(sig!.returns).toContain('input_pins');
+  });
+});
+
+describe('single-source migration: pcg_add_node (via pyTemplate factory)', () => {
+  it('is present in STANDARD_DESCRIPTORS', () => {
+    const d = getDescriptor('pcg_add_node');
+    expect(d.schema).toHaveProperty('graph');
+    expect(d.schema).toHaveProperty('settings_class');
+  });
+
+  it('deriveSignature returns expected params', () => {
+    const sig = deriveSignature('pcg_add_node');
+    expect(sig).not.toBeNull();
+    expect(sig!.cost).toBe('low');
+    expect(sig!.params['graph']).toMatch(/\(required\)/);
+    expect(sig!.params['settings_class']).toMatch(/\(required\)/);
+    expect(sig!.returns).toContain('node_index');
+  });
+});
+
+describe('single-source migration: pcg_set_prop (via pyTemplate factory)', () => {
+  it('is present in STANDARD_DESCRIPTORS', () => {
+    const d = getDescriptor('pcg_set_prop');
+    expect(d.schema).toHaveProperty('path');
+    expect(d.schema).toHaveProperty('node');
+  });
+
+  it('deriveSignature returns expected params', () => {
+    const sig = deriveSignature('pcg_set_prop');
+    expect(sig).not.toBeNull();
+    expect(sig!.cost).toBe('low');
+    expect(sig!.params['graph']).toMatch(/\(required\)/);
+    expect(sig!.params['path']).toMatch(/\(required\)/);
+    expect(sig!.returns).toContain('node_label');
+  });
+});
+
+describe('single-source migration: pcg_wire (via pyTemplate factory)', () => {
+  it('is present in STANDARD_DESCRIPTORS', () => {
+    const d = getDescriptor('pcg_wire');
+    expect(d.schema).toHaveProperty('from_node');
+    expect(d.schema).toHaveProperty('to_node');
+  });
+
+  it('deriveSignature returns expected params', () => {
+    const sig = deriveSignature('pcg_wire');
+    expect(sig).not.toBeNull();
+    expect(sig!.cost).toBe('low');
+    expect(sig!.params['from_pin']).toMatch(/\(optional\)/);
+    expect(sig!.params['to_pin']).toMatch(/\(optional\)/);
+    expect(sig!.returns).toContain('from_pin');
+  });
+});
+
+describe('single-source migration: pcg_inspect_instances (via pyTemplate factory)', () => {
+  it('is present in STANDARD_DESCRIPTORS', () => {
+    const d = getDescriptor('pcg_inspect_instances');
+    expect(d.schema).toHaveProperty('actor');
+  });
+
+  it('deriveSignature returns expected params', () => {
+    const sig = deriveSignature('pcg_inspect_instances');
+    expect(sig).not.toBeNull();
+    expect(sig!.cost).toBe('low');
+    expect(sig!.params['actor']).toMatch(/\(required\)/);
+    expect(sig!.returns).toContain('ism');
+  });
+});
+
 // ── no-double-declaration structural invariant ──────────────────────────────
 
 describe('no-double-declaration invariant', () => {
@@ -194,6 +281,12 @@ describe('no-double-declaration invariant', () => {
     'hayba_ambientcg_download',
     'hayba_sketchfab_search',
     'hayba_sketchfab_download',
+    // Task 8: python-factory tools
+    'hayba_introspect',
+    'pcg_add_node',
+    'pcg_set_prop',
+    'pcg_wire',
+    'pcg_inspect_instances',
   ]);
 
   it('every migrated tool appears exactly once in STANDARD_DESCRIPTORS', () => {

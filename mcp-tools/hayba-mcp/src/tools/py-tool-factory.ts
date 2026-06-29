@@ -62,6 +62,12 @@ export interface PyToolDescriptor<S extends z.ZodRawShape = z.ZodRawShape> {
   meta?: HaybaToolMeta;
   /** Override the python_run timeout (ms). Defaults to runUePythonJson's. */
   timeoutMs?: number;
+  /**
+   * When set, the result is passed through appendNicheBriefing(niche, ...) —
+   * reproducing the historic withNicheBriefing wrap (e.g. niche: 'material').
+   * Forwarded verbatim to the ToolDescriptor by toToolDescriptor.
+   */
+  niche?: string;
 }
 
 /**
@@ -123,6 +129,7 @@ export function toToolDescriptor<S extends z.ZodRawShape>(
     handler: makePyToolHandler(d),
     cost: d.cost,
     returns: d.returns,
+    niche: d.niche,
   };
 }
 

@@ -95,15 +95,12 @@ import { queryPcgexDocs, type QueryPcgexDocsParams } from './query-pcgex-docs.js
 import { initiateInfrastructureBrainstorm } from './initiate-infrastructure-brainstorm.js';
 
 // ── Agent-ergonomics tools (HANDOFF postmortem) ───────────────────────────────
-import { haybaIntrospectHandler, schema as introspectSchema, meta as introspectMeta } from './introspect/hayba-introspect.js';
+import { introspectDescriptor } from './introspect/hayba-introspect.js';
 import { pcgCookAndWaitHandler, schema as pcgCookSchema, meta as pcgCookMeta } from './pcg/pcg-cook-and-wait.js';
 import {
-  pcgAddNodeHandler, pcgAddNodeSchema,
-  pcgSetPropHandler, pcgSetPropSchema,
-  pcgWireHandler, pcgWireSchema,
-  pcgInspectInstancesHandler, pcgInspectInstancesSchema,
-  pcgPrimitiveMeta,
+  pcgAddNodeDescriptor, pcgSetPropDescriptor, pcgWireDescriptor, pcgInspectInstancesDescriptor,
 } from './pcg/pcg-primitives.js';
+import { toToolDescriptor } from './py-tool-factory.js';
 
 
 // ── Zone painter tool handlers ────────────────────────────────────────────────
@@ -207,7 +204,7 @@ const dCoerceVec3 = z.preprocess((v) => {
  * ## Non-eligible (stay hand-written)
  *   - editor_capture_viewport: custom wait_for_shaders pre-step closure.
  *   - editor_stream_log: reg schema adds fields absent from server.tool schema.
- *   - hayba_introspect, pcg_* ergonomics tools: reserved for python-factory (Task 8).
+ *   - pcg_cook_and_wait: 3-step TS orchestrator (python generate → wait_for_idle → python inspect), not a single buildScript.
  *   - PLUMB / validator / PCGEx / zone-painter / conventions: these have no
  *     meta or non-standard registration — migrate incrementally as needed.
  *
@@ -863,6 +860,17 @@ export const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
         target_dir: z.string().optional().describe('UE content path. Defaults to /Game/AssetConnectors/sketchfab/<uid>.'),
       },
     },
+
+    // ── Agent-ergonomics tools (HANDOFF postmortem) — factory path ────────────
+    // These 5 python-backed tools are expressed as PyToolDescriptors and adapted
+    // here via toToolDescriptor so they flow through the same always-record /
+    // eager-register loops as every other STANDARD_DESCRIPTORS entry.
+    // pcg_cook_and_wait is a 3-step TS orchestrator and stays hand-written below.
+    toToolDescriptor(introspectDescriptor),
+    toToolDescriptor(pcgAddNodeDescriptor),
+    toToolDescriptor(pcgSetPropDescriptor),
+    toToolDescriptor(pcgWireDescriptor),
+    toToolDescriptor(pcgInspectInstancesDescriptor),
 ];
 
 export async function registerTools(server: McpServer, session: SessionManagerStub): Promise<RoutingHandle | null> {
@@ -1137,17 +1145,8 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
   // wait_for_shaders, wait_for_idle, render_camera are now in STANDARD_DESCRIPTORS.
 
   // ── Agent-ergonomics tools (HANDOFF postmortem) ─────────────────────────────
-
-  server.tool(
-    'hayba_introspect',
-    appendMeta('Introspect UE reflection: editor-property names+types of a class/struct, member values of an enum, or input/output pin labels of a PCG node (by graph+node) or settings class. Kills trial-and-error API discovery.', introspectMeta),
-    introspectSchema.shape,
-    async (params) => {
-      const r = await haybaIntrospectHandler(params as never);
-      return { content: r.content, isError: r.isError };
-    }
-  );
-  remember('hayba_introspect', introspectMeta);
+  // hayba_introspect, pcg_add_node, pcg_set_prop, pcg_wire, pcg_inspect_instances
+  // are now in STANDARD_DESCRIPTORS (registered via the descriptor loop above).
 
   server.tool(
     'pcg_cook_and_wait',
@@ -1159,51 +1158,6 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     }
   );
   remember('pcg_cook_and_wait', pcgCookMeta);
-
-  server.tool(
-    'pcg_add_node',
-    appendMeta('Add a node of a given PCG settings class to a graph. Returns node_index + node_label (settings-class-derived) for use with pcg_set_prop / pcg_wire.', pcgPrimitiveMeta),
-    pcgAddNodeSchema.shape,
-    async (params) => {
-      const r = await pcgAddNodeHandler(params as never);
-      return { content: r.content, isError: r.isError };
-    }
-  );
-  remember('pcg_add_node', pcgPrimitiveMeta);
-
-  server.tool(
-    'pcg_set_prop',
-    appendMeta('Set an editor property on a PCG node\'s settings. Supports nested struct paths like "distribution_settings/distribution".', pcgPrimitiveMeta),
-    pcgSetPropSchema.shape,
-    async (params) => {
-      const r = await pcgSetPropHandler(params as never);
-      return { content: r.content, isError: r.isError };
-    }
-  );
-  remember('pcg_set_prop', pcgPrimitiveMeta);
-
-  server.tool(
-    'pcg_wire',
-    appendMeta('Wire one PCG node\'s output pin to another node\'s input pin (by node title or index, and pin label).', pcgPrimitiveMeta),
-    pcgWireSchema.shape,
-    async (params) => {
-      const r = await pcgWireHandler(params as never);
-      return { content: r.content, isError: r.isError };
-    }
-  );
-  remember('pcg_wire', pcgPrimitiveMeta);
-
-  server.tool(
-    'pcg_inspect_instances',
-    appendMeta('Read back the Instanced-Static-Mesh instance counts (and a sample transform) produced on an actor by its PCG cook.', pcgPrimitiveMeta),
-    pcgInspectInstancesSchema.shape,
-    async (params) => {
-      const r = await pcgInspectInstancesHandler(params as never);
-      return { content: r.content, isError: r.isError };
-    }
-  );
-  remember('pcg_inspect_instances', pcgPrimitiveMeta);
-
 
   // hayba_fab_*, hayba_polyhaven_*, hayba_ambientcg_*, hayba_sketchfab_* tools
   // are now in STANDARD_DESCRIPTORS — registered via the loop above.
@@ -2028,14 +1982,10 @@ function recordEagerSchemas(
   }, 'low', '{lines:[string|object], next_line:int, format}');
 
   // ── Agent-ergonomics tools (HANDOFF postmortem) ───────────────────────────
-  reg('hayba_introspect', introspectSchema.shape, 'low',
-    '{ok, mode, name?, properties?:[{name,type}], members?:[{name,value}], pins?, input_pins?, output_pins?, settings_class?}');
+  // hayba_introspect, pcg_add_node, pcg_set_prop, pcg_wire, pcg_inspect_instances:
+  // now in STANDARD_DESCRIPTORS — recordToolSchema(d) called by the loop above.
   reg('pcg_cook_and_wait', pcgCookSchema.shape, 'high',
     '{ok, cook:{components}, idle, result:{ism:[{mesh,count}], total}}');
-  reg('pcg_add_node', pcgAddNodeSchema.shape, 'low', '{ok, node_index, node_label, settings_class}');
-  reg('pcg_set_prop', pcgSetPropSchema.shape, 'low', '{ok, node_label, path}');
-  reg('pcg_wire', pcgWireSchema.shape, 'low', '{ok, from, from_pin, to, to_pin}');
-  reg('pcg_inspect_instances', pcgInspectInstancesSchema.shape, 'low', '{ok, actor, ism:[{mesh,count,sample}], total}');
 
   // ── PCGEx domain ──────────────────────────────────────────────────────────
   reg('hayba_search_node_catalog', {

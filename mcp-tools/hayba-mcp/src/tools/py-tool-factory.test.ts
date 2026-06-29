@@ -96,6 +96,20 @@ describe('makePyToolHandler', () => {
     await makePyToolHandler({ ...sampleDescriptor, timeoutMs: 45_000 })({ target: 'rock' });
     expect(seenTimeout).toBe(45_000);
   });
+
+  it('_err fidelity: python-level ok:false is NOT isError (transport/marker errors set isError, python errors are success-shaped)', async () => {
+    // A buildScript calls _err(e) which emits HAYBA_JSON:{"ok":false,"error":"..."}.
+    // The factory must treat this as a SUCCESS-shaped result (no isError flag) so
+    // the caller can inspect the payload. Only missing-marker or thrown exceptions
+    // set isError:true.
+    setDefaultSender(mockStdout('HAYBA_JSON:{"ok":false,"error":"class not found: Foo"}'));
+    const handler = makePyToolHandler(sampleDescriptor);
+    const res = await handler({ target: 'rock' });
+    expect(res.isError).toBeUndefined();
+    const parsed = JSON.parse(res.content[0].text);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toContain('class not found: Foo');
+  });
 });
 
 describe('toToolDescriptor', () => {
@@ -118,6 +132,16 @@ describe('toToolDescriptor', () => {
     const meta = { cost: 'low' as const, effects: ['mutates_asset'], when: 'w', not_when: 'nw' };
     const td = toToolDescriptor({ ...sampleDescriptor, meta });
     expect(td.meta).toBe(meta);
+  });
+
+  it('forwards niche when present (isomorphism with ToolDescriptor)', () => {
+    const td = toToolDescriptor({ ...sampleDescriptor, niche: 'pcg' });
+    expect(td.niche).toBe('pcg');
+  });
+
+  it('leaves niche undefined when absent', () => {
+    const td = toToolDescriptor(sampleDescriptor);
+    expect(td.niche).toBeUndefined();
   });
 });
 
