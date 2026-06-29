@@ -45,7 +45,7 @@ const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: 
   { domain: 'texture', command_count: 3, commands: ['texture_get_info','texture_set_compression','texture_list'] },
   { domain: 'data', command_count: 3, commands: ['data_create','data_get','data_set'] },
   { domain: 'project', command_count: 4, commands: ['project_get_info','project_get_settings','project_set_settings','project_list_plugins'] },
-  { domain: 'build', command_count: 3, commands: ['build_project','build_cook','build_generate_project_files'] },
+  { domain: 'build', command_count: 4, commands: ['build_project','build_cook','build_generate_project_files','build_status'] },
   { domain: 'test', command_count: 3, commands: ['test_list','test_run','test_get_log'] },
 ];
 

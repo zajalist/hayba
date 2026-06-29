@@ -1,19 +1,25 @@
 // HaybaMCPBuildHandler.cpp
 //
-// Implements three commands:
+// Implements four commands:
 //   * build_project                 — invoke UnrealBuildTool.exe
 //   * build_cook                    — invoke the editor in -run=cook mode
 //   * build_generate_project_files  — invoke RunUAT GenerateProjectFiles
+//   * build_status                  — read an async job's result by job_id
 //
-// Subprocess launches are always async (CreateProc on a background thread)
-// with stdout captured via a pipe. Short jobs (<= ShortJobTimeoutSec) block
-// until exit and return {ok, exit_code, log_excerpt}. Longer jobs return a
-// {job_id, status:"running"} envelope immediately and continue streaming
-// progress through FHaybaMCPSecurityManager::Journal so the same UI channels
-// other handlers use can observe it.
+// Every build is a NON-BLOCKING async job. ProcessCommand runs on the game
+// thread (HaybaMCPTcpServer::DrainPendingCommands drains the queue from the
+// engine tick), so blocking here freezes the editor — that was the old
+// Future.WaitFor(300s) bug. Instead each command allocates a job id in the
+// shared FHaybaMCPJobRegistry, kicks the subprocess on a background thread, and
+// returns { job_id, status:"running" } immediately. The background task pumps
+// stdout (journalled live via FHaybaMCPSecurityManager::Journal), then writes
+// { exit_code, output } into the registry under its lock. Callers poll
+// build_status { job_id } (or watch hayba_journal_tail) for the result.
+// build_status is also the reader for test_run's async jobs (same registry).
 
 #include "HaybaMCPBuildHandler.h"
 #include "HaybaMCPSecurityManager.h"
+#include "HaybaMCPJobRegistry.h"
 
 #include "Async/Async.h"
 #include "HAL/PlatformProcess.h"
@@ -29,11 +35,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPBuild, Log, All);
 
 namespace
 {
-    // Block in-process for at most this long. Longer jobs return a job_id and
-    // continue streaming through the journal. 5 min matches the task brief.
-    constexpr double kShortJobTimeoutSec = 300.0;
-
-    // Bounded excerpt size in the synchronous response payload.
+    // Bounded excerpt size for the captured output stored in the job registry.
     constexpr int32 kLogExcerptBytes = 16 * 1024;
 
     FString ResolveUBTPath()
@@ -207,30 +209,29 @@ namespace
     }
 
     /**
-     * Dispatch a subprocess: tries to complete inline (<= kShortJobTimeoutSec).
-     * If the process is still alive at the deadline, switches to background
-     * mode: returns {ok, job_id, status:"running"} and continues pumping the
-     * pipe on the worker thread, emitting Journal entries for each chunk.
+     * Launch a subprocess as an async job. Allocates a job id in the shared
+     * registry, kicks the run on a background thread, and returns
+     * { job_id, status:"running" } IMMEDIATELY. We NEVER block the game thread
+     * (ProcessCommand runs on it — see HaybaMCPTcpServer::DrainPendingCommands),
+     * which is what the old Future.WaitFor(300s) did and why the editor froze.
+     *
+     * RunCapture only pumps a pipe and sleeps on the worker thread; it never
+     * touches the game thread or the task graph, so AnyBackgroundThreadNormalTask
+     * is safe here. On completion the task publishes { exit_code, output } into
+     * the registry under its lock and appends to the operation journal. Poll
+     * build_status { job_id } for the result.
      */
     TSharedRef<FJsonObject> RunOrBackground(const FString& OpName,
                                             const FString& URL,
                                             const FString& Params)
     {
-        const FString JobId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
+        const FString JobId = FHaybaMCPJobRegistry::Get().AllocateJob(OpName);
 
-        UE_LOG(LogHaybaMCPBuild, Log, TEXT("[%s] launching: %s %s"), *OpName, *URL, *Params);
+        UE_LOG(LogHaybaMCPBuild, Log, TEXT("[%s] launching job %s: %s %s"), *OpName, *JobId, *URL, *Params);
         JournalProgress(JobId, TEXT("launch"),
             FString::Printf(TEXT("%s | %s %s"), *OpName, *URL, *Params));
 
-        // Run the entire job on a background thread so we never block the
-        // game/editor thread, then synchronously wait up to kShortJobTimeoutSec
-        // for completion from the calling (handler) thread. The handler is
-        // already invoked off the game thread by the TCP server, but we keep
-        // the OnChunk journaling separate from the response payload.
-        TSharedRef<TPromise<FProcRunResult>> Promise = MakeShared<TPromise<FProcRunResult>>();
-        TFuture<FProcRunResult> Future = Promise->GetFuture();
-
-        AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [Promise, OpName, URL, Params, JobId]()
+        AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [OpName, URL, Params, JobId]()
         {
             FProcRunResult R = RunCapture(URL, Params, /*MaxSeconds=*/ 0.0,
                 [JobId, OpName](const FString& Chunk)
@@ -240,37 +241,78 @@ namespace
                     JournalProgress(JobId, TEXT("stdout"), Short);
                     UE_LOG(LogHaybaMCPBuild, Verbose, TEXT("[%s] %s"), *OpName, *Short);
                 });
-            JournalProgress(JobId, TEXT("exit"),
-                FString::Printf(TEXT("%s exit_code=%d"), *OpName, R.ExitCode), R.ExitCode == 0);
-            Promise->SetValue(R);
-        });
 
-        const bool bFinished = Future.WaitFor(FTimespan::FromSeconds(kShortJobTimeoutSec));
+            const int32 ExitCode = R.bLaunched ? R.ExitCode : -1;
+            FString Output = TailExcerpt(R.CapturedOutput);
+            if (!R.ErrorMessage.IsEmpty())
+            {
+                Output = R.ErrorMessage + (Output.IsEmpty() ? FString() : (TEXT("\n") + Output));
+            }
+
+            // Publish the result under the registry lock so a concurrent
+            // build_status read always sees a consistent {status, exit_code, output}.
+            FHaybaMCPJobRegistry::Get().SetDone(JobId, ExitCode, Output);
+
+            // Append job completion to the operation journal.
+            JournalProgress(JobId, TEXT("exit"),
+                FString::Printf(TEXT("%s exit_code=%d"), *OpName, ExitCode), ExitCode == 0);
+        });
 
         TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("command"), OpName);
         Out->SetStringField(TEXT("job_id"), JobId);
+        Out->SetStringField(TEXT("status"), TEXT("running"));
+        Out->SetBoolField(TEXT("ok"), true);
+        Out->SetStringField(TEXT("note"),
+            TEXT("Job started asynchronously. Poll build_status { job_id } for {status, exit_code, output}, or watch hayba_journal_tail."));
+        return Out;
+    }
 
-        if (!bFinished)
+    /**
+     * build_status { job_id } — read an async job's state from the shared
+     * registry under its lock. Works for build_* AND test_run jobs (one
+     * registry). Returns {status:"running"} while in flight, or
+     * {status:"done", ok, exit_code, output} once complete; {status:"unknown"}
+     * if the id is not in the registry (e.g. it predates the last editor start).
+     */
+    TSharedRef<FJsonObject> Cmd_BuildStatus(const TSharedPtr<FJsonObject>& Params)
+    {
+        FString JobId;
+        if (!Params.IsValid() || !Params->TryGetStringField(TEXT("job_id"), JobId) || JobId.IsEmpty())
         {
-            // Long job — return immediately, the AsyncTask keeps logging via
-            // Journal. Subsequent build_job_status calls (future work) can
-            // look up the journal entries by job_id.
-            Out->SetStringField(TEXT("status"), TEXT("running"));
-            Out->SetBoolField(TEXT("ok"), true);
-            Out->SetStringField(TEXT("note"),
-                TEXT("job exceeded 5min; streaming progress to Saved/hayba-execution.log"));
+            TSharedRef<FJsonObject> Err = MakeShared<FJsonObject>();
+            Err->SetBoolField(TEXT("ok"), false);
+            Err->SetStringField(TEXT("error"), TEXT("build_status requires { job_id: string }"));
+            return Err;
+        }
+
+        const FHaybaJobState Job = FHaybaMCPJobRegistry::Get().GetJob(JobId);
+
+        TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
+        Out->SetStringField(TEXT("job_id"), JobId);
+        if (!Job.bFound)
+        {
+            Out->SetBoolField(TEXT("ok"), false);
+            Out->SetStringField(TEXT("status"), TEXT("unknown"));
+            Out->SetStringField(TEXT("error"),
+                FString::Printf(TEXT("no job with id %s (it may predate the last editor restart)"), *JobId));
             return Out;
         }
 
-        const FProcRunResult& R = Future.Get();
-        Out->SetStringField(TEXT("status"), TEXT("done"));
-        Out->SetBoolField(TEXT("ok"), R.bLaunched && R.ExitCode == 0);
-        Out->SetNumberField(TEXT("exit_code"), R.ExitCode);
-        Out->SetStringField(TEXT("log_excerpt"), TailExcerpt(R.CapturedOutput));
-        if (!R.ErrorMessage.IsEmpty())
+        Out->SetStringField(TEXT("command"), Job.OpName);
+        if (Job.Status == EHaybaJobStatus::Done)
         {
-            Out->SetStringField(TEXT("error"), R.ErrorMessage);
+            Out->SetStringField(TEXT("status"), TEXT("done"));
+            Out->SetBoolField(TEXT("ok"), Job.ExitCode == 0);
+            Out->SetNumberField(TEXT("exit_code"), Job.ExitCode);
+            // For builds this is the log tail; for test_run it is a JSON string
+            // of {passed, failed, skipped, elapsed_seconds, total}.
+            Out->SetStringField(TEXT("output"), Job.Output);
+        }
+        else
+        {
+            Out->SetStringField(TEXT("status"), TEXT("running"));
+            Out->SetBoolField(TEXT("ok"), true);
         }
         return Out;
     }
@@ -395,7 +437,8 @@ TArray<FString> FHaybaMCPBuildHandler::GetCommands() const
     return {
         TEXT("build_project"),
         TEXT("build_cook"),
-        TEXT("build_generate_project_files")
+        TEXT("build_generate_project_files"),
+        TEXT("build_status")
     };
 }
 
@@ -412,6 +455,10 @@ FHaybaHandlerResult FHaybaMCPBuildHandler::Handle(const FString& Cmd, const TSha
     if (Cmd == TEXT("build_generate_project_files"))
     {
         return FHaybaHandlerResult::Ok(Cmd_GenerateProjectFiles(Params));
+    }
+    if (Cmd == TEXT("build_status"))
+    {
+        return FHaybaHandlerResult::Ok(Cmd_BuildStatus(Params));
     }
 
     return FHaybaHandlerResult::Err(FString::Printf(
