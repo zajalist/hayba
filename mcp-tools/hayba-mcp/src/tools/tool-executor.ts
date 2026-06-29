@@ -67,11 +67,22 @@ export const NON_IDEMPOTENT = new Set<string>([
   // Material authoring
   'material_create',
   'material_create_instance',
+  // Material add-element family (append mutations — duplicate nodes/edges on retry)
+  'material_add_node',
+  'material_add_comment',
+  'material_add_reroute_declaration',
+  'material_add_reroute_usage',
+  'material_connect_nodes',
   // PCG
   'pcg_create_graph',
+  // PCG add-element family (MCP-registered; routed via python_run internally)
+  'pcg_add_node',
+  'pcg_wire',
   // ISM
   'ism_create_actor',
   'ism_clear_instances',
+  // ISM add-element family
+  'ism_add_instances',
   // Foliage
   'foliage_remove_instances',
   // Spline

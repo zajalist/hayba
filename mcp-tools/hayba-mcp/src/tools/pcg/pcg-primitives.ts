@@ -238,4 +238,3 @@ export const pcgInspectInstancesDescriptor: PyToolDescriptor<typeof pcgInspectIn
   timeoutMs: 30_000,
 };
 
-export const pcgPrimitiveMeta = lowMeta;

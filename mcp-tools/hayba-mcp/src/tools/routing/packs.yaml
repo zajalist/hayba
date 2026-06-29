@@ -16,11 +16,6 @@ packs:
       - hayba_ambientcg_download
       - actor_spawn
 
-  - name: planet-sim
-    kind: workflow
-    description: Planet-scale physics (tectonics, climate, habitability, tidal locking).
-    tools: []
-
   - name: connectors
     kind: workflow
     description: All third-party asset connector tools.

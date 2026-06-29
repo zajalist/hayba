@@ -727,10 +727,10 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
                 TEXT("SEH guard caught a structured exception in handler for command '%s' (id: %s) — editor kept alive"),
                 *Cmd, *Id);
             Result = FHaybaHandlerResult::Err(FString::Printf(
-                TEXT("handler crashed (SEH): command '%s' triggered a native structured exception ")
-                TEXT("(access violation). The editor was kept alive by the SEH guard and the operation ")
-                TEXT("did NOT complete. This is most often a stale Python-registered editor delegate firing ")
-                TEXT("on a garbage-collected target — do not register engine-lifetime UE delegates from python_run."),
+                TEXT("handler crashed (SEH): command '%s' faulted with a structured exception ")
+                TEXT("(e.g. a null/stale UObject in the handler, or a stale Python-registered editor delegate ")
+                TEXT("firing on a GC'd target). The editor was kept alive by the SEH guard and the operation ")
+                TEXT("did NOT complete."),
                 *Cmd));
         }
     }

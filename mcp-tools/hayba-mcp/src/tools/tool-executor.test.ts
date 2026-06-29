@@ -179,6 +179,25 @@ describe('executeCommand — idempotency / retry gating', () => {
       .rejects.toMatchObject({ code: 'transport' });
     expect(calls).toBe(1);
   });
+
+  it('material_add_node (add-element family) is NOT retried on transport failure (sender called once)', async () => {
+    let calls = 0;
+    const sender: Sender = async () => { calls++; throw new Error('ECONNRESET'); };
+    await expect(executeCommand('material_add_node', {}, { sender }))
+      .rejects.toMatchObject({ name: 'UeToolError', code: 'transport' });
+    expect(calls).toBe(1);
+  });
+
+  it('add-element family members are all present in NON_IDEMPOTENT', () => {
+    for (const cmd of [
+      'material_add_node', 'material_add_comment', 'material_add_reroute_declaration',
+      'material_add_reroute_usage', 'material_connect_nodes',
+      'pcg_add_node', 'pcg_wire',
+      'ism_add_instances',
+    ]) {
+      expect(NON_IDEMPOTENT.has(cmd)).toBe(true);
+    }
+  });
 });
 
 import { InMemoryToolExecutor } from './tool-executor.js';
