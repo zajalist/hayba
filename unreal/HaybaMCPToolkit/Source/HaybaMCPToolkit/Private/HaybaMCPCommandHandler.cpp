@@ -27,13 +27,97 @@ DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPCmd, Log, All);
 
 static bool IsDestructiveCommand(const FString& Cmd)
 {
-    return Cmd == TEXT("actor_delete")
-        || Cmd == TEXT("actor_spawn")
-        || Cmd == TEXT("python_run")   // was "python_exec" — a non-existent name, so python_run (arbitrary code exec) silently bypassed the Plan-Mode gate
-        || Cmd == TEXT("memory_clear")
-        || Cmd == TEXT("editor_execute_console")
-        || Cmd == TEXT("landscape_import")
-        || Cmd == TEXT("pcg_execute_graph");
+    // Plan-Mode gate coverage. Audited (2026-07-04) against every mutating
+    // command in legacy-commands/sidecar.json AND the TS NON_IDEMPOTENT set in
+    // tools/tool-executor.ts. Rule: gate anything that creates / adds / sets /
+    // deletes / removes / duplicates / imports / renames scene or asset state,
+    // plus the two wildcard-invocation escape hatches (actor_call_function,
+    // editor_run_console_command) and arbitrary code exec (python_run). Pure
+    // reads (get/list/info/search/validate/export/focus/ping) are NOT gated.
+    //
+    // Prior bugs this fixes: (1) "editor_execute_console" was a non-existent
+    // name — the real command is "editor_run_console_command", so console exec
+    // silently bypassed the gate (same class as the old python_exec typo).
+    // (2) actor_batch_spawn (live-testing finding) spawned actors with no plan
+    // approval while actor_delete WAS gated.
+    //
+    // NB: many TS-only tools reach C++ as "python_run" (already gated) so their
+    // own names never hit ProcessCommand; they are listed anyway so a direct
+    // hayba_invoke of a registered handler is still covered and intent is clear.
+    static const TSet<FString> DestructiveCommands = {
+        // Arbitrary code / wildcard invocation
+        TEXT("python_run"),
+        TEXT("actor_call_function"),
+        TEXT("editor_run_console_command"),
+        // Actor lifecycle + mutation
+        TEXT("actor_spawn"),
+        TEXT("actor_delete"),
+        TEXT("actor_duplicate"),
+        TEXT("actor_batch_spawn"),
+        TEXT("actor_spawn_from_asset"),
+        TEXT("actor_set_properties"),
+        TEXT("actor_set_visibility"),
+        TEXT("actor_snap_to_socket"),
+        TEXT("actor_tag"),
+        // Object reflection write
+        TEXT("object_set_property"),
+        // Asset lifecycle
+        TEXT("asset_import"),
+        TEXT("asset_duplicate"),
+        TEXT("asset_delete"),
+        TEXT("asset_rename"),
+        // Blueprint authoring
+        TEXT("blueprint_create"),
+        TEXT("blueprint_add_component"),
+        TEXT("blueprint_add_variable"),
+        TEXT("blueprint_set_defaults"),
+        // Material authoring
+        TEXT("material_create"),
+        TEXT("material_create_instance"),
+        TEXT("material_add_node"),
+        TEXT("material_add_comment"),
+        TEXT("material_add_reroute_declaration"),
+        TEXT("material_add_reroute_usage"),
+        TEXT("material_connect_nodes"),
+        // PCG (both legacy alias + namespaced form)
+        TEXT("create_graph"),
+        TEXT("pcg_create_graph"),
+        TEXT("execute_graph"),
+        TEXT("pcg_execute_graph"),
+        TEXT("pcg_add_node"),
+        TEXT("pcg_wire"),
+        // Landscape (legacy alias + namespaced form)
+        TEXT("landscape_import"),
+        TEXT("import_landscape"),
+        // ISM
+        TEXT("ism_create_actor"),
+        TEXT("ism_add_instance"),
+        TEXT("ism_add_instances"),
+        TEXT("ism_clear_instances"),
+        // Foliage
+        TEXT("foliage_remove_instances"),
+        // Spline
+        TEXT("spline_create"),
+        TEXT("spline_add_point"),
+        TEXT("spline_set_point"),
+        TEXT("spline_remove_point"),
+        // Level / Data authoring
+        TEXT("level_create"),
+        TEXT("data_create"),
+        TEXT("data_set"),
+        // Sequencer / Niagara / MetaSound / GAS / UI / Input authoring
+        TEXT("seq_create"),
+        TEXT("niagara_spawn"),
+        TEXT("metasound_create"),
+        TEXT("gas_create_ability"),
+        TEXT("gas_create_effect"),
+        TEXT("ui_create_widget"),
+        TEXT("input_create_action"),
+        TEXT("input_create_mapping"),
+        // Memory
+        TEXT("memory_clear"),
+    };
+    return DestructiveCommands.Contains(Cmd);
 }
 
 static void MaybeShowPlanModePrompt()

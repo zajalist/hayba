@@ -6,6 +6,14 @@
 >
 > Companion files: `2026-06-28-mcp-supertooling-tools.json` (machine-readable catalog) and `2026-06-28-mcp-competitive-and-audit-appendix.md` (raw research).
 
+## Shipped so far (2026-07-04)
+
+- **Phase 0/1 foundation** complete and smoke-proven (14/14 smoke checks green).
+- **Wave 1**: 55 surfaced legacy tools + 8 net-new actor tools (inspect/find/selection/asset-spawn/batch-transform/focus/outliner).
+- **Wave 2**: 13 editor tools + 9 asset/mesh tools + `asset_registry_query` extension; plus this backlog burn-down (output-log shared-read, Plan-Mode gate coverage audit).
+- **Honest tool count**: ~75 first-class today, on track to ~160.
+- A live in-editor battery harness now exists for regression testing.
+
 ---
 
 # Hayba UE MCP — Executive Roadmap: The Most Powerful Production-Grade Unreal MCP

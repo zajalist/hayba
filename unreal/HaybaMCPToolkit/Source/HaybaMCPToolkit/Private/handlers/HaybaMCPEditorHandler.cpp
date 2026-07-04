@@ -31,6 +31,63 @@ static FEditorViewportClient* AsEditorViewportClient(FViewport* VP)
     return nullptr;
 }
 
+// Read the most-recent project .log file into a line array using a SHARED read.
+// UE holds the active editor log open for writing, so FFileHelper's default
+// exclusive read fails ("failed to read log file") even though the file exists
+// and is being actively written. CreateFileReader(FILEREAD_AllowWrite) opens
+// alongside the live writer. Reads at most the last 16MB (a multi-GB log would
+// overflow the int32 in SetNumUninitialized(Size+1) and block the game thread).
+// Returns false and fills OutError on failure. Shared by GetOutputLog + StreamLog.
+static bool ReadMostRecentLogLines(TArray<FString>& OutLines, FString& OutFile, FString& OutError)
+{
+    OutLines.Reset();
+    OutFile.Reset();
+
+    const FString LogDir = FPaths::ProjectLogDir();
+    TArray<FString> LogFiles;
+    IFileManager::Get().FindFiles(LogFiles, *(LogDir / TEXT("*.log")), true, false);
+    if (LogFiles.Num() == 0)
+    {
+        OutError = TEXT("No log files found");
+        return false;
+    }
+
+    FDateTime MostRecentTime = FDateTime::MinValue();
+    for (const FString& File : LogFiles)
+    {
+        const FString FullPath = LogDir / File;
+        const FDateTime ModTime = IFileManager::Get().GetTimeStamp(*FullPath);
+        if (ModTime > MostRecentTime)
+        {
+            MostRecentTime = ModTime;
+            OutFile = FullPath;
+        }
+    }
+
+    TUniquePtr<FArchive> Reader(IFileManager::Get().CreateFileReader(*OutFile, FILEREAD_AllowWrite));
+    if (!Reader)
+    {
+        OutError = FString::Printf(TEXT("failed to open log file: %s"), *OutFile);
+        return false;
+    }
+
+    const int64 FullSize = Reader->TotalSize();
+    const int64 MaxBytes = 16 * 1024 * 1024;
+    int64 Size = FullSize;
+    if (FullSize > MaxBytes)
+    {
+        Reader->Seek(FullSize - MaxBytes);
+        Size = MaxBytes;
+    }
+    TArray<uint8> Buf;
+    Buf.SetNumUninitialized((int32)Size + 1);
+    Reader->Serialize(Buf.GetData(), Size);
+    Buf[(int32)Size] = 0;
+    const FString Content(UTF8_TO_TCHAR(Buf.GetData()));
+    Content.ParseIntoArrayLines(OutLines, /*InCullEmpty=*/false);
+    return true;
+}
+
 TArray<FString> FHaybaMCPEditorHandler::GetCommands() const
 {
     return {
@@ -347,30 +404,14 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::GetOutputLog(const TSharedPtr<FJsonO
             Lines = FMath::Min(TmpLines, 200);
     }
 
-    FString LogDir = FPaths::ProjectLogDir();
-    TArray<FString> LogFiles;
-    IFileManager::Get().FindFiles(LogFiles, *(LogDir / TEXT("*.log")), true, false);
-
-    if (LogFiles.Num() == 0)
-        return FHaybaHandlerResult::Err(TEXT("No log files found"));
-
-    // Find the most recent log file
-    FString MostRecentFile;
-    FDateTime MostRecentTime = FDateTime::MinValue();
-    for (const FString& File : LogFiles)
-    {
-        FString FullPath = LogDir / File;
-        FDateTime ModTime = IFileManager::Get().GetTimeStamp(*FullPath);
-        if (ModTime > MostRecentTime)
-        {
-            MostRecentTime = ModTime;
-            MostRecentFile = FullPath;
-        }
-    }
-
+    // Shared-read the live log (see ReadMostRecentLogLines) — the legacy
+    // exclusive read via FFileHelper::LoadFileToStringArray failed while the
+    // editor held the file open, even though it exists and is being written.
     TArray<FString> AllLines;
-    if (!FFileHelper::LoadFileToStringArray(AllLines, *MostRecentFile))
-        return FHaybaHandlerResult::Err(FString::Printf(TEXT("editor_get_output_log: failed to read log file: %s"), *MostRecentFile));
+    FString MostRecentFile;
+    FString ReadError;
+    if (!ReadMostRecentLogLines(AllLines, MostRecentFile, ReadError))
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("editor_get_output_log: %s"), *ReadError));
 
     int32 StartIdx = FMath::Max(0, AllLines.Num() - Lines);
     TArray<TSharedPtr<FJsonValue>> LogLineValues;
@@ -412,55 +453,13 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::StreamLog(const TSharedPtr<FJsonObje
         for (FString& S : Parts) { S.TrimStartAndEndInline(); if (!S.IsEmpty()) SeverityWanted.Add(S); }
     }
 
-    FString LogDir = FPaths::ProjectLogDir();
-    TArray<FString> LogFiles;
-    IFileManager::Get().FindFiles(LogFiles, *(LogDir / TEXT("*.log")), true, false);
-
-    if (LogFiles.Num() == 0)
-        return FHaybaHandlerResult::Err(TEXT("No log files found"));
-
-    FString MostRecentFile;
-    FDateTime MostRecentTime = FDateTime::MinValue();
-    for (const FString& File : LogFiles)
-    {
-        FString FullPath = LogDir / File;
-        FDateTime ModTime = IFileManager::Get().GetTimeStamp(*FullPath);
-        if (ModTime > MostRecentTime)
-        {
-            MostRecentTime = ModTime;
-            MostRecentFile = FullPath;
-        }
-    }
-
-    // UE keeps the active log open for writing — LoadFileToStringArray()'s
-    // default exclusive read fails. Use CreateFileReader with
-    // FILEREAD_AllowWrite to read alongside the live writer.
+    // Shared-read the live log (16MB tail, FILEREAD_AllowWrite) — see
+    // ReadMostRecentLogLines. GetOutputLog uses the same helper.
     TArray<FString> AllLines;
-    {
-        TUniquePtr<FArchive> Reader(IFileManager::Get().CreateFileReader(*MostRecentFile, FILEREAD_AllowWrite));
-        if (!Reader)
-        {
-            return FHaybaHandlerResult::Err(FString::Printf(
-                TEXT("editor_stream_log: failed to open log file: %s"), *MostRecentFile));
-        }
-        // Cap the read: a multi-GB log would (a) overflow TArray's int32 size in
-        // SetNumUninitialized(Size+1) -> one-past-end write, and (b) block the
-        // game thread for seconds. Read at most the last 16MB.
-        const int64 FullSize = Reader->TotalSize();
-        const int64 MaxBytes = 16 * 1024 * 1024;
-        int64 Size = FullSize;
-        if (FullSize > MaxBytes)
-        {
-            Reader->Seek(FullSize - MaxBytes);
-            Size = MaxBytes;
-        }
-        TArray<uint8> Buf;
-        Buf.SetNumUninitialized((int32)Size + 1);
-        Reader->Serialize(Buf.GetData(), Size);
-        Buf[(int32)Size] = 0;
-        const FString Content(UTF8_TO_TCHAR(Buf.GetData()));
-        Content.ParseIntoArrayLines(AllLines, /*InCullEmpty=*/false);
-    }
+    FString MostRecentFile;
+    FString ReadError;
+    if (!ReadMostRecentLogLines(AllLines, MostRecentFile, ReadError))
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("editor_stream_log: %s"), *ReadError));
 
     int32 ClampedStart = FMath::Clamp(SinceLine, 0, AllLines.Num());
     TArray<TSharedPtr<FJsonValue>> OutLines;

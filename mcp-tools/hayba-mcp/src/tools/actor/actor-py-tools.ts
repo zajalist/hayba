@@ -28,6 +28,13 @@ import type { PyToolDescriptor } from '../py-tool-factory.js';
 // (get_actor_label, the human-readable outliner name) or the full path
 // (get_path_name). We match label first (exact), then path, then a unique
 // label-substring — mirroring the PCG node-resolver's exact→substring policy.
+// ROTATOR CONVENTION — this file uses [roll, pitch, yaw] because that is UE
+// python's TRUE positional signature for unreal.Rotator(roll, pitch, yaw) and
+// set_actor_rotation. This is DIFFERENT from render-camera.ts and the legacy
+// sidecar, which use [pitch, yaw, roll] (the C++ FRotator field order). Do NOT
+// cross-copy rotation arrays between these files — the components will be
+// silently transposed (roll↔pitch), tilting/mis-aiming actors. Convert
+// explicitly at the boundary.
 const PY_ACTOR_HELPERS = [
   'def _eas():',
   '    return unreal.get_editor_subsystem(unreal.EditorActorSubsystem)',
