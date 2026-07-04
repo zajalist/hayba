@@ -882,6 +882,17 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         Limits.MaxArrayItems = 50;
         Limits.MaxStringChars = 512;
         Limits.MaxTopLevelFields = 20;
+        if (Cmd == TEXT("python_run"))
+        {
+            // python_run's stdout carries the HAYBA_JSON result line for every
+            // python-factory tool; the 512-char cap clipped it mid-JSON
+            // ("Unterminated string at position 501" — live-battery finding,
+            // broke actor_find/object_inspect/outliner_tree/reflect_class).
+            // The TS layer already spills >12k outputs to a temp file, so a
+            // 64K ceiling here is ample and still bounds the frame size.
+            Limits.MaxStringChars = 64 * 1024;
+            Limits.MaxArrayItems = 200;
+        }
         FHaybaMCPResponseBuilder Builder(Limits);
         TSharedRef<FJsonObject> Trimmed = Builder.Build(DataObj.ToSharedRef());
         return MakeOkResponse(Id, Trimmed);
