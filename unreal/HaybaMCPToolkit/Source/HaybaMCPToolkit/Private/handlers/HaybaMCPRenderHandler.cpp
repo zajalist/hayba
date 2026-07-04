@@ -362,12 +362,13 @@ namespace HaybaRender
             // Conservative: serialize as PNG when EXR helper isn't available.
             TArray<FColor> Pixels;
             Res->ReadPixels(Pixels);
-            // CompressImageArray emits PNG. ThumbnailCompressImageArray emits
-            // JPEG, which previously landed JPEG bytes behind a .png extension —
-            // the magic-byte verifier below correctly rejected that as
-            // file_invalid (caught by the Phase 0/1 in-editor smoke).
-            TArray<uint8> CompressedPng;
-            FImageUtils::CompressImageArray(S->Width, S->Height, Pixels, CompressedPng);
+            // NOTE (smoke-caught): ThumbnailCompressImageArray emits JPEG, and
+            // in UE 5.x CompressImageArray is a deprecated alias for it — both
+            // put JPEG bytes behind a .png extension, which the magic-byte
+            // verifier below correctly rejected as file_invalid. The real PNG
+            // encoder is PNGCompressImageArray (TArray64 API).
+            TArray64<uint8> CompressedPng;
+            FImageUtils::PNGCompressImageArray(S->Width, S->Height, Pixels, CompressedPng);
             bWrote = FFileHelper::SaveArrayToFile(CompressedPng, *S->OutPath);
             if (!bWrote) S->EngineHint = TEXT("png write failed (EXR fallback)");
         }
@@ -375,19 +376,21 @@ namespace HaybaRender
         {
             TArray<FColor> Pixels;
             Res->ReadPixels(Pixels);
-            TArray<uint8> Compressed;
             if (S->Format == TEXT("jpg"))
             {
                 // JPEG requested: the thumbnail compressor's JPEG output matches
                 // the .jpg extension + magic-byte expectation.
+                TArray<uint8> Compressed;
                 FImageUtils::ThumbnailCompressImageArray(S->Width, S->Height, Pixels, Compressed);
+                bWrote = FFileHelper::SaveArrayToFile(Compressed, *S->OutPath);
             }
             else
             {
-                // png (default): emit real PNG bytes.
-                FImageUtils::CompressImageArray(S->Width, S->Height, Pixels, Compressed);
+                // png (default): emit real PNG bytes (see NOTE above).
+                TArray64<uint8> CompressedPng;
+                FImageUtils::PNGCompressImageArray(S->Width, S->Height, Pixels, CompressedPng);
+                bWrote = FFileHelper::SaveArrayToFile(CompressedPng, *S->OutPath);
             }
-            bWrote = FFileHelper::SaveArrayToFile(Compressed, *S->OutPath);
             if (!bWrote) S->EngineHint = TEXT("file write failed");
         }
         S->RenderMs = (FPlatformTime::Seconds() - RenderT0) * 1000.0;
