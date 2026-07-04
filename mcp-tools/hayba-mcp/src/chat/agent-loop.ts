@@ -229,6 +229,30 @@ export function buildToolCatalog(opts: ToolCatalogOptions = {}): LLMTool[] {
 
 export type DispatchTool = (name: string, args: Record<string, unknown>) => Promise<unknown>;
 
+/**
+ * Identity of a plan-gated tool call: the tool name plus a stable hash of its
+ * arguments. Approval is bound to THIS identity (C1) so a resumed turn cannot
+ * launder a *different* destructive call through a single turn-wide approval.
+ */
+export interface ApprovedCall {
+  name: string;
+  argsHash: string;
+}
+
+/** Deterministic (sorted-key) JSON serialization — used as the args hash. */
+function stableStringify(v: unknown): string {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v) ?? 'null';
+  if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
+  const obj = v as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  return '{' + keys.map((k) => JSON.stringify(k) + ':' + stableStringify(obj[k])).join(',') + '}';
+}
+
+/** Stable hash of a tool call's arguments (sorted-key JSON). */
+export function argsHash(args: unknown): string {
+  return stableStringify(args);
+}
+
 /** Default dispatch: route through the UE bridge (executeCommand). Task 4
  *  replaces this with a hayba_invoke-style dispatch that also reaches TS-side
  *  captured handlers. */
@@ -240,7 +264,7 @@ export type AgentEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'tool_call'; call: LLMToolCall }
   | { type: 'tool_result'; id: string; name: string; result: unknown; isError?: boolean }
-  | { type: 'plan_request'; call: LLMToolCall; hint?: string; source: 'ts' | 'ue' }
+  | { type: 'plan_request'; call: LLMToolCall; hint?: string; source: 'ts' | 'ue'; argsHash?: string }
   | { type: 'done'; reason: AgentDoneReason; stopReason?: LLMStopReason }
   | { type: 'error'; error: string; kind?: string };
 
@@ -254,7 +278,21 @@ export interface AgentLoopParams {
   archetypeFilter?: string[];
   /** Plan-Mode gate for TS-side destructive tools (UE side is C++-authoritative). */
   planMode?: boolean;
+  /**
+   * @deprecated Turn-wide approval is unsafe (a resumed turn can emit different
+   * destructive calls that all sail through). Use {@link approvedCall} to bind
+   * the approval to a specific `{name, argsHash}` identity. Still honoured only
+   * when `approvedCall` is absent, for backwards compatibility.
+   */
   planApproved?: boolean;
+  /**
+   * Call-bound approval (C1). The TS-side gate passes exactly ONE destructive
+   * call matching this `{name, argsHash}`; the approval is consumed on first
+   * matching dispatch. Any other destructive call re-pauses with a fresh
+   * `plan_request`. (C++ re-checks server-side independently — the UE Plan tab
+   * remains authoritative for UE-bridged commands.)
+   */
+  approvedCall?: ApprovedCall;
   maxSteps?: number;
   /** Approximate token budget across the whole loop (chars/4 heuristic). */
   tokenBudget?: number;
@@ -291,12 +329,15 @@ export async function* runAgentLoop(
     system,
     planMode = false,
     planApproved = false,
+    approvedCall,
     maxSteps = DEFAULT_MAX_STEPS,
     tokenBudget,
     maxTokens,
     signal,
   } = params;
   const dispatchTool = params.dispatchTool ?? defaultDispatchTool;
+  // Call-bound approval is one-shot: consumed on the first matching dispatch.
+  let approvalUsed = false;
 
   const tools =
     params.tools ??
@@ -406,15 +447,31 @@ export async function* runAgentLoop(
       }
 
       // TS-side Plan-Mode gate (C++ is authoritative for UE commands, but this
-      // catches TS handlers that never reach ProcessCommand). Pause, no dispatch.
-      if (planMode && !planApproved && isDestructiveToolName(call.name)) {
-        yield {
-          type: 'plan_request',
-          call,
-          source: 'ts',
-          hint: 'Plan Mode is ON. This destructive tool needs an approved plan before it runs.',
-        };
-        return;
+      // catches TS handlers that never reach ProcessCommand). Approval is bound
+      // to a specific {name, argsHash} (C1): a resumed turn may dispatch ONLY the
+      // exact call that was approved, once. Any other destructive call — or a
+      // second copy of the approved one — re-pauses with a fresh plan_request.
+      if (planMode && isDestructiveToolName(call.name)) {
+        const hash = argsHash(call.input);
+        const matchesApproval =
+          !approvalUsed &&
+          approvedCall !== undefined &&
+          approvedCall.name === call.name &&
+          approvedCall.argsHash === hash;
+        // Legacy turn-wide approval only when no call-bound approval was supplied.
+        const legacyApproved = approvedCall === undefined && planApproved;
+        if (matchesApproval) {
+          approvalUsed = true; // one-shot consume
+        } else if (!legacyApproved) {
+          yield {
+            type: 'plan_request',
+            call,
+            source: 'ts',
+            argsHash: hash,
+            hint: 'Plan Mode is ON. This destructive tool needs an approved plan before it runs.',
+          };
+          return;
+        }
       }
 
       // Dispatch.

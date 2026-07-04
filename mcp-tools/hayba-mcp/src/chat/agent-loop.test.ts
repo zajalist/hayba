@@ -3,6 +3,7 @@ import {
   runAgentLoop,
   buildToolCatalog,
   isDestructiveToolName,
+  argsHash,
   type AgentEvent,
   type AgentLoopParams,
 } from './agent-loop.js';
@@ -167,6 +168,72 @@ describe('runAgentLoop', () => {
     expect((plan as { source?: string }).source).toBe('ts');
     // Loop paused: no done event emitted after plan_request.
     expect(events.at(-1)!.type).toBe('plan_request');
+  });
+
+  it('argsHash is stable across key ordering', () => {
+    expect(argsHash({ a: 1, b: 2 })).toBe(argsHash({ b: 2, a: 1 }));
+    expect(argsHash({ a: 1 })).not.toBe(argsHash({ a: 2 }));
+  });
+
+  it('C1: approve A then model requests B → B re-pauses, NO dispatch', async () => {
+    const client = new FakeLLMClient([toolResponse('actor_delete', { id: 'B' }, 'c1')]);
+    const dispatch = vi.fn(async () => ({ ok: true }));
+    // Approval bound to a DIFFERENT call (actor_spawn / id:A).
+    const approvedCall = { name: 'actor_spawn', argsHash: argsHash({ id: 'A' }) };
+    const tools = [
+      { name: 'actor_delete', description: 'del', input_schema: { type: 'object' as const, properties: {} } },
+    ];
+    const events = await collect(
+      runAgentLoop(baseParams({ client, tools, dispatchTool: dispatch, planMode: true, approvedCall })),
+    );
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(events.at(-1)!.type).toBe('plan_request');
+  });
+
+  it('C1: approve A then model requests A (same args) → dispatches once', async () => {
+    const client = new FakeLLMClient([
+      toolResponse('actor_spawn', { id: 'A' }, 'c1'),
+      textResponse('done'),
+    ]);
+    const dispatch = vi.fn(async () => ({ ok: true }));
+    const approvedCall = { name: 'actor_spawn', argsHash: argsHash({ id: 'A' }) };
+    const events = await collect(
+      runAgentLoop(baseParams({ client, dispatchTool: dispatch, planMode: true, approvedCall })),
+    );
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(events.some((e) => e.type === 'tool_result')).toBe(true);
+    expect(events.some((e) => e.type === 'plan_request')).toBe(false);
+  });
+
+  it('C1: a SECOND copy of the approved call in one turn re-pauses (one-shot)', async () => {
+    const client = new FakeLLMClient([
+      // Two destructive calls in a single assistant turn, both == the approved one.
+      {
+        content: null,
+        toolCalls: [
+          { id: 'c1', name: 'actor_spawn', input: { id: 'A' } },
+          { id: 'c2', name: 'actor_spawn', input: { id: 'A' } },
+        ],
+        stopReason: 'tool_use',
+      },
+    ]);
+    const dispatch = vi.fn(async () => ({ ok: true }));
+    const approvedCall = { name: 'actor_spawn', argsHash: argsHash({ id: 'A' }) };
+    const events = await collect(
+      runAgentLoop(baseParams({ client, dispatchTool: dispatch, planMode: true, approvedCall })),
+    );
+    // First dispatches; second re-pauses at the gate.
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(events.at(-1)!.type).toBe('plan_request');
+  });
+
+  it('C1: plan_request carries the argsHash of the paused call', async () => {
+    const client = new FakeLLMClient([toolResponse('actor_spawn', { id: 'Z' }, 'c1')]);
+    const events = await collect(
+      runAgentLoop(baseParams({ client, dispatchTool: vi.fn(async () => ({})), planMode: true })),
+    );
+    const plan = events.find((e) => e.type === 'plan_request') as { argsHash?: string };
+    expect(plan.argsHash).toBe(argsHash({ id: 'Z' }));
   });
 
   it('C++ plan_mode_required response → plan_request pause, not a failure', async () => {

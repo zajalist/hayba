@@ -5,6 +5,8 @@ import type { Server } from 'node:http';
 import {
   registerChatRoutes,
   __resetChatState,
+  __sweepSessions,
+  __sessionCount,
   isLoopback,
 } from '../../src/chat/chat-server.js';
 import type { LLMClient, LLMStreamEvent } from '../../src/agents/llm-client.js';
@@ -288,6 +290,157 @@ describe('sidecar SSE chat server', () => {
     const parsed = JSON.parse(getBody);
     expect(parsed.provider).toBe('anthropic');
     expect(parsed.key_last4).toBe('2333');
+  });
+
+  it('I3: a concurrent second /chat/stream gets a real 409 (not mid-stream JSON)', async () => {
+    ({ server, url } = startApp({
+      createClient: makeFakeClientFactory([
+        { deltas: ['a', 'b', 'c'], slowMs: 50, content: 'abc', toolCalls: [], stopReason: 'end_turn' },
+      ]) as never,
+      dispatchTool: async () => ({}),
+    }));
+
+    const first = await fetch(`${url}/chat/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: 'conc', prompt: 'go', provider: 'mock' }),
+    });
+    const firstP = readAllFrames(first.body!);
+    await new Promise((r) => setTimeout(r, 20)); // let the first turn start running
+
+    const second = await fetch(`${url}/chat/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: 'conc', prompt: 'again', provider: 'mock' }),
+    });
+    expect(second.status).toBe(409);
+    expect(second.headers.get('content-type')).toContain('application/json');
+    const body = (await second.json()) as { error: string };
+    expect(body.error).toMatch(/in flight/);
+
+    await firstP; // drain the first stream
+  });
+
+  it('I2: resume past the eviction window emits an explicit resume_gap error', async () => {
+    ({ server, url } = startApp({
+      createClient: makeFakeClientFactory([
+        // 600 deltas overflow BUFFER_LIMIT (500) so the buffer head advances.
+        { deltas: Array(600).fill('.'), content: '.'.repeat(600), toolCalls: [], stopReason: 'end_turn' },
+      ]) as never,
+      dispatchTool: async () => ({}),
+    }));
+
+    const first = await fetch(`${url}/chat/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: 'gap', prompt: 'x', provider: 'mock' }),
+    });
+    await readAllFrames(first.body!); // run to completion; early frames get evicted
+
+    const resume = await fetch(`${url}/chat/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: 'gap', last_seq: 5 }), // predates buffer head
+    });
+    const frames = await readAllFrames(resume.body!);
+    const err = frames.find((f) => f.event === 'error')!.data as {
+      code: string;
+      oldest_available_seq: number;
+    };
+    expect(err.code).toBe('resume_gap');
+    expect(err.oldest_available_seq).toBeGreaterThan(6);
+  });
+
+  it('I1: idle session evicted by the TTL sweep; active controller aborted', async () => {
+    ({ server, url } = startApp({
+      createClient: makeFakeClientFactory([
+        { deltas: ['a', 'b', 'c', 'd'], slowMs: 60, content: 'abcd', toolCalls: [], stopReason: 'end_turn' },
+      ]) as never,
+      dispatchTool: async () => ({}),
+    }));
+
+    const res = await fetch(`${url}/chat/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: 'idle', prompt: 'go', provider: 'mock' }),
+    });
+    const framesP = readAllFrames(res.body!);
+    await new Promise((r) => setTimeout(r, 20)); // turn is running
+    expect(__sessionCount()).toBe(1);
+
+    // Advance the virtual clock past the 30-min TTL and sweep → eviction aborts
+    // the in-flight controller and closes the client.
+    __sweepSessions(Date.now() + 31 * 60_000);
+    expect(__sessionCount()).toBe(0);
+
+    // The stream is force-closed by eviction (well before the ~240ms it would
+    // otherwise take), so the reader resolves promptly.
+    await framesP;
+  });
+
+  it('C1: /chat/approve requires a pending plan request, then binds the call', async () => {
+    let dispatchCount = 0;
+    ({ server, url } = startApp({
+      createClient: makeFakeClientFactory([
+        { content: null, toolCalls: [{ id: 'p1', name: 'actor_spawn', input: { id: 'A' } }], stopReason: 'tool_use' },
+        { content: null, toolCalls: [{ id: 'p2', name: 'actor_spawn', input: { id: 'A' } }], stopReason: 'tool_use' },
+        { deltas: ['ok'], content: 'ok', toolCalls: [], stopReason: 'end_turn' },
+      ]) as never,
+      tools: [
+        { name: 'actor_spawn', description: 'spawn', input_schema: { type: 'object', properties: {} } },
+      ],
+      dispatchTool: async () => {
+        dispatchCount++;
+        return { ok: true };
+      },
+    }));
+
+    // Approve with nothing pending → 409.
+    const early = await fetch(`${url}/chat/approve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: 'pm' }),
+    });
+    expect(early.status).toBe(404); // session doesn't exist yet
+
+    // Turn 1: destructive tool under Plan Mode → plan_request pause, NO dispatch.
+    const turn1 = await fetch(`${url}/chat/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: 'pm', prompt: 'spawn it', provider: 'mock' }),
+    });
+    const frames1 = await readAllFrames(turn1.body!);
+    const plan = frames1.find((f) => f.event === 'plan_request')!.data as { args_hash: string };
+    expect(plan.args_hash).toBeTruthy();
+    expect(dispatchCount).toBe(0);
+
+    // Approve binds to the paused call.
+    const approve = await fetch(`${url}/chat/approve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: 'pm' }),
+    });
+    expect(approve.status).toBe(200);
+    expect((await approve.json()).approved).toBe(true);
+
+    // Approving again (already consumed) → 409, nothing pending.
+    const again = await fetch(`${url}/chat/approve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: 'pm' }),
+    });
+    expect(again.status).toBe(409);
+
+    // Turn 2: resume dispatches the approved call exactly once → end_turn.
+    const turn2 = await fetch(`${url}/chat/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: 'pm', prompt: 'spawn it', provider: 'mock' }),
+    });
+    const frames2 = await readAllFrames(turn2.body!);
+    const done = frames2.find((f) => f.event === 'done')!.data as { reason: string };
+    expect(done.reason).toBe('end_turn');
+    expect(dispatchCount).toBe(1);
   });
 
   it('the API key never appears in any stream frame or log', async () => {

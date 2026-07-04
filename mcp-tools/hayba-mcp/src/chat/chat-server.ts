@@ -44,7 +44,13 @@ import type { Express, Request, Response } from 'express';
 import type { AddressInfo } from 'node:net';
 import { createLLMClient, type LLMMessage } from '../agents/llm-client.js';
 import { getProvider } from '../agents/providers.js';
-import { runAgentLoop, type AgentEvent, type DispatchTool } from './agent-loop.js';
+import {
+  runAgentLoop,
+  argsHash,
+  type AgentEvent,
+  type ApprovedCall,
+  type DispatchTool,
+} from './agent-loop.js';
 import type { LLMTool } from '../agents/llm-client.js';
 import { createChatDispatcher } from './tool-dispatch.js';
 
@@ -120,16 +126,88 @@ interface ChatSession {
   messages: LLMMessage[];
   clients: Set<Response>;
   running: boolean;
-  planApproved: boolean;
+  /**
+   * Identity of the tool call currently paused at the Plan-Mode gate (set when a
+   * plan_request is emitted). `/chat/approve` promotes this to `approvedCall`.
+   */
+  pendingPlanCall?: ApprovedCall;
+  /**
+   * Call-bound approval (C1): the ONE `{name, argsHash}` the next turn may
+   * dispatch past the TS-side gate. Consumed (cleared) after the turn runs.
+   */
+  approvedCall?: ApprovedCall;
   assistantText: string;
   toolTrace: ToolTraceEntry[];
+  /** Epoch ms of the last activity on this session; drives TTL/LRU eviction. */
+  lastActivity: number;
   /** Set once the current/last turn has ended (final done frame emitted). */
   lastDone?: BufferedFrame;
 }
 
 const BUFFER_LIMIT = 500;
 const HEARTBEAT_MS = 15_000;
+/** Idle time after which a session is evicted (I1). */
+const SESSION_TTL_MS = 30 * 60_000;
+/** How often the lazy sweeper runs. */
+const SWEEP_INTERVAL_MS = 60_000;
+/** Hard cap on concurrent sessions; oldest inactive are LRU-evicted past this. */
+const MAX_SESSIONS = 64;
 const sessions = new Map<string, ChatSession>();
+
+// ---------------------------------------------------------------------------
+// Session eviction (I1): idle-TTL + LRU cap. Evicting an active session aborts
+// its in-flight controller. The sweeper timer is `.unref()`d so it never keeps
+// the process alive, and is started lazily on first session creation.
+// ---------------------------------------------------------------------------
+
+let sweeper: ReturnType<typeof setInterval> | null = null;
+
+function startSweeper(): void {
+  if (sweeper) return;
+  sweeper = setInterval(() => sweepSessions(), SWEEP_INTERVAL_MS);
+  sweeper.unref?.();
+}
+
+function touch(session: ChatSession): void {
+  session.lastActivity = Date.now();
+}
+
+/** Abort the in-flight turn, close attached clients, and drop the session. */
+function evictSession(session: ChatSession): void {
+  try {
+    session.abortController.abort();
+  } catch {
+    /* already aborted */
+  }
+  for (const client of session.clients) {
+    try {
+      client.end();
+    } catch {
+      /* already closed */
+    }
+  }
+  session.clients.clear();
+  session.running = false;
+  sessions.delete(session.id);
+}
+
+function sweepSessions(now: number = Date.now()): void {
+  for (const session of sessions.values()) {
+    if (now - session.lastActivity > SESSION_TTL_MS) evictSession(session);
+  }
+}
+
+/** Enforce MAX_SESSIONS by LRU-evicting the oldest inactive (not running). */
+function enforceSessionCap(): void {
+  if (sessions.size <= MAX_SESSIONS) return;
+  const candidates = [...sessions.values()]
+    .filter((s) => !s.running)
+    .sort((a, b) => a.lastActivity - b.lastActivity);
+  for (const s of candidates) {
+    if (sessions.size <= MAX_SESSIONS) break;
+    evictSession(s);
+  }
+}
 
 let sessionCounter = 0;
 function newSessionId(): string {
@@ -138,6 +216,8 @@ function newSessionId(): string {
 }
 
 function getOrCreateSession(id: string): ChatSession {
+  startSweeper();
+  sweepSessions();
   let s = sessions.get(id);
   if (!s) {
     s = {
@@ -148,11 +228,12 @@ function getOrCreateSession(id: string): ChatSession {
       messages: [],
       clients: new Set(),
       running: false,
-      planApproved: false,
       assistantText: '',
       toolTrace: [],
+      lastActivity: Date.now(),
     };
     sessions.set(id, s);
+    enforceSessionCap();
   }
   return s;
 }
@@ -188,6 +269,15 @@ function replayMissed(session: ChatSession, res: Response, lastSeq: number): voi
   for (const frame of session.buffer) {
     if (frame.seq > lastSeq) writeFrame(res, frame);
   }
+}
+
+/**
+ * True when the client's `last_seq` predates the oldest buffered frame — i.e.
+ * frames between `last_seq` and the buffer head have already been evicted, so a
+ * gap-free replay is impossible (I2). The buffer must be non-empty.
+ */
+function hasResumeGap(session: ChatSession, lastSeq: number): boolean {
+  return session.buffer.length > 0 && lastSeq < session.buffer[0].seq - 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -298,6 +388,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     if (!session_id) return res.status(400).json({ error: 'session_id is required' });
     const session = sessions.get(session_id);
     if (!session) return res.status(404).json({ error: 'unknown session' });
+    touch(session);
     session.abortController.abort();
     return res.json({ ok: true, cancelled: true });
   });
@@ -309,10 +400,22 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     if (!session_id) return res.status(400).json({ error: 'session_id is required' });
     const session = sessions.get(session_id);
     if (!session) return res.status(404).json({ error: 'unknown session' });
-    session.planApproved = true;
+    touch(session);
+    // C1: approval is bound to the SPECIFIC call paused at the gate, not the
+    // whole turn. Without a pending plan_request there is nothing to approve.
+    if (!session.pendingPlanCall) {
+      return res.status(409).json({ error: 'no pending plan request to approve' });
+    }
+    session.approvedCall = session.pendingPlanCall;
+    session.pendingPlanCall = undefined;
     // Resume = the C++ panel re-issues POST /chat/stream with the same
-    // session_id; the stored transcript continues and the gated tool now runs.
-    return res.json({ ok: true, approved: true });
+    // session_id; the stored transcript continues and ONLY this exact call
+    // (name + argsHash) dispatches past the TS gate, once.
+    return res.json({
+      ok: true,
+      approved: true,
+      call: { name: session.approvedCall.name },
+    });
   });
 
   // ── POST /chat/stream ────────────────────────────────────────────────────
@@ -329,7 +432,20 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       last_seq?: number;
     };
 
-    // SSE headers.
+    // ── Branch on resume vs new turn BEFORE any SSE headers are flushed (I3) ──
+    // Emitting a 409 after flushHeaders() would append JSON mid-stream (the 200 +
+    // SSE headers are already on the wire). So decide the disposition first, and
+    // only flush SSE headers once we're committed to streaming.
+    const existing = body.session_id ? sessions.get(body.session_id) : undefined;
+    const isResume = existing !== undefined && typeof body.last_seq === 'number';
+
+    // Reject a second concurrent NEW turn on a running session with a real 409.
+    // (Resumes are allowed to attach to a running session — that is the point.)
+    if (!isResume && existing && existing.running) {
+      return res.status(409).json({ error: 'session already has a turn in flight' });
+    }
+
+    // Committed to streaming — now flush SSE headers.
     res.status(200);
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -347,9 +463,21 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     const cleanup = (): void => clearInterval(heartbeat);
 
     // ── RESUME path: existing session + last_seq → replay, don't re-dispatch ──
-    const existing = body.session_id ? sessions.get(body.session_id) : undefined;
-    const isResume = existing !== undefined && typeof body.last_seq === 'number';
     if (isResume && existing) {
+      touch(existing);
+      // I2: if last_seq predates the buffer head, the missed frames are gone —
+      // signal an explicit resume_gap error instead of silently skipping them.
+      if (hasResumeGap(existing, body.last_seq as number)) {
+        res.write(`event: error\n`);
+        res.write(
+          `data: ${JSON.stringify({
+            code: 'resume_gap',
+            oldest_available_seq: existing.buffer[0].seq,
+          })}\n\n`,
+        );
+        cleanup();
+        return res.end();
+      }
       existing.clients.add(res);
       replayMissed(existing, res, body.last_seq as number);
       // If the turn already finished, we've replayed the final done frame; end.
@@ -368,15 +496,10 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       return; // no new loop — this is the anti-duplicate-dispatch guarantee
     }
 
-    // Reject starting a second concurrent turn on a running session.
-    if (existing && existing.running) {
-      cleanup();
-      return res.status(409).json({ error: 'session already has a turn in flight' });
-    }
-
     // ── NEW TURN path ────────────────────────────────────────────────────────
     const sessionId = body.session_id || newSessionId();
     const session = getOrCreateSession(sessionId);
+    touch(session);
     // Fresh AbortController per turn (a prior cancel leaves an aborted one).
     session.abortController = new AbortController();
     session.running = true;
@@ -401,6 +524,13 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     const cfg = resolveSessionConfig(sessionId);
     const provider = body.provider ?? cfg?.provider ?? 'mock';
     const model = body.model ?? cfg?.model;
+    // The stored key belongs to the CONFIGURED provider. If the request names a
+    // DIFFERENT provider, that key must not be reused (M2), so we drop it and let
+    // the client factory source the key from the environment for the new
+    // provider. If the request omits provider, or names the SAME provider as the
+    // config, the configured key is the right one to use.
+    const useConfiguredKey = !body.provider || body.provider === cfg?.provider;
+    const resolvedApiKey = useConfiguredKey ? cfg?.apiKey : undefined;
     if (!getProvider(provider)) {
       emit(session, 'error', { error: `unknown provider: ${provider}`, kind: 'config' });
       finalize(session, 'error');
@@ -416,7 +546,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
         provider,
         model,
         baseURL: cfg?.baseURL,
-        apiKey: body.provider ? undefined : cfg?.apiKey, // key follows the resolved provider
+        apiKey: resolvedApiKey, // key follows the resolved provider (see above)
       });
     } catch (err) {
       emit(session, 'error', {
@@ -447,11 +577,11 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       tools: options.tools,
       dispatchTool,
       signal: session.abortController.signal,
-      planApproved: session.planApproved,
+      approvedCall: session.approvedCall,
     }).finally(() => {
       cleanup();
-      // Reset one-shot approval so a later turn re-gates.
-      session.planApproved = false;
+      // Consume the one-shot call-bound approval so a later turn re-gates.
+      session.approvedCall = undefined;
     });
 
     return undefined;
@@ -470,7 +600,8 @@ interface RunTurnParams {
   tools?: LLMTool[];
   dispatchTool: DispatchTool;
   signal: AbortSignal;
-  planApproved: boolean;
+  /** Call-bound Plan-Mode approval for this turn (C1); undefined = re-gate. */
+  approvedCall?: ApprovedCall;
 }
 
 /** Emit the single consolidated final done frame + mark the turn finished. */
@@ -487,7 +618,6 @@ function finalize(
     cancelled: reason === 'aborted' || reason === 'cancelled',
     ...extra,
   });
-  console.error("[dbg] finalize reason="+reason+" clients="+session.clients.size);
   session.lastDone = frame;
   session.running = false;
   // Close every attached SSE client — the turn is over. Buffered frames remain
@@ -503,7 +633,6 @@ function finalize(
 }
 
 async function runTurn(session: ChatSession, params: RunTurnParams): Promise<void> {
-  console.error("[dbg] runTurn start clients="+session.clients.size);
   let finalReason: string | null = null;
   let lastError: { error: string; kind?: string } | null = null;
 
@@ -517,7 +646,7 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
       dispatchTool: params.dispatchTool,
       signal: params.signal,
       planMode: true, // honour Plan Mode; UE side is authoritative, TS side gated
-      planApproved: params.planApproved,
+      approvedCall: params.approvedCall,
     })) {
       forwardEvent(session, ev, (r) => (finalReason = r), (e) => (lastError = e));
       if (finalReason) break; // loop's own done/plan_request/aborted terminus
@@ -566,17 +695,23 @@ function forwardEvent(
       });
       break;
     }
-    case 'plan_request':
+    case 'plan_request': {
+      // C1: record the identity of the paused call so /chat/approve can bind the
+      // approval to THIS exact {name, argsHash} rather than the whole turn.
+      const hash = ev.argsHash ?? argsHash(ev.call.input);
+      session.pendingPlanCall = { name: ev.call.name, argsHash: hash };
       emit(session, 'plan_request', {
         id: ev.call.id,
         name: ev.call.name,
         input: ev.call.input,
         source: ev.source,
         hint: ev.hint,
+        args_hash: hash,
       });
       // Loop RETURNS after plan_request — the turn pauses pending approval.
       setReason('plan_request');
       break;
+    }
     case 'done':
       setReason(ev.reason);
       break;
@@ -597,6 +732,20 @@ export function __resetChatState(): void {
   sessions.clear();
   configStore.clear();
   sessionCounter = 0;
+  if (sweeper) {
+    clearInterval(sweeper);
+    sweeper = null;
+  }
+}
+
+/** Test hook: run the idle-TTL sweep at a given wall-clock time. */
+export function __sweepSessions(now?: number): void {
+  sweepSessions(now);
+}
+
+/** Test hook: number of live sessions. */
+export function __sessionCount(): number {
+  return sessions.size;
 }
 
 /** Introspection for tests: the port an app is listening on. */
