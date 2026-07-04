@@ -61,25 +61,42 @@ describe('editor_get_camera', () => {
 });
 
 describe('editor_cvar_get', () => {
-  it('defaults to the float getter', async () => {
+  it('defaults to the float getter and marks type_assumed', async () => {
     const { sender, lastScript } = mockStdout(emit({ ok: true, name: 'r.X', type: 'float', value: 1.0 }));
     setDefaultSender(sender);
     await makePyToolHandler(editorCvarGetDescriptor)({ name: 'r.X' });
     const s = lastScript();
     expect(s).toContain("_name = 'r.X'");
     expect(s).toContain('get_console_variable_float_value');
+    expect(s).toContain('_type_assumed = True');
   });
 
-  it('picks the int getter when type=int', async () => {
+  it('picks the int getter when type=int and does not assume', async () => {
     const { sender, lastScript } = mockStdout(emit({ ok: true, value: 2 }));
     setDefaultSender(sender);
     await makePyToolHandler(editorCvarGetDescriptor)({ name: 'r.X', type: 'int' });
-    expect(lastScript()).toContain('get_console_variable_int_value');
+    const s = lastScript();
+    expect(s).toContain('get_console_variable_int_value');
+    expect(s).toContain('_type_assumed = False');
   });
 
   it('rejects a missing name', async () => {
     const res = await makePyToolHandler(editorCvarGetDescriptor)({});
     expect(res.isError).toBe(true);
+  });
+
+  it('probes cvar existence via the string getter and does not trust bare typed values', async () => {
+    const { sender, lastScript } = mockStdout(emit({ ok: true, name: 'r.Typo', type: 'float', value: 0, verified: false, note: 'cvar not found' }));
+    setDefaultSender(sender);
+    const res = await makePyToolHandler(editorCvarGetDescriptor)({ name: 'r.Typo' });
+    const s = lastScript();
+    // The generated script must attempt an existence probe rather than trusting
+    // the typed getter's type-default return value at face value.
+    expect(s).toContain('get_console_variable_string_value');
+    expect(s).toContain('verified');
+    expect(s).toContain('type-default');
+    const body = JSON.parse(res.content[0].text) as { verified: boolean };
+    expect(body.verified).toBe(false);
   });
 });
 
@@ -103,6 +120,15 @@ describe('editor_cvar_set', () => {
 
   it('is NOT classified NON_IDEMPOTENT (retry-safe)', () => {
     expect(NON_IDEMPOTENT.has('editor_cvar_set')).toBe(false);
+  });
+
+  it('probes existence via the string getter so a typo does not read back as a silent success', async () => {
+    const { sender, lastScript } = mockStdout(emit({ ok: true, name: 'r.Typo', requested: '5', applied: 0, verified: false, note: 'cvar not found after set' }));
+    setDefaultSender(sender);
+    await makePyToolHandler(editorCvarSetDescriptor)({ name: 'r.Typo', value: 5 });
+    const s = lastScript();
+    expect(s).toContain('get_console_variable_string_value');
+    expect(s).toContain('verified');
   });
 });
 
@@ -247,14 +273,14 @@ describe('editor-domain factory catalog', () => {
     expect(new Set(names).size).toBe(13);
   });
 
-  it('does not collide with existing editor/actor tool names', () => {
-    const existing = new Set([
-      'editor_set_camera', 'editor_focus_actor', 'editor_run_console_command',
-      'editor_get_output_log', 'actor_get_selection', 'actor_inspect', 'hayba_introspect',
-    ]);
-    for (const n of editorPyDescriptors.map((d) => d.name)) {
-      expect(existing.has(n)).toBe(false);
-    }
+  // The real cross-catalog no-duplicates backstop is the global
+  // STANDARD_DESCRIPTORS uniqueness check in schema-single-source.test.ts,
+  // which walks every descriptor in the tool registry (not a hand-curated
+  // list here that can silently drift). This test only checks internal
+  // self-consistency of this file's own descriptor array.
+  it('has no internal duplicate names (see schema-single-source.test.ts for the global check)', () => {
+    const names = editorPyDescriptors.map((d) => d.name);
+    expect(new Set(names).size).toBe(names.length);
   });
 
   it('every tool has a 30s timeout and structured returns', () => {

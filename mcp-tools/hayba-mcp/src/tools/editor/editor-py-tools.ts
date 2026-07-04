@@ -32,6 +32,24 @@
 //     content-browser asset selection and selected components.
 //   - object_inspect is the generic-by-path read; actor_inspect is the richer
 //     level-actor read. Both are kept.
+//   - asset_inspect / asset_registry_query vs the legacy sidecar's
+//     asset_get_info (C++, single-asset info): asset_registry_query is the
+//     BULK/DISCOVERY surface (class + path-prefix filter, pagination — "what
+//     assets exist here"); asset_inspect is the PYTHON-SIDE single-asset read
+//     (class, dirty flag, dependency/referencer counts — AssetRegistry-derived
+//     metadata); asset_get_info is the C++-backed single-asset info call and
+//     may expose engine-side fields the python path cannot reach (e.g. deeper
+//     tag/metadata introspection via UObject reflection). Use
+//     asset_registry_query to find candidates, asset_inspect for dependency
+//     graph questions, asset_get_info when you need the C++-only fields.
+//   - object_inspect vs the legacy sidecar's object_get_property: object_inspect
+//     is a PYTHON dir()-walk over any live UObject (asset, object, or resolved
+//     by level-actor label) — cheap, broad, string-coerced values, good for
+//     "what does this thing even look like". object_get_property is C++-backed
+//     and reads one CPF_Edit-flagged property by exact path — precise, typed,
+//     but only sees editor-exposed reflected properties and does not resolve
+//     actor labels. Use object_inspect to explore/discover; use
+//     object_get_property once you know the exact property path you need.
 //
 // Validated UE 5.7 idioms used here (verified against MEMORY + existing tools):
 //   unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem|LevelEditorSubsystem
@@ -180,18 +198,32 @@ export const editorGetCameraDescriptor: PyToolDescriptor<typeof editorGetCameraS
 };
 
 // ── editor_cvar_get ───────────────────────────────────────────────────────────
+// KNOWN API LIMITATION: unreal.SystemLibrary's get_console_variable_{int,float,
+// bool}_value getters return type-defaults (0 / 0.0 / False) for a nonexistent
+// or mistyped cvar name — there is no dedicated "does this cvar exist" python
+// API. To avoid silently reporting a fabricated 0 as if it were a real reading,
+// we probe existence via get_console_variable_string_value (if present on this
+// engine build) BEFORE trusting the typed value: an empty/None string strongly
+// suggests the cvar does not exist, so we surface verified:false rather than a
+// bare 0. If no string getter exists on this build, we cannot verify at all and
+// say so explicitly via verified:false + a "no existence probe available on
+// this engine build" note — callers must not treat value as trustworthy in
+// that case without independent confirmation.
 export const editorCvarGetSchema = z.object({
   name: z.string().min(1).describe('Console variable name, e.g. "r.ScreenPercentage"'),
-  type: z.enum(['int', 'float', 'bool']).optional().default('float')
-    .describe('Typed read: int | float | bool. Picks the matching KismetSystemLibrary getter.'),
+  type: z.enum(['int', 'float', 'bool']).optional()
+    .describe('Typed read: int | float | bool. If omitted, defaults to float and the response sets type_assumed:true.'),
 });
 export type EditorCvarGetParams = z.infer<typeof editorCvarGetSchema>;
 
 function editorCvarGetScript(p: EditorCvarGetParams): string {
+  const typeAssumed = p.type === undefined;
+  const effectiveType = p.type ?? 'float';
   return [
     PY_EDITOR_HELPERS,
     `_name = ${pyStr(p.name)}`,
-    `_type = ${pyStr(p.type)}`,
+    `_type = ${pyStr(effectiveType)}`,
+    `_type_assumed = ${typeAssumed ? 'True' : 'False'}`,
     'try:',
     '    if _type == "int":',
     '        val = unreal.SystemLibrary.get_console_variable_int_value(_name)',
@@ -199,7 +231,24 @@ function editorCvarGetScript(p: EditorCvarGetParams): string {
     '        val = unreal.SystemLibrary.get_console_variable_bool_value(_name)',
     '    else:',
     '        val = unreal.SystemLibrary.get_console_variable_float_value(_name)',
-    '    _emit({"ok": True, "name": _name, "type": _type, "value": val})',
+    '    # Existence probe: prefer the string getter when this engine build has one.',
+    '    str_getter = getattr(unreal.SystemLibrary, "get_console_variable_string_value", None)',
+    '    verified = None; str_val = None; note = None',
+    '    if str_getter is not None:',
+    '        try:',
+    '            str_val = str_getter(_name)',
+    '            verified = bool(str_val is not None and str(str_val) != "")',
+    '        except Exception:',
+    '            verified = False',
+    '    else:',
+    '        verified = False',
+    '        note = "no cvar-existence probe available on this engine build; value may be a type-default for an unknown/mistyped name"',
+    '    if verified is False and str_getter is None:',
+    '        pass  # note already set above',
+    '    elif verified is False:',
+    '        note = "cvar not found (empty string readback) — value is a type-default, not a real reading"',
+    '    _emit({"ok": True, "name": _name, "type": _type, "type_assumed": _type_assumed,',
+    '           "value": val, "verified": verified, "string_value": str_val, "note": note})',
     'except Exception as _e:',
     '    _err(_e)',
   ].join('\n');
@@ -208,9 +257,9 @@ function editorCvarGetScript(p: EditorCvarGetParams): string {
 export const editorCvarGetDescriptor: PyToolDescriptor<typeof editorCvarGetSchema.shape> = {
   name: 'editor_cvar_get',
   description:
-    'Typed read of a console variable (int/float/bool) via KismetSystemLibrary getters. NOT a freeform console runner — use editor_run_console_command for that.',
+    'Typed read of a console variable (int/float/bool) via KismetSystemLibrary getters. CAVEAT: UE\'s typed getters return type-defaults (0/0.0/False) for an unknown or mistyped cvar name, indistinguishable from a real zero value — this tool probes existence via the string getter when available and reports verified:false (plus a note) whenever the value cannot be confirmed real; treat verified:false as "do not trust this value". type defaults to float when omitted, with type_assumed:true in the response. NOT a freeform console runner — use editor_run_console_command for that.',
   cost: 'low',
-  returns: '{ok, name, type, value}',
+  returns: '{ok, name, type, type_assumed, value, verified, string_value, note}',
   schema: editorCvarGetSchema.shape,
   meta: readMeta,
   buildScript: editorCvarGetScript,
@@ -236,7 +285,22 @@ function editorCvarSetScript(p: EditorCvarSetParams): string {
     '    applied = None',
     '    try: applied = unreal.SystemLibrary.get_console_variable_float_value(_name)',
     '    except Exception: pass',
-    '    _emit({"ok": True, "name": _name, "requested": _val, "applied": applied})',
+    '    # Same existence caveat as editor_cvar_get: the float getter returns 0.0 for a',
+    '    # nonexistent cvar, so a typo would otherwise look like a successful set-to-0.',
+    '    str_getter = getattr(unreal.SystemLibrary, "get_console_variable_string_value", None)',
+    '    verified = None; note = None',
+    '    if str_getter is not None:',
+    '        try:',
+    '            sv = str_getter(_name)',
+    '            verified = bool(sv is not None and str(sv) != "")',
+    '            if not verified: note = "cvar not found after set (empty string readback) — the name is likely mistyped"',
+    '        except Exception:',
+    '            verified = False',
+    '            note = "string readback failed; cannot confirm the cvar exists"',
+    '    else:',
+    '        verified = False',
+    '        note = "no cvar-existence probe available on this engine build; applied may be a type-default if the name is wrong"',
+    '    _emit({"ok": True, "name": _name, "requested": _val, "applied": applied, "verified": verified, "note": note})',
     'except Exception as _e:',
     '    _err(_e)',
   ].join('\n');
@@ -245,9 +309,9 @@ function editorCvarSetScript(p: EditorCvarSetParams): string {
 export const editorCvarSetDescriptor: PyToolDescriptor<typeof editorCvarSetSchema.shape> = {
   name: 'editor_cvar_set',
   description:
-    'Typed set of a console variable, with a float read-back of the applied value. Idempotent (retry-safe). NOT a freeform console runner — use editor_run_console_command for arbitrary commands.',
+    'Typed set of a console variable, with a float read-back of the applied value. CAVEAT: the float readback returns 0.0 for a nonexistent cvar, indistinguishable from a real set-to-0 — this tool also probes the string getter (when available on this engine build) and reports verified:false + a note when it cannot confirm the cvar actually exists. Idempotent (retry-safe). NOT a freeform console runner — use editor_run_console_command for arbitrary commands.',
   cost: 'low',
-  returns: '{ok, name, requested, applied}',
+  returns: '{ok, name, requested, applied, verified, note}',
   schema: editorCvarSetSchema.shape,
   meta: uiMeta,
   buildScript: editorCvarSetScript,
@@ -346,7 +410,7 @@ function assetRegistryQueryScript(p: AssetRegistryQueryParams): string {
 export const assetRegistryQueryDescriptor: PyToolDescriptor<typeof assetRegistryQuerySchema.shape> = {
   name: 'asset_registry_query',
   description:
-    'Query the AssetRegistry by class and/or content-path prefix, paginated. Discovery surface for "what assets exist that I can use here".',
+    'Query the AssetRegistry by class and/or content-path prefix, paginated. Discovery surface for "what assets exist that I can use here" — see asset_inspect for single-asset dependency detail and the legacy asset_get_info for C++-only fields.',
   cost: 'low',
   returns: '{ok, assets:[{name,path,class}], total, has_more, next_offset}',
   schema: assetRegistryQuerySchema.shape,
@@ -402,7 +466,7 @@ function assetInspectScript(p: AssetInspectParams): string {
 export const assetInspectDescriptor: PyToolDescriptor<typeof assetInspectSchema.shape> = {
   name: 'asset_inspect',
   description:
-    'AssetRegistry metadata for one asset: class, dirty flag, dependency/referencer counts. Read before edit/delete to avoid surprises.',
+    'AssetRegistry metadata for one asset: class, dirty flag, dependency/referencer counts. Read before edit/delete to avoid surprises. Differs from the legacy asset_get_info (C++-backed single-asset info, may see engine-only fields) and from asset_registry_query (bulk discovery/pagination) — use this when you already know the asset path and want its dependency graph.',
   cost: 'low',
   returns: '{ok, asset_path, class, dirty, dep_count, ref_count, disk_size}',
   schema: assetInspectSchema.shape,
@@ -523,7 +587,7 @@ function objectInspectScript(p: ObjectInspectParams): string {
 export const objectInspectDescriptor: PyToolDescriptor<typeof objectInspectSchema.shape> = {
   name: 'object_inspect',
   description:
-    'Read the property tree of any live UObject by path (asset or object) or by level-actor label, filtered + paginated. The generic read-back primitive (actor_inspect is the richer level-actor variant).',
+    'Read the property tree of any live UObject by path (asset or object) or by level-actor label, filtered + paginated. The generic read-back primitive (actor_inspect is the richer level-actor variant). Differs from the legacy object_get_property (C++-backed, reads one CPF_Edit property by exact path, no actor-label resolution): use object_inspect to explore/discover an object\'s shape, object_get_property once you know the exact property path.',
   cost: 'low',
   returns: '{ok, object, class, properties:[{name,type,value}], total, has_more, next_offset}',
   schema: objectInspectSchema.shape,
@@ -695,8 +759,17 @@ function reflectClassScript(p: ReflectClassParams): string {
     '    cdo_summary = None',
     '    try:',
     '        cdo = o.get_default_object()',
-    '        keys = [k for k in dir(cdo) if not k.startswith("_")][:40]',
-    '        cdo_summary = keys',
+    '        names = [k for k in dir(cdo) if not k.startswith("_")][:40]',
+    '        summary = []',
+    '        for k in names:',
+    '            entry = {"name": k}',
+    '            try:',
+    '                v = getattr(cdo, k)',
+    '                if isinstance(v, (str, int, float, bool)) and not callable(v):',
+    '                    entry["value"] = v',
+    '            except Exception: pass',
+    '            summary.append(entry)',
+    '        cdo_summary = summary',
     '    except Exception: pass',
     '    _emit({"ok": True, "class": getattr(o, "__name__", _cp), "super_chain": super_chain,',
     '           "cdo_summary": cdo_summary})',
@@ -708,9 +781,9 @@ function reflectClassScript(p: ReflectClassParams): string {
 export const reflectClassDescriptor: PyToolDescriptor<typeof reflectClassSchema.shape> = {
   name: 'reflect_class',
   description:
-    'Describe a UClass: python superclass chain (MRO) and CDO default-object attribute summary, so agents stop guessing class shapes before spawning/editing. (Class flags/interfaces need C++ reflection — not exposed to python.)',
+    'Describe a UClass: python superclass chain (MRO) and CDO default-object attribute names, with values included for simple scalar types (str/int/float/bool) — so agents stop guessing class shapes before spawning/editing. (Class flags/interfaces need C++ reflection — not exposed to python.)',
   cost: 'low',
-  returns: '{ok, class, super_chain[], cdo_summary[]}',
+  returns: '{ok, class, super_chain[], cdo_summary:[{name, value?}]}',
   schema: reflectClassSchema.shape,
   meta: readMeta,
   buildScript: reflectClassScript,
