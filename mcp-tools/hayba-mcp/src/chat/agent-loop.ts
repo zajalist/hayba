@@ -31,6 +31,7 @@
 import { z, type ZodRawShape, type ZodTypeAny } from 'zod';
 import type {
   LLMClient,
+  LLMContentBlock,
   LLMMessage,
   LLMTool,
   LLMToolCall,
@@ -119,7 +120,13 @@ function zodToJsonSchema(t: ZodTypeAny): { schema: JsonSchema; optional: boolean
     inner instanceof z.ZodDefault ||
     inner instanceof z.ZodNullable
   ) {
-    if (inner instanceof z.ZodOptional || inner instanceof z.ZodNullable) optional = true;
+    // ZodDefault also makes the field optional (a default is supplied when absent).
+    if (
+      inner instanceof z.ZodOptional ||
+      inner instanceof z.ZodNullable ||
+      inner instanceof z.ZodDefault
+    )
+      optional = true;
     inner = (inner as unknown as { _def: { innerType: ZodTypeAny } })._def.innerType;
   }
   while (inner instanceof z.ZodEffects) {
@@ -138,7 +145,12 @@ function zodToJsonSchema(t: ZodTypeAny): { schema: JsonSchema; optional: boolean
       items: zodToJsonSchema((inner as unknown as { _def: { type: ZodTypeAny } })._def.type).schema,
     };
   else if (inner instanceof z.ZodTuple) schema = { type: 'array' };
-  else if (inner instanceof z.ZodObject) schema = { type: 'object' };
+  else if (inner instanceof z.ZodObject) {
+    // Finding 4: emit nested properties one level deep (don't over-engineer;
+    // deeper nesting is left flat). shapeToInputSchema is hoisted below.
+    const nestedShape = (inner as unknown as { _def: { shape: () => ZodRawShape } })._def.shape();
+    schema = shapeToInputSchema(nestedShape);
+  }
   else if (inner instanceof z.ZodRecord) schema = { type: 'object' };
   else schema = {};
 
@@ -294,8 +306,9 @@ export async function* runAgentLoop(
     });
   const allowedNames = new Set(tools.map((t) => t.name));
 
-  // Working transcript — LLMMessage only supports user/assistant string content,
-  // so tool results are fed back as a user message carrying serialized JSON.
+  // Working transcript. The assistant's tool_use turn and the tool_result turn
+  // are pushed as structured content blocks so the protocol builders can transmit
+  // them with fidelity (Anthropic content blocks / OpenAI tool_calls + tool msgs).
   const messages: LLMMessage[] = params.messages.map((m) => ({ ...m }));
 
   let steps = 0;
@@ -322,7 +335,7 @@ export async function* runAgentLoop(
     let stopReason: LLMStopReason = 'end_turn';
 
     try {
-      for await (const ev of client.stream({ system, messages, tools, maxTokens })) {
+      for await (const ev of client.stream({ system, messages, tools, maxTokens, signal })) {
         if (signal?.aborted) {
           yield { type: 'error', error: 'aborted', kind: 'aborted' };
           yield { type: 'done', reason: 'aborted' };
@@ -345,9 +358,18 @@ export async function* runAgentLoop(
     }
 
     steps += 1;
+    // Record the assistant turn as blocks: text (if any) followed by one
+    // tool_use block per requested call, so ids are preserved for the results.
+    const assistantBlocks: LLMContentBlock[] = [];
     if (content) {
-      messages.push({ role: 'assistant', content });
+      assistantBlocks.push({ type: 'text', text: content });
       tokens += estimateTokens(content);
+    }
+    for (const call of toolCalls) {
+      assistantBlocks.push({ type: 'tool_use', id: call.id, name: call.name, input: call.input });
+    }
+    if (assistantBlocks.length > 0) {
+      messages.push({ role: 'assistant', content: assistantBlocks });
     }
 
     // ── Halt when the model is done ──────────────────────────────────────
@@ -357,7 +379,7 @@ export async function* runAgentLoop(
     }
 
     // ── Dispatch each requested tool ─────────────────────────────────────
-    const resultsForModel: Array<Record<string, unknown>> = [];
+    const toolResultBlocks: LLMContentBlock[] = [];
     for (const call of toolCalls) {
       if (signal?.aborted) {
         yield { type: 'error', error: 'aborted', kind: 'aborted' };
@@ -374,7 +396,12 @@ export async function* runAgentLoop(
           error: `Tool "${call.name}" is not available (disabled or filtered out for this agent).`,
         };
         yield { type: 'tool_result', id: call.id, name: call.name, result, isError: true };
-        resultsForModel.push({ tool: call.name, id: call.id, ...result });
+        toolResultBlocks.push({
+          type: 'tool_result',
+          tool_use_id: call.id,
+          content: JSON.stringify(result),
+          is_error: true,
+        });
         continue;
       }
 
@@ -398,7 +425,12 @@ export async function* runAgentLoop(
         const msg = (err as { message?: string })?.message ?? String(err);
         const errResult = { ok: false, error: msg };
         yield { type: 'tool_result', id: call.id, name: call.name, result: errResult, isError: true };
-        resultsForModel.push({ tool: call.name, id: call.id, ...errResult });
+        toolResultBlocks.push({
+          type: 'tool_result',
+          tool_use_id: call.id,
+          content: JSON.stringify(errResult),
+          is_error: true,
+        });
         continue;
       }
 
@@ -414,14 +446,12 @@ export async function* runAgentLoop(
       }
 
       yield { type: 'tool_result', id: call.id, name: call.name, result };
-      resultsForModel.push({ tool: call.name, id: call.id, result });
-      tokens += estimateTokens(JSON.stringify(result));
+      const serialized = JSON.stringify(result);
+      toolResultBlocks.push({ type: 'tool_result', tool_use_id: call.id, content: serialized });
+      tokens += estimateTokens(serialized);
     }
 
-    // Feed the batch of tool results back to the model and continue the loop.
-    messages.push({
-      role: 'user',
-      content: `Tool results:\n${JSON.stringify(resultsForModel, null, 2)}`,
-    });
+    // Feed the batch of tool_result blocks back to the model and continue.
+    messages.push({ role: 'user', content: toolResultBlocks });
   }
 }

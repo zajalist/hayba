@@ -363,6 +363,129 @@ describe('mock provider', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Content-block transcript fidelity (tool_use + tool_result round-trip)
+// ---------------------------------------------------------------------------
+
+describe('content-block transcript', () => {
+  const TRANSCRIPT = {
+    system: 'sys',
+    tools: [TOOL],
+    messages: [
+      { role: 'user' as const, content: 'weather in Paris?' },
+      {
+        role: 'assistant' as const,
+        content: [
+          { type: 'text' as const, text: 'let me check' },
+          { type: 'tool_use' as const, id: 'tu_1', name: 'get_weather', input: { city: 'Paris' } },
+        ],
+      },
+      {
+        role: 'user' as const,
+        content: [
+          { type: 'tool_result' as const, tool_use_id: 'tu_1', content: '{"temp":20}' },
+        ],
+      },
+    ],
+  };
+
+  it('Anthropic builder passes tool_use + tool_result blocks through natively', async () => {
+    let captured: any;
+    const fake: AnthropicClientLike = {
+      messages: {
+        async create(params) {
+          captured = params;
+          return { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' };
+        },
+        stream: () => iter([]),
+      },
+    };
+    const client = createLLMClient({ provider: 'anthropic', apiKey: 'k' }, { anthropic: fake });
+    await client.complete(TRANSCRIPT);
+
+    const assistant = captured.messages[1];
+    expect(assistant.content).toContainEqual({
+      type: 'tool_use',
+      id: 'tu_1',
+      name: 'get_weather',
+      input: { city: 'Paris' },
+    });
+    const userResult = captured.messages[2];
+    expect(userResult.content).toContainEqual({
+      type: 'tool_result',
+      tool_use_id: 'tu_1',
+      content: '{"temp":20}',
+    });
+  });
+
+  it('OpenAI builder maps tool_use → tool_calls and tool_result → tool messages', async () => {
+    let captured: any;
+    const fake: OpenAIClientLike = {
+      chat: {
+        completions: {
+          async create(params) {
+            captured = params;
+            return { choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] };
+          },
+        },
+      },
+    };
+    const client = createLLMClient({ provider: 'openai', apiKey: 'k' }, { openai: fake });
+    await client.complete(TRANSCRIPT);
+
+    // messages[0] is the system fold; assistant turn carries tool_calls.
+    const assistant = captured.messages.find((m: any) => m.role === 'assistant');
+    expect(assistant.content).toBe('let me check');
+    expect(assistant.tool_calls).toEqual([
+      { id: 'tu_1', type: 'function', function: { name: 'get_weather', arguments: '{"city":"Paris"}' } },
+    ]);
+    // tool_result becomes a standalone tool-role message with matching id.
+    const toolMsg = captured.messages.find((m: any) => m.role === 'tool');
+    expect(toolMsg).toEqual({ role: 'tool', tool_call_id: 'tu_1', content: '{"temp":20}' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AbortSignal threading
+// ---------------------------------------------------------------------------
+
+describe('signal threading', () => {
+  it('threads the signal into the Anthropic SDK request options', async () => {
+    const ac = new AbortController();
+    let opts: any;
+    const fake: AnthropicClientLike = {
+      messages: {
+        async create(_params, options) {
+          opts = options;
+          return { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' };
+        },
+        stream: () => iter([]),
+      },
+    };
+    const client = createLLMClient({ provider: 'anthropic', apiKey: 'k' }, { anthropic: fake });
+    await client.complete({ ...BASE, signal: ac.signal });
+    expect(opts?.signal).toBe(ac.signal);
+  });
+
+  it('threads the signal into the OpenAI SDK request options', async () => {
+    const ac = new AbortController();
+    let opts: any;
+    const fake: OpenAIClientLike = {
+      chat: {
+        completions: {
+          async create(_params, options) {
+            opts = options;
+            return { choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] };
+          },
+        },
+      },
+    };
+    const client = createLLMClient({ provider: 'openai', apiKey: 'k' }, { openai: fake });
+    await client.complete({ ...BASE, signal: ac.signal });
+    expect(opts?.signal).toBe(ac.signal);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Config resolution
 // ---------------------------------------------------------------------------
 

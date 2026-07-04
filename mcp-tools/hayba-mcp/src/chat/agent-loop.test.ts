@@ -8,6 +8,8 @@ import {
 } from './agent-loop.js';
 import type {
   LLMClient,
+  LLMContentBlock,
+  LLMMessage,
   LLMResponse,
   LLMStreamEvent,
   LLMCompleteParams,
@@ -35,6 +37,8 @@ class FakeLLMClient implements LLMClient {
   model = 'fake';
   protocol = 'anthropic' as const;
   offeredToolNames: string[][] = [];
+  /** Snapshot of the transcript sent to the client on each stream() call. */
+  seenMessages: LLMMessage[][] = [];
   private turns: LLMResponse[];
 
   constructor(turns: LLMResponse[]) {
@@ -48,6 +52,7 @@ class FakeLLMClient implements LLMClient {
 
   async *stream(params: LLMCompleteParams): AsyncGenerator<LLMStreamEvent, void, unknown> {
     this.offeredToolNames.push((params.tools ?? []).map((t) => t.name));
+    this.seenMessages.push(params.messages.map((m) => ({ ...m })));
     const resp = this.turns.shift() ?? textResponse('done');
     if (resp.content) yield { type: 'text_delta', text: resp.content };
     for (const call of resp.toolCalls) yield { type: 'tool_call', call };
@@ -108,6 +113,20 @@ describe('runAgentLoop', () => {
     expect(done).toEqual({ type: 'done', reason: 'end_turn', stopReason: 'end_turn' });
     // last turn saw a text_delta
     expect(events.some((e) => e.type === 'text_delta' && e.text === 'all done')).toBe(true);
+
+    // Round-2 transcript must carry the round-1 assistant tool_use block AND the
+    // tool_result block, keyed by matching ids.
+    const round2 = client.seenMessages[1];
+    const blocks = round2.flatMap((m) =>
+      Array.isArray(m.content) ? (m.content as LLMContentBlock[]) : [],
+    );
+    expect(blocks).toContainEqual({ type: 'tool_use', id: 'c1', name: 'actor_list', input: {} });
+    const result = blocks.find(
+      (b): b is Extract<LLMContentBlock, { type: 'tool_result' }> =>
+        b.type === 'tool_result' && b.tool_use_id === 'c1',
+    );
+    expect(result).toBeDefined();
+    expect(result!.content).toContain('actor_list');
   });
 
   it('refuses a filtered/disabled tool: not offered AND refused if called', async () => {

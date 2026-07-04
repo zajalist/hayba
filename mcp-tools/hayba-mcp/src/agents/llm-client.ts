@@ -24,9 +24,19 @@ import { getProvider, type ProviderProtocol } from './providers.js';
 // Restored public shape (ac46d40) + extensions
 // ---------------------------------------------------------------------------
 
+/**
+ * A structured content block. Anthropic maps these 1:1 to its native content
+ * blocks; the OpenAI builder translates them into `tool_calls` / `tool` messages.
+ */
+export type LLMContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
+  | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean };
+
 export interface LLMMessage {
   role: 'user' | 'assistant';
-  content: string;
+  /** Plain string (simple turns) or structured blocks (tool_use / tool_result). */
+  content: string | LLMContentBlock[];
 }
 
 export interface LLMTool {
@@ -74,6 +84,8 @@ export interface LLMCompleteParams {
   messages: LLMMessage[];
   tools?: LLMTool[];
   maxTokens?: number;
+  /** Threaded into the underlying SDK request so the call is cancelled promptly. */
+  signal?: AbortSignal;
 }
 
 export interface LLMClient {
@@ -88,17 +100,22 @@ export interface LLMClient {
 // Injected SDK client shapes (structural — real SDKs satisfy these)
 // ---------------------------------------------------------------------------
 
+/** Per-request options passed as the SDK's second argument (carries the signal). */
+export interface LLMRequestOptions {
+  signal?: AbortSignal;
+}
+
 export interface AnthropicClientLike {
   messages: {
-    create(params: Record<string, unknown>): Promise<unknown>;
-    stream(params: Record<string, unknown>): AsyncIterable<unknown>;
+    create(params: Record<string, unknown>, options?: LLMRequestOptions): Promise<unknown>;
+    stream(params: Record<string, unknown>, options?: LLMRequestOptions): AsyncIterable<unknown>;
   };
 }
 
 export interface OpenAIClientLike {
   chat: {
     completions: {
-      create(params: Record<string, unknown>): Promise<unknown>;
+      create(params: Record<string, unknown>, options?: LLMRequestOptions): Promise<unknown>;
     };
   };
 }
@@ -217,6 +234,7 @@ function buildAnthropicRequest(cfg: ResolvedConfig, params: LLMCompleteParams): 
     model: cfg.model,
     max_tokens: params.maxTokens ?? 4096,
     system: params.system,
+    // Block arrays map 1:1 to Anthropic content blocks; strings pass through.
     messages: params.messages.map((m) => ({ role: m.role, content: m.content })),
   };
   if (params.tools && params.tools.length > 0) {
@@ -261,7 +279,7 @@ async function* streamAnthropic(
 
   let iterable: AsyncIterable<unknown>;
   try {
-    iterable = client.messages.stream(buildAnthropicRequest(cfg, params));
+    iterable = client.messages.stream(buildAnthropicRequest(cfg, params), { signal: params.signal });
   } catch (err) {
     throw mapError(err, cfg.provider, cfg.apiKey);
   }
@@ -334,6 +352,56 @@ async function* streamAnthropic(
 // OpenAI-compat protocol
 // ---------------------------------------------------------------------------
 
+/**
+ * Translate our messages into OpenAI chat-completions shape. Block arrays are
+ * expanded: assistant `tool_use` blocks become `tool_calls`; a user message of
+ * `tool_result` blocks becomes one `{role:'tool'}` message per block (the tool
+ * role replaces the user-role wrapper entirely).
+ */
+function toOpenAIMessages(messages: LLMMessage[]): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  for (const m of messages) {
+    if (typeof m.content === 'string') {
+      out.push({ role: m.role, content: m.content });
+      continue;
+    }
+    if (m.role === 'assistant') {
+      const textParts: string[] = [];
+      const toolCalls: Array<Record<string, unknown>> = [];
+      for (const block of m.content) {
+        if (block.type === 'text') {
+          textParts.push(block.text);
+        } else if (block.type === 'tool_use') {
+          toolCalls.push({
+            id: block.id,
+            type: 'function',
+            function: { name: block.name, arguments: JSON.stringify(block.input) },
+          });
+        }
+      }
+      const msg: Record<string, unknown> = {
+        role: 'assistant',
+        content: textParts.length > 0 ? textParts.join('') : null,
+      };
+      if (toolCalls.length > 0) msg.tool_calls = toolCalls;
+      out.push(msg);
+    } else {
+      // user turn — tool_result blocks become standalone 'tool' messages;
+      // any remaining text is emitted as a normal user message.
+      const textParts: string[] = [];
+      for (const block of m.content) {
+        if (block.type === 'tool_result') {
+          out.push({ role: 'tool', tool_call_id: block.tool_use_id, content: block.content });
+        } else if (block.type === 'text') {
+          textParts.push(block.text);
+        }
+      }
+      if (textParts.length > 0) out.push({ role: 'user', content: textParts.join('') });
+    }
+  }
+  return out;
+}
+
 function buildOpenAIRequest(
   cfg: ResolvedConfig,
   params: LLMCompleteParams,
@@ -341,7 +409,7 @@ function buildOpenAIRequest(
 ): Record<string, unknown> {
   const messages: Array<Record<string, unknown>> = [
     { role: 'system', content: params.system },
-    ...params.messages.map((m) => ({ role: m.role, content: m.content })),
+    ...toOpenAIMessages(params.messages),
   ];
   const req: Record<string, unknown> = {
     model: cfg.model,
@@ -392,9 +460,9 @@ async function* streamOpenAI(
 
   let iterable: AsyncIterable<unknown>;
   try {
-    iterable = (await client.chat.completions.create(
-      buildOpenAIRequest(cfg, params, true),
-    )) as AsyncIterable<unknown>;
+    iterable = (await client.chat.completions.create(buildOpenAIRequest(cfg, params, true), {
+      signal: params.signal,
+    })) as AsyncIterable<unknown>;
   } catch (err) {
     throw mapError(err, cfg.provider, cfg.apiKey);
   }
@@ -532,7 +600,9 @@ export function createLLMClient(config: LLMClientConfig, deps: LLMClientDeps = {
       async complete(params) {
         try {
           const client = await getClient();
-          const resp = await client.messages.create(buildAnthropicRequest(cfg, params));
+          const resp = await client.messages.create(buildAnthropicRequest(cfg, params), {
+            signal: params.signal,
+          });
           return parseAnthropicResponse(resp);
         } catch (err) {
           if (err instanceof LLMError) throw err;
@@ -556,7 +626,9 @@ export function createLLMClient(config: LLMClientConfig, deps: LLMClientDeps = {
     async complete(params) {
       try {
         const client = await getClient();
-        const resp = await client.chat.completions.create(buildOpenAIRequest(cfg, params, false));
+        const resp = await client.chat.completions.create(buildOpenAIRequest(cfg, params, false), {
+          signal: params.signal,
+        });
         return parseOpenAIResponse(resp);
       } catch (err) {
         if (err instanceof LLMError) throw err;
