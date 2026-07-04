@@ -101,6 +101,7 @@ import {
   pcgAddNodeDescriptor, pcgSetPropDescriptor, pcgWireDescriptor, pcgInspectInstancesDescriptor,
 } from './pcg/pcg-primitives.js';
 import { actorPyDescriptors } from './actor/actor-py-tools.js';
+import { editorPyDescriptors } from './editor/editor-py-tools.js';
 import { toToolDescriptor } from './py-tool-factory.js';
 import { generateLegacyDescriptors } from './legacy-tool-factory.js';
 
@@ -880,6 +881,12 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     // transform/focus/set-folder), generated as UE Python via the pyTemplate
     // factory. See src/tools/actor/actor-py-tools.ts for the overlap analysis.
     ...actorPyDescriptors.map((d) => toToolDescriptor(d)),
+
+    // ── Editor-introspection & observability P0 tools (Phase 2 Wave 2) ────────
+    // Net-new editor/reflection/asset-registry read + gating tools, generated as
+    // UE Python via the pyTemplate factory. See src/tools/editor/editor-py-tools.ts
+    // for the catalog overlap/skip analysis.
+    ...editorPyDescriptors.map((d) => toToolDescriptor(d)),
 ];
 
 // Single-source tool descriptor list = hand-written entries + the sidecar-
