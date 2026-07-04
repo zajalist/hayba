@@ -44,6 +44,15 @@ export interface UePythonResult {
 export async function runUePythonJson<T = unknown>(script: string, timeout?: number): Promise<T> {
   const full = `${PY_PREAMBLE}\n${script}`;
   const data = await executeCommand<UePythonResult>('python_run', { script: full }, timeout ? { timeout } : {});
+  // Plan Mode gates python_run as a destructive command. Surface that clearly
+  // instead of the misleading "no HAYBA_JSON result" (live-validation finding:
+  // the gate response has ok:true + empty stdout and was swallowed here).
+  const gated = data as UePythonResult & { status?: string; hint?: string };
+  if (gated.status === 'plan_mode_required') {
+    throw new Error(
+      `plan approval required: this tool runs UE Python, which Plan Mode gates as destructive. ${gated.hint ?? 'Call hayba_propose_plan and have the user click Approve in the Plan tab (or disable Plan Mode in the Hayba settings panel).'}`,
+    );
+  }
   const stdout = data.stdout ?? '';
   const idx = stdout.lastIndexOf(MARKER);
   if (idx === -1) {

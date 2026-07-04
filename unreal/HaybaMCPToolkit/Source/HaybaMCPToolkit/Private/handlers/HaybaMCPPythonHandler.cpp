@@ -124,7 +124,11 @@ EPythonTier FHaybaMCPPythonHandler::ClassifyScript(const FString& Code)
     static const TArray<FString> Tier3Keywords = {
         TEXT("subprocess"), TEXT("os.system"), TEXT("os.popen"),
         TEXT("open("), TEXT("__import__"), TEXT("eval("),
-        TEXT("compile("), TEXT("shutil"), TEXT("socket")
+        TEXT("compile("), TEXT("shutil"),
+        // NOTE: a bare "socket" pattern false-positived on UE's StaticMesh
+        // "sockets" property (live-battery finding: mesh_get_sockets was
+        // Tier-3 blocked). Match actual network-socket usage instead.
+        TEXT("import socket"), TEXT("socket.socket")
     };
     static const TArray<FString> Tier2Keywords = {
         TEXT("spawn_actor"), TEXT("destroy_actor"), TEXT("set_property"),

@@ -160,6 +160,9 @@ namespace HaybaRender
         FString EngineHint;
         double WaitMs = 0.0;
         double RenderMs = 0.0;
+        // True when world_tick was dropped from the wait set because Handle()
+        // ran inline on the game thread (see RunOnGameThread wait phase).
+        bool bSkippedWorldTickInline = false;
         // FEvent:
         FEvent* DoneEvent = nullptr;
 
@@ -284,6 +287,19 @@ namespace HaybaRender
         const uint64 StartFrame = GFrameCounter;
         const int32 WorldTicksRequired = 1;
         TSet<FString> Remaining(S->WaitSubsystems);
+        // RunOnGameThread always executes on the game thread — either inline
+        // (Handle() was already on it) or as the body of AsyncTask(GameThread).
+        // While this single task Sleeps below, the game thread is occupied and
+        // GFrameCounter cannot advance, so world_tick's predicate
+        // ((GFrameCounter - StartFrame) < 1) can never settle from here: it
+        // would spin to the full timeout and write no image. Drop it from the
+        // wait set; shaders/assets still settle because their work progresses
+        // on other threads. The IsInGameThread() guard documents the intent and
+        // keeps this correct if RunOnGameThread is ever dispatched off-thread.
+        if (IsInGameThread() && Remaining.Remove(TEXT("world_tick")) > 0)
+        {
+            S->bSkippedWorldTickInline = true;
+        }
         while (Remaining.Num() > 0)
         {
             const double Now = FPlatformTime::Seconds();
@@ -346,8 +362,13 @@ namespace HaybaRender
             // Conservative: serialize as PNG when EXR helper isn't available.
             TArray<FColor> Pixels;
             Res->ReadPixels(Pixels);
-            TArray<uint8> CompressedPng;
-            FImageUtils::ThumbnailCompressImageArray(S->Width, S->Height, Pixels, CompressedPng);
+            // NOTE (smoke-caught): ThumbnailCompressImageArray emits JPEG, and
+            // in UE 5.x CompressImageArray is a deprecated alias for it — both
+            // put JPEG bytes behind a .png extension, which the magic-byte
+            // verifier below correctly rejected as file_invalid. The real PNG
+            // encoder is PNGCompressImageArray (TArray64 API).
+            TArray64<uint8> CompressedPng;
+            FImageUtils::PNGCompressImageArray(S->Width, S->Height, Pixels, CompressedPng);
             bWrote = FFileHelper::SaveArrayToFile(CompressedPng, *S->OutPath);
             if (!bWrote) S->EngineHint = TEXT("png write failed (EXR fallback)");
         }
@@ -355,9 +376,21 @@ namespace HaybaRender
         {
             TArray<FColor> Pixels;
             Res->ReadPixels(Pixels);
-            TArray<uint8> Compressed;
-            FImageUtils::ThumbnailCompressImageArray(S->Width, S->Height, Pixels, Compressed);
-            bWrote = FFileHelper::SaveArrayToFile(Compressed, *S->OutPath);
+            if (S->Format == TEXT("jpg"))
+            {
+                // JPEG requested: the thumbnail compressor's JPEG output matches
+                // the .jpg extension + magic-byte expectation.
+                TArray<uint8> Compressed;
+                FImageUtils::ThumbnailCompressImageArray(S->Width, S->Height, Pixels, Compressed);
+                bWrote = FFileHelper::SaveArrayToFile(Compressed, *S->OutPath);
+            }
+            else
+            {
+                // png (default): emit real PNG bytes (see NOTE above).
+                TArray64<uint8> CompressedPng;
+                FImageUtils::PNGCompressImageArray(S->Width, S->Height, Pixels, CompressedPng);
+                bWrote = FFileHelper::SaveArrayToFile(CompressedPng, *S->OutPath);
+            }
             if (!bWrote) S->EngineHint = TEXT("file write failed");
         }
         S->RenderMs = (FPlatformTime::Seconds() - RenderT0) * 1000.0;
@@ -562,6 +595,10 @@ FHaybaHandlerResult FHaybaMCPRenderHandler::Handle(const FString& /*Command*/,
             Out->SetNumberField(TEXT("fileBytes"), (double)SizeBytes);
             Out->SetNumberField(TEXT("renderDurationMs"), S->RenderMs);
             Out->SetNumberField(TEXT("waitMs"), S->WaitMs);
+            if (S->bSkippedWorldTickInline)
+            {
+                Out->SetBoolField(TEXT("skippedWorldTickInline"), true);
+            }
         }
     }
 

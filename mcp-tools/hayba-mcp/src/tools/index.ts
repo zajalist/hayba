@@ -10,6 +10,7 @@ import { registerToolMeta } from './tool-meta-registry.js';
 import { readSettings } from './routing/settings-watcher.js';
 import { registerDeferredRouting, ALWAYS_ON_META, type CapturedTool, type RoutingHandle } from './routing/register.js';
 import { registerTool, recordToolSchema, type ToolDescriptor } from './register-tool.js';
+import { errorResult } from './tool-result.js';
 
 // ── Code Mode meta-tools (always-on) ──────────────────────────────────────────
 import { listToolCategoriesHandler, meta as listMeta } from './code-mode/list-tool-categories.js';
@@ -94,15 +95,17 @@ import { queryPcgexDocs, type QueryPcgexDocsParams } from './query-pcgex-docs.js
 import { initiateInfrastructureBrainstorm } from './initiate-infrastructure-brainstorm.js';
 
 // ── Agent-ergonomics tools (HANDOFF postmortem) ───────────────────────────────
-import { haybaIntrospectHandler, schema as introspectSchema, meta as introspectMeta } from './introspect/hayba-introspect.js';
+import { introspectDescriptor } from './introspect/hayba-introspect.js';
 import { pcgCookAndWaitHandler, schema as pcgCookSchema, meta as pcgCookMeta } from './pcg/pcg-cook-and-wait.js';
 import {
-  pcgAddNodeHandler, pcgAddNodeSchema,
-  pcgSetPropHandler, pcgSetPropSchema,
-  pcgWireHandler, pcgWireSchema,
-  pcgInspectInstancesHandler, pcgInspectInstancesSchema,
-  pcgPrimitiveMeta,
+  pcgAddNodeDescriptor, pcgSetPropDescriptor, pcgWireDescriptor, pcgInspectInstancesDescriptor,
 } from './pcg/pcg-primitives.js';
+import { actorPyDescriptors } from './actor/actor-py-tools.js';
+import { editorPyDescriptors } from './editor/editor-py-tools.js';
+import { assetPyDescriptors } from './asset/asset-py-tools.js';
+import { meshPyDescriptors } from './mesh/mesh-py-tools.js';
+import { toToolDescriptor } from './py-tool-factory.js';
+import { generateLegacyDescriptors } from './legacy-tool-factory.js';
 
 
 // ── Zone painter tool handlers ────────────────────────────────────────────────
@@ -184,17 +187,41 @@ const dCoerceVec3 = z.preprocess((v) => {
 }, dVec3);
 
 /**
- * The single source of truth for every tool that follows the STANDARD
- * registration shape (server.tool + remember + reg + pass-through handler).
- * Tools with custom closures or schema drift between their eager server.tool
- * shape and their reg shape are NOT included here — they stay hand-written.
+ * Single-source tool descriptor list.
  *
- * Both phases iterate this list:
- *   - recordEagerSchemas → recordToolSchema(d)   (always, Code Mode on/off)
- *   - registerToolsCore eager block → registerTool(server, session, d)
+ * ## Pattern
+ * Each entry is a ToolDescriptor that declares the tool ONCE. Two consumers
+ * iterate this list:
+ *   - recordEagerSchemas → recordToolSchema(d)   — records Zod shape + cost +
+ *     returns into the schema registry so get_tool_signature can derive params
+ *     at runtime, regardless of Code Mode.
+ *   - registerToolsCore eager block → registerTool(server, session, d) — calls
+ *     server.tool(appendMeta(desc, meta), schema, handler) + remember(name, meta),
+ *     only when Code Mode is off.
+ *
+ * ## Eligible tools
+ * A tool belongs here if:
+ *   1. Its server.tool schema and its reg() entry are identical (no drift).
+ *   2. The handler is a plain ToolHandler — no custom closures or side-effects
+ *      baked into the eager registration block.
+ *   3. The tool returns ToolResult (not RichToolResult with image blocks).
+ *
+ * ## Non-eligible (stay hand-written)
+ *   - editor_capture_viewport: custom wait_for_shaders pre-step closure.
+ *   - editor_stream_log: reg schema adds fields absent from server.tool schema.
+ *   - pcg_cook_and_wait: 3-step TS orchestrator (python generate → wait_for_idle → python inspect), not a single buildScript.
+ *   - PLUMB / validator / PCGEx / zone-painter / conventions: these have no
+ *     meta or non-standard registration — migrate incrementally as needed.
+ *
+ * ## Adding a new tool
+ * Add a ToolDescriptor entry here. Do NOT add a separate server.tool call in
+ * registerToolsCore or a separate reg() call in recordEagerSchemas — those
+ * are now generated automatically from this list.
  */
 const M = 'material'; // niche domain for the material toolset
-const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
+// Hand-written descriptors. Kept as a named const so the generated legacy list
+// can be de-duplicated against these names before splicing (see below).
+const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     // ── World generation (always-on flagship) ────────────────────────────────
     {
       name: 'world_generate',
@@ -656,14 +683,235 @@ const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     },
 
     // ── Editor domain ─────────────────────────────────────────────────────────
-    // NOTE: the entire editor domain stays hand-written below to preserve its
-    // exact registration order and per-tool quirks:
-    //   - editor_capture_viewport has a custom wait_for_shaders pre-step closure
-    //     and a server.tool-vs-reg schema divergence (wait_for_shaders field).
-    //   - editor_stream_log has a server.tool-vs-reg schema divergence
-    //     (reg adds regex_filter/severity_filter/format).
-    //   - editor_start_pie is standard but kept hand-written so the editor
-    //     domain registers contiguously in its original order.
+    // editor_capture_viewport and editor_stream_log are hand-written below:
+    //   - editor_capture_viewport: custom wait_for_shaders pre-step closure +
+    //     server.tool-vs-reg schema divergence (wait_for_shaders field in
+    //     eager schema, omitted from reg). Cannot cleanly fit the descriptor.
+    //   - editor_stream_log: reg adds regex_filter/severity_filter/format that
+    //     are NOT in the eager server.tool shape — schema divergence, left as-is.
+    {
+      name: 'editor_start_pie',
+      description: 'Start Play-In-Editor.',
+      meta: pieMeta,
+      handler: editorStartPieHandler,
+      cost: 'high',
+      returns: '{ok, pie_world_id}',
+      schema: {
+        single_step: dCoerceBool.optional(),
+      },
+    },
+
+    // ── Wait / capture helpers ──────────────────────────────────────────────
+    // These tools were eagerly registered but absent from recordEagerSchemas,
+    // meaning get_tool_signature had no schema to return for them. Migration
+    // adds them to the single-source list so the schema is recorded once.
+    {
+      name: 'wait_for_shaders',
+      description: 'Wait for UE shader compilation to settle (or timeout). Thin wrapper around wait_for_idle({subsystems:["shaders"]}).',
+      meta: waitForShadersMeta,
+      handler: async (args, _session) => handleWaitForShaders(args as any) as never,
+      cost: 'high',
+      returns: '{settled:bool, waited_ms:int} or legacy {status, subsystems}',
+      schema: {
+        max_seconds: z.number().int().min(1).max(600).optional().describe('Upper bound in seconds (default 60).'),
+        poll_seconds: z.number().min(0.05).max(10).optional().describe('Poll interval in seconds (default 1). NOTE: ignored — UE-side polling is fixed at 250ms.'),
+      },
+    },
+    {
+      name: 'wait_for_idle',
+      description: 'Wait for UE subsystems (shaders/assets/gc/pcg/world_tick) to settle before reading back or rendering. Default = shaders+assets+gc+pcg.',
+      meta: waitForIdleMeta,
+      handler: async (args, _session) => handleWaitForIdle(args as never) as never,
+      cost: 'high',
+      returns: '{settled, subsystems:{shaders,assets,gc,pcg,world_tick}}',
+      schema: waitForIdleSchema.shape,
+    },
+    {
+      name: 'render_camera',
+      description: 'Render a camera view to disk and VERIFY the file landed (magic bytes + dimensions). Accepts either an actor reference or an inline transform. Calls wait_for_idle internally before capture.',
+      meta: renderCameraMeta,
+      handler: async (args, _session) => handleRenderCamera(args as never) as never,
+      cost: 'high',
+      returns: '{ok, path, width, height, format, bytes}',
+      schema: renderCameraSchema.shape,
+    },
+
+    // ── Fab connector domain ────────────────────────────────────────────────
+    {
+      name: 'hayba_fab_login_status',
+      description: 'Check whether the user is currently logged into Fab through the UE editor.',
+      meta: fabLoginStatusMeta,
+      handler: async (args, _session) => handleFabLoginStatus(args as any),
+      cost: 'low',
+      returns: '{logged_in:bool, user?:string}',
+      schema: {},
+    },
+    {
+      name: 'hayba_fab_library_list',
+      description: "List a page of the user's Fab library (assets they own).",
+      meta: fabLibraryListMeta,
+      handler: async (args, _session) => handleFabLibraryList(args as any),
+      cost: 'medium',
+      returns: '{assets:[{id,title,type}], next_cursor?}',
+      schema: {
+        count: z.number().int().min(1).max(100).optional().describe('Number of results per page (default 20).'),
+        page: z.string().optional().describe('Pagination cursor from previous call.'),
+      },
+    },
+    {
+      name: 'hayba_fab_marketplace_search',
+      description: 'Search the public Fab marketplace for assets matching a query.',
+      meta: fabMarketplaceSearchMeta,
+      handler: async (args, _session) => handleFabMarketplaceSearch(args as any),
+      cost: 'medium',
+      returns: '{assets:[{id,title,type,price}], next_cursor?}',
+      schema: {
+        query: z.string().min(1).describe('Search query string.'),
+        type: z.string().optional().describe('Filter by asset type (e.g. "Material", "StaticMesh").'),
+        page: z.string().optional().describe('Pagination cursor from previous call.'),
+      },
+    },
+    {
+      name: 'hayba_fab_download',
+      description: 'Download a Fab asset into the active UE project.',
+      meta: fabDownloadMeta,
+      handler: async (args, _session) => handleFabDownload(args as any),
+      cost: 'high',
+      returns: '{ok, import_path}',
+      schema: {
+        asset_id: z.string().min(1).describe('Fab asset identifier.'),
+        download_url: z.string().url().describe('Signed download URL from library_list / search result item.'),
+        target_dir: z.string().optional().describe('Project content path, e.g. /Game/Fab/MyAsset. Defaults to /Game/Fab/<asset_id>.'),
+        wait: z.boolean().optional().describe('If true, blocks until download completes (up to 10min cap on the C++ side). Default true.'),
+      },
+    },
+
+    // ── Asset-source connectors (Poly Haven / ambientCG / Sketchfab) ────────
+    {
+      name: 'hayba_polyhaven_search',
+      description: 'Search Poly Haven for CC0 HDRIs, textures, or models.',
+      meta: polyhavenSearchMeta,
+      handler: async (args, _session) => handlePolyhavenSearch(args as any),
+      cost: 'medium',
+      returns: '{assets:[{id,name,type,categories,download_count}]}',
+      schema: {
+        query: z.string().min(1).describe('Search query string.'),
+        type: z.enum(['hdris', 'textures', 'models']).optional().describe('Asset type filter (default "textures").'),
+        categories: z.string().optional().describe('Comma-separated Poly Haven category filter.'),
+      },
+    },
+    {
+      name: 'hayba_polyhaven_download',
+      description: 'Download a Poly Haven asset (HDRI / texture maps / glTF model) and import into UE.',
+      meta: polyhavenDownloadMeta,
+      handler: async (args, _session) => handlePolyhavenDownload(args as any),
+      cost: 'high',
+      returns: '{ok, imported_paths:[string], target_dir}',
+      schema: {
+        asset_id: z.string().min(1).describe('Poly Haven asset slug.'),
+        type: z.enum(['hdris', 'textures', 'models']).optional().describe('Asset type (default "textures").'),
+        resolution: z.enum(['1k', '2k', '4k', '8k']).optional().describe('Resolution tier (default "2k").'),
+        target_dir: z.string().optional().describe('UE content path. Defaults to /Game/AssetConnectors/polyhaven/<asset_id>.'),
+      },
+    },
+    {
+      name: 'hayba_ambientcg_search',
+      description: 'Search ambientCG for CC0 PBR materials, decals, or 3D models.',
+      meta: ambientcgSearchMeta,
+      handler: async (args, _session) => handleAmbientCgSearch(args as any),
+      cost: 'medium',
+      returns: '{assets:[{id,name,downloadCount,tags}]}',
+      schema: {
+        query: z.string().min(1).describe('Search query string.'),
+        type: z.string().optional().describe('ambientCG asset type (default "Material").'),
+        limit: z.number().int().min(1).max(100).optional().describe('Max results (default 20).'),
+      },
+    },
+    {
+      name: 'hayba_ambientcg_download',
+      description: 'Download an ambientCG material zip and import into UE.',
+      meta: ambientcgDownloadMeta,
+      handler: async (args, _session) => handleAmbientCgDownload(args as any),
+      cost: 'high',
+      returns: '{ok, imported_paths:[string], target_dir}',
+      schema: {
+        asset_id: z.string().min(1).describe('ambientCG asset id (e.g. "Bricks075A").'),
+        resolution: z.string().optional().describe('Attribute string (e.g. "1K-JPG", "2K-JPG", "4K-PNG"). Default "2K-JPG".'),
+        target_dir: z.string().optional().describe('UE content path. Defaults to /Game/AssetConnectors/ambientcg/<asset_id>.'),
+      },
+    },
+    {
+      name: 'hayba_sketchfab_search',
+      description: 'Search Sketchfab for downloadable 3D models. Requires SKETCHFAB_API_TOKEN env var.',
+      meta: sketchfabSearchMeta,
+      handler: async (args, _session) => handleSketchfabSearch(args as any),
+      cost: 'medium',
+      returns: '{models:[{uid,name,license,downloadCount}]}',
+      schema: {
+        query: z.string().min(1).describe('Search query string.'),
+        downloadable: z.boolean().optional().describe('Filter to downloadable-only models (default true).'),
+        count: z.number().int().min(1).max(48).optional().describe('Max results (default 24).'),
+      },
+    },
+    {
+      name: 'hayba_sketchfab_download',
+      description: 'Download a Sketchfab model and import into UE. Requires SKETCHFAB_API_TOKEN env var.',
+      meta: sketchfabDownloadMeta,
+      handler: async (args, _session) => handleSketchfabDownload(args as any),
+      cost: 'high',
+      returns: '{ok, imported_path, uid}',
+      schema: {
+        uid: z.string().min(1).describe('Sketchfab model uid.'),
+        flavour: z.enum(['gltf', 'usdz', 'source']).optional().describe('Download flavour (default "gltf").'),
+        target_dir: z.string().optional().describe('UE content path. Defaults to /Game/AssetConnectors/sketchfab/<uid>.'),
+      },
+    },
+
+    // ── Agent-ergonomics tools (HANDOFF postmortem) — factory path ────────────
+    // These 5 python-backed tools are expressed as PyToolDescriptors and adapted
+    // here via toToolDescriptor so they flow through the same always-record /
+    // eager-register loops as every other STANDARD_DESCRIPTORS entry.
+    // pcg_cook_and_wait is a 3-step TS orchestrator and stays hand-written below.
+    toToolDescriptor(introspectDescriptor),
+    toToolDescriptor(pcgAddNodeDescriptor),
+    toToolDescriptor(pcgSetPropDescriptor),
+    toToolDescriptor(pcgWireDescriptor),
+    toToolDescriptor(pcgInspectInstancesDescriptor),
+
+    // ── Actor-domain P0 breadth tools (Phase 2 Wave 1) — factory path ─────────
+    // Net-new actor tools (inspect/find/selection/spawn-from-asset/batch-
+    // transform/focus/set-folder), generated as UE Python via the pyTemplate
+    // factory. See src/tools/actor/actor-py-tools.ts for the overlap analysis.
+    ...actorPyDescriptors.map((d) => toToolDescriptor(d)),
+
+    // ── Editor-introspection & observability P0 tools (Phase 2 Wave 2) ────────
+    // Net-new editor/reflection/asset-registry read + gating tools, generated as
+    // UE Python via the pyTemplate factory. See src/tools/editor/editor-py-tools.ts
+    // for the catalog overlap/skip analysis.
+    ...editorPyDescriptors.map((d) => toToolDescriptor(d)),
+
+    // ── Asset & mesh P0 tools (Phase 2 Wave 2, Task 2) — factory path ─────────
+    // Net-new asset-provenance/save/folder tools and StaticMesh-asset readbacks
+    // (sockets/LODs/materials/bounds + material-slot setter), generated as UE
+    // Python via the pyTemplate factory. See src/tools/asset/asset-py-tools.ts
+    // and src/tools/mesh/mesh-py-tools.ts for the catalog overlap/skip analysis.
+    ...assetPyDescriptors.map((d) => toToolDescriptor(d)),
+    ...meshPyDescriptors.map((d) => toToolDescriptor(d)),
+];
+
+// Single-source tool descriptor list = hand-written entries + the sidecar-
+// generated legacy tools. The generator surfaces every sidecar command that is
+// agent_callable:true && has_ts_wrapper:false (~55) as a first-class tool,
+// skipping any name that collides with a hand-written descriptor. Both the
+// recordEagerSchemas loop and the eager registerTool loop consume this merged
+// list identically — so generated tools are recorded + registered exactly once,
+// with real get_tool_signature schemas. Exported so tests can verify schema
+// presence and the no-drift / no-duplicate invariants.
+export const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
+  ...HANDWRITTEN_STANDARD_DESCRIPTORS,
+  ...generateLegacyDescriptors(
+    new Set(HANDWRITTEN_STANDARD_DESCRIPTORS.map((d) => d.name)),
+  ),
 ];
 
 export async function registerTools(server: McpServer, session: SessionManagerStub): Promise<RoutingHandle | null> {
@@ -807,10 +1055,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
           content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
         };
       } catch (e) {
-        return {
-          content: [{ type: 'text', text: `Error pushing plan to UE: ${(e as Error).message}` }],
-          isError: true,
-        };
+        return errorResult(`Error pushing plan to UE: ${(e as Error).message}`);
       }
     },
   );
@@ -832,10 +1077,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
           content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
         };
       } catch (e) {
-        return {
-          content: [{ type: 'text', text: `Error marking plan step in UE: ${(e as Error).message}` }],
-          isError: true,
-        };
+        return errorResult(`Error marking plan step in UE: ${(e as Error).message}`);
       }
     },
   );
@@ -925,16 +1167,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
   );
   remember('editor_capture_viewport', captureMeta);
 
-  server.tool(
-    'editor_start_pie',
-    appendMeta('Start Play-In-Editor.', pieMeta),
-    { single_step: coerceBool.optional() },
-    async (params) => {
-      const r = await editorStartPieHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
-    }
-  );
-  remember('editor_start_pie', pieMeta);
+  // editor_start_pie is now in STANDARD_DESCRIPTORS — registered via the loop above.
 
   server.tool(
     'editor_stream_log',
@@ -950,45 +1183,11 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
   );
   remember('editor_stream_log', streamLogMeta);
 
-  server.tool(
-    'wait_for_shaders',
-    appendMeta('Wait for UE shader compilation to settle (or timeout). Thin wrapper around wait_for_idle({subsystems:["shaders"]}).', waitForShadersMeta),
-    {
-      max_seconds: z.number().int().min(1).max(600).optional().describe('Upper bound in seconds (default 60).'),
-      poll_seconds: z.number().min(0.05).max(10).optional().describe('Poll interval in seconds (default 1). NOTE: ignored — UE-side polling is fixed at 250ms.'),
-    },
-    async (args, _extra) => handleWaitForShaders(args as any)
-  );
-  remember('wait_for_shaders', waitForShadersMeta);
-
-  server.tool(
-    'wait_for_idle',
-    appendMeta('Wait for UE subsystems (shaders/assets/gc/pcg/world_tick) to settle before reading back or rendering. Default = all five.', waitForIdleMeta),
-    waitForIdleSchema.shape,
-    async (args, _extra) => handleWaitForIdle(args as never),
-  );
-  remember('wait_for_idle', waitForIdleMeta);
-
-  server.tool(
-    'render_camera',
-    appendMeta('Render a camera view to disk and VERIFY the file landed (magic bytes + dimensions). Accepts either an actor reference or an inline transform. Calls wait_for_idle internally before capture.', renderCameraMeta),
-    renderCameraSchema.shape,
-    async (args, _extra) => handleRenderCamera(args as never),
-  );
-  remember('render_camera', renderCameraMeta);
+  // wait_for_shaders, wait_for_idle, render_camera are now in STANDARD_DESCRIPTORS.
 
   // ── Agent-ergonomics tools (HANDOFF postmortem) ─────────────────────────────
-
-  server.tool(
-    'hayba_introspect',
-    appendMeta('Introspect UE reflection: editor-property names+types of a class/struct, member values of an enum, or input/output pin labels of a PCG node (by graph+node) or settings class. Kills trial-and-error API discovery.', introspectMeta),
-    introspectSchema.shape,
-    async (params) => {
-      const r = await haybaIntrospectHandler(params as never);
-      return { content: r.content, isError: r.isError };
-    }
-  );
-  remember('hayba_introspect', introspectMeta);
+  // hayba_introspect, pcg_add_node, pcg_set_prop, pcg_wire, pcg_inspect_instances
+  // are now in STANDARD_DESCRIPTORS (registered via the descriptor loop above).
 
   server.tool(
     'pcg_cook_and_wait',
@@ -1001,171 +1200,8 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
   );
   remember('pcg_cook_and_wait', pcgCookMeta);
 
-  server.tool(
-    'pcg_add_node',
-    appendMeta('Add a node of a given PCG settings class to a graph. Returns node_index + node_label (settings-class-derived) for use with pcg_set_prop / pcg_wire.', pcgPrimitiveMeta),
-    pcgAddNodeSchema.shape,
-    async (params) => {
-      const r = await pcgAddNodeHandler(params as never);
-      return { content: r.content, isError: r.isError };
-    }
-  );
-  remember('pcg_add_node', pcgPrimitiveMeta);
-
-  server.tool(
-    'pcg_set_prop',
-    appendMeta('Set an editor property on a PCG node\'s settings. Supports nested struct paths like "distribution_settings/distribution".', pcgPrimitiveMeta),
-    pcgSetPropSchema.shape,
-    async (params) => {
-      const r = await pcgSetPropHandler(params as never);
-      return { content: r.content, isError: r.isError };
-    }
-  );
-  remember('pcg_set_prop', pcgPrimitiveMeta);
-
-  server.tool(
-    'pcg_wire',
-    appendMeta('Wire one PCG node\'s output pin to another node\'s input pin (by node title or index, and pin label).', pcgPrimitiveMeta),
-    pcgWireSchema.shape,
-    async (params) => {
-      const r = await pcgWireHandler(params as never);
-      return { content: r.content, isError: r.isError };
-    }
-  );
-  remember('pcg_wire', pcgPrimitiveMeta);
-
-  server.tool(
-    'pcg_inspect_instances',
-    appendMeta('Read back the Instanced-Static-Mesh instance counts (and a sample transform) produced on an actor by its PCG cook.', pcgPrimitiveMeta),
-    pcgInspectInstancesSchema.shape,
-    async (params) => {
-      const r = await pcgInspectInstancesHandler(params as never);
-      return { content: r.content, isError: r.isError };
-    }
-  );
-  remember('pcg_inspect_instances', pcgPrimitiveMeta);
-
-
-  // ── Fab connector tools ─────────────────────────────────────────────────────
-
-  server.tool(
-    'hayba_fab_login_status',
-    appendMeta('Check whether the user is currently logged into Fab through the UE editor.', fabLoginStatusMeta),
-    {},
-    async () => handleFabLoginStatus({})
-  );
-  remember('hayba_fab_login_status', fabLoginStatusMeta);
-
-  server.tool(
-    'hayba_fab_library_list',
-    appendMeta('List a page of the user\'s Fab library (assets they own).', fabLibraryListMeta),
-    {
-      count: z.number().int().min(1).max(100).optional().describe('Number of results per page (default 20).'),
-      page: z.string().optional().describe('Pagination cursor from previous call.'),
-    },
-    async (params) => handleFabLibraryList(params as any)
-  );
-  remember('hayba_fab_library_list', fabLibraryListMeta);
-
-  server.tool(
-    'hayba_fab_marketplace_search',
-    appendMeta('Search the public Fab marketplace for assets matching a query.', fabMarketplaceSearchMeta),
-    {
-      query: z.string().min(1).describe('Search query string.'),
-      type: z.string().optional().describe('Filter by asset type (e.g. "Material", "StaticMesh").'),
-      page: z.string().optional().describe('Pagination cursor from previous call.'),
-    },
-    async (params) => handleFabMarketplaceSearch(params as any)
-  );
-  remember('hayba_fab_marketplace_search', fabMarketplaceSearchMeta);
-
-  server.tool(
-    'hayba_fab_download',
-    appendMeta('Download a Fab asset into the active UE project.', fabDownloadMeta),
-    {
-      asset_id: z.string().min(1).describe('Fab asset identifier.'),
-      download_url: z.string().url().describe('Signed download URL from library_list / search result item.'),
-      target_dir: z.string().optional().describe('Project content path, e.g. /Game/Fab/MyAsset. Defaults to /Game/Fab/<asset_id>.'),
-      wait: z.boolean().optional().describe('If true, blocks until download completes (up to 10min cap on the C++ side). Default true.'),
-    },
-    async (params) => handleFabDownload(params as any)
-  );
-  remember('hayba_fab_download', fabDownloadMeta);
-
-  // ── Asset-source connectors (Poly Haven / ambientCG / Sketchfab) ────────────
-
-  server.tool(
-    'hayba_polyhaven_search',
-    appendMeta('Search Poly Haven for CC0 HDRIs, textures, or models.', polyhavenSearchMeta),
-    {
-      query: z.string().min(1).describe('Search query string.'),
-      type: z.enum(['hdris', 'textures', 'models']).optional().describe('Asset type filter (default "textures").'),
-      categories: z.string().optional().describe('Comma-separated Poly Haven category filter.'),
-    },
-    async (params) => handlePolyhavenSearch(params as any)
-  );
-  remember('hayba_polyhaven_search', polyhavenSearchMeta);
-
-  server.tool(
-    'hayba_polyhaven_download',
-    appendMeta('Download a Poly Haven asset (HDRI / texture maps / glTF model) and import into UE.', polyhavenDownloadMeta),
-    {
-      asset_id: z.string().min(1).describe('Poly Haven asset slug.'),
-      type: z.enum(['hdris', 'textures', 'models']).optional().describe('Asset type (default "textures").'),
-      resolution: z.enum(['1k', '2k', '4k', '8k']).optional().describe('Resolution tier (default "2k").'),
-      target_dir: z.string().optional().describe('UE content path. Defaults to /Game/AssetConnectors/polyhaven/<asset_id>.'),
-    },
-    async (params) => handlePolyhavenDownload(params as any)
-  );
-  remember('hayba_polyhaven_download', polyhavenDownloadMeta);
-
-  server.tool(
-    'hayba_ambientcg_search',
-    appendMeta('Search ambientCG for CC0 PBR materials, decals, or 3D models.', ambientcgSearchMeta),
-    {
-      query: z.string().min(1).describe('Search query string.'),
-      type: z.string().optional().describe('ambientCG asset type (default "Material").'),
-      limit: z.number().int().min(1).max(100).optional().describe('Max results (default 20).'),
-    },
-    async (params) => handleAmbientCgSearch(params as any)
-  );
-  remember('hayba_ambientcg_search', ambientcgSearchMeta);
-
-  server.tool(
-    'hayba_ambientcg_download',
-    appendMeta('Download an ambientCG material zip and import into UE.', ambientcgDownloadMeta),
-    {
-      asset_id: z.string().min(1).describe('ambientCG asset id (e.g. "Bricks075A").'),
-      resolution: z.string().optional().describe('Attribute string (e.g. "1K-JPG", "2K-JPG", "4K-PNG"). Default "2K-JPG".'),
-      target_dir: z.string().optional().describe('UE content path. Defaults to /Game/AssetConnectors/ambientcg/<asset_id>.'),
-    },
-    async (params) => handleAmbientCgDownload(params as any)
-  );
-  remember('hayba_ambientcg_download', ambientcgDownloadMeta);
-
-  server.tool(
-    'hayba_sketchfab_search',
-    appendMeta('Search Sketchfab for downloadable 3D models. Requires SKETCHFAB_API_TOKEN env var.', sketchfabSearchMeta),
-    {
-      query: z.string().min(1).describe('Search query string.'),
-      downloadable: z.boolean().optional().describe('Filter to downloadable-only models (default true).'),
-      count: z.number().int().min(1).max(48).optional().describe('Max results (default 24).'),
-    },
-    async (params) => handleSketchfabSearch(params as any)
-  );
-  remember('hayba_sketchfab_search', sketchfabSearchMeta);
-
-  server.tool(
-    'hayba_sketchfab_download',
-    appendMeta('Download a Sketchfab model and import into UE. Requires SKETCHFAB_API_TOKEN env var.', sketchfabDownloadMeta),
-    {
-      uid: z.string().min(1).describe('Sketchfab model uid.'),
-      flavour: z.enum(['gltf', 'usdz', 'source']).optional().describe('Download flavour (default "gltf").'),
-      target_dir: z.string().optional().describe('UE content path. Defaults to /Game/AssetConnectors/sketchfab/<uid>.'),
-    },
-    async (params) => handleSketchfabDownload(params as any)
-  );
-  remember('hayba_sketchfab_download', sketchfabDownloadMeta);
+  // hayba_fab_*, hayba_polyhaven_*, hayba_ambientcg_*, hayba_sketchfab_* tools
+  // are now in STANDARD_DESCRIPTORS — registered via the loop above.
 
   // ── PCGEx tools ─────────────────────────────────────────────────────────────
 
@@ -1936,10 +1972,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
           content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
         };
       } catch (e) {
-        return {
-          content: [{ type: 'text', text: `Error importing landscape: ${(e as Error).message}` }],
-          isError: true,
-        };
+        return errorResult(`Error importing landscape: ${(e as Error).message}`);
       }
     }
   );
@@ -1953,8 +1986,8 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
 function recordEagerSchemas(
   reg: (name: string, shape: z.ZodRawShape, cost: Cost, returns: string) => void,
 ): void {
-  // coerceBool kept for editor_start_pie's reg below. vec3/coerceVec3 moved to
-  // module scope (dVec3/dCoerceVec3) and are now consumed via STANDARD_DESCRIPTORS.
+  // coerceBool still used by hayba_validate_attribute_flow below. vec3/coerceVec3
+  // moved to module scope (dVec3/dCoerceVec3) and consumed via STANDARD_DESCRIPTORS.
   const coerceBool = z.preprocess(
     (v) => typeof v === 'string' ? v.toLowerCase() === 'true' : v,
     z.boolean(),
@@ -1980,7 +2013,7 @@ function recordEagerSchemas(
     width: z.coerce.number().int().optional(),
     height: z.coerce.number().int().optional(),
   }, 'medium', '{image_base64, width, height, camera}');
-  reg('editor_start_pie', { single_step: coerceBool.optional() }, 'high', '{ok, pie_world_id}');
+  // editor_start_pie is now in STANDARD_DESCRIPTORS — recordToolSchema(d) called above.
   reg('editor_stream_log', {
     filter: z.string().optional().describe('Plain substring filter (legacy)'),
     regex_filter: z.string().optional().describe('Perl-style regex applied to each line'),
@@ -1990,14 +2023,10 @@ function recordEagerSchemas(
   }, 'low', '{lines:[string|object], next_line:int, format}');
 
   // ── Agent-ergonomics tools (HANDOFF postmortem) ───────────────────────────
-  reg('hayba_introspect', introspectSchema.shape, 'low',
-    '{ok, mode, name?, properties?:[{name,type}], members?:[{name,value}], pins?, input_pins?, output_pins?, settings_class?}');
+  // hayba_introspect, pcg_add_node, pcg_set_prop, pcg_wire, pcg_inspect_instances:
+  // now in STANDARD_DESCRIPTORS — recordToolSchema(d) called by the loop above.
   reg('pcg_cook_and_wait', pcgCookSchema.shape, 'high',
     '{ok, cook:{components}, idle, result:{ism:[{mesh,count}], total}}');
-  reg('pcg_add_node', pcgAddNodeSchema.shape, 'low', '{ok, node_index, node_label, settings_class}');
-  reg('pcg_set_prop', pcgSetPropSchema.shape, 'low', '{ok, node_label, path}');
-  reg('pcg_wire', pcgWireSchema.shape, 'low', '{ok, from, from_pin, to, to_pin}');
-  reg('pcg_inspect_instances', pcgInspectInstancesSchema.shape, 'low', '{ok, actor, ism:[{mesh,count,sample}], total}');
 
   // ── PCGEx domain ──────────────────────────────────────────────────────────
   reg('hayba_search_node_catalog', {

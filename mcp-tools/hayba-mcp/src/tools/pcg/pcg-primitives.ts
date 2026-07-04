@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
-import { runUePythonJson, pyStr } from '../ue-python.js';
+import { pyStr } from '../ue-python.js';
+import type { PyToolDescriptor } from '../py-tool-factory.js';
 
 // ── Shared Python: resolve a node in a PCGGraph by title or index ─────────────
 // PCG nodes have no stable string id, so primitives accept either the node's
@@ -78,9 +79,17 @@ function addNodeScript(p: PcgAddNodeParams): string {
   ].join('\n');
 }
 
-export async function pcgAddNodeHandler(params: PcgAddNodeParams) {
-  return run(pcgAddNodeSchema, params, (p) => addNodeScript(p));
-}
+export const pcgAddNodeDescriptor: PyToolDescriptor<typeof pcgAddNodeSchema.shape> = {
+  name: 'pcg_add_node',
+  description:
+    'Add a node of a given PCG settings class to a graph. Returns node_index + node_label (settings-class-derived) for use with pcg_set_prop / pcg_wire.',
+  cost: 'low',
+  returns: '{ok, node_index, node_label, settings_class}',
+  schema: pcgAddNodeSchema.shape,
+  meta: lowMeta,
+  buildScript: addNodeScript,
+  timeoutMs: 30_000,
+};
 
 // ── pcg_set_prop ──────────────────────────────────────────────────────────────
 export const pcgSetPropSchema = z.object({
@@ -119,9 +128,17 @@ function setPropScript(p: PcgSetPropParams): string {
   ].join('\n');
 }
 
-export async function pcgSetPropHandler(params: PcgSetPropParams) {
-  return run(pcgSetPropSchema, params, (p) => setPropScript(p));
-}
+export const pcgSetPropDescriptor: PyToolDescriptor<typeof pcgSetPropSchema.shape> = {
+  name: 'pcg_set_prop',
+  description:
+    "Set an editor property on a PCG node's settings. Supports nested struct paths like \"distribution_settings/distribution\".",
+  cost: 'low',
+  returns: '{ok, node_label, path}',
+  schema: pcgSetPropSchema.shape,
+  meta: lowMeta,
+  buildScript: setPropScript,
+  timeoutMs: 30_000,
+};
 
 // ── pcg_wire ──────────────────────────────────────────────────────────────────
 export const pcgWireSchema = z.object({
@@ -161,9 +178,17 @@ function wireScript(p: PcgWireParams): string {
   ].join('\n');
 }
 
-export async function pcgWireHandler(params: PcgWireParams) {
-  return run(pcgWireSchema, params, (p) => wireScript(p));
-}
+export const pcgWireDescriptor: PyToolDescriptor<typeof pcgWireSchema.shape> = {
+  name: 'pcg_wire',
+  description:
+    "Wire one PCG node's output pin to another node's input pin (by node title or index, and pin label).",
+  cost: 'low',
+  returns: '{ok, from, from_pin, to, to_pin}',
+  schema: pcgWireSchema.shape,
+  meta: lowMeta,
+  buildScript: wireScript,
+  timeoutMs: 30_000,
+};
 
 // ── pcg_inspect_instances ────────────────────────────────────────────────────
 export const pcgInspectInstancesSchema = z.object({
@@ -201,26 +226,15 @@ function inspectInstancesScript(p: PcgInspectInstancesParams): string {
   ].join('\n');
 }
 
-export async function pcgInspectInstancesHandler(params: PcgInspectInstancesParams) {
-  return run(pcgInspectInstancesSchema, params, (p) => inspectInstancesScript(p));
-}
+export const pcgInspectInstancesDescriptor: PyToolDescriptor<typeof pcgInspectInstancesSchema.shape> = {
+  name: 'pcg_inspect_instances',
+  description:
+    'Read back the Instanced-Static-Mesh instance counts (and a sample transform) produced on an actor by its PCG cook.',
+  cost: 'low',
+  returns: '{ok, actor, ism:[{mesh,count,sample}], total}',
+  schema: pcgInspectInstancesSchema.shape,
+  meta: lowMeta,
+  buildScript: inspectInstancesScript,
+  timeoutMs: 30_000,
+};
 
-export const pcgPrimitiveMeta = lowMeta;
-
-// ── shared run wrapper ────────────────────────────────────────────────────────
-async function run<S extends z.ZodTypeAny>(
-  schema: S,
-  params: unknown,
-  build: (p: z.infer<S>) => string,
-) {
-  const parsed = schema.safeParse(params);
-  if (!parsed.success) {
-    return { content: [{ type: 'text' as const, text: 'Invalid params: ' + parsed.error.message }], isError: true };
-  }
-  try {
-    const result = await runUePythonJson(build(parsed.data), 30_000);
-    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-  } catch (e) {
-    return { content: [{ type: 'text' as const, text: `pcg primitive error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
-  }
-}

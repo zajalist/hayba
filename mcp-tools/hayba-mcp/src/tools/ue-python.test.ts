@@ -35,3 +35,12 @@ describe('runUePythonJson', () => {
     await expect(runUePythonJson('x')).rejects.toThrow(/no HAYBA_JSON/);
   });
 });
+
+describe('plan-mode gate surfacing', () => {
+  it('surfaces plan_mode_required clearly instead of "no HAYBA_JSON"', async () => {
+    const fn: Sender = async (_c: string, _p: Record<string, unknown>, _t: number) =>
+      ({ id: 'inmem', ok: true, data: { status: 'plan_mode_required', hint: 'click Approve' } });
+    setDefaultSender(fn);
+    await expect(runUePythonJson('x')).rejects.toThrow(/plan approval required.*click Approve/s);
+  });
+});

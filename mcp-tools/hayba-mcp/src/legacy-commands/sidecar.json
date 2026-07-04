@@ -131,15 +131,14 @@
         { "name": "timeout_seconds", "type": "number", "required": false, "description": "Per-test latent-command drain timeout (default 120)" }
       ],
       "returns": { "shape": "object", "fields": [
-        { "name": "passed", "type": "array" },
-        { "name": "failed", "type": "array", "description": "[{name, duration_seconds, errors[]}]" },
-        { "name": "skipped", "type": "array" },
-        { "name": "elapsed_seconds", "type": "number" },
-        { "name": "total", "type": "number" }
+        { "name": "job_id", "type": "string", "description": "Poll build_status { job_id } for the result" },
+        { "name": "status", "type": "string", "description": "'running' immediately; 'busy' if another run is already in flight" },
+        { "name": "total", "type": "number", "description": "Number of tests queued for this run" },
+        { "name": "note", "type": "string" }
       ] },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Run automation tests INLINE on the calling thread via FAutomationTestFramework::StartTestByName -> ExecuteLatentCommands (drained to completion or timeout) -> StopTest. Bypasses the controller/worker session queue (FAutomationControllerManager::Tick), so it works in a normal GUI editor without opening the Session Frontend / Test Automation tab — the queue that otherwise sits at 'Queued' forever. Use this instead of the console 'Automation RunTests' command."
+      "notes": "JOB ENVELOPE (async, non-freezing): returns { job_id, status:'running' } IMMEDIATELY and runs the tests on the editor's game-thread core ticker (one step/frame), so the editor stays responsive. Poll build_status { job_id } for the result { passed, failed, skipped, elapsed_seconds, total } (delivered as a JSON string in build_status.output), or call test_get_log for the last run's detailed errors/warnings. Only one test_run job at a time (status:'busy' otherwise). Drives FAutomationTestFramework::StartTestByName -> ExecuteLatentCommands -> StopTest directly, bypassing the controller/worker session queue, so it works in a normal GUI editor without the Session Frontend. Replaces the old INLINE busy-sleep that froze the game thread up to 120s/test."
     },
     "test_get_log": {
       "aliases": [],
@@ -152,6 +151,77 @@
       "agent_callable": true,
       "has_ts_wrapper": false,
       "notes": "Full entries (errors + warnings) from the last test_run."
+    },
+    "build_project": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPBuildHandler::Handle",
+      "params": [
+        { "name": "target", "type": "string", "required": false, "description": "'Editor' (default) -> <Project>Editor, or 'Game' -> <Project>" },
+        { "name": "configuration", "type": "string", "required": false, "description": "Development (default) | DebugGame | Shipping | Test" },
+        { "name": "platform", "type": "string", "required": false, "description": "Win64 (default) | Linux | Mac" }
+      ],
+      "returns": { "shape": "object", "fields": [
+        { "name": "job_id", "type": "string", "description": "Poll build_status { job_id } for the result" },
+        { "name": "status", "type": "string", "description": "'running' (returned immediately)" },
+        { "name": "command", "type": "string" },
+        { "name": "ok", "type": "boolean" },
+        { "name": "note", "type": "string" }
+      ] },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "JOB ENVELOPE (async, non-freezing): invokes UnrealBuildTool.exe on a background thread and returns { job_id, status:'running' } IMMEDIATELY — never blocks the editor (the old version blocked the game thread up to 5min). Poll build_status { job_id } for { status:'done', exit_code, output (log tail) }, or watch hayba_journal_tail for live build_job:<id> progress."
+    },
+    "build_cook": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPBuildHandler::Handle",
+      "params": [
+        { "name": "platform", "type": "string", "required": false, "description": "Cook target platform (default WindowsNoEditor)" },
+        { "name": "iterate", "type": "boolean", "required": false, "description": "Iterative cook (default true)" },
+        { "name": "unversioned", "type": "boolean", "required": false, "description": "Cook unversioned packages (default false)" }
+      ],
+      "returns": { "shape": "object", "fields": [
+        { "name": "job_id", "type": "string", "description": "Poll build_status { job_id } for the result" },
+        { "name": "status", "type": "string", "description": "'running' (returned immediately)" },
+        { "name": "command", "type": "string" },
+        { "name": "ok", "type": "boolean" },
+        { "name": "note", "type": "string" }
+      ] },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "JOB ENVELOPE (async, non-freezing): runs UnrealEditor-Cmd -run=cook on a background thread and returns { job_id, status:'running' } IMMEDIATELY. Poll build_status { job_id } for { status:'done', exit_code, output }, or watch hayba_journal_tail."
+    },
+    "build_generate_project_files": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPBuildHandler::Handle",
+      "params": [],
+      "returns": { "shape": "object", "fields": [
+        { "name": "job_id", "type": "string", "description": "Poll build_status { job_id } for the result" },
+        { "name": "status", "type": "string", "description": "'running' (returned immediately)" },
+        { "name": "command", "type": "string" },
+        { "name": "ok", "type": "boolean" },
+        { "name": "note", "type": "string" }
+      ] },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "JOB ENVELOPE (async, non-freezing): runs RunUAT GenerateProjectFiles on a background thread and returns { job_id, status:'running' } IMMEDIATELY. Poll build_status { job_id } for { status:'done', exit_code, output }."
+    },
+    "build_status": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPBuildHandler::Handle",
+      "params": [
+        { "name": "job_id", "type": "string", "required": true, "description": "Id returned by a build_* or test_run job envelope" }
+      ],
+      "returns": { "shape": "object", "fields": [
+        { "name": "job_id", "type": "string" },
+        { "name": "command", "type": "string", "description": "Originating command, e.g. 'build_project' or 'test_run'" },
+        { "name": "status", "type": "string", "description": "'running' | 'done' | 'unknown'" },
+        { "name": "ok", "type": "boolean", "description": "When done: exit_code == 0" },
+        { "name": "exit_code", "type": "number", "description": "When done: process exit code (build) or failure count (test_run)" },
+        { "name": "output", "type": "string", "description": "When done: log tail (build) or a JSON string of { passed, failed, skipped, elapsed_seconds, total } (test_run)" }
+      ] },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Reader for the async job registry shared by build_project / build_cook / build_generate_project_files / test_run. Reads the job entry under its lock by job_id and returns its current status/result. Poll this after a build_* / test_run call returns { job_id, status:'running' }."
     },
     "ping": {
       "aliases": [],

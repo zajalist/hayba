@@ -1,0 +1,3 @@
+# Runtime artifacts
+*.db
+.scratch/

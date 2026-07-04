@@ -26,11 +26,85 @@ function mapUeCode(raw: string | undefined): UeToolErrorCode {
   return 'ue_error';
 }
 
+// Timeout tiers mapped to UE operation ceilings:
+//   low    →  2 s  (fast queries, property reads)
+//   medium → 10 s  (graph rebuilds, property writes)
+//   high   → 120 s (build/compile/shader-warm/landscape-import; UE build ceiling
+//                   is 300 s, test ceiling 120 s — both will move to the async
+//                   job envelope in Task 9; until then high-cost ops must not
+//                   pre-time-out while UE is still working)
 const COST_TIMEOUTS_MS: Record<HaybaToolCost, number> = {
   low:    2_000,
   medium: 10_000,
-  high:   60_000,
+  high:   120_000,
 };
+
+/**
+ * Commands that MUST NOT be auto-retried on transport failure because a
+ * duplicate execution would cause real side-effects (duplicate actors,
+ * orphaned assets, double-deletes, etc.).
+ *
+ * Unknown commands default to IDEMPOTENT (retry allowed) to preserve the
+ * existing retry behaviour — only commands in this set skip the retry.
+ */
+export const NON_IDEMPOTENT = new Set<string>([
+  // Actor lifecycle
+  'actor_spawn',
+  'actor_delete',
+  'actor_duplicate',
+  'actor_batch_spawn',
+  'actor_spawn_from_asset',
+  // Asset lifecycle
+  'asset_delete',
+  'asset_duplicate',
+  'asset_import',
+  'asset_rename',
+  // Landscape
+  'landscape_import',
+  // Level authoring
+  'level_create',
+  // Blueprint authoring
+  'blueprint_create',
+  // Material authoring
+  'material_create',
+  'material_create_instance',
+  // Material add-element family (append mutations — duplicate nodes/edges on retry)
+  'material_add_node',
+  'material_add_comment',
+  'material_add_reroute_declaration',
+  'material_add_reroute_usage',
+  'material_connect_nodes',
+  // PCG
+  'pcg_create_graph',
+  // PCG add-element family (MCP-registered; routed via python_run internally)
+  'pcg_add_node',
+  'pcg_wire',
+  // ISM
+  'ism_create_actor',
+  'ism_clear_instances',
+  // ISM add-element family
+  'ism_add_instances',
+  // Foliage
+  'foliage_remove_instances',
+  // Spline
+  'spline_create',
+  // Sequencer
+  'seq_create',
+  // Niagara
+  'niagara_spawn',
+  // MetaSound
+  'metasound_create',
+  // GAS
+  'gas_create_ability',
+  'gas_create_effect',
+  // UI
+  'ui_create_widget',
+  // Data
+  'data_create',
+  // Input
+  'input_create_action',
+  'input_create_mapping',
+]);
 
 export function costToTimeoutMs(cost: HaybaToolCost | undefined): number {
   if (cost && cost in COST_TIMEOUTS_MS) return COST_TIMEOUTS_MS[cost];
@@ -71,7 +145,12 @@ export async function executeCommand<T = Record<string, unknown>>(
   try {
     resp = await attemptOnce();
   } catch (firstErr) {
-    // transport-level failure — one retry
+    // Transport-level failure. Only retry when the command is idempotent:
+    // non-idempotent ops (spawn, delete, create, …) must not execute twice.
+    if (NON_IDEMPOTENT.has(cmd)) {
+      const msg = (firstErr as Error)?.message ?? String(firstErr);
+      throw new UeToolError(msg, { code: 'transport', uePayload: firstErr });
+    }
     try {
       resp = await attemptOnce();
     } catch (secondErr) {

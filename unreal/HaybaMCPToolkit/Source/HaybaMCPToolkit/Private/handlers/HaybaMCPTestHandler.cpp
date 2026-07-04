@@ -1,11 +1,18 @@
 #include "HaybaMCPTestHandler.h"
 
 #if WITH_EDITOR
+#include "HaybaMCPJobRegistry.h"
+#include "HaybaMCPSecurityManager.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/App.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
+#include "Containers/Ticker.h"
+#include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
+#include "Policies/CondensedJsonPrintPolicy.h"
 #endif
 
 namespace
@@ -88,6 +95,155 @@ namespace
         Out->SetNumberField(TEXT("count"), JsonTests.Num());
         Out->SetNumberField(TEXT("total_discovered"), AllTests.Num());
         return FHaybaHandlerResult::Ok(Out);
+    }
+
+    // ── Async test-run job (non-freezing) ────────────────────────────────────
+    //
+    // test_run used to busy-sleep the game thread up to 120s/test, which froze
+    // the editor (ProcessCommand runs on the game thread). The automation
+    // framework MUST be driven on the game thread, and ExecuteLatentCommands may
+    // pump the task graph / async loads — so we cannot push it onto a background
+    // thread. Instead we drive the run from the core ticker (FTSTicker), exactly
+    // like HaybaMCPTcpServer drains commands: ticker callbacks fire on the game
+    // thread OUTSIDE task-graph task execution, so latent commands are safe.
+    // test_run returns { job_id, status:"running" } immediately and the pump
+    // advances one step per frame; build_status { job_id } reports the result.
+
+    // Only one automation run at a time — concurrent FAutomationTestFramework
+    // drives corrupt each other's state. Set on start, cleared on finalize.
+    static bool GTestRunActive = false;
+
+    struct FTestRunState
+    {
+        FString          JobId;
+        TArray<FString>  Names;
+        double           PerTestTimeoutSec = 120.0;
+
+        int32            Index       = 0;
+        bool             bInProgress = false;
+        double           TestStart   = 0.0;
+        double           RunStart    = 0.0;
+
+        TArray<TSharedPtr<FJsonValue>> Passed;
+        TArray<TSharedPtr<FJsonValue>> Failed;
+        TArray<TSharedPtr<FJsonValue>> Skipped;
+
+        // Mirrored into GLastTest* for test_get_log when the run finishes.
+        TArray<FString>                      ResultNames;
+        TArray<FAutomationTestExecutionInfo> ResultExecs;
+
+        FTSTicker::FDelegateHandle TickHandle;
+    };
+
+    // Runs on the game thread (core ticker). Serializes the accumulated results
+    // into the job registry + operation journal and clears the run lock.
+    static void FinalizeTestRun(TSharedRef<FTestRunState> S)
+    {
+        const double Elapsed = FPlatformTime::Seconds() - S->RunStart;
+
+        // Stash for test_get_log (also read on the game thread).
+        GLastTestNames     = S->ResultNames;
+        GLastTestExecInfos = S->ResultExecs;
+        GLastTestInfos.Reset();
+
+        TSharedRef<FJsonObject> Results = MakeShared<FJsonObject>();
+        Results->SetArrayField(TEXT("passed"),  S->Passed);
+        Results->SetArrayField(TEXT("failed"),  S->Failed);
+        Results->SetArrayField(TEXT("skipped"), S->Skipped);
+        Results->SetNumberField(TEXT("elapsed_seconds"), Elapsed);
+        Results->SetNumberField(TEXT("total"), S->Names.Num());
+
+        FString ResultsJson;
+        TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+            TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ResultsJson);
+        FJsonSerializer::Serialize(Results, Writer);
+
+        // exit_code == failure count (0 => all passed), output == results JSON.
+        const int32 FailCount = S->Failed.Num();
+        FHaybaMCPJobRegistry::Get().SetDone(S->JobId, FailCount, ResultsJson);
+
+        // Append job completion to the operation journal.
+        FHaybaJournalEntry Entry;
+        Entry.Timestamp    = FDateTime::UtcNow();
+        Entry.Command      = FString::Printf(TEXT("test_job:%s:exit"), *S->JobId);
+        Entry.ParamsHash   = TEXT("");
+        Entry.DurationMs   = (int64)(Elapsed * 1000.0);
+        Entry.bOk          = (FailCount == 0);
+        Entry.ErrorMessage = FString::Printf(TEXT("passed=%d failed=%d skipped=%d"),
+            S->Passed.Num(), FailCount, S->Skipped.Num());
+        FHaybaMCPSecurityManager::Get().Journal(Entry);
+
+        GTestRunActive = false;
+    }
+
+    // One pump step per frame. Returns false to unregister the ticker.
+    static bool TestRunPump(float /*Dt*/, TSharedRef<FTestRunState> S)
+    {
+        FAutomationTestFramework& Framework = FAutomationTestFramework::Get();
+
+        if (!S->bInProgress)
+        {
+            if (S->Index >= S->Names.Num())
+            {
+                FinalizeTestRun(S);
+                return false; // done — stop ticking
+            }
+
+            const FString& Name = S->Names[S->Index];
+            // UE 5.7: StartTestByName returns void; detect start via GetCurrentTest().
+            Framework.StartTestByName(Name, /*RoleIndex=*/0);
+            if (Framework.GetCurrentTest() == nullptr)
+            {
+                S->Skipped.Add(MakeStr(Name));
+                S->Index++;
+                return true;
+            }
+            S->bInProgress = true;
+            S->TestStart   = FPlatformTime::Seconds();
+            return true;
+        }
+
+        // A test is running — pump its latent commands once this frame.
+        const bool bComplete = Framework.ExecuteLatentCommands();
+        const bool bTimedOut = (FPlatformTime::Seconds() - S->TestStart) > S->PerTestTimeoutSec;
+        if (!bComplete && !bTimedOut)
+        {
+            return true; // still running; resume next frame
+        }
+
+        FAutomationTestExecutionInfo ExecInfo;
+        const bool bSuccess = Framework.StopTest(ExecInfo);
+        const double TestDuration = FPlatformTime::Seconds() - S->TestStart;
+        const FString Name = S->Names[S->Index];
+
+        S->ResultNames.Add(Name);
+        S->ResultExecs.Add(ExecInfo);
+
+        if (bSuccess && !ExecInfo.GetErrorTotal() && !bTimedOut)
+        {
+            S->Passed.Add(MakeStr(Name));
+        }
+        else
+        {
+            auto FailObj = MakeShared<FJsonObject>();
+            FailObj->SetStringField(TEXT("name"), Name);
+            FailObj->SetNumberField(TEXT("duration_seconds"), TestDuration);
+            if (bTimedOut) FailObj->SetBoolField(TEXT("timed_out"), true);
+            TArray<TSharedPtr<FJsonValue>> Errors;
+            for (const FAutomationExecutionEntry& Entry : ExecInfo.GetEntries())
+            {
+                if (Entry.Event.Type == EAutomationEventType::Error)
+                {
+                    Errors.Add(MakeStr(Entry.Event.Message));
+                }
+            }
+            FailObj->SetArrayField(TEXT("errors"), Errors);
+            S->Failed.Add(MakeShared<FJsonValueObject>(FailObj));
+        }
+
+        S->Index++;
+        S->bInProgress = false;
+        return true;
     }
 
     static FHaybaHandlerResult Cmd_TestRun(const TSharedPtr<FJsonObject>& Params)
@@ -183,86 +339,51 @@ namespace
             return FHaybaHandlerResult::Ok(Empty);
         }
 
-        // Resolve display->fullpath where needed (StartTestByName accepts either).
-        FAutomationTestFramework& Framework = FAutomationTestFramework::Get();
-
         // Per-run timeout from params (seconds), default 120 per test.
         double PerTestTimeoutSec = 120.0;
         Params->TryGetNumberField(TEXT("timeout_seconds"), PerTestTimeoutSec);
         if (PerTestTimeoutSec <= 0.0) PerTestTimeoutSec = 120.0;
 
-        TArray<TSharedPtr<FJsonValue>> PassedArr;
-        TArray<TSharedPtr<FJsonValue>> FailedArr;
-        TArray<TSharedPtr<FJsonValue>> SkippedArr;
+        // Reject overlapping runs — the automation framework is single-flight.
+        if (GTestRunActive)
+        {
+            auto Busy = MakeShared<FJsonObject>();
+            Busy->SetBoolField(TEXT("ok"), false);
+            Busy->SetStringField(TEXT("status"), TEXT("busy"));
+            Busy->SetStringField(TEXT("error"),
+                TEXT("a test_run job is already in progress; poll build_status for it before starting another"));
+            return FHaybaHandlerResult::Ok(Busy);
+        }
 
+        // Long-running: drive the run on the game-thread core ticker (fires
+        // OUTSIDE task-graph task execution, so latent commands that pump the
+        // task graph / async loads are safe — same reason TcpServer drains
+        // commands from a ticker). Return { job_id, status:"running" }
+        // immediately; the agent polls build_status { job_id } for the result.
+        // This replaces the old busy-sleep loop that froze the game thread.
+        TSharedRef<FTestRunState> S = MakeShared<FTestRunState>();
+        S->JobId             = FHaybaMCPJobRegistry::Get().AllocateJob(TEXT("test_run"));
+        S->Names             = MoveTemp(RequestedNames);
+        S->PerTestTimeoutSec = PerTestTimeoutSec;
+        S->RunStart          = FPlatformTime::Seconds();
+
+        // Clear the per-run last-results stash now; the pump fills it on finish.
         GLastTestInfos.Reset();
         GLastTestExecInfos.Reset();
         GLastTestNames.Reset();
 
-        const double RunStart = FPlatformTime::Seconds();
-
-        for (const FString& Name : RequestedNames)
-        {
-            // Default to first role (typically Editor/Client).
-            FAutomationTestExecutionInfo ExecInfo;
-            const int32 RoleIndex = 0;
-
-            // UE 5.7: StartTestByName returns void. Detect failure via GetCurrentTest().
-            Framework.StartTestByName(Name, RoleIndex);
-            const bool bStarted = Framework.GetCurrentTest() != nullptr;
-            if (!bStarted)
-            {
-                SkippedArr.Add(MakeStr(Name));
-                continue;
-            }
-
-            const double TestStart = FPlatformTime::Seconds();
-            // Pump latent commands until the running test completes or we time out.
-            while (!Framework.ExecuteLatentCommands())
-            {
-                if (FPlatformTime::Seconds() - TestStart > PerTestTimeoutSec)
-                {
-                    break;
-                }
-                FPlatformProcess::Sleep(0.01f);
-            }
-
-            const bool bSuccess = Framework.StopTest(ExecInfo);
-            const double TestDuration = FPlatformTime::Seconds() - TestStart;
-
-            GLastTestNames.Add(Name);
-            GLastTestExecInfos.Add(ExecInfo);
-
-            if (bSuccess && !ExecInfo.GetErrorTotal())
-            {
-                PassedArr.Add(MakeStr(Name));
-            }
-            else
-            {
-                auto FailObj = MakeShared<FJsonObject>();
-                FailObj->SetStringField(TEXT("name"), Name);
-                FailObj->SetNumberField(TEXT("duration_seconds"), TestDuration);
-                TArray<TSharedPtr<FJsonValue>> Errors;
-                for (const FAutomationExecutionEntry& Entry : ExecInfo.GetEntries())
-                {
-                    if (Entry.Event.Type == EAutomationEventType::Error)
-                    {
-                        Errors.Add(MakeStr(Entry.Event.Message));
-                    }
-                }
-                FailObj->SetArrayField(TEXT("errors"), Errors);
-                FailedArr.Add(MakeShared<FJsonValueObject>(FailObj));
-            }
-        }
-
-        const double Elapsed = FPlatformTime::Seconds() - RunStart;
+        GTestRunActive = true;
+        S->TickHandle = FTSTicker::GetCoreTicker().AddTicker(
+            FTickerDelegate::CreateLambda([S](float Dt){ return TestRunPump(Dt, S); }));
 
         auto Out = MakeShared<FJsonObject>();
-        Out->SetArrayField(TEXT("passed"),  PassedArr);
-        Out->SetArrayField(TEXT("failed"),  FailedArr);
-        Out->SetArrayField(TEXT("skipped"), SkippedArr);
-        Out->SetNumberField(TEXT("elapsed_seconds"), Elapsed);
-        Out->SetNumberField(TEXT("total"), RequestedNames.Num());
+        Out->SetStringField(TEXT("command"), TEXT("test_run"));
+        Out->SetStringField(TEXT("job_id"), S->JobId);
+        Out->SetStringField(TEXT("status"), TEXT("running"));
+        Out->SetNumberField(TEXT("total"), S->Names.Num());
+        Out->SetBoolField(TEXT("ok"), true);
+        Out->SetStringField(TEXT("note"),
+            TEXT("Tests started asynchronously. Poll build_status { job_id } for {passed, failed, skipped, elapsed_seconds, total}, or test_get_log for the last run's detailed entries."));
         return FHaybaHandlerResult::Ok(Out);
     }
 

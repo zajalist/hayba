@@ -1,6 +1,7 @@
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPGameThread.h"
 #include "IHaybaMCPHandler.h"
+#include "HaybaMCPSeh.h"
 #include "HaybaMCPSecurityManager.h"
 #include "HaybaMCPResponseBuilder.h"
 #include "HaybaMCPSettings.h"
@@ -26,13 +27,97 @@ DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPCmd, Log, All);
 
 static bool IsDestructiveCommand(const FString& Cmd)
 {
-    return Cmd == TEXT("actor_delete")
-        || Cmd == TEXT("actor_spawn")
-        || Cmd == TEXT("python_run")   // was "python_exec" — a non-existent name, so python_run (arbitrary code exec) silently bypassed the Plan-Mode gate
-        || Cmd == TEXT("memory_clear")
-        || Cmd == TEXT("editor_execute_console")
-        || Cmd == TEXT("landscape_import")
-        || Cmd == TEXT("pcg_execute_graph");
+    // Plan-Mode gate coverage. Audited (2026-07-04) against every mutating
+    // command in legacy-commands/sidecar.json AND the TS NON_IDEMPOTENT set in
+    // tools/tool-executor.ts. Rule: gate anything that creates / adds / sets /
+    // deletes / removes / duplicates / imports / renames scene or asset state,
+    // plus the two wildcard-invocation escape hatches (actor_call_function,
+    // editor_run_console_command) and arbitrary code exec (python_run). Pure
+    // reads (get/list/info/search/validate/export/focus/ping) are NOT gated.
+    //
+    // Prior bugs this fixes: (1) "editor_execute_console" was a non-existent
+    // name — the real command is "editor_run_console_command", so console exec
+    // silently bypassed the gate (same class as the old python_exec typo).
+    // (2) actor_batch_spawn (live-testing finding) spawned actors with no plan
+    // approval while actor_delete WAS gated.
+    //
+    // NB: many TS-only tools reach C++ as "python_run" (already gated) so their
+    // own names never hit ProcessCommand; they are listed anyway so a direct
+    // hayba_invoke of a registered handler is still covered and intent is clear.
+    static const TSet<FString> DestructiveCommands = {
+        // Arbitrary code / wildcard invocation
+        TEXT("python_run"),
+        TEXT("actor_call_function"),
+        TEXT("editor_run_console_command"),
+        // Actor lifecycle + mutation
+        TEXT("actor_spawn"),
+        TEXT("actor_delete"),
+        TEXT("actor_duplicate"),
+        TEXT("actor_batch_spawn"),
+        TEXT("actor_spawn_from_asset"),
+        TEXT("actor_set_properties"),
+        TEXT("actor_set_visibility"),
+        TEXT("actor_snap_to_socket"),
+        TEXT("actor_tag"),
+        // Object reflection write
+        TEXT("object_set_property"),
+        // Asset lifecycle
+        TEXT("asset_import"),
+        TEXT("asset_duplicate"),
+        TEXT("asset_delete"),
+        TEXT("asset_rename"),
+        // Blueprint authoring
+        TEXT("blueprint_create"),
+        TEXT("blueprint_add_component"),
+        TEXT("blueprint_add_variable"),
+        TEXT("blueprint_set_defaults"),
+        // Material authoring
+        TEXT("material_create"),
+        TEXT("material_create_instance"),
+        TEXT("material_add_node"),
+        TEXT("material_add_comment"),
+        TEXT("material_add_reroute_declaration"),
+        TEXT("material_add_reroute_usage"),
+        TEXT("material_connect_nodes"),
+        // PCG (both legacy alias + namespaced form)
+        TEXT("create_graph"),
+        TEXT("pcg_create_graph"),
+        TEXT("execute_graph"),
+        TEXT("pcg_execute_graph"),
+        TEXT("pcg_add_node"),
+        TEXT("pcg_wire"),
+        // Landscape (legacy alias + namespaced form)
+        TEXT("landscape_import"),
+        TEXT("import_landscape"),
+        // ISM
+        TEXT("ism_create_actor"),
+        TEXT("ism_add_instance"),
+        TEXT("ism_add_instances"),
+        TEXT("ism_clear_instances"),
+        // Foliage
+        TEXT("foliage_remove_instances"),
+        // Spline
+        TEXT("spline_create"),
+        TEXT("spline_add_point"),
+        TEXT("spline_set_point"),
+        TEXT("spline_remove_point"),
+        // Level / Data authoring
+        TEXT("level_create"),
+        TEXT("data_create"),
+        TEXT("data_set"),
+        // Sequencer / Niagara / MetaSound / GAS / UI / Input authoring
+        TEXT("seq_create"),
+        TEXT("niagara_spawn"),
+        TEXT("metasound_create"),
+        TEXT("gas_create_ability"),
+        TEXT("gas_create_effect"),
+        TEXT("ui_create_widget"),
+        TEXT("input_create_action"),
+        TEXT("input_create_mapping"),
+        // Memory
+        TEXT("memory_clear"),
+    };
+    return DestructiveCommands.Contains(Cmd);
 }
 
 static void MaybeShowPlanModePrompt()
@@ -223,34 +308,43 @@ static TMap<FString, FString> CaptureBeforeState(const FString& Cmd, const TShar
     FString PropertyName;
     if (bWantProperty) Params->TryGetStringField(TEXT("property"), PropertyName);
 
-    // Runs INLINE — ProcessCommand (hence this) already executes on the game
-    // thread, so the old AsyncTask(GameThread)+Wait(2s) self-deadlocked (the
-    // queued task could never run while this blocked), always timed out after
-    // 2s, and — capturing &Before by reference — risked a use-after-free when
-    // the late task wrote into the unwound frame. The seam runs the snapshot
-    // directly on the game thread.
-    HaybaGameThread::RunSyncVoid([&Before, ActorId, PropertyName, bWantTransform, bWantTags, bWantProperty, bWantDelete]()
+    // ProcessCommand (hence this) already executes on the game thread, so the
+    // seam runs the snapshot INLINE — no AsyncTask, no FEvent. The old
+    // AsyncTask(GameThread)+Wait(2s) self-deadlocked (the queued task could
+    // never run while this blocked), always timed out after 2s, and — capturing
+    // &Before by reference — risked a use-after-free (#283/#284) when the late
+    // task wrote into the already-unwound frame.
+    //
+    // Capture-safety: the work lambda OWNS its result map (`Snapshot`) and the
+    // seam returns it BY VALUE. Nothing captures the caller's local by
+    // reference, so even on the (never-taken under the current dispatch model)
+    // off-game-thread timeout path — where the seam keeps the work alive in
+    // shared state past this frame — there is no &-ref to a destroyed TMap and
+    // no pooled FEvent touched after return.
+    Before = HaybaGameThread::RunSync<TMap<FString, FString>>(
+        [ActorId, PropertyName, bWantTransform, bWantTags, bWantProperty, bWantDelete]() -> TMap<FString, FString>
     {
+        TMap<FString, FString> Snapshot;
         if (AActor* Actor = FindActorByLabel_GameThread(ActorId))
         {
             if (bWantDelete)
             {
-                Before.Add(TEXT("exists"), TEXT("true"));
+                Snapshot.Add(TEXT("exists"), TEXT("true"));
             }
             if (bWantTransform)
             {
                 const FVector L  = Actor->GetActorLocation();
                 const FRotator R = Actor->GetActorRotation();
                 const FVector S  = Actor->GetActorScale3D();
-                Before.Add(TEXT("location"), FString::Printf(TEXT("(%.1f, %.1f, %.1f)"), L.X, L.Y, L.Z));
-                Before.Add(TEXT("rotation"), FString::Printf(TEXT("(p=%.1f y=%.1f r=%.1f)"), R.Pitch, R.Yaw, R.Roll));
-                Before.Add(TEXT("scale"),    FString::Printf(TEXT("(%.2f, %.2f, %.2f)"), S.X, S.Y, S.Z));
+                Snapshot.Add(TEXT("location"), FString::Printf(TEXT("(%.1f, %.1f, %.1f)"), L.X, L.Y, L.Z));
+                Snapshot.Add(TEXT("rotation"), FString::Printf(TEXT("(p=%.1f y=%.1f r=%.1f)"), R.Pitch, R.Yaw, R.Roll));
+                Snapshot.Add(TEXT("scale"),    FString::Printf(TEXT("(%.2f, %.2f, %.2f)"), S.X, S.Y, S.Z));
             }
             if (bWantTags)
             {
                 FString Joined;
                 for (const FName& T : Actor->Tags) Joined += (Joined.IsEmpty() ? TEXT("") : TEXT(", ")) + T.ToString();
-                Before.Add(TEXT("tags"), Joined.IsEmpty() ? TEXT("(none)") : Joined);
+                Snapshot.Add(TEXT("tags"), Joined.IsEmpty() ? TEXT("(none)") : Joined);
             }
             if (bWantProperty && !PropertyName.IsEmpty())
             {
@@ -258,19 +352,20 @@ static TMap<FString, FString> CaptureBeforeState(const FString& Cmd, const TShar
                 {
                     FString Out;
                     Prop->ExportText_InContainer(0, Out, Actor, Actor, Actor, PPF_None);
-                    Before.Add(PropertyName, Out);
+                    Snapshot.Add(PropertyName, Out);
                 }
                 else
                 {
-                    Before.Add(PropertyName, TEXT("(no such property)"));
+                    Snapshot.Add(PropertyName, TEXT("(no such property)"));
                 }
             }
         }
         else
         {
-            Before.Add(TEXT("__missing__"), TEXT("(actor not found)"));
+            Snapshot.Add(TEXT("__missing__"), TEXT("(actor not found)"));
         }
-    }, /*TimeoutSeconds=*/2.0);
+        return Snapshot;
+    }, /*TimeoutSeconds=*/2.0, /*TimeoutValue=*/TMap<FString, FString>());
     return Before;
 }
 
@@ -677,7 +772,53 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     }
 
     const double Start = FPlatformTime::Seconds();
-    FHaybaHandlerResult Result = (*Found)->Handle(Cmd, Params);
+
+    // SEH-guard the handler-dispatch seam so a NATIVE structured exception
+    // (access violation, etc.) inside ANY of the registered handlers is converted
+    // into a recoverable error envelope instead of taking down the whole editor.
+    // Previously only the python and material handlers self-guarded their
+    // crash-prone calls (ExecPythonGuarded / HaybaSeh::RunGuarded), leaving the
+    // other ~31 handlers unrecoverable; wrapping this single dispatch point makes
+    // the entire handler surface recoverable in one place. Those per-handler
+    // guards are KEPT (a caught fault there yields a clean FHaybaHandlerResult, so
+    // this outer guard never sees it — no double-fault, no behaviour change).
+    //
+    // The thunk MUST be a captureless lambda (-> function pointer) and the result
+    // is written back through a pointer in the context struct, because MSVC forbids
+    // C++ object unwinding across __try (C2712) — RunGuarded isolates the __try in
+    // its own translation unit and only ever invokes a function pointer. Mirrors
+    // the FStatsCtx usage in HaybaMCPMaterialHandler.cpp.
+    FHaybaHandlerResult Result;
+    {
+        struct FDispatchCtx
+        {
+            IHaybaMCPHandler* Handler;
+            const FString* Cmd;
+            const TSharedPtr<FJsonObject>* Params;
+            FHaybaHandlerResult* Out;
+        } Ctx{ &Found->Get(), &Cmd, &Params, &Result };
+
+        bool bHandlerCrashed = false;
+        HaybaSeh::RunGuarded(+[](void* P)
+        {
+            FDispatchCtx* C = static_cast<FDispatchCtx*>(P);
+            *C->Out = C->Handler->Handle(*C->Cmd, *C->Params);
+        }, &Ctx, bHandlerCrashed);
+
+        if (bHandlerCrashed)
+        {
+            UE_LOG(LogHaybaMCPCmd, Error,
+                TEXT("SEH guard caught a structured exception in handler for command '%s' (id: %s) — editor kept alive"),
+                *Cmd, *Id);
+            Result = FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("handler crashed (SEH): command '%s' faulted with a structured exception ")
+                TEXT("(e.g. a null/stale UObject in the handler, or a stale Python-registered editor delegate ")
+                TEXT("firing on a GC'd target). The editor was kept alive by the SEH guard and the operation ")
+                TEXT("did NOT complete."),
+                *Cmd));
+        }
+    }
+
     const int64 DurMs = (int64)((FPlatformTime::Seconds() - Start) * 1000.0);
 
     if (bDestructive && GEditor)
@@ -741,6 +882,17 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         Limits.MaxArrayItems = 50;
         Limits.MaxStringChars = 512;
         Limits.MaxTopLevelFields = 20;
+        if (Cmd == TEXT("python_run"))
+        {
+            // python_run's stdout carries the HAYBA_JSON result line for every
+            // python-factory tool; the 512-char cap clipped it mid-JSON
+            // ("Unterminated string at position 501" — live-battery finding,
+            // broke actor_find/object_inspect/outliner_tree/reflect_class).
+            // The TS layer already spills >12k outputs to a temp file, so a
+            // 64K ceiling here is ample and still bounds the frame size.
+            Limits.MaxStringChars = 64 * 1024;
+            Limits.MaxArrayItems = 200;
+        }
         FHaybaMCPResponseBuilder Builder(Limits);
         TSharedRef<FJsonObject> Trimmed = Builder.Build(DataObj.ToSharedRef());
         return MakeOkResponse(Id, Trimmed);
