@@ -49,7 +49,12 @@ export function isLegacyTarget(entry: LegacyCommandEntry): boolean {
  *  sidecar carries no explicit cost/timeout hint, so this is the only "hint"
  *  available; everything else defaults to medium per the brief. */
 function costFor(name: string): Cost {
-  if (name.startsWith('build_') || name === 'build_cook' || name === 'test_run') {
+  if (
+    name.startsWith('build_') ||
+    name === 'build_cook' ||
+    name === 'test_run' ||
+    name === 'blueprint_compile' // slow/hang-prone in this codebase — exceeds the medium (10s) ceiling
+  ) {
     return 'high';
   }
   return 'medium';
@@ -59,7 +64,18 @@ function costFor(name: string): Cost {
  *  real side-effects (new actors/assets/points/instances). Matches the families
  *  the brief calls out: *_add_*, *_remove_*, *_delete_*, *_create*, duplicate,
  *  import, spawn, and explicit set/tag writes. */
+/** Wildcard-invocation commands — side effect opaque, never retry. These accept
+ *  an arbitrary function/console-command argument that can execute any
+ *  mutating operation, so a silent transport-failure retry could double-execute
+ *  anything dangerous. Listed explicitly (not inferable from the name pattern
+ *  heuristic below). */
+const WILDCARD_INVOCATION_COMMANDS = new Set<string>([
+  'actor_call_function',
+  'editor_run_console_command',
+]);
+
 export function isNonIdempotentLegacy(name: string): boolean {
+  if (WILDCARD_INVOCATION_COMMANDS.has(name)) return true;
   return (
     /(?:_add_|_remove_|_delete_|_create$|_create_|_duplicate|_import|_spawn|spawn$)/.test(name) ||
     name.endsWith('_set_properties') ||

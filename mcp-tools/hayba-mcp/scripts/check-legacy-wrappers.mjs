@@ -147,7 +147,7 @@ export function runLegacyWrapperCheck(opts = {}) {
     } else if (!entry.has_ts_wrapper && hasCall) {
       const uniq = Array.from(new Set(hitFiles));
       violations.push(
-        `[stale-flag] sidecar says "${name}" has no TS wrapper but executeCommand/dispatch call found in ${uniq.join(', ')}`,
+        `[stale-flag] sidecar says "${name}" has no TS wrapper but executeCommand/dispatch call found in ${uniq.join(', ')}. If this command is surfaced by src/tools/legacy-tool-factory.ts (agent_callable && !has_ts_wrapper), either keep dispatch dynamic or set has_ts_wrapper:true.`,
       );
     }
   }

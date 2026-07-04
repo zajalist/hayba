@@ -133,5 +133,10 @@ describe('NON_IDEMPOTENT extension', () => {
     // Read-only ones stay idempotent.
     expect(NON_IDEMPOTENT.has('level_list')).toBe(false);
     expect(NON_IDEMPOTENT.has('mesh_extract')).toBe(false);
+    // Wildcard-invocation commands — side effect opaque, never retry.
+    expect(isNonIdempotentLegacy('actor_call_function')).toBe(true);
+    expect(isNonIdempotentLegacy('editor_run_console_command')).toBe(true);
+    expect(NON_IDEMPOTENT.has('actor_call_function')).toBe(true);
+    expect(NON_IDEMPOTENT.has('editor_run_console_command')).toBe(true);
   });
 });
