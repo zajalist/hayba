@@ -100,6 +100,46 @@ function resolveSessionConfig(sessionId: string | undefined): SessionConfig | un
 }
 
 // ---------------------------------------------------------------------------
+// Narrow accessors for the copilot_* MCP tools (Task 5). These read/write the
+// SAME in-memory configStore the /chat/config routes use, so `copilot_provider_set`
+// and `POST /chat/config` are two doors onto one store — no duplicated state.
+//
+// TODO(Task 6): once the C++ DPAPI vault lands, `copilot_key_set`/`copilot_key_clear`
+// swap their storage target to the vault (via a localhost handshake) instead of
+// this in-memory map. The masked-read contract (never echo the raw key) does
+// not change when that happens.
+// ---------------------------------------------------------------------------
+
+export type { SessionConfig };
+
+/** Masked last-4 of a key, or null. Exposed so copilot tools reuse one mask rule. */
+export function maskKey(key: string | undefined): string | null {
+  return last4(key);
+}
+
+/** Read the resolved config (provider/model/baseURL + RAW key) for a session/default slot. */
+export function getConfigEntry(sessionId?: string): SessionConfig | undefined {
+  return resolveSessionConfig(sessionId);
+}
+
+/** Write (or replace) the config entry for a session/default slot. */
+export function setConfigEntry(sessionId: string | undefined, cfg: SessionConfig): void {
+  configStore.set(sessionId || DEFAULT_CONFIG_KEY, cfg);
+}
+
+/** Clear only the API key on a config entry, leaving provider/model/baseURL intact. */
+export function clearConfigKey(sessionId?: string): void {
+  const key = sessionId || DEFAULT_CONFIG_KEY;
+  const existing = configStore.get(key);
+  if (existing) configStore.set(key, { ...existing, apiKey: undefined });
+}
+
+/** True once `registerChatRoutes` has wired the /chat/* routes onto the sidecar app. */
+export function isChatRoutesRegistered(): boolean {
+  return chatRoutesRegistered;
+}
+
+// ---------------------------------------------------------------------------
 // Session store (in-memory). One turn runs server-side per session; frames
 // buffer while the client is disconnected so a reconnect can replay them.
 // ---------------------------------------------------------------------------
@@ -330,7 +370,10 @@ export interface ChatRoutesOptions {
  * Register the /chat/* routes onto an existing Express app so the sidecar port
  * serves them. Call from `registerApiRoutes`.
  */
+let chatRoutesRegistered = false;
+
 export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}): void {
+  chatRoutesRegistered = true;
   const dispatchTool = options.dispatchTool ?? createChatDispatcher();
   const makeClient = options.createClient ?? createLLMClient;
   const system = options.system ?? DEFAULT_SYSTEM;
@@ -732,6 +775,7 @@ export function __resetChatState(): void {
   sessions.clear();
   configStore.clear();
   sessionCounter = 0;
+  chatRoutesRegistered = false;
   if (sweeper) {
     clearInterval(sweeper);
     sweeper = null;
