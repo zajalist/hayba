@@ -362,8 +362,12 @@ namespace HaybaRender
             // Conservative: serialize as PNG when EXR helper isn't available.
             TArray<FColor> Pixels;
             Res->ReadPixels(Pixels);
+            // CompressImageArray emits PNG. ThumbnailCompressImageArray emits
+            // JPEG, which previously landed JPEG bytes behind a .png extension —
+            // the magic-byte verifier below correctly rejected that as
+            // file_invalid (caught by the Phase 0/1 in-editor smoke).
             TArray<uint8> CompressedPng;
-            FImageUtils::ThumbnailCompressImageArray(S->Width, S->Height, Pixels, CompressedPng);
+            FImageUtils::CompressImageArray(S->Width, S->Height, Pixels, CompressedPng);
             bWrote = FFileHelper::SaveArrayToFile(CompressedPng, *S->OutPath);
             if (!bWrote) S->EngineHint = TEXT("png write failed (EXR fallback)");
         }
@@ -372,7 +376,17 @@ namespace HaybaRender
             TArray<FColor> Pixels;
             Res->ReadPixels(Pixels);
             TArray<uint8> Compressed;
-            FImageUtils::ThumbnailCompressImageArray(S->Width, S->Height, Pixels, Compressed);
+            if (S->Format == TEXT("jpg"))
+            {
+                // JPEG requested: the thumbnail compressor's JPEG output matches
+                // the .jpg extension + magic-byte expectation.
+                FImageUtils::ThumbnailCompressImageArray(S->Width, S->Height, Pixels, Compressed);
+            }
+            else
+            {
+                // png (default): emit real PNG bytes.
+                FImageUtils::CompressImageArray(S->Width, S->Height, Pixels, Compressed);
+            }
             bWrote = FFileHelper::SaveArrayToFile(Compressed, *S->OutPath);
             if (!bWrote) S->EngineHint = TEXT("file write failed");
         }
