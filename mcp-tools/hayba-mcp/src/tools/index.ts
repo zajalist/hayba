@@ -102,6 +102,8 @@ import {
 } from './pcg/pcg-primitives.js';
 import { actorPyDescriptors } from './actor/actor-py-tools.js';
 import { editorPyDescriptors } from './editor/editor-py-tools.js';
+import { assetPyDescriptors } from './asset/asset-py-tools.js';
+import { meshPyDescriptors } from './mesh/mesh-py-tools.js';
 import { toToolDescriptor } from './py-tool-factory.js';
 import { generateLegacyDescriptors } from './legacy-tool-factory.js';
 
@@ -887,6 +889,14 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     // UE Python via the pyTemplate factory. See src/tools/editor/editor-py-tools.ts
     // for the catalog overlap/skip analysis.
     ...editorPyDescriptors.map((d) => toToolDescriptor(d)),
+
+    // ── Asset & mesh P0 tools (Phase 2 Wave 2, Task 2) — factory path ─────────
+    // Net-new asset-provenance/save/folder tools and StaticMesh-asset readbacks
+    // (sockets/LODs/materials/bounds + material-slot setter), generated as UE
+    // Python via the pyTemplate factory. See src/tools/asset/asset-py-tools.ts
+    // and src/tools/mesh/mesh-py-tools.ts for the catalog overlap/skip analysis.
+    ...assetPyDescriptors.map((d) => toToolDescriptor(d)),
+    ...meshPyDescriptors.map((d) => toToolDescriptor(d)),
 ];
 
 // Single-source tool descriptor list = hand-written entries + the sidecar-

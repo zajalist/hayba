@@ -163,6 +163,22 @@ describe('asset_registry_query', () => {
     await makePyToolHandler(assetRegistryQueryDescriptor)({ class_filter: 'StaticMesh' });
     expect(lastScript()).toContain("_cls = 'StaticMesh'");
   });
+
+  it('embeds a name_contains substring filter (folds in the would-be asset_find)', async () => {
+    const { sender, lastScript } = mockStdout(emit({ ok: true, assets: [], total: 0, has_more: false, next_offset: 0 }));
+    setDefaultSender(sender);
+    await makePyToolHandler(assetRegistryQueryDescriptor)({ name_contains: 'rock' });
+    const s = lastScript();
+    expect(s).toContain("_name_contains = 'rock'");
+    expect(s).toContain('_name_contains.lower() not in nm.lower()');
+  });
+
+  it('defaults name_contains to None when omitted', async () => {
+    const { sender, lastScript } = mockStdout(emit({ ok: true, assets: [], total: 0, has_more: false, next_offset: 0 }));
+    setDefaultSender(sender);
+    await makePyToolHandler(assetRegistryQueryDescriptor)({ class_filter: 'StaticMesh' });
+    expect(lastScript()).toContain('_name_contains = None');
+  });
 });
 
 describe('asset_inspect', () => {

@@ -364,6 +364,7 @@ export const selectionGetDescriptor: PyToolDescriptor<typeof selectionGetSchema.
 // ── asset_registry_query ──────────────────────────────────────────────────────
 export const assetRegistryQuerySchema = z.object({
   class_filter: z.string().optional().describe('Exact asset class name, e.g. "StaticMesh" or "Material"'),
+  name_contains: z.string().optional().describe('Case-insensitive substring the asset name must contain, e.g. "rock"'),
   path_prefix: z.string().optional().describe('Content path prefix, e.g. "/Game/Meshes"'),
   recursive: z.boolean().optional().default(true).describe('Recurse under path_prefix'),
   limit: z.number().int().positive().optional().default(50).describe('Max assets returned (pagination)'),
@@ -375,6 +376,7 @@ function assetRegistryQueryScript(p: AssetRegistryQueryParams): string {
   return [
     PY_EDITOR_HELPERS,
     `_cls = ${p.class_filter !== undefined ? pyStr(p.class_filter) : 'None'}`,
+    `_name_contains = ${p.name_contains !== undefined ? pyStr(p.name_contains) : 'None'}`,
     `_prefix = ${p.path_prefix !== undefined ? pyStr(p.path_prefix) : 'None'}`,
     `_recursive = ${p.recursive ? 'True' : 'False'}`,
     `_limit = ${p.limit}`,
@@ -397,6 +399,7 @@ function assetRegistryQueryScript(p: AssetRegistryQueryParams): string {
     '        except Exception: pth = None',
     '        try: nm = str(d.asset_name)',
     '        except Exception: nm = None',
+    '        if _name_contains is not None and (nm is None or _name_contains.lower() not in nm.lower()): continue',
     '        rows.append({"name": nm, "path": pth, "class": cn})',
     '    total = len(rows)',
     '    page = rows[_offset:_offset+_limit]',
@@ -410,7 +413,7 @@ function assetRegistryQueryScript(p: AssetRegistryQueryParams): string {
 export const assetRegistryQueryDescriptor: PyToolDescriptor<typeof assetRegistryQuerySchema.shape> = {
   name: 'asset_registry_query',
   description:
-    'Query the AssetRegistry by class and/or content-path prefix, paginated. Discovery surface for "what assets exist that I can use here" — see asset_inspect for single-asset dependency detail and the legacy asset_get_info for C++-only fields.',
+    'Query the AssetRegistry by class, name substring (name_contains), and/or content-path prefix, paginated. Discovery surface for "what assets exist that I can use here" — see asset_inspect for single-asset dependency detail and the legacy asset_get_info for C++-only fields.',
   cost: 'low',
   returns: '{ok, assets:[{name,path,class}], total, has_more, next_offset}',
   schema: assetRegistryQuerySchema.shape,
