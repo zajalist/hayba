@@ -56,7 +56,7 @@ const PROVIDERS: ProviderEntry[] = [
     id: 'groq',
     label: 'Groq (free tier)',
     baseURLDefault: 'https://api.groq.com/openai/v1',
-    defaultModel: 'llama-3.1-70b-versatile',
+    defaultModel: 'llama-3.3-70b-versatile',
     needsKey: true,
     keyHint: 'gsk_...',
     protocol: 'openai',
@@ -65,7 +65,8 @@ const PROVIDERS: ProviderEntry[] = [
     id: 'openrouter',
     label: 'OpenRouter (free routes)',
     baseURLDefault: 'https://openrouter.ai/api/v1',
-    defaultModel: 'meta-llama/llama-3-8b-instruct:free',
+    // OpenRouter free-tier slugs rotate with no stability guarantee — no default; user picks from the model list.
+    defaultModel: '',
     needsKey: true,
     keyHint: 'sk-or-...',
     protocol: 'openai',
@@ -116,6 +117,7 @@ export function getProvider(id: string): ProviderEntry | undefined {
  * Registers (or overwrites) a custom OpenAI-compatible provider entry, e.g. for
  * a self-hosted vLLM / llama.cpp server. Metadata only — the caller still
  * supplies the API key (if any) at request time via authHeader.
+ * Duplicate slug = last-write-wins overwrite.
  */
 export function registerCustomProvider(
   label: string,
