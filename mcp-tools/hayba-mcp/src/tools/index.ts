@@ -101,6 +101,7 @@ import {
   pcgAddNodeDescriptor, pcgSetPropDescriptor, pcgWireDescriptor, pcgInspectInstancesDescriptor,
 } from './pcg/pcg-primitives.js';
 import { toToolDescriptor } from './py-tool-factory.js';
+import { generateLegacyDescriptors } from './legacy-tool-factory.js';
 
 
 // ── Zone painter tool handlers ────────────────────────────────────────────────
@@ -214,8 +215,9 @@ const dCoerceVec3 = z.preprocess((v) => {
  * are now generated automatically from this list.
  */
 const M = 'material'; // niche domain for the material toolset
-// Exported so tests can verify schema presence and no-drift invariant.
-export const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
+// Hand-written descriptors. Kept as a named const so the generated legacy list
+// can be de-duplicated against these names before splicing (see below).
+const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     // ── World generation (always-on flagship) ────────────────────────────────
     {
       name: 'world_generate',
@@ -871,6 +873,21 @@ export const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     toToolDescriptor(pcgSetPropDescriptor),
     toToolDescriptor(pcgWireDescriptor),
     toToolDescriptor(pcgInspectInstancesDescriptor),
+];
+
+// Single-source tool descriptor list = hand-written entries + the sidecar-
+// generated legacy tools. The generator surfaces every sidecar command that is
+// agent_callable:true && has_ts_wrapper:false (~55) as a first-class tool,
+// skipping any name that collides with a hand-written descriptor. Both the
+// recordEagerSchemas loop and the eager registerTool loop consume this merged
+// list identically — so generated tools are recorded + registered exactly once,
+// with real get_tool_signature schemas. Exported so tests can verify schema
+// presence and the no-drift / no-duplicate invariants.
+export const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
+  ...HANDWRITTEN_STANDARD_DESCRIPTORS,
+  ...generateLegacyDescriptors(
+    new Set(HANDWRITTEN_STANDARD_DESCRIPTORS.map((d) => d.name)),
+  ),
 ];
 
 export async function registerTools(server: McpServer, session: SessionManagerStub): Promise<RoutingHandle | null> {
