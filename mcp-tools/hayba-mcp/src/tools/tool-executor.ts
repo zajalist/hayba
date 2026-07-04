@@ -53,6 +53,7 @@ export const NON_IDEMPOTENT = new Set<string>([
   'actor_delete',
   'actor_duplicate',
   'actor_batch_spawn',
+  'actor_spawn_from_asset',
   // Asset lifecycle
   'asset_delete',
   'asset_duplicate',

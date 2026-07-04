@@ -100,6 +100,7 @@ import { pcgCookAndWaitHandler, schema as pcgCookSchema, meta as pcgCookMeta } f
 import {
   pcgAddNodeDescriptor, pcgSetPropDescriptor, pcgWireDescriptor, pcgInspectInstancesDescriptor,
 } from './pcg/pcg-primitives.js';
+import { actorPyDescriptors } from './actor/actor-py-tools.js';
 import { toToolDescriptor } from './py-tool-factory.js';
 import { generateLegacyDescriptors } from './legacy-tool-factory.js';
 
@@ -873,6 +874,12 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     toToolDescriptor(pcgSetPropDescriptor),
     toToolDescriptor(pcgWireDescriptor),
     toToolDescriptor(pcgInspectInstancesDescriptor),
+
+    // ── Actor-domain P0 breadth tools (Phase 2 Wave 1) — factory path ─────────
+    // Net-new actor tools (inspect/find/selection/spawn-from-asset/batch-
+    // transform/focus/set-folder), generated as UE Python via the pyTemplate
+    // factory. See src/tools/actor/actor-py-tools.ts for the overlap analysis.
+    ...actorPyDescriptors.map((d) => toToolDescriptor(d)),
 ];
 
 // Single-source tool descriptor list = hand-written entries + the sidecar-
