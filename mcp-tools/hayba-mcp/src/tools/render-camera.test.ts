@@ -47,13 +47,20 @@ describe('handleRenderCamera', () => {
   });
 
   it('dispatches render_camera with (wait_timeout_s + 30) * 1000 timeout', async () => {
-    await handleRenderCamera({ camera: { kind: 'transform', location: [0, 0, 0], rotation: [0, 0, 0] }, wait_timeout_s: 15 } as never);
+    await handleRenderCamera({ camera: { kind: 'transform', location: [0, 0, 0], rotation: [0, 0, 0] }, wait_timeout_s: 15, force: true } as never);
     expect(sender).toHaveBeenCalledWith('render_camera', expect.any(Object), 45000);
   });
 
   it('returns the UE response in MCP content shape', async () => {
-    const res = await handleRenderCamera({ camera: { kind: 'actor', actor: '/Game/X' } } as never);
+    const res = await handleRenderCamera({ camera: { kind: 'actor', actor: '/Game/X' }, force: true } as never);
     expect(res.content[0].text).toContain('"ok": true');
     expect(res.content[0].text).toContain('"path"');
+  });
+
+  it('refuses without force (known editor-crasher) and does not dispatch', async () => {
+    const res = await handleRenderCamera({ camera: { kind: 'actor', actor: '/Game/X' } } as never);
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain('known editor-crasher');
+    expect(sender).not.toHaveBeenCalled();
   });
 });

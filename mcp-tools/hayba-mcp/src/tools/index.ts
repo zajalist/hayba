@@ -93,6 +93,17 @@ import { parameterizeGraphInputs } from './parameterize-graph-inputs.js';
 import { queryPcgexDocs, type QueryPcgexDocsParams } from './query-pcgex-docs.js';
 import { initiateInfrastructureBrainstorm } from './initiate-infrastructure-brainstorm.js';
 
+// ── Agent-ergonomics tools (HANDOFF postmortem) ───────────────────────────────
+import { haybaIntrospectHandler, schema as introspectSchema, meta as introspectMeta } from './introspect/hayba-introspect.js';
+import { pcgCookAndWaitHandler, schema as pcgCookSchema, meta as pcgCookMeta } from './pcg/pcg-cook-and-wait.js';
+import {
+  pcgAddNodeHandler, pcgAddNodeSchema,
+  pcgSetPropHandler, pcgSetPropSchema,
+  pcgWireHandler, pcgWireSchema,
+  pcgInspectInstancesHandler, pcgInspectInstancesSchema,
+  pcgPrimitiveMeta,
+} from './pcg/pcg-primitives.js';
+
 
 // ── Zone painter tool handlers ────────────────────────────────────────────────
 import { openZonePainterHandler } from './hayba-open-zone-painter.js';
@@ -898,7 +909,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
 
   server.tool(
     'editor_capture_viewport',
-    appendMeta('Capture the active editor viewport as a base64 PNG.', captureMeta),
+    appendMeta('Capture the active editor viewport and return it as an inline image block (plus a small text block with camera/width/height). Set HAYBA_CAPTURE_TO_FILE to also spill the image to a temp file path.', captureMeta),
     {
       width: z.coerce.number().int().optional(),
       height: z.coerce.number().int().optional(),
@@ -965,6 +976,74 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     async (args, _extra) => handleRenderCamera(args as never),
   );
   remember('render_camera', renderCameraMeta);
+
+  // ── Agent-ergonomics tools (HANDOFF postmortem) ─────────────────────────────
+
+  server.tool(
+    'hayba_introspect',
+    appendMeta('Introspect UE reflection: editor-property names+types of a class/struct, member values of an enum, or input/output pin labels of a PCG node (by graph+node) or settings class. Kills trial-and-error API discovery.', introspectMeta),
+    introspectSchema.shape,
+    async (params) => {
+      const r = await haybaIntrospectHandler(params as never);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('hayba_introspect', introspectMeta);
+
+  server.tool(
+    'pcg_cook_and_wait',
+    appendMeta('Regenerate an actor\'s PCGComponent, block on the PCG graph settling (NOT world_tick), and return per-mesh ISM instance counts — all in one call.', pcgCookMeta),
+    pcgCookSchema.shape,
+    async (params) => {
+      const r = await pcgCookAndWaitHandler(params as never);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('pcg_cook_and_wait', pcgCookMeta);
+
+  server.tool(
+    'pcg_add_node',
+    appendMeta('Add a node of a given PCG settings class to a graph. Returns node_index + node_label (settings-class-derived) for use with pcg_set_prop / pcg_wire.', pcgPrimitiveMeta),
+    pcgAddNodeSchema.shape,
+    async (params) => {
+      const r = await pcgAddNodeHandler(params as never);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('pcg_add_node', pcgPrimitiveMeta);
+
+  server.tool(
+    'pcg_set_prop',
+    appendMeta('Set an editor property on a PCG node\'s settings. Supports nested struct paths like "distribution_settings/distribution".', pcgPrimitiveMeta),
+    pcgSetPropSchema.shape,
+    async (params) => {
+      const r = await pcgSetPropHandler(params as never);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('pcg_set_prop', pcgPrimitiveMeta);
+
+  server.tool(
+    'pcg_wire',
+    appendMeta('Wire one PCG node\'s output pin to another node\'s input pin (by node title or index, and pin label).', pcgPrimitiveMeta),
+    pcgWireSchema.shape,
+    async (params) => {
+      const r = await pcgWireHandler(params as never);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('pcg_wire', pcgPrimitiveMeta);
+
+  server.tool(
+    'pcg_inspect_instances',
+    appendMeta('Read back the Instanced-Static-Mesh instance counts (and a sample transform) produced on an actor by its PCG cook.', pcgPrimitiveMeta),
+    pcgInspectInstancesSchema.shape,
+    async (params) => {
+      const r = await pcgInspectInstancesHandler(params as never);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('pcg_inspect_instances', pcgPrimitiveMeta);
 
 
   // ── Fab connector tools ─────────────────────────────────────────────────────
@@ -1909,6 +1988,16 @@ function recordEagerSchemas(
     format: z.enum(['raw', 'structured']).optional().describe('"structured" emits {line, category, severity, msg, raw} objects'),
     since_line: z.coerce.number().int().min(0).optional(),
   }, 'low', '{lines:[string|object], next_line:int, format}');
+
+  // ── Agent-ergonomics tools (HANDOFF postmortem) ───────────────────────────
+  reg('hayba_introspect', introspectSchema.shape, 'low',
+    '{ok, mode, name?, properties?:[{name,type}], members?:[{name,value}], pins?, input_pins?, output_pins?, settings_class?}');
+  reg('pcg_cook_and_wait', pcgCookSchema.shape, 'high',
+    '{ok, cook:{components}, idle, result:{ism:[{mesh,count}], total}}');
+  reg('pcg_add_node', pcgAddNodeSchema.shape, 'low', '{ok, node_index, node_label, settings_class}');
+  reg('pcg_set_prop', pcgSetPropSchema.shape, 'low', '{ok, node_label, path}');
+  reg('pcg_wire', pcgWireSchema.shape, 'low', '{ok, from, from_pin, to, to_pin}');
+  reg('pcg_inspect_instances', pcgInspectInstancesSchema.shape, 'low', '{ok, actor, ism:[{mesh,count,sample}], total}');
 
   // ── PCGEx domain ──────────────────────────────────────────────────────────
   reg('hayba_search_node_catalog', {

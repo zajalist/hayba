@@ -1,8 +1,18 @@
 // Shared MCP tool types. Decoupled from any gaea-flavored handler file so the
 // rest of the tool tree builds without the terrain stack present.
 
+export type ToolTextContent = { type: 'text'; text: string };
+export type ToolImageContent = { type: 'image'; data: string; mimeType: string };
+export type ToolContent = ToolTextContent | ToolImageContent;
+
 export type ToolResult = {
   content: Array<{ type: 'text'; text: string }>;
+  isError?: boolean;
+};
+
+/** Like ToolResult but content may include image blocks (e.g. viewport capture). */
+export type RichToolResult = {
+  content: ToolContent[];
   isError?: boolean;
 };
 
