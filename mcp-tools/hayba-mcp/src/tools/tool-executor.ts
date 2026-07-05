@@ -104,6 +104,12 @@ export const NON_IDEMPOTENT = new Set<string>([
   'niagara_spawn_transient',
   'niagara_place_actor',
   'niagara_create_from_template',
+  // Water factory tools (Phase 2 Wave 4 Task 3) — spawn a persistent actor; see
+  // WATER_NON_IDEMPOTENT in water/water-py-tools.ts.
+  'water_body_ocean_create',
+  'water_body_lake_create',
+  'water_body_river_create',
+  'water_zone_create',
   // MetaSound
   'metasound_create',
   // GAS

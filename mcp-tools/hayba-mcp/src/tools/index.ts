@@ -106,6 +106,7 @@ import { assetPyDescriptors } from './asset/asset-py-tools.js';
 import { meshPyDescriptors } from './mesh/mesh-py-tools.js';
 import { sequencerPyDescriptors } from './sequencer/sequencer-py-tools.js';
 import { niagaraPyDescriptors } from './niagara/niagara-py-tools.js';
+import { waterPyDescriptors } from './water/water-py-tools.js';
 import { toToolDescriptor } from './py-tool-factory.js';
 import { generateLegacyDescriptors } from './legacy-tool-factory.js';
 
@@ -916,6 +917,16 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     // src/tools/niagara/niagara-py-tools.ts for the 3-surface overlap audit and
     // wrap-and-skip decisions.
     ...niagaraPyDescriptors.map((d) => toToolDescriptor(d)),
+
+    // ── Water system P0 tools (Phase 2 Wave 4, Task 3) ────────────────────────
+    // Net-new water body/zone/wave discovery, spawn, tuning and PLUMB-style
+    // validation, generated as UE Python via the pyTemplate factory. All names
+    // are net-new + unique across all 3 surfaces (no water_* command exists in
+    // sidecar/index/list-tool-categories or any unreal GetCommands). The Water
+    // plugin may be DISABLED — water_check_plugin is the honest gate and every
+    // tool degrades to a clean plugin-disabled envelope. See
+    // src/tools/water/water-py-tools.ts for the overlap audit + plugin-probe.
+    ...waterPyDescriptors.map((d) => toToolDescriptor(d)),
 ];
 
 // Single-source tool descriptor list = hand-written entries + the sidecar-
