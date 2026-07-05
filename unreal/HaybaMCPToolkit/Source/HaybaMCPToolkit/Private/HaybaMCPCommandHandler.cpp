@@ -116,6 +116,11 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("input_create_mapping"),
         // Memory
         TEXT("memory_clear"),
+        // Credential mutation — writing/clearing an API key is as consequential
+        // as memory_clear. (copilot_get_key is a read → NOT gated here; it is
+        // separately fail-closed on capability-token config below.)
+        TEXT("copilot_key_set"),
+        TEXT("copilot_key_clear"),
     };
     return DestructiveCommands.Contains(Cmd);
 }
@@ -752,10 +757,14 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     // The TS copilot tools (copilot_key_*) and the local chat sidecar reach the
     // DPAPI key vault (FHaybaMCPSettings) ONLY through these four commands. They
     // have already cleared the capability-token auth gate above, and the TCP
-    // listener is bound to 127.0.0.1 only (HaybaMCPTcpServer.cpp:51) so no key
-    // material ever leaves the local machine. copilot_get_key is the ONLY command
-    // that returns a plaintext key; nothing here is written to the journal or a
-    // UE_LOG (the generic dispatch logger only records cmd+id, never params).
+    // listener is bound to 127.0.0.1 only (HaybaMCPTcpServer.cpp:51). Key
+    // material stays on the local machine SO LONG AS the bind remains loopback
+    // AND — for copilot_get_key specifically — a capability token is configured:
+    // that command fails CLOSED (below) and refuses to return a decrypted key
+    // when auth is unconfigured, even though the rest of the surface fails open.
+    // copilot_get_key is the ONLY command that returns a plaintext key; nothing
+    // here is written to the journal or a UE_LOG (the generic dispatch logger
+    // only records cmd+id, never params).
     if (Cmd == TEXT("copilot_key_status"))
     {
         auto Emit = [](const FString& ProviderId) -> TSharedPtr<FJsonObject>
@@ -785,6 +794,15 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
 
     if (Cmd == TEXT("copilot_get_key"))
     {
+        // FAIL CLOSED: this is the only command that returns a plaintext key.
+        // ValidateRequest fails OPEN when no capability token is configured
+        // (usability default), which would let any local process read the
+        // decrypted key unauthenticated. Refuse unless auth is actually
+        // configured — regardless of the global fail-open posture.
+        if (!FHaybaMCPSecurityManager::Get().IsAuthConfigured())
+        {
+            return MakeErrorResponse(Id, TEXT("copilot_get_key requires a configured capability token (set one in Hayba settings); refusing to return a decrypted key without authentication"));
+        }
         FString Provider;
         Params->TryGetStringField(TEXT("provider"), Provider);
         if (Provider.IsEmpty()) Provider = FHaybaMCPSettings::Get().SelectedProviderId;
