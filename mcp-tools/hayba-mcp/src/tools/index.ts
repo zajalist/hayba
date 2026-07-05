@@ -105,6 +105,7 @@ import { editorPyDescriptors } from './editor/editor-py-tools.js';
 import { assetPyDescriptors } from './asset/asset-py-tools.js';
 import { meshPyDescriptors } from './mesh/mesh-py-tools.js';
 import { sequencerPyDescriptors } from './sequencer/sequencer-py-tools.js';
+import { niagaraPyDescriptors } from './niagara/niagara-py-tools.js';
 import { toToolDescriptor } from './py-tool-factory.js';
 import { generateLegacyDescriptors } from './legacy-tool-factory.js';
 
@@ -906,6 +907,15 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     // tools wrapped-and-skipped). See src/tools/sequencer/sequencer-py-tools.ts
     // for the 3-surface overlap audit and render decision.
     ...sequencerPyDescriptors.map((d) => toToolDescriptor(d)),
+
+    // ── Niagara & VFX P0/P1 tools (Phase 2 Wave 4, Task 2) ────────────────────
+    // Net-new Niagara discovery/inspection/spawn/param/validation tools,
+    // generated as UE Python via the pyTemplate factory. Names are deliberately
+    // non-colliding with the dormant HaybaMCPNiagara satellite-plugin C++
+    // commands (niagara_list/niagara_spawn/niagara_set_param). See
+    // src/tools/niagara/niagara-py-tools.ts for the 3-surface overlap audit and
+    // wrap-and-skip decisions.
+    ...niagaraPyDescriptors.map((d) => toToolDescriptor(d)),
 ];
 
 // Single-source tool descriptor list = hand-written entries + the sidecar-

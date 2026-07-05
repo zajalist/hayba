@@ -97,8 +97,13 @@ export const NON_IDEMPOTENT = new Set<string>([
   'seq_track_add',
   'seq_transform_keyframe',
   'seq_camera_cut',
-  // Niagara
+  // Niagara (dormant satellite-plugin C++ command)
   'niagara_spawn',
+  // Niagara factory tools (Phase 2 Wave 4 Task 2) — spawn/place/create; see
+  // NIAGARA_NON_IDEMPOTENT in niagara/niagara-py-tools.ts.
+  'niagara_spawn_transient',
+  'niagara_place_actor',
+  'niagara_create_from_template',
   // MetaSound
   'metasound_create',
   // GAS
