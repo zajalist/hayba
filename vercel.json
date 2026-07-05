@@ -3,6 +3,7 @@
   "installCommand": "echo no install",
   "framework": null,
   "outputDirectory": "website",
+  "git": { "deploymentEnabled": false },
   "rewrites": [
     { "source": "/app/:path*", "destination": "/app/index.html" },
     { "source": "/lang/:id", "destination": "/app/index.html" },
