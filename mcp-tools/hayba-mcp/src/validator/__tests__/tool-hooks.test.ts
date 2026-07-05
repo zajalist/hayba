@@ -8,6 +8,18 @@ import { setConfigPath } from '../config.js';
 import { rulesById } from '../rules.js';
 import { makeValidatedPythonRunHandler } from '../../tools/python-run-validator-wrap.js';
 
+// The `allow_unsafe` case delegates to the REAL pythonRunHandler, which calls
+// tcp-client's ensureConnected(). Without a mock this test's behavior depends on
+// whether a live UE editor is listening on 52342 (and now waits up to the raised
+// `high`-cost timeout when it isn't), making it hang/time out. Mock tcp-client so
+// the delegation resolves fast and deterministically in any environment; the
+// pre-flight-rejection tests never reach send(), so this only affects the
+// allow_unsafe path. Only ensureConnected is overridden — everything else real.
+vi.mock('../../tcp-client.js', async (orig) => ({
+  ...(await orig<typeof import('../../tcp-client.js')>()),
+  ensureConnected: async () => ({ send: async () => ({ id: 'mock', ok: true, data: { stdout: '', stderr: '' } }) }),
+}));
+
 let tmpDir: string;
 
 beforeEach(() => {
