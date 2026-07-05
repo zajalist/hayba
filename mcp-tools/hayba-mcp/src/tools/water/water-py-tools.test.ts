@@ -91,6 +91,8 @@ describe('water_body_ocean_create', () => {
     expect(s).toContain("_CLS = 'WaterBodyOcean'");
     expect(s).toContain('spawn_actor_from_class');
     expect(s).toContain('_loc = [1, 2, 3]');
+    // set-success: extent scale write surfaces an applied flag, not silent
+    expect(s).toContain('extent_applied');
 
     const { sender: s2, lastScript: ls2 } = mockStdout(emit({ ok: true, enabled: true, planned: {} }));
     setDefaultSender(s2);
@@ -108,6 +110,8 @@ describe('water_body_lake_create', () => {
     expect(s).toContain("_CLS = 'WaterBodyLake'");
     expect(s).toContain('_radius = 500');
     expect(s).toContain('UNCERTAIN-API');
+    // set-success: radius scale write surfaces an applied flag, not silent
+    expect(s).toContain('radius_applied');
   });
 });
 
