@@ -59,6 +59,18 @@ FString FHaybaMCPAgentClient::MakeSessionId()
 // ─────────────────────────────────────────────────────────────────────────────
 void FHaybaMCPAgentClient::SendPrompt(const FString& UserPrompt)
 {
+	// Re-entrancy guard: a second SendPrompt while a turn is in flight would
+	// start a second /chat/stream sharing this instance's ParseCursor +
+	// AccumulatedText (reset in StartStream), corrupting the live parse. The
+	// server 409s a concurrent turn, but self-guard so the UI can't garble it.
+	if (bStreaming)
+	{
+		FHaybaChatError Busy;
+		Busy.Error = TEXT("a chat turn is already in progress; cancel it or wait for done");
+		Busy.Kind = TEXT("busy");
+		OnError.Broadcast(Busy);
+		return;
+	}
 	if (SessionId.IsEmpty())
 	{
 		SessionId = MakeSessionId();
