@@ -126,12 +126,12 @@ void FHaybaMCPAgentClient::PostConfig(const FString& UserPrompt)
 	UE_LOG(LogHaybaAgentClient, Verbose, TEXT("POST /chat/config provider=%s (key %d bytes, not logged)"),
 		*Provider, ApiKey.Len());
 
-	TWeakPtr<FHaybaMCPAgentClient> WeakThis = AsShared();
+	TWeakPtr<FHaybaMCPAgentClient> WeakSelf = AsShared();
 	const FString CapturedPrompt = UserPrompt;
 	Request->OnProcessRequestComplete().BindLambda(
-		[WeakThis, CapturedPrompt](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
+		[WeakSelf, CapturedPrompt](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
 		{
-			TSharedPtr<FHaybaMCPAgentClient> Self = WeakThis.Pin();
+			TSharedPtr<FHaybaMCPAgentClient> Self = WeakSelf.Pin();
 			if (!Self.IsValid()) return;
 
 			if (!bConnected || !Response.IsValid())
@@ -183,15 +183,15 @@ void FHaybaMCPAgentClient::StartStream(const FString& UserPrompt)
 	Request->SetContentAsString(JsonToString(Body));
 	StreamRequest = Request;
 
-	TWeakPtr<FHaybaMCPAgentClient> WeakThis = AsShared();
+	TWeakPtr<FHaybaMCPAgentClient> WeakSelf = AsShared();
 
 	// Progressive body access: OnRequestProgress64 fires as bytes arrive. The
 	// response's GetContentAsString() returns the whole body received so far, so
 	// we track a parse cursor and pull out only newly-completed `\n\n` frames.
 	Request->OnRequestProgress64().BindLambda(
-		[WeakThis](FHttpRequestPtr Req, uint64 /*BytesSent*/, uint64 /*BytesReceived*/)
+		[WeakSelf](FHttpRequestPtr Req, uint64 /*BytesSent*/, uint64 /*BytesReceived*/)
 		{
-			TSharedPtr<FHaybaMCPAgentClient> Self = WeakThis.Pin();
+			TSharedPtr<FHaybaMCPAgentClient> Self = WeakSelf.Pin();
 			if (!Self.IsValid() || !Req.IsValid()) return;
 			FHttpResponsePtr Response = Req->GetResponse();
 			if (!Response.IsValid()) return;
@@ -199,9 +199,9 @@ void FHaybaMCPAgentClient::StartStream(const FString& UserPrompt)
 		});
 
 	Request->OnProcessRequestComplete().BindLambda(
-		[WeakThis](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
+		[WeakSelf](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
 		{
-			TSharedPtr<FHaybaMCPAgentClient> Self = WeakThis.Pin();
+			TSharedPtr<FHaybaMCPAgentClient> Self = WeakSelf.Pin();
 			if (!Self.IsValid()) return;
 			Self->bStreaming = false;
 
@@ -423,11 +423,11 @@ void FHaybaMCPAgentClient::PostApprove()
 	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
 	Request->SetContentAsString(JsonToString(Body));
 
-	TWeakPtr<FHaybaMCPAgentClient> WeakThis = AsShared();
+	TWeakPtr<FHaybaMCPAgentClient> WeakSelf = AsShared();
 	Request->OnProcessRequestComplete().BindLambda(
-		[WeakThis](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
+		[WeakSelf](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
 		{
-			TSharedPtr<FHaybaMCPAgentClient> Self = WeakThis.Pin();
+			TSharedPtr<FHaybaMCPAgentClient> Self = WeakSelf.Pin();
 			if (!Self.IsValid()) return;
 
 			if (!bConnected || !Response.IsValid())

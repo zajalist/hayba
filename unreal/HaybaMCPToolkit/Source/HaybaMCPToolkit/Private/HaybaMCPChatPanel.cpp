@@ -1149,8 +1149,8 @@ void SHaybaMCPChatPanel::HandleStreamDone(const FHaybaChatDone& Done)
     {
         InProgressAssistantText = Done.AssistantText;
     }
-    const FString Tag = Done.bCancelled ? TEXT("[stopped]") : TEXT("");
-    FinalizeInProgressBubble(Tag);
+    const FString DoneTag = Done.bCancelled ? TEXT("[stopped]") : TEXT("");
+    FinalizeInProgressBubble(DoneTag);
 }
 
 void SHaybaMCPChatPanel::HandleStreamError(const FHaybaChatError& Error)
