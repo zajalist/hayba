@@ -36,6 +36,7 @@ import { dagRecordHandler, dagRecordSchema } from '../dag/record.js';
 import { dagRebuildHandler, dagRebuildSchema } from '../dag/rebuild.js';
 import { journalTailHandler, journalTailSchema } from '../dag/journal-tail.js';
 import { setAssetDagSink } from '../asset-sources/shared.js';
+import { registerChatCapturedTools } from '../../chat/tool-dispatch.js';
 
 /** Tools registered by registerDeferredRouting itself — skip in shim re-register. */
 export const ALWAYS_ON_META = new Set<string>([
@@ -125,6 +126,10 @@ export async function registerDeferredRouting(
   captured: Map<string, CapturedTool>,
   cacheDir?: string,
 ): Promise<RoutingHandle> {
+  // Publish the captured-tool map to the chat dispatcher (Task 4) so the sidecar
+  // SSE copilot reaches TS-side handlers, not just UE-bridged commands.
+  registerChatCapturedTools(captured);
+
   const settings = readSettings();
   const effectiveCacheDir = cacheDir
     ?? process.env.HAYBA_TOOL_INDEX_DIR

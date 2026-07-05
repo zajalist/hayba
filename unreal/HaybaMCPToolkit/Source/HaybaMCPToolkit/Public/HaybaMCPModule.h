@@ -81,6 +81,28 @@ public:
     DECLARE_MULTICAST_DELEGATE_OneParam(FOnToolCallRecorded, const FHaybaToolCallRecord&);
     FOnToolCallRecorded OnToolCallRecorded;
 
+    // Fires on the GameThread when the user clicks Approve in the Plan panel.
+    // The chat panel subscribes while a plan_request is pending so it can POST
+    // /chat/approve and resume the paused streaming turn. Explicit human action
+    // only — never auto-fired.
+    //
+    // INVARIANT: these are parameterless multicasts that assume exactly ONE chat
+    // panel is ever awaiting approval at a time (the plugin has a single chat
+    // surface). Because the broadcast carries no session/plan token, every
+    // subscriber that is armed (bAwaitingPlanApproval) treats the event as its
+    // own — the receiving handler re-validates bAwaitingPlanApproval to ignore
+    // strays. If a second concurrent chat surface is ever added, these must
+    // carry a session/plan id so the right panel resumes/aborts.
+    DECLARE_MULTICAST_DELEGATE(FOnPlanApproved);
+    FOnPlanApproved OnPlanApproved;
+
+    // Fires on the GameThread when the user clicks Reject in the Plan panel.
+    // Mirrors FOnPlanApproved (same single-awaiting-subscriber invariant above):
+    // the awaiting chat panel clears its armed state and cancels the paused turn
+    // so a later, unrelated Approve can't resume the rejected turn.
+    DECLARE_MULTICAST_DELEGATE(FOnPlanRejected);
+    FOnPlanRejected OnPlanRejected;
+
 private:
     mutable FCriticalSection ToolCallHistoryLock;
     TArray<FHaybaToolCallRecord> ToolCallHistory;

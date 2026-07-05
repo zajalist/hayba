@@ -20,6 +20,7 @@
     "gen:plumb-enums": "npx tsx scripts/gen-plumb-enums.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.110.0",
     "@distube/ytdl-core": "^4.16.12",
     "@huggingface/transformers": "^4.0.1",
     "@modelcontextprotocol/sdk": "^1.0.0",
@@ -30,6 +31,7 @@
     "js-yaml": "^4.1.1",
     "lru-cache": "^11.3.6",
     "minisearch": "^7.2.0",
+    "openai": "^6.45.0",
     "youtube-transcript-api": "^3.0.6",
     "zod": "^3.23.0"
   },
