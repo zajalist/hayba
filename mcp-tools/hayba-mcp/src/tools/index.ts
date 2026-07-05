@@ -114,6 +114,9 @@ import { actorPyDescriptors } from './actor/actor-py-tools.js';
 import { editorPyDescriptors } from './editor/editor-py-tools.js';
 import { assetPyDescriptors } from './asset/asset-py-tools.js';
 import { meshPyDescriptors } from './mesh/mesh-py-tools.js';
+import { landscapePyDescriptors } from './landscape/landscape-py-tools.js';
+import { foliagePyDescriptors } from './foliage/foliage-py-tools.js';
+import { lightingPyDescriptors } from './lighting/lighting-py-tools.js';
 import { toToolDescriptor } from './py-tool-factory.js';
 import { generateLegacyDescriptors } from './legacy-tool-factory.js';
 
@@ -908,6 +911,33 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     // and src/tools/mesh/mesh-py-tools.ts for the catalog overlap/skip analysis.
     ...assetPyDescriptors.map((d) => toToolDescriptor(d)),
     ...meshPyDescriptors.map((d) => toToolDescriptor(d)),
+
+    // ── Landscape & terrain P0/P1 tools (Phase 2 Wave 3, Task 1) — factory path ─
+    // Net-new landscape read/introspection (list/inspect/layer-list/get-material/
+    // list-splines) + set-to-value reflection writers (set-material/set-lod/
+    // set-nanite) + LayerInfo authoring (add-layer). See
+    // src/tools/landscape/landscape-py-tools.ts for the catalog overlap/skip
+    // analysis (C++ edit-data & import handlers deliberately not re-implemented).
+    ...landscapePyDescriptors.map((d) => toToolDescriptor(d)),
+
+    // ── Foliage & scatter P0 tools (Phase 2 Wave 3, Task 2) — factory path ─────
+    // Net-new foliage-SYSTEM authoring: capability-probe + type/instance reads,
+    // set-to-value typed-param + mesh writers, and non-idempotent create/add/
+    // scatter/remove/clear verbs, generated as UE Python via the pyTemplate
+    // factory. Direct low-level foliage authoring — NOT the PLUMB-validated
+    // world_generate flagship. See src/tools/foliage/foliage-py-tools.ts for the
+    // catalog overlap/skip analysis and UNCERTAIN-API flags.
+    ...foliagePyDescriptors.map((d) => toToolDescriptor(d)),
+
+    // ── Lighting & post-process P0/P1 tools (Phase 2 Wave 3, Task 3) — factory ──
+    // Net-new lighting/post-process AUTHORING: capability-probe + light/PPV reads,
+    // set-to-value light/PP/exposure/Lumen/color-grade/fog writers (each PP writer
+    // sets the bOverride_* flag alongside the value + writes the settings struct
+    // back), and non-idempotent light_spawn / postprocess_spawn_volume / sky_setup.
+    // Skips the render/vision-loop/job-envelope + PLUMB-validator catalog entries.
+    // See src/tools/lighting/lighting-py-tools.ts for the 3-surface overlap audit,
+    // the bOverride gotcha handling, skip analysis and UNCERTAIN-API flags.
+    ...lightingPyDescriptors.map((d) => toToolDescriptor(d)),
 
     // ── BYOK copilot config/introspection (Task 5) ────────────────────────────
     // Pure-TS descriptors reading/writing the SAME in-memory config store the
