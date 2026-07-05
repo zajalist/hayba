@@ -88,8 +88,15 @@ export const NON_IDEMPOTENT = new Set<string>([
   'foliage_remove_instances',
   // Spline
   'spline_create',
-  // Sequencer
+  // Sequencer (dormant satellite-plugin C++ command)
   'seq_create',
+  // Sequencer factory tools (Phase 2 Wave 4) — mutating create/append; see
+  // SEQUENCER_NON_IDEMPOTENT in sequencer/sequencer-py-tools.ts.
+  'seq_new',
+  'seq_bind_actor',
+  'seq_track_add',
+  'seq_transform_keyframe',
+  'seq_camera_cut',
   // Niagara
   'niagara_spawn',
   // MetaSound

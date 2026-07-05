@@ -104,6 +104,7 @@ import { actorPyDescriptors } from './actor/actor-py-tools.js';
 import { editorPyDescriptors } from './editor/editor-py-tools.js';
 import { assetPyDescriptors } from './asset/asset-py-tools.js';
 import { meshPyDescriptors } from './mesh/mesh-py-tools.js';
+import { sequencerPyDescriptors } from './sequencer/sequencer-py-tools.js';
 import { toToolDescriptor } from './py-tool-factory.js';
 import { generateLegacyDescriptors } from './legacy-tool-factory.js';
 
@@ -897,6 +898,14 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     // and src/tools/mesh/mesh-py-tools.ts for the catalog overlap/skip analysis.
     ...assetPyDescriptors.map((d) => toToolDescriptor(d)),
     ...meshPyDescriptors.map((d) => toToolDescriptor(d)),
+
+    // ── Sequencer & cinematics P0/P1 tools (Phase 2 Wave 4, Task 1) ───────────
+    // Net-new sequence authoring/inspection/validation tools, generated as UE
+    // Python via the pyTemplate factory. Names are deliberately non-colliding
+    // with the dormant HaybaMCPSequencer satellite-plugin C++ commands (render
+    // tools wrapped-and-skipped). See src/tools/sequencer/sequencer-py-tools.ts
+    // for the 3-surface overlap audit and render decision.
+    ...sequencerPyDescriptors.map((d) => toToolDescriptor(d)),
 ];
 
 // Single-source tool descriptor list = hand-written entries + the sidecar-
