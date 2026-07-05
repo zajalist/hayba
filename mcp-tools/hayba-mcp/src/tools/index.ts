@@ -114,6 +114,9 @@ import { actorPyDescriptors } from './actor/actor-py-tools.js';
 import { editorPyDescriptors } from './editor/editor-py-tools.js';
 import { assetPyDescriptors } from './asset/asset-py-tools.js';
 import { meshPyDescriptors } from './mesh/mesh-py-tools.js';
+import { sequencerPyDescriptors } from './sequencer/sequencer-py-tools.js';
+import { niagaraPyDescriptors } from './niagara/niagara-py-tools.js';
+import { waterPyDescriptors } from './water/water-py-tools.js';
 import { landscapePyDescriptors } from './landscape/landscape-py-tools.js';
 import { foliagePyDescriptors } from './foliage/foliage-py-tools.js';
 import { lightingPyDescriptors } from './lighting/lighting-py-tools.js';
@@ -911,6 +914,33 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     // and src/tools/mesh/mesh-py-tools.ts for the catalog overlap/skip analysis.
     ...assetPyDescriptors.map((d) => toToolDescriptor(d)),
     ...meshPyDescriptors.map((d) => toToolDescriptor(d)),
+
+    // ── Sequencer & cinematics P0/P1 tools (Phase 2 Wave 4, Task 1) ───────────
+    // Net-new sequence authoring/inspection/validation tools, generated as UE
+    // Python via the pyTemplate factory. Names are deliberately non-colliding
+    // with the dormant HaybaMCPSequencer satellite-plugin C++ commands (render
+    // tools wrapped-and-skipped). See src/tools/sequencer/sequencer-py-tools.ts
+    // for the 3-surface overlap audit and render decision.
+    ...sequencerPyDescriptors.map((d) => toToolDescriptor(d)),
+
+    // ── Niagara & VFX P0/P1 tools (Phase 2 Wave 4, Task 2) ────────────────────
+    // Net-new Niagara discovery/inspection/spawn/param/validation tools,
+    // generated as UE Python via the pyTemplate factory. Names are deliberately
+    // non-colliding with the dormant HaybaMCPNiagara satellite-plugin C++
+    // commands (niagara_list/niagara_spawn/niagara_set_param). See
+    // src/tools/niagara/niagara-py-tools.ts for the 3-surface overlap audit and
+    // wrap-and-skip decisions.
+    ...niagaraPyDescriptors.map((d) => toToolDescriptor(d)),
+
+    // ── Water system P0 tools (Phase 2 Wave 4, Task 3) ────────────────────────
+    // Net-new water body/zone/wave discovery, spawn, tuning and PLUMB-style
+    // validation, generated as UE Python via the pyTemplate factory. All names
+    // are net-new + unique across all 3 surfaces (no water_* command exists in
+    // sidecar/index/list-tool-categories or any unreal GetCommands). The Water
+    // plugin may be DISABLED — water_check_plugin is the honest gate and every
+    // tool degrades to a clean plugin-disabled envelope. See
+    // src/tools/water/water-py-tools.ts for the overlap audit + plugin-probe.
+    ...waterPyDescriptors.map((d) => toToolDescriptor(d)),
 
     // ── Landscape & terrain P0/P1 tools (Phase 2 Wave 3, Task 1) — factory path ─
     // Net-new landscape read/introspection (list/inspect/layer-list/get-material/

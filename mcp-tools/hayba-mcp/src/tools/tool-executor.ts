@@ -101,10 +101,31 @@ export const NON_IDEMPOTENT = new Set<string>([
   'sky_setup',
   // Spline
   'spline_create',
-  // Sequencer
+  // Sequencer (dormant satellite-plugin C++ command)
   'seq_create',
-  // Niagara
+  // Sequencer factory tools (Phase 2 Wave 4) — mutating create/append; see
+  // SEQUENCER_NON_IDEMPOTENT in sequencer/sequencer-py-tools.ts.
+  'seq_new',
+  'seq_bind_actor',
+  'seq_track_add',
+  'seq_transform_keyframe',
+  'seq_camera_cut',
+  // Niagara (dormant satellite-plugin C++ command)
   'niagara_spawn',
+  // Niagara factory tools (Phase 2 Wave 4 Task 2) — spawn/place/create; see
+  // NIAGARA_NON_IDEMPOTENT in niagara/niagara-py-tools.ts.
+  'niagara_spawn_transient',
+  'niagara_place_actor',
+  'niagara_create_from_template',
+  // Cumulative op: each call advances the sim forward, so a retry would
+  // double-advance to a different end state — not retry-safe.
+  'niagara_advance_simulation',
+  // Water factory tools (Phase 2 Wave 4 Task 3) — spawn a persistent actor; see
+  // WATER_NON_IDEMPOTENT in water/water-py-tools.ts.
+  'water_body_ocean_create',
+  'water_body_lake_create',
+  'water_body_river_create',
+  'water_zone_create',
   // MetaSound
   'metasound_create',
   // GAS
