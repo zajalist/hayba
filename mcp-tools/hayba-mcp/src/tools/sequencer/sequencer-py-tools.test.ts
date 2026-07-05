@@ -134,6 +134,8 @@ describe('seq_camera_cut', () => {
     expect(s).toContain('add_section');
     expect(s).toContain('set_camera_binding_id');
     expect(s).toContain('_start = 0');
+    expect(s).toContain('camera_bound');
+    expect(s).toContain('range_applied');
   });
 });
 
