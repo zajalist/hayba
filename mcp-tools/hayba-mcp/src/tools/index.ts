@@ -104,6 +104,7 @@ import { actorPyDescriptors } from './actor/actor-py-tools.js';
 import { editorPyDescriptors } from './editor/editor-py-tools.js';
 import { assetPyDescriptors } from './asset/asset-py-tools.js';
 import { meshPyDescriptors } from './mesh/mesh-py-tools.js';
+import { landscapePyDescriptors } from './landscape/landscape-py-tools.js';
 import { toToolDescriptor } from './py-tool-factory.js';
 import { generateLegacyDescriptors } from './legacy-tool-factory.js';
 
@@ -897,6 +898,14 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     // and src/tools/mesh/mesh-py-tools.ts for the catalog overlap/skip analysis.
     ...assetPyDescriptors.map((d) => toToolDescriptor(d)),
     ...meshPyDescriptors.map((d) => toToolDescriptor(d)),
+
+    // ── Landscape & terrain P0/P1 tools (Phase 2 Wave 3, Task 1) — factory path ─
+    // Net-new landscape read/introspection (list/inspect/layer-list/get-material/
+    // list-splines) + set-to-value reflection writers (set-material/set-lod/
+    // set-nanite) + LayerInfo authoring (add-layer). See
+    // src/tools/landscape/landscape-py-tools.ts for the catalog overlap/skip
+    // analysis (C++ edit-data & import handlers deliberately not re-implemented).
+    ...landscapePyDescriptors.map((d) => toToolDescriptor(d)),
 ];
 
 // Single-source tool descriptor list = hand-written entries + the sidecar-

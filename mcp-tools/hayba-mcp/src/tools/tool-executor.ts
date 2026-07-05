@@ -61,6 +61,7 @@ export const NON_IDEMPOTENT = new Set<string>([
   'asset_rename',
   // Landscape
   'landscape_import',
+  'landscape_add_layer',
   // Level authoring
   'level_create',
   // Blueprint authoring
