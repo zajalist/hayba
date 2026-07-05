@@ -69,6 +69,7 @@ private:
     // = one server session; reused across turns so the transcript continues.
     TSharedPtr<FHaybaMCPAgentClient> AgentClient;
     FDelegateHandle PlanApprovedSubscription;   // module OnPlanApproved
+    FDelegateHandle PlanRejectedSubscription;   // module OnPlanRejected
     bool            bAwaitingPlanApproval = false;
 
     void            EnsureAgentClient();
@@ -85,6 +86,7 @@ private:
     void            HandleStreamDone(const FHaybaChatDone& Done);
     void            HandleStreamError(const FHaybaChatError& Error);
     void            HandlePlanApproved();
+    void            HandlePlanRejected();
 
     // ── Layout ─────────────────────────────────────────────────────────────
     TSharedRef<SWidget> BuildToolbar();

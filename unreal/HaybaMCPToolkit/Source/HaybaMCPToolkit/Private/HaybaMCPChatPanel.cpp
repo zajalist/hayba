@@ -125,6 +125,11 @@ SHaybaMCPChatPanel::~SHaybaMCPChatPanel()
         Module->OnPlanApproved.Remove(PlanApprovedSubscription);
         PlanApprovedSubscription.Reset();
     }
+    if (Module && PlanRejectedSubscription.IsValid())
+    {
+        Module->OnPlanRejected.Remove(PlanRejectedSubscription);
+        PlanRejectedSubscription.Reset();
+    }
     // Tear down the streaming client: clear our delegate bindings so a late HTTP
     // tick can't fan out into this destroyed panel, then cancel the stream. The
     // client itself captures a weak ptr, so the ordering is belt-and-braces.
@@ -343,8 +348,16 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildInput()
                 .VAlign(VAlign_Center).Padding(FMargin(4.f, 0.f))
                 [
                     SNew(STextBlock)
-                    .Text(LOCTEXT("InputHint",
-                        "Describe what you want to generate…  (⏎ to send · ⇧⏎ for newline)"))
+                    .Text_Lambda([this]()
+                    {
+                        // Reflect the parked-at-the-gate state so the disabled
+                        // input reads as intentional, not broken.
+                        if (bAwaitingPlanApproval)
+                            return LOCTEXT("InputHintAwaitApproval",
+                                "Action needs approval — Approve or Reject it in the Plan tab to continue.");
+                        return LOCTEXT("InputHint",
+                            "Describe what you want to generate…  (⏎ to send · ⇧⏎ for newline)");
+                    })
                     .ColorAndOpacity(FSlateColor(FLinearColor(0.50f, 0.52f, 0.60f)))
                     .OverflowPolicy(ETextOverflowPolicy::MiddleEllipsis)
                     .Visibility_Lambda([this]()
@@ -706,7 +719,13 @@ void SHaybaMCPChatPanel::StopGeneration()
 
 bool SHaybaMCPChatPanel::CanSend() const
 {
-    return !Session.bWaitingForAI;
+    // Blocked while the AI is streaming AND while a plan_request is parked at the
+    // approval gate. On plan_request the server emits a `done` frame (so
+    // bWaitingForAI is false), but sending a fresh prompt here would start a new
+    // /chat/stream that server-side replaces session.messages — orphaning the
+    // paused plan and losing transcript context. Stay disabled until the user
+    // Approves (resume) or Rejects (cancel) the pending plan.
+    return !Session.bWaitingForAI && !bAwaitingPlanApproval;
 }
 
 // ── New / recent ──────────────────────────────────────────────────────────
@@ -906,6 +925,15 @@ void SHaybaMCPChatPanel::EnsureAgentClient()
         PlanApprovedSubscription = Module->OnPlanApproved.AddSP(
             this, &SHaybaMCPChatPanel::HandlePlanApproved);
     }
+
+    // Watch for Plan-tab rejections so a paused turn is cancelled and this panel
+    // disarms — otherwise it stays armed and a later, unrelated Approve resumes
+    // the rejected turn. Also guarded by bAwaitingPlanApproval in the handler.
+    if (Module && !PlanRejectedSubscription.IsValid())
+    {
+        PlanRejectedSubscription = Module->OnPlanRejected.AddSP(
+            this, &SHaybaMCPChatPanel::HandlePlanRejected);
+    }
 }
 
 void SHaybaMCPChatPanel::StartAgentTurn(const FString& Prompt)
@@ -1084,6 +1112,24 @@ void SHaybaMCPChatPanel::HandlePlanApproved()
     AgentClient->ApproveAndResume();
 
     if (MainPanel) MainPanel->ShowPanel(EHaybaPanel::Chat);
+}
+
+void SHaybaMCPChatPanel::HandlePlanRejected()
+{
+    // Only act if WE are the panel waiting on a plan (avoids cancelling on stray
+    // rejections from an unrelated Plan-tab action). Disarm before cancelling.
+    if (!bAwaitingPlanApproval) return;
+    bAwaitingPlanApproval = false;
+
+    // Cancel the paused server-side turn so it can never be resumed, and mark the
+    // in-progress bubble as aborted. Re-enables the input (CanSend clears once
+    // bAwaitingPlanApproval + bWaitingForAI are both false).
+    if (AgentClient.IsValid()) AgentClient->Cancel();
+    Session.bWaitingForAI = false;
+    bIsStreaming = false;
+    FinalizeInProgressBubble(TEXT("[rejected]"));
+
+    Toast(LOCTEXT("PlanRejected", "Plan rejected — the paused action was cancelled."));
 }
 
 void SHaybaMCPChatPanel::HandleStreamDone(const FHaybaChatDone& Done)
