@@ -851,7 +851,7 @@ function niagaraAdvanceSimulationScript(p: NiagaraAdvanceSimulationParams): stri
 export const niagaraAdvanceSimulationDescriptor: PyToolDescriptor<typeof niagaraAdvanceSimulationSchema.shape> = {
   name: 'niagara_advance_simulation',
   description:
-    'Deterministically tick a live NiagaraComponent\'s sim by N seconds at a fixed dt (AdvanceSimulation) so a screenshot is reproducible — the deterministic-preview primitive the vision loop needs (a transient effect is invisible at t=0). SET-SUCCESS: applied:true only when the advance call ran; arg order probed defensively.',
+    'Deterministically tick a live NiagaraComponent\'s sim by N seconds at a fixed dt (AdvanceSimulation) so a screenshot is reproducible — the deterministic-preview primitive the vision loop needs (a transient effect is invisible at t=0). SET-SUCCESS: applied:true only when the advance call ran; arg order probed defensively. NON-IDEMPOTENT: each call advances the sim cumulatively, so a repeat/retry compounds simulated time — re-run from a fresh spawn for a reproducible frame.',
   cost: 'medium',
   returns: '{ok, component_path, advanced_seconds, ticks, applied, warnings[]}',
   schema: niagaraAdvanceSimulationSchema.shape,
@@ -996,4 +996,6 @@ export const NIAGARA_NON_IDEMPOTENT: readonly string[] = [
   niagaraSpawnTransientDescriptor.name,
   niagaraPlaceActorDescriptor.name,
   niagaraCreateFromTemplateDescriptor.name,
+  // Cumulative: advances the sim forward, so a retry double-advances.
+  niagaraAdvanceSimulationDescriptor.name,
 ];

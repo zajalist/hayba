@@ -264,9 +264,9 @@ describe('niagara-domain factory catalog', () => {
     }
   });
 
-  it('classifies the 3 spawn/place/create tools NON_IDEMPOTENT', () => {
+  it('classifies spawn/place/create + cumulative advance_simulation NON_IDEMPOTENT', () => {
     expect([...NIAGARA_NON_IDEMPOTENT].sort()).toEqual(
-      ['niagara_create_from_template', 'niagara_place_actor', 'niagara_spawn_transient'],
+      ['niagara_advance_simulation', 'niagara_create_from_template', 'niagara_place_actor', 'niagara_spawn_transient'],
     );
     for (const name of NIAGARA_NON_IDEMPOTENT) {
       expect(NON_IDEMPOTENT.has(name)).toBe(true);
@@ -276,7 +276,7 @@ describe('niagara-domain factory catalog', () => {
   it('does NOT classify set-to-value / read tools as non-idempotent', () => {
     for (const name of [
       'niagara_param_set', 'niagara_set_user_param_default', 'niagara_activate',
-      'niagara_advance_simulation', 'niagara_systems', 'niagara_system_inspect',
+      'niagara_systems', 'niagara_system_inspect',
       'niagara_param_list', 'niagara_component_inspect', 'niagara_list_components',
       'niagara_validate', 'niagara_capability_probe',
     ]) {
