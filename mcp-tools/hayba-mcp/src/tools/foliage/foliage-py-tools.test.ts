@@ -3,7 +3,7 @@ import { makePyToolHandler } from '../py-tool-factory.js';
 import { setDefaultSender, NON_IDEMPOTENT, type Sender } from '../tool-executor.js';
 import {
   foliageCapabilityProbeDescriptor,
-  foliageListTypesDescriptor,
+  foliageScanTypesDescriptor,
   foliageTypeInspectDescriptor,
   foliageGetInstanceCountDescriptor,
   foliageTypeSetParamsDescriptor,
@@ -47,11 +47,11 @@ describe('foliage_capability_probe', () => {
   });
 });
 
-describe('foliage_list_types', () => {
+describe('foliage_scan_types', () => {
   it('enumerates types with pagination', async () => {
     const { sender, lastScript } = mockStdout(emit({ ok: true, types: [], total: 0, has_more: false, next_offset: 10 }));
     setDefaultSender(sender);
-    await makePyToolHandler(foliageListTypesDescriptor)({ limit: 10, offset: 5 });
+    await makePyToolHandler(foliageScanTypesDescriptor)({ limit: 10, offset: 5 });
     const s = lastScript();
     expect(s).toContain('_ifas');
     expect(s).toContain('_limit = 10');
@@ -140,6 +140,15 @@ describe('foliage_type_create', () => {
   it('IS classified NON_IDEMPOTENT (asset-create)', () => {
     expect(NON_IDEMPOTENT.has('foliage_type_create')).toBe(true);
     expect(FOLIAGE_NON_IDEMPOTENT).toContain('foliage_type_create');
+  });
+
+  it('guards against reusing a non-FoliageType asset at the destination path', async () => {
+    const { sender, lastScript } = mockStdout(emit({ ok: true, foliage_type_path: '/Game/FT', created: false }));
+    setDefaultSender(sender);
+    await makePyToolHandler(foliageTypeCreateDescriptor)({ static_mesh_path: '/Game/SM', dest_path: '/Game/Foliage', name: 'FT_Tree' });
+    const s = lastScript();
+    expect(s).toContain('isinstance(existing, unreal.FoliageType)');
+    expect(s).toContain('exists but is not a FoliageType');
   });
 });
 
@@ -254,7 +263,7 @@ describe('foliage-domain factory catalog', () => {
       const { sender, lastScript } = mockStdout(emit({ ok: true }));
       setDefaultSender(sender);
       const params: Record<string, unknown> = {};
-      if (d.name !== 'foliage_capability_probe' && d.name !== 'foliage_list_types') params.foliage_type_path = '/Game/FT';
+      if (d.name !== 'foliage_capability_probe' && d.name !== 'foliage_scan_types') params.foliage_type_path = '/Game/FT';
       if (d.name === 'foliage_type_set_params') params.density = 1;
       if (d.name === 'foliage_replace_mesh') params.new_mesh_path = '/Game/SM';
       if (d.name === 'foliage_type_create') { params.static_mesh_path = '/Game/SM'; params.dest_path = '/Game/F'; params.name = 'FT'; }

@@ -14,7 +14,7 @@
 // or a legacy C++ handler that is already surfaced:
 //
 //   SHIPPED (11):
-//     reads  — foliage_capability_probe, foliage_list_types, foliage_type_inspect,
+//     reads  — foliage_capability_probe, foliage_scan_types, foliage_type_inspect,
 //              foliage_get_instance_count
 //     writes — foliage_type_set_params (set-to-value), foliage_replace_mesh
 //              (set-to-value)
@@ -53,6 +53,21 @@
 //   push explicit or density-seeded transforms into the InstancedFoliageActor,
 //   and remove within bounds. No validation layer, no constraint language: the
 //   low-level verbs world_generate (and a human) build ON, not a competitor to it.
+//
+// NAME COLLISION AVOIDANCE with the C++ FHaybaMCPFoliageHandler (unreal/.../
+// handlers/HaybaMCPFoliageHandler.cpp): that handler exposes foliage_list_types,
+// foliage_add_instance, foliage_remove_instances, foliage_paint_at as legacy TCP
+// commands. The python tools below are deliberately given DISTINCT names so both
+// can be registered in sidecar.json without collision — these are intentional
+// distinct-name variants, NOT accidental duplicates:
+//   - foliage_scan_types (python, reflection-based scan over InstancedFoliageActors)
+//     vs C++ foliage_list_types (reads GetFoliageInfos() directly)
+//   - foliage_add_instances (python, bulk/chunked transforms via add_instances)
+//     vs C++ foliage_add_instance (single instance)
+//   - foliage_remove_in_bounds (python, area/box-based removal)
+//     vs C++ foliage_remove_instances
+//   - foliage_scatter_paint (python, seeded procedural ground-traced scatter)
+//     vs C++ foliage_paint_at (point-based paint)
 //
 // UNCERTAIN-API flags for the next live-validation pass (all wrapped defensively
 // so they degrade to a structured value/error/warning rather than a silent wrong
@@ -228,14 +243,14 @@ export const foliageCapabilityProbeDescriptor: PyToolDescriptor<typeof foliageCa
   timeoutMs: 30_000,
 };
 
-// ── foliage_list_types ────────────────────────────────────────────────────────
-export const foliageListTypesSchema = z.object({
+// ── foliage_scan_types ────────────────────────────────────────────────────────
+export const foliageScanTypesSchema = z.object({
   limit: z.number().int().positive().optional().default(50).describe('Max foliage types returned (pagination)'),
   offset: z.number().int().nonnegative().optional().default(0).describe('Pagination offset'),
 });
-export type FoliageListTypesParams = z.infer<typeof foliageListTypesSchema>;
+export type FoliageScanTypesParams = z.infer<typeof foliageScanTypesSchema>;
 
-function listTypesScript(p: FoliageListTypesParams): string {
+function scanTypesScript(p: FoliageScanTypesParams): string {
   return [
     PY_FOLIAGE_HELPERS,
     `_limit = ${p.limit}`,
@@ -269,16 +284,16 @@ function listTypesScript(p: FoliageListTypesParams): string {
   ].join('\n');
 }
 
-export const foliageListTypesDescriptor: PyToolDescriptor<typeof foliageListTypesSchema.shape> = {
-  name: 'foliage_list_types',
+export const foliageScanTypesDescriptor: PyToolDescriptor<typeof foliageScanTypesSchema.shape> = {
+  name: 'foliage_scan_types',
   description:
     'Enumerate the foliage types used in the level (across all InstancedFoliageActors) with mesh path, density, radius and instance count. Paginated. The read entry point so agents stop guessing foliage type asset paths. UNCERTAIN-API: type enumeration is probed and degrades to [] + a warning.',
   cost: 'low',
   returns:
     '{ok, types:[{path,class,mesh,density,radius,instance_count}], total, has_more, next_offset, warnings[]}',
-  schema: foliageListTypesSchema.shape,
+  schema: foliageScanTypesSchema.shape,
   meta: readMeta,
-  buildScript: listTypesScript,
+  buildScript: scanTypesScript,
   timeoutMs: 30_000,
 };
 
@@ -511,6 +526,8 @@ function typeCreateScript(p: FoliageTypeCreateParams): string {
     '    full = _dest.rstrip("/") + "/" + _name',
     '    existing = unreal.load_asset(full)',
     '    created = False',
+    '    if existing is not None and not isinstance(existing, unreal.FoliageType):',
+    '        raise Exception("Asset at %s exists but is not a FoliageType" % full)',
     '    if existing is not None:',
     '        ft = existing',
     '    else:',
@@ -775,7 +792,7 @@ export const foliageClearTypeDescriptor: PyToolDescriptor<typeof foliageClearTyp
 // ── Aggregate: all foliage-domain PyToolDescriptors (spliced in index.ts) ──────
 export const foliagePyDescriptors: PyToolDescriptor[] = [
   foliageCapabilityProbeDescriptor,
-  foliageListTypesDescriptor,
+  foliageScanTypesDescriptor,
   foliageTypeInspectDescriptor,
   foliageGetInstanceCountDescriptor,
   foliageTypeSetParamsDescriptor,
