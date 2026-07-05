@@ -23,6 +23,26 @@ const PYTHON_CRASHERS: CrashGuardHit[] = [
     reason: 'build_scale3d crashes the editor and does not update bounds',
     alternative: 'use GeometryScript append_box/transform_mesh + copy_mesh_to_static_mesh',
   },
+  // World-switching from python_run kills the editor: python_run runs on the
+  // game thread mid-tick (TCP drain), and a map load/create tears down the
+  // current UWorld / swaps GWorld under the in-flight tick → the engine asserts
+  // `CurrentGWorld == EditorContext.World()` (EditorEngine.cpp:1745). The SEH
+  // guard catches the first access violation but cannot reconcile the desync, so
+  // the assert on a later tick is unavoidable. Confirmed repro (2026-07-05
+  // HANDOFF-mcp-worldswitch-crash-guardrail). Structural — never do this here.
+  ...([
+    'new_blank_map',
+    'new_map_from_template',
+    'load_map',
+    'new_level',
+    'load_level',
+  ].map((p): CrashGuardHit => ({
+    pattern: p,
+    reason:
+      `world-switching from python_run ('${p}') tears down GWorld mid-tick and crashes the editor with the EditorEngine.cpp:1745 assert (GWorld/EditorContext desync); the SEH guard cannot recover it`,
+    alternative:
+      'switch or create maps from the editor UI (or a deferred editor_open_map command that schedules the load outside the command tick) — never load/create a map from python_run',
+  }))),
 ];
 
 /**

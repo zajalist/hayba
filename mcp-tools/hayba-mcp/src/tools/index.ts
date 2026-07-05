@@ -61,6 +61,16 @@ import { materialDisconnectHandler, meta as materialDisconnectMeta } from './mat
 import { materialValidateHandler, meta as materialValidateMeta } from './material/material-validate.js';
 import { worldGenerateHandler, meta as worldGenerateMeta } from './world/world-generate.js';
 import {
+  providerListHandler, providerListMeta,
+  providerSetHandler, providerSetMeta,
+  providerTestHandler, providerTestMeta,
+  modelListHandler, modelListMeta,
+  keySetHandler, keySetMeta,
+  keyClearHandler, keyClearMeta,
+  keyStatusHandler, keyStatusMeta,
+  healthHandler, healthMeta,
+} from './copilot/copilot-tools.js';
+import {
   textureGetInfoHandler, getInfoMeta as textureGetInfoMeta,
   textureSetCompressionHandler, setCompressionMeta as textureSetCompressionMeta,
   textureSetSettingsHandler, setSettingsMeta as textureSetSettingsMeta,
@@ -107,6 +117,9 @@ import { meshPyDescriptors } from './mesh/mesh-py-tools.js';
 import { sequencerPyDescriptors } from './sequencer/sequencer-py-tools.js';
 import { niagaraPyDescriptors } from './niagara/niagara-py-tools.js';
 import { waterPyDescriptors } from './water/water-py-tools.js';
+import { landscapePyDescriptors } from './landscape/landscape-py-tools.js';
+import { foliagePyDescriptors } from './foliage/foliage-py-tools.js';
+import { lightingPyDescriptors } from './lighting/lighting-py-tools.js';
 import { toToolDescriptor } from './py-tool-factory.js';
 import { generateLegacyDescriptors } from './legacy-tool-factory.js';
 
@@ -222,6 +235,7 @@ const dCoerceVec3 = z.preprocess((v) => {
  * are now generated automatically from this list.
  */
 const M = 'material'; // niche domain for the material toolset
+const PACK = 'copilot'; // niche domain for the BYOK copilot config/introspection toolset
 // Hand-written descriptors. Kept as a named const so the generated legacy list
 // can be de-duplicated against these names before splicing (see below).
 const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
@@ -927,6 +941,143 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     // tool degrades to a clean plugin-disabled envelope. See
     // src/tools/water/water-py-tools.ts for the overlap audit + plugin-probe.
     ...waterPyDescriptors.map((d) => toToolDescriptor(d)),
+
+    // ── Landscape & terrain P0/P1 tools (Phase 2 Wave 3, Task 1) — factory path ─
+    // Net-new landscape read/introspection (list/inspect/layer-list/get-material/
+    // list-splines) + set-to-value reflection writers (set-material/set-lod/
+    // set-nanite) + LayerInfo authoring (add-layer). See
+    // src/tools/landscape/landscape-py-tools.ts for the catalog overlap/skip
+    // analysis (C++ edit-data & import handlers deliberately not re-implemented).
+    ...landscapePyDescriptors.map((d) => toToolDescriptor(d)),
+
+    // ── Foliage & scatter P0 tools (Phase 2 Wave 3, Task 2) — factory path ─────
+    // Net-new foliage-SYSTEM authoring: capability-probe + type/instance reads,
+    // set-to-value typed-param + mesh writers, and non-idempotent create/add/
+    // scatter/remove/clear verbs, generated as UE Python via the pyTemplate
+    // factory. Direct low-level foliage authoring — NOT the PLUMB-validated
+    // world_generate flagship. See src/tools/foliage/foliage-py-tools.ts for the
+    // catalog overlap/skip analysis and UNCERTAIN-API flags.
+    ...foliagePyDescriptors.map((d) => toToolDescriptor(d)),
+
+    // ── Lighting & post-process P0/P1 tools (Phase 2 Wave 3, Task 3) — factory ──
+    // Net-new lighting/post-process AUTHORING: capability-probe + light/PPV reads,
+    // set-to-value light/PP/exposure/Lumen/color-grade/fog writers (each PP writer
+    // sets the bOverride_* flag alongside the value + writes the settings struct
+    // back), and non-idempotent light_spawn / postprocess_spawn_volume / sky_setup.
+    // Skips the render/vision-loop/job-envelope + PLUMB-validator catalog entries.
+    // See src/tools/lighting/lighting-py-tools.ts for the 3-surface overlap audit,
+    // the bOverride gotcha handling, skip analysis and UNCERTAIN-API flags.
+    ...lightingPyDescriptors.map((d) => toToolDescriptor(d)),
+
+    // ── BYOK copilot config/introspection (Task 5) ────────────────────────────
+    // Pure-TS descriptors reading/writing the SAME in-memory config store the
+    // /chat/config sidecar routes use (src/chat/chat-server.ts). See
+    // src/tools/copilot/copilot-tools.ts for the vault TODO (Task 6).
+    {
+      name: 'copilot_provider_list',
+      description: 'List the BYOK provider catalog, flagging which provider is active and whether a key is configured for it (masked last-4 only).',
+      meta: providerListMeta,
+      handler: providerListHandler,
+      cost: 'low',
+      returns: '{providers:[{id,label,protocol,needs_key,key_hint,default_model,base_url_default,active,key_configured,key_last4}], active_provider}',
+      niche: PACK,
+      schema: {
+        session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
+      },
+    },
+    {
+      name: 'copilot_provider_set',
+      description: 'Set the active BYOK provider (and optional model/base URL) for a copilot session.',
+      meta: providerSetMeta,
+      handler: providerSetHandler,
+      cost: 'low',
+      returns: '{ok, provider, model, base_url, key_last4}',
+      niche: PACK,
+      schema: {
+        provider: z.string().min(1).describe('Provider id from copilot_provider_list, e.g. "anthropic"'),
+        model: z.string().optional().describe('Override the provider default model'),
+        base_url: z.string().optional().describe('Override the provider default base URL (e.g. self-hosted OpenAI-compat endpoint)'),
+        session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
+      },
+    },
+    {
+      name: 'copilot_provider_test',
+      description: 'Preflight-check a BYOK provider: fails clean with {ok:false, reason:"no_key"} (no network call) if a key is required but absent; otherwise runs a minimal completion probe and reports latency.',
+      meta: providerTestMeta,
+      handler: providerTestHandler,
+      cost: 'low',
+      returns: '{ok, latency_ms?, model?, reason?, detail?}',
+      niche: PACK,
+      schema: {
+        provider: z.string().optional().describe('Provider id to test; defaults to the configured active provider'),
+        model: z.string().optional().describe('Model id to test; defaults to the configured/default model'),
+        session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
+      },
+    },
+    {
+      name: 'copilot_model_list',
+      description: 'List known model ids for a BYOK provider (advisory starting point only — BYOK users may use any id their key/endpoint supports).',
+      meta: modelListMeta,
+      handler: modelListHandler,
+      cost: 'low',
+      returns: '{provider, default_model, configured_model, known_models:[string], advisory:true, note}',
+      niche: PACK,
+      schema: {
+        provider: z.string().min(1).describe('Provider id from copilot_provider_list'),
+        session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
+      },
+    },
+    {
+      name: 'copilot_key_set',
+      description: 'Set the BYOK API key for a provider. The key is NEVER echoed back or logged — the response contains only a masked last-4. Stored in-memory (TODO Task 6: swaps to the C++ DPAPI vault).',
+      meta: keySetMeta,
+      handler: keySetHandler,
+      cost: 'low',
+      returns: '{ok, provider, key_last4}',
+      niche: PACK,
+      schema: {
+        provider: z.string().min(1).describe('Provider id from copilot_provider_list'),
+        api_key: z.string().min(1).describe('The raw API key (never returned or logged)'),
+        session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
+      },
+    },
+    {
+      name: 'copilot_key_clear',
+      description: 'Clear the stored BYOK API key for a provider. Destructive — plan-gated when Plan Mode is on.',
+      meta: keyClearMeta,
+      handler: keyClearHandler,
+      cost: 'low',
+      returns: '{ok, provider, cleared}',
+      niche: PACK,
+      schema: {
+        provider: z.string().min(1).describe('Provider id whose key should be cleared'),
+        session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
+      },
+    },
+    {
+      name: 'copilot_key_status',
+      description: 'Report, per provider, whether a BYOK key is configured (masked last-4 only, no network call).',
+      meta: keyStatusMeta,
+      handler: keyStatusHandler,
+      cost: 'low',
+      returns: '{providers:[{provider,configured,last4?}]}',
+      niche: PACK,
+      schema: {
+        session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
+      },
+    },
+    {
+      name: 'copilot_health',
+      description: 'Cheap health snapshot for the copilot stack: sidecar chat routes registered, UE bridge reachable, tool registry size, and the active provider.',
+      meta: healthMeta,
+      handler: healthHandler,
+      cost: 'low',
+      returns: '{sidecar_ok, ue_connected, tools_available, active_provider}',
+      niche: PACK,
+      schema: {
+        session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
+      },
+    },
 ];
 
 // Single-source tool descriptor list = hand-written entries + the sidecar-

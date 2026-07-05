@@ -8,15 +8,41 @@ enum class EHaybaMCPOperationMode : uint8
     ApiKey
 };
 
+// ── BYOK provider catalog mirror ────────────────────────────────────────────
+// MIRROR of mcp-tools/hayba-mcp/src/agents/providers.ts (Task 1 catalog).
+// There is NO build-time codegen linking the two — this is a DOCUMENTED MANUAL
+// MIRROR. If you add/edit/remove a provider in providers.ts you MUST make the
+// same change in the GetProviderCatalog() array in HaybaMCPSettings.cpp, and
+// vice-versa. Fields map 1:1 to ProviderEntry (id/label/baseURLDefault/
+// defaultModel/needsKey/keyHint); `protocol` is not needed C++-side.
+struct FHaybaProviderInfo
+{
+    const TCHAR* Id;
+    const TCHAR* Label;
+    const TCHAR* BaseURLDefault;
+    const TCHAR* DefaultModel;
+    bool         bNeedsKey;
+    const TCHAR* KeyHint;
+};
+
 class FHaybaMCPSettings
 {
 public:
     static FHaybaMCPSettings& Get();
 
-    // Claude API settings
+    // Claude / LLM API settings.
+    // ApiKey is a transient in-memory scratch value only (e.g. the Settings panel
+    // stages a freshly-typed key here before handing it to the vault). It is NOT
+    // loaded from or persisted to disk — the key of record lives DPAPI-encrypted
+    // in the vault via Get/SetProviderKey. Treat as sensitive: never log/journal.
     FString ApiKey;
     FString BaseURL = TEXT("https://api.anthropic.com/v1/messages");
     FString Model = TEXT("claude-opus-4-6-20251101");
+
+    // BYOK — id of the currently-selected provider (matches a catalog entry id).
+    // The vault stores one encrypted key per provider id; this picks which one
+    // the chat client / GetSharedApiKey resolves.
+    FString SelectedProviderId = TEXT("anthropic");
 
     // PCGEx output
     FString OutputPath = TEXT("/Game/Hayba/Generated");
@@ -76,8 +102,27 @@ public:
     // MCP server watches this file and rebuilds its disabled set from it.
     void WriteDisabledToolsFile() const;
 
+    // Legacy single-key accessors. Retained for the in-editor chat client;
+    // now route through the DPAPI vault under the currently-selected provider id.
     static FString GetSharedApiKey();
     static void SetSharedApiKey(const FString& Key);
+
+    // ── DPAPI-encrypted BYOK key vault ──────────────────────────────────────
+    // Keys are stored as DPAPI ciphertext (hex) in GEditorPerProjectIni under
+    // [HaybaProviderKeys], keyed by provider id — never plaintext. Decrypted on
+    // demand. On Windows this uses CryptProtectData/CryptUnprotectData (per-user,
+    // per-machine). DPAPI is Windows-only; other platforms fall back to a weak
+    // XOR+Base64 obfuscation (NOT secure) — documented limitation matching the
+    // plugin's Win64 pinning.
+    static void    SetProviderKey(const FString& ProviderId, const FString& Plaintext);
+    static FString GetProviderKey(const FString& ProviderId);   // -> plaintext ("" if none / decrypt fail)
+    static void    ClearProviderKey(const FString& ProviderId);
+    static FString GetProviderKeyLast4(const FString& ProviderId); // masked, safe to display/log
+    static bool    HasProviderKey(const FString& ProviderId);
+
+    // Catalog mirror of providers.ts. See FHaybaProviderInfo doc above.
+    static const TArray<FHaybaProviderInfo>& GetProviderCatalog();
+    static const FHaybaProviderInfo* FindProvider(const FString& ProviderId);
 
     void Load();
     void Save() const;
@@ -88,6 +133,8 @@ public:
 private:
     static constexpr const TCHAR* Section       = TEXT("HaybaMCPToolkit");
     static constexpr const TCHAR* SharedSection = TEXT("HaybaShared");
+    // Ciphertext (DPAPI hex) lives here, one entry per provider id.
+    static constexpr const TCHAR* VaultSection  = TEXT("HaybaProviderKeys");
     static constexpr const TCHAR* KeyApiKey     = TEXT("ApiKey");
     static constexpr const TCHAR* KeyBaseURL    = TEXT("BaseURL");
     static constexpr const TCHAR* KeyModel      = TEXT("Model");

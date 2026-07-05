@@ -7,11 +7,16 @@ import { createProject, deleteProject, getProject, listProjects } from '../proje
 import { submitZones, getCurrentZones, setHeightmap, getHeightmap, getPainterSession, lockPainter, unlockPainter, createScratchSession, submitScratchZones, getScratchZones } from '../zones.js';
 import { getEntries, addEntry, deleteEntry, getBaseTemplates } from '../encyclopedia.js';
 import { getCachedSidecarHealth, pingSidecar } from '../tools/visual/sidecar-client.js';
+import { registerChatRoutes } from '../chat/chat-server.js';
 
 /**
  * Register REST API endpoints for the dashboard.
  */
 export function registerApiRoutes(app: Express): void {
+  // BYOK copilot SSE surface (Task 4) — /chat/stream, /chat/cancel,
+  // /chat/approve, /chat/config. Localhost-only, key never persisted/echoed.
+  registerChatRoutes(app);
+
   // Server health
   app.get('/api/health', (_req: Request, res: Response) => {
     const client = getUEClient();

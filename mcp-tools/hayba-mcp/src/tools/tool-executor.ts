@@ -61,6 +61,7 @@ export const NON_IDEMPOTENT = new Set<string>([
   'asset_rename',
   // Landscape
   'landscape_import',
+  'landscape_add_layer',
   // Level authoring
   'level_create',
   // Blueprint authoring
@@ -86,6 +87,18 @@ export const NON_IDEMPOTENT = new Set<string>([
   'ism_add_instances',
   // Foliage
   'foliage_remove_instances',
+  // Foliage-domain factory tools (Wave 3 Task 2) — see foliage-py-tools.ts
+  // FOLIAGE_NON_IDEMPOTENT (asset-create / append / delete).
+  'foliage_type_create',
+  'foliage_add_instances',
+  'foliage_scatter_paint',
+  'foliage_remove_in_bounds',
+  'foliage_clear_type',
+  // Lighting-domain factory tools (Wave 3 Task 3) — see lighting-py-tools.ts
+  // LIGHTING_NON_IDEMPOTENT (actor-create / multi-actor spawn).
+  'light_spawn',
+  'postprocess_spawn_volume',
+  'sky_setup',
   // Spline
   'spline_create',
   // Sequencer (dormant satellite-plugin C++ command)
