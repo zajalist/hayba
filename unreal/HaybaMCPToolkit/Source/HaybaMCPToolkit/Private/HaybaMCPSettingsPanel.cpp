@@ -11,6 +11,7 @@
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
+#include "Widgets/Input/SComboBox.h"
 #include "Styling/AppStyle.h"
 
 void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
@@ -34,9 +35,50 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
     SAssignNew(LlmBaseUrlBox,  SEditableTextBox)
         .Text(FText::FromString(S.BaseURL))
         .OnTextChanged_Lambda(OnDirty);
+    // Key box starts EMPTY — we never populate it with the stored secret. The
+    // last-4 status label (RefreshKeyStatus) is the only readback. Typing here
+    // marks the key as edited so OnSave writes the new value through the vault.
     SAssignNew(LlmApiKeyBox,   SEditableTextBox)
-        .Text(FText::FromString(FHaybaMCPSettings::GetSharedApiKey())).IsPassword(true)
-        .OnTextChanged_Lambda(OnDirty);
+        .IsPassword(true)
+        .HintText(NSLOCTEXT("Hayba", "S.Backend.KeyHint", "enter to replace stored key"))
+        .OnTextChanged_Lambda([this](const FText&){ bKeyEdited = true; MarkDirty(); });
+
+    // Provider dropdown — options mirror the catalog (providers.ts).
+    ProviderOptions.Reset();
+    for (const FHaybaProviderInfo& P : FHaybaMCPSettings::GetProviderCatalog())
+    {
+        TSharedPtr<FString> Opt = MakeShared<FString>(FString(P.Id));
+        ProviderOptions.Add(Opt);
+        if (S.SelectedProviderId.Equals(P.Id, ESearchCase::IgnoreCase))
+            SelectedProvider = Opt;
+    }
+    if (!SelectedProvider.IsValid() && ProviderOptions.Num() > 0)
+        SelectedProvider = ProviderOptions[0];
+
+    auto MakeProviderLabel = [](TSharedPtr<FString> Id) -> FText
+    {
+        const FHaybaProviderInfo* Info = Id.IsValid() ? FHaybaMCPSettings::FindProvider(*Id) : nullptr;
+        return FText::FromString(Info ? FString(Info->Label) : (Id.IsValid() ? *Id : FString()));
+    };
+
+    SAssignNew(ProviderCombo, SComboBox<TSharedPtr<FString>>)
+        .OptionsSource(&ProviderOptions)
+        .InitiallySelectedItem(SelectedProvider)
+        .OnGenerateWidget_Lambda([MakeProviderLabel](TSharedPtr<FString> Id)
+        {
+            return SNew(STextBlock).Text(MakeProviderLabel(Id));
+        })
+        .OnSelectionChanged(this, &SHaybaMCPSettingsPanel::OnProviderChanged)
+        [
+            SNew(STextBlock)
+            .Text_Lambda([this, MakeProviderLabel]()
+            {
+                return MakeProviderLabel(SelectedProvider);
+            })
+        ];
+
+    SAssignNew(KeyStatusText, STextBlock)
+        .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("SmallText"));
     SAssignNew(RateLimitBox,   SEditableTextBox)
         .Text(FText::AsNumber(S.RateLimitPerMinute))
         .OnTextChanged_Lambda(OnDirty);
@@ -155,6 +197,14 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                             SNew(SVerticalBox)
                             + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
                             [ BuildLabeledRow(
+                                NSLOCTEXT("Hayba", "S.Backend.Provider", "Provider"),
+                                NSLOCTEXT("Hayba", "S.Backend.Provider.TT",
+                                    "Pick your LLM provider. Selecting one auto-fills the Base URL, "
+                                    "default Model, and key hint below. Local providers "
+                                    "(Ollama, LM Studio) and Mock need no API key."),
+                                ProviderCombo.ToSharedRef()) ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+                            [ BuildLabeledRow(
                                 NSLOCTEXT("Hayba", "S.Backend.Url",  "Base URL"),
                                 FText::GetEmpty(),
                                 LlmBaseUrlBox.ToSharedRef()) ]
@@ -166,8 +216,16 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                             + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
                             [ BuildLabeledRow(
                                 NSLOCTEXT("Hayba", "S.Backend.Key",  "API Key"),
-                                FText::GetEmpty(),
+                                NSLOCTEXT("Hayba", "S.Backend.Key.TT",
+                                    "Stored encrypted at rest via Windows DPAPI (per-user, per-machine); "
+                                    "never written to disk in plaintext and never shown here in full. "
+                                    "Leave blank to keep the existing key; type to replace it."),
                                 LlmApiKeyBox.ToSharedRef()) ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+                            [ BuildLabeledRow(
+                                FText::GetEmpty(),
+                                FText::GetEmpty(),
+                                KeyStatusText.ToSharedRef()) ]
                             + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
                             [ BuildToggle(
                                 NSLOCTEXT("Hayba", "S.CodeMode", "Code Mode (meta-tools)"),
@@ -328,6 +386,14 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
             ]
         ]
     ];
+
+    // Initialize the key box enabled/hint state + status label for the provider
+    // restored from settings. Do NOT overwrite the user's saved Base URL / Model
+    // on first paint — only the dropdown interaction does that.
+    ApplyProviderDefaults(
+        SelectedProvider.IsValid() ? FHaybaMCPSettings::FindProvider(*SelectedProvider) : nullptr,
+        /*bOverwriteUrlModel=*/false);
+    RefreshKeyStatus();
 }
 
 TSharedRef<SWidget> SHaybaMCPSettingsPanel::BuildSection(const FText& Heading, const FText& Tooltip, const TSharedRef<SWidget>& Body)
@@ -417,10 +483,21 @@ FReply SHaybaMCPSettingsPanel::OnSave()
     if (SidecarUrlBox.IsValid()) S.SidecarURL      = SidecarUrlBox->GetText().ToString();
     if (LlmModelBox.IsValid())   S.Model           = LlmModelBox->GetText().ToString();
     if (LlmBaseUrlBox.IsValid()) S.BaseURL         = LlmBaseUrlBox->GetText().ToString();
-    if (LlmApiKeyBox.IsValid())
+
+    // Persist the selected provider before writing the key so the vault stores
+    // it under the right id.
+    if (SelectedProvider.IsValid()) S.SelectedProviderId = *SelectedProvider;
+
+    // Only touch the vault when the user actually typed a new key this session.
+    // An empty-but-untouched box must NOT wipe the stored key.
+    if (bKeyEdited && LlmApiKeyBox.IsValid())
     {
-        S.ApiKey = LlmApiKeyBox->GetText().ToString();
-        FHaybaMCPSettings::SetSharedApiKey(S.ApiKey);
+        const FString Typed = LlmApiKeyBox->GetText().ToString();
+        FHaybaMCPSettings::SetProviderKey(S.SelectedProviderId, Typed); // empty -> clears
+        // Do not keep the plaintext around: clear the input and the scratch field.
+        S.ApiKey.Empty();
+        LlmApiKeyBox->SetText(FText::GetEmpty());
+        bKeyEdited = false;
     }
     if (RateLimitBox.IsValid())
     {
@@ -433,9 +510,68 @@ FReply SHaybaMCPSettingsPanel::OnSave()
         if (T.IsNumeric()) S.ToolCacheTTLSeconds = FCString::Atof(*T);
     }
     S.Save();
+    RefreshKeyStatus();
     bIsDirty = false;
     Invalidate(EInvalidateWidgetReason::Paint);
     return FReply::Handled();
+}
+
+void SHaybaMCPSettingsPanel::OnProviderChanged(TSharedPtr<FString> NewId, ESelectInfo::Type)
+{
+    if (!NewId.IsValid()) return;
+    SelectedProvider = NewId;
+    const FHaybaProviderInfo* Info = FHaybaMCPSettings::FindProvider(*NewId);
+    // Overwrite the Base URL / Model fields with this provider's defaults so the
+    // panel always shows a coherent config for the picked provider.
+    ApplyProviderDefaults(Info, /*bOverwriteUrlModel=*/true);
+    RefreshKeyStatus();
+    MarkDirty();
+}
+
+void SHaybaMCPSettingsPanel::ApplyProviderDefaults(const FHaybaProviderInfo* Info, bool bOverwriteUrlModel)
+{
+    if (!Info) return;
+    if (bOverwriteUrlModel)
+    {
+        if (LlmBaseUrlBox.IsValid()) LlmBaseUrlBox->SetText(FText::FromString(FString(Info->BaseURLDefault)));
+        if (LlmModelBox.IsValid())   LlmModelBox->SetText(FText::FromString(FString(Info->DefaultModel)));
+    }
+    if (LlmApiKeyBox.IsValid())
+    {
+        // Keyless providers: disable the key box; keyed providers: use the hint.
+        LlmApiKeyBox->SetEnabled(Info->bNeedsKey);
+        LlmApiKeyBox->SetHintText(Info->bNeedsKey
+            ? FText::FromString(FString(Info->KeyHint))
+            : NSLOCTEXT("Hayba", "S.Backend.KeylessHint", "no key required"));
+    }
+}
+
+void SHaybaMCPSettingsPanel::RefreshKeyStatus()
+{
+    if (!KeyStatusText.IsValid()) return;
+    const FString Id = SelectedProvider.IsValid() ? *SelectedProvider : FString();
+    const FHaybaProviderInfo* Info = FHaybaMCPSettings::FindProvider(Id);
+
+    if (Info && !Info->bNeedsKey)
+    {
+        KeyStatusText->SetText(NSLOCTEXT("Hayba", "S.Key.Keyless",
+            "Keyless provider — no API key needed."));
+        KeyStatusText->SetColorAndOpacity(FSlateColor(FLinearColor(0.45f, 0.8f, 0.5f))); // green
+        return;
+    }
+
+    // NEVER display the full key — last-4 only.
+    const FString Last4 = FHaybaMCPSettings::GetProviderKeyLast4(Id);
+    if (Last4.IsEmpty())
+    {
+        KeyStatusText->SetText(NSLOCTEXT("Hayba", "S.Key.None", "No key stored for this provider."));
+        KeyStatusText->SetColorAndOpacity(FSlateColor(FLinearColor(0.85f, 0.55f, 0.35f))); // amber
+    }
+    else
+    {
+        KeyStatusText->SetText(FText::FromString(FString::Printf(TEXT("Stored (DPAPI): ••••%s"), *Last4)));
+        KeyStatusText->SetColorAndOpacity(FSlateColor(FLinearColor(0.65f, 0.65f, 0.7f))); // muted
+    }
 }
 
 FReply SHaybaMCPSettingsPanel::OnRedoSetup()

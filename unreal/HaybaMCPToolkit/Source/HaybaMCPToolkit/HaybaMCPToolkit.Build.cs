@@ -86,5 +86,13 @@ public class HaybaMCPToolkit : ModuleRules
         // MetaSound (gh#18) and Sequencer (gh#9) moved to optional satellite
         // plugins (HaybaMCPMetaSound, HaybaMCPSequencer) so the core loads when
         // those plugins are disabled.
+
+        // Windows DPAPI (CryptProtectData/CryptUnprotectData) for the BYOK API-key
+        // vault in HaybaMCPSettings.cpp. Win64-only, matching the plugin's pinning;
+        // guarded by #if PLATFORM_WINDOWS in the source.
+        if (Target.Platform == UnrealTargetPlatform.Win64)
+        {
+            PublicSystemLibraries.Add("Crypt32.lib");
+        }
     }
 }
