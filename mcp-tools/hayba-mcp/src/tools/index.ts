@@ -105,6 +105,7 @@ import { editorPyDescriptors } from './editor/editor-py-tools.js';
 import { assetPyDescriptors } from './asset/asset-py-tools.js';
 import { meshPyDescriptors } from './mesh/mesh-py-tools.js';
 import { landscapePyDescriptors } from './landscape/landscape-py-tools.js';
+import { foliagePyDescriptors } from './foliage/foliage-py-tools.js';
 import { toToolDescriptor } from './py-tool-factory.js';
 import { generateLegacyDescriptors } from './legacy-tool-factory.js';
 
@@ -906,6 +907,15 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     // src/tools/landscape/landscape-py-tools.ts for the catalog overlap/skip
     // analysis (C++ edit-data & import handlers deliberately not re-implemented).
     ...landscapePyDescriptors.map((d) => toToolDescriptor(d)),
+
+    // ── Foliage & scatter P0 tools (Phase 2 Wave 3, Task 2) — factory path ─────
+    // Net-new foliage-SYSTEM authoring: capability-probe + type/instance reads,
+    // set-to-value typed-param + mesh writers, and non-idempotent create/add/
+    // scatter/remove/clear verbs, generated as UE Python via the pyTemplate
+    // factory. Direct low-level foliage authoring — NOT the PLUMB-validated
+    // world_generate flagship. See src/tools/foliage/foliage-py-tools.ts for the
+    // catalog overlap/skip analysis and UNCERTAIN-API flags.
+    ...foliagePyDescriptors.map((d) => toToolDescriptor(d)),
 ];
 
 // Single-source tool descriptor list = hand-written entries + the sidecar-
