@@ -106,6 +106,7 @@ import { assetPyDescriptors } from './asset/asset-py-tools.js';
 import { meshPyDescriptors } from './mesh/mesh-py-tools.js';
 import { landscapePyDescriptors } from './landscape/landscape-py-tools.js';
 import { foliagePyDescriptors } from './foliage/foliage-py-tools.js';
+import { lightingPyDescriptors } from './lighting/lighting-py-tools.js';
 import { toToolDescriptor } from './py-tool-factory.js';
 import { generateLegacyDescriptors } from './legacy-tool-factory.js';
 
@@ -916,6 +917,16 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     // world_generate flagship. See src/tools/foliage/foliage-py-tools.ts for the
     // catalog overlap/skip analysis and UNCERTAIN-API flags.
     ...foliagePyDescriptors.map((d) => toToolDescriptor(d)),
+
+    // ── Lighting & post-process P0/P1 tools (Phase 2 Wave 3, Task 3) — factory ──
+    // Net-new lighting/post-process AUTHORING: capability-probe + light/PPV reads,
+    // set-to-value light/PP/exposure/Lumen/color-grade/fog writers (each PP writer
+    // sets the bOverride_* flag alongside the value + writes the settings struct
+    // back), and non-idempotent light_spawn / postprocess_spawn_volume / sky_setup.
+    // Skips the render/vision-loop/job-envelope + PLUMB-validator catalog entries.
+    // See src/tools/lighting/lighting-py-tools.ts for the 3-surface overlap audit,
+    // the bOverride gotcha handling, skip analysis and UNCERTAIN-API flags.
+    ...lightingPyDescriptors.map((d) => toToolDescriptor(d)),
 ];
 
 // Single-source tool descriptor list = hand-written entries + the sidecar-

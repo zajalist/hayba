@@ -94,6 +94,11 @@ export const NON_IDEMPOTENT = new Set<string>([
   'foliage_scatter_paint',
   'foliage_remove_in_bounds',
   'foliage_clear_type',
+  // Lighting-domain factory tools (Wave 3 Task 3) — see lighting-py-tools.ts
+  // LIGHTING_NON_IDEMPOTENT (actor-create / multi-actor spawn).
+  'light_spawn',
+  'postprocess_spawn_volume',
+  'sky_setup',
   // Spline
   'spline_create',
   // Sequencer
