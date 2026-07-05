@@ -112,6 +112,11 @@ bool FHaybaMCPSecurityManager::ValidateRequest(const TSharedPtr<FJsonObject>& Re
     return true;
 }
 
+bool FHaybaMCPSecurityManager::IsAuthConfigured() const
+{
+    return !FHaybaMCPSettings::Get().CapabilityToken.IsEmpty();
+}
+
 FString FHaybaMCPSecurityManager::HashParams(const TSharedPtr<FJsonObject>& Params)
 {
     if (!Params.IsValid())

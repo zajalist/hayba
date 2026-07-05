@@ -320,6 +320,9 @@ FReply SHaybaMCPPlanPanel::OnApprove()
     if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
     {
         M->bPlanApproved = true;
+        // Notify the chat panel (and any observer) so a paused streaming turn
+        // can POST /chat/approve and resume. Broadcast AFTER the flag is set.
+        M->OnPlanApproved.Broadcast();
     }
     RebuildSteps();
     return FReply::Handled();
@@ -327,10 +330,14 @@ FReply SHaybaMCPPlanPanel::OnApprove()
 
 FReply SHaybaMCPPlanPanel::OnReject()
 {
-    // Make sure rejecting clears the approval flag in case it was somehow set.
+    // Make sure rejecting clears the approval flag in case it was somehow set,
+    // then notify the chat panel so it disarms and cancels the paused turn.
+    // Without this broadcast the chat panel would stay armed and a later,
+    // unrelated Approve would resume this rejected turn (wrong-context fan-out).
     if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
     {
         M->bPlanApproved = false;
+        M->OnPlanRejected.Broadcast();
     }
     Clear();
     return FReply::Handled();

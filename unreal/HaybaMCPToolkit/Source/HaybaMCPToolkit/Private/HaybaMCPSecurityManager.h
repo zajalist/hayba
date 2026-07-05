@@ -24,6 +24,14 @@ public:
      */
     bool ValidateRequest(const TSharedPtr<FJsonObject>& Request, FString& OutReason) const;
 
+    /**
+     * True when a non-empty capability token is configured (auth is enforced).
+     * When false, ValidateRequest fails OPEN for usability — so credential-
+     * returning paths (copilot_get_key) must consult this and refuse rather
+     * than hand back a decrypted key with no authentication.
+     */
+    bool IsAuthConfigured() const;
+
     /** Append a journal entry to hayba-execution.log in project Saved dir. Thread-safe. */
     void Journal(const FHaybaJournalEntry& Entry);
 

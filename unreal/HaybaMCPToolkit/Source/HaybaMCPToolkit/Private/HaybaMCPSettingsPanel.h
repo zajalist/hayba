@@ -4,7 +4,10 @@
 #include "Input/Reply.h"
 
 class SEditableTextBox;
+class STextBlock;
 class SHaybaMCPMainPanel;
+struct FHaybaProviderInfo;
+template <typename T> class SComboBox;
 
 class SHaybaMCPSettingsPanel : public SCompoundWidget
 {
@@ -26,6 +29,19 @@ private:
     TSharedPtr<SEditableTextBox> LlmApiKeyBox;
     TSharedPtr<SEditableTextBox> RateLimitBox;
     TSharedPtr<SEditableTextBox> CacheTtlBox;
+
+    // ── BYOK provider dropdown ──────────────────────────────────────────────
+    // Options are pointers into the static catalog (FHaybaMCPSettings::GetProviderCatalog()).
+    TArray<TSharedPtr<FString>>              ProviderOptions;   // provider ids, for the combo
+    TSharedPtr<FString>                      SelectedProvider;  // current combo selection
+    TSharedPtr<SComboBox<TSharedPtr<FString>>> ProviderCombo;
+    TSharedPtr<STextBlock>                   KeyStatusText;     // "Stored: ••••1234" / keyless badge
+    // Whether the user typed a new key this session (only then do we write the vault).
+    bool bKeyEdited = false;
+
+    void OnProviderChanged(TSharedPtr<FString> NewId, ESelectInfo::Type);
+    void ApplyProviderDefaults(const FHaybaProviderInfo* Info, bool bOverwriteUrlModel);
+    void RefreshKeyStatus();
 
     // Dirty tracking — Save button only enables when something has changed.
     bool bIsDirty = false;
