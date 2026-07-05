@@ -279,7 +279,12 @@ function layerListScript(p: LandscapeLayerListParams): string {
     '    layers = _layers_of(a)',
     '    for ly in layers:',
     '        ly["weightmap_present"] = ly.get("layer_info") is not None',
-    '    _emit({"ok": True, "actor_label": a.get_actor_label(), "layers": layers, "count": len(layers)})',
+    '    warnings = []',
+    '    if not layers:',
+    '        warnings.append("both get_target_layers() and editor_layer_settings returned no layers — landscape may have no layer info, or probes may be failing")',
+    '    result = {"ok": True, "actor_label": a.get_actor_label(), "layers": layers, "count": len(layers)}',
+    '    if warnings: result["warnings"] = warnings',
+    '    _emit(result)',
     'except Exception as _e:',
     '    _err(_e)',
   ].join('\n');
@@ -288,9 +293,9 @@ function layerListScript(p: LandscapeLayerListParams): string {
 export const landscapeLayerListDescriptor: PyToolDescriptor<typeof landscapeLayerListSchema.shape> = {
   name: 'landscape_layer_list',
   description:
-    'List the paint layers on a landscape with their LayerInfo asset and whether a weightmap is bound — the read tool that exposes painting state before a paint/add-layer write.',
+    'List the paint layers on a landscape with their LayerInfo asset and whether a weightmap is bound — the read tool that exposes painting state before a paint/add-layer write. Includes a warnings[] list when both probes (get_target_layers/editor_layer_settings) return empty.',
   cost: 'low',
-  returns: '{ok, actor_label, layers:[{name,layer_info,weightmap_present}], count}',
+  returns: '{ok, actor_label, layers:[{name,layer_info,weightmap_present}], count, warnings?}',
   schema: landscapeLayerListSchema.shape,
   meta: readMeta,
   buildScript: layerListScript,
@@ -498,7 +503,6 @@ function addLayerScript(p: LandscapeAddLayerParams): string {
     `_path = ${pyStr(p.layer_info_path)}`,
     `_wb = ${p.weight_blend ? 'True' : 'False'}`,
     'try:',
-    '    import os',
     '    pkg = _path.rsplit("/", 1)[0]',
     '    asset_name = _path.rsplit("/", 1)[1]',
     '    existing = unreal.load_asset(_path)',
