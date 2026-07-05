@@ -6,10 +6,21 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "pcg/HaybaSocketSolver.h"
 
 // ---------- inputs ----------
 
 enum class EPlumbStructureKind : uint8 { Room, Corridor };
+
+// A socket TYPE a structure offers at junctions (Q3: authored as DA_SocketType, converted
+// to this plain decl before Plan). Compatibility = the SP-1 tag contract; dims = type-sized (Q4).
+struct FPlumbSocketTypeDecl
+{
+    FHaybaSocketContract Contract;          // Name + Provides/Requires/bRelaxable (dotted tags)
+    double OpeningWidth    = 150.0;
+    double OpeningHeight   = 220.0;
+    double TransitionRadius = 0.0;          // Q9b: noisy-surface flatten falloff (0 = flat modular)
+};
 
 struct FPlumbStructure
 {
@@ -20,6 +31,7 @@ struct FPlumbStructure
     double               FloorZ = 0.0;       // Points[i].Z of the drawing plane
     double               WallHeight = 300.0;
     double               CorridorWidth = 300.0; // corridors only (Q10: rides with the corridor's data)
+    TArray<FPlumbSocketTypeDecl> SocketTypes;   // Q3: declared kinds; empty => params default type
 };
 
 struct FPlumbPlanParams
@@ -52,6 +64,9 @@ struct FPlumbSocketPlan
     double   Z0 = 0.0, Z1 = 0.0;      // walk level = max(floorA, floorB) .. +OpeningHeight (Q12)
     double   FloorDeltaSelf = 0.0;    // Z0 - own floor (stairs hook, Q12)
     bool     bOwned = false;          // Q8: this side realizes the entrance assembly; other side yields
+    FName    TypeName;                // winning DA_SocketType (drives the entrance kit)
+    double   TransitionRadius = 0.0;  // Q9b flatten falloff, from the winning type
+    bool     bRelaxedBond = false;    // solver committed by relaxing a requirement (yellow)
 };
 
 struct FPlumbRejectPlan
@@ -135,6 +150,68 @@ namespace PlumbWallPlanner
         return M;
     }
 
+    // -- socket-type resolution (Q3): SP-1 cost-min over the two sides' declared types --
+    struct FTypeChoice
+    {
+        bool    bOk = false;
+        bool    bRelaxed = false;
+        FName   TypeName;              // the WALL side's winning type (owner-facing kit)
+        double  Width = 0.0, Height = 0.0, Transition = 0.0;
+        FString Reason;                // unsat text when !bOk
+    };
+
+    inline FPlumbSocketTypeDecl DefaultType(const FPlumbPlanParams& P)
+    {
+        FPlumbSocketTypeDecl D;
+        D.Contract.Name = FName(TEXT("Default"));
+        D.Contract.Provides = { TEXT("Entrance") };
+        D.Contract.Requires.All = {};              // permissive: connects to anything
+        D.OpeningWidth  = P.OpeningWidth;
+        D.OpeningHeight = P.OpeningHeight;
+        return D;
+    }
+
+    // Pick the min-cost (wallType, otherType) pair that also FITS (width<=span, height<=headroom).
+    // Deterministic: candidates scanned in declared order; strict improvement wins (stable tie-break).
+    inline FTypeChoice SolveSocketType(const FPlumbStructure& Wall, const FPlumbStructure& Other,
+                                       double SpanLen, double Headroom, const FPlumbPlanParams& P)
+    {
+        TArray<FPlumbSocketTypeDecl> A = Wall.SocketTypes;  if (A.Num() == 0) A.Add(DefaultType(P));
+        TArray<FPlumbSocketTypeDecl> B = Other.SocketTypes; if (B.Num() == 0) B.Add(DefaultType(P));
+
+        FTypeChoice Best; double BestCost = HaybaSocketSolver::HardPenalty; FString FirstReason;
+        for (const FPlumbSocketTypeDecl& TA : A)
+        {
+            for (const FPlumbSocketTypeDecl& TB : B)
+            {
+                if (TA.OpeningWidth > SpanLen || TA.OpeningHeight > Headroom)
+                {
+                    if (FirstReason.IsEmpty())
+                        FirstReason = FString::Printf(TEXT("%s does not fit: w %.0f vs span %.0f, h %.0f vs headroom %.0f under shared ceiling"),
+                            *TA.Contract.Name.ToString(), TA.OpeningWidth, SpanLen, TA.OpeningHeight, Headroom);
+                    continue;
+                }
+                const FHaybaBondOutcome O = HaybaSocketSolver::SolveBond(TA.Contract, { TB.Contract });
+                if (O.bOk && O.Cost < BestCost)
+                {
+                    BestCost = O.Cost;
+                    Best.bOk = true; Best.bRelaxed = O.bRelaxed;
+                    Best.TypeName = TA.Contract.Name;
+                    Best.Width = TA.OpeningWidth; Best.Height = TA.OpeningHeight; Best.Transition = TA.TransitionRadius;
+                    if (BestCost <= 0.0) return Best; // clean bond: cannot improve
+                }
+                else if (!O.bOk && FirstReason.IsEmpty())
+                {
+                    FirstReason = FString::Printf(TEXT("%s vs %s: missing [%s]"),
+                        *TA.Contract.Name.ToString(), *TB.Contract.Name.ToString(),
+                        *FString::Join(O.MissingRequired, TEXT(", ")));
+                }
+            }
+        }
+        if (!Best.bOk) Best.Reason = FirstReason.IsEmpty() ? TEXT("no compatible socket types") : FirstReason;
+        return Best;
+    }
+
     // Try to derive the socket between Wall-owner `W` and open structure `C` at one mouth.
     // Returns true and fills Out on geometric success; Reason set on a *near-miss* reject.
     inline bool DeriveMouthSocket(const FPlumbStructure& W, const FPlumbStructure& C, const FMouth& M,
@@ -166,19 +243,16 @@ namespace PlumbWallPlanner
             Reason = FString::Printf(TEXT("shared span %.0fcm < min overlap %.0fcm"), SpanLen, P.MinOverlap);
             return false;
         }
-        if (P.OpeningWidth > SpanLen)
-        {
-            Reason = FString::Printf(TEXT("opening %.0fcm wider than shared wall %.0fcm"), P.OpeningWidth, SpanLen);
-            return false;
-        }
-
-        // Z algebra (Q12): walk level = max of floors; must fit under both ceilings.
+        // Z algebra (Q12): walk level = max of floors; headroom = shared ceiling above it.
         const double Z0 = FMath::Max(W.FloorZ, C.FloorZ);
-        const double Z1 = Z0 + P.OpeningHeight;
         const double SharedCeil = FMath::Min(W.FloorZ + W.WallHeight, C.FloorZ + C.WallHeight);
-        if (Z1 > SharedCeil)
+        const double Headroom = SharedCeil - Z0;
+
+        // Q3: the solver picks the entrance kind (dims come from the winning type).
+        const FTypeChoice Choice = SolveSocketType(W, C, SpanLen, Headroom, P);
+        if (!Choice.bOk)
         {
-            Reason = FString::Printf(TEXT("opening top %.0f exceeds shared ceiling %.0f"), Z1, SharedCeil);
+            Reason = Choice.Reason;
             return false;
         }
 
@@ -188,8 +262,11 @@ namespace PlumbWallPlanner
         Out.Center  = R.A + Tan * SCenter; Out.Center.Z = Z0;
         Out.Tangent = Tan;
         Out.Normal  = -M.Dir;              // out of the wall, toward the corridor
-        Out.Width   = P.OpeningWidth;
-        Out.Z0 = Z0; Out.Z1 = Z1;
+        Out.Width   = Choice.Width;
+        Out.Z0 = Z0; Out.Z1 = Z0 + Choice.Height;
+        Out.TypeName = Choice.TypeName;
+        Out.TransitionRadius = Choice.Transition;
+        Out.bRelaxedBond = Choice.bRelaxed;
         return true;
     }
 

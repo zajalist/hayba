@@ -144,5 +144,84 @@ bool FPlumbWallPlannerUnitTest::RunTest(const FString& Parameters)
         TestEqual(TEXT("f7: full coverage"), CoveredLength(Plan), 2400.0, 0.5);
     }
 
+    // ---- Fixture 8: typed sockets — Arch offered both sides -> clean bond, Arch dims win
+    {
+        FPlumbSocketTypeDecl Arch;
+        Arch.Contract.Name = FName(TEXT("Arch"));
+        Arch.Contract.Provides = { TEXT("Entrance.Arch") };
+        Arch.Contract.Requires.All = { TEXT("Entrance.Arch") };
+        Arch.OpeningWidth = 180.0; Arch.OpeningHeight = 240.0; Arch.TransitionRadius = 80.0;
+
+        FPlumbStructure RoomA  = Room(TEXT("RoomA"), FVector(0,0,0), FVector(600,600,0));
+        FPlumbStructure CorrAB = Corridor(TEXT("CorrAB"), { FVector(600,300,0), FVector(1400,300,0) });
+        RoomA.SocketTypes  = { Arch };
+        CorrAB.SocketTypes = { Arch };
+
+        const FPlumbWallPlan Plan = PlumbWallPlanner::Plan(RoomA, { CorrAB }, P);
+        TestEqual(TEXT("f8: one socket"), Plan.Sockets.Num(), 1);
+        if (Plan.Sockets.Num() == 1)
+        {
+            TestEqual(TEXT("f8: Arch chosen"), Plan.Sockets[0].TypeName, FName(TEXT("Arch")));
+            TestEqual(TEXT("f8: Arch width 180"), Plan.Sockets[0].Width, 180.0, 0.1);
+            TestEqual(TEXT("f8: transition radius carried"), Plan.Sockets[0].TransitionRadius, 80.0, 0.1);
+            TestTrue (TEXT("f8: clean, not relaxed"), !Plan.Sockets[0].bRelaxedBond);
+        }
+    }
+
+    // ---- Fixture 9: incompatible non-relaxable types -> reject with missing-tag reason (the moat)
+    {
+        FPlumbSocketTypeDecl Vault;   // vault door demands a vault entrance back, non-negotiable
+        Vault.Contract.Name = FName(TEXT("Vault"));
+        Vault.Contract.Provides = { TEXT("Entrance.Vault") };
+        Vault.Contract.Requires.All = { TEXT("Entrance.Vault") };
+        Vault.Contract.bRelaxable = false;
+        FPlumbSocketTypeDecl Rough;
+        Rough.Contract.Name = FName(TEXT("Rough"));
+        Rough.Contract.Provides = { TEXT("Entrance.Rough") };
+        Rough.Contract.bRelaxable = false;
+
+        FPlumbStructure RoomA  = Room(TEXT("RoomA"), FVector(0,0,0), FVector(600,600,0));
+        FPlumbStructure CorrAB = Corridor(TEXT("CorrAB"), { FVector(600,300,0), FVector(1400,300,0) });
+        RoomA.SocketTypes  = { Vault };
+        CorrAB.SocketTypes = { Rough };
+
+        const FPlumbWallPlan Plan = PlumbWallPlanner::Plan(RoomA, { CorrAB }, P);
+        TestEqual(TEXT("f9: no socket"), Plan.Sockets.Num(), 0);
+        TestEqual(TEXT("f9: one reject"), Plan.Rejects.Num(), 1);
+        if (Plan.Rejects.Num() == 1)
+        {
+            TestTrue(TEXT("f9: reason names the missing tag"), Plan.Rejects[0].Reason.Contains(TEXT("Entrance.Vault")));
+        }
+        TestEqual(TEXT("f9: wall stays sealed at full coverage"), CoveredLength(Plan), 2400.0, 0.5);
+    }
+
+    // ---- Fixture 10: cost-min picks the compatible pair among mixed candidates
+    {
+        FPlumbSocketTypeDecl Vault; // won't match
+        Vault.Contract.Name = FName(TEXT("Vault"));
+        Vault.Contract.Provides = { TEXT("Entrance.Vault") };
+        Vault.Contract.Requires.All = { TEXT("Entrance.Vault") };
+        Vault.Contract.bRelaxable = false;
+        FPlumbSocketTypeDecl Arch;  // will match cleanly
+        Arch.Contract.Name = FName(TEXT("Arch"));
+        Arch.Contract.Provides = { TEXT("Entrance.Arch") };
+        Arch.Contract.Requires.All = { TEXT("Entrance.Arch") };
+        Arch.OpeningWidth = 200.0;
+
+        FPlumbStructure RoomA  = Room(TEXT("RoomA"), FVector(0,0,0), FVector(600,600,0));
+        FPlumbStructure CorrAB = Corridor(TEXT("CorrAB"), { FVector(600,300,0), FVector(1400,300,0) });
+        RoomA.SocketTypes  = { Vault, Arch };  // vault preferred by order, but incompatible
+        CorrAB.SocketTypes = { Arch };
+
+        const FPlumbWallPlan Plan = PlumbWallPlanner::Plan(RoomA, { CorrAB }, P);
+        TestEqual(TEXT("f10: one socket"), Plan.Sockets.Num(), 1);
+        if (Plan.Sockets.Num() == 1)
+        {
+            TestEqual(TEXT("f10: solver picked Arch over incompatible Vault"), Plan.Sockets[0].TypeName, FName(TEXT("Arch")));
+            TestEqual(TEXT("f10: Arch dims used (200)"), Plan.Sockets[0].Width, 200.0, 0.1);
+        }
+        TestEqual(TEXT("f10: coverage = perimeter - 200"), CoveredLength(Plan), 2400.0 - 200.0, 0.5);
+    }
+
     return true;
 }
