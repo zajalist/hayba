@@ -748,6 +748,85 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         return MakeOkResponse(Id, Data);
     }
 
+    // ── copilot_* BYOK key-vault proxy ──────────────────────────────────────
+    // The TS copilot tools (copilot_key_*) and the local chat sidecar reach the
+    // DPAPI key vault (FHaybaMCPSettings) ONLY through these four commands. They
+    // have already cleared the capability-token auth gate above, and the TCP
+    // listener is bound to 127.0.0.1 only (HaybaMCPTcpServer.cpp:51) so no key
+    // material ever leaves the local machine. copilot_get_key is the ONLY command
+    // that returns a plaintext key; nothing here is written to the journal or a
+    // UE_LOG (the generic dispatch logger only records cmd+id, never params).
+    if (Cmd == TEXT("copilot_key_status"))
+    {
+        auto Emit = [](const FString& ProviderId) -> TSharedPtr<FJsonObject>
+        {
+            auto O = MakeShared<FJsonObject>();
+            O->SetStringField(TEXT("provider"), ProviderId);
+            const FString Last4 = FHaybaMCPSettings::GetProviderKeyLast4(ProviderId);
+            O->SetBoolField(TEXT("configured"), !Last4.IsEmpty());
+            if (Last4.IsEmpty()) O->SetField(TEXT("last4"), MakeShared<FJsonValueNull>());
+            else                 O->SetStringField(TEXT("last4"), Last4);
+            return O;
+        };
+        FString Provider;
+        Params->TryGetStringField(TEXT("provider"), Provider);
+        if (!Provider.IsEmpty())
+        {
+            return MakeOkResponse(Id, Emit(Provider));
+        }
+        // No provider given → report the whole catalog.
+        auto Data = MakeShared<FJsonObject>();
+        TArray<TSharedPtr<FJsonValue>> Arr;
+        for (const FHaybaProviderInfo& P : FHaybaMCPSettings::GetProviderCatalog())
+            Arr.Add(MakeShared<FJsonValueObject>(Emit(FString(P.Id))));
+        Data->SetArrayField(TEXT("providers"), Arr);
+        return MakeOkResponse(Id, Data);
+    }
+
+    if (Cmd == TEXT("copilot_get_key"))
+    {
+        FString Provider;
+        Params->TryGetStringField(TEXT("provider"), Provider);
+        if (Provider.IsEmpty()) Provider = FHaybaMCPSettings::Get().SelectedProviderId;
+        const FString Key = FHaybaMCPSettings::GetProviderKey(Provider);
+        auto Data = MakeShared<FJsonObject>();
+        Data->SetStringField(TEXT("provider"), Provider);
+        Data->SetBoolField(TEXT("set"), !Key.IsEmpty());
+        if (Key.IsEmpty()) Data->SetField(TEXT("key"), MakeShared<FJsonValueNull>());
+        else               Data->SetStringField(TEXT("key"), Key);
+        return MakeOkResponse(Id, Data);
+    }
+
+    if (Cmd == TEXT("copilot_key_set"))
+    {
+        FString Provider, Key;
+        Params->TryGetStringField(TEXT("provider"), Provider);
+        Params->TryGetStringField(TEXT("api_key"), Key);
+        if (Provider.IsEmpty()) return MakeErrorResponse(Id, TEXT("copilot_key_set requires { provider, api_key }"));
+        if (Key.IsEmpty())      return MakeErrorResponse(Id, TEXT("copilot_key_set requires a non-empty api_key"));
+        FHaybaMCPSettings::SetProviderKey(Provider, Key);
+        auto Data = MakeShared<FJsonObject>();
+        Data->SetStringField(TEXT("provider"), Provider);
+        Data->SetBoolField(TEXT("ok"), true);
+        // Echo the masked last-4 only — never the raw key.
+        Data->SetStringField(TEXT("key_last4"), FHaybaMCPSettings::GetProviderKeyLast4(Provider));
+        return MakeOkResponse(Id, Data);
+    }
+
+    if (Cmd == TEXT("copilot_key_clear"))
+    {
+        FString Provider;
+        Params->TryGetStringField(TEXT("provider"), Provider);
+        if (Provider.IsEmpty()) return MakeErrorResponse(Id, TEXT("copilot_key_clear requires { provider }"));
+        const bool bHad = FHaybaMCPSettings::HasProviderKey(Provider);
+        FHaybaMCPSettings::ClearProviderKey(Provider);
+        auto Data = MakeShared<FJsonObject>();
+        Data->SetStringField(TEXT("provider"), Provider);
+        Data->SetBoolField(TEXT("ok"), true);
+        Data->SetBoolField(TEXT("cleared"), bHad);
+        return MakeOkResponse(Id, Data);
+    }
+
     auto* Found = CommandToHandler.Find(Cmd);
     if (!Found)
     {
