@@ -116,6 +116,16 @@ public:
 	 */
 	void Cancel();
 
+	/**
+	 * Abort a PARKED server-side turn without touching local stream state. On a
+	 * plan reject the plan_request SSE stream has already closed (bStreaming is
+	 * false), so Cancel()'s early-return would skip the server notification and
+	 * leave the paused session parked. This fires POST /chat/cancel regardless of
+	 * local stream state and does NOT emit a local done (the UI already finalized
+	 * the bubble as [rejected]).
+	 */
+	void AbortServerTurn();
+
 	/** True while a stream request is in flight. */
 	bool IsStreaming() const { return bStreaming; }
 
@@ -134,6 +144,9 @@ private:
 	void PostConfig(const FString& UserPrompt);
 	void StartStream(const FString& UserPrompt);
 	void PostApprove();
+
+	/** Fire-and-forget POST /chat/cancel with {session_id} (no-op if no session). */
+	void PostCancel();
 
 	/** Parse any newly-completed `\n\n`-delimited frames out of the full body. */
 	void ParseNewFrames(const FString& FullBody);

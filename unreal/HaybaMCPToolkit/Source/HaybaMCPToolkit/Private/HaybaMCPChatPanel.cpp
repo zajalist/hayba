@@ -707,6 +707,9 @@ void SHaybaMCPChatPanel::StopGeneration()
     // Cancel the in-flight stream: aborts the server-side loop, cancels the local
     // HTTP request, and fires OnDone{cancelled} which finalizes the bubble.
     if (AgentClient.IsValid()) AgentClient->Cancel();
+    // Defensively disarm the plan gate too, in case Stop is pressed while parked
+    // at the approval gate (Cancel() above already notifies the server).
+    bAwaitingPlanApproval = false;
     // Belt-and-braces if there is no live client (shouldn't happen while
     // bIsStreaming): tag the partial reply and reset local flags.
     if (!AgentClient.IsValid())
@@ -1124,7 +1127,10 @@ void SHaybaMCPChatPanel::HandlePlanRejected()
     // Cancel the paused server-side turn so it can never be resumed, and mark the
     // in-progress bubble as aborted. Re-enables the input (CanSend clears once
     // bAwaitingPlanApproval + bWaitingForAI are both false).
-    if (AgentClient.IsValid()) AgentClient->Cancel();
+    // NOTE: use AbortServerTurn(), not Cancel(): on plan reject the plan_request
+    // SSE stream has already closed (bStreaming=false), so Cancel() would hit its
+    // early-return and never POST /chat/cancel, leaving the turn parked server-side.
+    if (AgentClient.IsValid()) AgentClient->AbortServerTurn();
     Session.bWaitingForAI = false;
     bIsStreaming = false;
     FinalizeInProgressBubble(TEXT("[rejected]"));

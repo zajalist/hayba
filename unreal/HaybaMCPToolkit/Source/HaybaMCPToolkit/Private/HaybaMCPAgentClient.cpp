@@ -466,19 +466,7 @@ void FHaybaMCPAgentClient::Cancel()
 
 	// Tell the sidecar to abort the server-side loop (fire-and-forget). Without
 	// this the turn keeps running server-side even after we drop the socket.
-	if (!SessionId.IsEmpty())
-	{
-		const FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
-		TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
-		Body->SetStringField(TEXT("session_id"), SessionId);
-
-		TSharedRef<IHttpRequest, ESPMode::ThreadSafe> CancelReq = FHttpModule::Get().CreateRequest();
-		CancelReq->SetURL(Settings.SidecarURL / TEXT("chat/cancel"));
-		CancelReq->SetVerb(TEXT("POST"));
-		CancelReq->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
-		CancelReq->SetContentAsString(JsonToString(Body));
-		CancelReq->ProcessRequest(); // ignore response
-	}
+	PostCancel();
 
 	// Cancel the local streaming request. This will trigger OnProcessRequestComplete
 	// with bConnected=false; bTerminalEmitted guards against a duplicate done.
@@ -493,6 +481,36 @@ void FHaybaMCPAgentClient::Cancel()
 
 	// Fire our own terminal done carrying the partial text streamed so far.
 	EmitLocalDone(TEXT("cancelled"), /*cancelled*/ true);
+}
+
+// Fire-and-forget POST /chat/cancel with {session_id}. Shared by Cancel() (mid-
+// stream abort) and AbortServerTurn() (parked-turn abort on plan reject).
+void FHaybaMCPAgentClient::PostCancel()
+{
+	if (SessionId.IsEmpty())
+	{
+		return;
+	}
+
+	const FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
+	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
+	Body->SetStringField(TEXT("session_id"), SessionId);
+
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> CancelReq = FHttpModule::Get().CreateRequest();
+	CancelReq->SetURL(Settings.SidecarURL / TEXT("chat/cancel"));
+	CancelReq->SetVerb(TEXT("POST"));
+	CancelReq->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+	CancelReq->SetContentAsString(JsonToString(Body));
+	CancelReq->ProcessRequest(); // ignore response
+}
+
+// Abort a parked server-side turn (plan reject). The plan_request stream has
+// already closed, so Cancel()'s early-return would skip the server notification.
+// This fires POST /chat/cancel independent of local stream state and emits no
+// local done (the UI already finalized the bubble as [rejected]).
+void FHaybaMCPAgentClient::AbortServerTurn()
+{
+	PostCancel();
 }
 
 void FHaybaMCPAgentClient::EmitLocalDone(const FString& Reason, bool bCancelled)
