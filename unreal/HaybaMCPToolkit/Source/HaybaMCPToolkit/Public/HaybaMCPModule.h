@@ -81,6 +81,13 @@ public:
     DECLARE_MULTICAST_DELEGATE_OneParam(FOnToolCallRecorded, const FHaybaToolCallRecord&);
     FOnToolCallRecorded OnToolCallRecorded;
 
+    // Fires on the GameThread when the user clicks Approve in the Plan panel.
+    // The chat panel subscribes while a plan_request is pending so it can POST
+    // /chat/approve and resume the paused streaming turn. Explicit human action
+    // only — never auto-fired.
+    DECLARE_MULTICAST_DELEGATE(FOnPlanApproved);
+    FOnPlanApproved OnPlanApproved;
+
 private:
     mutable FCriticalSection ToolCallHistoryLock;
     TArray<FHaybaToolCallRecord> ToolCallHistory;

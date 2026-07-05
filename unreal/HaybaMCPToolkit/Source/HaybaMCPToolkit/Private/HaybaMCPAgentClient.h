@@ -100,6 +100,16 @@ public:
 	void SendPrompt(const FString& UserPrompt);
 
 	/**
+	 * Plan-mode resume: after the user Approves a gated action in the Plan tab,
+	 * POST /chat/approve {session_id} (binds the paused call), then re-issue
+	 * /chat/stream with an EMPTY prompt so the stored server transcript continues
+	 * and the one approved call dispatches past the TS gate exactly once. NEVER
+	 * call this without an explicit human Approve — it is the resume half of the
+	 * plan_request handshake.
+	 */
+	void ApproveAndResume();
+
+	/**
 	 * Abort the in-flight stream: tells the sidecar to abort the server-side loop
 	 * (POST /chat/cancel), cancels the local HTTP request, and fires OnDone with
 	 * {cancelled:true, partial_text} = whatever text streamed so far.
@@ -123,6 +133,7 @@ public:
 private:
 	void PostConfig(const FString& UserPrompt);
 	void StartStream(const FString& UserPrompt);
+	void PostApprove();
 
 	/** Parse any newly-completed `\n\n`-delimited frames out of the full body. */
 	void ParseNewFrames(const FString& FullBody);

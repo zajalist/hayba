@@ -15,6 +15,14 @@ class SVerticalBox;
 class SHorizontalBox;
 class SButton;
 
+// Streaming agent client + its SSE payload structs (Task 7).
+class FHaybaMCPAgentClient;
+struct FHaybaChatToolCall;
+struct FHaybaChatToolResult;
+struct FHaybaChatPlanRequest;
+struct FHaybaChatDone;
+struct FHaybaChatError;
+
 /**
  * Single-purpose chat surface for API-key mode users. Integrated-mode users
  * never see this tab. Conversation, input, footer status — that's it.
@@ -29,6 +37,10 @@ public:
     SLATE_END_ARGS()
 
     void Construct(const FArguments& InArgs, FHaybaMCPModule* InModule);
+
+    // Unsubscribe delegates + cancel any in-flight stream so a late callback
+    // cannot touch freed Slate widgets.
+    virtual ~SHaybaMCPChatPanel() override;
 
 private:
     FHaybaMCPModule* Module = nullptr;
@@ -47,9 +59,32 @@ private:
     int32                                   UnseenWhileScrolledUp = 0;
 
     // In-flight tool-call trace state.
-    FDelegateHandle ToolCallSubscription;
+    FDelegateHandle ToolCallSubscription;   // legacy path (module recorder)
     int32           InProgressMessageIndex = INDEX_NONE;
-    TArray<FString> InProgressTrace;
+    TArray<FString> InProgressTrace;        // tool-step lines for the live bubble
+    FString         InProgressAssistantText;// streamed assistant deltas
+
+    // ── Streaming agent client (Task 7/8) ────────────────────────────────────
+    // Held via MakeShared (NEVER stack — AsShared asserts). One client per panel
+    // = one server session; reused across turns so the transcript continues.
+    TSharedPtr<FHaybaMCPAgentClient> AgentClient;
+    FDelegateHandle PlanApprovedSubscription;   // module OnPlanApproved
+    bool            bAwaitingPlanApproval = false;
+
+    void            EnsureAgentClient();
+    void            StartAgentTurn(const FString& Prompt);
+    void            BeginInProgressBubble();
+    void            RefreshInProgressBubble();
+    void            FinalizeInProgressBubble(const FString& FallbackText);
+
+    // Agent-client delegate handlers (all fire on the game thread).
+    void            HandleTextDelta(const FString& Text);
+    void            HandleToolCall(const FHaybaChatToolCall& Call);
+    void            HandleToolResult(const FHaybaChatToolResult& Result);
+    void            HandlePlanRequest(const FHaybaChatPlanRequest& Plan);
+    void            HandleStreamDone(const FHaybaChatDone& Done);
+    void            HandleStreamError(const FHaybaChatError& Error);
+    void            HandlePlanApproved();
 
     // ── Layout ─────────────────────────────────────────────────────────────
     TSharedRef<SWidget> BuildToolbar();

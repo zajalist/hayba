@@ -320,6 +320,9 @@ FReply SHaybaMCPPlanPanel::OnApprove()
     if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
     {
         M->bPlanApproved = true;
+        // Notify the chat panel (and any observer) so a paused streaming turn
+        // can POST /chat/approve and resume. Broadcast AFTER the flag is set.
+        M->OnPlanApproved.Broadcast();
     }
     RebuildSteps();
     return FReply::Handled();

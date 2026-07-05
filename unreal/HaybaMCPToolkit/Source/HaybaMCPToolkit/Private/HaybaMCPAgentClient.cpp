@@ -392,6 +392,69 @@ void FHaybaMCPAgentClient::DispatchFrame(const FString& FrameBlock)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Plan-mode resume — POST /chat/approve, then re-issue /chat/stream (empty prompt)
+// ─────────────────────────────────────────────────────────────────────────────
+void FHaybaMCPAgentClient::ApproveAndResume()
+{
+	if (SessionId.IsEmpty())
+	{
+		OnError.Broadcast(FHaybaChatError{
+			TEXT("Cannot resume: no chat session is active."), TEXT("resume") });
+		return;
+	}
+	if (bStreaming)
+	{
+		// A turn is already running; nothing to approve/resume against.
+		return;
+	}
+	PostApprove();
+}
+
+void FHaybaMCPAgentClient::PostApprove()
+{
+	const FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
+
+	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
+	Body->SetStringField(TEXT("session_id"), SessionId);
+
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(Settings.SidecarURL / TEXT("chat/approve"));
+	Request->SetVerb(TEXT("POST"));
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+	Request->SetContentAsString(JsonToString(Body));
+
+	TWeakPtr<FHaybaMCPAgentClient> WeakThis = AsShared();
+	Request->OnProcessRequestComplete().BindLambda(
+		[WeakThis](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
+		{
+			TSharedPtr<FHaybaMCPAgentClient> Self = WeakThis.Pin();
+			if (!Self.IsValid()) return;
+
+			if (!bConnected || !Response.IsValid())
+			{
+				Self->OnError.Broadcast(FHaybaChatError{
+					TEXT("Could not reach the Hayba sidecar to approve the plan."), TEXT("transport") });
+				return;
+			}
+			const int32 Code = Response->GetResponseCode();
+			if (Code != 200)
+			{
+				Self->OnError.Broadcast(FHaybaChatError{
+					FString::Printf(TEXT("Sidecar /chat/approve rejected the request (HTTP %d)."), Code),
+					TEXT("approve") });
+				return;
+			}
+			// Approval bound server-side; resume the paused turn. The stored
+			// transcript continues — an empty prompt just re-drives the loop.
+			Self->bTerminalEmitted = false;
+			Self->StartStream(FString());
+		});
+
+	UE_LOG(LogHaybaAgentClient, Verbose, TEXT("POST /chat/approve session=%s"), *SessionId);
+	Request->ProcessRequest();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Step 3 — Cancel: abort server-side loop + local request, emit local done
 // ─────────────────────────────────────────────────────────────────────────────
 void FHaybaMCPAgentClient::Cancel()
