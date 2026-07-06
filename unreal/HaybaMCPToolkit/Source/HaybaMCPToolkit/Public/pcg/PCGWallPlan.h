@@ -51,6 +51,21 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Plan)
 	bool bFlipWallFacing = false;
 
+	/** Band meshes for fill patches (0=base, 1=field, 2=crown). Swap per-graph for other styles. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Fills)
+	TArray<FSoftObjectPath> FillBandMeshes = {
+		FSoftObjectPath(TEXT("/Game/Plumb/Mesh/SM_GB_BaseQ.SM_GB_BaseQ")),
+		FSoftObjectPath(TEXT("/Game/Plumb/Mesh/SM_GB_FieldQ.SM_GB_FieldQ")),
+		FSoftObjectPath(TEXT("/Game/Plumb/Mesh/SM_GB_CrownQ.SM_GB_CrownQ")) };
+
+	/** Fill band meshes' native size (cm) used for exact stretch-fit scaling. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Fills, meta = (ClampMin = "1"))
+	double FillMeshNativeSize = 50.0;
+
+	/** Wall modules render this far inside the drawn line (the kit convention); fills match it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Fills)
+	double FillInwardTuck = 0.5;
+
 protected:
 	virtual TArray<FPCGPinProperties> InputPinProperties() const override;
 	virtual TArray<FPCGPinProperties> OutputPinProperties() const override;

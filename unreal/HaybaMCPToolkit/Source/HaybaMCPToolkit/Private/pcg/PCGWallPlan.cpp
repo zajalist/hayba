@@ -167,31 +167,32 @@ bool FPCGWallPlanElement::ExecuteInternal(FPCGContext* Context) const
 			OutT.Pin = PCGWallPlanPins::FloorLoop;
 		}
 
-		// -- FillPoints: guaranteed-coverage patches (small remainders, over-door bands) --
+		// -- FillPoints: guaranteed-coverage band patches, spawn-ready (AssetPath + exact
+		// stretch-fit scale + the kit's inward-tuck). One spawner realizes them; no staging.
 		if (Plan.Fills.Num() > 0)
 		{
 			UPCGPointData* PD = FPCGContext::NewObject_AnyThread<UPCGPointData>(Context);
 			UPCGMetadata* MD = PD->MutableMetadata();
-			FPCGMetadataAttribute<double>* AW  = MD->CreateAttribute<double>(TEXT("Width"), 0.0, false, true);
-			FPCGMetadataAttribute<int64>* AG = MD->CreateAttribute<int64>(TEXT("FillIndex"), 0, false, true);
+			FPCGMetadataAttribute<FSoftObjectPath>* AP = MD->CreateAttribute<FSoftObjectPath>(TEXT("AssetPath"), FSoftObjectPath(), false, true);
 			FPCGMetadataAttribute<double>* AZ0 = MD->CreateAttribute<double>(TEXT("Z0"), 0.0, false, true);
 			FPCGMetadataAttribute<double>* AZ1 = MD->CreateAttribute<double>(TEXT("Z1"), 0.0, false, true);
 			TArray<FPCGPoint>& Pts = PD->GetMutablePoints();
 			Pts.SetNum(Plan.Fills.Num());
+			const double Native = FMath::Max(1.0, Settings->FillMeshNativeSize);
 			for (int32 i = 0; i < Plan.Fills.Num(); ++i)
 			{
 				const FPlumbFillPlan& F = Plan.Fills[i];
 				FPCGPoint& Pt = Pts[i];
 				const FQuat Rot = FRotationMatrix::MakeFromXY(F.Tangent, F.Normal).ToQuat().GetNormalized();
-				Pt.Transform = FTransform(Rot, F.Center);
-				// Asymmetric Y-bounds [0,+1]: staging's center-justify then tucks the module
-				// 0.5 toward the interior — the SAME convention as every SubdivideSpline wall
-				// module (measured: all planes sit at drawn-line + 0.5*inward).
-				Pt.BoundsMin = FVector(-F.Width * 0.5, 0.0, 0.0);
-				Pt.BoundsMax = FVector( F.Width * 0.5, 1.0, F.Z1 - F.Z0);
+				const double H = F.Z1 - F.Z0;
+				FVector Pos = F.Center + F.Normal * Settings->FillInwardTuck; // match wall-module plane
+				Pos.Z = (F.Z0 + F.Z1) * 0.5;                                   // quad pivot = center
+				Pt.Transform = FTransform(Rot, Pos, FVector(F.Width / Native, 1.0, H / Native));
+				Pt.BoundsMin = FVector(-Native * 0.5, -1.0, -Native * 0.5);
+				Pt.BoundsMax = FVector( Native * 0.5,  1.0,  Native * 0.5);
 				Pt.MetadataEntry = MD->AddEntry();
-				AW->SetValue(Pt.MetadataEntry, F.Width);
-				AG->SetValue(Pt.MetadataEntry, (int64)F.BandIndex);
+				const int32 Band = FMath::Clamp(F.BandIndex, 0, Settings->FillBandMeshes.Num() - 1);
+				AP->SetValue(Pt.MetadataEntry, Settings->FillBandMeshes.IsValidIndex(Band) ? Settings->FillBandMeshes[Band] : FSoftObjectPath());
 				AZ0->SetValue(Pt.MetadataEntry, F.Z0);
 				AZ1->SetValue(Pt.MetadataEntry, F.Z1);
 			}
