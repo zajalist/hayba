@@ -109,6 +109,16 @@ These would replace the bespoke python and eliminate most P1 guessing.
 
 ---
 
+## P0b — Stale queued commands REPLAY on reconnect and pin the game thread (added 2026-07-05)
+
+**Symptom:** after an editor relaunch, the plugin processed `python_run (id: req_4)` that the agent never sent this session — it triggered an Interchange import of a multi-LOD Nanite glTF (`.scratch/ph-assets/pine_tree_01`, 60s+ Nanite build per LOD, 6.7GB memory estimates), pinning the game thread for minutes. Every in-flight agent request then times out, which is indistinguishable from an editor wedge — the agent kill-relooped the editor twice blaming its own graph edits before spotting `LogHaybaMCPCmd: Processing command: python_run (id: req_4)` + `LogInterchangeEngine` in the log.
+
+**Root cause to investigate:** the TS server (or sidecar) apparently re-sends unacknowledged/queued requests when a client (re)connects — including expensive asset-import commands from a long-dead session. Low request id (req_4) right after reconnect is the tell.
+
+**Fix:** (a) do NOT replay queued commands across a TCP reconnect — drop the queue when the editor connection is lost (the editor that would have serviced them is gone; results are undeliverable anyway); (b) tag every command with a session/connection id and have the plugin reject mismatched ones; (c) log a loud one-liner when a command older than N minutes executes. Acceptance: relaunch editor mid-session → no unexpected `Processing command` entries before the next fresh agent request.
+
+**Agent-side lesson (recorded in memory):** on suspected wedge, ALWAYS `tail` the editor log for `LogHaybaMCPCmd: Processing command` before blaming the in-flight script — frame number not advancing + a foreign req id = queued-command replay, not a graph bug.
+
 ## Smaller notes
 
 - **Nativize errors are cryptic.** `Cannot nativize 'NoneType' as 'RequestedLOD'` should ideally surface the expected Python type/constructor up front. Low priority; P1 introspection mostly addresses this.
