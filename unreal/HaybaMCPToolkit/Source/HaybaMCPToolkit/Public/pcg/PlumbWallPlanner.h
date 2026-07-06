@@ -135,6 +135,52 @@ namespace PlumbWallPlanner
         return FVector::DistSquared2D(C, P);
     }
 
+    // -- corridor offsetting (Q2 absorption): a corridor's WALLS are the mitered offset LOOP
+    //    around its centerline (left side + far cap + right side + near cap), not the centerline.
+    //    Pure + deterministic => both sides of a junction still derive identical geometry.
+    inline TArray<FVector> CorridorWallLoop(const FPlumbStructure& S)
+    {
+        TArray<FVector> Loop;
+        const int32 N = S.Points.Num();
+        if (S.bClosed || N < 2) return Loop;
+        const double H = S.CorridorWidth * 0.5;
+
+        // Offset one side of the polyline with LINE_PLANE-style mitered corners.
+        auto OffsetSide = [&](double Sign, TArray<FVector>& Out)
+        {
+            for (int32 i = 0; i < N; ++i)
+            {
+                const FVector DirIn  = (i > 0)     ? (S.Points[i] - S.Points[i-1]).GetSafeNormal2D() : (S.Points[1] - S.Points[0]).GetSafeNormal2D();
+                const FVector DirOut = (i < N - 1) ? (S.Points[i+1] - S.Points[i]).GetSafeNormal2D() : DirIn;
+                const FVector NIn (-DirIn.Y * Sign,  DirIn.X * Sign, 0.0);
+                const FVector NOut(-DirOut.Y * Sign, DirOut.X * Sign, 0.0);
+                FVector MiterN = (NIn + NOut).GetSafeNormal2D();
+                if (MiterN.IsNearlyZero()) MiterN = NIn;
+                const double Cos = FVector::DotProduct(MiterN, NIn);
+                const double Scale = (FMath::Abs(Cos) > 0.1) ? (1.0 / Cos) : 1.0; // miter length
+                FVector P = S.Points[i] + MiterN * (H * Scale);
+                P.Z = S.Points[i].Z;
+                Out.Add(P);
+            }
+        };
+        TArray<FVector> Left, Right;
+        OffsetSide(+1.0, Left);
+        OffsetSide(-1.0, Right);
+        Loop.Append(Left);                                   // start-cap end .. far-cap end (left side)
+        for (int32 i = Right.Num() - 1; i >= 0; --i) Loop.Add(Right[i]); // far cap + right side back
+        return Loop; // closed implicitly: last->first edge = the near (mouth) cap
+    }
+
+    // Wall geometry a structure exposes: rooms = drawn loop; corridors = offset tunnel loop.
+    inline FPlumbStructure EffectiveWalls(const FPlumbStructure& S)
+    {
+        if (S.bClosed) return S;
+        FPlumbStructure W = S;
+        W.Points = CorridorWallLoop(S);
+        W.bClosed = true; // the tunnel loop is closed (caps included)
+        return W;
+    }
+
     // -- the canonical socket derivation (Q1): pure function of the two structures --
     // v1 detector: corridor-mouth — an OPEN structure's endpoint sitting on another structure's wall.
     // (Pair-agnostic interval framework; collinear room|room shared-wall detector is the next fixture.)
@@ -217,7 +263,7 @@ namespace PlumbWallPlanner
     inline bool DeriveMouthSocket(const FPlumbStructure& W, const FPlumbStructure& C, const FMouth& M,
                                   const FPlumbPlanParams& P, FPlumbSocketPlan& Out, FString& Reason)
     {
-        const TArray<FRun> Runs = SplitRuns(W, P.CornerAngleDeg);
+        const TArray<FRun> Runs = SplitRuns(EffectiveWalls(W), P.CornerAngleDeg);
         double BestD2 = TNumericLimits<double>::Max(); int32 BestRun = INDEX_NONE; double BestT = 0.0;
         for (int32 i = 0; i < Runs.Num(); ++i)
         {
@@ -306,7 +352,9 @@ namespace PlumbWallPlanner
                                const FPlumbPlanParams& P)
     {
         FPlumbWallPlan Out;
-        const TArray<FRun> Runs = SplitRuns(Self, P.CornerAngleDeg);
+        // Q2: corridors plan their offset tunnel loop (side walls + caps); rooms plan the drawn loop.
+        const FPlumbStructure SelfWalls = EffectiveWalls(Self);
+        const TArray<FRun> Runs = SplitRuns(SelfWalls, P.CornerAngleDeg);
 
         // Collect sockets ON MY WALLS (I am the wall-owner in DeriveMouthSocket terms):
         // any open Other whose mouth touches my wall. Symmetric: the Other, planning itself,

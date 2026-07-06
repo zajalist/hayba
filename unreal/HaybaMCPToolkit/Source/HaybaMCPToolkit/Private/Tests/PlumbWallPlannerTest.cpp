@@ -96,12 +96,25 @@ bool FPlumbWallPlannerUnitTest::RunTest(const FString& Parameters)
         TestEqual(TEXT("f3: coverage"), CoveredLength(Plan), 2400.0 - 150.0, 0.5);
     }
 
-    // ---- Fixture 4: cap coverage (the "caps produce no bays" bug) — corridor alone, no neighbors
+    // ---- Fixture 4: corridor = offset TUNNEL loop (Q2) — two sides + two caps, full coverage
     {
         const FPlumbStructure CorrAB = Corridor(TEXT("CorrAB"), { FVector(600,300,0), FVector(1400,300,0) });
         const FPlumbWallPlan Plan = PlumbWallPlanner::Plan(CorrAB, {}, P);
-        TestEqual(TEXT("f4: open centerline plans its own runs w/o sockets"), Plan.Sockets.Num(), 0);
-        TestTrue (TEXT("f4: guaranteed coverage (segments exist)"), CoveredLength(Plan) > 0.0);
+        TestEqual(TEXT("f4: no sockets alone"), Plan.Sockets.Num(), 0);
+        // tunnel loop: 2 sides (800) + 2 caps (300) = 2200
+        TestEqual(TEXT("f4: tunnel loop coverage 2200"), CoveredLength(Plan), 2200.0, 1.0);
+        TestEqual(TEXT("f4: four wall runs (L, far cap, R, near cap)"), Plan.Segments.Num(), 4);
+    }
+
+    // ---- Fixture 4b: junction — corridor yields the span ON ITS NEAR CAP (retiled around it)
+    {
+        const FPlumbStructure RoomB = Room(TEXT("RoomB"), FVector(1200,0,0), FVector(1800,600,0));
+        const FPlumbStructure CorrIn = Corridor(TEXT("CorrIn"), { FVector(1800,300,0), FVector(2600,300,0) });
+        const FPlumbWallPlan Plan = PlumbWallPlanner::Plan(CorrIn, { RoomB }, P);
+        TestEqual(TEXT("f4b: one yielded socket"), Plan.Sockets.Num(), 1);
+        if (Plan.Sockets.Num() == 1) TestTrue(TEXT("f4b: corridor does not own"), !Plan.Sockets[0].bOwned);
+        // near cap loses the 150 opening: 2200 - 150
+        TestEqual(TEXT("f4b: cap retiled around the opening"), CoveredLength(Plan), 2200.0 - 150.0, 1.0);
     }
 
     // ---- Fixture 5: split-level Z (Q12) — corridor floor at 60 meets room floor at 0
