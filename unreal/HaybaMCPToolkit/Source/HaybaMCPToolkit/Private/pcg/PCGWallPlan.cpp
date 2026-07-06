@@ -70,24 +70,22 @@ namespace
 		Out.WallHeight = S->WallHeight;
 		Out.CorridorWidth = S->CorridorWidth;
 
-		if (const AActor* Src = Spline->TargetActor.Get())
-		{
-			Out.Id = Src->GetFName();
-		}
-		else
-		{
-			Out.Id = FName(*FString::Printf(TEXT("pcgdata_%u"), Spline->GetUniqueID()));
-		}
-
 		Out.Points.Reset(N);
 		double MinZ = TNumericLimits<double>::Max();
+		uint64 Hash = 1469598103934665603ull; // FNV-1a over quantized points: GEOMETRIC identity.
 		for (int32 i = 0; i < N; ++i)
 		{
 			const FVector P = SS.GetLocationAtSplineInputKey((float)i, ESplineCoordinateSpace::World);
 			Out.Points.Add(P);
 			MinZ = FMath::Min(MinZ, P.Z);
+			const int64 Q[3] = { (int64)FMath::RoundToDouble(P.X), (int64)FMath::RoundToDouble(P.Y), (int64)FMath::RoundToDouble(P.Z) };
+			for (int64 V : Q) { Hash ^= (uint64)V; Hash *= 1099511628211ull; }
 		}
 		Out.FloorZ = MinZ;
+
+		// Identity: the same drawn spline seen through ANY pin/data path hashes identically —
+		// self-exclusion cannot depend on TargetActor being populated (it isn't, in parse mode).
+		Out.Id = FName(*FString::Printf(TEXT("geo_%016llx"), Hash));
 		return true;
 	}
 }
