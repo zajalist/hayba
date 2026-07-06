@@ -186,8 +186,10 @@ bool FPCGWallPlanElement::ExecuteInternal(FPCGContext* Context) const
 			{
 				const FPlumbSocketPlan& S = Plan.Sockets[i];
 				FPCGPoint& Pt = Pts[i];
-				const FMatrix Rot(S.Tangent, S.Normal, FVector::UpVector, FVector::ZeroVector);
-				Pt.Transform = FTransform(Rot.ToQuat(), S.Center);
+				// MakeFromXY re-orthonormalizes and stays right-handed even when Normal = -Y
+				// (a raw FMatrix basis can be mirrored -> non-normalized quat -> PCG asserts).
+				const FQuat Rot = FRotationMatrix::MakeFromXY(S.Tangent, S.Normal).ToQuat().GetNormalized();
+				Pt.Transform = FTransform(Rot, S.Center);
 				Pt.BoundsMin = FVector(-S.Width * 0.5, -Settings->WallThickness * 0.5, 0.0);
 				Pt.BoundsMax = FVector( S.Width * 0.5,  Settings->WallThickness * 0.5, S.Z1 - S.Z0);
 				Pt.MetadataEntry = MD->AddEntry();
