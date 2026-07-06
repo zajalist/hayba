@@ -18,6 +18,7 @@ namespace PCGWallPlanPins
 	static const FName Segments(TEXT("WallSegments"));
 	static const FName Sockets(TEXT("Sockets"));
 	static const FName Rejects(TEXT("Rejects"));
+	static const FName FloorLoop(TEXT("FloorLoop"));
 }
 
 #if WITH_EDITOR
@@ -45,6 +46,7 @@ TArray<FPCGPinProperties> UPCGWallPlanSettings::OutputPinProperties() const
 	Pins.Emplace(PCGWallPlanPins::Segments, EPCGDataType::Spline);
 	Pins.Emplace(PCGWallPlanPins::Sockets, EPCGDataType::Point);
 	Pins.Emplace(PCGWallPlanPins::Rejects, EPCGDataType::Point);
+	Pins.Emplace(PCGWallPlanPins::FloorLoop, EPCGDataType::Spline);
 	return Pins;
 }
 
@@ -145,6 +147,22 @@ bool FPCGWallPlanElement::ExecuteInternal(FPCGContext* Context) const
 			FPCGTaggedData& Out = Context->OutputData.TaggedData.Emplace_GetRef();
 			Out.Data = SegData;
 			Out.Pin = PCGWallPlanPins::Segments;
+		}
+
+		// -- FloorLoop: one closed linear spline (rooms: drawn loop; corridors: tunnel footprint) --
+		if (Plan.FloorLoop.Num() >= 3)
+		{
+			UPCGSplineData* LoopData = FPCGContext::NewObject_AnyThread<UPCGSplineData>(Context);
+			TArray<FSplinePoint> Pts;
+			for (int32 i = 0; i < Plan.FloorLoop.Num(); ++i)
+			{
+				FSplinePoint SP((float)i, Plan.FloorLoop[i]); SP.Type = ESplinePointType::Linear;
+				Pts.Add(SP);
+			}
+			LoopData->Initialize(Pts, /*bClosed*/true, FTransform::Identity);
+			FPCGTaggedData& OutT = Context->OutputData.TaggedData.Emplace_GetRef();
+			OutT.Data = LoopData;
+			OutT.Pin = PCGWallPlanPins::FloorLoop;
 		}
 
 		// -- Sockets / Rejects as point data --

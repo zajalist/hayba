@@ -83,6 +83,7 @@ struct FPlumbWallPlan
     TArray<FPlumbSegmentPlan> Segments;
     TArray<FPlumbSocketPlan>  Sockets;
     TArray<FPlumbRejectPlan>  Rejects;
+    TArray<FVector>           FloorLoop; // closed loop for floor/ceiling realization (rooms: drawn; corridors: tunnel loop)
 };
 
 // ---------- core ----------
@@ -140,11 +141,25 @@ namespace PlumbWallPlanner
     // -- corridor offsetting (Q2 absorption): a corridor's WALLS are the mitered offset LOOP
     //    around its centerline (left side + far cap + right side + near cap), not the centerline.
     //    Pure + deterministic => both sides of a junction still derive identical geometry.
-    inline TArray<FVector> CorridorWallLoop(const FPlumbStructure& S)
+    // InsetStart/InsetEnd: pull the corridor's ends back along the centerline (the user's
+    // wall-thickness model — the gap between the two structures' inner faces IS the wall volume;
+    // the entrance frame spans it). Applied only at socketed mouths.
+    inline TArray<FVector> CorridorWallLoop(const FPlumbStructure& SIn, double InsetStart = 0.0, double InsetEnd = 0.0)
     {
         TArray<FVector> Loop;
+        FPlumbStructure S = SIn;
         const int32 N = S.Points.Num();
         if (S.bClosed || N < 2) return Loop;
+        if (InsetStart > 0.0)
+        {
+            const FVector D = (S.Points[1] - S.Points[0]).GetSafeNormal2D();
+            S.Points[0] += D * InsetStart;
+        }
+        if (InsetEnd > 0.0)
+        {
+            const FVector D = (S.Points[N-2] - S.Points[N-1]).GetSafeNormal2D();
+            S.Points[N-1] += D * InsetEnd;
+        }
         const double H = S.CorridorWidth * 0.5;
 
         // Offset one side of the polyline with LINE_PLANE-style mitered corners.
@@ -360,8 +375,43 @@ namespace PlumbWallPlanner
                                const FPlumbPlanParams& P)
     {
         FPlumbWallPlan Out;
-        // Q2: corridors plan their offset tunnel loop (side walls + caps); rooms plan the drawn loop.
-        const FPlumbStructure SelfWalls = EffectiveWalls(Self, P.bFlipWallFacing);
+
+        // Pass 1 (open self): resolve MY mouth sockets first — a socketed mouth insets that cap by
+        // WallThickness (the user's thickness model: the gap between the two structures' inner
+        // faces IS the wall volume; the entrance frame spans it).
+        double InsetStart = 0.0, InsetEnd = 0.0;
+        TArray<FPlumbSocketPlan> MouthSockets;
+        if (!Self.bClosed)
+        {
+            const TArray<FMouth> Ms = Mouths(Self);
+            for (const FPlumbStructure& O : Others)
+            {
+                if (O.Id == Self.Id) continue;
+                for (int32 mi = 0; mi < Ms.Num(); ++mi)
+                {
+                    FPlumbSocketPlan S; FString Why;
+                    if (DeriveMouthSocket(O, Self, Ms[mi], P, S, Why))
+                    {
+                        S.OtherId = O.Id;
+                        S.bOwned  = Owns(Self, O);
+                        S.FloorDeltaSelf = S.Z0 - Self.FloorZ;
+                        S.Normal = Ms[mi].Dir;
+                        MouthSockets.Add(S);
+                        if (mi == 0) InsetStart = P.WallThickness; else InsetEnd = P.WallThickness;
+                    }
+                }
+            }
+        }
+        Out.Sockets.Append(MouthSockets);
+
+        // Q2: corridors plan their offset tunnel loop (with socketed mouths inset); rooms plan the drawn loop.
+        FPlumbStructure SelfWalls = Self;
+        if (!Self.bClosed)
+        {
+            SelfWalls.Points = CorridorWallLoop(Self, InsetStart, InsetEnd);
+            SelfWalls.bClosed = true;
+        }
+        if (P.bFlipWallFacing) Algo::Reverse(SelfWalls.Points);
         const TArray<FRun> Runs = SplitRuns(SelfWalls, P.CornerAngleDeg);
 
         // Collect sockets ON MY WALLS (I am the wall-owner in DeriveMouthSocket terms):
@@ -372,11 +422,14 @@ namespace PlumbWallPlanner
 
         auto RegisterSocket = [&](const FPlumbSocketPlan& S)
         {
-            // locate the run + arc interval this socket occupies on my wall
+            // locate the run + arc interval this socket occupies on my wall.
+            // Tolerance includes WallThickness: an inset cap sits Thickness away from the
+            // socket center (which lies on the OTHER structure's inner face).
+            const double Tol2 = FMath::Square(P.CoincidenceTol + P.WallThickness);
             for (int32 i = 0; i < Runs.Num(); ++i)
             {
                 double T; const double D2 = ProjectOnRun(Runs[i], S.Center, T);
-                if (D2 < FMath::Square(P.CoincidenceTol))
+                if (D2 < Tol2)
                 {
                     const double SC = T * Runs[i].Len;
                     PerRun[i].Spans.Emplace(SC - S.Width * 0.5, SC + S.Width * 0.5);
@@ -384,6 +437,7 @@ namespace PlumbWallPlanner
                 }
             }
         };
+        for (const FPlumbSocketPlan& S : MouthSockets) RegisterSocket(S);
 
         for (const FPlumbStructure& O : Others)
         {
@@ -408,23 +462,7 @@ namespace PlumbWallPlanner
                     }
                 }
             }
-            // Case 2: I am open and MY mouth lands on Other's wall — my cap yields the same span.
-            if (!Self.bClosed)
-            {
-                for (const FMouth& M : Mouths(Self))
-                {
-                    FPlumbSocketPlan S; FString Why;
-                    if (DeriveMouthSocket(O, Self, M, P, S, Why)) // derived on THEIR wall — identical both sides
-                    {
-                        S.OtherId = O.Id;
-                        S.bOwned  = Owns(Self, O);
-                        S.FloorDeltaSelf = S.Z0 - Self.FloorZ;
-                        S.Normal = M.Dir; // from my cap, opening faces along my inward dir
-                        Out.Sockets.Add(S);
-                        RegisterSocket(S); // registers only if the span lies on one of MY runs (the cap)
-                    }
-                }
-            }
+            // (Case 2 — my own mouths — was resolved in pass 1 above, before the loop was built.)
         }
 
         // Retile every run around its sockets (guaranteed coverage — kills empty walls & the cap bug).
@@ -432,6 +470,7 @@ namespace PlumbWallPlanner
         {
             RetileRun(Runs[i], Self.FloorZ, Self.FloorZ + Self.WallHeight, PerRun[i].Spans, Out.Segments);
         }
+        Out.FloorLoop = SelfWalls.Points; // floor/ceiling follow the wall footprint (incl. cap insets)
         return Out;
     }
 }

@@ -113,8 +113,9 @@ bool FPlumbWallPlannerUnitTest::RunTest(const FString& Parameters)
         const FPlumbWallPlan Plan = PlumbWallPlanner::Plan(CorrIn, { RoomB }, P);
         TestEqual(TEXT("f4b: one yielded socket"), Plan.Sockets.Num(), 1);
         if (Plan.Sockets.Num() == 1) TestTrue(TEXT("f4b: corridor does not own"), !Plan.Sockets[0].bOwned);
-        // near cap loses the 150 opening: 2200 - 150
-        TestEqual(TEXT("f4b: cap retiled around the opening"), CoveredLength(Plan), 2200.0 - 150.0, 1.0);
+        // socketed mouth insets by WallThickness(30): sides 770x2 + caps 300x2 = 2140; minus 150 opening
+        TestEqual(TEXT("f4b: inset cap retiled around the opening"), CoveredLength(Plan), 2140.0 - 150.0, 1.0);
+        TestEqual(TEXT("f4b: floor loop follows inset footprint"), Plan.FloorLoop.Num(), 4);
     }
 
     // ---- Fixture 5: split-level Z (Q12) — corridor floor at 60 meets room floor at 0
