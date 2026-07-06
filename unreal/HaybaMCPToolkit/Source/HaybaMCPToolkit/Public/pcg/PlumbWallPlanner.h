@@ -7,6 +7,7 @@
 
 #include "CoreMinimal.h"
 #include "pcg/HaybaSocketSolver.h"
+#include "Algo/Reverse.h"
 
 // ---------- inputs ----------
 
@@ -42,6 +43,7 @@ struct FPlumbPlanParams
     double OpeningWidth   = 150.0;  // v1 stand-in for DA_SocketType dims (Q4: type-sized)
     double OpeningHeight  = 220.0;
     double CoincidenceTol = 26.0;   // how close a mouth must sit to a wall to count (>= thickness)
+    bool   bFlipWallFacing = false; // author knob: reverse wall winding (inner<->outer faces)
 };
 
 // ---------- outputs ----------
@@ -166,18 +168,24 @@ namespace PlumbWallPlanner
         TArray<FVector> Left, Right;
         OffsetSide(+1.0, Left);
         OffsetSide(-1.0, Right);
-        Loop.Append(Left);                                   // start-cap end .. far-cap end (left side)
-        for (int32 i = Right.Num() - 1; i >= 0; --i) Loop.Add(Right[i]); // far cap + right side back
+        // Winding: modules face LEFT of travel (rooms: CCW loop => inner faces). For the tunnel
+        // interior to be faced, traverse right side forward, then left side back.
+        Loop.Append(Right);
+        for (int32 i = Left.Num() - 1; i >= 0; --i) Loop.Add(Left[i]);
         return Loop; // closed implicitly: last->first edge = the near (mouth) cap
     }
 
     // Wall geometry a structure exposes: rooms = drawn loop; corridors = offset tunnel loop.
-    inline FPlumbStructure EffectiveWalls(const FPlumbStructure& S)
+    // bFlip reverses winding (inner<->outer faces) — the author's facing knob, uniform for both kinds.
+    inline FPlumbStructure EffectiveWalls(const FPlumbStructure& S, bool bFlip = false)
     {
-        if (S.bClosed) return S;
         FPlumbStructure W = S;
-        W.Points = CorridorWallLoop(S);
-        W.bClosed = true; // the tunnel loop is closed (caps included)
+        if (!S.bClosed)
+        {
+            W.Points = CorridorWallLoop(S);
+            W.bClosed = true; // the tunnel loop is closed (caps included)
+        }
+        if (bFlip) Algo::Reverse(W.Points);
         return W;
     }
 
@@ -263,7 +271,7 @@ namespace PlumbWallPlanner
     inline bool DeriveMouthSocket(const FPlumbStructure& W, const FPlumbStructure& C, const FMouth& M,
                                   const FPlumbPlanParams& P, FPlumbSocketPlan& Out, FString& Reason)
     {
-        const TArray<FRun> Runs = SplitRuns(EffectiveWalls(W), P.CornerAngleDeg);
+        const TArray<FRun> Runs = SplitRuns(EffectiveWalls(W, P.bFlipWallFacing), P.CornerAngleDeg);
         double BestD2 = TNumericLimits<double>::Max(); int32 BestRun = INDEX_NONE; double BestT = 0.0;
         for (int32 i = 0; i < Runs.Num(); ++i)
         {
@@ -353,7 +361,7 @@ namespace PlumbWallPlanner
     {
         FPlumbWallPlan Out;
         // Q2: corridors plan their offset tunnel loop (side walls + caps); rooms plan the drawn loop.
-        const FPlumbStructure SelfWalls = EffectiveWalls(Self);
+        const FPlumbStructure SelfWalls = EffectiveWalls(Self, P.bFlipWallFacing);
         const TArray<FRun> Runs = SplitRuns(SelfWalls, P.CornerAngleDeg);
 
         // Collect sockets ON MY WALLS (I am the wall-owner in DeriveMouthSocket terms):

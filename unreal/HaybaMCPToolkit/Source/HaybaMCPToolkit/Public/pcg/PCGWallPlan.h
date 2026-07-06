@@ -47,6 +47,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Sockets, meta = (ClampMin = "50"))
 	double DefaultOpeningHeight = 220.0;
 
+	/** Author knob: reverse wall winding (inner <-> outer faces). Composable per master/graph. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Plan)
+	bool bFlipWallFacing = false;
+
 protected:
 	virtual TArray<FPCGPinProperties> InputPinProperties() const override;
 	virtual TArray<FPCGPinProperties> OutputPinProperties() const override;

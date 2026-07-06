@@ -104,6 +104,7 @@ bool FPCGWallPlanElement::ExecuteInternal(FPCGContext* Context) const
 	P.CoincidenceTol = FMath::Max(Settings->WallThickness, 26.0);
 	P.OpeningWidth   = Settings->DefaultOpeningWidth;
 	P.OpeningHeight  = Settings->DefaultOpeningHeight;
+	P.bFlipWallFacing = Settings->bFlipWallFacing;
 
 	// Gather neighbors once.
 	TArray<FPlumbStructure> Others;
