@@ -62,11 +62,18 @@ bool FPlumbWallPlannerUnitTest::RunTest(const FString& Parameters)
         TestEqual(TEXT("f1: coverage = perimeter - opening"), CoveredLength(Plan), 2400.0 - 150.0, 0.5);
         TestEqual(TEXT("f1: no rejects"), Plan.Rejects.Num(), 0);
         // over-door band: a fill patch from opening top (220) to ceiling (300) over the 150 span
-        TestTrue (TEXT("f1: over-door fill exists"), Plan.Fills.Num() >= 1);
-        if (Plan.Fills.Num() >= 1)
+        TestTrue (TEXT("f1: over-door bands exist"), Plan.Fills.Num() >= 2);
+        if (Plan.Fills.Num() >= 2)
         {
-            TestEqual(TEXT("f1: fill starts at opening top"), Plan.Fills[0].Z0, 220.0, 0.1);
-            TestEqual(TEXT("f1: fill ends at ceiling"),      Plan.Fills[0].Z1, 300.0, 0.1);
+            double Lo = 1e9, Hi = -1e9; bool bCrownTops = false;
+            for (const FPlumbFillPlan& F : Plan.Fills)
+            {
+                Lo = FMath::Min(Lo, F.Z0); Hi = FMath::Max(Hi, F.Z1);
+                if (F.BandIndex == 2 && FMath::IsNearlyEqual(F.Z1, 300.0, 0.1)) bCrownTops = true;
+            }
+            TestEqual(TEXT("f1: bands start at opening top"), Lo, 220.0, 0.1);
+            TestEqual(TEXT("f1: bands reach the ceiling"),    Hi, 300.0, 0.1);
+            TestTrue (TEXT("f1: crown band tops out at ceiling"), bCrownTops);
         }
     }
 

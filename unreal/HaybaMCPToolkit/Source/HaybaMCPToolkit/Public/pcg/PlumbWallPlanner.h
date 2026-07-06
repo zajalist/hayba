@@ -81,7 +81,7 @@ struct FPlumbFillPlan
     FVector Normal  = FVector::YAxisVector;
     double  Width = 0.0;
     double  Z0 = 0.0, Z1 = 0.0;
-    FString Grammar;                      // Z-grammar for the band, chosen by height (crown-aligned)
+    int32   BandIndex = 1;                // kit entry: 0=base, 1=field, 2=crown (stretch-fit per band)
 };
 
 struct FPlumbRejectPlan
@@ -384,18 +384,24 @@ namespace PlumbWallPlanner
             if (Len <= KINDA_SMALL_NUMBER || SegZ1 - SegZ0 <= KINDA_SMALL_NUMBER) return;
             if (Len < MinGrammarLen || SegZ1 - SegZ0 < (Z1 - Z0) - KINDA_SMALL_NUMBER)
             {
-                // too small for the grammar, or a partial-height band -> fill patch.
-                // The fill still FOLLOWS the wall grammar: its Z-grammar is chosen by height so
-                // the crown band runs continuously (user: "pink thing at the top").
-                FPlumbFillPlan F;
-                F.Center = R.A + Tan * ((S0 + S1) * 0.5); F.Center.Z = SegZ0;
-                F.Tangent = Tan; F.Normal = Nrm;
-                F.Width = Len; F.Z0 = SegZ0; F.Z1 = SegZ1;
-                const double H = SegZ1 - SegZ0;
-                F.Grammar = (SegZ0 <= Z0 + KINDA_SMALL_NUMBER && H >= (Z1 - Z0) - KINDA_SMALL_NUMBER)
-                    ? TEXT("[base,field,crown]")
-                    : (H >= 100.0 ? TEXT("[field,crown]") : TEXT("[crown]"));
-                OutFills.Add(F);
+                // too small for the grammar, or a partial-height band -> fill patches that still
+                // FOLLOW the wall grammar: the planner splits the area into exact base/field/crown
+                // bands (PCGEx flex can only grow, so band sizing is decided HERE) and each band
+                // stretch-fits its kit module. Crown always tops out at the ceiling (the pink line).
+                auto Band = [&](double B0, double B1, int32 Idx)
+                {
+                    if (B1 - B0 <= KINDA_SMALL_NUMBER) return;
+                    FPlumbFillPlan F;
+                    F.Center = R.A + Tan * ((S0 + S1) * 0.5); F.Center.Z = B0;
+                    F.Tangent = Tan; F.Normal = Nrm;
+                    F.Width = Len; F.Z0 = B0; F.Z1 = B1; F.BandIndex = Idx;
+                    OutFills.Add(F);
+                };
+                const bool bFull = SegZ0 <= Z0 + KINDA_SMALL_NUMBER && SegZ1 - SegZ0 >= (Z1 - Z0) - KINDA_SMALL_NUMBER;
+                const double CrownZ0 = FMath::Max(SegZ0, SegZ1 - 50.0);
+                if (bFull) Band(SegZ0, FMath::Min(SegZ0 + 50.0, CrownZ0), 0);          // base
+                Band(bFull ? SegZ0 + 50.0 : SegZ0, CrownZ0, 1);                        // field
+                Band(CrownZ0, SegZ1, 2);                                               // crown
             }
             else
             {

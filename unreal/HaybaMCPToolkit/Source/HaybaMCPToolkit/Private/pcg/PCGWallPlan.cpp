@@ -173,7 +173,7 @@ bool FPCGWallPlanElement::ExecuteInternal(FPCGContext* Context) const
 			UPCGPointData* PD = FPCGContext::NewObject_AnyThread<UPCGPointData>(Context);
 			UPCGMetadata* MD = PD->MutableMetadata();
 			FPCGMetadataAttribute<double>* AW  = MD->CreateAttribute<double>(TEXT("Width"), 0.0, false, true);
-			FPCGMetadataAttribute<FString>* AG = MD->CreateAttribute<FString>(TEXT("FillGrammar"), FString(), false, true);
+			FPCGMetadataAttribute<int64>* AG = MD->CreateAttribute<int64>(TEXT("FillIndex"), 0, false, true);
 			FPCGMetadataAttribute<double>* AZ0 = MD->CreateAttribute<double>(TEXT("Z0"), 0.0, false, true);
 			FPCGMetadataAttribute<double>* AZ1 = MD->CreateAttribute<double>(TEXT("Z1"), 0.0, false, true);
 			TArray<FPCGPoint>& Pts = PD->GetMutablePoints();
@@ -191,7 +191,7 @@ bool FPCGWallPlanElement::ExecuteInternal(FPCGContext* Context) const
 				Pt.BoundsMax = FVector( F.Width * 0.5, 1.0, F.Z1 - F.Z0);
 				Pt.MetadataEntry = MD->AddEntry();
 				AW->SetValue(Pt.MetadataEntry, F.Width);
-				AG->SetValue(Pt.MetadataEntry, F.Grammar);
+				AG->SetValue(Pt.MetadataEntry, (int64)F.BandIndex);
 				AZ0->SetValue(Pt.MetadataEntry, F.Z0);
 				AZ1->SetValue(Pt.MetadataEntry, F.Z1);
 			}
