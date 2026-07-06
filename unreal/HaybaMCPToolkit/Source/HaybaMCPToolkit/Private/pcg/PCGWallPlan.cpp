@@ -19,6 +19,7 @@ namespace PCGWallPlanPins
 	static const FName Sockets(TEXT("Sockets"));
 	static const FName Rejects(TEXT("Rejects"));
 	static const FName FloorLoop(TEXT("FloorLoop"));
+	static const FName Fills(TEXT("FillPoints"));
 }
 
 #if WITH_EDITOR
@@ -47,6 +48,7 @@ TArray<FPCGPinProperties> UPCGWallPlanSettings::OutputPinProperties() const
 	Pins.Emplace(PCGWallPlanPins::Sockets, EPCGDataType::Point);
 	Pins.Emplace(PCGWallPlanPins::Rejects, EPCGDataType::Point);
 	Pins.Emplace(PCGWallPlanPins::FloorLoop, EPCGDataType::Spline);
+	Pins.Emplace(PCGWallPlanPins::Fills, EPCGDataType::Point);
 	return Pins;
 }
 
@@ -163,6 +165,34 @@ bool FPCGWallPlanElement::ExecuteInternal(FPCGContext* Context) const
 			FPCGTaggedData& OutT = Context->OutputData.TaggedData.Emplace_GetRef();
 			OutT.Data = LoopData;
 			OutT.Pin = PCGWallPlanPins::FloorLoop;
+		}
+
+		// -- FillPoints: guaranteed-coverage patches (small remainders, over-door bands) --
+		if (Plan.Fills.Num() > 0)
+		{
+			UPCGPointData* PD = FPCGContext::NewObject_AnyThread<UPCGPointData>(Context);
+			UPCGMetadata* MD = PD->MutableMetadata();
+			FPCGMetadataAttribute<double>* AW  = MD->CreateAttribute<double>(TEXT("Width"), 0.0, false, true);
+			FPCGMetadataAttribute<double>* AZ0 = MD->CreateAttribute<double>(TEXT("Z0"), 0.0, false, true);
+			FPCGMetadataAttribute<double>* AZ1 = MD->CreateAttribute<double>(TEXT("Z1"), 0.0, false, true);
+			TArray<FPCGPoint>& Pts = PD->GetMutablePoints();
+			Pts.SetNum(Plan.Fills.Num());
+			for (int32 i = 0; i < Plan.Fills.Num(); ++i)
+			{
+				const FPlumbFillPlan& F = Plan.Fills[i];
+				FPCGPoint& Pt = Pts[i];
+				const FQuat Rot = FRotationMatrix::MakeFromXY(F.Tangent, F.Normal).ToQuat().GetNormalized();
+				Pt.Transform = FTransform(Rot, F.Center);
+				Pt.BoundsMin = FVector(-F.Width * 0.5, -1.0, 0.0);
+				Pt.BoundsMax = FVector( F.Width * 0.5,  1.0, F.Z1 - F.Z0);
+				Pt.MetadataEntry = MD->AddEntry();
+				AW->SetValue(Pt.MetadataEntry, F.Width);
+				AZ0->SetValue(Pt.MetadataEntry, F.Z0);
+				AZ1->SetValue(Pt.MetadataEntry, F.Z1);
+			}
+			FPCGTaggedData& OutT = Context->OutputData.TaggedData.Emplace_GetRef();
+			OutT.Data = PD;
+			OutT.Pin = PCGWallPlanPins::Fills;
 		}
 
 		// -- Sockets / Rejects as point data --

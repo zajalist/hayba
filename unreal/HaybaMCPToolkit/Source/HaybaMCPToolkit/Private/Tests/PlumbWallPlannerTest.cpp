@@ -61,6 +61,13 @@ bool FPlumbWallPlannerUnitTest::RunTest(const FString& Parameters)
         // audit: perimeter 2400, one 150 opening -> segments cover 2250, no gaps
         TestEqual(TEXT("f1: coverage = perimeter - opening"), CoveredLength(Plan), 2400.0 - 150.0, 0.5);
         TestEqual(TEXT("f1: no rejects"), Plan.Rejects.Num(), 0);
+        // over-door band: a fill patch from opening top (220) to ceiling (300) over the 150 span
+        TestTrue (TEXT("f1: over-door fill exists"), Plan.Fills.Num() >= 1);
+        if (Plan.Fills.Num() >= 1)
+        {
+            TestEqual(TEXT("f1: fill starts at opening top"), Plan.Fills[0].Z0, 220.0, 0.1);
+            TestEqual(TEXT("f1: fill ends at ceiling"),      Plan.Fills[0].Z1, 300.0, 0.1);
+        }
     }
 
     // ---- Fixture 2: symmetric derivation (Q1) — corridor's own plan lands the identical socket
@@ -114,7 +121,9 @@ bool FPlumbWallPlannerUnitTest::RunTest(const FString& Parameters)
         TestEqual(TEXT("f4b: one yielded socket"), Plan.Sockets.Num(), 1);
         if (Plan.Sockets.Num() == 1) TestTrue(TEXT("f4b: corridor does not own"), !Plan.Sockets[0].bOwned);
         // socketed mouth insets by WallThickness(30): sides 770x2 + caps 300x2 = 2140; minus 150 opening
-        TestEqual(TEXT("f4b: inset cap retiled around the opening"), CoveredLength(Plan), 2140.0 - 150.0, 1.0);
+        // cap flanks (75x2) are now FILL patches, not grammar segments
+        TestEqual(TEXT("f4b: grammar coverage = sides + far cap"), CoveredLength(Plan), 770.0*2 + 300.0, 1.0);
+        TestTrue (TEXT("f4b: cap flanks became fills"), Plan.Fills.Num() >= 2);
         TestEqual(TEXT("f4b: floor loop follows inset footprint"), Plan.FloorLoop.Num(), 4);
     }
 

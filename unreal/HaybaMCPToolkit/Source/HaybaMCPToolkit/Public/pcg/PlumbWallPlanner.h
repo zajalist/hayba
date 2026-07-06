@@ -44,6 +44,7 @@ struct FPlumbPlanParams
     double OpeningHeight  = 220.0;
     double CoincidenceTol = 26.0;   // how close a mouth must sit to a wall to count (>= thickness)
     bool   bFlipWallFacing = false; // author knob: reverse wall winding (inner<->outer faces)
+    double MinGrammarLen  = 160.0;  // below this, a remainder realizes as a FILL patch, not the grammar
 };
 
 // ---------- outputs ----------
@@ -71,6 +72,17 @@ struct FPlumbSocketPlan
     bool     bRelaxedBond = false;    // solver committed by relaxing a requirement (yellow)
 };
 
+// A guaranteed-coverage patch: one stretched grammar module over an area the bay grammar
+// can't tile (sub-minimum remainders, over-opening bands). Realized like a socket point.
+struct FPlumbFillPlan
+{
+    FVector Center = FVector::ZeroVector; // world, at Z0
+    FVector Tangent = FVector::XAxisVector;
+    FVector Normal  = FVector::YAxisVector;
+    double  Width = 0.0;
+    double  Z0 = 0.0, Z1 = 0.0;
+};
+
 struct FPlumbRejectPlan
 {
     FName   OtherId;
@@ -82,6 +94,7 @@ struct FPlumbWallPlan
 {
     TArray<FPlumbSegmentPlan> Segments;
     TArray<FPlumbSocketPlan>  Sockets;
+    TArray<FPlumbFillPlan>    Fills;   // guaranteed-coverage patches (small remainders, over-door bands)
     TArray<FPlumbRejectPlan>  Rejects;
     TArray<FVector>           FloorLoop; // closed loop for floor/ceiling realization (rooms: drawn; corridors: tunnel loop)
 };
@@ -347,27 +360,48 @@ namespace PlumbWallPlanner
     }
 
     // -- retile (Q11 audit invariant: full coverage, zero gaps/overlaps) --
+    // Guaranteed coverage, literally: remainders too small for the bay grammar, and the
+    // wall band ABOVE each opening (socket Z1 .. ceiling), are emitted as FILL patches —
+    // single stretched grammar modules — so no wall area is ever silently dropped.
     inline void RetileRun(const FRun& R, double Z0, double Z1,
-                          TArray<TPair<double,double>> SocketSpans /*run-arc space, sorted*/,
-                          TArray<FPlumbSegmentPlan>& OutSegments)
+                          TArray<TTuple<double,double,double>> SocketSpans /*S0,S1,openTopZ; run-arc space*/,
+                          double MinGrammarLen,
+                          TArray<FPlumbSegmentPlan>& OutSegments,
+                          TArray<FPlumbFillPlan>& OutFills)
     {
-        SocketSpans.Sort([](const TPair<double,double>& X, const TPair<double,double>& Y){ return X.Key < Y.Key; });
+        SocketSpans.Sort([](const TTuple<double,double,double>& X, const TTuple<double,double,double>& Y){ return X.Get<0>() < Y.Get<0>(); });
         const FVector Tan = (R.B - R.A).GetSafeNormal2D();
+        const FVector Nrm(-Tan.Y, Tan.X, 0.0); // left of travel = the faced side
         double Cursor = 0.0;
-        auto Emit = [&](double S0, double S1)
+        auto Emit = [&](double S0, double S1, double SegZ0, double SegZ1)
         {
-            if (S1 - S0 <= KINDA_SMALL_NUMBER) return;
-            FPlumbSegmentPlan Seg;
-            Seg.A = R.A + Tan * S0; Seg.B = R.A + Tan * S1;
-            Seg.Z0 = Z0; Seg.Z1 = Z1;
-            OutSegments.Add(Seg);
+            const double Len = S1 - S0;
+            if (Len <= KINDA_SMALL_NUMBER || SegZ1 - SegZ0 <= KINDA_SMALL_NUMBER) return;
+            if (Len < MinGrammarLen || SegZ1 - SegZ0 < (Z1 - Z0) - KINDA_SMALL_NUMBER)
+            {
+                // too small for the grammar, or a partial-height band -> fill patch
+                FPlumbFillPlan F;
+                F.Center = R.A + Tan * ((S0 + S1) * 0.5); F.Center.Z = SegZ0;
+                F.Tangent = Tan; F.Normal = Nrm;
+                F.Width = Len; F.Z0 = SegZ0; F.Z1 = SegZ1;
+                OutFills.Add(F);
+            }
+            else
+            {
+                FPlumbSegmentPlan Seg;
+                Seg.A = R.A + Tan * S0; Seg.B = R.A + Tan * S1;
+                Seg.Z0 = SegZ0; Seg.Z1 = SegZ1;
+                OutSegments.Add(Seg);
+            }
         };
         for (const auto& Sp : SocketSpans)
         {
-            Emit(Cursor, FMath::Max(Cursor, Sp.Key));
-            Cursor = FMath::Max(Cursor, Sp.Value);
+            Emit(Cursor, FMath::Max(Cursor, Sp.Get<0>()), Z0, Z1);
+            // over-opening band: opening top .. ceiling, same span (follows the grammar as a fill)
+            Emit(FMath::Max(Cursor, Sp.Get<0>()), Sp.Get<1>(), Sp.Get<2>(), Z1);
+            Cursor = FMath::Max(Cursor, Sp.Get<1>());
         }
-        Emit(Cursor, R.Len);
+        Emit(Cursor, R.Len, Z0, Z1);
     }
 
     // -- the entry point --
@@ -417,7 +451,7 @@ namespace PlumbWallPlanner
         // Collect sockets ON MY WALLS (I am the wall-owner in DeriveMouthSocket terms):
         // any open Other whose mouth touches my wall. Symmetric: the Other, planning itself,
         // derives the identical socket via the same function with roles known from geometry.
-        struct FPerRun { TArray<TPair<double,double>> Spans; };
+        struct FPerRun { TArray<TTuple<double,double,double>> Spans; }; // S0,S1,openTopZ
         TArray<FPerRun> PerRun; PerRun.SetNum(Runs.Num());
 
         auto RegisterSocket = [&](const FPlumbSocketPlan& S)
@@ -432,7 +466,7 @@ namespace PlumbWallPlanner
                 if (D2 < Tol2)
                 {
                     const double SC = T * Runs[i].Len;
-                    PerRun[i].Spans.Emplace(SC - S.Width * 0.5, SC + S.Width * 0.5);
+                    PerRun[i].Spans.Emplace(SC - S.Width * 0.5, SC + S.Width * 0.5, S.Z1);
                     return;
                 }
             }
@@ -468,7 +502,7 @@ namespace PlumbWallPlanner
         // Retile every run around its sockets (guaranteed coverage — kills empty walls & the cap bug).
         for (int32 i = 0; i < Runs.Num(); ++i)
         {
-            RetileRun(Runs[i], Self.FloorZ, Self.FloorZ + Self.WallHeight, PerRun[i].Spans, Out.Segments);
+            RetileRun(Runs[i], Self.FloorZ, Self.FloorZ + Self.WallHeight, PerRun[i].Spans, P.MinGrammarLen, Out.Segments, Out.Fills);
         }
         Out.FloorLoop = SelfWalls.Points; // floor/ceiling follow the wall footprint (incl. cap insets)
         return Out;
