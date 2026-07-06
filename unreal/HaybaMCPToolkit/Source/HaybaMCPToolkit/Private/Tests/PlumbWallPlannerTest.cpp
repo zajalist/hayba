@@ -53,7 +53,7 @@ bool FPlumbWallPlannerUnitTest::RunTest(const FString& Parameters)
         TestEqual(TEXT("f1: exactly ONE socket"), Plan.Sockets.Num(), 1);
         if (Plan.Sockets.Num() == 1)
         {
-            TestEqual(TEXT("f1: socket on north wall y=600"), Plan.Sockets[0].Center.Y, 600.0, 1.0);
+            TestEqual(TEXT("f1: frame centered on the gap (wall+thickness/2)"), Plan.Sockets[0].Center.Y, 615.0, 1.0);
             TestEqual(TEXT("f1: centered on the mouth x=1500"), Plan.Sockets[0].Center.X, 1500.0, 1.0);
             TestTrue (TEXT("f1: room owns"), Plan.Sockets[0].bOwned);
             TestEqual(TEXT("f1: opening is type-sized 150, not span-sized"), Plan.Sockets[0].Width, 150.0, 0.1);
@@ -97,7 +97,7 @@ bool FPlumbWallPlannerUnitTest::RunTest(const FString& Parameters)
         TestEqual(TEXT("f3: one socket"), Plan.Sockets.Num(), 1);
         if (Plan.Sockets.Num() == 1)
         {
-            TestEqual(TEXT("f3: on east wall x=600"), Plan.Sockets[0].Center.X, 600.0, 1.0);
+            TestEqual(TEXT("f3: frame centered on the gap x=615"), Plan.Sockets[0].Center.X, 615.0, 1.0);
             TestEqual(TEXT("f3: at the mouth y=300"), Plan.Sockets[0].Center.Y, 300.0, 1.0);
         }
         TestEqual(TEXT("f3: coverage"), CoveredLength(Plan), 2400.0 - 150.0, 0.5);

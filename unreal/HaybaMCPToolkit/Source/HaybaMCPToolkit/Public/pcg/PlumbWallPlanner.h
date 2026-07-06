@@ -342,6 +342,10 @@ namespace PlumbWallPlanner
         const FVector Tan = (R.B - R.A).GetSafeNormal2D();
         Out.OtherId = C.Id;
         Out.Center  = R.A + Tan * SCenter; Out.Center.Z = Z0;
+        // Center the frame ON THE THICKNESS GAP, not the wall plane: half a thickness along the
+        // mouth direction (wall plane -> corridor face). Both sides derive from the same mouth,
+        // so symmetry holds; the assembly (depth == thickness) then spans face-to-face exactly.
+        Out.Center += FVector(M.Dir.X, M.Dir.Y, 0.0) * (P.WallThickness * 0.5);
         Out.Tangent = Tan;
         Out.Normal  = -M.Dir;              // out of the wall, toward the corridor
         Out.Width   = Choice.Width;
