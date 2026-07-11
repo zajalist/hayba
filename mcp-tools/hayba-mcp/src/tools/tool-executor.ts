@@ -1,13 +1,15 @@
 import type { HaybaToolCost } from './hayba-tool-meta.js';
 import type { TcpResponse } from '../tcp-client.js';
 import { getToolMeta } from './tool-meta-registry.js';
+import { isHeavyOp, HEAVY_OP_TIMEOUT_MS } from './heavy-ops.js';
 
 export type UeToolErrorCode =
   | 'transport'
   | 'timeout'
   | 'plan_gate'
   | 'tool_disabled'
-  | 'ue_error';
+  | 'ue_error'
+  | 'editor_busy';
 
 export class UeToolError extends Error {
   readonly code: UeToolErrorCode;
@@ -145,6 +147,51 @@ export function costToTimeoutMs(cost: HaybaToolCost | undefined): number {
   return COST_TIMEOUTS_MS.medium;
 }
 
+/**
+ * Resolve the effective timeout for a command. Heavy, game-thread-blocking ops
+ * (imports, level saves, PCG generate, asset re-index) get a dedicated,
+ * generous `heavy` tier instead of their cost tier, so they don't pre-time-out
+ * while UE is still legitimately working.
+ */
+export function resolveTimeoutMs(cmd: string): number {
+  if (isHeavyOp(cmd)) return HEAVY_OP_TIMEOUT_MS;
+  return costToTimeoutMs(getToolMeta(cmd)?.cost);
+}
+
+/**
+ * Build the structured, actionable error thrown when a heavy op fails at the
+ * transport layer (connection refused / reset / timeout). A heavy op that
+ * drops the connection almost always means "editor is busy finishing the
+ * operation on the game thread", NOT "editor crashed" — so the message steers
+ * the caller to re-check status rather than assume a crash. When a live status
+ * probe is reachable its process-up/down signal is folded in for accuracy.
+ */
+async function makeEditorBusyError(cmd: string, cause: unknown): Promise<UeToolError> {
+  const causeMsg = (cause as Error)?.message ?? String(cause);
+  let processHint =
+    'Re-check the editor with hayba_check_ue_status before retrying — do NOT auto-retry this op.';
+  try {
+    // Lazy import so this module stays unit-testable without the process probe.
+    const { probeEditorProcess } = await import('./heavy-op-probe.js');
+    const running = await probeEditorProcess();
+    if (running === true) {
+      processHint =
+        'The UnrealEditor process is still running — it is almost certainly busy finishing this operation on the game thread (not crashed). Wait for it to settle, then re-check hayba_check_ue_status. Do NOT auto-retry.';
+    } else if (running === false) {
+      processHint =
+        'No UnrealEditor process was detected — the editor may have exited/crashed during this operation. Verify with hayba_check_ue_status before retrying.';
+    }
+  } catch {
+    // Probe unavailable — fall back to the generic hint.
+  }
+  return new UeToolError(
+    `Heavy operation "${cmd}" failed at the transport layer (${causeMsg}). ` +
+      `Heavy ops block the UE game thread and stop the plugin TCP port from accepting ` +
+      `connections while they run. ${processHint}`,
+    { code: 'editor_busy', uePayload: { cmd, cause: causeMsg, heavy: true } },
+  );
+}
+
 export type Sender = (
   cmd: string,
   params: Record<string, unknown>,
@@ -171,7 +218,8 @@ export async function executeCommand<T = Record<string, unknown>>(
 ): Promise<T> {
   const sender = opts.sender ?? DEFAULT_SENDER;
   if (!sender) throw new UeToolError('No sender configured', { code: 'transport' });
-  const timeout = opts.timeout ?? costToTimeoutMs(getToolMeta(cmd)?.cost);
+  const heavy = isHeavyOp(cmd);
+  const timeout = opts.timeout ?? resolveTimeoutMs(cmd);
 
   const attemptOnce = async (): Promise<TcpResponse> => sender(cmd, params, timeout);
 
@@ -179,6 +227,13 @@ export async function executeCommand<T = Record<string, unknown>>(
   try {
     resp = await attemptOnce();
   } catch (firstErr) {
+    // Heavy ops NEVER retry: they block the game thread and are effectively
+    // non-idempotent, so re-firing into a busy editor compounds the stall.
+    // Throw a structured "editor busy" error steering the caller to re-check
+    // status rather than assume a crash.
+    if (heavy) {
+      throw await makeEditorBusyError(cmd, firstErr);
+    }
     // Transport-level failure. Only retry when the command is idempotent:
     // non-idempotent ops (spawn, delete, create, …) must not execute twice.
     if (NON_IDEMPOTENT.has(cmd)) {

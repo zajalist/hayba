@@ -256,6 +256,58 @@ export async function ensureConnected(
   return c;
 }
 
+export interface AwaitResponsiveOpts {
+  /** Total budget to wait for the port to become responsive (default 30 s). */
+  timeoutMs?: number;
+  /** Delay between probes (default 1 s). */
+  intervalMs?: number;
+  /** Per-probe send timeout (default 2 s) — a lightweight `ping`. */
+  probeTimeoutMs?: number;
+  /** Injected connect+ping for tests. Returns true if the port answered. */
+  probeFn?: () => Promise<boolean>;
+  /** Delay function — defaults to real setTimeout-based promise. */
+  delayFn?: DelayFn;
+  /** Clock — defaults to Date.now. */
+  now?: () => number;
+}
+
+/**
+ * Pre-flight gate for heavy ops: poll the plugin TCP port with a lightweight
+ * `ping` until it answers or the budget expires. Returns true once the editor
+ * is responsive, false if it never settled within `timeoutMs`.
+ *
+ * This is an OPT-IN utility — scripts/tools call it to wait for a busy editor
+ * to settle before firing another heavy op into a closed port. It is NOT wired
+ * into executeCommand's default path.
+ */
+export async function awaitEditorResponsive(opts: AwaitResponsiveOpts = {}): Promise<boolean> {
+  const {
+    timeoutMs = 30_000,
+    intervalMs = 1_000,
+    probeTimeoutMs = 2_000,
+    delayFn = defaultDelay,
+    now = Date.now,
+  } = opts;
+
+  const probeFn = opts.probeFn ?? (async () => {
+    try {
+      const c = await ensureConnected();
+      const resp = await c.send('ping', {}, probeTimeoutMs);
+      return resp.ok;
+    } catch {
+      return false;
+    }
+  });
+
+  const deadline = now() + timeoutMs;
+  // Always probe at least once, even for a zero/negative budget.
+  for (;;) {
+    if (await probeFn()) return true;
+    if (now() >= deadline) return false;
+    await delayFn(intervalMs);
+  }
+}
+
 /** Reset the module-level singleton — for testing only. */
 export function _resetClientForTesting(): void {
   client = null;

@@ -1,5 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { UeToolError, costToTimeoutMs, executeCommand, NON_IDEMPOTENT, type Sender } from './tool-executor.js';
+import { HEAVY_OP_TIMEOUT_MS, addHeavyOp, isHeavyOp, listHeavyOps, removeHeavyOp } from './heavy-ops.js';
+
+// Keep the "editor busy" tests hermetic: the real probe shells out to
+// tasklist/pgrep via the dynamic import in makeEditorBusyError. Mock it so unit
+// tests never spawn a subprocess (matches the "unit tests don't shell out" bar).
+vi.mock('./heavy-op-probe.js', () => ({ probeEditorProcess: async () => null }));
 import type { TcpResponse } from '../tcp-client.js';
 import { registerToolMeta, resetToolMetaRegistry } from './tool-meta-registry.js';
 
@@ -196,6 +202,58 @@ describe('executeCommand — idempotency / retry gating', () => {
       'ism_add_instances',
     ]) {
       expect(NON_IDEMPOTENT.has(cmd)).toBe(true);
+    }
+  });
+});
+
+describe('heavy-ops registry', () => {
+  it('recognises the known game-thread-blocking commands', () => {
+    for (const cmd of ['asset_import', 'landscape_import', 'level_save', 'pcg_execute_graph', 'hayba_asset_reindex']) {
+      expect(isHeavyOp(cmd)).toBe(true);
+    }
+    expect(isHeavyOp('actor_list')).toBe(false);
+  });
+
+  it('is extensible at runtime via addHeavyOp', () => {
+    expect(isHeavyOp('my_custom_blocking_op')).toBe(false);
+    addHeavyOp('my_custom_blocking_op');
+    expect(isHeavyOp('my_custom_blocking_op')).toBe(true);
+    expect(listHeavyOps()).toContain('my_custom_blocking_op');
+    // Don't leak this runtime registration into other suites.
+    removeHeavyOp('my_custom_blocking_op');
+  });
+});
+
+describe('executeCommand — heavy ops', () => {
+  it('gets the dedicated heavy timeout (300s), not the cost tier', async () => {
+    const seen: number[] = [];
+    const spy: Sender = async (_c, _p, t) => { seen.push(t); return { id: 't', ok: true, data: {} }; };
+    await executeCommand('level_save', {}, { sender: spy });
+    expect(seen[0]).toBe(HEAVY_OP_TIMEOUT_MS);
+    expect(seen[0]).toBe(300_000);
+  });
+
+  it('does NOT retry on transport failure — sender called exactly once', async () => {
+    let calls = 0;
+    const sender: Sender = async () => { calls++; throw new Error('ECONNREFUSED'); };
+    await expect(executeCommand('pcg_execute_graph', {}, { sender }))
+      .rejects.toMatchObject({ name: 'UeToolError', code: 'editor_busy' });
+    expect(calls).toBe(1);
+  });
+
+  it('produces a structured "editor busy" error on transport failure', async () => {
+    const sender: Sender = async () => { throw new Error('socket hang up'); };
+    try {
+      await executeCommand('asset_import', {}, { sender });
+      throw new Error('should have thrown');
+    } catch (e: unknown) {
+      const u = e as InstanceType<typeof UeToolError>;
+      expect(u.code).toBe('editor_busy');
+      expect(u.message).toContain('block the UE game thread');
+      expect(u.message).toContain('socket hang up');
+      const payload = u.uePayload as { cmd: string; heavy: boolean };
+      expect(payload.heavy).toBe(true);
+      expect(payload.cmd).toBe('asset_import');
     }
   });
 });

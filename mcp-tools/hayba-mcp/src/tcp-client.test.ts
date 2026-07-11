@@ -4,8 +4,48 @@ import {
   connectWithBackoff,
   resolveTargetPort,
   ensureConnected,
+  awaitEditorResponsive,
   _resetClientForTesting,
 } from './tcp-client.js';
+
+describe('awaitEditorResponsive', () => {
+  const noDelay = async () => {};
+
+  it('returns true immediately when the first probe answers', async () => {
+    let probes = 0;
+    const ok = await awaitEditorResponsive({
+      probeFn: async () => { probes++; return true; },
+      delayFn: noDelay,
+    });
+    expect(ok).toBe(true);
+    expect(probes).toBe(1);
+  });
+
+  it('polls until the port becomes responsive', async () => {
+    let probes = 0;
+    const ok = await awaitEditorResponsive({
+      probeFn: async () => { probes++; return probes >= 3; },
+      delayFn: noDelay,
+      intervalMs: 1,
+      timeoutMs: 10_000,
+      now: () => 0, // never exhaust the budget
+    });
+    expect(ok).toBe(true);
+    expect(probes).toBe(3);
+  });
+
+  it('returns false when the budget expires before the port answers', async () => {
+    let t = 0;
+    const ok = await awaitEditorResponsive({
+      probeFn: async () => false,
+      delayFn: noDelay,
+      intervalMs: 1,
+      timeoutMs: 5,
+      now: () => (t += 10), // jump past the deadline after the first probe
+    });
+    expect(ok).toBe(false);
+  });
+});
 
 // ── Existing baseline tests ───────────────────────────────────────────────────
 
