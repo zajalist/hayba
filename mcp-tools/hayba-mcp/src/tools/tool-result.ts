@@ -14,6 +14,36 @@
  */
 
 import type { ToolResult } from './types.js';
+import { VALIDATION_NUDGE } from './hayba-tool-meta.js';
+
+/**
+ * Append the post-mutation validation nudge to a successful tool result as an
+ * ADDITIONAL text content block. Additive by design: the tool's original
+ * content block(s) are left untouched (existing result shape is preserved), the
+ * nudge rides alongside as a trailing `type:'text'` block the agent will read.
+ *
+ * Applied centrally at the registration seam (register-tool.ts) keyed off the
+ * tool's scene-mutating `effects`, so it is DRY — not pasted into 40 handlers.
+ * No-ops on error results (isError) and on non-text results (e.g. image blocks
+ * from editor_capture_viewport), so nothing that already carries a validation
+ * signal or a screenshot is disturbed.
+ */
+export function withValidationNudge(result: ToolResult): ToolResult {
+  if (result.isError) return result;
+  if (!Array.isArray(result.content)) return result;
+  // Idempotent: never stack two nudges (a handler that already appended one).
+  const already = result.content.some(
+    (c) => c.type === 'text' && typeof c.text === 'string' && c.text.includes(VALIDATION_NUDGE),
+  );
+  if (already) return result;
+  return {
+    ...result,
+    content: [
+      ...result.content,
+      { type: 'text' as const, text: VALIDATION_NUDGE },
+    ],
+  };
+}
 
 /**
  * Wrap a successful data payload as a canonical ToolResult text block.

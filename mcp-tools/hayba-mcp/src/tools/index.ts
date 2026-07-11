@@ -1971,7 +1971,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
 
   server.tool(
     'validator_run',
-    'Manually evaluate validator rules. Pass scope=\'all\' or { rule_ids: [...] }. Persists findings to history.',
+    'CATCHES SILENT WRONGNESS YOU CANNOT SEE: runs the validator rules over the current scene and returns concrete post-condition findings — actors floating above ground, interpenetrating meshes, off-grid/mis-scaled placements, missing expected results, and PLUMB constraint violations. Pass scope=\'all\' (default) or { rule_ids: [...] }; findings persist to history and the Validation panel. USE_WHEN: after ANY scene mutation (spawn / move / delete / scatter / foliage / PCG execute / world_generate / landscape / lighting change), AND before you declare a task done or report success. NOT_WHEN: you have made no scene change since the last run. WHY: you have no viewport — this is how you verify placement actually landed correctly instead of assuming it did.',
     validatorRunSchema,
     async (args: { scope?: 'all' | { rule_ids?: string[] }; persist?: boolean }) => {
       const ue = await getUe();
@@ -1982,7 +1982,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
 
   server.tool(
     'validator_history',
-    'Read persisted validator findings. Filter by limit / since_iso / include_resolved / rule_ids.',
+    'Read persisted validator findings (the record of everything validator_run / plumb_validate caught). Filter by limit / since_iso / include_resolved / rule_ids. USE_WHEN: reviewing what is still wrong in the scene, checking whether a prior fix cleared a finding, or reporting outstanding issues to the user. NOT_WHEN: you want a fresh evaluation — call validator_run instead; history only shows past findings.',
     validatorHistorySchema,
     async (args: { limit?: number; since_iso?: string; include_resolved?: boolean; rule_ids?: string[] }) => {
       const r = await validatorHistoryHandler(args);
@@ -2012,7 +2012,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
 
   server.tool(
     'validator_rules',
-    'Return the validator rule catalog. Include each rule\'s message, hint, refs, and disabled state.',
+    'List the validator rule catalog — every post-condition check and bound PLUMB constraint that validator_run / plumb_validate will evaluate, with each rule\'s message, hint, refs, and disabled state. USE_WHEN: you want to know WHAT validation can catch before running it, or to confirm the right rule is enabled for the task at hand. NOT_WHEN: you just want to run the checks — call validator_run.',
     validatorRulesSchema,
     async (args: { include_disabled_state?: boolean }) => {
       const r = await validatorRulesHandler(args);
@@ -2083,7 +2083,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     plumbConstraintProposeSchema, async (a) => j(await plumbConstraintProposeHandler(a)));
 
   server.tool('plumb_validate',
-    'Run library constraints over a set of instances and return a PLUMB Verdict (gated, directional: per-gate ok + signed value_m + FixVector; hard fails set stopped_at, soft fails accumulate soft_cost).',
+    'VERIFY PLACEMENT IS ACTUALLY CORRECT: runs the PLUMB constraint library over a set of instances and returns a directional Verdict — per-gate ok, signed value_m (how far off, and which way), and a FixVector telling you exactly how to move each instance to satisfy it. Catches grounding, clearance, alignment, spacing and interpenetration violations the viewport would reveal but you cannot. Hard fails set stopped_at; soft fails accumulate soft_cost. USE_WHEN: immediately after placing/scattering/spawning/transforming instances, and before declaring the layout done — feed the FixVector back into a transform to correct, then re-validate. NOT_WHEN: no constraints are bound for these assets (check plumb_constraint_list / validator_rules first). WHY: this is the quantified check that turns "looks placed" into "provably grounded and non-overlapping".',
     plumbValidateSchema, async (a) => j(await plumbValidateHandler(a)));
 
   server.tool('plumb_mask_add',
