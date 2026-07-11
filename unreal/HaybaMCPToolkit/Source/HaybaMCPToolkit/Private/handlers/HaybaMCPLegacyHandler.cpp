@@ -750,13 +750,28 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
                             Weighted->MeshEntries.Reset();
                             for (const FRequestedEntry& Req : Requested)
                             {
-                                const FSoftObjectPath MeshRef(Req.MeshPath);
+                                // Normalize a package-only path ("/Game/Dir/SM_Foo") to a full
+                                // object path ("/Game/Dir/SM_Foo.SM_Foo"). LoadObject/TSoftObjectPtr
+                                // resolve the full form reliably; the short form can silently fail
+                                // to load and would re-mask as a zero-instance scatter — the exact
+                                // bug this path fixes. A path already containing '.' is left as-is.
+                                FString ObjPath = Req.MeshPath;
+                                if (!ObjPath.Contains(TEXT(".")))
+                                {
+                                    FString AssetName;
+                                    if (ObjPath.Split(TEXT("/"), nullptr, &AssetName, ESearchCase::IgnoreCase, ESearchDir::FromEnd)
+                                        && !AssetName.IsEmpty())
+                                    {
+                                        ObjPath = ObjPath + TEXT(".") + AssetName;
+                                    }
+                                }
+                                const FSoftObjectPath MeshRef(ObjPath);
                                 // Verify resolvability; warn + skip on failure, never crash.
-                                if (!LoadObject<UStaticMesh>(nullptr, *Req.MeshPath))
+                                if (!LoadObject<UStaticMesh>(nullptr, *ObjPath))
                                 {
                                     UE_LOG(LogTemp, Warning,
-                                        TEXT("[Hayba PCG] StaticMeshSpawner: could not load StaticMesh '%s' — skipping this MeshEntry."),
-                                        *Req.MeshPath);
+                                        TEXT("[Hayba PCG] StaticMeshSpawner: could not load StaticMesh '%s' (from '%s') — skipping this MeshEntry."),
+                                        *ObjPath, *Req.MeshPath);
                                     continue;
                                 }
                                 FPCGMeshSelectorWeightedEntry Entry;
