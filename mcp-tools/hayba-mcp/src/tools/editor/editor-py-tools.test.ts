@@ -129,6 +129,9 @@ describe('editor_cvar_set', () => {
     const s = lastScript();
     expect(s).toContain('get_console_variable_string_value');
     expect(s).toContain('verified');
+    // Honest failure: an empty-string readback (mistyped cvar) flips ok:false, not a silent set-to-0.
+    expect(s).toContain('_ok = False');
+    expect(s).toContain('"ok": _ok');
   });
 });
 

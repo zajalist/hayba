@@ -447,8 +447,11 @@ function typeSetParamsScript(p: FoliageTypeSetParamsParams): string {
     '        else: unchanged.append("cull_distance")',
     '    try: unreal.EditorAssetLibrary.save_loaded_asset(ft)',
     '    except Exception: pass',
-    '    _emit({"ok": True, "foliage_type_path": ft.get_path_name(), "changed_keys": changed,',
-    '           "unchanged_keys": unchanged})',
+    '    # A set where every requested key failed to apply (property not exposed on this',
+    '    # FoliageType build) is a failed write, not a success — bind ok to changed count.',
+    '    _warnings = [] if not unchanged else ["params not applied (property not exposed or unchanged): %s" % ", ".join(unchanged)]',
+    '    _emit({"ok": len(changed) > 0, "foliage_type_path": ft.get_path_name(), "changed_keys": changed,',
+    '           "unchanged_keys": unchanged, "warnings": _warnings})',
     'except Exception as _e:',
     '    _err(_e)',
   ].join('\n');
@@ -457,9 +460,9 @@ function typeSetParamsScript(p: FoliageTypeSetParamsParams): string {
 export const foliageTypeSetParamsDescriptor: PyToolDescriptor<typeof foliageTypeSetParamsSchema.shape> = {
   name: 'foliage_type_set_params',
   description:
-    'Set the core authoring knobs on a FoliageType — density, radius, scale range (X/Y/Z), align-to-normal, random-yaw, world collision, cast-shadow, and cull start/end — then save + read back which keys changed. Set-to-value (retry-safe); omitted fields untouched. UNCERTAIN-API: unknown property spellings land in unchanged_keys[] rather than being silently lost.',
+    'Set the core authoring knobs on a FoliageType — density, radius, scale range (X/Y/Z), align-to-normal, random-yaw, world collision, cast-shadow, and cull start/end — then save + read back which keys changed. Set-to-value (retry-safe); omitted fields untouched. UNCERTAIN-API: unknown property spellings land in unchanged_keys[] rather than being silently lost. Returns ok:false (with warnings[]) when NONE of the requested params applied.',
   cost: 'low',
-  returns: '{ok, foliage_type_path, changed_keys[], unchanged_keys[]}',
+  returns: '{ok, foliage_type_path, changed_keys[], unchanged_keys[], warnings[]}',
   schema: foliageTypeSetParamsSchema.shape,
   meta: writeMeta,
   buildScript: typeSetParamsScript,

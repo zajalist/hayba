@@ -313,8 +313,12 @@ function meshSetMaterialSlotScript(p: MeshSetMaterialSlotParams): string {
     '        if _slot < len(rb) and rb[_slot].material_interface is not None:',
     '            readback = rb[_slot].material_interface.get_path_name()',
     '    except Exception: pass',
-    '    _emit({"ok": True, "asset_path": _path, "slot_index": _slot,',
-    '           "material": _mat, "applied": applied, "readback": readback})',
+    '    # Bind ok to the read-back matching the requested asset — a set that silently',
+    '    # no-ops (out-of-range slot the subsystem ignored, engine rejection) is a failure.',
+    '    verified = (readback is not None and unreal.EditorAssetLibrary.load_asset(readback) == mat)',
+    '    warnings = [] if verified else ["slot %d material readback (%s) does not match requested (%s) — write did not stick" % (_slot, readback, _mat)]',
+    '    _emit({"ok": bool(applied and verified), "asset_path": _path, "slot_index": _slot,',
+    '           "material": _mat, "applied": applied, "verified": verified, "readback": readback, "warnings": warnings})',
     'except Exception as _e:',
     '    _err(_e)',
   ].join('\n');
@@ -325,7 +329,7 @@ export const meshSetMaterialSlotDescriptor: PyToolDescriptor<typeof meshSetMater
   description:
     'Assign a material/MaterialInstance asset to a StaticMesh material slot by index, saving the mesh and reading back the applied material path. Probes StaticMeshEditorSubsystem.set_material then the static_materials array. Idempotent set-to-value (assigning the same material twice is the same state). Sets the material ASSET on the slot — use material_* tools to edit the graph.',
   cost: 'low',
-  returns: '{ok, asset_path, slot_index, material, applied, readback}',
+  returns: '{ok, asset_path, slot_index, material, applied, verified, readback, warnings[]}',
   schema: meshSetMaterialSlotSchema.shape,
   meta: writeMeta,
   buildScript: meshSetMaterialSlotScript,

@@ -288,19 +288,21 @@ function editorCvarSetScript(p: EditorCvarSetParams): string {
     '    # Same existence caveat as editor_cvar_get: the float getter returns 0.0 for a',
     '    # nonexistent cvar, so a typo would otherwise look like a successful set-to-0.',
     '    str_getter = getattr(unreal.SystemLibrary, "get_console_variable_string_value", None)',
-    '    verified = None; note = None',
+    '    verified = None; note = None; _ok = True',
     '    if str_getter is not None:',
     '        try:',
     '            sv = str_getter(_name)',
     '            verified = bool(sv is not None and str(sv) != "")',
-    '            if not verified: note = "cvar not found after set (empty string readback) — the name is likely mistyped"',
+    '            if not verified:',
+    '                note = "cvar not found after set (empty string readback) — the name is likely mistyped"',
+    '                _ok = False',  // definitive not-found → honest failure, not a silent set-to-0
     '        except Exception:',
     '            verified = False',
     '            note = "string readback failed; cannot confirm the cvar exists"',
     '    else:',
     '        verified = False',
     '        note = "no cvar-existence probe available on this engine build; applied may be a type-default if the name is wrong"',
-    '    _emit({"ok": True, "name": _name, "requested": _val, "applied": applied, "verified": verified, "note": note})',
+    '    _emit({"ok": _ok, "name": _name, "requested": _val, "applied": applied, "verified": verified, "note": note})',
     'except Exception as _e:',
     '    _err(_e)',
   ].join('\n');
@@ -309,7 +311,7 @@ function editorCvarSetScript(p: EditorCvarSetParams): string {
 export const editorCvarSetDescriptor: PyToolDescriptor<typeof editorCvarSetSchema.shape> = {
   name: 'editor_cvar_set',
   description:
-    'Typed set of a console variable, with a float read-back of the applied value. CAVEAT: the float readback returns 0.0 for a nonexistent cvar, indistinguishable from a real set-to-0 — this tool also probes the string getter (when available on this engine build) and reports verified:false + a note when it cannot confirm the cvar actually exists. Idempotent (retry-safe). NOT a freeform console runner — use editor_run_console_command for arbitrary commands.',
+    'Typed set of a console variable, with a float read-back of the applied value. CAVEAT: the float readback returns 0.0 for a nonexistent cvar, indistinguishable from a real set-to-0 — this tool also probes the string getter (when available on this engine build) and returns ok:false + verified:false + a note when the readback proves the cvar does not exist (mistyped name). When no existence probe is available it stays ok:true with verified:false. Idempotent (retry-safe). NOT a freeform console runner — use editor_run_console_command for arbitrary commands.',
   cost: 'low',
   returns: '{ok, name, requested, applied, verified, note}',
   schema: editorCvarSetSchema.shape,

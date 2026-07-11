@@ -102,6 +102,15 @@ describe('foliage_type_set_params', () => {
     expect(s).toContain('changed_keys');
   });
 
+  it('binds ok to at least one applied key (no silent success when nothing changed)', async () => {
+    const { sender, lastScript } = mockStdout(emit({ ok: true }));
+    setDefaultSender(sender);
+    await makePyToolHandler(foliageTypeSetParamsDescriptor)({ foliage_type_path: '/Game/FT', density: 5 });
+    const s = lastScript();
+    expect(s).toContain('"ok": len(changed) > 0');
+    expect(s).toContain('warnings');
+  });
+
   it('is NOT classified NON_IDEMPOTENT (set-to-value)', () => {
     expect(NON_IDEMPOTENT.has('foliage_type_set_params')).toBe(false);
   });
