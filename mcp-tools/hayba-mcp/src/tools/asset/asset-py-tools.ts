@@ -102,7 +102,7 @@ function assetSaveScript(p: AssetSaveParams): string {
     '                (saved if ok else failed).append(pth)',
     '            except Exception:',
     '                failed.append(pth)',
-    '        _emit({"ok": True, "mode": "named", "saved": saved, "saved_count": len(saved), "failed": failed})',
+    '        _emit({"ok": len(failed) == 0, "mode": "named", "saved": saved, "saved_count": len(saved), "failed": failed, "warnings": ([] if not failed else ["%d of %d asset(s) failed to save (path missing or not saveable)" % (len(failed), len(_paths))])})',
     '    else:',
     '        ok = unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, True)',
     '        _emit({"ok": True, "mode": "all_dirty", "saved_all": bool(ok)})',
@@ -114,9 +114,9 @@ function assetSaveScript(p: AssetSaveParams): string {
 export const assetSaveDescriptor: PyToolDescriptor<typeof assetSaveSchema.shape> = {
   name: 'asset_save',
   description:
-    'Save dirty packages to disk. With asset_paths: saves each (only if dirty) and reports per-asset success. Without: flushes ALL dirty map+content packages in one call. The write counterpart to editor_get_state\'s dirty_packages read. Idempotent (re-saving unchanged bytes is a no-op).',
+    'Save dirty packages to disk. With asset_paths: saves each (only if dirty) and reports per-asset success — ok:false when ANY named path fails to save (surfaced in failed[] + warnings[]). Without: flushes ALL dirty map+content packages in one call. The write counterpart to editor_get_state\'s dirty_packages read. Idempotent (re-saving unchanged bytes is a no-op).',
   cost: 'low',
-  returns: '{ok, mode, saved?[], saved_count?, failed?[], saved_all?}',
+  returns: '{ok, mode, saved?[], saved_count?, failed?[], warnings?[], saved_all?}',
   schema: assetSaveSchema.shape,
   meta: writeMeta,
   buildScript: assetSaveScript,

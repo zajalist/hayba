@@ -114,6 +114,16 @@ describe('landscape_set_material', () => {
     expect(s).toContain("_mat = '/Game/M'");
   });
 
+  it('binds ok to the readback matching the assigned material (no silent success)', async () => {
+    const { sender, lastScript } = mockStdout(emit({ ok: true }));
+    setDefaultSender(sender);
+    await makePyToolHandler(landscapeSetMaterialDescriptor)({ actor_label: 'L', material_path: '/Game/M' });
+    const s = lastScript();
+    expect(s).toContain('_applied = (_rb == _mat)');
+    expect(s).toContain('"ok": _applied');
+    expect(s).toContain('warnings');
+  });
+
   it('is NOT classified NON_IDEMPOTENT (set-to-value)', () => {
     expect(NON_IDEMPOTENT.has('landscape_set_material')).toBe(false);
   });
@@ -147,6 +157,15 @@ describe('landscape_set_nanite', () => {
     expect(s).toContain('set_editor_property("enable_nanite"');
     expect(s).toContain('_enable = True');
     expect(s).toContain('rebuild_needed');
+  });
+
+  it('binds ok to the enable_nanite readback matching the request (no silent success)', async () => {
+    const { sender, lastScript } = mockStdout(emit({ ok: true }));
+    setDefaultSender(sender);
+    await makePyToolHandler(landscapeSetNaniteDescriptor)({ actor_label: 'L', enable: true });
+    const s = lastScript();
+    expect(s).toContain('_applied = (_rb == _enable)');
+    expect(s).toContain('"ok": _applied');
   });
 });
 

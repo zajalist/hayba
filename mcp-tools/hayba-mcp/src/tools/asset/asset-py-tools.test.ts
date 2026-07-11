@@ -47,6 +47,15 @@ describe('asset_save', () => {
     expect(s).toContain('_paths = ["/Game/A"]');
   });
 
+  it('binds ok to zero failures in named mode (no silent success on failed saves)', async () => {
+    const { sender, lastScript } = mockStdout(emit({ ok: true }));
+    setDefaultSender(sender);
+    await makePyToolHandler(assetSaveDescriptor)({ asset_paths: ['/Game/A'] });
+    const s = lastScript();
+    expect(s).toContain('"ok": len(failed) == 0');
+    expect(s).toContain('warnings');
+  });
+
   it('is NOT classified NON_IDEMPOTENT (retry-safe)', () => {
     expect(NON_IDEMPOTENT.has('asset_save')).toBe(false);
   });

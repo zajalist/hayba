@@ -95,6 +95,16 @@ describe('mesh_set_material_slot', () => {
     expect(s).toContain("_mat = '/Game/Mat'");
   });
 
+  it('binds ok to a verified readback matching the requested material (no silent success)', async () => {
+    const { sender, lastScript } = mockStdout(emit({ ok: true }));
+    setDefaultSender(sender);
+    await makePyToolHandler(meshSetMaterialSlotDescriptor)({ asset_path: '/Game/M', slot_index: 0, material_path: '/Game/Mat' });
+    const s = lastScript();
+    expect(s).toContain('verified = (readback is not None');
+    expect(s).toContain('"ok": bool(applied and verified)');
+    expect(s).toContain('warnings');
+  });
+
   it('is NOT classified NON_IDEMPOTENT (set-to-value is retry-safe)', () => {
     expect(NON_IDEMPOTENT.has('mesh_set_material_slot')).toBe(false);
   });
