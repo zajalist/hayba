@@ -190,7 +190,7 @@ void FHaybaMCPSceneGraphHandler::WriteCognitiveMapCache(const TSharedRef<FJsonOb
     // Build a local copy so we don't mutate the caller's object
     TSharedRef<FJsonObject> CacheObj = MakeShared<FJsonObject>();
     for (const auto& Field : Data->Values)
-        CacheObj->SetField(Field.Key, Field.Value);
+        CacheObj->SetField(FString(*Field.Key), Field.Value);
 
     // Add timestamp only to the local copy
     CacheObj->SetStringField(TEXT("built_at"), FDateTime::UtcNow().ToIso8601());

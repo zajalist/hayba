@@ -293,10 +293,11 @@ static void ApplyNodeProps(UMaterialExpression* Expr, const TSharedPtr<FJsonObje
         TEXT("const"), TEXT("function"), TEXT("coordinate_index"),
         TEXT("u_tiling"), TEXT("v_tiling"),
     };
-    for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Props->Values)
+    for (const auto& Pair : Props->Values)
     {
-        if (Aliases.Contains(Pair.Key)) continue;
-        HaybaReflection::SetProp(Expr, Pair.Key, Pair.Value);
+        const FString Key = FString(*Pair.Key);
+        if (Aliases.Contains(Key)) continue;
+        HaybaReflection::SetProp(Expr, Key, Pair.Value);
     }
 
     Expr->PostEditChange();
@@ -1540,12 +1541,13 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
     };
 
     TArray<TSharedPtr<FJsonValue>> Applied;
-    for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*PropsObj)->Values)
+    for (const auto& Pair : (*PropsObj)->Values)
     {
-        const FString* Real = Aliases.Find(Pair.Key);
-        const FString RealName = Real ? *Real : Pair.Key;
+        const FString Key = FString(*Pair.Key);
+        const FString* Real = Aliases.Find(Key);
+        const FString RealName = Real ? *Real : Key;
         if (HaybaReflection::SetProp(Mat, RealName, Pair.Value))
-            Applied.Add(MakeShared<FJsonValueString>(Pair.Key));
+            Applied.Add(MakeShared<FJsonValueString>(Key));
     }
 
     // In-memory only: master materials are written to disk solely by

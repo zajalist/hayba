@@ -145,7 +145,7 @@ namespace
 
         for (auto& Pair : Object->Values)
         {
-            const FString& Key = Pair.Key;
+            const FString Key = FString(*Pair.Key);
             TSharedPtr<FJsonValue>& Value = Pair.Value;
             if (!Value.IsValid())
             {
@@ -224,12 +224,12 @@ TSharedRef<FJsonObject> FHaybaMCPResponseBuilder::Build(const TSharedRef<FJsonOb
     if (Limits.MaxTopLevelFields > 0 && Copy->Values.Num() > Limits.MaxTopLevelFields)
     {
         TArray<FString> Keys;
-        Copy->Values.GenerateKeyArray(Keys);
+        for (const auto& Pair : Copy->Values) { Keys.Add(FString(*Pair.Key)); }
         Keys.Sort();
         const int32 RemovedCount = Keys.Num() - Limits.MaxTopLevelFields;
         for (int32 i = Limits.MaxTopLevelFields; i < Keys.Num(); ++i)
         {
-            Copy->Values.Remove(Keys[i]);
+            Copy->RemoveField(Keys[i]);
         }
         Truncations.Add({TEXT("_root"), TEXT("fields"), RemovedCount});
     }

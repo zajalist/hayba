@@ -74,7 +74,7 @@ void SHaybaLessonsPanel::Reload()
                 const TSharedPtr<FJsonObject> L = Pair.Value->AsObject();
                 if (!L.IsValid()) continue;
                 TSharedPtr<FHaybaLessonEntry> E = MakeShared<FHaybaLessonEntry>();
-                E->Slug = Pair.Key;
+                E->Slug = FString(*Pair.Key);
                 L->TryGetStringField(TEXT("title"), E->Title);
                 L->TryGetStringField(TEXT("body"), E->Body);
                 const TArray<TSharedPtr<FJsonValue>>* Refs = nullptr;

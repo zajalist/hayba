@@ -127,7 +127,7 @@ void SHaybaMCPMemoryPanel::Reload()
         const TSharedPtr<FJsonObject> P = Pair.Value->AsObject();
         if (!P.IsValid()) continue;
         TSharedPtr<FHaybaLibraryEntry> E = MakeShared<FHaybaLibraryEntry>();
-        E->AssetId = Pair.Key;
+        E->AssetId = FString(*Pair.Key);
         P->TryGetStringField(TEXT("profile"), E->Archetype);
         const TArray<TSharedPtr<FJsonValue>>* Masks = nullptr;
         if (P->TryGetArrayField(TEXT("masks"), Masks)) E->MaskCount = Masks->Num();
@@ -307,7 +307,7 @@ FReply SHaybaMCPMemoryPanel::OnRemoveChecked()
         const TSharedPtr<FJsonObject>* B = nullptr;
         FString Asset;
         if (C.IsValid() && C->TryGetObjectField(TEXT("binding"), B) && B) (*B)->TryGetStringField(TEXT("asset"), Asset);
-        if (Checked.Contains(Asset)) ToRemove.Add(Pair.Key);
+        if (Checked.Contains(Asset)) ToRemove.Add(FString(*Pair.Key));
     }
     for (const FString& K : ToRemove) Constraints->RemoveField(K);
     WriteObj(ConstraintsFile(), Constraints);

@@ -532,7 +532,7 @@ FReply SHaybaSemanticStudio::OnSaveConstraints()
                         if (C->TryGetObjectField(TEXT("binding"), B) && B)
                             (*B)->TryGetStringField(TEXT("asset"), BoundAsset);
                     }
-                    if (BoundAsset != AssetPath && C.IsValid()) Root->SetObjectField(Pair.Key, C);
+                    if (BoundAsset != AssetPath && C.IsValid()) Root->SetObjectField(FString(*Pair.Key), C);
                 }
             }
         }

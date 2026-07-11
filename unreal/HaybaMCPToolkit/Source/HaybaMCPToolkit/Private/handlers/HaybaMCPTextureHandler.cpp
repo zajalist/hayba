@@ -176,12 +176,13 @@ static FHaybaHandlerResult TexSetSettings(const TSharedPtr<FJsonObject>& P)
 
     Tex->Modify();
     TArray<TSharedPtr<FJsonValue>> Applied;
-    for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*Props)->Values)
+    for (const auto& Pair : (*Props)->Values)
     {
-        const FString* Real = Aliases.Find(Pair.Key);
-        const FString RealName = Real ? *Real : Pair.Key;
+        const FString Key = FString(*Pair.Key);
+        const FString* Real = Aliases.Find(Key);
+        const FString RealName = Real ? *Real : Key;
         if (HaybaReflection::SetProp(Tex, RealName, Pair.Value))
-            Applied.Add(MakeShared<FJsonValueString>(Pair.Key));
+            Applied.Add(MakeShared<FJsonValueString>(Key));
     }
     Tex->PostEditChange();
     Tex->UpdateResource();

@@ -327,7 +327,7 @@ FHaybaHandlerResult FHaybaMCPActorHandler::SetProps(const TSharedPtr<FJsonObject
                 continue;
         }
         Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(Actor), Actor, PPF_None);
-        SetNames.Add(MakeShared<FJsonValueString>(Pair.Key));
+        SetNames.Add(MakeShared<FJsonValueString>(FString(*Pair.Key)));
     }
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
