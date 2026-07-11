@@ -1,13 +1,6 @@
 #pragma once
 #include "CoreMinimal.h"
 
-UENUM()
-enum class EHaybaMCPOperationMode : uint8
-{
-    Integrated,
-    ApiKey
-};
-
 // ── BYOK provider catalog mirror ────────────────────────────────────────────
 // MIRROR of mcp-tools/hayba-mcp/src/agents/providers.ts (Task 1 catalog).
 // There is NO build-time codegen linking the two — this is a DOCUMENTED MANUAL
@@ -56,7 +49,6 @@ public:
     int32 PreferredLandscapeResolution = 1009;
 
     bool bHasSeenWizard = false;
-    EHaybaMCPOperationMode OperationMode = EHaybaMCPOperationMode::Integrated;
 
     // Onboarding (new branching wizard, separate from legacy bHasSeenWizard)
     bool bHasSeenOnboarding = false;

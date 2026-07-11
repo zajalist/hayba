@@ -24,8 +24,7 @@ struct FHaybaChatDone;
 struct FHaybaChatError;
 
 /**
- * Single-purpose chat surface for API-key mode users. Integrated-mode users
- * never see this tab. Conversation, input, footer status — that's it.
+ * Single-purpose chat surface. Conversation, input, footer status — that's it.
  *
  * Settings, step progress, and onboarding live in their dedicated panels.
  */
@@ -130,7 +129,6 @@ private:
     // ── Footer click handlers (Q17-b) ─────────────────────────────────────
     FReply OnFooterConnectionClick();
     FReply OnFooterModelClick();
-    FReply OnFooterModeClick();
 
     // ── Send helpers (existing wiring) ────────────────────────────────────
     void InitializeSession(const FString& Goal);

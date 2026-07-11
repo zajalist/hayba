@@ -141,7 +141,7 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                         BuildSection(
                             NSLOCTEXT("Hayba", "Settings.Sec.Connection", "Connection & Security"),
                             NSLOCTEXT("Hayba", "Settings.Sec.Connection.TT",
-                                "How the MCP server authenticates incoming tool calls and what gets logged.\n\nApplies to both Integrated and API Key modes."),
+                                "How the MCP server authenticates incoming tool calls and what gets logged."),
                             SNew(SVerticalBox)
                             + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
                             [ BuildLabeledRow(
@@ -192,8 +192,8 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                         BuildSection(
                             NSLOCTEXT("Hayba", "Settings.Sec.LLM", "AI / LLM Backend"),
                             NSLOCTEXT("Hayba", "Settings.Sec.LLM.TT",
-                                "Configures the AI used by the Chat tab in API Key mode.\n\n"
-                                "Integrated mode (Claude Desktop / Code / Cursor) ignores these fields — the host application drives the model choice there."),
+                                "Configures the AI used by the Chat tab.\n\n"
+                                "External MCP hosts (Claude Desktop / Code / Cursor) ignore these fields — the host application drives the model choice there."),
                             SNew(SVerticalBox)
                             + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
                             [ BuildLabeledRow(
@@ -363,7 +363,7 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                         BuildSection(
                             NSLOCTEXT("Hayba", "Settings.Sec.Redo", "Onboarding"),
                             NSLOCTEXT("Hayba", "Settings.Sec.Redo.TT",
-                                "Re-runs the first-time setup wizard. Your saved settings above are kept; this just re-shows the screens that pick Integrated vs API Key mode and configure the MCP server location."),
+                                "Re-runs the first-time setup wizard. Your saved settings above are kept; this just re-shows the screens that configure the MCP server location."),
                             SNew(SVerticalBox)
                             + SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 12.f)
                             [
