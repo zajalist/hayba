@@ -169,7 +169,7 @@ namespace
         // Generic reflection fall-through for any other documented slot prop.
         for (const auto& Pair : Props->Values)
         {
-            const FString& Key = Pair.Key;
+            const FString Key = FString(*Pair.Key);
             if (Key == TEXT("x") || Key == TEXT("y") || Key == TEXT("w") || Key == TEXT("h")
                 || Key == TEXT("fill") || Key == TEXT("padding")) continue;
             TrySetByReflection(Slot, Key, Pair.Value);

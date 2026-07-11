@@ -120,10 +120,11 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::ObjectSetProperty(const TSharedPtr<FJ
 #endif
     TArray<TSharedPtr<FJsonValue>> Applied;
     TArray<TSharedPtr<FJsonValue>> Failed;
-    for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*PropsObj)->Values)
+    for (const auto& Pair : (*PropsObj)->Values)
     {
-        if (HaybaReflection::SetProp(Obj, Pair.Key, Pair.Value)) Applied.Add(MakeShared<FJsonValueString>(Pair.Key));
-        else Failed.Add(MakeShared<FJsonValueString>(Pair.Key));
+        const FString Key = FString(*Pair.Key);
+        if (HaybaReflection::SetProp(Obj, Key, Pair.Value)) Applied.Add(MakeShared<FJsonValueString>(Key));
+        else Failed.Add(MakeShared<FJsonValueString>(Key));
     }
 #if WITH_EDITOR
     Obj->PostEditChange();

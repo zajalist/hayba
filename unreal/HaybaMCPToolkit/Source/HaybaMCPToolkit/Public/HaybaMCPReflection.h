@@ -136,8 +136,8 @@ namespace HaybaReflection
                         if (JArr[i].IsValid() && JArr[i]->Type == EJson::Object)
                         {
                             const TSharedPtr<FJsonObject>& ElemObj = JArr[i]->AsObject();
-                            for (const TPair<FString, TSharedPtr<FJsonValue>>& F : ElemObj->Values)
-                                SetStructField(InnerSt->Struct, ElemPtr, F.Key, F.Value);
+                            for (const auto& F : ElemObj->Values)
+                                SetStructField(InnerSt->Struct, ElemPtr, FString(*F.Key), F.Value);
                         }
                     }
                 }

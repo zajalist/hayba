@@ -68,7 +68,7 @@ void FHaybaTagIndex::EnsureLoaded()
     for (const auto& KV : Root->Values)
     {
         if (!KV.Value.IsValid() || KV.Value->Type != EJson::Array) continue;
-        TArray<FString>& Out = PathToTags.Add(KV.Key);
+        TArray<FString>& Out = PathToTags.Add(FString(*KV.Key));
         for (const TSharedPtr<FJsonValue>& V : KV.Value->AsArray())
         {
             FString S;

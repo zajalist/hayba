@@ -24,11 +24,11 @@ namespace
             if (Obj.IsValid())
             {
                 TArray<FString> Keys;
-                Obj->Values.GenerateKeyArray(Keys);
+                for (const auto& Pair : Obj->Values) { Keys.Add(FString(*Pair.Key)); }
                 Keys.Sort();
                 for (const FString& Key : Keys)
                 {
-                    const TSharedPtr<FJsonValue> Child = Obj->Values.FindRef(Key);
+                    const TSharedPtr<FJsonValue> Child = Obj->Values.FindRef(UE::FSharedString(*Key));
                     if (!Child.IsValid())
                     {
                         W.WriteNull(Key);
@@ -133,11 +133,11 @@ FString FHaybaMCPSecurityManager::HashParams(const TSharedPtr<FJsonObject>& Para
     Writer->WriteObjectStart();
     {
         TArray<FString> Keys;
-        Params->Values.GenerateKeyArray(Keys);
+        for (const auto& Pair : Params->Values) { Keys.Add(FString(*Pair.Key)); }
         Keys.Sort();
         for (const FString& Key : Keys)
         {
-            const TSharedPtr<FJsonValue> Child = Params->Values.FindRef(Key);
+            const TSharedPtr<FJsonValue> Child = Params->Values.FindRef(UE::FSharedString(*Key));
             if (!Child.IsValid())
             {
                 Writer->WriteNull(Key);

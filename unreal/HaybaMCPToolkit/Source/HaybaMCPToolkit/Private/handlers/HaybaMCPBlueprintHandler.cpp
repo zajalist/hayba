@@ -497,7 +497,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetDefaults(const TSharedPtr<FJso
         FProperty* Prop = BP->GeneratedClass->FindPropertyByName(FName(*Pair.Key));
         if (!Prop)
         {
-            AddSkipped(Pair.Key, TEXT("property_not_found"));
+            AddSkipped(FString(*Pair.Key), TEXT("property_not_found"));
             continue;
         }
 
@@ -552,12 +552,12 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetDefaults(const TSharedPtr<FJso
 
         if (!bHaveValue)
         {
-            AddSkipped(Pair.Key, TEXT("unsupported_value_type"));
+            AddSkipped(FString(*Pair.Key), TEXT("unsupported_value_type"));
             continue;
         }
 
         Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(CDO), CDO, PPF_None);
-        SetNames.Add(MakeShared<FJsonValueString>(Pair.Key));
+        SetNames.Add(MakeShared<FJsonValueString>(FString(*Pair.Key)));
     }
 
     FBlueprintEditorUtils::MarkBlueprintAsModified(BP);

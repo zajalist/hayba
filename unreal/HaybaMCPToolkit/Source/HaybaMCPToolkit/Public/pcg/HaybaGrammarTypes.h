@@ -200,7 +200,7 @@ namespace HaybaGrammar
 		if (!Root.IsValid()) { return; }
 
 		int32 Order = 0;
-		for (const TPair<FString, TSharedPtr<FJsonValue>>& Kv : Root->Values)
+		for (const auto& Kv : Root->Values)
 		{
 			if (!Kv.Value.IsValid() || Kv.Value->Type != EJson::Object) { continue; }
 			// AsObject() returns a non-null const ref into the FJsonValueObject; only
@@ -213,7 +213,7 @@ namespace HaybaGrammar
 			// id: prefer the explicit field, fall back to the map key.
 			if (!ProdObj->TryGetStringField(TEXT("id"), P.Id) || P.Id.IsEmpty())
 			{
-				P.Id = Kv.Key;
+				P.Id = FString(*Kv.Key);
 			}
 
 			// lhs { kind, when? }
@@ -224,10 +224,10 @@ namespace HaybaGrammar
 				const TSharedPtr<FJsonObject>* WhenPtr = nullptr;
 				if ((*LhsPtr)->TryGetObjectField(TEXT("when"), WhenPtr) && WhenPtr && (*WhenPtr).IsValid())
 				{
-					for (const TPair<FString, TSharedPtr<FJsonValue>>& WKv : (*WhenPtr)->Values)
+					for (const auto& WKv : (*WhenPtr)->Values)
 					{
 						FWhenClause Clause;
-						FString K = WKv.Key;
+						FString K = FString(*WKv.Key);
 						if (K.EndsWith(TEXT("_gt")))
 						{
 							Clause.bGreaterThan = true;
