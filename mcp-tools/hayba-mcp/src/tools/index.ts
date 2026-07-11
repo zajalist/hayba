@@ -107,6 +107,7 @@ import { initiateInfrastructureBrainstorm } from './initiate-infrastructure-brai
 // ── Agent-ergonomics tools (HANDOFF postmortem) ───────────────────────────────
 import { introspectDescriptor } from './introspect/hayba-introspect.js';
 import { pcgCookAndWaitHandler, schema as pcgCookSchema, meta as pcgCookMeta } from './pcg/pcg-cook-and-wait.js';
+import { pcgScatterMeshHandler, schema as pcgScatterSchema, meta as pcgScatterMeta } from './pcg/pcg-scatter-mesh.js';
 import {
   pcgAddNodeDescriptor, pcgSetPropDescriptor, pcgWireDescriptor, pcgInspectInstancesDescriptor,
 } from './pcg/pcg-primitives.js';
@@ -1381,6 +1382,17 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
   );
   remember('pcg_cook_and_wait', pcgCookMeta);
 
+  server.tool(
+    'pcg_scatter_mesh',
+    appendMeta('Scatter a mesh (or weighted mesh set) across a surface in ONE call — build the jittered PCG graph, spawn a bound PCGVolume, generate, and return instance counts. Hard-fails on 0 instances.', pcgScatterMeta),
+    pcgScatterSchema.shape,
+    async (params) => {
+      const r = await pcgScatterMeshHandler(params as never);
+      return { content: r.content, isError: r.isError };
+    }
+  );
+  remember('pcg_scatter_mesh', pcgScatterMeta);
+
   // hayba_fab_*, hayba_polyhaven_*, hayba_ambientcg_*, hayba_sketchfab_* tools
   // are now in STANDARD_DESCRIPTORS — registered via the loop above.
 
@@ -2208,6 +2220,8 @@ function recordEagerSchemas(
   // now in STANDARD_DESCRIPTORS — recordToolSchema(d) called by the loop above.
   reg('pcg_cook_and_wait', pcgCookSchema.shape, 'high',
     '{ok, cook:{components}, idle, result:{ism:[{mesh,count}], total}}');
+  reg('pcg_scatter_mesh', pcgScatterSchema.shape, 'high',
+    '{ok, graph_asset, volume_actor, instances, result:{ism:[{mesh,count}], total}} — ok:false when instances==0');
 
   // ── PCGEx domain ──────────────────────────────────────────────────────────
   reg('hayba_search_node_catalog', {
