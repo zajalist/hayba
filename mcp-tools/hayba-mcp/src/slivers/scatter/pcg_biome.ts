@@ -13,19 +13,37 @@
 //                                                            |
 //                                                          Out
 //                                                            v
+//                                          In [PCGTransformPointsSettings]
+//                                                            |
+//                                                          Out
+//                                                            v
 //                                          In [PCGStaticMeshSpawnerSettings]
 //
-// Determinism: the spec's `seed` param is written onto PCGSurfaceSampler's
-// Seed property; PCG samples deterministically from there.
+// The transform node breaks the "uniform clone" look: per point it multiplies
+// scale by a uniform random factor in [scale_min, scale_max] and adds a random
+// yaw in [0, yaw_jitter] degrees. Uniform clones read as fake; jitter reads as
+// natural.
+//
+// Determinism: the spec's `seed` param is written onto BOTH the SurfaceSampler
+// and the TransformPoints Seed property; PCG samples deterministically.
 
 import type { SliverExecutor } from '../types.js';
 import type { PCGGraphJSON, PCGNode, PCGEdge } from '../../types.js';
 
 export const SCATTER_PCG_BIOME_KIND = 'scatter.pcg_biome';
 
-interface PcgBiomeParams {
-  area_actor: string;
+/** A weighted mesh entry for the StaticMeshSpawner's weighted selector. */
+export interface MeshEntry {
   mesh: string;
+  weight: number;
+}
+
+export interface PcgBiomeParams {
+  area_actor: string;
+  /** Single mesh path. Ignored when `meshes` is supplied. */
+  mesh: string;
+  /** Optional weighted list; overrides `mesh` when non-empty. */
+  meshes?: MeshEntry[];
   density: number;
   scale_min: number;
   scale_max: number;
@@ -70,6 +88,34 @@ export function buildBiomeScatterGraph(p: PcgBiomeParams): PCGGraphJSON {
       Seed: p.seed,
     },
   );
+  // Per-point randomization. UPCGTransformPointsSettings (UE 5.8:
+  // Engine/Plugins/PCG/Source/PCG/Public/Elements/PCGTransformPoints.h) is the
+  // stock node for this. Property names verified against that header:
+  //   - ScaleMin / ScaleMax   : FVector (multiplicative; bAbsoluteScale=false)
+  //   - bUniformScale         : bool (true → uses the X component of Scale*)
+  //   - RotationMin / RotationMax : FRotator (additive; bAbsoluteRotation=false)
+  //   - Seed                  : inherited from UPCGSettings (UseSeed()==true)
+  // FVector/FRotator are expressed as UE import-text strings so the generic
+  // ImportText property applier sets them.
+  const s0 = p.scale_min;
+  const s1 = p.scale_max;
+  const transform: PCGNode = node(
+    'transform', 'PCGTransformPointsSettings', 'Scale + Yaw Jitter',
+    390, 0,
+    {
+      // Uniform scale in [scale_min, scale_max]; X component is what
+      // bUniformScale reads, but set all axes for clarity.
+      ScaleMin: `(X=${s0},Y=${s0},Z=${s0})`,
+      ScaleMax: `(X=${s1},Y=${s1},Z=${s1})`,
+      bUniformScale: true,
+      bAbsoluteScale: false,
+      // Yaw jitter in [0, yaw_jitter] degrees, added to the point's rotation.
+      RotationMin: '(Pitch=0,Yaw=0,Roll=0)',
+      RotationMax: `(Pitch=0,Yaw=${p.yaw_jitter},Roll=0)`,
+      bAbsoluteRotation: false,
+      Seed: p.seed,
+    },
+  );
   const spawner: PCGNode = node(
     'spawner', 'PCGStaticMeshSpawnerSettings', 'Spawn Mesh',
     520, 0,
@@ -79,10 +125,9 @@ export function buildBiomeScatterGraph(p: PcgBiomeParams): PCGGraphJSON {
       // MeshSelectorParameters from this array. A bare `Mesh` string never
       // bound (the export-text path came back null), so we always emit the
       // structured form.
-      MeshEntries: [{ mesh: p.mesh, weight: 1 }],
-      ScaleMin: p.scale_min,
-      ScaleMax: p.scale_max,
-      YawJitter: p.yaw_jitter,
+      MeshEntries: (p.meshes && p.meshes.length > 0)
+        ? p.meshes.map(m => ({ mesh: m.mesh, weight: m.weight }))
+        : [{ mesh: p.mesh, weight: 1 }],
     },
   );
 
@@ -90,14 +135,15 @@ export function buildBiomeScatterGraph(p: PcgBiomeParams): PCGGraphJSON {
     version: '2',
     meta: {
       sourceGraph: p.graph_name,
-      ueVersion: '5.7',
+      ueVersion: '5.8',
       exportedAt: new Date().toISOString(),
       tags: ['hayba.sliver', 'scatter.pcg_biome'],
     },
-    nodes: [actorSource, sampler, spawner],
+    nodes: [actorSource, sampler, transform, spawner],
     edges: [
       edge('actor', 'sampler'),
-      edge('sampler', 'spawner'),
+      edge('sampler', 'transform'),
+      edge('transform', 'spawner'),
     ],
     metadata: {},
   } as PCGGraphJSON;
