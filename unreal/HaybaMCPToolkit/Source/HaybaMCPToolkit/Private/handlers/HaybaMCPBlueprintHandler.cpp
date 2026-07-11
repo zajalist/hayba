@@ -556,7 +556,15 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetDefaults(const TSharedPtr<FJso
             continue;
         }
 
-        Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(CDO), CDO, PPF_None);
+        // ImportText_Direct returns nullptr when ValueStr can't be parsed into
+        // the property; count that as skipped rather than a phantom set.
+        const TCHAR* ImportResult = Prop->ImportText_Direct(
+            *ValueStr, Prop->ContainerPtrToValuePtr<void>(CDO), CDO, PPF_None);
+        if (ImportResult == nullptr)
+        {
+            AddSkipped(FString(*Pair.Key), TEXT("value_parse_failed"));
+            continue;
+        }
         SetNames.Add(MakeShared<FJsonValueString>(FString(*Pair.Key)));
     }
 

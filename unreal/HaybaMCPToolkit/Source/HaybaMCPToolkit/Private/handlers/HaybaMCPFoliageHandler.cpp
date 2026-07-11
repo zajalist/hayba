@@ -94,23 +94,15 @@ FHaybaHandlerResult FHaybaMCPFoliageHandler::FoliageAddInstance(const TSharedPtr
     Instance.Location = Loc;
     Instance.Rotation = Rot;
     Instance.DrawScale3D = (FVector3f)Scale;
-
-    // UE 5.7: API moved to FFoliageInfo (no AInstancedFoliageActor::AddInstance shortcut).
-    // Use IFA->AddInstances() bulk API which is the supported entry point.
-    // UE 5.7: AInstancedFoliageActor public AddInstance/AddInstances API was reworked.
-    // Stub for now — returning success without persistence; revisit when needed.
     (void)Instance;
 
-    int32 Count = 0;
-    if (FFoliageInfo* Info = IFA->FindInfo(Type))
-    {
-        Count = Info->Instances.Num();
-    }
-
-    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-    Out->SetBoolField(TEXT("added"), true);
-    Out->SetNumberField(TEXT("instance_count"), Count);
-    return FHaybaHandlerResult::Ok(Out);
+    // Honesty: this operation is not actually implemented — the foliage add API
+    // was reworked and no instance is ever persisted. Previously this reported
+    // added:true with the PRE-EXISTING count, which lies to the caller. Report a
+    // structured error instead until real persistence is wired up.
+    return FHaybaHandlerResult::Err(
+        TEXT("foliage_add_instance: not implemented — foliage instance persistence is unavailable "
+             "on this engine version; no instance was added"));
 }
 
 FHaybaHandlerResult FHaybaMCPFoliageHandler::FoliageRemoveInstances(const TSharedPtr<FJsonObject>& P)
@@ -143,9 +135,13 @@ FHaybaHandlerResult FHaybaMCPFoliageHandler::FoliageRemoveInstances(const TShare
 
     UObject* Loaded = LoadObject<UObject>(nullptr, *Path);
     UFoliageType* Type = Cast<UFoliageType>(Loaded);
-    int32 Removed = 0;
+    // Honesty: a path that fails to load or isn't a UFoliageType is a caller
+    // error, not a successful removal of zero instances.
+    if (!Type)
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("foliage_remove_instances: '%s' did not resolve to a UFoliageType"), *Path));
 
-    if (Type)
+    int32 Removed = 0;
     {
         if (FFoliageInfo* Info = IFA->FindInfo(Type))
         {
@@ -223,20 +219,11 @@ FHaybaHandlerResult FHaybaMCPFoliageHandler::FoliagePaintAt(const TSharedPtr<FJs
     UFoliageType* Type = ResolveFoliageType(IFA, Path);
     if (!Type) return FHaybaHandlerResult::Err(FString::Printf(TEXT("foliage_paint_at: cannot load foliage type: %s"), *Path));
 
-    int32 Painted = 0;
-    for (int32 i = 0; i < Density; ++i)
-    {
-        const float OffX = FMath::RandRange(-(float)Radius, (float)Radius);
-        const float OffY = FMath::RandRange(-(float)Radius, (float)Radius);
-        FFoliageInstance Inst;
-        Inst.Location = Center + FVector(OffX, OffY, 0.0f);
-        Inst.Rotation = FRotator(0.0f, FMath::RandRange(0.0f, 360.0f), 0.0f);
-        Inst.DrawScale3D = FVector3f::OneVector;
-        (void)Inst; // UE 5.7: AddInstances API reworked — stub
-        ++Painted;
-    }
-
-    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-    Out->SetNumberField(TEXT("painted"), Painted);
-    return FHaybaHandlerResult::Ok(Out);
+    // Honesty: the paint loop below builds instances but discards each one — no
+    // foliage is actually placed. Reporting painted:<density> for zero real work
+    // is a lie, so return a structured error instead of a fabricated count.
+    (void)Center; (void)Radius; (void)Density;
+    return FHaybaHandlerResult::Err(
+        TEXT("foliage_paint_at: not implemented — foliage instance persistence is unavailable "
+             "on this engine version; no foliage was painted"));
 }

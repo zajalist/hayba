@@ -168,6 +168,12 @@ FHaybaHandlerResult FHaybaMCPActorHandler::Delete(const TSharedPtr<FJsonObject>&
     if (!EAS) return FHaybaHandlerResult::Err(TEXT("actor_delete: EditorActorSubsystem unavailable"));
 
     bool bDeleted = EAS->DestroyActor(Actor);
+    // Honesty: DestroyActor can return false (actor locked / world protected)
+    // while the actor still exists. Do not report success in that case.
+    if (!bDeleted)
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("actor_delete: DestroyActor failed for %s (actor may be locked or non-destructible)"), *ActorId));
+
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetBoolField(TEXT("deleted"), bDeleted);
     return FHaybaHandlerResult::Ok(Out);
@@ -311,10 +317,19 @@ FHaybaHandlerResult FHaybaMCPActorHandler::SetProps(const TSharedPtr<FJsonObject
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("actor_set_properties: actor not found: %s"), *ActorId));
 
     TArray<TSharedPtr<FJsonValue>> SetNames;
+    // Honesty: track properties we could NOT apply (unknown/non-editable/bad
+    // value) instead of silently dropping them and still reporting success.
+    TArray<TSharedPtr<FJsonValue>> Skipped;
+    const int32 Requested = (*PropsObj)->Values.Num();
     for (const auto& Pair : (*PropsObj)->Values)
     {
         FProperty* Prop = Actor->GetClass()->FindPropertyByName(FName(*Pair.Key));
-        if (!Prop || !Prop->HasAnyPropertyFlags(CPF_Edit)) continue;
+        if (!Prop || !Prop->HasAnyPropertyFlags(CPF_Edit))
+        {
+            Skipped.Add(MakeShared<FJsonValueString>(FString::Printf(
+                TEXT("%s (unknown or non-editable)"), *Pair.Key)));
+            continue;
+        }
 
         FString ValueStr;
         if (!Pair.Value->TryGetString(ValueStr))
@@ -324,15 +339,36 @@ FHaybaHandlerResult FHaybaMCPActorHandler::SetProps(const TSharedPtr<FJsonObject
             else if (Pair.Value->Type == EJson::Boolean)
                 ValueStr = Pair.Value->AsBool() ? TEXT("True") : TEXT("False");
             else
+            {
+                Skipped.Add(MakeShared<FJsonValueString>(FString::Printf(
+                    TEXT("%s (unsupported value type)"), *Pair.Key)));
                 continue;
+            }
         }
-        Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(Actor), Actor, PPF_None);
+        // ImportText_Direct returns nullptr when the string could not be parsed
+        // into the property; treat that as a failure rather than a silent set.
+        const TCHAR* Result = Prop->ImportText_Direct(
+            *ValueStr, Prop->ContainerPtrToValuePtr<void>(Actor), Actor, PPF_None);
+        if (Result == nullptr)
+        {
+            Skipped.Add(MakeShared<FJsonValueString>(FString::Printf(
+                TEXT("%s (value parse failed)"), *Pair.Key)));
+            continue;
+        }
         SetNames.Add(MakeShared<FJsonValueString>(FString(*Pair.Key)));
     }
+
+    // If the caller requested properties but none applied, that is a failure.
+    if (Requested > 0 && SetNames.Num() == 0)
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("actor_set_properties: no properties applied on %s (%d requested, all skipped)"),
+            *ActorId, Requested));
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("actor_id"), ActorId);
     Out->SetArrayField(TEXT("set"), SetNames);
+    Out->SetNumberField(TEXT("set_count"), SetNames.Num());
+    Out->SetArrayField(TEXT("skipped"), Skipped);
     return FHaybaHandlerResult::Ok(Out);
 }
 
