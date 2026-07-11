@@ -1,5 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { UeToolError, costToTimeoutMs, executeCommand, NON_IDEMPOTENT, type Sender } from './tool-executor.js';
+import { HEAVY_OP_TIMEOUT_MS, addHeavyOp, isHeavyOp, listHeavyOps, removeHeavyOp } from './heavy-ops.js';
+
+// Keep the "editor busy" tests hermetic: the real probe shells out to
+// tasklist/pgrep via the dynamic import in makeEditorBusyError. Mock it so unit
+// tests never spawn a subprocess (matches the "unit tests don't shell out" bar).
+vi.mock('./heavy-op-probe.js', () => ({ probeEditorProcess: async () => null }));
 import type { TcpResponse } from '../tcp-client.js';
 import { registerToolMeta, resetToolMetaRegistry } from './tool-meta-registry.js';
 
@@ -200,8 +206,6 @@ describe('executeCommand — idempotency / retry gating', () => {
   });
 });
 
-import { HEAVY_OP_TIMEOUT_MS, addHeavyOp, isHeavyOp, listHeavyOps } from './heavy-ops.js';
-
 describe('heavy-ops registry', () => {
   it('recognises the known game-thread-blocking commands', () => {
     for (const cmd of ['asset_import', 'landscape_import', 'level_save', 'pcg_execute_graph', 'hayba_asset_reindex']) {
@@ -215,6 +219,8 @@ describe('heavy-ops registry', () => {
     addHeavyOp('my_custom_blocking_op');
     expect(isHeavyOp('my_custom_blocking_op')).toBe(true);
     expect(listHeavyOps()).toContain('my_custom_blocking_op');
+    // Don't leak this runtime registration into other suites.
+    removeHeavyOp('my_custom_blocking_op');
   });
 });
 

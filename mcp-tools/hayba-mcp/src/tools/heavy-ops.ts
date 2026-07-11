@@ -43,6 +43,12 @@ export function addHeavyOp(cmd: string): void {
   HEAVY_OPS.add(cmd);
 }
 
+/** Unregister a runtime-added heavy op. Returns true if it was present.
+ *  (Built-in defaults can be removed too; primarily for test isolation.) */
+export function removeHeavyOp(cmd: string): boolean {
+  return HEAVY_OPS.delete(cmd);
+}
+
 /** True when `cmd` is known to block the UE game thread. */
 export function isHeavyOp(cmd: string): boolean {
   return HEAVY_OPS.has(cmd);
