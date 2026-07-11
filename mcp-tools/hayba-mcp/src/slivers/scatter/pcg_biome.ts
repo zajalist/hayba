@@ -74,7 +74,12 @@ export function buildBiomeScatterGraph(p: PcgBiomeParams): PCGGraphJSON {
     'spawner', 'PCGStaticMeshSpawnerSettings', 'Spawn Mesh',
     520, 0,
     {
-      Mesh: p.mesh,
+      // Structured mesh binding: the native create_graph handler special-cases
+      // UPCGStaticMeshSpawnerSettings and populates its read-only weighted
+      // MeshSelectorParameters from this array. A bare `Mesh` string never
+      // bound (the export-text path came back null), so we always emit the
+      // structured form.
+      MeshEntries: [{ mesh: p.mesh, weight: 1 }],
       ScaleMin: p.scale_min,
       ScaleMax: p.scale_max,
       YawJitter: p.yaw_jitter,

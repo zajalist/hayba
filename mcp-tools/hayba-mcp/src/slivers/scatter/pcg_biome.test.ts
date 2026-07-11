@@ -43,7 +43,9 @@ describe('buildBiomeScatterGraph', () => {
     const g = buildBiomeScatterGraph({ ...baseParams, graph_name: 'X' });
     const spawner = g.nodes.find(n => n.id === 'spawner')!;
     expect(spawner.class).toBe('PCGStaticMeshSpawnerSettings');
-    expect(spawner.properties.Mesh).toBe('/Game/Foliage/SM_Pine');
+    // Mesh is bound via the structured MeshEntries array, not a bare string.
+    expect(spawner.properties.Mesh).toBeUndefined();
+    expect(spawner.properties.MeshEntries).toEqual([{ mesh: '/Game/Foliage/SM_Pine', weight: 1 }]);
     expect(spawner.properties.ScaleMin).toBe(0.9);
     expect(spawner.properties.ScaleMax).toBe(1.2);
     expect(spawner.properties.YawJitter).toBe(360);

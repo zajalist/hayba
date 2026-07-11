@@ -92,7 +92,31 @@ export async function pcgCookAndWaitHandler(params: PcgCookAndWaitParams) {
     }, { timeout: timeout_s * 1000 + 5000 });
 
     // 3. Read back the resulting instance counts.
-    const counts = await runUePythonJson(inspectScript(actor), 30_000);
+    const counts = await runUePythonJson<{ ok?: boolean; total?: number; ism?: unknown[]; error?: string }>(
+      inspectScript(actor), 30_000,
+    );
+
+    // 4. Hard-fail on a zero-instance cook. A PCG generate that settles clean
+    //    but produces NO instances is almost always a broken graph (mesh never
+    //    bound to the spawner, or the surface source emitted no points) — NOT a
+    //    success. Silent success on empty output is the trap that hides the
+    //    single most common scatter failure, so surface it as ok:false.
+    const total = typeof counts?.total === 'number' ? counts.total : 0;
+    if (total === 0) {
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            ok: false,
+            error: 'PCG generated 0 instances — check mesh binding (StaticMeshSpawner) / surface source. The graph cooked cleanly but produced no instances.',
+            cook: gen,
+            idle,
+            result: counts,
+          }, null, 2),
+        }],
+        isError: true,
+      };
+    }
 
     return {
       content: [{
