@@ -30,8 +30,9 @@
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
-import { appendMeta } from './hayba-tool-meta.js';
+import { appendMeta, isSceneMutating } from './hayba-tool-meta.js';
 import type { HaybaToolMeta } from './hayba-tool-meta.js';
+import { withValidationNudge } from './tool-result.js';
 import { recordSchema, type Cost } from './schema-registry.js';
 import { registerToolMeta } from './tool-meta-registry.js';
 import { appendNicheBriefing } from './niche-briefing.js';
@@ -81,15 +82,20 @@ export function registerTool(
   d: ToolDescriptor,
 ): void {
   const niche = d.niche;
+  // Scene-mutating tools get a post-mutation validation nudge appended to their
+  // successful result — see withValidationNudge. Decided ONCE here from the
+  // tool's declared effects so it's DRY across every registered tool.
+  const nudge = isSceneMutating(d.meta.effects);
   server.tool(
     d.name,
     appendMeta(d.description, d.meta),
     d.schema,
     async (params: Record<string, unknown>): Promise<ToolResult> => {
       const r = await d.handler(params, session);
-      return niche
+      const shaped = niche
         ? appendNicheBriefing(niche, session, r)
         : { content: r.content, isError: r.isError };
+      return nudge ? withValidationNudge(shaped) : shaped;
     },
   );
   registerToolMeta(d.name, d.meta);
