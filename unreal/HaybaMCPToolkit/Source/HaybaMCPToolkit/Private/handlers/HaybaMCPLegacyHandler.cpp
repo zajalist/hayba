@@ -16,6 +16,9 @@
 #include "Metadata/PCGMetadata.h"
 #include "Data/Registry/PCGDataTypeIdentifier.h"
 #include "PCGComponent.h"
+#include "Elements/PCGStaticMeshSpawner.h"
+#include "MeshSelectors/PCGMeshSelectorWeighted.h"
+#include "Engine/StaticMesh.h"
 #include "UObject/UObjectIterator.h"
 #include "UObject/SavePackage.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -688,6 +691,86 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
                         if (Pair.Value->TryGetString(ValueStr))
                         {
                             Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(Settings), Settings, PPF_None);
+                        }
+                    }
+                }
+
+                // --- Special-case: bind meshes to a Static Mesh Spawner ---------------
+                // UPCGStaticMeshSpawnerSettings::MeshSelectorParameters is a READ-ONLY
+                // instanced UObject (BlueprintReadOnly, no CPF_Edit), so the generic
+                // string-property path above can never touch it — and neither can any
+                // Python set_editor_property call. Without native intervention the
+                // spawner has NO mesh bound and silently scatters ZERO instances.
+                // Here we own it with full FProperty access: instantiate the weighted
+                // selector via the engine's own setter, then fill MeshEntries directly.
+                //
+                // JSON accepted on the spawner node's "properties":
+                //   "MeshEntries": [ { "mesh": "/Game/.../SM.SM", "weight": 2 }, ... ]
+                //   "Mesh": "/Game/.../SM.SM"   (shorthand -> one entry, weight 1)
+                if (UPCGStaticMeshSpawnerSettings* SmsSettings = Cast<UPCGStaticMeshSpawnerSettings>(Settings))
+                {
+                    // Gather the requested mesh entries from JSON.
+                    struct FRequestedEntry { FString MeshPath; int32 Weight; };
+                    TArray<FRequestedEntry> Requested;
+
+                    const TArray<TSharedPtr<FJsonValue>>* EntriesArr = nullptr;
+                    if (PropsObj->TryGetArrayField(TEXT("MeshEntries"), EntriesArr) && EntriesArr)
+                    {
+                        for (const TSharedPtr<FJsonValue>& EntryVal : *EntriesArr)
+                        {
+                            const TSharedPtr<FJsonObject>* EntryObj = nullptr;
+                            if (EntryVal.IsValid() && EntryVal->TryGetObject(EntryObj) && EntryObj && EntryObj->IsValid())
+                            {
+                                FString MeshPath;
+                                if ((*EntryObj)->TryGetStringField(TEXT("mesh"), MeshPath) && !MeshPath.IsEmpty())
+                                {
+                                    double W = 1.0;
+                                    (*EntryObj)->TryGetNumberField(TEXT("weight"), W);
+                                    Requested.Add({ MeshPath, FMath::Max(0, static_cast<int32>(W)) });
+                                }
+                            }
+                        }
+                    }
+
+                    // Shorthand: a single "Mesh" string.
+                    FString SingleMesh;
+                    if (Requested.Num() == 0 && PropsObj->TryGetStringField(TEXT("Mesh"), SingleMesh) && !SingleMesh.IsEmpty())
+                    {
+                        Requested.Add({ SingleMesh, 1 });
+                    }
+
+                    if (Requested.Num() > 0)
+                    {
+                        // Engine setter constructs a fresh UPCGMeshSelectorWeighted and
+                        // assigns it to the read-only MeshSelectorParameters member.
+                        SmsSettings->SetMeshSelectorType(UPCGMeshSelectorWeighted::StaticClass());
+
+                        if (UPCGMeshSelectorWeighted* Weighted = Cast<UPCGMeshSelectorWeighted>(SmsSettings->MeshSelectorParameters))
+                        {
+                            Weighted->MeshEntries.Reset();
+                            for (const FRequestedEntry& Req : Requested)
+                            {
+                                const FSoftObjectPath MeshRef(Req.MeshPath);
+                                // Verify resolvability; warn + skip on failure, never crash.
+                                if (!LoadObject<UStaticMesh>(nullptr, *Req.MeshPath))
+                                {
+                                    UE_LOG(LogTemp, Warning,
+                                        TEXT("[Hayba PCG] StaticMeshSpawner: could not load StaticMesh '%s' — skipping this MeshEntry."),
+                                        *Req.MeshPath);
+                                    continue;
+                                }
+                                FPCGMeshSelectorWeightedEntry Entry;
+                                Entry.Descriptor.StaticMesh = TSoftObjectPtr<UStaticMesh>(MeshRef);
+                                Entry.Weight = FMath::Max(1, Req.Weight);
+                                Weighted->MeshEntries.Add(Entry);
+                            }
+
+                            if (Weighted->MeshEntries.Num() == 0)
+                            {
+                                UE_LOG(LogTemp, Warning,
+                                    TEXT("[Hayba PCG] StaticMeshSpawner node '%s' has NO resolvable meshes — it will scatter zero instances."),
+                                    *NodeId);
+                            }
                         }
                     }
                 }
