@@ -1,12 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <line x1="20" y1="18" x2="40" y2="22" stroke="#5A6F9F" stroke-width="1.5"/>
-  <line x1="40" y1="22" x2="48" y2="42" stroke="#5A6F9F" stroke-width="1.5"/>
-  <line x1="20" y1="18" x2="18" y2="40" stroke="#5A6F9F" stroke-width="1.5"/>
-  <line x1="18" y1="40" x2="48" y2="42" stroke="#5A6F9F" stroke-width="1.5"/>
-  <line x1="40" y1="22" x2="32" y2="32" stroke="#5A6F9F" stroke-width="1.5"/>
-  <circle cx="20" cy="18" r="5" fill="#88C0A0"/>
-  <circle cx="40" cy="22" r="5" fill="#E0B080"/>
-  <circle cx="18" cy="40" r="5" fill="#A0B5E0"/>
-  <circle cx="48" cy="42" r="5" fill="#C880A0"/>
-  <circle cx="32" cy="32" r="4" fill="#FFD060"/>
+<svg width="900" height="910" viewBox="0 0 900 910" fill="none" xmlns="http://www.w3.org/2000/svg">
+<mask id="mask0_654_72" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="0" y="0" width="900" height="910">
+<path d="M305.043 599.957L431.627 910H0V475.413L305.043 599.957ZM900 910H468.373L594.957 599.957L900 475.413V910ZM305.043 310.043L0 434.586V0H431.627L305.043 310.043ZM900 434.586L594.957 310.043L468.373 0H900V434.586Z" fill="#FEE7C7"/>
+</mask>
+<g mask="url(#mask0_654_72)">
+<circle cx="137.317" cy="751.256" r="93.9138" transform="rotate(4.67546 137.317 751.256)" fill="#FEE7C7"/>
+<circle cx="576.462" cy="619.463" r="82.0483" transform="rotate(4.67546 576.462 619.463)" fill="#FEE7C7"/>
+<circle cx="432.917" cy="385.262" r="59.6023" transform="rotate(4.67546 432.917 385.262)" fill="#FEE7C7"/>
+<circle cx="91.4288" cy="96.4291" r="44.9173" transform="rotate(4.67546 91.4288 96.4291)" fill="#FEE7C7"/>
+<circle cx="704.049" cy="165.131" r="64.1179" transform="rotate(4.67546 704.049 165.131)" fill="#FEE7C7"/>
+<circle cx="264.113" cy="278.227" r="81.3395" transform="rotate(4.67546 264.113 278.227)" fill="#FEE7C7"/>
+<circle cx="808.55" cy="813.555" r="56.1642" transform="rotate(4.67546 808.55 813.555)" fill="#FEE7C7"/>
+<circle cx="276.46" cy="531.463" r="82.0483" transform="rotate(4.67546 276.46 531.463)" fill="#FEE7C7"/>
+</g>
 </svg>
