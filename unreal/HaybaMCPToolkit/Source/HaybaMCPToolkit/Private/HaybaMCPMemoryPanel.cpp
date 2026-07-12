@@ -8,6 +8,7 @@
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Views/STableRow.h"
 #include "Widgets/SBoxPanel.h"
+#include "Widgets/SOverlay.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Styling/AppStyle.h"
 #include "Dom/JsonObject.h"
@@ -92,11 +93,34 @@ void SHaybaMCPMemoryPanel::Construct(const FArguments& InArgs)
         [
             SNew(SBorder).BorderImage(FAppStyle::Get().GetBrush("ToolPanel.GroupBorder"))
             [
-                SAssignNew(Tree, STreeView<TSharedPtr<FHaybaLibraryNode>>)
-                .TreeItemsSource(&RootNodes)
-                .OnGenerateRow(this, &SHaybaMCPMemoryPanel::GenerateRow)
-                .OnGetChildren(this, &SHaybaMCPMemoryPanel::GetChildren)
-                .SelectionMode(ESelectionMode::Single)
+                SNew(SOverlay)
+                + SOverlay::Slot()
+                [
+                    SAssignNew(Tree, STreeView<TSharedPtr<FHaybaLibraryNode>>)
+                    .TreeItemsSource(&RootNodes)
+                    .OnGenerateRow(this, &SHaybaMCPMemoryPanel::GenerateRow)
+                    .OnGetChildren(this, &SHaybaMCPMemoryPanel::GetChildren)
+                    .SelectionMode(ESelectionMode::Single)
+                ]
+                // Empty-state message — shown whenever the tree has no rows, so a
+                // fresh project (no profiles.json yet) reads as "empty", not "broken".
+                + SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center).Padding(24)
+                [
+                    SNew(STextBlock)
+                    .Justification(ETextJustify::Center)
+                    .AutoWrapText(true)
+                    .ColorAndOpacity(FSlateColor::UseSubduedForeground())
+                    .Visibility_Lambda([this]()
+                    {
+                        return RootNodes.Num() == 0 ? EVisibility::HitTestInvisible : EVisibility::Collapsed;
+                    })
+                    .Text_Lambda([this]()
+                    {
+                        return Filter.IsEmpty()
+                            ? LOCTEXT("EmptyLibrary", "No profiled assets yet — profile an asset in the Semantic Studio to populate the Library.")
+                            : LOCTEXT("EmptyFilter", "No assets match the current filter.");
+                    })
+                ]
             ]
         ]
     ];
@@ -111,6 +135,7 @@ void SHaybaMCPMemoryPanel::Reload()
     TMap<FString, int32> ConstraintCounts;
     for (const auto& Pair : ReadObj(ConstraintsFile())->Values)
     {
+        if (!Pair.Value.IsValid()) continue;
         const TSharedPtr<FJsonObject> C = Pair.Value->AsObject();
         if (!C.IsValid()) continue;
         const TSharedPtr<FJsonObject>* B = nullptr;
@@ -124,6 +149,7 @@ void SHaybaMCPMemoryPanel::Reload()
     TSet<FString> Seen;
     for (const auto& Pair : ReadObj(ProfilesFile())->Values)
     {
+        if (!Pair.Value.IsValid()) continue;
         const TSharedPtr<FJsonObject> P = Pair.Value->AsObject();
         if (!P.IsValid()) continue;
         TSharedPtr<FHaybaLibraryEntry> E = MakeShared<FHaybaLibraryEntry>();
@@ -303,6 +329,7 @@ FReply SHaybaMCPMemoryPanel::OnRemoveChecked()
     TArray<FString> ToRemove;
     for (const auto& Pair : Constraints->Values)
     {
+        if (!Pair.Value.IsValid()) continue;
         const TSharedPtr<FJsonObject> C = Pair.Value->AsObject();
         const TSharedPtr<FJsonObject>* B = nullptr;
         FString Asset;
