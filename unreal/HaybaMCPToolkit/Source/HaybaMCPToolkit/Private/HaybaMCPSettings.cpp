@@ -272,10 +272,6 @@ void FHaybaMCPSettings::Load()
     GConfig->GetBool(Section, TEXT("bConfirmBeforeOverwrite"), bConfirmBeforeOverwrite, GEditorPerProjectIni);
     GConfig->GetInt(Section, TEXT("PreferredLandscapeResolution"), PreferredLandscapeResolution, GEditorPerProjectIni);
 
-    FString ModeStr;
-    GConfig->GetString(Section, TEXT("OperationMode"), ModeStr, GEditorPerProjectIni);
-    OperationMode = (ModeStr == TEXT("ApiKey")) ? EHaybaMCPOperationMode::ApiKey : EHaybaMCPOperationMode::Integrated;
-
     {
         FString RenderStr;
         if (GConfig->GetString(Section, TEXT("SceneMapRenderer"), RenderStr, GEditorPerProjectIni))
@@ -320,9 +316,6 @@ void FHaybaMCPSettings::Save() const
     GConfig->SetString(Section, TEXT("ConventionsScope"), *ConventionsScope, GEditorPerProjectIni);
     GConfig->SetBool(Section, TEXT("bConfirmBeforeOverwrite"), bConfirmBeforeOverwrite, GEditorPerProjectIni);
     GConfig->SetInt(Section, TEXT("PreferredLandscapeResolution"), PreferredLandscapeResolution, GEditorPerProjectIni);
-    GConfig->SetString(Section, TEXT("OperationMode"),
-        OperationMode == EHaybaMCPOperationMode::ApiKey ? TEXT("ApiKey") : TEXT("Integrated"),
-        GEditorPerProjectIni);
 
     {
         const TCHAR* Name = TEXT("Auto");

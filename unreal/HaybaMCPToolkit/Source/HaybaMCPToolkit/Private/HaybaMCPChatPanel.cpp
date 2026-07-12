@@ -283,34 +283,12 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildFooter()
                 .ColorAndOpacity(FSlateColor(ColorMuted))
             ]
         ]
-        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center) [ Sep() ]
-
-        // Mode segment (was the inline header in the old layout).
-        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-        [
-            SNew(SButton)
-            .ButtonStyle(FAppStyle::Get(), "SimpleButton")
-            .ContentPadding(FMargin(0.f))
-            .OnClicked(this, &SHaybaMCPChatPanel::OnFooterModeClick)
-            [
-                SNew(STextBlock)
-                .Text_Lambda([]()
-                {
-                    return FHaybaMCPSettings::Get().OperationMode == EHaybaMCPOperationMode::Integrated
-                        ? LOCTEXT("FootModeI", "Integrated Mode")
-                        : LOCTEXT("FootModeA", "API Key Mode");
-                })
-                .ColorAndOpacity(FSlateColor(ColorMuted))
-            ]
-        ]
-
         // Spacer + plugin watermark already shown by MainPanel — nothing here.
         + SHorizontalBox::Slot().FillWidth(1.f) [ SNew(SBox) ];
 }
 
 FReply SHaybaMCPChatPanel::OnFooterConnectionClick() { OpenSettings(MainPanel); return FReply::Handled(); }
 FReply SHaybaMCPChatPanel::OnFooterModelClick()      { OpenSettings(MainPanel); return FReply::Handled(); }
-FReply SHaybaMCPChatPanel::OnFooterModeClick()       { OpenSettings(MainPanel); return FReply::Handled(); }
 
 // ── Input area (inline send / stop, Q7-a) ─────────────────────────────────
 
@@ -943,7 +921,7 @@ void SHaybaMCPChatPanel::StartAgentTurn(const FString& Prompt)
 {
     if (!FHaybaMCPSettings::Get().HasApiKey())
     {
-        AddSystemError(TEXT("No API key set — open Settings"), TEXT(""));
+        AddSystemError(TEXT("No API key configured — add one in Settings to chat"), TEXT(""));
         return;
     }
 

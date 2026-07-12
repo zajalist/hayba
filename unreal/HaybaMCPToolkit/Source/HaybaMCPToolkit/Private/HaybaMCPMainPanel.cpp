@@ -104,9 +104,7 @@ void SHaybaMCPMainPanel::Construct(const FArguments& InArgs, FHaybaMCPModule* In
                 [
                     SAssignNew(ContentArea, SBox)
                     .Padding(FMargin(10.f, 8.f))
-                    [ BuildPanelContent(
-                        FHaybaMCPSettings::Get().OperationMode == EHaybaMCPOperationMode::Integrated
-                            ? EHaybaPanel::ToolStream : EHaybaPanel::Chat) ]
+                    [ BuildPanelContent(EHaybaPanel::Chat) ]
                 ]
             ]
             // Watermark — tiny logo + version, bottom-right, low opacity.
@@ -175,14 +173,9 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildSidebar()
 {
     SAssignNew(Sidebar, SVerticalBox);
 
-    // Q19: Integrated mode users never type in our Chat tab — they're talking
-    // to Claude in their MCP host (Claude Desktop / Code / Cursor). Hide the
-    // Chat sidebar item entirely in that mode; the observability tabs
-    // (Tool Stream, Plan, etc.) carry the value.
-    const bool bIntegrated = FHaybaMCPSettings::Get().OperationMode == EHaybaMCPOperationMode::Integrated;
-
+    // Chat is always the first sidebar item and the default active view.
     TArray<EHaybaPanel> Items;
-    if (!bIntegrated) Items.Add(EHaybaPanel::Chat);
+    Items.Add(EHaybaPanel::Chat);
     Items.Append({
         EHaybaPanel::MCP, EHaybaPanel::Slivers, EHaybaPanel::ToolStream, EHaybaPanel::SceneMap,
         EHaybaPanel::Plan, EHaybaPanel::Diff, EHaybaPanel::Validation,
