@@ -31,6 +31,9 @@
 #include "Widgets/Notifications/SNotificationList.h"
 
 #include "HAL/PlatformApplicationMisc.h"
+#include "DragAndDrop/AssetDragDropOp.h"
+#include "Input/DragAndDrop.h"          // FExternalDragOperation (SlateCore)
+#include "AssetRegistry/AssetData.h"
 #include "Json.h"
 #include "JsonUtilities.h"
 #include "Editor.h"
@@ -474,6 +477,78 @@ FReply SHaybaMCPChatPanel::OnPromptCardClicked(FString Prompt)
     if (FSlateApplication::IsInitialized() && InputBox.IsValid())
     {
         FSlateApplication::Get().SetKeyboardFocus(InputBox);
+    }
+    return FReply::Handled();
+}
+
+// ── Drag-and-drop into the input (assets + external files) ────────────────
+
+bool SHaybaMCPChatPanel::AppendToInput(const FString& Addition)
+{
+    if (!InputBox.IsValid() || Addition.IsEmpty()) return false;
+
+    FString Existing = InputBox->GetText().ToString();
+    // Space-separate from prior content; if the box already ends in whitespace
+    // (or is empty) don't inject a redundant leading space.
+    if (!Existing.IsEmpty() && !FChar::IsWhitespace(Existing[Existing.Len() - 1]))
+    {
+        Existing += TEXT(" ");
+    }
+    Existing += Addition;
+
+    InputBox->SetText(FText::FromString(Existing));
+    if (FSlateApplication::IsInitialized())
+    {
+        FSlateApplication::Get().SetKeyboardFocus(InputBox);
+    }
+    return true;
+}
+
+FReply SHaybaMCPChatPanel::OnDragOver(const FGeometry& /*MyGeometry*/, const FDragDropEvent& DragDropEvent)
+{
+    // Show the droppable cursor for payloads we know how to consume.
+    if (DragDropEvent.GetOperationAs<FAssetDragDropOp>().IsValid() ||
+        DragDropEvent.GetOperationAs<FExternalDragOperation>().IsValid())
+    {
+        return FReply::Handled();
+    }
+    return FReply::Unhandled();
+}
+
+FReply SHaybaMCPChatPanel::OnDrop(const FGeometry& /*MyGeometry*/, const FDragDropEvent& DragDropEvent)
+{
+    TArray<FString> Refs;
+
+    // 1) Content Browser assets — append each asset's object path
+    //    (e.g. /Game/Path/Asset.Asset) so the reference is unambiguous.
+    if (TSharedPtr<FAssetDragDropOp> AssetOp = DragDropEvent.GetOperationAs<FAssetDragDropOp>())
+    {
+        for (const FAssetData& Asset : AssetOp->GetAssets())
+        {
+            const FString ObjectPath = Asset.GetObjectPathString();
+            if (!ObjectPath.IsEmpty()) Refs.Add(ObjectPath);
+        }
+    }
+    // 2) External files dragged from the OS file explorer.
+    else if (TSharedPtr<FExternalDragOperation> ExtOp = DragDropEvent.GetOperationAs<FExternalDragOperation>())
+    {
+        if (ExtOp->HasFiles())
+        {
+            for (const FString& File : ExtOp->GetFiles())
+            {
+                if (!File.IsEmpty()) Refs.Add(File);
+            }
+        }
+    }
+
+    if (Refs.Num() == 0) return FReply::Unhandled();
+
+    const bool bAppended = AppendToInput(FString::Join(Refs, TEXT(" ")));
+    if (bAppended)
+    {
+        Toast(FText::Format(
+            LOCTEXT("DropAppended", "Added {0} reference(s) to the message."),
+            FText::AsNumber(Refs.Num())));
     }
     return FReply::Handled();
 }

@@ -41,7 +41,17 @@ public:
     // cannot touch freed Slate widgets.
     virtual ~SHaybaMCPChatPanel() override;
 
+    // ── Drag-and-drop into the chat input ────────────────────────────────────
+    // Accept Content Browser assets (FAssetDragDropOp) and external files
+    // (FExternalDragOperation); on drop, append their paths to InputBox.
+    virtual FReply OnDragOver(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent) override;
+    virtual FReply OnDrop(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent) override;
+
 private:
+    // Append `Addition` to InputBox, space-separating from any existing text,
+    // then focus the input. Returns true if anything was appended.
+    bool AppendToInput(const FString& Addition);
+
     FHaybaMCPModule* Module = nullptr;
     SHaybaMCPMainPanel* MainPanel = nullptr;
 
