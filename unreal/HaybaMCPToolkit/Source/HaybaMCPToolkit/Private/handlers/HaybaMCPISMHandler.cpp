@@ -184,9 +184,13 @@ FHaybaHandlerResult FHaybaMCPISMHandler::IsmClearInstances(const TSharedPtr<FJso
     UInstancedStaticMeshComponent* ISM = GetISM(Actor);
     if (!ISM) return FHaybaHandlerResult::Err(TEXT("ism_clear_instances: no ISM component"));
 
+    // Honesty: report how many instances were actually removed so a caller can
+    // tell a real clear from a no-op on an already-empty component.
+    const int32 RemovedCount = ISM->GetInstanceCount();
     ISM->ClearInstances();
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetBoolField(TEXT("cleared"), true);
+    Out->SetNumberField(TEXT("removed_count"), RemovedCount);
     return FHaybaHandlerResult::Ok(Out);
 }

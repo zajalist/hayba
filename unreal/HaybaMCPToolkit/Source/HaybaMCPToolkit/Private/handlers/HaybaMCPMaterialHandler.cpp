@@ -732,13 +732,28 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetParam(const TSharedPtr<FJson
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("param"), ParamName);
 
+    // Honesty: the ...EditorOnly setters silently register an override for a
+    // misspelled/nonexistent parameter and return void. Verify the parameter
+    // actually exists in the material hierarchy first (bOverriddenOnly=false so
+    // the default counts as "exists"), otherwise the caller would believe a real
+    // parameter changed when nothing was affected.
+    const FMaterialParameterInfo ParamInfo(PName);
+
     if (Val->Type == EJson::Number)
     {
+        float ExistingScalar = 0.f;
+        if (!MIC->GetScalarParameterValue(ParamInfo, ExistingScalar, /*bOveriddenOnly=*/false))
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("material_set_param: scalar parameter '%s' does not exist on this material"), *ParamName));
         MIC->SetScalarParameterValueEditorOnly(PName, (float)Val->AsNumber());
         Out->SetNumberField(TEXT("value"), Val->AsNumber());
     }
     else if (Val->Type == EJson::Array)
     {
+        FLinearColor ExistingVec;
+        if (!MIC->GetVectorParameterValue(ParamInfo, ExistingVec, /*bOveriddenOnly=*/false))
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("material_set_param: vector parameter '%s' does not exist on this material"), *ParamName));
         const TArray<TSharedPtr<FJsonValue>>& Arr = Val->AsArray();
         FLinearColor C(0,0,0,1);
         if (Arr.Num() > 0) C.R = Arr[0]->AsNumber();
@@ -750,6 +765,10 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetParam(const TSharedPtr<FJson
     }
     else if (Val->Type == EJson::String)
     {
+        UTexture* ExistingTex = nullptr;
+        if (!MIC->GetTextureParameterValue(ParamInfo, ExistingTex, /*bOveriddenOnly=*/false))
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("material_set_param: texture parameter '%s' does not exist on this material"), *ParamName));
         FString TexPath = Val->AsString();
         UTexture* Tex = LoadObject<UTexture>(nullptr, *TexPath);
         if (!Tex) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_set_param: texture not found: %s"), *TexPath));
@@ -773,15 +792,12 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetParam(const TSharedPtr<FJson
                 break;
             }
         }
+        // Honesty: GetStaticParameterValues returns the full static-switch set
+        // for the material hierarchy, so a name absent here does not exist on the
+        // material. Previously we invented a new override, masking a bad name.
         if (!bFound)
-        {
-            // Parameter not yet in the override set — add it.
-            FStaticSwitchParameter NewSP;
-            NewSP.ParameterInfo.Name = PName;
-            NewSP.Value = bSwitch;
-            NewSP.bOverride = true;
-            StaticParams.StaticSwitchParameters.Add(NewSP);
-        }
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("material_set_param: static switch parameter '%s' does not exist on this material"), *ParamName));
         MIC->UpdateStaticPermutation(StaticParams);
         Out->SetBoolField(TEXT("value"), bSwitch);
     }

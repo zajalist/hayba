@@ -3,6 +3,7 @@
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPLandscapeImporter.h"
 #include "Interfaces/IPluginManager.h"
+#include "Runtime/Launch/Resources/Version.h"
 #include "Json.h"
 #include "JsonUtilities.h"
 #include "PCGSettings.h"
@@ -110,7 +111,8 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_Ping(const TSharedPtr<FJsonObjec
 {
 	TSharedPtr<FJsonObject> Data = MakeShareable(new FJsonObject());
 	Data->SetStringField(TEXT("status"), TEXT("ok"));
-	Data->SetStringField(TEXT("ueVersion"), TEXT("5.7"));
+	Data->SetStringField(TEXT("ueVersion"),
+		FString::Printf(TEXT("%d.%d"), ENGINE_MAJOR_VERSION, ENGINE_MINOR_VERSION));
 	Data->SetStringField(TEXT("plugin"), TEXT("HaybaMCPToolkit"));
 
 	// Read the real version from the plugin descriptor instead of a hardcoded
@@ -442,7 +444,8 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_ExportGraph(const TSharedPtr<FJs
     // Meta
     TSharedPtr<FJsonObject> Meta = MakeShareable(new FJsonObject());
     Meta->SetStringField(TEXT("sourceGraph"), AssetPath);
-    Meta->SetStringField(TEXT("ueVersion"), TEXT("5.7"));
+    Meta->SetStringField(TEXT("ueVersion"),
+        FString::Printf(TEXT("%d.%d"), ENGINE_MAJOR_VERSION, ENGINE_MINOR_VERSION));
     Meta->SetStringField(TEXT("exportedAt"), FDateTime::UtcNow().ToIso8601());
     TArray<TSharedPtr<FJsonValue>> Tags;
     TArray<FString> PathParts;
