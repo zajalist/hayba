@@ -34,6 +34,29 @@ const PY_RESOLVE_NODE = [
   '    if len(sub) == 1: return sub[0]',
   '    if len(sub) > 1: raise Exception("ambiguous node ref %r matches %d nodes" % (ref, len(sub)))',
   '    raise Exception("node not found: %r" % ref)',
+  // The graph Input/Output nodes are NOT in g.nodes, so _resolve_node can never',
+  // find them. _resolve_node_ext maps the special refs "Input"/"Output" to the',
+  // graph I/O nodes (needed to wire a subgraph interface pin), else falls back.',
+  'def _graph_io_node(g, which):',
+  '    names = ("get_input_node", "input_node") if which == "input" else ("get_output_node", "output_node")',
+  '    for m in names:',
+  '        attr = getattr(g, m, None)',
+  '        if attr is None: continue',
+  '        try:',
+  '            n = attr() if callable(attr) else attr',
+  '            if n is not None: return n',
+  '        except Exception: pass',
+  '    return None',
+  'def _resolve_node_ext(g, ref):',
+  '    if isinstance(ref, str):',
+  '        low = ref.strip().lower()',
+  '        if low in ("input", "input node", "inputnode", "graph input"):',
+  '            n = _graph_io_node(g, "input")',
+  '            if n is not None: return n',
+  '        if low in ("output", "output node", "outputnode", "graph output"):',
+  '            n = _graph_io_node(g, "output")',
+  '            if n is not None: return n',
+  '    return _resolve_node(g, ref)',
 ].join('\n');
 
 // ── Shared Python: coerce a JSON value to the target editor-property's type ────
@@ -199,9 +222,9 @@ export const pcgSetPropDescriptor: PyToolDescriptor<typeof pcgSetPropSchema.shap
 // ── pcg_wire ──────────────────────────────────────────────────────────────────
 export const pcgWireSchema = z.object({
   graph: z.string().min(1).describe('PCG graph asset path'),
-  from_node: z.union([z.string(), z.number().int()]).describe('Source node title or index'),
+  from_node: z.union([z.string(), z.number().int()]).describe('Source node title or index. Use "Input" to wire from the graph\'s input node (its output pin is usually labelled "In").'),
   from_pin: z.string().optional().default('Out').describe('Source output pin label (default "Out")'),
-  to_node: z.union([z.string(), z.number().int()]).describe('Target node title or index'),
+  to_node: z.union([z.string(), z.number().int()]).describe('Target node title or index. Use "Output" to wire into the graph\'s output node.'),
   to_pin: z.string().optional().default('In').describe('Target input pin label (default "In"). NOTE: the visible "Map" pin on PCGEx Staging is internally "CollectionSource" — introspect first if unsure.'),
 });
 export type PcgWireParams = z.infer<typeof pcgWireSchema>;
@@ -218,8 +241,8 @@ function wireScript(p: PcgWireParams): string {
     `_to_pin = ${pyStr(p.to_pin ?? 'In')}`,
     'try:',
     '    g = _load_graph(_graph)',
-    '    a = _resolve_node(g, _from)',
-    '    b = _resolve_node(g, _to)',
+    '    a = _resolve_node_ext(g, _from)',
+    '    b = _resolve_node_ext(g, _to)',
     '    ok = False',
     '    for attr in ("add_edge",):',
     '        fn = getattr(g, attr, None)',
