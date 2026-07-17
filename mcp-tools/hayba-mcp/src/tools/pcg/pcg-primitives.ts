@@ -36,6 +36,54 @@ const PY_RESOLVE_NODE = [
   '    raise Exception("node not found: %r" % ref)',
 ].join('\n');
 
+// ── Shared Python: coerce a JSON value to the target editor-property's type ────
+// UE's set_editor_property cannot nativize a bare str/int into an EnumProperty
+// or a StructProperty. This mirrors the inverse of the export serializer:
+//   - enum: accept the member name ("AllWorldActors" | "ALL_WORLD_ACTORS"),
+//     a fully-qualified "EEnum::Member", or an int -> the unreal enum member.
+//   - struct: accept a JSON object (recursively coerced field-by-field) or a
+//     positional array (e.g. [x,y,z] -> unreal.Vector).
+// EnumBase/StructBase are resolved via getattr so a missing symbol degrades to
+// "never matches" rather than raising.
+const PY_COERCE = [
+  'import re as _re',
+  '_EB = getattr(unreal, "EnumBase", ())',
+  '_SB = getattr(unreal, "StructBase", ())',
+  'def _safe_get(o, k):',
+  '    try: return o.get_editor_property(k)',
+  '    except Exception: return None',
+  'def _to_enum(etype, val):',
+  '    if isinstance(val, bool): val = int(val)',
+  '    if isinstance(val, int):',
+  '        try: return etype(val)',
+  '        except Exception:',
+  '            try: return etype.cast(val)',
+  '            except Exception: pass',
+  '    if isinstance(val, str):',
+  '        v = val.strip()',
+  '        if "::" in v: v = v.split("::")[-1]',
+  '        cands = [v, v.upper(), _re.sub(r"(?<!^)(?=[A-Z])", "_", v).upper(), v.replace(" ", "_").upper()]',
+  '        for c in cands:',
+  '            if hasattr(etype, c): return getattr(etype, c)',
+  '        if v.lstrip("-").isdigit():',
+  '            try: return etype(int(v))',
+  '            except Exception:',
+  '                try: return etype.cast(int(v))',
+  '                except Exception: pass',
+  '    raise Exception("cannot coerce %r to enum %s" % (val, getattr(etype, "__name__", "enum")))',
+  'def _coerce(cur, val):',
+  '    if isinstance(cur, _EB): return _to_enum(type(cur), val)',
+  '    if isinstance(cur, _SB):',
+  '        if isinstance(val, dict):',
+  '            for k, vv in val.items():',
+  '                cur.set_editor_property(k, _coerce(_safe_get(cur, k), vv))',
+  '            return cur',
+  '        if isinstance(val, (list, tuple)):',
+  '            try: return type(cur)(*val)',
+  '            except Exception: return val',
+  '    return val',
+].join('\n');
+
 const lowMeta: HaybaToolMeta = {
   cost: 'low',
   effects: ['mutates_asset'],
@@ -96,7 +144,7 @@ export const pcgSetPropSchema = z.object({
   graph: z.string().min(1).describe('PCG graph asset path'),
   node: z.union([z.string(), z.number().int()]).describe('Node title (exact/substring) or 0-based index in the graph'),
   path: z.string().min(1).describe('Editor-property path on the node\'s settings. Supports nested struct paths with "/", e.g. "distribution_settings/distribution".'),
-  value: z.unknown().describe('Value to set (number, bool, string, or array).'),
+  value: z.unknown().describe('Value to set. Scalars (number/bool/string/array) set directly. Enum properties accept the member name ("AllWorldActors" or "ALL_WORLD_ACTORS"), a qualified "EEnum::Member", or an int. Struct properties accept a JSON object (coerced field-by-field, recursively) or a positional array (e.g. [x,y,z] for a Vector).'),
 });
 export type PcgSetPropParams = z.infer<typeof pcgSetPropSchema>;
 
@@ -104,23 +152,31 @@ function setPropScript(p: PcgSetPropParams): string {
   const nodeRef = typeof p.node === 'number' ? String(p.node) : pyStr(p.node);
   return [
     PY_RESOLVE_NODE,
+    PY_COERCE,
     `_graph = ${pyStr(p.graph)}`,
     `_node_ref = ${nodeRef}`,
     `_path = ${pyStr(p.path)}`,
-    `_value = ${JSON.stringify(p.value)}`,
+    // Embed as a JSON string and json.loads it so bools/null/objects arrive as
+    // proper Python types (True/False/None/dict/list), not JS literals.
+    `_value_json = ${pyStr(JSON.stringify(p.value ?? null))}`,
     'try:',
     '    import json as _j',
+    '    _value = _j.loads(_value_json)',
     '    g = _load_graph(_graph)',
     '    node = _resolve_node(g, _node_ref)',
     '    settings = node.get_settings()',
     '    parts = [s for s in _path.split("/") if s]',
-    '    holder = settings',
+    '    if not parts: raise Exception("empty property path")',
+    '    # Walk down, retaining each struct copy so we can write the chain back.',
+    '    chain = [settings]',
     '    for seg in parts[:-1]:',
-    '        holder = holder.get_editor_property(seg)',
-    '    holder.set_editor_property(parts[-1], _value)',
-    '    # struct values are copies — write the (possibly nested) struct back',
-    '    if len(parts) > 1:',
-    '        settings.set_editor_property(parts[0], settings.get_editor_property(parts[0]))',
+    '        chain.append(chain[-1].get_editor_property(seg))',
+    '    holder = chain[-1]',
+    '    holder.set_editor_property(parts[-1], _coerce(_safe_get(holder, parts[-1]), _value))',
+    '    # Struct get_editor_property returns copies — write each modified level',
+    '    # back into its parent, all the way up to the settings object.',
+    '    for i in range(len(parts) - 2, -1, -1):',
+    '        chain[i].set_editor_property(parts[i], chain[i + 1])',
     '    unreal.EditorAssetLibrary.save_loaded_asset(g)',
     '    _emit({"ok": True, "node_label": _node_label(node), "path": _path})',
     'except Exception as _e:',
