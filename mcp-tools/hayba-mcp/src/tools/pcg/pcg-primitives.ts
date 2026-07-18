@@ -97,6 +97,17 @@ const PY_COERCE = [
   'def _coerce(cur, val):',
   '    if isinstance(cur, _EB): return _to_enum(type(cur), val)',
   '    if isinstance(cur, _SB):',
+  '        # String -> struct via ExportText/ImportText. PCG attribute selectors',
+  '        # (FPCGAttributePropertySelector) need the "PCGBegin(<name>)PCGEnd"',
+  '        # wrapper; a bare "WallDist" is an attribute, "$Density" a property.',
+  '        if isinstance(val, str) and hasattr(cur, "import_text"):',
+  '            _v = val.strip()',
+  '            if "Selector" in type(cur).__name__ and not _v.startswith("PCGBegin("):',
+  '                _v = "PCGBegin(" + _v + ")PCGEnd"',
+  '            try:',
+  '                cur.import_text(_v)',
+  '                return cur',
+  '            except Exception: pass',
   '        if isinstance(val, dict):',
   '            for k, vv in val.items():',
   '                cur.set_editor_property(k, _coerce(_safe_get(cur, k), vv))',
@@ -167,7 +178,7 @@ export const pcgSetPropSchema = z.object({
   graph: z.string().min(1).describe('PCG graph asset path'),
   node: z.union([z.string(), z.number().int()]).describe('Node title (exact/substring) or 0-based index in the graph'),
   path: z.string().min(1).describe('Editor-property path on the node\'s settings. Supports nested struct paths with "/", e.g. "distribution_settings/distribution".'),
-  value: z.unknown().describe('Value to set. Scalars (number/bool/string/array) set directly. Enum properties accept the member name ("AllWorldActors" or "ALL_WORLD_ACTORS"), a qualified "EEnum::Member", or an int. Struct properties accept a JSON object (coerced field-by-field, recursively) or a positional array (e.g. [x,y,z] for a Vector).'),
+  value: z.unknown().describe('Value to set. Scalars (number/bool/string/array) set directly. Enum properties accept the member name ("AllWorldActors" or "ALL_WORLD_ACTORS"), a qualified "EEnum::Member", or an int. Struct properties accept a JSON object (coerced field-by-field, recursively) or a positional array (e.g. [x,y,z] for a Vector). PCG attribute selectors (e.g. a filter\'s target_attribute) accept a bare attribute name "WallDist", a property "$Density", or a full "PCGBegin(...)PCGEnd" string.'),
 });
 export type PcgSetPropParams = z.infer<typeof pcgSetPropSchema>;
 
