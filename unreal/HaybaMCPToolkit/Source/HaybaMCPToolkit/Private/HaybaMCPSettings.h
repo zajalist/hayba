@@ -72,6 +72,13 @@ public:
     bool bCodeModeEnabled = true;
     float ToolCacheTTLSeconds = 2.0f;
     FString SidecarURL = TEXT("http://localhost:7821");
+    // Auto-start the Node chat sidecar at editor startup (on the SidecarURL port)
+    // when nothing is already listening there. TRUE by default so the in-editor
+    // chat "just works" with no manual step.
+    bool bAutoStartSidecar = true;
+    // Optional override for the sidecar server entry .js. When non-empty and the
+    // file exists it wins over the auto-resolved dev / bundled build paths.
+    FString SidecarEntryPath = TEXT("");
     int32 ModelPreset = 0;       // 0=Minimal, 1=Balanced, 2=Full
     bool bEnableSpatialCLIP = false;
     bool bEnableOWLViT = false;

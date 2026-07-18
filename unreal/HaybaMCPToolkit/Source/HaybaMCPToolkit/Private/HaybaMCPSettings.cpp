@@ -268,6 +268,8 @@ void FHaybaMCPSettings::Load()
         if (GConfig->GetString(Section, TEXT("PlanModeFirstUseDate"), DateStr, GEditorPerProjectIni) && !DateStr.IsEmpty())
             FDateTime::ParseIso8601(*DateStr, PlanModeFirstUseDate);
     }
+    GConfig->GetBool(Section, TEXT("bAutoStartSidecar"), bAutoStartSidecar, GEditorPerProjectIni);
+    GConfig->GetString(Section, TEXT("SidecarEntryPath"), SidecarEntryPath, GEditorPerProjectIni);
     GConfig->GetString(Section, TEXT("ConventionsScope"), ConventionsScope, GEditorPerProjectIni);
     GConfig->GetBool(Section, TEXT("bConfirmBeforeOverwrite"), bConfirmBeforeOverwrite, GEditorPerProjectIni);
     GConfig->GetInt(Section, TEXT("PreferredLandscapeResolution"), PreferredLandscapeResolution, GEditorPerProjectIni);
@@ -313,6 +315,8 @@ void FHaybaMCPSettings::Save() const
     GConfig->SetInt(Section, TEXT("PlanModeToolCallCount"), PlanModeToolCallCount, GEditorPerProjectIni);
     GConfig->SetBool(Section, TEXT("bShownPlanModePrompt"), bShownPlanModePrompt, GEditorPerProjectIni);
     GConfig->SetString(Section, TEXT("PlanModeFirstUseDate"), *PlanModeFirstUseDate.ToIso8601(), GEditorPerProjectIni);
+    GConfig->SetBool(Section, TEXT("bAutoStartSidecar"), bAutoStartSidecar, GEditorPerProjectIni);
+    GConfig->SetString(Section, TEXT("SidecarEntryPath"), *SidecarEntryPath, GEditorPerProjectIni);
     GConfig->SetString(Section, TEXT("ConventionsScope"), *ConventionsScope, GEditorPerProjectIni);
     GConfig->SetBool(Section, TEXT("bConfirmBeforeOverwrite"), bConfirmBeforeOverwrite, GEditorPerProjectIni);
     GConfig->SetInt(Section, TEXT("PreferredLandscapeResolution"), PreferredLandscapeResolution, GEditorPerProjectIni);

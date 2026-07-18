@@ -64,6 +64,9 @@
 #include "Misc/FileHelper.h"
 #include "HAL/FileManager.h"
 #include "Logging/LogMacros.h"
+#include "Sockets.h"
+#include "SocketSubsystem.h"
+#include "IPAddress.h"
 #include "ToolMenus.h"
 #include "Styling/AppStyle.h"
 #include "WorkspaceMenuStructure.h"
@@ -75,6 +78,64 @@ DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCP, Log, All);
 
 const FName FHaybaMCPModule::TabMain(TEXT("HaybaMCP_Main"));
 const FName FHaybaMCPModule::TabStudio(TEXT("HaybaSemanticStudio"));
+
+namespace
+{
+    // Parse the port out of a URL like "http://localhost:7821" or
+    // "http://127.0.0.1:7821/chat". Returns DefaultPort on any parse failure.
+    int32 HaybaParseSidecarPort(const FString& Url, int32 DefaultPort)
+    {
+        FString Rest = Url;
+        int32 SchemeIdx = Rest.Find(TEXT("://"));
+        if (SchemeIdx != INDEX_NONE) Rest = Rest.RightChop(SchemeIdx + 3);
+        // Strip any path/query so we only look at the authority (host[:port]).
+        int32 SlashIdx = INDEX_NONE;
+        if (Rest.FindChar(TEXT('/'), SlashIdx)) Rest = Rest.Left(SlashIdx);
+        int32 ColonIdx = INDEX_NONE;
+        if (Rest.FindLastChar(TEXT(':'), ColonIdx))
+        {
+            const FString PortStr = Rest.RightChop(ColonIdx + 1);
+            if (PortStr.IsNumeric())
+            {
+                const int32 P = FCString::Atoi(*PortStr);
+                if (P > 0 && P <= 65535) return P;
+            }
+        }
+        return DefaultPort;
+    }
+
+    // Lightweight, non-blocking TCP reachability probe against 127.0.0.1:<Port>.
+    // Never throws / never hangs: a non-blocking connect + bounded Wait. Used so
+    // we don't double-spawn when a sidecar (manually-run or a prior instance) is
+    // already listening. Returns false on any error.
+    bool HaybaIsPortReachable(int32 Port, float TimeoutSeconds)
+    {
+        ISocketSubsystem* SS = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+        if (!SS) return false;
+
+        TSharedRef<FInternetAddr> Addr = SS->CreateInternetAddr();
+        bool bAddrValid = false;
+        Addr->SetIp(TEXT("127.0.0.1"), bAddrValid);
+        Addr->SetPort(Port);
+        if (!bAddrValid) return false;
+
+        FSocket* Socket = SS->CreateSocket(NAME_Stream, TEXT("HaybaSidecarProbe"), false);
+        if (!Socket) return false;
+
+        Socket->SetNonBlocking(true);
+        Socket->Connect(*Addr);
+
+        bool bReachable = false;
+        if (Socket->Wait(ESocketWaitConditions::WaitForWrite, FTimespan::FromSeconds(TimeoutSeconds)))
+        {
+            bReachable = (Socket->GetConnectionState() == SCS_Connected);
+        }
+
+        Socket->Close();
+        SS->DestroySocket(Socket);
+        return bReachable;
+    }
+}
 
 void FHaybaMCPModule::StartupModule()
 {
@@ -166,6 +227,23 @@ void FHaybaMCPModule::StartupModule()
     if (!StartTcpServer())
     {
         UE_LOG(LogHaybaMCP, Error, TEXT("Failed to start TCP listener on port %d at module startup"), TcpPort);
+    }
+
+    // Auto-start the Node chat sidecar so the in-editor chat works with no manual
+    // step. Skip if disabled, or if something is already listening on the sidecar
+    // port (a manually-run sidecar or a prior instance) — in that case we reuse it.
+    if (FHaybaMCPSettings::Get().bAutoStartSidecar)
+    {
+        const int32 SidecarPort = HaybaParseSidecarPort(FHaybaMCPSettings::Get().SidecarURL, 7821);
+        // Short, bounded probe so we never block editor startup.
+        if (HaybaIsPortReachable(SidecarPort, 0.25f))
+        {
+            UE_LOG(LogHaybaMCP, Log, TEXT("Chat sidecar already reachable on port %d — reusing it (not spawning)."), SidecarPort);
+        }
+        else if (!StartMCPServer())
+        {
+            UE_LOG(LogHaybaMCP, Warning, TEXT("Auto-start of chat sidecar failed — start it manually from the Hayba panel."));
+        }
     }
 
     auto& TM = FGlobalTabmanager::Get();
@@ -359,7 +437,11 @@ bool FHaybaMCPModule::StartMCPServer()
         return false;
     }
 
-    FPlatformMisc::SetEnvironmentVar(TEXT("DASHBOARD_PORT"), TEXT("52341"));
+    // Host the sidecar (chat SSE routes + dashboard) on the port the C++ chat
+    // panel talks to: HaybaMCPSettings::SidecarURL (default 7821). Parsing keeps
+    // the two ends in lockstep instead of a hardcoded constant.
+    const int32 SidecarPort = HaybaParseSidecarPort(FHaybaMCPSettings::Get().SidecarURL, 7821);
+    FPlatformMisc::SetEnvironmentVar(TEXT("DASHBOARD_PORT"), *FString::FromInt(SidecarPort));
     FPlatformMisc::SetEnvironmentVar(TEXT("UE_TCP_PORT"), *FString::FromInt(TcpPort));
 
     // Point the PLUMB stores at the project's .scratch so the MCP server and the
@@ -380,8 +462,8 @@ bool FHaybaMCPModule::StartMCPServer()
         return false;
     }
 
-    MCPPort = 52341;
-    UE_LOG(LogHaybaMCP, Log, TEXT("MCP server started. Dashboard: http://127.0.0.1:%d"), MCPPort);
+    MCPPort = SidecarPort;
+    UE_LOG(LogHaybaMCP, Log, TEXT("MCP server started (entry: %s). Dashboard/chat: http://127.0.0.1:%d"), *ServerPath, MCPPort);
     return true;
 }
 
@@ -469,7 +551,30 @@ FString FHaybaMCPModule::FindNodeExecutable() const
 
 FString FHaybaMCPModule::GetMCPServerPath() const
 {
-    return FPaths::Combine(PluginBaseDir, TEXT("ThirdParty"), TEXT("mcp_server"), TEXT("dist"), TEXT("index.js"));
+    // (a) Explicit override from settings, if it points at a real file.
+    const FString Override = FHaybaMCPSettings::Get().SidecarEntryPath;
+    if (!Override.IsEmpty() && FPaths::FileExists(Override))
+    {
+        UE_LOG(LogHaybaMCP, Log, TEXT("MCP server entry (override): %s"), *Override);
+        return Override;
+    }
+
+    // (b) Repo dev build. The plugin is symlinked into the project from the repo,
+    // so PluginBaseDir == <repo>/unreal/HaybaMCPToolkit and "../../" reaches the
+    // repo root, where the built server lives at mcp-tools/hayba-mcp/dist/index.js.
+    const FString DevBuild = FPaths::ConvertRelativePathToFull(
+        FPaths::Combine(PluginBaseDir, TEXT(".."), TEXT(".."),
+                        TEXT("mcp-tools"), TEXT("hayba-mcp"), TEXT("dist"), TEXT("index.js")));
+    if (FPaths::FileExists(DevBuild))
+    {
+        UE_LOG(LogHaybaMCP, Log, TEXT("MCP server entry (repo dev build): %s"), *DevBuild);
+        return DevBuild;
+    }
+
+    // (c) Bundled shipping fallback under the plugin's ThirdParty.
+    const FString Bundled = FPaths::Combine(PluginBaseDir, TEXT("ThirdParty"), TEXT("mcp_server"), TEXT("dist"), TEXT("index.js"));
+    UE_LOG(LogHaybaMCP, Log, TEXT("MCP server entry (bundled fallback): %s"), *Bundled);
+    return Bundled;
 }
 
 TSharedRef<SDockTab> FHaybaMCPModule::OnSpawnTab(const FSpawnTabArgs& Args)
