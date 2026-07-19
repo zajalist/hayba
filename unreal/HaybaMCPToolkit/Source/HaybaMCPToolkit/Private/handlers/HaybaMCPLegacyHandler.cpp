@@ -1506,6 +1506,23 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_ReadNodeOutput(const TSharedPtr<
     Features->SetArrayField(TEXT("attributes"), AttrNames);
     Features->SetObjectField(TEXT("value_ranges"), ValueRanges);
 
+    // §3a stale honesty: GetGeneratedGraphOutput() returns the data cached on the
+    // component from its LAST Generate()/inspection, NOT a live post-cook read. It can
+    // be empty or stale (e.g. point_count: 0 while the same component's cook produced
+    // real instances). Self-label the payload so agents don't trust it as ground truth.
+    //
+    // TODO(live-read): a true live read would need to force a synchronous cook of THIS
+    // component (Comp->GenerateLocal(/*bForce=*/true) or the PCG subsystem's
+    // schedule-and-flush path) on the game thread, wait for the graph to settle, then
+    // read GetGeneratedGraphOutput() — and additionally support per-node inspection data
+    // (UPCGComponent inspection cache keyed by node) rather than only the graph's final
+    // output. That is the risky regen-cascade path this tool deliberately avoids today.
+    Features->SetBoolField(TEXT("stale"), true);
+    Features->SetStringField(TEXT("stale_note"),
+        TEXT("Data is from the component's last inspection/Generate cache, NOT a live post-cook read; ")
+        TEXT("point_count may be 0 or reflect a prior run. For ground truth (instance counts per mesh), ")
+        TEXT("use pcg_cook_and_wait and read result.ism[]."));
+
     if (!bFoundAnyComponent)
     {
         Features->SetStringField(TEXT("note"), TEXT("No PCGComponents found for this graph. Place an actor with a PCGComponent referencing this graph."));
@@ -1513,6 +1530,7 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_ReadNodeOutput(const TSharedPtr<
 
     TSharedPtr<FJsonObject> Data = MakeShareable(new FJsonObject());
     Data->SetBoolField(TEXT("success"), true);
+    Data->SetBoolField(TEXT("stale"), true);
     Data->SetObjectField(TEXT("features"), Features);
 
     return FHaybaHandlerResult::Ok(Data);

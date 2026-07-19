@@ -165,9 +165,31 @@ export const pcgAddNodeSchema = z.object({
 });
 export type PcgAddNodeParams = z.infer<typeof pcgAddNodeSchema>;
 
+// §3d: UPCGNode::GetNodeTitle / UPCGSettings::GetDefaultNodeTitle are NOT
+// UFUNCTIONs in UE 5.8, so Python can't read a node's friendly display title
+// (e.g. "Shape : 3D Grid") directly — a freshly-added node reports only its raw
+// settings-class name. UHaybaPCGLibrary::GetPCGNodeTitle wraps GetNodeTitle so we
+// can surface that title as the node_label. Guarded: if the C++ library isn't
+// available (older build) or the call fails, fall back to _node_label (class
+// name) so addressing stays stable and the tool never errors on the label alone.
+const PY_FRIENDLY_LABEL = [
+  'def _friendly_label(n):',
+  '    try:',
+  '        lib = getattr(unreal, "HaybaPCGLibrary", None)',
+  '        if lib is not None:',
+  '            t = str(lib.get_pcg_node_title(n))',
+  '            # FullTitle can be multi-line ("Shape\\n3D Grid"); flatten for a',
+  '            # single-line, addressable label.',
+  '            t = " ".join(t.split())',
+  '            if t and t != "None": return t',
+  '    except Exception: pass',
+  '    return _node_label(n)',
+].join('\n');
+
 function addNodeScript(p: PcgAddNodeParams): string {
   return [
     PY_RESOLVE_NODE,
+    PY_FRIENDLY_LABEL,
     `_graph = ${pyStr(p.graph)}`,
     `_cls_name = ${pyStr(p.settings_class)}`,
     'try:',
@@ -188,7 +210,7 @@ function addNodeScript(p: PcgAddNodeParams): string {
     '    unreal.EditorAssetLibrary.save_loaded_asset(g)',
     '    nodes = list(g.nodes)',
     '    idx = nodes.index(node) if node in nodes else len(nodes)-1',
-    '    _emit({"ok": True, "node_index": idx, "node_label": _node_label(node), "settings_class": _cls_name})',
+    '    _emit({"ok": True, "node_index": idx, "node_label": _friendly_label(node), "settings_class": _cls_name})',
     'except Exception as _e:',
     '    _err(_e)',
   ].join('\n');
@@ -197,7 +219,7 @@ function addNodeScript(p: PcgAddNodeParams): string {
 export const pcgAddNodeDescriptor: PyToolDescriptor<typeof pcgAddNodeSchema.shape> = {
   name: 'pcg_add_node',
   description:
-    'Add a node of a given PCG settings class to a graph. Returns node_index + node_label (the settings-class name — the STABLE addressing key; the friendly display title such as "Shape : 3D Grid" is only reported by hayba_export_pcg_graph). New nodes land at (0,0) — run pcg_layout afterward to arrange the graph. To remove a node use pcg_remove_node; to inspect its pins before wiring use pcg_list_pins.',
+    'Add a node of a given PCG settings class to a graph. Returns node_index, settings_class, and node_label — node_label is now the friendly display title (e.g. "Shape : 3D Grid") when the HaybaPCGLibrary C++ helper is available, else it falls back to the settings-class name. For STABLE addressing pass either node_index or settings_class to pcg_wire/pcg_set_prop/pcg_remove_node (class-name and index addressing always work; friendly-title addressing depends on the node having an authored title). New nodes land at (0,0) — run pcg_layout afterward to arrange the graph. To remove a node use pcg_remove_node; to inspect its pins before wiring use pcg_list_pins.',
   cost: 'low',
   returns: '{ok, node_index, node_label, settings_class}',
   schema: pcgAddNodeSchema.shape,
