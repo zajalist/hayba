@@ -6,7 +6,7 @@ import { runUePythonJson, pyStr } from '../ue-python.js';
 export const meta: HaybaToolMeta = {
   cost: 'high',
   effects: ['mutates_scene', 'gpu_load', 'wait'],
-  when: 'after editing a PCG graph, to regenerate an actor AND read back instance counts in ONE call — PCGComponent.generate is async, so a plain generate reads 0 instances in the same call',
+  when: 'after editing a PCG graph, to regenerate an actor AND read back instance counts in ONE call — PCGComponent.generate is async, so a plain generate reads 0 instances in the same call. GROUND TRUTH is result.ism[] ({mesh,count} per ISM) — trust this over pcg_read_node_output (a possibly-stale inspection cache). result.freshness {changed,before,after} proves the counts are from THIS cook, not a prior run. idle.timedOut:["pcg"] is EXPECTED/BENIGN for PCGEx async chains and does NOT mean the cook failed (see idle_note); when result.ism is non-empty the cook succeeded regardless of the pcg idle timeout',
   not_when: 'you only want to read existing instances without regenerating — use pcg_inspect_instances',
 };
 
@@ -76,6 +76,15 @@ export async function pcgCookAndWaitHandler(params: PcgCookAndWaitParams) {
   }
   const { actor, timeout_s } = parsed.data;
   try {
+    // 0. Snapshot the ISM instance count BEFORE regenerating so we can prove the
+    //    counts we read back are from THIS cook, not a stale prior run (§3c).
+    //    A pre-cook read failure is non-fatal — freshness just goes unknown.
+    let before: number | null = null;
+    try {
+      const pre = await runUePythonJson<{ ok?: boolean; total?: number }>(inspectScript(actor), 30_000);
+      before = typeof pre?.total === 'number' ? pre.total : null;
+    } catch { /* freshness snapshot is best-effort */ }
+
     // 1. Trigger regeneration and resolve the actor's full path.
     const gen = await runUePythonJson<{ ok?: boolean; actor_path?: string; error?: string }>(
       resolveActorAndGenerateScript(actor), 30_000,
@@ -102,7 +111,43 @@ export async function pcgCookAndWaitHandler(params: PcgCookAndWaitParams) {
     //    success. Silent success on empty output is the trap that hides the
     //    single most common scatter failure, so surface it as ok:false.
     const total = typeof counts?.total === 'number' ? counts.total : 0;
-    if (total === 0) {
+    const ismCount = Array.isArray(counts?.ism) ? counts.ism.length : 0;
+
+    // Freshness signal (§3c): compare the pre-cook snapshot to the post-cook read
+    // so the agent can trust the numbers are from THIS cook without the diff trick.
+    const after = typeof counts?.total === 'number' ? counts.total : null;
+    const freshness = {
+      before,
+      after,
+      // `changed` proves this cook moved the numbers. `null` before = snapshot
+      // unavailable, so freshness is unknown (not a claim of staleness).
+      changed: before === null || after === null ? null : before !== after,
+      note:
+        'result.ism[] is the AUTHORITATIVE post-cook count. `changed:true` proves it reflects THIS cook; `changed:false` means the count matched the prior run (identical output or async tail not yet settled); `changed:null` means the pre-cook snapshot was unavailable.',
+    };
+
+    // §3b — a PCGEx async chain frequently leaves the pcg subsystem reporting a
+    // benign idle-timeout AFTER the ISM instances are already spawned and correct.
+    // A benign timeout must NOT flip the tool to isError when result.ism is
+    // present and non-empty: distinguish "settled, async tail still ticking" from
+    // "genuinely still cooking (produced nothing)".
+    const idleObj = (idle && typeof idle === 'object') ? (idle as Record<string, unknown>) : {};
+    const pcgTimedOut = Array.isArray(idleObj.timedOut) && (idleObj.timedOut as unknown[]).includes('pcg');
+    const ismAuthoritative = total > 0 && ismCount > 0;
+    const idle_note = pcgTimedOut
+      ? (ismAuthoritative
+        ? 'BENIGN: idle.timedOut for "pcg" is EXPECTED for PCGEx async chains. result.ism[] is present and non-empty, so the cook SUCCEEDED — the async tail is still ticking but the instances are settled. Do NOT treat this timeout as a failure.'
+        : 'idle.timedOut for "pcg" AND result.ism is empty — this cook may be genuinely still cooking or the graph produced nothing. Treated as failure below only because of the zero-instance result.')
+      : 'pcg subsystem settled cleanly within the timeout.';
+
+    // 4. Hard-fail on a zero-instance cook. A PCG generate that settles clean
+    //    but produces NO instances is almost always a broken graph (mesh never
+    //    bound to the spawner, or the surface source emitted no points) — NOT a
+    //    success. Silent success on empty output is the trap that hides the
+    //    single most common scatter failure, so surface it as ok:false.
+    //    NOTE: this fires ONLY on genuine zero output — a benign pcg idle-timeout
+    //    with a non-empty result.ism is a SUCCESS (§3b), not a failure.
+    if (!ismAuthoritative) {
       return {
         content: [{
           type: 'text' as const,
@@ -111,6 +156,8 @@ export async function pcgCookAndWaitHandler(params: PcgCookAndWaitParams) {
             error: 'PCG generated 0 instances — check mesh binding (StaticMeshSpawner) / surface source. The graph cooked cleanly but produced no instances.',
             cook: gen,
             idle,
+            idle_note,
+            freshness,
             result: counts,
           }, null, 2),
         }],
@@ -121,7 +168,15 @@ export async function pcgCookAndWaitHandler(params: PcgCookAndWaitParams) {
     return {
       content: [{
         type: 'text' as const,
-        text: JSON.stringify({ ok: true, cook: gen, idle, result: counts }, null, 2),
+        text: JSON.stringify({
+          ok: true,
+          authoritative: 'result.ism',
+          idle_note,
+          cook: gen,
+          idle,
+          freshness,
+          result: counts,
+        }, null, 2),
       }],
     };
   } catch (e) {
