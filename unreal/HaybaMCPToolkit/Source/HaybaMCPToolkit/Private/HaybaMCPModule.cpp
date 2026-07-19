@@ -571,6 +571,23 @@ FString FHaybaMCPModule::GetMCPServerPath() const
         return DevBuild;
     }
 
+    // (b') Symlink-resolved dev build. GetBaseDir() returns the symlink path
+    // (e.g. <project>/Plugins/HaybaMCPToolkit) when the plugin is symlinked into
+    // the project from a repo checkout, so the "../.." above lands in the project,
+    // not the repo. Resolve the on-disk target first, then reach the repo build.
+    const FString ResolvedBase = IFileManager::Get().GetFilenameOnDisk(*PluginBaseDir);
+    if (!ResolvedBase.IsEmpty() && ResolvedBase != PluginBaseDir)
+    {
+        const FString DevBuild2 = FPaths::ConvertRelativePathToFull(
+            FPaths::Combine(ResolvedBase, TEXT(".."), TEXT(".."),
+                            TEXT("mcp-tools"), TEXT("hayba-mcp"), TEXT("dist"), TEXT("index.js")));
+        if (FPaths::FileExists(DevBuild2))
+        {
+            UE_LOG(LogHaybaMCP, Log, TEXT("MCP server entry (symlink-resolved dev build): %s"), *DevBuild2);
+            return DevBuild2;
+        }
+    }
+
     // (c) Bundled shipping fallback under the plugin's ThirdParty.
     const FString Bundled = FPaths::Combine(PluginBaseDir, TEXT("ThirdParty"), TEXT("mcp_server"), TEXT("dist"), TEXT("index.js"));
     UE_LOG(LogHaybaMCP, Log, TEXT("MCP server entry (bundled fallback): %s"), *Bundled);
