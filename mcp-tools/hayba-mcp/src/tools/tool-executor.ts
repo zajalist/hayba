@@ -82,6 +82,12 @@ export const NON_IDEMPOTENT = new Set<string>([
   // PCG add-element family (MCP-registered; routed via python_run internally)
   'pcg_add_node',
   'pcg_wire',
+  // PCG graph-edit destructive family (2026-07 postmortem §2a/§2b): removing a
+  // node or cutting an edge is not safe to blind-retry (indices shift; a second
+  // remove/disconnect fails because the target is already gone). pcg_layout /
+  // pcg_list_pins / pcg_get_node are idempotent/read-only — intentionally absent.
+  'pcg_remove_node',
+  'pcg_disconnect',
   // ISM
   'ism_create_actor',
   'ism_clear_instances',

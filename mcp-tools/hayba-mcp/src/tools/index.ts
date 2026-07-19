@@ -110,6 +110,8 @@ import { pcgCookAndWaitHandler, schema as pcgCookSchema, meta as pcgCookMeta } f
 import { pcgScatterMeshHandler, schema as pcgScatterSchema, meta as pcgScatterMeta } from './pcg/pcg-scatter-mesh.js';
 import {
   pcgAddNodeDescriptor, pcgSetPropDescriptor, pcgWireDescriptor, pcgInspectInstancesDescriptor,
+  pcgRemoveNodeDescriptor, pcgDisconnectDescriptor, pcgLayoutDescriptor,
+  pcgListPinsDescriptor, pcgGetNodeDescriptor,
 } from './pcg/pcg-primitives.js';
 import { actorPyDescriptors } from './actor/actor-py-tools.js';
 import { editorPyDescriptors } from './editor/editor-py-tools.js';
@@ -895,6 +897,13 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     toToolDescriptor(pcgSetPropDescriptor),
     toToolDescriptor(pcgWireDescriptor),
     toToolDescriptor(pcgInspectInstancesDescriptor),
+    // PCG graph-EDIT tools (2026-07 postmortem §2a–2e): the destructive/introspect
+    // half that previously forced python_run fallbacks.
+    toToolDescriptor(pcgRemoveNodeDescriptor),
+    toToolDescriptor(pcgDisconnectDescriptor),
+    toToolDescriptor(pcgLayoutDescriptor),
+    toToolDescriptor(pcgListPinsDescriptor),
+    toToolDescriptor(pcgGetNodeDescriptor),
 
     // ── Actor-domain P0 breadth tools (Phase 2 Wave 1) — factory path ─────────
     // Net-new actor tools (inspect/find/selection/spawn-from-asset/batch-
