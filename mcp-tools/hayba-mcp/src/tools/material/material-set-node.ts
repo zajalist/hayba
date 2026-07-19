@@ -15,7 +15,12 @@ export const schema = z.object({
   function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
   node_id: z.string().min(1).describe('ID/name of the existing node to update'),
   node_pos: z.tuple([z.number(), z.number()]).optional().describe('New graph position [x, y]'),
-  properties: z.record(z.string(), z.unknown()).optional().describe('Properties to set on the node'),
+  properties: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe(
+      'Properties to set on the node. Friendly aliases (parameter_name/default_value/texture/const/function/coordinate_index/u_tiling/v_tiling); any other key is set as a real UPROPERTY by name. Keys that match no property are returned in unknown_props[] with data.ok=false (mistyped keys are reported, not silently ignored); applied keys are listed in applied_props[].',
+    ),
 }).refine((d) => !!d.material_path || !!d.function_path, {
   message: 'one of material_path or function_path is required',
 });

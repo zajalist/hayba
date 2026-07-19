@@ -198,30 +198,58 @@ static bool TryParseProperty(const FString& In, EMaterialProperty& Out)
     return false;
 }
 
+// Outcome of ApplyNodeProps: which requested keys actually took (Applied) and which
+// did NOT (Unknown = friendly alias that hit a non-matching node type, OR a reflection
+// key with no matching UPROPERTY / a set that failed). Lets material_add_node /
+// material_set_node report a mistyped key loudly instead of silently no-op'ing.
+struct FApplyNodePropsResult
+{
+    TArray<FString> Applied;
+    TArray<FString> Unknown;
+};
+
 // Apply optional per-node properties. Friendly aliases (parameter_name/default_value/
 // texture/const/function/coordinate_index/u_tiling/v_tiling) are handled first for
 // back-compat; every other key is treated as a real UPROPERTY name and set via
 // reflection (HaybaReflection::SetProp) — so callers can set InputType, ComponentMask
 // R/G/B/A, SortPriority, SamplerType, Desc, etc. with no per-type code here.
-static void ApplyNodeProps(UMaterialExpression* Expr, const TSharedPtr<FJsonObject>& Props)
+// Returns which requested keys applied vs were unknown/no-op (see FApplyNodePropsResult).
+static FApplyNodePropsResult ApplyNodeProps(UMaterialExpression* Expr, const TSharedPtr<FJsonObject>& Props)
 {
-    if (!Expr || !Props.IsValid()) return;
+    FApplyNodePropsResult R;
+    if (!Expr || !Props.IsValid()) return R;
 
+    // Record an alias key that was present in Props: Applied if it stuck on this
+    // node type, otherwise Unknown (so `default_value` on a non-parameter, etc.,
+    // is reported rather than silently swallowed).
+    auto RecordAlias = [&](const TCHAR* Key, bool bApplied)
+    {
+        if (Props->HasField(Key))
+            (bApplied ? R.Applied : R.Unknown).Add(FString(Key));
+    };
+
+    // parameter_name binds Parameter/TextureSampleParameter names AND (Task 4)
+    // FunctionInput/FunctionOutput names — any one of these counts as applied.
     FString S;
+    bool bParamNameApplied = false;
     if (Props->TryGetStringField(TEXT("parameter_name"), S))
     {
         const FName PName(*S);
-        if (UMaterialExpressionParameter* Par = Cast<UMaterialExpressionParameter>(Expr)) Par->ParameterName = PName;
-        if (UMaterialExpressionTextureSampleParameter* Tp = Cast<UMaterialExpressionTextureSampleParameter>(Expr)) Tp->ParameterName = PName;
+        if (UMaterialExpressionParameter* Par = Cast<UMaterialExpressionParameter>(Expr)) { Par->ParameterName = PName; bParamNameApplied = true; }
+        if (UMaterialExpressionTextureSampleParameter* Tp = Cast<UMaterialExpressionTextureSampleParameter>(Expr)) { Tp->ParameterName = PName; bParamNameApplied = true; }
+        if (UMaterialExpressionFunctionInput* In = Cast<UMaterialExpressionFunctionInput>(Expr)) { In->InputName = PName; bParamNameApplied = true; }
+        if (UMaterialExpressionFunctionOutput* O = Cast<UMaterialExpressionFunctionOutput>(Expr)) { O->OutputName = PName; bParamNameApplied = true; }
     }
+    RecordAlias(TEXT("parameter_name"), bParamNameApplied);
 
+    bool bDefaultApplied = false;
     const TSharedPtr<FJsonValue> DV = Props->TryGetField(TEXT("default_value"));
     if (DV.IsValid())
     {
         if (UMaterialExpressionScalarParameter* Sc = Cast<UMaterialExpressionScalarParameter>(Expr); Sc && DV->Type == EJson::Number)
-            Sc->DefaultValue = (float)DV->AsNumber();
+            { Sc->DefaultValue = (float)DV->AsNumber(); bDefaultApplied = true; }
         if (UMaterialExpressionStaticBoolParameter* Sb = Cast<UMaterialExpressionStaticBoolParameter>(Expr); Sb && DV->Type == EJson::Boolean)
-            Sb->DefaultValue = DV->AsBool();
+            { Sb->DefaultValue = DV->AsBool(); bDefaultApplied = true; }
         if (UMaterialExpressionVectorParameter* Vp = Cast<UMaterialExpressionVectorParameter>(Expr); Vp && DV->Type == EJson::Array)
         {
             const TArray<TSharedPtr<FJsonValue>>& A = DV->AsArray();
@@ -230,30 +258,36 @@ static void ApplyNodeProps(UMaterialExpression* Expr, const TSharedPtr<FJsonObje
             if (A.Num() > 1) C.G = A[1]->AsNumber();
             if (A.Num() > 2) C.B = A[2]->AsNumber();
             if (A.Num() > 3) C.A = A[3]->AsNumber();
-            Vp->DefaultValue = C;
+            Vp->DefaultValue = C; bDefaultApplied = true;
         }
     }
+    RecordAlias(TEXT("default_value"), bDefaultApplied);
 
+    bool bTexApplied = false;
     FString TexPath;
     if (Props->TryGetStringField(TEXT("texture"), TexPath))
         if (UMaterialExpressionTextureBase* Ts = Cast<UMaterialExpressionTextureBase>(Expr))
-            if (UTexture* Tex = LoadObject<UTexture>(nullptr, *TexPath)) Ts->Texture = Tex;
+            if (UTexture* Tex = LoadObject<UTexture>(nullptr, *TexPath)) { Ts->Texture = Tex; bTexApplied = true; }
+    RecordAlias(TEXT("texture"), bTexApplied);
 
+    bool bConstApplied = false;
     const TSharedPtr<FJsonValue> CV = Props->TryGetField(TEXT("const"));
     if (CV.IsValid())
     {
         if (UMaterialExpressionConstant* C1 = Cast<UMaterialExpressionConstant>(Expr); C1 && CV->Type == EJson::Number)
-            C1->R = (float)CV->AsNumber();
+            { C1->R = (float)CV->AsNumber(); bConstApplied = true; }
         if (CV->Type == EJson::Array)
         {
             const TArray<TSharedPtr<FJsonValue>>& A = CV->AsArray();
             auto N = [&A](int32 i) { return A.IsValidIndex(i) ? (float)A[i]->AsNumber() : 0.f; };
-            if (UMaterialExpressionConstant2Vector* C2 = Cast<UMaterialExpressionConstant2Vector>(Expr)) { C2->R = N(0); C2->G = N(1); }
-            if (UMaterialExpressionConstant3Vector* C3 = Cast<UMaterialExpressionConstant3Vector>(Expr)) C3->Constant = FLinearColor(N(0), N(1), N(2), 1.f);
-            if (UMaterialExpressionConstant4Vector* C4 = Cast<UMaterialExpressionConstant4Vector>(Expr)) C4->Constant = FLinearColor(N(0), N(1), N(2), N(3));
+            if (UMaterialExpressionConstant2Vector* C2 = Cast<UMaterialExpressionConstant2Vector>(Expr)) { C2->R = N(0); C2->G = N(1); bConstApplied = true; }
+            if (UMaterialExpressionConstant3Vector* C3 = Cast<UMaterialExpressionConstant3Vector>(Expr)) { C3->Constant = FLinearColor(N(0), N(1), N(2), 1.f); bConstApplied = true; }
+            if (UMaterialExpressionConstant4Vector* C4 = Cast<UMaterialExpressionConstant4Vector>(Expr)) { C4->Constant = FLinearColor(N(0), N(1), N(2), N(3)); bConstApplied = true; }
         }
     }
+    RecordAlias(TEXT("const"), bConstApplied);
 
+    bool bFuncApplied = false;
     FString FuncPath;
     if (!Props->TryGetStringField(TEXT("function"), FuncPath))
         Props->TryGetStringField(TEXT("function_path"), FuncPath); // accept either key
@@ -268,39 +302,96 @@ static void ApplyNodeProps(UMaterialExpression* Expr, const TSharedPtr<FJsonObje
                 // the exact footgun that drove the recompile/find_object dances in
                 // the python_run traces.
                 Fc->UpdateFromFunctionResource();
+                bFuncApplied = true;
             }
+    // `function` is the alias; `function_path` is accepted as a synonym — record
+    // whichever the caller supplied.
+    RecordAlias(TEXT("function"), bFuncApplied);
+    if (Props->HasField(TEXT("function_path")))
+        (bFuncApplied ? R.Applied : R.Unknown).Add(TEXT("function_path"));
 
+    bool bCoordApplied = false;
     if (UMaterialExpressionTextureCoordinate* Tc = Cast<UMaterialExpressionTextureCoordinate>(Expr))
     {
         double D;
-        if (Props->TryGetNumberField(TEXT("coordinate_index"), D)) Tc->CoordinateIndex = (int32)D;
-        if (Props->TryGetNumberField(TEXT("u_tiling"), D)) Tc->UTiling = (float)D;
-        if (Props->TryGetNumberField(TEXT("v_tiling"), D)) Tc->VTiling = (float)D;
+        if (Props->TryGetNumberField(TEXT("coordinate_index"), D)) { Tc->CoordinateIndex = (int32)D; }
+        if (Props->TryGetNumberField(TEXT("u_tiling"), D)) { Tc->UTiling = (float)D; }
+        if (Props->TryGetNumberField(TEXT("v_tiling"), D)) { Tc->VTiling = (float)D; }
+        bCoordApplied = true;
     }
-
-    // FunctionInput/Output naming (Task 4) reuses parameter_name.
-    if (Props->TryGetStringField(TEXT("parameter_name"), S))
-    {
-        if (UMaterialExpressionFunctionInput* In = Cast<UMaterialExpressionFunctionInput>(Expr)) In->InputName = FName(*S);
-        if (UMaterialExpressionFunctionOutput* O = Cast<UMaterialExpressionFunctionOutput>(Expr)) O->OutputName = FName(*S);
-    }
+    RecordAlias(TEXT("coordinate_index"), bCoordApplied);
+    RecordAlias(TEXT("u_tiling"), bCoordApplied);
+    RecordAlias(TEXT("v_tiling"), bCoordApplied);
 
     // Generic reflection passthrough: any key that isn't a friendly alias is
     // treated as a real UPROPERTY name (e.g. InputType, R/G/B/A, SortPriority,
-    // SamplerType, ConstCoordinate, Desc). Aliases above are skipped here.
+    // SamplerType, ConstCoordinate, Desc). HaybaReflection::SetProp returns false
+    // when the class has no such FProperty (a mistyped/invalid key) — collect
+    // those as Unknown so callers hear about the no-op instead of a silent success.
     static const TSet<FString> Aliases = {
         TEXT("parameter_name"), TEXT("default_value"), TEXT("texture"),
-        TEXT("const"), TEXT("function"), TEXT("coordinate_index"),
-        TEXT("u_tiling"), TEXT("v_tiling"),
+        TEXT("const"), TEXT("function"), TEXT("function_path"),
+        TEXT("coordinate_index"), TEXT("u_tiling"), TEXT("v_tiling"),
     };
     for (const auto& Pair : Props->Values)
     {
         const FString Key = FString(*Pair.Key);
         if (Aliases.Contains(Key)) continue;
-        HaybaReflection::SetProp(Expr, Key, Pair.Value);
+        if (HaybaReflection::SetProp(Expr, Key, Pair.Value)) R.Applied.Add(Key);
+        else                                                 R.Unknown.Add(Key);
     }
 
     Expr->PostEditChange();
+    return R;
+}
+
+// A few real, editable UPROPERTY names on this expression's class — a hint returned
+// alongside unknown_props so a caller who mistyped a key can see valid options.
+static TArray<FString> HaybaListNodeProps(UMaterialExpression* Expr, int32 Max = 12)
+{
+    TArray<FString> Names;
+    if (!Expr) return Names;
+    for (TFieldIterator<FProperty> It(Expr->GetClass()); It && Names.Num() < Max; ++It)
+        if (It->HasAnyPropertyFlags(CPF_Edit))
+            Names.Add(It->GetName());
+    return Names;
+}
+
+// Attach applied_props/unknown_props (and, when there were unknowns, a valid_props
+// hint + data-level ok:false + warning) to a node handler's result payload.
+// NOTE: we deliberately keep the HANDLER envelope ok:true even when a key is
+// unknown, because material_add_node is a registered destructive command — the
+// command router CANCELS the transaction on bOk=false (HaybaMCPCommandHandler
+// ~L926), which would UNDO the just-created node. Returning ok:true preserves the
+// node while the data-level ok:false + unknown_props[] + warning make the
+// partial failure loud and machine-readable (matches the "no silent success" bar).
+static void AttachNodePropsResult(const TSharedRef<FJsonObject>& Out,
+                                  const FApplyNodePropsResult& PR,
+                                  UMaterialExpression* Expr,
+                                  const TCHAR* Cmd)
+{
+    TArray<TSharedPtr<FJsonValue>> Applied;
+    for (const FString& K : PR.Applied) Applied.Add(MakeShared<FJsonValueString>(K));
+    Out->SetArrayField(TEXT("applied_props"), Applied);
+
+    TArray<TSharedPtr<FJsonValue>> Unknown;
+    for (const FString& K : PR.Unknown) Unknown.Add(MakeShared<FJsonValueString>(K));
+    Out->SetArrayField(TEXT("unknown_props"), Unknown);
+
+    if (PR.Unknown.Num() > 0)
+    {
+        const TArray<FString> Valid = HaybaListNodeProps(Expr);
+        TArray<TSharedPtr<FJsonValue>> ValidJson;
+        for (const FString& K : Valid) ValidJson.Add(MakeShared<FJsonValueString>(K));
+        Out->SetArrayField(TEXT("valid_props"), ValidJson);
+
+        Out->SetBoolField(TEXT("ok"), false);
+        Out->SetStringField(TEXT("warning"), FString::Printf(
+            TEXT("%s: %d property key(s) did not apply to node '%s' (%s) and were ignored: [%s]. Check spelling/casing against valid_props."),
+            Cmd, PR.Unknown.Num(),
+            *(Out->HasField(TEXT("node_id")) ? Out->GetStringField(TEXT("node_id")) : FString(TEXT("?"))),
+            *Expr->GetClass()->GetName(), *FString::Join(PR.Unknown, TEXT(", "))));
+    }
 }
 
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCreate(const TSharedPtr<FJsonObject>& P)
@@ -313,7 +404,13 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCreate(const TSharedPtr<FJsonOb
 
     IAssetTools& Tools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
     UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
-    FString Dir = FPackageName::GetLongPackagePath(PkgPath);
+    // package_path may be the target directory OR the full asset path — see
+    // material_function_create for the rationale. Backward-compatible: when the
+    // last segment already equals Name (the documented full-path convention) this
+    // strips it exactly as before; a bare directory now lands correctly too.
+    const FString Dir = (FPackageName::GetShortName(PkgPath) == Name)
+        ? FPackageName::GetLongPackagePath(PkgPath)
+        : PkgPath;
     UObject* Created = Tools.CreateAsset(Name, Dir, UMaterial::StaticClass(), Factory);
     if (!Created) return FHaybaHandlerResult::Err(TEXT("material_create: CreateAsset failed"));
 
@@ -341,7 +438,17 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatFunctionCreate(const TSharedPtr
 
     IAssetTools& Tools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
     UMaterialFunctionFactoryNew* Factory = NewObject<UMaterialFunctionFactoryNew>();
-    FString Dir = FPackageName::GetLongPackagePath(PkgPath);
+    // Robust path resolution — package_path may be EITHER the target directory
+    // ("/Game/Dir/MFs") OR the full asset path ("/Game/Dir/MFs/MF_X"). Historically
+    // this always did GetLongPackagePath (drops the last segment), which silently
+    // landed the asset one folder UP when a directory was passed. Detect which the
+    // caller supplied by comparing the last path segment to Name:
+    //   last segment == Name  -> full asset path -> Dir = parent (drop the name)
+    //   otherwise             -> directory       -> Dir = package_path (keep as-is)
+    const FString ShortName = FPackageName::GetShortName(PkgPath); // last segment after final '/'
+    const FString Dir = (ShortName == Name)
+        ? FPackageName::GetLongPackagePath(PkgPath)  // full path: strip the trailing name
+        : PkgPath;                                   // directory: use verbatim
     UObject* Created = Tools.CreateAsset(Name, Dir, UMaterialFunction::StaticClass(), Factory);
     if (!Created) return FHaybaHandlerResult::Err(TEXT("material_function_create: CreateAsset failed"));
 
@@ -425,13 +532,15 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddNode(const TSharedPtr<FJsonO
         if (!bHasPos) HaybaAutoNodePos(Fn->GetExpressions().Num(), X, Y);
         UMaterialExpression* Expr = UMaterialEditingLibrary::CreateMaterialExpressionInFunction(Fn, ExprCls, X, Y);
         if (!Expr) return FHaybaHandlerResult::Err(TEXT("material_add_node: CreateMaterialExpressionInFunction failed"));
-        if (PropsObj) ApplyNodeProps(Expr, *PropsObj);
+        FApplyNodePropsResult PR;
+        if (PropsObj) PR = ApplyNodeProps(Expr, *PropsObj);
         UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
         Fn->MarkPackageDirty();  // in-memory only — function written to disk by material_compile(function_path); avoids a half-built function landing on disk and asserting when the editor opens/compiles it
 
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("node_id"), Expr->GetName());
         EmitFunctionCallOutputs(Expr, Out.ToSharedRef());
+        AttachNodePropsResult(Out.ToSharedRef(), PR, Expr, TEXT("material_add_node"));
         return FHaybaHandlerResult::Ok(Out);
     }
 
@@ -444,7 +553,8 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddNode(const TSharedPtr<FJsonO
     if (!bHasPos) HaybaAutoNodePos(Mat->GetExpressions().Num(), X, Y);
     UMaterialExpression* Expr = UMaterialEditingLibrary::CreateMaterialExpression(Mat, ExprCls, X, Y);
     if (!Expr) return FHaybaHandlerResult::Err(TEXT("material_add_node: CreateMaterialExpression failed"));
-    if (PropsObj) ApplyNodeProps(Expr, *PropsObj);
+    FApplyNodePropsResult PR;
+    if (PropsObj) PR = ApplyNodeProps(Expr, *PropsObj);
     // Deferred-compile + crash-resilient save: no per-edit RecompileMaterial
     // (avoids translating a half-built graph -> editor-killing assert). Persist
     // to disk now; translate via the explicit material_compile command.
@@ -453,6 +563,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddNode(const TSharedPtr<FJsonO
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("node_id"), Expr->GetName());
     EmitFunctionCallOutputs(Expr, Out.ToSharedRef());
+    AttachNodePropsResult(Out.ToSharedRef(), PR, Expr, TEXT("material_add_node"));
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -700,7 +811,11 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCreateInstance(const TSharedPtr
     Factory->InitialParent = Parent;
 
     IAssetTools& Tools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
-    FString Dir = FPackageName::GetLongPackagePath(PkgPath);
+    // package_path may be the target directory OR the full asset path — see
+    // material_function_create. Backward-compatible with the full-path convention.
+    const FString Dir = (FPackageName::GetShortName(PkgPath) == Name)
+        ? FPackageName::GetLongPackagePath(PkgPath)
+        : PkgPath;
     UObject* Created = Tools.CreateAsset(Name, Dir, UMaterialInstanceConstant::StaticClass(), Factory);
     if (!Created) return FHaybaHandlerResult::Err(TEXT("material_create_instance: CreateAsset failed"));
 
@@ -1185,9 +1300,10 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetNode(const TSharedPtr<FJsonO
     const TSharedPtr<FJsonObject>* PropsObj = nullptr;
     P->TryGetObjectField(TEXT("properties"), PropsObj);
 
+    FApplyNodePropsResult PR;
     auto ApplyTo = [&](UMaterialExpression* Expr) {
         if (bHasPos) { Expr->MaterialExpressionEditorX = X; Expr->MaterialExpressionEditorY = Y; }
-        if (PropsObj) ApplyNodeProps(Expr, *PropsObj);
+        if (PropsObj) PR = ApplyNodeProps(Expr, *PropsObj);
     };
 
     FString FuncPath;
@@ -1202,6 +1318,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetNode(const TSharedPtr<FJsonO
         Fn->MarkPackageDirty();  // in-memory only — function written to disk by material_compile(function_path); avoids a half-built function landing on disk and asserting when the editor opens/compiles it
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("node_id"), NodeId);
+        AttachNodePropsResult(Out.ToSharedRef(), PR, Expr, TEXT("material_set_node"));
         return FHaybaHandlerResult::Ok(Out);
     }
 
@@ -1218,6 +1335,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetNode(const TSharedPtr<FJsonO
     Mat->MarkPackageDirty();  // in-memory only — master materials are written to disk ONLY by material_compile, so a half-built invalid-Normal graph never lands on disk for the editor to thumbnail/open-compile (Substrate check(NormalCodeChunk!=INDEX_NONE) crash)
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("node_id"), NodeId);
+    AttachNodePropsResult(Out.ToSharedRef(), PR, Expr, TEXT("material_set_node"));
     return FHaybaHandlerResult::Ok(Out);
 }
 

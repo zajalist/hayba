@@ -11,7 +11,12 @@ export const meta: HaybaToolMeta = {
 };
 
 export const schema = z.object({
-  package_path: z.string().min(1).describe('UE content path for the new material function'),
+  package_path: z
+    .string()
+    .min(1)
+    .describe(
+      'package_path may be the target directory (e.g. "/Game/Dir/MFs") OR the full asset path (e.g. "/Game/Dir/MFs/MF_X"); either resolves to the same folder',
+    ),
   name: z.string().min(1).describe('Name of the material function asset'),
 });
 

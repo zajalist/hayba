@@ -11,7 +11,10 @@ export const meta: HaybaToolMeta = {
 };
 
 export const schema = z.object({
-  package_path: z.string().min(1).describe('UE content path for the new material'),
+  package_path: z
+    .string()
+    .min(1)
+    .describe('UE content path for the new material — the target directory OR the full asset path (either resolves to the same folder)'),
   name: z.string().min(1).describe('Name of the material asset'),
 });
 

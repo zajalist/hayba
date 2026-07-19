@@ -70,7 +70,7 @@ describe('material instance-layer wrappers', () => {
     });
 
     it('has package_path and name schema fields', () => {
-      expect(materialCreateSrc).toMatch(/package_path:\s*z\.string\(\)/);
+      expect(materialCreateSrc).toMatch(/package_path:\s*z\s*\.string\(\)/);
       expect(materialCreateSrc).toMatch(/name:\s*z\.string\(\)/);
     });
   });
@@ -90,7 +90,7 @@ describe('material instance-layer wrappers', () => {
 
     it('has parent_material_path, package_path, and name schema fields', () => {
       expect(materialCreateInstanceSrc).toMatch(/parent_material_path:\s*z\.string\(\)/);
-      expect(materialCreateInstanceSrc).toMatch(/package_path:\s*z\.string\(\)/);
+      expect(materialCreateInstanceSrc).toMatch(/package_path:\s*z\s*\.string\(\)/);
       expect(materialCreateInstanceSrc).toMatch(/name:\s*z\.string\(\)/);
     });
   });
@@ -259,7 +259,7 @@ describe('material graph-layer wrappers', () => {
     });
 
     it('has package_path and name required fields with min(1)', () => {
-      expect(materialFunctionCreateSrc).toMatch(/package_path:\s*z\.string\(\)\.min\(1\)/);
+      expect(materialFunctionCreateSrc).toMatch(/package_path:\s*z\s*\.string\(\)\s*\.min\(1\)/);
       expect(materialFunctionCreateSrc).toMatch(/name:\s*z\.string\(\)\.min\(1\)/);
     });
   });

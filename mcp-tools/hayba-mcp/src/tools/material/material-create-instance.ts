@@ -12,7 +12,10 @@ export const meta: HaybaToolMeta = {
 
 export const schema = z.object({
   parent_material_path: z.string().min(1).describe('Path to the parent material asset'),
-  package_path: z.string().min(1).describe('UE content path for the new material instance'),
+  package_path: z
+    .string()
+    .min(1)
+    .describe('UE content path for the new material instance — the target directory OR the full asset path (either resolves to the same folder)'),
   name: z.string().min(1).describe('Name of the material instance asset'),
 });
 
