@@ -946,7 +946,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Reads cached output data from the PCGComponent's last Generate() call. Returns zero counts if the graph has not been executed."
+      "notes": "STALE-READ WARNING: reads a possibly-STALE inspection CACHE, not live post-cook data. point_count can report 0 (or a prior run's numbers) while the cook actually produced real instances — do NOT treat point_count:0 here as ground truth. GROUND TRUTH for instance counts is `pcg_cook_and_wait` result.ism[] (with result.freshness.changed proving this cook). Returns zero counts if the graph has not been executed. FOLLOW-UP (C++): make this read live post-cook data or return an explicit {stale:true} flag."
     },
     "pcg_read_node_output": {
       "aliases": [
@@ -988,7 +988,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Alias of read_node_output."
+      "notes": "Alias of read_node_output. STALE-READ WARNING: reads a possibly-STALE inspection cache, not live post-cook data — point_count:0 here is NOT ground truth. Use `pcg_cook_and_wait` result.ism[] for authoritative instance counts."
     },
     "describe_assets": {
       "aliases": [
