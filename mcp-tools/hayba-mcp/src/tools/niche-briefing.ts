@@ -33,6 +33,26 @@ INSTANCE LAYER
   material_set_param           Set a scalar, vector (rgba), or texture parameter on a material instance
   material_apply               Apply a material (or instance) to an actor in the level
 `.trim(),
+
+  ui: `
+UMG / WIDGET BLUEPRINT TOOLSET (3 tools) — first-touch briefing
+================================================================
+Author designer-editable UI the real UMG way (font picker works, artists can
+tweak) instead of hand-building the tree in C++. Param names mirror the C++
+handler exactly.
+
+  ui_create_widget   Create a Widget Blueprint asset (seeds a root CanvasPanel).
+                     path + name (+ optional parent_class descending from UserWidget).
+  ui_add_element     Add a widget to an existing BP tree. widget_blueprint_path +
+                     child_class (Button/TextBlock/Image/CanvasPanel/…), optional
+                     parent_widget_name (a panel), name, and slot_props
+                     (x/y/w/h for canvas, fill/padding for boxes).
+  ui_query           Read back the widget tree: per-widget name/class/slot/children.
+
+Tip: pass parent_class="/Script/<Module>.<CppWidget>" to keep C++ logic while
+setting fonts/brushes visually in the BP — this fixes the UFontFace preview-tile
+bug (Slate needs a composite UFont, or a font assigned through the designer).
+`.trim(),
 };
 
 /**

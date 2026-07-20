@@ -59,6 +59,9 @@ import { materialSetMaterialPropertyHandler, meta as materialSetMaterialProperty
 import { materialCompileHandler, meta as materialCompileMeta } from './material/material-compile.js';
 import { materialDisconnectHandler, meta as materialDisconnectMeta } from './material/material-disconnect.js';
 import { materialValidateHandler, meta as materialValidateMeta } from './material/material-validate.js';
+import { uiCreateWidgetHandler, meta as uiCreateWidgetMeta } from './ui/ui-create-widget.js';
+import { uiAddElementHandler, meta as uiAddElementMeta } from './ui/ui-add-element.js';
+import { uiQueryHandler, meta as uiQueryMeta } from './ui/ui-query.js';
 import { worldGenerateHandler, meta as worldGenerateMeta } from './world/world-generate.js';
 import {
   providerListHandler, providerListMeta,
@@ -238,6 +241,7 @@ const dCoerceVec3 = z.preprocess((v) => {
  * are now generated automatically from this list.
  */
 const M = 'material'; // niche domain for the material toolset
+const UI = 'ui'; // niche domain for the UMG / Widget Blueprint toolset
 const PACK = 'copilot'; // niche domain for the BYOK copilot config/introspection toolset
 // Hand-written descriptors. Kept as a named const so the generated legacy list
 // can be de-duplicated against these names before splicing (see below).
@@ -672,6 +676,55 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
         to_input: z.string().optional().describe('Input pin name on the target node (defaults to first input)'),
         to_input_index: z.number().int().nonnegative().optional().describe('Zero-based input pin index (alternative to to_input)'),
         to_property: z.string().optional().describe('Material output property name to disconnect (e.g. base_color, normal)'),
+      },
+    },
+
+    // ── UMG / Widget Blueprint domain ─────────────────────────────────────────
+    // Native TS wrappers over the modern FHaybaMCPUIHandler (GetDomain()=="ui").
+    // Param names mirror HaybaMCPUIHandler.cpp exactly (the source of truth):
+    // ui_add_element takes slot_props (not "properties"); ui_query takes path
+    // (not widget_blueprint_path).
+    {
+      name: 'ui_create_widget',
+      description: 'Create a new UMG Widget Blueprint asset (designer-editable UI). Seeds a root CanvasPanel. Use the real UMG pipeline instead of hand-building the tree in C++.',
+      meta: uiCreateWidgetMeta,
+      handler: uiCreateWidgetHandler,
+      cost: 'medium',
+      returns: '{path, name, parent_class, root?}',
+      niche: UI,
+      schema: {
+        path: z.string().min(1).describe('UE content package directory, e.g. "/Game/Aphrosia/UI"'),
+        name: z.string().min(1).describe('Asset name, e.g. "WBP_StartScreen"'),
+        parent_class: z.string().optional().describe('Parent class (must descend from UserWidget); class path or short name. Defaults to UserWidget.'),
+      },
+    },
+    {
+      name: 'ui_add_element',
+      description: 'Add a widget (Button/TextBlock/Image/panel/…) to an existing Widget Blueprint tree, optionally under a named panel, with slot layout props. Marks the BP structurally modified + dirty.',
+      meta: uiAddElementMeta,
+      handler: uiAddElementHandler,
+      cost: 'medium',
+      returns: '{widget_blueprint_path, parent, name, class, slot_class}',
+      niche: UI,
+      schema: {
+        widget_blueprint_path: z.string().min(1).describe('Full path of the target Widget Blueprint'),
+        child_class: z.string().min(1).describe('Widget class — short name (Button, TextBlock, CanvasPanel, HorizontalBox, …) or full class path'),
+        parent_widget_name: z.string().optional().describe('Name of an existing PANEL widget to parent under; defaults to the root panel'),
+        name: z.string().optional().describe('Name for the new widget (auto-generated if omitted)'),
+        slot_props: z.record(z.union([z.number(), z.string(), z.boolean()])).optional()
+          .describe('Slot layout props: x/y/w/h (canvas), fill/padding (box); other keys set on the slot by reflection'),
+      },
+    },
+    {
+      name: 'ui_query',
+      description: 'Return the widget tree of a Widget Blueprint — per-widget name, class, slot (offsets/fill/padding) and nested children.',
+      meta: uiQueryMeta,
+      handler: uiQueryHandler,
+      cost: 'low',
+      returns: '{path, parent_class, root:{name, class, slot, children:[…]}}',
+      niche: UI,
+      schema: {
+        path: z.string().min(1).describe('Full path of the Widget Blueprint to inspect'),
       },
     },
 
@@ -1168,12 +1221,17 @@ export async function registerTools(server: McpServer, session: SessionManagerSt
 /**
  * Infer the pack-source directory for a tool name by matching against the
  * known top-level dirs under src/tools/. Root-level tools return null.
+ *
+ * Exported so the deferred-routing regression tests can assert a domain's
+ * tools group under the expected pack (the "hidden until searched" surface —
+ * deriveDomainPacks buckets by this dir, and ToolIndex indexes by it).
  */
-function inferDir(name: string): string | null {
+export function inferDir(name: string): string | null {
   if (name.startsWith('actor_'))          return 'actor';
   if (name.startsWith('scene_'))          return 'scene';
   if (name.startsWith('editor_'))         return 'editor';
   if (name.startsWith('material_'))       return 'material';
+  if (name.startsWith('ui_'))             return 'ui';
   if (name.startsWith('hayba_fab_'))      return 'fab';
   if (name.startsWith('hayba_polyhaven_'))return 'asset-sources';
   if (name.startsWith('hayba_ambientcg_'))return 'asset-sources';
