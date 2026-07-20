@@ -53,6 +53,20 @@ TArray<FString> FHaybaMCPUIHandler::GetCommands() const
 
 namespace
 {
+    void RegisterWidgetVariable(UWidgetBlueprint* WidgetBlueprint, UWidget* Widget)
+    {
+        if (!WidgetBlueprint || !Widget)
+        {
+            return;
+        }
+
+        const FName WidgetName = Widget->GetFName();
+        if (!WidgetBlueprint->WidgetVariableNameToGuidMap.Contains(WidgetName))
+        {
+            WidgetBlueprint->OnVariableAdded(WidgetName);
+        }
+    }
+
     UClass* ResolveWidgetClass(const FString& Name)
     {
         // Try common UMG widget classes by short name first.
@@ -266,6 +280,7 @@ FHaybaHandlerResult FHaybaMCPUIHandler::Handle(const FString& Cmd, const TShared
         {
             UCanvasPanel* Root = WBP->WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), TEXT("RootCanvas"));
             WBP->WidgetTree->RootWidget = Root;
+            RegisterWidgetVariable(WBP, Root);
             FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
         }
 
@@ -323,6 +338,11 @@ FHaybaHandlerResult FHaybaMCPUIHandler::Handle(const FString& Cmd, const TShared
         UPanelSlot* NewSlot = Parent->AddChild(NewChild);
         if (!NewSlot)
             return FHaybaHandlerResult::Err(TEXT("ui_add_element: AddChild rejected (panel may be full or incompatible)"));
+
+        // Widget blueprints track every designer widget by a stable GUID. ConstructWidget
+        // does not update that map, and compiling a partially populated map triggers an
+        // ensure in UMGEditor (and leaves references vulnerable to rename breakage).
+        RegisterWidgetVariable(WBP, NewChild);
 
         const TSharedPtr<FJsonObject>* SlotProps = nullptr;
         if (P->TryGetObjectField(TEXT("slot_props"), SlotProps) && SlotProps && SlotProps->IsValid())
