@@ -33,6 +33,48 @@ INSTANCE LAYER
   material_set_param           Set a scalar, vector (rgba), or texture parameter on a material instance
   material_apply               Apply a material (or instance) to an actor in the level
 `.trim(),
+
+  ui: `
+UMG / WIDGET BLUEPRINT TOOLSET (17 tools) — first-touch briefing
+=================================================================
+Widget Blueprint editing operates on the authoritative designer WidgetTree.
+Changes survive compile, save, editor restart, and PIE.
+
+PERSISTENCE INVARIANT (CRITICAL):
+  ui_set_widget_properties and typed tools (ui_set_text_style etc.) call
+  Modify()+PostEditChange()+MarkBlueprintAsModified but do NOT compile or save.
+  Call ui_compile_widget to apply staged changes, then ui_save_widget to persist.
+
+CREATION
+  ui_create_widget     Create a new Widget Blueprint asset
+  ui_add_element       Add a child widget to an existing BP tree
+
+INSPECTION
+  ui_query             Return the widget tree (name/class/slot/children)
+  ui_get_widget_info   Extended query with properties + GUIDs
+  ui_search_widgets    Find widgets by name pattern or class
+  ui_list_widget_types List available UMG widget classes
+
+PROPERTY EDITING (survive compile+save+restart)
+  ui_set_widget_properties  Generic: set named properties + slot layout
+  ui_set_property           Set a single property by name
+  ui_set_text_style         Font, size, color, outline, shadow, justification
+  ui_set_brush              Texture/material resource, tint, draw style
+  ui_set_visibility         Visible/Hidden/Collapsed
+  ui_set_slot_layout        Canvas anchors, position, size, alignment, Z-order
+
+PERSISTENCE
+  ui_compile_widget     Compile the BP; returns warnings/errors
+  ui_save_widget        Save to disk; optionally compile first
+
+STRUCTURAL
+  ui_remove_element     Remove a widget from the tree
+  ui_reparent_element   Move a widget to a new parent
+  ui_replace_element    Swap a widget's class at the same position
+
+After any edit: ui_compile_widget → ui_save_widget → ui_query with
+include_properties=true to verify values survive.
+`.trim(),
 };
 
 /**
@@ -54,9 +96,6 @@ export function appendNicheBriefing(
   if (!session.briefNicheOnce(domain)) return result;
   return {
     ...result,
-    content: [
-      ...result.content,
-      { type: 'text' as const, text: briefing },
-    ],
+    content: [...result.content, { type: 'text' as const, text: briefing }],
   };
 }

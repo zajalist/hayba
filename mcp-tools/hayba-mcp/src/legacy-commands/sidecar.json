@@ -2284,6 +2284,29 @@
       "has_ts_wrapper": false,
       "notes": ""
     },
+    "ui_set_widget_properties": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPUIHandler::Handle",
+      "params": [
+        { "name": "widget_blueprint_path", "type": "string", "required": true, "description": "Widget Blueprint asset path, for example /Game/UI/WBP_HUD" },
+        { "name": "widget_name", "type": "string", "required": true, "description": "Exact widget name in the authoritative designer WidgetTree" },
+        { "name": "properties", "type": "object", "required": true, "description": "Widget UPROPERTY names mapped to reflection-compatible values" },
+        { "name": "slot_props", "type": "object", "required": false, "description": "Optional typed slot values such as x, y, w, h, padding, and fill" }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          { "name": "widget_blueprint_path", "type": "string" },
+          { "name": "widget_name", "type": "string" },
+          { "name": "applied", "type": "array" },
+          { "name": "failed", "type": "array" },
+          { "name": "ok", "type": "boolean" }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Edits the authoritative UWidgetBlueprint designer tree and survives compilation when followed by blueprint_compile and asset_save."
+    },
     "scene_get_actor_relations": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPSceneGraphHandler::Handle",

@@ -94,6 +94,12 @@ namespace HaybaReflection
         }
         if (FNameProperty* Nm = CastField<FNameProperty>(Prop)) { Nm->SetPropertyValue_InContainer(Owner, FName(*V->AsString())); return true; }
         if (FStrProperty* S = CastField<FStrProperty>(Prop)) { S->SetPropertyValue_InContainer(Owner, V->AsString()); return true; }
+        if (FTextProperty* T = CastField<FTextProperty>(Prop))
+        {
+            if (V->Type != EJson::String) return false;
+            T->SetPropertyValue_InContainer(Owner, FText::FromString(V->AsString()));
+            return true;
+        }
         if (FObjectProperty* O = CastField<FObjectProperty>(Prop))
         {
             if (V->Type == EJson::String)
@@ -103,6 +109,12 @@ namespace HaybaReflection
         }
         if (FStructProperty* St = CastField<FStructProperty>(Prop))
         {
+            if (V->Type == EJson::String)
+            {
+                void* Ptr = St->ContainerPtrToValuePtr<void>(Owner);
+                const TCHAR* End = St->ImportText_Direct(*V->AsString(), Ptr, Target, PPF_None);
+                return End != nullptr;
+            }
             if (V->Type == EJson::Array)
             {
                 const TArray<TSharedPtr<FJsonValue>>& A = V->AsArray();
@@ -114,8 +126,9 @@ namespace HaybaReflection
                 else if (SN == TEXT("Vector4") || SN == TEXT("Vector4f")) *(FVector4f*)Ptr = FVector4f(Num(0), Num(1), Num(2), Num(3));
                 else if (SN == TEXT("Vector2D"))                      *(FVector2D*)Ptr    = FVector2D(Num(0), Num(1));
                 else if (SN == TEXT("Color"))                         *(FColor*)Ptr       = FColor((uint8)Num(0), (uint8)Num(1), (uint8)Num(2), A.Num() > 3 ? (uint8)Num(3) : 255);
+                return true;
             }
-            return true;
+            return false;
         }
         // TArray support — each element is a JSON object whose keys are set
         // via SetStructField. Primary use: MaterialExpressionCustom.Inputs

@@ -112,6 +112,9 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("gas_create_ability"),
         TEXT("gas_create_effect"),
         TEXT("ui_create_widget"),
+        TEXT("ui_set_widget_properties"),
+        TEXT("ui_mutate_tree"),
+        TEXT("ui_save_widget"),
         TEXT("input_create_action"),
         TEXT("input_create_mapping"),
         // Memory
