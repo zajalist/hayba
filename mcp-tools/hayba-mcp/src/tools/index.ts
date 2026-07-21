@@ -37,7 +37,10 @@ import { handleFabDownload, meta as fabDownloadMeta } from './fab/download.js';
 
 // ── Material instance-layer tool handlers ───────────────────────────────────
 import { materialCreateHandler, meta as materialCreateMeta } from './material/material-create.js';
-import { materialCreateInstanceHandler, meta as materialCreateInstanceMeta } from './material/material-create-instance.js';
+import {
+  materialCreateInstanceHandler,
+  meta as materialCreateInstanceMeta,
+} from './material/material-create-instance.js';
 import { materialSetParamHandler, meta as materialSetParamMeta } from './material/material-set-param.js';
 import { materialApplyHandler, meta as materialApplyMeta } from './material/material-apply.js';
 import { materialListHandler, meta as materialListMeta } from './material/material-list.js';
@@ -50,34 +53,120 @@ import { materialDeleteNodeHandler, meta as materialDeleteNodeMeta } from './mat
 import { materialAddCommentHandler, meta as materialAddCommentMeta } from './material/material-add-comment.js';
 import { materialDeleteCommentHandler, meta as materialDeleteCommentMeta } from './material/material-delete-comment.js';
 import { materialSetCommentHandler, meta as materialSetCommentMeta } from './material/material-set-comment.js';
-import { materialAddRerouteDeclarationHandler, meta as materialAddRerouteDeclarationMeta } from './material/material-add-reroute-declaration.js';
-import { materialAddRerouteUsageHandler, meta as materialAddRerouteUsageMeta } from './material/material-add-reroute-usage.js';
+import {
+  materialAddRerouteDeclarationHandler,
+  meta as materialAddRerouteDeclarationMeta,
+} from './material/material-add-reroute-declaration.js';
+import {
+  materialAddRerouteUsageHandler,
+  meta as materialAddRerouteUsageMeta,
+} from './material/material-add-reroute-usage.js';
 import { assetDeleteHandler, meta as assetDeleteMeta } from './asset/asset-delete.js';
 import { materialConnectNodesHandler, meta as materialConnectNodesMeta } from './material/material-connect-nodes.js';
-import { materialFunctionCreateHandler, meta as materialFunctionCreateMeta } from './material/material-function-create.js';
-import { materialSetMaterialPropertyHandler, meta as materialSetMaterialPropertyMeta } from './material/material-set-material-property.js';
+import {
+  materialFunctionCreateHandler,
+  meta as materialFunctionCreateMeta,
+} from './material/material-function-create.js';
+import {
+  materialSetMaterialPropertyHandler,
+  meta as materialSetMaterialPropertyMeta,
+} from './material/material-set-material-property.js';
 import { materialCompileHandler, meta as materialCompileMeta } from './material/material-compile.js';
 import { materialDisconnectHandler, meta as materialDisconnectMeta } from './material/material-disconnect.js';
 import { materialValidateHandler, meta as materialValidateMeta } from './material/material-validate.js';
 import { uiCreateWidgetHandler, meta as uiCreateWidgetMeta } from './ui/ui-create-widget.js';
 import { uiAddElementHandler, meta as uiAddElementMeta } from './ui/ui-add-element.js';
-import { uiQueryHandler, meta as uiQueryMeta } from './ui/ui-query.js';
+import { uiQueryHandler, meta as uiQueryMeta, schema as uiQuerySchema } from './ui/ui-query.js';
+import {
+  meta as uiSetWidgetPropertiesMeta,
+  schema as uiSetWidgetPropertiesSchema,
+  uiSetWidgetPropertiesHandler,
+} from './ui/ui-set-widget-properties.js';
+import {
+  meta as uiSetPropertyMeta,
+  schema as uiSetPropertySchema,
+  uiSetPropertyHandler,
+} from './ui/ui-set-property.js';
+import {
+  meta as uiSetTextStyleMeta,
+  schema as uiSetTextStyleSchema,
+  uiSetTextStyleHandler,
+} from './ui/ui-set-text-style.js';
+import { meta as uiSetBrushMeta, schema as uiSetBrushSchema, uiSetBrushHandler } from './ui/ui-set-brush.js';
+import {
+  meta as uiSetVisibilityMeta,
+  schema as uiSetVisibilitySchema,
+  uiSetVisibilityHandler,
+} from './ui/ui-set-visibility.js';
+import {
+  meta as uiSetSlotLayoutMeta,
+  schema as uiSetSlotLayoutSchema,
+  uiSetSlotLayoutHandler,
+} from './ui/ui-set-slot-layout.js';
+import {
+  meta as uiCompileWidgetMeta,
+  schema as uiCompileWidgetSchema,
+  uiCompileWidgetHandler,
+} from './ui/ui-compile-widget.js';
+import { meta as uiSaveWidgetMeta, schema as uiSaveWidgetSchema, uiSaveWidgetHandler } from './ui/ui-save-widget.js';
+import {
+  meta as uiGetWidgetInfoMeta,
+  schema as uiGetWidgetInfoSchema,
+  uiGetWidgetInfoHandler,
+} from './ui/ui-get-widget-info.js';
+import {
+  meta as uiSearchWidgetsMeta,
+  schema as uiSearchWidgetsSchema,
+  uiSearchWidgetsHandler,
+} from './ui/ui-search-widgets.js';
+import {
+  meta as uiListWidgetTypesMeta,
+  schema as uiListWidgetTypesSchema,
+  uiListWidgetTypesHandler,
+} from './ui/ui-list-widget-types.js';
+import {
+  meta as uiRemoveElementMeta,
+  schema as uiRemoveElementSchema,
+  uiRemoveElementHandler,
+} from './ui/ui-remove-element.js';
+import {
+  meta as uiReparentElementMeta,
+  schema as uiReparentElementSchema,
+  uiReparentElementHandler,
+} from './ui/ui-reparent-element.js';
+import {
+  meta as uiReplaceElementMeta,
+  schema as uiReplaceElementSchema,
+  uiReplaceElementHandler,
+} from './ui/ui-replace-element.js';
 import { worldGenerateHandler, meta as worldGenerateMeta } from './world/world-generate.js';
 import {
-  providerListHandler, providerListMeta,
-  providerSetHandler, providerSetMeta,
-  providerTestHandler, providerTestMeta,
-  modelListHandler, modelListMeta,
-  keySetHandler, keySetMeta,
-  keyClearHandler, keyClearMeta,
-  keyStatusHandler, keyStatusMeta,
-  healthHandler, healthMeta,
+  providerListHandler,
+  providerListMeta,
+  providerSetHandler,
+  providerSetMeta,
+  providerTestHandler,
+  providerTestMeta,
+  modelListHandler,
+  modelListMeta,
+  keySetHandler,
+  keySetMeta,
+  keyClearHandler,
+  keyClearMeta,
+  keyStatusHandler,
+  keyStatusMeta,
+  healthHandler,
+  healthMeta,
 } from './copilot/copilot-tools.js';
 import {
-  textureGetInfoHandler, getInfoMeta as textureGetInfoMeta,
-  textureSetCompressionHandler, setCompressionMeta as textureSetCompressionMeta,
-  textureSetSettingsHandler, setSettingsMeta as textureSetSettingsMeta,
-  textureListHandler, listMeta as textureListMeta,
+  textureGetInfoHandler,
+  getInfoMeta as textureGetInfoMeta,
+  textureSetCompressionHandler,
+  setCompressionMeta as textureSetCompressionMeta,
+  textureSetSettingsHandler,
+  setSettingsMeta as textureSetSettingsMeta,
+  textureListHandler,
+  listMeta as textureListMeta,
 } from './texture/texture-tools.js';
 
 // ── Asset-source connectors (pure Node — no UE bridge except python_run) ──────
@@ -112,9 +201,15 @@ import { introspectDescriptor } from './introspect/hayba-introspect.js';
 import { pcgCookAndWaitHandler, schema as pcgCookSchema, meta as pcgCookMeta } from './pcg/pcg-cook-and-wait.js';
 import { pcgScatterMeshHandler, schema as pcgScatterSchema, meta as pcgScatterMeta } from './pcg/pcg-scatter-mesh.js';
 import {
-  pcgAddNodeDescriptor, pcgSetPropDescriptor, pcgWireDescriptor, pcgInspectInstancesDescriptor,
-  pcgRemoveNodeDescriptor, pcgDisconnectDescriptor, pcgLayoutDescriptor,
-  pcgListPinsDescriptor, pcgGetNodeDescriptor,
+  pcgAddNodeDescriptor,
+  pcgSetPropDescriptor,
+  pcgWireDescriptor,
+  pcgInspectInstancesDescriptor,
+  pcgRemoveNodeDescriptor,
+  pcgDisconnectDescriptor,
+  pcgLayoutDescriptor,
+  pcgListPinsDescriptor,
+  pcgGetNodeDescriptor,
 } from './pcg/pcg-primitives.js';
 import { actorPyDescriptors } from './actor/actor-py-tools.js';
 import { editorPyDescriptors } from './editor/editor-py-tools.js';
@@ -129,7 +224,6 @@ import { lightingPyDescriptors } from './lighting/lighting-py-tools.js';
 import { toToolDescriptor } from './py-tool-factory.js';
 import { generateLegacyDescriptors } from './legacy-tool-factory.js';
 
-
 // ── Zone painter tool handlers ────────────────────────────────────────────────
 import { openZonePainterHandler } from './hayba-open-zone-painter.js';
 import { readZonesHandler } from './hayba-read-zones.js';
@@ -143,41 +237,70 @@ import { analyzeConventionsHandler } from './hayba-analyze-conventions.js';
 import { appendNicheBriefing } from './niche-briefing.js';
 import { installToolHooks } from '../validator/index.js';
 import {
-  validatorRunSchema, validatorRunHandler,
-  validatorHistorySchema, validatorHistoryHandler,
-  validatorResolveSchema, validatorResolveHandler,
-  validatorClearSchema, validatorClearHandler,
-  validatorRulesSchema, validatorRulesHandler,
-  validatorSetRuleEnabledSchema, validatorSetRuleEnabledHandler,
+  validatorRunSchema,
+  validatorRunHandler,
+  validatorHistorySchema,
+  validatorHistoryHandler,
+  validatorResolveSchema,
+  validatorResolveHandler,
+  validatorClearSchema,
+  validatorClearHandler,
+  validatorRulesSchema,
+  validatorRulesHandler,
+  validatorSetRuleEnabledSchema,
+  validatorSetRuleEnabledHandler,
   defaultScratchDir as validatorScratchDir,
 } from './validator/tools.js';
 import { ensureConnected as ensureUeForValidator } from '../tcp-client.js';
 
 // ── PLUMB constraint subsystem (quantified validator + constraint language) ──
 import {
-  plumbPrimitivesSchema, plumbPrimitivesHandler,
-  plumbProfileBakeSchema, plumbProfileBakeHandler,
-  plumbProfileAnnotateSchema, plumbProfileAnnotateHandler,
-  plumbProfileListSchema, plumbProfileListHandler,
-  plumbProfileGetSchema, plumbProfileGetHandler,
-  plumbConstraintDefineSchema, plumbConstraintDefineHandler,
-  plumbConstraintListSchema, plumbConstraintListHandler,
-  plumbConstraintRemoveSchema, plumbConstraintRemoveHandler,
-  plumbConstraintProposeSchema, plumbConstraintProposeHandler,
-  plumbValidateSchema, plumbValidateHandler,
-  plumbMaskAddSchema, plumbMaskAddHandler,
-  plumbMaskRemoveSchema, plumbMaskRemoveHandler,
-  plumbLessonAddSchema, plumbLessonAddHandler,
-  plumbLessonListSchema, plumbLessonListHandler,
-  plumbLessonRemoveSchema, plumbLessonRemoveHandler,
-  plumbStudySchema, plumbStudyHandler,
-  plumbStudyTakeSchema, plumbStudyTakeHandler,
-  plumbSegmentSchema, plumbSegmentHandler,
-  plumbProductionDefineSchema, plumbProductionDefineHandler,
-  plumbProductionListSchema, plumbProductionListHandler,
-  plumbProductionRemoveSchema, plumbProductionRemoveHandler,
-  plumbSocketAddSchema, plumbSocketAddHandler,
-  plumbGrammarExpandSchema, plumbGrammarExpandHandler,
+  plumbPrimitivesSchema,
+  plumbPrimitivesHandler,
+  plumbProfileBakeSchema,
+  plumbProfileBakeHandler,
+  plumbProfileAnnotateSchema,
+  plumbProfileAnnotateHandler,
+  plumbProfileListSchema,
+  plumbProfileListHandler,
+  plumbProfileGetSchema,
+  plumbProfileGetHandler,
+  plumbConstraintDefineSchema,
+  plumbConstraintDefineHandler,
+  plumbConstraintListSchema,
+  plumbConstraintListHandler,
+  plumbConstraintRemoveSchema,
+  plumbConstraintRemoveHandler,
+  plumbConstraintProposeSchema,
+  plumbConstraintProposeHandler,
+  plumbValidateSchema,
+  plumbValidateHandler,
+  plumbMaskAddSchema,
+  plumbMaskAddHandler,
+  plumbMaskRemoveSchema,
+  plumbMaskRemoveHandler,
+  plumbLessonAddSchema,
+  plumbLessonAddHandler,
+  plumbLessonListSchema,
+  plumbLessonListHandler,
+  plumbLessonRemoveSchema,
+  plumbLessonRemoveHandler,
+  plumbStudySchema,
+  plumbStudyHandler,
+  plumbStudyTakeSchema,
+  plumbStudyTakeHandler,
+  plumbSegmentSchema,
+  plumbSegmentHandler,
+  plumbProductionDefineSchema,
+  plumbProductionDefineHandler,
+  plumbProductionListSchema,
+  plumbProductionListHandler,
+  plumbProductionRemoveSchema,
+  plumbProductionRemoveHandler,
+  plumbSocketAddSchema,
+  plumbSocketAddHandler,
+  plumbGrammarExpandSchema,
+  plumbGrammarExpandHandler,
 } from './plumb/tools.js';
 
 // SessionManager (Gaea session) parked while terrain features are off — kept
@@ -197,13 +320,14 @@ const dVec3 = z.tuple([z.number(), z.number(), z.number()]);
 // Some MCP clients (incl. Claude Code's tool harness) JSON-stringify nested
 // arrays/booleans before they hit Zod. Wrap so we accept both raw and the
 // stringified form for params we know are commonly affected.
-const dCoerceBool = z.preprocess(
-  (v) => typeof v === 'string' ? v.toLowerCase() === 'true' : v,
-  z.boolean(),
-);
+const dCoerceBool = z.preprocess((v) => (typeof v === 'string' ? v.toLowerCase() === 'true' : v), z.boolean());
 const dCoerceVec3 = z.preprocess((v) => {
   if (typeof v === 'string') {
-    try { return JSON.parse(v); } catch { return v; }
+    try {
+      return JSON.parse(v);
+    } catch {
+      return v;
+    }
   }
   return v;
 }, dVec3);
@@ -246,901 +370,1231 @@ const PACK = 'copilot'; // niche domain for the BYOK copilot config/introspectio
 // Hand-written descriptors. Kept as a named const so the generated legacy list
 // can be de-duplicated against these names before splicing (see below).
 const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
-    // ── World generation (always-on flagship) ────────────────────────────────
-    {
-      name: 'world_generate',
-      description: 'Build an environment from a natural-language biome description. Parses the prompt into layers (canopy/rock/undergrowth/groundcover), resolves one of the PROJECT\'S OWN StaticMeshes per layer, plans a deterministic seeded scatter across an area actor, then PLUMB-VALIDATES and auto-corrects every instance IN MEMORY (grounded, non-interpenetrating) before spawning — "scatter and prove", not scatter-and-hope. Use dry_run to get the validated plan without spawning.',
-      meta: worldGenerateMeta,
-      handler: worldGenerateHandler,
-      cost: 'high',
-      returns: '{ok, center_cm, layers:[{role,keywords,asset}], gaps:[string], planned, validation:{ran,passes,failed_before,failed_after,fixed}, ism_actors, instances, place_errors?, sample?}. Places one Instanced-Static-Mesh actor per resolved mesh with the validated transforms as instances.',
-      schema: {
-        area_actor: z.string().min(1).describe('Label of an actor whose location centres the biome region'),
-        prompt: z.string().min(1).describe('Natural-language biome description'),
-        radius_cm: z.number().positive().optional().describe('Scatter radius in cm (default 1500)'),
-        count: z.number().int().positive().optional().describe('Total instances across all layers (default 40)'),
-        seed: z.number().int().optional().describe('Deterministic seed (default 1337)'),
-        ground_tolerance_m: z.number().positive().optional().describe('Grounded tolerance in metres (default 0.1)'),
-        dry_run: z.boolean().optional().describe('Plan + validate only; do not spawn'),
-      },
+  // ── World generation (always-on flagship) ────────────────────────────────
+  {
+    name: 'world_generate',
+    description:
+      'Build an environment from a natural-language biome description. Parses the prompt into layers (canopy/rock/undergrowth/groundcover), resolves one of the PROJECT\'S OWN StaticMeshes per layer, plans a deterministic seeded scatter across an area actor, then PLUMB-VALIDATES and auto-corrects every instance IN MEMORY (grounded, non-interpenetrating) before spawning — "scatter and prove", not scatter-and-hope. Use dry_run to get the validated plan without spawning.',
+    meta: worldGenerateMeta,
+    handler: worldGenerateHandler,
+    cost: 'high',
+    returns:
+      '{ok, center_cm, layers:[{role,keywords,asset}], gaps:[string], planned, validation:{ran,passes,failed_before,failed_after,fixed}, ism_actors, instances, place_errors?, sample?}. Places one Instanced-Static-Mesh actor per resolved mesh with the validated transforms as instances.',
+    schema: {
+      area_actor: z.string().min(1).describe('Label of an actor whose location centres the biome region'),
+      prompt: z.string().min(1).describe('Natural-language biome description'),
+      radius_cm: z.number().positive().optional().describe('Scatter radius in cm (default 1500)'),
+      count: z.number().int().positive().optional().describe('Total instances across all layers (default 40)'),
+      seed: z.number().int().optional().describe('Deterministic seed (default 1337)'),
+      ground_tolerance_m: z.number().positive().optional().describe('Grounded tolerance in metres (default 0.1)'),
+      dry_run: z.boolean().optional().describe('Plan + validate only; do not spawn'),
     },
+  },
 
-    // ── Actor domain ────────────────────────────────────────────────────────
-    {
-      name: 'actor_spawn',
-      description: 'Spawn a new actor in the active level.',
-      meta: actorSpawnMeta,
-      handler: actorSpawnHandler,
-      cost: 'medium',
-      returns: '{actor_id, label, class}',
-      schema: {
-        class_path: z.string().describe('UE class path, e.g. "/Script/Engine.StaticMeshActor"'),
-        location: dCoerceVec3.optional(),
-        rotation: dCoerceVec3.optional(),
-        scale: dCoerceVec3.optional(),
-        label: z.string().optional(),
-      },
+  // ── Actor domain ────────────────────────────────────────────────────────
+  {
+    name: 'actor_spawn',
+    description: 'Spawn a new actor in the active level.',
+    meta: actorSpawnMeta,
+    handler: actorSpawnHandler,
+    cost: 'medium',
+    returns: '{actor_id, label, class}',
+    schema: {
+      class_path: z.string().describe('UE class path, e.g. "/Script/Engine.StaticMeshActor"'),
+      location: dCoerceVec3.optional(),
+      rotation: dCoerceVec3.optional(),
+      scale: dCoerceVec3.optional(),
+      label: z.string().optional(),
     },
-    {
-      name: 'actor_list',
-      description: 'Enumerate actors in the active level.',
-      meta: actorListMeta,
-      handler: actorListHandler,
-      cost: 'low',
-      returns: '{actors:[{id,label,class,location}], count}',
-      schema: {
-        class_filter: z.string().optional().describe('Exact class name filter'),
-        tag: z.string().optional().describe('Tag filter'),
-      },
+  },
+  {
+    name: 'actor_list',
+    description: 'Enumerate actors in the active level.',
+    meta: actorListMeta,
+    handler: actorListHandler,
+    cost: 'low',
+    returns: '{actors:[{id,label,class,location}], count}',
+    schema: {
+      class_filter: z.string().optional().describe('Exact class name filter'),
+      tag: z.string().optional().describe('Tag filter'),
     },
-    {
-      name: 'actor_delete',
-      description: 'Destroy an actor in the active level.',
-      meta: actorDeleteMeta,
-      handler: actorDeleteHandler,
-      cost: 'low',
-      returns: '{ok, actor_id}',
-      schema: { actor_id: z.string() },
+  },
+  {
+    name: 'actor_delete',
+    description: 'Destroy an actor in the active level.',
+    meta: actorDeleteMeta,
+    handler: actorDeleteHandler,
+    cost: 'low',
+    returns: '{ok, actor_id}',
+    schema: { actor_id: z.string() },
+  },
+  {
+    name: 'actor_transform',
+    description: 'Reposition, rotate, or scale an existing actor.',
+    meta: actorTransformMeta,
+    handler: actorTransformHandler,
+    cost: 'low',
+    returns: '{ok, actor_id, before, after}',
+    schema: {
+      actor_id: z.string(),
+      location: dCoerceVec3.optional(),
+      rotation: dCoerceVec3.optional(),
+      scale: dCoerceVec3.optional(),
     },
-    {
-      name: 'actor_transform',
-      description: 'Reposition, rotate, or scale an existing actor.',
-      meta: actorTransformMeta,
-      handler: actorTransformHandler,
-      cost: 'low',
-      returns: '{ok, actor_id, before, after}',
-      schema: {
-        actor_id: z.string(),
-        location: dCoerceVec3.optional(),
-        rotation: dCoerceVec3.optional(),
-        scale: dCoerceVec3.optional(),
-      },
-    },
+  },
 
-    // ── Material instance-layer domain ────────────────────────────────────────
-    {
-      name: 'material_create',
-      description: 'Create a new material asset.',
-      meta: materialCreateMeta,
-      handler: materialCreateHandler,
-      cost: 'low',
-      returns: '{path, name}',
-      niche: M,
-      schema: {
-        package_path: z.string().min(1).describe('UE content path for the new material'),
-        name: z.string().min(1).describe('Name of the material asset'),
-      },
+  // ── Material instance-layer domain ────────────────────────────────────────
+  {
+    name: 'material_create',
+    description: 'Create a new material asset.',
+    meta: materialCreateMeta,
+    handler: materialCreateHandler,
+    cost: 'low',
+    returns: '{path, name}',
+    niche: M,
+    schema: {
+      package_path: z.string().min(1).describe('UE content path for the new material'),
+      name: z.string().min(1).describe('Name of the material asset'),
     },
-    {
-      name: 'material_create_instance',
-      description: 'Create a new material instance derived from a parent material.',
-      meta: materialCreateInstanceMeta,
-      handler: materialCreateInstanceHandler,
-      cost: 'low',
-      returns: '{path, name}',
-      niche: M,
-      schema: {
-        parent_material_path: z.string().min(1).describe('Path to the parent material asset'),
-        package_path: z.string().min(1).describe('UE content path for the new material instance'),
-        name: z.string().min(1).describe('Name of the material instance asset'),
-      },
+  },
+  {
+    name: 'material_create_instance',
+    description: 'Create a new material instance derived from a parent material.',
+    meta: materialCreateInstanceMeta,
+    handler: materialCreateInstanceHandler,
+    cost: 'low',
+    returns: '{path, name}',
+    niche: M,
+    schema: {
+      parent_material_path: z.string().min(1).describe('Path to the parent material asset'),
+      package_path: z.string().min(1).describe('UE content path for the new material instance'),
+      name: z.string().min(1).describe('Name of the material instance asset'),
     },
-    {
-      name: 'material_set_param',
-      description: 'Set a scalar, vector (rgba), or texture parameter on a material instance.',
-      meta: materialSetParamMeta,
-      handler: materialSetParamHandler,
-      cost: 'low',
-      returns: '{ok}',
-      niche: M,
-      schema: {
-        instance_path: z.string().min(1).describe('Path to the material instance'),
-        param_name: z.string().min(1).describe('Name of the parameter to set'),
-        value: z.union([
+  },
+  {
+    name: 'material_set_param',
+    description: 'Set a scalar, vector (rgba), or texture parameter on a material instance.',
+    meta: materialSetParamMeta,
+    handler: materialSetParamHandler,
+    cost: 'low',
+    returns: '{ok}',
+    niche: M,
+    schema: {
+      instance_path: z.string().min(1).describe('Path to the material instance'),
+      param_name: z.string().min(1).describe('Name of the parameter to set'),
+      value: z
+        .union([
           z.number().describe('Scalar value'),
           z.array(z.number()).min(1).max(4).describe('Vector value (1-4 components for rgba)'),
           z.string().describe('Texture asset path'),
-        ]).describe('Parameter value: scalar, vector (1-4 elements), or texture asset path'),
-      },
+        ])
+        .describe('Parameter value: scalar, vector (1-4 elements), or texture asset path'),
     },
-    {
-      name: 'material_apply',
-      description: 'Apply a material to an actor in the level (optionally specifying a material slot).',
-      meta: materialApplyMeta,
-      handler: materialApplyHandler,
-      cost: 'medium',
-      returns: '{ok, actor_id, material_path, slot}',
-      niche: M,
-      schema: {
-        actor_id: z.string().min(1).describe('ID of the actor to apply the material to'),
-        material_path: z.string().min(1).describe('Path to the material asset to apply'),
-        slot_index: z.number().int().nonnegative().optional().describe('Material slot index (default 0)'),
-      },
+  },
+  {
+    name: 'material_apply',
+    description: 'Apply a material to an actor in the level (optionally specifying a material slot).',
+    meta: materialApplyMeta,
+    handler: materialApplyHandler,
+    cost: 'medium',
+    returns: '{ok, actor_id, material_path, slot}',
+    niche: M,
+    schema: {
+      actor_id: z.string().min(1).describe('ID of the actor to apply the material to'),
+      material_path: z.string().min(1).describe('Path to the material asset to apply'),
+      slot_index: z.number().int().nonnegative().optional().describe('Material slot index (default 0)'),
     },
-    {
-      name: 'material_list',
-      description: 'List materials and material instances in the project or a specific path.',
-      meta: materialListMeta,
-      handler: materialListHandler,
-      cost: 'low',
-      returns: '{materials:[{path,type,is_instance}]}',
-      niche: M,
-      schema: {
-        path: z.string().optional().describe('UE content path filter (default: list all)'),
-      },
+  },
+  {
+    name: 'material_list',
+    description: 'List materials and material instances in the project or a specific path.',
+    meta: materialListMeta,
+    handler: materialListHandler,
+    cost: 'low',
+    returns: '{materials:[{path,type,is_instance}]}',
+    niche: M,
+    schema: {
+      path: z.string().optional().describe('UE content path filter (default: list all)'),
     },
-    {
-      name: 'material_get_info',
-      description: 'Inspect a material, material function, or material instance: properties, parameters, and the full expression graph. For materials/functions, each expression input includes its source edge (from_node + from_output), each node reports output_consumed + reachable_from_output, and a top-level dead_nodes[] lists every node NOT reachable from any material output — i.e. provably dead, safe to delete (no delete-recompile-compare needed).',
-      meta: materialGetInfoMeta,
-      handler: materialGetInfoHandler,
-      cost: 'low',
-      returns: "{kind, name, expressions:[{id,class,x,y,output_consumed,reachable_from_output,reroute_name?,reroute_kind?,inputs:[{name,index,connected,from_node,from_output}],outputs:[{name,index}]}], dead_nodes:[{id,class}], comments} | instance:{kind,name,parent,parameters:[{name,type,value}]}. Named-reroute nodes report reroute_name + reroute_kind('declaration'|'usage') so you can bind a usage to a declaration WITHOUT scanning expressions in python. outputs[] gives a node's real output pin order (esp. MaterialFunctionCall, whose order follows FunctionOutput sort priority, NOT the visual layout) — wire from_output by these.",
-      niche: M,
-      schema: {
-        path: z.string().min(1).describe('Path to the material or material instance to inspect'),
-      },
+  },
+  {
+    name: 'material_get_info',
+    description:
+      'Inspect a material, material function, or material instance: properties, parameters, and the full expression graph. For materials/functions, each expression input includes its source edge (from_node + from_output), each node reports output_consumed + reachable_from_output, and a top-level dead_nodes[] lists every node NOT reachable from any material output — i.e. provably dead, safe to delete (no delete-recompile-compare needed).',
+    meta: materialGetInfoMeta,
+    handler: materialGetInfoHandler,
+    cost: 'low',
+    returns:
+      "{kind, name, expressions:[{id,class,x,y,output_consumed,reachable_from_output,reroute_name?,reroute_kind?,inputs:[{name,index,connected,from_node,from_output}],outputs:[{name,index}]}], dead_nodes:[{id,class}], comments} | instance:{kind,name,parent,parameters:[{name,type,value}]}. Named-reroute nodes report reroute_name + reroute_kind('declaration'|'usage') so you can bind a usage to a declaration WITHOUT scanning expressions in python. outputs[] gives a node's real output pin order (esp. MaterialFunctionCall, whose order follows FunctionOutput sort priority, NOT the visual layout) — wire from_output by these.",
+    niche: M,
+    schema: {
+      path: z.string().min(1).describe('Path to the material or material instance to inspect'),
     },
+  },
 
-    // ── Material graph-layer domain ───────────────────────────────────────────
-    {
-      name: 'material_add_node',
-      description: 'Add a new expression node to a material graph. For a MaterialFunctionCall, pass properties.function (asset path) — the node\'s inputs/outputs are rebuilt immediately (UpdateFromFunctionResource), so its output pins are wirable right away and are returned in outputs[]. No recompile/refresh dance needed.',
-      meta: materialAddNodeMeta,
-      handler: materialAddNodeHandler,
-      cost: 'low',
-      returns: '{node_id, outputs?:[{name,index}]}  — outputs[] present for MaterialFunctionCall nodes (the pin names to use as from_output)',
-      niche: M,
-      schema: {
-        material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-        function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-        expression_class: z.string().min(1).describe('UE expression class name, e.g. "MaterialExpressionVectorParameter"'),
-        node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y] for the new node'),
-        properties: z.record(z.string(), z.unknown()).optional().describe('Initial properties for the node. For a MaterialFunctionCall set "function" (or "function_path") to the function asset path — outputs are rebuilt immediately and returned.'),
-      },
+  // ── Material graph-layer domain ───────────────────────────────────────────
+  {
+    name: 'material_add_node',
+    description:
+      "Add a new expression node to a material graph. For a MaterialFunctionCall, pass properties.function (asset path) — the node's inputs/outputs are rebuilt immediately (UpdateFromFunctionResource), so its output pins are wirable right away and are returned in outputs[]. No recompile/refresh dance needed.",
+    meta: materialAddNodeMeta,
+    handler: materialAddNodeHandler,
+    cost: 'low',
+    returns:
+      '{node_id, outputs?:[{name,index}]}  — outputs[] present for MaterialFunctionCall nodes (the pin names to use as from_output)',
+    niche: M,
+    schema: {
+      material_path: z
+        .string()
+        .optional()
+        .describe('Path to the material asset (either this or function_path required)'),
+      function_path: z
+        .string()
+        .optional()
+        .describe('Path to the material function asset (either this or material_path required)'),
+      expression_class: z
+        .string()
+        .min(1)
+        .describe('UE expression class name, e.g. "MaterialExpressionVectorParameter"'),
+      node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y] for the new node'),
+      properties: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe(
+          'Initial properties for the node. For a MaterialFunctionCall set "function" (or "function_path") to the function asset path — outputs are rebuilt immediately and returned.',
+        ),
     },
-    {
-      name: 'material_set_node',
-      description: 'Move and/or set properties on an existing node in a material graph.',
-      meta: materialSetNodeMeta,
-      handler: materialSetNodeHandler,
-      cost: 'low',
-      returns: '{node_id}',
-      niche: M,
-      schema: {
-        material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-        function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-        node_id: z.string().min(1).describe('ID/name of the existing node to update'),
-        node_pos: z.tuple([z.number(), z.number()]).optional().describe('New graph position [x, y]'),
-        properties: z.record(z.string(), z.unknown()).optional().describe('Properties to set on the node'),
-      },
+  },
+  {
+    name: 'material_set_node',
+    description: 'Move and/or set properties on an existing node in a material graph.',
+    meta: materialSetNodeMeta,
+    handler: materialSetNodeHandler,
+    cost: 'low',
+    returns: '{node_id}',
+    niche: M,
+    schema: {
+      material_path: z
+        .string()
+        .optional()
+        .describe('Path to the material asset (either this or function_path required)'),
+      function_path: z
+        .string()
+        .optional()
+        .describe('Path to the material function asset (either this or material_path required)'),
+      node_id: z.string().min(1).describe('ID/name of the existing node to update'),
+      node_pos: z.tuple([z.number(), z.number()]).optional().describe('New graph position [x, y]'),
+      properties: z.record(z.string(), z.unknown()).optional().describe('Properties to set on the node'),
     },
-    {
-      name: 'material_delete_node',
-      description: 'Delete an existing node from a material graph.',
-      meta: materialDeleteNodeMeta,
-      handler: materialDeleteNodeHandler,
-      cost: 'low',
-      returns: '{deleted}',
-      niche: M,
-      schema: {
-        material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-        function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-        node_id: z.string().min(1).describe('ID/name of the node to delete'),
-      },
+  },
+  {
+    name: 'material_delete_node',
+    description: 'Delete an existing node from a material graph.',
+    meta: materialDeleteNodeMeta,
+    handler: materialDeleteNodeHandler,
+    cost: 'low',
+    returns: '{deleted}',
+    niche: M,
+    schema: {
+      material_path: z
+        .string()
+        .optional()
+        .describe('Path to the material asset (either this or function_path required)'),
+      function_path: z
+        .string()
+        .optional()
+        .describe('Path to the material function asset (either this or material_path required)'),
+      node_id: z.string().min(1).describe('ID/name of the node to delete'),
     },
-    {
-      name: 'material_set_property',
-      description: 'Set master-material settings (blend mode, domain, shading model, two-sided, opacity mask clip).',
-      meta: materialSetMaterialPropertyMeta,
-      handler: materialSetMaterialPropertyHandler,
-      cost: 'low',
-      returns: '{applied:[keys]}',
-      niche: M,
-      schema: {
-        material_path: z.string().min(1).describe('Path to the master material asset'),
-        properties: z.record(z.string(), z.unknown()).describe('Settings; aliases: domain, blend_mode, shading_model, two_sided, opacity_mask_clip_value, enable_tessellation'),
-      },
+  },
+  {
+    name: 'material_set_property',
+    description: 'Set master-material settings (blend mode, domain, shading model, two-sided, opacity mask clip).',
+    meta: materialSetMaterialPropertyMeta,
+    handler: materialSetMaterialPropertyHandler,
+    cost: 'low',
+    returns: '{applied:[keys]}',
+    niche: M,
+    schema: {
+      material_path: z.string().min(1).describe('Path to the master material asset'),
+      properties: z
+        .record(z.string(), z.unknown())
+        .describe(
+          'Settings; aliases: domain, blend_mode, shading_model, two_sided, opacity_mask_clip_value, enable_tessellation',
+        ),
     },
-    {
-      name: 'material_compile',
-      description: 'Finalize a material OR material FUNCTION: write it to disk, apply staged settings, surface translator errors + shader optimization stats (materials). Graph edits DEFER the disk write — call this once the graph is complete. NOTE: material functions no longer auto-save either, so after editing a function call material_compile with function_path to persist it (this avoids a half-built function crashing the editor when it is opened/compiled).',
-      meta: materialCompileMeta,
-      handler: materialCompileHandler,
-      cost: 'medium',
-      returns: '{errors:[string], has_errors, saved, stats:{shaders:[{name,instructions}], texture_samples, ...}} (materials) | {saved} (functions)',
-      niche: M,
-      schema: {
-        material_path: z.string().optional().describe('Path to the master material asset to compile (either this or function_path)'),
-        function_path: z.string().optional().describe('Path to a material FUNCTION to finalize + save (either this or material_path)'),
-      },
+  },
+  {
+    name: 'material_compile',
+    description:
+      'Finalize a material OR material FUNCTION: write it to disk, apply staged settings, surface translator errors + shader optimization stats (materials). Graph edits DEFER the disk write — call this once the graph is complete. NOTE: material functions no longer auto-save either, so after editing a function call material_compile with function_path to persist it (this avoids a half-built function crashing the editor when it is opened/compiled).',
+    meta: materialCompileMeta,
+    handler: materialCompileHandler,
+    cost: 'medium',
+    returns:
+      '{errors:[string], has_errors, saved, stats:{shaders:[{name,instructions}], texture_samples, ...}} (materials) | {saved} (functions)',
+    niche: M,
+    schema: {
+      material_path: z
+        .string()
+        .optional()
+        .describe('Path to the master material asset to compile (either this or function_path)'),
+      function_path: z
+        .string()
+        .optional()
+        .describe('Path to a material FUNCTION to finalize + save (either this or material_path)'),
     },
-    {
-      name: 'material_validate',
-      description: 'Statically check a material OR material FUNCTION graph for translator-crash-prone wiring WITHOUT compiling: reroutes/named-reroutes used downstream that resolve to no input, and connections to non-existent output indices — both trigger an uncatchable HLSL-translator assert that kills the editor. material_compile runs these same checks and refuses to compile when any fail, so call this first to fix issues safely.',
-      meta: materialValidateMeta,
-      handler: materialValidateHandler,
-      cost: 'low',
-      returns: '{ok:boolean, problems:[string]}',
-      niche: M,
-      schema: {
-        material_path: z.string().optional().describe('Path to the master material to validate (either this or function_path)'),
-        function_path: z.string().optional().describe('Path to a material FUNCTION to validate (either this or material_path)'),
-      },
+  },
+  {
+    name: 'material_validate',
+    description:
+      'Statically check a material OR material FUNCTION graph for translator-crash-prone wiring WITHOUT compiling: reroutes/named-reroutes used downstream that resolve to no input, and connections to non-existent output indices — both trigger an uncatchable HLSL-translator assert that kills the editor. material_compile runs these same checks and refuses to compile when any fail, so call this first to fix issues safely.',
+    meta: materialValidateMeta,
+    handler: materialValidateHandler,
+    cost: 'low',
+    returns: '{ok:boolean, problems:[string]}',
+    niche: M,
+    schema: {
+      material_path: z
+        .string()
+        .optional()
+        .describe('Path to the master material to validate (either this or function_path)'),
+      function_path: z
+        .string()
+        .optional()
+        .describe('Path to a material FUNCTION to validate (either this or material_path)'),
     },
-    {
-      name: 'texture_get_info',
-      description: 'Inspect a Texture2D: dimensions, source/platform format, mip count, compression settings, LOD group, sRGB, never-stream, address modes.',
-      meta: textureGetInfoMeta,
-      handler: textureGetInfoHandler,
-      cost: 'low',
-      returns: '{path, width, height, format, num_mips, compression_settings, lod_group, srgb, never_stream, address_x, address_y}',
-      schema: {
-        path: z.string().min(1).describe('Texture asset path, e.g. /Game/Tex/T_Rock'),
-      },
+  },
+  {
+    name: 'texture_get_info',
+    description:
+      'Inspect a Texture2D: dimensions, source/platform format, mip count, compression settings, LOD group, sRGB, never-stream, address modes.',
+    meta: textureGetInfoMeta,
+    handler: textureGetInfoHandler,
+    cost: 'low',
+    returns:
+      '{path, width, height, format, num_mips, compression_settings, lod_group, srgb, never_stream, address_x, address_y}',
+    schema: {
+      path: z.string().min(1).describe('Texture asset path, e.g. /Game/Tex/T_Rock'),
     },
-    {
-      name: 'texture_set_compression',
-      description: 'Set a texture\'s compression (TC_*) and optionally LOD group + sRGB. Re-imports the texture resource. For other properties (mip gen, max size, filter, address, ...) use texture_set_settings.',
-      meta: textureSetCompressionMeta,
-      handler: textureSetCompressionHandler,
-      cost: 'low',
-      returns: '{ok, path, compression_settings, lod_group, srgb}',
-      schema: {
-        path: z.string().min(1).describe('Texture asset path'),
-        compression_settings: z.string().min(1).describe('TextureCompressionSettings, e.g. Normalmap / Masks / Default (TC_ prefix optional)'),
-        lod_group: z.string().optional().describe('TextureGroup, e.g. World / WorldNormalMap (TEXTUREGROUP_ prefix optional)'),
-        srgb: z.boolean().optional().describe('sRGB flag'),
-      },
+  },
+  {
+    name: 'texture_set_compression',
+    description:
+      "Set a texture's compression (TC_*) and optionally LOD group + sRGB. Re-imports the texture resource. For other properties (mip gen, max size, filter, address, ...) use texture_set_settings.",
+    meta: textureSetCompressionMeta,
+    handler: textureSetCompressionHandler,
+    cost: 'low',
+    returns: '{ok, path, compression_settings, lod_group, srgb}',
+    schema: {
+      path: z.string().min(1).describe('Texture asset path'),
+      compression_settings: z
+        .string()
+        .min(1)
+        .describe('TextureCompressionSettings, e.g. Normalmap / Masks / Default (TC_ prefix optional)'),
+      lod_group: z
+        .string()
+        .optional()
+        .describe('TextureGroup, e.g. World / WorldNormalMap (TEXTUREGROUP_ prefix optional)'),
+      srgb: z.boolean().optional().describe('sRGB flag'),
     },
-    {
-      name: 'texture_set_settings',
-      description: 'Set any texture properties at once via reflection. Aliases: compression_settings, lod_group, srgb, never_stream, address_x, address_y, mip_gen_settings, max_texture_size, flip_green_channel, filter, virtual_texture_streaming, lod_bias. Any raw UTexture UPROPERTY name also works. Re-imports the resource after applying.',
-      meta: textureSetSettingsMeta,
-      handler: textureSetSettingsHandler,
-      cost: 'low',
-      returns: '{ok, path, applied:[string], compression_settings, lod_group, srgb, never_stream}',
-      schema: {
-        path: z.string().min(1).describe('Texture asset path'),
-        properties: z.record(z.string(), z.unknown()).describe('Settings to set, e.g. { compression_settings: "Normalmap", srgb: false, mip_gen_settings: "Sharpen4" }'),
-      },
+  },
+  {
+    name: 'texture_set_settings',
+    description:
+      'Set any texture properties at once via reflection. Aliases: compression_settings, lod_group, srgb, never_stream, address_x, address_y, mip_gen_settings, max_texture_size, flip_green_channel, filter, virtual_texture_streaming, lod_bias. Any raw UTexture UPROPERTY name also works. Re-imports the resource after applying.',
+    meta: textureSetSettingsMeta,
+    handler: textureSetSettingsHandler,
+    cost: 'low',
+    returns: '{ok, path, applied:[string], compression_settings, lod_group, srgb, never_stream}',
+    schema: {
+      path: z.string().min(1).describe('Texture asset path'),
+      properties: z
+        .record(z.string(), z.unknown())
+        .describe(
+          'Settings to set, e.g. { compression_settings: "Normalmap", srgb: false, mip_gen_settings: "Sharpen4" }',
+        ),
     },
-    {
-      name: 'texture_list',
-      description: 'List Texture2D assets, optionally filtered by path prefix.',
-      meta: textureListMeta,
-      handler: textureListHandler,
-      cost: 'low',
-      returns: '{textures:[{path, width, height, compression_settings}], count}',
-      schema: {
-        path_prefix: z.string().optional().describe('Only list textures whose path starts with this, e.g. /Game/Tex'),
-      },
+  },
+  {
+    name: 'texture_list',
+    description: 'List Texture2D assets, optionally filtered by path prefix.',
+    meta: textureListMeta,
+    handler: textureListHandler,
+    cost: 'low',
+    returns: '{textures:[{path, width, height, compression_settings}], count}',
+    schema: {
+      path_prefix: z.string().optional().describe('Only list textures whose path starts with this, e.g. /Game/Tex'),
     },
-    {
-      name: 'material_add_comment',
-      description: 'Add a titled comment box around a group of nodes in a material or function graph.',
-      meta: materialAddCommentMeta,
-      handler: materialAddCommentHandler,
-      cost: 'low',
-      returns: '{comment_id}',
-      niche: M,
-      schema: {
-        material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-        function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-        text: z.string().describe('Comment title/text shown on the box'),
-        node_pos: z.tuple([z.number(), z.number()]).optional().describe('Top-left graph position [x, y]'),
-        size: z.tuple([z.number(), z.number()]).optional().describe('Box size [width, height]'),
-        color: z.array(z.number()).min(3).max(4).optional().describe('Box color [r, g, b] or [r, g, b, a] (0..1)'),
-        font_size: z.number().int().optional().describe('Title font size (default 18)'),
-      },
+  },
+  {
+    name: 'material_add_comment',
+    description: 'Add a titled comment box around a group of nodes in a material or function graph.',
+    meta: materialAddCommentMeta,
+    handler: materialAddCommentHandler,
+    cost: 'low',
+    returns: '{comment_id}',
+    niche: M,
+    schema: {
+      material_path: z
+        .string()
+        .optional()
+        .describe('Path to the material asset (either this or function_path required)'),
+      function_path: z
+        .string()
+        .optional()
+        .describe('Path to the material function asset (either this or material_path required)'),
+      text: z.string().describe('Comment title/text shown on the box'),
+      node_pos: z.tuple([z.number(), z.number()]).optional().describe('Top-left graph position [x, y]'),
+      size: z.tuple([z.number(), z.number()]).optional().describe('Box size [width, height]'),
+      color: z.array(z.number()).min(3).max(4).optional().describe('Box color [r, g, b] or [r, g, b, a] (0..1)'),
+      font_size: z.number().int().optional().describe('Title font size (default 18)'),
     },
-    {
-      name: 'material_delete_comment',
-      description: 'Delete a comment box from a material or function graph (comment_id from material_get_info.comments[].id). Named reroutes are nodes — use material_delete_node for those.',
-      meta: materialDeleteCommentMeta,
-      handler: materialDeleteCommentHandler,
-      cost: 'low',
-      returns: '{deleted}',
-      niche: M,
-      schema: {
-        material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-        function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-        comment_id: z.string().min(1).describe('Comment id to delete (from material_get_info.comments[].id)'),
-      },
+  },
+  {
+    name: 'material_delete_comment',
+    description:
+      'Delete a comment box from a material or function graph (comment_id from material_get_info.comments[].id). Named reroutes are nodes — use material_delete_node for those.',
+    meta: materialDeleteCommentMeta,
+    handler: materialDeleteCommentHandler,
+    cost: 'low',
+    returns: '{deleted}',
+    niche: M,
+    schema: {
+      material_path: z
+        .string()
+        .optional()
+        .describe('Path to the material asset (either this or function_path required)'),
+      function_path: z
+        .string()
+        .optional()
+        .describe('Path to the material function asset (either this or material_path required)'),
+      comment_id: z.string().min(1).describe('Comment id to delete (from material_get_info.comments[].id)'),
     },
-    {
-      name: 'material_set_comment',
-      description: 'Edit an existing comment box (move/resize/retitle/recolor) by id — only the fields you pass change. Completes comment CRUD so comments never need a Python fallback.',
-      meta: materialSetCommentMeta,
-      handler: materialSetCommentHandler,
-      cost: 'low',
-      returns: '{comment_id}',
-      niche: M,
-      schema: {
-        material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-        function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-        comment_id: z.string().min(1).describe('Comment id to edit (from material_get_info.comments[].id)'),
-        text: z.string().optional().describe('New title/text'),
-        node_pos: z.tuple([z.number(), z.number()]).optional().describe('New top-left graph position [x, y]'),
-        size: z.tuple([z.number(), z.number()]).optional().describe('New box size [width, height]'),
-        color: z.array(z.number()).min(3).max(4).optional().describe('New color [r, g, b] or [r, g, b, a] (0..1)'),
-        font_size: z.number().int().optional().describe('New title font size'),
-      },
+  },
+  {
+    name: 'material_set_comment',
+    description:
+      'Edit an existing comment box (move/resize/retitle/recolor) by id — only the fields you pass change. Completes comment CRUD so comments never need a Python fallback.',
+    meta: materialSetCommentMeta,
+    handler: materialSetCommentHandler,
+    cost: 'low',
+    returns: '{comment_id}',
+    niche: M,
+    schema: {
+      material_path: z
+        .string()
+        .optional()
+        .describe('Path to the material asset (either this or function_path required)'),
+      function_path: z
+        .string()
+        .optional()
+        .describe('Path to the material function asset (either this or material_path required)'),
+      comment_id: z.string().min(1).describe('Comment id to edit (from material_get_info.comments[].id)'),
+      text: z.string().optional().describe('New title/text'),
+      node_pos: z.tuple([z.number(), z.number()]).optional().describe('New top-left graph position [x, y]'),
+      size: z.tuple([z.number(), z.number()]).optional().describe('New box size [width, height]'),
+      color: z.array(z.number()).min(3).max(4).optional().describe('New color [r, g, b] or [r, g, b, a] (0..1)'),
+      font_size: z.number().int().optional().describe('New title font size'),
     },
-    {
-      name: 'material_add_reroute_declaration',
-      description: 'Create a named-reroute declaration (source anchor) so a value can be referenced by name instead of long wires.',
-      meta: materialAddRerouteDeclarationMeta,
-      handler: materialAddRerouteDeclarationHandler,
-      cost: 'low',
-      returns: '{node_id}',
-      niche: M,
-      schema: {
-        material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-        function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-        name: z.string().min(1).describe('The reroute name (what usages bind to)'),
-        node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y]'),
-        color: z.array(z.number()).min(3).max(4).optional().describe('Node color [r, g, b] or [r, g, b, a] (0..1)'),
-      },
+  },
+  {
+    name: 'material_add_reroute_declaration',
+    description:
+      'Create a named-reroute declaration (source anchor) so a value can be referenced by name instead of long wires.',
+    meta: materialAddRerouteDeclarationMeta,
+    handler: materialAddRerouteDeclarationHandler,
+    cost: 'low',
+    returns: '{node_id}',
+    niche: M,
+    schema: {
+      material_path: z
+        .string()
+        .optional()
+        .describe('Path to the material asset (either this or function_path required)'),
+      function_path: z
+        .string()
+        .optional()
+        .describe('Path to the material function asset (either this or material_path required)'),
+      name: z.string().min(1).describe('The reroute name (what usages bind to)'),
+      node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y]'),
+      color: z.array(z.number()).min(3).max(4).optional().describe('Node color [r, g, b] or [r, g, b, a] (0..1)'),
     },
-    {
-      name: 'material_add_reroute_usage',
-      description: 'Create a named-reroute usage bound to a declaration by name (replaces a long wire).',
-      meta: materialAddRerouteUsageMeta,
-      handler: materialAddRerouteUsageHandler,
-      cost: 'low',
-      returns: '{node_id}',
-      niche: M,
-      schema: {
-        material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-        function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-        declaration_id: z.string().min(1).describe('node_id of the reroute declaration to bind to'),
-        node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y]'),
-      },
+  },
+  {
+    name: 'material_add_reroute_usage',
+    description: 'Create a named-reroute usage bound to a declaration by name (replaces a long wire).',
+    meta: materialAddRerouteUsageMeta,
+    handler: materialAddRerouteUsageHandler,
+    cost: 'low',
+    returns: '{node_id}',
+    niche: M,
+    schema: {
+      material_path: z
+        .string()
+        .optional()
+        .describe('Path to the material asset (either this or function_path required)'),
+      function_path: z
+        .string()
+        .optional()
+        .describe('Path to the material function asset (either this or material_path required)'),
+      declaration_id: z.string().min(1).describe('node_id of the reroute declaration to bind to'),
+      node_pos: z.tuple([z.number(), z.number()]).optional().describe('Graph position [x, y]'),
     },
-    {
-      name: 'asset_delete',
-      description: 'Permanently delete a content asset by object path.',
-      meta: assetDeleteMeta,
-      handler: assetDeleteHandler,
-      cost: 'low',
-      returns: '{deleted}',
-      schema: {
-        path: z.string().min(1).describe('Object path of the asset to delete, e.g. /Game/Foo/MF_X.MF_X'),
-      },
+  },
+  {
+    name: 'asset_delete',
+    description: 'Permanently delete a content asset by object path.',
+    meta: assetDeleteMeta,
+    handler: assetDeleteHandler,
+    cost: 'low',
+    returns: '{deleted}',
+    schema: {
+      path: z.string().min(1).describe('Object path of the asset to delete, e.g. /Game/Foo/MF_X.MF_X'),
     },
-    {
-      name: 'material_connect_nodes',
-      description: "Connect two nodes in a material graph or connect a node output to a material property. IMPORTANT for multi-output sources (esp. MaterialFunctionCall): you MUST pick the output pin with from_output (the pin NAME) or from_output_index — otherwise the call is rejected, because defaulting to the first output silently swaps function outputs (e.g. Albedo<->F0). Get the real pin names/order from material_get_info.expressions[].outputs[]. May return clutter-prevention suggestions: use named reroutes when a source fans out to 2+ targets, or a reroute knee node when a wire would run backward/over another node.",
-      meta: materialConnectNodesMeta,
-      handler: materialConnectNodesHandler,
-      cost: 'low',
-      returns: '{connected, from_node_fanout?, suggestions?[]}',
-      niche: M,
-      schema: {
-        material_path: z.string().optional().describe('Path to the material asset (either this or function_path required)'),
-        function_path: z.string().optional().describe('Path to the material function asset (either this or material_path required)'),
-        from_node: z.string().min(1).describe('ID or name of the source node'),
-        from_output: z.string().optional().describe('Output pin NAME on the source node (from material_get_info.expressions[].outputs[].name). REQUIRED when the source has >1 output (e.g. a material function) unless you pass from_output_index.'),
-        to_node: z.string().optional().describe('ID or name of the target node'),
-        to_input: z.string().optional().describe('Input pin name on the target node'),
-        to_input_index: z.number().int().optional().describe('Target input pin by index (unnamed pins, e.g. Substrate slab inputs)'),
-        from_output_index: z.number().int().optional().describe('Source output pin by index (default 0)'),
-        to_property: z.string().optional().describe('Target material output, e.g. base_color, normal, front_material (Substrate), displacement (Nanite tessellation - needs material_set_property enable_tessellation=true)'),
-      },
+  },
+  {
+    name: 'material_connect_nodes',
+    description:
+      'Connect two nodes in a material graph or connect a node output to a material property. IMPORTANT for multi-output sources (esp. MaterialFunctionCall): you MUST pick the output pin with from_output (the pin NAME) or from_output_index — otherwise the call is rejected, because defaulting to the first output silently swaps function outputs (e.g. Albedo<->F0). Get the real pin names/order from material_get_info.expressions[].outputs[]. May return clutter-prevention suggestions: use named reroutes when a source fans out to 2+ targets, or a reroute knee node when a wire would run backward/over another node.',
+    meta: materialConnectNodesMeta,
+    handler: materialConnectNodesHandler,
+    cost: 'low',
+    returns: '{connected, from_node_fanout?, suggestions?[]}',
+    niche: M,
+    schema: {
+      material_path: z
+        .string()
+        .optional()
+        .describe('Path to the material asset (either this or function_path required)'),
+      function_path: z
+        .string()
+        .optional()
+        .describe('Path to the material function asset (either this or material_path required)'),
+      from_node: z.string().min(1).describe('ID or name of the source node'),
+      from_output: z
+        .string()
+        .optional()
+        .describe(
+          'Output pin NAME on the source node (from material_get_info.expressions[].outputs[].name). REQUIRED when the source has >1 output (e.g. a material function) unless you pass from_output_index.',
+        ),
+      to_node: z.string().optional().describe('ID or name of the target node'),
+      to_input: z.string().optional().describe('Input pin name on the target node'),
+      to_input_index: z
+        .number()
+        .int()
+        .optional()
+        .describe('Target input pin by index (unnamed pins, e.g. Substrate slab inputs)'),
+      from_output_index: z.number().int().optional().describe('Source output pin by index (default 0)'),
+      to_property: z
+        .string()
+        .optional()
+        .describe(
+          'Target material output, e.g. base_color, normal, front_material (Substrate), displacement (Nanite tessellation - needs material_set_property enable_tessellation=true)',
+        ),
     },
-    {
-      name: 'material_function_create',
-      description: 'Create a new material function asset in the project.',
-      meta: materialFunctionCreateMeta,
-      handler: materialFunctionCreateHandler,
-      cost: 'low',
-      returns: '{path, name}',
-      niche: M,
-      schema: {
-        package_path: z.string().min(1).describe('UE content path for the new material function'),
-        name: z.string().min(1).describe('Name of the material function asset'),
-      },
+  },
+  {
+    name: 'material_function_create',
+    description: 'Create a new material function asset in the project.',
+    meta: materialFunctionCreateMeta,
+    handler: materialFunctionCreateHandler,
+    cost: 'low',
+    returns: '{path, name}',
+    niche: M,
+    schema: {
+      package_path: z.string().min(1).describe('UE content path for the new material function'),
+      name: z.string().min(1).describe('Name of the material function asset'),
     },
-    {
-      name: 'material_disconnect',
-      description: 'Break a connection in a material graph — clear a node input or a material output property.',
-      meta: materialDisconnectMeta,
-      handler: materialDisconnectHandler,
-      cost: 'low',
-      returns: '{disconnected}',
-      niche: M,
-      schema: {
-        material_path: z.string().min(1).describe('Path to the material asset'),
-        to_node: z.string().optional().describe('ID or name of the target node whose input should be disconnected'),
-        to_input: z.string().optional().describe('Input pin name on the target node (defaults to first input)'),
-        to_input_index: z.number().int().nonnegative().optional().describe('Zero-based input pin index (alternative to to_input)'),
-        to_property: z.string().optional().describe('Material output property name to disconnect (e.g. base_color, normal)'),
-      },
+  },
+  {
+    name: 'material_disconnect',
+    description: 'Break a connection in a material graph — clear a node input or a material output property.',
+    meta: materialDisconnectMeta,
+    handler: materialDisconnectHandler,
+    cost: 'low',
+    returns: '{disconnected}',
+    niche: M,
+    schema: {
+      material_path: z.string().min(1).describe('Path to the material asset'),
+      to_node: z.string().optional().describe('ID or name of the target node whose input should be disconnected'),
+      to_input: z.string().optional().describe('Input pin name on the target node (defaults to first input)'),
+      to_input_index: z
+        .number()
+        .int()
+        .nonnegative()
+        .optional()
+        .describe('Zero-based input pin index (alternative to to_input)'),
+      to_property: z
+        .string()
+        .optional()
+        .describe('Material output property name to disconnect (e.g. base_color, normal)'),
     },
+  },
 
-    // ── UMG / Widget Blueprint domain ─────────────────────────────────────────
-    // Native TS wrappers over the modern FHaybaMCPUIHandler (GetDomain()=="ui").
-    // Param names mirror HaybaMCPUIHandler.cpp exactly (the source of truth):
-    // ui_add_element takes slot_props (not "properties"); ui_query takes path
-    // (not widget_blueprint_path).
-    {
-      name: 'ui_create_widget',
-      description: 'Create a new UMG Widget Blueprint asset (designer-editable UI). Seeds a root CanvasPanel. Use the real UMG pipeline instead of hand-building the tree in C++.',
-      meta: uiCreateWidgetMeta,
-      handler: uiCreateWidgetHandler,
-      cost: 'medium',
-      returns: '{path, name, parent_class, root?}',
-      niche: UI,
-      schema: {
-        path: z.string().min(1).describe('UE content package directory, e.g. "/Game/Aphrosia/UI"'),
-        name: z.string().min(1).describe('Asset name, e.g. "WBP_StartScreen"'),
-        parent_class: z.string().optional().describe('Parent class (must descend from UserWidget); class path or short name. Defaults to UserWidget.'),
-      },
+  // ── UMG / Widget Blueprint domain ─────────────────────────────────────────
+  // Native TS wrappers over the modern FHaybaMCPUIHandler (GetDomain()=="ui").
+  // Param names mirror HaybaMCPUIHandler.cpp exactly (the source of truth):
+  // ui_add_element takes slot_props (not "properties"); ui_query takes path
+  // (not widget_blueprint_path).
+  // Property editing tools compose down to ui_set_widget_properties.
+  // Structural tools compose down to ui_mutate_tree.
+  {
+    name: 'ui_create_widget',
+    description:
+      'Create a new UMG Widget Blueprint asset (designer-editable UI). Seeds a root CanvasPanel. Use the real UMG pipeline instead of hand-building the tree in C++.',
+    meta: uiCreateWidgetMeta,
+    handler: uiCreateWidgetHandler,
+    cost: 'medium',
+    returns: '{path, name, parent_class, root?}',
+    niche: UI,
+    schema: {
+      path: z.string().min(1).describe('UE content package directory, e.g. "/Game/Aphrosia/UI"'),
+      name: z.string().min(1).describe('Asset name, e.g. "WBP_StartScreen"'),
+      parent_class: z
+        .string()
+        .optional()
+        .describe('Parent class (must descend from UserWidget); class path or short name. Defaults to UserWidget.'),
     },
-    {
-      name: 'ui_add_element',
-      description: 'Add a widget (Button/TextBlock/Image/panel/…) to an existing Widget Blueprint tree, optionally under a named panel, with slot layout props. Marks the BP structurally modified + dirty.',
-      meta: uiAddElementMeta,
-      handler: uiAddElementHandler,
-      cost: 'medium',
-      returns: '{widget_blueprint_path, parent, name, class, slot_class}',
-      niche: UI,
-      schema: {
-        widget_blueprint_path: z.string().min(1).describe('Full path of the target Widget Blueprint'),
-        child_class: z.string().min(1).describe('Widget class — short name (Button, TextBlock, CanvasPanel, HorizontalBox, …) or full class path'),
-        parent_widget_name: z.string().optional().describe('Name of an existing PANEL widget to parent under; defaults to the root panel'),
-        name: z.string().optional().describe('Name for the new widget (auto-generated if omitted)'),
-        slot_props: z.record(z.union([z.number(), z.string(), z.boolean()])).optional()
-          .describe('Slot layout props: x/y/w/h (canvas), fill/padding (box); other keys set on the slot by reflection'),
-      },
+  },
+  {
+    name: 'ui_add_element',
+    description:
+      'Add a widget (Button/TextBlock/Image/panel/…) to an existing Widget Blueprint tree, optionally under a named panel, with slot layout props. Marks the BP structurally modified + dirty.',
+    meta: uiAddElementMeta,
+    handler: uiAddElementHandler,
+    cost: 'medium',
+    returns: '{widget_blueprint_path, parent, name, class, slot_class}',
+    niche: UI,
+    schema: {
+      widget_blueprint_path: z.string().min(1).describe('Full path of the target Widget Blueprint'),
+      child_class: z
+        .string()
+        .min(1)
+        .describe('Widget class — short name (Button, TextBlock, CanvasPanel, HorizontalBox, …) or full class path'),
+      parent_widget_name: z
+        .string()
+        .optional()
+        .describe('Name of an existing PANEL widget to parent under; defaults to the root panel'),
+      name: z.string().optional().describe('Name for the new widget (auto-generated if omitted)'),
+      slot_props: z
+        .record(z.union([z.number(), z.string(), z.boolean()]))
+        .optional()
+        .describe('Slot layout props: x/y/w/h (canvas), fill/padding (box); other keys set on the slot by reflection'),
     },
-    {
-      name: 'ui_query',
-      description: 'Return the widget tree of a Widget Blueprint — per-widget name, class, slot (offsets/fill/padding) and nested children.',
-      meta: uiQueryMeta,
-      handler: uiQueryHandler,
-      cost: 'low',
-      returns: '{path, parent_class, root:{name, class, slot, children:[…]}}',
-      niche: UI,
-      schema: {
-        path: z.string().min(1).describe('Full path of the Widget Blueprint to inspect'),
-      },
-    },
+  },
+  {
+    name: 'ui_query',
+    description:
+      'Return the widget tree of a Widget Blueprint — per-widget name, class, slot, variable GUID, and typed properties. Use include_properties/include_guid/include_slot to control detail depth.',
+    meta: uiQueryMeta,
+    handler: uiQueryHandler,
+    cost: 'low',
+    returns: '{path, parent_class, root:{name, class, slot, guid?, properties?, children:[…]}}',
+    niche: UI,
+    schema: uiQuerySchema.shape,
+  },
+  {
+    name: 'ui_set_widget_properties',
+    description:
+      'Generic tool: set named properties + slot layout on a designer widget in a Widget Blueprint. Operates on the authoritative WidgetTree (not the generated template). Uses FScopedTransaction for undo. Prefer the typed tools (ui_set_property, ui_set_text_style, ui_set_slot_layout, etc.) for common operations.',
+    meta: uiSetWidgetPropertiesMeta,
+    handler: uiSetWidgetPropertiesHandler,
+    cost: 'medium',
+    returns: '{succeeded, failed, failed_properties?}',
+    niche: UI,
+    schema: uiSetWidgetPropertiesSchema.shape,
+  },
+  {
+    name: 'ui_set_property',
+    description:
+      'Set a single arbitrary property on a designer widget by name and value. Typed wrapper around ui_set_widget_properties for the common case of changing one thing.',
+    meta: uiSetPropertyMeta,
+    handler: uiSetPropertyHandler,
+    cost: 'low',
+    returns: '{succeeded, failed, failed_properties?}',
+    niche: UI,
+    schema: uiSetPropertySchema.shape,
+  },
+  {
+    name: 'ui_set_text_style',
+    description:
+      'Set text styling on a TextBlock widget in a Widget Blueprint: font, typeface, size, letter spacing, color, outline, shadow, justification. All values survive compile+save+restart.',
+    meta: uiSetTextStyleMeta,
+    handler: uiSetTextStyleHandler,
+    cost: 'low',
+    returns: '{succeeded, failed}',
+    niche: UI,
+    schema: uiSetTextStyleSchema.shape,
+  },
+  {
+    name: 'ui_set_brush',
+    description:
+      'Set the brush on an Image or Border widget in a Widget Blueprint: texture/material resource, tint color, draw style, image size, and 9-slice margins.',
+    meta: uiSetBrushMeta,
+    handler: uiSetBrushHandler,
+    cost: 'low',
+    returns: '{succeeded, failed}',
+    niche: UI,
+    schema: uiSetBrushSchema.shape,
+  },
+  {
+    name: 'ui_set_visibility',
+    description:
+      'Set the visibility of a designer widget in a Widget Blueprint. Changes survive compile, save, and editor restart.',
+    meta: uiSetVisibilityMeta,
+    handler: uiSetVisibilityHandler,
+    cost: 'low',
+    returns: '{succeeded, failed}',
+    niche: UI,
+    schema: uiSetVisibilitySchema.shape,
+  },
+  {
+    name: 'ui_set_slot_layout',
+    description:
+      'Set CanvasPanel slot layout properties (anchors, position, size, alignment, Z-order) on a designer widget in a Widget Blueprint. For non-Canvas slots use the slot_layout field in ui_set_widget_properties.',
+    meta: uiSetSlotLayoutMeta,
+    handler: uiSetSlotLayoutHandler,
+    cost: 'low',
+    returns: '{succeeded, failed}',
+    niche: UI,
+    schema: uiSetSlotLayoutSchema.shape,
+  },
+  {
+    name: 'ui_compile_widget',
+    description:
+      'Compile a Widget Blueprint asset. Returns compilation status (UpToDate/Error/Dirty), warnings, and errors. Optionally save on successful compilation.',
+    meta: uiCompileWidgetMeta,
+    handler: uiCompileWidgetHandler,
+    cost: 'high',
+    returns: '{success, status, warnings, errors}',
+    niche: UI,
+    schema: uiCompileWidgetSchema.shape,
+  },
+  {
+    name: 'ui_save_widget',
+    description:
+      'Save a Widget Blueprint package to disk. Optionally compile before save. Returns whether the save succeeded and whether the package is still dirty.',
+    meta: uiSaveWidgetMeta,
+    handler: uiSaveWidgetHandler,
+    cost: 'medium',
+    returns: '{saved_path, success, package_dirty_after_save}',
+    niche: UI,
+    schema: uiSaveWidgetSchema.shape,
+  },
+  {
+    name: 'ui_get_widget_info',
+    description:
+      'Get detailed info about a Widget Blueprint: full widget tree with properties, variable GUIDs, slot layout, and typed property values per widget.',
+    meta: uiGetWidgetInfoMeta,
+    handler: uiGetWidgetInfoHandler,
+    cost: 'low',
+    returns: '{path, parent_class, root:{name, class, guid?, properties?, slot?, children:[…]}}',
+    niche: UI,
+    schema: uiGetWidgetInfoSchema.shape,
+  },
+  {
+    name: 'ui_search_widgets',
+    description:
+      'Search within a Widget Blueprint for widgets matching a name pattern or class filter. Returns matching widget paths and properties.',
+    meta: uiSearchWidgetsMeta,
+    handler: uiSearchWidgetsHandler,
+    cost: 'low',
+    returns: '{results:[{path, name, class, properties?}]}',
+    niche: UI,
+    schema: uiSearchWidgetsSchema.shape,
+  },
+  {
+    name: 'ui_list_widget_types',
+    description:
+      'List all available UMG widget classes that can be added to a Widget Blueprint via ui_add_element or ui_replace_element. Optionally filter by name.',
+    meta: uiListWidgetTypesMeta,
+    handler: uiListWidgetTypesHandler,
+    cost: 'low',
+    returns: '{widget_types:[{name, class_path, is_panel, description}]}',
+    niche: UI,
+    schema: uiListWidgetTypesSchema.shape,
+  },
+  {
+    name: 'ui_remove_element',
+    description:
+      'Remove a widget from a Widget Blueprint designer tree. Cannot remove the root without an explicit replacement_root. Widget variable GUID and member state are cleaned up.',
+    meta: uiRemoveElementMeta,
+    handler: uiRemoveElementHandler,
+    cost: 'medium',
+    returns: '{widget_blueprint_path, operation, removed_widget, parent_before_removal, child_index}',
+    niche: UI,
+    schema: uiRemoveElementSchema.shape,
+  },
+  {
+    name: 'ui_reparent_element',
+    description:
+      'Move an existing designer widget from its current parent to a new parent panel. Preserves widget instance and GUID. Creates the correct slot class for the new parent.',
+    meta: uiReparentElementMeta,
+    handler: uiReparentElementHandler,
+    cost: 'medium',
+    returns: '{widget_blueprint_path, operation, widget_name, old_parent, new_parent, old_index, new_index}',
+    niche: UI,
+    schema: uiReparentElementSchema.shape,
+  },
+  {
+    name: 'ui_replace_element',
+    description:
+      'Replace a designer widget with a new widget of a different class at the same position. Preserves parent, child index, and optionally the name and variable GUID.',
+    meta: uiReplaceElementMeta,
+    handler: uiReplaceElementHandler,
+    cost: 'medium',
+    returns:
+      '{widget_blueprint_path, operation, old_widget, old_class, new_widget, new_class, parent, child_index, preserved_guid, migrated_properties, discarded_properties}',
+    niche: UI,
+    schema: uiReplaceElementSchema.shape,
+  },
 
-    // ── Scene domain ──────────────────────────────────────────────────────────
-    {
-      name: 'scene_export',
-      description: 'Export a 3D scene graph for LLM reasoning (flat / relational / hierarchical).',
-      meta: sceneExportMeta,
-      handler: sceneExportHandler,
-      cost: 'medium',
-      returns: 'mode-specific shape',
-      schema: {
-        mode: z.enum(['flat', 'relational', 'hierarchical']).optional(),
-        window: z.object({ min: dVec3, max: dVec3 }).optional(),
-        max_items: z.coerce.number().int().optional(),
-      },
+  // ── Scene domain ──────────────────────────────────────────────────────────
+  {
+    name: 'scene_export',
+    description: 'Export a 3D scene graph for LLM reasoning (flat / relational / hierarchical).',
+    meta: sceneExportMeta,
+    handler: sceneExportHandler,
+    cost: 'medium',
+    returns: 'mode-specific shape',
+    schema: {
+      mode: z.enum(['flat', 'relational', 'hierarchical']).optional(),
+      window: z.object({ min: dVec3, max: dVec3 }).optional(),
+      max_items: z.coerce.number().int().optional(),
     },
-    {
-      name: 'scene_validate_physics',
-      description: 'Detect floating / interpenetrating actors in the level.',
-      meta: scenePhysicsMeta,
-      handler: sceneValidatePhysicsHandler,
-      cost: 'medium',
-      returns: '{valid, floating, interpenetrating, checked_count, scanned_actors, skipped_system_actors}',
-      schema: {
-        deep_check: dCoerceBool.optional(),
-        window: z.object({ min: dVec3, max: dVec3 }).optional(),
-      },
+  },
+  {
+    name: 'scene_validate_physics',
+    description: 'Detect floating / interpenetrating actors in the level.',
+    meta: scenePhysicsMeta,
+    handler: sceneValidatePhysicsHandler,
+    cost: 'medium',
+    returns: '{valid, floating, interpenetrating, checked_count, scanned_actors, skipped_system_actors}',
+    schema: {
+      deep_check: dCoerceBool.optional(),
+      window: z.object({ min: dVec3, max: dVec3 }).optional(),
     },
+  },
 
-    // ── Editor domain ─────────────────────────────────────────────────────────
-    // editor_capture_viewport and editor_stream_log are hand-written below:
-    //   - editor_capture_viewport: custom wait_for_shaders pre-step closure +
-    //     server.tool-vs-reg schema divergence (wait_for_shaders field in
-    //     eager schema, omitted from reg). Cannot cleanly fit the descriptor.
-    //   - editor_stream_log: reg adds regex_filter/severity_filter/format that
-    //     are NOT in the eager server.tool shape — schema divergence, left as-is.
-    {
-      name: 'editor_start_pie',
-      description: 'Start Play-In-Editor.',
-      meta: pieMeta,
-      handler: editorStartPieHandler,
-      cost: 'high',
-      returns: '{ok, pie_world_id}',
-      schema: {
-        single_step: dCoerceBool.optional(),
-      },
+  // ── Editor domain ─────────────────────────────────────────────────────────
+  // editor_capture_viewport and editor_stream_log are hand-written below:
+  //   - editor_capture_viewport: custom wait_for_shaders pre-step closure +
+  //     server.tool-vs-reg schema divergence (wait_for_shaders field in
+  //     eager schema, omitted from reg). Cannot cleanly fit the descriptor.
+  //   - editor_stream_log: reg adds regex_filter/severity_filter/format that
+  //     are NOT in the eager server.tool shape — schema divergence, left as-is.
+  {
+    name: 'editor_start_pie',
+    description: 'Start Play-In-Editor.',
+    meta: pieMeta,
+    handler: editorStartPieHandler,
+    cost: 'high',
+    returns: '{ok, pie_world_id}',
+    schema: {
+      single_step: dCoerceBool.optional(),
     },
+  },
 
-    // ── Wait / capture helpers ──────────────────────────────────────────────
-    // These tools were eagerly registered but absent from recordEagerSchemas,
-    // meaning get_tool_signature had no schema to return for them. Migration
-    // adds them to the single-source list so the schema is recorded once.
-    {
-      name: 'wait_for_shaders',
-      description: 'Wait for UE shader compilation to settle (or timeout). Thin wrapper around wait_for_idle({subsystems:["shaders"]}).',
-      meta: waitForShadersMeta,
-      handler: async (args, _session) => handleWaitForShaders(args as any) as never,
-      cost: 'high',
-      returns: '{settled:bool, waited_ms:int} or legacy {status, subsystems}',
-      schema: {
-        max_seconds: z.number().int().min(1).max(600).optional().describe('Upper bound in seconds (default 60).'),
-        poll_seconds: z.number().min(0.05).max(10).optional().describe('Poll interval in seconds (default 1). NOTE: ignored — UE-side polling is fixed at 250ms.'),
-      },
+  // ── Wait / capture helpers ──────────────────────────────────────────────
+  // These tools were eagerly registered but absent from recordEagerSchemas,
+  // meaning get_tool_signature had no schema to return for them. Migration
+  // adds them to the single-source list so the schema is recorded once.
+  {
+    name: 'wait_for_shaders',
+    description:
+      'Wait for UE shader compilation to settle (or timeout). Thin wrapper around wait_for_idle({subsystems:["shaders"]}).',
+    meta: waitForShadersMeta,
+    handler: async (args, _session) => handleWaitForShaders(args as any) as never,
+    cost: 'high',
+    returns: '{settled:bool, waited_ms:int} or legacy {status, subsystems}',
+    schema: {
+      max_seconds: z.number().int().min(1).max(600).optional().describe('Upper bound in seconds (default 60).'),
+      poll_seconds: z
+        .number()
+        .min(0.05)
+        .max(10)
+        .optional()
+        .describe('Poll interval in seconds (default 1). NOTE: ignored — UE-side polling is fixed at 250ms.'),
     },
-    {
-      name: 'wait_for_idle',
-      description: 'Wait for UE subsystems (shaders/assets/gc/pcg/world_tick) to settle before reading back or rendering. Default = shaders+assets+gc+pcg.',
-      meta: waitForIdleMeta,
-      handler: async (args, _session) => handleWaitForIdle(args as never) as never,
-      cost: 'high',
-      returns: '{settled, subsystems:{shaders,assets,gc,pcg,world_tick}}',
-      schema: waitForIdleSchema.shape,
-    },
-    {
-      name: 'render_camera',
-      description: 'Render a camera view to disk and VERIFY the file landed (magic bytes + dimensions). Accepts either an actor reference or an inline transform. Calls wait_for_idle internally before capture.',
-      meta: renderCameraMeta,
-      handler: async (args, _session) => handleRenderCamera(args as never) as never,
-      cost: 'high',
-      returns: '{ok, path, width, height, format, bytes}',
-      schema: renderCameraSchema.shape,
-    },
+  },
+  {
+    name: 'wait_for_idle',
+    description:
+      'Wait for UE subsystems (shaders/assets/gc/pcg/world_tick) to settle before reading back or rendering. Default = shaders+assets+gc+pcg.',
+    meta: waitForIdleMeta,
+    handler: async (args, _session) => handleWaitForIdle(args as never) as never,
+    cost: 'high',
+    returns: '{settled, subsystems:{shaders,assets,gc,pcg,world_tick}}',
+    schema: waitForIdleSchema.shape,
+  },
+  {
+    name: 'render_camera',
+    description:
+      'Render a camera view to disk and VERIFY the file landed (magic bytes + dimensions). Accepts either an actor reference or an inline transform. Calls wait_for_idle internally before capture.',
+    meta: renderCameraMeta,
+    handler: async (args, _session) => handleRenderCamera(args as never) as never,
+    cost: 'high',
+    returns: '{ok, path, width, height, format, bytes}',
+    schema: renderCameraSchema.shape,
+  },
 
-    // ── Fab connector domain ────────────────────────────────────────────────
-    {
-      name: 'hayba_fab_login_status',
-      description: 'Check whether the user is currently logged into Fab through the UE editor.',
-      meta: fabLoginStatusMeta,
-      handler: async (args, _session) => handleFabLoginStatus(args as any),
-      cost: 'low',
-      returns: '{logged_in:bool, user?:string}',
-      schema: {},
+  // ── Fab connector domain ────────────────────────────────────────────────
+  {
+    name: 'hayba_fab_login_status',
+    description: 'Check whether the user is currently logged into Fab through the UE editor.',
+    meta: fabLoginStatusMeta,
+    handler: async (args, _session) => handleFabLoginStatus(args as any),
+    cost: 'low',
+    returns: '{logged_in:bool, user?:string}',
+    schema: {},
+  },
+  {
+    name: 'hayba_fab_library_list',
+    description: "List a page of the user's Fab library (assets they own).",
+    meta: fabLibraryListMeta,
+    handler: async (args, _session) => handleFabLibraryList(args as any),
+    cost: 'medium',
+    returns: '{assets:[{id,title,type}], next_cursor?}',
+    schema: {
+      count: z.number().int().min(1).max(100).optional().describe('Number of results per page (default 20).'),
+      page: z.string().optional().describe('Pagination cursor from previous call.'),
     },
-    {
-      name: 'hayba_fab_library_list',
-      description: "List a page of the user's Fab library (assets they own).",
-      meta: fabLibraryListMeta,
-      handler: async (args, _session) => handleFabLibraryList(args as any),
-      cost: 'medium',
-      returns: '{assets:[{id,title,type}], next_cursor?}',
-      schema: {
-        count: z.number().int().min(1).max(100).optional().describe('Number of results per page (default 20).'),
-        page: z.string().optional().describe('Pagination cursor from previous call.'),
-      },
+  },
+  {
+    name: 'hayba_fab_marketplace_search',
+    description: 'Search the public Fab marketplace for assets matching a query.',
+    meta: fabMarketplaceSearchMeta,
+    handler: async (args, _session) => handleFabMarketplaceSearch(args as any),
+    cost: 'medium',
+    returns: '{assets:[{id,title,type,price}], next_cursor?}',
+    schema: {
+      query: z.string().min(1).describe('Search query string.'),
+      type: z.string().optional().describe('Filter by asset type (e.g. "Material", "StaticMesh").'),
+      page: z.string().optional().describe('Pagination cursor from previous call.'),
     },
-    {
-      name: 'hayba_fab_marketplace_search',
-      description: 'Search the public Fab marketplace for assets matching a query.',
-      meta: fabMarketplaceSearchMeta,
-      handler: async (args, _session) => handleFabMarketplaceSearch(args as any),
-      cost: 'medium',
-      returns: '{assets:[{id,title,type,price}], next_cursor?}',
-      schema: {
-        query: z.string().min(1).describe('Search query string.'),
-        type: z.string().optional().describe('Filter by asset type (e.g. "Material", "StaticMesh").'),
-        page: z.string().optional().describe('Pagination cursor from previous call.'),
-      },
+  },
+  {
+    name: 'hayba_fab_download',
+    description: 'Download a Fab asset into the active UE project.',
+    meta: fabDownloadMeta,
+    handler: async (args, _session) => handleFabDownload(args as any),
+    cost: 'high',
+    returns: '{ok, import_path}',
+    schema: {
+      asset_id: z.string().min(1).describe('Fab asset identifier.'),
+      download_url: z.string().url().describe('Signed download URL from library_list / search result item.'),
+      target_dir: z
+        .string()
+        .optional()
+        .describe('Project content path, e.g. /Game/Fab/MyAsset. Defaults to /Game/Fab/<asset_id>.'),
+      wait: z
+        .boolean()
+        .optional()
+        .describe('If true, blocks until download completes (up to 10min cap on the C++ side). Default true.'),
     },
-    {
-      name: 'hayba_fab_download',
-      description: 'Download a Fab asset into the active UE project.',
-      meta: fabDownloadMeta,
-      handler: async (args, _session) => handleFabDownload(args as any),
-      cost: 'high',
-      returns: '{ok, import_path}',
-      schema: {
-        asset_id: z.string().min(1).describe('Fab asset identifier.'),
-        download_url: z.string().url().describe('Signed download URL from library_list / search result item.'),
-        target_dir: z.string().optional().describe('Project content path, e.g. /Game/Fab/MyAsset. Defaults to /Game/Fab/<asset_id>.'),
-        wait: z.boolean().optional().describe('If true, blocks until download completes (up to 10min cap on the C++ side). Default true.'),
-      },
-    },
+  },
 
-    // ── Asset-source connectors (Poly Haven / ambientCG / Sketchfab) ────────
-    {
-      name: 'hayba_polyhaven_search',
-      description: 'Search Poly Haven for CC0 HDRIs, textures, or models.',
-      meta: polyhavenSearchMeta,
-      handler: async (args, _session) => handlePolyhavenSearch(args as any),
-      cost: 'medium',
-      returns: '{assets:[{id,name,type,categories,download_count}]}',
-      schema: {
-        query: z.string().min(1).describe('Search query string.'),
-        type: z.enum(['hdris', 'textures', 'models']).optional().describe('Asset type filter (default "textures").'),
-        categories: z.string().optional().describe('Comma-separated Poly Haven category filter.'),
-      },
+  // ── Asset-source connectors (Poly Haven / ambientCG / Sketchfab) ────────
+  {
+    name: 'hayba_polyhaven_search',
+    description: 'Search Poly Haven for CC0 HDRIs, textures, or models.',
+    meta: polyhavenSearchMeta,
+    handler: async (args, _session) => handlePolyhavenSearch(args as any),
+    cost: 'medium',
+    returns: '{assets:[{id,name,type,categories,download_count}]}',
+    schema: {
+      query: z.string().min(1).describe('Search query string.'),
+      type: z.enum(['hdris', 'textures', 'models']).optional().describe('Asset type filter (default "textures").'),
+      categories: z.string().optional().describe('Comma-separated Poly Haven category filter.'),
     },
-    {
-      name: 'hayba_polyhaven_download',
-      description: 'Download a Poly Haven asset (HDRI / texture maps / glTF model) and import into UE.',
-      meta: polyhavenDownloadMeta,
-      handler: async (args, _session) => handlePolyhavenDownload(args as any),
-      cost: 'high',
-      returns: '{ok, imported_paths:[string], target_dir}',
-      schema: {
-        asset_id: z.string().min(1).describe('Poly Haven asset slug.'),
-        type: z.enum(['hdris', 'textures', 'models']).optional().describe('Asset type (default "textures").'),
-        resolution: z.enum(['1k', '2k', '4k', '8k']).optional().describe('Resolution tier (default "2k").'),
-        target_dir: z.string().optional().describe('UE content path. Defaults to /Game/AssetConnectors/polyhaven/<asset_id>.'),
-      },
+  },
+  {
+    name: 'hayba_polyhaven_download',
+    description: 'Download a Poly Haven asset (HDRI / texture maps / glTF model) and import into UE.',
+    meta: polyhavenDownloadMeta,
+    handler: async (args, _session) => handlePolyhavenDownload(args as any),
+    cost: 'high',
+    returns: '{ok, imported_paths:[string], target_dir}',
+    schema: {
+      asset_id: z.string().min(1).describe('Poly Haven asset slug.'),
+      type: z.enum(['hdris', 'textures', 'models']).optional().describe('Asset type (default "textures").'),
+      resolution: z.enum(['1k', '2k', '4k', '8k']).optional().describe('Resolution tier (default "2k").'),
+      target_dir: z
+        .string()
+        .optional()
+        .describe('UE content path. Defaults to /Game/AssetConnectors/polyhaven/<asset_id>.'),
     },
-    {
-      name: 'hayba_ambientcg_search',
-      description: 'Search ambientCG for CC0 PBR materials, decals, or 3D models.',
-      meta: ambientcgSearchMeta,
-      handler: async (args, _session) => handleAmbientCgSearch(args as any),
-      cost: 'medium',
-      returns: '{assets:[{id,name,downloadCount,tags}]}',
-      schema: {
-        query: z.string().min(1).describe('Search query string.'),
-        type: z.string().optional().describe('ambientCG asset type (default "Material").'),
-        limit: z.number().int().min(1).max(100).optional().describe('Max results (default 20).'),
-      },
+  },
+  {
+    name: 'hayba_ambientcg_search',
+    description: 'Search ambientCG for CC0 PBR materials, decals, or 3D models.',
+    meta: ambientcgSearchMeta,
+    handler: async (args, _session) => handleAmbientCgSearch(args as any),
+    cost: 'medium',
+    returns: '{assets:[{id,name,downloadCount,tags}]}',
+    schema: {
+      query: z.string().min(1).describe('Search query string.'),
+      type: z.string().optional().describe('ambientCG asset type (default "Material").'),
+      limit: z.number().int().min(1).max(100).optional().describe('Max results (default 20).'),
     },
-    {
-      name: 'hayba_ambientcg_download',
-      description: 'Download an ambientCG material zip and import into UE.',
-      meta: ambientcgDownloadMeta,
-      handler: async (args, _session) => handleAmbientCgDownload(args as any),
-      cost: 'high',
-      returns: '{ok, imported_paths:[string], target_dir}',
-      schema: {
-        asset_id: z.string().min(1).describe('ambientCG asset id (e.g. "Bricks075A").'),
-        resolution: z.string().optional().describe('Attribute string (e.g. "1K-JPG", "2K-JPG", "4K-PNG"). Default "2K-JPG".'),
-        target_dir: z.string().optional().describe('UE content path. Defaults to /Game/AssetConnectors/ambientcg/<asset_id>.'),
-      },
+  },
+  {
+    name: 'hayba_ambientcg_download',
+    description: 'Download an ambientCG material zip and import into UE.',
+    meta: ambientcgDownloadMeta,
+    handler: async (args, _session) => handleAmbientCgDownload(args as any),
+    cost: 'high',
+    returns: '{ok, imported_paths:[string], target_dir}',
+    schema: {
+      asset_id: z.string().min(1).describe('ambientCG asset id (e.g. "Bricks075A").'),
+      resolution: z
+        .string()
+        .optional()
+        .describe('Attribute string (e.g. "1K-JPG", "2K-JPG", "4K-PNG"). Default "2K-JPG".'),
+      target_dir: z
+        .string()
+        .optional()
+        .describe('UE content path. Defaults to /Game/AssetConnectors/ambientcg/<asset_id>.'),
     },
-    {
-      name: 'hayba_sketchfab_search',
-      description: 'Search Sketchfab for downloadable 3D models. Requires SKETCHFAB_API_TOKEN env var.',
-      meta: sketchfabSearchMeta,
-      handler: async (args, _session) => handleSketchfabSearch(args as any),
-      cost: 'medium',
-      returns: '{models:[{uid,name,license,downloadCount}]}',
-      schema: {
-        query: z.string().min(1).describe('Search query string.'),
-        downloadable: z.boolean().optional().describe('Filter to downloadable-only models (default true).'),
-        count: z.number().int().min(1).max(48).optional().describe('Max results (default 24).'),
-      },
+  },
+  {
+    name: 'hayba_sketchfab_search',
+    description: 'Search Sketchfab for downloadable 3D models. Requires SKETCHFAB_API_TOKEN env var.',
+    meta: sketchfabSearchMeta,
+    handler: async (args, _session) => handleSketchfabSearch(args as any),
+    cost: 'medium',
+    returns: '{models:[{uid,name,license,downloadCount}]}',
+    schema: {
+      query: z.string().min(1).describe('Search query string.'),
+      downloadable: z.boolean().optional().describe('Filter to downloadable-only models (default true).'),
+      count: z.number().int().min(1).max(48).optional().describe('Max results (default 24).'),
     },
-    {
-      name: 'hayba_sketchfab_download',
-      description: 'Download a Sketchfab model and import into UE. Requires SKETCHFAB_API_TOKEN env var.',
-      meta: sketchfabDownloadMeta,
-      handler: async (args, _session) => handleSketchfabDownload(args as any),
-      cost: 'high',
-      returns: '{ok, imported_path, uid}',
-      schema: {
-        uid: z.string().min(1).describe('Sketchfab model uid.'),
-        flavour: z.enum(['gltf', 'usdz', 'source']).optional().describe('Download flavour (default "gltf").'),
-        target_dir: z.string().optional().describe('UE content path. Defaults to /Game/AssetConnectors/sketchfab/<uid>.'),
-      },
+  },
+  {
+    name: 'hayba_sketchfab_download',
+    description: 'Download a Sketchfab model and import into UE. Requires SKETCHFAB_API_TOKEN env var.',
+    meta: sketchfabDownloadMeta,
+    handler: async (args, _session) => handleSketchfabDownload(args as any),
+    cost: 'high',
+    returns: '{ok, imported_path, uid}',
+    schema: {
+      uid: z.string().min(1).describe('Sketchfab model uid.'),
+      flavour: z.enum(['gltf', 'usdz', 'source']).optional().describe('Download flavour (default "gltf").'),
+      target_dir: z.string().optional().describe('UE content path. Defaults to /Game/AssetConnectors/sketchfab/<uid>.'),
     },
+  },
 
-    // ── Agent-ergonomics tools (HANDOFF postmortem) — factory path ────────────
-    // These 5 python-backed tools are expressed as PyToolDescriptors and adapted
-    // here via toToolDescriptor so they flow through the same always-record /
-    // eager-register loops as every other STANDARD_DESCRIPTORS entry.
-    // pcg_cook_and_wait is a 3-step TS orchestrator and stays hand-written below.
-    toToolDescriptor(introspectDescriptor),
-    toToolDescriptor(pcgAddNodeDescriptor),
-    toToolDescriptor(pcgSetPropDescriptor),
-    toToolDescriptor(pcgWireDescriptor),
-    toToolDescriptor(pcgInspectInstancesDescriptor),
-    // PCG graph-EDIT tools (2026-07 postmortem §2a–2e): the destructive/introspect
-    // half that previously forced python_run fallbacks.
-    toToolDescriptor(pcgRemoveNodeDescriptor),
-    toToolDescriptor(pcgDisconnectDescriptor),
-    toToolDescriptor(pcgLayoutDescriptor),
-    toToolDescriptor(pcgListPinsDescriptor),
-    toToolDescriptor(pcgGetNodeDescriptor),
+  // ── Agent-ergonomics tools (HANDOFF postmortem) — factory path ────────────
+  // These 5 python-backed tools are expressed as PyToolDescriptors and adapted
+  // here via toToolDescriptor so they flow through the same always-record /
+  // eager-register loops as every other STANDARD_DESCRIPTORS entry.
+  // pcg_cook_and_wait is a 3-step TS orchestrator and stays hand-written below.
+  toToolDescriptor(introspectDescriptor),
+  toToolDescriptor(pcgAddNodeDescriptor),
+  toToolDescriptor(pcgSetPropDescriptor),
+  toToolDescriptor(pcgWireDescriptor),
+  toToolDescriptor(pcgInspectInstancesDescriptor),
+  // PCG graph-EDIT tools (2026-07 postmortem §2a–2e): the destructive/introspect
+  // half that previously forced python_run fallbacks.
+  toToolDescriptor(pcgRemoveNodeDescriptor),
+  toToolDescriptor(pcgDisconnectDescriptor),
+  toToolDescriptor(pcgLayoutDescriptor),
+  toToolDescriptor(pcgListPinsDescriptor),
+  toToolDescriptor(pcgGetNodeDescriptor),
 
-    // ── Actor-domain P0 breadth tools (Phase 2 Wave 1) — factory path ─────────
-    // Net-new actor tools (inspect/find/selection/spawn-from-asset/batch-
-    // transform/focus/set-folder), generated as UE Python via the pyTemplate
-    // factory. See src/tools/actor/actor-py-tools.ts for the overlap analysis.
-    ...actorPyDescriptors.map((d) => toToolDescriptor(d)),
+  // ── Actor-domain P0 breadth tools (Phase 2 Wave 1) — factory path ─────────
+  // Net-new actor tools (inspect/find/selection/spawn-from-asset/batch-
+  // transform/focus/set-folder), generated as UE Python via the pyTemplate
+  // factory. See src/tools/actor/actor-py-tools.ts for the overlap analysis.
+  ...actorPyDescriptors.map((d) => toToolDescriptor(d)),
 
-    // ── Editor-introspection & observability P0 tools (Phase 2 Wave 2) ────────
-    // Net-new editor/reflection/asset-registry read + gating tools, generated as
-    // UE Python via the pyTemplate factory. See src/tools/editor/editor-py-tools.ts
-    // for the catalog overlap/skip analysis.
-    ...editorPyDescriptors.map((d) => toToolDescriptor(d)),
+  // ── Editor-introspection & observability P0 tools (Phase 2 Wave 2) ────────
+  // Net-new editor/reflection/asset-registry read + gating tools, generated as
+  // UE Python via the pyTemplate factory. See src/tools/editor/editor-py-tools.ts
+  // for the catalog overlap/skip analysis.
+  ...editorPyDescriptors.map((d) => toToolDescriptor(d)),
 
-    // ── Asset & mesh P0 tools (Phase 2 Wave 2, Task 2) — factory path ─────────
-    // Net-new asset-provenance/save/folder tools and StaticMesh-asset readbacks
-    // (sockets/LODs/materials/bounds + material-slot setter), generated as UE
-    // Python via the pyTemplate factory. See src/tools/asset/asset-py-tools.ts
-    // and src/tools/mesh/mesh-py-tools.ts for the catalog overlap/skip analysis.
-    ...assetPyDescriptors.map((d) => toToolDescriptor(d)),
-    ...meshPyDescriptors.map((d) => toToolDescriptor(d)),
+  // ── Asset & mesh P0 tools (Phase 2 Wave 2, Task 2) — factory path ─────────
+  // Net-new asset-provenance/save/folder tools and StaticMesh-asset readbacks
+  // (sockets/LODs/materials/bounds + material-slot setter), generated as UE
+  // Python via the pyTemplate factory. See src/tools/asset/asset-py-tools.ts
+  // and src/tools/mesh/mesh-py-tools.ts for the catalog overlap/skip analysis.
+  ...assetPyDescriptors.map((d) => toToolDescriptor(d)),
+  ...meshPyDescriptors.map((d) => toToolDescriptor(d)),
 
-    // ── Sequencer & cinematics P0/P1 tools (Phase 2 Wave 4, Task 1) ───────────
-    // Net-new sequence authoring/inspection/validation tools, generated as UE
-    // Python via the pyTemplate factory. Names are deliberately non-colliding
-    // with the dormant HaybaMCPSequencer satellite-plugin C++ commands (render
-    // tools wrapped-and-skipped). See src/tools/sequencer/sequencer-py-tools.ts
-    // for the 3-surface overlap audit and render decision.
-    ...sequencerPyDescriptors.map((d) => toToolDescriptor(d)),
+  // ── Sequencer & cinematics P0/P1 tools (Phase 2 Wave 4, Task 1) ───────────
+  // Net-new sequence authoring/inspection/validation tools, generated as UE
+  // Python via the pyTemplate factory. Names are deliberately non-colliding
+  // with the dormant HaybaMCPSequencer satellite-plugin C++ commands (render
+  // tools wrapped-and-skipped). See src/tools/sequencer/sequencer-py-tools.ts
+  // for the 3-surface overlap audit and render decision.
+  ...sequencerPyDescriptors.map((d) => toToolDescriptor(d)),
 
-    // ── Niagara & VFX P0/P1 tools (Phase 2 Wave 4, Task 2) ────────────────────
-    // Net-new Niagara discovery/inspection/spawn/param/validation tools,
-    // generated as UE Python via the pyTemplate factory. Names are deliberately
-    // non-colliding with the dormant HaybaMCPNiagara satellite-plugin C++
-    // commands (niagara_list/niagara_spawn/niagara_set_param). See
-    // src/tools/niagara/niagara-py-tools.ts for the 3-surface overlap audit and
-    // wrap-and-skip decisions.
-    ...niagaraPyDescriptors.map((d) => toToolDescriptor(d)),
+  // ── Niagara & VFX P0/P1 tools (Phase 2 Wave 4, Task 2) ────────────────────
+  // Net-new Niagara discovery/inspection/spawn/param/validation tools,
+  // generated as UE Python via the pyTemplate factory. Names are deliberately
+  // non-colliding with the dormant HaybaMCPNiagara satellite-plugin C++
+  // commands (niagara_list/niagara_spawn/niagara_set_param). See
+  // src/tools/niagara/niagara-py-tools.ts for the 3-surface overlap audit and
+  // wrap-and-skip decisions.
+  ...niagaraPyDescriptors.map((d) => toToolDescriptor(d)),
 
-    // ── Water system P0 tools (Phase 2 Wave 4, Task 3) ────────────────────────
-    // Net-new water body/zone/wave discovery, spawn, tuning and PLUMB-style
-    // validation, generated as UE Python via the pyTemplate factory. All names
-    // are net-new + unique across all 3 surfaces (no water_* command exists in
-    // sidecar/index/list-tool-categories or any unreal GetCommands). The Water
-    // plugin may be DISABLED — water_check_plugin is the honest gate and every
-    // tool degrades to a clean plugin-disabled envelope. See
-    // src/tools/water/water-py-tools.ts for the overlap audit + plugin-probe.
-    ...waterPyDescriptors.map((d) => toToolDescriptor(d)),
+  // ── Water system P0 tools (Phase 2 Wave 4, Task 3) ────────────────────────
+  // Net-new water body/zone/wave discovery, spawn, tuning and PLUMB-style
+  // validation, generated as UE Python via the pyTemplate factory. All names
+  // are net-new + unique across all 3 surfaces (no water_* command exists in
+  // sidecar/index/list-tool-categories or any unreal GetCommands). The Water
+  // plugin may be DISABLED — water_check_plugin is the honest gate and every
+  // tool degrades to a clean plugin-disabled envelope. See
+  // src/tools/water/water-py-tools.ts for the overlap audit + plugin-probe.
+  ...waterPyDescriptors.map((d) => toToolDescriptor(d)),
 
-    // ── Landscape & terrain P0/P1 tools (Phase 2 Wave 3, Task 1) — factory path ─
-    // Net-new landscape read/introspection (list/inspect/layer-list/get-material/
-    // list-splines) + set-to-value reflection writers (set-material/set-lod/
-    // set-nanite) + LayerInfo authoring (add-layer). See
-    // src/tools/landscape/landscape-py-tools.ts for the catalog overlap/skip
-    // analysis (C++ edit-data & import handlers deliberately not re-implemented).
-    ...landscapePyDescriptors.map((d) => toToolDescriptor(d)),
+  // ── Landscape & terrain P0/P1 tools (Phase 2 Wave 3, Task 1) — factory path ─
+  // Net-new landscape read/introspection (list/inspect/layer-list/get-material/
+  // list-splines) + set-to-value reflection writers (set-material/set-lod/
+  // set-nanite) + LayerInfo authoring (add-layer). See
+  // src/tools/landscape/landscape-py-tools.ts for the catalog overlap/skip
+  // analysis (C++ edit-data & import handlers deliberately not re-implemented).
+  ...landscapePyDescriptors.map((d) => toToolDescriptor(d)),
 
-    // ── Foliage & scatter P0 tools (Phase 2 Wave 3, Task 2) — factory path ─────
-    // Net-new foliage-SYSTEM authoring: capability-probe + type/instance reads,
-    // set-to-value typed-param + mesh writers, and non-idempotent create/add/
-    // scatter/remove/clear verbs, generated as UE Python via the pyTemplate
-    // factory. Direct low-level foliage authoring — NOT the PLUMB-validated
-    // world_generate flagship. See src/tools/foliage/foliage-py-tools.ts for the
-    // catalog overlap/skip analysis and UNCERTAIN-API flags.
-    ...foliagePyDescriptors.map((d) => toToolDescriptor(d)),
+  // ── Foliage & scatter P0 tools (Phase 2 Wave 3, Task 2) — factory path ─────
+  // Net-new foliage-SYSTEM authoring: capability-probe + type/instance reads,
+  // set-to-value typed-param + mesh writers, and non-idempotent create/add/
+  // scatter/remove/clear verbs, generated as UE Python via the pyTemplate
+  // factory. Direct low-level foliage authoring — NOT the PLUMB-validated
+  // world_generate flagship. See src/tools/foliage/foliage-py-tools.ts for the
+  // catalog overlap/skip analysis and UNCERTAIN-API flags.
+  ...foliagePyDescriptors.map((d) => toToolDescriptor(d)),
 
-    // ── Lighting & post-process P0/P1 tools (Phase 2 Wave 3, Task 3) — factory ──
-    // Net-new lighting/post-process AUTHORING: capability-probe + light/PPV reads,
-    // set-to-value light/PP/exposure/Lumen/color-grade/fog writers (each PP writer
-    // sets the bOverride_* flag alongside the value + writes the settings struct
-    // back), and non-idempotent light_spawn / postprocess_spawn_volume / sky_setup.
-    // Skips the render/vision-loop/job-envelope + PLUMB-validator catalog entries.
-    // See src/tools/lighting/lighting-py-tools.ts for the 3-surface overlap audit,
-    // the bOverride gotcha handling, skip analysis and UNCERTAIN-API flags.
-    ...lightingPyDescriptors.map((d) => toToolDescriptor(d)),
+  // ── Lighting & post-process P0/P1 tools (Phase 2 Wave 3, Task 3) — factory ──
+  // Net-new lighting/post-process AUTHORING: capability-probe + light/PPV reads,
+  // set-to-value light/PP/exposure/Lumen/color-grade/fog writers (each PP writer
+  // sets the bOverride_* flag alongside the value + writes the settings struct
+  // back), and non-idempotent light_spawn / postprocess_spawn_volume / sky_setup.
+  // Skips the render/vision-loop/job-envelope + PLUMB-validator catalog entries.
+  // See src/tools/lighting/lighting-py-tools.ts for the 3-surface overlap audit,
+  // the bOverride gotcha handling, skip analysis and UNCERTAIN-API flags.
+  ...lightingPyDescriptors.map((d) => toToolDescriptor(d)),
 
-    // ── BYOK copilot config/introspection (Task 5) ────────────────────────────
-    // Pure-TS descriptors reading/writing the SAME in-memory config store the
-    // /chat/config sidecar routes use (src/chat/chat-server.ts). See
-    // src/tools/copilot/copilot-tools.ts for the vault TODO (Task 6).
-    {
-      name: 'copilot_provider_list',
-      description: 'List the BYOK provider catalog, flagging which provider is active and whether a key is configured for it (masked last-4 only).',
-      meta: providerListMeta,
-      handler: providerListHandler,
-      cost: 'low',
-      returns: '{providers:[{id,label,protocol,needs_key,key_hint,default_model,base_url_default,active,key_configured,key_last4}], active_provider}',
-      niche: PACK,
-      schema: {
-        session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
-      },
+  // ── BYOK copilot config/introspection (Task 5) ────────────────────────────
+  // Pure-TS descriptors reading/writing the SAME in-memory config store the
+  // /chat/config sidecar routes use (src/chat/chat-server.ts). See
+  // src/tools/copilot/copilot-tools.ts for the vault TODO (Task 6).
+  {
+    name: 'copilot_provider_list',
+    description:
+      'List the BYOK provider catalog, flagging which provider is active and whether a key is configured for it (masked last-4 only).',
+    meta: providerListMeta,
+    handler: providerListHandler,
+    cost: 'low',
+    returns:
+      '{providers:[{id,label,protocol,needs_key,key_hint,default_model,base_url_default,active,key_configured,key_last4}], active_provider}',
+    niche: PACK,
+    schema: {
+      session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
     },
-    {
-      name: 'copilot_provider_set',
-      description: 'Set the active BYOK provider (and optional model/base URL) for a copilot session.',
-      meta: providerSetMeta,
-      handler: providerSetHandler,
-      cost: 'low',
-      returns: '{ok, provider, model, base_url, key_last4}',
-      niche: PACK,
-      schema: {
-        provider: z.string().min(1).describe('Provider id from copilot_provider_list, e.g. "anthropic"'),
-        model: z.string().optional().describe('Override the provider default model'),
-        base_url: z.string().optional().describe('Override the provider default base URL (e.g. self-hosted OpenAI-compat endpoint)'),
-        session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
-      },
+  },
+  {
+    name: 'copilot_provider_set',
+    description: 'Set the active BYOK provider (and optional model/base URL) for a copilot session.',
+    meta: providerSetMeta,
+    handler: providerSetHandler,
+    cost: 'low',
+    returns: '{ok, provider, model, base_url, key_last4}',
+    niche: PACK,
+    schema: {
+      provider: z.string().min(1).describe('Provider id from copilot_provider_list, e.g. "anthropic"'),
+      model: z.string().optional().describe('Override the provider default model'),
+      base_url: z
+        .string()
+        .optional()
+        .describe('Override the provider default base URL (e.g. self-hosted OpenAI-compat endpoint)'),
+      session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
     },
-    {
-      name: 'copilot_provider_test',
-      description: 'Preflight-check a BYOK provider: fails clean with {ok:false, reason:"no_key"} (no network call) if a key is required but absent; otherwise runs a minimal completion probe and reports latency.',
-      meta: providerTestMeta,
-      handler: providerTestHandler,
-      cost: 'low',
-      returns: '{ok, latency_ms?, model?, reason?, detail?}',
-      niche: PACK,
-      schema: {
-        provider: z.string().optional().describe('Provider id to test; defaults to the configured active provider'),
-        model: z.string().optional().describe('Model id to test; defaults to the configured/default model'),
-        session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
-      },
+  },
+  {
+    name: 'copilot_provider_test',
+    description:
+      'Preflight-check a BYOK provider: fails clean with {ok:false, reason:"no_key"} (no network call) if a key is required but absent; otherwise runs a minimal completion probe and reports latency.',
+    meta: providerTestMeta,
+    handler: providerTestHandler,
+    cost: 'low',
+    returns: '{ok, latency_ms?, model?, reason?, detail?}',
+    niche: PACK,
+    schema: {
+      provider: z.string().optional().describe('Provider id to test; defaults to the configured active provider'),
+      model: z.string().optional().describe('Model id to test; defaults to the configured/default model'),
+      session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
     },
-    {
-      name: 'copilot_model_list',
-      description: 'List known model ids for a BYOK provider (advisory starting point only — BYOK users may use any id their key/endpoint supports).',
-      meta: modelListMeta,
-      handler: modelListHandler,
-      cost: 'low',
-      returns: '{provider, default_model, configured_model, known_models:[string], advisory:true, note}',
-      niche: PACK,
-      schema: {
-        provider: z.string().min(1).describe('Provider id from copilot_provider_list'),
-        session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
-      },
+  },
+  {
+    name: 'copilot_model_list',
+    description:
+      'List known model ids for a BYOK provider (advisory starting point only — BYOK users may use any id their key/endpoint supports).',
+    meta: modelListMeta,
+    handler: modelListHandler,
+    cost: 'low',
+    returns: '{provider, default_model, configured_model, known_models:[string], advisory:true, note}',
+    niche: PACK,
+    schema: {
+      provider: z.string().min(1).describe('Provider id from copilot_provider_list'),
+      session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
     },
-    {
-      name: 'copilot_key_set',
-      description: 'Set the BYOK API key for a provider. The key is NEVER echoed back or logged — the response contains only a masked last-4. Stored in-memory (TODO Task 6: swaps to the C++ DPAPI vault).',
-      meta: keySetMeta,
-      handler: keySetHandler,
-      cost: 'low',
-      returns: '{ok, provider, key_last4}',
-      niche: PACK,
-      schema: {
-        provider: z.string().min(1).describe('Provider id from copilot_provider_list'),
-        api_key: z.string().min(1).describe('The raw API key (never returned or logged)'),
-        session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
-      },
+  },
+  {
+    name: 'copilot_key_set',
+    description:
+      'Set the BYOK API key for a provider. The key is NEVER echoed back or logged — the response contains only a masked last-4. Stored in-memory (TODO Task 6: swaps to the C++ DPAPI vault).',
+    meta: keySetMeta,
+    handler: keySetHandler,
+    cost: 'low',
+    returns: '{ok, provider, key_last4}',
+    niche: PACK,
+    schema: {
+      provider: z.string().min(1).describe('Provider id from copilot_provider_list'),
+      api_key: z.string().min(1).describe('The raw API key (never returned or logged)'),
+      session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
     },
-    {
-      name: 'copilot_key_clear',
-      description: 'Clear the stored BYOK API key for a provider. Destructive — plan-gated when Plan Mode is on.',
-      meta: keyClearMeta,
-      handler: keyClearHandler,
-      cost: 'low',
-      returns: '{ok, provider, cleared}',
-      niche: PACK,
-      schema: {
-        provider: z.string().min(1).describe('Provider id whose key should be cleared'),
-        session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
-      },
+  },
+  {
+    name: 'copilot_key_clear',
+    description: 'Clear the stored BYOK API key for a provider. Destructive — plan-gated when Plan Mode is on.',
+    meta: keyClearMeta,
+    handler: keyClearHandler,
+    cost: 'low',
+    returns: '{ok, provider, cleared}',
+    niche: PACK,
+    schema: {
+      provider: z.string().min(1).describe('Provider id whose key should be cleared'),
+      session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
     },
-    {
-      name: 'copilot_key_status',
-      description: 'Report, per provider, whether a BYOK key is configured (masked last-4 only, no network call).',
-      meta: keyStatusMeta,
-      handler: keyStatusHandler,
-      cost: 'low',
-      returns: '{providers:[{provider,configured,last4?}]}',
-      niche: PACK,
-      schema: {
-        session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
-      },
+  },
+  {
+    name: 'copilot_key_status',
+    description: 'Report, per provider, whether a BYOK key is configured (masked last-4 only, no network call).',
+    meta: keyStatusMeta,
+    handler: keyStatusHandler,
+    cost: 'low',
+    returns: '{providers:[{provider,configured,last4?}]}',
+    niche: PACK,
+    schema: {
+      session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
     },
-    {
-      name: 'copilot_health',
-      description: 'Cheap health snapshot for the copilot stack: sidecar chat routes registered, UE bridge reachable, tool registry size, and the active provider.',
-      meta: healthMeta,
-      handler: healthHandler,
-      cost: 'low',
-      returns: '{sidecar_ok, ue_connected, tools_available, active_provider}',
-      niche: PACK,
-      schema: {
-        session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
-      },
+  },
+  {
+    name: 'copilot_health',
+    description:
+      'Cheap health snapshot for the copilot stack: sidecar chat routes registered, UE bridge reachable, tool registry size, and the active provider.',
+    meta: healthMeta,
+    handler: healthHandler,
+    cost: 'low',
+    returns: '{sidecar_ok, ue_connected, tools_available, active_provider}',
+    niche: PACK,
+    schema: {
+      session_id: z.string().optional().describe('Chat session id; omitted = the default/global config slot'),
     },
+  },
 ];
 
 // Single-source tool descriptor list = hand-written entries + the sidecar-
@@ -1153,9 +1607,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
 // presence and the no-drift / no-duplicate invariants.
 export const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   ...HANDWRITTEN_STANDARD_DESCRIPTORS,
-  ...generateLegacyDescriptors(
-    new Set(HANDWRITTEN_STANDARD_DESCRIPTORS.map((d) => d.name)),
-  ),
+  ...generateLegacyDescriptors(new Set(HANDWRITTEN_STANDARD_DESCRIPTORS.map((d) => d.name))),
 ];
 
 export async function registerTools(server: McpServer, session: SessionManagerStub): Promise<RoutingHandle | null> {
@@ -1227,16 +1679,16 @@ export async function registerTools(server: McpServer, session: SessionManagerSt
  * deriveDomainPacks buckets by this dir, and ToolIndex indexes by it).
  */
 export function inferDir(name: string): string | null {
-  if (name.startsWith('actor_'))          return 'actor';
-  if (name.startsWith('scene_'))          return 'scene';
-  if (name.startsWith('editor_'))         return 'editor';
-  if (name.startsWith('material_'))       return 'material';
-  if (name.startsWith('ui_'))             return 'ui';
-  if (name.startsWith('hayba_fab_'))      return 'fab';
-  if (name.startsWith('hayba_polyhaven_'))return 'asset-sources';
-  if (name.startsWith('hayba_ambientcg_'))return 'asset-sources';
-  if (name.startsWith('hayba_sketchfab_'))return 'asset-sources';
-  if (name === 'python_run')              return 'python';
+  if (name.startsWith('actor_')) return 'actor';
+  if (name.startsWith('scene_')) return 'scene';
+  if (name.startsWith('editor_')) return 'editor';
+  if (name.startsWith('material_')) return 'material';
+  if (name.startsWith('ui_')) return 'ui';
+  if (name.startsWith('hayba_fab_')) return 'fab';
+  if (name.startsWith('hayba_polyhaven_')) return 'asset-sources';
+  if (name.startsWith('hayba_ambientcg_')) return 'asset-sources';
+  if (name.startsWith('hayba_sketchfab_')) return 'asset-sources';
+  if (name === 'python_run') return 'python';
   if (name === 'list_tool_categories' || name === 'get_tool_signature') return 'code-mode';
   return null;
 }
@@ -1251,7 +1703,6 @@ function withNicheBriefing(
 }
 
 function registerToolsCore(server: McpServer, session: SessionManagerStub): void {
-
   // Fire-and-forget: dynamic import resolves in <1ms; MCP handshake takes longer
   // so any tool call is guaranteed to find DEFAULT_SENDER set.
   void installLiveSender();
@@ -1286,15 +1737,24 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     'hayba_propose_plan',
     'Propose a step-by-step plan to the user before performing destructive operations. Required when Plan Mode is on. Steps may be strings or {title, description, tool} objects.',
     {
-      steps: z.array(z.union([
-        z.string(),
-        z.object({
-          title: z.string(),
-          description: z.string().optional(),
-          tool: z.string().optional(),
-        }),
-      ])).describe('Ordered list of plan steps'),
-      await_seconds: z.number().int().min(0).max(600).optional()
+      steps: z
+        .array(
+          z.union([
+            z.string(),
+            z.object({
+              title: z.string(),
+              description: z.string().optional(),
+              tool: z.string().optional(),
+            }),
+          ]),
+        )
+        .describe('Ordered list of plan steps'),
+      await_seconds: z
+        .number()
+        .int()
+        .min(0)
+        .max(600)
+        .optional()
         .describe('How long the agent will wait for human approval (informational; default 30)'),
     },
     async (params) => {
@@ -1314,9 +1774,10 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     'hayba_mark_plan_step',
     'Update the status of a single step in the proposed plan shown in the UE Plan panel. Marking a step "completed" auto-advances the next step to "running". Call this as you work through an approved plan so the user sees live progress.',
     {
-      index: z.number().int().min(0)
-        .describe('Zero-based index of the plan step to update'),
-      status: z.enum(['running', 'completed', 'failed']).default('completed')
+      index: z.number().int().min(0).describe('Zero-based index of the plan step to update'),
+      status: z
+        .enum(['running', 'completed', 'failed'])
+        .default('completed')
         .describe('New status for the step (default "completed")'),
     },
     async (params) => {
@@ -1334,29 +1795,38 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
 
   server.tool(
     'list_tool_categories',
-    appendMeta('List all HaybaOS command domains and their commands. Call this first to discover what is available before requesting a specific schema.', listMeta),
+    appendMeta(
+      'List all HaybaOS command domains and their commands. Call this first to discover what is available before requesting a specific schema.',
+      listMeta,
+    ),
     {},
     async () => {
       const r = await listToolCategoriesHandler({}, session);
       return { content: r.content, isError: r.isError };
-    }
+    },
   );
   remember('list_tool_categories', listMeta);
 
   server.tool(
     'get_tool_signature',
-    appendMeta('Return the JSON schema (params, return shape, cost) for a specific HaybaOS command. Call list_tool_categories first to find command names.', sigMeta),
+    appendMeta(
+      'Return the JSON schema (params, return shape, cost) for a specific HaybaOS command. Call list_tool_categories first to find command names.',
+      sigMeta,
+    ),
     { command: z.string().describe('Exact command name, e.g. "actor_spawn"') },
     async (params) => {
       const r = await getToolSignatureHandler(params as Record<string, unknown>, session);
       return { content: r.content, isError: r.isError };
-    }
+    },
   );
   remember('get_tool_signature', sigMeta);
 
   server.tool(
     'python_run',
-    appendMeta('Execute a Python script inside UE via PythonScriptPlugin. Universal escape hatch for invoking any UE command not otherwise exposed.', pyMeta),
+    appendMeta(
+      'Execute a Python script inside UE via PythonScriptPlugin. Universal escape hatch for invoking any UE command not otherwise exposed.',
+      pyMeta,
+    ),
     {
       script: z.string().describe('Python source to execute'),
       allow_unsafe: z.boolean().optional().describe('Override Tier 3 filesystem/subprocess block (DANGEROUS)'),
@@ -1364,7 +1834,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     async (params) => {
       const r = await pythonRunHandler(params as Record<string, unknown>, session);
       return { content: r.content, isError: r.isError };
-    }
+    },
   );
   remember('python_run', pyMeta);
 
@@ -1385,10 +1855,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
   // booleans before they hit Zod. Wrap so we accept both raw and the
   // stringified form for params we know are commonly affected. (vec3/coerceVec3
   // now live at module scope as dVec3/dCoerceVec3, used by the descriptor list.)
-  const coerceBool = z.preprocess(
-    (v) => typeof v === 'string' ? v.toLowerCase() === 'true' : v,
-    z.boolean()
-  );
+  const coerceBool = z.preprocess((v) => (typeof v === 'string' ? v.toLowerCase() === 'true' : v), z.boolean());
 
   // ── Standard tools (actor / material / scene) ───────────────────────────────
   // Registered from the single descriptor list. Each descriptor declares the
@@ -1400,11 +1867,17 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
 
   server.tool(
     'editor_capture_viewport',
-    appendMeta('Capture the active editor viewport and return it as an inline image block (plus a small text block with camera/width/height). Set HAYBA_CAPTURE_TO_FILE to also spill the image to a temp file path.', captureMeta),
+    appendMeta(
+      'Capture the active editor viewport and return it as an inline image block (plus a small text block with camera/width/height). Set HAYBA_CAPTURE_TO_FILE to also spill the image to a temp file path.',
+      captureMeta,
+    ),
     {
       width: z.coerce.number().int().optional(),
       height: z.coerce.number().int().optional(),
-      wait_for_shaders: z.boolean().optional().describe('If true, calls wait_for_shaders first (max_seconds=60, poll_seconds=1).'),
+      wait_for_shaders: z
+        .boolean()
+        .optional()
+        .describe('If true, calls wait_for_shaders first (max_seconds=60, poll_seconds=1).'),
     },
     async (params) => {
       if ((params as any).wait_for_shaders === true) {
@@ -1412,7 +1885,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
       }
       const r = await editorCaptureViewportHandler(params as Record<string, unknown>, session);
       return { content: r.content, isError: r.isError };
-    }
+    },
   );
   remember('editor_capture_viewport', captureMeta);
 
@@ -1428,7 +1901,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     async (params) => {
       const r = await editorStreamLogHandler(params as Record<string, unknown>, session);
       return { content: r.content, isError: r.isError };
-    }
+    },
   );
   remember('editor_stream_log', streamLogMeta);
 
@@ -1440,23 +1913,29 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
 
   server.tool(
     'pcg_cook_and_wait',
-    appendMeta('Regenerate an actor\'s PCGComponent, block on the PCG graph settling (NOT world_tick), and return per-mesh ISM instance counts — all in one call.', pcgCookMeta),
+    appendMeta(
+      "Regenerate an actor's PCGComponent, block on the PCG graph settling (NOT world_tick), and return per-mesh ISM instance counts — all in one call.",
+      pcgCookMeta,
+    ),
     pcgCookSchema.shape,
     async (params) => {
       const r = await pcgCookAndWaitHandler(params as never);
       return { content: r.content, isError: r.isError };
-    }
+    },
   );
   remember('pcg_cook_and_wait', pcgCookMeta);
 
   server.tool(
     'pcg_scatter_mesh',
-    appendMeta('Scatter a mesh (or weighted mesh set) across a surface in ONE call — build the jittered PCG graph, spawn a bound PCGVolume, generate, and return instance counts. Hard-fails on 0 instances.', pcgScatterMeta),
+    appendMeta(
+      'Scatter a mesh (or weighted mesh set) across a surface in ONE call — build the jittered PCG graph, spawn a bound PCGVolume, generate, and return instance counts. Hard-fails on 0 instances.',
+      pcgScatterMeta,
+    ),
     pcgScatterSchema.shape,
     async (params) => {
       const r = await pcgScatterMeshHandler(params as never);
       return { content: r.content, isError: r.isError };
-    }
+    },
   );
   remember('pcg_scatter_mesh', pcgScatterMeta);
 
@@ -1471,30 +1950,26 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     async ({ query }) => {
       const result = await searchNodeCatalog({ query });
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
+    },
   );
   // no meta registered (PCGEx pure-TS handler)
 
-  server.tool(
-    'hayba_get_node_details',
-    { class: z.string().describe('PCGEx node class name') },
-    async (params) => {
-      const result = await getNodeDetails({ class: params.class });
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
-  );
+  server.tool('hayba_get_node_details', { class: z.string().describe('PCGEx node class name') }, async (params) => {
+    const result = await getNodeDetails({ class: params.class });
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  });
   // no meta registered (PCGEx pure-TS handler)
 
   server.tool(
     'hayba_create_pcg_graph',
     {
       graph: z.string().describe('JSON string of the PCGEx graph topology'),
-      name: z.string().describe('Asset name for the new PCGGraph')
+      name: z.string().describe('Asset name for the new PCGGraph'),
     },
     async ({ graph, name }) => {
       const result = await createPcgGraph({ graph, name });
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
+    },
   );
   // no meta registered (PCGEx pure-TS handler)
 
@@ -1504,7 +1979,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     async ({ graph }) => {
       const result = await validatePcgGraph({ graph });
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
+    },
   );
   // no meta registered (PCGEx pure-TS handler)
 
@@ -1514,7 +1989,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     async ({ path }) => {
       const result = await listPcgAssets({ path });
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
+    },
   );
   // no meta registered (PCGEx pure-TS handler)
 
@@ -1524,7 +1999,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     async ({ assetPath }) => {
       const result = await exportPcgGraph({ assetPath });
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
+    },
   );
   // no meta registered (PCGEx pure-TS handler)
 
@@ -1534,18 +2009,14 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     async ({ assetPath }) => {
       const result = await executePcgGraph({ assetPath });
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
+    },
   );
   // no meta registered (PCGEx pure-TS handler)
 
-  server.tool(
-    'hayba_check_ue_status',
-    {},
-    async () => {
-      const result = await checkUeStatus();
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
-  );
+  server.tool('hayba_check_ue_status', {}, async () => {
+    const result = await checkUeStatus();
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  });
   // no meta registered (PCGEx pure-TS handler)
 
   server.tool(
@@ -1558,7 +2029,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     async (params) => {
       const result = await scrapeNodeRegistry(params as unknown as ScrapeNodeRegistryParams);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
+    },
   );
   // no meta registered (PCGEx pure-TS handler)
 
@@ -1572,7 +2043,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     async (params) => {
       const result = await matchPinNames(params);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
+    },
   );
   // no meta registered (PCGEx pure-TS handler)
 
@@ -1585,7 +2056,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     async (params) => {
       const result = await validateAttributeFlow(params as unknown as ValidateAttributeFlowParams);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
+    },
   );
   // no meta registered (PCGEx pure-TS handler)
 
@@ -1599,18 +2070,20 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     async (params) => {
       const result = await diffAgainstWorkingAsset(params as unknown as DiffAgainstWorkingAssetParams);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
+    },
   );
   // no meta registered (PCGEx pure-TS handler)
 
   server.tool(
     'hayba_format_graph_topology',
     {
-      graph: z.string().describe(
-        'JSON string of the PCGEx graph to layout. ' +
-        'Edges accept either canonical (fromNode/fromPin/toNode/toPin) or legacy (from/fromPin/to/toPin) keys. ' +
-        'Output nodes carry a position:{x,y} object; the C++ legacy handler reads that.'
-      ),
+      graph: z
+        .string()
+        .describe(
+          'JSON string of the PCGEx graph to layout. ' +
+            'Edges accept either canonical (fromNode/fromPin/toNode/toPin) or legacy (from/fromPin/to/toPin) keys. ' +
+            'Output nodes carry a position:{x,y} object; the C++ legacy handler reads that.',
+        ),
       algorithm: z.enum(['layered', 'grid']).optional().describe('Layout algorithm (default: layered)'),
       nodeWidth: z.number().int().optional().describe('Node width in pixels (default: 200)'),
       nodeHeight: z.number().int().optional().describe('Node height in pixels (default: 100)'),
@@ -1621,7 +2094,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     async (params) => {
       const result = await formatGraphTopology(params as unknown as FormatGraphTopologyParams);
       return { content: [{ type: 'text', text: result }] };
-    }
+    },
   );
   // no meta registered (PCGEx pure-TS handler)
 
@@ -1635,7 +2108,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     async (params) => {
       const result = await abstractToSubgraph(params as unknown as AbstractToSubgraphParams);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
+    },
   );
   // no meta registered (PCGEx pure-TS handler)
 
@@ -1643,16 +2116,20 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     'hayba_parameterize_graph_inputs',
     {
       graph: z.string().describe('JSON string of the PCGEx graph'),
-      targets: z.array(z.object({
-        nodeId: z.string().describe('Node ID containing the hardcoded property'),
-        property: z.string().describe('Property name to parameterize'),
-        parameterName: z.string().optional().describe('Name for the graph parameter'),
-      })).describe('List of properties to promote to graph parameters'),
+      targets: z
+        .array(
+          z.object({
+            nodeId: z.string().describe('Node ID containing the hardcoded property'),
+            property: z.string().describe('Property name to parameterize'),
+            parameterName: z.string().optional().describe('Name for the graph parameter'),
+          }),
+        )
+        .describe('List of properties to promote to graph parameters'),
     },
     async (params) => {
       const result = await parameterizeGraphInputs(params);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
+    },
   );
   // no meta registered (PCGEx pure-TS handler)
 
@@ -1660,12 +2137,16 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     'hayba_query_pcgex_docs',
     {
       query: z.string().describe('Node class name or keyword to search documentation'),
-      includeSourceSnippet: z.boolean().optional().default(false).describe('Include up to 80 lines from the header file'),
+      includeSourceSnippet: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('Include up to 80 lines from the header file'),
     },
     async (params) => {
       const result = await queryPcgexDocs(params as unknown as QueryPcgexDocsParams);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
+    },
   );
   // no meta registered (PCGEx pure-TS handler)
 
@@ -1680,15 +2161,18 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     async (params) => {
       const result = await initiateInfrastructureBrainstorm(params);
       return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify(result, null, 2) +
-            '\n\n---\nIMPORTANT: This is a PROPOSAL ONLY. Do NOT call hayba_create_pcg_graph, ' +
-            'hayba_validate_attribute_flow, hayba_abstract_to_subgraph, or any graph-mutation tool ' +
-            'until the user has explicitly approved an approach above.',
-        }]
+        content: [
+          {
+            type: 'text',
+            text:
+              JSON.stringify(result, null, 2) +
+              '\n\n---\nIMPORTANT: This is a PROPOSAL ONLY. Do NOT call hayba_create_pcg_graph, ' +
+              'hayba_validate_attribute_flow, hayba_abstract_to_subgraph, or any graph-mutation tool ' +
+              'until the user has explicitly approved an approach above.',
+          },
+        ],
       };
-    }
+    },
   );
   // no meta registered (PCGEx pure-TS handler)
 
@@ -1928,7 +2412,10 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     'Multi-turn wizard to configure UE project conventions. Call repeatedly with advancing stages.',
     {
       stage: z.enum(['start', 'folders', 'naming', 'workflow', 'confirm', 'save']).describe('Current wizard stage'),
-      preset: z.enum(['epic-default', 'gamedevtv', 'custom']).optional().describe('Preset to load (required at start stage)'),
+      preset: z
+        .enum(['epic-default', 'gamedevtv', 'custom'])
+        .optional()
+        .describe('Preset to load (required at start stage)'),
       answers: z.record(z.unknown()).optional().describe('Accumulated user responses from previous stages'),
       target: z.enum(['global', 'project']).optional().describe('Where to save (required at save stage)'),
       projectRoot: z.string().optional().describe('UE project root path (required if target is project)'),
@@ -1936,7 +2423,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     async (params) => {
       const result = await setupConventionsHandler(params as Record<string, unknown>);
       return { content: result.content, isError: result.isError };
-    }
+    },
   );
   // no meta registered (conventions pure-TS handler)
 
@@ -1951,7 +2438,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     async (params) => {
       const result = await analyzeConventionsHandler(params as Record<string, unknown>);
       return { content: result.content, isError: result.isError };
-    }
+    },
   );
   // no meta registered (conventions pure-TS handler)
 
@@ -1992,12 +2479,15 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     {
       projectId: z.string().optional().describe('Existing project ID. Omit to create a new project.'),
       projectName: z.string().optional().describe('Name for the new project (used when projectId is omitted).'),
-      phase: z.enum(['a', 'b']).optional().describe('Phase A = blank canvas, Phase B = heightmap overlay (default: a).'),
+      phase: z
+        .enum(['a', 'b'])
+        .optional()
+        .describe('Phase A = blank canvas, Phase B = heightmap overlay (default: a).'),
     },
     async (params) => {
       const result = await openZonePainterHandler(params as Record<string, unknown>);
       return { content: result.content, isError: result.isError };
-    }
+    },
   );
   // no meta registered (zone painter pure-TS handler)
 
@@ -2005,12 +2495,15 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     'hayba_read_zones',
     {
       projectId: z.string().optional().describe('Project ID to read submitted zones from.'),
-      scratchSessionId: z.string().optional().describe('Scratch session ID (for standalone zone painting without a project).'),
+      scratchSessionId: z
+        .string()
+        .optional()
+        .describe('Scratch session ID (for standalone zone painting without a project).'),
     },
     async (params) => {
       const result = await readZonesHandler(params as Record<string, unknown>);
       return { content: result.content, isError: result.isError };
-    }
+    },
   );
   // no meta registered (zone painter pure-TS handler)
 
@@ -2023,7 +2516,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     async (params) => {
       const result = await setPainterHeightmapHandler(params as Record<string, unknown>);
       return { content: result.content, isError: result.isError };
-    }
+    },
   );
   // no meta registered (zone painter pure-TS handler)
 
@@ -2045,12 +2538,16 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
   installToolHooks();
 
   const getUe = async () => {
-    try { return await ensureUeForValidator().catch(() => null); } catch { return null; }
+    try {
+      return await ensureUeForValidator().catch(() => null);
+    } catch {
+      return null;
+    }
   };
 
   server.tool(
     'validator_run',
-    'CATCHES SILENT WRONGNESS YOU CANNOT SEE: runs the validator rules over the current scene and returns concrete post-condition findings — actors floating above ground, interpenetrating meshes, off-grid/mis-scaled placements, missing expected results, and PLUMB constraint violations. Pass scope=\'all\' (default) or { rule_ids: [...] }; findings persist to history and the Validation panel. USE_WHEN: after ANY scene mutation (spawn / move / delete / scatter / foliage / PCG execute / world_generate / landscape / lighting change), AND before you declare a task done or report success. NOT_WHEN: you have made no scene change since the last run. WHY: you have no viewport — this is how you verify placement actually landed correctly instead of assuming it did.',
+    "CATCHES SILENT WRONGNESS YOU CANNOT SEE: runs the validator rules over the current scene and returns concrete post-condition findings — actors floating above ground, interpenetrating meshes, off-grid/mis-scaled placements, missing expected results, and PLUMB constraint violations. Pass scope='all' (default) or { rule_ids: [...] }; findings persist to history and the Validation panel. USE_WHEN: after ANY scene mutation (spawn / move / delete / scatter / foliage / PCG execute / world_generate / landscape / lighting change), AND before you declare a task done or report success. NOT_WHEN: you have made no scene change since the last run. WHY: you have no viewport — this is how you verify placement actually landed correctly instead of assuming it did.",
     validatorRunSchema,
     async (args: { scope?: 'all' | { rule_ids?: string[] }; persist?: boolean }) => {
       const ue = await getUe();
@@ -2091,7 +2588,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
 
   server.tool(
     'validator_rules',
-    'List the validator rule catalog — every post-condition check and bound PLUMB constraint that validator_run / plumb_validate will evaluate, with each rule\'s message, hint, refs, and disabled state. USE_WHEN: you want to know WHAT validation can catch before running it, or to confirm the right rule is enabled for the task at hand. NOT_WHEN: you just want to run the checks — call validator_run.',
+    "List the validator rule catalog — every post-condition check and bound PLUMB constraint that validator_run / plumb_validate will evaluate, with each rule's message, hint, refs, and disabled state. USE_WHEN: you want to know WHAT validation can catch before running it, or to confirm the right rule is enabled for the task at hand. NOT_WHEN: you just want to run the checks — call validator_run.",
     validatorRulesSchema,
     async (args: { include_disabled_state?: boolean }) => {
       const r = await validatorRulesHandler(args);
@@ -2116,103 +2613,162 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
   // grammar (10 primitives) never grows. See src/plumb/.
   const j = (r: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] });
 
-  server.tool('plumb_primitives',
+  server.tool(
+    'plumb_primitives',
     'List the COMPLETE closed constraint grammar — the 10 primitives, their gate, hard/soft default, params, and docs. Author constraints by picking one and filling params.',
-    plumbPrimitivesSchema, async () => j(await plumbPrimitivesHandler()));
+    plumbPrimitivesSchema,
+    async () => j(await plumbPrimitivesHandler()),
+  );
 
   // Auto-fetch StaticMesh bounds (cm) via the UE mesh_get_info command when the
   // caller omits origin_cm/extent_cm — "point at an SM and bake".
   const fetchMeshBounds = async (asset: string) => {
-    const data = await executeCommand('mesh_get_info', { path: asset }) as { bounds?: { min: Record<string, number>; max: Record<string, number>; extents: Record<string, number> } };
+    const data = (await executeCommand('mesh_get_info', { path: asset })) as {
+      bounds?: { min: Record<string, number>; max: Record<string, number>; extents: Record<string, number> };
+    };
     const b = data?.bounds;
     if (!b) throw new Error('mesh_get_info returned no bounds');
     const v = (o: Record<string, number>): [number, number, number] => [o.x ?? 0, o.y ?? 0, o.z ?? 0];
     return { min: v(b.min), max: v(b.max), extents: v(b.extents) };
   };
-  server.tool('plumb_profile_bake',
+  server.tool(
+    'plumb_profile_bake',
     'Bake the deterministic geometry/physics half of a Physical Asset Profile. Pass just the asset to auto-fetch bounds from UE (mesh_get_info), or supply origin_cm + extent_cm (+ optional pivot_to_base_cm) explicitly. Persists to the profile store.',
-    plumbProfileBakeSchema, async (a) => j(await plumbProfileBakeHandler(a, new Date().toISOString(), fetchMeshBounds)));
+    plumbProfileBakeSchema,
+    async (a) => j(await plumbProfileBakeHandler(a, new Date().toISOString(), fetchMeshBounds)),
+  );
 
-  server.tool('plumb_profile_annotate',
+  server.tool(
+    'plumb_profile_annotate',
     'Layer AI/human qualitative semantics (class, up/front vectors, named affordance regions) onto a baked profile, with optional field locks. Qualitative constraints can only hard-gate on locked fields.',
-    plumbProfileAnnotateSchema, async (a) => j(await plumbProfileAnnotateHandler(a)));
+    plumbProfileAnnotateSchema,
+    async (a) => j(await plumbProfileAnnotateHandler(a)),
+  );
 
-  server.tool('plumb_profile_list',
+  server.tool(
+    'plumb_profile_list',
     'List baked profiles (asset_id, archetype, affordance count, locked fields). Feeds the Memory tab.',
-    plumbProfileListSchema, async () => j(await plumbProfileListHandler()));
+    plumbProfileListSchema,
+    async () => j(await plumbProfileListHandler()),
+  );
 
-  server.tool('plumb_profile_get',
+  server.tool(
+    'plumb_profile_get',
     'Fetch one full Physical Asset Profile by asset path.',
-    plumbProfileGetSchema, async (a) => j(await plumbProfileGetHandler(a)));
+    plumbProfileGetSchema,
+    async (a) => j(await plumbProfileGetHandler(a)),
+  );
 
-  server.tool('plumb_constraint_define',
+  server.tool(
+    'plumb_constraint_define',
     'Author/upsert a bound constraint: a primitive id + params + a binding (exactly one of {asset, tag}). Validated against the closed primitive set — invalid primitives/params/bindings are rejected.',
-    plumbConstraintDefineSchema, async (a) => j(await plumbConstraintDefineHandler(a)));
+    plumbConstraintDefineSchema,
+    async (a) => j(await plumbConstraintDefineHandler(a)),
+  );
 
-  server.tool('plumb_constraint_list',
+  server.tool(
+    'plumb_constraint_list',
     'List the constraint library (optionally filtered to an asset binding).',
-    plumbConstraintListSchema, async (a) => j(await plumbConstraintListHandler(a)));
+    plumbConstraintListSchema,
+    async (a) => j(await plumbConstraintListHandler(a)),
+  );
 
-  server.tool('plumb_constraint_remove',
+  server.tool(
+    'plumb_constraint_remove',
     'Remove a constraint from the library by id.',
-    plumbConstraintRemoveSchema, async (a) => j(await plumbConstraintRemoveHandler(a)));
+    plumbConstraintRemoveSchema,
+    async (a) => j(await plumbConstraintRemoveHandler(a)),
+  );
 
-  server.tool('plumb_constraint_propose',
+  server.tool(
+    'plumb_constraint_propose',
     'Draft (does not save) constraints for an asset from its baked profile, using only closed primitives. Review/edit then call plumb_constraint_define.',
-    plumbConstraintProposeSchema, async (a) => j(await plumbConstraintProposeHandler(a)));
+    plumbConstraintProposeSchema,
+    async (a) => j(await plumbConstraintProposeHandler(a)),
+  );
 
-  server.tool('plumb_validate',
+  server.tool(
+    'plumb_validate',
     'VERIFY PLACEMENT IS ACTUALLY CORRECT: runs the PLUMB constraint library over a set of instances and returns a directional Verdict — per-gate ok, signed value_m (how far off, and which way), and a FixVector telling you exactly how to move each instance to satisfy it. Catches grounding, clearance, alignment, spacing and interpenetration violations the viewport would reveal but you cannot. Hard fails set stopped_at; soft fails accumulate soft_cost. USE_WHEN: immediately after placing/scattering/spawning/transforming instances, and before declaring the layout done — feed the FixVector back into a transform to correct, then re-validate. NOT_WHEN: no constraints are bound for these assets (check plumb_constraint_list / validator_rules first). WHY: this is the quantified check that turns "looks placed" into "provably grounded and non-overlapping".',
-    plumbValidateSchema, async (a) => j(await plumbValidateHandler(a)));
+    plumbValidateSchema,
+    async (a) => j(await plumbValidateHandler(a)),
+  );
 
-  server.tool('plumb_mask_add',
+  server.tool(
+    'plumb_mask_add',
     'Add or update a mask (surface = triangle set; volume = translucent shape) on a baked profile. Surface/volume masks are the regions constraints reference.',
-    plumbMaskAddSchema, async (a) => j(await plumbMaskAddHandler(a)));
-  server.tool('plumb_mask_remove',
-    'Remove a mask from a profile by id.',
-    plumbMaskRemoveSchema, async (a) => j(await plumbMaskRemoveHandler(a)));
+    plumbMaskAddSchema,
+    async (a) => j(await plumbMaskAddHandler(a)),
+  );
+  server.tool('plumb_mask_remove', 'Remove a mask from a profile by id.', plumbMaskRemoveSchema, async (a) =>
+    j(await plumbMaskRemoveHandler(a)),
+  );
 
-  server.tool('plumb_lesson_add',
+  server.tool(
+    'plumb_lesson_add',
     'Add/update a lesson — the durable [[slug]] knowledge that explains WHY a constraint exists (browsed in the Studio Lessons panel; cited by constraint/validator refs).',
-    plumbLessonAddSchema, async (a) => j(await plumbLessonAddHandler(a, new Date().toISOString())));
-  server.tool('plumb_lesson_list',
-    'List lessons (slug + title + refs).',
-    plumbLessonListSchema, async () => j(await plumbLessonListHandler()));
-  server.tool('plumb_lesson_remove',
-    'Remove a lesson by slug.',
-    plumbLessonRemoveSchema, async (a) => j(await plumbLessonRemoveHandler(a)));
+    plumbLessonAddSchema,
+    async (a) => j(await plumbLessonAddHandler(a, new Date().toISOString())),
+  );
+  server.tool('plumb_lesson_list', 'List lessons (slug + title + refs).', plumbLessonListSchema, async () =>
+    j(await plumbLessonListHandler()),
+  );
+  server.tool('plumb_lesson_remove', 'Remove a lesson by slug.', plumbLessonRemoveSchema, async (a) =>
+    j(await plumbLessonRemoveHandler(a)),
+  );
 
-  server.tool('plumb_study',
-    'AI study entry point: returns the asset\'s baked profile (if any) + the closed primitive grammar + mask kinds + guidance, so the agent can propose masks (plumb_mask_add) and constraints (plumb_constraint_define).',
-    plumbStudySchema, async (a) => j(await plumbStudyHandler(a)));
+  server.tool(
+    'plumb_study',
+    "AI study entry point: returns the asset's baked profile (if any) + the closed primitive grammar + mask kinds + guidance, so the agent can propose masks (plumb_mask_add) and constraints (plumb_constraint_define).",
+    plumbStudySchema,
+    async (a) => j(await plumbStudyHandler(a)),
+  );
 
-  server.tool('plumb_study_take',
+  server.tool(
+    'plumb_study_take',
     'Drain pending "Study with AI" requests from the Semantic Studio button. Returns the assets to study (then call plumb_study + author masks/constraints for each).',
-    plumbStudyTakeSchema, async () => j(await plumbStudyTakeHandler()));
+    plumbStudyTakeSchema,
+    async () => j(await plumbStudyTakeHandler()),
+  );
 
-  server.tool('plumb_segment',
-    'AI-segment a studied asset: given the study_render color passes, the agent\'s themed part labels + a box/points per view, runs SAM in the visual sidecar and back-projects to geometry-hugging surface masks (triangles via the world-position pass + a UV display texture), written into the profile. Replaces hand-placed blocky masks.',
-    plumbSegmentSchema, async (a) => j(await plumbSegmentHandler(a)));
+  server.tool(
+    'plumb_segment',
+    "AI-segment a studied asset: given the study_render color passes, the agent's themed part labels + a box/points per view, runs SAM in the visual sidecar and back-projects to geometry-hugging surface masks (triangles via the world-position pass + a UV display texture), written into the profile. Replaces hand-placed blocky masks.",
+    plumbSegmentSchema,
+    async (a) => j(await plumbSegmentHandler(a)),
+  );
 
-  server.tool('plumb_production_define',
+  server.tool(
+    'plumb_production_define',
     'Author/upsert a grammar production rule: an LHS symbol kind (+ optional attribute guards) → an RHS sequence of emit ops (shell/asset/symbol/scatter/decal/fill). Guards are constraint ids that must pass before the production fires.',
-    plumbProductionDefineSchema, async (a) => j(await plumbProductionDefineHandler(a)));
+    plumbProductionDefineSchema,
+    async (a) => j(await plumbProductionDefineHandler(a)),
+  );
 
-  server.tool('plumb_production_list',
+  server.tool(
+    'plumb_production_list',
     'List all grammar productions in the store.',
-    plumbProductionListSchema, async () => j(await plumbProductionListHandler()));
+    plumbProductionListSchema,
+    async () => j(await plumbProductionListHandler()),
+  );
 
-  server.tool('plumb_production_remove',
-    'Remove a grammar production by id.',
-    plumbProductionRemoveSchema, async (a) => j(await plumbProductionRemoveHandler(a)));
+  server.tool('plumb_production_remove', 'Remove a grammar production by id.', plumbProductionRemoveSchema, async (a) =>
+    j(await plumbProductionRemoveHandler(a)),
+  );
 
-  server.tool('plumb_socket_add',
+  server.tool(
+    'plumb_socket_add',
     'Add or replace a socket (connection point) on a baked profile. Idempotent on socket id.',
-    plumbSocketAddSchema, async (a) => j(await plumbSocketAddHandler(a)));
+    plumbSocketAddSchema,
+    async (a) => j(await plumbSocketAddHandler(a)),
+  );
 
-  server.tool('plumb_grammar_expand',
+  server.tool(
+    'plumb_grammar_expand',
     'Expand a seed symbol using the stored production rules + the PLUMB constraint store as guards. Returns a PlacementPlan. In dry-run (no UE scene), geometry-dependent constraints self-skip — rejections only reflect TS-evaluable constraints.',
-    plumbGrammarExpandSchema, async (a) => j(await plumbGrammarExpandHandler(a)));
+    plumbGrammarExpandSchema,
+    async (a) => j(await plumbGrammarExpandHandler(a)),
+  );
 
   // ── Landscape import (TS wrapper for UE-side landscape_import handler) ────
   server.tool(
@@ -2221,7 +2777,11 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     {
       heightmapPath: z.string().describe('Absolute path to a PNG or R16 heightmap file'),
       worldSizeKm: z.number().optional().default(8.0).describe('Landscape XY size in km'),
-      maxHeightM: z.number().optional().default(600.0).describe('Maximum height in m (0..maxHeightM mapped from uint16)'),
+      maxHeightM: z
+        .number()
+        .optional()
+        .default(600.0)
+        .describe('Maximum height in m (0..maxHeightM mapped from uint16)'),
       actorLabel: z.string().optional().default('Hayba_Terrain').describe('Label for the spawned Landscape actor'),
       landscapeMaterial: z.string().optional().describe('UE material path; empty = no material'),
     },
@@ -2234,7 +2794,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
       } catch (e) {
         return errorResult(`Error importing landscape: ${(e as Error).message}`);
       }
-    }
+    },
   );
   // no meta registered (thin UE bridge wrapper)
 }
@@ -2243,15 +2803,10 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
 // server.tool() calls above, but lives independently of the Code Mode gate
 // so get_tool_signature can derive params from real schemas at runtime.
 // New tools should add an entry here when first registered.
-function recordEagerSchemas(
-  reg: (name: string, shape: z.ZodRawShape, cost: Cost, returns: string) => void,
-): void {
+function recordEagerSchemas(reg: (name: string, shape: z.ZodRawShape, cost: Cost, returns: string) => void): void {
   // coerceBool still used by hayba_validate_attribute_flow below. vec3/coerceVec3
   // moved to module scope (dVec3/dCoerceVec3) and consumed via STANDARD_DESCRIPTORS.
-  const coerceBool = z.preprocess(
-    (v) => typeof v === 'string' ? v.toLowerCase() === 'true' : v,
-    z.boolean(),
-  );
+  const coerceBool = z.preprocess((v) => (typeof v === 'string' ? v.toLowerCase() === 'true' : v), z.boolean());
 
   // ── Standard tools (actor / material / scene) ──────────────────────────────
   // Schema recording from the single descriptor list. recordToolSchema mirrors
@@ -2260,164 +2815,331 @@ function recordEagerSchemas(
 
   // ── Code Mode meta ────────────────────────────────────────────────────────
   reg('list_tool_categories', {}, 'low', '{categories:[{domain,commands:[string]}]}');
-  reg('get_tool_signature',
+  reg(
+    'get_tool_signature',
     { command: z.string().describe('Exact command name, e.g. "actor_spawn"') },
-    'low', '{command, params, returns, cost} or {status:"no_schema_available", did_you_mean}');
-  reg('python_run', {
-    script: z.string().describe('Python source to execute'),
-    allow_unsafe: z.boolean().optional().describe('Override Tier 3 filesystem/subprocess block (DANGEROUS)'),
-  }, 'high', '{ok, tier, stdout, stderr}');
+    'low',
+    '{command, params, returns, cost} or {status:"no_schema_available", did_you_mean}',
+  );
+  reg(
+    'python_run',
+    {
+      script: z.string().describe('Python source to execute'),
+      allow_unsafe: z.boolean().optional().describe('Override Tier 3 filesystem/subprocess block (DANGEROUS)'),
+    },
+    'high',
+    '{ok, tier, stdout, stderr}',
+  );
 
   // ── Editor domain ─────────────────────────────────────────────────────────
-  reg('editor_capture_viewport', {
-    width: z.coerce.number().int().optional(),
-    height: z.coerce.number().int().optional(),
-  }, 'medium', '{image_base64, width, height, camera}');
+  reg(
+    'editor_capture_viewport',
+    {
+      width: z.coerce.number().int().optional(),
+      height: z.coerce.number().int().optional(),
+    },
+    'medium',
+    '{image_base64, width, height, camera}',
+  );
   // editor_start_pie is now in STANDARD_DESCRIPTORS — recordToolSchema(d) called above.
-  reg('editor_stream_log', {
-    filter: z.string().optional().describe('Plain substring filter (legacy)'),
-    regex_filter: z.string().optional().describe('Perl-style regex applied to each line'),
-    severity_filter: z.string().optional().describe('Comma-separated severities: Verbose,Display,Log,Warning,Error,Fatal'),
-    format: z.enum(['raw', 'structured']).optional().describe('"structured" emits {line, category, severity, msg, raw} objects'),
-    since_line: z.coerce.number().int().min(0).optional(),
-  }, 'low', '{lines:[string|object], next_line:int, format}');
+  reg(
+    'editor_stream_log',
+    {
+      filter: z.string().optional().describe('Plain substring filter (legacy)'),
+      regex_filter: z.string().optional().describe('Perl-style regex applied to each line'),
+      severity_filter: z
+        .string()
+        .optional()
+        .describe('Comma-separated severities: Verbose,Display,Log,Warning,Error,Fatal'),
+      format: z
+        .enum(['raw', 'structured'])
+        .optional()
+        .describe('"structured" emits {line, category, severity, msg, raw} objects'),
+      since_line: z.coerce.number().int().min(0).optional(),
+    },
+    'low',
+    '{lines:[string|object], next_line:int, format}',
+  );
 
   // ── Agent-ergonomics tools (HANDOFF postmortem) ───────────────────────────
   // hayba_introspect, pcg_add_node, pcg_set_prop, pcg_wire, pcg_inspect_instances:
   // now in STANDARD_DESCRIPTORS — recordToolSchema(d) called by the loop above.
-  reg('pcg_cook_and_wait', pcgCookSchema.shape, 'high',
-    '{ok, cook:{components}, idle, result:{ism:[{mesh,count}], total}}');
-  reg('pcg_scatter_mesh', pcgScatterSchema.shape, 'high',
-    '{ok, graph_asset, volume_actor, instances, result:{ism:[{mesh,count}], total}} — ok:false when instances==0');
+  reg(
+    'pcg_cook_and_wait',
+    pcgCookSchema.shape,
+    'high',
+    '{ok, cook:{components}, idle, result:{ism:[{mesh,count}], total}}',
+  );
+  reg(
+    'pcg_scatter_mesh',
+    pcgScatterSchema.shape,
+    'high',
+    '{ok, graph_asset, volume_actor, instances, result:{ism:[{mesh,count}], total}} — ok:false when instances==0',
+  );
 
   // ── PCGEx domain ──────────────────────────────────────────────────────────
-  reg('hayba_search_node_catalog', {
-    query: z.string().describe('Search query — keyword, node class, or category'),
-  }, 'low', '{results:[{class,category,description,inputs,outputs,key_properties}], matchType}');
-  reg('hayba_get_node_details', {
-    class: z.string().describe('PCGEx node class name'),
-  }, 'low', '{class, category, description, inputs, outputs, properties}');
-  reg('hayba_create_pcg_graph', {
-    graph: z.string().describe('JSON string of the PCGEx graph topology'),
-    name: z.string().describe('Asset name for the new PCGGraph'),
-  }, 'high', '{ok, asset_path}');
-  reg('hayba_validate_pcg_graph', {
-    graph: z.string().describe('JSON string of the PCGEx graph to validate'),
-  }, 'medium', '{valid, errors:[{type,node,pin,detail}], errorCount}');
-  reg('hayba_list_pcg_assets', {
-    path: z.string().optional().describe('Content path filter (default: /Game/)'),
-  }, 'low', '{assets:[{name,path,nodeCount,edgeCount}], count}');
-  reg('hayba_export_pcg_graph', {
-    assetPath: z.string().describe('Full UE asset path to the PCGGraph'),
-  }, 'medium', '{graph:{version,meta,nodes,edges,metadata}}');
-  reg('hayba_execute_pcg_graph', {
-    assetPath: z.string().describe('Full UE asset path to execute'),
-  }, 'high', '{ok, generated_count, duration_ms}');
+  reg(
+    'hayba_search_node_catalog',
+    {
+      query: z.string().describe('Search query — keyword, node class, or category'),
+    },
+    'low',
+    '{results:[{class,category,description,inputs,outputs,key_properties}], matchType}',
+  );
+  reg(
+    'hayba_get_node_details',
+    {
+      class: z.string().describe('PCGEx node class name'),
+    },
+    'low',
+    '{class, category, description, inputs, outputs, properties}',
+  );
+  reg(
+    'hayba_create_pcg_graph',
+    {
+      graph: z.string().describe('JSON string of the PCGEx graph topology'),
+      name: z.string().describe('Asset name for the new PCGGraph'),
+    },
+    'high',
+    '{ok, asset_path}',
+  );
+  reg(
+    'hayba_validate_pcg_graph',
+    {
+      graph: z.string().describe('JSON string of the PCGEx graph to validate'),
+    },
+    'medium',
+    '{valid, errors:[{type,node,pin,detail}], errorCount}',
+  );
+  reg(
+    'hayba_list_pcg_assets',
+    {
+      path: z.string().optional().describe('Content path filter (default: /Game/)'),
+    },
+    'low',
+    '{assets:[{name,path,nodeCount,edgeCount}], count}',
+  );
+  reg(
+    'hayba_export_pcg_graph',
+    {
+      assetPath: z.string().describe('Full UE asset path to the PCGGraph'),
+    },
+    'medium',
+    '{graph:{version,meta,nodes,edges,metadata}}',
+  );
+  reg(
+    'hayba_execute_pcg_graph',
+    {
+      assetPath: z.string().describe('Full UE asset path to execute'),
+    },
+    'high',
+    '{ok, generated_count, duration_ms}',
+  );
   reg('hayba_check_ue_status', {}, 'low', '{connected, status, ueVersion, plugin, pluginVersion}');
 
   // ── Asset domain — added Initiative #6 + #10 (ref-preserving move, deps) ─
-  reg('asset_move', {
-    path: z.string().describe('Source asset path, e.g. "/Game/Foo/Bar.Bar"'),
-    target_dir: z.string().describe('Target content-browser folder, e.g. "/Game/Archive"'),
-  }, 'medium', '{ok, old_path, new_path}');
-  reg('asset_fix_redirectors', {
-    path: z.string().optional().describe('Content path to scan (default /Game)'),
-  }, 'medium', '{fixed_count, path}');
-  reg('asset_get_dependencies', {
-    path: z.string().describe('Asset path; returns what this asset depends on'),
-  }, 'low', '{dependencies:[string], count}');
-  reg('asset_get_referencers', {
-    path: z.string().describe('Asset path; returns who depends on this asset (blast radius)'),
-  }, 'low', '{referencers:[string], count}');
-  reg('hayba_scrape_node_registry', {
-    pluginSourcePath: z.string().optional().describe('Path to PCGExtendedToolkit/Source/ directory'),
-    outputDbPath: z.string().optional().describe('Output SQLite DB path (default: Resources/pcgex_registry.db)'),
-    forceRescan: z.boolean().optional().describe('Force re-scan even if DB exists'),
-  }, 'high', '{nodes_scanned, pins_scanned, properties_scanned, db_path, catalog_path}');
-  reg('hayba_match_pin_names', {
-    fromClass: z.string().describe('Source node class'),
-    fromPin: z.string().describe('Pin name on source node (may be approximate)'),
-    toClass: z.string().describe('Target node class to find a matching input pin on'),
-  }, 'low', '{matches:[{pin,confidence,reason}]}');
-  reg('hayba_validate_attribute_flow', {
-    graph: z.string().describe('JSON string of the PCGEx graph to validate attribute flow'),
-    strictMode: coerceBool.optional().describe('If true, also flag orphan writes (written but never consumed)'),
-  }, 'medium', '{valid, errors:[{type,node,attribute,detail}]}');
-  reg('hayba_diff_against_working_asset', {
-    wipGraph: z.string().describe('JSON string of the work-in-progress graph'),
-    referenceAssetPath: z.string().describe('Full UE asset path to the reference PCGGraph'),
-    diffMode: z.enum(['structural', 'properties', 'full']).optional().describe('What to diff (default: full)'),
-  }, 'medium', '{added, removed, modified, identical}');
-  reg('hayba_format_graph_topology', {
-    graph: z.string().describe('JSON string of the PCGEx graph to layout'),
-    algorithm: z.enum(['layered', 'grid']).optional(),
-    nodeWidth: z.number().int().optional(),
-    nodeHeight: z.number().int().optional(),
-    horizontalSpacing: z.number().int().optional(),
-    verticalSpacing: z.number().int().optional(),
-    addCommentBlocks: z.boolean().optional(),
-  }, 'low', 'JSON string of laid-out graph (nodes carry position:{x,y})');
-  reg('hayba_abstract_to_subgraph', {
-    graph: z.string().describe('JSON string of the full PCGEx graph'),
-    nodeIds: z.array(z.string()).describe('Array of node IDs to extract into a subgraph'),
-    subgraphName: z.string().optional().describe('Name for the extracted subgraph (default: SubGraph)'),
-  }, 'medium', '{subgraph, mainGraph}');
-  reg('hayba_parameterize_graph_inputs', {
-    graph: z.string().describe('JSON string of the PCGEx graph'),
-    targets: z.array(z.object({
-      nodeId: z.string(),
-      property: z.string(),
-      parameterName: z.string().optional(),
-    })),
-  }, 'medium', '{graph, parameters:[{name,type,defaultValue}]}');
-  reg('hayba_query_pcgex_docs', {
-    query: z.string().describe('Node class name or keyword to search documentation'),
-    includeSourceSnippet: z.boolean().optional().describe('Include up to 80 lines from the header file'),
-  }, 'low', '{results:[{class,description,sourceSnippet?}]}');
-  reg('hayba_initiate_infrastructure_brainstorm', {
-    topic: z.string().describe('The infrastructure or system design topic to brainstorm'),
-    context: z.string().optional(),
-    constraints: z.array(z.string()).optional(),
-  }, 'low', '{approaches:[{name,description,nodes,tradeoffs}]} — PROPOSAL ONLY');
+  reg(
+    'asset_move',
+    {
+      path: z.string().describe('Source asset path, e.g. "/Game/Foo/Bar.Bar"'),
+      target_dir: z.string().describe('Target content-browser folder, e.g. "/Game/Archive"'),
+    },
+    'medium',
+    '{ok, old_path, new_path}',
+  );
+  reg(
+    'asset_fix_redirectors',
+    {
+      path: z.string().optional().describe('Content path to scan (default /Game)'),
+    },
+    'medium',
+    '{fixed_count, path}',
+  );
+  reg(
+    'asset_get_dependencies',
+    {
+      path: z.string().describe('Asset path; returns what this asset depends on'),
+    },
+    'low',
+    '{dependencies:[string], count}',
+  );
+  reg(
+    'asset_get_referencers',
+    {
+      path: z.string().describe('Asset path; returns who depends on this asset (blast radius)'),
+    },
+    'low',
+    '{referencers:[string], count}',
+  );
+  reg(
+    'hayba_scrape_node_registry',
+    {
+      pluginSourcePath: z.string().optional().describe('Path to PCGExtendedToolkit/Source/ directory'),
+      outputDbPath: z.string().optional().describe('Output SQLite DB path (default: Resources/pcgex_registry.db)'),
+      forceRescan: z.boolean().optional().describe('Force re-scan even if DB exists'),
+    },
+    'high',
+    '{nodes_scanned, pins_scanned, properties_scanned, db_path, catalog_path}',
+  );
+  reg(
+    'hayba_match_pin_names',
+    {
+      fromClass: z.string().describe('Source node class'),
+      fromPin: z.string().describe('Pin name on source node (may be approximate)'),
+      toClass: z.string().describe('Target node class to find a matching input pin on'),
+    },
+    'low',
+    '{matches:[{pin,confidence,reason}]}',
+  );
+  reg(
+    'hayba_validate_attribute_flow',
+    {
+      graph: z.string().describe('JSON string of the PCGEx graph to validate attribute flow'),
+      strictMode: coerceBool.optional().describe('If true, also flag orphan writes (written but never consumed)'),
+    },
+    'medium',
+    '{valid, errors:[{type,node,attribute,detail}]}',
+  );
+  reg(
+    'hayba_diff_against_working_asset',
+    {
+      wipGraph: z.string().describe('JSON string of the work-in-progress graph'),
+      referenceAssetPath: z.string().describe('Full UE asset path to the reference PCGGraph'),
+      diffMode: z.enum(['structural', 'properties', 'full']).optional().describe('What to diff (default: full)'),
+    },
+    'medium',
+    '{added, removed, modified, identical}',
+  );
+  reg(
+    'hayba_format_graph_topology',
+    {
+      graph: z.string().describe('JSON string of the PCGEx graph to layout'),
+      algorithm: z.enum(['layered', 'grid']).optional(),
+      nodeWidth: z.number().int().optional(),
+      nodeHeight: z.number().int().optional(),
+      horizontalSpacing: z.number().int().optional(),
+      verticalSpacing: z.number().int().optional(),
+      addCommentBlocks: z.boolean().optional(),
+    },
+    'low',
+    'JSON string of laid-out graph (nodes carry position:{x,y})',
+  );
+  reg(
+    'hayba_abstract_to_subgraph',
+    {
+      graph: z.string().describe('JSON string of the full PCGEx graph'),
+      nodeIds: z.array(z.string()).describe('Array of node IDs to extract into a subgraph'),
+      subgraphName: z.string().optional().describe('Name for the extracted subgraph (default: SubGraph)'),
+    },
+    'medium',
+    '{subgraph, mainGraph}',
+  );
+  reg(
+    'hayba_parameterize_graph_inputs',
+    {
+      graph: z.string().describe('JSON string of the PCGEx graph'),
+      targets: z.array(
+        z.object({
+          nodeId: z.string(),
+          property: z.string(),
+          parameterName: z.string().optional(),
+        }),
+      ),
+    },
+    'medium',
+    '{graph, parameters:[{name,type,defaultValue}]}',
+  );
+  reg(
+    'hayba_query_pcgex_docs',
+    {
+      query: z.string().describe('Node class name or keyword to search documentation'),
+      includeSourceSnippet: z.boolean().optional().describe('Include up to 80 lines from the header file'),
+    },
+    'low',
+    '{results:[{class,description,sourceSnippet?}]}',
+  );
+  reg(
+    'hayba_initiate_infrastructure_brainstorm',
+    {
+      topic: z.string().describe('The infrastructure or system design topic to brainstorm'),
+      context: z.string().optional(),
+      constraints: z.array(z.string()).optional(),
+    },
+    'low',
+    '{approaches:[{name,description,nodes,tradeoffs}]} — PROPOSAL ONLY',
+  );
 
   // ── Conventions domain ────────────────────────────────────────────────────
-  reg('hayba_setup_conventions', {
-    stage: z.enum(['start', 'folders', 'naming', 'workflow', 'confirm', 'save']),
-    preset: z.enum(['epic-default', 'gamedevtv', 'custom']).optional(),
-    answers: z.record(z.unknown()).optional(),
-    target: z.enum(['global', 'project']).optional(),
-    projectRoot: z.string().optional(),
-  }, 'low', '{stage, question?, next_stage?, saved_to?}');
-  reg('hayba_analyze_conventions', {
-    projectRoot: z.string().describe('Path to UE project root (contains .uproject file)'),
-    save: z.boolean().optional(),
-    target: z.enum(['global', 'project']).optional(),
-  }, 'medium', '{inferred:{folders, naming, workflow}, saved_to?}');
-
+  reg(
+    'hayba_setup_conventions',
+    {
+      stage: z.enum(['start', 'folders', 'naming', 'workflow', 'confirm', 'save']),
+      preset: z.enum(['epic-default', 'gamedevtv', 'custom']).optional(),
+      answers: z.record(z.unknown()).optional(),
+      target: z.enum(['global', 'project']).optional(),
+      projectRoot: z.string().optional(),
+    },
+    'low',
+    '{stage, question?, next_stage?, saved_to?}',
+  );
+  reg(
+    'hayba_analyze_conventions',
+    {
+      projectRoot: z.string().describe('Path to UE project root (contains .uproject file)'),
+      save: z.boolean().optional(),
+      target: z.enum(['global', 'project']).optional(),
+    },
+    'medium',
+    '{inferred:{folders, naming, workflow}, saved_to?}',
+  );
 
   // ── Landscape import ──────────────────────────────────────────────────────
-  reg('hayba_import_landscape', {
-    heightmapPath: z.string().describe('Absolute path to a PNG or R16 heightmap file'),
-    worldSizeKm: z.number().optional().default(8.0).describe('Landscape XY size in km'),
-    maxHeightM: z.number().optional().default(600.0).describe('Maximum height in m (0..maxHeightM mapped from uint16)'),
-    actorLabel: z.string().optional().default('Hayba_Terrain').describe('Label for the spawned Landscape actor'),
-    landscapeMaterial: z.string().optional().describe('UE material path; empty = no material'),
-  }, 'high', '{actorLabel, heightmapPath, worldSizeKm, maxHeightM}');
+  reg(
+    'hayba_import_landscape',
+    {
+      heightmapPath: z.string().describe('Absolute path to a PNG or R16 heightmap file'),
+      worldSizeKm: z.number().optional().default(8.0).describe('Landscape XY size in km'),
+      maxHeightM: z
+        .number()
+        .optional()
+        .default(600.0)
+        .describe('Maximum height in m (0..maxHeightM mapped from uint16)'),
+      actorLabel: z.string().optional().default('Hayba_Terrain').describe('Label for the spawned Landscape actor'),
+      landscapeMaterial: z.string().optional().describe('UE material path; empty = no material'),
+    },
+    'high',
+    '{actorLabel, heightmapPath, worldSizeKm, maxHeightM}',
+  );
 
   // ── Zone painter domain ───────────────────────────────────────────────────
-  reg('hayba_open_zone_painter', {
-    projectId: z.string().optional(),
-    projectName: z.string().optional(),
-    phase: z.enum(['a', 'b']).optional(),
-  }, 'low', '{ok, url, projectId}');
-  reg('hayba_read_zones', {
-    projectId: z.string().optional(),
-    scratchSessionId: z.string().optional(),
-  }, 'low', '{zones:[{id,label,mask_path,bounds}]}');
-  reg('hayba_set_painter_heightmap', {
-    projectId: z.string(),
-    heightmapPath: z.string(),
-  }, 'low', '{ok}');
+  reg(
+    'hayba_open_zone_painter',
+    {
+      projectId: z.string().optional(),
+      projectName: z.string().optional(),
+      phase: z.enum(['a', 'b']).optional(),
+    },
+    'low',
+    '{ok, url, projectId}',
+  );
+  reg(
+    'hayba_read_zones',
+    {
+      projectId: z.string().optional(),
+      scratchSessionId: z.string().optional(),
+    },
+    'low',
+    '{zones:[{id,label,mask_path,bounds}]}',
+  );
+  reg(
+    'hayba_set_painter_heightmap',
+    {
+      projectId: z.string(),
+      heightmapPath: z.string(),
+    },
+    'low',
+    '{ok}',
+  );
 
   // ── PLUMB constraint subsystem ────────────────────────────────────────────
   reg('plumb_primitives', plumbPrimitivesSchema, 'low', '{primitives:[{id,gate,default_hard,qualitative,params,doc}]}');

@@ -15,6 +15,9 @@ export const schema = z.object({
     .string()
     .min(1)
     .describe('Full path of the Widget Blueprint to inspect, e.g. "/Game/Aphrosia/UI/WBP_StartScreen"'),
+  include_properties: z.boolean().optional().default(false).describe('Include widget properties in the response'),
+  include_guid: z.boolean().optional().default(false).describe('Include GUIDs in the response'),
+  include_slot: z.boolean().optional().default(true).describe('Include slot layout info in the response'),
 });
 
 export const uiQueryHandler: ToolHandler = async (args) => {

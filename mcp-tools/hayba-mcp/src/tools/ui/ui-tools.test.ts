@@ -128,16 +128,16 @@ describe('UMG / Widget Blueprint wrappers', () => {
       expect(isSchemaRecorded('ui_query')).toBe(true);
     });
 
-    it('dispatches ui_query with path (not widget_blueprint_path)', async () => {
+    it('dispatches ui_query with path plus optional filters', async () => {
       const exec = new InMemoryToolExecutor().on('ui_query', (p) => {
-        expect(p).toEqual({ path: '/Game/UI/WBP_Test' });
+        expect(p).toMatchObject({ path: '/Game/UI/WBP_Test' });
+        expect(p).toHaveProperty('include_properties');
+        expect(p).toHaveProperty('include_guid');
+        expect(p).toHaveProperty('include_slot');
         return { ok: true, data: { path: '/Game/UI/WBP_Test', root: { class: 'CanvasPanel' } } };
       });
       setDefaultSender(exec.send);
-      const r = await uiQueryHandler(
-        { path: '/Game/UI/WBP_Test' },
-        undefined as never,
-      );
+      const r = await uiQueryHandler({ path: '/Game/UI/WBP_Test' }, undefined as never);
       expect(r.isError).toBeFalsy();
       expect(textOf(r)).toContain('CanvasPanel');
     });
