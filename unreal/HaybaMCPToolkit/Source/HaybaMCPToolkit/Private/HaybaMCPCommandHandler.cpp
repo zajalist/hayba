@@ -864,8 +864,15 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     // Initiative #1: wrap every destructive op in a native editor transaction
     // so the user can revert AI mutations with Ctrl+Z. Read-only commands
     // skip this for zero overhead.
+    //
+    // Skipped entirely during an active PIE session: the global transaction
+    // buffer (GEditor->Trans) can end up retaining a reference into the PIE
+    // world/GameInstance, which crashes the editor on PIE stop with
+    // "Object 'GameInstance ...' from PIE level still referenced". AI-driven
+    // edits made mid-PIE don't need undo support badly enough to risk that.
     const bool bDestructive = IsDestructiveCommand(Cmd);
-    if (bDestructive && GEditor)
+    const bool bInPIE = GEditor && GEditor->PlayWorld != nullptr;
+    if (bDestructive && GEditor && !bInPIE)
     {
         const FText TxText = FText::FromString(FString::Printf(TEXT("Hayba: %s"), *Cmd));
         GEditor->BeginTransaction(TxText);
@@ -921,7 +928,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
 
     const int64 DurMs = (int64)((FPlatformTime::Seconds() - Start) * 1000.0);
 
-    if (bDestructive && GEditor)
+    if (bDestructive && GEditor && !bInPIE)
     {
         // Cancel the transaction if the handler reported failure — leaves no
         // empty undo entry. Otherwise end normally so Ctrl+Z reverts the op.

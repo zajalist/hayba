@@ -902,8 +902,10 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetProperties(const TSharedPtr<FJs
     int32 Failed = 0;
     TArray<FString> FailedProps;
     {
-        FScopedTransaction Transaction(NSLOCTEXT("HaybaMCPUI", "SetWidgetProperties", "Set Widget Properties"));
-
+        // No FScopedTransaction: these are automation-tool edits with no undo/redo
+        // requirement, and the global editor transaction buffer (GEditor->Trans) can
+        // end up retaining a reference into a PIE session, crashing the editor on PIE
+        // stop with "Object 'GameInstance ...' from PIE level still referenced".
         WBP->Modify();
         Widget->Modify();
 
@@ -1027,7 +1029,8 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
         int32 OldChildIndex = -1;
 
         {
-            FScopedTransaction Transaction(NSLOCTEXT("HaybaMCPUI", "MutateTreeRemove", "Remove Widget"));
+            // No FScopedTransaction — see comment in ui_set_widget_properties above:
+            // avoids pinning a PIE GameInstance reference in the editor undo buffer.
             WBP->Modify();
             Widget->Modify();
 
@@ -1110,7 +1113,8 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
         FString OldParentName = OldParent->GetName();
 
         {
-            FScopedTransaction Transaction(NSLOCTEXT("HaybaMCPUI", "MutateTreeReparent", "Reparent Widget"));
+            // No FScopedTransaction — see comment in ui_set_widget_properties above:
+            // avoids pinning a PIE GameInstance reference in the editor undo buffer.
             WBP->Modify();
             Widget->Modify();
             OldParent->Modify();
@@ -1160,7 +1164,8 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
         FString OldClass = Widget->GetClass()->GetName();
 
         {
-            FScopedTransaction Transaction(NSLOCTEXT("HaybaMCPUI", "MutateTreeReplace", "Replace Widget"));
+            // No FScopedTransaction — see comment in ui_set_widget_properties above:
+            // avoids pinning a PIE GameInstance reference in the editor undo buffer.
             WBP->Modify();
             Widget->Modify();
             Parent->Modify();
