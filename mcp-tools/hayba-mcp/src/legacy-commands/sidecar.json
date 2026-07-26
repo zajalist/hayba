@@ -2296,16 +2296,17 @@
       "returns": {
         "shape": "object",
         "fields": [
-          { "name": "widget_blueprint_path", "type": "string" },
           { "name": "widget_name", "type": "string" },
-          { "name": "applied", "type": "array" },
-          { "name": "failed", "type": "array" },
-          { "name": "ok", "type": "boolean" }
+          { "name": "succeeded", "type": "number" },
+          { "name": "failed", "type": "number" },
+          { "name": "failed_properties", "type": "array" },
+          { "name": "unknown_slot_props", "type": "array" },
+          { "name": "warnings", "type": "array" }
         ]
       },
       "agent_callable": true,
-      "has_ts_wrapper": false,
-      "notes": "Edits the authoritative UWidgetBlueprint designer tree and survives compilation when followed by blueprint_compile and asset_save."
+      "has_ts_wrapper": true,
+      "notes": "Edits the authoritative UWidgetBlueprint designer tree and survives compilation when followed by ui_compile_widget and ui_save_widget. Reached through the ui_set_widget_properties TS wrapper and the typed tools (ui_set_property, ui_set_text_style, ui_set_brush, ui_set_visibility, ui_set_slot_layout) that compose onto it."
     },
     "scene_get_actor_relations": {
       "aliases": [],

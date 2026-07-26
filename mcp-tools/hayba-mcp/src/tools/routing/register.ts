@@ -65,6 +65,7 @@ export const ALWAYS_ON_META = new Set<string>([
   'validator_clear',
   'validator_rules',
   'validator_set_rule_enabled',
+  'validator_strictness',
   'plumb_primitives',
   'plumb_profile_bake',
   'plumb_profile_annotate',
@@ -299,6 +300,7 @@ export async function registerDeferredRouting(
   passthrough('validator_clear');
   passthrough('validator_rules');
   passthrough('validator_set_rule_enabled');
+  passthrough('validator_strictness');
   // PLUMB constraint subsystem — always-on so the Validator/Memory panels and
   // any agent can bake profiles, author constraints, and run Verdicts without
   // loading a pack.

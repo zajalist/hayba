@@ -1,4 +1,5 @@
 #include "HaybaMCPUIHandler.h"
+#include <initializer_list>
 #include "Json.h"
 #include "Editor.h"
 
@@ -54,6 +55,10 @@
 #include "Components/NamedSlot.h"
 #include "Components/BackgroundBlur.h"
 #include "Components/ExpandableArea.h"
+#include "Components/CircularThrobber.h"
+#include "Components/InvalidationBox.h"
+#include "Components/SafeZone.h"
+#include "Components/InputKeySelector.h"
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -65,8 +70,16 @@
 #include "UObject/SavePackage.h"
 #include "Misc/PackageName.h"
 #include "Layout/Margin.h"
+#include "Components/RichTextBlock.h"
+#include "Components/EditableText.h"
+#include "Engine/Font.h"
+#include "Engine/FontFace.h"
+#include "Engine/Blueprint.h"
+#include "Styling/CoreStyle.h"
+#include "AssetRegistry/IAssetRegistry.h"
 #include "HaybaMCPReflection.h"
 #include "HaybaMCPParams.h"
+#include "HaybaMCPUILayout.h"
 #endif
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPUI, Log, All);
@@ -82,6 +95,11 @@ TArray<FString> FHaybaMCPUIHandler::GetCommands() const
         TEXT("ui_compile_widget"),
         TEXT("ui_save_widget"),
         TEXT("ui_list_widget_types"),
+        TEXT("ui_build_tree"),
+        TEXT("ui_set_variable"),
+        TEXT("ui_list_widget_blueprints"),
+        TEXT("ui_layout_snapshot"),
+        TEXT("ui_measure_text"),
     };
 }
 
@@ -139,6 +157,15 @@ namespace
             M.Add(TEXT("BackgroundBlur"),     UBackgroundBlur::StaticClass());
             M.Add(TEXT("ExpandableArea"),     UExpandableArea::StaticClass());
             M.Add(TEXT("MenuAnchor"),         UMenuAnchor::StaticClass());
+            // Previously included as headers but never resolvable by short name.
+            M.Add(TEXT("NamedSlot"),          UNamedSlot::StaticClass());
+            M.Add(TEXT("NativeWidgetHost"),   UNativeWidgetHost::StaticClass());
+            M.Add(TEXT("RichTextBlock"),      URichTextBlock::StaticClass());
+            M.Add(TEXT("EditableText"),       UEditableText::StaticClass());
+            M.Add(TEXT("CircularThrobber"),   UCircularThrobber::StaticClass());
+            M.Add(TEXT("InvalidationBox"),    UInvalidationBox::StaticClass());
+            M.Add(TEXT("SafeZone"),           USafeZone::StaticClass());
+            M.Add(TEXT("InputKeySelector"),   UInputKeySelector::StaticClass());
             return M;
         }();
         if (UClass* const* Found = Known.Find(Name)) return *Found;
@@ -150,6 +177,63 @@ namespace
             if (UClass* C = FindFirstObjectSafe<UClass>(*(TEXT("U") + Name))) return C;
         }
         return nullptr;
+    }
+
+    /** Every widget in the subtree rooted at `W`, including `W` itself. */
+    void CollectSubtree(UWidget* W, TArray<UWidget*>& Out)
+    {
+        if (!W) return;
+        Out.Add(W);
+        if (UPanelWidget* Panel = Cast<UPanelWidget>(W))
+        {
+            for (int32 i = 0; i < Panel->GetChildrenCount(); ++i)
+            {
+                CollectSubtree(Panel->GetChildAt(i), Out);
+            }
+        }
+    }
+
+    /** Drop the whole subtree's variable GUIDs, not just the removed widget's.
+     *  Leaving descendants behind orphans entries in
+     *  WidgetVariableNameToGuidMap, which later resurfaces as phantom
+     *  variables on the compiled blueprint. */
+    void PurgeSubtreeGuids(UWidgetBlueprint* WBP, UWidget* Root)
+    {
+        if (!WBP || !Root) return;
+        TArray<UWidget*> Subtree;
+        CollectSubtree(Root, Subtree);
+        for (UWidget* W : Subtree)
+        {
+            if (W) WBP->WidgetVariableNameToGuidMap.Remove(W->GetFName());
+        }
+    }
+
+    /** Copy every property the two widgets share by name and type. Used by
+     *  `replace` with preserve_properties — text, colours, padding and so on
+     *  survive a Button→CheckBox style swap instead of resetting to defaults. */
+    int32 CopyCommonProperties(UObject* From, UObject* To)
+    {
+        if (!From || !To) return 0;
+        int32 Copied = 0;
+        for (TFieldIterator<FProperty> It(From->GetClass()); It; ++It)
+        {
+            FProperty* SrcProp = *It;
+            if (!SrcProp) continue;
+            // Transient/native-only state is not authoring data; copying it
+            // moves runtime junk (cached slate handles, generated names) across.
+            if (SrcProp->HasAnyPropertyFlags(CPF_Transient | CPF_DuplicateTransient | CPF_EditorOnly)) continue;
+
+            const FName PropName = SrcProp->GetFName();
+            if (PropName == TEXT("Slot")) continue;  // owned by the parent panel
+
+            FProperty* DstProp = To->GetClass()->FindPropertyByName(PropName);
+            if (!DstProp) continue;
+            if (!DstProp->SameType(SrcProp)) continue;
+
+            DstProp->CopyCompleteValue_InContainer(To, From);
+            ++Copied;
+        }
+        return Copied;
     }
 
     UWidget* FindWidgetByName(UWidgetTree* Tree, const FString& Name)
@@ -267,39 +351,144 @@ namespace
         return FVector2D::ZeroVector;
     }
 
+    /** Outcome of applying a slot-props object. Callers report these verbatim:
+     *  a key that matched nothing is a caller error worth surfacing, not
+     *  something to swallow while still reporting success. */
+    struct FSlotApplyResult
+    {
+        TArray<FString> Applied;
+        TArray<FString> Unknown;
+    };
+
+    /** Keys the explicit branches below actually consume FOR THIS SLOT TYPE.
+     *  Type-aware on purpose: `z_order` is real on a canvas slot and meaningless
+     *  on a vertical-box slot, and a caller who sends the latter deserves to be
+     *  told rather than shown a success count that includes it. */
+    static TSet<FString> ApplicableSlotKeys(UPanelSlot* Slot)
+    {
+        // Accepted and ignored everywhere: callers routinely echo the slot type back.
+        TSet<FString> Keys = { TEXT("type") };
+
+        auto AddAll = [&Keys](std::initializer_list<const TCHAR*> Names)
+        {
+            for (const TCHAR* N : Names) Keys.Add(FString(N));
+        };
+
+        const bool bHasAlignment =
+            Slot->IsA<UHorizontalBoxSlot>() || Slot->IsA<UVerticalBoxSlot>() || Slot->IsA<UOverlaySlot>() ||
+            Slot->IsA<UScrollBoxSlot>()     || Slot->IsA<UBorderSlot>()      || Slot->IsA<USizeBoxSlot>() ||
+            Slot->IsA<UWrapBoxSlot>()       || Slot->IsA<UWidgetSwitcherSlot>() ||
+            Slot->IsA<UGridSlot>()          || Slot->IsA<UUniformGridSlot>();
+        if (bHasAlignment) AddAll({ TEXT("horizontal_alignment"), TEXT("vertical_alignment") });
+
+        const bool bHasPadding =
+            Slot->IsA<UHorizontalBoxSlot>() || Slot->IsA<UVerticalBoxSlot>() || Slot->IsA<UOverlaySlot>() ||
+            Slot->IsA<UScrollBoxSlot>()     || Slot->IsA<UBorderSlot>()      || Slot->IsA<USizeBoxSlot>() ||
+            Slot->IsA<UWrapBoxSlot>()       || Slot->IsA<UWidgetSwitcherSlot>() || Slot->IsA<UGridSlot>();
+        if (bHasPadding) Keys.Add(TEXT("padding"));
+
+        if (Slot->IsA<UCanvasPanelSlot>())
+        {
+            AddAll({ TEXT("anchor_min_x"), TEXT("anchor_min_y"), TEXT("anchor_max_x"), TEXT("anchor_max_y"),
+                     TEXT("anchors"), TEXT("anchors_min"), TEXT("anchors_max"),
+                     TEXT("x"), TEXT("y"), TEXT("w"), TEXT("h"),
+                     TEXT("position"), TEXT("size"), TEXT("alignment"), TEXT("auto_size"), TEXT("z_order") });
+        }
+        if (Slot->IsA<UHorizontalBoxSlot>() || Slot->IsA<UVerticalBoxSlot>())
+        {
+            Keys.Add(TEXT("fill"));
+        }
+        if (Slot->IsA<UGridSlot>())
+        {
+            AddAll({ TEXT("row"), TEXT("column"), TEXT("row_span"), TEXT("column_span"), TEXT("layer"), TEXT("nudge") });
+        }
+        if (Slot->IsA<UUniformGridSlot>())
+        {
+            AddAll({ TEXT("row"), TEXT("column") });
+        }
+        return Keys;
+    }
+
+    /** Padding is set whenever the key is present, including an explicit zero.
+     *  The previous "only if non-zero" guard made it impossible to clear
+     *  padding — the call reported success and the margin stayed put. */
+    static bool TryApplyPadding(const TSharedPtr<FJsonObject>& Props, const FString& Key, FMargin& Out)
+    {
+        if (!Props->HasField(Key)) return false;
+        Out = ParseMargin(Props, Key);
+        return true;
+    }
+
+    /** Anchors accept every shape a caller might reasonably send:
+     *  flat anchor_min_x/…, an {min_x,…} object, or anchors_min/anchors_max
+     *  as [x,y] pairs (which is what the typed slot-layout tool sends). */
+    static bool TryApplyAnchors(const TSharedPtr<FJsonObject>& Props, UCanvasPanelSlot* CSlot)
+    {
+        bool bChanged = false;
+        FAnchors Anchors = CSlot->GetAnchors();
+
+        double V = 0.0;
+        if (Props->TryGetNumberField(TEXT("anchor_min_x"), V)) { Anchors.Minimum.X = V; bChanged = true; }
+        if (Props->TryGetNumberField(TEXT("anchor_min_y"), V)) { Anchors.Minimum.Y = V; bChanged = true; }
+        if (Props->TryGetNumberField(TEXT("anchor_max_x"), V)) { Anchors.Maximum.X = V; bChanged = true; }
+        if (Props->TryGetNumberField(TEXT("anchor_max_y"), V)) { Anchors.Maximum.Y = V; bChanged = true; }
+
+        const TSharedPtr<FJsonObject>* AnchorsObj = nullptr;
+        if (Props->TryGetObjectField(TEXT("anchors"), AnchorsObj) && AnchorsObj && AnchorsObj->IsValid())
+        {
+            double MinX = Anchors.Minimum.X, MinY = Anchors.Minimum.Y;
+            double MaxX = Anchors.Maximum.X, MaxY = Anchors.Maximum.Y;
+            (*AnchorsObj)->TryGetNumberField(TEXT("min_x"), MinX);
+            (*AnchorsObj)->TryGetNumberField(TEXT("min_y"), MinY);
+            (*AnchorsObj)->TryGetNumberField(TEXT("max_x"), MaxX);
+            (*AnchorsObj)->TryGetNumberField(TEXT("max_y"), MaxY);
+            Anchors.Minimum = FVector2D(MinX, MinY);
+            Anchors.Maximum = FVector2D(MaxX, MaxY);
+            bChanged = true;
+        }
+
+        if (Props->HasField(TEXT("anchors_min"))) { Anchors.Minimum = ParseVec2(Props, TEXT("anchors_min")); bChanged = true; }
+        if (Props->HasField(TEXT("anchors_max"))) { Anchors.Maximum = ParseVec2(Props, TEXT("anchors_max")); bChanged = true; }
+
+        if (bChanged) CSlot->SetAnchors(Anchors);
+        return bChanged;
+    }
+
+    /** Alignment shared by every slot type that exposes H/V alignment. */
+    template <typename TSlot>
+    static void ApplyAlignments(TSlot* S, const TSharedPtr<FJsonObject>& Props)
+    {
+        FString HAlign, VAlign;
+        if (Props->TryGetStringField(TEXT("horizontal_alignment"), HAlign))
+            S->SetHorizontalAlignment(ParseHAlign(HAlign));
+        if (Props->TryGetStringField(TEXT("vertical_alignment"), VAlign))
+            S->SetVerticalAlignment(ParseVAlign(VAlign));
+    }
+
+    template <typename TSlot>
+    static void ApplyPaddingAndAlignment(TSlot* S, const TSharedPtr<FJsonObject>& Props)
+    {
+        FMargin Pad;
+        if (TryApplyPadding(Props, TEXT("padding"), Pad)) S->SetPadding(Pad);
+        ApplyAlignments(S, Props);
+    }
+
+    FSlotApplyResult ApplySlotPropsChecked(UPanelSlot* Slot, const TSharedPtr<FJsonObject>& Props);
+
     void ApplySlotProps(UPanelSlot* Slot, const TSharedPtr<FJsonObject>& Props)
     {
-        if (!Slot || !Props.IsValid()) return;
+        ApplySlotPropsChecked(Slot, Props);
+    }
+
+    FSlotApplyResult ApplySlotPropsChecked(UPanelSlot* Slot, const TSharedPtr<FJsonObject>& Props)
+    {
+        FSlotApplyResult Result;
+        if (!Slot || !Props.IsValid()) return Result;
 
         // CanvasPanelSlot
         if (UCanvasPanelSlot* CSlot = Cast<UCanvasPanelSlot>(Slot))
         {
-            double AnchorMinX, AnchorMinY, AnchorMaxX, AnchorMaxY;
-            if (Props->TryGetNumberField(TEXT("anchor_min_x"), AnchorMinX) ||
-                Props->TryGetNumberField(TEXT("anchor_min_y"), AnchorMinY) ||
-                Props->TryGetNumberField(TEXT("anchor_max_x"), AnchorMaxX) ||
-                Props->TryGetNumberField(TEXT("anchor_max_y"), AnchorMaxY))
-            {
-                FAnchors Anchors = CSlot->GetAnchors();
-                if (Props->TryGetNumberField(TEXT("anchor_min_x"), AnchorMinX)) Anchors.Minimum.X = AnchorMinX;
-                if (Props->TryGetNumberField(TEXT("anchor_min_y"), AnchorMinY)) Anchors.Minimum.Y = AnchorMinY;
-                if (Props->TryGetNumberField(TEXT("anchor_max_x"), AnchorMaxX)) Anchors.Maximum.X = AnchorMaxX;
-                if (Props->TryGetNumberField(TEXT("anchor_max_y"), AnchorMaxY)) Anchors.Maximum.Y = AnchorMaxY;
-                CSlot->SetAnchors(Anchors);
-            }
-            const TSharedPtr<FJsonObject>* AnchorsObj = nullptr;
-            if (Props->TryGetObjectField(TEXT("anchors"), AnchorsObj) && AnchorsObj && AnchorsObj->IsValid())
-            {
-                FAnchors A;
-                double MinX = 0.0, MinY = 0.0, MaxX = 0.0, MaxY = 0.0;
-                (*AnchorsObj)->TryGetNumberField(TEXT("min_x"), MinX);
-                (*AnchorsObj)->TryGetNumberField(TEXT("min_y"), MinY);
-                (*AnchorsObj)->TryGetNumberField(TEXT("max_x"), MaxX);
-                (*AnchorsObj)->TryGetNumberField(TEXT("max_y"), MaxY);
-                A.Minimum = FVector2D(MinX, MinY);
-                A.Maximum = FVector2D(MaxX, MaxY);
-                CSlot->SetAnchors(A);
-            }
+            TryApplyAnchors(Props, CSlot);
 
             double OffX, OffY, OffW, OffH;
             const bool bHasOffX = Props->TryGetNumberField(TEXT("x"), OffX);
@@ -316,17 +505,11 @@ namespace
                 CSlot->SetOffsets(Offsets);
             }
 
-            FVector2D Position = ParseVec2(Props, TEXT("position"));
-            if (!Position.IsZero() || Props->HasField(TEXT("position")))
-                CSlot->SetPosition(Position);
-
-            FVector2D Size = ParseVec2(Props, TEXT("size"));
-            if (!Size.IsZero() || Props->HasField(TEXT("size")))
-                CSlot->SetSize(Size);
-
-            FVector2D Alignment = ParseVec2(Props, TEXT("alignment"));
-            if (!Alignment.IsZero() || Props->HasField(TEXT("alignment")))
-                CSlot->SetAlignment(Alignment);
+            // HasField (not "is non-zero") so a caller CAN move a widget back to
+            // the origin or collapse it to zero size.
+            if (Props->HasField(TEXT("position")))  CSlot->SetPosition(ParseVec2(Props, TEXT("position")));
+            if (Props->HasField(TEXT("size")))      CSlot->SetSize(ParseVec2(Props, TEXT("size")));
+            if (Props->HasField(TEXT("alignment"))) CSlot->SetAlignment(ParseVec2(Props, TEXT("alignment")));
 
             bool bAutoSize = false;
             if (Props->TryGetBoolField(TEXT("auto_size"), bAutoSize))
@@ -337,7 +520,7 @@ namespace
                 CSlot->SetZOrder(ZOrder);
         }
 
-        // HorizontalBoxSlot
+        // HorizontalBoxSlot / VerticalBoxSlot share the fill+padding+alignment shape.
         if (UHorizontalBoxSlot* HSlot = Cast<UHorizontalBoxSlot>(Slot))
         {
             double Fill = 0.0;
@@ -348,18 +531,9 @@ namespace
                 Sz.SizeRule = Fill > 0.0 ? ESlateSizeRule::Fill : ESlateSizeRule::Automatic;
                 HSlot->SetSize(Sz);
             }
-            const FMargin Pad = ParseMargin(Props, TEXT("padding"));
-            if (Pad.Left != 0.0 || Pad.Top != 0.0 || Pad.Right != 0.0 || Pad.Bottom != 0.0)
-                HSlot->SetPadding(Pad);
-
-            FString HAlign, VAlign;
-            if (Props->TryGetStringField(TEXT("horizontal_alignment"), HAlign))
-                HSlot->SetHorizontalAlignment(ParseHAlign(HAlign));
-            if (Props->TryGetStringField(TEXT("vertical_alignment"), VAlign))
-                HSlot->SetVerticalAlignment(ParseVAlign(VAlign));
+            ApplyPaddingAndAlignment(HSlot, Props);
         }
 
-        // VerticalBoxSlot
         if (UVerticalBoxSlot* VSlot = Cast<UVerticalBoxSlot>(Slot))
         {
             double Fill = 0.0;
@@ -370,111 +544,58 @@ namespace
                 Sz.SizeRule = Fill > 0.0 ? ESlateSizeRule::Fill : ESlateSizeRule::Automatic;
                 VSlot->SetSize(Sz);
             }
-            const FMargin Pad = ParseMargin(Props, TEXT("padding"));
-            if (Pad.Left != 0.0 || Pad.Top != 0.0 || Pad.Right != 0.0 || Pad.Bottom != 0.0)
-                VSlot->SetPadding(Pad);
-
-            FString HAlign, VAlign;
-            if (Props->TryGetStringField(TEXT("horizontal_alignment"), HAlign))
-                VSlot->SetHorizontalAlignment(ParseHAlign(HAlign));
-            if (Props->TryGetStringField(TEXT("vertical_alignment"), VAlign))
-                VSlot->SetVerticalAlignment(ParseVAlign(VAlign));
+            ApplyPaddingAndAlignment(VSlot, Props);
         }
 
-        // OverlaySlot
-        if (UOverlaySlot* OSlot = Cast<UOverlaySlot>(Slot))
-        {
-            const FMargin Pad = ParseMargin(Props, TEXT("padding"));
-            if (Pad.Left != 0.0 || Pad.Top != 0.0 || Pad.Right != 0.0 || Pad.Bottom != 0.0)
-                OSlot->SetPadding(Pad);
-
-            FString HAlign, VAlign;
-            if (Props->TryGetStringField(TEXT("horizontal_alignment"), HAlign))
-                OSlot->SetHorizontalAlignment(ParseHAlign(HAlign));
-            if (Props->TryGetStringField(TEXT("vertical_alignment"), VAlign))
-                OSlot->SetVerticalAlignment(ParseVAlign(VAlign));
-        }
+        if (UOverlaySlot* OSlot = Cast<UOverlaySlot>(Slot))       ApplyPaddingAndAlignment(OSlot, Props);
+        if (UScrollBoxSlot* ScSlot = Cast<UScrollBoxSlot>(Slot))  ApplyPaddingAndAlignment(ScSlot, Props);
+        if (UBorderSlot* BSlot = Cast<UBorderSlot>(Slot))         ApplyPaddingAndAlignment(BSlot, Props);
+        if (USizeBoxSlot* SbSlot = Cast<USizeBoxSlot>(Slot))      ApplyPaddingAndAlignment(SbSlot, Props);
+        if (UWrapBoxSlot* WSlot = Cast<UWrapBoxSlot>(Slot))       ApplyPaddingAndAlignment(WSlot, Props);
+        if (UWidgetSwitcherSlot* WsSlot = Cast<UWidgetSwitcherSlot>(Slot)) ApplyPaddingAndAlignment(WsSlot, Props);
 
         // GridSlot
         if (UGridSlot* GSlot = Cast<UGridSlot>(Slot))
         {
             int32 Row, Column, RowSpan, ColSpan, Layer;
-            if (Props->TryGetNumberField(TEXT("row"), Row))      GSlot->SetRow(Row);
-            if (Props->TryGetNumberField(TEXT("column"), Column)) GSlot->SetColumn(Column);
-            if (Props->TryGetNumberField(TEXT("row_span"), RowSpan))  GSlot->SetRowSpan(RowSpan);
-            if (Props->TryGetNumberField(TEXT("column_span"), ColSpan)) GSlot->SetColumnSpan(ColSpan);
-            if (Props->TryGetNumberField(TEXT("layer"), Layer))   GSlot->SetLayer(Layer);
+            if (Props->TryGetNumberField(TEXT("row"), Row))              GSlot->SetRow(Row);
+            if (Props->TryGetNumberField(TEXT("column"), Column))        GSlot->SetColumn(Column);
+            if (Props->TryGetNumberField(TEXT("row_span"), RowSpan))     GSlot->SetRowSpan(RowSpan);
+            if (Props->TryGetNumberField(TEXT("column_span"), ColSpan))  GSlot->SetColumnSpan(ColSpan);
+            if (Props->TryGetNumberField(TEXT("layer"), Layer))          GSlot->SetLayer(Layer);
 
-            const FMargin Pad = ParseMargin(Props, TEXT("padding"));
-            if (Pad.Left != 0.0 || Pad.Top != 0.0 || Pad.Right != 0.0 || Pad.Bottom != 0.0)
-                GSlot->SetPadding(Pad);
+            ApplyPaddingAndAlignment(GSlot, Props);
 
-            FString HAlign, VAlign;
-            if (Props->TryGetStringField(TEXT("horizontal_alignment"), HAlign))
-                GSlot->SetHorizontalAlignment(ParseHAlign(HAlign));
-            if (Props->TryGetStringField(TEXT("vertical_alignment"), VAlign))
-                GSlot->SetVerticalAlignment(ParseVAlign(VAlign));
-
-            FVector2D Nudge = ParseVec2(Props, TEXT("nudge"));
-            if (!Nudge.IsZero() || Props->HasField(TEXT("nudge")))
-                GSlot->SetNudge(Nudge);
+            if (Props->HasField(TEXT("nudge"))) GSlot->SetNudge(ParseVec2(Props, TEXT("nudge")));
         }
 
         // UniformGridSlot
         if (UUniformGridSlot* USlot = Cast<UUniformGridSlot>(Slot))
         {
             int32 Row, Column;
-            if (Props->TryGetNumberField(TEXT("row"), Row))      USlot->SetRow(Row);
+            if (Props->TryGetNumberField(TEXT("row"), Row))       USlot->SetRow(Row);
             if (Props->TryGetNumberField(TEXT("column"), Column)) USlot->SetColumn(Column);
-
-            FString HAlign, VAlign;
-            if (Props->TryGetStringField(TEXT("horizontal_alignment"), HAlign))
-                USlot->SetHorizontalAlignment(ParseHAlign(HAlign));
-            if (Props->TryGetStringField(TEXT("vertical_alignment"), VAlign))
-                USlot->SetVerticalAlignment(ParseVAlign(VAlign));
+            ApplyAlignments(USlot, Props);
         }
 
-        // ScrollBoxSlot
-        if (UScrollBoxSlot* ScSlot = Cast<UScrollBoxSlot>(Slot))
+        // Anything not handled above gets one reflection attempt against the
+        // slot's own UPROPERTYs; only then is it reported unknown. Silently
+        // dropping keys is what let ui_set_slot_layout report success while
+        // changing nothing.
+        const TSet<FString> Applicable = ApplicableSlotKeys(Slot);
+        for (const auto& Pair : Props->Values)
         {
-            const FMargin Pad = ParseMargin(Props, TEXT("padding"));
-            if (Pad.Left != 0.0 || Pad.Top != 0.0 || Pad.Right != 0.0 || Pad.Bottom != 0.0)
-                ScSlot->SetPadding(Pad);
-
-            FString HAlign, VAlign;
-            if (Props->TryGetStringField(TEXT("horizontal_alignment"), HAlign))
-                ScSlot->SetHorizontalAlignment(ParseHAlign(HAlign));
-            if (Props->TryGetStringField(TEXT("vertical_alignment"), VAlign))
-                ScSlot->SetVerticalAlignment(ParseVAlign(VAlign));
+            const FString& Key = Pair.Key;
+            if (Applicable.Contains(Key))
+            {
+                Result.Applied.Add(Key);
+                continue;
+            }
+            if (HaybaReflection::SetProp(Slot, Key, Pair.Value)) Result.Applied.Add(Key);
+            else Result.Unknown.Add(Key);
         }
 
-        // BorderSlot
-        if (UBorderSlot* BSlot = Cast<UBorderSlot>(Slot))
-        {
-            const FMargin Pad = ParseMargin(Props, TEXT("padding"));
-            if (Pad.Left != 0.0 || Pad.Top != 0.0 || Pad.Right != 0.0 || Pad.Bottom != 0.0)
-                BSlot->SetPadding(Pad);
-
-            FString HAlign, VAlign;
-            if (Props->TryGetStringField(TEXT("horizontal_alignment"), HAlign))
-                BSlot->SetHorizontalAlignment(ParseHAlign(HAlign));
-            if (Props->TryGetStringField(TEXT("vertical_alignment"), VAlign))
-                BSlot->SetVerticalAlignment(ParseVAlign(VAlign));
-        }
-
-        // SizeBoxSlot
-        if (USizeBoxSlot* SbSlot = Cast<USizeBoxSlot>(Slot))
-        {
-            const FMargin Pad = ParseMargin(Props, TEXT("padding"));
-            if (Pad.Left != 0.0 || Pad.Top != 0.0 || Pad.Right != 0.0 || Pad.Bottom != 0.0)
-                SbSlot->SetPadding(Pad);
-
-            FString HAlign, VAlign;
-            if (Props->TryGetStringField(TEXT("horizontal_alignment"), HAlign))
-                SbSlot->SetHorizontalAlignment(ParseHAlign(HAlign));
-            if (Props->TryGetStringField(TEXT("vertical_alignment"), VAlign))
-                SbSlot->SetVerticalAlignment(ParseVAlign(VAlign));
-        }
+        return Result;
     }
 
     TSharedPtr<FJsonObject> ExtractWidgetProperties(UWidget* W)
@@ -753,6 +874,11 @@ FHaybaHandlerResult FHaybaMCPUIHandler::Handle(const FString& Cmd, const TShared
     if (Cmd == TEXT("ui_compile_widget"))      return HandleCompile(P);
     if (Cmd == TEXT("ui_save_widget"))         return HandleSave(P);
     if (Cmd == TEXT("ui_list_widget_types"))   return HandleListTypes(P);
+    if (Cmd == TEXT("ui_build_tree"))          return HandleBuildTree(P);
+    if (Cmd == TEXT("ui_set_variable"))        return HandleSetVariable(P);
+    if (Cmd == TEXT("ui_list_widget_blueprints")) return HandleListWidgetBlueprints(P);
+    if (Cmd == TEXT("ui_layout_snapshot"))     return HandleLayoutSnapshot(P);
+    if (Cmd == TEXT("ui_measure_text"))        return HandleMeasureText(P);
 
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("UIHandler: unknown command %s"), *Cmd));
 #endif
@@ -886,13 +1012,17 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetProperties(const TSharedPtr<FJs
     const TSharedPtr<FJsonObject>* Props = nullptr;
     const TSharedPtr<FJsonObject>* SlotProps = nullptr;
     P->TryGetObjectField(TEXT("properties"), Props);
-    // Public MCP schema has always documented `slot_props`, while an earlier
-    // handler revision only read `slot_properties`.  Accept both spellings so
-    // typed UMG calls actually persist margins/layout rather than silently
-    // reporting success for unrelated widget properties.
+    // Three spellings have shipped in different layers: `slot_props` (public
+    // schema), `slot_properties` (an early handler revision) and `slot_layout`
+    // (the typed slot tool). Only the first was ever read, so the typed tool's
+    // payload fell on the floor and the call failed with "no properties
+    // provided" no matter how well-formed it was. Accept all three.
     if (!(P->TryGetObjectField(TEXT("slot_props"), SlotProps) && SlotProps && SlotProps->IsValid()))
     {
-        P->TryGetObjectField(TEXT("slot_properties"), SlotProps);
+        if (!(P->TryGetObjectField(TEXT("slot_properties"), SlotProps) && SlotProps && SlotProps->IsValid()))
+        {
+            P->TryGetObjectField(TEXT("slot_layout"), SlotProps);
+        }
     }
 
     if ((!Props || !Props->IsValid()) && (!SlotProps || !SlotProps->IsValid()))
@@ -901,6 +1031,8 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetProperties(const TSharedPtr<FJs
     int32 Succeeded = 0;
     int32 Failed = 0;
     TArray<FString> FailedProps;
+    TArray<FString> UnknownSlotProps;
+    TArray<FString> Warnings;
     {
         // No FScopedTransaction: these are automation-tool edits with no undo/redo
         // requirement, and the global editor transaction buffer (GEditor->Trans) can
@@ -924,17 +1056,63 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetProperties(const TSharedPtr<FJs
             }
         }
 
-        if (SlotProps && SlotProps->IsValid() && Widget->Slot)
+        if (SlotProps && SlotProps->IsValid())
         {
-            // Slots are distinct UObject instances in a WidgetTree.  Marking
-            // only the child widget dirty made horizontal/vertical padding look
-            // successful in the response but vanish on the next query/reopen.
-            Widget->Slot->Modify();
-            ApplySlotProps(Widget->Slot, *SlotProps);
-            Widget->Slot->PostEditChange();
-            for (const auto& Pair : (*SlotProps)->Values)
+            if (!Widget->Slot)
             {
-                ++Succeeded;
+                // The root widget has no slot at all. Reporting the keys as
+                // applied here would be a flat lie.
+                for (const auto& Pair : (*SlotProps)->Values)
+                {
+                    ++Failed;
+                    FailedProps.Add(FString::Printf(TEXT("slot.%s"), *Pair.Key));
+                }
+                Warnings.Add(FString::Printf(
+                    TEXT("'%s' has no panel slot (it is the root widget, or its parent is not a panel), so slot layout was not applied."),
+                    *WidgetName));
+            }
+            else
+            {
+                // Slots are distinct UObject instances in a WidgetTree.  Marking
+                // only the child widget dirty made horizontal/vertical padding look
+                // successful in the response but vanish on the next query/reopen.
+                Widget->Slot->Modify();
+                const FSlotApplyResult SlotResult = ApplySlotPropsChecked(Widget->Slot, *SlotProps);
+                Widget->Slot->PostEditChange();
+
+                // Count what actually landed. The previous code incremented the
+                // success counter once per submitted key regardless of whether
+                // the slot understood it.
+                Succeeded += SlotResult.Applied.Num();
+                Failed += SlotResult.Unknown.Num();
+                for (const FString& Key : SlotResult.Unknown)
+                {
+                    UnknownSlotProps.Add(Key);
+                    FailedProps.Add(FString::Printf(TEXT("slot.%s"), *Key));
+                }
+                if (SlotResult.Unknown.Num() > 0)
+                {
+                    Warnings.Add(FString::Printf(
+                        TEXT("Slot is a %s; keys %s are not valid for that slot type. Query the widget to see its real slot class."),
+                        *Widget->Slot->GetClass()->GetName(),
+                        *FString::Join(SlotResult.Unknown, TEXT(", "))));
+                }
+            }
+        }
+
+        // The single most expensive UMG trap to debug: assigning a UFontFace to
+        // a Slate font renders the font's glyph-preview atlas ("BASIC LATIN /
+        // A / 0000-007F" tiles) instead of text. Slate needs a composite UFont.
+        {
+            FSlateFontInfo WidgetFont;
+            if (HaybaUILayout::GetWidgetFont(Widget, WidgetFont) && WidgetFont.FontObject)
+            {
+                if (WidgetFont.FontObject->IsA<UFontFace>())
+                {
+                    Warnings.Add(FString::Printf(
+                        TEXT("Font object '%s' is a UFontFace, not a UFont. Slate renders a UFontFace as its glyph-preview tiles rather than as text. Assign the composite UFont asset instead."),
+                        *WidgetFont.FontObject->GetPathName()));
+                }
             }
         }
 
@@ -945,19 +1123,27 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetProperties(const TSharedPtr<FJs
         WBP->MarkPackageDirty();
     }
 
+    auto ToJsonArray = [](const TArray<FString>& In)
+    {
+        TArray<TSharedPtr<FJsonValue>> Arr;
+        for (const FString& S : In) Arr.Add(MakeShared<FJsonValueString>(S));
+        return Arr;
+    };
+
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("widget_name"), WidgetName);
     Out->SetNumberField(TEXT("succeeded"), Succeeded);
     Out->SetNumberField(TEXT("failed"), Failed);
-    if (FailedProps.Num() > 0)
-    {
-        TArray<TSharedPtr<FJsonValue>> FArr;
-        for (const FString& F : FailedProps)
-            FArr.Add(MakeShared<FJsonValueString>(F));
-        Out->SetArrayField(TEXT("failed_properties"), FArr);
-    }
+    if (FailedProps.Num() > 0)      Out->SetArrayField(TEXT("failed_properties"), ToJsonArray(FailedProps));
+    if (UnknownSlotProps.Num() > 0) Out->SetArrayField(TEXT("unknown_slot_props"), ToJsonArray(UnknownSlotProps));
+    if (Warnings.Num() > 0)         Out->SetArrayField(TEXT("warnings"), ToJsonArray(Warnings));
 
     if (Succeeded == 0)
-        return FHaybaHandlerResult::Err(TEXT("ui_set_widget_properties: all properties failed"));
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("ui_set_widget_properties: nothing applied to '%s'. Rejected: %s"),
+            *WidgetName, *FString::Join(FailedProps, TEXT(", "))));
+    }
 
     return FHaybaHandlerResult::Ok(Out);
 }
@@ -982,6 +1168,60 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleQuery(const TSharedPtr<FJsonObject
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("path"), WBP->GetPathName());
     Out->SetStringField(TEXT("parent_class"), WBP->ParentClass ? WBP->ParentClass->GetPathName() : TEXT(""));
+
+    // Filtered mode: return a flat list of matching widgets rather than the
+    // whole tree. Without this a "search" can only be done by shipping the
+    // entire tree to the caller and filtering there, which is what made the
+    // search tool a full-tree dump wearing a search tool's schema.
+    FString NamePattern, ClassFilter;
+    const bool bHasNameFilter  = P->TryGetStringField(TEXT("name_pattern"), NamePattern) && !NamePattern.IsEmpty();
+    const bool bHasClassFilter = P->TryGetStringField(TEXT("class_filter"), ClassFilter) && !ClassFilter.IsEmpty();
+    bool bFlatten = false;
+    P->TryGetBoolField(TEXT("flatten"), bFlatten);
+
+    if (bHasNameFilter || bHasClassFilter || bFlatten)
+    {
+        TArray<TSharedPtr<FJsonValue>> Matches;
+        WBP->WidgetTree->ForEachWidget([&](UWidget* Widget)
+        {
+            if (!Widget) return;
+            if (bHasNameFilter && !Widget->GetName().Contains(NamePattern)) return;
+            if (bHasClassFilter)
+            {
+                // Match on the exact class name or anywhere in the inheritance
+                // chain, so class_filter:"PanelWidget" finds every panel.
+                bool bClassMatch = false;
+                for (UClass* C = Widget->GetClass(); C; C = C->GetSuperClass())
+                {
+                    if (C->GetName() == ClassFilter || C->GetName() == (TEXT("U") + ClassFilter))
+                    {
+                        bClassMatch = true;
+                        break;
+                    }
+                }
+                if (!bClassMatch) return;
+            }
+
+            TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+            Entry->SetStringField(TEXT("name"), Widget->GetName());
+            Entry->SetStringField(TEXT("class"), Widget->GetClass()->GetName());
+            Entry->SetStringField(TEXT("parent"), Widget->GetParent() ? Widget->GetParent()->GetName() : FString());
+            if (bIncludeSlot) Entry->SetStringField(TEXT("slot_class"), ResolveSlotType(Widget));
+            if (bIncludeGuid)
+            {
+                if (const FGuid* Found = WBP->WidgetVariableNameToGuidMap.Find(Widget->GetFName()))
+                    Entry->SetStringField(TEXT("guid"), Found->ToString());
+            }
+            if (bIncludeProperties) Entry->SetObjectField(TEXT("properties"), ExtractWidgetProperties(Widget));
+            Matches.Add(MakeShared<FJsonValueObject>(Entry));
+        });
+
+        Out->SetArrayField(TEXT("matches"), Matches);
+        Out->SetNumberField(TEXT("match_count"), Matches.Num());
+        if (bHasNameFilter)  Out->SetStringField(TEXT("name_pattern"), NamePattern);
+        if (bHasClassFilter) Out->SetStringField(TEXT("class_filter"), ClassFilter);
+        return FHaybaHandlerResult::Ok(Out);
+    }
 
     if (UWidget* Root = WBP->WidgetTree->RootWidget)
     {
@@ -1064,7 +1304,10 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                 }
             }
 
-            WBP->WidgetVariableNameToGuidMap.Remove(Widget->GetFName());
+            PurgeSubtreeGuids(WBP, Widget);
+            // Detach the widget objects from the tree as well; RemoveChild only
+            // unlinks from the panel, leaving the widgets owned by the tree.
+            WBP->WidgetTree->RemoveWidget(Widget);
             FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
             WBP->MarkPackageDirty();
         }
@@ -1112,6 +1355,9 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
         int32 OldIndex = OldParent->GetChildIndex(Widget);
         FString OldParentName = OldParent->GetName();
 
+        int32 InsertIndex = -1;
+        P->TryGetNumberField(TEXT("index"), InsertIndex);
+
         {
             // No FScopedTransaction — see comment in ui_set_widget_properties above:
             // avoids pinning a PIE GameInstance reference in the editor undo buffer.
@@ -1121,7 +1367,41 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
             NewParent->Modify();
 
             OldParent->RemoveChild(Widget);
-            UPanelSlot* NewSlot = NewParent->AddChild(Widget);
+
+            UPanelSlot* NewSlot = (InsertIndex >= 0 && InsertIndex <= NewParent->GetChildrenCount())
+                ? NewParent->InsertChildAt(InsertIndex, Widget)
+                : NewParent->AddChild(Widget);
+
+            if (!NewSlot)
+            {
+                // Put it back rather than leaving the widget orphaned: full
+                // panels (SizeBox, Border, ScaleBox hold exactly one child)
+                // reject the add and the caller's tree would silently lose a
+                // whole subtree.
+                OldParent->InsertChildAt(FMath::Clamp(OldIndex, 0, OldParent->GetChildrenCount()), Widget);
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("ui_mutate_tree reparent: '%s' refused the child (a %s holds a limited number of children). Widget left under '%s'."),
+                    *NewParentName, *NewParent->GetClass()->GetName(), *OldParentName));
+            }
+
+            // Slot layout for the NEW parent, since the old slot's type is
+            // usually not even the same class.
+            const TSharedPtr<FJsonObject>* SlotProps = nullptr;
+            if (P->TryGetObjectField(TEXT("slot_props"), SlotProps) && SlotProps && SlotProps->IsValid())
+            {
+                NewSlot->Modify();
+                const FSlotApplyResult SlotResult = ApplySlotPropsChecked(NewSlot, *SlotProps);
+                NewSlot->PostEditChange();
+                if (SlotResult.Unknown.Num() > 0)
+                {
+                    TArray<TSharedPtr<FJsonValue>> UArr;
+                    for (const FString& K : SlotResult.Unknown) UArr.Add(MakeShared<FJsonValueString>(K));
+                    Out->SetArrayField(TEXT("unknown_slot_props"), UArr);
+                }
+            }
+
+            Out->SetStringField(TEXT("new_slot_class"), NewSlot->GetClass()->GetName());
+            Out->SetNumberField(TEXT("new_child_index"), NewParent->GetChildIndex(Widget));
 
             FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
             WBP->MarkPackageDirty();
@@ -1132,6 +1412,175 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
         Out->SetNumberField(TEXT("old_child_index"), OldIndex);
         Out->SetStringField(TEXT("new_parent"), NewParentName);
 
+        return FHaybaHandlerResult::Ok(Out);
+    }
+    else if (Operation == TEXT("move"))
+    {
+        // Reorder within the current parent. Draw/tab order in a box panel is
+        // child order, so this is the only way to change it without a
+        // remove+re-add round trip that loses the slot layout.
+        FString WidgetName;
+        int32 NewIndex = 0;
+        if (!P->TryGetStringField(TEXT("widget_name"), WidgetName) || WidgetName.IsEmpty())
+            return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree move: missing widget_name"));
+        if (!P->TryGetNumberField(TEXT("index"), NewIndex))
+            return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree move: missing index"));
+
+        UWidget* Widget = FindWidgetByName(WBP->WidgetTree, WidgetName);
+        if (!Widget)
+            return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_mutate_tree move: widget '%s' not found"), *WidgetName));
+
+        UPanelWidget* Parent = Widget->GetParent();
+        if (!Parent)
+            return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree move: widget is the root and has no siblings"));
+
+        const int32 OldIndex = Parent->GetChildIndex(Widget);
+        const int32 LastIndex = Parent->GetChildrenCount() - 1;
+        if (NewIndex < 0 || NewIndex > LastIndex)
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("ui_mutate_tree move: index %d out of range (parent '%s' has %d children, valid 0..%d)"),
+                NewIndex, *Parent->GetName(), Parent->GetChildrenCount(), LastIndex));
+        }
+
+        if (NewIndex != OldIndex)
+        {
+            WBP->Modify();
+            Parent->Modify();
+            Widget->Modify();
+
+            // Preserve the slot: shifting order must not reset padding/fill, so
+            // copy the old slot's values onto whatever slot the re-insert makes.
+            UPanelSlot* const OldSlot = Widget->Slot;
+            UObject* SlotSnapshot = nullptr;
+            if (OldSlot)
+            {
+                SlotSnapshot = NewObject<UObject>(GetTransientPackage(), OldSlot->GetClass());
+                CopyCommonProperties(OldSlot, SlotSnapshot);
+            }
+
+            Parent->RemoveChild(Widget);
+            UPanelSlot* NewSlot = Parent->InsertChildAt(NewIndex, Widget);
+            if (!NewSlot)
+            {
+                Parent->InsertChildAt(FMath::Clamp(OldIndex, 0, Parent->GetChildrenCount()), Widget);
+                return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree move: re-insert failed; widget restored to its original index"));
+            }
+            if (SlotSnapshot)
+            {
+                CopyCommonProperties(SlotSnapshot, NewSlot);
+                NewSlot->SynchronizeProperties();
+            }
+
+            FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
+            WBP->MarkPackageDirty();
+        }
+
+        Out->SetStringField(TEXT("widget_name"), WidgetName);
+        Out->SetStringField(TEXT("parent"), Parent->GetName());
+        Out->SetNumberField(TEXT("old_index"), OldIndex);
+        Out->SetNumberField(TEXT("new_index"), NewIndex);
+        return FHaybaHandlerResult::Ok(Out);
+    }
+    else if (Operation == TEXT("rename"))
+    {
+        FString WidgetName, NewName;
+        if (!P->TryGetStringField(TEXT("widget_name"), WidgetName) || WidgetName.IsEmpty())
+            return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree rename: missing widget_name"));
+        if (!P->TryGetStringField(TEXT("new_name"), NewName) || NewName.IsEmpty())
+            return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree rename: missing new_name"));
+
+        UWidget* Widget = FindWidgetByName(WBP->WidgetTree, WidgetName);
+        if (!Widget)
+            return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_mutate_tree rename: widget '%s' not found"), *WidgetName));
+        if (!ValidateWidgetName(WBP->WidgetTree, NewName))
+            return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_mutate_tree rename: '%s' is already taken in this widget tree"), *NewName));
+
+        WBP->Modify();
+        Widget->Modify();
+
+        // Carry the variable GUID across so existing bindings and any graph
+        // references keep resolving to this widget.
+        FGuid Guid;
+        const bool bHadGuid = WBP->WidgetVariableNameToGuidMap.RemoveAndCopyValue(FName(*WidgetName), Guid);
+
+        Widget->Rename(*NewName, Widget->GetOuter(), REN_DontCreateRedirectors);
+
+        if (bHadGuid) WBP->WidgetVariableNameToGuidMap.Add(FName(*NewName), Guid);
+        else RegisterWidgetVariable(WBP, Widget);
+
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
+        WBP->MarkPackageDirty();
+
+        Out->SetStringField(TEXT("old_name"), WidgetName);
+        Out->SetStringField(TEXT("new_name"), Widget->GetName());
+        Out->SetBoolField(TEXT("guid_preserved"), bHadGuid);
+        return FHaybaHandlerResult::Ok(Out);
+    }
+    else if (Operation == TEXT("duplicate"))
+    {
+        FString WidgetName, NewName, TargetParentName;
+        if (!P->TryGetStringField(TEXT("widget_name"), WidgetName) || WidgetName.IsEmpty())
+            return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree duplicate: missing widget_name"));
+        P->TryGetStringField(TEXT("new_name"), NewName);
+        P->TryGetStringField(TEXT("parent_widget_name"), TargetParentName);
+
+        UWidget* Source = FindWidgetByName(WBP->WidgetTree, WidgetName);
+        if (!Source)
+            return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_mutate_tree duplicate: widget '%s' not found"), *WidgetName));
+
+        UPanelWidget* TargetParent = TargetParentName.IsEmpty()
+            ? Source->GetParent()
+            : Cast<UPanelWidget>(FindWidgetByName(WBP->WidgetTree, TargetParentName));
+        if (!TargetParent)
+            return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree duplicate: no target panel (source is the root — pass parent_widget_name)"));
+
+        if (!NewName.IsEmpty() && !ValidateWidgetName(WBP->WidgetTree, NewName))
+            return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_mutate_tree duplicate: '%s' is already taken"), *NewName));
+
+        WBP->Modify();
+        TargetParent->Modify();
+
+        // Duplicating into the widget tree copies the whole subtree, which is
+        // the point: duplicating a styled row should bring its children along.
+        const FName DupName = NewName.IsEmpty()
+            ? MakeUniqueObjectName(WBP->WidgetTree, Source->GetClass(), Source->GetFName())
+            : FName(*NewName);
+
+        UWidget* Copy = DuplicateObject<UWidget>(Source, WBP->WidgetTree, DupName);
+        if (!Copy)
+            return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree duplicate: DuplicateObject failed"));
+
+        UPanelSlot* NewSlot = TargetParent->AddChild(Copy);
+        if (!NewSlot)
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("ui_mutate_tree duplicate: '%s' refused the child (panel is full)"), *TargetParent->GetName()));
+
+        if (Source->Slot && NewSlot->GetClass() == Source->Slot->GetClass())
+        {
+            CopyCommonProperties(Source->Slot, NewSlot);
+            NewSlot->SynchronizeProperties();
+        }
+
+        // Register the copy and every duplicated descendant as variables so
+        // they behave like hand-placed widgets in the designer.
+        TArray<UWidget*> Subtree;
+        CollectSubtree(Copy, Subtree);
+        for (UWidget* W : Subtree) RegisterWidgetVariable(WBP, W);
+
+        const TSharedPtr<FJsonObject>* SlotProps = nullptr;
+        if (P->TryGetObjectField(TEXT("slot_props"), SlotProps) && SlotProps && SlotProps->IsValid())
+        {
+            ApplySlotPropsChecked(NewSlot, *SlotProps);
+        }
+
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
+        WBP->MarkPackageDirty();
+
+        Out->SetStringField(TEXT("source"), WidgetName);
+        Out->SetStringField(TEXT("name"), Copy->GetName());
+        Out->SetStringField(TEXT("parent"), TargetParent->GetName());
+        Out->SetNumberField(TEXT("widgets_duplicated"), Subtree.Num());
         return FHaybaHandlerResult::Ok(Out);
     }
     else if (Operation == TEXT("replace"))
@@ -1171,19 +1620,50 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
             Parent->Modify();
 
             const FName ConstructName = NewName.IsEmpty() ? Widget->GetFName() : FName(*NewName);
+
+            // Free the name before reusing it. Constructing a widget with a name
+            // the outgoing widget still holds makes UE silently uniquify the new
+            // one ("Title_1"), which then breaks every binding that referenced
+            // the original name.
+            UPanelSlot* const OldSlot = Widget->Slot;
+            if (ConstructName == Widget->GetFName())
+            {
+                Widget->Rename(*MakeUniqueObjectName(Widget->GetOuter(), Widget->GetClass(), TEXT("HaybaMCP_Replaced")).ToString(),
+                    Widget->GetOuter(), REN_DontCreateRedirectors | REN_DoNotDirty);
+            }
+
             UWidget* NewWidget = WBP->WidgetTree->ConstructWidget<UWidget>(NewClass, ConstructName);
             if (!NewWidget)
                 return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree replace: ConstructWidget failed"));
+
+            int32 PropertiesCopied = 0;
+            if (bPreserveProperties)
+            {
+                PropertiesCopied = CopyCommonProperties(Widget, NewWidget);
+            }
 
             UPanelSlot* NewSlot = Parent->InsertChildAt(ChildIndex, NewWidget);
             if (!NewSlot)
                 return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree replace: InsertChildAt failed"));
 
+            // Slot layout describes the widget's place in its parent, not the
+            // widget's own identity, so it survives a class swap whenever the
+            // parent hands out the same slot type (it always does — the slot
+            // class is a property of the panel).
+            if (OldSlot && NewSlot->GetClass() == OldSlot->GetClass())
+            {
+                CopyCommonProperties(OldSlot, NewSlot);
+                NewSlot->SynchronizeProperties();
+            }
+
+            Out->SetNumberField(TEXT("properties_copied"), PropertiesCopied);
             Parent->RemoveChild(Widget);
 
             if (bPreserveGuid)
             {
-                const FName OldName = Widget->GetFName();
+                // The outgoing widget may have been renamed to a scratch name
+                // just above, so key off the name the caller asked for.
+                const FName OldName(*WidgetName);
                 FGuid OldGuid;
                 if (WBP->WidgetVariableNameToGuidMap.RemoveAndCopyValue(OldName, OldGuid))
                 {
@@ -1193,9 +1673,10 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
             }
             else
             {
-                WBP->WidgetVariableNameToGuidMap.Remove(Widget->GetFName());
+                WBP->WidgetVariableNameToGuidMap.Remove(FName(*WidgetName));
                 RegisterWidgetVariable(WBP, NewWidget);
             }
+            WBP->WidgetTree->RemoveWidget(Widget);
 
             FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
             WBP->MarkPackageDirty();
@@ -1210,7 +1691,9 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
         return FHaybaHandlerResult::Ok(Out);
     }
 
-    return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_mutate_tree: unknown operation '%s'"), *Operation));
+    return FHaybaHandlerResult::Err(FString::Printf(
+        TEXT("ui_mutate_tree: unknown operation '%s' (expected one of: remove, reparent, replace, move, rename, duplicate)"),
+        *Operation));
 }
 
 FHaybaHandlerResult FHaybaMCPUIHandler::HandleCompile(const TSharedPtr<FJsonObject>& P)
@@ -1319,6 +1802,12 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleListTypes(const TSharedPtr<FJsonOb
     FString Filter;
     P->TryGetStringField(TEXT("filter"), Filter);
 
+    bool bIncludeBlueprints = false;
+    P->TryGetBoolField(TEXT("include_blueprints"), bIncludeBlueprints);
+
+    bool bPanelsOnly = false;
+    P->TryGetBoolField(TEXT("panels_only"), bPanelsOnly);
+
     TArray<TSharedPtr<FJsonValue>> Results;
 
     for (TObjectIterator<UClass> It; It; ++It)
@@ -1327,15 +1816,22 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleListTypes(const TSharedPtr<FJsonOb
         if (!C->IsChildOf(UWidget::StaticClass())) continue;
         if (C == UWidget::StaticClass()) continue;
         if (C->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists)) continue;
-        if (!C->IsNative()) continue;
+        // Blueprint widget classes (your own reusable WBP_* components) are
+        // legitimate children — ui_add_element accepts them by class path — so
+        // they are only excluded when the caller asks for native types only.
+        if (!C->IsNative() && !bIncludeBlueprints) continue;
 
         const FString Name = C->GetName();
         if (!Filter.IsEmpty() && !Name.Contains(Filter)) continue;
 
+        const bool bIsPanel = C->IsChildOf(UPanelWidget::StaticClass());
+        if (bPanelsOnly && !bIsPanel) continue;
+
         TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
         Entry->SetStringField(TEXT("name"), Name);
         Entry->SetStringField(TEXT("class_path"), C->GetPathName());
-        Entry->SetBoolField(TEXT("is_panel"), C->IsChildOf(UPanelWidget::StaticClass()));
+        Entry->SetBoolField(TEXT("is_panel"), bIsPanel);
+        Entry->SetBoolField(TEXT("is_native"), C->IsNative());
 
         FString Desc = C->GetMetaData(TEXT("ToolTip"));
         if (Desc.IsEmpty()) Desc = C->GetMetaData(TEXT("Description"));
@@ -1347,6 +1843,591 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleListTypes(const TSharedPtr<FJsonOb
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetArrayField(TEXT("types"), Results);
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+// ── Batch authoring ─────────────────────────────────────────────────────────
+//
+// One ui_add_element per widget costs a round trip each and leaves the
+// blueprint half-built when a call in the middle fails. ui_build_tree takes the
+// whole subtree as a nested spec, so a screen is one call and the response
+// names every widget it created.
+
+namespace
+{
+    struct FBuildTreeStats
+    {
+        int32 Created = 0;
+        TArray<FString> Names;
+        TArray<FString> Warnings;
+    };
+
+    /** Recursively realise one spec node under `Parent`.
+     *  Spec: { class, name?, properties?, slot_props?, children?[] } */
+    FString BuildTreeNode(UWidgetBlueprint* WBP, UPanelWidget* Parent,
+        const TSharedPtr<FJsonObject>& Spec, FBuildTreeStats& Stats, int32 Depth)
+    {
+        if (Depth > 64) return TEXT("ui_build_tree: spec nested deeper than 64 levels");
+        if (!Spec.IsValid()) return TEXT("ui_build_tree: empty node in children");
+
+        FString ClassName;
+        if (!Spec->TryGetStringField(TEXT("class"), ClassName) || ClassName.IsEmpty())
+            return TEXT("ui_build_tree: every node needs a 'class'");
+
+        UClass* Class = ResolveWidgetClass(ClassName);
+        if (!Class || !Class->IsChildOf(UWidget::StaticClass()))
+            return FString::Printf(TEXT("ui_build_tree: unknown class '%s'"), *ClassName);
+
+        FString Name;
+        Spec->TryGetStringField(TEXT("name"), Name);
+        if (!Name.IsEmpty() && !ValidateWidgetName(WBP->WidgetTree, Name))
+            return FString::Printf(TEXT("ui_build_tree: widget name '%s' is already taken"), *Name);
+
+        const FName ConstructName = Name.IsEmpty() ? NAME_None : FName(*Name);
+        UWidget* New = WBP->WidgetTree->ConstructWidget<UWidget>(Class, ConstructName);
+        if (!New) return FString::Printf(TEXT("ui_build_tree: could not construct '%s'"), *ClassName);
+
+        UPanelSlot* Slot = Parent->AddChild(New);
+        if (!Slot)
+            return FString::Printf(TEXT("ui_build_tree: '%s' (a %s) refused another child"),
+                *Parent->GetName(), *Parent->GetClass()->GetName());
+
+        RegisterWidgetVariable(WBP, New);
+        Stats.Created++;
+        Stats.Names.Add(New->GetName());
+
+        const TSharedPtr<FJsonObject>* SlotProps = nullptr;
+        if (Spec->TryGetObjectField(TEXT("slot_props"), SlotProps) && SlotProps && SlotProps->IsValid())
+        {
+            const FSlotApplyResult R = ApplySlotPropsChecked(Slot, *SlotProps);
+            for (const FString& K : R.Unknown)
+            {
+                Stats.Warnings.Add(FString::Printf(TEXT("%s: slot key '%s' is not valid for a %s"),
+                    *New->GetName(), *K, *Slot->GetClass()->GetName()));
+            }
+        }
+
+        const TSharedPtr<FJsonObject>* Props = nullptr;
+        if (Spec->TryGetObjectField(TEXT("properties"), Props) && Props && Props->IsValid())
+        {
+            for (const auto& Pair : (*Props)->Values)
+            {
+                if (!HaybaReflection::SetProp(New, Pair.Key, Pair.Value))
+                {
+                    Stats.Warnings.Add(FString::Printf(TEXT("%s: property '%s' was rejected by %s"),
+                        *New->GetName(), *Pair.Key, *Class->GetName()));
+                }
+            }
+        }
+
+        const TArray<TSharedPtr<FJsonValue>>* Children = nullptr;
+        if (Spec->TryGetArrayField(TEXT("children"), Children) && Children && Children->Num() > 0)
+        {
+            UPanelWidget* AsPanel = Cast<UPanelWidget>(New);
+            if (!AsPanel)
+            {
+                return FString::Printf(TEXT("ui_build_tree: '%s' is a %s, which is not a panel and cannot take children"),
+                    *New->GetName(), *Class->GetName());
+            }
+            for (const TSharedPtr<FJsonValue>& ChildVal : *Children)
+            {
+                if (!ChildVal.IsValid() || ChildVal->Type != EJson::Object)
+                    return TEXT("ui_build_tree: every entry of 'children' must be an object");
+                const FString Err = BuildTreeNode(WBP, AsPanel, ChildVal->AsObject(), Stats, Depth + 1);
+                if (!Err.IsEmpty()) return Err;
+            }
+        }
+
+        return FString();
+    }
+}
+
+FHaybaHandlerResult FHaybaMCPUIHandler::HandleBuildTree(const TSharedPtr<FJsonObject>& P)
+{
+    FString BPPath, ParentName;
+    if (!P->TryGetStringField(TEXT("widget_blueprint_path"), BPPath) || BPPath.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("ui_build_tree: missing widget_blueprint_path"));
+    P->TryGetStringField(TEXT("parent_widget_name"), ParentName);
+
+    UWidgetBlueprint* WBP = LoadObject<UWidgetBlueprint>(nullptr, *BPPath);
+    if (!WBP || !WBP->WidgetTree)
+        return FHaybaHandlerResult::Err(TEXT("ui_build_tree: widget blueprint not found"));
+
+    UPanelWidget* Parent = nullptr;
+    if (ParentName.IsEmpty())
+    {
+        Parent = Cast<UPanelWidget>(WBP->WidgetTree->RootWidget);
+        if (!Parent)
+            return FHaybaHandlerResult::Err(TEXT("ui_build_tree: root widget is not a panel; pass parent_widget_name"));
+    }
+    else
+    {
+        Parent = Cast<UPanelWidget>(FindWidgetByName(WBP->WidgetTree, ParentName));
+        if (!Parent)
+            return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_build_tree: parent '%s' not found or not a panel"), *ParentName));
+    }
+
+    // Accept either a single root node or an array of siblings.
+    TArray<TSharedPtr<FJsonValue>> Nodes;
+    const TSharedPtr<FJsonObject>* SingleNode = nullptr;
+    const TArray<TSharedPtr<FJsonValue>>* NodeArray = nullptr;
+    if (P->TryGetObjectField(TEXT("tree"), SingleNode) && SingleNode && SingleNode->IsValid())
+    {
+        Nodes.Add(MakeShared<FJsonValueObject>(SingleNode->ToSharedRef()));
+    }
+    else if (P->TryGetArrayField(TEXT("tree"), NodeArray) && NodeArray)
+    {
+        Nodes = *NodeArray;
+    }
+    else
+    {
+        return FHaybaHandlerResult::Err(TEXT("ui_build_tree: missing 'tree' (an object, or an array of objects, each {class, name?, properties?, slot_props?, children?})"));
+    }
+
+    WBP->Modify();
+
+    FBuildTreeStats Stats;
+    FString Error;
+    for (const TSharedPtr<FJsonValue>& Node : Nodes)
+    {
+        if (!Node.IsValid() || Node->Type != EJson::Object)
+        {
+            Error = TEXT("ui_build_tree: every entry of 'tree' must be an object");
+            break;
+        }
+        Error = BuildTreeNode(WBP, Parent, Node->AsObject(), Stats, 0);
+        if (!Error.IsEmpty()) break;
+    }
+
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
+    WBP->MarkPackageDirty();
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("widget_blueprint_path"), WBP->GetPathName());
+    Out->SetStringField(TEXT("parent"), Parent->GetName());
+    Out->SetNumberField(TEXT("created"), Stats.Created);
+
+    TArray<TSharedPtr<FJsonValue>> NameArr;
+    for (const FString& N : Stats.Names) NameArr.Add(MakeShared<FJsonValueString>(N));
+    Out->SetArrayField(TEXT("names"), NameArr);
+
+    if (Stats.Warnings.Num() > 0)
+    {
+        TArray<TSharedPtr<FJsonValue>> WArr;
+        for (const FString& W : Stats.Warnings) WArr.Add(MakeShared<FJsonValueString>(W));
+        Out->SetArrayField(TEXT("warnings"), WArr);
+    }
+
+    if (!Error.IsEmpty())
+    {
+        // Partial builds are kept, not rolled back — the widgets that landed are
+        // usually the ones the caller wanted, and silently discarding them would
+        // hide how far the spec got. The error names where it stopped and the
+        // response lists exactly what exists now.
+        Out->SetStringField(TEXT("error"), Error);
+        Out->SetBoolField(TEXT("partial"), true);
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("%s — %d widget(s) were created before the failure: %s"),
+            *Error, Stats.Created, *FString::Join(Stats.Names, TEXT(", "))));
+    }
+
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetVariable(const TSharedPtr<FJsonObject>& P)
+{
+    FString BPPath, WidgetName;
+    if (!P->TryGetStringField(TEXT("widget_blueprint_path"), BPPath) || BPPath.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("ui_set_variable: missing widget_blueprint_path"));
+    if (!P->TryGetStringField(TEXT("widget_name"), WidgetName) || WidgetName.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("ui_set_variable: missing widget_name"));
+
+    UWidgetBlueprint* WBP = LoadObject<UWidgetBlueprint>(nullptr, *BPPath);
+    if (!WBP || !WBP->WidgetTree)
+        return FHaybaHandlerResult::Err(TEXT("ui_set_variable: widget blueprint not found"));
+
+    UWidget* Widget = FindWidgetByName(WBP->WidgetTree, WidgetName);
+    if (!Widget)
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_set_variable: widget '%s' not found"), *WidgetName));
+
+    bool bIsVariable = true;
+    P->TryGetBoolField(TEXT("is_variable"), bIsVariable);
+
+    WBP->Modify();
+    Widget->Modify();
+    Widget->bIsVariable = bIsVariable;
+
+    if (bIsVariable) RegisterWidgetVariable(WBP, Widget);
+    else WBP->WidgetVariableNameToGuidMap.Remove(Widget->GetFName());
+
+    FString Category;
+    if (P->TryGetStringField(TEXT("category"), Category) && !Category.IsEmpty())
+    {
+        Widget->SetCategoryName(Category);
+    }
+
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
+    WBP->MarkPackageDirty();
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("widget_name"), Widget->GetName());
+    Out->SetBoolField(TEXT("is_variable"), bIsVariable);
+    if (!Category.IsEmpty()) Out->SetStringField(TEXT("category"), Category);
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPUIHandler::HandleListWidgetBlueprints(const TSharedPtr<FJsonObject>& P)
+{
+    FString PathFilter, NameFilter;
+    P->TryGetStringField(TEXT("path"), PathFilter);
+    P->TryGetStringField(TEXT("filter"), NameFilter);
+
+    IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+
+    FARFilter Filter;
+    Filter.ClassPaths.Add(UWidgetBlueprint::StaticClass()->GetClassPathName());
+    Filter.bRecursiveClasses = true;
+    if (!PathFilter.IsEmpty())
+    {
+        Filter.PackagePaths.Add(FName(*PathFilter));
+        Filter.bRecursivePaths = true;
+    }
+
+    TArray<FAssetData> Assets;
+    Registry.GetAssets(Filter, Assets);
+
+    TArray<TSharedPtr<FJsonValue>> Results;
+    for (const FAssetData& Asset : Assets)
+    {
+        const FString AssetName = Asset.AssetName.ToString();
+        if (!NameFilter.IsEmpty() && !AssetName.Contains(NameFilter)) continue;
+
+        TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+        Entry->SetStringField(TEXT("name"), AssetName);
+        Entry->SetStringField(TEXT("path"), Asset.GetObjectPathString());
+        Entry->SetStringField(TEXT("package"), Asset.PackageName.ToString());
+
+        // The parent class comes from asset-registry tags, so this stays cheap:
+        // no blueprint is loaded just to list it.
+        FString ParentClass;
+        if (Asset.GetTagValue(FBlueprintTags::ParentClassPath, ParentClass))
+        {
+            Entry->SetStringField(TEXT("parent_class"), ParentClass);
+        }
+        // The `_C` suffix form is what ui_add_element / ui_create_widget need to
+        // reference this blueprint as a class, so hand it over directly.
+        Entry->SetStringField(TEXT("class_path"), Asset.GetObjectPathString() + TEXT("_C"));
+
+        Results.Add(MakeShared<FJsonValueObject>(Entry));
+    }
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetArrayField(TEXT("widget_blueprints"), Results);
+    Out->SetNumberField(TEXT("count"), Results.Num());
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+// ── Measurement ─────────────────────────────────────────────────────────────
+
+FHaybaHandlerResult FHaybaMCPUIHandler::HandleMeasureText(const TSharedPtr<FJsonObject>& P)
+{
+    FString Text;
+    if (!P->TryGetStringField(TEXT("text"), Text))
+        return FHaybaHandlerResult::Err(TEXT("ui_measure_text: missing text"));
+
+    double AvailableWidth = 0.0;
+    P->TryGetNumberField(TEXT("available_width"), AvailableWidth);
+
+    double FontScale = 1.0;
+    P->TryGetNumberField(TEXT("font_scale"), FontScale);
+
+    FSlateFontInfo Font;
+    bool bHaveFont = false;
+
+    // Either measure against a live widget's real font, or against an explicit
+    // font/size pair. The former is what validation uses — measuring with a
+    // guessed font would defeat the entire point of measuring.
+    FString BPPath, WidgetName;
+    if (P->TryGetStringField(TEXT("widget_blueprint_path"), BPPath) && !BPPath.IsEmpty() &&
+        P->TryGetStringField(TEXT("widget_name"), WidgetName) && !WidgetName.IsEmpty())
+    {
+        UWidgetBlueprint* WBP = LoadObject<UWidgetBlueprint>(nullptr, *BPPath);
+        if (!WBP || !WBP->WidgetTree)
+            return FHaybaHandlerResult::Err(TEXT("ui_measure_text: widget blueprint not found"));
+        UWidget* Widget = FindWidgetByName(WBP->WidgetTree, WidgetName);
+        if (!Widget)
+            return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_measure_text: widget '%s' not found"), *WidgetName));
+        if (!HaybaUILayout::GetWidgetFont(Widget, Font))
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("ui_measure_text: '%s' is a %s, which renders no text and has no font"),
+                *WidgetName, *Widget->GetClass()->GetName()));
+        bHaveFont = true;
+
+        // Default the available width to the widget's own laid-out box so the
+        // common call needs nothing but the blueprint, the widget and the text.
+        if (AvailableWidth <= 0.0)
+        {
+            TMap<FString, FHaybaUIWidgetGeom> Geoms;
+            FString LayoutError;
+            if (HaybaUILayout::ComputeGeometry(WBP, HaybaUILayout::GetDesignSize(WBP), Geoms, LayoutError))
+            {
+                if (const FHaybaUIWidgetGeom* G = Geoms.Find(WidgetName))
+                {
+                    AvailableWidth = G->Size.X;
+                }
+            }
+        }
+    }
+    else
+    {
+        FString FontPath;
+        double Size = 0.0;
+        if (!P->TryGetNumberField(TEXT("font_size"), Size) || Size <= 0.0)
+            return FHaybaHandlerResult::Err(TEXT("ui_measure_text: pass either (widget_blueprint_path + widget_name) or (font_size [+ font_asset])"));
+
+        if (P->TryGetStringField(TEXT("font_asset"), FontPath) && !FontPath.IsEmpty())
+        {
+            UObject* FontObj = LoadObject<UObject>(nullptr, *FontPath);
+            if (!FontObj)
+                return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_measure_text: font asset '%s' could not be loaded"), *FontPath));
+            if (FontObj->IsA<UFontFace>())
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("ui_measure_text: '%s' is a UFontFace. Slate measures (and renders) text through a composite UFont — pass the UFont asset."),
+                    *FontPath));
+            Font.FontObject = FontObj;
+        }
+        else
+        {
+            // No font given: fall back to the editor's own UI font so the answer
+            // is still a real measurement rather than an invented average.
+            Font = FCoreStyle::GetDefaultFontStyle("Regular", (int32)Size);
+        }
+        Font.Size = (float)Size;
+
+        FString Typeface;
+        if (P->TryGetStringField(TEXT("typeface"), Typeface) && !Typeface.IsEmpty())
+            Font.TypefaceFontName = FName(*Typeface);
+
+        bHaveFont = true;
+    }
+
+    if (!bHaveFont)
+        return FHaybaHandlerResult::Err(TEXT("ui_measure_text: no font resolved"));
+
+    const FHaybaUITextFit Fit = HaybaUILayout::AnalyzeTextFit(Text, Font, (float)AvailableWidth, (float)FontScale);
+    if (!Fit.bValid)
+        return FHaybaHandlerResult::Err(TEXT("ui_measure_text: the Slate font measure service is unavailable (headless editor?)"));
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("text"), Text);
+    Out->SetNumberField(TEXT("width_px"), Fit.MeasuredWidth);
+    Out->SetNumberField(TEXT("height_px"), Fit.MeasuredHeight);
+    Out->SetNumberField(TEXT("available_width_px"), Fit.AvailableWidth);
+    Out->SetBoolField(TEXT("overflows"), Fit.bOverflows);
+    Out->SetNumberField(TEXT("chars_that_fit"), Fit.CharsThatFit);
+    Out->SetNumberField(TEXT("typical_chars_that_fit"), Fit.TypicalChars);
+    Out->SetNumberField(TEXT("worst_case_chars_that_fit"), Fit.WorstCaseChars);
+    Out->SetNumberField(TEXT("font_size"), Font.Size);
+    if (Font.FontObject) Out->SetStringField(TEXT("font_object"), Font.FontObject->GetPathName());
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPUIHandler::HandleLayoutSnapshot(const TSharedPtr<FJsonObject>& P)
+{
+    FString BPPath;
+    if (!P->TryGetStringField(TEXT("widget_blueprint_path"), BPPath) || BPPath.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("ui_layout_snapshot: missing widget_blueprint_path"));
+
+    UWidgetBlueprint* WBP = LoadObject<UWidgetBlueprint>(nullptr, *BPPath);
+    if (!WBP || !WBP->WidgetTree)
+        return FHaybaHandlerResult::Err(TEXT("ui_layout_snapshot: widget blueprint not found"));
+
+    FVector2D ScreenSize = HaybaUILayout::GetDesignSize(WBP);
+    double W = 0.0, H = 0.0;
+    if (P->TryGetNumberField(TEXT("screen_width"), W) && W > 0.0)  ScreenSize.X = W;
+    if (P->TryGetNumberField(TEXT("screen_height"), H) && H > 0.0) ScreenSize.Y = H;
+
+    TMap<FString, FHaybaUIWidgetGeom> Geoms;
+    FString LayoutError;
+    const bool bHaveLayout = HaybaUILayout::ComputeGeometry(WBP, ScreenSize, Geoms, LayoutError);
+
+    TArray<TSharedPtr<FJsonValue>> Widgets;
+
+    WBP->WidgetTree->ForEachWidget([&](UWidget* Widget)
+    {
+        if (!Widget) return;
+
+        TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+        Entry->SetStringField(TEXT("name"), Widget->GetName());
+        Entry->SetStringField(TEXT("class"), Widget->GetClass()->GetName());
+        Entry->SetStringField(TEXT("parent"), Widget->GetParent() ? Widget->GetParent()->GetName() : FString());
+        Entry->SetStringField(TEXT("slot_class"), ResolveSlotType(Widget));
+        Entry->SetBoolField(TEXT("is_panel"), Widget->IsA<UPanelWidget>());
+        Entry->SetBoolField(TEXT("is_variable"), Widget->bIsVariable);
+        Entry->SetStringField(TEXT("visibility"), UEnum::GetValueAsString(Widget->GetVisibility()));
+        Entry->SetNumberField(TEXT("render_opacity"), Widget->GetRenderOpacity());
+        Entry->SetBoolField(TEXT("is_enabled"), Widget->GetIsEnabled());
+
+        // Interactivity is what most input/accessibility rules key off, and it
+        // is not derivable from the class name alone on the MCP side.
+        const bool bInteractive =
+            Widget->IsA<UButton>() || Widget->IsA<UCheckBox>() || Widget->IsA<USlider>() ||
+            Widget->IsA<USpinBox>() || Widget->IsA<UComboBoxString>() || Widget->IsA<UEditableText>() ||
+            Widget->IsA<UEditableTextBox>() || Widget->IsA<UMultiLineEditableTextBox>();
+        Entry->SetBoolField(TEXT("is_interactive"), bInteractive);
+        Entry->SetBoolField(TEXT("is_focusable"), Widget->IsFocusable());
+
+        if (const FHaybaUIWidgetGeom* G = Geoms.Find(Widget->GetName()))
+        {
+            Entry->SetNumberField(TEXT("x"), G->Position.X);
+            Entry->SetNumberField(TEXT("y"), G->Position.Y);
+            Entry->SetNumberField(TEXT("width"), G->Size.X);
+            Entry->SetNumberField(TEXT("height"), G->Size.Y);
+            Entry->SetNumberField(TEXT("depth"), G->Depth);
+            Entry->SetBoolField(TEXT("laid_out"), !G->IsDegenerate());
+        }
+        else
+        {
+            Entry->SetBoolField(TEXT("laid_out"), false);
+        }
+
+        if (UCanvasPanelSlot* CSlot = Cast<UCanvasPanelSlot>(Widget->Slot))
+        {
+            const FAnchors A = CSlot->GetAnchors();
+            TSharedPtr<FJsonObject> Anch = MakeShared<FJsonObject>();
+            Anch->SetNumberField(TEXT("min_x"), A.Minimum.X);
+            Anch->SetNumberField(TEXT("min_y"), A.Minimum.Y);
+            Anch->SetNumberField(TEXT("max_x"), A.Maximum.X);
+            Anch->SetNumberField(TEXT("max_y"), A.Maximum.Y);
+            Entry->SetObjectField(TEXT("anchors"), Anch);
+            Entry->SetNumberField(TEXT("z_order"), CSlot->GetZOrder());
+            Entry->SetBoolField(TEXT("auto_size"), CSlot->GetAutoSize());
+        }
+
+        // Text facts, including the measurement that only Slate can do.
+        FString Text;
+        FSlateFontInfo Font;
+        const bool bHasText = HaybaUILayout::GetWidgetText(Widget, Text);
+        const bool bHasFont = HaybaUILayout::GetWidgetFont(Widget, Font);
+
+        if (bHasText || bHasFont)
+        {
+            TSharedPtr<FJsonObject> TextObj = MakeShared<FJsonObject>();
+            if (bHasText) TextObj->SetStringField(TEXT("text"), Text);
+            if (bHasFont)
+            {
+                TextObj->SetNumberField(TEXT("font_size"), Font.Size);
+                TextObj->SetStringField(TEXT("typeface"), Font.TypefaceFontName.ToString());
+                if (Font.FontObject)
+                {
+                    TextObj->SetStringField(TEXT("font_object"), Font.FontObject->GetPathName());
+                    TextObj->SetBoolField(TEXT("font_is_font_face"), Font.FontObject->IsA<UFontFace>());
+                }
+                else
+                {
+                    TextObj->SetBoolField(TEXT("font_is_font_face"), false);
+                }
+
+                float AvailableWidth = 0.f;
+                if (const FHaybaUIWidgetGeom* G = Geoms.Find(Widget->GetName()))
+                {
+                    AvailableWidth = (float)G->Size.X;
+                }
+                if (bHasText && AvailableWidth > 0.f)
+                {
+                    const FHaybaUITextFit Fit = HaybaUILayout::AnalyzeTextFit(Text, Font, AvailableWidth);
+                    if (Fit.bValid)
+                    {
+                        TextObj->SetNumberField(TEXT("measured_width"), Fit.MeasuredWidth);
+                        TextObj->SetNumberField(TEXT("measured_height"), Fit.MeasuredHeight);
+                        TextObj->SetNumberField(TEXT("available_width"), Fit.AvailableWidth);
+                        TextObj->SetBoolField(TEXT("overflows"), Fit.bOverflows);
+                        TextObj->SetNumberField(TEXT("chars_that_fit"), Fit.CharsThatFit);
+                        TextObj->SetNumberField(TEXT("typical_chars_that_fit"), Fit.TypicalChars);
+                        TextObj->SetNumberField(TEXT("worst_case_chars_that_fit"), Fit.WorstCaseChars);
+                    }
+                }
+            }
+
+            if (UTextBlock* TB = Cast<UTextBlock>(Widget))
+            {
+                TextObj->SetBoolField(TEXT("auto_wrap"), TB->GetAutoWrapText());
+                const FLinearColor C = TB->GetColorAndOpacity().GetSpecifiedColor();
+                TArray<TSharedPtr<FJsonValue>> ColorArr;
+                ColorArr.Add(MakeShared<FJsonValueNumber>(C.R));
+                ColorArr.Add(MakeShared<FJsonValueNumber>(C.G));
+                ColorArr.Add(MakeShared<FJsonValueNumber>(C.B));
+                ColorArr.Add(MakeShared<FJsonValueNumber>(C.A));
+                TextObj->SetArrayField(TEXT("color"), ColorArr);
+            }
+            Entry->SetObjectField(TEXT("text_info"), TextObj);
+        }
+
+        // Brush facts for the fill/contrast rules.
+        if (UImage* Img = Cast<UImage>(Widget))
+        {
+            TSharedPtr<FJsonObject> BrushObj = MakeShared<FJsonObject>();
+            const FSlateBrush& B = Img->GetBrush();
+            BrushObj->SetBoolField(TEXT("has_resource"), B.GetResourceObject() != nullptr);
+            if (B.GetResourceObject()) BrushObj->SetStringField(TEXT("resource"), B.GetResourceObject()->GetPathName());
+            const FLinearColor Tint = Img->GetColorAndOpacity();
+            TArray<TSharedPtr<FJsonValue>> TintArr;
+            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.R));
+            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.G));
+            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.B));
+            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.A));
+            BrushObj->SetArrayField(TEXT("tint"), TintArr);
+            BrushObj->SetNumberField(TEXT("image_size_x"), B.ImageSize.X);
+            BrushObj->SetNumberField(TEXT("image_size_y"), B.ImageSize.Y);
+            Entry->SetObjectField(TEXT("brush_info"), BrushObj);
+        }
+        if (UBorder* Bd = Cast<UBorder>(Widget))
+        {
+            TSharedPtr<FJsonObject> BrushObj = MakeShared<FJsonObject>();
+            const FLinearColor Tint = Bd->GetBrushColor();
+            TArray<TSharedPtr<FJsonValue>> TintArr;
+            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.R));
+            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.G));
+            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.B));
+            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.A));
+            BrushObj->SetArrayField(TEXT("tint"), TintArr);
+            // A Border's own brush is reached through the reflection system
+            // rather than the member: UMG moved these properties behind
+            // accessors, and the member is not public in current engine
+            // versions. The contrast rules only need the tint, so a missing
+            // brush here degrades to "no resource" rather than failing.
+            bool bHasResource = false;
+            if (FStructProperty* BgProp = CastField<FStructProperty>(Bd->GetClass()->FindPropertyByName(TEXT("Background"))))
+            {
+                if (BgProp->Struct == TBaseStructure<FSlateBrush>::Get() ||
+                    BgProp->Struct->GetName() == TEXT("SlateBrush"))
+                {
+                    const FSlateBrush* Brush = BgProp->ContainerPtrToValuePtr<FSlateBrush>(Bd);
+                    bHasResource = Brush && Brush->GetResourceObject() != nullptr;
+                }
+            }
+            BrushObj->SetBoolField(TEXT("has_resource"), bHasResource);
+            Entry->SetObjectField(TEXT("brush_info"), BrushObj);
+        }
+
+        if (UPanelWidget* Panel = Cast<UPanelWidget>(Widget))
+        {
+            Entry->SetNumberField(TEXT("child_count"), Panel->GetChildrenCount());
+        }
+
+        Widgets.Add(MakeShared<FJsonValueObject>(Entry));
+    });
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("widget_blueprint_path"), WBP->GetPathName());
+    Out->SetNumberField(TEXT("screen_width"), ScreenSize.X);
+    Out->SetNumberField(TEXT("screen_height"), ScreenSize.Y);
+    Out->SetBoolField(TEXT("layout_resolved"), bHaveLayout);
+    // Callers MUST be able to tell "no problems found" from "could not measure".
+    // Rules that depend on geometry are skipped, not passed, when this is set.
+    if (!bHaveLayout) Out->SetStringField(TEXT("layout_error"), LayoutError);
+    Out->SetNumberField(TEXT("widget_count"), Widgets.Num());
+    Out->SetArrayField(TEXT("widgets"), Widgets);
     return FHaybaHandlerResult::Ok(Out);
 }
 

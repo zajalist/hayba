@@ -30,6 +30,7 @@ function fixtureCaptured(): Map<string, CapturedTool> {
     ['validator_clear',             'validator'],
     ['validator_rules',             'validator'],
     ['validator_set_rule_enabled',  'validator'],
+    ['validator_strictness',        'validator'],
     // PLUMB constraint subsystem — captured under the plumb dir, re-registered
     // as always-on via passthrough.
     ['plumb_primitives',            'plumb'],

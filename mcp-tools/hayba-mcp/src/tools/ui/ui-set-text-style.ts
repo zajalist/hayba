@@ -14,7 +14,12 @@ export const schema = z.object({
   widget_blueprint_path: z.string().min(1).describe('Full path of the target Widget Blueprint'),
   widget_name: z.string().min(1).describe('Name of the TextBlock widget to style'),
   text: z.string().optional().describe('Text content to display'),
-  font_asset: z.string().optional().describe('Font asset path, e.g. "/Game/Aphrosia/UI/Fonts/Cormorant-SemiBold"'),
+  font_asset: z
+    .string()
+    .optional()
+    .describe(
+      'Path to a composite UFont asset, e.g. "/Game/UI/Fonts/Cormorant". Must NOT be a UFontFace — Slate renders a raw font face as its glyph-preview tiles instead of as text, and the handler warns when it sees one.',
+    ),
   typeface: z.string().optional().describe('Font typeface name (e.g. "Regular", "Bold", "Italic")'),
   size: z.number().optional().describe('Font size in points'),
   letter_spacing: z.number().optional().describe('Letter spacing value'),
@@ -56,9 +61,9 @@ export const uiSetTextStyleHandler: ToolHandler = async (args) => {
 
   if (font_asset !== undefined || size !== undefined || typeface !== undefined) {
     const font: Record<string, unknown> = {};
-    if (font_asset !== undefined) font.FontObject = { ObjectPath: font_asset };
+    if (font_asset !== undefined) font.FontObject = font_asset;
     if (size !== undefined) font.Size = size;
-    if (typeface !== undefined) font.Typeface = { FontName: typeface };
+    if (typeface !== undefined) font.TypefaceFontName = typeface;
     properties.Font = font;
   }
 

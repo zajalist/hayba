@@ -124,6 +124,31 @@ import {
   schema as uiListWidgetTypesSchema,
   uiListWidgetTypesHandler,
 } from './ui/ui-list-widget-types.js';
+import { meta as uiBuildTreeMeta, schema as uiBuildTreeSchema, uiBuildTreeHandler } from './ui/ui-build-tree.js';
+import {
+  meta as uiDuplicateElementMeta,
+  schema as uiDuplicateElementSchema,
+  uiDuplicateElementHandler,
+} from './ui/ui-duplicate-element.js';
+import { meta as uiMoveElementMeta, schema as uiMoveElementSchema, uiMoveElementHandler } from './ui/ui-move-element.js';
+import {
+  meta as uiRenameElementMeta,
+  schema as uiRenameElementSchema,
+  uiRenameElementHandler,
+} from './ui/ui-rename-element.js';
+import { meta as uiSetVariableMeta, schema as uiSetVariableSchema, uiSetVariableHandler } from './ui/ui-set-variable.js';
+import {
+  meta as uiListWidgetBlueprintsMeta,
+  schema as uiListWidgetBlueprintsSchema,
+  uiListWidgetBlueprintsHandler,
+} from './ui/ui-list-widget-blueprints.js';
+import { meta as uiValidateMeta, schema as uiValidateSchema, uiValidateHandler } from './ui/ui-validate.js';
+import { meta as uiMeasureTextMeta, schema as uiMeasureTextSchema, uiMeasureTextHandler } from './ui/ui-measure-text.js';
+import {
+  meta as uiLayoutSnapshotMeta,
+  schema as uiLayoutSnapshotSchema,
+  uiLayoutSnapshotHandler,
+} from './ui/ui-layout-snapshot.js';
 import {
   meta as uiRemoveElementMeta,
   schema as uiRemoveElementSchema,
@@ -249,6 +274,8 @@ import {
   validatorRulesHandler,
   validatorSetRuleEnabledSchema,
   validatorSetRuleEnabledHandler,
+  validatorStrictnessHandler,
+  validatorStrictnessSchema,
   defaultScratchDir as validatorScratchDir,
 } from './validator/tools.js';
 import { ensureConnected as ensureUeForValidator } from '../tcp-client.js';
@@ -986,7 +1013,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'ui_query',
     description:
-      'Return the widget tree of a Widget Blueprint — per-widget name, class, slot, variable GUID, and typed properties. Use include_properties/include_guid/include_slot to control detail depth.',
+      'Return the widget tree of a Widget Blueprint - per-widget name, class, slot, variable GUID and typed properties. Pass name_pattern / class_filter / flatten to get a flat list of matching widgets instead of the whole tree.',
     meta: uiQueryMeta,
     handler: uiQueryHandler,
     cost: 'low',
@@ -997,7 +1024,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'ui_set_widget_properties',
     description:
-      'Generic tool: set named properties + slot layout on a designer widget in a Widget Blueprint. Operates on the authoritative WidgetTree (not the generated template). Uses FScopedTransaction for undo. Prefer the typed tools (ui_set_property, ui_set_text_style, ui_set_slot_layout, etc.) for common operations.',
+      'Generic tool: set named properties and/or slot layout on a designer widget. Operates on the authoritative WidgetTree (not the generated template). Property values may be nested objects for struct properties (Brush, Font). Reports per-key outcomes: succeeded, failed_properties, unknown_slot_props. NOT transacted - these edits deliberately stay out of the editor undo stack, because the transaction buffer can pin PIE references and crash the editor. Prefer the typed tools (ui_set_property, ui_set_text_style, ui_set_slot_layout) for common operations.',
     meta: uiSetWidgetPropertiesMeta,
     handler: uiSetWidgetPropertiesHandler,
     cost: 'medium',
@@ -1107,22 +1134,22 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'ui_list_widget_types',
     description:
-      'List all available UMG widget classes that can be added to a Widget Blueprint via ui_add_element or ui_replace_element. Optionally filter by name.',
+      'List UMG widget classes that can be added via ui_add_element or ui_replace_element. Native classes by default; pass include_blueprints to also list your own Widget Blueprint classes, or panels_only to narrow to containers.',
     meta: uiListWidgetTypesMeta,
     handler: uiListWidgetTypesHandler,
     cost: 'low',
-    returns: '{widget_types:[{name, class_path, is_panel, description}]}',
+    returns: '{types:[{name, class_path, is_panel, is_native, description}]}',
     niche: UI,
     schema: uiListWidgetTypesSchema.shape,
   },
   {
     name: 'ui_remove_element',
     description:
-      'Remove a widget from a Widget Blueprint designer tree. Cannot remove the root without an explicit replacement_root. Widget variable GUID and member state are cleaned up.',
+      'Remove a widget from a Widget Blueprint designer tree, together with its whole subtree. Variable GUIDs for every removed descendant are purged, not just the named widget. Removing the root requires an explicit replacement_root.',
     meta: uiRemoveElementMeta,
     handler: uiRemoveElementHandler,
     cost: 'medium',
-    returns: '{widget_blueprint_path, operation, removed_widget, parent_before_removal, child_index}',
+    returns: '{widget_blueprint_path, operation, widget_name, old_parent, old_child_index?}',
     niche: UI,
     schema: uiRemoveElementSchema.shape,
   },
@@ -1133,21 +1160,124 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     meta: uiReparentElementMeta,
     handler: uiReparentElementHandler,
     cost: 'medium',
-    returns: '{widget_blueprint_path, operation, widget_name, old_parent, new_parent, old_index, new_index}',
+    returns: '{widget_blueprint_path, operation, widget_name, old_parent, old_child_index, new_parent, new_child_index, new_slot_class, unknown_slot_props?}',
     niche: UI,
     schema: uiReparentElementSchema.shape,
   },
   {
     name: 'ui_replace_element',
     description:
-      'Replace a designer widget with a new widget of a different class at the same position. Preserves parent, child index, and optionally the name and variable GUID.',
+      'Replace a designer widget with a different class at the same position. Preserves parent, child index and slot layout; optionally the name, the variable GUID (preserve_guid) and every property the two classes share by name and type (preserve_properties).',
     meta: uiReplaceElementMeta,
     handler: uiReplaceElementHandler,
     cost: 'medium',
     returns:
-      '{widget_blueprint_path, operation, old_widget, old_class, new_widget, new_class, parent, child_index, preserved_guid, migrated_properties, discarded_properties}',
+      '{widget_blueprint_path, operation, widget_name, old_class, new_class, new_name, child_index, properties_copied}',
     niche: UI,
     schema: uiReplaceElementSchema.shape,
+  },
+
+  {
+    name: 'ui_build_tree',
+    description:
+      'Build a whole widget subtree from one nested spec - {class, name?, properties?, slot_props?, children?}. One call instead of one ui_add_element per widget. Depth-first in order; on failure the widgets already created are KEPT and named in the error so you can see exactly how far it got.',
+    meta: uiBuildTreeMeta,
+    handler: uiBuildTreeHandler,
+    cost: 'medium',
+    returns: '{widget_blueprint_path, parent, created, names[], warnings?[], error?, partial?}',
+    niche: UI,
+    schema: uiBuildTreeSchema.shape,
+  },
+  {
+    name: 'ui_duplicate_element',
+    description:
+      'Duplicate a widget and its entire subtree, cloning properties and slot layout. The copy and every duplicated descendant are registered as designer variables. Use for repeated rows, cards and list entries.',
+    meta: uiDuplicateElementMeta,
+    handler: uiDuplicateElementHandler,
+    cost: 'medium',
+    returns: '{widget_blueprint_path, operation, source, name, parent, widgets_duplicated}',
+    niche: UI,
+    schema: uiDuplicateElementSchema.shape,
+  },
+  {
+    name: 'ui_move_element',
+    description:
+      'Reorder a widget among its siblings. Child order is draw order and tab order in box panels. Slot layout is preserved across the move; an out-of-range index is rejected with the valid range.',
+    meta: uiMoveElementMeta,
+    handler: uiMoveElementHandler,
+    cost: 'medium',
+    returns: '{widget_blueprint_path, operation, widget_name, parent, old_index, new_index}',
+    niche: UI,
+    schema: uiMoveElementSchema.shape,
+  },
+  {
+    name: 'ui_rename_element',
+    description:
+      'Rename a designer widget, carrying its variable GUID across so existing bindings keep resolving. The widget name IS the variable name the graph and C++ BindWidget use, so this is an API change.',
+    meta: uiRenameElementMeta,
+    handler: uiRenameElementHandler,
+    cost: 'medium',
+    returns: '{widget_blueprint_path, operation, old_name, new_name, guid_preserved}',
+    niche: UI,
+    schema: uiRenameElementSchema.shape,
+  },
+  {
+    name: 'ui_set_variable',
+    description:
+      'Expose (or hide) a widget as a blueprint variable - the designer Is Variable checkbox. Without it the graph and C++ BindWidget cannot reach the widget at all.',
+    meta: uiSetVariableMeta,
+    handler: uiSetVariableHandler,
+    cost: 'low',
+    returns: '{widget_name, is_variable, category?}',
+    niche: UI,
+    schema: uiSetVariableSchema.shape,
+  },
+  {
+    name: 'ui_list_widget_blueprints',
+    description:
+      'List the Widget Blueprints that exist in the project, with the _C class path needed to use one as a child widget or as a parent class. Reads the asset registry, so no blueprint is loaded.',
+    meta: uiListWidgetBlueprintsMeta,
+    handler: uiListWidgetBlueprintsHandler,
+    cost: 'low',
+    returns: '{widget_blueprints:[{name, path, package, parent_class?, class_path}], count}',
+    niche: UI,
+    schema: uiListWidgetBlueprintsSchema.shape,
+  },
+  {
+    name: 'ui_layout_snapshot',
+    description:
+      'Resolve the real on-screen geometry of every widget by running a Slate prepass on the compiled widget class, plus per-widget font, measured text width and brush facts. This is the measurement layer ui_validate judges. layout_resolved:false means the blueprint could not be instantiated (usually: compile it first) and geometry is absent rather than zero.',
+    meta: uiLayoutSnapshotMeta,
+    handler: uiLayoutSnapshotHandler,
+    cost: 'medium',
+    returns:
+      '{widget_blueprint_path, screen_width, screen_height, layout_resolved, layout_error?, widget_count, widgets:[{name, class, x, y, width, height, depth, anchors?, text_info?, brush_info?}]}',
+    niche: UI,
+    schema: uiLayoutSnapshotSchema.shape,
+  },
+  {
+    name: 'ui_measure_text',
+    description:
+      'Measure a string exactly, through the Slate font measure service, in a widget real font or an explicit one. Returns rendered width/height plus how many characters fit in the box: the actual string, typical mixed-case prose, and the worst case if every glyph were the font widest. Use this to size a label for variable-length runtime text (player names, item names, translations) BEFORE it clips in game.',
+    meta: uiMeasureTextMeta,
+    handler: uiMeasureTextHandler,
+    cost: 'low',
+    returns:
+      '{text, width_px, height_px, available_width_px, overflows, chars_that_fit, typical_chars_that_fit, worst_case_chars_that_fit, font_size, font_object?}',
+    niche: UI,
+    schema: uiMeasureTextSchema.shape,
+  },
+  {
+    name: 'ui_validate',
+    description:
+      'CHECK A SCREEN AGAINST GAME-UI STANDARDS: runs the UI rule catalogue over a real Slate layout and reports precise, actionable findings - text that overflows (and the exact character count at which it does), labels with no room for translation growth, content inside TV title/action-safe margins, touch targets below the platform minimum, overlapping siblings, contrast below WCAG, controls gamepad focus cannot reach, and performance traps. Judged per platform (pc/console/handheld/mobile) and per strictness (relaxed/standard/strict). USE_WHEN: after building or editing a Widget Blueprint, and before calling the screen done. NOT_WHEN: you only need the tree (ui_query) or one measurement (ui_measure_text). Rules that need geometry are reported as SKIPPED when the layout cannot be resolved - never as passing.',
+    meta: uiValidateMeta,
+    handler: uiValidateHandler,
+    cost: 'medium',
+    returns:
+      '{widget_blueprint_path, platform, strictness, layout_resolved, findings:[{ruleId, severity, widget?, message, hint, data}], rules_evaluated, rules_skipped_no_layout[], rules_disabled[], rules_below_strictness[], counts}',
+    niche: UI,
+    schema: uiValidateSchema.shape,
   },
 
   // ── Scene domain ──────────────────────────────────────────────────────────
@@ -2602,6 +2732,16 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
     validatorSetRuleEnabledSchema,
     async (args: { rule_id: string; enabled: boolean }) => {
       const r = await validatorSetRuleEnabledHandler(args);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    'validator_strictness',
+    "Read or set validation strictness. Three modes — relaxed (only what is broken), standard (plus established conventions), strict (plus house-style polish) — set globally or per category (ui, pcg, landscape, material, blueprint, python, asset, general). A rule declares the lowest mode at which it fires, so raising strictness only ever adds findings. Call with no arguments to read the current settings. Persists to .scratch/validator-config.json, the same file the editor Configure panel reads.",
+    validatorStrictnessSchema,
+    async (args: Parameters<typeof validatorStrictnessHandler>[0]) => {
+      const r = await validatorStrictnessHandler(args);
       return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
     },
   );

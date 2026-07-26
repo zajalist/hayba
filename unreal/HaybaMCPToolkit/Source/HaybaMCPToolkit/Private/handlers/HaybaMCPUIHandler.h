@@ -16,4 +16,15 @@ private:
     FHaybaHandlerResult HandleCompile(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult HandleSave(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult HandleListTypes(const TSharedPtr<FJsonObject>& P);
+
+    // Authoring additions
+    FHaybaHandlerResult HandleBuildTree(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult HandleSetVariable(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult HandleListWidgetBlueprints(const TSharedPtr<FJsonObject>& P);
+
+    // Measurement — facts only the engine can produce. The validation rules
+    // themselves live MCP-side so they can be extended and configured without
+    // a plugin rebuild; these two commands feed them.
+    FHaybaHandlerResult HandleLayoutSnapshot(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult HandleMeasureText(const TSharedPtr<FJsonObject>& P);
 };

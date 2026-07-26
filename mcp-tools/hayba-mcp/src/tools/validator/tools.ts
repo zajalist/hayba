@@ -20,6 +20,18 @@ import {
   type ValidatorContext,
   type ValidatorRule,
 } from '../../validator/index.js';
+import {
+  RULE_CATEGORIES,
+  STRICTNESS_MODES,
+  clearCategoryStrictness,
+  getStrictness,
+  getStrictnessConfig,
+  meetsStrictness,
+  setStrictness,
+  type RuleCategory,
+  type Strictness,
+} from '../../validator/config.js';
+import { UI_RULES } from '../../validator/ui/index.js';
 import type { UETcpClient } from '../../tcp-client.js';
 import { loadConstraints, primitivesById } from '../../plumb/index.js';
 
@@ -119,6 +131,11 @@ export interface RuleCatalogEntry {
   trigger: ValidatorRule['trigger'];
   has_evaluator: boolean;
   disabled?: boolean;
+  /** Present on rules that declare one (currently the UI ruleset). */
+  category?: string;
+  min_strictness?: string;
+  /** Whether the rule fires at the category's current strictness setting. */
+  active?: boolean;
 }
 
 export async function validatorRulesHandler(args: { include_disabled_state?: boolean }): Promise<{
@@ -155,7 +172,70 @@ export async function validatorRulesHandler(args: { include_disabled_state?: boo
     };
   });
 
-  return { rules: [...floppy, ...constraintRules] };
+  // UI rules are catalogued alongside the rest so one settings surface covers
+  // everything. They carry a category and a minimum strictness, which is what
+  // the Configure panel needs to show why a rule is or is not currently firing.
+  const uiRules: RuleCatalogEntry[] = UI_RULES.map(r => ({
+    id: r.id,
+    severity: r.severity,
+    message: r.title,
+    hint: r.needsLayout
+      ? 'Needs resolved layout — skipped (and reported as skipped) when the blueprint cannot be laid out.'
+      : 'Evaluated from the widget tree alone.',
+    trigger: 'manual' as ValidatorRule['trigger'],
+    has_evaluator: true,
+    category: r.category,
+    min_strictness: r.minStrictness,
+    active: meetsStrictness(r.minStrictness, getStrictness(r.category)),
+    ...(includeState ? { disabled: isRuleDisabled(r.id) } : {}),
+  }));
+
+  return { rules: [...floppy, ...constraintRules, ...uiRules] };
+}
+
+export const validatorStrictnessSchema = {
+  mode: z
+    .enum(STRICTNESS_MODES)
+    .optional()
+    .describe('New strictness. Omit to read the current settings without changing anything.'),
+  category: z
+    .enum(RULE_CATEGORIES)
+    .optional()
+    .describe('Set strictness for one category only. Omit to set the global default.'),
+  reset_category: z
+    .enum(RULE_CATEGORIES)
+    .optional()
+    .describe('Clear a category override so it follows the global default again.'),
+};
+
+export interface StrictnessView {
+  default: string;
+  by_category: Record<string, string>;
+  /** Effective mode for every category, after applying the default. */
+  effective: Record<string, string>;
+  modes: readonly string[];
+  categories: readonly string[];
+}
+
+export async function validatorStrictnessHandler(args: {
+  mode?: Strictness;
+  category?: RuleCategory;
+  reset_category?: RuleCategory;
+}): Promise<StrictnessView> {
+  if (args.reset_category) clearCategoryStrictness(args.reset_category);
+  if (args.mode) setStrictness(args.mode, args.category);
+
+  const config = getStrictnessConfig();
+  const effective: Record<string, string> = {};
+  for (const c of RULE_CATEGORIES) effective[c] = getStrictness(c);
+
+  return {
+    default: config.default,
+    by_category: { ...config.byCategory },
+    effective,
+    modes: STRICTNESS_MODES,
+    categories: RULE_CATEGORIES,
+  };
 }
 
 export const validatorSetRuleEnabledSchema = {
