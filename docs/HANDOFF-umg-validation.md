@@ -57,37 +57,52 @@ compile:
   see `[[haybamcp-pie-transaction-leak]]`)
 - `FBlueprintTags::ParentClassPath` include path
 
-## Verification status
+## Verification status (2026-07-26, after a live run)
 
-- TypeScript: `npm run typecheck` clean, `npm run lint:legacy-wrappers` clean,
-  1011/1012 tests pass. The single failure is `landscape-import.test.ts`, which
-  fails on a clean tree too (pre-existing, unrelated).
-- C++: **not compiled, not run.**
-- Live editor: **nothing has been exercised against a running UE.**
+The plugin **compiles and links** against UE 5.8, and the core loop has been
+exercised against a running editor.
 
-## Still to do
+Verified live, on `/Game/ReelAssets/UI/WBP_ValidatorProbe`:
 
-1. **Rebuild the plugin** and run the loop end to end against a real blueprint:
-   `ui_build_tree` → `ui_compile_widget` → `ui_validate` → `ui_save_widget`.
-2. **Editor settings panel**: strictness is fully wired through MCP
-   (`validator_strictness`) and persists to `.scratch/validator-config.json`,
-   which is the same file `HaybaMCPValidationPanel` already reads for the rule
-   disable list. The panel does **not** yet have a strictness control — that
-   is a per-category dropdown over the existing config, and is the one piece of
-   the "configurable in settings" ask that was not built.
-3. **Calibrate the measurement path.** The character-count hints are only as
-   good as `ui_layout_snapshot`'s `available_width`. Once the plugin builds,
-   check a known label against the designer and confirm the numbers agree
-   before leaning on them.
-4. **Grow the ruleset.** 32 rules ship. Adding one means appending an entry to
-   `src/validator/ui/rules.ts` — the runner, the settings surface and the
-   strictness gate all read that array, so nothing else needs touching. Gaps
-   worth filling: focus-navigation graph reachability, per-widget clipping
-   behaviour, ListView entry-class checks, animation-track validation, and
-   input-action binding coverage.
-5. **Not built:** `ui_bind_event` (widget delegate → blueprint event graph) and
-   widget-animation authoring. Both need Kismet graph / MovieScene work that
-   was out of scope here.
+- `ui_build_tree` — 13 widgets across two calls, canvas and box/grid slots, all
+  three padding shapes (scalar, `[l,t,r,b]`, `{left,top,…}`), zero rejected keys
+- `ui_layout_snapshot` — `layout_resolved: true`, geometry matching the authored
+  values, fonts resolved, text measured
+- **Text measurement is exact at the boundary**: 12 chars = 199px fits, 13 chars
+  = 219px overflows, in a 200px box
+- `ui_validate` — every seeded defect caught, `rules_skipped_no_layout` empty,
+  platform gate holds (pc 24px vs console 40px targets; safe areas console-only)
+- Contrast measured 6:1, silent at standard (4.5:1), fires at strict (7:1)
+- Previously-broken paths now work and **persist** (confirmed by re-query):
+  `ui_search_widgets`, `ui_set_slot_layout`, `ui_set_text_style`, `ui_set_brush`
+  (both `Brush` and `Background`), `ui_replace_element` (34 properties copied,
+  name kept), `ui_rename_element` (GUID preserved), `ui_move_element`,
+  `ui_set_variable`, `ui_list_widget_blueprints`
+
+TypeScript: typecheck clean, `lint:legacy-wrappers` clean, 44 UI tests + 27 rule
+tests green. The one repo-wide failure is `landscape-import.test.ts`, which
+fails on a clean tree too (pre-existing, unrelated).
+
+### Needs the next plugin rebuild
+
+Two C++ fixes are committed but **not yet compiled into the running editor**:
+
+1. `ui_duplicate_element` corrupted the tree — `DuplicateObject` keeps every
+   descendant's name and UMG requires tree-wide uniqueness, so UE renamed the
+   collisions to `TRASH_<name>` and left two widgets answering to `Card`. Until
+   the rebuild lands, **do not use this tool**.
+2. `ui_report_findings` — the route that puts findings in the Validation panel.
+
+### Still untested
+
+`ui_remove_element`, `ui_reparent_element`, `ui_get_widget_info`,
+`ui_list_widget_types`, standalone `ui_save_widget`, the
+`validator_strictness` persistence round-trip, and the non-canvas slot rules
+against a real box layout (the box tree exists in the probe, but only four
+rules have been run against it).
+
+The probe blueprint currently contains the corrupt duplicate; clean it after
+the rebuild.
 
 ## Rule catalogue shape
 

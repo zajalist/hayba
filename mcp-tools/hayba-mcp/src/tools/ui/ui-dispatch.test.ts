@@ -326,6 +326,38 @@ describe('ui_measure_text', () => {
   });
 });
 
+// The duplicate path is C++, so what is pinned here is the invariant that made
+// it wrong: a live editor produced "TRASH_CardCopy_0" and left two widgets both
+// named "Card", because DuplicateObject copies the subtree with every
+// descendant keeping its source name and UMG requires tree-wide uniqueness.
+describe('ui_duplicate_element subtree renaming (C++ invariant)', () => {
+  const handlerSrc = readFileSync(
+    join(
+      __dirname,
+      '..', '..', '..', '..', '..',
+      'unreal', 'HaybaMCPToolkit', 'Source', 'HaybaMCPToolkit', 'Private', 'handlers', 'HaybaMCPUIHandler.cpp',
+    ),
+    'utf-8',
+  );
+
+  const duplicateBlock = handlerSrc.slice(
+    handlerSrc.indexOf("Operation == TEXT(\"duplicate\")"),
+    handlerSrc.indexOf('ui_mutate_tree: unknown operation'),
+  );
+
+  it('duplicates under a scratch name rather than the requested one', () => {
+    expect(duplicateBlock).toContain('HaybaMCP_DuplicateScratch');
+    // The old code passed the caller's name straight to DuplicateObject, which
+    // is what let UE trash the colliding descendants.
+    expect(duplicateBlock).toMatch(/DuplicateObject<UWidget>\(Source, WBP->WidgetTree, ScratchName\)/);
+  });
+
+  it('renames the whole copied subtree, not just its root', () => {
+    expect(duplicateBlock).toContain('CollectSubtree(Copy, Copied)');
+    expect(duplicateBlock).toContain('MakeUniqueObjectName');
+  });
+});
+
 describe('descriptor registration', () => {
   const NEW_TOOLS = [
     'ui_build_tree',
