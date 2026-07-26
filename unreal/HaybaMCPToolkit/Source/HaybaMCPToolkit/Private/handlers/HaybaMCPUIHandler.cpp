@@ -236,6 +236,28 @@ namespace
         return Copied;
     }
 
+    /** Whether a widget can take keyboard/gamepad focus.
+     *  There is no UWidget-level accessor: each focusable widget class declares
+     *  its own `IsFocusable` / `bIsFocusable` property, so read it reflectively
+     *  rather than casting to a hand-maintained list of classes. Text entry
+     *  widgets do not declare the flag at all — they are always focusable. */
+    bool ResolveIsFocusable(UWidget* W)
+    {
+        if (!W) return false;
+
+        static const FName Names[] = { TEXT("IsFocusable"), TEXT("bIsFocusable") };
+        for (const FName& PropName : Names)
+        {
+            if (FBoolProperty* Prop = CastField<FBoolProperty>(W->GetClass()->FindPropertyByName(PropName)))
+            {
+                return Prop->GetPropertyValue_InContainer(W);
+            }
+        }
+
+        return W->IsA<UEditableText>() || W->IsA<UEditableTextBox>() ||
+               W->IsA<UMultiLineEditableTextBox>() || W->IsA<USpinBox>() || W->IsA<USlider>();
+    }
+
     UWidget* FindWidgetByName(UWidgetTree* Tree, const FString& Name)
     {
         if (!Tree) return nullptr;
@@ -585,7 +607,7 @@ namespace
         const TSet<FString> Applicable = ApplicableSlotKeys(Slot);
         for (const auto& Pair : Props->Values)
         {
-            const FString& Key = Pair.Key;
+            const FString Key(Pair.Key);
             if (Applicable.Contains(Key))
             {
                 Result.Applied.Add(Key);
@@ -1065,7 +1087,7 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetProperties(const TSharedPtr<FJs
                 for (const auto& Pair : (*SlotProps)->Values)
                 {
                     ++Failed;
-                    FailedProps.Add(FString::Printf(TEXT("slot.%s"), *Pair.Key));
+                    FailedProps.Add(FString::Printf(TEXT("slot.%s"), *FString(Pair.Key)));
                 }
                 Warnings.Add(FString::Printf(
                     TEXT("'%s' has no panel slot (it is the root widget, or its parent is not a panel), so slot layout was not applied."),
@@ -1912,10 +1934,11 @@ namespace
         {
             for (const auto& Pair : (*Props)->Values)
             {
-                if (!HaybaReflection::SetProp(New, Pair.Key, Pair.Value))
+                const FString PropName(Pair.Key);
+                if (!HaybaReflection::SetProp(New, PropName, Pair.Value))
                 {
                     Stats.Warnings.Add(FString::Printf(TEXT("%s: property '%s' was rejected by %s"),
-                        *New->GetName(), *Pair.Key, *Class->GetName()));
+                        *New->GetName(), *PropName, *Class->GetName()));
                 }
             }
         }
@@ -2275,7 +2298,7 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleLayoutSnapshot(const TSharedPtr<FJ
             Widget->IsA<USpinBox>() || Widget->IsA<UComboBoxString>() || Widget->IsA<UEditableText>() ||
             Widget->IsA<UEditableTextBox>() || Widget->IsA<UMultiLineEditableTextBox>();
         Entry->SetBoolField(TEXT("is_interactive"), bInteractive);
-        Entry->SetBoolField(TEXT("is_focusable"), Widget->IsFocusable());
+        Entry->SetBoolField(TEXT("is_focusable"), ResolveIsFocusable(Widget));
 
         if (const FHaybaUIWidgetGeom* G = Geoms.Find(Widget->GetName()))
         {

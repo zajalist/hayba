@@ -84,8 +84,11 @@ namespace HaybaReflection
         int32 Applied = 0;
         for (const auto& Pair : Obj->Values)
         {
-            if (SetStructField(Struct, StructPtr, Pair.Key, Pair.Value)) ++Applied;
-            else if (OutUnknown) OutUnknown->Add(Pair.Key);
+            // FJsonObject keys are a storage type, not FString, so they need an
+            // explicit conversion before anything takes them by const FString&.
+            const FString Key(Pair.Key);
+            if (SetStructField(Struct, StructPtr, Key, Pair.Value)) ++Applied;
+            else if (OutUnknown) OutUnknown->Add(Key);
         }
         return Applied;
     }

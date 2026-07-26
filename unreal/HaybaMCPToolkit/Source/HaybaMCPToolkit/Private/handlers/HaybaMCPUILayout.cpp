@@ -67,14 +67,34 @@ FVector2D GetDesignSize(UWidgetBlueprint* WBP)
 {
     if (!WBP) return FVector2D(1920.0, 1080.0);
 
-    const FVector2D Declared(WBP->DesignTimeSize.X, WBP->DesignTimeSize.Y);
-    if (Declared.X > 1.0 && Declared.Y > 1.0)
+#if WITH_EDITORONLY_DATA
+    // The authored design size is stored on the generated widget class's CDO,
+    // not on the blueprint asset — and it is only a real screen size when the
+    // designer is in one of the Custom modes.
+    //
+    // In FillScreen / Desired mode DesignTimeSize keeps its (100,100)
+    // placeholder. Treating that as the screen makes every widget on a normal
+    // screen look wildly off-canvas, which would fire the safe-area and
+    // off-screen rules on essentially every blueprint.
+    if (WBP->GeneratedClass)
     {
-        return Declared;
+        if (const UUserWidget* CDO = Cast<UUserWidget>(WBP->GeneratedClass->GetDefaultObject()))
+        {
+            const bool bCustomSize =
+                CDO->DesignSizeMode == EDesignPreviewSizeMode::Custom ||
+                CDO->DesignSizeMode == EDesignPreviewSizeMode::CustomOnScreen;
+
+            const FVector2D Declared(CDO->DesignTimeSize.X, CDO->DesignTimeSize.Y);
+            if (bCustomSize && Declared.X > 1.0 && Declared.Y > 1.0)
+            {
+                return Declared;
+            }
+        }
     }
-    // A blueprint authored in "Fill Screen" / "Desired" mode has no meaningful
-    // DesignTimeSize; 1080p is the honest default to reason about because it is
-    // what the designer canvas shows by default.
+#endif
+    // Fill-screen and desired-size blueprints are authored against the whole
+    // viewport, so 1080p is the honest default to reason about. Callers that
+    // care about a different target pass screen_width/screen_height.
     return FVector2D(1920.0, 1080.0);
 }
 
@@ -169,7 +189,7 @@ bool ComputeGeometry(UWidgetBlueprint* WBP, const FVector2D& ScreenSize,
                     const TSharedPtr<SWidget> Cached = W->GetCachedWidget();
                     if (Cached.IsValid())
                     {
-                        if (const FGeometry* Found = BySlate.Find(&Cached.Get()))
+                        if (const FGeometry* Found = BySlate.Find(Cached.Get()))
                         {
                             const FVector2D Min(Found->GetAbsolutePosition());
                             const FVector2D Max(Found->GetAbsolutePositionAtCoordinates(FVector2D(1.0, 1.0)));
@@ -287,7 +307,7 @@ bool GetWidgetFont(UWidget* W, FSlateFontInfo& OutFont)
     if (UTextBlock* TB = Cast<UTextBlock>(W))                    { OutFont = TB->GetFont(); return true; }
     if (UEditableText* ET = Cast<UEditableText>(W))              { OutFont = ET->GetFont(); return true; }
     if (UEditableTextBox* ETB = Cast<UEditableTextBox>(W))       { OutFont = ETB->GetWidgetStyle().TextStyle.Font; return true; }
-    if (UMultiLineEditableTextBox* ML = Cast<UMultiLineEditableTextBox>(W)) { OutFont = ML->GetWidgetStyle().TextStyle.Font; return true; }
+    if (UMultiLineEditableTextBox* ML = Cast<UMultiLineEditableTextBox>(W)) { OutFont = ML->WidgetStyle.TextStyle.Font; return true; }
     if (URichTextBlock* RT = Cast<URichTextBlock>(W))
     {
         // RichTextBlock resolves its font per text-run from a style set, so

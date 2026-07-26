@@ -699,8 +699,12 @@ export const UI_RULES: UiRule[] = [
   {
     id: 'ui_canvas_child_top_left_anchored',
     category: 'ui',
-    severity: 'warning',
-    minStrictness: 'standard',
+    severity: 'info',
+    // Demoted to strict after the first live run: nearly every widget on a
+    // canvas-authored screen uses the default anchor, so at standard this rule
+    // produced one finding per widget and buried the real defects. It is a
+    // real responsiveness concern, but it is house style rather than a bug.
+    minStrictness: 'strict',
     title: 'Canvas child is pinned to the top-left and will not adapt',
     needsLayout: false,
     evaluate: (ctx) => {
@@ -716,7 +720,7 @@ export const UI_RULES: UiRule[] = [
         if (nearCorner) continue;
         out.push(
           finding(
-            { id: 'ui_canvas_child_top_left_anchored', category: 'ui', severity: 'warning' },
+            { id: 'ui_canvas_child_top_left_anchored', category: 'ui', severity: 'info' },
             `"${w.name}" uses the default top-left anchor but sits at (${Math.round(r.x)}, ${Math.round(r.y)}).`,
             'With a top-left anchor the widget keeps that pixel offset at every resolution, so it drifts away from where you placed it on wider or shorter screens. Anchor it to the region it belongs to (centre, bottom-right, or a stretched anchor).',
             w.name,
@@ -953,6 +957,9 @@ export const UI_RULES: UiRule[] = [
         if ((w.child_count ?? 0) > 0) continue;
         // A NamedSlot is a deliberate hole for a caller to fill.
         if (w.class === 'NamedSlot') continue;
+        // Buttons and check boxes are panels, but an empty one is already
+        // reported by ui_button_without_content with better advice.
+        if (w.class === 'Button' || w.class === 'CheckBox') continue;
         out.push(
           finding(
             { id: 'ui_empty_panel', category: 'ui', severity: 'info' },
