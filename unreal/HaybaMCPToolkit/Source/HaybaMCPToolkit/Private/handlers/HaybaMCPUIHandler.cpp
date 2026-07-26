@@ -231,6 +231,15 @@ namespace
             // the same children, which is a corrupt tree rather than a copy.
             // Children are rebuilt explicitly by the caller instead.
             if (PropName == TEXT("Slots")) continue;
+            // Structural links on a UPanelSlot. Copying these is what made a
+            // duplicated subtree adopt the ORIGINAL's widgets: the new slot's
+            // Content was overwritten with a pointer to the source's child, so
+            // the tree showed one widget reached through two slots — two entries
+            // with the same name AND the same object path. Layout values are the
+            // only thing worth copying between slots; who they point at is set
+            // by AddChild and must survive.
+            if (PropName == TEXT("Content")) continue;
+            if (PropName == TEXT("Parent")) continue;
 
             FProperty* DstProp = To->GetClass()->FindPropertyByName(PropName);
             if (!DstProp) continue;
@@ -787,6 +796,10 @@ namespace
         if (!W) return;
         Out->SetStringField(TEXT("name"), W->GetName());
         Out->SetStringField(TEXT("class"), W->GetClass()->GetName());
+        // Full object path. Display names can repeat in a malformed tree, and
+        // two entries showing one name is ambiguous between "two widgets" and
+        // "one widget reached through two slots" — the path distinguishes them.
+        Out->SetStringField(TEXT("object_path"), W->GetPathName());
 
         if (bIncludeGuid && WBP)
         {
@@ -987,6 +1000,38 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleCreateWidget(const TSharedPtr<FJso
     if (!ParentClass) ParentClass = UUserWidget::StaticClass();
     if (!ParentClass->IsChildOf(UUserWidget::StaticClass()))
         return FHaybaHandlerResult::Err(TEXT("ui_create_widget: parent_class must derive from UserWidget"));
+
+    // Refuse a name that is already taken, rather than letting CreateAsset ask.
+    //
+    // AssetTools::CreateAsset raises a modal "Overwrite Existing Object" dialog
+    // when the name collides. Handlers run on the game thread, so that dialog
+    // blocks the thread that would service the reply: the command never
+    // completes, the caller times out, and every subsequent MCP request hangs
+    // behind it until a human clicks the box. One tool call takes the whole
+    // connection down, and nothing in the logs says why.
+    //
+    // Nothing about "this name is taken" needs a human, so it is answered here.
+    {
+        const FString ObjectPath = FString::Printf(TEXT("%s/%s.%s"), *PkgPath, *AssetName, *AssetName);
+        const FAssetRegistryModule& RegistryModule =
+            FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+        const FAssetData Existing =
+            RegistryModule.Get().GetAssetByObjectPath(FSoftObjectPath(ObjectPath));
+
+        // Check the registry AND memory: an asset created earlier this session
+        // and not yet saved is absent from the registry but still collides.
+        const bool bExists = Existing.IsValid()
+            || FindObject<UObject>(nullptr, *ObjectPath) != nullptr;
+
+        if (bExists)
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("ui_create_widget: '%s' already exists at %s. Pick another name, or edit the existing asset ")
+                TEXT("(ui_query to inspect it). This is refused rather than prompting, because a modal overwrite ")
+                TEXT("dialog would block the editor's game thread and hang every MCP request behind it."),
+                *AssetName, *PkgPath));
+        }
+    }
 
     FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
     UWidgetBlueprintFactory* Factory = NewObject<UWidgetBlueprintFactory>();
@@ -1289,6 +1334,7 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleQuery(const TSharedPtr<FJsonObject
             TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
             Entry->SetStringField(TEXT("name"), Widget->GetName());
             Entry->SetStringField(TEXT("class"), Widget->GetClass()->GetName());
+            Entry->SetStringField(TEXT("object_path"), Widget->GetPathName());
             Entry->SetStringField(TEXT("parent"), Widget->GetParent() ? Widget->GetParent()->GetName() : FString());
             if (bIncludeSlot) Entry->SetStringField(TEXT("slot_class"), ResolveSlotType(Widget));
             if (bIncludeGuid)
@@ -1655,10 +1701,17 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                 TEXT("wanted \"%s\", got \"%s\""), *RootName.ToString(), *Copy->GetName()));
         }
 
+        // Stage capture. Two rounds of fixes were spent guessing WHICH call
+        // trashes the copy; recording the name at each step answers it in one
+        // build instead.
+        const FString NameAfterClone = Copy->GetName();
+
         UPanelSlot* NewSlot = TargetParent->AddChild(Copy);
         if (!NewSlot)
             return FHaybaHandlerResult::Err(FString::Printf(
                 TEXT("ui_mutate_tree duplicate: '%s' refused the child (panel is full)"), *TargetParent->GetName()));
+
+        const FString NameAfterAddChild = Copy->GetName();
 
         if (Source->Slot && NewSlot->GetClass() == Source->Slot->GetClass())
         {
@@ -1678,8 +1731,26 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
             ApplySlotPropsChecked(NewSlot, *SlotProps);
         }
 
+        // Structural, like every other tree mutation here.
+        //
+        // A stage trace showed the copy surviving the clone and AddChild, then
+        // becoming TRASH_ across this call — which looked like the recompile was
+        // at fault. It was not. The copy was ORPHANED (its parent slot pointed
+        // at the source's child, because slot Content was being copied), and the
+        // recompile simply collected a widget nothing referenced. Fixing the
+        // slot pointers made it reachable, and it now survives compilation like
+        // every other widget these tools create.
         FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
         WBP->MarkPackageDirty();
+
+        {
+            TSharedPtr<FJsonObject> Stages = MakeShared<FJsonObject>();
+            Stages->SetStringField(TEXT("after_clone"), NameAfterClone);
+            Stages->SetStringField(TEXT("after_add_child"), NameAfterAddChild);
+            Stages->SetStringField(TEXT("final"), Copy->GetName());
+            Stages->SetStringField(TEXT("object_path"), Copy->GetPathName());
+            Out->SetObjectField(TEXT("name_stages"), Stages);
+        }
 
         Out->SetStringField(TEXT("source"), WidgetName);
         Out->SetStringField(TEXT("name"), Copy->GetName());
@@ -1728,11 +1799,16 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
 
             if (Defects.Num() > 0)
             {
+                // Carry the stage trace in the error itself. The success payload
+                // is discarded on this path, and the whole point of recording
+                // where the name changed is to know WHICH call broke it.
                 return FHaybaHandlerResult::Err(FString::Printf(
                     TEXT("ui_mutate_tree duplicate: the copy did not come out clean — %s. ")
+                    TEXT("Name by stage: after_clone=\"%s\" after_add_child=\"%s\" final=\"%s\". ")
                     TEXT("The blueprint has NOT been saved; discard the change by reloading the asset. ")
                     TEXT("Build the widget explicitly with ui_build_tree instead."),
-                    *FString::Join(Defects, TEXT("; "))));
+                    *FString::Join(Defects, TEXT("; ")),
+                    *NameAfterClone, *NameAfterAddChild, *Copy->GetName()));
             }
         }
 

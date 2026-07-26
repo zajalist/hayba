@@ -355,10 +355,30 @@ describe('ui_duplicate_element deep clone (C++ invariant)', () => {
     expect(handlerSrc).toMatch(/PropName == TEXT\("Slots"\)\) continue/);
   });
 
-  it('verifies the result and errors rather than reporting a bad copy as success', () => {
-    // The path is not fully settled, so the post-condition is load-bearing:
-    // a trashed copy or a duplicated name must be a loud failure.
-    expect(handlerSrc).toContain('TRASH_');
+  it('never copies a slot Content or Parent pointer between slots', () => {
+    // Copying Content made the new slot adopt the SOURCE's child, so the tree
+    // held one widget reached through two slots — two entries with the same
+    // name AND the same object path. Layout values are the only thing worth
+    // copying between slots.
+    expect(handlerSrc).toMatch(/PropName == TEXT\("Content"\)\) continue/);
+    expect(handlerSrc).toMatch(/PropName == TEXT\("Parent"\)\) continue/);
+  });
+
+  it('keeps the structural notification, like every other tree mutation', () => {
+    // A stage trace made the recompile look guilty: the copy was fine before
+    // MarkBlueprintAsStructurallyModified and TRASH_ after. It was innocent.
+    // The copy was ORPHANED — its parent slot pointed at the source's child —
+    // so the recompile collected a widget nothing referenced. Deferring the
+    // compile was tried and reverted once the slot pointers were fixed, because
+    // it treated the symptom and diverged from every other operation here.
+    const dup = handlerSrc.slice(
+      handlerSrc.indexOf('Operation == TEXT("duplicate")'),
+      handlerSrc.indexOf('Operation == TEXT("replace")'),
+    );
+    expect(dup).toContain('MarkBlueprintAsStructurallyModified');
+  });
+
+  it('verifies its own post-condition rather than trusting the operation', () => {
     expect(handlerSrc).toMatch(/widgets now share the name/);
     expect(handlerSrc).toMatch(/did not come out clean/);
   });

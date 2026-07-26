@@ -144,47 +144,62 @@ the rebuild.
    widget-animation authoring. Both need Kismet graph / MovieScene work that was
    out of scope here.
 
-## ui_duplicate_element — partially fixed, still not right
+## ui_duplicate_element and ui_replace_element — fixed, one root cause
 
-Worth reading before touching it, because two plausible fixes failed here.
+Both were corrupting the widget tree, and it was the same bug. Worth reading,
+because three plausible fixes failed before the real one, and two of the failures
+looked like progress.
 
-**Root cause.** A `UPanelSlot`'s `Content` is a plain pointer to a widget owned by
-the `WidgetTree`, not a subobject of the panel. `DuplicateObject` therefore copies
-the POINTER: the "copy" shares the original's children. Renaming "the copy's"
-subtree renames the ORIGINAL's widgets. Observed as `RowLabel` silently becoming
-`RowLabel_0` on the source after duplicating its parent.
+**Root cause.** `CopyCommonProperties(SourceSlot, NewSlot)` copied the slot's
+`Content` pointer. `UPanelSlot::Content` points at the child widget, so the new
+slot adopted the SOURCE's child. The tree then held one widget reached through
+two slots — which reads as two widgets with the same name, and is why the first
+diagnosis was wrong. Adding the object path to `ui_query` is what settled it:
+both entries had the identical path.
 
-**What did not work.**
-- Giving the copy's root a scratch name before renaming. The collisions are among
-  the descendants, so the root was never the problem.
-- Duplicating into a transient package first. Same outcome — the shared-children
-  problem is in what `DuplicateObject` produces, not in where it is put.
+The knock-on effect explains the rest. Because the copy's own child pointer was
+overwritten, the copy was ORPHANED — nothing referenced it — so the next
+recompile collected it and renamed it `TRASH_<name>_0`.
 
-**What did work.** `DeepCloneWidget` rebuilds the subtree node by node —
-`ConstructWidget` per node, copy properties, recurse, re-parent, copy slot layout.
-`CopyCommonProperties` now also skips the `Slots` array, since copying it is what
-makes two widgets claim the same children. **Verified: the source subtree is no
-longer corrupted.**
+**Dead ends, and why they looked right.**
+- *Scratch name for the copy's root.* The collisions were among descendants.
+- *Duplicating into a transient package.* The problem is in what
+  `DuplicateObject` produces, not where it is put — a slot's `Content` is a plain
+  pointer, not a subobject, so the copy shares the original's children either way.
+- *Deferring compilation with `MarkBlueprintAsModified`.* A stage trace showed the
+  name correct before `MarkBlueprintAsStructurallyModified` and `TRASH_` after,
+  which made the recompile look guilty. It was innocent: it was collecting an
+  orphan. This change was reverted once the slot pointers were fixed — every
+  other tree mutation uses the structural notification, and diverging for this
+  one would have hidden the real defect.
 
-**What is still wrong.** The copy itself can come back named `TRASH_<name>_0`, and
-the tree can show two widgets reporting the same name. The remaining suspect is
-`FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified`, which triggers a
-recompile between the clone and the point where the name is read — but that is
-unconfirmed. Note `ui_query` reads names via `GetChildAt`, so two entries showing
-one name may mean two slots pointing at one widget rather than two widgets.
+**The fix.** `CopyCommonProperties` now skips `Content` and `Parent` alongside
+`Slot` and `Slots`. Layout values are the only thing worth copying between slots;
+who they point at belongs to `AddChild`. `DeepCloneWidget` rebuilds the subtree
+node by node rather than calling `DuplicateObject`.
 
-**Current behaviour.** The handler checks its own post-condition and returns a hard
-error when the copy is trashed or any name is duplicated, instead of reporting
-success on a bad tree. The blueprint is not saved on that path. `ui_build_tree` is
-the dependable way to produce a repeated structure.
+**Verified live:** duplicate produces distinct object paths, unique names
+(`RowLabel` / `RowLabel_0`), and carries properties and slot layout across.
+Replace swaps class in place, keeps the name and index, and leaves no orphan —
+the `HaybaMCP_Replaced_0` leak seen earlier is gone.
 
-**Next step if picking this up:** the cheap win is visibility — add the object path
-name to `ui_query` output so distinct widgets can be told apart, and capture
-`Copy->GetName()` immediately after the clone, after `AddChild`, and after
-`MarkBlueprintAsStructurallyModified`. That pins which call trashes it in one
-build cycle instead of guessing.
+**Kept:** the handler still checks its own post-condition (trashed copy, or any
+name shared by two widgets) and returns a hard error rather than reporting
+success on a malformed tree.
 
-## Rule catalogue shape
+## ui_create_widget could hang the whole MCP connection
+
+`AssetTools::CreateAsset` raises a modal "Overwrite Existing Object" dialog on a
+name collision. Handlers run on the game thread, so that dialog blocks the thread
+that would service the reply: the command never completes, the caller times out,
+and every later request queues behind it until a human clicks the box. Nothing in
+the log says why.
+
+The handler now checks the asset registry AND memory (an asset created earlier in
+the session is absent from the registry but still collides) and returns a plain
+error instead of prompting. See `[[no-modal-dialogs-from-handlers]]`.
+
+## Rule catalogue shape## Rule catalogue shape
 
 ```
 src/validator/ui/

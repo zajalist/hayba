@@ -7,19 +7,9 @@ export const meta: HaybaToolMeta = {
   cost: 'medium',
   effects: ['modifies_asset'],
   when: 'copying an existing widget — with its children, properties and slot layout — to build repeated rows or cards',
-  not_when:
-    'you need this to be reliable right now — see the known issue below; ui_build_tree is the dependable way to produce a repeated structure',
+  not_when: 'creating a fresh widget from a class (use ui_add_element)',
 };
 
-// KNOWN ISSUE: this path is not fully settled. Cloning no longer corrupts the
-// SOURCE widget's subtree (it used to rename the original's children out from
-// under the blueprint), but the copy itself can still come back trashed or
-// sharing a name with its source. The handler verifies the result and returns a
-// hard error when that happens rather than reporting success, so a bad outcome
-// is loud — but a call that errors is still a call that did not work.
-//
-// Prefer ui_build_tree when you need a repeated structure and cannot tolerate a
-// retry. Diagnosis so far is in docs/HANDOFF-umg-validation.md.
 export const schema = z.object({
   widget_blueprint_path: z.string().min(1).describe('Full path of the target Widget Blueprint'),
   widget_name: z.string().min(1).describe('Name of the widget to duplicate. Its whole subtree is copied.'),
