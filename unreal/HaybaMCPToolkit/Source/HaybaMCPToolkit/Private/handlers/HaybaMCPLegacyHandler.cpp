@@ -630,6 +630,10 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
     // Add nodes
     const TArray<TSharedPtr<FJsonValue>>& NodesArray = (*GraphObj)->GetArrayField(TEXT("nodes"));
     TMap<FString, UPCGNode*> CreatedNodes;
+    // Per-property outcomes for the response. A graph that builds but drops the
+    // properties that make it do anything is the failure mode worth surfacing.
+    TArray<FString> PropertyProblems;
+    int32 PropertiesApplied = 0;
     TArray<FString> NodeOrder;                 // creation order, for stable layout
     TSet<FString> ExplicitlyPositioned;        // ids the caller positioned itself
     TArray<TPair<FString, FString>> LayoutEdges; // (fromId, toId) for the layout pass
@@ -685,17 +689,64 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
             const TSharedPtr<FJsonObject>& PropsObj = NodeObj->GetObjectField(TEXT("properties"));
             if (PropsObj.IsValid() && Settings)
             {
+                // Every rejection here is reported, not swallowed.
+                //
+                // A property that does not land on a PCG node does not fail
+                // loudly — the graph builds, the response says created:true, and
+                // the graph then scatters zero instances at execute time. That is
+                // the single most expensive failure in this domain to debug,
+                // because nothing on the way in says anything went wrong.
+                //
+                // There are four distinct ways to be silently dropped and the
+                // caller needs to know which one it hit: the name is wrong, the
+                // property is not editable, the value is not a string (numbers
+                // and bools do NOT arrive as strings from JSON), or the string
+                // does not parse for the property type.
                 for (const auto& Pair : PropsObj->Values)
                 {
-                    FProperty* Prop = SettingsClass->FindPropertyByName(FName(*Pair.Key));
-                    if (Prop && Prop->HasAnyPropertyFlags(CPF_Edit))
+                    const FString PropName(Pair.Key);
+                    const FString NodeLabel = FString::Printf(TEXT("node \"%s\" (%s).%s"), *NodeId, *NodeClass, *PropName);
+
+                    FProperty* Prop = SettingsClass->FindPropertyByName(FName(*PropName));
+                    if (!Prop)
                     {
-                        FString ValueStr;
-                        if (Pair.Value->TryGetString(ValueStr))
+                        PropertyProblems.Add(FString::Printf(
+                            TEXT("%s: no such property on %s"), *NodeLabel, *SettingsClass->GetName()));
+                        continue;
+                    }
+                    if (!Prop->HasAnyPropertyFlags(CPF_Edit))
+                    {
+                        PropertyProblems.Add(FString::Printf(
+                            TEXT("%s: property is not editable (no CPF_Edit), so it cannot be set this way"), *NodeLabel));
+                        continue;
+                    }
+
+                    FString ValueStr;
+                    if (!Pair.Value->TryGetString(ValueStr))
+                    {
+                        // Numbers and bools are the common case here, and they
+                        // arrive as JSON numbers/bools rather than strings.
+                        // ImportText works from text, so coerce rather than drop.
+                        switch (Pair.Value->Type)
                         {
-                            Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(Settings), Settings, PPF_None);
+                        case EJson::Number:  ValueStr = FString::SanitizeFloat(Pair.Value->AsNumber()); break;
+                        case EJson::Boolean: ValueStr = Pair.Value->AsBool() ? TEXT("true") : TEXT("false"); break;
+                        default:
+                            PropertyProblems.Add(FString::Printf(
+                                TEXT("%s: value must be a string, number or bool"), *NodeLabel));
+                            continue;
                         }
                     }
+
+                    const TCHAR* End = Prop->ImportText_Direct(
+                        *ValueStr, Prop->ContainerPtrToValuePtr<void>(Settings), Settings, PPF_None);
+                    if (End == nullptr)
+                    {
+                        PropertyProblems.Add(FString::Printf(
+                            TEXT("%s: could not parse \"%s\" as %s"), *NodeLabel, *ValueStr, *Prop->GetCPPType()));
+                        continue;
+                    }
+                    ++PropertiesApplied;
                 }
 
                 // --- Special-case: bind meshes to a Static Mesh Spawner ---------------
@@ -873,12 +924,32 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
     FString FilePath = FPackageName::LongPackageNameToFilename(FullPath, FPackageName::GetAssetPackageExtension());
     FSavePackageArgs SaveArgs;
     SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
-    UPackage::SavePackage(Package, NewGraph, *FilePath, SaveArgs);
+    const bool bSaved = UPackage::SavePackage(Package, NewGraph, *FilePath, SaveArgs);
 
     TSharedPtr<FJsonObject> Data = MakeShareable(new FJsonObject());
     Data->SetBoolField(TEXT("created"), true);
     Data->SetStringField(TEXT("assetPath"), FullPath);
     Data->SetNumberField(TEXT("nodeCount"), CreatedNodes.Num());
+
+    // The save result was previously discarded, so a graph that failed to reach
+    // disk still reported created:true and then vanished on editor restart.
+    Data->SetBoolField(TEXT("saved"), bSaved);
+
+    Data->SetNumberField(TEXT("propertiesApplied"), PropertiesApplied);
+    if (PropertyProblems.Num() > 0)
+    {
+        TArray<TSharedPtr<FJsonValue>> Arr;
+        for (const FString& P : PropertyProblems) Arr.Add(MakeShared<FJsonValueString>(P));
+        Data->SetArrayField(TEXT("propertyProblems"), Arr);
+        // Said plainly, because "created: true" alongside a list of problems is
+        // easy to skim past — and the consequence (a graph that scatters
+        // nothing) shows up much later and looks unrelated.
+        Data->SetStringField(TEXT("warning"), FString::Printf(
+            TEXT("The graph was created, but %d node propert%s could not be applied. "
+                 "A PCG node missing its settings usually produces zero instances at execute time. "
+                 "See propertyProblems."),
+            PropertyProblems.Num(), PropertyProblems.Num() == 1 ? TEXT("y") : TEXT("ies")));
+    }
     return FHaybaHandlerResult::Ok(Data);
 }
 
