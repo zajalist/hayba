@@ -96,11 +96,8 @@ fails on a clean tree too (pre-existing, unrelated).
 
 Two C++ fixes are committed but **not yet compiled into the running editor**:
 
-1. `ui_duplicate_element` corrupted the tree — `DuplicateObject` keeps every
-   descendant's name and UMG requires tree-wide uniqueness, so UE renamed the
-   collisions to `TRASH_<name>` and left two widgets answering to `Card`. Until
-   the rebuild lands, **do not use this tool**.
-2. `ui_report_findings` — the route that puts findings in the Validation panel.
+1. `ui_report_findings` — the route that puts findings in the Validation panel.
+   Compiled and verified present in the DLL.
 
 ### Still untested
 
@@ -146,6 +143,46 @@ the rebuild.
 5. **Not built:** `ui_bind_event` (widget delegate → blueprint event graph) and
    widget-animation authoring. Both need Kismet graph / MovieScene work that was
    out of scope here.
+
+## ui_duplicate_element — partially fixed, still not right
+
+Worth reading before touching it, because two plausible fixes failed here.
+
+**Root cause.** A `UPanelSlot`'s `Content` is a plain pointer to a widget owned by
+the `WidgetTree`, not a subobject of the panel. `DuplicateObject` therefore copies
+the POINTER: the "copy" shares the original's children. Renaming "the copy's"
+subtree renames the ORIGINAL's widgets. Observed as `RowLabel` silently becoming
+`RowLabel_0` on the source after duplicating its parent.
+
+**What did not work.**
+- Giving the copy's root a scratch name before renaming. The collisions are among
+  the descendants, so the root was never the problem.
+- Duplicating into a transient package first. Same outcome — the shared-children
+  problem is in what `DuplicateObject` produces, not in where it is put.
+
+**What did work.** `DeepCloneWidget` rebuilds the subtree node by node —
+`ConstructWidget` per node, copy properties, recurse, re-parent, copy slot layout.
+`CopyCommonProperties` now also skips the `Slots` array, since copying it is what
+makes two widgets claim the same children. **Verified: the source subtree is no
+longer corrupted.**
+
+**What is still wrong.** The copy itself can come back named `TRASH_<name>_0`, and
+the tree can show two widgets reporting the same name. The remaining suspect is
+`FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified`, which triggers a
+recompile between the clone and the point where the name is read — but that is
+unconfirmed. Note `ui_query` reads names via `GetChildAt`, so two entries showing
+one name may mean two slots pointing at one widget rather than two widgets.
+
+**Current behaviour.** The handler checks its own post-condition and returns a hard
+error when the copy is trashed or any name is duplicated, instead of reporting
+success on a bad tree. The blueprint is not saved on that path. `ui_build_tree` is
+the dependable way to produce a repeated structure.
+
+**Next step if picking this up:** the cheap win is visibility — add the object path
+name to `ui_query` output so distinct widgets can be told apart, and capture
+`Copy->GetName()` immediately after the clone, after `AddChild`, and after
+`MarkBlueprintAsStructurallyModified`. That pins which call trashes it in one
+build cycle instead of guessing.
 
 ## Rule catalogue shape
 

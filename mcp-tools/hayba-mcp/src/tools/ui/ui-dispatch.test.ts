@@ -326,11 +326,15 @@ describe('ui_measure_text', () => {
   });
 });
 
-// The duplicate path is C++, so what is pinned here is the invariant that made
-// it wrong: a live editor produced "TRASH_CardCopy_0" and left two widgets both
-// named "Card", because DuplicateObject copies the subtree with every
-// descendant keeping its source name and UMG requires tree-wide uniqueness.
-describe('ui_duplicate_element subtree renaming (C++ invariant)', () => {
+// The duplicate path is C++, so what is pinned here is the invariant it depends
+// on. A live editor showed the original bug: duplicating "Card" renamed the
+// ORIGINAL's children out from under the blueprint, because a UPanelSlot's
+// Content is a plain pointer rather than a subobject — DuplicateObject copies
+// the pointer, so the "copy" shares the source's children.
+//
+// Two earlier fixes treated the symptom by renaming after the fact and did not
+// work. The tree is now rebuilt node by node instead.
+describe('ui_duplicate_element deep clone (C++ invariant)', () => {
   const handlerSrc = readFileSync(
     join(
       __dirname,
@@ -340,21 +344,23 @@ describe('ui_duplicate_element subtree renaming (C++ invariant)', () => {
     'utf-8',
   );
 
-  const duplicateBlock = handlerSrc.slice(
-    handlerSrc.indexOf("Operation == TEXT(\"duplicate\")"),
-    handlerSrc.indexOf('ui_mutate_tree: unknown operation'),
-  );
-
-  it('duplicates under a scratch name rather than the requested one', () => {
-    expect(duplicateBlock).toContain('HaybaMCP_DuplicateScratch');
-    // The old code passed the caller's name straight to DuplicateObject, which
-    // is what let UE trash the colliding descendants.
-    expect(duplicateBlock).toMatch(/DuplicateObject<UWidget>\(Source, WBP->WidgetTree, ScratchName\)/);
+  it('rebuilds the subtree rather than calling DuplicateObject on it', () => {
+    expect(handlerSrc).toContain('DeepCloneWidget');
+    // The clone must construct genuinely new widgets, not duplicate the source.
+    expect(handlerSrc).toMatch(/DeepCloneWidget[\s\S]{0,1500}ConstructWidget<UWidget>/);
   });
 
-  it('renames the whole copied subtree, not just its root', () => {
-    expect(duplicateBlock).toContain('CollectSubtree(Copy, Copied)');
-    expect(duplicateBlock).toContain('MakeUniqueObjectName');
+  it('never copies a panel Slots array between widgets', () => {
+    // Copying Slots is what makes two widgets claim the same children.
+    expect(handlerSrc).toMatch(/PropName == TEXT\("Slots"\)\) continue/);
+  });
+
+  it('verifies the result and errors rather than reporting a bad copy as success', () => {
+    // The path is not fully settled, so the post-condition is load-bearing:
+    // a trashed copy or a duplicated name must be a loud failure.
+    expect(handlerSrc).toContain('TRASH_');
+    expect(handlerSrc).toMatch(/widgets now share the name/);
+    expect(handlerSrc).toMatch(/did not come out clean/);
   });
 });
 

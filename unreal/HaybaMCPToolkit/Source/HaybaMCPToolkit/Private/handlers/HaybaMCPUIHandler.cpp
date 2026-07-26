@@ -225,7 +225,12 @@ namespace
             if (SrcProp->HasAnyPropertyFlags(CPF_Transient | CPF_DuplicateTransient | CPF_EditorOnly)) continue;
 
             const FName PropName = SrcProp->GetFName();
-            if (PropName == TEXT("Slot")) continue;  // owned by the parent panel
+            if (PropName == TEXT("Slot")) continue;   // owned by the parent panel
+            // A panel's Slots array holds pointers to slot objects whose Content
+            // points at the SOURCE's children. Copying it makes two widgets claim
+            // the same children, which is a corrupt tree rather than a copy.
+            // Children are rebuilt explicitly by the caller instead.
+            if (PropName == TEXT("Slots")) continue;
 
             FProperty* DstProp = To->GetClass()->FindPropertyByName(PropName);
             if (!DstProp) continue;
@@ -257,6 +262,61 @@ namespace
 
         return W->IsA<UEditableText>() || W->IsA<UEditableTextBox>() ||
                W->IsA<UMultiLineEditableTextBox>() || W->IsA<USpinBox>() || W->IsA<USlider>();
+    }
+
+    /** Recursively clone a widget and its children into `WBP`'s widget tree.
+     *
+     *  DuplicateObject cannot do this. A UPanelSlot's Content is a plain pointer
+     *  to a widget owned by the WidgetTree, not a subobject of the panel, so
+     *  duplication copies the POINTER: the "copy" ends up sharing the original's
+     *  children, and renaming the copy's subtree renames the original's widgets
+     *  out from under the blueprint. That was observable as two widgets with the
+     *  same name and a child that had silently moved.
+     *
+     *  So the tree is rebuilt node by node: construct a widget of the same class,
+     *  copy its properties, then recurse and re-parent, copying each slot's
+     *  layout across as we go. Every widget produced is genuinely new.
+     *
+     *  Returns nullptr if construction fails at any level. */
+    UWidget* DeepCloneWidget(UWidgetBlueprint* WBP, UWidget* Source, FName DesiredName, int32 Depth = 0)
+    {
+        if (!WBP || !WBP->WidgetTree || !Source) return nullptr;
+        if (Depth > 64) return nullptr;  // defensive: a cycle would never terminate
+
+        UClass* Cls = Source->GetClass();
+        const FName Name = DesiredName.IsNone()
+            ? MakeUniqueObjectName(WBP->WidgetTree, Cls, Source->GetFName())
+            : DesiredName;
+
+        UWidget* New = WBP->WidgetTree->ConstructWidget<UWidget>(Cls, Name);
+        if (!New) return nullptr;
+
+        CopyCommonProperties(Source, New);
+
+        if (UPanelWidget* SrcPanel = Cast<UPanelWidget>(Source))
+        {
+            UPanelWidget* NewPanel = Cast<UPanelWidget>(New);
+            if (NewPanel)
+            {
+                for (int32 i = 0; i < SrcPanel->GetChildrenCount(); ++i)
+                {
+                    UWidget* SrcChild = SrcPanel->GetChildAt(i);
+                    if (!SrcChild) continue;
+
+                    UWidget* NewChild = DeepCloneWidget(WBP, SrcChild, NAME_None, Depth + 1);
+                    if (!NewChild) continue;
+
+                    UPanelSlot* NewSlot = NewPanel->AddChild(NewChild);
+                    if (NewSlot && SrcChild->Slot && NewSlot->GetClass() == SrcChild->Slot->GetClass())
+                    {
+                        CopyCommonProperties(SrcChild->Slot, NewSlot);
+                        NewSlot->SynchronizeProperties();
+                    }
+                }
+            }
+        }
+
+        return New;
     }
 
     UWidget* FindWidgetByName(UWidgetTree* Tree, const FString& Name)
@@ -1574,41 +1634,25 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
         // leaves the blueprint with a mangled copy and two widgets answering to
         // the same name. So duplicate under a scratch name first, then rename
         // the whole subtree to unique names before anything else sees it.
-        const FName ScratchName = MakeUniqueObjectName(
-            WBP->WidgetTree, Source->GetClass(), TEXT("HaybaMCP_DuplicateScratch"));
+        // Rebuild the subtree rather than duplicating it. See DeepCloneWidget:
+        // DuplicateObject leaves the copy pointing at the ORIGINAL's children,
+        // because a slot's Content is a plain pointer rather than a subobject.
+        // Two earlier attempts to fix that by renaming after the fact were
+        // treating the symptom — the copy and the original genuinely shared
+        // widgets, so renaming "the copy's" subtree renamed the original's.
+        const FName RootName = NewName.IsEmpty()
+            ? MakeUniqueObjectName(WBP->WidgetTree, Source->GetClass(), Source->GetFName())
+            : FName(*NewName);
 
-        UWidget* Copy = DuplicateObject<UWidget>(Source, WBP->WidgetTree, ScratchName);
+        UWidget* Copy = DeepCloneWidget(WBP, Source, RootName);
         if (!Copy)
-            return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree duplicate: DuplicateObject failed"));
+            return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree duplicate: could not clone the widget subtree"));
 
-        // The root of the copy takes the caller's name (or a unique variant of
-        // the source's); every descendant takes a unique variant of its own.
+        TArray<FString> RenameFallbacks;
+        if (Copy->GetFName() != RootName)
         {
-            TArray<UWidget*> Copied;
-            CollectSubtree(Copy, Copied);
-            for (UWidget* W : Copied)
-            {
-                if (!W) continue;
-
-                const bool bIsRoot = (W == Copy);
-                FName Desired;
-                if (bIsRoot && !NewName.IsEmpty())
-                {
-                    Desired = FName(*NewName);
-                }
-                else
-                {
-                    // Base the unique name on the SOURCE widget's name, not the
-                    // scratch name, so a duplicated "Row" reads "Row_1".
-                    const FName Base = bIsRoot ? Source->GetFName() : W->GetFName();
-                    Desired = MakeUniqueObjectName(WBP->WidgetTree, W->GetClass(), Base);
-                }
-
-                if (W->GetFName() != Desired)
-                {
-                    W->Rename(*Desired.ToString(), WBP->WidgetTree, REN_DontCreateRedirectors | REN_DoNotDirty);
-                }
-            }
+            RenameFallbacks.Add(FString::Printf(
+                TEXT("wanted \"%s\", got \"%s\""), *RootName.ToString(), *Copy->GetName()));
         }
 
         UPanelSlot* NewSlot = TargetParent->AddChild(Copy);
@@ -1641,6 +1685,63 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
         Out->SetStringField(TEXT("name"), Copy->GetName());
         Out->SetStringField(TEXT("parent"), TargetParent->GetName());
         Out->SetNumberField(TEXT("widgets_duplicated"), Subtree.Num());
+
+        // Post-condition check. Two rounds of fixes have improved this path
+        // without fully settling it: the clone no longer corrupts the ORIGINAL's
+        // subtree, but the copy can still come back trashed or sharing a name
+        // with its source. Rather than return ok on a tree that is wrong, verify
+        // what actually landed and say so.
+        //
+        // This is deliberately a hard error. A silently mis-shaped widget tree is
+        // the expensive kind of failure — it surfaces later as a binding that
+        // cannot resolve, with nothing pointing back at the call that caused it.
+        {
+            const FString FinalName = Copy->GetName();
+            TArray<FString> Defects;
+
+            if (FinalName.StartsWith(TEXT("TRASH_")))
+            {
+                Defects.Add(FString::Printf(
+                    TEXT("the copy was trashed by the engine and is named \"%s\""), *FinalName));
+            }
+            if (!NewName.IsEmpty() && FinalName != NewName)
+            {
+                Defects.Add(FString::Printf(
+                    TEXT("asked for \"%s\" but the copy is named \"%s\""), *NewName, *FinalName));
+            }
+
+            // Two widgets answering to one name means later lookups are
+            // ambiguous, which is how the original corruption presented.
+            TMap<FString, int32> NameCounts;
+            WBP->WidgetTree->ForEachWidget([&NameCounts](UWidget* W)
+            {
+                if (W) NameCounts.FindOrAdd(W->GetName())++;
+            });
+            for (const auto& Pair : NameCounts)
+            {
+                if (Pair.Value > 1)
+                {
+                    Defects.Add(FString::Printf(
+                        TEXT("%d widgets now share the name \"%s\""), Pair.Value, *Pair.Key));
+                }
+            }
+
+            if (Defects.Num() > 0)
+            {
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("ui_mutate_tree duplicate: the copy did not come out clean — %s. ")
+                    TEXT("The blueprint has NOT been saved; discard the change by reloading the asset. ")
+                    TEXT("Build the widget explicitly with ui_build_tree instead."),
+                    *FString::Join(Defects, TEXT("; "))));
+            }
+        }
+
+        if (RenameFallbacks.Num() > 0)
+        {
+            TArray<TSharedPtr<FJsonValue>> Arr;
+            for (const FString& R : RenameFallbacks) Arr.Add(MakeShared<FJsonValueString>(R));
+            Out->SetArrayField(TEXT("rename_fallbacks"), Arr);
+        }
         return FHaybaHandlerResult::Ok(Out);
     }
     else if (Operation == TEXT("replace"))
