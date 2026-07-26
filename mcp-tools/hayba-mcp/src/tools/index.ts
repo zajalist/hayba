@@ -421,7 +421,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   // ── Actor domain ────────────────────────────────────────────────────────
   {
     name: 'actor_spawn',
-    description: 'Spawn a new actor in the active level.',
+    description: 'Place a new actor in the active level by class — a light, a volume, a blueprint actor, or any registered UClass. To place a StaticMesh or other content asset by its path instead, use actor_spawn_from_asset.',
     meta: actorSpawnMeta,
     handler: actorSpawnHandler,
     cost: 'medium',
@@ -436,7 +436,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   },
   {
     name: 'actor_list',
-    description: 'Enumerate actors in the active level.',
+    description: 'List what is in the scene: every actor in the active level with its label, class and transform. Start here when you need to know what already exists before changing anything.',
     meta: actorListMeta,
     handler: actorListHandler,
     cost: 'low',
