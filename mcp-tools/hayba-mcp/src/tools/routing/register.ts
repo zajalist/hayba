@@ -37,6 +37,7 @@ import { dagRebuildHandler, dagRebuildSchema } from '../dag/rebuild.js';
 import { journalTailHandler, journalTailSchema } from '../dag/journal-tail.js';
 import { setAssetDagSink } from '../asset-sources/shared.js';
 import { registerChatCapturedTools } from '../../chat/tool-dispatch.js';
+import { buildOrientation, shouldOrient } from './orientation.js';
 
 // ── First-install surface ────────────────────────────────────────────────────
 //
@@ -414,40 +415,60 @@ export async function registerDeferredRouting(
   });
   const index = await ToolIndex.build(docs, { embeddings, cacheDir: effectiveCacheDir });
 
+  // ── First-contact orientation ──────────────────────────────────────────────
+  //
+  // Appended to whichever core tool the agent happens to call first, then never
+  // again. A seven-tool surface is only an improvement if the agent knows the
+  // other seventy are one call away; without this it just looks like a server
+  // that cannot do very much.
+  const withOrientation = (
+    result: { content: Array<{ type: 'text'; text: string }> },
+  ): { content: Array<{ type: 'text'; text: string }> } => {
+    if (!shouldOrient()) return result;
+    const text = buildOrientation({
+      totalTools: captured.size,
+      loadedTools: Array.from(registeredNames),
+      registry,
+    });
+    return { ...result, content: [...result.content, { type: 'text' as const, text }] };
+  };
+
+  const j = (r: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] });
+
   // ── Register the 4 new meta-tools ──────────────────────────────────────────
   server.tool(
     'hayba_search_tools',
-    'Find Hayba tools by capability before loading their pack. Hybrid BM25 + embedding search over the full tool catalog.',
+    'FIND A TOOL BY DESCRIBING WHAT YOU WANT, in plain language ("make a menu widget", "why is my landscape flat"). Searches the FULL catalogue, including the tools that are not registered yet — most of them are not, by design. Returns tool names you can pass straight to hayba_invoke without loading anything. USE_WHEN: you do not already know the exact tool name. NOT_WHEN: you know the name — just hayba_invoke it.',
     searchToolsSchema,
     async (args: { query: string; k?: number; filterPack?: string }) => {
       const r = await searchToolsHandler(args, { index });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+      return withOrientation(j(r));
     },
   );
 
   server.tool(
     'hayba_pack_list',
-    'List available Hayba tool packs (domain + workflow), with loaded flag and tool count.',
+    'List the tool packs — domain packs group one subsystem, workflow packs bundle a task across subsystems. Shows tool counts and which are loaded. USE_WHEN: you want the map of what exists. NOT_WHEN: you want a specific capability — hayba_search_tools is faster than reading the map.',
     packListSchema,
     async () => {
       const r = await packListHandler({}, { registry });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+      return withOrientation(j(r));
     },
   );
 
   server.tool(
     'hayba_pack_load',
-    'Load a Hayba tool pack — registers its tools natively so the client sees them on the next list refresh.',
+    'Register a pack natively so its tools appear in your tool list with full schemas. This is an OPTIMISATION for repeated use, not a prerequisite: hayba_invoke already calls any tool without it. USE_WHEN: you are about to make several calls into one domain. NOT_WHEN: one-off call — just invoke it.',
     packLoadSchema,
     async (args: { name: string }) => {
       const r = await packLoadHandler(args, { registry });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+      return withOrientation(j(r));
     },
   );
 
   server.tool(
     'hayba_invoke',
-    'Polymorphic dispatcher: call any Hayba tool by name without loading its pack. Best for one-off calls; load the pack for repeated use.',
+    'CALL ANY TOOL BY NAME, whether or not its pack is loaded — the whole catalogue is reachable through here. Pair with hayba_search_tools when you do not know the name. USE_WHEN: any call into an unloaded domain, which is most of them. NOT_WHEN: you are making many calls into one domain — hayba_pack_load gives you native schemas.',
     invokeSchema,
     async (args: { name: string; args: Record<string, unknown>; via?: 'ts' | 'ue_legacy' }) => {
       const r = await invokeHandler(args, {
@@ -468,7 +489,7 @@ export async function registerDeferredRouting(
         },
         isDisabled: isToolDisabled,
       });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+      return withOrientation(j(r));
     },
   );
 
@@ -510,7 +531,7 @@ export async function registerDeferredRouting(
         const status = await checkUeStatus({
           onConnected: () => registry.maybeAutoLoad('ue_connected'),
         });
-        return { content: [{ type: 'text' as const, text: JSON.stringify(status, null, 2) }] };
+        return withOrientation(j(status));
       },
     );
     registeredNames.add('hayba_check_ue_status');
