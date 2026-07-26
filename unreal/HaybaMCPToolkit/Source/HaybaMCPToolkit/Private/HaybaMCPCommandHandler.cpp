@@ -112,6 +112,9 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("gas_create_ability"),
         TEXT("gas_create_effect"),
         TEXT("ui_create_widget"),
+        TEXT("ui_set_widget_properties"),
+        TEXT("ui_mutate_tree"),
+        TEXT("ui_save_widget"),
         TEXT("input_create_action"),
         TEXT("input_create_mapping"),
         // Memory
@@ -220,6 +223,64 @@ static void PushSceneGraphToPanel(const TSharedPtr<FJsonObject>& Data)
             if (TSharedPtr<SHaybaMCPSceneMapPanel> Panel = M->SceneMapPanel.Pin())
             {
                 Panel->LoadSceneGraph(Nodes, Edges);
+            }
+        }
+    });
+}
+
+/** Push findings produced OUTSIDE the editor into the Validation panel.
+ *  The panel is push-only from in here, so MCP-side validators (ui_validate
+ *  and anything else that judges a snapshot rather than the live world) have
+ *  no other way to surface. Without this their findings only ever exist in a
+ *  tool response the user never opens.
+ *
+ *  Params: { findings: [{ rule_id, severity, message, hint?, widget? }],
+ *            append?: bool }  — append keeps earlier findings on screen. */
+static void PushExternalFindingsToPanel(const TSharedPtr<FJsonObject>& Data)
+{
+    if (!Data.IsValid()) return;
+
+    TArray<FHaybaValidationIssue> Issues;
+    const TArray<TSharedPtr<FJsonValue>>* FindingsArr = nullptr;
+    if (Data->TryGetArrayField(TEXT("findings"), FindingsArr) && FindingsArr)
+    {
+        for (const auto& V : *FindingsArr)
+        {
+            const TSharedPtr<FJsonObject> F = V->AsObject();
+            if (!F.IsValid()) continue;
+
+            FHaybaValidationIssue I;
+            F->TryGetStringField(TEXT("rule_id"), I.IssueType);
+            F->TryGetStringField(TEXT("widget"), I.ActorLabel);
+
+            FString Message, Hint;
+            F->TryGetStringField(TEXT("message"), Message);
+            F->TryGetStringField(TEXT("hint"), Hint);
+            // The hint is the actionable half of a finding; keeping it out of
+            // the panel would strip the part that says what to actually do.
+            I.Description = Hint.IsEmpty() ? Message : FString::Printf(TEXT("%s — %s"), *Message, *Hint);
+
+            FString Severity;
+            F->TryGetStringField(TEXT("severity"), Severity);
+            if (Severity.Equals(TEXT("error"), ESearchCase::IgnoreCase))        I.Severity = EHaybaSeverity::Error;
+            else if (Severity.Equals(TEXT("warning"), ESearchCase::IgnoreCase)) I.Severity = EHaybaSeverity::Warning;
+            else                                                                I.Severity = EHaybaSeverity::Info;
+
+            Issues.Add(MoveTemp(I));
+        }
+    }
+
+    bool bAppend = false;
+    Data->TryGetBoolField(TEXT("append"), bAppend);
+
+    AsyncTask(ENamedThreads::GameThread, [Issues = MoveTemp(Issues), bAppend]()
+    {
+        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        {
+            if (TSharedPtr<SHaybaMCPValidationPanel> Panel = M->ValidationPanel.Pin())
+            {
+                if (!bAppend) Panel->Clear();
+                for (const auto& I : Issues) Panel->AddIssue(I);
             }
         }
     });
@@ -861,8 +922,15 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     // Initiative #1: wrap every destructive op in a native editor transaction
     // so the user can revert AI mutations with Ctrl+Z. Read-only commands
     // skip this for zero overhead.
+    //
+    // Skipped entirely during an active PIE session: the global transaction
+    // buffer (GEditor->Trans) can end up retaining a reference into the PIE
+    // world/GameInstance, which crashes the editor on PIE stop with
+    // "Object 'GameInstance ...' from PIE level still referenced". AI-driven
+    // edits made mid-PIE don't need undo support badly enough to risk that.
     const bool bDestructive = IsDestructiveCommand(Cmd);
-    if (bDestructive && GEditor)
+    const bool bInPIE = GEditor && GEditor->PlayWorld != nullptr;
+    if (bDestructive && GEditor && !bInPIE)
     {
         const FText TxText = FText::FromString(FString::Printf(TEXT("Hayba: %s"), *Cmd));
         GEditor->BeginTransaction(TxText);
@@ -918,7 +986,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
 
     const int64 DurMs = (int64)((FPlatformTime::Seconds() - Start) * 1000.0);
 
-    if (bDestructive && GEditor)
+    if (bDestructive && GEditor && !bInPIE)
     {
         // Cancel the transaction if the handler reported failure — leaves no
         // empty undo entry. Otherwise end normally so Ctrl+Z reverts the op.
@@ -937,6 +1005,9 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         if (Cmd == TEXT("scene_get_graph"))           PushSceneGraphToPanel(Result.Data);
         else if (Cmd == TEXT("scene_validate_physics")) PushPhysicsResultsToPanel(Result.Data);
         else if (Cmd == TEXT("memory_query"))           PushMemoryResultsToPanel(Result.Data);
+        // ui_report_findings carries its payload in the REQUEST, not the
+        // response, because the findings were judged MCP-side.
+        else if (Cmd == TEXT("ui_report_findings"))      PushExternalFindingsToPanel(Params);
     }
     // Log destructive ops to the Diff panel with true Before / requested After.
     if (Result.bOk)
