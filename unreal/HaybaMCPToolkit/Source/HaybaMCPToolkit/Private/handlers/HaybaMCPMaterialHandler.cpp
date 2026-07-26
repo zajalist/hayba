@@ -11,6 +11,7 @@
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "HaybaMCPAssetGuard.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/Actor.h"
@@ -411,6 +412,15 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCreate(const TSharedPtr<FJsonOb
     const FString Dir = (FPackageName::GetShortName(PkgPath) == Name)
         ? FPackageName::GetLongPackagePath(PkgPath)
         : PkgPath;
+    // Refuse a taken name instead of letting CreateAsset raise a modal
+    // overwrite dialog, which would block the game thread and hang every
+    // queued MCP request. See HaybaMCPAssetGuard.h.
+    if (HaybaAssetGuard::AssetNameTaken(Dir, Name))
+    {
+        return FHaybaHandlerResult::Err(
+            HaybaAssetGuard::NameTakenError(TEXT("material_create"), Dir, Name));
+    }
+
     UObject* Created = Tools.CreateAsset(Name, Dir, UMaterial::StaticClass(), Factory);
     if (!Created) return FHaybaHandlerResult::Err(TEXT("material_create: CreateAsset failed"));
 
@@ -449,6 +459,15 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatFunctionCreate(const TSharedPtr
     const FString Dir = (ShortName == Name)
         ? FPackageName::GetLongPackagePath(PkgPath)  // full path: strip the trailing name
         : PkgPath;                                   // directory: use verbatim
+    // Refuse a taken name instead of letting CreateAsset raise a modal
+    // overwrite dialog, which would block the game thread and hang every
+    // queued MCP request. See HaybaMCPAssetGuard.h.
+    if (HaybaAssetGuard::AssetNameTaken(Dir, Name))
+    {
+        return FHaybaHandlerResult::Err(
+            HaybaAssetGuard::NameTakenError(TEXT("material_function_create"), Dir, Name));
+    }
+
     UObject* Created = Tools.CreateAsset(Name, Dir, UMaterialFunction::StaticClass(), Factory);
     if (!Created) return FHaybaHandlerResult::Err(TEXT("material_function_create: CreateAsset failed"));
 
@@ -816,6 +835,15 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCreateInstance(const TSharedPtr
     const FString Dir = (FPackageName::GetShortName(PkgPath) == Name)
         ? FPackageName::GetLongPackagePath(PkgPath)
         : PkgPath;
+    // Refuse a taken name instead of letting CreateAsset raise a modal
+    // overwrite dialog, which would block the game thread and hang every
+    // queued MCP request. See HaybaMCPAssetGuard.h.
+    if (HaybaAssetGuard::AssetNameTaken(Dir, Name))
+    {
+        return FHaybaHandlerResult::Err(
+            HaybaAssetGuard::NameTakenError(TEXT("material_create_instance"), Dir, Name));
+    }
+
     UObject* Created = Tools.CreateAsset(Name, Dir, UMaterialInstanceConstant::StaticClass(), Factory);
     if (!Created) return FHaybaHandlerResult::Err(TEXT("material_create_instance: CreateAsset failed"));
 

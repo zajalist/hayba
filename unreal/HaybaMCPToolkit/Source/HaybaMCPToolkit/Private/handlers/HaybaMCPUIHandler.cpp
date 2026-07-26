@@ -77,6 +77,7 @@
 #include "Engine/Blueprint.h"
 #include "Styling/CoreStyle.h"
 #include "AssetRegistry/IAssetRegistry.h"
+#include "HaybaMCPAssetGuard.h"
 #include "HaybaMCPReflection.h"
 #include "HaybaMCPParams.h"
 #include "HaybaMCPUILayout.h"
@@ -1001,36 +1002,13 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleCreateWidget(const TSharedPtr<FJso
     if (!ParentClass->IsChildOf(UUserWidget::StaticClass()))
         return FHaybaHandlerResult::Err(TEXT("ui_create_widget: parent_class must derive from UserWidget"));
 
-    // Refuse a name that is already taken, rather than letting CreateAsset ask.
-    //
-    // AssetTools::CreateAsset raises a modal "Overwrite Existing Object" dialog
-    // when the name collides. Handlers run on the game thread, so that dialog
-    // blocks the thread that would service the reply: the command never
-    // completes, the caller times out, and every subsequent MCP request hangs
-    // behind it until a human clicks the box. One tool call takes the whole
-    // connection down, and nothing in the logs says why.
-    //
-    // Nothing about "this name is taken" needs a human, so it is answered here.
+    // Refuse a taken name instead of letting CreateAsset raise a modal overwrite
+    // dialog, which would block the game thread and hang every queued MCP
+    // request. See HaybaMCPAssetGuard.h for why this is worth guarding.
+    if (HaybaAssetGuard::AssetNameTaken(PkgPath, AssetName))
     {
-        const FString ObjectPath = FString::Printf(TEXT("%s/%s.%s"), *PkgPath, *AssetName, *AssetName);
-        const FAssetRegistryModule& RegistryModule =
-            FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-        const FAssetData Existing =
-            RegistryModule.Get().GetAssetByObjectPath(FSoftObjectPath(ObjectPath));
-
-        // Check the registry AND memory: an asset created earlier this session
-        // and not yet saved is absent from the registry but still collides.
-        const bool bExists = Existing.IsValid()
-            || FindObject<UObject>(nullptr, *ObjectPath) != nullptr;
-
-        if (bExists)
-        {
-            return FHaybaHandlerResult::Err(FString::Printf(
-                TEXT("ui_create_widget: '%s' already exists at %s. Pick another name, or edit the existing asset ")
-                TEXT("(ui_query to inspect it). This is refused rather than prompting, because a modal overwrite ")
-                TEXT("dialog would block the editor's game thread and hang every MCP request behind it."),
-                *AssetName, *PkgPath));
-        }
+        return FHaybaHandlerResult::Err(
+            HaybaAssetGuard::NameTakenError(TEXT("ui_create_widget"), PkgPath, AssetName));
     }
 
     FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
