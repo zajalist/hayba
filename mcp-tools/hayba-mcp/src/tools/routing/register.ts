@@ -38,58 +38,63 @@ import { journalTailHandler, journalTailSchema } from '../dag/journal-tail.js';
 import { setAssetDagSink } from '../asset-sources/shared.js';
 import { registerChatCapturedTools } from '../../chat/tool-dispatch.js';
 
-/** Tools registered by registerDeferredRouting itself — skip in shim re-register. */
-export const ALWAYS_ON_META = new Set<string>([
-  'world_generate',
+// ── First-install surface ────────────────────────────────────────────────────
+//
+// What an agent sees before it asks for anything. This number matters more than
+// it looks: every always-on tool spends context on every request, forever, and
+// a large default set actively defeats discovery — there is no reason to search
+// a catalog when 50 tools are already sitting in front of you, so the ones that
+// are NOT surfaced never get found.
+//
+// The set below is the bootstrap minimum: what you cannot discover your way to,
+// because you need it to discover. Everything else in the catalog stays
+// reachable at all times without being registered:
+//
+//   hayba_search_tools  → find it
+//   hayba_invoke        → call it (resolves from the captured map, which holds
+//                         every tool regardless of pack state — loading a pack
+//                         is an optimisation for repeated use, never a
+//                         prerequisite)
+//   hayba_pack_load     → register a domain natively when you want its schemas
+//
+// Before changing this, ask whether the tool is genuinely un-discoverable
+// without itself being present. If an agent could find it with a search, it
+// belongs in a pack.
+
+/** The bootstrap set: needed to discover and reach everything else. */
+export const CORE_META = new Set<string>([
+  // Discovery.
   'hayba_search_tools',
-  'hayba_pack_list',
-  'hayba_pack_load',
-  'hayba_invoke',
-  'hayba_check_ue_status',
   'list_tool_categories',
   'get_tool_signature',
-  'hayba_asset_search',
-  'hayba_asset_browse',
-  'hayba_asset_reindex',
-  'hayba_sliver_list',
-  'hayba_sliver_get',
-  'hayba_sliver_run',
-  'hayba_sliver_import',
-  'hayba_dag_status',
-  'hayba_dag_record',
-  'hayba_dag_rebuild',
-  'hayba_journal_tail',
-  'validator_run',
-  'validator_history',
-  'validator_resolve',
-  'validator_clear',
-  'validator_rules',
-  'validator_set_rule_enabled',
-  'validator_strictness',
-  'plumb_primitives',
-  'plumb_profile_bake',
-  'plumb_profile_annotate',
-  'plumb_profile_list',
-  'plumb_profile_get',
-  'plumb_constraint_define',
-  'plumb_constraint_list',
-  'plumb_constraint_remove',
-  'plumb_constraint_propose',
-  'plumb_validate',
-  'plumb_mask_add',
-  'plumb_mask_remove',
-  'plumb_lesson_add',
-  'plumb_lesson_list',
-  'plumb_lesson_remove',
-  'plumb_study',
-  'plumb_study_take',
-  'plumb_segment',
-  'plumb_production_define',
-  'plumb_production_list',
-  'plumb_production_remove',
-  'plumb_socket_add',
-  'plumb_grammar_expand',
+  // Execution without registration.
+  'hayba_invoke',
+  // Progressive loading.
+  'hayba_pack_list',
+  'hayba_pack_load',
+  // Liveness — every UE-touching tool fails confusingly without this answer,
+  // and an agent cannot know to look for it.
+  'hayba_check_ue_status',
 ]);
+
+/** Packs auto-loaded once the UE editor is confirmed connected. Keeps the cold
+ *  surface tiny while making the tools you obviously need present as soon as
+ *  there is an editor to use them on. */
+export const AUTOLOAD_ON_UE_CONNECT = ['editor'] as const;
+
+/** Tools registered by registerDeferredRouting itself — skip in shim re-register.
+ *
+ *  Kept as a separate export because callers (and the routing integration test)
+ *  treat it as "what is registered at startup". It is exactly CORE_META now;
+ *  previously it also carried the whole PLUMB, validator, sliver, DAG and asset
+ *  surfaces — 49 tools — which is what made the catalog unsearchable.
+ *
+ *  Note on PLUMB in particular: it was always-on so "the Validator/Memory panels
+ *  and any agent can bake profiles without loading a pack." The panels read the
+ *  PLUMB stores directly from disk (see PushMemoryResultsToPanel), so they never
+ *  needed the MCP registration; and an agent reaches every one of those tools
+ *  through hayba_invoke. Nothing regressed by moving them into their pack. */
+export const ALWAYS_ON_META = new Set<string>(CORE_META);
 
 export interface CapturedTool {
   /** Description string passed to server.tool (may be empty). */
@@ -135,6 +140,207 @@ export async function registerDeferredRouting(
   const effectiveCacheDir = cacheDir
     ?? process.env.HAYBA_TOOL_INDEX_DIR
     ?? resolve(process.cwd(), 'Saved/HaybaMCP');
+
+  // ── Runtime-constructed subsystems ─────────────────────────────────────────
+  //
+  // These tools cannot be declared statically: they close over live objects
+  // (the asset retriever, the DAG, the sliver loader). They used to call
+  // server.tool() directly, which registered all 11 unconditionally and — because
+  // it ran after the search index was built — left every one of them OUT of the
+  // index. They were simultaneously always in your face and impossible to find
+  // by searching.
+  //
+  // They now go through `defer`, which puts them in the captured map like every
+  // other tool. Pack discovery, the search index and hayba_invoke all read that
+  // map, so they stay searchable and callable while costing nothing until asked
+  // for. This block must stay ABOVE pack discovery for that to hold.
+
+  /** Route a runtime-constructed tool through the deferred path instead of
+   *  registering it natively. */
+  const defer = (
+    dir: string,
+    name: string,
+    description: string,
+    schema: z.ZodRawShape,
+    handler: (...args: never[]) => unknown,
+  ): void => {
+    captured.set(name, {
+      description,
+      schema,
+      handler: handler as unknown as CapturedTool['handler'],
+      dir,
+    });
+  };
+
+  // ── Asset retriever (Layer 3a) ─────────────────────────────────────────────
+  const retriever = new AssetRetriever(
+    (cmd, params) => executeCommand(cmd, params ?? {}),
+    { cacheDir: effectiveCacheDir },
+  );
+  setDefaultRetriever(retriever);
+
+  defer(
+    'asset-sources',
+    'hayba_asset_search',
+    'Find an asset in the user\'s UE Content Browser by semantic intent or keyword. Hybrid BM25 + embedding search.',
+    assetSearchSchema,
+    async (args: { query: string; k?: number; filterClass?: string; filterSource?: 'project' | 'polyhaven' | 'ambientcg' | 'sketchfab' | 'fab' | 'unknown' }) => {
+      const r = await assetSearchHandler(args, { retriever });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  defer(
+    'asset-sources',
+    'hayba_asset_browse',
+    'Enumerate assets by filter (path/class/tag/source) without semantic ranking. Paginated.',
+    assetBrowseSchema,
+    async (args: { filter?: { path?: string; class?: string; tag?: string; source?: 'project' | 'polyhaven' | 'ambientcg' | 'sketchfab' | 'fab' | 'unknown' }; offset?: number; limit?: number }) => {
+      const r = await assetBrowseHandler(args, { retriever });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  defer(
+    'asset-sources',
+    'hayba_asset_reindex',
+    'Force a rebuild of the asset index. Use after a batch import outside the MCP-tracked download flow.',
+    assetReindexSchema,
+    async () => {
+      const r = await assetReindexHandler({}, { retriever });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  // ── DAG + journal (Layer 2 — operation tracking) ───────────────────────────
+  const dag = setupDagSystem();
+
+  // Asset-source verified writes feed the journal.
+  setAssetDagSink((writeUri) => {
+    dag.recordMutation({ actor: 'asset', reads: [], writes: [writeUri], paramsHash: '', ok: true });
+  });
+
+  // ── Slivers (Layer 2 — deterministic abstractions) ─────────────────────────
+  const slivers = await setupSliverSystem({
+    onRun: (info) => {
+      dag.recordSliverRun({
+        sliverId: info.sliverId,
+        params: info.params,
+        declaredReads: info.declaredReads,
+        writes: info.writes,
+        ok: info.ok,
+      });
+    },
+    // Side-effecting executors reach the UE bridge through ctx.dispatch.
+    // executeCommand throws on transport/UE error; we convert to the
+    // structured SliverDispatchResult so executors can branch on `ok`.
+    ueBridge: async (cmd, params) => {
+      try {
+        const data = await executeCommand(cmd, params);
+        return { ok: true, data: data as Record<string, unknown> };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+  });
+  for (const err of slivers.loader.errors()) {
+    console.warn(`[slivers] load error: ${err}`);
+  }
+
+  defer(
+    'sliver',
+    'hayba_sliver_list',
+    'List installed Slivers (deterministic abstractions). Optional category or namespace filter.',
+    sliverListSchema,
+    async (args: { category?: string; namespace?: string }) => {
+      const r = await sliverListHandler(args, { loader: slivers.loader });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  defer(
+    'sliver',
+    'hayba_sliver_get',
+    'Get the full spec (params + determinism + executor) of an installed sliver by id.',
+    sliverGetSchema,
+    async (args: { id: string }) => {
+      const r = await sliverGetHandler(args, { loader: slivers.loader });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  defer(
+    'sliver',
+    'hayba_sliver_run',
+    'Execute a sliver with concrete parameter values. Returns outputs + declared side_effects + durationMs.',
+    sliverRunSchema,
+    async (args: { id: string; params: Record<string, unknown> }) => {
+      const r = await sliverRunHandler(args, { runtime: slivers.runtime });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  defer(
+    'sliver',
+    'hayba_sliver_import',
+    'Install a sliver from a local file path or an http(s) URL into the user sliver library.',
+    sliverImportSchema,
+    async (args: { source: string }) => {
+      const r = await sliverImportHandler(args, { loader: slivers.loader });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  defer(
+    'dag',
+    'hayba_dag_status',
+    'Show the dependency graph of generated artifacts and which are stale (dirty).',
+    dagStatusSchema,
+    async (args: { namespace?: string; dirtyOnly?: boolean }) => {
+      const r = await dagStatusHandler(args, { dag });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  defer(
+    'dag',
+    'hayba_dag_record',
+    'Record a mutation Hayba did not instrument (editor-side edits, manual writes) so the DAG stays accurate.',
+    dagRecordSchema,
+    async (args: { reads?: string[]; writes: string[]; actor?: string; note?: string }) => {
+      const r = await dagRecordHandler(args, { dag });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  defer(
+    'dag',
+    'hayba_dag_rebuild',
+    'Re-run stale (dirty) artifacts. Optionally restrict to the subtree under a target URI.',
+    dagRebuildSchema,
+    async (args: { target?: string }) => {
+      const r = await dagRebuildHandler(args, {
+        dag,
+        runSliverNode: async (uri: string) => {
+          return { ok: false, reason: uri.startsWith('sliver://')
+            ? 'sliver re-run from node id is v2'
+            : 'no executor for this node type' };
+        },
+      });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
+
+  defer(
+    'dag',
+    'hayba_journal_tail',
+    'Return the most recent mutation operations from the journal.',
+    journalTailSchema,
+    async (args: { limit?: number }) => {
+      const r = await journalTailHandler(args, { dag });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+    },
+  );
 
   // ── Pack discovery ─────────────────────────────────────────────────────────
   const toolDirs = new Map<string, string | null>();
@@ -287,46 +493,11 @@ export async function registerDeferredRouting(
     }
     registeredNames.add(name);
   };
+  // Only the bootstrap set is registered here. Everything else stays in the
+  // captured map: findable with hayba_search_tools, callable with hayba_invoke,
+  // and registrable on demand with hayba_pack_load.
   passthrough('list_tool_categories');
   passthrough('get_tool_signature');
-  // world_generate — the always-on flagship: describe a biome, get a
-  // PLUMB-validated scene. No pack load required.
-  passthrough('world_generate');
-  // Validator tools — always-on so the UE plugin's Validator panel and any
-  // agent can read/manage history without loading a pack.
-  passthrough('validator_run');
-  passthrough('validator_history');
-  passthrough('validator_resolve');
-  passthrough('validator_clear');
-  passthrough('validator_rules');
-  passthrough('validator_set_rule_enabled');
-  passthrough('validator_strictness');
-  // PLUMB constraint subsystem — always-on so the Validator/Memory panels and
-  // any agent can bake profiles, author constraints, and run Verdicts without
-  // loading a pack.
-  passthrough('plumb_primitives');
-  passthrough('plumb_profile_bake');
-  passthrough('plumb_profile_annotate');
-  passthrough('plumb_profile_list');
-  passthrough('plumb_profile_get');
-  passthrough('plumb_constraint_define');
-  passthrough('plumb_constraint_list');
-  passthrough('plumb_constraint_remove');
-  passthrough('plumb_constraint_propose');
-  passthrough('plumb_validate');
-  passthrough('plumb_mask_add');
-  passthrough('plumb_mask_remove');
-  passthrough('plumb_lesson_add');
-  passthrough('plumb_lesson_list');
-  passthrough('plumb_lesson_remove');
-  passthrough('plumb_study');
-  passthrough('plumb_study_take');
-  passthrough('plumb_segment');
-  passthrough('plumb_production_define');
-  passthrough('plumb_production_list');
-  passthrough('plumb_production_remove');
-  passthrough('plumb_socket_add');
-  passthrough('plumb_grammar_expand');
 
   // For hayba_check_ue_status: REPLACE the captured handler with one that
   // wires onConnected → maybeAutoLoad('ue_connected'). The captured handler
@@ -345,164 +516,6 @@ export async function registerDeferredRouting(
     registeredNames.add('hayba_check_ue_status');
   }
 
-  // ── Asset retriever (Layer 3a) ─────────────────────────────────────────────
-  const retriever = new AssetRetriever(
-    (cmd, params) => executeCommand(cmd, params ?? {}),
-    { cacheDir: effectiveCacheDir },
-  );
-  setDefaultRetriever(retriever);
-
-  server.tool(
-    'hayba_asset_search',
-    'Find an asset in the user\'s UE Content Browser by semantic intent or keyword. Hybrid BM25 + embedding search.',
-    assetSearchSchema,
-    async (args: { query: string; k?: number; filterClass?: string; filterSource?: 'project' | 'polyhaven' | 'ambientcg' | 'sketchfab' | 'fab' | 'unknown' }) => {
-      const r = await assetSearchHandler(args, { retriever });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'hayba_asset_browse',
-    'Enumerate assets by filter (path/class/tag/source) without semantic ranking. Paginated.',
-    assetBrowseSchema,
-    async (args: { filter?: { path?: string; class?: string; tag?: string; source?: 'project' | 'polyhaven' | 'ambientcg' | 'sketchfab' | 'fab' | 'unknown' }; offset?: number; limit?: number }) => {
-      const r = await assetBrowseHandler(args, { retriever });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'hayba_asset_reindex',
-    'Force a rebuild of the asset index. Use after a batch import outside the MCP-tracked download flow.',
-    assetReindexSchema,
-    async () => {
-      const r = await assetReindexHandler({}, { retriever });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  // ── DAG + journal (Layer 2 — operation tracking) ───────────────────────────
-  const dag = setupDagSystem();
-
-  // Asset-source verified writes feed the journal.
-  setAssetDagSink((writeUri) => {
-    dag.recordMutation({ actor: 'asset', reads: [], writes: [writeUri], paramsHash: '', ok: true });
-  });
-
-  // ── Slivers (Layer 2 — deterministic abstractions) ─────────────────────────
-  const slivers = await setupSliverSystem({
-    onRun: (info) => {
-      dag.recordSliverRun({
-        sliverId: info.sliverId,
-        params: info.params,
-        declaredReads: info.declaredReads,
-        writes: info.writes,
-        ok: info.ok,
-      });
-    },
-    // Side-effecting executors reach the UE bridge through ctx.dispatch.
-    // executeCommand throws on transport/UE error; we convert to the
-    // structured SliverDispatchResult so executors can branch on `ok`.
-    ueBridge: async (cmd, params) => {
-      try {
-        const data = await executeCommand(cmd, params);
-        return { ok: true, data: data as Record<string, unknown> };
-      } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
-      }
-    },
-  });
-  for (const err of slivers.loader.errors()) {
-    console.warn(`[slivers] load error: ${err}`);
-  }
-
-  server.tool(
-    'hayba_sliver_list',
-    'List installed Slivers (deterministic abstractions). Optional category or namespace filter.',
-    sliverListSchema,
-    async (args: { category?: string; namespace?: string }) => {
-      const r = await sliverListHandler(args, { loader: slivers.loader });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'hayba_sliver_get',
-    'Get the full spec (params + determinism + executor) of an installed sliver by id.',
-    sliverGetSchema,
-    async (args: { id: string }) => {
-      const r = await sliverGetHandler(args, { loader: slivers.loader });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'hayba_sliver_run',
-    'Execute a sliver with concrete parameter values. Returns outputs + declared side_effects + durationMs.',
-    sliverRunSchema,
-    async (args: { id: string; params: Record<string, unknown> }) => {
-      const r = await sliverRunHandler(args, { runtime: slivers.runtime });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'hayba_sliver_import',
-    'Install a sliver from a local file path or an http(s) URL into the user sliver library.',
-    sliverImportSchema,
-    async (args: { source: string }) => {
-      const r = await sliverImportHandler(args, { loader: slivers.loader });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'hayba_dag_status',
-    'Show the dependency graph of generated artifacts and which are stale (dirty).',
-    dagStatusSchema,
-    async (args: { namespace?: string; dirtyOnly?: boolean }) => {
-      const r = await dagStatusHandler(args, { dag });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'hayba_dag_record',
-    'Record a mutation Hayba did not instrument (editor-side edits, manual writes) so the DAG stays accurate.',
-    dagRecordSchema,
-    async (args: { reads?: string[]; writes: string[]; actor?: string; note?: string }) => {
-      const r = await dagRecordHandler(args, { dag });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'hayba_dag_rebuild',
-    'Re-run stale (dirty) artifacts. Optionally restrict to the subtree under a target URI.',
-    dagRebuildSchema,
-    async (args: { target?: string }) => {
-      const r = await dagRebuildHandler(args, {
-        dag,
-        runSliverNode: async (uri: string) => {
-          return { ok: false, reason: uri.startsWith('sliver://')
-            ? 'sliver re-run from node id is v2'
-            : 'no executor for this node type' };
-        },
-      });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'hayba_journal_tail',
-    'Return the most recent mutation operations from the journal.',
-    journalTailSchema,
-    async (args: { limit?: number }) => {
-      const r = await journalTailHandler(args, { dag });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
 
   // ── Always-load packs from settings ────────────────────────────────────────
   for (const name of settings.alwaysLoadPacks) {
