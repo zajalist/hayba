@@ -38,24 +38,33 @@ Do not move rules into C++.
 | `reparent` discarded slot layout, no index | and orphaned the widget entirely if the new panel refused it |
 | descriptor text claimed `FScopedTransaction` | deliberately removed in c071a59; several `returns:` strings named fields that did not exist |
 
-## New commands (C++) — **needs a plugin rebuild**
+## New commands (C++)
 
 `ui_build_tree`, `ui_set_variable`, `ui_list_widget_blueprints`,
-`ui_layout_snapshot`, `ui_measure_text`, plus `ui_mutate_tree` operations
-`move` / `rename` / `duplicate`, and `ui_query` filters
-(`name_pattern` / `class_filter` / `flatten`).
+`ui_layout_snapshot`, `ui_measure_text`, `ui_report_findings`, plus
+`ui_mutate_tree` operations `move` / `rename` / `duplicate`, and `ui_query`
+filters (`name_pattern` / `class_filter` / `flatten`).
 
 New files: `handlers/HaybaMCPUILayout.{h,cpp}`.
 
-**The C++ has not been compiled** — no engine build ran in this session. Build
-the plugin before trusting any of it. Things to check first if it does not
-compile:
+### UE 5.8 API notes (learned the hard way — the first build failed on all of these)
 
-- `UWidget::IsFocusable()` and `UWidget::SetCategoryName` availability on 5.8
-- `UUserWidget::TakeWidget()` on an editor-world instance in
-  `HaybaUILayout::ComputeGeometry` (it deliberately never uses a PIE world —
-  see `[[haybamcp-pie-transaction-leak]]`)
-- `FBlueprintTags::ParentClassPath` include path
+- **There is no `UWidget`-level focus API.** `Button`, `CheckBox` and `ComboBox`
+  each declare their own `IsFocusable` / `bIsFocusable`. The snapshot resolves it
+  reflectively over both spellings, with text-entry widgets treated as
+  inherently focusable, so one path covers every widget class.
+- **`FJsonObject::Values` keys are a storage type, not `FString`.** Anything
+  taking `const FString&` needs an explicit conversion.
+- **`DesignTimeSize` lives on the `UUserWidget` CDO**, not on `UWidgetBlueprint`
+  — and it only holds a real screen size when `DesignSizeMode` is `Custom` /
+  `CustomOnScreen`. Otherwise it keeps a `(100,100)` placeholder, which would
+  make every widget look off-canvas and fire the safe-area rules everywhere.
+- **`UMultiLineEditableTextBox` has no `GetWidgetStyle()`** — only
+  `UEditableTextBox` does; multi-line exposes `WidgetStyle` directly.
+- `TSharedPtr::Get()` already returns the pointer (`&Cached.Get()` does not
+  compile).
+- `ComputeGeometry` deliberately never outers to a PIE world — see
+  `[[haybamcp-pie-transaction-leak]]`.
 
 ## Verification status (2026-07-26, after a live run)
 
@@ -103,6 +112,40 @@ rules have been run against it).
 
 The probe blueprint currently contains the corrupt duplicate; clean it after
 the rebuild.
+
+## Still to do
+
+1. **Rebuild the plugin** for the two fixes listed above, then re-run the loop
+   and confirm the Validation panel actually populates.
+
+2. **Strictness control in the editor.** Strictness is fully wired through MCP
+   (`validator_strictness`) and persists to `.scratch/validator-config.json`.
+   The panel has no control for it yet.
+
+   Correction to an earlier assumption in this doc: `SHaybaMCPValidationPanel`
+   does **not** read that config file, or any file. It is push-only —
+   `AddIssue` / `Clear`, fed by post-dispatch hooks in the command handler
+   (`PushPhysicsResultsToPanel` and friends). The comment in
+   `HaybaMCPMainPanel.cpp` claiming findings persist to
+   `validator-history.jsonl` describes the MCP side, not the panel. This is why
+   `ui_report_findings` had to exist at all, and why a strictness dropdown needs
+   its own read/write path to the config rather than just a widget.
+
+3. **Grow the ruleset.** 32 rules ship. Adding one means appending an entry to
+   `src/validator/ui/rules.ts` — the runner, the settings surface and the
+   strictness gate all read that array. Gaps worth filling: focus-navigation
+   graph reachability, per-widget clipping behaviour, ListView entry-class
+   checks, animation-track validation, input-action binding coverage.
+
+4. **Calibrate against more real screens.** Two rules already needed demoting
+   after one live run (`ui_canvas_child_top_left_anchored` fired on 7 of 8
+   widgets; `ui_empty_panel` double-reported empty Buttons). Expect more of
+   this — a rule that is correct in principle can still be useless in practice
+   if it fires on everything.
+
+5. **Not built:** `ui_bind_event` (widget delegate → blueprint event graph) and
+   widget-animation authoring. Both need Kismet graph / MovieScene work that was
+   out of scope here.
 
 ## Rule catalogue shape
 
