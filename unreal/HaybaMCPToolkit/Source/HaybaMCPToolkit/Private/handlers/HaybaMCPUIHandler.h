@@ -27,4 +27,6 @@ private:
     // a plugin rebuild; these two commands feed them.
     FHaybaHandlerResult HandleLayoutSnapshot(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult HandleMeasureText(const TSharedPtr<FJsonObject>& P);
+    /** Accepts findings judged MCP-side so they can reach the Validation panel. */
+    FHaybaHandlerResult HandleReportFindings(const TSharedPtr<FJsonObject>& P);
 };

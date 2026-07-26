@@ -58,9 +58,31 @@ export const uiValidateHandler: ToolHandler = async (args) => {
 
   const result = validateUiSnapshot(snapshot, { platform, strictness, ruleIds: rule_ids });
 
-  // Persist to the shared history file. The editor's Validation panel reads
-  // .scratch/validator-history.jsonl — findings that only come back in the tool
-  // response never reach the surface the user actually watches.
+  // Surface the findings in the editor's Validation panel. That panel is
+  // push-only from inside UE, so a rule judged here has no other way to reach
+  // the window the user actually watches — without this it only ever existed
+  // in a tool response.
+  if (persist !== false && result.findings.length > 0) {
+    try {
+      await executeCommand('ui_report_findings', {
+        findings: result.findings.map((f) => ({
+          rule_id: f.ruleId,
+          severity: f.severity,
+          message: f.message,
+          hint: f.hint,
+          widget: f.widget,
+        })),
+        append: false,
+      } as Record<string, unknown>);
+    } catch {
+      // An older plugin build has no ui_report_findings. The findings are still
+      // returned to the caller and written to history, so a failed push must
+      // not fail the validation run.
+    }
+  }
+
+  // Persist to the shared history file as well, so findings survive an editor
+  // restart and can be reviewed with validator_history.
   if (persist !== false && result.findings.length > 0) {
     const timestamp = new Date().toISOString();
     for (const f of result.findings) {

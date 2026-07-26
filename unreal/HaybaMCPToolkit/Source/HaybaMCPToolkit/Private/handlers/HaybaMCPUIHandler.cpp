@@ -100,6 +100,7 @@ TArray<FString> FHaybaMCPUIHandler::GetCommands() const
         TEXT("ui_list_widget_blueprints"),
         TEXT("ui_layout_snapshot"),
         TEXT("ui_measure_text"),
+        TEXT("ui_report_findings"),
     };
 }
 
@@ -901,6 +902,7 @@ FHaybaHandlerResult FHaybaMCPUIHandler::Handle(const FString& Cmd, const TShared
     if (Cmd == TEXT("ui_list_widget_blueprints")) return HandleListWidgetBlueprints(P);
     if (Cmd == TEXT("ui_layout_snapshot"))     return HandleLayoutSnapshot(P);
     if (Cmd == TEXT("ui_measure_text"))        return HandleMeasureText(P);
+    if (Cmd == TEXT("ui_report_findings"))     return HandleReportFindings(P);
 
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("UIHandler: unknown command %s"), *Cmd));
 #endif
@@ -2288,6 +2290,37 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMeasureText(const TSharedPtr<FJson
     Out->SetNumberField(TEXT("worst_case_chars_that_fit"), Fit.WorstCaseChars);
     Out->SetNumberField(TEXT("font_size"), Font.Size);
     if (Font.FontObject) Out->SetStringField(TEXT("font_object"), Font.FontObject->GetPathName());
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPUIHandler::HandleReportFindings(const TSharedPtr<FJsonObject>& P)
+{
+    // Deliberately a pass-through that only validates shape: the judging lives
+    // MCP-side so rules can change without a plugin rebuild, and this command
+    // exists purely so those findings can reach the editor's Validation panel.
+    // The actual push happens in the command handler's post-dispatch hook,
+    // which is where every other panel-feeding command is wired.
+    const TArray<TSharedPtr<FJsonValue>>* FindingsArr = nullptr;
+    if (!P->TryGetArrayField(TEXT("findings"), FindingsArr) || !FindingsArr)
+        return FHaybaHandlerResult::Err(TEXT("ui_report_findings: missing findings array"));
+
+    int32 Errors = 0, Warnings = 0, Infos = 0;
+    for (const auto& V : *FindingsArr)
+    {
+        const TSharedPtr<FJsonObject> F = V->AsObject();
+        if (!F.IsValid()) continue;
+        FString Severity;
+        F->TryGetStringField(TEXT("severity"), Severity);
+        if (Severity.Equals(TEXT("error"), ESearchCase::IgnoreCase)) ++Errors;
+        else if (Severity.Equals(TEXT("warning"), ESearchCase::IgnoreCase)) ++Warnings;
+        else ++Infos;
+    }
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetNumberField(TEXT("received"), FindingsArr->Num());
+    Out->SetNumberField(TEXT("errors"), Errors);
+    Out->SetNumberField(TEXT("warnings"), Warnings);
+    Out->SetNumberField(TEXT("infos"), Infos);
     return FHaybaHandlerResult::Ok(Out);
 }
 

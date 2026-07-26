@@ -228,6 +228,64 @@ static void PushSceneGraphToPanel(const TSharedPtr<FJsonObject>& Data)
     });
 }
 
+/** Push findings produced OUTSIDE the editor into the Validation panel.
+ *  The panel is push-only from in here, so MCP-side validators (ui_validate
+ *  and anything else that judges a snapshot rather than the live world) have
+ *  no other way to surface. Without this their findings only ever exist in a
+ *  tool response the user never opens.
+ *
+ *  Params: { findings: [{ rule_id, severity, message, hint?, widget? }],
+ *            append?: bool }  — append keeps earlier findings on screen. */
+static void PushExternalFindingsToPanel(const TSharedPtr<FJsonObject>& Data)
+{
+    if (!Data.IsValid()) return;
+
+    TArray<FHaybaValidationIssue> Issues;
+    const TArray<TSharedPtr<FJsonValue>>* FindingsArr = nullptr;
+    if (Data->TryGetArrayField(TEXT("findings"), FindingsArr) && FindingsArr)
+    {
+        for (const auto& V : *FindingsArr)
+        {
+            const TSharedPtr<FJsonObject> F = V->AsObject();
+            if (!F.IsValid()) continue;
+
+            FHaybaValidationIssue I;
+            F->TryGetStringField(TEXT("rule_id"), I.IssueType);
+            F->TryGetStringField(TEXT("widget"), I.ActorLabel);
+
+            FString Message, Hint;
+            F->TryGetStringField(TEXT("message"), Message);
+            F->TryGetStringField(TEXT("hint"), Hint);
+            // The hint is the actionable half of a finding; keeping it out of
+            // the panel would strip the part that says what to actually do.
+            I.Description = Hint.IsEmpty() ? Message : FString::Printf(TEXT("%s — %s"), *Message, *Hint);
+
+            FString Severity;
+            F->TryGetStringField(TEXT("severity"), Severity);
+            if (Severity.Equals(TEXT("error"), ESearchCase::IgnoreCase))        I.Severity = EHaybaSeverity::Error;
+            else if (Severity.Equals(TEXT("warning"), ESearchCase::IgnoreCase)) I.Severity = EHaybaSeverity::Warning;
+            else                                                                I.Severity = EHaybaSeverity::Info;
+
+            Issues.Add(MoveTemp(I));
+        }
+    }
+
+    bool bAppend = false;
+    Data->TryGetBoolField(TEXT("append"), bAppend);
+
+    AsyncTask(ENamedThreads::GameThread, [Issues = MoveTemp(Issues), bAppend]()
+    {
+        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        {
+            if (TSharedPtr<SHaybaMCPValidationPanel> Panel = M->ValidationPanel.Pin())
+            {
+                if (!bAppend) Panel->Clear();
+                for (const auto& I : Issues) Panel->AddIssue(I);
+            }
+        }
+    });
+}
+
 static void PushPhysicsResultsToPanel(const TSharedPtr<FJsonObject>& Data)
 {
     if (!Data.IsValid()) return;
@@ -947,6 +1005,9 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         if (Cmd == TEXT("scene_get_graph"))           PushSceneGraphToPanel(Result.Data);
         else if (Cmd == TEXT("scene_validate_physics")) PushPhysicsResultsToPanel(Result.Data);
         else if (Cmd == TEXT("memory_query"))           PushMemoryResultsToPanel(Result.Data);
+        // ui_report_findings carries its payload in the REQUEST, not the
+        // response, because the findings were judged MCP-side.
+        else if (Cmd == TEXT("ui_report_findings"))      PushExternalFindingsToPanel(Params);
     }
     // Log destructive ops to the Diff panel with true Before / requested After.
     if (Result.bOk)
