@@ -1565,13 +1565,49 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
 
         // Duplicating into the widget tree copies the whole subtree, which is
         // the point: duplicating a styled row should bring its children along.
-        const FName DupName = NewName.IsEmpty()
-            ? MakeUniqueObjectName(WBP->WidgetTree, Source->GetClass(), Source->GetFName())
-            : FName(*NewName);
+        //
+        // But the copy arrives with EVERY descendant still carrying its source
+        // name, and UMG requires names to be unique across the whole tree. UE
+        // resolves the collision by renaming objects to TRASH_<name>, which
+        // leaves the blueprint with a mangled copy and two widgets answering to
+        // the same name. So duplicate under a scratch name first, then rename
+        // the whole subtree to unique names before anything else sees it.
+        const FName ScratchName = MakeUniqueObjectName(
+            WBP->WidgetTree, Source->GetClass(), TEXT("HaybaMCP_DuplicateScratch"));
 
-        UWidget* Copy = DuplicateObject<UWidget>(Source, WBP->WidgetTree, DupName);
+        UWidget* Copy = DuplicateObject<UWidget>(Source, WBP->WidgetTree, ScratchName);
         if (!Copy)
             return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree duplicate: DuplicateObject failed"));
+
+        // The root of the copy takes the caller's name (or a unique variant of
+        // the source's); every descendant takes a unique variant of its own.
+        {
+            TArray<UWidget*> Copied;
+            CollectSubtree(Copy, Copied);
+            for (UWidget* W : Copied)
+            {
+                if (!W) continue;
+
+                const bool bIsRoot = (W == Copy);
+                FName Desired;
+                if (bIsRoot && !NewName.IsEmpty())
+                {
+                    Desired = FName(*NewName);
+                }
+                else
+                {
+                    // Base the unique name on the SOURCE widget's name, not the
+                    // scratch name, so a duplicated "Row" reads "Row_1".
+                    const FName Base = bIsRoot ? Source->GetFName() : W->GetFName();
+                    Desired = MakeUniqueObjectName(WBP->WidgetTree, W->GetClass(), Base);
+                }
+
+                if (W->GetFName() != Desired)
+                {
+                    W->Rename(*Desired.ToString(), WBP->WidgetTree, REN_DontCreateRedirectors | REN_DoNotDirty);
+                }
+            }
+        }
 
         UPanelSlot* NewSlot = TargetParent->AddChild(Copy);
         if (!NewSlot)

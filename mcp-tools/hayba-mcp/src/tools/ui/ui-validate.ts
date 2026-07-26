@@ -2,8 +2,9 @@ import { z } from 'zod';
 import type { ToolHandler } from '../types.js';
 import { executeCommand } from '../tool-executor.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
-import { validateUiSnapshot, UI_PLATFORMS, type UiSnapshot } from '../../validator/ui/index.js';
+import { validateUiSnapshot, UI_PLATFORMS, type UiFinding, type UiSnapshot } from '../../validator/ui/index.js';
 import { STRICTNESS_MODES } from '../../validator/config.js';
+import { appendFinding } from '../../validator/history.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'medium',
@@ -30,6 +31,13 @@ export const schema = z.object({
   screen_width: z.number().optional().describe('Resolution to evaluate at. Defaults to the blueprint design size.'),
   screen_height: z.number().optional().describe('Resolution to evaluate at. Defaults to the blueprint design size.'),
   rule_ids: z.array(z.string()).optional().describe('Run only these rules, by id.'),
+  persist: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe(
+      'Write the findings to the validator history so they appear in the editor Validation panel. Set false for a read-only check that leaves no trace.',
+    ),
 });
 
 export const uiValidateHandler: ToolHandler = async (args) => {
@@ -37,7 +45,7 @@ export const uiValidateHandler: ToolHandler = async (args) => {
   if (!parsed.success) {
     return { content: [{ type: 'text', text: `Validation error: ${parsed.error.message}` }], isError: true };
   }
-  const { widget_blueprint_path, platform, strictness, screen_width, screen_height, rule_ids } = parsed.data;
+  const { widget_blueprint_path, platform, strictness, screen_width, screen_height, rule_ids, persist } = parsed.data;
 
   // The engine does the measuring (Slate prepass + font metrics); the rules
   // are judged here so they can be extended and configured without a plugin
@@ -50,5 +58,34 @@ export const uiValidateHandler: ToolHandler = async (args) => {
 
   const result = validateUiSnapshot(snapshot, { platform, strictness, ruleIds: rule_ids });
 
+  // Persist to the shared history file. The editor's Validation panel reads
+  // .scratch/validator-history.jsonl — findings that only come back in the tool
+  // response never reach the surface the user actually watches.
+  if (persist !== false && result.findings.length > 0) {
+    const timestamp = new Date().toISOString();
+    for (const f of result.findings) {
+      await appendFinding({
+        ruleId: f.ruleId,
+        severity: f.severity,
+        message: f.message,
+        hint: f.hint,
+        context: toContext(f, widget_blueprint_path, platform),
+        // Distinct per finding so resolve/clear can address them individually;
+        // the runner emits them in one pass, so a shared stamp would collide.
+        timestamp: `${timestamp}#${f.ruleId}:${f.widget ?? '-'}`,
+        toolName: 'ui_validate',
+      });
+    }
+  }
+
   return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
 };
+
+function toContext(f: UiFinding, blueprintPath: string, platform: string): Record<string, unknown> {
+  return {
+    widget_blueprint_path: blueprintPath,
+    platform,
+    ...(f.widget ? { widget: f.widget } : {}),
+    ...(f.data ?? {}),
+  };
+}
