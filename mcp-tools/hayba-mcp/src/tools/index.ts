@@ -135,6 +135,45 @@ import {
   schema as docsLookupApiSchema,
   docsLookupApiHandler,
 } from './docs/docs-lookup-api.js';
+import {
+  meta as assetGetReferencersMeta,
+  schema as assetGetReferencersSchema,
+  assetGetReferencersHandler,
+} from './asset-graph/asset-get-referencers.js';
+import {
+  meta as assetGetDependenciesMeta,
+  schema as assetGetDependenciesSchema,
+  assetGetDependenciesHandler,
+} from './asset-graph/asset-get-dependencies.js';
+import {
+  meta as assetGetReferencesMeta,
+  schema as assetGetReferencesSchema,
+  assetGetReferencesHandler,
+} from './asset-graph/asset-get-references.js';
+import { meta as assetRenameMeta, schema as assetRenameSchema, assetRenameHandler } from './asset-graph/asset-rename.js';
+import { meta as assetMoveMeta, schema as assetMoveSchema, assetMoveHandler } from './asset-graph/asset-move.js';
+import {
+  meta as assetFixRedirectorsMeta,
+  schema as assetFixRedirectorsSchema,
+  assetFixRedirectorsHandler,
+} from './asset-graph/asset-fix-redirectors.js';
+import {
+  meta as assetValidateMeta,
+  schema as assetValidateSchema,
+  assetValidateHandler,
+} from './asset-graph/asset-validate.js';
+import {
+  meta as foliageListTypesMeta, schema as foliageListTypesSchema, foliageListTypesHandler,
+} from './foliage/foliage-list-types.js';
+import {
+  meta as foliageAddInstanceMeta, schema as foliageAddInstanceSchema, foliageAddInstanceHandler,
+} from './foliage/foliage-add-instance.js';
+import {
+  meta as foliagePaintAtMeta, schema as foliagePaintAtSchema, foliagePaintAtHandler,
+} from './foliage/foliage-paint-at.js';
+import {
+  meta as foliageRemoveInstancesMeta, schema as foliageRemoveInstancesSchema, foliageRemoveInstancesHandler,
+} from './foliage/foliage-remove-instances.js';
 import { meta as uiBuildTreeMeta, schema as uiBuildTreeSchema, uiBuildTreeHandler } from './ui/ui-build-tree.js';
 import {
   meta as uiDuplicateElementMeta,
@@ -406,6 +445,8 @@ const M = 'material'; // niche domain for the material toolset
 const UI = 'ui'; // niche domain for the UMG / Widget Blueprint toolset
 const PACK = 'copilot'; // niche domain for the BYOK copilot config/introspection toolset
 const DOCS = 'docs'; // niche domain for live-editor API reflection
+const ASSETGRAPH = 'asset'; // niche domain for asset reference/refactor tools
+const FOLIAGE = 'foliage'; // niche domain for foliage placement
 // Hand-written descriptors. Kept as a named const so the generated legacy list
 // can be de-duplicated against these names before splicing (see below).
 const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
@@ -1329,6 +1370,137 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     returns: '{name, properties:[{name, type, category, tooltip, is_editable, is_blueprint_visible}], functions:[{name, is_blueprint_callable, is_event, tooltip}]}',
     niche: DOCS,
     schema: docsLookupApiSchema.shape,
+  },
+
+  // ── Asset graph ───────────────────────────────────────────────────────────
+  // Know what breaks before breaking it. These handlers were implemented in C++
+  // and had no wrapper, so an agent could delete or rename an asset but could
+  // not first ask what depended on it.
+  {
+    name: 'asset_get_referencers',
+    description:
+      'WHAT BREAKS IF I DELETE OR RENAME THIS? Lists every asset that references the given one. USE_WHEN: before asset_delete, asset_rename or asset_move — a reference you did not know about becomes a broken link that surfaces much later. NOT_WHEN: you want what the asset itself needs (asset_get_dependencies).',
+    meta: assetGetReferencersMeta,
+    handler: assetGetReferencersHandler,
+    cost: 'low',
+    returns: '{path, referencers[], count}',
+    niche: ASSETGRAPH,
+    schema: assetGetReferencersSchema.shape,
+  },
+  {
+    name: 'asset_get_dependencies',
+    description:
+      'What this asset pulls in — everything that must exist for it to load. USE_WHEN: working out why an asset drags in a large cook, or what to migrate alongside it. NOT_WHEN: you want what depends on IT (asset_get_referencers).',
+    meta: assetGetDependenciesMeta,
+    handler: assetGetDependenciesHandler,
+    cost: 'low',
+    returns: '{path, dependencies[], count}',
+    niche: ASSETGRAPH,
+    schema: assetGetDependenciesSchema.shape,
+  },
+  {
+    name: 'asset_get_references',
+    description:
+      'Both directions of an asset reference graph in one call. Note the lists may be truncated — `capped: true` says so. Prefer the single-direction tools when you need an exact count.',
+    meta: assetGetReferencesMeta,
+    handler: assetGetReferencesHandler,
+    cost: 'low',
+    returns: '{referencers[], dependencies[], capped}',
+    niche: ASSETGRAPH,
+    schema: assetGetReferencesSchema.shape,
+  },
+  {
+    name: 'asset_rename',
+    description:
+      'Rename an asset in place, fixing up references rather than breaking them. Leaves a redirector behind; asset_fix_redirectors cleans those up. USE_WHEN: the name is wrong. NOT_WHEN: it belongs in another folder (asset_move).',
+    meta: assetRenameMeta,
+    handler: assetRenameHandler,
+    cost: 'medium',
+    returns: '{old_path, new_path}',
+    niche: ASSETGRAPH,
+    schema: assetRenameSchema.shape,
+  },
+  {
+    name: 'asset_move',
+    description:
+      'Move an asset to another folder, keeping references working. Leaves a redirector behind; asset_fix_redirectors cleans those up.',
+    meta: assetMoveMeta,
+    handler: assetMoveHandler,
+    cost: 'medium',
+    returns: '{ok, old_path, new_path}',
+    niche: ASSETGRAPH,
+    schema: assetMoveSchema.shape,
+  },
+  {
+    name: 'asset_fix_redirectors',
+    description:
+      'Collapse the redirector stubs left behind by renames and moves. USE_WHEN: after a batch of asset_rename / asset_move calls — redirectors that survive into a cook are wasted work and confuse later reference lookups.',
+    meta: assetFixRedirectorsMeta,
+    handler: assetFixRedirectorsHandler,
+    cost: 'medium',
+    returns: '{fixed_count, path}',
+    niche: ASSETGRAPH,
+    schema: assetFixRedirectorsSchema.shape,
+  },
+  {
+    name: 'asset_validate',
+    description:
+      'Run the editor data-validation rules over an asset or folder and return the errors and warnings. USE_WHEN: confirming an asset is sound before building on it. NOT_WHEN: checking UI layout — ui_validate is the tool for that.',
+    meta: assetValidateMeta,
+    handler: assetValidateHandler,
+    cost: 'medium',
+    returns: '{valid, num_valid, num_invalid, num_warnings, errors[], warnings[]}',
+    niche: ASSETGRAPH,
+    schema: assetValidateSchema.shape,
+  },
+
+  // ── Foliage ───────────────────────────────────────────────────────────────
+  // Implemented in C++ all along. These were briefly on a stub denylist because
+  // a heuristic sweep misjudged them — a reminder that suppressing working
+  // capability is as wrong as advertising broken capability.
+  {
+    name: 'foliage_list_types',
+    description:
+      'List the FoliageType assets in use in the current level, with instance counts. USE_WHEN: before adding or removing foliage, to learn what is already there.',
+    meta: foliageListTypesMeta,
+    handler: foliageListTypesHandler,
+    cost: 'low',
+    returns: '{path, count, types[]}',
+    niche: FOLIAGE,
+    schema: foliageListTypesSchema.shape,
+  },
+  {
+    name: 'foliage_add_instance',
+    description:
+      'Place one foliage instance at an exact transform. USE_WHEN: precise single placement. NOT_WHEN: covering an area — foliage_paint_at scatters at a density instead.',
+    meta: foliageAddInstanceMeta,
+    handler: foliageAddInstanceHandler,
+    cost: 'medium',
+    returns: '{ok}',
+    niche: FOLIAGE,
+    schema: foliageAddInstanceSchema.shape,
+  },
+  {
+    name: 'foliage_paint_at',
+    description:
+      'Scatter foliage over a circular area at a density, as the foliage paint brush does. USE_WHEN: dressing terrain. NOT_WHEN: you need one instance at an exact spot.',
+    meta: foliagePaintAtMeta,
+    handler: foliagePaintAtHandler,
+    cost: 'medium',
+    returns: '{ok}',
+    niche: FOLIAGE,
+    schema: foliagePaintAtSchema.shape,
+  },
+  {
+    name: 'foliage_remove_instances',
+    description:
+      'Remove foliage instances of a type inside a world-space box. Returns how many were removed, so an unexpected zero is visible rather than silent.',
+    meta: foliageRemoveInstancesMeta,
+    handler: foliageRemoveInstancesHandler,
+    cost: 'medium',
+    returns: '{removed}',
+    niche: FOLIAGE,
+    schema: foliageRemoveInstancesSchema.shape,
   },
 
   // ── Scene domain ──────────────────────────────────────────────────────────
