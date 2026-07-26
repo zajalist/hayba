@@ -66,11 +66,14 @@ function backgroundColorOf(ctx: UiRuleContext, w: UiWidget): [number, number, nu
   let current = ctx.byName.get(w.parent);
   let guard = 0;
   while (current && guard++ < 64) {
-    const tint = current.brush_info?.tint;
-    // Only an opaque fill is a defensible "background" to measure against.
-    // A translucent panel sits on top of something unknown, and guessing would
-    // produce a contrast number that is precise and wrong.
-    if (tint && tint[3] >= 0.95) return tint;
+    const brush = current.brush_info;
+    // A brush WITH a texture or material uses its tint as a multiplier, not as
+    // the colour — the pixels come from the art. Reading the tint as the
+    // background there says "white" for the default [1,1,1,1] tint over a dark
+    // panel texture, which is how a live HUD reported 1.1:1 against a
+    // background that is actually dark. Only an untextured fill is a
+    // defensible colour to measure against.
+    if (brush?.tint && !brush.has_resource && brush.tint[3] >= 0.95) return brush.tint;
     current = ctx.byName.get(current.parent);
   }
   return null;

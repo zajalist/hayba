@@ -323,6 +323,27 @@ describe('contrast', () => {
     expect(findingsFor(result, 'ui_text_contrast_below_minimum')).toHaveLength(1);
   });
 
+  it('skips contrast when the background brush has a texture', () => {
+    // A tint over art is a multiplier, not a colour. Reading the default
+    // [1,1,1,1] tint as "white" is how a live HUD reported 1.1:1 against a
+    // background that is actually a dark panel texture.
+    const panel = widget({
+      name: 'Card',
+      class: 'Border',
+      parent: 'Root',
+      is_panel: true,
+      child_count: 1,
+      brush_info: { tint: [1, 1, 1, 1], has_resource: true, resource: '/Game/UI/T_DarkPanel' },
+    });
+    const label = widget({
+      name: 'Caption',
+      parent: 'Card',
+      text_info: { text: 'Hello', font_size: 20, color: [1, 0.9, 0.61, 1] },
+    });
+    const result = validateUiSnapshot(snapshot([rootPanel, panel, label]), { strictness: 'standard' });
+    expect(findingsFor(result, 'ui_text_contrast_below_minimum')).toHaveLength(0);
+  });
+
   it('skips contrast when the backdrop is translucent and therefore unknown', () => {
     const panel = widget({
       name: 'Card',
