@@ -124,6 +124,17 @@ import {
   schema as uiListWidgetTypesSchema,
   uiListWidgetTypesHandler,
 } from './ui/ui-list-widget-types.js';
+import { meta as docsSearchMeta, schema as docsSearchSchema, docsSearchHandler } from './docs/docs-search.js';
+import {
+  meta as docsLookupClassMeta,
+  schema as docsLookupClassSchema,
+  docsLookupClassHandler,
+} from './docs/docs-lookup-class.js';
+import {
+  meta as docsLookupApiMeta,
+  schema as docsLookupApiSchema,
+  docsLookupApiHandler,
+} from './docs/docs-lookup-api.js';
 import { meta as uiBuildTreeMeta, schema as uiBuildTreeSchema, uiBuildTreeHandler } from './ui/ui-build-tree.js';
 import {
   meta as uiDuplicateElementMeta,
@@ -394,6 +405,7 @@ const dCoerceVec3 = z.preprocess((v) => {
 const M = 'material'; // niche domain for the material toolset
 const UI = 'ui'; // niche domain for the UMG / Widget Blueprint toolset
 const PACK = 'copilot'; // niche domain for the BYOK copilot config/introspection toolset
+const DOCS = 'docs'; // niche domain for live-editor API reflection
 // Hand-written descriptors. Kept as a named const so the generated legacy list
 // can be de-duplicated against these names before splicing (see below).
 const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
@@ -1278,6 +1290,45 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       '{widget_blueprint_path, platform, strictness, layout_resolved, findings:[{ruleId, severity, widget?, message, hint, data}], rules_evaluated, rules_skipped_no_layout[], rules_disabled[], rules_below_strictness[], counts}',
     niche: UI,
     schema: uiValidateSchema.shape,
+  },
+
+  // ── Docs domain ───────────────────────────────────────────────────────────
+  // Reflection over the LIVE editor, so answers match the engine version and
+  // plugin set actually loaded — not a web page for some other build. The C++
+  // handler existed and worked; it simply had no wrapper, so the catalogue
+  // reported the whole domain as unavailable.
+  {
+    name: 'docs_search',
+    description:
+      'FIND THE REAL NAME OF A UE CLASS instead of guessing. Substring search over every class loaded in the running editor. USE_WHEN: you are about to write a class name from memory. NOT_WHEN: you already have the exact path.',
+    meta: docsSearchMeta,
+    handler: docsSearchHandler,
+    cost: 'low',
+    returns: '{results:[{name, path, kind}], count, capped}',
+    niche: DOCS,
+    schema: docsSearchSchema.shape,
+  },
+  {
+    name: 'docs_lookup_class',
+    description:
+      'Inspect a UE class in the running editor: full inheritance chain, class flags, and how many properties and functions it has. USE_WHEN: confirming a class exists and what it derives from before using it as a parent or a cast target.',
+    meta: docsLookupClassMeta,
+    handler: docsLookupClassHandler,
+    cost: 'low',
+    returns: '{name, path, parent_chain[], flags[], property_count, function_count}',
+    niche: DOCS,
+    schema: docsLookupClassSchema.shape,
+  },
+  {
+    name: 'docs_lookup_api',
+    description:
+      'CHECK A PROPERTY OR FUNCTION EXISTS BEFORE YOU USE IT. Lists the real properties of a class (name, C++ type, category, tooltip, whether it is editable and blueprint-visible) and functions (blueprint-callable, event). USE_WHEN: before setting a property by name or calling a function — a wrong name is otherwise a silent no-op or a failed edit. Pass include_inherited when a member you expected is missing; it is usually declared on a parent.',
+    meta: docsLookupApiMeta,
+    handler: docsLookupApiHandler,
+    cost: 'low',
+    returns: '{name, properties:[{name, type, category, tooltip, is_editable, is_blueprint_visible}], functions:[{name, is_blueprint_callable, is_event, tooltip}]}',
+    niche: DOCS,
+    schema: docsLookupApiSchema.shape,
   },
 
   // ── Scene domain ──────────────────────────────────────────────────────────
