@@ -181,6 +181,11 @@ import { meta as pieTypeTextMeta, schema as pieTypeTextSchema, pieTypeTextHandle
 import { meta as pieAxisMeta, schema as pieAxisSchema, pieAxisHandler } from './pie/pie-axis.js';
 import { meta as piePressKeyMeta, schema as piePressKeySchema, piePressKeyHandler } from './pie/pie-press-key.js';
 import { meta as pieScreenshotMeta, schema as pieScreenshotSchema, pieScreenshotHandler } from './pie/pie-screenshot.js';
+import { meta as textureAuditMeta, schema as textureAuditSchema, textureAuditHandler } from './content/texture-audit.js';
+import { meta as meshAuditMeta, schema as meshAuditSchema, meshAuditHandler } from './content/mesh-audit.js';
+import {
+  meta as contentValidateMeta, schema as contentValidateSchema, contentValidateHandler,
+} from './content/content-validate.js';
 import { meta as uiBuildTreeMeta, schema as uiBuildTreeSchema, uiBuildTreeHandler } from './ui/ui-build-tree.js';
 import {
   meta as uiDuplicateElementMeta,
@@ -455,6 +460,7 @@ const DOCS = 'docs'; // niche domain for live-editor API reflection
 const ASSETGRAPH = 'asset'; // niche domain for asset reference/refactor tools
 const FOLIAGE = 'foliage'; // niche domain for foliage placement
 const PIE = 'pie'; // niche domain for driving a running game
+const CONTENT = 'content'; // niche domain for content audits and budgets
 // Hand-written descriptors. Kept as a named const so the generated legacy list
 // can be de-duplicated against these names before splicing (see below).
 const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
@@ -1596,6 +1602,42 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     returns: '{filename, requested, captured, note}',
     niche: PIE,
     schema: pieScreenshotSchema.shape,
+  },
+
+  // ── Content audits + validation ───────────────────────────────────────────
+  {
+    name: 'texture_audit',
+    description:
+      'WHICH TEXTURES ARE COSTING MEMORY: every Texture2D ranked by resource size, with dimensions, format, LOD group and compression, and a flag where the name implies a role the compression contradicts. USE_WHEN: chasing memory or load times. NOT_WHEN: inspecting one texture you already know about (texture_get_info).',
+    meta: textureAuditMeta,
+    handler: textureAuditHandler,
+    cost: 'medium',
+    returns: '{textures:[{path, size_x, size_y, format, memory_kb, lod_group, compression, outlier}], scanned, count, top_n_total_kb}',
+    niche: CONTENT,
+    schema: textureAuditSchema.shape,
+  },
+  {
+    name: 'mesh_audit',
+    description:
+      'WHICH MESHES ARE COSTING FRAME TIME: static meshes with LOD0 triangle counts, LOD count, material slot count and how many things reference them. USE_WHEN: a scene is heavy and you need to know where the triangles and draw calls actually are.',
+    meta: meshAuditMeta,
+    handler: meshAuditHandler,
+    cost: 'medium',
+    returns: '{meshes:[{path, tris_lod0, lod_count, missing_lods, material_slot_count, referencer_count}], scanned, count}',
+    niche: CONTENT,
+    schema: meshAuditSchema.shape,
+  },
+  {
+    name: 'content_validate',
+    description:
+      'CHECK PROJECT CONTENT AGAINST MEMORY AND PERFORMANCE BUDGETS: oversized textures, compression that contradicts the asset name, non-power-of-two dimensions, UI textures outside the UI group, meshes with no LODs, excessive material slots, unreferenced meshes. Judged per strictness (relaxed/standard/strict) with every threshold justified in the hint. Reports what it did NOT examine — the audits only cover the heaviest N assets, so a clean result is scoped, never a claim about the whole project. NOT_WHEN: checking a UI screen (ui_validate).',
+    meta: contentValidateMeta,
+    handler: contentValidateHandler,
+    cost: 'medium',
+    returns:
+      '{strictness, findings:[{ruleId, severity, asset, message, hint, data}], rules_evaluated, rules_skipped_no_data[], counts, coverage:{textures_reported, textures_scanned, truncated}}',
+    niche: CONTENT,
+    schema: contentValidateSchema.shape,
   },
 
   // ── Scene domain ──────────────────────────────────────────────────────────
