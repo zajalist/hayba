@@ -70,11 +70,11 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::Handle(const FString& Cmd, const TShare
     if (Cmd == TEXT("editor_pie_assert"))     return PIEAssert(Params);
     if (Cmd == TEXT("editor_pie_wait_for"))   return PIEWaitFor(Params);
     if (Cmd == TEXT("editor_pie_press_key"))  return PIEPressKey(Params);
-    if (Cmd == TEXT("editor_pie_mouse"))         return PIEMouse(P);
-    if (Cmd == TEXT("editor_pie_type_text"))     return PIETypeText(P);
-    if (Cmd == TEXT("editor_pie_axis"))          return PIEAxis(P);
-    if (Cmd == TEXT("editor_pie_widget_tree"))   return PIEWidgetTree(P);
-    if (Cmd == TEXT("editor_pie_click_widget"))  return PIEClickWidget(P);
+    if (Cmd == TEXT("editor_pie_mouse"))         return PIEMouse(Params);
+    if (Cmd == TEXT("editor_pie_type_text"))     return PIETypeText(Params);
+    if (Cmd == TEXT("editor_pie_axis"))          return PIEAxis(Params);
+    if (Cmd == TEXT("editor_pie_widget_tree"))   return PIEWidgetTree(Params);
+    if (Cmd == TEXT("editor_pie_click_widget"))  return PIEClickWidget(Params);
     if (Cmd == TEXT("editor_pie_screenshot")) return PIEScreenshot(Params);
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("Unknown PIE command: %s"), *Cmd));
 #endif
@@ -552,7 +552,12 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEScreenshot(const TSharedPtr<FJsonObj
         return FHaybaHandlerResult::Ok(R);
     }
 
-    FScreenshotRequest::RequestScreenshot(Filename, /*bShowUI=*/false, /*bAddFilenameSuffix=*/false);
+    // Default to INCLUDING the UI: a PIE screenshot is almost always taken to see the
+    // UMG/HUD, and bShowUI=false yields a black frame for UI-only screens. Callers can
+    // pass show_ui:false for a scene-only capture.
+    bool bShowUI = true;
+    if (P.IsValid()) P->TryGetBoolField(TEXT("show_ui"), bShowUI);
+    FScreenshotRequest::RequestScreenshot(Filename, bShowUI, /*bAddFilenameSuffix=*/false);
 
     // Returns immediately. The old code pumped the core ticker for up to three
     // seconds waiting for the file — from inside a game-thread handler, which
@@ -599,6 +604,8 @@ namespace
         return EKeys::LeftMouseButton;
     }
 
+    void SendMouseMove();
+
     /** Move the OS/Slate cursor to a viewport-relative pixel and report where. */
     bool MoveCursorToViewportPixel(UGameViewportClient* Client, const FVector2D& Px, FVector2D& OutAbsolute)
     {
@@ -614,16 +621,96 @@ namespace
         }
         OutAbsolute = Origin + Px;
         FSlateApplication::Get().SetCursorPos(OutAbsolute);
+        SendMouseMove();
         return true;
     }
 
+    /** Deliver a mouse button through Slate's hit-testing.
+     *
+     *  This is the difference between a click that works and one that appears to
+     *  do nothing. UGameViewportClient::InputKey feeds the GAME input pipeline —
+     *  player controller, Enhanced Input — and never consults the Slate widget
+     *  tree. A UMG button therefore never sees it: the cursor lands on exactly
+     *  the right pixel, and the press goes down a pipe the button is not
+     *  listening to.
+     *
+     *  FSlateApplication routes by cursor position, so it hit-tests the widget
+     *  under the pointer AND forwards anything the UI does not consume down to
+     *  the game viewport. One path serves both UI and gameplay input, in the
+     *  order a real click would. */
     void SendMouseButton(UGameViewportClient* Client, const FKey& Button, EInputEvent Evt)
     {
+        // Slate routes by cursor position, not through the viewport, but the
+        // viewport still gates WHETHER we should be injecting at all: without a
+        // live PIE viewport a click would land on the editor's own UI.
         if (!Client || !Client->Viewport) return;
-        const FInputDeviceId DeviceId = IPlatformInputDeviceMapper::Get().GetDefaultInputDevice();
-        FInputKeyEventArgs Args(Client->Viewport, DeviceId, Button, Evt,
-                                /*AmountDepressed=*/1.0f, /*bIsTouch=*/false, /*EventTimestamp=*/0u);
-        Client->InputKey(Args);
+        if (!FSlateApplication::IsInitialized()) return;
+        FSlateApplication& Slate = FSlateApplication::Get();
+
+        const FVector2D Pos = Slate.GetCursorPos();
+        const FVector2D LastPos = Slate.GetLastCursorPos();
+
+        TSet<FKey> Pressed;
+        if (Evt != IE_Released) Pressed.Add(Button);
+
+        FPointerEvent MouseEvent(
+            /*PointerIndex=*/0,
+            Pos, LastPos,
+            Pressed,
+            Button,
+            /*WheelDelta=*/0.0f,
+            FModifierKeysState());
+
+        if (Evt == IE_Pressed)
+        {
+            Slate.ProcessMouseButtonDownEvent(nullptr, MouseEvent);
+        }
+        else if (Evt == IE_Released)
+        {
+            Slate.ProcessMouseButtonUpEvent(MouseEvent);
+        }
+        else if (Evt == IE_DoubleClick)
+        {
+            Slate.ProcessMouseButtonDoubleClickEvent(nullptr, MouseEvent);
+        }
+    }
+
+    /** Move the pointer through Slate as well, so widgets receive hover/enter
+     *  and a drag actually looks like a drag. SetCursorPos alone repositions the
+     *  OS cursor without telling the widget tree anything moved. */
+    void SendMouseMove()
+    {
+        if (!FSlateApplication::IsInitialized()) return;
+        FSlateApplication& Slate = FSlateApplication::Get();
+        FPointerEvent MoveEvent(
+            /*PointerIndex=*/0,
+            Slate.GetCursorPos(), Slate.GetLastCursorPos(),
+            TSet<FKey>(), EKeys::Invalid,
+            /*WheelDelta=*/0.0f,
+            FModifierKeysState());
+        Slate.ProcessMouseMoveEvent(MoveEvent);
+    }
+
+    /** Text rendered anywhere beneath a widget, flattened.
+     *
+     *  Depth-limited: this is for identifying a control by its label, not for
+     *  dumping a whole panel's contents into its parent's search text. */
+    FString CollectDescendantText(const TSharedRef<SWidget>& W, int32 Depth)
+    {
+        if (Depth > 4) return FString();
+        FString Out = W->GetAccessibleText().ToString();
+        FChildren* Kids = W->GetChildren();
+        if (Kids)
+        {
+            for (int32 i = 0; i < Kids->Num(); ++i)
+            {
+                const FString Child = CollectDescendantText(Kids->GetChildAt(i), Depth + 1);
+                if (Child.IsEmpty()) continue;
+                if (!Out.IsEmpty()) Out.AppendChar(TEXT(' '));
+                Out.Append(Child);
+            }
+        }
+        return Out.TrimStartAndEnd();
     }
 
     /** Depth-first walk of the live Slate tree under a window. */
@@ -651,8 +738,14 @@ namespace
             E->SetNumberField(TEXT("depth"), Depth);
             E->SetBoolField(TEXT("enabled"), W->IsEnabled());
             E->SetBoolField(TEXT("interactive"), W->IsInteractable());
-            const FText Tip = W->GetAccessibleText();
-            if (!Tip.IsEmpty()) E->SetStringField(TEXT("text"), Tip.ToString());
+            // A button's label lives in a child STextBlock, so the button's own
+            // accessible text is usually empty. Matching on that alone meant
+            // "click the widget that says Start" could not find the button that
+            // visibly says Start. Aggregate what the subtree renders instead.
+            const FString OwnText = W->GetAccessibleText().ToString();
+            const FString SubText = CollectDescendantText(W, 0);
+            const FString Searchable = OwnText.IsEmpty() ? SubText : OwnText;
+            if (!Searchable.IsEmpty()) E->SetStringField(TEXT("text"), Searchable);
             Out.Add(MakeShared<FJsonValueObject>(E));
         }
 
@@ -888,7 +981,15 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEClickWidget(const TSharedPtr<FJsonOb
 
     // Prefer an interactive widget: matching a label is usually a request to
     // press the button containing it, not to click the text itself.
+    // Scoring, rather than "first match wins".
+    //
+    // Matching a label usually means "press the control that carries it", so an
+    // interactive widget outranks a static one. Among equals the SMALLEST match
+    // wins: a panel containing the text is a worse target than the button
+    // containing the text, and the panel is often huge enough that its centre is
+    // nowhere near the thing you meant.
     TSharedPtr<FJsonObject> Best;
+    double BestScore = -1e18;
     TArray<FString> Candidates;
     for (const TSharedPtr<FJsonValue>& V : All)
     {
@@ -898,16 +999,32 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEClickWidget(const TSharedPtr<FJsonOb
         O->TryGetStringField(TEXT("type"), Type);
         O->TryGetStringField(TEXT("text"), Text);
         O->TryGetStringField(TEXT("tag"), Tag);
-        if (!(Type.Contains(Match) || Text.Contains(Match) || Tag.Contains(Match))) continue;
 
-        Candidates.Add(FString::Printf(TEXT("%s%s"), *Type, Text.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" \"%s\""), *Text)));
-        bool bInteractive = false;
+        const bool bExactText = Text.Equals(Match, ESearchCase::IgnoreCase);
+        const bool bHit = bExactText
+            || Text.Contains(Match) || Tag.Contains(Match) || Type.Contains(Match);
+        if (!bHit) continue;
+
+        Candidates.Add(FString::Printf(TEXT("%s%s"), *Type,
+            Text.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" \"%s\""), *Text)));
+
+        bool bInteractive = false, bEnabled = true;
         O->TryGetBoolField(TEXT("interactive"), bInteractive);
-        if (!Best.IsValid() || bInteractive)
+        O->TryGetBoolField(TEXT("enabled"), bEnabled);
+        double W = 0.0, H = 0.0;
+        O->TryGetNumberField(TEXT("width"), W);
+        O->TryGetNumberField(TEXT("height"), H);
+
+        double Score = 0.0;
+        if (bInteractive) Score += 1000.0;      // a control beats a label
+        if (bEnabled)     Score += 100.0;       // a disabled control is rarely the target
+        if (bExactText)   Score += 500.0;       // exact label beats substring
+        Score -= (W * H) / 10000.0;             // prefer the tightest box
+
+        if (Score > BestScore)
         {
-            bool bBestInteractive = false;
-            if (Best.IsValid()) Best->TryGetBoolField(TEXT("interactive"), bBestInteractive);
-            if (!Best.IsValid() || (bInteractive && !bBestInteractive)) Best = O;
+            BestScore = Score;
+            Best = O;
         }
     }
 
@@ -938,6 +1055,16 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEClickWidget(const TSharedPtr<FJsonOb
     R->SetNumberField(TEXT("x"), CX);
     R->SetNumberField(TEXT("y"), CY);
     R->SetNumberField(TEXT("candidates"), Candidates.Num());
+    bool bEnabled = true, bInteractive = false;
+    Best->TryGetBoolField(TEXT("enabled"), bEnabled);
+    Best->TryGetBoolField(TEXT("interactive"), bInteractive);
+    R->SetBoolField(TEXT("target_enabled"), bEnabled);
+    R->SetBoolField(TEXT("target_interactive"), bInteractive);
+    if (!bEnabled)
+    {
+        // Otherwise this reads as a successful click that silently did nothing.
+        R->SetStringField(TEXT("warning"), TEXT("The matched widget is DISABLED, so the click will have no effect."));
+    }
     if (Candidates.Num() > 1)
     {
         // Say when the choice was ambiguous rather than silently picking one.
