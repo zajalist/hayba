@@ -1,6 +1,6 @@
 {
   "$schema": "./sidecar.schema.json",
-  "_doc": "Hand-authored sidecar for UE-side commands routed through HaybaMCPLegacyHandler::Handle (see unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPLegacyHandler.cpp). This file is the single source of truth for: (a) the parameter docs surfaced by get_tool_signature for legacy commands that have no TS Zod registration, and (b) the allowlist that hayba_invoke consults when called with via:'ue_legacy'. INVARIANTS (enforced by scripts/check-legacy-wrappers.ts and CI): every dispatch-table command in the .cpp MUST have an entry here (including aliases); every entry with has_ts_wrapper:true MUST have a corresponding executeCommand('<name>', ...) or dispatch('<name>', ...) call somewhere under src/tools/**; every entry with has_ts_wrapper:false MUST NOT have such a call. To add a new legacy command: register it in the .cpp dispatch table, add an entry here (with aliases array if any), set has_ts_wrapper to whatever's true, run `npm run lint:legacy-wrappers`. Marking agent_callable:false hides it from hayba_invoke via:'ue_legacy' while still letting get_tool_signature document it (e.g. ping, wizard_chat — internal/diagnostic).",
+  "_doc": "Hand-authored sidecar for UE-side commands routed through HaybaMCPLegacyHandler::Handle (see unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPLegacyHandler.cpp). This file is the single source of truth for: (a) the parameter docs surfaced by get_tool_signature for legacy commands that have no TS Zod registration, and (b) the allowlist that hayba_invoke consults when called with via:'ue_legacy'. INVARIANTS (enforced by scripts/check-legacy-wrappers.ts and CI): every dispatch-table command in the .cpp MUST have an entry here (including aliases); every entry with has_ts_wrapper:true MUST have a corresponding executeCommand('<name>', ...) or dispatch('<name>', ...) call somewhere under src/tools/**; every entry with has_ts_wrapper:false MUST NOT have such a call. To add a new legacy command: register it in the .cpp dispatch table, add an entry here (with aliases array if any), set has_ts_wrapper to whatever's true, run `npm run lint:legacy-wrappers`. Marking agent_callable:false hides it from hayba_invoke via:'ue_legacy' while still letting get_tool_signature document it (e.g. ping, wizard_chat \u2014 internal/diagnostic).",
   "version": 1,
   "commands": {
     "mesh_extract": {
@@ -29,7 +29,7 @@
           "name": "path",
           "type": "string",
           "required": false,
-          "description": "UStaticMesh asset path (/Game/...) — alternative source (render data: counts + bounds + optional arrays)"
+          "description": "UStaticMesh asset path (/Game/...) \u2014 alternative source (render data: counts + bounds + optional arrays)"
         },
         {
           "name": "lod",
@@ -212,7 +212,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Enumerate every UDynamicMeshComponent in the editor level with tri/vert/material counts — replaces the hand-rolled 'loop all actors -> DynamicMeshComponent -> tris' python_run for inspecting PCG/grammar output. Pair with mesh_topology_stats(actor_label=...) for a full weld/manifold verdict on a specific one."
+      "notes": "Enumerate every UDynamicMeshComponent in the editor level with tri/vert/material counts \u2014 replaces the hand-rolled 'loop all actors -> DynamicMeshComponent -> tris' python_run for inspecting PCG/grammar output. Pair with mesh_topology_stats(actor_label=...) for a full weld/manifold verdict on a specific one."
     },
     "object_get_property": {
       "aliases": [],
@@ -251,7 +251,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Generic reflection read on any loadable UObject — replaces get_editor_property python_run pokes. Values are UE ExportText strings."
+      "notes": "Generic reflection read on any loadable UObject \u2014 replaces get_editor_property python_run pokes. Values are UE ExportText strings."
     },
     "object_set_property": {
       "aliases": [],
@@ -294,7 +294,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Generic reflection write on any loadable UObject (Modify + PostEditChange + MarkPackageDirty) — replaces set_editor_property python_run pokes. For textures prefer texture_set_settings; for material nodes prefer the material_* tools."
+      "notes": "Generic reflection write on any loadable UObject (Modify + PostEditChange + MarkPackageDirty) \u2014 replaces set_editor_property python_run pokes. For textures prefer texture_set_settings; for material nodes prefer the material_* tools."
     },
     "test_list": {
       "aliases": [],
@@ -460,7 +460,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "JOB ENVELOPE (async, non-freezing): invokes UnrealBuildTool.exe on a background thread and returns { job_id, status:'running' } IMMEDIATELY — never blocks the editor (the old version blocked the game thread up to 5min). Poll build_status { job_id } for { status:'done', exit_code, output (log tail) }, or watch hayba_journal_tail for live build_job:<id> progress."
+      "notes": "JOB ENVELOPE (async, non-freezing): invokes UnrealBuildTool.exe on a background thread and returns { job_id, status:'running' } IMMEDIATELY \u2014 never blocks the editor (the old version blocked the game thread up to 5min). Poll build_status { job_id } for { status:'done', exit_code, output (log tail) }, or watch hayba_journal_tail for live build_job:<id> progress."
     },
     "build_cook": {
       "aliases": [],
@@ -631,7 +631,7 @@
       },
       "agent_callable": false,
       "has_ts_wrapper": false,
-      "notes": "Diagnostic ping used by sidecar discovery handshake. Not exposed to agents via hayba_invoke — call check_ue_status instead."
+      "notes": "Diagnostic ping used by sidecar discovery handshake. Not exposed to agents via hayba_invoke \u2014 call check_ue_status instead."
     },
     "list_node_classes": {
       "aliases": [
@@ -924,7 +924,7 @@
           {
             "name": "errors",
             "type": "array",
-            "description": "Present when created:false — same shape as validate_graph errors"
+            "description": "Present when created:false \u2014 same shape as validate_graph errors"
           }
         ]
       },
@@ -1007,7 +1007,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": true,
-      "notes": "Wrapped by hayba_validate_pcg_graph (src/tools/validate-pcg-graph.ts). Pure validation — does not touch UE world state."
+      "notes": "Wrapped by hayba_validate_pcg_graph (src/tools/validate-pcg-graph.ts). Pure validation \u2014 does not touch UE world state."
     },
     "pcg_validate_graph": {
       "aliases": [
@@ -1065,7 +1065,7 @@
           {
             "name": "componentsExecuted",
             "type": "number",
-            "description": "Count of PCGComponents in the world that reference this graph and were triggered. ZERO means the graph runs no instances — verify HISM counts before claiming success (see verify-by-viewport skill)."
+            "description": "Count of PCGComponents in the world that reference this graph and were triggered. ZERO means the graph runs no instances \u2014 verify HISM counts before claiming success (see verify-by-viewport skill)."
           },
           {
             "name": "note",
@@ -1076,7 +1076,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": true,
-      "notes": "Wrapped by hayba_execute_pcg_graph (src/tools/execute-pcg-graph.ts). Game-thread marshaled. Returning success:true with componentsExecuted>0 is NOT proof that instances were placed — see the 2026-05-23 PCG/landscape postmortem."
+      "notes": "Wrapped by hayba_execute_pcg_graph (src/tools/execute-pcg-graph.ts). Game-thread marshaled. Returning success:true with componentsExecuted>0 is NOT proof that instances were placed \u2014 see the 2026-05-23 PCG/landscape postmortem."
     },
     "pcg_execute_graph": {
       "aliases": [
@@ -1151,7 +1151,7 @@
       },
       "agent_callable": false,
       "has_ts_wrapper": false,
-      "notes": "Hardcoded wizard-style chat for the in-editor panel. Not useful from agents — use hayba_initiate_infrastructure_brainstorm instead."
+      "notes": "Hardcoded wizard-style chat for the in-editor panel. Not useful from agents \u2014 use hayba_initiate_infrastructure_brainstorm instead."
     },
     "import_landscape": {
       "aliases": [
@@ -1276,7 +1276,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": true,
-      "notes": "Alias of import_landscape — the name discoverable in list_tool_categories under the 'pcg' domain. Wrapped by hayba_import_landscape (src/tools/index.ts uses this exact name as the dispatch target). See PR #229 for the game-thread marshal fix."
+      "notes": "Alias of import_landscape \u2014 the name discoverable in list_tool_categories under the 'pcg' domain. Wrapped by hayba_import_landscape (src/tools/index.ts uses this exact name as the dispatch target). See PR #229 for the game-thread marshal fix."
     },
     "read_node_output": {
       "aliases": [
@@ -1323,7 +1323,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "STALE-READ WARNING: reads a possibly-STALE inspection CACHE, not live post-cook data. point_count can report 0 (or a prior run's numbers) while the cook actually produced real instances — do NOT treat point_count:0 here as ground truth. GROUND TRUTH for instance counts is `pcg_cook_and_wait` result.ism[] (with result.freshness.changed proving this cook). Returns zero counts if the graph has not been executed. FOLLOW-UP (C++): make this read live post-cook data or return an explicit {stale:true} flag."
+      "notes": "STALE-READ WARNING: reads a possibly-STALE inspection CACHE, not live post-cook data. point_count can report 0 (or a prior run's numbers) while the cook actually produced real instances \u2014 do NOT treat point_count:0 here as ground truth. GROUND TRUTH for instance counts is `pcg_cook_and_wait` result.ism[] (with result.freshness.changed proving this cook). Returns zero counts if the graph has not been executed. FOLLOW-UP (C++): make this read live post-cook data or return an explicit {stale:true} flag."
     },
     "pcg_read_node_output": {
       "aliases": [
@@ -1365,7 +1365,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Alias of read_node_output. STALE-READ WARNING: reads a possibly-STALE inspection cache, not live post-cook data — point_count:0 here is NOT ground truth. Use `pcg_cook_and_wait` result.ism[] for authoritative instance counts."
+      "notes": "Alias of read_node_output. STALE-READ WARNING: reads a possibly-STALE inspection cache, not live post-cook data \u2014 point_count:0 here is NOT ground truth. Use `pcg_cook_and_wait` result.ism[] for authoritative instance counts."
     },
     "describe_assets": {
       "aliases": [
@@ -1502,7 +1502,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": true,
-      "notes": "Alias of describe_assets — the agent-friendly name surfaced as the hayba_asset_browse routing tool."
+      "notes": "Alias of describe_assets \u2014 the agent-friendly name surfaced as the hayba_asset_browse routing tool."
     },
     "actor_get_properties": {
       "aliases": [],
@@ -2548,13 +2548,13 @@
           "name": "look_at",
           "type": "array",
           "required": false,
-          "description": "BEST way to aim the camera: a world point [x,y,z] to face. The orientation is computed in C++ (correct pitch+yaw, roll always 0 — the horizon never tilts). Use this instead of rotation whenever you know what you want the camera pointed at; you do NOT compute any angles yourself. Takes precedence over rotation."
+          "description": "BEST way to aim the camera: a world point [x,y,z] to face. The orientation is computed in C++ (correct pitch+yaw, roll always 0 \u2014 the horizon never tilts). Use this instead of rotation whenever you know what you want the camera pointed at; you do NOT compute any angles yourself. Takes precedence over rotation."
         },
         {
           "name": "rotation",
           "type": "object",
           "required": false,
-          "description": "Manual orientation (only if you are not using look_at). PREFERRED form: object {pitch, yaw, roll} in degrees — unambiguous. yaw = heading (about the vertical/Z axis, the value you usually want); pitch = look up(+)/down(-); roll = horizon tilt and defaults to 0 (omit it — a non-zero roll is what makes the viewport 'look angled'). Array form is accepted as [pitch, yaw, roll] but its 3rd element (roll) is IGNORED so the camera never tilts by accident — do NOT pass [x,y,z] euler here, index 2 is roll, not yaw."
+          "description": "Manual orientation (only if you are not using look_at). PREFERRED form: object {pitch, yaw, roll} in degrees \u2014 unambiguous. yaw = heading (about the vertical/Z axis, the value you usually want); pitch = look up(+)/down(-); roll = horizon tilt and defaults to 0 (omit it \u2014 a non-zero roll is what makes the viewport 'look angled'). Array form is accepted as [pitch, yaw, roll] but its 3rd element (roll) is IGNORED so the camera never tilts by accident \u2014 do NOT pass [x,y,z] euler here, index 2 is roll, not yaw."
         }
       ],
       "returns": {
@@ -2596,7 +2596,7 @@
           "name": "direction",
           "type": "array",
           "required": false,
-          "description": "Optional [x,y,z] view direction (camera→actor). Default is a 3/4 front-right-above view. Need not be normalized."
+          "description": "Optional [x,y,z] view direction (camera\u2192actor). Default is a 3/4 front-right-above view. Need not be normalized."
         }
       ],
       "returns": {
@@ -2620,7 +2620,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Frame an actor in the editor viewport by label — computes camera position from the actor's bounds and aims at its centre, entirely in C++. Roll is always 0 so the view never tilts. This is the correct 'framing tool'; do NOT hand-compute camera angles in python_run."
+      "notes": "Frame an actor in the editor viewport by label \u2014 computes camera position from the actor's bounds and aims at its centre, entirely in C++. Roll is always 0 so the view never tilts. This is the correct 'framing tool'; do NOT hand-compute camera angles in python_run."
     },
     "editor_run_console_command": {
       "aliases": [],
@@ -2893,8 +2893,8 @@
         "fields": []
       },
       "agent_callable": true,
-      "has_ts_wrapper": false,
-      "notes": "Inject a mouse action into PIE (drag interpolates so delta-tracking widgets react)."
+      "has_ts_wrapper": true,
+      "notes": "Move, click, double_click, press, release, drag or scroll in the running game. Drag interpolates intermediate positions because widgets tracking deltas ignore a single jump."
     },
     "editor_pie_type_text": {
       "aliases": [],
@@ -2912,8 +2912,8 @@
         "fields": []
       },
       "agent_callable": true,
-      "has_ts_wrapper": false,
-      "notes": "Type text into the focused PIE widget via character events."
+      "has_ts_wrapper": true,
+      "notes": "Sends character events, which is what text fields consume. Goes to whatever holds keyboard focus."
     },
     "editor_pie_click_widget": {
       "aliases": [],
@@ -2931,8 +2931,8 @@
         "fields": []
       },
       "agent_callable": true,
-      "has_ts_wrapper": false,
-      "notes": "Click a widget by visible text instead of coordinates; reports candidate count so ambiguous picks aren't silent."
+      "has_ts_wrapper": true,
+      "notes": "Clicks a control by its visible text, tag or type, preferring the interactive widget. Reports candidate count so an ambiguous pick is visible."
     },
     "editor_pie_widget_tree": {
       "aliases": [],
@@ -2956,8 +2956,8 @@
         "fields": []
       },
       "agent_callable": true,
-      "has_ts_wrapper": false,
-      "notes": "List every visible PIE widget with its on-screen rect (read the screen before clicking)."
+      "has_ts_wrapper": true,
+      "notes": "Every visible Slate/UMG widget in the running game with its on-screen rectangle. The input to click-by-name."
     },
     "editor_pie_axis": {
       "aliases": [],
@@ -2981,8 +2981,8 @@
         "fields": []
       },
       "agent_callable": true,
-      "has_ts_wrapper": false,
-      "notes": "Inject an analog axis (sticks/triggers) into PIE."
+      "has_ts_wrapper": true,
+      "notes": "Analog input for sticks, triggers and mouse axes. Applies for one frame; resend per step for sustained movement."
     }
   }
 }
