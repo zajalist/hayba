@@ -78,6 +78,7 @@
 #include "Styling/CoreStyle.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "HaybaMCPAssetGuard.h"
+#include "HaybaMCPSaveVerify.h"
 #include "HaybaMCPReflection.h"
 #include "HaybaMCPParams.h"
 #include "HaybaMCPUILayout.h"
@@ -937,20 +938,15 @@ namespace
         return R;
     }
 
-    bool SaveWidgetPackage(UWidgetBlueprint* WBP)
+    /** Save and verify against the file system. See HaybaMCPSaveVerify.h — the
+     *  previous version returned a bare bool and the caller then inferred
+     *  success from IsDirty(), which answers a different question and reported
+     *  false on saves that had in fact reached disk. */
+    HaybaSaveVerify::FResult SaveWidgetPackage(UWidgetBlueprint* WBP)
     {
-        if (!WBP) return false;
+        if (!WBP) return HaybaSaveVerify::FResult{};
         WBP->MarkPackageDirty();
-        UPackage* Pkg = WBP->GetOutermost();
-        if (!Pkg) return false;
-
-        const FString FileName = FPackageName::LongPackageNameToFilename(
-            Pkg->GetName(), FPackageName::GetAssetPackageExtension());
-
-        FSavePackageArgs Args;
-        Args.TopLevelFlags = RF_Public | RF_Standalone;
-        Args.SaveFlags = SAVE_NoError;
-        return UPackage::SavePackage(Pkg, WBP, *FileName, Args);
+        return HaybaSaveVerify::SaveAndVerify(WBP);
     }
 }
 
@@ -1926,17 +1922,24 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleCompile(const TSharedPtr<FJsonObje
     bool bSaveOnSuccess = false;
     P->TryGetBoolField(TEXT("save_on_success"), bSaveOnSuccess);
 
+    HaybaSaveVerify::FResult SaveResult;
+    bool bAttemptedSave = false;
     if (bSaveOnSuccess && CR.bSuccess)
     {
-        if (!SaveWidgetPackage(WBP))
+        bAttemptedSave = true;
+        SaveResult = SaveWidgetPackage(WBP);
+        if (!SaveResult.DidReachDisk())
         {
-            return FHaybaHandlerResult::Err(TEXT("ui_compile_widget: compile succeeded but save failed"));
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("ui_compile_widget: compile succeeded but the change did not reach disk. %s"),
+                *SaveResult.Note));
         }
     }
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetBoolField(TEXT("success"), CR.bSuccess);
     Out->SetStringField(TEXT("status"), CR.Status);
+    if (bAttemptedSave) HaybaSaveVerify::Describe(SaveResult, Out);
 
     if (CR.Warnings.Num() > 0)
     {
@@ -1991,22 +1994,20 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSave(const TSharedPtr<FJsonObject>
         }
     }
 
-    if (!SaveWidgetPackage(WBP))
-    {
-        return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_save_widget: SavePackage failed for %s"), *WBP->GetPathName()));
-    }
-
-    UPackage* Pkg = WBP->GetOutermost();
-    const bool bDirtyAfter = Pkg ? Pkg->IsDirty() : true;
+    const HaybaSaveVerify::FResult SaveResult = SaveWidgetPackage(WBP);
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("saved_path"), WBP->GetPathName());
-    Out->SetBoolField(TEXT("success"), !bDirtyAfter);
-    Out->SetBoolField(TEXT("package_dirty_after_save"), bDirtyAfter);
+    HaybaSaveVerify::Describe(SaveResult, Out);
 
-    if (bDirtyAfter)
+    // `saved` comes from the file system, not from the dirty flag. A caller
+    // about to restart the editor needs a straight answer to "is my work on
+    // disk", and inferring it from IsDirty() gave the wrong one.
+    if (!SaveResult.DidReachDisk())
     {
-        return FHaybaHandlerResult::Ok(Out);
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("ui_save_widget: %s did not reach disk. %s"),
+            *WBP->GetPathName(), *SaveResult.Note));
     }
 
     return FHaybaHandlerResult::Ok(Out);
