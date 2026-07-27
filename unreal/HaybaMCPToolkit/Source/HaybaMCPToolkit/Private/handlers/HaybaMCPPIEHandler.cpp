@@ -16,6 +16,9 @@
 #include "UObject/Object.h"
 #include "Containers/Ticker.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Widgets/SWindow.h"
+#include "Widgets/SWidget.h"
+#include "Layout/Children.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
 #include "InputCoreTypes.h"
@@ -38,6 +41,11 @@ TArray<FString> FHaybaMCPPIEHandler::GetCommands() const
         TEXT("editor_pie_wait_for"),
         TEXT("editor_pie_press_key"),
         TEXT("editor_pie_screenshot"),
+        TEXT("editor_pie_mouse"),
+        TEXT("editor_pie_type_text"),
+        TEXT("editor_pie_axis"),
+        TEXT("editor_pie_widget_tree"),
+        TEXT("editor_pie_click_widget"),
     };
 }
 
@@ -62,6 +70,11 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::Handle(const FString& Cmd, const TShare
     if (Cmd == TEXT("editor_pie_assert"))     return PIEAssert(Params);
     if (Cmd == TEXT("editor_pie_wait_for"))   return PIEWaitFor(Params);
     if (Cmd == TEXT("editor_pie_press_key"))  return PIEPressKey(Params);
+    if (Cmd == TEXT("editor_pie_mouse"))         return PIEMouse(P);
+    if (Cmd == TEXT("editor_pie_type_text"))     return PIETypeText(P);
+    if (Cmd == TEXT("editor_pie_axis"))          return PIEAxis(P);
+    if (Cmd == TEXT("editor_pie_widget_tree"))   return PIEWidgetTree(P);
+    if (Cmd == TEXT("editor_pie_click_widget"))  return PIEClickWidget(P);
     if (Cmd == TEXT("editor_pie_screenshot")) return PIEScreenshot(Params);
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("Unknown PIE command: %s"), *Cmd));
 #endif
@@ -329,13 +342,20 @@ FHaybaHandlerResult FHaybaMCPPIEHandler_WaitLoop(
     P->TryGetNumberField(TEXT("tolerance"), Tolerance);
 
     const double StartTime = FPlatformTime::Seconds();
-    const double Deadline  = StartTime + (double)TimeoutMs / 1000.0;
 
     int32 Frame = 0;
     TSharedPtr<FJsonValue> LastObserved;
     FString LastErr;
 
-    while (FPlatformTime::Seconds() < Deadline)
+    // Evaluated ONCE. This used to loop until a deadline, pumping the core
+    // ticker between iterations to let the world advance — which is what made
+    // these commands crash. See the note on the pump removal below.
+    //
+    // A handler cannot advance the world, so it cannot meaningfully wait: the
+    // property it is watching can never change while it blocks. The honest
+    // shape is therefore a single observation the caller polls, and the
+    // response carries `polling: true` so that is obvious from the result
+    // rather than only from the docs.
     {
         if (Self.bCancelPending)
         {
@@ -381,16 +401,16 @@ FHaybaHandlerResult FHaybaMCPPIEHandler_WaitLoop(
             LastErr = ResolveErr;
         }
 
-        // Pump ticker + sleep.
-        FTSTicker::GetCoreTicker().Tick(0.005f);
-        FPlatformProcess::Sleep(0.005f);
         ++Frame;
     }
 
     TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
     R->SetBoolField(TEXT("matched"), false);
-    R->SetNumberField(TEXT("frames"), Frame);
-    R->SetStringField(TEXT("reason"), LastErr.IsEmpty() ? TEXT("timeout") : LastErr);
+    R->SetBoolField(TEXT("polling"), true);
+    R->SetNumberField(TEXT("elapsed_ms"), (FPlatformTime::Seconds() - StartTime) * 1000.0);
+    R->SetStringField(TEXT("reason"), LastErr.IsEmpty()
+        ? TEXT("condition not met at this instant — call again to poll; the world only advances between calls")
+        : LastErr);
     if (LastObserved.IsValid()) R->SetField(TEXT("observed_value_last"), LastObserved);
     return FHaybaHandlerResult::Ok(R);
 }
@@ -439,40 +459,67 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEPressKey(const TSharedPtr<FJsonObjec
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("invalid key: %s"), *KeyName));
 
     const FInputDeviceId DeviceId = IPlatformInputDeviceMapper::Get().GetDefaultInputDevice();
-    auto Send = [&](EInputEvent Evt)
+
+    // Resolve the viewport at the moment of use, never from a captured pointer.
+    // The old code captured FViewport* and UGameViewportClient*, pumped the core
+    // ticker (which can tear PIE down), then dereferenced them — a use-after-free
+    // that surfaced as an SEH access violation.
+    auto SendNow = [DeviceId, Key](EInputEvent Evt) -> bool
     {
-        FInputKeyEventArgs Args(VP, DeviceId, Key, Evt,
+        UWorld* W = GetPIEWorld();
+        if (!W) return false;
+        UGameViewportClient* Client = W->GetGameViewport();
+        if (!Client || !Client->Viewport) return false;
+
+        FInputKeyEventArgs Args(Client->Viewport, DeviceId, Key, Evt,
                                 /*AmountDepressed=*/1.0f,
                                 /*bIsTouch=*/false,
                                 /*EventTimestamp=*/0u);
-        GVC->InputKey(Args);
+        Client->InputKey(Args);
+        return true;
     };
+
+    bool bReleaseScheduled = false;
 
     if (EventStr == TEXT("pressed"))
     {
-        Send(IE_Pressed);
+        if (!SendNow(IE_Pressed)) return FHaybaHandlerResult::Err(TEXT("PIE viewport went away before the key was sent"));
     }
     else if (EventStr == TEXT("released"))
     {
-        Send(IE_Released);
+        if (!SendNow(IE_Released)) return FHaybaHandlerResult::Err(TEXT("PIE viewport went away before the key was sent"));
     }
     else // pressed_and_released
     {
-        Send(IE_Pressed);
-        // Pump ticker briefly so the world sees the keydown.
-        const double End = FPlatformTime::Seconds() + (double)HeldMs / 1000.0;
-        while (FPlatformTime::Seconds() < End)
-        {
-            FTSTicker::GetCoreTicker().Tick(0.005f);
-            FPlatformProcess::Sleep(0.005f);
-        }
-        Send(IE_Released);
+        if (!SendNow(IE_Pressed)) return FHaybaHandlerResult::Err(TEXT("PIE viewport went away before the key was sent"));
+
+        // The release is DEFERRED onto a real ticker delegate rather than held
+        // by spinning here. A handler runs on the game thread, so spinning
+        // prevents the very frames the hold is supposed to span — the key would
+        // be down for wall-clock time during which the game never ticks.
+        const float DelaySeconds = FMath::Clamp((float)HeldMs, 0.0f, 5000.0f) / 1000.0f;
+        FTSTicker::GetCoreTicker().AddTicker(
+            FTickerDelegate::CreateLambda([SendNow](float) -> bool
+            {
+                // Re-resolves the viewport internally and no-ops if PIE ended.
+                SendNow(IE_Released);
+                return false;  // one shot
+            }),
+            DelaySeconds);
+        bReleaseScheduled = true;
     }
 
     TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
     R->SetStringField(TEXT("key"), KeyName);
     R->SetStringField(TEXT("event"), EventStr);
     R->SetBoolField(TEXT("dispatched"), true);
+    R->SetBoolField(TEXT("release_scheduled"), bReleaseScheduled);
+    if (bReleaseScheduled)
+    {
+        R->SetNumberField(TEXT("release_after_ms"), HeldMs);
+        R->SetStringField(TEXT("note"), TEXT("The release fires on a later tick. This call returns immediately, ")
+                                        TEXT("so the key is still down when you read this."));
+    }
     return FHaybaHandlerResult::Ok(R);
 }
 
@@ -491,27 +538,424 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEScreenshot(const TSharedPtr<FJsonObj
                                    *FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S")));
     }
 
-    // TODO(ue5.7): wire FScreenshotRequest::OnScreenshotCaptured() to capture
-    // the FColor buffer directly (currently waits on file write).
-    FScreenshotRequest::RequestScreenshot(Filename, /*bShowUI=*/false, /*bAddFilenameSuffix=*/false);
+    // `check_only` reports whether a previously requested file has landed, so a
+    // caller can poll without issuing another capture.
+    bool bCheckOnly = false;
+    if (P.IsValid()) P->TryGetBoolField(TEXT("check_only"), bCheckOnly);
 
-    // Pump ticker until the file appears or 3s elapses.
-    const double Deadline = FPlatformTime::Seconds() + 3.0;
-    while (FPlatformTime::Seconds() < Deadline)
+    if (bCheckOnly)
     {
-        FTSTicker::GetCoreTicker().Tick(0.005f);
-        FPlatformProcess::Sleep(0.01f);
-        if (FPaths::FileExists(Filename)) break;
+        TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+        R->SetStringField(TEXT("filename"), Filename);
+        R->SetBoolField(TEXT("captured"), FPaths::FileExists(Filename));
+        R->SetBoolField(TEXT("requested"), false);
+        return FHaybaHandlerResult::Ok(R);
     }
 
+    FScreenshotRequest::RequestScreenshot(Filename, /*bShowUI=*/false, /*bAddFilenameSuffix=*/false);
+
+    // Returns immediately. The old code pumped the core ticker for up to three
+    // seconds waiting for the file — from inside a game-thread handler, which
+    // both froze the editor and re-entered systems that can tear PIE down while
+    // this command still held pointers into it.
+    //
+    // The screenshot is written by the engine a frame or two later. Poll for it
+    // with check_only rather than blocking the thread that has to render it.
     TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
     R->SetStringField(TEXT("filename"), Filename);
+    R->SetBoolField(TEXT("requested"), true);
     R->SetBoolField(TEXT("captured"), FPaths::FileExists(Filename));
+    R->SetStringField(TEXT("note"), TEXT("Capture requested. The engine writes the file on a later frame — ")
+                                    TEXT("call again with check_only:true (and the same filename) to see when it lands."));
     return FHaybaHandlerResult::Ok(R);
 }
 
+
+// ---------------------------------------------------------------------------
+// Interaction
+// ---------------------------------------------------------------------------
+//
+// Everything here obeys one rule the old code broke: a handler runs on the game
+// thread and must never pump the ticker or sleep. Input is dispatched and the
+// call returns; the world advances between calls, not during them.
+
+namespace
+{
+    /** Live PIE viewport client, or null when PIE is not running. Always
+     *  resolved at point of use — never cached across anything that can tick. */
+    UGameViewportClient* PIEViewportClient()
+    {
+        UWorld* W = GetPIEWorld();
+        if (!W) return nullptr;
+        UGameViewportClient* C = W->GetGameViewport();
+        return (C && C->Viewport) ? C : nullptr;
+    }
+
+    FKey MouseButtonFromString(const FString& InName)
+    {
+        const FString N = InName.ToLower();
+        if (N == TEXT("right"))  return EKeys::RightMouseButton;
+        if (N == TEXT("middle")) return EKeys::MiddleMouseButton;
+        return EKeys::LeftMouseButton;
+    }
+
+    /** Move the OS/Slate cursor to a viewport-relative pixel and report where. */
+    bool MoveCursorToViewportPixel(UGameViewportClient* Client, const FVector2D& Px, FVector2D& OutAbsolute)
+    {
+        if (!Client || !Client->Viewport) return false;
+        if (!FSlateApplication::IsInitialized()) return false;
+
+        // Viewport pixels are relative to the game window; Slate wants absolute
+        // desktop coordinates, so offset by the window position.
+        FVector2D Origin = FVector2D::ZeroVector;
+        if (TSharedPtr<SWindow> Win = Client->GetWindow())
+        {
+            Origin = Win->GetPositionInScreen();
+        }
+        OutAbsolute = Origin + Px;
+        FSlateApplication::Get().SetCursorPos(OutAbsolute);
+        return true;
+    }
+
+    void SendMouseButton(UGameViewportClient* Client, const FKey& Button, EInputEvent Evt)
+    {
+        if (!Client || !Client->Viewport) return;
+        const FInputDeviceId DeviceId = IPlatformInputDeviceMapper::Get().GetDefaultInputDevice();
+        FInputKeyEventArgs Args(Client->Viewport, DeviceId, Button, Evt,
+                                /*AmountDepressed=*/1.0f, /*bIsTouch=*/false, /*EventTimestamp=*/0u);
+        Client->InputKey(Args);
+    }
+
+    /** Depth-first walk of the live Slate tree under a window. */
+    void CollectSlateWidgets(const TSharedRef<SWidget>& W, int32 Depth,
+                             TArray<TSharedPtr<FJsonValue>>& Out, int32 MaxDepth)
+    {
+        if (Depth > MaxDepth) return;
+
+        const FGeometry& G = W->GetTickSpaceGeometry();
+        const FVector2D Pos  = FVector2D(G.GetAbsolutePosition());
+        const FVector2D Size = FVector2D(G.GetLocalSize()) * G.Scale;
+
+        // Zero-size widgets are layout scaffolding, not things to click.
+        if (Size.X > 0.5 && Size.Y > 0.5)
+        {
+            TSharedPtr<FJsonObject> E = MakeShared<FJsonObject>();
+            E->SetStringField(TEXT("type"), W->GetTypeAsString());
+            E->SetStringField(TEXT("tag"), W->GetTag().ToString());
+            E->SetNumberField(TEXT("x"), Pos.X);
+            E->SetNumberField(TEXT("y"), Pos.Y);
+            E->SetNumberField(TEXT("width"), Size.X);
+            E->SetNumberField(TEXT("height"), Size.Y);
+            E->SetNumberField(TEXT("center_x"), Pos.X + Size.X * 0.5);
+            E->SetNumberField(TEXT("center_y"), Pos.Y + Size.Y * 0.5);
+            E->SetNumberField(TEXT("depth"), Depth);
+            E->SetBoolField(TEXT("enabled"), W->IsEnabled());
+            E->SetBoolField(TEXT("interactive"), W->IsInteractable());
+            const FText Tip = W->GetAccessibleText();
+            if (!Tip.IsEmpty()) E->SetStringField(TEXT("text"), Tip.ToString());
+            Out.Add(MakeShared<FJsonValueObject>(E));
+        }
+
+        FChildren* Children = W->GetChildren();
+        if (!Children) return;
+        for (int32 i = 0; i < Children->Num(); ++i)
+        {
+            CollectSlateWidgets(Children->GetChildAt(i), Depth + 1, Out, MaxDepth);
+        }
+    }
+}
+
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEMouse(const TSharedPtr<FJsonObject>& P)
+{
+    UGameViewportClient* Client = PIEViewportClient();
+    if (!Client) return FHaybaHandlerResult::Err(TEXT("no PIE viewport (start PIE first)"));
+    if (!P.IsValid()) return FHaybaHandlerResult::Err(TEXT("editor_pie_mouse: missing params"));
+
+    FString Action = TEXT("click");
+    P->TryGetStringField(TEXT("action"), Action);
+    Action = Action.ToLower();
+
+    double X = 0.0, Y = 0.0;
+    const bool bHasX = P->TryGetNumberField(TEXT("x"), X);
+    const bool bHasY = P->TryGetNumberField(TEXT("y"), Y);
+
+    FString ButtonName = TEXT("left");
+    P->TryGetStringField(TEXT("button"), ButtonName);
+    const FKey Button = MouseButtonFromString(ButtonName);
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetStringField(TEXT("action"), Action);
+
+    if (Action == TEXT("move") || Action == TEXT("click") || Action == TEXT("double_click") ||
+        Action == TEXT("press") || Action == TEXT("release") || Action == TEXT("drag"))
+    {
+        if (!bHasX || !bHasY)
+            return FHaybaHandlerResult::Err(TEXT("editor_pie_mouse: x and y are required for this action"));
+
+        FVector2D Abs;
+        if (!MoveCursorToViewportPixel(Client, FVector2D(X, Y), Abs))
+            return FHaybaHandlerResult::Err(TEXT("editor_pie_mouse: could not position the cursor"));
+        R->SetNumberField(TEXT("x"), X);
+        R->SetNumberField(TEXT("y"), Y);
+    }
+
+    if (Action == TEXT("move"))
+    {
+        // Position only.
+    }
+    else if (Action == TEXT("press"))
+    {
+        SendMouseButton(Client, Button, IE_Pressed);
+    }
+    else if (Action == TEXT("release"))
+    {
+        SendMouseButton(Client, Button, IE_Released);
+    }
+    else if (Action == TEXT("click"))
+    {
+        SendMouseButton(Client, Button, IE_Pressed);
+        SendMouseButton(Client, Button, IE_Released);
+    }
+    else if (Action == TEXT("double_click"))
+    {
+        SendMouseButton(Client, Button, IE_Pressed);
+        SendMouseButton(Client, Button, IE_Released);
+        SendMouseButton(Client, Button, IE_DoubleClick);
+        SendMouseButton(Client, Button, IE_Released);
+    }
+    else if (Action == TEXT("drag"))
+    {
+        double ToX = 0.0, ToY = 0.0;
+        if (!P->TryGetNumberField(TEXT("to_x"), ToX) || !P->TryGetNumberField(TEXT("to_y"), ToY))
+            return FHaybaHandlerResult::Err(TEXT("editor_pie_mouse drag: to_x and to_y are required"));
+
+        SendMouseButton(Client, Button, IE_Pressed);
+
+        // Intermediate positions matter: a drag that jumps straight to the
+        // destination is often ignored by widgets that track deltas.
+        const int32 Steps = 8;
+        FVector2D Abs;
+        for (int32 i = 1; i <= Steps; ++i)
+        {
+            const double T = (double)i / (double)Steps;
+            MoveCursorToViewportPixel(Client, FVector2D(FMath::Lerp(X, ToX, T), FMath::Lerp(Y, ToY, T)), Abs);
+        }
+        SendMouseButton(Client, Button, IE_Released);
+        R->SetNumberField(TEXT("to_x"), ToX);
+        R->SetNumberField(TEXT("to_y"), ToY);
+    }
+    else if (Action == TEXT("scroll"))
+    {
+        double Delta = 1.0;
+        P->TryGetNumberField(TEXT("delta"), Delta);
+        const FInputDeviceId DeviceId = IPlatformInputDeviceMapper::Get().GetDefaultInputDevice();
+        FInputKeyEventArgs Args(Client->Viewport, DeviceId, EKeys::MouseWheelAxis, IE_Axis,
+                                (float)Delta, /*bIsTouch=*/false, /*EventTimestamp=*/0u);
+        Client->InputKey(Args);
+        R->SetNumberField(TEXT("delta"), Delta);
+    }
+    else
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("editor_pie_mouse: unknown action '%s' (move, click, double_click, press, release, drag, scroll)"),
+            *Action));
+    }
+
+    R->SetStringField(TEXT("button"), ButtonName);
+    R->SetBoolField(TEXT("dispatched"), true);
+    return FHaybaHandlerResult::Ok(R);
+}
+
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIETypeText(const TSharedPtr<FJsonObject>& P)
+{
+    UGameViewportClient* Client = PIEViewportClient();
+    if (!Client) return FHaybaHandlerResult::Err(TEXT("no PIE viewport (start PIE first)"));
+
+    FString Text;
+    if (!P.IsValid() || !P->TryGetStringField(TEXT("text"), Text))
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_type_text: text is required"));
+
+    // Character events, not key events: a text field wants the character that
+    // was produced, which is not recoverable from a keycode alone once shift,
+    // layout and IME are involved.
+    const FInputDeviceId DeviceId = IPlatformInputDeviceMapper::Get().GetDefaultInputDevice();
+    int32 Sent = 0;
+    for (const TCHAR C : Text)
+    {
+        Client->InputChar(Client->Viewport, DeviceId.GetId(), C);
+        ++Sent;
+    }
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetStringField(TEXT("text"), Text);
+    R->SetNumberField(TEXT("characters_sent"), Sent);
+    R->SetStringField(TEXT("note"), TEXT("Characters go to whatever currently has keyboard focus. ")
+                                    TEXT("Click the field first if focus is not already there."));
+    return FHaybaHandlerResult::Ok(R);
+}
+
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEAxis(const TSharedPtr<FJsonObject>& P)
+{
+    UGameViewportClient* Client = PIEViewportClient();
+    if (!Client) return FHaybaHandlerResult::Err(TEXT("no PIE viewport (start PIE first)"));
+
+    FString KeyName;
+    if (!P.IsValid() || !P->TryGetStringField(TEXT("key"), KeyName) || KeyName.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_axis: key is required (e.g. Gamepad_LeftX, MouseX)"));
+
+    const FKey Key(*KeyName);
+    if (!Key.IsValid())
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("editor_pie_axis: invalid key '%s'"), *KeyName));
+    if (!Key.IsAxis1D() && !Key.IsAxis2D() && !Key.IsAxis3D())
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("editor_pie_axis: '%s' is not an axis key — use editor_pie_press_key for buttons"), *KeyName));
+
+    double Value = 0.0;
+    P->TryGetNumberField(TEXT("value"), Value);
+
+    const FInputDeviceId DeviceId = IPlatformInputDeviceMapper::Get().GetDefaultInputDevice();
+    FInputKeyEventArgs Args(Client->Viewport, DeviceId, Key, IE_Axis,
+                            (float)Value, /*bIsTouch=*/false, /*EventTimestamp=*/0u);
+    Client->InputKey(Args);
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetStringField(TEXT("key"), KeyName);
+    R->SetNumberField(TEXT("value"), Value);
+    R->SetStringField(TEXT("note"), TEXT("Axis input applies for the frame it is delivered. For sustained "
+                                         "movement, send it again each step rather than expecting it to latch."));
+    return FHaybaHandlerResult::Ok(R);
+}
+
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEWidgetTree(const TSharedPtr<FJsonObject>& P)
+{
+    UGameViewportClient* Client = PIEViewportClient();
+    if (!Client) return FHaybaHandlerResult::Err(TEXT("no PIE viewport (start PIE first)"));
+    if (!FSlateApplication::IsInitialized())
+        return FHaybaHandlerResult::Err(TEXT("Slate is not initialized"));
+
+    TSharedPtr<SWindow> Win = Client->GetWindow();
+    if (!Win.IsValid()) return FHaybaHandlerResult::Err(TEXT("PIE window not found"));
+
+    int32 MaxDepth = 40;
+    if (P.IsValid()) P->TryGetNumberField(TEXT("max_depth"), MaxDepth);
+    MaxDepth = FMath::Clamp(MaxDepth, 1, 200);
+
+    FString Filter;
+    if (P.IsValid()) P->TryGetStringField(TEXT("filter"), Filter);
+
+    TArray<TSharedPtr<FJsonValue>> All;
+    CollectSlateWidgets(Win.ToSharedRef(), 0, All, MaxDepth);
+
+    TArray<TSharedPtr<FJsonValue>> Kept;
+    for (const TSharedPtr<FJsonValue>& V : All)
+    {
+        if (Filter.IsEmpty()) { Kept.Add(V); continue; }
+        const TSharedPtr<FJsonObject> O = V->AsObject();
+        if (!O.IsValid()) continue;
+        FString Type, Text, Tag;
+        O->TryGetStringField(TEXT("type"), Type);
+        O->TryGetStringField(TEXT("text"), Text);
+        O->TryGetStringField(TEXT("tag"), Tag);
+        if (Type.Contains(Filter) || Text.Contains(Filter) || Tag.Contains(Filter)) Kept.Add(V);
+    }
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetArrayField(TEXT("widgets"), Kept);
+    R->SetNumberField(TEXT("count"), Kept.Num());
+    R->SetNumberField(TEXT("total_before_filter"), All.Num());
+    if (!Filter.IsEmpty()) R->SetStringField(TEXT("filter"), Filter);
+    R->SetStringField(TEXT("note"), TEXT("Coordinates are absolute desktop pixels and are what "
+                                         "editor_pie_mouse expects. center_x/center_y is the click point."));
+    return FHaybaHandlerResult::Ok(R);
+}
+
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEClickWidget(const TSharedPtr<FJsonObject>& P)
+{
+    UGameViewportClient* Client = PIEViewportClient();
+    if (!Client) return FHaybaHandlerResult::Err(TEXT("no PIE viewport (start PIE first)"));
+    if (!FSlateApplication::IsInitialized())
+        return FHaybaHandlerResult::Err(TEXT("Slate is not initialized"));
+
+    FString Match;
+    if (!P.IsValid() || !P->TryGetStringField(TEXT("match"), Match) || Match.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_click_widget: match is required (widget text, tag or type)"));
+
+    TSharedPtr<SWindow> Win = Client->GetWindow();
+    if (!Win.IsValid()) return FHaybaHandlerResult::Err(TEXT("PIE window not found"));
+
+    TArray<TSharedPtr<FJsonValue>> All;
+    CollectSlateWidgets(Win.ToSharedRef(), 0, All, 60);
+
+    // Prefer an interactive widget: matching a label is usually a request to
+    // press the button containing it, not to click the text itself.
+    TSharedPtr<FJsonObject> Best;
+    TArray<FString> Candidates;
+    for (const TSharedPtr<FJsonValue>& V : All)
+    {
+        const TSharedPtr<FJsonObject> O = V->AsObject();
+        if (!O.IsValid()) continue;
+        FString Type, Text, Tag;
+        O->TryGetStringField(TEXT("type"), Type);
+        O->TryGetStringField(TEXT("text"), Text);
+        O->TryGetStringField(TEXT("tag"), Tag);
+        if (!(Type.Contains(Match) || Text.Contains(Match) || Tag.Contains(Match))) continue;
+
+        Candidates.Add(FString::Printf(TEXT("%s%s"), *Type, Text.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" \"%s\""), *Text)));
+        bool bInteractive = false;
+        O->TryGetBoolField(TEXT("interactive"), bInteractive);
+        if (!Best.IsValid() || bInteractive)
+        {
+            bool bBestInteractive = false;
+            if (Best.IsValid()) Best->TryGetBoolField(TEXT("interactive"), bBestInteractive);
+            if (!Best.IsValid() || (bInteractive && !bBestInteractive)) Best = O;
+        }
+    }
+
+    if (!Best.IsValid())
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("editor_pie_click_widget: nothing on screen matches '%s'. ")
+            TEXT("Call editor_pie_widget_tree to see what is actually there."), *Match));
+    }
+
+    double CX = 0.0, CY = 0.0;
+    Best->TryGetNumberField(TEXT("center_x"), CX);
+    Best->TryGetNumberField(TEXT("center_y"), CY);
+
+    // center_x/center_y are already absolute desktop coordinates.
+    FSlateApplication::Get().SetCursorPos(FVector2D(CX, CY));
+    SendMouseButton(Client, EKeys::LeftMouseButton, IE_Pressed);
+    SendMouseButton(Client, EKeys::LeftMouseButton, IE_Released);
+
+    FString Type, Text;
+    Best->TryGetStringField(TEXT("type"), Type);
+    Best->TryGetStringField(TEXT("text"), Text);
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetStringField(TEXT("match"), Match);
+    R->SetStringField(TEXT("clicked_type"), Type);
+    if (!Text.IsEmpty()) R->SetStringField(TEXT("clicked_text"), Text);
+    R->SetNumberField(TEXT("x"), CX);
+    R->SetNumberField(TEXT("y"), CY);
+    R->SetNumberField(TEXT("candidates"), Candidates.Num());
+    if (Candidates.Num() > 1)
+    {
+        // Say when the choice was ambiguous rather than silently picking one.
+        R->SetStringField(TEXT("note"), FString::Printf(
+            TEXT("%d widgets matched; clicked the interactive one. Use editor_pie_widget_tree and "
+                 "editor_pie_mouse with explicit coordinates if that was the wrong choice."), Candidates.Num()));
+    }
+    return FHaybaHandlerResult::Ok(R);
+}
+
+
 #else  // !WITH_EDITOR
 
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEMouse(const TSharedPtr<FJsonObject>&)      { return FHaybaHandlerResult::Err(TEXT("editor-only")); }
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIETypeText(const TSharedPtr<FJsonObject>&)   { return FHaybaHandlerResult::Err(TEXT("editor-only")); }
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEAxis(const TSharedPtr<FJsonObject>&)       { return FHaybaHandlerResult::Err(TEXT("editor-only")); }
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEWidgetTree(const TSharedPtr<FJsonObject>&) { return FHaybaHandlerResult::Err(TEXT("editor-only")); }
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEClickWidget(const TSharedPtr<FJsonObject>&){ return FHaybaHandlerResult::Err(TEXT("editor-only")); }
 FHaybaHandlerResult FHaybaMCPPIEHandler::PIEAssert(const TSharedPtr<FJsonObject>&)    { return FHaybaHandlerResult::Err(TEXT("editor-only")); }
 FHaybaHandlerResult FHaybaMCPPIEHandler::PIEWaitFor(const TSharedPtr<FJsonObject>&)   { return FHaybaHandlerResult::Err(TEXT("editor-only")); }
 FHaybaHandlerResult FHaybaMCPPIEHandler::PIEPressKey(const TSharedPtr<FJsonObject>&)  { return FHaybaHandlerResult::Err(TEXT("editor-only")); }

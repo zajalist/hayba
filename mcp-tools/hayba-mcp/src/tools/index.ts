@@ -174,6 +174,13 @@ import {
 import {
   meta as foliageRemoveInstancesMeta, schema as foliageRemoveInstancesSchema, foliageRemoveInstancesHandler,
 } from './foliage/foliage-remove-instances.js';
+import { meta as pieWidgetTreeMeta, schema as pieWidgetTreeSchema, pieWidgetTreeHandler } from './pie/pie-widget-tree.js';
+import { meta as pieClickWidgetMeta, schema as pieClickWidgetSchema, pieClickWidgetHandler } from './pie/pie-click-widget.js';
+import { meta as pieMouseMeta, schema as pieMouseSchema, pieMouseHandler } from './pie/pie-mouse.js';
+import { meta as pieTypeTextMeta, schema as pieTypeTextSchema, pieTypeTextHandler } from './pie/pie-type-text.js';
+import { meta as pieAxisMeta, schema as pieAxisSchema, pieAxisHandler } from './pie/pie-axis.js';
+import { meta as piePressKeyMeta, schema as piePressKeySchema, piePressKeyHandler } from './pie/pie-press-key.js';
+import { meta as pieScreenshotMeta, schema as pieScreenshotSchema, pieScreenshotHandler } from './pie/pie-screenshot.js';
 import { meta as uiBuildTreeMeta, schema as uiBuildTreeSchema, uiBuildTreeHandler } from './ui/ui-build-tree.js';
 import {
   meta as uiDuplicateElementMeta,
@@ -447,6 +454,7 @@ const PACK = 'copilot'; // niche domain for the BYOK copilot config/introspectio
 const DOCS = 'docs'; // niche domain for live-editor API reflection
 const ASSETGRAPH = 'asset'; // niche domain for asset reference/refactor tools
 const FOLIAGE = 'foliage'; // niche domain for foliage placement
+const PIE = 'pie'; // niche domain for driving a running game
 // Hand-written descriptors. Kept as a named const so the generated legacy list
 // can be de-duplicated against these names before splicing (see below).
 const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
@@ -1022,7 +1030,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'ui_create_widget',
     description:
-      'Create a new UMG Widget Blueprint asset (designer-editable UI). Seeds a root CanvasPanel. Use the real UMG pipeline instead of hand-building the tree in C++.',
+      'CREATE A NEW MENU, SCREEN OR HUD as a UMG Widget Blueprint asset — the designer-editable kind an artist can also open. Seeds a root CanvasPanel ready for content. USE_WHEN: starting any new piece of UI. NOT_WHEN: adding to an existing one (ui_add_element / ui_build_tree), or inspecting what a running game is showing (editor_pie_widget_tree).',
     meta: uiCreateWidgetMeta,
     handler: uiCreateWidgetHandler,
     cost: 'medium',
@@ -1501,6 +1509,93 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     returns: '{removed}',
     niche: FOLIAGE,
     schema: foliageRemoveInstancesSchema.shape,
+  },
+
+  // ── PIE interaction ───────────────────────────────────────────────────────
+  //
+  // Driving a running game. Every one of these dispatches input and returns
+  // immediately — none of them block or pump the engine. The previous versions
+  // spun the core ticker from inside a game-thread handler, which tore down the
+  // objects they were holding and crashed the editor.
+  //
+  // Consequence worth knowing: the world advances BETWEEN calls, not during
+  // them. Look at the result, then act again.
+  {
+    name: 'editor_pie_widget_tree',
+    description:
+      'WHAT IS ON SCREEN RIGHT NOW in the running game: every visible Slate/UMG widget with its type, text and on-screen rectangle. USE_WHEN: before interacting — this is how you find a button instead of guessing coordinates. NOT_WHEN: inspecting a Widget Blueprint asset rather than the live screen (ui_query).',
+    meta: pieWidgetTreeMeta,
+    handler: pieWidgetTreeHandler,
+    cost: 'low',
+    returns: '{widgets:[{type, tag, text, x, y, width, height, center_x, center_y, enabled, interactive}], count}',
+    niche: PIE,
+    schema: pieWidgetTreeSchema.shape,
+  },
+  {
+    name: 'editor_pie_click_widget',
+    description:
+      'CLICK A CONTROL BY WHAT IT SAYS rather than by pixel. Finds the widget whose text, tag or type matches and clicks its centre, preferring an interactive one so matching a label presses the button containing it. Reports how many matched, so an ambiguous choice is visible instead of silent. USE_WHEN: pressing menu buttons. NOT_WHEN: you need an exact position.',
+    meta: pieClickWidgetMeta,
+    handler: pieClickWidgetHandler,
+    cost: 'medium',
+    returns: '{match, clicked_type, clicked_text, x, y, candidates, note?}',
+    niche: PIE,
+    schema: pieClickWidgetSchema.shape,
+  },
+  {
+    name: 'editor_pie_mouse',
+    description:
+      'Drive the mouse in the running game: move, click, double_click, press, release, drag or scroll. press/release let you hold a button across calls; drag interpolates intermediate positions because widgets that track deltas ignore a single jump. Coordinates match what editor_pie_widget_tree reports.',
+    meta: pieMouseMeta,
+    handler: pieMouseHandler,
+    cost: 'medium',
+    returns: '{action, x, y, button, dispatched}',
+    niche: PIE,
+    schema: pieMouseSchema.shape,
+  },
+  {
+    name: 'editor_pie_type_text',
+    description:
+      'Type a string into the running game as character input, which is what text fields actually consume. Goes to whatever holds keyboard focus — click the field first. USE_WHEN: filling in a name or search box. NOT_WHEN: a single control key like Enter (editor_pie_press_key).',
+    meta: pieTypeTextMeta,
+    handler: pieTypeTextHandler,
+    cost: 'medium',
+    returns: '{text, characters_sent, note}',
+    niche: PIE,
+    schema: pieTypeTextSchema.shape,
+  },
+  {
+    name: 'editor_pie_press_key',
+    description:
+      'Press a keyboard or gamepad button in the running game. pressed_and_released schedules the release on a later tick and RETURNS IMMEDIATELY — the key is still down when you read the result, which is what lets the game see the hold at all.',
+    meta: piePressKeyMeta,
+    handler: piePressKeyHandler,
+    cost: 'medium',
+    returns: '{key, event, dispatched, release_scheduled, release_after_ms?}',
+    niche: PIE,
+    schema: piePressKeySchema.shape,
+  },
+  {
+    name: 'editor_pie_axis',
+    description:
+      'Send analog input — gamepad sticks and triggers, mouse axes. Applies for the frame it is delivered, so send it again per step for sustained movement rather than expecting it to latch.',
+    meta: pieAxisMeta,
+    handler: pieAxisHandler,
+    cost: 'medium',
+    returns: '{key, value, note}',
+    niche: PIE,
+    schema: pieAxisSchema.shape,
+  },
+  {
+    name: 'editor_pie_screenshot',
+    description:
+      'Capture the running game. Requests the shot and returns immediately; the engine writes the file a frame or two later, so poll with check_only:true and the same filename rather than assuming it is ready. NOT_WHEN: capturing the editor viewport outside PIE (editor_capture_viewport).',
+    meta: pieScreenshotMeta,
+    handler: pieScreenshotHandler,
+    cost: 'medium',
+    returns: '{filename, requested, captured, note}',
+    niche: PIE,
+    schema: pieScreenshotSchema.shape,
   },
 
   // ── Scene domain ──────────────────────────────────────────────────────────
