@@ -11,6 +11,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { registerTool, type ToolDescriptor } from './register-tool.js';
 import { resetToolMetaRegistry } from './tool-meta-registry.js';
 import {
+  appendMeta,
   isSceneMutating,
   VALIDATION_NUDGE,
   type HaybaToolMeta,
@@ -109,22 +110,49 @@ describe('post-mutation nudge via registerTool', () => {
 });
 
 describe('validation tools carry strengthened when/USE_WHEN guidance', () => {
-  // Read the source of the raw server.tool registrations to assert the copy.
-  it('validator_run + plumb_validate descriptions are loud and directive', async () => {
+  // Asserted against the DESCRIPTION THE AGENT RECEIVES, not against source text.
+  //
+  // This previously grepped index.ts for `USE_WHEN:` sitting inline in the
+  // description literal, which tied the copy review to one registration style.
+  // The validator tools are now ToolDescriptors, so the guidance lives in
+  // meta.when and appendMeta renders it — same words reach the agent, and the
+  // assertion no longer breaks when a tool changes how it is registered.
+  it('validator descriptions are loud and directive as rendered', async () => {
+    const { VALIDATOR_DESCRIPTORS } = await import('./index.js');
+    const rendered = new Map(VALIDATOR_DESCRIPTORS.map((d) => [d.name, appendMeta(d.description, d.meta)]));
+
+    const run = rendered.get('validator_run')!;
+    expect(run).toContain('CATCHES SILENT WRONGNESS');
+    expect(run).toMatch(/USE_WHEN:[\s\S]{0,400}after ANY scene mutation/);
+    expect(run).toContain('before you declare a task done');
+
+    // history + rules carry USE_WHEN too — they are the tools an agent reaches
+    // for by mistake, so the NOT_WHEN pointing at validator_run matters.
+    expect(rendered.get('validator_history')!).toMatch(/USE_WHEN:/);
+    expect(rendered.get('validator_rules')!).toMatch(/USE_WHEN:/);
+    expect(rendered.get('validator_history')!).toMatch(/NOT_WHEN:[\s\S]{0,200}validator_run/);
+  });
+
+  it('every validator tool that persists state declares an effect', async () => {
+    const { VALIDATOR_DESCRIPTORS } = await import('./index.js');
+    // The hand-written form had nowhere to put effects, so the tools that write
+    // config and history declared none and sat outside the evidence contract.
+    for (const name of ['validator_resolve', 'validator_clear', 'validator_set_rule_enabled', 'validator_strictness']) {
+      const d = VALIDATOR_DESCRIPTORS.find((x) => x.name === name)!;
+      expect(d.meta.effects.length, `${name} persists state but declares no effect`).toBeGreaterThan(0);
+    }
+    // ...and the pure reads still declare none, so they get no spurious warning.
+    for (const name of ['validator_history', 'validator_rules']) {
+      expect(VALIDATOR_DESCRIPTORS.find((x) => x.name === name)!.meta.effects).toEqual([]);
+    }
+  });
+
+  it('plumb_validate copy is still loud (hand-registered, converts with the plumb family)', async () => {
     const { readFileSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
     const here = fileURLToPath(new URL('.', import.meta.url));
     const src = readFileSync(`${here}/index.ts`, 'utf8');
-
-    // validator_run — loud, with an after-mutation + before-done USE_WHEN.
-    expect(src).toContain('CATCHES SILENT WRONGNESS');
-    expect(src).toMatch(/'validator_run',[\s\S]{0,600}USE_WHEN:[\s\S]{0,400}after ANY scene mutation/);
-    expect(src).toMatch(/'validator_run',[\s\S]{0,900}before you declare a task done/);
-    // plumb_validate
     expect(src).toContain('VERIFY PLACEMENT IS ACTUALLY CORRECT');
     expect(src).toMatch(/'plumb_validate',[\s\S]{0,900}USE_WHEN:/);
-    // history + rules also gained USE_WHEN
-    expect(src).toMatch(/'validator_history',[\s\S]{0,400}USE_WHEN:/);
-    expect(src).toMatch(/'validator_rules',[\s\S]{0,400}USE_WHEN:/);
   });
 });

@@ -15,7 +15,7 @@ import {
   isUnderEvidenceContract,
   parseEffectsFromDescription,
 } from './response-evidence.js';
-import { errorResult } from './tool-result.js';
+import { errorResult, okResult } from './tool-result.js';
 
 // ── Code Mode meta-tools (always-on) ──────────────────────────────────────────
 import { listToolCategoriesHandler, meta as listMeta } from './code-mode/list-tool-categories.js';
@@ -468,6 +468,135 @@ const PIE = 'pie'; // niche domain for driving a running game
 const CONTENT = 'content'; // niche domain for content audits and budgets
 // Hand-written descriptors. Kept as a named const so the generated legacy list
 // can be de-duplicated against these names before splicing (see below).
+
+// ── Validator tools ────────────────────────────────────────────────────────
+//
+// Previously registered by hand, which left them outside the registrar and so
+// outside appendMeta, the response-evidence contract and the validation nudge.
+// Notably validator_set_rule_enabled and validator_clear persist state while
+// declaring no effects at all, because the hand-written form had nowhere to put
+// them. Expressing effects as data is most of the point of this conversion.
+//
+// USE_WHEN / NOT_WHEN guidance moved out of the description prose into meta,
+// where appendMeta renders it — the descriptions had been carrying it inline.
+export const VALIDATOR_DESCRIPTORS: ToolDescriptor[] = [
+  {
+    name: 'validator_run',
+    description:
+      'CATCHES SILENT WRONGNESS YOU CANNOT SEE: runs the validator rules over the current scene and returns concrete post-condition findings \u2014 actors floating above ground, interpenetrating meshes, off-grid/mis-scaled placements, missing expected results, and PLUMB constraint violations. Pass scope=\'all\' (default) or { rule_ids: [...] }; findings persist to history and the Validation panel. WHY: you have no viewport \u2014 this is how you verify placement actually landed correctly instead of assuming it did.',
+    meta: {
+      cost: 'high',
+      effects: ['persists_validator_findings'],
+      when: 'after ANY scene mutation (spawn / move / delete / scatter / foliage / PCG execute / world_generate / landscape / lighting change), AND before you declare a task done or report success',
+      not_when: 'you have made no scene change since the last run',
+    },
+    schema: validatorRunSchema,
+    cost: 'high',
+    returns: '{findings:[{rule_id,severity,message,hint,refs}], counts, ran, scope}',
+    handler: async (args) =>
+      okResult(
+        await validatorRunHandler(args as { scope?: 'all' | { rule_ids?: string[] }; persist?: boolean }, {
+          ue: await getUe(),
+          scratchDir: validatorScratchDir(),
+        }),
+      ),
+  },
+  {
+    name: 'validator_history',
+    description:
+      'Read persisted validator findings (the record of everything validator_run / plumb_validate caught). Filter by limit / since_iso / include_resolved / rule_ids.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'reviewing what is still wrong in the scene, checking whether a prior fix cleared a finding, or reporting outstanding issues to the user',
+      not_when: 'you want a fresh evaluation \u2014 call validator_run instead; history only shows past findings',
+    },
+    schema: validatorHistorySchema,
+    cost: 'low',
+    returns: '{findings:[{timestamp,rule_id,severity,message,resolved}], total}',
+    handler: async (args) =>
+      okResult(
+        await validatorHistoryHandler(
+          args as { limit?: number; since_iso?: string; include_resolved?: boolean; rule_ids?: string[] },
+        ),
+      ),
+  },
+  {
+    name: 'validator_resolve',
+    description: 'Mark a validator finding as resolved (or restore it). Identifies the finding by its ISO timestamp.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_validator_history'],
+      when: 'you have fixed what a finding reported and want it cleared from the outstanding list',
+      not_when: 'the finding is still true \u2014 resolving it hides a real problem rather than fixing it',
+    },
+    schema: validatorResolveSchema,
+    cost: 'low',
+    returns: '{ok, timestamp, resolved}',
+    handler: async (args) => okResult(await validatorResolveHandler(args as { timestamp: string; resolved: boolean })),
+  },
+  {
+    name: 'validator_clear',
+    description: 'Clear the validator history. Requires { confirm: true } to actually wipe.',
+    meta: {
+      cost: 'low',
+      effects: ['clears_validator_history'],
+      when: 'starting a fresh session on a scene and the accumulated findings are noise',
+      not_when: 'you simply want to hide outstanding problems \u2014 the history is the record that they exist',
+    },
+    schema: validatorClearSchema,
+    cost: 'low',
+    returns: '{ok, cleared}',
+    handler: async (args) => okResult(await validatorClearHandler(args as { confirm: boolean })),
+  },
+  {
+    name: 'validator_rules',
+    description:
+      "List the validator rule catalog \u2014 every post-condition check and bound PLUMB constraint that validator_run / plumb_validate will evaluate, with each rule's message, hint, refs, and disabled state.",
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'you want to know WHAT validation can catch before running it, or to confirm the right rule is enabled for the task at hand',
+      not_when: 'you just want to run the checks \u2014 call validator_run',
+    },
+    schema: validatorRulesSchema,
+    cost: 'low',
+    returns: '{rules:[{id,message,hint,refs,disabled,min_strictness}]}',
+    handler: async (args) => okResult(await validatorRulesHandler(args as { include_disabled_state?: boolean })),
+  },
+  {
+    name: 'validator_set_rule_enabled',
+    description: 'Enable or disable a validator rule by id. Persists to .scratch/validator-config.json.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_validator_config'],
+      when: 'a rule is firing on something intentional in this project and the noise outweighs the signal',
+      not_when: 'the rule is right and the scene is wrong \u2014 disabling it silences the report, not the problem',
+    },
+    schema: validatorSetRuleEnabledSchema,
+    cost: 'low',
+    returns: '{ok, rule_id, enabled}',
+    handler: async (args) =>
+      okResult(await validatorSetRuleEnabledHandler(args as { rule_id: string; enabled: boolean })),
+  },
+  {
+    name: 'validator_strictness',
+    description:
+      'Read or set validation strictness. Three modes \u2014 relaxed (only what is broken), standard (plus established conventions), strict (plus house-style polish) \u2014 set globally or per category (ui, pcg, landscape, material, blueprint, python, asset, general). A rule declares the lowest mode at which it fires, so raising strictness only ever adds findings. Call with no arguments to read the current settings. Persists to .scratch/validator-config.json, the same file the editor Configure panel reads.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_validator_config'],
+      when: 'tuning how much the validator reports, globally or for one category',
+      not_when: 'you only want to read the current mode \u2014 that is the same call with no arguments, and it writes nothing',
+    },
+    schema: validatorStrictnessSchema,
+    cost: 'low',
+    returns: '{global, categories:{ui,pcg,landscape,material,blueprint,python,asset,general}}',
+    handler: async (args) =>
+      okResult(await validatorStrictnessHandler(args as Parameters<typeof validatorStrictnessHandler>[0])),
+  },
+];
+
 const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   // ── World generation (always-on flagship) ────────────────────────────────
   {
@@ -2102,7 +2231,10 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
 // presence and the no-drift / no-duplicate invariants.
 export const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   ...HANDWRITTEN_STANDARD_DESCRIPTORS,
-  ...generateLegacyDescriptors(new Set(HANDWRITTEN_STANDARD_DESCRIPTORS.map((d) => d.name))),
+  ...VALIDATOR_DESCRIPTORS,
+  ...generateLegacyDescriptors(
+    new Set([...HANDWRITTEN_STANDARD_DESCRIPTORS, ...VALIDATOR_DESCRIPTORS].map((d) => d.name)),
+  ),
 ];
 
 export async function registerTools(server: McpServer, session: SessionManagerStub): Promise<RoutingHandle | null> {
@@ -2180,6 +2312,25 @@ export async function registerTools(server: McpServer, session: SessionManagerSt
  * tools group under the expected pack (the "hidden until searched" surface —
  * deriveDomainPacks buckets by this dir, and ToolIndex indexes by it).
  */
+/**
+ * Best-effort live UE handle for validator evaluation.
+ *
+ * Hoisted to module scope so the validator tools can be expressed as static
+ * ToolDescriptors — closing over a local inside registerToolsCore was the only
+ * thing keeping them on the hand-written registration path, and therefore
+ * outside every cross-cutting policy the registrar applies.
+ *
+ * Returns null rather than throwing: validation degrades to whatever it can
+ * evaluate offline instead of failing the call.
+ */
+const getUe = async () => {
+  try {
+    return await ensureUeForValidator().catch(() => null);
+  } catch {
+    return null;
+  }
+};
+
 export function inferDir(name: string): string | null {
   if (name.startsWith('actor_')) return 'actor';
   if (name.startsWith('scene_')) return 'scene';
@@ -3025,98 +3176,16 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
   // ──────────────────────────────────────────────────────────────────────────
   // ── Validator (runtime rule system + history) ───────────────────────────
   //
-  // Five MCP tools that expose the validator surface to agents and to the
-  // UE plugin's Validator panel:
-  //   - validator_run      : manual evaluation pass
-  //   - validator_history  : read persisted findings
-  //   - validator_resolve  : mark a finding resolved / unresolved
-  //   - validator_clear    : wipe history
-  //   - validator_rules    : list the rule catalog (+ disabled state)
+  // The validator tools are declared as ToolDescriptors (see
+  // VALIDATOR_DESCRIPTORS) so they pass through the one registrar with every
+  // other tool. Only the evaluator-hook installation is left here, because it
+  // is a startup side-effect rather than a registration.
   //
   // Rule definitions live in src/validator/rules.ts; evaluators in
   // src/validator/tool-hooks.ts (auto-installed below).
   // ──────────────────────────────────────────────────────────────────────────
   // Install evaluator hooks once — wires actual logic onto rules catalog.
   installToolHooks();
-
-  const getUe = async () => {
-    try {
-      return await ensureUeForValidator().catch(() => null);
-    } catch {
-      return null;
-    }
-  };
-
-  server.tool(
-    'validator_run',
-    "CATCHES SILENT WRONGNESS YOU CANNOT SEE: runs the validator rules over the current scene and returns concrete post-condition findings — actors floating above ground, interpenetrating meshes, off-grid/mis-scaled placements, missing expected results, and PLUMB constraint violations. Pass scope='all' (default) or { rule_ids: [...] }; findings persist to history and the Validation panel. USE_WHEN: after ANY scene mutation (spawn / move / delete / scatter / foliage / PCG execute / world_generate / landscape / lighting change), AND before you declare a task done or report success. NOT_WHEN: you have made no scene change since the last run. WHY: you have no viewport — this is how you verify placement actually landed correctly instead of assuming it did.",
-    validatorRunSchema,
-    async (args: { scope?: 'all' | { rule_ids?: string[] }; persist?: boolean }) => {
-      const ue = await getUe();
-      const r = await validatorRunHandler(args, { ue, scratchDir: validatorScratchDir() });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'validator_history',
-    'Read persisted validator findings (the record of everything validator_run / plumb_validate caught). Filter by limit / since_iso / include_resolved / rule_ids. USE_WHEN: reviewing what is still wrong in the scene, checking whether a prior fix cleared a finding, or reporting outstanding issues to the user. NOT_WHEN: you want a fresh evaluation — call validator_run instead; history only shows past findings.',
-    validatorHistorySchema,
-    async (args: { limit?: number; since_iso?: string; include_resolved?: boolean; rule_ids?: string[] }) => {
-      const r = await validatorHistoryHandler(args);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'validator_resolve',
-    'Mark a validator finding as resolved (or restore it). Identifies the finding by its ISO timestamp.',
-    validatorResolveSchema,
-    async (args: { timestamp: string; resolved: boolean }) => {
-      const r = await validatorResolveHandler(args);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'validator_clear',
-    'Clear the validator history. Requires { confirm: true } to actually wipe.',
-    validatorClearSchema,
-    async (args: { confirm: boolean }) => {
-      const r = await validatorClearHandler(args);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'validator_rules',
-    "List the validator rule catalog — every post-condition check and bound PLUMB constraint that validator_run / plumb_validate will evaluate, with each rule's message, hint, refs, and disabled state. USE_WHEN: you want to know WHAT validation can catch before running it, or to confirm the right rule is enabled for the task at hand. NOT_WHEN: you just want to run the checks — call validator_run.",
-    validatorRulesSchema,
-    async (args: { include_disabled_state?: boolean }) => {
-      const r = await validatorRulesHandler(args);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'validator_set_rule_enabled',
-    'Enable or disable a validator rule by id. Persists to .scratch/validator-config.json.',
-    validatorSetRuleEnabledSchema,
-    async (args: { rule_id: string; enabled: boolean }) => {
-      const r = await validatorSetRuleEnabledHandler(args);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'validator_strictness',
-    "Read or set validation strictness. Three modes — relaxed (only what is broken), standard (plus established conventions), strict (plus house-style polish) — set globally or per category (ui, pcg, landscape, material, blueprint, python, asset, general). A rule declares the lowest mode at which it fires, so raising strictness only ever adds findings. Call with no arguments to read the current settings. Persists to .scratch/validator-config.json, the same file the editor Configure panel reads.",
-    validatorStrictnessSchema,
-    async (args: Parameters<typeof validatorStrictnessHandler>[0]) => {
-      const r = await validatorStrictnessHandler(args);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
 
   // ── PLUMB constraint subsystem ──────────────────────────────────────────
   //
