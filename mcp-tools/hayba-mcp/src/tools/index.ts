@@ -597,6 +597,342 @@ export const VALIDATOR_DESCRIPTORS: ToolDescriptor[] = [
   },
 ];
 
+
+// ── PLUMB tools ────────────────────────────────────────────────────
+//
+// Effects were determined by reading each handler body, not inferred from the
+// verb in its name: plumb_study_take persists via upsertLesson despite reading
+// like a query, while constraint_propose, segment and grammar_expand compute
+// and store nothing despite sounding like authoring tools.
+export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
+  {
+    name: 'plumb_primitives',
+    description: 'List the COMPLETE closed constraint grammar — the 10 primitives, their gate, hard/soft default, params, and docs. Author constraints by picking one and filling params.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'you need the CLOSED set of primitives a constraint or production may legally reference',
+      not_when: 'you want a specific asset profile - use plumb_profile_get',
+    },
+    schema: plumbPrimitivesSchema,
+    cost: 'low',
+    returns: '{primitives:[{name,kind,attrs}]}',
+    handler: async () => okResult(await plumbPrimitivesHandler()),
+  },
+  {
+    name: 'plumb_profile_bake',
+    description: 'Bake the deterministic geometry/physics half of a Physical Asset Profile. Pass just the asset to auto-fetch bounds from UE (mesh_get_info), or supply origin_cm + extent_cm (+ optional pivot_to_base_cm) explicitly. Persists to the profile store.',
+    meta: {
+      cost: 'low',
+      effects: ['bakes_plumb_profile'],
+      when: 'a mesh needs a measured profile before constraints or grammar can reference it',
+      not_when: 'the profile is already baked and unchanged - plumb_profile_get reads it',
+    },
+    schema: plumbProfileBakeSchema,
+    cost: 'low',
+    returns: '{ok, asset, profile:{bounds,sockets,attrs}}',
+    handler: async (a) => okResult(await plumbProfileBakeHandler(a as Parameters<typeof plumbProfileBakeHandler>[0], new Date().toISOString(), fetchMeshBounds)),
+  },
+  {
+    name: 'plumb_profile_annotate',
+    description: 'Layer AI/human qualitative semantics (class, up/front vectors, named affordance regions) onto a baked profile, with optional field locks. Qualitative constraints can only hard-gate on locked fields.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_profile'],
+      when: 'a baked profile needs a human-meaningful tag the solver can bind to',
+      not_when: 'the annotation belongs on a constraint instead',
+    },
+    schema: plumbProfileAnnotateSchema,
+    cost: 'low',
+    returns: '{ok, asset, annotations}',
+    handler: async (a) => okResult(await plumbProfileAnnotateHandler(a as Parameters<typeof plumbProfileAnnotateHandler>[0])),
+  },
+  {
+    name: 'plumb_profile_list',
+    description: 'List baked profiles (asset_id, archetype, affordance count, locked fields). Feeds the Memory tab.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'you want to know which assets already have baked profiles',
+      not_when: 'you need one profile in full - plumb_profile_get',
+    },
+    schema: plumbProfileListSchema,
+    cost: 'low',
+    returns: '{profiles:[{asset,baked_at}]}',
+    handler: async () => okResult(await plumbProfileListHandler()),
+  },
+  {
+    name: 'plumb_profile_get',
+    description: 'Fetch one full Physical Asset Profile by asset path.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: "you need one asset's baked bounds, sockets and attributes",
+      not_when: "you only want to know whether it exists - plumb_profile_list is cheaper",
+    },
+    schema: plumbProfileGetSchema,
+    cost: 'low',
+    returns: '{asset, bounds, sockets, attrs, masks}',
+    handler: async (a) => okResult(await plumbProfileGetHandler(a as Parameters<typeof plumbProfileGetHandler>[0])),
+  },
+  {
+    name: 'plumb_constraint_define',
+    description: 'Author/upsert a bound constraint: a primitive id + params + a binding (exactly one of {asset, tag}). Validated against the closed primitive set — invalid primitives/params/bindings are rejected.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_constraints'],
+      when: 'expressing a placement rule that must hold, in the closed constraint language',
+      not_when: 'the rule is a one-off check - plumb_validate takes ad-hoc scope',
+    },
+    schema: plumbConstraintDefineSchema,
+    cost: 'low',
+    returns: '{ok, id, constraint, validated}',
+    handler: async (a) => okResult(await plumbConstraintDefineHandler(a as Parameters<typeof plumbConstraintDefineHandler>[0])),
+  },
+  {
+    name: 'plumb_constraint_list',
+    description: 'List the constraint library (optionally filtered to an asset binding).',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'reviewing which placement rules are currently in force',
+      not_when: 'you want to know whether the scene SATISFIES them - plumb_validate',
+    },
+    schema: plumbConstraintListSchema,
+    cost: 'low',
+    returns: '{constraints:[{id,kind,bound_to}]}',
+    handler: async (a) => okResult(await plumbConstraintListHandler(a as Parameters<typeof plumbConstraintListHandler>[0])),
+  },
+  {
+    name: 'plumb_constraint_remove',
+    description: 'Remove a constraint from the library by id.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_constraints'],
+      when: 'a constraint is wrong or obsolete and should stop being enforced',
+      not_when: 'the constraint is right and the scene is wrong - fix the scene',
+    },
+    schema: plumbConstraintRemoveSchema,
+    cost: 'low',
+    returns: '{ok, id, removed}',
+    handler: async (a) => okResult(await plumbConstraintRemoveHandler(a as Parameters<typeof plumbConstraintRemoveHandler>[0])),
+  },
+  {
+    name: 'plumb_constraint_propose',
+    description: 'Draft (does not save) constraints for an asset from its baked profile, using only closed primitives. Review/edit then call plumb_constraint_define.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'you want candidate constraints inferred from what is already placed, to review before defining',
+      not_when: 'you already know the rule - plumb_constraint_define writes it directly',
+    },
+    schema: plumbConstraintProposeSchema,
+    cost: 'low',
+    returns: '{proposals:[{constraint,support,confidence}]} - nothing is persisted',
+    handler: async (a) => okResult(await plumbConstraintProposeHandler(a as Parameters<typeof plumbConstraintProposeHandler>[0])),
+  },
+  {
+    name: 'plumb_validate',
+    description: 'VERIFY PLACEMENT IS ACTUALLY CORRECT: runs the PLUMB constraint library over a set of instances and returns a directional Verdict — per-gate ok, signed value_m (how far off, and which way), and a FixVector telling you exactly how to move each instance to satisfy it. Catches grounding, clearance, alignment, spacing and interpenetration violations the viewport would reveal but you cannot. Hard fails set stopped_at; soft fails accumulate soft_cost. WHY: this is the quantified check that turns "looks placed" into "provably grounded and non-overlapping".',
+    meta: {
+      cost: 'medium',
+      effects: ['persists_validator_findings'],
+      when: 'immediately after placing/scattering/spawning/transforming instances, and before declaring the layout done — feed the FixVector back into a transform to correct, then re-validate',
+      not_when: 'no constraints are bound for these assets — check plumb_constraint_list / validator_rules first',
+    },
+    schema: plumbValidateSchema,
+    cost: 'medium',
+    returns: '{findings:[{constraint_id,severity,message,actors}], counts, passes}',
+    handler: async (a) => okResult(await plumbValidateHandler(a as Parameters<typeof plumbValidateHandler>[0])),
+  },
+  {
+    name: 'plumb_mask_add',
+    description: 'Add or update a mask (surface = triangle set; volume = translucent shape) on a baked profile. Surface/volume masks are the regions constraints reference.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_profile'],
+      when: 'part of a profile must be excluded from constraint solving',
+      not_when: 'the whole asset should be excluded - remove its profile',
+    },
+    schema: plumbMaskAddSchema,
+    cost: 'low',
+    returns: '{ok, asset, mask_id}',
+    handler: async (a) => okResult(await plumbMaskAddHandler(a as Parameters<typeof plumbMaskAddHandler>[0])),
+  },
+  {
+    name: 'plumb_mask_remove',
+    description: 'Remove a mask from a profile by id.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_profile'],
+      when: 'a mask is over-excluding and constraints should see that region again',
+      not_when: 'you want to keep the mask but change its extent - add a replacement',
+    },
+    schema: plumbMaskRemoveSchema,
+    cost: 'low',
+    returns: '{ok, asset, mask_id, removed}',
+    handler: async (a) =>
+    okResult(await plumbMaskRemoveHandler(a as Parameters<typeof plumbMaskRemoveHandler>[0])),
+  },
+  {
+    name: 'plumb_lesson_add',
+    description: 'Add/update a lesson — the durable [[slug]] knowledge that explains WHY a constraint exists (browsed in the Studio Lessons panel; cited by constraint/validator refs).',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_lessons'],
+      when: 'recording WHY a constraint exists, so a future reader does not delete it as noise',
+      not_when: 'the note is about one scene rather than a durable rule',
+    },
+    schema: plumbLessonAddSchema,
+    cost: 'low',
+    returns: '{ok, slug, title}',
+    handler: async (a) => okResult(await plumbLessonAddHandler(a as Parameters<typeof plumbLessonAddHandler>[0], new Date().toISOString())),
+  },
+  {
+    name: 'plumb_lesson_list',
+    description: 'List lessons (slug + title + refs).',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'finding the durable knowledge behind the current constraint set',
+      not_when: 'you want the constraints themselves - plumb_constraint_list',
+    },
+    schema: plumbLessonListSchema,
+    cost: 'low',
+    returns: '{lessons:[{slug,title,refs}]}',
+    handler: async () =>
+    okResult(await plumbLessonListHandler()),
+  },
+  {
+    name: 'plumb_lesson_remove',
+    description: 'Remove a lesson by slug.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_lessons'],
+      when: 'a lesson has been superseded and would mislead',
+      not_when: 'the lesson is still true but the constraint changed - update the lesson',
+    },
+    schema: plumbLessonRemoveSchema,
+    cost: 'low',
+    returns: '{ok, slug, removed}',
+    handler: async (a) =>
+    okResult(await plumbLessonRemoveHandler(a as Parameters<typeof plumbLessonRemoveHandler>[0])),
+  },
+  {
+    name: 'plumb_study',
+    description: "AI study entry point: returns the asset's baked profile (if any) + the closed primitive grammar + mask kinds + guidance, so the agent can propose masks (plumb_mask_add) and constraints (plumb_constraint_define).",
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'orienting on an asset before authoring constraints - returns its profile plus the legal primitives',
+      not_when: 'you already know the asset and just need its numbers - plumb_profile_get',
+    },
+    schema: plumbStudySchema,
+    cost: 'low',
+    returns: '{asset, profile, primitives, constraints}',
+    handler: async (a) => okResult(await plumbStudyHandler(a as Parameters<typeof plumbStudyHandler>[0])),
+  },
+  {
+    name: 'plumb_study_take',
+    description: 'Drain pending "Study with AI" requests from the Semantic Studio button. Returns the assets to study (then call plumb_study + author masks/constraints for each).',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_lessons'],
+      when: 'committing what a study concluded as a durable lesson',
+      not_when: 'you are still exploring - plumb_study reads without recording',
+    },
+    schema: plumbStudyTakeSchema,
+    cost: 'low',
+    returns: '{ok, slug, lesson}',
+    handler: async () => okResult(await plumbStudyTakeHandler()),
+  },
+  {
+    name: 'plumb_segment',
+    description: "AI-segment a studied asset: given the study_render color passes, the agent's themed part labels + a box/points per view, runs SAM in the visual sidecar and back-projects to geometry-hugging surface masks (triangles via the world-position pass + a UV display texture), written into the profile. Replaces hand-placed blocky masks.",
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'splitting a run or surface into placeable spans before scattering',
+      not_when: 'you want to validate what is already placed - plumb_validate',
+    },
+    schema: plumbSegmentSchema,
+    cost: 'low',
+    returns: '{segments:[{start,end,length}]} - computed, not persisted',
+    handler: async (a) => okResult(await plumbSegmentHandler(a as Parameters<typeof plumbSegmentHandler>[0])),
+  },
+  {
+    name: 'plumb_production_define',
+    description: 'Author/upsert a grammar production rule: an LHS symbol kind (+ optional attribute guards) → an RHS sequence of emit ops (shell/asset/symbol/scatter/decal/fill). Guards are constraint ids that must pass before the production fires.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_grammar'],
+      when: 'adding a grammar production that expands one symbol into placed parts',
+      not_when: 'the rule is a constraint on placement rather than a way to generate it',
+    },
+    schema: plumbProductionDefineSchema,
+    cost: 'low',
+    returns: '{ok, id, production}',
+    handler: async (a) => okResult(await plumbProductionDefineHandler(a as Parameters<typeof plumbProductionDefineHandler>[0])),
+  },
+  {
+    name: 'plumb_production_list',
+    description: 'List all grammar productions in the store.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'reviewing the grammar currently available to expansion',
+      not_when: 'you want the result of expanding it - plumb_grammar_expand',
+    },
+    schema: plumbProductionListSchema,
+    cost: 'low',
+    returns: '{productions:[{id,symbol,expansion}]}',
+    handler: async () => okResult(await plumbProductionListHandler()),
+  },
+  {
+    name: 'plumb_production_remove',
+    description: 'Remove a grammar production by id.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_grammar'],
+      when: 'a production generates the wrong shape and should stop being used',
+      not_when: 'you want to keep it but change it - define a replacement with the same id',
+    },
+    schema: plumbProductionRemoveSchema,
+    cost: 'low',
+    returns: '{ok, id, removed}',
+    handler: async (a) =>
+    okResult(await plumbProductionRemoveHandler(a as Parameters<typeof plumbProductionRemoveHandler>[0])),
+  },
+  {
+    name: 'plumb_socket_add',
+    description: 'Add or replace a socket (connection point) on a baked profile. Idempotent on socket id.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_profile'],
+      when: 'a baked profile needs a named connection point for the grammar to join against',
+      not_when: 'the point is an exclusion rather than a join - plumb_mask_add',
+    },
+    schema: plumbSocketAddSchema,
+    cost: 'low',
+    returns: '{ok, asset, socket}',
+    handler: async (a) => okResult(await plumbSocketAddHandler(a as Parameters<typeof plumbSocketAddHandler>[0])),
+  },
+  {
+    name: 'plumb_grammar_expand',
+    description: 'Expand a seed symbol using the stored production rules + the PLUMB constraint store as guards. Returns a PlacementPlan. In dry-run (no UE scene), geometry-dependent constraints self-skip — rejections only reflect TS-evaluable constraints.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'previewing what the grammar produces from a symbol, before anything is placed',
+      not_when: 'you want it actually placed in the scene - that is a separate spawn step',
+    },
+    schema: plumbGrammarExpandSchema,
+    cost: 'low',
+    returns: '{expansion:[{symbol,parts}]} - computed, nothing placed',
+    handler: async (a) => okResult(await plumbGrammarExpandHandler(a as Parameters<typeof plumbGrammarExpandHandler>[0])),
+  },
+];
+
 const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   // ── World generation (always-on flagship) ────────────────────────────────
   {
@@ -2232,8 +2568,11 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
 export const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   ...HANDWRITTEN_STANDARD_DESCRIPTORS,
   ...VALIDATOR_DESCRIPTORS,
+  ...PLUMB_DESCRIPTORS,
   ...generateLegacyDescriptors(
-    new Set([...HANDWRITTEN_STANDARD_DESCRIPTORS, ...VALIDATOR_DESCRIPTORS].map((d) => d.name)),
+    new Set(
+      [...HANDWRITTEN_STANDARD_DESCRIPTORS, ...VALIDATOR_DESCRIPTORS, ...PLUMB_DESCRIPTORS].map((d) => d.name),
+    ),
   ),
 ];
 
@@ -2323,6 +2662,23 @@ export async function registerTools(server: McpServer, session: SessionManagerSt
  * Returns null rather than throwing: validation degrades to whatever it can
  * evaluate offline instead of failing the call.
  */
+/**
+ * Measured bounds for an asset, used when baking a PLUMB profile.
+ *
+ * Hoisted alongside getUe so plumb_profile_bake can be a static descriptor.
+ * Goes through the executeCommand seam, so the in-memory adapter can script it
+ * in tests without a live editor.
+ */
+const fetchMeshBounds = async (asset: string) => {
+  const data = (await executeCommand('mesh_get_info', { path: asset })) as {
+    bounds?: { min: Record<string, number>; max: Record<string, number>; extents: Record<string, number> };
+  };
+  const b = data?.bounds;
+  if (!b) throw new Error('mesh_get_info returned no bounds');
+  const v = (o: Record<string, number>): [number, number, number] => [o.x ?? 0, o.y ?? 0, o.z ?? 0];
+  return { min: v(b.min), max: v(b.max), extents: v(b.extents) };
+};
+
 const getUe = async () => {
   try {
     return await ensureUeForValidator().catch(() => null);
@@ -3194,162 +3550,27 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
   // grammar (10 primitives) never grows. See src/plumb/.
   const j = (r: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] });
 
-  server.tool(
-    'plumb_primitives',
-    'List the COMPLETE closed constraint grammar — the 10 primitives, their gate, hard/soft default, params, and docs. Author constraints by picking one and filling params.',
-    plumbPrimitivesSchema,
-    async () => j(await plumbPrimitivesHandler()),
-  );
 
   // Auto-fetch StaticMesh bounds (cm) via the UE mesh_get_info command when the
   // caller omits origin_cm/extent_cm — "point at an SM and bake".
-  const fetchMeshBounds = async (asset: string) => {
-    const data = (await executeCommand('mesh_get_info', { path: asset })) as {
-      bounds?: { min: Record<string, number>; max: Record<string, number>; extents: Record<string, number> };
-    };
-    const b = data?.bounds;
-    if (!b) throw new Error('mesh_get_info returned no bounds');
-    const v = (o: Record<string, number>): [number, number, number] => [o.x ?? 0, o.y ?? 0, o.z ?? 0];
-    return { min: v(b.min), max: v(b.max), extents: v(b.extents) };
-  };
-  server.tool(
-    'plumb_profile_bake',
-    'Bake the deterministic geometry/physics half of a Physical Asset Profile. Pass just the asset to auto-fetch bounds from UE (mesh_get_info), or supply origin_cm + extent_cm (+ optional pivot_to_base_cm) explicitly. Persists to the profile store.',
-    plumbProfileBakeSchema,
-    async (a) => j(await plumbProfileBakeHandler(a, new Date().toISOString(), fetchMeshBounds)),
-  );
 
-  server.tool(
-    'plumb_profile_annotate',
-    'Layer AI/human qualitative semantics (class, up/front vectors, named affordance regions) onto a baked profile, with optional field locks. Qualitative constraints can only hard-gate on locked fields.',
-    plumbProfileAnnotateSchema,
-    async (a) => j(await plumbProfileAnnotateHandler(a)),
-  );
 
-  server.tool(
-    'plumb_profile_list',
-    'List baked profiles (asset_id, archetype, affordance count, locked fields). Feeds the Memory tab.',
-    plumbProfileListSchema,
-    async () => j(await plumbProfileListHandler()),
-  );
 
-  server.tool(
-    'plumb_profile_get',
-    'Fetch one full Physical Asset Profile by asset path.',
-    plumbProfileGetSchema,
-    async (a) => j(await plumbProfileGetHandler(a)),
-  );
 
-  server.tool(
-    'plumb_constraint_define',
-    'Author/upsert a bound constraint: a primitive id + params + a binding (exactly one of {asset, tag}). Validated against the closed primitive set — invalid primitives/params/bindings are rejected.',
-    plumbConstraintDefineSchema,
-    async (a) => j(await plumbConstraintDefineHandler(a)),
-  );
 
-  server.tool(
-    'plumb_constraint_list',
-    'List the constraint library (optionally filtered to an asset binding).',
-    plumbConstraintListSchema,
-    async (a) => j(await plumbConstraintListHandler(a)),
-  );
 
-  server.tool(
-    'plumb_constraint_remove',
-    'Remove a constraint from the library by id.',
-    plumbConstraintRemoveSchema,
-    async (a) => j(await plumbConstraintRemoveHandler(a)),
-  );
 
-  server.tool(
-    'plumb_constraint_propose',
-    'Draft (does not save) constraints for an asset from its baked profile, using only closed primitives. Review/edit then call plumb_constraint_define.',
-    plumbConstraintProposeSchema,
-    async (a) => j(await plumbConstraintProposeHandler(a)),
-  );
 
-  server.tool(
-    'plumb_validate',
-    'VERIFY PLACEMENT IS ACTUALLY CORRECT: runs the PLUMB constraint library over a set of instances and returns a directional Verdict — per-gate ok, signed value_m (how far off, and which way), and a FixVector telling you exactly how to move each instance to satisfy it. Catches grounding, clearance, alignment, spacing and interpenetration violations the viewport would reveal but you cannot. Hard fails set stopped_at; soft fails accumulate soft_cost. USE_WHEN: immediately after placing/scattering/spawning/transforming instances, and before declaring the layout done — feed the FixVector back into a transform to correct, then re-validate. NOT_WHEN: no constraints are bound for these assets (check plumb_constraint_list / validator_rules first). WHY: this is the quantified check that turns "looks placed" into "provably grounded and non-overlapping".',
-    plumbValidateSchema,
-    async (a) => j(await plumbValidateHandler(a)),
-  );
 
-  server.tool(
-    'plumb_mask_add',
-    'Add or update a mask (surface = triangle set; volume = translucent shape) on a baked profile. Surface/volume masks are the regions constraints reference.',
-    plumbMaskAddSchema,
-    async (a) => j(await plumbMaskAddHandler(a)),
-  );
-  server.tool('plumb_mask_remove', 'Remove a mask from a profile by id.', plumbMaskRemoveSchema, async (a) =>
-    j(await plumbMaskRemoveHandler(a)),
-  );
 
-  server.tool(
-    'plumb_lesson_add',
-    'Add/update a lesson — the durable [[slug]] knowledge that explains WHY a constraint exists (browsed in the Studio Lessons panel; cited by constraint/validator refs).',
-    plumbLessonAddSchema,
-    async (a) => j(await plumbLessonAddHandler(a, new Date().toISOString())),
-  );
-  server.tool('plumb_lesson_list', 'List lessons (slug + title + refs).', plumbLessonListSchema, async () =>
-    j(await plumbLessonListHandler()),
-  );
-  server.tool('plumb_lesson_remove', 'Remove a lesson by slug.', plumbLessonRemoveSchema, async (a) =>
-    j(await plumbLessonRemoveHandler(a)),
-  );
 
-  server.tool(
-    'plumb_study',
-    "AI study entry point: returns the asset's baked profile (if any) + the closed primitive grammar + mask kinds + guidance, so the agent can propose masks (plumb_mask_add) and constraints (plumb_constraint_define).",
-    plumbStudySchema,
-    async (a) => j(await plumbStudyHandler(a)),
-  );
 
-  server.tool(
-    'plumb_study_take',
-    'Drain pending "Study with AI" requests from the Semantic Studio button. Returns the assets to study (then call plumb_study + author masks/constraints for each).',
-    plumbStudyTakeSchema,
-    async () => j(await plumbStudyTakeHandler()),
-  );
 
-  server.tool(
-    'plumb_segment',
-    "AI-segment a studied asset: given the study_render color passes, the agent's themed part labels + a box/points per view, runs SAM in the visual sidecar and back-projects to geometry-hugging surface masks (triangles via the world-position pass + a UV display texture), written into the profile. Replaces hand-placed blocky masks.",
-    plumbSegmentSchema,
-    async (a) => j(await plumbSegmentHandler(a)),
-  );
 
-  server.tool(
-    'plumb_production_define',
-    'Author/upsert a grammar production rule: an LHS symbol kind (+ optional attribute guards) → an RHS sequence of emit ops (shell/asset/symbol/scatter/decal/fill). Guards are constraint ids that must pass before the production fires.',
-    plumbProductionDefineSchema,
-    async (a) => j(await plumbProductionDefineHandler(a)),
-  );
 
-  server.tool(
-    'plumb_production_list',
-    'List all grammar productions in the store.',
-    plumbProductionListSchema,
-    async () => j(await plumbProductionListHandler()),
-  );
 
-  server.tool('plumb_production_remove', 'Remove a grammar production by id.', plumbProductionRemoveSchema, async (a) =>
-    j(await plumbProductionRemoveHandler(a)),
-  );
 
-  server.tool(
-    'plumb_socket_add',
-    'Add or replace a socket (connection point) on a baked profile. Idempotent on socket id.',
-    plumbSocketAddSchema,
-    async (a) => j(await plumbSocketAddHandler(a)),
-  );
 
-  server.tool(
-    'plumb_grammar_expand',
-    'Expand a seed symbol using the stored production rules + the PLUMB constraint store as guards. Returns a PlacementPlan. In dry-run (no UE scene), geometry-dependent constraints self-skip — rejections only reflect TS-evaluable constraints.',
-    plumbGrammarExpandSchema,
-    async (a) => j(await plumbGrammarExpandHandler(a)),
-  );
 
   // ── Landscape import (TS wrapper for UE-side landscape_import handler) ────
   server.tool(

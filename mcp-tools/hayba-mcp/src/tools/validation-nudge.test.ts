@@ -147,12 +147,28 @@ describe('validation tools carry strengthened when/USE_WHEN guidance', () => {
     }
   });
 
-  it('plumb_validate copy is still loud (hand-registered, converts with the plumb family)', async () => {
-    const { readFileSync } = await import('node:fs');
-    const { fileURLToPath } = await import('node:url');
-    const here = fileURLToPath(new URL('.', import.meta.url));
-    const src = readFileSync(`${here}/index.ts`, 'utf8');
-    expect(src).toContain('VERIFY PLACEMENT IS ACTUALLY CORRECT');
-    expect(src).toMatch(/'plumb_validate',[\s\S]{0,900}USE_WHEN:/);
+  it('plumb_validate copy is still loud as rendered', async () => {
+    const { PLUMB_DESCRIPTORS } = await import('./index.js');
+    const d = PLUMB_DESCRIPTORS.find((x) => x.name === 'plumb_validate')!;
+    const rendered = appendMeta(d.description, d.meta);
+    expect(rendered).toContain('VERIFY PLACEMENT IS ACTUALLY CORRECT');
+    expect(rendered).toMatch(/USE_WHEN:[\s\S]{0,300}after placing/);
+    // The WHY clause is what makes an agent reach for this instead of assuming.
+    expect(rendered).toContain('provably grounded and non-overlapping');
+  });
+
+  it('plumb tools declare effects by what they DO, not by their verb', async () => {
+    const { PLUMB_DESCRIPTORS } = await import('./index.js');
+    const eff = (n: string) => PLUMB_DESCRIPTORS.find((x) => x.name === n)!.meta.effects;
+    // Reads like a query, but persists a lesson via upsertLesson.
+    expect(eff('plumb_study_take').length).toBeGreaterThan(0);
+    // Read like authoring tools, but compute and store nothing.
+    expect(eff('plumb_constraint_propose')).toEqual([]);
+    expect(eff('plumb_segment')).toEqual([]);
+    expect(eff('plumb_grammar_expand')).toEqual([]);
+    // Every remove/define/add does persist.
+    for (const n of PLUMB_DESCRIPTORS.map((d) => d.name).filter((n) => /_(add|define|remove|bake|annotate)$/.test(n))) {
+      expect(eff(n).length, `${n} mutates a store but declares no effect`).toBeGreaterThan(0);
+    }
   });
 });
