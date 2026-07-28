@@ -10,6 +10,11 @@ import { registerToolMeta } from './tool-meta-registry.js';
 import { readSettings } from './routing/settings-watcher.js';
 import { registerDeferredRouting, ALWAYS_ON_META, type CapturedTool, type RoutingHandle } from './routing/register.js';
 import { registerTool, recordToolSchema, type ToolDescriptor } from './register-tool.js';
+import {
+  guardHandlerWithEvidence,
+  isUnderEvidenceContract,
+  parseEffectsFromDescription,
+} from './response-evidence.js';
 import { errorResult } from './tool-result.js';
 
 // ── Code Mode meta-tools (always-on) ──────────────────────────────────────────
@@ -2123,7 +2128,14 @@ export async function registerTools(server: McpServer, session: SessionManagerSt
         handler = rest[1] as (...args: unknown[]) => unknown;
       }
       const dir = inferDir(name);
-      captured.set(name, { description, schema, handler, dir });
+      // Put every captured tool under the response-evidence contract, not just
+      // the ones registered through registerTool. Most sites below hand-roll
+      // server.tool(...) with an appendMeta'd description and never register a
+      // meta object, so effects are recovered from the description — a tool
+      // should not escape the rule because of which registration path it took.
+      const effects = parseEffectsFromDescription(description);
+      const guarded = isUnderEvidenceContract(effects) ? guardHandlerWithEvidence(handler) : handler;
+      captured.set(name, { description, schema, handler: guarded, dir });
       // Don't forward to realTool — registerDeferredRouting re-registers only
       // the always-on subset + alwaysLoadPacks tools.
     };

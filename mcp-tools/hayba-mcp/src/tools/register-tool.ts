@@ -33,6 +33,7 @@ import type { z } from 'zod';
 import { appendMeta, isSceneMutating } from './hayba-tool-meta.js';
 import type { HaybaToolMeta } from './hayba-tool-meta.js';
 import { withValidationNudge } from './tool-result.js';
+import { isUnderEvidenceContract, withEvidenceWarning } from './response-evidence.js';
 import { recordSchema, type Cost } from './schema-registry.js';
 import { registerToolMeta } from './tool-meta-registry.js';
 import { appendNicheBriefing } from './niche-briefing.js';
@@ -86,6 +87,12 @@ export function registerTool(
   // successful result — see withValidationNudge. Decided ONCE here from the
   // tool's declared effects so it's DRY across every registered tool.
   const nudge = isSceneMutating(d.meta.effects);
+  // A tool that declares ANY effect is under the response-evidence contract:
+  // if it comes back with only ok/status/message, the caller is told "success"
+  // about a change nothing in the response describes. Decided here for the same
+  // reason as the nudge — one place, every tool, including the wrappers that
+  // pass the plugin's reply straight through.
+  const evidence = isUnderEvidenceContract(d.meta.effects);
   server.tool(
     d.name,
     appendMeta(d.description, d.meta),
@@ -95,7 +102,8 @@ export function registerTool(
       const shaped = niche
         ? appendNicheBriefing(niche, session, r)
         : { content: r.content, isError: r.isError };
-      return nudge ? withValidationNudge(shaped) : shaped;
+      const checked = evidence ? withEvidenceWarning(shaped) : shaped;
+      return nudge ? withValidationNudge(checked) : checked;
     },
   );
   registerToolMeta(d.name, d.meta);
