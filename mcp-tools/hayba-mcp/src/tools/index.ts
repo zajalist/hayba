@@ -9,7 +9,7 @@ import { installLiveSender, executeCommand } from './tool-executor.js';
 import { registerToolMeta } from './tool-meta-registry.js';
 import { readSettings } from './routing/settings-watcher.js';
 import { registerDeferredRouting, ALWAYS_ON_META, type CapturedTool, type RoutingHandle } from './routing/register.js';
-import { registerTool, recordToolSchema, type ToolDescriptor } from './register-tool.js';
+import { defineTool, registerTool, recordToolSchema, type ToolDescriptor } from './register-tool.js';
 import {
   guardHandlerWithEvidence,
   isUnderEvidenceContract,
@@ -931,6 +931,623 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
     returns: '{expansion:[{symbol,parts}]} - computed, nothing placed',
     handler: async (a) => okResult(await plumbGrammarExpandHandler(a as Parameters<typeof plumbGrammarExpandHandler>[0])),
   },
+];
+
+
+// ── PCG authoring, conventions, zones and landscape ─────────────────
+//
+// Most of these were registered with the THREE-argument server.tool(name,
+// schema, handler) form, i.e. with no description at all: the agent saw a name
+// and a parameter list and nothing else, which also made them close to
+// invisible to description-based tool search. Descriptions are authored here.
+//
+// Effects were read out of each implementation, and three contradict the verb
+// in the tool's name: hayba_setup_conventions calls writeProjectConventions,
+// hayba_set_painter_heightmap calls setHeightmap, and hayba_open_zone_painter
+// CREATES a project rather than merely opening one. Conversely
+// hayba_abstract_to_subgraph and hayba_parameterize_graph_inputs only transform
+// a graph object in memory despite reading like authoring tools.
+export const PCG_DESCRIPTORS: ToolDescriptor[] = [
+  defineTool({
+    name: 'hayba_propose_plan',
+    description: 'Propose a step-by-step plan to the user before performing destructive operations. Required when Plan Mode is on. Steps may be strings or {title, description, tool} objects.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plan_state'],
+      when: 'pushing the steps of a destructive operation to the Plan panel for approval',
+      not_when: 'the operation is read-only - Plan Mode gates mutations',
+    },
+    schema: {
+      steps: z
+        .array(
+          z.union([
+            z.string(),
+            z.object({
+              title: z.string(),
+              description: z.string().optional(),
+              tool: z.string().optional(),
+            }),
+          ]),
+        )
+        .describe('Ordered list of plan steps'),
+      await_seconds: z
+        .number()
+        .int()
+        .min(0)
+        .max(600)
+        .optional()
+        .describe('How long the agent will wait for human approval (informational; default 30)'),
+    },
+    cost: 'low',
+    returns: '{ok, steps, plan_id}',
+    handler: async (params) => {
+      try {
+        const data = await executeCommand('hayba_propose_plan', params as Record<string, unknown>, { timeout: 5000 });
+        return {
+          content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
+        };
+      } catch (e) {
+        return errorResult(`Error pushing plan to UE: ${(e as Error).message}`);
+      }
+    },
+  }),
+  defineTool({
+    name: 'hayba_mark_plan_step',
+    description: 'Update the status of a single step in the proposed plan shown in the UE Plan panel. Marking a step "completed" auto-advances the next step to "running". Call this as you work through an approved plan so the user sees live progress.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plan_state'],
+      when: 'reporting progress through an approved plan so the panel tracks it',
+      not_when: 'no plan is active',
+    },
+    schema: {
+      index: z.number().int().min(0).describe('Zero-based index of the plan step to update'),
+      status: z
+        .enum(['running', 'completed', 'failed'])
+        .default('completed')
+        .describe('New status for the step (default "completed")'),
+    },
+    cost: 'low',
+    returns: '{ok, step, status}',
+    handler: async (params) => {
+      try {
+        const data = await executeCommand('plan_mark_step', params as Record<string, unknown>, { timeout: 5000 });
+        return {
+          content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
+        };
+      } catch (e) {
+        return errorResult(`Error marking plan step in UE: ${(e as Error).message}`);
+      }
+    },
+  }),
+  defineTool({
+    name: 'pcg_cook_and_wait',
+    description: appendMeta(
+      "Regenerate an actor's PCGComponent, block on the PCG graph settling (NOT world_tick), and return per-mesh ISM instance counts — all in one call.",
+      pcgCookMeta,
+    ),
+    meta: {
+      cost: 'high',
+      effects: ['executes_pcg_graph'],
+      when: 'you need a PCG graph cooked AND the editor settled before reading results',
+      not_when: 'you only want to trigger the cook - this also waits',
+    },
+    schema: pcgCookSchema.shape,
+    cost: 'high',
+    returns: '{ok, cooked, idle, elapsed_ms}',
+    handler: async (params) => {
+      const r = await pcgCookAndWaitHandler(params as never);
+      return { content: r.content, isError: r.isError };
+    },
+  }),
+  defineTool({
+    name: 'pcg_scatter_mesh',
+    description: appendMeta(
+      'Scatter a mesh (or weighted mesh set) across a surface in ONE call — build the jittered PCG graph, spawn a bound PCGVolume, generate, and return instance counts. Hard-fails on 0 instances.',
+      pcgScatterMeta,
+    ),
+    meta: {
+      cost: 'high',
+      effects: ['executes_pcg_scatter', 'modifies_scene'],
+      when: 'scattering a mesh across a surface through PCG',
+      not_when: 'you want placement proven before it lands - world_generate validates first',
+    },
+    schema: pcgScatterSchema.shape,
+    cost: 'high',
+    returns: '{ok, points, actor, cooked}',
+    handler: async (params) => {
+      const r = await pcgScatterMeshHandler(params as never);
+      return { content: r.content, isError: r.isError };
+    },
+  }),
+  defineTool({
+    name: 'hayba_search_node_catalog',
+    description: 'Find a PCG or PCGEx node by what you want it to DO, searching the node catalog by intent rather than by exact type name.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'you know the effect you want but not which node produces it',
+      not_when: 'you already know the node type - hayba_get_node_details',
+    },
+    schema: { query: z.string().describe('Search query — keyword, node class, or category') },
+    cost: 'low',
+    returns: '{nodes:[{type,title,summary,pins}]}',
+    handler: async ({ query }) => {
+      const result = await searchNodeCatalog({ query });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_get_node_details',
+    description: 'Full detail for one PCG/PCGEx node type: its exact input/output pins, properties and defaults.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: "you need a node's exact pin names and properties before wiring it",
+      not_when: "you are still looking for the right node - hayba_search_node_catalog",
+    },
+    schema: { class: z.string().describe('PCGEx node class name') },
+    cost: 'low',
+    returns: '{type, pins:[{name,direction,type}], properties}',
+    handler: async (params) => {
+    const result = await getNodeDetails({ class: params.class });
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_create_pcg_graph',
+    description: 'Author a new PCG graph asset from a node and edge description.',
+    meta: {
+      cost: 'medium',
+      effects: ['creates_pcg_graph'],
+      when: 'building a new PCG graph from scratch',
+      not_when: 'the graph already exists - edit it instead of recreating',
+    },
+    schema: {
+      graph: z.string().describe('JSON string of the PCGEx graph topology'),
+      name: z.string().describe('Asset name for the new PCGGraph'),
+    },
+    cost: 'medium',
+    returns: '{ok, path, nodes, edges}',
+    handler: async ({ graph, name }) => {
+      const result = await createPcgGraph({ graph, name });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_validate_pcg_graph',
+    description: 'Check a PCG graph for disconnected pins, type mismatches and dead branches WITHOUT cooking it.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'before executing a graph, to catch wiring faults cheaply',
+      not_when: 'you want to know what the graph produces - execute it',
+    },
+    schema: { graph: z.string().describe('JSON string of the PCGEx graph to validate') },
+    cost: 'low',
+    returns: '{valid, issues:[{node,pin,problem}]}',
+    handler: async ({ graph }) => {
+      const result = await validatePcgGraph({ graph });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_list_pcg_assets',
+    description: 'List the PCG graph assets that exist in the project.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'discovering which graphs are already available',
+      not_when: 'you need one graph in full - export it',
+    },
+    schema: { path: z.string().optional().describe('Content path filter (default: /Game/)') },
+    cost: 'low',
+    returns: '{assets:[{path,name}]}',
+    handler: async ({ path }) => {
+      const result = await listPcgAssets({ path });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_export_pcg_graph',
+    description: 'Export an existing PCG graph as JSON so it can be inspected or transformed.',
+    meta: {
+      cost: 'medium',
+      effects: ['writes_export_file'],
+      when: 'reading a graph out of the project to inspect or edit it',
+      not_when: 'you only need the node list - hayba_get_graph_state is cheaper',
+    },
+    schema: { assetPath: z.string().describe('Full UE asset path to the PCGGraph') },
+    cost: 'medium',
+    returns: '{ok, path, graph:{nodes,edges}}',
+    handler: async ({ assetPath }) => {
+      const result = await exportPcgGraph({ assetPath });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_execute_pcg_graph',
+    description: 'Run a PCG graph so it generates content in the level.',
+    meta: {
+      cost: 'high',
+      effects: ['executes_pcg_graph', 'modifies_scene'],
+      when: 'you want the graph to actually produce geometry in the world',
+      not_when: 'you only want to check the graph is sound - hayba_validate_pcg_graph',
+    },
+    schema: { assetPath: z.string().describe('Full UE asset path to execute') },
+    cost: 'high',
+    returns: '{ok, generated, actors, elapsed_ms}',
+    handler: async ({ assetPath }) => {
+      const result = await executePcgGraph({ assetPath });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_scrape_node_registry',
+    description: 'Rebuild the PCGEx node registry from the installed plugin - the SQLite catalog that node search reads.',
+    meta: {
+      cost: 'high',
+      effects: ['rebuilds_node_registry'],
+      when: 'node search returns nothing or the registry is stale after a plugin update',
+      not_when: 'the registry is current - this rebuilds it from scratch',
+    },
+    schema: {
+      pluginSourcePath: z.string().optional().describe('Path to PCGExtendedToolkit/Source/ directory'),
+      outputDbPath: z.string().optional().describe('Output SQLite DB path (default: Resources/pcgex_registry.db)'),
+      forceRescan: z.boolean().optional().describe('Force re-scan even if DB exists'),
+    },
+    cost: 'high',
+    returns: '{ok, nodes, pins, properties, db_path}',
+    handler: async (params) => {
+      const result = await scrapeNodeRegistry(params as unknown as ScrapeNodeRegistryParams);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_match_pin_names',
+    description: 'Suggest the correct pin names for an edge between two nodes.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'two nodes will not connect and you need the right pin names',
+      not_when: 'you already have valid pin names',
+    },
+    schema: {
+      fromClass: z.string().describe('Source node class'),
+      fromPin: z.string().describe('Pin name on source node (may be approximate)'),
+      toClass: z.string().describe('Target node class to find a matching input pin on'),
+    },
+    cost: 'low',
+    returns: '{matches:[{from,to,confidence}]}',
+    handler: async (params) => {
+      const result = await matchPinNames(params);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_validate_attribute_flow',
+    description: 'Trace attributes through a graph and report where the chain breaks.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'attributes vanish downstream and you need to find where',
+      not_when: 'the graph does not use attributes',
+    },
+    schema: {
+      graph: z.string().describe('JSON string of the PCGEx graph to validate attribute flow'),
+      strictMode: dCoerceBool.optional().describe('If true, also flag orphan writes (written but never consumed)'),
+    },
+    cost: 'low',
+    returns: '{ok, breaks:[{node,attribute,reason}]}',
+    handler: async (params) => {
+      const result = await validateAttributeFlow(params as unknown as ValidateAttributeFlowParams);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_diff_against_working_asset',
+    description: 'Compare a graph description against the asset currently in the project.',
+    meta: {
+      cost: 'medium',
+      effects: [],
+      when: 'checking what your edits would change before writing them',
+      not_when: 'you want the asset contents alone - export it',
+    },
+    schema: {
+      wipGraph: z.string().describe('JSON string of the work-in-progress graph'),
+      referenceAssetPath: z.string().describe('Full UE asset path to the reference PCGGraph'),
+      diffMode: z.enum(['structural', 'properties', 'full']).optional().describe('What to diff (default: full)'),
+    },
+    cost: 'medium',
+    returns: '{added, removed, changed}',
+    handler: async (params) => {
+      const result = await diffAgainstWorkingAsset(params as unknown as DiffAgainstWorkingAssetParams);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_format_graph_topology',
+    description: 'Render a graph as readable topology text.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'reasoning about a graph structure in a readable form',
+      not_when: 'you need machine-readable JSON - export it',
+    },
+    schema: {
+      graph: z
+        .string()
+        .describe(
+          'JSON string of the PCGEx graph to layout. ' +
+            'Edges accept either canonical (fromNode/fromPin/toNode/toPin) or legacy (from/fromPin/to/toPin) keys. ' +
+            'Output nodes carry a position:{x,y} object; the C++ legacy handler reads that.',
+        ),
+      algorithm: z.enum(['layered', 'grid']).optional().describe('Layout algorithm (default: layered)'),
+      nodeWidth: z.number().int().optional().describe('Node width in pixels (default: 200)'),
+      nodeHeight: z.number().int().optional().describe('Node height in pixels (default: 100)'),
+      horizontalSpacing: z.number().int().optional().describe('Horizontal gap between layers (default: 150)'),
+      verticalSpacing: z.number().int().optional().describe('Vertical gap between rows (default: 80)'),
+      addCommentBlocks: z.boolean().optional().describe('Wrap category clusters in PCGComment nodes'),
+    },
+    cost: 'low',
+    returns: '{topology}',
+    handler: async (params) => {
+      const result = await formatGraphTopology(params as unknown as FormatGraphTopologyParams);
+      return { content: [{ type: 'text', text: result }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_abstract_to_subgraph',
+    description: 'Extract a repeated node cluster into a reusable subgraph. Transforms the graph object in memory and writes nothing.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'the same cluster appears several times and should be factored out',
+      not_when: 'the cluster is used once - abstracting it only adds indirection',
+    },
+    schema: {
+      graph: z.string().describe('JSON string of the full PCGEx graph'),
+      nodeIds: z.array(z.string()).describe('Array of node IDs to extract into a subgraph'),
+      subgraphName: z.string().optional().describe('Name for the extracted subgraph (default: SubGraph)'),
+    },
+    cost: 'low',
+    returns: '{graph, subgraph, replaced} - in memory, nothing written',
+    handler: async (params) => {
+      const result = await abstractToSubgraph(params as unknown as AbstractToSubgraphParams);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_parameterize_graph_inputs',
+    description: 'Promote hard-coded values in a graph to named inputs. Transforms the graph object in memory and writes nothing.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'making a graph reusable across biomes or scales',
+      not_when: 'the values are genuinely fixed for this graph',
+    },
+    schema: {
+      graph: z.string().describe('JSON string of the PCGEx graph'),
+      targets: z
+        .array(
+          z.object({
+            nodeId: z.string().describe('Node ID containing the hardcoded property'),
+            property: z.string().describe('Property name to parameterize'),
+            parameterName: z.string().optional().describe('Name for the graph parameter'),
+          }),
+        )
+        .describe('List of properties to promote to graph parameters'),
+    },
+    cost: 'low',
+    returns: '{graph, parameters:[{name,type,default}]} - in memory',
+    handler: async (params) => {
+      const result = await parameterizeGraphInputs(params);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_query_pcgex_docs',
+    description: 'Search the PCGEx documentation for a node or concept.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: "you need PCGEx reference material while authoring a graph",
+      not_when: "the question is about this project's own graphs - search the catalog",
+    },
+    schema: {
+      query: z.string().describe('Node class name or keyword to search documentation'),
+      includeSourceSnippet: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('Include up to 80 lines from the header file'),
+    },
+    cost: 'low',
+    returns: '{results:[{title,excerpt,ref}]}',
+    handler: async (params) => {
+      const result = await queryPcgexDocs(params as unknown as QueryPcgexDocsParams);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_initiate_infrastructure_brainstorm',
+    description: 'Plan complex graph architectures. IMPORTANT: After calling this tool, do NOT call hayba_create_pcg_graph, hayba_validate_pcg_graph, or any graph-mutation tool until the user explicitly approves an approach from the proposal.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'starting a structured design pass over world infrastructure',
+      not_when: 'you already know what to build',
+    },
+    schema: {
+      topic: z.string().describe('The infrastructure or system design topic to brainstorm'),
+      context: z.string().optional().describe('Additional context about the project or constraints'),
+      constraints: z.array(z.string()).optional().describe('Explicit constraints or requirements'),
+    },
+    cost: 'low',
+    returns: '{prompt, considerations}',
+    handler: async (params) => {
+      const result = await initiateInfrastructureBrainstorm(params);
+      return {
+        content: [
+          {
+            type: 'text',
+            text:
+              JSON.stringify(result, null, 2) +
+              '\n\n---\nIMPORTANT: This is a PROPOSAL ONLY. Do NOT call hayba_create_pcg_graph, ' +
+              'hayba_validate_attribute_flow, hayba_abstract_to_subgraph, or any graph-mutation tool ' +
+              'until the user has explicitly approved an approach above.',
+          },
+        ],
+      };
+    },
+  }),
+  defineTool({
+    name: 'hayba_setup_conventions',
+    description: 'Multi-turn wizard to configure UE project conventions. Call repeatedly with advancing stages.',
+    meta: {
+      cost: 'low',
+      effects: ['writes_conventions_file'],
+      when: 'setting or changing where generated content should be placed and how it is named',
+      not_when: 'you only want to read the current conventions - hayba_analyze_conventions',
+    },
+    schema: {
+      stage: z.enum(['start', 'folders', 'naming', 'workflow', 'confirm', 'save']).describe('Current wizard stage'),
+      preset: z
+        .enum(['epic-default', 'gamedevtv', 'custom'])
+        .optional()
+        .describe('Preset to load (required at start stage)'),
+      answers: z.record(z.unknown()).optional().describe('Accumulated user responses from previous stages'),
+      target: z.enum(['global', 'project']).optional().describe('Where to save (required at save stage)'),
+      projectRoot: z.string().optional().describe('UE project root path (required if target is project)'),
+    },
+    cost: 'low',
+    returns: '{ok, stage, conventions, written_to}',
+    handler: async (params) => {
+      const result = await setupConventionsHandler(params as Record<string, unknown>);
+      return { content: result.content, isError: result.isError };
+    },
+  }),
+  defineTool({
+    name: 'hayba_analyze_conventions',
+    description: 'Scan a UE project Content directory and infer conventions from existing folder structure and asset naming.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'auditing whether the project follows its own conventions',
+      not_when: 'you want to CHANGE them - hayba_setup_conventions',
+    },
+    schema: {
+      projectRoot: z.string().describe('Path to UE project root (contains .uproject file)'),
+      save: z.boolean().optional().describe('If true, write inferred conventions to target (default: false — dry run)'),
+      target: z.enum(['global', 'project']).optional().describe('Where to save (required when save is true)'),
+    },
+    cost: 'low',
+    returns: '{conventions, violations:[{path,rule}]}',
+    handler: async (params) => {
+      const result = await analyzeConventionsHandler(params as Record<string, unknown>);
+      return { content: result.content, isError: result.isError };
+    },
+  }),
+  defineTool({
+    name: 'hayba_open_zone_painter',
+    description: 'Open the zone painter for a world. CREATES the project when it does not already exist.',
+    meta: {
+      cost: 'low',
+      effects: ['creates_zone_project'],
+      when: 'starting or reopening a zone-painting session',
+      not_when: 'you only want to read painted zones - hayba_read_zones',
+    },
+    schema: {
+      projectId: z.string().optional().describe('Existing project ID. Omit to create a new project.'),
+      projectName: z.string().optional().describe('Name for the new project (used when projectId is omitted).'),
+      phase: z
+        .enum(['a', 'b'])
+        .optional()
+        .describe('Phase A = blank canvas, Phase B = heightmap overlay (default: a).'),
+    },
+    cost: 'low',
+    returns: '{ok, projectId, url, created}',
+    handler: async (params) => {
+      const result = await openZonePainterHandler(params as Record<string, unknown>);
+      return { content: result.content, isError: result.isError };
+    },
+  }),
+  defineTool({
+    name: 'hayba_read_zones',
+    description: 'Read the zones a user has painted, to drive placement decisions.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'turning painted zones into placement rules',
+      not_when: 'you want to change the heightmap - hayba_set_painter_heightmap',
+    },
+    schema: {
+      projectId: z.string().optional().describe('Project ID to read submitted zones from.'),
+      scratchSessionId: z
+        .string()
+        .optional()
+        .describe('Scratch session ID (for standalone zone painting without a project).'),
+    },
+    cost: 'low',
+    returns: '{zones:[{name,color,area}]}',
+    handler: async (params) => {
+      const result = await readZonesHandler(params as Record<string, unknown>);
+      return { content: result.content, isError: result.isError };
+    },
+  }),
+  defineTool({
+    name: 'hayba_set_painter_heightmap',
+    description: 'Point the zone painter at the heightmap it should paint over.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_zone_project'],
+      when: 'the painter needs a terrain image to paint against',
+      not_when: 'the project does not exist yet - hayba_open_zone_painter first',
+    },
+    schema: {
+      projectId: z.string().describe('Project ID to associate the heightmap with.'),
+      heightmapPath: z.string().describe('Absolute path to the baked heightmap PNG or R16 file.'),
+    },
+    cost: 'low',
+    returns: '{ok, projectId, heightmapPath}',
+    handler: async (params) => {
+      const result = await setPainterHeightmapHandler(params as Record<string, unknown>);
+      return { content: result.content, isError: result.isError };
+    },
+  }),
+  defineTool({
+    name: 'hayba_import_landscape',
+    description: 'Import a heightmap (PNG or R16) as an UE Landscape actor. Wraps the UE-side landscape_import handler. The heightmap is sampled 0..uint16-max -> 0..maxHeightM (m). Spawns one Landscape covering worldSizeKm x worldSizeKm.',
+    meta: {
+      cost: 'high',
+      effects: ['imports_landscape', 'modifies_level'],
+      when: 'you need terrain that PCG can sample points against',
+      not_when: 'a static mesh is sufficient and no PCG sampling is needed',
+    },
+    schema: {
+      heightmapPath: z.string().describe('Absolute path to a PNG or R16 heightmap file'),
+      worldSizeKm: z.number().optional().default(8.0).describe('Landscape XY size in km'),
+      maxHeightM: z
+        .number()
+        .optional()
+        .default(600.0)
+        .describe('Maximum height in m (0..maxHeightM mapped from uint16)'),
+      actorLabel: z.string().optional().default('Hayba_Terrain').describe('Label for the spawned Landscape actor'),
+      landscapeMaterial: z.string().optional().describe('UE material path; empty = no material'),
+    },
+    cost: 'high',
+    returns: '{ok, actor, size, components}',
+    handler: async (params) => {
+      try {
+        const data = await executeCommand('landscape_import', params as Record<string, unknown>);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
+        };
+      } catch (e) {
+        return errorResult(`Error importing landscape: ${(e as Error).message}`);
+      }
+    },
+  }),
 ];
 
 const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
@@ -2569,9 +3186,15 @@ export const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   ...HANDWRITTEN_STANDARD_DESCRIPTORS,
   ...VALIDATOR_DESCRIPTORS,
   ...PLUMB_DESCRIPTORS,
+  ...PCG_DESCRIPTORS,
   ...generateLegacyDescriptors(
     new Set(
-      [...HANDWRITTEN_STANDARD_DESCRIPTORS, ...VALIDATOR_DESCRIPTORS, ...PLUMB_DESCRIPTORS].map((d) => d.name),
+      [
+        ...HANDWRITTEN_STANDARD_DESCRIPTORS,
+        ...VALIDATOR_DESCRIPTORS,
+        ...PLUMB_DESCRIPTORS,
+        ...PCG_DESCRIPTORS,
+      ].map((d) => d.name),
     ),
   ),
 ];
@@ -2742,65 +3365,9 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
   //   python_run            → executes any command via UE Python (escape hatch)
   // ──────────────────────────────────────────────────────────────────────────
 
-  server.tool(
-    'hayba_propose_plan',
-    'Propose a step-by-step plan to the user before performing destructive operations. Required when Plan Mode is on. Steps may be strings or {title, description, tool} objects.',
-    {
-      steps: z
-        .array(
-          z.union([
-            z.string(),
-            z.object({
-              title: z.string(),
-              description: z.string().optional(),
-              tool: z.string().optional(),
-            }),
-          ]),
-        )
-        .describe('Ordered list of plan steps'),
-      await_seconds: z
-        .number()
-        .int()
-        .min(0)
-        .max(600)
-        .optional()
-        .describe('How long the agent will wait for human approval (informational; default 30)'),
-    },
-    async (params) => {
-      try {
-        const data = await executeCommand('hayba_propose_plan', params as Record<string, unknown>, { timeout: 5000 });
-        return {
-          content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
-        };
-      } catch (e) {
-        return errorResult(`Error pushing plan to UE: ${(e as Error).message}`);
-      }
-    },
-  );
-  // no meta registered (plan control tool)
+// no meta registered (plan control tool)
 
-  server.tool(
-    'hayba_mark_plan_step',
-    'Update the status of a single step in the proposed plan shown in the UE Plan panel. Marking a step "completed" auto-advances the next step to "running". Call this as you work through an approved plan so the user sees live progress.',
-    {
-      index: z.number().int().min(0).describe('Zero-based index of the plan step to update'),
-      status: z
-        .enum(['running', 'completed', 'failed'])
-        .default('completed')
-        .describe('New status for the step (default "completed")'),
-    },
-    async (params) => {
-      try {
-        const data = await executeCommand('plan_mark_step', params as Record<string, unknown>, { timeout: 5000 });
-        return {
-          content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
-        };
-      } catch (e) {
-        return errorResult(`Error marking plan step in UE: ${(e as Error).message}`);
-      }
-    },
-  );
-  // no meta registered (plan control tool)
+// no meta registered (plan control tool)
 
   server.tool(
     'list_tool_categories',
@@ -2920,269 +3487,33 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
   // hayba_introspect, pcg_add_node, pcg_set_prop, pcg_wire, pcg_inspect_instances
   // are now in STANDARD_DESCRIPTORS (registered via the descriptor loop above).
 
-  server.tool(
-    'pcg_cook_and_wait',
-    appendMeta(
-      "Regenerate an actor's PCGComponent, block on the PCG graph settling (NOT world_tick), and return per-mesh ISM instance counts — all in one call.",
-      pcgCookMeta,
-    ),
-    pcgCookSchema.shape,
-    async (params) => {
-      const r = await pcgCookAndWaitHandler(params as never);
-      return { content: r.content, isError: r.isError };
-    },
-  );
-  remember('pcg_cook_and_wait', pcgCookMeta);
+remember('pcg_cook_and_wait', pcgCookMeta);
 
-  server.tool(
-    'pcg_scatter_mesh',
-    appendMeta(
-      'Scatter a mesh (or weighted mesh set) across a surface in ONE call — build the jittered PCG graph, spawn a bound PCGVolume, generate, and return instance counts. Hard-fails on 0 instances.',
-      pcgScatterMeta,
-    ),
-    pcgScatterSchema.shape,
-    async (params) => {
-      const r = await pcgScatterMeshHandler(params as never);
-      return { content: r.content, isError: r.isError };
-    },
-  );
-  remember('pcg_scatter_mesh', pcgScatterMeta);
+remember('pcg_scatter_mesh', pcgScatterMeta);
 
   // hayba_fab_*, hayba_polyhaven_*, hayba_ambientcg_*, hayba_sketchfab_* tools
   // are now in STANDARD_DESCRIPTORS — registered via the loop above.
 
   // ── PCGEx tools ─────────────────────────────────────────────────────────────
 
-  server.tool(
-    'hayba_search_node_catalog',
-    { query: z.string().describe('Search query — keyword, node class, or category') },
-    async ({ query }) => {
-      const result = await searchNodeCatalog({ query });
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
+// no meta registered (PCGEx pure-TS handler)
 
-  server.tool('hayba_get_node_details', { class: z.string().describe('PCGEx node class name') }, async (params) => {
-    const result = await getNodeDetails({ class: params.class });
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-  });
-  // no meta registered (PCGEx pure-TS handler)
+// no meta registered (PCGEx pure-TS handler)
 
-  server.tool(
-    'hayba_create_pcg_graph',
-    {
-      graph: z.string().describe('JSON string of the PCGEx graph topology'),
-      name: z.string().describe('Asset name for the new PCGGraph'),
-    },
-    async ({ graph, name }) => {
-      const result = await createPcgGraph({ graph, name });
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
+// no meta registered (PCGEx pure-TS handler)
 
-  server.tool(
-    'hayba_validate_pcg_graph',
-    { graph: z.string().describe('JSON string of the PCGEx graph to validate') },
-    async ({ graph }) => {
-      const result = await validatePcgGraph({ graph });
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
+// no meta registered (PCGEx pure-TS handler)
 
-  server.tool(
-    'hayba_list_pcg_assets',
-    { path: z.string().optional().describe('Content path filter (default: /Game/)') },
-    async ({ path }) => {
-      const result = await listPcgAssets({ path });
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
+// no meta registered (PCGEx pure-TS handler)
 
-  server.tool(
-    'hayba_export_pcg_graph',
-    { assetPath: z.string().describe('Full UE asset path to the PCGGraph') },
-    async ({ assetPath }) => {
-      const result = await exportPcgGraph({ assetPath });
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
+// no meta registered (PCGEx pure-TS handler)
 
-  server.tool(
-    'hayba_execute_pcg_graph',
-    { assetPath: z.string().describe('Full UE asset path to execute') },
-    async ({ assetPath }) => {
-      const result = await executePcgGraph({ assetPath });
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
+// no meta registered (PCGEx pure-TS handler)
 
   server.tool('hayba_check_ue_status', {}, async () => {
     const result = await checkUeStatus();
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
   });
-  // no meta registered (PCGEx pure-TS handler)
-
-  server.tool(
-    'hayba_scrape_node_registry',
-    {
-      pluginSourcePath: z.string().optional().describe('Path to PCGExtendedToolkit/Source/ directory'),
-      outputDbPath: z.string().optional().describe('Output SQLite DB path (default: Resources/pcgex_registry.db)'),
-      forceRescan: z.boolean().optional().describe('Force re-scan even if DB exists'),
-    },
-    async (params) => {
-      const result = await scrapeNodeRegistry(params as unknown as ScrapeNodeRegistryParams);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
-
-  server.tool(
-    'hayba_match_pin_names',
-    {
-      fromClass: z.string().describe('Source node class'),
-      fromPin: z.string().describe('Pin name on source node (may be approximate)'),
-      toClass: z.string().describe('Target node class to find a matching input pin on'),
-    },
-    async (params) => {
-      const result = await matchPinNames(params);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
-
-  server.tool(
-    'hayba_validate_attribute_flow',
-    {
-      graph: z.string().describe('JSON string of the PCGEx graph to validate attribute flow'),
-      strictMode: coerceBool.optional().describe('If true, also flag orphan writes (written but never consumed)'),
-    },
-    async (params) => {
-      const result = await validateAttributeFlow(params as unknown as ValidateAttributeFlowParams);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
-
-  server.tool(
-    'hayba_diff_against_working_asset',
-    {
-      wipGraph: z.string().describe('JSON string of the work-in-progress graph'),
-      referenceAssetPath: z.string().describe('Full UE asset path to the reference PCGGraph'),
-      diffMode: z.enum(['structural', 'properties', 'full']).optional().describe('What to diff (default: full)'),
-    },
-    async (params) => {
-      const result = await diffAgainstWorkingAsset(params as unknown as DiffAgainstWorkingAssetParams);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
-
-  server.tool(
-    'hayba_format_graph_topology',
-    {
-      graph: z
-        .string()
-        .describe(
-          'JSON string of the PCGEx graph to layout. ' +
-            'Edges accept either canonical (fromNode/fromPin/toNode/toPin) or legacy (from/fromPin/to/toPin) keys. ' +
-            'Output nodes carry a position:{x,y} object; the C++ legacy handler reads that.',
-        ),
-      algorithm: z.enum(['layered', 'grid']).optional().describe('Layout algorithm (default: layered)'),
-      nodeWidth: z.number().int().optional().describe('Node width in pixels (default: 200)'),
-      nodeHeight: z.number().int().optional().describe('Node height in pixels (default: 100)'),
-      horizontalSpacing: z.number().int().optional().describe('Horizontal gap between layers (default: 150)'),
-      verticalSpacing: z.number().int().optional().describe('Vertical gap between rows (default: 80)'),
-      addCommentBlocks: z.boolean().optional().describe('Wrap category clusters in PCGComment nodes'),
-    },
-    async (params) => {
-      const result = await formatGraphTopology(params as unknown as FormatGraphTopologyParams);
-      return { content: [{ type: 'text', text: result }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
-
-  server.tool(
-    'hayba_abstract_to_subgraph',
-    {
-      graph: z.string().describe('JSON string of the full PCGEx graph'),
-      nodeIds: z.array(z.string()).describe('Array of node IDs to extract into a subgraph'),
-      subgraphName: z.string().optional().describe('Name for the extracted subgraph (default: SubGraph)'),
-    },
-    async (params) => {
-      const result = await abstractToSubgraph(params as unknown as AbstractToSubgraphParams);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
-
-  server.tool(
-    'hayba_parameterize_graph_inputs',
-    {
-      graph: z.string().describe('JSON string of the PCGEx graph'),
-      targets: z
-        .array(
-          z.object({
-            nodeId: z.string().describe('Node ID containing the hardcoded property'),
-            property: z.string().describe('Property name to parameterize'),
-            parameterName: z.string().optional().describe('Name for the graph parameter'),
-          }),
-        )
-        .describe('List of properties to promote to graph parameters'),
-    },
-    async (params) => {
-      const result = await parameterizeGraphInputs(params);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
-
-  server.tool(
-    'hayba_query_pcgex_docs',
-    {
-      query: z.string().describe('Node class name or keyword to search documentation'),
-      includeSourceSnippet: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe('Include up to 80 lines from the header file'),
-    },
-    async (params) => {
-      const result = await queryPcgexDocs(params as unknown as QueryPcgexDocsParams);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
-
-  server.tool(
-    'hayba_initiate_infrastructure_brainstorm',
-    'Plan complex graph architectures. IMPORTANT: After calling this tool, do NOT call hayba_create_pcg_graph, hayba_validate_pcg_graph, or any graph-mutation tool until the user explicitly approves an approach from the proposal.',
-    {
-      topic: z.string().describe('The infrastructure or system design topic to brainstorm'),
-      context: z.string().optional().describe('Additional context about the project or constraints'),
-      constraints: z.array(z.string()).optional().describe('Explicit constraints or requirements'),
-    },
-    async (params) => {
-      const result = await initiateInfrastructureBrainstorm(params);
-      return {
-        content: [
-          {
-            type: 'text',
-            text:
-              JSON.stringify(result, null, 2) +
-              '\n\n---\nIMPORTANT: This is a PROPOSAL ONLY. Do NOT call hayba_create_pcg_graph, ' +
-              'hayba_validate_attribute_flow, hayba_abstract_to_subgraph, or any graph-mutation tool ' +
-              'until the user has explicitly approved an approach above.',
-          },
-        ],
-      };
-    },
-  );
   // no meta registered (PCGEx pure-TS handler)
 
   // Gaea / terrain feature surface intentionally disabled — kept out of the
@@ -3412,44 +3743,32 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
       return { content: result.content, isError: result.isError };
     }
   );
-  */ // end Gaea + Knowledge tool block
+  */
+// no meta registered (PCGEx pure-TS handler)
+
+// no meta registered (PCGEx pure-TS handler)
+
+// no meta registered (PCGEx pure-TS handler)
+
+// no meta registered (PCGEx pure-TS handler)
+
+// no meta registered (PCGEx pure-TS handler)
+
+// no meta registered (PCGEx pure-TS handler)
+
+// no meta registered (PCGEx pure-TS handler)
+
+// no meta registered (PCGEx pure-TS handler)
+
+// no meta registered (PCGEx pure-TS handler)
+
+ // end Gaea + Knowledge tool block
 
   // ── Conventions tools ────────────────────────────────────────────────────────
 
-  server.tool(
-    'hayba_setup_conventions',
-    'Multi-turn wizard to configure UE project conventions. Call repeatedly with advancing stages.',
-    {
-      stage: z.enum(['start', 'folders', 'naming', 'workflow', 'confirm', 'save']).describe('Current wizard stage'),
-      preset: z
-        .enum(['epic-default', 'gamedevtv', 'custom'])
-        .optional()
-        .describe('Preset to load (required at start stage)'),
-      answers: z.record(z.unknown()).optional().describe('Accumulated user responses from previous stages'),
-      target: z.enum(['global', 'project']).optional().describe('Where to save (required at save stage)'),
-      projectRoot: z.string().optional().describe('UE project root path (required if target is project)'),
-    },
-    async (params) => {
-      const result = await setupConventionsHandler(params as Record<string, unknown>);
-      return { content: result.content, isError: result.isError };
-    },
-  );
-  // no meta registered (conventions pure-TS handler)
+// no meta registered (conventions pure-TS handler)
 
-  server.tool(
-    'hayba_analyze_conventions',
-    'Scan a UE project Content directory and infer conventions from existing folder structure and asset naming.',
-    {
-      projectRoot: z.string().describe('Path to UE project root (contains .uproject file)'),
-      save: z.boolean().optional().describe('If true, write inferred conventions to target (default: false — dry run)'),
-      target: z.enum(['global', 'project']).optional().describe('Where to save (required when save is true)'),
-    },
-    async (params) => {
-      const result = await analyzeConventionsHandler(params as Record<string, unknown>);
-      return { content: result.content, isError: result.isError };
-    },
-  );
-  // no meta registered (conventions pure-TS handler)
+// no meta registered (conventions pure-TS handler)
 
   // Landscape import surface intentionally disabled with the rest of the
   // terrain features. See note above.
@@ -3483,51 +3802,11 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
 
   // ── Zone Painter tools ──────────────────────────────────────────────────────
 
-  server.tool(
-    'hayba_open_zone_painter',
-    {
-      projectId: z.string().optional().describe('Existing project ID. Omit to create a new project.'),
-      projectName: z.string().optional().describe('Name for the new project (used when projectId is omitted).'),
-      phase: z
-        .enum(['a', 'b'])
-        .optional()
-        .describe('Phase A = blank canvas, Phase B = heightmap overlay (default: a).'),
-    },
-    async (params) => {
-      const result = await openZonePainterHandler(params as Record<string, unknown>);
-      return { content: result.content, isError: result.isError };
-    },
-  );
-  // no meta registered (zone painter pure-TS handler)
+// no meta registered (zone painter pure-TS handler)
 
-  server.tool(
-    'hayba_read_zones',
-    {
-      projectId: z.string().optional().describe('Project ID to read submitted zones from.'),
-      scratchSessionId: z
-        .string()
-        .optional()
-        .describe('Scratch session ID (for standalone zone painting without a project).'),
-    },
-    async (params) => {
-      const result = await readZonesHandler(params as Record<string, unknown>);
-      return { content: result.content, isError: result.isError };
-    },
-  );
-  // no meta registered (zone painter pure-TS handler)
+// no meta registered (zone painter pure-TS handler)
 
-  server.tool(
-    'hayba_set_painter_heightmap',
-    {
-      projectId: z.string().describe('Project ID to associate the heightmap with.'),
-      heightmapPath: z.string().describe('Absolute path to the baked heightmap PNG or R16 file.'),
-    },
-    async (params) => {
-      const result = await setPainterHeightmapHandler(params as Record<string, unknown>);
-      return { content: result.content, isError: result.isError };
-    },
-  );
-  // no meta registered (zone painter pure-TS handler)
+// no meta registered (zone painter pure-TS handler)
 
   // ──────────────────────────────────────────────────────────────────────────
   // ── Validator (runtime rule system + history) ───────────────────────────
@@ -3573,32 +3852,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
 
 
   // ── Landscape import (TS wrapper for UE-side landscape_import handler) ────
-  server.tool(
-    'hayba_import_landscape',
-    'Import a heightmap (PNG or R16) as an UE Landscape actor. Wraps the UE-side landscape_import handler. The heightmap is sampled 0..uint16-max -> 0..maxHeightM (m). Spawns one Landscape covering worldSizeKm x worldSizeKm.',
-    {
-      heightmapPath: z.string().describe('Absolute path to a PNG or R16 heightmap file'),
-      worldSizeKm: z.number().optional().default(8.0).describe('Landscape XY size in km'),
-      maxHeightM: z
-        .number()
-        .optional()
-        .default(600.0)
-        .describe('Maximum height in m (0..maxHeightM mapped from uint16)'),
-      actorLabel: z.string().optional().default('Hayba_Terrain').describe('Label for the spawned Landscape actor'),
-      landscapeMaterial: z.string().optional().describe('UE material path; empty = no material'),
-    },
-    async (params) => {
-      try {
-        const data = await executeCommand('landscape_import', params as Record<string, unknown>);
-        return {
-          content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
-        };
-      } catch (e) {
-        return errorResult(`Error importing landscape: ${(e as Error).message}`);
-      }
-    },
-  );
-  // no meta registered (thin UE bridge wrapper)
+// no meta registered (thin UE bridge wrapper)
 }
 
 // Schema registry seeding. Mirrors the Zod shapes used by the eager

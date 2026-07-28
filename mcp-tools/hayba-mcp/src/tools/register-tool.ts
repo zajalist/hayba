@@ -63,6 +63,35 @@ export type ToolDescriptor = {
 };
 
 /**
+ * Declare a ToolDescriptor with the handler's params inferred from its schema.
+ *
+ * A bare `ToolDescriptor` object literal types `handler` as ToolHandler, whose
+ * args are Record<string, unknown> — so moving a tool from the inline
+ * server.tool(name, schema, handler) form onto a descriptor silently lost the
+ * zod-derived parameter types the handler body was written against, and the
+ * only way back was a cast per call site.
+ *
+ * Wrapping the literal keeps that inference: `handler` sees the shape its own
+ * `schema` describes. The return type is erased to ToolDescriptor so descriptors
+ * with different schemas still live in one array.
+ */
+export function defineTool<S extends z.ZodRawShape>(d: {
+  name: string;
+  description: string;
+  schema: S;
+  meta: HaybaToolMeta;
+  cost: Cost;
+  returns: string;
+  niche?: string;
+  handler: (
+    args: z.objectOutputType<S, z.ZodTypeAny>,
+    session: SessionManager,
+  ) => Promise<ToolResult>;
+}): ToolDescriptor {
+  return d as unknown as ToolDescriptor;
+}
+
+/**
  * Record a descriptor's Zod shape + cost + return doc into the schema registry.
  * Runs unconditionally (independent of Code Mode), matching the old reg(...)
  * calls in recordEagerSchemas. The registry feeds get_tool_signature.
