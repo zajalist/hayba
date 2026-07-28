@@ -15,7 +15,6 @@ import { errorResult } from '../tool-result.js';
  */
 const STDOUT_SPILL_THRESHOLD = 12_000;
 
-// TODO: wire into registerTools with RateLimiter + ToolCache + appendMeta wrapper
 
 export const meta: HaybaToolMeta = {
   cost: 'high',

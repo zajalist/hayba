@@ -3,7 +3,6 @@ import type { ToolHandler } from '../types.js';
 import { executeCommand } from '../tool-executor.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 
-// TODO: wire into registerTools with RateLimiter + ToolCache + appendMeta wrapper
 
 export const meta: HaybaToolMeta = {
   cost: 'low',

@@ -3325,15 +3325,6 @@ export function inferDir(name: string): string | null {
   return null;
 }
 
-/** Attach a first-touch niche briefing to a ToolResult when appropriate. */
-function withNicheBriefing(
-  domain: string,
-  session: SessionManagerStub,
-  r: { content: Array<{ type: 'text'; text: string }>; isError?: boolean },
-): { content: Array<{ type: 'text'; text: string }>; isError?: boolean } {
-  return appendNicheBriefing(domain, session, { content: r.content, isError: r.isError });
-}
-
 function registerToolsCore(server: McpServer, session: SessionManagerStub): void {
   // Fire-and-forget: dynamic import resolves in <1ms; MCP handshake takes longer
   // so any tool call is guaranteed to find DEFAULT_SENDER set.

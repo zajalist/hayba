@@ -6,7 +6,6 @@ import type { RichToolResult, SessionManager } from '../types.js';
 import { ensureConnected } from '../../tcp-client.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 
-// TODO: wire into registerTools with RateLimiter + ToolCache + appendMeta wrapper
 
 export const meta: HaybaToolMeta = {
   cost: 'medium',
