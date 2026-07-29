@@ -44,6 +44,15 @@ static bool IsDestructiveCommand(const FString& Cmd)
     // NB: many TS-only tools reach C++ as "python_run" (already gated) so their
     // own names never hit ProcessCommand; they are listed anyway so a direct
     // hayba_invoke of a registered handler is still covered and intent is clear.
+    //
+    // ENFORCED (2026-07-29): this set must contain every command in the TS
+    // NON_IDEMPOTENT set — a command whose double-execution has real
+    // side-effects is by definition state-changing, so it must also require an
+    // approved plan. `plan-mode-gate.test.ts` parses both lists and fails on
+    // drift. That audit found 26 commands added to NON_IDEMPOTENT over time and
+    // never mirrored here; they are now present. Both of this gate's earlier
+    // bugs were drift of exactly this kind, which is why it is a test and not a
+    // comment asking the next person to remember.
     static const TSet<FString> DestructiveCommands = {
         // Arbitrary code / wildcard invocation
         TEXT("python_run"),
@@ -117,6 +126,41 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("ui_save_widget"),
         TEXT("input_create_action"),
         TEXT("input_create_mapping"),
+        // Asset move — moves FROM a path, so it is as consequential as rename.
+        TEXT("asset_move"),
+        // Landscape layer authoring
+        TEXT("landscape_add_layer"),
+        // PCG graph-edit destructive family
+        TEXT("pcg_remove_node"),
+        TEXT("pcg_disconnect"),
+        // Foliage factory tools
+        TEXT("foliage_type_create"),
+        TEXT("foliage_add_instances"),
+        TEXT("foliage_scatter_paint"),
+        TEXT("foliage_remove_in_bounds"),
+        TEXT("foliage_clear_type"),
+        // Lighting factory tools
+        TEXT("light_spawn"),
+        TEXT("postprocess_spawn_volume"),
+        TEXT("sky_setup"),
+        // Sequencer factory tools
+        TEXT("seq_new"),
+        TEXT("seq_bind_actor"),
+        TEXT("seq_track_add"),
+        TEXT("seq_transform_keyframe"),
+        TEXT("seq_camera_cut"),
+        // Niagara factory tools
+        TEXT("niagara_spawn_transient"),
+        TEXT("niagara_place_actor"),
+        TEXT("niagara_create_from_template"),
+        TEXT("niagara_advance_simulation"),
+        // Water factory tools
+        TEXT("water_body_ocean_create"),
+        TEXT("water_body_lake_create"),
+        TEXT("water_body_river_create"),
+        TEXT("water_zone_create"),
+        // UI authoring
+        TEXT("ui_compile_widget"),
         // Memory
         TEXT("memory_clear"),
         // Credential mutation — writing/clearing an API key is as consequential
