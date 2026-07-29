@@ -46,3 +46,6 @@ docs/superpowers/
 docs/briefs/
 docs/research/
 docs/architecture/
+
+# Sidecar chat/session runtime state — machine-local, not source
+.ai-agent/
