@@ -345,7 +345,7 @@ import {
   validatorStrictnessSchema,
   defaultScratchDir as validatorScratchDir,
 } from './validator/tools.js';
-import { ensureConnected as ensureUeForValidator } from '../tcp-client.js';
+import { liveUeProbe } from '../validator/ue-probe.js';
 
 // ── PLUMB constraint subsystem (quantified validator + constraint language) ──
 import {
@@ -496,7 +496,7 @@ export const VALIDATOR_DESCRIPTORS: ToolDescriptor[] = [
     handler: async (args) =>
       okResult(
         await validatorRunHandler(args as { scope?: 'all' | { rule_ids?: string[] }; persist?: boolean }, {
-          ue: await getUe(),
+          probe: liveUeProbe,
           scratchDir: validatorScratchDir(),
         }),
       ),
@@ -3275,20 +3275,9 @@ export async function registerTools(server: McpServer, session: SessionManagerSt
  * deriveDomainPacks buckets by this dir, and ToolIndex indexes by it).
  */
 /**
- * Best-effort live UE handle for validator evaluation.
- *
- * Hoisted to module scope so the validator tools can be expressed as static
- * ToolDescriptors — closing over a local inside registerToolsCore was the only
- * thing keeping them on the hand-written registration path, and therefore
- * outside every cross-cutting policy the registrar applies.
- *
- * Returns null rather than throwing: validation degrades to whatever it can
- * evaluate offline instead of failing the call.
- */
-/**
  * Measured bounds for an asset, used when baking a PLUMB profile.
  *
- * Hoisted alongside getUe so plumb_profile_bake can be a static descriptor.
+ * Hoisted to module scope so plumb_profile_bake can be a static descriptor.
  * Goes through the executeCommand seam, so the in-memory adapter can script it
  * in tests without a live editor.
  */
@@ -3300,14 +3289,6 @@ const fetchMeshBounds = async (asset: string) => {
   if (!b) throw new Error('mesh_get_info returned no bounds');
   const v = (o: Record<string, number>): [number, number, number] => [o.x ?? 0, o.y ?? 0, o.z ?? 0];
   return { min: v(b.min), max: v(b.max), extents: v(b.extents) };
-};
-
-const getUe = async () => {
-  try {
-    return await ensureUeForValidator().catch(() => null);
-  } catch {
-    return null;
-  }
 };
 
 export function inferDir(name: string): string | null {
