@@ -1,7 +1,8 @@
 // Content validation entry point. Mirrors the UI validator's contract: rules
 // whose data is absent are reported as SKIPPED, never as passing.
 
-import { getStrictness, isRuleDisabled, meetsStrictness, type Strictness } from '../config.js';
+import { getStrictness, type Strictness } from '../config.js';
+import { runCategoryRules } from '../run-category-rules.js';
 import { CONTENT_RULES, contentRulesById, resolveContentThresholds } from './rules.js';
 import type {
   ContentFinding,
@@ -32,57 +33,20 @@ export function validateContentSnapshot(
     thresholds: resolveContentThresholds(strictness),
   };
 
-  const byId = contentRulesById();
-  const selected = options.ruleIds
-    ? options.ruleIds.map((id) => byId.get(id)).filter((r): r is NonNullable<typeof r> => r !== undefined)
-    : CONTENT_RULES;
-
-  const findings: ContentFinding[] = [];
-  const skipped: string[] = [];
-  const disabled: string[] = [];
-  const belowStrictness: string[] = [];
-  let evaluated = 0;
-
   const hasTextures = Array.isArray(snapshot.textures);
   const hasMeshes = Array.isArray(snapshot.meshes);
 
-  for (const rule of selected) {
-    if (isRuleDisabled(rule.id)) {
-      disabled.push(rule.id);
-      continue;
-    }
-    if (!meetsStrictness(rule.minStrictness, strictness)) {
-      belowStrictness.push(rule.id);
-      continue;
-    }
+  const outcome = runCategoryRules({
+    rules: CONTENT_RULES,
+    byId: contentRulesById(),
+    ruleIds: options.ruleIds,
+    ctx,
+    strictness,
     // The audit was not run for this asset type, so the rule checked nothing.
     // Saying so is the difference between "clean" and "not looked at".
-    if ((rule.needs === 'textures' && !hasTextures) || (rule.needs === 'meshes' && !hasMeshes)) {
-      skipped.push(rule.id);
-      continue;
-    }
-
-    evaluated++;
-    try {
-      findings.push(...rule.evaluate(ctx));
-    } catch (e) {
-      findings.push({
-        ruleId: rule.id,
-        category: rule.category,
-        severity: 'info',
-        message: `Rule "${rule.id}" threw while evaluating and was skipped.`,
-        hint: e instanceof Error ? e.message : String(e),
-      });
-    }
-  }
-
-  findings.sort((a, b) => {
-    const bySeverity = SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity];
-    return bySeverity !== 0 ? bySeverity : a.ruleId.localeCompare(b.ruleId);
+    hasNothingToCheck: (rule) =>
+      (rule.needs === 'textures' && !hasTextures) || (rule.needs === 'meshes' && !hasMeshes),
   });
-
-  const counts: Record<ContentSeverity, number> = { error: 0, warning: 0, info: 0 };
-  for (const f of findings) counts[f.severity]++;
 
   const texturesReported = snapshot.textures?.length ?? 0;
   const meshesReported = snapshot.meshes?.length ?? 0;
@@ -94,12 +58,12 @@ export function validateContentSnapshot(
 
   return {
     strictness,
-    findings,
-    rules_evaluated: evaluated,
-    rules_skipped_no_data: skipped,
-    rules_disabled: disabled,
-    rules_below_strictness: belowStrictness,
-    counts,
+    findings: outcome.findings,
+    rules_evaluated: outcome.evaluated,
+    rules_skipped_no_data: outcome.skipped,
+    rules_disabled: outcome.disabled,
+    rules_below_strictness: outcome.belowStrictness,
+    counts: outcome.counts,
     coverage: {
       textures_reported: texturesReported,
       textures_scanned: snapshot.textures_scanned,
