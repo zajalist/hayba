@@ -824,131 +824,22 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         MaybeShowPlanModePrompt();
     }
 
-    // get_setting: allowlisted read of UHaybaMCPDeveloperSettings fields so
-    // the Node MCP server can pick up tokens (e.g. SketchfabApiToken) the user
-    // entered in Project Settings → Plugins → Hayba MCP Toolkit, without env vars.
-    if (Cmd == TEXT("get_setting"))
-    {
-        FString Key;
-        if (!Params.IsValid() || !Params->TryGetStringField(TEXT("key"), Key))
-        {
-            return MakeErrorResponse(Id, TEXT("get_setting requires { key: string }"));
-        }
-        static const TSet<FString> Allow = { TEXT("sketchfab_api_token") };
-        if (!Allow.Contains(Key))
-        {
-            return MakeErrorResponse(Id,
-                FString::Printf(TEXT("Setting '%s' is not exposed via get_setting"), *Key));
-        }
-        const UHaybaMCPDeveloperSettings* DS = GetDefault<UHaybaMCPDeveloperSettings>();
-        FString Value;
-        if (Key == TEXT("sketchfab_api_token")) Value = DS->SketchfabApiToken;
-        TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
-        Data->SetStringField(TEXT("key"), Key);
-        if (Value.IsEmpty())
-        {
-            Data->SetField(TEXT("value"), MakeShared<FJsonValueNull>());
-            Data->SetBoolField(TEXT("set"), false);
-        }
-        else
-        {
-            Data->SetStringField(TEXT("value"), Value);
-            Data->SetBoolField(TEXT("set"), true);
-        }
-        return MakeOkResponse(Id, Data);
-    }
-
-    // ── copilot_* BYOK key-vault proxy ──────────────────────────────────────
-    // The TS copilot tools (copilot_key_*) and the local chat sidecar reach the
-    // DPAPI key vault (FHaybaMCPSettings) ONLY through these four commands. They
-    // have already cleared the capability-token auth gate above, and the TCP
-    // listener is bound to 127.0.0.1 only (HaybaMCPTcpServer.cpp:51). Key
-    // material stays on the local machine SO LONG AS the bind remains loopback
-    // AND — for copilot_get_key specifically — a capability token is configured:
-    // that command fails CLOSED (below) and refuses to return a decrypted key
-    // when auth is unconfigured, even though the rest of the surface fails open.
-    // copilot_get_key is the ONLY command that returns a plaintext key; nothing
-    // here is written to the journal or a UE_LOG (the generic dispatch logger
-    // only records cmd+id, never params).
-    if (Cmd == TEXT("copilot_key_status"))
-    {
-        auto Emit = [](const FString& ProviderId) -> TSharedPtr<FJsonObject>
-        {
-            auto O = MakeShared<FJsonObject>();
-            O->SetStringField(TEXT("provider"), ProviderId);
-            const FString Last4 = FHaybaMCPSettings::GetProviderKeyLast4(ProviderId);
-            O->SetBoolField(TEXT("configured"), !Last4.IsEmpty());
-            if (Last4.IsEmpty()) O->SetField(TEXT("last4"), MakeShared<FJsonValueNull>());
-            else                 O->SetStringField(TEXT("last4"), Last4);
-            return O;
-        };
-        FString Provider;
-        Params->TryGetStringField(TEXT("provider"), Provider);
-        if (!Provider.IsEmpty())
-        {
-            return MakeOkResponse(Id, Emit(Provider));
-        }
-        // No provider given → report the whole catalog.
-        auto Data = MakeShared<FJsonObject>();
-        TArray<TSharedPtr<FJsonValue>> Arr;
-        for (const FHaybaProviderInfo& P : FHaybaMCPSettings::GetProviderCatalog())
-            Arr.Add(MakeShared<FJsonValueObject>(Emit(FString(P.Id))));
-        Data->SetArrayField(TEXT("providers"), Arr);
-        return MakeOkResponse(Id, Data);
-    }
-
-    if (Cmd == TEXT("copilot_get_key"))
-    {
-        // FAIL CLOSED: this is the only command that returns a plaintext key.
-        // ValidateRequest fails OPEN when no capability token is configured
-        // (usability default), which would let any local process read the
-        // decrypted key unauthenticated. Refuse unless auth is actually
-        // configured — regardless of the global fail-open posture.
-        if (!FHaybaMCPSecurityManager::Get().IsAuthConfigured())
-        {
-            return MakeErrorResponse(Id, TEXT("copilot_get_key requires a configured capability token (set one in Hayba settings); refusing to return a decrypted key without authentication"));
-        }
-        FString Provider;
-        Params->TryGetStringField(TEXT("provider"), Provider);
-        if (Provider.IsEmpty()) Provider = FHaybaMCPSettings::Get().SelectedProviderId;
-        const FString Key = FHaybaMCPSettings::GetProviderKey(Provider);
-        auto Data = MakeShared<FJsonObject>();
-        Data->SetStringField(TEXT("provider"), Provider);
-        Data->SetBoolField(TEXT("set"), !Key.IsEmpty());
-        if (Key.IsEmpty()) Data->SetField(TEXT("key"), MakeShared<FJsonValueNull>());
-        else               Data->SetStringField(TEXT("key"), Key);
-        return MakeOkResponse(Id, Data);
-    }
-
-    if (Cmd == TEXT("copilot_key_set"))
-    {
-        FString Provider, Key;
-        Params->TryGetStringField(TEXT("provider"), Provider);
-        Params->TryGetStringField(TEXT("api_key"), Key);
-        if (Provider.IsEmpty()) return MakeErrorResponse(Id, TEXT("copilot_key_set requires { provider, api_key }"));
-        if (Key.IsEmpty())      return MakeErrorResponse(Id, TEXT("copilot_key_set requires a non-empty api_key"));
-        FHaybaMCPSettings::SetProviderKey(Provider, Key);
-        auto Data = MakeShared<FJsonObject>();
-        Data->SetStringField(TEXT("provider"), Provider);
-        Data->SetBoolField(TEXT("ok"), true);
-        // Echo the masked last-4 only — never the raw key.
-        Data->SetStringField(TEXT("key_last4"), FHaybaMCPSettings::GetProviderKeyLast4(Provider));
-        return MakeOkResponse(Id, Data);
-    }
-
-    if (Cmd == TEXT("copilot_key_clear"))
-    {
-        FString Provider;
-        Params->TryGetStringField(TEXT("provider"), Provider);
-        if (Provider.IsEmpty()) return MakeErrorResponse(Id, TEXT("copilot_key_clear requires { provider }"));
-        const bool bHad = FHaybaMCPSettings::HasProviderKey(Provider);
-        FHaybaMCPSettings::ClearProviderKey(Provider);
-        auto Data = MakeShared<FJsonObject>();
-        Data->SetStringField(TEXT("provider"), Provider);
-        Data->SetBoolField(TEXT("ok"), true);
-        Data->SetBoolField(TEXT("cleared"), bHad);
-        return MakeOkResponse(Id, Data);
-    }
+    // get_setting and the copilot_* key-vault commands used to be written out
+    // here, ahead of the registry lookup below. They now live in
+    // FHaybaMCPVaultHandler and arrive through the same dispatch as everything
+    // else, so GetRegisteredCommands() reports the surface the router actually
+    // has.
+    //
+    // Still inline above, with reasons:
+    //   hayba_propose_plan  — the Plan Mode gate's own control command; it has
+    //                         to be answerable before the gate it feeds.
+    //   ui_memory_set,
+    //   ui_tool_stream,
+    //   ui_tool_stream_new_turn
+    //                       — editor-panel mirrors that call this file's
+    //                         Push*ToPanel statics, which the post-dispatch
+    //                         path below also uses. Moving them means moving
+    //                         those, which is a separate change.
 
     auto* Found = CommandToHandler.Find(Cmd);
     if (!Found)

@@ -39,6 +39,7 @@
 #include "handlers/HaybaMCPISMHandler.h"
 #include "handlers/HaybaMCPPhysicsHandler.h"
 #include "handlers/HaybaMCPDocsHandler.h"
+#include "handlers/HaybaMCPVaultHandler.h"
 // ===== Stub handlers (advertise commands; return not_implemented) =====
 #include "handlers/HaybaMCPAnimationHandler.h"
 #include "handlers/HaybaMCPAudioHandler.h"
@@ -162,6 +163,7 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPISMHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPPhysicsHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPDocsHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPVaultHandler>());
 
     // ===== Stub handlers (advertise commands; return not_implemented) =====
     // seq_* commands now live in the optional HaybaMCPSequencer satellite plugin.
