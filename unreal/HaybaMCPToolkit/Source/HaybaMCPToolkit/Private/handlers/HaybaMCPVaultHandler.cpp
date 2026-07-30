@@ -2,6 +2,7 @@
 #include "HaybaMCPSettings.h"
 #include "HaybaMCPSecurityManager.h"
 #include "HaybaMCPDeveloperSettings.h"
+#include "HaybaMCPParams.h"
 #include "Json.h"
 
 TArray<FString> FHaybaMCPVaultHandler::GetCommands() const
@@ -33,11 +34,9 @@ FHaybaHandlerResult FHaybaMCPVaultHandler::Handle(const FString& Cmd, const TSha
 // in Project Settings → Plugins → Hayba MCP Toolkit, without env vars.
 FHaybaHandlerResult FHaybaMCPVaultHandler::HandleGetSetting(const TSharedPtr<FJsonObject>& P)
 {
-    FString Key;
-    if (!P->TryGetStringField(TEXT("key"), Key))
-    {
-        return FHaybaHandlerResult::Err(TEXT("get_setting requires { key: string }"));
-    }
+    FHaybaParamReader R(P, TEXT("get_setting"));
+    const FString Key = R.RequiredString(TEXT("key"));
+    if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
     // Allowlist, not a general settings reader: an arbitrary field read would
     // expose every developer setting, including ones added later by someone who
     // never considered this command.
@@ -124,11 +123,13 @@ FHaybaHandlerResult FHaybaMCPVaultHandler::HandleGetKey(const TSharedPtr<FJsonOb
 
 FHaybaHandlerResult FHaybaMCPVaultHandler::HandleKeySet(const TSharedPtr<FJsonObject>& P)
 {
-    FString Provider, Key;
-    P->TryGetStringField(TEXT("provider"), Provider);
-    P->TryGetStringField(TEXT("api_key"), Key);
-    if (Provider.IsEmpty()) return FHaybaHandlerResult::Err(TEXT("copilot_key_set requires { provider, api_key }"));
-    if (Key.IsEmpty())      return FHaybaHandlerResult::Err(TEXT("copilot_key_set requires a non-empty api_key"));
+    // Both fields are reported together: the old shape told a caller who
+    // omitted both about `provider`, and only mentioned `api_key` after they
+    // had fixed the first and sent again.
+    FHaybaParamReader R(P, TEXT("copilot_key_set"));
+    const FString Provider = R.RequiredString(TEXT("provider"));
+    const FString Key      = R.RequiredString(TEXT("api_key"));
+    if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
 
     FHaybaMCPSettings::SetProviderKey(Provider, Key);
 
@@ -142,9 +143,9 @@ FHaybaHandlerResult FHaybaMCPVaultHandler::HandleKeySet(const TSharedPtr<FJsonOb
 
 FHaybaHandlerResult FHaybaMCPVaultHandler::HandleKeyClear(const TSharedPtr<FJsonObject>& P)
 {
-    FString Provider;
-    P->TryGetStringField(TEXT("provider"), Provider);
-    if (Provider.IsEmpty()) return FHaybaHandlerResult::Err(TEXT("copilot_key_clear requires { provider }"));
+    FHaybaParamReader R(P, TEXT("copilot_key_clear"));
+    const FString Provider = R.RequiredString(TEXT("provider"));
+    if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
 
     const bool bHad = FHaybaMCPSettings::HasProviderKey(Provider);
     FHaybaMCPSettings::ClearProviderKey(Provider);
