@@ -2041,13 +2041,19 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   },
   {
     name: 'asset_delete',
-    description: 'Permanently delete a content asset by object path.',
+    description:
+      'Permanently delete content assets, verifying on the FILESYSTEM that each file is gone. Pass `paths` to delete a set in one call. READ deleted_count, not requested — it counts .uasset files actually removed. NEVER verify a delete with does_asset_exist or asset_search: the asset registry can report an asset gone while its file is still on disk, and that is exactly how a batch delete reports success for files it never removed. Assets the registry has lost but whose files remain are reported as ORPHANED and must be removed from disk directly.',
     meta: assetDeleteMeta,
     handler: assetDeleteHandler,
     cost: 'low',
-    returns: '{deleted}',
+    returns:
+      '{requested, deleted_count, still_on_disk_count, warning?, results:[{path, existed_on_disk, existed_in_registry, engine_reported_deleted, file_gone, deleted, file, reason?}]}',
     schema: {
-      path: z.string().min(1).describe('Object path of the asset to delete, e.g. /Game/Foo/MF_X.MF_X'),
+      path: z.string().optional().describe('Object path of one asset to delete, e.g. /Game/Foo/MF_X.MF_X'),
+      paths: z
+        .array(z.string().min(1))
+        .optional()
+        .describe('Several assets in one call. Prefer this over looping — one call reports which ones actually went.'),
     },
   },
   {

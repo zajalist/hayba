@@ -674,6 +674,26 @@ void FHaybaMCPCommandHandler::UnregisterHandler(const TSharedRef<IHaybaMCPHandle
     UE_LOG(LogHaybaMCPCmd, Log, TEXT("Unregistered handler '%s'"), *Handler->GetDomain());
 }
 
+void FHaybaMCPCommandHandler::RebuildCommandMap()
+{
+    // Ask every live handler what it currently answers to. GetCommands() is
+    // ordinary code, so Live Coding keeps it current even though the map built
+    // from it at startup is not.
+    const int32 Before = CommandToHandler.Num();
+    CommandToHandler.Reset();
+    for (const TSharedRef<IHaybaMCPHandler>& Handler : Handlers)
+    {
+        for (const FString& Cmd : Handler->GetCommands())
+        {
+            CommandToHandler.Add(Cmd, Handler);
+        }
+    }
+    if (CommandToHandler.Num() != Before)
+    {
+        UE_LOG(LogHaybaMCPCmd, Log, TEXT("Command map rebuilt: %d -> %d commands"), Before, CommandToHandler.Num());
+    }
+}
+
 TArray<FString> FHaybaMCPCommandHandler::GetAllCommands() const
 {
     TArray<FString> Out;
@@ -844,11 +864,29 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     auto* Found = CommandToHandler.Find(Cmd);
     if (!Found)
     {
+        // The map is a CACHE derived from the handlers, not a snapshot of them.
+        // It was built once at module load, so a command added to an existing
+        // handler was unreachable until the editor restarted — Live Coding
+        // patches GetCommands() but nothing rebuilt this map, and the caller
+        // saw "Unknown command" for a command whose code was demonstrably
+        // loaded. Rebuild from the live handlers and try once more before
+        // declaring anything unknown.
+        RebuildCommandMap();
+        Found = CommandToHandler.Find(Cmd);
+    }
+    if (!Found)
+    {
         FHaybaJournalEntry E{ FDateTime::UtcNow(), Cmd,
             FHaybaMCPSecurityManager::HashParams(Params), 0, false,
             TEXT("Unknown command") };
         FHaybaMCPSecurityManager::Get().Journal(E);
-        return MakeErrorResponse(Id, FString::Printf(TEXT("Unknown command: %s"), *Cmd));
+        // Naming the restart case matters: a command belonging to a handler
+        // class that did not exist at startup has no instance to ask, so no
+        // rebuild can find it and only a restart will.
+        return MakeErrorResponse(Id, FString::Printf(
+            TEXT("Unknown command: %s. If this command was just added to the plugin, its handler class may be new ")
+            TEXT("since the editor started — Live Coding cannot register a handler that did not exist at module load, ")
+            TEXT("so restart the editor."), *Cmd));
     }
 
     // Capture actor before-state for destructive ops so the Diff panel shows true Before -> After.
