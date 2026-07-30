@@ -3,7 +3,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { RichToolResult, SessionManager } from '../types.js';
-import { ensureConnected } from '../../tcp-client.js';
+import { executeCommand } from '../tool-executor.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 
 
@@ -40,19 +40,16 @@ export const editorCaptureViewportHandler = async (
     return { content: [{ type: 'text', text: `Validation error: ${parsed.error.message}` }], isError: true };
   }
   try {
-    const client = await ensureConnected();
-    const resp = await client.send('editor_capture_viewport', parsed.data as Record<string, unknown>);
-    if (!resp.ok) {
-      return { content: [{ type: 'text', text: `editor_capture_viewport failed: ${resp.error ?? 'unknown error'}` }], isError: true };
-    }
-
     // The UE handler returns { image_base64, width, height, camera, ... }.
     // Historically this was serialized as one giant text block whose base64
     // string was then length-capped by the transport layer — destroying every
     // screenshot. Split the payload: the image goes in a proper MCP image
     // content block (never truncated as text), metadata stays a small text
     // block. See docs/HANDOFF-mcp-agent-ergonomics-postmortem.md (P0).
-    const data = (resp.data ?? {}) as Record<string, unknown>;
+    const data = await executeCommand<Record<string, unknown>>(
+      'editor_capture_viewport',
+      parsed.data as Record<string, unknown>,
+    );
     const { image_base64, ...metaFields } = data as { image_base64?: unknown } & Record<string, unknown>;
 
     if (typeof image_base64 !== 'string' || image_base64.length === 0) {

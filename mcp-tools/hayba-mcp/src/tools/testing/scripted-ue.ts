@@ -86,6 +86,22 @@ export class ScriptedUe {
     return this;
   }
 
+  /**
+   * UE refuses the command AND returns structured data explaining why.
+   *
+   * Not a variant for completeness: the sandbox tier that tells python_run's
+   * caller which setting to change arrives this way, in `data` on a non-ok
+   * response. Code that reads only the error string loses it, and the loss is
+   * invisible — the tool still fails, just unhelpfully.
+   */
+  failsWithData(cmd: string, error: string, data: Record<string, unknown>): this {
+    this.exec.on(cmd, (params) => {
+      this.record(cmd, params);
+      return { ok: false, error, data };
+    });
+    return this;
+  }
+
   /** The transport drops — models the editor being busy or gone. */
   disconnects(cmd: string): this {
     this.exec.on(cmd, (params) => {

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolHandler } from '../types.js';
-import { ensureConnected } from '../../tcp-client.js';
+import { executeCommand } from '../tool-executor.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 
 
@@ -28,13 +28,12 @@ export const sceneValidatePhysicsHandler: ToolHandler = async (args) => {
     return { content: [{ type: 'text', text: `Validation error: ${parsed.error.message}` }], isError: true };
   }
   try {
-    const client = await ensureConnected();
-    const resp = await client.send('scene_validate_physics', parsed.data as Record<string, unknown>);
-    if (!resp.ok) {
-      return { content: [{ type: 'text', text: `scene_validate_physics failed: ${resp.error ?? 'unknown error'}` }], isError: true };
-    }
-    let text = JSON.stringify(resp.data, null, 2);
-    if (parsed.data.deep_check && resp.data && (resp.data as Record<string, unknown>).deep_check_required === true) {
+    const data = await executeCommand<Record<string, unknown>>(
+      'scene_validate_physics',
+      parsed.data as Record<string, unknown>,
+    );
+    let text = JSON.stringify(data, null, 2);
+    if (parsed.data.deep_check && data && data.deep_check_required === true) {
       text += `\n\nDeep check requested — relay payload to visual sidecar at SidecarURL/validate (not implemented in this version)`;
     }
     return { content: [{ type: 'text', text }] };
