@@ -93,6 +93,113 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPUI, Log, All);
 
+#if WITH_EDITOR
+
+static TArray<TSharedPtr<FJsonValue>> HaybaColorArray(const FLinearColor& C)
+{
+    TArray<TSharedPtr<FJsonValue>> Arr;
+    Arr.Add(MakeShared<FJsonValueNumber>(C.R));
+    Arr.Add(MakeShared<FJsonValueNumber>(C.G));
+    Arr.Add(MakeShared<FJsonValueNumber>(C.B));
+    Arr.Add(MakeShared<FJsonValueNumber>(C.A));
+    return Arr;
+}
+
+/** Engine name for a brush draw type, matching what ui_set_brush accepts. */
+static FString HaybaDrawTypeName(ESlateBrushDrawType::Type T)
+{
+    switch (T)
+    {
+    case ESlateBrushDrawType::NoDrawType: return TEXT("NoDrawType");
+    case ESlateBrushDrawType::Box:        return TEXT("Box");
+    case ESlateBrushDrawType::Border:     return TEXT("Border");
+    case ESlateBrushDrawType::Image:      return TEXT("Image");
+    case ESlateBrushDrawType::RoundedBox: return TEXT("RoundedBox");
+    default:                              return TEXT("Unknown");
+    }
+}
+
+static FString HaybaTilingName(ESlateBrushTileType::Type T)
+{
+    switch (T)
+    {
+    case ESlateBrushTileType::NoTile:     return TEXT("NoTile");
+    case ESlateBrushTileType::Horizontal: return TEXT("Horizontal");
+    case ESlateBrushTileType::Vertical:   return TEXT("Vertical");
+    case ESlateBrushTileType::Both:       return TEXT("Both");
+    default:                              return TEXT("Unknown");
+    }
+}
+
+/**
+ * Everything about a brush that distinguishes it from another brush.
+ *
+ * The point is answering "what is the working panel doing that mine is not".
+ * draw_as and margin are the load-bearing pair: a frame material drawn as Box
+ * with a fractional margin looks completely different from the same material
+ * drawn as Image, and neither the widget tree nor the old brush_info showed
+ * either of them.
+ */
+static TSharedPtr<FJsonObject> HaybaDescribeBrush(const FSlateBrush& B)
+{
+    TSharedPtr<FJsonObject> O = MakeShared<FJsonObject>();
+
+    O->SetStringField(TEXT("draw_as"), HaybaDrawTypeName(B.DrawAs));
+    O->SetStringField(TEXT("tiling"), HaybaTilingName(B.Tiling));
+
+    UObject* Res = B.GetResourceObject();
+    O->SetBoolField(TEXT("has_resource"), Res != nullptr);
+    if (Res)
+    {
+        O->SetStringField(TEXT("resource"), Res->GetPathName());
+        // Material vs texture matters: a material brush must be assigned with
+        // SetBrushFromMaterial, and hand-building an FSlateBrush around one
+        // renders black.
+        O->SetStringField(TEXT("resource_class"), Res->GetClass()->GetName());
+    }
+
+    TArray<TSharedPtr<FJsonValue>> MarginArr;
+    MarginArr.Add(MakeShared<FJsonValueNumber>(B.Margin.Left));
+    MarginArr.Add(MakeShared<FJsonValueNumber>(B.Margin.Top));
+    MarginArr.Add(MakeShared<FJsonValueNumber>(B.Margin.Right));
+    MarginArr.Add(MakeShared<FJsonValueNumber>(B.Margin.Bottom));
+    O->SetArrayField(TEXT("margin"), MarginArr);
+
+    O->SetNumberField(TEXT("image_size_x"), B.ImageSize.X);
+    O->SetNumberField(TEXT("image_size_y"), B.ImageSize.Y);
+    O->SetArrayField(TEXT("brush_tint"), HaybaColorArray(B.TintColor.GetSpecifiedColor()));
+
+    if (B.DrawAs == ESlateBrushDrawType::RoundedBox)
+    {
+        TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+        TArray<TSharedPtr<FJsonValue>> Radii;
+        Radii.Add(MakeShared<FJsonValueNumber>(B.OutlineSettings.CornerRadii.X));
+        Radii.Add(MakeShared<FJsonValueNumber>(B.OutlineSettings.CornerRadii.Y));
+        Radii.Add(MakeShared<FJsonValueNumber>(B.OutlineSettings.CornerRadii.Z));
+        Radii.Add(MakeShared<FJsonValueNumber>(B.OutlineSettings.CornerRadii.W));
+        R->SetArrayField(TEXT("corner_radii"), Radii);
+        R->SetNumberField(TEXT("width"), B.OutlineSettings.Width);
+        R->SetArrayField(TEXT("color"), HaybaColorArray(B.OutlineSettings.Color.GetSpecifiedColor()));
+        O->SetObjectField(TEXT("outline"), R);
+    }
+
+    return O;
+}
+
+/** Read an FSlateBrush property off a widget by name, or null when the widget
+ *  has no such property (or it is not a brush). */
+static const FSlateBrush* HaybaFindBrushProperty(UObject* Owner, const TCHAR* PropName)
+{
+    if (!Owner) return nullptr;
+    FStructProperty* Prop = CastField<FStructProperty>(Owner->GetClass()->FindPropertyByName(FName(PropName)));
+    if (!Prop) return nullptr;
+    if (Prop->Struct != TBaseStructure<FSlateBrush>::Get() && Prop->Struct->GetName() != TEXT("SlateBrush"))
+        return nullptr;
+    return Prop->ContainerPtrToValuePtr<FSlateBrush>(Owner);
+}
+
+#endif // WITH_EDITOR
+
 TArray<FString> FHaybaMCPUIHandler::GetCommands() const
 {
     return {
@@ -2620,50 +2727,42 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleLayoutSnapshot(const TSharedPtr<FJ
             Entry->SetObjectField(TEXT("text_info"), TextObj);
         }
 
-        // Brush facts for the fill/contrast rules.
+        // Brush facts.
+        //
+        // These used to carry a tint, a has_resource bool, and for a Border not
+        // even the resource PATH. That is not enough to answer the question
+        // people actually ask — "what is the working panel doing that mine is
+        // not" — so the only way through was dropping to object_get_property and
+        // reading the raw ExportText. Everything that distinguishes one brush
+        // from another is reported now: draw_as, the resource, the 9-slice
+        // margin, tiling and the outline.
         if (UImage* Img = Cast<UImage>(Widget))
         {
-            TSharedPtr<FJsonObject> BrushObj = MakeShared<FJsonObject>();
-            const FSlateBrush& B = Img->GetBrush();
-            BrushObj->SetBoolField(TEXT("has_resource"), B.GetResourceObject() != nullptr);
-            if (B.GetResourceObject()) BrushObj->SetStringField(TEXT("resource"), B.GetResourceObject()->GetPathName());
-            const FLinearColor Tint = Img->GetColorAndOpacity();
-            TArray<TSharedPtr<FJsonValue>> TintArr;
-            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.R));
-            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.G));
-            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.B));
-            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.A));
-            BrushObj->SetArrayField(TEXT("tint"), TintArr);
-            BrushObj->SetNumberField(TEXT("image_size_x"), B.ImageSize.X);
-            BrushObj->SetNumberField(TEXT("image_size_y"), B.ImageSize.Y);
+            TSharedPtr<FJsonObject> BrushObj = HaybaDescribeBrush(Img->GetBrush());
+            // Image's own ColorAndOpacity multiplies the brush tint, so it is
+            // the colour actually on screen.
+            BrushObj->SetArrayField(TEXT("tint"), HaybaColorArray(Img->GetColorAndOpacity()));
+            BrushObj->SetStringField(TEXT("brush_property"), TEXT("Brush"));
             Entry->SetObjectField(TEXT("brush_info"), BrushObj);
         }
-        if (UBorder* Bd = Cast<UBorder>(Widget))
+        else if (UBorder* Bd = Cast<UBorder>(Widget))
         {
-            TSharedPtr<FJsonObject> BrushObj = MakeShared<FJsonObject>();
-            const FLinearColor Tint = Bd->GetBrushColor();
-            TArray<TSharedPtr<FJsonValue>> TintArr;
-            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.R));
-            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.G));
-            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.B));
-            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.A));
-            BrushObj->SetArrayField(TEXT("tint"), TintArr);
-            // A Border's own brush is reached through the reflection system
-            // rather than the member: UMG moved these properties behind
-            // accessors, and the member is not public in current engine
-            // versions. The contrast rules only need the tint, so a missing
-            // brush here degrades to "no resource" rather than failing.
-            bool bHasResource = false;
-            if (FStructProperty* BgProp = CastField<FStructProperty>(Bd->GetClass()->FindPropertyByName(TEXT("Background"))))
+            // A Border's brush is reached through reflection rather than a
+            // member: UMG moved these behind accessors and the member is not
+            // public in current engine versions.
+            TSharedPtr<FJsonObject> BrushObj;
+            if (const FSlateBrush* Brush = HaybaFindBrushProperty(Bd, TEXT("Background")))
             {
-                if (BgProp->Struct == TBaseStructure<FSlateBrush>::Get() ||
-                    BgProp->Struct->GetName() == TEXT("SlateBrush"))
-                {
-                    const FSlateBrush* Brush = BgProp->ContainerPtrToValuePtr<FSlateBrush>(Bd);
-                    bHasResource = Brush && Brush->GetResourceObject() != nullptr;
-                }
+                BrushObj = HaybaDescribeBrush(*Brush);
             }
-            BrushObj->SetBoolField(TEXT("has_resource"), bHasResource);
+            else
+            {
+                BrushObj = MakeShared<FJsonObject>();
+                BrushObj->SetBoolField(TEXT("has_resource"), false);
+                BrushObj->SetStringField(TEXT("note"), TEXT("Background brush could not be read through reflection on this engine version"));
+            }
+            BrushObj->SetArrayField(TEXT("tint"), HaybaColorArray(Bd->GetBrushColor()));
+            BrushObj->SetStringField(TEXT("brush_property"), TEXT("Background"));
             Entry->SetObjectField(TEXT("brush_info"), BrushObj);
         }
 

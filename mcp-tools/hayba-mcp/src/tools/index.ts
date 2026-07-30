@@ -217,6 +217,11 @@ import {
   uiLayoutSnapshotHandler,
 } from './ui/ui-layout-snapshot.js';
 import {
+  meta as uiSetDefaultFontMeta,
+  schema as uiSetDefaultFontSchema,
+  uiSetDefaultFontHandler,
+} from './ui/ui-set-default-font.js';
+import {
   meta as uiRenderWidgetToPngMeta,
   schema as uiRenderWidgetToPngSchema,
   uiRenderWidgetToPngHandler,
@@ -2413,6 +2418,17 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       '{widget_blueprint_path, screen_width, screen_height, layout_resolved, layout_error?, widget_count, widgets:[{name, class, x, y, width, height, depth, anchors?, text_info?, brush_info?}]}',
     niche: UI,
     schema: uiLayoutSnapshotSchema.shape,
+  },
+  {
+    name: 'ui_set_default_font',
+    description:
+      'Rewrite every text widget still on an engine default font (Roboto) onto a project font, in one call. New TextBlocks always arrive as /Engine/EngineFonts/Roboto "Bold" and ui_set_text_style only changes the fields you pass — so setting size and colour but forgetting font_asset+typeface silently keeps Roboto and still reports success. Use dry_run first to see what would change. USE_WHEN: a blueprint has the default font anywhere. NOT_WHEN: restyling one widget (ui_set_text_style).',
+    meta: uiSetDefaultFontMeta,
+    handler: uiSetDefaultFontHandler,
+    cost: 'high',
+    returns: '{widget_blueprint_path, font_asset, typeface, changed:[{widget, from}], changed_count, failed:[{widget, error}], failed_count, note}',
+    niche: UI,
+    schema: uiSetDefaultFontSchema.shape,
   },
   {
     name: 'ui_render_widget_to_png',
