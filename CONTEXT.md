@@ -65,3 +65,10 @@ re-litigate a recorded decision without reopening its ADR.
 - The authoritative gate is **local**: `tsc + npm test` in
   `mcp-tools/hayba-mcp`. Run it before pushing.
 - No `Co-Authored-By`/AI trailer in commits.
+- **Before changing any MCP tool or plugin handler, read
+  [`docs/WORKFLOW-improving-the-mcp.md`](docs/WORKFLOW-improving-the-mcp.md).**
+  It covers the failure mode this codebase actually has — tools that report
+  success for work they did not do — plus the four staleness caches that make a
+  correct change look broken, how to compile and run both test suites, and the
+  verification ladder (written → compiled → loaded → routed → observed). Every
+  entry in it was paid for in hours.
