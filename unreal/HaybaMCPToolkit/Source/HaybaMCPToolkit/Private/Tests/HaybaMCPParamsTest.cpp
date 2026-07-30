@@ -199,3 +199,68 @@ bool FHaybaMCPVaultHandlerTest::RunTest(const FString& Parameters)
 }
 
 #endif // WITH_EDITOR
+
+// ── PIE input coordinate space ──────────────────────────────────────────────
+//
+// Regression test for the 24px click offset. Before the fix, editor_pie_mouse
+// added the game window's on-screen origin to whatever it was given — including
+// the absolute desktop coordinates editor_pie_widget_tree reports and tells
+// callers to pass straight through. Every click landed low and right by the
+// window chrome, which is invisible on a 60px button and fatal on a 26px text
+// field or a 33px tab.
+//
+// The assertion that would have failed before the fix is the first one: an
+// absolute coordinate must come back UNCHANGED.
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FHaybaMCPPieCoordSpaceTest,
+    "Hayba.MCP.PIE.CoordinateSpace",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPPieCoordSpaceTest::RunTest(const FString& Parameters)
+{
+    // The measured case: PIE window at desktop (0,24), username field reported
+    // by editor_pie_widget_tree at desktop y=576.11, rendering at window-
+    // relative y=552.
+    const FVector2D WindowOrigin(0.0, 24.0);
+    const FVector2D ReportedByWidgetTree(959.9999030828476, 576.1105942858376);
+
+    {
+        const FVector2D Out = HaybaPieCoords::ToAbsolute(ReportedByWidgetTree, WindowOrigin, /*bViewportRelative=*/false);
+        // THE REGRESSION. The old code returned 600.11 here and the click missed
+        // the 26px-tall field entirely.
+        TestEqual(TEXT("absolute input passes through untouched (x)"), Out.X, ReportedByWidgetTree.X);
+        TestEqual(TEXT("absolute input passes through untouched (y)"), Out.Y, ReportedByWidgetTree.Y);
+    }
+
+    {
+        // Viewport-relative input still gets the origin, so a caller who really
+        // did measure from the window is unaffected.
+        const FVector2D WindowRelative(959.9999030828476, 552.1105942858376);
+        const FVector2D Out = HaybaPieCoords::ToAbsolute(WindowRelative, WindowOrigin, /*bViewportRelative=*/true);
+        TestEqual(TEXT("viewport-relative input gains the window origin"), Out.Y, ReportedByWidgetTree.Y);
+    }
+
+    {
+        // The offset must never be a constant. A borderless window at the origin
+        // has none, and the same input must then resolve identically in both
+        // spaces — a hardcoded 24 would break exactly here.
+        const FVector2D NoChrome(0.0, 0.0);
+        const FVector2D P(100.0, 200.0);
+        TestEqual(TEXT("no chrome, absolute"), HaybaPieCoords::ToAbsolute(P, NoChrome, false).Y, 200.0);
+        TestEqual(TEXT("no chrome, viewport-relative"), HaybaPieCoords::ToAbsolute(P, NoChrome, true).Y, 200.0);
+    }
+
+    {
+        // A window moved away from the screen origin offsets both axes, so the
+        // X component has to be carried too — the bug was symmetrical and only
+        // looked vertical because the window happened to sit at x=0.
+        const FVector2D Moved(640.0, 480.0);
+        const FVector2D P(10.0, 20.0);
+        const FVector2D Out = HaybaPieCoords::ToAbsolute(P, Moved, true);
+        TestEqual(TEXT("moved window offsets x"), Out.X, 650.0);
+        TestEqual(TEXT("moved window offsets y"), Out.Y, 500.0);
+    }
+
+    return true;
+}

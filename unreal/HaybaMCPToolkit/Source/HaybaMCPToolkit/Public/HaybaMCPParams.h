@@ -159,3 +159,34 @@ private:
     TArray<FString> Errors;
     bool bParamsMissing = false;
 };
+
+/**
+ * PIE input coordinate spaces.
+ *
+ * editor_pie_widget_tree reports a widget's position from Slate geometry, which
+ * is ABSOLUTE DESKTOP space. editor_pie_mouse used to add the game window's
+ * on-screen origin to whatever it was given — correct only if the caller had
+ * measured from the window. Feeding it tree coordinates, which the tree's own
+ * note told callers to do, therefore double-counted the origin and every click
+ * landed low and right by the window's offset.
+ *
+ * That offset is the window chrome: 24px at 1080p with a title bar, but it is a
+ * function of DPI, window position and whether a title bar exists at all — so
+ * it must be computed, never assumed. The error is smaller than a large button,
+ * which is why it went unnoticed: it only misses on targets under ~48px, like a
+ * 33px tab or a 26px text field.
+ */
+namespace HaybaPieCoords
+{
+    /**
+     * Resolve an input coordinate to the absolute desktop point to click.
+     *
+     * `WindowOrigin` is the game window's top-left in screen space. It is added
+     * ONLY for viewport-relative input; absolute input is already in the space
+     * Slate dispatches in and must pass through untouched.
+     */
+    inline FVector2D ToAbsolute(const FVector2D& Input, const FVector2D& WindowOrigin, bool bViewportRelative)
+    {
+        return bViewportRelative ? (WindowOrigin + Input) : Input;
+    }
+}

@@ -30,6 +30,7 @@
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
 #include "Misc/FrameNumber.h"
+#include "HaybaMCPParams.h"
 #endif
 
 // ---------------------------------------------------------------------------
@@ -666,15 +667,15 @@ namespace
         if (!Client || !Client->Viewport) return false;
         if (!FSlateApplication::IsInitialized()) return false;
 
+        // Origin is always READ, never always applied: HaybaPieCoords::ToAbsolute
+        // decides. Keeping the decision in one testable function is the point —
+        // this is the line that produced a 24px error for months.
         FVector2D Origin = FVector2D::ZeroVector;
-        if (bViewportRelative)
+        if (TSharedPtr<SWindow> Win = Client->GetWindow())
         {
-            if (TSharedPtr<SWindow> Win = Client->GetWindow())
-            {
-                Origin = Win->GetPositionInScreen();
-            }
+            Origin = Win->GetPositionInScreen();
         }
-        OutAbsolute = Origin + Px;
+        OutAbsolute = HaybaPieCoords::ToAbsolute(Px, Origin, bViewportRelative);
         FSlateApplication::Get().SetCursorPos(OutAbsolute);
         SendMouseMove();
         return true;
