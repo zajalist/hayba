@@ -152,6 +152,34 @@ describe('cross-language contract with the C++ handler', () => {
     });
   }
 
+  // This file has now shipped the same bug twice: input dispatched through
+  // UGameViewportClient, which feeds the game input pipeline and never consults
+  // the Slate widget tree, so focused UMG widgets never see it. It was fixed for
+  // the mouse (clicks did nothing), then found again on the keyboard
+  // (editor_pie_type_text reported characters_sent and inserted nothing —
+  // docs/HANDOFF-pie-input-tools-not-inserting-text.md). Nothing about the
+  // viewport call looks wrong at the call site, which is why it keeps coming
+  // back, and why this is a test rather than a comment.
+  describe('UI input is routed through Slate, not the game viewport', () => {
+    it('delivers characters via ProcessKeyCharEvent', () => {
+      expect(cpp).toContain('ProcessKeyCharEvent');
+    });
+
+    it('delivers keys via ProcessKeyDownEvent/ProcessKeyUpEvent', () => {
+      expect(cpp).toContain('ProcessKeyDownEvent');
+      expect(cpp).toContain('ProcessKeyUpEvent');
+    });
+
+    it('delivers mouse buttons via ProcessMouseButtonDownEvent', () => {
+      expect(cpp).toContain('ProcessMouseButtonDownEvent');
+    });
+
+    it('reports what the UI accepted, not just what was sent', () => {
+      // characters_sent alone is the silent-lie shape: it says "we tried".
+      expect(cpp).toContain('characters_accepted_by_ui');
+    });
+  });
+
   it('records the plugin commands that have no TS wrapper', () => {
     // Not a failure — implemented-but-unwrapped capability is invisible to the
     // agent, so it is worth naming. Update this list when a wrapper is added.

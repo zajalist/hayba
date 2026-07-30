@@ -2649,11 +2649,11 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'editor_pie_type_text',
     description:
-      'Type a string into the running game as character input, which is what text fields actually consume. Goes to whatever holds keyboard focus — click the field first. USE_WHEN: filling in a name or search box. NOT_WHEN: a single control key like Enter (editor_pie_press_key).',
+      'Type a string into the running game as character input, which is what text fields actually consume. Goes to whatever holds keyboard focus — click the field first. Read characters_accepted_by_ui, NOT characters_sent: the first says the text landed in a widget, the second only says it was sent. USE_WHEN: filling in a name or search box. NOT_WHEN: a single control key like Enter (editor_pie_press_key).',
     meta: pieTypeTextMeta,
     handler: pieTypeTextHandler,
     cost: 'medium',
-    returns: '{text, characters_sent, note}',
+    returns: '{text, characters_sent, characters_accepted_by_ui, focused_widget, warning?, note}',
     niche: PIE,
     schema: pieTypeTextSchema.shape,
   },
@@ -2664,7 +2664,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     meta: piePressKeyMeta,
     handler: piePressKeyHandler,
     cost: 'medium',
-    returns: '{key, event, dispatched, release_scheduled, release_after_ms?}',
+    returns: '{key, event, dispatched, focused_widget, release_scheduled, release_after_ms?}',
     niche: PIE,
     schema: piePressKeySchema.shape,
   },

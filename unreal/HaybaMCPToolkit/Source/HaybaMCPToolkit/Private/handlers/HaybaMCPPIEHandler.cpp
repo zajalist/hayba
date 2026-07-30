@@ -471,6 +471,13 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEPressKey(const TSharedPtr<FJsonObjec
         UGameViewportClient* Client = W->GetGameViewport();
         if (!Client || !Client->Viewport) return false;
 
+        // Slate first, for the same reason SendMouseButton goes through Slate:
+        // a focused UMG widget must see the key before the game does, which is
+        // the order real platform input arrives in. Only when the UI declines
+        // does this fall through to the game pipeline, so gameplay bindings
+        // behave exactly as they did before.
+        if (SendKeyThroughSlate(Key, Evt)) return true;
+
         FInputKeyEventArgs Args(Client->Viewport, DeviceId, Key, Evt,
                                 /*AmountDepressed=*/1.0f,
                                 /*bIsTouch=*/false,
@@ -513,6 +520,12 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEPressKey(const TSharedPtr<FJsonObjec
     R->SetStringField(TEXT("key"), KeyName);
     R->SetStringField(TEXT("event"), EventStr);
     R->SetBoolField(TEXT("dispatched"), true);
+    // Where the key was routed. "dispatched" only ever meant "we sent it"; when
+    // a key appears to do nothing, the focused widget is the thing that
+    // explains it.
+    const FString FocusedType = FocusedWidgetType();
+    if (FocusedType.IsEmpty()) R->SetField(TEXT("focused_widget"), MakeShared<FJsonValueNull>());
+    else                       R->SetStringField(TEXT("focused_widget"), FocusedType);
     R->SetBoolField(TEXT("release_scheduled"), bReleaseScheduled);
     if (bReleaseScheduled)
     {
@@ -689,6 +702,64 @@ namespace
             /*WheelDelta=*/0.0f,
             FModifierKeysState());
         Slate.ProcessMouseMoveEvent(MoveEvent);
+    }
+
+    /** The widget Slate will deliver keyboard input to, as a type name.
+     *  Empty when nothing holds focus — which is itself the answer to "why did
+     *  my text go nowhere". */
+    FString FocusedWidgetType()
+    {
+        if (!FSlateApplication::IsInitialized()) return FString();
+        TSharedPtr<SWidget> Focused = FSlateApplication::Get().GetKeyboardFocusedWidget();
+        return Focused.IsValid() ? Focused->GetTypeAsString() : FString();
+    }
+
+    /** Deliver a key through Slate, and report whether the UI consumed it.
+     *
+     *  Exactly the distinction SendMouseButton documents, on the keyboard path:
+     *  UGameViewportClient::InputKey feeds the GAME input pipeline — player
+     *  controller, Enhanced Input — and never consults the Slate widget tree.
+     *  A focused UMG text box therefore never sees it. Real platform input goes
+     *  to the focused widget FIRST and only falls through to the viewport when
+     *  the UI does not consume it.
+     *
+     *  Returns true when Slate handled the event, so the caller can fall back
+     *  to the viewport and leave gameplay bindings (WASD, action keys) behaving
+     *  exactly as they did before. */
+    bool SendKeyThroughSlate(const FKey& Key, EInputEvent Evt)
+    {
+        if (!FSlateApplication::IsInitialized()) return false;
+        FSlateApplication& Slate = FSlateApplication::Get();
+        const uint32 UserIndex = Slate.GetUserIndexForKeyboard();
+
+        FKeyEvent KeyEvent(
+            Key,
+            FSlateApplication::Get().GetModifierKeys(),
+            UserIndex,
+            /*bIsRepeat=*/false,
+            /*CharacterCode=*/0,
+            /*KeyCode=*/0);
+
+        if (Evt == IE_Released) return Slate.ProcessKeyUpEvent(KeyEvent);
+        return Slate.ProcessKeyDownEvent(KeyEvent);
+    }
+
+    /** Deliver one character through Slate's focused widget.
+     *
+     *  Slate text widgets insert on OnKeyChar, not OnKeyDown — the platform
+     *  normally produces BOTH for a printable key, and only the character event
+     *  carries what shift/layout/IME actually resolved to. Returns true when a
+     *  widget consumed it. */
+    bool SendCharThroughSlate(TCHAR C)
+    {
+        if (!FSlateApplication::IsInitialized()) return false;
+        FSlateApplication& Slate = FSlateApplication::Get();
+        FCharacterEvent CharEvent(
+            C,
+            Slate.GetModifierKeys(),
+            Slate.GetUserIndexForKeyboard(),
+            /*bIsRepeat=*/false);
+        return Slate.ProcessKeyCharEvent(CharEvent);
     }
 
     /** Text rendered anywhere beneath a widget, flattened.
@@ -871,17 +942,56 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIETypeText(const TSharedPtr<FJsonObjec
     // Character events, not key events: a text field wants the character that
     // was produced, which is not recoverable from a keycode alone once shift,
     // layout and IME are involved.
+    //
+    // Sent through Slate, NOT UGameViewportClient::InputChar. The viewport path
+    // feeds the game input pipeline, which never consults the widget tree — a
+    // focused SEditableText never sees a character delivered that way, which is
+    // why this command used to report characters_sent and insert nothing. The
+    // viewport remains the fallback for whatever the UI declines, so a game that
+    // reads raw chars off the viewport still works.
+    const FString FocusedBefore = FocusedWidgetType();
     const FInputDeviceId DeviceId = IPlatformInputDeviceMapper::Get().GetDefaultInputDevice();
     int32 Sent = 0;
+    int32 Accepted = 0;
     for (const TCHAR C : Text)
     {
-        Client->InputChar(Client->Viewport, DeviceId.GetId(), C);
+        if (SendCharThroughSlate(C))
+        {
+            ++Accepted;
+        }
+        else if (Client && Client->Viewport)
+        {
+            Client->InputChar(Client->Viewport, DeviceId.GetId(), C);
+        }
         ++Sent;
     }
 
     TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
     R->SetStringField(TEXT("text"), Text);
     R->SetNumberField(TEXT("characters_sent"), Sent);
+    // The number that actually answers "did the text land". characters_sent
+    // only ever meant "we tried"; a caller reading it as success is exactly how
+    // this bug went unnoticed.
+    R->SetNumberField(TEXT("characters_accepted_by_ui"), Accepted);
+    if (FocusedBefore.IsEmpty())
+    {
+        R->SetField(TEXT("focused_widget"), MakeShared<FJsonValueNull>());
+    }
+    else
+    {
+        R->SetStringField(TEXT("focused_widget"), FocusedBefore);
+    }
+
+    if (Accepted == 0)
+    {
+        R->SetStringField(TEXT("warning"),
+            FocusedBefore.IsEmpty()
+                ? TEXT("NOTHING HAS KEYBOARD FOCUS, so no UI widget accepted these characters. ")
+                  TEXT("Click the field first (editor_pie_click_widget), then re-send. The characters ")
+                  TEXT("were forwarded to the game viewport, which a text box does not read.")
+                : TEXT("The focused widget accepted no characters — it is focused but not a text ")
+                  TEXT("input, or it is read-only. Verify with a screenshot before treating this as done."));
+    }
     R->SetStringField(TEXT("note"), TEXT("Characters go to whatever currently has keyboard focus. ")
                                     TEXT("Click the field first if focus is not already there."));
     return FHaybaHandlerResult::Ok(R);
