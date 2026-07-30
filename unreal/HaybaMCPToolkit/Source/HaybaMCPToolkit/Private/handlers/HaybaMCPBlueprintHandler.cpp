@@ -1,3 +1,4 @@
+#include "HaybaMCPReflection.h"
 #include "HaybaMCPBlueprintHandler.h"
 #include "Json.h"
 #include "Editor.h"
@@ -501,68 +502,21 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetDefaults(const TSharedPtr<FJso
             continue;
         }
 
-        FString ValueStr;
-        bool bHaveValue = Pair.Value->TryGetString(ValueStr);
-        if (!bHaveValue)
+        // Routed through the shared reflection module rather than a local
+        // stringify-then-ImportText pass.
+        //
+        // The old code guessed the struct from the ARRAY LENGTH: 3 numbers
+        // became "(X=,Y=,Z=)", 4 became "(R=,G=,B=,A=)", 2 became "(X=,Y=)".
+        // That is right only when the property happens to match the guess — a
+        // 4-number array on a Vector4 was formatted as a colour and failed to
+        // parse, and a 3-number array on a Rotator (which imports as
+        // Pitch/Yaw/Roll) failed the same way. SetValueFromJson dispatches on
+        // the property's ACTUAL struct type instead, and handles nested JSON
+        // objects, enums by name and object references, none of which the text
+        // path could express.
+        if (!HaybaReflection::SetValueFromJson(Prop, CDO, Pair.Value, CDO))
         {
-            switch (Pair.Value->Type)
-            {
-            case EJson::Number:
-                ValueStr = FString::SanitizeFloat(Pair.Value->AsNumber());
-                bHaveValue = true;
-                break;
-            case EJson::Boolean:
-                ValueStr = Pair.Value->AsBool() ? TEXT("True") : TEXT("False");
-                bHaveValue = true;
-                break;
-            case EJson::Array:
-            {
-                const TArray<TSharedPtr<FJsonValue>>& Arr = Pair.Value->AsArray();
-                // Numeric vector/rotator/color coercion.
-                bool bAllNumbers = Arr.Num() > 0;
-                for (const TSharedPtr<FJsonValue>& V : Arr)
-                {
-                    if (!V.IsValid() || V->Type != EJson::Number) { bAllNumbers = false; break; }
-                }
-                if (bAllNumbers && Arr.Num() == 3)
-                {
-                    ValueStr = FString::Printf(TEXT("(X=%f,Y=%f,Z=%f)"),
-                        Arr[0]->AsNumber(), Arr[1]->AsNumber(), Arr[2]->AsNumber());
-                    bHaveValue = true;
-                }
-                else if (bAllNumbers && Arr.Num() == 4)
-                {
-                    ValueStr = FString::Printf(TEXT("(R=%f,G=%f,B=%f,A=%f)"),
-                        Arr[0]->AsNumber(), Arr[1]->AsNumber(),
-                        Arr[2]->AsNumber(), Arr[3]->AsNumber());
-                    bHaveValue = true;
-                }
-                else if (bAllNumbers && Arr.Num() == 2)
-                {
-                    ValueStr = FString::Printf(TEXT("(X=%f,Y=%f)"),
-                        Arr[0]->AsNumber(), Arr[1]->AsNumber());
-                    bHaveValue = true;
-                }
-                break;
-            }
-            default:
-                break;
-            }
-        }
-
-        if (!bHaveValue)
-        {
-            AddSkipped(FString(*Pair.Key), TEXT("unsupported_value_type"));
-            continue;
-        }
-
-        // ImportText_Direct returns nullptr when ValueStr can't be parsed into
-        // the property; count that as skipped rather than a phantom set.
-        const TCHAR* ImportResult = Prop->ImportText_Direct(
-            *ValueStr, Prop->ContainerPtrToValuePtr<void>(CDO), CDO, PPF_None);
-        if (ImportResult == nullptr)
-        {
-            AddSkipped(FString(*Pair.Key), TEXT("value_parse_failed"));
+            AddSkipped(FString(*Pair.Key), TEXT("value_could_not_be_applied"));
             continue;
         }
         SetNames.Add(MakeShared<FJsonValueString>(FString(*Pair.Key)));

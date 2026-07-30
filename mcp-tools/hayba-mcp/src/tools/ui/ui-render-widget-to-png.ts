@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { RichToolResult } from '../types.js';
+import type { RichToolHandler, RichToolResult } from '../types.js';
 import { executeCommand } from '../tool-executor.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 
@@ -33,10 +33,8 @@ export const schema = z.object({
 });
 
 // Rich rather than plain: this tool returns an image block, which the text-only
-// ToolResult cannot carry.
-export const uiRenderWidgetToPngHandler = async (
-  args: Record<string, unknown>,
-): Promise<RichToolResult> => {
+// ToolResult cannot carry. Signature otherwise matches every other handler.
+export const uiRenderWidgetToPngHandler: RichToolHandler = async (args) => {
   const parsed = schema.safeParse(args);
   if (!parsed.success) {
     return { content: [{ type: 'text', text: `Validation error: ${parsed.error.message}` }], isError: true };

@@ -1,3 +1,4 @@
+#include "HaybaMCPReflection.h"
 #include "HaybaMCPLegacyHandler.h"
 #include "HaybaMCPGameThread.h"
 #include "HaybaMCPCommandHandler.h"
@@ -721,29 +722,16 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
                         continue;
                     }
 
-                    FString ValueStr;
-                    if (!Pair.Value->TryGetString(ValueStr))
-                    {
-                        // Numbers and bools are the common case here, and they
-                        // arrive as JSON numbers/bools rather than strings.
-                        // ImportText works from text, so coerce rather than drop.
-                        switch (Pair.Value->Type)
-                        {
-                        case EJson::Number:  ValueStr = FString::SanitizeFloat(Pair.Value->AsNumber()); break;
-                        case EJson::Boolean: ValueStr = Pair.Value->AsBool() ? TEXT("true") : TEXT("false"); break;
-                        default:
-                            PropertyProblems.Add(FString::Printf(
-                                TEXT("%s: value must be a string, number or bool"), *NodeLabel));
-                            continue;
-                        }
-                    }
-
-                    const TCHAR* End = Prop->ImportText_Direct(
-                        *ValueStr, Prop->ContainerPtrToValuePtr<void>(Settings), Settings, PPF_None);
-                    if (End == nullptr)
+                    // Routed through the shared reflection module rather than
+                    // a local stringify-then-ImportText pass. The old path
+                    // coerced only strings, numbers and bools, so a PCG node
+                    // setting that is a struct or an asset reference could not
+                    // be set at all — it came back as "value must be a string,
+                    // number or bool" even when well-formed.
+                    if (!HaybaReflection::SetValueFromJson(Prop, Settings, Pair.Value, Settings))
                     {
                         PropertyProblems.Add(FString::Printf(
-                            TEXT("%s: could not parse \"%s\" as %s"), *NodeLabel, *ValueStr, *Prop->GetCPPType()));
+                            TEXT("%s: could not apply the given value to a %s"), *NodeLabel, *Prop->GetCPPType()));
                         continue;
                     }
                     ++PropertiesApplied;

@@ -1,3 +1,4 @@
+#include "HaybaMCPReflection.h"
 #include "HaybaMCPActorHandler.h"
 #include "Json.h"
 #include "Editor.h"
@@ -331,28 +332,19 @@ FHaybaHandlerResult FHaybaMCPActorHandler::SetProps(const TSharedPtr<FJsonObject
             continue;
         }
 
-        FString ValueStr;
-        if (!Pair.Value->TryGetString(ValueStr))
-        {
-            if (Pair.Value->Type == EJson::Number)
-                ValueStr = FString::SanitizeFloat(Pair.Value->AsNumber());
-            else if (Pair.Value->Type == EJson::Boolean)
-                ValueStr = Pair.Value->AsBool() ? TEXT("True") : TEXT("False");
-            else
-            {
-                Skipped.Add(MakeShared<FJsonValueString>(FString::Printf(
-                    TEXT("%s (unsupported value type)"), *Pair.Key)));
-                continue;
-            }
-        }
-        // ImportText_Direct returns nullptr when the string could not be parsed
-        // into the property; treat that as a failure rather than a silent set.
-        const TCHAR* Result = Prop->ImportText_Direct(
-            *ValueStr, Prop->ContainerPtrToValuePtr<void>(Actor), Actor, PPF_None);
-        if (Result == nullptr)
+        // Routed through the shared reflection module rather than a local
+        // stringify-then-ImportText pass. The old path coerced JSON to text and
+        // handed it to ImportText_Direct, which meant a JSON object or array
+        // was rejected as "unsupported value type" — so
+        // {"RelativeLocation": {"X":1,"Y":2,"Z":3}} failed on an actor while the
+        // identical shape worked on a widget, purely because the two handlers
+        // had different copies of this loop. SetValueFromJson still routes a
+        // STRING for a struct through ImportText, so nothing that worked before
+        // stops working.
+        if (!HaybaReflection::SetValueFromJson(Prop, Actor, Pair.Value, Actor))
         {
             Skipped.Add(MakeShared<FJsonValueString>(FString::Printf(
-                TEXT("%s (value parse failed)"), *Pair.Key)));
+                TEXT("%s (value could not be applied to %s)"), *Pair.Key, *Prop->GetCPPType())));
             continue;
         }
         SetNames.Add(MakeShared<FJsonValueString>(FString(*Pair.Key)));
