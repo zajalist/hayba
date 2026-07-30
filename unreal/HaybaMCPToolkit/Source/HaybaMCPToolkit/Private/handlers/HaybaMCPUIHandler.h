@@ -29,4 +29,6 @@ private:
     FHaybaHandlerResult HandleMeasureText(const TSharedPtr<FJsonObject>& P);
     /** Accepts findings judged MCP-side so they can reach the Validation panel. */
     FHaybaHandlerResult HandleReportFindings(const TSharedPtr<FJsonObject>& P);
+    /** Draws the blueprint to a PNG without launching PIE. */
+    FHaybaHandlerResult HandleRenderToPng(const TSharedPtr<FJsonObject>& P);
 };

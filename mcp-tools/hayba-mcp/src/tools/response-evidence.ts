@@ -25,7 +25,7 @@
  * it is registered rather than the day someone remembers this rule.
  */
 
-import type { ToolResult } from './types.js';
+import type { RichToolResult, ToolResult, ToolTextContent } from './types.js';
 
 /**
  * Keys that carry no information about what a mutation actually did.
@@ -90,9 +90,11 @@ export function hasMutationEvidence(payload: unknown): boolean {
  * and guessing would produce exactly the noisy false positives this module is
  * trying to avoid.
  */
-function parsePayload(result: ToolResult): unknown | undefined {
+function parsePayload(result: RichToolResult): unknown | undefined {
   if (!Array.isArray(result.content)) return undefined;
-  const first = result.content.find((c) => c.type === 'text');
+  // Only text blocks carry a payload; an image block is the picture, not the
+  // report, so it is skipped rather than treated as missing evidence.
+  const first = result.content.find((c): c is ToolTextContent => c.type === 'text');
   if (!first || typeof first.text !== 'string') return undefined;
   try {
     return JSON.parse(first.text);
@@ -112,7 +114,7 @@ function parsePayload(result: ToolResult): unknown | undefined {
  * No-ops on error results (an error is already an honest report of failure) and
  * on non-JSON / image results (outside the contract, see parsePayload).
  */
-export function withEvidenceWarning(result: ToolResult): ToolResult {
+export function withEvidenceWarning<T extends RichToolResult>(result: T): T {
   if (result.isError) return result;
   if (!Array.isArray(result.content)) return result;
 

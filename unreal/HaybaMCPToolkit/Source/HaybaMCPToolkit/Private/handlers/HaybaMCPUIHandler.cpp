@@ -82,6 +82,13 @@
 #include "HaybaMCPReflection.h"
 #include "HaybaMCPParams.h"
 #include "HaybaMCPUILayout.h"
+// ui_render_widget_to_png — off-screen widget rendering.
+#include "Slate/WidgetRenderer.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "ImageUtils.h"
+#include "Misc/FileHelper.h"
+#include "HAL/FileManager.h"
+#include "RenderingThread.h"
 #endif
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPUI, Log, All);
@@ -103,6 +110,7 @@ TArray<FString> FHaybaMCPUIHandler::GetCommands() const
         TEXT("ui_layout_snapshot"),
         TEXT("ui_measure_text"),
         TEXT("ui_report_findings"),
+        TEXT("ui_render_widget_to_png"),
     };
 }
 
@@ -973,6 +981,7 @@ FHaybaHandlerResult FHaybaMCPUIHandler::Handle(const FString& Cmd, const TShared
     if (Cmd == TEXT("ui_layout_snapshot"))     return HandleLayoutSnapshot(P);
     if (Cmd == TEXT("ui_measure_text"))        return HandleMeasureText(P);
     if (Cmd == TEXT("ui_report_findings"))     return HandleReportFindings(P);
+    if (Cmd == TEXT("ui_render_widget_to_png")) return HandleRenderToPng(P);
 
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("UIHandler: unknown command %s"), *Cmd));
 #endif
@@ -2676,6 +2685,168 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleLayoutSnapshot(const TSharedPtr<FJ
     if (!bHaveLayout) Out->SetStringField(TEXT("layout_error"), LayoutError);
     Out->SetNumberField(TEXT("widget_count"), Widgets.Num());
     Out->SetArrayField(TEXT("widgets"), Widgets);
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+// ── ui_render_widget_to_png ─────────────────────────────────────────────────
+//
+// Draw a Widget Blueprint to a PNG without launching PIE.
+//
+// The problem this exists for: every font, brush, spacing and sizing mistake in
+// a UMG layout is invisible until it renders, and the only way to render one
+// was close editor → build → relaunch → drive PIE → screenshot. That is a
+// four-minute round trip to answer "is the text still Roboto". An agent cannot
+// see the viewport, so it either pays that cost on every change or works blind.
+//
+// FWidgetRenderer is what the UMG designer's own thumbnails use: it draws a
+// Slate widget into a render target off-screen, on the game thread, with no
+// world and no play session.
+
+FHaybaHandlerResult FHaybaMCPUIHandler::HandleRenderToPng(const TSharedPtr<FJsonObject>& P)
+{
+    FString BPPath;
+    if (!P->TryGetStringField(TEXT("widget_blueprint_path"), BPPath) || BPPath.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: missing widget_blueprint_path"));
+
+    UWidgetBlueprint* WBP = LoadObject<UWidgetBlueprint>(nullptr, *BPPath);
+    if (!WBP || !WBP->WidgetTree)
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: widget blueprint not found"));
+
+    // Default to the size the blueprint is authored against, so what comes back
+    // matches what the designer shows rather than an arbitrary crop.
+    const FVector2D DesignSize = HaybaUILayout::GetDesignSize(WBP);
+    double ReqW = DesignSize.X;
+    double ReqH = DesignSize.Y;
+    P->TryGetNumberField(TEXT("width"), ReqW);
+    P->TryGetNumberField(TEXT("height"), ReqH);
+
+    double Scale = 1.0;
+    P->TryGetNumberField(TEXT("scale"), Scale);
+    Scale = FMath::Clamp(Scale, 0.1, 4.0);
+
+    const int32 Width  = FMath::Clamp(FMath::RoundToInt(ReqW * Scale), 16, 8192);
+    const int32 Height = FMath::Clamp(FMath::RoundToInt(ReqH * Scale), 16, 8192);
+
+    FString OutPath;
+    P->TryGetStringField(TEXT("out_path"), OutPath);
+    if (OutPath.IsEmpty())
+    {
+        const FString Stamp = FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S"));
+        const FString Uuid8 = FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(8).ToLower();
+        OutPath = FPaths::ProjectSavedDir() / TEXT("Screenshots/Hayba")
+                / FString::Printf(TEXT("widget_%s_%s_%s.png"), *WBP->GetName(), *Stamp, *Uuid8);
+    }
+    else if (FPaths::IsRelative(OutPath))
+    {
+        OutPath = FPaths::ProjectDir() / OutPath;
+    }
+    OutPath = FPaths::ConvertRelativePathToFull(OutPath);
+
+    FString Error;
+    HaybaUILayout::FPreviewInstance Preview;
+    if (!HaybaUILayout::MakePreviewInstance(WBP, Preview, Error))
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_render_widget_to_png: %s"), *Error));
+
+    const FVector2D DrawSize(Width, Height);
+
+    // bUseGammaCorrection: without it every colour comes back visibly dark, and
+    // "the mockup looks wrong" is exactly the judgement this tool exists to
+    // support — a systematically wrong palette would make it worse than useless.
+    TSharedPtr<FWidgetRenderer> Renderer = MakeShared<FWidgetRenderer>(/*bUseGammaCorrection=*/true);
+    if (!Renderer.IsValid())
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: could not create the widget renderer"));
+    Renderer->SetIsPrepassNeeded(true);
+
+    UTextureRenderTarget2D* RT = Renderer->DrawWidget(Preview.Slate.ToSharedRef(), DrawSize);
+    if (!RT)
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: DrawWidget produced no render target"));
+
+    // DrawWidget enqueues render commands; reading the pixels before they have
+    // executed yields an empty (black) buffer. This is the same "first frame is
+    // black" trap the PIE screenshot path hit.
+    FlushRenderingCommands();
+
+    FTextureRenderTargetResource* Res = RT->GameThread_GetRenderTargetResource();
+    if (!Res)
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: render target has no resource"));
+
+    TArray<FColor> Pixels;
+    if (!Res->ReadPixels(Pixels) || Pixels.Num() == 0)
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: failed to read pixels back from the render target"));
+
+    // UMG draws onto transparency. Left alone, every pixel the layout does not
+    // cover is alpha-0 and most viewers show the whole image as black, which
+    // reads as "the render failed" rather than "this widget does not fill its
+    // canvas". Opaque by default; opt out when compositing is the point.
+    bool bOpaqueBackground = true;
+    P->TryGetBoolField(TEXT("opaque_background"), bOpaqueBackground);
+    int32 OpaquePixels = 0;
+    for (FColor& C : Pixels)
+    {
+        if (C.A != 0) ++OpaquePixels;
+        if (bOpaqueBackground) C.A = 255;
+    }
+
+    IFileManager::Get().MakeDirectory(*FPaths::GetPath(OutPath), /*Tree=*/true);
+
+    // PNGCompressImageArray, NOT ThumbnailCompressImageArray/CompressImageArray:
+    // those emit JPEG bytes behind a .png extension (see HaybaMCPRenderHandler).
+    TArray64<uint8> Png;
+    FImageUtils::PNGCompressImageArray(Width, Height, Pixels, Png);
+    if (!FFileHelper::SaveArrayToFile(Png, *OutPath))
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_render_widget_to_png: could not write %s"), *OutPath));
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("widget_blueprint_path"), WBP->GetPathName());
+    Out->SetStringField(TEXT("out_path"), OutPath);
+
+    // Hand back the image itself, not just where it went. The caller cannot see
+    // the viewport — that is the entire reason this command exists — so a bare
+    // filename would leave them as blind as the four-minute PIE loop did.
+    //
+    // Capped: a full-resolution render can base64 to several MB, which is worth
+    // refusing rather than pushing through the transport. When it is too big the
+    // path is still there to read, and the response says so instead of silently
+    // omitting the field.
+    bool bInlineImage = true;
+    P->TryGetBoolField(TEXT("inline_image"), bInlineImage);
+    const int64 InlineByteLimit = 3 * 1024 * 1024;
+    if (bInlineImage)
+    {
+        if (Png.Num() <= InlineByteLimit)
+        {
+            TArray<uint8> Narrow;
+            Narrow.Append(Png.GetData(), Png.Num());
+            Out->SetStringField(TEXT("image_base64"), FBase64::Encode(Narrow));
+        }
+        else
+        {
+            Out->SetStringField(TEXT("inline_image_skipped"),
+                FString::Printf(TEXT("PNG is %lld bytes, over the %lld-byte inline limit — read out_path instead, ")
+                                TEXT("or re-render with a smaller scale."), (int64)Png.Num(), InlineByteLimit));
+        }
+    }
+    Out->SetNumberField(TEXT("width"), Width);
+    Out->SetNumberField(TEXT("height"), Height);
+    Out->SetNumberField(TEXT("design_width"), DesignSize.X);
+    Out->SetNumberField(TEXT("design_height"), DesignSize.Y);
+    Out->SetNumberField(TEXT("bytes"), Png.Num());
+    Out->SetBoolField(TEXT("opaque_background"), bOpaqueBackground);
+
+    // A fully transparent render means the widget drew nothing — a collapsed
+    // root, an empty tree, an inactive switcher slot. The file still exists and
+    // still has a size, so without this the caller gets a confident success for
+    // a blank image.
+    const double CoveragePct = Pixels.Num() > 0 ? (100.0 * OpaquePixels / Pixels.Num()) : 0.0;
+    Out->SetNumberField(TEXT("coverage_percent"), FMath::RoundToDouble(CoveragePct * 100.0) / 100.0);
+    if (OpaquePixels == 0)
+    {
+        Out->SetStringField(TEXT("warning"),
+            TEXT("The widget drew NOTHING — every pixel was fully transparent. The PNG exists but is blank. ")
+            TEXT("Usual causes: the root widget is Collapsed/Hidden, the tree is empty, the visible content sits ")
+            TEXT("in an inactive WidgetSwitcher slot, or nothing has an explicit size. Do not treat this as a render."));
+    }
+
     return FHaybaHandlerResult::Ok(Out);
 }
 

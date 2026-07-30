@@ -217,6 +217,11 @@ import {
   uiLayoutSnapshotHandler,
 } from './ui/ui-layout-snapshot.js';
 import {
+  meta as uiRenderWidgetToPngMeta,
+  schema as uiRenderWidgetToPngSchema,
+  uiRenderWidgetToPngHandler,
+} from './ui/ui-render-widget-to-png.js';
+import {
   meta as uiRemoveElementMeta,
   schema as uiRemoveElementSchema,
   uiRemoveElementHandler,
@@ -2410,6 +2415,18 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     schema: uiLayoutSnapshotSchema.shape,
   },
   {
+    name: 'ui_render_widget_to_png',
+    description:
+      'SEE a Widget Blueprint: draws it to a PNG and returns the image inline, with no PIE session and no editor restart. This is how you check fonts, colours, brushes, spacing and overflow in seconds instead of a rebuild-and-play cycle. Read coverage_percent — 0 means the widget drew nothing and the PNG is blank. USE_WHEN: you want to look at the UI. NOT_WHEN: you want numbers (ui_layout_snapshot) or a verdict (ui_validate).',
+    meta: uiRenderWidgetToPngMeta,
+    handler: uiRenderWidgetToPngHandler,
+    cost: 'high',
+    returns:
+      '{widget_blueprint_path, out_path, width, height, design_width, design_height, bytes, opaque_background, coverage_percent, warning?, inline_image_skipped?} + the PNG as an image block',
+    niche: UI,
+    schema: uiRenderWidgetToPngSchema.shape,
+  },
+  {
     name: 'ui_measure_text',
     description:
       'Measure a string exactly, through the Slate font measure service, in a widget real font or an explicit one. Returns rendered width/height plus how many characters fit in the box: the actual string, typical mixed-case prose, and the worst case if every glyph were the font widest. Use this to size a label for variable-length runtime text (player names, item names, translations) BEFORE it clips in game.',
@@ -3413,13 +3430,16 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
 
   // ── Editor domain ───────────────────────────────────────────────────────────
 
-  server.tool(
-    'editor_capture_viewport',
-    appendMeta(
+  // editor_capture_viewport was hand-written only because it returns an image
+  // block and the registrar's handler type was text-only. Now that the
+  // descriptor accepts a RichToolHandler it goes through the same path as
+  // everything else, and picks up the policies it had been missing.
+  registerTool(server, session, {
+    name: 'editor_capture_viewport',
+    description:
       'Capture the active editor viewport and return it as an inline image block (plus a small text block with camera/width/height). Set HAYBA_CAPTURE_TO_FILE to also spill the image to a temp file path.',
-      captureMeta,
-    ),
-    {
+    meta: captureMeta,
+    schema: {
       width: z.coerce.number().int().optional(),
       height: z.coerce.number().int().optional(),
       wait_for_shaders: z
@@ -3427,15 +3447,15 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
         .optional()
         .describe('If true, calls wait_for_shaders first (max_seconds=60, poll_seconds=1).'),
     },
-    async (params) => {
-      if ((params as any).wait_for_shaders === true) {
+    cost: 'medium',
+    returns: '{width, height, camera, ...} + the capture as an image block',
+    handler: async (params, sess) => {
+      if (params.wait_for_shaders === true) {
         await handleWaitForShaders({ max_seconds: 60, poll_seconds: 1 });
       }
-      const r = await editorCaptureViewportHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return editorCaptureViewportHandler(params as Record<string, unknown>, sess);
     },
-  );
-  remember('editor_capture_viewport', captureMeta);
+  });
 
   // editor_start_pie is now in STANDARD_DESCRIPTORS — registered via the loop above.
 

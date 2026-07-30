@@ -37,7 +37,7 @@ import { isUnderEvidenceContract, withEvidenceWarning } from './response-evidenc
 import { recordSchema, type Cost } from './schema-registry.js';
 import { registerToolMeta } from './tool-meta-registry.js';
 import { appendNicheBriefing } from './niche-briefing.js';
-import type { ToolHandler, ToolResult, SessionManager } from './types.js';
+import type { RichToolHandler, RichToolResult, ToolHandler, ToolResult, SessionManager } from './types.js';
 
 export type ToolDescriptor = {
   /** MCP tool name, e.g. "material_create". */
@@ -48,8 +48,16 @@ export type ToolDescriptor = {
   schema: z.ZodRawShape;
   /** Tool meta — drives appendMeta(description) and the cost-lookup registry. */
   meta: HaybaToolMeta;
-  /** The wrapper-file handler: (args, session) => Promise<ToolResult>. */
-  handler: ToolHandler;
+  /**
+   * The wrapper-file handler: (args, session) => Promise<ToolResult>.
+   *
+   * RichToolResult is allowed so a tool can return an image block. Without it,
+   * anything that hands back a picture had to be hand-registered — which is how
+   * editor_capture_viewport ended up outside every policy this registrar
+   * applies. The cross-cutting helpers below only ever read and append TEXT
+   * blocks, so an image block passes through them untouched.
+   */
+  handler: ToolHandler | RichToolHandler;
   /** Cost tier recorded in the schema registry (fallback catalog). */
   cost: Cost;
   /** Return-shape doc recorded in the schema registry (fallback catalog). */
@@ -126,7 +134,7 @@ export function registerTool(
     d.name,
     appendMeta(d.description, d.meta),
     d.schema,
-    async (params: Record<string, unknown>): Promise<ToolResult> => {
+    async (params: Record<string, unknown>): Promise<RichToolResult> => {
       const r = await d.handler(params, session);
       const shaped = niche
         ? appendNicheBriefing(niche, session, r)
