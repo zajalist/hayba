@@ -2664,7 +2664,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     meta: piePressKeyMeta,
     handler: piePressKeyHandler,
     cost: 'medium',
-    returns: '{key, event, dispatched, focused_widget, release_scheduled, release_after_ms?}',
+    returns: '{key, event, dispatched, focused_widget, handled_by_ui, release_scheduled, release_after_ms?}',
     niche: PIE,
     schema: piePressKeySchema.shape,
   },

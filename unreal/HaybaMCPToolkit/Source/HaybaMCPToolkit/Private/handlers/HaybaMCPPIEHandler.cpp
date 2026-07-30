@@ -432,6 +432,15 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEWaitFor(const TSharedPtr<FJsonObject
     return FHaybaMCPPIEHandler_WaitLoop(*this, P, Comparator);
 }
 
+// Defined with the other input helpers in the Interaction section below, which
+// sits after this function. Same anonymous namespace, declared here so the key
+// path can use them — mirrors the existing SendMouseMove forward declaration.
+namespace
+{
+    FString FocusedWidgetType();
+    bool SendKeyThroughSlate(const FKey& Key, EInputEvent Evt);
+}
+
 FHaybaHandlerResult FHaybaMCPPIEHandler::PIEPressKey(const TSharedPtr<FJsonObject>& P)
 {
     if (!GEditor) return FHaybaHandlerResult::Err(TEXT("GEditor is null"));
@@ -464,7 +473,13 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEPressKey(const TSharedPtr<FJsonObjec
     // The old code captured FViewport* and UGameViewportClient*, pumped the core
     // ticker (which can tear PIE down), then dereferenced them — a use-after-free
     // that surfaced as an SEH access violation.
-    auto SendNow = [DeviceId, Key](EInputEvent Evt) -> bool
+    // Shared, not captured by reference: SendNow is also stored on a ticker
+    // delegate for the deferred release, and a reference to a local here would
+    // dangle by the time that fires — the same use-after-free class this
+    // function's viewport handling already had to fix.
+    TSharedRef<bool> SlateHandled = MakeShared<bool>(false);
+
+    auto SendNow = [DeviceId, Key, SlateHandled](EInputEvent Evt) -> bool
     {
         UWorld* W = GetPIEWorld();
         if (!W) return false;
@@ -476,7 +491,11 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEPressKey(const TSharedPtr<FJsonObjec
         // the order real platform input arrives in. Only when the UI declines
         // does this fall through to the game pipeline, so gameplay bindings
         // behave exactly as they did before.
-        if (SendKeyThroughSlate(Key, Evt)) return true;
+        if (SendKeyThroughSlate(Key, Evt))
+        {
+            *SlateHandled = true;
+            return true;
+        }
 
         FInputKeyEventArgs Args(Client->Viewport, DeviceId, Key, Evt,
                                 /*AmountDepressed=*/1.0f,
@@ -526,6 +545,10 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEPressKey(const TSharedPtr<FJsonObjec
     const FString FocusedType = FocusedWidgetType();
     if (FocusedType.IsEmpty()) R->SetField(TEXT("focused_widget"), MakeShared<FJsonValueNull>());
     else                       R->SetStringField(TEXT("focused_widget"), FocusedType);
+    // Whether the UI consumed the press. False is not a failure — gameplay keys
+    // are SUPPOSED to fall through to the game — but when a key aimed at a
+    // widget appears to do nothing, this is the field that says why.
+    R->SetBoolField(TEXT("handled_by_ui"), *SlateHandled);
     R->SetBoolField(TEXT("release_scheduled"), bReleaseScheduled);
     if (bReleaseScheduled)
     {
@@ -741,7 +764,34 @@ namespace
             /*KeyCode=*/0);
 
         if (Evt == IE_Released) return Slate.ProcessKeyUpEvent(KeyEvent);
-        return Slate.ProcessKeyDownEvent(KeyEvent);
+
+        const bool bHandled = Slate.ProcessKeyDownEvent(KeyEvent);
+
+        // Slate's text layout keys backspace and submit off the CHARACTER event,
+        // not the key event — FSlateEditableTextLayout tests for '\b' and '\r'.
+        // The platform sends both a key-down and a character for these, so a
+        // synthetic press that sends only the key-down looks like it worked and
+        // deletes nothing. Mirroring the platform is what makes
+        // editor_pie_press_key "BackSpace" actually erase a character.
+        //
+        // Deliberately only these two. Tab already works through OnKeyDown as a
+        // focus change, and also sending '\t' would insert a tab into whatever
+        // text box it just moved to.
+        TCHAR Companion = 0;
+        if (Key == EKeys::BackSpace)                                  Companion = TEXT('\b');
+        else if (Key == EKeys::Enter)                                 Companion = TEXT('\r');
+
+        if (Companion != 0)
+        {
+            FCharacterEvent CharEvent(
+                Companion,
+                Slate.GetModifierKeys(),
+                UserIndex,
+                /*bIsRepeat=*/false);
+            return Slate.ProcessKeyCharEvent(CharEvent) || bHandled;
+        }
+
+        return bHandled;
     }
 
     /** Deliver one character through Slate's focused widget.

@@ -175,8 +175,17 @@ describe('cross-language contract with the C++ handler', () => {
     });
 
     it('reports what the UI accepted, not just what was sent', () => {
-      // characters_sent alone is the silent-lie shape: it says "we tried".
+      // characters_sent / dispatched alone are the silent-lie shape: they say
+      // "we tried". These two say whether it landed.
       expect(cpp).toContain('characters_accepted_by_ui');
+      expect(cpp).toContain('handled_by_ui');
+    });
+
+    it('sends the companion character for keys Slate handles via OnKeyChar', () => {
+      // FSlateEditableTextLayout tests for '\b' and '\r', not the key event, so
+      // a key-down-only BackSpace reports success and erases nothing.
+      expect(cpp).toContain("Companion = TEXT('\\b')");
+      expect(cpp).toContain("Companion = TEXT('\\r')");
     });
   });
 

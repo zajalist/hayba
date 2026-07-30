@@ -1,5 +1,37 @@
 # Handoff: PIE input tools don't insert text into UMG EditableTextBox
 
+> **RESOLVED 2026-07-30.** Cause: `editor_pie_type_text` dispatched through
+> `UGameViewportClient::InputChar` and `editor_pie_press_key` through
+> `InputKey`. Both feed the GAME input pipeline, which never consults the Slate
+> widget tree, so a focused `SEditableText` never saw them. This is the same bug
+> the mouse path already fixed once — `SendMouseButton` carries a comment
+> explaining it; the keyboard paths were never moved over. Characters now go
+> through `FSlateApplication::ProcessKeyCharEvent` and keys through
+> `ProcessKeyDown/UpEvent`, with the viewport kept as the fallback for anything
+> the UI declines, so gameplay bindings are unchanged.
+>
+> Verified live against this exact repro: `click_widget {match:"Username"}` →
+> `type_text {"zejbadr"}` → screenshot shows **zejbadr** in the field.
+> `press_key Tab` moves focus (typing then lands in Password), and
+> `press_key BackSpace` erases a character.
+>
+> A second cause sat behind the first: Slate's text layout keys backspace and
+> submit off the CHARACTER event (`'\b'`, `'\r'`), not the key event. The
+> platform sends both; a synthetic key-down alone reported success and erased
+> nothing. `press_key` now sends the companion character for those two keys.
+>
+> The responses were also lying by omission, which is why this went unnoticed:
+> `characters_sent` and `dispatched` only ever meant "we tried".
+> `type_text` now returns `characters_accepted_by_ui`, `press_key` returns
+> `handled_by_ui`, and both return `focused_widget`. That paid off during
+> verification itself — a click that silently focused the `SViewport` instead of
+> the text field was visible immediately as
+> `{focused_widget:"SViewport", handled_by_ui:false}`.
+>
+> Guarded by tests in `pie-tools.test.ts`, since this routing mistake has now
+> shipped twice in this file and nothing about the viewport call looks wrong at
+> the call site. The two bugs below are unfixed — see the notes on each.
+
 **Date:** 2026-07-30
 **Found by:** live-driving Aphrosia's character UI via the new PIE automation commands (`editor_pie_mouse`, `editor_pie_type_text`, `editor_pie_press_key`, `editor_pie_click_widget`, `editor_pie_widget_tree`, `editor_pie_screenshot`) added to `HaybaMCPPIEHandler`.
 **Context:** These tools are otherwise a huge win — screenshot+click-by-text let me drive the actual game loop end to end (open panel → select character → confirm modal → verify rendered data) with real evidence instead of guessing. This one gap blocks the rest.
