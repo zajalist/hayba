@@ -1,4 +1,5 @@
 #include "HaybaMCPTestHandler.h"
+#include "CoreGlobals.h"
 
 #if WITH_EDITOR
 #include "HaybaMCPJobRegistry.h"
@@ -56,6 +57,34 @@ namespace
             | EAutomationTestFlags::NegativeFilter);
         Framework.GetValidTestNames(OutTests);
     }
+
+    /**
+     * Map whatever the caller supplied to the name StartTestByName accepts.
+     *
+     * GetValidTestNames reports two different strings per test and they are not
+     * interchangeable: GetFullTestPath()/GetDisplayName() is the dotted pretty
+     * name ("Hayba.MCP.Params.Reader") and GetTestName() is the registered name
+     * ("FHaybaMCPParamReaderTest"). Only the latter starts a test. Accept
+     * either, so callers can paste any field test_list showed them.
+     */
+    static FString ResolveRegisteredTestName(const FString& Requested)
+    {
+        TArray<FAutomationTestInfo> All;
+        CollectAllTests(All);
+        for (const FAutomationTestInfo& Info : All)
+        {
+            if (Info.GetTestName() == Requested) return Requested;  // already registered form
+        }
+        for (const FAutomationTestInfo& Info : All)
+        {
+            if (Info.GetFullTestPath() == Requested || Info.GetDisplayName() == Requested)
+            {
+                return Info.GetTestName();
+            }
+        }
+        return Requested;  // unknown — let StartTestByName report it
+    }
+
 
     static FHaybaHandlerResult Cmd_TestList(const TSharedPtr<FJsonObject>& Params)
     {
@@ -180,6 +209,7 @@ namespace
     static bool TestRunPump(float /*Dt*/, TSharedRef<FTestRunState> S)
     {
         FAutomationTestFramework& Framework = FAutomationTestFramework::Get();
+        bool bTimedOut = false;
 
         if (!S->bInProgress)
         {
@@ -190,29 +220,77 @@ namespace
             }
 
             const FString& Name = S->Names[S->Index];
-            // UE 5.7: StartTestByName returns void; detect start via GetCurrentTest().
-            Framework.StartTestByName(Name, /*RoleIndex=*/0);
-            if (Framework.GetCurrentTest() == nullptr)
+
+            // StartTestByName wants the REGISTERED name, which for
+            // IMPLEMENT_SIMPLE_AUTOMATION_TEST is the C++ class name — NOT the
+            // dotted pretty name the same framework reports from
+            // GetValidTestNames(). Passing the pretty name (the obvious thing,
+            // and what test_list shows as `name`) makes UE log "Test <x> does
+            // not exist" and start nothing, which this handler then recorded as
+            // "skipped". Every test_run ever made returned skipped for
+            // everything, and skipped reads like a decision rather than a
+            // failure — so the harness looked like it worked.
+            const FString Registered = ResolveRegisteredTestName(Name);
+            bTimedOut = false;
+
+            Framework.StartTestByName(Registered, /*RoleIndex=*/0);
+            // BOTH conditions matter. GetCurrentTest() says a test object was
+            // selected; GIsAutomationTesting says the framework actually
+            // entered testing mode. ExecuteLatentCommands and StopTest are
+            // check()'d on the latter — a hard assert that takes the editor
+            // down, not an error return.
+            if (Framework.GetCurrentTest() == nullptr || !GIsAutomationTesting)
             {
-                S->Skipped.Add(MakeStr(Name));
+                auto FailObj = MakeShared<FJsonObject>();
+                FailObj->SetStringField(TEXT("name"), Name);
+                FailObj->SetStringField(TEXT("error"),
+                    FString::Printf(TEXT("no such test: '%s' (tried registered name '%s'). Use the `name` or "
+                                         "`category` field from test_list."), *Name, *Registered));
+                S->Failed.Add(MakeShared<FJsonValueObject>(FailObj));
                 S->Index++;
                 return true;
             }
-            S->bInProgress = true;
-            S->TestStart   = FPlatformTime::Seconds();
-            return true;
+
+            // Run this test to completion NOW, in this one tick.
+            //
+            // The original design spread start / pump / stop across frames to
+            // keep the editor responsive. That cannot work here: a simple
+            // automation test executes its body inside StartTestByName, and the
+            // framework leaves testing mode before the next tick — so the pump
+            // always found GIsAutomationTesting false and either asserted or
+            // reported the test abandoned. Unit tests of this kind finish in
+            // milliseconds; the frame budget below is what protects the editor,
+            // not spreading the work out.
+            {
+                const double Budget = FMath::Min(S->PerTestTimeoutSec, 30.0);
+                const double Began  = FPlatformTime::Seconds();
+                while (GIsAutomationTesting && !Framework.ExecuteLatentCommands())
+                {
+                    if (FPlatformTime::Seconds() - Began > Budget) break;
+                }
+                S->TestStart = Began;
+                bTimedOut = (FPlatformTime::Seconds() - Began) > Budget;
+            }
         }
 
-        // A test is running — pump its latent commands once this frame.
-        const bool bComplete = Framework.ExecuteLatentCommands();
-        const bool bTimedOut = (FPlatformTime::Seconds() - S->TestStart) > S->PerTestTimeoutSec;
-        if (!bComplete && !bTimedOut)
-        {
-            return true; // still running; resume next frame
-        }
+        // Fall straight through to the stop below, in this same tick. Splitting
+        // start from stop across frames is what broke: nothing holds the
+        // framework in testing mode between them.
 
+        // StopTest does check(GIsAutomationTesting) and takes the whole editor
+        // down when it is false — an assert, not an error return. Reached that
+        // exactly once by fixing the name resolution above, which is a poor way
+        // to find out. Only stop a test the framework still believes is running.
         FAutomationTestExecutionInfo ExecInfo;
-        const bool bSuccess = Framework.StopTest(ExecInfo);
+        bool bSuccess = false;
+        if (Framework.GetCurrentTest() != nullptr && GIsAutomationTesting)
+        {
+            bSuccess = Framework.StopTest(ExecInfo);
+        }
+        else
+        {
+            ExecInfo.AddError(TEXT("the automation framework dropped this test before it could be stopped"));
+        }
         const double TestDuration = FPlatformTime::Seconds() - S->TestStart;
         const FString Name = S->Names[S->Index];
 
