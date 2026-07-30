@@ -33,6 +33,7 @@ private:
     FHaybaHandlerResult PIEAxis(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult PIEWidgetTree(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult PIEClickWidget(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult PIESetText(const TSharedPtr<FJsonObject>& P);
 
 #if WITH_EDITOR
     void EnsureLifecycleHooks();

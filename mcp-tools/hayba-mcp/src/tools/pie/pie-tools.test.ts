@@ -23,6 +23,7 @@ import { pieMouseHandler } from './pie-mouse.js';
 import { piePressKeyHandler } from './pie-press-key.js';
 import { pieScreenshotHandler } from './pie-screenshot.js';
 import { pieTypeTextHandler } from './pie-type-text.js';
+import { pieSetTextHandler } from './pie-set-text.js';
 import { pieWidgetTreeHandler } from './pie-widget-tree.js';
 import type { SessionManager, ToolHandler } from '../types.js';
 
@@ -43,6 +44,7 @@ const TOOLS: Array<{ name: string; cmd: string; handler: ToolHandler; args: Reco
   { name: 'pie_mouse', cmd: 'editor_pie_mouse', handler: pieMouseHandler, args: { x: 100, y: 200 } },
   { name: 'pie_press_key', cmd: 'editor_pie_press_key', handler: piePressKeyHandler, args: { key: 'SpaceBar' } },
   { name: 'pie_type_text', cmd: 'editor_pie_type_text', handler: pieTypeTextHandler, args: { text: 'hello' } },
+  { name: 'pie_set_text', cmd: 'editor_pie_set_text', handler: pieSetTextHandler, args: { text: 'hello', match: 'Username' } },
   // NB: `key` is an axis KEY (Gamepad_LeftX), not an input-mapping axis name.
   { name: 'pie_axis', cmd: 'editor_pie_axis', handler: pieAxisHandler, args: { key: 'Gamepad_LeftX', value: 1 } },
   { name: 'pie_screenshot', cmd: 'editor_pie_screenshot', handler: pieScreenshotHandler, args: {} },

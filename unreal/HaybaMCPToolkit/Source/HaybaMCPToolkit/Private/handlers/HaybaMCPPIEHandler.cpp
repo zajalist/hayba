@@ -18,6 +18,8 @@
 #include "Framework/Application/SlateApplication.h"
 #include "Widgets/SWindow.h"
 #include "Widgets/SWidget.h"
+#include "Widgets/Input/SEditableText.h"
+#include "Widgets/Text/SMultiLineEditableText.h"
 #include "Layout/Children.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
@@ -46,6 +48,7 @@ TArray<FString> FHaybaMCPPIEHandler::GetCommands() const
         TEXT("editor_pie_axis"),
         TEXT("editor_pie_widget_tree"),
         TEXT("editor_pie_click_widget"),
+        TEXT("editor_pie_set_text"),
     };
 }
 
@@ -75,6 +78,7 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::Handle(const FString& Cmd, const TShare
     if (Cmd == TEXT("editor_pie_axis"))          return PIEAxis(Params);
     if (Cmd == TEXT("editor_pie_widget_tree"))   return PIEWidgetTree(Params);
     if (Cmd == TEXT("editor_pie_click_widget"))  return PIEClickWidget(Params);
+    if (Cmd == TEXT("editor_pie_set_text"))      return PIESetText(Params);
     if (Cmd == TEXT("editor_pie_screenshot")) return PIEScreenshot(Params);
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("Unknown PIE command: %s"), *Cmd));
 #endif
@@ -642,18 +646,33 @@ namespace
 
     void SendMouseMove();
 
-    /** Move the OS/Slate cursor to a viewport-relative pixel and report where. */
-    bool MoveCursorToViewportPixel(UGameViewportClient* Client, const FVector2D& Px, FVector2D& OutAbsolute)
+    /**
+     * Move the OS/Slate cursor to a pixel and report where it ended up.
+     *
+     * `bViewportRelative` decides how the incoming pixel is read, and getting
+     * this wrong is silent: the click still happens, just somewhere else.
+     *
+     * editor_pie_widget_tree reports ABSOLUTE desktop coordinates (that is what
+     * FGeometry::GetAbsolutePosition returns), and its note has always told
+     * callers to pass them straight to editor_pie_mouse. But this function used
+     * to add the window origin unconditionally, so doing exactly that
+     * double-counted it and every click landed offset by the window's screen
+     * position — down and right by roughly the title bar and border. The
+     * symptom is a click that "lands a few px below" the thing you aimed at, or
+     * misses the UI entirely and focuses the SViewport.
+     */
+    bool MoveCursorToPixel(UGameViewportClient* Client, const FVector2D& Px, bool bViewportRelative, FVector2D& OutAbsolute)
     {
         if (!Client || !Client->Viewport) return false;
         if (!FSlateApplication::IsInitialized()) return false;
 
-        // Viewport pixels are relative to the game window; Slate wants absolute
-        // desktop coordinates, so offset by the window position.
         FVector2D Origin = FVector2D::ZeroVector;
-        if (TSharedPtr<SWindow> Win = Client->GetWindow())
+        if (bViewportRelative)
         {
-            Origin = Win->GetPositionInScreen();
+            if (TSharedPtr<SWindow> Win = Client->GetWindow())
+            {
+                Origin = Win->GetPositionInScreen();
+            }
         }
         OutAbsolute = Origin + Px;
         FSlateApplication::Get().SetCursorPos(OutAbsolute);
@@ -812,6 +831,66 @@ namespace
         return Slate.ProcessKeyCharEvent(CharEvent);
     }
 
+    // Defined below; the editable-text lookups sit above it and need it.
+    FString CollectDescendantText(const TSharedRef<SWidget>& W, int32 Depth);
+
+    /** The first editable-text widget at or beneath `W`, depth-first.
+     *
+     *  SEditableTextBox is a wrapper: the widget that actually holds the text
+     *  is a child. Setting text on the box does nothing, silently, which is
+     *  exactly the class of failure these tools keep producing. */
+    TSharedPtr<SWidget> FindEditableDescendant(const TSharedRef<SWidget>& W, int32 Depth = 0)
+    {
+        if (Depth > 8) return nullptr;
+        const FString T = W->GetTypeAsString();
+        // Match the leaf editors, not the Box wrappers around them.
+        if ((T.Contains(TEXT("SEditableText")) || T.Contains(TEXT("SMultiLineEditableText")))
+            && !T.Contains(TEXT("Box")))
+        {
+            return W;
+        }
+        FChildren* Children = W->GetChildren();
+        if (!Children) return nullptr;
+        for (int32 i = 0; i < Children->Num(); ++i)
+        {
+            if (TSharedPtr<SWidget> Found = FindEditableDescendant(Children->GetChildAt(i), Depth + 1))
+            {
+                return Found;
+            }
+        }
+        return nullptr;
+    }
+
+    /** Find an editable text widget by the text visible on or near it.
+     *
+     *  Matches the field's own content INCLUDING its placeholder, because an
+     *  empty login box is identified by the word "Username" that it is showing
+     *  — that is how a person finds it, so it is how the tool should. */
+    TSharedPtr<SWidget> FindEditableByText(const TSharedRef<SWidget>& Root, const FString& Match, int32 Depth = 0)
+    {
+        if (Depth > 60) return nullptr;
+        const FString T = Root->GetTypeAsString();
+        if (T.Contains(TEXT("EditableText")))
+        {
+            const FString Flat = CollectDescendantText(Root, 0);
+            if (Flat.Contains(Match, ESearchCase::IgnoreCase))
+            {
+                if (TSharedPtr<SWidget> Leaf = FindEditableDescendant(Root)) return Leaf;
+                return Root;
+            }
+        }
+        FChildren* Children = Root->GetChildren();
+        if (!Children) return nullptr;
+        for (int32 i = 0; i < Children->Num(); ++i)
+        {
+            if (TSharedPtr<SWidget> Found = FindEditableByText(Children->GetChildAt(i), Match, Depth + 1))
+            {
+                return Found;
+            }
+        }
+        return nullptr;
+    }
+
     /** Text rendered anywhere beneath a widget, flattened.
      *
      *  Depth-limited: this is for identifying a control by its label, not for
@@ -897,6 +976,15 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEMouse(const TSharedPtr<FJsonObject>&
     P->TryGetStringField(TEXT("button"), ButtonName);
     const FKey Button = MouseButtonFromString(ButtonName);
 
+    // Absolute by default, because that is what editor_pie_widget_tree reports
+    // and what this command has always claimed to accept. Resolved once here so
+    // the drag path below cannot disagree with the initial positioning — a drag
+    // whose start and end were read in different spaces would travel a
+    // completely wrong distance.
+    FString Space = TEXT("absolute");
+    P->TryGetStringField(TEXT("coordinate_space"), Space);
+    const bool bViewportRelative = Space.Equals(TEXT("viewport"), ESearchCase::IgnoreCase);
+
     TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
     R->SetStringField(TEXT("action"), Action);
 
@@ -907,10 +995,17 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEMouse(const TSharedPtr<FJsonObject>&
             return FHaybaHandlerResult::Err(TEXT("editor_pie_mouse: x and y are required for this action"));
 
         FVector2D Abs;
-        if (!MoveCursorToViewportPixel(Client, FVector2D(X, Y), Abs))
+        if (!MoveCursorToPixel(Client, FVector2D(X, Y), bViewportRelative, Abs))
             return FHaybaHandlerResult::Err(TEXT("editor_pie_mouse: could not position the cursor"));
         R->SetNumberField(TEXT("x"), X);
         R->SetNumberField(TEXT("y"), Y);
+        R->SetStringField(TEXT("coordinate_space"), bViewportRelative ? TEXT("viewport") : TEXT("absolute"));
+        // Where the cursor actually went. When these differ from x/y the
+        // coordinate space is not what the caller assumed, which is otherwise
+        // invisible until the click does nothing.
+        R->SetNumberField(TEXT("absolute_x"), Abs.X);
+        R->SetNumberField(TEXT("absolute_y"), Abs.Y);
+        R->SetStringField(TEXT("focused_widget_after"), FocusedWidgetType());
     }
 
     if (Action == TEXT("move"))
@@ -952,7 +1047,7 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEMouse(const TSharedPtr<FJsonObject>&
         for (int32 i = 1; i <= Steps; ++i)
         {
             const double T = (double)i / (double)Steps;
-            MoveCursorToViewportPixel(Client, FVector2D(FMath::Lerp(X, ToX, T), FMath::Lerp(Y, ToY, T)), Abs);
+            MoveCursorToPixel(Client, FVector2D(FMath::Lerp(X, ToX, T), FMath::Lerp(Y, ToY, T)), bViewportRelative, Abs);
         }
         SendMouseButton(Client, Button, IE_Released);
         R->SetNumberField(TEXT("to_x"), ToX);
@@ -1117,8 +1212,147 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEWidgetTree(const TSharedPtr<FJsonObj
     R->SetNumberField(TEXT("count"), Kept.Num());
     R->SetNumberField(TEXT("total_before_filter"), All.Num());
     if (!Filter.IsEmpty()) R->SetStringField(TEXT("filter"), Filter);
-    R->SetStringField(TEXT("note"), TEXT("Coordinates are absolute desktop pixels and are what "
-                                         "editor_pie_mouse expects. center_x/center_y is the click point."));
+    R->SetStringField(TEXT("note"), TEXT("Coordinates are ABSOLUTE desktop pixels; center_x/center_y is the click point. "
+                                         "Pass them to editor_pie_mouse unchanged (it defaults to coordinate_space:\"absolute\"). "
+                                         "They will NOT match a screenshot, which is window-relative — the difference is the "
+                                         "window's on-screen position, so never read a click target off a screenshot."));
+    return FHaybaHandlerResult::Ok(R);
+}
+
+// ── editor_pie_set_text ─────────────────────────────────────────────────────
+//
+// Set an editable widget's text directly, instead of synthesising the
+// keystrokes that would have produced it.
+//
+// editor_pie_type_text drives real character events, which is the honest way to
+// test input handling — but it is a bad way to FILL A FORM. Character events go
+// wherever focus happens to be, they can be eaten by a modal or a hotkey, and
+// text entered that way is lost if focus moves before the widget commits.
+// Filling a login box to reach the screen behind it does not need any of that
+// fidelity; it needs the text to be in the box.
+//
+// This sets the value on the widget and commits it (ETextCommit::OnEnter), so
+// the game's OnTextCommitted binding fires exactly as if the user had typed and
+// pressed enter — which is what actually makes the value stick.
+
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIESetText(const TSharedPtr<FJsonObject>& P)
+{
+    UGameViewportClient* Client = PIEViewportClient();
+    if (!Client) return FHaybaHandlerResult::Err(TEXT("no PIE viewport (start PIE first)"));
+    if (!FSlateApplication::IsInitialized())
+        return FHaybaHandlerResult::Err(TEXT("Slate is not initialized"));
+
+    FString NewText;
+    if (!P.IsValid() || !P->TryGetStringField(TEXT("text"), NewText))
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_set_text: text is required"));
+
+    // Target either a widget found by label/placeholder, or whatever has focus.
+    FString Match;
+    P->TryGetStringField(TEXT("match"), Match);
+
+    TSharedPtr<SWidget> Target;
+    FString HowFound;
+
+    if (!Match.IsEmpty())
+    {
+        TSharedPtr<SWindow> Win = Client->GetWindow();
+        if (!Win.IsValid()) return FHaybaHandlerResult::Err(TEXT("PIE window not found"));
+        Target = FindEditableByText(Win.ToSharedRef(), Match);
+        HowFound = TEXT("match");
+        if (!Target.IsValid())
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("editor_pie_set_text: no editable text widget matching '%s'. ")
+                TEXT("Call editor_pie_widget_tree to see what is there — the placeholder text counts as a match."), *Match));
+        }
+    }
+    else
+    {
+        Target = FSlateApplication::Get().GetKeyboardFocusedWidget();
+        HowFound = TEXT("focus");
+        if (!Target.IsValid())
+        {
+            return FHaybaHandlerResult::Err(TEXT("editor_pie_set_text: nothing has keyboard focus and no `match` was given"));
+        }
+    }
+
+    const FString Type = Target->GetTypeAsString();
+    bool bApplied = false;
+
+    if (Type.Contains(TEXT("SEditableText")) || Type.Contains(TEXT("SMultiLineEditableText")))
+    {
+        if (Type.Contains(TEXT("Box")))
+        {
+            // SEditableTextBox / SMultiLineEditableTextBox wrap the real editor.
+            if (TSharedPtr<SWidget> Inner = FindEditableDescendant(Target.ToSharedRef()))
+            {
+                Target = Inner;
+            }
+        }
+    }
+
+    const FString ResolvedType = Target->GetTypeAsString();
+
+    // Focus first. The value is committed below by a real Enter key, which only
+    // reaches the widget that holds focus — and focusing also matches what the
+    // game sees when a person fills the field.
+    FSlateApplication::Get().SetKeyboardFocus(Target, EFocusCause::SetDirectly);
+
+    if (ResolvedType.Contains(TEXT("SMultiLineEditableText")))
+    {
+        StaticCastSharedRef<SMultiLineEditableText>(Target.ToSharedRef())->SetText(FText::FromString(NewText));
+        bApplied = true;
+    }
+    else if (ResolvedType.Contains(TEXT("SEditableText")))
+    {
+        StaticCastSharedRef<SEditableText>(Target.ToSharedRef())->SetText(FText::FromString(NewText));
+        bApplied = true;
+    }
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetStringField(TEXT("text"), NewText);
+    R->SetStringField(TEXT("target_type"), ResolvedType);
+    R->SetStringField(TEXT("found_by"), HowFound);
+    R->SetBoolField(TEXT("applied"), bApplied);
+
+    if (!bApplied)
+    {
+        // Naming the type is what turns "it did nothing" into a next step.
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("editor_pie_set_text: %s is not an editable text widget, so no text was set. ")
+            TEXT("Target one with `match`, or click into the field first."), *ResolvedType));
+    }
+
+    // Read the value back off the widget rather than echoing the input — the
+    // whole point is to know the text is actually in the box.
+    FString Readback;
+    if (ResolvedType.Contains(TEXT("SMultiLineEditableText")))
+        Readback = StaticCastSharedRef<SMultiLineEditableText>(Target.ToSharedRef())->GetText().ToString();
+    else
+        Readback = StaticCastSharedRef<SEditableText>(Target.ToSharedRef())->GetText().ToString();
+
+    R->SetStringField(TEXT("readback"), Readback);
+    R->SetBoolField(TEXT("verified"), Readback == NewText);
+
+    // SetText updates the widget but does NOT fire OnTextCommitted, and most
+    // games read the value from that binding rather than polling the widget.
+    // Without this the box visibly contains the text and the game never gets
+    // it — which is the "typed text was lost" shape. A real Enter through Slate
+    // makes the commit happen exactly as it would for a person.
+    bool bCommit = true;
+    P->TryGetBoolField(TEXT("commit"), bCommit);
+    if (bCommit)
+    {
+        SendKeyThroughSlate(EKeys::Enter, IE_Pressed);
+        SendKeyThroughSlate(EKeys::Enter, IE_Released);
+    }
+    R->SetBoolField(TEXT("committed"), bCommit);
+    if (Readback != NewText)
+    {
+        R->SetStringField(TEXT("warning"),
+            TEXT("The widget did not take the value — it may be read-only, length-capped or filtered. ")
+            TEXT("`readback` is what it actually holds."));
+    }
     return FHaybaHandlerResult::Ok(R);
 }
 
@@ -1151,6 +1385,10 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEClickWidget(const TSharedPtr<FJsonOb
     TSharedPtr<FJsonObject> Best;
     double BestScore = -1e18;
     TArray<FString> Candidates;
+    // Every match with its score, so a wrong pick is diagnosable and
+    // overridable instead of being a dead end. "It clicked the wrong one" was
+    // unanswerable before: the response named a count and nothing else.
+    TArray<TPair<double, TSharedPtr<FJsonObject>>> Ranked;
     for (const TSharedPtr<FJsonValue>& V : All)
     {
         const TSharedPtr<FJsonObject> O = V->AsObject();
@@ -1181,10 +1419,45 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEClickWidget(const TSharedPtr<FJsonOb
         if (bExactText)   Score += 500.0;       // exact label beats substring
         Score -= (W * H) / 10000.0;             // prefer the tightest box
 
+        Ranked.Add(TPair<double, TSharedPtr<FJsonObject>>(Score, O));
         if (Score > BestScore)
         {
             BestScore = Score;
             Best = O;
+        }
+    }
+
+    Ranked.Sort([](const TPair<double, TSharedPtr<FJsonObject>>& A,
+                   const TPair<double, TSharedPtr<FJsonObject>>& B) { return A.Key > B.Key; });
+
+    // `nth` picks a different candidate from that ranking, so "it clicked the
+    // wrong one" is a one-parameter fix rather than a fall back to hand-tuned
+    // coordinates.
+    int32 Nth = 0;
+    if (P->TryGetNumberField(TEXT("nth"), Nth) && Nth > 0)
+    {
+        if (!Ranked.IsValidIndex(Nth))
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("editor_pie_click_widget: nth=%d but only %d widgets matched '%s'"),
+                Nth, Ranked.Num(), *Match));
+        }
+        Best = Ranked[Nth].Value;
+    }
+
+    // Restrict to a widget type when the label is ambiguous, e.g. prefer_type
+    // "SButton" for a tab whose label also appears on a panel behind it.
+    FString PreferType;
+    if (P->TryGetStringField(TEXT("prefer_type"), PreferType) && !PreferType.IsEmpty())
+    {
+        for (const TPair<double, TSharedPtr<FJsonObject>>& Entry : Ranked)
+        {
+            FString T;
+            if (Entry.Value->TryGetStringField(TEXT("type"), T) && T.Contains(PreferType))
+            {
+                Best = Entry.Value;
+                break;
+            }
         }
     }
 
@@ -1215,6 +1488,39 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEClickWidget(const TSharedPtr<FJsonOb
     R->SetNumberField(TEXT("x"), CX);
     R->SetNumberField(TEXT("y"), CY);
     R->SetNumberField(TEXT("candidates"), Candidates.Num());
+
+    // The ranking itself, so a wrong pick can be corrected with nth/prefer_type
+    // instead of abandoning the tool for hand-tuned coordinates.
+    {
+        TArray<TSharedPtr<FJsonValue>> Detail;
+        const int32 Show = FMath::Min(Ranked.Num(), 6);
+        for (int32 i = 0; i < Show; ++i)
+        {
+            TSharedPtr<FJsonObject> E = MakeShared<FJsonObject>();
+            FString T, Tx;
+            Ranked[i].Value->TryGetStringField(TEXT("type"), T);
+            Ranked[i].Value->TryGetStringField(TEXT("text"), Tx);
+            double EX = 0, EY = 0;
+            Ranked[i].Value->TryGetNumberField(TEXT("center_x"), EX);
+            Ranked[i].Value->TryGetNumberField(TEXT("center_y"), EY);
+            bool bInt = false;
+            Ranked[i].Value->TryGetBoolField(TEXT("interactive"), bInt);
+            E->SetNumberField(TEXT("nth"), i);
+            E->SetStringField(TEXT("type"), T);
+            if (!Tx.IsEmpty()) E->SetStringField(TEXT("text"), Tx);
+            E->SetBoolField(TEXT("interactive"), bInt);
+            E->SetNumberField(TEXT("center_x"), EX);
+            E->SetNumberField(TEXT("center_y"), EY);
+            E->SetNumberField(TEXT("score"), Ranked[i].Key);
+            Detail.Add(MakeShared<FJsonValueObject>(E));
+        }
+        R->SetArrayField(TEXT("ranked"), Detail);
+    }
+
+    // What holds focus now. A click that was supposed to land on a control and
+    // left focus on the SViewport did not hit the UI, and that is otherwise
+    // invisible until something later fails.
+    R->SetStringField(TEXT("focused_widget_after"), FocusedWidgetType());
     bool bEnabled = true, bInteractive = false;
     Best->TryGetBoolField(TEXT("enabled"), bEnabled);
     Best->TryGetBoolField(TEXT("interactive"), bInteractive);

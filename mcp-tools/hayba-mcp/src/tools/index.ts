@@ -183,6 +183,7 @@ import { meta as pieWidgetTreeMeta, schema as pieWidgetTreeSchema, pieWidgetTree
 import { meta as pieClickWidgetMeta, schema as pieClickWidgetSchema, pieClickWidgetHandler } from './pie/pie-click-widget.js';
 import { meta as pieMouseMeta, schema as pieMouseSchema, pieMouseHandler } from './pie/pie-mouse.js';
 import { meta as pieTypeTextMeta, schema as pieTypeTextSchema, pieTypeTextHandler } from './pie/pie-type-text.js';
+import { meta as pieSetTextMeta, schema as pieSetTextSchema, pieSetTextHandler } from './pie/pie-set-text.js';
 import { meta as pieAxisMeta, schema as pieAxisSchema, pieAxisHandler } from './pie/pie-axis.js';
 import { meta as piePressKeyMeta, schema as piePressKeySchema, piePressKeyHandler } from './pie/pie-press-key.js';
 import { meta as pieScreenshotMeta, schema as pieScreenshotSchema, pieScreenshotHandler } from './pie/pie-screenshot.js';
@@ -2687,11 +2688,11 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'editor_pie_mouse',
     description:
-      'Drive the mouse in the running game: move, click, double_click, press, release, drag or scroll. press/release let you hold a button across calls; drag interpolates intermediate positions because widgets that track deltas ignore a single jump. Coordinates match what editor_pie_widget_tree reports.',
+      'Drive the mouse in the running game: move, click, double_click, press, release, drag or scroll. press/release let you hold a button across calls; drag interpolates intermediate positions because widgets that track deltas ignore a single jump. x/y are ABSOLUTE desktop pixels — pass center_x/center_y from editor_pie_widget_tree straight through. Check focused_widget_after: if it says SViewport, the click missed the UI. PREFER editor_pie_click_widget when you know the label.',
     meta: pieMouseMeta,
     handler: pieMouseHandler,
     cost: 'medium',
-    returns: '{action, x, y, button, dispatched}',
+    returns: '{action, x, y, coordinate_space, absolute_x, absolute_y, focused_widget_after, button, dispatched}',
     niche: PIE,
     schema: pieMouseSchema.shape,
   },
@@ -2705,6 +2706,17 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     returns: '{text, characters_sent, characters_accepted_by_ui, focused_widget, warning?, note}',
     niche: PIE,
     schema: pieTypeTextSchema.shape,
+  },
+  {
+    name: 'editor_pie_set_text',
+    description:
+      'Put a value straight into a text field and tell the game about it. PREFER THIS over editor_pie_type_text when you just need to get past a field — typed characters go wherever focus happens to be, can be eaten by a modal, and are lost if focus moves before the widget commits. Find the field by the text ON it (the placeholder counts, so an empty login box matches "Username"), or omit match to use the focused field. Returns readback+verified, so you know the value is actually in the box. USE_WHEN: filling a login/search/name field. NOT_WHEN: you are testing how the game itself handles keystrokes.',
+    meta: pieSetTextMeta,
+    handler: pieSetTextHandler,
+    cost: 'medium',
+    returns: '{text, target_type, found_by, applied, readback, verified, committed, warning?}',
+    niche: PIE,
+    schema: pieSetTextSchema.shape,
   },
   {
     name: 'editor_pie_press_key',
