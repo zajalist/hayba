@@ -217,6 +217,11 @@ import {
   uiLayoutSnapshotHandler,
 } from './ui/ui-layout-snapshot.js';
 import {
+  meta as uiCopyStyleMeta,
+  schema as uiCopyStyleSchema,
+  uiCopyStyleHandler,
+} from './ui/ui-copy-style.js';
+import {
   meta as uiSetDefaultFontMeta,
   schema as uiSetDefaultFontSchema,
   uiSetDefaultFontHandler,
@@ -2418,6 +2423,17 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       '{widget_blueprint_path, screen_width, screen_height, layout_resolved, layout_error?, widget_count, widgets:[{name, class, x, y, width, height, depth, anchors?, text_info?, brush_info?}]}',
     niche: UI,
     schema: uiLayoutSnapshotSchema.shape,
+  },
+  {
+    name: 'ui_copy_style',
+    description:
+      '"Make this look like that one" — copies a working widget\'s brush (draw_as, resource, margin, tint, size) and text style (font, typeface, size, colour) onto another. Copies STYLE ONLY: slot layout and text content stay the target\'s, so matching a look cannot wreck a layout. Use dry_run to see what would be copied. USE_WHEN: one widget already looks right. NOT_WHEN: you know the values (ui_set_brush / ui_set_text_style) or want the widget itself (ui_duplicate_element).',
+    meta: uiCopyStyleMeta,
+    handler: uiCopyStyleHandler,
+    cost: 'high',
+    returns: '{from, to, widget_blueprint_path, copied[], copied_count, applied:[{aspect, values}], failed[], note}',
+    niche: UI,
+    schema: uiCopyStyleSchema.shape,
   },
   {
     name: 'ui_set_default_font',
