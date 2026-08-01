@@ -1547,10 +1547,29 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEClickWidget(const TSharedPtr<FJsonOb
     Best->TryGetNumberField(TEXT("center_x"), CX);
     Best->TryGetNumberField(TEXT("center_y"), CY);
 
-    // center_x/center_y are already absolute desktop coordinates.
-    FSlateApplication::Get().SetCursorPos(FVector2D(CX, CY));
+    // The EXACT sequence editor_pie_mouse uses at these coordinates: a
+    // Slate-visible move to the target (MoveCursorToPixel sends a real
+    // ProcessMouseMoveEvent), press, release, pointer-state reset.
+    //
+    // This path previously did a bare SetCursorPos with NO synthetic move
+    // before the press. Field matrix (WarRoom map, viewport MouseCaptureMode
+    // CaptureDuringMouseDown): editor_pie_mouse click at the button's centre
+    // fired OnClicked; this command on the SAME button showed hover/pressed
+    // visuals and focused the SButton but never dispatched OnClicked; on a
+    // NoCapture map both worked. Without the move, Slate's pointer path was
+    // stale from whatever the cursor last hovered, and under a capturing
+    // viewport the release resolved against that stale state instead of the
+    // button. Sharing the primitives makes the two commands equivalent by
+    // construction.
+    //
+    // center_x/center_y are already absolute desktop coordinates, so
+    // bViewportRelative=false passes them through unchanged.
+    FVector2D ClickAbs;
+    if (!MoveCursorToPixel(Client, FVector2D(CX, CY), /*bViewportRelative=*/false, ClickAbs))
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_click_widget: could not position the cursor"));
     SendMouseButton(Client, EKeys::LeftMouseButton, IE_Pressed);
     SendMouseButton(Client, EKeys::LeftMouseButton, IE_Released);
+    const bool bCaptureCleared = ResetPointerStateAfterRelease();
 
     FString Type, Text;
     Best->TryGetStringField(TEXT("type"), Type);
@@ -1596,6 +1615,7 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEClickWidget(const TSharedPtr<FJsonOb
     // left focus on the SViewport did not hit the UI, and that is otherwise
     // invisible until something later fails.
     R->SetStringField(TEXT("focused_widget_after"), FocusedWidgetType());
+    R->SetBoolField(TEXT("capture_cleared"), bCaptureCleared);
     bool bEnabled = true, bInteractive = false;
     Best->TryGetBoolField(TEXT("enabled"), bEnabled);
     Best->TryGetBoolField(TEXT("interactive"), bInteractive);
