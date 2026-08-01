@@ -34,7 +34,7 @@ describe('ui_set_default_font', () => {
   it('rewrites only the widgets still on an engine font', async () => {
     ue = scriptedUe()
       .replies('ui_layout_snapshot', snapshot([engineText('Title'), projectText('Body'), engineText('Label')]))
-      .replies('ui_set_text_style', { ok: true });
+      .replies('ui_set_widget_properties', { succeeded: 1, failed: 0 });
 
     const r = await uiSetDefaultFontHandler(
       { widget_blueprint_path: BP, font_asset: PROJECT_FONT },
@@ -43,8 +43,11 @@ describe('ui_set_default_font', () => {
     const body = JSON.parse(textOf(r)) as { changed_count: number; changed: Array<{ widget: string }> };
     expect(body.changed_count).toBe(2);
     expect(body.changed.map((c) => c.widget)).toEqual(['Title', 'Label']);
-    // Body was already on the project font and must not be touched.
-    expect(ue.calls.filter((c) => c.cmd === 'ui_set_text_style')).toHaveLength(2);
+    // Body was already on the project font and must not be touched. The wire
+    // command is ui_set_widget_properties — 'ui_set_text_style' is a TS tool
+    // name the plugin does not know (the old re-dispatch bug).
+    expect(ue.calls.filter((c) => c.cmd === 'ui_set_widget_properties')).toHaveLength(2);
+    expect(ue.calls.some((c) => c.cmd === 'ui_set_text_style')).toBe(false);
   });
 
   it('always sends font_asset AND typeface together', async () => {
@@ -53,28 +56,28 @@ describe('ui_set_default_font', () => {
     // typeface leaves Roboto Bold in place and still reports success.
     ue = scriptedUe()
       .replies('ui_layout_snapshot', snapshot([engineText('Title')]))
-      .replies('ui_set_text_style', { ok: true });
+      .replies('ui_set_widget_properties', { succeeded: 1, failed: 0 });
 
     await uiSetDefaultFontHandler({ widget_blueprint_path: BP, font_asset: PROJECT_FONT }, {} as never);
-    expect(ue.paramsFor('ui_set_text_style')).toMatchObject({
+    expect(ue.paramsFor('ui_set_widget_properties')).toMatchObject({
       widget_name: 'Title',
-      font_asset: PROJECT_FONT,
-      typeface: 'Regular',
+      properties: { Font: { FontObject: PROJECT_FONT, TypefaceFontName: 'Regular' } },
     });
   });
 
   it('defaults the typeface to Regular, not the engine default Bold', async () => {
     ue = scriptedUe()
       .replies('ui_layout_snapshot', snapshot([engineText('Title')]))
-      .replies('ui_set_text_style', { ok: true });
+      .replies('ui_set_widget_properties', { succeeded: 1, failed: 0 });
     await uiSetDefaultFontHandler({ widget_blueprint_path: BP, font_asset: PROJECT_FONT }, {} as never);
-    expect(ue.paramsFor('ui_set_text_style').typeface).toBe('Regular');
+    const font = (ue.paramsFor('ui_set_widget_properties').properties as { Font: Record<string, unknown> }).Font;
+    expect(font.TypefaceFontName).toBe('Regular');
   });
 
   it('touches every text widget when only_engine_fonts is false', async () => {
     ue = scriptedUe()
       .replies('ui_layout_snapshot', snapshot([engineText('Title'), projectText('Body')]))
-      .replies('ui_set_text_style', { ok: true });
+      .replies('ui_set_widget_properties', { succeeded: 1, failed: 0 });
     const r = await uiSetDefaultFontHandler(
       { widget_blueprint_path: BP, font_asset: PROJECT_FONT, only_engine_fonts: false },
       {} as never,
@@ -90,7 +93,7 @@ describe('ui_set_default_font', () => {
     );
     const body = JSON.parse(textOf(r)) as { would_change_count: number };
     expect(body.would_change_count).toBe(1);
-    expect(ue.calls.some((c) => c.cmd === 'ui_set_text_style')).toBe(false);
+    expect(ue.calls.some((c) => c.cmd === 'ui_set_widget_properties')).toBe(false);
   });
 
   it('does NOT report an unlaid-out blueprint as a clean sweep', async () => {
@@ -127,7 +130,7 @@ describe('ui_set_default_font', () => {
   it('reports per-widget failures instead of aborting the sweep', async () => {
     ue = scriptedUe().replies('ui_layout_snapshot', snapshot([engineText('A'), engineText('B')]));
     let call = 0;
-    (ue as unknown as { exec: { on: (c: string, f: () => unknown) => void } }).exec.on('ui_set_text_style', () => {
+    (ue as unknown as { exec: { on: (c: string, f: () => unknown) => void } }).exec.on('ui_set_widget_properties', () => {
       call++;
       return call === 1 ? { ok: false, error: 'widget is read-only' } : { ok: true, data: { ok: true } };
     });

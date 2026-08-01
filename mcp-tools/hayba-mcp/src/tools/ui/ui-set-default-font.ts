@@ -1,7 +1,8 @@
 import { z } from 'zod';
-import type { ToolHandler } from '../types.js';
+import type { ToolHandler, ToolResult } from '../types.js';
 import { executeCommand } from '../tool-executor.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
+import { uiSetTextStyleHandler } from './ui-set-text-style.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'high',
@@ -52,7 +53,7 @@ interface SnapshotWidget {
   text_info?: { font_object?: string; typeface?: string };
 }
 
-export const uiSetDefaultFontHandler: ToolHandler = async (args) => {
+export const uiSetDefaultFontHandler: ToolHandler = async (args, session) => {
   const parsed = schema.safeParse(args);
   if (!parsed.success) {
     return { content: [{ type: 'text', text: `Validation error: ${parsed.error.message}` }], isError: true };
@@ -127,17 +128,23 @@ export const uiSetDefaultFontHandler: ToolHandler = async (args) => {
   const changed: Array<{ widget: string; from?: string }> = [];
   const failed: Array<{ widget: string; error: string }> = [];
 
+  const firstText = (r: ToolResult): string => r.content.find((c) => c.type === 'text')?.text ?? 'unknown error';
+
   for (const w of candidates) {
     try {
       // font_asset AND typeface together, always: passing one without the other
       // is the exact mistake this tool exists to undo.
-      await executeCommand('ui_set_text_style', {
-        widget_blueprint_path,
-        widget_name: w.name,
-        font_asset,
-        typeface,
-      });
-      changed.push({ widget: w.name, from: w.text_info?.font_object });
+      //
+      // Through the ui_set_text_style HANDLER, not executeCommand with its
+      // name: 'ui_set_text_style' is a TS-layer tool, not a UE command, so the
+      // string re-dispatch came back "Unknown command" from the plugin (same
+      // root cause as the ui_copy_style defect fixed alongside this).
+      const r = await uiSetTextStyleHandler(
+        { widget_blueprint_path, widget_name: w.name, font_asset, typeface },
+        session,
+      );
+      if (r.isError) failed.push({ widget: w.name, error: firstText(r) });
+      else changed.push({ widget: w.name, from: w.text_info?.font_object });
     } catch (e) {
       failed.push({ widget: w.name, error: e instanceof Error ? e.message : String(e) });
     }
