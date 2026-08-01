@@ -93,6 +93,16 @@ namespace
         if (Params.IsValid())
         {
             Params->TryGetStringField(TEXT("filter_pattern"), FilterPattern);
+            // `filter` is what callers actually type. Live finding: test_list
+            // {filter:"Aphrosia.CharacterPanelViewModel"} returned all 7111
+            // engine tests, because the legacy dispatch route validates
+            // nothing and this handler only read `filter_pattern` — the
+            // misnamed param fell on the floor and the response looked like
+            // "the filter doesn't work". Accept both spellings.
+            if (FilterPattern.IsEmpty())
+            {
+                Params->TryGetStringField(TEXT("filter"), FilterPattern);
+            }
             Params->TryGetStringField(TEXT("category"),       CategoryFilter);
         }
 
@@ -123,6 +133,10 @@ namespace
         Out->SetArrayField(TEXT("tests"), JsonTests);
         Out->SetNumberField(TEXT("count"), JsonTests.Num());
         Out->SetNumberField(TEXT("total_discovered"), AllTests.Num());
+        // Echo what was actually applied, so "the filter didn't filter" and
+        // "the filter never arrived" are distinguishable from the response.
+        if (!FilterPattern.IsEmpty()) Out->SetStringField(TEXT("filter"),   FilterPattern);
+        if (!CategoryFilter.IsEmpty()) Out->SetStringField(TEXT("category"), CategoryFilter);
         return FHaybaHandlerResult::Ok(Out);
     }
 

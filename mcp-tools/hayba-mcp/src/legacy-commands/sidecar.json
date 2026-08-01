@@ -304,7 +304,13 @@
           "name": "filter_pattern",
           "type": "string",
           "required": false,
-          "description": "Substring filter on display name or full path"
+          "description": "Substring filter on display name or full path (alias: filter)"
+        },
+        {
+          "name": "filter",
+          "type": "string",
+          "required": false,
+          "description": "Alias of filter_pattern — substring filter on display name or full path. Accepted because it is the spelling callers reach for; it used to be silently ignored and the call returned all ~7000 engine tests."
         },
         {
           "name": "category",
@@ -333,7 +339,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Enumerate registered automation tests via FAutomationTestFramework directly (no controller/session-frontend needed)."
+      "notes": "Enumerate registered automation tests via FAutomationTestFramework directly (no controller/session-frontend needed). Name-substring filtering: pass filter_pattern (or its alias filter); the response echoes the applied filter so a dropped param is visible."
     },
     "test_run": {
       "aliases": [],
