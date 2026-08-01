@@ -572,12 +572,10 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEScreenshot(const TSharedPtr<FJsonObj
 
     FString Filename;
     if (P.IsValid()) P->TryGetStringField(TEXT("filename"), Filename);
-    if (Filename.IsEmpty())
-    {
-        Filename = FPaths::ProjectSavedDir() / TEXT("Screenshots") /
-                   FString::Printf(TEXT("HaybaPIE_%s.png"),
-                                   *FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S")));
-    }
+    // `path` accepted as an alias: the object_* tools call the same idea
+    // `path`, and callers reach for it. Silently ignoring it is how the field
+    // ended up polling a file that was never going to be the one checked.
+    if (Filename.IsEmpty() && P.IsValid()) P->TryGetStringField(TEXT("path"), Filename);
 
     // `check_only` reports whether a previously requested file has landed, so a
     // caller can poll without issuing another capture.
@@ -586,11 +584,31 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEScreenshot(const TSharedPtr<FJsonObj
 
     if (bCheckOnly)
     {
+        // check_only asks about a PREVIOUS capture, so minting a fresh
+        // timestamped default here is never right: the field repro polled with
+        // the exact filename the capture call returned, an upper layer dropped
+        // the param, and this branch invented a brand-new name that could not
+        // exist — {captured:false} forever, for a file already on disk. No
+        // filename means there is nothing to check; say so instead.
+        if (Filename.IsEmpty())
+        {
+            return FHaybaHandlerResult::Err(
+                TEXT("editor_pie_screenshot: check_only:true requires 'filename' — pass the exact filename ")
+                TEXT("the capture call returned. Without it there is no file to check, and inventing a new ")
+                TEXT("timestamped name would report captured:false forever."));
+        }
         TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
         R->SetStringField(TEXT("filename"), Filename);
         R->SetBoolField(TEXT("captured"), FPaths::FileExists(Filename));
         R->SetBoolField(TEXT("requested"), false);
         return FHaybaHandlerResult::Ok(R);
+    }
+
+    if (Filename.IsEmpty())
+    {
+        Filename = FPaths::ProjectSavedDir() / TEXT("Screenshots") /
+                   FString::Printf(TEXT("HaybaPIE_%s.png"),
+                                   *FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S")));
     }
 
     // Default to INCLUDING the UI: a PIE screenshot is almost always taken to see the

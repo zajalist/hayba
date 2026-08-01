@@ -87,6 +87,34 @@ describe('arguments survive the trip', () => {
   });
 });
 
+describe('pie_screenshot check_only polls the file the caller named', () => {
+  it('forwards filename on a check_only poll', async () => {
+    ue = scriptedUe().replies('editor_pie_screenshot', { filename: 'D:/Saved/HaybaPIE_x.png', captured: true, requested: false });
+    await pieScreenshotHandler({ filename: 'D:/Saved/HaybaPIE_x.png', check_only: true }, session);
+    expect(ue.paramsFor('editor_pie_screenshot')).toMatchObject({
+      filename: 'D:/Saved/HaybaPIE_x.png',
+      check_only: true,
+    });
+  });
+
+  it('accepts `path` as an alias and forwards it as filename', async () => {
+    // The object_* tools call the same idea `path`; stripping it silently made
+    // check_only polls target a fresh timestamped file that never existed.
+    ue = scriptedUe().replies('editor_pie_screenshot', { captured: true, requested: false });
+    await pieScreenshotHandler({ path: 'D:/Saved/HaybaPIE_x.png', check_only: true }, session);
+    const p = ue.paramsFor('editor_pie_screenshot');
+    expect(p.filename).toBe('D:/Saved/HaybaPIE_x.png');
+    expect(p).not.toHaveProperty('path');
+  });
+
+  it('rejects unknown parameter names instead of stripping them', async () => {
+    ue = scriptedUe().replies('editor_pie_screenshot', { ok: true });
+    const r = await pieScreenshotHandler({ file: 'D:/Saved/HaybaPIE_x.png', check_only: true }, session);
+    expect(r.isError).toBe(true);
+    expect(ue.calls).toHaveLength(0);
+  });
+});
+
 describe('bad arguments are rejected before reaching UE', () => {
   it('click_widget refuses an empty match instead of clicking something arbitrary', async () => {
     ue = scriptedUe().replies('editor_pie_click_widget', { ok: true });
