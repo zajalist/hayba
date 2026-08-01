@@ -202,6 +202,35 @@ There is a search benchmark: `src/tools/routing/search-quality.test.ts`. It
 **will** catch a description that oversells. When it fails, the description is
 usually wrong, not the benchmark — resist tuning for the test.
 
+### Step 3b — Tool names and command names are different namespaces
+
+`executeCommand(name, …)` puts `name` **on the TCP socket**. It must be a
+command the **plugin** implements. It is *not* the place to call another MCP
+tool, even though the two namespaces look identical.
+
+`ui_copy_style` and `ui_set_default_font` both shipped doing
+`executeCommand('ui_set_brush', …)` and `executeCommand('ui_set_text_style', …)`.
+Those are TS-layer tools that translate onto `ui_set_widget_properties` before
+anything reaches the wire, so the plugin answered **"Unknown command:
+ui_set_brush"**. Both tools were dead on arrival.
+
+**Their unit tests were green.** `ScriptedUe` maps arbitrary strings to
+responses, so `scriptedUe().replies('ui_set_brush', …)` cheerfully scripts a
+command that does not exist — the test confirmed the author's wrong model
+instead of the system's actual contract. This is the sharpest form of the
+"verify the effect, not the reply" rule: *a passing test is also just a claim,
+if it asserts the wrong contract.*
+
+- **To re-dispatch another tool, call its exported HANDLER** —
+  `uiSetBrushHandler(args, session)` — never its name over the wire.
+- **When you script a command in a test, ask whether the plugin implements it.**
+  If you cannot point at the `TEXT("…")` in C++ or an entry in
+  `legacy-commands/sidecar.json`, the test is fiction.
+- `wire-command-names.test.ts` now enforces this statically. It also carries a
+  `KNOWN_UNIMPLEMENTED` list of tools that dispatch commands the plugin has
+  never had (the four `fab_*`, `plan_mark_step`, `hayba_request_input`,
+  `hayba_get_user_response`). **Shrink that list; never grow it.**
+
 ### Step 4 — Close the seam bypasses
 ```
 grep -rln "ensureConnected" mcp-tools/hayba-mcp/src/tools/ | grep -v test
