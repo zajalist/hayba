@@ -765,6 +765,46 @@ namespace
         Slate.ProcessMouseMoveEvent(MoveEvent);
     }
 
+    /** Put Slate's synthetic-pointer state back to neutral after a release.
+     *
+     *  Field failure (UE 5.8): press at A, move to B outside the widget,
+     *  release at B — after that sequence synthetic moves stopped updating
+     *  hover (OnHovered never fired again, focus read back "SWindow") until
+     *  PIE restarted, while REAL mouse input kept working. The synthetic
+     *  stream has no OS-level counterpart cleaning up after it: a widget (or
+     *  the game viewport in CaptureDuringMouseDown mode) still holding Slate
+     *  mouse capture after our release keeps every later synthetic move routed
+     *  to itself, so nothing else ever sees MouseEnter/MouseLeave again.
+     *
+     *  Two defensive steps, both no-ops in the healthy case:
+     *    1. if ANY captor survives the release, drop it — after a completed
+     *       press+release pair no UI widget legitimately holds pointer capture;
+     *    2. send one synthetic move at the current position so hover state is
+     *       recomputed from a fresh hit-test rather than left stale.
+     *
+     *  Returns whether a stale captor was actually cleared, so callers can
+     *  surface it — a click that needed this is a click whose release went
+     *  somewhere surprising, and that is worth seeing in the response.
+     *
+     *  Residual risk, documented rather than hidden: a game viewport in
+     *  CapturePermanently mode loses its capture here too and re-acquires on
+     *  the next click into the world. That trade is taken deliberately — these
+     *  tools drive UI, and a dead hover pipeline until PIE restart is worse
+     *  than a mouse-look game needing one extra click. */
+    bool ResetPointerStateAfterRelease()
+    {
+        if (!FSlateApplication::IsInitialized()) return false;
+        FSlateApplication& Slate = FSlateApplication::Get();
+        bool bClearedCapture = false;
+        if (Slate.HasAnyMouseCaptor())
+        {
+            Slate.ReleaseAllPointerCapture();
+            bClearedCapture = true;
+        }
+        SendMouseMove();
+        return bClearedCapture;
+    }
+
     /** The widget Slate will deliver keyboard input to, as a type name.
      *  Empty when nothing holds focus — which is itself the answer to "why did
      *  my text go nowhere". */
@@ -1024,7 +1064,6 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEMouse(const TSharedPtr<FJsonObject>&
         // invisible until the click does nothing.
         R->SetNumberField(TEXT("absolute_x"), Abs.X);
         R->SetNumberField(TEXT("absolute_y"), Abs.Y);
-        R->SetStringField(TEXT("focused_widget_after"), FocusedWidgetType());
     }
 
     if (Action == TEXT("move"))
@@ -1033,16 +1072,21 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEMouse(const TSharedPtr<FJsonObject>&
     }
     else if (Action == TEXT("press"))
     {
+        // No pointer-state reset here: the caller is deliberately holding the
+        // button, and any capture taken by the pressed widget must survive
+        // until the matching release.
         SendMouseButton(Client, Button, IE_Pressed);
     }
     else if (Action == TEXT("release"))
     {
         SendMouseButton(Client, Button, IE_Released);
+        R->SetBoolField(TEXT("capture_cleared"), ResetPointerStateAfterRelease());
     }
     else if (Action == TEXT("click"))
     {
         SendMouseButton(Client, Button, IE_Pressed);
         SendMouseButton(Client, Button, IE_Released);
+        R->SetBoolField(TEXT("capture_cleared"), ResetPointerStateAfterRelease());
     }
     else if (Action == TEXT("double_click"))
     {
@@ -1050,6 +1094,7 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEMouse(const TSharedPtr<FJsonObject>&
         SendMouseButton(Client, Button, IE_Released);
         SendMouseButton(Client, Button, IE_DoubleClick);
         SendMouseButton(Client, Button, IE_Released);
+        R->SetBoolField(TEXT("capture_cleared"), ResetPointerStateAfterRelease());
     }
     else if (Action == TEXT("drag"))
     {
@@ -1069,6 +1114,9 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEMouse(const TSharedPtr<FJsonObject>&
             MoveCursorToPixel(Client, FVector2D(FMath::Lerp(X, ToX, T), FMath::Lerp(Y, ToY, T)), bViewportRelative, Abs);
         }
         SendMouseButton(Client, Button, IE_Released);
+        // The drag-release-outside sequence is the one that reproduced the
+        // stale-hover state in the field (see ResetPointerStateAfterRelease).
+        R->SetBoolField(TEXT("capture_cleared"), ResetPointerStateAfterRelease());
         R->SetNumberField(TEXT("to_x"), ToX);
         R->SetNumberField(TEXT("to_y"), ToY);
     }
@@ -1087,6 +1135,14 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEMouse(const TSharedPtr<FJsonObject>&
         return FHaybaHandlerResult::Err(FString::Printf(
             TEXT("editor_pie_mouse: unknown action '%s' (move, click, double_click, press, release, drag, scroll)"),
             *Action));
+    }
+
+    if (Action != TEXT("scroll"))
+    {
+        // Captured AFTER the action dispatched — it used to be read before the
+        // press/release ran, so for click it reported the PRE-click focus and
+        // "did my click land" was answered with stale information.
+        R->SetStringField(TEXT("focused_widget_after"), FocusedWidgetType());
     }
 
     R->SetStringField(TEXT("button"), ButtonName);
