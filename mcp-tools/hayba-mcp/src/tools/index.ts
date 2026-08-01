@@ -2255,7 +2255,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'ui_set_slot_layout',
     description:
-      'Set CanvasPanel slot layout properties (anchors, position, size, alignment, Z-order) on a designer widget in a Widget Blueprint. For non-Canvas slots use the slot_layout field in ui_set_widget_properties.',
+      'Set CanvasPanel slot layout on a designer widget: anchors (as `anchors` [minX,minY,maxX,maxY], or `anchors_min`+`anchors_max` [x,y] pairs), `position`, `size`, `alignment`, `z_order`, `auto_size`; box/grid slots take `padding`, `fill`, alignments, row/column. Anchors + position + alignment are committed to the CanvasPanelSlot atomically (one LayoutData write). Unknown parameter names are REJECTED with a validation error rather than silently dropped. For non-Canvas slots use the slot_props field in ui_set_widget_properties.',
     meta: uiSetSlotLayoutMeta,
     handler: uiSetSlotLayoutHandler,
     cost: 'low',

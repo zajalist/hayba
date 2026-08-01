@@ -630,11 +630,16 @@ namespace
 
     /** Anchors accept every shape a caller might reasonably send:
      *  flat anchor_min_x/…, an {min_x,…} object, or anchors_min/anchors_max
-     *  as [x,y] pairs (which is what the typed slot-layout tool sends). */
-    static bool TryApplyAnchors(const TSharedPtr<FJsonObject>& Props, UCanvasPanelSlot* CSlot)
+     *  as [x,y] pairs (which is what the typed slot-layout tool sends).
+     *
+     *  Mutates `Anchors` in place and reports whether anything was set. The
+     *  caller owns the surrounding FAnchorData and commits it ONCE via
+     *  UCanvasPanelSlot::SetLayout — this function deliberately never touches
+     *  the slot, so anchors can no longer be written through a different path
+     *  than position/alignment. */
+    static bool TryApplyAnchors(const TSharedPtr<FJsonObject>& Props, FAnchors& Anchors)
     {
         bool bChanged = false;
-        FAnchors Anchors = CSlot->GetAnchors();
 
         double V = 0.0;
         if (Props->TryGetNumberField(TEXT("anchor_min_x"), V)) { Anchors.Minimum.X = V; bChanged = true; }
@@ -659,7 +664,6 @@ namespace
         if (Props->HasField(TEXT("anchors_min"))) { Anchors.Minimum = ParseVec2(Props, TEXT("anchors_min")); bChanged = true; }
         if (Props->HasField(TEXT("anchors_max"))) { Anchors.Maximum = ParseVec2(Props, TEXT("anchors_max")); bChanged = true; }
 
-        if (bChanged) CSlot->SetAnchors(Anchors);
         return bChanged;
     }
 
@@ -697,28 +701,60 @@ namespace
         // CanvasPanelSlot
         if (UCanvasPanelSlot* CSlot = Cast<UCanvasPanelSlot>(Slot))
         {
-            TryApplyAnchors(Props, CSlot);
+            // ONE FAnchorData, ONE commit. The previous code pushed anchors,
+            // position, size and alignment through four separate setters
+            // (SetAnchors / SetOffsets / SetPosition / SetSize / SetAlignment).
+            // Each of those reads its baseline through the slot's GETTERS,
+            // which prefer the live Slate slot over the serialized LayoutData
+            // whenever a preview is attached — so a value could be read from
+            // one place, modified, and written through another, and anchors in
+            // particular could be rebuilt from a stale copy. Field report
+            // (2026-07/08, Aphrosia): ui_set_slot_layout anchors were a silent
+            // no-op and the working workaround was object_set_property with a
+            // full LayoutData literal on the slot. This is that workaround made
+            // first-class: build the complete FAnchorData from the serialized
+            // layout (GetLayout reads LayoutData, never Slate) and commit it
+            // atomically via SetLayout, which writes LayoutData and pushes
+            // offsets + anchors + alignment to any live slot in one step.
+            FAnchorData Layout = CSlot->GetLayout();
+            bool bLayoutChanged = TryApplyAnchors(Props, Layout.Anchors);
 
             double OffX, OffY, OffW, OffH;
             const bool bHasOffX = Props->TryGetNumberField(TEXT("x"), OffX);
             const bool bHasOffY = Props->TryGetNumberField(TEXT("y"), OffY);
             const bool bHasOffW = Props->TryGetNumberField(TEXT("w"), OffW);
             const bool bHasOffH = Props->TryGetNumberField(TEXT("h"), OffH);
-            if (bHasOffX || bHasOffY || bHasOffW || bHasOffH)
-            {
-                FMargin Offsets = CSlot->GetOffsets();
-                if (bHasOffX) Offsets.Left   = OffX;
-                if (bHasOffY) Offsets.Top    = OffY;
-                if (bHasOffW) Offsets.Right  = OffW;
-                if (bHasOffH) Offsets.Bottom = OffH;
-                CSlot->SetOffsets(Offsets);
-            }
+            if (bHasOffX) { Layout.Offsets.Left   = OffX; bLayoutChanged = true; }
+            if (bHasOffY) { Layout.Offsets.Top    = OffY; bLayoutChanged = true; }
+            if (bHasOffW) { Layout.Offsets.Right  = OffW; bLayoutChanged = true; }
+            if (bHasOffH) { Layout.Offsets.Bottom = OffH; bLayoutChanged = true; }
 
             // HasField (not "is non-zero") so a caller CAN move a widget back to
-            // the origin or collapse it to zero size.
-            if (Props->HasField(TEXT("position")))  CSlot->SetPosition(ParseVec2(Props, TEXT("position")));
-            if (Props->HasField(TEXT("size")))      CSlot->SetSize(ParseVec2(Props, TEXT("size")));
-            if (Props->HasField(TEXT("alignment"))) CSlot->SetAlignment(ParseVec2(Props, TEXT("alignment")));
+            // the origin or collapse it to zero size. position/size mirror the
+            // engine's own SetPosition/SetSize: Left/Top and Right/Bottom of
+            // the offsets — under stretched anchors Right/Bottom are margins,
+            // not a size, exactly as in the designer.
+            if (Props->HasField(TEXT("position")))
+            {
+                const FVector2D Pos = ParseVec2(Props, TEXT("position"));
+                Layout.Offsets.Left = Pos.X;
+                Layout.Offsets.Top  = Pos.Y;
+                bLayoutChanged = true;
+            }
+            if (Props->HasField(TEXT("size")))
+            {
+                const FVector2D Sz = ParseVec2(Props, TEXT("size"));
+                Layout.Offsets.Right  = Sz.X;
+                Layout.Offsets.Bottom = Sz.Y;
+                bLayoutChanged = true;
+            }
+            if (Props->HasField(TEXT("alignment")))
+            {
+                Layout.Alignment = ParseVec2(Props, TEXT("alignment"));
+                bLayoutChanged = true;
+            }
+
+            if (bLayoutChanged) CSlot->SetLayout(Layout);
 
             bool bAutoSize = false;
             if (Props->TryGetBoolField(TEXT("auto_size"), bAutoSize))

@@ -115,6 +115,63 @@ describe('ui_set_slot_layout', () => {
     );
     expect(r.isError).toBe(true);
   });
+
+  it('accepts the natural `anchors` spelling as a 4-array', async () => {
+    // Before this, zod's default strip mode silently DELETED `anchors`, the
+    // remaining fields applied, and the tool reported success — the field
+    // conclusion was "anchors are a silent no-op".
+    let seen: Record<string, unknown> | null = null;
+    const exec = new InMemoryToolExecutor().on('ui_set_widget_properties', (p) => {
+      seen = p;
+      return ok({ succeeded: 2, failed: 0 });
+    });
+    setDefaultSender(exec.send);
+
+    const r = await uiSetSlotLayoutHandler(
+      { widget_blueprint_path: '/Game/UI/WBP_Test', widget_name: 'Title', anchors: [0, 0, 1, 1] },
+      undefined as never,
+    );
+    expect(r.isError).toBeFalsy();
+    expect((seen as unknown as { slot_props: Record<string, unknown> }).slot_props).toEqual({
+      anchors_min: [0, 0],
+      anchors_max: [1, 1],
+    });
+  });
+
+  it('accepts `anchors` as {min, max} pairs', async () => {
+    let seen: Record<string, unknown> | null = null;
+    const exec = new InMemoryToolExecutor().on('ui_set_widget_properties', (p) => {
+      seen = p;
+      return ok({ succeeded: 2, failed: 0 });
+    });
+    setDefaultSender(exec.send);
+
+    await uiSetSlotLayoutHandler(
+      {
+        widget_blueprint_path: '/Game/UI/WBP_Test',
+        widget_name: 'Title',
+        anchors: { min: [0.5, 0], max: [0.5, 0] },
+        position: [0, 40],
+      },
+      undefined as never,
+    );
+    expect((seen as unknown as { slot_props: Record<string, unknown> }).slot_props).toEqual({
+      anchors_min: [0.5, 0],
+      anchors_max: [0.5, 0],
+      position: [0, 40],
+    });
+  });
+
+  it('rejects unknown parameter names loudly instead of stripping them', async () => {
+    // The silent-strip failure mode: an invented key used to vanish before the
+    // wire while everything else applied and the call reported success.
+    const r = await uiSetSlotLayoutHandler(
+      { widget_blueprint_path: '/Game/UI/WBP_Test', widget_name: 'Title', anchor: [0, 0, 1, 1] },
+      undefined as never,
+    );
+    expect(r.isError).toBe(true);
+    expect(textOf(r as { content: Array<{ type: string; text: string }> })).toMatch(/anchor/);
+  });
 });
 
 describe('ui_set_widget_properties', () => {
