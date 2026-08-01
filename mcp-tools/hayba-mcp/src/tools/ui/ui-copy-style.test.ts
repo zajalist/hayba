@@ -40,19 +40,45 @@ describe('ui_copy_style', () => {
     // reported them, and exactly what made the broken modal broken.
     ue = scriptedUe()
       .replies('ui_layout_snapshot', { layout_resolved: true, widgets: [workingBorder, brokenBorder] })
-      .replies('ui_set_brush', { ok: true });
+      .replies('ui_set_widget_properties', { succeeded: 1, failed: 0 });
 
     await uiCopyStyleHandler(
       { widget_blueprint_path: BP, from_widget: 'PanelFrame', to_widget: 'ModalFrame', include: ['brush'] },
       {} as never,
     );
 
-    expect(ue.paramsFor('ui_set_brush')).toMatchObject({
+    expect(ue.paramsFor('ui_set_widget_properties')).toMatchObject({
       widget_name: 'ModalFrame',
-      draw_as: 'Box',
-      resource: '/Game/UI/MI_OrnateFrame_Gold',
-      margin: [0.08, 0.08, 0.08, 0.08],
+      properties: {
+        Background: {
+          DrawAs: 'Box',
+          ResourceObject: '/Game/UI/MI_OrnateFrame_Gold',
+          Margin: { Left: 0.08, Top: 0.08, Right: 0.08, Bottom: 0.08 },
+        },
+      },
     });
+  });
+
+  it('reaches UE only through commands the plugin actually registers', async () => {
+    // Regression: this tool used to re-dispatch "ui_set_brush" /
+    // "ui_set_text_style" over the socket. Those are TS-layer tool names, not
+    // UE commands, so the plugin answered "Unknown command: ui_set_brush" —
+    // while the top-level tools of the same name worked, because they translate
+    // onto ui_set_widget_properties first.
+    ue = scriptedUe()
+      .replies('ui_layout_snapshot', { layout_resolved: true, widgets: [workingBorder, brokenBorder] })
+      .replies('ui_set_widget_properties', { succeeded: 1, failed: 0 });
+
+    const r = await uiCopyStyleHandler(
+      { widget_blueprint_path: BP, from_widget: 'PanelFrame', to_widget: 'ModalFrame', include: ['brush'] },
+      {} as never,
+    );
+
+    expect(r.isError).toBeFalsy();
+    const wireCommands = ue.calls.map((c) => c.cmd);
+    expect(wireCommands).not.toContain('ui_set_brush');
+    expect(wireCommands).not.toContain('ui_set_text_style');
+    expect(wireCommands).toContain('ui_set_widget_properties');
   });
 
   it("writes to the TARGET's brush property, not the source's", async () => {
@@ -61,13 +87,15 @@ describe('ui_copy_style', () => {
     const targetImage = { name: 'Icon', class: 'Image', brush_info: { draw_as: 'Image', brush_property: 'Brush' } };
     ue = scriptedUe()
       .replies('ui_layout_snapshot', { layout_resolved: true, widgets: [workingBorder, targetImage] })
-      .replies('ui_set_brush', { ok: true });
+      .replies('ui_set_widget_properties', { succeeded: 1, failed: 0 });
 
     await uiCopyStyleHandler(
       { widget_blueprint_path: BP, from_widget: 'PanelFrame', to_widget: 'Icon', include: ['brush'] },
       {} as never,
     );
-    expect(ue.paramsFor('ui_set_brush').brush_property).toBe('Brush');
+    const props = ue.paramsFor('ui_set_widget_properties').properties as Record<string, unknown>;
+    expect(props).toHaveProperty('Brush');
+    expect(props).not.toHaveProperty('Background');
   });
 
   it('copies font and typeface together', async () => {
@@ -75,16 +103,16 @@ describe('ui_copy_style', () => {
     const dst = { name: 'BadLabel', class: 'TextBlock', text_info: { font_object: '/Engine/EngineFonts/Roboto', typeface: 'Bold' } };
     ue = scriptedUe()
       .replies('ui_layout_snapshot', { layout_resolved: true, widgets: [src, dst] })
-      .replies('ui_set_text_style', { ok: true });
+      .replies('ui_set_widget_properties', { succeeded: 1, failed: 0 });
 
     await uiCopyStyleHandler(
       { widget_blueprint_path: BP, from_widget: 'GoodLabel', to_widget: 'BadLabel', include: ['text'] },
       {} as never,
     );
-    expect(ue.paramsFor('ui_set_text_style')).toMatchObject({
-      font_asset: '/Game/F_Body',
-      typeface: 'Italic',
-      size: 18,
+    expect(ue.paramsFor('ui_set_widget_properties')).toMatchObject({
+      properties: {
+        Font: { FontObject: '/Game/F_Body', TypefaceFontName: 'Italic', Size: 18 },
+      },
     });
   });
 
@@ -99,14 +127,15 @@ describe('ui_copy_style', () => {
     };
     ue = scriptedUe()
       .replies('ui_layout_snapshot', { layout_resolved: true, widgets: [src, { name: 'B', class: 'TextBlock', text_info: {} }] })
-      .replies('ui_set_text_style', { ok: true });
+      .replies('ui_set_widget_properties', { succeeded: 1, failed: 0 });
 
     await uiCopyStyleHandler({ widget_blueprint_path: BP, from_widget: 'GoodLabel', to_widget: 'B' }, {} as never);
-    const sent = ue.paramsFor('ui_set_text_style');
+    const sent = ue.paramsFor('ui_set_widget_properties');
+    const props = sent.properties as Record<string, unknown>;
     // Matching a look must not move the target or overwrite what it says.
-    expect(sent).not.toHaveProperty('text');
-    expect(sent).not.toHaveProperty('x');
-    expect(sent).not.toHaveProperty('width');
+    expect(props).not.toHaveProperty('Text');
+    expect(sent).not.toHaveProperty('slot_props');
+    expect(props).not.toHaveProperty('x');
   });
 
   it('writes nothing on a dry run', async () => {

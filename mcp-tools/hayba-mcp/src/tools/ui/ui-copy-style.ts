@@ -1,7 +1,9 @@
 import { z } from 'zod';
-import type { ToolHandler } from '../types.js';
+import type { ToolHandler, ToolResult } from '../types.js';
 import { executeCommand } from '../tool-executor.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
+import { uiSetBrushHandler } from './ui-set-brush.js';
+import { uiSetTextStyleHandler } from './ui-set-text-style.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'high',
@@ -66,7 +68,11 @@ async function snapshotOf(path: string): Promise<SnapWidget[]> {
   return snap.widgets ?? [];
 }
 
-export const uiCopyStyleHandler: ToolHandler = async (args) => {
+function firstText(r: ToolResult): string {
+  return r.content.find((c) => c.type === 'text')?.text ?? 'unknown error';
+}
+
+export const uiCopyStyleHandler: ToolHandler = async (args, session) => {
   const parsed = schema.safeParse(args);
   if (!parsed.success) {
     return { content: [{ type: 'text', text: `Validation error: ${parsed.error.message}` }], isError: true };
@@ -152,14 +158,22 @@ export const uiCopyStyleHandler: ToolHandler = async (args) => {
   const copied: string[] = [];
   const failed: Array<{ aspect: string; error: string }> = [];
   for (const p of planned) {
+    // Dispatch through the SAME TS handlers that back the top-level
+    // ui_set_brush / ui_set_text_style tools. Those names are TS-layer tools,
+    // not UE commands — they translate onto ui_set_widget_properties before
+    // anything reaches the wire. The previous code sent the tool NAMES over
+    // the socket, so the plugin's command registry (which has no such entries)
+    // answered "Unknown command: ui_set_brush" while invoking ui_set_brush as
+    // a top-level tool worked fine. Sharing the handler keeps one source of
+    // truth for the brush/font field mapping.
+    const handler = p.aspect === 'brush' ? uiSetBrushHandler : uiSetTextStyleHandler;
     try {
-      const cmd = p.aspect === 'brush' ? 'ui_set_brush' : 'ui_set_text_style';
-      await executeCommand(cmd, {
-        widget_blueprint_path: targetPath,
-        widget_name: to_widget,
-        ...p.values,
-      });
-      copied.push(p.aspect);
+      const r = await handler(
+        { widget_blueprint_path: targetPath, widget_name: to_widget, ...p.values },
+        session,
+      );
+      if (r.isError) failed.push({ aspect: p.aspect, error: firstText(r) });
+      else copied.push(p.aspect);
     } catch (e) {
       failed.push({ aspect: p.aspect, error: e instanceof Error ? e.message : String(e) });
     }
