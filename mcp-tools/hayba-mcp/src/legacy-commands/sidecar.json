@@ -251,7 +251,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Generic reflection read on any loadable UObject — replaces get_editor_property python_run pokes. Values are UE ExportText strings."
+      "notes": "Generic reflection read on any loadable UObject — replaces get_editor_property python_run pokes. Values are UE ExportText strings. PARAMS: `path` (object/asset path) + optional `names` — NOT widget_blueprint_path/widget_name; those belong to the ui_* tools. To reach a widget's slot, pass the slot's full object path as `path`."
     },
     "object_set_property": {
       "aliases": [],
@@ -294,7 +294,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Generic reflection write on any loadable UObject (Modify + PostEditChange + MarkPackageDirty) — replaces set_editor_property python_run pokes. For textures prefer texture_set_settings; for material nodes prefer the material_* tools."
+      "notes": "Generic reflection write on any loadable UObject (Modify + PostEditChange + MarkPackageDirty) — replaces set_editor_property python_run pokes. PARAMS: `path` (object/asset path) + `properties` (name→value map) — NOT widget_blueprint_path/widget_name/property; those belong to the ui_* tools. For textures prefer texture_set_settings; for material nodes prefer the material_* tools."
     },
     "test_list": {
       "aliases": [],
