@@ -2861,13 +2861,19 @@
           "name": "x",
           "type": "number",
           "required": false,
-          "description": "target x in viewport px"
+          "description": "target x, ABSOLUTE desktop px by default (what editor_pie_widget_tree reports) — see coordinate_space. Optional for scroll: positions the cursor before the wheel."
         },
         {
           "name": "y",
           "type": "number",
           "required": false,
-          "description": "target y in viewport px"
+          "description": "target y, ABSOLUTE desktop px by default (what editor_pie_widget_tree reports) — see coordinate_space. Optional for scroll: positions the cursor before the wheel."
+        },
+        {
+          "name": "coordinate_space",
+          "type": "string",
+          "required": false,
+          "description": "absolute (default, desktop px) | viewport (relative to the game window's top-left)"
         },
         {
           "name": "button",
@@ -2888,19 +2894,61 @@
           "description": "drag end y"
         },
         {
+          "name": "steps",
+          "type": "number",
+          "required": false,
+          "description": "intermediate drag positions (default 8, clamped 1..256)"
+        },
+        {
           "name": "delta",
           "type": "number",
           "required": false,
-          "description": "scroll delta"
+          "description": "wheel notches for scroll (default 1, positive scrolls up)"
         }
       ],
       "returns": {
         "shape": "object",
-        "fields": []
+        "fields": [
+          {
+            "name": "cursor_delta_x",
+            "type": "number",
+            "description": "FPointerEvent::GetCursorDelta of the last move dispatched. ZERO means no widget that tracks movement can have responded — that is a harness result, not a widget result."
+          },
+          {
+            "name": "cursor_delta_y",
+            "type": "number",
+            "description": "As cursor_delta_x."
+          },
+          {
+            "name": "moves_delivered",
+            "type": "number",
+            "description": "How many moves carried a non-zero delta. 0 on a drag means no gesture was performed."
+          },
+          {
+            "name": "mouse_captor",
+            "type": "string",
+            "description": "Type name of the widget holding Slate pointer capture after the action, or null. A drag against a null captor cannot work: SScrollBar::OnMouseMove and friends gate on HasMouseCapture()."
+          },
+          {
+            "name": "captor_after_press",
+            "type": "string",
+            "description": "drag only — who took capture in answer to the press."
+          },
+          {
+            "name": "pressed_buttons",
+            "type": "array",
+            "description": "Slate's held mouse buttons after the action. Moves between a press and a release carry this set, which is what SScrollBox's right-click drag scrolling reads."
+          },
+          {
+            "name": "handled_by",
+            "type": "string",
+            "description": "scroll only — slate | game_viewport | nothing."
+          }
+        ]
       },
       "agent_callable": true,
       "has_ts_wrapper": true,
-      "notes": "Move, click, double_click, press, release, drag or scroll in the running game. Drag interpolates intermediate positions because widgets tracking deltas ignore a single jump."
+      "notes": "Move, click, double_click, press, release, drag or scroll in the running game. All of it is synthesised as real Slate FPointerEvents, so UI widgets see it: the wheel goes through ProcessMouseWheelOrGestureEvent (it used to go to game input only and reached no widget at all), and drag moves carry the held button plus a genuine non-zero cursor delta (they used to carry neither, because SetCursorPos writes the destination to Slate's previous-position slot too, so every synthetic move had a zero delta). Judge a gesture by cursor_delta/moves_delivered/mouse_captor in the response, not by assuming it landed."
     },
     "editor_pie_type_text": {
       "aliases": [],

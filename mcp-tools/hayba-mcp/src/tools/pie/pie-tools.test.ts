@@ -85,6 +85,33 @@ describe('arguments survive the trip', () => {
     await pieTypeTextHandler({ text: 'hello  world' }, session);
     expect(ue.paramsFor('editor_pie_type_text').text).toBe('hello  world');
   });
+
+  it('drag forwards the destination and the step count', async () => {
+    // A drag that arrives without to_x/to_y presses and never moves, which reads
+    // downstream as "the widget ignored the drag".
+    ue = scriptedUe().replies('editor_pie_mouse', { ok: true });
+    await pieMouseHandler({ action: 'drag', x: 1424, y: 700, to_x: 1424, to_y: 1000, steps: 16 }, session);
+    expect(ue.paramsFor('editor_pie_mouse')).toMatchObject({
+      action: 'drag',
+      to_x: 1424,
+      to_y: 1000,
+      steps: 16,
+    });
+  });
+
+  it('scroll forwards a cursor position, so the wheel has a target', async () => {
+    // A wheel is delivered to whatever is under the cursor. Without x/y it lands
+    // wherever the previous call left the pointer, which is not something the
+    // caller can reason about — and was one reason wheel results were unreadable.
+    ue = scriptedUe().replies('editor_pie_mouse', { ok: true, handled_by: 'slate' });
+    await pieMouseHandler({ action: 'scroll', x: 1200, y: 800, delta: -3 }, session);
+    expect(ue.paramsFor('editor_pie_mouse')).toMatchObject({
+      action: 'scroll',
+      x: 1200,
+      y: 800,
+      delta: -3,
+    });
+  });
 });
 
 describe('pie_screenshot check_only polls the file the caller named', () => {
@@ -216,6 +243,82 @@ describe('cross-language contract with the C++ handler', () => {
       // a key-down-only BackSpace reports success and erases nothing.
       expect(cpp).toContain("Companion = TEXT('\\b')");
       expect(cpp).toContain("Companion = TEXT('\\r')");
+    });
+
+    it('delivers the mouse wheel via ProcessMouseWheelOrGestureEvent', () => {
+      // Third instance of the same bug, on the third input device: the wheel was
+      // UGameViewportClient::InputKey(MouseWheelAxis), which no SWidget listens
+      // to. SScrollBox::OnMouseWheel therefore could not fire, and two critics
+      // reported a working ScrollBox as dead because they measured it with a
+      // wheel that reached nothing.
+      expect(cpp).toContain('ProcessMouseWheelOrGestureEvent');
+    });
+
+    it('only falls back to the game viewport when Slate declined the wheel', () => {
+      // Sending both would double-apply every notch, because Slate's own route
+      // already reaches the viewport through SViewport::OnMouseWheel.
+      expect(cpp).toMatch(/if\s*\(!bSlateHandled\s*&&\s*Client->Viewport\)/);
+    });
+  });
+
+  // ── capture + delta: the second half of the same defect ────────────────────
+  //
+  // A held gesture (scrollbar thumb, slider, splitter, marquee, drag-and-drop)
+  // is consumed off the MOVE events between the press and the release, and
+  // SScrollBar::OnMouseMove — the reference consumer — reads exactly two things:
+  //
+  //     if (this->HasMouseCapture())
+  //         if (!MouseEvent.GetCursorDelta().IsZero()) ...
+  //
+  // The harness supplied neither. Capture came free once the press was routed
+  // through Slate; the delta did not, and the reason is subtle enough that it
+  // will be "simplified" back if nothing guards it: FSlateApplication::SetCursorPos
+  // ends in FSlateUser::UpdatePointerPosition, which writes the destination to
+  // BOTH the current and the previous pointer position. Read the position after
+  // moving and the delta is always (0,0).
+  describe('synthetic moves carry a real cursor delta and the held button', () => {
+    // lastIndexOf, not indexOf: both helpers are forward-declared near the top
+    // of the anonymous namespace, so the first hit is a declaration and the
+    // slice would come back empty (and every assertion below would pass
+    // vacuously — which is why 'the move helper was found' exists).
+    const moveFn = cpp.slice(
+      cpp.lastIndexOf('FVector2D SendPointerMoveTo(const FVector2D& AbsTo)'),
+      cpp.lastIndexOf('void SendHoverRefresh()'),
+    );
+
+    it('the move helper was found', () => {
+      // Guards the slice: a rename would otherwise make every case below pass
+      // against an empty string.
+      expect(moveFn.length).toBeGreaterThan(200);
+      expect(moveFn).toContain('ProcessMouseMoveEvent');
+    });
+
+    it('reads the origin BEFORE moving the cursor', () => {
+      const read = moveFn.indexOf('Slate.GetCursorPos()');
+      const move = moveFn.indexOf('Slate.SetCursorPos(');
+      expect(read).toBeGreaterThan(-1);
+      expect(move).toBeGreaterThan(-1);
+      expect(read).toBeLessThan(move);
+    });
+
+    it('never builds a move from GetLastCursorPos', () => {
+      // THE REGRESSION, stated exactly. After a SetCursorPos, GetLastCursorPos()
+      // is the destination — so this pair always yields a zero delta.
+      expect(moveFn).not.toContain('GetLastCursorPos');
+    });
+
+    it('carries Slate pressed buttons rather than an empty set', () => {
+      // SScrollBox gates right-click drag scrolling on
+      // MouseEvent.IsMouseButtonDown(EKeys::RightMouseButton); an empty set here
+      // makes that gesture impossible no matter how good the delta is.
+      expect(moveFn).toContain('Slate.GetPressedMouseButtons()');
+      expect(moveFn).not.toContain('TSet<FKey>()');
+    });
+
+    it('reports the two facts a caller needs to tell a harness fault from a widget fault', () => {
+      expect(cpp).toContain('cursor_delta_x');
+      expect(cpp).toContain('moves_delivered');
+      expect(cpp).toContain('mouse_captor');
     });
   });
 

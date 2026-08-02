@@ -264,3 +264,123 @@ bool FHaybaMCPPieCoordSpaceTest::RunTest(const FString& Parameters)
 
     return true;
 }
+
+// ── PIE drag gesture planning ───────────────────────────────────────────────
+//
+// Regression test for the dead-drag defect (Aphrosia docs/gauntlet/scroll-dossier.md,
+// 2026-08-02): a press on a scrollbar thumb followed by moves left the scroll
+// offset at exactly 0.000000, across both action:"drag" and manual
+// press/move/move/release, and right-click drag-scrolling on the content failed
+// identically.
+//
+// SScrollBar::OnMouseMove is the reference consumer and is unambiguous:
+//
+//     if (this->HasMouseCapture())
+//         if (!MouseEvent.GetCursorDelta().IsZero())
+//             ... scroll ...
+//     return FReply::Unhandled();
+//
+// So the ONE property every dispatched move must have is a non-zero cursor
+// delta. The runtime half of that (read the origin before SetCursorPos, because
+// FSlateUser::UpdatePointerPosition writes the destination to BOTH the current
+// and the previous position) needs a live FSlateApplication and is covered by
+// docs/VERIFY-pie-input-gestures.md. This test covers the half that is pure
+// arithmetic: that the planned path never contains a step Slate would quantise
+// down to a zero delta, and that it ends where the caller said.
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FHaybaMCPPieDragPathTest,
+    "Hayba.MCP.PIE.DragPath",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPPieDragPathTest::RunTest(const FString& Parameters)
+{
+    using namespace HaybaPieGesture;
+
+    // The measured case: dragging the Profile chronicle scrollbar thumb down the
+    // track, desktop (1424.6, 700) -> (1424.6, 1000).
+    {
+        const FVector2D Start(1424.6, 700.0);
+        const FVector2D End(1424.6, 1000.0);
+        const TArray<FVector2D> Path = PlanDragPath(Start, End, 8);
+
+        TestEqual(TEXT("a 300px drag in 8 steps plans 8 waypoints"), Path.Num(), 8);
+
+        // THE REGRESSION. Every consecutive pair must differ, because a repeated
+        // position is a zero delta and a zero delta is not a small move — it is
+        // no move at all as far as SScrollBar is concerned.
+        FVector2D Prev = QuantiseToPixel(Start);
+        for (int32 i = 0; i < Path.Num(); ++i)
+        {
+            const FVector2D Delta = Path[i] - Prev;
+            TestTrue(FString::Printf(TEXT("step %d carries a non-zero cursor delta"), i), !Delta.IsZero());
+            Prev = Path[i];
+        }
+
+        // A drag has to finish where it was told to finish, or the caller's
+        // arithmetic about "how far did the thumb travel" is wrong.
+        TestEqual(TEXT("the path ends on the destination"), Path.Last().Y, 1000.0);
+        TestEqual(TEXT("the path holds the unchanging axis"), Path.Last().X, 1424.0);
+    }
+
+    // Sub-pixel steps are the trap. Slate truncates pointer positions to whole
+    // pixels (FSlateUser::SetCursorPosition takes int32), so a 3px drag split
+    // into 8 steps has five waypoints that land on a pixel already visited.
+    // Dispatching those is dispatching zero-delta moves.
+    {
+        const TArray<FVector2D> Path = PlanDragPath(FVector2D(100.0, 100.0), FVector2D(100.0, 103.0), 8);
+        TestEqual(TEXT("a 3px drag plans exactly 3 whole-pixel waypoints"), Path.Num(), 3);
+        TestEqual(TEXT("first waypoint"), Path[0].Y, 101.0);
+        TestEqual(TEXT("last waypoint is the destination"), Path.Last().Y, 103.0);
+    }
+
+    // A zero-length drag must plan NOTHING rather than a move that cannot move.
+    // Reporting "0 moves delivered" is the honest answer; silently dispatching
+    // eight no-ops and returning dispatched:true is how a harness fault gets
+    // read as a widget fault.
+    {
+        const TArray<FVector2D> Path = PlanDragPath(FVector2D(500.0, 500.0), FVector2D(500.4, 500.4), 8);
+        TestEqual(TEXT("a sub-pixel drag plans no moves at all"), Path.Num(), 0);
+    }
+
+    // Diagonal, and backwards: the fix must not be axis- or sign-specific. The
+    // right-click drag-scroll path reads the same delta with the opposite sign.
+    {
+        const TArray<FVector2D> Path = PlanDragPath(FVector2D(800.0, 600.0), FVector2D(700.0, 500.0), 4);
+        TestEqual(TEXT("backwards diagonal plans 4 waypoints"), Path.Num(), 4);
+        TestEqual(TEXT("ends at the destination x"), Path.Last().X, 700.0);
+        TestEqual(TEXT("ends at the destination y"), Path.Last().Y, 500.0);
+        FVector2D Prev = QuantiseToPixel(FVector2D(800.0, 600.0));
+        for (const FVector2D& Pt : Path)
+        {
+            TestTrue(TEXT("every backwards step moves"), !(Pt - Prev).IsZero());
+            Prev = Pt;
+        }
+    }
+
+    // Steps is clamped, not trusted: steps:0 would divide by zero and a caller
+    // asking for 100000 would hang the game thread inside one command.
+    {
+        TestEqual(TEXT("steps:0 still plans the gesture"), PlanDragPath(FVector2D(0, 0), FVector2D(0, 50), 0).Num(), 1);
+        TestTrue(TEXT("steps is clamped from above"), PlanDragPath(FVector2D(0, 0), FVector2D(0, 5000), 100000).Num() <= 256);
+    }
+
+    // The quantiser must model the engine's cast, not a rounding of convenience.
+    // FSlateUser::SetCursorPosition does (int32)X — truncation toward zero.
+    {
+        TestEqual(TEXT("truncates, does not round"), QuantiseToPixel(FVector2D(10.9, 10.9)).X, 10.0);
+        TestEqual(TEXT("truncates toward zero on the left of the primary display"),
+                  QuantiseToPixel(FVector2D(-10.9, 0.0)).X, -10.0);
+    }
+
+    // DeltaFor is what callers should reason with: the delta Slate will REPORT,
+    // not the one they asked for.
+    {
+        TestEqual(TEXT("a sub-pixel request reports a zero delta"),
+                  DeltaFor(FVector2D(10.1, 10.1), FVector2D(10.9, 10.9)).Y, 0.0);
+        TestEqual(TEXT("a whole-pixel request reports it"),
+                  DeltaFor(FVector2D(10.0, 10.0), FVector2D(10.0, 25.0)).Y, 15.0);
+    }
+
+    return true;
+}

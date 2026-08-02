@@ -190,3 +190,83 @@ namespace HaybaPieCoords
         return bViewportRelative ? (WindowOrigin + Input) : Input;
     }
 }
+
+/**
+ * PIE pointer gestures — the pure arithmetic behind a synthetic drag.
+ *
+ * A Slate widget that tracks a held gesture reads exactly two things off the
+ * FPointerEvent it receives on a move: whether the button is still down
+ * (FPointerEvent::IsMouseButtonDown) and how far the pointer travelled
+ * (FPointerEvent::GetCursorDelta). SScrollBar::OnMouseMove is the reference
+ * consumer and is blunt about it:
+ *
+ *     if (this->HasMouseCapture())
+ *         if (!MouseEvent.GetCursorDelta().IsZero())
+ *             ... scroll ...
+ *     return FReply::Unhandled();
+ *
+ * A move with a zero delta is therefore not a weak move, it is NO move. This
+ * namespace exists so the "is this step actually going to move anything?"
+ * question is answered by testable arithmetic instead of by hoping.
+ *
+ * The quantisation matters and is not incidental: FSlateApplication::SetCursorPos
+ * forwards to FSlateUser::SetCursorPosition(int32, int32), which casts. Two
+ * waypoints less than a pixel apart therefore land on the same stored position
+ * and produce a zero delta no matter what the caller asked for — a 6px drag
+ * split into 8 steps is mostly no-ops. PlanDragPath drops those steps rather
+ * than dispatching moves that cannot do anything.
+ */
+namespace HaybaPieGesture
+{
+    /**
+     * The position Slate will actually store for a requested pointer position.
+     *
+     * Mirrors FSlateUser::SetCursorPosition's `(int32)` cast — truncation toward
+     * zero, not floor, because a multi-monitor desktop has negative coordinates
+     * to the left of the primary display and the engine truncates there too.
+     */
+    inline FVector2D QuantiseToPixel(const FVector2D& P)
+    {
+        return FVector2D((double)(int32)P.X, (double)(int32)P.Y);
+    }
+
+    /** The cursor delta Slate will report for a move between two requested points. */
+    inline FVector2D DeltaFor(const FVector2D& From, const FVector2D& To)
+    {
+        return QuantiseToPixel(To) - QuantiseToPixel(From);
+    }
+
+    /**
+     * The waypoints a drag from Start to End should visit, in order.
+     *
+     * Every returned point differs from its predecessor by at least one whole
+     * pixel, so every dispatched move carries a non-zero cursor delta. The last
+     * point is always the destination. A zero-length drag returns an empty path
+     * — which is the honest answer, and lets the caller report "0 moves
+     * delivered" instead of claiming a gesture it did not perform.
+     */
+    inline TArray<FVector2D> PlanDragPath(const FVector2D& Start, const FVector2D& End, int32 Steps)
+    {
+        TArray<FVector2D> Path;
+        Steps = FMath::Clamp(Steps, 1, 256);
+
+        FVector2D Last = QuantiseToPixel(Start);
+        for (int32 i = 1; i <= Steps; ++i)
+        {
+            const double T = (double)i / (double)Steps;
+            const FVector2D P = QuantiseToPixel(Start + (End - Start) * T);
+            if (P.Equals(Last, 0.0)) continue;  // Slate would see a zero delta; skip it.
+            Path.Add(P);
+            Last = P;
+        }
+
+        // Interpolation plus truncation can stop a pixel short of the target.
+        // A drag has to finish where the caller said it finishes.
+        const FVector2D Destination = QuantiseToPixel(End);
+        if (!Destination.Equals(Last, 0.0))
+        {
+            Path.Add(Destination);
+        }
+        return Path;
+    }
+}

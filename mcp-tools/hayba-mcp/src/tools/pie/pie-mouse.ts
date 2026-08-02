@@ -15,12 +15,20 @@ export const schema = z.object({
     .enum(['move', 'click', 'double_click', 'press', 'release', 'drag', 'scroll'])
     .default('click')
     .describe('press/release let you hold a button across several calls; drag does the whole gesture.'),
-  x: z.number().optional().describe('Target X in ABSOLUTE desktop pixels — pass center_x from editor_pie_widget_tree unchanged. Required for everything except scroll.'),
-  y: z.number().optional().describe('Target Y in ABSOLUTE desktop pixels — pass center_y from editor_pie_widget_tree unchanged. Required for everything except scroll.'),
+  x: z.number().optional().describe('Target X in ABSOLUTE desktop pixels — pass center_x from editor_pie_widget_tree unchanged. Required for everything except scroll, where it is optional and positions the cursor before the wheel.'),
+  y: z.number().optional().describe('Target Y in ABSOLUTE desktop pixels — pass center_y from editor_pie_widget_tree unchanged. Required for everything except scroll, where it is optional and positions the cursor before the wheel.'),
   to_x: z.number().optional().describe('Drag destination X. Required for action:"drag".'),
   to_y: z.number().optional().describe('Drag destination Y. Required for action:"drag".'),
+  steps: z
+    .number()
+    .int()
+    .optional()
+    .describe('Intermediate positions for action:"drag" (default 8, clamped 1..256). Slate quantises the pointer to whole pixels, so steps closer than a pixel apart are dropped rather than sent as no-op moves.'),
   button: z.enum(['left', 'right', 'middle']).optional().default('left'),
-  delta: z.number().optional().describe('Wheel delta for action:"scroll". Positive scrolls up.'),
+  delta: z
+    .number()
+    .optional()
+    .describe('Wheel notches for action:"scroll" (default 1). Positive scrolls up. Delivered as a real Slate FPointerEvent under the cursor, so it reaches ScrollBoxes, list views and combo boxes as well as the game.'),
   coordinate_space: z
     .enum(['absolute', 'viewport'])
     .optional()

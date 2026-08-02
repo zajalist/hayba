@@ -16,6 +16,7 @@
 #include "UObject/Object.h"
 #include "Containers/Ticker.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Framework/Application/SlateUser.h"
 #include "Widgets/SWindow.h"
 #include "Widgets/SWidget.h"
 #include "Widgets/Input/SEditableText.h"
@@ -663,7 +664,25 @@ namespace
         return EKeys::LeftMouseButton;
     }
 
-    void SendMouseMove();
+    FVector2D SendPointerMoveTo(const FVector2D& AbsTo);
+    void SendHoverRefresh();
+
+    /** The game window's top-left in desktop space, or the origin if there is
+     *  no window. Read at point of use — a PIE window can be moved. */
+    FVector2D WindowOriginOf(UGameViewportClient* Client)
+    {
+        if (Client)
+        {
+            if (TSharedPtr<SWindow> Win = Client->GetWindow())
+            {
+                // Copy-initialised, not FVector2D(...): Slate's deprecation
+                // shim for FVector2D returns are only IMPLICITLY convertible.
+                const FVector2D Origin = Win->GetPositionInScreen();
+                return Origin;
+            }
+        }
+        return FVector2D::ZeroVector;
+    }
 
     /**
      * Move the OS/Slate cursor to a pixel and report where it ended up.
@@ -680,7 +699,8 @@ namespace
      * symptom is a click that "lands a few px below" the thing you aimed at, or
      * misses the UI entirely and focuses the SViewport.
      */
-    bool MoveCursorToPixel(UGameViewportClient* Client, const FVector2D& Px, bool bViewportRelative, FVector2D& OutAbsolute)
+    bool MoveCursorToPixel(UGameViewportClient* Client, const FVector2D& Px, bool bViewportRelative,
+                           FVector2D& OutAbsolute, FVector2D* OutCursorDelta = nullptr)
     {
         if (!Client || !Client->Viewport) return false;
         if (!FSlateApplication::IsInitialized()) return false;
@@ -688,14 +708,10 @@ namespace
         // Origin is always READ, never always applied: HaybaPieCoords::ToAbsolute
         // decides. Keeping the decision in one testable function is the point —
         // this is the line that produced a 24px error for months.
-        FVector2D Origin = FVector2D::ZeroVector;
-        if (TSharedPtr<SWindow> Win = Client->GetWindow())
-        {
-            Origin = Win->GetPositionInScreen();
-        }
+        const FVector2D Origin = WindowOriginOf(Client);
         OutAbsolute = HaybaPieCoords::ToAbsolute(Px, Origin, bViewportRelative);
-        FSlateApplication::Get().SetCursorPos(OutAbsolute);
-        SendMouseMove();
+        const FVector2D Delta = SendPointerMoveTo(OutAbsolute);
+        if (OutCursorDelta) *OutCursorDelta = Delta;
         return true;
     }
 
@@ -724,19 +740,38 @@ namespace
         const FVector2D Pos = Slate.GetCursorPos();
         const FVector2D LastPos = Slate.GetLastCursorPos();
 
-        TSet<FKey> Pressed;
-        if (Evt != IE_Released) Pressed.Add(Button);
+        // The button set is a POST-state snapshot, exactly as
+        // FSlateApplication::OnMouseDown / OnMouseUp build it: down includes the
+        // button being pressed, up excludes the one being released. This is not
+        // cosmetic. Anything that drag-scrolls reads it off the *move* events
+        // that follow — SScrollBox::OnMouseMove gates its right-click drag
+        // scrolling on MouseEvent.IsMouseButtonDown(EKeys::RightMouseButton) —
+        // and those moves take their set from Slate's PressedMouseButtons, which
+        // only ever gets populated because this event carries the right button.
+        TSet<FKey> Pressed = Slate.GetPressedMouseButtons();
+        if (Evt == IE_Released) Pressed.Remove(Button);
+        else                    Pressed.Add(Button);
 
+        // Explicit user/pointer index rather than the 7-arg overload's implicit
+        // 0: FSlateApplication only records PressedMouseButtons when the event's
+        // user index matches CursorUserIndex, and only the cursor pointer index
+        // participates in mouse capture.
         FPointerEvent MouseEvent(
-            /*PointerIndex=*/0,
+            (uint32)Slate.GetUserIndexForMouse(),
+            FSlateApplication::CursorPointerIndex,
             Pos, LastPos,
             Pressed,
             Button,
             /*WheelDelta=*/0.0f,
-            FModifierKeysState());
+            Slate.GetModifierKeys());
 
         if (Evt == IE_Pressed)
         {
+            // A widget that wants the rest of the gesture answers this with
+            // FReply::Handled().CaptureMouse(AsShared()); FSlateApplication
+            // installs the captor while processing the reply. That is how
+            // SScrollBar::OnMouseMove's HasMouseCapture() gate gets satisfied —
+            // we must not, and do not, set capture ourselves.
             Slate.ProcessMouseButtonDownEvent(nullptr, MouseEvent);
         }
         else if (Evt == IE_Released)
@@ -749,20 +784,135 @@ namespace
         }
     }
 
-    /** Move the pointer through Slate as well, so widgets receive hover/enter
-     *  and a drag actually looks like a drag. SetCursorPos alone repositions the
-     *  OS cursor without telling the widget tree anything moved. */
-    void SendMouseMove()
+    /**
+     * Move the pointer to an absolute desktop pixel and tell Slate it moved.
+     * Returns the cursor delta the event actually carried.
+     *
+     * THE ORDER OF THESE THREE LINES IS THE WHOLE FIX.
+     *
+     * FSlateApplication::SetCursorPos forwards to FSlateUser::SetPointerPosition,
+     * which ends in:
+     *
+     *     void FSlateUser::UpdatePointerPosition(uint32 PointerIndex, const FVector2f& Position)
+     *     {
+     *         PointerPositionsByIndex.FindOrAdd(PointerIndex)         = Position;
+     *         PreviousPointerPositionsByIndex.FindOrAdd(PointerIndex) = Position;
+     *     }
+     *
+     * — it writes the SAME value to the current and the previous position. So
+     * after a SetCursorPos, GetLastCursorPos() is the DESTINATION, not the
+     * origin, and an FPointerEvent built from (GetCursorPos(), GetLastCursorPos())
+     * has CursorDelta == (0,0). That is precisely what this harness did, on every
+     * synthetic move it has ever sent.
+     *
+     * A zero delta is not a small move, it is no move at all. SScrollBar::OnMouseMove
+     * returns Unhandled on it; SScrollBox's right-click drag scrolling adds 0.0 to
+     * its accumulator and never crosses the drag trigger distance. Both of those
+     * were measured dead in the field (Aphrosia docs/gauntlet/scroll-dossier.md,
+     * 2026-08-02) and both were the harness, not the widget.
+     *
+     * So: read the origin BEFORE moving, move, then read back what Slate stored
+     * (it truncates to whole pixels) and build the event from the real pair.
+     */
+    FVector2D SendPointerMoveTo(const FVector2D& AbsTo)
+    {
+        if (!FSlateApplication::IsInitialized()) return FVector2D::ZeroVector;
+        FSlateApplication& Slate = FSlateApplication::Get();
+
+        const FVector2D From = Slate.GetCursorPos();   // BEFORE the move.
+        Slate.SetCursorPos(AbsTo);
+        const FVector2D To = Slate.GetCursorPos();     // What Slate stored.
+
+        // PressedButtons comes from Slate's own set, which our press populated,
+        // so a move dispatched between a press and a release carries the held
+        // button the way a real one does.
+        FPointerEvent MoveEvent(
+            (uint32)Slate.GetUserIndexForMouse(),
+            FSlateApplication::CursorPointerIndex,
+            To, From,
+            Slate.GetPressedMouseButtons(),
+            EKeys::Invalid,
+            /*WheelDelta=*/0.0f,
+            Slate.GetModifierKeys());
+
+        Slate.ProcessMouseMoveEvent(MoveEvent);
+        return To - From;
+    }
+
+    /** A deliberately ZERO-delta move at the current position.
+     *
+     *  Not a gesture: this exists to make Slate re-run its hit test so hover /
+     *  MouseEnter / MouseLeave are recomputed after a release. Zero delta is
+     *  correct here — nothing moved. Every place that means "the pointer
+     *  travelled" must use SendPointerMoveTo instead. */
+    void SendHoverRefresh()
     {
         if (!FSlateApplication::IsInitialized()) return;
+        const FVector2D Here = FSlateApplication::Get().GetCursorPos();
+        SendPointerMoveTo(Here);
+    }
+
+    /**
+     * Deliver a mouse wheel notch through SLATE.
+     *
+     * This used to be UGameViewportClient::InputKey(MouseWheelAxis, IE_Axis),
+     * which is the game input pipeline. FSlateApplication never saw it, so
+     * SWidget::OnMouseWheel never fired and no ScrollBox, list view, combo box or
+     * spin box could be scrolled by this harness at all. A positive control
+     * proved it reached nothing whatsoever: with no UI open, action:"scroll" over
+     * the map left the camera bit-identical while a MouseScrollUp key press moved
+     * it.
+     *
+     * Constructed to match FSlateApplication::OnMouseWheel(Delta, CursorPos)
+     * field for field, and dispatched through the same public entry point Slate
+     * uses for a real wheel, so the event bubbles from the leafmost widget under
+     * the cursor outward — nested scrollboxes included, inner one first.
+     *
+     * This also serves gameplay: whatever the UI declines reaches SViewport,
+     * whose FSceneViewport::OnMouseWheel raises MouseScrollUp/MouseScrollDown and
+     * the MouseWheelAxis on the viewport client. One path, both consumers, in the
+     * order a real wheel would hit them.
+     */
+    bool SendMouseWheel(float Delta)
+    {
+        if (!FSlateApplication::IsInitialized()) return false;
         FSlateApplication& Slate = FSlateApplication::Get();
-        FPointerEvent MoveEvent(
-            /*PointerIndex=*/0,
-            Slate.GetCursorPos(), Slate.GetLastCursorPos(),
-            TSet<FKey>(), EKeys::Invalid,
-            /*WheelDelta=*/0.0f,
-            FModifierKeysState());
-        Slate.ProcessMouseMoveEvent(MoveEvent);
+
+        const FVector2D Pos = Slate.GetCursorPos();
+        FPointerEvent WheelEvent(
+            (uint32)Slate.GetUserIndexForMouse(),
+            FSlateApplication::CursorPointerIndex,
+            Pos, Pos,
+            Slate.GetPressedMouseButtons(),
+            EKeys::Invalid,
+            Delta,
+            Slate.GetModifierKeys());
+
+        return Slate.ProcessMouseWheelOrGestureEvent(WheelEvent, nullptr);
+    }
+
+    /** The widget currently holding pointer capture, as a type name. Empty when
+     *  nothing does — which is the answer to "why did my drag do nothing", so it
+     *  belongs in the response rather than in a log nobody reads. */
+    FString PointerCaptorType()
+    {
+        if (!FSlateApplication::IsInitialized()) return FString();
+        TSharedPtr<FSlateUser> User = FSlateApplication::Get().GetCursorUser();
+        if (!User.IsValid()) return FString();
+        TSharedPtr<SWidget> Captor = User->GetCursorCaptor();
+        return Captor.IsValid() ? Captor->GetTypeAsString() : FString();
+    }
+
+    /** Slate's currently-held mouse buttons, as JSON. */
+    TArray<TSharedPtr<FJsonValue>> PressedButtonsJson()
+    {
+        TArray<TSharedPtr<FJsonValue>> Out;
+        if (!FSlateApplication::IsInitialized()) return Out;
+        for (const FKey& K : FSlateApplication::Get().GetPressedMouseButtons())
+        {
+            Out.Add(MakeShared<FJsonValueString>(K.ToString()));
+        }
+        return Out;
     }
 
     /** Put Slate's synthetic-pointer state back to neutral after a release.
@@ -801,7 +951,7 @@ namespace
             Slate.ReleaseAllPointerCapture();
             bClearedCapture = true;
         }
-        SendMouseMove();
+        SendHoverRefresh();
         return bClearedCapture;
     }
 
@@ -1047,15 +1197,30 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEMouse(const TSharedPtr<FJsonObject>&
     TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
     R->SetStringField(TEXT("action"), Action);
 
-    if (Action == TEXT("move") || Action == TEXT("click") || Action == TEXT("double_click") ||
-        Action == TEXT("press") || Action == TEXT("release") || Action == TEXT("drag"))
+    // The cursor delta of the last move dispatched, and how many moves actually
+    // carried one. These are the numbers that distinguish "the widget ignored my
+    // drag" from "the harness never moved the pointer" — the confusion that cost
+    // three rounds of false FAIL verdicts on a working ScrollBox.
+    FVector2D LastDelta = FVector2D::ZeroVector;
+    int32 MovesDelivered = 0;
+
+    const bool bNeedsPosition =
+        Action == TEXT("move") || Action == TEXT("click") || Action == TEXT("double_click") ||
+        Action == TEXT("press") || Action == TEXT("release") || Action == TEXT("drag");
+
+    // scroll takes x/y too now, and OPTIONALLY: a wheel is delivered to whatever
+    // is under the cursor, so "scroll the panel" needs a way to say where the
+    // cursor is. Without this the wheel went wherever the pointer happened to be
+    // left by the previous call, which is not a thing a caller can reason about.
+    if (bNeedsPosition || (Action == TEXT("scroll") && bHasX && bHasY))
     {
-        if (!bHasX || !bHasY)
+        if (bNeedsPosition && (!bHasX || !bHasY))
             return FHaybaHandlerResult::Err(TEXT("editor_pie_mouse: x and y are required for this action"));
 
         FVector2D Abs;
-        if (!MoveCursorToPixel(Client, FVector2D(X, Y), bViewportRelative, Abs))
+        if (!MoveCursorToPixel(Client, FVector2D(X, Y), bViewportRelative, Abs, &LastDelta))
             return FHaybaHandlerResult::Err(TEXT("editor_pie_mouse: could not position the cursor"));
+        if (!LastDelta.IsNearlyZero()) ++MovesDelivered;
         R->SetNumberField(TEXT("x"), X);
         R->SetNumberField(TEXT("y"), Y);
         R->SetStringField(TEXT("coordinate_space"), bViewportRelative ? TEXT("viewport") : TEXT("absolute"));
@@ -1103,32 +1268,92 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEMouse(const TSharedPtr<FJsonObject>&
             return FHaybaHandlerResult::Err(TEXT("editor_pie_mouse drag: to_x and to_y are required"));
 
         SendMouseButton(Client, Button, IE_Pressed);
+        // Whoever answered the press by taking capture. A drag against a widget
+        // that took no capture cannot work, and saying so here is cheaper than
+        // another round of measuring the widget.
+        R->SetStringField(TEXT("captor_after_press"), PointerCaptorType());
 
-        // Intermediate positions matter: a drag that jumps straight to the
-        // destination is often ignored by widgets that track deltas.
-        const int32 Steps = 8;
+        // Intermediate positions matter twice over. A widget that tracks deltas
+        // ignores a single jump; and Slate's own drag detection
+        // (FSlateUser::DetectDrag, FReply::DetectDrag) only fires once the
+        // pointer has travelled GetDragTriggerDistance() ACROSS MOVE EVENTS.
+        //
+        // The path is planned rather than lerped inline so that no step is a
+        // sub-pixel no-op: Slate truncates pointer positions to whole pixels, so
+        // two waypoints less than a pixel apart produce CursorDelta == (0,0),
+        // which SScrollBar::OnMouseMove treats as no movement at all. See
+        // HaybaPieGesture::PlanDragPath, which is unit-tested.
+        int32 Steps = 8;
+        P->TryGetNumberField(TEXT("steps"), Steps);
+        const TArray<FVector2D> Path = HaybaPieGesture::PlanDragPath(
+            FVector2D(X, Y), FVector2D(ToX, ToY), Steps);
+
         FVector2D Abs;
-        for (int32 i = 1; i <= Steps; ++i)
+        FVector2D TotalDelta = FVector2D::ZeroVector;
+        for (const FVector2D& Waypoint : Path)
         {
-            const double T = (double)i / (double)Steps;
-            MoveCursorToPixel(Client, FVector2D(FMath::Lerp(X, ToX, T), FMath::Lerp(Y, ToY, T)), bViewportRelative, Abs);
+            FVector2D StepDelta = FVector2D::ZeroVector;
+            MoveCursorToPixel(Client, Waypoint, bViewportRelative, Abs, &StepDelta);
+            if (!StepDelta.IsNearlyZero()) ++MovesDelivered;
+            TotalDelta += StepDelta;
+            LastDelta = StepDelta;
         }
+
         SendMouseButton(Client, Button, IE_Released);
         // The drag-release-outside sequence is the one that reproduced the
         // stale-hover state in the field (see ResetPointerStateAfterRelease).
         R->SetBoolField(TEXT("capture_cleared"), ResetPointerStateAfterRelease());
         R->SetNumberField(TEXT("to_x"), ToX);
         R->SetNumberField(TEXT("to_y"), ToY);
+        R->SetNumberField(TEXT("steps_planned"), Path.Num());
+        R->SetNumberField(TEXT("total_travel_x"), TotalDelta.X);
+        R->SetNumberField(TEXT("total_travel_y"), TotalDelta.Y);
+        if (Path.Num() == 0)
+        {
+            // Otherwise a zero-length drag reads as a gesture that was performed
+            // and ignored, rather than one that was never performed.
+            R->SetStringField(TEXT("warning"),
+                TEXT("Start and end round to the same pixel, so NO move events were sent. "
+                     "This is not a drag; widen the drag or check the coordinate space."));
+        }
     }
     else if (Action == TEXT("scroll"))
     {
         double Delta = 1.0;
         P->TryGetNumberField(TEXT("delta"), Delta);
-        const FInputDeviceId DeviceId = IPlatformInputDeviceMapper::Get().GetDefaultInputDevice();
-        FInputKeyEventArgs Args(Client->Viewport, DeviceId, EKeys::MouseWheelAxis, IE_Axis,
-                                (float)Delta, /*bIsTouch=*/false, /*EventTimestamp=*/0u);
-        Client->InputKey(Args);
+
+        // Through Slate, so SWidget::OnMouseWheel fires and bubbles. See
+        // SendMouseWheel for why the old UGameViewportClient::InputKey path
+        // reached no widget at all.
+        const bool bSlateHandled = SendMouseWheel((float)Delta);
+
+        // Fallback, not a duplicate: Slate returns false when nothing under the
+        // cursor consumed the wheel, which includes the cursor not being over a
+        // Slate window at all. In that case the game should still get its axis,
+        // exactly as it did before this change. When Slate DOES handle it the
+        // wheel already reached the viewport through SViewport, so sending this
+        // too would double-apply it.
+        bool bViewportFallback = false;
+        if (!bSlateHandled && Client->Viewport)
+        {
+            const FInputDeviceId DeviceId = IPlatformInputDeviceMapper::Get().GetDefaultInputDevice();
+            FInputKeyEventArgs Args(Client->Viewport, DeviceId, EKeys::MouseWheelAxis, IE_Axis,
+                                    (float)Delta, /*bIsTouch=*/false, /*EventTimestamp=*/0u);
+            Client->InputKey(Args);
+            bViewportFallback = true;
+        }
+
         R->SetNumberField(TEXT("delta"), Delta);
+        R->SetBoolField(TEXT("handled_by_slate"), bSlateHandled);
+        R->SetStringField(TEXT("handled_by"),
+            bSlateHandled ? TEXT("slate") : (bViewportFallback ? TEXT("game_viewport") : TEXT("nothing")));
+        if (!bSlateHandled)
+        {
+            R->SetStringField(TEXT("warning"),
+                TEXT("No Slate widget under the cursor consumed the wheel. Position the cursor "
+                     "over the target first (pass x/y, from editor_pie_widget_tree), and check "
+                     "the target's ConsumeMouseWheel setting."));
+        }
     }
     else
     {
@@ -1145,6 +1370,22 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEMouse(const TSharedPtr<FJsonObject>&
         R->SetStringField(TEXT("focused_widget_after"), FocusedWidgetType());
     }
 
+    // The two facts SScrollBar::OnMouseMove — and every other capture+delta
+    // consumer — actually gates on. Reporting them turns "the widget didn't
+    // respond" into a decidable question: a non-zero cursor_delta with a named
+    // captor and no state change is the WIDGET's problem; a zero delta or an
+    // empty captor is the HARNESS's. Both used to be invisible, which is how a
+    // harness fault masqueraded as a product bug for three rounds.
+    R->SetNumberField(TEXT("cursor_delta_x"), LastDelta.X);
+    R->SetNumberField(TEXT("cursor_delta_y"), LastDelta.Y);
+    R->SetNumberField(TEXT("moves_delivered"), MovesDelivered);
+    {
+        const FString Captor = PointerCaptorType();
+        if (Captor.IsEmpty()) R->SetField(TEXT("mouse_captor"), MakeShared<FJsonValueNull>());
+        else                  R->SetStringField(TEXT("mouse_captor"), Captor);
+    }
+
+    R->SetArrayField(TEXT("pressed_buttons"), PressedButtonsJson());
     R->SetStringField(TEXT("button"), ButtonName);
     R->SetBoolField(TEXT("dispatched"), true);
     return FHaybaHandlerResult::Ok(R);
