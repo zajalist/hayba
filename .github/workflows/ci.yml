@@ -71,23 +71,37 @@ jobs:
         run: npm run lint:legacy-wrappers
 
   sidecar:
-    name: Visual sidecar — import + lint
+    name: Visual sidecar — import + test + lint
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp-tools/hayba-mcp/addons/visual-embeddings
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
-      - name: Install sidecar
-        working-directory: mcp-tools/hayba-mcp/addons/visual-embeddings
+      # Deliberately NOT installing torch. The sidecar's model loaders import
+      # their heavy dependency inside the function that needs it, so the app
+      # must start and answer /health with none of the weights present. A CI run
+      # that installed torch would not be testing that property — it would be
+      # hiding a regression in it.
+      - name: Install sidecar (torch-free)
         run: |
-          if [ -f pyproject.toml ]; then
-            python -m pip install --upgrade pip
-            pip install ruff
-            pip install -e .[cpu] || pip install -e .
-          fi
+          python -m pip install --upgrade pip
+          pip install ruff
+          pip install -e .[test]
+
+      # This job was previously named "import + lint" and never imported
+      # anything. Importing the app is the check: it was unimportable without
+      # multi-GB weights for as long as the model modules imported at module
+      # scope, which took /health down with them.
+      - name: Import the app without weights
+        run: python -c "from hayba_sidecar.server import app; print(sorted({r.path for r in app.routes}))"
+
+      - name: Test
+        run: pytest -q
 
       - name: Lint
-        working-directory: mcp-tools/hayba-mcp/addons/visual-embeddings
         run: ruff check . || true   # non-blocking until a style baseline is adopted

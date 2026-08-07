@@ -37,7 +37,7 @@ export async function assetBrowseHandler(
       toolName: 'hayba_asset_browse',
       toolArgs: args as Record<string, unknown>,
       toolResult: errored,
-      ue: null,
+      probe: null,
       scratchDir: join(process.cwd(), '.scratch'),
     });
     return attachFindingsToValue(result as unknown as Record<string, unknown>, findings) as unknown as AssetBrowseResult;
@@ -47,7 +47,7 @@ export async function assetBrowseHandler(
     toolName: 'hayba_asset_browse',
     toolArgs: args as Record<string, unknown>,
     toolResult: result,
-    ue: null,
+    probe: null,
     scratchDir: join(process.cwd(), '.scratch'),
   });
   return attachFindingsToValue(result as unknown as Record<string, unknown>, findings) as unknown as AssetBrowseResult;

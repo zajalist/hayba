@@ -4,7 +4,7 @@ import { executeCommand } from './tool-executor.js';
  * Shared plumbing for tools that are implemented as generated UE Python rather
  * than a dedicated C++ handler. `python_run` is the de-facto UE API surface, so
  * the ergonomic wrappers (introspection, PCG primitives, cook-and-wait) all
- * funnel through here. See docs/HANDOFF-mcp-agent-ergonomics-postmortem.md.
+ * funnel through here. See docs/handoffs/HANDOFF-mcp-agent-ergonomics-postmortem.md.
  *
  * Contract: the generated script prints exactly one line of the form
  *   HAYBA_JSON:{...}

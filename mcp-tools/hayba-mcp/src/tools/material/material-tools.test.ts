@@ -62,7 +62,7 @@ describe('material instance-layer wrappers', () => {
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
-      expect(materialCreateSrc).toMatch(/executeCommand\(\s*['"]material_create['"]/);
+      expect(materialCreateSrc).toMatch(/(?:executeCommand|ueTool)\(\s*['"]material_create['"]/);
     });
 
     it('registers the schema in the eager schema-registry block', () => {
@@ -81,7 +81,7 @@ describe('material instance-layer wrappers', () => {
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
-      expect(materialCreateInstanceSrc).toMatch(/executeCommand\(\s*['"]material_create_instance['"]/);
+      expect(materialCreateInstanceSrc).toMatch(/(?:executeCommand|ueTool)\(\s*['"]material_create_instance['"]/);
     });
 
     it('registers the schema in the eager schema-registry block', () => {
@@ -101,7 +101,7 @@ describe('material instance-layer wrappers', () => {
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
-      expect(materialSetParamSrc).toMatch(/executeCommand\(\s*['"]material_set_param['"]/);
+      expect(materialSetParamSrc).toMatch(/(?:executeCommand|ueTool)\(\s*['"]material_set_param['"]/);
     });
 
     it('registers the schema in the eager schema-registry block', () => {
@@ -121,7 +121,7 @@ describe('material instance-layer wrappers', () => {
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
-      expect(materialApplySrc).toMatch(/executeCommand\(\s*['"]material_apply['"]/);
+      expect(materialApplySrc).toMatch(/(?:executeCommand|ueTool)\(\s*['"]material_apply['"]/);
     });
 
     it('registers the schema in the eager schema-registry block', () => {
@@ -140,7 +140,7 @@ describe('material instance-layer wrappers', () => {
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
-      expect(materialListSrc).toMatch(/executeCommand\(\s*['"]material_list['"]/);
+      expect(materialListSrc).toMatch(/(?:executeCommand|ueTool)\(\s*['"]material_list['"]/);
     });
 
     it('registers the schema in the eager schema-registry block', () => {
@@ -158,7 +158,7 @@ describe('material instance-layer wrappers', () => {
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
-      expect(materialGetInfoSrc).toMatch(/executeCommand\(\s*['"]material_get_info['"]/);
+      expect(materialGetInfoSrc).toMatch(/(?:executeCommand|ueTool)\(\s*['"]material_get_info['"]/);
     });
 
     it('registers the schema in the eager schema-registry block', () => {
@@ -190,7 +190,7 @@ describe('material graph-layer wrappers', () => {
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
-      expect(materialAddNodeSrc).toMatch(/executeCommand\(\s*['"]material_add_node['"]/);
+      expect(materialAddNodeSrc).toMatch(/(?:executeCommand|ueTool)\(\s*['"]material_add_node['"]/);
     });
 
     it('registers the schema in the eager schema-registry block', () => {
@@ -217,7 +217,7 @@ describe('material graph-layer wrappers', () => {
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
-      expect(materialConnectNodesSrc).toMatch(/executeCommand\(\s*['"]material_connect_nodes['"]/);
+      expect(materialConnectNodesSrc).toMatch(/(?:executeCommand|ueTool)\(\s*['"]material_connect_nodes['"]/);
     });
 
     it('registers the schema in the eager schema-registry block', () => {
@@ -251,7 +251,7 @@ describe('material graph-layer wrappers', () => {
     });
 
     it('calls executeCommand with the correct command name in handler', () => {
-      expect(materialFunctionCreateSrc).toMatch(/executeCommand\(\s*['"]material_function_create['"]/);
+      expect(materialFunctionCreateSrc).toMatch(/(?:executeCommand|ueTool)\(\s*['"]material_function_create['"]/);
     });
 
     it('registers the schema in the eager schema-registry block', () => {
@@ -275,7 +275,7 @@ describe('material comment + named-reroute wrappers', () => {
       expect(isToolRegistered('material_add_comment')).toBe(true);
     });
     it('calls executeCommand with the correct command name', () => {
-      expect(addCommentSrc).toMatch(/executeCommand\(\s*['"]material_add_comment['"]/);
+      expect(addCommentSrc).toMatch(/(?:executeCommand|ueTool)\(\s*['"]material_add_comment['"]/);
     });
     it('registers the schema in the eager schema-registry block', () => {
       expect(isSchemaRecorded('material_add_comment')).toBe(true);
@@ -290,7 +290,7 @@ describe('material comment + named-reroute wrappers', () => {
       expect(isToolRegistered('material_add_reroute_declaration')).toBe(true);
     });
     it('calls executeCommand with the correct command name', () => {
-      expect(rerouteDeclSrc).toMatch(/executeCommand\(\s*['"]material_add_reroute_declaration['"]/);
+      expect(rerouteDeclSrc).toMatch(/(?:executeCommand|ueTool)\(\s*['"]material_add_reroute_declaration['"]/);
     });
     it('registers the schema in the eager schema-registry block', () => {
       expect(isSchemaRecorded('material_add_reroute_declaration')).toBe(true);
@@ -305,7 +305,7 @@ describe('material comment + named-reroute wrappers', () => {
       expect(isToolRegistered('material_add_reroute_usage')).toBe(true);
     });
     it('calls executeCommand with the correct command name', () => {
-      expect(rerouteUsageSrc).toMatch(/executeCommand\(\s*['"]material_add_reroute_usage['"]/);
+      expect(rerouteUsageSrc).toMatch(/(?:executeCommand|ueTool)\(\s*['"]material_add_reroute_usage['"]/);
     });
     it('registers the schema in the eager schema-registry block', () => {
       expect(isSchemaRecorded('material_add_reroute_usage')).toBe(true);

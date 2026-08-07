@@ -6,7 +6,7 @@ import { runAfterTool } from '../runner.js';
 import { setHistoryPath, listFindings } from '../history.js';
 import { setConfigPath, setRuleDisabled } from '../config.js';
 import { installToolHooks, _resetToolHooksForTests } from '../tool-hooks.js';
-import type { UETcpClient } from '../../tcp-client.js';
+import type { UeProbe } from '../ue-probe.js';
 
 let tmpDir: string;
 
@@ -24,30 +24,27 @@ afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-/** Build a minimal stub UE client that replies to python_run with ok and writes
- *  a zero-instance count to the validator scratch file. */
-function stubUe(opts: { writeCount: number; scratchDir: string }): UETcpClient {
-  return {
-    async send(_cmd: string, _params: Record<string, unknown>) {
-      // Simulate the script writing its output file.
-      mkdirSync(opts.scratchDir, { recursive: true });
-      writeFileSync(
-        join(opts.scratchDir, 'validator_pcg_instance_count.json'),
-        JSON.stringify({ total: opts.writeCount, actors: 1 }),
-      );
-      return { id: 'x', ok: true, data: { stdout: JSON.stringify({ total: opts.writeCount }) } };
-    },
-  } as unknown as UETcpClient;
+/** A probe that behaves like the real counter script: writes its result to the
+ *  scratch file AND prints it. */
+function stubProbe(opts: { writeCount: number; scratchDir: string }): UeProbe {
+  return async () => {
+    mkdirSync(opts.scratchDir, { recursive: true });
+    writeFileSync(
+      join(opts.scratchDir, 'validator_pcg_instance_count.json'),
+      JSON.stringify({ total: opts.writeCount, actors: 1 }),
+    );
+    return { ok: true, stdout: JSON.stringify({ total: opts.writeCount }) };
+  };
 }
 
 describe('runAfterTool', () => {
   it('emits pcg_zero_instances finding when count is 0', async () => {
-    const ue = stubUe({ writeCount: 0, scratchDir: tmpDir });
+    const probe = stubProbe({ writeCount: 0, scratchDir: tmpDir });
     const findings = await runAfterTool({
       toolName: 'hayba_execute_pcg_graph',
       toolArgs: { assetPath: '/Game/Foo' },
       toolResult: { componentsExecuted: 1 },
-      ue,
+      probe,
       scratchDir: tmpDir,
     });
     const ids = findings.map(f => f.ruleId);
@@ -59,12 +56,12 @@ describe('runAfterTool', () => {
   });
 
   it('does NOT emit pcg_zero_instances when count > 0', async () => {
-    const ue = stubUe({ writeCount: 42, scratchDir: tmpDir });
+    const probe = stubProbe({ writeCount: 42, scratchDir: tmpDir });
     const findings = await runAfterTool({
       toolName: 'hayba_execute_pcg_graph',
       toolArgs: { assetPath: '/Game/Foo' },
       toolResult: { componentsExecuted: 1 },
-      ue,
+      probe,
       scratchDir: tmpDir,
     });
     expect(findings.find(f => f.ruleId === 'pcg_zero_instances_after_execute')).toBeUndefined();
@@ -75,7 +72,7 @@ describe('runAfterTool', () => {
       toolName: 'pcg_execute_graph',
       toolArgs: { assetPath: '/Game/Foo' },
       toolResult: 'No PCGComponents found using this graph',
-      ue: null,
+      probe: null,
       scratchDir: tmpDir,
     });
     expect(findings.map(f => f.ruleId)).toContain('pcg_execute_no_component_in_world');
@@ -86,7 +83,7 @@ describe('runAfterTool', () => {
       toolName: 'hayba_export_pcg_graph',
       toolArgs: { assetPath: '/Game/MissingGraph' },
       toolResult: { ok: false, error: 'could not load asset /Game/MissingGraph' },
-      ue: null,
+      probe: null,
       scratchDir: tmpDir,
     });
     const f = findings.find(x => x.ruleId === 'pcg_asset_not_found');
@@ -99,7 +96,7 @@ describe('runAfterTool', () => {
       toolName: 'hayba_asset_browse',
       toolArgs: {},
       toolResult: { error: 'Unknown command: describe_assets' },
-      ue: null,
+      probe: null,
       scratchDir: tmpDir,
     });
     expect(findings.map(f => f.ruleId)).toContain('asset_browse_describe_assets_missing');
@@ -111,7 +108,7 @@ describe('runAfterTool', () => {
       toolName: 'pcg_execute_graph',
       toolArgs: { assetPath: '/Game/Foo' },
       toolResult: 'No PCGComponents found using this graph',
-      ue: null,
+      probe: null,
       scratchDir: tmpDir,
     });
     expect(findings.map(f => f.ruleId)).not.toContain('pcg_execute_no_component_in_world');
@@ -122,7 +119,7 @@ describe('runAfterTool', () => {
       toolName: 'pcg_execute_graph',
       toolArgs: { assetPath: '/Game/Foo' },
       toolResult: 'No PCGComponents found using this graph',
-      ue: null,
+      probe: null,
       scratchDir: tmpDir,
     });
     expect(existsSync(join(tmpDir, 'history.jsonl'))).toBe(true);

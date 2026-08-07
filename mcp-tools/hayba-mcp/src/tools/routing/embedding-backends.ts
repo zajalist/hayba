@@ -4,12 +4,18 @@ const OLLAMA_URL = process.env.OLLAMA_URL ?? 'http://localhost:11434';
 const OLLAMA_MODEL = process.env.HAYBA_EMBED_MODEL_OLLAMA ?? 'nomic-embed-text';
 const XENOVA_MODEL = process.env.HAYBA_EMBED_MODEL_XENOVA ?? 'Xenova/all-MiniLM-L6-v2';
 
+/** How long the startup probe waits for Ollama. A refused connection fails fast,
+ *  but a firewalled or black-holed port hangs until the OS gives up — which
+ *  stalls server startup behind a backend we were only ever guessing at. */
+const PROBE_TIMEOUT_MS = Number(process.env.HAYBA_EMBED_PROBE_TIMEOUT_MS ?? 2000);
+
 export async function probeOllama(): Promise<EmbeddingBackend | null> {
   try {
     const probe = await fetch(`${OLLAMA_URL}/api/embeddings`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ model: OLLAMA_MODEL, prompt: 'probe' }),
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
     if (!probe.ok) return null;
     return {

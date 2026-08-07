@@ -32,7 +32,7 @@ import {
   type Strictness,
 } from '../../validator/config.js';
 import { UI_RULES } from '../../validator/ui/index.js';
-import type { UETcpClient } from '../../tcp-client.js';
+import type { UeProbe } from '../../validator/ue-probe.js';
 import { loadConstraints, primitivesById } from '../../plumb/index.js';
 
 export const validatorRunSchema = {
@@ -44,7 +44,7 @@ export const validatorRunSchema = {
 };
 
 export interface ValidatorRunCtx {
-  ue: UETcpClient | null;
+  probe: UeProbe | null;
   scratchDir: string;
 }
 
@@ -61,7 +61,7 @@ export async function validatorRunHandler(
     toolName: 'validator_run',
     toolArgs: { ruleId: rule.id },
     toolResult: null,
-    ue: ctx.ue,
+    probe: ctx.probe,
     scratchDir: ctx.scratchDir,
   });
 

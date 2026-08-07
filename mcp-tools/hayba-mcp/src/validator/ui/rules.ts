@@ -304,6 +304,45 @@ export const UI_RULES: UiRule[] = [
     },
   },
   {
+    id: 'ui_engine_default_font',
+    category: 'ui',
+    severity: 'warning',
+    minStrictness: 'relaxed',
+    title: 'Text is still using an engine default font',
+    needsLayout: false,
+    evaluate: (ctx) => {
+      // The most-repeated authoring mistake on record: every TextBlock created
+      // through ui_build_tree / ui_add_element / NewObject arrives as
+      // /Engine/EngineFonts/Roboto "Bold", and it is invisible until the widget
+      // is rendered — which, without an offscreen render, means a full editor
+      // rebuild and a PIE session away. One session hit it five separate times.
+      //
+      // It compounds because ui_set_text_style only writes the fields it is
+      // given: setting size and colour while omitting font_asset and typeface
+      // leaves the engine font in place and reports success either way.
+      const out: UiFinding[] = [];
+      for (const w of ctx.snapshot.widgets) {
+        if (!isTextWidget(w)) continue;
+        const font = w.text_info?.font_object;
+        if (!font || !/^\/Engine\//i.test(font)) continue;
+        const face = w.text_info?.typeface;
+        const bold = face && /bold/i.test(face);
+        out.push(
+          finding(
+            { id: 'ui_engine_default_font', category: 'ui', severity: 'warning' },
+            `"${w.name}" renders in ${font}${face ? ` "${face}"` : ''} — an engine default, not a project font.`,
+            `This is what a text widget gets when no font was set explicitly${
+              bold ? ', and the default typeface is Bold, which reads as emphasis nobody asked for' : ''
+            }. Set font_asset AND typeface together via ui_set_text_style — passing only size or colour leaves the engine font in place and still reports success. If an engine font is deliberate here, disable this rule rather than leaving it flagged.`,
+            w.name,
+            { font_object: font, typeface: face },
+          ),
+        );
+      }
+      return out;
+    },
+  },
+  {
     id: 'ui_text_empty',
     category: 'ui',
     severity: 'warning',

@@ -27,3 +27,6 @@ export type SessionManager = {
 };
 
 export type ToolHandler = (args: Record<string, unknown>, session: SessionManager) => Promise<ToolResult>;
+
+/** A handler that may return image blocks alongside text. */
+export type RichToolHandler = (args: Record<string, unknown>, session: SessionManager) => Promise<RichToolResult>;

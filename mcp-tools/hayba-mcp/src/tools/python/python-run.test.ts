@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { wrapScriptForPrintRedirect } from './python-run.js';
 
+// Installed on the ToolExecutor seam rather than mocking the tcp-client module
+// — same (cmd, params, timeoutMs) signature, so the assertions are unchanged.
 const send = vi.fn();
-vi.mock('../../tcp-client.js', () => ({
-  ensureConnected: async () => ({ send }),
-}));
+import { setDefaultSender } from '../tool-executor.js';
 
 describe('wrapScriptForPrintRedirect', () => {
   it('injects unreal.log_warning shim for builtin print', () => {
@@ -54,6 +54,7 @@ describe('python_run crash guard + spill', () => {
   it('refuses a known-crasher script without contacting UE', async () => {
     const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
+    setDefaultSender(send);
     const r = await pythonRunHandler({ script: 'm.build_scale3d(v)' }, {} as never);
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('known editor-crasher');
@@ -63,6 +64,7 @@ describe('python_run crash guard + spill', () => {
   it('allows the crasher through when allow_unsafe is set', async () => {
     const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
+    setDefaultSender(send);
     send.mockResolvedValueOnce({ ok: true, data: { ok: true, stdout: 'done' } });
     const r = await pythonRunHandler({ script: 'm.build_scale3d(v)', allow_unsafe: true }, {} as never);
     expect(r.isError).toBeFalsy();
@@ -72,6 +74,7 @@ describe('python_run crash guard + spill', () => {
   it('spills oversized output to a temp file and returns a path', async () => {
     const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
+    setDefaultSender(send);
     send.mockResolvedValueOnce({ ok: true, data: { ok: true, stdout: 'x'.repeat(20_000) } });
     const r = await pythonRunHandler({ script: 'print("big")' }, {} as never);
     expect(r.content[0].text).toContain('Full output written to:');
@@ -81,6 +84,7 @@ describe('python_run crash guard + spill', () => {
   it('returns small output inline', async () => {
     const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
+    setDefaultSender(send);
     send.mockResolvedValueOnce({ ok: true, data: { ok: true, stdout: 'small' } });
     const r = await pythonRunHandler({ script: 'print("small")' }, {} as never);
     expect(r.content[0].text).toContain('small');

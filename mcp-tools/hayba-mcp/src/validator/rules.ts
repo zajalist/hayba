@@ -11,7 +11,7 @@
 // `tool-hooks.ts` and are attached to entries below by reference, not by
 // duplicating the metadata.
 
-import type { UETcpClient } from '../tcp-client.js';
+import type { UeProbe } from './ue-probe.js';
 
 export type ValidatorSeverity = 'error' | 'warning' | 'info';
 
@@ -22,8 +22,9 @@ export interface ValidatorContext {
   toolArgs: Record<string, unknown>;
   /** The raw response value the tool returned (TS-side, before MCP wrapping). */
   toolResult: unknown;
-  /** Live TCP client to UE for follow-up queries (may be null for unit tests). */
-  ue: UETcpClient | null;
+  /** Runs a python follow-up query inside the editor. Null when no editor is
+   *  reachable (and in unit tests) — rules that need it must skip, not guess. */
+  probe: UeProbe | null;
   /** Where to scratch intermediate JSON files (default = repo `.scratch/`). */
   scratchDir: string;
 }

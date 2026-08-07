@@ -77,12 +77,128 @@
 #include "Engine/Blueprint.h"
 #include "Styling/CoreStyle.h"
 #include "AssetRegistry/IAssetRegistry.h"
+#include "HaybaMCPAssetGuard.h"
+#include "HaybaMCPSaveVerify.h"
 #include "HaybaMCPReflection.h"
 #include "HaybaMCPParams.h"
 #include "HaybaMCPUILayout.h"
+// ui_render_widget_to_png — off-screen widget rendering.
+#include "Slate/WidgetRenderer.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "ImageUtils.h"
+#include "Misc/FileHelper.h"
+#include "HAL/FileManager.h"
+#include "RenderingThread.h"
 #endif
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPUI, Log, All);
+
+#if WITH_EDITOR
+
+static TArray<TSharedPtr<FJsonValue>> HaybaColorArray(const FLinearColor& C)
+{
+    TArray<TSharedPtr<FJsonValue>> Arr;
+    Arr.Add(MakeShared<FJsonValueNumber>(C.R));
+    Arr.Add(MakeShared<FJsonValueNumber>(C.G));
+    Arr.Add(MakeShared<FJsonValueNumber>(C.B));
+    Arr.Add(MakeShared<FJsonValueNumber>(C.A));
+    return Arr;
+}
+
+/** Engine name for a brush draw type, matching what ui_set_brush accepts. */
+static FString HaybaDrawTypeName(ESlateBrushDrawType::Type T)
+{
+    switch (T)
+    {
+    case ESlateBrushDrawType::NoDrawType: return TEXT("NoDrawType");
+    case ESlateBrushDrawType::Box:        return TEXT("Box");
+    case ESlateBrushDrawType::Border:     return TEXT("Border");
+    case ESlateBrushDrawType::Image:      return TEXT("Image");
+    case ESlateBrushDrawType::RoundedBox: return TEXT("RoundedBox");
+    default:                              return TEXT("Unknown");
+    }
+}
+
+static FString HaybaTilingName(ESlateBrushTileType::Type T)
+{
+    switch (T)
+    {
+    case ESlateBrushTileType::NoTile:     return TEXT("NoTile");
+    case ESlateBrushTileType::Horizontal: return TEXT("Horizontal");
+    case ESlateBrushTileType::Vertical:   return TEXT("Vertical");
+    case ESlateBrushTileType::Both:       return TEXT("Both");
+    default:                              return TEXT("Unknown");
+    }
+}
+
+/**
+ * Everything about a brush that distinguishes it from another brush.
+ *
+ * The point is answering "what is the working panel doing that mine is not".
+ * draw_as and margin are the load-bearing pair: a frame material drawn as Box
+ * with a fractional margin looks completely different from the same material
+ * drawn as Image, and neither the widget tree nor the old brush_info showed
+ * either of them.
+ */
+static TSharedPtr<FJsonObject> HaybaDescribeBrush(const FSlateBrush& B)
+{
+    TSharedPtr<FJsonObject> O = MakeShared<FJsonObject>();
+
+    O->SetStringField(TEXT("draw_as"), HaybaDrawTypeName(B.DrawAs));
+    O->SetStringField(TEXT("tiling"), HaybaTilingName(B.Tiling));
+
+    UObject* Res = B.GetResourceObject();
+    O->SetBoolField(TEXT("has_resource"), Res != nullptr);
+    if (Res)
+    {
+        O->SetStringField(TEXT("resource"), Res->GetPathName());
+        // Material vs texture matters: a material brush must be assigned with
+        // SetBrushFromMaterial, and hand-building an FSlateBrush around one
+        // renders black.
+        O->SetStringField(TEXT("resource_class"), Res->GetClass()->GetName());
+    }
+
+    TArray<TSharedPtr<FJsonValue>> MarginArr;
+    MarginArr.Add(MakeShared<FJsonValueNumber>(B.Margin.Left));
+    MarginArr.Add(MakeShared<FJsonValueNumber>(B.Margin.Top));
+    MarginArr.Add(MakeShared<FJsonValueNumber>(B.Margin.Right));
+    MarginArr.Add(MakeShared<FJsonValueNumber>(B.Margin.Bottom));
+    O->SetArrayField(TEXT("margin"), MarginArr);
+
+    O->SetNumberField(TEXT("image_size_x"), B.ImageSize.X);
+    O->SetNumberField(TEXT("image_size_y"), B.ImageSize.Y);
+    O->SetArrayField(TEXT("brush_tint"), HaybaColorArray(B.TintColor.GetSpecifiedColor()));
+
+    if (B.DrawAs == ESlateBrushDrawType::RoundedBox)
+    {
+        TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+        TArray<TSharedPtr<FJsonValue>> Radii;
+        Radii.Add(MakeShared<FJsonValueNumber>(B.OutlineSettings.CornerRadii.X));
+        Radii.Add(MakeShared<FJsonValueNumber>(B.OutlineSettings.CornerRadii.Y));
+        Radii.Add(MakeShared<FJsonValueNumber>(B.OutlineSettings.CornerRadii.Z));
+        Radii.Add(MakeShared<FJsonValueNumber>(B.OutlineSettings.CornerRadii.W));
+        R->SetArrayField(TEXT("corner_radii"), Radii);
+        R->SetNumberField(TEXT("width"), B.OutlineSettings.Width);
+        R->SetArrayField(TEXT("color"), HaybaColorArray(B.OutlineSettings.Color.GetSpecifiedColor()));
+        O->SetObjectField(TEXT("outline"), R);
+    }
+
+    return O;
+}
+
+/** Read an FSlateBrush property off a widget by name, or null when the widget
+ *  has no such property (or it is not a brush). */
+static const FSlateBrush* HaybaFindBrushProperty(UObject* Owner, const TCHAR* PropName)
+{
+    if (!Owner) return nullptr;
+    FStructProperty* Prop = CastField<FStructProperty>(Owner->GetClass()->FindPropertyByName(FName(PropName)));
+    if (!Prop) return nullptr;
+    if (Prop->Struct != TBaseStructure<FSlateBrush>::Get() && Prop->Struct->GetName() != TEXT("SlateBrush"))
+        return nullptr;
+    return Prop->ContainerPtrToValuePtr<FSlateBrush>(Owner);
+}
+
+#endif // WITH_EDITOR
 
 TArray<FString> FHaybaMCPUIHandler::GetCommands() const
 {
@@ -97,10 +213,12 @@ TArray<FString> FHaybaMCPUIHandler::GetCommands() const
         TEXT("ui_list_widget_types"),
         TEXT("ui_build_tree"),
         TEXT("ui_set_variable"),
+        TEXT("ui_bind_property"),
         TEXT("ui_list_widget_blueprints"),
         TEXT("ui_layout_snapshot"),
         TEXT("ui_measure_text"),
         TEXT("ui_report_findings"),
+        TEXT("ui_render_widget_to_png"),
     };
 }
 
@@ -225,7 +343,21 @@ namespace
             if (SrcProp->HasAnyPropertyFlags(CPF_Transient | CPF_DuplicateTransient | CPF_EditorOnly)) continue;
 
             const FName PropName = SrcProp->GetFName();
-            if (PropName == TEXT("Slot")) continue;  // owned by the parent panel
+            if (PropName == TEXT("Slot")) continue;   // owned by the parent panel
+            // A panel's Slots array holds pointers to slot objects whose Content
+            // points at the SOURCE's children. Copying it makes two widgets claim
+            // the same children, which is a corrupt tree rather than a copy.
+            // Children are rebuilt explicitly by the caller instead.
+            if (PropName == TEXT("Slots")) continue;
+            // Structural links on a UPanelSlot. Copying these is what made a
+            // duplicated subtree adopt the ORIGINAL's widgets: the new slot's
+            // Content was overwritten with a pointer to the source's child, so
+            // the tree showed one widget reached through two slots — two entries
+            // with the same name AND the same object path. Layout values are the
+            // only thing worth copying between slots; who they point at is set
+            // by AddChild and must survive.
+            if (PropName == TEXT("Content")) continue;
+            if (PropName == TEXT("Parent")) continue;
 
             FProperty* DstProp = To->GetClass()->FindPropertyByName(PropName);
             if (!DstProp) continue;
@@ -257,6 +389,61 @@ namespace
 
         return W->IsA<UEditableText>() || W->IsA<UEditableTextBox>() ||
                W->IsA<UMultiLineEditableTextBox>() || W->IsA<USpinBox>() || W->IsA<USlider>();
+    }
+
+    /** Recursively clone a widget and its children into `WBP`'s widget tree.
+     *
+     *  DuplicateObject cannot do this. A UPanelSlot's Content is a plain pointer
+     *  to a widget owned by the WidgetTree, not a subobject of the panel, so
+     *  duplication copies the POINTER: the "copy" ends up sharing the original's
+     *  children, and renaming the copy's subtree renames the original's widgets
+     *  out from under the blueprint. That was observable as two widgets with the
+     *  same name and a child that had silently moved.
+     *
+     *  So the tree is rebuilt node by node: construct a widget of the same class,
+     *  copy its properties, then recurse and re-parent, copying each slot's
+     *  layout across as we go. Every widget produced is genuinely new.
+     *
+     *  Returns nullptr if construction fails at any level. */
+    UWidget* DeepCloneWidget(UWidgetBlueprint* WBP, UWidget* Source, FName DesiredName, int32 Depth = 0)
+    {
+        if (!WBP || !WBP->WidgetTree || !Source) return nullptr;
+        if (Depth > 64) return nullptr;  // defensive: a cycle would never terminate
+
+        UClass* Cls = Source->GetClass();
+        const FName Name = DesiredName.IsNone()
+            ? MakeUniqueObjectName(WBP->WidgetTree, Cls, Source->GetFName())
+            : DesiredName;
+
+        UWidget* New = WBP->WidgetTree->ConstructWidget<UWidget>(Cls, Name);
+        if (!New) return nullptr;
+
+        CopyCommonProperties(Source, New);
+
+        if (UPanelWidget* SrcPanel = Cast<UPanelWidget>(Source))
+        {
+            UPanelWidget* NewPanel = Cast<UPanelWidget>(New);
+            if (NewPanel)
+            {
+                for (int32 i = 0; i < SrcPanel->GetChildrenCount(); ++i)
+                {
+                    UWidget* SrcChild = SrcPanel->GetChildAt(i);
+                    if (!SrcChild) continue;
+
+                    UWidget* NewChild = DeepCloneWidget(WBP, SrcChild, NAME_None, Depth + 1);
+                    if (!NewChild) continue;
+
+                    UPanelSlot* NewSlot = NewPanel->AddChild(NewChild);
+                    if (NewSlot && SrcChild->Slot && NewSlot->GetClass() == SrcChild->Slot->GetClass())
+                    {
+                        CopyCommonProperties(SrcChild->Slot, NewSlot);
+                        NewSlot->SynchronizeProperties();
+                    }
+                }
+            }
+        }
+
+        return New;
     }
 
     UWidget* FindWidgetByName(UWidgetTree* Tree, const FString& Name)
@@ -444,11 +631,16 @@ namespace
 
     /** Anchors accept every shape a caller might reasonably send:
      *  flat anchor_min_x/…, an {min_x,…} object, or anchors_min/anchors_max
-     *  as [x,y] pairs (which is what the typed slot-layout tool sends). */
-    static bool TryApplyAnchors(const TSharedPtr<FJsonObject>& Props, UCanvasPanelSlot* CSlot)
+     *  as [x,y] pairs (which is what the typed slot-layout tool sends).
+     *
+     *  Mutates `Anchors` in place and reports whether anything was set. The
+     *  caller owns the surrounding FAnchorData and commits it ONCE via
+     *  UCanvasPanelSlot::SetLayout — this function deliberately never touches
+     *  the slot, so anchors can no longer be written through a different path
+     *  than position/alignment. */
+    static bool TryApplyAnchors(const TSharedPtr<FJsonObject>& Props, FAnchors& Anchors)
     {
         bool bChanged = false;
-        FAnchors Anchors = CSlot->GetAnchors();
 
         double V = 0.0;
         if (Props->TryGetNumberField(TEXT("anchor_min_x"), V)) { Anchors.Minimum.X = V; bChanged = true; }
@@ -473,7 +665,6 @@ namespace
         if (Props->HasField(TEXT("anchors_min"))) { Anchors.Minimum = ParseVec2(Props, TEXT("anchors_min")); bChanged = true; }
         if (Props->HasField(TEXT("anchors_max"))) { Anchors.Maximum = ParseVec2(Props, TEXT("anchors_max")); bChanged = true; }
 
-        if (bChanged) CSlot->SetAnchors(Anchors);
         return bChanged;
     }
 
@@ -511,28 +702,60 @@ namespace
         // CanvasPanelSlot
         if (UCanvasPanelSlot* CSlot = Cast<UCanvasPanelSlot>(Slot))
         {
-            TryApplyAnchors(Props, CSlot);
+            // ONE FAnchorData, ONE commit. The previous code pushed anchors,
+            // position, size and alignment through four separate setters
+            // (SetAnchors / SetOffsets / SetPosition / SetSize / SetAlignment).
+            // Each of those reads its baseline through the slot's GETTERS,
+            // which prefer the live Slate slot over the serialized LayoutData
+            // whenever a preview is attached — so a value could be read from
+            // one place, modified, and written through another, and anchors in
+            // particular could be rebuilt from a stale copy. Field report
+            // (2026-07/08, Aphrosia): ui_set_slot_layout anchors were a silent
+            // no-op and the working workaround was object_set_property with a
+            // full LayoutData literal on the slot. This is that workaround made
+            // first-class: build the complete FAnchorData from the serialized
+            // layout (GetLayout reads LayoutData, never Slate) and commit it
+            // atomically via SetLayout, which writes LayoutData and pushes
+            // offsets + anchors + alignment to any live slot in one step.
+            FAnchorData Layout = CSlot->GetLayout();
+            bool bLayoutChanged = TryApplyAnchors(Props, Layout.Anchors);
 
             double OffX, OffY, OffW, OffH;
             const bool bHasOffX = Props->TryGetNumberField(TEXT("x"), OffX);
             const bool bHasOffY = Props->TryGetNumberField(TEXT("y"), OffY);
             const bool bHasOffW = Props->TryGetNumberField(TEXT("w"), OffW);
             const bool bHasOffH = Props->TryGetNumberField(TEXT("h"), OffH);
-            if (bHasOffX || bHasOffY || bHasOffW || bHasOffH)
-            {
-                FMargin Offsets = CSlot->GetOffsets();
-                if (bHasOffX) Offsets.Left   = OffX;
-                if (bHasOffY) Offsets.Top    = OffY;
-                if (bHasOffW) Offsets.Right  = OffW;
-                if (bHasOffH) Offsets.Bottom = OffH;
-                CSlot->SetOffsets(Offsets);
-            }
+            if (bHasOffX) { Layout.Offsets.Left   = OffX; bLayoutChanged = true; }
+            if (bHasOffY) { Layout.Offsets.Top    = OffY; bLayoutChanged = true; }
+            if (bHasOffW) { Layout.Offsets.Right  = OffW; bLayoutChanged = true; }
+            if (bHasOffH) { Layout.Offsets.Bottom = OffH; bLayoutChanged = true; }
 
             // HasField (not "is non-zero") so a caller CAN move a widget back to
-            // the origin or collapse it to zero size.
-            if (Props->HasField(TEXT("position")))  CSlot->SetPosition(ParseVec2(Props, TEXT("position")));
-            if (Props->HasField(TEXT("size")))      CSlot->SetSize(ParseVec2(Props, TEXT("size")));
-            if (Props->HasField(TEXT("alignment"))) CSlot->SetAlignment(ParseVec2(Props, TEXT("alignment")));
+            // the origin or collapse it to zero size. position/size mirror the
+            // engine's own SetPosition/SetSize: Left/Top and Right/Bottom of
+            // the offsets — under stretched anchors Right/Bottom are margins,
+            // not a size, exactly as in the designer.
+            if (Props->HasField(TEXT("position")))
+            {
+                const FVector2D Pos = ParseVec2(Props, TEXT("position"));
+                Layout.Offsets.Left = Pos.X;
+                Layout.Offsets.Top  = Pos.Y;
+                bLayoutChanged = true;
+            }
+            if (Props->HasField(TEXT("size")))
+            {
+                const FVector2D Sz = ParseVec2(Props, TEXT("size"));
+                Layout.Offsets.Right  = Sz.X;
+                Layout.Offsets.Bottom = Sz.Y;
+                bLayoutChanged = true;
+            }
+            if (Props->HasField(TEXT("alignment")))
+            {
+                Layout.Alignment = ParseVec2(Props, TEXT("alignment"));
+                bLayoutChanged = true;
+            }
+
+            if (bLayoutChanged) CSlot->SetLayout(Layout);
 
             bool bAutoSize = false;
             if (Props->TryGetBoolField(TEXT("auto_size"), bAutoSize))
@@ -727,6 +950,10 @@ namespace
         if (!W) return;
         Out->SetStringField(TEXT("name"), W->GetName());
         Out->SetStringField(TEXT("class"), W->GetClass()->GetName());
+        // Full object path. Display names can repeat in a malformed tree, and
+        // two entries showing one name is ambiguous between "two widgets" and
+        // "one widget reached through two slots" — the path distinguishes them.
+        Out->SetStringField(TEXT("object_path"), W->GetPathName());
 
         if (bIncludeGuid && WBP)
         {
@@ -863,20 +1090,15 @@ namespace
         return R;
     }
 
-    bool SaveWidgetPackage(UWidgetBlueprint* WBP)
+    /** Save and verify against the file system. See HaybaMCPSaveVerify.h — the
+     *  previous version returned a bare bool and the caller then inferred
+     *  success from IsDirty(), which answers a different question and reported
+     *  false on saves that had in fact reached disk. */
+    HaybaSaveVerify::FResult SaveWidgetPackage(UWidgetBlueprint* WBP)
     {
-        if (!WBP) return false;
+        if (!WBP) return HaybaSaveVerify::FResult{};
         WBP->MarkPackageDirty();
-        UPackage* Pkg = WBP->GetOutermost();
-        if (!Pkg) return false;
-
-        const FString FileName = FPackageName::LongPackageNameToFilename(
-            Pkg->GetName(), FPackageName::GetAssetPackageExtension());
-
-        FSavePackageArgs Args;
-        Args.TopLevelFlags = RF_Public | RF_Standalone;
-        Args.SaveFlags = SAVE_NoError;
-        return UPackage::SavePackage(Pkg, WBP, *FileName, Args);
+        return HaybaSaveVerify::SaveAndVerify(WBP);
     }
 }
 
@@ -899,10 +1121,12 @@ FHaybaHandlerResult FHaybaMCPUIHandler::Handle(const FString& Cmd, const TShared
     if (Cmd == TEXT("ui_list_widget_types"))   return HandleListTypes(P);
     if (Cmd == TEXT("ui_build_tree"))          return HandleBuildTree(P);
     if (Cmd == TEXT("ui_set_variable"))        return HandleSetVariable(P);
+    if (Cmd == TEXT("ui_bind_property"))       return HandleBindProperty(P);
     if (Cmd == TEXT("ui_list_widget_blueprints")) return HandleListWidgetBlueprints(P);
     if (Cmd == TEXT("ui_layout_snapshot"))     return HandleLayoutSnapshot(P);
     if (Cmd == TEXT("ui_measure_text"))        return HandleMeasureText(P);
     if (Cmd == TEXT("ui_report_findings"))     return HandleReportFindings(P);
+    if (Cmd == TEXT("ui_render_widget_to_png")) return HandleRenderToPng(P);
 
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("UIHandler: unknown command %s"), *Cmd));
 #endif
@@ -927,6 +1151,15 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleCreateWidget(const TSharedPtr<FJso
     if (!ParentClass) ParentClass = UUserWidget::StaticClass();
     if (!ParentClass->IsChildOf(UUserWidget::StaticClass()))
         return FHaybaHandlerResult::Err(TEXT("ui_create_widget: parent_class must derive from UserWidget"));
+
+    // Refuse a taken name instead of letting CreateAsset raise a modal overwrite
+    // dialog, which would block the game thread and hang every queued MCP
+    // request. See HaybaMCPAssetGuard.h for why this is worth guarding.
+    if (HaybaAssetGuard::AssetNameTaken(PkgPath, AssetName))
+    {
+        return FHaybaHandlerResult::Err(
+            HaybaAssetGuard::NameTakenError(TEXT("ui_create_widget"), PkgPath, AssetName));
+    }
 
     FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
     UWidgetBlueprintFactory* Factory = NewObject<UWidgetBlueprintFactory>();
@@ -1229,6 +1462,7 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleQuery(const TSharedPtr<FJsonObject
             TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
             Entry->SetStringField(TEXT("name"), Widget->GetName());
             Entry->SetStringField(TEXT("class"), Widget->GetClass()->GetName());
+            Entry->SetStringField(TEXT("object_path"), Widget->GetPathName());
             Entry->SetStringField(TEXT("parent"), Widget->GetParent() ? Widget->GetParent()->GetName() : FString());
             if (bIncludeSlot) Entry->SetStringField(TEXT("slot_class"), ResolveSlotType(Widget));
             if (bIncludeGuid)
@@ -1328,10 +1562,22 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                 }
             }
 
-            PurgeSubtreeGuids(WBP, Widget);
+            // Collect BEFORE detaching (the subtree walk needs the links), but purge AFTER.
+            // WidgetBlueprintCompiler requires a GUID for EVERY source widget, not just the
+            // ones marked Is Variable, so a widget that is still in the tree with its GUID
+            // already dropped trips "was added but did not get a GUID".
+            TArray<UWidget*> Doomed;
+            CollectSubtree(Widget, Doomed);
+
             // Detach the widget objects from the tree as well; RemoveChild only
             // unlinks from the panel, leaving the widgets owned by the tree.
             WBP->WidgetTree->RemoveWidget(Widget);
+
+            for (UWidget* W : Doomed)
+            {
+                if (W) WBP->WidgetVariableNameToGuidMap.Remove(W->GetFName());
+            }
+
             FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
             WBP->MarkPackageDirty();
         }
@@ -1574,47 +1820,38 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
         // leaves the blueprint with a mangled copy and two widgets answering to
         // the same name. So duplicate under a scratch name first, then rename
         // the whole subtree to unique names before anything else sees it.
-        const FName ScratchName = MakeUniqueObjectName(
-            WBP->WidgetTree, Source->GetClass(), TEXT("HaybaMCP_DuplicateScratch"));
+        // Rebuild the subtree rather than duplicating it. See DeepCloneWidget:
+        // DuplicateObject leaves the copy pointing at the ORIGINAL's children,
+        // because a slot's Content is a plain pointer rather than a subobject.
+        // Two earlier attempts to fix that by renaming after the fact were
+        // treating the symptom — the copy and the original genuinely shared
+        // widgets, so renaming "the copy's" subtree renamed the original's.
+        const FName RootName = NewName.IsEmpty()
+            ? MakeUniqueObjectName(WBP->WidgetTree, Source->GetClass(), Source->GetFName())
+            : FName(*NewName);
 
-        UWidget* Copy = DuplicateObject<UWidget>(Source, WBP->WidgetTree, ScratchName);
+        UWidget* Copy = DeepCloneWidget(WBP, Source, RootName);
         if (!Copy)
-            return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree duplicate: DuplicateObject failed"));
+            return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree duplicate: could not clone the widget subtree"));
 
-        // The root of the copy takes the caller's name (or a unique variant of
-        // the source's); every descendant takes a unique variant of its own.
+        TArray<FString> RenameFallbacks;
+        if (Copy->GetFName() != RootName)
         {
-            TArray<UWidget*> Copied;
-            CollectSubtree(Copy, Copied);
-            for (UWidget* W : Copied)
-            {
-                if (!W) continue;
-
-                const bool bIsRoot = (W == Copy);
-                FName Desired;
-                if (bIsRoot && !NewName.IsEmpty())
-                {
-                    Desired = FName(*NewName);
-                }
-                else
-                {
-                    // Base the unique name on the SOURCE widget's name, not the
-                    // scratch name, so a duplicated "Row" reads "Row_1".
-                    const FName Base = bIsRoot ? Source->GetFName() : W->GetFName();
-                    Desired = MakeUniqueObjectName(WBP->WidgetTree, W->GetClass(), Base);
-                }
-
-                if (W->GetFName() != Desired)
-                {
-                    W->Rename(*Desired.ToString(), WBP->WidgetTree, REN_DontCreateRedirectors | REN_DoNotDirty);
-                }
-            }
+            RenameFallbacks.Add(FString::Printf(
+                TEXT("wanted \"%s\", got \"%s\""), *RootName.ToString(), *Copy->GetName()));
         }
+
+        // Stage capture. Two rounds of fixes were spent guessing WHICH call
+        // trashes the copy; recording the name at each step answers it in one
+        // build instead.
+        const FString NameAfterClone = Copy->GetName();
 
         UPanelSlot* NewSlot = TargetParent->AddChild(Copy);
         if (!NewSlot)
             return FHaybaHandlerResult::Err(FString::Printf(
                 TEXT("ui_mutate_tree duplicate: '%s' refused the child (panel is full)"), *TargetParent->GetName()));
+
+        const FString NameAfterAddChild = Copy->GetName();
 
         if (Source->Slot && NewSlot->GetClass() == Source->Slot->GetClass())
         {
@@ -1634,13 +1871,93 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
             ApplySlotPropsChecked(NewSlot, *SlotProps);
         }
 
+        // Structural, like every other tree mutation here.
+        //
+        // A stage trace showed the copy surviving the clone and AddChild, then
+        // becoming TRASH_ across this call — which looked like the recompile was
+        // at fault. It was not. The copy was ORPHANED (its parent slot pointed
+        // at the source's child, because slot Content was being copied), and the
+        // recompile simply collected a widget nothing referenced. Fixing the
+        // slot pointers made it reachable, and it now survives compilation like
+        // every other widget these tools create.
         FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
         WBP->MarkPackageDirty();
+
+        {
+            TSharedPtr<FJsonObject> Stages = MakeShared<FJsonObject>();
+            Stages->SetStringField(TEXT("after_clone"), NameAfterClone);
+            Stages->SetStringField(TEXT("after_add_child"), NameAfterAddChild);
+            Stages->SetStringField(TEXT("final"), Copy->GetName());
+            Stages->SetStringField(TEXT("object_path"), Copy->GetPathName());
+            Out->SetObjectField(TEXT("name_stages"), Stages);
+        }
 
         Out->SetStringField(TEXT("source"), WidgetName);
         Out->SetStringField(TEXT("name"), Copy->GetName());
         Out->SetStringField(TEXT("parent"), TargetParent->GetName());
         Out->SetNumberField(TEXT("widgets_duplicated"), Subtree.Num());
+
+        // Post-condition check. Two rounds of fixes have improved this path
+        // without fully settling it: the clone no longer corrupts the ORIGINAL's
+        // subtree, but the copy can still come back trashed or sharing a name
+        // with its source. Rather than return ok on a tree that is wrong, verify
+        // what actually landed and say so.
+        //
+        // This is deliberately a hard error. A silently mis-shaped widget tree is
+        // the expensive kind of failure — it surfaces later as a binding that
+        // cannot resolve, with nothing pointing back at the call that caused it.
+        {
+            const FString FinalName = Copy->GetName();
+            TArray<FString> Defects;
+
+            if (FinalName.StartsWith(TEXT("TRASH_")))
+            {
+                Defects.Add(FString::Printf(
+                    TEXT("the copy was trashed by the engine and is named \"%s\""), *FinalName));
+            }
+            if (!NewName.IsEmpty() && FinalName != NewName)
+            {
+                Defects.Add(FString::Printf(
+                    TEXT("asked for \"%s\" but the copy is named \"%s\""), *NewName, *FinalName));
+            }
+
+            // Two widgets answering to one name means later lookups are
+            // ambiguous, which is how the original corruption presented.
+            TMap<FString, int32> NameCounts;
+            WBP->WidgetTree->ForEachWidget([&NameCounts](UWidget* W)
+            {
+                if (W) NameCounts.FindOrAdd(W->GetName())++;
+            });
+            for (const auto& Pair : NameCounts)
+            {
+                if (Pair.Value > 1)
+                {
+                    Defects.Add(FString::Printf(
+                        TEXT("%d widgets now share the name \"%s\""), Pair.Value, *Pair.Key));
+                }
+            }
+
+            if (Defects.Num() > 0)
+            {
+                // Carry the stage trace in the error itself. The success payload
+                // is discarded on this path, and the whole point of recording
+                // where the name changed is to know WHICH call broke it.
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("ui_mutate_tree duplicate: the copy did not come out clean — %s. ")
+                    TEXT("Name by stage: after_clone=\"%s\" after_add_child=\"%s\" final=\"%s\". ")
+                    TEXT("The blueprint has NOT been saved; discard the change by reloading the asset. ")
+                    TEXT("Build the widget explicitly with ui_build_tree instead."),
+                    *FString::Join(Defects, TEXT("; ")),
+                    *NameAfterClone, *NameAfterAddChild, *Copy->GetName()));
+            }
+        }
+
+        if (RenameFallbacks.Num() > 0)
+        {
+            TArray<TSharedPtr<FJsonValue>> Arr;
+            for (const FString& R : RenameFallbacks) Arr.Add(MakeShared<FJsonValueString>(R));
+            Out->SetArrayField(TEXT("rename_fallbacks"), Arr);
+        }
         return FHaybaHandlerResult::Ok(Out);
     }
     else if (Operation == TEXT("replace"))
@@ -1771,17 +2088,24 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleCompile(const TSharedPtr<FJsonObje
     bool bSaveOnSuccess = false;
     P->TryGetBoolField(TEXT("save_on_success"), bSaveOnSuccess);
 
+    HaybaSaveVerify::FResult SaveResult;
+    bool bAttemptedSave = false;
     if (bSaveOnSuccess && CR.bSuccess)
     {
-        if (!SaveWidgetPackage(WBP))
+        bAttemptedSave = true;
+        SaveResult = SaveWidgetPackage(WBP);
+        if (!SaveResult.DidReachDisk())
         {
-            return FHaybaHandlerResult::Err(TEXT("ui_compile_widget: compile succeeded but save failed"));
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("ui_compile_widget: compile succeeded but the change did not reach disk. %s"),
+                *SaveResult.Note));
         }
     }
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetBoolField(TEXT("success"), CR.bSuccess);
     Out->SetStringField(TEXT("status"), CR.Status);
+    if (bAttemptedSave) HaybaSaveVerify::Describe(SaveResult, Out);
 
     if (CR.Warnings.Num() > 0)
     {
@@ -1836,22 +2160,20 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSave(const TSharedPtr<FJsonObject>
         }
     }
 
-    if (!SaveWidgetPackage(WBP))
-    {
-        return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_save_widget: SavePackage failed for %s"), *WBP->GetPathName()));
-    }
-
-    UPackage* Pkg = WBP->GetOutermost();
-    const bool bDirtyAfter = Pkg ? Pkg->IsDirty() : true;
+    const HaybaSaveVerify::FResult SaveResult = SaveWidgetPackage(WBP);
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("saved_path"), WBP->GetPathName());
-    Out->SetBoolField(TEXT("success"), !bDirtyAfter);
-    Out->SetBoolField(TEXT("package_dirty_after_save"), bDirtyAfter);
+    HaybaSaveVerify::Describe(SaveResult, Out);
 
-    if (bDirtyAfter)
+    // `saved` comes from the file system, not from the dirty flag. A caller
+    // about to restart the editor needs a straight answer to "is my work on
+    // disk", and inferring it from IsDirty() gave the wrong one.
+    if (!SaveResult.DidReachDisk())
     {
-        return FHaybaHandlerResult::Ok(Out);
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("ui_save_widget: %s did not reach disk. %s"),
+            *WBP->GetPathName(), *SaveResult.Note));
     }
 
     return FHaybaHandlerResult::Ok(Out);
@@ -2134,6 +2456,113 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetVariable(const TSharedPtr<FJson
     Out->SetStringField(TEXT("widget_name"), Widget->GetName());
     Out->SetBoolField(TEXT("is_variable"), bIsVariable);
     if (!Category.IsEmpty()) Out->SetStringField(TEXT("category"), Category);
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPUIHandler::HandleBindProperty(const TSharedPtr<FJsonObject>& P)
+{
+    FString BPPath, WidgetName, PropertyName, VariableName;
+    if (!P->TryGetStringField(TEXT("widget_blueprint_path"), BPPath) || BPPath.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("ui_bind_property: missing widget_blueprint_path"));
+    if (!P->TryGetStringField(TEXT("widget_name"), WidgetName) || WidgetName.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("ui_bind_property: missing widget_name"));
+    if (!P->TryGetStringField(TEXT("property_name"), PropertyName) || PropertyName.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("ui_bind_property: missing property_name (e.g. \"Text\")"));
+
+    const bool bClearing = !P->TryGetStringField(TEXT("variable_name"), VariableName) || VariableName.IsEmpty();
+
+    UWidgetBlueprint* WBP = LoadObject<UWidgetBlueprint>(nullptr, *BPPath);
+    if (!WBP || !WBP->WidgetTree)
+        return FHaybaHandlerResult::Err(TEXT("ui_bind_property: widget blueprint not found"));
+
+    UWidget* Widget = FindWidgetByName(WBP->WidgetTree, WidgetName);
+    if (!Widget)
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_bind_property: widget '%s' not found"), *WidgetName));
+
+    // A binding only survives compile if the widget is a variable of the UserWidget — the
+    // binding is stored by name and resolved against the generated class.
+    if (!Widget->bIsVariable)
+    {
+        Widget->Modify();
+        Widget->bIsVariable = true;
+        RegisterWidgetVariable(WBP, Widget);
+    }
+
+    WBP->Modify();
+
+    // One binding per (widget, property) — FDelegateEditorBinding::operator== compares exactly
+    // those two, so removing first makes this idempotent and doubles as the "clear" path.
+    FDelegateEditorBinding Binding;
+    Binding.ObjectName = Widget->GetName();
+    Binding.PropertyName = FName(*PropertyName);
+    WBP->Bindings.Remove(Binding);
+
+    if (bClearing)
+    {
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
+        WBP->MarkPackageDirty();
+
+        TSharedPtr<FJsonObject> ClearedOut = MakeShared<FJsonObject>();
+        ClearedOut->SetStringField(TEXT("widget_name"), Widget->GetName());
+        ClearedOut->SetStringField(TEXT("property_name"), PropertyName);
+        ClearedOut->SetBoolField(TEXT("bound"), false);
+        ClearedOut->SetStringField(TEXT("note"), TEXT("Binding cleared. Call ui_compile_widget then ui_save_widget to persist."));
+        return FHaybaHandlerResult::Ok(ClearedOut);
+    }
+
+    // The source variable lives on the generated class. Resolve it now rather than letting the
+    // compiler fail later with a binding that points at nothing.
+    UClass* SourceClass = WBP->GeneratedClass ? WBP->GeneratedClass.Get() : WBP->SkeletonGeneratedClass.Get();
+    if (!SourceClass)
+        return FHaybaHandlerResult::Err(TEXT("ui_bind_property: blueprint has no generated class — compile it first"));
+
+    FProperty* SourceProperty = FindFProperty<FProperty>(SourceClass, FName(*VariableName));
+    if (!SourceProperty)
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("ui_bind_property: no variable '%s' on '%s'. Create it first with blueprint_add_variable."),
+            *VariableName, *SourceClass->GetName()));
+    }
+
+    // Verify the destination is actually bindable: UMG generates a companion delegate property
+    // named "<Property>Delegate" for every property the designer can bind.
+    const FName DelegateName(*(PropertyName + TEXT("Delegate")));
+    FDelegateProperty* DelegateProperty = FindFProperty<FDelegateProperty>(Widget->GetClass(), DelegateName);
+    if (!DelegateProperty)
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("ui_bind_property: '%s' on %s is not bindable (no %s). Bindable examples: Text, ToolTipText, Visibility, bIsEnabled."),
+            *PropertyName, *Widget->GetClass()->GetName(), *DelegateName.ToString()));
+    }
+
+    TArray<FFieldVariant> Chain;
+    Chain.Add(SourceProperty);
+
+    Binding.SourceProperty = FName(*VariableName);
+    Binding.SourcePath = FEditorPropertyPath(Chain);
+    Binding.Kind = EBindingKind::Property;
+
+    // Refuse a type mismatch here, where the message can name both sides, instead of emitting a
+    // compile error that only says the binding is invalid.
+    FText BindError;
+    if (!Binding.SourcePath.Validate(DelegateProperty, BindError))
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("ui_bind_property: '%s' cannot drive %s.%s — %s"),
+            *VariableName, *Widget->GetName(), *PropertyName, *BindError.ToString()));
+    }
+
+    WBP->Bindings.Add(Binding);
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
+    WBP->MarkPackageDirty();
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("widget_name"), Widget->GetName());
+    Out->SetStringField(TEXT("property_name"), PropertyName);
+    Out->SetStringField(TEXT("variable_name"), VariableName);
+    Out->SetBoolField(TEXT("bound"), true);
+    Out->SetNumberField(TEXT("binding_count"), WBP->Bindings.Num());
+    Out->SetStringField(TEXT("note"), TEXT("Staged. Call ui_compile_widget then ui_save_widget to persist."));
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -2455,50 +2884,42 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleLayoutSnapshot(const TSharedPtr<FJ
             Entry->SetObjectField(TEXT("text_info"), TextObj);
         }
 
-        // Brush facts for the fill/contrast rules.
+        // Brush facts.
+        //
+        // These used to carry a tint, a has_resource bool, and for a Border not
+        // even the resource PATH. That is not enough to answer the question
+        // people actually ask — "what is the working panel doing that mine is
+        // not" — so the only way through was dropping to object_get_property and
+        // reading the raw ExportText. Everything that distinguishes one brush
+        // from another is reported now: draw_as, the resource, the 9-slice
+        // margin, tiling and the outline.
         if (UImage* Img = Cast<UImage>(Widget))
         {
-            TSharedPtr<FJsonObject> BrushObj = MakeShared<FJsonObject>();
-            const FSlateBrush& B = Img->GetBrush();
-            BrushObj->SetBoolField(TEXT("has_resource"), B.GetResourceObject() != nullptr);
-            if (B.GetResourceObject()) BrushObj->SetStringField(TEXT("resource"), B.GetResourceObject()->GetPathName());
-            const FLinearColor Tint = Img->GetColorAndOpacity();
-            TArray<TSharedPtr<FJsonValue>> TintArr;
-            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.R));
-            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.G));
-            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.B));
-            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.A));
-            BrushObj->SetArrayField(TEXT("tint"), TintArr);
-            BrushObj->SetNumberField(TEXT("image_size_x"), B.ImageSize.X);
-            BrushObj->SetNumberField(TEXT("image_size_y"), B.ImageSize.Y);
+            TSharedPtr<FJsonObject> BrushObj = HaybaDescribeBrush(Img->GetBrush());
+            // Image's own ColorAndOpacity multiplies the brush tint, so it is
+            // the colour actually on screen.
+            BrushObj->SetArrayField(TEXT("tint"), HaybaColorArray(Img->GetColorAndOpacity()));
+            BrushObj->SetStringField(TEXT("brush_property"), TEXT("Brush"));
             Entry->SetObjectField(TEXT("brush_info"), BrushObj);
         }
-        if (UBorder* Bd = Cast<UBorder>(Widget))
+        else if (UBorder* Bd = Cast<UBorder>(Widget))
         {
-            TSharedPtr<FJsonObject> BrushObj = MakeShared<FJsonObject>();
-            const FLinearColor Tint = Bd->GetBrushColor();
-            TArray<TSharedPtr<FJsonValue>> TintArr;
-            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.R));
-            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.G));
-            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.B));
-            TintArr.Add(MakeShared<FJsonValueNumber>(Tint.A));
-            BrushObj->SetArrayField(TEXT("tint"), TintArr);
-            // A Border's own brush is reached through the reflection system
-            // rather than the member: UMG moved these properties behind
-            // accessors, and the member is not public in current engine
-            // versions. The contrast rules only need the tint, so a missing
-            // brush here degrades to "no resource" rather than failing.
-            bool bHasResource = false;
-            if (FStructProperty* BgProp = CastField<FStructProperty>(Bd->GetClass()->FindPropertyByName(TEXT("Background"))))
+            // A Border's brush is reached through reflection rather than a
+            // member: UMG moved these behind accessors and the member is not
+            // public in current engine versions.
+            TSharedPtr<FJsonObject> BrushObj;
+            if (const FSlateBrush* Brush = HaybaFindBrushProperty(Bd, TEXT("Background")))
             {
-                if (BgProp->Struct == TBaseStructure<FSlateBrush>::Get() ||
-                    BgProp->Struct->GetName() == TEXT("SlateBrush"))
-                {
-                    const FSlateBrush* Brush = BgProp->ContainerPtrToValuePtr<FSlateBrush>(Bd);
-                    bHasResource = Brush && Brush->GetResourceObject() != nullptr;
-                }
+                BrushObj = HaybaDescribeBrush(*Brush);
             }
-            BrushObj->SetBoolField(TEXT("has_resource"), bHasResource);
+            else
+            {
+                BrushObj = MakeShared<FJsonObject>();
+                BrushObj->SetBoolField(TEXT("has_resource"), false);
+                BrushObj->SetStringField(TEXT("note"), TEXT("Background brush could not be read through reflection on this engine version"));
+            }
+            BrushObj->SetArrayField(TEXT("tint"), HaybaColorArray(Bd->GetBrushColor()));
+            BrushObj->SetStringField(TEXT("brush_property"), TEXT("Background"));
             Entry->SetObjectField(TEXT("brush_info"), BrushObj);
         }
 
@@ -2520,6 +2941,168 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleLayoutSnapshot(const TSharedPtr<FJ
     if (!bHaveLayout) Out->SetStringField(TEXT("layout_error"), LayoutError);
     Out->SetNumberField(TEXT("widget_count"), Widgets.Num());
     Out->SetArrayField(TEXT("widgets"), Widgets);
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+// ── ui_render_widget_to_png ─────────────────────────────────────────────────
+//
+// Draw a Widget Blueprint to a PNG without launching PIE.
+//
+// The problem this exists for: every font, brush, spacing and sizing mistake in
+// a UMG layout is invisible until it renders, and the only way to render one
+// was close editor → build → relaunch → drive PIE → screenshot. That is a
+// four-minute round trip to answer "is the text still Roboto". An agent cannot
+// see the viewport, so it either pays that cost on every change or works blind.
+//
+// FWidgetRenderer is what the UMG designer's own thumbnails use: it draws a
+// Slate widget into a render target off-screen, on the game thread, with no
+// world and no play session.
+
+FHaybaHandlerResult FHaybaMCPUIHandler::HandleRenderToPng(const TSharedPtr<FJsonObject>& P)
+{
+    FString BPPath;
+    if (!P->TryGetStringField(TEXT("widget_blueprint_path"), BPPath) || BPPath.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: missing widget_blueprint_path"));
+
+    UWidgetBlueprint* WBP = LoadObject<UWidgetBlueprint>(nullptr, *BPPath);
+    if (!WBP || !WBP->WidgetTree)
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: widget blueprint not found"));
+
+    // Default to the size the blueprint is authored against, so what comes back
+    // matches what the designer shows rather than an arbitrary crop.
+    const FVector2D DesignSize = HaybaUILayout::GetDesignSize(WBP);
+    double ReqW = DesignSize.X;
+    double ReqH = DesignSize.Y;
+    P->TryGetNumberField(TEXT("width"), ReqW);
+    P->TryGetNumberField(TEXT("height"), ReqH);
+
+    double Scale = 1.0;
+    P->TryGetNumberField(TEXT("scale"), Scale);
+    Scale = FMath::Clamp(Scale, 0.1, 4.0);
+
+    const int32 Width  = FMath::Clamp(FMath::RoundToInt(ReqW * Scale), 16, 8192);
+    const int32 Height = FMath::Clamp(FMath::RoundToInt(ReqH * Scale), 16, 8192);
+
+    FString OutPath;
+    P->TryGetStringField(TEXT("out_path"), OutPath);
+    if (OutPath.IsEmpty())
+    {
+        const FString Stamp = FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S"));
+        const FString Uuid8 = FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(8).ToLower();
+        OutPath = FPaths::ProjectSavedDir() / TEXT("Screenshots/Hayba")
+                / FString::Printf(TEXT("widget_%s_%s_%s.png"), *WBP->GetName(), *Stamp, *Uuid8);
+    }
+    else if (FPaths::IsRelative(OutPath))
+    {
+        OutPath = FPaths::ProjectDir() / OutPath;
+    }
+    OutPath = FPaths::ConvertRelativePathToFull(OutPath);
+
+    FString Error;
+    HaybaUILayout::FPreviewInstance Preview;
+    if (!HaybaUILayout::MakePreviewInstance(WBP, Preview, Error))
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_render_widget_to_png: %s"), *Error));
+
+    const FVector2D DrawSize(Width, Height);
+
+    // bUseGammaCorrection: without it every colour comes back visibly dark, and
+    // "the mockup looks wrong" is exactly the judgement this tool exists to
+    // support — a systematically wrong palette would make it worse than useless.
+    TSharedPtr<FWidgetRenderer> Renderer = MakeShared<FWidgetRenderer>(/*bUseGammaCorrection=*/true);
+    if (!Renderer.IsValid())
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: could not create the widget renderer"));
+    Renderer->SetIsPrepassNeeded(true);
+
+    UTextureRenderTarget2D* RT = Renderer->DrawWidget(Preview.Slate.ToSharedRef(), DrawSize);
+    if (!RT)
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: DrawWidget produced no render target"));
+
+    // DrawWidget enqueues render commands; reading the pixels before they have
+    // executed yields an empty (black) buffer. This is the same "first frame is
+    // black" trap the PIE screenshot path hit.
+    FlushRenderingCommands();
+
+    FTextureRenderTargetResource* Res = RT->GameThread_GetRenderTargetResource();
+    if (!Res)
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: render target has no resource"));
+
+    TArray<FColor> Pixels;
+    if (!Res->ReadPixels(Pixels) || Pixels.Num() == 0)
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: failed to read pixels back from the render target"));
+
+    // UMG draws onto transparency. Left alone, every pixel the layout does not
+    // cover is alpha-0 and most viewers show the whole image as black, which
+    // reads as "the render failed" rather than "this widget does not fill its
+    // canvas". Opaque by default; opt out when compositing is the point.
+    bool bOpaqueBackground = true;
+    P->TryGetBoolField(TEXT("opaque_background"), bOpaqueBackground);
+    int32 OpaquePixels = 0;
+    for (FColor& C : Pixels)
+    {
+        if (C.A != 0) ++OpaquePixels;
+        if (bOpaqueBackground) C.A = 255;
+    }
+
+    IFileManager::Get().MakeDirectory(*FPaths::GetPath(OutPath), /*Tree=*/true);
+
+    // PNGCompressImageArray, NOT ThumbnailCompressImageArray/CompressImageArray:
+    // those emit JPEG bytes behind a .png extension (see HaybaMCPRenderHandler).
+    TArray64<uint8> Png;
+    FImageUtils::PNGCompressImageArray(Width, Height, Pixels, Png);
+    if (!FFileHelper::SaveArrayToFile(Png, *OutPath))
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_render_widget_to_png: could not write %s"), *OutPath));
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("widget_blueprint_path"), WBP->GetPathName());
+    Out->SetStringField(TEXT("out_path"), OutPath);
+
+    // Hand back the image itself, not just where it went. The caller cannot see
+    // the viewport — that is the entire reason this command exists — so a bare
+    // filename would leave them as blind as the four-minute PIE loop did.
+    //
+    // Capped: a full-resolution render can base64 to several MB, which is worth
+    // refusing rather than pushing through the transport. When it is too big the
+    // path is still there to read, and the response says so instead of silently
+    // omitting the field.
+    bool bInlineImage = true;
+    P->TryGetBoolField(TEXT("inline_image"), bInlineImage);
+    const int64 InlineByteLimit = 3 * 1024 * 1024;
+    if (bInlineImage)
+    {
+        if (Png.Num() <= InlineByteLimit)
+        {
+            TArray<uint8> Narrow;
+            Narrow.Append(Png.GetData(), Png.Num());
+            Out->SetStringField(TEXT("image_base64"), FBase64::Encode(Narrow));
+        }
+        else
+        {
+            Out->SetStringField(TEXT("inline_image_skipped"),
+                FString::Printf(TEXT("PNG is %lld bytes, over the %lld-byte inline limit — read out_path instead, ")
+                                TEXT("or re-render with a smaller scale."), (int64)Png.Num(), InlineByteLimit));
+        }
+    }
+    Out->SetNumberField(TEXT("width"), Width);
+    Out->SetNumberField(TEXT("height"), Height);
+    Out->SetNumberField(TEXT("design_width"), DesignSize.X);
+    Out->SetNumberField(TEXT("design_height"), DesignSize.Y);
+    Out->SetNumberField(TEXT("bytes"), Png.Num());
+    Out->SetBoolField(TEXT("opaque_background"), bOpaqueBackground);
+
+    // A fully transparent render means the widget drew nothing — a collapsed
+    // root, an empty tree, an inactive switcher slot. The file still exists and
+    // still has a size, so without this the caller gets a confident success for
+    // a blank image.
+    const double CoveragePct = Pixels.Num() > 0 ? (100.0 * OpaquePixels / Pixels.Num()) : 0.0;
+    Out->SetNumberField(TEXT("coverage_percent"), FMath::RoundToDouble(CoveragePct * 100.0) / 100.0);
+    if (OpaquePixels == 0)
+    {
+        Out->SetStringField(TEXT("warning"),
+            TEXT("The widget drew NOTHING — every pixel was fully transparent. The PNG exists but is blank. ")
+            TEXT("Usual causes: the root widget is Collapsed/Hidden, the tree is empty, the visible content sits ")
+            TEXT("in an inactive WidgetSwitcher slot, or nothing has an explicit size. Do not treat this as a render."));
+    }
+
     return FHaybaHandlerResult::Ok(Out);
 }
 

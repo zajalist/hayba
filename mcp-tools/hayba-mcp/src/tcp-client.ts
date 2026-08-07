@@ -1,4 +1,5 @@
 // mcp_server/src/tcp-client.ts
+import { FrameDecoder } from './tcp-frame-decoder.js';
 import { createConnection, Socket } from 'node:net';
 import { EventEmitter } from 'node:events';
 
@@ -34,7 +35,11 @@ export class UETcpClient extends EventEmitter {
     reject: (reason: Error) => void;
     timer: ReturnType<typeof setTimeout>;
   }>();
-  private receiveBuffer = Buffer.alloc(0);
+  /** Framing lives in FrameDecoder, not here. The 4-byte big-endian length
+   *  prefix is the single most important invariant in the repo — both ends of
+   *  the TCP seam must agree on it — and while it sat inline in the socket
+   *  callback it could not be unit-tested at all. */
+  private frames = new FrameDecoder();
   private requestCounter = 0;
   private connected = false;
 
@@ -62,6 +67,10 @@ export class UETcpClient extends EventEmitter {
       this.socket.on('data', (data: Buffer) => this.onData(data));
       this.socket.on('close', () => {
         this.connected = false;
+        // Drop any half-arrived frame. The old inline buffer was never cleared
+        // on close, so a truncated tail from a dead editor prefixed the first
+        // frame of the next connection and desynced the stream.
+        this.frames.reset();
         this.emit('disconnected');
         for (const [id, pending] of this.pendingRequests) {
           clearTimeout(pending.timer);
@@ -115,22 +124,7 @@ export class UETcpClient extends EventEmitter {
   }
 
   private onData(data: Buffer): void {
-    this.receiveBuffer = Buffer.concat([this.receiveBuffer, data]);
-
-    while (this.receiveBuffer.length >= 4) {
-      const messageLength = this.receiveBuffer.readUInt32BE(0);
-      if (messageLength === 0 || messageLength > 1024 * 1024) {
-        this.receiveBuffer = Buffer.alloc(0);
-        return;
-      }
-
-      if (this.receiveBuffer.length < 4 + messageLength) {
-        return;
-      }
-
-      const messageBytes = this.receiveBuffer.subarray(4, 4 + messageLength);
-      this.receiveBuffer = this.receiveBuffer.subarray(4 + messageLength);
-
+    for (const messageBytes of this.frames.push(data)) {
       try {
         const response: TcpResponse = JSON.parse(messageBytes.toString('utf-8'));
         const pending = this.pendingRequests.get(response.id);

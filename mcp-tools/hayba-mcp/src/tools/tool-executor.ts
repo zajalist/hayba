@@ -55,6 +55,11 @@ export const NON_IDEMPOTENT = new Set<string>([
   'asset_duplicate',
   'asset_import',
   'asset_rename',
+  // asset_move moves FROM a path. If the first attempt lands but its reply is
+  // lost, the retry looks for an asset that is no longer there and fails — so
+  // the caller is told the move failed when it actually succeeded. Sat outside
+  // this set while asset_rename and asset_delete beside it were protected.
+  'asset_move',
   // Landscape
   'landscape_import',
   'landscape_add_layer',

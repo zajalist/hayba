@@ -16,6 +16,7 @@
 #include "Misc/UObjectToken.h"
 #include "FileHelpers.h"
 #include "Misc/PackageName.h"
+#include "HAL/FileManager.h"
 #include "ObjectTools.h"
 #include "AssetRegistry/AssetRegistryHelpers.h"
 #include "Misc/Base64.h"
@@ -287,18 +288,146 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetDuplicate(const TSharedPtr<FJson
     return FHaybaHandlerResult::Ok(Out);
 }
 
+// Delete assets, and confirm on the FILESYSTEM that they are gone.
+//
+// The asset registry and the disk can disagree, and when they do the registry
+// is the one that lies. Reproduced 2026-07-30: after a force-delete invalidated
+// a neighbour, `does_asset_exist` returned false for an asset whose .uasset was
+// still on disk, and a subsequent DeleteAsset returned false because the
+// registry could no longer find it. The file is then orphaned — invisible to
+// every registry query, permanently present on disk.
+//
+// That is why verification here reads the filesystem. Anything that checks
+// does_asset_exist after deleting is asking the component that was already
+// wrong, and will report success for files it never removed. A batch loop doing
+// that is how "34 deleted" came back with 34 files still on disk.
+static FString PackageFileOnDisk(const FString& AssetPath)
+{
+    // Accept /Game/X/Y or /Game/X/Y.Y — the object suffix is not part of the
+    // package name and breaks the filename lookup if left on.
+    FString PackageName = AssetPath;
+    int32 Dot;
+    if (PackageName.FindChar(TEXT('.'), Dot)) PackageName.LeftInline(Dot);
+
+    FString Filename;
+    if (!FPackageName::TryConvertLongPackageNameToFilename(
+            PackageName, Filename, FPackageName::GetAssetPackageExtension()))
+    {
+        return FString();
+    }
+    return Filename;
+}
+
 FHaybaHandlerResult FHaybaMCPAssetHandler::AssetDelete(const TSharedPtr<FJsonObject>& P)
 {
-    FString Path;
-    if (!P->TryGetStringField(TEXT("path"), Path) || Path.IsEmpty())
-        return FHaybaHandlerResult::Err(TEXT("asset_delete: missing path"));
+    // Accept one path or many. Deleting a set is the real use, and doing it one
+    // call at a time is what made a partial failure look like a clean sweep.
+    TArray<FString> Paths;
+    FString Single;
+    if (P->TryGetStringField(TEXT("path"), Single) && !Single.IsEmpty())
+    {
+        Paths.Add(Single);
+    }
+    const TArray<TSharedPtr<FJsonValue>>* Arr = nullptr;
+    if (P->TryGetArrayField(TEXT("paths"), Arr) && Arr)
+    {
+        for (const TSharedPtr<FJsonValue>& V : *Arr)
+        {
+            const FString S = V->AsString();
+            if (!S.IsEmpty()) Paths.Add(S);
+        }
+    }
+    if (Paths.Num() == 0)
+        return FHaybaHandlerResult::Err(TEXT("asset_delete: give `path` (string) or `paths` (array of strings)"));
 
-    bool bDeleted = UEditorAssetLibrary::DeleteAsset(Path);
-    if (!bDeleted)
-        return FHaybaHandlerResult::Err(FString::Printf(TEXT("asset_delete: failed for %s"), *Path));
+    TArray<TSharedPtr<FJsonValue>> Results;
+    int32 DeletedCount = 0;
+    int32 StillOnDisk = 0;
+    TArray<FString> Orphans;
+
+    for (const FString& Path : Paths)
+    {
+        TSharedPtr<FJsonObject> E = MakeShared<FJsonObject>();
+        E->SetStringField(TEXT("path"), Path);
+
+        const FString File = PackageFileOnDisk(Path);
+        const bool bFileBefore = !File.IsEmpty() && IFileManager::Get().FileExists(*File);
+        const bool bRegistryBefore = UEditorAssetLibrary::DoesAssetExist(Path);
+        E->SetBoolField(TEXT("existed_on_disk"), bFileBefore);
+        E->SetBoolField(TEXT("existed_in_registry"), bRegistryBefore);
+
+        // An asset the registry has lost but whose file remains cannot be
+        // deleted through the asset APIs at all — say so instead of returning a
+        // bare false the caller will read as "already gone".
+        if (!bRegistryBefore && bFileBefore)
+        {
+            E->SetBoolField(TEXT("deleted"), false);
+            E->SetStringField(TEXT("reason"),
+                TEXT("ORPHANED: the asset registry does not know this asset but its .uasset is on disk, so the "
+                     "asset APIs cannot delete it. Usually caused by an earlier force-delete invalidating it. "
+                     "It must be removed from disk directly, then the registry rescanned."));
+            E->SetStringField(TEXT("file"), File);
+            Results.Add(MakeShared<FJsonValueObject>(E));
+            ++StillOnDisk;
+            Orphans.Add(Path);
+            continue;
+        }
+
+        const bool bReported = UEditorAssetLibrary::DeleteAsset(Path);
+        const bool bFileAfter = !File.IsEmpty() && IFileManager::Get().FileExists(*File);
+
+        E->SetBoolField(TEXT("engine_reported_deleted"), bReported);
+        E->SetBoolField(TEXT("file_gone"), !bFileAfter);
+        if (!File.IsEmpty()) E->SetStringField(TEXT("file"), File);
+
+        // `deleted` means the FILE is gone. Nothing else is deletion.
+        const bool bReallyDeleted = bFileBefore && !bFileAfter;
+        E->SetBoolField(TEXT("deleted"), bReallyDeleted);
+
+        if (bReallyDeleted)
+        {
+            ++DeletedCount;
+        }
+        else if (bFileAfter)
+        {
+            ++StillOnDisk;
+            E->SetStringField(TEXT("reason"), bReported
+                ? TEXT("The engine reported success but the .uasset is STILL ON DISK. The file may be read-only "
+                       "or locked (source control, another process), or the delete was only applied in memory.")
+                : TEXT("The engine refused the delete and the .uasset is still on disk. Check asset_get_references "
+                       "— a referenced asset needs the references cleared first."));
+        }
+        else if (!bFileBefore)
+        {
+            E->SetStringField(TEXT("reason"), TEXT("Nothing to delete: no .uasset at this path."));
+        }
+
+        Results.Add(MakeShared<FJsonValueObject>(E));
+    }
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-    Out->SetBoolField(TEXT("deleted"), true);
+    Out->SetNumberField(TEXT("requested"), Paths.Num());
+    Out->SetNumberField(TEXT("deleted_count"), DeletedCount);
+    Out->SetNumberField(TEXT("still_on_disk_count"), StillOnDisk);
+    Out->SetArrayField(TEXT("results"), Results);
+
+    if (StillOnDisk > 0)
+    {
+        Out->SetStringField(TEXT("warning"), FString::Printf(
+            TEXT("%d of %d assets are STILL ON DISK. deleted_count counts files actually removed, verified on the "
+                 "filesystem — do NOT read `requested` as a success count, and do NOT verify a delete with "
+                 "does_asset_exist: the registry can report an asset gone while its file remains."),
+            StillOnDisk, Paths.Num()));
+    }
+
+    // Every path failed → this is a failure, not a partial success.
+    if (DeletedCount == 0 && Paths.Num() > 0)
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("asset_delete: nothing was deleted (%d requested, %d still on disk). See the per-path reasons."),
+            Paths.Num(), StillOnDisk));
+    }
+
     return FHaybaHandlerResult::Ok(Out);
 }
 

@@ -115,6 +115,63 @@ describe('ui_set_slot_layout', () => {
     );
     expect(r.isError).toBe(true);
   });
+
+  it('accepts the natural `anchors` spelling as a 4-array', async () => {
+    // Before this, zod's default strip mode silently DELETED `anchors`, the
+    // remaining fields applied, and the tool reported success — the field
+    // conclusion was "anchors are a silent no-op".
+    let seen: Record<string, unknown> | null = null;
+    const exec = new InMemoryToolExecutor().on('ui_set_widget_properties', (p) => {
+      seen = p;
+      return ok({ succeeded: 2, failed: 0 });
+    });
+    setDefaultSender(exec.send);
+
+    const r = await uiSetSlotLayoutHandler(
+      { widget_blueprint_path: '/Game/UI/WBP_Test', widget_name: 'Title', anchors: [0, 0, 1, 1] },
+      undefined as never,
+    );
+    expect(r.isError).toBeFalsy();
+    expect((seen as unknown as { slot_props: Record<string, unknown> }).slot_props).toEqual({
+      anchors_min: [0, 0],
+      anchors_max: [1, 1],
+    });
+  });
+
+  it('accepts `anchors` as {min, max} pairs', async () => {
+    let seen: Record<string, unknown> | null = null;
+    const exec = new InMemoryToolExecutor().on('ui_set_widget_properties', (p) => {
+      seen = p;
+      return ok({ succeeded: 2, failed: 0 });
+    });
+    setDefaultSender(exec.send);
+
+    await uiSetSlotLayoutHandler(
+      {
+        widget_blueprint_path: '/Game/UI/WBP_Test',
+        widget_name: 'Title',
+        anchors: { min: [0.5, 0], max: [0.5, 0] },
+        position: [0, 40],
+      },
+      undefined as never,
+    );
+    expect((seen as unknown as { slot_props: Record<string, unknown> }).slot_props).toEqual({
+      anchors_min: [0.5, 0],
+      anchors_max: [0.5, 0],
+      position: [0, 40],
+    });
+  });
+
+  it('rejects unknown parameter names loudly instead of stripping them', async () => {
+    // The silent-strip failure mode: an invented key used to vanish before the
+    // wire while everything else applied and the call reported success.
+    const r = await uiSetSlotLayoutHandler(
+      { widget_blueprint_path: '/Game/UI/WBP_Test', widget_name: 'Title', anchor: [0, 0, 1, 1] },
+      undefined as never,
+    );
+    expect(r.isError).toBe(true);
+    expect(textOf(r as { content: Array<{ type: string; text: string }> })).toMatch(/anchor/);
+  });
 });
 
 describe('ui_set_widget_properties', () => {
@@ -326,11 +383,15 @@ describe('ui_measure_text', () => {
   });
 });
 
-// The duplicate path is C++, so what is pinned here is the invariant that made
-// it wrong: a live editor produced "TRASH_CardCopy_0" and left two widgets both
-// named "Card", because DuplicateObject copies the subtree with every
-// descendant keeping its source name and UMG requires tree-wide uniqueness.
-describe('ui_duplicate_element subtree renaming (C++ invariant)', () => {
+// The duplicate path is C++, so what is pinned here is the invariant it depends
+// on. A live editor showed the original bug: duplicating "Card" renamed the
+// ORIGINAL's children out from under the blueprint, because a UPanelSlot's
+// Content is a plain pointer rather than a subobject — DuplicateObject copies
+// the pointer, so the "copy" shares the source's children.
+//
+// Two earlier fixes treated the symptom by renaming after the fact and did not
+// work. The tree is now rebuilt node by node instead.
+describe('ui_duplicate_element deep clone (C++ invariant)', () => {
   const handlerSrc = readFileSync(
     join(
       __dirname,
@@ -340,21 +401,43 @@ describe('ui_duplicate_element subtree renaming (C++ invariant)', () => {
     'utf-8',
   );
 
-  const duplicateBlock = handlerSrc.slice(
-    handlerSrc.indexOf("Operation == TEXT(\"duplicate\")"),
-    handlerSrc.indexOf('ui_mutate_tree: unknown operation'),
-  );
-
-  it('duplicates under a scratch name rather than the requested one', () => {
-    expect(duplicateBlock).toContain('HaybaMCP_DuplicateScratch');
-    // The old code passed the caller's name straight to DuplicateObject, which
-    // is what let UE trash the colliding descendants.
-    expect(duplicateBlock).toMatch(/DuplicateObject<UWidget>\(Source, WBP->WidgetTree, ScratchName\)/);
+  it('rebuilds the subtree rather than calling DuplicateObject on it', () => {
+    expect(handlerSrc).toContain('DeepCloneWidget');
+    // The clone must construct genuinely new widgets, not duplicate the source.
+    expect(handlerSrc).toMatch(/DeepCloneWidget[\s\S]{0,1500}ConstructWidget<UWidget>/);
   });
 
-  it('renames the whole copied subtree, not just its root', () => {
-    expect(duplicateBlock).toContain('CollectSubtree(Copy, Copied)');
-    expect(duplicateBlock).toContain('MakeUniqueObjectName');
+  it('never copies a panel Slots array between widgets', () => {
+    // Copying Slots is what makes two widgets claim the same children.
+    expect(handlerSrc).toMatch(/PropName == TEXT\("Slots"\)\) continue/);
+  });
+
+  it('never copies a slot Content or Parent pointer between slots', () => {
+    // Copying Content made the new slot adopt the SOURCE's child, so the tree
+    // held one widget reached through two slots — two entries with the same
+    // name AND the same object path. Layout values are the only thing worth
+    // copying between slots.
+    expect(handlerSrc).toMatch(/PropName == TEXT\("Content"\)\) continue/);
+    expect(handlerSrc).toMatch(/PropName == TEXT\("Parent"\)\) continue/);
+  });
+
+  it('keeps the structural notification, like every other tree mutation', () => {
+    // A stage trace made the recompile look guilty: the copy was fine before
+    // MarkBlueprintAsStructurallyModified and TRASH_ after. It was innocent.
+    // The copy was ORPHANED — its parent slot pointed at the source's child —
+    // so the recompile collected a widget nothing referenced. Deferring the
+    // compile was tried and reverted once the slot pointers were fixed, because
+    // it treated the symptom and diverged from every other operation here.
+    const dup = handlerSrc.slice(
+      handlerSrc.indexOf('Operation == TEXT("duplicate")'),
+      handlerSrc.indexOf('Operation == TEXT("replace")'),
+    );
+    expect(dup).toContain('MarkBlueprintAsStructurallyModified');
+  });
+
+  it('verifies its own post-condition rather than trusting the operation', () => {
+    expect(handlerSrc).toMatch(/widgets now share the name/);
+    expect(handlerSrc).toMatch(/did not come out clean/);
   });
 });
 
