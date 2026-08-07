@@ -213,6 +213,7 @@ TArray<FString> FHaybaMCPUIHandler::GetCommands() const
         TEXT("ui_list_widget_types"),
         TEXT("ui_build_tree"),
         TEXT("ui_set_variable"),
+        TEXT("ui_bind_property"),
         TEXT("ui_list_widget_blueprints"),
         TEXT("ui_layout_snapshot"),
         TEXT("ui_measure_text"),
@@ -1120,6 +1121,7 @@ FHaybaHandlerResult FHaybaMCPUIHandler::Handle(const FString& Cmd, const TShared
     if (Cmd == TEXT("ui_list_widget_types"))   return HandleListTypes(P);
     if (Cmd == TEXT("ui_build_tree"))          return HandleBuildTree(P);
     if (Cmd == TEXT("ui_set_variable"))        return HandleSetVariable(P);
+    if (Cmd == TEXT("ui_bind_property"))       return HandleBindProperty(P);
     if (Cmd == TEXT("ui_list_widget_blueprints")) return HandleListWidgetBlueprints(P);
     if (Cmd == TEXT("ui_layout_snapshot"))     return HandleLayoutSnapshot(P);
     if (Cmd == TEXT("ui_measure_text"))        return HandleMeasureText(P);
@@ -1560,10 +1562,22 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                 }
             }
 
-            PurgeSubtreeGuids(WBP, Widget);
+            // Collect BEFORE detaching (the subtree walk needs the links), but purge AFTER.
+            // WidgetBlueprintCompiler requires a GUID for EVERY source widget, not just the
+            // ones marked Is Variable, so a widget that is still in the tree with its GUID
+            // already dropped trips "was added but did not get a GUID".
+            TArray<UWidget*> Doomed;
+            CollectSubtree(Widget, Doomed);
+
             // Detach the widget objects from the tree as well; RemoveChild only
             // unlinks from the panel, leaving the widgets owned by the tree.
             WBP->WidgetTree->RemoveWidget(Widget);
+
+            for (UWidget* W : Doomed)
+            {
+                if (W) WBP->WidgetVariableNameToGuidMap.Remove(W->GetFName());
+            }
+
             FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
             WBP->MarkPackageDirty();
         }
@@ -2442,6 +2456,113 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetVariable(const TSharedPtr<FJson
     Out->SetStringField(TEXT("widget_name"), Widget->GetName());
     Out->SetBoolField(TEXT("is_variable"), bIsVariable);
     if (!Category.IsEmpty()) Out->SetStringField(TEXT("category"), Category);
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPUIHandler::HandleBindProperty(const TSharedPtr<FJsonObject>& P)
+{
+    FString BPPath, WidgetName, PropertyName, VariableName;
+    if (!P->TryGetStringField(TEXT("widget_blueprint_path"), BPPath) || BPPath.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("ui_bind_property: missing widget_blueprint_path"));
+    if (!P->TryGetStringField(TEXT("widget_name"), WidgetName) || WidgetName.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("ui_bind_property: missing widget_name"));
+    if (!P->TryGetStringField(TEXT("property_name"), PropertyName) || PropertyName.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("ui_bind_property: missing property_name (e.g. \"Text\")"));
+
+    const bool bClearing = !P->TryGetStringField(TEXT("variable_name"), VariableName) || VariableName.IsEmpty();
+
+    UWidgetBlueprint* WBP = LoadObject<UWidgetBlueprint>(nullptr, *BPPath);
+    if (!WBP || !WBP->WidgetTree)
+        return FHaybaHandlerResult::Err(TEXT("ui_bind_property: widget blueprint not found"));
+
+    UWidget* Widget = FindWidgetByName(WBP->WidgetTree, WidgetName);
+    if (!Widget)
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_bind_property: widget '%s' not found"), *WidgetName));
+
+    // A binding only survives compile if the widget is a variable of the UserWidget — the
+    // binding is stored by name and resolved against the generated class.
+    if (!Widget->bIsVariable)
+    {
+        Widget->Modify();
+        Widget->bIsVariable = true;
+        RegisterWidgetVariable(WBP, Widget);
+    }
+
+    WBP->Modify();
+
+    // One binding per (widget, property) — FDelegateEditorBinding::operator== compares exactly
+    // those two, so removing first makes this idempotent and doubles as the "clear" path.
+    FDelegateEditorBinding Binding;
+    Binding.ObjectName = Widget->GetName();
+    Binding.PropertyName = FName(*PropertyName);
+    WBP->Bindings.Remove(Binding);
+
+    if (bClearing)
+    {
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
+        WBP->MarkPackageDirty();
+
+        TSharedPtr<FJsonObject> ClearedOut = MakeShared<FJsonObject>();
+        ClearedOut->SetStringField(TEXT("widget_name"), Widget->GetName());
+        ClearedOut->SetStringField(TEXT("property_name"), PropertyName);
+        ClearedOut->SetBoolField(TEXT("bound"), false);
+        ClearedOut->SetStringField(TEXT("note"), TEXT("Binding cleared. Call ui_compile_widget then ui_save_widget to persist."));
+        return FHaybaHandlerResult::Ok(ClearedOut);
+    }
+
+    // The source variable lives on the generated class. Resolve it now rather than letting the
+    // compiler fail later with a binding that points at nothing.
+    UClass* SourceClass = WBP->GeneratedClass ? WBP->GeneratedClass.Get() : WBP->SkeletonGeneratedClass.Get();
+    if (!SourceClass)
+        return FHaybaHandlerResult::Err(TEXT("ui_bind_property: blueprint has no generated class — compile it first"));
+
+    FProperty* SourceProperty = FindFProperty<FProperty>(SourceClass, FName(*VariableName));
+    if (!SourceProperty)
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("ui_bind_property: no variable '%s' on '%s'. Create it first with blueprint_add_variable."),
+            *VariableName, *SourceClass->GetName()));
+    }
+
+    // Verify the destination is actually bindable: UMG generates a companion delegate property
+    // named "<Property>Delegate" for every property the designer can bind.
+    const FName DelegateName(*(PropertyName + TEXT("Delegate")));
+    FDelegateProperty* DelegateProperty = FindFProperty<FDelegateProperty>(Widget->GetClass(), DelegateName);
+    if (!DelegateProperty)
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("ui_bind_property: '%s' on %s is not bindable (no %s). Bindable examples: Text, ToolTipText, Visibility, bIsEnabled."),
+            *PropertyName, *Widget->GetClass()->GetName(), *DelegateName.ToString()));
+    }
+
+    TArray<FFieldVariant> Chain;
+    Chain.Add(SourceProperty);
+
+    Binding.SourceProperty = FName(*VariableName);
+    Binding.SourcePath = FEditorPropertyPath(Chain);
+    Binding.Kind = EBindingKind::Property;
+
+    // Refuse a type mismatch here, where the message can name both sides, instead of emitting a
+    // compile error that only says the binding is invalid.
+    FText BindError;
+    if (!Binding.SourcePath.Validate(DelegateProperty, BindError))
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("ui_bind_property: '%s' cannot drive %s.%s — %s"),
+            *VariableName, *Widget->GetName(), *PropertyName, *BindError.ToString()));
+    }
+
+    WBP->Bindings.Add(Binding);
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
+    WBP->MarkPackageDirty();
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("widget_name"), Widget->GetName());
+    Out->SetStringField(TEXT("property_name"), PropertyName);
+    Out->SetStringField(TEXT("variable_name"), VariableName);
+    Out->SetBoolField(TEXT("bound"), true);
+    Out->SetNumberField(TEXT("binding_count"), WBP->Bindings.Num());
+    Out->SetStringField(TEXT("note"), TEXT("Staged. Call ui_compile_widget then ui_save_widget to persist."));
     return FHaybaHandlerResult::Ok(Out);
 }
 

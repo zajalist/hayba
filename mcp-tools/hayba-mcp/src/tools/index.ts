@@ -205,6 +205,7 @@ import {
   uiRenameElementHandler,
 } from './ui/ui-rename-element.js';
 import { meta as uiSetVariableMeta, schema as uiSetVariableSchema, uiSetVariableHandler } from './ui/ui-set-variable.js';
+import { meta as uiBindPropertyMeta, schema as uiBindPropertySchema, uiBindPropertyHandler } from './ui/ui-bind-property.js';
 import {
   meta as uiListWidgetBlueprintsMeta,
   schema as uiListWidgetBlueprintsSchema,
@@ -2407,6 +2408,17 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     returns: '{widget_name, is_variable, category?}',
     niche: UI,
     schema: uiSetVariableSchema.shape,
+  },
+  {
+    name: 'ui_bind_property',
+    description:
+      'Bind a widget property (Text, ToolTipText, Visibility, bIsEnabled) to a blueprint variable - the designer Bind dropdown. This is how a reusable pure-Blueprint component gets a settable caption without a C++ base class. Omit variable_name to clear the binding.',
+    meta: uiBindPropertyMeta,
+    handler: uiBindPropertyHandler,
+    cost: 'low',
+    returns: '{widget_name, property_name, variable_name?, bound, binding_count?}',
+    niche: UI,
+    schema: uiBindPropertySchema.shape,
   },
   {
     name: 'ui_list_widget_blueprints',

@@ -45,8 +45,10 @@ export const config = {
   /** UE TCP server host */
   ueTcpHost: process.env.UE_TCP_HOST || '127.0.0.1',
 
-  /** Web dashboard port */
-  dashboardPort: parseInt(process.env.DASHBOARD_PORT || '52343', 10),
+  /** Web dashboard port. Deliberately OUTSIDE 52342-52350: that range is the UE
+   *  editor's multi-instance port walk (HaybaMCPModule::StartTcpServer), so a second
+   *  editor would otherwise claim the dashboard's port and silently kill the HTTP UI. */
+  dashboardPort: parseInt(process.env.DASHBOARD_PORT || '52360', 10),
 
   /** Dashboard host */
   dashboardHost: process.env.DASHBOARD_HOST || '127.0.0.1',

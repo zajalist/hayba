@@ -46,8 +46,14 @@ bool FHaybaMCPTcpServer::Start()
         CommandHandler = MakeShareable(new FHaybaMCPCommandHandler());
     }
 
+    // Deliberately NOT .AsReusable(): the multi-instance port scan in
+    // FHaybaMCPModule::StartTcpServer() depends on Listen() FAILING when the
+    // port is already taken by another editor instance, so it can walk
+    // forward to the next free port. SO_REUSEADDR on Windows lets a second
+    // process bind+listen on an already-listening port without erroring,
+    // which silently defeated the whole scan (every instance "won" the same
+    // port and only one ever actually received connections).
     ListenSocket = FTcpSocketBuilder(TEXT("HaybaMCPListener"))
-        .AsReusable()
         .BoundToAddress(FIPv4Address(127, 0, 0, 1))
         .BoundToPort(Port)
         .Listening(4);
