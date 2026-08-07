@@ -1,4 +1,6 @@
 #include "HaybaMCPActorHandler.h"
+#include "HaybaActorOps.h"
+#include "HaybaMCPParams.h"
 #include "HaybaMCPReflection.h"
 #include "Json.h"
 #include "Editor.h"
@@ -106,48 +108,19 @@ FHaybaHandlerResult FHaybaMCPActorHandler::Handle(const FString& Cmd, const TSha
 // ---------------------------------------------------------------------------
 FHaybaHandlerResult FHaybaMCPActorHandler::Spawn(const TSharedPtr<FJsonObject>& P)
 {
-    FString ClassPath;
-    if (!P->TryGetStringField(TEXT("class_path"), ClassPath) || ClassPath.IsEmpty())
-        return FHaybaHandlerResult::Err(TEXT("actor_spawn: missing class_path"));
+    // Adapter: read params, call the domain, shape the reply. No UE object
+    // handling here and no JSON below. See HaybaActorOps.h.
+    FHaybaParamReader R(P, TEXT("actor_spawn"));
+    const HaybaActorOps::FSpawnRequest Req = HaybaActorOps::ParseSpawn(R);
+    if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
 
-    UClass* ActorClass = LoadClass<AActor>(nullptr, *ClassPath);
-    if (!ActorClass)
-        return FHaybaHandlerResult::Err(FString::Printf(TEXT("actor_spawn: class not found: %s"), *ClassPath));
-
-    UEditorActorSubsystem* EAS = GEditor ? GEditor->GetEditorSubsystem<UEditorActorSubsystem>() : nullptr;
-    if (!EAS)
-        return FHaybaHandlerResult::Err(TEXT("actor_spawn: EditorActorSubsystem unavailable"));
-
-    // Location
-    FVector Location = FVector::ZeroVector;
-    const TArray<TSharedPtr<FJsonValue>>* LocArr;
-    if (P->TryGetArrayField(TEXT("location"), LocArr))
-        Location = ParseVec3(*LocArr);
-
-    // Rotation
-    FRotator Rotation = FRotator::ZeroRotator;
-    const TArray<TSharedPtr<FJsonValue>>* RotArr;
-    if (P->TryGetArrayField(TEXT("rotation"), RotArr) && RotArr->Num() >= 3)
-        Rotation = FRotator((*RotArr)[0]->AsNumber(), (*RotArr)[1]->AsNumber(), (*RotArr)[2]->AsNumber());
-
-    AActor* NewActor = EAS->SpawnActorFromClass(ActorClass, Location, Rotation);
-    if (!NewActor)
-        return FHaybaHandlerResult::Err(TEXT("actor_spawn: SpawnActorFromClass failed"));
-
-    // Scale
-    const TArray<TSharedPtr<FJsonValue>>* ScaleArr;
-    if (P->TryGetArrayField(TEXT("scale"), ScaleArr))
-        NewActor->SetActorScale3D(ParseVec3(*ScaleArr, FVector::OneVector));
-
-    // Label
-    FString Label;
-    if (P->TryGetStringField(TEXT("label"), Label) && !Label.IsEmpty())
-        NewActor->SetActorLabel(Label);
+    const HaybaActorOps::FSpawnResult Res = HaybaActorOps::Spawn(Req);
+    if (!Res.bOk) return FHaybaHandlerResult::Err(FString::Printf(TEXT("actor_spawn: %s"), *Res.Error));
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-    Out->SetStringField(TEXT("actor_id"), NewActor->GetName());
-    Out->SetStringField(TEXT("label"),    NewActor->GetActorLabel());
-    Out->SetStringField(TEXT("class"),    ActorClass->GetName());
+    Out->SetStringField(TEXT("actor_id"), Res.ActorId);
+    Out->SetStringField(TEXT("label"),    Res.Label);
+    Out->SetStringField(TEXT("class"),    Res.ClassName);
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -156,27 +129,16 @@ FHaybaHandlerResult FHaybaMCPActorHandler::Spawn(const TSharedPtr<FJsonObject>& 
 // ---------------------------------------------------------------------------
 FHaybaHandlerResult FHaybaMCPActorHandler::Delete(const TSharedPtr<FJsonObject>& P)
 {
-    FString ActorId;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId))
-        return FHaybaHandlerResult::Err(TEXT("actor_delete: missing actor_id"));
+    FHaybaParamReader R(P, TEXT("actor_delete"));
+    const FString ActorId = R.RequiredString(TEXT("actor_id"));
+    if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
 
-    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
-    AActor* Actor = FindActorByName(World, ActorId);
-    if (!Actor)
-        return FHaybaHandlerResult::Err(FString::Printf(TEXT("actor_delete: actor not found: %s"), *ActorId));
-
-    UEditorActorSubsystem* EAS = GEditor ? GEditor->GetEditorSubsystem<UEditorActorSubsystem>() : nullptr;
-    if (!EAS) return FHaybaHandlerResult::Err(TEXT("actor_delete: EditorActorSubsystem unavailable"));
-
-    bool bDeleted = EAS->DestroyActor(Actor);
-    // Honesty: DestroyActor can return false (actor locked / world protected)
-    // while the actor still exists. Do not report success in that case.
-    if (!bDeleted)
-        return FHaybaHandlerResult::Err(FString::Printf(
-            TEXT("actor_delete: DestroyActor failed for %s (actor may be locked or non-destructible)"), *ActorId));
+    const HaybaActorOps::FDeleteResult Res = HaybaActorOps::Delete(ActorId);
+    if (!Res.bOk) return FHaybaHandlerResult::Err(FString::Printf(TEXT("actor_delete: %s"), *Res.Error));
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-    Out->SetBoolField(TEXT("deleted"), bDeleted);
+    Out->SetBoolField(TEXT("deleted"), true);
+    Out->SetStringField(TEXT("actor_id"), ActorId);
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -185,32 +147,23 @@ FHaybaHandlerResult FHaybaMCPActorHandler::Delete(const TSharedPtr<FJsonObject>&
 // ---------------------------------------------------------------------------
 FHaybaHandlerResult FHaybaMCPActorHandler::Transform(const TSharedPtr<FJsonObject>& P)
 {
-    FString ActorId;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId))
-        return FHaybaHandlerResult::Err(TEXT("actor_transform: missing actor_id"));
+    FHaybaParamReader R(P, TEXT("actor_transform"));
+    const HaybaActorOps::FTransformRequest Req = HaybaActorOps::ParseTransform(R);
+    if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
 
-    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
-    AActor* Actor = FindActorByName(World, ActorId);
-    if (!Actor)
-        return FHaybaHandlerResult::Err(FString::Printf(TEXT("actor_transform: actor not found: %s"), *ActorId));
-
-    const TArray<TSharedPtr<FJsonValue>>* LocArr;
-    if (P->TryGetArrayField(TEXT("location"), LocArr))
-        Actor->SetActorLocation(ParseVec3(*LocArr));
-
-    const TArray<TSharedPtr<FJsonValue>>* RotArr;
-    if (P->TryGetArrayField(TEXT("rotation"), RotArr) && RotArr->Num() >= 3)
-        Actor->SetActorRotation(FRotator((*RotArr)[0]->AsNumber(), (*RotArr)[1]->AsNumber(), (*RotArr)[2]->AsNumber()));
-
-    const TArray<TSharedPtr<FJsonValue>>* ScaleArr;
-    if (P->TryGetArrayField(TEXT("scale"), ScaleArr))
-        Actor->SetActorScale3D(ParseVec3(*ScaleArr, FVector::OneVector));
+    const HaybaActorOps::FTransformResult Res = HaybaActorOps::Transform(Req);
+    if (!Res.bOk) return FHaybaHandlerResult::Err(FString::Printf(TEXT("actor_transform: %s"), *Res.Error));
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-    Out->SetStringField(TEXT("actor_id"), ActorId);
-    Out->SetObjectField(TEXT("location"), VecToJson(Actor->GetActorLocation()));
-    Out->SetObjectField(TEXT("rotation"), RotToJson(Actor->GetActorRotation()));
-    Out->SetObjectField(TEXT("scale"),    VecToJson(Actor->GetActorScale3D()));
+    Out->SetStringField(TEXT("actor_id"), Req.ActorId);
+    // Read back from the actor, and name what was actually written — the old
+    // reply could not be told apart from one where nothing applied.
+    TArray<TSharedPtr<FJsonValue>> Applied;
+    for (const FString& K : Res.AppliedKeys) Applied.Add(MakeShared<FJsonValueString>(K));
+    Out->SetArrayField(TEXT("applied"), Applied);
+    Out->SetObjectField(TEXT("location"), VecToJson(Res.Location));
+    Out->SetObjectField(TEXT("rotation"), RotToJson(Res.Rotation));
+    Out->SetObjectField(TEXT("scale"),    VecToJson(Res.Scale));
     return FHaybaHandlerResult::Ok(Out);
 }
 

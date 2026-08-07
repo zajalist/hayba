@@ -136,6 +136,32 @@ public:
         return static_cast<int32>(OptionalNumber(Key, static_cast<double>(Default)));
     }
 
+    /** Reads a 3-number array. Unset when the key is absent — which is not the
+     *  same as [0,0,0], and callers that conflate the two silently move actors
+     *  to the origin. A present-but-malformed value is an error, not an absence. */
+    TOptional<FVector> OptionalVec3(const TCHAR* Key)
+    {
+        if (bParamsMissing) return {};
+        const TArray<TSharedPtr<FJsonValue>>* Arr = nullptr;
+        if (!Params->TryGetArrayField(Key, Arr) || !Arr) return {};
+        if (Arr->Num() < 3)
+        {
+            Errors.Add(FString::Printf(
+                TEXT("'%s' needs 3 numbers, got %d"), Key, Arr->Num()));
+            return {};
+        }
+        return FVector((*Arr)[0]->AsNumber(), (*Arr)[1]->AsNumber(), (*Arr)[2]->AsNumber());
+    }
+
+    /** As OptionalVec3, read as [pitch, yaw, roll] — UE's FRotator argument
+     *  order, which is not the order the components are declared in. */
+    TOptional<FRotator> OptionalRotator(const TCHAR* Key)
+    {
+        const TOptional<FVector> V = OptionalVec3(Key);
+        if (!V.IsSet()) return {};
+        return FRotator(V->X, V->Y, V->Z);
+    }
+
     /** Record a problem the reader cannot detect on its own (a value out of
      *  range, a combination that does not make sense). */
     void AddError(const FString& Message) { Errors.Add(Message); }
