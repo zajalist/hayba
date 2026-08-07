@@ -1,12 +1,12 @@
-import sys, os, json
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import json
+import os
 
 import numpy as np
 import imageio.v2 as iio
 from fastapi.testclient import TestClient
 
-import app as appmod
-from app import app
+from hayba_sidecar import segment as segmod
+from hayba_sidecar.server import app
 
 
 def _make_study(tmp):
@@ -30,7 +30,7 @@ def test_segment_project(tmp_path, monkeypatch):
     # deterministic SAM stub: mask the single valid pixel
     def stub(image, box=None, points=None):
         m = np.zeros((2, 2), bool); m[1, 0] = True; return m
-    monkeypatch.setattr(appmod, "_run_sam", stub)
+    monkeypatch.setattr(segmod, "_run_sam", stub)
 
     c = TestClient(app)
     r = c.post("/segment_project", json={

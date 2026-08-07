@@ -1,9 +1,7 @@
-import sys, os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import trimesh
-from projection import assign_triangles, bake_uv_texture
+from hayba_sidecar.projection import assign_triangles, bake_uv_texture
 
 
 def _quad():

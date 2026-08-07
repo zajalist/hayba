@@ -1,10 +1,13 @@
-"""Hayba visual sidecar — SAM segmentation + world-position back-projection.
+"""SAM segmentation + world-position back-projection.
 
-A small FastAPI service the MCP/agent calls to turn agent-grounded boxes into
-geometry-hugging masks. SAM is lazy-loaded on the first segment call so the
-process starts fast and `/health` works without the (multi-GB) weights present.
+Turns agent-grounded boxes into geometry-hugging masks. SAM is lazy-loaded on
+the first segment call so the process starts fast and `/health` answers without
+the (multi-GB) weights present.
 
-Run: `uvicorn app:app --port 7821`  (or ./run.ps1)
+This used to be a second FastAPI app in `mcp-tools/visual-sidecar/`, listening on
+the same port 7821 as this package with a disjoint set of endpoints. One client
+(`src/tools/visual/sidecar-client.ts`) called across both, so whichever process
+was running, half the client was broken.
 """
 from __future__ import annotations
 
@@ -12,20 +15,40 @@ import os
 
 import numpy as np
 import imageio.v2 as iio
-from fastapi import FastAPI
 
-from projection import (
+from .projection import (
     assign_triangles, bake_uv_texture,
     read_worldpos_exr, read_uv_exr, load_mesh,
 )
-
-app = FastAPI(title="hayba-visual-sidecar", version="0.1.0")
 
 # Lazy SAM predictor handle. None until _load_sam() runs on the first segment.
 _SAM = None
 
 # Where SAM weights are cached / looked up.
 SAM_CACHE = os.environ.get("HAYBA_SAM_CACHE", os.path.expanduser("~/.cache/hayba-sam"))
+
+
+def sam_loaded() -> bool:
+    """Whether the predictor is resident. Distinct from *available*: the weights
+    may be installed and simply not touched yet."""
+    return _SAM is not None
+
+
+def sam_available() -> bool:
+    """Whether segmentation could run — the import resolves and the checkpoint is
+    on disk. Reported by /health so the client can tell "not installed" apart
+    from "not warmed up"."""
+    try:
+        import segment_anything  # type: ignore  # noqa: F401
+    except Exception:
+        return False
+    return os.path.exists(_checkpoint_path())
+
+
+def _checkpoint_path() -> str:
+    return os.environ.get(
+        "HAYBA_SAM_CHECKPOINT", os.path.join(SAM_CACHE, "sam_vit_b_01ec64.pth")
+    )
 
 
 def _load_sam():
@@ -38,17 +61,11 @@ def _load_sam():
     import torch  # type: ignore
 
     os.makedirs(SAM_CACHE, exist_ok=True)
-    ckpt = os.environ.get("HAYBA_SAM_CHECKPOINT", os.path.join(SAM_CACHE, "sam_vit_b_01ec64.pth"))
     model_type = os.environ.get("HAYBA_SAM_MODEL", "vit_b")
-    sam = sam_model_registry[model_type](checkpoint=ckpt)
+    sam = sam_model_registry[model_type](checkpoint=_checkpoint_path())
     sam.to("cuda" if torch.cuda.is_available() else "cpu")
     _SAM = SamPredictor(sam)
     return _SAM
-
-
-@app.get("/health")
-def health():
-    return {"ok": True, "model_loaded": _SAM is not None}
 
 
 def _run_sam(image, box=None, points=None):
@@ -73,8 +90,7 @@ def _run_sam(image, box=None, points=None):
     return np.asarray(masks[0], dtype=bool)
 
 
-@app.post("/segment_project")
-def segment_project(req: dict):
+def segment_project(req: dict) -> dict:
     """SAM-segment each agent box, back-project to triangles via the world-position
     pass, and bake a UV display texture. Never throws — errors return {ok:false}."""
     try:
