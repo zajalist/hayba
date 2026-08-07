@@ -10,7 +10,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readSettings } from './settings-watcher.js';
 import { PackRegistry, type PackDef } from './pack-registry.js';
-import { ToolIndex, type ToolDoc } from './tool-index.js';
+import { ToolIndex, type ToolDoc, type EmbeddingBackend } from './tool-index.js';
 import { selectEmbeddingBackend } from './embedding-backends.js';
 import { deriveDomainPacks, loadWorkflowPacks } from './pack-discovery.js';
 import { searchToolsHandler, searchToolsSchema } from './meta-tools/search-tools.js';
@@ -128,10 +128,22 @@ const __dirname = dirname(__filename);
  * @param captured        Map of every tool name → its descriptor (filled by the shim).
  * @param cacheDir        Where to persist the tool index (defaults to Saved/HaybaMCP).
  */
+/** Options for {@link registerDeferredRouting}.
+ *
+ *  `selectBackend` exists so the embedding backend is *accepted*, not created.
+ *  The default probe reaches the network (Ollama on :11434, then a Hugging Face
+ *  model download), which is fine for a long-lived server and fatal for a test:
+ *  three integration tests used to time out at 5s on any machine without a warm
+ *  model cache. Pass `() => Promise.resolve(null)` for a lexical-only index. */
+export interface DeferredRoutingOptions {
+  selectBackend?: () => Promise<EmbeddingBackend | null>;
+}
+
 export async function registerDeferredRouting(
   server: McpServer,
   captured: Map<string, CapturedTool>,
   cacheDir?: string,
+  options: DeferredRoutingOptions = {},
 ): Promise<RoutingHandle> {
   // Publish the captured-tool map to the chat dispatcher (Task 4) so the sidecar
   // SSE copilot reaches TS-side handlers, not just UE-bridged commands.
@@ -397,7 +409,7 @@ export async function registerDeferredRouting(
   const registry = new PackRegistry([...domainPacks, ...workflowPacks], onPacksChanged);
 
   // ── ToolIndex ──────────────────────────────────────────────────────────────
-  const embeddings = await selectEmbeddingBackend();
+  const embeddings = await (options.selectBackend ?? selectEmbeddingBackend)();
   const docs: ToolDoc[] = Array.from(captured.entries()).map(([name, t]) => {
     const m = getToolMeta(name);
     const dirPack = m?.pack ?? t.dir ?? 'core';

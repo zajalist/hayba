@@ -8,7 +8,7 @@ const SUBSYSTEMS = ['shaders', 'assets', 'gc', 'pcg', 'world_tick'] as const;
 // essentially always "busy on entry", so gating on it makes wait_for_idle
 // time out / report not-settled every time (a false-positive source). Callers
 // who genuinely need a tick barrier can still request it explicitly.
-// See docs/HANDOFF-mcp-agent-ergonomics-postmortem.md (P2).
+// See docs/handoffs/HANDOFF-mcp-agent-ergonomics-postmortem.md (P2).
 const DEFAULT_SUBSYSTEMS = ['shaders', 'assets', 'gc', 'pcg'] as const;
 
 export const schema = z.object({

@@ -30,9 +30,6 @@ const HANDLER_DIR = join(
  *  denylist that silently suppresses working capability is the same kind of
  *  quiet wrongness as a tool that reports success without doing anything. */
 const KNOWN_STUBS = [
-  'blueprint_add_node',
-  'blueprint_connect_nodes',
-  'blueprint_add_event',
   // Returns compile_started:false and points at the manual shortcut.
   'editor_live_compile',
 ];

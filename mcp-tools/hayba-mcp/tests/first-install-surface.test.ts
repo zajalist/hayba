@@ -15,6 +15,11 @@ import { registerToolMeta } from '../src/tools/tool-meta-registry.js';
 import { __resetSettingsCache } from '../src/tools/routing/settings-watcher.js';
 import { __resetConnectedLatch } from '../src/tools/check-ue-status.js';
 
+/** Lexical-only index — see the same constant in routing-integration.test.ts.
+ *  The default backend probe reaches the network and blows the test timeout on
+ *  a cold model cache. */
+const NO_EMBEDDINGS = { selectBackend: async () => null };
+
 // The first-install surface is a product decision, not an implementation
 // detail, so it gets asserted rather than left to drift.
 //
@@ -76,7 +81,7 @@ async function bootFreshInstall(dir: string): Promise<{ server: McpServer; captu
   __resetSettingsCache();
   const server = new McpServer({ name: 'test', version: '0' });
   const captured = fixtureCaptured();
-  await registerDeferredRouting(server, captured, dir);
+  await registerDeferredRouting(server, captured, dir, NO_EMBEDDINGS);
   return { server, captured };
 }
 
@@ -174,7 +179,7 @@ describe('first-install tool surface', () => {
     );
     __resetSettingsCache();
     const server = new McpServer({ name: 'test', version: '0' });
-    await registerDeferredRouting(server, fixtureCaptured(), dir);
+    await registerDeferredRouting(server, fixtureCaptured(), dir, NO_EMBEDDINGS);
 
     const names = registeredNamesOf(server);
     expect(names).toContain('ui_validate');

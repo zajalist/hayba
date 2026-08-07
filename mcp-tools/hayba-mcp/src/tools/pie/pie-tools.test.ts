@@ -214,7 +214,7 @@ describe('cross-language contract with the C++ handler', () => {
   // the Slate widget tree, so focused UMG widgets never see it. It was fixed for
   // the mouse (clicks did nothing), then found again on the keyboard
   // (editor_pie_type_text reported characters_sent and inserted nothing —
-  // docs/HANDOFF-pie-input-tools-not-inserting-text.md). Nothing about the
+  // docs/handoffs/HANDOFF-pie-input-tools-not-inserting-text.md). Nothing about the
   // viewport call looks wrong at the call site, which is why it keeps coming
   // back, and why this is a test rather than a comment.
   describe('UI input is routed through Slate, not the game viewport', () => {

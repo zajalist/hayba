@@ -45,7 +45,7 @@ export const editorCaptureViewportHandler = async (
     // string was then length-capped by the transport layer — destroying every
     // screenshot. Split the payload: the image goes in a proper MCP image
     // content block (never truncated as text), metadata stays a small text
-    // block. See docs/HANDOFF-mcp-agent-ergonomics-postmortem.md (P0).
+    // block. See docs/handoffs/HANDOFF-mcp-agent-ergonomics-postmortem.md (P0).
     const data = await executeCommand<Record<string, unknown>>(
       'editor_capture_viewport',
       parsed.data as Record<string, unknown>,
