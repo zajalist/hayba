@@ -42,6 +42,7 @@ TArray<FString> FHaybaMCPBlueprintHandler::GetCommands() const
         TEXT("blueprint_document"),
         TEXT("blueprint_add_event"),
         TEXT("blueprint_set_defaults"),
+        TEXT("blueprint_set_pin_default"),
     };
 }
 
@@ -125,7 +126,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Handle(const FString& Cmd, const 
         TEXT("blueprint_add_component"), TEXT("blueprint_add_variable"),
         TEXT("blueprint_add_function"),  TEXT("blueprint_add_node"),
         TEXT("blueprint_connect_nodes"), TEXT("blueprint_add_event"),
-        TEXT("blueprint_set_defaults"),
+        TEXT("blueprint_set_defaults"), TEXT("blueprint_set_pin_default"),
     };
     if (MutatingCommands.Contains(Cmd))
     {
@@ -149,6 +150,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Handle(const FString& Cmd, const 
     if (Cmd == TEXT("blueprint_document"))       return Document(P);
     if (Cmd == TEXT("blueprint_add_event"))      return AddEvent(P);
     if (Cmd == TEXT("blueprint_set_defaults"))   return SetDefaults(P);
+    if (Cmd == TEXT("blueprint_set_pin_default")) return SetPinDefault(P);
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("BlueprintHandler: unknown command %s"), *Cmd));
 }
 
@@ -457,6 +459,92 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
 
     TSharedPtr<FJsonObject> Out = HaybaDescribeNode(Node);
     Out->SetStringField(TEXT("graph"), Graph->GetName());
+    Out->SetStringField(TEXT("note"), TEXT("Staged. Call blueprint_compile to apply."));
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetPinDefault(const TSharedPtr<FJsonObject>& P)
+{
+    // The third leg of graph authoring. add_node places a node and connect_nodes wires the
+    // ones that carry data, but most real graphs also need LITERALS on unconnected inputs —
+    // which subsystem class to fetch, a format string, a flag. Without this, a graph can be
+    // built and wired and still do nothing useful.
+    FString Path, NodeId, PinName, Value, GraphName;
+    if (!P->TryGetStringField(TEXT("path"), Path))
+        return FHaybaHandlerResult::Err(TEXT("blueprint_set_pin_default: missing path"));
+    if (!P->TryGetStringField(TEXT("node_id"), NodeId))
+        return FHaybaHandlerResult::Err(TEXT("blueprint_set_pin_default: missing node_id"));
+    if (!P->TryGetStringField(TEXT("pin_name"), PinName))
+        return FHaybaHandlerResult::Err(TEXT("blueprint_set_pin_default: missing pin_name"));
+    if (!P->TryGetStringField(TEXT("value"), Value))
+        return FHaybaHandlerResult::Err(TEXT("blueprint_set_pin_default: missing value"));
+    P->TryGetStringField(TEXT("graph_name"), GraphName);
+
+    UBlueprint* BP = LoadBPByPath(Path);
+    if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_set_pin_default: blueprint not found"));
+    UEdGraph* Graph = HaybaFindGraph(BP, GraphName);
+    if (!Graph) return FHaybaHandlerResult::Err(TEXT("blueprint_set_pin_default: graph not found"));
+    UEdGraphNode* Node = HaybaFindNode(Graph, NodeId);
+    if (!Node) return FHaybaHandlerResult::Err(TEXT("blueprint_set_pin_default: node id not found"));
+
+    UEdGraphPin* Pin = Node->FindPin(FName(*PinName), EGPD_Input);
+    if (!Pin)
+    {
+        FString Available;
+        for (UEdGraphPin* Other : Node->Pins)
+        {
+            if (Other && Other->Direction == EGPD_Input)
+            {
+                Available += Other->PinName.ToString();
+                Available += TEXT(" ");
+            }
+        }
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("blueprint_set_pin_default: no input pin '%s'. Input pins: %s"), *PinName, *Available));
+    }
+
+    if (Pin->LinkedTo.Num() > 0)
+    {
+        // A literal on a connected pin is silently ignored by the compiler, which looks like
+        // the value "not sticking". Refuse loudly instead.
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("blueprint_set_pin_default: pin '%s' is connected; a literal there would be ignored. Disconnect it first."),
+            *PinName));
+    }
+
+    BP->Modify();
+    Graph->Modify();
+
+    const UEdGraphSchema_K2* Schema = GetDefault<UEdGraphSchema_K2>();
+    // Object/class pins take an asset reference rather than a string literal.
+    if (Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object
+        || Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Class
+        || Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_SoftObject
+        || Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_SoftClass)
+    {
+        UObject* Asset = LoadObject<UObject>(nullptr, *Value);
+        if (!Asset)
+        {
+            Asset = LoadClass<UObject>(nullptr, *Value);
+        }
+        if (!Asset)
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("blueprint_set_pin_default: could not load '%s' for object/class pin '%s'"), *Value, *PinName));
+        }
+        Schema->TrySetDefaultObject(*Pin, Asset);
+    }
+    else
+    {
+        Schema->TrySetDefaultValue(*Pin, Value);
+    }
+
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(BP);
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("node_id"), NodeId);
+    Out->SetStringField(TEXT("pin_name"), PinName);
+    Out->SetStringField(TEXT("applied"), Pin->DefaultObject ? Pin->DefaultObject->GetPathName() : Pin->DefaultValue);
     Out->SetStringField(TEXT("note"), TEXT("Staged. Call blueprint_compile to apply."));
     return FHaybaHandlerResult::Ok(Out);
 }

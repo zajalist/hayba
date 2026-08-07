@@ -19,6 +19,8 @@ private:
     FHaybaHandlerResult Document(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult AddEvent(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult SetDefaults(const TSharedPtr<FJsonObject>& P);
+    /** Set a literal on an unconnected input pin — the third leg of graph authoring. */
+    FHaybaHandlerResult SetPinDefault(const TSharedPtr<FJsonObject>& P);
 
     // Initiative #7 — Blueprint compilation safety gates.
     // After every mutation we record the BP's compile state. If the most
