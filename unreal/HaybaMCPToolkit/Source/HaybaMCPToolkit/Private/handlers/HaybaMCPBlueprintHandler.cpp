@@ -1,5 +1,5 @@
-#include "HaybaMCPReflection.h"
 #include "HaybaMCPBlueprintHandler.h"
+#include "HaybaMCPReflection.h"
 #include "Json.h"
 #include "Editor.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -341,14 +341,184 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddFunction(const TSharedPtr<FJso
     return FHaybaHandlerResult::Ok(Out);
 }
 
+// ---------------------------------------------------------------------------
+// Blueprint graph authoring.
+//
+// add_node / connect_nodes / add_event shipped as not_implemented_in_v1 stubs while
+// still being ADVERTISED by GetCommands, so an agent asked to build UI logic in
+// Blueprint hit a dead end and had no option but to write C++ instead. These are the
+// real implementations.
+// ---------------------------------------------------------------------------
+
+/** Resolve a graph by name, defaulting to the primary event graph. */
+static UEdGraph* HaybaFindGraph(UBlueprint* BP, const FString& GraphName)
+{
+    if (!BP) return nullptr;
+    TArray<UEdGraph*> All;
+    BP->GetAllGraphs(All);
+    if (GraphName.IsEmpty())
+    {
+        if (BP->UbergraphPages.Num() > 0) { return BP->UbergraphPages[0]; }
+        return All.Num() > 0 ? All[0] : nullptr;
+    }
+    for (UEdGraph* G : All)
+    {
+        if (G && G->GetName().Equals(GraphName, ESearchCase::IgnoreCase)) return G;
+    }
+    return nullptr;
+}
+
+/** Find a node by the GUID string that add_node hands back. */
+static UEdGraphNode* HaybaFindNode(UEdGraph* Graph, const FString& NodeId)
+{
+    if (!Graph) return nullptr;
+    for (UEdGraphNode* N : Graph->Nodes)
+    {
+        if (N && N->NodeGuid.ToString() == NodeId) return N;
+    }
+    return nullptr;
+}
+
+/** Report a node with its pins, because pin names are what callers need next. */
+static TSharedPtr<FJsonObject> HaybaDescribeNode(UEdGraphNode* Node)
+{
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    if (!Node) return Out;
+    Out->SetStringField(TEXT("node_id"), Node->NodeGuid.ToString());
+    Out->SetStringField(TEXT("title"), Node->GetNodeTitle(ENodeTitleType::ListView).ToString());
+    TArray<TSharedPtr<FJsonValue>> Pins;
+    for (UEdGraphPin* Pin : Node->Pins)
+    {
+        if (!Pin) continue;
+        TSharedPtr<FJsonObject> PinObj = MakeShared<FJsonObject>();
+        PinObj->SetStringField(TEXT("name"), Pin->PinName.ToString());
+        PinObj->SetStringField(TEXT("direction"), Pin->Direction == EGPD_Input ? TEXT("input") : TEXT("output"));
+        PinObj->SetStringField(TEXT("type"), Pin->PinType.PinCategory.ToString());
+        Pins.Add(MakeShared<FJsonValueObject>(PinObj));
+    }
+    Out->SetArrayField(TEXT("pins"), Pins);
+    return Out;
+}
+
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObject>& P)
 {
-    return FHaybaHandlerResult::Err(TEXT("blueprint_add_node: not_implemented_in_v1"));
+    FString Path, FunctionName, GraphName, ClassPath;
+    if (!P->TryGetStringField(TEXT("path"), Path))
+        return FHaybaHandlerResult::Err(TEXT("blueprint_add_node: missing path"));
+    if (!P->TryGetStringField(TEXT("function_name"), FunctionName))
+        return FHaybaHandlerResult::Err(TEXT("blueprint_add_node: missing function_name"));
+    P->TryGetStringField(TEXT("graph_name"), GraphName);
+    P->TryGetStringField(TEXT("class_path"), ClassPath);
+
+    UBlueprint* BP = LoadBPByPath(Path);
+    if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_add_node: blueprint not found"));
+
+    UEdGraph* Graph = HaybaFindGraph(BP, GraphName);
+    if (!Graph) return FHaybaHandlerResult::Err(TEXT("blueprint_add_node: graph not found"));
+
+    // Default to the blueprint's own generated class, which is what makes self-calls and
+    // anything inherited resolve without the caller naming a class.
+    UClass* OwnerClass = nullptr;
+    if (!ClassPath.IsEmpty())
+    {
+        OwnerClass = LoadObject<UClass>(nullptr, *ClassPath);
+        if (!OwnerClass)
+            return FHaybaHandlerResult::Err(FString::Printf(TEXT("blueprint_add_node: class not found: %s"), *ClassPath));
+    }
+    else
+    {
+        OwnerClass = BP->GeneratedClass ? BP->GeneratedClass.Get() : BP->ParentClass.Get();
+    }
+
+    UFunction* Fn = OwnerClass ? OwnerClass->FindFunctionByName(FName(*FunctionName)) : nullptr;
+    if (!Fn)
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("blueprint_add_node: no function '%s' on %s. Pass class_path to call one on another class."),
+            *FunctionName, OwnerClass ? *OwnerClass->GetName() : TEXT("<null>")));
+    }
+
+    BP->Modify();
+    Graph->Modify();
+
+    UK2Node_CallFunction* Node = NewObject<UK2Node_CallFunction>(Graph);
+    Node->CreateNewGuid();
+    Node->SetFromFunction(Fn);
+    double X = 0.0, Y = 0.0;
+    P->TryGetNumberField(TEXT("x"), X);
+    P->TryGetNumberField(TEXT("y"), Y);
+    Node->NodePosX = (int32)X;
+    Node->NodePosY = (int32)Y;
+    Graph->AddNode(Node, false, false);
+    Node->PostPlacedNewNode();
+    Node->AllocateDefaultPins();
+
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(BP);
+
+    TSharedPtr<FJsonObject> Out = HaybaDescribeNode(Node);
+    Out->SetStringField(TEXT("graph"), Graph->GetName());
+    Out->SetStringField(TEXT("note"), TEXT("Staged. Call blueprint_compile to apply."));
+    return FHaybaHandlerResult::Ok(Out);
 }
 
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::ConnectNodes(const TSharedPtr<FJsonObject>& P)
 {
-    return FHaybaHandlerResult::Err(TEXT("blueprint_connect_nodes: not_implemented_in_v1"));
+    FString Path, FromId, FromPin, ToId, ToPin, GraphName;
+    if (!P->TryGetStringField(TEXT("path"), Path))
+        return FHaybaHandlerResult::Err(TEXT("blueprint_connect_nodes: missing path"));
+    if (!P->TryGetStringField(TEXT("from_node"), FromId) || !P->TryGetStringField(TEXT("to_node"), ToId))
+        return FHaybaHandlerResult::Err(TEXT("blueprint_connect_nodes: missing from_node / to_node"));
+    if (!P->TryGetStringField(TEXT("from_pin"), FromPin) || !P->TryGetStringField(TEXT("to_pin"), ToPin))
+        return FHaybaHandlerResult::Err(TEXT("blueprint_connect_nodes: missing from_pin / to_pin"));
+    P->TryGetStringField(TEXT("graph_name"), GraphName);
+
+    UBlueprint* BP = LoadBPByPath(Path);
+    if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_connect_nodes: blueprint not found"));
+    UEdGraph* Graph = HaybaFindGraph(BP, GraphName);
+    if (!Graph) return FHaybaHandlerResult::Err(TEXT("blueprint_connect_nodes: graph not found"));
+
+    UEdGraphNode* From = HaybaFindNode(Graph, FromId);
+    UEdGraphNode* To = HaybaFindNode(Graph, ToId);
+    if (!From || !To)
+        return FHaybaHandlerResult::Err(TEXT("blueprint_connect_nodes: node id not found in that graph"));
+
+    UEdGraphPin* OutPin = From->FindPin(FName(*FromPin), EGPD_Output);
+    UEdGraphPin* InPin = To->FindPin(FName(*ToPin), EGPD_Input);
+    if (!OutPin || !InPin)
+    {
+        // Name the pins that DO exist. A wrong pin name is the usual failure, and guessing
+        // blind is what makes graph authoring feel impossible.
+        FString Available;
+        UEdGraphNode* Failing = OutPin ? To : From;
+        for (UEdGraphPin* Pin : Failing->Pins)
+        {
+            if (Pin) { Available += Pin->PinName.ToString(); Available += TEXT(" "); }
+        }
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("blueprint_connect_nodes: pin not found. Pins on the failing node: %s"), *Available));
+    }
+
+    const UEdGraphSchema_K2* Schema = GetDefault<UEdGraphSchema_K2>();
+    const FPinConnectionResponse Response = Schema->CanCreateConnection(OutPin, InPin);
+    if (Response.Response == CONNECT_RESPONSE_DISALLOW)
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("blueprint_connect_nodes: schema refused the connection: %s"), *Response.Message.ToString()));
+    }
+
+    BP->Modify();
+    Graph->Modify();
+    if (!Schema->TryCreateConnection(OutPin, InPin))
+        return FHaybaHandlerResult::Err(TEXT("blueprint_connect_nodes: TryCreateConnection failed"));
+
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(BP);
+
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetStringField(TEXT("from"), FromId + TEXT(".") + FromPin);
+    Result->SetStringField(TEXT("to"), ToId + TEXT(".") + ToPin);
+    Result->SetBoolField(TEXT("connected"), true);
+    Result->SetStringField(TEXT("note"), TEXT("Staged. Call blueprint_compile to apply."));
+    return FHaybaHandlerResult::Ok(Result);
 }
 
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::Compile(const TSharedPtr<FJsonObject>& P)
@@ -463,7 +633,63 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Document(const TSharedPtr<FJsonOb
 
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddEvent(const TSharedPtr<FJsonObject>& P)
 {
-    return FHaybaHandlerResult::Err(TEXT("blueprint_add_event: not_implemented_in_v1"));
+    // Adds (or finds) an overridable event node such as Construct / Tick / PreConstruct. It is
+    // idempotent: an event that already exists in the graph is returned rather than duplicated,
+    // because two Construct nodes is a compile error, not a second entry point.
+    FString Path, EventName, GraphName;
+    if (!P->TryGetStringField(TEXT("path"), Path))
+        return FHaybaHandlerResult::Err(TEXT("blueprint_add_event: missing path"));
+    if (!P->TryGetStringField(TEXT("event_name"), EventName))
+        return FHaybaHandlerResult::Err(TEXT("blueprint_add_event: missing event_name (e.g. \"Construct\", \"Tick\")"));
+    P->TryGetStringField(TEXT("graph_name"), GraphName);
+
+    UBlueprint* BP = LoadBPByPath(Path);
+    if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_add_event: blueprint not found"));
+    UEdGraph* Graph = HaybaFindGraph(BP, GraphName);
+    if (!Graph) return FHaybaHandlerResult::Err(TEXT("blueprint_add_event: graph not found"));
+
+    UClass* ParentClass = BP->ParentClass.Get();
+    UFunction* EventFn = ParentClass ? ParentClass->FindFunctionByName(FName(*EventName)) : nullptr;
+    if (!EventFn)
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("blueprint_add_event: no overridable event '%s' on %s"),
+            *EventName, ParentClass ? *ParentClass->GetName() : TEXT("<null>")));
+    }
+
+    for (UEdGraphNode* N : Graph->Nodes)
+    {
+        UK2Node_Event* Existing = Cast<UK2Node_Event>(N);
+        if (Existing && Existing->EventReference.GetMemberName() == EventFn->GetFName())
+        {
+            TSharedPtr<FJsonObject> Found = HaybaDescribeNode(Existing);
+            Found->SetBoolField(TEXT("already_existed"), true);
+            return FHaybaHandlerResult::Ok(Found);
+        }
+    }
+
+    BP->Modify();
+    Graph->Modify();
+
+    UK2Node_Event* Node = NewObject<UK2Node_Event>(Graph);
+    Node->CreateNewGuid();
+    Node->EventReference.SetExternalMember(EventFn->GetFName(), ParentClass);
+    Node->bOverrideFunction = true;
+    double X = 0.0, Y = 0.0;
+    P->TryGetNumberField(TEXT("x"), X);
+    P->TryGetNumberField(TEXT("y"), Y);
+    Node->NodePosX = (int32)X;
+    Node->NodePosY = (int32)Y;
+    Graph->AddNode(Node, false, false);
+    Node->PostPlacedNewNode();
+    Node->AllocateDefaultPins();
+
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(BP);
+
+    TSharedPtr<FJsonObject> Out = HaybaDescribeNode(Node);
+    Out->SetBoolField(TEXT("already_existed"), false);
+    Out->SetStringField(TEXT("note"), TEXT("Staged. Call blueprint_compile to apply."));
+    return FHaybaHandlerResult::Ok(Out);
 }
 
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetDefaults(const TSharedPtr<FJsonObject>& P)
