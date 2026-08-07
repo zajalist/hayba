@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { join } from 'node:path';
 import { executeCommand } from './tool-executor.js';
 import { runAfterTool } from '../validator/runner.js';
+import { liveUeProbe } from '../validator/ue-probe.js';
 import { attachFindingsToValue } from '../validator/response.js';
 import type { ValidatorFinding } from '../validator/rules.js';
 
@@ -25,21 +26,11 @@ export async function executePcgGraph(params: ExecutePcgGraphParams): Promise<Ex
     result = { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 
-  // Lazy-import the TCP client to avoid pulling network deps into pure-TS test
-  // setups that import this module without an active UE.
-  let ue = null;
-  try {
-    const tcpMod = await import('../tcp-client.js');
-    ue = await tcpMod.ensureConnected().catch(() => null);
-  } catch {
-    ue = null;
-  }
-
   const findings = await runAfterTool({
     toolName: 'hayba_execute_pcg_graph',
     toolArgs: { assetPath },
     toolResult: result,
-    ue,
+    probe: liveUeProbe,
     scratchDir: join(process.cwd(), '.scratch'),
   });
   return attachFindingsToValue(result, findings);

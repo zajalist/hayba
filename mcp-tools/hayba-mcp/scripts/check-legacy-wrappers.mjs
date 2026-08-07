@@ -92,13 +92,21 @@ export function collectTsWrapperCalls(toolsRoot) {
       // don't want to satisfy the lint with.
       if (entry.endsWith('.test.ts')) continue;
       const src = readFileSync(full, 'utf-8');
-      // Match executeCommand(...) / dispatch(...) with optional generic
-      // type args between the identifier and `(`, e.g.
+      // Match executeCommand(...) / dispatch(...) / ueTool(...) with optional
+      // generic type args between the identifier and `(`, e.g.
       //   executeCommand<Record<string, unknown>>('get_node_details', ...).
       // Generics can nest one level (Record<string, unknown>), so we
       // permit one nested pair inside the outer <...>.
+      //
+      // ueTool('<name>', schema) is the pass-through wrapper form. It calls
+      // executeCommand internally, so scanning for executeCommand alone still
+      // *passes* — it just stops seeing every wrapper that uses the helper.
+      // When the six editor_pie_* wrappers moved to ueTool this linter reported
+      // them as missing rather than as covered, which is the visible half of
+      // the same blindness; the invisible half is a wrapper that quietly drops
+      // out of the check entirely.
       const re =
-        /\b(?:executeCommand|dispatch)(?:\s*<(?:[^<>]|<[^<>]*>)*>)?\s*\(\s*['"]([^'"]+)['"]/g;
+        /\b(?:executeCommand|dispatch|ueTool)(?:\s*<(?:[^<>]|<[^<>]*>)*>)?\s*\(\s*['"]([^'"]+)['"]/g;
       let m;
       while ((m = re.exec(src)) !== null) {
         addHit(m[1], full);

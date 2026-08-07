@@ -30,6 +30,10 @@ public:
     static FString MakeErrorResponse(const FString& Id, const FString& ErrorMessage);
 
 private:
+    /** Rebuild CommandToHandler from the live handlers. The map is derived
+     *  data and can go stale — see the call site in ProcessCommand. */
+    void RebuildCommandMap();
+
     TMap<FString, TSharedRef<IHaybaMCPHandler>> CommandToHandler;
     TArray<TSharedRef<IHaybaMCPHandler>> Handlers;
 };

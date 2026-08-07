@@ -1,20 +1,35 @@
 [project]
 name = "hayba-visual-sidecar"
 version = "0.1.0"
-description = "HaybaOS visual perception sidecar — CLIP / SpatialCLIP / OWLViT embeddings for UE viewport"
+description = "Hayba visual perception sidecar — CLIP / SpatialCLIP / OWLViT embeddings and SAM segmentation for the UE viewport"
 requires-python = ">=3.10"
+# Base is deliberately torch-free. Every model loader imports its heavy
+# dependency inside the function that needs it, so the process starts — and
+# /health answers honestly about what it can and cannot do — with none of the
+# weights installed. Keeping open-clip-torch in the base set contradicted that.
 dependencies = [
   "fastapi>=0.111",
   "uvicorn[standard]>=0.30",
   "pillow>=10",
   "numpy>=1.26",
-  "open-clip-torch>=2.24",
+  "trimesh>=4.0",
+  "rtree>=1.2",
+  # trimesh's proximity/BVH queries pull scipy at call time, not import time, so
+  # a missing scipy shows up as a ModuleNotFoundError inside back-projection
+  # rather than at startup. It is a hard requirement of projection.py.
+  "scipy>=1.11",
+  # EXR is the format the UE world-position and UV passes are written in, and
+  # imageio only reads it through the FreeImage plugin.
+  "imageio[freeimage]>=2.34",
 ]
 
 [project.optional-dependencies]
 gpu = ["torch>=2.3 ; platform_system != 'Darwin'"]
 cpu = ["torch>=2.3"]
+embed = ["open-clip-torch>=2.24", "torch>=2.3"]
 owlvit = ["transformers>=4.40"]
+segment = ["segment-anything>=1.0", "torch>=2.3", "imageio[freeimage]>=2.34"]
+test = ["pytest>=8", "httpx>=0.27"]
 
 [project.scripts]
 hayba-visual-sidecar = "hayba_sidecar.server:main"
@@ -25,3 +40,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/hayba_sidecar"]
+
+[tool.pytest.ini_options]
+# src-layout: tests import the package, not a sibling module. Without this the
+# suite only ran from an editable install, which is why the moved tests carried
+# hand-rolled sys.path hacks.
+pythonpath = ["src"]
+testpaths = ["tests"]

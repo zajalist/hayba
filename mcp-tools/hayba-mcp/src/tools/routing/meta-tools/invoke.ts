@@ -29,7 +29,7 @@ export const invokeSchema = {
 
 export type InvokeResult =
   | { ok: true; result: unknown }
-  | { ok: false; error: { kind: 'validation'; issues: unknown } }
+  | { ok: false; error: { kind: 'validation'; issues: unknown; accepted_params?: string[] } }
   | { ok: false; error: { kind: 'tool_disabled'; name: string } }
   | { ok: false; error: { kind: 'unknown_tool'; name: string } }
   | { ok: false; error: { kind: 'legacy_not_allowlisted'; name: string } };
@@ -76,9 +76,19 @@ export async function invokeHandler(
     }
     return { ok: false, error: { kind: 'unknown_tool', name: args.name } };
   }
-  const parse = z.object(shape).safeParse(args.args);
+  // .strict(): an unknown/misnamed argument is a loud validation error naming
+  // the key AND the params the tool actually takes. zod's default strip mode
+  // silently deleted such keys here, which produced a whole class of field
+  // defects that looked like broken tools — test_list {filter} returning all
+  // 7111 engine tests, editor_pie_screenshot {path} polling a file that was
+  // never checked, ui_set_slot_layout {anchors} applying everything except the
+  // anchors. One loud round-trip beats hours of "the tool ignores its param".
+  const parse = z.object(shape).strict().safeParse(args.args);
   if (!parse.success) {
-    return { ok: false, error: { kind: 'validation', issues: parse.error.issues } };
+    return {
+      ok: false,
+      error: { kind: 'validation', issues: parse.error.issues, accepted_params: Object.keys(shape) },
+    };
   }
   const result = await ctx.dispatch(args.name, parse.data as Record<string, unknown>);
   return { ok: true, result };

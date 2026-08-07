@@ -1,16 +1,26 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// Installed on the ToolExecutor seam rather than mocking the tcp-client module.
+// The Sender signature is (cmd, params, timeoutMs), identical to the old
+// client.send, so every assertion below still checks exactly what it did — but
+// now through the seam the handler actually uses.
 const sendMock = vi.fn();
 
-vi.mock('../../tcp-client.js', () => ({
-  ensureConnected: vi.fn(async () => ({ send: sendMock })),
-}));
-
+import { setDefaultSender } from '../tool-executor.js';
 import { haybaGetUserResponseHandler } from './hayba-get-user-response.js';
 
 describe('hayba_get_user_response', () => {
-  beforeEach(() => sendMock.mockReset());
-  afterEach(() => sendMock.mockReset());
+  beforeEach(() => {
+    sendMock.mockReset();
+    setDefaultSender(sendMock);
+  });
+  afterEach(() => {
+    sendMock.mockReset();
+    // A live sender left installed lets the next test pass for the wrong reason.
+    setDefaultSender(async (cmd) => {
+      throw new Error(`sender uninstalled, but "${cmd}" was sent`);
+    });
+  });
 
   it('forwards prompt_id and wait_ms to UE, returns UE payload verbatim on success', async () => {
     sendMock.mockResolvedValueOnce({ ok: true, data: { prompt_id: 'p1', status: 'answered', value: 'hello' } });

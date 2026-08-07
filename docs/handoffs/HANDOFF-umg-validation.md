@@ -1,0 +1,219 @@
+# Handoff: UMG toolset overhaul + UI validation engine
+
+**Date:** 2026-07-26
+**Branch:** `feat/umg-validation-engine`
+
+## What this changed
+
+Two things: the UMG authoring tools got fixed and extended, and a UI validation
+engine was added on top of real Slate measurement.
+
+### Architecture decision worth keeping
+
+**UE measures, MCP judges.** The plugin gained exactly two new read commands
+(`ui_layout_snapshot`, `ui_measure_text`) that do the one job only the engine
+can do — a real Slate prepass plus font metrics. Every rule that interprets
+those numbers lives in TypeScript (`src/validator/ui/`), so:
+
+- rules are unit-tested without an editor (54 tests, all green),
+- new rules ship without a plugin rebuild,
+- strictness and per-category config are plain JSON both sides read.
+
+Do not move rules into C++.
+
+## Bugs found and fixed (all were silent)
+
+| What | Symptom |
+|---|---|
+| `ui_search_widgets` never sent `path` | every call failed `ui_query: missing path` |
+| `ui_set_slot_layout` sent `slot_layout` | no handler revision read that key — every call failed "no properties provided" |
+| `HaybaReflection::SetProp` rejected JSON objects for struct properties | `ui_set_brush` and `ui_set_text_style` could not set a brush or a font at all |
+| `ui_set_text_style` sent `Typeface: {FontName}` | matched no property; the field is `TypefaceFontName` |
+| `ui_set_brush` sent `Brush` to Borders | Borders expose theirs as `Background` |
+| slot props counted as succeeded unconditionally | success counts included keys the slot never accepted |
+| padding only applied when non-zero | padding could never be cleared |
+| `preserve_properties` on replace | parsed, then never used |
+| `remove` purged only the named widget's GUID | descendants left phantom entries in `WidgetVariableNameToGuidMap` |
+| `replace` reused a name the old widget still held | UE silently uniquified to `Name_1`, breaking bindings |
+| `reparent` discarded slot layout, no index | and orphaned the widget entirely if the new panel refused it |
+| descriptor text claimed `FScopedTransaction` | deliberately removed in c071a59; several `returns:` strings named fields that did not exist |
+
+## New commands (C++)
+
+`ui_build_tree`, `ui_set_variable`, `ui_list_widget_blueprints`,
+`ui_layout_snapshot`, `ui_measure_text`, `ui_report_findings`, plus
+`ui_mutate_tree` operations `move` / `rename` / `duplicate`, and `ui_query`
+filters (`name_pattern` / `class_filter` / `flatten`).
+
+New files: `handlers/HaybaMCPUILayout.{h,cpp}`.
+
+### UE 5.8 API notes (learned the hard way — the first build failed on all of these)
+
+- **There is no `UWidget`-level focus API.** `Button`, `CheckBox` and `ComboBox`
+  each declare their own `IsFocusable` / `bIsFocusable`. The snapshot resolves it
+  reflectively over both spellings, with text-entry widgets treated as
+  inherently focusable, so one path covers every widget class.
+- **`FJsonObject::Values` keys are a storage type, not `FString`.** Anything
+  taking `const FString&` needs an explicit conversion.
+- **`DesignTimeSize` lives on the `UUserWidget` CDO**, not on `UWidgetBlueprint`
+  — and it only holds a real screen size when `DesignSizeMode` is `Custom` /
+  `CustomOnScreen`. Otherwise it keeps a `(100,100)` placeholder, which would
+  make every widget look off-canvas and fire the safe-area rules everywhere.
+- **`UMultiLineEditableTextBox` has no `GetWidgetStyle()`** — only
+  `UEditableTextBox` does; multi-line exposes `WidgetStyle` directly.
+- `TSharedPtr::Get()` already returns the pointer (`&Cached.Get()` does not
+  compile).
+- `ComputeGeometry` deliberately never outers to a PIE world — see
+  `[[haybamcp-pie-transaction-leak]]`.
+
+## Verification status (2026-07-26, after a live run)
+
+The plugin **compiles and links** against UE 5.8, and the core loop has been
+exercised against a running editor.
+
+Verified live, on `/Game/ReelAssets/UI/WBP_ValidatorProbe`:
+
+- `ui_build_tree` — 13 widgets across two calls, canvas and box/grid slots, all
+  three padding shapes (scalar, `[l,t,r,b]`, `{left,top,…}`), zero rejected keys
+- `ui_layout_snapshot` — `layout_resolved: true`, geometry matching the authored
+  values, fonts resolved, text measured
+- **Text measurement is exact at the boundary**: 12 chars = 199px fits, 13 chars
+  = 219px overflows, in a 200px box
+- `ui_validate` — every seeded defect caught, `rules_skipped_no_layout` empty,
+  platform gate holds (pc 24px vs console 40px targets; safe areas console-only)
+- Contrast measured 6:1, silent at standard (4.5:1), fires at strict (7:1)
+- Previously-broken paths now work and **persist** (confirmed by re-query):
+  `ui_search_widgets`, `ui_set_slot_layout`, `ui_set_text_style`, `ui_set_brush`
+  (both `Brush` and `Background`), `ui_replace_element` (34 properties copied,
+  name kept), `ui_rename_element` (GUID preserved), `ui_move_element`,
+  `ui_set_variable`, `ui_list_widget_blueprints`
+
+TypeScript: typecheck clean, `lint:legacy-wrappers` clean, 44 UI tests + 27 rule
+tests green. The one repo-wide failure is `landscape-import.test.ts`, which
+fails on a clean tree too (pre-existing, unrelated).
+
+### Needs the next plugin rebuild
+
+Two C++ fixes are committed but **not yet compiled into the running editor**:
+
+1. `ui_report_findings` — the route that puts findings in the Validation panel.
+   Compiled and verified present in the DLL.
+
+### Still untested
+
+`ui_remove_element`, `ui_reparent_element`, `ui_get_widget_info`,
+`ui_list_widget_types`, standalone `ui_save_widget`, the
+`validator_strictness` persistence round-trip, and the non-canvas slot rules
+against a real box layout (the box tree exists in the probe, but only four
+rules have been run against it).
+
+The probe blueprint currently contains the corrupt duplicate; clean it after
+the rebuild.
+
+## Still to do
+
+1. **Rebuild the plugin** for the two fixes listed above, then re-run the loop
+   and confirm the Validation panel actually populates.
+
+2. **Strictness control in the editor.** Strictness is fully wired through MCP
+   (`validator_strictness`) and persists to `.scratch/validator-config.json`.
+   The panel has no control for it yet.
+
+   Correction to an earlier assumption in this doc: `SHaybaMCPValidationPanel`
+   does **not** read that config file, or any file. It is push-only —
+   `AddIssue` / `Clear`, fed by post-dispatch hooks in the command handler
+   (`PushPhysicsResultsToPanel` and friends). The comment in
+   `HaybaMCPMainPanel.cpp` claiming findings persist to
+   `validator-history.jsonl` describes the MCP side, not the panel. This is why
+   `ui_report_findings` had to exist at all, and why a strictness dropdown needs
+   its own read/write path to the config rather than just a widget.
+
+3. **Grow the ruleset.** 32 rules ship. Adding one means appending an entry to
+   `src/validator/ui/rules.ts` — the runner, the settings surface and the
+   strictness gate all read that array. Gaps worth filling: focus-navigation
+   graph reachability, per-widget clipping behaviour, ListView entry-class
+   checks, animation-track validation, input-action binding coverage.
+
+4. **Calibrate against more real screens.** Two rules already needed demoting
+   after one live run (`ui_canvas_child_top_left_anchored` fired on 7 of 8
+   widgets; `ui_empty_panel` double-reported empty Buttons). Expect more of
+   this — a rule that is correct in principle can still be useless in practice
+   if it fires on everything.
+
+5. **Not built:** `ui_bind_event` (widget delegate → blueprint event graph) and
+   widget-animation authoring. Both need Kismet graph / MovieScene work that was
+   out of scope here.
+
+## ui_duplicate_element and ui_replace_element — fixed, one root cause
+
+Both were corrupting the widget tree, and it was the same bug. Worth reading,
+because three plausible fixes failed before the real one, and two of the failures
+looked like progress.
+
+**Root cause.** `CopyCommonProperties(SourceSlot, NewSlot)` copied the slot's
+`Content` pointer. `UPanelSlot::Content` points at the child widget, so the new
+slot adopted the SOURCE's child. The tree then held one widget reached through
+two slots — which reads as two widgets with the same name, and is why the first
+diagnosis was wrong. Adding the object path to `ui_query` is what settled it:
+both entries had the identical path.
+
+The knock-on effect explains the rest. Because the copy's own child pointer was
+overwritten, the copy was ORPHANED — nothing referenced it — so the next
+recompile collected it and renamed it `TRASH_<name>_0`.
+
+**Dead ends, and why they looked right.**
+- *Scratch name for the copy's root.* The collisions were among descendants.
+- *Duplicating into a transient package.* The problem is in what
+  `DuplicateObject` produces, not where it is put — a slot's `Content` is a plain
+  pointer, not a subobject, so the copy shares the original's children either way.
+- *Deferring compilation with `MarkBlueprintAsModified`.* A stage trace showed the
+  name correct before `MarkBlueprintAsStructurallyModified` and `TRASH_` after,
+  which made the recompile look guilty. It was innocent: it was collecting an
+  orphan. This change was reverted once the slot pointers were fixed — every
+  other tree mutation uses the structural notification, and diverging for this
+  one would have hidden the real defect.
+
+**The fix.** `CopyCommonProperties` now skips `Content` and `Parent` alongside
+`Slot` and `Slots`. Layout values are the only thing worth copying between slots;
+who they point at belongs to `AddChild`. `DeepCloneWidget` rebuilds the subtree
+node by node rather than calling `DuplicateObject`.
+
+**Verified live:** duplicate produces distinct object paths, unique names
+(`RowLabel` / `RowLabel_0`), and carries properties and slot layout across.
+Replace swaps class in place, keeps the name and index, and leaves no orphan —
+the `HaybaMCP_Replaced_0` leak seen earlier is gone.
+
+**Kept:** the handler still checks its own post-condition (trashed copy, or any
+name shared by two widgets) and returns a hard error rather than reporting
+success on a malformed tree.
+
+## ui_create_widget could hang the whole MCP connection
+
+`AssetTools::CreateAsset` raises a modal "Overwrite Existing Object" dialog on a
+name collision. Handlers run on the game thread, so that dialog blocks the thread
+that would service the reply: the command never completes, the caller times out,
+and every later request queues behind it until a human clicks the box. Nothing in
+the log says why.
+
+The handler now checks the asset registry AND memory (an asset created earlier in
+the session is absent from the registry but still collides) and returns a plain
+error instead of prompting. See `[[no-modal-dialogs-from-handlers]]`.
+
+## Rule catalogue shape## Rule catalogue shape
+
+```
+src/validator/ui/
+  types.ts        snapshot + rule types
+  thresholds.ts   platform presets (pc/console/handheld/mobile) + strictness
+                  tuning, every number cited to its source
+  rules.ts        the 32 rules
+  index.ts        runner: strictness gate, disable list, skip accounting
+```
+
+`resolveThresholds` scales pixel numbers to the blueprint's design height, so a
+720p-authored screen is judged with 720p numbers.
+
+**Reporting contract:** a rule that needs geometry and has none is reported in
+`rules_skipped_no_layout`, never counted as a pass. Same principle as the
+per-key `unknown_slot_props` reporting on the authoring side — the whole point
+of this pass was that silence was being read as success.

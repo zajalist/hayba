@@ -6,12 +6,12 @@ can degrade gracefully.
 """
 import os
 import warnings
-
-import numpy as np
-import torch
-from PIL import Image
+from typing import TYPE_CHECKING
 
 from .clip_model import get_clip
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from PIL import Image
 
 _adapter = None
 _warned = False
@@ -22,14 +22,17 @@ class _SpatialClip:
         self.base = base_clip
         self.adapter = adapter  # may be None
 
-    @torch.no_grad()
-    def encode(self, img: Image.Image):
-        base_vec = self.base.encode_image(img)
-        if self.adapter is None:
-            return np.zeros_like(base_vec)
-        # Adapter is a small MLP that lifts CLIP features into a depth/spatial
-        # latent. Real implementation TBD.
-        return self.adapter(torch.from_numpy(base_vec)).cpu().numpy()
+    def encode(self, img: "Image.Image"):
+        import numpy as np
+        import torch
+
+        with torch.no_grad():
+            base_vec = self.base.encode_image(img)
+            if self.adapter is None:
+                return np.zeros_like(base_vec)
+            # Adapter is a small MLP that lifts CLIP features into a depth/spatial
+            # latent. Real implementation TBD.
+            return self.adapter(torch.from_numpy(base_vec)).cpu().numpy()
 
 
 def get_spatial_clip():
@@ -37,6 +40,8 @@ def get_spatial_clip():
     ckpt = os.getenv("HAYBA_SPATIAL_CLIP_CHECKPOINT")
     if ckpt and os.path.exists(ckpt):
         if _adapter is None:
+            import torch
+
             _adapter = torch.load(ckpt, map_location="cpu").eval()
     elif not _warned:
         warnings.warn(

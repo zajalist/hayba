@@ -13,7 +13,7 @@
  * are exempt and must not be routed through the text-only helpers here.
  */
 
-import type { ToolResult } from './types.js';
+import type { RichToolResult, ToolResult } from './types.js';
 import { VALIDATION_NUDGE } from './hayba-tool-meta.js';
 
 /**
@@ -28,7 +28,7 @@ import { VALIDATION_NUDGE } from './hayba-tool-meta.js';
  * from editor_capture_viewport), so nothing that already carries a validation
  * signal or a screenshot is disturbed.
  */
-export function withValidationNudge(result: ToolResult): ToolResult {
+export function withValidationNudge<T extends RichToolResult>(result: T): T {
   if (result.isError) return result;
   if (!Array.isArray(result.content)) return result;
   // Idempotent: never stack two nudges (a handler that already appended one).

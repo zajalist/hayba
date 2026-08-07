@@ -1,9 +1,23 @@
 #pragma once
 
-// Tiny, header-only typed param-extraction helpers over a TSharedPtr<FJsonObject>.
-// These are thin wrappers over the FJsonObject TryGet* methods so handlers can
-// read params ergonomically. They preserve the exact semantics of the underlying
-// TryGet* calls (return false on missing/wrong-type, leave Out untouched).
+// Typed param extraction for command handlers.
+//
+// The thin GetString/GetNumber/GetBool helpers below are 1:1 wrappers over the
+// FJsonObject TryGet* methods. They are kept because existing handlers use
+// them, but they are the reason this header was ignored: wrapping a call in a
+// call of the same shape saves nobody anything, so 549 sites went straight to
+// TryGet*Field and each re-invented the same three things —
+//
+//   1. the missing-required-field error string, in a slightly different format
+//      every time ("x is required", "missing x", "<cmd>: missing x");
+//   2. one-at-a-time reporting, so a caller who got three params wrong had to
+//      make three round trips to find that out;
+//   3. defaults, spelled as an uninitialised local plus an ignored return.
+//
+// FHaybaParamReader does those three things once. It accumulates failures
+// rather than returning on the first, so a handler validates everything and
+// reports it together.
+
 #include "CoreMinimal.h"
 #include "Dom/JsonObject.h"
 
@@ -40,5 +54,219 @@ namespace HaybaParams
             (*Arr)[1]->AsNumber(),
             (*Arr)[2]->AsNumber());
         return true;
+    }
+}
+
+/**
+ * Reads a command's params, collecting every problem instead of stopping at
+ * the first.
+ *
+ * Usage mirrors how handlers already read params, minus the error plumbing:
+ *
+ *     FHaybaParamReader R(Params, TEXT("ui_set_brush"));
+ *     const FString Path = R.RequiredString(TEXT("widget_blueprint_path"));
+ *     const FString Name = R.RequiredString(TEXT("widget_name"));
+ *     const double  Size = R.OptionalNumber(TEXT("size"), 12.0);
+ *     if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
+ *
+ * A caller who omitted two fields is told about both, once — rather than
+ * fixing one, re-sending, and learning about the next.
+ */
+class FHaybaParamReader
+{
+public:
+    FHaybaParamReader(const TSharedPtr<FJsonObject>& InParams, const FString& InCommandName)
+        : Params(InParams), CommandName(InCommandName)
+    {
+        if (!Params.IsValid())
+        {
+            // A null params object is not "every field missing" — say the one
+            // true thing rather than listing every field the handler asks for.
+            Errors.Add(TEXT("no params object was supplied"));
+            bParamsMissing = true;
+        }
+    }
+
+    FString RequiredString(const TCHAR* Key)
+    {
+        FString Out;
+        if (!bParamsMissing && !Params->TryGetStringField(Key, Out))
+        {
+            Missing(Key, TEXT("string"));
+        }
+        else if (!bParamsMissing && Out.IsEmpty())
+        {
+            // An empty string is the shape of a caller that built the value and
+            // got nothing, which fails later and further away.
+            Errors.Add(FString::Printf(TEXT("'%s' is present but empty"), Key));
+        }
+        return Out;
+    }
+
+    double RequiredNumber(const TCHAR* Key)
+    {
+        double Out = 0.0;
+        if (!bParamsMissing && !Params->TryGetNumberField(Key, Out)) Missing(Key, TEXT("number"));
+        return Out;
+    }
+
+    FString OptionalString(const TCHAR* Key, const FString& Default = FString()) const
+    {
+        FString Out;
+        if (bParamsMissing || !Params->TryGetStringField(Key, Out)) return Default;
+        return Out;
+    }
+
+    double OptionalNumber(const TCHAR* Key, double Default = 0.0) const
+    {
+        double Out = 0.0;
+        if (bParamsMissing || !Params->TryGetNumberField(Key, Out)) return Default;
+        return Out;
+    }
+
+    bool OptionalBool(const TCHAR* Key, bool Default = false) const
+    {
+        bool Out = false;
+        if (bParamsMissing || !Params->TryGetBoolField(Key, Out)) return Default;
+        return Out;
+    }
+
+    int32 OptionalInt(const TCHAR* Key, int32 Default = 0) const
+    {
+        return static_cast<int32>(OptionalNumber(Key, static_cast<double>(Default)));
+    }
+
+    /** Record a problem the reader cannot detect on its own (a value out of
+     *  range, a combination that does not make sense). */
+    void AddError(const FString& Message) { Errors.Add(Message); }
+
+    bool HasErrors() const { return Errors.Num() > 0; }
+
+    /** One message naming the command and every problem found. */
+    FString ErrorMessage() const
+    {
+        return FString::Printf(TEXT("%s: %s"), *CommandName, *FString::Join(Errors, TEXT("; ")));
+    }
+
+private:
+    void Missing(const TCHAR* Key, const TCHAR* Type)
+    {
+        Errors.Add(FString::Printf(TEXT("missing required %s '%s'"), Type, Key));
+    }
+
+    TSharedPtr<FJsonObject> Params;
+    FString CommandName;
+    TArray<FString> Errors;
+    bool bParamsMissing = false;
+};
+
+/**
+ * PIE input coordinate spaces.
+ *
+ * editor_pie_widget_tree reports a widget's position from Slate geometry, which
+ * is ABSOLUTE DESKTOP space. editor_pie_mouse used to add the game window's
+ * on-screen origin to whatever it was given — correct only if the caller had
+ * measured from the window. Feeding it tree coordinates, which the tree's own
+ * note told callers to do, therefore double-counted the origin and every click
+ * landed low and right by the window's offset.
+ *
+ * That offset is the window chrome: 24px at 1080p with a title bar, but it is a
+ * function of DPI, window position and whether a title bar exists at all — so
+ * it must be computed, never assumed. The error is smaller than a large button,
+ * which is why it went unnoticed: it only misses on targets under ~48px, like a
+ * 33px tab or a 26px text field.
+ */
+namespace HaybaPieCoords
+{
+    /**
+     * Resolve an input coordinate to the absolute desktop point to click.
+     *
+     * `WindowOrigin` is the game window's top-left in screen space. It is added
+     * ONLY for viewport-relative input; absolute input is already in the space
+     * Slate dispatches in and must pass through untouched.
+     */
+    inline FVector2D ToAbsolute(const FVector2D& Input, const FVector2D& WindowOrigin, bool bViewportRelative)
+    {
+        return bViewportRelative ? (WindowOrigin + Input) : Input;
+    }
+}
+
+/**
+ * PIE pointer gestures — the pure arithmetic behind a synthetic drag.
+ *
+ * A Slate widget that tracks a held gesture reads exactly two things off the
+ * FPointerEvent it receives on a move: whether the button is still down
+ * (FPointerEvent::IsMouseButtonDown) and how far the pointer travelled
+ * (FPointerEvent::GetCursorDelta). SScrollBar::OnMouseMove is the reference
+ * consumer and is blunt about it:
+ *
+ *     if (this->HasMouseCapture())
+ *         if (!MouseEvent.GetCursorDelta().IsZero())
+ *             ... scroll ...
+ *     return FReply::Unhandled();
+ *
+ * A move with a zero delta is therefore not a weak move, it is NO move. This
+ * namespace exists so the "is this step actually going to move anything?"
+ * question is answered by testable arithmetic instead of by hoping.
+ *
+ * The quantisation matters and is not incidental: FSlateApplication::SetCursorPos
+ * forwards to FSlateUser::SetCursorPosition(int32, int32), which casts. Two
+ * waypoints less than a pixel apart therefore land on the same stored position
+ * and produce a zero delta no matter what the caller asked for — a 6px drag
+ * split into 8 steps is mostly no-ops. PlanDragPath drops those steps rather
+ * than dispatching moves that cannot do anything.
+ */
+namespace HaybaPieGesture
+{
+    /**
+     * The position Slate will actually store for a requested pointer position.
+     *
+     * Mirrors FSlateUser::SetCursorPosition's `(int32)` cast — truncation toward
+     * zero, not floor, because a multi-monitor desktop has negative coordinates
+     * to the left of the primary display and the engine truncates there too.
+     */
+    inline FVector2D QuantiseToPixel(const FVector2D& P)
+    {
+        return FVector2D((double)(int32)P.X, (double)(int32)P.Y);
+    }
+
+    /** The cursor delta Slate will report for a move between two requested points. */
+    inline FVector2D DeltaFor(const FVector2D& From, const FVector2D& To)
+    {
+        return QuantiseToPixel(To) - QuantiseToPixel(From);
+    }
+
+    /**
+     * The waypoints a drag from Start to End should visit, in order.
+     *
+     * Every returned point differs from its predecessor by at least one whole
+     * pixel, so every dispatched move carries a non-zero cursor delta. The last
+     * point is always the destination. A zero-length drag returns an empty path
+     * — which is the honest answer, and lets the caller report "0 moves
+     * delivered" instead of claiming a gesture it did not perform.
+     */
+    inline TArray<FVector2D> PlanDragPath(const FVector2D& Start, const FVector2D& End, int32 Steps)
+    {
+        TArray<FVector2D> Path;
+        Steps = FMath::Clamp(Steps, 1, 256);
+
+        FVector2D Last = QuantiseToPixel(Start);
+        for (int32 i = 1; i <= Steps; ++i)
+        {
+            const double T = (double)i / (double)Steps;
+            const FVector2D P = QuantiseToPixel(Start + (End - Start) * T);
+            if (P.Equals(Last, 0.0)) continue;  // Slate would see a zero delta; skip it.
+            Path.Add(P);
+            Last = P;
+        }
+
+        // Interpolation plus truncation can stop a pixel short of the target.
+        // A drag has to finish where the caller said it finishes.
+        const FVector2D Destination = QuantiseToPixel(End);
+        if (!Destination.Equals(Last, 0.0))
+        {
+            Path.Add(Destination);
+        }
+        return Path;
     }
 }

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolHandler } from '../types.js';
-import { executeCommand } from '../tool-executor.js';
+import { ueTool } from '../ue-tool.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 
 export const meta: HaybaToolMeta = {
@@ -20,11 +20,4 @@ export const schema = z.object({
   ]).describe('Parameter value: scalar, vector (1-4 elements), or texture asset path'),
 });
 
-export const materialSetParamHandler: ToolHandler = async (args) => {
-  const parsed = schema.safeParse(args);
-  if (!parsed.success) {
-    return { content: [{ type: 'text', text: `Validation error: ${parsed.error.message}` }], isError: true };
-  }
-  const data = await executeCommand('material_set_param', parsed.data as Record<string, unknown>);
-  return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
-};
+export const materialSetParamHandler: ToolHandler = ueTool('material_set_param', schema);

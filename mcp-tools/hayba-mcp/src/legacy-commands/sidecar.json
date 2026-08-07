@@ -7,29 +7,116 @@
       "aliases": [],
       "handler_cpp": "FHaybaMCPStaticMeshHandler::MeshExtract",
       "params": [
-        { "name": "actor_label", "type": "string", "required": false, "description": "Editor actor label; reads its UDynamicMeshComponent (primary source for PCG dynamic-mesh output). Provide this OR path, not both." },
-        { "name": "component_index", "type": "number", "required": false, "description": "Which UDynamicMeshComponent on the actor (default 0)" },
-        { "name": "component_name", "type": "string", "required": false, "description": "Match the dynamic mesh component by name instead of index" },
-        { "name": "path", "type": "string", "required": false, "description": "UStaticMesh asset path (/Game/...) — alternative source (render data: counts + bounds + optional arrays)" },
-        { "name": "lod", "type": "number", "required": false, "description": "StaticMesh LOD to read (default 0); ignored for dynamic mesh" },
-        { "name": "include_triangles", "type": "boolean", "required": false, "description": "Include the triangles index array [[i,j,k],...] (bounded by max_elements)" },
-        { "name": "include_positions", "type": "boolean", "required": false, "description": "Include the vertices array [[x,y,z],...] (bounded by max_elements)" },
-        { "name": "include_normals", "type": "boolean", "required": false, "description": "Include computed per-triangle face normals (dynamic mesh only)" },
-        { "name": "max_elements", "type": "number", "required": false, "description": "Hard cap on emitted array elements (default 2000); stats are always over the whole mesh" },
-        { "name": "bbox_min", "type": "array", "required": false, "description": "[x,y,z] local-space AABB min; with arrays requested, only emit triangles whose centroid is inside the box" },
-        { "name": "bbox_max", "type": "array", "required": false, "description": "[x,y,z] local-space AABB max" }
+        {
+          "name": "actor_label",
+          "type": "string",
+          "required": false,
+          "description": "Editor actor label; reads its UDynamicMeshComponent (primary source for PCG dynamic-mesh output). Provide this OR path, not both."
+        },
+        {
+          "name": "component_index",
+          "type": "number",
+          "required": false,
+          "description": "Which UDynamicMeshComponent on the actor (default 0)"
+        },
+        {
+          "name": "component_name",
+          "type": "string",
+          "required": false,
+          "description": "Match the dynamic mesh component by name instead of index"
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "required": false,
+          "description": "UStaticMesh asset path (/Game/...) — alternative source (render data: counts + bounds + optional arrays)"
+        },
+        {
+          "name": "lod",
+          "type": "number",
+          "required": false,
+          "description": "StaticMesh LOD to read (default 0); ignored for dynamic mesh"
+        },
+        {
+          "name": "include_triangles",
+          "type": "boolean",
+          "required": false,
+          "description": "Include the triangles index array [[i,j,k],...] (bounded by max_elements)"
+        },
+        {
+          "name": "include_positions",
+          "type": "boolean",
+          "required": false,
+          "description": "Include the vertices array [[x,y,z],...] (bounded by max_elements)"
+        },
+        {
+          "name": "include_normals",
+          "type": "boolean",
+          "required": false,
+          "description": "Include computed per-triangle face normals (dynamic mesh only)"
+        },
+        {
+          "name": "max_elements",
+          "type": "number",
+          "required": false,
+          "description": "Hard cap on emitted array elements (default 2000); stats are always over the whole mesh"
+        },
+        {
+          "name": "bbox_min",
+          "type": "array",
+          "required": false,
+          "description": "[x,y,z] local-space AABB min; with arrays requested, only emit triangles whose centroid is inside the box"
+        },
+        {
+          "name": "bbox_max",
+          "type": "array",
+          "required": false,
+          "description": "[x,y,z] local-space AABB max"
+        }
       ],
       "returns": {
         "shape": "object",
         "fields": [
-          { "name": "source", "type": "string", "description": "'dynamic_mesh_component' | 'static_mesh'" },
-          { "name": "counts", "type": "object", "description": "{triangles, vertices, edges}" },
-          { "name": "topology", "type": "object", "description": "Both dynamic AND static sources (static is welded from the render LOD first): {boundary_edges, boundary_loops (hole count), non_manifold_vertices (bowties), degenerate_triangles, connected_components, component_triangle_counts[], has_open_boundaries, is_closed, is_valid, surface_area, volume, euler_characteristic, genus (only when single closed manifold)}" },
-          { "name": "bounds", "type": "object", "description": "{min,max,extents}" },
-          { "name": "triangles", "type": "array", "description": "present only when include_triangles" },
-          { "name": "vertices", "type": "array", "description": "present only when include_positions" },
-          { "name": "face_normals", "type": "array", "description": "present only when include_normals (dynamic mesh)" },
-          { "name": "truncated", "type": "boolean", "description": "true if arrays were capped by max_elements/bbox" }
+          {
+            "name": "source",
+            "type": "string",
+            "description": "'dynamic_mesh_component' | 'static_mesh'"
+          },
+          {
+            "name": "counts",
+            "type": "object",
+            "description": "{triangles, vertices, edges}"
+          },
+          {
+            "name": "topology",
+            "type": "object",
+            "description": "Both dynamic AND static sources (static is welded from the render LOD first): {boundary_edges, boundary_loops (hole count), non_manifold_vertices (bowties), degenerate_triangles, connected_components, component_triangle_counts[], has_open_boundaries, is_closed, is_valid, surface_area, volume, euler_characteristic, genus (only when single closed manifold)}"
+          },
+          {
+            "name": "bounds",
+            "type": "object",
+            "description": "{min,max,extents}"
+          },
+          {
+            "name": "triangles",
+            "type": "array",
+            "description": "present only when include_triangles"
+          },
+          {
+            "name": "vertices",
+            "type": "array",
+            "description": "present only when include_positions"
+          },
+          {
+            "name": "face_normals",
+            "type": "array",
+            "description": "present only when include_normals (dynamic mesh)"
+          },
+          {
+            "name": "truncated",
+            "type": "boolean",
+            "description": "true if arrays were capped by max_elements/bbox"
+          }
         ]
       },
       "agent_callable": true,
@@ -40,18 +127,54 @@
       "aliases": [],
       "handler_cpp": "FHaybaMCPStaticMeshHandler::MeshExtract",
       "params": [
-        { "name": "actor_label", "type": "string", "required": false, "description": "Editor actor label; reads its UDynamicMeshComponent" },
-        { "name": "component_index", "type": "number", "required": false, "description": "Which UDynamicMeshComponent (default 0)" },
-        { "name": "component_name", "type": "string", "required": false, "description": "Match component by name instead of index" },
-        { "name": "path", "type": "string", "required": false, "description": "UStaticMesh asset path (alternative source)" },
-        { "name": "lod", "type": "number", "required": false, "description": "StaticMesh LOD (default 0)" }
+        {
+          "name": "actor_label",
+          "type": "string",
+          "required": false,
+          "description": "Editor actor label; reads its UDynamicMeshComponent"
+        },
+        {
+          "name": "component_index",
+          "type": "number",
+          "required": false,
+          "description": "Which UDynamicMeshComponent (default 0)"
+        },
+        {
+          "name": "component_name",
+          "type": "string",
+          "required": false,
+          "description": "Match component by name instead of index"
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "required": false,
+          "description": "UStaticMesh asset path (alternative source)"
+        },
+        {
+          "name": "lod",
+          "type": "number",
+          "required": false,
+          "description": "StaticMesh LOD (default 0)"
+        }
       ],
       "returns": {
         "shape": "object",
         "fields": [
-          { "name": "counts", "type": "object", "description": "{triangles, vertices, edges}" },
-          { "name": "topology", "type": "object", "description": "{boundary_edges, boundary_loops, non_manifold_vertices, degenerate_triangles, connected_components, component_triangle_counts[], has_open_boundaries, is_closed, is_valid, surface_area, volume, euler_characteristic, genus}" },
-          { "name": "bounds", "type": "object" }
+          {
+            "name": "counts",
+            "type": "object",
+            "description": "{triangles, vertices, edges}"
+          },
+          {
+            "name": "topology",
+            "type": "object",
+            "description": "{boundary_edges, boundary_loops, non_manifold_vertices, degenerate_triangles, connected_components, component_triangle_counts[], has_open_boundaries, is_closed, is_valid, surface_area, volume, euler_characteristic, genus}"
+          },
+          {
+            "name": "bounds",
+            "type": "object"
+          }
         ]
       },
       "agent_callable": true,
@@ -62,13 +185,31 @@
       "aliases": [],
       "handler_cpp": "FHaybaMCPStaticMeshHandler::MeshListDynamic",
       "params": [
-        { "name": "label_contains", "type": "string", "required": false, "description": "Only list components on actors whose label contains this substring" }
+        {
+          "name": "label_contains",
+          "type": "string",
+          "required": false,
+          "description": "Only list components on actors whose label contains this substring"
+        }
       ],
-      "returns": { "shape": "object", "fields": [
-        { "name": "dynamic_meshes", "type": "array", "description": "[{actor_label, component, triangles, vertices, num_materials, empty}]" },
-        { "name": "count", "type": "number" },
-        { "name": "total_triangles", "type": "number" }
-      ] },
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "dynamic_meshes",
+            "type": "array",
+            "description": "[{actor_label, component, triangles, vertices, num_materials, empty}]"
+          },
+          {
+            "name": "count",
+            "type": "number"
+          },
+          {
+            "name": "total_triangles",
+            "type": "number"
+          }
+        ]
+      },
       "agent_callable": true,
       "has_ts_wrapper": false,
       "notes": "Enumerate every UDynamicMeshComponent in the editor level with tri/vert/material counts — replaces the hand-rolled 'loop all actors -> DynamicMeshComponent -> tris' python_run for inspecting PCG/grammar output. Pair with mesh_topology_stats(actor_label=...) for a full weld/manifold verdict on a specific one."
@@ -77,65 +218,176 @@
       "aliases": [],
       "handler_cpp": "FHaybaMCPAssetHandler::ObjectGetProperty",
       "params": [
-        { "name": "path", "type": "string", "required": true, "description": "Object/asset path, e.g. /Game/Foo/MyAsset or a sub-object path" },
-        { "name": "names", "type": "array", "required": false, "description": "Optional list of property names to read; omit to dump all editable (CPF_Edit) properties" }
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "description": "Object/asset path, e.g. /Game/Foo/MyAsset or a sub-object path"
+        },
+        {
+          "name": "names",
+          "type": "array",
+          "required": false,
+          "description": "Optional list of property names to read; omit to dump all editable (CPF_Edit) properties"
+        }
       ],
-      "returns": { "shape": "object", "fields": [
-        { "name": "path", "type": "string" },
-        { "name": "class", "type": "string" },
-        { "name": "properties", "type": "object", "description": "name -> ExportText string value" }
-      ] },
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "path",
+            "type": "string"
+          },
+          {
+            "name": "class",
+            "type": "string"
+          },
+          {
+            "name": "properties",
+            "type": "object",
+            "description": "name -> ExportText string value"
+          }
+        ]
+      },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Generic reflection read on any loadable UObject — replaces get_editor_property python_run pokes. Values are UE ExportText strings."
+      "notes": "Generic reflection read on any loadable UObject — replaces get_editor_property python_run pokes. Values are UE ExportText strings. PARAMS: `path` (object/asset path) + optional `names` — NOT widget_blueprint_path/widget_name; those belong to the ui_* tools. To reach a widget's slot, pass the slot's full object path as `path`."
     },
     "object_set_property": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPAssetHandler::ObjectSetProperty",
       "params": [
-        { "name": "path", "type": "string", "required": true, "description": "Object/asset path" },
-        { "name": "properties", "type": "object", "required": true, "description": "name -> value map (numbers/strings/bools/arrays); set via reflection (HaybaReflection::SetProp)" }
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "description": "Object/asset path"
+        },
+        {
+          "name": "properties",
+          "type": "object",
+          "required": true,
+          "description": "name -> value map (numbers/strings/bools/arrays); set via reflection (HaybaReflection::SetProp)"
+        }
       ],
-      "returns": { "shape": "object", "fields": [
-        { "name": "path", "type": "string" },
-        { "name": "applied", "type": "array" },
-        { "name": "failed", "type": "array", "description": "property names that did not resolve" },
-        { "name": "ok", "type": "boolean" }
-      ] },
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "path",
+            "type": "string"
+          },
+          {
+            "name": "applied",
+            "type": "array"
+          },
+          {
+            "name": "failed",
+            "type": "array",
+            "description": "property names that did not resolve"
+          },
+          {
+            "name": "ok",
+            "type": "boolean"
+          }
+        ]
+      },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Generic reflection write on any loadable UObject (Modify + PostEditChange + MarkPackageDirty) — replaces set_editor_property python_run pokes. For textures prefer texture_set_settings; for material nodes prefer the material_* tools."
+      "notes": "Generic reflection write on any loadable UObject (Modify + PostEditChange + MarkPackageDirty) — replaces set_editor_property python_run pokes. PARAMS: `path` (object/asset path) + `properties` (name→value map) — NOT widget_blueprint_path/widget_name/property; those belong to the ui_* tools. For textures prefer texture_set_settings; for material nodes prefer the material_* tools."
     },
     "test_list": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPTestHandler::Handle",
       "params": [
-        { "name": "filter_pattern", "type": "string", "required": false, "description": "Substring filter on display name or full path" },
-        { "name": "category", "type": "string", "required": false, "description": "Full-path prefix filter, e.g. 'Hayba.Socket'" }
+        {
+          "name": "filter_pattern",
+          "type": "string",
+          "required": false,
+          "description": "Substring filter on display name or full path (alias: filter)"
+        },
+        {
+          "name": "filter",
+          "type": "string",
+          "required": false,
+          "description": "Alias of filter_pattern — substring filter on display name or full path. Accepted because it is the spelling callers reach for; it used to be silently ignored and the call returned all ~7000 engine tests."
+        },
+        {
+          "name": "category",
+          "type": "string",
+          "required": false,
+          "description": "Full-path prefix filter, e.g. 'Hayba.Socket'"
+        }
       ],
-      "returns": { "shape": "object", "fields": [
-        { "name": "tests", "type": "array", "description": "[{name, full_test_path, file_name, line_number}]" },
-        { "name": "count", "type": "number" },
-        { "name": "total_discovered", "type": "number" }
-      ] },
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "tests",
+            "type": "array",
+            "description": "[{name, full_test_path, file_name, line_number}]"
+          },
+          {
+            "name": "count",
+            "type": "number"
+          },
+          {
+            "name": "total_discovered",
+            "type": "number"
+          }
+        ]
+      },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Enumerate registered automation tests via FAutomationTestFramework directly (no controller/session-frontend needed)."
+      "notes": "Enumerate registered automation tests via FAutomationTestFramework directly (no controller/session-frontend needed). Name-substring filtering: pass filter_pattern (or its alias filter); the response echoes the applied filter so a dropped param is visible."
     },
     "test_run": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPTestHandler::Handle",
       "params": [
-        { "name": "test_names", "type": "array", "required": false, "description": "Test names/full-paths to run, or the single string 'all'. Accepts a string or array." },
-        { "name": "smoke_only", "type": "boolean", "required": false, "description": "Restrict to SmokeFilter-tagged tests" },
-        { "name": "timeout_seconds", "type": "number", "required": false, "description": "Per-test latent-command drain timeout (default 120)" }
+        {
+          "name": "test_names",
+          "type": "array",
+          "required": false,
+          "description": "Test names/full-paths to run, or the single string 'all'. Accepts a string or array."
+        },
+        {
+          "name": "smoke_only",
+          "type": "boolean",
+          "required": false,
+          "description": "Restrict to SmokeFilter-tagged tests"
+        },
+        {
+          "name": "timeout_seconds",
+          "type": "number",
+          "required": false,
+          "description": "Per-test latent-command drain timeout (default 120)"
+        }
       ],
-      "returns": { "shape": "object", "fields": [
-        { "name": "job_id", "type": "string", "description": "Poll build_status { job_id } for the result" },
-        { "name": "status", "type": "string", "description": "'running' immediately; 'busy' if another run is already in flight" },
-        { "name": "total", "type": "number", "description": "Number of tests queued for this run" },
-        { "name": "note", "type": "string" }
-      ] },
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "job_id",
+            "type": "string",
+            "description": "Poll build_status { job_id } for the result"
+          },
+          {
+            "name": "status",
+            "type": "string",
+            "description": "'running' immediately; 'busy' if another run is already in flight"
+          },
+          {
+            "name": "total",
+            "type": "number",
+            "description": "Number of tests queued for this run"
+          },
+          {
+            "name": "note",
+            "type": "string"
+          }
+        ]
+      },
       "agent_callable": true,
       "has_ts_wrapper": false,
       "notes": "JOB ENVELOPE (async, non-freezing): returns { job_id, status:'running' } IMMEDIATELY and runs the tests on the editor's game-thread core ticker (one step/frame), so the editor stays responsive. Poll build_status { job_id } for the result { passed, failed, skipped, elapsed_seconds, total } (delivered as a JSON string in build_status.output), or call test_get_log for the last run's detailed errors/warnings. Only one test_run job at a time (status:'busy' otherwise). Drives FAutomationTestFramework::StartTestByName -> ExecuteLatentCommands -> StopTest directly, bypassing the controller/worker session queue, so it works in a normal GUI editor without the Session Frontend. Replaces the old INLINE busy-sleep that froze the game thread up to 120s/test."
@@ -144,29 +396,74 @@
       "aliases": [],
       "handler_cpp": "FHaybaMCPTestHandler::Handle",
       "params": [],
-      "returns": { "shape": "object", "fields": [
-        { "name": "tests", "type": "array", "description": "[{name, success, duration_seconds, errors[], warnings[]}] from the most recent test_run" },
-        { "name": "count", "type": "number" }
-      ] },
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "tests",
+            "type": "array",
+            "description": "[{name, success, duration_seconds, errors[], warnings[]}] from the most recent test_run"
+          },
+          {
+            "name": "count",
+            "type": "number"
+          }
+        ]
+      },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Full entries (errors + warnings) from the last test_run."
+      "notes": "Full entries (errors + warnings) from the last test_run, not just the pass/fail counts. Read this when a test failed and you need the actual assertion text rather than a tally."
     },
     "build_project": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPBuildHandler::Handle",
       "params": [
-        { "name": "target", "type": "string", "required": false, "description": "'Editor' (default) -> <Project>Editor, or 'Game' -> <Project>" },
-        { "name": "configuration", "type": "string", "required": false, "description": "Development (default) | DebugGame | Shipping | Test" },
-        { "name": "platform", "type": "string", "required": false, "description": "Win64 (default) | Linux | Mac" }
+        {
+          "name": "target",
+          "type": "string",
+          "required": false,
+          "description": "'Editor' (default) -> <Project>Editor, or 'Game' -> <Project>"
+        },
+        {
+          "name": "configuration",
+          "type": "string",
+          "required": false,
+          "description": "Development (default) | DebugGame | Shipping | Test"
+        },
+        {
+          "name": "platform",
+          "type": "string",
+          "required": false,
+          "description": "Win64 (default) | Linux | Mac"
+        }
       ],
-      "returns": { "shape": "object", "fields": [
-        { "name": "job_id", "type": "string", "description": "Poll build_status { job_id } for the result" },
-        { "name": "status", "type": "string", "description": "'running' (returned immediately)" },
-        { "name": "command", "type": "string" },
-        { "name": "ok", "type": "boolean" },
-        { "name": "note", "type": "string" }
-      ] },
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "job_id",
+            "type": "string",
+            "description": "Poll build_status { job_id } for the result"
+          },
+          {
+            "name": "status",
+            "type": "string",
+            "description": "'running' (returned immediately)"
+          },
+          {
+            "name": "command",
+            "type": "string"
+          },
+          {
+            "name": "ok",
+            "type": "boolean"
+          },
+          {
+            "name": "note",
+            "type": "string"
+          }
+        ]
+      },
       "agent_callable": true,
       "has_ts_wrapper": false,
       "notes": "JOB ENVELOPE (async, non-freezing): invokes UnrealBuildTool.exe on a background thread and returns { job_id, status:'running' } IMMEDIATELY — never blocks the editor (the old version blocked the game thread up to 5min). Poll build_status { job_id } for { status:'done', exit_code, output (log tail) }, or watch hayba_journal_tail for live build_job:<id> progress."
@@ -175,17 +472,52 @@
       "aliases": [],
       "handler_cpp": "FHaybaMCPBuildHandler::Handle",
       "params": [
-        { "name": "platform", "type": "string", "required": false, "description": "Cook target platform (default WindowsNoEditor)" },
-        { "name": "iterate", "type": "boolean", "required": false, "description": "Iterative cook (default true)" },
-        { "name": "unversioned", "type": "boolean", "required": false, "description": "Cook unversioned packages (default false)" }
+        {
+          "name": "platform",
+          "type": "string",
+          "required": false,
+          "description": "Cook target platform (default WindowsNoEditor)"
+        },
+        {
+          "name": "iterate",
+          "type": "boolean",
+          "required": false,
+          "description": "Iterative cook (default true)"
+        },
+        {
+          "name": "unversioned",
+          "type": "boolean",
+          "required": false,
+          "description": "Cook unversioned packages (default false)"
+        }
       ],
-      "returns": { "shape": "object", "fields": [
-        { "name": "job_id", "type": "string", "description": "Poll build_status { job_id } for the result" },
-        { "name": "status", "type": "string", "description": "'running' (returned immediately)" },
-        { "name": "command", "type": "string" },
-        { "name": "ok", "type": "boolean" },
-        { "name": "note", "type": "string" }
-      ] },
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "job_id",
+            "type": "string",
+            "description": "Poll build_status { job_id } for the result"
+          },
+          {
+            "name": "status",
+            "type": "string",
+            "description": "'running' (returned immediately)"
+          },
+          {
+            "name": "command",
+            "type": "string"
+          },
+          {
+            "name": "ok",
+            "type": "boolean"
+          },
+          {
+            "name": "note",
+            "type": "string"
+          }
+        ]
+      },
       "agent_callable": true,
       "has_ts_wrapper": false,
       "notes": "JOB ENVELOPE (async, non-freezing): runs UnrealEditor-Cmd -run=cook on a background thread and returns { job_id, status:'running' } IMMEDIATELY. Poll build_status { job_id } for { status:'done', exit_code, output }, or watch hayba_journal_tail."
@@ -194,13 +526,33 @@
       "aliases": [],
       "handler_cpp": "FHaybaMCPBuildHandler::Handle",
       "params": [],
-      "returns": { "shape": "object", "fields": [
-        { "name": "job_id", "type": "string", "description": "Poll build_status { job_id } for the result" },
-        { "name": "status", "type": "string", "description": "'running' (returned immediately)" },
-        { "name": "command", "type": "string" },
-        { "name": "ok", "type": "boolean" },
-        { "name": "note", "type": "string" }
-      ] },
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "job_id",
+            "type": "string",
+            "description": "Poll build_status { job_id } for the result"
+          },
+          {
+            "name": "status",
+            "type": "string",
+            "description": "'running' (returned immediately)"
+          },
+          {
+            "name": "command",
+            "type": "string"
+          },
+          {
+            "name": "ok",
+            "type": "boolean"
+          },
+          {
+            "name": "note",
+            "type": "string"
+          }
+        ]
+      },
       "agent_callable": true,
       "has_ts_wrapper": false,
       "notes": "JOB ENVELOPE (async, non-freezing): runs RunUAT GenerateProjectFiles on a background thread and returns { job_id, status:'running' } IMMEDIATELY. Poll build_status { job_id } for { status:'done', exit_code, output }."
@@ -209,16 +561,47 @@
       "aliases": [],
       "handler_cpp": "FHaybaMCPBuildHandler::Handle",
       "params": [
-        { "name": "job_id", "type": "string", "required": true, "description": "Id returned by a build_* or test_run job envelope" }
+        {
+          "name": "job_id",
+          "type": "string",
+          "required": true,
+          "description": "Id returned by a build_* or test_run job envelope"
+        }
       ],
-      "returns": { "shape": "object", "fields": [
-        { "name": "job_id", "type": "string" },
-        { "name": "command", "type": "string", "description": "Originating command, e.g. 'build_project' or 'test_run'" },
-        { "name": "status", "type": "string", "description": "'running' | 'done' | 'unknown'" },
-        { "name": "ok", "type": "boolean", "description": "When done: exit_code == 0" },
-        { "name": "exit_code", "type": "number", "description": "When done: process exit code (build) or failure count (test_run)" },
-        { "name": "output", "type": "string", "description": "When done: log tail (build) or a JSON string of { passed, failed, skipped, elapsed_seconds, total } (test_run)" }
-      ] },
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "job_id",
+            "type": "string"
+          },
+          {
+            "name": "command",
+            "type": "string",
+            "description": "Originating command, e.g. 'build_project' or 'test_run'"
+          },
+          {
+            "name": "status",
+            "type": "string",
+            "description": "'running' | 'done' | 'unknown'"
+          },
+          {
+            "name": "ok",
+            "type": "boolean",
+            "description": "When done: exit_code == 0"
+          },
+          {
+            "name": "exit_code",
+            "type": "number",
+            "description": "When done: process exit code (build) or failure count (test_run)"
+          },
+          {
+            "name": "output",
+            "type": "string",
+            "description": "When done: log tail (build) or a JSON string of { passed, failed, skipped, elapsed_seconds, total } (test_run)"
+          }
+        ]
+      },
       "agent_callable": true,
       "has_ts_wrapper": false,
       "notes": "Reader for the async job registry shared by build_project / build_cook / build_generate_project_files / test_run. Reads the job entry under its lock by job_id and returns its current status/result. Poll this after a build_* / test_run call returns { job_id, status:'running' }."
@@ -1148,7 +1531,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Reflect all properties on an actor."
+      "notes": "Reflect every property on an actor with its current value. The discovery step before actor_set_properties — property names must match the UPROPERTY exactly, and this is how you learn them instead of guessing."
     },
     "actor_set_properties": {
       "aliases": [],
@@ -1172,7 +1555,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Set actor properties from a name->value map."
+      "notes": "Set actor properties from a name->value map. Names must match the UPROPERTY exactly; a name the actor does not have is reported back rather than silently dropped, so read the response instead of assuming it applied."
     },
     "actor_get_components": {
       "aliases": [],
@@ -1200,7 +1583,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "List an actor's components with their class and name. Use this before object_set_property or actor_call_function, which both need the component name. include_internal also returns engine-created components you normally do not touch."
     },
     "actor_call_function": {
       "aliases": [],
@@ -1233,7 +1616,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Call a BlueprintCallable UFunction on the actor."
+      "notes": "Call a BlueprintCallable UFunction on an actor by name, with arguments. The escape hatch for behaviour no dedicated tool exposes — powerful and unvalidated, so it is gated by Plan Mode."
     },
     "actor_duplicate": {
       "aliases": [],
@@ -1276,7 +1659,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Copy an existing actor, optionally placing the copy at a new transform. Keeps the source's properties, so it is the cheap way to repeat a configured actor rather than spawning and re-setting everything."
     },
     "actor_tag": {
       "aliases": [],
@@ -1304,7 +1687,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Add or remove gameplay tags on an actor in one call. Tagging marks an actor's role so PCG filters and gameplay code can select it by tag rather than by name."
     },
     "actor_set_visibility": {
       "aliases": [],
@@ -1327,7 +1710,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Show or hide an actor in the level. This is editor/runtime visibility only — the actor still exists, still ticks and still collides."
     },
     "actor_snap_to_socket": {
       "aliases": [],
@@ -1355,7 +1738,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Attach an actor to a named socket on another actor, so it follows that socket's transform. The usual way to put a prop in a hand, a light on a fixture, or a decal on a mount point."
     },
     "actor_batch_spawn": {
       "aliases": [],
@@ -1379,7 +1762,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Spawn many actors in ONE call from an array of {class_path, location?, rotation?, scale?, label?}. Prefer this over repeated actor_spawn: one round trip and one transaction instead of N."
     },
     "spline_create": {
       "aliases": [],
@@ -1411,7 +1794,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Create a spline actor at a location. The spline starts empty — add its shape with spline_add_point. Splines drive roads, rivers, fences, cable runs and PCG spline samplers."
     },
     "spline_add_point": {
       "aliases": [],
@@ -1444,7 +1827,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Append a point to a spline, or insert it at `index`. Returns the new point_count, which is the index bound for spline_set_point and spline_remove_point."
     },
     "spline_set_point": {
       "aliases": [],
@@ -1477,7 +1860,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Move an existing spline point to a new location, addressed by index. Use spline_get_info first to see the current points — an out-of-range index fails rather than appending."
     },
     "spline_remove_point": {
       "aliases": [],
@@ -1505,7 +1888,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Delete a spline point by index. Indices of later points SHIFT DOWN afterwards, so remove from the end backwards when deleting several."
     },
     "spline_get_info": {
       "aliases": [],
@@ -1536,7 +1919,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Read a spline's point count, total length and every point's position. The read half of spline editing — call it before set/remove so indices refer to what you think they do."
     },
     "ism_create_actor": {
       "aliases": [],
@@ -1573,7 +1956,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": true,
-      "notes": "Spawns an actor whose root is an ISM component named \"ISM\"."
+      "notes": "Spawn an actor whose root is an InstancedStaticMesh component named \"ISM\". This is the container ism_add_instances fills — create it once, then add instances in bulk rather than spawning an actor per item."
     },
     "ism_add_instance": {
       "aliases": [],
@@ -1606,7 +1989,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Add ONE instance to an InstancedStaticMesh actor. For more than a handful use ism_add_instances instead — a per-instance round trip is the slow way to build a forest."
     },
     "ism_add_instances": {
       "aliases": [],
@@ -1639,7 +2022,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": true,
-      "notes": ""
+      "notes": "Add up to 1000 instances to an InstancedStaticMesh actor in one call. This is how you place large repeated geometry (trees, rocks, crowd props) without one actor per item."
     },
     "ism_clear_instances": {
       "aliases": [],
@@ -1662,7 +2045,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Remove every instance from an InstancedStaticMesh actor, keeping the actor and its mesh. Use before re-scattering rather than deleting and respawning the actor."
     },
     "blueprint_create": {
       "aliases": [],
@@ -1719,7 +2102,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "List a Blueprint's components. The read step before blueprint_add_component (to avoid a duplicate name) or object_set_property (which needs the component name)."
     },
     "blueprint_add_component": {
       "aliases": [],
@@ -1747,7 +2130,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Add a component of a given class to a Blueprint's component tree. Changes are staged — blueprint_compile applies them, and nothing takes effect in the level until it does."
     },
     "blueprint_add_variable": {
       "aliases": [],
@@ -1776,7 +2159,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Add a variable to a Blueprint. variable_type takes bool/int/float/string/name/vector or a class/struct path. Staged until blueprint_compile."
     },
     "blueprint_compile": {
       "aliases": [],
@@ -1803,7 +2186,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Compile a Blueprint and report errors. Every blueprint_* edit is staged until this runs, so call it before expecting a change to exist — and read `errors`, because a failed compile leaves the old class in place."
     },
     "blueprint_set_defaults": {
       "aliases": [],
@@ -1826,7 +2209,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Set default property values on a Blueprint's class defaults, so every future instance starts with them. Does NOT change actors already placed in the level."
     },
     "data_create": {
       "aliases": [],
@@ -1860,7 +2243,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Create a DataAsset of a class inheriting UDataAsset. Data assets are the standard home for designer-tunable config that should live in the content browser rather than in code."
     },
     "data_get": {
       "aliases": [],
@@ -1883,7 +2266,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Read every property off a DataAsset. Use this to discover the property names data_set expects rather than guessing them."
     },
     "data_set": {
       "aliases": [],
@@ -1916,7 +2299,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Write one property on a DataAsset by name. Read it back with data_get — a name the asset does not have is reported, but confirming the value is how you know it took."
     },
     "level_create": {
       "aliases": [],
@@ -1944,7 +2327,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Create a new empty level asset. Does not open it — follow with level_load to switch the editor to it."
     },
     "level_save": {
       "aliases": [],
@@ -1967,7 +2350,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Save the current level, or the one at `path`. Editor edits live in memory until this runs, so an unsaved level loses everything on restart or a rebuild."
     },
     "level_load": {
       "aliases": [],
@@ -1990,7 +2373,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Open a level in the editor, replacing the current one. UNSAVED CHANGES IN THE CURRENT LEVEL ARE AT RISK — call level_save first."
     },
     "level_list": {
       "aliases": [],
@@ -2007,7 +2390,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "List every level asset in the project. Use it to find the exact path level_load wants."
     },
     "level_get_info": {
       "aliases": [],
@@ -2028,7 +2411,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Name and actor count of the level currently open. The cheapest way to confirm which level you are actually editing before making changes."
     },
     "asset_search": {
       "aliases": [],
@@ -2071,7 +2454,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": true,
-      "notes": ""
+      "notes": "Find assets by path, name substring or class, optionally with thumbnails. The general 'what exists in this project' query — start here when you need an asset path and only know roughly what it is."
     },
     "asset_get_info": {
       "aliases": [],
@@ -2099,7 +2482,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Read one asset's metadata (class, path, size, optional thumbnail) by exact path. Use asset_search when you do not yet know the path."
     },
     "asset_import": {
       "aliases": [],
@@ -2127,7 +2510,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Import a file from disk (FBX, texture, audio) into the content browser. The imported asset is NOT saved to disk automatically — follow with asset_save, or a rebuild will lose it."
     },
     "asset_duplicate": {
       "aliases": [],
@@ -2155,7 +2538,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Copy an asset to a new path. Use this to derive a variant rather than editing the original in place."
     },
     "editor_set_camera": {
       "aliases": [],
@@ -2183,8 +2566,16 @@
       "returns": {
         "shape": "object",
         "fields": [
-          { "name": "location", "type": "array", "description": "Applied [x,y,z]" },
-          { "name": "rotation", "type": "array", "description": "Applied [pitch, yaw, roll]" }
+          {
+            "name": "location",
+            "type": "array",
+            "description": "Applied [x,y,z]"
+          },
+          {
+            "name": "rotation",
+            "type": "array",
+            "description": "Applied [pitch, yaw, roll]"
+          }
         ]
       },
       "agent_callable": true,
@@ -2195,16 +2586,42 @@
       "aliases": [],
       "handler_cpp": "FHaybaMCPEditorHandler::Handle",
       "params": [
-        { "name": "actor_label", "type": "string", "required": true, "description": "Label of the actor to frame in the viewport." },
-        { "name": "distance_scale", "type": "number", "required": false, "description": "How far back to sit, as a multiple of the actor's bounds radius (default 2.5; larger = further/more padding)." },
-        { "name": "direction", "type": "array", "required": false, "description": "Optional [x,y,z] view direction (camera→actor). Default is a 3/4 front-right-above view. Need not be normalized." }
+        {
+          "name": "actor_label",
+          "type": "string",
+          "required": true,
+          "description": "Label of the actor to frame in the viewport."
+        },
+        {
+          "name": "distance_scale",
+          "type": "number",
+          "required": false,
+          "description": "How far back to sit, as a multiple of the actor's bounds radius (default 2.5; larger = further/more padding)."
+        },
+        {
+          "name": "direction",
+          "type": "array",
+          "required": false,
+          "description": "Optional [x,y,z] view direction (camera→actor). Default is a 3/4 front-right-above view. Need not be normalized."
+        }
       ],
       "returns": {
         "shape": "object",
         "fields": [
-          { "name": "actor_label", "type": "string" },
-          { "name": "location", "type": "array", "description": "Resulting camera [x,y,z]" },
-          { "name": "rotation", "type": "array", "description": "Resulting [pitch, yaw, roll] (roll always 0)" }
+          {
+            "name": "actor_label",
+            "type": "string"
+          },
+          {
+            "name": "location",
+            "type": "array",
+            "description": "Resulting camera [x,y,z]"
+          },
+          {
+            "name": "rotation",
+            "type": "array",
+            "description": "Resulting [pitch, yaw, roll] (roll always 0)"
+          }
         ]
       },
       "agent_callable": true,
@@ -2227,7 +2644,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Run an editor console command (stat unit, r.* toggles, etc)."
+      "notes": "Run an editor console command (stat unit, r.* toggles, LiveCoding.Compile, etc). Arbitrary console access, so it is gated by Plan Mode. Effects are reported by the console, not returned — check editor_get_output_log."
     },
     "editor_get_output_log": {
       "aliases": [],
@@ -2265,7 +2682,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Read the editor's output log, filtered by severity or regex and paged with since_line. The first thing to check when a command reported success but nothing happened — UE logs the real reason here."
     },
     "editor_stop_pie": {
       "aliases": [],
@@ -2282,7 +2699,69 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Stop the running Play-In-Editor session and return whether one was running. Call it before editor-only operations: many asset and level edits are unsafe or refused while PIE is live."
+    },
+    "ui_set_widget_properties": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPUIHandler::Handle",
+      "params": [
+        {
+          "name": "widget_blueprint_path",
+          "type": "string",
+          "required": true,
+          "description": "Widget Blueprint asset path, for example /Game/UI/WBP_HUD"
+        },
+        {
+          "name": "widget_name",
+          "type": "string",
+          "required": true,
+          "description": "Exact widget name in the authoritative designer WidgetTree"
+        },
+        {
+          "name": "properties",
+          "type": "object",
+          "required": true,
+          "description": "Widget UPROPERTY names mapped to reflection-compatible values"
+        },
+        {
+          "name": "slot_props",
+          "type": "object",
+          "required": false,
+          "description": "Optional typed slot values such as x, y, w, h, padding, and fill"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "widget_name",
+            "type": "string"
+          },
+          {
+            "name": "succeeded",
+            "type": "number"
+          },
+          {
+            "name": "failed",
+            "type": "number"
+          },
+          {
+            "name": "failed_properties",
+            "type": "array"
+          },
+          {
+            "name": "unknown_slot_props",
+            "type": "array"
+          },
+          {
+            "name": "warnings",
+            "type": "array"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Edits the authoritative UWidgetBlueprint designer tree and survives compilation when followed by ui_compile_widget and ui_save_widget. Reached through the ui_set_widget_properties TS wrapper and the typed tools (ui_set_property, ui_set_text_style, ui_set_brush, ui_set_visibility, ui_set_slot_layout) that compose onto it."
     },
     "scene_get_actor_relations": {
       "aliases": [],
@@ -2305,7 +2784,259 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": ""
+      "notes": "Report one actor's attachment parent, its attached children and its asset references. Answers 'what would move or break if I reparent or delete this' — it is not an inventory, use actor_list for that."
+    },
+    "editor_pie_screenshot": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPPIEHandler::PIEScreenshot",
+      "params": [
+        {
+          "name": "filename",
+          "type": "string",
+          "required": false,
+          "description": "Absolute PNG output path; defaults to Saved/Screenshots/HaybaPIE_<timestamp>.png. Captures the composited PIE viewport INCLUDING UMG (unlike HighResShot)."
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "filename",
+            "type": "string",
+            "description": "path written"
+          },
+          {
+            "name": "captured",
+            "type": "boolean",
+            "description": "true if the file exists after capture"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Requests a capture and returns immediately; the engine writes the file a frame or two later. Poll with check_only:true. Previously pumped the core ticker for up to 3s from the game thread, which crashed the editor."
+    },
+    "editor_pie_press_key": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPPIEHandler::PIEPressKey",
+      "params": [
+        {
+          "name": "key",
+          "type": "string",
+          "required": true,
+          "description": "FKey name, e.g. 'A','Enter','Tab','SpaceBar','LeftMouseButton'"
+        },
+        {
+          "name": "event",
+          "type": "string",
+          "required": false,
+          "description": "'Pressed' (default), 'Released', or a down+up click depending on handler"
+        },
+        {
+          "name": "held_ms",
+          "type": "number",
+          "required": false,
+          "description": "Hold duration in ms before release"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": []
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Dispatches the press and schedules the release on a later tick, returning immediately. Previously spun the core ticker while holding raw viewport pointers, which tore down PIE underneath itself and crashed."
+    },
+    "editor_pie_mouse": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPPIEHandler::PIEMouse",
+      "params": [
+        {
+          "name": "action",
+          "type": "string",
+          "required": true,
+          "description": "move|click|double|press|release|drag|scroll"
+        },
+        {
+          "name": "x",
+          "type": "number",
+          "required": false,
+          "description": "target x, ABSOLUTE desktop px by default (what editor_pie_widget_tree reports) — see coordinate_space. Optional for scroll: positions the cursor before the wheel."
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "required": false,
+          "description": "target y, ABSOLUTE desktop px by default (what editor_pie_widget_tree reports) — see coordinate_space. Optional for scroll: positions the cursor before the wheel."
+        },
+        {
+          "name": "coordinate_space",
+          "type": "string",
+          "required": false,
+          "description": "absolute (default, desktop px) | viewport (relative to the game window's top-left)"
+        },
+        {
+          "name": "button",
+          "type": "string",
+          "required": false,
+          "description": "Left|Right|Middle (default Left)"
+        },
+        {
+          "name": "to_x",
+          "type": "number",
+          "required": false,
+          "description": "drag end x"
+        },
+        {
+          "name": "to_y",
+          "type": "number",
+          "required": false,
+          "description": "drag end y"
+        },
+        {
+          "name": "steps",
+          "type": "number",
+          "required": false,
+          "description": "intermediate drag positions (default 8, clamped 1..256)"
+        },
+        {
+          "name": "delta",
+          "type": "number",
+          "required": false,
+          "description": "wheel notches for scroll (default 1, positive scrolls up)"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "cursor_delta_x",
+            "type": "number",
+            "description": "FPointerEvent::GetCursorDelta of the last move dispatched. ZERO means no widget that tracks movement can have responded — that is a harness result, not a widget result."
+          },
+          {
+            "name": "cursor_delta_y",
+            "type": "number",
+            "description": "As cursor_delta_x."
+          },
+          {
+            "name": "moves_delivered",
+            "type": "number",
+            "description": "How many moves carried a non-zero delta. 0 on a drag means no gesture was performed."
+          },
+          {
+            "name": "mouse_captor",
+            "type": "string",
+            "description": "Type name of the widget holding Slate pointer capture after the action, or null. A drag against a null captor cannot work: SScrollBar::OnMouseMove and friends gate on HasMouseCapture()."
+          },
+          {
+            "name": "captor_after_press",
+            "type": "string",
+            "description": "drag only — who took capture in answer to the press."
+          },
+          {
+            "name": "pressed_buttons",
+            "type": "array",
+            "description": "Slate's held mouse buttons after the action. Moves between a press and a release carry this set, which is what SScrollBox's right-click drag scrolling reads."
+          },
+          {
+            "name": "handled_by",
+            "type": "string",
+            "description": "scroll only — slate | game_viewport | nothing."
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Move, click, double_click, press, release, drag or scroll in the running game. All of it is synthesised as real Slate FPointerEvents, so UI widgets see it: the wheel goes through ProcessMouseWheelOrGestureEvent (it used to go to game input only and reached no widget at all), and drag moves carry the held button plus a genuine non-zero cursor delta (they used to carry neither, because SetCursorPos writes the destination to Slate's previous-position slot too, so every synthetic move had a zero delta). Judge a gesture by cursor_delta/moves_delivered/mouse_captor in the response, not by assuming it landed."
+    },
+    "editor_pie_type_text": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPPIEHandler::PIETypeText",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "description": "text to type as character events (what text fields consume)"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": []
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Sends character events, which is what text fields consume. Goes to whatever holds keyboard focus."
+    },
+    "editor_pie_click_widget": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPPIEHandler::PIEClickWidget",
+      "params": [
+        {
+          "name": "match",
+          "type": "string",
+          "required": true,
+          "description": "visible text/label of the widget to click; prefers the interactive widget"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": []
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Clicks a control by its visible text, tag or type, preferring the interactive widget. Reports candidate count so an ambiguous pick is visible."
+    },
+    "editor_pie_widget_tree": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPPIEHandler::PIEWidgetTree",
+      "params": [
+        {
+          "name": "max_depth",
+          "type": "number",
+          "required": false,
+          "description": "limit tree depth"
+        },
+        {
+          "name": "filter",
+          "type": "string",
+          "required": false,
+          "description": "substring filter on text/type/tag"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": []
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Every visible Slate/UMG widget in the running game with its on-screen rectangle. The input to click-by-name."
+    },
+    "editor_pie_axis": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPPIEHandler::PIEAxis",
+      "params": [
+        {
+          "name": "key",
+          "type": "string",
+          "required": true,
+          "description": "axis FKey, e.g. Gamepad_LeftX"
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "required": false,
+          "description": "axis value -1..1"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": []
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Analog input for sticks, triggers and mouse axes. Applies for one frame; resend per step for sustained movement."
     }
   }
 }

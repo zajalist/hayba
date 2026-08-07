@@ -3,13 +3,7 @@ import type { TcpResponse } from '../tcp-client.js';
 import { getToolMeta } from './tool-meta-registry.js';
 import { isHeavyOp, HEAVY_OP_TIMEOUT_MS } from './heavy-ops.js';
 
-export type UeToolErrorCode =
-  | 'transport'
-  | 'timeout'
-  | 'plan_gate'
-  | 'tool_disabled'
-  | 'ue_error'
-  | 'editor_busy';
+export type UeToolErrorCode = 'transport' | 'timeout' | 'plan_gate' | 'tool_disabled' | 'ue_error' | 'editor_busy';
 
 export class UeToolError extends Error {
   readonly code: UeToolErrorCode;
@@ -36,9 +30,9 @@ function mapUeCode(raw: string | undefined): UeToolErrorCode {
 //                   job envelope in Task 9; until then high-cost ops must not
 //                   pre-time-out while UE is still working)
 const COST_TIMEOUTS_MS: Record<HaybaToolCost, number> = {
-  low:    2_000,
+  low: 2_000,
   medium: 10_000,
-  high:   120_000,
+  high: 120_000,
 };
 
 /**
@@ -61,6 +55,11 @@ export const NON_IDEMPOTENT = new Set<string>([
   'asset_duplicate',
   'asset_import',
   'asset_rename',
+  // asset_move moves FROM a path. If the first attempt lands but its reply is
+  // lost, the retry looks for an asset that is no longer there and fails — so
+  // the caller is told the move failed when it actually succeeded. Sat outside
+  // this set while asset_rename and asset_delete beside it were protected.
+  'asset_move',
   // Landscape
   'landscape_import',
   'landscape_add_layer',
@@ -141,6 +140,10 @@ export const NON_IDEMPOTENT = new Set<string>([
   'gas_create_effect',
   // UI
   'ui_create_widget',
+  'ui_set_widget_properties',
+  'ui_mutate_tree',
+  'ui_compile_widget',
+  'ui_save_widget',
   // Data
   'data_create',
   // Input
@@ -174,8 +177,7 @@ export function resolveTimeoutMs(cmd: string): number {
  */
 async function makeEditorBusyError(cmd: string, cause: unknown): Promise<UeToolError> {
   const causeMsg = (cause as Error)?.message ?? String(cause);
-  let processHint =
-    'Re-check the editor with hayba_check_ue_status before retrying — do NOT auto-retry this op.';
+  let processHint = 'Re-check the editor with hayba_check_ue_status before retrying — do NOT auto-retry this op.';
   try {
     // Lazy import so this module stays unit-testable without the process probe.
     const { probeEditorProcess } = await import('./heavy-op-probe.js');
@@ -198,11 +200,7 @@ async function makeEditorBusyError(cmd: string, cause: unknown): Promise<UeToolE
   );
 }
 
-export type Sender = (
-  cmd: string,
-  params: Record<string, unknown>,
-  timeoutMs: number,
-) => Promise<TcpResponse>;
+export type Sender = (cmd: string, params: Record<string, unknown>, timeoutMs: number) => Promise<TcpResponse>;
 
 export interface ExecuteOpts {
   /** Override the cost-derived default timeout. */
@@ -215,7 +213,9 @@ let DEFAULT_SENDER: Sender | null = null;
 
 /** Install the production (TCP) sender. Lazy on purpose so unit tests
  *  can use this module without importing tcp-client. */
-export function setDefaultSender(s: Sender): void { DEFAULT_SENDER = s; }
+export function setDefaultSender(s: Sender): void {
+  DEFAULT_SENDER = s;
+}
 
 export async function executeCommand<T = Record<string, unknown>>(
   cmd: string,

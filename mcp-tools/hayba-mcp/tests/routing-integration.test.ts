@@ -10,6 +10,13 @@ import { registerToolMeta } from '../src/tools/tool-meta-registry.js';
 import { __resetSettingsCache } from '../src/tools/routing/settings-watcher.js';
 import { __resetConnectedLatch } from '../src/tools/check-ue-status.js';
 
+/** Lexical-only index. The default backend probe reaches the network — Ollama
+ *  on :11434, then a Hugging Face model download — which took these tests past
+ *  the 5s timeout on any machine without a warm model cache. Routing behaviour
+ *  under test is pack membership, not embedding quality; search-quality.test.ts
+ *  is where the embedding path belongs. */
+const NO_EMBEDDINGS = { selectBackend: async () => null };
+
 function fixtureCaptured(): Map<string, CapturedTool> {
   const captured = new Map<string, CapturedTool>();
   const tools: Array<[string, string | null]> = [
@@ -30,6 +37,7 @@ function fixtureCaptured(): Map<string, CapturedTool> {
     ['validator_clear',             'validator'],
     ['validator_rules',             'validator'],
     ['validator_set_rule_enabled',  'validator'],
+    ['validator_strictness',        'validator'],
     // PLUMB constraint subsystem — captured under the plumb dir, re-registered
     // as always-on via passthrough.
     ['plumb_primitives',            'plumb'],
@@ -90,7 +98,7 @@ describe('routing integration (deferred)', () => {
     }));
     __resetSettingsCache();
     const server = new McpServer({ name: 'test', version: '0' });
-    await registerDeferredRouting(server, fixtureCaptured(), dir);
+    await registerDeferredRouting(server, fixtureCaptured(), dir, NO_EMBEDDINGS);
 
     const registered = (server as unknown as { _registeredTools: Record<string, unknown> })._registeredTools;
     const names = Object.keys(registered).sort();
@@ -104,7 +112,7 @@ describe('routing integration (deferred)', () => {
     }));
     __resetSettingsCache();
     const server = new McpServer({ name: 'test', version: '0' });
-    await registerDeferredRouting(server, fixtureCaptured(), dir);
+    await registerDeferredRouting(server, fixtureCaptured(), dir, NO_EMBEDDINGS);
 
     const registered = (server as unknown as { _registeredTools: Record<string, unknown> })._registeredTools;
     expect('actor_spawn' in registered).toBe(true);
@@ -118,7 +126,7 @@ describe('routing integration (deferred)', () => {
     }));
     __resetSettingsCache();
     const server = new McpServer({ name: 'test', version: '0' });
-    const handle = await registerDeferredRouting(server, fixtureCaptured(), dir);
+    const handle = await registerDeferredRouting(server, fixtureCaptured(), dir, NO_EMBEDDINGS);
 
     await handle.onUeConnected();
     const registered = (server as unknown as { _registeredTools: Record<string, unknown> })._registeredTools;
@@ -132,7 +140,7 @@ describe('routing integration (deferred)', () => {
     }));
     __resetSettingsCache();
     const server = new McpServer({ name: 'test', version: '0' });
-    await registerDeferredRouting(server, fixtureCaptured(), dir);
+    await registerDeferredRouting(server, fixtureCaptured(), dir, NO_EMBEDDINGS);
 
     const registered = (server as unknown as { _registeredTools: Record<string, unknown> })._registeredTools;
     const invoke = registered['hayba_invoke'] as unknown as { implementation?: (args: unknown) => Promise<unknown>; handler?: (args: unknown) => Promise<unknown> };
