@@ -3416,9 +3416,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
   //   python_run            → executes any command via UE Python (escape hatch)
   // ──────────────────────────────────────────────────────────────────────────
 
-// no meta registered (plan control tool)
 
-// no meta registered (plan control tool)
 
   server.tool(
     'list_tool_categories',
@@ -3550,279 +3548,35 @@ remember('pcg_scatter_mesh', pcgScatterMeta);
 
   // ── PCGEx tools ─────────────────────────────────────────────────────────────
 
-// no meta registered (PCGEx pure-TS handler)
 
-// no meta registered (PCGEx pure-TS handler)
 
-// no meta registered (PCGEx pure-TS handler)
 
-// no meta registered (PCGEx pure-TS handler)
 
-// no meta registered (PCGEx pure-TS handler)
 
-// no meta registered (PCGEx pure-TS handler)
 
-// no meta registered (PCGEx pure-TS handler)
 
   server.tool('hayba_check_ue_status', {}, async () => {
     const result = await checkUeStatus();
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
   });
-  // no meta registered (PCGEx pure-TS handler)
 
   // Gaea / terrain feature surface intentionally disabled — kept out of the
   // build by removing imports + registrations. Will return when the
   // worldbuilding-hub roadmap reaches the terrain integration phase.
-  /*
-  server.tool(
-    'hayba_search_gaea_archetypes',
-    {
-      query: z.string().describe('Natural language terrain idea, e.g. "frozen coastal cliffs"'),
-      biome_tags: z.array(z.string()).optional().describe('Filter to archetypes matching these biomes'),
-      topology_filter: z.array(z.string()).optional().describe('Boost archetypes containing these Gaea node types'),
-      limit: z.number().int().optional().default(3).describe('Max results (default: 3)'),
-    },
-    async (params) => {
-      const result = await searchGaeaArchetypes(params);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
-  );
 
-  server.tool(
-    'hayba_get_full_archetype_graph',
-    {
-      pattern_name: z.string().describe('Exact pattern_name from search_gaea_archetypes results'),
-    },
-    async (params) => {
-      const result = await getFullArchetypeGraph(params);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
-  );
 
-  server.tool(
-    'hayba_query_gaea_knowledge',
-    {
-      node_type: z.string().optional().describe('Gaea node type to look up (e.g. "Erosion2", "Mountain")'),
-      phase: z.string().optional().describe('Filter by phase: base, character, simulation, lookdev, utility'),
-      query: z.string().optional().describe('Search keyword for best practices and workflow patterns'),
-    },
-    async (params) => {
-      const result = await queryGaeaKnowledge(params as QueryGaeaKnowledgeParams);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
-  );
 
-  // ── Gaea tools ───────────────────────────────────────────────────────────────
 
-  server.tool(
-    'hayba_brainstorm_gaea',
-    'Brainstorm a Gaea terrain through RAG-powered knowledge search and multi-turn refinement. Returns archetype matches, best practices, common mistakes, and a synthesized graph plan. IMPORTANT: Always call this tool before hayba_create_terrain. Do NOT build a Gaea graph without first brainstorming through this tool.',
-    {
-      prompt: z.string().describe('Natural language terrain description, e.g. "alpine mountain with sharp ridges"'),
-      step: z.enum(['start', 'followup', 'zones', 'finalize']).optional().default('start')
-        .describe('Current step. start=initial RAG search, followup=refine with answer, zones=open painter, finalize=build graph plan'),
-      answer: z.string().optional()
-        .describe('User answer to a follow-up question from the previous step'),
-      scratchSessionId: z.string().optional()
-        .describe('Scratch session ID from the zones step, for reading painted zones'),
-    },
-    async (params) => {
-      const result = await brainstormGaeaHandler(params as Record<string, unknown>);
-      return { content: result.content, isError: result.isError };
-    }
-  );
 
-  server.tool(
-    'hayba_bake_terrain',
-    {
-      path: z.string().optional().describe('Absolute path to the .terrain file (uses loaded terrain if omitted)'),
-      variables: z.record(z.unknown()).optional().describe('Variable overrides to inject as -v key=value flags'),
-      ignorecache: z.boolean().optional().describe('Force full re-bake ignoring cache (default: true)'),
-    },
-    async (params) => {
-      const result = await bakeTerrain(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
 
-  server.tool(
-    'hayba_create_terrain',
-    'Create a Gaea terrain from a graph definition or template. IMPORTANT: Do NOT call this tool without first calling hayba_brainstorm_gaea. The brainstorm tool performs RAG search, knowledge lookup, and graph planning that is essential for quality terrain output.',
-    {
-      prompt: z.string().describe('Natural language terrain description — used for logging and as fallback if no graph provided'),
-      name: z.string().optional().describe('Name for the terrain file (e.g. the landscape/project name). Used as the .terrain filename.'),
-      template: z.string().optional().describe('Predefined terrain template: desert, mountains, tropical, volcanic'),
-      template_overrides: z.record(z.unknown()).optional().describe('Override specific template parameters'),
-      graph: z.unknown().optional().describe('Full Gaea node graph JSON with nodes and edges arrays. Use File nodes (params: { FileName: "<abs_path_to_mask.png>" }) to bring in painted zone masks as inputs.'),
-      output_dir: z.string().optional().describe('Output directory (uses config default if omitted)'),
-      resolution: z.number().optional().describe('Output heightmap resolution: 1024, 2048, or 4096 (default: 1024)'),
-    },
-    async (params) => {
-      const result = await createTerrainHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
 
-  server.tool(
-    'hayba_open_in_gaea',
-    { path: z.string().optional().describe('Absolute path to the .terrain file (uses current terrain if omitted)') },
-    async (params) => {
-      const result = await openInGaeaTool(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
 
-  server.tool(
-    'hayba_read_terrain_variables',
-    { path: z.string().optional().describe('Absolute path to the .terrain file (uses current terrain if omitted)') },
-    async (params) => {
-      const result = await readTerrainVariablesTool(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_set_terrain_variables',
-    {
-      path: z.string().optional().describe('Absolute path to the .terrain file (uses current terrain if omitted)'),
-      contract: z.record(z.unknown()).describe('Variable contract: keys are variable names, values define type/default/min/max'),
-      values: z.record(z.unknown()).optional().describe('Values to write; missing keys use contract defaults'),
-    },
-    async (params) => {
-      const result = await setTerrainVariablesTool(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_open_session',
-    { path: z.string().describe('Absolute path to the .terrain file to open') },
-    async (params) => {
-      const result = await openSessionHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_close_session',
-    {},
-    async () => {
-      const result = await closeSessionHandler({}, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_add_node',
-    {
-      type: z.string().describe('Node type, e.g. "Mountain", "Erosion2". Call hayba_list_node_types to see options.'),
-      id: z.string().describe('Unique name for this node, e.g. "peaks", "erode"'),
-      params: z.record(z.unknown()).optional().describe('Optional parameter overrides'),
-      position: z.object({ X: z.number(), Y: z.number() }).optional(),
-    },
-    async (params) => {
-      const result = await addNodeHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_remove_node',
-    { id: z.string().describe('Node id to remove') },
-    async (params) => {
-      const result = await removeNodeHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_connect_nodes',
-    {
-      from_id: z.string().describe('Source node id'),
-      from_port: z.string().describe('Source port, e.g. "Out"'),
-      to_id: z.string().describe('Target node id'),
-      to_port: z.string().describe('Target port, e.g. "In"'),
-    },
-    async (params) => {
-      const result = await connectNodesHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_get_graph_state',
-    {},
-    async () => {
-      const result = await getGraphStateHandler({}, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_get_parameters',
-    { node_id: z.string().describe('Node id as shown in hayba_get_graph_state') },
-    async (params) => {
-      const result = await getParametersHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_set_parameter',
-    {
-      node_id: z.string(),
-      parameter: z.string().describe('Parameter name as returned by hayba_get_parameters'),
-      value: z.union([z.string(), z.number(), z.boolean()]).describe('New value within valid range'),
-    },
-    async (params) => {
-      const result = await setParameterHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_list_node_types',
-    { category: z.string().optional().describe('Filter by category, e.g. "erosion", "primitives"') },
-    async (params) => {
-      const result = await listNodeTypesHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_cook_graph',
-    { nodes: z.array(z.string()).optional().describe('Node ids for partial re-cook; omit for full cook') },
-    async (params) => {
-      const result = await cookGraphHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-  */
-// no meta registered (PCGEx pure-TS handler)
-
-// no meta registered (PCGEx pure-TS handler)
-
-// no meta registered (PCGEx pure-TS handler)
-
-// no meta registered (PCGEx pure-TS handler)
-
-// no meta registered (PCGEx pure-TS handler)
-
-// no meta registered (PCGEx pure-TS handler)
-
-// no meta registered (PCGEx pure-TS handler)
-
-// no meta registered (PCGEx pure-TS handler)
-
-// no meta registered (PCGEx pure-TS handler)
 
  // end Gaea + Knowledge tool block
 
   // ── Conventions tools ────────────────────────────────────────────────────────
 
-// no meta registered (conventions pure-TS handler)
 
-// no meta registered (conventions pure-TS handler)
 
   // Landscape import surface intentionally disabled with the rest of the
   // terrain features. See note above.
@@ -3856,11 +3610,8 @@ remember('pcg_scatter_mesh', pcgScatterMeta);
 
   // ── Zone Painter tools ──────────────────────────────────────────────────────
 
-// no meta registered (zone painter pure-TS handler)
 
-// no meta registered (zone painter pure-TS handler)
 
-// no meta registered (zone painter pure-TS handler)
 
   // ──────────────────────────────────────────────────────────────────────────
   // ── Validator (runtime rule system + history) ───────────────────────────
@@ -3906,7 +3657,6 @@ remember('pcg_scatter_mesh', pcgScatterMeta);
 
 
   // ── Landscape import (TS wrapper for UE-side landscape_import handler) ────
-// no meta registered (thin UE bridge wrapper)
 }
 
 // Schema registry seeding. Mirrors the Zod shapes used by the eager

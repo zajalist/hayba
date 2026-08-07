@@ -165,7 +165,15 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPDocsHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPVaultHandler>());
 
-    // ===== Stub handlers (advertise commands; return not_implemented) =====
+    // ===== Domains split out to satellite plugins, plus the rest =====
+    //
+    // This block was headed "Stub handlers (advertise commands; return
+    // not_implemented)". That has not been true for some time: every handler
+    // below is a real implementation — Animation 454 lines, UI 3109, Render 610,
+    // Test 543, StaticMesh 586, and so on, with no not_implemented among them.
+    // The comment mattered because it told a reader these domains do not work,
+    // so the honest ones were as likely to be avoided as the stubs ever were.
+    //
     // seq_* commands now live in the optional HaybaMCPSequencer satellite plugin.
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPAnimationHandler>());
     // niagara_* commands now live in the optional HaybaMCPNiagara satellite plugin.
