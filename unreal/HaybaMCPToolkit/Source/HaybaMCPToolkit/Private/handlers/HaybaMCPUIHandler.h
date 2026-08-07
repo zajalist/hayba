@@ -21,6 +21,13 @@ private:
     FHaybaHandlerResult HandleBuildTree(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult HandleSetVariable(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult HandleListWidgetBlueprints(const TSharedPtr<FJsonObject>& P);
+    /**
+     * Bind a widget property to a Blueprint variable — the designer's "Bind" dropdown.
+     * Without it a pure-Blueprint reusable component cannot expose a settable caption:
+     * nothing else in this toolkit can author a property binding or a graph node, so the
+     * only way to give a component an API was a C++ base class.
+     */
+    FHaybaHandlerResult HandleBindProperty(const TSharedPtr<FJsonObject>& P);
 
     // Measurement — facts only the engine can produce. The validation rules
     // themselves live MCP-side so they can be extended and configured without
@@ -29,4 +36,6 @@ private:
     FHaybaHandlerResult HandleMeasureText(const TSharedPtr<FJsonObject>& P);
     /** Accepts findings judged MCP-side so they can reach the Validation panel. */
     FHaybaHandlerResult HandleReportFindings(const TSharedPtr<FJsonObject>& P);
+    /** Draws the blueprint to a PNG without launching PIE. */
+    FHaybaHandlerResult HandleRenderToPng(const TSharedPtr<FJsonObject>& P);
 };

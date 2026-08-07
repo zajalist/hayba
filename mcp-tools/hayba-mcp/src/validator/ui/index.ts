@@ -4,7 +4,8 @@
 // category's strictness setting, and reports what it did NOT check as
 // explicitly as what it did.
 
-import { getStrictness, isRuleDisabled, meetsStrictness, type Strictness } from '../config.js';
+import { getStrictness, type Strictness } from '../config.js';
+import { runCategoryRules } from '../run-category-rules.js';
 import { UI_RULES, uiRulesById } from './rules.js';
 import { resolveThresholds } from './thresholds.js';
 import type {
@@ -65,56 +66,16 @@ export function validateUiSnapshot(
   const strictness = options.strictness ?? getStrictness('ui');
   const ctx = buildContext(snapshot, platform, strictness);
 
-  const byId = uiRulesById();
-  const selected = options.ruleIds
-    ? options.ruleIds.map((id) => byId.get(id)).filter((r): r is NonNullable<typeof r> => r !== undefined)
-    : UI_RULES;
-
-  const findings: UiFinding[] = [];
-  const skippedNoLayout: string[] = [];
-  const disabled: string[] = [];
-  const belowStrictness: string[] = [];
-  let evaluated = 0;
-
-  for (const rule of selected) {
-    if (isRuleDisabled(rule.id)) {
-      disabled.push(rule.id);
-      continue;
-    }
-    if (!meetsStrictness(rule.minStrictness, strictness)) {
-      belowStrictness.push(rule.id);
-      continue;
-    }
-    if (rule.needsLayout && !snapshot.layout_resolved) {
-      // Reported, not silently passed. A geometry rule with no geometry has
-      // checked nothing, and saying otherwise would be the same lie the old
-      // slot-props path told.
-      skippedNoLayout.push(rule.id);
-      continue;
-    }
-
-    evaluated++;
-    try {
-      findings.push(...rule.evaluate(ctx));
-    } catch (e) {
-      findings.push({
-        ruleId: rule.id,
-        category: rule.category,
-        severity: 'info',
-        message: `Rule "${rule.id}" threw while evaluating and was skipped.`,
-        hint: e instanceof Error ? e.message : String(e),
-      });
-    }
-  }
-
-  findings.sort((a, b) => {
-    const bySeverity = SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity];
-    if (bySeverity !== 0) return bySeverity;
-    return a.ruleId.localeCompare(b.ruleId);
+  const outcome = runCategoryRules({
+    rules: UI_RULES,
+    byId: uiRulesById(),
+    ruleIds: options.ruleIds,
+    ctx,
+    strictness,
+    // A geometry rule with no geometry has checked nothing, and saying
+    // otherwise would be the same lie the old slot-props path told.
+    hasNothingToCheck: (rule) => rule.needsLayout && !snapshot.layout_resolved,
   });
-
-  const counts: Record<UiSeverity, number> = { error: 0, warning: 0, info: 0 };
-  for (const f of findings) counts[f.severity]++;
 
   return {
     widget_blueprint_path: snapshot.widget_blueprint_path,
@@ -122,11 +83,11 @@ export function validateUiSnapshot(
     strictness,
     layout_resolved: snapshot.layout_resolved,
     layout_error: snapshot.layout_error,
-    findings,
-    rules_evaluated: evaluated,
-    rules_skipped_no_layout: skippedNoLayout,
-    rules_disabled: disabled,
-    rules_below_strictness: belowStrictness,
-    counts,
+    findings: outcome.findings,
+    rules_evaluated: outcome.evaluated,
+    rules_skipped_no_layout: outcome.skipped,
+    rules_disabled: outcome.disabled,
+    rules_below_strictness: outcome.belowStrictness,
+    counts: outcome.counts,
   };
 }

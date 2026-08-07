@@ -67,7 +67,7 @@ All via environment variables ([`src/config.ts`](src/config.ts)):
 |---|---|---|
 | `UE_TCP_HOST` | `127.0.0.1` | UE plugin host |
 | `UE_TCP_PORT` | `52342` | UE plugin port (plugin auto-falls back `52343–52350`) |
-| `DASHBOARD_PORT` | `52343` | Local web dashboard |
+| `DASHBOARD_PORT` | `52360` | Local web dashboard (kept clear of the UE `52342–52350` walk) |
 | `HAYBA_CODE_MODE` | on (`off` to disable) | Progressive tool discovery (see below) |
 | `HAYBA_NODE_CATALOG` | resolved | Override PCGEx `node_catalog.json` path |
 | `HAYBA_PCGEX_DB` | resolved | Override PCGEx `pcgex_registry.db` path |

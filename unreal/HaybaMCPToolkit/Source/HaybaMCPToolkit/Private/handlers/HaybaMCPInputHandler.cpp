@@ -1,6 +1,7 @@
 #include "HaybaMCPInputHandler.h"
 #include "Json.h"
 #include "AssetToolsModule.h"
+#include "HaybaMCPAssetGuard.h"
 #include "IAssetTools.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
@@ -93,6 +94,15 @@ FHaybaHandlerResult FHaybaMCPInputHandler::Handle(const FString& Cmd, const TSha
             return FHaybaHandlerResult::Err(FString::Printf(TEXT("input_create_action: unknown value_type '%s' (expected Boolean|Axis1D|Axis2D|Axis3D)"), *ValueTypeStr));
 
         IAssetTools& Tools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
+        // Refuse a taken name instead of letting CreateAsset raise a modal
+        // overwrite dialog, which would block the game thread and hang every
+        // queued MCP request. See HaybaMCPAssetGuard.h.
+        if (HaybaAssetGuard::AssetNameTaken(PkgPath, Name))
+        {
+            return FHaybaHandlerResult::Err(
+                HaybaAssetGuard::NameTakenError(TEXT("input_create_action"), PkgPath, Name));
+        }
+
         UObject* Created = Tools.CreateAsset(Name, PkgPath, UInputAction::StaticClass(), nullptr);
         if (!Created) return FHaybaHandlerResult::Err(TEXT("input_create_action: CreateAsset failed"));
 
@@ -118,6 +128,15 @@ FHaybaHandlerResult FHaybaMCPInputHandler::Handle(const FString& Cmd, const TSha
             return FHaybaHandlerResult::Err(TEXT("input_create_mapping: missing name"));
 
         IAssetTools& Tools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
+        // Refuse a taken name instead of letting CreateAsset raise a modal
+        // overwrite dialog, which would block the game thread and hang every
+        // queued MCP request. See HaybaMCPAssetGuard.h.
+        if (HaybaAssetGuard::AssetNameTaken(PkgPath, Name))
+        {
+            return FHaybaHandlerResult::Err(
+                HaybaAssetGuard::NameTakenError(TEXT("input_create_mapping"), PkgPath, Name));
+        }
+
         UObject* Created = Tools.CreateAsset(Name, PkgPath, UInputMappingContext::StaticClass(), nullptr);
         if (!Created) return FHaybaHandlerResult::Err(TEXT("input_create_mapping: CreateAsset failed"));
 

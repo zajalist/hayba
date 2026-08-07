@@ -25,6 +25,22 @@ describe('hayba_invoke', () => {
     if (!res.ok) expect(res.error.kind).toBe('validation');
   });
 
+  it('rejects unknown argument names and lists the accepted params', async () => {
+    // zod's default strip mode used to silently DELETE a misnamed key here and
+    // dispatch the rest — the tool then "ignored its parameter" (test_list
+    // {filter}, editor_pie_screenshot {path}, ui_set_slot_layout {anchors}).
+    const dispatch = vi.fn();
+    const res = await invokeHandler({ name: 'echo_tool', args: { msg: 'hi', mesage: 'oops' } }, {
+      dispatch, isDisabled: () => false,
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok && res.error.kind === 'validation') {
+      expect(JSON.stringify(res.error.issues)).toContain('mesage');
+      expect(res.error.accepted_params).toEqual(['msg']);
+    }
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it('refuses disabled tools', async () => {
     const res = await invokeHandler({ name: 'echo_tool', args: { msg: 'hi' } }, {
       dispatch: vi.fn(), isDisabled: () => true,

@@ -1,7 +1,7 @@
 // First-touch niche briefing: surfaces the full tool catalogue for a domain
 // the first time any tool in that domain is called within a session.
 
-import type { SessionManager, ToolResult } from './types.js';
+import type { RichToolResult, SessionManager, ToolResult } from './types.js';
 
 export const NICHE_BRIEFINGS: Record<string, string> = {
   material: `
@@ -120,11 +120,11 @@ ui_compile_widget -> ui_save_widget.
  *   - domain has no registered briefing
  *   - the domain has already been briefed this session
  */
-export function appendNicheBriefing(
+export function appendNicheBriefing<T extends RichToolResult>(
   domain: string,
   session: SessionManager | undefined,
-  result: ToolResult,
-): ToolResult {
+  result: T,
+): T {
   if (!session?.briefNicheOnce) return result;
   const briefing = NICHE_BRIEFINGS[domain];
   if (!briefing) return result;

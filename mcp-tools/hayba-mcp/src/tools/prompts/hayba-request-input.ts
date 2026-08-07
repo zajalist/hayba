@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { ensureConnected } from '../../tcp-client.js';
+import { executeCommand } from '../tool-executor.js';
 import type { ToolHandler } from '../types.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 
@@ -82,12 +82,15 @@ export const haybaRequestInputHandler: ToolHandler = async (args) => {
   const payload = { ...parsed.data, prompt_id: promptId };
 
   try {
-    const client = await ensureConnected();
-    const resp = await client.send('hayba_request_input', payload as unknown as Record<string, unknown>, 5000);
-    const body = resp.ok
-      ? { prompt_id: promptId, status: 'pushed', ...(resp.data as Record<string, unknown> | undefined) }
-      : { prompt_id: promptId, status: 'push_failed', error: resp.error };
-    return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }], isError: !resp.ok };
+    // The UE-failure branch produced the same push_failed body as the transport
+    // catch below, so the seam (which throws on both) loses no case.
+    const data = await executeCommand<Record<string, unknown>>(
+      'hayba_request_input',
+      payload as unknown as Record<string, unknown>,
+      { timeout: 5000 },
+    );
+    const body = { prompt_id: promptId, status: 'pushed', ...data };
+    return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }] };
   } catch (e: unknown) {
     return {
       content: [{ type: 'text', text: JSON.stringify({ prompt_id: promptId, status: 'push_failed', error: e instanceof Error ? e.message : String(e) }, null, 2) }],

@@ -12,6 +12,12 @@ import { deriveSignature } from './schema-registry.js';
 import { recordToolSchema, type ToolDescriptor } from './register-tool.js';
 import { setDefaultSender, NON_IDEMPOTENT, type Sender } from './tool-executor.js';
 
+/** First text block. Descriptors may now return image blocks too, so the
+ *  content array is no longer text-only. */
+function textOf(r: { content: Array<{ type: string; text?: string }> }): string {
+  return r.content.find((c) => c.type === 'text')?.text ?? '';
+}
+
 function byName(list: ToolDescriptor[], name: string): ToolDescriptor {
   const d = list.find((x) => x.name === name);
   if (!d) throw new Error(`descriptor ${name} not found`);
@@ -84,7 +90,7 @@ describe('legacy handler dispatch (mocked sender)', () => {
     expect(seenCmd).toBe('level_save');
     expect(seenParams).toEqual({ path: '/Game/Maps/M' });
     expect(res.isError).toBeUndefined();
-    expect(JSON.parse(res.content[0].text)).toEqual({ saved: true });
+    expect(JSON.parse(textOf(res))).toEqual({ saved: true });
   });
 
   it('returns a canonical error envelope when UE errors', async () => {
@@ -92,7 +98,7 @@ describe('legacy handler dispatch (mocked sender)', () => {
     const d = buildLegacyDescriptor('level_save', getSidecar().commands['level_save']);
     const res = await d.handler({}, {} as never);
     expect(res.isError).toBe(true);
-    const parsed = JSON.parse(res.content[0].text);
+    const parsed = JSON.parse(textOf(res));
     expect(parsed.ok).toBe(false);
     expect(parsed.error).toContain('level_save error');
     expect(parsed.error).toContain('boom');

@@ -2,7 +2,7 @@
  * Refusal layer for commands/python patterns known to crash or wedge the UE
  * editor. On a hit we return guidance that names a safe alternative instead of
  * taking the editor down. Grounded in repeated incidents — see
- * docs/HANDOFF-mcp-agent-ergonomics-postmortem.md (P2) and project memory.
+ * docs/handoffs/HANDOFF-mcp-agent-ergonomics-postmortem.md (P2) and project memory.
  */
 
 export interface CrashGuardHit {

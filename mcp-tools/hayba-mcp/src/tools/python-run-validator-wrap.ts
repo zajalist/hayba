@@ -99,7 +99,7 @@ export function makeValidatedPythonRunHandler(opts: WrapOpts = {}): ToolHandler 
       toolName: 'python_run',
       toolArgs: args as unknown as Record<string, unknown>,
       toolResult: result,
-      ue: null, // no follow-up UE queries needed for self-socket post-cond
+      probe: null, // no follow-up UE queries needed for self-socket post-cond
       scratchDir,
     });
     return attachFindingsToResponse(result as { content: Array<{ type: 'text'; text: string }>; isError?: boolean }, findings);

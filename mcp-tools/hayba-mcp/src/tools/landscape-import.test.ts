@@ -29,11 +29,20 @@ describe('hayba_import_landscape wrapper', () => {
   it('declares the full param schema from the UE Cmd_ImportLandscape signature', () => {
     // Each TryGetStringField / TryGetNumberField call in the C++ handler
     // should have a matching schema entry.
-    expect(indexSrc).toMatch(/heightmapPath:\s*z\.string\(\)/);
-    expect(indexSrc).toMatch(/worldSizeKm:\s*z\.number\(\)/);
-    expect(indexSrc).toMatch(/maxHeightM:\s*z\.number\(\)/);
-    expect(indexSrc).toMatch(/actorLabel:\s*z\.string\(\)/);
-    expect(indexSrc).toMatch(/landscapeMaterial:\s*z\.string\(\)/);
+    //
+    // Whitespace is permitted between `z` and its type because these are
+    // source-text assertions and the formatter is free to break a long zod
+    // chain across lines. It did exactly that to maxHeightM, and this suite went
+    // permanently red over a line break rather than a real regression — a
+    // failing check nobody can act on trains everyone to ignore the suite.
+    const declares = (param: string, zodType: 'string' | 'number'): RegExp =>
+      new RegExp(`${param}:\\s*z\\s*\\.\\s*${zodType}\\(\\)`);
+
+    expect(indexSrc).toMatch(declares('heightmapPath', 'string'));
+    expect(indexSrc).toMatch(declares('worldSizeKm', 'number'));
+    expect(indexSrc).toMatch(declares('maxHeightM', 'number'));
+    expect(indexSrc).toMatch(declares('actorLabel', 'string'));
+    expect(indexSrc).toMatch(declares('landscapeMaterial', 'string'));
   });
 
   it('registers the schema in the eager schema-registry block', () => {

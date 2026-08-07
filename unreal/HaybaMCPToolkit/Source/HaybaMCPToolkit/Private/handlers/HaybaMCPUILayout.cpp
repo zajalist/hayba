@@ -98,11 +98,20 @@ FVector2D GetDesignSize(UWidgetBlueprint* WBP)
     return FVector2D(1920.0, 1080.0);
 }
 
-bool ComputeGeometry(UWidgetBlueprint* WBP, const FVector2D& ScreenSize,
-    TMap<FString, FHaybaUIWidgetGeom>& Out, FString& OutError)
+FPreviewInstance::~FPreviewInstance()
 {
-    Out.Reset();
+    if (Instance)
+    {
+        // Drop Slate resources before the instance is collected so nothing
+        // retains a live SWidget for a UObject that is about to go away.
+        Instance->ReleaseSlateResources(true);
+        Instance->MarkAsGarbage();
+    }
+    Slate.Reset();
+}
 
+bool MakePreviewInstance(UWidgetBlueprint* WBP, FPreviewInstance& Out, FString& OutError)
+{
     if (!WBP)
     {
         OutError = TEXT("no widget blueprint");
@@ -121,11 +130,6 @@ bool ComputeGeometry(UWidgetBlueprint* WBP, const FVector2D& ScreenSize,
     if (WBP->GeneratedClass->HasAnyClassFlags(CLASS_Abstract))
     {
         OutError = TEXT("widget blueprint class is abstract and cannot be instantiated for layout");
-        return false;
-    }
-    if (ScreenSize.X <= 1.0 || ScreenSize.Y <= 1.0)
-    {
-        OutError = TEXT("screen size must be at least 1x1");
         return false;
     }
 
@@ -154,15 +158,37 @@ bool ComputeGeometry(UWidgetBlueprint* WBP, const FVector2D& ScreenSize,
     // Designing flag keeps the instance from running BeginPlay-style logic and
     // matches how the UMG designer evaluates layout.
     Instance->SetDesignerFlags(EWidgetDesignFlags::Designing);
+    Out.Instance = Instance;
+
+    Out.Slate = Instance->TakeWidget();
+    if (!Out.Slate.IsValid())
+    {
+        OutError = TEXT("TakeWidget() returned no Slate widget");
+        return false;
+    }
+    Out.Slate.ToSharedRef()->SlatePrepass(1.0f);
+    return true;
+}
+
+bool ComputeGeometry(UWidgetBlueprint* WBP, const FVector2D& ScreenSize,
+    TMap<FString, FHaybaUIWidgetGeom>& Out, FString& OutError)
+{
+    Out.Reset();
+
+    if (ScreenSize.X <= 1.0 || ScreenSize.Y <= 1.0)
+    {
+        OutError = TEXT("screen size must be at least 1x1");
+        return false;
+    }
+
+    FPreviewInstance Preview;
+    if (!MakePreviewInstance(WBP, Preview, OutError)) return false;
+    UUserWidget* Instance = Preview.Instance;
 
     bool bOk = false;
     {
-        TSharedPtr<SWidget> SlateWidget;
-        SlateWidget = Instance->TakeWidget();
-        if (SlateWidget.IsValid())
         {
-            const TSharedRef<SWidget> SlateRef = SlateWidget.ToSharedRef();
-            SlateRef->SlatePrepass(1.0f);
+            const TSharedRef<SWidget> SlateRef = Preview.Slate.ToSharedRef();
 
             const FGeometry Root = FGeometry::MakeRoot(ScreenSize, FSlateLayoutTransform());
 
@@ -208,17 +234,10 @@ bool ComputeGeometry(UWidgetBlueprint* WBP, const FVector2D& ScreenSize,
             bOk = Out.Num() > 0;
             if (!bOk) OutError = TEXT("layout produced no widgets (empty widget tree?)");
         }
-        else
-        {
-            OutError = TEXT("TakeWidget() returned no Slate widget");
-        }
-
-        // Drop Slate resources before the instance goes out of scope so nothing
-        // retains a live SWidget for a UObject that is about to be collected.
-        Instance->ReleaseSlateResources(true);
     }
 
-    Instance->MarkAsGarbage();
+    // Preview's destructor releases Slate resources and marks the instance
+    // garbage — the teardown that used to live inline here.
     return bOk;
 }
 
