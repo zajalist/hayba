@@ -6,9 +6,9 @@ import type { HaybaToolMeta } from './hayba-tool-meta.js';
 import { recordSchema, type Cost } from './schema-registry.js';
 import { installToolStreamMirror } from './tool-stream-mirror.js';
 import { installLiveSender, executeCommand } from './tool-executor.js';
-import { registerToolMeta } from './tool-meta-registry.js';
+import { registerToolMeta, getToolMeta } from './tool-meta-registry.js';
 import { readSettings } from './routing/settings-watcher.js';
-import { registerDeferredRouting, ALWAYS_ON_META, type CapturedTool, type RoutingHandle } from './routing/register.js';
+import { registerDeferredRouting, type CapturedTool, type RoutingHandle } from './routing/register.js';
 import { defineTool, registerTool, recordToolSchema, type ToolDescriptor } from './register-tool.js';
 import {
   guardHandlerWithEvidence,
@@ -3302,11 +3302,24 @@ export async function registerTools(server: McpServer, session: SessionManagerSt
       }
       const dir = inferDir(name);
       // Put every captured tool under the response-evidence contract, not just
-      // the ones registered through registerTool. Most sites below hand-roll
-      // server.tool(...) with an appendMeta'd description and never register a
-      // meta object, so effects are recovered from the description — a tool
-      // should not escape the rule because of which registration path it took.
-      const effects = parseEffectsFromDescription(description);
+      // the ones registered through registerTool — a tool should not escape the
+      // rule because of which registration path it took.
+      //
+      // Effects come from the meta registry when the tool has one. Only the
+      // hand-rolled server.tool(...) sites, which never register a meta object,
+      // fall back to recovering them from the description string — the effects
+      // are appended there as `[effects=[...]]` by appendMeta, so parsing them
+      // back out is reading our own formatting rather than a fact. Data first,
+      // string-scraping only where there is no data.
+      //
+      // Note the `.length` check rather than `??`. A registered meta with
+      // `effects: []` is a truthy value, so `??` would accept it and suppress
+      // the description fallback — quietly dropping that tool out of the
+      // evidence contract. This can only ever add coverage, never remove it.
+      const metaEffects = getToolMeta(name)?.effects;
+      const effects = metaEffects && metaEffects.length > 0
+        ? metaEffects
+        : parseEffectsFromDescription(description);
       const guarded = isUnderEvidenceContract(effects) ? guardHandlerWithEvidence(handler) : handler;
       captured.set(name, { description, schema, handler: guarded, dir });
       // Don't forward to realTool — registerDeferredRouting re-registers only
@@ -3323,10 +3336,6 @@ export async function registerTools(server: McpServer, session: SessionManagerSt
       (config as { codeMode: boolean }).codeMode = origCodeMode;
       (server as unknown as { tool: typeof realTool }).tool = realTool;
     }
-
-    // Note: ALWAYS_ON_META is imported but used implicitly via
-    // registerDeferredRouting's always-on registrations.
-    void ALWAYS_ON_META;
 
     // Re-install the tool-stream mirror on the (now restored) real server.tool
     // so newly-registered meta-tools and pack-loaded tools get mirrored. The
@@ -3555,6 +3564,18 @@ remember('pcg_scatter_mesh', pcgScatterMeta);
 
 
 
+  // Two registrations of this tool exist and both are load-bearing, which is
+  // not obvious from either site.
+  //
+  // This one serves eager (non-deferred) mode, and it also puts the name and
+  // schema into the captured map so hayba_invoke can reach it. In deferred mode
+  // registerDeferredRouting then REPLACES the handler with one that wires
+  // onConnected -> maybeAutoLoad('ue_connected') (see routing/register.ts), a
+  // registry this module has no access to.
+  //
+  // The consequence worth knowing: in eager mode, confirming the editor is
+  // connected does not trigger pack autoload. That is a real difference in
+  // behaviour between the two modes, not an oversight in one of them.
   server.tool('hayba_check_ue_status', {}, async () => {
     const result = await checkUeStatus();
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
