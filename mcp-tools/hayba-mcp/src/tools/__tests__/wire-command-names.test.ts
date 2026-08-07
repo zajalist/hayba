@@ -54,7 +54,18 @@ function pluginCommands(): Set<string> {
   return cmds;
 }
 
-/** Literal executeCommand('name') call sites in non-test source. */
+/** Every site in non-test source that puts a command name on the wire.
+ *
+ *  Two forms, and both must be matched or this whole test quietly stops
+ *  covering whatever it misses:
+ *
+ *    executeCommand('actor_delete', ...)        hand-written handlers
+ *    ueTool('actor_delete', schema)             pass-through wrappers
+ *
+ *  ueTool() calls executeCommand internally, so a scan for `executeCommand(`
+ *  alone still passes — it just silently exempts every wrapper that adopted the
+ *  helper. When 56 wrappers moved to ueTool at once, that would have dropped
+ *  them all out of this check without a single test going red. */
 function wireCalls(): Array<{ file: string; cmd: string }> {
   const hits: Array<{ file: string; cmd: string }> = [];
   for (const f of walk(join(SRC, 'tools'))) {
@@ -64,6 +75,9 @@ function wireCalls(): Array<{ file: string; cmd: string }> {
     // matches newlines, so a loose pattern walked from one executeCommand all
     // the way into an unrelated `startsWith('build_')` many lines below.
     for (const m of src.matchAll(/executeCommand(?:<[^>\n]*>)?\(\s*'([a-z][a-z0-9_]+)'/g)) {
+      hits.push({ file: relative(SRC, f).split(sep).join('/'), cmd: m[1]! });
+    }
+    for (const m of src.matchAll(/\bueTool\(\s*'([a-z][a-z0-9_]+)'/g)) {
       hits.push({ file: relative(SRC, f).split(sep).join('/'), cmd: m[1]! });
     }
   }
