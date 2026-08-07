@@ -47,6 +47,13 @@ jobs:
           build-mode: none
         - language: python
           build-mode: none
+        # The UE plugin is the largest subsystem in the repo (43k lines across
+        # 33 handler domains) and had no static analysis of any kind: CI cannot
+        # compile it, because UBT needs an Unreal install a hosted runner does
+        # not have. build-mode: none analyses the sources without building, so
+        # the C++ stops being the one part of the codebase nothing looks at.
+        - language: c-cpp
+          build-mode: none
         # CodeQL supports the following values keywords for 'language': 'actions', 'c-cpp', 'csharp', 'go', 'java-kotlin', 'javascript-typescript', 'python', 'ruby', 'rust', 'swift'
         # Use `c-cpp` to analyze code written in C, C++ or both
         # Use 'java-kotlin' to analyze code written in Java, Kotlin or both

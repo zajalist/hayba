@@ -14,7 +14,13 @@ dependencies = [
   "numpy>=1.26",
   "trimesh>=4.0",
   "rtree>=1.2",
-  "imageio>=2.34",
+  # trimesh's proximity/BVH queries pull scipy at call time, not import time, so
+  # a missing scipy shows up as a ModuleNotFoundError inside back-projection
+  # rather than at startup. It is a hard requirement of projection.py.
+  "scipy>=1.11",
+  # EXR is the format the UE world-position and UV passes are written in, and
+  # imageio only reads it through the FreeImage plugin.
+  "imageio[freeimage]>=2.34",
 ]
 
 [project.optional-dependencies]

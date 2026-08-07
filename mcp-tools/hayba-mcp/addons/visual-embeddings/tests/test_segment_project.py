@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from hayba_sidecar import segment as segmod
 from hayba_sidecar.server import app
+from conftest import requires_exr
 
 
 def _make_study(tmp):
@@ -24,6 +25,7 @@ def _make_study(tmp):
     iio.imwrite(os.path.join(tmp, "color_v0.png"), np.zeros((2, 2, 3), np.uint8))
 
 
+@requires_exr
 def test_segment_project(tmp_path, monkeypatch):
     tmp = str(tmp_path)
     _make_study(tmp)
