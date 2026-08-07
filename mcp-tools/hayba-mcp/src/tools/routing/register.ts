@@ -17,6 +17,7 @@ import { searchToolsHandler, searchToolsSchema } from './meta-tools/search-tools
 import { packListHandler, packListSchema } from './meta-tools/pack-list.js';
 import { packLoadHandler, packLoadSchema } from './meta-tools/pack-load.js';
 import { invokeHandler, invokeSchema } from './meta-tools/invoke.js';
+import { toMcpResponse } from '../mcp-response.js';
 import { isToolDisabled } from '../disabled-tools-watcher.js';
 import { executeCommand } from '../tool-executor.js';
 import { getToolMeta } from '../tool-meta-registry.js';
@@ -170,17 +171,28 @@ export async function registerDeferredRouting(
 
   /** Route a runtime-constructed tool through the deferred path instead of
    *  registering it natively. */
+  /** Capture a runtime-constructed tool — one that closes over a live object
+   *  (the retriever, the DAG, the sliver loader) and so cannot be declared
+   *  statically as a descriptor.
+   *
+   *  `run` returns a plain JSON-serialisable value; the MCP content-block
+   *  envelope is applied here via toMcpResponse. All eleven call sites used to
+   *  end with the same hand-written
+   *  `{ content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] }`,
+   *  which is the one shape every Hayba tool returns and therefore the last
+   *  thing a call site should be restating. */
   const defer = (
     dir: string,
     name: string,
     description: string,
     schema: z.ZodRawShape,
-    handler: (...args: never[]) => unknown,
+    run: (...args: never[]) => unknown,
   ): void => {
     captured.set(name, {
       description,
       schema,
-      handler: handler as unknown as CapturedTool['handler'],
+      handler: (async (...args: never[]) =>
+        toMcpResponse(await run(...args))) as unknown as CapturedTool['handler'],
       dir,
     });
   };
@@ -197,10 +209,7 @@ export async function registerDeferredRouting(
     'hayba_asset_search',
     'Find an asset in the user\'s UE Content Browser by semantic intent or keyword. Hybrid BM25 + embedding search.',
     assetSearchSchema,
-    async (args: { query: string; k?: number; filterClass?: string; filterSource?: 'project' | 'polyhaven' | 'ambientcg' | 'sketchfab' | 'fab' | 'unknown' }) => {
-      const r = await assetSearchHandler(args, { retriever });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { query: string; k?: number; filterClass?: string; filterSource?: 'project' | 'polyhaven' | 'ambientcg' | 'sketchfab' | 'fab' | 'unknown' }) => assetSearchHandler(args, { retriever }),
   );
 
   defer(
@@ -208,10 +217,7 @@ export async function registerDeferredRouting(
     'hayba_asset_browse',
     'Enumerate assets by filter (path/class/tag/source) without semantic ranking. Paginated.',
     assetBrowseSchema,
-    async (args: { filter?: { path?: string; class?: string; tag?: string; source?: 'project' | 'polyhaven' | 'ambientcg' | 'sketchfab' | 'fab' | 'unknown' }; offset?: number; limit?: number }) => {
-      const r = await assetBrowseHandler(args, { retriever });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { filter?: { path?: string; class?: string; tag?: string; source?: 'project' | 'polyhaven' | 'ambientcg' | 'sketchfab' | 'fab' | 'unknown' }; offset?: number; limit?: number }) => assetBrowseHandler(args, { retriever }),
   );
 
   defer(
@@ -219,10 +225,7 @@ export async function registerDeferredRouting(
     'hayba_asset_reindex',
     'Force a rebuild of the asset index. Use after a batch import outside the MCP-tracked download flow.',
     assetReindexSchema,
-    async () => {
-      const r = await assetReindexHandler({}, { retriever });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    () => assetReindexHandler({}, { retriever }),
   );
 
   // ── DAG + journal (Layer 2 — operation tracking) ───────────────────────────
@@ -265,10 +268,7 @@ export async function registerDeferredRouting(
     'hayba_sliver_list',
     'List installed Slivers (deterministic abstractions). Optional category or namespace filter.',
     sliverListSchema,
-    async (args: { category?: string; namespace?: string }) => {
-      const r = await sliverListHandler(args, { loader: slivers.loader });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { category?: string; namespace?: string }) => sliverListHandler(args, { loader: slivers.loader }),
   );
 
   defer(
@@ -276,10 +276,7 @@ export async function registerDeferredRouting(
     'hayba_sliver_get',
     'Get the full spec (params + determinism + executor) of an installed sliver by id.',
     sliverGetSchema,
-    async (args: { id: string }) => {
-      const r = await sliverGetHandler(args, { loader: slivers.loader });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { id: string }) => sliverGetHandler(args, { loader: slivers.loader }),
   );
 
   defer(
@@ -287,10 +284,7 @@ export async function registerDeferredRouting(
     'hayba_sliver_run',
     'Execute a sliver with concrete parameter values. Returns outputs + declared side_effects + durationMs.',
     sliverRunSchema,
-    async (args: { id: string; params: Record<string, unknown> }) => {
-      const r = await sliverRunHandler(args, { runtime: slivers.runtime });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { id: string; params: Record<string, unknown> }) => sliverRunHandler(args, { runtime: slivers.runtime }),
   );
 
   defer(
@@ -298,10 +292,7 @@ export async function registerDeferredRouting(
     'hayba_sliver_import',
     'Install a sliver from a local file path or an http(s) URL into the user sliver library.',
     sliverImportSchema,
-    async (args: { source: string }) => {
-      const r = await sliverImportHandler(args, { loader: slivers.loader });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { source: string }) => sliverImportHandler(args, { loader: slivers.loader }),
   );
 
   defer(
@@ -309,10 +300,7 @@ export async function registerDeferredRouting(
     'hayba_dag_status',
     'Show the dependency graph of generated artifacts and which are stale (dirty).',
     dagStatusSchema,
-    async (args: { namespace?: string; dirtyOnly?: boolean }) => {
-      const r = await dagStatusHandler(args, { dag });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { namespace?: string; dirtyOnly?: boolean }) => dagStatusHandler(args, { dag }),
   );
 
   defer(
@@ -320,10 +308,7 @@ export async function registerDeferredRouting(
     'hayba_dag_record',
     'Record a mutation Hayba did not instrument (editor-side edits, manual writes) so the DAG stays accurate.',
     dagRecordSchema,
-    async (args: { reads?: string[]; writes: string[]; actor?: string; note?: string }) => {
-      const r = await dagRecordHandler(args, { dag });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { reads?: string[]; writes: string[]; actor?: string; note?: string }) => dagRecordHandler(args, { dag }),
   );
 
   defer(
@@ -331,17 +316,14 @@ export async function registerDeferredRouting(
     'hayba_dag_rebuild',
     'Re-run stale (dirty) artifacts. Optionally restrict to the subtree under a target URI.',
     dagRebuildSchema,
-    async (args: { target?: string }) => {
-      const r = await dagRebuildHandler(args, {
-        dag,
-        runSliverNode: async (uri: string) => {
-          return { ok: false, reason: uri.startsWith('sliver://')
-            ? 'sliver re-run from node id is v2'
-            : 'no executor for this node type' };
-        },
-      });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { target?: string }) => dagRebuildHandler(args, {
+      dag,
+      runSliverNode: async (uri: string) => {
+        return { ok: false, reason: uri.startsWith('sliver://')
+          ? 'sliver re-run from node id is v2'
+          : 'no executor for this node type' };
+      },
+    }),
   );
 
   defer(
@@ -349,10 +331,7 @@ export async function registerDeferredRouting(
     'hayba_journal_tail',
     'Return the most recent mutation operations from the journal.',
     journalTailSchema,
-    async (args: { limit?: number }) => {
-      const r = await journalTailHandler(args, { dag });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
+    (args: { limit?: number }) => journalTailHandler(args, { dag }),
   );
 
   // ── Pack discovery ─────────────────────────────────────────────────────────
@@ -445,7 +424,6 @@ export async function registerDeferredRouting(
     return { ...result, content: [...result.content, { type: 'text' as const, text }] };
   };
 
-  const j = (r: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] });
 
   // ── Register the 4 new meta-tools ──────────────────────────────────────────
   server.tool(
@@ -454,7 +432,7 @@ export async function registerDeferredRouting(
     searchToolsSchema,
     async (args: { query: string; k?: number; filterPack?: string }) => {
       const r = await searchToolsHandler(args, { index });
-      return withOrientation(j(r));
+      return withOrientation(toMcpResponse(r));
     },
   );
 
@@ -464,7 +442,7 @@ export async function registerDeferredRouting(
     packListSchema,
     async () => {
       const r = await packListHandler({}, { registry });
-      return withOrientation(j(r));
+      return withOrientation(toMcpResponse(r));
     },
   );
 
@@ -474,7 +452,7 @@ export async function registerDeferredRouting(
     packLoadSchema,
     async (args: { name: string }) => {
       const r = await packLoadHandler(args, { registry });
-      return withOrientation(j(r));
+      return withOrientation(toMcpResponse(r));
     },
   );
 
@@ -501,7 +479,7 @@ export async function registerDeferredRouting(
         },
         isDisabled: isToolDisabled,
       });
-      return withOrientation(j(r));
+      return withOrientation(toMcpResponse(r));
     },
   );
 
@@ -543,7 +521,7 @@ export async function registerDeferredRouting(
         const status = await checkUeStatus({
           onConnected: () => registry.maybeAutoLoad('ue_connected'),
         });
-        return withOrientation(j(status));
+        return withOrientation(toMcpResponse(status));
       },
     );
     registeredNames.add('hayba_check_ue_status');
