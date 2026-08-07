@@ -16,6 +16,10 @@
 #include "K2Node.h"
 #include "K2Node_Event.h"
 #include "K2Node_CallFunction.h"
+#include "K2Node_IfThenElse.h"
+#include "K2Node_VariableGet.h"
+#include "K2Node_VariableSet.h"
+#include "K2Node_DynamicCast.h"
 #include "UObject/UObjectGlobals.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
@@ -404,19 +408,99 @@ static TSharedPtr<FJsonObject> HaybaDescribeNode(UEdGraphNode* Node)
 
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObject>& P)
 {
-    FString Path, FunctionName, GraphName, ClassPath;
+    FString Path, FunctionName, GraphName, ClassPath, NodeType;
     if (!P->TryGetStringField(TEXT("path"), Path))
         return FHaybaHandlerResult::Err(TEXT("blueprint_add_node: missing path"));
-    if (!P->TryGetStringField(TEXT("function_name"), FunctionName))
-        return FHaybaHandlerResult::Err(TEXT("blueprint_add_node: missing function_name"));
     P->TryGetStringField(TEXT("graph_name"), GraphName);
     P->TryGetStringField(TEXT("class_path"), ClassPath);
+    P->TryGetStringField(TEXT("node_type"), NodeType);
+    if (NodeType.IsEmpty()) { NodeType = TEXT("call_function"); }
 
     UBlueprint* BP = LoadBPByPath(Path);
     if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_add_node: blueprint not found"));
 
     UEdGraph* Graph = HaybaFindGraph(BP, GraphName);
     if (!Graph) return FHaybaHandlerResult::Err(TEXT("blueprint_add_node: graph not found"));
+
+    double NX = 0.0, NY = 0.0;
+    P->TryGetNumberField(TEXT("x"), NX);
+    P->TryGetNumberField(TEXT("y"), NY);
+
+    // Non-function node kinds. A graph that can only place function calls cannot express
+    // "if a character is assumed, show their holdings" — the shape every real panel needs —
+    // so branch / variable / cast are first-class here rather than a later addition.
+    auto Place = [&](UK2Node* Node) -> FHaybaHandlerResult
+    {
+        BP->Modify();
+        Graph->Modify();
+        Node->CreateNewGuid();
+        Node->NodePosX = (int32)NX;
+        Node->NodePosY = (int32)NY;
+        Graph->AddNode(Node, false, false);
+        Node->PostPlacedNewNode();
+        Node->AllocateDefaultPins();
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(BP);
+        TSharedPtr<FJsonObject> Out = HaybaDescribeNode(Node);
+        Out->SetStringField(TEXT("graph"), Graph->GetName());
+        Out->SetStringField(TEXT("node_type"), NodeType);
+        Out->SetStringField(TEXT("note"), TEXT("Staged. Call blueprint_compile to apply."));
+        return FHaybaHandlerResult::Ok(Out);
+    };
+
+    if (NodeType.Equals(TEXT("branch"), ESearchCase::IgnoreCase))
+    {
+        return Place(NewObject<UK2Node_IfThenElse>(Graph));
+    }
+
+    if (NodeType.Equals(TEXT("variable_get"), ESearchCase::IgnoreCase)
+        || NodeType.Equals(TEXT("variable_set"), ESearchCase::IgnoreCase))
+    {
+        FString VarName;
+        if (!P->TryGetStringField(TEXT("variable_name"), VarName))
+            return FHaybaHandlerResult::Err(TEXT("blueprint_add_node: variable_get/set needs variable_name"));
+
+        UClass* VarScope = BP->SkeletonGeneratedClass ? BP->SkeletonGeneratedClass.Get() : BP->GeneratedClass.Get();
+        if (!VarScope || !FindFProperty<FProperty>(VarScope, FName(*VarName)))
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("blueprint_add_node: no variable '%s' on this blueprint. Create it with blueprint_add_variable."),
+                *VarName));
+        }
+
+        if (NodeType.Equals(TEXT("variable_get"), ESearchCase::IgnoreCase))
+        {
+            UK2Node_VariableGet* Node = NewObject<UK2Node_VariableGet>(Graph);
+            Node->VariableReference.SetSelfMember(FName(*VarName));
+            return Place(Node);
+        }
+        UK2Node_VariableSet* Node = NewObject<UK2Node_VariableSet>(Graph);
+        Node->VariableReference.SetSelfMember(FName(*VarName));
+        return Place(Node);
+    }
+
+    if (NodeType.Equals(TEXT("cast"), ESearchCase::IgnoreCase))
+    {
+        if (ClassPath.IsEmpty())
+            return FHaybaHandlerResult::Err(TEXT("blueprint_add_node: cast needs class_path (the target type)"));
+        UClass* Target = LoadObject<UClass>(nullptr, *ClassPath);
+        if (!Target) { Target = LoadClass<UObject>(nullptr, *ClassPath); }
+        if (!Target)
+            return FHaybaHandlerResult::Err(FString::Printf(TEXT("blueprint_add_node: cast target not found: %s"), *ClassPath));
+        UK2Node_DynamicCast* Node = NewObject<UK2Node_DynamicCast>(Graph);
+        Node->TargetType = Target;
+        Node->SetPurity(false);
+        return Place(Node);
+    }
+
+    if (!NodeType.Equals(TEXT("call_function"), ESearchCase::IgnoreCase))
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("blueprint_add_node: unknown node_type '%s'. Supported: call_function, branch, variable_get, variable_set, cast."),
+            *NodeType));
+    }
+
+    if (!P->TryGetStringField(TEXT("function_name"), FunctionName))
+        return FHaybaHandlerResult::Err(TEXT("blueprint_add_node: missing function_name"));
 
     // Default to the blueprint's own generated class, which is what makes self-calls and
     // anything inherited resolve without the caller naming a class.
@@ -446,11 +530,8 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
     UK2Node_CallFunction* Node = NewObject<UK2Node_CallFunction>(Graph);
     Node->CreateNewGuid();
     Node->SetFromFunction(Fn);
-    double X = 0.0, Y = 0.0;
-    P->TryGetNumberField(TEXT("x"), X);
-    P->TryGetNumberField(TEXT("y"), Y);
-    Node->NodePosX = (int32)X;
-    Node->NodePosY = (int32)Y;
+    Node->NodePosX = (int32)NX;
+    Node->NodePosY = (int32)NY;
     Graph->AddNode(Node, false, false);
     Node->PostPlacedNewNode();
     Node->AllocateDefaultPins();

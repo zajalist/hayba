@@ -1,5 +1,5 @@
-#include "HaybaMCPReflection.h"
 #include "HaybaMCPLegacyHandler.h"
+#include "HaybaMCPReflection.h"
 #include "HaybaMCPGameThread.h"
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPLandscapeImporter.h"
