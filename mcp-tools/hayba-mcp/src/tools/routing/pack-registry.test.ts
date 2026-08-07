@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { PackRegistry, type PackDef } from './pack-registry.js';
+import { PackRegistry, type PackDef, type OnPacksChanged } from './pack-registry.js';
 
 const fixture: PackDef[] = [
   { name: 'actor',  kind: 'domain',   description: 'd', tools: ['actor_spawn', 'actor_list'] },
@@ -9,10 +9,12 @@ const fixture: PackDef[] = [
 
 describe('PackRegistry', () => {
   let reg: PackRegistry;
-  let onChange: ReturnType<typeof vi.fn>;
+  // Typed explicitly: vitest 4 infers vi.fn() as Mock<Constructable | Procedure>,
+  // which is not assignable to a plain () => void | Promise<void>.
+  let onChange: OnPacksChanged;
 
   beforeEach(() => {
-    onChange = vi.fn();
+    onChange = vi.fn<OnPacksChanged>();
     reg = new PackRegistry(fixture, onChange);
   });
 
