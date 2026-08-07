@@ -8,7 +8,7 @@ import { installToolStreamMirror } from './tool-stream-mirror.js';
 import { installLiveSender, executeCommand } from './tool-executor.js';
 import { registerToolMeta, getToolMeta } from './tool-meta-registry.js';
 import { readSettings } from './routing/settings-watcher.js';
-import { registerDeferredRouting, type CapturedTool, type RoutingHandle } from './routing/register.js';
+import { registerDeferredRouting, type CapturedTool, type RoutingHandle, type DeferredRoutingOptions } from './routing/register.js';
 import { defineTool, registerTool, recordToolSchema, type ToolDescriptor } from './register-tool.js';
 import {
   guardHandlerWithEvidence,
@@ -3278,17 +3278,23 @@ export const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   ),
 ];
 
-export async function registerTools(server: McpServer, session: SessionManagerStub): Promise<RoutingHandle | null> {
+export async function registerTools(
+  server: McpServer,
+  session: SessionManagerStub,
+  /** Forwarded to registerDeferredRouting. Exists so a test can pass a
+   *  lexical-only embedding backend instead of letting the default probe reach
+   *  the network — without it this function is untestable, which is how the
+   *  capture shim went uncovered for as long as it did. */
+  options: DeferredRoutingOptions = {},
+): Promise<RoutingHandle | null> {
   const settings = readSettings();
   if (settings.toolRouting === 'deferred') {
     // γ-hybrid: capture every server.tool(...) call into a descriptor map
     // without registering it. registerDeferredRouting wires the always-on
     // meta-tools and packs against the captured set.
     const captured = new Map<string, CapturedTool>();
-    const realTool = server.tool.bind(server);
 
-    type ToolArgs = [string, ...unknown[]];
-    (server as unknown as { tool: (...a: ToolArgs) => void }).tool = (name, ...rest) => {
+    const capture = (name: string, ...rest: unknown[]): void => {
       let description: string | undefined;
       let schema: z.ZodRawShape;
       let handler: (...args: unknown[]) => unknown;
@@ -3322,31 +3328,36 @@ export async function registerTools(server: McpServer, session: SessionManagerSt
         : parseEffectsFromDescription(description);
       const guarded = isUnderEvidenceContract(effects) ? guardHandlerWithEvidence(handler) : handler;
       captured.set(name, { description, schema, handler: guarded, dir });
-      // Don't forward to realTool — registerDeferredRouting re-registers only
-      // the always-on subset + alwaysLoadPacks tools.
+      // Nothing is forwarded to the real server here — registerDeferredRouting
+      // registers only the always-on subset plus alwaysLoadPacks tools.
     };
 
-    // Force the eager registration block to run so we capture every tool,
-    // not just the codeMode always-on five. Restore on exit.
-    const origCodeMode = config.codeMode;
-    (config as { codeMode: boolean }).codeMode = false;
-    try {
-      registerToolsCore(server, session);
-    } finally {
-      (config as { codeMode: boolean }).codeMode = origCodeMode;
-      (server as unknown as { tool: typeof realTool }).tool = realTool;
-    }
+    // Registration writes into this stand-in, not into the real server.
+    //
+    // It used to monkey-patch `server.tool`, run registration, and restore the
+    // original in a `finally`. Same effect, but the real object spent the
+    // window in a mutated state: anything else holding a reference to it saw
+    // the capturing implementation, the tool-stream mirror silently wrapped the
+    // shim instead of the server (which is why it had to be re-installed
+    // afterwards), and an exception anywhere in registration risked leaving a
+    // live MCP server whose `tool` method quietly registered nothing.
+    //
+    // registerToolsCore only ever calls `.tool()`, so the stand-in only needs
+    // that. If it grows another dependency, this cast stops compiling — which
+    // is the point of writing it out rather than patching in place.
+    const capturingServer = { tool: capture } as unknown as McpServer;
 
-    // Re-install the tool-stream mirror on the (now restored) real server.tool
-    // so newly-registered meta-tools and pack-loaded tools get mirrored. The
-    // capturing shim above suppressed the mirror's wrapper during capture.
+    registerToolsCore(capturingServer, session, { forceEager: true });
+
+    // The mirror goes on the real server. registerToolsCore installed one on
+    // the stand-in, which is discarded with it.
     installToolStreamMirror(server);
 
     // Now register meta-tools + alwaysLoadPacks. Awaited so the caller can
     // sequence server.connect() after every server.tool() call has happened
     // — McpServer rejects late registrations with "Cannot register
     // capabilities after connecting to transport".
-    const handle = await registerDeferredRouting(server, captured);
+    const handle = await registerDeferredRouting(server, captured, undefined, options);
     return handle;
   }
 
@@ -3394,7 +3405,22 @@ export function inferDir(name: string): string | null {
   return null;
 }
 
-function registerToolsCore(server: McpServer, session: SessionManagerStub): void {
+/** Options for {@link registerToolsCore}.
+ *
+ *  `forceEager` exists so the deferred-routing capture can walk the *whole*
+ *  catalogue. It used to be expressed by assigning `config.codeMode = false`
+ *  around the call and restoring it in a `finally` — a global mutated to pass
+ *  one boolean one level down, which meant anything else reading `config`
+ *  during registration saw a value that was briefly a lie. */
+interface RegisterCoreOptions {
+  forceEager?: boolean;
+}
+
+function registerToolsCore(
+  server: McpServer,
+  session: SessionManagerStub,
+  { forceEager = false }: RegisterCoreOptions = {},
+): void {
   // Fire-and-forget: dynamic import resolves in <1ms; MCP handshake takes longer
   // so any tool call is guaranteed to find DEFAULT_SENDER set.
   void installLiveSender();
@@ -3479,7 +3505,10 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
   // When Code Mode is ON (default), stop here — full schemas are only fetched
   // on demand via get_tool_signature. Set HAYBA_CODE_MODE=off to expose
   // every tool eagerly (~70 tools, much larger initial tool-list payload).
-  if (config.codeMode) return;
+  //
+  // forceEager overrides it for the deferred-routing capture, which needs to
+  // see every tool in order to make every tool reachable through hayba_invoke.
+  if (config.codeMode && !forceEager) return;
 
   // ──────────────────────────────────────────────────────────────────────────
   // Eager registrations (Code Mode disabled) — every domain tool below here.
