@@ -16,6 +16,12 @@
 #include "UObject/Object.h"
 #include "Containers/Ticker.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Framework/Application/SlateUser.h"
+#include "Widgets/SWindow.h"
+#include "Widgets/SWidget.h"
+#include "Widgets/Input/SEditableText.h"
+#include "Widgets/Text/SMultiLineEditableText.h"
+#include "Layout/Children.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
 #include "InputCoreTypes.h"
@@ -25,6 +31,7 @@
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
 #include "Misc/FrameNumber.h"
+#include "HaybaMCPParams.h"
 #endif
 
 // ---------------------------------------------------------------------------
@@ -38,6 +45,12 @@ TArray<FString> FHaybaMCPPIEHandler::GetCommands() const
         TEXT("editor_pie_wait_for"),
         TEXT("editor_pie_press_key"),
         TEXT("editor_pie_screenshot"),
+        TEXT("editor_pie_mouse"),
+        TEXT("editor_pie_type_text"),
+        TEXT("editor_pie_axis"),
+        TEXT("editor_pie_widget_tree"),
+        TEXT("editor_pie_click_widget"),
+        TEXT("editor_pie_set_text"),
     };
 }
 
@@ -62,6 +75,12 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::Handle(const FString& Cmd, const TShare
     if (Cmd == TEXT("editor_pie_assert"))     return PIEAssert(Params);
     if (Cmd == TEXT("editor_pie_wait_for"))   return PIEWaitFor(Params);
     if (Cmd == TEXT("editor_pie_press_key"))  return PIEPressKey(Params);
+    if (Cmd == TEXT("editor_pie_mouse"))         return PIEMouse(Params);
+    if (Cmd == TEXT("editor_pie_type_text"))     return PIETypeText(Params);
+    if (Cmd == TEXT("editor_pie_axis"))          return PIEAxis(Params);
+    if (Cmd == TEXT("editor_pie_widget_tree"))   return PIEWidgetTree(Params);
+    if (Cmd == TEXT("editor_pie_click_widget"))  return PIEClickWidget(Params);
+    if (Cmd == TEXT("editor_pie_set_text"))      return PIESetText(Params);
     if (Cmd == TEXT("editor_pie_screenshot")) return PIEScreenshot(Params);
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("Unknown PIE command: %s"), *Cmd));
 #endif
@@ -329,13 +348,20 @@ FHaybaHandlerResult FHaybaMCPPIEHandler_WaitLoop(
     P->TryGetNumberField(TEXT("tolerance"), Tolerance);
 
     const double StartTime = FPlatformTime::Seconds();
-    const double Deadline  = StartTime + (double)TimeoutMs / 1000.0;
 
     int32 Frame = 0;
     TSharedPtr<FJsonValue> LastObserved;
     FString LastErr;
 
-    while (FPlatformTime::Seconds() < Deadline)
+    // Evaluated ONCE. This used to loop until a deadline, pumping the core
+    // ticker between iterations to let the world advance — which is what made
+    // these commands crash. See the note on the pump removal below.
+    //
+    // A handler cannot advance the world, so it cannot meaningfully wait: the
+    // property it is watching can never change while it blocks. The honest
+    // shape is therefore a single observation the caller polls, and the
+    // response carries `polling: true` so that is obvious from the result
+    // rather than only from the docs.
     {
         if (Self.bCancelPending)
         {
@@ -381,16 +407,16 @@ FHaybaHandlerResult FHaybaMCPPIEHandler_WaitLoop(
             LastErr = ResolveErr;
         }
 
-        // Pump ticker + sleep.
-        FTSTicker::GetCoreTicker().Tick(0.005f);
-        FPlatformProcess::Sleep(0.005f);
         ++Frame;
     }
 
     TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
     R->SetBoolField(TEXT("matched"), false);
-    R->SetNumberField(TEXT("frames"), Frame);
-    R->SetStringField(TEXT("reason"), LastErr.IsEmpty() ? TEXT("timeout") : LastErr);
+    R->SetBoolField(TEXT("polling"), true);
+    R->SetNumberField(TEXT("elapsed_ms"), (FPlatformTime::Seconds() - StartTime) * 1000.0);
+    R->SetStringField(TEXT("reason"), LastErr.IsEmpty()
+        ? TEXT("condition not met at this instant — call again to poll; the world only advances between calls")
+        : LastErr);
     if (LastObserved.IsValid()) R->SetField(TEXT("observed_value_last"), LastObserved);
     return FHaybaHandlerResult::Ok(R);
 }
@@ -410,6 +436,15 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEWaitFor(const TSharedPtr<FJsonObject
     if (P.IsValid()) P->TryGetStringField(TEXT("comparator"), Comparator);
     Comparator = Comparator.ToLower();
     return FHaybaMCPPIEHandler_WaitLoop(*this, P, Comparator);
+}
+
+// Defined with the other input helpers in the Interaction section below, which
+// sits after this function. Same anonymous namespace, declared here so the key
+// path can use them — mirrors the existing SendMouseMove forward declaration.
+namespace
+{
+    FString FocusedWidgetType();
+    bool SendKeyThroughSlate(const FKey& Key, EInputEvent Evt);
 }
 
 FHaybaHandlerResult FHaybaMCPPIEHandler::PIEPressKey(const TSharedPtr<FJsonObject>& P)
@@ -439,40 +474,94 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEPressKey(const TSharedPtr<FJsonObjec
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("invalid key: %s"), *KeyName));
 
     const FInputDeviceId DeviceId = IPlatformInputDeviceMapper::Get().GetDefaultInputDevice();
-    auto Send = [&](EInputEvent Evt)
+
+    // Resolve the viewport at the moment of use, never from a captured pointer.
+    // The old code captured FViewport* and UGameViewportClient*, pumped the core
+    // ticker (which can tear PIE down), then dereferenced them — a use-after-free
+    // that surfaced as an SEH access violation.
+    // Shared, not captured by reference: SendNow is also stored on a ticker
+    // delegate for the deferred release, and a reference to a local here would
+    // dangle by the time that fires — the same use-after-free class this
+    // function's viewport handling already had to fix.
+    TSharedRef<bool> SlateHandled = MakeShared<bool>(false);
+
+    auto SendNow = [DeviceId, Key, SlateHandled](EInputEvent Evt) -> bool
     {
-        FInputKeyEventArgs Args(VP, DeviceId, Key, Evt,
+        UWorld* W = GetPIEWorld();
+        if (!W) return false;
+        UGameViewportClient* Client = W->GetGameViewport();
+        if (!Client || !Client->Viewport) return false;
+
+        // Slate first, for the same reason SendMouseButton goes through Slate:
+        // a focused UMG widget must see the key before the game does, which is
+        // the order real platform input arrives in. Only when the UI declines
+        // does this fall through to the game pipeline, so gameplay bindings
+        // behave exactly as they did before.
+        if (SendKeyThroughSlate(Key, Evt))
+        {
+            *SlateHandled = true;
+            return true;
+        }
+
+        FInputKeyEventArgs Args(Client->Viewport, DeviceId, Key, Evt,
                                 /*AmountDepressed=*/1.0f,
                                 /*bIsTouch=*/false,
                                 /*EventTimestamp=*/0u);
-        GVC->InputKey(Args);
+        Client->InputKey(Args);
+        return true;
     };
+
+    bool bReleaseScheduled = false;
 
     if (EventStr == TEXT("pressed"))
     {
-        Send(IE_Pressed);
+        if (!SendNow(IE_Pressed)) return FHaybaHandlerResult::Err(TEXT("PIE viewport went away before the key was sent"));
     }
     else if (EventStr == TEXT("released"))
     {
-        Send(IE_Released);
+        if (!SendNow(IE_Released)) return FHaybaHandlerResult::Err(TEXT("PIE viewport went away before the key was sent"));
     }
     else // pressed_and_released
     {
-        Send(IE_Pressed);
-        // Pump ticker briefly so the world sees the keydown.
-        const double End = FPlatformTime::Seconds() + (double)HeldMs / 1000.0;
-        while (FPlatformTime::Seconds() < End)
-        {
-            FTSTicker::GetCoreTicker().Tick(0.005f);
-            FPlatformProcess::Sleep(0.005f);
-        }
-        Send(IE_Released);
+        if (!SendNow(IE_Pressed)) return FHaybaHandlerResult::Err(TEXT("PIE viewport went away before the key was sent"));
+
+        // The release is DEFERRED onto a real ticker delegate rather than held
+        // by spinning here. A handler runs on the game thread, so spinning
+        // prevents the very frames the hold is supposed to span — the key would
+        // be down for wall-clock time during which the game never ticks.
+        const float DelaySeconds = FMath::Clamp((float)HeldMs, 0.0f, 5000.0f) / 1000.0f;
+        FTSTicker::GetCoreTicker().AddTicker(
+            FTickerDelegate::CreateLambda([SendNow](float) -> bool
+            {
+                // Re-resolves the viewport internally and no-ops if PIE ended.
+                SendNow(IE_Released);
+                return false;  // one shot
+            }),
+            DelaySeconds);
+        bReleaseScheduled = true;
     }
 
     TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
     R->SetStringField(TEXT("key"), KeyName);
     R->SetStringField(TEXT("event"), EventStr);
     R->SetBoolField(TEXT("dispatched"), true);
+    // Where the key was routed. "dispatched" only ever meant "we sent it"; when
+    // a key appears to do nothing, the focused widget is the thing that
+    // explains it.
+    const FString FocusedType = FocusedWidgetType();
+    if (FocusedType.IsEmpty()) R->SetField(TEXT("focused_widget"), MakeShared<FJsonValueNull>());
+    else                       R->SetStringField(TEXT("focused_widget"), FocusedType);
+    // Whether the UI consumed the press. False is not a failure — gameplay keys
+    // are SUPPOSED to fall through to the game — but when a key aimed at a
+    // widget appears to do nothing, this is the field that says why.
+    R->SetBoolField(TEXT("handled_by_ui"), *SlateHandled);
+    R->SetBoolField(TEXT("release_scheduled"), bReleaseScheduled);
+    if (bReleaseScheduled)
+    {
+        R->SetNumberField(TEXT("release_after_ms"), HeldMs);
+        R->SetStringField(TEXT("note"), TEXT("The release fires on a later tick. This call returns immediately, ")
+                                        TEXT("so the key is still down when you read this."));
+    }
     return FHaybaHandlerResult::Ok(R);
 }
 
@@ -484,6 +573,38 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEScreenshot(const TSharedPtr<FJsonObj
 
     FString Filename;
     if (P.IsValid()) P->TryGetStringField(TEXT("filename"), Filename);
+    // `path` accepted as an alias: the object_* tools call the same idea
+    // `path`, and callers reach for it. Silently ignoring it is how the field
+    // ended up polling a file that was never going to be the one checked.
+    if (Filename.IsEmpty() && P.IsValid()) P->TryGetStringField(TEXT("path"), Filename);
+
+    // `check_only` reports whether a previously requested file has landed, so a
+    // caller can poll without issuing another capture.
+    bool bCheckOnly = false;
+    if (P.IsValid()) P->TryGetBoolField(TEXT("check_only"), bCheckOnly);
+
+    if (bCheckOnly)
+    {
+        // check_only asks about a PREVIOUS capture, so minting a fresh
+        // timestamped default here is never right: the field repro polled with
+        // the exact filename the capture call returned, an upper layer dropped
+        // the param, and this branch invented a brand-new name that could not
+        // exist — {captured:false} forever, for a file already on disk. No
+        // filename means there is nothing to check; say so instead.
+        if (Filename.IsEmpty())
+        {
+            return FHaybaHandlerResult::Err(
+                TEXT("editor_pie_screenshot: check_only:true requires 'filename' — pass the exact filename ")
+                TEXT("the capture call returned. Without it there is no file to check, and inventing a new ")
+                TEXT("timestamped name would report captured:false forever."));
+        }
+        TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+        R->SetStringField(TEXT("filename"), Filename);
+        R->SetBoolField(TEXT("captured"), FPaths::FileExists(Filename));
+        R->SetBoolField(TEXT("requested"), false);
+        return FHaybaHandlerResult::Ok(R);
+    }
+
     if (Filename.IsEmpty())
     {
         Filename = FPaths::ProjectSavedDir() / TEXT("Screenshots") /
@@ -491,27 +612,1279 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEScreenshot(const TSharedPtr<FJsonObj
                                    *FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S")));
     }
 
-    // TODO(ue5.7): wire FScreenshotRequest::OnScreenshotCaptured() to capture
-    // the FColor buffer directly (currently waits on file write).
-    FScreenshotRequest::RequestScreenshot(Filename, /*bShowUI=*/false, /*bAddFilenameSuffix=*/false);
+    // Default to INCLUDING the UI: a PIE screenshot is almost always taken to see the
+    // UMG/HUD, and bShowUI=false yields a black frame for UI-only screens. Callers can
+    // pass show_ui:false for a scene-only capture.
+    bool bShowUI = true;
+    if (P.IsValid()) P->TryGetBoolField(TEXT("show_ui"), bShowUI);
+    FScreenshotRequest::RequestScreenshot(Filename, bShowUI, /*bAddFilenameSuffix=*/false);
 
-    // Pump ticker until the file appears or 3s elapses.
-    const double Deadline = FPlatformTime::Seconds() + 3.0;
-    while (FPlatformTime::Seconds() < Deadline)
-    {
-        FTSTicker::GetCoreTicker().Tick(0.005f);
-        FPlatformProcess::Sleep(0.01f);
-        if (FPaths::FileExists(Filename)) break;
-    }
-
+    // Returns immediately. The old code pumped the core ticker for up to three
+    // seconds waiting for the file — from inside a game-thread handler, which
+    // both froze the editor and re-entered systems that can tear PIE down while
+    // this command still held pointers into it.
+    //
+    // The screenshot is written by the engine a frame or two later. Poll for it
+    // with check_only rather than blocking the thread that has to render it.
     TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
     R->SetStringField(TEXT("filename"), Filename);
+    R->SetBoolField(TEXT("requested"), true);
     R->SetBoolField(TEXT("captured"), FPaths::FileExists(Filename));
+    R->SetStringField(TEXT("note"), TEXT("Capture requested. The engine writes the file on a later frame — ")
+                                    TEXT("call again with check_only:true (and the same filename) to see when it lands."));
     return FHaybaHandlerResult::Ok(R);
 }
 
+
+// ---------------------------------------------------------------------------
+// Interaction
+// ---------------------------------------------------------------------------
+//
+// Everything here obeys one rule the old code broke: a handler runs on the game
+// thread and must never pump the ticker or sleep. Input is dispatched and the
+// call returns; the world advances between calls, not during them.
+
+namespace
+{
+    /** Live PIE viewport client, or null when PIE is not running. Always
+     *  resolved at point of use — never cached across anything that can tick. */
+    UGameViewportClient* PIEViewportClient()
+    {
+        UWorld* W = GetPIEWorld();
+        if (!W) return nullptr;
+        UGameViewportClient* C = W->GetGameViewport();
+        return (C && C->Viewport) ? C : nullptr;
+    }
+
+    FKey MouseButtonFromString(const FString& InName)
+    {
+        const FString N = InName.ToLower();
+        if (N == TEXT("right"))  return EKeys::RightMouseButton;
+        if (N == TEXT("middle")) return EKeys::MiddleMouseButton;
+        return EKeys::LeftMouseButton;
+    }
+
+    FVector2D SendPointerMoveTo(const FVector2D& AbsTo);
+    void SendHoverRefresh();
+
+    /** The game window's top-left in desktop space, or the origin if there is
+     *  no window. Read at point of use — a PIE window can be moved. */
+    FVector2D WindowOriginOf(UGameViewportClient* Client)
+    {
+        if (Client)
+        {
+            if (TSharedPtr<SWindow> Win = Client->GetWindow())
+            {
+                // Copy-initialised, not FVector2D(...): Slate's deprecation
+                // shim for FVector2D returns are only IMPLICITLY convertible.
+                const FVector2D Origin = Win->GetPositionInScreen();
+                return Origin;
+            }
+        }
+        return FVector2D::ZeroVector;
+    }
+
+    /**
+     * Move the OS/Slate cursor to a pixel and report where it ended up.
+     *
+     * `bViewportRelative` decides how the incoming pixel is read, and getting
+     * this wrong is silent: the click still happens, just somewhere else.
+     *
+     * editor_pie_widget_tree reports ABSOLUTE desktop coordinates (that is what
+     * FGeometry::GetAbsolutePosition returns), and its note has always told
+     * callers to pass them straight to editor_pie_mouse. But this function used
+     * to add the window origin unconditionally, so doing exactly that
+     * double-counted it and every click landed offset by the window's screen
+     * position — down and right by roughly the title bar and border. The
+     * symptom is a click that "lands a few px below" the thing you aimed at, or
+     * misses the UI entirely and focuses the SViewport.
+     */
+    bool MoveCursorToPixel(UGameViewportClient* Client, const FVector2D& Px, bool bViewportRelative,
+                           FVector2D& OutAbsolute, FVector2D* OutCursorDelta = nullptr)
+    {
+        if (!Client || !Client->Viewport) return false;
+        if (!FSlateApplication::IsInitialized()) return false;
+
+        // Origin is always READ, never always applied: HaybaPieCoords::ToAbsolute
+        // decides. Keeping the decision in one testable function is the point —
+        // this is the line that produced a 24px error for months.
+        const FVector2D Origin = WindowOriginOf(Client);
+        OutAbsolute = HaybaPieCoords::ToAbsolute(Px, Origin, bViewportRelative);
+        const FVector2D Delta = SendPointerMoveTo(OutAbsolute);
+        if (OutCursorDelta) *OutCursorDelta = Delta;
+        return true;
+    }
+
+    /** Deliver a mouse button through Slate's hit-testing.
+     *
+     *  This is the difference between a click that works and one that appears to
+     *  do nothing. UGameViewportClient::InputKey feeds the GAME input pipeline —
+     *  player controller, Enhanced Input — and never consults the Slate widget
+     *  tree. A UMG button therefore never sees it: the cursor lands on exactly
+     *  the right pixel, and the press goes down a pipe the button is not
+     *  listening to.
+     *
+     *  FSlateApplication routes by cursor position, so it hit-tests the widget
+     *  under the pointer AND forwards anything the UI does not consume down to
+     *  the game viewport. One path serves both UI and gameplay input, in the
+     *  order a real click would. */
+    void SendMouseButton(UGameViewportClient* Client, const FKey& Button, EInputEvent Evt)
+    {
+        // Slate routes by cursor position, not through the viewport, but the
+        // viewport still gates WHETHER we should be injecting at all: without a
+        // live PIE viewport a click would land on the editor's own UI.
+        if (!Client || !Client->Viewport) return;
+        if (!FSlateApplication::IsInitialized()) return;
+        FSlateApplication& Slate = FSlateApplication::Get();
+
+        const FVector2D Pos = Slate.GetCursorPos();
+        const FVector2D LastPos = Slate.GetLastCursorPos();
+
+        // The button set is a POST-state snapshot, exactly as
+        // FSlateApplication::OnMouseDown / OnMouseUp build it: down includes the
+        // button being pressed, up excludes the one being released. This is not
+        // cosmetic. Anything that drag-scrolls reads it off the *move* events
+        // that follow — SScrollBox::OnMouseMove gates its right-click drag
+        // scrolling on MouseEvent.IsMouseButtonDown(EKeys::RightMouseButton) —
+        // and those moves take their set from Slate's PressedMouseButtons, which
+        // only ever gets populated because this event carries the right button.
+        TSet<FKey> Pressed = Slate.GetPressedMouseButtons();
+        if (Evt == IE_Released) Pressed.Remove(Button);
+        else                    Pressed.Add(Button);
+
+        // Explicit user/pointer index rather than the 7-arg overload's implicit
+        // 0: FSlateApplication only records PressedMouseButtons when the event's
+        // user index matches CursorUserIndex, and only the cursor pointer index
+        // participates in mouse capture.
+        FPointerEvent MouseEvent(
+            (uint32)Slate.GetUserIndexForMouse(),
+            FSlateApplication::CursorPointerIndex,
+            Pos, LastPos,
+            Pressed,
+            Button,
+            /*WheelDelta=*/0.0f,
+            Slate.GetModifierKeys());
+
+        if (Evt == IE_Pressed)
+        {
+            // A widget that wants the rest of the gesture answers this with
+            // FReply::Handled().CaptureMouse(AsShared()); FSlateApplication
+            // installs the captor while processing the reply. That is how
+            // SScrollBar::OnMouseMove's HasMouseCapture() gate gets satisfied —
+            // we must not, and do not, set capture ourselves.
+            Slate.ProcessMouseButtonDownEvent(nullptr, MouseEvent);
+        }
+        else if (Evt == IE_Released)
+        {
+            Slate.ProcessMouseButtonUpEvent(MouseEvent);
+        }
+        else if (Evt == IE_DoubleClick)
+        {
+            Slate.ProcessMouseButtonDoubleClickEvent(nullptr, MouseEvent);
+        }
+    }
+
+    /**
+     * Move the pointer to an absolute desktop pixel and tell Slate it moved.
+     * Returns the cursor delta the event actually carried.
+     *
+     * THE ORDER OF THESE THREE LINES IS THE WHOLE FIX.
+     *
+     * FSlateApplication::SetCursorPos forwards to FSlateUser::SetPointerPosition,
+     * which ends in:
+     *
+     *     void FSlateUser::UpdatePointerPosition(uint32 PointerIndex, const FVector2f& Position)
+     *     {
+     *         PointerPositionsByIndex.FindOrAdd(PointerIndex)         = Position;
+     *         PreviousPointerPositionsByIndex.FindOrAdd(PointerIndex) = Position;
+     *     }
+     *
+     * — it writes the SAME value to the current and the previous position. So
+     * after a SetCursorPos, GetLastCursorPos() is the DESTINATION, not the
+     * origin, and an FPointerEvent built from (GetCursorPos(), GetLastCursorPos())
+     * has CursorDelta == (0,0). That is precisely what this harness did, on every
+     * synthetic move it has ever sent.
+     *
+     * A zero delta is not a small move, it is no move at all. SScrollBar::OnMouseMove
+     * returns Unhandled on it; SScrollBox's right-click drag scrolling adds 0.0 to
+     * its accumulator and never crosses the drag trigger distance. Both of those
+     * were measured dead in the field (Aphrosia docs/gauntlet/scroll-dossier.md,
+     * 2026-08-02) and both were the harness, not the widget.
+     *
+     * So: read the origin BEFORE moving, move, then read back what Slate stored
+     * (it truncates to whole pixels) and build the event from the real pair.
+     */
+    FVector2D SendPointerMoveTo(const FVector2D& AbsTo)
+    {
+        if (!FSlateApplication::IsInitialized()) return FVector2D::ZeroVector;
+        FSlateApplication& Slate = FSlateApplication::Get();
+
+        const FVector2D From = Slate.GetCursorPos();   // BEFORE the move.
+        Slate.SetCursorPos(AbsTo);
+        const FVector2D To = Slate.GetCursorPos();     // What Slate stored.
+
+        // PressedButtons comes from Slate's own set, which our press populated,
+        // so a move dispatched between a press and a release carries the held
+        // button the way a real one does.
+        FPointerEvent MoveEvent(
+            (uint32)Slate.GetUserIndexForMouse(),
+            FSlateApplication::CursorPointerIndex,
+            To, From,
+            Slate.GetPressedMouseButtons(),
+            EKeys::Invalid,
+            /*WheelDelta=*/0.0f,
+            Slate.GetModifierKeys());
+
+        Slate.ProcessMouseMoveEvent(MoveEvent);
+        return To - From;
+    }
+
+    /** A deliberately ZERO-delta move at the current position.
+     *
+     *  Not a gesture: this exists to make Slate re-run its hit test so hover /
+     *  MouseEnter / MouseLeave are recomputed after a release. Zero delta is
+     *  correct here — nothing moved. Every place that means "the pointer
+     *  travelled" must use SendPointerMoveTo instead. */
+    void SendHoverRefresh()
+    {
+        if (!FSlateApplication::IsInitialized()) return;
+        const FVector2D Here = FSlateApplication::Get().GetCursorPos();
+        SendPointerMoveTo(Here);
+    }
+
+    /**
+     * Deliver a mouse wheel notch through SLATE.
+     *
+     * This used to be UGameViewportClient::InputKey(MouseWheelAxis, IE_Axis),
+     * which is the game input pipeline. FSlateApplication never saw it, so
+     * SWidget::OnMouseWheel never fired and no ScrollBox, list view, combo box or
+     * spin box could be scrolled by this harness at all. A positive control
+     * proved it reached nothing whatsoever: with no UI open, action:"scroll" over
+     * the map left the camera bit-identical while a MouseScrollUp key press moved
+     * it.
+     *
+     * Constructed to match FSlateApplication::OnMouseWheel(Delta, CursorPos)
+     * field for field, and dispatched through the same public entry point Slate
+     * uses for a real wheel, so the event bubbles from the leafmost widget under
+     * the cursor outward — nested scrollboxes included, inner one first.
+     *
+     * This also serves gameplay: whatever the UI declines reaches SViewport,
+     * whose FSceneViewport::OnMouseWheel raises MouseScrollUp/MouseScrollDown and
+     * the MouseWheelAxis on the viewport client. One path, both consumers, in the
+     * order a real wheel would hit them.
+     */
+    bool SendMouseWheel(float Delta)
+    {
+        if (!FSlateApplication::IsInitialized()) return false;
+        FSlateApplication& Slate = FSlateApplication::Get();
+
+        const FVector2D Pos = Slate.GetCursorPos();
+        FPointerEvent WheelEvent(
+            (uint32)Slate.GetUserIndexForMouse(),
+            FSlateApplication::CursorPointerIndex,
+            Pos, Pos,
+            Slate.GetPressedMouseButtons(),
+            EKeys::Invalid,
+            Delta,
+            Slate.GetModifierKeys());
+
+        return Slate.ProcessMouseWheelOrGestureEvent(WheelEvent, nullptr);
+    }
+
+    /** The widget currently holding pointer capture, as a type name. Empty when
+     *  nothing does — which is the answer to "why did my drag do nothing", so it
+     *  belongs in the response rather than in a log nobody reads. */
+    FString PointerCaptorType()
+    {
+        if (!FSlateApplication::IsInitialized()) return FString();
+        TSharedPtr<FSlateUser> User = FSlateApplication::Get().GetCursorUser();
+        if (!User.IsValid()) return FString();
+        TSharedPtr<SWidget> Captor = User->GetCursorCaptor();
+        return Captor.IsValid() ? Captor->GetTypeAsString() : FString();
+    }
+
+    /** Slate's currently-held mouse buttons, as JSON. */
+    TArray<TSharedPtr<FJsonValue>> PressedButtonsJson()
+    {
+        TArray<TSharedPtr<FJsonValue>> Out;
+        if (!FSlateApplication::IsInitialized()) return Out;
+        for (const FKey& K : FSlateApplication::Get().GetPressedMouseButtons())
+        {
+            Out.Add(MakeShared<FJsonValueString>(K.ToString()));
+        }
+        return Out;
+    }
+
+    /** Put Slate's synthetic-pointer state back to neutral after a release.
+     *
+     *  Field failure (UE 5.8): press at A, move to B outside the widget,
+     *  release at B — after that sequence synthetic moves stopped updating
+     *  hover (OnHovered never fired again, focus read back "SWindow") until
+     *  PIE restarted, while REAL mouse input kept working. The synthetic
+     *  stream has no OS-level counterpart cleaning up after it: a widget (or
+     *  the game viewport in CaptureDuringMouseDown mode) still holding Slate
+     *  mouse capture after our release keeps every later synthetic move routed
+     *  to itself, so nothing else ever sees MouseEnter/MouseLeave again.
+     *
+     *  Two defensive steps, both no-ops in the healthy case:
+     *    1. if ANY captor survives the release, drop it — after a completed
+     *       press+release pair no UI widget legitimately holds pointer capture;
+     *    2. send one synthetic move at the current position so hover state is
+     *       recomputed from a fresh hit-test rather than left stale.
+     *
+     *  Returns whether a stale captor was actually cleared, so callers can
+     *  surface it — a click that needed this is a click whose release went
+     *  somewhere surprising, and that is worth seeing in the response.
+     *
+     *  Residual risk, documented rather than hidden: a game viewport in
+     *  CapturePermanently mode loses its capture here too and re-acquires on
+     *  the next click into the world. That trade is taken deliberately — these
+     *  tools drive UI, and a dead hover pipeline until PIE restart is worse
+     *  than a mouse-look game needing one extra click. */
+    bool ResetPointerStateAfterRelease()
+    {
+        if (!FSlateApplication::IsInitialized()) return false;
+        FSlateApplication& Slate = FSlateApplication::Get();
+        bool bClearedCapture = false;
+        if (Slate.HasAnyMouseCaptor())
+        {
+            Slate.ReleaseAllPointerCapture();
+            bClearedCapture = true;
+        }
+        SendHoverRefresh();
+        return bClearedCapture;
+    }
+
+    /** The widget Slate will deliver keyboard input to, as a type name.
+     *  Empty when nothing holds focus — which is itself the answer to "why did
+     *  my text go nowhere". */
+    FString FocusedWidgetType()
+    {
+        if (!FSlateApplication::IsInitialized()) return FString();
+        TSharedPtr<SWidget> Focused = FSlateApplication::Get().GetKeyboardFocusedWidget();
+        return Focused.IsValid() ? Focused->GetTypeAsString() : FString();
+    }
+
+    /** Deliver a key through Slate, and report whether the UI consumed it.
+     *
+     *  Exactly the distinction SendMouseButton documents, on the keyboard path:
+     *  UGameViewportClient::InputKey feeds the GAME input pipeline — player
+     *  controller, Enhanced Input — and never consults the Slate widget tree.
+     *  A focused UMG text box therefore never sees it. Real platform input goes
+     *  to the focused widget FIRST and only falls through to the viewport when
+     *  the UI does not consume it.
+     *
+     *  Returns true when Slate handled the event, so the caller can fall back
+     *  to the viewport and leave gameplay bindings (WASD, action keys) behaving
+     *  exactly as they did before. */
+    bool SendKeyThroughSlate(const FKey& Key, EInputEvent Evt)
+    {
+        if (!FSlateApplication::IsInitialized()) return false;
+        FSlateApplication& Slate = FSlateApplication::Get();
+        const uint32 UserIndex = Slate.GetUserIndexForKeyboard();
+
+        FKeyEvent KeyEvent(
+            Key,
+            FSlateApplication::Get().GetModifierKeys(),
+            UserIndex,
+            /*bIsRepeat=*/false,
+            /*CharacterCode=*/0,
+            /*KeyCode=*/0);
+
+        if (Evt == IE_Released) return Slate.ProcessKeyUpEvent(KeyEvent);
+
+        const bool bHandled = Slate.ProcessKeyDownEvent(KeyEvent);
+
+        // Slate's text layout keys backspace and submit off the CHARACTER event,
+        // not the key event — FSlateEditableTextLayout tests for '\b' and '\r'.
+        // The platform sends both a key-down and a character for these, so a
+        // synthetic press that sends only the key-down looks like it worked and
+        // deletes nothing. Mirroring the platform is what makes
+        // editor_pie_press_key "BackSpace" actually erase a character.
+        //
+        // Deliberately only these two. Tab already works through OnKeyDown as a
+        // focus change, and also sending '\t' would insert a tab into whatever
+        // text box it just moved to.
+        TCHAR Companion = 0;
+        if (Key == EKeys::BackSpace)                                  Companion = TEXT('\b');
+        else if (Key == EKeys::Enter)                                 Companion = TEXT('\r');
+
+        if (Companion != 0)
+        {
+            FCharacterEvent CharEvent(
+                Companion,
+                Slate.GetModifierKeys(),
+                UserIndex,
+                /*bIsRepeat=*/false);
+            return Slate.ProcessKeyCharEvent(CharEvent) || bHandled;
+        }
+
+        return bHandled;
+    }
+
+    /** Deliver one character through Slate's focused widget.
+     *
+     *  Slate text widgets insert on OnKeyChar, not OnKeyDown — the platform
+     *  normally produces BOTH for a printable key, and only the character event
+     *  carries what shift/layout/IME actually resolved to. Returns true when a
+     *  widget consumed it. */
+    bool SendCharThroughSlate(TCHAR C)
+    {
+        if (!FSlateApplication::IsInitialized()) return false;
+        FSlateApplication& Slate = FSlateApplication::Get();
+        FCharacterEvent CharEvent(
+            C,
+            Slate.GetModifierKeys(),
+            Slate.GetUserIndexForKeyboard(),
+            /*bIsRepeat=*/false);
+        return Slate.ProcessKeyCharEvent(CharEvent);
+    }
+
+    // Defined below; the editable-text lookups sit above it and need it.
+    FString CollectDescendantText(const TSharedRef<SWidget>& W, int32 Depth);
+
+    /** The first editable-text widget at or beneath `W`, depth-first.
+     *
+     *  SEditableTextBox is a wrapper: the widget that actually holds the text
+     *  is a child. Setting text on the box does nothing, silently, which is
+     *  exactly the class of failure these tools keep producing. */
+    TSharedPtr<SWidget> FindEditableDescendant(const TSharedRef<SWidget>& W, int32 Depth = 0)
+    {
+        if (Depth > 8) return nullptr;
+        const FString T = W->GetTypeAsString();
+        // Match the leaf editors, not the Box wrappers around them.
+        if ((T.Contains(TEXT("SEditableText")) || T.Contains(TEXT("SMultiLineEditableText")))
+            && !T.Contains(TEXT("Box")))
+        {
+            return W;
+        }
+        FChildren* Children = W->GetChildren();
+        if (!Children) return nullptr;
+        for (int32 i = 0; i < Children->Num(); ++i)
+        {
+            if (TSharedPtr<SWidget> Found = FindEditableDescendant(Children->GetChildAt(i), Depth + 1))
+            {
+                return Found;
+            }
+        }
+        return nullptr;
+    }
+
+    /** Find an editable text widget by the text visible on or near it.
+     *
+     *  Matches the field's own content INCLUDING its placeholder, because an
+     *  empty login box is identified by the word "Username" that it is showing
+     *  — that is how a person finds it, so it is how the tool should. */
+    TSharedPtr<SWidget> FindEditableByText(const TSharedRef<SWidget>& Root, const FString& Match, int32 Depth = 0)
+    {
+        if (Depth > 60) return nullptr;
+        const FString T = Root->GetTypeAsString();
+        if (T.Contains(TEXT("EditableText")))
+        {
+            const FString Flat = CollectDescendantText(Root, 0);
+            if (Flat.Contains(Match, ESearchCase::IgnoreCase))
+            {
+                if (TSharedPtr<SWidget> Leaf = FindEditableDescendant(Root)) return Leaf;
+                return Root;
+            }
+        }
+        FChildren* Children = Root->GetChildren();
+        if (!Children) return nullptr;
+        for (int32 i = 0; i < Children->Num(); ++i)
+        {
+            if (TSharedPtr<SWidget> Found = FindEditableByText(Children->GetChildAt(i), Match, Depth + 1))
+            {
+                return Found;
+            }
+        }
+        return nullptr;
+    }
+
+    /** Text rendered anywhere beneath a widget, flattened.
+     *
+     *  Depth-limited: this is for identifying a control by its label, not for
+     *  dumping a whole panel's contents into its parent's search text. */
+    FString CollectDescendantText(const TSharedRef<SWidget>& W, int32 Depth)
+    {
+        if (Depth > 4) return FString();
+        FString Out = W->GetAccessibleText().ToString();
+        FChildren* Kids = W->GetChildren();
+        if (Kids)
+        {
+            for (int32 i = 0; i < Kids->Num(); ++i)
+            {
+                const FString Child = CollectDescendantText(Kids->GetChildAt(i), Depth + 1);
+                if (Child.IsEmpty()) continue;
+                if (!Out.IsEmpty()) Out.AppendChar(TEXT(' '));
+                Out.Append(Child);
+            }
+        }
+        return Out.TrimStartAndEnd();
+    }
+
+    /** Depth-first walk of the live Slate tree under a window. */
+    void CollectSlateWidgets(const TSharedRef<SWidget>& W, int32 Depth,
+                             TArray<TSharedPtr<FJsonValue>>& Out, int32 MaxDepth)
+    {
+        if (Depth > MaxDepth) return;
+
+        const FGeometry& G = W->GetTickSpaceGeometry();
+        const FVector2D Pos  = FVector2D(G.GetAbsolutePosition());
+        const FVector2D Size = FVector2D(G.GetLocalSize()) * G.Scale;
+
+        // Zero-size widgets are layout scaffolding, not things to click.
+        if (Size.X > 0.5 && Size.Y > 0.5)
+        {
+            TSharedPtr<FJsonObject> E = MakeShared<FJsonObject>();
+            E->SetStringField(TEXT("type"), W->GetTypeAsString());
+            E->SetStringField(TEXT("tag"), W->GetTag().ToString());
+            E->SetNumberField(TEXT("x"), Pos.X);
+            E->SetNumberField(TEXT("y"), Pos.Y);
+            E->SetNumberField(TEXT("width"), Size.X);
+            E->SetNumberField(TEXT("height"), Size.Y);
+            E->SetNumberField(TEXT("center_x"), Pos.X + Size.X * 0.5);
+            E->SetNumberField(TEXT("center_y"), Pos.Y + Size.Y * 0.5);
+            E->SetNumberField(TEXT("depth"), Depth);
+            E->SetBoolField(TEXT("enabled"), W->IsEnabled());
+            E->SetBoolField(TEXT("interactive"), W->IsInteractable());
+            // A button's label lives in a child STextBlock, so the button's own
+            // accessible text is usually empty. Matching on that alone meant
+            // "click the widget that says Start" could not find the button that
+            // visibly says Start. Aggregate what the subtree renders instead.
+            const FString OwnText = W->GetAccessibleText().ToString();
+            const FString SubText = CollectDescendantText(W, 0);
+            const FString Searchable = OwnText.IsEmpty() ? SubText : OwnText;
+            if (!Searchable.IsEmpty()) E->SetStringField(TEXT("text"), Searchable);
+            Out.Add(MakeShared<FJsonValueObject>(E));
+        }
+
+        FChildren* Children = W->GetChildren();
+        if (!Children) return;
+        for (int32 i = 0; i < Children->Num(); ++i)
+        {
+            CollectSlateWidgets(Children->GetChildAt(i), Depth + 1, Out, MaxDepth);
+        }
+    }
+}
+
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEMouse(const TSharedPtr<FJsonObject>& P)
+{
+    UGameViewportClient* Client = PIEViewportClient();
+    if (!Client) return FHaybaHandlerResult::Err(TEXT("no PIE viewport (start PIE first)"));
+    if (!P.IsValid()) return FHaybaHandlerResult::Err(TEXT("editor_pie_mouse: missing params"));
+
+    FString Action = TEXT("click");
+    P->TryGetStringField(TEXT("action"), Action);
+    Action = Action.ToLower();
+
+    double X = 0.0, Y = 0.0;
+    const bool bHasX = P->TryGetNumberField(TEXT("x"), X);
+    const bool bHasY = P->TryGetNumberField(TEXT("y"), Y);
+
+    FString ButtonName = TEXT("left");
+    P->TryGetStringField(TEXT("button"), ButtonName);
+    const FKey Button = MouseButtonFromString(ButtonName);
+
+    // Absolute by default, because that is what editor_pie_widget_tree reports
+    // and what this command has always claimed to accept. Resolved once here so
+    // the drag path below cannot disagree with the initial positioning — a drag
+    // whose start and end were read in different spaces would travel a
+    // completely wrong distance.
+    FString Space = TEXT("absolute");
+    P->TryGetStringField(TEXT("coordinate_space"), Space);
+    const bool bViewportRelative = Space.Equals(TEXT("viewport"), ESearchCase::IgnoreCase);
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetStringField(TEXT("action"), Action);
+
+    // The cursor delta of the last move dispatched, and how many moves actually
+    // carried one. These are the numbers that distinguish "the widget ignored my
+    // drag" from "the harness never moved the pointer" — the confusion that cost
+    // three rounds of false FAIL verdicts on a working ScrollBox.
+    FVector2D LastDelta = FVector2D::ZeroVector;
+    int32 MovesDelivered = 0;
+
+    const bool bNeedsPosition =
+        Action == TEXT("move") || Action == TEXT("click") || Action == TEXT("double_click") ||
+        Action == TEXT("press") || Action == TEXT("release") || Action == TEXT("drag");
+
+    // scroll takes x/y too now, and OPTIONALLY: a wheel is delivered to whatever
+    // is under the cursor, so "scroll the panel" needs a way to say where the
+    // cursor is. Without this the wheel went wherever the pointer happened to be
+    // left by the previous call, which is not a thing a caller can reason about.
+    if (bNeedsPosition || (Action == TEXT("scroll") && bHasX && bHasY))
+    {
+        if (bNeedsPosition && (!bHasX || !bHasY))
+            return FHaybaHandlerResult::Err(TEXT("editor_pie_mouse: x and y are required for this action"));
+
+        FVector2D Abs;
+        if (!MoveCursorToPixel(Client, FVector2D(X, Y), bViewportRelative, Abs, &LastDelta))
+            return FHaybaHandlerResult::Err(TEXT("editor_pie_mouse: could not position the cursor"));
+        if (!LastDelta.IsNearlyZero()) ++MovesDelivered;
+        R->SetNumberField(TEXT("x"), X);
+        R->SetNumberField(TEXT("y"), Y);
+        R->SetStringField(TEXT("coordinate_space"), bViewportRelative ? TEXT("viewport") : TEXT("absolute"));
+        // Where the cursor actually went. When these differ from x/y the
+        // coordinate space is not what the caller assumed, which is otherwise
+        // invisible until the click does nothing.
+        R->SetNumberField(TEXT("absolute_x"), Abs.X);
+        R->SetNumberField(TEXT("absolute_y"), Abs.Y);
+    }
+
+    if (Action == TEXT("move"))
+    {
+        // Position only.
+    }
+    else if (Action == TEXT("press"))
+    {
+        // No pointer-state reset here: the caller is deliberately holding the
+        // button, and any capture taken by the pressed widget must survive
+        // until the matching release.
+        SendMouseButton(Client, Button, IE_Pressed);
+    }
+    else if (Action == TEXT("release"))
+    {
+        SendMouseButton(Client, Button, IE_Released);
+        R->SetBoolField(TEXT("capture_cleared"), ResetPointerStateAfterRelease());
+    }
+    else if (Action == TEXT("click"))
+    {
+        SendMouseButton(Client, Button, IE_Pressed);
+        SendMouseButton(Client, Button, IE_Released);
+        R->SetBoolField(TEXT("capture_cleared"), ResetPointerStateAfterRelease());
+    }
+    else if (Action == TEXT("double_click"))
+    {
+        SendMouseButton(Client, Button, IE_Pressed);
+        SendMouseButton(Client, Button, IE_Released);
+        SendMouseButton(Client, Button, IE_DoubleClick);
+        SendMouseButton(Client, Button, IE_Released);
+        R->SetBoolField(TEXT("capture_cleared"), ResetPointerStateAfterRelease());
+    }
+    else if (Action == TEXT("drag"))
+    {
+        double ToX = 0.0, ToY = 0.0;
+        if (!P->TryGetNumberField(TEXT("to_x"), ToX) || !P->TryGetNumberField(TEXT("to_y"), ToY))
+            return FHaybaHandlerResult::Err(TEXT("editor_pie_mouse drag: to_x and to_y are required"));
+
+        SendMouseButton(Client, Button, IE_Pressed);
+        // Whoever answered the press by taking capture. A drag against a widget
+        // that took no capture cannot work, and saying so here is cheaper than
+        // another round of measuring the widget.
+        R->SetStringField(TEXT("captor_after_press"), PointerCaptorType());
+
+        // Intermediate positions matter twice over. A widget that tracks deltas
+        // ignores a single jump; and Slate's own drag detection
+        // (FSlateUser::DetectDrag, FReply::DetectDrag) only fires once the
+        // pointer has travelled GetDragTriggerDistance() ACROSS MOVE EVENTS.
+        //
+        // The path is planned rather than lerped inline so that no step is a
+        // sub-pixel no-op: Slate truncates pointer positions to whole pixels, so
+        // two waypoints less than a pixel apart produce CursorDelta == (0,0),
+        // which SScrollBar::OnMouseMove treats as no movement at all. See
+        // HaybaPieGesture::PlanDragPath, which is unit-tested.
+        int32 Steps = 8;
+        P->TryGetNumberField(TEXT("steps"), Steps);
+        const TArray<FVector2D> Path = HaybaPieGesture::PlanDragPath(
+            FVector2D(X, Y), FVector2D(ToX, ToY), Steps);
+
+        FVector2D Abs;
+        FVector2D TotalDelta = FVector2D::ZeroVector;
+        for (const FVector2D& Waypoint : Path)
+        {
+            FVector2D StepDelta = FVector2D::ZeroVector;
+            MoveCursorToPixel(Client, Waypoint, bViewportRelative, Abs, &StepDelta);
+            if (!StepDelta.IsNearlyZero()) ++MovesDelivered;
+            TotalDelta += StepDelta;
+            LastDelta = StepDelta;
+        }
+
+        SendMouseButton(Client, Button, IE_Released);
+        // The drag-release-outside sequence is the one that reproduced the
+        // stale-hover state in the field (see ResetPointerStateAfterRelease).
+        R->SetBoolField(TEXT("capture_cleared"), ResetPointerStateAfterRelease());
+        R->SetNumberField(TEXT("to_x"), ToX);
+        R->SetNumberField(TEXT("to_y"), ToY);
+        R->SetNumberField(TEXT("steps_planned"), Path.Num());
+        R->SetNumberField(TEXT("total_travel_x"), TotalDelta.X);
+        R->SetNumberField(TEXT("total_travel_y"), TotalDelta.Y);
+        if (Path.Num() == 0)
+        {
+            // Otherwise a zero-length drag reads as a gesture that was performed
+            // and ignored, rather than one that was never performed.
+            R->SetStringField(TEXT("warning"),
+                TEXT("Start and end round to the same pixel, so NO move events were sent. "
+                     "This is not a drag; widen the drag or check the coordinate space."));
+        }
+    }
+    else if (Action == TEXT("scroll"))
+    {
+        double Delta = 1.0;
+        P->TryGetNumberField(TEXT("delta"), Delta);
+
+        // Through Slate, so SWidget::OnMouseWheel fires and bubbles. See
+        // SendMouseWheel for why the old UGameViewportClient::InputKey path
+        // reached no widget at all.
+        const bool bSlateHandled = SendMouseWheel((float)Delta);
+
+        // Fallback, not a duplicate: Slate returns false when nothing under the
+        // cursor consumed the wheel, which includes the cursor not being over a
+        // Slate window at all. In that case the game should still get its axis,
+        // exactly as it did before this change. When Slate DOES handle it the
+        // wheel already reached the viewport through SViewport, so sending this
+        // too would double-apply it.
+        bool bViewportFallback = false;
+        if (!bSlateHandled && Client->Viewport)
+        {
+            const FInputDeviceId DeviceId = IPlatformInputDeviceMapper::Get().GetDefaultInputDevice();
+            FInputKeyEventArgs Args(Client->Viewport, DeviceId, EKeys::MouseWheelAxis, IE_Axis,
+                                    (float)Delta, /*bIsTouch=*/false, /*EventTimestamp=*/0u);
+            Client->InputKey(Args);
+            bViewportFallback = true;
+        }
+
+        R->SetNumberField(TEXT("delta"), Delta);
+        R->SetBoolField(TEXT("handled_by_slate"), bSlateHandled);
+        R->SetStringField(TEXT("handled_by"),
+            bSlateHandled ? TEXT("slate") : (bViewportFallback ? TEXT("game_viewport") : TEXT("nothing")));
+        if (!bSlateHandled)
+        {
+            R->SetStringField(TEXT("warning"),
+                TEXT("No Slate widget under the cursor consumed the wheel. Position the cursor "
+                     "over the target first (pass x/y, from editor_pie_widget_tree), and check "
+                     "the target's ConsumeMouseWheel setting."));
+        }
+    }
+    else
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("editor_pie_mouse: unknown action '%s' (move, click, double_click, press, release, drag, scroll)"),
+            *Action));
+    }
+
+    if (Action != TEXT("scroll"))
+    {
+        // Captured AFTER the action dispatched — it used to be read before the
+        // press/release ran, so for click it reported the PRE-click focus and
+        // "did my click land" was answered with stale information.
+        R->SetStringField(TEXT("focused_widget_after"), FocusedWidgetType());
+    }
+
+    // The two facts SScrollBar::OnMouseMove — and every other capture+delta
+    // consumer — actually gates on. Reporting them turns "the widget didn't
+    // respond" into a decidable question: a non-zero cursor_delta with a named
+    // captor and no state change is the WIDGET's problem; a zero delta or an
+    // empty captor is the HARNESS's. Both used to be invisible, which is how a
+    // harness fault masqueraded as a product bug for three rounds.
+    R->SetNumberField(TEXT("cursor_delta_x"), LastDelta.X);
+    R->SetNumberField(TEXT("cursor_delta_y"), LastDelta.Y);
+    R->SetNumberField(TEXT("moves_delivered"), MovesDelivered);
+    {
+        const FString Captor = PointerCaptorType();
+        if (Captor.IsEmpty()) R->SetField(TEXT("mouse_captor"), MakeShared<FJsonValueNull>());
+        else                  R->SetStringField(TEXT("mouse_captor"), Captor);
+    }
+
+    R->SetArrayField(TEXT("pressed_buttons"), PressedButtonsJson());
+    R->SetStringField(TEXT("button"), ButtonName);
+    R->SetBoolField(TEXT("dispatched"), true);
+    return FHaybaHandlerResult::Ok(R);
+}
+
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIETypeText(const TSharedPtr<FJsonObject>& P)
+{
+    UGameViewportClient* Client = PIEViewportClient();
+    if (!Client) return FHaybaHandlerResult::Err(TEXT("no PIE viewport (start PIE first)"));
+
+    FString Text;
+    if (!P.IsValid() || !P->TryGetStringField(TEXT("text"), Text))
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_type_text: text is required"));
+
+    // Character events, not key events: a text field wants the character that
+    // was produced, which is not recoverable from a keycode alone once shift,
+    // layout and IME are involved.
+    //
+    // Sent through Slate, NOT UGameViewportClient::InputChar. The viewport path
+    // feeds the game input pipeline, which never consults the widget tree — a
+    // focused SEditableText never sees a character delivered that way, which is
+    // why this command used to report characters_sent and insert nothing. The
+    // viewport remains the fallback for whatever the UI declines, so a game that
+    // reads raw chars off the viewport still works.
+    const FString FocusedBefore = FocusedWidgetType();
+    const FInputDeviceId DeviceId = IPlatformInputDeviceMapper::Get().GetDefaultInputDevice();
+    int32 Sent = 0;
+    int32 Accepted = 0;
+    for (const TCHAR C : Text)
+    {
+        if (SendCharThroughSlate(C))
+        {
+            ++Accepted;
+        }
+        else if (Client && Client->Viewport)
+        {
+            Client->InputChar(Client->Viewport, DeviceId.GetId(), C);
+        }
+        ++Sent;
+    }
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetStringField(TEXT("text"), Text);
+    R->SetNumberField(TEXT("characters_sent"), Sent);
+    // The number that actually answers "did the text land". characters_sent
+    // only ever meant "we tried"; a caller reading it as success is exactly how
+    // this bug went unnoticed.
+    R->SetNumberField(TEXT("characters_accepted_by_ui"), Accepted);
+    if (FocusedBefore.IsEmpty())
+    {
+        R->SetField(TEXT("focused_widget"), MakeShared<FJsonValueNull>());
+    }
+    else
+    {
+        R->SetStringField(TEXT("focused_widget"), FocusedBefore);
+    }
+
+    if (Accepted == 0)
+    {
+        R->SetStringField(TEXT("warning"),
+            FocusedBefore.IsEmpty()
+                ? TEXT("NOTHING HAS KEYBOARD FOCUS, so no UI widget accepted these characters. ")
+                  TEXT("Click the field first (editor_pie_click_widget), then re-send. The characters ")
+                  TEXT("were forwarded to the game viewport, which a text box does not read.")
+                : TEXT("The focused widget accepted no characters — it is focused but not a text ")
+                  TEXT("input, or it is read-only. Verify with a screenshot before treating this as done."));
+    }
+    R->SetStringField(TEXT("note"), TEXT("Characters go to whatever currently has keyboard focus. ")
+                                    TEXT("Click the field first if focus is not already there."));
+    return FHaybaHandlerResult::Ok(R);
+}
+
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEAxis(const TSharedPtr<FJsonObject>& P)
+{
+    UGameViewportClient* Client = PIEViewportClient();
+    if (!Client) return FHaybaHandlerResult::Err(TEXT("no PIE viewport (start PIE first)"));
+
+    FString KeyName;
+    if (!P.IsValid() || !P->TryGetStringField(TEXT("key"), KeyName) || KeyName.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_axis: key is required (e.g. Gamepad_LeftX, MouseX)"));
+
+    const FKey Key(*KeyName);
+    if (!Key.IsValid())
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("editor_pie_axis: invalid key '%s'"), *KeyName));
+    if (!Key.IsAxis1D() && !Key.IsAxis2D() && !Key.IsAxis3D())
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("editor_pie_axis: '%s' is not an axis key — use editor_pie_press_key for buttons"), *KeyName));
+
+    double Value = 0.0;
+    P->TryGetNumberField(TEXT("value"), Value);
+
+    const FInputDeviceId DeviceId = IPlatformInputDeviceMapper::Get().GetDefaultInputDevice();
+    FInputKeyEventArgs Args(Client->Viewport, DeviceId, Key, IE_Axis,
+                            (float)Value, /*bIsTouch=*/false, /*EventTimestamp=*/0u);
+    Client->InputKey(Args);
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetStringField(TEXT("key"), KeyName);
+    R->SetNumberField(TEXT("value"), Value);
+    R->SetStringField(TEXT("note"), TEXT("Axis input applies for the frame it is delivered. For sustained "
+                                         "movement, send it again each step rather than expecting it to latch."));
+    return FHaybaHandlerResult::Ok(R);
+}
+
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEWidgetTree(const TSharedPtr<FJsonObject>& P)
+{
+    UGameViewportClient* Client = PIEViewportClient();
+    if (!Client) return FHaybaHandlerResult::Err(TEXT("no PIE viewport (start PIE first)"));
+    if (!FSlateApplication::IsInitialized())
+        return FHaybaHandlerResult::Err(TEXT("Slate is not initialized"));
+
+    TSharedPtr<SWindow> Win = Client->GetWindow();
+    if (!Win.IsValid()) return FHaybaHandlerResult::Err(TEXT("PIE window not found"));
+
+    int32 MaxDepth = 40;
+    if (P.IsValid()) P->TryGetNumberField(TEXT("max_depth"), MaxDepth);
+    MaxDepth = FMath::Clamp(MaxDepth, 1, 200);
+
+    FString Filter;
+    if (P.IsValid()) P->TryGetStringField(TEXT("filter"), Filter);
+
+    TArray<TSharedPtr<FJsonValue>> All;
+    CollectSlateWidgets(Win.ToSharedRef(), 0, All, MaxDepth);
+
+    TArray<TSharedPtr<FJsonValue>> Kept;
+    for (const TSharedPtr<FJsonValue>& V : All)
+    {
+        if (Filter.IsEmpty()) { Kept.Add(V); continue; }
+        const TSharedPtr<FJsonObject> O = V->AsObject();
+        if (!O.IsValid()) continue;
+        FString Type, Text, Tag;
+        O->TryGetStringField(TEXT("type"), Type);
+        O->TryGetStringField(TEXT("text"), Text);
+        O->TryGetStringField(TEXT("tag"), Tag);
+        if (Type.Contains(Filter) || Text.Contains(Filter) || Tag.Contains(Filter)) Kept.Add(V);
+    }
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetArrayField(TEXT("widgets"), Kept);
+    R->SetNumberField(TEXT("count"), Kept.Num());
+    R->SetNumberField(TEXT("total_before_filter"), All.Num());
+    if (!Filter.IsEmpty()) R->SetStringField(TEXT("filter"), Filter);
+    R->SetStringField(TEXT("note"), TEXT("Coordinates are ABSOLUTE desktop pixels; center_x/center_y is the click point. "
+                                         "Pass them to editor_pie_mouse unchanged (it defaults to coordinate_space:\"absolute\"). "
+                                         "They will NOT match a screenshot, which is window-relative — the difference is the "
+                                         "window's on-screen position, so never read a click target off a screenshot."));
+    return FHaybaHandlerResult::Ok(R);
+}
+
+// ── editor_pie_set_text ─────────────────────────────────────────────────────
+//
+// Set an editable widget's text directly, instead of synthesising the
+// keystrokes that would have produced it.
+//
+// editor_pie_type_text drives real character events, which is the honest way to
+// test input handling — but it is a bad way to FILL A FORM. Character events go
+// wherever focus happens to be, they can be eaten by a modal or a hotkey, and
+// text entered that way is lost if focus moves before the widget commits.
+// Filling a login box to reach the screen behind it does not need any of that
+// fidelity; it needs the text to be in the box.
+//
+// This sets the value on the widget and commits it (ETextCommit::OnEnter), so
+// the game's OnTextCommitted binding fires exactly as if the user had typed and
+// pressed enter — which is what actually makes the value stick.
+
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIESetText(const TSharedPtr<FJsonObject>& P)
+{
+    UGameViewportClient* Client = PIEViewportClient();
+    if (!Client) return FHaybaHandlerResult::Err(TEXT("no PIE viewport (start PIE first)"));
+    if (!FSlateApplication::IsInitialized())
+        return FHaybaHandlerResult::Err(TEXT("Slate is not initialized"));
+
+    FString NewText;
+    if (!P.IsValid() || !P->TryGetStringField(TEXT("text"), NewText))
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_set_text: text is required"));
+
+    // Target either a widget found by label/placeholder, or whatever has focus.
+    FString Match;
+    P->TryGetStringField(TEXT("match"), Match);
+
+    TSharedPtr<SWidget> Target;
+    FString HowFound;
+
+    if (!Match.IsEmpty())
+    {
+        TSharedPtr<SWindow> Win = Client->GetWindow();
+        if (!Win.IsValid()) return FHaybaHandlerResult::Err(TEXT("PIE window not found"));
+        Target = FindEditableByText(Win.ToSharedRef(), Match);
+        HowFound = TEXT("match");
+        if (!Target.IsValid())
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("editor_pie_set_text: no editable text widget matching '%s'. ")
+                TEXT("Call editor_pie_widget_tree to see what is there — the placeholder text counts as a match."), *Match));
+        }
+    }
+    else
+    {
+        Target = FSlateApplication::Get().GetKeyboardFocusedWidget();
+        HowFound = TEXT("focus");
+        if (!Target.IsValid())
+        {
+            return FHaybaHandlerResult::Err(TEXT("editor_pie_set_text: nothing has keyboard focus and no `match` was given"));
+        }
+    }
+
+    const FString Type = Target->GetTypeAsString();
+    bool bApplied = false;
+
+    if (Type.Contains(TEXT("SEditableText")) || Type.Contains(TEXT("SMultiLineEditableText")))
+    {
+        if (Type.Contains(TEXT("Box")))
+        {
+            // SEditableTextBox / SMultiLineEditableTextBox wrap the real editor.
+            if (TSharedPtr<SWidget> Inner = FindEditableDescendant(Target.ToSharedRef()))
+            {
+                Target = Inner;
+            }
+        }
+    }
+
+    const FString ResolvedType = Target->GetTypeAsString();
+
+    // Focus first. The value is committed below by a real Enter key, which only
+    // reaches the widget that holds focus — and focusing also matches what the
+    // game sees when a person fills the field.
+    FSlateApplication::Get().SetKeyboardFocus(Target, EFocusCause::SetDirectly);
+
+    if (ResolvedType.Contains(TEXT("SMultiLineEditableText")))
+    {
+        StaticCastSharedRef<SMultiLineEditableText>(Target.ToSharedRef())->SetText(FText::FromString(NewText));
+        bApplied = true;
+    }
+    else if (ResolvedType.Contains(TEXT("SEditableText")))
+    {
+        StaticCastSharedRef<SEditableText>(Target.ToSharedRef())->SetText(FText::FromString(NewText));
+        bApplied = true;
+    }
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetStringField(TEXT("text"), NewText);
+    R->SetStringField(TEXT("target_type"), ResolvedType);
+    R->SetStringField(TEXT("found_by"), HowFound);
+    R->SetBoolField(TEXT("applied"), bApplied);
+
+    if (!bApplied)
+    {
+        // Naming the type is what turns "it did nothing" into a next step.
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("editor_pie_set_text: %s is not an editable text widget, so no text was set. ")
+            TEXT("Target one with `match`, or click into the field first."), *ResolvedType));
+    }
+
+    // Read the value back off the widget rather than echoing the input — the
+    // whole point is to know the text is actually in the box.
+    FString Readback;
+    if (ResolvedType.Contains(TEXT("SMultiLineEditableText")))
+        Readback = StaticCastSharedRef<SMultiLineEditableText>(Target.ToSharedRef())->GetText().ToString();
+    else
+        Readback = StaticCastSharedRef<SEditableText>(Target.ToSharedRef())->GetText().ToString();
+
+    R->SetStringField(TEXT("readback"), Readback);
+    R->SetBoolField(TEXT("verified"), Readback == NewText);
+
+    // SetText updates the widget but does NOT fire OnTextCommitted, and most
+    // games read the value from that binding rather than polling the widget.
+    // Without this the box visibly contains the text and the game never gets
+    // it — which is the "typed text was lost" shape. A real Enter through Slate
+    // makes the commit happen exactly as it would for a person.
+    bool bCommit = true;
+    P->TryGetBoolField(TEXT("commit"), bCommit);
+    if (bCommit)
+    {
+        SendKeyThroughSlate(EKeys::Enter, IE_Pressed);
+        SendKeyThroughSlate(EKeys::Enter, IE_Released);
+    }
+    R->SetBoolField(TEXT("committed"), bCommit);
+    if (Readback != NewText)
+    {
+        R->SetStringField(TEXT("warning"),
+            TEXT("The widget did not take the value — it may be read-only, length-capped or filtered. ")
+            TEXT("`readback` is what it actually holds."));
+    }
+    return FHaybaHandlerResult::Ok(R);
+}
+
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEClickWidget(const TSharedPtr<FJsonObject>& P)
+{
+    UGameViewportClient* Client = PIEViewportClient();
+    if (!Client) return FHaybaHandlerResult::Err(TEXT("no PIE viewport (start PIE first)"));
+    if (!FSlateApplication::IsInitialized())
+        return FHaybaHandlerResult::Err(TEXT("Slate is not initialized"));
+
+    FString Match;
+    if (!P.IsValid() || !P->TryGetStringField(TEXT("match"), Match) || Match.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_click_widget: match is required (widget text, tag or type)"));
+
+    TSharedPtr<SWindow> Win = Client->GetWindow();
+    if (!Win.IsValid()) return FHaybaHandlerResult::Err(TEXT("PIE window not found"));
+
+    TArray<TSharedPtr<FJsonValue>> All;
+    CollectSlateWidgets(Win.ToSharedRef(), 0, All, 60);
+
+    // Prefer an interactive widget: matching a label is usually a request to
+    // press the button containing it, not to click the text itself.
+    // Scoring, rather than "first match wins".
+    //
+    // Matching a label usually means "press the control that carries it", so an
+    // interactive widget outranks a static one. Among equals the SMALLEST match
+    // wins: a panel containing the text is a worse target than the button
+    // containing the text, and the panel is often huge enough that its centre is
+    // nowhere near the thing you meant.
+    TSharedPtr<FJsonObject> Best;
+    double BestScore = -1e18;
+    TArray<FString> Candidates;
+    // Every match with its score, so a wrong pick is diagnosable and
+    // overridable instead of being a dead end. "It clicked the wrong one" was
+    // unanswerable before: the response named a count and nothing else.
+    TArray<TPair<double, TSharedPtr<FJsonObject>>> Ranked;
+    for (const TSharedPtr<FJsonValue>& V : All)
+    {
+        const TSharedPtr<FJsonObject> O = V->AsObject();
+        if (!O.IsValid()) continue;
+        FString Type, Text, Tag;
+        O->TryGetStringField(TEXT("type"), Type);
+        O->TryGetStringField(TEXT("text"), Text);
+        O->TryGetStringField(TEXT("tag"), Tag);
+
+        const bool bExactText = Text.Equals(Match, ESearchCase::IgnoreCase);
+        const bool bHit = bExactText
+            || Text.Contains(Match) || Tag.Contains(Match) || Type.Contains(Match);
+        if (!bHit) continue;
+
+        Candidates.Add(FString::Printf(TEXT("%s%s"), *Type,
+            Text.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" \"%s\""), *Text)));
+
+        bool bInteractive = false, bEnabled = true;
+        O->TryGetBoolField(TEXT("interactive"), bInteractive);
+        O->TryGetBoolField(TEXT("enabled"), bEnabled);
+        double W = 0.0, H = 0.0;
+        O->TryGetNumberField(TEXT("width"), W);
+        O->TryGetNumberField(TEXT("height"), H);
+
+        double Score = 0.0;
+        if (bInteractive) Score += 1000.0;      // a control beats a label
+        if (bEnabled)     Score += 100.0;       // a disabled control is rarely the target
+        if (bExactText)   Score += 500.0;       // exact label beats substring
+        Score -= (W * H) / 10000.0;             // prefer the tightest box
+
+        Ranked.Add(TPair<double, TSharedPtr<FJsonObject>>(Score, O));
+        if (Score > BestScore)
+        {
+            BestScore = Score;
+            Best = O;
+        }
+    }
+
+    Ranked.Sort([](const TPair<double, TSharedPtr<FJsonObject>>& A,
+                   const TPair<double, TSharedPtr<FJsonObject>>& B) { return A.Key > B.Key; });
+
+    // `nth` picks a different candidate from that ranking, so "it clicked the
+    // wrong one" is a one-parameter fix rather than a fall back to hand-tuned
+    // coordinates.
+    int32 Nth = 0;
+    if (P->TryGetNumberField(TEXT("nth"), Nth) && Nth > 0)
+    {
+        if (!Ranked.IsValidIndex(Nth))
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("editor_pie_click_widget: nth=%d but only %d widgets matched '%s'"),
+                Nth, Ranked.Num(), *Match));
+        }
+        Best = Ranked[Nth].Value;
+    }
+
+    // Restrict to a widget type when the label is ambiguous, e.g. prefer_type
+    // "SButton" for a tab whose label also appears on a panel behind it.
+    FString PreferType;
+    if (P->TryGetStringField(TEXT("prefer_type"), PreferType) && !PreferType.IsEmpty())
+    {
+        for (const TPair<double, TSharedPtr<FJsonObject>>& Entry : Ranked)
+        {
+            FString T;
+            if (Entry.Value->TryGetStringField(TEXT("type"), T) && T.Contains(PreferType))
+            {
+                Best = Entry.Value;
+                break;
+            }
+        }
+    }
+
+    if (!Best.IsValid())
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("editor_pie_click_widget: nothing on screen matches '%s'. ")
+            TEXT("Call editor_pie_widget_tree to see what is actually there."), *Match));
+    }
+
+    double CX = 0.0, CY = 0.0;
+    Best->TryGetNumberField(TEXT("center_x"), CX);
+    Best->TryGetNumberField(TEXT("center_y"), CY);
+
+    // The EXACT sequence editor_pie_mouse uses at these coordinates: a
+    // Slate-visible move to the target (MoveCursorToPixel sends a real
+    // ProcessMouseMoveEvent), press, release, pointer-state reset.
+    //
+    // This path previously did a bare SetCursorPos with NO synthetic move
+    // before the press. Field matrix (WarRoom map, viewport MouseCaptureMode
+    // CaptureDuringMouseDown): editor_pie_mouse click at the button's centre
+    // fired OnClicked; this command on the SAME button showed hover/pressed
+    // visuals and focused the SButton but never dispatched OnClicked; on a
+    // NoCapture map both worked. Without the move, Slate's pointer path was
+    // stale from whatever the cursor last hovered, and under a capturing
+    // viewport the release resolved against that stale state instead of the
+    // button. Sharing the primitives makes the two commands equivalent by
+    // construction.
+    //
+    // center_x/center_y are already absolute desktop coordinates, so
+    // bViewportRelative=false passes them through unchanged.
+    FVector2D ClickAbs;
+    if (!MoveCursorToPixel(Client, FVector2D(CX, CY), /*bViewportRelative=*/false, ClickAbs))
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_click_widget: could not position the cursor"));
+    SendMouseButton(Client, EKeys::LeftMouseButton, IE_Pressed);
+    SendMouseButton(Client, EKeys::LeftMouseButton, IE_Released);
+    const bool bCaptureCleared = ResetPointerStateAfterRelease();
+
+    FString Type, Text;
+    Best->TryGetStringField(TEXT("type"), Type);
+    Best->TryGetStringField(TEXT("text"), Text);
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetStringField(TEXT("match"), Match);
+    R->SetStringField(TEXT("clicked_type"), Type);
+    if (!Text.IsEmpty()) R->SetStringField(TEXT("clicked_text"), Text);
+    R->SetNumberField(TEXT("x"), CX);
+    R->SetNumberField(TEXT("y"), CY);
+    R->SetNumberField(TEXT("candidates"), Candidates.Num());
+
+    // The ranking itself, so a wrong pick can be corrected with nth/prefer_type
+    // instead of abandoning the tool for hand-tuned coordinates.
+    {
+        TArray<TSharedPtr<FJsonValue>> Detail;
+        const int32 Show = FMath::Min(Ranked.Num(), 6);
+        for (int32 i = 0; i < Show; ++i)
+        {
+            TSharedPtr<FJsonObject> E = MakeShared<FJsonObject>();
+            FString T, Tx;
+            Ranked[i].Value->TryGetStringField(TEXT("type"), T);
+            Ranked[i].Value->TryGetStringField(TEXT("text"), Tx);
+            double EX = 0, EY = 0;
+            Ranked[i].Value->TryGetNumberField(TEXT("center_x"), EX);
+            Ranked[i].Value->TryGetNumberField(TEXT("center_y"), EY);
+            bool bInt = false;
+            Ranked[i].Value->TryGetBoolField(TEXT("interactive"), bInt);
+            E->SetNumberField(TEXT("nth"), i);
+            E->SetStringField(TEXT("type"), T);
+            if (!Tx.IsEmpty()) E->SetStringField(TEXT("text"), Tx);
+            E->SetBoolField(TEXT("interactive"), bInt);
+            E->SetNumberField(TEXT("center_x"), EX);
+            E->SetNumberField(TEXT("center_y"), EY);
+            E->SetNumberField(TEXT("score"), Ranked[i].Key);
+            Detail.Add(MakeShared<FJsonValueObject>(E));
+        }
+        R->SetArrayField(TEXT("ranked"), Detail);
+    }
+
+    // What holds focus now. A click that was supposed to land on a control and
+    // left focus on the SViewport did not hit the UI, and that is otherwise
+    // invisible until something later fails.
+    R->SetStringField(TEXT("focused_widget_after"), FocusedWidgetType());
+    R->SetBoolField(TEXT("capture_cleared"), bCaptureCleared);
+    bool bEnabled = true, bInteractive = false;
+    Best->TryGetBoolField(TEXT("enabled"), bEnabled);
+    Best->TryGetBoolField(TEXT("interactive"), bInteractive);
+    R->SetBoolField(TEXT("target_enabled"), bEnabled);
+    R->SetBoolField(TEXT("target_interactive"), bInteractive);
+    if (!bEnabled)
+    {
+        // Otherwise this reads as a successful click that silently did nothing.
+        R->SetStringField(TEXT("warning"), TEXT("The matched widget is DISABLED, so the click will have no effect."));
+    }
+    if (Candidates.Num() > 1)
+    {
+        // Say when the choice was ambiguous rather than silently picking one.
+        R->SetStringField(TEXT("note"), FString::Printf(
+            TEXT("%d widgets matched; clicked the interactive one. Use editor_pie_widget_tree and "
+                 "editor_pie_mouse with explicit coordinates if that was the wrong choice."), Candidates.Num()));
+    }
+    return FHaybaHandlerResult::Ok(R);
+}
+
+
 #else  // !WITH_EDITOR
 
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEMouse(const TSharedPtr<FJsonObject>&)      { return FHaybaHandlerResult::Err(TEXT("editor-only")); }
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIETypeText(const TSharedPtr<FJsonObject>&)   { return FHaybaHandlerResult::Err(TEXT("editor-only")); }
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEAxis(const TSharedPtr<FJsonObject>&)       { return FHaybaHandlerResult::Err(TEXT("editor-only")); }
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEWidgetTree(const TSharedPtr<FJsonObject>&) { return FHaybaHandlerResult::Err(TEXT("editor-only")); }
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEClickWidget(const TSharedPtr<FJsonObject>&){ return FHaybaHandlerResult::Err(TEXT("editor-only")); }
 FHaybaHandlerResult FHaybaMCPPIEHandler::PIEAssert(const TSharedPtr<FJsonObject>&)    { return FHaybaHandlerResult::Err(TEXT("editor-only")); }
 FHaybaHandlerResult FHaybaMCPPIEHandler::PIEWaitFor(const TSharedPtr<FJsonObject>&)   { return FHaybaHandlerResult::Err(TEXT("editor-only")); }
 FHaybaHandlerResult FHaybaMCPPIEHandler::PIEPressKey(const TSharedPtr<FJsonObject>&)  { return FHaybaHandlerResult::Err(TEXT("editor-only")); }

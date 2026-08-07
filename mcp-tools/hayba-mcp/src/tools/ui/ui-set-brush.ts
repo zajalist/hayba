@@ -6,7 +6,7 @@ import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 export const meta: HaybaToolMeta = {
   cost: 'medium',
   effects: ['modifies_asset'],
-  when: 'setting brush properties on an Image or Border widget (texture, tint, draw style, image size, 9-slice margin)',
+  when: 'setting brush properties on an Image or Border widget (texture or MATERIAL, tint, draw style, image size, 9-slice margin)',
   not_when: 'setting text properties (use ui_set_text_style) or visibility (use ui_set_visibility)',
 };
 
@@ -18,7 +18,17 @@ export const schema = z.object({
     .optional()
     .describe('Texture2D or Material asset path for the brush, e.g. "/Game/Aphrosia/UI/Icons/T_RoundedBorder"'),
   tint: z.array(z.number()).length(4).optional().describe('RGBA tint color (0-1)'),
-  draw_as: z.enum(['Image', 'Border', 'Mask', 'RoundedBox']).optional().describe('Brush draw style'),
+  // The engine's ESlateBrushDrawType is exactly {NoDrawType, Box, Border,
+  // Image, RoundedBox}. This enum previously offered "Mask", which is not a
+  // draw type at all, and omitted "Box" — the 9-slice mode every ornate frame
+  // uses. So the one tool built for brushes could not reproduce the project's
+  // own frames, and the only way through was hand-writing the raw struct.
+  draw_as: z
+    .enum(['Image', 'Border', 'Box', 'RoundedBox', 'NoDrawType'])
+    .optional()
+    .describe(
+      'Brush draw style. Box = 9-slice: the four Margin values fix the corners and the middle stretches — this is what a frame or panel background wants. Image stretches the whole texture. Border draws edges only.',
+    ),
   image_size: z.array(z.number()).length(2).optional().describe('Image size [Width, Height]'),
   margin: z.array(z.number()).length(4).optional().describe('9-slice margins [Left, Top, Right, Bottom]'),
   brush_property: z
@@ -44,7 +54,7 @@ export const uiSetBrushHandler: ToolHandler = async (args) => {
   if (margin !== undefined) brush.Margin = { Left: margin[0], Top: margin[1], Right: margin[2], Bottom: margin[3] };
 
   // Image exposes its brush as `Brush`; Border exposes the same struct as
-  // `Background`. Send both � the handler reports per-property outcomes, and
+  // `Background`. Send both � the handler reports per-property outcomes, and
   // the one that does not exist on this widget comes back in failed_properties
   // rather than aborting the call.
   const data = await executeCommand('ui_set_widget_properties', {

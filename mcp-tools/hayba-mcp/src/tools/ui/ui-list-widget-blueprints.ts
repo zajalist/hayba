@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolHandler } from '../types.js';
-import { executeCommand } from '../tool-executor.js';
+import { ueTool } from '../ue-tool.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 
 export const meta: HaybaToolMeta = {
@@ -15,11 +15,4 @@ export const schema = z.object({
   filter: z.string().optional().describe('Case-sensitive substring the asset name must contain'),
 });
 
-export const uiListWidgetBlueprintsHandler: ToolHandler = async (args) => {
-  const parsed = schema.safeParse(args);
-  if (!parsed.success) {
-    return { content: [{ type: 'text', text: `Validation error: ${parsed.error.message}` }], isError: true };
-  }
-  const data = await executeCommand('ui_list_widget_blueprints', parsed.data as Record<string, unknown>);
-  return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
-};
+export const uiListWidgetBlueprintsHandler: ToolHandler = ueTool('ui_list_widget_blueprints', schema);

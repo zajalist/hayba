@@ -1,11 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// Installed on the ToolExecutor seam rather than mocking the tcp-client module
+// — same (cmd, params, timeoutMs) signature, so the assertions are unchanged.
 const sendMock = vi.fn();
 
-vi.mock('../../tcp-client.js', () => ({
-  ensureConnected: vi.fn(async () => ({ send: sendMock })),
-}));
-
+import { setDefaultSender } from '../tool-executor.js';
 import {
   haybaRequestInputHandler,
   requestInputSchema,
@@ -42,8 +41,16 @@ describe('hayba_request_input / contract validation', () => {
 });
 
 describe('hayba_request_input / TCP push', () => {
-  beforeEach(() => sendMock.mockReset());
-  afterEach(() => sendMock.mockReset());
+  beforeEach(() => {
+    sendMock.mockReset();
+    setDefaultSender(sendMock);
+  });
+  afterEach(() => {
+    sendMock.mockReset();
+    setDefaultSender(async (cmd) => {
+      throw new Error(`sender uninstalled, but "${cmd}" was sent`);
+    });
+  });
 
   it('auto-generates a prompt_id when caller omits one and forwards payload to UE', async () => {
     sendMock.mockResolvedValueOnce({ ok: true, data: { queued: true } });

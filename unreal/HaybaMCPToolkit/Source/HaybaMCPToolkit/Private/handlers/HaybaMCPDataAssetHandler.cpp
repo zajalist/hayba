@@ -6,6 +6,7 @@
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "HaybaMCPAssetGuard.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "EditorAssetLibrary.h"
 #include "UObject/UnrealType.h"
@@ -140,6 +141,15 @@ FHaybaHandlerResult FHaybaMCPDataAssetHandler::Handle(const FString& Cmd, const 
         FAssetToolsModule& AssetToolsModule =
             FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
         IAssetTools& AssetTools = AssetToolsModule.Get();
+
+        // Refuse a taken name instead of letting CreateAsset raise a modal
+        // overwrite dialog, which would block the game thread and hang every
+        // queued MCP request. See HaybaMCPAssetGuard.h.
+        if (HaybaAssetGuard::AssetNameTaken(PackagePath, AssetName))
+        {
+            return FHaybaHandlerResult::Err(
+                HaybaAssetGuard::NameTakenError(TEXT("data_create"), PackagePath, AssetName));
+        }
 
         UObject* NewAsset = AssetTools.CreateAsset(AssetName, PackagePath, Class, nullptr);
         if (!NewAsset)

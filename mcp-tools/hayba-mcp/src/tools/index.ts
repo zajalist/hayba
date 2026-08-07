@@ -9,8 +9,13 @@ import { installLiveSender, executeCommand } from './tool-executor.js';
 import { registerToolMeta } from './tool-meta-registry.js';
 import { readSettings } from './routing/settings-watcher.js';
 import { registerDeferredRouting, ALWAYS_ON_META, type CapturedTool, type RoutingHandle } from './routing/register.js';
-import { registerTool, recordToolSchema, type ToolDescriptor } from './register-tool.js';
-import { errorResult } from './tool-result.js';
+import { defineTool, registerTool, recordToolSchema, type ToolDescriptor } from './register-tool.js';
+import {
+  guardHandlerWithEvidence,
+  isUnderEvidenceContract,
+  parseEffectsFromDescription,
+} from './response-evidence.js';
+import { errorResult, okResult } from './tool-result.js';
 
 // ── Code Mode meta-tools (always-on) ──────────────────────────────────────────
 import { listToolCategoriesHandler, meta as listMeta } from './code-mode/list-tool-categories.js';
@@ -124,6 +129,69 @@ import {
   schema as uiListWidgetTypesSchema,
   uiListWidgetTypesHandler,
 } from './ui/ui-list-widget-types.js';
+import { meta as docsSearchMeta, schema as docsSearchSchema, docsSearchHandler } from './docs/docs-search.js';
+import {
+  meta as docsLookupClassMeta,
+  schema as docsLookupClassSchema,
+  docsLookupClassHandler,
+} from './docs/docs-lookup-class.js';
+import {
+  meta as docsLookupApiMeta,
+  schema as docsLookupApiSchema,
+  docsLookupApiHandler,
+} from './docs/docs-lookup-api.js';
+import {
+  meta as assetGetReferencersMeta,
+  schema as assetGetReferencersSchema,
+  assetGetReferencersHandler,
+} from './asset-graph/asset-get-referencers.js';
+import {
+  meta as assetGetDependenciesMeta,
+  schema as assetGetDependenciesSchema,
+  assetGetDependenciesHandler,
+} from './asset-graph/asset-get-dependencies.js';
+import {
+  meta as assetGetReferencesMeta,
+  schema as assetGetReferencesSchema,
+  assetGetReferencesHandler,
+} from './asset-graph/asset-get-references.js';
+import { meta as assetRenameMeta, schema as assetRenameSchema, assetRenameHandler } from './asset-graph/asset-rename.js';
+import { meta as assetMoveMeta, schema as assetMoveSchema, assetMoveHandler } from './asset-graph/asset-move.js';
+import {
+  meta as assetFixRedirectorsMeta,
+  schema as assetFixRedirectorsSchema,
+  assetFixRedirectorsHandler,
+} from './asset-graph/asset-fix-redirectors.js';
+import {
+  meta as assetValidateMeta,
+  schema as assetValidateSchema,
+  assetValidateHandler,
+} from './asset-graph/asset-validate.js';
+import {
+  meta as foliageListTypesMeta, schema as foliageListTypesSchema, foliageListTypesHandler,
+} from './foliage/foliage-list-types.js';
+import {
+  meta as foliageAddInstanceMeta, schema as foliageAddInstanceSchema, foliageAddInstanceHandler,
+} from './foliage/foliage-add-instance.js';
+import {
+  meta as foliagePaintAtMeta, schema as foliagePaintAtSchema, foliagePaintAtHandler,
+} from './foliage/foliage-paint-at.js';
+import {
+  meta as foliageRemoveInstancesMeta, schema as foliageRemoveInstancesSchema, foliageRemoveInstancesHandler,
+} from './foliage/foliage-remove-instances.js';
+import { meta as pieWidgetTreeMeta, schema as pieWidgetTreeSchema, pieWidgetTreeHandler } from './pie/pie-widget-tree.js';
+import { meta as pieClickWidgetMeta, schema as pieClickWidgetSchema, pieClickWidgetHandler } from './pie/pie-click-widget.js';
+import { meta as pieMouseMeta, schema as pieMouseSchema, pieMouseHandler } from './pie/pie-mouse.js';
+import { meta as pieTypeTextMeta, schema as pieTypeTextSchema, pieTypeTextHandler } from './pie/pie-type-text.js';
+import { meta as pieSetTextMeta, schema as pieSetTextSchema, pieSetTextHandler } from './pie/pie-set-text.js';
+import { meta as pieAxisMeta, schema as pieAxisSchema, pieAxisHandler } from './pie/pie-axis.js';
+import { meta as piePressKeyMeta, schema as piePressKeySchema, piePressKeyHandler } from './pie/pie-press-key.js';
+import { meta as pieScreenshotMeta, schema as pieScreenshotSchema, pieScreenshotHandler } from './pie/pie-screenshot.js';
+import { meta as textureAuditMeta, schema as textureAuditSchema, textureAuditHandler } from './content/texture-audit.js';
+import { meta as meshAuditMeta, schema as meshAuditSchema, meshAuditHandler } from './content/mesh-audit.js';
+import {
+  meta as contentValidateMeta, schema as contentValidateSchema, contentValidateHandler,
+} from './content/content-validate.js';
 import { meta as uiBuildTreeMeta, schema as uiBuildTreeSchema, uiBuildTreeHandler } from './ui/ui-build-tree.js';
 import {
   meta as uiDuplicateElementMeta,
@@ -137,6 +205,7 @@ import {
   uiRenameElementHandler,
 } from './ui/ui-rename-element.js';
 import { meta as uiSetVariableMeta, schema as uiSetVariableSchema, uiSetVariableHandler } from './ui/ui-set-variable.js';
+import { meta as uiBindPropertyMeta, schema as uiBindPropertySchema, uiBindPropertyHandler } from './ui/ui-bind-property.js';
 import {
   meta as uiListWidgetBlueprintsMeta,
   schema as uiListWidgetBlueprintsSchema,
@@ -149,6 +218,21 @@ import {
   schema as uiLayoutSnapshotSchema,
   uiLayoutSnapshotHandler,
 } from './ui/ui-layout-snapshot.js';
+import {
+  meta as uiCopyStyleMeta,
+  schema as uiCopyStyleSchema,
+  uiCopyStyleHandler,
+} from './ui/ui-copy-style.js';
+import {
+  meta as uiSetDefaultFontMeta,
+  schema as uiSetDefaultFontSchema,
+  uiSetDefaultFontHandler,
+} from './ui/ui-set-default-font.js';
+import {
+  meta as uiRenderWidgetToPngMeta,
+  schema as uiRenderWidgetToPngSchema,
+  uiRenderWidgetToPngHandler,
+} from './ui/ui-render-widget-to-png.js';
 import {
   meta as uiRemoveElementMeta,
   schema as uiRemoveElementSchema,
@@ -278,7 +362,7 @@ import {
   validatorStrictnessSchema,
   defaultScratchDir as validatorScratchDir,
 } from './validator/tools.js';
-import { ensureConnected as ensureUeForValidator } from '../tcp-client.js';
+import { liveUeProbe } from '../validator/ue-probe.js';
 
 // ── PLUMB constraint subsystem (quantified validator + constraint language) ──
 import {
@@ -394,8 +478,1095 @@ const dCoerceVec3 = z.preprocess((v) => {
 const M = 'material'; // niche domain for the material toolset
 const UI = 'ui'; // niche domain for the UMG / Widget Blueprint toolset
 const PACK = 'copilot'; // niche domain for the BYOK copilot config/introspection toolset
+const DOCS = 'docs'; // niche domain for live-editor API reflection
+const ASSETGRAPH = 'asset'; // niche domain for asset reference/refactor tools
+const FOLIAGE = 'foliage'; // niche domain for foliage placement
+const PIE = 'pie'; // niche domain for driving a running game
+const CONTENT = 'content'; // niche domain for content audits and budgets
 // Hand-written descriptors. Kept as a named const so the generated legacy list
 // can be de-duplicated against these names before splicing (see below).
+
+// ── Validator tools ────────────────────────────────────────────────────────
+//
+// Previously registered by hand, which left them outside the registrar and so
+// outside appendMeta, the response-evidence contract and the validation nudge.
+// Notably validator_set_rule_enabled and validator_clear persist state while
+// declaring no effects at all, because the hand-written form had nowhere to put
+// them. Expressing effects as data is most of the point of this conversion.
+//
+// USE_WHEN / NOT_WHEN guidance moved out of the description prose into meta,
+// where appendMeta renders it — the descriptions had been carrying it inline.
+export const VALIDATOR_DESCRIPTORS: ToolDescriptor[] = [
+  {
+    name: 'validator_run',
+    description:
+      'CATCHES SILENT WRONGNESS YOU CANNOT SEE: runs the validator rules over the current scene and returns concrete post-condition findings \u2014 actors floating above ground, interpenetrating meshes, off-grid/mis-scaled placements, missing expected results, and PLUMB constraint violations. Pass scope=\'all\' (default) or { rule_ids: [...] }; findings persist to history and the Validation panel. WHY: you have no viewport \u2014 this is how you verify placement actually landed correctly instead of assuming it did.',
+    meta: {
+      cost: 'high',
+      effects: ['persists_validator_findings'],
+      when: 'after ANY scene mutation (spawn / move / delete / scatter / foliage / PCG execute / world_generate / landscape / lighting change), AND before you declare a task done or report success',
+      not_when: 'you have made no scene change since the last run',
+    },
+    schema: validatorRunSchema,
+    cost: 'high',
+    returns: '{findings:[{rule_id,severity,message,hint,refs}], counts, ran, scope}',
+    handler: async (args) =>
+      okResult(
+        await validatorRunHandler(args as { scope?: 'all' | { rule_ids?: string[] }; persist?: boolean }, {
+          probe: liveUeProbe,
+          scratchDir: validatorScratchDir(),
+        }),
+      ),
+  },
+  {
+    name: 'validator_history',
+    description:
+      'Read persisted validator findings (the record of everything validator_run / plumb_validate caught). Filter by limit / since_iso / include_resolved / rule_ids.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'reviewing what is still wrong in the scene, checking whether a prior fix cleared a finding, or reporting outstanding issues to the user',
+      not_when: 'you want a fresh evaluation \u2014 call validator_run instead; history only shows past findings',
+    },
+    schema: validatorHistorySchema,
+    cost: 'low',
+    returns: '{findings:[{timestamp,rule_id,severity,message,resolved}], total}',
+    handler: async (args) =>
+      okResult(
+        await validatorHistoryHandler(
+          args as { limit?: number; since_iso?: string; include_resolved?: boolean; rule_ids?: string[] },
+        ),
+      ),
+  },
+  {
+    name: 'validator_resolve',
+    description: 'Mark a validator finding as resolved (or restore it). Identifies the finding by its ISO timestamp.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_validator_history'],
+      when: 'you have fixed what a finding reported and want it cleared from the outstanding list',
+      not_when: 'the finding is still true \u2014 resolving it hides a real problem rather than fixing it',
+    },
+    schema: validatorResolveSchema,
+    cost: 'low',
+    returns: '{ok, timestamp, resolved}',
+    handler: async (args) => okResult(await validatorResolveHandler(args as { timestamp: string; resolved: boolean })),
+  },
+  {
+    name: 'validator_clear',
+    description: 'Clear the validator history. Requires { confirm: true } to actually wipe.',
+    meta: {
+      cost: 'low',
+      effects: ['clears_validator_history'],
+      when: 'starting a fresh session on a scene and the accumulated findings are noise',
+      not_when: 'you simply want to hide outstanding problems \u2014 the history is the record that they exist',
+    },
+    schema: validatorClearSchema,
+    cost: 'low',
+    returns: '{ok, cleared}',
+    handler: async (args) => okResult(await validatorClearHandler(args as { confirm: boolean })),
+  },
+  {
+    name: 'validator_rules',
+    description:
+      "List the validator rule catalog \u2014 every post-condition check and bound PLUMB constraint that validator_run / plumb_validate will evaluate, with each rule's message, hint, refs, and disabled state.",
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'you want to know WHAT validation can catch before running it, or to confirm the right rule is enabled for the task at hand',
+      not_when: 'you just want to run the checks \u2014 call validator_run',
+    },
+    schema: validatorRulesSchema,
+    cost: 'low',
+    returns: '{rules:[{id,message,hint,refs,disabled,min_strictness}]}',
+    handler: async (args) => okResult(await validatorRulesHandler(args as { include_disabled_state?: boolean })),
+  },
+  {
+    name: 'validator_set_rule_enabled',
+    description: 'Enable or disable a validator rule by id. Persists to .scratch/validator-config.json.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_validator_config'],
+      when: 'a rule is firing on something intentional in this project and the noise outweighs the signal',
+      not_when: 'the rule is right and the scene is wrong \u2014 disabling it silences the report, not the problem',
+    },
+    schema: validatorSetRuleEnabledSchema,
+    cost: 'low',
+    returns: '{ok, rule_id, enabled}',
+    handler: async (args) =>
+      okResult(await validatorSetRuleEnabledHandler(args as { rule_id: string; enabled: boolean })),
+  },
+  {
+    name: 'validator_strictness',
+    description:
+      'Read or set validation strictness. Three modes \u2014 relaxed (only what is broken), standard (plus established conventions), strict (plus house-style polish) \u2014 set globally or per category (ui, pcg, landscape, material, blueprint, python, asset, general). A rule declares the lowest mode at which it fires, so raising strictness only ever adds findings. Call with no arguments to read the current settings. Persists to .scratch/validator-config.json, the same file the editor Configure panel reads.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_validator_config'],
+      when: 'tuning how much the validator reports, globally or for one category',
+      not_when: 'you only want to read the current mode \u2014 that is the same call with no arguments, and it writes nothing',
+    },
+    schema: validatorStrictnessSchema,
+    cost: 'low',
+    returns: '{global, categories:{ui,pcg,landscape,material,blueprint,python,asset,general}}',
+    handler: async (args) =>
+      okResult(await validatorStrictnessHandler(args as Parameters<typeof validatorStrictnessHandler>[0])),
+  },
+];
+
+
+// ── PLUMB tools ────────────────────────────────────────────────────
+//
+// Effects were determined by reading each handler body, not inferred from the
+// verb in its name: plumb_study_take persists via upsertLesson despite reading
+// like a query, while constraint_propose, segment and grammar_expand compute
+// and store nothing despite sounding like authoring tools.
+export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
+  {
+    name: 'plumb_primitives',
+    description: 'List the COMPLETE closed constraint grammar — the 10 primitives, their gate, hard/soft default, params, and docs. Author constraints by picking one and filling params.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'you need the CLOSED set of primitives a constraint or production may legally reference',
+      not_when: 'you want a specific asset profile - use plumb_profile_get',
+    },
+    schema: plumbPrimitivesSchema,
+    cost: 'low',
+    returns: '{primitives:[{name,kind,attrs}]}',
+    handler: async () => okResult(await plumbPrimitivesHandler()),
+  },
+  {
+    name: 'plumb_profile_bake',
+    description: 'Bake the deterministic geometry/physics half of a Physical Asset Profile. Pass just the asset to auto-fetch bounds from UE (mesh_get_info), or supply origin_cm + extent_cm (+ optional pivot_to_base_cm) explicitly. Persists to the profile store.',
+    meta: {
+      cost: 'low',
+      effects: ['bakes_plumb_profile'],
+      when: 'a mesh needs a measured profile before constraints or grammar can reference it',
+      not_when: 'the profile is already baked and unchanged - plumb_profile_get reads it',
+    },
+    schema: plumbProfileBakeSchema,
+    cost: 'low',
+    returns: '{ok, asset, profile:{bounds,sockets,attrs}}',
+    handler: async (a) => okResult(await plumbProfileBakeHandler(a as Parameters<typeof plumbProfileBakeHandler>[0], new Date().toISOString(), fetchMeshBounds)),
+  },
+  {
+    name: 'plumb_profile_annotate',
+    description: 'Layer AI/human qualitative semantics (class, up/front vectors, named affordance regions) onto a baked profile, with optional field locks. Qualitative constraints can only hard-gate on locked fields.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_profile'],
+      when: 'a baked profile needs a human-meaningful tag the solver can bind to',
+      not_when: 'the annotation belongs on a constraint instead',
+    },
+    schema: plumbProfileAnnotateSchema,
+    cost: 'low',
+    returns: '{ok, asset, annotations}',
+    handler: async (a) => okResult(await plumbProfileAnnotateHandler(a as Parameters<typeof plumbProfileAnnotateHandler>[0])),
+  },
+  {
+    name: 'plumb_profile_list',
+    description: 'List baked profiles (asset_id, archetype, affordance count, locked fields). Feeds the Memory tab.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'you want to know which assets already have baked profiles',
+      not_when: 'you need one profile in full - plumb_profile_get',
+    },
+    schema: plumbProfileListSchema,
+    cost: 'low',
+    returns: '{profiles:[{asset,baked_at}]}',
+    handler: async () => okResult(await plumbProfileListHandler()),
+  },
+  {
+    name: 'plumb_profile_get',
+    description: 'Fetch one full Physical Asset Profile by asset path.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: "you need one asset's baked bounds, sockets and attributes",
+      not_when: "you only want to know whether it exists - plumb_profile_list is cheaper",
+    },
+    schema: plumbProfileGetSchema,
+    cost: 'low',
+    returns: '{asset, bounds, sockets, attrs, masks}',
+    handler: async (a) => okResult(await plumbProfileGetHandler(a as Parameters<typeof plumbProfileGetHandler>[0])),
+  },
+  {
+    name: 'plumb_constraint_define',
+    description: 'Author/upsert a bound constraint: a primitive id + params + a binding (exactly one of {asset, tag}). Validated against the closed primitive set — invalid primitives/params/bindings are rejected.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_constraints'],
+      when: 'expressing a placement rule that must hold, in the closed constraint language',
+      not_when: 'the rule is a one-off check - plumb_validate takes ad-hoc scope',
+    },
+    schema: plumbConstraintDefineSchema,
+    cost: 'low',
+    returns: '{ok, id, constraint, validated}',
+    handler: async (a) => okResult(await plumbConstraintDefineHandler(a as Parameters<typeof plumbConstraintDefineHandler>[0])),
+  },
+  {
+    name: 'plumb_constraint_list',
+    description: 'List the constraint library (optionally filtered to an asset binding).',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'reviewing which placement rules are currently in force',
+      not_when: 'you want to know whether the scene SATISFIES them - plumb_validate',
+    },
+    schema: plumbConstraintListSchema,
+    cost: 'low',
+    returns: '{constraints:[{id,kind,bound_to}]}',
+    handler: async (a) => okResult(await plumbConstraintListHandler(a as Parameters<typeof plumbConstraintListHandler>[0])),
+  },
+  {
+    name: 'plumb_constraint_remove',
+    description: 'Remove a constraint from the library by id.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_constraints'],
+      when: 'a constraint is wrong or obsolete and should stop being enforced',
+      not_when: 'the constraint is right and the scene is wrong - fix the scene',
+    },
+    schema: plumbConstraintRemoveSchema,
+    cost: 'low',
+    returns: '{ok, id, removed}',
+    handler: async (a) => okResult(await plumbConstraintRemoveHandler(a as Parameters<typeof plumbConstraintRemoveHandler>[0])),
+  },
+  {
+    name: 'plumb_constraint_propose',
+    description: 'Draft (does not save) constraints for an asset from its baked profile, using only closed primitives. Review/edit then call plumb_constraint_define.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'you want candidate constraints inferred from what is already placed, to review before defining',
+      not_when: 'you already know the rule - plumb_constraint_define writes it directly',
+    },
+    schema: plumbConstraintProposeSchema,
+    cost: 'low',
+    returns: '{proposals:[{constraint,support,confidence}]} - nothing is persisted',
+    handler: async (a) => okResult(await plumbConstraintProposeHandler(a as Parameters<typeof plumbConstraintProposeHandler>[0])),
+  },
+  {
+    name: 'plumb_validate',
+    description: 'VERIFY PLACEMENT IS ACTUALLY CORRECT: runs the PLUMB constraint library over a set of instances and returns a directional Verdict — per-gate ok, signed value_m (how far off, and which way), and a FixVector telling you exactly how to move each instance to satisfy it. Catches grounding, clearance, alignment, spacing and interpenetration violations the viewport would reveal but you cannot. Hard fails set stopped_at; soft fails accumulate soft_cost. WHY: this is the quantified check that turns "looks placed" into "provably grounded and non-overlapping".',
+    meta: {
+      cost: 'medium',
+      effects: ['persists_validator_findings'],
+      when: 'immediately after placing/scattering/spawning/transforming instances, and before declaring the layout done — feed the FixVector back into a transform to correct, then re-validate',
+      not_when: 'no constraints are bound for these assets — check plumb_constraint_list / validator_rules first',
+    },
+    schema: plumbValidateSchema,
+    cost: 'medium',
+    returns: '{findings:[{constraint_id,severity,message,actors}], counts, passes}',
+    handler: async (a) => okResult(await plumbValidateHandler(a as Parameters<typeof plumbValidateHandler>[0])),
+  },
+  {
+    name: 'plumb_mask_add',
+    description: 'Add or update a mask (surface = triangle set; volume = translucent shape) on a baked profile. Surface/volume masks are the regions constraints reference.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_profile'],
+      when: 'part of a profile must be excluded from constraint solving',
+      not_when: 'the whole asset should be excluded - remove its profile',
+    },
+    schema: plumbMaskAddSchema,
+    cost: 'low',
+    returns: '{ok, asset, mask_id}',
+    handler: async (a) => okResult(await plumbMaskAddHandler(a as Parameters<typeof plumbMaskAddHandler>[0])),
+  },
+  {
+    name: 'plumb_mask_remove',
+    description: 'Remove a mask from a profile by id.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_profile'],
+      when: 'a mask is over-excluding and constraints should see that region again',
+      not_when: 'you want to keep the mask but change its extent - add a replacement',
+    },
+    schema: plumbMaskRemoveSchema,
+    cost: 'low',
+    returns: '{ok, asset, mask_id, removed}',
+    handler: async (a) =>
+    okResult(await plumbMaskRemoveHandler(a as Parameters<typeof plumbMaskRemoveHandler>[0])),
+  },
+  {
+    name: 'plumb_lesson_add',
+    description: 'Add/update a lesson — the durable [[slug]] knowledge that explains WHY a constraint exists (browsed in the Studio Lessons panel; cited by constraint/validator refs).',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_lessons'],
+      when: 'recording WHY a constraint exists, so a future reader does not delete it as noise',
+      not_when: 'the note is about one scene rather than a durable rule',
+    },
+    schema: plumbLessonAddSchema,
+    cost: 'low',
+    returns: '{ok, slug, title}',
+    handler: async (a) => okResult(await plumbLessonAddHandler(a as Parameters<typeof plumbLessonAddHandler>[0], new Date().toISOString())),
+  },
+  {
+    name: 'plumb_lesson_list',
+    description: 'List lessons (slug + title + refs).',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'finding the durable knowledge behind the current constraint set',
+      not_when: 'you want the constraints themselves - plumb_constraint_list',
+    },
+    schema: plumbLessonListSchema,
+    cost: 'low',
+    returns: '{lessons:[{slug,title,refs}]}',
+    handler: async () =>
+    okResult(await plumbLessonListHandler()),
+  },
+  {
+    name: 'plumb_lesson_remove',
+    description: 'Remove a lesson by slug.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_lessons'],
+      when: 'a lesson has been superseded and would mislead',
+      not_when: 'the lesson is still true but the constraint changed - update the lesson',
+    },
+    schema: plumbLessonRemoveSchema,
+    cost: 'low',
+    returns: '{ok, slug, removed}',
+    handler: async (a) =>
+    okResult(await plumbLessonRemoveHandler(a as Parameters<typeof plumbLessonRemoveHandler>[0])),
+  },
+  {
+    name: 'plumb_study',
+    description: "AI study entry point: returns the asset's baked profile (if any) + the closed primitive grammar + mask kinds + guidance, so the agent can propose masks (plumb_mask_add) and constraints (plumb_constraint_define).",
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'orienting on an asset before authoring constraints - returns its profile plus the legal primitives',
+      not_when: 'you already know the asset and just need its numbers - plumb_profile_get',
+    },
+    schema: plumbStudySchema,
+    cost: 'low',
+    returns: '{asset, profile, primitives, constraints}',
+    handler: async (a) => okResult(await plumbStudyHandler(a as Parameters<typeof plumbStudyHandler>[0])),
+  },
+  {
+    name: 'plumb_study_take',
+    description: 'Drain pending "Study with AI" requests from the Semantic Studio button. Returns the assets to study (then call plumb_study + author masks/constraints for each).',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_lessons'],
+      when: 'committing what a study concluded as a durable lesson',
+      not_when: 'you are still exploring - plumb_study reads without recording',
+    },
+    schema: plumbStudyTakeSchema,
+    cost: 'low',
+    returns: '{ok, slug, lesson}',
+    handler: async () => okResult(await plumbStudyTakeHandler()),
+  },
+  {
+    name: 'plumb_segment',
+    description: "AI-segment a studied asset: given the study_render color passes, the agent's themed part labels + a box/points per view, runs SAM in the visual sidecar and back-projects to geometry-hugging surface masks (triangles via the world-position pass + a UV display texture), written into the profile. Replaces hand-placed blocky masks.",
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'splitting a run or surface into placeable spans before scattering',
+      not_when: 'you want to validate what is already placed - plumb_validate',
+    },
+    schema: plumbSegmentSchema,
+    cost: 'low',
+    returns: '{segments:[{start,end,length}]} - computed, not persisted',
+    handler: async (a) => okResult(await plumbSegmentHandler(a as Parameters<typeof plumbSegmentHandler>[0])),
+  },
+  {
+    name: 'plumb_production_define',
+    description: 'Author/upsert a grammar production rule: an LHS symbol kind (+ optional attribute guards) → an RHS sequence of emit ops (shell/asset/symbol/scatter/decal/fill). Guards are constraint ids that must pass before the production fires.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_grammar'],
+      when: 'adding a grammar production that expands one symbol into placed parts',
+      not_when: 'the rule is a constraint on placement rather than a way to generate it',
+    },
+    schema: plumbProductionDefineSchema,
+    cost: 'low',
+    returns: '{ok, id, production}',
+    handler: async (a) => okResult(await plumbProductionDefineHandler(a as Parameters<typeof plumbProductionDefineHandler>[0])),
+  },
+  {
+    name: 'plumb_production_list',
+    description: 'List all grammar productions in the store.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'reviewing the grammar currently available to expansion',
+      not_when: 'you want the result of expanding it - plumb_grammar_expand',
+    },
+    schema: plumbProductionListSchema,
+    cost: 'low',
+    returns: '{productions:[{id,symbol,expansion}]}',
+    handler: async () => okResult(await plumbProductionListHandler()),
+  },
+  {
+    name: 'plumb_production_remove',
+    description: 'Remove a grammar production by id.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_grammar'],
+      when: 'a production generates the wrong shape and should stop being used',
+      not_when: 'you want to keep it but change it - define a replacement with the same id',
+    },
+    schema: plumbProductionRemoveSchema,
+    cost: 'low',
+    returns: '{ok, id, removed}',
+    handler: async (a) =>
+    okResult(await plumbProductionRemoveHandler(a as Parameters<typeof plumbProductionRemoveHandler>[0])),
+  },
+  {
+    name: 'plumb_socket_add',
+    description: 'Add or replace a socket (connection point) on a baked profile. Idempotent on socket id.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plumb_profile'],
+      when: 'a baked profile needs a named connection point for the grammar to join against',
+      not_when: 'the point is an exclusion rather than a join - plumb_mask_add',
+    },
+    schema: plumbSocketAddSchema,
+    cost: 'low',
+    returns: '{ok, asset, socket}',
+    handler: async (a) => okResult(await plumbSocketAddHandler(a as Parameters<typeof plumbSocketAddHandler>[0])),
+  },
+  {
+    name: 'plumb_grammar_expand',
+    description: 'Expand a seed symbol using the stored production rules + the PLUMB constraint store as guards. Returns a PlacementPlan. In dry-run (no UE scene), geometry-dependent constraints self-skip — rejections only reflect TS-evaluable constraints.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'previewing what the grammar produces from a symbol, before anything is placed',
+      not_when: 'you want it actually placed in the scene - that is a separate spawn step',
+    },
+    schema: plumbGrammarExpandSchema,
+    cost: 'low',
+    returns: '{expansion:[{symbol,parts}]} - computed, nothing placed',
+    handler: async (a) => okResult(await plumbGrammarExpandHandler(a as Parameters<typeof plumbGrammarExpandHandler>[0])),
+  },
+];
+
+
+// ── PCG authoring, conventions, zones and landscape ─────────────────
+//
+// Most of these were registered with the THREE-argument server.tool(name,
+// schema, handler) form, i.e. with no description at all: the agent saw a name
+// and a parameter list and nothing else, which also made them close to
+// invisible to description-based tool search. Descriptions are authored here.
+//
+// Effects were read out of each implementation, and three contradict the verb
+// in the tool's name: hayba_setup_conventions calls writeProjectConventions,
+// hayba_set_painter_heightmap calls setHeightmap, and hayba_open_zone_painter
+// CREATES a project rather than merely opening one. Conversely
+// hayba_abstract_to_subgraph and hayba_parameterize_graph_inputs only transform
+// a graph object in memory despite reading like authoring tools.
+export const PCG_DESCRIPTORS: ToolDescriptor[] = [
+  defineTool({
+    name: 'hayba_propose_plan',
+    description: 'Propose a step-by-step plan to the user before performing destructive operations. Required when Plan Mode is on. Steps may be strings or {title, description, tool} objects.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plan_state'],
+      when: 'pushing the steps of a destructive operation to the Plan panel for approval',
+      not_when: 'the operation is read-only - Plan Mode gates mutations',
+    },
+    schema: {
+      steps: z
+        .array(
+          z.union([
+            z.string(),
+            z.object({
+              title: z.string(),
+              description: z.string().optional(),
+              tool: z.string().optional(),
+            }),
+          ]),
+        )
+        .describe('Ordered list of plan steps'),
+      await_seconds: z
+        .number()
+        .int()
+        .min(0)
+        .max(600)
+        .optional()
+        .describe('How long the agent will wait for human approval (informational; default 30)'),
+    },
+    cost: 'low',
+    returns: '{ok, steps, plan_id}',
+    handler: async (params) => {
+      try {
+        const data = await executeCommand('hayba_propose_plan', params as Record<string, unknown>, { timeout: 5000 });
+        return {
+          content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
+        };
+      } catch (e) {
+        return errorResult(`Error pushing plan to UE: ${(e as Error).message}`);
+      }
+    },
+  }),
+  defineTool({
+    name: 'hayba_mark_plan_step',
+    description: 'Update the status of a single step in the proposed plan shown in the UE Plan panel. Marking a step "completed" auto-advances the next step to "running". Call this as you work through an approved plan so the user sees live progress.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_plan_state'],
+      when: 'reporting progress through an approved plan so the panel tracks it',
+      not_when: 'no plan is active',
+    },
+    schema: {
+      index: z.number().int().min(0).describe('Zero-based index of the plan step to update'),
+      status: z
+        .enum(['running', 'completed', 'failed'])
+        .default('completed')
+        .describe('New status for the step (default "completed")'),
+    },
+    cost: 'low',
+    returns: '{ok, step, status}',
+    handler: async (params) => {
+      try {
+        const data = await executeCommand('plan_mark_step', params as Record<string, unknown>, { timeout: 5000 });
+        return {
+          content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
+        };
+      } catch (e) {
+        return errorResult(`Error marking plan step in UE: ${(e as Error).message}`);
+      }
+    },
+  }),
+  defineTool({
+    name: 'pcg_cook_and_wait',
+    description: appendMeta(
+      "Regenerate an actor's PCGComponent, block on the PCG graph settling (NOT world_tick), and return per-mesh ISM instance counts — all in one call.",
+      pcgCookMeta,
+    ),
+    meta: {
+      cost: 'high',
+      effects: ['executes_pcg_graph'],
+      when: 'you need a PCG graph cooked AND the editor settled before reading results',
+      not_when: 'you only want to trigger the cook - this also waits',
+    },
+    schema: pcgCookSchema.shape,
+    cost: 'high',
+    returns: '{ok, cooked, idle, elapsed_ms}',
+    handler: async (params) => {
+      const r = await pcgCookAndWaitHandler(params as never);
+      return { content: r.content, isError: r.isError };
+    },
+  }),
+  defineTool({
+    name: 'pcg_scatter_mesh',
+    description: appendMeta(
+      'Scatter a mesh (or weighted mesh set) across a surface in ONE call — build the jittered PCG graph, spawn a bound PCGVolume, generate, and return instance counts. Hard-fails on 0 instances.',
+      pcgScatterMeta,
+    ),
+    meta: {
+      cost: 'high',
+      effects: ['executes_pcg_scatter', 'modifies_scene'],
+      when: 'scattering a mesh across a surface through PCG',
+      not_when: 'you want placement proven before it lands - world_generate validates first',
+    },
+    schema: pcgScatterSchema.shape,
+    cost: 'high',
+    returns: '{ok, points, actor, cooked}',
+    handler: async (params) => {
+      const r = await pcgScatterMeshHandler(params as never);
+      return { content: r.content, isError: r.isError };
+    },
+  }),
+  defineTool({
+    name: 'hayba_search_node_catalog',
+    description: 'Find a PCG or PCGEx node by what you want it to DO, searching the node catalog by intent rather than by exact type name.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'you know the effect you want but not which node produces it',
+      not_when: 'you already know the node type - hayba_get_node_details',
+    },
+    schema: { query: z.string().describe('Search query — keyword, node class, or category') },
+    cost: 'low',
+    returns: '{nodes:[{type,title,summary,pins}]}',
+    handler: async ({ query }) => {
+      const result = await searchNodeCatalog({ query });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_get_node_details',
+    description: 'Full detail for one PCG/PCGEx node type: its exact input/output pins, properties and defaults.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: "you need a node's exact pin names and properties before wiring it",
+      not_when: "you are still looking for the right node - hayba_search_node_catalog",
+    },
+    schema: { class: z.string().describe('PCGEx node class name') },
+    cost: 'low',
+    returns: '{type, pins:[{name,direction,type}], properties}',
+    handler: async (params) => {
+    const result = await getNodeDetails({ class: params.class });
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_create_pcg_graph',
+    description: 'Author a new PCG graph asset from a node and edge description.',
+    meta: {
+      cost: 'medium',
+      effects: ['creates_pcg_graph'],
+      when: 'building a new PCG graph from scratch',
+      not_when: 'the graph already exists - edit it instead of recreating',
+    },
+    schema: {
+      graph: z.string().describe('JSON string of the PCGEx graph topology'),
+      name: z.string().describe('Asset name for the new PCGGraph'),
+    },
+    cost: 'medium',
+    returns: '{ok, path, nodes, edges}',
+    handler: async ({ graph, name }) => {
+      const result = await createPcgGraph({ graph, name });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_validate_pcg_graph',
+    description: 'Check a PCG graph for disconnected pins, type mismatches and dead branches WITHOUT cooking it.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'before executing a graph, to catch wiring faults cheaply',
+      not_when: 'you want to know what the graph produces - execute it',
+    },
+    schema: { graph: z.string().describe('JSON string of the PCGEx graph to validate') },
+    cost: 'low',
+    returns: '{valid, issues:[{node,pin,problem}]}',
+    handler: async ({ graph }) => {
+      const result = await validatePcgGraph({ graph });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_list_pcg_assets',
+    description: 'List the PCG graph assets that exist in the project.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'discovering which graphs are already available',
+      not_when: 'you need one graph in full - export it',
+    },
+    schema: { path: z.string().optional().describe('Content path filter (default: /Game/)') },
+    cost: 'low',
+    returns: '{assets:[{path,name}]}',
+    handler: async ({ path }) => {
+      const result = await listPcgAssets({ path });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_export_pcg_graph',
+    description: 'Export an existing PCG graph as JSON so it can be inspected or transformed.',
+    meta: {
+      cost: 'medium',
+      effects: ['writes_export_file'],
+      when: 'reading a graph out of the project to inspect or edit it',
+      not_when: 'you only need the node list - hayba_get_graph_state is cheaper',
+    },
+    schema: { assetPath: z.string().describe('Full UE asset path to the PCGGraph') },
+    cost: 'medium',
+    returns: '{ok, path, graph:{nodes,edges}}',
+    handler: async ({ assetPath }) => {
+      const result = await exportPcgGraph({ assetPath });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_execute_pcg_graph',
+    description: 'Run a PCG graph so it generates content in the level.',
+    meta: {
+      cost: 'high',
+      effects: ['executes_pcg_graph', 'modifies_scene'],
+      when: 'you want the graph to actually produce geometry in the world',
+      not_when: 'you only want to check the graph is sound - hayba_validate_pcg_graph',
+    },
+    schema: { assetPath: z.string().describe('Full UE asset path to execute') },
+    cost: 'high',
+    returns: '{ok, generated, actors, elapsed_ms}',
+    handler: async ({ assetPath }) => {
+      const result = await executePcgGraph({ assetPath });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_scrape_node_registry',
+    description: 'Rebuild the PCGEx node registry from the installed plugin - the SQLite catalog that node search reads.',
+    meta: {
+      cost: 'high',
+      effects: ['rebuilds_node_registry'],
+      when: 'node search returns nothing or the registry is stale after a plugin update',
+      not_when: 'the registry is current - this rebuilds it from scratch',
+    },
+    schema: {
+      pluginSourcePath: z.string().optional().describe('Path to PCGExtendedToolkit/Source/ directory'),
+      outputDbPath: z.string().optional().describe('Output SQLite DB path (default: Resources/pcgex_registry.db)'),
+      forceRescan: z.boolean().optional().describe('Force re-scan even if DB exists'),
+    },
+    cost: 'high',
+    returns: '{ok, nodes, pins, properties, db_path}',
+    handler: async (params) => {
+      const result = await scrapeNodeRegistry(params as unknown as ScrapeNodeRegistryParams);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_match_pin_names',
+    description: 'Suggest the correct pin names for an edge between two nodes.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'two nodes will not connect and you need the right pin names',
+      not_when: 'you already have valid pin names',
+    },
+    schema: {
+      fromClass: z.string().describe('Source node class'),
+      fromPin: z.string().describe('Pin name on source node (may be approximate)'),
+      toClass: z.string().describe('Target node class to find a matching input pin on'),
+    },
+    cost: 'low',
+    returns: '{matches:[{from,to,confidence}]}',
+    handler: async (params) => {
+      const result = await matchPinNames(params);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_validate_attribute_flow',
+    description: 'Trace attributes through a graph and report where the chain breaks.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'attributes vanish downstream and you need to find where',
+      not_when: 'the graph does not use attributes',
+    },
+    schema: {
+      graph: z.string().describe('JSON string of the PCGEx graph to validate attribute flow'),
+      strictMode: dCoerceBool.optional().describe('If true, also flag orphan writes (written but never consumed)'),
+    },
+    cost: 'low',
+    returns: '{ok, breaks:[{node,attribute,reason}]}',
+    handler: async (params) => {
+      const result = await validateAttributeFlow(params as unknown as ValidateAttributeFlowParams);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_diff_against_working_asset',
+    description: 'Compare a graph description against the asset currently in the project.',
+    meta: {
+      cost: 'medium',
+      effects: [],
+      when: 'checking what your edits would change before writing them',
+      not_when: 'you want the asset contents alone - export it',
+    },
+    schema: {
+      wipGraph: z.string().describe('JSON string of the work-in-progress graph'),
+      referenceAssetPath: z.string().describe('Full UE asset path to the reference PCGGraph'),
+      diffMode: z.enum(['structural', 'properties', 'full']).optional().describe('What to diff (default: full)'),
+    },
+    cost: 'medium',
+    returns: '{added, removed, changed}',
+    handler: async (params) => {
+      const result = await diffAgainstWorkingAsset(params as unknown as DiffAgainstWorkingAssetParams);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_format_graph_topology',
+    description: 'Render a graph as readable topology text.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'reasoning about a graph structure in a readable form',
+      not_when: 'you need machine-readable JSON - export it',
+    },
+    schema: {
+      graph: z
+        .string()
+        .describe(
+          'JSON string of the PCGEx graph to layout. ' +
+            'Edges accept either canonical (fromNode/fromPin/toNode/toPin) or legacy (from/fromPin/to/toPin) keys. ' +
+            'Output nodes carry a position:{x,y} object; the C++ legacy handler reads that.',
+        ),
+      algorithm: z.enum(['layered', 'grid']).optional().describe('Layout algorithm (default: layered)'),
+      nodeWidth: z.number().int().optional().describe('Node width in pixels (default: 200)'),
+      nodeHeight: z.number().int().optional().describe('Node height in pixels (default: 100)'),
+      horizontalSpacing: z.number().int().optional().describe('Horizontal gap between layers (default: 150)'),
+      verticalSpacing: z.number().int().optional().describe('Vertical gap between rows (default: 80)'),
+      addCommentBlocks: z.boolean().optional().describe('Wrap category clusters in PCGComment nodes'),
+    },
+    cost: 'low',
+    returns: '{topology}',
+    handler: async (params) => {
+      const result = await formatGraphTopology(params as unknown as FormatGraphTopologyParams);
+      return { content: [{ type: 'text', text: result }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_abstract_to_subgraph',
+    description: 'Extract a repeated node cluster into a reusable subgraph. Transforms the graph object in memory and writes nothing.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'the same cluster appears several times and should be factored out',
+      not_when: 'the cluster is used once - abstracting it only adds indirection',
+    },
+    schema: {
+      graph: z.string().describe('JSON string of the full PCGEx graph'),
+      nodeIds: z.array(z.string()).describe('Array of node IDs to extract into a subgraph'),
+      subgraphName: z.string().optional().describe('Name for the extracted subgraph (default: SubGraph)'),
+    },
+    cost: 'low',
+    returns: '{graph, subgraph, replaced} - in memory, nothing written',
+    handler: async (params) => {
+      const result = await abstractToSubgraph(params as unknown as AbstractToSubgraphParams);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_parameterize_graph_inputs',
+    description: 'Promote hard-coded values in a graph to named inputs. Transforms the graph object in memory and writes nothing.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'making a graph reusable across biomes or scales',
+      not_when: 'the values are genuinely fixed for this graph',
+    },
+    schema: {
+      graph: z.string().describe('JSON string of the PCGEx graph'),
+      targets: z
+        .array(
+          z.object({
+            nodeId: z.string().describe('Node ID containing the hardcoded property'),
+            property: z.string().describe('Property name to parameterize'),
+            parameterName: z.string().optional().describe('Name for the graph parameter'),
+          }),
+        )
+        .describe('List of properties to promote to graph parameters'),
+    },
+    cost: 'low',
+    returns: '{graph, parameters:[{name,type,default}]} - in memory',
+    handler: async (params) => {
+      const result = await parameterizeGraphInputs(params);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_query_pcgex_docs',
+    description: 'Search the PCGEx documentation for a node or concept.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: "you need PCGEx reference material while authoring a graph",
+      not_when: "the question is about this project's own graphs - search the catalog",
+    },
+    schema: {
+      query: z.string().describe('Node class name or keyword to search documentation'),
+      includeSourceSnippet: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('Include up to 80 lines from the header file'),
+    },
+    cost: 'low',
+    returns: '{results:[{title,excerpt,ref}]}',
+    handler: async (params) => {
+      const result = await queryPcgexDocs(params as unknown as QueryPcgexDocsParams);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_initiate_infrastructure_brainstorm',
+    description: 'Plan complex graph architectures. IMPORTANT: After calling this tool, do NOT call hayba_create_pcg_graph, hayba_validate_pcg_graph, or any graph-mutation tool until the user explicitly approves an approach from the proposal.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'starting a structured design pass over world infrastructure',
+      not_when: 'you already know what to build',
+    },
+    schema: {
+      topic: z.string().describe('The infrastructure or system design topic to brainstorm'),
+      context: z.string().optional().describe('Additional context about the project or constraints'),
+      constraints: z.array(z.string()).optional().describe('Explicit constraints or requirements'),
+    },
+    cost: 'low',
+    returns: '{prompt, considerations}',
+    handler: async (params) => {
+      const result = await initiateInfrastructureBrainstorm(params);
+      return {
+        content: [
+          {
+            type: 'text',
+            text:
+              JSON.stringify(result, null, 2) +
+              '\n\n---\nIMPORTANT: This is a PROPOSAL ONLY. Do NOT call hayba_create_pcg_graph, ' +
+              'hayba_validate_attribute_flow, hayba_abstract_to_subgraph, or any graph-mutation tool ' +
+              'until the user has explicitly approved an approach above.',
+          },
+        ],
+      };
+    },
+  }),
+  defineTool({
+    name: 'hayba_setup_conventions',
+    description: 'Multi-turn wizard to configure UE project conventions. Call repeatedly with advancing stages.',
+    meta: {
+      cost: 'low',
+      effects: ['writes_conventions_file'],
+      when: 'setting or changing where generated content should be placed and how it is named',
+      not_when: 'you only want to read the current conventions - hayba_analyze_conventions',
+    },
+    schema: {
+      stage: z.enum(['start', 'folders', 'naming', 'workflow', 'confirm', 'save']).describe('Current wizard stage'),
+      preset: z
+        .enum(['epic-default', 'gamedevtv', 'custom'])
+        .optional()
+        .describe('Preset to load (required at start stage)'),
+      answers: z.record(z.unknown()).optional().describe('Accumulated user responses from previous stages'),
+      target: z.enum(['global', 'project']).optional().describe('Where to save (required at save stage)'),
+      projectRoot: z.string().optional().describe('UE project root path (required if target is project)'),
+    },
+    cost: 'low',
+    returns: '{ok, stage, conventions, written_to}',
+    handler: async (params) => {
+      const result = await setupConventionsHandler(params as Record<string, unknown>);
+      return { content: result.content, isError: result.isError };
+    },
+  }),
+  defineTool({
+    name: 'hayba_analyze_conventions',
+    description: 'Scan a UE project Content directory and infer conventions from existing folder structure and asset naming.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'auditing whether the project follows its own conventions',
+      not_when: 'you want to CHANGE them - hayba_setup_conventions',
+    },
+    schema: {
+      projectRoot: z.string().describe('Path to UE project root (contains .uproject file)'),
+      save: z.boolean().optional().describe('If true, write inferred conventions to target (default: false — dry run)'),
+      target: z.enum(['global', 'project']).optional().describe('Where to save (required when save is true)'),
+    },
+    cost: 'low',
+    returns: '{conventions, violations:[{path,rule}]}',
+    handler: async (params) => {
+      const result = await analyzeConventionsHandler(params as Record<string, unknown>);
+      return { content: result.content, isError: result.isError };
+    },
+  }),
+  defineTool({
+    name: 'hayba_open_zone_painter',
+    description: 'Open the zone painter for a world. CREATES the project when it does not already exist.',
+    meta: {
+      cost: 'low',
+      effects: ['creates_zone_project'],
+      when: 'starting or reopening a zone-painting session',
+      not_when: 'you only want to read painted zones - hayba_read_zones',
+    },
+    schema: {
+      projectId: z.string().optional().describe('Existing project ID. Omit to create a new project.'),
+      projectName: z.string().optional().describe('Name for the new project (used when projectId is omitted).'),
+      phase: z
+        .enum(['a', 'b'])
+        .optional()
+        .describe('Phase A = blank canvas, Phase B = heightmap overlay (default: a).'),
+    },
+    cost: 'low',
+    returns: '{ok, projectId, url, created}',
+    handler: async (params) => {
+      const result = await openZonePainterHandler(params as Record<string, unknown>);
+      return { content: result.content, isError: result.isError };
+    },
+  }),
+  defineTool({
+    name: 'hayba_read_zones',
+    description: 'Read the zones a user has painted, to drive placement decisions.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'turning painted zones into placement rules',
+      not_when: 'you want to change the heightmap - hayba_set_painter_heightmap',
+    },
+    schema: {
+      projectId: z.string().optional().describe('Project ID to read submitted zones from.'),
+      scratchSessionId: z
+        .string()
+        .optional()
+        .describe('Scratch session ID (for standalone zone painting without a project).'),
+    },
+    cost: 'low',
+    returns: '{zones:[{name,color,area}]}',
+    handler: async (params) => {
+      const result = await readZonesHandler(params as Record<string, unknown>);
+      return { content: result.content, isError: result.isError };
+    },
+  }),
+  defineTool({
+    name: 'hayba_set_painter_heightmap',
+    description: 'Point the zone painter at the heightmap it should paint over.',
+    meta: {
+      cost: 'low',
+      effects: ['modifies_zone_project'],
+      when: 'the painter needs a terrain image to paint against',
+      not_when: 'the project does not exist yet - hayba_open_zone_painter first',
+    },
+    schema: {
+      projectId: z.string().describe('Project ID to associate the heightmap with.'),
+      heightmapPath: z.string().describe('Absolute path to the baked heightmap PNG or R16 file.'),
+    },
+    cost: 'low',
+    returns: '{ok, projectId, heightmapPath}',
+    handler: async (params) => {
+      const result = await setPainterHeightmapHandler(params as Record<string, unknown>);
+      return { content: result.content, isError: result.isError };
+    },
+  }),
+  defineTool({
+    name: 'hayba_import_landscape',
+    description: 'Import a heightmap (PNG or R16) as an UE Landscape actor. Wraps the UE-side landscape_import handler. The heightmap is sampled 0..uint16-max -> 0..maxHeightM (m). Spawns one Landscape covering worldSizeKm x worldSizeKm.',
+    meta: {
+      cost: 'high',
+      effects: ['imports_landscape', 'modifies_level'],
+      when: 'you need terrain that PCG can sample points against',
+      not_when: 'a static mesh is sufficient and no PCG sampling is needed',
+    },
+    schema: {
+      heightmapPath: z.string().describe('Absolute path to a PNG or R16 heightmap file'),
+      worldSizeKm: z.number().optional().default(8.0).describe('Landscape XY size in km'),
+      maxHeightM: z
+        .number()
+        .optional()
+        .default(600.0)
+        .describe('Maximum height in m (0..maxHeightM mapped from uint16)'),
+      actorLabel: z.string().optional().default('Hayba_Terrain').describe('Label for the spawned Landscape actor'),
+      landscapeMaterial: z.string().optional().describe('UE material path; empty = no material'),
+    },
+    cost: 'high',
+    returns: '{ok, actor, size, components}',
+    handler: async (params) => {
+      try {
+        const data = await executeCommand('landscape_import', params as Record<string, unknown>);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
+        };
+      } catch (e) {
+        return errorResult(`Error importing landscape: ${(e as Error).message}`);
+      }
+    },
+  }),
+];
+
 const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   // ── World generation (always-on flagship) ────────────────────────────────
   {
@@ -421,7 +1592,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   // ── Actor domain ────────────────────────────────────────────────────────
   {
     name: 'actor_spawn',
-    description: 'Spawn a new actor in the active level.',
+    description: 'Place a new actor in the active level by class — a light, a volume, a blueprint actor, or any registered UClass. To place a StaticMesh or other content asset by its path instead, use actor_spawn_from_asset.',
     meta: actorSpawnMeta,
     handler: actorSpawnHandler,
     cost: 'medium',
@@ -436,7 +1607,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   },
   {
     name: 'actor_list',
-    description: 'Enumerate actors in the active level.',
+    description: 'List what is in the scene: every actor in the active level with its label, class and transform. Start here when you need to know what already exists before changing anything.',
     meta: actorListMeta,
     handler: actorListHandler,
     cost: 'low',
@@ -871,13 +2042,19 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   },
   {
     name: 'asset_delete',
-    description: 'Permanently delete a content asset by object path.',
+    description:
+      'Permanently delete content assets, verifying on the FILESYSTEM that each file is gone. Pass `paths` to delete a set in one call. READ deleted_count, not requested — it counts .uasset files actually removed. NEVER verify a delete with does_asset_exist or asset_search: the asset registry can report an asset gone while its file is still on disk, and that is exactly how a batch delete reports success for files it never removed. Assets the registry has lost but whose files remain are reported as ORPHANED and must be removed from disk directly.',
     meta: assetDeleteMeta,
     handler: assetDeleteHandler,
     cost: 'low',
-    returns: '{deleted}',
+    returns:
+      '{requested, deleted_count, still_on_disk_count, warning?, results:[{path, existed_on_disk, existed_in_registry, engine_reported_deleted, file_gone, deleted, file, reason?}]}',
     schema: {
-      path: z.string().min(1).describe('Object path of the asset to delete, e.g. /Game/Foo/MF_X.MF_X'),
+      path: z.string().optional().describe('Object path of one asset to delete, e.g. /Game/Foo/MF_X.MF_X'),
+      paths: z
+        .array(z.string().min(1))
+        .optional()
+        .describe('Several assets in one call. Prefer this over looping — one call reports which ones actually went.'),
     },
   },
   {
@@ -969,7 +2146,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'ui_create_widget',
     description:
-      'Create a new UMG Widget Blueprint asset (designer-editable UI). Seeds a root CanvasPanel. Use the real UMG pipeline instead of hand-building the tree in C++.',
+      'CREATE A NEW MENU, SCREEN OR HUD as a UMG Widget Blueprint asset — the designer-editable kind an artist can also open. Seeds a root CanvasPanel ready for content. USE_WHEN: starting any new piece of UI. NOT_WHEN: adding to an existing one (ui_add_element / ui_build_tree), or inspecting what a running game is showing (editor_pie_widget_tree).',
     meta: uiCreateWidgetMeta,
     handler: uiCreateWidgetHandler,
     cost: 'medium',
@@ -1079,7 +2256,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'ui_set_slot_layout',
     description:
-      'Set CanvasPanel slot layout properties (anchors, position, size, alignment, Z-order) on a designer widget in a Widget Blueprint. For non-Canvas slots use the slot_layout field in ui_set_widget_properties.',
+      'Set CanvasPanel slot layout on a designer widget: anchors (as `anchors` [minX,minY,maxX,maxY], or `anchors_min`+`anchors_max` [x,y] pairs), `position`, `size`, `alignment`, `z_order`, `auto_size`; box/grid slots take `padding`, `fill`, alignments, row/column. Anchors + position + alignment are committed to the CanvasPanelSlot atomically (one LayoutData write). Unknown parameter names are REJECTED with a validation error rather than silently dropped. For non-Canvas slots use the slot_props field in ui_set_widget_properties.',
     meta: uiSetSlotLayoutMeta,
     handler: uiSetSlotLayoutHandler,
     cost: 'low',
@@ -1233,6 +2410,17 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     schema: uiSetVariableSchema.shape,
   },
   {
+    name: 'ui_bind_property',
+    description:
+      'Bind a widget property (Text, ToolTipText, Visibility, bIsEnabled) to a blueprint variable - the designer Bind dropdown. This is how a reusable pure-Blueprint component gets a settable caption without a C++ base class. Omit variable_name to clear the binding.',
+    meta: uiBindPropertyMeta,
+    handler: uiBindPropertyHandler,
+    cost: 'low',
+    returns: '{widget_name, property_name, variable_name?, bound, binding_count?}',
+    niche: UI,
+    schema: uiBindPropertySchema.shape,
+  },
+  {
     name: 'ui_list_widget_blueprints',
     description:
       'List the Widget Blueprints that exist in the project, with the _C class path needed to use one as a child widget or as a parent class. Reads the asset registry, so no blueprint is loaded.',
@@ -1254,6 +2442,40 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       '{widget_blueprint_path, screen_width, screen_height, layout_resolved, layout_error?, widget_count, widgets:[{name, class, x, y, width, height, depth, anchors?, text_info?, brush_info?}]}',
     niche: UI,
     schema: uiLayoutSnapshotSchema.shape,
+  },
+  {
+    name: 'ui_copy_style',
+    description:
+      '"Make this look like that one" — copies a working widget\'s brush (draw_as, resource, margin, tint, size) and text style (font, typeface, size, colour) onto another. Copies STYLE ONLY: slot layout and text content stay the target\'s, so matching a look cannot wreck a layout. Use dry_run to see what would be copied. USE_WHEN: one widget already looks right. NOT_WHEN: you know the values (ui_set_brush / ui_set_text_style) or want the widget itself (ui_duplicate_element).',
+    meta: uiCopyStyleMeta,
+    handler: uiCopyStyleHandler,
+    cost: 'high',
+    returns: '{from, to, widget_blueprint_path, copied[], copied_count, applied:[{aspect, values}], failed[], note}',
+    niche: UI,
+    schema: uiCopyStyleSchema.shape,
+  },
+  {
+    name: 'ui_set_default_font',
+    description:
+      'Rewrite every text widget still on an engine default font (Roboto) onto a project font, in one call. New TextBlocks always arrive as /Engine/EngineFonts/Roboto "Bold" and ui_set_text_style only changes the fields you pass — so setting size and colour but forgetting font_asset+typeface silently keeps Roboto and still reports success. Use dry_run first to see what would change. USE_WHEN: a blueprint has the default font anywhere. NOT_WHEN: restyling one widget (ui_set_text_style).',
+    meta: uiSetDefaultFontMeta,
+    handler: uiSetDefaultFontHandler,
+    cost: 'high',
+    returns: '{widget_blueprint_path, font_asset, typeface, changed:[{widget, from}], changed_count, failed:[{widget, error}], failed_count, note}',
+    niche: UI,
+    schema: uiSetDefaultFontSchema.shape,
+  },
+  {
+    name: 'ui_render_widget_to_png',
+    description:
+      'SEE a Widget Blueprint: draws it to a PNG and returns the image inline, with no PIE session and no editor restart. This is how you check fonts, colours, brushes, spacing and overflow in seconds instead of a rebuild-and-play cycle. Read coverage_percent — 0 means the widget drew nothing and the PNG is blank. USE_WHEN: you want to look at the UI. NOT_WHEN: you want numbers (ui_layout_snapshot) or a verdict (ui_validate).',
+    meta: uiRenderWidgetToPngMeta,
+    handler: uiRenderWidgetToPngHandler,
+    cost: 'high',
+    returns:
+      '{widget_blueprint_path, out_path, width, height, design_width, design_height, bytes, opaque_background, coverage_percent, warning?, inline_image_skipped?} + the PNG as an image block',
+    niche: UI,
+    schema: uiRenderWidgetToPngSchema.shape,
   },
   {
     name: 'ui_measure_text',
@@ -1278,6 +2500,310 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       '{widget_blueprint_path, platform, strictness, layout_resolved, findings:[{ruleId, severity, widget?, message, hint, data}], rules_evaluated, rules_skipped_no_layout[], rules_disabled[], rules_below_strictness[], counts}',
     niche: UI,
     schema: uiValidateSchema.shape,
+  },
+
+  // ── Docs domain ───────────────────────────────────────────────────────────
+  // Reflection over the LIVE editor, so answers match the engine version and
+  // plugin set actually loaded — not a web page for some other build. The C++
+  // handler existed and worked; it simply had no wrapper, so the catalogue
+  // reported the whole domain as unavailable.
+  {
+    name: 'docs_search',
+    description:
+      'FIND THE REAL NAME OF A UE CLASS instead of guessing. Substring search over every class loaded in the running editor. USE_WHEN: you are about to write a class name from memory. NOT_WHEN: you already have the exact path.',
+    meta: docsSearchMeta,
+    handler: docsSearchHandler,
+    cost: 'low',
+    returns: '{results:[{name, path, kind}], count, capped}',
+    niche: DOCS,
+    schema: docsSearchSchema.shape,
+  },
+  {
+    name: 'docs_lookup_class',
+    description:
+      'Inspect a UE class in the running editor: full inheritance chain, class flags, and how many properties and functions it has. USE_WHEN: confirming a class exists and what it derives from before using it as a parent or a cast target.',
+    meta: docsLookupClassMeta,
+    handler: docsLookupClassHandler,
+    cost: 'low',
+    returns: '{name, path, parent_chain[], flags[], property_count, function_count}',
+    niche: DOCS,
+    schema: docsLookupClassSchema.shape,
+  },
+  {
+    name: 'docs_lookup_api',
+    description:
+      'CHECK A PROPERTY OR FUNCTION EXISTS BEFORE YOU USE IT. Lists the real properties of a class (name, C++ type, category, tooltip, whether it is editable and blueprint-visible) and functions (blueprint-callable, event). USE_WHEN: before setting a property by name or calling a function — a wrong name is otherwise a silent no-op or a failed edit. Pass include_inherited when a member you expected is missing; it is usually declared on a parent.',
+    meta: docsLookupApiMeta,
+    handler: docsLookupApiHandler,
+    cost: 'low',
+    returns: '{name, properties:[{name, type, category, tooltip, is_editable, is_blueprint_visible}], functions:[{name, is_blueprint_callable, is_event, tooltip}]}',
+    niche: DOCS,
+    schema: docsLookupApiSchema.shape,
+  },
+
+  // ── Asset graph ───────────────────────────────────────────────────────────
+  // Know what breaks before breaking it. These handlers were implemented in C++
+  // and had no wrapper, so an agent could delete or rename an asset but could
+  // not first ask what depended on it.
+  {
+    name: 'asset_get_referencers',
+    description:
+      'WHAT BREAKS IF I DELETE OR RENAME THIS? Lists every asset that references the given one. USE_WHEN: before asset_delete, asset_rename or asset_move — a reference you did not know about becomes a broken link that surfaces much later. NOT_WHEN: you want what the asset itself needs (asset_get_dependencies).',
+    meta: assetGetReferencersMeta,
+    handler: assetGetReferencersHandler,
+    cost: 'low',
+    returns: '{path, referencers[], count}',
+    niche: ASSETGRAPH,
+    schema: assetGetReferencersSchema.shape,
+  },
+  {
+    name: 'asset_get_dependencies',
+    description:
+      'What this asset pulls in — everything that must exist for it to load. USE_WHEN: working out why an asset drags in a large cook, or what to migrate alongside it. NOT_WHEN: you want what depends on IT (asset_get_referencers).',
+    meta: assetGetDependenciesMeta,
+    handler: assetGetDependenciesHandler,
+    cost: 'low',
+    returns: '{path, dependencies[], count}',
+    niche: ASSETGRAPH,
+    schema: assetGetDependenciesSchema.shape,
+  },
+  {
+    name: 'asset_get_references',
+    description:
+      'Both directions of an asset reference graph in one call. Note the lists may be truncated — `capped: true` says so. Prefer the single-direction tools when you need an exact count.',
+    meta: assetGetReferencesMeta,
+    handler: assetGetReferencesHandler,
+    cost: 'low',
+    returns: '{referencers[], dependencies[], capped}',
+    niche: ASSETGRAPH,
+    schema: assetGetReferencesSchema.shape,
+  },
+  {
+    name: 'asset_rename',
+    description:
+      'Rename an asset in place, fixing up references rather than breaking them. Leaves a redirector behind; asset_fix_redirectors cleans those up. USE_WHEN: the name is wrong. NOT_WHEN: it belongs in another folder (asset_move).',
+    meta: assetRenameMeta,
+    handler: assetRenameHandler,
+    cost: 'medium',
+    returns: '{old_path, new_path}',
+    niche: ASSETGRAPH,
+    schema: assetRenameSchema.shape,
+  },
+  {
+    name: 'asset_move',
+    description:
+      'Move an asset to another folder, keeping references working. Leaves a redirector behind; asset_fix_redirectors cleans those up.',
+    meta: assetMoveMeta,
+    handler: assetMoveHandler,
+    cost: 'medium',
+    returns: '{ok, old_path, new_path}',
+    niche: ASSETGRAPH,
+    schema: assetMoveSchema.shape,
+  },
+  {
+    name: 'asset_fix_redirectors',
+    description:
+      'Collapse the redirector stubs left behind by renames and moves. USE_WHEN: after a batch of asset_rename / asset_move calls — redirectors that survive into a cook are wasted work and confuse later reference lookups.',
+    meta: assetFixRedirectorsMeta,
+    handler: assetFixRedirectorsHandler,
+    cost: 'medium',
+    returns: '{fixed_count, path}',
+    niche: ASSETGRAPH,
+    schema: assetFixRedirectorsSchema.shape,
+  },
+  {
+    name: 'asset_validate',
+    description:
+      'Run the editor data-validation rules over an asset or folder and return the errors and warnings. USE_WHEN: confirming an asset is sound before building on it. NOT_WHEN: checking UI layout — ui_validate is the tool for that.',
+    meta: assetValidateMeta,
+    handler: assetValidateHandler,
+    cost: 'medium',
+    returns: '{valid, num_valid, num_invalid, num_warnings, errors[], warnings[]}',
+    niche: ASSETGRAPH,
+    schema: assetValidateSchema.shape,
+  },
+
+  // ── Foliage ───────────────────────────────────────────────────────────────
+  // Implemented in C++ all along. These were briefly on a stub denylist because
+  // a heuristic sweep misjudged them — a reminder that suppressing working
+  // capability is as wrong as advertising broken capability.
+  {
+    name: 'foliage_list_types',
+    description:
+      'List the FoliageType assets in use in the current level, with instance counts. USE_WHEN: before adding or removing foliage, to learn what is already there.',
+    meta: foliageListTypesMeta,
+    handler: foliageListTypesHandler,
+    cost: 'low',
+    returns: '{path, count, types[]}',
+    niche: FOLIAGE,
+    schema: foliageListTypesSchema.shape,
+  },
+  {
+    name: 'foliage_add_instance',
+    description:
+      'Place one foliage instance at an exact transform. USE_WHEN: precise single placement. NOT_WHEN: covering an area — foliage_paint_at scatters at a density instead.',
+    meta: foliageAddInstanceMeta,
+    handler: foliageAddInstanceHandler,
+    cost: 'medium',
+    returns: '{ok}',
+    niche: FOLIAGE,
+    schema: foliageAddInstanceSchema.shape,
+  },
+  {
+    name: 'foliage_paint_at',
+    description:
+      'Scatter foliage over a circular area at a density, as the foliage paint brush does. USE_WHEN: dressing terrain. NOT_WHEN: you need one instance at an exact spot.',
+    meta: foliagePaintAtMeta,
+    handler: foliagePaintAtHandler,
+    cost: 'medium',
+    returns: '{ok}',
+    niche: FOLIAGE,
+    schema: foliagePaintAtSchema.shape,
+  },
+  {
+    name: 'foliage_remove_instances',
+    description:
+      'Remove foliage instances of a type inside a world-space box. Returns how many were removed, so an unexpected zero is visible rather than silent.',
+    meta: foliageRemoveInstancesMeta,
+    handler: foliageRemoveInstancesHandler,
+    cost: 'medium',
+    returns: '{removed}',
+    niche: FOLIAGE,
+    schema: foliageRemoveInstancesSchema.shape,
+  },
+
+  // ── PIE interaction ───────────────────────────────────────────────────────
+  //
+  // Driving a running game. Every one of these dispatches input and returns
+  // immediately — none of them block or pump the engine. The previous versions
+  // spun the core ticker from inside a game-thread handler, which tore down the
+  // objects they were holding and crashed the editor.
+  //
+  // Consequence worth knowing: the world advances BETWEEN calls, not during
+  // them. Look at the result, then act again.
+  {
+    name: 'editor_pie_widget_tree',
+    description:
+      'WHAT IS ON SCREEN RIGHT NOW in the running game: every visible Slate/UMG widget with its type, text and on-screen rectangle. USE_WHEN: before interacting — this is how you find a button instead of guessing coordinates. NOT_WHEN: inspecting a Widget Blueprint asset rather than the live screen (ui_query).',
+    meta: pieWidgetTreeMeta,
+    handler: pieWidgetTreeHandler,
+    cost: 'low',
+    returns: '{widgets:[{type, tag, text, x, y, width, height, center_x, center_y, enabled, interactive}], count}',
+    niche: PIE,
+    schema: pieWidgetTreeSchema.shape,
+  },
+  {
+    name: 'editor_pie_click_widget',
+    description:
+      'CLICK A CONTROL BY WHAT IT SAYS rather than by pixel. Finds the widget whose text, tag or type matches and clicks its centre, preferring an interactive one so matching a label presses the button containing it. Reports how many matched, so an ambiguous choice is visible instead of silent. USE_WHEN: pressing menu buttons. NOT_WHEN: you need an exact position.',
+    meta: pieClickWidgetMeta,
+    handler: pieClickWidgetHandler,
+    cost: 'medium',
+    returns: '{match, clicked_type, clicked_text, x, y, candidates, note?}',
+    niche: PIE,
+    schema: pieClickWidgetSchema.shape,
+  },
+  {
+    name: 'editor_pie_mouse',
+    description:
+      'Drive the mouse in the running game: move, click, double_click, press, release, drag or scroll. press/release let you hold a button across calls; drag interpolates intermediate positions because widgets that track deltas ignore a single jump. x/y are ABSOLUTE desktop pixels — pass center_x/center_y from editor_pie_widget_tree straight through. Check focused_widget_after: if it says SViewport, the click missed the UI. PREFER editor_pie_click_widget when you know the label.',
+    meta: pieMouseMeta,
+    handler: pieMouseHandler,
+    cost: 'medium',
+    returns: '{action, x, y, coordinate_space, absolute_x, absolute_y, focused_widget_after, button, dispatched}',
+    niche: PIE,
+    schema: pieMouseSchema.shape,
+  },
+  {
+    name: 'editor_pie_type_text',
+    description:
+      'Type a string into the running game as character input, which is what text fields actually consume. Goes to whatever holds keyboard focus — click the field first. Read characters_accepted_by_ui, NOT characters_sent: the first says the text landed in a widget, the second only says it was sent. USE_WHEN: filling in a name or search box. NOT_WHEN: a single control key like Enter (editor_pie_press_key).',
+    meta: pieTypeTextMeta,
+    handler: pieTypeTextHandler,
+    cost: 'medium',
+    returns: '{text, characters_sent, characters_accepted_by_ui, focused_widget, warning?, note}',
+    niche: PIE,
+    schema: pieTypeTextSchema.shape,
+  },
+  {
+    name: 'editor_pie_set_text',
+    description:
+      'Put a value straight into a text field and tell the game about it. PREFER THIS over editor_pie_type_text when you just need to get past a field — typed characters go wherever focus happens to be, can be eaten by a modal, and are lost if focus moves before the widget commits. Find the field by the text ON it (the placeholder counts, so an empty login box matches "Username"), or omit match to use the focused field. Returns readback+verified, so you know the value is actually in the box. USE_WHEN: filling a login/search/name field. NOT_WHEN: you are testing how the game itself handles keystrokes.',
+    meta: pieSetTextMeta,
+    handler: pieSetTextHandler,
+    cost: 'medium',
+    returns: '{text, target_type, found_by, applied, readback, verified, committed, warning?}',
+    niche: PIE,
+    schema: pieSetTextSchema.shape,
+  },
+  {
+    name: 'editor_pie_press_key',
+    description:
+      'Press a keyboard or gamepad button in the running game. pressed_and_released schedules the release on a later tick and RETURNS IMMEDIATELY — the key is still down when you read the result, which is what lets the game see the hold at all.',
+    meta: piePressKeyMeta,
+    handler: piePressKeyHandler,
+    cost: 'medium',
+    returns: '{key, event, dispatched, focused_widget, handled_by_ui, release_scheduled, release_after_ms?}',
+    niche: PIE,
+    schema: piePressKeySchema.shape,
+  },
+  {
+    name: 'editor_pie_axis',
+    description:
+      'Send analog input — gamepad sticks and triggers, mouse axes. Applies for the frame it is delivered, so send it again per step for sustained movement rather than expecting it to latch.',
+    meta: pieAxisMeta,
+    handler: pieAxisHandler,
+    cost: 'medium',
+    returns: '{key, value, note}',
+    niche: PIE,
+    schema: pieAxisSchema.shape,
+  },
+  {
+    name: 'editor_pie_screenshot',
+    description:
+      'Capture the running game. Requests the shot and returns immediately; the engine writes the file a frame or two later, so poll with check_only:true and the same filename rather than assuming it is ready. NOT_WHEN: capturing the editor viewport outside PIE (editor_capture_viewport).',
+    meta: pieScreenshotMeta,
+    handler: pieScreenshotHandler,
+    cost: 'medium',
+    returns: '{filename, requested, captured, note}',
+    niche: PIE,
+    schema: pieScreenshotSchema.shape,
+  },
+
+  // ── Content audits + validation ───────────────────────────────────────────
+  {
+    name: 'texture_audit',
+    description:
+      'WHICH TEXTURES ARE COSTING MEMORY: every Texture2D ranked by resource size, with dimensions, format, LOD group and compression, and a flag where the name implies a role the compression contradicts. USE_WHEN: chasing memory or load times. NOT_WHEN: inspecting one texture you already know about (texture_get_info).',
+    meta: textureAuditMeta,
+    handler: textureAuditHandler,
+    cost: 'medium',
+    returns: '{textures:[{path, size_x, size_y, format, memory_kb, lod_group, compression, outlier}], scanned, count, top_n_total_kb}',
+    niche: CONTENT,
+    schema: textureAuditSchema.shape,
+  },
+  {
+    name: 'mesh_audit',
+    description:
+      'WHICH MESHES ARE COSTING FRAME TIME: static meshes with LOD0 triangle counts, LOD count, material slot count and how many things reference them. USE_WHEN: a scene is heavy and you need to know where the triangles and draw calls actually are.',
+    meta: meshAuditMeta,
+    handler: meshAuditHandler,
+    cost: 'medium',
+    returns: '{meshes:[{path, tris_lod0, lod_count, missing_lods, material_slot_count, referencer_count}], scanned, count}',
+    niche: CONTENT,
+    schema: meshAuditSchema.shape,
+  },
+  {
+    name: 'content_validate',
+    description:
+      'CHECK PROJECT CONTENT AGAINST MEMORY AND PERFORMANCE BUDGETS: oversized textures, compression that contradicts the asset name, non-power-of-two dimensions, UI textures outside the UI group, meshes with no LODs, excessive material slots, unreferenced meshes. Judged per strictness (relaxed/standard/strict) with every threshold justified in the hint. Reports what it did NOT examine — the audits only cover the heaviest N assets, so a clean result is scoped, never a claim about the whole project. NOT_WHEN: checking a UI screen (ui_validate).',
+    meta: contentValidateMeta,
+    handler: contentValidateHandler,
+    cost: 'medium',
+    returns:
+      '{strictness, findings:[{ruleId, severity, asset, message, hint, data}], rules_evaluated, rules_skipped_no_data[], counts, coverage:{textures_reported, textures_scanned, truncated}}',
+    niche: CONTENT,
+    schema: contentValidateSchema.shape,
   },
 
   // ── Scene domain ──────────────────────────────────────────────────────────
@@ -1737,7 +3263,19 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
 // presence and the no-drift / no-duplicate invariants.
 export const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   ...HANDWRITTEN_STANDARD_DESCRIPTORS,
-  ...generateLegacyDescriptors(new Set(HANDWRITTEN_STANDARD_DESCRIPTORS.map((d) => d.name))),
+  ...VALIDATOR_DESCRIPTORS,
+  ...PLUMB_DESCRIPTORS,
+  ...PCG_DESCRIPTORS,
+  ...generateLegacyDescriptors(
+    new Set(
+      [
+        ...HANDWRITTEN_STANDARD_DESCRIPTORS,
+        ...VALIDATOR_DESCRIPTORS,
+        ...PLUMB_DESCRIPTORS,
+        ...PCG_DESCRIPTORS,
+      ].map((d) => d.name),
+    ),
+  ),
 ];
 
 export async function registerTools(server: McpServer, session: SessionManagerStub): Promise<RoutingHandle | null> {
@@ -1763,7 +3301,14 @@ export async function registerTools(server: McpServer, session: SessionManagerSt
         handler = rest[1] as (...args: unknown[]) => unknown;
       }
       const dir = inferDir(name);
-      captured.set(name, { description, schema, handler, dir });
+      // Put every captured tool under the response-evidence contract, not just
+      // the ones registered through registerTool. Most sites below hand-roll
+      // server.tool(...) with an appendMeta'd description and never register a
+      // meta object, so effects are recovered from the description — a tool
+      // should not escape the rule because of which registration path it took.
+      const effects = parseEffectsFromDescription(description);
+      const guarded = isUnderEvidenceContract(effects) ? guardHandlerWithEvidence(handler) : handler;
+      captured.set(name, { description, schema, handler: guarded, dir });
       // Don't forward to realTool — registerDeferredRouting re-registers only
       // the always-on subset + alwaysLoadPacks tools.
     };
@@ -1808,6 +3353,23 @@ export async function registerTools(server: McpServer, session: SessionManagerSt
  * tools group under the expected pack (the "hidden until searched" surface —
  * deriveDomainPacks buckets by this dir, and ToolIndex indexes by it).
  */
+/**
+ * Measured bounds for an asset, used when baking a PLUMB profile.
+ *
+ * Hoisted to module scope so plumb_profile_bake can be a static descriptor.
+ * Goes through the executeCommand seam, so the in-memory adapter can script it
+ * in tests without a live editor.
+ */
+const fetchMeshBounds = async (asset: string) => {
+  const data = (await executeCommand('mesh_get_info', { path: asset })) as {
+    bounds?: { min: Record<string, number>; max: Record<string, number>; extents: Record<string, number> };
+  };
+  const b = data?.bounds;
+  if (!b) throw new Error('mesh_get_info returned no bounds');
+  const v = (o: Record<string, number>): [number, number, number] => [o.x ?? 0, o.y ?? 0, o.z ?? 0];
+  return { min: v(b.min), max: v(b.max), extents: v(b.extents) };
+};
+
 export function inferDir(name: string): string | null {
   if (name.startsWith('actor_')) return 'actor';
   if (name.startsWith('scene_')) return 'scene';
@@ -1821,15 +3383,6 @@ export function inferDir(name: string): string | null {
   if (name === 'python_run') return 'python';
   if (name === 'list_tool_categories' || name === 'get_tool_signature') return 'code-mode';
   return null;
-}
-
-/** Attach a first-touch niche briefing to a ToolResult when appropriate. */
-function withNicheBriefing(
-  domain: string,
-  session: SessionManagerStub,
-  r: { content: Array<{ type: 'text'; text: string }>; isError?: boolean },
-): { content: Array<{ type: 'text'; text: string }>; isError?: boolean } {
-  return appendNicheBriefing(domain, session, { content: r.content, isError: r.isError });
 }
 
 function registerToolsCore(server: McpServer, session: SessionManagerStub): void {
@@ -1863,65 +3416,7 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
   //   python_run            → executes any command via UE Python (escape hatch)
   // ──────────────────────────────────────────────────────────────────────────
 
-  server.tool(
-    'hayba_propose_plan',
-    'Propose a step-by-step plan to the user before performing destructive operations. Required when Plan Mode is on. Steps may be strings or {title, description, tool} objects.',
-    {
-      steps: z
-        .array(
-          z.union([
-            z.string(),
-            z.object({
-              title: z.string(),
-              description: z.string().optional(),
-              tool: z.string().optional(),
-            }),
-          ]),
-        )
-        .describe('Ordered list of plan steps'),
-      await_seconds: z
-        .number()
-        .int()
-        .min(0)
-        .max(600)
-        .optional()
-        .describe('How long the agent will wait for human approval (informational; default 30)'),
-    },
-    async (params) => {
-      try {
-        const data = await executeCommand('hayba_propose_plan', params as Record<string, unknown>, { timeout: 5000 });
-        return {
-          content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
-        };
-      } catch (e) {
-        return errorResult(`Error pushing plan to UE: ${(e as Error).message}`);
-      }
-    },
-  );
-  // no meta registered (plan control tool)
 
-  server.tool(
-    'hayba_mark_plan_step',
-    'Update the status of a single step in the proposed plan shown in the UE Plan panel. Marking a step "completed" auto-advances the next step to "running". Call this as you work through an approved plan so the user sees live progress.',
-    {
-      index: z.number().int().min(0).describe('Zero-based index of the plan step to update'),
-      status: z
-        .enum(['running', 'completed', 'failed'])
-        .default('completed')
-        .describe('New status for the step (default "completed")'),
-    },
-    async (params) => {
-      try {
-        const data = await executeCommand('plan_mark_step', params as Record<string, unknown>, { timeout: 5000 });
-        return {
-          content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
-        };
-      } catch (e) {
-        return errorResult(`Error marking plan step in UE: ${(e as Error).message}`);
-      }
-    },
-  );
-  // no meta registered (plan control tool)
 
   server.tool(
     'list_tool_categories',
@@ -1995,13 +3490,16 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
 
   // ── Editor domain ───────────────────────────────────────────────────────────
 
-  server.tool(
-    'editor_capture_viewport',
-    appendMeta(
+  // editor_capture_viewport was hand-written only because it returns an image
+  // block and the registrar's handler type was text-only. Now that the
+  // descriptor accepts a RichToolHandler it goes through the same path as
+  // everything else, and picks up the policies it had been missing.
+  registerTool(server, session, {
+    name: 'editor_capture_viewport',
+    description:
       'Capture the active editor viewport and return it as an inline image block (plus a small text block with camera/width/height). Set HAYBA_CAPTURE_TO_FILE to also spill the image to a temp file path.',
-      captureMeta,
-    ),
-    {
+    meta: captureMeta,
+    schema: {
       width: z.coerce.number().int().optional(),
       height: z.coerce.number().int().optional(),
       wait_for_shaders: z
@@ -2009,15 +3507,15 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
         .optional()
         .describe('If true, calls wait_for_shaders first (max_seconds=60, poll_seconds=1).'),
     },
-    async (params) => {
-      if ((params as any).wait_for_shaders === true) {
+    cost: 'medium',
+    returns: '{width, height, camera, ...} + the capture as an image block',
+    handler: async (params, sess) => {
+      if (params.wait_for_shaders === true) {
         await handleWaitForShaders({ max_seconds: 60, poll_seconds: 1 });
       }
-      const r = await editorCaptureViewportHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
+      return editorCaptureViewportHandler(params as Record<string, unknown>, sess);
     },
-  );
-  remember('editor_capture_viewport', captureMeta);
+  });
 
   // editor_start_pie is now in STANDARD_DESCRIPTORS — registered via the loop above.
 
@@ -2041,536 +3539,44 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
   // hayba_introspect, pcg_add_node, pcg_set_prop, pcg_wire, pcg_inspect_instances
   // are now in STANDARD_DESCRIPTORS (registered via the descriptor loop above).
 
-  server.tool(
-    'pcg_cook_and_wait',
-    appendMeta(
-      "Regenerate an actor's PCGComponent, block on the PCG graph settling (NOT world_tick), and return per-mesh ISM instance counts — all in one call.",
-      pcgCookMeta,
-    ),
-    pcgCookSchema.shape,
-    async (params) => {
-      const r = await pcgCookAndWaitHandler(params as never);
-      return { content: r.content, isError: r.isError };
-    },
-  );
-  remember('pcg_cook_and_wait', pcgCookMeta);
+remember('pcg_cook_and_wait', pcgCookMeta);
 
-  server.tool(
-    'pcg_scatter_mesh',
-    appendMeta(
-      'Scatter a mesh (or weighted mesh set) across a surface in ONE call — build the jittered PCG graph, spawn a bound PCGVolume, generate, and return instance counts. Hard-fails on 0 instances.',
-      pcgScatterMeta,
-    ),
-    pcgScatterSchema.shape,
-    async (params) => {
-      const r = await pcgScatterMeshHandler(params as never);
-      return { content: r.content, isError: r.isError };
-    },
-  );
-  remember('pcg_scatter_mesh', pcgScatterMeta);
+remember('pcg_scatter_mesh', pcgScatterMeta);
 
   // hayba_fab_*, hayba_polyhaven_*, hayba_ambientcg_*, hayba_sketchfab_* tools
   // are now in STANDARD_DESCRIPTORS — registered via the loop above.
 
   // ── PCGEx tools ─────────────────────────────────────────────────────────────
 
-  server.tool(
-    'hayba_search_node_catalog',
-    { query: z.string().describe('Search query — keyword, node class, or category') },
-    async ({ query }) => {
-      const result = await searchNodeCatalog({ query });
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
 
-  server.tool('hayba_get_node_details', { class: z.string().describe('PCGEx node class name') }, async (params) => {
-    const result = await getNodeDetails({ class: params.class });
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-  });
-  // no meta registered (PCGEx pure-TS handler)
 
-  server.tool(
-    'hayba_create_pcg_graph',
-    {
-      graph: z.string().describe('JSON string of the PCGEx graph topology'),
-      name: z.string().describe('Asset name for the new PCGGraph'),
-    },
-    async ({ graph, name }) => {
-      const result = await createPcgGraph({ graph, name });
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
 
-  server.tool(
-    'hayba_validate_pcg_graph',
-    { graph: z.string().describe('JSON string of the PCGEx graph to validate') },
-    async ({ graph }) => {
-      const result = await validatePcgGraph({ graph });
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
 
-  server.tool(
-    'hayba_list_pcg_assets',
-    { path: z.string().optional().describe('Content path filter (default: /Game/)') },
-    async ({ path }) => {
-      const result = await listPcgAssets({ path });
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
 
-  server.tool(
-    'hayba_export_pcg_graph',
-    { assetPath: z.string().describe('Full UE asset path to the PCGGraph') },
-    async ({ assetPath }) => {
-      const result = await exportPcgGraph({ assetPath });
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
 
-  server.tool(
-    'hayba_execute_pcg_graph',
-    { assetPath: z.string().describe('Full UE asset path to execute') },
-    async ({ assetPath }) => {
-      const result = await executePcgGraph({ assetPath });
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
 
   server.tool('hayba_check_ue_status', {}, async () => {
     const result = await checkUeStatus();
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
   });
-  // no meta registered (PCGEx pure-TS handler)
-
-  server.tool(
-    'hayba_scrape_node_registry',
-    {
-      pluginSourcePath: z.string().optional().describe('Path to PCGExtendedToolkit/Source/ directory'),
-      outputDbPath: z.string().optional().describe('Output SQLite DB path (default: Resources/pcgex_registry.db)'),
-      forceRescan: z.boolean().optional().describe('Force re-scan even if DB exists'),
-    },
-    async (params) => {
-      const result = await scrapeNodeRegistry(params as unknown as ScrapeNodeRegistryParams);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
-
-  server.tool(
-    'hayba_match_pin_names',
-    {
-      fromClass: z.string().describe('Source node class'),
-      fromPin: z.string().describe('Pin name on source node (may be approximate)'),
-      toClass: z.string().describe('Target node class to find a matching input pin on'),
-    },
-    async (params) => {
-      const result = await matchPinNames(params);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
-
-  server.tool(
-    'hayba_validate_attribute_flow',
-    {
-      graph: z.string().describe('JSON string of the PCGEx graph to validate attribute flow'),
-      strictMode: coerceBool.optional().describe('If true, also flag orphan writes (written but never consumed)'),
-    },
-    async (params) => {
-      const result = await validateAttributeFlow(params as unknown as ValidateAttributeFlowParams);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
-
-  server.tool(
-    'hayba_diff_against_working_asset',
-    {
-      wipGraph: z.string().describe('JSON string of the work-in-progress graph'),
-      referenceAssetPath: z.string().describe('Full UE asset path to the reference PCGGraph'),
-      diffMode: z.enum(['structural', 'properties', 'full']).optional().describe('What to diff (default: full)'),
-    },
-    async (params) => {
-      const result = await diffAgainstWorkingAsset(params as unknown as DiffAgainstWorkingAssetParams);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
-
-  server.tool(
-    'hayba_format_graph_topology',
-    {
-      graph: z
-        .string()
-        .describe(
-          'JSON string of the PCGEx graph to layout. ' +
-            'Edges accept either canonical (fromNode/fromPin/toNode/toPin) or legacy (from/fromPin/to/toPin) keys. ' +
-            'Output nodes carry a position:{x,y} object; the C++ legacy handler reads that.',
-        ),
-      algorithm: z.enum(['layered', 'grid']).optional().describe('Layout algorithm (default: layered)'),
-      nodeWidth: z.number().int().optional().describe('Node width in pixels (default: 200)'),
-      nodeHeight: z.number().int().optional().describe('Node height in pixels (default: 100)'),
-      horizontalSpacing: z.number().int().optional().describe('Horizontal gap between layers (default: 150)'),
-      verticalSpacing: z.number().int().optional().describe('Vertical gap between rows (default: 80)'),
-      addCommentBlocks: z.boolean().optional().describe('Wrap category clusters in PCGComment nodes'),
-    },
-    async (params) => {
-      const result = await formatGraphTopology(params as unknown as FormatGraphTopologyParams);
-      return { content: [{ type: 'text', text: result }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
-
-  server.tool(
-    'hayba_abstract_to_subgraph',
-    {
-      graph: z.string().describe('JSON string of the full PCGEx graph'),
-      nodeIds: z.array(z.string()).describe('Array of node IDs to extract into a subgraph'),
-      subgraphName: z.string().optional().describe('Name for the extracted subgraph (default: SubGraph)'),
-    },
-    async (params) => {
-      const result = await abstractToSubgraph(params as unknown as AbstractToSubgraphParams);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
-
-  server.tool(
-    'hayba_parameterize_graph_inputs',
-    {
-      graph: z.string().describe('JSON string of the PCGEx graph'),
-      targets: z
-        .array(
-          z.object({
-            nodeId: z.string().describe('Node ID containing the hardcoded property'),
-            property: z.string().describe('Property name to parameterize'),
-            parameterName: z.string().optional().describe('Name for the graph parameter'),
-          }),
-        )
-        .describe('List of properties to promote to graph parameters'),
-    },
-    async (params) => {
-      const result = await parameterizeGraphInputs(params);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
-
-  server.tool(
-    'hayba_query_pcgex_docs',
-    {
-      query: z.string().describe('Node class name or keyword to search documentation'),
-      includeSourceSnippet: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe('Include up to 80 lines from the header file'),
-    },
-    async (params) => {
-      const result = await queryPcgexDocs(params as unknown as QueryPcgexDocsParams);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
-
-  server.tool(
-    'hayba_initiate_infrastructure_brainstorm',
-    'Plan complex graph architectures. IMPORTANT: After calling this tool, do NOT call hayba_create_pcg_graph, hayba_validate_pcg_graph, or any graph-mutation tool until the user explicitly approves an approach from the proposal.',
-    {
-      topic: z.string().describe('The infrastructure or system design topic to brainstorm'),
-      context: z.string().optional().describe('Additional context about the project or constraints'),
-      constraints: z.array(z.string()).optional().describe('Explicit constraints or requirements'),
-    },
-    async (params) => {
-      const result = await initiateInfrastructureBrainstorm(params);
-      return {
-        content: [
-          {
-            type: 'text',
-            text:
-              JSON.stringify(result, null, 2) +
-              '\n\n---\nIMPORTANT: This is a PROPOSAL ONLY. Do NOT call hayba_create_pcg_graph, ' +
-              'hayba_validate_attribute_flow, hayba_abstract_to_subgraph, or any graph-mutation tool ' +
-              'until the user has explicitly approved an approach above.',
-          },
-        ],
-      };
-    },
-  );
-  // no meta registered (PCGEx pure-TS handler)
 
   // Gaea / terrain feature surface intentionally disabled — kept out of the
   // build by removing imports + registrations. Will return when the
   // worldbuilding-hub roadmap reaches the terrain integration phase.
-  /*
-  server.tool(
-    'hayba_search_gaea_archetypes',
-    {
-      query: z.string().describe('Natural language terrain idea, e.g. "frozen coastal cliffs"'),
-      biome_tags: z.array(z.string()).optional().describe('Filter to archetypes matching these biomes'),
-      topology_filter: z.array(z.string()).optional().describe('Boost archetypes containing these Gaea node types'),
-      limit: z.number().int().optional().default(3).describe('Max results (default: 3)'),
-    },
-    async (params) => {
-      const result = await searchGaeaArchetypes(params);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
-  );
 
-  server.tool(
-    'hayba_get_full_archetype_graph',
-    {
-      pattern_name: z.string().describe('Exact pattern_name from search_gaea_archetypes results'),
-    },
-    async (params) => {
-      const result = await getFullArchetypeGraph(params);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
-  );
 
-  server.tool(
-    'hayba_query_gaea_knowledge',
-    {
-      node_type: z.string().optional().describe('Gaea node type to look up (e.g. "Erosion2", "Mountain")'),
-      phase: z.string().optional().describe('Filter by phase: base, character, simulation, lookdev, utility'),
-      query: z.string().optional().describe('Search keyword for best practices and workflow patterns'),
-    },
-    async (params) => {
-      const result = await queryGaeaKnowledge(params as QueryGaeaKnowledgeParams);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
-  );
 
-  // ── Gaea tools ───────────────────────────────────────────────────────────────
 
-  server.tool(
-    'hayba_brainstorm_gaea',
-    'Brainstorm a Gaea terrain through RAG-powered knowledge search and multi-turn refinement. Returns archetype matches, best practices, common mistakes, and a synthesized graph plan. IMPORTANT: Always call this tool before hayba_create_terrain. Do NOT build a Gaea graph without first brainstorming through this tool.',
-    {
-      prompt: z.string().describe('Natural language terrain description, e.g. "alpine mountain with sharp ridges"'),
-      step: z.enum(['start', 'followup', 'zones', 'finalize']).optional().default('start')
-        .describe('Current step. start=initial RAG search, followup=refine with answer, zones=open painter, finalize=build graph plan'),
-      answer: z.string().optional()
-        .describe('User answer to a follow-up question from the previous step'),
-      scratchSessionId: z.string().optional()
-        .describe('Scratch session ID from the zones step, for reading painted zones'),
-    },
-    async (params) => {
-      const result = await brainstormGaeaHandler(params as Record<string, unknown>);
-      return { content: result.content, isError: result.isError };
-    }
-  );
 
-  server.tool(
-    'hayba_bake_terrain',
-    {
-      path: z.string().optional().describe('Absolute path to the .terrain file (uses loaded terrain if omitted)'),
-      variables: z.record(z.unknown()).optional().describe('Variable overrides to inject as -v key=value flags'),
-      ignorecache: z.boolean().optional().describe('Force full re-bake ignoring cache (default: true)'),
-    },
-    async (params) => {
-      const result = await bakeTerrain(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
 
-  server.tool(
-    'hayba_create_terrain',
-    'Create a Gaea terrain from a graph definition or template. IMPORTANT: Do NOT call this tool without first calling hayba_brainstorm_gaea. The brainstorm tool performs RAG search, knowledge lookup, and graph planning that is essential for quality terrain output.',
-    {
-      prompt: z.string().describe('Natural language terrain description — used for logging and as fallback if no graph provided'),
-      name: z.string().optional().describe('Name for the terrain file (e.g. the landscape/project name). Used as the .terrain filename.'),
-      template: z.string().optional().describe('Predefined terrain template: desert, mountains, tropical, volcanic'),
-      template_overrides: z.record(z.unknown()).optional().describe('Override specific template parameters'),
-      graph: z.unknown().optional().describe('Full Gaea node graph JSON with nodes and edges arrays. Use File nodes (params: { FileName: "<abs_path_to_mask.png>" }) to bring in painted zone masks as inputs.'),
-      output_dir: z.string().optional().describe('Output directory (uses config default if omitted)'),
-      resolution: z.number().optional().describe('Output heightmap resolution: 1024, 2048, or 4096 (default: 1024)'),
-    },
-    async (params) => {
-      const result = await createTerrainHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
 
-  server.tool(
-    'hayba_open_in_gaea',
-    { path: z.string().optional().describe('Absolute path to the .terrain file (uses current terrain if omitted)') },
-    async (params) => {
-      const result = await openInGaeaTool(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
 
-  server.tool(
-    'hayba_read_terrain_variables',
-    { path: z.string().optional().describe('Absolute path to the .terrain file (uses current terrain if omitted)') },
-    async (params) => {
-      const result = await readTerrainVariablesTool(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
 
-  server.tool(
-    'hayba_set_terrain_variables',
-    {
-      path: z.string().optional().describe('Absolute path to the .terrain file (uses current terrain if omitted)'),
-      contract: z.record(z.unknown()).describe('Variable contract: keys are variable names, values define type/default/min/max'),
-      values: z.record(z.unknown()).optional().describe('Values to write; missing keys use contract defaults'),
-    },
-    async (params) => {
-      const result = await setTerrainVariablesTool(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_open_session',
-    { path: z.string().describe('Absolute path to the .terrain file to open') },
-    async (params) => {
-      const result = await openSessionHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_close_session',
-    {},
-    async () => {
-      const result = await closeSessionHandler({}, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_add_node',
-    {
-      type: z.string().describe('Node type, e.g. "Mountain", "Erosion2". Call hayba_list_node_types to see options.'),
-      id: z.string().describe('Unique name for this node, e.g. "peaks", "erode"'),
-      params: z.record(z.unknown()).optional().describe('Optional parameter overrides'),
-      position: z.object({ X: z.number(), Y: z.number() }).optional(),
-    },
-    async (params) => {
-      const result = await addNodeHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_remove_node',
-    { id: z.string().describe('Node id to remove') },
-    async (params) => {
-      const result = await removeNodeHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_connect_nodes',
-    {
-      from_id: z.string().describe('Source node id'),
-      from_port: z.string().describe('Source port, e.g. "Out"'),
-      to_id: z.string().describe('Target node id'),
-      to_port: z.string().describe('Target port, e.g. "In"'),
-    },
-    async (params) => {
-      const result = await connectNodesHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_get_graph_state',
-    {},
-    async () => {
-      const result = await getGraphStateHandler({}, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_get_parameters',
-    { node_id: z.string().describe('Node id as shown in hayba_get_graph_state') },
-    async (params) => {
-      const result = await getParametersHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_set_parameter',
-    {
-      node_id: z.string(),
-      parameter: z.string().describe('Parameter name as returned by hayba_get_parameters'),
-      value: z.union([z.string(), z.number(), z.boolean()]).describe('New value within valid range'),
-    },
-    async (params) => {
-      const result = await setParameterHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_list_node_types',
-    { category: z.string().optional().describe('Filter by category, e.g. "erosion", "primitives"') },
-    async (params) => {
-      const result = await listNodeTypesHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-
-  server.tool(
-    'hayba_cook_graph',
-    { nodes: z.array(z.string()).optional().describe('Node ids for partial re-cook; omit for full cook') },
-    async (params) => {
-      const result = await cookGraphHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-  */ // end Gaea + Knowledge tool block
+ // end Gaea + Knowledge tool block
 
   // ── Conventions tools ────────────────────────────────────────────────────────
 
-  server.tool(
-    'hayba_setup_conventions',
-    'Multi-turn wizard to configure UE project conventions. Call repeatedly with advancing stages.',
-    {
-      stage: z.enum(['start', 'folders', 'naming', 'workflow', 'confirm', 'save']).describe('Current wizard stage'),
-      preset: z
-        .enum(['epic-default', 'gamedevtv', 'custom'])
-        .optional()
-        .describe('Preset to load (required at start stage)'),
-      answers: z.record(z.unknown()).optional().describe('Accumulated user responses from previous stages'),
-      target: z.enum(['global', 'project']).optional().describe('Where to save (required at save stage)'),
-      projectRoot: z.string().optional().describe('UE project root path (required if target is project)'),
-    },
-    async (params) => {
-      const result = await setupConventionsHandler(params as Record<string, unknown>);
-      return { content: result.content, isError: result.isError };
-    },
-  );
-  // no meta registered (conventions pure-TS handler)
 
-  server.tool(
-    'hayba_analyze_conventions',
-    'Scan a UE project Content directory and infer conventions from existing folder structure and asset naming.',
-    {
-      projectRoot: z.string().describe('Path to UE project root (contains .uproject file)'),
-      save: z.boolean().optional().describe('If true, write inferred conventions to target (default: false — dry run)'),
-      target: z.enum(['global', 'project']).optional().describe('Where to save (required when save is true)'),
-    },
-    async (params) => {
-      const result = await analyzeConventionsHandler(params as Record<string, unknown>);
-      return { content: result.content, isError: result.isError };
-    },
-  );
-  // no meta registered (conventions pure-TS handler)
 
   // Landscape import surface intentionally disabled with the rest of the
   // terrain features. See note above.
@@ -2604,147 +3610,22 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
 
   // ── Zone Painter tools ──────────────────────────────────────────────────────
 
-  server.tool(
-    'hayba_open_zone_painter',
-    {
-      projectId: z.string().optional().describe('Existing project ID. Omit to create a new project.'),
-      projectName: z.string().optional().describe('Name for the new project (used when projectId is omitted).'),
-      phase: z
-        .enum(['a', 'b'])
-        .optional()
-        .describe('Phase A = blank canvas, Phase B = heightmap overlay (default: a).'),
-    },
-    async (params) => {
-      const result = await openZonePainterHandler(params as Record<string, unknown>);
-      return { content: result.content, isError: result.isError };
-    },
-  );
-  // no meta registered (zone painter pure-TS handler)
 
-  server.tool(
-    'hayba_read_zones',
-    {
-      projectId: z.string().optional().describe('Project ID to read submitted zones from.'),
-      scratchSessionId: z
-        .string()
-        .optional()
-        .describe('Scratch session ID (for standalone zone painting without a project).'),
-    },
-    async (params) => {
-      const result = await readZonesHandler(params as Record<string, unknown>);
-      return { content: result.content, isError: result.isError };
-    },
-  );
-  // no meta registered (zone painter pure-TS handler)
 
-  server.tool(
-    'hayba_set_painter_heightmap',
-    {
-      projectId: z.string().describe('Project ID to associate the heightmap with.'),
-      heightmapPath: z.string().describe('Absolute path to the baked heightmap PNG or R16 file.'),
-    },
-    async (params) => {
-      const result = await setPainterHeightmapHandler(params as Record<string, unknown>);
-      return { content: result.content, isError: result.isError };
-    },
-  );
-  // no meta registered (zone painter pure-TS handler)
 
   // ──────────────────────────────────────────────────────────────────────────
   // ── Validator (runtime rule system + history) ───────────────────────────
   //
-  // Five MCP tools that expose the validator surface to agents and to the
-  // UE plugin's Validator panel:
-  //   - validator_run      : manual evaluation pass
-  //   - validator_history  : read persisted findings
-  //   - validator_resolve  : mark a finding resolved / unresolved
-  //   - validator_clear    : wipe history
-  //   - validator_rules    : list the rule catalog (+ disabled state)
+  // The validator tools are declared as ToolDescriptors (see
+  // VALIDATOR_DESCRIPTORS) so they pass through the one registrar with every
+  // other tool. Only the evaluator-hook installation is left here, because it
+  // is a startup side-effect rather than a registration.
   //
   // Rule definitions live in src/validator/rules.ts; evaluators in
   // src/validator/tool-hooks.ts (auto-installed below).
   // ──────────────────────────────────────────────────────────────────────────
   // Install evaluator hooks once — wires actual logic onto rules catalog.
   installToolHooks();
-
-  const getUe = async () => {
-    try {
-      return await ensureUeForValidator().catch(() => null);
-    } catch {
-      return null;
-    }
-  };
-
-  server.tool(
-    'validator_run',
-    "CATCHES SILENT WRONGNESS YOU CANNOT SEE: runs the validator rules over the current scene and returns concrete post-condition findings — actors floating above ground, interpenetrating meshes, off-grid/mis-scaled placements, missing expected results, and PLUMB constraint violations. Pass scope='all' (default) or { rule_ids: [...] }; findings persist to history and the Validation panel. USE_WHEN: after ANY scene mutation (spawn / move / delete / scatter / foliage / PCG execute / world_generate / landscape / lighting change), AND before you declare a task done or report success. NOT_WHEN: you have made no scene change since the last run. WHY: you have no viewport — this is how you verify placement actually landed correctly instead of assuming it did.",
-    validatorRunSchema,
-    async (args: { scope?: 'all' | { rule_ids?: string[] }; persist?: boolean }) => {
-      const ue = await getUe();
-      const r = await validatorRunHandler(args, { ue, scratchDir: validatorScratchDir() });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'validator_history',
-    'Read persisted validator findings (the record of everything validator_run / plumb_validate caught). Filter by limit / since_iso / include_resolved / rule_ids. USE_WHEN: reviewing what is still wrong in the scene, checking whether a prior fix cleared a finding, or reporting outstanding issues to the user. NOT_WHEN: you want a fresh evaluation — call validator_run instead; history only shows past findings.',
-    validatorHistorySchema,
-    async (args: { limit?: number; since_iso?: string; include_resolved?: boolean; rule_ids?: string[] }) => {
-      const r = await validatorHistoryHandler(args);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'validator_resolve',
-    'Mark a validator finding as resolved (or restore it). Identifies the finding by its ISO timestamp.',
-    validatorResolveSchema,
-    async (args: { timestamp: string; resolved: boolean }) => {
-      const r = await validatorResolveHandler(args);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'validator_clear',
-    'Clear the validator history. Requires { confirm: true } to actually wipe.',
-    validatorClearSchema,
-    async (args: { confirm: boolean }) => {
-      const r = await validatorClearHandler(args);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'validator_rules',
-    "List the validator rule catalog — every post-condition check and bound PLUMB constraint that validator_run / plumb_validate will evaluate, with each rule's message, hint, refs, and disabled state. USE_WHEN: you want to know WHAT validation can catch before running it, or to confirm the right rule is enabled for the task at hand. NOT_WHEN: you just want to run the checks — call validator_run.",
-    validatorRulesSchema,
-    async (args: { include_disabled_state?: boolean }) => {
-      const r = await validatorRulesHandler(args);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'validator_set_rule_enabled',
-    'Enable or disable a validator rule by id. Persists to .scratch/validator-config.json.',
-    validatorSetRuleEnabledSchema,
-    async (args: { rule_id: string; enabled: boolean }) => {
-      const r = await validatorSetRuleEnabledHandler(args);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
-
-  server.tool(
-    'validator_strictness',
-    "Read or set validation strictness. Three modes — relaxed (only what is broken), standard (plus established conventions), strict (plus house-style polish) — set globally or per category (ui, pcg, landscape, material, blueprint, python, asset, general). A rule declares the lowest mode at which it fires, so raising strictness only ever adds findings. Call with no arguments to read the current settings. Persists to .scratch/validator-config.json, the same file the editor Configure panel reads.",
-    validatorStrictnessSchema,
-    async (args: Parameters<typeof validatorStrictnessHandler>[0]) => {
-      const r = await validatorStrictnessHandler(args);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
-    },
-  );
 
   // ── PLUMB constraint subsystem ──────────────────────────────────────────
   //
@@ -2753,190 +3634,29 @@ function registerToolsCore(server: McpServer, session: SessionManagerStub): void
   // grammar (10 primitives) never grows. See src/plumb/.
   const j = (r: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] });
 
-  server.tool(
-    'plumb_primitives',
-    'List the COMPLETE closed constraint grammar — the 10 primitives, their gate, hard/soft default, params, and docs. Author constraints by picking one and filling params.',
-    plumbPrimitivesSchema,
-    async () => j(await plumbPrimitivesHandler()),
-  );
 
   // Auto-fetch StaticMesh bounds (cm) via the UE mesh_get_info command when the
   // caller omits origin_cm/extent_cm — "point at an SM and bake".
-  const fetchMeshBounds = async (asset: string) => {
-    const data = (await executeCommand('mesh_get_info', { path: asset })) as {
-      bounds?: { min: Record<string, number>; max: Record<string, number>; extents: Record<string, number> };
-    };
-    const b = data?.bounds;
-    if (!b) throw new Error('mesh_get_info returned no bounds');
-    const v = (o: Record<string, number>): [number, number, number] => [o.x ?? 0, o.y ?? 0, o.z ?? 0];
-    return { min: v(b.min), max: v(b.max), extents: v(b.extents) };
-  };
-  server.tool(
-    'plumb_profile_bake',
-    'Bake the deterministic geometry/physics half of a Physical Asset Profile. Pass just the asset to auto-fetch bounds from UE (mesh_get_info), or supply origin_cm + extent_cm (+ optional pivot_to_base_cm) explicitly. Persists to the profile store.',
-    plumbProfileBakeSchema,
-    async (a) => j(await plumbProfileBakeHandler(a, new Date().toISOString(), fetchMeshBounds)),
-  );
 
-  server.tool(
-    'plumb_profile_annotate',
-    'Layer AI/human qualitative semantics (class, up/front vectors, named affordance regions) onto a baked profile, with optional field locks. Qualitative constraints can only hard-gate on locked fields.',
-    plumbProfileAnnotateSchema,
-    async (a) => j(await plumbProfileAnnotateHandler(a)),
-  );
 
-  server.tool(
-    'plumb_profile_list',
-    'List baked profiles (asset_id, archetype, affordance count, locked fields). Feeds the Memory tab.',
-    plumbProfileListSchema,
-    async () => j(await plumbProfileListHandler()),
-  );
 
-  server.tool(
-    'plumb_profile_get',
-    'Fetch one full Physical Asset Profile by asset path.',
-    plumbProfileGetSchema,
-    async (a) => j(await plumbProfileGetHandler(a)),
-  );
 
-  server.tool(
-    'plumb_constraint_define',
-    'Author/upsert a bound constraint: a primitive id + params + a binding (exactly one of {asset, tag}). Validated against the closed primitive set — invalid primitives/params/bindings are rejected.',
-    plumbConstraintDefineSchema,
-    async (a) => j(await plumbConstraintDefineHandler(a)),
-  );
 
-  server.tool(
-    'plumb_constraint_list',
-    'List the constraint library (optionally filtered to an asset binding).',
-    plumbConstraintListSchema,
-    async (a) => j(await plumbConstraintListHandler(a)),
-  );
 
-  server.tool(
-    'plumb_constraint_remove',
-    'Remove a constraint from the library by id.',
-    plumbConstraintRemoveSchema,
-    async (a) => j(await plumbConstraintRemoveHandler(a)),
-  );
 
-  server.tool(
-    'plumb_constraint_propose',
-    'Draft (does not save) constraints for an asset from its baked profile, using only closed primitives. Review/edit then call plumb_constraint_define.',
-    plumbConstraintProposeSchema,
-    async (a) => j(await plumbConstraintProposeHandler(a)),
-  );
 
-  server.tool(
-    'plumb_validate',
-    'VERIFY PLACEMENT IS ACTUALLY CORRECT: runs the PLUMB constraint library over a set of instances and returns a directional Verdict — per-gate ok, signed value_m (how far off, and which way), and a FixVector telling you exactly how to move each instance to satisfy it. Catches grounding, clearance, alignment, spacing and interpenetration violations the viewport would reveal but you cannot. Hard fails set stopped_at; soft fails accumulate soft_cost. USE_WHEN: immediately after placing/scattering/spawning/transforming instances, and before declaring the layout done — feed the FixVector back into a transform to correct, then re-validate. NOT_WHEN: no constraints are bound for these assets (check plumb_constraint_list / validator_rules first). WHY: this is the quantified check that turns "looks placed" into "provably grounded and non-overlapping".',
-    plumbValidateSchema,
-    async (a) => j(await plumbValidateHandler(a)),
-  );
 
-  server.tool(
-    'plumb_mask_add',
-    'Add or update a mask (surface = triangle set; volume = translucent shape) on a baked profile. Surface/volume masks are the regions constraints reference.',
-    plumbMaskAddSchema,
-    async (a) => j(await plumbMaskAddHandler(a)),
-  );
-  server.tool('plumb_mask_remove', 'Remove a mask from a profile by id.', plumbMaskRemoveSchema, async (a) =>
-    j(await plumbMaskRemoveHandler(a)),
-  );
 
-  server.tool(
-    'plumb_lesson_add',
-    'Add/update a lesson — the durable [[slug]] knowledge that explains WHY a constraint exists (browsed in the Studio Lessons panel; cited by constraint/validator refs).',
-    plumbLessonAddSchema,
-    async (a) => j(await plumbLessonAddHandler(a, new Date().toISOString())),
-  );
-  server.tool('plumb_lesson_list', 'List lessons (slug + title + refs).', plumbLessonListSchema, async () =>
-    j(await plumbLessonListHandler()),
-  );
-  server.tool('plumb_lesson_remove', 'Remove a lesson by slug.', plumbLessonRemoveSchema, async (a) =>
-    j(await plumbLessonRemoveHandler(a)),
-  );
 
-  server.tool(
-    'plumb_study',
-    "AI study entry point: returns the asset's baked profile (if any) + the closed primitive grammar + mask kinds + guidance, so the agent can propose masks (plumb_mask_add) and constraints (plumb_constraint_define).",
-    plumbStudySchema,
-    async (a) => j(await plumbStudyHandler(a)),
-  );
 
-  server.tool(
-    'plumb_study_take',
-    'Drain pending "Study with AI" requests from the Semantic Studio button. Returns the assets to study (then call plumb_study + author masks/constraints for each).',
-    plumbStudyTakeSchema,
-    async () => j(await plumbStudyTakeHandler()),
-  );
 
-  server.tool(
-    'plumb_segment',
-    "AI-segment a studied asset: given the study_render color passes, the agent's themed part labels + a box/points per view, runs SAM in the visual sidecar and back-projects to geometry-hugging surface masks (triangles via the world-position pass + a UV display texture), written into the profile. Replaces hand-placed blocky masks.",
-    plumbSegmentSchema,
-    async (a) => j(await plumbSegmentHandler(a)),
-  );
 
-  server.tool(
-    'plumb_production_define',
-    'Author/upsert a grammar production rule: an LHS symbol kind (+ optional attribute guards) → an RHS sequence of emit ops (shell/asset/symbol/scatter/decal/fill). Guards are constraint ids that must pass before the production fires.',
-    plumbProductionDefineSchema,
-    async (a) => j(await plumbProductionDefineHandler(a)),
-  );
 
-  server.tool(
-    'plumb_production_list',
-    'List all grammar productions in the store.',
-    plumbProductionListSchema,
-    async () => j(await plumbProductionListHandler()),
-  );
 
-  server.tool('plumb_production_remove', 'Remove a grammar production by id.', plumbProductionRemoveSchema, async (a) =>
-    j(await plumbProductionRemoveHandler(a)),
-  );
 
-  server.tool(
-    'plumb_socket_add',
-    'Add or replace a socket (connection point) on a baked profile. Idempotent on socket id.',
-    plumbSocketAddSchema,
-    async (a) => j(await plumbSocketAddHandler(a)),
-  );
 
-  server.tool(
-    'plumb_grammar_expand',
-    'Expand a seed symbol using the stored production rules + the PLUMB constraint store as guards. Returns a PlacementPlan. In dry-run (no UE scene), geometry-dependent constraints self-skip — rejections only reflect TS-evaluable constraints.',
-    plumbGrammarExpandSchema,
-    async (a) => j(await plumbGrammarExpandHandler(a)),
-  );
 
   // ── Landscape import (TS wrapper for UE-side landscape_import handler) ────
-  server.tool(
-    'hayba_import_landscape',
-    'Import a heightmap (PNG or R16) as an UE Landscape actor. Wraps the UE-side landscape_import handler. The heightmap is sampled 0..uint16-max -> 0..maxHeightM (m). Spawns one Landscape covering worldSizeKm x worldSizeKm.',
-    {
-      heightmapPath: z.string().describe('Absolute path to a PNG or R16 heightmap file'),
-      worldSizeKm: z.number().optional().default(8.0).describe('Landscape XY size in km'),
-      maxHeightM: z
-        .number()
-        .optional()
-        .default(600.0)
-        .describe('Maximum height in m (0..maxHeightM mapped from uint16)'),
-      actorLabel: z.string().optional().default('Hayba_Terrain').describe('Label for the spawned Landscape actor'),
-      landscapeMaterial: z.string().optional().describe('UE material path; empty = no material'),
-    },
-    async (params) => {
-      try {
-        const data = await executeCommand('landscape_import', params as Record<string, unknown>);
-        return {
-          content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
-        };
-      } catch (e) {
-        return errorResult(`Error importing landscape: ${(e as Error).message}`);
-      }
-    },
-  );
-  // no meta registered (thin UE bridge wrapper)
 }
 
 // Schema registry seeding. Mirrors the Zod shapes used by the eager

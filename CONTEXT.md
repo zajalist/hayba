@@ -43,9 +43,28 @@ Agent host ──stdio──▶ Node MCP server ──TCP──▶ UE5 C++ plugi
 - **Code Mode meta-tools** — `list_tool_categories` / `get_tool_signature`
   / `python_run`: the small interface that hides the full ~100-tool
   catalog until needed (a deliberately **deep** module).
-- **Visual sidecar** — Python FastAPI (CLIP/SpatialCLIP/OWL-ViT + SAM)
-  for spatial grounding, physics validation, and AI mask generation;
-  degraded-mode aware.
+- **Visual sidecar** — **one** Python FastAPI process on `:7821`
+  (`mcp-tools/hayba-mcp/addons/visual-embeddings`) serving CLIP/SpatialCLIP/
+  OWL-ViT embeddings *and* SAM segmentation with world-position
+  back-projection, for spatial grounding, physics validation and AI mask
+  generation; degraded-mode aware. `/health` declares every capability it can
+  serve, because the adapter derives availability from that map. There were
+  briefly two sidecars on the same port with disjoint endpoints — see ADR-0006
+  before adding a second process.
+- **`ueTool(command, schema)`** — the body of a pass-through wrapper, once
+  (`src/tools/ue-tool.ts`). Validate, put the params on the wire, return the
+  reply. A wrapper that remaps params or shapes its response differently keeps
+  a hand-written handler instead.
+- **`toMcpResponse` / `FrameDecoder`** — the two ends of the envelope.
+  `toMcpResponse` (`src/tools/mcp-response.ts`) owns the MCP content-block
+  shape every tool returns; `FrameDecoder` (`src/tcp-frame-decoder.ts`) owns
+  the 4-byte big-endian TCP framing, extracted from the socket callback so the
+  repo's most important invariant is unit-testable.
+- **Wire command name** — the string that goes on the TCP socket. A *different
+  namespace* from an MCP tool name, despite looking identical; calling a
+  TS-layer tool name over the wire yields `Unknown command` while unit tests
+  pass. Guarded statically — and every guard must know every call form that
+  reaches it (ADR-0007).
 - **Re-emulation doctrine** — when a pre-restructure branch's behaviour
   must land on the restructured layout, reproduce its *effect* as fresh
   commits; never git-merge the old layout back in (see ADR-0001).
@@ -65,3 +84,10 @@ re-litigate a recorded decision without reopening its ADR.
 - The authoritative gate is **local**: `tsc + npm test` in
   `mcp-tools/hayba-mcp`. Run it before pushing.
 - No `Co-Authored-By`/AI trailer in commits.
+- **Before changing any MCP tool or plugin handler, read
+  [`docs/WORKFLOW-improving-the-mcp.md`](docs/WORKFLOW-improving-the-mcp.md).**
+  It covers the failure mode this codebase actually has — tools that report
+  success for work they did not do — plus the four staleness caches that make a
+  correct change look broken, how to compile and run both test suites, and the
+  verification ladder (written → compiled → loaded → routed → observed). Every
+  entry in it was paid for in hours.

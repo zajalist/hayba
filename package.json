@@ -9,7 +9,7 @@
   "bugs": { "url": "https://github.com/zajalist/hayba/issues" },
   "author": "zajalist",
   "engines": { "node": ">=22.5.0" },
-  "workspaces": ["packages/*", "mcp-tools/*"],
+  "workspaces": ["packages/*", "mcp-tools/hayba-mcp"],
   "scripts": {
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces --if-present",

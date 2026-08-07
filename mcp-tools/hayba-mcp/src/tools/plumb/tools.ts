@@ -424,7 +424,7 @@ export async function plumbSegmentHandler(args: {
   try {
     resp = await segmentProject({ study_dir: args.study_dir, parts: args.parts, vote_threshold: args.vote_threshold });
   } catch (e) {
-    return { ok: false, added: [], error: `visual sidecar unreachable (start mcp-tools/visual-sidecar): ${(e as Error).message}` };
+    return { ok: false, added: [], error: `visual sidecar unreachable (start it with: uv run hayba-visual-sidecar): ${(e as Error).message}` };
   }
   if (!resp.ok) return { ok: false, added: [], error: resp.error ?? 'segment_project failed' };
   const added: string[] = [];
