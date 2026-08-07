@@ -5,7 +5,7 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 ## [Unreleased]
 
 ### Changed
-- **Repo split** — the tectonic simulation, Hayba Explorer (Tauri viewer), `viz/`, sim audit tooling, `design-tokens`, and the Rust workspace moved to [hayba-explorer](https://github.com/zajalist/hayba-explorer) with full history (ADR-0005). `@hayba/linguistics` and `@hayba/planet-physics` relocated to `packages/` (the MCP server imports them). Root workspaces are now `packages/*` + `mcp-tools/*`.
+- **Repo split** — the tectonic simulation, Hayba Explorer (Tauri viewer), `viz/`, sim audit tooling, `design-tokens`, and the Rust workspace moved to [hayba-explorer](https://github.com/zajalist/hayba-explorer) with full history ([ADR-0005](docs/adr/0005-tectonic-stack-split-to-hayba-explorer.md)). `@hayba/linguistics` and `@hayba/planet-physics` relocated to `packages/` (the MCP server imports them). Root workspaces are now `packages/*` + `mcp-tools/*`.
 
 ### Added
 - Scene Map panels (native + web) auto-refresh on level actor add/delete. Subscribes to `GEngine->OnLevelActorAdded` and `OnLevelActorDeleted`; debounced 0.5s so spawn bursts coalesce into a single rebuild. Native panel piggybacks on its existing `Tick`; web panel uses an `FTSTicker` poll (it has no Tick). Currently always-on — a `bSceneMapAutoRefresh` settings toggle is the follow-up. **Requires a plugin recompile** to take effect.

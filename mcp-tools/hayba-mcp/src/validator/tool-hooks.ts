@@ -2,9 +2,8 @@
 // in `rules.ts`. Calling `installToolHooks()` once at server startup attaches
 // every evaluator below.
 
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
 import { attachEvaluator, type ValidatorContext, type ValidatorFinding } from './rules.js';
+import { probeCount } from './ue-probe.js';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -60,37 +59,15 @@ async function evaluatePcgZeroInstances(ctx: ValidatorContext): Promise<Validato
   const result = asRecord(ctx.toolResult);
   const componentsExecuted = Number(result.componentsExecuted ?? 0);
   if (componentsExecuted <= 0) return null;
-  if (!ctx.ue) return null;
 
-  // Send the counter script. Use a generous timeout — walking the world can
-  // be slow on big levels.
-  let resp;
-  try {
-    resp = await ctx.ue.send('python_run', { script: PCG_COUNTER_SCRIPT, allow_unsafe: true }, 15_000);
-  } catch {
-    return null;
-  }
-  if (!resp.ok) return null;
-
-  const outPath = join(ctx.scratchDir, 'validator_pcg_instance_count.json');
-  let total = -1;
-  if (existsSync(outPath)) {
-    try {
-      const parsed = JSON.parse(readFileSync(outPath, 'utf-8')) as { total?: number };
-      total = Number(parsed.total ?? 0);
-    } catch {
-      total = -1;
-    } finally {
-      try { unlinkSync(outPath); } catch { /* swallow */ }
-    }
-  } else {
-    // Fall back to the print() value embedded in the response.
-    const data = asRecord(resp.data);
-    const printed = typeof data.stdout === 'string' ? data.stdout : '';
-    const m = printed.match(/\{[^}]*"total"\s*:\s*(\d+)/);
-    if (m) total = Number(m[1]);
-  }
-
+  // Use a generous timeout — walking the world can be slow on big levels.
+  const total = await probeCount(ctx.probe, {
+    script: PCG_COUNTER_SCRIPT,
+    fileName: 'validator_pcg_instance_count.json',
+    key: 'total',
+    scratchDir: ctx.scratchDir,
+    timeoutMs: 15_000,
+  });
   if (total !== 0) return null;
 
   return {
@@ -164,29 +141,14 @@ async function evaluateLandscapeImportSilentFailure(ctx: ValidatorContext): Prom
   const result = asRecord(ctx.toolResult);
   // Only fire when the tool claims success.
   if (result.ok === false) return null;
-  if (!ctx.ue) return null;
 
-  let resp;
-  try {
-    resp = await ctx.ue.send('python_run', { script: LANDSCAPE_COUNTER_SCRIPT, allow_unsafe: true }, 10_000);
-  } catch {
-    return null;
-  }
-  if (!resp.ok) return null;
-
-  const outPath = join(ctx.scratchDir, 'validator_landscape_count.json');
-  let count = -1;
-  if (existsSync(outPath)) {
-    try {
-      const parsed = JSON.parse(readFileSync(outPath, 'utf-8')) as { count?: number };
-      count = Number(parsed.count ?? 0);
-    } catch {
-      count = -1;
-    } finally {
-      try { unlinkSync(outPath); } catch { /* swallow */ }
-    }
-  }
-
+  const count = await probeCount(ctx.probe, {
+    script: LANDSCAPE_COUNTER_SCRIPT,
+    fileName: 'validator_landscape_count.json',
+    key: 'count',
+    scratchDir: ctx.scratchDir,
+    timeoutMs: 10_000,
+  });
   if (count !== 0) return null;
 
   return {

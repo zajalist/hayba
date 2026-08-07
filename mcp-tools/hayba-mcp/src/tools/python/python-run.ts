@@ -3,7 +3,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolHandler } from '../types.js';
-import { ensureConnected } from '../../tcp-client.js';
+import { executeCommand } from '../tool-executor.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 import { scanPythonForCrashers, crashGuardMessage } from '../guards/known-crashers.js';
 import { errorResult } from '../tool-result.js';
@@ -15,7 +15,6 @@ import { errorResult } from '../tool-result.js';
  */
 const STDOUT_SPILL_THRESHOLD = 12_000;
 
-// TODO: wire into registerTools with RateLimiter + ToolCache + appendMeta wrapper
 
 export const meta: HaybaToolMeta = {
   cost: 'high',
@@ -78,7 +77,6 @@ export const pythonRunHandler: ToolHandler = async (args) => {
     }
   }
   try {
-    const client = await ensureConnected();
     // Send the raw script. The UE handler now captures print()/stderr itself
     // (it injects a capturing print into the user code's exec globals) and
     // returns them in the stdout/stderr fields. Wrapping here too would
@@ -88,18 +86,8 @@ export const pythonRunHandler: ToolHandler = async (args) => {
     const payload: Record<string, unknown> = {
       ...(parsed.data as Record<string, unknown>),
     };
-    const resp = await client.send('python_run', payload);
-    const data = (resp.data ?? {}) as Record<string, unknown>;
-    if (!resp.ok) {
-      if (data.tier === 3) {
-        return errorResult(
-          `Tier 3 (filesystem/subprocess) access blocked. Set bAllowUnsafePython=true in plugin settings or pass allow_unsafe:true to override (DANGEROUS). Underlying error: ${resp.error ?? 'unknown'}`,
-          { tier: 3 },
-        );
-      }
-      return errorResult(`python_run failed: ${resp.error ?? 'unknown error'}`);
-    }
-    const text = JSON.stringify(resp.data, null, 2);
+    const data = await executeCommand<Record<string, unknown>>('python_run', payload);
+    const text = JSON.stringify(data, null, 2);
     if (text.length > STDOUT_SPILL_THRESHOLD) {
       // Auto-spill: write the full payload to a temp file and return a head +
       // path so large dumps (pin lists, asset inventories) survive intact
@@ -122,6 +110,19 @@ export const pythonRunHandler: ToolHandler = async (args) => {
     }
     return { content: [{ type: 'text', text }] };
   } catch (e: unknown) {
+    // The seam throws on a UE-reported failure, carrying the original response
+    // as uePayload — which is where the sandbox tier lives. Losing it here
+    // would turn the actionable "tier 3 blocked, here is the setting to change"
+    // message back into a bare error string.
+    const uePayload = (e as { uePayload?: unknown })?.uePayload as
+      | { data?: Record<string, unknown>; error?: string }
+      | undefined;
+    if (uePayload?.data?.tier === 3) {
+      return errorResult(
+        `Tier 3 (filesystem/subprocess) access blocked. Set bAllowUnsafePython=true in plugin settings or pass allow_unsafe:true to override (DANGEROUS). Underlying error: ${uePayload.error ?? 'unknown'}`,
+        { tier: 3 },
+      );
+    }
     return errorResult(`python_run error: ${e instanceof Error ? e.message : String(e)}`);
   }
 };

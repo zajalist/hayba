@@ -76,6 +76,41 @@ namespace HaybaUILayout
     /** Design-time screen size the blueprint is authored against. */
     FVector2D GetDesignSize(UWidgetBlueprint* WBP);
 
+    /**
+     * A design-time instance of a Widget Blueprint, ready to lay out or draw.
+     *
+     * Holds the UUserWidget and its Slate widget together because they must be
+     * torn down together: releasing Slate resources before the instance is
+     * collected is what stops a live SWidget retaining a UObject that is about
+     * to go away. The destructor does that, so callers cannot forget.
+     *
+     * Scope-bound on purpose. The instance is not rooted, so it must not
+     * outlive the synchronous call that made it.
+     */
+    struct FPreviewInstance
+    {
+        UUserWidget* Instance = nullptr;
+        TSharedPtr<SWidget> Slate;
+
+        FPreviewInstance() = default;
+        FPreviewInstance(const FPreviewInstance&) = delete;
+        FPreviewInstance& operator=(const FPreviewInstance&) = delete;
+        ~FPreviewInstance();
+
+        bool IsValid() const { return Instance != nullptr && Slate.IsValid(); }
+    };
+
+    /**
+     * Instantiate the blueprint's generated class, flag it as designing, take
+     * its Slate widget and prepass it — everything needed before either
+     * arranging the tree or drawing it.
+     *
+     * Returns false with a reason in `OutError` when the blueprint cannot be
+     * instantiated (uncompiled, abstract, Slate unavailable). Callers must
+     * degrade rather than report a clean result.
+     */
+    bool MakePreviewInstance(UWidgetBlueprint* WBP, FPreviewInstance& Out, FString& OutError);
+
     /** Instantiate + prepass + arrange the blueprint at `ScreenSize`, filling
      *  `Out` keyed by widget name. Returns false with a reason in `OutError`
      *  when the blueprint cannot be instantiated (uncompiled, abstract parent,

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ensureConnected } from '../../tcp-client.js';
+import { executeCommand } from '../tool-executor.js';
 import type { ToolHandler } from '../types.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 
@@ -36,17 +36,15 @@ export const haybaGetUserResponseHandler: ToolHandler = async (args) => {
   // TCP request timeout has to outlive the UE-side wait, plus a margin.
   const tcpTimeoutMs = Math.max(5000, waitMs + 2000);
   try {
-    const client = await ensureConnected();
-    const resp = await client.send(
+    // A UE-reported failure and a transport failure produced identical bodies
+    // here, so routing through the seam (which throws on both) collapses the
+    // two branches into the catch below rather than losing a case.
+    const data = await executeCommand(
       'hayba_get_user_response',
       { prompt_id: parsed.data.prompt_id, wait_ms: waitMs },
-      tcpTimeoutMs,
+      { timeout: tcpTimeoutMs },
     );
-    if (!resp.ok) {
-      const body: UserResponse = { prompt_id: parsed.data.prompt_id, status: 'unknown', error: resp.error };
-      return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }], isError: true };
-    }
-    return { content: [{ type: 'text', text: JSON.stringify(resp.data, null, 2) }] };
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
   } catch (e: unknown) {
     const body: UserResponse = { prompt_id: parsed.data.prompt_id, status: 'unknown', error: e instanceof Error ? e.message : String(e) };
     return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }], isError: true };

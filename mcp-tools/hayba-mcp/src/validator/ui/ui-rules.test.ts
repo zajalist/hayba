@@ -440,3 +440,56 @@ describe('catalogue integrity', () => {
     expect(result.findings.filter((f) => f.hint.includes('threw'))).toHaveLength(0);
   });
 });
+
+describe('engine default font', () => {
+  // From field use: the most-repeated authoring mistake on record. Invisible
+  // until rendered, and a session hit it five separate times.
+  const roboto = (over: Record<string, unknown> = {}) =>
+    widget({
+      name: 'Label',
+      parent: 'Root',
+      text_info: { text: 'Persephone', font_object: '/Engine/EngineFonts/Roboto', typeface: 'Bold', ...over },
+    });
+
+  it('flags an engine font even at the most relaxed setting', () => {
+    const r = validateUiSnapshot(snapshot([rootPanel, roboto()]), { strictness: 'relaxed' });
+    expect(findingsFor(r, 'ui_engine_default_font')).toHaveLength(1);
+  });
+
+  it('names the font and the typeface, so the fix is obvious', () => {
+    const r = validateUiSnapshot(snapshot([rootPanel, roboto()]), { strictness: 'relaxed' });
+    const f = findingsFor(r, 'ui_engine_default_font')[0]!;
+    expect(f.message).toContain('/Engine/EngineFonts/Roboto');
+    expect(f.message).toContain('Bold');
+    expect(f.data).toMatchObject({ font_object: '/Engine/EngineFonts/Roboto', typeface: 'Bold' });
+  });
+
+  it('calls out the Bold default only when the typeface is actually Bold', () => {
+    const bold = validateUiSnapshot(snapshot([rootPanel, roboto()]), { strictness: 'relaxed' });
+    expect(findingsFor(bold, 'ui_engine_default_font')[0]!.hint).toContain('Bold');
+    const regular = validateUiSnapshot(snapshot([rootPanel, roboto({ typeface: 'Regular' })]), {
+      strictness: 'relaxed',
+    });
+    expect(findingsFor(regular, 'ui_engine_default_font')[0]!.hint).not.toContain('reads as emphasis');
+  });
+
+  it('warns that a partial ui_set_text_style leaves the font in place', () => {
+    // The compounding half of the bug: passing size/colour without font_asset
+    // keeps the engine font AND still reports success.
+    const r = validateUiSnapshot(snapshot([rootPanel, roboto()]), { strictness: 'relaxed' });
+    expect(findingsFor(r, 'ui_engine_default_font')[0]!.hint).toMatch(/font_asset AND typeface/);
+  });
+
+  it('leaves a project font alone', () => {
+    const r = validateUiSnapshot(
+      snapshot([rootPanel, roboto({ font_object: '/Game/UI/Fonts/F_AphrosiaBody', typeface: 'Regular' })]),
+      { strictness: 'strict' },
+    );
+    expect(findingsFor(r, 'ui_engine_default_font')).toHaveLength(0);
+  });
+
+  it('says nothing when the font is unknown, rather than guessing', () => {
+    const r = validateUiSnapshot(snapshot([rootPanel, roboto({ font_object: undefined })]), { strictness: 'strict' });
+    expect(findingsFor(r, 'ui_engine_default_font')).toHaveLength(0);
+  });
+});

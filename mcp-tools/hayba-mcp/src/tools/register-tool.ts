@@ -33,10 +33,11 @@ import type { z } from 'zod';
 import { appendMeta, isSceneMutating } from './hayba-tool-meta.js';
 import type { HaybaToolMeta } from './hayba-tool-meta.js';
 import { withValidationNudge } from './tool-result.js';
+import { isUnderEvidenceContract, withEvidenceWarning } from './response-evidence.js';
 import { recordSchema, type Cost } from './schema-registry.js';
 import { registerToolMeta } from './tool-meta-registry.js';
 import { appendNicheBriefing } from './niche-briefing.js';
-import type { ToolHandler, ToolResult, SessionManager } from './types.js';
+import type { RichToolHandler, RichToolResult, ToolHandler, ToolResult, SessionManager } from './types.js';
 
 export type ToolDescriptor = {
   /** MCP tool name, e.g. "material_create". */
@@ -47,8 +48,16 @@ export type ToolDescriptor = {
   schema: z.ZodRawShape;
   /** Tool meta — drives appendMeta(description) and the cost-lookup registry. */
   meta: HaybaToolMeta;
-  /** The wrapper-file handler: (args, session) => Promise<ToolResult>. */
-  handler: ToolHandler;
+  /**
+   * The wrapper-file handler: (args, session) => Promise<ToolResult>.
+   *
+   * RichToolResult is allowed so a tool can return an image block. Without it,
+   * anything that hands back a picture had to be hand-registered — which is how
+   * editor_capture_viewport ended up outside every policy this registrar
+   * applies. The cross-cutting helpers below only ever read and append TEXT
+   * blocks, so an image block passes through them untouched.
+   */
+  handler: ToolHandler | RichToolHandler;
   /** Cost tier recorded in the schema registry (fallback catalog). */
   cost: Cost;
   /** Return-shape doc recorded in the schema registry (fallback catalog). */
@@ -60,6 +69,35 @@ export type ToolDescriptor = {
    */
   niche?: string;
 };
+
+/**
+ * Declare a ToolDescriptor with the handler's params inferred from its schema.
+ *
+ * A bare `ToolDescriptor` object literal types `handler` as ToolHandler, whose
+ * args are Record<string, unknown> — so moving a tool from the inline
+ * server.tool(name, schema, handler) form onto a descriptor silently lost the
+ * zod-derived parameter types the handler body was written against, and the
+ * only way back was a cast per call site.
+ *
+ * Wrapping the literal keeps that inference: `handler` sees the shape its own
+ * `schema` describes. The return type is erased to ToolDescriptor so descriptors
+ * with different schemas still live in one array.
+ */
+export function defineTool<S extends z.ZodRawShape>(d: {
+  name: string;
+  description: string;
+  schema: S;
+  meta: HaybaToolMeta;
+  cost: Cost;
+  returns: string;
+  niche?: string;
+  handler: (
+    args: z.objectOutputType<S, z.ZodTypeAny>,
+    session: SessionManager,
+  ) => Promise<ToolResult>;
+}): ToolDescriptor {
+  return d as unknown as ToolDescriptor;
+}
 
 /**
  * Record a descriptor's Zod shape + cost + return doc into the schema registry.
@@ -86,16 +124,23 @@ export function registerTool(
   // successful result — see withValidationNudge. Decided ONCE here from the
   // tool's declared effects so it's DRY across every registered tool.
   const nudge = isSceneMutating(d.meta.effects);
+  // A tool that declares ANY effect is under the response-evidence contract:
+  // if it comes back with only ok/status/message, the caller is told "success"
+  // about a change nothing in the response describes. Decided here for the same
+  // reason as the nudge — one place, every tool, including the wrappers that
+  // pass the plugin's reply straight through.
+  const evidence = isUnderEvidenceContract(d.meta.effects);
   server.tool(
     d.name,
     appendMeta(d.description, d.meta),
     d.schema,
-    async (params: Record<string, unknown>): Promise<ToolResult> => {
+    async (params: Record<string, unknown>): Promise<RichToolResult> => {
       const r = await d.handler(params, session);
       const shaped = niche
         ? appendNicheBriefing(niche, session, r)
         : { content: r.content, isError: r.isError };
-      return nudge ? withValidationNudge(shaped) : shaped;
+      const checked = evidence ? withEvidenceWarning(shaped) : shaped;
+      return nudge ? withValidationNudge(checked) : checked;
     },
   );
   registerToolMeta(d.name, d.meta);

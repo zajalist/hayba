@@ -50,7 +50,7 @@ the Node client discovers the live instance. Ports auto-allocate in
 | Layer | Language | Where |
 |---|---|---|
 | Tool surface, schemas, TCP client | TypeScript (Node ≥22.5) | `mcp-tools/hayba-mcp` |
-| Visual sidecar (CLIP / SpatialCLIP / SAM) | Python (FastAPI) | `mcp-tools/visual-sidecar` |
+| Visual sidecar (CLIP / SpatialCLIP / SAM) | Python (FastAPI) | `mcp-tools/hayba-mcp/addons/visual-embeddings` |
 | Editor plugin, handlers, panels | C++ (UE 5.7) | `unreal/HaybaMCPToolkit` |
 | Website | static HTML/CSS/JS | `website/` |
 | Backend / self-host | SQL + Docker | `supabase/`, `infra/` |

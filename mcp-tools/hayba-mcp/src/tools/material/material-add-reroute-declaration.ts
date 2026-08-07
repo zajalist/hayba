@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolHandler } from '../types.js';
-import { executeCommand } from '../tool-executor.js';
+import { ueTool } from '../ue-tool.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 
 export const meta: HaybaToolMeta = {
@@ -20,11 +20,4 @@ export const schema = z.object({
   message: 'one of material_path or function_path is required',
 });
 
-export const materialAddRerouteDeclarationHandler: ToolHandler = async (args) => {
-  const parsed = schema.safeParse(args);
-  if (!parsed.success) {
-    return { content: [{ type: 'text', text: `Validation error: ${parsed.error.message}` }], isError: true };
-  }
-  const data = await executeCommand('material_add_reroute_declaration', parsed.data as Record<string, unknown>);
-  return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
-};
+export const materialAddRerouteDeclarationHandler: ToolHandler = ueTool('material_add_reroute_declaration', schema);

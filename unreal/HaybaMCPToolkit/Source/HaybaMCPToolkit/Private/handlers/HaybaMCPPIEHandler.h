@@ -27,6 +27,14 @@ private:
     FHaybaHandlerResult PIEPressKey(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult PIEScreenshot(const TSharedPtr<FJsonObject>& P);
 
+    // Interaction surface: everything an agent needs to drive a running game.
+    FHaybaHandlerResult PIEMouse(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult PIETypeText(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult PIEAxis(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult PIEWidgetTree(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult PIEClickWidget(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult PIESetText(const TSharedPtr<FJsonObject>& P);
+
 #if WITH_EDITOR
     void EnsureLifecycleHooks();
     void OnBeginPIE(const bool bIsSimulating);

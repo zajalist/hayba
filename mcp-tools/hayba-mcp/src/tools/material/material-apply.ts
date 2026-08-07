@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolHandler } from '../types.js';
-import { executeCommand } from '../tool-executor.js';
+import { ueTool } from '../ue-tool.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 
 export const meta: HaybaToolMeta = {
@@ -16,11 +16,4 @@ export const schema = z.object({
   slot_index: z.number().int().nonnegative().optional().describe('Material slot index (default 0)'),
 });
 
-export const materialApplyHandler: ToolHandler = async (args) => {
-  const parsed = schema.safeParse(args);
-  if (!parsed.success) {
-    return { content: [{ type: 'text', text: `Validation error: ${parsed.error.message}` }], isError: true };
-  }
-  const data = await executeCommand('material_apply', parsed.data as Record<string, unknown>);
-  return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
-};
+export const materialApplyHandler: ToolHandler = ueTool('material_apply', schema);

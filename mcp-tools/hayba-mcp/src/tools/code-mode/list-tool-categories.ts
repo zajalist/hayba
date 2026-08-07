@@ -11,7 +11,23 @@ export const meta: HaybaToolMeta = {
   not_when: 'you already know the exact tool name',
 };
 
-// TODO(v1.1): wire to C++ meta_list_domains when the handler exists
+// The plugin's capability surface, hand-maintained.
+//
+// This list used to be the WHOLE catalogue, and it had drifted badly: 176 of the
+// 245 registered tools were absent from it, including every UI tool added after
+// the first three. The tool an agent consults to learn what the system can do
+// was understating it by 72%, and its own legend framed the omission as "does
+// not exist" rather than "not listed here".
+//
+// It is no longer the source of truth for anything callable. The callable half
+// is derived from the schema registry below, so it cannot drift. What stays here
+// is the one thing the registry genuinely cannot know: commands the C++ plugin
+// dispatches but no agent wrapper reaches yet. Those are worth naming — an agent
+// that knows the capability exists can ask the user or reach for python_run
+// instead of concluding it is impossible.
+//
+// A guard test asserts every registered tool appears in the generated output, so
+// this file falling behind is a test failure rather than a silent lie.
 const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: string[] }> = [
   { domain: 'actor', command_count: 14, commands: ['actor_spawn','actor_delete','actor_transform','actor_list','actor_get_properties','actor_set_properties','actor_tag','actor_snap_to_socket','actor_duplicate','actor_set_visibility','actor_get_components','actor_call_function','actor_batch_spawn','placement_validate'] },
   { domain: 'level', command_count: 8, commands: ['level_load','level_save','level_list','level_get_info','level_get_spatial_index','level_create','level_set_bookmark','level_goto_bookmark'] },
@@ -49,6 +65,25 @@ const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: 
   { domain: 'test', command_count: 3, commands: ['test_list','test_run','test_get_log'] },
 ];
 
+/** Domain for a command name. Mirrors inferDir() in ../index.ts, duplicated
+ *  deliberately: index.ts imports this module, so importing it back would close
+ *  a cycle. Falls back to the prefix before the first underscore, which is the
+ *  convention every domain follows. */
+function domainOf(name: string): string {
+  if (name.startsWith('hayba_fab_')) return 'fab';
+  if (name.startsWith('hayba_polyhaven_') || name.startsWith('hayba_ambientcg_') || name.startsWith('hayba_sketchfab_')) {
+    return 'asset-sources';
+  }
+  if (name === 'list_tool_categories' || name === 'get_tool_signature') return 'code-mode';
+  if (name.startsWith('hayba_')) {
+    const rest = name.slice('hayba_'.length);
+    const head = rest.split('_')[0];
+    return head || 'hayba';
+  }
+  const head = name.split('_')[0];
+  return head || 'misc';
+}
+
 /**
  * A command is *agent-callable right now* iff it has a TS wrapper in the schema
  * registry OR it is allow-listed for the ue_legacy route. The DOMAINS array
@@ -67,36 +102,50 @@ function callableCommandSet(): ReadonlySet<string> {
 export const listToolCategoriesHandler: ToolHandler = async () => {
   const callable = callableCommandSet();
 
-  // Filter out tools the user has disabled in the MCP panel, then annotate each
-  // remaining command with whether it is callable now. Drop categories that end
-  // up empty so the agent doesn't see "actor: 0 commands" noise.
-  const domains = DOMAINS
-    .map(d => ({
-      domain: d.domain,
-      commands: d.commands.filter(c => !isToolDisabled(c)),
+  // Everything callable, grouped by domain, straight from the registry. This is
+  // the half that must never be stale, so it is never written down.
+  const byDomain = new Map<string, { callable: string[]; unavailable: string[] }>();
+  const bucket = (d: string) => {
+    let b = byDomain.get(d);
+    if (!b) { b = { callable: [], unavailable: [] }; byDomain.set(d, b); }
+    return b;
+  };
+
+  for (const name of callable) {
+    if (isToolDisabled(name)) continue;
+    bucket(domainOf(name)).callable.push(name);
+  }
+
+  // Plugin commands with no wrapper. Anything here that HAS since gained a
+  // wrapper is already in the callable set above, so skip it rather than
+  // reporting the same command twice with contradictory availability.
+  for (const d of DOMAINS) {
+    for (const name of d.commands) {
+      if (callable.has(name) || isToolDisabled(name)) continue;
+      bucket(d.domain).unavailable.push(name);
+    }
+  }
+
+  const domains = Array.from(byDomain.entries())
+    .map(([domain, b]) => ({
+      domain,
+      command_count: b.callable.length + b.unavailable.length,
+      callable_count: b.callable.length,
+      callable: b.callable.slice().sort(),
+      // Advertised by the plugin but not yet wrapped for agents — calling these
+      // returns unknown_tool. Listed so the agent knows the capability exists
+      // (e.g. to ask the user / use python_run) without trying to invoke them.
+      unavailable: b.unavailable.slice().sort(),
     }))
-    .filter(d => d.commands.length > 0)
-    .map(d => {
-      const callableNames = d.commands.filter(c => callable.has(c));
-      const unavailableNames = d.commands.filter(c => !callable.has(c));
-      return {
-        domain: d.domain,
-        command_count: d.commands.length,
-        callable_count: callableNames.length,
-        callable: callableNames,
-        // Advertised by the plugin but not yet wrapped for agents — calling these
-        // returns unknown_tool. Listed so the agent knows the capability exists
-        // (e.g. to ask the user / use python_run) without trying to invoke them.
-        unavailable: unavailableNames,
-      };
-    });
+    .filter(d => d.command_count > 0)
+    .sort((a, b) => b.callable_count - a.callable_count || a.domain.localeCompare(b.domain));
 
   const totalAdvertised = domains.reduce((n, d) => n + d.command_count, 0);
   const totalCallable = domains.reduce((n, d) => n + d.callable_count, 0);
 
   return {
     content: [{ type: 'text', text: JSON.stringify({
-      _legend: 'callable = invokable now via hayba_invoke. unavailable = plugin supports it but no agent wrapper exists yet (calling it errors).',
+      _legend: 'callable = invokable now via hayba_invoke, no pack load needed. unavailable = the plugin supports it but no agent wrapper exists yet (calling it errors). The callable list is generated from the live tool registry, so it reflects what is actually there.',
       domains,
       total_commands: totalAdvertised,
       total_callable: totalCallable,

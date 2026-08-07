@@ -8,4 +8,13 @@ ADRs. One decision per file. Status: `Accepted` · `Superseded` ·
 |---|---|---|
 | [0001](0001-monorepo-restructure-and-re-emulation-doctrine.md) | Monorepo restructure + re-emulation doctrine | Accepted |
 | [0002](0002-website-at-top-level.md) | Website lives at top-level `website/` | Accepted |
+| 0003 | *(tectonics — moved to [hayba-explorer](https://github.com/zajalist/hayba-explorer) with the split)* | — |
 | [0004](0004-ue-plugin-location.md) | UE plugin lives at `unreal/HaybaMCPToolkit/` | Accepted |
+| [0005](0005-tectonic-stack-split-to-hayba-explorer.md) | Tectonic stack split out to `hayba-explorer` | Accepted |
+| [0006](0006-one-visual-sidecar.md) | One visual sidecar, one interface | Accepted |
+| [0007](0007-static-checks-must-know-every-call-form.md) | A static check must know every form of the call it guards | Accepted |
+
+An ADR describing code that moves **out** of this repo gets copied to both
+repos, not moved. 0005 was moved, and `CHANGELOG.md` spent two months citing a
+file that was not here; 0003 is listed above rather than silently skipped for
+the same reason.
