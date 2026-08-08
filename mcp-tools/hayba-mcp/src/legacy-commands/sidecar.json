@@ -4110,6 +4110,304 @@
       "agent_callable": true,
       "has_ts_wrapper": false,
       "notes": "Compiles an animation blueprint and reports the compiler's own errors and warnings. Every anim_blueprint_* write leaves the asset needing a compile, and an uncompiled blueprint keeps running its previous generated class — so skipping this makes edits look like they did nothing."
+    },
+    "physics_set_simulate": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPPhysicsHandler::PhysicsSetSimulate",
+      "params": [
+        {
+          "name": "actor_id",
+          "type": "string",
+          "required": true,
+          "description": "Actor name or editor label in the current editor world"
+        },
+        {
+          "name": "enabled",
+          "type": "boolean",
+          "required": true
+        },
+        {
+          "name": "component_name",
+          "type": "string",
+          "required": false,
+          "description": "Which primitive component. Omitted means the root component, falling back to the first primitive component found."
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "actor_id",
+            "type": "string"
+          },
+          {
+            "name": "simulating",
+            "type": "boolean",
+            "description": "Read back off the component after the write, not echoed — a component that refused to simulate reports false here"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Turns rigid-body simulation on or off for one primitive component in the EDITOR world. The reply reads the flag back off the component rather than repeating the request, so a component that cannot simulate (no collision, no body instance) is visible as simulating:false with ok:true. Editor-world only: this is not how you drive physics during PIE."
+    },
+    "physics_set_collision_profile": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPPhysicsHandler::PhysicsSetCollisionProfile",
+      "params": [
+        {
+          "name": "actor_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "profile_name",
+          "type": "string",
+          "required": true,
+          "description": "A profile from Project Settings > Collision, e.g. BlockAll, OverlapAllDynamic, NoCollision"
+        },
+        {
+          "name": "component_name",
+          "type": "string",
+          "required": false,
+          "description": "Defaults to the root primitive component"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "component",
+            "type": "string"
+          },
+          {
+            "name": "requested_profile",
+            "type": "string",
+            "description": "What you asked for"
+          },
+          {
+            "name": "profile",
+            "type": "string",
+            "description": "What the component is actually on, read back after the write"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Assigns a named collision profile to a component and READS IT BACK. An unrecognised profile name leaves the component on whatever it had, so a mismatch between requested_profile and profile is returned as an error naming the current profile rather than as a success. Profiles come from the project Collision settings, e.g. BlockAll, OverlapAll, NoCollision, Pawn."
+    },
+    "physics_add_impulse": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPPhysicsHandler::PhysicsAddImpulse",
+      "params": [
+        {
+          "name": "actor_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "impulse",
+          "type": "array",
+          "required": true,
+          "description": "[x,y,z]. Fewer than three numbers is rejected rather than zero-filled."
+        },
+        {
+          "name": "velocity_change",
+          "type": "boolean",
+          "required": false,
+          "description": "true applies the vector as a velocity change, ignoring mass"
+        },
+        {
+          "name": "component_name",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "component",
+            "type": "string"
+          },
+          {
+            "name": "linear_velocity",
+            "type": "object",
+            "description": "{x,y,z} read off the body after the impulse — an observable to compare against what you asked for"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Applies an impulse to a primitive component in the editor world and reports the resulting linear velocity. A component that is not simulating physics discards an impulse silently, so that case is REFUSED with a message naming the fix rather than answering applied:true — the old reply was true of the call and false of the world. Turn simulation on with physics_set_simulate first."
+    },
+    "wp_get_cells": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPWorldPartitionHandler::WpGetCells",
+      "params": [],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "cells",
+            "type": "array",
+            "description": "cell_id, bounds{min,max}, actor_count, top_classes (top 5 by count)"
+          },
+          {
+            "name": "total",
+            "type": "number",
+            "description": "How many cells exist"
+          },
+          {
+            "name": "returned",
+            "type": "number",
+            "description": "Present only when the list was cut short at 100"
+          },
+          {
+            "name": "truncated",
+            "type": "boolean",
+            "description": "Present only when total exceeds what was returned"
+          },
+          {
+            "name": "cell_source",
+            "type": "string",
+            "description": "Always \"computed_grid\" — see the note"
+          },
+          {
+            "name": "grid_size_cm",
+            "type": "number",
+            "description": "The fixed bin size used, 51200"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "A spatial summary of where actors are: it bins every actor in the editor world onto a fixed 512m grid and reports per-bin counts and the classes that dominate each. These are NOT the World Partition runtime cells — cell ids and bounds will not match the partition's own, which is why the reply says cell_source. Requires World Partition to be enabled on the map; use it to find the busy regions before deciding where to look."
+    },
+    "wp_load_cell": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPWorldPartitionHandler::WpLoadCell",
+      "params": [
+        {
+          "name": "cell_id",
+          "type": "string",
+          "required": false,
+          "description": "Accepted and ignored — the command cannot load anything"
+        }
+      ],
+      "returns": {
+        "shape": "object"
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "NOT IMPLEMENTED, and it says so rather than pretending. World Partition cell loading is interactive-only in the editor and there is no programmatic path here yet, so every call returns an error naming that limit. It previously returned ok with loaded:false, which let a caller loop over cells and conclude the world was loaded."
+    },
+    "wp_get_streaming_state": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPWorldPartitionHandler::WpGetStreamingState",
+      "params": [],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "boolean",
+            "description": "Whether the current editor world has a World Partition at all"
+          },
+          {
+            "name": "streaming_sources",
+            "type": "string",
+            "description": "Always \"not_enumerated\" — sources are not counted here, and the field says so rather than reporting a zero that would read as measured"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Answers one question honestly: does the current editor world use World Partition. It previously also reported a hard-coded source_count of 0 — a field named for a measurement that always answers zero reads as \"measured, none found\", so it now names itself not_enumerated instead of inventing a number."
+    },
+    "editor_get_performance_stats": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPEditorHandler::GetPerformanceStats",
+      "params": [],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "fps",
+            "type": "number",
+            "description": "Engine rolling average"
+          },
+          {
+            "name": "frame_ms",
+            "type": "number"
+          },
+          {
+            "name": "render_thread_ms",
+            "type": "number",
+            "description": "Converted from engine cycles"
+          },
+          {
+            "name": "game_thread_ms",
+            "type": "number",
+            "description": "Converted from engine cycles"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Editor frame timing: average fps, frame time, and the two thread times. These are whole-editor averages, not a profile of one operation — an idle editor with a compile running reads badly and that is not a scene problem. The thread times are cycle counters converted through FPlatformTime::ToMilliseconds; they were previously emitted RAW under _ms names, so every reading of those two fields used to be wrong by the platform cycle factor."
+    },
+    "editor_live_compile": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPEditorHandler::LiveCompile",
+      "params": [],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "compile_requested",
+            "type": "boolean",
+            "description": "The trigger was issued. NOT that the compile succeeded — the outcome never comes back through this call."
+          },
+          {
+            "name": "result_source",
+            "type": "string",
+            "description": "Where to read the actual outcome"
+          },
+          {
+            "name": "log_dir",
+            "type": "string",
+            "description": "Absolute project log directory"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Triggers a Live Coding compile of the running editor. It is asynchronous: poll the editor log for 'Live coding succeeded' or 'LogLiveCoding: Error', matching on a COUNT of terminal lines rather than presence, because earlier runs are still in the file. Compile ERRORS are not in the editor log at all — they are in UnrealBuildTool\\Log.txt. A brand-new handler CLASS still needs a full editor restart; Live Coding cannot register one."
+    },
+    "editor_set_viewport_mode": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPEditorHandler::SetViewportMode",
+      "params": [
+        {
+          "name": "mode",
+          "type": "string",
+          "required": true,
+          "description": "lit | unlit | wireframe | detail_lighting | lighting_only | shader_complexity"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "mode",
+            "type": "string"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Switches the active editor viewport's view mode — wireframe to read geometry density, shader_complexity to find expensive materials, unlit to judge albedo without lighting. This changes what a HUMAN is looking at and does not change back on its own, so put it back to lit when you are done rather than leaving someone else's viewport in wireframe."
     }
   }
 }
