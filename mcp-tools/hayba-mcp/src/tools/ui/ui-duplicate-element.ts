@@ -19,7 +19,7 @@ export const schema = z.object({
     .optional()
     .describe('Panel to place the copy under. Defaults to the source widget own parent (i.e. a sibling copy).'),
   slot_props: z
-    .record(z.union([z.number(), z.string(), z.boolean(), z.array(z.number())]))
+    .record(z.string(), z.union([z.number(), z.string(), z.boolean(), z.array(z.number())]))
     .optional()
     .describe('Slot layout overrides for the copy, applied after the source slot layout is cloned.'),
 });

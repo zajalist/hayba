@@ -22,7 +22,7 @@ export const UE_LEGACY_ALLOWLIST: ReadonlySet<string> = LEGACY_ALLOWLIST;
 
 export const invokeSchema = {
   name: z.string().min(1),
-  args: z.record(z.unknown()).default({}),
+  args: z.record(z.string(), z.unknown()).default({}),
   via: z.enum(['ts', 'ue_legacy']).optional().default('ts')
     .describe('Dispatch route. "ts" (default) looks the tool up in the TS captured map. "ue_legacy" calls executeCommand(name, args) directly against the UE plugin — only commands marked agent_callable:true in legacy-commands/sidecar.json are accepted.'),
 };

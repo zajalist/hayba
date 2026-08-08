@@ -33,7 +33,7 @@
     "minisearch": "^7.2.0",
     "openai": "^6.45.0",
     "youtube-transcript-api": "^3.0.6",
-    "zod": "^3.23.0"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/adm-zip": "^0.5.5",

@@ -14,20 +14,20 @@ export const meta: HaybaToolMeta = {
 // which contains an FLinearColor. The handler applies nested JSON objects field
 // by field via reflection, so the schema must not flatten them away.
 const propertyValue: z.ZodType<unknown> = z.lazy(() =>
-  z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(propertyValue), z.record(propertyValue)]),
+  z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(propertyValue), z.record(z.string(), propertyValue)]),
 );
 
 export const schema = z.object({
   widget_blueprint_path: z.string().min(1).describe('Full path of the target Widget Blueprint'),
   widget_name: z.string().min(1).describe('Name of the widget to set properties on'),
   properties: z
-    .record(propertyValue)
+    .record(z.string(), propertyValue)
     .optional()
     .describe(
       'Property values keyed by their real UE property name (e.g. "Text", "ColorAndOpacity", "Font"). Values may be nested objects for struct properties, arrays for colors/vectors, or an asset path string for object references.',
     ),
   slot_props: z
-    .record(propertyValue)
+    .record(z.string(), propertyValue)
     .optional()
     .describe(
       'Layout properties applied to the widget’s PANEL SLOT rather than the widget: canvas (anchors/position/size/alignment/auto_size/z_order), box (fill/padding/alignment), grid (row/column/spans). Keys the slot type does not support come back in unknown_slot_props instead of being silently dropped.',

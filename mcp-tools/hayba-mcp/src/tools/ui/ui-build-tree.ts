@@ -11,7 +11,7 @@ export const meta: HaybaToolMeta = {
 };
 
 const propertyValue: z.ZodType<unknown> = z.lazy(() =>
-  z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(propertyValue), z.record(propertyValue)]),
+  z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(propertyValue), z.record(z.string(), propertyValue)]),
 );
 
 // Recursive by construction: a node's children are nodes. z.lazy is required
@@ -25,8 +25,8 @@ const nodeSchema: z.ZodType<unknown> = z.lazy(() =>
         'Widget class — short name ("VerticalBox", "TextBlock") or a full class path, including your own /Game/... widget blueprint classes',
       ),
     name: z.string().optional().describe('Name for this widget. Must be unique in the blueprint; auto-generated if omitted.'),
-    properties: z.record(propertyValue).optional().describe('Properties set on the widget itself'),
-    slot_props: z.record(propertyValue).optional().describe('Layout properties for this widget slot in its parent'),
+    properties: z.record(z.string(), propertyValue).optional().describe('Properties set on the widget itself'),
+    slot_props: z.record(z.string(), propertyValue).optional().describe('Layout properties for this widget slot in its parent'),
     children: z.array(nodeSchema).optional().describe('Child nodes. Only valid when `class` is a panel widget.'),
   }),
 );

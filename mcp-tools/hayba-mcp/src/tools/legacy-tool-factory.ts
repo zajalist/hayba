@@ -114,7 +114,9 @@ function zodForParam(p: LegacyParam): z.ZodTypeAny {
 
 /** Build the Zod raw shape for one command's params[]. */
 function shapeFor(params: LegacyParam[]): z.ZodRawShape {
-  const shape: z.ZodRawShape = {};
+  // zod 4 types ZodRawShape as Readonly, so it cannot be built by assignment.
+  // Assemble a mutable record and widen on return.
+  const shape: Record<string, z.ZodTypeAny> = {};
   for (const p of params ?? []) {
     let t = zodForParam(p);
     if (p.description) t = t.describe(p.description);

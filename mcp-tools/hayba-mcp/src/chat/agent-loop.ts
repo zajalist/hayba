@@ -129,8 +129,11 @@ function zodToJsonSchema(t: ZodTypeAny): { schema: JsonSchema; optional: boolean
       optional = true;
     inner = (inner as unknown as { _def: { innerType: ZodTypeAny } })._def.innerType;
   }
-  while (inner instanceof z.ZodEffects) {
-    inner = (inner as unknown as { _def: { schema: ZodTypeAny } })._def.schema;
+  // zod 4: ZodEffects became ZodPipe, whose ends are `_def.in` / `_def.out`.
+  // Follow the end that is not the transform.
+  while (inner instanceof z.ZodPipe) {
+    const { in: pin, out: pout } = inner._def as unknown as { in: ZodTypeAny; out: ZodTypeAny };
+    inner = pout instanceof z.ZodTransform ? pin : pout;
   }
 
   let schema: JsonSchema;
@@ -154,8 +157,9 @@ function zodToJsonSchema(t: ZodTypeAny): { schema: JsonSchema; optional: boolean
   else if (inner instanceof z.ZodRecord) schema = { type: 'object' };
   else schema = {};
 
-  const desc = (t as unknown as { _def?: { description?: string } })._def?.description
-    ?? (inner as unknown as { _def?: { description?: string } })._def?.description;
+  // zod 4: .describe() lives on the public `.description` getter now, not on
+  // `_def.description` — which reads undefined rather than throwing.
+  const desc = t.description ?? inner.description;
   if (desc) schema.description = desc;
   return { schema, optional };
 }

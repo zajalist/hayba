@@ -5,7 +5,7 @@ import type { SliverRunResult } from '../../slivers/types.js';
 
 export const sliverRunSchema = {
   id: z.string().min(1),
-  params: z.record(z.unknown()).default({}),
+  params: z.record(z.string(), z.unknown()).default({}),
 };
 
 export interface SliverRunCtx { runtime: SliverRuntime; }

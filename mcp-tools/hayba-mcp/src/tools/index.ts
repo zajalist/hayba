@@ -1433,7 +1433,7 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
         .enum(['epic-default', 'gamedevtv', 'custom'])
         .optional()
         .describe('Preset to load (required at start stage)'),
-      answers: z.record(z.unknown()).optional().describe('Accumulated user responses from previous stages'),
+      answers: z.record(z.string(), z.unknown()).optional().describe('Accumulated user responses from previous stages'),
       target: z.enum(['global', 'project']).optional().describe('Where to save (required at save stage)'),
       projectRoot: z.string().optional().describe('UE project root path (required if target is project)'),
     },
@@ -2182,7 +2182,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
         .describe('Name of an existing PANEL widget to parent under; defaults to the root panel'),
       name: z.string().optional().describe('Name for the new widget (auto-generated if omitted)'),
       slot_props: z
-        .record(z.union([z.number(), z.string(), z.boolean()]))
+        .record(z.string(), z.union([z.number(), z.string(), z.boolean()]))
         .optional()
         .describe('Slot layout props: x/y/w/h (canvas), fill/padding (box); other keys set on the slot by reflection'),
     },
@@ -3985,7 +3985,7 @@ function recordEagerSchemas(reg: (name: string, shape: z.ZodRawShape, cost: Cost
     {
       stage: z.enum(['start', 'folders', 'naming', 'workflow', 'confirm', 'save']),
       preset: z.enum(['epic-default', 'gamedevtv', 'custom']).optional(),
-      answers: z.record(z.unknown()).optional(),
+      answers: z.record(z.string(), z.unknown()).optional(),
       target: z.enum(['global', 'project']).optional(),
       projectRoot: z.string().optional(),
     },
