@@ -74,3 +74,23 @@ describe('per-domain non-idempotent lists are mirrored into the retry gate', () 
     expect(Array.isArray(empty)).toBe(true);
   });
 });
+
+describe('sidecar-derived mutating commands reach the retry gate', () => {
+  it('generateLegacyDescriptors populates NON_IDEMPOTENT', async () => {
+    const { generateLegacyDescriptors, legacyNonIdempotentNames } =
+      await import('../legacy-tool-factory.js');
+
+    generateLegacyDescriptors();
+
+    const names = legacyNonIdempotentNames();
+    expect(names.length, 'the sidecar should surface some mutating commands').toBeGreaterThan(0);
+
+    const missing = names.filter((n) => !NON_IDEMPOTENT.has(n));
+    expect(
+      missing,
+      'these sidecar commands mutate state but are not in the retry gate, so a\n' +
+        'transport failure will auto-retry them and duplicate the side-effect:\n  ' +
+        missing.join('\n  '),
+    ).toEqual([]);
+  });
+});

@@ -189,6 +189,10 @@ export function buildLegacyDescriptor(
 export function generateLegacyDescriptors(
   reserved: ReadonlySet<string> = new Set(),
 ): ToolDescriptor[] {
+  // The retry gate must know about these before anything can be invoked, and
+  // this is the earliest point that is a deliberate call rather than an import.
+  registerLegacyNonIdempotent();
+
   const out: ToolDescriptor[] = [];
   const skipped: string[] = [];
   const sidecar = getSidecar();
@@ -218,9 +222,20 @@ export function legacyNonIdempotentNames(): string[] {
     .map(([name]) => name);
 }
 
-// ── Side-effect: extend NON_IDEMPOTENT with the surfaced mutating commands ────
-// tool-executor's retry gate reads NON_IDEMPOTENT at call time; mutating it here
-// (at module load, before any tool call) is sufficient and avoids a static list
-// that drifts from the sidecar. tool-executor does NOT import this module, so
-// there is no import cycle.
-for (const name of legacyNonIdempotentNames()) NON_IDEMPOTENT.add(name);
+/** Extend NON_IDEMPOTENT with the mutating commands surfaced from the sidecar.
+ *
+ *  Deriving these from the sidecar rather than hard-coding them is right — a
+ *  static list would drift. Doing it as a bare module-load side effect was not:
+ *  importing this file for `generateLegacyDescriptors` also silently rewrote
+ *  another module's exported Set, so the retry gate's contents depended on
+ *  whether some unrelated import had happened yet. Nothing said so at the
+ *  reading end, in tool-executor.
+ *
+ *  Called from generateLegacyDescriptors, which must run before any tool can be
+ *  registered or invoked, so the set is complete by the time the gate reads it.
+ *  Idempotent — Set.add is, and callers may run it more than once.
+ *
+ *  Exported for the drift test in __tests__/non-idempotent-domains.test.ts. */
+export function registerLegacyNonIdempotent(): void {
+  for (const name of legacyNonIdempotentNames()) NON_IDEMPOTENT.add(name);
+}
