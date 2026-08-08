@@ -12,6 +12,7 @@
 
 #include "CoreMinimal.h"
 #include "Dom/JsonObject.h"
+#include "HaybaMCPParams.h"
 
 namespace HaybaUIOps
 {
@@ -48,4 +49,66 @@ namespace HaybaUIOps
      *  deprecated spelling should be told which one it used rather than left to
      *  infer that it worked by accident. */
     const TCHAR* SpellingName(ESlotPropsSpelling Spelling);
+
+    // ── ui_set_widget_properties ─────────────────────────────────────────────
+    //
+    // Same three-way split as HaybaActorOps.h — Parse / Execute / Shape — with
+    // one difference: Execute stays in the handler. Applying properties needs
+    // the widget tree, UMG slot classes, Modify()/PostEditChange() and
+    // FBlueprintEditorUtils, none of which this header should drag in. Parse and
+    // Shape are the halves that are pure, and they are the halves that were
+    // wrong: the payload-naming bug and the counter that credited a success per
+    // *submitted* key rather than per applied one both lived here.
+
+    struct FSetPropertiesRequest
+    {
+        FString BlueprintPath;
+        FString WidgetName;
+        /** Widget properties. Null when the caller sent none — which is not the
+         *  same as an empty object, though both mean "nothing to apply". */
+        TSharedPtr<FJsonObject> Properties;
+        FSlotPropsPayload Slot;
+
+        /** Whether there is a single key to write. A request naming a widget and
+         *  carrying no keys used to reach the editor, mark the blueprint dirty
+         *  and come back "nothing applied ... Rejected: " with an empty list. */
+        bool HasAnythingToApply() const;
+    };
+
+    struct FSetPropertiesResult
+    {
+        FString WidgetName;
+        /** Keys the widget or its slot actually took. Not the count submitted:
+         *  slot keys used to be counted as successes before the slot was asked
+         *  whether it understood them. */
+        int32 Succeeded = 0;
+        int32 Failed = 0;
+        TArray<FString> FailedProps;
+        TArray<FString> UnknownSlotProps;
+        TArray<FString> Warnings;
+        /** Which spelling the slot payload arrived under, so the reply can name
+         *  a deprecated one instead of forgiving it in silence. */
+        ESlotPropsSpelling SlotSpelling = ESlotPropsSpelling::None;
+
+        bool AppliedNothing() const { return Succeeded == 0; }
+    };
+
+    /** 1. Parse — pure. Errors accumulate on the reader; check R.HasErrors().
+     *
+     *  "You sent no keys" is decided here rather than after the blueprint loads,
+     *  so a caller with two mistakes hears about both at once instead of being
+     *  told about the blueprint and then, a round trip later, about the payload. */
+    FSetPropertiesRequest ParseSetProperties(FHaybaParamReader& R);
+
+    /** How a slot key is named in `failed_properties`, so widget and slot keys
+     *  cannot be confused with each other in a flat list. */
+    FString SlotKeyName(const FString& Key);
+
+    /** 3. Shape — pure. */
+    TSharedPtr<FJsonObject> ShapeSetProperties(const FSetPropertiesResult& Result);
+
+    /** The message for a request where nothing landed. Naming the rejected keys
+     *  is the difference between "your property names are wrong" and a bare
+     *  failure the caller can only respond to by guessing. */
+    FString NothingAppliedError(const FSetPropertiesResult& Result);
 }

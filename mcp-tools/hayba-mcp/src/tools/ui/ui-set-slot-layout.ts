@@ -96,8 +96,10 @@ export const uiSetSlotLayoutHandler: ToolHandler = async (args) => {
   }
 
   // The UE handler reads `slot_props`. This tool used to send `slot_layout`,
-  // which no handler revision ever read, so every call failed outright with
-  // "no properties or slot_props provided".
+  // which no handler revision ever read, so every call failed outright as
+  // having sent no payload. The handler now accepts all three spellings and
+  // names the one it read back (HaybaUIOps::ResolveSlotProps); keep sending the
+  // documented one so the reply stays silent about it.
   const data = await executeCommand('ui_set_widget_properties', {
     widget_blueprint_path,
     widget_name,
