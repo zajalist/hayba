@@ -194,7 +194,7 @@ const bindingSchema = z.object({
 export const plumbConstraintDefineSchema = {
   id: z.string(),
   primitive: z.string().describe('One of the closed primitive ids (see plumb_primitives)'),
-  params: z.record(z.unknown()).optional(),
+  params: z.record(z.string(), z.unknown()).optional(),
   binding: bindingSchema.describe('Exactly one of {asset, tag}'),
   hard: z.boolean().optional().describe('Override the primitive default hard/soft'),
   note: z.string().optional(),
@@ -282,7 +282,7 @@ const transformSchema = z.object({
 const instanceSchema = z.object({
   object: z.string(),
   asset: z.string().optional(),
-  tags: z.record(z.string()).optional(),
+  tags: z.record(z.string(), z.string()).optional(),
   transform: transformSchema,
 });
 
@@ -501,7 +501,7 @@ export const plumbProductionDefineSchema = {
   id: z.string(),
   lhs: z.object({
     kind: z.string(),
-    when: z.record(z.unknown()).optional(),
+    when: z.record(z.string(), z.unknown()).optional(),
   }),
   rhs: z.array(emitOpSchema).min(1),
   guards: z.array(z.string()).optional().describe('Constraint ids that must pass before this production fires'),
@@ -564,7 +564,7 @@ export async function plumbSocketAddHandler(args: {
 export const plumbGrammarExpandSchema = {
   seed: z.object({
     kind: z.string(),
-    attrs: z.record(z.union([z.number(), z.string(), z.boolean()])).optional(),
+    attrs: z.record(z.string(), z.union([z.number(), z.string(), z.boolean()])).optional(),
   }).describe('Seed symbol to expand from'),
 };
 export async function plumbGrammarExpandHandler(args: {

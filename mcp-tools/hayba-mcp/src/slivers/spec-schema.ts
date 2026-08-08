@@ -41,7 +41,7 @@ const determinism = z.object({
 
 const requirement = z.object({
   primitive: z.string().min(1),
-  params: z.record(z.unknown()).optional(),
+  params: z.record(z.string(), z.unknown()).optional(),
   binding: z.object({
     asset: z.string().optional(),
     tag: z.object({ axis: z.string(), value: z.string() }).optional(),

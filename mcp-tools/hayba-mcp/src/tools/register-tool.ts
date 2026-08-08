@@ -92,7 +92,9 @@ export function defineTool<S extends z.ZodRawShape>(d: {
   returns: string;
   niche?: string;
   handler: (
-    args: z.objectOutputType<S, z.ZodTypeAny>,
+    // zod 4 removed z.objectOutputType; inferring through ZodObject is
+    // the supported way to get the parsed shape's output type.
+    args: z.infer<z.ZodObject<S>>,
     session: SessionManager,
   ) => Promise<ToolResult>;
 }): ToolDescriptor {

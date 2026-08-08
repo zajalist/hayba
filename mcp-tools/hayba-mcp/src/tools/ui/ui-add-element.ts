@@ -30,7 +30,7 @@ export const schema = z.object({
     .describe('Name of an existing PANEL widget to parent under. Defaults to the root panel; errors if the root is not a panel and none is given.'),
   name: z.string().optional().describe('Name for the new widget (auto-generated if omitted).'),
   slot_props: z
-    .record(z.union([z.number(), z.string(), z.boolean()]))
+    .record(z.string(), z.union([z.number(), z.string(), z.boolean()]))
     .optional()
     .describe(
       'Slot layout props. Canvas slot: x, y, w, h (offsets). Box slot: fill, padding. Any other key is set on the slot by reflection.',

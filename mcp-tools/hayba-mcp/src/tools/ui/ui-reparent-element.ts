@@ -15,7 +15,7 @@ export const schema = z.object({
   widget_name: z.string().min(1).describe('Name of the widget to reparent'),
   new_parent_name: z.string().min(1).describe('Name of the existing panel widget to reparent under'),
   slot_props: z
-    .record(z.union([z.number(), z.string(), z.boolean()]))
+    .record(z.string(), z.union([z.number(), z.string(), z.boolean()]))
     .optional()
     .describe('Optional slot layout props for the new parent slot'),
 });
