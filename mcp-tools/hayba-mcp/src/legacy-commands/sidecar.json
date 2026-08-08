@@ -3037,6 +3037,464 @@
       "agent_callable": true,
       "has_ts_wrapper": true,
       "notes": "Analog input for sticks, triggers and mouse axes. Applies for one frame; resend per step for sustained movement."
+    },
+    "project_get_info": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPProjectHandler::Handle",
+      "params": [],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "project_name",
+            "type": "string"
+          },
+          {
+            "name": "project_dir",
+            "type": "string",
+            "description": "Absolute path, forward slashes"
+          },
+          {
+            "name": "content_dir",
+            "type": "string"
+          },
+          {
+            "name": "saved_dir",
+            "type": "string",
+            "description": "Where the editor log lives — the first place to look when a command claims success"
+          },
+          {
+            "name": "engine_version",
+            "type": "string"
+          },
+          {
+            "name": "engine_association",
+            "type": "string"
+          },
+          {
+            "name": "description",
+            "type": "string"
+          },
+          {
+            "name": "category",
+            "type": "string"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Where this project is on disk and which engine built it. Call it before any path-building work rather than guessing a content root, and to resolve the Saved/ directory the editor log lives in. Takes no parameters."
+    },
+    "project_get_settings": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPProjectHandler::Handle",
+      "params": [],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "project_id",
+            "type": "string"
+          },
+          {
+            "name": "project_name",
+            "type": "string"
+          },
+          {
+            "name": "project_version",
+            "type": "string"
+          },
+          {
+            "name": "company_name",
+            "type": "string"
+          },
+          {
+            "name": "homepage",
+            "type": "string"
+          },
+          {
+            "name": "support_contact",
+            "type": "string"
+          },
+          {
+            "name": "description",
+            "type": "string"
+          },
+          {
+            "name": "copyright_notice",
+            "type": "string"
+          },
+          {
+            "name": "editor_startup_map",
+            "type": "string",
+            "description": "Read from GEngineIni, not from GeneralProjectSettings"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Reads UGeneralProjectSettings — the identity fields shown on the Project Settings > Description page — plus the editor startup map. Read-only; use project_set_settings to change any of them. Fields that were never filled in come back as empty strings, not as missing keys."
+    },
+    "project_set_settings": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPProjectHandler::Handle",
+      "params": [
+        {
+          "name": "section",
+          "type": "string",
+          "required": false,
+          "description": "Raw-ini mode: the ini section, e.g. /Script/EngineSettings.GameMapsSettings. Requires key and value; writes GEngineIni and takes precedence over the named fields below."
+        },
+        {
+          "name": "key",
+          "type": "string",
+          "required": false,
+          "description": "Raw-ini mode: the ini key. Only with section + value."
+        },
+        {
+          "name": "value",
+          "type": "string",
+          "required": false,
+          "description": "Raw-ini mode: the value to write. Only with section + key."
+        },
+        {
+          "name": "project_name",
+          "type": "string",
+          "required": false,
+          "description": "Named mode: written to DefaultGame.ini"
+        },
+        {
+          "name": "company_name",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "homepage",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "project_version",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "company_distinguished_name",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "project_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "support_contact",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "copyright_notice",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "ok",
+            "type": "boolean"
+          },
+          {
+            "name": "updated",
+            "type": "array",
+            "description": "Named mode: exactly which fields were written. Check it — a field this command does not recognise is not reported per-key."
+          },
+          {
+            "name": "section",
+            "type": "string",
+            "description": "Raw-ini mode only"
+          },
+          {
+            "name": "key",
+            "type": "string",
+            "description": "Raw-ini mode only"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Writes project identity settings to the ini files, in two modes: pass section+key+value to write any ini key directly, or pass any of the named fields to write DefaultGame.ini. It flushes to disk immediately — this edits config the whole team shares, so prefer project_get_settings first. Values are strings in both modes."
+    },
+    "project_list_plugins": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPProjectHandler::Handle",
+      "params": [],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "plugins",
+            "type": "array",
+            "description": "name, friendly_name, version, version_name, enabled, category, description, is_engine"
+          },
+          {
+            "name": "count",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Every ENABLED plugin, engine and project alike, with its version and category. This is the reliable way to answer 'is Water/PCG/Niagara available here' before calling a domain that needs one — a capability probe against reality rather than an assumption. Disabled plugins are not listed at all."
+    },
+    "mesh_get_info": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPStaticMeshHandler::MeshGetInfo",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "description": "Object path of a UStaticMesh, e.g. /Engine/BasicShapes/Cube.Cube"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "lod_count",
+            "type": "number"
+          },
+          {
+            "name": "triangle_count_lod0",
+            "type": "number"
+          },
+          {
+            "name": "num_vertices_lod0",
+            "type": "number"
+          },
+          {
+            "name": "lod_screen_sizes",
+            "type": "array",
+            "description": "One entry per source model, in LOD order"
+          },
+          {
+            "name": "material_slots",
+            "type": "array",
+            "description": "name + material_path per slot; material_path is empty when the slot has no material"
+          },
+          {
+            "name": "bounds",
+            "type": "object",
+            "description": "min / max / extents, each {x,y,z}"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Triangle and vertex counts, the LOD chain with its screen sizes, material slots and local bounds for one static mesh. Called from TS by the physical-asset baker and world_generate for bounds, so it is documented here rather than surfaced as its own agent tool: agents should reach for mesh_get_bounds / mesh_get_lods / mesh_get_materials, which split the same information and do not load the asset whole."
+    },
+    "mesh_set_lod": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPStaticMeshHandler::MeshSetLOD",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "description": "Object path of the UStaticMesh"
+        },
+        {
+          "name": "lod_index",
+          "type": "number",
+          "required": true,
+          "description": "Which source model; must be within lod_count from mesh_get_info"
+        },
+        {
+          "name": "screen_size",
+          "type": "number",
+          "required": true,
+          "description": "Screen size at which this LOD takes over"
+        },
+        {
+          "name": "reduction_percent_triangles",
+          "type": "number",
+          "required": false,
+          "description": "Optional triangle-reduction target for this LOD"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "ok",
+            "type": "boolean"
+          },
+          {
+            "name": "lod_index",
+            "type": "number"
+          },
+          {
+            "name": "screen_size",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Sets a LOD's screen size (and optionally its reduction target) on a static mesh, then rebuilds it. Editor-only, and it modifies the asset — save it afterwards. It REFUSES a mesh with any zero-UV LOD, because the rebuild would hit an engine assert and take the editor down with it; that refusal is a real limit of the asset, not a bug in this command."
+    },
+    "mesh_list": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPStaticMeshHandler::MeshList",
+      "params": [
+        {
+          "name": "path_prefix",
+          "type": "string",
+          "required": false,
+          "description": "Keep only assets whose object path starts with this, e.g. /Game/Aphrosia. Omitted means every static mesh the registry knows, engine content included."
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "meshes",
+            "type": "array",
+            "description": "path, name, package_path"
+          },
+          {
+            "name": "count",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Enumerate static meshes from the asset registry without loading any of them — the cheap way to find something to place or inspect. Always pass path_prefix on a real project unless you actually want engine content in the results. Exact subclasses only, so a mesh subclass is not listed."
+    },
+    "audio_list": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPAudioHandler::AudioList",
+      "params": [
+        {
+          "name": "path_prefix",
+          "type": "string",
+          "required": false,
+          "description": "Keep only sounds whose object path starts with this. Omitted means everything, including the large engine sound set."
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "sounds",
+            "type": "array",
+            "description": "path, name, class, and duration_seconds / sample_rate when the registry has them cached"
+          },
+          {
+            "name": "count",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Enumerate USoundBase assets (waves, cues, MetaSound sources) from the asset registry, including subclasses, without loading them. Duration and sample rate come from registry tags, so they are present for most assets but not guaranteed — a missing key means untagged, not zero."
+    },
+    "audio_play": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPAudioHandler::AudioPlay",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "description": "Object path of a USoundBase"
+        },
+        {
+          "name": "volume",
+          "type": "number",
+          "required": false,
+          "default": 1
+        },
+        {
+          "name": "pitch",
+          "type": "number",
+          "required": false,
+          "default": 1
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "ok",
+            "type": "boolean"
+          },
+          {
+            "name": "playing",
+            "type": "string",
+            "description": "Asset name actually loaded and played"
+          },
+          {
+            "name": "volume",
+            "type": "number"
+          },
+          {
+            "name": "pitch",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Play a sound 2D through the editor's current world, for auditioning an asset. The reply says the sound loaded and playback was started — it cannot tell you anything was audible, so treat it as dispatch, not as evidence. Needs an active world; it fails rather than queueing if there is none."
+    },
+    "audio_set_volume": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPAudioHandler::AudioSetVolume",
+      "params": [
+        {
+          "name": "category",
+          "type": "string",
+          "required": true,
+          "description": "Only 'master' is implemented; any other category is an explicit error rather than a silent no-op"
+        },
+        {
+          "name": "volume",
+          "type": "number",
+          "required": true,
+          "description": "Multiplier, 1.0 being unchanged"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "ok",
+            "type": "boolean"
+          },
+          {
+            "name": "category",
+            "type": "string"
+          },
+          {
+            "name": "volume",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Sets the transient primary volume on the main audio device — the master bus, and only that. Per-category mixing (music, sfx, ui) would need Sound Class / Sound Mix routing and is not implemented; asking for one of those categories returns an error naming the limit. The change is transient and does not persist."
     }
   }
 }
