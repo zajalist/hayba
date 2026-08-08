@@ -1253,13 +1253,20 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleAddElement(const TSharedPtr<FJsonO
 
 FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetProperties(const TSharedPtr<FJsonObject>& P)
 {
-    FString BPPath, WidgetName;
-    if (!P->TryGetStringField(TEXT("widget_blueprint_path"), BPPath) || BPPath.IsEmpty())
-        return FHaybaHandlerResult::Err(TEXT("ui_set_widget_properties: missing widget_blueprint_path"));
-    if (!P->TryGetStringField(TEXT("widget_name"), WidgetName) || WidgetName.IsEmpty())
-        return FHaybaHandlerResult::Err(TEXT("ui_set_widget_properties: missing widget_name"));
+    // 1. Parse — pure, no editor. Everything the wire format decides (which
+    //    fields are required, which of three spellings the slot payload used,
+    //    whether there is a single key to apply) is settled before anything is
+    //    loaded, and every problem is reported in one message. See HaybaUIOps.h.
+    FHaybaParamReader R(P, TEXT("ui_set_widget_properties"));
+    const HaybaUIOps::FSetPropertiesRequest Req = HaybaUIOps::ParseSetProperties(R);
+    if (R.HasErrors())
+        return FHaybaHandlerResult::Err(R.ErrorMessage());
 
-    UWidgetBlueprint* WBP = LoadObject<UWidgetBlueprint>(nullptr, *BPPath);
+    const FString& WidgetName = Req.WidgetName;
+    const TSharedPtr<FJsonObject> SlotPropsObj = Req.Slot.Object;
+
+    // 2. Execute — needs the editor.
+    UWidgetBlueprint* WBP = LoadObject<UWidgetBlueprint>(nullptr, *Req.BlueprintPath);
     if (!WBP || !WBP->WidgetTree)
         return FHaybaHandlerResult::Err(TEXT("ui_set_widget_properties: widget blueprint not found"));
 
@@ -1267,24 +1274,17 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetProperties(const TSharedPtr<FJs
     if (!Widget)
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_set_widget_properties: widget '%s' not found"), *WidgetName));
 
-    const TSharedPtr<FJsonObject>* Props = nullptr;
-    P->TryGetObjectField(TEXT("properties"), Props);
+    HaybaUIOps::FSetPropertiesResult Result;
+    Result.WidgetName   = WidgetName;
+    Result.SlotSpelling = Req.Slot.Spelling;
 
-    // Which of the three shipped spellings the slot payload arrived under is a
-    // wire-format question, not a widget one — see HaybaUIOps.h for why there
-    // are three and what it cost. Resolved outside this function so it can be
-    // tested without an editor.
-    const HaybaUIOps::FSlotPropsPayload SlotPayload = HaybaUIOps::ResolveSlotProps(P);
-    const TSharedPtr<FJsonObject> SlotPropsObj = SlotPayload.Object;
-
-    if ((!Props || !Props->IsValid()) && !SlotPayload.IsSet())
-        return FHaybaHandlerResult::Err(TEXT("ui_set_widget_properties: no properties or slot_props provided"));
-
-    int32 Succeeded = 0;
-    int32 Failed = 0;
-    TArray<FString> FailedProps;
-    TArray<FString> UnknownSlotProps;
-    TArray<FString> Warnings;
+    // References, not copies: the block below writes straight into Result, which
+    // is the only thing the reply is built from.
+    int32& Succeeded = Result.Succeeded;
+    int32& Failed = Result.Failed;
+    TArray<FString>& FailedProps = Result.FailedProps;
+    TArray<FString>& UnknownSlotProps = Result.UnknownSlotProps;
+    TArray<FString>& Warnings = Result.Warnings;
     {
         // No FScopedTransaction: these are automation-tool edits with no undo/redo
         // requirement, and the global editor transaction buffer (GEditor->Trans) can
@@ -1293,9 +1293,9 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetProperties(const TSharedPtr<FJs
         WBP->Modify();
         Widget->Modify();
 
-        if (Props && Props->IsValid())
+        if (Req.Properties.IsValid())
         {
-            for (const auto& Pair : (*Props)->Values)
+            for (const auto& Pair : Req.Properties->Values)
             {
                 const FString PropertyName(Pair.Key);
                 if (HaybaReflection::SetProp(Widget, PropertyName, Pair.Value))
@@ -1317,7 +1317,7 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetProperties(const TSharedPtr<FJs
                 for (const auto& Pair : SlotPropsObj->Values)
                 {
                     ++Failed;
-                    FailedProps.Add(FString::Printf(TEXT("slot.%s"), *FString(Pair.Key)));
+                    FailedProps.Add(HaybaUIOps::SlotKeyName(FString(Pair.Key)));
                 }
                 Warnings.Add(FString::Printf(
                     TEXT("'%s' has no panel slot (it is the root widget, or its parent is not a panel), so slot layout was not applied."),
@@ -1340,7 +1340,7 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetProperties(const TSharedPtr<FJs
                 for (const FString& Key : SlotResult.Unknown)
                 {
                     UnknownSlotProps.Add(Key);
-                    FailedProps.Add(FString::Printf(TEXT("slot.%s"), *Key));
+                    FailedProps.Add(HaybaUIOps::SlotKeyName(Key));
                 }
                 if (SlotResult.Unknown.Num() > 0)
                 {
@@ -1375,37 +1375,13 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetProperties(const TSharedPtr<FJs
         WBP->MarkPackageDirty();
     }
 
-    auto ToJsonArray = [](const TArray<FString>& In)
+    // 3. Shape — pure.
+    if (Result.AppliedNothing())
     {
-        TArray<TSharedPtr<FJsonValue>> Arr;
-        for (const FString& S : In) Arr.Add(MakeShared<FJsonValueString>(S));
-        return Arr;
-    };
-
-    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-    Out->SetStringField(TEXT("widget_name"), WidgetName);
-    Out->SetNumberField(TEXT("succeeded"), Succeeded);
-    Out->SetNumberField(TEXT("failed"), Failed);
-    if (FailedProps.Num() > 0)      Out->SetArrayField(TEXT("failed_properties"), ToJsonArray(FailedProps));
-    if (UnknownSlotProps.Num() > 0) Out->SetArrayField(TEXT("unknown_slot_props"), ToJsonArray(UnknownSlotProps));
-    if (Warnings.Num() > 0)         Out->SetArrayField(TEXT("warnings"), ToJsonArray(Warnings));
-    // Name the spelling the slot payload arrived under. A caller using a
-    // deprecated one currently cannot tell it worked by tolerance rather than
-    // by being right, so it never learns to send the documented name.
-    if (SlotPayload.IsSet() && SlotPayload.Spelling != HaybaUIOps::ESlotPropsSpelling::SlotProps)
-    {
-        Out->SetStringField(TEXT("slot_props_read_from"),
-                            HaybaUIOps::SpellingName(SlotPayload.Spelling));
+        return FHaybaHandlerResult::Err(HaybaUIOps::NothingAppliedError(Result));
     }
 
-    if (Succeeded == 0)
-    {
-        return FHaybaHandlerResult::Err(FString::Printf(
-            TEXT("ui_set_widget_properties: nothing applied to '%s'. Rejected: %s"),
-            *WidgetName, *FString::Join(FailedProps, TEXT(", "))));
-    }
-
-    return FHaybaHandlerResult::Ok(Out);
+    return FHaybaHandlerResult::Ok(HaybaUIOps::ShapeSetProperties(Result));
 }
 
 FHaybaHandlerResult FHaybaMCPUIHandler::HandleQuery(const TSharedPtr<FJsonObject>& P)

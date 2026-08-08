@@ -162,6 +162,23 @@ public:
         return FRotator(V->X, V->Y, V->Z);
     }
 
+    /** Reads a nested object. Absent, null and "present but not an object" all
+     *  come back unset — a handler that treats a null as an empty object goes on
+     *  to apply nothing and reports having applied it. */
+    TSharedPtr<FJsonObject> OptionalObject(const TCHAR* Key) const
+    {
+        if (bParamsMissing) return nullptr;
+        const TSharedPtr<FJsonObject>* Found = nullptr;
+        if (!Params->TryGetObjectField(Key, Found) || !Found || !Found->IsValid()) return nullptr;
+        return *Found;
+    }
+
+    /** The params object itself, for the rare read this class cannot express —
+     *  chiefly a field whose *name* is the question (see
+     *  HaybaUIOps::ResolveSlotProps). Not a general escape hatch: a read that
+     *  belongs here should be added here. Null when no params were supplied. */
+    const TSharedPtr<FJsonObject>& Raw() const { return Params; }
+
     /** Record a problem the reader cannot detect on its own (a value out of
      *  range, a combination that does not make sense). */
     void AddError(const FString& Message) { Errors.Add(Message); }
