@@ -4592,6 +4592,282 @@
       "agent_callable": true,
       "has_ts_wrapper": false,
       "notes": "Moves the editor viewport to a stored bookmark. This changes what a human is looking at, so it is not a neutral read — prefer editor_set_camera when you just need a viewpoint for a capture. NOT VERIFIED LIVE: described from the handler source."
+    },
+    "gas_create_ability": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPGASHandler::CreateAbility",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "description": "Package FOLDER. Note this differs from blueprint_create / material_create / metasound_create, whose package_path is the full asset path with its last component discarded."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "path",
+            "type": "string",
+            "description": "Full object path of the created ability blueprint — read it, given the path contracts differ between create commands"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Creates a UGameplayAbility blueprint. Lives in the optional HaybaMCPGAS satellite plugin, which auto-disables when the engine's GameplayAbilities plugin is off — so an Unknown command here means the satellite is not installed in this project, not that the command is missing. The ability is created empty; grant it to an actor with gas_grant_ability."
+    },
+    "gas_create_effect": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPGASHandler::CreateEffect",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "description": "Package folder"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "duration_policy",
+          "type": "string",
+          "required": false,
+          "description": "Instant | HasDuration | Infinite"
+        },
+        {
+          "name": "duration_seconds",
+          "type": "number",
+          "required": false,
+          "description": "Only meaningful with HasDuration"
+        },
+        {
+          "name": "modifiers",
+          "type": "array",
+          "required": false,
+          "description": "Attribute modifiers: attribute, op, magnitude"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "path",
+            "type": "string"
+          },
+          {
+            "name": "duration_policy",
+            "type": "string"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Creates a UGameplayEffect blueprint — the data asset that changes attributes, the unit GAS actually applies. duration_policy decides whether it fires once (Instant), ticks for a while (HasDuration) or persists until removed (Infinite). Part of the optional HaybaMCPGAS satellite."
+    },
+    "gas_grant_ability": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPGASHandler::GrantAbility",
+      "params": [
+        {
+          "name": "actor_path",
+          "type": "string",
+          "required": true,
+          "description": "Must own a UAbilitySystemComponent — a plain actor is refused by name"
+        },
+        {
+          "name": "ability_path",
+          "type": "string",
+          "required": true,
+          "description": "Object path of a UGameplayAbility blueprint"
+        },
+        {
+          "name": "level",
+          "type": "number",
+          "required": false,
+          "default": 1
+        },
+        {
+          "name": "input_id",
+          "type": "number",
+          "required": false
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "handle",
+            "type": "string",
+            "description": "Granted-ability handle"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Grants an ability to an actor's ability system component. It refuses an actor with no UAbilitySystemComponent rather than silently doing nothing, and refuses an uncompiled ability blueprint (no class default object) — both verified live. Grants made in the editor world are editor state, not gameplay state."
+    },
+    "gas_apply_effect": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPGASHandler::ApplyEffect",
+      "params": [
+        {
+          "name": "actor_path",
+          "type": "string",
+          "required": true,
+          "description": "Must own a UAbilitySystemComponent"
+        },
+        {
+          "name": "effect_path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "level",
+          "type": "number",
+          "required": false,
+          "default": 1
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "active_handle",
+            "type": "string",
+            "description": "Present for effects that persist; an Instant effect has none to return"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Applies a gameplay effect to an actor's ability system component, for checking that an effect does what you think before wiring it into gameplay. Refuses an actor without an ability system component by name. An Instant effect changes attributes and leaves no active handle behind, so an empty handle is not a failure."
+    },
+    "metasound_list": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPMetaSoundHandler::List",
+      "params": [
+        {
+          "name": "path_prefix",
+          "type": "string",
+          "required": false,
+          "description": "Filter by object-path prefix"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "metasounds",
+            "type": "array",
+            "description": "path, name, class"
+          },
+          {
+            "name": "count",
+            "type": "number"
+          },
+          {
+            "name": "capped",
+            "type": "boolean",
+            "description": "True when the list was cut short — it says so rather than letting count disagree silently"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Enumerates MetaSound assets (sources and patches) from the asset registry. Part of the optional HaybaMCPMetaSound satellite; an Unknown command means the satellite is not installed. This and metasound_create are the only two commands in that plugin that do anything — the graph-editing four are declared but not implemented."
+    },
+    "metasound_create": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPMetaSoundHandler::Create",
+      "params": [
+        {
+          "name": "package_path",
+          "type": "string",
+          "required": true,
+          "description": "TRAP: this is the FULL intended asset path and its trailing component is DISCARDED. Passing a folder writes the asset one directory up — package_path \"/Game/Temp\" + name \"MS_X\" creates /Game/MS_X. Same contract as blueprint_create and material_create; the opposite of gas_create_ability."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "path",
+            "type": "string",
+            "description": "Where the asset ACTUALLY landed — check it against where you meant"
+          },
+          {
+            "name": "class",
+            "type": "string",
+            "description": "MetaSoundSource"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Creates an empty MetaSoundSource asset. It cannot then be edited through this plugin: metasound_add_node / connect / set_input / compile are all declared but unimplemented, so a created MetaSound has to be finished by hand in the editor. Verified live, including the package_path trap above."
+    },
+    "metasound_add_node": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPMetaSoundHandler::AddNode",
+      "params": [],
+      "returns": {
+        "shape": "object"
+      },
+      "agent_callable": false,
+      "has_ts_wrapper": false,
+      "notes": "NOT IMPLEMENTED — returns 'pending MetaSoundFrontendDocumentBuilder API stability' for every call, verified live. Documented so get_tool_signature can explain it; agent_callable:false so it is not offered as capability an agent would spend a turn discovering is empty. See issue #18."
+    },
+    "metasound_connect": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPMetaSoundHandler::Connect",
+      "params": [],
+      "returns": {
+        "shape": "object"
+      },
+      "agent_callable": false,
+      "has_ts_wrapper": false,
+      "notes": "NOT IMPLEMENTED — returns 'pending MetaSoundFrontendDocumentBuilder API stability' for every call, verified live. Documented but not callable, for the same reason as metasound_add_node. See issue #18."
+    },
+    "metasound_set_input": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPMetaSoundHandler::SetInput",
+      "params": [],
+      "returns": {
+        "shape": "object"
+      },
+      "agent_callable": false,
+      "has_ts_wrapper": false,
+      "notes": "NOT IMPLEMENTED — returns 'pending MetaSoundFrontendDocumentBuilder API stability' for every call, verified live. Documented but not callable. See issue #18."
+    },
+    "metasound_compile": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPMetaSoundHandler::Compile",
+      "params": [],
+      "returns": {
+        "shape": "object"
+      },
+      "agent_callable": false,
+      "has_ts_wrapper": false,
+      "notes": "NOT IMPLEMENTED — returns 'pending MetaSoundFrontendDocumentBuilder API stability' for every call, verified live. Documented but not callable. See issue #18."
     }
   }
 }

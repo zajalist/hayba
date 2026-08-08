@@ -47,9 +47,12 @@ const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: 
   { domain: 'physics', command_count: 3, commands: ['physics_set_simulate','physics_set_collision_profile','physics_add_impulse'] },
   { domain: 'docs', command_count: 3, commands: ['docs_search','docs_lookup_class','docs_lookup_api'] },
   { domain: 'pcg', command_count: 9, commands: ['pcg_list_node_classes','pcg_get_node_details','pcg_list_assets','pcg_export_graph','pcg_create_graph','pcg_validate_graph','pcg_execute_graph','pcg_read_node_output','landscape_import'] },
-  { domain: 'seq', command_count: 8, commands: ['seq_create','seq_add_track','seq_add_keyframe','seq_get_info','seq_play','seq_export','seq_add_camera_cut','seq_set_playback_range'] },
+  // seq_* and niagara_* satellite entries removed (ADR-0008). They named C++
+  // commands in HaybaMCPNiagara / HaybaMCPSequencer, two plugins that were never
+  // installed anywhere and are now deleted: every one of niagara's three and six
+  // of sequencer's eight duplicated a shipping python tool under an older name.
+  // Listing them made the catalogue report 11 capabilities that did not exist.
   { domain: 'anim', command_count: 5, commands: ['anim_blueprint_get_info','anim_blueprint_add_state','anim_blueprint_add_transition','anim_blueprint_set_condition','anim_blueprint_compile'] },
-  { domain: 'niagara', command_count: 3, commands: ['niagara_list','niagara_spawn','niagara_set_param'] },
   { domain: 'audio', command_count: 3, commands: ['audio_play','audio_list','audio_set_volume'] },
   { domain: 'metasound', command_count: 6, commands: ['metasound_create','metasound_add_node','metasound_connect','metasound_set_input','metasound_compile','metasound_list'] },
   { domain: 'gas', command_count: 4, commands: ['gas_create_ability','gas_grant_ability','gas_create_effect','gas_apply_effect'] },

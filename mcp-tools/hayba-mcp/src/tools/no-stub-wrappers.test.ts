@@ -22,10 +22,15 @@ import { fileURLToPath } from 'node:url';
 // honest stubs say that and the misleading ones do not.
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = join(__dirname, '..', '..', '..', '..');
 const HANDLER_DIR = join(
-  __dirname, '..', '..', '..', '..',
-  'unreal', 'HaybaMCPToolkit', 'Source', 'HaybaMCPToolkit', 'Private', 'handlers',
+  REPO_ROOT, 'unreal', 'HaybaMCPToolkit', 'Source', 'HaybaMCPToolkit', 'Private', 'handlers',
 );
+// Satellite plugins carry their own handlers, and their stubs are stubs too.
+const SATELLITE_HANDLER_DIRS = [
+  join(REPO_ROOT, 'unreal', 'HaybaMCPMetaSound', 'Source', 'HaybaMCPMetaSound', 'Private'),
+  join(REPO_ROOT, 'unreal', 'HaybaMCPGAS', 'Source', 'HaybaMCPGAS', 'Private'),
+];
 
 /** Commands whose C++ cannot do the thing their name claims. Wrapping any of
  *  these is a bug; delete the entry only when the handler genuinely works.
@@ -38,6 +43,13 @@ const HANDLER_DIR = join(
 const KNOWN_STUBS = [
   // Returns status:"deferred" pointing at scene_export, for every call.
   'level_get_spatial_index',
+  // The HaybaMCPMetaSound satellite declares six commands; these four answer
+  // "pending MetaSoundFrontendDocumentBuilder API stability" every time.
+  // Verified live 2026-08-08. metasound_list and metasound_create do work.
+  'metasound_add_node',
+  'metasound_connect',
+  'metasound_set_input',
+  'metasound_compile',
   // Returns an error naming the limit: World Partition cell loading is
   // interactive-only in the editor. Honest, but still a command that can never
   // succeed, so nothing should wrap it as capability.
@@ -81,10 +93,12 @@ describe('wrappers never advertise a stubbed command', () => {
     // If a handler stops being a stub, this test should start failing so the
     // list gets trimmed and the capability gets wrapped — the whole point is to
     // avoid a stale denylist quietly suppressing real functionality.
-    const sources = readdirSync(HANDLER_DIR)
-      .filter((f) => f.endsWith('.cpp'))
-      .map((f) => readFileSync(join(HANDLER_DIR, f), 'utf-8'))
-      .join('\n');
+    const readCpp = (dir: string): string =>
+      readdirSync(dir)
+        .filter((f) => f.endsWith('.cpp'))
+        .map((f) => readFileSync(join(dir, f), 'utf-8'))
+        .join('\n');
+    const sources = [HANDLER_DIR, ...SATELLITE_HANDLER_DIRS].map(readCpp).join('\n');
 
     const stillStubbed = KNOWN_STUBS.filter((s) => {
       // Each entry needs a marker that is specific to how THAT handler declines,
@@ -93,6 +107,7 @@ describe('wrappers never advertise a stubbed command', () => {
       // disappears and this test starts failing — which is the point.
       if (s === 'level_get_spatial_index') return /SetStringField\(TEXT\("status"\), TEXT\("deferred"\)\)/.test(sources);
       if (s === 'wp_load_cell') return /wp_load_cell: not implemented/.test(sources);
+      if (s.startsWith('metasound_')) return new RegExp(`${s}: pending MetaSoundFrontendDocumentBuilder`).test(sources);
       return new RegExp(`${s}[\\s\\S]{0,2000}?not_implemented`).test(sources)
         || new RegExp(`not_implemented[\\s\\S]{0,2000}?${s}`).test(sources);
     });
