@@ -360,13 +360,13 @@ FHaybaHandlerResult FHaybaMCPActorHandler::Tag(const TSharedPtr<FJsonObject>& P)
 // ---------------------------------------------------------------------------
 FHaybaHandlerResult FHaybaMCPActorHandler::SnapToSocket(const TSharedPtr<FJsonObject>& P)
 {
-    FString ActorId, TargetId, SocketName;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId))
-        return FHaybaHandlerResult::Err(TEXT("actor_snap_to_socket: missing actor_id"));
-    if (!P->TryGetStringField(TEXT("target_actor_id"), TargetId))
-        return FHaybaHandlerResult::Err(TEXT("actor_snap_to_socket: missing target_actor_id"));
-    if (!P->TryGetStringField(TEXT("socket_name"), SocketName))
-        return FHaybaHandlerResult::Err(TEXT("actor_snap_to_socket: missing socket_name"));
+    // Three required params, so three round trips before this told you all of
+    // them. The reader collects every problem and reports it once.
+    FHaybaParamReader R(P, TEXT("actor_snap_to_socket"));
+    const FString ActorId    = R.RequiredString(TEXT("actor_id"));
+    const FString TargetId   = R.RequiredString(TEXT("target_actor_id"));
+    const FString SocketName = R.RequiredString(TEXT("socket_name"));
+    if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
 
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     AActor* Actor  = FindActorByName(World, ActorId);
@@ -497,9 +497,10 @@ FHaybaHandlerResult FHaybaMCPActorHandler::GetComponents(const TSharedPtr<FJsonO
 // ---------------------------------------------------------------------------
 FHaybaHandlerResult FHaybaMCPActorHandler::CallFunction(const TSharedPtr<FJsonObject>& P)
 {
-    FString ActorId, FuncName;
-    if (!P->TryGetStringField(TEXT("actor_id"),      ActorId))   return FHaybaHandlerResult::Err(TEXT("actor_call_function: missing actor_id"));
-    if (!P->TryGetStringField(TEXT("function_name"), FuncName))  return FHaybaHandlerResult::Err(TEXT("actor_call_function: missing function_name"));
+    FHaybaParamReader R(P, TEXT("actor_call_function"));
+    const FString ActorId  = R.RequiredString(TEXT("actor_id"));
+    const FString FuncName = R.RequiredString(TEXT("function_name"));
+    if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
 
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     AActor* Actor = FindActorByName(World, ActorId);
@@ -576,19 +577,14 @@ FHaybaHandlerResult FHaybaMCPActorHandler::BatchSpawn(const TSharedPtr<FJsonObje
 // ---------------------------------------------------------------------------
 FHaybaHandlerResult FHaybaMCPActorHandler::ValidatePlacement(const TSharedPtr<FJsonObject>& P)
 {
-    FString ClassPath;
-    if (!P->TryGetStringField(TEXT("class_path"), ClassPath))
-        return FHaybaHandlerResult::Err(TEXT("placement_validate: missing class_path"));
+    FHaybaParamReader R(P, TEXT("placement_validate"));
+    const FString ClassPath = R.RequiredString(TEXT("class_path"));
+    const TOptional<FVector> Loc = R.OptionalVec3(TEXT("location"));
+    if (!Loc.IsSet()) R.AddError(TEXT("'location' is required (3 numbers)"));
+    if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
 
-    const TArray<TSharedPtr<FJsonValue>>* LocArr;
-    if (!P->TryGetArrayField(TEXT("location"), LocArr))
-        return FHaybaHandlerResult::Err(TEXT("placement_validate: missing location"));
-
-    FVector Location = ParseVec3(*LocArr);
-
-    double RadiusDbl = 50.0;
-    P->TryGetNumberField(TEXT("radius"), RadiusDbl);
-    float Radius = static_cast<float>(RadiusDbl);
+    const FVector Location = *Loc;
+    const float Radius = static_cast<float>(R.OptionalNumber(TEXT("radius"), 50.0));
 
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
