@@ -61,13 +61,16 @@ static TSharedRef<FJsonObject> GetSettings()
     return Out;
 }
 
-static TSharedRef<FJsonObject> SetSetting(const TSharedPtr<FJsonObject>& Params)
+// Returns an error string when nothing was written, empty otherwise. The two
+// failure cases used to be reported as an `error` field inside an Ok response —
+// a caller checking `ok` was told a settings write succeeded when not one key
+// had been touched.
+static FHaybaHandlerResult SetSetting(const TSharedPtr<FJsonObject>& Params)
 {
     auto Out = MakeShared<FJsonObject>();
     if (!Params.IsValid())
     {
-        Out->SetStringField(TEXT("error"), TEXT("missing params"));
-        return Out;
+        return FHaybaHandlerResult::Err(TEXT("project_set_settings: no params object was supplied"));
     }
 
     // Generic passthrough: explicit section/key/value into a chosen ini.
@@ -81,7 +84,7 @@ static TSharedRef<FJsonObject> SetSetting(const TSharedPtr<FJsonObject>& Params)
         Out->SetBoolField(TEXT("ok"), true);
         Out->SetStringField(TEXT("section"), Section);
         Out->SetStringField(TEXT("key"),     Key);
-        return Out;
+        return FHaybaHandlerResult::Ok(Out);
     }
 
     // Typed: write GeneralProjectSettings fields to GGameIni (DefaultGame.ini).
@@ -108,13 +111,18 @@ static TSharedRef<FJsonObject> SetSetting(const TSharedPtr<FJsonObject>& Params)
 
     if (Updated.Num() == 0)
     {
-        Out->SetStringField(TEXT("error"), TEXT("project_set_settings: no recognized fields provided"));
-        return Out;
+        // Nothing recognised is a caller error, not a successful no-op. Name the
+        // fields that exist so the next attempt can be right.
+        return FHaybaHandlerResult::Err(TEXT(
+            "project_set_settings: nothing was written — no recognized field was supplied. "
+            "Pass section+key+value to write an ini key directly, or one or more of: "
+            "project_name, company_name, description, homepage, project_version, "
+            "company_distinguished_name, project_id, support_contact, copyright_notice."));
     }
     GConfig->Flush(false, GGameIni);
     Out->SetBoolField(TEXT("ok"), true);
     Out->SetArrayField(TEXT("updated"), Updated);
-    return Out;
+    return FHaybaHandlerResult::Ok(Out);
 }
 
 static TSharedRef<FJsonObject> ListPlugins()
@@ -144,7 +152,7 @@ FHaybaHandlerResult FHaybaMCPProjectHandler::Handle(const FString& Cmd, const TS
 {
     if (Cmd == TEXT("project_get_info"))     return FHaybaHandlerResult::Ok(GetInfo());
     if (Cmd == TEXT("project_get_settings")) return FHaybaHandlerResult::Ok(GetSettings());
-    if (Cmd == TEXT("project_set_settings")) return FHaybaHandlerResult::Ok(SetSetting(Params));
+    if (Cmd == TEXT("project_set_settings")) return SetSetting(Params);
     if (Cmd == TEXT("project_list_plugins")) return FHaybaHandlerResult::Ok(ListPlugins());
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("ProjectHandler: unknown command %s"), *Cmd));
 }
