@@ -1,4 +1,5 @@
 #include "HaybaMCPAudioHandler.h"
+#include "HaybaMCPParams.h"
 
 #include "Sound/SoundBase.h"
 #include "Sound/SoundWave.h"
@@ -25,8 +26,9 @@ static FHaybaHandlerResult AudioPlay(const TSharedPtr<FJsonObject>& P)
 {
     if (!P.IsValid()) return FHaybaHandlerResult::Err(TEXT("audio_play: missing params"));
     FString Path;
-    if (!P->TryGetStringField(TEXT("path"), Path))
-        return FHaybaHandlerResult::Err(TEXT("audio_play: missing arg path"));
+    FHaybaParamReader ParamR(P, TEXT("audio_play"));
+    Path = ParamR.RequiredString(TEXT("path"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     double Volume = 1.0;
     double Pitch  = 1.0;
@@ -96,8 +98,9 @@ static FHaybaHandlerResult AudioSetVolume(const TSharedPtr<FJsonObject>& P)
 {
     if (!P.IsValid()) return FHaybaHandlerResult::Err(TEXT("audio_set_volume: missing params"));
     FString Category;
-    if (!P->TryGetStringField(TEXT("category"), Category))
-        return FHaybaHandlerResult::Err(TEXT("audio_set_volume: missing arg category"));
+    FHaybaParamReader ParamR(P, TEXT("audio_set_volume"));
+    Category = ParamR.RequiredString(TEXT("category"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
     double Volume = 1.0;
     if (!P->TryGetNumberField(TEXT("volume"), Volume))
         return FHaybaHandlerResult::Err(TEXT("audio_set_volume: missing arg volume"));

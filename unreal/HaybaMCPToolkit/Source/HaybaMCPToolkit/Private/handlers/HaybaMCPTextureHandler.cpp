@@ -1,4 +1,5 @@
 #include "HaybaMCPTextureHandler.h"
+#include "HaybaMCPParams.h"
 
 #include "Engine/Texture.h"
 #include "Engine/Texture2D.h"
@@ -49,8 +50,9 @@ static FHaybaHandlerResult TexGetInfo(const TSharedPtr<FJsonObject>& P)
 {
     if (!P.IsValid()) return FHaybaHandlerResult::Err(TEXT("texture_get_info: missing params"));
     FString Path;
-    if (!P->TryGetStringField(TEXT("path"), Path))
-        return FHaybaHandlerResult::Err(TEXT("texture_get_info: missing arg path"));
+    FHaybaParamReader ParamR(P, TEXT("texture_get_info"));
+    Path = ParamR.RequiredString(TEXT("path"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UTexture2D* Tex = Cast<UTexture2D>(FSoftObjectPath(Path).TryLoad());
     if (!Tex) return FHaybaHandlerResult::Err(FString::Printf(TEXT("texture_get_info: failed to load %s"), *Path));
@@ -84,11 +86,11 @@ static FHaybaHandlerResult TexSetCompression(const TSharedPtr<FJsonObject>& P)
 {
     if (!P.IsValid()) return FHaybaHandlerResult::Err(TEXT("texture_set_compression: missing params"));
     FString Path;
-    if (!P->TryGetStringField(TEXT("path"), Path))
-        return FHaybaHandlerResult::Err(TEXT("texture_set_compression: missing arg path"));
+    FHaybaParamReader ParamR(P, TEXT("texture_set_compression"));
+    Path = ParamR.RequiredString(TEXT("path"));
     FString CompName;
-    if (!P->TryGetStringField(TEXT("compression_settings"), CompName))
-        return FHaybaHandlerResult::Err(TEXT("texture_set_compression: missing arg compression_settings"));
+    CompName = ParamR.RequiredString(TEXT("compression_settings"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UTexture2D* Tex = Cast<UTexture2D>(FSoftObjectPath(Path).TryLoad());
     if (!Tex) return FHaybaHandlerResult::Err(FString::Printf(TEXT("texture_set_compression: failed to load %s"), *Path));
@@ -149,8 +151,9 @@ static FHaybaHandlerResult TexSetSettings(const TSharedPtr<FJsonObject>& P)
 {
     if (!P.IsValid()) return FHaybaHandlerResult::Err(TEXT("texture_set_settings: missing params"));
     FString Path;
-    if (!P->TryGetStringField(TEXT("path"), Path))
-        return FHaybaHandlerResult::Err(TEXT("texture_set_settings: missing arg path"));
+    FHaybaParamReader ParamR(P, TEXT("texture_set_settings"));
+    Path = ParamR.RequiredString(TEXT("path"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
     const TSharedPtr<FJsonObject>* Props = nullptr;
     if (!P->TryGetObjectField(TEXT("properties"), Props) || !Props || (*Props)->Values.Num() == 0)
         return FHaybaHandlerResult::Err(TEXT("texture_set_settings: missing non-empty 'properties'"));

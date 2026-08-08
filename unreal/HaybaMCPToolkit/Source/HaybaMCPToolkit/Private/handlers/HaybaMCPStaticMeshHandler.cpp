@@ -1,4 +1,5 @@
 #include "HaybaMCPStaticMeshHandler.h"
+#include "HaybaMCPParams.h"
 
 #include "Engine/StaticMesh.h"
 #include "StaticMeshResources.h"
@@ -50,8 +51,9 @@ static FHaybaHandlerResult MeshGetInfo(const TSharedPtr<FJsonObject>& P)
 {
     if (!P.IsValid()) return FHaybaHandlerResult::Err(TEXT("mesh_get_info: missing params"));
     FString Path;
-    if (!P->TryGetStringField(TEXT("path"), Path))
-        return FHaybaHandlerResult::Err(TEXT("mesh_get_info: missing arg path"));
+    FHaybaParamReader ParamR(P, TEXT("mesh_get_info"));
+    Path = ParamR.RequiredString(TEXT("path"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UStaticMesh* Mesh = Cast<UStaticMesh>(FSoftObjectPath(Path).TryLoad());
     if (!Mesh) return FHaybaHandlerResult::Err(FString::Printf(TEXT("mesh_get_info: failed to load %s"), *Path));
@@ -118,8 +120,9 @@ static FHaybaHandlerResult MeshSetLOD(const TSharedPtr<FJsonObject>& P)
 {
     if (!P.IsValid()) return FHaybaHandlerResult::Err(TEXT("mesh_set_lod: missing params"));
     FString Path;
-    if (!P->TryGetStringField(TEXT("path"), Path))
-        return FHaybaHandlerResult::Err(TEXT("mesh_set_lod: missing arg path"));
+    FHaybaParamReader ParamR(P, TEXT("mesh_set_lod"));
+    Path = ParamR.RequiredString(TEXT("path"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
     int32 LodIndex = 0;
     if (!P->TryGetNumberField(TEXT("lod_index"), LodIndex))
         return FHaybaHandlerResult::Err(TEXT("mesh_set_lod: missing arg lod_index"));

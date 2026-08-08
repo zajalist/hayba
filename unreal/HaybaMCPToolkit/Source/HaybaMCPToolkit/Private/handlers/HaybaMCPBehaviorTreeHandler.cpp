@@ -1,4 +1,5 @@
 #include "HaybaMCPBehaviorTreeHandler.h"
+#include "HaybaMCPParams.h"
 #include "Json.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -128,12 +129,11 @@ static FHaybaHandlerResult BTGetInfo(const TSharedPtr<FJsonObject>& P)
 static FHaybaHandlerResult BTAddNode(const TSharedPtr<FJsonObject>& P)
 {
     FString Path, ParentGuidStr, Kind, ClassName;
-    if (!P->TryGetStringField(TEXT("path"), Path))
-        return FHaybaHandlerResult::Err(TEXT("bt_add_node: missing path"));
-    if (!P->TryGetStringField(TEXT("node_kind"), Kind))
-        return FHaybaHandlerResult::Err(TEXT("bt_add_node: missing node_kind"));
-    if (!P->TryGetStringField(TEXT("node_class_name"), ClassName))
-        return FHaybaHandlerResult::Err(TEXT("bt_add_node: missing node_class_name"));
+    FHaybaParamReader ParamR(P, TEXT("bt_add_node"));
+    Path = ParamR.RequiredString(TEXT("path"));
+    Kind = ParamR.RequiredString(TEXT("node_kind"));
+    ClassName = ParamR.RequiredString(TEXT("node_class_name"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
     P->TryGetStringField(TEXT("parent_guid"), ParentGuidStr);
 
     UBehaviorTree* BT = LoadBTByPath(Path);
@@ -230,12 +230,11 @@ static FHaybaHandlerResult BTAddNode(const TSharedPtr<FJsonObject>& P)
 static FHaybaHandlerResult BTConnect(const TSharedPtr<FJsonObject>& P)
 {
     FString Path, ParentGuidStr, ChildGuidStr;
-    if (!P->TryGetStringField(TEXT("path"), Path))
-        return FHaybaHandlerResult::Err(TEXT("bt_connect: missing path"));
-    if (!P->TryGetStringField(TEXT("parent_guid"), ParentGuidStr))
-        return FHaybaHandlerResult::Err(TEXT("bt_connect: missing parent_guid"));
-    if (!P->TryGetStringField(TEXT("child_guid"), ChildGuidStr))
-        return FHaybaHandlerResult::Err(TEXT("bt_connect: missing child_guid"));
+    FHaybaParamReader ParamR(P, TEXT("bt_connect"));
+    Path = ParamR.RequiredString(TEXT("path"));
+    ParentGuidStr = ParamR.RequiredString(TEXT("parent_guid"));
+    ChildGuidStr = ParamR.RequiredString(TEXT("child_guid"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UBehaviorTree* BT = LoadBTByPath(Path);
     if (!BT || !BT->RootNode) return FHaybaHandlerResult::Err(TEXT("bt_connect: behavior tree / root not found"));
@@ -298,8 +297,9 @@ static FHaybaHandlerResult BTConnect(const TSharedPtr<FJsonObject>& P)
 static FHaybaHandlerResult BTCompile(const TSharedPtr<FJsonObject>& P)
 {
     FString Path;
-    if (!P->TryGetStringField(TEXT("path"), Path))
-        return FHaybaHandlerResult::Err(TEXT("bt_compile: missing path"));
+    FHaybaParamReader ParamR(P, TEXT("bt_compile"));
+    Path = ParamR.RequiredString(TEXT("path"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
     UBehaviorTree* BT = LoadBTByPath(Path);
     if (!BT) return FHaybaHandlerResult::Err(TEXT("bt_compile: behavior tree not found"));
 
