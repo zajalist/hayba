@@ -55,7 +55,7 @@ npm run lint:legacy-wrappers        # SEPARATE from npm test. Easy to forget.
 grep -E "Test Completed" /d/Projects/aphrosia/Saved/Logs/Aphrosia.log
 ```
 
-Expected: **14 of 15 `Hayba.MCP` tests pass.** The one failure is
+Expected: **16 of 17 `Hayba.MCP` tests pass.** The one failure is
 `Hayba.MCP.UI.RenderWidgetToPng`, which fails **only** under `-NullRHI` and
 passes with a real RHI (drop the flag to confirm). It is not a regression.
 
@@ -252,8 +252,12 @@ and `FBlueprintEditorUtils`. That asymmetry is the point and is worth copying:
 the pure halves are where the bugs were, so extract those and leave the engine
 half alone. `FHaybaParamReader` gained `OptionalObject` and `Raw()` doing it.
 
-Next candidates: the rest of the UI handler (`HandleMutateTree` is ~580 lines
-across six sub-commands, each re-reading `widget_name` its own way), then
-`Blueprint` (943 lines, 25 reads, has a reader, no seam).
+`Blueprint` is **done** too — `HaybaBlueprintOps` holds the two rules that were
+actually wrong (duplicate function names, and the `package_path` trailing
+component), both mutation-tested. Five domains now have a seam: Actor, UI, PIE,
+Editor, Blueprint.
+
+Next candidate: the rest of the UI handler. `HandleMutateTree` is ~580 lines
+across six sub-commands, each re-reading `widget_name` its own way.
 
 Check first whether the domain needs it. Two of four did not.
