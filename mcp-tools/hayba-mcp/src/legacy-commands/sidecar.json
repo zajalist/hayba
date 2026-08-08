@@ -3744,6 +3744,372 @@
       "agent_callable": true,
       "has_ts_wrapper": false,
       "notes": "Binds a key to an action inside a mapping context, optionally with modifiers and triggers. A modifier or trigger class name it cannot resolve is reported under unresolved_classes rather than silently skipped — so a reply listing fewer modifiers than you asked for is telling you something. Marks the context dirty; asset_save to keep it."
+    },
+    "bt_get_info": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPBehaviorTreeHandler::BTGetInfo",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "description": "Object path of a UBehaviorTree"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "root_class",
+            "type": "string",
+            "description": "Empty on a tree that has no root node yet"
+          },
+          {
+            "name": "blackboard_path",
+            "type": "string"
+          },
+          {
+            "name": "nodes",
+            "type": "array",
+            "description": "guid, name, class, parent_guid, children — the guid is derived from the node's object path, so it is stable across calls"
+          },
+          {
+            "name": "blackboard_keys",
+            "type": "array"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Reads a behavior tree's whole node graph plus its blackboard keys. Call it first: bt_add_node and bt_connect address nodes by the guids this returns, and those guids come from node object paths rather than being stored, so they stay valid between calls without any bookkeeping on your side."
+    },
+    "bt_add_node": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPBehaviorTreeHandler::BTAddNode",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "description": "Object path of the UBehaviorTree"
+        },
+        {
+          "name": "node_kind",
+          "type": "string",
+          "required": true,
+          "description": "composite | task | decorator | service. Checked against the class — asking for a composite and naming a task class is an error, not a guess."
+        },
+        {
+          "name": "node_class_name",
+          "type": "string",
+          "required": true,
+          "description": "UBTNode subclass, e.g. BTComposite_Selector, BTTask_Wait, BTDecorator_Blackboard"
+        },
+        {
+          "name": "parent_guid",
+          "type": "string",
+          "required": false,
+          "description": "From bt_get_info. Omitted on a composite means it becomes the root; decorators and services always need a composite parent."
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "guid",
+            "type": "string",
+            "description": "Address the new node by this in bt_connect"
+          },
+          {
+            "name": "class",
+            "type": "string"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Adds one node to a behavior tree. Build a tree root-first: a composite with no parent_guid becomes the root, then tasks and further composites hang off it by guid. The kind/class mismatch checks are strict on purpose, since a decorator quietly added as a task is the kind of thing you only notice when the AI misbehaves. Marks the asset dirty; asset_save to keep it."
+    },
+    "bt_connect": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPBehaviorTreeHandler::BTConnect",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "parent_guid",
+          "type": "string",
+          "required": true,
+          "description": "Must be a composite — only composites take children"
+        },
+        {
+          "name": "child_guid",
+          "type": "string",
+          "required": true,
+          "description": "A composite or a task"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "ok",
+            "type": "boolean"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Re-parents an existing node under a composite. It refuses to connect a node to itself and refuses an edge that would make a cycle, so a tree cannot be wired into one that never terminates. Ordering among siblings is the order children were added, and that order is execution order for a Selector or Sequence."
+    },
+    "bt_compile": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPBehaviorTreeHandler::BTCompile",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "ok",
+            "type": "boolean"
+          },
+          {
+            "name": "errors",
+            "type": "array"
+          },
+          {
+            "name": "warnings",
+            "type": "array",
+            "description": "e.g. \"Behavior tree has no blackboard asset\" — a tree that compiles clean can still be one that cannot run"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Compiles the tree and reports what the compiler said. Read the warnings, not just ok: a tree with no blackboard asset compiles successfully and then does nothing useful at runtime, and that case is reported as a warning rather than an error."
+    },
+    "anim_blueprint_get_info": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPAnimationHandler::AnimBPGetInfo",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "description": "Object path of a UAnimBlueprint"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "target_skeleton",
+            "type": "string",
+            "description": "Empty string when the asset genuinely has no skeleton bound"
+          },
+          {
+            "name": "parent_class",
+            "type": "string"
+          },
+          {
+            "name": "state_machines",
+            "type": "array",
+            "description": "Each with its name, states and transitions"
+          },
+          {
+            "name": "variables",
+            "type": "array"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Reads an animation blueprint's state machines, their states and transitions, and its variables. Call it before any of the anim_blueprint_* writers: they address a state machine BY NAME, and this is the only way to learn the names — a freshly created anim blueprint has none at all."
+    },
+    "anim_blueprint_add_state": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPAnimationHandler::AnimBPAddState",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "state_machine_name",
+          "type": "string",
+          "required": true,
+          "description": "From anim_blueprint_get_info. This command does not create state machines — only states inside one that exists."
+        },
+        {
+          "name": "new_state_name",
+          "type": "string",
+          "required": true,
+          "description": "A name already used in that state machine is refused rather than duplicated"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "state_machine",
+            "type": "string"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Adds a state to an existing state machine in an animation blueprint. It cannot create the state machine itself — that still needs the AnimGraph editor — so on a blueprint with none it answers 'state machine not found', which is a missing prerequisite rather than a bad request. Compile with anim_blueprint_compile afterwards."
+    },
+    "anim_blueprint_add_transition": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPAnimationHandler::AnimBPAddTransition",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "from_state",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "to_state",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "state_machine_name",
+          "type": "string",
+          "required": false,
+          "description": "Optional — without it the states are searched for across every state machine, which is ambiguous if two share a state name"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "from",
+            "type": "string"
+          },
+          {
+            "name": "to",
+            "type": "string"
+          },
+          {
+            "name": "transition_id",
+            "type": "string",
+            "description": "Pass to anim_blueprint_set_condition"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Wires one state to another. The transition is created with no rule, which means it is always taken — pair it with anim_blueprint_set_condition unless you actually want an unconditional transition. Pass state_machine_name when two state machines might share a state name."
+    },
+    "anim_blueprint_set_condition": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPAnimationHandler::AnimBPSetCondition",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "condition_expression",
+          "type": "string",
+          "required": true,
+          "description": "The rule to drive the transition"
+        },
+        {
+          "name": "transition_id",
+          "type": "string",
+          "required": false,
+          "description": "From anim_blueprint_add_transition. Use this, or from_state + to_state."
+        },
+        {
+          "name": "from_state",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "to_state",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "transition_id",
+            "type": "string"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Sets the rule on an existing transition, identified either by its id or by the pair of states it joins. A transition with no rule fires immediately, so this is what turns a wired-up state machine into one that behaves. Compile afterwards to find out whether the expression resolved."
+    },
+    "anim_blueprint_compile": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPAnimationHandler::AnimBPCompile",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "compiled",
+            "type": "boolean"
+          },
+          {
+            "name": "error_count",
+            "type": "number"
+          },
+          {
+            "name": "warning_count",
+            "type": "number"
+          },
+          {
+            "name": "errors",
+            "type": "array"
+          },
+          {
+            "name": "warnings",
+            "type": "array"
+          },
+          {
+            "name": "status",
+            "type": "number",
+            "description": "Raw EBlueprintStatus; 3 is up-to-date"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Compiles an animation blueprint and reports the compiler's own errors and warnings. Every anim_blueprint_* write leaves the asset needing a compile, and an uncompiled blueprint keeps running its previous generated class — so skipping this makes edits look like they did nothing."
     }
   }
 }
