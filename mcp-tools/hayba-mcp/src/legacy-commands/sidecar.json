@@ -4109,7 +4109,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Compiles an animation blueprint and reports the compiler's own errors and warnings. Every anim_blueprint_* write leaves the asset needing a compile, and an uncompiled blueprint keeps running its previous generated class — so skipping this makes edits look like they did nothing."
+      "notes": "Compiles an ANIMATION blueprint (ABP) — the animation state-machine asset, not an ordinary class. Reports the compiler errors and warnings. Every anim_blueprint_* write leaves the asset needing this, and an uncompiled ABP keeps running its previously generated class, so state-machine edits look like they did nothing."
     },
     "physics_set_simulate": {
       "aliases": [],
@@ -4194,7 +4194,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Assigns a named collision profile to a component and READS IT BACK. An unrecognised profile name leaves the component on whatever it had, so a mismatch between requested_profile and profile is returned as an error naming the current profile rather than as a success. Profiles come from the project Collision settings, e.g. BlockAll, OverlapAll, NoCollision, Pawn."
+      "notes": "Assigns a named collision profile to one primitive component and READS IT BACK. An unrecognised name leaves the component on whatever it had, so a mismatch between requested_profile and profile is returned as an error naming the current setting rather than as a success. Names come from the project Collision settings, e.g. BlockAll, NoCollision, Pawn. This SETS a profile; to find out what is currently intersecting what, use scene_validate_physics."
     },
     "physics_add_impulse": {
       "aliases": [],
@@ -4298,9 +4298,9 @@
       "returns": {
         "shape": "object"
       },
-      "agent_callable": true,
+      "agent_callable": false,
       "has_ts_wrapper": false,
-      "notes": "NOT IMPLEMENTED, and it says so rather than pretending. World Partition cell loading is interactive-only in the editor and there is no programmatic path here yet, so every call returns an error naming that limit. It previously returned ok with loaded:false, which let a caller loop over cells and conclude the world was loaded."
+      "notes": "NOT IMPLEMENTED, and it says so rather than pretending: World Partition cell loading is interactive-only in the editor, so every call returns an error naming that limit. It previously returned ok with loaded:false, which let a caller loop over cells and conclude the world was loaded. agent_callable:false — an honest error is still a command that can never succeed, and the catalogue should not offer it."
     },
     "wp_get_streaming_state": {
       "aliases": [],
@@ -4408,6 +4408,190 @@
       "agent_callable": true,
       "has_ts_wrapper": false,
       "notes": "Switches the active editor viewport's view mode — wireframe to read geometry density, shader_complexity to find expensive materials, unlit to judge albedo without lighting. This changes what a HUMAN is looking at and does not change back on its own, so put it back to lit when you are done rather than leaving someone else's viewport in wireframe."
+    },
+    "placement_validate": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPActorHandler::PlacementValidate",
+      "params": [
+        {
+          "name": "class_path",
+          "type": "string",
+          "required": true,
+          "description": "Class you intend to spawn, e.g. /Script/Engine.StaticMeshActor"
+        },
+        {
+          "name": "location",
+          "type": "array",
+          "required": false,
+          "description": "[x,y,z] of the intended placement. A short array is an error, not a silent zero — a 2-element location once made this report a clean spot at the origin."
+        },
+        {
+          "name": "rotation",
+          "type": "array",
+          "required": false,
+          "description": "[pitch,yaw,roll]"
+        },
+        {
+          "name": "scale",
+          "type": "array",
+          "required": false,
+          "description": "[x,y,z]"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "valid",
+            "type": "boolean",
+            "description": "True when nothing overlaps the intended placement"
+          },
+          {
+            "name": "overlaps",
+            "type": "array",
+            "description": "id + class of each actor already occupying the space"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Asks whether an actor of this class would collide with anything if spawned at this transform, WITHOUT spawning it. Use it before actor_spawn when placing into a populated scene — cheaper than spawning, checking, and deleting. It answers about overlap only: it does not tell you whether the spot makes sense, is on navmesh, or is inside geometry."
+    },
+    "blueprint_add_function": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPBlueprintHandler::AddFunction",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "description": "Object path of the UBlueprint"
+        },
+        {
+          "name": "function_name",
+          "type": "string",
+          "required": true,
+          "description": "A name already used by this blueprint is NOT rejected — see the note"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "function_name",
+            "type": "string"
+          },
+          {
+            "name": "compiled_clean",
+            "type": "boolean",
+            "description": "READ THIS. False means the function was added and the blueprint no longer compiles."
+          },
+          {
+            "name": "compile_errors",
+            "type": "array",
+            "description": "Present when the compile failed"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Adds an empty function graph to a blueprint and recompiles. Check compiled_clean, not just ok: adding a function whose name is already taken SUCCEEDS and leaves the blueprint broken with 'Found more than one function with the same name' — verified live. The reply reports the compiler's verdict, but the operation is not rolled back, so a duplicate name costs you a manual repair."
+    },
+    "blueprint_document": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPBlueprintHandler::Document",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "description": "Object path of the UBlueprint"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "documentation",
+            "type": "string",
+            "description": "One WHEN ... THEN ... line per event, e.g. \"WHEN Event BeginPlay THEN END\""
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Renders a blueprint's EVENT GRAPH as pseudo-English — a fast way to see what a blueprint reacts to without opening it. It covers events only: user-defined function graphs do not appear, so a blueprint documented as three bare events may still have functions. Use blueprint_get_info for structure."
+    },
+    "level_get_spatial_index": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPLevelHandler::GetSpatialIndex",
+      "params": [],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "status",
+            "type": "string",
+            "description": "Always \"deferred\""
+          },
+          {
+            "name": "see",
+            "type": "string",
+            "description": "Always \"scene_export\""
+          }
+        ]
+      },
+      "agent_callable": false,
+      "has_ts_wrapper": false,
+      "notes": "NOT IMPLEMENTED — returns status:\"deferred\" pointing at scene_export, for every call. Documented here so get_tool_signature can explain it, but agent_callable:false so it does not appear as capability an agent can spend a turn discovering is empty. Use scene_export, or wp_get_cells for a spatial summary."
+    },
+    "level_set_bookmark": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPLevelHandler::SetBookmark",
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "description": "Bookmark identifier"
+        },
+        {
+          "name": "location",
+          "type": "array",
+          "required": false,
+          "description": "[x,y,z]; defaults to the current viewport camera position when omitted"
+        },
+        {
+          "name": "rotation",
+          "type": "array",
+          "required": false,
+          "description": "[pitch,yaw,roll]"
+        }
+      ],
+      "returns": {
+        "shape": "object"
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Stores a named camera position in the current level so it can be returned to later. Bookmarks live in the LEVEL, so this dirties the map and persists only if the level is saved — do not use it as scratch state on a map someone else is working in. NOT VERIFIED LIVE: described from the handler source, because verifying it means dirtying a real level."
+    },
+    "level_goto_bookmark": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPLevelHandler::GotoBookmark",
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "description": "A bookmark previously stored by level_set_bookmark"
+        }
+      ],
+      "returns": {
+        "shape": "object"
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Moves the editor viewport to a stored bookmark. This changes what a human is looking at, so it is not a neutral read — prefer editor_set_camera when you just need a viewpoint for a capture. NOT VERIFIED LIVE: described from the handler source."
     }
   }
 }

@@ -6,11 +6,17 @@ import { fileURLToPath } from 'node:url';
 // A wrapper must not advertise a command the C++ cannot actually perform.
 //
 // This nearly happened. A sweep for "implemented in C++ but missing a wrapper"
-// flagged editor_live_compile as free capability. It is not implemented — the
-// handler returns compile_started:false with "use Live Coding (Ctrl+Alt+F11) —
-// programmatic trigger not exposed in UE 5.4+". Wrapping it would have put a
-// tool in the catalogue that always fails, which is worse than the gap it was
-// meant to close: an agent would burn turns discovering it does nothing.
+// flagged editor_live_compile as free capability, and the handler said it was
+// not possible: compile_started:false, "programmatic trigger not exposed in UE
+// 5.4+". Wrapping a command that always fails is worse than the gap it closes.
+//
+// That reason turned out to be FALSE. LiveCoding.Compile triggers a compile
+// perfectly well, and editor_run_console_command had been the documented way to
+// do it all along — the handler was the only thing refusing. It now works, so it
+// has left this list. The near-miss is still worth remembering, but the lesson
+// changed shape: a handler's own explanation of why it cannot do something is a
+// claim like any other, and this one went unchecked long enough to become a
+// denylist entry and a test comment.
 //
 // Detecting these needs more than grepping for "not_implemented", because the
 // honest stubs say that and the misleading ones do not.
@@ -30,8 +36,12 @@ const HANDLER_DIR = join(
  *  denylist that silently suppresses working capability is the same kind of
  *  quiet wrongness as a tool that reports success without doing anything. */
 const KNOWN_STUBS = [
-  // Returns compile_started:false and points at the manual shortcut.
-  'editor_live_compile',
+  // Returns status:"deferred" pointing at scene_export, for every call.
+  'level_get_spatial_index',
+  // Returns an error naming the limit: World Partition cell loading is
+  // interactive-only in the editor. Honest, but still a command that can never
+  // succeed, so nothing should wrap it as capability.
+  'wp_load_cell',
 ];
 
 function wrapperSources(): Array<{ file: string; text: string }> {
@@ -77,9 +87,12 @@ describe('wrappers never advertise a stubbed command', () => {
       .join('\n');
 
     const stillStubbed = KNOWN_STUBS.filter((s) => {
-      // Either the command name sits near a not-implemented marker, or the
-      // handler is one we have individually confirmed (live_compile).
-      if (s === 'editor_live_compile') return /programmatic trigger not exposed/.test(sources);
+      // Each entry needs a marker that is specific to how THAT handler declines,
+      // because the honest stubs phrase it differently and a generic grep for
+      // "not_implemented" misses them. If a handler is reworked, its marker
+      // disappears and this test starts failing — which is the point.
+      if (s === 'level_get_spatial_index') return /SetStringField\(TEXT\("status"\), TEXT\("deferred"\)\)/.test(sources);
+      if (s === 'wp_load_cell') return /wp_load_cell: not implemented/.test(sources);
       return new RegExp(`${s}[\\s\\S]{0,2000}?not_implemented`).test(sources)
         || new RegExp(`not_implemented[\\s\\S]{0,2000}?${s}`).test(sources);
     });
