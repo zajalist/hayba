@@ -1,4 +1,5 @@
 #include "HaybaMCPLegacyHandler.h"
+#include "HaybaMCPParams.h"
 #include "HaybaMCPReflection.h"
 #include "HaybaMCPGameThread.h"
 #include "HaybaMCPCommandHandler.h"
@@ -1478,17 +1479,13 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_ReadNodeOutput(const TSharedPtr<
     // LoadObject + TActorIterator on the editor world must run on the game thread.
     check(IsInGameThread());
 
-    FString AssetPath;
-    FString NodeId;
-
-    if (!Params->TryGetStringField(TEXT("assetPath"), AssetPath) || AssetPath.IsEmpty())
-    {
-        return FHaybaHandlerResult::Err(TEXT("Missing required param: assetPath"));
-    }
-    if (!Params->TryGetStringField(TEXT("nodeId"), NodeId) || NodeId.IsEmpty())
-    {
-        return FHaybaHandlerResult::Err(TEXT("Missing required param: nodeId"));
-    }
+    // Both errors previously read "Missing required param: assetPath" with no
+    // mention of which command produced them — unhelpful in a log holding
+    // several commands' output — and reported one at a time.
+    FHaybaParamReader ParamR(Params, TEXT("read_node_output"));
+    const FString AssetPath = ParamR.RequiredString(TEXT("assetPath"));
+    const FString NodeId    = ParamR.RequiredString(TEXT("nodeId"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UPCGGraph* Graph = LoadObject<UPCGGraph>(nullptr, *AssetPath);
     if (!Graph)
