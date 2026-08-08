@@ -3495,6 +3495,255 @@
       "agent_callable": true,
       "has_ts_wrapper": false,
       "notes": "Sets the transient primary volume on the main audio device — the master bus, and only that. Per-category mixing (music, sfx, ui) would need Sound Class / Sound Mix routing and is not implemented; asking for one of those categories returns an error naming the limit. The change is transient and does not persist."
+    },
+    "net_debug": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPNetworkHandler::Handle",
+      "params": [
+        {
+          "name": "enabled",
+          "type": "boolean",
+          "required": true,
+          "description": "true turns the net stat overlay and packet-handler logging on, false turns both off"
+        },
+        {
+          "name": "channels",
+          "type": "array",
+          "required": false,
+          "description": "Reported back as channels_applied. Defaults to [\"all\"]. Currently descriptive only — the same overlay is enabled whatever you pass."
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "boolean"
+          },
+          {
+            "name": "channels_applied",
+            "type": "array"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Toggles the networking stat overlay (stat net) and packet-handler log stats in the editor viewport. Reach for it when diagnosing replication during PIE. It is a viewport overlay, so the effect is visible in a screenshot rather than in this reply; the reply only tells you the console commands were issued."
+    },
+    "net_set_replication": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPNetworkHandler::Handle",
+      "params": [
+        {
+          "name": "actor_path",
+          "type": "string",
+          "required": true,
+          "description": "Actor name, label, or full object path in the current editor world"
+        },
+        {
+          "name": "replicate",
+          "type": "boolean",
+          "required": true,
+          "description": "Whether the actor replicates at all"
+        },
+        {
+          "name": "always_relevant",
+          "type": "boolean",
+          "required": false,
+          "description": "Left alone when omitted, rather than reset to false"
+        },
+        {
+          "name": "net_dormancy",
+          "type": "string",
+          "required": false,
+          "description": "Awake | Initial | DormantAll. DORM_Never and DORM_DormantPartial cannot be expressed — an unrecognised value is rejected and nothing is written."
+        },
+        {
+          "name": "replicated_components",
+          "type": "array",
+          "required": false,
+          "description": "Component names to mark replicated. Ones that do not resolve come back under missing_components rather than being dropped."
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "actor",
+            "type": "string",
+            "description": "Full object path of the actor that was actually matched"
+          },
+          {
+            "name": "replicates",
+            "type": "boolean",
+            "description": "Read back off the actor, not echoed from the request"
+          },
+          {
+            "name": "always_relevant",
+            "type": "boolean",
+            "description": "Present only when you passed it"
+          },
+          {
+            "name": "net_dormancy",
+            "type": "string",
+            "description": "Present only when you passed it"
+          },
+          {
+            "name": "replicated_components",
+            "type": "array"
+          },
+          {
+            "name": "missing_components",
+            "type": "array",
+            "description": "Names that matched no component on the actor"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Sets replication flags on one actor in the editor world and marks its level dirty — this edits the LEVEL, so the change persists only if the level is saved, and it is not something to try on a map someone is working in. Every parameter is validated before anything is written, so a rejected request leaves the actor untouched."
+    },
+    "input_create_action": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPInputHandler::Handle",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "description": "Package folder, e.g. /Game/Input"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "description": "Asset name. A name already in use is refused rather than overwritten."
+        },
+        {
+          "name": "value_type",
+          "type": "string",
+          "required": true,
+          "description": "Boolean | Axis1D | Axis2D | Axis3D"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "path",
+            "type": "string",
+            "description": "Full object path of the created UInputAction"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "value_type",
+            "type": "string"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Creates an Enhanced Input UInputAction — the 'what the player did' half of the system, independent of which key does it. Pick value_type by the shape of the input: Boolean for a press, Axis1D for a trigger, Axis2D for a stick. The asset is created dirty and unsaved; call asset_save to keep it. An existing name is an explicit error, because letting the engine ask would raise a modal dialog and hang every queued command."
+    },
+    "input_create_mapping": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPInputHandler::Handle",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "description": "Package folder, e.g. /Game/Input"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "description": "Asset name; an existing one is refused, not overwritten"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "path",
+            "type": "string",
+            "description": "Full object path of the created UInputMappingContext"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Creates an empty UInputMappingContext — the 'which keys, in this situation' half of Enhanced Input. A context is what gets pushed and popped as the player moves between menus, driving and walking. Fill it with input_add_mapping. Created dirty and unsaved; asset_save to keep it."
+    },
+    "input_add_mapping": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPInputHandler::Handle",
+      "params": [
+        {
+          "name": "mapping_path",
+          "type": "string",
+          "required": true,
+          "description": "Object path of an existing UInputMappingContext"
+        },
+        {
+          "name": "action_path",
+          "type": "string",
+          "required": true,
+          "description": "Object path of an existing UInputAction"
+        },
+        {
+          "name": "key_name",
+          "type": "string",
+          "required": true,
+          "description": "Engine key name, e.g. W, SpaceBar, Gamepad_LeftX. An unknown key is rejected."
+        },
+        {
+          "name": "modifiers",
+          "type": "array",
+          "required": false,
+          "description": "UInputModifier class names, e.g. InputModifierNegate, InputModifierSwizzleAxis"
+        },
+        {
+          "name": "triggers",
+          "type": "array",
+          "required": false,
+          "description": "UInputTrigger class names, e.g. InputTriggerPressed, InputTriggerHold"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "key",
+            "type": "string"
+          },
+          {
+            "name": "modifiers",
+            "type": "array",
+            "description": "The ones actually constructed and attached"
+          },
+          {
+            "name": "triggers",
+            "type": "array"
+          },
+          {
+            "name": "unresolved_classes",
+            "type": "array",
+            "description": "Names that matched no modifier/trigger class. The binding is still made — check this before believing a modifier applied."
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Binds a key to an action inside a mapping context, optionally with modifiers and triggers. A modifier or trigger class name it cannot resolve is reported under unresolved_classes rather than silently skipped — so a reply listing fewer modifiers than you asked for is telling you something. Marks the context dirty; asset_save to keep it."
     }
   }
 }

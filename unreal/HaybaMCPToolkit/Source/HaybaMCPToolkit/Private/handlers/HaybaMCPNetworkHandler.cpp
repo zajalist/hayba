@@ -135,24 +135,34 @@ FHaybaHandlerResult FHaybaMCPNetworkHandler::Handle(const FString& Cmd, const TS
         if (!Actor)
             return FHaybaHandlerResult::Err(FString::Printf(TEXT("net_set_replication: actor not found: %s"), *ActorPath));
 
-        Actor->SetReplicates(bReplicate);
-
+        // Validate EVERYTHING before writing anything. net_dormancy used to be
+        // parsed after SetReplicates and bAlwaysRelevant had already been
+        // applied, so a misspelled dormancy returned an error on an actor whose
+        // replication had just been changed — the caller reads a failure and
+        // reasonably concludes nothing happened.
         bool bAlwaysRelevant = false;
-        bool bHasAlwaysRelevant = P->TryGetBoolField(TEXT("always_relevant"), bAlwaysRelevant);
+        const bool bHasAlwaysRelevant = P->TryGetBoolField(TEXT("always_relevant"), bAlwaysRelevant);
+
+        FString DormancyStr;
+        const bool bHasDormancy = P->TryGetStringField(TEXT("net_dormancy"), DormancyStr) && !DormancyStr.IsEmpty();
+        ENetDormancy Dormancy = ENetDormancy::DORM_Never;
+        if (bHasDormancy)
+        {
+            bool bOk = false;
+            Dormancy = ParseDormancy(DormancyStr, bOk);
+            if (!bOk)
+                return FHaybaHandlerResult::Err(FString::Printf(TEXT("net_set_replication: invalid net_dormancy '%s'"), *DormancyStr));
+        }
+
+        // Past this line the request is known-good and the writes begin.
+        Actor->SetReplicates(bReplicate);
         if (bHasAlwaysRelevant)
         {
             Actor->bAlwaysRelevant = bAlwaysRelevant;
         }
-
-        FString DormancyStr;
-        bool bHasDormancy = P->TryGetStringField(TEXT("net_dormancy"), DormancyStr) && !DormancyStr.IsEmpty();
         if (bHasDormancy)
         {
-            bool bOk = false;
-            ENetDormancy D = ParseDormancy(DormancyStr, bOk);
-            if (!bOk)
-                return FHaybaHandlerResult::Err(FString::Printf(TEXT("net_set_replication: invalid net_dormancy '%s'"), *DormancyStr));
-            Actor->NetDormancy = D;
+            Actor->NetDormancy = Dormancy;
         }
 
         TArray<FString> AppliedComponents;
