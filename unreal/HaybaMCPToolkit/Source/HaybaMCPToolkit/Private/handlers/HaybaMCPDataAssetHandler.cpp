@@ -156,27 +156,53 @@ FHaybaHandlerResult FHaybaMCPDataAssetHandler::Handle(const FString& Cmd, const 
             return FHaybaHandlerResult::Err(TEXT("data_create: CreateAsset failed"));
 
         // Mark dirty + best-effort save so callers can immediately re-load it.
+        // The save result was discarded, and it does fail — creating into a
+        // content folder that does not exist yet leaves nothing on disk. The
+        // reply then said the asset was created and ready to re-load while
+        // data_get answered "could not load", which reads as a bug in data_get.
+        bool bSaved = false;
         if (UPackage* Pkg = NewAsset->GetOutermost())
         {
             Pkg->MarkPackageDirty();
-            UEditorAssetLibrary::SaveLoadedAsset(NewAsset, /*bOnlyIfDirty*/false);
+            bSaved = UEditorAssetLibrary::SaveLoadedAsset(NewAsset, /*bOnlyIfDirty*/false);
         }
 
         auto Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("path"), NewAsset->GetPathName());
         Out->SetStringField(TEXT("class"), Class->GetPathName());
         Out->SetStringField(TEXT("name"), AssetName);
+        // The asset exists either way — in memory at minimum. `saved` says
+        // whether it also reached disk, which is the difference between an edit
+        // that survives an editor restart and one that does not.
+        Out->SetBoolField(TEXT("saved"), bSaved);
+        if (!bSaved)
+        {
+            Out->SetStringField(TEXT("save_note"),
+                TEXT("created in memory but NOT written to disk — call asset_save, or create into an existing content folder"));
+        }
         return FHaybaHandlerResult::Ok(Out);
     }
 
     // ---------- data_get ----------
+    // UEditorAssetLibrary::LoadAsset resolves through the asset registry, which
+    // only knows assets that are ON DISK. data_create does not save, so
+    // create -> get -> set on a brand-new asset failed with "could not load" on
+    // an object that was sitting in memory the whole time. LoadObject finds the
+    // in-memory object first and falls back to loading from disk, which is what
+    // the behavior-tree and animation handlers already do.
+    const auto LoadDataAsset = [](const FString& Path) -> UObject*
+    {
+        if (UObject* InMemory = LoadObject<UObject>(nullptr, *Path)) return InMemory;
+        return UEditorAssetLibrary::LoadAsset(Path);
+    };
+
     if (Cmd == TEXT("data_get"))
     {
         FString Path;
         if (!P.IsValid() || !P->TryGetStringField(TEXT("path"), Path) || Path.IsEmpty())
             return FHaybaHandlerResult::Err(TEXT("data_get: missing path"));
 
-        UObject* Asset = UEditorAssetLibrary::LoadAsset(Path);
+        UObject* Asset = LoadDataAsset(Path);
         if (!Asset)
             return FHaybaHandlerResult::Err(FString::Printf(
                 TEXT("data_get: could not load %s"), *Path));
@@ -203,7 +229,7 @@ FHaybaHandlerResult FHaybaMCPDataAssetHandler::Handle(const FString& Cmd, const 
         if (!Value.IsValid())
             return FHaybaHandlerResult::Err(TEXT("data_set: missing value"));
 
-        UObject* Asset = UEditorAssetLibrary::LoadAsset(Path);
+        UObject* Asset = LoadDataAsset(Path);
         if (!Asset)
             return FHaybaHandlerResult::Err(FString::Printf(
                 TEXT("data_set: could not load %s"), *Path));
