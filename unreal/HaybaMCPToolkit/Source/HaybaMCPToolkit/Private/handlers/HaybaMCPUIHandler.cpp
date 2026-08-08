@@ -1,4 +1,5 @@
 #include "HaybaMCPUIHandler.h"
+#include "HaybaUIOps.h"
 #include <initializer_list>
 #include "Json.h"
 #include "Editor.h"
@@ -1267,22 +1268,16 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetProperties(const TSharedPtr<FJs
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_set_widget_properties: widget '%s' not found"), *WidgetName));
 
     const TSharedPtr<FJsonObject>* Props = nullptr;
-    const TSharedPtr<FJsonObject>* SlotProps = nullptr;
     P->TryGetObjectField(TEXT("properties"), Props);
-    // Three spellings have shipped in different layers: `slot_props` (public
-    // schema), `slot_properties` (an early handler revision) and `slot_layout`
-    // (the typed slot tool). Only the first was ever read, so the typed tool's
-    // payload fell on the floor and the call failed with "no properties
-    // provided" no matter how well-formed it was. Accept all three.
-    if (!(P->TryGetObjectField(TEXT("slot_props"), SlotProps) && SlotProps && SlotProps->IsValid()))
-    {
-        if (!(P->TryGetObjectField(TEXT("slot_properties"), SlotProps) && SlotProps && SlotProps->IsValid()))
-        {
-            P->TryGetObjectField(TEXT("slot_layout"), SlotProps);
-        }
-    }
 
-    if ((!Props || !Props->IsValid()) && (!SlotProps || !SlotProps->IsValid()))
+    // Which of the three shipped spellings the slot payload arrived under is a
+    // wire-format question, not a widget one — see HaybaUIOps.h for why there
+    // are three and what it cost. Resolved outside this function so it can be
+    // tested without an editor.
+    const HaybaUIOps::FSlotPropsPayload SlotPayload = HaybaUIOps::ResolveSlotProps(P);
+    const TSharedPtr<FJsonObject> SlotPropsObj = SlotPayload.Object;
+
+    if ((!Props || !Props->IsValid()) && !SlotPayload.IsSet())
         return FHaybaHandlerResult::Err(TEXT("ui_set_widget_properties: no properties or slot_props provided"));
 
     int32 Succeeded = 0;
@@ -1313,13 +1308,13 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetProperties(const TSharedPtr<FJs
             }
         }
 
-        if (SlotProps && SlotProps->IsValid())
+        if (SlotPropsObj.IsValid())
         {
             if (!Widget->Slot)
             {
                 // The root widget has no slot at all. Reporting the keys as
                 // applied here would be a flat lie.
-                for (const auto& Pair : (*SlotProps)->Values)
+                for (const auto& Pair : SlotPropsObj->Values)
                 {
                     ++Failed;
                     FailedProps.Add(FString::Printf(TEXT("slot.%s"), *FString(Pair.Key)));
@@ -1334,7 +1329,7 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetProperties(const TSharedPtr<FJs
                 // only the child widget dirty made horizontal/vertical padding look
                 // successful in the response but vanish on the next query/reopen.
                 Widget->Slot->Modify();
-                const FSlotApplyResult SlotResult = ApplySlotPropsChecked(Widget->Slot, *SlotProps);
+                const FSlotApplyResult SlotResult = ApplySlotPropsChecked(Widget->Slot, SlotPropsObj);
                 Widget->Slot->PostEditChange();
 
                 // Count what actually landed. The previous code incremented the
@@ -1394,6 +1389,14 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetProperties(const TSharedPtr<FJs
     if (FailedProps.Num() > 0)      Out->SetArrayField(TEXT("failed_properties"), ToJsonArray(FailedProps));
     if (UnknownSlotProps.Num() > 0) Out->SetArrayField(TEXT("unknown_slot_props"), ToJsonArray(UnknownSlotProps));
     if (Warnings.Num() > 0)         Out->SetArrayField(TEXT("warnings"), ToJsonArray(Warnings));
+    // Name the spelling the slot payload arrived under. A caller using a
+    // deprecated one currently cannot tell it worked by tolerance rather than
+    // by being right, so it never learns to send the documented name.
+    if (SlotPayload.IsSet() && SlotPayload.Spelling != HaybaUIOps::ESlotPropsSpelling::SlotProps)
+    {
+        Out->SetStringField(TEXT("slot_props_read_from"),
+                            HaybaUIOps::SpellingName(SlotPayload.Spelling));
+    }
 
     if (Succeeded == 0)
     {
