@@ -5,6 +5,7 @@
 // drifts every time a tool changes.
 
 import { z, type ZodRawShape, type ZodTypeAny } from 'zod';
+import { unwrapZod, formatDefault } from './zod-unwrap.js';
 
 export type Cost = 'low' | 'medium' | 'high';
 
@@ -44,26 +45,8 @@ export function deriveSignature(name: string): DerivedSignature | null {
 // Mirrors the style of the hand-maintained dict: type first, then "(required)"
 // or "(optional)", with describe() text appended when present.
 function describeZod(t: ZodTypeAny): string {
-  // Unwrap optionals/defaults to reach the inner type, but remember we did.
-  let optional = false;
-  let inner: ZodTypeAny = t;
-  // ZodOptional / ZodDefault / ZodNullable all expose ._def.innerType
-  while (
-    inner instanceof z.ZodOptional ||
-    inner instanceof z.ZodDefault ||
-    inner instanceof z.ZodNullable
-  ) {
-    if (inner instanceof z.ZodOptional || inner instanceof z.ZodNullable) optional = true;
-    inner = (inner as any)._def.innerType;
-  }
-  // zod 4 replaced ZodEffects with ZodPipe: preprocess/transform are a pipe
-  // whose two ends are `_def.in` and `_def.out`. Describe the end that is not
-  // the transform itself — for z.preprocess(fn, schema) that is `out`, for
-  // schema.transform(fn) it is `in`.
-  while (inner instanceof z.ZodPipe) {
-    const { in: pin, out: pout } = inner._def as unknown as { in: ZodTypeAny; out: ZodTypeAny };
-    inner = pout instanceof z.ZodTransform ? pin : pout;
-  }
+  // What the wrappers mean is decided in one place — see zod-unwrap.ts.
+  const { inner, optional, hasDefault, defaultValue } = unwrapZod(t);
 
   let typeStr: string;
   if (inner instanceof z.ZodString) typeStr = 'string';
@@ -88,7 +71,15 @@ function describeZod(t: ZodTypeAny): string {
     typeStr = (inner._def as unknown as { type?: string })?.type ?? 'any';
   }
 
-  const qualifier = optional ? '(optional)' : '(required)';
+  // Naming the default is worth a few tokens: it tells an agent both that it
+  // may omit the parameter AND what happens if it does, so it can decide
+  // whether to override rather than guess a value that is already there.
+  const shownDefault = hasDefault ? formatDefault(defaultValue) : null;
+  const qualifier = hasDefault
+    ? (shownDefault ? `(optional, default: ${shownDefault})` : '(optional, has a default)')
+    : optional
+      ? '(optional)'
+      : '(required)';
   // zod 4 moved .describe() out of `_def.description` and onto a public
   // `.description` getter. Reading the old location returns undefined rather
   // than throwing, so every parameter description silently became

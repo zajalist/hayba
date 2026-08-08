@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import { z } from 'zod';
+import { recordSchema } from '../tools/schema-registry.js';
 import {
   runAgentLoop,
   buildToolCatalog,
@@ -324,5 +326,31 @@ describe('buildToolCatalog', () => {
     // registry-derived branch is covered by integration; here we assert the
     // function runs and honours the no-shape skip without throwing.
     expect(Array.isArray(tools)).toBe(true);
+  });
+
+  // The second copy of the rule shared in tools/zod-unwrap.ts. This surface and
+  // the tool catalogue's prose describer once disagreed about `.default()`
+  // (#322), so the same parameter was advertised two different ways depending
+  // on which one an agent was reading. Both are pinned now.
+  it('a defaulted param is not required, and the schema carries the default', () => {
+    recordSchema('zzz_default_probe', {
+      shape: {
+        needed: z.string(),
+        capped: z.number().default(5),
+        maybe: z.string().optional(),
+      },
+      cost: 'low',
+      returns: '{ok}',
+    });
+
+    const tool = buildToolCatalog({ listCommands: () => ['zzz_default_probe'] })
+      .find((t) => t.name === 'zzz_default_probe');
+
+    expect(tool, 'the probe tool should be in the catalog').toBeDefined();
+    const schema = tool!.input_schema as { required?: string[]; properties: Record<string, { default?: unknown }> };
+    expect(schema.required, 'only the genuinely required param is required').toEqual(['needed']);
+    expect(schema.properties.capped.default, 'the value it gets by omitting it').toBe(5);
+    expect(schema.properties.maybe, 'a plain optional has no default to report')
+      .not.toHaveProperty('default');
   });
 });

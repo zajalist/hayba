@@ -175,7 +175,10 @@ describe('registerPyTool', () => {
     expect(sig!.returns).toBe('{ok, echoed}');
     expect(sig!.params.target).toContain('string');
     expect(sig!.params.target).toContain('(required)');
-    expect(sig!.params.limit).toContain('(optional)'); // defaulted ⇒ optional
+    // Defaulted ⇒ optional, and the default is named so a caller can decide
+    // whether to override it instead of guessing a value (#322).
+    expect(sig!.params.limit).toContain('(optional');
+    expect(sig!.params.limit).toContain('default: 5');
   });
 
   it('registers tool meta for cost lookup', () => {
