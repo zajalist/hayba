@@ -445,12 +445,39 @@ FHaybaHandlerResult FHaybaMCPRenderHandler::Handle(const FString& /*Command*/,
         const TArray<TSharedPtr<FJsonValue>>* Rot = nullptr;
         (*CameraObj)->TryGetArrayField(TEXT("location"), Loc);
         (*CameraObj)->TryGetArrayField(TEXT("rotation"), Rot);
-        if (Loc && Loc->Num() == 3)
+
+        // A present-but-malformed array used to fall through the `Num() == 3`
+        // check and leave the default in place, so a two-element location
+        // rendered from the origin and reported success. The picture comes back,
+        // it is simply of the wrong place — which is the hardest kind of wrong
+        // to notice in an automated pipeline.
+        if (Loc && Loc->Num() != 3)
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("render_camera: camera.location needs 3 numbers, got %d"), Loc->Num()));
+        }
+        if (Rot && Rot->Num() != 3)
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("render_camera: camera.rotation needs 3 numbers, got %d"), Rot->Num()));
+        }
+
+        if (Loc)
         {
             S->Camera.Location = FVector((*Loc)[0]->AsNumber(), (*Loc)[1]->AsNumber(), (*Loc)[2]->AsNumber());
         }
-        if (Rot && Rot->Num() == 3)
+        if (Rot)
         {
+            // NOTE — deliberately different from editor_set_camera, which reads
+            // an array rotation as [pitch, yaw] and IGNORES a third element so a
+            // stray value cannot tilt the horizon (HaybaEditorOps.h).
+            //
+            // Here the third element IS applied as roll, because a rendered shot
+            // is a camera setup where a deliberate dutch angle is legitimate,
+            // whereas the editor viewport is a place you have to keep working in.
+            // Two commands that look like the same operation and are not; stated
+            // here so the next person does not "fix" one to match the other by
+            // accident. See #320.
             S->Camera.Rotation = FRotator((*Rot)[0]->AsNumber(), (*Rot)[1]->AsNumber(), (*Rot)[2]->AsNumber());
         }
         double FovD = 90.0;
