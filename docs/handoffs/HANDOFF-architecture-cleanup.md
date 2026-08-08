@@ -144,6 +144,46 @@ picked as "real candidates" needed nothing.
 
 ---
 
+## 3b. The unreachable-command gap (2026-08-08)
+
+`list_tool_categories` reports **415 plugin commands, 355 callable**. That gap is
+mostly not missing features — it is C++ that shipped with nothing exposing it.
+Whole domains sat at zero callable while their handlers worked perfectly.
+
+A command becomes callable by adding a descriptor to
+`mcp-tools/hayba-mcp/src/legacy-commands/sidecar.json`. No plugin rebuild, no TS
+code: `agent_callable: true` plus `has_ts_wrapper: false` makes
+`legacy-tool-factory` surface it. Two traps:
+
+- If any TS file already calls `executeCommand('<name>')` — even internally —
+  `has_ts_wrapper` must be `true`, and then the factory will NOT surface it. That
+  is why `mesh_get_info` stays internal. `npm run lint:legacy-wrappers` catches it.
+- A running MCP server reads the sidecar at startup. New entries are invisible
+  until the user restarts it, so **you cannot verify a new descriptor through
+  `hayba_invoke` in the session that wrote it.**
+
+Talk to the plugin directly instead. 4-byte big-endian length prefix + a JSON
+`{cmd, id, params}` payload on port 52342 (see `src/tcp-client.ts`). ~40 lines of
+node. Every descriptor written in this sweep was produced by calling the command
+first and describing what came back, which is how each of these was found:
+
+- `project_set_settings` returned `ok:true` carrying an `error` field when it
+  had written nothing.
+- `net_set_replication` validated `net_dormancy` **after** applying
+  `SetReplicates` — a rejected request left the actor changed.
+- `data_create` discarded its save result, so creating into a folder that did
+  not exist reported success and wrote nothing; `data_get`/`data_set` then could
+  not see the asset at all, because `UEditorAssetLibrary::LoadAsset` only finds
+  what is on disk.
+
+Surfaced and verified so far: project, audio, mesh_list/set_lod (#8), input,
+net (#21/#23), bt, anim (#20/#17). Still at zero, and genuinely so: `gas`,
+`metasound`, `physics`, `wp`. The first two live in **uninstalled plugins** —
+`unreal/HaybaMCP{GAS,MetaSound,Niagara,Sequencer}/` are all absent from
+`Aphrosia/Plugins/`, so their commands answer `Unknown command`. See #19.
+
+---
+
 ## 4. Recurring bug patterns found (look for these)
 
 - **`TryGetArrayField` true ≠ well-formed.** Hit twice: `placement_validate`
