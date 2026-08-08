@@ -176,11 +176,28 @@ first and describing what came back, which is how each of these was found:
   not see the asset at all, because `UEditorAssetLibrary::LoadAsset` only finds
   what is on disk.
 
-Surfaced and verified so far: project, audio, mesh_list/set_lod (#8), input,
-net (#21/#23), bt, anim (#20/#17). Still at zero, and genuinely so: `gas`,
-`metasound`, `physics`, `wp`. The first two live in **uninstalled plugins** —
-`unreal/HaybaMCP{GAS,MetaSound,Niagara,Sequencer}/` are all absent from
-`Aphrosia/Plugins/`, so their commands answer `Unknown command`. See #19.
+Surfaced: project, audio, mesh_list/set_lod (#8), input, net (#21/#23), bt,
+anim (#20/#17), physics, wp and the three stranded `editor_*` commands.
+
+**What is left, precisely:**
+
+- Six main-toolkit commands with no descriptor yet — `placement_validate`,
+  `blueprint_add_function`, `blueprint_document`, `level_set_bookmark`,
+  `level_goto_bookmark`, `level_get_spatial_index`. Ordinary work; they just
+  need an editor to verify against.
+- `gas`, `metasound`, and the stale `niagara_*` / `seq_*` names. These are NOT
+  missing descriptors. `unreal/HaybaMCP{GAS,MetaSound,Niagara,Sequencer}/` are
+  four complete plugins that are **absent from `Aphrosia/Plugins/`**, so their
+  commands answer `Unknown command`. The `niagara_*` / `seq_*` surfaces agents
+  use today come from the TS/python tool layer instead. Settle the packaging
+  question before writing another line of code here: install and build them, or
+  fold what is worth keeping into the toolkit and delete the rest. See #19.
+
+**One caution learned the hard way.** Two people edited the same three handlers
+in the same afternoon and independently made the *same* fix. A session holding
+pre-commit file state will happily revert the other's committed work when it
+writes. Diff against HEAD before committing anything in a file you did not open
+in this session.
 
 ---
 
