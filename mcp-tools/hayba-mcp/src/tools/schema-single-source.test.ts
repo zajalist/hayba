@@ -191,8 +191,10 @@ describe('single-source migration: hayba_introspect (via pyTemplate factory)', (
     const sig = deriveSignature('hayba_introspect');
     expect(sig).not.toBeNull();
     expect(sig!.cost).toBe('low');
-    expect(sig!.params['mode']).toMatch(/\(optional\)/);
-    expect(sig!.params['settings_class']).toMatch(/\(optional\)/);
+    // `mode` is optional AND defaulted, so it also names the default (#322).
+    expect(sig!.params['mode']).toMatch(/\(optional/);
+    expect(sig!.params['mode']).toContain('default: "auto"');
+    expect(sig!.params['settings_class']).toMatch(/\(optional/);
     expect(sig!.returns).toContain('input_pins');
   });
 });
@@ -242,8 +244,9 @@ describe('single-source migration: pcg_wire (via pyTemplate factory)', () => {
     const sig = deriveSignature('pcg_wire');
     expect(sig).not.toBeNull();
     expect(sig!.cost).toBe('low');
-    expect(sig!.params['from_pin']).toMatch(/\(optional\)/);
-    expect(sig!.params['to_pin']).toMatch(/\(optional\)/);
+    // Both are defaulted pin labels, so both name their default (#322).
+    expect(sig!.params['from_pin']).toContain('default: "Out"');
+    expect(sig!.params['to_pin']).toMatch(/\(optional/);
     expect(sig!.returns).toContain('from_pin');
   });
 });

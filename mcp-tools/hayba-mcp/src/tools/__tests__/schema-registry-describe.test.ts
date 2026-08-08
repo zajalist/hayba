@@ -98,17 +98,38 @@ describe('describeZod under zod 4', () => {
     expect(p.any).toContain('any');
   });
 
-  it('PINS A KNOWN INACCURACY: a defaulted param is reported as required', () => {
-    // Pre-existing, not a zod 4 regression — the unwrap loop steps through
-    // ZodDefault without setting the optional flag, and this predates the
-    // migration.
-    //
-    // It is still wrong from the caller's side: a param with a default does not
-    // have to be supplied, and telling an agent "required" makes it invent a
-    // value rather than let the default apply. Pinned here so the behaviour is
-    // visible and so fixing it fails this test loudly rather than silently
-    // changing what every tool advertises. See the follow-up issue.
+  // This replaces a test named "PINS A KNOWN INACCURACY", which asserted that a
+  // defaulted param was advertised as `(required)` so that fixing it would fail
+  // loudly rather than silently change what every tool advertises. #322 is that
+  // fix; the pin has done its job and is now inverted.
+  it('a defaulted param is optional, and says what the default is', () => {
     const p = sigFor({ d: z.string().default('x') });
-    expect(p.d).toContain('(required)');
+    expect(p.d, 'a param with a default does not have to be supplied').toContain('(optional');
+    expect(p.d, 'and telling an agent it is required makes it invent a value').not.toContain('(required)');
+    expect(p.d, 'knowing the value it would get is what makes omitting it a choice').toContain('default: "x"');
+  });
+
+  it('reports a default it cannot quote briefly as existing rather than in full', () => {
+    // Every parameter line is paid for in the context window of every agent
+    // that reads the catalogue.
+    const p = sigFor({ d: z.array(z.string()).default(['a'.repeat(60)]) });
+    expect(p.d).toContain('(optional');
+    expect(p.d).toContain('has a default');
+    expect(p.d.length, 'the long value itself is not pasted in').toBeLessThan(80);
+  });
+
+  it('still separates a plain optional from a defaulted one', () => {
+    // "may be omitted" and "may be omitted, and here is what you get" are
+    // different facts; collapsing them loses the second.
+    const p = sigFor({ o: z.string().optional(), d: z.number().default(5) });
+    expect(p.o).toContain('(optional)');
+    expect(p.d).toContain('default: 5');
+  });
+
+  it('sees a default through the wrappers around it', () => {
+    // .optional().default() and .default().optional() are both real spellings
+    // in this codebase (py-tool-factory descriptors use the first).
+    expect(sigFor({ d: z.number().optional().default(5) }).d).toContain('default: 5');
+    expect(sigFor({ d: z.number().default(5).optional() }).d).toContain('default: 5');
   });
 });

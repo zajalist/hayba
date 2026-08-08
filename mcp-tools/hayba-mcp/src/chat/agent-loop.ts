@@ -38,6 +38,7 @@ import type {
   LLMStopReason,
 } from '../agents/llm-client.js';
 import { deriveSignature, getRawShape, listRecordedCommands } from '../tools/schema-registry.js';
+import { unwrapZod } from '../tools/zod-unwrap.js';
 import { getToolMeta } from '../tools/tool-meta-registry.js';
 import { describeMeta } from '../tools/hayba-tool-meta.js';
 import { NON_IDEMPOTENT, executeCommand } from '../tools/tool-executor.js';
@@ -113,28 +114,9 @@ interface JsonSchema {
 }
 
 function zodToJsonSchema(t: ZodTypeAny): { schema: JsonSchema; optional: boolean } {
-  let optional = false;
-  let inner: ZodTypeAny = t;
-  while (
-    inner instanceof z.ZodOptional ||
-    inner instanceof z.ZodDefault ||
-    inner instanceof z.ZodNullable
-  ) {
-    // ZodDefault also makes the field optional (a default is supplied when absent).
-    if (
-      inner instanceof z.ZodOptional ||
-      inner instanceof z.ZodNullable ||
-      inner instanceof z.ZodDefault
-    )
-      optional = true;
-    inner = (inner as unknown as { _def: { innerType: ZodTypeAny } })._def.innerType;
-  }
-  // zod 4: ZodEffects became ZodPipe, whose ends are `_def.in` / `_def.out`.
-  // Follow the end that is not the transform.
-  while (inner instanceof z.ZodPipe) {
-    const { in: pin, out: pout } = inner._def as unknown as { in: ZodTypeAny; out: ZodTypeAny };
-    inner = pout instanceof z.ZodTransform ? pin : pout;
-  }
+  // Shared with the tool catalogue's describer — see zod-unwrap.ts. These two
+  // used to answer "is this optional?" differently for the same schema.
+  const { inner, optional, hasDefault, defaultValue } = unwrapZod(t);
 
   let schema: JsonSchema;
   if (inner instanceof z.ZodString) schema = { type: 'string' };
@@ -161,6 +143,10 @@ function zodToJsonSchema(t: ZodTypeAny): { schema: JsonSchema; optional: boolean
   // `_def.description` — which reads undefined rather than throwing.
   const desc = t.description ?? inner.description;
   if (desc) schema.description = desc;
+  // `default` is a JSON Schema keyword, and the model reads it: knowing the
+  // value it gets by omitting a parameter is what makes omitting it a choice
+  // rather than a gamble.
+  if (hasDefault && defaultValue !== undefined) schema.default = defaultValue;
   return { schema, optional };
 }
 
