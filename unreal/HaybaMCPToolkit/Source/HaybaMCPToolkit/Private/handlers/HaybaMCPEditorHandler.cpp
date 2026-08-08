@@ -1,4 +1,5 @@
 #include "HaybaMCPEditorHandler.h"
+#include "HaybaEditorOps.h"
 #include "HaybaMCPCaptureActor.h"
 #include "Editor.h"
 #include "EngineUtils.h"
@@ -185,61 +186,16 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::SetCamera(const TSharedPtr<FJsonObje
 
     Client->SetViewLocation(Location);
 
-    // Rotation. UE FRotator is (Pitch, Yaw, Roll) — NOT XYZ euler. Agents commonly
-    // think "rotate N about Z" and pass [0,0,N] expecting yaw, but index 2 is ROLL,
-    // which tilts the horizon → the "camera looks angled" bug. Two guards:
-    //   1. Accept an unambiguous object form {pitch, yaw, roll} (recommended).
-    //   2. Keep the editor viewport LEVEL by default: roll is only applied when
-    //      explicitly given via the object's "roll" key. The array form is read as
-    //      [pitch, yaw] and any 3rd (roll) element is ignored, so a stray value can
-    //      never tilt the camera.
-    FRotator Rotation = Client->GetViewRotation();
-    bool bRotProvided = false;
-    double NewPitch = Rotation.Pitch, NewYaw = Rotation.Yaw, NewRoll = 0.0;
-
-    // HIGHEST PRIORITY: look_at [x,y,z]. The agent gives a world point to face and
-    // we derive the orientation — no manual angles, no axis confusion, and
-    // FVector::Rotation() yields roll=0 by construction (horizon always level).
-    // This is the correct way to "aim" the camera; prefer it over rotation.
-    const TArray<TSharedPtr<FJsonValue>>* LookAtArr = nullptr;
-    if (P->TryGetArrayField(TEXT("look_at"), LookAtArr) && LookAtArr && LookAtArr->Num() >= 3)
+    // Rotation is decided in HaybaEditorOps::ResolveCameraRotation — three input
+    // forms, a precedence order, and the roll rule that keeps the horizon level.
+    // All of it is pure, so it lives where a test can reach it.
+    const HaybaEditorOps::FCameraOrientation Orient =
+        HaybaEditorOps::ResolveCameraRotation(P, Location, Client->GetViewRotation());
+    if (Orient.bChanged())
     {
-        const FVector Target(
-            (*LookAtArr)[0]->AsNumber(),
-            (*LookAtArr)[1]->AsNumber(),
-            (*LookAtArr)[2]->AsNumber());
-        const FVector Dir = (Target - Location);
-        if (!Dir.IsNearlyZero())
-        {
-            Rotation = Dir.Rotation();          // pitch+yaw to face Target, roll = 0
-            Client->SetViewRotation(Rotation);
-            bRotProvided = true;
-        }
+        Client->SetViewRotation(Orient.Rotation);
     }
-
-    const TSharedPtr<FJsonObject>* RotObj = nullptr;
-    const TArray<TSharedPtr<FJsonValue>>* RotArr = nullptr;
-    if (bRotProvided)
-    {
-        // look_at already set orientation — skip the manual rotation paths.
-    }
-    else if (P->TryGetObjectField(TEXT("rotation"), RotObj) && RotObj && RotObj->IsValid())
-    {
-        bRotProvided = true;
-        (*RotObj)->TryGetNumberField(TEXT("pitch"), NewPitch);
-        (*RotObj)->TryGetNumberField(TEXT("yaw"), NewYaw);
-        (*RotObj)->TryGetNumberField(TEXT("roll"), NewRoll); // opt-in tilt only
-        Rotation = FRotator(NewPitch, NewYaw, NewRoll);
-        Client->SetViewRotation(Rotation);
-    }
-    else if (P->TryGetArrayField(TEXT("rotation"), RotArr) && RotArr && RotArr->Num() >= 2)
-    {
-        NewPitch = (*RotArr)[0]->AsNumber();
-        NewYaw   = (*RotArr)[1]->AsNumber();
-        // (*RotArr)[2] (roll) intentionally ignored — see guard #2 above.
-        Rotation = FRotator(NewPitch, NewYaw, NewRoll);
-        Client->SetViewRotation(Rotation);
-    }
+    const FRotator Rotation = Orient.Rotation;
 
     TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject());
 
@@ -254,6 +210,7 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::SetCamera(const TSharedPtr<FJsonObje
     RotOut.Add(MakeShareable(new FJsonValueNumber(Rotation.Yaw)));
     RotOut.Add(MakeShareable(new FJsonValueNumber(Rotation.Roll)));
     Result->SetArrayField(TEXT("rotation"), RotOut);
+    Result->SetStringField(TEXT("rotation_from"), HaybaEditorOps::RotationSourceName(Orient.Source));
 
     return FHaybaHandlerResult::Ok(Result);
 }
