@@ -1,4 +1,5 @@
 #include "HaybaMCPBlueprintHandler.h"
+#include "HaybaBlueprintOps.h"
 #include "HaybaMCPParams.h"
 #include "HaybaMCPReflection.h"
 #include "Json.h"
@@ -184,8 +185,11 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Create(const TSharedPtr<FJsonObje
     // the standard /Game/Dir/Name.Name — NOT the malformed /Game/Dir.Name that
     // results from using package_path directly as the package and Name as a
     // sub-object inside it.
-    const FString Dir = FPackageName::GetLongPackagePath(PkgPath);
-    const FString FullPackageName = Dir / Name;
+    // Composed in HaybaBlueprintOps so the rule — and the case where a caller
+    // passed a folder and lands one directory up — is testable without an editor.
+    const HaybaBlueprintOps::FResolvedPackage Resolved =
+        HaybaBlueprintOps::ResolvePackage(PkgPath, Name);
+    const FString FullPackageName = Resolved.PackageName;
     UPackage* Package = CreatePackage(*FullPackageName);
     if (!Package)
         return FHaybaHandlerResult::Err(TEXT("blueprint_create: CreatePackage failed"));
@@ -215,6 +219,11 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Create(const TSharedPtr<FJsonObje
     Out->SetStringField(TEXT("path"), BP->GetPathName());
     Out->SetStringField(TEXT("name"), Name);
     Out->SetBoolField(TEXT("saved"), bSaved);
+    // Say where it went when that is probably not where the caller meant. The
+    // path above has always been accurate; nobody reads it until something is
+    // missing, and by then the asset is sitting a directory up.
+    const FString PathNote = HaybaBlueprintOps::PackagePathNote(Resolved, PkgPath);
+    if (!PathNote.IsEmpty()) Out->SetStringField(TEXT("package_path_note"), PathNote);
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -338,6 +347,24 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddFunction(const TSharedPtr<FJso
 
     UBlueprint* BP = LoadBPByPath(Path);
     if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_add_function: blueprint not found"));
+
+    // Refuse a name the blueprint already has, BEFORE creating anything. Adding
+    // a second graph with the same name compiles to "Found more than one
+    // function with the same name" and is not rolled back, so the old behaviour
+    // left the asset broken and still answered ok. The rule itself is pure and
+    // lives in HaybaBlueprintOps where a test can reach it.
+    {
+        TArray<UEdGraph*> AllGraphs;
+        BP->GetAllGraphs(AllGraphs);
+        TArray<FString> Names;
+        Names.Reserve(AllGraphs.Num());
+        for (const UEdGraph* G : AllGraphs)
+        {
+            if (G) Names.Add(G->GetName());
+        }
+        const FString Conflict = HaybaBlueprintOps::FunctionNameConflict(Names, FuncName);
+        if (!Conflict.IsEmpty()) return FHaybaHandlerResult::Err(Conflict);
+    }
 
     UEdGraph* NewGraph = FBlueprintEditorUtils::CreateNewGraph(
         BP, FName(*FuncName), UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
