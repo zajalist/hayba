@@ -179,12 +179,14 @@ first and describing what came back, which is how each of these was found:
 Surfaced: project, audio, mesh_list/set_lod (#8), input, net (#21/#23), bt,
 anim (#20/#17), physics, wp and the three stranded `editor_*` commands.
 
+**The main plugin is done.** Every command `HaybaMCPToolkit` implements now has a
+descriptor or is deliberately `agent_callable:false`. Two are the latter —
+`level_get_spatial_index` (always `status:"deferred"`) and `wp_load_cell` (an
+honest error, but never a success). The rule they follow is
+`no-stub-wrappers.test.ts`: do not offer a command that can never succeed.
+
 **What is left, precisely:**
 
-- Six main-toolkit commands with no descriptor yet — `placement_validate`,
-  `blueprint_add_function`, `blueprint_document`, `level_set_bookmark`,
-  `level_goto_bookmark`, `level_get_spatial_index`. Ordinary work; they just
-  need an editor to verify against.
 - `gas`, `metasound`, and the stale `niagara_*` / `seq_*` names. These are NOT
   missing descriptors. `unreal/HaybaMCP{GAS,MetaSound,Niagara,Sequencer}/` are
   four complete plugins that are **absent from `Aphrosia/Plugins/`**, so their
@@ -198,6 +200,17 @@ in the same afternoon and independently made the *same* fix. A session holding
 pre-commit file state will happily revert the other's committed work when it
 writes. Diff against HEAD before committing anything in a file you did not open
 in this session.
+
+**Two traps found by writing descriptions, both still live:**
+
+- `blueprint_create` / `material_create` take `package_path` as the FULL intended
+  asset path and discard its trailing component. Passing a folder — the obvious
+  reading — writes the asset one directory up and saves it there.
+  `package_path:"/Game/Temp"` + `name:"BP_X"` produces `/Game/BP_X`.
+- `blueprint_add_function` accepts a name the blueprint already has. It adds the
+  function, the compile fails with "Found more than one function with the same
+  name", the reply is `ok:true` with `compile_errors`, and nothing is rolled
+  back. Read `compiled_clean`, not `ok`.
 
 ---
 
