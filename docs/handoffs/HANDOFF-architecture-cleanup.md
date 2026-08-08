@@ -55,7 +55,7 @@ npm run lint:legacy-wrappers        # SEPARATE from npm test. Easy to forget.
 grep -E "Test Completed" /d/Projects/aphrosia/Saved/Logs/Aphrosia.log
 ```
 
-Expected: **12 of 13 `Hayba.MCP` tests pass.** The one failure is
+Expected: **14 of 15 `Hayba.MCP` tests pass.** The one failure is
 `Hayba.MCP.UI.RenderWidgetToPng`, which fails **only** under `-NullRHI` and
 passes with a real RHI (drop the flag to confirm). It is not a regression.
 
@@ -176,10 +176,14 @@ recorded at both sites. Do not "fix" one to match the other.
 
 Pick one domain, do it end-to-end, verify at rung 5, commit. Do not batch.
 
-Candidates by remaining reads: **UI** has a seam but only for slot-payload
-naming — `HandleSetProperties` still interleaves widget traversal, `Modify()`/
-`PostEditChange()` and response shaping, and at 3,113 lines it is the biggest
-single win left. After that, `Blueprint` (943 lines, 25 reads, has a reader, no
-seam).
+`ui_set_widget_properties` is **done** — Parse and Shape are in `HaybaUIOps`,
+Execute stayed in the handler because applying properties needs UMG slot classes
+and `FBlueprintEditorUtils`. That asymmetry is the point and is worth copying:
+the pure halves are where the bugs were, so extract those and leave the engine
+half alone. `FHaybaParamReader` gained `OptionalObject` and `Raw()` doing it.
+
+Next candidates: the rest of the UI handler (`HandleMutateTree` is ~580 lines
+across six sub-commands, each re-reading `widget_name` its own way), then
+`Blueprint` (943 lines, 25 reads, has a reader, no seam).
 
 Check first whether the domain needs it. Two of four did not.
