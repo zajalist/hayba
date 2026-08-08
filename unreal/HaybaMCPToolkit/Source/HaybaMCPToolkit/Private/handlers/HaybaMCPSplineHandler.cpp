@@ -1,4 +1,5 @@
 #include "HaybaMCPSplineHandler.h"
+#include "HaybaMCPParams.h"
 #include "Json.h"
 #include "Editor.h"
 #include "EngineUtils.h"
@@ -107,8 +108,9 @@ FHaybaHandlerResult FHaybaMCPSplineHandler::SplineAddPoint(const TSharedPtr<FJso
     if (!World) return FHaybaHandlerResult::Err(TEXT("spline_add_point: no editor world"));
 
     FString ActorId;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId))
-        return FHaybaHandlerResult::Err(TEXT("spline_add_point: missing actor_id"));
+    FHaybaParamReader ParamR(P, TEXT("spline_add_point"));
+    ActorId = ParamR.RequiredString(TEXT("actor_id"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     FVector Loc;
     if (!ReadVec(P, TEXT("location"), Loc))
@@ -140,8 +142,9 @@ FHaybaHandlerResult FHaybaMCPSplineHandler::SplineSetPoint(const TSharedPtr<FJso
     if (!World) return FHaybaHandlerResult::Err(TEXT("spline_set_point: no editor world"));
 
     FString ActorId;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId))
-        return FHaybaHandlerResult::Err(TEXT("spline_set_point: missing actor_id"));
+    FHaybaParamReader ParamR(P, TEXT("spline_set_point"));
+    ActorId = ParamR.RequiredString(TEXT("actor_id"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     int32 Index = 0;
     if (!P->TryGetNumberField(TEXT("index"), Index))
@@ -173,8 +176,9 @@ FHaybaHandlerResult FHaybaMCPSplineHandler::SplineRemovePoint(const TSharedPtr<F
     if (!World) return FHaybaHandlerResult::Err(TEXT("spline_remove_point: no editor world"));
 
     FString ActorId;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId))
-        return FHaybaHandlerResult::Err(TEXT("spline_remove_point: missing actor_id"));
+    FHaybaParamReader ParamR(P, TEXT("spline_remove_point"));
+    ActorId = ParamR.RequiredString(TEXT("actor_id"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     int32 Index = 0;
     if (!P->TryGetNumberField(TEXT("index"), Index))
@@ -202,8 +206,9 @@ FHaybaHandlerResult FHaybaMCPSplineHandler::SplineGetInfo(const TSharedPtr<FJson
     if (!World) return FHaybaHandlerResult::Err(TEXT("spline_get_info: no editor world"));
 
     FString ActorId;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId))
-        return FHaybaHandlerResult::Err(TEXT("spline_get_info: missing actor_id"));
+    FHaybaParamReader ParamR(P, TEXT("spline_get_info"));
+    ActorId = ParamR.RequiredString(TEXT("actor_id"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     AActor* Actor = FindActorByName(World, ActorId);
     if (!Actor) return FHaybaHandlerResult::Err(TEXT("spline_get_info: actor not found"));

@@ -524,7 +524,9 @@ static void EmitFunctionCallOutputs(UMaterialExpression* Expr, const TSharedRef<
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddNode(const TSharedPtr<FJsonObject>& P)
 {
     FString ExprClass;
-    if (!P->TryGetStringField(TEXT("expression_class"), ExprClass)) return FHaybaHandlerResult::Err(TEXT("material_add_node: missing expression_class"));
+    FHaybaParamReader ParamR(P, TEXT("material_add_node"));
+    ExprClass = ParamR.RequiredString(TEXT("expression_class"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UClass* ExprCls = FindFirstObjectSafe<UClass>(*ExprClass);
     if (!ExprCls) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_add_node: class not found: %s"), *ExprClass));
@@ -708,7 +710,9 @@ static FExpressionInput* ResolveToInput(UMaterialExpression* To, const FString& 
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<FJsonObject>& P)
 {
     FString FromNode;
-    if (!P->TryGetStringField(TEXT("from_node"), FromNode)) return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: missing from_node"));
+    FHaybaParamReader ParamR(P, TEXT("material_connect_nodes"));
+    FromNode = ParamR.RequiredString(TEXT("from_node"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     FString FromOutput;
     P->TryGetStringField(TEXT("from_output"), FromOutput); // "" => first output
@@ -863,7 +867,9 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetParam(const TSharedPtr<FJson
 {
     FString InstPath, ParamName;
     if (!HaybaParams::GetString(P, TEXT("instance_path"), InstPath)) return FHaybaHandlerResult::Err(TEXT("material_set_param: missing instance_path"));
-    if (!P->TryGetStringField(TEXT("param_name"), ParamName)) return FHaybaHandlerResult::Err(TEXT("material_set_param: missing param_name"));
+    FHaybaParamReader ParamR(P, TEXT("material_set_param"));
+    ParamName = ParamR.RequiredString(TEXT("param_name"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UMaterialInstanceConstant* MIC = LoadObject<UMaterialInstanceConstant>(nullptr, *InstPath);
     if (!MIC) return FHaybaHandlerResult::Err(TEXT("material_set_param: instance not found"));
@@ -1315,7 +1321,9 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatGetInfo(const TSharedPtr<FJsonO
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetNode(const TSharedPtr<FJsonObject>& P)
 {
     FString NodeId;
-    if (!P->TryGetStringField(TEXT("node_id"), NodeId)) return FHaybaHandlerResult::Err(TEXT("material_set_node: missing node_id"));
+    FHaybaParamReader ParamR(P, TEXT("material_set_node"));
+    NodeId = ParamR.RequiredString(TEXT("node_id"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     int32 X = 0, Y = 0; bool bHasPos = false;
     const TArray<TSharedPtr<FJsonValue>>* Pos;
@@ -1371,7 +1379,9 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetNode(const TSharedPtr<FJsonO
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDeleteNode(const TSharedPtr<FJsonObject>& P)
 {
     FString NodeId;
-    if (!P->TryGetStringField(TEXT("node_id"), NodeId)) return FHaybaHandlerResult::Err(TEXT("material_delete_node: missing node_id"));
+    FHaybaParamReader ParamR(P, TEXT("material_delete_node"));
+    NodeId = ParamR.RequiredString(TEXT("node_id"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     FString FuncPath;
     if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())

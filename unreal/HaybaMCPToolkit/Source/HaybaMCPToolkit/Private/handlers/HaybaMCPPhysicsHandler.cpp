@@ -1,4 +1,5 @@
 #include "HaybaMCPPhysicsHandler.h"
+#include "HaybaMCPParams.h"
 #include "Json.h"
 #include "Editor.h"
 #include "EngineUtils.h"
@@ -78,8 +79,9 @@ FHaybaHandlerResult FHaybaMCPPhysicsHandler::PhysicsSetSimulate(const TSharedPtr
     if (!World) return FHaybaHandlerResult::Err(TEXT("physics_set_simulate: no editor world"));
 
     FString ActorId;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId))
-        return FHaybaHandlerResult::Err(TEXT("physics_set_simulate: missing actor_id"));
+    FHaybaParamReader ParamR(P, TEXT("physics_set_simulate"));
+    ActorId = ParamR.RequiredString(TEXT("actor_id"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     bool bEnabled = false;
     if (!P->TryGetBoolField(TEXT("enabled"), bEnabled))
@@ -107,8 +109,9 @@ FHaybaHandlerResult FHaybaMCPPhysicsHandler::PhysicsSetCollisionProfile(const TS
     if (!World) return FHaybaHandlerResult::Err(TEXT("physics_set_collision_profile: no editor world"));
 
     FString ActorId;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId))
-        return FHaybaHandlerResult::Err(TEXT("physics_set_collision_profile: missing actor_id"));
+    FHaybaParamReader ParamR(P, TEXT("physics_set_collision_profile"));
+    ActorId = ParamR.RequiredString(TEXT("actor_id"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     FString Profile;
     if (!P->TryGetStringField(TEXT("profile_name"), Profile) || Profile.IsEmpty())
@@ -135,8 +138,9 @@ FHaybaHandlerResult FHaybaMCPPhysicsHandler::PhysicsAddImpulse(const TSharedPtr<
     if (!World) return FHaybaHandlerResult::Err(TEXT("physics_add_impulse: no editor world"));
 
     FString ActorId;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId))
-        return FHaybaHandlerResult::Err(TEXT("physics_add_impulse: missing actor_id"));
+    FHaybaParamReader ParamR(P, TEXT("physics_add_impulse"));
+    ActorId = ParamR.RequiredString(TEXT("actor_id"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     FVector Impulse;
     if (!ReadVec(P, TEXT("impulse"), Impulse))

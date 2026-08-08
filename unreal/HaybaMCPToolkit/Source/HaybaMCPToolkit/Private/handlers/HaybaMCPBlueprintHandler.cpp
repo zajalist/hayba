@@ -1,4 +1,5 @@
 #include "HaybaMCPBlueprintHandler.h"
+#include "HaybaMCPParams.h"
 #include "HaybaMCPReflection.h"
 #include "Json.h"
 #include "Editor.h"
@@ -265,9 +266,11 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::GetInfo(const TSharedPtr<FJsonObj
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddComponent(const TSharedPtr<FJsonObject>& P)
 {
     FString Path, CompClassPath, CompName;
-    if (!P->TryGetStringField(TEXT("path"), Path)) return FHaybaHandlerResult::Err(TEXT("blueprint_add_component: missing path"));
-    if (!P->TryGetStringField(TEXT("component_class_path"), CompClassPath)) return FHaybaHandlerResult::Err(TEXT("blueprint_add_component: missing component_class_path"));
-    if (!P->TryGetStringField(TEXT("component_name"), CompName)) return FHaybaHandlerResult::Err(TEXT("blueprint_add_component: missing component_name"));
+    FHaybaParamReader ParamR(P, TEXT("blueprint_add_component"));
+    Path = ParamR.RequiredString(TEXT("path"));
+    CompClassPath = ParamR.RequiredString(TEXT("component_class_path"));
+    CompName = ParamR.RequiredString(TEXT("component_name"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UBlueprint* BP = LoadBPByPath(Path);
     if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_add_component: blueprint not found"));
@@ -293,9 +296,11 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddComponent(const TSharedPtr<FJs
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddVariable(const TSharedPtr<FJsonObject>& P)
 {
     FString Path, VarName, VarType;
-    if (!P->TryGetStringField(TEXT("path"), Path)) return FHaybaHandlerResult::Err(TEXT("blueprint_add_variable: missing path"));
-    if (!P->TryGetStringField(TEXT("variable_name"), VarName)) return FHaybaHandlerResult::Err(TEXT("blueprint_add_variable: missing variable_name"));
-    if (!P->TryGetStringField(TEXT("variable_type"), VarType)) return FHaybaHandlerResult::Err(TEXT("blueprint_add_variable: missing variable_type"));
+    FHaybaParamReader ParamR(P, TEXT("blueprint_add_variable"));
+    Path = ParamR.RequiredString(TEXT("path"));
+    VarName = ParamR.RequiredString(TEXT("variable_name"));
+    VarType = ParamR.RequiredString(TEXT("variable_type"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UBlueprint* BP = LoadBPByPath(Path);
     if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_add_variable: blueprint not found"));
@@ -326,8 +331,10 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddVariable(const TSharedPtr<FJso
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddFunction(const TSharedPtr<FJsonObject>& P)
 {
     FString Path, FuncName;
-    if (!P->TryGetStringField(TEXT("path"), Path)) return FHaybaHandlerResult::Err(TEXT("blueprint_add_function: missing path"));
-    if (!P->TryGetStringField(TEXT("function_name"), FuncName)) return FHaybaHandlerResult::Err(TEXT("blueprint_add_function: missing function_name"));
+    FHaybaParamReader ParamR(P, TEXT("blueprint_add_function"));
+    Path = ParamR.RequiredString(TEXT("path"));
+    FuncName = ParamR.RequiredString(TEXT("function_name"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UBlueprint* BP = LoadBPByPath(Path);
     if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_add_function: blueprint not found"));
@@ -551,14 +558,12 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetPinDefault(const TSharedPtr<FJ
     // which subsystem class to fetch, a format string, a flag. Without this, a graph can be
     // built and wired and still do nothing useful.
     FString Path, NodeId, PinName, Value, GraphName;
-    if (!P->TryGetStringField(TEXT("path"), Path))
-        return FHaybaHandlerResult::Err(TEXT("blueprint_set_pin_default: missing path"));
-    if (!P->TryGetStringField(TEXT("node_id"), NodeId))
-        return FHaybaHandlerResult::Err(TEXT("blueprint_set_pin_default: missing node_id"));
-    if (!P->TryGetStringField(TEXT("pin_name"), PinName))
-        return FHaybaHandlerResult::Err(TEXT("blueprint_set_pin_default: missing pin_name"));
-    if (!P->TryGetStringField(TEXT("value"), Value))
-        return FHaybaHandlerResult::Err(TEXT("blueprint_set_pin_default: missing value"));
+    FHaybaParamReader ParamR(P, TEXT("blueprint_set_pin_default"));
+    Path = ParamR.RequiredString(TEXT("path"));
+    NodeId = ParamR.RequiredString(TEXT("node_id"));
+    PinName = ParamR.RequiredString(TEXT("pin_name"));
+    Value = ParamR.RequiredString(TEXT("value"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
     P->TryGetStringField(TEXT("graph_name"), GraphName);
 
     UBlueprint* BP = LoadBPByPath(Path);
@@ -633,8 +638,9 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetPinDefault(const TSharedPtr<FJ
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::ConnectNodes(const TSharedPtr<FJsonObject>& P)
 {
     FString Path, FromId, FromPin, ToId, ToPin, GraphName;
-    if (!P->TryGetStringField(TEXT("path"), Path))
-        return FHaybaHandlerResult::Err(TEXT("blueprint_connect_nodes: missing path"));
+    FHaybaParamReader ParamR(P, TEXT("blueprint_connect_nodes"));
+    Path = ParamR.RequiredString(TEXT("path"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
     if (!P->TryGetStringField(TEXT("from_node"), FromId) || !P->TryGetStringField(TEXT("to_node"), ToId))
         return FHaybaHandlerResult::Err(TEXT("blueprint_connect_nodes: missing from_node / to_node"));
     if (!P->TryGetStringField(TEXT("from_pin"), FromPin) || !P->TryGetStringField(TEXT("to_pin"), ToPin))
@@ -693,7 +699,9 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::ConnectNodes(const TSharedPtr<FJs
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::Compile(const TSharedPtr<FJsonObject>& P)
 {
     FString Path;
-    if (!P->TryGetStringField(TEXT("path"), Path)) return FHaybaHandlerResult::Err(TEXT("blueprint_compile: missing path"));
+    FHaybaParamReader ParamR(P, TEXT("blueprint_compile"));
+    Path = ParamR.RequiredString(TEXT("path"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
     UBlueprint* BP = LoadBPByPath(Path);
     if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_compile: blueprint not found"));
 
@@ -749,7 +757,9 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Compile(const TSharedPtr<FJsonObj
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::Document(const TSharedPtr<FJsonObject>& P)
 {
     FString Path;
-    if (!P->TryGetStringField(TEXT("path"), Path)) return FHaybaHandlerResult::Err(TEXT("blueprint_document: missing path"));
+    FHaybaParamReader ParamR(P, TEXT("blueprint_document"));
+    Path = ParamR.RequiredString(TEXT("path"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
     UBlueprint* BP = LoadBPByPath(Path);
     if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_document: blueprint not found"));
 
@@ -806,8 +816,9 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddEvent(const TSharedPtr<FJsonOb
     // idempotent: an event that already exists in the graph is returned rather than duplicated,
     // because two Construct nodes is a compile error, not a second entry point.
     FString Path, EventName, GraphName;
-    if (!P->TryGetStringField(TEXT("path"), Path))
-        return FHaybaHandlerResult::Err(TEXT("blueprint_add_event: missing path"));
+    FHaybaParamReader ParamR(P, TEXT("blueprint_add_event"));
+    Path = ParamR.RequiredString(TEXT("path"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
     if (!P->TryGetStringField(TEXT("event_name"), EventName))
         return FHaybaHandlerResult::Err(TEXT("blueprint_add_event: missing event_name (e.g. \"Construct\", \"Tick\")"));
     P->TryGetStringField(TEXT("graph_name"), GraphName);
@@ -864,7 +875,9 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddEvent(const TSharedPtr<FJsonOb
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetDefaults(const TSharedPtr<FJsonObject>& P)
 {
     FString Path;
-    if (!P->TryGetStringField(TEXT("path"), Path)) return FHaybaHandlerResult::Err(TEXT("blueprint_set_defaults: missing path"));
+    FHaybaParamReader ParamR(P, TEXT("blueprint_set_defaults"));
+    Path = ParamR.RequiredString(TEXT("path"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
     const TSharedPtr<FJsonObject>* PropsObj;
     if (!P->TryGetObjectField(TEXT("properties"), PropsObj) || !PropsObj->IsValid())
         return FHaybaHandlerResult::Err(TEXT("blueprint_set_defaults: missing properties"));

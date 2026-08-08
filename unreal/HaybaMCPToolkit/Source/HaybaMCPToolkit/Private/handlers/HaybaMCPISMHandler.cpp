@@ -1,4 +1,5 @@
 #include "HaybaMCPISMHandler.h"
+#include "HaybaMCPParams.h"
 #include "Json.h"
 #include "Editor.h"
 #include "EngineUtils.h"
@@ -116,8 +117,9 @@ FHaybaHandlerResult FHaybaMCPISMHandler::IsmAddInstance(const TSharedPtr<FJsonOb
     if (!World) return FHaybaHandlerResult::Err(TEXT("ism_add_instance: no editor world"));
 
     FString ActorId;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId))
-        return FHaybaHandlerResult::Err(TEXT("ism_add_instance: missing actor_id"));
+    FHaybaParamReader ParamR(P, TEXT("ism_add_instance"));
+    ActorId = ParamR.RequiredString(TEXT("actor_id"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     const TSharedPtr<FJsonObject>* TransformObj;
     if (!P->TryGetObjectField(TEXT("transform"), TransformObj))
@@ -142,8 +144,9 @@ FHaybaHandlerResult FHaybaMCPISMHandler::IsmAddInstances(const TSharedPtr<FJsonO
     if (!World) return FHaybaHandlerResult::Err(TEXT("ism_add_instances: no editor world"));
 
     FString ActorId;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId))
-        return FHaybaHandlerResult::Err(TEXT("ism_add_instances: missing actor_id"));
+    FHaybaParamReader ParamR(P, TEXT("ism_add_instances"));
+    ActorId = ParamR.RequiredString(TEXT("actor_id"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     const TArray<TSharedPtr<FJsonValue>>* Arr;
     if (!P->TryGetArrayField(TEXT("transforms"), Arr))
@@ -176,8 +179,9 @@ FHaybaHandlerResult FHaybaMCPISMHandler::IsmClearInstances(const TSharedPtr<FJso
     if (!World) return FHaybaHandlerResult::Err(TEXT("ism_clear_instances: no editor world"));
 
     FString ActorId;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId))
-        return FHaybaHandlerResult::Err(TEXT("ism_clear_instances: missing actor_id"));
+    FHaybaParamReader ParamR(P, TEXT("ism_clear_instances"));
+    ActorId = ParamR.RequiredString(TEXT("actor_id"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     AActor* Actor = FindActorByName(World, ActorId);
     if (!Actor) return FHaybaHandlerResult::Err(TEXT("ism_clear_instances: actor not found"));

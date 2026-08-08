@@ -227,8 +227,9 @@ FHaybaHandlerResult FHaybaMCPActorHandler::List(const TSharedPtr<FJsonObject>& P
 FHaybaHandlerResult FHaybaMCPActorHandler::GetProps(const TSharedPtr<FJsonObject>& P)
 {
     FString ActorId;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId))
-        return FHaybaHandlerResult::Err(TEXT("actor_get_properties: missing actor_id"));
+    FHaybaParamReader ParamR(P, TEXT("actor_get_properties"));
+    ActorId = ParamR.RequiredString(TEXT("actor_id"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     AActor* Actor = FindActorByName(World, ActorId);
@@ -258,8 +259,9 @@ FHaybaHandlerResult FHaybaMCPActorHandler::GetProps(const TSharedPtr<FJsonObject
 FHaybaHandlerResult FHaybaMCPActorHandler::SetProps(const TSharedPtr<FJsonObject>& P)
 {
     FString ActorId;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId))
-        return FHaybaHandlerResult::Err(TEXT("actor_set_properties: missing actor_id"));
+    FHaybaParamReader ParamR(P, TEXT("actor_set_properties"));
+    ActorId = ParamR.RequiredString(TEXT("actor_id"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     const TSharedPtr<FJsonObject>* PropsObj;
     if (!P->TryGetObjectField(TEXT("properties"), PropsObj) || !PropsObj->IsValid())
@@ -323,8 +325,9 @@ FHaybaHandlerResult FHaybaMCPActorHandler::SetProps(const TSharedPtr<FJsonObject
 FHaybaHandlerResult FHaybaMCPActorHandler::Tag(const TSharedPtr<FJsonObject>& P)
 {
     FString ActorId;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId))
-        return FHaybaHandlerResult::Err(TEXT("actor_tag: missing actor_id"));
+    FHaybaParamReader ParamR(P, TEXT("actor_tag"));
+    ActorId = ParamR.RequiredString(TEXT("actor_id"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     AActor* Actor = FindActorByName(World, ActorId);
@@ -405,8 +408,9 @@ FHaybaHandlerResult FHaybaMCPActorHandler::SnapToSocket(const TSharedPtr<FJsonOb
 FHaybaHandlerResult FHaybaMCPActorHandler::Duplicate(const TSharedPtr<FJsonObject>& P)
 {
     FString ActorId;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId))
-        return FHaybaHandlerResult::Err(TEXT("actor_duplicate: missing actor_id"));
+    FHaybaParamReader ParamR(P, TEXT("actor_duplicate"));
+    ActorId = ParamR.RequiredString(TEXT("actor_id"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     AActor* Actor = FindActorByName(World, ActorId);
@@ -439,8 +443,9 @@ FHaybaHandlerResult FHaybaMCPActorHandler::Duplicate(const TSharedPtr<FJsonObjec
 FHaybaHandlerResult FHaybaMCPActorHandler::SetVisibility(const TSharedPtr<FJsonObject>& P)
 {
     FString ActorId;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId))
-        return FHaybaHandlerResult::Err(TEXT("actor_set_visibility: missing actor_id"));
+    FHaybaParamReader ParamR(P, TEXT("actor_set_visibility"));
+    ActorId = ParamR.RequiredString(TEXT("actor_id"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     bool bVisible = true;
     P->TryGetBoolField(TEXT("visible"), bVisible);
@@ -465,8 +470,9 @@ FHaybaHandlerResult FHaybaMCPActorHandler::SetVisibility(const TSharedPtr<FJsonO
 FHaybaHandlerResult FHaybaMCPActorHandler::GetComponents(const TSharedPtr<FJsonObject>& P)
 {
     FString ActorId;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId))
-        return FHaybaHandlerResult::Err(TEXT("actor_get_components: missing actor_id"));
+    FHaybaParamReader ParamR(P, TEXT("actor_get_components"));
+    ActorId = ParamR.RequiredString(TEXT("actor_id"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     AActor* Actor = FindActorByName(World, ActorId);

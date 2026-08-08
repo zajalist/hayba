@@ -1,4 +1,5 @@
 #include "HaybaMCPSceneGraphHandler.h"
+#include "HaybaMCPParams.h"
 #include "Editor.h"
 #include "EngineUtils.h"
 #include "GameFramework/Actor.h"
@@ -435,8 +436,9 @@ FHaybaHandlerResult FHaybaMCPSceneGraphHandler::ValidatePhysics(const TSharedPtr
 FHaybaHandlerResult FHaybaMCPSceneGraphHandler::GetActorRelations(const TSharedPtr<FJsonObject>& P)
 {
     FString ActorId;
-    if (!P->TryGetStringField(TEXT("actor_id"), ActorId))
-        return FHaybaHandlerResult::Err(TEXT("scene_get_actor_relations: missing actor_id"));
+    FHaybaParamReader ParamR(P, TEXT("scene_get_actor_relations"));
+    ActorId = ParamR.RequiredString(TEXT("actor_id"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     double RadiusDbl = 2000.0;
     P->TryGetNumberField(TEXT("radius"), RadiusDbl);

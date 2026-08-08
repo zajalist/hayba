@@ -2622,8 +2622,9 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleListWidgetBlueprints(const TShared
 FHaybaHandlerResult FHaybaMCPUIHandler::HandleMeasureText(const TSharedPtr<FJsonObject>& P)
 {
     FString Text;
-    if (!P->TryGetStringField(TEXT("text"), Text))
-        return FHaybaHandlerResult::Err(TEXT("ui_measure_text: missing text"));
+    FHaybaParamReader ParamR(P, TEXT("ui_measure_text"));
+    Text = ParamR.RequiredString(TEXT("text"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     double AvailableWidth = 0.0;
     P->TryGetNumberField(TEXT("available_width"), AvailableWidth);

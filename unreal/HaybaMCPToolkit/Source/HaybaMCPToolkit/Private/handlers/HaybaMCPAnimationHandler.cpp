@@ -1,4 +1,5 @@
 #include "HaybaMCPAnimationHandler.h"
+#include "HaybaMCPParams.h"
 
 #include "Animation/AnimBlueprint.h"
 #include "Animation/AnimBlueprintGeneratedClass.h"
@@ -192,8 +193,9 @@ FHaybaHandlerResult FHaybaMCPAnimationHandler::AddState(const TSharedPtr<FJsonOb
     FString Path, SMName, NewState;
     if (!P.IsValid() || !P->TryGetStringField(TEXT("path"), Path))
         return FHaybaHandlerResult::Err(TEXT("anim_blueprint_add_state: missing path"));
-    if (!P->TryGetStringField(TEXT("state_machine_name"), SMName))
-        return FHaybaHandlerResult::Err(TEXT("anim_blueprint_add_state: missing state_machine_name"));
+    FHaybaParamReader ParamR(P, TEXT("anim_blueprint_add_state"));
+    SMName = ParamR.RequiredString(TEXT("state_machine_name"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
     if (!P->TryGetStringField(TEXT("new_state_name"), NewState) || NewState.IsEmpty())
         return FHaybaHandlerResult::Err(TEXT("anim_blueprint_add_state: missing new_state_name"));
 
@@ -256,10 +258,10 @@ FHaybaHandlerResult FHaybaMCPAnimationHandler::AddTransition(const TSharedPtr<FJ
     if (!P.IsValid() || !P->TryGetStringField(TEXT("path"), Path))
         return FHaybaHandlerResult::Err(TEXT("anim_blueprint_add_transition: missing path"));
     P->TryGetStringField(TEXT("state_machine_name"), SMName);   // optional — we can search by state name
-    if (!P->TryGetStringField(TEXT("from_state"), FromName))
-        return FHaybaHandlerResult::Err(TEXT("anim_blueprint_add_transition: missing from_state"));
-    if (!P->TryGetStringField(TEXT("to_state"), ToName))
-        return FHaybaHandlerResult::Err(TEXT("anim_blueprint_add_transition: missing to_state"));
+    FHaybaParamReader ParamR(P, TEXT("anim_blueprint_add_transition"));
+    FromName = ParamR.RequiredString(TEXT("from_state"));
+    ToName = ParamR.RequiredString(TEXT("to_state"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UAnimBlueprint* BP = LoadAnimBPByPath(Path);
     if (!BP) return FHaybaHandlerResult::Err(TEXT("anim_blueprint_add_transition: anim blueprint not found"));
@@ -312,8 +314,9 @@ FHaybaHandlerResult FHaybaMCPAnimationHandler::SetCondition(const TSharedPtr<FJs
     FString Path, Expr;
     if (!P.IsValid() || !P->TryGetStringField(TEXT("path"), Path))
         return FHaybaHandlerResult::Err(TEXT("anim_blueprint_set_condition: missing path"));
-    if (!P->TryGetStringField(TEXT("condition_expression"), Expr))
-        return FHaybaHandlerResult::Err(TEXT("anim_blueprint_set_condition: missing condition_expression"));
+    FHaybaParamReader ParamR(P, TEXT("anim_blueprint_set_condition"));
+    Expr = ParamR.RequiredString(TEXT("condition_expression"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     // Caller may supply either explicit transition_id (UEdGraphNode name) or
     // a from_state/to_state pair (preferred).
