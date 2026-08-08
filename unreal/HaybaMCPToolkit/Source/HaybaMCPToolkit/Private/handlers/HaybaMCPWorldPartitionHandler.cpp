@@ -117,15 +117,38 @@ FHaybaHandlerResult FHaybaMCPWorldPartitionHandler::WpGetCells(const TSharedPtr<
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetArrayField(TEXT("cells"), CellArr);
     Out->SetNumberField(TEXT("total"), Cells.Num());
+    // These are NOT the World Partition's runtime cells. They are actor
+    // locations binned onto a fixed grid by this handler — a useful spatial
+    // summary, and a different thing entirely, since the real grid size and
+    // cell bounds come from the partition config. A caller had no way to know
+    // which of the two it was holding.
+    Out->SetStringField(TEXT("cell_source"), TEXT("computed_grid"));
+    Out->SetNumberField(TEXT("grid_size_cm"), CellSize);
+    Out->SetStringField(TEXT("cell_source_note"),
+        TEXT("Cells are computed by binning actor locations onto a fixed grid in this handler, "
+             "NOT read from the World Partition runtime hash — cell ids and bounds will not match "
+             "the partition's own cells."));
+    if (Cells.Num() > Emitted)
+    {
+        // The 100-cell cap was silent: `total` disagreed with the array length
+        // and nothing said why.
+        Out->SetNumberField(TEXT("returned"), Emitted);
+        Out->SetBoolField(TEXT("truncated"), true);
+    }
     return FHaybaHandlerResult::Ok(Out);
 }
 
 FHaybaHandlerResult FHaybaMCPWorldPartitionHandler::WpLoadCell(const TSharedPtr<FJsonObject>& P)
 {
-    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-    Out->SetBoolField(TEXT("loaded"), false);
-    Out->SetStringField(TEXT("reason"), TEXT("interactive_loading_only"));
-    return FHaybaHandlerResult::Ok(Out);
+    // Same family as the source_count fix above: this returned Ok with
+    // loaded:false for every call it has ever received. An unconditional no-op
+    // reporting success is worse than an unimplemented command — a caller loops
+    // over cells, gets ok every time, and concludes the world is loaded. It
+    // never loads anything, so it now says so.
+    return FHaybaHandlerResult::Err(TEXT(
+        "wp_load_cell: not implemented — World Partition cell loading is interactive-only in the editor. "
+        "There is no programmatic path here yet; load the region in the editor, or use wp_get_cells to see "
+        "what exists without loading it."));
 }
 
 FHaybaHandlerResult FHaybaMCPWorldPartitionHandler::WpGetStreamingState(const TSharedPtr<FJsonObject>& P)

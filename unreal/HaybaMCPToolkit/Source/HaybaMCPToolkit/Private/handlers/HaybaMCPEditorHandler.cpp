@@ -504,10 +504,28 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::StreamLog(const TSharedPtr<FJsonObje
 
 FHaybaHandlerResult FHaybaMCPEditorHandler::LiveCompile(const TSharedPtr<FJsonObject>& P)
 {
-    // Hot Reload was removed in UE 5.4+; Live Coding replaces it but its public C++ API is limited.
+    // This returned Ok with compile_started:false and "programmatic trigger not
+    // exposed in UE 5.4+". That reason was wrong: the LiveCoding.Compile console
+    // command triggers it, and it is the route WORKFLOW-improving-the-mcp.md has
+    // told agents to use through editor_run_console_command all along. The
+    // command that exists for this job was the only thing refusing to do it.
+    if (!GEngine)
+        return FHaybaHandlerResult::Err(TEXT("editor_live_compile: GEngine not available"));
+
+    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    GEngine->Exec(World, TEXT("LiveCoding.Compile"), *GLog);
+
     TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject());
-    Result->SetBoolField(TEXT("compile_started"), false);
-    Result->SetStringField(TEXT("reason"), TEXT("Use Live Coding (Ctrl+Alt+F11) — programmatic trigger not exposed in UE 5.4+"));
+    // "Requested", not "succeeded". The compile runs asynchronously in
+    // LiveCodingConsole and its outcome never comes back through this call, so
+    // claiming a result here would be precisely the lie this codebase keeps
+    // finding in its own replies.
+    Result->SetBoolField(TEXT("compile_requested"), true);
+    Result->SetStringField(TEXT("result_source"),
+        TEXT("asynchronous — poll the editor log for 'Live coding succeeded' or 'LogLiveCoding: Error', "
+             "matching on a COUNT of those lines rather than presence, since earlier runs are still in the file. "
+             "Compile ERRORS are not in the editor log at all; they are in UnrealBuildTool\\Log.txt."));
+    Result->SetStringField(TEXT("log_dir"), FPaths::ConvertRelativePathToFull(FPaths::ProjectLogDir()));
     return FHaybaHandlerResult::Ok(Result);
 }
 
