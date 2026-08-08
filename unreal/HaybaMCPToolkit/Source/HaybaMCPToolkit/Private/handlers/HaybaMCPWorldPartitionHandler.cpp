@@ -139,6 +139,10 @@ FHaybaHandlerResult FHaybaMCPWorldPartitionHandler::WpGetStreamingState(const TS
     }
     UWorldPartition* WP = World->GetWorldPartition();
     Out->SetBoolField(TEXT("enabled"), WP != nullptr);
-    Out->SetNumberField(TEXT("source_count"), 0);
+    // `source_count` used to be reported here as a hard-coded 0. A field named
+    // for a measurement, always answering zero, is worse than no field: it reads
+    // as "measured, and there are none". Streaming sources are not enumerated
+    // here, so the reply says that instead of inventing a number.
+    Out->SetStringField(TEXT("streaming_sources"), TEXT("not_enumerated"));
     return FHaybaHandlerResult::Ok(Out);
 }

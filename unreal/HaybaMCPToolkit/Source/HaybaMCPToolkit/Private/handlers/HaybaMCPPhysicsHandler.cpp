@@ -127,8 +127,22 @@ FHaybaHandlerResult FHaybaMCPPhysicsHandler::PhysicsSetCollisionProfile(const TS
 
     Prim->SetCollisionProfileName(FName(*Profile));
 
+    // Read the profile back rather than echoing the request. An unrecognised
+    // profile name leaves the component on whatever it had, and the old reply —
+    // the requested name, unconditionally — was indistinguishable from success.
+    const FString Applied = Prim->GetCollisionProfileName().ToString();
+
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-    Out->SetStringField(TEXT("profile"), Profile);
+    Out->SetStringField(TEXT("component"), Prim->GetName());
+    Out->SetStringField(TEXT("requested_profile"), Profile);
+    Out->SetStringField(TEXT("profile"), Applied);
+    if (!Applied.Equals(Profile, ESearchCase::IgnoreCase))
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("physics_set_collision_profile: '%s' is not a known collision profile — the component is still on '%s'. "
+                 "Profiles come from the project's Collision settings (DefaultEngine.ini), e.g. BlockAll, OverlapAll, NoCollision, Pawn."),
+            *Profile, *Applied));
+    }
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -157,9 +171,30 @@ FHaybaHandlerResult FHaybaMCPPhysicsHandler::PhysicsAddImpulse(const TSharedPtr<
     UPrimitiveComponent* Prim = ResolvePrim(Actor, ComponentName);
     if (!Prim) return FHaybaHandlerResult::Err(TEXT("physics_add_impulse: no primitive component"));
 
+    // An impulse on a component that is not simulating physics is discarded by
+    // the engine without complaint. `applied: true` was therefore true of the
+    // call and false of the world — the shape this codebase keeps getting bitten
+    // by. Refuse instead, and say what to do about it.
+    if (!Prim->IsSimulatingPhysics())
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("physics_add_impulse: '%s' on '%s' is not simulating physics, so an impulse would be discarded. "
+                 "Call physics_set_simulate with enabled:true first."),
+            *Prim->GetName(), *Actor->GetName()));
+    }
+
     Prim->AddImpulse(Impulse, NAME_None, bVelocityChange);
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetBoolField(TEXT("applied"), true);
+    Out->SetStringField(TEXT("component"), Prim->GetName());
+    // The resulting velocity is the observable effect; a caller can compare it
+    // against what it asked for instead of trusting a bare boolean.
+    const FVector V = Prim->GetPhysicsLinearVelocity();
+    TSharedPtr<FJsonObject> Vel = MakeShared<FJsonObject>();
+    Vel->SetNumberField(TEXT("x"), V.X);
+    Vel->SetNumberField(TEXT("y"), V.Y);
+    Vel->SetNumberField(TEXT("z"), V.Z);
+    Out->SetObjectField(TEXT("linear_velocity_after"), Vel);
     return FHaybaHandlerResult::Ok(Out);
 }

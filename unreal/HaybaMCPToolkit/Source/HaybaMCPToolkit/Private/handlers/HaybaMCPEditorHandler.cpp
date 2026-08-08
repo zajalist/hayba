@@ -518,8 +518,13 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::GetPerformanceStats(const TSharedPtr
     TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject());
     Result->SetNumberField(TEXT("fps"), GAverageFPS);
     Result->SetNumberField(TEXT("frame_ms"), GAverageMS);
-    Result->SetNumberField(TEXT("render_thread_ms"), GRenderThreadTime);
-    Result->SetNumberField(TEXT("game_thread_ms"), GGameThreadTime);
+    // GRenderThreadTime and GGameThreadTime are CYCLE COUNTS, not milliseconds.
+    // Reported raw under a name ending in _ms they read as a catastrophically
+    // slow editor — a live capture showed game_thread_ms: 281961 next to
+    // frame_ms: 333, two numbers that cannot both be true. The unit was the lie,
+    // not the measurement.
+    Result->SetNumberField(TEXT("render_thread_ms"), FPlatformTime::ToMilliseconds(GRenderThreadTime));
+    Result->SetNumberField(TEXT("game_thread_ms"), FPlatformTime::ToMilliseconds(GGameThreadTime));
     return FHaybaHandlerResult::Ok(Result);
 }
 
