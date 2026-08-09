@@ -36,6 +36,15 @@ const HEAVY_OPS = new Set<string>([
   // Asset re-index — a full asset-registry rescan / embedding rebuild.
   'hayba_asset_reindex',
   'asset_reindex',
+  // Widget tree mutation — on a large Widget Blueprint (dozens of widgets)
+  // remove/move/reparent/rename/replace/duplicate can block the game thread
+  // long enough to blow the medium (10s) cost tier while the mutation itself
+  // succeeds (issue #338: ui_remove_element timed out on a ~60-widget tree
+  // AFTER the removal had already landed). Every ui_*_element tool funnels
+  // through this single wire command (see tool-executor.ts NON_IDEMPOTENT and
+  // src/tools/ui/*.ts), so registering it here covers all of them at once —
+  // no per-tool timeout to keep in sync.
+  'ui_mutate_tree',
 ]);
 
 /** Register an additional command as a heavy (game-thread-blocking) op. */

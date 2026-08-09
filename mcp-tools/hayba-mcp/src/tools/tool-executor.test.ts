@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { UeToolError, costToTimeoutMs, executeCommand, NON_IDEMPOTENT, type Sender } from './tool-executor.js';
+import { UeToolError, costToTimeoutMs, executeCommand, resolveTimeoutMs, NON_IDEMPOTENT, type Sender } from './tool-executor.js';
 import { HEAVY_OP_TIMEOUT_MS, addHeavyOp, isHeavyOp, listHeavyOps, removeHeavyOp } from './heavy-ops.js';
 
 // Keep the "editor busy" tests hermetic: the real probe shells out to
@@ -221,6 +221,24 @@ describe('heavy-ops registry', () => {
     expect(listHeavyOps()).toContain('my_custom_blocking_op');
     // Don't leak this runtime registration into other suites.
     removeHeavyOp('my_custom_blocking_op');
+  });
+});
+
+describe('ui_mutate_tree timeout tier (issue #338)', () => {
+  it('is registered as a heavy op, not the medium cost tier', () => {
+    expect(isHeavyOp('ui_mutate_tree')).toBe(true);
+  });
+
+  it('resolves to the 300s heavy timeout, not the 10s medium default', () => {
+    expect(resolveTimeoutMs('ui_mutate_tree')).toBe(HEAVY_OP_TIMEOUT_MS);
+    expect(resolveTimeoutMs('ui_mutate_tree')).not.toBe(costToTimeoutMs('medium'));
+  });
+
+  it('every ui_*_element tool funnels through the ui_mutate_tree wire command that carries this tier', async () => {
+    const seen: number[] = [];
+    const spy: Sender = async (_c, _p, t) => { seen.push(t); return { id: 't', ok: true, data: {} }; };
+    await executeCommand('ui_mutate_tree', { operation: 'remove' }, { sender: spy });
+    expect(seen[0]).toBe(HEAVY_OP_TIMEOUT_MS);
   });
 });
 
