@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { ToolHandler } from '../types.js';
 import { ueTool } from '../ue-tool.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
+import { TOOL_ALIASES } from '../tool-aliases.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'low',
@@ -38,4 +39,4 @@ export const schema = z.object({
     .describe('Return the flat `matches` list even when no filter is given.'),
 });
 
-export const uiQueryHandler: ToolHandler = ueTool('ui_query', schema);
+export const uiQueryHandler: ToolHandler = ueTool('ui_query', schema, TOOL_ALIASES.ui_query);

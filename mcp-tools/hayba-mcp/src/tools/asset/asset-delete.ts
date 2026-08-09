@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { ToolHandler } from '../types.js';
 import { ueTool } from '../ue-tool.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
+import { TOOL_ALIASES } from '../tool-aliases.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'low',
@@ -22,4 +23,4 @@ export const schema = z
     message: 'give `path` (string) or `paths` (array of strings)',
   });
 
-export const assetDeleteHandler: ToolHandler = ueTool('asset_delete', schema);
+export const assetDeleteHandler: ToolHandler = ueTool('asset_delete', schema, TOOL_ALIASES.asset_delete);

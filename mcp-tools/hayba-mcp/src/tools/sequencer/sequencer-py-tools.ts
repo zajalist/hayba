@@ -93,6 +93,7 @@ import { z } from 'zod';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 import { pyStr } from '../ue-python.js';
 import type { PyToolDescriptor } from '../py-tool-factory.js';
+import { TOOL_ALIASES } from '../tool-aliases.js';
 
 // ── Shared Python helpers: load + validate a LevelSequence, rate/frame math,
 //    actor lookup, binding lookup by GUID ─────────────────────────────────────
@@ -213,6 +214,7 @@ export const seqNewDescriptor: PyToolDescriptor<typeof seqNewSchema.shape> = {
   cost: 'medium',
   returns: '{ok, asset_path, name, created, frame_rate?, dry_run?}',
   schema: seqNewSchema.shape,
+  aliases: TOOL_ALIASES.seq_new,
   meta: writeMeta,
   buildScript: seqNewScript,
   timeoutMs: 30_000,

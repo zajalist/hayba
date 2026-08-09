@@ -7,6 +7,8 @@ import { executeCommand } from '../tool-executor.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 import { scanPythonForCrashers, crashGuardMessage } from '../guards/known-crashers.js';
 import { errorResult } from '../tool-result.js';
+import { resolveAliases } from '../param-aliases.js';
+import { TOOL_ALIASES } from '../tool-aliases.js';
 
 /**
  * When python_run output exceeds this many characters, spill the full payload
@@ -64,7 +66,11 @@ export function wrapScriptForPrintRedirect(userScript: string): string {
 }
 
 export const pythonRunHandler: ToolHandler = async (args) => {
-  const parsed = schema.safeParse(args);
+  const resolved = resolveAliases(args, TOOL_ALIASES.python_run);
+  if (!resolved.ok) {
+    return errorResult(`Validation error: ${resolved.error}`);
+  }
+  const parsed = schema.safeParse(resolved.args);
   if (!parsed.success) {
     return errorResult(`Validation error: ${parsed.error.message}`);
   }

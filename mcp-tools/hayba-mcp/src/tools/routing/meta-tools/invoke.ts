@@ -1,6 +1,8 @@
 import { z, type ZodRawShape } from 'zod';
 import { getRawShape } from '../../schema-registry.js';
 import { listAgentCallableLegacyCommands } from '../../../legacy-commands/index.js';
+import { resolveAliases } from '../../param-aliases.js';
+import { TOOL_ALIASES } from '../../tool-aliases.js';
 
 /**
  * Built once at module load from sidecar.json. Every entry with
@@ -48,6 +50,26 @@ export async function invokeHandler(
   if (ctx.isDisabled(args.name)) {
     return { ok: false, error: { kind: 'tool_disabled', name: args.name } };
   }
+
+  // Fold historical/expected param-name aliases onto their canonical key
+  // before ANY dispatch route sees the args — see param-aliases.ts / issue
+  // #339. Applies uniformly to the legacy route (no zod schema to normalise
+  // against downstream) and the ts route (normalised BEFORE the strict parse
+  // below, so the canonical shape used for that parse — and for
+  // get_tool_signature's docs — never changes).
+  const toolAliases = TOOL_ALIASES[args.name];
+  let rawArgs = args.args ?? {};
+  if (toolAliases) {
+    const resolved = resolveAliases(rawArgs, toolAliases);
+    if (!resolved.ok) {
+      return {
+        ok: false,
+        error: { kind: 'validation', issues: [{ message: resolved.error }] },
+      };
+    }
+    rawArgs = resolved.args;
+  }
+
   // UE-legacy route: when via:'ue_legacy' is set, dispatch the raw command
   // through the UE bridge. This is the safety hatch that makes a legacy
   // command reachable from hayba_invoke even when no TS wrapper has been
@@ -59,7 +81,7 @@ export async function invokeHandler(
       return { ok: false, error: { kind: 'legacy_not_allowlisted', name: args.name } };
     }
     const legacy = ctx.dispatchLegacy ?? ctx.dispatch;
-    const result = await legacy(args.name, args.args ?? {});
+    const result = await legacy(args.name, rawArgs);
     return { ok: true, result };
   }
   const shape: ZodRawShape | null = getRawShape(args.name);
@@ -71,7 +93,7 @@ export async function invokeHandler(
     // allow-listed. Only when neither route knows the command do we error.
     if (LEGACY_ALLOWLIST.has(args.name)) {
       const legacy = ctx.dispatchLegacy ?? ctx.dispatch;
-      const result = await legacy(args.name, args.args ?? {});
+      const result = await legacy(args.name, rawArgs);
       return { ok: true, result };
     }
     return { ok: false, error: { kind: 'unknown_tool', name: args.name } };
@@ -83,7 +105,7 @@ export async function invokeHandler(
   // 7111 engine tests, editor_pie_screenshot {path} polling a file that was
   // never checked, ui_set_slot_layout {anchors} applying everything except the
   // anchors. One loud round-trip beats hours of "the tool ignores its param".
-  const parse = z.object(shape).strict().safeParse(args.args);
+  const parse = z.object(shape).strict().safeParse(rawArgs);
   if (!parse.success) {
     return {
       ok: false,

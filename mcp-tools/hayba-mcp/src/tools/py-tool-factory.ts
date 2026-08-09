@@ -35,6 +35,7 @@ import {
 } from './register-tool.js';
 import type { Cost } from './schema-registry.js';
 import type { ToolResult, SessionManager } from './types.js';
+import { resolveAliases, type AliasMap } from './param-aliases.js';
 
 /**
  * Declarative description of a python_run-backed tool. Everything needed to
@@ -56,6 +57,10 @@ export interface PyToolDescriptor<S extends z.ZodRawShape = z.ZodRawShape> {
   returns: string;
   /** Zod raw shape — validates params AND feeds the schema registry. */
   schema: S;
+  /** Optional canonical->alternates param-name map (see param-aliases.ts).
+   *  Applied to raw args BEFORE `schema` parses them, so `schema` — and thus
+   *  the schema registry / get_tool_signature — stays canonical-only. */
+  aliases?: AliasMap;
   /** Build the Python body from validated params. Calls _emit/_err. */
   buildScript: (params: z.infer<z.ZodObject<S>>) => string;
   /** Full tool meta. When omitted, a minimal meta is synthesized from `cost`. */
@@ -98,7 +103,15 @@ export function makePyToolHandler<S extends z.ZodRawShape>(
 ): PyToolHandler {
   const validator = z.object(d.schema);
   return async (params: Record<string, unknown>): Promise<ToolResult> => {
-    const parsed = validator.safeParse(params);
+    let effectiveParams = params;
+    if (d.aliases) {
+      const resolved = resolveAliases(params, d.aliases);
+      if (!resolved.ok) {
+        return errorResult(`Invalid params for ${d.name}: ${resolved.error}`);
+      }
+      effectiveParams = resolved.args;
+    }
+    const parsed = validator.safeParse(effectiveParams);
     if (!parsed.success) {
       return errorResult(`Invalid params for ${d.name}: ${parsed.error.message}`);
     }
