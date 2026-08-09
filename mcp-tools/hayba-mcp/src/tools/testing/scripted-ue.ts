@@ -111,6 +111,15 @@ export class ScriptedUe {
     return this;
   }
 
+  /** Whether `cmd` was issued at all.
+   *
+   *  The useful direction is usually the negative one: proving a destructive
+   *  command was NOT sent down a refusal path. `paramsFor` cannot express that,
+   *  because it throws when the call count is zero. */
+  called(cmd: string): boolean {
+    return this.calls.some((c) => c.cmd === cmd);
+  }
+
   /** Params of the single call to `cmd`, asserting exactly one was made. */
   paramsFor(cmd: string): Record<string, unknown> {
     const hits = this.calls.filter((c) => c.cmd === cmd);

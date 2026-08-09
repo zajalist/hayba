@@ -226,6 +226,11 @@ import {
   uiCopyStyleHandler,
 } from './ui/ui-copy-style.js';
 import {
+  meta as editorSaveAllAndQuitMeta,
+  schema as editorSaveAllAndQuitSchema,
+  editorSaveAllAndQuitHandler,
+} from './editor/editor-save-all-and-quit.js';
+import {
   meta as uiSetDefaultFontMeta,
   schema as uiSetDefaultFontSchema,
   uiSetDefaultFontHandler,
@@ -2455,6 +2460,17 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     returns: '{from, to, widget_blueprint_path, copied[], copied_count, applied:[{aspect, values}], failed[], note}',
     niche: UI,
     schema: uiCopyStyleSchema.shape,
+  },
+  {
+    name: 'editor_save_all_and_quit',
+    description:
+      'Save every unsaved package, then shut the editor down — in that order. Shutting down with a dirty asset parks the editor on a modal save prompt that nothing can answer, because the MCP port closes first; three editor deaths in one session each cost exactly the assets still unsaved. REFUSES to quit if anything is still dirty after the save pass, and names what is holding it up. Pass quit:false to save everything without shutting down. USE_WHEN: ending a session, or closing the editor to link C++. NOT_WHEN: you only want to save (asset_save).',
+    meta: editorSaveAllAndQuitMeta,
+    handler: editorSaveAllAndQuitHandler,
+    cost: 'high',
+    returns: '{quit, saved[], saved_count, still_dirty[]?, note?}',
+    niche: 'editor',
+    schema: editorSaveAllAndQuitSchema.shape,
   },
   {
     name: 'ui_set_default_font',
