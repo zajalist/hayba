@@ -1526,7 +1526,31 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
 
         UWidget* Widget = FindWidgetByName(WBP->WidgetTree, WidgetName);
         if (!Widget)
-            return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_mutate_tree remove: widget '%s' not found"), *WidgetName));
+        {
+            // Removing a widget that is already gone is a SUCCESS, not an error.
+            //
+            // This command can time out after having succeeded — a ~60-widget
+            // blueprint exceeded the RPC deadline while the removal completed —
+            // and the natural response to a timeout is to retry. Under the old
+            // behaviour the retry answered "widget not found", which reads as
+            // "the removal never happened" and invites the caller to go looking
+            // for what went wrong, or worse, to remove something else.
+            //
+            // The end state the caller asked for is "this widget is not in the
+            // tree", and that is already true. Say so, and say plainly that
+            // nothing was removed THIS time so nobody reads it as a second
+            // deletion.
+            TSharedPtr<FJsonObject> AlreadyGone = MakeShared<FJsonObject>();
+            AlreadyGone->SetStringField(TEXT("action"), TEXT("remove"));
+            AlreadyGone->SetStringField(TEXT("widget_name"), WidgetName);
+            AlreadyGone->SetBoolField(TEXT("removed"), false);
+            AlreadyGone->SetBoolField(TEXT("already_absent"), true);
+            AlreadyGone->SetStringField(TEXT("note"),
+                FString::Printf(TEXT("'%s' is not in this widget tree, so there was nothing to remove and nothing "
+                                     "was changed. If a previous call timed out, it had already succeeded — this is "
+                                     "the state you asked for."), *WidgetName));
+            return FHaybaHandlerResult::Ok(AlreadyGone);
+        }
 
         P->TryGetStringField(TEXT("replacement_root"), ReplacementRoot);
 
