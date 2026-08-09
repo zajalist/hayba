@@ -601,7 +601,15 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEScreenshot(const TSharedPtr<FJsonObj
         TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
         R->SetStringField(TEXT("filename"), Filename);
         R->SetBoolField(TEXT("captured"), FPaths::FileExists(Filename));
+        // `requested:false` here means "this call did not ask for a new
+        // capture" — it is a statement about THIS call, not about the earlier
+        // one. Read as "your request was dropped" it sends a caller into
+        // re-requesting instead of looking on disk, which is exactly what
+        // happened in the field. Say which it is.
         R->SetBoolField(TEXT("requested"), false);
+        R->SetStringField(TEXT("requested_meaning"),
+            TEXT("false because check_only does not issue a capture. It says nothing about the earlier request; "
+                 "'captured' is the answer to whether the file exists."));
         return FHaybaHandlerResult::Ok(R);
     }
 
@@ -632,6 +640,47 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEScreenshot(const TSharedPtr<FJsonObj
     R->SetBoolField(TEXT("captured"), FPaths::FileExists(Filename));
     R->SetStringField(TEXT("note"), TEXT("Capture requested. The engine writes the file on a later frame — ")
                                     TEXT("call again with check_only:true (and the same filename) to see when it lands."));
+
+    // Name what is being photographed.
+    //
+    // FScreenshotRequest is GLOBAL: it captures whatever viewport the engine
+    // renders next, not a viewport this command chose. With a stale standalone
+    // PIE window left open beside a docked session, that was the DEAD window —
+    // and the capture came back as a plausible, correctly-rendered picture of
+    // the game that simply never changed. editor_pie_widget_tree meanwhile read
+    // the live session, so the two disagreed and the obvious reading was "the
+    // widget is laid out but paints nothing", which is a real UMG bug and a
+    // long detour. A verification tool that cannot say WHAT it photographed is
+    // unfalsifiable.
+    R->SetStringField(TEXT("world_name"), World->GetName());
+    if (UGameViewportClient* ShotGVC = World->GetGameViewport())
+    {
+        if (FViewport* ShotVP = ShotGVC->Viewport)
+        {
+            const FIntPoint Size = ShotVP->GetSizeXY();
+            R->SetStringField(TEXT("viewport_size"), FString::Printf(TEXT("%dx%d"), Size.X, Size.Y));
+        }
+    }
+
+    // More than one live PIE world is the condition under which the global
+    // request can pick the wrong one. Say so rather than let the caller find out
+    // by disbelieving a screenshot.
+    int32 PieWorldCount = 0;
+    for (const FWorldContext& Ctx : GEngine->GetWorldContexts())
+    {
+        if (Ctx.WorldType == EWorldType::PIE && Ctx.World()) ++PieWorldCount;
+    }
+    R->SetNumberField(TEXT("pie_world_count"), PieWorldCount);
+    if (PieWorldCount > 1)
+    {
+        R->SetStringField(TEXT("ambiguous_target_warning"),
+            FString::Printf(
+                TEXT("%d live PIE worlds. This capture is a global screenshot request, so it may photograph a "
+                     "window other than '%s' — including a stale standalone window left from an earlier session, "
+                     "which renders a convincing frame that never changes. Cross-check against "
+                     "editor_pie_widget_tree before trusting the image, or stop the extra session."),
+                PieWorldCount, *World->GetName()));
+    }
     return FHaybaHandlerResult::Ok(R);
 }
 

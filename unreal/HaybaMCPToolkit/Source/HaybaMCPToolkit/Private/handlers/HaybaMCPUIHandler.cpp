@@ -2261,10 +2261,26 @@ namespace
         if (Spec->TryGetObjectField(TEXT("slot_props"), SlotProps) && SlotProps && SlotProps->IsValid())
         {
             const FSlotApplyResult R = ApplySlotPropsChecked(Slot, *SlotProps);
-            for (const FString& K : R.Unknown)
+            if (R.Unknown.Num() > 0)
             {
-                Stats.Warnings.Add(FString::Printf(TEXT("%s: slot key '%s' is not valid for a %s"),
-                    *New->GetName(), *K, *Slot->GetClass()->GetName()));
+                // A slot key is LAYOUT-CRITICAL: ignoring one does not degrade
+                // the result, it changes it. This used to warn and build the
+                // tree anyway, so a misspelled key (`size_rule`, which is what
+                // the UMG details panel calls it) produced 17 warnings, a
+                // reported `created: 26`, and a ScrollBox that sized to content
+                // instead of filling its parent — discovered much later, in a
+                // layout snapshot. Silent-but-wrong layout is worse than a
+                // failed call.
+                TArray<FString> Valid = ApplicableSlotKeys(Slot).Array();
+                Valid.Sort();
+                return FString::Printf(
+                    TEXT("ui_build_tree: '%s' — slot key%s %s not valid for a %s. Valid keys for that slot: %s. ")
+                    TEXT("Nothing was built; fix the key and call again."),
+                    *New->GetName(),
+                    R.Unknown.Num() == 1 ? TEXT("") : TEXT("s"),
+                    *FString::Join(R.Unknown, TEXT(", ")),
+                    *Slot->GetClass()->GetName(),
+                    Valid.Num() > 0 ? *FString::Join(Valid, TEXT(", ")) : TEXT("(none)"));
             }
         }
 
@@ -2361,6 +2377,24 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleBuildTree(const TSharedPtr<FJsonOb
         if (!Error.IsEmpty()) break;
     }
 
+    // A failed build leaves nothing behind. Aborting halfway used to hand back
+    // a partial tree with an error, which is the worst of both: the call failed
+    // AND the blueprint changed, so a retry stacks a second partial tree on top
+    // of the first. Remove what this call created, newest first so parents go
+    // after their children.
+    int32 RolledBack = 0;
+    if (!Error.IsEmpty() && Stats.Names.Num() > 0)
+    {
+        for (int32 i = Stats.Names.Num() - 1; i >= 0; --i)
+        {
+            if (UWidget* Created = FindWidgetByName(WBP->WidgetTree, Stats.Names[i]))
+            {
+                WBP->WidgetTree->RemoveWidget(Created);
+                ++RolledBack;
+            }
+        }
+    }
+
     FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
     WBP->MarkPackageDirty();
 
@@ -2382,15 +2416,25 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleBuildTree(const TSharedPtr<FJsonOb
 
     if (!Error.IsEmpty())
     {
-        // Partial builds are kept, not rolled back — the widgets that landed are
-        // usually the ones the caller wanted, and silently discarding them would
-        // hide how far the spec got. The error names where it stopped and the
-        // response lists exactly what exists now.
+        // Partial builds USED to be kept, on the reasoning that the widgets
+        // which landed are usually the ones the caller wanted. Reversed
+        // deliberately: the caller's next move after a failed build is to fix
+        // the spec and call again, and a retry on top of a kept partial stacks
+        // a SECOND copy of everything that succeeded the first time. A field
+        // session hit exactly that shape from the other direction — a tree
+        // mutation that timed out after succeeding, where the natural retry was
+        // the dangerous act. Failing clean is the only answer that makes retry
+        // safe, which is the operation a failure invites.
         Out->SetStringField(TEXT("error"), Error);
-        Out->SetBoolField(TEXT("partial"), true);
+        Out->SetBoolField(TEXT("partial"), false);
+        Out->SetNumberField(TEXT("rolled_back"), RolledBack);
         return FHaybaHandlerResult::Err(FString::Printf(
-            TEXT("%s — %d widget(s) were created before the failure: %s"),
-            *Error, Stats.Created, *FString::Join(Stats.Names, TEXT(", "))));
+            TEXT("%s%s"),
+            *Error,
+            RolledBack > 0
+                ? *FString::Printf(TEXT(" %d widget(s) created before the failure were removed, so the blueprint "
+                                        "is as it was and a corrected call will not duplicate them."), RolledBack)
+                : TEXT("")));
     }
 
     return FHaybaHandlerResult::Ok(Out);
