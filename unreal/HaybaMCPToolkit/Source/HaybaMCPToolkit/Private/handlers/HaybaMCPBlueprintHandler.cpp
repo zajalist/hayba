@@ -160,9 +160,65 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Handle(const FString& Cmd, const 
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("BlueprintHandler: unknown command %s"), *Cmd));
 }
 
-static UBlueprint* LoadBPByPath(const FString& Path)
+/**
+ * Load a blueprint by any of the spellings a caller reasonably arrives with.
+ *
+ * The asset path must NOT carry `_C`, while class VALUES inside `properties`
+ * must — so a caller holding one class path naturally pastes it into `path` and
+ * gets "blueprint not found", which sends them hunting for a missing asset that
+ * is sitting right there. Accept both and normalise.
+ *
+ * Tries, in order: the path as given; the same path with a trailing `_C`
+ * stripped from the object name; and the package-only form `/Game/X/WBP_A`
+ * expanded to `/Game/X/WBP_A.WBP_A`.
+ */
+static UBlueprint* LoadBPByPath(const FString& Path, FString* OutResolvedPath = nullptr)
 {
-    return LoadObject<UBlueprint>(nullptr, *Path);
+    auto Try = [OutResolvedPath](const FString& Candidate) -> UBlueprint*
+    {
+        if (Candidate.IsEmpty()) return nullptr;
+        if (UBlueprint* BP = LoadObject<UBlueprint>(nullptr, *Candidate))
+        {
+            if (OutResolvedPath) *OutResolvedPath = Candidate;
+            return BP;
+        }
+        return nullptr;
+    };
+
+    if (UBlueprint* BP = Try(Path)) return BP;
+
+    // "/Game/X/WBP_A.WBP_A_C" -> "/Game/X/WBP_A.WBP_A"
+    if (Path.EndsWith(TEXT("_C")))
+    {
+        if (UBlueprint* BP = Try(Path.LeftChop(2))) return BP;
+    }
+
+    // "/Game/X/WBP_A" -> "/Game/X/WBP_A.WBP_A"
+    if (!Path.Contains(TEXT(".")))
+    {
+        FString Leaf = Path;
+        int32 Slash = INDEX_NONE;
+        if (Path.FindLastChar(TEXT('/'), Slash) && Slash != INDEX_NONE)
+        {
+            Leaf = Path.Mid(Slash + 1);
+        }
+        if (UBlueprint* BP = Try(Path + TEXT(".") + Leaf)) return BP;
+    }
+
+    return nullptr;
+}
+
+/** The error to hand back when none of the spellings resolved. Names the forms
+ *  that work, because "not found" alone sends the caller looking for the wrong
+ *  problem — the asset usually exists and the path shape is what is wrong. */
+static FString BlueprintNotFoundError(const TCHAR* Command, const FString& Path)
+{
+    return FString::Printf(
+        TEXT("%s: no blueprint at '%s'. Accepted forms: '/Game/Dir/WBP_Name', "
+             "'/Game/Dir/WBP_Name.WBP_Name', or the class path '/Game/Dir/WBP_Name.WBP_Name_C' "
+             "(the '_C' is stripped for you). Note the asset must have been SAVED at least once — "
+             "a freshly created, never-saved blueprint cannot be loaded by path."),
+        Command, *Path);
 }
 
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::Create(const TSharedPtr<FJsonObject>& P)
@@ -233,7 +289,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::GetInfo(const TSharedPtr<FJsonObj
     if (!P->TryGetStringField(TEXT("path"), Path) || Path.IsEmpty())
         return FHaybaHandlerResult::Err(TEXT("blueprint_get_info: missing path"));
     UBlueprint* BP = LoadBPByPath(Path);
-    if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_get_info: blueprint not found"));
+    if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_get_info"), Path));
 
     TArray<TSharedPtr<FJsonValue>> Vars;
     for (const FBPVariableDescription& V : BP->NewVariables)
@@ -282,7 +338,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddComponent(const TSharedPtr<FJs
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UBlueprint* BP = LoadBPByPath(Path);
-    if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_add_component: blueprint not found"));
+    if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_add_component"), Path));
     UClass* CompClass = LoadClass<UActorComponent>(nullptr, *CompClassPath);
     if (!CompClass) return FHaybaHandlerResult::Err(TEXT("blueprint_add_component: component class not found"));
     if (!BP->SimpleConstructionScript)
@@ -312,7 +368,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddVariable(const TSharedPtr<FJso
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UBlueprint* BP = LoadBPByPath(Path);
-    if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_add_variable: blueprint not found"));
+    if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_add_variable"), Path));
 
     FEdGraphPinType PinType;
     FString L = VarType.ToLower();
@@ -346,7 +402,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddFunction(const TSharedPtr<FJso
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UBlueprint* BP = LoadBPByPath(Path);
-    if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_add_function: blueprint not found"));
+    if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_add_function"), Path));
 
     // Refuse a name the blueprint already has, BEFORE creating anything. Adding
     // a second graph with the same name compiles to "Found more than one
@@ -451,7 +507,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
     if (NodeType.IsEmpty()) { NodeType = TEXT("call_function"); }
 
     UBlueprint* BP = LoadBPByPath(Path);
-    if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_add_node: blueprint not found"));
+    if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_add_node"), Path));
 
     UEdGraph* Graph = HaybaFindGraph(BP, GraphName);
     if (!Graph) return FHaybaHandlerResult::Err(TEXT("blueprint_add_node: graph not found"));
@@ -594,7 +650,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetPinDefault(const TSharedPtr<FJ
     P->TryGetStringField(TEXT("graph_name"), GraphName);
 
     UBlueprint* BP = LoadBPByPath(Path);
-    if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_set_pin_default: blueprint not found"));
+    if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_set_pin_default"), Path));
     UEdGraph* Graph = HaybaFindGraph(BP, GraphName);
     if (!Graph) return FHaybaHandlerResult::Err(TEXT("blueprint_set_pin_default: graph not found"));
     UEdGraphNode* Node = HaybaFindNode(Graph, NodeId);
@@ -675,7 +731,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::ConnectNodes(const TSharedPtr<FJs
     P->TryGetStringField(TEXT("graph_name"), GraphName);
 
     UBlueprint* BP = LoadBPByPath(Path);
-    if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_connect_nodes: blueprint not found"));
+    if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_connect_nodes"), Path));
     UEdGraph* Graph = HaybaFindGraph(BP, GraphName);
     if (!Graph) return FHaybaHandlerResult::Err(TEXT("blueprint_connect_nodes: graph not found"));
 
@@ -730,7 +786,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Compile(const TSharedPtr<FJsonObj
     Path = ParamR.RequiredString(TEXT("path"));
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
     UBlueprint* BP = LoadBPByPath(Path);
-    if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_compile: blueprint not found"));
+    if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_compile"), Path));
 
     FCompilerResultsLog ResultsLog;
     ResultsLog.SetSourcePath(BP->GetPathName());
@@ -788,7 +844,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Document(const TSharedPtr<FJsonOb
     Path = ParamR.RequiredString(TEXT("path"));
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
     UBlueprint* BP = LoadBPByPath(Path);
-    if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_document: blueprint not found"));
+    if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_document"), Path));
 
     FString Doc;
     for (UEdGraph* Graph : BP->UbergraphPages)
@@ -851,7 +907,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddEvent(const TSharedPtr<FJsonOb
     P->TryGetStringField(TEXT("graph_name"), GraphName);
 
     UBlueprint* BP = LoadBPByPath(Path);
-    if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_add_event: blueprint not found"));
+    if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_add_event"), Path));
     UEdGraph* Graph = HaybaFindGraph(BP, GraphName);
     if (!Graph) return FHaybaHandlerResult::Err(TEXT("blueprint_add_event: graph not found"));
 
@@ -910,7 +966,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetDefaults(const TSharedPtr<FJso
         return FHaybaHandlerResult::Err(TEXT("blueprint_set_defaults: missing properties"));
 
     UBlueprint* BP = LoadBPByPath(Path);
-    if (!BP) return FHaybaHandlerResult::Err(TEXT("blueprint_set_defaults: blueprint not found"));
+    if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_set_defaults"), Path));
     if (!BP->GeneratedClass)
         return FHaybaHandlerResult::Err(TEXT("blueprint_set_defaults: GeneratedClass missing — compile first"));
 
