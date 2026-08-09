@@ -116,6 +116,29 @@ describe('ui_copy_style', () => {
     });
   });
 
+  // The field the layout snapshot ACTUALLY emits is `font_size`; this reader
+  // looked for `size`, so a real copy transferred font, typeface and colour and
+  // silently left the size behind. A 26pt source left the target at 24pt, which
+  // inflated a row from 40px to 57px and was only caught by a layout snapshot.
+  //
+  // The test above passes `size`, which is why it stayed green through all of
+  // that: it asserted the author's model of the payload rather than the payload
+  // the C++ sends. Both spellings are pinned now.
+  it('copies the size the snapshot really reports (font_size)', async () => {
+    const src = { name: 'GoodLabel', class: 'TextBlock', text_info: { font_object: '/Game/F_Body', typeface: 'Regular', font_size: 26 } };
+    const dst = { name: 'BadLabel', class: 'TextBlock', text_info: { font_object: '/Game/F_Body', typeface: 'Regular', font_size: 24 } };
+    ue = scriptedUe()
+      .replies('ui_layout_snapshot', { layout_resolved: true, widgets: [src, dst] })
+      .replies('ui_set_widget_properties', { succeeded: 1, failed: 0 });
+
+    await uiCopyStyleHandler(
+      { widget_blueprint_path: BP, from_widget: 'GoodLabel', to_widget: 'BadLabel', include: ['text'] },
+      {} as never,
+    );
+    const props = ue.paramsFor('ui_set_widget_properties').properties as { Font: { Size?: number } };
+    expect(props.Font.Size, 'the source was 26pt; copying text style must carry the size').toBe(26);
+  });
+
   it('never copies slot layout or text content', async () => {
     const src = {
       name: 'GoodLabel',

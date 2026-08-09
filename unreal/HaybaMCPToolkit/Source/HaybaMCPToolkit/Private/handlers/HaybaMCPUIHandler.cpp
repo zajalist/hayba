@@ -1231,7 +1231,35 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleAddElement(const TSharedPtr<FJsonO
 
     UPanelSlot* NewSlot = Parent->AddChild(NewChild);
     if (!NewSlot)
-        return FHaybaHandlerResult::Err(TEXT("ui_add_element: AddChild rejected (panel may be full or incompatible)"));
+    {
+        // "panel may be full or incompatible" is accurate and useless: it names
+        // the failure and withholds the remedy, in a system where the caller
+        // cannot see the editor. The overwhelmingly common case is a
+        // single-child container that already has its one child, and the fix is
+        // always the same — wrap what is there in an Overlay. Say that.
+        WBP->WidgetTree->RemoveWidget(NewChild);   // do not leave the orphan behind
+
+        const int32 ChildCount = Parent->GetChildrenCount();
+        const int32 MaxChildren = Parent->GetClass()->GetDefaultObject<UPanelWidget>()
+            ? (Parent->CanHaveMultipleChildren() ? -1 : 1)
+            : -1;
+
+        if (MaxChildren == 1 && ChildCount >= 1)
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("ui_add_element: '%s' is a %s, which accepts ONE child and already has '%s'. "
+                     "To put two things inside it: add an Overlay to a panel that takes several children, "
+                     "reparent '%s' into the Overlay with ui_reparent_element, then reparent the Overlay "
+                     "into '%s'."),
+                *Parent->GetName(), *Parent->GetClass()->GetName(),
+                *Parent->GetChildAt(0)->GetName(), *Parent->GetChildAt(0)->GetName(), *Parent->GetName()));
+        }
+
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("ui_add_element: '%s' (a %s) refused a %s. It currently holds %d child(ren). "
+                 "Some panels accept only specific child types; check the panel's class."),
+            *Parent->GetName(), *Parent->GetClass()->GetName(), *ChildClass->GetName(), ChildCount));
+    }
 
     RegisterWidgetVariable(WBP, NewChild);
 

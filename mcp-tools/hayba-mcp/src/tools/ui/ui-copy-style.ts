@@ -51,6 +51,13 @@ interface BrushInfo {
 interface TextInfo {
   font_object?: string;
   typeface?: string;
+  /** What the layout snapshot actually emits. The C++ writes `font_size`
+   *  (HaybaMCPUIHandler, text_info); this reader looked for `size` and so
+   *  silently copied everything about a text style EXCEPT its size. A 26pt
+   *  source left the target on its default 24pt, which inflated one row from
+   *  40px to 57px and was only caught by a layout snapshot. */
+  font_size?: number;
+  /** Historical spelling, kept so an older snapshot still copies. */
   size?: number;
   color?: number[];
 }
@@ -125,7 +132,9 @@ export const uiCopyStyleHandler: ToolHandler = async (args, session) => {
     // the target on whatever face it had, which is usually the engine Bold.
     values.font_asset = t.font_object;
     values.typeface = t.typeface ?? 'Regular';
-    if (typeof t.size === 'number') values.size = t.size;
+    // font_size first — that is the field the snapshot emits.
+    const sourceSize = typeof t.font_size === 'number' ? t.font_size : t.size;
+    if (typeof sourceSize === 'number') values.size = sourceSize;
     if (Array.isArray(t.color)) values.color = t.color;
     planned.push({ aspect: 'text', values });
   }
