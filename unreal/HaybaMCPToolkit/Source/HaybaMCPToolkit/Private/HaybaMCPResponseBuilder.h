@@ -7,6 +7,24 @@ struct FHaybaResponseLimits
     int32 MaxArrayItems = 50;
     int32 MaxStringChars = 512;
     int32 MaxTopLevelFields = 20;
+
+    /**
+     * Fields whose value must never be trimmed, by key name.
+     *
+     * A base64 image is always over the string cap, and clipping it does not
+     * produce a shorter image — it produces a NON-EMPTY string that is not
+     * valid base64. The MCP SDK then rejects the whole content block
+     * ("Invalid Base64 string"), so the reply is lost entirely, metadata
+     * included, and ui_render_widget_to_png has been unusable for at least a
+     * week. editor_capture_viewport was reported failing the same way earlier,
+     * with a "_truncated: image_base64" marker that named the culprit.
+     *
+     * Exempting by FIELD rather than by command on purpose: the previous
+     * mechanism was a per-command override (python_run), which protects only
+     * the commands somebody remembered. Any command that returns an image is
+     * covered by this, including ones not written yet.
+     */
+    TSet<FString> NeverTrimFields { TEXT("image_base64") };
 };
 
 class FHaybaMCPResponseBuilder
@@ -16,6 +34,9 @@ public:
 
     /** Trim string in place, returning whether trimmed. */
     bool TrimString(FString& InOutValue) const;
+
+    /** Whether a field carrying this key is exempt from string trimming. */
+    bool IsFieldExempt(const FString& Key) const;
 
     /** Trim array in place, returning number of items removed. */
     int32 TrimArray(TArray<TSharedPtr<FJsonValue>>& InOutItems) const;
