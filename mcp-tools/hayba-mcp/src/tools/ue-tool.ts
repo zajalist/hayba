@@ -22,6 +22,7 @@
 import type { z } from 'zod';
 import type { ToolHandler } from './types.js';
 import { executeCommand } from './tool-executor.js';
+import { resolveAliases, type AliasMap } from './param-aliases.js';
 
 /** Build the handler for a wrapper that passes validated args straight to a
  *  plugin command and returns the reply as pretty-printed JSON.
@@ -33,10 +34,22 @@ import { executeCommand } from './tool-executor.js';
  *                  unit tests pass. `wire-command-names.test.ts` enforces this
  *                  statically; see docs/WORKFLOW-improving-the-mcp.md §3b.
  *  @param schema   Zod schema; its parsed output is the params object.
+ *  @param aliases  Optional canonical->alternates param-name map (see
+ *                  param-aliases.ts). Applied to the raw args BEFORE `schema`
+ *                  parses them, so `schema` itself stays canonical-only —
+ *                  get_tool_signature's documented signature is unaffected.
  */
-export function ueTool(command: string, schema: z.ZodTypeAny): ToolHandler {
+export function ueTool(command: string, schema: z.ZodTypeAny, aliases?: AliasMap): ToolHandler {
   return async (args) => {
-    const parsed = schema.safeParse(args);
+    let effectiveArgs: Record<string, unknown> = args;
+    if (aliases) {
+      const resolved = resolveAliases(args, aliases);
+      if (!resolved.ok) {
+        return { content: [{ type: 'text', text: `Validation error: ${resolved.error}` }], isError: true };
+      }
+      effectiveArgs = resolved.args;
+    }
+    const parsed = schema.safeParse(effectiveArgs);
     if (!parsed.success) {
       return {
         content: [{ type: 'text', text: `Validation error: ${parsed.error.message}` }],

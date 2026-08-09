@@ -10,6 +10,8 @@ import { registerToolMeta, getToolMeta } from './tool-meta-registry.js';
 import { readSettings } from './routing/settings-watcher.js';
 import { registerDeferredRouting, type CapturedTool, type RoutingHandle, type DeferredRoutingOptions } from './routing/register.js';
 import { defineTool, registerTool, recordToolSchema, type ToolDescriptor } from './register-tool.js';
+import { resolveAliases } from './param-aliases.js';
+import { TOOL_ALIASES } from './tool-aliases.js';
 import {
   guardHandlerWithEvidence,
   isUnderEvidenceContract,
@@ -3473,9 +3475,22 @@ function registerToolsCore(
       'Return the JSON schema (params, return shape, cost) for a specific HaybaOS command. Call list_tool_categories first to find command names.',
       sigMeta,
     ),
-    { command: z.string().describe('Exact command name, e.g. "actor_spawn"') },
+    // Wire-level shape only — widened with `name` as an accepted alias for
+    // `command` (issue #339) so the MCP transport doesn't reject the call
+    // before it reaches getToolSignatureHandler. The DOCUMENTED signature
+    // (what get_tool_signature reports about itself, via recordEagerSchemas'
+    // separate `{command...}` literal below) is untouched — still one
+    // required field, one spelling.
+    {
+      command: z.string().optional().describe('Exact command name, e.g. "actor_spawn"'),
+      name: z.string().optional().describe('Alias for "command".'),
+    },
     async (params) => {
-      const r = await getToolSignatureHandler(params as Record<string, unknown>, session);
+      const resolved = resolveAliases(params as Record<string, unknown>, TOOL_ALIASES.get_tool_signature);
+      if (!resolved.ok) {
+        return { content: [{ type: 'text', text: `Validation error: ${resolved.error}` }], isError: true };
+      }
+      const r = await getToolSignatureHandler(resolved.args, session);
       return { content: r.content, isError: r.isError };
     },
   );
@@ -3487,8 +3502,12 @@ function registerToolsCore(
       'Execute a Python script inside UE via PythonScriptPlugin. Universal escape hatch for invoking any UE command not otherwise exposed.',
       pyMeta,
     ),
+    // Wire-level shape only — widened with `code` as an accepted alias for
+    // `script` (issue #339); pythonRunHandler's own schema (canonical-only)
+    // still enforces `script` is actually present after normalisation.
     {
-      script: z.string().describe('Python source to execute'),
+      script: z.string().optional().describe('Python source to execute'),
+      code: z.string().optional().describe('Alias for "script".'),
       allow_unsafe: z.boolean().optional().describe('Override Tier 3 filesystem/subprocess block (DANGEROUS)'),
     },
     async (params) => {

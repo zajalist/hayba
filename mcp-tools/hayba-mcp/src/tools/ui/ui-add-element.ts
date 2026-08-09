@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { ToolHandler } from '../types.js';
 import { ueTool } from '../ue-tool.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
+import { TOOL_ALIASES } from '../tool-aliases.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'medium',
@@ -37,4 +38,4 @@ export const schema = z.object({
     ),
 });
 
-export const uiAddElementHandler: ToolHandler = ueTool('ui_add_element', schema);
+export const uiAddElementHandler: ToolHandler = ueTool('ui_add_element', schema, TOOL_ALIASES.ui_add_element);

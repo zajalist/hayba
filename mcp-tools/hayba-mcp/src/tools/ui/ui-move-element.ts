@@ -2,6 +2,8 @@ import { z } from 'zod';
 import type { ToolHandler } from '../types.js';
 import { executeCommand } from '../tool-executor.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
+import { resolveAliases } from '../param-aliases.js';
+import { TOOL_ALIASES } from '../tool-aliases.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'medium',
@@ -21,7 +23,11 @@ export const schema = z.object({
 });
 
 export const uiMoveElementHandler: ToolHandler = async (args) => {
-  const parsed = schema.safeParse(args);
+  const resolved = resolveAliases(args, TOOL_ALIASES.ui_move_element);
+  if (!resolved.ok) {
+    return { content: [{ type: 'text', text: `Validation error: ${resolved.error}` }], isError: true };
+  }
+  const parsed = schema.safeParse(resolved.args);
   if (!parsed.success) {
     return { content: [{ type: 'text', text: `Validation error: ${parsed.error.message}` }], isError: true };
   }
