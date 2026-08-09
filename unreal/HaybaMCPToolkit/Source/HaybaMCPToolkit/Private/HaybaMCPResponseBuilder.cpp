@@ -25,6 +25,11 @@ bool FHaybaMCPResponseBuilder::TrimString(FString& InOutValue) const
     return false;
 }
 
+bool FHaybaMCPResponseBuilder::IsFieldExempt(const FString& Key) const
+{
+    return Limits.NeverTrimFields.Contains(Key);
+}
+
 int32 FHaybaMCPResponseBuilder::TrimArray(TArray<TSharedPtr<FJsonValue>>& InOutItems) const
 {
     if (Limits.MaxArrayItems < 0)
@@ -158,6 +163,12 @@ namespace
             {
             case EJson::String:
             {
+                // An exempt field passes through whole. Clipping a base64 image
+                // does not shorten it, it invalidates it — see NeverTrimFields.
+                if (Builder.IsFieldExempt(Key))
+                {
+                    break;
+                }
                 FString Str = Value->AsString();
                 const int32 OriginalLen = Str.Len();
                 if (Builder.TrimString(Str))
