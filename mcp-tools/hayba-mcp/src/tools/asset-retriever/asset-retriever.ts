@@ -8,7 +8,7 @@ export interface ReindexResult {
   ok: boolean;
   durationMs: number;
   docCount: number;
-  backend: 'ollama' | 'transformers' | 'bm25';
+  backend: 'ollama' | 'bm25';
   fallbackUsed: boolean;
 }
 
@@ -16,7 +16,7 @@ export interface AssetRetrieverOpts {
   cacheDir?: string;
   /**
    * Override the embedding backend probe. Pass `null` to force BM25-only.
-   * Leave undefined to auto-probe (Ollama → transformers.js → BM25-only).
+   * Leave undefined to auto-probe (Ollama → BM25-only).
    */
   embeddings?: EmbeddingBackend | null;
 }
@@ -106,9 +106,7 @@ export class AssetRetriever {
 
   private summarize(): Omit<ReindexResult, 'durationMs'> {
     const docCount = this.index?.allDocs().length ?? 0;
-    const backend: ReindexResult['backend'] = this.embeddings
-      ? (/^ollama:/.test(this.embeddings.id) ? 'ollama' : 'transformers')
-      : 'bm25';
+    const backend: ReindexResult['backend'] = this.embeddings ? 'ollama' : 'bm25';
     return { ok: true, docCount, backend, fallbackUsed: false };
   }
 }

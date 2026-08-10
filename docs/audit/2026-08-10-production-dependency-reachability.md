@@ -1,39 +1,63 @@
 # Production dependency reachability — 2026-08-10
 
-Issue #380 turns the production dependency audit from a point-in-time command
-into an executable, expiring policy. The machine authority is
+The machine authority is
 [`production-dependency-assessments.json`](production-dependency-assessments.json).
+Issue #397 removes the final time-bounded exceptions rather than extending
+them for a different top-level version.
 
-## Outcome
+## Observed before and after
 
-Compatible updates removed every currently fixable production finding:
+The baseline was `origin/main` at
+`2a0533c121802ae84ce2fdfc039eb3db951247d0`. On that lockfile,
+`npm audit --omit=dev --json` reported four high production vulnerability
+nodes and no other production vulnerabilities:
 
-- `js-yaml` 4.1.1 → 4.3.1;
-- `@modelcontextprotocol/sdk` 1.29.0 → 1.30.0;
-- compatible transitive updates for Hono/Node Server, Axios/FormData,
-  Fast-URI, BodyParser, IP Address, Undici, and ProtobufJS.
+| Package | Resolved version | Advisory path |
+| --- | --- | --- |
+| `@huggingface/transformers` | 4.0.1 | both advisories below, via its production graph |
+| `sharp` | 0.34.5 | `GHSA-f88m-g3jw-g9cj` |
+| `onnxruntime-node` | 1.24.3 | `GHSA-xcpc-8h2w-3j85`, via `adm-zip` |
+| `adm-zip` | 0.5.17 | `GHSA-xcpc-8h2w-3j85` |
 
-`npm audit --omit=dev --json` fell from 15 production vulnerability nodes (12
-high) to four high nodes. The gate expands transitive `via` chains into five
-distinct package/advisory paths so an aggregate package cannot silently inherit
-another package's exception.
+GitHub's reviewed Sharp advisory marks releases below 0.35.0 affected and
+0.35.0 patched. The reviewed AdmZip advisory marks releases below 0.6.0
+affected and 0.6.0 patched. These are the primary advisory records:
 
-#377 removed the reachable direct `adm-zip` path and the direct dependency.
-External asset archives now use the bounded streaming extractor, and an `rg`
-audit finds zero runtime `adm-zip`/`AdmZip`/`extractAllTo` references. The
-package still appears transitively under ONNX Runtime, so the production audit
-correctly remains non-zero rather than hiding it.
+- [Sharp / libvips advisory](https://github.com/advisories/GHSA-f88m-g3jw-g9cj)
+- [AdmZip allocation advisory](https://github.com/advisories/GHSA-xcpc-8h2w-3j85)
 
-The other paths come from the optional Transformers text-embedding backend:
+The local Transformers backend was optional and already had two complete
+fallbacks: a locally managed Ollama service for semantic embeddings and the
+always-available MiniSearch/BM25 index. Removing the backend was therefore a
+smaller and safer boundary than forcing incompatible transitive versions into
+Transformers' exact ONNX dependency graph.
 
-- ONNX Runtime's residual `adm-zip` path is installation-only. Hayba never
-  invokes it at runtime; audit jobs install with scripts disabled and the
-  lockfile pins integrity.
-- Sharp's vulnerable image/SVG parser is outside Hayba's text-only
-  `feature-extraction` call path. The backend accepts only strings.
+After removing the direct dependency and regenerating the lockfile,
+`npm audit --omit=dev --json` reports zero critical, high, moderate, or low
+production vulnerabilities. The four package keys above are absent from both
+the MCP manifest and the root lock package map. The assessment inventory is now
+empty because retaining stale exceptions is a policy error.
 
-Those decisions expire on 2026-09-09. Expiry fails CI even when the inventory
-file is otherwise unchanged.
+## Install and runtime boundary
+
+Root Node CI installs use `npm ci --ignore-scripts`; the nested dashboard build
+does the same. npm documents that `--ignore-scripts` prevents package lifecycle
+scripts during a clean install:
+[npm ci / ignore-scripts](https://docs.npmjs.com/cli/v11/commands/npm-ci/#ignore-scripts).
+
+More importantly, default production installs no longer contain Transformers,
+Sharp, ONNX Runtime, or AdmZip at all. That removes the ONNX native installer
+and its archive path rather than merely suppressing their lifecycle scripts.
+Hayba does not download embedding models. At runtime it only probes the user's
+existing local Ollama endpoint with a two-second abort signal; refusal,
+timeout, or offline failure returns `null`, and the server builds its lexical
+index from a cold cache.
+
+The clean-install CI lane runs a focused fallback contract before the full MCP
+suite. It proves that an offline probe is bounded, a fresh cache is populated
+without vector files, warm and cold lexical rankings are identical, and the
+non-embedding index remains usable. The production graph contract also rejects
+the return of any of the four removed package keys.
 
 ## Executable policy
 
@@ -43,34 +67,7 @@ Run from the repository root:
 npm run audit:production
 ```
 
-The script itself launches `npm audit --omit=dev --json`; callers cannot
-accidentally broaden it to a dev audit or weaken it with `--audit-level`. Raw
-npm JSON is parsed in memory and never emitted. Output contains only stable
-policy codes, package names, GHSA IDs, counts, and no dependency paths, request
-data, environment, registry credentials, or raw advisory prose.
-
-The policy fails on:
-
-- any new/unassessed critical or high package/advisory path;
-- an unresolved/cyclic npm `via` chain;
-- malformed, duplicate, future-dated, expired, or stale assessments;
-- severity or installed-version drift.
-
-Moderate/low findings are reported as non-blocking warnings. The current report
-contains none; every remaining current finding has an assessed high record.
-Dev-only advisories do not enter this lane because the executable collector
-always supplies `--omit=dev`.
-
-CI runs the gate on every push/PR. A weekly scheduled workflow uses the same
-script and creates or updates exactly one issue named
-`[security] Production dependency audit drift`; it closes that issue when the
-lane returns green.
-
-## Reproducibility and install ordering
-
-Dependency installation mutates the shared root `node_modules`, so install,
-typecheck, test, and audit must be serialized. A transient typecheck executed
-while npm was replacing SDK files observed missing declarations; the identical
-typecheck passed after installation completed. CI naturally serializes these
-steps, and local evidence for this change was collected only after the final
-install process exited.
+The script launches `npm audit --omit=dev --json`, parses raw JSON in memory,
+and emits only sanitized policy codes and counts. CI and the weekly scheduled
+audit both install from the lockfile with lifecycle scripts disabled before
+running the same gate.
