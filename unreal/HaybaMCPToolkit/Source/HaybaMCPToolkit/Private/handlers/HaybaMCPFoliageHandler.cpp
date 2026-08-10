@@ -71,6 +71,43 @@ namespace
         }
         return Count;
     }
+
+    // UE 5.8 declares AInstancedFoliageActor::AddInstances as a Blueprint
+    // helper on a MinimalAPI class but does not export the function. Calling it
+    // directly therefore compiles and then fails LNK2019 on a clean build. Use
+    // only the explicitly FOLIAGE_API-exported pieces of the same operation.
+    static bool AddFoliageTransforms(UWorld* World, UFoliageType* Type,
+        const TArray<FTransform>& Transforms, FString& OutError)
+    {
+        if (!World || !Type)
+        {
+            OutError = TEXT("invalid world or foliage type");
+            return false;
+        }
+        for (int32 Index = 0; Index < Transforms.Num(); ++Index)
+        {
+            const FTransform& Transform = Transforms[Index];
+            AInstancedFoliageActor* IFA = AInstancedFoliageActor::Get(
+                World, /*bCreateIfNone=*/true, World->GetCurrentLevel(), Transform.GetLocation());
+            if (!IFA)
+            {
+                OutError = FString::Printf(TEXT("could not resolve/create InstancedFoliageActor for transform %d"), Index);
+                return false;
+            }
+            IFA->Modify();
+            FFoliageInfo* Info = nullptr;
+            UFoliageType* LocalType = IFA->AddFoliageType(Type, &Info);
+            if (!LocalType || !Info)
+            {
+                OutError = FString::Printf(TEXT("AddFoliageType returned no usable foliage info for transform %d"), Index);
+                return false;
+            }
+            FFoliageInstance Instance;
+            Instance.SetInstanceWorldTransform(Transform);
+            Info->AddInstance(LocalType, Instance);
+        }
+        return true;
+    }
 }
 
 TArray<FString> FHaybaMCPFoliageHandler::GetCommands() const
@@ -123,7 +160,9 @@ FHaybaHandlerResult FHaybaMCPFoliageHandler::FoliageAddInstance(const TSharedPtr
 
     const int32 Before = CountInstances(World, Type);
     const TArray<FTransform> Transforms = { FTransform(Rot, Loc, Scale) };
-    AInstancedFoliageActor::AddInstances(World, Type, Transforms);
+    FString AddError;
+    if (!AddFoliageTransforms(World, Type, Transforms, AddError))
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("foliage_add_instance: %s"), *AddError));
     const int32 After = CountInstances(World, Type);
     if (After != Before + 1)
         return FHaybaHandlerResult::Err(FString::Printf(
@@ -273,7 +312,9 @@ FHaybaHandlerResult FHaybaMCPFoliageHandler::FoliagePaintAt(const TSharedPtr<FJs
         return FHaybaHandlerResult::Err(TEXT("foliage_paint_at: no WorldStatic surface was hit; no foliage was added"));
 
     const int32 Before = CountInstances(World, Type);
-    AInstancedFoliageActor::AddInstances(World, Type, Transforms);
+    FString AddError;
+    if (!AddFoliageTransforms(World, Type, Transforms, AddError))
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("foliage_paint_at: %s"), *AddError));
     const int32 After = CountInstances(World, Type);
     const int32 Added = After - Before;
     if (Added <= 0)

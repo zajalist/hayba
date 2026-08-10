@@ -21,7 +21,9 @@ describe('partition-safe foliage handler contract', () => {
   });
 
   it('uses the engine-supported persistence path for add and paint', () => {
-    expect(handler.match(/AInstancedFoliageActor::AddInstances/g)?.length).toBe(2);
+    expect(handler).not.toMatch(/AInstancedFoliageActor::AddInstances\s*\(/);
+    expect(handler.match(/AddFoliageTransforms\(World, Type, Transforms, AddError\)/g)?.length).toBe(2);
+    expect(handler).toContain('Info->AddInstance(LocalType, Instance)');
     expect(handler).not.toContain('foliage instance persistence is unavailable');
   });
 
