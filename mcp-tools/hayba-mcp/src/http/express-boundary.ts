@@ -1,5 +1,6 @@
 import type { ErrorRequestHandler, Express, Request } from 'express';
 import { redactThrown } from '../security/secret-redaction.js';
+import { StorageIdentifierError } from '../storage-path.js';
 
 /**
  * Express 5 deliberately leaves `req.body` undefined when no parser produced a
@@ -48,6 +49,10 @@ export function installHttpErrorBoundary(app: Express): void {
     }
     if (candidate?.type === 'entity.too.large') {
       res.status(413).json({ error: "JSON body exceeds this endpoint's configured limit" });
+      return;
+    }
+    if (error instanceof StorageIdentifierError) {
+      res.status(400).json({ code: error.code, error: error.message });
       return;
     }
 

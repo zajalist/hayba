@@ -89,6 +89,47 @@ describe('Express 5 dashboard boundary', () => {
     }
   });
 
+  it('rate-limits every HTTP surface and omits Express fingerprinting', async () => {
+    const app = createDashboardApp({
+      staticDir: null,
+      rateLimit: { windowMs: 60_000, limit: 2 },
+      registerRoutes: (target) => {
+        target.get('/api/limited', (_req, res) => res.json({ ok: true }));
+      },
+    });
+    const { url } = await listen(app);
+
+    for (let count = 0; count < 2; count += 1) {
+      const response = await fetch(`${url}/api/limited`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('x-powered-by')).toBeNull();
+      expect(response.headers.get('ratelimit')).not.toBeNull();
+    }
+
+    const blocked = await fetch(`${url}/api/limited`);
+    expect(blocked.status).toBe(429);
+    expect(blocked.headers.get('content-type')).toContain('application/json');
+    expect(await blocked.json()).toEqual({
+      error: 'Too many requests; retry after the rate-limit window',
+    });
+  });
+
+  it('maps traversal-shaped storage identifiers to a stable non-reflective 400', async () => {
+    const app = createDashboardApp({ staticDir: null, rateLimit: false });
+    const { url } = await listen(app);
+    const attack = '..%2F..%2Foutside-secret';
+
+    const response = await fetch(`${url}/api/projects/${attack}`);
+    expect(response.status).toBe(400);
+    expect(response.headers.get('content-type')).toContain('application/json');
+    const body = (await response.json()) as { code: string; error: string };
+    expect(body).toEqual({
+      code: 'invalid_storage_identifier',
+      error: 'projectId is not a valid storage identifier',
+    });
+    expect(JSON.stringify(body)).not.toContain('outside-secret');
+  });
+
   it('handles absent and malformed JSON bodies without HTML errors or throws', async () => {
     const app = createDashboardApp({
       staticDir: null,

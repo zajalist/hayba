@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { DEFAULT_PROJECTS_BASE } from './projects.js';
+import { isStorageUuid, requireStorageFileStem, requireStorageUuid, resolveStorageChild } from './storage-path.js';
 
 export interface EncyclopediaEntry {
   id: string;
@@ -26,10 +26,14 @@ export interface EncyclopediaEntry {
 }
 
 function encFile(projectId: string, base: string): string {
-  return join(base, projectId, 'encyclopedia.json');
+  return resolveStorageChild(base, requireStorageUuid(projectId, 'projectId'), 'encyclopedia.json');
 }
 
 export async function getEntries(projectId: string, base = DEFAULT_PROJECTS_BASE): Promise<EncyclopediaEntry[]> {
+  if (!isStorageUuid(projectId)) {
+    requireStorageFileStem(projectId, 'projectId');
+    return [];
+  }
   const file = encFile(projectId, base);
   if (!existsSync(file)) return [];
   return JSON.parse(readFileSync(file, 'utf-8')) as EncyclopediaEntry[];

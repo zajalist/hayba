@@ -1,4 +1,5 @@
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 import type { Server } from 'node:http';
 import { extname, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +15,8 @@ export interface DashboardAppOptions {
   staticDir?: string | null;
   /** Test/embedding seam for registering routes before the reserved-prefix 404. */
   registerRoutes?: (app: express.Express) => void;
+  /** Set false only in isolated tests/embeddings that provide their own limiter. */
+  rateLimit?: false | { windowMs?: number; limit?: number };
 }
 
 function detectStaticDir(): string | null {
@@ -35,10 +38,25 @@ function isSpaNavigation(path: string): boolean {
 /** Build the direct dashboard app without binding a socket. */
 export function createDashboardApp(options: DashboardAppOptions = {}): express.Express {
   const app = express();
+  app.disable('x-powered-by');
   // Pin Express 5 semantics instead of inheriting a future default change.
   app.set('query parser', 'simple');
-  app.use(express.json({ limit: '50mb', strict: true }));
+  // The dashboard binds directly to loopback; never trust a caller-supplied
+  // forwarding chain for localhost policy or per-client rate-limit identity.
+  app.set('trust proxy', false);
   installExpressJsonRedaction(app);
+  if (options.rateLimit !== false) {
+    app.use(
+      rateLimit({
+        windowMs: options.rateLimit?.windowMs ?? 60_000,
+        limit: options.rateLimit?.limit ?? 600,
+        standardHeaders: 'draft-8',
+        legacyHeaders: false,
+        message: { error: 'Too many requests; retry after the rate-limit window' },
+      }),
+    );
+  }
+  app.use(express.json({ limit: '50mb', strict: true }));
 
   (options.registerRoutes ?? registerApiRoutes)(app);
 
