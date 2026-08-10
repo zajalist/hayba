@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
   "model_id": "hayba-editor-crash-threats-v1",
-  "generated_utc": "2026-08-10T00:00:00Z",
+  "generated_utc": "2026-08-10T09:16:24.715Z",
   "corpus": {
     "evidence_window": {
       "start_utc": "2026-07-20T03:01:17.209Z",
-      "end_utc": "2026-08-10T03:38:37.898Z"
+      "end_utc": "2026-08-10T09:16:24.715Z"
     },
-    "raw_artifact_count": 264,
+    "raw_artifact_count": 269,
     "missing_signature_artifact_count": 0,
     "deduplication_key": "CrashContext.RuntimeProperties.PCallStackHash",
-    "distinct_signature_count": 97,
+    "distinct_signature_count": 101,
     "classification_semantics": "First matching rule wins. Counts are observed crash-report artifacts; distinct counts are unique non-empty engine stack hashes. Reproduced and source-audit threats have no corpus count unless the classifier also matched them.",
     "classification_order": [
       "stale-umg-guid-map",
@@ -30,8 +30,8 @@
       {
         "category": "stale-umg-guid-map",
         "threat_id": "HCR-UMG-001",
-        "observed_artifact_count": 153,
-        "observed_distinct_signature_count": 57
+        "observed_artifact_count": 157,
+        "observed_distinct_signature_count": 60
       },
       {
         "category": "pie-teardown-reference",
@@ -48,8 +48,8 @@
       {
         "category": "unsafe-automation-execution",
         "threat_id": "HCR-AUTO-001",
-        "observed_artifact_count": 17,
-        "observed_distinct_signature_count": 16
+        "observed_artifact_count": 18,
+        "observed_distinct_signature_count": 17
       },
       {
         "category": "rhi-render-teardown",
@@ -126,12 +126,18 @@
       "evidence": {
         "classification": "observed",
         "kind": "crash_corpus",
-        "observed_artifact_count": 153,
-        "observed_distinct_signature_count": 57,
+        "observed_artifact_count": 157,
+        "observed_distinct_signature_count": 60,
         "source_refs": ["docs/handoffs/HANDOFF-umg-validation.md"]
       },
       "trigger": "A UI tree mutation adds, removes, renames, duplicates, or reparents a variable widget without keeping the blueprint variable-name-to-GUID map synchronized.",
-      "affected_commands": ["ui_create_widget", "ui_add_element", "ui_mutate_tree", "ui_build_tree"],
+      "affected_commands": [
+        "ui_create_widget",
+        "ui_add_element",
+        "ui_mutate_tree",
+        "ui_set_widget_properties",
+        "ui_build_tree"
+      ],
       "guard_layer": [
         "ui-handler structural mutation seam",
         "widget GUID registration and subtree purge",
@@ -146,7 +152,7 @@
         "sources": ["unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPUIHandlerTest.cpp"],
         "runtime": ["docs/handoffs/HANDOFF-umg-validation.md"]
       },
-      "status": "resolved"
+      "status": "open"
     },
     {
       "id": "HCR-PIE-001",
@@ -205,8 +211,8 @@
       "evidence": {
         "classification": "observed",
         "kind": "crash_corpus",
-        "observed_artifact_count": 17,
-        "observed_distinct_signature_count": 16,
+        "observed_artifact_count": 18,
+        "observed_distinct_signature_count": 17,
         "source_refs": ["docs/audit/2026-08-09-test-run-seh-double-fault.md"]
       },
       "trigger": "The MCP runner re-enters discovery, advances or stops a test outside the framework lifecycle, or a selected test constructs an engine object with an invalid owner.",
@@ -229,7 +235,7 @@
         ],
         "runtime": ["docs/audit/2026-08-09-test-run-seh-double-fault.md"]
       },
-      "status": "resolved"
+      "status": "mitigated"
     },
     {
       "id": "HCR-RHI-001",
@@ -250,14 +256,24 @@
         "action": "Restart with a real RHI, inspect the new crash signature, and do not classify a NullRHI-only result as render success or failure."
       },
       "test_evidence": {
-        "regressions": [],
+        "regressions": [
+          "Hayba.MCP.RenderSafety.Policy",
+          "render/RHI lifecycle source contract",
+          "Hayba.MCP.UI.RenderWidgetToPng"
+        ],
         "sources": [
+          "unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPRenderSafety.cpp",
+          "unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPRenderSafetyTest.cpp",
+          "mcp-tools/hayba-mcp/src/tools/render-rhi-safety-contract.test.ts",
           "mcp-tools/hayba-mcp/src/tools/render-camera.test.ts",
           "mcp-tools/hayba-mcp/src/tools/ui/ui-render-widget-to-png.test.ts"
         ],
-        "runtime": ["docs/handoffs/HANDOFF-architecture-cleanup.md"]
+        "runtime": [
+          "docs/handoffs/HANDOFF-architecture-cleanup.md",
+          "docs/audit/2026-08-10-render-rhi-lifecycle.md"
+        ]
       },
-      "status": "open"
+      "status": "mitigated"
     },
     {
       "id": "HCR-CTOR-001",

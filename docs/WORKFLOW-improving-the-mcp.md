@@ -153,6 +153,47 @@ decision.
 Write new C++ tests in `Source/HaybaMCPToolkit/Private/Tests/`, using
 `IMPLEMENT_SIMPLE_AUTOMATION_TEST` with `EditorContext | EngineFilter`.
 
+### Crash-sensitive changes (disposable editor only)
+
+Transport, threading, shutdown, Python policy, parameter-boundary, world/PIE,
+render, and native-handler changes also require the editor-survival gate:
+
+```powershell
+pwsh mcp-tools/hayba-mcp/scripts/test-editor-survival.ps1 `
+  -ProjectPath D:\Projects\aphrosia\Aphrosia.uproject `
+  -OutputJson Saved\TestResults\hayba-survival.json `
+  -OutputJUnit Saved\TestResults\hayba-survival.xml
+```
+
+Use `-List` for a no-editor inventory. Use `-CanaryKill` separately to prove
+the harness detects the death of the disposable process it launched. Attach
+mode accepts only an exact PID whose command line contains the matching
+`-HaybaSurvivalSession=<token>` tag; it deliberately refuses ordinary user
+editors. Every hostile case must retain the same PID/listener, recover with a
+fresh ping, create no crash artifact, and leave the dirty-package baseline
+unchanged. A safe error reply alone is not a pass.
+
+### Transport ceilings and large responses
+
+The native TCP boundary captures seven centrally clamped limits when it starts:
+request bytes, response bytes, active clients, pending commands, and JSON
+nesting depth, plus the complete-frame receive and response-send deadlines.
+Their defaults are 1 MiB / 8 MiB / 16 / 128 / 64 / 5000 ms / 1000 ms. The
+receive deadline is for the whole framed request, not each byte, so a slow
+client cannot drip-feed forever and occupy every connection slot. Users may tune
+them under **Project Settings → Plugins → Hayba MCP Toolkit → Transport Safety**;
+an edited config file is clamped again in code. `ping` reports the configured
+values under `transport_limits` and labels them
+`captured_at_tcp_server_start`, because changing them does not race a live
+worker—the next editor/TCP restart applies them.
+
+The response cap is also an allocation boundary. Do not raise it merely to make
+an unbounded property dump fit. Paginate ordinary data. For images, prefer a
+file-backed response (`inline_image:false` / `out_path` where supported) and
+return bounded metadata; use inline base64 only when its complete encoded frame
+fits the configured response limit. A frame that does not fit is refused and
+the client is disconnected rather than receiving silently clipped base64.
+
 ---
 
 ## 5. The study loop
@@ -295,6 +336,8 @@ A change is done when **all** of these hold. Anything short, say so explicitly.
       does not
 - [ ] The effect was **observed** — screenshot, file, readback, passing test
 - [ ] A test exists that would fail without the change
+- [ ] Crash-sensitive changes passed the tagged disposable-editor survival
+      gate, with JSON/JUnit evidence (or are explicitly below that rung)
 - [ ] Editor left clean: PIE stopped, probes deleted, no dirty packages of yours
 - [ ] Committed and pushed; working tree clean
 
@@ -311,6 +354,7 @@ A change is done when **all** of these hold. Anything short, say so explicitly.
 | Compile errors | `C:\Users\Admin\AppData\Local\UnrealBuildTool\Log.txt` |
 | C++ tests | `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/` |
 | Test harness | `mcp-tools/hayba-mcp/src/tools/testing/scripted-ue.ts` |
+| Editor survival gate | `mcp-tools/hayba-mcp/scripts/test-editor-survival.ps1` |
 | Evidence contract | `mcp-tools/hayba-mcp/src/tools/response-evidence.ts` |
 | Tool registrar | `mcp-tools/hayba-mcp/src/tools/register-tool.ts` |
 | Param reader | `unreal/.../Public/HaybaMCPParams.h` |

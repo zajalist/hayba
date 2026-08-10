@@ -7,8 +7,8 @@ and accidental host-private data.
 
 ## Evidence boundary
 
-The inspected window is **2026-07-20 03:01:17.209 UTC through 2026-08-10 03:38:37.898 UTC**. It contains
-264 crash-report directories and 97 distinct non-empty engine `PCallStackHash` values. The counts
+The inspected window is **2026-07-20 03:01:17.209 UTC through 2026-08-10 09:16:24.715 UTC**. It contains
+269 crash-report directories and 101 distinct non-empty engine `PCallStackHash` values. The counts
 below are deliberately two different measurements:
 
 - **Artifacts** count crash-report directories. Unreal writes these for ensures as well as fatal
@@ -29,11 +29,11 @@ imports → PIE type mismatch. First match wins, which keeps the rows disjoint.
 
 | Stable class                                                   | Artifacts | Signatures | Current disposition                                         |
 | -------------------------------------------------------------- | --------: | ---------: | ----------------------------------------------------------- |
-| `HCR-UMG-001` stale UMG variable GUID map                      |       153 |         57 | Resolved; direct compile regression                         |
+| `HCR-UMG-001` stale UMG variable GUID map                      |       157 |         60 | Reopened by fresh handler ensures; remediation is #406     |
 | `HCR-PIE-001` PIE world/object survives teardown               |         6 |          4 | Mitigated; survival regression still needed                 |
 | `HCR-TRANS-001` transaction buffer retains PIE object          |        68 |          3 | Mitigated; static policy exists, survival regression needed |
-| `HCR-AUTO-001` unsafe automation lifecycle/test object         |        17 |         16 | Resolved for the MCP runner; host tests remain their owners |
-| `HCR-RHI-001` RHI/render teardown fault                        |         2 |          2 | Open                                                        |
+| `HCR-AUTO-001` unsafe automation lifecycle/test object         |        18 |         17 | Mitigated runner; arbitrary tests need isolation in #407   |
+| `HCR-RHI-001` RHI/render teardown fault                        |         2 |          2 | Mitigated; real-RHI render/shutdown survival proof needed   |
 | `HCR-CTOR-001` constructor helper used at runtime              |         2 |          1 | External host-project defect                                |
 | `HCR-SEH-001` handler fault followed by unsafe post-processing |         2 |          2 | Resolved; fault tail has an early-return contract           |
 | `HCR-DELEG-001` reflected dynamic delegate cannot bind         |         4 |          3 | External host-code defect                                   |
@@ -43,10 +43,17 @@ imports → PIE type mismatch. First match wins, which keeps the rows disjoint.
 | `HCR-PIETYPE-001` PIE duplication returns wrong object class   |         1 |          1 | External host asset/class defect                            |
 | **Unclassified**                                               |     **0** |      **0** | **Clear for this evidence window**                          |
 
-The classified rows reconcile exactly to 264 artifacts and 97 signatures. The release threshold
+The classified rows reconcile exactly to 269 artifacts and 101 signatures. The release threshold
 is zero unclassified signatures, so the current manifest says `audit_threshold.met: true`.
 That is a statement about this bounded corpus, not universal coverage: the classifier emits an
 opaque one-way fingerprint for any future unknown and immediately makes the threshold fail.
+
+The five-artifact drift after the initial inventory was actionable rather than silently rebased:
+four UMG ensures added three signatures from tree/GUID inconsistency in live handler paths, so
+`HCR-UMG-001` is reopened under #406. One host-project automation ensure added a signature while
+`test_run` was on the stack. The invalid test object remains host-owned, but executing arbitrary
+tests inside the serving editor is an MCP containment gap tracked by #407. All five new artifacts
+were classified by existing rules; the unclassified threshold remains zero.
 
 The original pass left 14 signatures unclassified. Mining their sibling editor logs and module
 families reduced them without guessing: three were one reflected-delegate defect; five were Slate

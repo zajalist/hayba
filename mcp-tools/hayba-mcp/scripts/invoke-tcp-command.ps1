@@ -90,3 +90,9 @@ catch {
     [Console]::Error.WriteLine("invoke-tcp-command failed: $($_.Exception.Message)")
     exit 1
 }
+
+# When this script is invoked from another PowerShell script, a successful
+# scriptblock does not reliably populate the caller's $LASTEXITCODE. The
+# survival harness treats a missing exit status as a transport failure, so make
+# the success contract explicit just as the catch path makes failure explicit.
+exit 0

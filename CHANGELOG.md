@@ -70,6 +70,11 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   mid-turn tool-catalog changes and malformed streamed tool JSON now fail
   closed with bounded diagnostics; the unused second SDK dependency in the
   architecture package was removed.
+- Large Widget Blueprints no longer lose controls after the native 50-item
+  response limit. `ui_layout_snapshot` now supports exact-name reads and
+  truthful pagination; `ui_copy_style` targets source/destination names
+  directly, and `ui_validate` reconstructs every page or fails closed instead
+  of silently judging an incomplete HUD.
 - `test_run` now accepts the same case-insensitive filter/category selectors as
   `test_list`, rejects empty, ambiguous, and zero-match requests instead of
   returning false-green empty results, and reports explicit pass/fail/skip
