@@ -17,6 +17,7 @@ private:
     FHaybaHandlerResult ConnectNodes(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult Compile(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult Document(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult InspectGraph(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult AddEvent(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult SetDefaults(const TSharedPtr<FJsonObject>& P);
     /** Set a literal on an unconnected input pin — the third leg of graph authoring. */

@@ -4,14 +4,9 @@ import { listToolCategoriesHandler } from './list-tool-categories.js';
 import { recordSchema } from '../schema-registry.js';
 import { STANDARD_DESCRIPTORS } from '../index.js';
 
-// Stubs that always return not_implemented_in_v1 from C++ and must not be
-// advertised — even in the "unavailable" bucket — so agents are never misled
-// into expecting these commands to work (HaybaMCPBlueprintHandler.cpp:345/350/465).
-const KNOWN_STUBS = [
-  'blueprint_add_node',
-  'blueprint_connect_nodes',
-  'blueprint_add_event',
-];
+// Keep this list for any future C++ graph stubs. The former add/connect/event
+// entries are real editor-backed implementations now.
+const KNOWN_STUBS: string[] = [];
 
 async function parsedOutput(): Promise<Record<string, unknown>> {
   const res = await listToolCategoriesHandler({}, {} as never);

@@ -22,6 +22,8 @@
 #include "K2Node_VariableGet.h"
 #include "K2Node_VariableSet.h"
 #include "K2Node_DynamicCast.h"
+#include "K2Node_Select.h"
+#include "Kismet/KismetSystemLibrary.h"
 #include "UObject/UObjectGlobals.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
@@ -46,6 +48,7 @@ TArray<FString> FHaybaMCPBlueprintHandler::GetCommands() const
         TEXT("blueprint_connect_nodes"),
         TEXT("blueprint_compile"),
         TEXT("blueprint_document"),
+        TEXT("blueprint_inspect_graph"),
         TEXT("blueprint_add_event"),
         TEXT("blueprint_set_defaults"),
         TEXT("blueprint_set_pin_default"),
@@ -154,6 +157,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Handle(const FString& Cmd, const 
     if (Cmd == TEXT("blueprint_connect_nodes")) return ConnectNodes(P);
     if (Cmd == TEXT("blueprint_compile"))        return Compile(P);
     if (Cmd == TEXT("blueprint_document"))       return Document(P);
+    if (Cmd == TEXT("blueprint_inspect_graph"))  return InspectGraph(P);
     if (Cmd == TEXT("blueprint_add_event"))      return AddEvent(P);
     if (Cmd == TEXT("blueprint_set_defaults"))   return SetDefaults(P);
     if (Cmd == TEXT("blueprint_set_pin_default")) return SetPinDefault(P);
@@ -542,6 +546,23 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
         return Place(NewObject<UK2Node_IfThenElse>(Graph));
     }
 
+    if (NodeType.Equals(TEXT("select"), ESearchCase::IgnoreCase))
+    {
+        UK2Node_Select* Node = NewObject<UK2Node_Select>(Graph);
+        FHaybaHandlerResult Placed = Place(Node);
+        int32 Options = 2; P->TryGetNumberField(TEXT("option_count"), Options);
+        Options = FMath::Clamp(Options, 2, 32);
+        for (int32 I = 2; I < Options && Node->CanAddPin(); ++I) Node->AddInputPin();
+        return Placed;
+    }
+
+    if (NodeType.Equals(TEXT("timer_by_function"), ESearchCase::IgnoreCase))
+    {
+        FunctionName = TEXT("K2_SetTimer");
+        ClassPath = UKismetSystemLibrary::StaticClass()->GetPathName();
+        NodeType = TEXT("call_function");
+    }
+
     if (NodeType.Equals(TEXT("variable_get"), ESearchCase::IgnoreCase)
         || NodeType.Equals(TEXT("variable_set"), ESearchCase::IgnoreCase))
     {
@@ -585,7 +606,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
     if (!NodeType.Equals(TEXT("call_function"), ESearchCase::IgnoreCase))
     {
         return FHaybaHandlerResult::Err(FString::Printf(
-            TEXT("blueprint_add_node: unknown node_type '%s'. Supported: call_function, branch, variable_get, variable_set, cast."),
+            TEXT("blueprint_add_node: unknown node_type '%s'. Supported: call_function, branch, select, timer_by_function, variable_get, variable_set, cast."),
             *NodeType));
     }
 
@@ -834,7 +855,42 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Compile(const TSharedPtr<FJsonObj
     Out->SetNumberField(TEXT("num_warnings"), ResultsLog.NumWarnings); // legacy alias
     Out->SetArrayField(TEXT("errors"),   Errors);
     Out->SetArrayField(TEXT("warnings"), Warnings);
+    bool bSave = true; P->TryGetBoolField(TEXT("save"), bSave);
+    bool bSaved = false;
+    if (bOk && bSave)
+    {
+        UPackage* Package = BP->GetOutermost();
+        const FString Filename = FPackageName::LongPackageNameToFilename(Package->GetName(), FPackageName::GetAssetPackageExtension());
+        FSavePackageArgs Args; Args.TopLevelFlags = RF_Public | RF_Standalone;
+        bSaved = UPackage::SavePackage(Package, BP, *Filename, Args);
+        if (!bSaved) return FHaybaHandlerResult::Err(TEXT("blueprint_compile: compile succeeded but SavePackage failed"));
+    }
+    Out->SetBoolField(TEXT("saved"), bSaved);
     return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPBlueprintHandler::InspectGraph(const TSharedPtr<FJsonObject>& P)
+{
+    FString Path, GraphName;
+    if (!P->TryGetStringField(TEXT("path"), Path) || Path.IsEmpty()) return FHaybaHandlerResult::Err(TEXT("blueprint_inspect_graph: missing path"));
+    P->TryGetStringField(TEXT("graph_name"), GraphName);
+    UBlueprint* BP = LoadBPByPath(Path); if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_inspect_graph"), Path));
+    UEdGraph* Graph = HaybaFindGraph(BP, GraphName); if (!Graph) return FHaybaHandlerResult::Err(TEXT("blueprint_inspect_graph: graph not found"));
+    TArray<TSharedPtr<FJsonValue>> Nodes, Edges;
+    for (UEdGraphNode* Node : Graph->Nodes)
+    {
+        Nodes.Add(MakeShared<FJsonValueObject>(HaybaDescribeNode(Node).ToSharedRef()));
+        for (UEdGraphPin* Pin : Node->Pins)
+        {
+            if (!Pin || Pin->Direction != EGPD_Output) continue;
+            for (UEdGraphPin* Linked : Pin->LinkedTo)
+            {
+                if (!Linked) continue;
+                TSharedPtr<FJsonObject> Edge=MakeShared<FJsonObject>(); Edge->SetStringField(TEXT("from_node"),Node->NodeGuid.ToString()); Edge->SetStringField(TEXT("from_pin"),Pin->PinName.ToString()); Edge->SetStringField(TEXT("to_node"),Linked->GetOwningNode()->NodeGuid.ToString()); Edge->SetStringField(TEXT("to_pin"),Linked->PinName.ToString()); Edges.Add(MakeShared<FJsonValueObject>(Edge.ToSharedRef()));
+            }
+        }
+    }
+    TSharedPtr<FJsonObject> Out=MakeShared<FJsonObject>(); Out->SetStringField(TEXT("path"),BP->GetPathName()); Out->SetStringField(TEXT("graph"),Graph->GetName()); Out->SetArrayField(TEXT("nodes"),Nodes); Out->SetArrayField(TEXT("edges"),Edges); Out->SetNumberField(TEXT("node_count"),Nodes.Num()); Out->SetNumberField(TEXT("edge_count"),Edges.Num()); Out->SetBoolField(TEXT("dirty"),BP->GetOutermost()->IsDirty()); return FHaybaHandlerResult::Ok(Out);
 }
 
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::Document(const TSharedPtr<FJsonObject>& P)

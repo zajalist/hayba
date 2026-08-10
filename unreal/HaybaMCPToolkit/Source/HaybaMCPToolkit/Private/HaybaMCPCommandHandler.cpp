@@ -80,6 +80,9 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("blueprint_add_component"),
         TEXT("blueprint_add_variable"),
         TEXT("blueprint_set_defaults"),
+        TEXT("blueprint_add_node"),
+        TEXT("blueprint_connect_nodes"),
+        TEXT("blueprint_set_pin_default"),
         // Material authoring
         TEXT("material_create"),
         TEXT("material_create_instance"),

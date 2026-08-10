@@ -67,6 +67,9 @@ export const NON_IDEMPOTENT = new Set<string>([
   'level_create',
   // Blueprint authoring
   'blueprint_create',
+  'blueprint_add_node',
+  'blueprint_connect_nodes',
+  'blueprint_set_pin_default',
   // Material authoring
   'material_create',
   'material_create_instance',

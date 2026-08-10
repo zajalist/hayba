@@ -38,7 +38,7 @@ const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: 
   // blueprint_add_node / blueprint_connect_nodes / blueprint_add_event are C++ stubs that
   // return not_implemented_in_v1 — they will never succeed. Omit them so the catalog
   // does not advertise commands an agent cannot use. (HaybaMCPBlueprintHandler.cpp:345/350/465)
-  { domain: 'blueprint', command_count: 8, commands: ['blueprint_create','blueprint_get_info','blueprint_add_component','blueprint_add_variable','blueprint_add_function','blueprint_compile','blueprint_document','blueprint_set_defaults'] },
+  { domain: 'blueprint', command_count: 12, commands: ['blueprint_create','blueprint_get_info','blueprint_add_component','blueprint_add_variable','blueprint_add_function','blueprint_add_node','blueprint_connect_nodes','blueprint_set_pin_default','blueprint_compile','blueprint_document','blueprint_inspect_graph','blueprint_set_defaults'] },
   { domain: 'material', command_count: 8, commands: ['material_create','material_add_node','material_connect_nodes','material_create_instance','material_set_param','material_apply','material_list','material_get_info'] },
   { domain: 'foliage', command_count: 4, commands: ['foliage_add_instance','foliage_remove_instances','foliage_list_types','foliage_paint_at'] },
   { domain: 'spline', command_count: 5, commands: ['spline_create','spline_add_point','spline_set_point','spline_remove_point','spline_get_info'] },

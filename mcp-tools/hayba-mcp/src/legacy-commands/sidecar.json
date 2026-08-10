@@ -4522,6 +4522,31 @@
       "has_ts_wrapper": false,
       "notes": "Renders a blueprint's EVENT GRAPH as pseudo-English — a fast way to see what a blueprint reacts to without opening it. It covers events only: user-defined function graphs do not appear, so a blueprint documented as three bare events may still have functions. Use blueprint_get_info for structure."
     },
+    "blueprint_inspect_graph": {
+      "aliases": [], "handler_cpp": "FHaybaMCPBlueprintHandler::InspectGraph",
+      "params": [{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false}],
+      "returns": {"shape":"object","fields":[{"name":"nodes","type":"array"},{"name":"edges","type":"array"},{"name":"dirty","type":"boolean"}]},
+      "agent_callable": true, "has_ts_wrapper": false,
+      "notes": "Read-only exact graph export. Returns stable node GUIDs, pin names/directions/types, every edge, counts, and dirty state. Use this before adding or wiring nodes."
+    },
+    "blueprint_add_node": {
+      "aliases": [], "handler_cpp": "FHaybaMCPBlueprintHandler::AddNode",
+      "params": [{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false},{"name":"node_type","type":"string","required":true,"description":"call_function, branch, select, timer_by_function, variable_get, variable_set, or cast"},{"name":"function_name","type":"string","required":false},{"name":"class_path","type":"string","required":false},{"name":"variable_name","type":"string","required":false},{"name":"option_count","type":"integer","required":false},{"name":"x","type":"number","required":false},{"name":"y","type":"number","required":false}],
+      "returns":{"shape":"object","fields":[{"name":"node_id","type":"string"},{"name":"pins","type":"array"}]}, "agent_callable":true,"has_ts_wrapper":false,
+      "notes":"Stages a standard event-graph node and returns its GUID plus exact pins. timer_by_function creates K2_SetTimer; set its Object, FunctionName, Time and Looping pins before compile."
+    },
+    "blueprint_connect_nodes": {
+      "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::ConnectNodes",
+      "params":[{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false},{"name":"from_node","type":"string","required":true},{"name":"from_pin","type":"string","required":true},{"name":"to_node","type":"string","required":true},{"name":"to_pin","type":"string","required":true}],
+      "returns":{"shape":"object","fields":[{"name":"connected","type":"boolean"}]},"agent_callable":true,"has_ts_wrapper":false,
+      "notes":"Wires exec or data pins using GUIDs and exact pin names from blueprint_inspect_graph/add_node. The K2 schema rejects invalid type or direction connections."
+    },
+    "blueprint_set_pin_default": {
+      "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::SetPinDefault",
+      "params":[{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false},{"name":"node_id","type":"string","required":true},{"name":"pin_name","type":"string","required":true},{"name":"value","type":"string","required":true}],
+      "returns":{"shape":"object","fields":[{"name":"applied","type":"string"}]},"agent_callable":true,"has_ts_wrapper":false,
+      "notes":"Sets a literal or object/class reference on an unconnected input pin. Refuses connected pins so values are never silently ignored."
+    },
     "level_get_spatial_index": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPLevelHandler::GetSpatialIndex",
