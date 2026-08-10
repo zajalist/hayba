@@ -16,6 +16,52 @@
 
 namespace HaybaUIOps
 {
+    // ── WidgetBlueprint variable-GUID invariant ───────────────────────────
+    //
+    // UE's WidgetBlueprintCompiler requires one valid, unique GUID for every
+    // source widget and animation. Once the map is non-empty, a missing or stale
+    // entry emits ensureAlways from the compiler. Planning the exact map is pure
+    // so every mutation path can share one rule and the crash shapes can be
+    // regression-tested without compiling a damaged asset.
+
+    struct FVariableGuidReconciliation
+    {
+        TMap<FName, FGuid> Reconciled;
+        TArray<FName> Missing;
+        TArray<FName> Stale;
+        TArray<FName> Invalid;
+        TArray<FName> Colliding;
+        TArray<FName> DuplicateSourceNames;
+        TArray<FName> ScratchSourceNames;
+        bool bChanged = false;
+
+        /** Duplicate source names and leaked staging/trash names cannot be
+         *  repaired by changing the GUID map: compilation must be refused. */
+        bool CanApply() const
+        {
+            return DuplicateSourceNames.IsEmpty() && ScratchSourceNames.IsEmpty();
+        }
+
+        int32 RepairCount() const
+        {
+            return Missing.Num() + Stale.Num() + Invalid.Num() + Colliding.Num();
+        }
+
+        FString BlockingReason() const;
+        FString RepairSummary() const;
+    };
+
+    /** Return the exact compiler-safe map, preserving every usable GUID.
+     *
+     *  `SourceNames` must contain every source widget AND animation, matching
+     *  UWidgetBlueprint::ForEachSourceWidget plus Animations. Missing, invalid,
+     *  colliding and stale entries are repaired deterministically. Duplicate or
+     *  scratch source names are blockers because a map cannot make those object
+     *  identities unambiguous. */
+    FVariableGuidReconciliation PlanVariableGuidReconciliation(
+        const TArray<FName>& SourceNames,
+        const TMap<FName, FGuid>& Existing);
+
     /** Where a slot-properties payload was found, so the reply can say. */
     enum class ESlotPropsSpelling : uint8
     {

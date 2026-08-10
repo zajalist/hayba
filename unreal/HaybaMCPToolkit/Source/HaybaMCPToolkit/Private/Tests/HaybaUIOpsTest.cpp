@@ -27,6 +27,137 @@ namespace
         FJsonSerializer::Deserialize(Reader, Obj);
         return Obj;
     }
+
+    FGuid Guid(uint32 D)
+    {
+        return FGuid(0xA11CE000u + D, 0xBADC0DEu, 0xC001D00Du, D + 1u);
+    }
+}
+
+// ── WidgetBlueprint variable-GUID invariant ──────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FHaybaUIOpsVariableGuidReconciliationTest,
+    "Hayba.MCP.UIOps.VariableGuidReconciliation",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaUIOpsVariableGuidReconciliationTest::RunTest(const FString&)
+{
+    using namespace HaybaUIOps;
+
+    {
+        const TMap<FName, FGuid> Before = {
+            { TEXT("Root"), Guid(1) },
+            { TEXT("Title"), Guid(2) },
+        };
+        const FVariableGuidReconciliation Plan =
+            PlanVariableGuidReconciliation({ TEXT("Root"), TEXT("Title") }, Before);
+        TestTrue(TEXT("a valid tree is accepted"), Plan.CanApply());
+        TestFalse(TEXT("a valid tree is unchanged"), Plan.bChanged);
+        TestEqual(TEXT("valid GUIDs are preserved"), Plan.Reconciled.FindRef(TEXT("Title")), Guid(2));
+    }
+
+    {
+        const TMap<FName, FGuid> Before = {
+            { TEXT("Root"), Guid(1) },
+            { TEXT("Deleted"), Guid(3) },
+        };
+        const FVariableGuidReconciliation Plan =
+            PlanVariableGuidReconciliation({ TEXT("Root"), TEXT("Added") }, Before);
+        TestTrue(TEXT("missing and stale entries are repairable"), Plan.CanApply());
+        TestTrue(TEXT("the repair changes the map"), Plan.bChanged);
+        TestTrue(TEXT("the added source is classified missing"), Plan.Missing.Contains(TEXT("Added")));
+        TestTrue(TEXT("the deleted source is classified stale"), Plan.Stale.Contains(TEXT("Deleted")));
+        TestTrue(TEXT("the added source gets a valid GUID"), Plan.Reconciled.FindRef(TEXT("Added")).IsValid());
+        TestFalse(TEXT("the deleted source no longer has a GUID"), Plan.Reconciled.Contains(TEXT("Deleted")));
+
+        const FVariableGuidReconciliation Again =
+            PlanVariableGuidReconciliation({ TEXT("Root"), TEXT("Added") }, Plan.Reconciled);
+        TestFalse(TEXT("recovery is idempotent"), Again.bChanged);
+    }
+
+    {
+        const TMap<FName, FGuid> Before = {
+            { TEXT("Invalid"), FGuid() },
+            { TEXT("A"), Guid(8) },
+            { TEXT("B"), Guid(8) },
+        };
+        const FVariableGuidReconciliation Plan =
+            PlanVariableGuidReconciliation({ TEXT("Invalid"), TEXT("A"), TEXT("B") }, Before);
+        TestTrue(TEXT("invalid and colliding GUIDs are repairable"), Plan.CanApply());
+        TestTrue(TEXT("the invalid GUID is classified"), Plan.Invalid.Contains(TEXT("Invalid")));
+        TestEqual(TEXT("one duplicate GUID is reissued"), Plan.Colliding.Num(), 1);
+        TestTrue(TEXT("all repaired GUIDs are valid"),
+            Plan.Reconciled.FindRef(TEXT("Invalid")).IsValid()
+            && Plan.Reconciled.FindRef(TEXT("A")).IsValid()
+            && Plan.Reconciled.FindRef(TEXT("B")).IsValid());
+        TestTrue(TEXT("colliding sources become unique"),
+            Plan.Reconciled.FindRef(TEXT("A")) != Plan.Reconciled.FindRef(TEXT("B")));
+    }
+
+    {
+        // Rename preserves identity because the handler moves the old GUID to
+        // the final name before asking the whole-tree planner to validate it.
+        TMap<FName, FGuid> AfterRename = { { TEXT("After"), Guid(11) } };
+        const FVariableGuidReconciliation Plan =
+            PlanVariableGuidReconciliation({ TEXT("After") }, AfterRename);
+        TestFalse(TEXT("rename with a transferred GUID needs no repair"), Plan.bChanged);
+        TestEqual(TEXT("rename preserves the GUID"), Plan.Reconciled.FindRef(TEXT("After")), Guid(11));
+    }
+
+    {
+        // Replace with preservation keeps the old identity; replacement without
+        // preservation deliberately starts with no entry and receives a new one.
+        const FVariableGuidReconciliation Preserved =
+            PlanVariableGuidReconciliation({ TEXT("Widget") }, { { TEXT("Widget"), Guid(12) } });
+        const FVariableGuidReconciliation Reissued =
+            PlanVariableGuidReconciliation({ TEXT("Widget") }, {});
+        TestEqual(TEXT("replace can preserve identity"), Preserved.Reconciled.FindRef(TEXT("Widget")), Guid(12));
+        TestTrue(TEXT("replace without preservation gets a GUID"), Reissued.Reconciled.FindRef(TEXT("Widget")).IsValid());
+        TestTrue(TEXT("replace without preservation gets a different identity"),
+            Reissued.Reconciled.FindRef(TEXT("Widget")) != Guid(12));
+    }
+
+    {
+        const FVariableGuidReconciliation Removal =
+            PlanVariableGuidReconciliation({ TEXT("Root") }, {
+                { TEXT("Root"), Guid(1) },
+                { TEXT("RemovedParent"), Guid(2) },
+                { TEXT("RemovedChild"), Guid(3) },
+            });
+        TestEqual(TEXT("subtree removal purges every stale GUID"), Removal.Stale.Num(), 2);
+        TestEqual(TEXT("only the live root remains"), Removal.Reconciled.Num(), 1);
+    }
+
+    {
+        // bIsVariable controls generated member exposure, not this compiler map:
+        // both toggle states present the same source set and must keep the GUID.
+        const TMap<FName, FGuid> Before = { { TEXT("Label"), Guid(15) } };
+        const FVariableGuidReconciliation ToggleOff =
+            PlanVariableGuidReconciliation({ TEXT("Label") }, Before);
+        const FVariableGuidReconciliation ToggleOn =
+            PlanVariableGuidReconciliation({ TEXT("Label") }, ToggleOff.Reconciled);
+        TestFalse(TEXT("variable off keeps the compiler GUID"), ToggleOff.bChanged);
+        TestFalse(TEXT("variable on keeps the same compiler GUID"), ToggleOn.bChanged);
+    }
+
+    {
+        const FVariableGuidReconciliation Duplicate =
+            PlanVariableGuidReconciliation({ TEXT("Same"), TEXT("Same") }, {});
+        TestFalse(TEXT("duplicate source names block compilation"), Duplicate.CanApply());
+        TestTrue(TEXT("the duplicate is named"), Duplicate.DuplicateSourceNames.Contains(TEXT("Same")));
+        TestTrue(TEXT("a blocked tree is not partially rewritten"), Duplicate.Reconciled.IsEmpty());
+    }
+
+    {
+        const FVariableGuidReconciliation Scratch =
+            PlanVariableGuidReconciliation({ TEXT("Root"), TEXT("TRASH_Old") }, {});
+        TestFalse(TEXT("trash-name leakage blocks compilation"), Scratch.CanApply());
+        TestTrue(TEXT("the scratch source is classified"), Scratch.ScratchSourceNames.Contains(TEXT("TRASH_Old")));
+        TestTrue(TEXT("the error is actionable"), Scratch.BlockingReason().Contains(TEXT("temporary/trash")));
+    }
+
+    return true;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
