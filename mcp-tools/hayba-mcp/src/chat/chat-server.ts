@@ -51,7 +51,7 @@ import {
   type ApprovedCall,
   type DispatchTool,
 } from './agent-loop.js';
-import type { LLMTool } from '../agents/llm-client.js';
+import type { LLMTool, LLMUsage } from '../agents/llm-client.js';
 import { createChatDispatcher } from './tool-dispatch.js';
 
 // ---------------------------------------------------------------------------
@@ -678,6 +678,9 @@ function finalize(
 async function runTurn(session: ChatSession, params: RunTurnParams): Promise<void> {
   let finalReason: string | null = null;
   let lastError: { error: string; kind?: string } | null = null;
+  // Cache-hit metrics (cache_creation_input_tokens / cache_read_input_tokens
+  // among them) travel on the loop's own 'done' event — see agent-loop.ts.
+  let usage: LLMUsage | undefined;
 
   try {
     for await (const ev of runAgentLoop({
@@ -691,20 +694,31 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
       planMode: true, // honour Plan Mode; UE side is authoritative, TS side gated
       approvedCall: params.approvedCall,
     })) {
-      forwardEvent(session, ev, (r) => (finalReason = r), (e) => (lastError = e));
+      forwardEvent(
+        session,
+        ev,
+        (r) => (finalReason = r),
+        (e) => (lastError = e),
+        (u) => {
+          if (u) usage = u;
+        },
+      );
       if (finalReason) break; // loop's own done/plan_request/aborted terminus
     }
   } catch (err) {
     lastError = { error: err instanceof Error ? err.message : String(err), kind: 'internal' };
   }
 
-  // Consolidated terminal frame.
+  // Consolidated terminal frame. `usage` is included whenever the loop
+  // reported any (even on an aborted/error turn — partial usage still cost
+  // real tokens and is worth surfacing).
+  const usageExtra = usage ? { usage } : {};
   if (finalReason === 'aborted') {
-    finalize(session, 'aborted');
+    finalize(session, 'aborted', usageExtra);
   } else if (lastError && !finalReason) {
-    finalize(session, 'error', { error: lastError });
+    finalize(session, 'error', { error: lastError, ...usageExtra });
   } else {
-    finalize(session, finalReason ?? 'end_turn', lastError ? { error: lastError } : {});
+    finalize(session, finalReason ?? 'end_turn', { ...(lastError ? { error: lastError } : {}), ...usageExtra });
   }
 }
 
@@ -714,6 +728,7 @@ function forwardEvent(
   ev: AgentEvent,
   setReason: (r: string) => void,
   setError: (e: { error: string; kind?: string }) => void,
+  setUsage: (u: LLMUsage | undefined) => void,
 ): void {
   switch (ev.type) {
     case 'text_delta':
@@ -757,6 +772,7 @@ function forwardEvent(
     }
     case 'done':
       setReason(ev.reason);
+      setUsage(ev.usage);
       break;
     case 'error':
       setError({ error: ev.error, kind: ev.kind });

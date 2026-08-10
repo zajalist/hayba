@@ -45,8 +45,16 @@ describe('tool mapping', () => {
     };
     const client = createLLMClient({ provider: 'anthropic', apiKey: 'k' }, { anthropic: fake });
     await client.complete(BASE);
+    // Issue #30: the LAST tool in the catalog carries a `cache_control`
+    // breakpoint so the (stable, re-sent-every-turn) tool catalog is
+    // cacheable. With one tool offered, that's this one.
     expect(captured.tools).toEqual([
-      { name: 'get_weather', description: 'Get the weather', input_schema: TOOL.input_schema },
+      {
+        name: 'get_weather',
+        description: 'Get the weather',
+        input_schema: TOOL.input_schema,
+        cache_control: { type: 'ephemeral' },
+      },
     ]);
     expect(captured.model).toBe('claude-opus-4-8');
   });
