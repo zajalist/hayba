@@ -56,6 +56,24 @@ bool FHaybaPIERuntimeParseTest::RunTest(const FString&)
             Message.Contains(TEXT("offset")) && Message.Contains(TEXT("limit")) && Message.Contains(TEXT("pie_instance")));
     }
     {
+        FHaybaParamReader WrongTypes(
+            RuntimeJson(TEXT(R"({"class_filter":42,"name_filter":false,"tag":[],"offset":"1","limit":true,"pie_instance":"0"})")),
+            TEXT("editor_pie_actor_list"));
+        const HaybaPIERuntimeOps::FListRequest Request = HaybaPIERuntimeOps::ParseList(WrongTypes);
+        TestTrue(TEXT("list rejects UE JSON scalar coercions"), WrongTypes.HasErrors());
+        const FString Message = WrongTypes.ErrorMessage();
+        TestTrue(TEXT("list reports every wrong-typed field together"),
+            Message.Contains(TEXT("class_filter"))
+            && Message.Contains(TEXT("name_filter"))
+            && Message.Contains(TEXT("tag"))
+            && Message.Contains(TEXT("offset"))
+            && Message.Contains(TEXT("limit"))
+            && Message.Contains(TEXT("pie_instance")));
+        TestEqual(TEXT("wrong offset type cannot poison its safe default"), Request.Offset, 0);
+        TestEqual(TEXT("wrong limit type cannot poison its safe default"), Request.Limit, 50);
+        TestFalse(TEXT("wrong PIE selector type remains unset"), Request.World.PIEInstance.IsSet());
+    }
+    {
         const FString LongFilter = FString::ChrN(HaybaPIERuntimeOps::MaxFilterLength + 1, TEXT('x'));
         TSharedPtr<FJsonObject> Params = MakeShared<FJsonObject>();
         Params->SetStringField(TEXT("class_filter"), LongFilter);
@@ -73,6 +91,31 @@ bool FHaybaPIERuntimeParseTest::RunTest(const FString&)
             TEXT("editor_pie_actor_inspect"));
         HaybaPIERuntimeOps::ParseInspect(Ambiguous);
         TestTrue(TEXT("inspect rejects ambiguous reference forms"), Ambiguous.HasErrors());
+
+        FHaybaParamReader WrongTypes(
+            RuntimeJson(TEXT(R"({"actor_id":7,"component_filter":{},"component_offset":"0","component_limit":false})")),
+            TEXT("editor_pie_actor_inspect"));
+        const HaybaPIERuntimeOps::FInspectRequest WrongRequest = HaybaPIERuntimeOps::ParseInspect(WrongTypes);
+        const FString WrongMessage = WrongTypes.ErrorMessage();
+        TestTrue(TEXT("inspect rejects all wrong wire types"), WrongTypes.HasErrors());
+        TestTrue(TEXT("inspect reports all wrong wire types together"),
+            WrongMessage.Contains(TEXT("actor_id"))
+            && WrongMessage.Contains(TEXT("component_filter"))
+            && WrongMessage.Contains(TEXT("component_offset"))
+            && WrongMessage.Contains(TEXT("component_limit")));
+        TestFalse(TEXT("malformed-but-present actor does not produce a false missing-reference diagnostic"),
+            WrongMessage.Contains(TEXT("pass exactly one")));
+        TestEqual(TEXT("wrong component offset uses safe default"), WrongRequest.ComponentOffset, 0);
+        TestEqual(TEXT("wrong component limit uses safe default"), WrongRequest.ComponentLimit, 50);
+
+        FHaybaParamReader NullReference(
+            RuntimeJson(TEXT(R"({"actor_path":null})")),
+            TEXT("editor_pie_actor_inspect"));
+        HaybaPIERuntimeOps::ParseInspect(NullReference);
+        TestTrue(TEXT("null is not accepted as an actor reference string"),
+            NullReference.ErrorMessage().Contains(TEXT("actor_path")));
+        TestFalse(TEXT("null actor reference is reported as malformed rather than absent"),
+            NullReference.ErrorMessage().Contains(TEXT("pass exactly one")));
     }
     {
         FHaybaParamReader Valid(
@@ -109,6 +152,58 @@ bool FHaybaPIERuntimeParseTest::RunTest(const FString&)
         TestTrue(TEXT("both wrong types are reported"),
             WrongTypes.ErrorMessage().Contains(TEXT("world_location"))
             && WrongTypes.ErrorMessage().Contains(TEXT("trace_visibility")));
+        TestFalse(TEXT("malformed explicit location does not invent a missing actor error"),
+            WrongTypes.ErrorMessage().Contains(TEXT("pass exactly one")));
+
+        FHaybaParamReader CoercibleScalars(
+            RuntimeJson(TEXT(R"({"actor_id":1,"component_name":null,"sample":false,"player_index":"0","trace_visibility":1})")),
+            TEXT("editor_pie_project_world"));
+        const HaybaPIERuntimeOps::FProjectRequest CoercibleRequest = HaybaPIERuntimeOps::ParseProject(CoercibleScalars);
+        const FString CoercibleMessage = CoercibleScalars.ErrorMessage();
+        TestTrue(TEXT("projection rejects values that UE's JSON DOM can coerce"), CoercibleScalars.HasErrors());
+        TestTrue(TEXT("projection names every rejected coercible scalar"),
+            CoercibleMessage.Contains(TEXT("actor_id"))
+            && CoercibleMessage.Contains(TEXT("component_name"))
+            && CoercibleMessage.Contains(TEXT("sample"))
+            && CoercibleMessage.Contains(TEXT("player_index"))
+            && CoercibleMessage.Contains(TEXT("trace_visibility")));
+        TestFalse(TEXT("malformed-but-present projection actor is not reported missing"),
+            CoercibleMessage.Contains(TEXT("pass exactly one")));
+        TestEqual(TEXT("wrong player index type uses safe default"), CoercibleRequest.PlayerIndex, 0);
+        TestTrue(TEXT("wrong trace flag type uses safe default"), CoercibleRequest.bTraceVisibility);
+
+        const TCHAR* MalformedVectors[] = {
+            TEXT(R"({"world_location":null})"),
+            TEXT(R"({"world_location":"0,0,0"})"),
+            TEXT(R"({"world_location":{}})"),
+            TEXT(R"({"world_location":[0,true,2]})"),
+            TEXT(R"({"world_location":[0,null,2]})"),
+            TEXT(R"({"world_location":[0,[],2]})"),
+            TEXT(R"({"world_location":[0,{},2]})"),
+            TEXT(R"({"world_location":[0,1,2,3]})")
+        };
+        for (const TCHAR* Json : MalformedVectors)
+        {
+            FHaybaParamReader Malformed(RuntimeJson(Json), TEXT("editor_pie_project_world"));
+            HaybaPIERuntimeOps::ParseProject(Malformed);
+            TestTrue(TEXT("every malformed vector shape fails closed"), Malformed.HasErrors());
+            TestTrue(TEXT("every malformed vector diagnostic names world_location"),
+                Malformed.ErrorMessage().Contains(TEXT("world_location")));
+            TestFalse(TEXT("malformed vector shape does not cascade into a missing actor diagnostic"),
+                Malformed.ErrorMessage().Contains(TEXT("pass exactly one")));
+        }
+
+        TSharedPtr<FJsonObject> NonFiniteParams = MakeShared<FJsonObject>();
+        TArray<TSharedPtr<FJsonValue>> NonFiniteVector;
+        NonFiniteVector.Add(MakeShared<FJsonValueNumber>(0.0));
+        NonFiniteVector.Add(MakeShared<FJsonValueNumber>(std::numeric_limits<double>::infinity()));
+        NonFiniteVector.Add(MakeShared<FJsonValueNumber>(2.0));
+        NonFiniteParams->SetArrayField(TEXT("world_location"), MoveTemp(NonFiniteVector));
+        FHaybaParamReader NonFinite(NonFiniteParams, TEXT("editor_pie_project_world"));
+        HaybaPIERuntimeOps::ParseProject(NonFinite);
+        TestTrue(TEXT("programmatic non-finite vector values fail closed"), NonFinite.HasErrors());
+        TestTrue(TEXT("non-finite vector diagnostic names world_location"),
+            NonFinite.ErrorMessage().Contains(TEXT("world_location")));
 
         FHaybaParamReader ExtremeCoordinate(
             RuntimeJson(TEXT(R"({"world_location":[1e308,0,0]})")),
@@ -122,6 +217,14 @@ bool FHaybaPIERuntimeParseTest::RunTest(const FString&)
         const HaybaPIERuntimeOps::FProjectRequest PivotRequest = HaybaPIERuntimeOps::ParseProject(ComponentPivot);
         TestFalse(TEXT("component pivot is an explicit valid sample"), ComponentPivot.HasErrors());
         TestEqual(TEXT("component sample survives native parsing"), PivotRequest.Sample, FString(TEXT("component_location")));
+
+        FHaybaParamReader StrictValid(
+            RuntimeJson(TEXT(R"({"world_location":[0,-1,2.5],"player_index":16,"trace_visibility":false})")),
+            TEXT("editor_pie_project_world"));
+        const HaybaPIERuntimeOps::FProjectRequest StrictValidRequest = HaybaPIERuntimeOps::ParseProject(StrictValid);
+        TestFalse(TEXT("strict parsing still accepts correctly typed boundary values"), StrictValid.HasErrors());
+        TestEqual(TEXT("maximum player index remains valid"), StrictValidRequest.PlayerIndex, 16);
+        TestFalse(TEXT("literal false remains a valid trace flag"), StrictValidRequest.bTraceVisibility);
 
         FHaybaParamReader BadComponentSample(
             RuntimeJson(TEXT(R"({"actor_id":"Road_1","component_name":"Spline","sample":"actor_location"})")),

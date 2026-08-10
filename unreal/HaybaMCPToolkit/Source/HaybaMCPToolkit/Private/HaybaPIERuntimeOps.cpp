@@ -12,8 +12,11 @@ namespace
     {
         const TSharedPtr<FJsonObject>& Raw = R.Raw();
         if (!Raw.IsValid() || !Raw->HasField(Name)) return Default;
+        const TSharedPtr<FJsonValue> Field = Raw->TryGetField(Name);
         FString Value;
-        if (!Raw->TryGetStringField(Name, Value))
+        // FJsonValueNumber/Boolean::TryGetString intentionally coerce their
+        // values in UE, so TryGetStringField alone is not a wire-type check.
+        if (!Field.IsValid() || Field->Type != EJson::String || !Field->TryGetString(Value))
         {
             R.AddError(FString::Printf(TEXT("'%s' must be a string"), Name));
             return Default;
@@ -29,8 +32,12 @@ namespace
     {
         const TSharedPtr<FJsonObject>& Raw = R.Raw();
         if (!Raw.IsValid() || !Raw->HasField(Name)) return Default;
+        const TSharedPtr<FJsonValue> Field = Raw->TryGetField(Name);
         bool Value = Default;
-        if (!Raw->TryGetBoolField(Name, Value))
+        // UE's JSON DOM accepts every JSON string as a bool (via ToBool) and
+        // numbers as value != 0. Runtime inspection is a direct-wire boundary:
+        // accepting those shapes makes malformed commands look successful.
+        if (!Field.IsValid() || Field->Type != EJson::Boolean || !Field->TryGetBool(Value))
         {
             R.AddError(FString::Printf(TEXT("'%s' must be a boolean"), Name));
             return Default;
@@ -102,8 +109,15 @@ namespace
         const TSharedPtr<FJsonObject>& Raw = R.Raw();
         if (!Raw.IsValid() || !Raw->HasField(Name)) return {};
 
+        const TSharedPtr<FJsonValue> Field = Raw->TryGetField(Name);
         double Value = 0.0;
-        if (!Raw->TryGetNumberField(Name, Value) || !FMath::IsFinite(Value) || FMath::FloorToDouble(Value) != Value)
+        // TryGetNumberField coerces booleans and numeric strings in UE. Keep
+        // this API's integer contract strict before applying range checks.
+        if (!Field.IsValid()
+            || Field->Type != EJson::Number
+            || !Field->TryGetNumber(Value)
+            || !FMath::IsFinite(Value)
+            || FMath::FloorToDouble(Value) != Value)
         {
             R.AddError(FString::Printf(TEXT("'%s' must be a finite integer"), Name));
             return {};
@@ -136,14 +150,22 @@ namespace
         return Out;
     }
 
-    void ValidateExactlyOneActorReference(FHaybaParamReader& R, const HaybaPIERuntimeOps::FActorReference& Ref)
+    int32 PresentActorReferenceCount(const FHaybaParamReader& R)
     {
-        const int32 Count = Ref.SuppliedCount();
-        if (Count == 0)
+        const TSharedPtr<FJsonObject>& Raw = R.Raw();
+        if (!Raw.IsValid()) return 0;
+        return (Raw->HasField(TEXT("actor_path")) ? 1 : 0)
+            + (Raw->HasField(TEXT("actor_id")) ? 1 : 0)
+            + (Raw->HasField(TEXT("actor_label")) ? 1 : 0);
+    }
+
+    void ValidateExactlyOneActorReference(FHaybaParamReader& R, int32 PresentCount)
+    {
+        if (PresentCount == 0)
         {
             R.AddError(TEXT("pass exactly one of actor_path, actor_id, or actor_label"));
         }
-        else if (Count > 1)
+        else if (PresentCount > 1)
         {
             R.AddError(TEXT("actor_path, actor_id, and actor_label are mutually exclusive"));
         }
@@ -175,7 +197,7 @@ namespace HaybaPIERuntimeOps
         Out.ComponentFilter = OptionalStrictString(R, TEXT("component_filter"));
         Out.ComponentOffset = OptionalBoundedInt(R, TEXT("component_offset"), 0, MaxComponentOffset).Get(0);
         Out.ComponentLimit = OptionalBoundedInt(R, TEXT("component_limit"), 1, MaxComponents).Get(50);
-        ValidateExactlyOneActorReference(R, Out.Actor);
+        ValidateExactlyOneActorReference(R, PresentActorReferenceCount(R));
         ValidateShortString(R, TEXT("component_filter"), Out.ComponentFilter);
         return Out;
     }
@@ -193,21 +215,24 @@ namespace HaybaPIERuntimeOps
 
         ValidateReferenceString(R, TEXT("component_name"), Out.ComponentName);
 
-        const int32 ActorCount = Out.Actor.SuppliedCount();
-        if (Out.WorldLocation.IsSet())
+        const TSharedPtr<FJsonObject>& Raw = R.Raw();
+        const bool bWorldLocationPresent = Raw.IsValid() && Raw->HasField(TEXT("world_location"));
+        const int32 ActorReferenceCount = PresentActorReferenceCount(R);
+        const bool bComponentNamePresent = Raw.IsValid() && Raw->HasField(TEXT("component_name"));
+        if (bWorldLocationPresent)
         {
-            if (ActorCount > 0)
+            if (ActorReferenceCount > 0)
             {
                 R.AddError(TEXT("world_location is mutually exclusive with actor_path, actor_id, and actor_label"));
             }
-            if (!Out.ComponentName.IsEmpty())
+            if (bComponentNamePresent)
             {
                 R.AddError(TEXT("component_name requires an actor target"));
             }
         }
         else
         {
-            ValidateExactlyOneActorReference(R, Out.Actor);
+            ValidateExactlyOneActorReference(R, ActorReferenceCount);
         }
 
         if (Out.Sample != TEXT("actor_location")
@@ -216,8 +241,8 @@ namespace HaybaPIERuntimeOps
         {
             R.AddError(TEXT("'sample' must be actor_location, component_location, or bounds_origin"));
         }
-        const bool bSampleWasSupplied = R.Raw().IsValid() && R.Raw()->HasField(TEXT("sample"));
-        if (Out.WorldLocation.IsSet() && bSampleWasSupplied)
+        const bool bSampleWasSupplied = Raw.IsValid() && Raw->HasField(TEXT("sample"));
+        if (bWorldLocationPresent && bSampleWasSupplied)
         {
             R.AddError(TEXT("'sample' is not used with an explicit world_location"));
         }

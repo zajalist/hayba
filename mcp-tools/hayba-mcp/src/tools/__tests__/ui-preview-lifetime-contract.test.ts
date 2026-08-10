@@ -17,6 +17,12 @@ const LAYOUT_CPP = join(ROOT, 'Private/handlers/HaybaMCPUILayout.cpp');
 const UI_HANDLER_CPP = join(ROOT, 'Private/handlers/HaybaMCPUIHandler.cpp');
 const NATIVE_TEST_CPP = join(ROOT, 'Private/Tests/HaybaMCPUIPreviewLifetimeTest.cpp');
 
+function readNativeSource(path: string): string {
+  // Git checks native sources out as CRLF on Windows. Contract assertions
+  // must describe source content, not the host's line-ending convention.
+  return readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
+}
+
 function bodyBetween(source: string, startToken: string, endToken: string): string {
   const start = source.indexOf(startToken);
   expect(start, `missing native contract token: ${startToken}`).toBeGreaterThan(-1);
@@ -29,7 +35,7 @@ describe('native UMG preview lifetime contract', () => {
   const available = [COMMAND_CPP, LAYOUT_CPP, UI_HANDLER_CPP, NATIVE_TEST_CPP].every(existsSync);
 
   it.runIf(available)('keeps compile Plan-gated but excludes only its derived work from undo', () => {
-    const source = readFileSync(COMMAND_CPP, 'utf8');
+    const source = readNativeSource(COMMAND_CPP);
     const gate = bodyBetween(source, 'static const TSet<FString> DestructiveCommands', '};');
     const transactionPolicy = bodyBetween(
       source,
@@ -45,7 +51,7 @@ describe('native UMG preview lifetime contract', () => {
   });
 
   it.runIf(available)('makes the whole preview graph transient and non-transactional', () => {
-    const source = readFileSync(LAYOUT_CPP, 'utf8');
+    const source = readNativeSource(LAYOUT_CPP);
     const create = bodyBetween(source, 'bool MakePreviewInstance', 'bool ComputeGeometry');
     const destroy = bodyBetween(source, 'FPreviewInstance::~FPreviewInstance', 'bool MakePreviewInstance');
 
@@ -58,7 +64,7 @@ describe('native UMG preview lifetime contract', () => {
   });
 
   it.runIf(available)('suppresses only compile-time recording when another gesture owns GUndo', () => {
-    const source = readFileSync(UI_HANDLER_CPP, 'utf8');
+    const source = readNativeSource(UI_HANDLER_CPP);
     const compile = bodyBetween(source, 'FCompileResult CompileWidgetBlueprint', 'HaybaSaveVerify::FResult');
     expect(compile).toContain('TGuardValue<ITransaction*> SuppressCompileTransactions(GUndo, nullptr)');
     expect(compile).not.toContain('Reset(');
@@ -67,7 +73,7 @@ describe('native UMG preview lifetime contract', () => {
   });
 
   it.runIf(available)('retains repeated GC and undo-preservation native coverage', () => {
-    const source = readFileSync(NATIVE_TEST_CPP, 'utf8');
+    const source = readNativeSource(NATIVE_TEST_CPP);
     expect(source).toContain('PreviewLifetimePreservesUndoAndGCs');
     expect(source).toContain('Iteration < 8');
     expect(source).toContain('Iteration < 3');
