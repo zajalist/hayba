@@ -1,5 +1,6 @@
 #include "HaybaMCPTestHandler.h"
 #include "HaybaMCPTestSelectionOps.h"
+#include "HaybaMCPTestRunLifecycle.h"
 #include "CoreGlobals.h"
 
 #if WITH_EDITOR
@@ -157,8 +158,58 @@ namespace
     // advances one step per frame; build_status { job_id } reports the result.
 
     // Only one automation run at a time — concurrent FAutomationTestFramework
-    // drives corrupt each other's state. Set on start, cleared on finalize.
-    static bool GTestRunActive = false;
+    // drives corrupt each other's state. The lease records the pollable owner;
+    // unlike the former boolean, it can detect and clear orphaned ownership.
+    static FHaybaMCPTestRunLease& GetTestRunLease()
+    {
+        // Intentionally process-lifetime: ticker-owned guards may be destroyed
+        // during engine shutdown after ordinary static destruction has begun.
+        static FHaybaMCPTestRunLease* Lease = new FHaybaMCPTestRunLease();
+        return *Lease;
+    }
+
+    static FString MakeLifecycleFailureResultsJson(
+        const TArray<FString>& Names,
+        const FString& Error)
+    {
+        const int32 FailureCount = FMath::Max(Names.Num(), 1);
+        TArray<TSharedPtr<FJsonValue>> Failures;
+        if (Names.IsEmpty())
+        {
+            auto Failure = MakeShared<FJsonObject>();
+            Failure->SetStringField(TEXT("name"), TEXT("test_run lifecycle"));
+            Failure->SetStringField(TEXT("error"), Error);
+            Failures.Add(MakeShared<FJsonValueObject>(Failure));
+        }
+        else
+        {
+            for (const FString& Name : Names)
+            {
+                auto Failure = MakeShared<FJsonObject>();
+                Failure->SetStringField(TEXT("name"), Name);
+                Failure->SetStringField(TEXT("error"), Error);
+                Failures.Add(MakeShared<FJsonValueObject>(Failure));
+            }
+        }
+
+        TSharedRef<FJsonObject> Results = MakeShared<FJsonObject>();
+        const TArray<TSharedPtr<FJsonValue>> Empty;
+        Results->SetArrayField(TEXT("passed"), Empty);
+        Results->SetArrayField(TEXT("failed"), Failures);
+        Results->SetArrayField(TEXT("skipped"), Empty);
+        Results->SetNumberField(TEXT("passed_count"), 0);
+        Results->SetNumberField(TEXT("failed_count"), FailureCount);
+        Results->SetNumberField(TEXT("skipped_count"), 0);
+        Results->SetBoolField(TEXT("all_passed"), false);
+        Results->SetNumberField(TEXT("elapsed_seconds"), 0);
+        Results->SetNumberField(TEXT("total"), FailureCount);
+
+        FString ResultsJson;
+        const TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+            TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ResultsJson);
+        FJsonSerializer::Serialize(Results, Writer);
+        return ResultsJson;
+    }
 
     struct FTestRunState
     {
@@ -181,7 +232,32 @@ namespace
         TArray<FAutomationTestExecutionInfo> ResultExecs;
 
         FTSTicker::FDelegateHandle TickHandle;
+        TUniquePtr<FHaybaMCPTestRunLeaseGuard> LeaseGuard;
+        bool bFinalized = false;
+
+        ~FTestRunState()
+        {
+            if (!bFinalized && !JobId.IsEmpty())
+            {
+                // Delegate removal/module teardown can destroy the last strong
+                // state reference without another pump. Never leave its job
+                // reporting "running" forever.
+                FHaybaMCPJobRegistry::Get().SetDone(
+                    JobId,
+                    FMath::Max(Names.Num(), 1),
+                    MakeLifecycleFailureResultsJson(
+                        Names, TEXT("test_run state was destroyed before completion")));
+            }
+        }
     };
+
+    static TWeakPtr<FTestRunState>& GetActiveTestRunState()
+    {
+        // See GetTestRunLease: survive until explicit module shutdown removes
+        // the ticker and drops the last owning reference.
+        static TWeakPtr<FTestRunState>* State = new TWeakPtr<FTestRunState>();
+        return *State;
+    }
 
     // Runs on the game thread (core ticker). Serializes the accumulated results
     // into the job registry + operation journal and clears the run lock.
@@ -214,6 +290,13 @@ namespace
         // exit_code == failure count (0 => all passed), output == results JSON.
         const int32 FailCount = S->Failed.Num();
         FHaybaMCPJobRegistry::Get().SetDone(S->JobId, FailCount, ResultsJson);
+        S->bFinalized = true;
+
+        // Release before non-essential reporting. The old boolean was cleared
+        // after Journal(), so any abnormal reporting path could strand Hayba in
+        // a permanent, unpollable busy state even though SetDone had succeeded.
+        S->LeaseGuard.Reset();
+        GetActiveTestRunState().Reset();
 
         // Append job completion to the operation journal.
         FHaybaJournalEntry Entry;
@@ -226,7 +309,6 @@ namespace
             S->Passed.Num(), FailCount, S->Skipped.Num());
         FHaybaMCPSecurityManager::Get().Journal(Entry);
 
-        GTestRunActive = false;
     }
 
     // One pump step per frame. Returns false to unregister the ticker.
@@ -491,11 +573,57 @@ namespace
         Params->TryGetNumberField(TEXT("timeout_seconds"), PerTestTimeoutSec);
         if (PerTestTimeoutSec <= 0.0) PerTestTimeoutSec = 120.0;
 
-        // Reject overlapping runs — the automation framework is single-flight.
-        if (GTestRunActive)
+        // Reject only a pollable, running owner. Module/live-code reloads and
+        // abnormal ticker teardown can otherwise leave process-static state
+        // behind while the job registry no longer contains that job.
+        FHaybaMCPTestRunLease& Lease = GetTestRunLease();
+        if (const TSharedPtr<FTestRunState> ActiveState = GetActiveTestRunState().Pin())
         {
-            return FHaybaHandlerResult::Err(
-                TEXT("a test_run job is already in progress; poll build_status for it before starting another"));
+            // A live state owns a ticker (the lambda holds the strong ref), so
+            // registry absence cannot safely prove the framework is idle. Make
+            // the owner pollable again and continue to reject overlap.
+            const FHaybaJobState ActiveJob =
+                FHaybaMCPJobRegistry::Get().GetJob(ActiveState->JobId);
+            if (!ActiveJob.bFound)
+            {
+                FHaybaMCPJobRegistry::Get().RestoreRunningJob(
+                    ActiveState->JobId, TEXT("test_run"), FDateTime::UtcNow());
+            }
+            if (!ActiveJob.bFound || ActiveJob.Status == EHaybaJobStatus::Running)
+            {
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("a test_run job %s is already in progress; poll build_status { job_id: '%s' } before starting another"),
+                    *ActiveState->JobId, *ActiveState->JobId));
+            }
+
+            // A done registry entry and a live ticker cannot both own the same
+            // generation. Stop the stale callback before admitting a new run.
+            FTSTicker::GetCoreTicker().RemoveTicker(ActiveState->TickHandle);
+            ActiveState->TickHandle.Reset();
+            ActiveState->bFinalized = true;
+            GetActiveTestRunState().Reset();
+            ActiveState->LeaseGuard.Reset();
+        }
+        if (Lease.IsActive())
+        {
+            const FString ActiveJobId = Lease.GetActiveJobId();
+            FHaybaJobState ActiveJob = FHaybaMCPJobRegistry::Get().GetJob(ActiveJobId);
+            if (ActiveJob.bFound && ActiveJob.Status == EHaybaJobStatus::Running)
+            {
+                // The ticker lambda owns a strong FTestRunState reference. No
+                // live state therefore proves this running registry entry has
+                // no executable owner; complete it instead of blocking forever.
+                FHaybaMCPJobRegistry::Get().SetDone(
+                    ActiveJobId,
+                    1,
+                    MakeLifecycleFailureResultsJson(
+                        TArray<FString>(), TEXT("test_run lost its ticker state before completion")));
+                ActiveJob = FHaybaMCPJobRegistry::Get().GetJob(ActiveJobId);
+            }
+            Lease.Reconcile(ActiveJob);
+            UE_LOG(LogTemp, Warning,
+                TEXT("[test_run] recovered orphaned single-flight lease for job %s"),
+                *ActiveJobId);
         }
 
         // Long-running: drive the run on the game-thread core ticker (fires
@@ -511,14 +639,32 @@ namespace
         S->PerTestTimeoutSec = PerTestTimeoutSec;
         S->RunStart          = FPlatformTime::Seconds();
 
+        if (!Lease.TryAcquire(S->JobId))
+        {
+            FHaybaMCPJobRegistry::Get().SetDone(
+                S->JobId, -1, TEXT("{\"error\":\"failed to acquire test-run lease\"}"));
+            S->bFinalized = true;
+            return FHaybaHandlerResult::Err(TEXT("failed to acquire test-run lease"));
+        }
+        S->LeaseGuard = MakeUnique<FHaybaMCPTestRunLeaseGuard>(Lease, S->JobId);
+
         // Clear the per-run last-results stash now; the pump fills it on finish.
         GLastTestInfos.Reset();
         GLastTestExecInfos.Reset();
         GLastTestNames.Reset();
 
-        GTestRunActive = true;
         S->TickHandle = FTSTicker::GetCoreTicker().AddTicker(
             FTickerDelegate::CreateLambda([S](float Dt){ return TestRunPump(Dt, S); }));
+        if (!S->TickHandle.IsValid())
+        {
+            FHaybaMCPJobRegistry::Get().SetDone(
+                S->JobId, -1, TEXT("{\"error\":\"failed to register test-run ticker\"}"));
+            S->bFinalized = true;
+            S->LeaseGuard.Reset();
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("failed to register test-run ticker; job %s was completed as failed"), *S->JobId));
+        }
+        GetActiveTestRunState() = S;
 
         auto Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("command"), TEXT("test_run"));
@@ -594,5 +740,53 @@ FHaybaHandlerResult FHaybaMCPTestHandler::Handle(const FString& Cmd, const TShar
     Out->SetStringField(TEXT("domain"), TEXT("test"));
     Out->SetStringField(TEXT("command"), Cmd);
     return FHaybaHandlerResult::Ok(Out);
+#endif
+}
+
+void FHaybaMCPTestHandler::ShutdownActiveRun()
+{
+#if WITH_EDITOR
+    const TSharedPtr<FTestRunState> ActiveState = GetActiveTestRunState().Pin();
+    GetActiveTestRunState().Reset();
+    if (!ActiveState.IsValid())
+    {
+        return;
+    }
+
+    // Module shutdown and live coding must remove callbacks before their code
+    // can unload. This runs on the game thread, so it cannot interleave with a
+    // pump step.
+    if (ActiveState->TickHandle.IsValid())
+    {
+        FTSTicker::GetCoreTicker().RemoveTicker(ActiveState->TickHandle);
+        ActiveState->TickHandle.Reset();
+    }
+
+    FAutomationTestFramework& Framework = FAutomationTestFramework::Get();
+    if (Framework.GetCurrentTest() != nullptr && GIsAutomationTesting)
+    {
+        FAutomationTestExecutionInfo Ignored;
+        Framework.StopTest(Ignored);
+    }
+
+    const FString Error = TEXT("test_run was interrupted by Hayba module shutdown");
+    FHaybaMCPJobRegistry::Get().SetDone(
+        ActiveState->JobId,
+        FMath::Max(ActiveState->Names.Num(), 1),
+        MakeLifecycleFailureResultsJson(ActiveState->Names, Error));
+    ActiveState->bFinalized = true;
+
+    GLastTestNames = ActiveState->Names;
+    GLastTestExecInfos.Reset();
+    for (int32 Index = 0; Index < ActiveState->Names.Num(); ++Index)
+    {
+        FAutomationTestExecutionInfo Exec;
+        Exec.AddError(Error);
+        GLastTestExecInfos.Add(MoveTemp(Exec));
+    }
+
+    // Release before the remainder of module shutdown can early-return or
+    // touch services that are themselves tearing down.
+    ActiveState->LeaseGuard.Reset();
 #endif
 }

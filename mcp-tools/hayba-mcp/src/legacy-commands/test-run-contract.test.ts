@@ -22,6 +22,16 @@ const buildCpp = readFileSync(
     'HaybaMCPToolkit', 'Private', 'handlers', 'HaybaMCPBuildHandler.cpp'),
   'utf8',
 );
+const lifecycle = readFileSync(
+  join(here, '..', '..', '..', '..', 'unreal', 'HaybaMCPToolkit', 'Source',
+    'HaybaMCPToolkit', 'Private', 'handlers', 'HaybaMCPTestRunLifecycle.h'),
+  'utf8',
+);
+const moduleCpp = readFileSync(
+  join(here, '..', '..', '..', '..', 'unreal', 'HaybaMCPToolkit', 'Source',
+    'HaybaMCPToolkit', 'Private', 'HaybaMCPModule.cpp'),
+  'utf8',
+);
 
 describe('test_run selection contract', () => {
   it('advertises the same selectors as test_list', () => {
@@ -39,7 +49,7 @@ describe('test_run selection contract', () => {
     expect(cpp).toContain('ESearchCase::IgnoreCase');
   });
 
-  it('discovers once, resolves registered names once, and rejects overlapping runs at the boundary', () => {
+  it('discovers once, resolves registered names once, and rejects only a pollable overlap', () => {
     const resolver = cpp.slice(
       cpp.indexOf('static FString ResolveRegisteredTestName'),
       cpp.indexOf('static void ReadTestSelectors'),
@@ -48,7 +58,14 @@ describe('test_run selection contract', () => {
     expect(resolver).not.toContain('CollectAllTests');
     expect(cpp).toContain('S->RegisteredNames[S->Index]');
     expect(cpp).toContain('SeenRegisteredNames');
-    expect(cpp).toMatch(/if \(GTestRunActive\)[\s\S]*?return FHaybaHandlerResult::Err/);
+    expect(cpp).not.toContain('GTestRunActive');
+    expect(cpp).toContain('Lease.Reconcile(ActiveJob)');
+    expect(cpp).toContain('GetActiveTestRunState().Pin()');
+    expect(cpp).toContain('RestoreRunningJob(');
+    expect(cpp).toContain('poll build_status { job_id:');
+    expect(lifecycle).toContain('Job.Status == EHaybaJobStatus::Running');
+    expect(lifecycle).toContain('Job.OpName == TEXT("test_run")');
+    expect(lifecycle).toContain('ActiveJobId.Reset()');
   });
 
   it('fails closed for empty, zero-match, and ambiguous selections', () => {
@@ -58,6 +75,18 @@ describe('test_run selection contract', () => {
     expect(cpp).toContain('ValidateResolvedSelection');
     expect(cpp).toContain('ValidateCombination');
     expect(sidecar.commands.test_run!.notes).toContain('false green');
+    expect(cpp.indexOf('ValidateResolvedSelection')).toBeLessThan(cpp.indexOf('AllocateJob(TEXT("test_run"))'));
+  });
+
+  it('cannot strand the single-flight lease on completion or setup failure', () => {
+    const finalize = cpp.slice(cpp.indexOf('static void FinalizeTestRun'), cpp.indexOf('static bool TestRunPump'));
+    expect(finalize.indexOf('S->LeaseGuard.Reset()')).toBeLessThan(finalize.indexOf('Journal(Entry)'));
+    expect(cpp).toContain('if (!S->TickHandle.IsValid())');
+    expect(cpp).toMatch(/if \(!S->TickHandle\.IsValid\(\)\)[\s\S]*?SetDone[\s\S]*?LeaseGuard\.Reset/);
+    expect(lifecycle).toContain('~FHaybaMCPTestRunLeaseGuard()');
+    expect(lifecycle).toContain('Lease.Release(JobId)');
+    expect(cpp).toContain('FHaybaMCPTestHandler::ShutdownActiveRun()');
+    expect(moduleCpp).toMatch(/ShutdownModule\(\)[\s\S]*?ShutdownActiveRun\(\)[\s\S]*?StopTcpServer\(\)/);
   });
 
   it('returns untruncated scalar evidence and fails closed on malformed results', () => {

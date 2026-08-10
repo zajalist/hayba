@@ -7,4 +7,7 @@ public:
     virtual FString GetDomain() const override { return TEXT("test"); }
     virtual TArray<FString> GetCommands() const override;
     virtual FHaybaHandlerResult Handle(const FString& Cmd, const TSharedPtr<FJsonObject>& Params) override;
+
+    /** Cancel the ticker and fail its pollable job before module code unloads. */
+    static void ShutdownActiveRun();
 };

@@ -338,6 +338,9 @@ void FHaybaMCPModule::StartupModule()
 
 void FHaybaMCPModule::ShutdownModule()
 {
+    // Ticker lambdas execute plugin code. Remove/fail an in-flight test job
+    // before module unload so no callback can jump into an unloaded DLL.
+    FHaybaMCPTestHandler::ShutdownActiveRun();
     auto& TM = FGlobalTabmanager::Get();
     if (PlanOverlay) { PlanOverlay->Unregister(); PlanOverlay.Reset(); }
     TM->UnregisterNomadTabSpawner(TabMain);
