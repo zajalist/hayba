@@ -1,0 +1,12 @@
+# Example hayba-cli spec. Not a tested UE session — `ping` is the one
+# command guaranteed to exist across plugin versions; swap the rest of the
+# `steps:` list for whatever the target project's build actually needs
+# (actor_spawn, pcg_create_graph, landscape_import, ...). See
+# mcp-tools/hayba-mcp/src/cli/spec.ts for the full step shape:
+#   - cmd: <required, a wire command the HaybaMCPToolkit plugin implements>
+#     name: <optional, human label used only in progress/error output>
+#     params: <optional, object passed straight through to the command>
+version: 1
+steps:
+  - cmd: ping
+    name: sanity check the connection before doing real work

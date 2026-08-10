@@ -4,7 +4,8 @@
   "description": "Hayba MCP Toolkit — AI-powered terrain and PCG authoring for Unreal Engine",
   "type": "module",
   "bin": {
-    "hayba-mcp": "./dist/index.js"
+    "hayba-mcp": "./dist/index.js",
+    "hayba-cli": "./dist/cli/index.js"
   },
   "main": "./dist/index.js",
   "scripts": {
