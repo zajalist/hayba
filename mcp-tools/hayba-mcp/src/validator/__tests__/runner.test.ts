@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runAfterTool } from '../runner.js';
@@ -24,22 +24,14 @@ afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-/** A probe that behaves like the real counter script: writes its result to the
- *  scratch file AND prints it. */
-function stubProbe(opts: { writeCount: number; scratchDir: string }): UeProbe {
-  return async () => {
-    mkdirSync(opts.scratchDir, { recursive: true });
-    writeFileSync(
-      join(opts.scratchDir, 'validator_pcg_instance_count.json'),
-      JSON.stringify({ total: opts.writeCount, actors: 1 }),
-    );
-    return { ok: true, stdout: JSON.stringify({ total: opts.writeCount }) };
-  };
+/** A probe that behaves like the real counter script: one stdout JSON object. */
+function stubProbe(count: number): UeProbe {
+  return async () => ({ ok: true, stdout: JSON.stringify({ total: count, actors: 1 }) });
 }
 
 describe('runAfterTool', () => {
   it('emits pcg_zero_instances finding when count is 0', async () => {
-    const probe = stubProbe({ writeCount: 0, scratchDir: tmpDir });
+    const probe = stubProbe(0);
     const findings = await runAfterTool({
       toolName: 'hayba_execute_pcg_graph',
       toolArgs: { assetPath: '/Game/Foo' },
@@ -47,16 +39,16 @@ describe('runAfterTool', () => {
       probe,
       scratchDir: tmpDir,
     });
-    const ids = findings.map(f => f.ruleId);
+    const ids = findings.map((f) => f.ruleId);
     expect(ids).toContain('pcg_zero_instances_after_execute');
 
     // history should now contain the finding
     const hist = await listFindings();
-    expect(hist.find(f => f.ruleId === 'pcg_zero_instances_after_execute')).toBeDefined();
+    expect(hist.find((f) => f.ruleId === 'pcg_zero_instances_after_execute')).toBeDefined();
   });
 
   it('does NOT emit pcg_zero_instances when count > 0', async () => {
-    const probe = stubProbe({ writeCount: 42, scratchDir: tmpDir });
+    const probe = stubProbe(42);
     const findings = await runAfterTool({
       toolName: 'hayba_execute_pcg_graph',
       toolArgs: { assetPath: '/Game/Foo' },
@@ -64,7 +56,7 @@ describe('runAfterTool', () => {
       probe,
       scratchDir: tmpDir,
     });
-    expect(findings.find(f => f.ruleId === 'pcg_zero_instances_after_execute')).toBeUndefined();
+    expect(findings.find((f) => f.ruleId === 'pcg_zero_instances_after_execute')).toBeUndefined();
   });
 
   it('emits pcg_execute_no_component_in_world from error text', async () => {
@@ -75,7 +67,7 @@ describe('runAfterTool', () => {
       probe: null,
       scratchDir: tmpDir,
     });
-    expect(findings.map(f => f.ruleId)).toContain('pcg_execute_no_component_in_world');
+    expect(findings.map((f) => f.ruleId)).toContain('pcg_execute_no_component_in_world');
   });
 
   it('emits pcg_asset_not_found from error text', async () => {
@@ -86,7 +78,7 @@ describe('runAfterTool', () => {
       probe: null,
       scratchDir: tmpDir,
     });
-    const f = findings.find(x => x.ruleId === 'pcg_asset_not_found');
+    const f = findings.find((x) => x.ruleId === 'pcg_asset_not_found');
     expect(f).toBeDefined();
     expect(f?.context?.assetPath).toBe('/Game/MissingGraph');
   });
@@ -99,7 +91,7 @@ describe('runAfterTool', () => {
       probe: null,
       scratchDir: tmpDir,
     });
-    expect(findings.map(f => f.ruleId)).toContain('asset_browse_describe_assets_missing');
+    expect(findings.map((f) => f.ruleId)).toContain('asset_browse_describe_assets_missing');
   });
 
   it('skips disabled rules', async () => {
@@ -111,7 +103,7 @@ describe('runAfterTool', () => {
       probe: null,
       scratchDir: tmpDir,
     });
-    expect(findings.map(f => f.ruleId)).not.toContain('pcg_execute_no_component_in_world');
+    expect(findings.map((f) => f.ruleId)).not.toContain('pcg_execute_no_component_in_world');
   });
 
   it('persists findings to history', async () => {

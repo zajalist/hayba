@@ -29,7 +29,7 @@ function resultText(v: unknown): string {
 // we don't want to drown the user in noise.
 
 const PCG_COUNTER_SCRIPT = `
-import json, os, unreal
+import json, unreal
 out = {"total": 0, "actors": 0}
 sub = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 if sub:
@@ -37,21 +37,11 @@ if sub:
         if not isinstance(actor, unreal.Actor):
             continue
         for comp in actor.get_components_by_class(unreal.HierarchicalInstancedStaticMeshComponent):
-            try:
-                out["total"] += int(comp.get_instance_count())
-                out["actors"] += 1
-            except Exception:
-                pass
+            out["total"] += int(comp.get_instance_count())
+            out["actors"] += 1
         for comp in actor.get_components_by_class(unreal.InstancedStaticMeshComponent):
-            try:
-                out["total"] += int(comp.get_instance_count())
-                out["actors"] += 1
-            except Exception:
-                pass
-out_path = os.path.join(unreal.SystemLibrary.get_project_directory(), ".scratch", "validator_pcg_instance_count.json")
-os.makedirs(os.path.dirname(out_path), exist_ok=True)
-with open(out_path, "w") as f:
-    json.dump(out, f)
+            out["total"] += int(comp.get_instance_count())
+            out["actors"] += 1
 print(json.dumps(out))
 `;
 
@@ -63,9 +53,7 @@ async function evaluatePcgZeroInstances(ctx: ValidatorContext): Promise<Validato
   // Use a generous timeout — walking the world can be slow on big levels.
   const total = await probeCount(ctx.probe, {
     script: PCG_COUNTER_SCRIPT,
-    fileName: 'validator_pcg_instance_count.json',
     key: 'total',
-    scratchDir: ctx.scratchDir,
     timeoutMs: 15_000,
   });
   if (total !== 0) return null;
@@ -123,17 +111,13 @@ async function evaluatePcgAssetNotFound(ctx: ValidatorContext): Promise<Validato
 // ── landscape_import_no_landscape_in_world ──────────────────────────────────
 
 const LANDSCAPE_COUNTER_SCRIPT = `
-import json, os, unreal
+import json, unreal
 count = 0
 sub = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 if sub:
     for a in sub.get_all_level_actors():
         if isinstance(a, unreal.LandscapeProxy):
             count += 1
-out_path = os.path.join(unreal.SystemLibrary.get_project_directory(), ".scratch", "validator_landscape_count.json")
-os.makedirs(os.path.dirname(out_path), exist_ok=True)
-with open(out_path, "w") as f:
-    json.dump({"count": count}, f)
 print(json.dumps({"count": count}))
 `;
 
@@ -144,9 +128,7 @@ async function evaluateLandscapeImportSilentFailure(ctx: ValidatorContext): Prom
 
   const count = await probeCount(ctx.probe, {
     script: LANDSCAPE_COUNTER_SCRIPT,
-    fileName: 'validator_landscape_count.json',
     key: 'count',
-    scratchDir: ctx.scratchDir,
     timeoutMs: 10_000,
   });
   if (count !== 0) return null;

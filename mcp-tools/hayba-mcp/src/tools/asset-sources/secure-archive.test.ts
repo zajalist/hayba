@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import { deflateRawSync } from 'node:zlib';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  connectorFailureFacts,
   downloadExtractThen,
   downloadToFile,
   extractZip,
@@ -453,5 +454,48 @@ describe('download/extract/import boundary', () => {
     ).rejects.toMatchObject({ code: 'HAYBA-DOWNLOAD-SIZE' });
     expect(afterVerified).not.toHaveBeenCalled();
     await expect(fsp.lstat(cacheRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('preserves the primary refusal and reports retained paths when cleanup fails', async () => {
+    const root = await tempRoot();
+    const cacheRoot = path.join(root, 'request-cache');
+    const malicious = zipFixture([{ name: '../../outside.uasset', content: 'owned' }]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(new Uint8Array(malicious), { status: 200 })),
+    );
+    const afterVerified = vi.fn(async () => ({ ok: true }));
+
+    let failure: unknown;
+    try {
+      await downloadExtractThen({
+        url: 'https://assets.invalid/malicious.zip',
+        archivePath: path.join(cacheRoot, 'archive.zip'),
+        extractDir: path.join(cacheRoot, 'extracted'),
+        failureCleanupRoot: cacheRoot,
+        afterVerified,
+        testHooks: {
+          removeFailureCleanupRoot: async () => {
+            throw Object.assign(new Error('simulated cleanup refusal'), { code: 'EACCES' });
+          },
+        },
+      });
+    } catch (error: unknown) {
+      failure = error;
+    }
+
+    const facts = connectorFailureFacts(failure);
+    expect(facts).toMatchObject({
+      primary_code: 'HAYBA-ARCHIVE-PATH',
+      cleanup_failed: true,
+      retained_count: 1,
+      cleanup_error: 'EACCES',
+    });
+    expect(facts.retained_path_refs).toEqual([expect.stringMatching(/^sha256:[0-9a-f]{16}$/)]);
+    expect(facts.primary_error).toContain('HAYBA-ARCHIVE-PATH');
+    expect(facts.primary_error).not.toContain('simulated cleanup refusal');
+    expect(JSON.stringify(facts)).not.toContain(path.resolve(cacheRoot));
+    expect(afterVerified).not.toHaveBeenCalled();
+    await expect(fsp.lstat(cacheRoot)).resolves.toBeDefined();
   });
 });

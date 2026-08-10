@@ -9,9 +9,9 @@
 // the live implementation goes through the ToolExecutor seam like everything
 // else, so it inherits the retry and timeout policy.
 
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
 import { executeCommand } from '../tools/tool-executor.js';
+
+export const MAX_VALIDATOR_PROBE_STDOUT_BYTES = 16 * 1024;
 
 export interface ProbeResult {
   ok: boolean;
@@ -28,49 +28,38 @@ export type UeProbe = (script: string, timeoutMs: number) => Promise<ProbeResult
  *  ordinary tool calls. */
 export const liveUeProbe: UeProbe = async (script, timeoutMs) => {
   try {
-    const data = await executeCommand<Record<string, unknown>>(
-      'python_run',
-      { script, allow_unsafe: true },
-      { timeout: timeoutMs },
-    );
-    return { ok: true, stdout: typeof data.stdout === 'string' ? data.stdout : '' };
+    const data = await executeCommand<Record<string, unknown>>('python_run', { script }, { timeout: timeoutMs });
+    if (typeof data.stdout !== 'string' || Buffer.byteLength(data.stdout, 'utf8') > MAX_VALIDATOR_PROBE_STDOUT_BYTES) {
+      return { ok: false, stdout: '' };
+    }
+    return { ok: true, stdout: data.stdout };
   } catch {
     return { ok: false, stdout: '' };
   }
 };
 
 /**
- * Run a counter script and read back one integer.
- *
- * The scripts write their result to a JSON file under the project's `.scratch`
- * and also `print()` it. The file is preferred (it survives stdout truncation
- * on large scripts) with the printed value as fallback; the file is always
- * unlinked so a stale count from a previous run can never be misread as fresh.
+ * Run a counter script and read back one integer from one bounded stdout JSON
+ * object. Unreal Python never owns a scratch path, so a failed/timed-out probe
+ * cannot leave stale evidence for the next validation pass.
  *
  * Returns `null` when the count could not be established — callers must treat
  * that as "don't fire", never as zero.
  */
 export async function probeCount(
   probe: UeProbe | null,
-  opts: { script: string; fileName: string; key: string; scratchDir: string; timeoutMs: number },
+  opts: { script: string; key: string; timeoutMs: number },
 ): Promise<number | null> {
   if (!probe) return null;
   const resp = await probe(opts.script, opts.timeoutMs);
   if (!resp.ok) return null;
-
-  const outPath = join(opts.scratchDir, opts.fileName);
-  if (existsSync(outPath)) {
-    try {
-      const parsed = JSON.parse(readFileSync(outPath, 'utf-8')) as Record<string, unknown>;
-      const n = Number(parsed[opts.key]);
-      if (Number.isFinite(n)) return n;
-    } catch {
-      // Fall through to the stdout fallback.
-    } finally {
-      try { unlinkSync(outPath); } catch { /* swallow */ }
-    }
+  if (Buffer.byteLength(resp.stdout, 'utf8') > MAX_VALIDATOR_PROBE_STDOUT_BYTES) return null;
+  try {
+    const parsed: unknown = JSON.parse(resp.stdout.trim());
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const value = (parsed as Record<string, unknown>)[opts.key];
+    return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+  } catch {
+    return null;
   }
-
-  const m = resp.stdout.match(new RegExp(`"${opts.key}"\\s*:\\s*(-?\\d+)`));
-  return m ? Number(m[1]) : null;
 }
