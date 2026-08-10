@@ -10,6 +10,7 @@
 #include "Metasound.h"
 #include "MetasoundBuilderSubsystem.h"
 #include "MetasoundBuilderBase.h"
+#include "MetasoundDocumentBuilderRegistry.h"
 #include "MetasoundDocumentInterface.h"
 #include "MetasoundFrontendDocument.h"
 #include "UObject/SavePackage.h"
@@ -69,8 +70,14 @@ static UObject* LoadMetaSound(const TSharedPtr<FJsonObject>& P, FString& OutPath
 
 static UMetaSoundBuilderBase* AttachBuilder(UObject& Asset)
 {
-    UMetaSoundBuilderSubsystem* Subsystem = GEngine ? GEngine->GetEngineSubsystem<UMetaSoundBuilderSubsystem>() : nullptr;
-    return Subsystem ? &Subsystem->AttachBuilderToAssetChecked(Asset) : nullptr;
+#if WITH_EDITORONLY_DATA
+    // The subsystem AttachBuilderToAssetChecked seam was removed in UE 5.8.
+    // The engine-owned document registry is the supported lifecycle owner in
+    // both 5.7 and 5.8 and reuses an active builder when one already exists.
+    return &Metasound::Engine::FDocumentBuilderRegistry::GetChecked().FindOrBeginBuilding<>(Asset);
+#else
+    return nullptr;
+#endif
 }
 
 static bool ParseGuidField(const TSharedPtr<FJsonObject>& P, const TCHAR* Field, FGuid& Out)
