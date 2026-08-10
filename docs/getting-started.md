@@ -61,11 +61,27 @@ uv run hayba-visual-sidecar  # listens on :7821
 iterating. Configure via Project Settings → Plugins → Hayba MCP Toolkit →
 Visual Sidecar.
 
+See [Getting started — Visual Sidecar](getting-started-visual-sidecar.md)
+for install details, environment variables, and how the "Model Preset" /
+per-capability toggles relate to what you actually installed.
+
 ### Tier 3 — Workflow skills (optional)
 
 Copy `mcp-tools/hayba-mcp/addons/workflows/*` to `~/.claude/skills/`.
 Skills: `hayba-new-scene`, `hayba-refine-scene`, `hayba-debug-level`,
 `hayba-pcg-build` — SKILL.md guides Claude Code surfaces automatically.
+
+See [Getting started — Skills bundle](getting-started-skills-bundle.md) for
+what each skill's workflow actually does.
+
+### Swarm agents and shared memory
+
+Two more add-on pieces referenced by `hayba.agents.json` and the onboarding
+wizard, with an honest look at what's wired up today versus what's still a
+config template:
+
+- [Getting started — Swarm agents](getting-started-swarm-agents.md)
+- [Getting started — Memory system](getting-started-memory-system.md)
 
 ## Troubleshooting
 
