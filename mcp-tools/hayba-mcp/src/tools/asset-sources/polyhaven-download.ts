@@ -1,7 +1,16 @@
 import * as path from 'node:path';
+import * as fsp from 'node:fs/promises';
 import { z } from 'zod';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
-import { cachePathFor, downloadToFile, ensureDir, importIntoUe, verifyAndMarkDelta, type DownloadedAsset } from './shared.js';
+import {
+  createUniqueCacheDir,
+  downloadToFile,
+  fetchJsonBounded,
+  importIntoUe,
+  safeDownloadLeafName,
+  verifyAndMarkDelta,
+  type DownloadedAsset,
+} from './shared.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'high',
@@ -68,21 +77,26 @@ export async function handlePolyhavenDownload(params: PolyhavenDownloadParams) {
     return { content: [{ type: 'text' as const, text: 'Invalid params: ' + parsed.error.message }], isError: true };
   }
   const { asset_id, type, resolution, target_dir } = parsed.data;
+  let requestCacheDir: string | undefined;
   try {
-    const res = await fetch(filesUrl(asset_id));
-    if (!res.ok) {
-      return { content: [{ type: 'text' as const, text: `Poly Haven files lookup failed: ${res.status} ${res.statusText}` }], isError: true };
-    }
-    const files = (await res.json()) as Record<string, any>;
+    const files = await fetchJsonBounded<Record<string, any>>(filesUrl(asset_id));
     const picks = pickDownloads(files, type, resolution);
     if (picks.length === 0) {
-      return { content: [{ type: 'text' as const, text: `No downloadable files for ${asset_id} at ${resolution}` }], isError: true };
+      return {
+        content: [{ type: 'text' as const, text: `No downloadable files for ${asset_id} at ${resolution}` }],
+        isError: true,
+      };
     }
-    const cacheDir = cachePathFor('polyhaven', asset_id);
-    await ensureDir(cacheDir);
+    const cacheDir = await createUniqueCacheDir('polyhaven', asset_id);
+    requestCacheDir = cacheDir;
     const written: string[] = [];
+    const names = new Set<string>();
     for (const pick of picks) {
-      const dest = path.join(cacheDir, pick.filename);
+      const filename = safeDownloadLeafName(pick.filename);
+      const folded = filename.toLocaleLowerCase('en-US');
+      if (names.has(folded)) throw new Error('provider returned duplicate/case-colliding filenames');
+      names.add(folded);
+      const dest = path.join(cacheDir, filename);
       await downloadToFile(pick.url, dest);
       written.push(dest);
     }
@@ -102,6 +116,7 @@ export async function handlePolyhavenDownload(params: PolyhavenDownloadParams) {
     };
     return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
   } catch (e: unknown) {
+    if (requestCacheDir) await fsp.rm(requestCacheDir, { recursive: true, force: true });
     const msg = e instanceof Error ? e.message : String(e);
     return { content: [{ type: 'text' as const, text: `Poly Haven download error: ${msg}` }], isError: true };
   }
