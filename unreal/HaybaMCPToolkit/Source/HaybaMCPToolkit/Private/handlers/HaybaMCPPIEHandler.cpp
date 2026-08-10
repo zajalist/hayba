@@ -8,10 +8,13 @@
 #include "Editor.h"
 #include "Editor/EditorEngine.h"
 #include "Engine/World.h"
+#include "Engine/GameInstance.h"
 #include "Engine/GameViewportClient.h"
+#include "Engine/LocalPlayer.h"
 #include "UnrealClient.h"
 #include "EngineUtils.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/HUD.h"
 #include "GameFramework/PlayerController.h"
 #include "Components/ActorComponent.h"
 #include "Components/SceneComponent.h"
@@ -25,6 +28,7 @@
 #include "Widgets/SWindow.h"
 #include "Widgets/SWidget.h"
 #include "Widgets/SViewport.h"
+#include "Slate/SceneViewport.h"
 #include "Layout/WidgetPath.h"
 #include "Widgets/Input/SEditableText.h"
 #include "Widgets/Text/SMultiLineEditableText.h"
@@ -61,6 +65,7 @@ TArray<FString> FHaybaMCPPIEHandler::GetCommands() const
         TEXT("editor_pie_actor_list"),
         TEXT("editor_pie_actor_inspect"),
         TEXT("editor_pie_project_world"),
+        TEXT("editor_pie_click_actor"),
     };
 }
 
@@ -94,6 +99,7 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::Handle(const FString& Cmd, const TShare
     if (Cmd == TEXT("editor_pie_actor_list"))    return PIEActorList(Params);
     if (Cmd == TEXT("editor_pie_actor_inspect")) return PIEActorInspect(Params);
     if (Cmd == TEXT("editor_pie_project_world")) return PIEProjectWorld(Params);
+    if (Cmd == TEXT("editor_pie_click_actor"))   return PIEClickActor(Params);
     if (Cmd == TEXT("editor_pie_screenshot")) return PIEScreenshot(Params);
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("Unknown PIE command: %s"), *Cmd));
 #endif
@@ -2291,6 +2297,43 @@ namespace
         }
         return true;
     }
+
+    APlayerController* RuntimeLocalPlayerController(UWorld* World, int32 PlayerIndex, FString& OutError)
+    {
+        if (!IsValid(World))
+        {
+            OutError = TEXT("selected PIE world is no longer valid");
+            return nullptr;
+        }
+
+        UGameInstance* GameInstance = World->GetGameInstance();
+        if (!IsValid(GameInstance))
+        {
+            OutError = TEXT("selected PIE world has no game instance");
+            return nullptr;
+        }
+
+        // UWorld::PlayerControllerList is not an ordinal contract: its order
+        // can change on travel/controller replacement. LocalPlayers is the
+        // canonical stable split-screen order exposed by UGameInstance.
+        ULocalPlayer* LocalPlayer = GameInstance->GetLocalPlayerByIndex(PlayerIndex);
+        if (!IsValid(LocalPlayer))
+        {
+            OutError = FString::Printf(TEXT("local player_index %d was not found"), PlayerIndex);
+            return nullptr;
+        }
+        APlayerController* PlayerController = LocalPlayer->GetPlayerController(World);
+        if (!IsValid(PlayerController)
+            || !PlayerController->IsLocalController()
+            || PlayerController->GetWorld() != World
+            || PlayerController->GetLocalPlayer() != LocalPlayer)
+        {
+            OutError = FString::Printf(
+                TEXT("local player_index %d has no controller in the selected PIE world"), PlayerIndex);
+            return nullptr;
+        }
+        return PlayerController;
+    }
 }
 
 FHaybaHandlerResult FHaybaMCPPIEHandler::PIEActorList(const TSharedPtr<FJsonObject>& P)
@@ -2508,21 +2551,11 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEProjectWorld(const TSharedPtr<FJsonO
         }
     }
 
-    APlayerController* PlayerController = nullptr;
-    int32 LocalPlayerOrdinal = 0;
-    for (FConstPlayerControllerIterator It = Selected->World->GetPlayerControllerIterator(); It; ++It)
-    {
-        APlayerController* Candidate = It->Get();
-        if (!IsValid(Candidate) || !Candidate->IsLocalController()) continue;
-        if (LocalPlayerOrdinal++ == Request.PlayerIndex)
-        {
-            PlayerController = Candidate;
-            break;
-        }
-    }
+    APlayerController* PlayerController = RuntimeLocalPlayerController(
+        Selected->World, Request.PlayerIndex, Error);
     if (!PlayerController)
         return FHaybaHandlerResult::Err(FString::Printf(
-            TEXT("editor_pie_project_world: local player_index %d was not found"), Request.PlayerIndex));
+            TEXT("editor_pie_project_world: %s"), *Error));
 
     UGameViewportClient* ViewportClient = Selected->World->GetGameViewport();
     if (!ViewportClient || !ViewportClient->Viewport)
@@ -2756,6 +2789,417 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEProjectWorld(const TSharedPtr<FJsonO
     return FHaybaHandlerResult::Ok(Out);
 }
 
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEClickActor(const TSharedPtr<FJsonObject>& P)
+{
+    FHaybaParamReader Reader(P, TEXT("editor_pie_click_actor"));
+    const HaybaPIERuntimeOps::FActorInteractionRequest Request =
+        HaybaPIERuntimeOps::ParseActorInteraction(Reader);
+    if (Reader.HasErrors()) return FHaybaHandlerResult::Err(Reader.ErrorMessage());
+
+    // Reuse the complete projection/Slate/Visibility proof. This call executes
+    // synchronously on the game thread, so the world cannot tick between proof
+    // and dispatch. The interaction surface therefore cannot drift to a subtly
+    // different definition of "clickable" than editor_pie_project_world.
+    FHaybaHandlerResult Proof = PIEProjectWorld(P);
+    if (!Proof.bOk)
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("editor_pie_click_actor: target proof failed: %s"), *Proof.ErrorMessage));
+    }
+    if (!Proof.Data.IsValid())
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_click_actor: target proof returned no data"));
+
+    bool bTargetClickReady = false;
+    if (!Proof.Data->TryGetBoolField(TEXT("target_click_ready"), bTargetClickReady) || !bTargetClickReady)
+    {
+        FString Status = TEXT("unverified");
+        Proof.Data->TryGetStringField(TEXT("target_click_status"), Status);
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("editor_pie_click_actor: refused unverified target (%s)"), *Status));
+    }
+
+    TArray<FPIEWorldEntry> Worlds;
+    FPIEWorldEntry* Selected = nullptr;
+    HaybaPIERuntimeOps::FWorldSelection Selection;
+    FString Error;
+    if (!RuntimeSelectWorld(
+            Request.Projection.World.PIEInstance,
+            true,
+            Worlds,
+            Selected,
+            Selection,
+            Error))
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("editor_pie_click_actor: %s"), *Error));
+    }
+
+    AActor* TargetActor = ResolveRuntimeActor(Selected->World, Request.Projection.Actor, Error);
+    if (!TargetActor)
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("editor_pie_click_actor: %s"), *Error));
+    if (TargetActor->IsHidden())
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_click_actor: target actor is hidden"));
+
+    UPrimitiveComponent* RequiredComponent = nullptr;
+    if (!Request.Projection.ComponentName.IsEmpty())
+    {
+        UActorComponent* Component = ResolveOwnedRuntimeComponent(
+            TargetActor, Request.Projection.ComponentName, Error);
+        RequiredComponent = Cast<UPrimitiveComponent>(Component);
+        if (!RequiredComponent)
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("editor_pie_click_actor: target component is not a primitive component: %s"),
+                *Request.Projection.ComponentName));
+        }
+        if (!RequiredComponent->IsRegistered()
+            || !RequiredComponent->IsVisible()
+            || RequiredComponent->bHiddenInGame)
+        {
+            return FHaybaHandlerResult::Err(TEXT(
+                "editor_pie_click_actor: requested primitive component is hidden, unregistered, or not visible"));
+        }
+    }
+
+    APlayerController* PlayerController = RuntimeLocalPlayerController(
+        Selected->World, Request.Projection.PlayerIndex, Error);
+    if (!PlayerController)
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("editor_pie_click_actor: %s"), *Error));
+
+    UGameViewportClient* ViewportClient = Selected->World->GetGameViewport();
+    if (!ViewportClient || !ViewportClient->Viewport)
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_click_actor: selected PIE world lost its viewport"));
+    if (ViewportClient->IgnoreInput())
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_click_actor: game viewport is currently ignoring input"));
+    if (!PlayerController->PlayerInput)
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_click_actor: local player has no PlayerInput"));
+    if (PlayerController->CurrentClickTraceChannel != ECC_Visibility)
+    {
+        return FHaybaHandlerResult::Err(TEXT(
+            "editor_pie_click_actor: player controller click trace channel is not Visibility; verified dispatch would not match native click targeting"));
+    }
+
+    if (!PlayerController->bEnableClickEvents)
+    {
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_click_actor: player controller click events are disabled"));
+    }
+    if (!PlayerController->ClickEventKeys.Contains(EKeys::LeftMouseButton)
+        && !PlayerController->ClickEventKeys.Contains(EKeys::AnyKey))
+    {
+        return FHaybaHandlerResult::Err(TEXT(
+            "editor_pie_click_actor: LeftMouseButton is not enabled in player controller ClickEventKeys"));
+    }
+
+    const TSharedPtr<FJsonObject>* VisibilityHit = nullptr;
+    FString HitActorPath;
+    FString HitComponentPath;
+    if (!Proof.Data->TryGetObjectField(TEXT("visibility_hit"), VisibilityHit)
+        || !VisibilityHit || !VisibilityHit->IsValid()
+        || !(*VisibilityHit)->TryGetStringField(TEXT("actor_path"), HitActorPath)
+        || !(*VisibilityHit)->TryGetStringField(TEXT("component_path"), HitComponentPath))
+    {
+        return FHaybaHandlerResult::Err(TEXT(
+            "editor_pie_click_actor: verified Visibility hit lost its exact actor/component identity"));
+    }
+
+    UPrimitiveComponent* HitComponent = FindObject<UPrimitiveComponent>(nullptr, *HitComponentPath);
+    if (!IsValid(HitComponent)
+        || HitComponent->GetWorld() != Selected->World
+        || HitComponent->GetOwner() != TargetActor
+        || HitActorPath != TargetActor->GetPathName())
+    {
+        return FHaybaHandlerResult::Err(TEXT(
+            "editor_pie_click_actor: Visibility hit no longer belongs to the requested actor in the selected PIE world"));
+    }
+    if (RequiredComponent && HitComponent != RequiredComponent)
+    {
+        return FHaybaHandlerResult::Err(TEXT(
+            "editor_pie_click_actor: requested component is not the first Visibility hit"));
+    }
+    if (!HitComponent->IsRegistered()
+        || !HitComponent->IsVisible()
+        || HitComponent->bHiddenInGame)
+    {
+        return FHaybaHandlerResult::Err(TEXT(
+            "editor_pie_click_actor: first Visibility-hit component is hidden, unregistered, or not visible"));
+    }
+
+    const TSharedPtr<FJsonObject>* ViewportProof = nullptr;
+    const TSharedPtr<FJsonObject>* AbsoluteProof = nullptr;
+    double ViewportX = 0.0;
+    double ViewportY = 0.0;
+    double AbsoluteX = 0.0;
+    double AbsoluteY = 0.0;
+    if (!Proof.Data->TryGetObjectField(TEXT("viewport"), ViewportProof)
+        || !ViewportProof || !ViewportProof->IsValid()
+        || !(*ViewportProof)->TryGetNumberField(TEXT("x"), ViewportX)
+        || !(*ViewportProof)->TryGetNumberField(TEXT("y"), ViewportY)
+        || !Proof.Data->TryGetObjectField(TEXT("absolute"), AbsoluteProof)
+        || !AbsoluteProof || !AbsoluteProof->IsValid()
+        || !(*AbsoluteProof)->TryGetNumberField(TEXT("x"), AbsoluteX)
+        || !(*AbsoluteProof)->TryGetNumberField(TEXT("y"), AbsoluteY))
+    {
+        return FHaybaHandlerResult::Err(TEXT(
+            "editor_pie_click_actor: verified target proof lost its exact viewport/absolute coordinates"));
+    }
+    const FVector2D ViewportPoint(ViewportX, ViewportY);
+    const FVector2D AbsolutePoint(AbsoluteX, AbsoluteY);
+
+    const FString TargetActorPath = TargetActor->GetPathName();
+    const FString TargetComponentPath = HitComponent->GetPathName();
+    const TWeakObjectPtr<UWorld> WeakWorld(Selected->World);
+    const TWeakObjectPtr<AActor> WeakTargetActor(TargetActor);
+    const TWeakObjectPtr<UPrimitiveComponent> WeakHitComponent(HitComponent);
+    const TWeakObjectPtr<APlayerController> WeakPlayerController(PlayerController);
+
+    // APlayerController::InputKey gives Canvas HUD hit boxes first refusal and
+    // suppresses primitive clicks whenever any box is under the point. Probe
+    // that public HUD surface without dispatching it; direct primitive dispatch
+    // would otherwise click through Canvas UI that Slate cannot see.
+    if (AHUD* HUD = PlayerController->GetHUD())
+    {
+        if (const FHUDHitBox* HUDHit = HUD->GetHitBoxAtCoordinates(ViewportPoint, false))
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("editor_pie_click_actor: Canvas HUD hit box '%s' blocks the world target"),
+                *HUDHit->GetName().ToString()));
+        }
+    }
+
+    if (!FSlateApplication::IsInitialized())
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_click_actor: Slate is not initialized"));
+    TSharedPtr<SViewport> ViewportWidget = ViewportClient->GetGameViewportWidget();
+    FSceneViewport* SceneViewport = ViewportClient->GetGameViewport();
+    if (!ViewportWidget.IsValid() || !SceneViewport)
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_click_actor: live PIE scene viewport is unavailable"));
+    if (ViewportWidget->HasMouseCapture())
+        return FHaybaHandlerResult::Err(TEXT(
+            "editor_pie_click_actor: refused while the PIE viewport has mouse capture"));
+
+    FSlateApplication& Slate = FSlateApplication::Get();
+    ULocalPlayer* CanonicalLocalPlayer = PlayerController->GetLocalPlayer();
+    TSharedPtr<FSlateUser> LocalSlateUser = CanonicalLocalPlayer
+        ? CanonicalLocalPlayer->GetSlateUser()
+        : nullptr;
+    if (!CanonicalLocalPlayer || !LocalSlateUser.IsValid())
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_click_actor: local player has no Slate user"));
+    const FPlatformUserId CanonicalPlatformUser = CanonicalLocalPlayer->GetPlatformUserId();
+
+    if (!Slate.GetPressedMouseButtons().IsEmpty()
+        || PlayerController->IsInputKeyDown(EKeys::LeftMouseButton))
+    {
+        return FHaybaHandlerResult::Err(TEXT(
+            "editor_pie_click_actor: refused while another mouse gesture is already active"));
+    }
+    if (LocalSlateUser->HasCursorCapture()
+        || LocalSlateUser->IsDragDropping())
+    {
+        return FHaybaHandlerResult::Err(TEXT(
+            "editor_pie_click_actor: refused while the selected Slate user has capture or drag state"));
+    }
+
+    // Exact click needs no synthetic pointer event. Locate the point to reject
+    // Slate/UMG obstruction, but never call a Slate or scene-viewport mouse
+    // route: UE's public move paths can recenter the desktop cursor through
+    // private stale-capture state. Hover therefore fails during parsing.
+    const FWidgetPath ProvenSlatePath = Slate.LocateWindowUnderMouse(
+        AbsolutePoint,
+        Slate.GetInteractiveTopLevelWindows(),
+        /*bIgnoreEnabledStatus=*/false,
+        LocalSlateUser->GetUserIndex());
+    if (!ProvenSlatePath.IsValid()
+        || !ProvenSlatePath.ContainsWidget(ViewportWidget.Get())
+        || &ProvenSlatePath.GetLastWidget().Get() != ViewportWidget.Get())
+    {
+        return FHaybaHandlerResult::Err(TEXT(
+            "editor_pie_click_actor: Slate/UMG obstruction appeared before interaction"));
+    }
+
+    // Slate routing and gameplay delegates are re-entrant. Every boundary
+    // below re-establishes the complete contract from weak identities: exact
+    // PIE/local player, live viewport, input policy, visible primitive, no UI
+    // blocker, cached point, and first Visibility hit. Nothing relies on a raw
+    // pointer surviving a callback.
+    auto ValidateExactInteractionState = [&](const TCHAR* Stage, FString& OutFailure) -> bool
+    {
+        UWorld* CurrentWorld = WeakWorld.Get();
+        AActor* CurrentActor = WeakTargetActor.Get();
+        UPrimitiveComponent* CurrentComponent = WeakHitComponent.Get();
+        APlayerController* CurrentController = WeakPlayerController.Get();
+        if (!IsValid(CurrentWorld)
+            || !IsValid(CurrentActor)
+            || !IsValid(CurrentComponent)
+            || !IsValid(CurrentController)
+            || CurrentActor->IsActorBeingDestroyed())
+        {
+            OutFailure = FString::Printf(TEXT("%s: target, controller, or PIE world was destroyed"), Stage);
+            return false;
+        }
+        if (CurrentActor->GetWorld() != CurrentWorld
+            || CurrentComponent->GetWorld() != CurrentWorld
+            || CurrentController->GetWorld() != CurrentWorld
+            || CurrentComponent->GetOwner() != CurrentActor
+            || CurrentActor->IsHidden()
+            || !CurrentComponent->IsRegistered()
+            || !CurrentComponent->IsVisible()
+            || CurrentComponent->bHiddenInGame)
+        {
+            OutFailure = FString::Printf(TEXT("%s: exact actor/component is no longer visible and world-owned"), Stage);
+            return false;
+        }
+
+        UGameInstance* CurrentGameInstance = CurrentWorld->GetGameInstance();
+        ULocalPlayer* CurrentLocalPlayer = CurrentGameInstance
+            ? CurrentGameInstance->GetLocalPlayerByIndex(Request.Projection.PlayerIndex)
+            : nullptr;
+        if (!CurrentLocalPlayer
+            || CurrentLocalPlayer != CurrentController->GetLocalPlayer()
+            || CurrentLocalPlayer->GetPlayerController(CurrentWorld) != CurrentController
+            || CurrentLocalPlayer->GetSlateUser() != LocalSlateUser
+            || CurrentLocalPlayer->GetPlatformUserId() != CanonicalPlatformUser)
+        {
+            OutFailure = FString::Printf(TEXT("%s: player_index no longer resolves to the same local player/controller"), Stage);
+            return false;
+        }
+
+        UGameViewportClient* CurrentViewportClient = CurrentWorld->GetGameViewport();
+        if (!CurrentViewportClient
+            || CurrentViewportClient != ViewportClient
+            || !CurrentViewportClient->Viewport
+            || CurrentViewportClient->GetGameViewport() != SceneViewport
+            || CurrentViewportClient->GetGameViewportWidget() != ViewportWidget
+            || ViewportWidget->HasMouseCapture()
+            || CurrentViewportClient->IgnoreInput()
+            || !CurrentController->PlayerInput
+            || CurrentController->CurrentClickTraceChannel != ECC_Visibility)
+        {
+            OutFailure = FString::Printf(TEXT("%s: viewport, PlayerInput, or Visibility click policy changed"), Stage);
+            return false;
+        }
+        if (!CurrentController->bEnableClickEvents
+            || (!CurrentController->ClickEventKeys.Contains(EKeys::LeftMouseButton)
+                && !CurrentController->ClickEventKeys.Contains(EKeys::AnyKey))
+            || !Slate.GetPressedMouseButtons().IsEmpty()
+            || CurrentController->IsInputKeyDown(EKeys::LeftMouseButton)
+            || LocalSlateUser->HasCursorCapture()
+            || LocalSlateUser->IsDragDropping())
+        {
+            OutFailure = FString::Printf(TEXT("%s: controller input policy or active-gesture state changed"), Stage);
+            return false;
+        }
+
+        const FWidgetPath CurrentSlatePath = Slate.LocateWindowUnderMouse(
+            AbsolutePoint,
+            Slate.GetInteractiveTopLevelWindows(),
+            /*bIgnoreEnabledStatus=*/false,
+            LocalSlateUser->GetUserIndex());
+        if (!CurrentSlatePath.IsValid()
+            || !CurrentSlatePath.ContainsWidget(ViewportWidget.Get())
+            || &CurrentSlatePath.GetLastWidget().Get() != ViewportWidget.Get())
+        {
+            OutFailure = FString::Printf(TEXT("%s: Slate/UMG no longer routes the selected user directly to the viewport"), Stage);
+            return false;
+        }
+        if (AHUD* CurrentHUD = CurrentController->GetHUD())
+        {
+            if (CurrentHUD->GetHitBoxAtCoordinates(ViewportPoint, false))
+            {
+                OutFailure = FString::Printf(TEXT("%s: a Canvas HUD hit box blocks the target"), Stage);
+                return false;
+            }
+        }
+
+        FHitResult CurrentHit;
+        const bool bCurrentHit = CurrentController->GetHitResultAtScreenPosition(
+            ViewportPoint, ECC_Visibility, true, CurrentHit);
+        if (!bCurrentHit
+            || !CurrentHit.bBlockingHit
+            || CurrentHit.GetActor() != CurrentActor
+            || CurrentHit.GetComponent() != CurrentComponent)
+        {
+            OutFailure = FString::Printf(TEXT("%s: first Visibility hit no longer matches the exact target"), Stage);
+            return false;
+        }
+        return true;
+    };
+
+    FString RoutedFailure;
+    if (!ValidateExactInteractionState(TEXT("after Slate routing"), RoutedFailure))
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("editor_pie_click_actor: %s; no gameplay event was dispatched"), *RoutedFailure));
+    }
+    TSharedPtr<FJsonObject> Dispatch = MakeShared<FJsonObject>();
+    Dispatch->SetStringField(TEXT("path"),
+        TEXT("verified APlayerController world-click stage -> UPrimitiveComponent::DispatchOnClicked/Released"));
+    Dispatch->SetStringField(TEXT("player_controller_path"), PlayerController->GetPathName());
+    Dispatch->SetStringField(TEXT("primitive_component_path"), TargetComponentPath);
+    Dispatch->SetBoolField(TEXT("os_input_used"), false);
+    Dispatch->SetBoolField(TEXT("desktop_cursor_moved"), false);
+    Dispatch->SetBoolField(TEXT("pointer_routed"), false);
+
+    bool bPressed = false;
+    bool bReleased = false;
+    bool bReleaseSent = false;
+    bool bReleaseTargetStillMatches = false;
+    FString ReleaseSuppressedReason;
+    // APlayerController::InputKey cannot be made exact: it executes arbitrary
+    // PlayerInput code before tracing and does not report which primitive it
+    // eventually dispatched. Enter at the controller's native world-click
+    // stage after proving every guard. DispatchOnClicked is the exact engine
+    // call APlayerController uses, without an unchecked re-entrant trace.
+    UPrimitiveComponent* PressComponent = WeakHitComponent.Get();
+    PressComponent->DispatchOnClicked(EKeys::LeftMouseButton);
+    bPressed = true;
+
+    FString ReleaseFailure;
+    bReleaseTargetStillMatches = ValidateExactInteractionState(
+        TEXT("before release"), ReleaseFailure);
+    if (bReleaseTargetStillMatches)
+    {
+        bReleaseSent = true;
+        WeakHitComponent->DispatchOnReleased(EKeys::LeftMouseButton);
+        bReleased = true;
+    }
+    else
+    {
+        ReleaseSuppressedReason = ReleaseFailure;
+    }
+    Dispatch->SetBoolField(TEXT("pressed"), bPressed);
+    Dispatch->SetBoolField(TEXT("release_sent"), bReleaseSent);
+    Dispatch->SetBoolField(TEXT("released"), bReleased);
+    Dispatch->SetBoolField(TEXT("release_target_still_matches"), bReleaseTargetStillMatches);
+    if (!ReleaseSuppressedReason.IsEmpty())
+        Dispatch->SetStringField(TEXT("release_suppressed_reason"), ReleaseSuppressedReason);
+    const bool bLeftMouseDownAfter = WeakPlayerController.IsValid()
+        && WeakPlayerController->IsInputKeyDown(EKeys::LeftMouseButton);
+    Dispatch->SetBoolField(TEXT("left_mouse_down_after"), bLeftMouseDownAfter);
+    if (bLeftMouseDownAfter)
+    {
+        Dispatch->SetStringField(TEXT("warning"), TEXT(
+            "LeftMouseButton remains down after release; stop PIE before further input"));
+    }
+
+    TSharedPtr<FJsonObject> Postcondition = MakeShared<FJsonObject>();
+    const bool bTargetValidAfter = WeakTargetActor.IsValid()
+        && WeakTargetActor->GetWorld() == Selected->World
+        && !WeakTargetActor->IsActorBeingDestroyed();
+    const bool bComponentValidAfter = WeakHitComponent.IsValid()
+        && WeakHitComponent->GetWorld() == Selected->World;
+    Postcondition->SetBoolField(TEXT("target_valid_after"), bTargetValidAfter);
+    Postcondition->SetBoolField(TEXT("component_valid_after"), bComponentValidAfter);
+    Postcondition->SetStringField(TEXT("target_actor_path_before"), TargetActorPath);
+    Postcondition->SetStringField(TEXT("target_component_path_before"), TargetComponentPath);
+    // Hayba can observe delivery and object lifetime generically. Selection/UI
+    // state is application-specific and must be read back with the game's own
+    // assertion or editor_pie_widget_tree rather than invented here.
+    Postcondition->SetBoolField(TEXT("application_specific_state_observed"), false);
+
+    Proof.Data->SetStringField(TEXT("action"), Request.Action);
+    Proof.Data->SetObjectField(TEXT("dispatch"), Dispatch);
+    Proof.Data->SetObjectField(TEXT("postcondition"), Postcondition);
+    return FHaybaHandlerResult::Ok(Proof.Data);
+}
+
 
 #else  // !WITH_EDITOR
 
@@ -2771,5 +3215,6 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEScreenshot(const TSharedPtr<FJsonObj
 FHaybaHandlerResult FHaybaMCPPIEHandler::PIEActorList(const TSharedPtr<FJsonObject>&)  { return FHaybaHandlerResult::Err(TEXT("editor-only")); }
 FHaybaHandlerResult FHaybaMCPPIEHandler::PIEActorInspect(const TSharedPtr<FJsonObject>&){ return FHaybaHandlerResult::Err(TEXT("editor-only")); }
 FHaybaHandlerResult FHaybaMCPPIEHandler::PIEProjectWorld(const TSharedPtr<FJsonObject>&){ return FHaybaHandlerResult::Err(TEXT("editor-only")); }
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEClickActor(const TSharedPtr<FJsonObject>&){ return FHaybaHandlerResult::Err(TEXT("editor-only")); }
 
 #endif  // WITH_EDITOR

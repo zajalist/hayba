@@ -213,6 +213,7 @@ import { meta as pieScreenshotMeta, schema as pieScreenshotSchema, pieScreenshot
 import { meta as pieActorListMeta, schema as pieActorListSchema, pieActorListHandler } from './pie/pie-actor-list.js';
 import { meta as pieActorInspectMeta, schema as pieActorInspectSchema, pieActorInspectHandler } from './pie/pie-actor-inspect.js';
 import { meta as pieProjectWorldMeta, schema as pieProjectWorldSchema, pieProjectWorldHandler } from './pie/pie-project-world.js';
+import { meta as pieClickActorMeta, schema as pieClickActorSchema, pieClickActorHandler } from './pie/pie-click-actor.js';
 import { meta as textureAuditMeta, schema as textureAuditSchema, textureAuditHandler } from './content/texture-audit.js';
 import { meta as meshAuditMeta, schema as meshAuditSchema, meshAuditHandler } from './content/mesh-audit.js';
 import {
@@ -2827,13 +2828,24 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'editor_pie_project_world',
     description:
-      'PROJECT A LIVE WORLD TARGET TO A VERIFIED CLICK CANDIDATE. Accepts an actor, owned scene component or [x,y,z]. absolute.available and x/y are present only when the point is on-screen, its PIE window is visible/not minimized, and Slate finds no UMG/modal obstruction. For actor/component clicks require target_click_ready:true too; it combines that Slate proof with the first world Visibility hit. USE_WHEN: hovering/clicking a road, unit or world-space target headlessly.',
+      'PROJECT A LIVE WORLD TARGET TO A VERIFIED CLICK CANDIDATE. Accepts an actor, owned scene component or [x,y,z]. absolute.available and x/y are present only when the point is on-screen, its PIE window is visible/not minimized, and Slate finds no UMG/modal obstruction. For actor/component clicks require target_click_ready:true too; it combines that Slate proof with the first world Visibility hit. USE_WHEN: diagnosing or clicking a road, unit or world-space target without OS input against a live visible PIE viewport.',
     meta: pieProjectWorldMeta,
     handler: pieProjectWorldHandler,
     cost: 'low',
     returns: '{world,available_worlds,player_index,target,target_click_ready,target_click_status,viewport:{x,y,width,height,projected,in_viewport},absolute:{available,geometry_available,x?,y?,coordinate_space},slate_hit:{tested,world_click_clear,leaf_type?},visibility_hit:{tested,blocking_hit,actor_path?,component_path?,verdict}}',
     niche: PIE,
     schema: pieProjectWorldSchema.shape,
+  },
+  {
+    name: 'editor_pie_click_actor',
+    description:
+      'CLICK AN EXACT LIVE PIE ACTOR WITHOUT OS INPUT. Reuses the world-projection safety seam, rejects Slate/UMG and Canvas HUD blockers, and repeatedly verifies the canonical local player and first Visibility hit. It dispatches the exact native primitive stage used by APlayerController only after its complete guard state is proven, avoiding InputKey\'s unchecked re-entrant trace window and all synthetic mouse routes. Hover fails closed because UE exposes no public route that preserves native hover state while guaranteeing zero OS cursor movement. Fails closed for ambiguous clients, absent/hidden/minimized viewports, offscreen/hidden/occluded actors, policy changes and active gestures. USE_WHEN: selecting a road, unit or world actor in background automation with a live visible PIE viewport. NOT_WHEN: hovering, truly headless/NullRHI PIE, or clicking UI controls (editor_pie_click_widget).',
+    meta: pieClickActorMeta,
+    handler: pieClickActorHandler,
+    cost: 'medium',
+    returns: '{world,available_worlds,player_index,action,target,visibility_hit,dispatch:{path,pointer_routed,pressed,released,release_target_still_matches,release_suppressed_reason?},postcondition:{target_valid_after,component_valid_after,application_specific_state_observed}}',
+    niche: PIE,
+    schema: pieClickActorSchema.shape,
   },
   {
     name: 'editor_pie_widget_tree',

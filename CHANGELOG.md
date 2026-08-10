@@ -12,6 +12,17 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 - `asset_registry_query` now uses a native, read-only AssetRegistry handler instead of blocked dynamic Python reflection, with deterministic bounded pagination, strict input checks, and fail-closed response validation.
 
 ### Added
+- `editor_pie_click_actor` performs exact OS-input-free world interaction
+  against a live visible PIE viewport without moving the desktop cursor or
+  foregrounding its window. It reuses player-controller projection, rejects
+  Slate/UMG and Canvas HUD blockers, verifies the first Visibility hit, and
+  dispatches the exact native primitive click stage used by `APlayerController`
+  after repeating every guard across re-entrant boundaries. It intentionally
+  avoids `InputKey`'s unchecked trace window. Hover is explicitly unsupported:
+  UE exposes no public route that both updates its protected native hover state
+  and guarantees zero OS cursor movement. Ambiguous clients, absent/hidden/minimized
+  viewports, hidden/offscreen/occluded targets, active gestures, ignored input,
+  and disabled controller event paths fail closed.
 - Read-only headless PIE scene grounding with `editor_pie_actor_list`,
   `editor_pie_actor_inspect`, and `editor_pie_project_world`: deterministic
   multi-client world selection, capped pagination, exact world-owned actor and

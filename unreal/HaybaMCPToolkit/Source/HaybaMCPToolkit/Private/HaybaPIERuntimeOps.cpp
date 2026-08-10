@@ -257,6 +257,52 @@ namespace HaybaPIERuntimeOps
         return Out;
     }
 
+    FActorInteractionRequest ParseActorInteraction(FHaybaParamReader& R)
+    {
+        FActorInteractionRequest Out;
+        Out.Projection = ParseProject(R);
+        Out.Action = OptionalStrictString(R, TEXT("action"), TEXT("click"), true);
+
+        // Unlike read-only probes, an interaction must not silently ignore a
+        // misspelled/direct-wire field and then click a different target under
+        // the caller's feet. The public Zod schema is strict; enforce the same
+        // boundary natively because hayba_invoke can bypass TypeScript.
+        static const TSet<FString> AllowedFields = {
+            TEXT("pie_instance"), TEXT("actor_path"), TEXT("actor_id"), TEXT("actor_label"),
+            TEXT("component_name"), TEXT("sample"), TEXT("player_index"), TEXT("action"),
+            TEXT("world_location"), TEXT("trace_visibility")
+        };
+        if (R.Raw().IsValid())
+        {
+            for (const TPair<FString, TSharedPtr<FJsonValue>>& Field : R.Raw()->Values)
+            {
+                if (!AllowedFields.Contains(Field.Key))
+                {
+                    R.AddError(FString::Printf(TEXT("unknown field '%s'"), *Field.Key));
+                    break;
+                }
+            }
+        }
+
+        // Interaction is deliberately actor-only. An arbitrary world point has
+        // no identity to compare with the first Visibility hit, so accepting it
+        // would turn a verified actor tool back into a coordinate click.
+        if (Out.Projection.WorldLocation.IsSet())
+        {
+            R.AddError(TEXT("world_location is not supported; pass exactly one actor reference"));
+        }
+        if (!Out.Projection.bTraceVisibility)
+        {
+            R.AddError(TEXT("trace_visibility cannot be disabled for actor interaction"));
+        }
+        if (Out.Action != TEXT("click"))
+        {
+            R.AddError(TEXT(
+                "'action' must be click; exact hover is unavailable because UE exposes no public viewport route that both preserves native hover state and guarantees zero OS cursor movement"));
+        }
+        return Out;
+    }
+
     FWorldSelection SelectWorld(
         const TArray<FWorldCandidate>& Candidates,
         const TOptional<int32>& RequestedPIEInstance,

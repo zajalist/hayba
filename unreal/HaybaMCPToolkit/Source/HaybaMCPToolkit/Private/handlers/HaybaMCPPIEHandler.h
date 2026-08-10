@@ -39,6 +39,7 @@ private:
     FHaybaHandlerResult PIEActorList(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult PIEActorInspect(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult PIEProjectWorld(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult PIEClickActor(const TSharedPtr<FJsonObject>& P);
 
 #if WITH_EDITOR
     void EnsureLifecycleHooks();

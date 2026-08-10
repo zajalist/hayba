@@ -232,6 +232,57 @@ bool FHaybaPIERuntimeParseTest::RunTest(const FString&)
         HaybaPIERuntimeOps::ParseProject(BadComponentSample);
         TestTrue(TEXT("actor pivot cannot masquerade as a component sample"), BadComponentSample.HasErrors());
     }
+    {
+        FHaybaParamReader Click(
+            RuntimeJson(TEXT(R"({"actor_path":"/Game/UEDPIE_0_Map.Map:PersistentLevel.Road_1"})")),
+            TEXT("editor_pie_click_actor"));
+        const HaybaPIERuntimeOps::FActorInteractionRequest ClickRequest =
+            HaybaPIERuntimeOps::ParseActorInteraction(Click);
+        TestFalse(TEXT("exact actor click parses"), Click.HasErrors());
+        TestEqual(TEXT("interaction defaults to click"), ClickRequest.Action, FString(TEXT("click")));
+        TestTrue(TEXT("interaction always keeps visibility proof enabled"), ClickRequest.Projection.bTraceVisibility);
+
+        FHaybaParamReader Hover(
+            RuntimeJson(TEXT(R"({"actor_id":"Road_1","component_name":"Collision","sample":"component_location","action":"hover","player_index":16})")),
+            TEXT("editor_pie_click_actor"));
+        HaybaPIERuntimeOps::ParseActorInteraction(Hover);
+        TestTrue(TEXT("hover fails closed instead of using an OS-unsafe synthetic route"), Hover.HasErrors());
+        TestTrue(TEXT("hover refusal explains the zero-OS-input constraint"),
+            Hover.ErrorMessage().Contains(TEXT("exact hover is unavailable")));
+
+        FHaybaParamReader CoordinateClick(
+            RuntimeJson(TEXT(R"({"world_location":[0,0,0],"action":"click"})")),
+            TEXT("editor_pie_click_actor"));
+        HaybaPIERuntimeOps::ParseActorInteraction(CoordinateClick);
+        TestTrue(TEXT("actor interaction cannot degrade to an arbitrary coordinate click"), CoordinateClick.HasErrors());
+        TestTrue(TEXT("coordinate refusal is explicit"), CoordinateClick.ErrorMessage().Contains(TEXT("world_location")));
+
+        FHaybaParamReader Unverified(
+            RuntimeJson(TEXT(R"({"actor_id":"Road_1","trace_visibility":false})")),
+            TEXT("editor_pie_click_actor"));
+        HaybaPIERuntimeOps::ParseActorInteraction(Unverified);
+        TestTrue(TEXT("visibility proof cannot be disabled on direct wire"), Unverified.HasErrors());
+
+        FHaybaParamReader BadAction(
+            RuntimeJson(TEXT(R"({"actor_id":"Road_1","action":"double_click"})")),
+            TEXT("editor_pie_click_actor"));
+        HaybaPIERuntimeOps::ParseActorInteraction(BadAction);
+        TestTrue(TEXT("unknown interaction action fails closed"), BadAction.HasErrors());
+
+        FHaybaParamReader WrongActionType(
+            RuntimeJson(TEXT(R"({"actor_id":"Road_1","action":1})")),
+            TEXT("editor_pie_click_actor"));
+        HaybaPIERuntimeOps::ParseActorInteraction(WrongActionType);
+        TestTrue(TEXT("non-string action fails closed"), WrongActionType.HasErrors());
+
+        FHaybaParamReader UnknownField(
+            RuntimeJson(TEXT(R"({"actor_id":"Road_1","screen_x":400})")),
+            TEXT("editor_pie_click_actor"));
+        HaybaPIERuntimeOps::ParseActorInteraction(UnknownField);
+        TestTrue(TEXT("direct-wire typo cannot be ignored before a mutation"), UnknownField.HasErrors());
+        TestTrue(TEXT("unknown field is named in the refusal"),
+            UnknownField.ErrorMessage().Contains(TEXT("screen_x")));
+    }
     return true;
 }
 

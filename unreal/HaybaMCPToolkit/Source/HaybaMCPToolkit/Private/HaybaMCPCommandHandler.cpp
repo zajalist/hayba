@@ -59,6 +59,9 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("actor_call_function"),
         TEXT("editor_run_console_command"),
         TEXT("editor_save_all_and_quit"),
+        // Runtime gameplay interaction. It is plan-gated and retry-unsafe even
+        // though it intentionally creates no editor undo record below.
+        TEXT("editor_pie_click_actor"),
         // Actor lifecycle + mutation
         TEXT("actor_spawn"),
         TEXT("actor_delete"),
@@ -207,7 +210,7 @@ bool FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(const FString& Cmd)
     // IsDestructiveCommand for Plan Mode, but do not create an undo record for
     // the compile itself.  Never reset or disable the user's transaction
     // buffer here: that would silently destroy unrelated undo history.
-    if (Cmd == TEXT("ui_compile_widget")) return false;
+    if (Cmd == TEXT("ui_compile_widget") || Cmd == TEXT("editor_pie_click_actor")) return false;
 
     return true;
 }
@@ -1122,7 +1125,8 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         }
         else if (Cmd == TEXT("editor_pie_actor_list")
             || Cmd == TEXT("editor_pie_actor_inspect")
-            || Cmd == TEXT("editor_pie_project_world"))
+            || Cmd == TEXT("editor_pie_project_world")
+            || Cmd == TEXT("editor_pie_click_actor"))
         {
             // These read-only tools intentionally hand actor_path and
             // component_path back to the caller as exact follow-up keys. The

@@ -71,6 +71,12 @@ namespace HaybaPIERuntimeOps
         bool bTraceVisibility = true;
     };
 
+    struct FActorInteractionRequest
+    {
+        FProjectRequest Projection;
+        FString Action = TEXT("click");
+    };
+
     struct FWorldCandidate
     {
         int32 PIEInstance = INDEX_NONE;
@@ -100,6 +106,7 @@ namespace HaybaPIERuntimeOps
     FListRequest ParseList(FHaybaParamReader& R);
     FInspectRequest ParseInspect(FHaybaParamReader& R);
     FProjectRequest ParseProject(FHaybaParamReader& R);
+    FActorInteractionRequest ParseActorInteraction(FHaybaParamReader& R);
 
     /**
      * Stable selection for 0/1/multi-client PIE.

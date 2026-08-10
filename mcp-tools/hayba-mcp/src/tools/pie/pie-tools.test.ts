@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
 import { scriptedUe, type ScriptedUe } from '../testing/scripted-ue.js';
-import { UeToolError } from '../tool-executor.js';
+import { NON_IDEMPOTENT, UeToolError } from '../tool-executor.js';
 import { pieAxisHandler } from './pie-axis.js';
 import { pieClickWidgetHandler } from './pie-click-widget.js';
 import { pieMouseHandler } from './pie-mouse.js';
@@ -28,6 +28,7 @@ import { pieWidgetTreeHandler } from './pie-widget-tree.js';
 import { pieActorListHandler } from './pie-actor-list.js';
 import { pieActorInspectHandler } from './pie-actor-inspect.js';
 import { pieProjectWorldHandler } from './pie-project-world.js';
+import { pieClickActorHandler } from './pie-click-actor.js';
 import type { SessionManager, ToolHandler } from '../types.js';
 
 // PIE wrappers ignore the session; a stub keeps the ToolHandler signature honest.
@@ -78,6 +79,12 @@ const TOOLS: Array<{ name: string; cmd: string; handler: ToolHandler; args: Reco
     cmd: 'editor_pie_project_world',
     handler: pieProjectWorldHandler,
     args: { world_location: [1, 2, 3] },
+  },
+  {
+    name: 'pie_click_actor',
+    cmd: 'editor_pie_click_actor',
+    handler: pieClickActorHandler,
+    args: { actor_path: '/Game/UEDPIE_0_Map.Map:PersistentLevel.Road_1' },
   },
 ];
 
@@ -206,6 +213,24 @@ describe('bad arguments are rejected before reaching UE', () => {
     expect(ue.calls).toHaveLength(0);
   });
 
+  it('actor interaction requires one exact actor target and rejects irrelevant fields', async () => {
+    ue = scriptedUe().replies('editor_pie_click_actor', { ok: true });
+    expect((await pieClickActorHandler({}, session)).isError).toBe(true);
+    expect((await pieClickActorHandler({ actor_id: 'Road_1', actor_label: 'Road' }, session)).isError).toBe(true);
+    expect(
+      (
+        await pieClickActorHandler(
+          {
+            actor_id: 'Road_1',
+            world_location: [0, 0, 0],
+          },
+          session,
+        )
+      ).isError,
+    ).toBe(true);
+    expect(ue.calls).toHaveLength(0);
+  });
+
   it('runtime list enforces response caps and rejects unknown fields', async () => {
     ue = scriptedUe().replies('editor_pie_actor_list', { actors: [] });
     expect((await pieActorListHandler({ limit: 51 }, session)).isError).toBe(true);
@@ -245,6 +270,49 @@ describe('runtime scene grounding forwards typed defaults and exact identifiers'
       trace_visibility: true,
     });
     expect(ue.paramsFor('editor_pie_project_world')).not.toHaveProperty('sample');
+  });
+
+  it('actor interaction forwards exact routing defaults and is retry-unsafe', async () => {
+    ue = scriptedUe().replies('editor_pie_click_actor', {
+      dispatch: { pressed: true, released: true },
+    });
+    const actorPath = '/Game/UEDPIE_1_WarRoom.WarRoom:PersistentLevel.BP_RoadSpline_C_7';
+    await pieClickActorHandler({ pie_instance: 1, actor_path: actorPath }, session);
+    expect(ue.paramsFor('editor_pie_click_actor')).toEqual({
+      pie_instance: 1,
+      actor_path: actorPath,
+      player_index: 0,
+      action: 'click',
+    });
+    expect(NON_IDEMPOTENT.has('editor_pie_click_actor')).toBe(true);
+  });
+
+  it('actor hover and invalid sample combinations fail closed before UE dispatch', async () => {
+    ue = scriptedUe().replies('editor_pie_click_actor', { dispatch: { pressed: true } });
+    expect(
+      (
+        await pieClickActorHandler(
+          {
+            actor_id: 'Road_1',
+            component_name: 'RoadCollision',
+            sample: 'component_location',
+            action: 'hover',
+          },
+          session,
+        )
+      ).isError,
+    ).toBe(true);
+    expect(ue.calls).toHaveLength(0);
+
+    expect(
+      (
+        await pieClickActorHandler(
+          { actor_id: 'Road_1', component_name: 'RoadCollision', sample: 'actor_location' },
+          session,
+        )
+      ).isError,
+    ).toBe(true);
+    expect(ue.calls).toHaveLength(0);
   });
 
   it('rejects semantically irrelevant sample combinations', async () => {
