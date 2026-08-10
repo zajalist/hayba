@@ -4868,6 +4868,160 @@
       "agent_callable": false,
       "has_ts_wrapper": false,
       "notes": "NOT IMPLEMENTED — returns 'pending MetaSoundFrontendDocumentBuilder API stability' for every call, verified live. Documented but not callable. See issue #18."
+    },
+    "editor_pie_assert": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPPIEHandler::PIEAssert",
+      "params": [
+        {
+          "name": "property_name",
+          "type": "string",
+          "required": true,
+          "description": "A UPROPERTY on the resolved actor, by reflection name"
+        },
+        {
+          "name": "expected_value",
+          "type": "any",
+          "required": true,
+          "description": "Compared for equality. Numbers honour `tolerance`."
+        },
+        {
+          "name": "actor_label",
+          "type": "string",
+          "required": false,
+          "description": "Editor label of the actor to inspect. Give this or actor_path."
+        },
+        {
+          "name": "actor_path",
+          "type": "string",
+          "required": false,
+          "description": "Full object path in the PIE world"
+        },
+        {
+          "name": "tolerance",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "description": "Float comparison slack — an exact match on a simulated float is rarely what you want"
+        },
+        {
+          "name": "timeout_ms",
+          "type": "number",
+          "required": false,
+          "default": 2000,
+          "description": "Accepted for signature compatibility. It does NOT make the call wait — see the note."
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "matched",
+            "type": "boolean",
+            "description": "Whether the property equalled expected_value AT THE MOMENT OF THE CALL"
+          },
+          {
+            "name": "observed_value",
+            "type": "any",
+            "description": "Present on a match"
+          },
+          {
+            "name": "observed_value_last",
+            "type": "any",
+            "description": "What was actually read, when it did not match — compare this against what you expected"
+          },
+          {
+            "name": "polling",
+            "type": "boolean",
+            "description": "True when the answer is a single observation, i.e. a no-match. Poll again rather than treating it as final."
+          },
+          {
+            "name": "reason",
+            "type": "string",
+            "description": "Why it did not match: a comparison miss, or pie_ended"
+          },
+          {
+            "name": "elapsed_ms",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Assert a UPROPERTY on a PIE actor holds a value. It is ONE OBSERVATION, not a wait: a command handler runs on the game thread, so it cannot advance the world, and a property it watches can never change while it blocks — an earlier version that pumped the ticker to fake waiting is what crashed the editor. So a false `matched` with `polling:true` means 'not yet', and the caller loops. Read observed_value_last before assuming the property is wrong; it is often the expectation that is."
+    },
+    "editor_pie_wait_for": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPPIEHandler::PIEWaitFor",
+      "params": [
+        {
+          "name": "property_name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "expected_value",
+          "type": "any",
+          "required": true
+        },
+        {
+          "name": "actor_label",
+          "type": "string",
+          "required": false,
+          "description": "Give this or actor_path"
+        },
+        {
+          "name": "actor_path",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "tolerance",
+          "type": "number",
+          "required": false,
+          "default": 0
+        },
+        {
+          "name": "timeout_ms",
+          "type": "number",
+          "required": false,
+          "default": 2000,
+          "description": "Accepted, but this call does not block — see the note"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "matched",
+            "type": "boolean"
+          },
+          {
+            "name": "observed_value",
+            "type": "any"
+          },
+          {
+            "name": "observed_value_last",
+            "type": "any"
+          },
+          {
+            "name": "polling",
+            "type": "boolean",
+            "description": "True on a no-match: call again, the world will have advanced by then"
+          },
+          {
+            "name": "reason",
+            "type": "string"
+          },
+          {
+            "name": "elapsed_ms",
+            "type": "number"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "The polling half of a PIE wait: one observation of a property, with `polling:true` when the condition is not met yet, so the caller can loop until it is or until it gives up. It does NOT block for you — the handler occupies the game thread it would need to advance, which is the reason the previous blocking version had to be removed. Same shape as editor_pie_assert; use this name when you intend to loop and that one when you intend a single check."
     }
   }
 }
