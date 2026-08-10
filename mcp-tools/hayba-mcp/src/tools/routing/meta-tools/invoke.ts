@@ -3,6 +3,11 @@ import { getRawShape } from '../../schema-registry.js';
 import { listAgentCallableLegacyCommands } from '../../../legacy-commands/index.js';
 import { resolveAliases } from '../../param-aliases.js';
 import { TOOL_ALIASES } from '../../tool-aliases.js';
+import {
+  IdempotencyLedger,
+  IdempotencyLedgerError,
+  isVerifiedSuccessReceipt,
+} from '../idempotency-ledger.js';
 
 /**
  * Built once at module load from sidecar.json. Every entry with
@@ -27,6 +32,8 @@ export const invokeSchema = {
   args: z.record(z.string(), z.unknown()).default({}),
   via: z.enum(['ts', 'ue_legacy']).optional().default('ts')
     .describe('Dispatch route. "ts" (default) looks the tool up in the TS captured map. "ue_legacy" calls executeCommand(name, args) directly against the UE plugin — only commands marked agent_callable:true in legacy-commands/sidecar.json are accepted.'),
+  idempotency_key: z.string().min(1).max(256).optional()
+    .describe('Retry identity for a mutation. This is envelope metadata, never forwarded as a tool parameter. Requires an authenticated MCP principal; receipts are process-local and expire.'),
 };
 
 export type InvokeResult =
@@ -34,16 +41,30 @@ export type InvokeResult =
   | { ok: false; error: { kind: 'validation'; issues: unknown; accepted_params?: string[] } }
   | { ok: false; error: { kind: 'tool_disabled'; name: string } }
   | { ok: false; error: { kind: 'unknown_tool'; name: string } }
-  | { ok: false; error: { kind: 'legacy_not_allowlisted'; name: string } };
+  | { ok: false; error: { kind: 'legacy_not_allowlisted'; name: string } }
+  | { ok: false; error: {
+      kind: 'idempotency_unavailable' | 'idempotency_invalid' | 'idempotency_conflict' | 'idempotency_capacity' | 'idempotency_wait_cancelled';
+      message: string;
+      reference?: string;
+      scope: 'process_lifetime';
+    } };
+
+export interface InvokeIdempotencyContext {
+  ledger: IdempotencyLedger;
+  /** Derived only from SDK-validated authInfo. Never use sessionId or args. */
+  authenticatedPrincipal?: string;
+  waitSignal?: AbortSignal;
+}
 
 export interface InvokeCtx {
   dispatch: (cmd: string, args: Record<string, unknown>) => Promise<unknown>;
   dispatchLegacy?: (cmd: string, args: Record<string, unknown>) => Promise<unknown>;
   isDisabled: (name: string) => boolean;
+  idempotency?: InvokeIdempotencyContext;
 }
 
 export async function invokeHandler(
-  args: { name: string; args: Record<string, unknown>; via?: 'ts' | 'ue_legacy' },
+  args: { name: string; args: Record<string, unknown>; via?: 'ts' | 'ue_legacy'; idempotency_key?: string },
   ctx: InvokeCtx,
 ): Promise<InvokeResult> {
   const via = args.via ?? 'ts';
@@ -81,8 +102,7 @@ export async function invokeHandler(
       return { ok: false, error: { kind: 'legacy_not_allowlisted', name: args.name } };
     }
     const legacy = ctx.dispatchLegacy ?? ctx.dispatch;
-    const result = await legacy(args.name, rawArgs);
-    return { ok: true, result };
+    return await dispatchWithOptionalIdempotency(args, rawArgs, ctx, legacy);
   }
   const shape: ZodRawShape | null = getRawShape(args.name);
   if (!shape) {
@@ -93,8 +113,7 @@ export async function invokeHandler(
     // allow-listed. Only when neither route knows the command do we error.
     if (LEGACY_ALLOWLIST.has(args.name)) {
       const legacy = ctx.dispatchLegacy ?? ctx.dispatch;
-      const result = await legacy(args.name, rawArgs);
-      return { ok: true, result };
+      return await dispatchWithOptionalIdempotency(args, rawArgs, ctx, legacy);
     }
     return { ok: false, error: { kind: 'unknown_tool', name: args.name } };
   }
@@ -112,8 +131,64 @@ export async function invokeHandler(
       error: { kind: 'validation', issues: parse.error.issues, accepted_params: Object.keys(shape) },
     };
   }
-  const result = await ctx.dispatch(args.name, parse.data as Record<string, unknown>);
-  return { ok: true, result };
+  return await dispatchWithOptionalIdempotency(
+    args,
+    parse.data as Record<string, unknown>,
+    ctx,
+    ctx.dispatch,
+  );
+}
+
+async function dispatchWithOptionalIdempotency(
+  envelope: { name: string; via?: 'ts' | 'ue_legacy'; idempotency_key?: string },
+  validatedArgs: Record<string, unknown>,
+  ctx: InvokeCtx,
+  dispatch: (cmd: string, args: Record<string, unknown>) => Promise<unknown>,
+): Promise<InvokeResult> {
+  const key = envelope.idempotency_key;
+  if (!key) {
+    return { ok: true, result: await dispatch(envelope.name, validatedArgs) };
+  }
+
+  const authenticatedPrincipal = ctx.idempotency?.authenticatedPrincipal;
+  if (!ctx.idempotency || !authenticatedPrincipal) {
+    return {
+      ok: false,
+      error: {
+        kind: 'idempotency_unavailable',
+        message: 'Idempotency requires an authenticated MCP principal; this transport supplied none. See #379 for authenticated transport support.',
+        scope: 'process_lifetime',
+      },
+    };
+  }
+
+  try {
+    const result = await ctx.idempotency.ledger.run(
+      {
+        principal: authenticatedPrincipal,
+        tool: envelope.name,
+        key,
+        // `via` changes which implementation runs, so it belongs in the
+        // fingerprint even though the logical tool owns the keyed slot.
+        request: { via: envelope.via ?? 'ts', args: validatedArgs },
+        waitSignal: ctx.idempotency.waitSignal,
+      },
+      () => dispatch(envelope.name, validatedArgs),
+      isVerifiedSuccessReceipt,
+    );
+    return { ok: true, result };
+  } catch (error) {
+    if (!(error instanceof IdempotencyLedgerError)) throw error;
+    return {
+      ok: false,
+      error: {
+        kind: error.code,
+        message: error.message,
+        ...(error.reference ? { reference: error.reference } : {}),
+        scope: 'process_lifetime',
+      },
+    };
+  }
 }
 
 export const meta = {

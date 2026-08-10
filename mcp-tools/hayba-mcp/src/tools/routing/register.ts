@@ -39,6 +39,7 @@ import { setAssetDagSink } from '../asset-sources/shared.js';
 import { registerChatCapturedTools } from '../../chat/tool-dispatch.js';
 import { buildOrientation, shouldOrient } from './orientation.js';
 import { wrapToolHandlerForStream } from '../tool-stream-mirror.js';
+import { IdempotencyLedger } from './idempotency-ledger.js';
 
 // ── First-install surface ────────────────────────────────────────────────────
 //
@@ -146,6 +147,11 @@ export async function registerDeferredRouting(
   cacheDir?: string,
   options: DeferredRoutingOptions = {},
 ): Promise<RoutingHandle> {
+  // One bounded process-local ledger spans both captured TS tools and the UE
+  // legacy fallthrough. Restarting this MCP process intentionally loses its
+  // receipts; durable/reconnect identity belongs to the authenticated transport
+  // work tracked in #379, not to a fabricated stdio principal.
+  const idempotencyLedger = new IdempotencyLedger();
   // Publish the captured-tool map to the chat dispatcher (Task 4) so the sidecar
   // SSE copilot reaches TS-side handlers, not just UE-bridged commands.
   registerChatCapturedTools(captured);
@@ -482,7 +488,13 @@ export async function registerDeferredRouting(
     'hayba_invoke',
     'CALL ANY TOOL BY NAME, whether or not its pack is loaded — the whole catalogue is reachable through here. Pair with hayba_search_tools when you do not know the name. USE_WHEN: any call into an unloaded domain, which is most of them. NOT_WHEN: you are making many calls into one domain — hayba_pack_load gives you native schemas.',
     invokeSchema,
-    async (args: { name: string; args: Record<string, unknown>; via?: 'ts' | 'ue_legacy' }) => {
+    async (args, extra) => {
+      const auth = extra?.authInfo;
+      // `authInfo` is produced by the SDK only after access-token validation.
+      // Never substitute the request/session ID, token, or caller args here.
+      const authenticatedPrincipal = auth?.clientId
+        ? `${auth.resource?.href ?? ''}\u0000${auth.clientId}`
+        : undefined;
       const r = await invokeHandler(args, {
         dispatch: async (cmd, params) => {
           // Prefer the captured handler if present — covers TS-side tools.
@@ -500,6 +512,11 @@ export async function registerDeferredRouting(
           return await executeCommand(cmd, params);
         },
         isDisabled: isToolDisabled,
+        idempotency: {
+          ledger: idempotencyLedger,
+          authenticatedPrincipal,
+          waitSignal: extra?.signal,
+        },
       });
       return withOrientation(toMcpResponse(r));
     },
