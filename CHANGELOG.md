@@ -33,6 +33,11 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   `mcp-tools/hayba-mcp/examples/github-actions-hayba-cli.yml`.
 
 ### Changed
+- The architecture workspace now declares its actual Three.js boundary: the
+  browser-only Culture Studio keeps one pinned CDN import map, while the unused
+  `three` and `@types/three` npm dependencies are removed. A source/manifest/
+  lockfile guard prevents the inert duplicate from returning or the two CDN
+  addon URLs from drifting to different runtime versions.
 - **Satellite plugins settled** ([ADR-0008](docs/adr/0008-satellite-plugins-earn-their-place.md)).
   `HaybaMCPGAS` and `HaybaMCPMetaSound` are installed and surfaced.
   `HaybaMCPNiagara` and `HaybaMCPSequencer` are deleted — every command they

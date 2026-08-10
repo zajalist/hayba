@@ -91,6 +91,28 @@ jobs:
         working-directory: mcp-tools/hayba-mcp
         run: npm run lint:legacy-wrappers
 
+  architecture:
+    name: Architecture — clean install + build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Clean install
+        run: npm ci --ignore-scripts
+
+      # The package test builds first, exercises the real demo server tests,
+      # then runs the TypeScript suite. It also owns the CDN-only Three.js
+      # boundary guard, so an inert npm dependency cannot drift back unnoticed.
+      - name: Build and test
+        run: npm test --workspace=@hayba/architecture
+
+      - name: Typecheck
+        run: npm run typecheck --workspace=@hayba/architecture
+
   sidecar:
     name: Visual sidecar — import + test + lint
     runs-on: ubuntu-latest

@@ -21,17 +21,16 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "vitest run",
+    "test": "npm run build && npm run test:demo && vitest run",
+    "test:demo": "node --test demo/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "serve": "tsc && node demo/serve.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.96.0",
-    "three": "^0.169.0"
+    "@anthropic-ai/sdk": "^0.96.0"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
-    "@types/three": "^0.169.0",
     "@vitest/coverage-v8": "^4.1.10",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"

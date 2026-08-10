@@ -17,6 +17,11 @@ node demo/serve.mjs
 
 Set `PORT=<n>` to override. The server auto-increments if the port is busy.
 
+The demo intentionally loads Three.js and its addons from the pinned import map
+in `demo/index.html`. The TypeScript package does not import Three.js, so the npm
+workspace must not install `three` or `@types/three`; `demo/three-boundary.test.mjs`
+guards that boundary and keeps both import-map URLs on one exact runtime version.
+
 ### Data layout
 
 Per-culture, three JSON files under `src/data/cultures/<culture-id>/`:
