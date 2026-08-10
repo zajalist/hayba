@@ -217,7 +217,12 @@ describe('ui_set_brush', () => {
     setDefaultSender(exec.send);
 
     await uiSetBrushHandler(
-      { widget_blueprint_path: '/Game/UI/WBP_Test', widget_name: 'Bg', resource: '/Game/UI/T_Panel', tint: [1, 1, 1, 1] },
+      {
+        widget_blueprint_path: '/Game/UI/WBP_Test',
+        widget_name: 'Bg',
+        resource: '/Game/UI/T_Panel',
+        tint: [1, 1, 1, 1],
+      },
       undefined as never,
     );
 
@@ -277,7 +282,9 @@ describe('ui_set_text_style', () => {
 });
 
 describe('tree mutation wrappers map onto ui_mutate_tree operations', () => {
-  const cases: Array<[string, (a: Record<string, unknown>) => Promise<{ isError?: boolean }>, Record<string, unknown>]> = [
+  const cases: Array<
+    [string, (a: Record<string, unknown>) => Promise<{ isError?: boolean }>, Record<string, unknown>]
+  > = [
     ['duplicate', (a) => uiDuplicateElementHandler(a, undefined as never), { widget_name: 'Row' }],
     ['move', (a) => uiMoveElementHandler(a, undefined as never), { widget_name: 'Row', index: 2 }],
     ['rename', (a) => uiRenameElementHandler(a, undefined as never), { widget_name: 'Row', new_name: 'FirstRow' }],
@@ -343,7 +350,9 @@ describe('new commands dispatch to their own handler names', () => {
   });
 
   it('ui_list_widget_blueprints dispatches with no required args', async () => {
-    const exec = new InMemoryToolExecutor().on('ui_list_widget_blueprints', () => ok({ widget_blueprints: [], count: 0 }));
+    const exec = new InMemoryToolExecutor().on('ui_list_widget_blueprints', () =>
+      ok({ widget_blueprints: [], count: 0 }),
+    );
     setDefaultSender(exec.send);
     const r = await uiListWidgetBlueprintsHandler({}, undefined as never);
     expect(r.isError).toBeFalsy();
@@ -395,8 +404,18 @@ describe('ui_duplicate_element deep clone (C++ invariant)', () => {
   const handlerSrc = readFileSync(
     join(
       __dirname,
-      '..', '..', '..', '..', '..',
-      'unreal', 'HaybaMCPToolkit', 'Source', 'HaybaMCPToolkit', 'Private', 'handlers', 'HaybaMCPUIHandler.cpp',
+      '..',
+      '..',
+      '..',
+      '..',
+      '..',
+      'unreal',
+      'HaybaMCPToolkit',
+      'Source',
+      'HaybaMCPToolkit',
+      'Private',
+      'handlers',
+      'HaybaMCPUIHandler.cpp',
     ),
     'utf-8',
   );
@@ -432,7 +451,13 @@ describe('ui_duplicate_element deep clone (C++ invariant)', () => {
       handlerSrc.indexOf('Operation == TEXT("duplicate")'),
       handlerSrc.indexOf('Operation == TEXT("replace")'),
     );
-    expect(dup).toContain('MarkBlueprintAsStructurallyModified');
+    // #406 centralizes the notification behind the invariant gate. Duplicate
+    // must call that gate, and must not be able to compile a raw/stale GUID map.
+    expect(dup).toContain('FinalizeWidgetTreeMutation');
+    expect(dup).not.toContain('MarkBlueprintAsStructurallyModified');
+    expect(handlerSrc).toMatch(
+      /FinalizeWidgetTreeMutation[\s\S]{0,2000}ReconcileWidgetVariableGuids[\s\S]{0,2000}MarkBlueprintAsStructurallyModified/,
+    );
   });
 
   it('verifies its own post-condition rather than trusting the operation', () => {

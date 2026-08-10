@@ -39,13 +39,14 @@ describe('TCP crash-resilience contract', () => {
   });
 
   it('waits for every client worker before module-owned code can unload', () => {
-    expect(tcpHeader).toContain('TArray<TFuture<void>> ClientWorkers');
-    expect(tcpCpp).toContain('TFuture<void> Worker = Async(EAsyncExecution::ThreadPool');
-    expect(tcpCpp).toContain('WorkersToJoin = MoveTemp(ClientWorkers)');
+    expect(tcpHeader).toContain('TArray<TFuture<void>> Workers');
+    expect(tcpCpp.match(/RetainWorker\(Async\(EAsyncExecution::Thread/g)).toHaveLength(2);
+    expect(tcpCpp).not.toContain('EAsyncExecution::ThreadPool');
+    expect(tcpCpp).toContain('WorkersToJoin = MoveTemp(Workers)');
     expect(tcpCpp).toContain('Worker.Wait()');
-    expect(tcpCpp).toMatch(/Thread->WaitForCompletion\(\)[\s\S]*WorkersToJoin = MoveTemp\(ClientWorkers\)/);
+    expect(tcpCpp).toMatch(/Thread->WaitForCompletion\(\)[\s\S]*WorkersToJoin = MoveTemp\(Workers\)/);
     expect(tcpCpp).not.toContain('ClientWorkersDoneEvent');
-    expect(tcpCpp).toMatch(/ReadExact[\s\S]*while \(TotalRead < NumBytes && bIsRunning\)/);
+    expect(tcpCpp).toMatch(/ReadBounded[\s\S]*while \(TotalRead < NumBytes && bIsRunning && Conn->bAlive\)/);
     expect(tcpCpp).toContain('BytesRead <= 0');
   });
 
@@ -78,7 +79,10 @@ describe('TCP crash-resilience contract', () => {
     expect(tcpCpp).toContain('HasStrictUtf8(Buffer.GetData()');
     expect(tcpCpp).toContain('Rejecting request with malformed UTF-8 or embedded NUL');
     expect(tcpCpp).toContain('FUTF8ToTCHAR Converted');
-    expect(tcpCpp).toContain('FPlatformTime::Seconds() >= DeadlineSeconds');
+    expect(tcpCpp).toContain('FHaybaMCPSendDeadlinePolicy Deadline');
+    expect(tcpCpp).toContain('Deadline.ShouldAbort(FPlatformTime::Seconds())');
+    expect(tcpCpp).toContain('MaxPipelinedRequestsPerClient');
+    expect(tcpCpp).toContain('QueuedChars > MaxQueuedResponseCharsPerClient');
     expect(tcpCpp).toMatch(/NewPending > MaxPendingCommands[\s\S]*break;/);
     expect(tcpCpp).toContain('.Listening(MaxClientConnections)');
     expect(legacyCpp).toContain('SetObjectField(TEXT("transport_limits"), Limits)');
