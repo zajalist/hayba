@@ -92,6 +92,8 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("material_add_reroute_declaration"),
         TEXT("material_add_reroute_usage"),
         TEXT("material_connect_nodes"),
+        TEXT("material_set_property"),
+        TEXT("material_compile"),
         // PCG (both legacy alias + namespaced form)
         TEXT("create_graph"),
         TEXT("pcg_create_graph"),

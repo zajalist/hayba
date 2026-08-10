@@ -69,6 +69,8 @@ const EXTRA_DESTRUCTIVE = new Set<string>([
   'actor_snap_to_socket',
   'actor_tag',
   'object_set_property',
+  'material_set_property',
+  'material_compile',
   'blueprint_add_component',
   'blueprint_add_variable',
   'blueprint_set_defaults',

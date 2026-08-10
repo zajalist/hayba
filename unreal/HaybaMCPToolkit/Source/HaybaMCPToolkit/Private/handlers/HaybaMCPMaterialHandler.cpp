@@ -1112,6 +1112,7 @@ static TArray<TSharedPtr<FJsonValue>> SerializeMaterialExpressions(
 
 // Forward decl — defined later (used by the validator path too).
 static void GatherMaterialPropertyInputs(UMaterial* Mat, TArray<FExpressionInput*>& Out);
+static const TMap<FString, EMaterialUsage>& HaybaMaterialUsageAliases();
 
 // Build the two graph sets the compiler implicitly knows:
 //   Consumed  — every expression whose output feeds some node input or a root.
@@ -1213,6 +1214,10 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatGetInfo(const TSharedPtr<FJsonO
         Out->SetArrayField(TEXT("dead_nodes"), CollectDeadNodeIds(Mat->GetExpressions(), Reachable));
         Out->SetArrayField(TEXT("comments"), SerializeComments(Mat->GetEditorComments()));
         Out->SetNumberField(TEXT("shading_model"), (int32)Mat->GetShadingModels().GetFirstShadingModel());
+        TSharedPtr<FJsonObject> UsageFlags = MakeShared<FJsonObject>();
+        for (const auto& Usage : HaybaMaterialUsageAliases())
+            UsageFlags->SetBoolField(Usage.Key, Mat->GetUsageByFlag(Usage.Value));
+        Out->SetObjectField(TEXT("usage_flags"), UsageFlags);
         return FHaybaHandlerResult::Ok(Out);
     }
 
@@ -1690,6 +1695,51 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddRerouteUsage(const TSharedPt
     return FHaybaHandlerResult::Ok(Out);
 }
 
+static const TMap<FString, EMaterialUsage>& HaybaMaterialUsageAliases()
+{
+    static const TMap<FString, EMaterialUsage> Aliases = {
+        { TEXT("used_with_skeletal_meshes"), MATUSAGE_SkeletalMesh },
+        { TEXT("used_with_particle_sprites"), MATUSAGE_ParticleSprites },
+        { TEXT("used_with_beam_trails"), MATUSAGE_BeamTrails },
+        { TEXT("used_with_mesh_particles"), MATUSAGE_MeshParticles },
+        { TEXT("used_with_static_lighting"), MATUSAGE_StaticLighting },
+        { TEXT("used_with_morph_targets"), MATUSAGE_MorphTargets },
+        { TEXT("used_with_spline_meshes"), MATUSAGE_SplineMesh },
+        { TEXT("used_with_instanced_static_meshes"), MATUSAGE_InstancedStaticMeshes },
+        { TEXT("used_with_geometry_collections"), MATUSAGE_GeometryCollections },
+        { TEXT("used_with_clothing"), MATUSAGE_Clothing },
+        { TEXT("used_with_niagara_sprites"), MATUSAGE_NiagaraSprites },
+        { TEXT("used_with_niagara_ribbons"), MATUSAGE_NiagaraRibbons },
+        { TEXT("used_with_niagara_mesh_particles"), MATUSAGE_NiagaraMeshParticles },
+        { TEXT("used_with_geometry_cache"), MATUSAGE_GeometryCache },
+        { TEXT("used_with_water"), MATUSAGE_Water },
+        { TEXT("used_with_hair_strands"), MATUSAGE_HairStrands },
+        { TEXT("used_with_lidar_point_cloud"), MATUSAGE_LidarPointCloud },
+        { TEXT("used_with_nanite"), MATUSAGE_Nanite },
+        { TEXT("used_with_voxels"), MATUSAGE_Voxels },
+        { TEXT("used_with_volumetric_cloud"), MATUSAGE_VolumetricCloud },
+        { TEXT("used_with_heterogeneous_volumes"), MATUSAGE_HeterogeneousVolumes },
+        { TEXT("used_with_static_mesh"), MATUSAGE_StaticMesh },
+        { TEXT("used_with_editor_compositing"), MATUSAGE_EditorCompositing },
+        { TEXT("used_with_neural_networks"), MATUSAGE_NeuralNetworks },
+        { TEXT("used_with_mesh_deformer"), MATUSAGE_MeshDeformer },
+        { TEXT("used_with_instanced_skinned_meshes"), MATUSAGE_InstancedSkinnedMesh },
+        { TEXT("used_with_curves"), MATUSAGE_Curves },
+    };
+    return Aliases;
+}
+
+static const TMap<FString, FString>& HaybaMaterialUsageCompatibilityAliases()
+{
+    // material_set_property historically advertised raw UMaterial UPROPERTY
+    // names. Keep the production-critical spline spelling compatible, but
+    // canonicalize it before touching UE's deprecated bitfield surface.
+    static const TMap<FString, FString> Aliases = {
+        { TEXT("bUsedWithSplineMeshes"), TEXT("used_with_spline_meshes") },
+    };
+    return Aliases;
+}
+
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJsonObject>& P)
 {
     FString MatPath;
@@ -1701,6 +1751,8 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
     const TSharedPtr<FJsonObject>* PropsObj = nullptr;
     if (!P->TryGetObjectField(TEXT("properties"), PropsObj) || !PropsObj)
         return FHaybaHandlerResult::Err(TEXT("material_set_property: missing properties"));
+    if ((*PropsObj)->Values.Num() == 0)
+        return FHaybaHandlerResult::Err(TEXT("material_set_property: properties must be non-empty"));
 
     // Friendly alias -> real UMaterial UPROPERTY name.
     static const TMap<FString, FString> Aliases = {
@@ -1712,35 +1764,266 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
         { TEXT("enable_tessellation"),     TEXT("bEnableTessellation") },  // required for the displacement output to tessellate (Nanite)
     };
 
-    TArray<TSharedPtr<FJsonValue>> Applied;
+    // Usage aliases are deliberately allowlisted and typed. These flags select
+    // vertex-factory shader permutations; treating them as arbitrary reflection
+    // keys silently failed on UE5.8 and made spline meshes substitute the pale
+    // default material in game.
+    const TMap<FString, EMaterialUsage>& UsageAliases = HaybaMaterialUsageAliases();
+
+    struct FUsageRequest
+    {
+        FString Key;
+        EMaterialUsage Usage = MATUSAGE_MAX;
+        bool bRequested = false;
+        bool bPrevious = false;
+    };
+    TArray<FUsageRequest> RequestedUsage;
+    TSet<FString> RequestedUsageKeys;
+    bool bHasOrdinarySetting = false;
     for (const auto& Pair : (*PropsObj)->Values)
     {
-        const FString Key = FString(*Pair.Key);
-        const FString* Real = Aliases.Find(Key);
-        const FString RealName = Real ? *Real : Key;
-        if (HaybaReflection::SetProp(Mat, RealName, Pair.Value))
-            Applied.Add(MakeShared<FJsonValueString>(Key));
+        const FString InputKey(*Pair.Key);
+        const FString* CompatibilityKey = HaybaMaterialUsageCompatibilityAliases().Find(InputKey);
+        const FString Key = CompatibilityKey ? *CompatibilityKey : InputKey;
+        if (const EMaterialUsage* Usage = UsageAliases.Find(Key))
+        {
+            if (!Pair.Value.IsValid() || Pair.Value->Type != EJson::Boolean)
+            {
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("material_set_property: usage flag '%s' must be a JSON boolean"), *Key));
+            }
+            if (RequestedUsageKeys.Contains(Key))
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("material_set_property: duplicate aliases supplied for usage flag '%s'"), *Key));
+            RequestedUsageKeys.Add(Key);
+            RequestedUsage.Add({ Key, *Usage, Pair.Value->AsBool(), Mat->GetUsageByFlag(*Usage) });
+        }
+        else if (InputKey.StartsWith(TEXT("used_with_"), ESearchCase::IgnoreCase) ||
+                 InputKey.StartsWith(TEXT("bUsedWith"), ESearchCase::IgnoreCase))
+        {
+            TArray<FString> Supported;
+            UsageAliases.GetKeys(Supported);
+            Supported.Sort();
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("material_set_property: unsupported usage flag '%s'; supported keys: %s"),
+                *InputKey, *FString::Join(Supported, TEXT(", "))));
+        }
+        else if (const FString* RealName = Aliases.Find(Key))
+        {
+            bHasOrdinarySetting = true;
+            const EJson ExpectedType =
+                (Key == TEXT("two_sided") || Key == TEXT("enable_tessellation")) ? EJson::Boolean :
+                (Key == TEXT("opacity_mask_clip_value")) ? EJson::Number : EJson::String;
+            if (!Pair.Value.IsValid() || Pair.Value->Type != ExpectedType)
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("material_set_property: '%s' has the wrong JSON type"), *Key));
+
+            if (Key == TEXT("opacity_mask_clip_value"))
+            {
+                const double Value = Pair.Value->AsNumber();
+                if (!FMath::IsFinite(Value) || Value < 0.0 || Value > 1.0)
+                    return FHaybaHandlerResult::Err(TEXT("material_set_property: opacity_mask_clip_value must be finite and between 0 and 1"));
+            }
+            else if (Key == TEXT("domain") && StaticEnum<EMaterialDomain>()->GetValueByNameString(Pair.Value->AsString()) == INDEX_NONE)
+                return FHaybaHandlerResult::Err(TEXT("material_set_property: invalid domain enum value"));
+            else if (Key == TEXT("blend_mode") && StaticEnum<EBlendMode>()->GetValueByNameString(Pair.Value->AsString()) == INDEX_NONE)
+                return FHaybaHandlerResult::Err(TEXT("material_set_property: invalid blend_mode enum value"));
+            else if (Key == TEXT("shading_model") && StaticEnum<EMaterialShadingModel>()->GetValueByNameString(Pair.Value->AsString()) == INDEX_NONE)
+                return FHaybaHandlerResult::Err(TEXT("material_set_property: invalid shading_model enum value"));
+        }
+        else
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("material_set_property: unsupported property '%s'; use a documented friendly alias"), *InputKey));
+        }
     }
 
-    // In-memory only: master materials are written to disk solely by
-    // material_compile, so settings changes never leave a half-built material on
-    // disk for the editor to compile-on-open (Substrate Normal-chunk assert).
-    Mat->MarkPackageDirty();
+    if (RequestedUsage.Num() > 0 && bHasOrdinarySetting)
+        return FHaybaHandlerResult::Err(TEXT("material_set_property: submit usage flags separately from other settings so usage changes remain atomic"));
+
+    if (RequestedUsage.Num() > 0 &&
+        Mat->MaterialDomain != MD_Surface && Mat->MaterialDomain != MD_DeferredDecal && Mat->MaterialDomain != MD_Volume)
+    {
+        return FHaybaHandlerResult::Err(TEXT("material_set_property: usage flags require a Surface, Deferred Decal, or Volume material domain"));
+    }
+
+    TArray<TSharedPtr<FJsonValue>> Applied;
+    TArray<TSharedPtr<FJsonValue>> Changed;
+    if (RequestedUsage.Num() > 0)
+    {
+        bool bAnyChanged = false;
+        for (const FUsageRequest& Request : RequestedUsage) bAnyChanged |= Request.bPrevious != Request.bRequested;
+        if (bAnyChanged) Mat->Modify();
+
+        for (const FUsageRequest& Request : RequestedUsage)
+        {
+            Applied.Add(MakeShared<FJsonValueString>(Request.Key));
+            if (Request.bPrevious != Request.bRequested)
+            {
+                Mat->SetUsageByFlag(Request.Usage, Request.bRequested);
+                Changed.Add(MakeShared<FJsonValueString>(Request.Key));
+            }
+        }
+        bool bUsageVerified = true;
+        TSharedPtr<FJsonObject> UsageReadback = MakeShared<FJsonObject>();
+        for (const FUsageRequest& Request : RequestedUsage)
+        {
+            const bool bObserved = Mat->GetUsageByFlag(Request.Usage);
+            UsageReadback->SetBoolField(Request.Key, bObserved);
+            bUsageVerified &= bObserved == Request.bRequested;
+        }
+        const bool bDirtyMarked = !bAnyChanged || Mat->MarkPackageDirty();
+        if (!bUsageVerified || !bDirtyMarked)
+        {
+            for (const FUsageRequest& Request : RequestedUsage)
+                Mat->SetUsageByFlag(Request.Usage, Request.bPrevious);
+            return FHaybaHandlerResult::Err(TEXT("material_set_property: usage readback or dirty-mark verification failed; changes were rolled back"));
+        }
+
+        bool bAnyUsageFlagDirty = false;
+        for (const auto& Usage : UsageAliases)
+            bAnyUsageFlagDirty |= Mat->IsUsageFlagDirty(Usage.Value);
+        const bool bPackageDirty = Mat->GetOutermost()->IsDirty();
+        const bool bRequiresCompile = bPackageDirty || bAnyUsageFlagDirty;
+
+        TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+        Out->SetStringField(TEXT("material_path"), Mat->GetPathName());
+        Out->SetArrayField(TEXT("applied"), Applied);
+        Out->SetArrayField(TEXT("changed"), Changed);
+        Out->SetObjectField(TEXT("usage_flags"), UsageReadback);
+        Out->SetBoolField(TEXT("usage_flags_verified"), true);
+        Out->SetBoolField(TEXT("dirty"), bPackageDirty);
+        Out->SetBoolField(TEXT("saved"), false);
+        Out->SetBoolField(TEXT("requires_compile"), bRequiresCompile);
+        Out->SetStringField(TEXT("note"), bAnyChanged
+            ? TEXT("usage flags staged and verified; call material_compile to compile permutations and save")
+            : bRequiresCompile
+                ? TEXT("requested usage flags already matched, but staged material changes still require material_compile")
+                : TEXT("requested usage flags already matched the clean saved material; no compile or save is required"));
+        return FHaybaHandlerResult::Ok(Out);
+    }
+
+    struct FOrdinarySnapshot
+    {
+        EMaterialDomain Domain;
+        EBlendMode BlendMode;
+        EMaterialShadingModel ShadingModel;
+        bool bTwoSided;
+        float OpacityMaskClipValue;
+        bool bEnableTessellation;
+    } Before {
+        Mat->MaterialDomain,
+        Mat->BlendMode,
+        Mat->GetShadingModels().GetFirstShadingModel(),
+        Mat->TwoSided != 0,
+        Mat->OpacityMaskClipValue,
+        Mat->bEnableTessellation != 0,
+    };
+
+    auto RestoreOrdinary = [&]()
+    {
+        Mat->MaterialDomain = Before.Domain;
+        Mat->BlendMode = Before.BlendMode;
+        Mat->SetShadingModel(Before.ShadingModel);
+        Mat->TwoSided = Before.bTwoSided;
+        Mat->OpacityMaskClipValue = Before.OpacityMaskClipValue;
+        Mat->bEnableTessellation = Before.bEnableTessellation;
+    };
+
+    bool bAnyChanged = false;
+    for (const auto& Pair : (*PropsObj)->Values)
+    {
+        const FString Key(*Pair.Key);
+        Applied.Add(MakeShared<FJsonValueString>(Key));
+        bool bKeyChanged = false;
+        if (Key == TEXT("domain"))
+            bKeyChanged = Before.Domain != static_cast<EMaterialDomain>(StaticEnum<EMaterialDomain>()->GetValueByNameString(Pair.Value->AsString()));
+        else if (Key == TEXT("blend_mode"))
+            bKeyChanged = Before.BlendMode != static_cast<EBlendMode>(StaticEnum<EBlendMode>()->GetValueByNameString(Pair.Value->AsString()));
+        else if (Key == TEXT("shading_model"))
+            bKeyChanged = Before.ShadingModel != static_cast<EMaterialShadingModel>(StaticEnum<EMaterialShadingModel>()->GetValueByNameString(Pair.Value->AsString()));
+        else if (Key == TEXT("two_sided")) bKeyChanged = Before.bTwoSided != Pair.Value->AsBool();
+        else if (Key == TEXT("opacity_mask_clip_value")) bKeyChanged = !FMath::IsNearlyEqual(Before.OpacityMaskClipValue, static_cast<float>(Pair.Value->AsNumber()));
+        else if (Key == TEXT("enable_tessellation")) bKeyChanged = Before.bEnableTessellation != Pair.Value->AsBool();
+        bAnyChanged |= bKeyChanged;
+        if (bKeyChanged) Changed.Add(MakeShared<FJsonValueString>(Key));
+    }
+    if (bAnyChanged) Mat->Modify();
+
+    TSharedPtr<FJsonObject> Readback = MakeShared<FJsonObject>();
+    bool bVerified = true;
+    for (const auto& Pair : (*PropsObj)->Values)
+    {
+        const FString Key(*Pair.Key);
+        if (Key == TEXT("domain"))
+        {
+            const EMaterialDomain Value = static_cast<EMaterialDomain>(StaticEnum<EMaterialDomain>()->GetValueByNameString(Pair.Value->AsString()));
+            Mat->MaterialDomain = Value;
+            const FString Observed = StaticEnum<EMaterialDomain>()->GetNameStringByValue(Mat->MaterialDomain);
+            Readback->SetStringField(Key, Observed);
+            bVerified &= Mat->MaterialDomain == Value;
+        }
+        else if (Key == TEXT("blend_mode"))
+        {
+            const EBlendMode Value = static_cast<EBlendMode>(StaticEnum<EBlendMode>()->GetValueByNameString(Pair.Value->AsString()));
+            Mat->BlendMode = Value;
+            const FString Observed = StaticEnum<EBlendMode>()->GetNameStringByValue(Mat->BlendMode);
+            Readback->SetStringField(Key, Observed);
+            bVerified &= Mat->BlendMode == Value;
+        }
+        else if (Key == TEXT("shading_model"))
+        {
+            const EMaterialShadingModel Value = static_cast<EMaterialShadingModel>(StaticEnum<EMaterialShadingModel>()->GetValueByNameString(Pair.Value->AsString()));
+            Mat->SetShadingModel(Value);
+            const EMaterialShadingModel ObservedValue = Mat->GetShadingModels().GetFirstShadingModel();
+            Readback->SetStringField(Key, StaticEnum<EMaterialShadingModel>()->GetNameStringByValue(ObservedValue));
+            bVerified &= ObservedValue == Value;
+        }
+        else if (Key == TEXT("two_sided"))
+        {
+            Mat->TwoSided = Pair.Value->AsBool();
+            Readback->SetBoolField(Key, Mat->TwoSided != 0);
+            bVerified &= (Mat->TwoSided != 0) == Pair.Value->AsBool();
+        }
+        else if (Key == TEXT("opacity_mask_clip_value"))
+        {
+            Mat->OpacityMaskClipValue = static_cast<float>(Pair.Value->AsNumber());
+            Readback->SetNumberField(Key, Mat->OpacityMaskClipValue);
+            bVerified &= FMath::IsNearlyEqual(Mat->OpacityMaskClipValue, static_cast<float>(Pair.Value->AsNumber()));
+        }
+        else if (Key == TEXT("enable_tessellation"))
+        {
+            Mat->bEnableTessellation = Pair.Value->AsBool();
+            Readback->SetBoolField(Key, Mat->bEnableTessellation != 0);
+            bVerified &= (Mat->bEnableTessellation != 0) == Pair.Value->AsBool();
+        }
+    }
+    const bool bDirtyMarked = !bAnyChanged || Mat->MarkPackageDirty();
+    if (!bVerified || !bDirtyMarked)
+    {
+        RestoreOrdinary();
+        return FHaybaHandlerResult::Err(TEXT("material_set_property: ordinary-setting readback or dirty-mark verification failed; changes were rolled back"));
+    }
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("material_path"), Mat->GetPathName());
     Out->SetArrayField(TEXT("applied"), Applied);
+    Out->SetArrayField(TEXT("changed"), Changed);
+    Out->SetObjectField(TEXT("readback"), Readback);
+    Out->SetBoolField(TEXT("verified"), true);
+    const bool bPackageDirty = Mat->GetOutermost()->IsDirty();
+    Out->SetBoolField(TEXT("dirty"), bPackageDirty);
     Out->SetBoolField(TEXT("saved"), false);
+    Out->SetBoolField(TEXT("requires_compile"), bPackageDirty);
     Out->SetStringField(TEXT("note"), TEXT("call material_compile to apply settings and write the material to disk"));
     return FHaybaHandlerResult::Ok(Out);
 }
 
 // Explicit, deferred compile. This is the ONE place the master-material graph
-// is translated (the per-edit handlers only save). PostEditChange applies any
-// settings staged by material_set_property; RecompileMaterial forces the shader
-// translate so compile errors surface. A truly pathological graph can still hit
-// an engine check() here and crash — but every prior edit was already saved to
-// disk, so the AI's progress is recoverable on restart. Returns the translator
-// errors so the agent gets feedback instead of guessing.
+// is translated and saved (the per-edit handlers only stage dirty in-memory
+// state). UE5.8 RecompileMaterial performs the PreEditChange/PostEditChange pair
+// and forces shader translation so compile errors surface. Returns those errors
+// so the agent gets feedback instead of guessing.
 // ── Graph validation ─────────────────────────────────────────────────────────
 // The HLSL translator asserts (uncatchable check 'Default != nullptr' in
 // FHLSLMaterialTranslator::GetParameterCodeRaw) when a CONSUMED expression
@@ -1845,6 +2128,14 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatValidate(const TSharedPtr<FJson
 
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonObject>& P)
 {
+    const bool bHasMaterialPath = P->HasField(TEXT("material_path"));
+    const bool bHasFunctionPath = P->HasField(TEXT("function_path"));
+    if (bHasMaterialPath == bHasFunctionPath)
+        return FHaybaHandlerResult::Err(TEXT("material_compile: provide exactly one of material_path or function_path"));
+    if ((bHasMaterialPath && !P->HasTypedField<EJson::String>(TEXT("material_path"))) ||
+        (bHasFunctionPath && !P->HasTypedField<EJson::String>(TEXT("function_path"))))
+        return FHaybaHandlerResult::Err(TEXT("material_compile: target path must be a JSON string"));
+
     // Material FUNCTIONS are no longer auto-saved per edit (a half-built function
     // on disk asserts when the editor opens/compiles it). This is their explicit
     // save point: refresh + write to disk.
@@ -1886,6 +2177,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         FString FnSaveErr;
         const bool bFnSaved = HaybaPersistAsset(Fn, FnSaveErr);
         TSharedPtr<FJsonObject> FnOut = MakeShared<FJsonObject>();
+        FnOut->SetStringField(TEXT("function_path"), Fn->GetPathName());
         FnOut->SetBoolField(TEXT("saved"), bFnSaved);
         if (!bFnSaved) FnOut->SetStringField(TEXT("save_error"), FnSaveErr);
         return FHaybaHandlerResult::Ok(FnOut);
@@ -1918,6 +2210,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         }
     }
 
+    TSharedPtr<FJsonObject> Out;
     // PostEditChange + RecompileMaterial broadcast editor change notifications
     // (FCoreUObjectDelegates, MaterialEditor). If a Python script registered a
     // delegate whose target was since garbage-collected/destroyed, that broadcast
@@ -1925,12 +2218,20 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
     // editor (not a catchable C++/Python exception). Guard it.
     {
         bool bCompileCrashed = false;
+        TArray<FString> CompileErrors;
+        struct FCompileContext
+        {
+            UMaterial* Material = nullptr;
+            TArray<FString>* Errors = nullptr;
+        } Context{ Mat, &CompileErrors };
         HaybaSeh::RunGuarded(+[](void* P)
         {
-            UMaterial* M = static_cast<UMaterial*>(P);
-            M->PostEditChange();
-            UMaterialEditingLibrary::RecompileMaterial(M);
-        }, Mat, bCompileCrashed);
+            FCompileContext* C = static_cast<FCompileContext*>(P);
+            // UE5.8 RecompileMaterial already performs the required
+            // PreEditChange/PostEditChange pair. Calling PostEditChange here as
+            // well double-broadcasts and can re-enter material delegates.
+            *C->Errors = UMaterialEditingLibrary::RecompileMaterial(C->Material);
+        }, &Context, bCompileCrashed);
         if (bCompileCrashed)
         {
             TSharedPtr<FJsonObject> Bad = MakeShared<FJsonObject>();
@@ -1939,29 +2240,31 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
             Bad->SetStringField(TEXT("crash_guarded"), TEXT("material_compile: native access violation during recompile/PostEditChange — commonly a stale Python-registered editor delegate firing on a garbage-collected target, or a re-entrant property broadcast. The editor was kept alive by the SEH guard and the material was NOT saved. Do not register UE editor delegates from python_run whose targets can be GC'd."));
             return FHaybaHandlerResult::Ok(Bad);
         }
+
+        TArray<TSharedPtr<FJsonValue>> Errs;
+        for (const FString& Error : CompileErrors) Errs.Add(MakeShared<FJsonValueString>(Error));
+
+        FString SaveErr;
+        const bool bSaved = HaybaPersistAsset(Mat, SaveErr);
+
+        Out = MakeShared<FJsonObject>();
+        Out->SetStringField(TEXT("material_path"), Mat->GetPathName());
+        Out->SetArrayField(TEXT("errors"), Errs);
+        Out->SetBoolField(TEXT("has_errors"), Errs.Num() > 0);
+        Out->SetBoolField(TEXT("saved"), bSaved);
+        if (!bSaved) Out->SetStringField(TEXT("save_error"), SaveErr);
+
+        // Continue below to append optimization feedback using the recompiled
+        // resource without compiling or saving a second time.
     }
-
-    TArray<TSharedPtr<FJsonValue>> Errs;
     FMaterialResource* Res = Mat->GetMaterialResource(GMaxRHIShaderPlatform);
-    if (Res)
-        for (const FString& E : Res->GetCompileErrors())
-            Errs.Add(MakeShared<FJsonValueString>(E));
-
-    FString SaveErr;
-    const bool bSaved = HaybaPersistAsset(Mat, SaveErr);
-
-    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-    Out->SetArrayField(TEXT("errors"), Errs);
-    Out->SetBoolField(TEXT("has_errors"), Errs.Num() > 0);
-    Out->SetBoolField(TEXT("saved"), bSaved);
-    if (!bSaved) Out->SetStringField(TEXT("save_error"), SaveErr);
 
     // ── Optimization feedback ────────────────────────────────────────────────
     // After a clean recompile, read shader cost off the recompiled
     // FMaterialResource — the same numbers the Material Editor Stats panel shows
     // — so the AI building this material via MCP gets instruction counts,
     // texture samples, samplers, and interpolator usage as actionable feedback.
-    if (Res && Errs.Num() == 0)
+    if (Res && !Out->GetBoolField(TEXT("has_errors")))
     {
         TSharedPtr<FJsonObject> Stats = MakeShared<FJsonObject>();
 

@@ -97,6 +97,7 @@ import {
 import {
   materialSetMaterialPropertyHandler,
   meta as materialSetMaterialPropertyMeta,
+  schema as materialSetMaterialPropertySchema,
 } from './material/material-set-material-property.js';
 import { materialCompileHandler, meta as materialCompileMeta } from './material/material-compile.js';
 import { materialDisconnectHandler, meta as materialDisconnectMeta } from './material/material-disconnect.js';
@@ -1918,20 +1919,15 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   },
   {
     name: 'material_set_property',
-    description: 'Set master-material settings (blend mode, domain, shading model, two-sided, opacity mask clip).',
+    description:
+      'Stage strict master-material settings with observed readback. Set used_with_spline_meshes:true for spline routes, then call material_compile to compile the required permutation and save.',
     meta: materialSetMaterialPropertyMeta,
     handler: materialSetMaterialPropertyHandler,
-    cost: 'low',
-    returns: '{applied:[keys]}',
+    cost: 'medium',
+    returns:
+      '{material_path, applied:[keys], changed:[keys], dirty, saved:false, requires_compile, verified?, readback?, usage_flags_verified?, usage_flags?}',
     niche: M,
-    schema: {
-      material_path: z.string().min(1).describe('Path to the master material asset'),
-      properties: z
-        .record(z.string(), z.unknown())
-        .describe(
-          'Settings; aliases: domain, blend_mode, shading_model, two_sided, opacity_mask_clip_value, enable_tessellation',
-        ),
-    },
+    schema: materialSetMaterialPropertySchema.shape,
   },
   {
     name: 'material_compile',
@@ -1939,9 +1935,9 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       'Finalize a material OR material FUNCTION: write it to disk, apply staged settings, surface translator errors + shader optimization stats (materials). Graph edits DEFER the disk write — call this once the graph is complete. NOTE: material functions no longer auto-save either, so after editing a function call material_compile with function_path to persist it (this avoids a half-built function crashing the editor when it is opened/compiled).',
     meta: materialCompileMeta,
     handler: materialCompileHandler,
-    cost: 'medium',
+    cost: 'high',
     returns:
-      '{errors:[string], has_errors, saved, stats:{shaders:[{name,instructions}], texture_samples, ...}} (materials) | {saved} (functions)',
+      '{material_path, errors:[string], has_errors, saved, stats:{...}} (materials) | {function_path, saved} (functions)',
     niche: M,
     schema: {
       material_path: z
