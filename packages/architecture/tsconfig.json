@@ -9,6 +9,7 @@
     "rootDir": "src",
     "strict": true,
     "skipLibCheck": true,
+    "types": ["node"],
     "verbatimModuleSyntax": true,
     "resolveJsonModule": true
   },
