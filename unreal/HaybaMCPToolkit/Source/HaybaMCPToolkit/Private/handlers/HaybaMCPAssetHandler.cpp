@@ -211,6 +211,12 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetGetInfo(const TSharedPtr<FJsonOb
         return FHaybaHandlerResult::Err(TEXT("asset_get_info: missing path"));
 
     IAssetRegistry& AR = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+    // Accept package paths as well as canonical object paths. SoundWave imports
+    // commonly return /Game/Audio/Foo while AssetRegistry expects
+    // /Game/Audio/Foo.Foo here.
+    Path.TrimStartAndEndInline();
+    if (!Path.Contains(TEXT(".")) && Path.StartsWith(TEXT("/")))
+        Path += TEXT(".") + FPackageName::GetShortName(Path);
     FAssetData Data = AR.GetAssetByObjectPath(FSoftObjectPath(Path));
     if (!Data.IsValid())
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("asset_get_info: asset not found: %s"), *Path));
@@ -479,13 +485,30 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetValidate(const TSharedPtr<FJsonO
         return FHaybaHandlerResult::Err(TEXT("asset_validate: EditorValidatorSubsystem unavailable"));
 
     IAssetRegistry& AR = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
-    FAssetData Data = AR.GetAssetByObjectPath(FSoftObjectPath(Path));
-    if (!Data.IsValid())
-        return FHaybaHandlerResult::Err(FString::Printf(TEXT("asset_validate: asset not found: %s"), *Path));
+    Path.TrimStartAndEndInline();
+    TArray<FAssetData> ToValidate;
 
-    TArray<FAssetData> ToValidate = { Data };
+    // The public contract accepts either an asset or a folder. For an asset,
+    // normalize the common package-only spelling (/Game/A/B) to the canonical
+    // object path (/Game/A/B.B). Appending the full package name produced the
+    // malformed `/Game/A/B./Game/A/B` load observed with imported SoundWaves.
+    FString ObjectPath = Path;
+    if (!ObjectPath.Contains(TEXT(".")) && ObjectPath.StartsWith(TEXT("/")))
+        ObjectPath += TEXT(".") + FPackageName::GetShortName(ObjectPath);
+    FAssetData Data = AR.GetAssetByObjectPath(FSoftObjectPath(ObjectPath));
+    if (Data.IsValid())
+    {
+        ToValidate.Add(Data);
+    }
+    else
+    {
+        AR.GetAssetsByPath(FName(*Path), ToValidate, /*bRecursive*/true);
+    }
+    if (ToValidate.IsEmpty())
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("asset_validate: asset or folder not found: %s"), *Path));
     FValidateAssetsSettings Settings;
     Settings.bSkipExcludedDirectories = true;
+    Settings.bCollectPerAssetDetails = true;
     Settings.ValidationUsecase = EDataValidationUsecase::Manual;
 
     // Spin up a fresh AssetCheck message-log page so we can capture per-message
@@ -502,16 +525,34 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetValidate(const TSharedPtr<FJsonO
     Out->SetNumberField(TEXT("num_valid"),   Results.NumValid);
     Out->SetNumberField(TEXT("num_invalid"), Results.NumInvalid);
     Out->SetNumberField(TEXT("num_warnings"), Results.NumWarnings);
+    Out->SetNumberField(TEXT("num_requested"), Results.NumRequested);
+    Out->SetNumberField(TEXT("num_checked"), Results.NumChecked);
+    Out->SetNumberField(TEXT("num_skipped"), Results.NumSkipped);
+    Out->SetNumberField(TEXT("num_unable_to_validate"), Results.NumUnableToValidate);
 
-    // FMessageLog::GetMessages is not part of the public API across UE 5.x, so
-    // we cannot portably extract individual tokenized messages here. Surface a
-    // hint so callers know to consult the editor's Message Log → Asset Check.
-    // TODO(v1.1): wire up message capture when the API stabilizes (e.g. via a
-    // custom IMessageLogListing or by iterating Results.AssetsResults once that
-    // surface is consistently available).
-    Out->SetArrayField(TEXT("errors"),   TArray<TSharedPtr<FJsonValue>>());
-    Out->SetArrayField(TEXT("warnings"), TArray<TSharedPtr<FJsonValue>>());
-    Out->SetBoolField(TEXT("details_available"), false);
+    TArray<TSharedPtr<FJsonValue>> Errors, Warnings, AssetResults;
+    for (const TPair<FString, FValidateAssetsDetails>& Pair : Results.AssetsDetails)
+    {
+        TSharedPtr<FJsonObject> Detail = MakeShared<FJsonObject>();
+        Detail->SetStringField(TEXT("path"), Pair.Key);
+        Detail->SetStringField(TEXT("result"), StaticEnum<EDataValidationResult>()->GetNameStringByValue(static_cast<int64>(Pair.Value.Result)));
+        TArray<TSharedPtr<FJsonValue>> DetailErrors, DetailWarnings;
+        for (const FText& Message : Pair.Value.ValidationErrors)
+        {
+            TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>(); Entry->SetStringField(TEXT("path"), Pair.Key); Entry->SetStringField(TEXT("message"), Message.ToString());
+            Errors.Add(MakeShared<FJsonValueObject>(Entry.ToSharedRef())); DetailErrors.Add(MakeShared<FJsonValueString>(Message.ToString()));
+        }
+        for (const FText& Message : Pair.Value.ValidationWarnings)
+        {
+            TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>(); Entry->SetStringField(TEXT("path"), Pair.Key); Entry->SetStringField(TEXT("message"), Message.ToString());
+            Warnings.Add(MakeShared<FJsonValueObject>(Entry.ToSharedRef())); DetailWarnings.Add(MakeShared<FJsonValueString>(Message.ToString()));
+        }
+        Detail->SetArrayField(TEXT("errors"), DetailErrors); Detail->SetArrayField(TEXT("warnings"), DetailWarnings); AssetResults.Add(MakeShared<FJsonValueObject>(Detail.ToSharedRef()));
+    }
+    Out->SetArrayField(TEXT("errors"), Errors);
+    Out->SetArrayField(TEXT("warnings"), Warnings);
+    Out->SetArrayField(TEXT("assets"), AssetResults);
+    Out->SetBoolField(TEXT("details_available"), true);
     Out->SetBoolField(TEXT("details_in_message_log"),
         Results.NumInvalid > 0 || Results.NumWarnings > 0);
     return FHaybaHandlerResult::Ok(Out);

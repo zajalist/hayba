@@ -135,6 +135,9 @@ export const NON_IDEMPOTENT = new Set<string>([
   'water_zone_create',
   // MetaSound
   'metasound_create',
+  'metasound_add_node',
+  'metasound_connect',
+  'metasound_set_input',
   // GAS
   'gas_create_ability',
   'gas_create_effect',

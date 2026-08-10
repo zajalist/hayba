@@ -4788,7 +4788,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Enumerates MetaSound assets (sources and patches) from the asset registry. Part of the optional HaybaMCPMetaSound satellite; an Unknown command means the satellite is not installed. This and metasound_create are the only two commands in that plugin that do anything — the graph-editing four are declared but not implemented."
+      "notes": "Enumerates MetaSound assets (sources and patches) from the asset registry. Part of the optional HaybaMCPMetaSound satellite; an Unknown command means the satellite is not installed."
     },
     "metasound_create": {
       "aliases": [],
@@ -4798,7 +4798,7 @@
           "name": "package_path",
           "type": "string",
           "required": true,
-          "description": "TRAP: this is the FULL intended asset path and its trailing component is DISCARDED. Passing a folder writes the asset one directory up — package_path \"/Game/Temp\" + name \"MS_X\" creates /Game/MS_X. Same contract as blueprint_create and material_create; the opposite of gas_create_ability."
+          "description": "Destination /Game folder, or the historic full intended asset path ending in name. Both spellings resolve to the same destination."
         },
         {
           "name": "name",
@@ -4823,51 +4823,87 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Creates an empty MetaSoundSource asset. It cannot then be edited through this plugin: metasound_add_node / connect / set_input / compile are all declared but unimplemented, so a created MetaSound has to be finished by hand in the editor. Verified live, including the package_path trap above."
+      "notes": "Creates an empty MetaSoundSource asset. Author it with metasound_add_node/connect/set_input, inspect it, then use metasound_compile as the explicit validate/save boundary."
     },
     "metasound_add_node": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPMetaSoundHandler::AddNode",
-      "params": [],
+      "params": [
+        { "name": "metasound_path", "type": "string", "required": true },
+        { "name": "class_name", "type": "string", "required": true, "description": "Registered MetaSound class name, for example Sine" },
+        { "name": "namespace", "type": "string", "required": false, "description": "Defaults to UE" },
+        { "name": "variant", "type": "string", "required": false },
+        { "name": "major_version", "type": "integer", "required": false }
+      ],
       "returns": {
         "shape": "object"
       },
-      "agent_callable": false,
+      "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "NOT IMPLEMENTED — returns 'pending MetaSoundFrontendDocumentBuilder API stability' for every call, verified live. Documented so get_tool_signature can explain it; agent_callable:false so it is not offered as capability an agent would spend a turn discovering is empty. See issue #18."
+      "notes": "Adds a registered native MetaSound node and returns its stable node_id GUID. Mutates in memory; call metasound_compile to validate and save."
     },
     "metasound_connect": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPMetaSoundHandler::Connect",
-      "params": [],
+      "params": [
+        { "name": "metasound_path", "type": "string", "required": true },
+        { "name": "from_node_id", "type": "string", "required": true },
+        { "name": "output_name", "type": "string", "required": true },
+        { "name": "to_node_id", "type": "string", "required": true },
+        { "name": "input_name", "type": "string", "required": true }
+      ],
       "returns": {
         "shape": "object"
       },
-      "agent_callable": false,
+      "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "NOT IMPLEMENTED — returns 'pending MetaSoundFrontendDocumentBuilder API stability' for every call, verified live. Documented but not callable, for the same reason as metasound_add_node. See issue #18."
+      "notes": "Connects two named pins using node GUIDs returned by add_node or inspect. Mutates in memory; call metasound_compile to validate and save."
     },
     "metasound_set_input": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPMetaSoundHandler::SetInput",
-      "params": [],
+      "params": [
+        { "name": "metasound_path", "type": "string", "required": true },
+        { "name": "input_name", "type": "string", "required": true },
+        { "name": "value", "type": "any", "required": true },
+        { "name": "type", "type": "string", "required": false, "description": "float (default), int32, bool, or string" },
+        { "name": "node_id", "type": "string", "required": false, "description": "Omit to set a graph input default" }
+      ],
       "returns": {
         "shape": "object"
       },
-      "agent_callable": false,
+      "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "NOT IMPLEMENTED — returns 'pending MetaSoundFrontendDocumentBuilder API stability' for every call, verified live. Documented but not callable. See issue #18."
+      "notes": "Sets a named node input default, or a graph input default when node_id is omitted. Mutates in memory; call metasound_compile to validate and save."
     },
     "metasound_compile": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPMetaSoundHandler::Compile",
-      "params": [],
+      "params": [
+        { "name": "metasound_path", "type": "string", "required": true },
+        { "name": "save", "type": "boolean", "required": false, "description": "Defaults true" }
+      ],
       "returns": {
         "shape": "object"
       },
-      "agent_callable": false,
+      "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "NOT IMPLEMENTED — returns 'pending MetaSoundFrontendDocumentBuilder API stability' for every call, verified live. Documented but not callable. See issue #18."
+      "notes": "Conforms the asset to its document, initializes editor node locations, validates, and saves explicitly. Half-authored graphs are never implicitly saved by node edits."
+    },
+    "metasound_inspect": {
+      "aliases": ["metasound_export"],
+      "handler_cpp": "FHaybaMCPMetaSoundHandler::Inspect",
+      "params": [
+        { "name": "metasound_path", "type": "string", "required": true }
+      ],
+      "returns": { "shape": "object", "fields": [
+        { "name": "nodes", "type": "array" },
+        { "name": "edges", "type": "array" },
+        { "name": "dirty", "type": "boolean" }
+      ] },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Read-only graph export with node GUIDs, named typed pins, edges, counts, and dirty state. Use before and after every mutation."
     },
     "editor_pie_assert": {
       "aliases": [],

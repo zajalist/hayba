@@ -43,13 +43,6 @@ const SATELLITE_HANDLER_DIRS = [
 const KNOWN_STUBS = [
   // Returns status:"deferred" pointing at scene_export, for every call.
   'level_get_spatial_index',
-  // The HaybaMCPMetaSound satellite declares six commands; these four answer
-  // "pending MetaSoundFrontendDocumentBuilder API stability" every time.
-  // Verified live 2026-08-08. metasound_list and metasound_create do work.
-  'metasound_add_node',
-  'metasound_connect',
-  'metasound_set_input',
-  'metasound_compile',
   // Returns an error naming the limit: World Partition cell loading is
   // interactive-only in the editor. Honest, but still a command that can never
   // succeed, so nothing should wrap it as capability.

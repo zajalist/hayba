@@ -54,7 +54,7 @@ const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: 
   // Listing them made the catalogue report 11 capabilities that did not exist.
   { domain: 'anim', command_count: 5, commands: ['anim_blueprint_get_info','anim_blueprint_add_state','anim_blueprint_add_transition','anim_blueprint_set_condition','anim_blueprint_compile'] },
   { domain: 'audio', command_count: 3, commands: ['audio_play','audio_list','audio_set_volume'] },
-  { domain: 'metasound', command_count: 6, commands: ['metasound_create','metasound_add_node','metasound_connect','metasound_set_input','metasound_compile','metasound_list'] },
+  { domain: 'metasound', command_count: 7, commands: ['metasound_create','metasound_add_node','metasound_connect','metasound_set_input','metasound_compile','metasound_inspect','metasound_list'] },
   { domain: 'gas', command_count: 4, commands: ['gas_create_ability','gas_grant_ability','gas_create_effect','gas_apply_effect'] },
   { domain: 'bt', command_count: 4, commands: ['bt_get_info','bt_add_node','bt_connect','bt_compile'] },
   { domain: 'input', command_count: 3, commands: ['input_create_action','input_create_mapping','input_add_mapping'] },
