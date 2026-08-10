@@ -289,8 +289,7 @@ export const foliageScanTypesDescriptor: PyToolDescriptor<typeof foliageScanType
   description:
     'Enumerate the foliage types used in the level (across all InstancedFoliageActors) with mesh path, density, radius and instance count. Paginated. The read entry point so agents stop guessing foliage type asset paths. UNCERTAIN-API: type enumeration is probed and degrades to [] + a warning.',
   cost: 'low',
-  returns:
-    '{ok, types:[{path,class,mesh,density,radius,instance_count}], total, has_more, next_offset, warnings[]}',
+  returns: '{ok, types:[{path,class,mesh,density,radius,instance_count}], total, has_more, next_offset, warnings[]}',
   schema: foliageScanTypesSchema.shape,
   meta: readMeta,
   buildScript: scanTypesScript,
@@ -579,7 +578,13 @@ const transformSchema = z.object({
 export const foliageAddInstancesSchema = z.object({
   foliage_type_path: z.string().min(1).describe('Content path of the FoliageType asset'),
   transforms: z.array(transformSchema).min(1).describe('Explicit world transforms to place'),
-  chunk_size: z.number().int().positive().optional().default(2000).describe('Instances per add call (game-thread freeze guard)'),
+  chunk_size: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .default(2000)
+    .describe('Instances per add call (game-thread freeze guard)'),
 });
 export type FoliageAddInstancesParams = z.infer<typeof foliageAddInstancesSchema>;
 
@@ -628,20 +633,156 @@ export const foliageAddInstancesDescriptor: PyToolDescriptor<typeof foliageAddIn
 };
 
 // ── foliage_scatter_paint ─────────────────────────────────────────────────────
+export const FOLIAGE_SCATTER_WORK_LIMITS = Object.freeze({
+  maxCandidates: 10_000,
+  maxRadius: 100_000,
+  maxDensityPer100m2: 10_000,
+  maxAbsWorldCoordinate: 100_000_000,
+  maxScale: 100,
+  maxTraceHeight: 1_000_000,
+  minSeed: -2_147_483_648,
+  maxSeed: 2_147_483_647,
+});
+
+function finiteScatterNumber(field: string, alternative: string) {
+  return z.custom<number>((value) => typeof value === 'number' && Number.isFinite(value), {
+    message: `bounded_work_limit: foliage_scatter_paint ${field} must be a finite number. ${alternative}; no Unreal request was sent`,
+  });
+}
+
+const scatterCoordinate = finiteScatterNumber(
+  'center coordinates',
+  `Use finite coordinates within +/-${FOLIAGE_SCATTER_WORK_LIMITS.maxAbsWorldCoordinate}`,
+).refine((value) => Math.abs(value) <= FOLIAGE_SCATTER_WORK_LIMITS.maxAbsWorldCoordinate, {
+  message: `bounded_work_limit: foliage_scatter_paint center coordinates must be within +/-${FOLIAGE_SCATTER_WORK_LIMITS.maxAbsWorldCoordinate}. Move the center into that finite world range; no Unreal request was sent`,
+});
+
+const scatterRadius = finiteScatterNumber(
+  'radius',
+  `Use a positive radius <= ${FOLIAGE_SCATTER_WORK_LIMITS.maxRadius}, or split a larger area into smaller non-overlapping regions`,
+).refine((value) => value > 0 && value <= FOLIAGE_SCATTER_WORK_LIMITS.maxRadius, {
+  message: `bounded_work_limit: foliage_scatter_paint radius must be > 0 and <= ${FOLIAGE_SCATTER_WORK_LIMITS.maxRadius}. Use a positive radius inside that limit, or split a larger area into smaller non-overlapping regions; no Unreal request was sent`,
+});
+
+const scatterDensity = finiteScatterNumber(
+  'density_per_100m2',
+  `Use a positive density <= ${FOLIAGE_SCATTER_WORK_LIMITS.maxDensityPer100m2}, or submit smaller regions`,
+).refine((value) => value > 0 && value <= FOLIAGE_SCATTER_WORK_LIMITS.maxDensityPer100m2, {
+  message: `bounded_work_limit: foliage_scatter_paint density_per_100m2 must be > 0 and <= ${FOLIAGE_SCATTER_WORK_LIMITS.maxDensityPer100m2}. Use a positive density inside that limit, or submit smaller regions; no Unreal request was sent`,
+});
+
+const scatterSeed = finiteScatterNumber('seed', 'Use a deterministic signed 32-bit integer seed').refine(
+  (value) =>
+    Number.isInteger(value) &&
+    value >= FOLIAGE_SCATTER_WORK_LIMITS.minSeed &&
+    value <= FOLIAGE_SCATTER_WORK_LIMITS.maxSeed,
+  {
+    message: `bounded_work_limit: foliage_scatter_paint seed must be an integer in [${FOLIAGE_SCATTER_WORK_LIMITS.minSeed}, ${FOLIAGE_SCATTER_WORK_LIMITS.maxSeed}]. Use a deterministic signed 32-bit integer seed; no Unreal request was sent`,
+  },
+);
+
+const scatterScale = (field: 'scale_min' | 'scale_max') =>
+  finiteScatterNumber(field, `Use a positive finite scale in (0, ${FOLIAGE_SCATTER_WORK_LIMITS.maxScale}]`).refine(
+    (value) => value > 0 && value <= FOLIAGE_SCATTER_WORK_LIMITS.maxScale,
+    {
+      message: `bounded_work_limit: foliage_scatter_paint ${field} must be > 0 and <= ${FOLIAGE_SCATTER_WORK_LIMITS.maxScale}. Use a positive finite scale inside that limit; no Unreal request was sent`,
+    },
+  );
+
+const scatterTraceHeight = finiteScatterNumber(
+  'trace_height',
+  `Use a positive finite trace no greater than ${FOLIAGE_SCATTER_WORK_LIMITS.maxTraceHeight}`,
+).refine((value) => value > 0 && value <= FOLIAGE_SCATTER_WORK_LIMITS.maxTraceHeight, {
+  message: `bounded_work_limit: foliage_scatter_paint trace_height must be > 0 and <= ${FOLIAGE_SCATTER_WORK_LIMITS.maxTraceHeight}. Use a positive finite trace inside that limit; no Unreal request was sent`,
+});
+
 export const foliageScatterPaintSchema = z.object({
   foliage_type_path: z.string().min(1).describe('Content path of the FoliageType asset'),
-  center: z.array(z.number()).length(3).describe('[x,y,z] world center of the scatter region'),
-  radius: z.number().positive().describe('Scatter radius in world units (circular footprint)'),
-  density_per_100m2: z.number().positive().describe('Target instances per 100x100 unit cell (drives candidate count)'),
-  seed: z.number().int().optional().default(1337).describe('Deterministic RNG seed'),
-  scale_min: z.number().positive().optional().default(1).describe('Per-instance uniform scale minimum'),
-  scale_max: z.number().positive().optional().default(1).describe('Per-instance uniform scale maximum'),
+  center: z.array(scatterCoordinate).length(3).describe('[x,y,z] finite world center of the scatter region'),
+  radius: scatterRadius.describe(`Scatter radius in world units (max ${FOLIAGE_SCATTER_WORK_LIMITS.maxRadius})`),
+  density_per_100m2: scatterDensity.describe(
+    `Target instances per 100x100 unit cell (max ${FOLIAGE_SCATTER_WORK_LIMITS.maxDensityPer100m2})`,
+  ),
+  seed: scatterSeed.optional().default(1337).describe('Deterministic signed 32-bit RNG seed'),
+  scale_min: scatterScale('scale_min')
+    .optional()
+    .default(1)
+    .describe(`Per-instance uniform scale minimum (max ${FOLIAGE_SCATTER_WORK_LIMITS.maxScale})`),
+  scale_max: scatterScale('scale_max')
+    .optional()
+    .default(1)
+    .describe(`Per-instance uniform scale maximum (max ${FOLIAGE_SCATTER_WORK_LIMITS.maxScale})`),
   align_normal: z.boolean().optional().default(false).describe('Align instances to the ground-hit normal'),
-  trace_height: z.number().positive().optional().default(100000).describe('How far above center to start the downward ground trace'),
+  trace_height: scatterTraceHeight
+    .optional()
+    .default(100000)
+    .describe(`Downward trace half-height (max ${FOLIAGE_SCATTER_WORK_LIMITS.maxTraceHeight})`),
 });
 export type FoliageScatterPaintParams = z.infer<typeof foliageScatterPaintSchema>;
 
+/**
+ * Compute the exact candidate count before allocating the script or contacting UE.
+ * Dividing before multiplying keeps the bounded intermediate small; the individual
+ * radius/density caps are also rechecked here so direct buildScript callers cannot
+ * bypass the descriptor schema.
+ */
+function preflightScatterPaint(p: FoliageScatterPaintParams): number {
+  const limits = FOLIAGE_SCATTER_WORK_LIMITS;
+  const finiteNumbers = [...p.center, p.radius, p.density_per_100m2, p.seed, p.scale_min, p.scale_max, p.trace_height];
+  if (!finiteNumbers.every(Number.isFinite)) {
+    throw new Error(
+      'bounded_work_limit: foliage_scatter_paint accepts only finite numeric values. Replace non-finite values with values inside the published limits; no Unreal request was sent',
+    );
+  }
+  if (p.center.some((value) => Math.abs(value) > limits.maxAbsWorldCoordinate)) {
+    throw new Error(
+      `bounded_work_limit: foliage_scatter_paint center coordinates must be within +/-${limits.maxAbsWorldCoordinate}. Move the center into that finite world range; no Unreal request was sent`,
+    );
+  }
+  if (p.radius <= 0 || p.radius > limits.maxRadius) {
+    throw new Error(
+      `bounded_work_limit: foliage_scatter_paint radius must be > 0 and <= ${limits.maxRadius}. Use a positive radius inside that limit, or split a larger area into smaller non-overlapping regions; no Unreal request was sent`,
+    );
+  }
+  if (p.density_per_100m2 <= 0 || p.density_per_100m2 > limits.maxDensityPer100m2) {
+    throw new Error(
+      `bounded_work_limit: foliage_scatter_paint density_per_100m2 must be > 0 and <= ${limits.maxDensityPer100m2}. Use a positive density inside that limit, or submit smaller regions; no Unreal request was sent`,
+    );
+  }
+  if (!Number.isInteger(p.seed) || p.seed < limits.minSeed || p.seed > limits.maxSeed) {
+    throw new Error(
+      `bounded_work_limit: foliage_scatter_paint seed must be an integer in [${limits.minSeed}, ${limits.maxSeed}]. Use a deterministic signed 32-bit integer seed; no Unreal request was sent`,
+    );
+  }
+  if (p.scale_min <= 0 || p.scale_max < p.scale_min || p.scale_max > limits.maxScale) {
+    throw new Error(
+      `bounded_work_limit: foliage_scatter_paint requires 0 < scale_min <= scale_max <= ${limits.maxScale}. Choose a smaller ordered scale interval; no Unreal request was sent`,
+    );
+  }
+  if (p.trace_height <= 0 || p.trace_height > limits.maxTraceHeight) {
+    throw new Error(
+      `bounded_work_limit: foliage_scatter_paint trace_height must be > 0 and <= ${limits.maxTraceHeight}. Use a positive finite trace inside that limit; no Unreal request was sent`,
+    );
+  }
+
+  const radiusInCells = p.radius / 100;
+  const rawCandidates = Math.PI * radiusInCells * radiusInCells * p.density_per_100m2;
+  const candidates = Math.max(1, Math.floor(rawCandidates));
+  if (!Number.isSafeInteger(candidates)) {
+    throw new Error(
+      'bounded_work_limit: foliage_scatter_paint candidate calculation exceeded the safe integer range; reduce radius or density_per_100m2; no Unreal request was sent',
+    );
+  }
+  if (candidates > limits.maxCandidates) {
+    throw new Error(
+      `bounded_work_limit: foliage_scatter_paint would run ${candidates} ground traces/native candidates; limit is ${limits.maxCandidates}. Reduce radius or density_per_100m2, or split the area into non-overlapping chunks whose floor(pi * (radius/100)^2 * density_per_100m2) is <= ${limits.maxCandidates}; no Unreal request was sent`,
+    );
+  }
+  return candidates;
+}
+
 function scatterPaintScript(p: FoliageScatterPaintParams): string {
+  const candidates = preflightScatterPaint(p);
   return [
     PY_FOLIAGE_HELPERS,
     'import math, random',
@@ -654,12 +795,12 @@ function scatterPaintScript(p: FoliageScatterPaintParams): string {
     `_smax = ${p.scale_max}`,
     `_align = ${p.align_normal ? 'True' : 'False'}`,
     `_th = ${p.trace_height}`,
+    `_candidate_count = ${candidates}`,
     'try:',
     '    ft = _load_ft(_path)',
     '    if _efl() is None or getattr(_efl(), "add_instances", None) is None:',
     '        raise Exception("EditorFoliageLibrary.add_instances not python-exposed")',
-    '    area_cells = (math.pi * _radius * _radius) / (100.0 * 100.0)',
-    '    n = max(1, int(area_cells * _dens))',
+    '    n = _candidate_count  # exact bounded count precomputed before UE transport',
     '    rng = random.Random(_seed)',
     '    xforms = []',
     '    skipped = 0',
@@ -700,8 +841,7 @@ function scatterPaintScript(p: FoliageScatterPaintParams): string {
 
 export const foliageScatterPaintDescriptor: PyToolDescriptor<typeof foliageScatterPaintSchema.shape> = {
   name: 'foliage_scatter_paint',
-  description:
-    'Deterministic area scatter: ground-trace downward onto landscape/collision inside a circular radius at a target density, with per-instance yaw + uniform-scale jitter and optional align-to-normal, then commit via add_instances. Same seed → same placement. NON-IDEMPOTENT (append). This is the low-level authoring verb, NOT the PLUMB-validated world_generate flagship. UNCERTAIN-API: needs a collision surface (see foliage_capability_probe.surface_actors) and add_instances exposure.',
+  description: `Deterministic area scatter: ground-trace downward onto landscape/collision inside a circular radius at a target density, with per-instance yaw + uniform-scale jitter and optional align-to-normal, then commit via add_instances. Refuses before UE transport above ${FOLIAGE_SCATTER_WORK_LIMITS.maxCandidates} candidates; reduce radius/density or split into non-overlapping regions. Same seed → same placement. NON-IDEMPOTENT (append). This is the low-level authoring verb, NOT the PLUMB-validated world_generate flagship. UNCERTAIN-API: needs a collision surface (see foliage_capability_probe.surface_actors) and add_instances exposure.`,
   cost: 'medium',
   returns: '{ok, foliage_type_path, painted, skipped_no_hit, candidates, seed, instance_count}',
   schema: foliageScatterPaintSchema.shape,
