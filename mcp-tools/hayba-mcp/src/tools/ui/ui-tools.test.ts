@@ -27,8 +27,8 @@ const UI_TOOLS = ['ui_create_widget', 'ui_add_element', 'ui_query'] as const;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const indexSrc = readFileSync(join(__dirname, '..', 'index.ts'), 'utf-8');
 
-const REGISTRAR_LOOP = /for\s*\(\s*const\s+d\s+of\s+STANDARD_DESCRIPTORS\s*\)\s*registerTool\(/;
-const SCHEMA_LOOP = /for\s*\(\s*const\s+d\s+of\s+STANDARD_DESCRIPTORS\s*\)\s*recordToolSchema\(/;
+const REGISTRAR_LOOP = /for\s*\(\s*const\s+descriptor\s+of\s+STANDARD_DESCRIPTORS\s*\)\s*\{\s*registerTool\(/;
+const SCHEMA_LOOP = /for\s*\(\s*const\s+descriptor\s+of\s+STATIC_TOOL_CATALOGUE\s*\)\s*recordToolSchema\(/;
 function isToolRegistered(name: string): boolean {
   const descriptor = new RegExp(`name:\\s*['"]${name}['"]`);
   return descriptor.test(indexSrc) && REGISTRAR_LOOP.test(indexSrc);

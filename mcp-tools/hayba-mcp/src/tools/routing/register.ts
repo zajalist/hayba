@@ -1,8 +1,7 @@
 // Wiring for γ-hybrid tool routing. Called from tools/index.ts when
-// settings.toolRouting === 'deferred'. Expects the caller to have already
-// captured every original server.tool(...) registration into `captured` via
-// a shim, and to have populated `schema-registry` via the existing `reg(...)`
-// helper. We don't re-walk the tool catalog here — we read from those.
+// settings.toolRouting === 'deferred'. The caller supplies the catalogue as a
+// value map built directly from ToolDescriptors; this layer augments it with
+// the few runtime descriptors that close over retriever/DAG/sliver instances.
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
@@ -39,6 +38,7 @@ import { journalTailHandler, journalTailSchema } from '../dag/journal-tail.js';
 import { setAssetDagSink } from '../asset-sources/shared.js';
 import { registerChatCapturedTools } from '../../chat/tool-dispatch.js';
 import { buildOrientation, shouldOrient } from './orientation.js';
+import { wrapToolHandlerForStream } from '../tool-stream-mirror.js';
 
 // ── First-install surface ────────────────────────────────────────────────────
 //
@@ -84,7 +84,7 @@ export const CORE_META = new Set<string>([
  *  there is an editor to use them on. */
 export const AUTOLOAD_ON_UE_CONNECT = ['editor'] as const;
 
-/** Tools registered by registerDeferredRouting itself — skip in shim re-register.
+/** Tools registered by registerDeferredRouting itself.
  *
  *  Kept as a separate export because callers (and the routing integration test)
  *  treat it as "what is registered at startup". It is exactly CORE_META now;
@@ -126,7 +126,7 @@ const __dirname = dirname(__filename);
  * Build the deferred-mode routing layer.
  *
  * @param server          The real MCP server (used to register meta-tools + on pack load).
- * @param captured        Map of every tool name → its descriptor (filled by the shim).
+ * @param captured        Map of every static tool name → its materialized descriptor.
  * @param cacheDir        Where to persist the tool index (defaults to Saved/HaybaMCP).
  */
 /** Options for {@link registerDeferredRouting}.
@@ -164,14 +164,20 @@ export async function registerDeferredRouting(
   // index. They were simultaneously always in your face and impossible to find
   // by searching.
   //
-  // They now go through `defer`, which puts them in the captured map like every
-  // other tool. Pack discovery, the search index and hayba_invoke all read that
-  // map, so they stay searchable and callable while costing nothing until asked
-  // for. This block must stay ABOVE pack discovery for that to hold.
+  // They now produce RuntimeToolDescriptor values first. One conversion below
+  // adds that complete list to the captured map before pack discovery, so they
+  // stay searchable and callable while costing nothing until asked for.
 
-  /** Route a runtime-constructed tool through the deferred path instead of
-   *  registering it natively. */
-  /** Capture a runtime-constructed tool — one that closes over a live object
+  interface RuntimeToolDescriptor {
+    dir: string;
+    name: string;
+    description: string;
+    schema: z.ZodRawShape;
+    handler: CapturedTool['handler'];
+  }
+  const runtimeDescriptors: RuntimeToolDescriptor[] = [];
+
+  /** Declare a runtime-constructed tool — one that closes over a live object
    *  (the retriever, the DAG, the sliver loader) and so cannot be declared
    *  statically as a descriptor.
    *
@@ -188,11 +194,15 @@ export async function registerDeferredRouting(
     schema: z.ZodRawShape,
     run: (...args: never[]) => unknown,
   ): void => {
-    captured.set(name, {
+    runtimeDescriptors.push({
+      name,
       description,
       schema,
-      handler: (async (...args: never[]) =>
-        toMcpResponse(await run(...args))) as unknown as CapturedTool['handler'],
+      handler: wrapToolHandlerForStream(
+        name,
+        (async (...args: never[]) =>
+          toMcpResponse(await run(...args))) as unknown as CapturedTool['handler'],
+      ),
       dir,
     });
   };
@@ -335,6 +345,18 @@ export async function registerDeferredRouting(
   );
 
   // ── Pack discovery ─────────────────────────────────────────────────────────
+  for (const descriptor of runtimeDescriptors) {
+    if (captured.has(descriptor.name)) {
+      throw new Error(`runtime tool collides with static catalogue: ${descriptor.name}`);
+    }
+    captured.set(descriptor.name, {
+      description: descriptor.description,
+      schema: descriptor.schema,
+      handler: descriptor.handler,
+      dir: descriptor.dir,
+    });
+  }
+
   const toolDirs = new Map<string, string | null>();
   const explicitPacks = new Map<string, string>();
   for (const [name, desc] of captured) {
@@ -485,7 +507,7 @@ export async function registerDeferredRouting(
 
   // ── Re-register the always-on tools from the captured set ─────────────────
   // (list_tool_categories, get_tool_signature, hayba_check_ue_status are
-  // captured by the shim but not registered with the real server. We register
+  // present in the catalogue but not registered with the real server. We register
   // them here so they appear in the deferred always-on surface.)
   const passthrough = (name: string): void => {
     const t = captured.get(name);

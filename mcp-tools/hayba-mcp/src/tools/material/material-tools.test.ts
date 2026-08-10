@@ -13,33 +13,28 @@ import { fileURLToPath } from 'node:url';
  * - material_get_info
  *
  * Tests that all wrappers are:
- * 1. Registered in index.ts with server.tool()
+ * 1. Declared in index.ts's descriptor catalogue
  * 2. Wired to executeCommand() calls with the correct command names (in handler files)
- * 3. Registered in the schema-registry block via reg()
+ * 3. Consumed by the shared native-registration and schema-seeding loops
  * 4. Have the correct handler exports
  */
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const indexSrc = readFileSync(join(__dirname, '..', 'index.ts'), 'utf-8');
 
 // As of the registrar refactor, standard tools (incl. all material_*) are
-// declared ONCE in the STANDARD_DESCRIPTORS list and registered/recorded via
-// loops (registerTool + recordToolSchema). A descriptor `name: 'X'` is the
-// single source of truth that drives BOTH server.tool(X) and reg(X). These
-// helpers accept either the legacy literal form (for un-migrated tools) or the
-// descriptor form, so the tests assert the real guarantee, not a code shape.
-const REGISTRAR_LOOP = /for\s*\(\s*const\s+d\s+of\s+STANDARD_DESCRIPTORS\s*\)\s*registerTool\(/;
-const SCHEMA_LOOP = /for\s*\(\s*const\s+d\s+of\s+STANDARD_DESCRIPTORS\s*\)\s*recordToolSchema\(/;
-/** True when `name` is registered as a tool: literal server.tool OR a descriptor consumed by the registerTool loop. */
+// declared once in STANDARD_DESCRIPTORS, spliced into STATIC_TOOL_CATALOGUE,
+// and consumed by the native registration + schema-seeding loops.
+const REGISTRAR_LOOP = /for\s*\(\s*const\s+descriptor\s+of\s+STANDARD_DESCRIPTORS\s*\)\s*\{\s*registerTool\(/;
+const SCHEMA_LOOP = /for\s*\(\s*const\s+descriptor\s+of\s+STATIC_TOOL_CATALOGUE\s*\)\s*recordToolSchema\(/;
+/** True when `name` is registered from the descriptor catalogue. */
 function isToolRegistered(name: string): boolean {
-  const literal = new RegExp(`server\\.tool\\(\\s*['"]${name}['"]`);
   const descriptor = new RegExp(`name:\\s*['"]${name}['"]`);
-  return literal.test(indexSrc) || (descriptor.test(indexSrc) && REGISTRAR_LOOP.test(indexSrc));
+  return descriptor.test(indexSrc) && REGISTRAR_LOOP.test(indexSrc);
 }
-/** True when `name`'s schema is recorded: literal reg() OR a descriptor consumed by the recordToolSchema loop. */
+/** True when `name`'s descriptor feeds the shared schema-seeding loop. */
 function isSchemaRecorded(name: string): boolean {
-  const literal = new RegExp(`reg\\(\\s*['"]${name}['"]`);
   const descriptor = new RegExp(`name:\\s*['"]${name}['"]`);
-  return literal.test(indexSrc) || (descriptor.test(indexSrc) && SCHEMA_LOOP.test(indexSrc));
+  return descriptor.test(indexSrc) && SCHEMA_LOOP.test(indexSrc);
 }
 
 // Read handler files to check for executeCommand calls
