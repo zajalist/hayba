@@ -181,6 +181,73 @@ describe('runAgentLoop', () => {
     });
   });
 
+  it('treats context-window exhaustion as an error with bounded recovery guidance', async () => {
+    const secret = 'sk-ant-must-not-leak';
+    const client = new FakeLLMClient([
+      {
+        content: null,
+        toolCalls: [],
+        stopReason: 'model_context_window_exceeded',
+        stopDiagnostic: {
+          code: 'context_window_exceeded',
+          message: 'Anthropic stopped because the model context window was exhausted.',
+          recoveryTip: 'Start a new chat or remove older messages and large tool results, then retry.',
+        },
+      },
+    ]);
+    const events = await collect(
+      runAgentLoop(
+        baseParams({
+          client,
+          messages: [{ role: 'user', content: `private prompt ${secret}` }],
+        }),
+      ),
+    );
+    const error = events.find((event) => event.type === 'error') as Extract<AgentEvent, { type: 'error' }>;
+    expect(error).toMatchObject({ kind: 'context_window_exceeded' });
+    expect(error.error).toContain('Tip:');
+    expect(error.error.length).toBeLessThanOrEqual(384);
+    expect(error.error).not.toContain(secret);
+    expect(events.at(-1)).toMatchObject({
+      type: 'done',
+      reason: 'context_window_exceeded',
+      stopReason: 'model_context_window_exceeded',
+    });
+    expect(events.at(-1)).not.toMatchObject({ reason: 'end_turn' });
+  });
+
+  it.each([
+    ['max_tokens', 'max_tokens'],
+    ['refusal', 'provider_refusal'],
+  ] as const)('reports %s as %s instead of a successful end_turn', async (stopReason, reason) => {
+    const client = new FakeLLMClient([{ content: null, toolCalls: [], stopReason }]);
+    const events = await collect(runAgentLoop(baseParams({ client })));
+    expect(events.at(-1)).toMatchObject({ type: 'done', reason, stopReason });
+    expect(events.at(-1)).not.toMatchObject({ reason: 'end_turn' });
+  });
+
+  it('reports a diagnosed Anthropic unknown stop as a provider protocol error', async () => {
+    const client = new FakeLLMClient([
+      {
+        content: null,
+        toolCalls: [],
+        stopReason: 'unknown',
+        stopDiagnostic: {
+          code: 'unknown_stop_reason',
+          message: 'Anthropic returned an unsupported stop reason; the turn was not treated as complete.',
+          recoveryTip: 'Upgrade Hayba or choose another provider before retrying this turn.',
+        },
+      },
+    ]);
+    const events = await collect(runAgentLoop(baseParams({ client })));
+    expect(events.at(-2)).toMatchObject({ type: 'error', kind: 'provider_protocol' });
+    expect(events.at(-1)).toMatchObject({
+      type: 'done',
+      reason: 'provider_protocol_error',
+      stopReason: 'unknown',
+    });
+  });
+
   it('refuses a filtered/disabled tool: not offered AND refused if called', async () => {
     const client = new FakeLLMClient([toolResponse('actor_spawn', {}, 'c1'), textResponse('ok')]);
     const dispatch = vi.fn(async () => ({ ok: true }));

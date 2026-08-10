@@ -21,7 +21,7 @@
     "gen:plumb-enums": "npx tsx scripts/gen-plumb-enums.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.110.0",
+    "@anthropic-ai/sdk": "^0.115.0",
     "@distube/ytdl-core": "^4.16.12",
     "@huggingface/transformers": "^4.0.1",
     "@modelcontextprotocol/sdk": "^1.30.0",
