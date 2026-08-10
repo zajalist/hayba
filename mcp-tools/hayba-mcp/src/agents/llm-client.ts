@@ -18,6 +18,7 @@
  *   - mock:           deterministic in-process echo (offline dev + tests)
  */
 
+import { redactSecrets } from '../security/secret-redaction.js';
 import { getProvider, type ProviderProtocol } from './providers.js';
 
 // ---------------------------------------------------------------------------
@@ -51,7 +52,7 @@ export interface LLMToolCall {
   input: Record<string, unknown>;
 }
 
-export type LLMStopReason = 'end_turn' | 'tool_use' | 'max_tokens';
+export type LLMStopReason = 'end_turn' | 'tool_use' | 'max_tokens' | 'content_filter' | 'unknown';
 
 /**
  * Token accounting for one LLM call. `cacheCreationInputTokens` /
@@ -146,6 +147,8 @@ export interface LLMClientConfig {
   model?: string;
   baseURL?: string;
   apiKey?: string;
+  /** Optional SDK request deadline. Primarily useful for local OpenAI-compatible providers. */
+  timeoutMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +168,47 @@ interface ResolvedConfig {
   model: string;
   baseURL: string;
   apiKey: string;
+  timeoutMs?: number;
+}
+
+function hasUnsafeBaseURLCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (value[index] === '\\' || code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+/**
+ * Canonicalize an OpenAI-compatible endpoint before giving it to the SDK.
+ * A custom provider with no endpoint must fail closed: otherwise the OpenAI
+ * SDK silently falls back to api.openai.com, which is an unsafe surprise for
+ * a caller that selected a local provider.
+ */
+export function normalizeOpenAIBaseURL(raw: string, provider = 'OpenAI-compatible'): string {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    throw new LLMError('api', `${provider} requires an explicit base URL`);
+  }
+  if (trimmed.length > 2_048 || hasUnsafeBaseURLCharacter(trimmed)) {
+    throw new LLMError('api', `${provider} base URL is invalid`);
+  }
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new LLMError('api', `${provider} base URL is invalid`);
+  }
+  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password) {
+    throw new LLMError('api', `${provider} base URL must be an HTTP(S) URL without credentials`);
+  }
+  if (url.search || url.hash) {
+    throw new LLMError('api', `${provider} base URL must not contain a query string or fragment`);
+  }
+
+  url.pathname = url.pathname.replace(/\/+$/, '') || '/';
+  return url.toString().replace(/\/$/, '');
 }
 
 export function resolveConfig(config: LLMClientConfig): ResolvedConfig {
@@ -173,13 +217,22 @@ export function resolveConfig(config: LLMClientConfig): ResolvedConfig {
     throw new LLMError('api', `Unknown provider: ${config.provider}`);
   }
   const envKey = ENV_KEY_BY_PROVIDER[config.provider];
-  const apiKey = config.apiKey ?? (envKey ? process.env[envKey] ?? '' : '');
+  const apiKey = config.apiKey ?? (envKey ? (process.env[envKey] ?? '') : '');
+  const rawBaseURL = config.baseURL ?? entry.baseURLDefault;
+  const baseURL = entry.protocol === 'openai' ? normalizeOpenAIBaseURL(rawBaseURL, entry.label) : rawBaseURL;
+  if (
+    config.timeoutMs !== undefined &&
+    (!Number.isInteger(config.timeoutMs) || config.timeoutMs < 1 || config.timeoutMs > 10 * 60_000)
+  ) {
+    throw new LLMError('api', 'LLM timeoutMs must be an integer between 1 and 600000');
+  }
   return {
     provider: entry.id,
     protocol: entry.protocol,
     model: config.model ?? entry.defaultModel,
-    baseURL: config.baseURL ?? entry.baseURLDefault,
+    baseURL,
     apiKey,
+    ...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
   };
 }
 
@@ -187,20 +240,33 @@ export function resolveConfig(config: LLMClientConfig): ResolvedConfig {
 // Error mapping + key redaction
 // ---------------------------------------------------------------------------
 
-function redact(text: string, apiKey: string): string {
-  if (!apiKey) return text;
-  return text.split(apiKey).join('***');
+function redactDiagnostic(text: string, apiKey: string): string {
+  // Exact replacement catches short/custom keys that do not look like a
+  // provider key; the central bounded redactor catches Authorization headers,
+  // URL credentials, and secret-looking fields in otherwise useful prose.
+  const withoutConfiguredKey = apiKey ? text.split(apiKey).join('[REDACTED:api_key]') : text;
+  return redactSecrets(withoutConfiguredKey, { maxStringChars: 2_048, maxTotalStringChars: 2_048 }).value;
 }
 
 function mapError(err: unknown, provider: string, apiKey: string): LLMError {
-  const e = err as { status?: number; statusCode?: number; message?: string; code?: string };
+  const e = err as { name?: string; status?: number; statusCode?: number; message?: string; code?: string };
   const status = e?.status ?? e?.statusCode;
   let kind: LLMErrorKind;
   if (status === 401 || status === 403) kind = 'auth';
   else if (status === 429) kind = 'rate_limit';
   else if (status === undefined) kind = 'network';
   else kind = 'api';
-  const detail = redact(e?.message ?? String(err ?? 'unknown error'), apiKey);
+  const rawMessage = e?.message ?? String(err ?? 'unknown error');
+  const redactedMessage = redactDiagnostic(rawMessage, apiKey);
+  const sensitiveDetailWasDropped = redactedMessage !== rawMessage;
+  // The SDK's non-2xx message is built from the entire response body. Do not
+  // repeat it: a compatible backend may reflect the prompt/request or return
+  // secret-bearing diagnostic fields. Status + a bounded code are enough to
+  // act, while network/abort messages have no response body and remain useful.
+  const detail =
+    status === undefined
+      ? redactedMessage
+      : `HTTP ${status}${e?.code ? ` (${redactDiagnostic(String(e.code).slice(0, 128), apiKey)})` : ''}${sensitiveDetailWasDropped ? ' ***' : ''}`;
   return new LLMError(kind, `LLM ${kind} error (${provider}): ${detail}`, status);
 }
 
@@ -244,8 +310,11 @@ function normalizeAnthropicStop(reason: unknown): LLMStopReason {
 
 function normalizeOpenAIStop(reason: unknown): LLMStopReason {
   if (reason === 'tool_calls') return 'tool_use';
+  if (reason === 'function_call') return 'tool_use';
   if (reason === 'length') return 'max_tokens';
-  return 'end_turn';
+  if (reason === 'stop') return 'end_turn';
+  if (reason === 'content_filter') return 'content_filter';
+  return 'unknown';
 }
 
 // ---------------------------------------------------------------------------
@@ -273,10 +342,7 @@ function normalizeOpenAIStop(reason: unknown): LLMStopReason {
  * and the volatile block last (messages) keeps the cached prefix at the head
  * of the prompt, which is what the API requires for a hit.
  */
-export function buildAnthropicRequest(
-  cfg: ResolvedConfig,
-  params: LLMCompleteParams,
-): Record<string, unknown> {
+export function buildAnthropicRequest(cfg: ResolvedConfig, params: LLMCompleteParams): Record<string, unknown> {
   const req: Record<string, unknown> = {
     model: cfg.model,
     max_tokens: params.maxTokens ?? 4096,
@@ -321,8 +387,7 @@ function parseAnthropicUsage(raw: RawAnthropicUsage | undefined): LLMUsage | und
   if (typeof raw.output_tokens === 'number') usage.outputTokens = raw.output_tokens;
   if (typeof raw.cache_creation_input_tokens === 'number')
     usage.cacheCreationInputTokens = raw.cache_creation_input_tokens;
-  if (typeof raw.cache_read_input_tokens === 'number')
-    usage.cacheReadInputTokens = raw.cache_read_input_tokens;
+  if (typeof raw.cache_read_input_tokens === 'number') usage.cacheReadInputTokens = raw.cache_read_input_tokens;
   return Object.keys(usage).length > 0 ? usage : undefined;
 }
 
@@ -506,11 +571,7 @@ function toOpenAIMessages(messages: LLMMessage[]): Array<Record<string, unknown>
   return out;
 }
 
-function buildOpenAIRequest(
-  cfg: ResolvedConfig,
-  params: LLMCompleteParams,
-  stream: boolean,
-): Record<string, unknown> {
+function buildOpenAIRequest(cfg: ResolvedConfig, params: LLMCompleteParams, stream: boolean): Record<string, unknown> {
   const messages: Array<Record<string, unknown>> = [
     { role: 'system', content: params.system },
     ...toOpenAIMessages(params.messages),
@@ -523,8 +584,20 @@ function buildOpenAIRequest(
   if (params.tools && params.tools.length > 0) {
     req.tools = toOpenAITools(params.tools);
   }
-  if (stream) req.stream = true;
+  if (stream) {
+    req.stream = true;
+    req.stream_options = { include_usage: true };
+  }
   return req;
+}
+
+function parseOpenAIUsage(raw: unknown): LLMUsage | undefined {
+  const usage = raw as { prompt_tokens?: unknown; completion_tokens?: unknown } | undefined;
+  if (!usage) return undefined;
+  const parsed: LLMUsage = {};
+  if (typeof usage.prompt_tokens === 'number') parsed.inputTokens = usage.prompt_tokens;
+  if (typeof usage.completion_tokens === 'number') parsed.outputTokens = usage.completion_tokens;
+  return Object.keys(parsed).length > 0 ? parsed : undefined;
 }
 
 function parseOpenAIResponse(resp: unknown): LLMResponse {
@@ -533,6 +606,7 @@ function parseOpenAIResponse(resp: unknown): LLMResponse {
       message?: { content?: string | null; tool_calls?: Array<Record<string, unknown>> };
       finish_reason?: unknown;
     }>;
+    usage?: unknown;
   };
   const choice = r.choices?.[0];
   const msg = choice?.message ?? {};
@@ -548,6 +622,7 @@ function parseOpenAIResponse(resp: unknown): LLMResponse {
     content: msg.content ?? null,
     toolCalls,
     stopReason: normalizeOpenAIStop(choice?.finish_reason),
+    usage: parseOpenAIUsage(r.usage),
   };
 }
 
@@ -557,7 +632,10 @@ async function* streamOpenAI(
   params: LLMCompleteParams,
 ): AsyncGenerator<LLMStreamEvent, void, unknown> {
   const textParts: string[] = [];
-  let stopReason: LLMStopReason = 'end_turn';
+  // A stream that closes without a terminal finish_reason is not a successful
+  // turn; keep it unknown unless the wire explicitly proves otherwise.
+  let stopReason: LLMStopReason = 'unknown';
+  let usage: LLMUsage | undefined;
   // Tool-call fragments accumulate by index; arguments arrive as JSON-string chunks.
   const pending = new Map<number, { id: string; name: string; args: string }>();
   const order: number[] = [];
@@ -578,7 +656,9 @@ async function* streamOpenAI(
           delta?: { content?: string | null; tool_calls?: Array<Record<string, unknown>> };
           finish_reason?: unknown;
         }>;
+        usage?: unknown;
       };
+      usage = parseOpenAIUsage(chunk.usage) ?? usage;
       const choice = chunk.choices?.[0];
       if (!choice) continue;
       const delta = choice.delta ?? {};
@@ -625,6 +705,7 @@ async function* streamOpenAI(
       content: textParts.length > 0 ? textParts.join('') : null,
       toolCalls,
       stopReason,
+      usage,
     },
   };
 }
@@ -656,8 +737,7 @@ async function* streamMock(params: LLMCompleteParams): AsyncGenerator<LLMStreamE
 
 async function buildAnthropic(cfg: ResolvedConfig): Promise<AnthropicClientLike> {
   const mod = await import('@anthropic-ai/sdk');
-  const Anthropic = (mod as unknown as { default: new (opts: Record<string, unknown>) => AnthropicClientLike })
-    .default;
+  const Anthropic = (mod as unknown as { default: new (opts: Record<string, unknown>) => AnthropicClientLike }).default;
   return new Anthropic({ apiKey: cfg.apiKey, ...(cfg.baseURL ? { baseURL: cfg.baseURL } : {}) });
 }
 
@@ -666,9 +746,16 @@ async function buildOpenAI(cfg: ResolvedConfig): Promise<OpenAIClientLike> {
     default?: new (opts: Record<string, unknown>) => OpenAIClientLike;
     OpenAI?: new (opts: Record<string, unknown>) => OpenAIClientLike;
   };
-  const OpenAI = mod.default ?? mod.OpenAI!;
+  const OpenAI = mod.default ?? mod.OpenAI;
+  if (typeof OpenAI !== 'function') {
+    throw new LLMError('api', 'Installed OpenAI SDK has no compatible constructor export');
+  }
   // OpenAI-compat servers (Ollama/LM Studio) may not require a key; send a placeholder.
-  return new OpenAI({ apiKey: cfg.apiKey || 'not-needed', ...(cfg.baseURL ? { baseURL: cfg.baseURL } : {}) });
+  return new OpenAI({
+    apiKey: cfg.apiKey || 'not-needed',
+    baseURL: cfg.baseURL,
+    ...(cfg.timeoutMs !== undefined ? { timeout: cfg.timeoutMs } : {}),
+  });
 }
 
 // ---------------------------------------------------------------------------

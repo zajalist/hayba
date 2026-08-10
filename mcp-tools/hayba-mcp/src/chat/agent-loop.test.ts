@@ -104,9 +104,7 @@ describe('runAgentLoop', () => {
     ]);
     const dispatch = vi.fn(async (name: string) => ({ ok: true, name }));
 
-    const events = await collect(
-      runAgentLoop(baseParams({ client, dispatchTool: dispatch })),
-    );
+    const events = await collect(runAgentLoop(baseParams({ client, dispatchTool: dispatch })));
 
     expect(dispatch).toHaveBeenCalledTimes(2);
     expect(dispatch.mock.calls.map((c) => c[0])).toEqual(['actor_list', 'actor_spawn']);
@@ -120,13 +118,10 @@ describe('runAgentLoop', () => {
     // Round-2 transcript must carry the round-1 assistant tool_use block AND the
     // tool_result block, keyed by matching ids.
     const round2 = client.seenMessages[1];
-    const blocks = round2.flatMap((m) =>
-      Array.isArray(m.content) ? (m.content as LLMContentBlock[]) : [],
-    );
+    const blocks = round2.flatMap((m) => (Array.isArray(m.content) ? (m.content as LLMContentBlock[]) : []));
     expect(blocks).toContainEqual({ type: 'tool_use', id: 'c1', name: 'actor_list', input: {} });
     const result = blocks.find(
-      (b): b is Extract<LLMContentBlock, { type: 'tool_result' }> =>
-        b.type === 'tool_result' && b.tool_use_id === 'c1',
+      (b): b is Extract<LLMContentBlock, { type: 'tool_result' }> => b.type === 'tool_result' && b.tool_use_id === 'c1',
     );
     expect(result).toBeDefined();
     expect(result!.content).toContain('actor_list');
@@ -169,20 +164,32 @@ describe('runAgentLoop', () => {
     expect(done.usage).toBeUndefined();
   });
 
-  it('refuses a filtered/disabled tool: not offered AND refused if called', async () => {
+  it('reports an unknown provider finish reason as a non-success state', async () => {
     const client = new FakeLLMClient([
-      toolResponse('actor_spawn', {}, 'c1'),
-      textResponse('ok'),
+      {
+        content: 'partial answer',
+        toolCalls: [],
+        stopReason: 'unknown',
+      },
     ]);
+    const events = await collect(runAgentLoop(baseParams({ client })));
+    expect(events.at(-2)).toMatchObject({ type: 'error', kind: 'api' });
+    expect(events.at(-1)).toEqual({
+      type: 'done',
+      reason: 'provider_stop',
+      stopReason: 'unknown',
+    });
+  });
+
+  it('refuses a filtered/disabled tool: not offered AND refused if called', async () => {
+    const client = new FakeLLMClient([toolResponse('actor_spawn', {}, 'c1'), textResponse('ok')]);
     const dispatch = vi.fn(async () => ({ ok: true }));
 
     // Only actor_list is offered; actor_spawn is filtered out of the catalog.
     const tools = [
       { name: 'actor_list', description: 'list', input_schema: { type: 'object' as const, properties: {} } },
     ];
-    const events = await collect(
-      runAgentLoop(baseParams({ client, tools, dispatchTool: dispatch })),
-    );
+    const events = await collect(runAgentLoop(baseParams({ client, tools, dispatchTool: dispatch })));
 
     // Not offered
     expect(client.offeredToolNames[0]).toEqual(['actor_list']);
@@ -230,10 +237,7 @@ describe('runAgentLoop', () => {
   });
 
   it('C1: approve A then model requests A (same args) → dispatches once', async () => {
-    const client = new FakeLLMClient([
-      toolResponse('actor_spawn', { id: 'A' }, 'c1'),
-      textResponse('done'),
-    ]);
+    const client = new FakeLLMClient([toolResponse('actor_spawn', { id: 'A' }, 'c1'), textResponse('done')]);
     const dispatch = vi.fn(async () => ({ ok: true }));
     const approvedCall = { name: 'actor_spawn', argsHash: argsHash({ id: 'A' }) };
     const events = await collect(
@@ -280,9 +284,7 @@ describe('runAgentLoop', () => {
     // Dispatch returns the C++ gate payload (plan mode NOT set on the loop side).
     const dispatch = vi.fn(async () => ({ status: 'plan_mode_required', hint: 'approve first' }));
 
-    const events = await collect(
-      runAgentLoop(baseParams({ client, dispatchTool: dispatch })),
-    );
+    const events = await collect(runAgentLoop(baseParams({ client, dispatchTool: dispatch })));
 
     expect(dispatch).toHaveBeenCalledTimes(1);
     const plan = events.find((e) => e.type === 'plan_request');
@@ -295,14 +297,10 @@ describe('runAgentLoop', () => {
 
   it('halts at maxSteps', async () => {
     // Endlessly requests a (non-destructive) tool; loop must stop at maxSteps.
-    const client = new FakeLLMClient(
-      Array.from({ length: 10 }, (_, i) => toolResponse('actor_list', {}, `c${i}`)),
-    );
+    const client = new FakeLLMClient(Array.from({ length: 10 }, (_, i) => toolResponse('actor_list', {}, `c${i}`)));
     const dispatch = vi.fn(async () => ({ ok: true }));
 
-    const events = await collect(
-      runAgentLoop(baseParams({ client, dispatchTool: dispatch, maxSteps: 3 })),
-    );
+    const events = await collect(runAgentLoop(baseParams({ client, dispatchTool: dispatch, maxSteps: 3 })));
 
     const done = events.at(-1);
     expect(done).toEqual({ type: 'done', reason: 'max_steps' });
@@ -321,9 +319,7 @@ describe('runAgentLoop', () => {
       return { ok: true };
     });
 
-    const events = await collect(
-      runAgentLoop(baseParams({ client, dispatchTool: dispatch, signal: ac.signal })),
-    );
+    const events = await collect(runAgentLoop(baseParams({ client, dispatchTool: dispatch, signal: ac.signal })));
 
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(events.some((e) => e.type === 'error' && (e as { kind?: string }).kind === 'aborted')).toBe(true);
@@ -332,15 +328,10 @@ describe('runAgentLoop', () => {
 
   it('never leaks the API key in any event', async () => {
     const SECRET = 'sk-super-secret-key-123';
-    const client = new FakeLLMClient([
-      toolResponse('actor_list', {}, 'c1'),
-      textResponse(`done ${SECRET ? '' : ''}`),
-    ]);
+    const client = new FakeLLMClient([toolResponse('actor_list', {}, 'c1'), textResponse(`done ${SECRET ? '' : ''}`)]);
     const dispatch = vi.fn(async () => ({ ok: true }));
 
-    const events = await collect(
-      runAgentLoop(baseParams({ client, dispatchTool: dispatch })),
-    );
+    const events = await collect(runAgentLoop(baseParams({ client, dispatchTool: dispatch })));
 
     const serialized = JSON.stringify(events);
     expect(serialized).not.toContain(SECRET);
@@ -380,14 +371,14 @@ describe('buildToolCatalog', () => {
       returns: '{ok}',
     });
 
-    const tool = buildToolCatalog({ listCommands: () => ['zzz_default_probe'] })
-      .find((t) => t.name === 'zzz_default_probe');
+    const tool = buildToolCatalog({ listCommands: () => ['zzz_default_probe'] }).find(
+      (t) => t.name === 'zzz_default_probe',
+    );
 
     expect(tool, 'the probe tool should be in the catalog').toBeDefined();
     const schema = tool!.input_schema as { required?: string[]; properties: Record<string, { default?: unknown }> };
     expect(schema.required, 'only the genuinely required param is required').toEqual(['needed']);
     expect(schema.properties.capped.default, 'the value it gets by omitting it').toBe(5);
-    expect(schema.properties.maybe, 'a plain optional has no default to report')
-      .not.toHaveProperty('default');
+    expect(schema.properties.maybe, 'a plain optional has no default to report').not.toHaveProperty('default');
   });
 });

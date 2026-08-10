@@ -96,9 +96,7 @@ export function isDestructiveToolName(name: string): boolean {
   if (NON_IDEMPOTENT.has(name)) return true;
   if (EXTRA_DESTRUCTIVE.has(name)) return true;
   // Mutation verbs, matched as a segment (prefix, suffix, or *_verb_*).
-  return /(^|_)(create|delete|add|remove|set|spawn|duplicate|import|rename|clear|destroy)(_|$)/.test(
-    name,
-  );
+  return /(^|_)(create|delete|add|remove|set|spawn|duplicate|import|rename|clear|destroy)(_|$)/.test(name);
 }
 
 // ---------------------------------------------------------------------------
@@ -136,8 +134,7 @@ function zodToJsonSchema(t: ZodTypeAny): { schema: JsonSchema; optional: boolean
     // deeper nesting is left flat). shapeToInputSchema is hoisted below.
     const nestedShape = (inner as unknown as { _def: { shape: () => ZodRawShape } })._def.shape();
     schema = shapeToInputSchema(nestedShape);
-  }
-  else if (inner instanceof z.ZodRecord) schema = { type: 'object' };
+  } else if (inner instanceof z.ZodRecord) schema = { type: 'object' };
   else schema = {};
 
   // zod 4: .describe() lives on the public `.description` getter now, not on
@@ -249,7 +246,7 @@ export function argsHash(args: unknown): string {
  *  captured handlers. */
 export const defaultDispatchTool: DispatchTool = (name, args) => executeCommand(name, args);
 
-export type AgentDoneReason = 'end_turn' | 'max_steps' | 'token_budget' | 'aborted';
+export type AgentDoneReason = 'end_turn' | 'max_steps' | 'token_budget' | 'aborted' | 'provider_stop';
 
 export type AgentEvent =
   | { type: 'text_delta'; text: string }
@@ -302,9 +299,7 @@ function estimateTokens(text: string): number {
 /** Is a dispatch result the C++ Plan-Mode pause payload? */
 function isPlanModeRequired(result: unknown): result is { status: string; hint?: string } {
   return (
-    typeof result === 'object' &&
-    result !== null &&
-    (result as { status?: unknown }).status === 'plan_mode_required'
+    typeof result === 'object' && result !== null && (result as { status?: unknown }).status === 'plan_mode_required'
   );
 }
 
@@ -312,9 +307,7 @@ function isPlanModeRequired(result: unknown): result is { status: string; hint?:
  * Run the agentic tool-calling loop. Yields normalized events; halts on
  * end_turn, maxSteps, token budget, abort, or a plan_request pause.
  */
-export async function* runAgentLoop(
-  params: AgentLoopParams,
-): AsyncGenerator<AgentEvent, void, unknown> {
+export async function* runAgentLoop(params: AgentLoopParams): AsyncGenerator<AgentEvent, void, unknown> {
   const {
     client,
     system,
@@ -421,6 +414,21 @@ export async function* runAgentLoop(
     }
 
     // ── Halt when the model is done ──────────────────────────────────────
+    // A content filter or a finish reason added by a compatible provider is
+    // not a successful end turn. Preserve an explicit machine state so the UI
+    // can warn/retry instead of silently presenting a partial answer as done.
+    if (stopReason === 'content_filter' || stopReason === 'unknown') {
+      yield {
+        type: 'error',
+        kind: 'api',
+        error:
+          stopReason === 'content_filter'
+            ? 'The provider stopped the response because of its content filter.'
+            : 'The provider returned an unsupported or missing finish reason.',
+      };
+      yield { type: 'done', reason: 'provider_stop', stopReason, usage };
+      return;
+    }
     if (stopReason !== 'tool_use' || toolCalls.length === 0) {
       yield { type: 'done', reason: 'end_turn', stopReason, usage };
       return;
