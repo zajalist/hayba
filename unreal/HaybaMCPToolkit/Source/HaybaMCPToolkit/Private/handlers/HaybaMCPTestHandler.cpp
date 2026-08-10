@@ -1,4 +1,5 @@
 #include "HaybaMCPTestHandler.h"
+#include "HaybaMCPTestSelectionOps.h"
 #include "CoreGlobals.h"
 
 #if WITH_EDITOR
@@ -67,15 +68,15 @@ namespace
      * ("FHaybaMCPParamReaderTest"). Only the latter starts a test. Accept
      * either, so callers can paste any field test_list showed them.
      */
-    static FString ResolveRegisteredTestName(const FString& Requested)
+    static FString ResolveRegisteredTestName(
+        const FString& Requested,
+        const TArray<FAutomationTestInfo>& Discovered)
     {
-        TArray<FAutomationTestInfo> All;
-        CollectAllTests(All);
-        for (const FAutomationTestInfo& Info : All)
+        for (const FAutomationTestInfo& Info : Discovered)
         {
             if (Info.GetTestName() == Requested) return Requested;  // already registered form
         }
-        for (const FAutomationTestInfo& Info : All)
+        for (const FAutomationTestInfo& Info : Discovered)
         {
             if (Info.GetFullTestPath() == Requested || Info.GetDisplayName() == Requested)
             {
@@ -85,26 +86,41 @@ namespace
         return Requested;  // unknown — let StartTestByName report it
     }
 
+    static void ReadTestSelectors(
+        const TSharedPtr<FJsonObject>& Params,
+        FString& OutFilterPattern,
+        FString& OutCategoryFilter)
+    {
+        OutFilterPattern.Reset();
+        OutCategoryFilter.Reset();
+        if (!Params.IsValid()) return;
+
+        Params->TryGetStringField(TEXT("filter_pattern"), OutFilterPattern);
+        if (OutFilterPattern.IsEmpty())
+        {
+            Params->TryGetStringField(TEXT("filter"), OutFilterPattern);
+        }
+        Params->TryGetStringField(TEXT("category"), OutCategoryFilter);
+    }
+
+    static bool MatchesTestSelectors(
+        const FAutomationTestInfo& Info,
+        const FString& FilterPattern,
+        const FString& CategoryFilter)
+    {
+        return HaybaTestSelection::Matches(
+            Info.GetDisplayName(), Info.GetFullTestPath(), FilterPattern, CategoryFilter);
+    }
+
 
     static FHaybaHandlerResult Cmd_TestList(const TSharedPtr<FJsonObject>& Params)
     {
         FString FilterPattern;
         FString CategoryFilter;
-        if (Params.IsValid())
-        {
-            Params->TryGetStringField(TEXT("filter_pattern"), FilterPattern);
-            // `filter` is what callers actually type. Live finding: test_list
-            // {filter:"Aphrosia.CharacterPanelViewModel"} returned all 7111
-            // engine tests, because the legacy dispatch route validates
-            // nothing and this handler only read `filter_pattern` — the
-            // misnamed param fell on the floor and the response looked like
-            // "the filter doesn't work". Accept both spellings.
-            if (FilterPattern.IsEmpty())
-            {
-                Params->TryGetStringField(TEXT("filter"), FilterPattern);
-            }
-            Params->TryGetStringField(TEXT("category"),       CategoryFilter);
-        }
+        // `filter` is what callers actually type. Both list and run use this
+        // exact selector reader so a successful discovery query can be passed
+        // unchanged to test_run without accidentally selecting every test.
+        ReadTestSelectors(Params, FilterPattern, CategoryFilter);
 
         TArray<FAutomationTestInfo> AllTests;
         CollectAllTests(AllTests);
@@ -112,19 +128,7 @@ namespace
         TArray<TSharedPtr<FJsonValue>> JsonTests;
         for (const FAutomationTestInfo& Info : AllTests)
         {
-            const FString DisplayName = Info.GetDisplayName();
-            const FString FullPath    = Info.GetFullTestPath();
-
-            if (!FilterPattern.IsEmpty()
-                && !DisplayName.Contains(FilterPattern)
-                && !FullPath.Contains(FilterPattern))
-            {
-                continue;
-            }
-            if (!CategoryFilter.IsEmpty() && !FullPath.StartsWith(CategoryFilter))
-            {
-                continue;
-            }
+            if (!MatchesTestSelectors(Info, FilterPattern, CategoryFilter)) continue;
 
             JsonTests.Add(MakeShared<FJsonValueObject>(TestInfoToJson(Info)));
         }
@@ -160,6 +164,7 @@ namespace
     {
         FString          JobId;
         TArray<FString>  Names;
+        TArray<FString>  RegisteredNames;
         double           PerTestTimeoutSec = 120.0;
 
         int32            Index       = 0;
@@ -193,6 +198,11 @@ namespace
         Results->SetArrayField(TEXT("passed"),  S->Passed);
         Results->SetArrayField(TEXT("failed"),  S->Failed);
         Results->SetArrayField(TEXT("skipped"), S->Skipped);
+        Results->SetNumberField(TEXT("passed_count"), S->Passed.Num());
+        Results->SetNumberField(TEXT("failed_count"), S->Failed.Num());
+        Results->SetNumberField(TEXT("skipped_count"), S->Skipped.Num());
+        Results->SetBoolField(TEXT("all_passed"),
+            S->Passed.Num() == S->Names.Num() && S->Failed.IsEmpty() && S->Skipped.IsEmpty());
         Results->SetNumberField(TEXT("elapsed_seconds"), Elapsed);
         Results->SetNumberField(TEXT("total"), S->Names.Num());
 
@@ -244,7 +254,7 @@ namespace
             // "skipped". Every test_run ever made returned skipped for
             // everything, and skipped reads like a decision rather than a
             // failure — so the harness looked like it worked.
-            const FString Registered = ResolveRegisteredTestName(Name);
+            const FString& Registered = S->RegisteredNames[S->Index];
             bTimedOut = false;
 
             Framework.StartTestByName(Registered, /*RoleIndex=*/0);
@@ -348,6 +358,11 @@ namespace
         bool bSmokeOnly = false;
         Params->TryGetBoolField(TEXT("smoke_only"), bSmokeOnly);
 
+        FString FilterPattern;
+        FString CategoryFilter;
+        ReadTestSelectors(Params, FilterPattern, CategoryFilter);
+        const bool bHasSelector = !FilterPattern.IsEmpty() || !CategoryFilter.IsEmpty();
+
         // Resolve list of test names to run.
         TArray<FString> RequestedNames;
         bool bRunAll = false;
@@ -387,14 +402,21 @@ namespace
             }
         }
 
+        if (const FString CombinationError = HaybaTestSelection::ValidateCombination(
+            bRunAll, RequestedNames.Num(), bHasSelector); !CombinationError.IsEmpty())
+        {
+            return FHaybaHandlerResult::Err(CombinationError);
+        }
+
         // Expand "all"
         TArray<FAutomationTestInfo> Discovered;
         CollectAllTests(Discovered);
-        if (bRunAll)
+        if (bRunAll || bHasSelector)
         {
             RequestedNames.Reset();
             for (const FAutomationTestInfo& Info : Discovered)
             {
+                if (!MatchesTestSelectors(Info, FilterPattern, CategoryFilter)) continue;
                 if (bSmokeOnly && !EnumHasAnyFlags(static_cast<EAutomationTestFlags>(Info.GetTestFlags()),
                                                     EAutomationTestFlags::SmokeFilter))
                 {
@@ -420,16 +442,49 @@ namespace
                 [&SmokeNames](const FString& N){ return SmokeNames.Contains(N); });
         }
 
-        if (RequestedNames.Num() == 0)
+        const FString SelectionError = HaybaTestSelection::ValidateResolvedSelection(
+            bRunAll, bHasSelector, RequestedNames.Num());
+        if (!SelectionError.IsEmpty())
         {
-            auto Empty = MakeShared<FJsonObject>();
-            Empty->SetArrayField(TEXT("passed"),  {});
-            Empty->SetArrayField(TEXT("failed"),  {});
-            Empty->SetArrayField(TEXT("skipped"), {});
-            Empty->SetNumberField(TEXT("elapsed_seconds"), 0.0);
-            Empty->SetStringField(TEXT("note"), TEXT("no matching tests"));
-            return FHaybaHandlerResult::Ok(Empty);
+            if (SelectionError != TEXT("test_run matched no tests"))
+            {
+                return FHaybaHandlerResult::Err(SelectionError);
+            }
+
+            FString SelectorDescription;
+            if (!CategoryFilter.IsEmpty())
+            {
+                SelectorDescription += FString::Printf(TEXT(" category='%s'"), *CategoryFilter);
+            }
+            if (!FilterPattern.IsEmpty())
+            {
+                SelectorDescription += FString::Printf(TEXT(" filter='%s'"), *FilterPattern);
+            }
+            if (bSmokeOnly) SelectorDescription += TEXT(" smoke_only=true");
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("%s.%s Use test_list with the same selectors to inspect discovery."),
+                *SelectionError,
+                *SelectorDescription));
         }
+
+        // Resolve every caller-facing display/path alias against the discovery
+        // snapshot once. The old pump called CollectAllTests for every selected
+        // test; a 331-test project suite therefore rediscovered ~7,000 engine
+        // tests 331 times and flooded the log with MetaSound registration work.
+        // Deduplicate aliases that resolve to the same registered test while
+        // preserving the first caller-facing name for results.
+        TArray<FString> UniqueNames;
+        TArray<FString> RegisteredNames;
+        TSet<FString> SeenRegisteredNames;
+        for (const FString& RequestedName : RequestedNames)
+        {
+            const FString RegisteredName = ResolveRegisteredTestName(RequestedName, Discovered);
+            if (SeenRegisteredNames.Contains(RegisteredName)) continue;
+            SeenRegisteredNames.Add(RegisteredName);
+            UniqueNames.Add(RequestedName);
+            RegisteredNames.Add(RegisteredName);
+        }
+        RequestedNames = MoveTemp(UniqueNames);
 
         // Per-run timeout from params (seconds), default 120 per test.
         double PerTestTimeoutSec = 120.0;
@@ -439,12 +494,8 @@ namespace
         // Reject overlapping runs — the automation framework is single-flight.
         if (GTestRunActive)
         {
-            auto Busy = MakeShared<FJsonObject>();
-            Busy->SetBoolField(TEXT("ok"), false);
-            Busy->SetStringField(TEXT("status"), TEXT("busy"));
-            Busy->SetStringField(TEXT("error"),
+            return FHaybaHandlerResult::Err(
                 TEXT("a test_run job is already in progress; poll build_status for it before starting another"));
-            return FHaybaHandlerResult::Ok(Busy);
         }
 
         // Long-running: drive the run on the game-thread core ticker (fires
@@ -456,6 +507,7 @@ namespace
         TSharedRef<FTestRunState> S = MakeShared<FTestRunState>();
         S->JobId             = FHaybaMCPJobRegistry::Get().AllocateJob(TEXT("test_run"));
         S->Names             = MoveTemp(RequestedNames);
+        S->RegisteredNames   = MoveTemp(RegisteredNames);
         S->PerTestTimeoutSec = PerTestTimeoutSec;
         S->RunStart          = FPlatformTime::Seconds();
 
@@ -474,6 +526,9 @@ namespace
         Out->SetStringField(TEXT("status"), TEXT("running"));
         Out->SetNumberField(TEXT("total"), S->Names.Num());
         Out->SetBoolField(TEXT("ok"), true);
+        if (!FilterPattern.IsEmpty()) Out->SetStringField(TEXT("filter"), FilterPattern);
+        if (!CategoryFilter.IsEmpty()) Out->SetStringField(TEXT("category"), CategoryFilter);
+        Out->SetBoolField(TEXT("smoke_only"), bSmokeOnly);
         Out->SetStringField(TEXT("note"),
             TEXT("Tests started asynchronously. Poll build_status { job_id } for {passed, failed, skipped, elapsed_seconds, total}, or test_get_log for the last run's detailed entries."));
         return FHaybaHandlerResult::Ok(Out);

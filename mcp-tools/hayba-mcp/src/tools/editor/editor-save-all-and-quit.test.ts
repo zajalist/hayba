@@ -1,72 +1,54 @@
-// The order matters, and so does the refusal.
-//
-// Shutting the editor down with a dirty asset parks it on a modal save prompt
-// that nothing can answer, because the MCP port is already closed. Three editor
-// deaths in one reported session each cost exactly the assets still unsaved.
-
-import { describe, it, expect, beforeEach } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { scriptedUe, type ScriptedUe } from '../testing/scripted-ue.js';
 import { editorSaveAllAndQuitHandler } from './editor-save-all-and-quit.js';
 
-function payload(before: string[], after: string[]): { stdout: string } {
-  return { stdout: `HAYBA_JSON:${JSON.stringify({ before, after, save_reported_ok: after.length === 0 })}` };
-}
-
-/** The quit is issued as a SECOND python_run carrying QUIT_EDITOR. */
-function quitWasIssued(ue: ScriptedUe): boolean {
-  return ue.calls.some(
-    (c) => c.cmd === 'python_run' && String((c.params as { script?: string }).script ?? '').includes('QUIT_EDITOR'),
-  );
-}
+const verified = (quit: boolean) => ({
+  dirty_package_count_before: 2,
+  dirty_package_count_after: 0,
+  save_candidate_count: 2,
+  save_verified: true,
+  quit_scheduled: quit,
+});
 
 describe('editor_save_all_and_quit', () => {
-  let ue: ScriptedUe;
+  let ue: ScriptedUe | undefined;
+  afterEach(() => ue?.restore());
 
-  beforeEach(() => {
-    ue = scriptedUe();
+  it('routes save+quit through the single native command', async () => {
+    ue = scriptedUe().replies('editor_save_all_and_quit', verified(true));
+    const result = await editorSaveAllAndQuitHandler({}, {} as never);
+    expect(result.isError).not.toBe(true);
+    expect(ue.paramsFor('editor_save_all_and_quit')).toEqual({ quit: true });
+    expect(ue.called('python_run')).toBe(false);
   });
 
-  it('saves everything, then quits', async () => {
-    ue.replies('python_run', payload(['/Game/A', '/Game/B'], []));
-
-    const r = await editorSaveAllAndQuitHandler({}, {} as never);
-    const out = JSON.parse(r.content[0].text as string);
-
-    expect(out.quit).toBe(true);
-    expect(out.saved_count).toBe(2);
-    expect(quitWasIssued(ue), 'QUIT_EDITOR must have been issued').toBe(true);
+  it('quit:false uses the same native persistence boundary without exit', async () => {
+    ue = scriptedUe().replies('editor_save_all_and_quit', verified(false));
+    const result = await editorSaveAllAndQuitHandler({ quit: false }, {} as never);
+    expect(result.isError).not.toBe(true);
+    expect(ue.paramsFor('editor_save_all_and_quit')).toEqual({ quit: false });
   });
 
-  it('REFUSES to quit while anything is still unsaved', async () => {
-    // The whole point. Quitting here is the failure the tool exists to prevent.
-    ue.replies('python_run', payload(['/Game/A', '/Game/B'], ['/Game/B']));
-
-    const r = await editorSaveAllAndQuitHandler({}, {} as never);
-    const out = JSON.parse(r.content[0].text as string);
-
-    expect(r.isError, 'a refusal is an error, not a quiet success').toBe(true);
-    expect(out.quit).toBe(false);
-    expect(out.still_dirty).toEqual(['/Game/B']);
-    expect(quitWasIssued(ue), 'must NOT have issued QUIT_EDITOR').toBe(false);
+  it('fails closed on missing verification fields', async () => {
+    ue = scriptedUe().silentlySucceeds('editor_save_all_and_quit');
+    const result = await editorSaveAllAndQuitHandler({}, {} as never);
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('incomplete or contradictory');
   });
 
-  it('quit:false saves and reports without shutting down', async () => {
-    ue.replies('python_run', payload(['/Game/A'], []));
-
-    const r = await editorSaveAllAndQuitHandler({ quit: false }, {} as never);
-    const out = JSON.parse(r.content[0].text as string);
-
-    expect(out.quit).toBe(false);
-    expect(out.saved_count).toBe(1);
-    expect(quitWasIssued(ue)).toBe(false);
+  it('fails closed when native verification is contradictory', async () => {
+    ue = scriptedUe().replies('editor_save_all_and_quit', {
+      ...verified(true),
+      save_verified: false,
+    });
+    const result = await editorSaveAllAndQuitHandler({}, {} as never);
+    expect(result.isError).toBe(true);
   });
 
-  it('a clean editor still quits', async () => {
-    ue.replies('python_run', payload([], []));
-
-    const r = await editorSaveAllAndQuitHandler({}, {} as never);
-    const out = JSON.parse(r.content[0].text as string);
-    expect(out.quit).toBe(true);
-    expect(out.saved_count).toBe(0);
+  it('surfaces native save refusal without issuing another command', async () => {
+    ue = scriptedUe().fails('editor_save_all_and_quit', 'dirty packages remain');
+    const result = await editorSaveAllAndQuitHandler({}, {} as never);
+    expect(result.isError).toBe(true);
+    expect(ue.calls).toHaveLength(1);
   });
 });

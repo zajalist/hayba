@@ -141,6 +141,18 @@ export const NON_IDEMPOTENT = new Set<string>([
   'metasound_add_node',
   'metasound_connect',
   'metasound_set_input',
+  // Audio runtime/asset operations that cannot be blind-retried. Set/save and
+  // meter lifecycle are intentionally absent: those are set-to-value or
+  // idempotent cleanup, while create/play/control/record can duplicate a live
+  // voice, re-trigger a parameter, or consume the only recording buffer.
+  'audio_asset_create',
+  'audio_component_play',
+  'audio_component_control',
+  'audio_recording_start',
+  'audio_recording_stop',
+  // Saves packages and terminates the only UE transport; never retry after a
+  // lost response because the first call may already have scheduled exit.
+  'editor_save_all_and_quit',
   // GAS
   'gas_create_ability',
   'gas_create_effect',

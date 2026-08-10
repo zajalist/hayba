@@ -352,6 +352,24 @@
           "description": "Test names/full-paths to run, or the single string 'all'. Accepts a string or array."
         },
         {
+          "name": "filter_pattern",
+          "type": "string",
+          "required": false,
+          "description": "Case-insensitive substring selector on display name or full path (alias: filter). Use without explicit test_names."
+        },
+        {
+          "name": "filter",
+          "type": "string",
+          "required": false,
+          "description": "Alias of filter_pattern. Use the same selector object returned by a successful test_list discovery call."
+        },
+        {
+          "name": "category",
+          "type": "string",
+          "required": false,
+          "description": "Case-insensitive full-path prefix selector, e.g. 'Aphrosia'. Use without explicit test_names."
+        },
+        {
           "name": "smoke_only",
           "type": "boolean",
           "required": false,
@@ -385,12 +403,26 @@
           {
             "name": "note",
             "type": "string"
+          },
+          {
+            "name": "filter",
+            "type": "string",
+            "description": "Applied substring selector, when supplied"
+          },
+          {
+            "name": "category",
+            "type": "string",
+            "description": "Applied full-path prefix selector, when supplied"
+          },
+          {
+            "name": "smoke_only",
+            "type": "boolean"
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "JOB ENVELOPE (async, non-freezing): returns { job_id, status:'running' } IMMEDIATELY and runs the tests on the editor's game-thread core ticker (one step/frame), so the editor stays responsive. Poll build_status { job_id } for the result { passed, failed, skipped, elapsed_seconds, total } (delivered as a JSON string in build_status.output), or call test_get_log for the last run's detailed errors/warnings. Only one test_run job at a time (status:'busy' otherwise). Drives FAutomationTestFramework::StartTestByName -> ExecuteLatentCommands -> StopTest directly, bypassing the controller/worker session queue, so it works in a normal GUI editor without the Session Frontend. Replaces the old INLINE busy-sleep that froze the game thread up to 120s/test."
+      "notes": "JOB ENVELOPE (async, non-freezing): run explicit test_names, 'all', or the same filter/filter_pattern/category selectors accepted by test_list. Selectors are case-insensitive and cannot be combined with explicit names; an empty or zero-match selection is an error rather than a false green run. Returns { job_id, status:'running' } immediately and runs tests on the editor's game-thread core ticker. Poll build_status for { passed, failed, skipped, elapsed_seconds, total }, or test_get_log for detailed entries. Only one run may be active."
     },
     "test_get_log": {
       "aliases": [],
@@ -598,13 +630,38 @@
           {
             "name": "output",
             "type": "string",
-            "description": "When done: log tail (build) or a JSON string of { passed, failed, skipped, elapsed_seconds, total } (test_run)"
+            "description": "When a build job is done: bounded process log tail"
+          },
+          {
+            "name": "passed_count",
+            "type": "number",
+            "description": "When a test_run job is done: number of passing tests"
+          },
+          {
+            "name": "failed_count",
+            "type": "number",
+            "description": "When a test_run job is done: number of failing tests"
+          },
+          {
+            "name": "skipped_count",
+            "type": "number",
+            "description": "When a test_run job is done: number of skipped tests"
+          },
+          {
+            "name": "all_passed",
+            "type": "boolean",
+            "description": "When a test_run job is done: true only when every selected test passed and none failed or skipped"
+          },
+          {
+            "name": "test_results",
+            "type": "object",
+            "description": "When a test_run job is done: structured { passed, failed, skipped, passed_count, failed_count, skipped_count, all_passed, elapsed_seconds, total } result"
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Reader for the async job registry shared by build_project / build_cook / build_generate_project_files / test_run. Reads the job entry under its lock by job_id and returns its current status/result. Poll this after a build_* / test_run call returns { job_id, status:'running' }."
+      "notes": "Reader for the async job registry shared by build_project / build_cook / build_generate_project_files / test_run. Reads the job entry under its lock by job_id and returns its current status/result. Test jobs expose untruncated scalar pass/fail/skip totals plus a structured test_results object; malformed test results fail closed. Poll this after a build_* / test_run call returns { job_id, status:'running' }."
     },
     "ping": {
       "aliases": [],
@@ -2628,6 +2685,48 @@
       "has_ts_wrapper": false,
       "notes": "Frame an actor in the editor viewport by label — computes camera position from the actor's bounds and aims at its centre, entirely in C++. Roll is always 0 so the view never tilts. This is the correct 'framing tool'; do NOT hand-compute camera angles in python_run."
     },
+    "editor_save_all_and_quit": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPEditorHandler::Handle",
+      "params": [
+        {
+          "name": "quit",
+          "type": "boolean",
+          "required": false,
+          "default": true,
+          "description": "Set false to save and verify without scheduling editor exit"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "dirty_package_count_before",
+            "type": "number"
+          },
+          {
+            "name": "dirty_package_count_after",
+            "type": "number",
+            "description": "Always zero on success"
+          },
+          {
+            "name": "save_candidate_count",
+            "type": "number"
+          },
+          {
+            "name": "save_verified",
+            "type": "boolean"
+          },
+          {
+            "name": "quit_scheduled",
+            "type": "boolean"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Single native persistence boundary used by the first-class TS tool: persist every loaded dirty map/content package, verify none remain, then optionally schedule editor exit after the response flushes. Exit revalidates dirtiness and cancels if queued/background work changed state. Refuses queued or active PIE and any save failure. Plan-Mode gated and non-idempotent when quit is true."
+    },
     "editor_run_console_command": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPEditorHandler::Handle",
@@ -3430,19 +3529,32 @@
           "type": "number",
           "required": false,
           "default": 1
+        },
+        {
+          "name": "start_time",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "description": "Playback seek offset in seconds"
+        },
+        {
+          "name": "concurrency_path",
+          "type": "string",
+          "required": false,
+          "description": "Optional SoundConcurrency override"
         }
       ],
       "returns": {
         "shape": "object",
         "fields": [
           {
-            "name": "ok",
-            "type": "boolean"
+            "name": "component_id",
+            "type": "string",
+            "description": "Stable retained AudioComponent id, controllable with audio_component_control"
           },
           {
-            "name": "playing",
-            "type": "string",
-            "description": "Asset name actually loaded and played"
+            "name": "play_state",
+            "type": "string"
           },
           {
             "name": "volume",
@@ -3456,7 +3568,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Play a sound 2D through the editor's current world, for auditioning an asset. The reply says the sound loaded and playback was started — it cannot tell you anything was audible, so treat it as dispatch, not as evidence. Needs an active world; it fails rather than queueing if there is none."
+      "notes": "Play a sound 2D through a retained AudioComponent. Fails unless the component becomes active and returns component_id plus live play-state/volume/pitch readback. Prefer audio_component_play for the fully typed first-class schema."
     },
     "audio_set_volume": {
       "aliases": [],
@@ -3479,22 +3591,104 @@
         "shape": "object",
         "fields": [
           {
-            "name": "ok",
-            "type": "boolean"
-          },
-          {
             "name": "category",
             "type": "string"
           },
           {
-            "name": "volume",
+            "name": "requested_volume",
             "type": "number"
+          },
+          {
+            "name": "scope",
+            "type": "string"
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Sets the transient primary volume on the main audio device — the master bus, and only that. Per-category mixing (music, sfx, ui) would need Sound Class / Sound Mix routing and is not implemented; asking for one of those categories returns an error naming the limit. The change is transient and does not persist."
+      "notes": "Sets the transient primary volume on the main audio device — the master bus, and only that. Use audio_asset_create/set/save with SoundClass and SoundMix assets for category routing. The change is transient and does not persist."
+    },
+    "audio_asset_create": {
+      "aliases": [], "handler_cpp": "FHaybaMCPAudioHandler::Handle",
+      "params": [
+        {"name":"path","type":"string","required":true,"description":"Full /Game target asset path; package-only/object/export-text forms normalize identically"},
+        {"name":"asset_type","type":"string","required":true,"description":"SoundClass|SoundMix|SoundConcurrency|SoundAttenuation|SoundSubmix"}
+      ],
+      "returns":{"shape":"object","fields":[{"name":"path","type":"string"},{"name":"asset_type","type":"string"},{"name":"persistence","type":"string"},{"name":"readback","type":"object"}]},
+      "agent_callable":true,"has_ts_wrapper":true,
+      "notes":"Creates an unsaved audio settings asset with a typed default readback. SoundWave is engine-limited here because it needs imported PCM data: use asset_import then audio_asset_set. Explicitly call audio_asset_save after authoring."
+    },
+    "audio_asset_inspect": {
+      "aliases": [], "handler_cpp": "FHaybaMCPAudioHandler::Handle",
+      "params":[{"name":"path","type":"string","required":true,"description":"Supported audio asset path"}],
+      "returns":{"shape":"object","fields":[{"name":"path","type":"string"},{"name":"asset_type","type":"string"},{"name":"dirty","type":"boolean"},{"name":"settings","type":"object"}]},
+      "agent_callable":true,"has_ts_wrapper":true,
+      "notes":"Typed inspection for SoundClass, SoundMix/class overrides, SoundConcurrency, SoundAttenuation, SoundSubmix, and SoundWave import/playback policy."
+    },
+    "audio_asset_set": {
+      "aliases": [], "handler_cpp": "FHaybaMCPAudioHandler::Handle",
+      "params":[{"name":"path","type":"string","required":true},{"name":"settings","type":"object","required":true,"description":"Typed snake_case settings documented by the first-class Zod schema; incompatible keys fail before mutation"}],
+      "returns":{"shape":"object","fields":[{"name":"path","type":"string"},{"name":"changed_keys","type":"array"},{"name":"unchanged_keys","type":"array"},{"name":"persistence","type":"string"},{"name":"readback","type":"object"}]},
+      "agent_callable":true,"has_ts_wrapper":true,
+      "notes":"Set-to-value audio authoring with changed/unchanged diagnostics and full readback. Mutates memory only; audio_asset_save is the explicit persistence boundary."
+    },
+    "audio_asset_save": {
+      "aliases": [], "handler_cpp": "FHaybaMCPAudioHandler::Handle",
+      "params":[{"name":"path","type":"string","required":true}],
+      "returns":{"shape":"object","fields":[{"name":"path","type":"string"},{"name":"package_file","type":"string"},{"name":"persistence","type":"string"},{"name":"readback","type":"object"}]},
+      "agent_callable":true,"has_ts_wrapper":true,
+      "notes":"Single-target explicit save. It verifies the .uasset exists on disk and fails rather than reporting nested saved:false."
+    },
+    "audio_component_play": {
+      "aliases": [], "handler_cpp": "FHaybaMCPAudioHandler::Handle",
+      "params":[{"name":"path","type":"string","required":true},{"name":"volume","type":"number","required":false,"default":1},{"name":"pitch","type":"number","required":false,"default":1},{"name":"start_time","type":"number","required":false,"default":0},{"name":"concurrency_path","type":"string","required":false}],
+      "returns":{"shape":"object","fields":[{"name":"component_id","type":"string"},{"name":"sound_path","type":"string"},{"name":"world","type":"string"},{"name":"play_state","type":"string"},{"name":"volume","type":"number"},{"name":"pitch","type":"number"}]},
+      "agent_callable":true,"has_ts_wrapper":true,
+      "notes":"Starts retained, controllable 2D playback and fails unless playback becomes active."
+    },
+    "audio_component_control": {
+      "aliases": [], "handler_cpp": "FHaybaMCPAudioHandler::Handle",
+      "params":[{"name":"component_id","type":"string","required":true},{"name":"action","type":"string","required":true,"description":"play|stop|pause|resume|fade_in|fade_out|set_volume|set_pitch|set_parameter|reset_parameters"},{"name":"duration","type":"number","required":false},{"name":"level","type":"number","required":false},{"name":"start_time","type":"number","required":false},{"name":"parameter_name","type":"string","required":false},{"name":"parameter_type","type":"string","required":false},{"name":"parameter_value","type":"any","required":false}],
+      "returns":{"shape":"object","fields":[{"name":"component_id","type":"string"},{"name":"action_applied","type":"string"},{"name":"play_state","type":"string"},{"name":"volume","type":"number"},{"name":"pitch","type":"number"},{"name":"virtualized","type":"boolean"}]},
+      "agent_callable":true,"has_ts_wrapper":true,
+      "notes":"Controls retained AudioComponents and typed SoundCue/MetaSound parameters. Expired ids and failed replays are errors."
+    },
+    "audio_active_sounds": {
+      "aliases": [], "handler_cpp": "FHaybaMCPAudioHandler::Handle",
+      "params":[{"name":"include_preview","type":"boolean","required":false,"default":false},{"name":"limit","type":"integer","required":false,"default":256}],
+      "returns":{"shape":"object","fields":[{"name":"active_sound_count","type":"integer"},{"name":"active_voice_count","type":"integer"},{"name":"virtual_sound_count","type":"integer"},{"name":"managed_component_count","type":"integer"},{"name":"sounds","type":"array"}]},
+      "agent_callable":true,"has_ts_wrapper":true,
+      "notes":"Reads active sounds and physical voice count from the main audio device for concurrency, virtualization, and leak diagnosis."
+    },
+    "audio_meter_start": {
+      "aliases": [], "handler_cpp": "FHaybaMCPAudioHandler::Handle",
+      "params":[{"name":"submix_path","type":"string","required":false,"description":"Omit for master output"},{"name":"fft_size","type":"string","required":false,"default":"medium"}],
+      "returns":{"shape":"object","fields":[{"name":"submix","type":"string"},{"name":"fft_size","type":"string"},{"name":"analyzer_state","type":"string"}]},
+      "agent_callable":true,"has_ts_wrapper":true,"notes":"Starts tracked Audio Mixer spectral analysis; fails cleanly on a non-mixer device or duplicate target."
+    },
+    "audio_meter_read": {
+      "aliases": [], "handler_cpp": "FHaybaMCPAudioHandler::Handle",
+      "params":[{"name":"submix_path","type":"string","required":false},{"name":"frequencies_hz","type":"array","required":true,"description":"1..256 frequencies in (0,24000]"}],
+      "returns":{"shape":"object","fields":[{"name":"submix","type":"string"},{"name":"analyzer_state","type":"string"},{"name":"bins","type":"array"}]},
+      "agent_callable":true,"has_ts_wrapper":true,"notes":"Reads linear magnitude, dB magnitude, and phase. No analyzer or no spectral data is an error, not zero-filled success."
+    },
+    "audio_meter_stop": {
+      "aliases": [], "handler_cpp": "FHaybaMCPAudioHandler::Handle",
+      "params":[{"name":"submix_path","type":"string","required":false}],
+      "returns":{"shape":"object","fields":[{"name":"submix","type":"string"},{"name":"analyzer_state","type":"string"}]},
+      "agent_callable":true,"has_ts_wrapper":true,"notes":"Stops a tracked master/submix analyzer; no active analyzer is an error."
+    },
+    "audio_recording_start": {
+      "aliases": [], "handler_cpp": "FHaybaMCPAudioHandler::Handle",
+      "params":[{"name":"submix_path","type":"string","required":false},{"name":"expected_duration","type":"number","required":false,"default":10}],
+      "returns":{"shape":"object","fields":[{"name":"submix","type":"string"},{"name":"expected_duration","type":"number"},{"name":"recording_state","type":"string"}]},
+      "agent_callable":true,"has_ts_wrapper":true,"notes":"Starts tracked Audio Mixer capture of master or one submix; fails cleanly when Audio Mixer is unavailable."
+    },
+    "audio_recording_stop": {
+      "aliases": [], "handler_cpp": "FHaybaMCPAudioHandler::Handle",
+      "params":[{"name":"submix_path","type":"string","required":false},{"name":"filename","type":"string","required":true},{"name":"relative_path","type":"string","required":false,"default":"","description":"Subfolder under Saved/BouncedWavFiles; absolute/.. rejected"}],
+      "returns":{"shape":"object","fields":[{"name":"submix","type":"string"},{"name":"recording_state","type":"string"},{"name":"wav_path","type":"string"},{"name":"sample_count","type":"integer"},{"name":"channel_count","type":"integer"},{"name":"sample_rate","type":"number"},{"name":"duration_seconds","type":"number"}]},
+      "agent_callable":true,"has_ts_wrapper":true,"notes":"Stops capture and uses UE's synchronous PCM writer. Zero samples, writer failure, or absent WAV is an outer command error."
     },
     "net_debug": {
       "aliases": [],

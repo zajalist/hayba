@@ -58,6 +58,7 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("python_run"),
         TEXT("actor_call_function"),
         TEXT("editor_run_console_command"),
+        TEXT("editor_save_all_and_quit"),
         // Actor lifecycle + mutation
         TEXT("actor_spawn"),
         TEXT("actor_delete"),
@@ -117,6 +118,16 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("level_create"),
         TEXT("data_create"),
         TEXT("data_set"),
+        // Audio asset/runtime authoring and capture
+        TEXT("audio_asset_create"),
+        TEXT("audio_asset_set"),
+        TEXT("audio_asset_save"),
+        TEXT("audio_component_play"),
+        TEXT("audio_component_control"),
+        TEXT("audio_meter_start"),
+        TEXT("audio_meter_stop"),
+        TEXT("audio_recording_start"),
+        TEXT("audio_recording_stop"),
         // Sequencer / Niagara / MetaSound / GAS / UI / Input authoring
         TEXT("seq_create"),
         TEXT("niagara_spawn"),
@@ -937,6 +948,11 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         GEditor->BeginTransaction(TxText);
     }
 
+    // Canonicalization allocates JSON writer state. Do it before entering an
+    // SEH-guarded native handler: if that handler faults, continuing with
+    // allocation-heavy post-processing is unsafe and previously turned a
+    // caught handler fault into a second fatal access violation in HashParams.
+    const FString ParamsHash = FHaybaMCPSecurityManager::HashParams(Params);
     const double Start = FPlatformTime::Seconds();
 
     // SEH-guard the handler-dispatch seam so a NATIVE structured exception
@@ -955,6 +971,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     // its own translation unit and only ever invokes a function pointer. Mirrors
     // the FStatsCtx usage in HaybaMCPMaterialHandler.cpp.
     FHaybaHandlerResult Result;
+    bool bHandlerCrashed = false;
     {
         struct FDispatchCtx
         {
@@ -964,7 +981,6 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
             FHaybaHandlerResult* Out;
         } Ctx{ &Found->Get(), &Cmd, &Params, &Result };
 
-        bool bHandlerCrashed = false;
         HaybaSeh::RunGuarded(+[](void* P)
         {
             FDispatchCtx* C = static_cast<FDispatchCtx*>(P);
@@ -974,18 +990,35 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         if (bHandlerCrashed)
         {
             UE_LOG(LogHaybaMCPCmd, Error,
-                TEXT("SEH guard caught a structured exception in handler for command '%s' (id: %s) — editor kept alive"),
+                TEXT("SEH guard caught a structured exception in handler for command '%s' (id: %s) — skipping post-processing"),
                 *Cmd, *Id);
             Result = FHaybaHandlerResult::Err(FString::Printf(
                 TEXT("handler crashed (SEH): command '%s' faulted with a structured exception ")
                 TEXT("(e.g. a null/stale UObject in the handler, or a stale Python-registered editor delegate ")
-                TEXT("firing on a GC'd target). The editor was kept alive by the SEH guard and the operation ")
-                TEXT("did NOT complete."),
+                TEXT("firing on a GC'd target). Post-processing was skipped and the operation did NOT complete. ")
+                TEXT("Treat the editor session as suspect and restart it before mutating more state."),
                 *Cmd));
         }
     }
 
     const int64 DurMs = (int64)((FPlatformTime::Seconds() - Start) * 1000.0);
+
+    if (bHandlerCrashed)
+    {
+        // Never continue through transaction completion, diff capture, panel
+        // dispatch, response trimming, or a second params serialization after
+        // a native fault. The 2026-08-09 test_run incident proved that the old
+        // "keep going" path could immediately double-fault in HashParams and
+        // terminate UE despite the SEH guard's recovery claim.
+        if (bDestructive && GEditor && !bInPIE)
+        {
+            GEditor->CancelTransaction(0);
+        }
+        FHaybaJournalEntry CrashEntry{
+            FDateTime::UtcNow(), Cmd, ParamsHash, DurMs, false, Result.ErrorMessage };
+        FHaybaMCPSecurityManager::Get().Journal(CrashEntry);
+        return MakeErrorResponse(Id, Result.ErrorMessage);
+    }
 
     if (bDestructive && GEditor && !bInPIE)
     {
@@ -997,7 +1030,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
 
     // Journal using result directly — no need to re-parse the response string
     FHaybaJournalEntry E{ FDateTime::UtcNow(), Cmd,
-        FHaybaMCPSecurityManager::HashParams(Params), DurMs, Result.bOk, Result.ErrorMessage };
+        ParamsHash, DurMs, Result.bOk, Result.ErrorMessage };
     FHaybaMCPSecurityManager::Get().Journal(E);
 
     // Push scene-shaped results into their dedicated panels.

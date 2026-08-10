@@ -30,6 +30,8 @@
 #include "Misc/Guid.h"
 #include "Misc/ScopeLock.h"
 #include "Dom/JsonObject.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPBuild, Log, All);
 
@@ -275,15 +277,12 @@ namespace
      * {status:"done", ok, exit_code, output} once complete; {status:"unknown"}
      * if the id is not in the registry (e.g. it predates the last editor start).
      */
-    TSharedRef<FJsonObject> Cmd_BuildStatus(const TSharedPtr<FJsonObject>& Params)
+    FHaybaHandlerResult Cmd_BuildStatus(const TSharedPtr<FJsonObject>& Params)
     {
         FString JobId;
         if (!Params.IsValid() || !Params->TryGetStringField(TEXT("job_id"), JobId) || JobId.IsEmpty())
         {
-            TSharedRef<FJsonObject> Err = MakeShared<FJsonObject>();
-            Err->SetBoolField(TEXT("ok"), false);
-            Err->SetStringField(TEXT("error"), TEXT("build_status requires { job_id: string }"));
-            return Err;
+            return FHaybaHandlerResult::Err(TEXT("build_status requires { job_id: string }"));
         }
 
         const FHaybaJobState Job = FHaybaMCPJobRegistry::Get().GetJob(JobId);
@@ -292,11 +291,8 @@ namespace
         Out->SetStringField(TEXT("job_id"), JobId);
         if (!Job.bFound)
         {
-            Out->SetBoolField(TEXT("ok"), false);
-            Out->SetStringField(TEXT("status"), TEXT("unknown"));
-            Out->SetStringField(TEXT("error"),
-                FString::Printf(TEXT("no job with id %s (it may predate the last editor restart)"), *JobId));
-            return Out;
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("no job with id %s (it may predate the last editor restart)"), *JobId));
         }
 
         Out->SetStringField(TEXT("command"), Job.OpName);
@@ -305,16 +301,60 @@ namespace
             Out->SetStringField(TEXT("status"), TEXT("done"));
             Out->SetBoolField(TEXT("ok"), Job.ExitCode == 0);
             Out->SetNumberField(TEXT("exit_code"), Job.ExitCode);
-            // For builds this is the log tail; for test_run it is a JSON string
-            // of {passed, failed, skipped, elapsed_seconds, total}.
-            Out->SetStringField(TEXT("output"), Job.Output);
+            if (Job.OpName == TEXT("test_run"))
+            {
+                // Test output is structured JSON. Returning it as a string made
+                // the generic 512-character response limiter clip large runs
+                // before callers could see their pass/fail totals. Parse it and
+                // promote scalar release evidence to the top level; arrays stay
+                // available under test_results and are independently bounded.
+                TSharedPtr<FJsonObject> TestResults;
+                const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Job.Output);
+                if (!FJsonSerializer::Deserialize(Reader, TestResults) || !TestResults.IsValid())
+                {
+                    return FHaybaHandlerResult::Err(
+                        TEXT("test_run completed but produced invalid structured results"));
+                }
+
+                const TArray<TSharedPtr<FJsonValue>>* Passed = nullptr;
+                const TArray<TSharedPtr<FJsonValue>>* Failed = nullptr;
+                const TArray<TSharedPtr<FJsonValue>>* Skipped = nullptr;
+                TestResults->TryGetArrayField(TEXT("passed"), Passed);
+                TestResults->TryGetArrayField(TEXT("failed"), Failed);
+                TestResults->TryGetArrayField(TEXT("skipped"), Skipped);
+
+                double PassedCount = Passed ? Passed->Num() : 0;
+                double FailedCount = Failed ? Failed->Num() : 0;
+                double SkippedCount = Skipped ? Skipped->Num() : 0;
+                TestResults->TryGetNumberField(TEXT("passed_count"), PassedCount);
+                TestResults->TryGetNumberField(TEXT("failed_count"), FailedCount);
+                TestResults->TryGetNumberField(TEXT("skipped_count"), SkippedCount);
+
+                double Total = PassedCount + FailedCount + SkippedCount;
+                TestResults->TryGetNumberField(TEXT("total"), Total);
+                const bool bAllPassed =
+                    FailedCount == 0 && SkippedCount == 0 && PassedCount == Total;
+
+                Out->SetNumberField(TEXT("passed_count"), PassedCount);
+                Out->SetNumberField(TEXT("failed_count"), FailedCount);
+                Out->SetNumberField(TEXT("skipped_count"), SkippedCount);
+                Out->SetNumberField(TEXT("total"), Total);
+                Out->SetBoolField(TEXT("all_passed"), bAllPassed);
+                Out->SetBoolField(TEXT("ok"), Job.ExitCode == 0 && bAllPassed);
+                Out->SetObjectField(TEXT("test_results"), TestResults);
+            }
+            else
+            {
+                // Build jobs expose their bounded process-log tail as text.
+                Out->SetStringField(TEXT("output"), Job.Output);
+            }
         }
         else
         {
             Out->SetStringField(TEXT("status"), TEXT("running"));
             Out->SetBoolField(TEXT("ok"), true);
         }
-        return Out;
+        return FHaybaHandlerResult::Ok(Out);
     }
 
     // -------- per-command builders --------
@@ -458,7 +498,7 @@ FHaybaHandlerResult FHaybaMCPBuildHandler::Handle(const FString& Cmd, const TSha
     }
     if (Cmd == TEXT("build_status"))
     {
-        return FHaybaHandlerResult::Ok(Cmd_BuildStatus(Params));
+        return Cmd_BuildStatus(Params);
     }
 
     return FHaybaHandlerResult::Err(FString::Printf(

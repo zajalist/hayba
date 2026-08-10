@@ -5,6 +5,13 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 ## [Unreleased]
 
 ### Added
+- Production audio authoring and verification: typed create/inspect/set/save
+  support for SoundClass, SoundMix class overrides, SoundConcurrency,
+  SoundAttenuation, SoundSubmix, and SoundWave import/playback settings;
+  retained 2D AudioComponent control; active sound/physical voice inspection;
+  Audio Mixer spectrum metering; and synchronous, filesystem-verified submix
+  WAV capture. Asset edits have an explicit save boundary and every runtime
+  lifecycle command fails cleanly when its target/device state is unavailable.
 - `editor_save_all_and_quit` — saves every dirty package, refuses to quit while
   anything is still unsaved (a dirty asset otherwise parks the editor on a
   modal save prompt with the MCP port already closed), then issues
@@ -41,6 +48,21 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   ones not written yet. This was the root cause under #334.
 
 ### Fixed
+- `test_run` now accepts the same case-insensitive filter/category selectors as
+  `test_list`, rejects empty, ambiguous, and zero-match requests instead of
+  returning false-green empty results, and reports explicit pass/fail/skip
+  counts through `build_status`. Test status is structured rather than clipped
+  by the generic 512-character string limit; malformed results and unknown job
+  ids fail at the handler boundary.
+- Native handler SEH containment no longer resumes the normal transaction,
+  hashing, UI, and response-building tail after a structured exception. The
+  params hash is captured before dispatch and a fault returns immediately with
+  the editor session marked suspect, preventing the observed recovery-path
+  double fault.
+- UE 5.8 clean builds no longer fail to link the foliage add/paint tools.
+  `AInstancedFoliageActor::AddInstances` is declared on a `MinimalAPI` class
+  but not exported; Hayba now performs the same append through exported
+  `AInstancedFoliageActor` / `FFoliageInfo` APIs and preserves count readback.
 - CI on `main` had been red for 26 days, from three causes that were not the code under test: `room-grammar.test.ts` read a developer-machine absolute path (`D:/UnrealEngine/...`); `registerDeferredRouting` **created** its embedding backend instead of accepting one, so the default probe's Hugging Face model download blew a 5s test timeout on any cold cache; and `no-stub-wrappers` correctly flagged three Blueprint commands that had been implemented but left on the stub denylist. `probeOllama` also had no timeout at all.
 - **One visual sidecar.** Two FastAPI apps, both titled `hayba-visual-sidecar`, both defaulting to `:7821`, serving disjoint endpoints, with a single Node adapter calling across both — so whichever process ran, half the adapter was broken. Merged ([ADR-0006](docs/adr/0006-one-visual-sidecar.md)). The app also could not be *imported* without multi-GB weights, which took `/health` down with it; model imports are now lazy and `/health` reports real capability rather than a hardcoded `"clip": true`.
 - The TCP receive buffer was never cleared on socket close, so a half-arrived frame from a dead editor prefixed the next connection's first frame and desynced the stream. Surfaced by extracting `FrameDecoder`.

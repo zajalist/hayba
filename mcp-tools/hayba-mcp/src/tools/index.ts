@@ -12,6 +12,7 @@ import { registerDeferredRouting, type CapturedTool, type RoutingHandle, type De
 import { defineTool, registerTool, recordToolSchema, type ToolDescriptor } from './register-tool.js';
 import { resolveAliases } from './param-aliases.js';
 import { TOOL_ALIASES } from './tool-aliases.js';
+import { AUDIO_DESCRIPTORS } from './audio/audio-tools.js';
 import {
   guardHandlerWithEvidence,
   isUnderEvidenceContract,
@@ -3392,6 +3393,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
 // presence and the no-drift / no-duplicate invariants.
 export const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   ...HANDWRITTEN_STANDARD_DESCRIPTORS,
+  ...AUDIO_DESCRIPTORS,
   ...VALIDATOR_DESCRIPTORS,
   ...PLUMB_DESCRIPTORS,
   ...PCG_DESCRIPTORS,
@@ -3399,6 +3401,7 @@ export const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     new Set(
       [
         ...HANDWRITTEN_STANDARD_DESCRIPTORS,
+        ...AUDIO_DESCRIPTORS,
         ...VALIDATOR_DESCRIPTORS,
         ...PLUMB_DESCRIPTORS,
         ...PCG_DESCRIPTORS,

@@ -28,7 +28,7 @@ namespace
                 Keys.Sort();
                 for (const FString& Key : Keys)
                 {
-                    const TSharedPtr<FJsonValue> Child = Obj->Values.FindRef(UE::FSharedString(*Key));
+                    const TSharedPtr<FJsonValue> Child = Obj->TryGetField(Key);
                     if (!Child.IsValid())
                     {
                         W.WriteNull(Key);
@@ -137,7 +137,7 @@ FString FHaybaMCPSecurityManager::HashParams(const TSharedPtr<FJsonObject>& Para
         Keys.Sort();
         for (const FString& Key : Keys)
         {
-            const TSharedPtr<FJsonValue> Child = Params->Values.FindRef(UE::FSharedString(*Key));
+            const TSharedPtr<FJsonValue> Child = Params->TryGetField(Key);
             if (!Child.IsValid())
             {
                 Writer->WriteNull(Key);

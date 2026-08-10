@@ -37,6 +37,7 @@ public class HaybaMCPToolkit : ModuleRules
             "UnrealEd", "EditorFramework", "Projects", "ToolMenus", "WorkspaceMenuStructure",
             "ContentBrowser", "AdvancedPreviewScene", "RenderCore", "GraphEditor",
             "Sockets", "Networking", "Json", "JsonUtilities",
+            "AudioMixer",
             "PCG", "HTTP",
             // Underground tunnel PCG node — build a continuous (seamless) swept
             // dynamic mesh from a spline. FDynamicMesh3 = GeometryCore; UDynamicMesh = GeometryFramework.
@@ -80,6 +81,7 @@ public class HaybaMCPToolkit : ModuleRules
                 "BehaviorTreeEditor",
                 "UMGEditor",
                 "AutomationController",
+                "AudioEditor",
             });
         }
 
