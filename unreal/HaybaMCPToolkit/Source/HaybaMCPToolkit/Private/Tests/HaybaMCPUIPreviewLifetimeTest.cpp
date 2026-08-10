@@ -10,9 +10,11 @@
 #include "Framework/Application/SlateApplication.h"
 #include "HAL/FileManager.h"
 #include "HaybaMCPCommandHandler.h"
+#include "RenderingThread.h"
 #include "RHIGlobals.h"
 #include "UObject/GarbageCollection.h"
 #include "UObject/ObjectKey.h"
+#include "UObject/StrongObjectPtr.h"
 #include "UObject/UObjectHash.h"
 #include "UObject/UObjectIterator.h"
 #include "WidgetBlueprint.h"
@@ -37,7 +39,7 @@ namespace
             TSharedPtr<FJsonObject> Create = MakeShared<FJsonObject>();
             Create->SetStringField(TEXT("path"), PackagePath);
             Create->SetStringField(TEXT("name"), Name);
-            Create->SetStringField(TEXT("parent_class"), TEXT("UserWidget"));
+            Create->SetStringField(TEXT("parent_class"), TEXT("/Script/UMG.UserWidget"));
             const FHaybaHandlerResult Created = Handler.Handle(TEXT("ui_create_widget"), Create);
             if (!Created.bOk || !Created.Data.IsValid()) return;
             Created.Data->TryGetStringField(TEXT("path"), ObjectPath);
@@ -66,17 +68,28 @@ namespace
      */
     struct FScopedIsolatedUndoBuffer
     {
-        UTransactor* Original = nullptr;
+        // Swapping GEditor->Trans removes the editor engine's only reflected
+        // reference to its real transactor. A raw pointer is NOT sufficient
+        // across the forced GC below: the first version of this regression
+        // collected the user's transactor, restored a dangling pointer, then
+        // crashed when checking its queue. Keep both sides GC-visible.
+        TStrongObjectPtr<UTransactor> Original;
+        ITransaction* OriginalUndo = nullptr;
         UTransBuffer* Isolated = nullptr;
 
         FScopedIsolatedUndoBuffer()
+            : Original(GEditor ? GEditor->Trans : nullptr)
+            , OriginalUndo(GUndo)
         {
-            if (!GEditor) return;
-            Original = GEditor->Trans;
+            if (!GEditor || !Original.IsValid()) return;
+            // Never splice an automation buffer into a user gesture already in
+            // progress. The caller treats this as a hard test precondition.
+            if (Original->IsActive() || OriginalUndo != nullptr) return;
             Isolated = NewObject<UTransBuffer>(GetTransientPackage());
             Isolated->AddToRoot();
             Isolated->Initialize(8 * 1024 * 1024);
             GEditor->Trans = Isolated;
+            GUndo = nullptr;
         }
 
         ~FScopedIsolatedUndoBuffer()
@@ -84,12 +97,13 @@ namespace
             if (!GEditor || !Isolated) return;
             if (Isolated->IsActive()) Isolated->Cancel(0);
             Isolated->Reset(FText::FromString(TEXT("Hayba preview-lifetime test teardown")));
-            GEditor->Trans = Original;
+            GEditor->Trans = Original.Get();
+            GUndo = OriginalUndo;
             Isolated->RemoveFromRoot();
             Isolated->MarkAsGarbage();
         }
 
-        bool IsValid() const { return Original != nullptr && Isolated != nullptr; }
+        bool IsValid() const { return Original.IsValid() && Isolated != nullptr; }
     };
 
     TSet<FObjectKey> SnapshotTransientWorlds()
@@ -112,13 +126,18 @@ bool FHaybaMCPUIPreviewLifetimeTest::RunTest(const FString& Parameters)
 {
     if (!GEditor || !GEditor->Trans)
     {
-        AddWarning(TEXT("A live editor transaction system is required for the preview lifetime regression"));
-        return true;
+        AddError(TEXT("A live editor transaction system is required for the preview lifetime regression"));
+        return false;
     }
     if (!FSlateApplication::IsInitialized())
     {
-        AddWarning(TEXT("Slate is not initialized; preview lifetime cannot be exercised in this process"));
-        return true;
+        AddError(TEXT("Slate is not initialized; preview lifetime cannot be exercised in this process"));
+        return false;
+    }
+    if (GEditor->Trans->IsActive() || GUndo != nullptr)
+    {
+        AddError(TEXT("Preview lifetime regression refuses to interrupt an active editor transaction"));
+        return false;
     }
 
     // Plan Mode and Undo History have different safety boundaries. Compilation
@@ -131,38 +150,49 @@ bool FHaybaMCPUIPreviewLifetimeTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("ordinary UMG mutation still receives undo support"),
         FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(TEXT("ui_set_widget_properties")));
 
-    FHaybaMCPUIHandler Handler;
-    FScratchPreviewWidget Scratch(Handler);
-    if (!TestTrue(TEXT("representative WBP was created and compiled"), Scratch.bValid))
-    {
-        Scratch.Cleanup();
-        return true;
-    }
-
-    UWidgetBlueprint* WBP = LoadObject<UWidgetBlueprint>(nullptr, *Scratch.ObjectPath);
-    if (!TestNotNull(TEXT("representative WBP remains loadable"), WBP))
-    {
-        Scratch.Cleanup();
-        return true;
-    }
-    WBP->AddToRoot();
-
-    UTransactor* const UserUndoBuffer = GEditor->Trans;
+    // Independent belt-and-suspenders pin for the post-scope assertions. The
+    // scoped swap owns its own strong pin too; this one makes it impossible for
+    // a future teardown refactor to turn the final diagnostic into a UAF.
+    const TStrongObjectPtr<UTransactor> UserUndoBuffer(GEditor->Trans);
     const int32 UserUndoCount = UserUndoBuffer->GetQueueLength();
 
     {
         FScopedIsolatedUndoBuffer UndoScope;
         if (!TestTrue(TEXT("isolated undo buffer was installed"), UndoScope.IsValid()))
         {
-            WBP->RemoveFromRoot();
+            return true;
+        }
+
+        // Install isolation before creating any temporary asset. DeleteAsset
+        // may reset the active transaction buffer even on a partial-creation
+        // failure, so every success and cleanup path belongs inside this scope.
+        FHaybaMCPUIHandler Handler;
+        FScratchPreviewWidget Scratch(Handler);
+        if (!TestTrue(TEXT("representative WBP was created and compiled"), Scratch.bValid))
+        {
             Scratch.Cleanup();
             return true;
         }
+
+        UWidgetBlueprint* WBP = LoadObject<UWidgetBlueprint>(nullptr, *Scratch.ObjectPath);
+        if (!TestNotNull(TEXT("representative WBP remains loadable"), WBP))
+        {
+            Scratch.Cleanup();
+            return true;
+        }
+        WBP->AddToRoot();
+        const bool bWasTransactional = WBP->HasAnyFlags(RF_Transactional);
+        const FVector2D OriginalThumbnailSize = WBP->ThumbnailCustomSize;
+        WBP->SetFlags(RF_Transactional);
 
         // Seed one unrelated undo record. Every preview and GC below must leave
         // this record present and still undoable.
         GEditor->BeginTransaction(FText::FromString(TEXT("Existing user edit")));
         WBP->Modify();
+        // Modify() only snapshots transactional objects; mutate a serialized
+        // property too so the seed cannot be optimized into an empty/transient
+        // transaction on a fresh disposable host.
+        WBP->ThumbnailCustomSize.X = OriginalThumbnailSize.X + 1.0;
         GEditor->EndTransaction();
         const int32 SeededQueueLength = UndoScope.Isolated->GetQueueLength();
         FText UndoBefore;
@@ -257,17 +287,33 @@ bool FHaybaMCPUIPreviewLifetimeTest::RunTest(const FString& Parameters)
             AddInfo(TEXT("NullRHI: lifecycle/transaction checks ran; PNG draw is covered in the real-RHI editor gauntlet"));
         }
 
-        CollectGarbage(RF_NoFlags);
+        // Repeat collection and reference validation. The first cycle proves
+        // teardown; later cycles catch stale references or deferred cleanup
+        // that only becomes visible after an additional purge.
+        for (int32 GCCycle = 0; GCCycle < 3; ++GCCycle)
+        {
+            // Pump both Slate and the render thread before every purge so later
+            // cycles exercise deferred widget/resource teardown rather than
+            // merely checking the same null weak pointers again.
+            FSlateApplication::Get().Tick();
+            FlushRenderingCommands();
+            CollectGarbage(RF_NoFlags);
 
-        for (int32 Index = 0; Index < PreviewInstances.Num(); ++Index)
-        {
-            TestNull(*FString::Printf(TEXT("preview %d is released by GC"), Index),
-                PreviewInstances[Index].Get(/*bEvenIfPendingKill=*/true));
-        }
-        for (int32 Index = 0; Index < CompilePreviewWorlds.Num(); ++Index)
-        {
-            TestNull(*FString::Printf(TEXT("compile preview world %d is released by GC"), Index),
-                CompilePreviewWorlds[Index].Get(/*bEvenIfPendingKill=*/true));
+            TestTrue(*FString::Printf(TEXT("original editor transactor survives GC cycle %d"), GCCycle),
+                UndoScope.Original.IsValid());
+            TestTrue(*FString::Printf(TEXT("original editor transactor identity survives GC cycle %d"), GCCycle),
+                UndoScope.Original.Get() == UserUndoBuffer.Get());
+
+            for (int32 Index = 0; Index < PreviewInstances.Num(); ++Index)
+            {
+                TestNull(*FString::Printf(TEXT("preview %d is released by GC cycle %d"), Index, GCCycle),
+                    PreviewInstances[Index].Get(/*bEvenIfPendingKill=*/true));
+            }
+            for (int32 Index = 0; Index < CompilePreviewWorlds.Num(); ++Index)
+            {
+                TestNull(*FString::Printf(TEXT("compile preview world %d is released by GC cycle %d"), Index, GCCycle),
+                    CompilePreviewWorlds[Index].Get(/*bEvenIfPendingKill=*/true));
+            }
         }
 
         FText UndoAfter;
@@ -276,16 +322,24 @@ bool FHaybaMCPUIPreviewLifetimeTest::RunTest(const FString& Parameters)
         TestTrue(TEXT("existing history remains undoable after preview/GC"),
             UndoScope.Isolated->CanUndo(&UndoAfter));
         TestEqual(TEXT("existing undo title is unchanged"), UndoAfter.ToString(), UndoBefore.ToString());
+
+        // DeleteAsset may reset the currently installed transaction buffer to
+        // release references to the asset being removed. Keep the isolated
+        // buffer installed through cleanup so the test cannot prove the user's
+        // history survived and then erase it one line later.
+        WBP->ThumbnailCustomSize = OriginalThumbnailSize;
+        if (!bWasTransactional) WBP->ClearFlags(RF_Transactional);
+        WBP->RemoveFromRoot();
+        UndoScope.Isolated->Reset(FText::FromString(TEXT("Release scratch WBP before cleanup")));
+        Scratch.Cleanup();
     }
 
     // The private-buffer gauntlet must not have replaced or mutated the user's
     // actual global undo history.
-    TestTrue(TEXT("real undo buffer pointer is restored"), GEditor->Trans == UserUndoBuffer);
+    TestTrue(TEXT("real undo buffer pointer is restored"), GEditor->Trans == UserUndoBuffer.Get());
     TestEqual(TEXT("real undo queue is untouched"),
         UserUndoBuffer->GetQueueLength(), UserUndoCount);
 
-    WBP->RemoveFromRoot();
-    Scratch.Cleanup();
     return true;
 }
 

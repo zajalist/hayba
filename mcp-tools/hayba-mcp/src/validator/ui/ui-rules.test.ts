@@ -184,6 +184,48 @@ describe('text fit rules', () => {
     expect(found).toHaveLength(1);
     expect(found[0]!.severity).toBe('error');
   });
+
+  it('does not report an empty runtime label whose own visibility is Collapsed', () => {
+    const label = widget({
+      name: 'RuntimeState',
+      visibility: 'ESlateVisibility::Collapsed',
+      text_info: { text: '', font_size: 18 },
+    });
+    const result = validateUiSnapshot(snapshot([rootPanel, label]), { strictness: 'standard' });
+    expect(findingsFor(result, 'ui_text_empty')).toHaveLength(0);
+  });
+
+  it('treats a label below a Collapsed ancestor as effectively Collapsed', () => {
+    const runtimePanel = widget({
+      name: 'RuntimePanel',
+      class: 'VerticalBox',
+      parent: 'Root',
+      is_panel: true,
+      child_count: 1,
+      visibility: 'Collapsed',
+    });
+    const label = widget({
+      name: 'RuntimeState',
+      parent: 'RuntimePanel',
+      visibility: 'ESlateVisibility::Visible',
+      text_info: { text: '   ', font_size: 18 },
+    });
+    const result = validateUiSnapshot(snapshot([rootPanel, runtimePanel, label]), { strictness: 'standard' });
+    expect(findingsFor(result, 'ui_text_empty')).toHaveLength(0);
+  });
+
+  it.each(['ESlateVisibility::Hidden', 'Hidden', 'ESlateVisibility::Visible', 'NotCollapsed'])(
+    'still reports empty text whose effective visibility is %s',
+    (visibility) => {
+      const label = widget({
+        name: 'EmptyState',
+        visibility,
+        text_info: { text: '', font_size: 18 },
+      });
+      const result = validateUiSnapshot(snapshot([rootPanel, label]), { strictness: 'standard' });
+      expect(findingsFor(result, 'ui_text_empty')).toHaveLength(1);
+    },
+  );
 });
 
 describe('platform-sensitive thresholds', () => {
@@ -235,10 +277,558 @@ describe('safe areas', () => {
     expect(findingsFor(result, 'ui_outside_title_safe')).toHaveLength(0);
   });
 
+  it('does not apply console safe margins along a ScrollBox scroll axis', () => {
+    const scroll = widget({
+      name: 'GoodsScroll',
+      class: 'ScrollBox',
+      parent: 'Root',
+      is_panel: true,
+      is_scroll_box: true,
+      scroll_orientation: 'Vertical',
+      child_count: 1,
+      x: 100,
+      y: 100,
+      width: 500,
+      height: 400,
+    });
+    const row = widget({
+      name: 'LateGoodRow',
+      parent: 'GoodsScroll',
+      x: 100,
+      y: 1200,
+      width: 500,
+      height: 200,
+      text_info: { text: 'Grain', font_size: 32 },
+    });
+    const result = validateUiSnapshot(snapshot([rootPanel, scroll, row]), {
+      platform: 'console',
+      strictness: 'standard',
+    });
+    expect(findingsFor(result, 'ui_outside_action_safe').map((f) => f.widget)).not.toContain('LateGoodRow');
+    expect(findingsFor(result, 'ui_outside_title_safe').map((f) => f.widget)).not.toContain('LateGoodRow');
+  });
+
+  it('still reports visible scroller content in the console top and bottom safe margins', () => {
+    const topScroll = widget({
+      name: 'TopScroll',
+      class: 'ScrollBox',
+      parent: 'Root',
+      is_panel: true,
+      is_scroll_box: true,
+      scroll_orientation: 'Vertical',
+      child_count: 2,
+      x: 100,
+      y: 0,
+      width: 500,
+      height: 400,
+    });
+    const bottomScroll = widget({
+      name: 'BottomScroll',
+      class: 'ScrollBox',
+      parent: 'Root',
+      is_panel: true,
+      is_scroll_box: true,
+      scroll_orientation: 'Vertical',
+      child_count: 2,
+      x: 100,
+      y: 680,
+      width: 500,
+      height: 400,
+    });
+    const topAction = widget({
+      name: 'TopAction', parent: 'TopScroll', x: 200, y: 0, width: 200, height: 40,
+      text_info: { text: 'Unsafe top', font_size: 32 },
+    });
+    const topTitle = widget({
+      name: 'TopTitle', parent: 'TopScroll', x: 200, y: 40, width: 200, height: 40,
+      text_info: { text: 'Near top', font_size: 32 },
+    });
+    const bottomTitle = widget({
+      name: 'BottomTitle', parent: 'BottomScroll', x: 200, y: 1000, width: 200, height: 40,
+      text_info: { text: 'Near bottom', font_size: 32 },
+    });
+    const bottomAction = widget({
+      name: 'BottomAction', parent: 'BottomScroll', x: 200, y: 1040, width: 200, height: 40,
+      text_info: { text: 'Unsafe bottom', font_size: 32 },
+    });
+    const result = validateUiSnapshot(
+      snapshot([rootPanel, topScroll, bottomScroll, topAction, topTitle, bottomTitle, bottomAction]),
+      { platform: 'console', strictness: 'standard' },
+    );
+    expect(findingsFor(result, 'ui_outside_action_safe').map((f) => f.widget)).toEqual([
+      'TopAction',
+      'BottomAction',
+    ]);
+    expect(findingsFor(result, 'ui_outside_title_safe').map((f) => f.widget)).toEqual([
+      'TopTitle',
+      'BottomTitle',
+    ]);
+  });
+
+  it('judges both safe-margin edges of the visible clipped slice', () => {
+    const scroll = widget({
+      name: 'FullHeightScroll',
+      class: 'ScrollBox',
+      parent: 'Root',
+      is_panel: true,
+      is_scroll_box: true,
+      scroll_orientation: 'Vertical',
+      child_count: 1,
+      x: 100,
+      y: 0,
+      width: 500,
+      height: 1080,
+    });
+    const row = widget({
+      name: 'OppositeEdgeDefect',
+      parent: 'FullHeightScroll',
+      x: 200,
+      y: -100,
+      width: 200,
+      height: 1170,
+      text_info: { text: 'Tall malformed row', font_size: 32 },
+    });
+    const result = validateUiSnapshot(snapshot([rootPanel, scroll, row]), {
+      platform: 'console',
+      strictness: 'standard',
+    });
+    const action = findingsFor(result, 'ui_outside_action_safe').find((f) => f.widget === 'OppositeEdgeDefect');
+    expect(action?.message).toContain('bottom edge');
+    expect(action?.message).toContain('top edge');
+  });
+
+  it('reports partially visible rows clipped at the top and bottom of a ScrollBox', () => {
+    const topScroll = widget({
+      name: 'PartialTopScroll',
+      class: 'ScrollBox',
+      parent: 'Root',
+      is_panel: true,
+      is_scroll_box: true,
+      scroll_orientation: 'Vertical',
+      child_count: 1,
+      x: 100,
+      y: 0,
+      width: 500,
+      height: 400,
+    });
+    const bottomScroll = widget({
+      name: 'PartialBottomScroll',
+      class: 'ScrollBox',
+      parent: 'Root',
+      is_panel: true,
+      is_scroll_box: true,
+      scroll_orientation: 'Vertical',
+      child_count: 1,
+      x: 100,
+      y: 680,
+      width: 500,
+      height: 400,
+    });
+    const partialTop = widget({
+      name: 'PartialTopRow',
+      parent: 'PartialTopScroll',
+      x: 200,
+      y: -150,
+      width: 200,
+      height: 200,
+      text_info: { text: 'Partly visible top', font_size: 32 },
+    });
+    const partialBottom = widget({
+      name: 'PartialBottomRow',
+      parent: 'PartialBottomScroll',
+      x: 200,
+      y: 1030,
+      width: 200,
+      height: 200,
+      text_info: { text: 'Partly visible bottom', font_size: 32 },
+    });
+    const result = validateUiSnapshot(snapshot([rootPanel, topScroll, bottomScroll, partialTop, partialBottom]), {
+      platform: 'console',
+      strictness: 'standard',
+    });
+    expect(findingsFor(result, 'ui_outside_action_safe').map((f) => f.widget)).toEqual([
+      'PartialTopRow',
+      'PartialBottomRow',
+    ]);
+    expect(
+      findingsFor(result, 'ui_outside_action_safe').find((f) => f.widget === 'PartialBottomRow')?.data,
+    ).toMatchObject({
+      safe_area_projection: { vertical: { start: 1030, end: 1080 } },
+    });
+  });
+
+  it('preserves cross-axis action-safe and title-safe findings inside a vertical ScrollBox', () => {
+    const scroll = widget({
+      name: 'GoodsScroll',
+      class: 'ScrollBox',
+      parent: 'Root',
+      is_panel: true,
+      is_scroll_box: true,
+      scroll_orientation: 'Vertical',
+      child_count: 2,
+      x: 0,
+      y: 100,
+      width: 500,
+      height: 400,
+    });
+    const actionCross = widget({
+      name: 'ActionCrossAxis',
+      parent: 'GoodsScroll',
+      x: 10,
+      y: 120,
+      width: 200,
+      height: 40,
+      text_info: { text: 'Unsafe', font_size: 32 },
+    });
+    const titleCross = widget({
+      name: 'TitleCrossAxis',
+      parent: 'GoodsScroll',
+      x: 80,
+      y: 180,
+      width: 200,
+      height: 40,
+      text_info: { text: 'Near edge', font_size: 32 },
+    });
+    const result = validateUiSnapshot(snapshot([rootPanel, scroll, actionCross, titleCross]), {
+      platform: 'console',
+      strictness: 'standard',
+    });
+    expect(findingsFor(result, 'ui_outside_action_safe').map((f) => f.widget)).toEqual(['ActionCrossAxis']);
+    expect(findingsFor(result, 'ui_outside_title_safe').map((f) => f.widget)).toEqual(['TitleCrossAxis']);
+  });
+
+  it('preserves cross-axis safe findings while content is far along a vertical scroll axis', () => {
+    const scroll = widget({
+      name: 'FarVerticalScroll',
+      class: 'ScrollBox',
+      parent: 'Root',
+      is_panel: true,
+      is_scroll_box: true,
+      scroll_orientation: 'Vertical',
+      child_count: 2,
+      x: 0,
+      y: 100,
+      width: 500,
+      height: 400,
+    });
+    const actionCross = widget({
+      name: 'FarVerticalActionCross',
+      parent: 'FarVerticalScroll',
+      x: 10,
+      y: 1200,
+      width: 200,
+      height: 40,
+      text_info: { text: 'Unsafe when scrolled in', font_size: 32 },
+    });
+    const titleCross = widget({
+      name: 'FarVerticalTitleCross',
+      parent: 'FarVerticalScroll',
+      x: 80,
+      y: 1300,
+      width: 200,
+      height: 40,
+      text_info: { text: 'Near edge when scrolled in', font_size: 32 },
+    });
+    const result = validateUiSnapshot(snapshot([rootPanel, scroll, actionCross, titleCross]), {
+      platform: 'console', strictness: 'standard',
+    });
+    expect(findingsFor(result, 'ui_outside_action_safe').map((f) => f.widget)).toEqual([
+      'FarVerticalActionCross',
+    ]);
+    expect(findingsFor(result, 'ui_outside_title_safe').map((f) => f.widget)).toEqual([
+      'FarVerticalTitleCross',
+    ]);
+  });
+
+  it('preserves cross-axis safe findings while content is far along a horizontal scroll axis', () => {
+    const scroll = widget({
+      name: 'FarHorizontalScroll',
+      class: 'ScrollBox',
+      parent: 'Root',
+      is_panel: true,
+      is_scroll_box: true,
+      scroll_orientation: 'Horizontal',
+      child_count: 2,
+      x: 100,
+      y: 0,
+      width: 500,
+      height: 400,
+    });
+    const actionCross = widget({
+      name: 'FarHorizontalActionCross',
+      parent: 'FarHorizontalScroll',
+      x: 2000,
+      y: 10,
+      width: 200,
+      height: 40,
+      text_info: { text: 'Unsafe when scrolled in', font_size: 32 },
+    });
+    const titleCross = widget({
+      name: 'FarHorizontalTitleCross',
+      parent: 'FarHorizontalScroll',
+      x: 2300,
+      y: 40,
+      width: 200,
+      height: 40,
+      text_info: { text: 'Near edge when scrolled in', font_size: 32 },
+    });
+    const result = validateUiSnapshot(snapshot([rootPanel, scroll, actionCross, titleCross]), {
+      platform: 'console', strictness: 'standard',
+    });
+    expect(findingsFor(result, 'ui_outside_action_safe').map((f) => f.widget)).toEqual([
+      'FarHorizontalActionCross',
+    ]);
+    expect(findingsFor(result, 'ui_outside_title_safe').map((f) => f.widget)).toEqual([
+      'FarHorizontalTitleCross',
+    ]);
+  });
+
   it('reports a widget hanging off the screen', () => {
     const label = widget({ name: 'Offscreen', x: 1850, y: 100, width: 300, height: 40 });
     const result = validateUiSnapshot(snapshot([rootPanel, label]), { strictness: 'relaxed' });
     expect(findingsFor(result, 'ui_outside_screen')).toHaveLength(1);
+  });
+
+  it('does not report a vertically scrolled descendant below the screen', () => {
+    const scroll = widget({
+      name: 'GoodsScroll',
+      class: 'ScrollBox',
+      parent: 'Root',
+      is_panel: true,
+      is_scroll_box: true,
+      scroll_orientation: 'Vertical',
+      child_count: 1,
+      x: 100,
+      y: 100,
+      width: 500,
+      height: 400,
+    });
+    const row = widget({
+      name: 'LateGoodRow',
+      class: 'TradeGoodRow',
+      parent: 'GoodsScroll',
+      x: 100,
+      y: 1120,
+      width: 500,
+      height: 200,
+    });
+    const result = validateUiSnapshot(snapshot([rootPanel, scroll, row]), { strictness: 'standard' });
+    expect(findingsFor(result, 'ui_outside_screen')).toHaveLength(0);
+    expect(findingsFor(result, 'ui_child_exceeds_parent')).toHaveLength(0);
+  });
+
+  it('still reports the ScrollBox itself when it hangs off-screen', () => {
+    const scroll = widget({
+      name: 'GoodsScroll',
+      class: 'ScrollBox',
+      parent: 'Root',
+      is_panel: true,
+      is_scroll_box: true,
+      scroll_orientation: 'Vertical',
+      child_count: 1,
+      x: 1850,
+      y: 100,
+      width: 500,
+      height: 400,
+    });
+    const row = widget({
+      name: 'LateGoodRow',
+      class: 'TradeGoodRow',
+      parent: 'GoodsScroll',
+      x: 1850,
+      y: 1200,
+      width: 500,
+      height: 200,
+    });
+    const result = validateUiSnapshot(snapshot([rootPanel, scroll, row]), { strictness: 'standard' });
+    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.widget)).toEqual(['GoodsScroll']);
+  });
+
+  it('reports cross-axis overflow inside a vertical ScrollBox', () => {
+    const scroll = widget({
+      name: 'GoodsScroll',
+      class: 'ScrollBox',
+      parent: 'Root',
+      is_panel: true,
+      is_scroll_box: true,
+      scroll_orientation: 'Vertical',
+      child_count: 1,
+      x: 100,
+      y: 100,
+      width: 500,
+      height: 400,
+    });
+    const row = widget({
+      name: 'TooWideRow',
+      class: 'TradeGoodRow',
+      parent: 'GoodsScroll',
+      x: 1700,
+      y: 900,
+      width: 500,
+      height: 200,
+    });
+    const result = validateUiSnapshot(snapshot([rootPanel, scroll, row]), { strictness: 'standard' });
+    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.widget)).toContain('TooWideRow');
+    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.widget)).toContain('TooWideRow');
+  });
+
+  it('uses a horizontal ScrollBox orientation without suppressing vertical defects', () => {
+    const scroll = widget({
+      name: 'CardCarousel',
+      class: 'ScrollBox',
+      parent: 'Root',
+      is_panel: true,
+      is_scroll_box: true,
+      scroll_orientation: 'Horizontal',
+      child_count: 2,
+      x: 100,
+      y: 100,
+      width: 500,
+      height: 300,
+    });
+    const expectedHorizontalOverflow = widget({
+      name: 'FarCard',
+      parent: 'CardCarousel',
+      x: 2100,
+      y: 100,
+      width: 300,
+      height: 250,
+    });
+    const brokenVerticalOverflow = widget({
+      name: 'DroppedCard',
+      parent: 'CardCarousel',
+      x: 900,
+      y: 1200,
+      width: 300,
+      height: 250,
+    });
+    const result = validateUiSnapshot(
+      snapshot([rootPanel, scroll, expectedHorizontalOverflow, brokenVerticalOverflow]),
+      { strictness: 'standard' },
+    );
+    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.widget)).not.toContain('FarCard');
+    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.widget)).not.toContain('FarCard');
+    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.widget)).toContain('DroppedCard');
+    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.widget)).toContain('DroppedCard');
+  });
+
+  it('still reports a grandchild that exceeds an ordinary panel inside a ScrollBox', () => {
+    const scroll = widget({
+      name: 'GoodsScroll',
+      class: 'ScrollBox',
+      parent: 'Root',
+      is_panel: true,
+      is_scroll_box: true,
+      scroll_orientation: 'Vertical',
+      child_count: 1,
+      x: 100,
+      y: 100,
+      width: 500,
+      height: 400,
+    });
+    const row = widget({
+      name: 'GoodRow',
+      class: 'VerticalBox',
+      parent: 'GoodsScroll',
+      is_panel: true,
+      child_count: 1,
+      x: 100,
+      y: 700,
+      width: 500,
+      height: 200,
+    });
+    const brokenChild = widget({
+      name: 'BrokenFactors',
+      parent: 'GoodRow',
+      x: 100,
+      y: 950,
+      width: 500,
+      height: 100,
+    });
+    const result = validateUiSnapshot(snapshot([rootPanel, scroll, row, brokenChild]), {
+      strictness: 'standard',
+    });
+    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.widget)).toContain('BrokenFactors');
+  });
+
+  it('fails closed for a pre-orientation ScrollBox snapshot', () => {
+    const scroll = widget({
+      name: 'LegacyScroll',
+      class: 'ScrollBox',
+      parent: 'Root',
+      is_panel: true,
+      child_count: 1,
+      x: 100,
+      y: 100,
+      width: 500,
+      height: 400,
+    });
+    const row = widget({
+      name: 'LegacyOffscreenRow',
+      parent: 'LegacyScroll',
+      x: 2100,
+      y: 1200,
+      width: 500,
+      height: 200,
+    });
+    const result = validateUiSnapshot(snapshot([rootPanel, scroll, row]), { strictness: 'standard' });
+    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.widget)).toContain('LegacyOffscreenRow');
+    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.widget)).toContain('LegacyOffscreenRow');
+  });
+
+  it('fails closed when a current ScrollBox fact omits its required orientation', () => {
+    const scroll = widget({
+      name: 'MalformedScroll',
+      class: 'ScrollBox',
+      parent: 'Root',
+      is_panel: true,
+      is_scroll_box: true,
+      child_count: 1,
+      x: 100,
+      y: 100,
+      width: 500,
+      height: 400,
+    });
+    const row = widget({
+      name: 'MalformedOffscreenRow',
+      parent: 'MalformedScroll',
+      x: 2100,
+      y: 1200,
+      width: 500,
+      height: 200,
+    });
+    const result = validateUiSnapshot(snapshot([rootPanel, scroll, row]), { strictness: 'standard' });
+    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.widget)).toContain('MalformedOffscreenRow');
+    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.widget)).toContain('MalformedOffscreenRow');
+  });
+
+  it('honours an explicit non-ScrollBox identity over a misleading legacy class name', () => {
+    const notScroll = widget({
+      name: 'ContradictoryPanel',
+      class: 'ScrollBox',
+      parent: 'Root',
+      is_panel: true,
+      is_scroll_box: false,
+      scroll_orientation: 'Vertical',
+      child_count: 1,
+      x: 100,
+      y: 100,
+      width: 500,
+      height: 400,
+    });
+    const row = widget({
+      name: 'ContradictoryOffscreenRow',
+      parent: 'ContradictoryPanel',
+      x: 100,
+      y: 1200,
+      width: 500,
+      height: 200,
+    });
+    const result = validateUiSnapshot(snapshot([rootPanel, notScroll, row]), { strictness: 'standard' });
+    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.widget)).toContain('ContradictoryOffscreenRow');
+    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.widget)).toContain(
+      'ContradictoryOffscreenRow',
+    );
   });
 });
 

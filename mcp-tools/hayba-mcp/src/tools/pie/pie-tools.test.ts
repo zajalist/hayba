@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
 import { scriptedUe, type ScriptedUe } from '../testing/scripted-ue.js';
-import { UeToolError } from '../tool-executor.js';
+import { NON_IDEMPOTENT, UeToolError } from '../tool-executor.js';
 import { pieAxisHandler } from './pie-axis.js';
 import { pieClickWidgetHandler } from './pie-click-widget.js';
 import { pieMouseHandler } from './pie-mouse.js';
@@ -25,6 +25,10 @@ import { pieScreenshotHandler } from './pie-screenshot.js';
 import { pieTypeTextHandler } from './pie-type-text.js';
 import { pieSetTextHandler } from './pie-set-text.js';
 import { pieWidgetTreeHandler } from './pie-widget-tree.js';
+import { pieActorListHandler } from './pie-actor-list.js';
+import { pieActorInspectHandler } from './pie-actor-inspect.js';
+import { pieProjectWorldHandler } from './pie-project-world.js';
+import { pieClickActorHandler } from './pie-click-actor.js';
 import type { SessionManager, ToolHandler } from '../types.js';
 
 // PIE wrappers ignore the session; a stub keeps the ToolHandler signature honest.
@@ -39,15 +43,49 @@ function payload(r: { content: Array<{ text?: string }> }): Record<string, unkno
 
 /** Each wrapper, the command it must send, and arguments that satisfy its schema. */
 const TOOLS: Array<{ name: string; cmd: string; handler: ToolHandler; args: Record<string, unknown> }> = [
-  { name: 'pie_click_widget', cmd: 'editor_pie_click_widget', handler: pieClickWidgetHandler, args: { match: 'Start Game' } },
+  {
+    name: 'pie_click_widget',
+    cmd: 'editor_pie_click_widget',
+    handler: pieClickWidgetHandler,
+    args: { match: 'Start Game' },
+  },
   { name: 'pie_widget_tree', cmd: 'editor_pie_widget_tree', handler: pieWidgetTreeHandler, args: {} },
   { name: 'pie_mouse', cmd: 'editor_pie_mouse', handler: pieMouseHandler, args: { x: 100, y: 200 } },
   { name: 'pie_press_key', cmd: 'editor_pie_press_key', handler: piePressKeyHandler, args: { key: 'SpaceBar' } },
   { name: 'pie_type_text', cmd: 'editor_pie_type_text', handler: pieTypeTextHandler, args: { text: 'hello' } },
-  { name: 'pie_set_text', cmd: 'editor_pie_set_text', handler: pieSetTextHandler, args: { text: 'hello', match: 'Username' } },
+  {
+    name: 'pie_set_text',
+    cmd: 'editor_pie_set_text',
+    handler: pieSetTextHandler,
+    args: { text: 'hello', match: 'Username' },
+  },
   // NB: `key` is an axis KEY (Gamepad_LeftX), not an input-mapping axis name.
   { name: 'pie_axis', cmd: 'editor_pie_axis', handler: pieAxisHandler, args: { key: 'Gamepad_LeftX', value: 1 } },
   { name: 'pie_screenshot', cmd: 'editor_pie_screenshot', handler: pieScreenshotHandler, args: {} },
+  {
+    name: 'pie_actor_list',
+    cmd: 'editor_pie_actor_list',
+    handler: pieActorListHandler,
+    args: { class_filter: 'Road' },
+  },
+  {
+    name: 'pie_actor_inspect',
+    cmd: 'editor_pie_actor_inspect',
+    handler: pieActorInspectHandler,
+    args: { actor_path: '/Game/UEDPIE_0_Map.Map:PersistentLevel.Road_1' },
+  },
+  {
+    name: 'pie_project_world',
+    cmd: 'editor_pie_project_world',
+    handler: pieProjectWorldHandler,
+    args: { world_location: [1, 2, 3] },
+  },
+  {
+    name: 'pie_click_actor',
+    cmd: 'editor_pie_click_actor',
+    handler: pieClickActorHandler,
+    args: { actor_path: '/Game/UEDPIE_0_Map.Map:PersistentLevel.Road_1' },
+  },
 ];
 
 describe('every PIE wrapper reaches the command it claims', () => {
@@ -116,7 +154,11 @@ describe('arguments survive the trip', () => {
 
 describe('pie_screenshot check_only polls the file the caller named', () => {
   it('forwards filename on a check_only poll', async () => {
-    ue = scriptedUe().replies('editor_pie_screenshot', { filename: 'D:/Saved/HaybaPIE_x.png', captured: true, requested: false });
+    ue = scriptedUe().replies('editor_pie_screenshot', {
+      filename: 'D:/Saved/HaybaPIE_x.png',
+      captured: true,
+      requested: false,
+    });
     await pieScreenshotHandler({ filename: 'D:/Saved/HaybaPIE_x.png', check_only: true }, session);
     expect(ue.paramsFor('editor_pie_screenshot')).toMatchObject({
       filename: 'D:/Saved/HaybaPIE_x.png',
@@ -154,6 +196,138 @@ describe('bad arguments are rejected before reaching UE', () => {
     ue = scriptedUe().replies('editor_pie_press_key', { ok: true });
     const r = await piePressKeyHandler({}, session);
     expect(r.isError).toBe(true);
+    expect(ue.calls).toHaveLength(0);
+  });
+
+  it('PIE actor inspection requires exactly one reference', async () => {
+    ue = scriptedUe().replies('editor_pie_actor_inspect', { ok: true });
+    expect((await pieActorInspectHandler({}, session)).isError).toBe(true);
+    expect((await pieActorInspectHandler({ actor_id: 'Road_1', actor_label: 'Road' }, session)).isError).toBe(true);
+    expect(ue.calls).toHaveLength(0);
+  });
+
+  it('world projection refuses cross-target ambiguity', async () => {
+    ue = scriptedUe().replies('editor_pie_project_world', { ok: true });
+    const r = await pieProjectWorldHandler({ actor_id: 'Road_1', world_location: [0, 0, 0] }, session);
+    expect(r.isError).toBe(true);
+    expect(ue.calls).toHaveLength(0);
+  });
+
+  it('actor interaction requires one exact actor target and rejects irrelevant fields', async () => {
+    ue = scriptedUe().replies('editor_pie_click_actor', { ok: true });
+    expect((await pieClickActorHandler({}, session)).isError).toBe(true);
+    expect((await pieClickActorHandler({ actor_id: 'Road_1', actor_label: 'Road' }, session)).isError).toBe(true);
+    expect(
+      (
+        await pieClickActorHandler(
+          {
+            actor_id: 'Road_1',
+            world_location: [0, 0, 0],
+          },
+          session,
+        )
+      ).isError,
+    ).toBe(true);
+    expect(ue.calls).toHaveLength(0);
+  });
+
+  it('runtime list enforces response caps and rejects unknown fields', async () => {
+    ue = scriptedUe().replies('editor_pie_actor_list', { actors: [] });
+    expect((await pieActorListHandler({ limit: 51 }, session)).isError).toBe(true);
+    expect((await pieActorListHandler({ world: 'editor' }, session)).isError).toBe(true);
+    expect(ue.calls).toHaveLength(0);
+  });
+});
+
+describe('runtime scene grounding forwards typed defaults and exact identifiers', () => {
+  it('list supplies bounded paging defaults', async () => {
+    ue = scriptedUe().replies('editor_pie_actor_list', { actors: [], total_matched: 0 });
+    await pieActorListHandler({ name_filter: 'Road' }, session);
+    expect(ue.paramsFor('editor_pie_actor_list')).toMatchObject({ name_filter: 'Road', offset: 0, limit: 50 });
+  });
+
+  it('inspect preserves a PIE path and component page', async () => {
+    ue = scriptedUe().replies('editor_pie_actor_inspect', { actor: {}, components: [] });
+    const actorPath = '/Game/UEDPIE_1_WarRoom.WarRoom:PersistentLevel.BP_RoadSpline_C_7';
+    await pieActorInspectHandler(
+      { pie_instance: 1, actor_path: actorPath, component_offset: 50, component_limit: 50 },
+      session,
+    );
+    expect(ue.paramsFor('editor_pie_actor_inspect')).toMatchObject({
+      pie_instance: 1,
+      actor_path: actorPath,
+      component_offset: 50,
+      component_limit: 50,
+    });
+  });
+
+  it('project requests visibility evidence by default', async () => {
+    ue = scriptedUe().replies('editor_pie_project_world', { viewport: {}, absolute: {}, visibility_hit: {} });
+    await pieProjectWorldHandler({ actor_id: 'Road_1' }, session);
+    expect(ue.paramsFor('editor_pie_project_world')).toMatchObject({
+      actor_id: 'Road_1',
+      player_index: 0,
+      trace_visibility: true,
+    });
+    expect(ue.paramsFor('editor_pie_project_world')).not.toHaveProperty('sample');
+  });
+
+  it('actor interaction forwards exact routing defaults and is retry-unsafe', async () => {
+    ue = scriptedUe().replies('editor_pie_click_actor', {
+      dispatch: { pressed: true, released: true },
+    });
+    const actorPath = '/Game/UEDPIE_1_WarRoom.WarRoom:PersistentLevel.BP_RoadSpline_C_7';
+    await pieClickActorHandler({ pie_instance: 1, actor_path: actorPath }, session);
+    expect(ue.paramsFor('editor_pie_click_actor')).toEqual({
+      pie_instance: 1,
+      actor_path: actorPath,
+      player_index: 0,
+      action: 'click',
+    });
+    expect(NON_IDEMPOTENT.has('editor_pie_click_actor')).toBe(true);
+  });
+
+  it('actor hover and invalid sample combinations fail closed before UE dispatch', async () => {
+    ue = scriptedUe().replies('editor_pie_click_actor', { dispatch: { pressed: true } });
+    expect(
+      (
+        await pieClickActorHandler(
+          {
+            actor_id: 'Road_1',
+            component_name: 'RoadCollision',
+            sample: 'component_location',
+            action: 'hover',
+          },
+          session,
+        )
+      ).isError,
+    ).toBe(true);
+    expect(ue.calls).toHaveLength(0);
+
+    expect(
+      (
+        await pieClickActorHandler(
+          { actor_id: 'Road_1', component_name: 'RoadCollision', sample: 'actor_location' },
+          session,
+        )
+      ).isError,
+    ).toBe(true);
+    expect(ue.calls).toHaveLength(0);
+  });
+
+  it('rejects semantically irrelevant sample combinations', async () => {
+    ue = scriptedUe().replies('editor_pie_project_world', { ok: true });
+    expect(
+      (await pieProjectWorldHandler({ world_location: [0, 0, 0], sample: 'bounds_origin' }, session)).isError,
+    ).toBe(true);
+    expect(
+      (
+        await pieProjectWorldHandler(
+          { actor_id: 'Road_1', component_name: 'Spline', sample: 'actor_location' },
+          session,
+        )
+      ).isError,
+    ).toBe(true);
     expect(ue.calls).toHaveLength(0);
   });
 });

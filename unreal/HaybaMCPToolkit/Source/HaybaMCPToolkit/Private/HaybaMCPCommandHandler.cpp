@@ -366,6 +366,9 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("actor_call_function"),
         TEXT("editor_run_console_command"),
         TEXT("editor_save_all_and_quit"),
+        // Runtime gameplay interaction. It is plan-gated and retry-unsafe even
+        // though it intentionally creates no editor undo record below.
+        TEXT("editor_pie_click_actor"),
         // Actor lifecycle + mutation
         TEXT("actor_spawn"),
         TEXT("actor_delete"),
@@ -514,7 +517,7 @@ bool FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(const FString& Cmd)
     // IsDestructiveCommand for Plan Mode, but do not create an undo record for
     // the compile itself.  Never reset or disable the user's transaction
     // buffer here: that would silently destroy unrelated undo history.
-    if (Cmd == TEXT("ui_compile_widget")) return false;
+    if (Cmd == TEXT("ui_compile_widget") || Cmd == TEXT("editor_pie_click_actor")) return false;
 
     // data_set deliberately performs one bounded scalar copy without Modify(),
     // editor property notifications, or persistence. A global transaction would
@@ -1510,6 +1513,19 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
             // 64K ceiling here is ample and still bounds the frame size.
             Limits.MaxStringChars = 64 * 1024;
             Limits.MaxArrayItems = 200;
+        }
+        else if (Cmd == TEXT("editor_pie_actor_list")
+            || Cmd == TEXT("editor_pie_actor_inspect")
+            || Cmd == TEXT("editor_pie_project_world")
+            || Cmd == TEXT("editor_pie_click_actor"))
+        {
+            // These read-only tools intentionally hand actor_path and
+            // component_path back to the caller as exact follow-up keys. The
+            // generic 512-character ellipsis turns a valid long UE object path
+            // into an identifier that can never resolve. Inputs are capped at
+            // 2048 in both TS and native parsing; matching that ceiling here
+            // preserves round-trip identity while keeping the frame bounded.
+            Limits.MaxStringChars = 2048;
         }
         FHaybaMCPResponseBuilder Builder(Limits);
         TSharedRef<FJsonObject> Trimmed = Builder.Build(DataObj.ToSharedRef());

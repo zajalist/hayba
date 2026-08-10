@@ -47,6 +47,118 @@ function isAncestor(ctx: UiRuleContext, ancestor: string, w: UiWidget): boolean 
   return false;
 }
 
+type ScrollAxes = { horizontal: boolean; vertical: boolean };
+
+function isScrollBox(w: UiWidget): boolean {
+  // is_scroll_box is authoritative for new plugin builds. The class fallback
+  // keeps a newer MCP server compatible with snapshots from an older plugin.
+  if (w.is_scroll_box !== undefined) return w.is_scroll_box;
+  return w.class === 'ScrollBox';
+}
+
+function scrollAxesOf(w: UiWidget): ScrollAxes {
+  if (!isScrollBox(w)) return { horizontal: false, vertical: false };
+  if (w.scroll_orientation === 'Horizontal') return { horizontal: true, vertical: false };
+  if (w.scroll_orientation === 'Vertical') return { horizontal: false, vertical: true };
+  // Old or malformed snapshots do not prove which overflow is intentional.
+  // Keep reporting rather than turn a version mismatch into false-green QA.
+  return { horizontal: false, vertical: false };
+}
+
+/**
+ * Axes along which an ancestor ScrollBox makes overflow expected. When the
+ * native orientation field is absent, no axis is suppressed: only facts the
+ * snapshot actually proves can remove a finding.
+ */
+function scrollAxesFor(ctx: UiRuleContext, w: UiWidget, includeContainerOffscreen = false): ScrollAxes {
+  const axes: ScrollAxes = { horizontal: false, vertical: false };
+  let current = ctx.byName.get(w.parent);
+  const seen = new Set<string>();
+  while (current) {
+    if (seen.has(current.name)) return axes; // malformed snapshot cycle
+    seen.add(current.name);
+
+    if (isScrollBox(current)) {
+      const ownAxes = scrollAxesOf(current);
+      axes.horizontal ||= ownAxes.horizontal;
+      axes.vertical ||= ownAxes.vertical;
+
+      // If the ScrollBox itself is off-screen, its own finding is the useful
+      // one. Do not duplicate that same inherited displacement on every row.
+      if (includeContainerOffscreen && current.laid_out) {
+        const r = rect(current);
+        const { screen_width: sw, screen_height: sh } = ctx.snapshot;
+        if (r.x < 0 || r.x + r.w > sw) axes.horizontal = true;
+        if (r.y < 0 || r.y + r.h > sh) axes.vertical = true;
+      }
+    }
+    current = ctx.byName.get(current.parent);
+  }
+  return axes;
+}
+
+type SafeAreaProjection = {
+  horizontal: { start: number; end: number } | null;
+  vertical: { start: number; end: number } | null;
+};
+
+/**
+ * Per-axis interval that can appear through every ancestor ScrollBox. Keeping
+ * the axes independent matters: a vertically scrolled-off row can still have
+ * a horizontal safe-area defect when the row is scrolled into view.
+ */
+function safeAreaProjectionWithinScrollBoxes(ctx: UiRuleContext, w: UiWidget): SafeAreaProjection {
+  const authored = rect(w);
+  const failClosed = (): SafeAreaProjection => ({
+    horizontal: { start: authored.x, end: authored.x + authored.w },
+    vertical: { start: authored.y, end: authored.y + authored.h },
+  });
+  let horizontal: SafeAreaProjection['horizontal'] = failClosed().horizontal;
+  let vertical: SafeAreaProjection['vertical'] = failClosed().vertical;
+  let current = ctx.byName.get(w.parent);
+  const seen = new Set<string>();
+  while (current) {
+    if (seen.has(current.name)) return failClosed();
+    seen.add(current.name);
+    if (isScrollBox(current)) {
+      if (!current.laid_out) return failClosed();
+      const viewport = rect(current);
+      if (viewport.w <= 0 || viewport.h <= 0) return failClosed();
+      // ScrollBox clips its content to the viewport rectangle on both axes;
+      // orientation controls movement/stacking, not clipping.
+      if (horizontal) {
+        const start = Math.max(horizontal.start, viewport.x);
+        const end = Math.min(horizontal.end, viewport.x + viewport.w);
+        horizontal = end - start > 1 ? { start, end } : null;
+      }
+      if (vertical) {
+        const start = Math.max(vertical.start, viewport.y);
+        const end = Math.min(vertical.end, viewport.y + viewport.h);
+        vertical = end - start > 1 ? { start, end } : null;
+      }
+    }
+    current = ctx.byName.get(current.parent);
+  }
+  return { horizontal, vertical };
+}
+
+function isCollapsedVisibility(visibility: string): boolean {
+  return /(?:^|::)Collapsed$/.test(visibility.trim());
+}
+
+/** Own or inherited Collapsed state. Hidden deliberately does not qualify. */
+function isEffectivelyCollapsed(ctx: UiRuleContext, w: UiWidget): boolean {
+  let current: UiWidget | undefined = w;
+  const seen = new Set<string>();
+  while (current) {
+    if (seen.has(current.name)) return false; // malformed snapshot cycle
+    seen.add(current.name);
+    if (isCollapsedVisibility(current.visibility)) return true;
+    current = ctx.byName.get(current.parent);
+  }
+  return false;
+}
+
 /** Widgets that are siblings (same parent) and both laid out. */
 function siblingPairs(ctx: UiRuleContext, filter: (w: UiWidget) => boolean): Array<[UiWidget, UiWidget]> {
   const pairs: Array<[UiWidget, UiWidget]> = [];
@@ -355,6 +467,7 @@ export const UI_RULES: UiRule[] = [
         if (!isTextWidget(w)) continue;
         const text = w.text_info?.text;
         if (text === undefined || text.trim().length > 0) continue;
+        if (isEffectivelyCollapsed(ctx, w)) continue;
         out.push(
           finding(
             { id: 'ui_text_empty', category: 'ui', severity: 'warning' },
@@ -440,11 +553,16 @@ export const UI_RULES: UiRule[] = [
       for (const w of laidOut(ctx)) {
         if (w.is_panel) continue; // panels legitimately span the screen
         const r = rect(w);
+        const projected = safeAreaProjectionWithinScrollBoxes(ctx, w);
         const violations: string[] = [];
-        if (r.x < marginX) violations.push(`left edge ${round(marginX - r.x)}px inside the margin`);
-        if (r.y < marginY) violations.push(`top edge ${round(marginY - r.y)}px inside the margin`);
-        if (r.x + r.w > sw - marginX) violations.push(`right edge ${round(r.x + r.w - (sw - marginX))}px inside the margin`);
-        if (r.y + r.h > sh - marginY) violations.push(`bottom edge ${round(r.y + r.h - (sh - marginY))}px inside the margin`);
+        if (projected.horizontal && projected.horizontal.start < marginX)
+          violations.push(`left edge ${round(marginX - projected.horizontal.start)}px inside the margin`);
+        if (projected.vertical && projected.vertical.start < marginY)
+          violations.push(`top edge ${round(marginY - projected.vertical.start)}px inside the margin`);
+        if (projected.horizontal && projected.horizontal.end > sw - marginX)
+          violations.push(`right edge ${round(projected.horizontal.end - (sw - marginX))}px inside the margin`);
+        if (projected.vertical && projected.vertical.end > sh - marginY)
+          violations.push(`bottom edge ${round(projected.vertical.end - (sh - marginY))}px inside the margin`);
         if (violations.length === 0) continue;
         out.push(
           finding(
@@ -452,7 +570,7 @@ export const UI_RULES: UiRule[] = [
             `"${w.name}" extends into the ${Math.round(f * 100)}% action-safe margin (${violations.join('; ')}).`,
             `On ${ctx.platform} anything inside this margin can be cropped by the display. Move it at least ${Math.ceil(Math.max(marginX, marginY))}px from the screen edges, or parent it under a SafeZone widget which does this automatically.`,
             w.name,
-            { rect: r, margin_x: round(marginX), margin_y: round(marginY) },
+            { rect: r, safe_area_projection: projected, margin_x: round(marginX), margin_y: round(marginY) },
           ),
         );
       }
@@ -480,12 +598,19 @@ export const UI_RULES: UiRule[] = [
         // Only critical content — readable text and things you can press.
         if (!isTextWidget(w) && !w.is_interactive) continue;
         const r = rect(w);
+        const projected = safeAreaProjectionWithinScrollBoxes(ctx, w);
         const insideTitle =
-          r.x < marginX || r.y < marginY || r.x + r.w > sw - marginX || r.y + r.h > sh - marginY;
+          (projected.horizontal !== null &&
+            (projected.horizontal.start < marginX || projected.horizontal.end > sw - marginX)) ||
+          (projected.vertical !== null &&
+            (projected.vertical.start < marginY || projected.vertical.end > sh - marginY));
         if (!insideTitle) continue;
         // The action-safe rule already reports the worse violation.
         const insideAction =
-          r.x < actionX || r.y < actionY || r.x + r.w > sw - actionX || r.y + r.h > sh - actionY;
+          (projected.horizontal !== null &&
+            (projected.horizontal.start < actionX || projected.horizontal.end > sw - actionX)) ||
+          (projected.vertical !== null &&
+            (projected.vertical.start < actionY || projected.vertical.end > sh - actionY));
         if (insideAction) continue;
         out.push(
           finding(
@@ -493,7 +618,7 @@ export const UI_RULES: UiRule[] = [
             `"${w.name}" is inside the ${Math.round(f * 100)}% title-safe margin.`,
             'Text and interactive elements should stay within the title-safe area so they are fully readable on every display. Non-critical decoration may live out here.',
             w.name,
-            { rect: r, margin_x: round(marginX), margin_y: round(marginY) },
+            { rect: r, safe_area_projection: projected, margin_x: round(marginX), margin_y: round(marginY) },
           ),
         );
       }
@@ -514,8 +639,12 @@ export const UI_RULES: UiRule[] = [
         const r = rect(w);
         if (r.w <= 0 || r.h <= 0) continue;
         const fullyOff = r.x + r.w <= 0 || r.y + r.h <= 0 || r.x >= sw || r.y >= sh;
-        const partlyOff = r.x < 0 || r.y < 0 || r.x + r.w > sw || r.y + r.h > sh;
+        const offHorizontal = r.x < 0 || r.x + r.w > sw;
+        const offVertical = r.y < 0 || r.y + r.h > sh;
+        const partlyOff = offHorizontal || offVertical;
         if (!partlyOff) continue;
+        const scrollAxes = scrollAxesFor(ctx, w, true);
+        if ((!offHorizontal || scrollAxes.horizontal) && (!offVertical || scrollAxes.vertical)) continue;
         out.push(
           finding(
             { id: 'ui_outside_screen', category: 'ui', severity: 'error' },
@@ -682,7 +811,16 @@ export const UI_RULES: UiRule[] = [
         const overflowBottom = r.y + r.h - (rp.y + rp.h);
         const overflowLeft = rp.x - r.x;
         const overflowTop = rp.y - r.y;
-        const worst = Math.max(overflowRight, overflowBottom, overflowLeft, overflowTop);
+        const worstHorizontal = Math.max(overflowRight, overflowLeft);
+        const worstVertical = Math.max(overflowBottom, overflowTop);
+        // A ScrollBox is allowed to lay out its direct children beyond its own
+        // viewport along the scroll axis. A grandchild exceeding an ordinary
+        // row/panel is a separate layout defect and must remain visible.
+        const scrollAxes = scrollAxesOf(parent);
+        const worst = Math.max(
+          scrollAxes.horizontal ? Number.NEGATIVE_INFINITY : worstHorizontal,
+          scrollAxes.vertical ? Number.NEGATIVE_INFINITY : worstVertical,
+        );
         if (worst <= 1) continue;
         out.push(
           finding(

@@ -153,6 +153,9 @@ export const NON_IDEMPOTENT = new Set<string>([
   // Saves packages and terminates the only UE transport; never retry after a
   // lost response because the first call may already have scheduled exit.
   'editor_save_all_and_quit',
+  // A world click can select, move, attack or open game state. Never repeat it
+  // after a lost response; the first dispatch may already have landed.
+  'editor_pie_click_actor',
   // GAS
   'gas_create_ability',
   'gas_create_effect',

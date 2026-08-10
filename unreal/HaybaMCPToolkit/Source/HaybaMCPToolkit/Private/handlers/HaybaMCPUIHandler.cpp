@@ -3656,6 +3656,14 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleLayoutSnapshot(const TSharedPtr<FJ
             Widget->IsA<UEditableTextBox>() || Widget->IsA<UMultiLineEditableTextBox>();
         Entry->SetBoolField(TEXT("is_interactive"), bInteractive);
         Entry->SetBoolField(TEXT("is_focusable"), ResolveIsFocusable(Widget));
+        const UScrollBox* ScrollBox = Cast<UScrollBox>(Widget);
+        Entry->SetBoolField(TEXT("is_scroll_box"), ScrollBox != nullptr);
+        if (ScrollBox)
+        {
+            Entry->SetStringField(
+                TEXT("scroll_orientation"),
+                ScrollBox->GetOrientation() == Orient_Horizontal ? TEXT("Horizontal") : TEXT("Vertical"));
+        }
 
         if (const FHaybaUIWidgetGeom* G = Geoms.Find(Widget->GetName()))
         {
