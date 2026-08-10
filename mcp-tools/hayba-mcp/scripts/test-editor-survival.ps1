@@ -119,7 +119,7 @@ $PendingAcceptanceMatrix = @(
     [pscustomobject]@{ issue = '#383'; state = 'pending_opt_in'; required = 'sentinel absence across native journal/log/panel/MCP/report artifacts' },
     [pscustomobject]@{ issue = '#387'; state = 'pending_opt_in'; required = 'real-RHI camera/UMG/viewport render, cancel/disconnect/overlap, render-then-graceful-quit' },
     [pscustomobject]@{ issue = '#406'; state = 'pending_opt_in'; required = 'all UMG mutations plus hostile inconsistent fixtures, cleanup, compile-log and crash-signature proof' },
-    [pscustomobject]@{ issue = '#365-response'; state = 'needs_native_test_hook'; required = 'oversized response and outbound socket backpressure without allocating hostile handler output' }
+    [pscustomobject]@{ issue = '#365-response'; state = 'pending_opt_in'; required = 'execute Hayba.MCP.Transport.OutboundAdmissionAndAccounting, then prove a real stalled reader is disconnected and a fresh ping succeeds' }
 )
 $CaseCatalog = @(
     'world_switch_new_blank_map', 'world_switch_load_map', 'self_socket_deadlock',
@@ -1205,14 +1205,17 @@ function Stop-OwnedEditorWithEvidence {
         throw 'ping transport_limits were not the active TCP server snapshot'
     }
     $ActiveMaxRequestBytes = Get-RequiredTransportLimit $rawLimits 'max_request_bytes' 65536 16777216
-    $maxResponseBytes = Get-RequiredTransportLimit $rawLimits 'max_response_bytes' 65536 16777216
+    $maxResponseBytes = Get-RequiredTransportLimit $rawLimits 'max_response_bytes' 65536 67108864
     $ConfiguredMaxClients = Get-RequiredTransportLimit $rawLimits 'max_clients' 1 256
     $maxPendingCommands = Get-RequiredTransportLimit $rawLimits 'max_pending_commands' 1 1024
     $ActiveMaxJsonNestingDepth = Get-RequiredTransportLimit $rawLimits 'max_json_nesting_depth' 8 256
     $FrameReadTimeoutMs = Get-RequiredTransportLimit $rawLimits 'frame_read_timeout_ms' 100 60000
     $sendTimeoutMs = Get-RequiredTransportLimit $rawLimits 'send_timeout_ms' 100 60000
     $maxPipelined = Get-RequiredTransportLimit $rawLimits 'max_pipelined_requests_per_client' 1 1024
-    $maxQueuedResponseChars = Get-RequiredTransportLimit $rawLimits 'max_queued_response_chars_per_client' 65536 16777216
+    $maxQueuedResponseChars = Get-RequiredTransportLimit $rawLimits 'max_queued_response_chars_per_client' 65536 67108864
+    $maxOutboundMemoryBytes = Get-RequiredTransportLimit $rawLimits 'max_outbound_memory_bytes_per_client' 262144 268435456
+    $maxGlobalOutboundMemoryBytes = Get-RequiredTransportLimit $rawLimits 'max_global_outbound_memory_bytes' 262144 268435456
+    if ($rawLimits.outbound_budget_includes_in_flight -ne $true) { throw 'TCP outbound budget does not include in-flight responses' }
     $PipelinedRequestProbeCount = $maxPipelined + 1
     $ActiveTransportLimits = [pscustomobject]@{
         applies = 'active_tcp_server_snapshot'
@@ -1225,6 +1228,9 @@ function Stop-OwnedEditorWithEvidence {
         send_timeout_ms = $sendTimeoutMs
         max_pipelined_requests_per_client = $maxPipelined
         max_queued_response_chars_per_client = $maxQueuedResponseChars
+        max_outbound_memory_bytes_per_client = $maxOutboundMemoryBytes
+        max_global_outbound_memory_bytes = $maxGlobalOutboundMemoryBytes
+        outbound_budget_includes_in_flight = $true
     }
     if ($MaxCaseMs -le ($FrameReadTimeoutMs + 1500)) {
         throw "MaxCaseMs (${MaxCaseMs}) must exceed the configured frame-read timeout (${FrameReadTimeoutMs}) by at least 1500ms"

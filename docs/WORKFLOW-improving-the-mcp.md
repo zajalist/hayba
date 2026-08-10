@@ -183,11 +183,16 @@ receive deadline is for the whole framed request, not each byte, so a slow
 client cannot drip-feed forever and occupy every connection slot. Users may tune
 them under **Project Settings → Plugins → Hayba MCP Toolkit → Transport Safety**;
 an edited config file is clamped again in code. `ping` reports the configured
-values under `transport_limits` and labels them
-`captured_at_tcp_server_start`, because changing them does not race a live
-worker—the next editor/TCP restart applies them.
+values under `transport_limits` and labels them `active_tcp_server_snapshot`,
+because changing them does not race a live worker—the next editor/TCP restart
+applies them. That snapshot also surfaces the derived per-client and global
+outbound-memory ceilings and states that they include the response currently
+blocked in the socket writer, not only items still waiting in its queue.
 
-The response cap is also an allocation boundary. Do not raise it merely to make
+The response cap is also an allocation boundary. Per-client and server-global
+RAII leases are both coupled to that cap and remain held through send completion,
+so many stalled clients cannot each retain a full queue plus an unaccounted
+in-flight response. Do not raise it merely to make
 an unbounded property dump fit. Paginate ordinary data. For images, prefer a
 file-backed response (`inline_image:false` / `out_path` where supported) and
 return bounded metadata; use inline base64 only when its complete encoded frame

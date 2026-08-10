@@ -91,7 +91,7 @@ the exact tagged process data and `-TakeOwnership`.
 | Issue | Generic/native evidence | Additional opt-in live acceptance |
 |---|---|---|
 | #18 | Not covered by hostile suite | MetaSound create/add/connect/set/compile/list readback, then cleanup and filesystem/crash/log proof. |
-| #365 | Framing, strict UTF-8/NUL/nesting, total read deadline, connection/global/pipeline accounting, disconnect recovery | Oversized response and real outbound backpressure still need a native non-allocating test hook; do not synthesize an 8 MiB handler result in the generic suite. |
+| #365 | Framing, strict UTF-8/NUL/nesting, total read deadline, disconnect recovery, native non-allocating response admission, exactly-once lifecycle reservations, and coupled per-client/global outbound-memory leases retained through send completion | Execute `Hayba.MCP.Transport.OutboundAdmissionAndAccounting` from the attested DLL, then hold a real reader stalled through the send deadline and prove a fresh ping succeeds. |
 | #366 | Fatal-pattern rejections, bounded Python execution, denied and self-cleaning allowed Tier-3 filesystem probes, per-case Python nonce | Run the documented live tier matrix from the Python crash-policy audit in a recreated disposable project. |
 | #367 | Typed malformed parameter cases plus native centralized reader tests | Add live handler-specific boundary cases only when their fixtures are self-cleaning. |
 | #368 | PIE start/stop transitions with baseline state and nonce recovery | Exercise any remaining PIE input/world-context cases in the dedicated PIE acceptance run. |
@@ -111,7 +111,10 @@ values and hard-coded defaults are not accepted as live evidence. Stored
 response and exception diagnostics are bounded hashes only, so the #383
 sentinel scan can inspect JSON/JUnit artifacts without those artifacts becoming
 a new plaintext exfiltration surface.
-It cannot safely generate oversized handler output or sustained outbound
-backpressure without a purpose-built native test hook. #365's response-side
-acceptance remains blocked on that hook; the JSON report advertises it as
-`needs_native_test_hook` rather than claiming coverage.
+It intentionally does not synthesize oversized handler output. The native
+`FHaybaMCPOutboundAdmission` hook classifies even `MAX_uint64` without allocating
+an attacker-sized string, and production measures exact UTF-8 bytes before
+constructing `FTCHARToUTF8`. #365 is still live-pending: the native test must run
+from the attested DLL, and an opt-in disposable-editor run must prove a real
+stalled reader is disconnected at the configured send deadline, accounting
+returns to zero, and the next valid ping succeeds.

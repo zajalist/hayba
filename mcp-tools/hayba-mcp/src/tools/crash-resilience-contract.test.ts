@@ -9,6 +9,11 @@ const toolkitPrivate = join(root, 'unreal', 'HaybaMCPToolkit', 'Source', 'HaybaM
 
 const tcpCpp = readFileSync(join(toolkitPrivate, 'HaybaMCPTcpServer.cpp'), 'utf8');
 const tcpHeader = readFileSync(join(toolkitPrivate, 'HaybaMCPTcpServer.h'), 'utf8');
+const joinableWorker = readFileSync(join(toolkitPrivate, 'HaybaMCPJoinableWorker.h'), 'utf8');
+const transportPolicyTest = readFileSync(
+  join(toolkitPrivate, 'Tests', 'HaybaMCPTransportPolicyTest.cpp'),
+  'utf8',
+);
 const moduleCpp = readFileSync(join(toolkitPrivate, 'HaybaMCPModule.cpp'), 'utf8');
 const settingsCpp = readFileSync(join(toolkitPrivate, 'HaybaMCPSettings.cpp'), 'utf8');
 const developerSettings = readFileSync(join(toolkitPrivate, 'HaybaMCPDeveloperSettings.h'), 'utf8');
@@ -38,13 +43,23 @@ describe('TCP crash-resilience contract', () => {
     expect(tcpCpp).not.toContain('[this, Conn]()');
   });
 
-  it('waits for every client worker before module-owned code can unload', () => {
-    expect(tcpHeader).toContain('TArray<TFuture<void>> Workers');
-    expect(tcpCpp.match(/RetainWorker\(Async\(EAsyncExecution::Thread/g)).toHaveLength(2);
+  it('truly joins and destroys every client-worker capture before module-owned code can unload', () => {
+    expect(tcpHeader).toContain('TArray<TUniquePtr<FHaybaMCPJoinableWorker>> Workers');
+    expect(tcpCpp.match(/MakeUnique<FHaybaMCPJoinableWorker>/g)).toHaveLength(2);
     expect(tcpCpp).not.toContain('EAsyncExecution::ThreadPool');
+    expect(tcpCpp).not.toContain('Async(EAsyncExecution::Thread');
+    expect(tcpHeader).not.toContain('TFuture');
     expect(tcpCpp).toContain('WorkersToJoin = MoveTemp(Workers)');
-    expect(tcpCpp).toContain('Worker.Wait()');
-    expect(tcpCpp).toMatch(/Thread->WaitForCompletion\(\)[\s\S]*WorkersToJoin = MoveTemp\(Workers\)/);
+    expect(tcpCpp).toContain('Worker->JoinAndDestroy()');
+    const wait = joinableWorker.indexOf('Thread->WaitForCompletion();');
+    const deleteThread = joinableWorker.indexOf('delete Thread;', wait);
+    const destroyCaptures = joinableWorker.indexOf('Callable.Reset();', deleteThread);
+    expect(wait).toBeGreaterThan(-1);
+    expect(deleteThread).toBeGreaterThan(wait);
+    expect(destroyCaptures).toBeGreaterThan(deleteThread);
+    expect(transportPolicyTest).toContain('true join destroys callable captures before returning');
+    expect(transportPolicyTest).toContain('a fresh worker starts after exact prior teardown');
+    expect(transportPolicyTest).toContain('restart capture also dies before join returns');
     expect(tcpCpp).not.toContain('ClientWorkersDoneEvent');
     expect(tcpCpp).toMatch(/ReadBounded[\s\S]*while \(TotalRead < NumBytes && bIsRunning && Conn->bAlive\)/);
     expect(tcpCpp).toContain('BytesRead <= 0');
@@ -82,8 +97,9 @@ describe('TCP crash-resilience contract', () => {
     expect(tcpCpp).toContain('FHaybaMCPSendDeadlinePolicy Deadline');
     expect(tcpCpp).toContain('Deadline.ShouldAbort(FPlatformTime::Seconds())');
     expect(tcpCpp).toContain('MaxPipelinedRequestsPerClient');
-    expect(tcpCpp).toContain('QueuedChars > MaxQueuedResponseCharsPerClient');
-    expect(tcpCpp).toMatch(/NewPending > MaxPendingCommands[\s\S]*break;/);
+    expect(tcpCpp).toContain('FHaybaMCPOutboundBudgetReservation::TryCreate');
+    expect(tcpCpp).toContain('MaxGlobalOutboundMemoryBytes = static_cast<int64>(MaxResponseBytes) * 4');
+    expect(tcpCpp).toMatch(/GetCountAfterAcquire\(\) > MaxPendingCommands[\s\S]*break;/);
     expect(tcpCpp).toContain('.Listening(MaxClientConnections)');
     expect(tcpCpp).toContain('GetTransportLimitsSnapshot() const');
     expect(legacyCpp).toContain('Module->GetTcpTransportLimits()');
@@ -224,7 +240,9 @@ describe('TCP crash-resilience contract', () => {
     expect(survivalHarness).toContain('native project identity mismatch');
     expect(survivalHarness).toContain('pending_acceptance_matrix');
     expect(survivalHarness).toContain("issue = '#406'");
-    expect(survivalHarness).toContain('needs_native_test_hook');
+    expect(survivalHarness).toContain(
+      'execute Hayba.MCP.Transport.OutboundAdmissionAndAccounting',
+    );
     expect(survivalHarness).not.toContain('fatal_error = $fatalMessage');
     expect(survivalHarness).not.toContain('detail = $fatalMessage');
   });
@@ -241,6 +259,8 @@ describe('TCP crash-resilience contract', () => {
       'send_timeout_ms',
       'max_pipelined_requests_per_client',
       'max_queued_response_chars_per_client',
+      'max_outbound_memory_bytes_per_client',
+      'max_global_outbound_memory_bytes',
     ]) {
       expect(survivalHarness).toContain(`Get-RequiredTransportLimit $rawLimits '${limit}'`);
     }

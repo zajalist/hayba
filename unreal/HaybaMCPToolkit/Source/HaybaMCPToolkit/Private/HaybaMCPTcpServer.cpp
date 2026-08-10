@@ -2,7 +2,7 @@
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPFrameReadPolicy.h"
 #include "HaybaMCPSettings.h"
-#include "Async/Async.h"
+#include "Containers/StringConv.h"
 #include "Serialization/JsonSerializer.h"
 #include "SocketSubsystem.h"
 #include "IPAddress.h"
@@ -15,6 +15,7 @@ namespace
     constexpr int32 SendPollMs = 25;
     constexpr int32 MaxCommandsPerTick = 4;
     constexpr double MaxDrainSeconds = 0.008;
+	FThreadSafeCounter ClientWorkerSerial;
 
     // FUTF8ToTCHAR deliberately replaces malformed sequences with the Unicode
     // replacement character. That is friendly for display text and unsafe for
@@ -102,12 +103,38 @@ namespace
         }
         return Depth == 0 && !bInString && !bEscaped;
     }
+
+	// Exact UTF-8 byte measurement without constructing FTCHARToUTF8's output
+	// buffer. The TCHAR lower-bound check also prevents ConvertedLength from
+	// doing attacker-proportional work once the answer is already oversized.
+	EHaybaMCPResponseAdmission ClassifyResponseUtf8(
+		const FString& Message, int32 MaxBytes, int32& OutUtf8Bytes)
+	{
+		OutUtf8Bytes = 0;
+		const EHaybaMCPResponseAdmission CharLowerBound =
+			FHaybaMCPOutboundAdmission::ClassifyFrameBytes(
+				static_cast<uint64>(Message.Len()), static_cast<uint64>(MaxBytes));
+		if (CharLowerBound != EHaybaMCPResponseAdmission::Accepted)
+		{
+			return CharLowerBound;
+		}
+
+		OutUtf8Bytes = FTCHARToUTF8_Convert::ConvertedLength(*Message, Message.Len());
+		return FHaybaMCPOutboundAdmission::ClassifyFrameBytes(
+			static_cast<uint64>(OutUtf8Bytes), static_cast<uint64>(MaxBytes));
+	}
 }
 
-FHaybaMCPClientConnection::FHaybaMCPClientConnection(FSocket* InSocket)
+FHaybaMCPClientConnection::FHaybaMCPClientConnection(
+	FSocket* InSocket,
+	FHaybaMCPCountReservationPtr InClientReservation,
+	int64 InMaxOutboundMemoryBytes)
 	: Socket(InSocket)
 	, AcceptedAtSeconds(FPlatformTime::Seconds())
+	, OutboundBudget(MakeShared<FHaybaMCPOutboundBudget, ESPMode::ThreadSafe>(
+		InMaxOutboundMemoryBytes))
 	, OutboundEvent(FPlatformProcess::GetSynchEventFromPool(false))
+	, ClientWorkers(2, MoveTemp(InClientReservation))
 {
 }
 
@@ -127,7 +154,9 @@ FHaybaMCPClientConnection::~FHaybaMCPClientConnection()
 }
 
 FHaybaMCPTcpServer::FHaybaMCPTcpServer(int32 InPort)
-    : Port(InPort)
+	: Port(InPort)
+	, GlobalOutboundBudget(MakeShared<FHaybaMCPOutboundBudget, ESPMode::ThreadSafe>(
+		MaxGlobalOutboundMemoryBytes))
 {
 }
 
@@ -147,7 +176,12 @@ TSharedRef<FJsonObject> FHaybaMCPTcpServer::GetTransportLimitsSnapshot() const
     Limits->SetNumberField(TEXT("frame_read_timeout_ms"), FrameReadTimeoutMs);
     Limits->SetNumberField(TEXT("send_timeout_ms"), SendTimeoutMs);
     Limits->SetNumberField(TEXT("max_pipelined_requests_per_client"), MaxPipelinedRequestsPerClient);
-    Limits->SetNumberField(TEXT("max_queued_response_chars_per_client"), MaxQueuedResponseCharsPerClient);
+	// Preserve the older character-named field as a response-sized compatibility
+	// hint; the byte fields below are the enforced memory reservations.
+    Limits->SetNumberField(TEXT("max_queued_response_chars_per_client"), MaxResponseBytes);
+	Limits->SetNumberField(TEXT("max_outbound_memory_bytes_per_client"), MaxOutboundMemoryBytesPerClient);
+	Limits->SetNumberField(TEXT("max_global_outbound_memory_bytes"), MaxGlobalOutboundMemoryBytes);
+	Limits->SetBoolField(TEXT("outbound_budget_includes_in_flight"), true);
     Limits->SetStringField(TEXT("applies"), TEXT("active_tcp_server_snapshot"));
     return Limits;
 }
@@ -179,10 +213,17 @@ bool FHaybaMCPTcpServer::Start()
     MaxJsonNestingDepth = FMath::Clamp(Settings.TcpMaxJsonNestingDepth, 8, 256);
     FrameReadTimeoutMs = FMath::Clamp(Settings.TcpFrameReadTimeoutMs, 500, 30000);
     SendTimeoutMs = FMath::Clamp(Settings.TcpSendTimeoutMs, 100, 30000);
-	// Preserve the aggregate per-client outbound budget as well as the limit on
-	// each individual response frame. FString character counts never exceed the
-	// corresponding UTF-8 byte count, so this is conservative for non-ASCII.
-	MaxQueuedResponseCharsPerClient = MaxResponseBytes;
+	// Couple both per-client and global FString budgets to one maximum response.
+	// This prevents MaxClientConnections peers from each retaining a full queue;
+	// reservations include the response currently blocked inside SendMessage.
+	MaxOutboundMemoryBytesPerClient = static_cast<int64>(MaxResponseBytes) * 4;
+	MaxGlobalOutboundMemoryBytes = static_cast<int64>(MaxResponseBytes) * 4;
+	if (!GlobalOutboundBudget->Configure(MaxGlobalOutboundMemoryBytes))
+	{
+		UE_LOG(LogHaybaMCPTCP, Error,
+			TEXT("Refusing TCP restart while outbound-memory leases are still active"));
+		return false;
+	}
 
     // Deliberately NOT .AsReusable(): the multi-instance port scan in
     // FHaybaMCPModule::StartTcpServer() depends on Listen() FAILING when the
@@ -264,28 +305,31 @@ void FHaybaMCPTcpServer::Shutdown()
 
 	// No new read workers can be added after the listener is joined, and no
 	// response workers can be added after the ticker is removed. Read/send loops
-	// poll bIsRunning, so each future leaves promptly without raw module access.
-	TArray<TFuture<void>> WorkersToJoin;
+	// poll bIsRunning, so each owned thread leaves promptly without raw module access.
+	TArray<TUniquePtr<FHaybaMCPJoinableWorker>> WorkersToJoin;
 	{
 		FScopeLock Lock(&WorkerMutex);
 		WorkersToJoin = MoveTemp(Workers);
 	}
-	for (TFuture<void>& Worker : WorkersToJoin)
+	for (TUniquePtr<FHaybaMCPJoinableWorker>& Worker : WorkersToJoin)
 	{
-		Worker.Wait();
+		if (Worker.IsValid())
+		{
+			Worker->JoinAndDestroy();
+		}
 	}
+	// JoinAndDestroy reset every callable capture; destroying the owners here is
+	// now bookkeeping, not a deferred module-lifetime dependency.
+	WorkersToJoin.Reset();
 
-    // No producer or consumer remains after the listener and exact worker
-    // futures are joined. Drain every unexecuted command and balance both
+    // No producer or consumer remains after the listener and owned workers are
+    // truly joined. Drain every unexecuted command and balance both
     // reservations so a later Start() cannot inherit phantom pressure.
     FHaybaMCPPendingCommand Discarded;
     while (PendingCommands.Dequeue(Discarded))
     {
-        PendingCommandCount.Decrement();
-		if (Discarded.Conn.IsValid())
-		{
-			Discarded.Conn->ResponsesPending.Decrement();
-		}
+		Discarded.PendingReservation.Reset();
+		Discarded.ResponseReservation.Reset();
     }
 
     UE_LOG(LogHaybaMCPTCP, Log, TEXT("TCP server stopped"));
@@ -322,20 +366,58 @@ uint32 FHaybaMCPTcpServer::Run()
 					continue;
 				}
 				ClientSocket->SetNoDelay(true);
-                const int32 NewCount = ClientCount.Increment();
+				FHaybaMCPCountReservationPtr ClientReservation =
+					MakeShared<FHaybaMCPCountReservation, ESPMode::ThreadSafe>(ClientCount);
+				const int32 NewCount = ClientReservation->GetCountAfterAcquire();
                 UE_LOG(LogHaybaMCPTCP, Log, TEXT("Client accepted (active: %d)"), NewCount);
-                FHaybaMCPClientConnectionPtr Conn = MakeShared<FHaybaMCPClientConnection, ESPMode::ThreadSafe>(ClientSocket);
+				FHaybaMCPClientConnectionPtr Conn =
+					MakeShared<FHaybaMCPClientConnection, ESPMode::ThreadSafe>(
+						ClientSocket, MoveTemp(ClientReservation), MaxOutboundMemoryBytesPerClient);
 				TSharedRef<FHaybaMCPTcpServer, ESPMode::ThreadSafe> Self = AsShared();
-				// A bounded reader and serial writer per connection prevent persistent
-				// reads from starving response work in the global task pool.
-				RetainWorker(Async(EAsyncExecution::Thread, [Self, Conn]()
-                {
-					Self->HandleClientConnection(Conn);
-				}));
-				RetainWorker(Async(EAsyncExecution::Thread, [Self, Conn]()
+				// Dedicated owned threads are intentionally not Async(Thread): in UE
+				// 5.8 a future can be ready before TAsyncRunnable/capture deletion.
+				TUniquePtr<FHaybaMCPJoinableWorker> Reader =
+					MakeUnique<FHaybaMCPJoinableWorker>([Self, Conn]()
+					{
+						Self->HandleClientConnection(Conn);
+						Self->CompleteClientWorker(Conn, TEXT("reader"));
+					});
+				const FString ReaderName = FString::Printf(
+					TEXT("HaybaMCPClientReader_%d"), ClientWorkerSerial.Increment());
+				if (!Reader->Start(*ReaderName))
 				{
-					Self->HandleClientWrites(Conn);
-				}));
+					Conn->bAlive = false;
+					if (Conn->Socket)
+					{
+						Conn->Socket->Shutdown(ESocketShutdownMode::ReadWrite);
+					}
+					CompleteClientWorker(Conn, TEXT("reader-start-failed"));
+					CompleteClientWorker(Conn, TEXT("writer-not-started"));
+					UE_LOG(LogHaybaMCPTCP, Error, TEXT("Could not create client reader thread"));
+					continue;
+				}
+				RetainWorker(MoveTemp(Reader));
+
+				TUniquePtr<FHaybaMCPJoinableWorker> Writer =
+					MakeUnique<FHaybaMCPJoinableWorker>([Self, Conn]()
+					{
+						Self->HandleClientWrites(Conn);
+						Self->CompleteClientWorker(Conn, TEXT("writer"));
+					});
+				const FString WriterName = FString::Printf(
+					TEXT("HaybaMCPClientWriter_%d"), ClientWorkerSerial.Increment());
+				if (!Writer->Start(*WriterName))
+				{
+					Conn->bAlive = false;
+					if (Conn->Socket)
+					{
+						Conn->Socket->Shutdown(ESocketShutdownMode::ReadWrite);
+					}
+					CompleteClientWorker(Conn, TEXT("writer-start-failed"));
+					UE_LOG(LogHaybaMCPTCP, Error, TEXT("Could not create client writer thread"));
+					continue;
+				}
+				RetainWorker(MoveTemp(Writer));
             }
         }
     }
@@ -368,10 +450,11 @@ void FHaybaMCPTcpServer::HandleClientConnection(FHaybaMCPClientConnectionPtr Con
         // socket outlives this read loop). NOT AsyncTask(GameThread) — see header:
         // running a handler inside a task-graph task crashes when it re-enters the
         // task graph (python_run -> Interchange import).
-		const int32 NewPending = PendingCommandCount.Increment();
-		if (NewPending > MaxPendingCommands)
+		FHaybaMCPCountReservationPtr PendingReservation =
+			MakeShared<FHaybaMCPCountReservation, ESPMode::ThreadSafe>(PendingCommandCount);
+		if (PendingReservation->GetCountAfterAcquire() > MaxPendingCommands)
 		{
-			PendingCommandCount.Decrement();
+			PendingReservation->Release();
 			UE_LOG(LogHaybaMCPTCP, Warning,
 				TEXT("Disconnecting client: pending-command limit %d reached"),
 				MaxPendingCommands);
@@ -380,8 +463,10 @@ void FHaybaMCPTcpServer::HandleClientConnection(FHaybaMCPClientConnectionPtr Con
 		// Increment before the reader waits for the next frame. Otherwise a
 		// command can be queued just before its old idle deadline and the worker
 		// can close the socket before the game-thread handler sends its response.
-		Conn->ResponsesPending.Increment();
-		PendingCommands.Enqueue(FHaybaMCPPendingCommand{ MoveTemp(Message), Conn });
+		FHaybaMCPCountReservationPtr ResponseReservation =
+			MakeShared<FHaybaMCPCountReservation, ESPMode::ThreadSafe>(Conn->ResponsesPending);
+		PendingCommands.Enqueue(FHaybaMCPPendingCommand{
+			MoveTemp(Message), Conn, MoveTemp(PendingReservation), MoveTemp(ResponseReservation) });
     }
 
     Conn->bAlive = false;
@@ -389,15 +474,13 @@ void FHaybaMCPTcpServer::HandleClientConnection(FHaybaMCPClientConnectionPtr Con
 	{
 		Conn->Socket->Shutdown(ESocketShutdownMode::ReadWrite);
 	}
-	const int32 NewCount = ClientCount.Decrement();
-	UE_LOG(LogHaybaMCPTCP, Log, TEXT("Client disconnected (active: %d)"), NewCount);
 }
 
 void FHaybaMCPTcpServer::HandleClientWrites(FHaybaMCPClientConnectionPtr Conn)
 {
 	while (bIsRunning && Conn.IsValid() && Conn->bAlive)
 	{
-		FString Response;
+		FHaybaMCPOutboundResponse Response;
 		if (!Conn->OutboundResponses.Dequeue(Response))
 		{
 			if (Conn->OutboundEvent)
@@ -407,21 +490,57 @@ void FHaybaMCPTcpServer::HandleClientWrites(FHaybaMCPClientConnectionPtr Conn)
 			continue;
 		}
 
-		Conn->QueuedResponseChars.Subtract(Response.Len());
-		SendMessage(Conn, Response);
+		SendMessage(Conn, Response.Message);
 		Conn->ResponseGeneration.Increment();
-		Conn->ResponsesPending.Decrement();
+		Response.ResponseReservation.Reset();
+		// Held while SendMessage owns both the FString and its bounded UTF-8
+		// conversion, not merely while the item waits in OutboundResponses.
+		Response.MemoryReservation.Reset();
 	}
 }
 
-void FHaybaMCPTcpServer::RetainWorker(TFuture<void>&& Worker)
+void FHaybaMCPTcpServer::CompleteClientWorker(
+	const FHaybaMCPClientConnectionPtr& Conn, const TCHAR* WorkerName)
 {
-	FScopeLock Lock(&WorkerMutex);
-	Workers.RemoveAll([](const TFuture<void>& Existing)
+	if (!Conn.IsValid())
 	{
-		return Existing.IsReady();
-	});
-	Workers.Add(MoveTemp(Worker));
+		return;
+	}
+	const FHaybaMCPWorkerCompletion Completion = Conn->ClientWorkers.WorkerFinished();
+	if (Completion.bReleasedReservation)
+	{
+		UE_LOG(LogHaybaMCPTCP, Log,
+			TEXT("Client workers stopped; slot released by %s (active: %d)"),
+			WorkerName, Completion.CountAfterRelease);
+	}
+	else
+	{
+		UE_LOG(LogHaybaMCPTCP, Verbose,
+			TEXT("Client %s stopped; slot retained for %d remaining worker(s)"),
+			WorkerName, Completion.RemainingWorkers);
+	}
+}
+
+void FHaybaMCPTcpServer::RetainWorker(TUniquePtr<FHaybaMCPJoinableWorker>&& Worker)
+{
+	TArray<TUniquePtr<FHaybaMCPJoinableWorker>> CompletedWorkers;
+	{
+		FScopeLock Lock(&WorkerMutex);
+		for (int32 Index = Workers.Num() - 1; Index >= 0; --Index)
+		{
+			if (Workers[Index].IsValid() && Workers[Index]->IsCompleted())
+			{
+				CompletedWorkers.Add(MoveTemp(Workers[Index]));
+				Workers.RemoveAtSwap(Index, 1, EAllowShrinking::No);
+			}
+		}
+		Workers.Add(MoveTemp(Worker));
+	}
+	for (TUniquePtr<FHaybaMCPJoinableWorker>& Completed : CompletedWorkers)
+	{
+		Completed->JoinAndDestroy();
+	}
+	CompletedWorkers.Reset();
 }
 
 bool FHaybaMCPTcpServer::DrainPendingCommands(float /*DeltaTime*/)
@@ -436,37 +555,58 @@ bool FHaybaMCPTcpServer::DrainPendingCommands(float /*DeltaTime*/)
     while (Processed < MaxCommandsPerTick && PendingCommands.Dequeue(Cmd))
     {
         ++Processed;
-        PendingCommandCount.Decrement();
+		Cmd.PendingReservation.Reset();
 		if (!Cmd.Conn.IsValid())
 		{
+			Cmd.ResponseReservation.Reset();
 			continue;
 		}
 		if (!Cmd.Conn->bAlive || !CommandHandler.IsValid())
         {
-			Cmd.Conn->ResponsesPending.Decrement();
+			Cmd.ResponseReservation.Reset();
             continue;
         }
-        const FString ResponseString = CommandHandler->ProcessCommand(Cmd.Message);
-
-		// The serial per-connection writer keeps socket backpressure off the
-		// game-thread ticker and preserves response order. Bound queued output so
-		// a pipelined local peer cannot turn responses into unbounded memory.
-		const int32 QueuedChars = Cmd.Conn->QueuedResponseChars.Add(ResponseString.Len());
-		if (QueuedChars > MaxQueuedResponseCharsPerClient)
+        FString ResponseString = CommandHandler->ProcessCommand(Cmd.Message);
+		int32 ResponseUtf8Bytes = 0;
+		if (ClassifyResponseUtf8(ResponseString, MaxResponseBytes, ResponseUtf8Bytes)
+			!= EHaybaMCPResponseAdmission::Accepted)
 		{
-			Cmd.Conn->QueuedResponseChars.Subtract(ResponseString.Len());
-			Cmd.Conn->ResponsesPending.Decrement();
+			Cmd.ResponseReservation.Reset();
+			Cmd.Conn->bAlive = false;
+			if (Cmd.Conn->Socket)
+			{
+				Cmd.Conn->Socket->Shutdown(ESocketShutdownMode::ReadWrite);
+			}
+			UE_LOG(LogHaybaMCPTCP, Error,
+				TEXT("Disconnected client before queueing oversized response (measured/lower-bound %d bytes, limit %d)"),
+				ResponseUtf8Bytes > 0 ? ResponseUtf8Bytes : ResponseString.Len(), MaxResponseBytes);
+			continue;
+		}
+
+		// Couple the per-client and server-global reservations before enqueueing.
+		// Lock-based subtraction-before-add semantics avoid relying on
+		// FThreadSafeCounter::Add, whose UE API returns the OLD value.
+		FHaybaMCPOutboundBudgetReservationPtr MemoryReservation =
+			FHaybaMCPOutboundBudgetReservation::TryCreate(
+				Cmd.Conn->OutboundBudget,
+				GlobalOutboundBudget,
+				static_cast<int64>(ResponseString.GetAllocatedSize())
+					+ static_cast<int64>(ResponseUtf8Bytes));
+		if (!MemoryReservation.IsValid())
+		{
+			Cmd.ResponseReservation.Reset();
 			Cmd.Conn->bAlive = false;
 			if (Cmd.Conn->Socket)
 			{
 				Cmd.Conn->Socket->Shutdown(ESocketShutdownMode::ReadWrite);
 			}
 			UE_LOG(LogHaybaMCPTCP, Warning,
-				TEXT("Disconnected client above queued-response budget %d chars"),
-				MaxQueuedResponseCharsPerClient);
+				TEXT("Disconnected client above coupled outbound-memory budget (client=%lld, global=%lld bytes)"),
+				MaxOutboundMemoryBytesPerClient, MaxGlobalOutboundMemoryBytes);
 			continue;
 		}
-		Cmd.Conn->OutboundResponses.Enqueue(ResponseString);
+		Cmd.Conn->OutboundResponses.Enqueue(FHaybaMCPOutboundResponse{
+			MoveTemp(ResponseString), MoveTemp(Cmd.ResponseReservation), MoveTemp(MemoryReservation) });
 		if (Cmd.Conn->OutboundEvent)
 		{
 			Cmd.Conn->OutboundEvent->Trigger();
@@ -603,6 +743,22 @@ bool FHaybaMCPTcpServer::SendMessage(const FHaybaMCPClientConnectionPtr& Conn, c
 		return false;
     }
 
+	int32 MeasuredUtf8Bytes = 0;
+	const EHaybaMCPResponseAdmission Admission =
+		ClassifyResponseUtf8(Message, MaxResponseBytes, MeasuredUtf8Bytes);
+	if (Admission != EHaybaMCPResponseAdmission::Accepted)
+	{
+		UE_LOG(LogHaybaMCPTCP, Error,
+			TEXT("Refusing response frame before allocation (measured/lower-bound %d bytes, limit %d)"),
+			MeasuredUtf8Bytes > 0 ? MeasuredUtf8Bytes : Message.Len(), MaxResponseBytes);
+		Conn->bAlive = false;
+		if (Conn->Socket)
+		{
+			Conn->Socket->Shutdown(ESocketShutdownMode::ReadWrite);
+		}
+		return false;
+	}
+
     // Serialize sends and re-check liveness under the lock: the read loop may
     // have flagged the client dead between the task's guard and here. The
     // shared Conn keeps the socket alive for the duration of this call.
@@ -613,13 +769,13 @@ bool FHaybaMCPTcpServer::SendMessage(const FHaybaMCPClientConnectionPtr& Conn, c
     }
     FSocket* Socket = Conn->Socket;
 
+    // Allocation is now bounded by the exact preflight above.
     FTCHARToUTF8 Utf8Msg(*Message);
     uint32 Length = Utf8Msg.Length();
-    if (Length == 0 || Length > static_cast<uint32>(MaxResponseBytes))
+    if (Length != static_cast<uint32>(MeasuredUtf8Bytes))
     {
         UE_LOG(LogHaybaMCPTCP, Error,
-            TEXT("Refusing response frame of %u bytes (limit %d)"),
-            Length, MaxResponseBytes);
+			TEXT("Refusing response whose UTF-8 size changed during bounded conversion"));
         Conn->bAlive = false;
         Socket->Shutdown(ESocketShutdownMode::ReadWrite);
         return false;

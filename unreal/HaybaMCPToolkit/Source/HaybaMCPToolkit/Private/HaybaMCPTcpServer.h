@@ -5,11 +5,20 @@
 #include "HAL/ThreadSafeBool.h"
 #include "Containers/Queue.h"
 #include "Containers/Ticker.h"
-#include "Async/Future.h"
 #include "Dom/JsonObject.h"
 #include "Networking.h"
+#include "HaybaMCPJoinableWorker.h"
+#include "HaybaMCPTransportPolicy.h"
 
 class FHaybaMCPCommandHandler;
+
+/** A response plus the accepted-request reservation it must complete once. */
+struct FHaybaMCPOutboundResponse
+{
+	FString Message;
+	FHaybaMCPCountReservationPtr ResponseReservation;
+	FHaybaMCPOutboundBudgetReservationPtr MemoryReservation;
+};
 
 /**
  * Shared owner of a single client socket. Both the background read loop and
@@ -20,7 +29,10 @@ class FHaybaMCPCommandHandler;
  */
 struct FHaybaMCPClientConnection
 {
-	explicit FHaybaMCPClientConnection(FSocket* InSocket);
+	FHaybaMCPClientConnection(
+		FSocket* InSocket,
+		FHaybaMCPCountReservationPtr InClientReservation,
+		int64 InMaxOutboundMemoryBytes);
 	~FHaybaMCPClientConnection();
 
 	FSocket* Socket = nullptr;
@@ -33,11 +45,14 @@ struct FHaybaMCPClientConnection
 	// cannot miss a complete response lifecycle and reuse a stale idle deadline.
 	FThreadSafeCounter ResponseGeneration;
 	FThreadSafeCounter RequestsReceived;
-	FThreadSafeCounter QueuedResponseChars;
 	double AcceptedAtSeconds = 0.0;
-	TQueue<FString, EQueueMode::Mpsc> OutboundResponses;
+	FHaybaMCPOutboundBudgetPtr OutboundBudget;
+	TQueue<FHaybaMCPOutboundResponse, EQueueMode::Mpsc> OutboundResponses;
 	FEvent* OutboundEvent = nullptr;
 	FCriticalSection SendMutex;
+	// Both the reader and serial writer occupy this client slot. The second one
+	// to finish releases it; destruction covers a worker-launch failure.
+	FHaybaMCPWorkerQuorum ClientWorkers;
 };
 
 using FHaybaMCPClientConnectionPtr = TSharedPtr<FHaybaMCPClientConnection, ESPMode::ThreadSafe>;
@@ -47,6 +62,8 @@ struct FHaybaMCPPendingCommand
 {
 	FString Message;
 	FHaybaMCPClientConnectionPtr Conn;
+	FHaybaMCPCountReservationPtr PendingReservation;
+	FHaybaMCPCountReservationPtr ResponseReservation;
 };
 
 class FHaybaMCPTcpServer : public FRunnable, public TSharedFromThis<FHaybaMCPTcpServer, ESPMode::ThreadSafe>
@@ -97,12 +114,14 @@ private:
 	int32 FrameReadTimeoutMs = 5000;
 	int32 SendTimeoutMs = 1000;
 	static constexpr int32 MaxPipelinedRequestsPerClient = 8;
-	int32 MaxQueuedResponseCharsPerClient = 8 * 1024 * 1024;
+	int64 MaxOutboundMemoryBytesPerClient = 32 * 1024 * 1024;
+	int64 MaxGlobalOutboundMemoryBytes = 32 * 1024 * 1024;
+	FHaybaMCPOutboundBudgetPtr GlobalOutboundBudget;
 	// Actual completion handles for every background connection/read/send task.
 	// Shutdown removes the ticker, joins the listener, then joins these workers
 	// before module code can unload.
 	FCriticalSection WorkerMutex;
-	TArray<TFuture<void>> Workers;
+	TArray<TUniquePtr<FHaybaMCPJoinableWorker>> Workers;
 
 	// Commands run on the game thread via a TICKER drain (not AsyncTask). Running
 	// inside an AsyncTask(GameThread) *task* makes any handler that itself pumps
@@ -113,10 +132,11 @@ private:
 	TQueue<FHaybaMCPPendingCommand, EQueueMode::Mpsc> PendingCommands;
 	FTSTicker::FDelegateHandle DrainTickerHandle;
 	bool DrainPendingCommands(float DeltaTime);
-	void RetainWorker(TFuture<void>&& Worker);
+	void RetainWorker(TUniquePtr<FHaybaMCPJoinableWorker>&& Worker);
 
 	void HandleClientConnection(FHaybaMCPClientConnectionPtr Conn);
 	void HandleClientWrites(FHaybaMCPClientConnectionPtr Conn);
+	void CompleteClientWorker(const FHaybaMCPClientConnectionPtr& Conn, const TCHAR* WorkerName);
 	bool ReadMessage(const FHaybaMCPClientConnectionPtr& Conn, FString& OutMessage);
 	bool SendMessage(const FHaybaMCPClientConnectionPtr& Conn, const FString& Message);
 };
