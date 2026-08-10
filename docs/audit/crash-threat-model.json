@@ -1,0 +1,646 @@
+{
+  "schema_version": 1,
+  "model_id": "hayba-editor-crash-threats-v1",
+  "generated_utc": "2026-08-10T00:00:00Z",
+  "corpus": {
+    "evidence_window": {
+      "start_utc": "2026-07-20T03:01:17.209Z",
+      "end_utc": "2026-08-10T03:38:37.898Z"
+    },
+    "raw_artifact_count": 264,
+    "missing_signature_artifact_count": 0,
+    "deduplication_key": "CrashContext.RuntimeProperties.PCallStackHash",
+    "distinct_signature_count": 97,
+    "classification_semantics": "First matching rule wins. Counts are observed crash-report artifacts; distinct counts are unique non-empty engine stack hashes. Reproduced and source-audit threats have no corpus count unless the classifier also matched them.",
+    "classification_order": [
+      "stale-umg-guid-map",
+      "pie-teardown-reference",
+      "transaction-buffer-pie-retention",
+      "unsafe-automation-execution",
+      "rhi-render-teardown",
+      "illegal-constructor-helper",
+      "security-audit-reentrancy",
+      "dynamic-delegate-bind-failure",
+      "slate-runtime-collection-corruption",
+      "abstract-data-asset-instantiation",
+      "asynchronous-import-pipeline-fault",
+      "pie-object-class-mismatch"
+    ],
+    "classified": [
+      {
+        "category": "stale-umg-guid-map",
+        "threat_id": "HCR-UMG-001",
+        "observed_artifact_count": 153,
+        "observed_distinct_signature_count": 57
+      },
+      {
+        "category": "pie-teardown-reference",
+        "threat_id": "HCR-PIE-001",
+        "observed_artifact_count": 6,
+        "observed_distinct_signature_count": 4
+      },
+      {
+        "category": "transaction-buffer-pie-retention",
+        "threat_id": "HCR-TRANS-001",
+        "observed_artifact_count": 68,
+        "observed_distinct_signature_count": 3
+      },
+      {
+        "category": "unsafe-automation-execution",
+        "threat_id": "HCR-AUTO-001",
+        "observed_artifact_count": 17,
+        "observed_distinct_signature_count": 16
+      },
+      {
+        "category": "rhi-render-teardown",
+        "threat_id": "HCR-RHI-001",
+        "observed_artifact_count": 2,
+        "observed_distinct_signature_count": 2
+      },
+      {
+        "category": "illegal-constructor-helper",
+        "threat_id": "HCR-CTOR-001",
+        "observed_artifact_count": 2,
+        "observed_distinct_signature_count": 1
+      },
+      {
+        "category": "security-audit-reentrancy",
+        "threat_id": "HCR-SEH-001",
+        "observed_artifact_count": 2,
+        "observed_distinct_signature_count": 2
+      },
+      {
+        "category": "dynamic-delegate-bind-failure",
+        "threat_id": "HCR-DELEG-001",
+        "observed_artifact_count": 4,
+        "observed_distinct_signature_count": 3
+      },
+      {
+        "category": "slate-runtime-collection-corruption",
+        "threat_id": "HCR-SLATE-001",
+        "observed_artifact_count": 6,
+        "observed_distinct_signature_count": 5
+      },
+      {
+        "category": "abstract-data-asset-instantiation",
+        "threat_id": "HCR-DATA-001",
+        "observed_artifact_count": 1,
+        "observed_distinct_signature_count": 1
+      },
+      {
+        "category": "asynchronous-import-pipeline-fault",
+        "threat_id": "HCR-IMPORT-001",
+        "observed_artifact_count": 2,
+        "observed_distinct_signature_count": 2
+      },
+      {
+        "category": "pie-object-class-mismatch",
+        "threat_id": "HCR-PIETYPE-001",
+        "observed_artifact_count": 1,
+        "observed_distinct_signature_count": 1
+      }
+    ],
+    "unclassified": {
+      "observed_artifact_count": 0,
+      "observed_distinct_signature_count": 0,
+      "opaque_signature_fingerprints": [],
+      "status": "clear",
+      "disposition": "Every signature in this evidence window matched a deterministic semantic rule. Any future unmatched signature reopens the audit automatically."
+    },
+    "audit_threshold": {
+      "max_unclassified_distinct_signatures": 0,
+      "met": true
+    },
+    "limitations": [
+      "Crash reports include ensures as well as fatal process exits; an artifact count is not an editor-death count.",
+      "One root cause can produce multiple engine stack hashes after code or call-site changes.",
+      "The corpus belongs to one host project and one evidence window; it cannot prove universal crash immunity.",
+      "No crash payload, user content, machine identifier, account identifier, or absolute host path is retained here."
+    ]
+  },
+  "threats": [
+    {
+      "id": "HCR-UMG-001",
+      "signature": "widget-blueprint-variable-guid-map-desynchronization",
+      "category": "stale-umg-guid-map",
+      "evidence": {
+        "classification": "observed",
+        "kind": "crash_corpus",
+        "observed_artifact_count": 153,
+        "observed_distinct_signature_count": 57,
+        "source_refs": ["docs/handoffs/HANDOFF-umg-validation.md"]
+      },
+      "trigger": "A UI tree mutation adds, removes, renames, duplicates, or reparents a variable widget without keeping the blueprint variable-name-to-GUID map synchronized.",
+      "affected_commands": ["ui_create_widget", "ui_add_element", "ui_mutate_tree", "ui_build_tree"],
+      "guard_layer": [
+        "ui-handler structural mutation seam",
+        "widget GUID registration and subtree purge",
+        "compile postcondition"
+      ],
+      "recovery": {
+        "session_health": "suspect",
+        "action": "Stop further UI mutation, discard the malformed transient blueprint if possible, and restart before retrying from a clean asset."
+      },
+      "test_evidence": {
+        "regressions": ["Hayba.MCP.UI.WidgetGuidRegistration"],
+        "sources": ["unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPUIHandlerTest.cpp"],
+        "runtime": ["docs/handoffs/HANDOFF-umg-validation.md"]
+      },
+      "status": "resolved"
+    },
+    {
+      "id": "HCR-PIE-001",
+      "signature": "pie-world-or-object-survives-teardown",
+      "category": "pie-teardown-reference",
+      "evidence": {
+        "classification": "observed",
+        "kind": "crash_corpus",
+        "observed_artifact_count": 6,
+        "observed_distinct_signature_count": 4,
+        "source_refs": ["docs/handoffs/HANDOFF-umg-validation.md"]
+      },
+      "trigger": "A command creates or retains an object outered to a PIE world, then PIE teardown finds the old world or object still referenced.",
+      "affected_commands": ["ui_layout_snapshot", "ui_render_widget_to_png", "editor_start_pie", "editor_stop_pie"],
+      "guard_layer": ["PIE-state preflight", "transient-object ownership", "post-PIE survival test"],
+      "recovery": {
+        "session_health": "suspect",
+        "action": "Stop PIE, release transient widget/world references, and restart if teardown emitted an assertion or the world identity changed unexpectedly."
+      },
+      "test_evidence": {
+        "regressions": [],
+        "sources": ["mcp-tools/hayba-mcp/src/tools/ui/ui-render-widget-to-png.test.ts"],
+        "runtime": ["docs/handoffs/HANDOFF-umg-validation.md"]
+      },
+      "status": "mitigated"
+    },
+    {
+      "id": "HCR-TRANS-001",
+      "signature": "editor-transaction-buffer-retains-pie-world",
+      "category": "transaction-buffer-pie-retention",
+      "evidence": {
+        "classification": "observed",
+        "kind": "crash_corpus",
+        "observed_artifact_count": 68,
+        "observed_distinct_signature_count": 3,
+        "source_refs": ["docs/handoffs/HANDOFF-umg-validation.md"]
+      },
+      "trigger": "An automation edit records a PIE-owned world, game instance, or widget in the global editor transaction buffer.",
+      "affected_commands": ["ui_set_widget_properties", "ui_mutate_tree", "ui_build_tree"],
+      "guard_layer": ["transaction policy", "PIE-state transaction suppression", "ownership-safe UI mutation"],
+      "recovery": {
+        "session_health": "suspect",
+        "action": "Do not continue mutating the retained world. Stop PIE and restart the editor so the transaction buffer cannot keep stale objects alive."
+      },
+      "test_evidence": {
+        "regressions": [],
+        "sources": ["unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPUIHandler.cpp"],
+        "runtime": ["docs/handoffs/HANDOFF-umg-validation.md"]
+      },
+      "status": "mitigated"
+    },
+    {
+      "id": "HCR-AUTO-001",
+      "signature": "automation-runner-invalid-lifecycle-or-test-object",
+      "category": "unsafe-automation-execution",
+      "evidence": {
+        "classification": "observed",
+        "kind": "crash_corpus",
+        "observed_artifact_count": 17,
+        "observed_distinct_signature_count": 16,
+        "source_refs": ["docs/audit/2026-08-09-test-run-seh-double-fault.md"]
+      },
+      "trigger": "The MCP runner re-enters discovery, advances or stops a test outside the framework lifecycle, or a selected test constructs an engine object with an invalid owner.",
+      "affected_commands": ["test_list", "test_run", "build_status"],
+      "guard_layer": [
+        "test selector purity",
+        "single-flight async runner",
+        "framework-state validation",
+        "structured result boundary"
+      ],
+      "recovery": {
+        "session_health": "suspect",
+        "action": "Cancel the job, do not re-enter discovery from an executing automation test, and restart after any native runner fault."
+      },
+      "test_evidence": {
+        "regressions": ["Hayba.MCP.TestSelection.SelectorsAndFailuresAreTruthful", "test-run command contract"],
+        "sources": [
+          "unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPTestSelectionTest.cpp",
+          "mcp-tools/hayba-mcp/src/legacy-commands/test-run-contract.test.ts"
+        ],
+        "runtime": ["docs/audit/2026-08-09-test-run-seh-double-fault.md"]
+      },
+      "status": "resolved"
+    },
+    {
+      "id": "HCR-RHI-001",
+      "signature": "render-or-rhi-teardown-access-violation",
+      "category": "rhi-render-teardown",
+      "evidence": {
+        "classification": "observed",
+        "kind": "crash_corpus",
+        "observed_artifact_count": 2,
+        "observed_distinct_signature_count": 2,
+        "source_refs": ["docs/handoffs/HANDOFF-architecture-cleanup.md"]
+      },
+      "trigger": "Rendering or editor shutdown overlaps an RHI/render-thread lifetime boundary; NullRHI also cannot prove real render behavior.",
+      "affected_commands": ["render_camera", "ui_render_widget_to_png", "editor_save_all_and_quit"],
+      "guard_layer": ["render capability preflight", "async render completion", "shutdown state machine"],
+      "recovery": {
+        "session_health": "dead",
+        "action": "Restart with a real RHI, inspect the new crash signature, and do not classify a NullRHI-only result as render success or failure."
+      },
+      "test_evidence": {
+        "regressions": [],
+        "sources": [
+          "mcp-tools/hayba-mcp/src/tools/render-camera.test.ts",
+          "mcp-tools/hayba-mcp/src/tools/ui/ui-render-widget-to-png.test.ts"
+        ],
+        "runtime": ["docs/handoffs/HANDOFF-architecture-cleanup.md"]
+      },
+      "status": "open"
+    },
+    {
+      "id": "HCR-CTOR-001",
+      "signature": "constructor-helper-used-after-construction",
+      "category": "illegal-constructor-helper",
+      "evidence": {
+        "classification": "observed",
+        "kind": "crash_corpus",
+        "observed_artifact_count": 2,
+        "observed_distinct_signature_count": 1,
+        "source_refs": []
+      },
+      "trigger": "Host-project code invokes an Unreal ConstructorHelpers object finder outside a UObject constructor while an MCP-driven workflow reaches that code.",
+      "affected_commands": ["python_run", "editor_start_pie", "test_run"],
+      "guard_layer": ["host-project source review", "host-project regression test", "native fault containment"],
+      "recovery": {
+        "session_health": "dead",
+        "action": "Move the asset lookup into a constructor or use a runtime load API, rebuild the host project, and relaunch."
+      },
+      "test_evidence": {
+        "regressions": [],
+        "sources": [],
+        "runtime": []
+      },
+      "status": "external"
+    },
+    {
+      "id": "HCR-SEH-001",
+      "signature": "native-handler-fault-followed-by-unsafe-postprocessing",
+      "category": "security-audit-reentrancy",
+      "evidence": {
+        "classification": "observed",
+        "kind": "crash_corpus",
+        "observed_artifact_count": 2,
+        "observed_distinct_signature_count": 2,
+        "source_refs": ["docs/audit/2026-08-09-test-run-seh-double-fault.md"]
+      },
+      "trigger": "A native handler raises a structured exception, the guard regains control, and normal hashing, transaction, UI, or serialization post-processing touches corrupted state.",
+      "affected_commands": ["all native commands"],
+      "guard_layer": [
+        "global native dispatch seam",
+        "pre-dispatch parameter hash",
+        "fault-only early return",
+        "minimal fault journal"
+      ],
+      "recovery": {
+        "session_health": "suspect",
+        "action": "Return immediately, cancel any open transaction, tell the caller to restart, and never retry in the same editor process."
+      },
+      "test_evidence": {
+        "regressions": ["native handler SEH containment"],
+        "sources": ["mcp-tools/hayba-mcp/src/tools/__tests__/seh-postprocessing-gate.test.ts"],
+        "runtime": ["docs/audit/2026-08-09-test-run-seh-double-fault.md"]
+      },
+      "status": "resolved"
+    },
+    {
+      "id": "HCR-DELEG-001",
+      "signature": "dynamic-delegate-target-is-not-bindable-at-pie-start",
+      "category": "dynamic-delegate-bind-failure",
+      "evidence": {
+        "classification": "observed",
+        "kind": "crash_corpus",
+        "observed_artifact_count": 4,
+        "observed_distinct_signature_count": 3,
+        "source_refs": ["mcp-tools/hayba-mcp/scripts/audit-crash-threat-model.mjs"]
+      },
+      "trigger": "PIE begins and host game code binds a dynamic delegate to a missing, non-UFUNCTION, or pending-kill target.",
+      "affected_commands": ["editor_start_pie", "python_run"],
+      "guard_layer": [
+        "host player-controller delegate registration",
+        "PIE startup validation",
+        "post-start ensure monitoring"
+      ],
+      "recovery": {
+        "session_health": "healthy",
+        "action": "Stop PIE, correct the reflected delegate target in host code, rebuild, and retry only after a clean startup."
+      },
+      "test_evidence": {
+        "regressions": [],
+        "sources": [],
+        "runtime": []
+      },
+      "status": "external"
+    },
+    {
+      "id": "HCR-SLATE-001",
+      "signature": "slate-list-item-identity-or-lifetime-corruption",
+      "category": "slate-runtime-collection-corruption",
+      "evidence": {
+        "classification": "observed",
+        "kind": "crash_corpus",
+        "observed_artifact_count": 6,
+        "observed_distinct_signature_count": 5,
+        "source_refs": ["mcp-tools/hayba-mcp/scripts/audit-crash-threat-model.mjs"]
+      },
+      "trigger": "Runtime UI code duplicates list items, removes an item without scheduling refresh, or dispatches PIE input through a row whose UObject identity or Slate lifetime is already stale.",
+      "affected_commands": ["python_run", "editor_pie_click_widget", "editor_pie_mouse", "editor_pie_press_key"],
+      "guard_layer": [
+        "host list-model identity invariant",
+        "PIE input target revalidation",
+        "fatal Slate diagnostic monitor"
+      ],
+      "recovery": {
+        "session_health": "dead",
+        "action": "Relaunch, rebuild the runtime collection with unique live item objects, and never retry input against a cached widget path."
+      },
+      "test_evidence": {
+        "regressions": [],
+        "sources": [],
+        "runtime": []
+      },
+      "status": "external"
+    },
+    {
+      "id": "HCR-DATA-001",
+      "signature": "abstract-data-asset-class-reaches-asset-tools",
+      "category": "abstract-data-asset-instantiation",
+      "evidence": {
+        "classification": "observed",
+        "kind": "crash_corpus",
+        "observed_artifact_count": 1,
+        "observed_distinct_signature_count": 1,
+        "source_refs": ["mcp-tools/hayba-mcp/scripts/audit-crash-threat-model.mjs"]
+      },
+      "trigger": "data_create accepts a UDataAsset-derived class that is abstract and passes it into AssetTools::CreateAsset.",
+      "affected_commands": ["data_create"],
+      "guard_layer": [
+        "data asset class preflight",
+        "abstract/deprecated/newer-version class flags",
+        "pre-AssetTools refusal"
+      ],
+      "recovery": {
+        "session_health": "healthy",
+        "action": "Reject the class before asset creation and retry with a concrete UDataAsset subclass; remove any transient package shell left by the failed call."
+      },
+      "test_evidence": {
+        "regressions": [],
+        "sources": ["unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPDataAssetHandler.cpp"],
+        "runtime": []
+      },
+      "status": "open"
+    },
+    {
+      "id": "HCR-IMPORT-001",
+      "signature": "asynchronous-fab-or-interchange-import-invalidates-source-node",
+      "category": "asynchronous-import-pipeline-fault",
+      "evidence": {
+        "classification": "observed",
+        "kind": "crash_corpus",
+        "observed_artifact_count": 2,
+        "observed_distinct_signature_count": 2,
+        "source_refs": ["mcp-tools/hayba-mcp/scripts/audit-crash-threat-model.mjs"]
+      },
+      "trigger": "A Fab or Interchange import continues asynchronously with an invalid source node, unsupported skeletal layout, or source lifetime that ended before the import task.",
+      "affected_commands": ["python_run", "asset_import"],
+      "guard_layer": [
+        "import source validation",
+        "single-flight async import ownership",
+        "engine/third-party import completion monitor"
+      ],
+      "recovery": {
+        "session_health": "dead",
+        "action": "Relaunch, validate the source through the import pipeline UI, and do not start a second import or world transition until completion."
+      },
+      "test_evidence": {
+        "regressions": [],
+        "sources": [],
+        "runtime": []
+      },
+      "status": "external"
+    },
+    {
+      "id": "HCR-PIETYPE-001",
+      "signature": "pie-world-duplication-returns-unexpected-object-class",
+      "category": "pie-object-class-mismatch",
+      "evidence": {
+        "classification": "observed",
+        "kind": "crash_corpus",
+        "observed_artifact_count": 1,
+        "observed_distinct_signature_count": 1,
+        "source_refs": ["mcp-tools/hayba-mcp/scripts/audit-crash-threat-model.mjs"]
+      },
+      "trigger": "PIE world duplication resolves a host-project object or class path to an object that does not have the requested reflected type.",
+      "affected_commands": ["editor_start_pie"],
+      "guard_layer": ["host asset/class reference validation", "PIE startup preflight", "failed-start cleanup"],
+      "recovery": {
+        "session_health": "dead",
+        "action": "Relaunch, repair the host asset or class reference, resave the map/defaults, and retry PIE from a clean editor."
+      },
+      "test_evidence": {
+        "regressions": [],
+        "sources": [],
+        "runtime": []
+      },
+      "status": "external"
+    },
+    {
+      "id": "HCR-WORLD-001",
+      "signature": "world-switch-during-mcp-tick-desynchronizes-gworld",
+      "category": "world-switch-during-request",
+      "evidence": {
+        "classification": "reproduced",
+        "kind": "reproduced_incident",
+        "source_refs": ["docs/handoffs/HANDOFF-mcp-worldswitch-crash-guardrail.md"]
+      },
+      "trigger": "python_run or a synchronous level command loads or creates a world while the TCP drain tick still owns the previous editor world context.",
+      "affected_commands": ["python_run", "level_create", "level_load"],
+      "guard_layer": ["TypeScript preflight", "authoritative C++ python guard", "deferred editor map command"],
+      "recovery": {
+        "session_health": "suspect",
+        "action": "Reject before execution. If a world switch began, stop issuing commands and restart even if the first access violation was caught."
+      },
+      "test_evidence": {
+        "regressions": [],
+        "sources": [
+          "mcp-tools/hayba-mcp/src/tools/guards/known-crashers.test.ts",
+          "mcp-tools/hayba-mcp/src/tools/python/python-run.test.ts"
+        ],
+        "runtime": ["docs/handoffs/HANDOFF-mcp-worldswitch-crash-guardrail.md"]
+      },
+      "status": "mitigated"
+    },
+    {
+      "id": "HCR-LIFE-001",
+      "signature": "python-work-escapes-request-lifetime",
+      "category": "lifetime-escaping-callback-or-thread",
+      "evidence": {
+        "classification": "inferred",
+        "kind": "adversarial_model",
+        "source_refs": ["unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPPythonHandler.cpp"]
+      },
+      "trigger": "A Python script registers an engine-lifetime callback, starts a thread/task, sleeps on the game thread, or leaves work running after the framed response returns.",
+      "affected_commands": ["python_run"],
+      "guard_layer": ["authoritative C++ deny policy", "TypeScript early refusal", "editor-survival harness"],
+      "recovery": {
+        "session_health": "suspect",
+        "action": "Reject the script before Python execution. If work escaped, restart rather than assuming callbacks or threads were cancelled."
+      },
+      "test_evidence": {
+        "regressions": [],
+        "sources": ["mcp-tools/hayba-mcp/src/tools/python/python-run.test.ts"],
+        "runtime": []
+      },
+      "status": "mitigated"
+    },
+    {
+      "id": "HCR-TCP-001",
+      "signature": "malformed-oversized-or-stalled-tcp-frame",
+      "category": "tcp-framing-and-resource-exhaustion",
+      "evidence": {
+        "classification": "inferred",
+        "kind": "adversarial_model",
+        "source_refs": ["docs/audit/2026-06-22-crash-and-architecture-audit.md"]
+      },
+      "trigger": "A loopback client declares a zero, oversized, truncated, malformed, or indefinitely stalled frame, floods the pending queue, or closes during a partial response send.",
+      "affected_commands": ["transport boundary"],
+      "guard_layer": [
+        "TCP frame decoder",
+        "request and response allocation ceilings",
+        "connection and queue backpressure",
+        "worker lifetime join"
+      ],
+      "recovery": {
+        "session_health": "healthy",
+        "action": "Close only the offending connection, retain editor liveness, and require a fresh framed ping before accepting more work from that client."
+      },
+      "test_evidence": {
+        "regressions": [],
+        "sources": [
+          "mcp-tools/hayba-mcp/src/tcp-client.test.ts",
+          "unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPTcpServer.cpp"
+        ],
+        "runtime": []
+      },
+      "status": "mitigated"
+    },
+    {
+      "id": "HCR-FOL-001",
+      "signature": "partitioned-foliage-lookup-without-level-hint",
+      "category": "engine-assert-precondition",
+      "evidence": {
+        "classification": "reproduced",
+        "kind": "reproduced_incident",
+        "source_refs": ["mcp-tools/hayba-mcp/src/tools/foliage/foliage-handler-contract.test.ts"]
+      },
+      "trigger": "A foliage command asks the actor-partition subsystem for an instanced foliage actor without a valid level/location hint in a partitioned world.",
+      "affected_commands": [
+        "foliage_list_types",
+        "foliage_remove_instances",
+        "foliage_add_instance",
+        "foliage_paint_at"
+      ],
+      "guard_layer": [
+        "partition-safe actor enumeration",
+        "level and location aware foliage lookup",
+        "finite bounded transform validation"
+      ],
+      "recovery": {
+        "session_health": "dead",
+        "action": "Relaunch, then use the partition-safe handler path; do not retry the unhinted actor-partition lookup."
+      },
+      "test_evidence": {
+        "regressions": ["foliage handler partition-safe contract", "foliage exported persistence API link contract"],
+        "sources": [
+          "mcp-tools/hayba-mcp/src/tools/foliage/foliage-handler-contract.test.ts",
+          "mcp-tools/hayba-mcp/src/tools/foliage-handler-link-contract.test.ts"
+        ],
+        "runtime": []
+      },
+      "status": "resolved"
+    },
+    {
+      "id": "HCR-BLOCK-001",
+      "signature": "game-thread-waits-on-work-that-requires-game-thread",
+      "category": "game-thread-deadlock-or-starvation",
+      "evidence": {
+        "classification": "inferred",
+        "kind": "source_audit",
+        "source_refs": [
+          "docs/audit/2026-06-22-crash-and-architecture-audit.md",
+          "docs/audit/2026-06-22-mcp-async-command-conversions.md"
+        ]
+      },
+      "trigger": "A handler running in the TCP drain tick waits, sleeps, or queues work back to the same game thread and then waits for it.",
+      "affected_commands": ["wait_for_idle", "wait_for_shaders", "build_project", "test_run", "render_camera"],
+      "guard_layer": ["game-thread execution seam", "asynchronous job registry", "bounded per-frame pump"],
+      "recovery": {
+        "session_health": "suspect",
+        "action": "Cancel or expire the job without waiting on the game thread; if frame progress stopped, restart and inspect the last accepted command."
+      },
+      "test_evidence": {
+        "regressions": [],
+        "sources": ["mcp-tools/hayba-mcp/src/legacy-commands/test-run-contract.test.ts"],
+        "runtime": []
+      },
+      "status": "mitigated"
+    },
+    {
+      "id": "HCR-MAT-001",
+      "signature": "material-compiler-engine-check-on-incomplete-graph",
+      "category": "engine-assert-precondition",
+      "evidence": {
+        "classification": "inferred",
+        "kind": "source_audit",
+        "source_refs": ["docs/audit/2026-06-22-crash-and-architecture-audit.md"]
+      },
+      "trigger": "material_compile sends an incomplete or pathological material graph into an engine compiler path containing fatal check assertions.",
+      "affected_commands": ["material_compile"],
+      "guard_layer": ["material graph preflight", "safe compile capability gate", "editor-survival test"],
+      "recovery": {
+        "session_health": "dead",
+        "action": "Relaunch, repair required material inputs before compiling, and retain unsaved graph edits only if they were persisted before the compile."
+      },
+      "test_evidence": {
+        "regressions": [],
+        "sources": ["mcp-tools/hayba-mcp/src/tools/material/material-compile.test.ts"],
+        "runtime": []
+      },
+      "status": "open"
+    },
+    {
+      "id": "HCR-NUM-001",
+      "signature": "nonfinite-overflowing-or-unbounded-numeric-input",
+      "category": "input-resource-exhaustion-or-engine-precondition",
+      "evidence": {
+        "classification": "inferred",
+        "kind": "source_audit",
+        "source_refs": ["docs/audit/2026-06-22-crash-and-architecture-audit.md"]
+      },
+      "trigger": "JSON numeric values become NaN, infinity, fractional integers, overflowed timeouts, huge allocations, or invalid engine vectors before a domain handler validates them.",
+      "affected_commands": ["all numeric and vector parameters"],
+      "guard_layer": ["shared parameter reader", "domain-specific bounds", "pre-allocation and pre-engine validation"],
+      "recovery": {
+        "session_health": "healthy",
+        "action": "Reject the request with the field name and accepted range before allocating memory or calling an engine API."
+      },
+      "test_evidence": {
+        "regressions": [],
+        "sources": ["unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPParamsTest.cpp"],
+        "runtime": []
+      },
+      "status": "mitigated"
+    }
+  ]
+}
