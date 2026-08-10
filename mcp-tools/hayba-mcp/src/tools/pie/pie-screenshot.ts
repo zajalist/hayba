@@ -15,7 +15,9 @@ export const schema = z
     filename: z
       .string()
       .optional()
-      .describe('Absolute output path. Defaults to Saved/Screenshots with a timestamp. check_only:true REQUIRES this (the filename the capture call returned).'),
+      .describe(
+        'Output path. An absolute path is used as-is; a RELATIVE name is anchored to the project screenshot directory (Saved/Screenshots/<Platform>) — it is NOT relative to the editor process, whose working directory is the Unreal install tree. Defaults to that directory with a timestamp. The response returns the RESOLVED ABSOLUTE path; poll check_only with that value. check_only:true REQUIRES this.',
+      ),
     path: z
       .string()
       .optional()

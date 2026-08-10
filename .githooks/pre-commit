@@ -14,4 +14,18 @@ fi
 
 echo "pre-commit: hayba-mcp TS changed — typechecking"
 cd mcp-tools/hayba-mcp
-npx tsc --noEmit
+
+# Prefer the workspace-local binary over `npx`.
+#
+# `npx tsc` does not reliably resolve ./node_modules/.bin in this monorepo: on at
+# least one Windows/Git-Bash setup it skipped the local typescript entirely and
+# tried to fetch the unrelated `tsc` package from the registry, printing "This is
+# not the tsc command you are looking for" and failing the hook. No squatting
+# package is installed and node_modules/.bin/tsc is present and works — so the
+# guard was failing for reasons that had nothing to do with the code being
+# committed. A pre-commit check that cannot run is a check that is off.
+if [ -x node_modules/.bin/tsc ]; then
+  ./node_modules/.bin/tsc --noEmit
+else
+  npx tsc --noEmit
+fi
