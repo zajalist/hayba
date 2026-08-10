@@ -10,10 +10,12 @@ import express from 'express';
 import type { Server } from 'node:http';
 import type { SliverSystem } from '../slivers/index.js';
 import { mountSliverRoutes } from './sliver-routes.js';
+import { installExpressJsonRedaction } from '../security/secret-redaction.js';
 
 export function startHttpServer(slivers: SliverSystem): Server {
   const app = express();
   app.use(express.json({ limit: '1mb' }));
+  installExpressJsonRedaction(app);
 
   mountSliverRoutes(app, slivers);
 

@@ -4,7 +4,7 @@
   "description": "Hayba MCP Toolkit — AI-powered terrain and PCG authoring for Unreal Engine",
   "type": "module",
   "bin": {
-    "hayba-mcp": "./dist/index.js",
+    "hayba-mcp": "./dist/bootstrap.js",
     "hayba-cli": "./dist/cli/index.js"
   },
   "main": "./dist/index.js",
@@ -14,7 +14,7 @@
     "build:server": "tsc && npm run build:assets",
     "build:assets": "node -e \"import('node:fs').then(fs=>{fs.mkdirSync('dist/tools/routing',{recursive:true});fs.copyFileSync('src/tools/routing/packs.yaml','dist/tools/routing/packs.yaml');fs.mkdirSync('dist/slivers/specs',{recursive:true});for(const f of fs.readdirSync('src/slivers/specs')){if(f.endsWith('.sliver.json'))fs.copyFileSync('src/slivers/specs/'+f,'dist/slivers/specs/'+f)}fs.mkdirSync('dist/legacy-commands',{recursive:true});fs.copyFileSync('src/legacy-commands/sidecar.json','dist/legacy-commands/sidecar.json');fs.copyFileSync('src/legacy-commands/sidecar.schema.json','dist/legacy-commands/sidecar.schema.json');console.error('[build:assets] copied packs.yaml + sliver specs + legacy sidecar')})\"",
     "dev": "tsc --watch",
-    "start": "node dist/index.js",
+    "start": "node dist/bootstrap.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint:legacy-wrappers": "node scripts/check-legacy-wrappers.mjs",

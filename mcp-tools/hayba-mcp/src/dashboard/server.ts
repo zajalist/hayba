@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { config } from '../config.js';
 import { registerApiRoutes } from './api.js';
+import { installExpressJsonRedaction } from '../security/secret-redaction.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -13,6 +14,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export async function startDashboard(port: number, host: string): Promise<void> {
   const app = express();
   app.use(express.json({ limit: '50mb' }));
+  installExpressJsonRedaction(app);
 
   // Register API routes for dashboard data
   registerApiRoutes(app);
