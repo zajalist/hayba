@@ -14,4 +14,3 @@ enum class EHaybaMCPAdvisoryVerbosity : uint8
     ErrorsAndWarnings UMETA(DisplayName="Errors and warnings"),
     ErrorsWarningsAndTips UMETA(DisplayName="Errors, warnings, and AI tips")
 };
-

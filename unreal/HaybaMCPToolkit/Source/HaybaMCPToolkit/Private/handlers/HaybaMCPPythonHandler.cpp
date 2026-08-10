@@ -11,6 +11,13 @@
 namespace
 {
     constexpr int32 MaxPythonScriptChars = 256 * 1024;
+    constexpr int32 MaxPythonPolicyExpandedChars = MaxPythonScriptChars * 4;
+    constexpr int32 MaxPythonPolicyPathChars = 4096;
+    constexpr int32 MaxPythonPolicyPathComponents = 64;
+    constexpr int32 MaxPythonPolicyFStringDepth = 16;
+    constexpr int32 MaxPythonPolicyTokens = MaxPythonScriptChars;
+    constexpr int32 MaxPythonPolicyLexedChars = MaxPythonPolicyExpandedChars;
+    constexpr int32 MaxPythonCapturedCharsPerStream = 64 * 1024;
     constexpr double MaxPythonExecutionSeconds = 5.0;
     constexpr int32 PythonDeadlineCheckInterval = 256;
 
@@ -128,6 +135,9 @@ namespace
             { TEXT("__import__("), TEXT("HCR-DYNAMIC-001"), TEXT("can dynamically import crash/process primitives hidden from preflight"), TEXT("use ordinary imports so policy can inspect the module") },
             { TEXT("importlib."), TEXT("HCR-DYNAMIC-001"), TEXT("can dynamically import crash/process primitives hidden from preflight"), TEXT("use ordinary imports so policy can inspect the module") },
             { TEXT("getattr("), TEXT("HCR-DYNAMIC-001"), TEXT("can construct a fatal attribute lookup that source preflight cannot identify"), TEXT("call the intended inspected API directly by name") },
+            { TEXT(".__getattribute__("), TEXT("HCR-DYNAMIC-001"), TEXT("can construct a fatal attribute lookup while bypassing getattr policy"), TEXT("call the intended inspected API directly by name") },
+            { TEXT("operator.attrgetter("), TEXT("HCR-DYNAMIC-001"), TEXT("can construct a fatal attribute lookup from a runtime string"), TEXT("call the intended inspected API directly by name") },
+            { TEXT("operator.methodcaller("), TEXT("HCR-DYNAMIC-001"), TEXT("can construct a fatal method call from a runtime string"), TEXT("call the intended inspected API directly by name") },
             { TEXT("setattr("), TEXT("HCR-DYNAMIC-001"), TEXT("can tamper with deadline or engine state through a dynamically selected attribute"), TEXT("assign an explicitly named, policy-visible property or use a typed handler") },
             { TEXT("delattr("), TEXT("HCR-DYNAMIC-001"), TEXT("can tamper with deadline or engine state through a dynamically selected attribute"), TEXT("use an explicitly named, policy-visible operation or a typed handler") },
             { TEXT(".__dict__"), TEXT("HCR-DYNAMIC-001"), TEXT("can retrieve and invoke crash or deadline primitives while hiding their callable spelling"), TEXT("call the intended inspected API directly by name") },
@@ -170,6 +180,594 @@ namespace
         return Out;
     }
 
+    enum class EPythonPolicyTokenKind : uint8
+    {
+        Identifier,
+        Dot,
+        OpenParen,
+        CloseParen,
+        Comma,
+        Equal,
+        Colon,
+        Newline,
+        Semicolon,
+        Other,
+    };
+
+    struct FPythonPolicyToken
+    {
+        EPythonPolicyTokenKind Kind = EPythonPolicyTokenKind::Other;
+        FString Text;
+    };
+
+    bool IsPythonIdentifierStart(const TCHAR Ch)
+    {
+        return Ch == TEXT('_') || FChar::IsAlpha(Ch);
+    }
+
+    bool IsPythonIdentifierContinuation(const TCHAR Ch)
+    {
+        return Ch == TEXT('_') || FChar::IsAlnum(Ch);
+    }
+
+    bool IsPythonStringPrefix(const FString& Prefix)
+    {
+        if (Prefix.IsEmpty() || Prefix.Len() > 3) return false;
+        for (const TCHAR Ch : Prefix)
+        {
+            const TCHAR Lower = FChar::ToLower(Ch);
+            if (Lower != TEXT('f') && Lower != TEXT('r')
+                && Lower != TEXT('b') && Lower != TEXT('u'))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Return only expressions inside f-string replacement fields. Treating the
+     * whole literal as source would false-positive on f"os.abort() is text";
+     * ignoring it would let f"{os.abort()}" bypass the fatal boundary. This is
+     * deliberately a conservative lexical extractor, not a Python evaluator.
+     */
+    FString ExtractPythonFStringExpressions(const FString& Code)
+    {
+        FString Expressions;
+        Expressions.Reserve(FMath::Min(Code.Len(), MaxPythonPolicyExpandedChars));
+
+        auto SkipQuoted = [&Code](int32& At)
+        {
+            const TCHAR Quote = Code[At];
+            const bool bTriple = At + 2 < Code.Len()
+                && Code[At + 1] == Quote && Code[At + 2] == Quote;
+            At += bTriple ? 3 : 1;
+            while (At < Code.Len())
+            {
+                if (Code[At] == TEXT('\\'))
+                {
+                    At = FMath::Min(At + 2, Code.Len());
+                    continue;
+                }
+                if (bTriple)
+                {
+                    if (At + 2 < Code.Len() && Code[At] == Quote
+                        && Code[At + 1] == Quote && Code[At + 2] == Quote)
+                    {
+                        At += 3;
+                        return;
+                    }
+                }
+                else if (Code[At] == Quote)
+                {
+                    ++At;
+                    return;
+                }
+                ++At;
+            }
+        };
+
+        int32 Index = 0;
+        while (Index < Code.Len() && Expressions.Len() < MaxPythonPolicyExpandedChars)
+        {
+            if (Code[Index] == TEXT('#'))
+            {
+                while (Index < Code.Len() && Code[Index] != TEXT('\n') && Code[Index] != TEXT('\r')) ++Index;
+                continue;
+            }
+
+            FString Prefix;
+            int32 QuoteAt = Index;
+            if (Code[Index] == TEXT('\'') || Code[Index] == TEXT('"'))
+            {
+                // An unprefixed string cannot contain evaluated replacement
+                // fields, but it still has to be skipped as one lexical unit.
+            }
+            else if (IsPythonIdentifierStart(Code[Index]))
+            {
+                const int32 PrefixStart = Index;
+                while (QuoteAt < Code.Len() && IsPythonIdentifierContinuation(Code[QuoteAt])) ++QuoteAt;
+                Prefix = Code.Mid(PrefixStart, QuoteAt - PrefixStart);
+                if (!IsPythonStringPrefix(Prefix)
+                    || QuoteAt < 0 || QuoteAt >= Code.Len()
+                    || (Code[QuoteAt] != TEXT('\'') && Code[QuoteAt] != TEXT('"')))
+                {
+                    Index = QuoteAt;
+                    continue;
+                }
+            }
+            else
+            {
+                ++Index;
+                continue;
+            }
+
+            const TCHAR Quote = Code[QuoteAt];
+            const bool bTriple = QuoteAt + 2 < Code.Len()
+                && Code[QuoteAt + 1] == Quote && Code[QuoteAt + 2] == Quote;
+            const bool bFString = Prefix.ToLower().Contains(TEXT("f"));
+            int32 At = QuoteAt + (bTriple ? 3 : 1);
+            while (At < Code.Len())
+            {
+                if (Code[At] == TEXT('\\'))
+                {
+                    At = FMath::Min(At + 2, Code.Len());
+                    continue;
+                }
+                if (bTriple)
+                {
+                    if (At + 2 < Code.Len() && Code[At] == Quote
+                        && Code[At + 1] == Quote && Code[At + 2] == Quote)
+                    {
+                        At += 3;
+                        break;
+                    }
+                }
+                else if (Code[At] == Quote)
+                {
+                    ++At;
+                    break;
+                }
+
+                if (bFString && Code[At] == TEXT('{'))
+                {
+                    if (At + 1 < Code.Len() && Code[At + 1] == TEXT('{'))
+                    {
+                        At += 2;
+                        continue;
+                    }
+                    const int32 ExpressionStart = ++At;
+                    int32 Depth = 1;
+                    while (At < Code.Len() && Depth > 0)
+                    {
+                        if (Code[At] == TEXT('\'') || Code[At] == TEXT('"'))
+                        {
+                            SkipQuoted(At);
+                            continue;
+                        }
+                        if (Code[At] == TEXT('{')) ++Depth;
+                        else if (Code[At] == TEXT('}')) --Depth;
+                        ++At;
+                    }
+                    const int32 ExpressionEnd = Depth == 0 ? At - 1 : At;
+                    const int32 Available = MaxPythonPolicyExpandedChars - Expressions.Len();
+                    if (Available > 1)
+                    {
+                        Expressions += Code.Mid(
+                            ExpressionStart,
+                            FMath::Min(ExpressionEnd - ExpressionStart, Available - 1));
+                        Expressions.AppendChar(TEXT(';'));
+                    }
+                    continue;
+                }
+                ++At;
+            }
+            Index = At;
+        }
+        return Expressions;
+    }
+
+    /**
+     * Tokenize only the Python syntax needed by fatal-policy import resolution.
+     * Comments and string literals are deliberately skipped: a warning or a
+     * printed example containing "os.abort()" must not become executable policy
+     * evidence. The older compact matcher still handles non-call structural
+     * rules; aliases are resolved from this lexical stream instead of by
+     * substring guesses.
+     */
+    struct FPythonPolicyLexBudget
+    {
+        int32 RemainingTokens = MaxPythonPolicyTokens;
+        int32 RemainingChars = MaxPythonPolicyLexedChars;
+        bool bExceeded = false;
+    };
+
+    void MarkPythonPolicyLexBudgetExceeded(
+        TArray<FPythonPolicyToken>& Tokens,
+        FPythonPolicyLexBudget& Budget)
+    {
+        Tokens.Reset();
+        Tokens.Add({ EPythonPolicyTokenKind::Identifier, TEXT("__hayba_fstring_nesting_limit__") });
+        Tokens.Add({ EPythonPolicyTokenKind::OpenParen, TEXT("(") });
+        Budget.bExceeded = true;
+    }
+
+    void LexPythonPolicySourceInto(
+        const FString& Code,
+        TArray<FPythonPolicyToken>& Tokens,
+        FPythonPolicyLexBudget& Budget,
+        const int32 FStringDepth)
+    {
+        if (Budget.bExceeded) return;
+        if (Code.Len() > Budget.RemainingChars)
+        {
+            MarkPythonPolicyLexBudgetExceeded(Tokens, Budget);
+            return;
+        }
+        Budget.RemainingChars -= Code.Len();
+
+        auto AddToken = [&Tokens, &Budget](FPythonPolicyToken&& Token) -> bool
+        {
+            if (Budget.RemainingTokens <= 0)
+            {
+                MarkPythonPolicyLexBudgetExceeded(Tokens, Budget);
+                return false;
+            }
+            --Budget.RemainingTokens;
+            Tokens.Add(MoveTemp(Token));
+            return true;
+        };
+
+        int32 Index = 0;
+        while (Index < Code.Len())
+        {
+            const TCHAR Ch = Code[Index];
+
+            if (Ch == TEXT('\\') && Index + 1 < Code.Len()
+                && (Code[Index + 1] == TEXT('\n') || Code[Index + 1] == TEXT('\r')))
+            {
+                ++Index;
+                if (Index < Code.Len() && Code[Index] == TEXT('\r')) ++Index;
+                if (Index < Code.Len() && Code[Index] == TEXT('\n')) ++Index;
+                continue;
+            }
+
+            if (Ch == TEXT('#'))
+            {
+                while (Index < Code.Len() && Code[Index] != TEXT('\n') && Code[Index] != TEXT('\r')) ++Index;
+                continue;
+            }
+
+            if (Ch == TEXT('\'') || Ch == TEXT('"'))
+            {
+                const TCHAR Quote = Ch;
+                const bool bTriple = Index + 2 < Code.Len()
+                    && Code[Index + 1] == Quote && Code[Index + 2] == Quote;
+                Index += bTriple ? 3 : 1;
+                while (Index < Code.Len())
+                {
+                    if (Code[Index] == TEXT('\\'))
+                    {
+                        Index = FMath::Min(Index + 2, Code.Len());
+                        continue;
+                    }
+                    if (bTriple)
+                    {
+                        if (Index + 2 < Code.Len() && Code[Index] == Quote
+                            && Code[Index + 1] == Quote && Code[Index + 2] == Quote)
+                        {
+                            Index += 3;
+                            break;
+                        }
+                    }
+                    else if (Code[Index] == Quote)
+                    {
+                        ++Index;
+                        break;
+                    }
+                    ++Index;
+                }
+                continue;
+            }
+
+            if (IsPythonIdentifierStart(Ch))
+            {
+                const int32 Start = Index++;
+                while (Index < Code.Len() && IsPythonIdentifierContinuation(Code[Index])) ++Index;
+                if (!AddToken({
+                    EPythonPolicyTokenKind::Identifier,
+                    Code.Mid(Start, Index - Start).ToLower() })) return;
+                continue;
+            }
+
+            EPythonPolicyTokenKind Kind = EPythonPolicyTokenKind::Other;
+            switch (Ch)
+            {
+            case TEXT('.'): Kind = EPythonPolicyTokenKind::Dot; break;
+            case TEXT('('): Kind = EPythonPolicyTokenKind::OpenParen; break;
+            case TEXT(')'): Kind = EPythonPolicyTokenKind::CloseParen; break;
+            case TEXT(','): Kind = EPythonPolicyTokenKind::Comma; break;
+            case TEXT('='): Kind = EPythonPolicyTokenKind::Equal; break;
+            case TEXT(':'): Kind = EPythonPolicyTokenKind::Colon; break;
+            case TEXT(';'): Kind = EPythonPolicyTokenKind::Semicolon; break;
+            case TEXT('\n'):
+                Kind = EPythonPolicyTokenKind::Newline;
+                break;
+            case TEXT('\r'):
+                Kind = EPythonPolicyTokenKind::Newline;
+                if (Index + 1 < Code.Len() && Code[Index + 1] == TEXT('\n')) ++Index;
+                break;
+            default:
+                if (FChar::IsWhitespace(Ch))
+                {
+                    ++Index;
+                    continue;
+                }
+                break;
+            }
+            if (!AddToken({ Kind, FString::ChrN(1, Ch) })) return;
+            ++Index;
+        }
+
+        const FString FStringExpressions = ExtractPythonFStringExpressions(Code);
+        if (!FStringExpressions.IsEmpty())
+        {
+            if (!AddToken({ EPythonPolicyTokenKind::Semicolon, TEXT(";") })) return;
+            if (FStringDepth >= MaxPythonPolicyFStringDepth)
+            {
+                // Fail closed instead of recursively tokenizing attacker-made
+                // nested f-string-looking text until the editor stack blows.
+                MarkPythonPolicyLexBudgetExceeded(Tokens, Budget);
+            }
+            else
+            {
+                LexPythonPolicySourceInto(
+                    FStringExpressions,
+                    Tokens,
+                    Budget,
+                    FStringDepth + 1);
+            }
+        }
+    }
+
+    TArray<FPythonPolicyToken> LexPythonPolicySource(const FString& Code)
+    {
+        TArray<FPythonPolicyToken> Tokens;
+        Tokens.Reserve(FMath::Min(Code.Len() / 2, MaxPythonPolicyTokens));
+        FPythonPolicyLexBudget Budget;
+        LexPythonPolicySourceInto(Code, Tokens, Budget, 0);
+        return Tokens;
+    }
+
+    bool TokenIsIdentifier(
+        const TArray<FPythonPolicyToken>& Tokens,
+        const int32 Index,
+        const TCHAR* Expected = nullptr)
+    {
+        if (!Tokens.IsValidIndex(Index) || Tokens[Index].Kind != EPythonPolicyTokenKind::Identifier) return false;
+        return Expected == nullptr || Tokens[Index].Text == Expected;
+    }
+
+    bool ReadDottedPythonName(
+        const TArray<FPythonPolicyToken>& Tokens,
+        int32& Index,
+        FString& OutName)
+    {
+        if (!TokenIsIdentifier(Tokens, Index)) return false;
+        OutName = Tokens[Index++].Text;
+        while (Tokens.IsValidIndex(Index + 1)
+            && Tokens[Index].Kind == EPythonPolicyTokenKind::Dot
+            && TokenIsIdentifier(Tokens, Index + 1))
+        {
+            OutName += TEXT(".");
+            OutName += Tokens[Index + 1].Text;
+            Index += 2;
+        }
+        return true;
+    }
+
+    FString FirstPythonNameComponent(const FString& Name)
+    {
+        int32 Dot = INDEX_NONE;
+        return Name.FindChar(TEXT('.'), Dot) ? Name.Left(Dot) : Name;
+    }
+
+    bool ApplyPythonImportAliasesAt(
+        const TArray<FPythonPolicyToken>& Tokens,
+        const int32 Cursor,
+        TMap<FString, FString>& Aliases,
+        int32& OutAfter)
+    {
+        OutAfter = Cursor + 1;
+        if (TokenIsIdentifier(Tokens, Cursor, TEXT("import")))
+        {
+            int32 At = Cursor + 1;
+            while (At < Tokens.Num())
+            {
+                FString Imported;
+                if (!ReadDottedPythonName(Tokens, At, Imported)) break;
+
+                FString Local = FirstPythonNameComponent(Imported);
+                if (TokenIsIdentifier(Tokens, At, TEXT("as")) && TokenIsIdentifier(Tokens, At + 1))
+                {
+                    Local = Tokens[At + 1].Text;
+                    At += 2;
+                }
+                Aliases.Add(Local, Imported);
+
+                if (!Tokens.IsValidIndex(At) || Tokens[At].Kind != EPythonPolicyTokenKind::Comma) break;
+                ++At;
+            }
+            OutAfter = At;
+            return true;
+        }
+
+        if (!TokenIsIdentifier(Tokens, Cursor, TEXT("from"))) return false;
+        int32 At = Cursor + 1;
+        FString Module;
+        if (!ReadDottedPythonName(Tokens, At, Module) || !TokenIsIdentifier(Tokens, At, TEXT("import")))
+        {
+            return false;
+        }
+        ++At;
+
+        bool bParenthesized = false;
+        if (Tokens.IsValidIndex(At) && Tokens[At].Kind == EPythonPolicyTokenKind::OpenParen)
+        {
+            bParenthesized = true;
+            ++At;
+        }
+        while (At < Tokens.Num())
+        {
+            if (Tokens[At].Kind == EPythonPolicyTokenKind::CloseParen && bParenthesized)
+            {
+                ++At;
+                break;
+            }
+            if (Tokens[At].Kind == EPythonPolicyTokenKind::Newline)
+            {
+                if (!bParenthesized) break;
+                ++At;
+                continue;
+            }
+            if (Tokens[At].Kind == EPythonPolicyTokenKind::Comma)
+            {
+                ++At;
+                continue;
+            }
+
+            FString Imported;
+            if (!ReadDottedPythonName(Tokens, At, Imported)) break;
+            FString Local = FirstPythonNameComponent(Imported);
+            if (TokenIsIdentifier(Tokens, At, TEXT("as")) && TokenIsIdentifier(Tokens, At + 1))
+            {
+                Local = Tokens[At + 1].Text;
+                At += 2;
+            }
+            Aliases.Add(Local, Module + TEXT(".") + Imported);
+        }
+        OutAfter = At;
+        return true;
+    }
+
+    FString ResolvePythonAliasPath(const FString& Path, const TMap<FString, FString>& Aliases)
+    {
+        const FString First = FirstPythonNameComponent(Path);
+        const FString* Target = Aliases.Find(First);
+        if (!Target) return Path;
+        return *Target + Path.Mid(First.Len());
+    }
+
+    FString BuildAliasExpandedPythonCalls(const FString& Code)
+    {
+        const TArray<FPythonPolicyToken> Tokens = LexPythonPolicySource(Code);
+        TMap<FString, FString> Aliases;
+        FString Expanded;
+
+        auto AppendReference = [&Expanded](const FString& Resolved)
+        {
+            if (Expanded.Len() >= MaxPythonPolicyExpandedChars) return;
+            TArray<FString> Components;
+            Resolved.Left(MaxPythonPolicyPathChars).ParseIntoArray(Components, TEXT("."), true);
+            FString Prefix;
+            const int32 ComponentCount = FMath::Min(Components.Num(), MaxPythonPolicyPathComponents);
+            for (int32 ComponentIndex = 0; ComponentIndex < ComponentCount; ++ComponentIndex)
+            {
+                if (!Prefix.IsEmpty()) Prefix += TEXT(".");
+                Prefix += Components[ComponentIndex];
+                if (Expanded.Len() + Prefix.Len() + 2 > MaxPythonPolicyExpandedChars) break;
+                if (!Expanded.IsEmpty()) Expanded.AppendChar(TEXT(';'));
+                Expanded += Prefix;
+                Expanded.AppendChar(TEXT('('));
+            }
+        };
+
+        for (int32 Cursor = 0; Cursor < Tokens.Num(); ++Cursor)
+        {
+            int32 AfterImport = Cursor + 1;
+            if (ApplyPythonImportAliasesAt(Tokens, Cursor, Aliases, AfterImport))
+            {
+                Cursor = AfterImport - 1;
+                continue;
+            }
+
+            if (!TokenIsIdentifier(Tokens, Cursor)) continue;
+            if (Cursor > 0 && Tokens[Cursor - 1].Kind == EPythonPolicyTokenKind::Dot) continue;
+
+            const bool bStatementStart = Cursor == 0
+                || Tokens[Cursor - 1].Kind == EPythonPolicyTokenKind::Newline
+                || Tokens[Cursor - 1].Kind == EPythonPolicyTokenKind::Semicolon
+                || Tokens[Cursor - 1].Kind == EPythonPolicyTokenKind::Colon;
+            if (bStatementStart
+                && Tokens.IsValidIndex(Cursor + 2)
+                && Tokens[Cursor + 1].Kind == EPythonPolicyTokenKind::Equal
+                && Tokens[Cursor + 2].Kind != EPythonPolicyTokenKind::Equal)
+            {
+                const FString Local = Tokens[Cursor].Text;
+                int32 AfterValue = Cursor + 2;
+                int32 WrapperParens = 0;
+                while (Tokens.IsValidIndex(AfterValue)
+                    && Tokens[AfterValue].Kind == EPythonPolicyTokenKind::OpenParen)
+                {
+                    ++WrapperParens;
+                    ++AfterValue;
+                }
+                FString AssignedPath;
+                const bool bHasAssignedPath = ReadDottedPythonName(Tokens, AfterValue, AssignedPath);
+                while (bHasAssignedPath && WrapperParens > 0 && Tokens.IsValidIndex(AfterValue)
+                    && Tokens[AfterValue].Kind == EPythonPolicyTokenKind::CloseParen)
+                {
+                    --WrapperParens;
+                    ++AfterValue;
+                }
+                if (bHasAssignedPath && WrapperParens == 0
+                    && (!Tokens.IsValidIndex(AfterValue)
+                        || Tokens[AfterValue].Kind == EPythonPolicyTokenKind::Newline
+                        || Tokens[AfterValue].Kind == EPythonPolicyTokenKind::Semicolon))
+                {
+                    const FString First = FirstPythonNameComponent(AssignedPath);
+                    if (Aliases.Contains(First))
+                    {
+                        const FString Resolved = ResolvePythonAliasPath(AssignedPath, Aliases);
+                        Aliases.Add(Local, Resolved);
+                        AppendReference(Resolved);
+                    }
+                    else
+                    {
+                        // A plain reassignment to a non-alias invalidates the
+                        // earlier binding, preventing broad false positives.
+                        Aliases.Remove(Local);
+                    }
+                    Cursor = AfterValue - 1;
+                    continue;
+                }
+
+                // Calls, literals, arithmetic, and other non-alias RHS forms
+                // replace the local with an ordinary value. Clear the binding
+                // now, but leave the RHS tokens to the normal fatal-reference
+                // scan (for example `r = q.abort()` must still be rejected).
+                Aliases.Remove(Local);
+                ++Cursor;
+                continue;
+            }
+
+            int32 At = Cursor;
+            FString Path;
+            if (!ReadDottedPythonName(Tokens, At, Path)) continue;
+
+            // Treat a reference to a fatal callable as fatal even when the
+            // immediate syntax is not `name(...)`. Otherwise trivial Python
+            // indirection such as `f = process.abort; f()` or
+            // `process.abort.__call__()` evades source preflight. Appending an
+            // opening parenthesis lets the existing exact callable rules judge
+            // the canonical path without attempting unsafe data-flow analysis.
+            const FString Resolved = ResolvePythonAliasPath(Path, Aliases);
+            AppendReference(Resolved);
+            Cursor = At - 1;
+        }
+        return Expanded;
+    }
+
     bool CompactContainsPolicyPattern(const FString& Compact, const FString& Pattern)
     {
         // Bare callable names need a token boundary. A plain substring check
@@ -208,14 +806,39 @@ namespace
         FString& OutReason,
         FString& OutAlternative)
     {
-        // Patterns are whitespace-free lowercase and are matched against a
-        // compacted source string. This closes trivial `time . sleep (` /
-        // `while ( True )` variants; the C++ boundary remains authoritative
-        // even when the TS validator or allow_unsafe is bypassed.
+        // Keep structural matching for legacy non-call rules, but augment it
+        // with lexically parsed, alias-expanded call paths. `import os as q;
+        // q.kill(...)` therefore presents the exact canonical `os.kill(` path
+        // to the same rule table instead of relying on an alias substring.
         const FString Compact = CompactPythonSource(Code);
+        const FString AliasExpandedCalls = BuildAliasExpandedPythonCalls(Code);
+
+        // os.abort is deliberately lexical-only. Adding it to the compact
+        // substring table would reject a comment or string that merely explains
+        // the forbidden API.
+        TArray<FString> ExactExpandedCalls;
+        AliasExpandedCalls.ParseIntoArray(ExactExpandedCalls, TEXT(";"), true);
+        if (ExactExpandedCalls.Contains(TEXT("__hayba_fstring_nesting_limit__(")))
+        {
+            OutPattern = TEXT("f_string_nesting_limit");
+            OutPolicyCode = TEXT("HCR-DYNAMIC-001");
+            OutReason = TEXT("exceeds the bounded f-string policy inspection depth and cannot be proven safe");
+            OutAlternative = TEXT("flatten the expression into named intermediate values and call inspected APIs directly");
+            return true;
+        }
+        if (ExactExpandedCalls.Contains(TEXT("os.abort(")))
+        {
+            OutPattern = TEXT("os.abort(");
+            OutPolicyCode = TEXT("HCR-EXIT-001");
+            OutReason = TEXT("terminates the editor process immediately through the C runtime");
+            OutAlternative = TEXT("return from python_run and use the typed editor shutdown workflow");
+            return true;
+        }
+
         for (const FFatalPythonRule& Rule : FatalPythonRules())
         {
-            if (CompactContainsPolicyPattern(Compact, Rule.Pattern))
+            if (CompactContainsPolicyPattern(Compact, Rule.Pattern)
+                || CompactContainsPolicyPattern(AliasExpandedCalls, Rule.Pattern))
             {
                 OutPattern = Rule.Pattern;
                 OutPolicyCode = Rule.PolicyCode;
@@ -428,12 +1051,14 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
 
     // Capture stdout/stderr. ExecuteStatement mode sends print() to the editor's
     // Python log, NOT to CommandResult (which only carries a last-expression repr
-    // in Evaluate mode) — so the old code always returned "None". We redirect
-    // sys.stdout/stderr into buffers stashed on a module global, run the user
-    // code indented under a try/finally, then read the buffers back with a
-    // second Evaluate call in the same interpreter. The user's own code was
-    // already tier-classified above; this wrapper's machinery is internal and
-    // intentionally not re-classified.
+    // in Evaluate mode). A StringIO here is a process-memory vulnerability: one
+    // bounded request can print the same large value indefinitely until the
+    // cooperative deadline, and traceback.format_exc() creates another complete
+    // copy. The internal sink below never retains more than the fixed per-stream
+    // limit, never joins an unbounded argument list, and formats tracebacks a
+    // frame at a time. The response says exactly when and how much was dropped.
+    // This bounds capture-owned amplification; it cannot undo memory the user
+    // explicitly allocates before write(), such as `'x' * 2_000_000_000`.
     // Base64-encode the user script so it embeds in the wrapper with zero
     // escaping/indentation hazards; the wrapper decodes it and exec()s it.
     FTCHARToUTF8 CodeUtf8(*Code);
@@ -452,13 +1077,59 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     // resolves to ours WITHOUT ever mutating the process-global builtins.print
     // (mutating it leaked a stale override across runs). Results are stashed on
     // builtins (a shared singleton) and read back base64-encoded.
-    Wrapper += TEXT("import io as _hb_io, traceback as _hb_tb, builtins as _hb_b, base64 as _hb_64, sys as _hb_sys, time as _hb_time\n");
+    Wrapper += TEXT("import builtins as _hb_b, base64 as _hb_64, sys as _hb_sys, time as _hb_time\n");
     Wrapper += FString::Printf(TEXT("_hb_src = _hb_64.b64decode('%s').decode('utf-8')\n"), *CodeB64);
-    Wrapper += TEXT("_hb_out = _hb_io.StringIO(); _hb_err = _hb_io.StringIO()\n");
+    Wrapper += TEXT("class _HaybaBoundedCapture:\n");
+    Wrapper += TEXT("    __slots__ = ('_parts', '_count', '_dropped', '_limit')\n");
+    Wrapper += TEXT("    def __init__(self, limit):\n");
+    Wrapper += TEXT("        self._parts = []; self._count = 0; self._dropped = 0; self._limit = limit\n");
+    Wrapper += TEXT("    def write(self, value):\n");
+    Wrapper += TEXT("        if type(value) is not str:\n");
+    Wrapper += TEXT("            value = '<non-text write omitted by bounded capture>'\n");
+    Wrapper += TEXT("        offered = len(value); remaining = self._limit - self._count\n");
+    Wrapper += TEXT("        if remaining > 0:\n");
+    Wrapper += TEXT("            kept = value[:remaining]\n");
+    Wrapper += TEXT("            if kept: self._parts.append(kept); self._count += len(kept)\n");
+    Wrapper += TEXT("        self._dropped += max(0, offered - max(0, remaining))\n");
+    Wrapper += TEXT("        return offered\n");
+    Wrapper += TEXT("    def flush(self):\n");
+    Wrapper += TEXT("        pass\n");
+    Wrapper += TEXT("    def getvalue(self):\n");
+    Wrapper += TEXT("        return ''.join(self._parts)\n");
+    Wrapper += FString::Printf(TEXT("_hb_out = _HaybaBoundedCapture(%d); _hb_err = _HaybaBoundedCapture(%d)\n"),
+        MaxPythonCapturedCharsPerStream, MaxPythonCapturedCharsPerStream);
+    // Deliberately do not call arbitrary object __str__/__repr__ hooks here.
+    // Besides allocating without a useful ceiling, Unreal Python wrappers can
+    // cross into native C/C++ during conversion. This closes the output-buffer
+    // class; general safety for arbitrary native extension calls remains #392
+    // and cannot honestly be promised by source preflight. Behavior change:
+    // callers that need a container/object value must serialize it explicitly
+    // to bounded text (for example a size-limited json.dumps result) before
+    // print(); the response advertises capture_value_policy so an AI can adapt.
+    Wrapper += TEXT("def _hb_write_value(sink, value):\n");
+    Wrapper += TEXT("    value_type = type(value)\n");
+    Wrapper += TEXT("    if value_type is str:\n");
+    Wrapper += TEXT("        sink.write(value)\n");
+    Wrapper += TEXT("    elif value_type is int:\n");
+    Wrapper += TEXT("        sink.write(str(value) if value.bit_length() <= 4096 else '<oversized int omitted by bounded capture>')\n");
+    Wrapper += TEXT("    elif value_type in (float, bool, complex, type(None)):\n");
+    Wrapper += TEXT("        sink.write(str(value))\n");
+    Wrapper += TEXT("    elif value_type is bytes:\n");
+    Wrapper += TEXT("        remaining = max(0, sink._limit - sink._count)\n");
+    Wrapper += TEXT("        sink.write(repr(value[:max(0, remaining // 4)]))\n");
+    Wrapper += TEXT("    else:\n");
+    Wrapper += TEXT("        sink.write('<non-primitive value omitted by bounded capture>')\n");
     Wrapper += TEXT("def _hb_print(*a, **k):\n");
     Wrapper += TEXT("    _sep = k.get('sep', ' '); _end = k.get('end', '\\n'); _f = k.get('file', None)\n");
-    Wrapper += TEXT("    _line = _sep.join([str(_x) for _x in a]) + _end\n");
-    Wrapper += TEXT("    (_hb_err if _f is not None else _hb_out).write(_line)\n");
+    Wrapper += TEXT("    if _sep is None: _sep = ' '\n");
+    Wrapper += TEXT("    if _end is None: _end = '\\n'\n");
+    Wrapper += TEXT("    if type(_sep) is not str or type(_end) is not str:\n");
+    Wrapper += TEXT("        raise TypeError('sep and end must be strings or None')\n");
+    Wrapper += TEXT("    _sink = _hb_err if _f is _hb_sys.stderr else _hb_out\n");
+    Wrapper += TEXT("    for _index, _value in enumerate(a):\n");
+    Wrapper += TEXT("        if _index: _sink.write(_sep)\n");
+    Wrapper += TEXT("        _hb_write_value(_sink, _value)\n");
+    Wrapper += TEXT("    _sink.write(_end)\n");
     Wrapper += TEXT("_hb_g = {'print': _hb_print, '__name__': '__main__'}\n");
     Wrapper += TEXT("_hb_ok = True\n");
     Wrapper += TEXT("_hb_timed_out = False\n");
@@ -472,7 +1143,9 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     Wrapper += FString::Printf(TEXT("    if (_hb_trace_events %% %d) == 0 and _hb_time.monotonic() >= _hb_deadline:\n"), PythonDeadlineCheckInterval);
     Wrapper += FString::Printf(TEXT("        raise _HaybaDeadlineExceeded('python_run exceeded %.1f second cooperative bytecode deadline')\n"), MaxPythonExecutionSeconds);
     Wrapper += TEXT("    return _hb_trace\n");
+    Wrapper += TEXT("_hb_previous_stdout = _hb_sys.stdout; _hb_previous_stderr = _hb_sys.stderr\n");
     Wrapper += TEXT("try:\n");
+    Wrapper += TEXT("    _hb_sys.stdout = _hb_out; _hb_sys.stderr = _hb_err\n");
     Wrapper += TEXT("    _hb_sys.settrace(_hb_trace)\n");
     Wrapper += TEXT("    exec(compile(_hb_src, '<hayba>', 'exec'), _hb_g)\n");
     Wrapper += TEXT("except _HaybaDeadlineExceeded as _hb_timeout_error:\n");
@@ -481,13 +1154,28 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     Wrapper += TEXT("    _hb_err.write(str(_hb_timeout_error))\n");
     // Catch BaseException so SystemExit/KeyboardInterrupt cannot escape the
     // one-shot command even if a future alias slips past source preflight.
-    Wrapper += TEXT("except BaseException:\n");
+    Wrapper += TEXT("except BaseException as _hb_exception:\n");
     Wrapper += TEXT("    _hb_ok = False\n");
-    Wrapper += TEXT("    _hb_err.write(_hb_tb.format_exc())\n");
+    Wrapper += TEXT("    _hb_err.write('Traceback (most recent call last):\\n')\n");
+    Wrapper += TEXT("    _hb_tb_cursor = BaseException.__getattribute__(_hb_exception, '__traceback__'); _hb_tb_frames = 0\n");
+    Wrapper += TEXT("    while _hb_tb_cursor is not None and _hb_tb_frames < 32:\n");
+    Wrapper += TEXT("        _hb_code = _hb_tb_cursor.tb_frame.f_code\n");
+    Wrapper += TEXT("        _hb_err.write('  File '); _hb_write_value(_hb_err, _hb_code.co_filename)\n");
+    Wrapper += TEXT("        _hb_err.write(', line '); _hb_write_value(_hb_err, _hb_tb_cursor.tb_lineno)\n");
+    Wrapper += TEXT("        _hb_err.write(', in '); _hb_write_value(_hb_err, _hb_code.co_name); _hb_err.write('\\n')\n");
+    Wrapper += TEXT("        _hb_tb_cursor = _hb_tb_cursor.tb_next; _hb_tb_frames += 1\n");
+    Wrapper += TEXT("    if _hb_tb_cursor is not None: _hb_err.write('  <additional frames omitted>\\n')\n");
+    Wrapper += TEXT("    _hb_err.write(type.__getattribute__(type(_hb_exception), '__name__')); _hb_err.write(': ')\n");
+    // A custom BaseException can override attribute access just like any other
+    // Python object. Do not touch .args or call str(exception): both can invoke
+    // attacker-controlled/native code while reporting the original failure.
+    Wrapper += TEXT("    _hb_err.write('<exception arguments omitted by bounded capture>\\n')\n");
     Wrapper += TEXT("finally:\n");
     Wrapper += TEXT("    _hb_sys.settrace(None)\n");
+    Wrapper += TEXT("    _hb_sys.stdout = _hb_previous_stdout; _hb_sys.stderr = _hb_previous_stderr\n");
     Wrapper += TEXT("_hb_b._hayba_out = _hb_out.getvalue()\n");
     Wrapper += TEXT("_hb_b._hayba_err = _hb_err.getvalue()\n");
+    Wrapper += TEXT("_hb_b._hayba_capture_meta = '%d,%d,%d,%d' % (int(_hb_out._dropped > 0), int(_hb_err._dropped > 0), _hb_out._dropped, _hb_err._dropped)\n");
     Wrapper += TEXT("_hb_b._hayba_ok = _hb_ok\n");
     Wrapper += TEXT("_hb_b._hayba_timed_out = _hb_timed_out\n");
     // Eagerly drop the script's exec namespace and force a CPython collection
@@ -562,9 +1250,11 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
 
     bool bStdOutReadCrashed = false;
     bool bStdErrReadCrashed = false;
+    bool bCaptureMetaReadCrashed = false;
     const FString StdOut = EvalB64(TEXT("_hayba_out"), bStdOutReadCrashed);
     const FString StdErr = EvalB64(TEXT("_hayba_err"), bStdErrReadCrashed);
-    if (bStdOutReadCrashed || bStdErrReadCrashed)
+    const FString CaptureMeta = EvalB64(TEXT("_hayba_capture_meta"), bCaptureMetaReadCrashed);
+    if (bStdOutReadCrashed || bStdErrReadCrashed || bCaptureMetaReadCrashed)
     {
         return FHaybaHandlerResult::Err(TEXT(
             "python_run fatal_error [HCR-NATIVE-002]: matched 'post_execution_readback_access_violation'. "
@@ -602,6 +1292,24 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
             "session health is suspect."));
     }
     const bool bTimedOut = !bTimeoutReadCrashed && TimeoutCmd.CommandResult.Contains(TEXT("True"));
+
+    FPythonCommandEx CleanupCmd;
+    CleanupCmd.Command = TEXT(
+        "import builtins as _hb_cleanup_b\n"
+        "for _hb_cleanup_name in ('_hayba_out','_hayba_err','_hayba_capture_meta','_hayba_ok','_hayba_timed_out'):\n"
+        "    if hasattr(_hb_cleanup_b, _hb_cleanup_name): delattr(_hb_cleanup_b, _hb_cleanup_name)\n");
+    CleanupCmd.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
+    bool bCleanupCrashed = false;
+    ExecPythonGuarded(PythonPlugin, &CleanupCmd, bCleanupCrashed);
+    if (bCleanupCrashed)
+    {
+        return FHaybaHandlerResult::Err(TEXT(
+            "python_run fatal_error [HCR-NATIVE-002]: matched 'post_execution_cleanup_access_violation'. "
+            "The interpreter faulted while releasing bounded capture state. Safe alternative: restart the disposable "
+            "editor before retrying and use typed handlers for native objects. Retry unchanged: forbidden; editor "
+            "session health is suspect."));
+    }
+
     if (bTimedOut)
     {
         return FHaybaHandlerResult::Err(FString::Printf(
@@ -614,6 +1322,19 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     Out->SetNumberField(TEXT("tier"), static_cast<int32>(Tier));
     Out->SetStringField(TEXT("stdout"), StdOut);
     Out->SetStringField(TEXT("stderr"), StdErr);
+
+    TArray<FString> CaptureFacts;
+    CaptureMeta.ParseIntoArray(CaptureFacts, TEXT(","), false);
+    const bool bStdOutTruncated = CaptureFacts.IsValidIndex(0) && CaptureFacts[0] == TEXT("1");
+    const bool bStdErrTruncated = CaptureFacts.IsValidIndex(1) && CaptureFacts[1] == TEXT("1");
+    const int64 StdOutCharsDropped = CaptureFacts.IsValidIndex(2) ? FCString::Atoi64(*CaptureFacts[2]) : 0;
+    const int64 StdErrCharsDropped = CaptureFacts.IsValidIndex(3) ? FCString::Atoi64(*CaptureFacts[3]) : 0;
+    Out->SetBoolField(TEXT("stdout_truncated"), bStdOutTruncated);
+    Out->SetBoolField(TEXT("stderr_truncated"), bStdErrTruncated);
+    Out->SetNumberField(TEXT("stdout_chars_dropped"), static_cast<double>(FMath::Max<int64>(0, StdOutCharsDropped)));
+    Out->SetNumberField(TEXT("stderr_chars_dropped"), static_cast<double>(FMath::Max<int64>(0, StdErrCharsDropped)));
+    Out->SetNumberField(TEXT("capture_limit_chars_per_stream"), MaxPythonCapturedCharsPerStream);
+    Out->SetStringField(TEXT("capture_value_policy"), TEXT("bounded_primitive_only"));
 
     return FHaybaHandlerResult::Ok(Out);
 }

@@ -64,4 +64,42 @@ describe('MCP advisory state/config contract', () => {
       expect(test).toContain(transition);
     }
   });
+
+  it('classifies untrimmed facts and never drops correctness fields', () => {
+    const command = read('HaybaMCPCommandHandler.cpp');
+    const postDispatch = command.slice(
+      command.indexOf('const int64 DurMs'),
+      command.indexOf('FString FHaybaMCPCommandHandler::MakeOkResponse'),
+    );
+    const classifyAt = postDispatch.indexOf('SignalsForSuccess(Cmd, DataObj)');
+    expect(classifyAt).toBeGreaterThanOrEqual(0);
+    for (const successDependentBoundary of [
+      'if (bEffectiveOk) GEditor->EndTransaction()',
+      'ParamsHash, DurMs, bEffectiveOk, EffectiveError',
+      'if (bEffectiveOk && Result.Data.IsValid())',
+      'PushDiffEntries(Cmd, Params, BeforeState)',
+      'M->RecordToolCall(Cmd, ParamsStr, ResultStr)',
+      'Builder.Build(DataObj.ToSharedRef())',
+    ]) {
+      expect(classifyAt).toBeLessThan(postDispatch.indexOf(successDependentBoundary));
+    }
+    expect(postDispatch).toContain('const bool bEffectiveOk = Result.bOk && SuccessSignals.bOperationSucceeded');
+    expect(postDispatch).toContain('StreamError->SetObjectField(TEXT("data")');
+
+    const responseLimits = read('HaybaMCPResponseBuilder.h');
+    for (const fact of [
+      'succeeded',
+      'failed',
+      'saved',
+      'save_verified',
+      'verified',
+      'readback_verified',
+      'compiled_clean',
+      'dirty',
+      'dirty_count',
+    ]) {
+      expect(responseLimits).toContain(`TEXT("${fact}")`);
+    }
+    expect(read(join('Tests', 'HaybaResponseBuilderTest.cpp'))).toContain('save fact survives the field cap');
+  });
 });

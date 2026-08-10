@@ -814,6 +814,32 @@ FResult Redact(const TSharedPtr<FJsonObject>& Envelope, const FLimits& Limits)
     return Result;
 }
 
+FString RedactTextForLog(const FString& Input, int32 MaxChars)
+{
+    const int32 SafeMaxChars = FMath::Clamp(MaxChars, 64, 64 * 1024);
+    FLimits Limits;
+    Limits.MaxDepth = 2;
+    Limits.MaxNodes = 8;
+    Limits.MaxArrayItems = 1;
+    Limits.MaxObjectKeys = 4;
+    Limits.MaxKeyChars = 32;
+    Limits.MaxStringChars = SafeMaxChars;
+    Limits.MaxTotalStringChars = Limits.MaxStringChars;
+
+    TSharedPtr<FJsonObject> Wrapper = MakeShared<FJsonObject>();
+    Wrapper->SetStringField(TEXT("text"), Input);
+    const FResult Safe = Redact(Wrapper, Limits);
+    FString Output;
+    if (!Safe.Value.IsValid() || !Safe.Value->TryGetStringField(TEXT("text"), Output))
+    {
+        return TEXT("[TRUNCATED:accessor]");
+    }
+    // WalkString appends a machine truncation marker after its content budget.
+    // A log boundary promises a hard final size, so cap the already-redacted
+    // value once more. Cutting a marker cannot reveal any removed secret.
+    return Output.Left(SafeMaxChars);
+}
+
 TSharedPtr<FJsonObject> RedactFinalEnvelope(const TSharedPtr<FJsonObject>& Envelope, const FLimits& Limits)
 {
     const FResult Result = Redact(Envelope, Limits);

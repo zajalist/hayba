@@ -87,6 +87,38 @@ bool FHaybaMCPAdvisoryBoundaryTest::RunTest(const FString&)
     }
 
     {
+        TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+        Data->SetBoolField(TEXT("ok"), false);
+        Data->SetStringField(TEXT("stdout"), TEXT("before failure\n"));
+        Data->SetStringField(TEXT("stderr"), TEXT("RuntimeError: boom\n"));
+        Data->SetStringField(TEXT("error"), TEXT("operation rejected the input"));
+        const TSharedPtr<FJsonObject> Envelope = ParseEnvelope(
+            FHaybaMCPCommandHandler::MakeOkResponse(TEXT("2logical"), Data, TEXT("generic_operation")));
+        TestFalse(TEXT("a nested logical failure cannot remain top-level ok:true"),
+            Envelope->GetBoolField(TEXT("ok")));
+        TestEqual(TEXT("the handler's bounded error is promoted without operation-specific guessing"),
+            Envelope->GetStringField(TEXT("error")), FString(TEXT("operation rejected the input")));
+        const TSharedPtr<FJsonObject> PreservedData = Envelope->GetObjectField(TEXT("data"));
+        TestEqual(TEXT("structured stderr survives truthful failure shaping"),
+            PreservedData->GetStringField(TEXT("stderr")), FString(TEXT("RuntimeError: boom\n")));
+        TestEqual(TEXT("logical failure has an honest unknown-outcome state"),
+            Envelope->GetObjectField(TEXT("advisory"))->GetStringField(TEXT("state")),
+            FString(TEXT("unknown_outcome")));
+    }
+
+    {
+        TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+        Data->SetBoolField(TEXT("ok"), false);
+        Data->SetStringField(TEXT("stderr"), FString::ChrN(10000, TEXT('x')));
+        const TSharedPtr<FJsonObject> Envelope = ParseEnvelope(
+            FHaybaMCPCommandHandler::MakeOkResponse(TEXT("2bounded"), Data, TEXT("any_handler")));
+        TestTrue(TEXT("promoted diagnostics have a hard bound"),
+            Envelope->GetStringField(TEXT("error")).Len() <= 4096);
+        TestFalse(TEXT("generic failure prose does not assume Python"),
+            Envelope->GetStringField(TEXT("error")).Contains(TEXT("python"), ESearchCase::IgnoreCase));
+    }
+
+    {
         const TSharedPtr<FJsonObject> Envelope = ParseEnvelope(
             FHaybaMCPCommandHandler::MakeOkResponse(
                 TEXT("2c"), MakeShared<FJsonObject>(), TEXT("actor_transform")));

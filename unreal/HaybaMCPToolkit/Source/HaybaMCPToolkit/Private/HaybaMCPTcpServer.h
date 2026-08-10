@@ -6,6 +6,7 @@
 #include "Containers/Queue.h"
 #include "Containers/Ticker.h"
 #include "Async/Future.h"
+#include "Dom/JsonObject.h"
 #include "Networking.h"
 
 class FHaybaMCPCommandHandler;
@@ -67,6 +68,8 @@ public:
 	void Shutdown();
 	bool IsRunning() const { return bIsRunning; }
 	int32 GetClientCount() const { return ClientCount.GetValue(); }
+	/** Immutable, clamped values captured by this running server instance. */
+	TSharedRef<FJsonObject> GetTransportLimitsSnapshot() const;
 
 	// FRunnable interface
 	virtual uint32 Run() override;

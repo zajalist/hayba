@@ -366,6 +366,15 @@ void FHaybaMCPModule::ShutdownModule()
     UE_LOG(LogHaybaMCP, Log, TEXT("HaybaMCPToolkit module shut down."));
 }
 
+TSharedPtr<FJsonObject> FHaybaMCPModule::GetTcpTransportLimits() const
+{
+    if (TcpServer.IsValid() && TcpServer->IsRunning())
+    {
+        return TcpServer->GetTransportLimitsSnapshot();
+    }
+    return nullptr;
+}
+
 bool FHaybaMCPModule::StartTcpServer()
 {
     if (TcpServer.IsValid() && TcpServer->IsRunning())

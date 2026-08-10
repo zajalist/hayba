@@ -31,6 +31,58 @@ static bool IsDestructiveCommand(const FString& Cmd);
 
 namespace
 {
+    constexpr int32 MaxPromotedFailureChars = 4096;
+
+    FString BoundFailureDiagnostic(const FString& Input)
+    {
+        FString Diagnostic = Input;
+        Diagnostic.TrimStartAndEndInline();
+        if (Diagnostic.IsEmpty()) return FString();
+        return HaybaMCPSecretRedaction::RedactTextForLog(
+            Diagnostic,
+            MaxPromotedFailureChars);
+    }
+
+    FString LogicalFailureDiagnostic(const TSharedPtr<FJsonObject>& Data)
+    {
+        if (Data.IsValid())
+        {
+            FString Diagnostic;
+            if (Data->TryGetStringField(TEXT("error"), Diagnostic))
+            {
+                Diagnostic = BoundFailureDiagnostic(Diagnostic);
+                if (!Diagnostic.IsEmpty()) return Diagnostic;
+            }
+
+            const TArray<TSharedPtr<FJsonValue>>* Errors = nullptr;
+            if (Data->TryGetArrayField(TEXT("errors"), Errors) && Errors)
+            {
+                FString Joined;
+                for (const TSharedPtr<FJsonValue>& Value : *Errors)
+                {
+                    FString Item;
+                    if (!Value.IsValid() || !Value->TryGetString(Item)) continue;
+                    Item.TrimStartAndEndInline();
+                    if (Item.IsEmpty()) continue;
+                    if (!Joined.IsEmpty()) Joined += TEXT("; ");
+                    const int32 Remaining = MaxPromotedFailureChars - Joined.Len();
+                    if (Remaining <= 0) break;
+                    Joined += Item.Left(Remaining);
+                }
+                Joined = BoundFailureDiagnostic(Joined);
+                if (!Joined.IsEmpty()) return Joined;
+            }
+
+            if (Data->TryGetStringField(TEXT("stderr"), Diagnostic))
+            {
+                Diagnostic = BoundFailureDiagnostic(Diagnostic);
+                if (!Diagnostic.IsEmpty()) return Diagnostic;
+            }
+        }
+
+        return TEXT("The handler reported a logical failure without a diagnostic; the operation's final state is unknown.");
+    }
+
     void CopyStringGuidanceField(
         const TSharedPtr<FJsonObject>& Data,
         const TCHAR* Singular,
@@ -152,6 +204,22 @@ namespace
             {
                 Signals.MutationStatus = EHaybaMCPMutationStatus::Applied;
             }
+        }
+
+        // Some handlers return structured diagnostics even when their inner
+        // operation failed. Preserve that data, but never infer success solely
+        // because the native handler returned a data object. Promote the most
+        // useful bounded diagnostic without assuming which handler produced it.
+        bool bExplicitHandlerOk = true;
+        if (Data->TryGetBoolField(TEXT("ok"), bExplicitHandlerOk) && !bExplicitHandlerOk)
+        {
+            Signals.bOperationSucceeded = false;
+            Signals.FailureKind = EHaybaMCPFailureKind::UnknownOutcome;
+            Signals.Code = TEXT("handler_reported_failure");
+            Signals.Error = LogicalFailureDiagnostic(Data);
+            Signals.MutationStatus = IsDestructiveCommand(Operation)
+                ? EHaybaMCPMutationStatus::Unknown
+                : EHaybaMCPMutationStatus::None;
         }
 
         FString Status;
@@ -892,6 +960,27 @@ static FString JsonToString(const TSharedRef<FJsonObject>& Obj)
     return Output;
 }
 
+static FString ShapeOkResponse(
+    const FString& Id,
+    const TSharedPtr<FJsonObject>& Data,
+    const FHaybaMCPAdvisorySignals& Signals)
+{
+    TSharedRef<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetStringField(TEXT("id"), Id);
+    Response->SetBoolField(TEXT("ok"), Signals.bOperationSucceeded);
+    if (!Signals.bOperationSucceeded && !Signals.Error.IsEmpty())
+    {
+        Response->SetStringField(TEXT("error"), Signals.Error);
+    }
+    Response->SetObjectField(TEXT("data"),
+        Data.IsValid() ? Data.ToSharedRef() : MakeShared<FJsonObject>());
+    HaybaMCPAdvisory::ApplyToResponse(
+        Response,
+        Signals,
+        FHaybaMCPSettings::Get().AdvisoryVerbosity);
+    return JsonToString(Response);
+}
+
 FHaybaMCPCommandHandler::FHaybaMCPCommandHandler() {}
 FHaybaMCPCommandHandler::~FHaybaMCPCommandHandler() {}
 
@@ -1268,21 +1357,39 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         return MakeErrorResponse(Id, Result.ErrorMessage, Cmd, /*bSessionSuspect=*/true);
     }
 
+    // Classify the handler's complete typed result before ANY success-dependent
+    // side effect. A native bOk=true is only transport-level success: handlers
+    // can truthfully return diagnostics with data.ok=false, all-rejected counts,
+    // or a policy status. Those logical failures must cancel the transaction and
+    // be recorded consistently as failures everywhere, not merely be corrected
+    // later while shaping the TCP envelope.
+    const TSharedPtr<FJsonObject> DataObj =
+        Result.Data.IsValid() ? Result.Data : MakeShared<FJsonObject>();
+    FHaybaMCPAdvisorySignals SuccessSignals;
+    if (Result.bOk)
+    {
+        SuccessSignals = SignalsForSuccess(Cmd, DataObj);
+    }
+    const bool bEffectiveOk = Result.bOk && SuccessSignals.bOperationSucceeded;
+    const FString EffectiveError = BoundFailureDiagnostic(Result.bOk && !bEffectiveOk
+        ? SuccessSignals.Error
+        : Result.ErrorMessage);
+
     if (bDestructive && GEditor && !bInPIE)
     {
-        // Cancel the transaction if the handler reported failure — leaves no
-        // empty undo entry. Otherwise end normally so Ctrl+Z reverts the op.
-        if (Result.bOk) GEditor->EndTransaction();
-        else            GEditor->CancelTransaction(0);
+        // A nested logical failure is a failure here too: never commit an undo
+        // record for an operation whose own result says it did not succeed.
+        if (bEffectiveOk) GEditor->EndTransaction();
+        else              GEditor->CancelTransaction(0);
     }
 
-    // Journal using result directly — no need to re-parse the response string
+    // Journal the effective outcome, not merely the handler envelope flag.
     FHaybaJournalEntry E{ FDateTime::UtcNow(), Cmd,
-        ParamsHash, DurMs, Result.bOk, Result.ErrorMessage };
+        ParamsHash, DurMs, bEffectiveOk, EffectiveError };
     FHaybaMCPSecurityManager::Get().Journal(E);
 
     // Push scene-shaped results into their dedicated panels.
-    if (Result.bOk && Result.Data.IsValid())
+    if (bEffectiveOk && Result.Data.IsValid())
     {
         if (Cmd == TEXT("scene_get_graph"))           PushSceneGraphToPanel(Result.Data);
         else if (Cmd == TEXT("scene_validate_physics")) PushPhysicsResultsToPanel(Result.Data);
@@ -1292,7 +1399,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         else if (Cmd == TEXT("ui_report_findings"))      PushExternalFindingsToPanel(Params);
     }
     // Log destructive ops to the Diff panel with true Before / requested After.
-    if (Result.bOk)
+    if (bEffectiveOk)
     {
         PushDiffEntries(Cmd, Params, BeforeState);
     }
@@ -1304,18 +1411,24 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     {
         const FString ParamsStr = JsonToString(Params.ToSharedRef());
         FString ResultStr;
-        if (Result.bOk && Result.Data.IsValid())
+        if (bEffectiveOk && Result.Data.IsValid())
         {
             ResultStr = JsonToString(Result.Data.ToSharedRef());
         }
-        else if (!Result.bOk)
+        else
         {
             // The tool stream is a second output boundary.  Passing a raw
             // error string here bypassed the final-envelope secret redactor
             // even though the TCP reply was safe.  Shape it as JSON and send
             // it through the same bounded redaction path before recording.
             TSharedRef<FJsonObject> StreamError = MakeShared<FJsonObject>();
-            StreamError->SetStringField(TEXT("error"), Result.ErrorMessage);
+            StreamError->SetStringField(TEXT("error"), EffectiveError);
+            if (Result.Data.IsValid())
+            {
+                // Keep bounded stdout/stderr and structured handler diagnostics
+                // visible even though the lifecycle entry is correctly failed.
+                StreamError->SetObjectField(TEXT("data"), Result.Data.ToSharedRef());
+            }
             ResultStr = JsonToString(StreamError);
         }
 
@@ -1338,8 +1451,9 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
 
     if (Result.bOk)
     {
-        // Apply response limits via FHaybaMCPResponseBuilder before serializing
-        TSharedPtr<FJsonObject> DataObj = Result.Data.IsValid() ? Result.Data : MakeShared<FJsonObject>();
+        // Apply response limits only after classification. Correctness facts
+        // also live on the response builder's fixed never-drop allowlist so
+        // callers retain their raw machine values alongside the advisory.
         FHaybaResponseLimits Limits;
         Limits.MaxArrayItems = 50;
         Limits.MaxStringChars = 512;
@@ -1357,11 +1471,11 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         }
         FHaybaMCPResponseBuilder Builder(Limits);
         TSharedRef<FJsonObject> Trimmed = Builder.Build(DataObj.ToSharedRef());
-        return MakeOkResponse(Id, Trimmed, Cmd);
+        return ShapeOkResponse(Id, Trimmed, SuccessSignals);
     }
     else
     {
-        return MakeErrorResponse(Id, Result.ErrorMessage, Cmd);
+        return MakeErrorResponse(Id, EffectiveError, Cmd);
     }
 }
 
@@ -1370,20 +1484,8 @@ FString FHaybaMCPCommandHandler::MakeOkResponse(
     const TSharedPtr<FJsonObject>& Data,
     const FString& Operation)
 {
-    TSharedRef<FJsonObject> Response = MakeShareable(new FJsonObject());
     const FHaybaMCPAdvisorySignals Signals = SignalsForSuccess(Operation, Data);
-    Response->SetStringField(TEXT("id"), Id);
-    Response->SetBoolField(TEXT("ok"), Signals.bOperationSucceeded);
-    if (!Signals.bOperationSucceeded && !Signals.Error.IsEmpty())
-    {
-        Response->SetStringField(TEXT("error"), Signals.Error);
-    }
-    Response->SetObjectField(TEXT("data"), Data.IsValid() ? Data.ToSharedRef() : MakeShareable(new FJsonObject()));
-    HaybaMCPAdvisory::ApplyToResponse(
-        Response,
-        Signals,
-        FHaybaMCPSettings::Get().AdvisoryVerbosity);
-    return JsonToString(Response);
+    return ShapeOkResponse(Id, Data, Signals);
 }
 
 FString FHaybaMCPCommandHandler::MakeErrorResponse(

@@ -1,7 +1,7 @@
 # Mutation atomicity audit — Blueprint, Level, Material, DataAsset
 
-**Date:** 2026-08-10  
-**Issue:** #369  
+**Date:** 2026-08-10
+**Issue:** #369
 **Scope:** state-changing commands in the four handlers named above. This is a
 contract, not a claim that the remaining handlers have been audited.
 

@@ -1,16 +1,14 @@
 // HaybaMCPRenderHandler.cpp — see header.
 //
-// Threading: Handle() is invoked from the TCP server's per-request thread
-// (NOT the game thread). All UWorld/UPCGComponent/SceneCapture touches must
-// happen on the game thread, so we AsyncTask the render work and block the
-// TCP thread on an FEvent until completion.
+// Threading: ProcessCommand drains requests on the game thread. Handle()
+// enforces that boundary before acquiring a render lease or touching any
+// UWorld/SceneCapture/RHI state. Off-thread callers are rejected without
+// queuing module-owned work, so shutdown can never unload beneath a late task.
 
 #include "HaybaMCPRenderHandler.h"
 #include "HaybaMCPCaptureActor.h"
 #include "HaybaMCPRenderSafety.h"
 
-#include "Async/Async.h"
-#include "Containers/Ticker.h"
 #include "Editor.h"
 #include "Editor/EditorEngine.h"
 #include "EngineUtils.h"
@@ -98,21 +96,7 @@ namespace HaybaRender
         // True when world_tick was dropped from the wait set because Handle()
         // ran inline on the game thread (see RunOnGameThread wait phase).
         bool bSkippedWorldTickInline = false;
-        // FEvent:
-        FEvent* DoneEvent = nullptr;
         TSharedPtr<HaybaRenderSafety::FLease, ESPMode::ThreadSafe> Lease;
-
-        // Returned to the pool only when the LAST owner (caller OR the async
-        // game-thread task, whichever finishes last) drops its shared ref — so
-        // the event is never recycled while the task may still Trigger() it.
-        ~FRenderState()
-        {
-            if (DoneEvent)
-            {
-                FPlatformProcess::ReturnSynchEventToPool(DoneEvent);
-                DoneEvent = nullptr;
-            }
-        }
     };
 
     using FRenderStatePtr = TSharedPtr<FRenderState, ESPMode::ThreadSafe>;
@@ -127,8 +111,8 @@ namespace HaybaRender
         return World->SpawnActor<AHaybaMCPCaptureActor>(AHaybaMCPCaptureActor::StaticClass());
     }
 
-    /** Game-thread render execution. Takes a shared ref so the state stays
-     *  alive for the whole task even if the caller's bounded wait timed out. */
+    /** Synchronous game-thread render execution. The shared state keeps the
+     *  lease and cleanup data together for the duration of this call. */
     static void RunOnGameThread(FRenderStatePtr S)
     {
         auto Fail = [&S](const FString& Kind, const FString& Hint)
@@ -136,7 +120,6 @@ namespace HaybaRender
             S->bRendered = false;
             S->FailReason = Kind;
             S->EngineHint = Hint;
-            if (S->DoneEvent) S->DoneEvent->Trigger();
         };
 
         if (!IsInGameThread())
@@ -179,7 +162,6 @@ namespace HaybaRender
                 S->bRendered = false;
                 S->FailReason = TEXT("actor_not_found");
                 S->EngineHint = S->Camera.ActorPath + TEXT(" (actor must already exist in the active editor world)");
-                if (S->DoneEvent) S->DoneEvent->Trigger();
                 return;
             }
             // Prefer an existing SceneCapture component on the actor; otherwise
@@ -206,7 +188,6 @@ namespace HaybaRender
                     S->bRendered = false;
                     S->FailReason = TEXT("actor_not_found");
                     S->EngineHint = TEXT("no camera or scene-capture component on actor");
-                    if (S->DoneEvent) S->DoneEvent->Trigger();
                     return;
                 }
             }
@@ -258,9 +239,8 @@ namespace HaybaRender
         const uint64 StartFrame = GFrameCounter;
         const int32 WorldTicksRequired = 1;
         TSet<FString> Remaining(S->WaitSubsystems);
-        // RunOnGameThread always executes on the game thread — either inline
-        // (Handle() was already on it) or as the body of AsyncTask(GameThread).
-        // While this single task Sleeps below, the game thread is occupied and
+        // RunOnGameThread always executes inline on the game thread. While this
+        // call Sleeps below, the game thread is occupied and
         // GFrameCounter cannot advance, so world_tick's predicate
         // ((GFrameCounter - StartFrame) < 1) can never settle from here: it
         // would spin to the full timeout and write no image. Drop it from the
@@ -285,7 +265,6 @@ namespace HaybaRender
                 S->TimedOutSubsystems = Remaining.Array();
                 S->WaitMs = (Now - WaitT0) * 1000.0;
                 S->bRendered = false;
-                if (S->DoneEvent) S->DoneEvent->Trigger();
                 return;
             }
             TArray<FString> Settled;
@@ -386,7 +365,6 @@ namespace HaybaRender
         S->RenderMs = (FPlatformTime::Seconds() - RenderT0) * 1000.0;
 
         S->bRendered = true;
-        if (S->DoneEvent) S->DoneEvent->Trigger();
     }
 }
 
@@ -549,43 +527,21 @@ FHaybaHandlerResult FHaybaMCPRenderHandler::Handle(const FString& /*Command*/,
         return FHaybaHandlerResult::Err(TEXT("render_camera: ") + ValidationError);
     }
 
-    // ── Cross-thread event ────────────────────────────────────────────────
-    S->DoneEvent = FPlatformProcess::GetSynchEventFromPool(/*bIsManualReset=*/ false);
-    if (!S->DoneEvent)
+    // ProcessCommand is a game-thread boundary. Do not recreate the former
+    // off-thread marshal here: if its bounded wait elapsed, the queued lambda
+    // still retained this module's code and render lease while module shutdown
+    // continued. That is an unload-time UAF, not a recoverable timeout. A
+    // future non-TCP caller must marshal the whole command before entering the
+    // handler, where ownership and cancellation can be tracked centrally.
+    if (!IsInGameThread())
     {
-        return FHaybaHandlerResult::Err(TEXT("render_camera: failed to allocate FEvent"));
+        return FHaybaHandlerResult::Err(
+            TEXT("render_camera: must run on the game thread; no render work was queued"));
     }
-
-    // ProcessCommand already runs on the game thread, so run INLINE. The old
-    // AsyncTask(GameThread)+Wait queued a task the blocked game thread could
-    // never run -> deadlock -> always timed out (render never produced output).
-    // Only marshal when genuinely called from off the game thread; the shared
-    // ref keeps S alive across that hop even if the wait times out.
-    bool bSignaled = true;
-    if (IsInGameThread())
-    {
-        RunOnGameThread(S);
-    }
-    else
-    {
-        AsyncTask(ENamedThreads::GameThread, [S]() { RunOnGameThread(S); });
-        const uint32 BlockTimeoutMs = uint32(FMath::CeilToInt((S->Lease->RemainingSeconds() + 1.0) * 1000.0));
-        bSignaled = S->DoneEvent->Wait(BlockTimeoutMs);
-    }
+    RunOnGameThread(S);
 
     // ── Build response ────────────────────────────────────────────────────
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-
-    if (!bSignaled)
-    {
-        // The game-thread task is still running (busy/hitched/deadlocked). Do
-        // NOT read S's task-written fields here — that would race the game
-        // thread. The task keeps its own shared ref and will free S when it
-        // finishes; we just report the timeout.
-        return FHaybaHandlerResult::Err(
-            TEXT("render_camera: total deadline elapsed while game-thread render work was still in flight. ")
-            TEXT("Do not retry immediately: the single-flight lease remains held until that work drains; restart if the editor stops answering."));
-    }
 
     if (S->bWaitTimedOut)
     {
@@ -618,9 +574,8 @@ FHaybaHandlerResult FHaybaMCPRenderHandler::Handle(const FString& /*Command*/,
         }
     }
 
-    // No manual cleanup: when this function's shared ref to S drops (and the
-    // async task's ref, whichever is last), ~FRenderState returns the FEvent to
-    // the pool. This is safe because we reached here only after the event was
-    // signaled, i.e. the task is done with S.
+    // Render resources are released by the scope-exit guard inside
+    // RunOnGameThread. Dropping S here releases only ordinary response/lease
+    // state; no queued task or pooled event can outlive the handler.
     return FHaybaHandlerResult::Ok(Out);
 }

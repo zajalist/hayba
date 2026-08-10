@@ -85,8 +85,10 @@ describe('TCP crash-resilience contract', () => {
     expect(tcpCpp).toContain('QueuedChars > MaxQueuedResponseCharsPerClient');
     expect(tcpCpp).toMatch(/NewPending > MaxPendingCommands[\s\S]*break;/);
     expect(tcpCpp).toContain('.Listening(MaxClientConnections)');
-    expect(legacyCpp).toContain('SetObjectField(TEXT("transport_limits"), Limits)');
-    expect(legacyCpp).toContain('captured_at_tcp_server_start');
+    expect(tcpCpp).toContain('GetTransportLimitsSnapshot() const');
+    expect(legacyCpp).toContain('Module->GetTcpTransportLimits()');
+    expect(tcpCpp).toContain('active_tcp_server_snapshot');
+    expect(legacyCpp).toContain('next_tcp_server_start');
   });
 
   it('handles partial stream sends instead of assuming one send is complete', () => {
@@ -109,41 +111,151 @@ describe('TCP crash-resilience contract', () => {
     expect(invoker).toContain('$MaxFrameBytes = 1MB');
     expect(invoker).toMatch(/\$length -le 0 -or \$length -gt 8MB/);
     expect(invoker).toContain('[ValidateRange(100, 60000)]');
+    expect(invoker).toContain("ConnectAsync('127.0.0.1', $Port)");
+    expect(invoker).toContain('$stream.WriteAsync(');
+    expect(invoker).toContain('$Stream.ReadAsync(');
+    expect(invoker).toContain('Get-RemainingTimeoutMs');
+    expect(invoker).toContain('[System.Text.UTF8Encoding]::new($false, $true)');
+    expect(invoker).toContain('[string]$response.id -cne $requestId');
+    expect(invoker).toContain('Get-DiagnosticHash $_.Exception.Message');
+    expect(invoker).not.toContain('invoke-tcp-command failed: $($_.Exception.Message)');
     expect(invoker).toMatch(/catch \{[\s\S]*exit 1[\s\S]*exit 0/);
   });
 
-  it('never aims hostile probes at an untagged user editor', () => {
+  it('requires disposable ownership and revalidates immutable process identity', () => {
     expect(survivalHarness).toContain('-HaybaSurvivalSession=$SessionToken');
-    expect(survivalHarness).toContain('Assert-SurvivalTag $EditorPid $SessionToken');
+    expect(survivalHarness).toContain('[switch]$ConfirmDisposableProject');
+    expect(survivalHarness).toContain('[switch]$TakeOwnership');
+    expect(survivalHarness).toContain('HAYBA_DISPOSABLE_PROJECT_V1');
+    expect(survivalHarness).toContain('Assert-DisposableProject $ProjectPath');
+    expect(survivalHarness).toContain('Test-ExactCommandLineArgument');
+    expect(survivalHarness).toContain('[string]$row.ExecutablePath');
+    expect(survivalHarness).toContain('([DateTime]$row.CreationDate).ToUniversalTime()');
+    expect(survivalHarness).toContain("foreach ($field in @('pid', 'executable_path', 'creation_utc'");
+    expect(survivalHarness).toContain('Assert-CaseTarget');
+    expect(survivalHarness).toMatch(/function Assert-CaseTarget[\s\S]*return Assert-EditorHealthy/);
+    expect(survivalHarness).toMatch(/function Assert-EditorHealthy[\s\S]*Assert-EditorIdentity/);
+    expect(survivalHarness).toContain('-NotePropertyName preflight');
+    expect(survivalHarness).toContain(
+      'the survival harness will not disable, bypass, or auto-approve production policy',
+    );
+    expect(survivalHarness).toMatch(/Failed recovery only[\s\S]*Assert-EditorIdentity[\s\S]*Stop-Process/);
     expect(survivalHarness).toContain('Start-Process -FilePath $EditorExe');
     expect(survivalHarness).toContain('-WindowStyle Hidden -PassThru');
     expect(survivalHarness).toContain('Find-OwnedMcpPort $EditorPid');
-    expect(survivalHarness).toContain('Stop-Process -Id $EditorPid -Force');
+    expect(survivalHarness).toContain("Invoke-HaybaCommand -Command 'editor_save_all_and_quit'");
+    expect(survivalHarness).toContain('$owned.CloseMainWindow()');
+    expect(survivalHarness).not.toContain('[switch]$KeepEditor');
     expect(survivalHarness).not.toContain("'D:\\Projects\\aphrosia");
   });
 
-  it('emits auditable survival evidence and has a safe self-test mode', () => {
+  it('attests exact clean source and loaded plugin artifacts before accepting evidence', () => {
+    for (const marker of [
+      '[string]$ExpectedSourceCommit',
+      '[string[]]$ExpectedPluginDllSha256',
+      '[string]$ExpectedArtifactManifest',
+      'Resolve-ArtifactExpectation',
+      'status --porcelain=v1 --untracked-files=all',
+      'source_worktree_clean = $true',
+      'UnrealEditor-HaybaMCPToolkit.dll',
+      'Loaded Hayba plugin DLL set does not exactly match',
+      'Loaded Hayba plugin DLL hash mismatch',
+      'artifact_attestation_mode',
+      'artifact_manifest_sha256',
+    ]) {
+      expect(survivalHarness).toContain(marker);
+    }
+    expect(survivalHarness).toMatch(/manifestInfo\.Length[\s\S]*-gt 64KB/);
+    expect(survivalHarness).toMatch(/Get-FileHash -Algorithm SHA256[\s\S]*expected_dlls\.GetEnumerator/);
+  });
+
+  it('emits auditable state/evidence and proves the canary trips the ordinary gate', () => {
     for (const marker of [
       '[switch]$List',
       '[switch]$CanaryKill',
       '[string]$OutputJUnit',
       'sanitized_params_sha256',
+      'python_nonce_ok',
+      'python_nonce_sha256',
+      'map_baseline_unchanged',
+      'pie_state_expected',
       'dirty_package_delta',
-      'same_pid_alive',
       'listener_owner',
-      'crash_delta',
+      'crash_signature_delta',
+      'critical_log_delta',
+      'filesystem_delta',
       'canary_detects_editor_exit',
-      'slowloris_frame_timeout',
+      'ordinary_gate_would_fail',
+      'canary_self_test_expected_exit_code = 0',
+      'ordinary_gate_simulated_exit_code = 1',
+      'ordinary_gate_exit_code = 1',
+      'slowloris_total_frame_deadline',
+      'client_limit_accounting_recovery',
+      'pipelined_request_limit',
+      'disconnect_after_dispatch',
       'python_deadline_exhaustion',
       'pie_start_transition',
       'pie_stop_transition',
       "'-CanaryKill is launch-mode only",
+      'New-DiagnosticDigest',
+      'chars_hashed',
+      'fatal_error = $fatalDigest',
+      '$MaxCrashDirectories = 256',
+      '$MaxCrashFiles = 4096',
+      '$MaxCrashContextBytes = 1MB',
+      '$CrashScanTimeoutMs = 2000',
+      '$FilesystemScanTimeoutMs = 2000',
+      '$MaxTrackedProjectFiles = 25000',
+      '$MaxLogFiles = 64',
+      '$MaxTotalLogDeltaBytes = 8MB',
+      '$LogScanTimeoutMs = 1000',
     ]) {
       expect(survivalHarness).toContain(marker);
     }
     expect(survivalHarness).toContain('Write-SurvivalReports');
     expect(survivalHarness).toContain('<testsuite name=');
-    expect(survivalHarness).toContain('Get-DirtyPackages');
+    expect(survivalHarness).toContain('Get-EditorState');
+    expect(survivalHarness).toContain('Get-ProjectFilesystemEvidence');
+    expect(survivalHarness).toContain('Get-CrashEvidence');
+    expect(survivalHarness).toContain('Read-NewCriticalLogEvidence');
+    expect(survivalHarness).toContain('Get-EnvironmentEvidence');
+    expect(survivalHarness).toContain('(Get-Process -Id $EditorPid -ErrorAction Stop).Modules');
+    expect(survivalHarness).toContain('loaded_plugin_binaries');
+    expect(survivalHarness).toContain('native project identity mismatch');
+    expect(survivalHarness).toContain('pending_acceptance_matrix');
+    expect(survivalHarness).toContain("issue = '#406'");
+    expect(survivalHarness).toContain('needs_native_test_hook');
+    expect(survivalHarness).not.toContain('fatal_error = $fatalMessage');
+    expect(survivalHarness).not.toContain('detail = $fatalMessage');
+  });
+
+  it('derives hostile transport dimensions from the active listener snapshot', () => {
+    expect(survivalHarness).toContain("[string]$rawLimits.applies -cne 'active_tcp_server_snapshot'");
+    for (const limit of [
+      'max_request_bytes',
+      'max_response_bytes',
+      'max_clients',
+      'max_pending_commands',
+      'max_json_nesting_depth',
+      'frame_read_timeout_ms',
+      'send_timeout_ms',
+      'max_pipelined_requests_per_client',
+      'max_queued_response_chars_per_client',
+    ]) {
+      expect(survivalHarness).toContain(`Get-RequiredTransportLimit $rawLimits '${limit}'`);
+    }
+    expect(survivalHarness).toContain('($ActiveMaxRequestBytes + 1)');
+    expect(survivalHarness).toContain('$probeDepth = $ActiveMaxJsonNestingDepth + 1');
+    expect(survivalHarness).toContain('$PipelinedRequestProbeCount = $maxPipelined + 1');
+    expect(survivalHarness).not.toContain('Get-BigEndianHeader (1MB + 1)');
+    expect(survivalHarness).not.toContain("('[' * 65)");
+  });
+
+  it('treats Plan Mode as a hard gate for legacy and top-level failure shapes', () => {
+    expect(survivalHarness).toContain("[string]$response.data.status -ceq 'plan_mode_required'");
+    expect(survivalHarness).toContain("[string]$response.status -ceq 'plan_mode_required'");
+    expect(survivalHarness).toContain("[string]$response.code -ceq 'plan_mode_required'");
+    expect(survivalHarness).toContain('will not disable, bypass, or auto-approve production policy');
   });
 
   it('centralizes hostile JSON shapes before handlers reach Unreal APIs', () => {

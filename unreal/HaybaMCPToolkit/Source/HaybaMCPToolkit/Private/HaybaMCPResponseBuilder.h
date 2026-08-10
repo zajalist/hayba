@@ -25,6 +25,16 @@ struct FHaybaResponseLimits
      * covered by this, including ones not written yet.
      */
     TSet<FString> NeverTrimFields { TEXT("image_base64") };
+
+    /** Correctness facts used by the advisory classifier and callers. These
+     * survive the top-level presentation cap even when their lexical order
+     * would otherwise drop them. The allowlist itself is a fixed bound. */
+    TSet<FString> NeverDropTopLevelFields {
+        TEXT("succeeded"), TEXT("failed"), TEXT("saved"), TEXT("save_verified"),
+        TEXT("verified"), TEXT("readback_verified"), TEXT("compiled_clean"),
+        TEXT("dirty"), TEXT("dirty_count"), TEXT("valid"), TEXT("status"),
+        TEXT("code"), TEXT("error"), TEXT("errors")
+    };
 };
 
 class FHaybaMCPResponseBuilder

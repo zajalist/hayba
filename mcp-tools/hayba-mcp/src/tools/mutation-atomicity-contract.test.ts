@@ -26,6 +26,31 @@ function expectBefore(source: string, earlier: string, later: string): void {
 }
 
 describe('stateful handler atomicity contracts (#369)', () => {
+  it('bounds data_create strings and refuses unsafe classes before AssetTools (#368)', () => {
+    const create = between(dataAsset, '// ---------- data_create ----------', '// ---------- data_get ----------');
+    for (const fact of [
+      'FHaybaParamReader R',
+      'RequiredGamePath(TEXT("path"), MaxDataAssetPathChars)',
+      'RequiredString(TEXT("name"), MaxDataAssetNameChars)',
+      'RequiredString(TEXT("class_name"), MaxDataAssetClassChars)',
+      'IsValidLongPackageName(PackagePath)',
+      'IsSafeAssetName',
+      'IsSafeClassReference',
+      'CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists',
+      'LoadModulePtr<FAssetToolsModule>',
+      'AssetTools module is unavailable; nothing was created',
+    ]) {
+      expect(create).toContain(fact);
+    }
+    expectBefore(create, 'if (R.HasErrors())', 'const FString IntendedPackage');
+    expectBefore(create, 'if (R.HasErrors())', 'ResolveClass(ClassName)');
+    expectBefore(create, 'CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists', 'AssetNameTaken');
+    expectBefore(create, 'AssetNameTaken', 'LoadModulePtr<FAssetToolsModule>');
+    expectBefore(create, 'LoadModulePtr<FAssetToolsModule>', 'AssetTools.CreateAsset');
+    expect(create).not.toContain('LoadModuleChecked<FAssetToolsModule>');
+    expect(create).not.toContain('TryGetStringField(TEXT("path"), PackagePath)');
+  });
+
   it('stages DataAsset conversion away from the live UObject and reports persistence/readback', () => {
     const set = between(dataAsset, '// ---------- data_set ----------', 'TEXT("DataAssetHandler: unknown command');
     expectBefore(set, 'NewObject<UObject>', 'const bool bOk = FJsonObjectConverter::JsonValueToUProperty');

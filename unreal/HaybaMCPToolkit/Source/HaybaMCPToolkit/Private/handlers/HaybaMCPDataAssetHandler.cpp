@@ -7,6 +7,7 @@
 #include "IAssetTools.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "HaybaMCPAssetGuard.h"
+#include "HaybaMCPParams.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "EditorAssetLibrary.h"
 #include "UObject/UnrealType.h"
@@ -32,6 +33,74 @@ TArray<FString> FHaybaMCPDataAssetHandler::GetCommands() const
 
 namespace HaybaMCPDataAssetHelpers
 {
+    constexpr int32 MaxDataAssetPathChars = 1024;
+    constexpr int32 MaxDataAssetNameChars = 256;
+    constexpr int32 MaxDataAssetClassChars = 1024;
+
+    static bool IsSafeAssetName(const FString& Value)
+    {
+        if (Value.IsEmpty()) return false;
+        for (const TCHAR Ch : Value)
+        {
+            // Keep untrusted names out of FName/package internals until their
+            // lexical shape is known. Package/object names do not need control
+            // characters, separators, or punctuation when the folder is a
+            // separate parameter.
+            if (Ch == TEXT('\0') || FChar::IsControl(Ch)
+                || !(FChar::IsAlnum(Ch) || Ch == TEXT('_')))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static bool IsSafeClassReference(const FString& Value)
+    {
+        if (Value.IsEmpty()
+            || Value.Contains(TEXT(".."))
+            || Value.Contains(TEXT("//"))
+            || Value.Contains(TEXT("\\")))
+        {
+            return false;
+        }
+        for (const TCHAR Ch : Value)
+        {
+            // ResolveClass accepts short names, Module.Class, and /Game or
+            // /Script object paths. None requires quotes, whitespace, control
+            // characters, or punctuation beyond slash/dot/underscore.
+            if (Ch == TEXT('\0') || FChar::IsControl(Ch)
+                || !(FChar::IsAlnum(Ch)
+                    || Ch == TEXT('_') || Ch == TEXT('/') || Ch == TEXT('.')))
+            {
+                return false;
+            }
+        }
+        if (Value.StartsWith(TEXT("/"), ESearchCase::CaseSensitive))
+        {
+            if (!(Value.StartsWith(TEXT("/Game/"), ESearchCase::CaseSensitive)
+                    || Value.StartsWith(TEXT("/Script/"), ESearchCase::CaseSensitive)))
+            {
+                return false;
+            }
+            int32 LastSlash = INDEX_NONE;
+            int32 FirstDot = INDEX_NONE;
+            int32 LastDot = INDEX_NONE;
+            Value.FindLastChar(TEXT('/'), LastSlash);
+            Value.FindChar(TEXT('.'), FirstDot);
+            Value.FindLastChar(TEXT('.'), LastDot);
+            return FirstDot == LastDot
+                && FirstDot > LastSlash + 1
+                && FirstDot < Value.Len() - 1;
+        }
+        if (Value.Contains(TEXT("/"))) return false;
+        int32 FirstDot = INDEX_NONE;
+        int32 LastDot = INDEX_NONE;
+        if (!Value.FindChar(TEXT('.'), FirstDot)) return true;
+        Value.FindLastChar(TEXT('.'), LastDot);
+        return FirstDot == LastDot && FirstDot > 0 && FirstDot < Value.Len() - 1;
+    }
+
     // Resolve a UClass* by user-supplied name. Accepts:
     //   "/Script/MyGame.MyClass"  (path)
     //   "MyClass" or "MyClass_C"  (short name)
@@ -154,13 +223,26 @@ FHaybaHandlerResult FHaybaMCPDataAssetHandler::Handle(const FString& Cmd, const 
     // ---------- data_create ----------
     if (Cmd == TEXT("data_create"))
     {
-        FString PackagePath, AssetName, ClassName;
-        if (!P.IsValid() || !P->TryGetStringField(TEXT("path"), PackagePath) || PackagePath.IsEmpty())
-            return FHaybaHandlerResult::Err(TEXT("data_create: missing path"));
-        if (!P->TryGetStringField(TEXT("name"), AssetName) || AssetName.IsEmpty())
-            return FHaybaHandlerResult::Err(TEXT("data_create: missing name"));
-        if (!P->TryGetStringField(TEXT("class_name"), ClassName) || ClassName.IsEmpty())
-            return FHaybaHandlerResult::Err(TEXT("data_create: missing class_name"));
+        // Parse and bound every attacker-controlled string before any path
+        // concatenation, object/class lookup, module load, or asset mutation.
+        FHaybaParamReader R(P, TEXT("data_create"));
+        const FString PackagePath = R.RequiredGamePath(TEXT("path"), MaxDataAssetPathChars);
+        const FString AssetName = R.RequiredString(TEXT("name"), MaxDataAssetNameChars);
+        const FString ClassName = R.RequiredString(TEXT("class_name"), MaxDataAssetClassChars);
+        if (!PackagePath.IsEmpty() && !FPackageName::IsValidLongPackageName(PackagePath))
+        {
+            R.AddError(TEXT("'path' must name a /Game content folder, not an object path"));
+        }
+        if (!AssetName.IsEmpty() && !IsSafeAssetName(AssetName))
+        {
+            R.AddError(TEXT("'name' must contain only letters, numbers, or underscores; control characters and separators are not allowed"));
+        }
+        if (!ClassName.IsEmpty() && !IsSafeClassReference(ClassName))
+        {
+            R.AddError(TEXT("'class_name' must be a bounded short class name, Module.Class, or /Game or /Script class path without control characters or traversal"));
+        }
+        if (R.HasErrors())
+            return FHaybaHandlerResult::Err(R.ErrorMessage());
 
         const FString IntendedPackage = PackagePath / AssetName;
         if (!(PackagePath == TEXT("/Game") || PackagePath.StartsWith(TEXT("/Game/")))
@@ -177,9 +259,10 @@ FHaybaHandlerResult FHaybaMCPDataAssetHandler::Handle(const FString& Cmd, const 
                 TEXT("data_create: class not found: %s"), *ClassName));
 
         if (!Class->IsChildOf(UDataAsset::StaticClass())
-            || Class->HasAnyClassFlags(CLASS_Abstract))
+            || Class->HasAnyClassFlags(
+                CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists))
             return FHaybaHandlerResult::Err(FString::Printf(
-                TEXT("data_create: class %s must be a concrete UDataAsset subclass; nothing was created"), *ClassName));
+                TEXT("data_create: class %s must be a current, non-deprecated, concrete UDataAsset subclass; nothing was created"), *ClassName));
 
         // Refuse a taken name instead of letting CreateAsset raise a modal
         // overwrite dialog, which would block the game thread and hang every
@@ -190,9 +273,11 @@ FHaybaHandlerResult FHaybaMCPDataAssetHandler::Handle(const FString& Cmd, const 
                 HaybaAssetGuard::NameTakenError(TEXT("data_create"), PackagePath, AssetName));
         }
 
-        FAssetToolsModule& AssetToolsModule =
-            FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
-        IAssetTools& AssetTools = AssetToolsModule.Get();
+        FAssetToolsModule* AssetToolsModule =
+            FModuleManager::LoadModulePtr<FAssetToolsModule>(TEXT("AssetTools"));
+        if (!AssetToolsModule)
+            return FHaybaHandlerResult::Err(TEXT("data_create: AssetTools module is unavailable; nothing was created"));
+        IAssetTools& AssetTools = AssetToolsModule->Get();
 
         UObject* NewAsset = AssetTools.CreateAsset(AssetName, PackagePath, Class, nullptr);
         if (!NewAsset)

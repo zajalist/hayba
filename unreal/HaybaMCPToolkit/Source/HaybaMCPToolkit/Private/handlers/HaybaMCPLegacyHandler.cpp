@@ -3,6 +3,7 @@
 #include "HaybaMCPReflection.h"
 #include "HaybaMCPGameThread.h"
 #include "HaybaMCPCommandHandler.h"
+#include "HaybaMCPModule.h"
 #include "HaybaMCPSettings.h"
 #include "HaybaMCPLandscapeImporter.h"
 #include "Interfaces/IPluginManager.h"
@@ -150,22 +151,30 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_Ping(const TSharedPtr<FJsonObjec
 		Data->SetObjectField(TEXT("capabilities"), Caps);
 	}
 
-    // These are the centrally-clamped values the TCP server captures at Start.
-    // Surfacing them in the diagnostic ping makes the effective safety contract
-    // inspectable without asking a user to find an ini file. Runtime settings
-    // changes apply on the next TCP-server/editor restart.
+    // Report the immutable snapshot from the active server, not the mutable
+    // settings cache. The old response labelled current settings as already
+    // captured, so a live setting change made diagnostics claim limits the
+    // socket workers were not actually using.
     {
         const FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
-        TSharedPtr<FJsonObject> Limits = MakeShared<FJsonObject>();
-        Limits->SetNumberField(TEXT("max_request_bytes"), Settings.TcpMaxRequestBytes);
-        Limits->SetNumberField(TEXT("max_response_bytes"), Settings.TcpMaxResponseBytes);
-        Limits->SetNumberField(TEXT("max_clients"), Settings.TcpMaxClientConnections);
-        Limits->SetNumberField(TEXT("max_pending_commands"), Settings.TcpMaxPendingCommands);
-        Limits->SetNumberField(TEXT("max_json_nesting_depth"), Settings.TcpMaxJsonNestingDepth);
-        Limits->SetNumberField(TEXT("frame_read_timeout_ms"), Settings.TcpFrameReadTimeoutMs);
-        Limits->SetNumberField(TEXT("send_timeout_ms"), Settings.TcpSendTimeoutMs);
-        Limits->SetStringField(TEXT("applies"), TEXT("captured_at_tcp_server_start"));
-        Data->SetObjectField(TEXT("transport_limits"), Limits);
+        if (FHaybaMCPModule* Module = FModuleManager::GetModulePtr<FHaybaMCPModule>(TEXT("HaybaMCPToolkit")))
+        {
+            if (TSharedPtr<FJsonObject> Active = Module->GetTcpTransportLimits())
+            {
+                Data->SetObjectField(TEXT("transport_limits"), Active);
+            }
+        }
+
+        TSharedPtr<FJsonObject> Next = MakeShared<FJsonObject>();
+        Next->SetNumberField(TEXT("max_request_bytes"), Settings.TcpMaxRequestBytes);
+        Next->SetNumberField(TEXT("max_response_bytes"), Settings.TcpMaxResponseBytes);
+        Next->SetNumberField(TEXT("max_clients"), Settings.TcpMaxClientConnections);
+        Next->SetNumberField(TEXT("max_pending_commands"), Settings.TcpMaxPendingCommands);
+        Next->SetNumberField(TEXT("max_json_nesting_depth"), Settings.TcpMaxJsonNestingDepth);
+        Next->SetNumberField(TEXT("frame_read_timeout_ms"), Settings.TcpFrameReadTimeoutMs);
+        Next->SetNumberField(TEXT("send_timeout_ms"), Settings.TcpSendTimeoutMs);
+        Next->SetStringField(TEXT("applies"), TEXT("next_tcp_server_start"));
+        Data->SetObjectField(TEXT("transport_limits_configured"), Next);
     }
 
 	UE_LOG(LogHaybaMCPLegacy, Log, TEXT("Ping command processed"));

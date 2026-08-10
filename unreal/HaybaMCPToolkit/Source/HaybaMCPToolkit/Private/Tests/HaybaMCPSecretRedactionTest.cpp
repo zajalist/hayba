@@ -308,6 +308,18 @@ bool FHaybaMCPSecretRedactionTest::RunTest(const FString&)
     }
 
     {
+        const FString SafeBearer = RedactTextForLog(
+            TEXT("compiler said Authorization: Bearer SENTINEL_NATIVE_LOG_SECRET"), 256);
+        TestFalse(TEXT("native log text drops bearer secrets"),
+            SafeBearer.Contains(TEXT("SENTINEL_NATIVE_LOG_SECRET")));
+        TestTrue(TEXT("native log text preserves useful surrounding diagnostics"),
+            SafeBearer.Contains(TEXT("compiler said")));
+
+        const FString Bounded = RedactTextForLog(FString::ChrN(10000, TEXT('x')), 128);
+        TestTrue(TEXT("native log text is bounded"), Bounded.Len() <= 128);
+    }
+
+    {
         TSharedPtr<FJsonObject> Image = MakeShared<FJsonObject>();
         Image->SetStringField(TEXT("type"), TEXT("image"));
         Image->SetStringField(TEXT("data"), TEXT("QUJDREVGRw=="));

@@ -237,12 +237,29 @@ TSharedRef<FJsonObject> FHaybaMCPResponseBuilder::Build(const TSharedRef<FJsonOb
         TArray<FString> Keys;
         for (const auto& Pair : Copy->Values) { Keys.Add(FString(*Pair.Key)); }
         Keys.Sort();
-        const int32 RemovedCount = Keys.Num() - Limits.MaxTopLevelFields;
-        for (int32 i = Limits.MaxTopLevelFields; i < Keys.Num(); ++i)
+        TArray<FString> OrdinaryKeys;
+        int32 ProtectedPresent = 0;
+        for (const FString& Key : Keys)
         {
-            Copy->RemoveField(Keys[i]);
+            if (Limits.NeverDropTopLevelFields.Contains(Key))
+            {
+                ++ProtectedPresent;
+            }
+            else
+            {
+                OrdinaryKeys.Add(Key);
+            }
         }
-        Truncations.Add({TEXT("_root"), TEXT("fields"), RemovedCount});
+        const int32 OrdinaryBudget = FMath::Max(0, Limits.MaxTopLevelFields - ProtectedPresent);
+        const int32 RemovedCount = FMath::Max(0, OrdinaryKeys.Num() - OrdinaryBudget);
+        for (int32 i = OrdinaryBudget; i < OrdinaryKeys.Num(); ++i)
+        {
+            Copy->RemoveField(OrdinaryKeys[i]);
+        }
+        if (RemovedCount > 0)
+        {
+            Truncations.Add({TEXT("_root"), TEXT("fields"), RemovedCount});
+        }
     }
 
     if (Truncations.Num() > 0)

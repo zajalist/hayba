@@ -54,7 +54,8 @@ describe('MCP + Tool Stream final redaction boundary', () => {
       handler.indexOf('// Send response'),
     );
 
-    expect(recordBoundary).toContain('StreamError->SetStringField(TEXT("error"), Result.ErrorMessage)');
+    expect(handler).toContain('const FString EffectiveError = BoundFailureDiagnostic(');
+    expect(recordBoundary).toContain('StreamError->SetStringField(TEXT("error"), EffectiveError)');
     expect(recordBoundary).toContain('ResultStr = JsonToString(StreamError)');
     expect(recordBoundary).not.toContain('FString::Printf(TEXT("ERROR: %s")');
   });

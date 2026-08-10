@@ -29,7 +29,8 @@ describe('render/RHI lifecycle source contract (#387)', () => {
     expect(safetyCpp).toContain('IsEngineExitRequested()');
     expect(safetyCpp).toContain('GUsingNullRHI');
     expect(safetyCpp).toContain('DeadlineAtSeconds');
-    expect(camera).toContain('RemainingSeconds() + 1.0');
+    expect(camera).toContain('must run on the game thread; no render work was queued');
+    expect(camera).not.toContain('AsyncTask(ENamedThreads::GameThread, [S]');
   });
 
   it('detaches and releases every transient target before the lease drains', () => {

@@ -28,6 +28,8 @@ public:
     void StopTcpServer();
     bool IsTcpServerRunning() const;
     int32 GetTcpClientCount() const;
+    /** Active server's immutable, clamped transport limits; null while stopped. */
+    TSharedPtr<FJsonObject> GetTcpTransportLimits() const;
 
     bool StartMCPServer();
     void StopMCPServer();

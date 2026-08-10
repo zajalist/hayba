@@ -136,6 +136,22 @@ FHaybaMCPTcpServer::~FHaybaMCPTcpServer()
     Shutdown();
 }
 
+TSharedRef<FJsonObject> FHaybaMCPTcpServer::GetTransportLimitsSnapshot() const
+{
+    TSharedRef<FJsonObject> Limits = MakeShared<FJsonObject>();
+    Limits->SetNumberField(TEXT("max_request_bytes"), MaxRequestBytes);
+    Limits->SetNumberField(TEXT("max_response_bytes"), MaxResponseBytes);
+    Limits->SetNumberField(TEXT("max_clients"), MaxClientConnections);
+    Limits->SetNumberField(TEXT("max_pending_commands"), MaxPendingCommands);
+    Limits->SetNumberField(TEXT("max_json_nesting_depth"), MaxJsonNestingDepth);
+    Limits->SetNumberField(TEXT("frame_read_timeout_ms"), FrameReadTimeoutMs);
+    Limits->SetNumberField(TEXT("send_timeout_ms"), SendTimeoutMs);
+    Limits->SetNumberField(TEXT("max_pipelined_requests_per_client"), MaxPipelinedRequestsPerClient);
+    Limits->SetNumberField(TEXT("max_queued_response_chars_per_client"), MaxQueuedResponseCharsPerClient);
+    Limits->SetStringField(TEXT("applies"), TEXT("active_tcp_server_snapshot"));
+    return Limits;
+}
+
 bool FHaybaMCPTcpServer::Start()
 {
     if (IsRunning())

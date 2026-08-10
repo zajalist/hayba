@@ -45,6 +45,11 @@ namespace HaybaMCPSecretRedaction
     /** Redact an envelope without changing the caller's object graph. */
     FResult Redact(const TSharedPtr<FJsonObject>& Envelope, const FLimits& Limits = FLimits());
 
+    /** Last-mile boundary for native log text that never enters a JSON/TCP
+     * envelope. The result is secret-scanned and deterministically bounded;
+     * callers may log it, but must never fall back to the raw input. */
+    FString RedactTextForLog(const FString& Input, int32 MaxChars = 4096);
+
     /**
      * Redact and, when anything changed, attach the machine-readable summary at
      * `_meta["hayba/security_redaction"]`.
