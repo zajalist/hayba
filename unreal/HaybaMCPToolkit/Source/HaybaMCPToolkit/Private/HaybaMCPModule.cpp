@@ -58,6 +58,7 @@
 #include "handlers/HaybaMCPRenderHandler.h"
 #include "HaybaMCPCaptureActor.h"
 #include "HaybaMCPSettings.h"
+#include "HaybaMCPRenderSafety.h"
 #include "Json.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformMisc.h"
@@ -142,6 +143,14 @@ void FHaybaMCPModule::StartupModule()
 {
     PluginBaseDir = IPluginManager::Get().FindPlugin(TEXT("HaybaMCPToolkit"))->GetBaseDir();
     UE_LOG(LogHaybaMCP, Log, TEXT("HaybaMCPToolkit module started. Base dir: %s"), *PluginBaseDir);
+
+    FString RenderLifecycleError;
+    if (!HaybaRenderSafety::Initialize(RenderLifecycleError))
+    {
+        // Fail closed: StartTcpServer remains available for non-render tools,
+        // while every render lease will refuse until a clean editor restart.
+        UE_LOG(LogHaybaMCP, Error, TEXT("Render lifecycle initialization refused: %s"), *RenderLifecycleError);
+    }
 
     FHaybaMCPStyle::Initialize();
     FHaybaMCPSettings::Get().Load();
@@ -338,6 +347,13 @@ void FHaybaMCPModule::StartupModule()
 
 void FHaybaMCPModule::ShutdownModule()
 {
+    FString ActiveRender;
+    if (!HaybaRenderSafety::BeginShutdown(ActiveRender))
+    {
+        UE_LOG(LogHaybaMCP, Error,
+            TEXT("Module shutdown began while render command '%s' was still in flight; new render work is now refused while TCP teardown drains the active request."),
+            *ActiveRender);
+    }
     auto& TM = FGlobalTabmanager::Get();
     if (PlanOverlay) { PlanOverlay->Unregister(); PlanOverlay.Reset(); }
     TM->UnregisterNomadTabSpawner(TabMain);

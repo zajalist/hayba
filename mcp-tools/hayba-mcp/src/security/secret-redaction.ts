@@ -12,14 +12,7 @@ export type SecretCategory =
   | 'url_query';
 
 export type TruncationReason =
-  | 'accessor'
-  | 'array_items'
-  | 'cycle'
-  | 'depth'
-  | 'nodes'
-  | 'object_keys'
-  | 'string_chars'
-  | 'total_string_chars';
+  'accessor' | 'array_items' | 'cycle' | 'depth' | 'nodes' | 'object_keys' | 'string_chars' | 'total_string_chars';
 
 const SECRET_CATEGORIES: readonly SecretCategory[] = [
   'api_key',
@@ -84,13 +77,57 @@ const CONSOLE_INSTALLED = Symbol.for('hayba.consoleSecretRedactionInstalled');
 const JSON_WRAPPED_RESPONSES = new WeakSet<object>();
 
 const MEASUREMENT_HEADS = new Set([
-  'age', 'algorithm', 'allowed', 'at', 'budget', 'count', 'date', 'depth',
-  'disabled', 'duration', 'enabled', 'error', 'expired', 'format', 'found',
-  'id', 'index', 'kind', 'label', 'last4', 'length', 'limit', 'max', 'message',
-  'min', 'missing', 'mode', 'name', 'offset', 'order', 'policy', 'position',
-  'present', 'reason', 'remaining', 'required', 'rule', 'scheme', 'size',
-  'source', 'state', 'status', 'supported', 'time', 'timestamp', 'total',
-  'ttl', 'type', 'used', 'valid', 'version',
+  'age',
+  'algorithm',
+  'allowed',
+  'at',
+  'budget',
+  'count',
+  'date',
+  'depth',
+  'disabled',
+  'duration',
+  'enabled',
+  'error',
+  'expired',
+  'format',
+  'found',
+  'id',
+  'index',
+  'kind',
+  'label',
+  'last4',
+  'length',
+  'limit',
+  'max',
+  'message',
+  'min',
+  'missing',
+  'mode',
+  'name',
+  'offset',
+  'order',
+  'policy',
+  'position',
+  'present',
+  'reason',
+  'remaining',
+  'required',
+  'rule',
+  'scheme',
+  'size',
+  'source',
+  'state',
+  'status',
+  'supported',
+  'time',
+  'timestamp',
+  'total',
+  'ttl',
+  'type',
+  'used',
+  'valid',
+  'version',
 ]);
 
 const SECRET_COMPOUNDS: ReadonlyArray<[string, SecretCategory]> = [
@@ -119,10 +156,13 @@ const SECRET_COMPOUNDS: ReadonlyArray<[string, SecretCategory]> = [
 // nested quantifier or an unbounded alternation over attacker-controlled text.
 const BEARER = /\bBearer[ \t]+[A-Za-z0-9._~+\/=:-]+/gi;
 const JWT = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g;
-const PROVIDER_KEY = /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AIza[A-Za-z0-9_-]{30,}|AKIA[A-Z0-9]{16})\b/g;
-const URL_SECRET = /([?&](?:api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|client[_-]?secret|signature|sig|x-amz-signature|x-amz-credential)=)([^&#\s]+)/gi;
+const PROVIDER_KEY =
+  /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AIza[A-Za-z0-9_-]{30,}|AKIA[A-Z0-9]{16})\b/g;
+const URL_SECRET =
+  /([?&](?:api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|client[_-]?secret|signature|sig|x-amz-signature|x-amz-credential)=)([^&#\s]+)/gi;
 const URL_USERINFO = /(\bhttps?:\/\/[^\s\/@:]+:)([^\s\/@]+)(@)/gi;
-const ASSIGNMENT = /((?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|auth[_ -]?token|client[_ -]?secret|private[_ -]?key|password|passwd|pwd|token|secret|authorization|credential|x-api-key|cookie|set-cookie)["']?\s*[:=]\s*["']?)([^"'&,;\s}\]]+)/gi;
+const ASSIGNMENT =
+  /((?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|auth[_ -]?token|client[_ -]?secret|private[_ -]?key|password|passwd|pwd|token|secret|authorization|credential|x-api-key|cookie|set-cookie)["']?\s*[:=]\s*["']?)([^"'&,;\s}\]]+)/gi;
 
 interface WalkState {
   options: Required<SecretRedactionOptions>;
@@ -171,7 +211,11 @@ export function redactMcpResult<T>(value: T): T {
   if (!result.summary.applied && !result.summary.truncated) return result.value;
   if (!isRecord(result.value) || Array.isArray(result.value)) return result.value;
   const currentMeta = isRecord(result.value._meta) ? result.value._meta : {};
-  return cloneWithProperty(result.value, '_meta', cloneWithProperty(currentMeta, SECURITY_META_KEY, result.summary)) as T;
+  return cloneWithProperty(
+    result.value,
+    '_meta',
+    cloneWithProperty(currentMeta, SECURITY_META_KEY, result.summary),
+  ) as T;
 }
 
 /** Preserve Error type while ensuring SDK error serialization and stacks are safe. */
@@ -194,7 +238,9 @@ function redactThrownInner(error: unknown, active: WeakSet<object>): unknown {
   const rawCause = causeDescriptor && 'value' in causeDescriptor ? causeDescriptor.value : undefined;
   const cause = causeWasAccessor
     ? `${TRUNCATED_PREFIX}accessor]`
-    : rawCause === undefined ? undefined : redactThrownInner(rawCause, active);
+    : rawCause === undefined
+      ? undefined
+      : redactThrownInner(rawCause, active);
   const details = Object.keys(error).map((key) => {
     const descriptor = Object.getOwnPropertyDescriptor(error, key);
     const hasValue = !!descriptor && 'value' in descriptor;
@@ -203,7 +249,13 @@ function redactThrownInner(error: unknown, active: WeakSet<object>): unknown {
     return [key, raw, redactBoundaryValue(raw), wasAccessor] as const;
   });
   const detailsChanged = details.some(([, raw, safe, wasAccessor]) => wasAccessor || safe !== raw);
-  if (message === error.message && stack === error.stack && !causeWasAccessor && cause === rawCause && !detailsChanged) {
+  if (
+    message === error.message &&
+    stack === error.stack &&
+    !causeWasAccessor &&
+    cause === rawCause &&
+    !detailsChanged
+  ) {
     active.delete(error);
     return error;
   }
@@ -228,7 +280,7 @@ export function installConsoleSecretRedaction(): void {
   if (tagged[CONSOLE_INSTALLED]) return;
   for (const level of ['debug', 'error', 'info', 'log', 'warn'] as const) {
     const original = console[level].bind(console);
-    console[level] = ((...args: unknown[]) => original(...args.map(redactThrown))) as typeof console[typeof level];
+    console[level] = ((...args: unknown[]) => original(...args.map(redactThrown))) as (typeof console)[typeof level];
   }
   Object.defineProperty(tagged, CONSOLE_INSTALLED, { value: true, enumerable: false });
 }
@@ -294,7 +346,11 @@ function walkArray(value: unknown[], state: WalkState, depth: number): WalkResul
   return changed ? { value: output, changed: true } : { value, changed: false };
 }
 
-function walkObject(value: Record<string, unknown>, state: WalkState, depth: number): WalkResult<Record<string, unknown>> {
+function walkObject(
+  value: Record<string, unknown>,
+  state: WalkState,
+  depth: number,
+): WalkResult<Record<string, unknown>> {
   const entries: Array<[string, unknown]> = [];
   for (const key of Object.keys(value)) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
@@ -353,19 +409,25 @@ function selectObjectEntries(entries: Array<[string, unknown]>, limit: number): 
 
 function isMandatoryOutputKey(key: string): boolean {
   const normalized = key.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
-  return normalized === 'error'
-    || normalized === 'errors'
-    || normalized === 'mandatoryrecovery'
-    || normalized === 'recovery'
-    || normalized === 'recoveryaction'
-    || normalized === 'recoveryactions';
+  return (
+    normalized === 'error' ||
+    normalized === 'errors' ||
+    normalized === 'mandatoryrecovery' ||
+    normalized === 'recovery' ||
+    normalized === 'recoveryaction' ||
+    normalized === 'recoveryactions'
+  );
 }
 
 function walkString(value: string, state: WalkState, opaque: boolean): WalkResult<string> {
   if (isRedactedMarker(value) || isTruncationMarker(value)) return { value, changed: false };
   // Binary/base64 payloads retain exact bytes; transport response limits remain
-  // their allocation boundary. Secret-named keys are masked before this point.
-  if (opaque) return { value, changed: false };
+  // their allocation boundary. A trusted-looking key is not proof of encoding:
+  // malformed prose must still be scanned, and an AWS access-key id is itself
+  // valid base64 syntax. Secret-named keys are masked before this point.
+  if (opaque && isStructurallyValidBase64(value) && !isHighConfidenceProviderKey(value)) {
+    return { value, changed: false };
+  }
 
   let text = value;
   let changed = false;
@@ -388,6 +450,40 @@ function walkString(value: string, state: WalkState, opaque: boolean): WalkResul
   ({ text, changed } = replaceValueGroup(text, URL_SECRET, 'url_query', changed, state));
   ({ text, changed } = replaceValueGroup(text, ASSIGNMENT, 'credential', changed, state));
   return changed ? { value: text, changed: true } : { value, changed: false };
+}
+
+function isStructurallyValidBase64(value: string): boolean {
+  if (value.length === 0 || value.length % 4 !== 0) return false;
+  let firstPadding = -1;
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code === 0x3d) {
+      // =
+      if (firstPadding < 0) firstPadding = i;
+      continue;
+    }
+    const asciiAlphabet =
+      (code >= 0x41 && code <= 0x5a) ||
+      (code >= 0x61 && code <= 0x7a) ||
+      (code >= 0x30 && code <= 0x39) ||
+      code === 0x2b ||
+      code === 0x2f;
+    if (firstPadding >= 0 || !asciiAlphabet) return false;
+  }
+  if (firstPadding >= 0) {
+    const padding = value.length - firstPadding;
+    if (padding < 1 || padding > 2) return false;
+  }
+  return true;
+}
+
+function isHighConfidenceProviderKey(value: string): boolean {
+  if (value.length !== 20 || !value.startsWith('AKIA')) return false;
+  for (let i = 4; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (!((code >= 0x41 && code <= 0x5a) || (code >= 0x30 && code <= 0x39))) return false;
+  }
+  return true;
 }
 
 function replaceMiddleGroup(
@@ -449,12 +545,26 @@ function redactPrivateKeyBlocks(input: string, state: WalkState): { value: strin
   let changed = false;
   while (cursor < input.length) {
     const begin = input.indexOf('-----BEGIN ', cursor);
-    if (begin < 0) { output += input.slice(cursor); break; }
+    if (begin < 0) {
+      output += input.slice(cursor);
+      break;
+    }
     const headerEnd = input.indexOf(terminal, begin);
-    if (headerEnd < 0 || headerEnd - begin > 80) { output += input.slice(cursor, begin + 11); cursor = begin + 11; continue; }
+    if (headerEnd < 0 || headerEnd - begin > 80) {
+      output += input.slice(cursor, begin + 11);
+      cursor = begin + 11;
+      continue;
+    }
     const end = input.indexOf(terminal, headerEnd + terminal.length);
-    if (end < 0) { output += input.slice(cursor, begin); output += marker('private_key'); cursor = input.length; }
-    else { output += input.slice(cursor, begin); output += marker('private_key'); cursor = end + terminal.length; }
+    if (end < 0) {
+      output += input.slice(cursor, begin);
+      output += marker('private_key');
+      cursor = input.length;
+    } else {
+      output += input.slice(cursor, begin);
+      output += marker('private_key');
+      cursor = end + terminal.length;
+    }
     state.categories.add('private_key');
     state.redactedValues += 1;
     changed = true;
@@ -491,10 +601,11 @@ function isOpaquePayload(key: string, owner: Record<string, unknown>): boolean {
   return normalized === 'data' && (type === 'image' || type === 'audio' || type === 'blob');
 }
 
-function marker(category: SecretCategory): string { return `${REDACTED_PREFIX}${category}]`; }
+function marker(category: SecretCategory): string {
+  return `${REDACTED_PREFIX}${category}]`;
+}
 function isRedactedMarker(value: unknown): boolean {
-  return typeof value === 'string'
-    && SECRET_CATEGORIES.some((category) => value === marker(category));
+  return typeof value === 'string' && SECRET_CATEGORIES.some((category) => value === marker(category));
 }
 function isTruncationMarker(value: string): boolean {
   return TRUNCATION_REASONS.some((reason) => value === `${TRUNCATED_PREFIX}${reason}]`);

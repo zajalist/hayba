@@ -26,8 +26,17 @@ public:
     /** Returns all registered command names. */
     TArray<FString> GetAllCommands() const;
 
-    static FString MakeOkResponse(const FString& Id, const TSharedPtr<FJsonObject>& Data);
-    static FString MakeErrorResponse(const FString& Id, const FString& ErrorMessage);
+    static FString MakeOkResponse(
+        const FString& Id,
+        const TSharedPtr<FJsonObject>& Data,
+        const FString& Operation = FString());
+    static FString MakeErrorResponse(
+        const FString& Id,
+        const FString& ErrorMessage,
+        const FString& Operation = FString(),
+        bool bSessionSuspect = false,
+        /** True only when dispatch/Execute provably never began. */
+        bool bKnownPreflight = false);
 
 private:
     /** Rebuild CommandToHandler from the live handlers. The map is derived

@@ -124,6 +124,8 @@ private:
     FString FindNodeExecutable() const;
     FString GetMCPServerPath() const;
 
+    // Connection workers retain the server while they exit during shutdown,
+    // so the shared controller crosses the game/listener/connection threads.
     TSharedPtr<FHaybaMCPTcpServer, ESPMode::ThreadSafe> TcpServer;
     TSharedPtr<FHaybaMCPCommandHandler> CommandHandler;
     mutable FProcHandle MCPProcessHandle;

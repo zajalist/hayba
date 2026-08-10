@@ -215,7 +215,18 @@ void FHaybaMCPSettings::Load()
         bEnableExecutionJournal  = DevSettings->bEnableExecutionJournal;
         bAllowUnsafePython       = DevSettings->bAllowUnsafePython;
         RateLimitPerMinute       = DevSettings->RateLimitPerMinute;
+        // Clamp again at the runtime boundary. UPROPERTY clamps protect the UI,
+        // but an edited config file must not turn a safety ceiling into an
+        // allocation or queue-amplification primitive.
+        TcpMaxRequestBytes       = FMath::Clamp(DevSettings->TcpMaxRequestBytes, 64 * 1024, 16 * 1024 * 1024);
+        TcpMaxResponseBytes      = FMath::Clamp(DevSettings->TcpMaxResponseBytes, 1024 * 1024, 64 * 1024 * 1024);
+        TcpMaxClientConnections = FMath::Clamp(DevSettings->TcpMaxClientConnections, 1, 64);
+        TcpMaxPendingCommands    = FMath::Clamp(DevSettings->TcpMaxPendingCommands, 1, 1024);
+        TcpMaxJsonNestingDepth   = FMath::Clamp(DevSettings->TcpMaxJsonNestingDepth, 8, 256);
+        TcpFrameReadTimeoutMs    = FMath::Clamp(DevSettings->TcpFrameReadTimeoutMs, 500, 30000);
+        TcpSendTimeoutMs         = FMath::Clamp(DevSettings->TcpSendTimeoutMs, 100, 30000);
         bCodeModeEnabled         = DevSettings->bCodeModeEnabled;
+        AdvisoryVerbosity        = DevSettings->AdvisoryVerbosity;
         ToolCacheTTLSeconds      = DevSettings->ToolCacheTTLSeconds;
         SidecarURL               = DevSettings->SidecarURL;
         ModelPreset              = (int32)DevSettings->ModelPreset;
@@ -303,6 +314,18 @@ void FHaybaMCPSettings::Load()
 
 void FHaybaMCPSettings::Save() const
 {
+    // Keep the custom in-plugin panel and Project Settings on one source of
+    // truth. The custom panel edits this cached model; UDeveloperSettings owns
+    // the persisted Config property used on the next editor launch.
+    if (UHaybaMCPDeveloperSettings* DevSettings = GetMutableDefault<UHaybaMCPDeveloperSettings>())
+    {
+        if (DevSettings->AdvisoryVerbosity != AdvisoryVerbosity)
+        {
+            DevSettings->AdvisoryVerbosity = AdvisoryVerbosity;
+            DevSettings->SaveConfig();
+        }
+    }
+
     // NOTE: the LLM API key is NOT written here — it lives DPAPI-encrypted in the
     // vault ([HaybaProviderKeys]) via SetProviderKey. Never persist it plaintext.
     GConfig->SetString(Section, TEXT("SelectedProviderId"), *SelectedProviderId, GEditorPerProjectIni);
@@ -357,6 +380,23 @@ void FHaybaMCPSettings::WriteDisabledToolsFile() const
         Json += TEXT("\n    \"") + Sorted[i] + TEXT("\"");
         if (i + 1 < Sorted.Num()) Json += TEXT(",");
     }
-    Json += TEXT("\n  ]\n}\n");
+    Json += FString::Printf(
+        TEXT("\n  ],\n  \"advisory_verbosity\": \"%s\"\n}\n"),
+        AdvisoryVerbosityWireName(AdvisoryVerbosity));
     FFileHelper::SaveStringToFile(Json, *FilePath);
+}
+
+const TCHAR* FHaybaMCPSettings::AdvisoryVerbosityWireName(
+    EHaybaMCPAdvisoryVerbosity Value)
+{
+    switch (Value)
+    {
+    case EHaybaMCPAdvisoryVerbosity::ErrorsOnly:
+        return TEXT("errors_only");
+    case EHaybaMCPAdvisoryVerbosity::ErrorsWarningsAndTips:
+        return TEXT("errors_warnings_and_tips");
+    case EHaybaMCPAdvisoryVerbosity::ErrorsAndWarnings:
+    default:
+        return TEXT("errors_and_warnings");
+    }
 }

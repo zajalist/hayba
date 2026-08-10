@@ -83,9 +83,18 @@ private:
 	// data race the compiler may hoist, never seeing shutdown).
 	FThreadSafeBool bIsRunning{ false };
 	FThreadSafeCounter ClientCount;
-	static constexpr int32 MaxClientConnections = 16;
+	FThreadSafeCounter PendingCommandCount;
+	// Effective, clamped limits captured once at Start(). Project Settings may
+	// change the next server incarnation without racing live worker threads.
+	int32 MaxRequestBytes = 1024 * 1024;
+	int32 MaxResponseBytes = 8 * 1024 * 1024;
+	int32 MaxClientConnections = 16;
+	int32 MaxPendingCommands = 128;
+	int32 MaxJsonNestingDepth = 64;
+	int32 FrameReadTimeoutMs = 5000;
+	int32 SendTimeoutMs = 1000;
 	static constexpr int32 MaxPipelinedRequestsPerClient = 8;
-	static constexpr int32 MaxQueuedResponseCharsPerClient = 8 * 1024 * 1024;
+	int32 MaxQueuedResponseCharsPerClient = 8 * 1024 * 1024;
 	// Actual completion handles for every background connection/read/send task.
 	// Shutdown removes the ticker, joins the listener, then joins these workers
 	// before module code can unload.

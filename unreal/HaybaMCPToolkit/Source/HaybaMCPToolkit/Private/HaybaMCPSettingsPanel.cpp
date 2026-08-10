@@ -86,6 +86,43 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
         .Text(FText::AsNumber(S.ToolCacheTTLSeconds))
         .OnTextChanged_Lambda(OnDirty);
 
+    AdvisoryVerbosityOptions = {
+        MakeShared<EHaybaMCPAdvisoryVerbosity>(EHaybaMCPAdvisoryVerbosity::ErrorsOnly),
+        MakeShared<EHaybaMCPAdvisoryVerbosity>(EHaybaMCPAdvisoryVerbosity::ErrorsAndWarnings),
+        MakeShared<EHaybaMCPAdvisoryVerbosity>(EHaybaMCPAdvisoryVerbosity::ErrorsWarningsAndTips),
+    };
+    for (const TSharedPtr<EHaybaMCPAdvisoryVerbosity>& Option : AdvisoryVerbosityOptions)
+    {
+        if (Option.IsValid() && *Option == S.AdvisoryVerbosity)
+        {
+            SelectedAdvisoryVerbosity = Option;
+            break;
+        }
+    }
+    if (!SelectedAdvisoryVerbosity.IsValid())
+    {
+        SelectedAdvisoryVerbosity = AdvisoryVerbosityOptions[1];
+    }
+    SAssignNew(AdvisoryVerbosityCombo, SComboBox<TSharedPtr<EHaybaMCPAdvisoryVerbosity>>)
+        .OptionsSource(&AdvisoryVerbosityOptions)
+        .InitiallySelectedItem(SelectedAdvisoryVerbosity)
+        .OnGenerateWidget_Lambda([](TSharedPtr<EHaybaMCPAdvisoryVerbosity> Value)
+        {
+            return SNew(STextBlock).Text(Value.IsValid()
+                ? AdvisoryVerbosityLabel(*Value)
+                : FText::GetEmpty());
+        })
+        .OnSelectionChanged(this, &SHaybaMCPSettingsPanel::OnAdvisoryVerbosityChanged)
+        [
+            SNew(STextBlock)
+            .Text_Lambda([this]()
+            {
+                return SelectedAdvisoryVerbosity.IsValid()
+                    ? AdvisoryVerbosityLabel(*SelectedAdvisoryVerbosity)
+                    : FText::GetEmpty();
+            })
+        ];
+
     ChildSlot
     [
         SNew(SBorder)
@@ -238,6 +275,25 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                                     "Default: on. Turn off only if your agent host has trouble with progressive tool discovery."),
                                 [](){ return FHaybaMCPSettings::Get().bCodeModeEnabled; },
                                 [](bool b){ FHaybaMCPSettings::Get().bCodeModeEnabled = b; }) ]
+                        )
+                    ]
+
+                    + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
+                    [
+                        BuildSection(
+                            NSLOCTEXT("Hayba", "Settings.Sec.Guidance", "AI Response Guidance"),
+                            NSLOCTEXT("Hayba", "Settings.Sec.Guidance.TT",
+                                "Choose how much optional guidance Hayba adds to tool replies. Errors and safety-required recovery instructions can never be hidden."),
+                            SNew(SVerticalBox)
+                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+                            [ BuildLabeledRow(
+                                NSLOCTEXT("Hayba", "S.Guidance.Level", "Response detail"),
+                                NSLOCTEXT("Hayba", "S.Guidance.Level.TT",
+                                    "Errors only — suppress optional warnings and AI tips.\n\n"
+                                    "Errors and warnings — include risk, partial-success, and verification warnings, but no coaching tips.\n\n"
+                                    "Errors, warnings, and AI tips — include concise next-step guidance.\n\n"
+                                    "Errors, session-health failures, and mandatory recovery instructions are always returned."),
+                                AdvisoryVerbosityCombo.ToSharedRef()) ]
                         )
                     ]
 
@@ -572,6 +628,30 @@ void SHaybaMCPSettingsPanel::RefreshKeyStatus()
         KeyStatusText->SetText(FText::FromString(FString::Printf(TEXT("Stored (DPAPI): ••••%s"), *Last4)));
         KeyStatusText->SetColorAndOpacity(FSlateColor(FLinearColor(0.65f, 0.65f, 0.7f))); // muted
     }
+}
+
+FText SHaybaMCPSettingsPanel::AdvisoryVerbosityLabel(EHaybaMCPAdvisoryVerbosity Value)
+{
+    switch (Value)
+    {
+    case EHaybaMCPAdvisoryVerbosity::ErrorsOnly:
+        return NSLOCTEXT("Hayba", "S.Guidance.ErrorsOnly", "Errors only");
+    case EHaybaMCPAdvisoryVerbosity::ErrorsAndWarnings:
+        return NSLOCTEXT("Hayba", "S.Guidance.ErrorsWarnings", "Errors and warnings");
+    case EHaybaMCPAdvisoryVerbosity::ErrorsWarningsAndTips:
+    default:
+        return NSLOCTEXT("Hayba", "S.Guidance.ErrorsWarningsTips", "Errors, warnings, and AI tips");
+    }
+}
+
+void SHaybaMCPSettingsPanel::OnAdvisoryVerbosityChanged(
+    TSharedPtr<EHaybaMCPAdvisoryVerbosity> NewValue,
+    ESelectInfo::Type)
+{
+    if (!NewValue.IsValid()) return;
+    SelectedAdvisoryVerbosity = NewValue;
+    FHaybaMCPSettings::Get().AdvisoryVerbosity = *NewValue;
+    MarkDirty();
 }
 
 FReply SHaybaMCPSettingsPanel::OnRedoSetup()

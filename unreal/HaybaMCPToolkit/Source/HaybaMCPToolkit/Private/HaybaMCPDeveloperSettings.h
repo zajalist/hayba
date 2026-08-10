@@ -2,6 +2,7 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "Engine/DeveloperSettings.h"
+#include "HaybaMCPAdvisoryTypes.h"
 #include "HaybaMCPDeveloperSettings.generated.h"
 
 UENUM()
@@ -32,8 +33,47 @@ public:
     UPROPERTY(EditAnywhere, Config, Category="Performance", meta=(ClampMin=10, ClampMax=600))
     int32 RateLimitPerMinute = 60;
 
+    UPROPERTY(EditAnywhere, Config, Category="Transport Safety",
+        meta=(ClampMin=65536, ClampMax=16777216, UIMin=65536, UIMax=16777216,
+            ToolTip="Maximum UTF-8 bytes accepted in one MCP request. Applied when the TCP server next starts."))
+    int32 TcpMaxRequestBytes = 1024 * 1024;
+
+    UPROPERTY(EditAnywhere, Config, Category="Transport Safety",
+        meta=(ClampMin=1048576, ClampMax=67108864, UIMin=1048576, UIMax=67108864,
+            ToolTip="Maximum UTF-8 bytes emitted in one MCP response. Keep large enough for bounded image/base64 tools. Applied when the TCP server next starts."))
+    int32 TcpMaxResponseBytes = 8 * 1024 * 1024;
+
+    UPROPERTY(EditAnywhere, Config, Category="Transport Safety",
+        meta=(ClampMin=1, ClampMax=64,
+            ToolTip="Maximum simultaneous MCP client connections. Applied when the TCP server next starts."))
+    int32 TcpMaxClientConnections = 16;
+
+    UPROPERTY(EditAnywhere, Config, Category="Transport Safety",
+        meta=(ClampMin=1, ClampMax=1024,
+            ToolTip="Maximum accepted commands waiting for the game thread. Excess clients are disconnected before enqueue. Applied when the TCP server next starts."))
+    int32 TcpMaxPendingCommands = 128;
+
+    UPROPERTY(EditAnywhere, Config, Category="Transport Safety",
+        meta=(ClampMin=8, ClampMax=256,
+            ToolTip="Maximum JSON object/array nesting accepted before parsing. Applied when the TCP server next starts."))
+    int32 TcpMaxJsonNestingDepth = 64;
+
+    UPROPERTY(EditAnywhere, Config, Category="Transport Safety",
+        meta=(ClampMin=500, ClampMax=30000,
+            ToolTip="Maximum total milliseconds allowed to receive one complete framed request. Prevents slow clients from holding every connection slot. Applied when the TCP server next starts."))
+    int32 TcpFrameReadTimeoutMs = 5000;
+
+    UPROPERTY(EditAnywhere, Config, Category="Transport Safety",
+        meta=(ClampMin=100, ClampMax=30000,
+            ToolTip="Maximum total milliseconds allowed to send one response before disconnecting a client that is not reading. Applied when the TCP server next starts."))
+    int32 TcpSendTimeoutMs = 1000;
+
     UPROPERTY(EditAnywhere, Config, Category="Performance")
     bool bCodeModeEnabled = true;
+
+    UPROPERTY(EditAnywhere, Config, Category="AI Response Guidance",
+        meta=(ToolTip="Controls optional guidance in MCP responses. Errors and mandatory recovery instructions are always returned, even in Errors only mode."))
+    EHaybaMCPAdvisoryVerbosity AdvisoryVerbosity = EHaybaMCPAdvisoryVerbosity::ErrorsAndWarnings;
 
     UPROPERTY(EditAnywhere, Config, Category="Performance", meta=(ClampMin=0.5, ClampMax=30.0))
     float ToolCacheTTLSeconds = 2.0f;
