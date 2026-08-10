@@ -14,6 +14,7 @@ namespace
     constexpr int32 MaxPythonPolicyExpandedChars = MaxPythonScriptChars * 4;
     constexpr int32 MaxPythonPolicyPathChars = 4096;
     constexpr int32 MaxPythonPolicyPathComponents = 64;
+    constexpr int32 MaxPythonPolicyAliasWorkChars = MaxPythonPolicyExpandedChars;
     constexpr int32 MaxPythonPolicyFStringDepth = 16;
     constexpr int32 MaxPythonPolicyTokens = MaxPythonScriptChars;
     constexpr int32 MaxPythonPolicyLexedChars = MaxPythonPolicyExpandedChars;
@@ -65,7 +66,8 @@ namespace
             { TEXT("asyncio.create_task"), TEXT("HCR-LIFE-001"), TEXT("leaves asynchronous Python work after the one-shot namespace is collected"), TEXT("perform bounded work synchronously or add an owned native async job") },
             { TEXT("asyncio.ensure_future"), TEXT("HCR-LIFE-001"), TEXT("leaves asynchronous Python work after the one-shot namespace is collected"), TEXT("perform bounded work synchronously or add an owned native async job") },
             { TEXT("run_in_executor("), TEXT("HCR-LIFE-001"), TEXT("runs Python work beyond the request and potentially off the game thread"), TEXT("perform bounded work synchronously or add an owned native async job") },
-            { TEXT("concurrent.futures"), TEXT("HCR-LIFE-001"), TEXT("runs Python work beyond the request and potentially off the game thread"), TEXT("perform bounded work synchronously or add an owned native async job") },
+            { TEXT("concurrent.futures.threadpoolexecutor("), TEXT("HCR-LIFE-001"), TEXT("runs Python work beyond the request and off the game thread"), TEXT("use a separately managed external job") },
+            { TEXT("concurrent.futures.processpoolexecutor("), TEXT("HCR-LIFE-001"), TEXT("runs Python work beyond the request in child processes"), TEXT("use a separately managed external job") },
             { TEXT("multiprocessing."), TEXT("HCR-LIFE-001"), TEXT("starts process-owned work beyond the MCP request lifetime"), TEXT("use a separately managed external job rather than python_run") },
             { TEXT("importmultiprocessing"), TEXT("HCR-LIFE-001"), TEXT("imports process-owned work that can outlive the request under aliases"), TEXT("use a separately managed external job rather than python_run") },
             { TEXT("fromthreadingimportthread"), TEXT("HCR-LIFE-001"), TEXT("imports an unmanaged thread constructor under an arbitrary local name"), TEXT("perform bounded work synchronously or add an owned native async job") },
@@ -74,7 +76,8 @@ namespace
             { TEXT("fromasyncioimportensure_future"), TEXT("HCR-LIFE-001"), TEXT("imports an asynchronous task constructor under an arbitrary local name"), TEXT("perform bounded work synchronously or add an owned native async job") },
             { TEXT("importthreadingas"), TEXT("HCR-LIFE-001"), TEXT("imports unmanaged thread/timer constructors under an alias"), TEXT("perform bounded work synchronously or add an owned native async job") },
             { TEXT("importasyncioas"), TEXT("HCR-LIFE-001"), TEXT("imports task constructors under an alias that can outlive the request"), TEXT("perform bounded work synchronously or add an owned native async job") },
-            { TEXT("importconcurrent.futuresas"), TEXT("HCR-LIFE-001"), TEXT("imports executors under an alias that can run beyond the request"), TEXT("use a separately managed external job") },
+            { TEXT("fromconcurrent.futuresimportthreadpoolexecutor"), TEXT("HCR-LIFE-001"), TEXT("imports an executor that can run beyond the request"), TEXT("use a separately managed external job") },
+            { TEXT("fromconcurrent.futuresimportprocesspoolexecutor"), TEXT("HCR-LIFE-001"), TEXT("imports an executor that can run beyond the request"), TEXT("use a separately managed external job") },
             { TEXT("time.sleep("), TEXT("HCR-BLOCK-001"), TEXT("blocks the editor game thread"), TEXT("return a job id and poll from the client instead of sleeping") },
             { TEXT("fromtimeimportsleep"), TEXT("HCR-BLOCK-001"), TEXT("imports a blocking sleep primitive under an arbitrary local name"), TEXT("return a job id and poll from the client instead of sleeping") },
             { TEXT("importtimeas"), TEXT("HCR-BLOCK-001"), TEXT("aliases the blocking sleep primitive beyond reliable source preflight"), TEXT("use bounded engine time queries or do timing in the Node process") },
@@ -104,6 +107,23 @@ namespace
             { TEXT("while(true)"), TEXT("HCR-BLOCK-001"), TEXT("is an unbounded loop on the editor game thread"), TEXT("use a bounded loop or an owned incremental job") },
             { TEXT("while1"), TEXT("HCR-BLOCK-001"), TEXT("is an unbounded loop on the editor game thread"), TEXT("use a bounded loop or an owned incremental job") },
             { TEXT("while(1)"), TEXT("HCR-BLOCK-001"), TEXT("is an unbounded loop on the editor game thread"), TEXT("use a bounded loop or an owned incremental job") },
+            { TEXT("threading.lock("), TEXT("HCR-BLOCK-001"), TEXT("creates a lock whose acquire can block the editor game thread"), TEXT("use straight-line request-local state without blocking synchronization") },
+            { TEXT("threading.rlock("), TEXT("HCR-BLOCK-001"), TEXT("creates a re-entrant lock whose acquire can block the editor game thread"), TEXT("use straight-line request-local state without blocking synchronization") },
+            { TEXT("threading.event("), TEXT("HCR-BLOCK-001"), TEXT("creates an event whose wait can block the editor game thread"), TEXT("return an owned job id and poll from the client") },
+            { TEXT("threading.condition("), TEXT("HCR-BLOCK-001"), TEXT("creates a condition whose wait can block the editor game thread"), TEXT("return an owned job id and poll from the client") },
+            { TEXT("threading.semaphore("), TEXT("HCR-BLOCK-001"), TEXT("creates a semaphore whose acquire can block the editor game thread"), TEXT("use bounded request-local work without blocking synchronization") },
+            { TEXT("threading.boundedsemaphore("), TEXT("HCR-BLOCK-001"), TEXT("creates a semaphore whose acquire can block the editor game thread"), TEXT("use bounded request-local work without blocking synchronization") },
+            { TEXT("threading.lock.acquire("), TEXT("HCR-BLOCK-001"), TEXT("can block forever, including on a second non-reentrant acquire"), TEXT("avoid locks inside python_run and perform bounded work inline") },
+            { TEXT("threading.rlock.acquire("), TEXT("HCR-BLOCK-001"), TEXT("can block the editor game thread while waiting for ownership"), TEXT("avoid locks inside python_run and perform bounded work inline") },
+            { TEXT("threading.event.wait("), TEXT("HCR-BLOCK-001"), TEXT("waits on the editor game thread"), TEXT("return an owned job id and poll from the client") },
+            { TEXT("threading.condition.wait("), TEXT("HCR-BLOCK-001"), TEXT("waits on the editor game thread"), TEXT("return an owned job id and poll from the client") },
+            { TEXT("threading.semaphore.acquire("), TEXT("HCR-BLOCK-001"), TEXT("can wait indefinitely on the editor game thread"), TEXT("use bounded request-local work without blocking synchronization") },
+            { TEXT("threading.boundedsemaphore.acquire("), TEXT("HCR-BLOCK-001"), TEXT("can wait indefinitely on the editor game thread"), TEXT("use bounded request-local work without blocking synchronization") },
+            { TEXT("queue.queue("), TEXT("HCR-BLOCK-001"), TEXT("creates a queue whose get or join can block the editor game thread"), TEXT("pass bounded request data directly or poll an owned native job") },
+            { TEXT("queue.queue.get("), TEXT("HCR-BLOCK-001"), TEXT("can wait indefinitely for queue data on the editor game thread"), TEXT("pass bounded request data directly or poll an owned native job") },
+            { TEXT("queue.queue.join("), TEXT("HCR-BLOCK-001"), TEXT("can wait indefinitely for queue completion on the editor game thread"), TEXT("poll an owned native job from the client") },
+            { TEXT("concurrent.futures.future.result("), TEXT("HCR-BLOCK-001"), TEXT("can wait indefinitely for a future on the editor game thread"), TEXT("return an owned job id and poll from the client") },
+            { TEXT("concurrent.futures.wait("), TEXT("HCR-BLOCK-001"), TEXT("waits for futures on the editor game thread"), TEXT("return an owned job id and poll from the client") },
             { TEXT("ctypes."), TEXT("HCR-NATIVE-001"), TEXT("exposes native memory outside Unreal/Python safety boundaries"), TEXT("add a typed native handler with validated inputs") },
             { TEXT("importctypes"), TEXT("HCR-NATIVE-001"), TEXT("imports native-memory access that can be aliased"), TEXT("add a typed native handler with validated inputs") },
             { TEXT("fromctypesimport"), TEXT("HCR-NATIVE-001"), TEXT("imports native-memory access under an arbitrary local name"), TEXT("add a typed native handler with validated inputs") },
@@ -548,21 +568,70 @@ namespace
         return Expected == nullptr || Tokens[Index].Text == Expected;
     }
 
-    bool ReadDottedPythonName(
+    struct FPythonPolicyAliasBudget
+    {
+        int32 RemainingCopiedChars = MaxPythonPolicyAliasWorkChars;
+        bool bExceeded = false;
+    };
+
+    bool ReadDottedPythonNameBounded(
         const TArray<FPythonPolicyToken>& Tokens,
         int32& Index,
-        FString& OutName)
+        FString& OutName,
+        FPythonPolicyAliasBudget* Budget)
     {
         if (!TokenIsIdentifier(Tokens, Index)) return false;
-        OutName = Tokens[Index++].Text;
-        while (Tokens.IsValidIndex(Index + 1)
-            && Tokens[Index].Kind == EPythonPolicyTokenKind::Dot
-            && TokenIsIdentifier(Tokens, Index + 1))
+
+        // First measure the complete path without constructing it. Repeated
+        // FString += on a componentized <=256 KiB name otherwise performs
+        // quadratic prefix copying before any post-hoc path limit can run.
+        const int32 Start = Index;
+        int32 End = Index + 1;
+        int32 ComponentCount = 1;
+        int32 NameChars = Tokens[Index].Text.Len();
+        if (NameChars > MaxPythonPolicyPathChars)
         {
-            OutName += TEXT(".");
-            OutName += Tokens[Index + 1].Text;
-            Index += 2;
+            if (Budget) Budget->bExceeded = true;
+            return false;
         }
+        while (Tokens.IsValidIndex(End + 1)
+            && Tokens[End].Kind == EPythonPolicyTokenKind::Dot
+            && TokenIsIdentifier(Tokens, End + 1))
+        {
+            const int32 ComponentChars = Tokens[End + 1].Text.Len();
+            if (ComponentCount >= MaxPythonPolicyPathComponents
+                || ComponentChars > MaxPythonPolicyPathChars - NameChars - 1)
+            {
+                if (Budget) Budget->bExceeded = true;
+                return false;
+            }
+            ++ComponentCount;
+            NameChars += 1 + ComponentChars;
+            if (Budget && NameChars > Budget->RemainingCopiedChars)
+            {
+                Budget->bExceeded = true;
+                return false;
+            }
+            End += 2;
+        }
+        if (Budget && NameChars > Budget->RemainingCopiedChars)
+        {
+            Budget->bExceeded = true;
+            return false;
+        }
+
+        // One exact reserve makes the construction linear. Charge that copy to
+        // the same budget used by alias storage and resolution.
+        if (Budget) Budget->RemainingCopiedChars -= NameChars;
+        OutName.Reset();
+        OutName.Reserve(NameChars);
+        OutName += Tokens[Start].Text;
+        for (int32 At = Start + 1; At < End; At += 2)
+        {
+            OutName.AppendChar(TEXT('.'));
+            OutName += Tokens[At + 1].Text;
+        }
+        Index = End;
         return true;
     }
 
@@ -572,11 +641,29 @@ namespace
         return Name.FindChar(TEXT('.'), Dot) ? Name.Left(Dot) : Name;
     }
 
+    bool AddBoundedPythonAlias(
+        TMap<FString, FString>& Aliases,
+        const FString& Local,
+        const FString& Target,
+        FPythonPolicyAliasBudget* Budget)
+    {
+        if (Target.Len() > MaxPythonPolicyPathChars
+            || (Budget && Target.Len() > Budget->RemainingCopiedChars))
+        {
+            if (Budget) Budget->bExceeded = true;
+            return false;
+        }
+        if (Budget) Budget->RemainingCopiedChars -= Target.Len();
+        Aliases.Add(Local, Target);
+        return true;
+    }
+
     bool ApplyPythonImportAliasesAt(
         const TArray<FPythonPolicyToken>& Tokens,
         const int32 Cursor,
         TMap<FString, FString>& Aliases,
-        int32& OutAfter)
+        int32& OutAfter,
+        FPythonPolicyAliasBudget* Budget)
     {
         OutAfter = Cursor + 1;
         if (TokenIsIdentifier(Tokens, Cursor, TEXT("import")))
@@ -585,7 +672,7 @@ namespace
             while (At < Tokens.Num())
             {
                 FString Imported;
-                if (!ReadDottedPythonName(Tokens, At, Imported)) break;
+                if (!ReadDottedPythonNameBounded(Tokens, At, Imported, Budget)) break;
 
                 FString Local = FirstPythonNameComponent(Imported);
                 if (TokenIsIdentifier(Tokens, At, TEXT("as")) && TokenIsIdentifier(Tokens, At + 1))
@@ -593,7 +680,7 @@ namespace
                     Local = Tokens[At + 1].Text;
                     At += 2;
                 }
-                Aliases.Add(Local, Imported);
+                if (!AddBoundedPythonAlias(Aliases, Local, Imported, Budget)) return true;
 
                 if (!Tokens.IsValidIndex(At) || Tokens[At].Kind != EPythonPolicyTokenKind::Comma) break;
                 ++At;
@@ -605,7 +692,8 @@ namespace
         if (!TokenIsIdentifier(Tokens, Cursor, TEXT("from"))) return false;
         int32 At = Cursor + 1;
         FString Module;
-        if (!ReadDottedPythonName(Tokens, At, Module) || !TokenIsIdentifier(Tokens, At, TEXT("import")))
+        if (!ReadDottedPythonNameBounded(Tokens, At, Module, Budget)
+            || !TokenIsIdentifier(Tokens, At, TEXT("import")))
         {
             return false;
         }
@@ -630,38 +718,147 @@ namespace
                 ++At;
                 continue;
             }
-            if (Tokens[At].Kind == EPythonPolicyTokenKind::Comma)
-            {
-                ++At;
-                continue;
-            }
-
+            const bool bWildcard = Tokens.IsValidIndex(At)
+                && Tokens[At].Kind == EPythonPolicyTokenKind::Other
+                && Tokens[At].Text == TEXT("*");
             FString Imported;
-            if (!ReadDottedPythonName(Tokens, At, Imported)) break;
-            FString Local = FirstPythonNameComponent(Imported);
-            if (TokenIsIdentifier(Tokens, At, TEXT("as")) && TokenIsIdentifier(Tokens, At + 1))
+            if (bWildcard)
+            {
+                Imported = TEXT("*");
+                ++At;
+            }
+            else if (!ReadDottedPythonNameBounded(Tokens, At, Imported, Budget))
+            {
+                break;
+            }
+            FString Local = bWildcard ? TEXT("*") : FirstPythonNameComponent(Imported);
+            if (!bWildcard
+                && TokenIsIdentifier(Tokens, At, TEXT("as"))
+                && TokenIsIdentifier(Tokens, At + 1))
             {
                 Local = Tokens[At + 1].Text;
                 At += 2;
             }
-            Aliases.Add(Local, Module + TEXT(".") + Imported);
+            const int32 TargetLen = Module.Len() + 1 + Imported.Len();
+            if (TargetLen > MaxPythonPolicyPathChars
+                || (Budget && TargetLen > Budget->RemainingCopiedChars))
+            {
+                if (Budget) Budget->bExceeded = true;
+                return true;
+            }
+            if (Budget) Budget->RemainingCopiedChars -= TargetLen;
+            FString Target = Module;
+            Target.AppendChar(TEXT('.'));
+            Target += Imported;
+            if (!AddBoundedPythonAlias(Aliases, Local, Target, Budget)) return true;
+
+            // Another imported identifier requires a comma. Treat malformed
+            // continuation as unprovable instead of repeatedly rescanning an
+            // overlapping token tail before Python eventually rejects it.
+            while (bParenthesized
+                && Tokens.IsValidIndex(At)
+                && Tokens[At].Kind == EPythonPolicyTokenKind::Newline)
+            {
+                ++At;
+            }
+            if (Tokens.IsValidIndex(At) && Tokens[At].Kind == EPythonPolicyTokenKind::Comma)
+            {
+                ++At;
+                continue;
+            }
+            if (bParenthesized
+                && Tokens.IsValidIndex(At)
+                && Tokens[At].Kind == EPythonPolicyTokenKind::CloseParen)
+            {
+                ++At;
+                break;
+            }
+            if (!Tokens.IsValidIndex(At)
+                || (!bParenthesized
+                    && (Tokens[At].Kind == EPythonPolicyTokenKind::Newline
+                        || Tokens[At].Kind == EPythonPolicyTokenKind::Semicolon)))
+            {
+                break;
+            }
+            if (Budget) Budget->bExceeded = true;
+            return true;
         }
         OutAfter = At;
         return true;
     }
 
-    FString ResolvePythonAliasPath(const FString& Path, const TMap<FString, FString>& Aliases)
+    bool ResolvePythonAliasPath(
+        const FString& Path,
+        const TMap<FString, FString>& Aliases,
+        FPythonPolicyAliasBudget& Budget,
+        FString& OutResolved)
     {
+        if (Path.Len() > MaxPythonPolicyPathChars)
+        {
+            Budget.bExceeded = true;
+            return false;
+        }
         const FString First = FirstPythonNameComponent(Path);
         const FString* Target = Aliases.Find(First);
-        if (!Target) return Path;
-        return *Target + Path.Mid(First.Len());
+        if (!Target)
+        {
+            if (Path.Len() > Budget.RemainingCopiedChars)
+            {
+                Budget.bExceeded = true;
+                return false;
+            }
+            Budget.RemainingCopiedChars -= Path.Len();
+            OutResolved = Path;
+            return true;
+        }
+        const int32 ResolvedLen = Target->Len() + Path.Len() - First.Len();
+        if (ResolvedLen > MaxPythonPolicyPathChars
+            || ResolvedLen > Budget.RemainingCopiedChars)
+        {
+            Budget.bExceeded = true;
+            return false;
+        }
+        Budget.RemainingCopiedChars -= ResolvedLen;
+        OutResolved = *Target;
+        OutResolved += Path.Mid(First.Len());
+        return true;
     }
 
     FString BuildAliasExpandedPythonCalls(const FString& Code)
     {
         const TArray<FPythonPolicyToken> Tokens = LexPythonPolicySource(Code);
         TMap<FString, FString> Aliases;
+        FPythonPolicyAliasBudget AliasBudget;
+        // These builtins do not need an import, so seed them explicitly. A
+        // reference is treated like a call by the fatal policy: otherwise
+        // `imp = __import__; imp('os')` or `pick = getattr; pick(...)` hides the
+        // dangerous operation behind the first ordinary assignment.
+        static const TArray<FString> DangerousBuiltinCallables = {
+            TEXT("exec"), TEXT("eval"), TEXT("compile"), TEXT("__import__"),
+            TEXT("getattr"), TEXT("setattr"), TEXT("delattr"),
+            TEXT("globals"), TEXT("locals"), TEXT("vars"),
+            TEXT("input"), TEXT("breakpoint"), TEXT("exit"), TEXT("quit"),
+        };
+        for (const FString& Callable : DangerousBuiltinCallables)
+        {
+            if (!AddBoundedPythonAlias(Aliases, Callable, Callable, &AliasBudget))
+            {
+                return TEXT("__hayba_alias_budget_limit__(");
+            }
+        }
+        // Direct identity roots are not fatal by themselves, but their dotted
+        // descriptors are: `pick = object.__getattribute__` must expand to the
+        // same forbidden path as an imported-module attribute reference.
+        static const TArray<FString> BuiltinIdentityRoots = {
+            TEXT("object"), TEXT("type"),
+        };
+        for (const FString& Root : BuiltinIdentityRoots)
+        {
+            if (!AddBoundedPythonAlias(Aliases, Root, Root, &AliasBudget))
+            {
+                return TEXT("__hayba_alias_budget_limit__(");
+            }
+        }
         FString Expanded;
 
         auto AppendReference = [&Expanded](const FString& Resolved)
@@ -685,8 +882,9 @@ namespace
         for (int32 Cursor = 0; Cursor < Tokens.Num(); ++Cursor)
         {
             int32 AfterImport = Cursor + 1;
-            if (ApplyPythonImportAliasesAt(Tokens, Cursor, Aliases, AfterImport))
+            if (ApplyPythonImportAliasesAt(Tokens, Cursor, Aliases, AfterImport, &AliasBudget))
             {
+                if (AliasBudget.bExceeded) return TEXT("__hayba_alias_budget_limit__(");
                 Cursor = AfterImport - 1;
                 continue;
             }
@@ -698,6 +896,7 @@ namespace
                 || Tokens[Cursor - 1].Kind == EPythonPolicyTokenKind::Newline
                 || Tokens[Cursor - 1].Kind == EPythonPolicyTokenKind::Semicolon
                 || Tokens[Cursor - 1].Kind == EPythonPolicyTokenKind::Colon;
+
             if (bStatementStart
                 && Tokens.IsValidIndex(Cursor + 2)
                 && Tokens[Cursor + 1].Kind == EPythonPolicyTokenKind::Equal
@@ -713,7 +912,12 @@ namespace
                     ++AfterValue;
                 }
                 FString AssignedPath;
-                const bool bHasAssignedPath = ReadDottedPythonName(Tokens, AfterValue, AssignedPath);
+                const bool bHasAssignedPath = ReadDottedPythonNameBounded(
+                    Tokens,
+                    AfterValue,
+                    AssignedPath,
+                    &AliasBudget);
+                if (AliasBudget.bExceeded) return TEXT("__hayba_alias_budget_limit__(");
                 while (bHasAssignedPath && WrapperParens > 0 && Tokens.IsValidIndex(AfterValue)
                     && Tokens[AfterValue].Kind == EPythonPolicyTokenKind::CloseParen)
                 {
@@ -728,8 +932,12 @@ namespace
                     const FString First = FirstPythonNameComponent(AssignedPath);
                     if (Aliases.Contains(First))
                     {
-                        const FString Resolved = ResolvePythonAliasPath(AssignedPath, Aliases);
-                        Aliases.Add(Local, Resolved);
+                        FString Resolved;
+                        if (!ResolvePythonAliasPath(AssignedPath, Aliases, AliasBudget, Resolved)
+                            || !AddBoundedPythonAlias(Aliases, Local, Resolved, &AliasBudget))
+                        {
+                            return TEXT("__hayba_alias_budget_limit__(");
+                        }
                         AppendReference(Resolved);
                     }
                     else
@@ -746,6 +954,22 @@ namespace
                 // replace the local with an ordinary value. Clear the binding
                 // now, but leave the RHS tokens to the normal fatal-reference
                 // scan (for example `r = q.abort()` must still be rejected).
+                // If the LHS shadows the same imported name used at the start
+                // of the RHS (`Lock = Lock()`), resolve that first reference
+                // before invalidating the old binding.
+                if (bHasAssignedPath)
+                {
+                    const FString AssignedFirst = FirstPythonNameComponent(AssignedPath);
+                    if (Aliases.Contains(AssignedFirst))
+                    {
+                        FString Resolved;
+                        if (!ResolvePythonAliasPath(AssignedPath, Aliases, AliasBudget, Resolved))
+                        {
+                            return TEXT("__hayba_alias_budget_limit__(");
+                        }
+                        AppendReference(Resolved);
+                    }
+                }
                 Aliases.Remove(Local);
                 ++Cursor;
                 continue;
@@ -753,7 +977,11 @@ namespace
 
             int32 At = Cursor;
             FString Path;
-            if (!ReadDottedPythonName(Tokens, At, Path)) continue;
+            if (!ReadDottedPythonNameBounded(Tokens, At, Path, &AliasBudget))
+            {
+                if (AliasBudget.bExceeded) return TEXT("__hayba_alias_budget_limit__(");
+                continue;
+            }
 
             // Treat a reference to a fatal callable as fatal even when the
             // immediate syntax is not `name(...)`. Otherwise trivial Python
@@ -761,11 +989,608 @@ namespace
             // `process.abort.__call__()` evades source preflight. Appending an
             // opening parenthesis lets the existing exact callable rules judge
             // the canonical path without attempting unsafe data-flow analysis.
-            const FString Resolved = ResolvePythonAliasPath(Path, Aliases);
+            FString Resolved;
+            if (!ResolvePythonAliasPath(Path, Aliases, AliasBudget, Resolved))
+            {
+                return TEXT("__hayba_alias_budget_limit__(");
+            }
             AppendReference(Resolved);
             Cursor = At - 1;
         }
         return Expanded;
+    }
+
+    bool FindReservedPythonRuntimeAccess(
+        const FString& Code,
+        const FString& AliasExpandedCalls,
+        FString& OutPattern,
+        FString& OutPolicyCode,
+        FString& OutReason,
+        FString& OutAlternative)
+    {
+        const TArray<FPythonPolicyToken> Tokens = LexPythonPolicySource(Code);
+        FPythonPolicyAliasBudget ImportScanBudget;
+        auto RefuseImportScanBudget = [
+            &OutPattern,
+            &OutPolicyCode,
+            &OutReason,
+            &OutAlternative]() -> bool
+        {
+            OutPattern = TEXT("alias_resolution_budget");
+            OutPolicyCode = TEXT("HCR-DYNAMIC-001");
+            OutReason = TEXT("exceeds bounded dotted-name/import alias work and cannot be proven safe");
+            OutAlternative = TEXT("use short, comma-separated ordinary imports and direct calls");
+            return true;
+        };
+
+        // This bounded, incident-driven stdlib list is not a claim that source
+        // preflight can make arbitrary in-process Python complete or safe.
+        // These modules can recover hidden attributes, load code, or
+        // deserialize attacker-shaped objects without spelling the eventual
+        // crash primitive in source. Until #392 provides a killable Python
+        // process, refuse their executable imports at the authoritative native
+        // boundary. ApplyPythonImportAliasesAt resolves both aliases and
+        // submodules (`import importlib.util as u`, `from inspect import ...`).
+        static const TSet<FString> HighRiskDynamicPythonModules = {
+            TEXT("inspect"), TEXT("pydoc"), TEXT("pickle"), TEXT("marshal"),
+            TEXT("types"), TEXT("pkgutil"), TEXT("runpy"), TEXT("importlib"),
+            TEXT("traceback"),
+        };
+        // These are process-global module singletons used by the trusted
+        // wrapper before tracing starts or while it restores/collects state.
+        // Letting one request import and monkey-patch them poisons later
+        // requests even though each request gets a fresh globals dictionary.
+        // Refuse every executable import form, including from/as aliases.
+        static const TSet<FString> TrustedWrapperPythonModules = {
+            TEXT("time"), TEXT("base64"), TEXT("sys"), TEXT("gc"),
+        };
+        for (int32 Cursor = 0; Cursor < Tokens.Num(); ++Cursor)
+        {
+            if (!TokenIsIdentifier(Tokens, Cursor, TEXT("import"))
+                && !TokenIsIdentifier(Tokens, Cursor, TEXT("from")))
+            {
+                continue;
+            }
+            TMap<FString, FString> ImportedBindings;
+            int32 AfterImport = Cursor + 1;
+            const bool bAppliedImport = ApplyPythonImportAliasesAt(
+                Tokens,
+                Cursor,
+                ImportedBindings,
+                AfterImport,
+                &ImportScanBudget);
+            if (ImportScanBudget.bExceeded)
+            {
+                return RefuseImportScanBudget();
+            }
+            if (!bAppliedImport)
+            {
+                continue;
+            }
+            for (const TPair<FString, FString>& Binding : ImportedBindings)
+            {
+                if (Binding.Key == TEXT("*") || Binding.Value.EndsWith(TEXT(".*")))
+                {
+                    OutPattern = TEXT("wildcard import");
+                    OutPolicyCode = TEXT("HCR-DYNAMIC-001");
+                    OutReason = TEXT("imports policy-denied callables without names that source alias analysis can prove");
+                    OutAlternative = TEXT("import only the specific policy-visible names required by the request");
+                    return true;
+                }
+                const FString ModuleRoot = FirstPythonNameComponent(Binding.Value);
+                if (TrustedWrapperPythonModules.Contains(ModuleRoot))
+                {
+                    OutPattern = FString::Printf(TEXT("import %s"), *ModuleRoot);
+                    OutPolicyCode = ModuleRoot == TEXT("time") || ModuleRoot == TEXT("sys")
+                        ? TEXT("HCR-TIME-001")
+                        : TEXT("HCR-DYNAMIC-001");
+                    OutReason = TEXT("can mutate a process-global module used by trusted wrapper setup, deadline enforcement, readback, or cleanup and poison later requests");
+                    OutAlternative = TEXT("use policy-visible request-local values or a typed handler; trusted wrapper modules are not exposed to user scripts");
+                    return true;
+                }
+                if (!HighRiskDynamicPythonModules.Contains(ModuleRoot)) continue;
+                OutPattern = FString::Printf(TEXT("import %s"), *ModuleRoot);
+                OutPolicyCode = TEXT("HCR-DYNAMIC-001");
+                OutReason = TEXT("exposes dynamic lookup, code loading, or deserialization that can reconstruct a hidden editor-crash primitive");
+                OutAlternative = TEXT("use a validated typed handler for the intended operation; broader Python requires the process isolation tracked in #392");
+                return true;
+            }
+            Cursor = FMath::Max(Cursor, AfterImport - 1);
+        }
+
+        // Known CPython object-graph/importer discovery spellings can recover
+        // modules without an ordinary import (for example by walking
+        // object.__subclasses__ to BuiltinImporter.load_module). This is a
+        // bounded incident-driven refusal, not a claim that source policy makes
+        // arbitrary in-process Python safe: process isolation remains #392.
+        static const TSet<FString> ObjectGraphImporterDiscoveryTokens = {
+            TEXT("__subclasses__"), TEXT("__base__"), TEXT("__bases__"),
+            TEXT("__mro__"), TEXT("__loader__"), TEXT("__spec__"),
+            TEXT("builtinimporter"), TEXT("frozenimporter"),
+            TEXT("load_module"), TEXT("find_spec"), TEXT("module_from_spec"),
+            TEXT("create_module"), TEXT("exec_module"),
+        };
+        for (const FPythonPolicyToken& Token : Tokens)
+        {
+            if (Token.Kind != EPythonPolicyTokenKind::Identifier
+                || !ObjectGraphImporterDiscoveryTokens.Contains(Token.Text))
+            {
+                continue;
+            }
+            OutPattern = Token.Text;
+            OutPolicyCode = TEXT("HCR-DYNAMIC-001");
+            OutReason = TEXT("can discover a hidden importer or traverse the CPython object graph to load policy-invisible process modules");
+            OutAlternative = TEXT("use ordinary policy-visible imports and direct APIs; broader Python requires the process isolation tracked in #392");
+            return true;
+        }
+
+        // The bytecode deadline is cooperative. When its trace callback raises,
+        // CPython disables tracing before propagating the exception. A user
+        // try/except can swallow it, while finally and context-manager __exit__
+        // code can then run forever without another deadline event. Until #392
+        // moves arbitrary Python into a killable process, refuse all executable
+        // exception/context cleanup syntax. Strings and comments never produce
+        // these lexical identifiers and remain benign.
+        for (const FPythonPolicyToken& Token : Tokens)
+        {
+            if (Token.Kind != EPythonPolicyTokenKind::Identifier) continue;
+            if (Token.Text == TEXT("try") || Token.Text == TEXT("with"))
+            {
+                OutPattern = Token.Text == TEXT("try")
+                    ? TEXT("try statement")
+                    : TEXT("with statement");
+                OutPolicyCode = TEXT("HCR-TIME-001");
+                OutReason = TEXT("can continue in except/finally/__exit__ after CPython disables the cooperative trace hook");
+                OutAlternative = TEXT("return explicit status values, use straight-line bounded cleanup, or move the operation to an owned typed handler; process-isolated Python is tracked in #392");
+                return true;
+            }
+        }
+
+        // A Python trace exception is cooperative: user code can catch it. In
+        // CPython, an exception raised by a trace callback also disables that
+        // callback, so a catch-all handler could swallow the deadline and then
+        // wedge the editor forever. Prove handler types are Exception-derived
+        // using only this already-bounded token stream. Unknown/dynamic handler
+        // expressions fail closed; source preflight cannot safely evaluate
+        // Exception.__base__, subscripts, calls, or imported class hierarchies.
+        TSet<FString> SafeExceptionNames = {
+            TEXT("exception"), TEXT("exceptiongroup"),
+            TEXT("arithmeticerror"), TEXT("assertionerror"), TEXT("attributeerror"),
+            TEXT("buffererror"), TEXT("eoferror"), TEXT("importerror"),
+            TEXT("lookuperror"), TEXT("memoryerror"), TEXT("nameerror"),
+            TEXT("oserror"), TEXT("environmenterror"), TEXT("ioerror"),
+            TEXT("windowserror"), TEXT("referenceerror"), TEXT("runtimeerror"),
+            TEXT("stopasynciteration"), TEXT("stopiteration"), TEXT("syntaxerror"),
+            TEXT("indentationerror"), TEXT("taberror"),
+            TEXT("systemerror"), TEXT("typeerror"), TEXT("valueerror"), TEXT("warning"),
+            TEXT("floatingpointerror"), TEXT("overflowerror"), TEXT("zerodivisionerror"),
+            TEXT("modulenotfounderror"), TEXT("indexerror"), TEXT("keyerror"),
+            TEXT("unboundlocalerror"), TEXT("blockingioerror"), TEXT("childprocesserror"),
+            TEXT("connectionerror"), TEXT("fileexistserror"), TEXT("filenotfounderror"),
+            TEXT("interruptederror"), TEXT("isadirectoryerror"), TEXT("notadirectoryerror"),
+            TEXT("permissionerror"), TEXT("processlookuperror"), TEXT("timeouterror"),
+            TEXT("brokenpipeerror"), TEXT("connectionabortederror"),
+            TEXT("connectionrefusederror"), TEXT("connectionreseterror"),
+            TEXT("unicodeerror"), TEXT("unicodedecodeerror"), TEXT("unicodeencodeerror"),
+            TEXT("unicodetranslateerror"), TEXT("byteswarning"),
+            TEXT("deprecationwarning"), TEXT("encodingwarning"), TEXT("futurewarning"),
+            TEXT("importwarning"), TEXT("pendingdeprecationwarning"),
+            TEXT("resourcewarning"), TEXT("runtimewarning"), TEXT("syntaxwarning"),
+            TEXT("unicodewarning"), TEXT("userwarning"), TEXT("recursionerror"),
+            TEXT("notimplementederror"),
+        };
+
+        auto IsProvenSafeExceptionExpression = [&Tokens, &SafeExceptionNames](
+            const int32 Start,
+            const int32 End) -> bool
+        {
+            if (Start >= End) return false;
+            TArray<bool> GroupHasValue;
+            GroupHasValue.Reserve(FMath::Min(End - Start, MaxPythonPolicyPathComponents));
+            bool bExpectValue = true;
+            bool bTopHasValue = false;
+            for (int32 At = Start; At < End; ++At)
+            {
+                const FPythonPolicyToken& Token = Tokens[At];
+                if (Token.Kind == EPythonPolicyTokenKind::OpenParen)
+                {
+                    if (!bExpectValue || GroupHasValue.Num() >= MaxPythonPolicyPathComponents) return false;
+                    GroupHasValue.Add(false);
+                    continue;
+                }
+                if (Token.Kind == EPythonPolicyTokenKind::Identifier)
+                {
+                    if (!bExpectValue || !SafeExceptionNames.Contains(Token.Text)) return false;
+                    bExpectValue = false;
+                    if (GroupHasValue.Num() > 0) GroupHasValue.Last() = true;
+                    else bTopHasValue = true;
+                    continue;
+                }
+                if (Token.Kind == EPythonPolicyTokenKind::Comma)
+                {
+                    if (bExpectValue || GroupHasValue.Num() == 0) return false;
+                    bExpectValue = true;
+                    continue;
+                }
+                if (Token.Kind == EPythonPolicyTokenKind::CloseParen)
+                {
+                    if (GroupHasValue.Num() == 0 || !GroupHasValue.Last()) return false;
+                    GroupHasValue.Pop(EAllowShrinking::No);
+                    bExpectValue = false;
+                    if (GroupHasValue.Num() > 0) GroupHasValue.Last() = true;
+                    else bTopHasValue = true;
+                    continue;
+                }
+                // Dot, subscript, call, binary expression, or any other syntax
+                // is not a statically proven Exception-derived handler type.
+                return false;
+            }
+            return GroupHasValue.Num() == 0 && !bExpectValue && bTopHasValue;
+        };
+
+        TSet<FString> PermanentlyUnprovenExceptionNames;
+        auto MarkExceptionNameUnproven = [
+            &SafeExceptionNames,
+            &PermanentlyUnprovenExceptionNames](const FString& Name)
+        {
+            SafeExceptionNames.Remove(Name);
+            PermanentlyUnprovenExceptionNames.Add(Name);
+        };
+        for (int32 Cursor = 0; Cursor < Tokens.Num(); ++Cursor)
+        {
+            const bool bStatementStart = Cursor == 0
+                || Tokens[Cursor - 1].Kind == EPythonPolicyTokenKind::Newline
+                || Tokens[Cursor - 1].Kind == EPythonPolicyTokenKind::Semicolon
+                || Tokens[Cursor - 1].Kind == EPythonPolicyTokenKind::Colon;
+
+            // Bindings other than a proven class/alias can shadow a safe name.
+            // Record them for the whole source because a function body may be
+            // defined before, but execute after, a later global reassignment.
+            if (TokenIsIdentifier(Tokens, Cursor, TEXT("as"))
+                && TokenIsIdentifier(Tokens, Cursor + 1))
+            {
+                MarkExceptionNameUnproven(Tokens[Cursor + 1].Text);
+            }
+            if (bStatementStart
+                && TokenIsIdentifier(Tokens, Cursor, TEXT("for")))
+            {
+                for (int32 At = Cursor + 1; Tokens.IsValidIndex(At); ++At)
+                {
+                    if (TokenIsIdentifier(Tokens, At, TEXT("in"))
+                        || Tokens[At].Kind == EPythonPolicyTokenKind::Newline
+                        || Tokens[At].Kind == EPythonPolicyTokenKind::Semicolon)
+                    {
+                        break;
+                    }
+                    if (Tokens[At].Kind == EPythonPolicyTokenKind::Identifier)
+                    {
+                        MarkExceptionNameUnproven(Tokens[At].Text);
+                    }
+                }
+            }
+            if (bStatementStart
+                && TokenIsIdentifier(Tokens, Cursor, TEXT("def"))
+                && TokenIsIdentifier(Tokens, Cursor + 1))
+            {
+                MarkExceptionNameUnproven(Tokens[Cursor + 1].Text);
+                int32 At = Cursor + 2;
+                while (Tokens.IsValidIndex(At)
+                    && Tokens[At].Kind != EPythonPolicyTokenKind::OpenParen
+                    && Tokens[At].Kind != EPythonPolicyTokenKind::Newline) ++At;
+                if (Tokens.IsValidIndex(At)
+                    && Tokens[At].Kind == EPythonPolicyTokenKind::OpenParen)
+                {
+                    int32 Depth = 1;
+                    bool bExpectParameterName = true;
+                    for (++At; Tokens.IsValidIndex(At) && Depth > 0; ++At)
+                    {
+                        if (Tokens[At].Kind == EPythonPolicyTokenKind::OpenParen)
+                        {
+                            ++Depth;
+                            continue;
+                        }
+                        if (Tokens[At].Kind == EPythonPolicyTokenKind::CloseParen)
+                        {
+                            --Depth;
+                            continue;
+                        }
+                        if (Depth != 1) continue;
+                        if (Tokens[At].Kind == EPythonPolicyTokenKind::Comma)
+                        {
+                            bExpectParameterName = true;
+                            continue;
+                        }
+                        if (bExpectParameterName
+                            && Tokens[At].Kind == EPythonPolicyTokenKind::Identifier)
+                        {
+                            MarkExceptionNameUnproven(Tokens[At].Text);
+                            bExpectParameterName = false;
+                        }
+                    }
+                }
+            }
+            if (bStatementStart
+                && (TokenIsIdentifier(Tokens, Cursor, TEXT("import"))
+                    || TokenIsIdentifier(Tokens, Cursor, TEXT("from"))))
+            {
+                TMap<FString, FString> ImportedBindings;
+                int32 AfterImport = Cursor + 1;
+                const bool bAppliedImport = ApplyPythonImportAliasesAt(
+                    Tokens,
+                    Cursor,
+                    ImportedBindings,
+                    AfterImport,
+                    &ImportScanBudget);
+                if (ImportScanBudget.bExceeded)
+                {
+                    return RefuseImportScanBudget();
+                }
+                if (bAppliedImport)
+                {
+                    for (const TPair<FString, FString>& Binding : ImportedBindings)
+                    {
+                        MarkExceptionNameUnproven(Binding.Key);
+                    }
+                    Cursor = FMath::Max(Cursor, AfterImport - 1);
+                }
+            }
+
+            // A simple local class whose every base is already proven safe can
+            // be caught without weakening the deadline. Imported/dynamic bases
+            // remain unknown and are refused at the handler.
+            if (bStatementStart
+                && TokenIsIdentifier(Tokens, Cursor, TEXT("class"))
+                && TokenIsIdentifier(Tokens, Cursor + 1))
+            {
+                const FString ClassName = Tokens[Cursor + 1].Text;
+                int32 ColonAt = Cursor + 2;
+                while (Tokens.IsValidIndex(ColonAt)
+                    && Tokens[ColonAt].Kind != EPythonPolicyTokenKind::Colon
+                    && Tokens[ColonAt].Kind != EPythonPolicyTokenKind::Newline
+                    && Tokens[ColonAt].Kind != EPythonPolicyTokenKind::Semicolon)
+                {
+                    ++ColonAt;
+                }
+                if (!PermanentlyUnprovenExceptionNames.Contains(ClassName)
+                    && Tokens.IsValidIndex(Cursor + 2)
+                    && Tokens[Cursor + 2].Kind == EPythonPolicyTokenKind::OpenParen
+                    && IsProvenSafeExceptionExpression(Cursor + 2, ColonAt))
+                {
+                    SafeExceptionNames.Add(ClassName);
+                }
+                else
+                {
+                    SafeExceptionNames.Remove(ClassName);
+                    PermanentlyUnprovenExceptionNames.Add(ClassName);
+                }
+            }
+
+            // Preserve straightforward aliases and tuples of proven-safe
+            // exception types. Reassignment to anything dynamic invalidates the
+            // earlier proof before a later handler can use it.
+            if (bStatementStart
+                && TokenIsIdentifier(Tokens, Cursor))
+            {
+                const FString Local = Tokens[Cursor].Text;
+                int32 EqualAt = Cursor + 1;
+                while (Tokens.IsValidIndex(EqualAt)
+                    && Tokens[EqualAt].Kind != EPythonPolicyTokenKind::Newline
+                    && Tokens[EqualAt].Kind != EPythonPolicyTokenKind::Semicolon)
+                {
+                    const bool bSingleEqual = Tokens[EqualAt].Kind == EPythonPolicyTokenKind::Equal
+                        && (!Tokens.IsValidIndex(EqualAt - 1)
+                            || Tokens[EqualAt - 1].Kind != EPythonPolicyTokenKind::Equal)
+                        && (!Tokens.IsValidIndex(EqualAt + 1)
+                            || Tokens[EqualAt + 1].Kind != EPythonPolicyTokenKind::Equal);
+                    if (bSingleEqual) break;
+                    ++EqualAt;
+                }
+                if (!Tokens.IsValidIndex(EqualAt)
+                    || Tokens[EqualAt].Kind != EPythonPolicyTokenKind::Equal)
+                {
+                    continue;
+                }
+                int32 AfterValue = EqualAt + 1;
+                while (Tokens.IsValidIndex(AfterValue)
+                    && Tokens[AfterValue].Kind != EPythonPolicyTokenKind::Newline
+                    && Tokens[AfterValue].Kind != EPythonPolicyTokenKind::Semicolon)
+                {
+                    ++AfterValue;
+                }
+                if (!PermanentlyUnprovenExceptionNames.Contains(Local)
+                    && IsProvenSafeExceptionExpression(EqualAt + 1, AfterValue))
+                {
+                    SafeExceptionNames.Add(Local);
+                }
+                else
+                {
+                    SafeExceptionNames.Remove(Local);
+                    PermanentlyUnprovenExceptionNames.Add(Local);
+                }
+            }
+
+            // Declaration pass only. It intentionally consumes the complete
+            // source before judging any handler: a later reassignment can
+            // change the global captured by an earlier function body.
+        }
+
+        for (int32 Cursor = 0; Cursor < Tokens.Num(); ++Cursor)
+        {
+            if (!TokenIsIdentifier(Tokens, Cursor, TEXT("except"))) continue;
+            int32 HandlerStart = Cursor + 1;
+            if (Tokens.IsValidIndex(HandlerStart)
+                && Tokens[HandlerStart].Kind == EPythonPolicyTokenKind::Other
+                && Tokens[HandlerStart].Text == TEXT("*"))
+            {
+                ++HandlerStart;
+            }
+            if (Tokens.IsValidIndex(HandlerStart)
+                && Tokens[HandlerStart].Kind == EPythonPolicyTokenKind::Colon)
+            {
+                OutPattern = TEXT("bare except");
+                OutPolicyCode = TEXT("HCR-TIME-001");
+                OutReason = TEXT("can swallow the cooperative deadline exception after CPython disables its trace hook");
+                OutAlternative = TEXT("catch Exception or the specific recoverable exception types the script expects");
+                return true;
+            }
+
+            int32 ColonAt = HandlerStart;
+            while (Tokens.IsValidIndex(ColonAt)
+                && Tokens[ColonAt].Kind != EPythonPolicyTokenKind::Colon
+                && Tokens[ColonAt].Kind != EPythonPolicyTokenKind::Newline
+                && Tokens[ColonAt].Kind != EPythonPolicyTokenKind::Semicolon)
+            {
+                ++ColonAt;
+            }
+            int32 ExpressionEnd = ColonAt;
+            int32 Depth = 0;
+            for (int32 At = HandlerStart; At < ColonAt; ++At)
+            {
+                if (Tokens[At].Kind == EPythonPolicyTokenKind::OpenParen) ++Depth;
+                else if (Tokens[At].Kind == EPythonPolicyTokenKind::CloseParen) --Depth;
+                else if (Depth == 0 && TokenIsIdentifier(Tokens, At, TEXT("as")))
+                {
+                    ExpressionEnd = At;
+                    if (!TokenIsIdentifier(Tokens, At + 1) || At + 2 != ColonAt)
+                    {
+                        ExpressionEnd = HandlerStart;
+                    }
+                    break;
+                }
+            }
+            if (!Tokens.IsValidIndex(ColonAt)
+                || Tokens[ColonAt].Kind != EPythonPolicyTokenKind::Colon
+                || !IsProvenSafeExceptionExpression(HandlerStart, ExpressionEnd))
+            {
+                OutPattern = TEXT("unproven exception handler");
+                OutPolicyCode = TEXT("HCR-TIME-001");
+                OutReason = TEXT("is not statically proven Exception-derived and could swallow the private cooperative deadline after CPython disables its trace hook");
+                OutAlternative = TEXT("catch Exception, a direct built-in Exception subclass, a proven local subclass, or a tuple of those types");
+                return true;
+            }
+        }
+
+        // The wrapper deliberately reserves every _hb_* identifier. These
+        // tokens are checked lexically, rather than in CompactPythonSource, so
+        // documentation such as print("_hb_deadline") and comments remain
+        // harmless. Check deadline identifiers first so an expression such as
+        // __main__._hb_deadline gets the more useful HCR-TIME diagnosis.
+        for (const FPythonPolicyToken& Token : Tokens)
+        {
+            if (Token.Kind != EPythonPolicyTokenKind::Identifier
+                || !Token.Text.StartsWith(TEXT("_hb_")))
+            {
+                continue;
+            }
+
+            if (Token.Text.Contains(TEXT("deadline"))
+                || Token.Text.Contains(TEXT("trace"))
+                || Token.Text == TEXT("_hb_sys")
+                || Token.Text == TEXT("_hb_time"))
+            {
+                OutPattern = Token.Text;
+                OutPolicyCode = TEXT("HCR-TIME-001");
+                OutReason = TEXT("attempts to access reserved cooperative-deadline state");
+                OutAlternative = TEXT("use application-owned variable names and leave the deadline hook private");
+                return true;
+            }
+        }
+
+        for (const FPythonPolicyToken& Token : Tokens)
+        {
+            if (Token.Kind != EPythonPolicyTokenKind::Identifier) continue;
+            if (Token.Text.StartsWith(TEXT("_hb_")))
+            {
+                OutPattern = Token.Text;
+                OutPolicyCode = TEXT("HCR-DYNAMIC-001");
+                OutReason = TEXT("attempts to access a reserved wrapper-internal name");
+                OutAlternative = TEXT("rename the application variable without the reserved _hb_ prefix");
+                return true;
+            }
+            if (Token.Text == TEXT("__main__"))
+            {
+                OutPattern = Token.Text;
+                OutPolicyCode = TEXT("HCR-DYNAMIC-001");
+                OutReason = TEXT("can expose the private wrapper module and its execution controls");
+                OutAlternative = TEXT("keep request state in the isolated script namespace instead of importing __main__");
+                return true;
+            }
+            if (Token.Text == TEXT("builtins"))
+            {
+                OutPattern = Token.Text;
+                OutPolicyCode = TEXT("HCR-DYNAMIC-001");
+                OutReason = TEXT("can mutate process-global Python helpers used after the request");
+                OutAlternative = TEXT("use ordinary built-in names without importing or modifying the builtins module");
+                return true;
+            }
+            if (Token.Text == TEXT("__builtins__"))
+            {
+                OutPattern = Token.Text;
+                OutPolicyCode = TEXT("HCR-DYNAMIC-001");
+                OutReason = TEXT("can index the copied built-in namespace to hide imports, dynamic execution, or deadline tampering from source policy");
+                OutAlternative = TEXT("use policy-visible imports and built-in calls directly by name");
+                return true;
+            }
+        }
+
+        TArray<FString> ExpandedReferences;
+        AliasExpandedCalls.ParseIntoArray(ExpandedReferences, TEXT(";"), true);
+        for (const FString& Reference : ExpandedReferences)
+        {
+            static const TArray<FString> FatalCallableSuffixes = {
+                TEXT(".abort("), TEXT(".kill("), TEXT("._exit("), TEXT(".settrace("),
+            };
+            for (const FString& Suffix : FatalCallableSuffixes)
+            {
+                if (!Reference.EndsWith(Suffix)) continue;
+                OutPattern = Suffix.LeftChop(1);
+                OutPolicyCode = Suffix == TEXT(".settrace(")
+                    ? TEXT("HCR-TIME-001")
+                    : TEXT("HCR-EXIT-001");
+                OutReason = Suffix == TEXT(".settrace(")
+                    ? TEXT("can disable or replace the cooperative execution deadline through an unresolved alias")
+                    : TEXT("is a fatal process-control callable suffix that cannot be safely resolved in-process");
+                OutAlternative = Suffix == TEXT(".settrace(")
+                    ? TEXT("leave the deadline hook intact and split long work into bounded requests")
+                    : TEXT("return normally and use the typed editor shutdown workflow where appropriate");
+                return true;
+            }
+
+            if (Reference.EndsWith(TEXT(".settrace("))
+                || Reference.EndsWith(TEXT(".setprofile(")))
+            {
+                OutPattern = Reference.EndsWith(TEXT(".settrace("))
+                    ? TEXT(".settrace")
+                    : TEXT(".setprofile");
+                OutPolicyCode = TEXT("HCR-TIME-001");
+                OutReason = TEXT("disables, replaces, or monkey-patches execution instrumentation used by the cooperative deadline");
+                OutAlternative = TEXT("leave runtime instrumentation intact and split long work into bounded requests");
+                return true;
+            }
+
+            static const TArray<FString> PrivateIntrospectionSuffixes = {
+                TEXT(".modules("),
+                TEXT("._getframe("),
+                TEXT(".currentframe("),
+                TEXT(".f_back("),
+                TEXT(".f_globals("),
+                TEXT(".f_locals("),
+                TEXT(".f_trace("),
+                TEXT(".__globals__("),
+                TEXT(".__closure__("),
+            };
+            for (const FString& Suffix : PrivateIntrospectionSuffixes)
+            {
+                if (!Reference.EndsWith(Suffix)) continue;
+                OutPattern = Suffix.LeftChop(1);
+                OutPolicyCode = TEXT("HCR-DYNAMIC-001");
+                OutReason = TEXT("can traverse into private wrapper frames or module state and tamper with execution controls");
+                OutAlternative = TEXT("use values in the isolated request namespace and direct, policy-visible APIs");
+                return true;
+            }
+        }
+
+        return false;
     }
 
     bool CompactContainsPolicyPattern(const FString& Compact, const FString& Pattern)
@@ -813,6 +1638,17 @@ namespace
         const FString Compact = CompactPythonSource(Code);
         const FString AliasExpandedCalls = BuildAliasExpandedPythonCalls(Code);
 
+        if (FindReservedPythonRuntimeAccess(
+            Code,
+            AliasExpandedCalls,
+            OutPattern,
+            OutPolicyCode,
+            OutReason,
+            OutAlternative))
+        {
+            return true;
+        }
+
         // os.abort is deliberately lexical-only. Adding it to the compact
         // substring table would reject a comment or string that merely explains
         // the forbidden API.
@@ -826,6 +1662,14 @@ namespace
             OutAlternative = TEXT("flatten the expression into named intermediate values and call inspected APIs directly");
             return true;
         }
+        if (ExactExpandedCalls.Contains(TEXT("__hayba_alias_budget_limit__(")))
+        {
+            OutPattern = TEXT("alias_resolution_budget");
+            OutPolicyCode = TEXT("HCR-DYNAMIC-001");
+            OutReason = TEXT("exceeds the bounded alias path/copy-work budget and cannot be proven safe");
+            OutAlternative = TEXT("use short direct imports and calls without recursively growing alias paths");
+            return true;
+        }
         if (ExactExpandedCalls.Contains(TEXT("os.abort(")))
         {
             OutPattern = TEXT("os.abort(");
@@ -837,7 +1681,12 @@ namespace
 
         for (const FFatalPythonRule& Rule : FatalPythonRules())
         {
-            if (CompactContainsPolicyPattern(Compact, Rule.Pattern)
+            // Deadline-tampering rules are lexical-only. The compact stream
+            // intentionally retains strings for property-name policies, so
+            // using it here would reject print("sys.settrace(None)") even
+            // though no instrumentation access is executable.
+            const bool bDeadlineRule = FCString::Strcmp(Rule.PolicyCode, TEXT("HCR-TIME-001")) == 0;
+            if ((!bDeadlineRule && CompactContainsPolicyPattern(Compact, Rule.Pattern))
                 || CompactContainsPolicyPattern(AliasExpandedCalls, Rule.Pattern))
             {
                 OutPattern = Rule.Pattern;
@@ -958,6 +1807,16 @@ EPythonTier FHaybaMCPPythonHandler::ClassifyScript(const FString& Code)
 {
     static const TArray<FString> Tier3Keywords = {
         TEXT("subprocess"), TEXT("os.system"), TEXT("os.popen"),
+        TEXT("os.remove("), TEXT("os.unlink("), TEXT("os.rename("),
+        TEXT("os.renames("), TEXT("os.replace("), TEXT("os.mkdir("),
+        TEXT("os.makedirs("), TEXT("os.rmdir("), TEXT("os.removedirs("),
+        TEXT("os.truncate("), TEXT("os.chmod("), TEXT("os.chown("),
+        TEXT("os.lchown("), TEXT("os.link("), TEXT("os.symlink("),
+        TEXT("os.mknod("),
+        TEXT(".write_text("), TEXT(".write_bytes("), TEXT(".unlink("),
+        TEXT(".rename("), TEXT(".replace("), TEXT(".mkdir("),
+        TEXT(".rmdir("), TEXT(".touch("), TEXT(".chmod("),
+        TEXT(".lchmod("), TEXT(".symlink_to("), TEXT(".hardlink_to("),
         TEXT("open("), TEXT("__import__"), TEXT("eval("),
         TEXT("compile("), TEXT("shutil"),
         // NOTE: a bare "socket" pattern false-positived on UE's StaticMesh
@@ -973,15 +1832,17 @@ EPythonTier FHaybaMCPPythonHandler::ClassifyScript(const FString& Code)
 
     // Tier policy must not be bypassable by `SubProcess . Popen` or mixed
     // case. Use the same compact representation as the fatal boundary.
-    const FString Compact = CompactPythonSource(Code);
+    FString PolicyVisible = CompactPythonSource(Code);
+    PolicyVisible.AppendChar(TEXT(';'));
+    PolicyVisible += BuildAliasExpandedPythonCalls(Code);
 
     for (const FString& K : Tier3Keywords)
     {
-        if (Compact.Contains(CompactPythonSource(K))) return EPythonTier::Unsafe;
+        if (PolicyVisible.Contains(CompactPythonSource(K))) return EPythonTier::Unsafe;
     }
     for (const FString& K : Tier2Keywords)
     {
-        if (Compact.Contains(CompactPythonSource(K))) return EPythonTier::Mutation;
+        if (PolicyVisible.Contains(CompactPythonSource(K))) return EPythonTier::Mutation;
     }
     return EPythonTier::ReadOnly;
 }
@@ -1036,7 +1897,7 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
         {
             return FHaybaHandlerResult::Err(TEXT(
                 "python_run policy_blocked [HCR-SANDBOX-001]: matched 'tier_3_filesystem_or_subprocess'. "
-                "Filesystem and subprocess access is disabled. Safe alternative: use a typed MCP tool, or explicitly "
+                "A detected filesystem or subprocess primitive is disabled by default. Safe alternative: use a typed MCP tool, or explicitly "
                 "enable AllowUnsafePython / pass allow_unsafe:true after reviewing the script. Retry unchanged: forbidden; "
                 "retry with the explicit unsafe grant is permitted. Crash, deadline, and deadlock guards remain non-bypassable."));
         }
@@ -1077,25 +1938,25 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     // resolves to ours WITHOUT ever mutating the process-global builtins.print
     // (mutating it leaked a stale override across runs). Results are stashed on
     // builtins (a shared singleton) and read back base64-encoded.
-    Wrapper += TEXT("import builtins as _hb_b, base64 as _hb_64, sys as _hb_sys, time as _hb_time\n");
+    Wrapper += TEXT("import builtins as _hb_b, base64 as _hb_64, gc as _hb_gc, sys as _hb_sys, time as _hb_time\n");
     Wrapper += FString::Printf(TEXT("_hb_src = _hb_64.b64decode('%s').decode('utf-8')\n"), *CodeB64);
     Wrapper += TEXT("class _HaybaBoundedCapture:\n");
-    Wrapper += TEXT("    __slots__ = ('_parts', '_count', '_dropped', '_limit')\n");
+    Wrapper += TEXT("    __slots__ = ('_hb_parts', '_hb_count', '_hb_dropped', '_hb_limit')\n");
     Wrapper += TEXT("    def __init__(self, limit):\n");
-    Wrapper += TEXT("        self._parts = []; self._count = 0; self._dropped = 0; self._limit = limit\n");
+    Wrapper += TEXT("        self._hb_parts = []; self._hb_count = 0; self._hb_dropped = 0; self._hb_limit = limit\n");
     Wrapper += TEXT("    def write(self, value):\n");
     Wrapper += TEXT("        if type(value) is not str:\n");
     Wrapper += TEXT("            value = '<non-text write omitted by bounded capture>'\n");
-    Wrapper += TEXT("        offered = len(value); remaining = self._limit - self._count\n");
+    Wrapper += TEXT("        offered = len(value); remaining = self._hb_limit - self._hb_count\n");
     Wrapper += TEXT("        if remaining > 0:\n");
     Wrapper += TEXT("            kept = value[:remaining]\n");
-    Wrapper += TEXT("            if kept: self._parts.append(kept); self._count += len(kept)\n");
-    Wrapper += TEXT("        self._dropped += max(0, offered - max(0, remaining))\n");
+    Wrapper += TEXT("            if kept: self._hb_parts.append(kept); self._hb_count += len(kept)\n");
+    Wrapper += TEXT("        self._hb_dropped += max(0, offered - max(0, remaining))\n");
     Wrapper += TEXT("        return offered\n");
     Wrapper += TEXT("    def flush(self):\n");
     Wrapper += TEXT("        pass\n");
     Wrapper += TEXT("    def getvalue(self):\n");
-    Wrapper += TEXT("        return ''.join(self._parts)\n");
+    Wrapper += TEXT("        return ''.join(self._hb_parts)\n");
     Wrapper += FString::Printf(TEXT("_hb_out = _HaybaBoundedCapture(%d); _hb_err = _HaybaBoundedCapture(%d)\n"),
         MaxPythonCapturedCharsPerStream, MaxPythonCapturedCharsPerStream);
     // Deliberately do not call arbitrary object __str__/__repr__ hooks here.
@@ -1115,7 +1976,7 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     Wrapper += TEXT("    elif value_type in (float, bool, complex, type(None)):\n");
     Wrapper += TEXT("        sink.write(str(value))\n");
     Wrapper += TEXT("    elif value_type is bytes:\n");
-    Wrapper += TEXT("        remaining = max(0, sink._limit - sink._count)\n");
+    Wrapper += TEXT("        remaining = max(0, sink._hb_limit - sink._hb_count)\n");
     Wrapper += TEXT("        sink.write(repr(value[:max(0, remaining // 4)]))\n");
     Wrapper += TEXT("    else:\n");
     Wrapper += TEXT("        sink.write('<non-primitive value omitted by bounded capture>')\n");
@@ -1130,56 +1991,94 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     Wrapper += TEXT("        if _index: _sink.write(_sep)\n");
     Wrapper += TEXT("        _hb_write_value(_sink, _value)\n");
     Wrapper += TEXT("    _sink.write(_end)\n");
-    Wrapper += TEXT("_hb_g = {'print': _hb_print, '__name__': '__main__'}\n");
-    Wrapper += TEXT("_hb_ok = True\n");
-    Wrapper += TEXT("_hb_timed_out = False\n");
-    Wrapper += FString::Printf(TEXT("_hb_deadline = _hb_time.monotonic() + %.3f\n"), MaxPythonExecutionSeconds);
-    Wrapper += TEXT("_hb_trace_events = 0\n");
-    Wrapper += TEXT("class _HaybaDeadlineExceeded(RuntimeError):\n");
-    Wrapper += TEXT("    pass\n");
-    Wrapper += TEXT("def _hb_trace(_frame, _event, _arg):\n");
-    Wrapper += TEXT("    global _hb_trace_events\n");
-    Wrapper += TEXT("    _hb_trace_events += 1\n");
-    Wrapper += FString::Printf(TEXT("    if (_hb_trace_events %% %d) == 0 and _hb_time.monotonic() >= _hb_deadline:\n"), PythonDeadlineCheckInterval);
-    Wrapper += FString::Printf(TEXT("        raise _HaybaDeadlineExceeded('python_run exceeded %.1f second cooperative bytecode deadline')\n"), MaxPythonExecutionSeconds);
-    Wrapper += TEXT("    return _hb_trace\n");
-    Wrapper += TEXT("_hb_previous_stdout = _hb_sys.stdout; _hb_previous_stderr = _hb_sys.stderr\n");
-    Wrapper += TEXT("try:\n");
-    Wrapper += TEXT("    _hb_sys.stdout = _hb_out; _hb_sys.stderr = _hb_err\n");
-    Wrapper += TEXT("    _hb_sys.settrace(_hb_trace)\n");
-    Wrapper += TEXT("    exec(compile(_hb_src, '<hayba>', 'exec'), _hb_g)\n");
-    Wrapper += TEXT("except _HaybaDeadlineExceeded as _hb_timeout_error:\n");
-    Wrapper += TEXT("    _hb_ok = False\n");
-    Wrapper += TEXT("    _hb_timed_out = True\n");
-    Wrapper += TEXT("    _hb_err.write(str(_hb_timeout_error))\n");
+    // Keep the enforcement clock, counter, trace callback, and trusted
+    // settrace callable in a private function frame. The user code receives a
+    // distinct globals dictionary and cannot replace these locals. Saving the
+    // bound settrace function before execution also means finally never calls
+    // a module attribute that user code could have monkey-patched.
+    Wrapper += TEXT("_hb_trusted_settrace = _hb_sys.settrace\n");
+    Wrapper += TEXT("_hb_trusted_gettrace = _hb_sys.gettrace\n");
+    Wrapper += TEXT("_hb_trusted_monotonic = _hb_time.monotonic\n");
+    Wrapper += TEXT("_hb_trusted_gc_collect = _hb_gc.collect\n");
+    Wrapper += TEXT("def _hb_execute_user(_hb_user_source, _hb_user_globals, _hb_set_trace, _hb_get_trace, _hb_now, _hb_collect, _hb_system):\n");
+    Wrapper += TEXT("    _hb_ok = True; _hb_timed_out = False; _hb_trace_events = 0\n");
+    Wrapper += FString::Printf(TEXT("    _hb_deadline = _hb_now() + %.3f\n"), MaxPythonExecutionSeconds);
+    Wrapper += TEXT("    class _HaybaDeadlineExceeded(BaseException):\n");
+    Wrapper += TEXT("        pass\n");
+    Wrapper += TEXT("    def _hb_trace(_frame, _event, _arg):\n");
+    Wrapper += TEXT("        nonlocal _hb_trace_events\n");
+    Wrapper += TEXT("        _hb_trace_events += 1\n");
+    Wrapper += FString::Printf(TEXT("        if (_hb_trace_events %% %d) == 0 and _hb_now() >= _hb_deadline:\n"), PythonDeadlineCheckInterval);
+    Wrapper += TEXT("            raise _HaybaDeadlineExceeded()\n");
+    Wrapper += TEXT("        return _hb_trace\n");
+    Wrapper += TEXT("    _hb_previous_stdout = _hb_system.stdout; _hb_previous_stderr = _hb_system.stderr\n");
+    Wrapper += TEXT("    _hb_previous_trace = _hb_get_trace()\n");
+    Wrapper += TEXT("    try:\n");
+    Wrapper += TEXT("        _hb_system.stdout = _hb_out; _hb_system.stderr = _hb_err\n");
+    Wrapper += TEXT("        _hb_set_trace(_hb_trace)\n");
+    Wrapper += TEXT("        exec(compile(_hb_user_source, '<hayba>', 'exec'), _hb_user_globals)\n");
+    Wrapper += TEXT("    except _HaybaDeadlineExceeded:\n");
+    Wrapper += TEXT("        _hb_ok = False\n");
+    Wrapper += TEXT("        _hb_timed_out = True\n");
+    Wrapper += FString::Printf(TEXT("        _hb_err.write('python_run exceeded %.1f second cooperative bytecode deadline')\n"), MaxPythonExecutionSeconds);
     // Catch BaseException so SystemExit/KeyboardInterrupt cannot escape the
     // one-shot command even if a future alias slips past source preflight.
-    Wrapper += TEXT("except BaseException as _hb_exception:\n");
-    Wrapper += TEXT("    _hb_ok = False\n");
-    Wrapper += TEXT("    _hb_err.write('Traceback (most recent call last):\\n')\n");
-    Wrapper += TEXT("    _hb_tb_cursor = BaseException.__getattribute__(_hb_exception, '__traceback__'); _hb_tb_frames = 0\n");
-    Wrapper += TEXT("    while _hb_tb_cursor is not None and _hb_tb_frames < 32:\n");
-    Wrapper += TEXT("        _hb_code = _hb_tb_cursor.tb_frame.f_code\n");
-    Wrapper += TEXT("        _hb_err.write('  File '); _hb_write_value(_hb_err, _hb_code.co_filename)\n");
-    Wrapper += TEXT("        _hb_err.write(', line '); _hb_write_value(_hb_err, _hb_tb_cursor.tb_lineno)\n");
-    Wrapper += TEXT("        _hb_err.write(', in '); _hb_write_value(_hb_err, _hb_code.co_name); _hb_err.write('\\n')\n");
-    Wrapper += TEXT("        _hb_tb_cursor = _hb_tb_cursor.tb_next; _hb_tb_frames += 1\n");
-    Wrapper += TEXT("    if _hb_tb_cursor is not None: _hb_err.write('  <additional frames omitted>\\n')\n");
-    Wrapper += TEXT("    _hb_err.write(type.__getattribute__(type(_hb_exception), '__name__')); _hb_err.write(': ')\n");
+    Wrapper += TEXT("    except BaseException as _hb_exception:\n");
+    Wrapper += TEXT("        _hb_ok = False\n");
+    Wrapper += TEXT("        _hb_err.write('Traceback (most recent call last):\\n')\n");
+    Wrapper += TEXT("        _hb_tb_cursor = BaseException.__getattribute__(_hb_exception, '__traceback__'); _hb_tb_frames = 0\n");
+    Wrapper += TEXT("        while _hb_tb_cursor is not None and _hb_tb_frames < 32:\n");
+    Wrapper += TEXT("            _hb_code = _hb_tb_cursor.tb_frame.f_code\n");
+    Wrapper += TEXT("            _hb_err.write('  File '); _hb_write_value(_hb_err, _hb_code.co_filename)\n");
+    Wrapper += TEXT("            _hb_err.write(', line '); _hb_write_value(_hb_err, _hb_tb_cursor.tb_lineno)\n");
+    Wrapper += TEXT("            _hb_err.write(', in '); _hb_write_value(_hb_err, _hb_code.co_name); _hb_err.write('\\n')\n");
+    Wrapper += TEXT("            _hb_tb_cursor = _hb_tb_cursor.tb_next; _hb_tb_frames += 1\n");
+    Wrapper += TEXT("        if _hb_tb_cursor is not None: _hb_err.write('  <additional frames omitted>\\n')\n");
+    Wrapper += TEXT("        _hb_err.write(type.__getattribute__(type(_hb_exception), '__name__')); _hb_err.write(': ')\n");
     // A custom BaseException can override attribute access just like any other
     // Python object. Do not touch .args or call str(exception): both can invoke
     // attacker-controlled/native code while reporting the original failure.
-    Wrapper += TEXT("    _hb_err.write('<exception arguments omitted by bounded capture>\\n')\n");
-    Wrapper += TEXT("finally:\n");
-    Wrapper += TEXT("    _hb_sys.settrace(None)\n");
-    Wrapper += TEXT("    _hb_sys.stdout = _hb_previous_stdout; _hb_sys.stderr = _hb_previous_stderr\n");
+    Wrapper += TEXT("        _hb_err.write('<exception arguments omitted by bounded capture>\\n')\n");
+    // CPython disables tracing if the trace callback itself raises. Reinstall
+    // the trusted trace before dropping request globals so hostile __del__ code
+    // remains deadline-bounded. Restore any host trace only after clear/GC and
+    // stream restoration have finished.
+    Wrapper += TEXT("    finally:\n");
+    Wrapper += TEXT("        try:\n");
+    Wrapper += TEXT("            try:\n");
+    Wrapper += TEXT("                _hb_set_trace(_hb_trace)\n");
+    Wrapper += TEXT("                _hb_user_globals.clear()\n");
+    Wrapper += TEXT("                _hb_collect()\n");
+    Wrapper += TEXT("            except _HaybaDeadlineExceeded:\n");
+    Wrapper += TEXT("                _hb_ok = False; _hb_timed_out = True\n");
+    Wrapper += TEXT("                _hb_err.write('python_run cleanup exceeded the cooperative bytecode deadline')\n");
+    Wrapper += TEXT("            except BaseException:\n");
+    Wrapper += TEXT("                _hb_ok = False\n");
+    Wrapper += TEXT("                _hb_err.write('python_run request-global cleanup failed safely')\n");
+    Wrapper += TEXT("        finally:\n");
+    Wrapper += TEXT("            try:\n");
+    Wrapper += TEXT("                _hb_system.stdout = _hb_previous_stdout; _hb_system.stderr = _hb_previous_stderr\n");
+    Wrapper += TEXT("            finally:\n");
+    Wrapper += TEXT("                _hb_set_trace(_hb_previous_trace)\n");
+    Wrapper += TEXT("    return _hb_ok, _hb_timed_out\n");
+    // Give user code a private globals dictionary and a private copy of the
+    // builtin-name mapping. Importing the process-global builtins module is
+    // rejected lexically above, so simple assignments cannot poison readback
+    // and cleanup helpers after the request completes.
+    Wrapper += TEXT("_hb_user_builtins = _hb_b.__dict__.copy()\n");
+    // Deleting the request-global print name must not fall through to the real
+    // process built-in, which would invoke arbitrary object __str__/__repr__.
+    Wrapper += TEXT("_hb_user_builtins['print'] = _hb_print\n");
+    Wrapper += TEXT("_hb_g = {'print': _hb_print, '__name__': '__hayba_user__', '__builtins__': _hb_user_builtins}\n");
+    Wrapper += TEXT("_hb_ok, _hb_timed_out = _hb_execute_user(_hb_src, _hb_g, _hb_trusted_settrace, _hb_trusted_gettrace, _hb_trusted_monotonic, _hb_trusted_gc_collect, _hb_sys)\n");
     Wrapper += TEXT("_hb_b._hayba_out = _hb_out.getvalue()\n");
     Wrapper += TEXT("_hb_b._hayba_err = _hb_err.getvalue()\n");
-    Wrapper += TEXT("_hb_b._hayba_capture_meta = '%d,%d,%d,%d' % (int(_hb_out._dropped > 0), int(_hb_err._dropped > 0), _hb_out._dropped, _hb_err._dropped)\n");
+    Wrapper += TEXT("_hb_b._hayba_capture_meta = '%d,%d,%d,%d' % (int(_hb_out._hb_dropped > 0), int(_hb_err._hb_dropped > 0), _hb_out._hb_dropped, _hb_err._hb_dropped)\n");
     Wrapper += TEXT("_hb_b._hayba_ok = _hb_ok\n");
     Wrapper += TEXT("_hb_b._hayba_timed_out = _hb_timed_out\n");
-    // Eagerly drop the script's exec namespace and force a CPython collection
-    // WHILE STILL INSIDE the SEH-guarded ExecPythonCommandEx below. This targets
+    // The execution function already dropped the script namespace and forced a
+    // CPython collection while its trusted trace remained active and while
+    // still inside the SEH-guarded ExecPythonCommandEx below. This targets
     // the python311 -> PythonScriptPlugin -> CoreUObject access-violation class:
     // a one-shot script creates a Python wrapper for a UObject it spawns/edits,
     // that UObject is later destroyed (or the wrapper otherwise dangles), and the
@@ -1189,17 +2088,12 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     // `_hb_g` and calling gc.collect() here, the wrapper is finalised NOW, inside
     // the guard: if finalisation is going to fault it does so where the SEH guard
     // converts it to a recoverable error, and if it doesn't fault the dangling
-    // reference is gone before the next engine GC can trip over it. Results were
-    // already stashed on `builtins` (above), and the wrapper-local capture buffers
-    // (_hb_out/_hb_err/_hb_ok) are NOT in `_hb_g`, so the readback is unaffected.
-    // Wrapped in try/except so a degraded interpreter never turns cleanup into the
-    // very failure we are guarding against.
-    Wrapper += TEXT("try:\n");
-    Wrapper += TEXT("    _hb_g.clear()\n");
-    Wrapper += TEXT("    import gc as _hb_gc\n");
-    Wrapper += TEXT("    _hb_gc.collect()\n");
-    Wrapper += TEXT("except Exception:\n");
-    Wrapper += TEXT("    pass\n");
+    // reference is gone before the next engine GC can trip over it. The
+    // wrapper-local capture buffers (_hb_out/_hb_err/_hb_ok) are NOT in `_hb_g`,
+    // so the result stash performed immediately after the function returns is
+    // unaffected.
+    // Cleanup exceptions are contained by the execution function before it
+    // restores the previous trace hook.
 
     FPythonCommandEx RunCmd;
     RunCmd.Command = Wrapper;

@@ -61,12 +61,20 @@ Calls that disable tracing/profiling are themselves forbidden. The deadline is
 defense in depth for accidentally expensive Python bytecode, not a promise that
 arbitrary hostile native code can be interrupted safely.
 
+The incident-driven native denylist is intentionally a bounded mitigation, not
+a proof that arbitrary in-process Python is safe. Unknown Python/C-extension
+calls can still block or fault without returning to the trace hook. Issue #392
+owns the complete trust-boundary fix: move untrusted execution into a disposable
+process and communicate only validated results back to the editor.
+
 ## Regression gates
 
 - `PYTHON_CRASH_RULES` is table-tested through the registered TypeScript handler
   with `allow_unsafe:true`; no rejected case may contact Unreal.
-- `Hayba.MCP.Python.FatalPolicy` invokes the C++ handler directly with
-  `allow_unsafe:true` for every native fatal-table entry.
+- `Hayba.MCP.Python.FatalPolicy` feeds every fatal example only to the pure
+  native source-policy matcher. A matcher regression must fail the test; it must
+  never execute `abort`, `kill`, map replacement, or another destructive probe
+  in the serving editor.
 - `Hayba.MCP.Python.PolicyBoundary` covers the size ceiling and normalized
   Tier-3 classification.
 - Asset connector imports submit multiline source directly. They no longer hide

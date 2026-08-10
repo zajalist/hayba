@@ -1,9 +1,10 @@
 /**
  * Early-feedback mirror of the authoritative C++ python_run crash policy.
  *
- * This table is intentionally exported: the test suite executes every entry
- * with allow_unsafe=true and the native automation test carries the same
- * examples. A new fatal rule is incomplete until both boundaries reject it.
+ * This table is intentionally exported: the TypeScript test exercises every
+ * entry against a mocked transport and native automation feeds the same
+ * examples only to its pure matcher. A new fatal rule is incomplete until both
+ * boundaries reject it; dangerous examples are never executed in the editor.
  * The C++ handler remains authoritative because a stale or direct TCP client
  * can bypass this process entirely.
  */
@@ -77,7 +78,8 @@ export const PYTHON_CRASH_RULES: readonly PythonCrashRule[] = [
       'asyncio.create_task',
       'asyncio.ensure_future',
       'run_in_executor(',
-      'concurrent.futures',
+      'concurrent.futures.threadpoolexecutor(',
+      'concurrent.futures.processpoolexecutor(',
       'multiprocessing.',
       'importmultiprocessing',
       'fromthreadingimportthread',
@@ -86,7 +88,8 @@ export const PYTHON_CRASH_RULES: readonly PythonCrashRule[] = [
       'fromasyncioimportensure_future',
       'importthreadingas',
       'importasyncioas',
-      'importconcurrent.futuresas',
+      'fromconcurrent.futuresimportthreadpoolexecutor',
+      'fromconcurrent.futuresimportprocesspoolexecutor',
     ],
     reason: 'it can outlive the one-shot namespace or run Unreal Python off the game thread',
     alternative: 'perform bounded work inline or implement an owned native job that unregisters on shutdown',
@@ -124,6 +127,23 @@ export const PYTHON_CRASH_RULES: readonly PythonCrashRule[] = [
       'while(true)',
       'while1',
       'while(1)',
+      'threading.lock(',
+      'threading.rlock(',
+      'threading.event(',
+      'threading.condition(',
+      'threading.semaphore(',
+      'threading.boundedsemaphore(',
+      'threading.lock.acquire(',
+      'threading.rlock.acquire(',
+      'threading.event.wait(',
+      'threading.condition.wait(',
+      'threading.semaphore.acquire(',
+      'threading.boundedsemaphore.acquire(',
+      'queue.queue(',
+      'queue.queue.get(',
+      'queue.queue.join(',
+      'concurrent.futures.future.result(',
+      'concurrent.futures.wait(',
     ],
     reason: 'it can block the editor game thread or create work with no safe native interruption point',
     alternative: 'use a bounded loop, do I/O in the Node process, or return an owned job id and poll it',
@@ -233,6 +253,18 @@ function compactContainsPolicyPattern(compact: string, pattern: string): boolean
 /** Return the first fatal policy match, or null for a script safe to forward. */
 export function scanPythonForCrashers(script: string): CrashGuardHit | null {
   const compact = compactPythonPolicySource(script);
+  // Wildcard imports erase the callable spellings that both policy boundaries
+  // rely on for alias analysis. The native lexer remains authoritative; this
+  // is the matching early-feedback refusal for ordinary executable syntax.
+  if (/\bfrom\s+[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*\s+import\s*(?:\(\s*)?\*/i.test(script)) {
+    return {
+      pattern: 'wildcard import',
+      code: 'HCR-DYNAMIC-001',
+      family: 'dynamic_code_hiding',
+      reason: 'it imports policy-denied callables without names that source alias analysis can prove',
+      alternative: 'import only the specific policy-visible names required by the request',
+    };
+  }
   for (const rule of PYTHON_CRASH_RULES) {
     for (const pattern of rule.patterns) {
       if (compactContainsPolicyPattern(compact, pattern)) {

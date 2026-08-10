@@ -44,6 +44,18 @@ describe('python_run crash guard + spill', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it('rejects wildcard imports before UE with the stable dynamic-policy code', async () => {
+    const { pythonRunHandler } = await import('./python-run.js');
+    send.mockClear();
+    setDefaultSender(send);
+    const r = await pythonRunHandler({ script: 'from math import *', allow_unsafe: true }, {} as never);
+    expect(r.isError).toBe(true);
+    const payload = JSON.parse(r.content[0].text);
+    expect(payload.policy_code).toBe('HCR-DYNAMIC-001');
+    expect(payload.matched_rule).toBe('wildcard import');
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('rejects every fatal rule before UE, including with allow_unsafe', async () => {
     const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();

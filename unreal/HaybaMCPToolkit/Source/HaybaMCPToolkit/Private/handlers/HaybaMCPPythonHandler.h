@@ -12,7 +12,8 @@ public:
 
 #if WITH_DEV_AUTOMATION_TESTS
     /** Exact fatal table exported only to prove every native deny rule through
-     *  Handle(), including with allow_unsafe=true. */
+     *  the pure source-policy matcher. Destructive examples must never reach
+     *  Handle(): a matcher regression should fail a test, not execute them. */
     static TArray<TPair<FString, FString>> FatalPolicyCasesForTests();
     static bool MatchFatalPolicyForTests(const FString& Script, FString& OutPolicyCode);
     static bool IsTier3PolicyBlockedForTests(

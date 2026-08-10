@@ -104,12 +104,13 @@ export const pythonRunHandler: ToolHandler = async (args) => {
     // C++ boundary is authoritative for stale/direct clients and for runtime
     // deadline/SEH failures that TypeScript cannot predict.
     const uePayload = (e as { uePayload?: unknown })?.uePayload as
-      { data?: Record<string, unknown>; error?: string } | undefined;
+      | { data?: Record<string, unknown>; error?: string }
+      | undefined;
     const nativeError = uePayload?.error ?? (e instanceof Error ? e.message : String(e));
     if (uePayload?.data?.tier === 3 && !nativeError.includes('[HCR-')) {
       return errorResult(
         `python_run policy_blocked [HCR-SANDBOX-001]: matched 'tier_3_filesystem_or_subprocess'. ` +
-          `Filesystem/subprocess access is disabled. Safe alternative: use a typed MCP tool, or set ` +
+          `A detected filesystem or subprocess primitive is disabled by default. Safe alternative: use a typed MCP tool, or set ` +
           `bAllowUnsafePython=true / pass allow_unsafe:true after reviewing the script. ` +
           `Retry unchanged: forbidden; underlying error: ${nativeError}`,
         {
