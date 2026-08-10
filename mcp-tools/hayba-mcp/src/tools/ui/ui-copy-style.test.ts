@@ -59,6 +59,21 @@ describe('ui_copy_style', () => {
     });
   });
 
+  it('targets exact widget names so a large tree cannot truncate away a newly added target', async () => {
+    ue = scriptedUe()
+      .replies('ui_layout_snapshot', (params) => {
+        expect(params.widget_names).toEqual(['PanelFrame', 'ModalFrame']);
+        return { layout_resolved: true, widgets: [workingBorder, brokenBorder] };
+      })
+      .replies('ui_set_widget_properties', { succeeded: 1, failed: 0 });
+
+    const r = await uiCopyStyleHandler(
+      { widget_blueprint_path: BP, from_widget: 'PanelFrame', to_widget: 'ModalFrame', include: ['brush'] },
+      {} as never,
+    );
+    expect(r.isError).toBeFalsy();
+  });
+
   it('reaches UE only through commands the plugin actually registers', async () => {
     // Regression: this tool used to re-dispatch "ui_set_brush" /
     // "ui_set_text_style" over the socket. Those are TS-layer tool names, not

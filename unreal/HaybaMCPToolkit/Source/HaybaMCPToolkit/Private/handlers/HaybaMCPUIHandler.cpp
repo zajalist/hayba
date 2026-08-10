@@ -2849,10 +2849,41 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleLayoutSnapshot(const TSharedPtr<FJ
     const bool bHaveLayout = HaybaUILayout::ComputeGeometry(WBP, ScreenSize, Geoms, LayoutError);
 
     TArray<TSharedPtr<FJsonValue>> Widgets;
+    TSet<FName> RequestedWidgetNames;
+    const TArray<TSharedPtr<FJsonValue>>* RequestedValues = nullptr;
+    if (P->TryGetArrayField(TEXT("widget_names"), RequestedValues) && RequestedValues)
+    {
+        for (const TSharedPtr<FJsonValue>& Value : *RequestedValues)
+        {
+            FString Name;
+            if (Value.IsValid() && Value->TryGetString(Name) && !Name.IsEmpty())
+            {
+                RequestedWidgetNames.Add(FName(*Name));
+            }
+        }
+    }
+    double RequestedOffset = 0.0;
+    double RequestedLimit = 50.0;
+    P->TryGetNumberField(TEXT("offset"), RequestedOffset);
+    P->TryGetNumberField(TEXT("limit"), RequestedLimit);
+    const int32 Offset = FMath::Max(0, FMath::FloorToInt(RequestedOffset));
+    const int32 Limit = FMath::Clamp(FMath::FloorToInt(RequestedLimit), 1, 50);
+    int32 TotalWidgetCount = 0;
+    int32 MatchedWidgetCount = 0;
 
     WBP->WidgetTree->ForEachWidget([&](UWidget* Widget)
     {
         if (!Widget) return;
+        ++TotalWidgetCount;
+        if (!RequestedWidgetNames.IsEmpty() && !RequestedWidgetNames.Contains(Widget->GetFName()))
+        {
+            return;
+        }
+        const int32 MatchIndex = MatchedWidgetCount++;
+        if (MatchIndex < Offset || Widgets.Num() >= Limit)
+        {
+            return;
+        }
 
         TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
         Entry->SetStringField(TEXT("name"), Widget->GetName());
@@ -3015,7 +3046,15 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleLayoutSnapshot(const TSharedPtr<FJ
     // Callers MUST be able to tell "no problems found" from "could not measure".
     // Rules that depend on geometry are skipped, not passed, when this is set.
     if (!bHaveLayout) Out->SetStringField(TEXT("layout_error"), LayoutError);
+    Out->SetNumberField(TEXT("total_widget_count"), TotalWidgetCount);
+    Out->SetNumberField(TEXT("matched_widget_count"), MatchedWidgetCount);
+    Out->SetNumberField(TEXT("offset"), Offset);
+    Out->SetNumberField(TEXT("limit"), Limit);
     Out->SetNumberField(TEXT("widget_count"), Widgets.Num());
+    const int32 NextOffset = Offset + Widgets.Num();
+    const bool bHasMore = NextOffset < MatchedWidgetCount;
+    Out->SetBoolField(TEXT("has_more"), bHasMore);
+    if (bHasMore) Out->SetNumberField(TEXT("next_offset"), NextOffset);
     Out->SetArrayField(TEXT("widgets"), Widgets);
     return FHaybaHandlerResult::Ok(Out);
 }

@@ -20,6 +20,24 @@ export const schema = z.object({
     .number()
     .optional()
     .describe('Resolution to lay out at. Defaults to the blueprint’s design-time size.'),
+  widget_names: z
+    .array(z.string().min(1))
+    .max(50)
+    .optional()
+    .describe('Return only these exact widget names. Use this for targeted style/geometry reads on large trees.'),
+  offset: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe('Zero-based widget offset for paginating production-sized trees.'),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .optional()
+    .describe('Widgets to return per page (maximum 50, matching the UE transport limit).'),
 });
 
 export const uiLayoutSnapshotHandler: ToolHandler = async (args) => {

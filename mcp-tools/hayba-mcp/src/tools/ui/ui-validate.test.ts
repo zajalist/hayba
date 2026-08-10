@@ -132,6 +132,57 @@ describe('ui_validate reporting', () => {
     expect(new Set(stamps).size).toBe(2);
   });
 
+  it('validates every page when the widget tree exceeds the native response limit', async () => {
+    const base = snapshotWithOverflow();
+    const second = { ...base.widgets[0]!, name: 'LateObserverAction' };
+    const offsets: number[] = [];
+    const exec = new InMemoryToolExecutor().on('ui_layout_snapshot', (params) => {
+      const offset = Number(params.offset ?? 0);
+      offsets.push(offset);
+      return {
+        ok: true,
+        data: {
+          ...base,
+          widget_count: 1,
+          total_widget_count: 2,
+          matched_widget_count: 2,
+          offset,
+          limit: 50,
+          has_more: offset === 0,
+          next_offset: offset === 0 ? 1 : undefined,
+          widgets: offset === 0 ? [base.widgets[0]!] : [second],
+        },
+      };
+    });
+    setDefaultSender(exec.send);
+
+    const r = await uiValidateHandler(
+      { widget_blueprint_path: '/Game/UI/WBP_Probe', persist: false },
+      undefined as never,
+    );
+    const parsed = JSON.parse(r.content[0]!.text) as {
+      findings: Array<{ ruleId: string; widget?: string }>;
+    };
+
+    expect(offsets).toEqual([0, 1]);
+    expect(parsed.findings.some((f) => f.ruleId === 'ui_text_overflows_box' && f.widget === 'NameLabel')).toBe(true);
+    expect(parsed.findings.some((f) => f.ruleId === 'ui_text_overflows_box' && f.widget === 'LateObserverAction')).toBe(true);
+  });
+
+  it('fails closed when an older plugin repeats page one instead of honoring pagination', async () => {
+    const truncated = {
+      ...snapshotWithOverflow(),
+      widget_count: 51,
+      widgets: snapshotWithOverflow().widgets,
+    };
+    const exec = new InMemoryToolExecutor().on('ui_layout_snapshot', () => ({ ok: true, data: truncated }));
+    setDefaultSender(exec.send);
+
+    await expect(
+      uiValidateHandler({ widget_blueprint_path: '/Game/UI/WBP_Probe', persist: false }, undefined as never),
+    ).rejects.toThrow('refusing to validate an incomplete widget tree');
+  });
+
   it('still returns findings when the plugin is too old to accept the push', async () => {
     // An older plugin build has no ui_report_findings. Losing the whole run
     // over a failed push would be worse than losing the panel update.

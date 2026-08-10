@@ -68,9 +68,10 @@ interface SnapWidget {
   text_info?: TextInfo;
 }
 
-async function snapshotOf(path: string): Promise<SnapWidget[]> {
+async function snapshotOf(path: string, widgetNames: string[]): Promise<SnapWidget[]> {
   const snap = await executeCommand<{ widgets?: SnapWidget[] }>('ui_layout_snapshot', {
     widget_blueprint_path: path,
+    widget_names: [...new Set(widgetNames)],
   });
   return snap.widgets ?? [];
 }
@@ -87,7 +88,13 @@ export const uiCopyStyleHandler: ToolHandler = async (args, session) => {
   const { widget_blueprint_path, from_widget, to_widget, include, dry_run } = parsed.data;
   const targetPath = parsed.data.to_widget_blueprint_path ?? widget_blueprint_path;
 
-  const sourceWidgets = await snapshotOf(widget_blueprint_path);
+  // A full snapshot is response-limited to 50 widgets by the UE transport. Newly authored
+  // targets are usually at the end of the tree, which made a perfectly real widget disappear
+  // from this tool on any production-sized HUD. Ask UE for the exact names instead.
+  const sourceWidgets = await snapshotOf(
+    widget_blueprint_path,
+    targetPath === widget_blueprint_path ? [from_widget, to_widget] : [from_widget],
+  );
   const source = sourceWidgets.find((w) => w.name === from_widget);
   if (!source) {
     return {
@@ -97,7 +104,7 @@ export const uiCopyStyleHandler: ToolHandler = async (args, session) => {
   }
 
   const targetWidgets =
-    targetPath === widget_blueprint_path ? sourceWidgets : await snapshotOf(targetPath);
+    targetPath === widget_blueprint_path ? sourceWidgets : await snapshotOf(targetPath, [to_widget]);
   const target = targetWidgets.find((w) => w.name === to_widget);
   if (!target) {
     return {

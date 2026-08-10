@@ -290,6 +290,58 @@ bool FHaybaMCPBrushInfoTest::RunTest(const FString& Parameters)
             TestTrue(TEXT("reports brush_property"), (*Brush)->TryGetStringField(TEXT("brush_property"), BrushProp));
             TestEqual(TEXT("a Border's brush is Background"), BrushProp, FString(TEXT("Background")));
         }
+
+        // Production HUDs routinely exceed the transport's 50-item response limit. Targeted
+        // reads are what make ui_copy_style reliable for a widget appended near the end.
+        TSharedPtr<FJsonObject> FilteredP = MakeShared<FJsonObject>();
+        FilteredP->SetStringField(TEXT("widget_blueprint_path"), W.ObjectPath);
+        TArray<TSharedPtr<FJsonValue>> Names;
+        Names.Add(MakeShared<FJsonValueString>(TEXT("Frame")));
+        FilteredP->SetArrayField(TEXT("widget_names"), Names);
+        const FHaybaHandlerResult Filtered = Handler.Handle(TEXT("ui_layout_snapshot"), FilteredP);
+        if (TestTrue(TEXT("targeted layout snapshot succeeds"), Filtered.bOk))
+        {
+            const TArray<TSharedPtr<FJsonValue>>* FilteredWidgets = nullptr;
+            if (TestTrue(TEXT("targeted snapshot returns widgets"),
+                Filtered.Data->TryGetArrayField(TEXT("widgets"), FilteredWidgets)))
+            {
+                TestEqual(TEXT("targeted snapshot returns only the exact widget"), FilteredWidgets->Num(), 1);
+                TestEqual(TEXT("targeted widget is Frame"),
+                    (*FilteredWidgets)[0]->AsObject()->GetStringField(TEXT("name")), FString(TEXT("Frame")));
+            }
+            TestTrue(TEXT("targeted response preserves the full-tree count"),
+                Filtered.Data->GetIntegerField(TEXT("total_widget_count")) >= 2);
+        }
+
+        TSharedPtr<FJsonObject> PageOneP = MakeShared<FJsonObject>();
+        PageOneP->SetStringField(TEXT("widget_blueprint_path"), W.ObjectPath);
+        PageOneP->SetNumberField(TEXT("offset"), 0);
+        PageOneP->SetNumberField(TEXT("limit"), 1);
+        const FHaybaHandlerResult PageOne = Handler.Handle(TEXT("ui_layout_snapshot"), PageOneP);
+        if (TestTrue(TEXT("first layout page succeeds"), PageOne.bOk))
+        {
+            const TArray<TSharedPtr<FJsonValue>>& FirstWidgets = PageOne.Data->GetArrayField(TEXT("widgets"));
+            TestEqual(TEXT("first layout page obeys its limit"), FirstWidgets.Num(), 1);
+            TestTrue(TEXT("first layout page reports remaining widgets"),
+                PageOne.Data->GetBoolField(TEXT("has_more")));
+
+            TSharedPtr<FJsonObject> PageTwoP = MakeShared<FJsonObject>();
+            PageTwoP->SetStringField(TEXT("widget_blueprint_path"), W.ObjectPath);
+            PageTwoP->SetNumberField(TEXT("offset"), PageOne.Data->GetIntegerField(TEXT("next_offset")));
+            PageTwoP->SetNumberField(TEXT("limit"), 1);
+            const FHaybaHandlerResult PageTwo = Handler.Handle(TEXT("ui_layout_snapshot"), PageTwoP);
+            if (TestTrue(TEXT("second layout page succeeds"), PageTwo.bOk))
+            {
+                const TArray<TSharedPtr<FJsonValue>>& SecondWidgets = PageTwo.Data->GetArrayField(TEXT("widgets"));
+                TestEqual(TEXT("second layout page obeys its limit"), SecondWidgets.Num(), 1);
+                if (FirstWidgets.Num() == 1 && SecondWidgets.Num() == 1)
+                {
+                    TestNotEqual(TEXT("pagination advances to a different widget"),
+                        FirstWidgets[0]->AsObject()->GetStringField(TEXT("name")),
+                        SecondWidgets[0]->AsObject()->GetStringField(TEXT("name")));
+                }
+            }
+        }
     }
 
     W.Cleanup();

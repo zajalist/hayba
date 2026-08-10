@@ -6,6 +6,15 @@ import { validateUiSnapshot, UI_PLATFORMS, type UiFinding, type UiSnapshot } fro
 import { STRICTNESS_MODES } from '../../validator/config.js';
 import { appendFinding } from '../../validator/history.js';
 
+interface UiSnapshotPage extends UiSnapshot {
+  total_widget_count?: number;
+  matched_widget_count?: number;
+  offset?: number;
+  limit?: number;
+  has_more?: boolean;
+  next_offset?: number;
+}
+
 export const meta: HaybaToolMeta = {
   cost: 'medium',
   effects: [],
@@ -50,11 +59,7 @@ export const uiValidateHandler: ToolHandler = async (args) => {
   // The engine does the measuring (Slate prepass + font metrics); the rules
   // are judged here so they can be extended and configured without a plugin
   // rebuild.
-  const snapshot = (await executeCommand('ui_layout_snapshot', {
-    widget_blueprint_path,
-    screen_width,
-    screen_height,
-  } as Record<string, unknown>)) as UiSnapshot;
+  const snapshot = await readCompleteSnapshot(widget_blueprint_path, screen_width, screen_height);
 
   const result = validateUiSnapshot(snapshot, { platform, strictness, ruleIds: rule_ids });
 
@@ -102,6 +107,62 @@ export const uiValidateHandler: ToolHandler = async (args) => {
 
   return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
 };
+
+/**
+ * The native response builder deliberately caps arrays at 50 items. A validator that reads only
+ * page one gives the most recently appended production HUD controls no QA at all, which is worse
+ * than an explicit failure. Walk every page, reject a server that ignores pagination, and judge
+ * one reconstructed tree so parent/child and overlap rules still see the complete layout.
+ */
+async function readCompleteSnapshot(
+  widgetBlueprintPath: string,
+  screenWidth?: number,
+  screenHeight?: number,
+): Promise<UiSnapshot> {
+  const allWidgets: UiSnapshot['widgets'] = [];
+  const seenNames = new Set<string>();
+  let first: UiSnapshotPage | undefined;
+  let offset = 0;
+
+  for (let pageIndex = 0; pageIndex < 100; pageIndex += 1) {
+    const page = (await executeCommand('ui_layout_snapshot', {
+      widget_blueprint_path: widgetBlueprintPath,
+      screen_width: screenWidth,
+      screen_height: screenHeight,
+      offset,
+      limit: 50,
+    } as Record<string, unknown>)) as UiSnapshotPage;
+
+    first ??= page;
+    let added = 0;
+    for (const widget of page.widgets ?? []) {
+      if (seenNames.has(widget.name)) continue;
+      seenNames.add(widget.name);
+      allWidgets.push(widget);
+      added += 1;
+    }
+
+    const expected = page.matched_widget_count ?? page.total_widget_count ?? page.widget_count;
+    const hasMore = page.has_more ?? allWidgets.length < expected;
+    if (!hasMore) {
+      return {
+        ...first,
+        widget_count: allWidgets.length,
+        widgets: allWidgets,
+      };
+    }
+
+    const nextOffset = page.next_offset ?? offset + (page.widgets?.length ?? 0);
+    if (added === 0 || !Number.isInteger(nextOffset) || nextOffset <= offset) {
+      throw new Error(
+        `ui_layout_snapshot did not advance pagination at offset ${offset}; refusing to validate an incomplete widget tree`,
+      );
+    }
+    offset = nextOffset;
+  }
+
+  throw new Error('ui_layout_snapshot exceeded 100 pages; refusing to validate an incomplete widget tree');
+}
 
 function toContext(f: UiFinding, blueprintPath: string, platform: string): Record<string, unknown> {
   return {
