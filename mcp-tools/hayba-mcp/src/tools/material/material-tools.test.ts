@@ -44,6 +44,24 @@ const materialSetParamSrc = readFileSync(join(__dirname, 'material-set-param.ts'
 const materialApplySrc = readFileSync(join(__dirname, 'material-apply.ts'), 'utf-8');
 const materialListSrc = readFileSync(join(__dirname, 'material-list.ts'), 'utf-8');
 const materialGetInfoSrc = readFileSync(join(__dirname, 'material-get-info.ts'), 'utf-8');
+const materialHandlerCpp = readFileSync(
+  join(
+    __dirname,
+    '..',
+    '..',
+    '..',
+    '..',
+    '..',
+    'unreal',
+    'HaybaMCPToolkit',
+    'Source',
+    'HaybaMCPToolkit',
+    'Private',
+    'handlers',
+    'HaybaMCPMaterialHandler.cpp',
+  ),
+  'utf-8',
+);
 
 // Read handler files for graph-layer commands
 const materialAddNodeSrc = readFileSync(join(__dirname, 'material-add-node.ts'), 'utf-8');
@@ -162,6 +180,42 @@ describe('material instance-layer wrappers', () => {
 
     it('has path schema field', () => {
       expect(materialGetInfoSrc).toMatch(/path:\s*z\.string\(\)/);
+    });
+
+    it('truthfully serializes expression parameter identity, typed defaults, and availability', () => {
+      expect(materialHandlerCpp).toMatch(/Expr->HasAParameterName\(\)/);
+      expect(materialHandlerCpp).toContain('TEXT("parameter_name")');
+      expect(materialHandlerCpp).toContain('TEXT("parameter_name_valid")');
+      expect(materialHandlerCpp).toMatch(/ParameterName\.IsValid\(\)/);
+      expect(materialHandlerCpp).toContain('TEXT("parameter_type")');
+      expect(materialHandlerCpp).toContain('TEXT("parameter_metadata_available")');
+      expect(materialHandlerCpp).toContain('TEXT("default_value_available")');
+      expect(materialHandlerCpp).toContain('TEXT("default_value")');
+      expect(materialHandlerCpp).toMatch(/EMaterialParameterType::Scalar[\s\S]*?AsScalar\(\)/);
+      expect(materialHandlerCpp).toMatch(/EMaterialParameterType::Vector[\s\S]*?AsLinearColor\(\)/);
+      expect(materialHandlerCpp).toMatch(/EMaterialParameterType::StaticSwitch[\s\S]*?AsStaticSwitch\(\)/);
+      expect(materialHandlerCpp).toMatch(/EMaterialParameterType::Texture[\s\S]*?AsTextureObject\(\)/);
+      expect(materialHandlerCpp).toMatch(/FMath::IsFinite/);
+      expect(materialHandlerCpp).toMatch(/MakeShared<FJsonValueNull>\(\)/);
+    });
+
+    it('exposes exact terminal material-output connection evidence', () => {
+      expect(materialHandlerCpp).toMatch(/SerializeMaterialOutputs\(UMaterial\* Mat\)/);
+      expect(materialHandlerCpp).toContain('TEXT("material_outputs")');
+      expect(materialHandlerCpp).toContain('TEXT("property_id")');
+      expect(materialHandlerCpp).toContain('TEXT("connected")');
+      expect(materialHandlerCpp).toContain('TEXT("compiler_input_active")');
+      expect(materialHandlerCpp).toContain('TEXT("connection_compiler_used")');
+      expect(materialHandlerCpp).toContain('TEXT("from_node")');
+      expect(materialHandlerCpp).toContain('TEXT("from_output")');
+      expect(materialHandlerCpp).toContain('TEXT("from_output_name")');
+      expect(materialHandlerCpp).toContain('TEXT("from_output_label")');
+      expect(materialHandlerCpp).toContain('TEXT("connect_by_name")');
+      expect(materialHandlerCpp).toMatch(/Output\.MaskR/);
+      expect(materialHandlerCpp).toMatch(/HaybaExpressionOutputName\(From, i\)\.Equals/);
+      expect(materialHandlerCpp).toMatch(/Mat->bUseMaterialAttributes/);
+      expect(materialHandlerCpp).toMatch(/Mat->IsPropertyActiveInEditor\(Property\)/);
+      expect(materialHandlerCpp).toMatch(/Property == MP_MaterialAttributes/);
     });
   });
 });

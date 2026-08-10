@@ -5,6 +5,15 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 ## [Unreleased]
 
 ### Fixed
+- `material_get_info` now reports each graph parameter's authored name, exact
+  parameter type, and typed default value, with explicit availability flags
+  for invalid/non-finite metadata instead of plausible omissions. Master
+  materials also expose every terminal material-property connection, including
+  its exact source node and output index/name. Mask-derived `R/G/B/A` pin names
+  round-trip through `material_connect_nodes`; truly unnamed pins are explicit
+  nulls with display-only labels and require an output index. In Use Material Attributes mode,
+  retained legacy property wires are explicitly marked compiler-inactive and
+  no longer create false reachability.
 - UI validation no longer mistakes ScrollBox content outside the viewport for
   off-screen or parent-overflow defects. Native layout snapshots now expose the
   ScrollBox axis so cross-axis failures remain visible, and empty text is
