@@ -55,6 +55,39 @@ the Node client discovers the live instance. Ports auto-allocate in
 | Website | static HTML/CSS/JS | `website/` |
 | Backend / self-host | SQL + Docker | `supabase/`, `infra/` |
 
+## Satellite plugins
+
+`unreal/HaybaMCPToolkit` is the always-present plugin — 33 handler domains,
+loaded whenever the toolkit is. Two more UE modules sit outside it and are
+installed only when they add capability the TypeScript/python tool layer
+cannot reach on its own:
+
+- `unreal/HaybaMCPGAS` — Gameplay Ability System commands.
+- `unreal/HaybaMCPMetaSound` — MetaSound graph commands (`metasound_list` /
+  `metasound_create` work; four graph-editing commands are documented but
+  `agent_callable: false`, pending MetaSound Frontend Document Builder API
+  stability).
+
+`HaybaMCPNiagara` and `HaybaMCPSequencer` **were deleted** — every command
+they added duplicated a TS/python tool already shipping under a different
+name (`niagara_*`, `seq_*`), which is the always-available surface these
+satellites exist to be an *exception* to, not a second copy of. See
+[ADR-0008](adr/0008-satellite-plugins-earn-their-place.md) for the
+command-by-command audit that motivated the deletion.
+
+## Typed domain seam
+
+A handler can split into a pure Parse/Shape half (unit-testable without an
+editor) and an Execute half (still needs one) — `HaybaActorOps`,
+`HaybaUIOps`, `HaybaEditorOps`, `HaybaBlueprintOps` in
+`unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Public/`, plus the PIE domain's
+`HaybaPieCoords::ToAbsolute` (in `HaybaMCPParams.h`). 5 of 33 handler domains
+have this seam today: Actor, UI, PIE, Editor, Blueprint. This is `#320`'s
+whole point — most of a handler's bugs live in parameter parsing, which
+previously required a live editor to exercise at all. See
+`docs/handoffs/HANDOFF-architecture-cleanup.md` for the pattern and the
+current count; it is worked one domain at a time, not all at once.
+
 ## Build & verify
 
 The authoritative gate is local — run it before pushing:
@@ -66,6 +99,8 @@ npm --prefix mcp-tools/hayba-mcp test    # tsc --noEmit + vitest
 
 ## Surfaced deepening opportunities
 
-Friction points flagged for future grilling (see README roadmap): the
-large tool-registration surface, the manual schema-registry bottleneck,
-and the un-versioned TCP envelope.
+Friction points flagged for future grilling — no README roadmap section
+exists to link to, this is the list itself: the large tool-registration
+surface (`docs/handoffs/HANDOFF-architecture-cleanup.md` §3 tracks it as
+#319), the manual schema-registry bottleneck, and the un-versioned TCP
+envelope.

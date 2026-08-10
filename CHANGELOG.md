@@ -4,6 +4,42 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 
 ## [Unreleased]
 
+### Added
+- `editor_save_all_and_quit` — saves every dirty package, refuses to quit while
+  anything is still unsaved (a dirty asset otherwise parks the editor on a
+  modal save prompt with the MCP port already closed), then issues
+  `QUIT_EDITOR`.
+- Parameter-name aliasing (`src/tools/param-aliases.ts`, `resolveAliases`) — a
+  single normalisation step, routed through by every dispatch path (`ueTool`,
+  the python-tool factory, `hayba_invoke`, the two hand-registered
+  meta-tools), that folds a historical/expected param spelling (e.g.
+  `widget_blueprint_path`) onto its canonical name before the tool's own Zod
+  schema sees it. Conflicting values under two spellings fail loudly instead
+  of silently picking one.
+- `hayba-cli` — a headless runner (`mcp-tools/hayba-mcp/src/cli`) for CI. Reads
+  a JSON/YAML spec of wire commands, sends them over the same TCP seam every
+  MCP tool uses, and exits with a code a pipeline can branch on (0 ok, 1 bad
+  spec, 2 UE unreachable, 3 a step failed, 4 unexpected CLI error — see
+  `src/cli/exit-codes.ts`). Does not launch UE; assumes an editor is already
+  running and holding the port. An example (untested, not wired into this
+  repo's own CI) workflow lives at
+  `mcp-tools/hayba-mcp/examples/github-actions-hayba-cli.yml`.
+
+### Changed
+- **Satellite plugins settled** ([ADR-0008](docs/adr/0008-satellite-plugins-earn-their-place.md)).
+  `HaybaMCPGAS` and `HaybaMCPMetaSound` are installed and surfaced.
+  `HaybaMCPNiagara` and `HaybaMCPSequencer` are deleted — every command they
+  added duplicated a TS/python tool (`niagara_*`, `seq_*`) already shipping
+  under a different name, chosen deliberately not to collide with the dormant
+  C++ ones.
+- The C++ response limiter caps every string field in every reply at 512
+  characters — right for a property dump, fatal for a base64 image (the clip
+  produces a non-empty string that fails base64 validation, and the MCP SDK
+  drops the whole content block). `image_base64` is now in
+  `FHaybaMCPResponseBuilder::NeverTrimFields`, exempting it by field name (not
+  by command), so any command that returns an image is covered, including
+  ones not written yet. This was the root cause under #334.
+
 ### Fixed
 - CI on `main` had been red for 26 days, from three causes that were not the code under test: `room-grammar.test.ts` read a developer-machine absolute path (`D:/UnrealEngine/...`); `registerDeferredRouting` **created** its embedding backend instead of accepting one, so the default probe's Hugging Face model download blew a 5s test timeout on any cold cache; and `no-stub-wrappers` correctly flagged three Blueprint commands that had been implemented but left on the stub denylist. `probeOllama` also had no timeout at all.
 - **One visual sidecar.** Two FastAPI apps, both titled `hayba-visual-sidecar`, both defaulting to `:7821`, serving disjoint endpoints, with a single Node adapter calling across both — so whichever process ran, half the adapter was broken. Merged ([ADR-0006](docs/adr/0006-one-visual-sidecar.md)). The app also could not be *imported* without multi-GB weights, which took `/health` down with it; model imports are now lazy and `/health` reports real capability rather than a hardcoded `"clip": true`.
@@ -58,7 +94,12 @@ First tagged release. The repo has shipped continuously for four months without 
 
 ## Earlier history
 
-Pre-roadmap commits are summarized in the [open feat/mcp-stabilization PR](https://github.com/zajalist/hayba/pull/2). Major themes:
+**This section describes the state of the repo at the time it was written,
+not today.** It predates the satellite-plugin decision, the typed-domain-seam
+work, and most of what is listed under [Unreleased](#unreleased) above — do
+not read "34-domain" or "16 stubs" below as current counts; see
+`docs/ARCHITECTURE.md` / `CONTEXT.md` for what is true now. Pre-roadmap
+commits are summarized in the [open feat/mcp-stabilization PR](https://github.com/zajalist/hayba/pull/2). Major themes, as they stood then:
 
 - 34-domain UE plugin (Actor / Level / Scene / Asset / Blueprint / Material / Foliage / Spline / WP / ISM / Physics / Python / Editor / Docs + 16 stubs).
 - Code Mode meta-tool architecture.

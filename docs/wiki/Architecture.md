@@ -1,12 +1,11 @@
 # Architecture
 
-The authoritative architectural orientation is
-[`../../CONTEXT.md`](../../CONTEXT.md) ("The protocol seam" section) and the
-recorded decisions in [`../adr/`](../adr/). The root
-[`../../README.md`](../../README.md) and the UE plugin README reference a
-long-form `docs/ARCHITECTURE.md`; that file is a **planned expansion** of the
-CONTEXT.md seam section and does not exist yet — use CONTEXT.md until it
-lands.
+The authoritative long-form doc is [`../ARCHITECTURE.md`](../ARCHITECTURE.md)
+(language boundaries, the TCP seam, satellite plugins, the typed domain
+seam). [`../../CONTEXT.md`](../../CONTEXT.md) ("The protocol seam" section)
+is the shorter domain-language version, and decisions are recorded in
+[`../adr/`](../adr/). This page is a summary/pointer, not a third copy —
+read the two files above for anything not covered here.
 
 ## The protocol seam (summary)
 
@@ -22,15 +21,19 @@ Agent host ──stdio──▶ Node MCP server ──TCP──▶ UE5 C++ plugi
   `src/index.ts` (stdio transport + local dashboard + visual-sidecar probe).
 - **TCP seam** — a **length-prefixed JSON envelope** `{ cmd, id, params,
   auth? }` on `:52342` (auto-fallback `:52343–52350`). A 4-byte
-  little-endian length header precedes the UTF-8 JSON body. Responses are
+  **big-endian** length header precedes the UTF-8 JSON body
+  (`buffer.readUInt32BE` in `src/tcp-frame-decoder.ts`). Responses are
   `{ id, ok, data?, error? }`, correlated by `id`.
 - **Two adapters on the seam** that must agree on the envelope:
   `mcp-tools/hayba-mcp/src/tcp-client.ts` (Node, `UETcpClient`) and the UE
   plugin's `FHaybaMCPTcpServer`. This agreement is the single most important
   invariant in the repo.
-- **UE plugin** (`unreal/HaybaMCPToolkit`) — the C++ editor adapter: 34
-  command-handler domains + Slate panels. The plugin publishes its actual
-  port to `Saved/HaybaMCP/instances/<pid>.json` for multi-editor setups.
+- **UE plugin** (`unreal/HaybaMCPToolkit`) — the C++ editor adapter: 33
+  command-handler domains + Slate panels, plus two optional satellite
+  plugins (`HaybaMCPGAS`, `HaybaMCPMetaSound` — see
+  [ADR-0008](../adr/0008-satellite-plugins-earn-their-place.md)). The plugin
+  publishes its actual port to `Saved/HaybaMCP/instances/<pid>.json` for
+  multi-editor setups.
 
 ## Key properties
 

@@ -27,7 +27,7 @@ Agent host ──stdio──▶ Node MCP server ──TCP──▶ UE5 C++ plugi
   `mcp-tools/hayba-mcp/src/tcp-client.ts` and the UE plugin's
   `FHaybaMCPTcpServer`. They must agree on the envelope — this is the
   single most important invariant in the repo.
-- **UE plugin** — the C++ editor **adapter**: 34 command-handler domains,
+- **UE plugin** — the C++ editor **adapter**: 33 command-handler domains,
   Slate panels.
 
 ## Glossary
@@ -68,6 +68,18 @@ Agent host ──stdio──▶ Node MCP server ──TCP──▶ UE5 C++ plugi
 - **Re-emulation doctrine** — when a pre-restructure branch's behaviour
   must land on the restructured layout, reproduce its *effect* as fresh
   commits; never git-merge the old layout back in (see ADR-0001).
+- **Satellite plugin** — an optional UE module living outside
+  `unreal/HaybaMCPToolkit/`, installed into a host project only when it adds
+  capability the always-available TypeScript/python tool surface cannot
+  reach. `HaybaMCPGAS` and `HaybaMCPMetaSound` are installed; `HaybaMCPNiagara`
+  and `HaybaMCPSequencer` were deleted because their commands duplicated a
+  shipping TS tool under an older name (ADR-0008).
+- **Typed domain seam** (`HaybaActorOps` / `HaybaUIOps` / `HaybaEditorOps` /
+  `HaybaBlueprintOps`) — a per-domain split of a C++ handler into a pure
+  Parse/Shape half (unit-testable without an editor) and an Execute half
+  (still needs one). 5 of 33 handler domains have one today: Actor, UI, PIE,
+  Editor, Blueprint. See `docs/handoffs/HANDOFF-architecture-cleanup.md` for
+  the running count and the pattern to copy for the next domain.
 
 ## Repo shape
 

@@ -20,7 +20,7 @@ This repo is the UE5 MCP toolkit: the Node MCP server, the UE5 C++ editor plugin
 
 ## Features
 
-- **100+ tools across 30+ domains** — Actor / Level / Scene / Asset / Blueprint / Material / Foliage / Spline / World Partition / ISM / Physics / Python / Editor / Docs / PCG / Sequencer / Animation / Niagara / Audio / MetaSound / GAS / Behavior Tree / Input / UI / Net / Mesh / Texture / Data / Project / Build / Test / Memory / Plan / Conventions
+- **100+ tools across 30+ domains** — Actor / Level / Scene / Asset / Blueprint / Material / Foliage / Spline / World Partition / ISM / Physics / Python / Editor / Docs / PCG / Sequencer / Animation / Audio / Behavior Tree / Input / UI / Net / Mesh / Texture / Data / Project / Build / Test / Memory / Plan / Conventions, plus GAS and MetaSound as optional [satellite plugins](docs/adr/0008-satellite-plugins-earn-their-place.md)
 - **PCG SQLite registry** — 344 PCGEx nodes / 356 pins / 2270 properties scraped from C++ headers, queryable with semantic + structural intent
 - **Cognitive Map** — 2D top-down semantic clustering of every actor in the level, force-directed mindmap renderer
 - **Visual sidecar** — FastAPI + CLIP / SpatialCLIP / OWL-ViT for deep physics validation and spatial grounding, plus SAM segmentation for AI mask generation
@@ -34,7 +34,7 @@ This repo is the UE5 MCP toolkit: the Node MCP server, the UE5 C++ editor plugin
 | Path | What it is |
 |---|---|
 | [`mcp-tools/hayba-mcp`](mcp-tools/hayba-mcp) | **Core product** — the Node/TypeScript MCP server (tool surface, schema registry, TCP client to UE) |
-| [`mcp-tools/visual-sidecar`](mcp-tools/visual-sidecar) | Python FastAPI visual sidecar (CLIP / SpatialCLIP / OWL-ViT + SAM segmentation) |
+| [`mcp-tools/hayba-mcp/addons/visual-embeddings`](mcp-tools/hayba-mcp/addons/visual-embeddings) | Python FastAPI visual sidecar (CLIP / SpatialCLIP / OWL-ViT + SAM segmentation) |
 | `mcp-tools/pcgex` | PCGEx node-registry tooling (see its README) |
 | [`unreal/HaybaMCPToolkit`](unreal/HaybaMCPToolkit) | The UE5 C++ editor plugin — command-handler domains, Slate panels, the TCP server half of the protocol |
 | [`website/`](website) | Public website (static HTML/CSS/JS) — landing, waitlist, login, admin |
