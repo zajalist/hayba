@@ -42,6 +42,15 @@ import { handleFabLibraryList, meta as fabLibraryListMeta } from './fab/library-
 import { handleFabMarketplaceSearch, meta as fabMarketplaceSearchMeta } from './fab/marketplace-search.js';
 import { handleFabDownload, meta as fabDownloadMeta } from './fab/download.js';
 
+// ── Agent memory tool handlers (issue #355) ──────────────────────────────────
+import { memoryWriteHandler, meta as memoryWriteMeta } from './memory/write.js';
+import { memoryRecallHandler, meta as memoryRecallMeta } from './memory/recall.js';
+import { memoryListHandler, meta as memoryListMeta } from './memory/list.js';
+import { memoryDeleteHandler, meta as memoryDeleteMeta } from './memory/delete.js';
+import { memoryExportHandler, meta as memoryExportMeta } from './memory/export-blocks.js';
+import { memoryImportHandler, meta as memoryImportMeta } from './memory/import-blocks.js';
+import { memoryPruneHandler, meta as memoryPruneMeta } from './memory/prune.js';
+
 // ── Material instance-layer tool handlers ───────────────────────────────────
 import { materialCreateHandler, meta as materialCreateMeta } from './material/material-create.js';
 import {
@@ -1645,6 +1654,108 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       location: dCoerceVec3.optional(),
       rotation: dCoerceVec3.optional(),
       scale: dCoerceVec3.optional(),
+    },
+  },
+
+  // ── Agent memory domain (issue #355) ──────────────────────────────────────
+  // Wraps HaybaMemory (src/gaea/memory/hayba-memory.ts), a SQLite-backed store
+  // of small text blocks an agent writes and later recalls. Was fully
+  // implemented, tested only by its own excluded test, and reachable by
+  // nothing — see the issue for why it is being surfaced now.
+  {
+    name: 'memory_write',
+    description: 'Write a memory block: an intent, its content, which agent role wrote it, and whether it is private or shared with other agents. Runs bounded retention (age + count) after every write and reports what (if anything) it pruned.',
+    meta: memoryWriteMeta,
+    handler: memoryWriteHandler,
+    cost: 'low',
+    returns: '{ok, id, retention:{pruned_by_age, pruned_by_count, pruned_total, remaining}}',
+    schema: {
+      agentRole: z.string().min(1).describe('Role of the writing agent, e.g. "director", "asset-manager"'),
+      scope: z.enum(['private', 'shared']).describe('"private" = only this agentRole sees it via recall/list filters; "shared" = any role can'),
+      intent: z.string().min(1).describe('Short label for what this block is about'),
+      content: z.string().min(1).describe('The memory content itself'),
+      accessedResources: z.array(z.string()).optional().describe('Resource paths/ids touched while forming this memory'),
+      tokenCost: z.number().optional().describe('Approximate token cost of the content, for budget tracking'),
+      provenance: z.record(z.string(), z.unknown()).optional().describe('Free-form provenance, e.g. {tool, cursor}'),
+      id: z.string().optional().describe('Explicit id (default: a generated UUID) — mainly for re-inserting/overwriting a known block'),
+      timestamp: z.number().optional().describe('Explicit epoch-ms timestamp (default: now) — mainly for import/migration'),
+    },
+  },
+  {
+    name: 'memory_recall',
+    description: 'Search memory blocks by keyword against their intent and content, most recent match first. Use when you remember roughly what a past block was about but not its id.',
+    meta: memoryRecallMeta,
+    handler: memoryRecallHandler,
+    cost: 'low',
+    returns: '{blocks:[MemoryBlock], count, query}',
+    schema: {
+      text: z.string().min(1).describe('Keyword/phrase to search for in intent + content'),
+      scope: z.enum(['private', 'shared']).optional(),
+      agentRole: z.string().optional().describe('Restrict to blocks written by this role'),
+      limit: z.number().int().positive().optional().describe('Max blocks to return (default 10)'),
+    },
+  },
+  {
+    name: 'memory_list',
+    description: 'List recent memory blocks for a role/scope, most-recent-first, with no keyword filter. Use to browse what has been written, not to search for something specific.',
+    meta: memoryListMeta,
+    handler: memoryListHandler,
+    cost: 'low',
+    returns: '{blocks:[MemoryBlock], count, total_matching, truncated}',
+    schema: {
+      scope: z.enum(['private', 'shared']).optional(),
+      agentRole: z.string().optional(),
+      limit: z.number().int().positive().optional().describe('Max blocks to return (default 50)'),
+    },
+  },
+  {
+    name: 'memory_delete',
+    description: 'Delete memory blocks: a single block by id, every block from one agentRole, or (with confirm_all) the entire store. Exactly one of id / agentRole / confirm_all is required.',
+    meta: memoryDeleteMeta,
+    handler: memoryDeleteHandler,
+    cost: 'low',
+    returns: '{ok, deleted_count, ...}',
+    schema: {
+      id: z.string().optional().describe('Delete exactly this block'),
+      agentRole: z.string().optional().describe('Delete every block written by this role'),
+      confirm_all: z.boolean().optional().describe('Set true to delete the entire store — required, not inferred'),
+    },
+  },
+  {
+    name: 'memory_export',
+    description: 'Dump memory blocks (optionally filtered by scope/agentRole) to a portable JSON file for backup or transfer to another store via memory_import.',
+    meta: memoryExportMeta,
+    handler: memoryExportHandler,
+    cost: 'low',
+    returns: '{ok, path, count}',
+    schema: {
+      path: z.string().min(1).describe('File path to write the export JSON to'),
+      scope: z.enum(['private', 'shared']).optional(),
+      agentRole: z.string().optional(),
+    },
+  },
+  {
+    name: 'memory_import',
+    description: 'Load a memory_export JSON file back into the store. Reports exactly what happened per row: inserted, skipped (malformed), or conflicted (id already existed — left alone under "skip", overwritten under "replace").',
+    meta: memoryImportMeta,
+    handler: memoryImportHandler,
+    cost: 'low',
+    returns: '{ok, total_read, inserted, skipped, conflicted, errors:[string]}',
+    schema: {
+      path: z.string().min(1).describe('File path previously written by memory_export'),
+      on_conflict: z.enum(['skip', 'replace']).optional().describe('How to handle an id that already exists (default "skip")'),
+    },
+  },
+  {
+    name: 'memory_prune',
+    description: 'Force retention to run now with an explicit (or default-configured) age/count bound. memory_write already does this automatically after every insert — use this only to prune on demand with a tighter one-off bound.',
+    meta: memoryPruneMeta,
+    handler: memoryPruneHandler,
+    cost: 'low',
+    returns: '{ok, pruned_by_age, pruned_by_count, pruned_total, remaining}',
+    schema: {
+      max_count: z.number().int().positive().optional().describe('Keep at most this many blocks (default: configured HAYBA_MEMORY_MAX_COUNT)'),
+      max_age_days: z.number().positive().optional().describe('Delete blocks older than this many days (default: configured HAYBA_MEMORY_MAX_AGE_DAYS)'),
     },
   },
 
@@ -3413,6 +3524,7 @@ export function inferDir(name: string): string | null {
   if (name.startsWith('scene_')) return 'scene';
   if (name.startsWith('editor_')) return 'editor';
   if (name.startsWith('material_')) return 'material';
+  if (name.startsWith('memory_')) return 'memory';
   if (name.startsWith('ui_')) return 'ui';
   if (name.startsWith('hayba_fab_')) return 'fab';
   if (name.startsWith('hayba_polyhaven_')) return 'asset-sources';

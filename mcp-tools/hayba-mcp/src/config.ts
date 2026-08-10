@@ -73,6 +73,29 @@ export const config = {
    */
   codeMode: process.env.HAYBA_CODE_MODE !== 'off',
 
+  /**
+   * Path to the agent-memory SQLite DB (override with HAYBA_MEMORY_DB).
+   * Defaults to a data/ directory next to dist/ so a plain checkout gets a
+   * writable location without requiring the caller to configure anything.
+   * The memory store creates this file (and its parent directory) lazily on
+   * first write; it is not a shipped resource like catalogPath/pcgexDbPath.
+   */
+  get memoryDbPath() {
+    return process.env.HAYBA_MEMORY_DB || resolve(__dirname, '..', 'data', 'hayba-memory.db');
+  },
+
+  /** Retention bounds applied automatically after every memory_write (override with HAYBA_MEMORY_MAX_COUNT / HAYBA_MEMORY_MAX_AGE_DAYS). */
+  get memoryMaxCount() {
+    const raw = process.env.HAYBA_MEMORY_MAX_COUNT;
+    const n = raw ? parseInt(raw, 10) : 2000;
+    return Number.isFinite(n) && n > 0 ? n : 2000;
+  },
+  get memoryMaxAgeMs() {
+    const raw = process.env.HAYBA_MEMORY_MAX_AGE_DAYS;
+    const days = raw ? parseFloat(raw) : 90;
+    return Number.isFinite(days) && days > 0 ? days * 24 * 60 * 60 * 1000 : 90 * 24 * 60 * 60 * 1000;
+  },
+
   /** Terrain critique threshold — complexity score above which self-critique triggers */
   critiqueThreshold: parseFloat(process.env.HAYBA_CRITIQUE_THRESHOLD || '15.0'),
 
