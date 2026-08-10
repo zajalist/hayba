@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { isStorageUuid, requireStorageFileStem, requireStorageUuid, resolveStorageChild } from './storage-path.js';
 
 export interface Project {
   id: string;
@@ -15,7 +16,7 @@ export interface Project {
 export const DEFAULT_PROJECTS_BASE = join(homedir(), '.hayba', 'projects');
 
 function projectDir(id: string, base = DEFAULT_PROJECTS_BASE): string {
-  return join(base, id);
+  return resolveStorageChild(base, requireStorageUuid(id, 'projectId'));
 }
 
 export async function createProject(name: string, base = DEFAULT_PROJECTS_BASE): Promise<Project> {
@@ -39,12 +40,22 @@ export async function createProject(name: string, base = DEFAULT_PROJECTS_BASE):
 }
 
 export async function getProject(id: string, base = DEFAULT_PROJECTS_BASE): Promise<Project | null> {
+  if (!isStorageUuid(id)) {
+    // Preserve the read-only "unknown id" contract without ever turning the
+    // unknown value into a path. Traversal syntax remains a caller error.
+    requireStorageFileStem(id, 'projectId');
+    return null;
+  }
   const file = join(projectDir(id, base), 'project.json');
   if (!existsSync(file)) return null;
   return JSON.parse(readFileSync(file, 'utf-8')) as Project;
 }
 
-export async function updateProject(id: string, patch: Partial<Project>, base = DEFAULT_PROJECTS_BASE): Promise<Project | null> {
+export async function updateProject(
+  id: string,
+  patch: Partial<Project>,
+  base = DEFAULT_PROJECTS_BASE,
+): Promise<Project | null> {
   const existing = await getProject(id, base);
   if (!existing) return null;
   const updated = { ...existing, ...patch, lastModified: new Date().toISOString() };
@@ -53,6 +64,10 @@ export async function updateProject(id: string, patch: Partial<Project>, base = 
 }
 
 export async function deleteProject(id: string, base = DEFAULT_PROJECTS_BASE): Promise<boolean> {
+  if (!isStorageUuid(id)) {
+    requireStorageFileStem(id, 'projectId');
+    return false;
+  }
   const dir = projectDir(id, base);
   if (!existsSync(dir)) return false;
   rmSync(dir, { recursive: true, force: true });
@@ -63,7 +78,7 @@ export async function listProjects(base = DEFAULT_PROJECTS_BASE): Promise<Projec
   if (!existsSync(base)) return [];
   const projects: Project[] = [];
   for (const entry of readdirSync(base, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
+    if (!entry.isDirectory() || !isStorageUuid(entry.name)) continue;
     const p = await getProject(entry.name, base);
     if (p) projects.push(p);
   }

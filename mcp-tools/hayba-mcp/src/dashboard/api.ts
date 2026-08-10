@@ -1,13 +1,25 @@
 import { Express, Request, Response } from 'express';
 import { config } from '../config.js';
-import { log } from '../logger.js';
 import { getUEClient } from '../tcp-client.js';
 import { loadCatalog, searchCatalog, getCategories } from '../catalog.js';
 import { createProject, deleteProject, getProject, listProjects } from '../projects.js';
-import { submitZones, getCurrentZones, setHeightmap, getHeightmap, getPainterSession, lockPainter, unlockPainter, createScratchSession, submitScratchZones, getScratchZones } from '../zones.js';
+import {
+  submitZones,
+  getCurrentZones,
+  setHeightmap,
+  getHeightmap,
+  getPainterSession,
+  lockPainter,
+  unlockPainter,
+  createScratchSession,
+  submitScratchZones,
+  getScratchZones,
+} from '../zones.js';
 import { getEntries, addEntry, deleteEntry, getBaseTemplates } from '../encyclopedia.js';
+import type { EncyclopediaEntry } from '../encyclopedia.js';
 import { getCachedSidecarHealth, pingSidecar } from '../tools/visual/sidecar-client.js';
 import { registerChatRoutes } from '../chat/chat-server.js';
+import { jsonObjectBody, stringQuery } from '../http/express-boundary.js';
 
 /**
  * Register REST API endpoints for the dashboard.
@@ -26,13 +38,15 @@ export function registerApiRoutes(app: Express): void {
       nodeVersion: process.version,
       port: config.dashboardPort,
       ueConnected: client.isConnected(),
-      ueTcpTarget: `${config.ueTcpHost}:${config.ueTcpPort}`
+      ueTcpTarget: `${config.ueTcpHost}:${config.ueTcpPort}`,
     });
   });
 
   // Node catalog search
   app.get('/api/catalog/search', (req: Request, res: Response) => {
-    const query = (req.query.q as string) || '';
+    const parsed = stringQuery(req.query.q, 'q');
+    if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+    const query = parsed.value ?? '';
     if (!query) {
       return res.status(400).json({ error: 'Missing query parameter: q' });
     }
@@ -57,7 +71,7 @@ export function registerApiRoutes(app: Express): void {
 
   // UE status (ping) + visual sidecar handshake
   app.get('/api/ue/status', async (_req: Request, res: Response) => {
-    const sidecar = getCachedSidecarHealth() ?? await pingSidecar();
+    const sidecar = getCachedSidecarHealth() ?? (await pingSidecar());
     const sidecarFields = {
       visual_embeddings_available: sidecar.available,
       active_models: sidecar.active_models,
@@ -94,7 +108,9 @@ export function registerApiRoutes(app: Express): void {
   app.get('/api/ue/assets', async (req: Request, res: Response) => {
     try {
       const client = getUEClient();
-      const path = (req.query.path as string) || '/Game/';
+      const parsed = stringQuery(req.query.path, 'path');
+      if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+      const path = parsed.value || '/Game/';
       const response = await client.send('list_pcg_assets', { path });
       if (response.ok) {
         res.json(response.data);
@@ -109,8 +125,9 @@ export function registerApiRoutes(app: Express): void {
   // ── Projects ──────────────────────────────────────────────────────────────
 
   app.post('/api/projects', async (req: Request, res: Response) => {
-    const { name } = req.body as { name?: string };
+    const { name } = jsonObjectBody(req) as { name?: unknown };
     if (!name) return res.status(400).json({ error: 'name is required' });
+    if (typeof name !== 'string') return res.status(400).json({ error: 'name must be a string' });
     const project = await createProject(name);
     res.json(project);
   });
@@ -135,17 +152,25 @@ export function registerApiRoutes(app: Express): void {
   // ── Zones ─────────────────────────────────────────────────────────────────
 
   app.post('/api/zones/submit', async (req: Request, res: Response) => {
-    const { projectId, zones, masks, canvasSize, phase } = req.body as {
+    const { projectId, zones, masks, canvasSize, phase } = jsonObjectBody(req) as {
       projectId?: string;
       zones?: unknown[];
       masks?: { zoneId: string; pngBase64: string }[];
       canvasSize?: 1024 | 2048 | 4096;
       phase?: 'a' | 'b';
     };
-    if (!projectId || !zones || !masks) return res.status(400).json({ error: 'projectId, zones, and masks are required' });
+    if (!projectId || !zones || !masks)
+      return res.status(400).json({ error: 'projectId, zones, and masks are required' });
     const project = await getProject(projectId);
     if (!project) return res.status(404).json({ error: 'Project not found' });
-    const session = await submitZones(projectId, zones as any, masks, undefined, canvasSize, phase);
+    const session = await submitZones(
+      projectId,
+      zones as Parameters<typeof submitZones>[1],
+      masks,
+      undefined,
+      canvasSize,
+      phase,
+    );
     res.json(session);
   });
 
@@ -156,8 +181,9 @@ export function registerApiRoutes(app: Express): void {
   });
 
   app.post('/api/zones/heightmap', async (req: Request, res: Response) => {
-    const { projectId, heightmapPath } = req.body as { projectId?: string; heightmapPath?: string };
-    if (!projectId || !heightmapPath) return res.status(400).json({ error: 'projectId and heightmapPath are required' });
+    const { projectId, heightmapPath } = jsonObjectBody(req) as { projectId?: string; heightmapPath?: string };
+    if (!projectId || !heightmapPath)
+      return res.status(400).json({ error: 'projectId and heightmapPath are required' });
     await setHeightmap(projectId, heightmapPath);
     res.json({ ok: true });
   });
@@ -174,7 +200,7 @@ export function registerApiRoutes(app: Express): void {
   });
 
   app.post('/api/zones/painter-session', (req: Request, res: Response) => {
-    const { projectId, phase } = req.body as { projectId?: string; phase?: 'a' | 'b' };
+    const { projectId, phase } = jsonObjectBody(req) as { projectId?: string; phase?: 'a' | 'b' };
     if (!projectId) return res.status(400).json({ error: 'projectId is required' });
     unlockPainter(projectId, phase ?? 'a');
     res.json({ ok: true });
@@ -194,7 +220,7 @@ export function registerApiRoutes(app: Express): void {
   });
 
   app.post('/api/zones/scratch-submit', async (req: Request, res: Response) => {
-    const { scratchSessionId, zones, masks, canvasSize } = req.body as {
+    const { scratchSessionId, zones, masks, canvasSize } = jsonObjectBody(req) as {
       scratchSessionId?: string;
       zones?: Omit<Parameters<typeof submitScratchZones>[1][0], never>[];
       masks?: { zoneId: string; pngBase64: string }[];
@@ -226,9 +252,9 @@ export function registerApiRoutes(app: Express): void {
   });
 
   app.post('/api/encyclopedia/:projectId', async (req: Request, res: Response) => {
-    const entry = req.body;
+    const entry = jsonObjectBody(req) as Partial<EncyclopediaEntry>;
     if (!entry?.id || !entry?.name) return res.status(400).json({ error: 'id and name are required' });
-    await addEntry(req.params.projectId as string, entry);
+    await addEntry(req.params.projectId as string, entry as EncyclopediaEntry);
     res.json({ ok: true });
   });
 

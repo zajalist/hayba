@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { CARDINAL_VOWELS, PULMONIC_CONSONANTS } from '../../../../linguistics/src/ipa-chart';
+import { CARDINAL_VOWELS, PULMONIC_CONSONANTS } from '../../../../../packages/linguistics/src/ipa-chart';
 
 /**
  * L1 — clickable IPA palette for assembling phoneme inventories before MCP persistence.

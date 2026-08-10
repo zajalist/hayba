@@ -44,17 +44,12 @@ import type { Express, Request, Response } from 'express';
 import type { AddressInfo } from 'node:net';
 import { createLLMClient, type LLMMessage } from '../agents/llm-client.js';
 import { getProvider } from '../agents/providers.js';
-import {
-  runAgentLoop,
-  argsHash,
-  type AgentEvent,
-  type ApprovedCall,
-  type DispatchTool,
-} from './agent-loop.js';
+import { runAgentLoop, argsHash, type AgentEvent, type ApprovedCall, type DispatchTool } from './agent-loop.js';
 import type { LLMTool, LLMUsage } from '../agents/llm-client.js';
 import { createChatDispatcher } from './tool-dispatch.js';
 import { getArchetype } from '../agents/agent-registry.js';
 import { installExpressJsonRedaction, redactBoundaryValue } from '../security/secret-redaction.js';
+import { jsonObjectBody, stringQuery } from '../http/express-boundary.js';
 
 // ---------------------------------------------------------------------------
 // Localhost enforcement
@@ -63,12 +58,7 @@ import { installExpressJsonRedaction, redactBoundaryValue } from '../security/se
 /** True for IPv4/IPv6 loopback (incl. IPv4-mapped IPv6). Never network-exposed. */
 export function isLoopback(addr: string | undefined): boolean {
   if (!addr) return false;
-  return (
-    addr === '127.0.0.1' ||
-    addr === '::1' ||
-    addr === '::ffff:127.0.0.1' ||
-    addr.startsWith('127.')
-  );
+  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1' || addr.startsWith('127.');
 }
 
 function requireLoopback(req: Request, res: Response): boolean {
@@ -242,9 +232,7 @@ function sweepSessions(now: number = Date.now()): void {
 /** Enforce MAX_SESSIONS by LRU-evicting the oldest inactive (not running). */
 function enforceSessionCap(): void {
   if (sessions.size <= MAX_SESSIONS) return;
-  const candidates = [...sessions.values()]
-    .filter((s) => !s.running)
-    .sort((a, b) => a.lastActivity - b.lastActivity);
+  const candidates = [...sessions.values()].filter((s) => !s.running).sort((a, b) => a.lastActivity - b.lastActivity);
   for (const s of candidates) {
     if (sessions.size <= MAX_SESSIONS) break;
     evictSession(s);
@@ -328,17 +316,13 @@ function hasResumeGap(session: ChatSession, lastSeq: number): boolean {
 // Message normalization
 // ---------------------------------------------------------------------------
 
-function normalizeMessages(body: {
-  messages?: unknown;
-  prompt?: unknown;
-}): LLMMessage[] | null {
+function normalizeMessages(body: { messages?: unknown; prompt?: unknown }): LLMMessage[] | null {
   if (Array.isArray(body.messages)) {
     const ok = body.messages.every(
       (m) =>
         m &&
         typeof m === 'object' &&
-        (((m as { role?: unknown }).role === 'user') ||
-          ((m as { role?: unknown }).role === 'assistant')),
+        ((m as { role?: unknown }).role === 'user' || (m as { role?: unknown }).role === 'assistant'),
     );
     return ok ? (body.messages as LLMMessage[]) : null;
   }
@@ -389,7 +373,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
   // ── POST /chat/config ────────────────────────────────────────────────────
   app.post('/chat/config', (req: Request, res: Response) => {
     if (!requireLoopback(req, res)) return;
-    const body = req.body as {
+    const body = jsonObjectBody(req) as {
       session_id?: string;
       provider?: string;
       model?: string;
@@ -421,7 +405,9 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
   // ── GET /chat/config ─────────────────────────────────────────────────────
   app.get('/chat/config', (req: Request, res: Response) => {
     if (!requireLoopback(req, res)) return;
-    const sessionId = typeof req.query.session_id === 'string' ? req.query.session_id : undefined;
+    const parsed = stringQuery(req.query.session_id, 'session_id');
+    if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+    const sessionId = parsed.value;
     const cfg = resolveSessionConfig(sessionId);
     if (!cfg) return res.json({ configured: false });
     return res.json({
@@ -435,7 +421,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
   // ── POST /chat/cancel ────────────────────────────────────────────────────
   app.post('/chat/cancel', (req: Request, res: Response) => {
     if (!requireLoopback(req, res)) return;
-    const { session_id } = req.body as { session_id?: string };
+    const { session_id } = jsonObjectBody(req) as { session_id?: string };
     if (!session_id) return res.status(400).json({ error: 'session_id is required' });
     const session = sessions.get(session_id);
     if (!session) return res.status(404).json({ error: 'unknown session' });
@@ -447,7 +433,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
   // ── POST /chat/approve ───────────────────────────────────────────────────
   app.post('/chat/approve', (req: Request, res: Response) => {
     if (!requireLoopback(req, res)) return;
-    const { session_id } = req.body as { session_id?: string };
+    const { session_id } = jsonObjectBody(req) as { session_id?: string };
     if (!session_id) return res.status(400).json({ error: 'session_id is required' });
     const session = sessions.get(session_id);
     if (!session) return res.status(404).json({ error: 'unknown session' });
@@ -472,7 +458,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
   // ── POST /chat/stream ────────────────────────────────────────────────────
   app.post('/chat/stream', async (req: Request, res: Response) => {
     if (!requireLoopback(req, res)) return;
-    const body = req.body as {
+    const body = jsonObjectBody(req) as {
       session_id?: string;
       messages?: LLMMessage[];
       prompt?: string;
@@ -681,11 +667,7 @@ interface RunTurnParams {
 }
 
 /** Emit the single consolidated final done frame + mark the turn finished. */
-function finalize(
-  session: ChatSession,
-  reason: string,
-  extra: Record<string, unknown> = {},
-): void {
+function finalize(session: ChatSession, reason: string, extra: Record<string, unknown> = {}): void {
   const frame = emit(session, 'done', {
     reason,
     assistant_text: session.assistantText,
