@@ -1,0 +1,79 @@
+# EXAMPLE WORKFLOW — not wired into this repo's CI.
+#
+# This file lives in mcp-tools/hayba-mcp/examples/, NOT .github/workflows/,
+# specifically so GitHub Actions never picks it up here. This repo's own CI
+# is unreliable and is deliberately not treated as a trusted gate (see
+# docs/WORKFLOW-improving-the-mcp.md §4) — copy this into a downstream
+# project's .github/workflows/ once you have a runner that can actually
+# launch UE, and adapt the paths/secrets to that project.
+#
+# What this demonstrates: a CI job that
+#   1. builds the MCP server package,
+#   2. launches UE headless (-batchmode -Cmd) with the HaybaMCPToolkit
+#      plugin enabled, so it opens the MCP TCP port,
+#   3. runs `hayba-cli` against a spec file describing the scene to build,
+#   4. relies entirely on hayba-cli's exit code for pass/fail — see
+#      mcp-tools/hayba-mcp/src/cli/exit-codes.ts for what each code means.
+#
+# UNVERIFIED: this workflow has not been run on a real GitHub-hosted or
+# self-hosted runner, and hayba-cli has not been exercised against UE
+# launched via -batchmode -Cmd (only against an already-running GUI editor,
+# manually, during development — see the PR description). Treat the UE
+# launch step below as a sketch of the shape, not a tested command line;
+# flags/paths will need adjusting to your actual project and runner.
+
+name: hayba-cli scene build (EXAMPLE — do not enable as-is)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build-scene:
+    # Needs a runner with UE installed and licensed — not a hosted
+    # ubuntu-latest/windows-latest runner. Self-hosted with UE pre-installed.
+    runs-on: self-hosted
+
+    env:
+      # hayba-cli discovers the port from Saved/HaybaMCP/instances/<pid>.json
+      # when UE is launched from the workspace; set this explicitly instead
+      # when the project's Saved/ dir isn't reachable from the CI working
+      # directory, or to pin a fixed port for a headless launch.
+      UE_TCP_PORT: 52342
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install and build the MCP server
+        working-directory: mcp-tools/hayba-mcp
+        run: |
+          npm ci
+          npm run build:server
+
+      - name: Launch UE headless with the HaybaMCPToolkit plugin
+        # Sketch only — adapt UPROJECT_PATH / UE_EDITOR_CMD to the runner.
+        # This backgrounds the process; hayba-cli's own reachability check
+        # (poll + bounded retry/backoff) is what waits for the TCP port to
+        # come up, so no manual sleep is needed here.
+        run: |
+          "$UE_EDITOR_CMD" "$UPROJECT_PATH" -batchmode -Cmd -unattended -nosplash &
+        env:
+          UE_EDITOR_CMD: ${{ vars.UE_EDITOR_CMD }}
+          UPROJECT_PATH: ${{ vars.UPROJECT_PATH }}
+
+      - name: Run the scene-build spec through hayba-cli
+        working-directory: mcp-tools/hayba-mcp
+        run: node dist/cli/index.js examples/sample-spec.yaml
+        # Exit code contract (dist/cli/exit-codes.js):
+        #   0  every step in the spec succeeded  → job passes
+        #   1  the spec file was missing/malformed → job fails, fix the spec
+        #   2  UE never became reachable          → job fails, check the launch step
+        #   3  a step failed against UE           → job fails, read the step's error
+        #   4  hayba-cli itself crashed            → job fails, file a bug
+
+      - name: Tear down UE
+        if: always()
+        run: pkill -f UnrealEditor-Cmd || true
