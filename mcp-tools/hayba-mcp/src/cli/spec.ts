@@ -1,5 +1,8 @@
 // mcp_server/src/cli/spec.ts
-import { load as loadYaml } from 'js-yaml';
+import { Buffer } from 'node:buffer';
+import { BoundedYamlError, parseBoundedYaml } from '../security/bounded-yaml.js';
+
+export const CLI_SPEC_MAX_INPUT_BYTES = 1024 * 1024;
 
 /** One command sent over the same TCP seam every MCP tool uses
  *  (`executeCommand` in tool-executor.ts). `cmd` is a wire command name the
@@ -43,20 +46,29 @@ function looksLikeYaml(filename: string | undefined): boolean {
  *  — malformed syntax, wrong top-level shape, or a step missing `cmd` — never
  *  a bare parser exception. */
 export function parseSpec(raw: string, filename?: string): CliSpec {
+  if (Buffer.byteLength(raw, 'utf8') > CLI_SPEC_MAX_INPUT_BYTES) {
+    throw new SpecParseError(`spec exceeds the ${CLI_SPEC_MAX_INPUT_BYTES}-byte input limit`);
+  }
+
   let parsed: unknown;
   const yamlFirst = looksLikeYaml(filename);
 
   const tryJson = (): unknown => JSON.parse(raw);
-  const tryYaml = (): unknown => loadYaml(raw);
+  const tryYaml = (): unknown =>
+    parseBoundedYaml(raw, {
+      label: 'CLI spec',
+      maxBytes: CLI_SPEC_MAX_INPUT_BYTES,
+    });
 
   try {
     parsed = yamlFirst ? tryYaml() : tryJson();
   } catch (firstErr) {
     try {
       parsed = yamlFirst ? tryJson() : tryYaml();
-    } catch {
-      const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
-      throw new SpecParseError(`could not parse spec as JSON or YAML: ${msg}`);
+    } catch (secondErr) {
+      const yamlError = firstErr instanceof BoundedYamlError ? firstErr : secondErr;
+      const detail = yamlError instanceof BoundedYamlError ? `: ${yamlError.message}` : '';
+      throw new SpecParseError(`could not parse spec as JSON or YAML${detail}`);
     }
   }
 

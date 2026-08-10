@@ -1,5 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
-import { parseSpec, SpecParseError } from './spec.js';
+import { CLI_SPEC_MAX_INPUT_BYTES, parseSpec, SpecParseError } from './spec.js';
 
 describe('parseSpec', () => {
   it('parses a valid JSON spec', () => {
@@ -26,6 +27,68 @@ describe('parseSpec', () => {
     const yaml = 'steps:\n  - cmd: ping\n';
     const spec = parseSpec(yaml);
     expect(spec.steps).toEqual([{ cmd: 'ping', params: {}, name: undefined }]);
+  });
+
+  it('parses the checked-in CLI example without changing its command shape', () => {
+    const raw = readFileSync(new URL('../../examples/sample-spec.yaml', import.meta.url), 'utf8');
+    expect(parseSpec(raw, 'sample-spec.yaml')).toEqual({
+      version: 1,
+      steps: [
+        {
+          cmd: 'ping',
+          name: 'sanity check the connection before doing real work',
+          params: {},
+        },
+      ],
+    });
+  });
+
+  it('uses YAML 1.2 CORE scalar semantics in params', () => {
+    const yaml = [
+      'steps:',
+      '  - cmd: ping',
+      '    params:',
+      '      legacy_yes: yes',
+      '      legacy_on: on',
+      '      leading_zero: 012',
+      '      date: 2026-08-10',
+      '      real_bool: true',
+    ].join('\n');
+    expect(parseSpec(yaml, 'spec.yaml').steps[0].params).toEqual({
+      legacy_yes: 'yes',
+      legacy_on: 'on',
+      leading_zero: 12,
+      date: '2026-08-10',
+      real_bool: true,
+    });
+  });
+
+  it('rejects empty YAML with a stable diagnostic', () => {
+    expect(() => parseSpec('', 'spec.yaml')).toThrow('could not parse spec as JSON or YAML: CLI spec is empty');
+  });
+
+  it('bounds JSON and YAML specs before either parser runs', () => {
+    const oversized = `{"steps":[{"cmd":"${'a'.repeat(CLI_SPEC_MAX_INPUT_BYTES)}"}]}`;
+    expect(() => parseSpec(oversized, 'spec.json')).toThrow(
+      `spec exceeds the ${CLI_SPEC_MAX_INPUT_BYTES}-byte input limit`,
+    );
+    expect(() => parseSpec(oversized, 'spec.yaml')).toThrow(
+      `spec exceeds the ${CLI_SPEC_MAX_INPUT_BYTES}-byte input limit`,
+    );
+  });
+
+  it('never includes malformed YAML source or credentials in its diagnostic', () => {
+    const secret = 'sk-live-NEVER-ECHO';
+    let error: unknown;
+    try {
+      parseSpec(`steps:\n  - cmd: ping\nsecret: ${secret}\nbroken: [`, 'spec.yaml');
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(SpecParseError);
+    expect((error as Error).message).toMatch(/^could not parse spec as JSON or YAML: CLI spec is invalid YAML/);
+    expect((error as Error).message).not.toContain(secret);
+    expect((error as Error).message).not.toContain('broken');
   });
 
   it('rejects syntactically broken input as neither JSON nor YAML', () => {
