@@ -64,4 +64,36 @@ describe('OperationJournal', () => {
     const j = new OperationJournal(path);
     expect(j.append(sample).note).toBeNull();
   });
+
+  it('redacts secrets before disk, memory, tail, and replay while preserving useful notes', () => {
+    const j = new OperationJournal(path);
+    const input: JournalInput = {
+      ...sample,
+      actor: 'https://example.test/op?token=SENTINEL_QUERY',
+      reads: ['Bearer SENTINEL_READ_123456'],
+      note: 'Authorization: Bearer SENTINEL_NOTE_123456; recovery: rotate and retry',
+    };
+    const record = j.append(input);
+    const disk = readFileSync(path, 'utf8');
+    expect(JSON.stringify(record)).not.toContain('SENTINEL');
+    expect(disk).not.toContain('SENTINEL');
+    expect(record.note).toContain('recovery: rotate and retry');
+    expect(record.securityRedaction).toMatchObject({ applied: true });
+    expect(JSON.stringify(j.tail(1))).not.toContain('SENTINEL');
+    expect(JSON.stringify(new OperationJournal(path).all())).not.toContain('SENTINEL');
+    expect(input.note).toContain('SENTINEL_NOTE');
+  });
+
+  it('sanitizes a legacy on-disk journal before exposing or retaining it', () => {
+    const legacy = {
+      ...sample,
+      note: 'apiKey=SENTINEL_LEGACY',
+      ts: new Date(0).toISOString(),
+      seq: 1,
+    };
+    writeFileSync(path, `${JSON.stringify(legacy)}\n`, 'utf8');
+    const journal = new OperationJournal(path);
+    expect(JSON.stringify(journal.all())).not.toContain('SENTINEL_LEGACY');
+    expect(readFileSync(path, 'utf8')).not.toContain('SENTINEL_LEGACY');
+  });
 });

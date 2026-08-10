@@ -54,6 +54,7 @@ import {
 import type { LLMTool, LLMUsage } from '../agents/llm-client.js';
 import { createChatDispatcher } from './tool-dispatch.js';
 import { getArchetype } from '../agents/agent-registry.js';
+import { installExpressJsonRedaction, redactBoundaryValue } from '../security/secret-redaction.js';
 
 // ---------------------------------------------------------------------------
 // Localhost enforcement
@@ -293,7 +294,9 @@ function writeFrame(res: Response, frame: BufferedFrame): void {
 /** Assign a seq, buffer (bounded), and fan out to every attached client. */
 function emit(session: ChatSession, event: string, data: unknown): BufferedFrame {
   session.seq += 1;
-  const frame: BufferedFrame = { seq: session.seq, event, data };
+  // Sanitize before buffering, not merely before socket write: reconnect replay,
+  // the final done frame and crash diagnostics must never retain a raw copy.
+  const frame: BufferedFrame = { seq: session.seq, event, data: redactBoundaryValue(data) };
   session.buffer.push(frame);
   if (session.buffer.length > BUFFER_LIMIT) session.buffer.shift();
   for (const client of session.clients) {
@@ -375,6 +378,10 @@ let chatRoutesRegistered = false;
 
 export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}): void {
   chatRoutesRegistered = true;
+  // `registerChatRoutes` is also used directly in tests/embedders, outside the
+  // dashboard app. Response wrapping is idempotent if the dashboard already
+  // installed the same shared middleware.
+  installExpressJsonRedaction(app, '/chat');
   const dispatchTool = options.dispatchTool ?? createChatDispatcher();
   const makeClient = options.createClient ?? createLLMClient;
   const system = options.system ?? DEFAULT_SYSTEM;
@@ -762,19 +769,23 @@ function forwardEvent(
       emit(session, 'text_delta', { text: ev.text });
       break;
     case 'tool_call':
-      session.toolTrace.push({ id: ev.call.id, name: ev.call.name, input: ev.call.input });
-      emit(session, 'tool_call', { id: ev.call.id, name: ev.call.name, input: ev.call.input });
+      {
+        const input = redactBoundaryValue(ev.call.input) as Record<string, unknown>;
+        session.toolTrace.push({ id: ev.call.id, name: ev.call.name, input });
+        emit(session, 'tool_call', { id: ev.call.id, name: ev.call.name, input });
+      }
       break;
     case 'tool_result': {
+      const result = redactBoundaryValue(ev.result);
       const entry = session.toolTrace.find((t) => t.id === ev.id);
       if (entry) {
-        entry.result = ev.result;
+        entry.result = result;
         entry.isError = ev.isError;
       }
       emit(session, 'tool_result', {
         id: ev.id,
         name: ev.name,
-        result: ev.result,
+        result,
         isError: ev.isError,
       });
       break;
@@ -784,10 +795,11 @@ function forwardEvent(
       // approval to THIS exact {name, argsHash} rather than the whole turn.
       const hash = ev.argsHash ?? argsHash(ev.call.input);
       session.pendingPlanCall = { name: ev.call.name, argsHash: hash };
+      const input = redactBoundaryValue(ev.call.input) as Record<string, unknown>;
       emit(session, 'plan_request', {
         id: ev.call.id,
         name: ev.call.name,
-        input: ev.call.input,
+        input,
         source: ev.source,
         hint: ev.hint,
         args_hash: hash,

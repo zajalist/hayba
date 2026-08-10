@@ -7,6 +7,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ensureConnected } from '../tcp-client.js';
 import { getAdvisoryVerbosity, isToolDisabled } from './disabled-tools-watcher.js';
 import { applyAdvisoryVerbosity } from './advisory-verbosity.js';
+import { redactBoundaryValue, redactMcpResult, redactThrown } from '../security/secret-redaction.js';
 
 function preview(value: unknown, max: number): string {
   if (value == null) return '';
@@ -83,6 +84,7 @@ export function wrapToolHandlerForStream<T extends Function>(name: string, handl
   if (MIRRORED_HANDLERS.has(handler)) return handler;
 
   const wrapped = async (params: unknown, ...rest: unknown[]) => {
+    try {
       // MCP panel gate: if the user disabled this tool, short-circuit with a
       // clear status. Meta-tools (list_tool_categories / get_tool_signature)
       // are never gated themselves — they handle disabled-state internally.
@@ -104,11 +106,18 @@ export function wrapToolHandlerForStream<T extends Function>(name: string, handl
         && Array.isArray((result as { content?: unknown }).content)
         ? applyAdvisoryVerbosity(result as never, getAdvisoryVerbosity())
         : result;
+      // This is the final shared MCP boundary for native registrations and the
+      // deferred catalogue. Redact BEFORE returning and feed that same safe
+      // value to Tool Stream so the mirror cannot retain a second raw copy.
+      const boundaryResult = filteredResult && typeof filteredResult === 'object'
+        && Array.isArray((filteredResult as { content?: unknown }).content)
+        ? redactMcpResult(filteredResult)
+        : redactBoundaryValue(filteredResult);
       // Extract the text content the tool returned, when available — that's
       // what users care about in the stream. Fall back to the full object.
-      let resultForMirror: unknown = filteredResult;
-      if (filteredResult && typeof filteredResult === 'object') {
-        const r = filteredResult as { content?: Array<{ type?: string; text?: string }> };
+      let resultForMirror: unknown = boundaryResult;
+      if (boundaryResult && typeof boundaryResult === 'object') {
+        const r = boundaryResult as { content?: Array<{ type?: string; text?: string }> };
         if (Array.isArray(r.content)) {
           const text = r.content
             .filter(c => c?.type === 'text' && typeof c.text === 'string')
@@ -117,8 +126,13 @@ export function wrapToolHandlerForStream<T extends Function>(name: string, handl
           if (text) resultForMirror = text;
         }
       }
-      mirror(name, params, resultForMirror).catch(() => {});
-      return filteredResult;
+      mirror(name, redactBoundaryValue(params), resultForMirror).catch(() => {});
+      return boundaryResult;
+    } catch (error) {
+      // MCP SDKs serialize thrown messages; never let that error path bypass
+      // the same policy applied to successful tool content.
+      throw redactThrown(error);
+    }
   };
 
   MIRRORED_HANDLERS.add(wrapped);

@@ -7,6 +7,12 @@ import { registerTools } from './tools/index.js';
 import { startDashboard } from './dashboard/server.js';
 import { startHttpServer } from './http/server.js';
 import { pingSidecar } from './tools/visual/sidecar-client.js';
+import { installConsoleSecretRedaction } from './security/secret-redaction.js';
+
+// Install before startup diagnostics, sidecar errors, dashboard logs, or an
+// unhandled rejection can reach stderr. The adapter is process-global and
+// idempotent; structured args and Error stacks use the same bounded policy.
+installConsoleSecretRedaction();
 
 // ── MCP server setup ─────────────────────────────────────────────────────────
 const server = new McpServer({

@@ -5,8 +5,9 @@
 // the file is replayed to recover the last seq and the in-memory list;
 // a corrupt or truncated line is skipped, not fatal.
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { redactSecrets, type SecretRedactionSummary } from '../security/secret-redaction.js';
 
 export interface JournalInput {
   actor: string;
@@ -20,6 +21,7 @@ export interface JournalInput {
 export interface JournalRecord extends Required<JournalInput> {
   ts: string;
   seq: number;
+  securityRedaction?: SecretRedactionSummary;
 }
 
 export class OperationJournal {
@@ -33,7 +35,7 @@ export class OperationJournal {
   }
 
   append(input: JournalInput): JournalRecord {
-    const rec: JournalRecord = {
+    const raw: JournalRecord = {
       ts: new Date().toISOString(),
       seq: ++this.lastSeq,
       actor: input.actor,
@@ -43,6 +45,10 @@ export class OperationJournal {
       ok: input.ok,
       note: input.note ?? null,
     };
+    const redacted = redactSecrets(raw);
+    const rec: JournalRecord = redacted.summary.applied || redacted.summary.truncated
+      ? { ...(redacted.value as JournalRecord), securityRedaction: redacted.summary }
+      : redacted.value as JournalRecord;
     mkdirSync(dirname(this.path), { recursive: true });
     appendFileSync(this.path, JSON.stringify(rec) + '\n', 'utf8');
     this.records.push(rec);
@@ -58,17 +64,26 @@ export class OperationJournal {
   private replay(): void {
     if (!existsSync(this.path)) return;
     const lines = readFileSync(this.path, 'utf8').split('\n');
+    let sanitizedLegacyRecord = false;
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
       try {
-        const rec = JSON.parse(trimmed) as JournalRecord;
-        if (typeof rec.seq !== 'number') continue;
+        const parsed = JSON.parse(trimmed) as JournalRecord;
+        if (typeof parsed.seq !== 'number') continue;
+        const redacted = redactSecrets(parsed);
+        const rec = redacted.summary.applied || redacted.summary.truncated
+          ? { ...(redacted.value as JournalRecord), securityRedaction: redacted.summary }
+          : redacted.value as JournalRecord;
+        sanitizedLegacyRecord ||= rec !== parsed;
         this.records.push(rec);
         this.lastSeq = Math.max(this.lastSeq, rec.seq);
       } catch {
         // Corrupt / truncated line — skip, keep replaying.
       }
+    }
+    if (sanitizedLegacyRecord) {
+      writeFileSync(this.path, this.records.map((record) => JSON.stringify(record)).join('\n') + '\n', 'utf8');
     }
   }
 }
