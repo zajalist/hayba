@@ -68,15 +68,23 @@ export async function listFilesRecursive(dir: string): Promise<string[]> {
 export async function importIntoUe(localDir: string, gamePath: string): Promise<{ ok: boolean; note?: string }> {
   const normalized = localDir.replace(/\\/g, '/');
   const dest = gamePath.startsWith('/Game/') ? gamePath : `/Game/AssetConnectors/${gamePath}`;
-  // python_run accepts a single statement only, so wrap the whole body in exec(...).
+  // python_run uses ExecuteFile and accepts this multi-statement body directly.
+  // Do not hide it in exec(<string>): dynamic execution is a non-bypassable
+  // crash-policy violation because preflight cannot safely reason about code
+  // assembled at runtime. The old wrapper became invalid when HCR-DYNAMIC-001
+  // was made authoritative in the C++ handler (#366).
   // One AssetImportTask per file (UE5.7 chokes on a single task with many filenames).
   // save=False — the user can save when ready; saving inline on a fresh import burst
   // has crashed UE in practice when stacked on top of other heavy work.
   const body = [
     'import os',
     'import unreal',
-    `src_dir = r"${normalized}"`,
-    `dest_path = "${dest}"`,
+    // JSON string syntax is valid Python string-literal syntax for strings.
+    // Encode both values instead of interpolating into quotes: target_dir is
+    // caller-controlled, and a quote/newline must remain data rather than
+    // becoming another Python statement.
+    `src_dir = ${JSON.stringify(normalized)}`,
+    `dest_path = ${JSON.stringify(dest)}`,
     'files = []',
     'for root, _dirs, fnames in os.walk(src_dir):',
     '    for fn in fnames:',
@@ -95,7 +103,7 @@ export async function importIntoUe(localDir: string, gamePath: string): Promise<
     '    asset_tools.import_asset_tasks(tasks)',
     `unreal.log("HAYBA_IMPORT_RESULT: imported %d file(s) to %s" % (len(tasks), dest_path))`,
   ].join('\n');
-  const script = `exec(${JSON.stringify(body)})`;
+  const script = body;
 
   try {
     const data = await executeCommand('python_run', { script });
@@ -119,9 +127,7 @@ export async function importIntoUe(localDir: string, gamePath: string): Promise<
  * not throw, even when the import script silently SyntaxError'd. This
  * helper insists on a registry round-trip before claiming success.
  */
-export async function verifyAndMarkDelta(
-  gamePath: string,
-): Promise<{ verified: boolean; reason?: string }> {
+export async function verifyAndMarkDelta(gamePath: string): Promise<{ verified: boolean; reason?: string }> {
   // verifyPath expects the full asset path (e.g. /Game/.../Asset.Asset). The
   // import lands files under a directory; UE's describe_assets resolution
   // returns each asset under that dir. We probe the directory by querying

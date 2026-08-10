@@ -43,9 +43,7 @@ export interface ValidatorFinding {
   resolvedAt?: string;
 }
 
-export type ValidatorTrigger =
-  | 'manual'
-  | { after_tool: string | string[] };
+export type ValidatorTrigger = 'manual' | { after_tool: string | string[] };
 
 export interface ValidatorRule {
   id: string;
@@ -94,16 +92,18 @@ export const RULES: ValidatorRule[] = [
   {
     id: 'tcp_socket_to_self_in_python_run',
     severity: 'error',
-    message: 'python_run script opens a TCP socket to the UE plugin port (would deadlock)',
-    hint: 'Calling back into the MCP TCP listener (52342–52350) from inside a python_run script reenters the game thread and crashes UE. Use the Python plugin API (`unreal.*`) directly instead of round-tripping through the TCP server.',
+    message:
+      'python_run policy_blocked [HCR-BLOCK-001]: script opens a TCP socket to the UE plugin port (would deadlock)',
+    hint: 'Calling back into the MCP TCP listener (52342–52350) from inside a python_run script reenters the game thread and crashes UE. Use the Python plugin API (`unreal.*`) directly instead of round-tripping through the TCP server. Retry unchanged: forbidden; this guard is non-bypassable.',
     refs: ['[[python-run-no-self-connect]]'],
     trigger: { after_tool: 'python_run' },
   },
   {
     id: 'dangling_lifetime_callback_in_python_run',
     severity: 'error',
-    message: 'python_run script registers an engine-lifetime callback that would dangle and crash the editor',
-    hint: 'register_slate_post/pre_tick_callback, register_python_shutdown_callback and register_post_engine_init_callback bind a Python callable into an engine-lifetime delegate. From a one-shot python_run the callable is garbage-collected as soon as the call returns, so the next engine broadcast dereferences freed memory and crashes the editor with a native access violation (#283/#284). Do the work inline, or keep the callable on a module-global and pass allow_unsafe=true.',
+    message:
+      'python_run policy_blocked [HCR-LIFE-001]: script registers an engine-lifetime callback that would dangle and crash the editor',
+    hint: 'register_slate_post/pre_tick_callback, register_python_shutdown_callback and register_post_engine_init_callback bind a Python callable into an engine-lifetime delegate. From a one-shot python_run the callable is garbage-collected as soon as the call returns, so the next engine broadcast dereferences freed memory and crashes the editor with a native access violation (#283/#284). Do the work inline. Retry unchanged: forbidden; this crash guard is non-bypassable.',
     refs: ['[[python-run-no-dangling-delegate]]'],
     trigger: 'manual',
   },
@@ -111,7 +111,7 @@ export const RULES: ValidatorRule[] = [
     id: 'actor_position_drift_after_user_edit',
     severity: 'warning',
     message: 'Actor position differs from the last recorded value (user may have moved it)',
-    hint: 'The actor at this label has been moved in the editor between MCP-driven updates. If you continue, your transform will overwrite the user\'s edit. Re-fetch with actor_list before applying transforms, or coordinate with the user.',
+    hint: "The actor at this label has been moved in the editor between MCP-driven updates. If you continue, your transform will overwrite the user's edit. Re-fetch with actor_list before applying transforms, or coordinate with the user.",
     refs: ['[[actor-position-drift]]'],
     trigger: 'manual',
   },
@@ -179,13 +179,10 @@ export function rulesForTool(toolName: string): ValidatorRule[] {
 
 /** Attach (or override) the evaluator for a rule by id. Used by tool-hooks
  *  to keep the catalog data-only while still wiring real logic. */
-export function attachEvaluator(
-  id: string,
-  fn: NonNullable<ValidatorRule['evaluate']>,
-): void {
+export function attachEvaluator(id: string, fn: NonNullable<ValidatorRule['evaluate']>): void {
   const r = rulesById().get(id);
   // rulesById() returned a copy of the map; we mutate the original RULES entry.
-  const target = RULES.find(x => x.id === id);
+  const target = RULES.find((x) => x.id === id);
   if (!target) throw new Error(`attachEvaluator: rule "${id}" not found`);
   target.evaluate = fn;
   void r;

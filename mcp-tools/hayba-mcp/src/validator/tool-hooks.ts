@@ -188,9 +188,15 @@ async function evaluatePythonRunSelfSocket(ctx: ValidatorContext): Promise<Valid
   return {
     ruleId: 'tcp_socket_to_self_in_python_run',
     severity: 'error',
-    message: 'python_run script opens a TCP socket to the UE plugin port (would deadlock)',
-    hint: 'Use the Python plugin API (`unreal.*`) directly instead of round-tripping through the TCP server (52342–52350).',
+    message:
+      'python_run policy_blocked [HCR-BLOCK-001]: script opens a TCP socket to the UE plugin port (would deadlock)',
+    hint: 'Use the Python plugin API (`unreal.*`) directly instead of round-tripping through the TCP server (52342–52350). Retry unchanged: forbidden; this guard is non-bypassable.',
     refs: ['[[python-run-no-self-connect]]'],
+    context: {
+      policy_code: 'HCR-BLOCK-001',
+      matched_rule: 'loopback MCP socket connection',
+      retry_unchanged: 'forbidden',
+    },
     timestamp: nowIso(),
     toolName: ctx.toolName,
   };
@@ -222,7 +228,7 @@ export function danglingLifetimeRegistration(script: string): string | null {
  *  Matches any `<name>.connect(("127.0.0.1"|"localhost", PORT))` where
  *  PORT is in the UE plugin range 52342..52350. */
 export function isSelfSocketScript(script: string): boolean {
-  const re = /\.\s*connect\s*\(\s*\(\s*['"](?:127\.0\.0\.1|localhost)['"]\s*,\s*(\d+)/gi;
+  const re = /\.\s*connect\s*\(\s*\(\s*['"](?:127\.0\.0\.1|localhost|::1)['"]\s*,\s*(\d+)/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(script)) !== null) {
     const port = Number(m[1]);
@@ -238,12 +244,12 @@ let INSTALLED = false;
 export function installToolHooks(): void {
   if (INSTALLED) return;
   INSTALLED = true;
-  attachEvaluator('pcg_zero_instances_after_execute',  evaluatePcgZeroInstances);
+  attachEvaluator('pcg_zero_instances_after_execute', evaluatePcgZeroInstances);
   attachEvaluator('pcg_execute_no_component_in_world', evaluatePcgNoComponentInWorld);
-  attachEvaluator('pcg_asset_not_found',                evaluatePcgAssetNotFound);
+  attachEvaluator('pcg_asset_not_found', evaluatePcgAssetNotFound);
   attachEvaluator('landscape_import_no_landscape_in_world', evaluateLandscapeImportSilentFailure);
-  attachEvaluator('asset_browse_describe_assets_missing',   evaluateAssetBrowseDescribeMissing);
-  attachEvaluator('tcp_socket_to_self_in_python_run',       evaluatePythonRunSelfSocket);
+  attachEvaluator('asset_browse_describe_assets_missing', evaluateAssetBrowseDescribeMissing);
+  attachEvaluator('tcp_socket_to_self_in_python_run', evaluatePythonRunSelfSocket);
 }
 
 /** Re-export so the test suite can reset between runs. */

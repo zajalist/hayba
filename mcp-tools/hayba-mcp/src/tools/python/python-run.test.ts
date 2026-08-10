@@ -1,54 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { wrapScriptForPrintRedirect } from './python-run.js';
+import { MAX_PYTHON_SCRIPT_CHARS, PYTHON_CRASH_RULES } from '../guards/known-crashers.js';
 
 // Installed on the ToolExecutor seam rather than mocking the tcp-client module
 // — same (cmd, params, timeoutMs) signature, so the assertions are unchanged.
 const send = vi.fn();
 import { setDefaultSender } from '../tool-executor.js';
-
-describe('wrapScriptForPrintRedirect', () => {
-  it('injects unreal.log_warning shim for builtin print', () => {
-    const wrapped = wrapScriptForPrintRedirect('print("hello")');
-    expect(wrapped).toContain('import unreal as _hayba_unreal');
-    expect(wrapped).toContain('def _hayba_print(*args, **kwargs):');
-    expect(wrapped).toContain('_hayba_unreal.log_warning(');
-    expect(wrapped).toContain('"print": _hayba_print');
-  });
-
-  it('preserves the user script verbatim inside a triple-quoted block', () => {
-    const userScript = 'x = 1 + 2\nprint(x)';
-    const wrapped = wrapScriptForPrintRedirect(userScript);
-    // Source string is passed unchanged into a """...""" literal — no
-    // indentation rewriting that could break the user's intent.
-    expect(wrapped).toContain('"""x = 1 + 2\nprint(x)"""');
-  });
-
-  it('escapes embedded triple-quotes so the wrap cannot be broken out of', () => {
-    const userScript = 'doc = """trap"""';
-    const wrapped = wrapScriptForPrintRedirect(userScript);
-    expect(wrapped).not.toContain('"""trap"""');
-    expect(wrapped).toContain('\\"\\"\\"trap\\"\\"\\"');
-  });
-
-  it('escapes backslashes so raw paths survive', () => {
-    const userScript = 'p = "C:\\Users\\me"';
-    const wrapped = wrapScriptForPrintRedirect(userScript);
-    expect(wrapped).toContain('C:\\\\Users\\\\me');
-  });
-
-  it('snapshot-style: minimal script produces the expected wrap shape', () => {
-    const wrapped = wrapScriptForPrintRedirect('print(1)');
-    expect(wrapped.split('\n')).toEqual([
-      'import unreal as _hayba_unreal',
-      'def _hayba_print(*args, **kwargs):',
-      '    sep = kwargs.get("sep", " ")',
-      '    _hayba_unreal.log_warning(sep.join(str(a) for a in args))',
-      '_hayba_user_globals = {"__name__": "__main__", "print": _hayba_print, "unreal": _hayba_unreal}',
-      '_hayba_user_src = """print(1)"""',
-      'exec(compile(_hayba_user_src, "<python_run>", "exec"), _hayba_user_globals)',
-    ]);
-  });
-});
 
 describe('python_run crash guard + spill', () => {
   it('refuses a known-crasher script without contacting UE', async () => {
@@ -57,18 +13,109 @@ describe('python_run crash guard + spill', () => {
     setDefaultSender(send);
     const r = await pythonRunHandler({ script: 'm.build_scale3d(v)' }, {} as never);
     expect(r.isError).toBe(true);
-    expect(r.content[0].text).toContain('known editor-crasher');
+    expect(r.content[0].text).toContain('HCR-STATICMESH-001');
+    expect(r.content[0].text).toContain('Safe alternative:');
     expect(send).not.toHaveBeenCalled();
   });
 
-  it('allows the crasher through when allow_unsafe is set', async () => {
+  it('does not let allow_unsafe bypass an editor-crash guard', async () => {
     const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
-    send.mockResolvedValueOnce({ ok: true, data: { ok: true, stdout: 'done' } });
     const r = await pythonRunHandler({ script: 'm.build_scale3d(v)', allow_unsafe: true }, {} as never);
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('non-bypassable');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('normalizes case and whitespace before the early crash check', async () => {
+    const { pythonRunHandler } = await import('./python-run.js');
+    send.mockClear();
+    setDefaultSender(send);
+    const r = await pythonRunHandler(
+      {
+        script: 'unreal.EditorLoadingAndSavingUtils . LOAD_MAP ("/Game/X")',
+        allow_unsafe: true,
+      },
+      {} as never,
+    );
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('HCR-WORLD-001');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('rejects every fatal rule before UE, including with allow_unsafe', async () => {
+    const { pythonRunHandler } = await import('./python-run.js');
+    send.mockClear();
+    setDefaultSender(send);
+
+    for (const rule of PYTHON_CRASH_RULES) {
+      for (const pattern of rule.patterns) {
+        const r = await pythonRunHandler({ script: pattern, allow_unsafe: true }, {} as never);
+        expect(r.isError, `${rule.code}: ${pattern}`).toBe(true);
+        const text = r.content.map((c) => ('text' in c ? c.text : '')).join('\n');
+        expect(text).toContain(rule.code);
+        expect(text).toContain('Retry unchanged: forbidden');
+      }
+    }
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('rejects oversized scripts before UE with a stable non-retryable code', async () => {
+    const { pythonRunHandler } = await import('./python-run.js');
+    send.mockClear();
+    setDefaultSender(send);
+    const r = await pythonRunHandler(
+      { script: 'x'.repeat(MAX_PYTHON_SCRIPT_CHARS + 1), allow_unsafe: true },
+      {} as never,
+    );
+    expect(r.isError).toBe(true);
+    const payload = JSON.parse(r.content[0].text);
+    expect(payload.policy_code).toBe('HCR-SIZE-001');
+    expect(payload.retry_unchanged).toBe('forbidden');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('keeps allow_unsafe limited to Tier-3 filesystem/subprocess policy', async () => {
+    const { pythonRunHandler } = await import('./python-run.js');
+    send.mockClear();
+    setDefaultSender(send);
+    send.mockResolvedValueOnce({ ok: true, data: { ok: true, stdout: 'allowed by setting' } });
+    const r = await pythonRunHandler({ script: 'open("C:/Temp/hayba.txt", "w")', allow_unsafe: true }, {} as never);
     expect(r.isError).toBeFalsy();
-    expect(send).toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith('python_run', expect.objectContaining({ allow_unsafe: true }), expect.anything());
+  });
+
+  it('preserves an authoritative native policy code and recovery response', async () => {
+    const { pythonRunHandler } = await import('./python-run.js');
+    send.mockClear();
+    setDefaultSender(send);
+    const nativeMessage =
+      "python_run policy_blocked [HCR-SANDBOX-001]: matched 'tier_3_filesystem_or_subprocess'. " +
+      'Safe alternative: use a typed tool. Retry unchanged: forbidden.';
+    send.mockResolvedValueOnce({ ok: false, error: nativeMessage });
+
+    const r = await pythonRunHandler({ script: 'open("C:/Temp/probe.txt", "w")' }, {} as never);
+    const payload = JSON.parse(r.content[0].text);
+    expect(payload.policy_code).toBe('HCR-SANDBOX-001');
+    expect(payload.retry_unchanged).toBe('forbidden');
+    expect(payload.retry_with_allow_unsafe).toBe('permitted_after_review');
+    expect(payload.error).toContain('Safe alternative:');
+  });
+
+  it('preserves non-bypassable runtime deadline codes from native UE', async () => {
+    const { pythonRunHandler } = await import('./python-run.js');
+    send.mockClear();
+    setDefaultSender(send);
+    const nativeMessage =
+      "python_run policy_blocked [HCR-TIME-001]: matched 'execution_deadline'. " +
+      'Safe alternative: split the work. Retry unchanged: forbidden.';
+    send.mockResolvedValueOnce({ ok: false, error: nativeMessage });
+
+    const r = await pythonRunHandler({ script: 'for _ in range(10**12): x = 1' }, {} as never);
+    const payload = JSON.parse(r.content[0].text);
+    expect(payload.policy_code).toBe('HCR-TIME-001');
+    expect(payload.retry_with_allow_unsafe).toBeUndefined();
   });
 
   it('spills oversized output to a temp file and returns a path', async () => {
