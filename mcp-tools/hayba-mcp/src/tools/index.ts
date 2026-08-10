@@ -210,6 +210,9 @@ import { meta as pieSetTextMeta, schema as pieSetTextSchema, pieSetTextHandler }
 import { meta as pieAxisMeta, schema as pieAxisSchema, pieAxisHandler } from './pie/pie-axis.js';
 import { meta as piePressKeyMeta, schema as piePressKeySchema, piePressKeyHandler } from './pie/pie-press-key.js';
 import { meta as pieScreenshotMeta, schema as pieScreenshotSchema, pieScreenshotHandler } from './pie/pie-screenshot.js';
+import { meta as pieActorListMeta, schema as pieActorListSchema, pieActorListHandler } from './pie/pie-actor-list.js';
+import { meta as pieActorInspectMeta, schema as pieActorInspectSchema, pieActorInspectHandler } from './pie/pie-actor-inspect.js';
+import { meta as pieProjectWorldMeta, schema as pieProjectWorldSchema, pieProjectWorldHandler } from './pie/pie-project-world.js';
 import { meta as textureAuditMeta, schema as textureAuditSchema, textureAuditHandler } from './content/texture-audit.js';
 import { meta as meshAuditMeta, schema as meshAuditSchema, meshAuditHandler } from './content/mesh-audit.js';
 import {
@@ -2799,6 +2802,39 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   //
   // Consequence worth knowing: the world advances BETWEEN calls, not during
   // them. Look at the result, then act again.
+  {
+    name: 'editor_pie_actor_list',
+    description:
+      'WHAT EXISTS IN THE RUNNING WORLD: paginated runtime actors from the selected PIE client/server, with exact path, class and transform. USE_WHEN: finding roads, controllers, interactable actors or spawned state while PIE runs. NOT_WHEN: querying the editor MainMenu world (actor_list). Use the returned actor_path for unambiguous follow-up calls.',
+    meta: pieActorListMeta,
+    handler: pieActorListHandler,
+    cost: 'low',
+    returns: '{world,available_worlds,actors:[{id,path,label,class,location,rotation,scale,invalid_numeric}],offset,limit,returned,matched_in_scanned_prefix,matched_count_is_lower_bound,retained_for_pagination,result_set_complete,has_more,next_offset?,partial_reason?}',
+    niche: PIE,
+    schema: pieActorListSchema.shape,
+  },
+  {
+    name: 'editor_pie_actor_inspect',
+    description:
+      'INSPECT ONE LIVE PIE ACTOR without touching editor-world state: transform, bounds, tags, owner and a capped/paginated list of owned components with visibility, collision and component-space evidence. USE_WHEN: understanding a runtime road, controller, pawn or interaction target found by editor_pie_actor_list. Read-only.',
+    meta: pieActorInspectMeta,
+    handler: pieActorInspectHandler,
+    cost: 'low',
+    returns: '{world,available_worlds,actor,components,component_offset,component_limit,components_returned,components_total,components_have_more}',
+    niche: PIE,
+    schema: pieActorInspectSchema.shape,
+  },
+  {
+    name: 'editor_pie_project_world',
+    description:
+      'PROJECT A LIVE WORLD TARGET TO A VERIFIED CLICK CANDIDATE. Accepts an actor, owned scene component or [x,y,z]. absolute.available and x/y are present only when the point is on-screen, its PIE window is visible/not minimized, and Slate finds no UMG/modal obstruction. For actor/component clicks require target_click_ready:true too; it combines that Slate proof with the first world Visibility hit. USE_WHEN: hovering/clicking a road, unit or world-space target headlessly.',
+    meta: pieProjectWorldMeta,
+    handler: pieProjectWorldHandler,
+    cost: 'low',
+    returns: '{world,available_worlds,player_index,target,target_click_ready,target_click_status,viewport:{x,y,width,height,projected,in_viewport},absolute:{available,geometry_available,x?,y?,coordinate_space},slate_hit:{tested,world_click_clear,leaf_type?},visibility_hit:{tested,blocking_hit,actor_path?,component_path?,verdict}}',
+    niche: PIE,
+    schema: pieProjectWorldSchema.shape,
+  },
   {
     name: 'editor_pie_widget_tree',
     description:

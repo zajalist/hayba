@@ -8,6 +8,12 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 - `asset_registry_query` now uses a native, read-only AssetRegistry handler instead of blocked dynamic Python reflection, with deterministic bounded pagination, strict input checks, and fail-closed response validation.
 
 ### Added
+- Read-only headless PIE scene grounding with `editor_pie_actor_list`,
+  `editor_pie_actor_inspect`, and `editor_pie_project_world`: deterministic
+  multi-client world selection, capped pagination, exact world-owned actor and
+  component resolution, live SViewport-to-desktop projection, and a
+  Visibility-channel hit result that identifies what is actually under the
+  projected point.
 - Production audio authoring and verification: typed create/inspect/set/save
   support for SoundClass, SoundMix class overrides, SoundConcurrency,
   SoundAttenuation, SoundSubmix, and SoundWave import/playback settings;

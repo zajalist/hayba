@@ -1120,6 +1120,18 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
             Limits.MaxStringChars = 64 * 1024;
             Limits.MaxArrayItems = 200;
         }
+        else if (Cmd == TEXT("editor_pie_actor_list")
+            || Cmd == TEXT("editor_pie_actor_inspect")
+            || Cmd == TEXT("editor_pie_project_world"))
+        {
+            // These read-only tools intentionally hand actor_path and
+            // component_path back to the caller as exact follow-up keys. The
+            // generic 512-character ellipsis turns a valid long UE object path
+            // into an identifier that can never resolve. Inputs are capped at
+            // 2048 in both TS and native parsing; matching that ceiling here
+            // preserves round-trip identity while keeping the frame bounded.
+            Limits.MaxStringChars = 2048;
+        }
         FHaybaMCPResponseBuilder Builder(Limits);
         TSharedRef<FJsonObject> Trimmed = Builder.Build(DataObj.ToSharedRef());
         return MakeOkResponse(Id, Trimmed);

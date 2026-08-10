@@ -35,6 +35,11 @@ private:
     FHaybaHandlerResult PIEClickWidget(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult PIESetText(const TSharedPtr<FJsonObject>& P);
 
+    // Read-only runtime scene grounding for headless visual gauntlets.
+    FHaybaHandlerResult PIEActorList(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult PIEActorInspect(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult PIEProjectWorld(const TSharedPtr<FJsonObject>& P);
+
 #if WITH_EDITOR
     void EnsureLifecycleHooks();
     void OnBeginPIE(const bool bIsSimulating);

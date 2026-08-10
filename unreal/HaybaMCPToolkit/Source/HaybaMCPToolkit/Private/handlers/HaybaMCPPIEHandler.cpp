@@ -1,4 +1,5 @@
 #include "HaybaMCPPIEHandler.h"
+#include "HaybaPIERuntimeOps.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -11,6 +12,10 @@
 #include "UnrealClient.h"
 #include "EngineUtils.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/PlayerController.h"
+#include "Components/ActorComponent.h"
+#include "Components/SceneComponent.h"
+#include "Components/PrimitiveComponent.h"
 #include "UObject/UnrealType.h"
 #include "UObject/Class.h"
 #include "UObject/Object.h"
@@ -19,6 +24,8 @@
 #include "Framework/Application/SlateUser.h"
 #include "Widgets/SWindow.h"
 #include "Widgets/SWidget.h"
+#include "Widgets/SViewport.h"
+#include "Layout/WidgetPath.h"
 #include "Widgets/Input/SEditableText.h"
 #include "Widgets/Text/SMultiLineEditableText.h"
 #include "Layout/Children.h"
@@ -51,6 +58,9 @@ TArray<FString> FHaybaMCPPIEHandler::GetCommands() const
         TEXT("editor_pie_widget_tree"),
         TEXT("editor_pie_click_widget"),
         TEXT("editor_pie_set_text"),
+        TEXT("editor_pie_actor_list"),
+        TEXT("editor_pie_actor_inspect"),
+        TEXT("editor_pie_project_world"),
     };
 }
 
@@ -81,6 +91,9 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::Handle(const FString& Cmd, const TShare
     if (Cmd == TEXT("editor_pie_widget_tree"))   return PIEWidgetTree(Params);
     if (Cmd == TEXT("editor_pie_click_widget"))  return PIEClickWidget(Params);
     if (Cmd == TEXT("editor_pie_set_text"))      return PIESetText(Params);
+    if (Cmd == TEXT("editor_pie_actor_list"))    return PIEActorList(Params);
+    if (Cmd == TEXT("editor_pie_actor_inspect")) return PIEActorInspect(Params);
+    if (Cmd == TEXT("editor_pie_project_world")) return PIEProjectWorld(Params);
     if (Cmd == TEXT("editor_pie_screenshot")) return PIEScreenshot(Params);
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("Unknown PIE command: %s"), *Cmd));
 #endif
@@ -1926,6 +1939,823 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEClickWidget(const TSharedPtr<FJsonOb
     return FHaybaHandlerResult::Ok(R);
 }
 
+// ---------------------------------------------------------------------------
+// Read-only runtime scene grounding
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    constexpr int32 MaxPIEWorldsReported = 50;
+    constexpr int32 MaxActorsScanned = 100000;
+    constexpr int32 MaxActorResolutionScans = 20000;
+    constexpr int32 MaxTagsReported = 50;
+
+    struct FPIEWorldEntry
+    {
+        UWorld* World = nullptr;
+        HaybaPIERuntimeOps::FWorldCandidate Candidate;
+    };
+
+    TArray<FPIEWorldEntry> RuntimePIEWorlds()
+    {
+        TArray<FPIEWorldEntry> Out;
+        if (!GEngine) return Out;
+
+        for (const FWorldContext& Context : GEngine->GetWorldContexts())
+        {
+            UWorld* World = Context.World();
+            if (Context.WorldType != EWorldType::PIE || !IsValid(World)) continue;
+
+            FPIEWorldEntry Entry;
+            Entry.World = World;
+            Entry.Candidate.PIEInstance = Context.PIEInstance;
+            Entry.Candidate.WorldName = World->GetName();
+            Entry.Candidate.bIsPlayWorld = GEditor && GEditor->PlayWorld == World;
+            if (UGameViewportClient* ViewportClient = World->GetGameViewport())
+            {
+                Entry.Candidate.bHasViewport = ViewportClient->Viewport != nullptr;
+            }
+            Out.Add(MoveTemp(Entry));
+            if (Out.Num() >= MaxPIEWorldsReported) break;
+        }
+
+        Out.Sort([](const FPIEWorldEntry& A, const FPIEWorldEntry& B)
+        {
+            if (A.Candidate.PIEInstance != B.Candidate.PIEInstance)
+                return A.Candidate.PIEInstance < B.Candidate.PIEInstance;
+            return A.Candidate.WorldName < B.Candidate.WorldName;
+        });
+        return Out;
+    }
+
+    TArray<HaybaPIERuntimeOps::FWorldCandidate> RuntimeWorldCandidates(const TArray<FPIEWorldEntry>& Worlds)
+    {
+        TArray<HaybaPIERuntimeOps::FWorldCandidate> Out;
+        Out.Reserve(Worlds.Num());
+        for (const FPIEWorldEntry& Entry : Worlds) Out.Add(Entry.Candidate);
+        return Out;
+    }
+
+    FString RuntimeNetModeName(const UWorld* World)
+    {
+        if (!World) return TEXT("unknown");
+        switch (World->GetNetMode())
+        {
+        case NM_Standalone:      return TEXT("standalone");
+        case NM_DedicatedServer: return TEXT("dedicated_server");
+        case NM_ListenServer:    return TEXT("listen_server");
+        case NM_Client:          return TEXT("client");
+        default:                 return TEXT("unknown");
+        }
+    }
+
+    TSharedPtr<FJsonObject> RuntimeVectorJson(const FVector& Value)
+    {
+        TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+        const bool bValid = HaybaPIERuntimeOps::IsFiniteVector(Value);
+        Out->SetBoolField(TEXT("valid"), bValid);
+        if (bValid)
+        {
+            Out->SetNumberField(TEXT("x"), Value.X);
+            Out->SetNumberField(TEXT("y"), Value.Y);
+            Out->SetNumberField(TEXT("z"), Value.Z);
+        }
+        return Out;
+    }
+
+    TSharedPtr<FJsonObject> RuntimeRotatorJson(const FRotator& Value)
+    {
+        TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+        const bool bValid = HaybaPIERuntimeOps::IsFiniteRotator(Value);
+        Out->SetBoolField(TEXT("valid"), bValid);
+        if (bValid)
+        {
+            Out->SetNumberField(TEXT("pitch"), Value.Pitch);
+            Out->SetNumberField(TEXT("yaw"), Value.Yaw);
+            Out->SetNumberField(TEXT("roll"), Value.Roll);
+        }
+        return Out;
+    }
+
+    TSharedPtr<FJsonObject> RuntimeWorldJson(
+        const FPIEWorldEntry& Selected,
+        const HaybaPIERuntimeOps::FWorldSelection& Selection)
+    {
+        TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+        Out->SetNumberField(TEXT("pie_instance"), Selected.Candidate.PIEInstance);
+        Out->SetStringField(TEXT("name"), Selected.Candidate.WorldName);
+        Out->SetStringField(TEXT("net_mode"), RuntimeNetModeName(Selected.World));
+        Out->SetBoolField(TEXT("has_viewport"), Selected.Candidate.bHasViewport);
+        Out->SetStringField(TEXT("selected_by"), Selection.Reason);
+        Out->SetBoolField(TEXT("multiple_worlds_present"), Selection.bWasAmbiguous);
+        return Out;
+    }
+
+    TArray<TSharedPtr<FJsonValue>> RuntimeAvailableWorldsJson(const TArray<FPIEWorldEntry>& Worlds)
+    {
+        TArray<TSharedPtr<FJsonValue>> Out;
+        for (const FPIEWorldEntry& Entry : Worlds)
+        {
+            TSharedPtr<FJsonObject> Item = MakeShared<FJsonObject>();
+            Item->SetNumberField(TEXT("pie_instance"), Entry.Candidate.PIEInstance);
+            Item->SetStringField(TEXT("name"), Entry.Candidate.WorldName);
+            Item->SetStringField(TEXT("net_mode"), RuntimeNetModeName(Entry.World));
+            Item->SetBoolField(TEXT("has_viewport"), Entry.Candidate.bHasViewport);
+            Item->SetBoolField(TEXT("is_play_world"), Entry.Candidate.bIsPlayWorld);
+            Out.Add(MakeShared<FJsonValueObject>(Item));
+        }
+        return Out;
+    }
+
+    bool RuntimeActorIsUsable(const AActor* Actor, const UWorld* ExpectedWorld)
+    {
+        return IsValid(Actor) && Actor->GetWorld() == ExpectedWorld && !Actor->IsActorBeingDestroyed();
+    }
+
+    AActor* ResolveRuntimeActor(
+        UWorld* World,
+        const HaybaPIERuntimeOps::FActorReference& Reference,
+        FString& OutError)
+    {
+        if (!IsValid(World))
+        {
+            OutError = TEXT("selected PIE world is no longer valid");
+            return nullptr;
+        }
+
+        // Exact paths come from editor_pie_actor_list. Resolve them directly,
+        // then enforce selected-world ownership; no asset load and no actor in
+        // another PIE/editor world can cross this boundary.
+        if (!Reference.Path.IsEmpty())
+        {
+            AActor* PathMatch = FindObject<AActor>(nullptr, *Reference.Path);
+            if (!RuntimeActorIsUsable(PathMatch, World))
+            {
+                OutError = TEXT("actor_path was not found in the selected PIE world");
+                return nullptr;
+            }
+            return PathMatch;
+        }
+
+        AActor* Match = nullptr;
+        int32 MatchCount = 0;
+        int32 Scanned = 0;
+        for (TActorIterator<AActor> It(World); It; ++It)
+        {
+            if (++Scanned > MaxActorResolutionScans)
+            {
+                OutError = FString::Printf(
+                    TEXT("actor lookup exceeded %d scanned actors; use actor_path from editor_pie_actor_list"),
+                    MaxActorResolutionScans);
+                return nullptr;
+            }
+            AActor* Actor = *It;
+            if (!RuntimeActorIsUsable(Actor, World)) continue;
+
+            bool bMatches = false;
+            if (!Reference.Id.IsEmpty())
+                bMatches = Actor->GetName() == Reference.Id;
+            else if (!Reference.Label.IsEmpty())
+                bMatches = Actor->GetActorLabel() == Reference.Label;
+
+            if (!bMatches) continue;
+            Match = Actor;
+            ++MatchCount;
+            if (MatchCount > 1) break;
+        }
+
+        if (MatchCount == 0)
+        {
+            OutError = TEXT("actor was not found in the selected PIE world");
+            return nullptr;
+        }
+        if (MatchCount > 1)
+        {
+            OutError = FString::Printf(
+                TEXT("actor reference matched %d actors; use actor_path from editor_pie_actor_list"),
+                MatchCount);
+            return nullptr;
+        }
+        return RuntimeActorIsUsable(Match, World) ? Match : nullptr;
+    }
+
+    UActorComponent* ResolveOwnedRuntimeComponent(AActor* Actor, const FString& Name, FString& OutError)
+    {
+        if (!IsValid(Actor))
+        {
+            OutError = TEXT("actor is no longer valid");
+            return nullptr;
+        }
+        if (Name.IsEmpty()) return nullptr;
+
+        TInlineComponentArray<UActorComponent*> Components;
+        Actor->GetComponents(Components);
+        UActorComponent* Match = nullptr;
+        int32 MatchCount = 0;
+        for (UActorComponent* Component : Components)
+        {
+            if (!IsValid(Component) || Component->GetOwner() != Actor) continue;
+            if (Component->GetName() == Name || Component->GetPathName() == Name)
+            {
+                Match = Component;
+                ++MatchCount;
+            }
+        }
+        if (MatchCount == 0)
+        {
+            OutError = FString::Printf(TEXT("owned component not found: %s"), *Name);
+            return nullptr;
+        }
+        if (MatchCount > 1)
+        {
+            OutError = FString::Printf(TEXT("component reference is ambiguous: %s"), *Name);
+            return nullptr;
+        }
+        return IsValid(Match) && Match->GetOwner() == Actor ? Match : nullptr;
+    }
+
+    FString RuntimeCollisionName(const UPrimitiveComponent* Primitive)
+    {
+        if (!Primitive) return TEXT("not_primitive");
+        return HaybaPIERuntimeOps::CollisionEnabledName(Primitive->GetCollisionEnabled());
+    }
+
+    TSharedPtr<FJsonObject> RuntimeComponentJson(UActorComponent* Component)
+    {
+        TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+        Out->SetStringField(TEXT("name"), Component->GetName());
+        Out->SetStringField(TEXT("path"), Component->GetPathName());
+        Out->SetStringField(TEXT("class"), Component->GetClass()->GetPathName());
+        Out->SetBoolField(TEXT("active"), Component->IsActive());
+        Out->SetBoolField(TEXT("registered"), Component->IsRegistered());
+
+        if (const USceneComponent* Scene = Cast<USceneComponent>(Component))
+        {
+            const FVector Location = Scene->GetComponentLocation();
+            const FRotator Rotation = Scene->GetComponentRotation();
+            const FVector Scale = Scene->GetComponentScale();
+            Out->SetObjectField(TEXT("location"), RuntimeVectorJson(Location));
+            Out->SetObjectField(TEXT("rotation"), RuntimeRotatorJson(Rotation));
+            Out->SetObjectField(TEXT("scale"), RuntimeVectorJson(Scale));
+            Out->SetBoolField(TEXT("invalid_numeric"),
+                !HaybaPIERuntimeOps::IsFiniteVector(Location)
+                || !HaybaPIERuntimeOps::IsFiniteRotator(Rotation)
+                || !HaybaPIERuntimeOps::IsFiniteVector(Scale));
+            Out->SetBoolField(TEXT("visible"), Scene->IsVisible());
+        }
+        if (const UPrimitiveComponent* Primitive = Cast<UPrimitiveComponent>(Component))
+        {
+            Out->SetStringField(TEXT("collision"), RuntimeCollisionName(Primitive));
+            const bool bBoundsValid = HaybaPIERuntimeOps::IsFiniteVector(Primitive->Bounds.Origin)
+                && HaybaPIERuntimeOps::IsFiniteVector(Primitive->Bounds.BoxExtent);
+            Out->SetObjectField(TEXT("bounds_origin"), RuntimeVectorJson(Primitive->Bounds.Origin));
+            Out->SetObjectField(TEXT("bounds_extent"), RuntimeVectorJson(Primitive->Bounds.BoxExtent));
+            bool bInvalidNumeric = false;
+            Out->TryGetBoolField(TEXT("invalid_numeric"), bInvalidNumeric);
+            Out->SetBoolField(TEXT("invalid_numeric"), bInvalidNumeric || !bBoundsValid);
+        }
+        return Out;
+    }
+
+    TSharedPtr<FJsonObject> RuntimeActorJson(AActor* Actor, bool bIncludeBounds)
+    {
+        TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+        Out->SetStringField(TEXT("id"), Actor->GetName());
+        Out->SetStringField(TEXT("path"), Actor->GetPathName());
+        Out->SetStringField(TEXT("label"), Actor->GetActorLabel());
+        Out->SetStringField(TEXT("class"), Actor->GetClass()->GetPathName());
+        const FVector Location = Actor->GetActorLocation();
+        const FRotator Rotation = Actor->GetActorRotation();
+        const FVector Scale = Actor->GetActorScale3D();
+        Out->SetObjectField(TEXT("location"), RuntimeVectorJson(Location));
+        Out->SetObjectField(TEXT("rotation"), RuntimeRotatorJson(Rotation));
+        Out->SetObjectField(TEXT("scale"), RuntimeVectorJson(Scale));
+        bool bInvalidNumeric = !HaybaPIERuntimeOps::IsFiniteVector(Location)
+            || !HaybaPIERuntimeOps::IsFiniteRotator(Rotation)
+            || !HaybaPIERuntimeOps::IsFiniteVector(Scale);
+        Out->SetBoolField(TEXT("hidden"), Actor->IsHidden());
+
+        if (bIncludeBounds)
+        {
+            FVector Origin = FVector::ZeroVector;
+            FVector Extent = FVector::ZeroVector;
+            Actor->GetActorBounds(false, Origin, Extent, true);
+            Out->SetObjectField(TEXT("bounds_origin"), RuntimeVectorJson(Origin));
+            Out->SetObjectField(TEXT("bounds_extent"), RuntimeVectorJson(Extent));
+            bInvalidNumeric = bInvalidNumeric
+                || !HaybaPIERuntimeOps::IsFiniteVector(Origin)
+                || !HaybaPIERuntimeOps::IsFiniteVector(Extent);
+        }
+        Out->SetBoolField(TEXT("invalid_numeric"), bInvalidNumeric);
+        return Out;
+    }
+
+    bool RuntimeSelectWorld(
+        const TOptional<int32>& RequestedPIEInstance,
+        bool bRequireViewport,
+        TArray<FPIEWorldEntry>& OutWorlds,
+        FPIEWorldEntry*& OutSelected,
+        HaybaPIERuntimeOps::FWorldSelection& OutSelection,
+        FString& OutError)
+    {
+        OutWorlds = RuntimePIEWorlds();
+        OutSelection = HaybaPIERuntimeOps::SelectWorld(
+            RuntimeWorldCandidates(OutWorlds), RequestedPIEInstance, bRequireViewport);
+        if (!OutSelection.IsValid())
+        {
+            TArray<FString> Available;
+            for (const FPIEWorldEntry& Entry : OutWorlds)
+            {
+                Available.Add(FString::Printf(
+                    TEXT("%d:%s(viewport=%s,net=%s)"),
+                    Entry.Candidate.PIEInstance,
+                    *Entry.Candidate.WorldName,
+                    Entry.Candidate.bHasViewport ? TEXT("yes") : TEXT("no"),
+                    *RuntimeNetModeName(Entry.World)));
+            }
+            OutError = OutSelection.Error;
+            if (!Available.IsEmpty())
+                OutError += FString::Printf(TEXT("; available PIE worlds: [%s]"), *FString::Join(Available, TEXT(", ")));
+            return false;
+        }
+        if (!OutWorlds.IsValidIndex(OutSelection.CandidateIndex))
+        {
+            OutError = TEXT("PIE world selection became invalid");
+            return false;
+        }
+        OutSelected = &OutWorlds[OutSelection.CandidateIndex];
+        if (!IsValid(OutSelected->World))
+        {
+            OutError = TEXT("selected PIE world was destroyed before inspection");
+            return false;
+        }
+        return true;
+    }
+}
+
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEActorList(const TSharedPtr<FJsonObject>& P)
+{
+    FHaybaParamReader Reader(P, TEXT("editor_pie_actor_list"));
+    const HaybaPIERuntimeOps::FListRequest Request = HaybaPIERuntimeOps::ParseList(Reader);
+    if (Reader.HasErrors()) return FHaybaHandlerResult::Err(Reader.ErrorMessage());
+
+    TArray<FPIEWorldEntry> Worlds;
+    FPIEWorldEntry* Selected = nullptr;
+    HaybaPIERuntimeOps::FWorldSelection Selection;
+    FString Error;
+    if (!RuntimeSelectWorld(Request.World.PIEInstance, false, Worlds, Selected, Selection, Error))
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("editor_pie_actor_list: %s"), *Error));
+
+    TArray<AActor*> Matches;
+    Matches.Reserve(FMath::Min(HaybaPIERuntimeOps::MaxRetainedActorMatches, Request.Offset + Request.Limit));
+    int32 Scanned = 0;
+    int32 TotalMatched = 0;
+    bool bScanTruncated = false;
+    bool bMatchesTruncated = false;
+    const FName TagFilterName = Request.Tag.IsEmpty()
+        ? NAME_None
+        : FName(*Request.Tag, FNAME_Find);
+    for (TActorIterator<AActor> It(Selected->World); It; ++It)
+    {
+        if (++Scanned > MaxActorsScanned)
+        {
+            bScanTruncated = true;
+            break;
+        }
+        AActor* Actor = *It;
+        if (!RuntimeActorIsUsable(Actor, Selected->World)) continue;
+        if (!Request.ClassFilter.IsEmpty()
+            && !Actor->GetClass()->GetName().Contains(Request.ClassFilter, ESearchCase::IgnoreCase)
+            && !Actor->GetClass()->GetPathName().Contains(Request.ClassFilter, ESearchCase::IgnoreCase))
+            continue;
+        if (!Request.NameFilter.IsEmpty()
+            && !Actor->GetName().Contains(Request.NameFilter, ESearchCase::IgnoreCase)
+            && !Actor->GetActorLabel().Contains(Request.NameFilter, ESearchCase::IgnoreCase))
+            continue;
+        if (!Request.Tag.IsEmpty()
+            && (TagFilterName.IsNone() || !Actor->ActorHasTag(TagFilterName))) continue;
+
+        ++TotalMatched;
+        if (Matches.Num() < HaybaPIERuntimeOps::MaxRetainedActorMatches) Matches.Add(Actor);
+        else bMatchesTruncated = true;
+    }
+
+    Matches.Sort([](const AActor& A, const AActor& B)
+    {
+        return A.GetPathName() < B.GetPathName();
+    });
+
+    TArray<TSharedPtr<FJsonValue>> Actors;
+    const HaybaPIERuntimeOps::FPageWindow Page = HaybaPIERuntimeOps::ComputePage(
+        Request.Offset, Request.Limit, Matches.Num());
+    for (int32 Index = Page.Start; Index < Page.End; ++Index)
+    {
+        AActor* Actor = Matches[Index];
+        if (!RuntimeActorIsUsable(Actor, Selected->World)) continue;
+        Actors.Add(MakeShared<FJsonValueObject>(RuntimeActorJson(Actor, false)));
+    }
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetObjectField(TEXT("world"), RuntimeWorldJson(*Selected, Selection));
+    Out->SetArrayField(TEXT("available_worlds"), RuntimeAvailableWorldsJson(Worlds));
+    Out->SetArrayField(TEXT("actors"), Actors);
+    Out->SetNumberField(TEXT("offset"), Request.Offset);
+    Out->SetNumberField(TEXT("limit"), Request.Limit);
+    Out->SetNumberField(TEXT("returned"), Actors.Num());
+    Out->SetNumberField(TEXT("matched_in_scanned_prefix"), TotalMatched);
+    Out->SetBoolField(TEXT("matched_count_is_lower_bound"), bScanTruncated);
+    Out->SetNumberField(TEXT("retained_for_pagination"), Matches.Num());
+    Out->SetBoolField(TEXT("result_set_complete"), !bScanTruncated && !bMatchesTruncated);
+    Out->SetNumberField(TEXT("scanned"), FMath::Min(Scanned, MaxActorsScanned));
+    Out->SetBoolField(TEXT("scan_truncated"), bScanTruncated);
+    Out->SetBoolField(TEXT("matches_truncated"), bMatchesTruncated);
+    Out->SetBoolField(TEXT("has_more"), Page.bHasMore);
+    if (Page.NextOffset.IsSet()) Out->SetNumberField(TEXT("next_offset"), *Page.NextOffset);
+    if (bMatchesTruncated)
+        Out->SetStringField(TEXT("partial_reason"), TEXT("more than 10000 actors matched; pagination is bounded to the retained prefix"));
+    else if (bScanTruncated)
+        Out->SetStringField(TEXT("partial_reason"), TEXT("actor scan reached the 100000-actor safety cap"));
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEActorInspect(const TSharedPtr<FJsonObject>& P)
+{
+    FHaybaParamReader Reader(P, TEXT("editor_pie_actor_inspect"));
+    const HaybaPIERuntimeOps::FInspectRequest Request = HaybaPIERuntimeOps::ParseInspect(Reader);
+    if (Reader.HasErrors()) return FHaybaHandlerResult::Err(Reader.ErrorMessage());
+
+    TArray<FPIEWorldEntry> Worlds;
+    FPIEWorldEntry* Selected = nullptr;
+    HaybaPIERuntimeOps::FWorldSelection Selection;
+    FString Error;
+    if (!RuntimeSelectWorld(Request.World.PIEInstance, false, Worlds, Selected, Selection, Error))
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("editor_pie_actor_inspect: %s"), *Error));
+
+    AActor* Actor = ResolveRuntimeActor(Selected->World, Request.Actor, Error);
+    if (!Actor)
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("editor_pie_actor_inspect: %s"), *Error));
+
+    TInlineComponentArray<UActorComponent*> Components;
+    Actor->GetComponents(Components);
+    Components.RemoveAll([&](UActorComponent* Component)
+    {
+        return !IsValid(Component)
+            || Component->GetOwner() != Actor
+            || (!Request.ComponentFilter.IsEmpty()
+                && !Component->GetName().Contains(Request.ComponentFilter, ESearchCase::IgnoreCase)
+                && !Component->GetClass()->GetName().Contains(Request.ComponentFilter, ESearchCase::IgnoreCase));
+    });
+    Components.Sort([](const UActorComponent& A, const UActorComponent& B)
+    {
+        return A.GetPathName() < B.GetPathName();
+    });
+
+    TArray<TSharedPtr<FJsonValue>> ComponentJson;
+    const int32 PageStart = FMath::Min(Request.ComponentOffset, Components.Num());
+    const int32 PageEnd = FMath::Min(PageStart + Request.ComponentLimit, Components.Num());
+    for (int32 Index = PageStart; Index < PageEnd; ++Index)
+    {
+        UActorComponent* Component = Components[Index];
+        if (!IsValid(Component) || Component->GetOwner() != Actor) continue;
+        ComponentJson.Add(MakeShared<FJsonValueObject>(RuntimeComponentJson(Component)));
+    }
+
+    TSharedPtr<FJsonObject> ActorJson = RuntimeActorJson(Actor, true);
+    TArray<TSharedPtr<FJsonValue>> Tags;
+    const int32 TagCount = FMath::Min(Actor->Tags.Num(), MaxTagsReported);
+    for (int32 Index = 0; Index < TagCount; ++Index)
+        Tags.Add(MakeShared<FJsonValueString>(Actor->Tags[Index].ToString()));
+    ActorJson->SetArrayField(TEXT("tags"), Tags);
+    ActorJson->SetBoolField(TEXT("tags_truncated"), Actor->Tags.Num() > MaxTagsReported);
+    if (AActor* Owner = Actor->GetOwner(); RuntimeActorIsUsable(Owner, Selected->World))
+        ActorJson->SetStringField(TEXT("owner_path"), Owner->GetPathName());
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetObjectField(TEXT("world"), RuntimeWorldJson(*Selected, Selection));
+    Out->SetArrayField(TEXT("available_worlds"), RuntimeAvailableWorldsJson(Worlds));
+    Out->SetObjectField(TEXT("actor"), ActorJson);
+    Out->SetArrayField(TEXT("components"), ComponentJson);
+    Out->SetNumberField(TEXT("component_offset"), Request.ComponentOffset);
+    Out->SetNumberField(TEXT("component_limit"), Request.ComponentLimit);
+    Out->SetNumberField(TEXT("components_returned"), ComponentJson.Num());
+    Out->SetNumberField(TEXT("components_total"), Components.Num());
+    Out->SetBoolField(TEXT("components_have_more"), Request.ComponentOffset + ComponentJson.Num() < Components.Num());
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEProjectWorld(const TSharedPtr<FJsonObject>& P)
+{
+    FHaybaParamReader Reader(P, TEXT("editor_pie_project_world"));
+    const HaybaPIERuntimeOps::FProjectRequest Request = HaybaPIERuntimeOps::ParseProject(Reader);
+    if (Reader.HasErrors()) return FHaybaHandlerResult::Err(Reader.ErrorMessage());
+
+    TArray<FPIEWorldEntry> Worlds;
+    FPIEWorldEntry* Selected = nullptr;
+    HaybaPIERuntimeOps::FWorldSelection Selection;
+    FString Error;
+    if (!RuntimeSelectWorld(Request.World.PIEInstance, true, Worlds, Selected, Selection, Error))
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("editor_pie_project_world: %s"), *Error));
+
+    AActor* TargetActor = nullptr;
+    UActorComponent* TargetComponent = nullptr;
+    FVector TargetLocation = FVector::ZeroVector;
+    FString TargetSource;
+    if (Request.WorldLocation.IsSet())
+    {
+        TargetLocation = *Request.WorldLocation;
+        TargetSource = TEXT("world_location");
+    }
+    else
+    {
+        TargetActor = ResolveRuntimeActor(Selected->World, Request.Actor, Error);
+        if (!TargetActor)
+            return FHaybaHandlerResult::Err(FString::Printf(TEXT("editor_pie_project_world: %s"), *Error));
+
+        if (!Request.ComponentName.IsEmpty())
+        {
+            TargetComponent = ResolveOwnedRuntimeComponent(TargetActor, Request.ComponentName, Error);
+            if (!TargetComponent)
+                return FHaybaHandlerResult::Err(FString::Printf(TEXT("editor_pie_project_world: %s"), *Error));
+            const USceneComponent* Scene = Cast<USceneComponent>(TargetComponent);
+            if (!Scene)
+                return FHaybaHandlerResult::Err(TEXT("editor_pie_project_world: component is not a scene component"));
+            if (Request.Sample == TEXT("component_location"))
+            {
+                TargetLocation = Scene->GetComponentLocation();
+                TargetSource = TEXT("component_location");
+            }
+            else if (const UPrimitiveComponent* Primitive = Cast<UPrimitiveComponent>(TargetComponent))
+            {
+                TargetLocation = Primitive->Bounds.Origin;
+                TargetSource = TEXT("component_bounds_origin");
+            }
+            else
+            {
+                return FHaybaHandlerResult::Err(TEXT(
+                    "editor_pie_project_world: bounds_origin requires a primitive component; pass sample:'component_location' for this scene component"));
+            }
+        }
+        else if (Request.Sample == TEXT("actor_location"))
+        {
+            TargetLocation = TargetActor->GetActorLocation();
+            TargetSource = TEXT("actor_location");
+        }
+        else
+        {
+            FVector Extent = FVector::ZeroVector;
+            TargetActor->GetActorBounds(false, TargetLocation, Extent, true);
+            TargetSource = TEXT("bounds_origin");
+        }
+    }
+
+    APlayerController* PlayerController = nullptr;
+    int32 LocalPlayerOrdinal = 0;
+    for (FConstPlayerControllerIterator It = Selected->World->GetPlayerControllerIterator(); It; ++It)
+    {
+        APlayerController* Candidate = It->Get();
+        if (!IsValid(Candidate) || !Candidate->IsLocalController()) continue;
+        if (LocalPlayerOrdinal++ == Request.PlayerIndex)
+        {
+            PlayerController = Candidate;
+            break;
+        }
+    }
+    if (!PlayerController)
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("editor_pie_project_world: local player_index %d was not found"), Request.PlayerIndex));
+
+    UGameViewportClient* ViewportClient = Selected->World->GetGameViewport();
+    if (!ViewportClient || !ViewportClient->Viewport)
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_project_world: selected PIE world lost its viewport"));
+
+    const FIntPoint ViewportSize = ViewportClient->Viewport->GetSizeXY();
+    FVector2D ViewportPoint = FVector2D::ZeroVector;
+    // Full-viewport coordinates are required by both GetHitResultAtScreenPosition
+    // and the SViewport-to-desktop transform below. Player-relative coordinates
+    // silently click the wrong quadrant in split-screen PIE.
+    if (!FMath::IsFinite(TargetLocation.X)
+        || !FMath::IsFinite(TargetLocation.Y)
+        || !FMath::IsFinite(TargetLocation.Z)
+        || FMath::Abs(TargetLocation.X) > HaybaPIERuntimeOps::MaxWorldCoordinateAbs
+        || FMath::Abs(TargetLocation.Y) > HaybaPIERuntimeOps::MaxWorldCoordinateAbs
+        || FMath::Abs(TargetLocation.Z) > HaybaPIERuntimeOps::MaxWorldCoordinateAbs)
+    {
+        return FHaybaHandlerResult::Err(TEXT(
+            "editor_pie_project_world: target location is non-finite or outside the supported world range"));
+    }
+
+    const bool bProjectionCallSucceeded = PlayerController->ProjectWorldLocationToScreen(
+        TargetLocation, ViewportPoint, /*bPlayerViewportRelative=*/false);
+    const bool bProjectionFinite = FMath::IsFinite(ViewportPoint.X) && FMath::IsFinite(ViewportPoint.Y);
+    if (!bProjectionFinite)
+    {
+        return FHaybaHandlerResult::Err(TEXT(
+            "editor_pie_project_world: projection produced non-finite screen coordinates"));
+    }
+    const bool bProjected = bProjectionCallSucceeded && bProjectionFinite;
+    const bool bInViewport = bProjected
+        && ViewportPoint.X >= 0.0 && ViewportPoint.Y >= 0.0
+        && ViewportPoint.X < ViewportSize.X && ViewportPoint.Y < ViewportSize.Y;
+
+    TSharedPtr<FJsonObject> ViewportJson = MakeShared<FJsonObject>();
+    ViewportJson->SetNumberField(TEXT("x"), ViewportPoint.X);
+    ViewportJson->SetNumberField(TEXT("y"), ViewportPoint.Y);
+    ViewportJson->SetNumberField(TEXT("width"), ViewportSize.X);
+    ViewportJson->SetNumberField(TEXT("height"), ViewportSize.Y);
+    ViewportJson->SetBoolField(TEXT("projected"), bProjected);
+    ViewportJson->SetBoolField(TEXT("in_viewport"), bInViewport);
+
+    // Convert through the live SViewport geometry rather than assuming the
+    // outer SWindow begins where the game pixels begin. That assumption is
+    // wrong for docked PIE and adds toolbar/tab offsets to every click.
+    TSharedPtr<FJsonObject> AbsoluteJson = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> SlateHitJson = MakeShared<FJsonObject>();
+    bool bGeometryAvailable = false;
+    bool bWindowVisible = false;
+    bool bWindowMinimized = false;
+    bool bSlateHitTested = false;
+    bool bSlatePathValid = false;
+    bool bOwningWindowIsHit = false;
+    bool bContainsGameViewport = false;
+    bool bWorldClickClear = false;
+    bool bAbsoluteAvailable = false;
+    if (TSharedPtr<SViewport> ViewportWidget = ViewportClient->GetGameViewportWidget())
+    {
+        const FGeometry Geometry = ViewportWidget->GetCachedGeometry();
+        const FVector2D AbsoluteOrigin = Geometry.LocalToAbsolute(FVector2D::ZeroVector);
+        const FVector2D AbsoluteEnd = Geometry.LocalToAbsolute(Geometry.GetLocalSize());
+        const FVector2D AbsoluteSize = AbsoluteEnd - AbsoluteOrigin;
+        if (ViewportSize.X > 0 && ViewportSize.Y > 0
+            && FMath::IsFinite(AbsoluteOrigin.X) && FMath::IsFinite(AbsoluteOrigin.Y)
+            && FMath::IsFinite(AbsoluteSize.X) && FMath::IsFinite(AbsoluteSize.Y)
+            && AbsoluteSize.X > 0.0 && AbsoluteSize.Y > 0.0)
+        {
+            const FVector2D PixelScale(
+                AbsoluteSize.X / static_cast<double>(ViewportSize.X),
+                AbsoluteSize.Y / static_cast<double>(ViewportSize.Y));
+            const FVector2D AbsolutePoint = AbsoluteOrigin + ViewportPoint * PixelScale;
+            bGeometryAvailable = FMath::IsFinite(AbsolutePoint.X) && FMath::IsFinite(AbsolutePoint.Y);
+            AbsoluteJson->SetNumberField(TEXT("viewport_origin_x"), AbsoluteOrigin.X);
+            AbsoluteJson->SetNumberField(TEXT("viewport_origin_y"), AbsoluteOrigin.Y);
+            AbsoluteJson->SetNumberField(TEXT("viewport_width"), AbsoluteSize.X);
+            AbsoluteJson->SetNumberField(TEXT("viewport_height"), AbsoluteSize.Y);
+            AbsoluteJson->SetNumberField(TEXT("pixel_scale_x"), PixelScale.X);
+            AbsoluteJson->SetNumberField(TEXT("pixel_scale_y"), PixelScale.Y);
+
+            TSharedPtr<SWindow> ViewportWindow = ViewportClient->GetWindow();
+            if (bGeometryAvailable && bProjected && bInViewport
+                && ViewportWindow.IsValid() && FSlateApplication::IsInitialized())
+            {
+                bWindowVisible = ViewportWindow->IsVisible();
+                bWindowMinimized = ViewportWindow->IsWindowMinimized();
+                FSlateApplication& Slate = FSlateApplication::Get();
+                const FWidgetPath HitPath = Slate.LocateWindowUnderMouse(
+                    AbsolutePoint,
+                    Slate.GetInteractiveTopLevelWindows(),
+                    /*bIgnoreEnabledStatus=*/false,
+                    Slate.GetUserIndexForMouse());
+                bSlateHitTested = true;
+                bSlatePathValid = HitPath.IsValid();
+                if (bSlatePathValid)
+                {
+                    bOwningWindowIsHit = HitPath.GetWindow() == ViewportWindow.ToSharedRef();
+                    bContainsGameViewport = HitPath.ContainsWidget(ViewportWidget.Get());
+                    const TSharedRef<SWidget> Leaf = HitPath.GetLastWidget();
+                    SlateHitJson->SetStringField(TEXT("leaf_type"), Leaf->GetTypeAsString());
+                    // A modal/UMG/Slate control deeper than or beside SViewport
+                    // will consume the synthetic click before gameplay sees it.
+                    bWorldClickClear = bOwningWindowIsHit
+                        && bContainsGameViewport
+                        && &Leaf.Get() == ViewportWidget.Get();
+                }
+            }
+
+            bAbsoluteAvailable = bProjected
+                && bInViewport
+                && bGeometryAvailable
+                && bWindowVisible
+                && !bWindowMinimized
+                && bSlatePathValid
+                && bWorldClickClear;
+            if (bAbsoluteAvailable)
+            {
+                // x/y exist only when they are a currently hit-testable world
+                // click. Keeping a stale/offscreen candidate out of these keys
+                // prevents callers from feeding it blindly to pie_mouse.
+                AbsoluteJson->SetNumberField(TEXT("x"), AbsolutePoint.X);
+                AbsoluteJson->SetNumberField(TEXT("y"), AbsolutePoint.Y);
+            }
+        }
+    }
+    AbsoluteJson->SetBoolField(TEXT("geometry_available"), bGeometryAvailable);
+    AbsoluteJson->SetBoolField(TEXT("available"), bAbsoluteAvailable);
+    AbsoluteJson->SetStringField(TEXT("coordinate_space"), TEXT("absolute"));
+    SlateHitJson->SetBoolField(TEXT("tested"), bSlateHitTested);
+    SlateHitJson->SetBoolField(TEXT("path_valid"), bSlatePathValid);
+    SlateHitJson->SetBoolField(TEXT("owning_window_is_hit"), bOwningWindowIsHit);
+    SlateHitJson->SetBoolField(TEXT("contains_game_viewport"), bContainsGameViewport);
+    SlateHitJson->SetBoolField(TEXT("window_visible"), bWindowVisible);
+    SlateHitJson->SetBoolField(TEXT("window_minimized"), bWindowMinimized);
+    SlateHitJson->SetBoolField(TEXT("world_click_clear"), bWorldClickClear);
+
+    TSharedPtr<FJsonObject> HitJson = MakeShared<FJsonObject>();
+    bool bWorldHitTested = false;
+    bool bTargetIsFirstWorldHit = false;
+    HitJson->SetBoolField(TEXT("requested"), Request.bTraceVisibility);
+    HitJson->SetBoolField(TEXT("tested"), false);
+    if (Request.bTraceVisibility && bProjected && bInViewport)
+    {
+        FHitResult Hit;
+        FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(HaybaPIEProjectWorld), true);
+        QueryParams.bReturnPhysicalMaterial = false;
+        QueryParams.bReturnFaceIndex = false;
+        const bool bHit = PlayerController->GetHitResultAtScreenPosition(
+            ViewportPoint, ECC_Visibility, QueryParams, Hit);
+        HitJson->SetBoolField(TEXT("tested"), true);
+        bWorldHitTested = true;
+        HitJson->SetBoolField(TEXT("blocking_hit"), bHit && Hit.bBlockingHit);
+        const bool bDistanceValid = FMath::IsFinite(Hit.Distance);
+        HitJson->SetBoolField(TEXT("distance_valid"), bDistanceValid);
+        if (bDistanceValid) HitJson->SetNumberField(TEXT("distance"), Hit.Distance);
+
+        AActor* HitActor = Hit.GetActor();
+        UPrimitiveComponent* HitComponent = Hit.GetComponent();
+        if (RuntimeActorIsUsable(HitActor, Selected->World))
+        {
+            HitJson->SetStringField(TEXT("actor_id"), HitActor->GetName());
+            HitJson->SetStringField(TEXT("actor_path"), HitActor->GetPathName());
+            HitJson->SetStringField(TEXT("actor_class"), HitActor->GetClass()->GetPathName());
+        }
+        if (IsValid(HitComponent) && HitComponent->GetWorld() == Selected->World)
+        {
+            HitJson->SetStringField(TEXT("component_name"), HitComponent->GetName());
+            HitJson->SetStringField(TEXT("component_path"), HitComponent->GetPathName());
+        }
+
+        const bool bMatchesActor = TargetActor && HitActor == TargetActor;
+        const bool bMatchesComponent = TargetComponent && HitComponent == TargetComponent;
+        bTargetIsFirstWorldHit = bMatchesComponent || (!TargetComponent && bMatchesActor);
+        HitJson->SetBoolField(TEXT("matches_target_actor"), bMatchesActor);
+        HitJson->SetBoolField(TEXT("matches_target_component"), bMatchesComponent);
+        if (!TargetActor)
+            HitJson->SetStringField(TEXT("verdict"), bHit ? TEXT("blocking_object_under_point") : TEXT("no_blocking_object_under_point"));
+        else if (bTargetIsFirstWorldHit)
+            HitJson->SetStringField(TEXT("verdict"), TEXT("target_is_first_world_visibility_hit"));
+        else if (bHit)
+            HitJson->SetStringField(TEXT("verdict"), TEXT("another_object_is_first_world_visibility_hit"));
+        else
+            HitJson->SetStringField(TEXT("verdict"), TEXT("no_blocking_hit_target_not_proven"));
+    }
+    else if (Request.bTraceVisibility)
+    {
+        HitJson->SetStringField(TEXT("not_tested_reason"),
+            bProjected ? TEXT("projected point is outside the PIE viewport") : TEXT("world point did not project in front of the camera"));
+    }
+
+    TSharedPtr<FJsonObject> TargetJson = MakeShared<FJsonObject>();
+    TargetJson->SetStringField(TEXT("source"), TargetSource);
+    TargetJson->SetObjectField(TEXT("world_location"), RuntimeVectorJson(TargetLocation));
+    if (TargetActor)
+    {
+        TargetJson->SetStringField(TEXT("actor_id"), TargetActor->GetName());
+        TargetJson->SetStringField(TEXT("actor_path"), TargetActor->GetPathName());
+    }
+    if (TargetComponent)
+    {
+        TargetJson->SetStringField(TEXT("component_name"), TargetComponent->GetName());
+        TargetJson->SetStringField(TEXT("component_path"), TargetComponent->GetPathName());
+    }
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetObjectField(TEXT("world"), RuntimeWorldJson(*Selected, Selection));
+    Out->SetArrayField(TEXT("available_worlds"), RuntimeAvailableWorldsJson(Worlds));
+    Out->SetNumberField(TEXT("player_index"), Request.PlayerIndex);
+    Out->SetObjectField(TEXT("target"), TargetJson);
+    Out->SetObjectField(TEXT("viewport"), ViewportJson);
+    Out->SetObjectField(TEXT("absolute"), AbsoluteJson);
+    Out->SetObjectField(TEXT("slate_hit"), SlateHitJson);
+    Out->SetObjectField(TEXT("visibility_hit"), HitJson);
+    const bool bTargetClickReady = TargetActor
+        && bAbsoluteAvailable
+        && bWorldHitTested
+        && bTargetIsFirstWorldHit;
+    Out->SetBoolField(TEXT("target_click_ready"), bTargetClickReady);
+    if (!TargetActor)
+        Out->SetStringField(TEXT("target_click_status"), TEXT("no_actor_target_to_verify"));
+    else if (!bAbsoluteAvailable)
+        Out->SetStringField(TEXT("target_click_status"), TEXT("no_clear_slate_click_path"));
+    else if (!bWorldHitTested)
+        Out->SetStringField(TEXT("target_click_status"), TEXT("world_visibility_not_tested"));
+    else if (!bTargetIsFirstWorldHit)
+        Out->SetStringField(TEXT("target_click_status"), TEXT("target_is_not_first_world_visibility_hit"));
+    else
+        Out->SetStringField(TEXT("target_click_status"), TEXT("verified"));
+    if (!bAbsoluteAvailable)
+        Out->SetStringField(TEXT("warning"), TEXT(
+            "no currently hit-testable world click is available (offscreen/behind camera, hidden/minimized/stale PIE window, or Slate/UMG obstruction); do not guess absolute mouse coordinates"));
+    return FHaybaHandlerResult::Ok(Out);
+}
+
 
 #else  // !WITH_EDITOR
 
@@ -1938,5 +2768,8 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEAssert(const TSharedPtr<FJsonObject>
 FHaybaHandlerResult FHaybaMCPPIEHandler::PIEWaitFor(const TSharedPtr<FJsonObject>&)   { return FHaybaHandlerResult::Err(TEXT("editor-only")); }
 FHaybaHandlerResult FHaybaMCPPIEHandler::PIEPressKey(const TSharedPtr<FJsonObject>&)  { return FHaybaHandlerResult::Err(TEXT("editor-only")); }
 FHaybaHandlerResult FHaybaMCPPIEHandler::PIEScreenshot(const TSharedPtr<FJsonObject>&){ return FHaybaHandlerResult::Err(TEXT("editor-only")); }
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEActorList(const TSharedPtr<FJsonObject>&)  { return FHaybaHandlerResult::Err(TEXT("editor-only")); }
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEActorInspect(const TSharedPtr<FJsonObject>&){ return FHaybaHandlerResult::Err(TEXT("editor-only")); }
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIEProjectWorld(const TSharedPtr<FJsonObject>&){ return FHaybaHandlerResult::Err(TEXT("editor-only")); }
 
 #endif  // WITH_EDITOR
