@@ -2757,26 +2757,100 @@
         {
           "name": "source_file",
           "type": "string",
-          "required": true
+          "required": true,
+          "description": "One absolute regular file below the fixed OS-temp/hayba-asset-connectors source/request cache. Links, reparse points, hardlinks, device/UNC paths, traversal, and files outside that authority are rejected."
         },
         {
           "name": "destination_path",
           "type": "string",
-          "required": true
+          "required": true,
+          "description": "Canonical /Game folder. The exact asset name is the strict ASCII source basename; an existing registry/live/disk package is refused, never overwritten."
+        },
+        {
+          "name": "asset_type",
+          "type": "string",
+          "required": true,
+          "description": "Exact type intent: texture for PNG/JPEG, sound_wave for WAV, or static_mesh for binary FBX. glTF/GLB/OBJ/USD and dependency-reading formats are rejected."
         }
       ],
       "returns": {
         "shape": "object",
         "fields": [
           {
+            "name": "code",
+            "type": "string",
+            "description": "Stable HAI_* result/refusal code."
+          },
+          {
+            "name": "mutation_status",
+            "type": "string",
+            "description": "not_started, applied_unsaved/applied, partially_applied, or unknown."
+          },
+          {
+            "name": "failure_kind",
+            "type": "string",
+            "description": "Machine-actionable refusal/retry/unknown/session classification on failure."
+          },
+          {
             "name": "path",
-            "type": "string"
+            "type": "string",
+            "description": "Exact freshly AssetRegistry-read object path; present only on verified success."
+          },
+          {
+            "name": "class",
+            "type": "string",
+            "description": "Exact freshly AssetRegistry-read class."
+          },
+          {
+            "name": "verified",
+            "type": "boolean",
+            "description": "True only after exact object path, package, asset name, class, and live package re-resolution."
+          },
+          {
+            "name": "saved",
+            "type": "boolean",
+            "description": "Whether the exact package is present on disk after import; asset_import itself does not request a save."
+          },
+          {
+            "name": "save_attempted",
+            "type": "boolean",
+            "description": "Always false: asset_import deliberately leaves persistence to an explicit asset_save call."
+          },
+          {
+            "name": "dirty_known",
+            "type": "boolean",
+            "description": "Whether dirty is backed by a freshly re-resolved live package."
+          },
+          {
+            "name": "dirty",
+            "type": "boolean",
+            "description": "Fresh live-package dirty state; interpret only with dirty_known."
+          },
+          {
+            "name": "partial",
+            "type": "boolean",
+            "description": "Failure fact: some mutation evidence exists despite failed exact readback."
+          },
+          {
+            "name": "unknown_outcome",
+            "type": "boolean",
+            "description": "Failure fact: callbacks returned without proof of one exact result; do not retry unchanged."
+          },
+          {
+            "name": "session_suspect",
+            "type": "boolean",
+            "description": "True for impossible return/readback invariants or unexpected returned outputs; stop further mutations and restart/inspect."
+          },
+          {
+            "name": "crafted_format_safety",
+            "type": "string",
+            "description": "Always not_proven: bounded header checks cannot contain an in-process engine parser."
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Import a file from disk (FBX, texture, audio) into the content browser. The imported asset is NOT saved to disk automatically — follow with asset_save, or a rebuild will lose it."
+      "notes": "Fail-closed, single-file native import. It pins the fixed connector-cache ancestor/file handles, enforces kind-specific size+magic policy and an exact factory, refuses collisions/overwrite, then discards callback-returned UObject pointers and re-resolves the exact registry path/class/package. Successful imports are normally dirty_in_memory: follow with asset_save on the returned exact path. These checks reduce exposure but do NOT prove crafted files safe for an in-process UE parser; untrusted remote files still require an isolated sanitizer. Future connector continuation additionally requires an opaque single-use grant bound to one enumerated file; directory assertions are not authority."
     },
     "asset_duplicate": {
       "aliases": [],

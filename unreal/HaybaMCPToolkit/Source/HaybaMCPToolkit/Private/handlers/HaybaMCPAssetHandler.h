@@ -3,6 +3,40 @@
 
 struct FAssetData;
 
+namespace HaybaAssetImport
+{
+    enum class EKind : uint8
+    {
+        TexturePng,
+        TextureJpeg,
+        SoundWave,
+        StaticMeshFbx,
+    };
+
+    struct FRequest
+    {
+        FString SourceFile;
+        FString DestinationPath;
+        FString AssetType;
+        FString AssetName;
+        FString ExpectedPackageName;
+        FString ExpectedObjectPath;
+        FString Extension;
+        EKind Kind = EKind::TexturePng;
+        int64 MaxFileBytes = 0;
+    };
+
+    /** Pure request/type/path parsing. No filesystem, module, or editor access. */
+    bool ParseAndValidateRequest(const TSharedPtr<FJsonObject>& Json, FRequest& Out, FString& Error);
+
+    /** Pure bounded format-header validation over bytes read from the pinned source handle. */
+    bool ValidateFileHeader(EKind Kind, TConstArrayView<uint8> Header, int64 FileBytes, FString& Error);
+
+    /** Pure per-kind byte cap used by both request shaping and the pinned-handle check. */
+    int64 MaxFileBytesForKind(EKind Kind);
+    bool ValidateFileSize(EKind Kind, int64 FileBytes, FString& Error);
+}
+
 class FHaybaMCPAssetHandler : public IHaybaMCPHandler
 {
 public:

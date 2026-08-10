@@ -154,7 +154,9 @@ namespace
         bool bSaved = true;
         if (Data->HasField(TEXT("saved")) && Data->TryGetBoolField(TEXT("saved"), bSaved))
         {
-            Signals.bSaveAttempted = true;
+            bool bSaveAttempted = true;
+            Data->TryGetBoolField(TEXT("save_attempted"), bSaveAttempted);
+            Signals.bSaveAttempted = bSaveAttempted;
             Signals.bSaveSucceeded = bSaved;
             if (!bSaved) Signals.MutationStatus = EHaybaMCPMutationStatus::AppliedUnsaved;
         }
@@ -221,6 +223,66 @@ namespace
                 : EHaybaMCPMutationStatus::None;
         }
 
+        // Handlers that cross a callback-heavy mutation boundary can report
+        // exact lifecycle facts instead of making this layer infer them from
+        // prose. Values outside this fixed vocabulary are ignored.
+        FString ExplicitCode;
+        if (Data->TryGetStringField(TEXT("code"), ExplicitCode)
+            && !ExplicitCode.IsEmpty() && ExplicitCode.Len() <= 64)
+        {
+            Signals.Code = ExplicitCode;
+        }
+        FString Phase;
+        if (Data->TryGetStringField(TEXT("phase"), Phase))
+        {
+            if (Phase == TEXT("parse")) Signals.Phase = EHaybaMCPCommandPhase::Parse;
+            else if (Phase == TEXT("preflight")) Signals.Phase = EHaybaMCPCommandPhase::Preflight;
+            else if (Phase == TEXT("execute")) Signals.Phase = EHaybaMCPCommandPhase::Execute;
+            else if (Phase == TEXT("verify")) Signals.Phase = EHaybaMCPCommandPhase::Verify;
+            else if (Phase == TEXT("shape")) Signals.Phase = EHaybaMCPCommandPhase::Shape;
+        }
+        FString MutationStatus;
+        if (Data->TryGetStringField(TEXT("mutation_status"), MutationStatus))
+        {
+            if (MutationStatus == TEXT("not_started"))
+                Signals.MutationStatus = EHaybaMCPMutationStatus::NotStarted;
+            else if (MutationStatus == TEXT("applied"))
+                Signals.MutationStatus = EHaybaMCPMutationStatus::Applied;
+            else if (MutationStatus == TEXT("partially_applied"))
+                Signals.MutationStatus = EHaybaMCPMutationStatus::PartiallyApplied;
+            else if (MutationStatus == TEXT("applied_unsaved"))
+                Signals.MutationStatus = EHaybaMCPMutationStatus::AppliedUnsaved;
+            else if (MutationStatus == TEXT("unknown"))
+                Signals.MutationStatus = EHaybaMCPMutationStatus::Unknown;
+        }
+        FString FailureKind;
+        if (!bExplicitHandlerOk && Data->TryGetStringField(TEXT("failure_kind"), FailureKind))
+        {
+            if (FailureKind == TEXT("input_rejected"))
+                Signals.FailureKind = EHaybaMCPFailureKind::InputRejected;
+            else if (FailureKind == TEXT("policy_blocked"))
+                Signals.FailureKind = EHaybaMCPFailureKind::PolicyBlocked;
+            else if (FailureKind == TEXT("retryable"))
+            {
+                Signals.FailureKind = EHaybaMCPFailureKind::Retryable;
+                Signals.bRetryUnchangedSafe = Signals.MutationStatus == EHaybaMCPMutationStatus::NotStarted;
+            }
+            else if (FailureKind == TEXT("unknown_outcome"))
+                Signals.FailureKind = EHaybaMCPFailureKind::UnknownOutcome;
+            else if (FailureKind == TEXT("session_suspect"))
+                Signals.FailureKind = EHaybaMCPFailureKind::SessionSuspect;
+            else if (FailureKind == TEXT("fatal"))
+                Signals.FailureKind = EHaybaMCPFailureKind::Fatal;
+        }
+        bool bUnknownOutcome = false;
+        if (Data->TryGetBoolField(TEXT("unknown_outcome"), bUnknownOutcome) && bUnknownOutcome)
+        {
+            Signals.bOperationSucceeded = false;
+            Signals.FailureKind = EHaybaMCPFailureKind::UnknownOutcome;
+            if (Signals.MutationStatus == EHaybaMCPMutationStatus::None)
+                Signals.MutationStatus = EHaybaMCPMutationStatus::Unknown;
+        }
+
         bool bSessionSuspect = false;
         if (Data->TryGetBoolField(TEXT("session_suspect"), bSessionSuspect)
             && bSessionSuspect)
@@ -230,8 +292,10 @@ namespace
             Signals.FailureKind = EHaybaMCPFailureKind::SessionSuspect;
             Signals.Code = TEXT("structured_exception");
             Signals.Error = LogicalFailureDiagnostic(Data);
-            Signals.Phase = EHaybaMCPCommandPhase::Execute;
-            Signals.MutationStatus = EHaybaMCPMutationStatus::Unknown;
+            if (Signals.Phase != EHaybaMCPCommandPhase::Verify)
+                Signals.Phase = EHaybaMCPCommandPhase::Execute;
+            if (Signals.MutationStatus != EHaybaMCPMutationStatus::PartiallyApplied)
+                Signals.MutationStatus = EHaybaMCPMutationStatus::Unknown;
         }
 
         FString Status;
@@ -1366,7 +1430,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
             Result = FHaybaHandlerResult::Err(FString::Printf(
                 TEXT("handler crashed (SEH): command '%s' faulted with a structured exception ")
                 TEXT("(e.g. a null/stale UObject in the handler, or a stale Python-registered editor delegate ")
-                TEXT("firing on a GC'd target). Post-processing was skipped and the operation did NOT complete. ")
+                TEXT("firing on a GC'd target). Post-processing was skipped; completion cannot be proven and the outcome is unknown. ")
                 TEXT("Treat the editor session as suspect and restart it before mutating more state."),
                 *Cmd));
         }
@@ -1503,7 +1567,13 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         Limits.MaxArrayItems = 50;
         Limits.MaxStringChars = 512;
         Limits.MaxTopLevelFields = 20;
-        if (Cmd == TEXT("python_run"))
+        if (Cmd == TEXT("asset_import"))
+        {
+            // Import is callback-heavy and its compact lifecycle/readback facts
+            // are correctness, not presentation. Keep the full bounded object.
+            Limits.MaxTopLevelFields = 32;
+        }
+        else if (Cmd == TEXT("python_run"))
         {
             // python_run's stdout carries the HAYBA_JSON result line for every
             // python-factory tool; the 512-char cap clipped it mid-JSON
