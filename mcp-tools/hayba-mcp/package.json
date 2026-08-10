@@ -28,7 +28,6 @@
     "cheerio": "^1.2.0",
     "express": "^4.21.0",
     "js-yaml": "^4.3.1",
-    "lru-cache": "^11.3.6",
     "minisearch": "^7.2.0",
     "openai": "^6.45.0",
     "youtube-transcript-api": "^3.0.6",
