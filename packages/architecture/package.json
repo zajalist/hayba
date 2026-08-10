@@ -30,7 +30,7 @@
     "three": "^0.169.0"
   },
   "devDependencies": {
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.1.2",
     "@types/three": "^0.169.0",
     "@vitest/coverage-v8": "^4.1.10",
     "typescript": "^7.0.2",
