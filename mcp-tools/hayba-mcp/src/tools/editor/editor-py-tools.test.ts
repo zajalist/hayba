@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { makePyToolHandler } from '../py-tool-factory.js';
 import { setDefaultSender, NON_IDEMPOTENT, type Sender } from '../tool-executor.js';
 import {
-  editorGetStateDescriptor,
   editorGetCameraDescriptor,
   editorCvarGetDescriptor,
   editorCvarSetDescriptor,
@@ -35,20 +34,6 @@ function emit(obj: unknown): string {
 }
 
 beforeEach(() => setDefaultSender(undefined as never));
-
-describe('editor_get_state', () => {
-  it('takes no params and probes map/pie/selection/dirty', async () => {
-    const { sender, lastScript } = mockStdout(emit({ ok: true, map: '/Game/Map', pie_running: false, selection_count: 0, dirty_packages: [], dirty_count: 0 }));
-    setDefaultSender(sender);
-    const res = await makePyToolHandler(editorGetStateDescriptor)({});
-    expect(res.isError).toBeUndefined();
-    const s = lastScript();
-    expect(s).toContain('UnrealEditorSubsystem');
-    expect(s).toContain('LevelEditorSubsystem');
-    expect(s).toContain('get_dirty_content_packages');
-    expect(s).toContain('is_in_play_in_editor');
-  });
-});
 
 describe('editor_get_camera', () => {
   it('reads viewport camera info and parses HAYBA_JSON', async () => {
@@ -286,10 +271,10 @@ describe('reflect_class', () => {
 });
 
 describe('editor-domain factory catalog', () => {
-  it('exports 13 net-new tools with unique names', () => {
+  it('exports 12 net-new Python tools with unique names', () => {
     const names = editorPyDescriptors.map((d) => d.name);
-    expect(names).toHaveLength(13);
-    expect(new Set(names).size).toBe(13);
+    expect(names).toHaveLength(12);
+    expect(new Set(names).size).toBe(12);
   });
 
   // The real cross-catalog no-duplicates backstop is the global

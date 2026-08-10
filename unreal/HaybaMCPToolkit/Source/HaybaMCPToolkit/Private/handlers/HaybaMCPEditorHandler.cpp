@@ -123,6 +123,7 @@ TArray<FString> FHaybaMCPEditorHandler::GetCommands() const
         TEXT("editor_start_pie"),
         TEXT("editor_stop_pie"),
         TEXT("editor_save_all_and_quit"),
+        TEXT("editor_get_state"),
         TEXT("editor_set_camera"),
         TEXT("editor_capture_viewport"),
         TEXT("editor_run_console_command"),
@@ -140,6 +141,7 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::Handle(const FString& Cmd, const TSh
     if (Cmd == TEXT("editor_start_pie"))         return StartPIE(Params);
     if (Cmd == TEXT("editor_stop_pie"))          return StopPIE(Params);
     if (Cmd == TEXT("editor_save_all_and_quit")) return SaveAllAndQuit(Params);
+    if (Cmd == TEXT("editor_get_state"))         return GetState(Params);
     if (Cmd == TEXT("editor_set_camera"))        return SetCamera(Params);
     if (Cmd == TEXT("editor_capture_viewport"))  return CaptureViewport(Params);
     if (Cmd == TEXT("editor_run_console_command")) return RunConsoleCommand(Params);
@@ -189,6 +191,28 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::StopPIE(const TSharedPtr<FJsonObject
     TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject());
     Result->SetBoolField(TEXT("pie_stopped"), true);
     return FHaybaHandlerResult::Ok(Result);
+}
+
+FHaybaHandlerResult FHaybaMCPEditorHandler::GetState(const TSharedPtr<FJsonObject>& P)
+{
+    if (!GEditor)
+        return FHaybaHandlerResult::Err(TEXT("editor_get_state: GEditor is not available"));
+
+    UWorld* World = GEditor->GetEditorWorldContext().World();
+    const TArray<FString> DirtyPackages = CollectSaveableDirtyPackageNames();
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetBoolField(TEXT("ok"), true);
+    Out->SetStringField(TEXT("map"), World ? World->GetPathName() : FString());
+    Out->SetBoolField(TEXT("pie_running"), GEditor->IsPlaySessionInProgress());
+    Out->SetNumberField(TEXT("selection_count"), GEditor->GetSelectedActorCount());
+    TArray<TSharedPtr<FJsonValue>> DirtyValues;
+    DirtyValues.Reserve(DirtyPackages.Num());
+    for (const FString& PackageName : DirtyPackages)
+        DirtyValues.Add(MakeShared<FJsonValueString>(PackageName));
+    Out->SetArrayField(TEXT("dirty_packages"), MoveTemp(DirtyValues));
+    Out->SetNumberField(TEXT("dirty_count"), DirtyPackages.Num());
+    return FHaybaHandlerResult::Ok(Out);
 }
 
 FHaybaHandlerResult FHaybaMCPEditorHandler::SaveAllAndQuit(const TSharedPtr<FJsonObject>& P)

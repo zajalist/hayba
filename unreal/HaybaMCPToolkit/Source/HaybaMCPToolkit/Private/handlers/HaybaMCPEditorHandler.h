@@ -14,6 +14,7 @@ private:
     FHaybaHandlerResult StartPIE(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult StopPIE(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult SaveAllAndQuit(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult GetState(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult SetCamera(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult FocusActor(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult CaptureViewport(const TSharedPtr<FJsonObject>& P);

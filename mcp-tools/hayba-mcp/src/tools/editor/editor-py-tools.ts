@@ -7,7 +7,7 @@
 // python-feasible, NET-NEW subset and skip catalog entries that are C++-backed,
 // TS-only, already surfaced by the legacy sidecar, or whose python is speculative:
 //
-//   SHIPPED (13): editor_get_state, editor_get_camera, editor_cvar_get,
+//   SHIPPED HERE (12): editor_get_camera, editor_cvar_get,
 //     editor_cvar_set, selection_get, asset_registry_query, asset_inspect,
 //     outliner_tree, object_inspect, object_exists, content_browser_sync,
 //     reflect_search_types, reflect_class.
@@ -113,53 +113,6 @@ const uiMeta: HaybaToolMeta = {
   effects: [],
   when: 'steering the editor UI/console (cvar set, content-browser focus) — changes editor state, not saved assets',
   not_when: 'authoring an asset on disk — use the asset/material/pcg tools',
-};
-
-// ── editor_get_state ──────────────────────────────────────────────────────────
-export const editorGetStateSchema = z.object({});
-export type EditorGetStateParams = z.infer<typeof editorGetStateSchema>;
-
-function editorGetStateScript(_p: EditorGetStateParams): string {
-  return [
-    PY_EDITOR_HELPERS,
-    'try:',
-    '    ues = _sub("UnrealEditorSubsystem")',
-    '    les = _sub("LevelEditorSubsystem")',
-    '    eas = _sub("EditorActorSubsystem")',
-    '    world_map = None',
-    '    try:',
-    '        w = ues.get_editor_world() if ues else None',
-    '        if w is not None: world_map = w.get_path_name()',
-    '    except Exception: pass',
-    '    pie_running = False',
-    '    try: pie_running = bool(les.is_in_play_in_editor()) if les else False',
-    '    except Exception: pass',
-    '    sel_count = 0',
-    '    try: sel_count = len(eas.get_selected_level_actors()) if eas else 0',
-    '    except Exception: pass',
-    '    dirty = []',
-    '    try:',
-    '        for p in unreal.EditorLoadingAndSavingUtils.get_dirty_content_packages(): dirty.append(str(p))',
-    '        for p in unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages(): dirty.append(str(p))',
-    '    except Exception: pass',
-    '    _emit({"ok": True, "map": world_map, "pie_running": pie_running,',
-    '           "selection_count": sel_count, "dirty_packages": dirty,',
-    '           "dirty_count": len(dirty)})',
-    'except Exception as _e:',
-    '    _err(_e)',
-  ].join('\n');
-}
-
-export const editorGetStateDescriptor: PyToolDescriptor<typeof editorGetStateSchema.shape> = {
-  name: 'editor_get_state',
-  description:
-    'One-shot consolidated editor status: current map, PIE/play state, selected-actor count, and dirty (unsaved) package list. The master gating probe before any action loop.',
-  cost: 'low',
-  returns: '{ok, map, pie_running, selection_count, dirty_packages[], dirty_count}',
-  schema: editorGetStateSchema.shape,
-  meta: readMeta,
-  buildScript: editorGetStateScript,
-  timeoutMs: 30_000,
 };
 
 // ── editor_get_camera ─────────────────────────────────────────────────────────
@@ -797,7 +750,6 @@ export const reflectClassDescriptor: PyToolDescriptor<typeof reflectClassSchema.
 
 // ── Aggregate: all editor-domain PyToolDescriptors (spliced in index.ts) ────────
 export const editorPyDescriptors: PyToolDescriptor[] = [
-  editorGetStateDescriptor,
   editorGetCameraDescriptor,
   editorCvarGetDescriptor,
   editorCvarSetDescriptor,

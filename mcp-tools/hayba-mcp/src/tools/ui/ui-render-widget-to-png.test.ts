@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { scriptedUe, type ScriptedUe } from '../testing/scripted-ue.js';
-import { isValidBase64, uiRenderWidgetToPngHandler } from './ui-render-widget-to-png.js';
+import { isValidBase64, schema, uiRenderWidgetToPngHandler } from './ui-render-widget-to-png.js';
 
 let ue: ScriptedUe | undefined;
 afterEach(() => {
@@ -10,8 +10,7 @@ afterEach(() => {
 
 const BP = '/Game/UI/WBP_Panel';
 // 1x1 transparent PNG.
-const PNG_B64 =
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
 function blocks(r: { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> }) {
   return {
@@ -21,6 +20,39 @@ function blocks(r: { content: Array<{ type: string; text?: string; data?: string
 }
 
 describe('ui_render_widget_to_png', () => {
+  it('refuses non-finite, fractional, oversized, and over-budget allocations before UE', () => {
+    const base = { widget_blueprint_path: BP };
+    expect(() => schema.parse({ ...base, width: Number.POSITIVE_INFINITY })).toThrow();
+    expect(() => schema.parse({ ...base, width: 100.5 })).toThrow();
+    expect(() => schema.parse({ ...base, width: 4097 })).toThrow();
+    expect(() => schema.parse({ ...base, width: 4096, height: 4096 })).toThrow();
+    expect(() => schema.parse({ ...base, width: 3840, height: 2160 })).not.toThrow();
+    expect(() => schema.parse({ ...base, width: 2048, height: 2048, scale: 2 })).toThrow();
+  });
+
+  it('accepts only omitted or clean PNG filenames before UE', () => {
+    const base = { widget_blueprint_path: BP };
+    expect(() => schema.parse(base)).not.toThrow();
+    expect(() => schema.parse({ ...base, out_path: 'widget-proof.png' })).not.toThrow();
+    expect(() => schema.parse({ ...base, out_path: 'Saved/Screenshots/gauntlet/widget-proof.png' })).toThrow();
+    expect(() =>
+      schema.parse({ ...base, out_path: 'D:\\Projects\\Aphrosia\\Saved\\Screenshots\\gauntlet\\widget-proof.png' }),
+    ).toThrow();
+  });
+
+  it('refuses traversal, invalid types, wrong extensions, controls, and oversized paths before UE', () => {
+    const base = { widget_blueprint_path: BP };
+    expect(() => schema.parse({ ...base, out_path: '../widget-proof.png' })).toThrow();
+    expect(() => schema.parse({ ...base, out_path: 'Saved/Screenshots/../widget-proof.png' })).toThrow();
+    expect(() => schema.parse({ ...base, out_path: 'widget-proof.jpg' })).toThrow();
+    expect(() => schema.parse({ ...base, out_path: 'widget\nproof.png' })).toThrow();
+    expect(() => schema.parse({ ...base, out_path: 42 })).toThrow();
+    expect(() => schema.parse({ ...base, out_path: 'CON.png' })).toThrow();
+    expect(() => schema.parse({ ...base, out_path: 'NUL.png' })).toThrow();
+    expect(() => schema.parse({ ...base, out_path: 'LPT1.anything.png' })).toThrow();
+    expect(() => schema.parse({ ...base, out_path: `${'a'.repeat(237)}.png` })).toThrow();
+  });
+
   it('returns the PNG as an image block, not buried in the text', async () => {
     // The whole point of the tool is that the caller can SEE the widget. A
     // filename in a text block would leave them exactly as blind as the
@@ -48,10 +80,7 @@ describe('ui_render_widget_to_png', () => {
       out_path: 'D:/x.png',
       inline_image_skipped: 'too big',
     });
-    const r = await uiRenderWidgetToPngHandler(
-      { widget_blueprint_path: BP, inline_image: false },
-      {} as never,
-    );
+    const r = await uiRenderWidgetToPngHandler({ widget_blueprint_path: BP, inline_image: false }, {} as never);
     const { image, text } = blocks(r);
     expect(image).toBeUndefined();
     expect(JSON.parse(text).inline_image_skipped).toBe('too big');
@@ -163,10 +192,7 @@ describe('ui_render_widget_to_png', () => {
       out_path: 'D:/only-metadata.png',
       inline_image_skipped: 'too big',
     });
-    const r = await uiRenderWidgetToPngHandler(
-      { widget_blueprint_path: BP, inline_image: false },
-      {} as never,
-    );
+    const r = await uiRenderWidgetToPngHandler({ widget_blueprint_path: BP, inline_image: false }, {} as never);
     const { text } = blocks(r);
     const parsed = JSON.parse(text);
     expect(parsed.path).toBe('D:/only-metadata.png');

@@ -33,6 +33,11 @@ import { actorTransformHandler, meta as actorTransformMeta } from './actor/actor
 import { sceneExportHandler, meta as sceneExportMeta } from './scene/scene-export.js';
 import { sceneValidatePhysicsHandler, meta as scenePhysicsMeta } from './scene/scene-validate-physics.js';
 import { editorCaptureViewportHandler, meta as captureMeta } from './editor/editor-capture-viewport.js';
+import {
+  editorGetStateHandler,
+  meta as editorGetStateMeta,
+  schema as editorGetStateSchema,
+} from './editor/editor-get-state.js';
 import { editorStartPieHandler, meta as pieMeta } from './editor/editor-start-pie.js';
 import { editorStreamLogHandler, meta as streamLogMeta } from './editor/editor-stream-log.js';
 import { handleWaitForShaders, meta as waitForShadersMeta } from './wait-for-shaders.js';
@@ -3181,6 +3186,16 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   // Net-new editor/reflection/asset-registry read + gating tools, generated as
   // UE Python via the pyTemplate factory. See src/tools/editor/editor-py-tools.ts
   // for the catalog overlap/skip analysis.
+  {
+    name: 'editor_get_state',
+    description:
+      'One-shot consolidated native editor status: current map, PIE/play state, selected-actor count, and dirty (unsaved) package list. The master gating probe before any action loop.',
+    meta: editorGetStateMeta,
+    handler: editorGetStateHandler,
+    cost: 'low',
+    returns: '{ok, map, pie_running, selection_count, dirty_packages[], dirty_count}',
+    schema: editorGetStateSchema.shape,
+  },
   ...editorPyDescriptors.map((d) => toToolDescriptor(d)),
 
   // ── Asset & mesh P0 tools (Phase 2 Wave 2, Task 2) — factory path ─────────

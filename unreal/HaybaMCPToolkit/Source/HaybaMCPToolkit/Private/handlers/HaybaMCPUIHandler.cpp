@@ -83,6 +83,7 @@
 #include "HaybaMCPReflection.h"
 #include "HaybaMCPParams.h"
 #include "HaybaMCPUILayout.h"
+#include "HaybaMCPRenderSafety.h"
 // ui_render_widget_to_png — off-screen widget rendering.
 #include "Slate/WidgetRenderer.h"
 #include "Engine/TextureRenderTarget2D.h"
@@ -90,6 +91,7 @@
 #include "Misc/FileHelper.h"
 #include "HAL/FileManager.h"
 #include "RenderingThread.h"
+#include "Misc/ScopeExit.h"
 #endif
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPUI, Log, All);
@@ -3075,6 +3077,11 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleLayoutSnapshot(const TSharedPtr<FJ
 
 FHaybaHandlerResult FHaybaMCPUIHandler::HandleRenderToPng(const TSharedPtr<FJsonObject>& P)
 {
+    if (!P.IsValid())
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: missing params"));
+    if (!IsInGameThread())
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: must execute on the game thread"));
+
     FString BPPath;
     if (!P->TryGetStringField(TEXT("widget_blueprint_path"), BPPath) || BPPath.IsEmpty())
         return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: missing widget_blueprint_path"));
@@ -3093,27 +3100,26 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleRenderToPng(const TSharedPtr<FJson
 
     double Scale = 1.0;
     P->TryGetNumberField(TEXT("scale"), Scale);
-    Scale = FMath::Clamp(Scale, 0.1, 4.0);
-
-    const int32 Width  = FMath::Clamp(FMath::RoundToInt(ReqW * Scale), 16, 8192);
-    const int32 Height = FMath::Clamp(FMath::RoundToInt(ReqH * Scale), 16, 8192);
-
-    FString OutPath;
-    P->TryGetStringField(TEXT("out_path"), OutPath);
-    if (OutPath.IsEmpty())
-    {
-        const FString Stamp = FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S"));
-        const FString Uuid8 = FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(8).ToLower();
-        OutPath = FPaths::ProjectSavedDir() / TEXT("Screenshots/Hayba")
-                / FString::Printf(TEXT("widget_%s_%s_%s.png"), *WBP->GetName(), *Stamp, *Uuid8);
-    }
-    else if (FPaths::IsRelative(OutPath))
-    {
-        OutPath = FPaths::ProjectDir() / OutPath;
-    }
-    OutPath = FPaths::ConvertRelativePathToFull(OutPath);
-
+    int32 Width = 0;
+    int32 Height = 0;
     FString Error;
+    if (!HaybaRenderSafety::ValidateScaledDimensions(ReqW, ReqH, Scale, Width, Height, Error))
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: ") + Error);
+
+    FString RequestedOutPath;
+    P->TryGetStringField(TEXT("out_path"), RequestedOutPath);
+    FString OutPath;
+    if (!HaybaRenderSafety::ResolveOutputPath(
+        RequestedOutPath, TEXT("png"), TEXT("widget_") + WBP->GetName(), OutPath, Error))
+    {
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: ") + Error);
+    }
+
+    const TSharedPtr<HaybaRenderSafety::FLease, ESPMode::ThreadSafe> Lease =
+        HaybaRenderSafety::FLease::TryAcquire(TEXT("ui_render_widget_to_png"), 30.0, Error);
+    if (!Lease.IsValid())
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: ") + Error);
+
     HaybaUILayout::FPreviewInstance Preview;
     if (!HaybaUILayout::MakePreviewInstance(WBP, Preview, Error))
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_render_widget_to_png: %s"), *Error));
@@ -3128,22 +3134,36 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleRenderToPng(const TSharedPtr<FJson
         return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: could not create the widget renderer"));
     Renderer->SetIsPrepassNeeded(true);
 
+    if (!Lease->Advance(HaybaRenderSafety::EStage::AllocatingTarget, Error))
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: ") + Error);
     UTextureRenderTarget2D* RT = Renderer->DrawWidget(Preview.Slate.ToSharedRef(), DrawSize);
     if (!RT)
         return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: DrawWidget produced no render target"));
+    ON_SCOPE_EXIT
+    {
+        if (IsValid(RT))
+        {
+            RT->ReleaseResource();
+            FlushRenderingCommands();
+        }
+    };
 
     // DrawWidget enqueues render commands; reading the pixels before they have
     // executed yields an empty (black) buffer. This is the same "first frame is
     // black" trap the PIE screenshot path hit.
     FlushRenderingCommands();
 
+    if (!Lease->Advance(HaybaRenderSafety::EStage::ReadingBack, Error))
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: ") + Error);
     FTextureRenderTargetResource* Res = RT->GameThread_GetRenderTargetResource();
     if (!Res)
         return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: render target has no resource"));
 
     TArray<FColor> Pixels;
-    if (!Res->ReadPixels(Pixels) || Pixels.Num() == 0)
-        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: failed to read pixels back from the render target"));
+    if (!Res->ReadPixels(Pixels) || Pixels.Num() != int64(Width) * int64(Height))
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("ui_render_widget_to_png: readback returned %d pixels, expected %lld"),
+            Pixels.Num(), int64(Width) * int64(Height)));
 
     // UMG draws onto transparency. Left alone, every pixel the layout does not
     // cover is alpha-0 and most viewers show the whole image as black, which
@@ -3158,14 +3178,19 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleRenderToPng(const TSharedPtr<FJson
         if (bOpaqueBackground) C.A = 255;
     }
 
-    IFileManager::Get().MakeDirectory(*FPaths::GetPath(OutPath), /*Tree=*/true);
-
     // PNGCompressImageArray, NOT ThumbnailCompressImageArray/CompressImageArray:
     // those emit JPEG bytes behind a .png extension (see HaybaMCPRenderHandler).
+    if (!Lease->Advance(HaybaRenderSafety::EStage::Encoding, Error))
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: ") + Error);
     TArray64<uint8> Png;
     FImageUtils::PNGCompressImageArray(Width, Height, Pixels, Png);
-    if (!FFileHelper::SaveArrayToFile(Png, *OutPath))
-        return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_render_widget_to_png: could not write %s"), *OutPath));
+    if (!Lease->Advance(HaybaRenderSafety::EStage::Publishing, Error))
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: ") + Error);
+    int64 FileBytes = 0;
+    if (!HaybaRenderSafety::PublishVerifiedImage(Png, TEXT("png"), Width, Height, OutPath, FileBytes, Error))
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: ") + Error);
+    if (!Lease->Advance(HaybaRenderSafety::EStage::Complete, Error))
+        return FHaybaHandlerResult::Err(TEXT("ui_render_widget_to_png: ") + Error);
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("widget_blueprint_path"), WBP->GetPathName());
@@ -3187,7 +3212,7 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleRenderToPng(const TSharedPtr<FJson
         if (Png.Num() <= InlineByteLimit)
         {
             TArray<uint8> Narrow;
-            Narrow.Append(Png.GetData(), Png.Num());
+            Narrow.Append(Png.GetData(), int32(Png.Num()));
             Out->SetStringField(TEXT("image_base64"), FBase64::Encode(Narrow));
         }
         else
@@ -3201,7 +3226,8 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleRenderToPng(const TSharedPtr<FJson
     Out->SetNumberField(TEXT("height"), Height);
     Out->SetNumberField(TEXT("design_width"), DesignSize.X);
     Out->SetNumberField(TEXT("design_height"), DesignSize.Y);
-    Out->SetNumberField(TEXT("bytes"), Png.Num());
+    Out->SetNumberField(TEXT("bytes"), FileBytes);
+    Out->SetBoolField(TEXT("artifact_verified"), true);
     Out->SetBoolField(TEXT("opaque_background"), bOpaqueBackground);
 
     // A fully transparent render means the widget drew nothing — a collapsed

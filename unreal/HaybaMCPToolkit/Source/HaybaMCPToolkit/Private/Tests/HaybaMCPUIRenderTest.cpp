@@ -8,6 +8,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
+#include "RHIGlobals.h"
 
 namespace
 {
@@ -91,6 +92,16 @@ bool FHaybaMCPRenderWidgetToPngTest::RunTest(const FString& Parameters)
         TSharedPtr<FJsonObject> P = MakeShared<FJsonObject>();
         const FHaybaHandlerResult R = Handler.Handle(TEXT("ui_render_widget_to_png"), P);
         TestFalse(TEXT("missing widget_blueprint_path is refused"), R.bOk);
+    }
+
+    // NullRHI cannot render and therefore cannot prove this behavior. The old
+    // test continued into FWidgetRenderer and failed in engine code, leaving
+    // the suite permanently 14/15. Clean refusal is the only valid NullRHI
+    // assertion; the real-RHI run below remains release evidence.
+    if (GUsingNullRHI)
+    {
+        AddInfo(TEXT("ui_render_widget_to_png requires a real RHI; clean NullRHI refusal is covered by Hayba.MCP.RenderSafety.Policy"));
+        return true;
     }
 
     FScratchWidget W(Handler, TEXT("Render"));

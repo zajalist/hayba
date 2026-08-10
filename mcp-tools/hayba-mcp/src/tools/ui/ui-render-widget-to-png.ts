@@ -3,6 +3,18 @@ import type { RichToolHandler, RichToolResult } from '../types.js';
 import { executeCommand } from '../tool-executor.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 
+const pngArtifactPath = z
+  .string()
+  .min(1)
+  .max(240)
+  .regex(/^[^<>:"/\\|?*\u0000-\u001f]+$/, 'must be a clean filename without path separators or reserved characters')
+  .refine((name) => !/[. ]$/.test(name), 'must name a safe file')
+  .refine(
+    (name) => !/^(?:con|prn|aux|nul|clock\$|com[1-9]|lpt[1-9])(?:\s*\.|$)/i.test(name),
+    'must not use a reserved Windows device name',
+  )
+  .refine((name) => name.toLowerCase().endsWith('.png'), 'must end in .png');
+
 export const meta: HaybaToolMeta = {
   cost: 'high',
   // Writes a PNG and nothing else — no asset, no scene, no widget state.
@@ -11,26 +23,54 @@ export const meta: HaybaToolMeta = {
   not_when: 'you need numbers rather than an image (ui_layout_snapshot) or the problems (ui_validate)',
 };
 
-export const schema = z.object({
-  widget_blueprint_path: z.string().min(1).describe('Full path of the Widget Blueprint to draw'),
-  width: z.number().optional().describe('Render width in px. Defaults to the blueprint’s design-time size.'),
-  height: z.number().optional().describe('Render height in px. Defaults to the blueprint’s design-time size.'),
-  scale: z.number().optional().describe('Multiplies the size, 0.1–4.0. Use 2 to read small text.'),
-  out_path: z
-    .string()
-    .optional()
-    .describe('Where to write the PNG. Defaults to Saved/Screenshots/Hayba/. Relative paths resolve against the project.'),
-  opaque_background: z
-    .boolean()
-    .optional()
-    .describe(
-      'Force alpha to 255 (default true). UMG draws onto transparency, and an unmodified alpha channel makes most viewers show the whole image as black. Pass false only when you intend to composite.',
-    ),
-  inline_image: z
-    .boolean()
-    .optional()
-    .describe('Return the PNG inline so you can actually look at it (default true). Skipped automatically above ~3MB; read out_path in that case.'),
-});
+export const schema = z
+  .object({
+    widget_blueprint_path: z.string().min(1).describe('Full path of the Widget Blueprint to draw'),
+    width: z
+      .number()
+      .int()
+      .min(16)
+      .max(4096)
+      .optional()
+      .describe('Render width in px. Defaults to the blueprint’s design-time size.'),
+    height: z
+      .number()
+      .int()
+      .min(16)
+      .max(4096)
+      .optional()
+      .describe('Render height in px. Defaults to the blueprint’s design-time size.'),
+    scale: z.number().min(0.1).max(4).optional().describe('Multiplies the size, 0.1–4.0. Use 2 to read small text.'),
+    out_path: pngArtifactPath
+      .optional()
+      .describe(
+        'Optional clean PNG filename only. Written without overwrite under Saved/Screenshots/Hayba; omit for a unique filename.',
+      ),
+    opaque_background: z
+      .boolean()
+      .optional()
+      .describe(
+        'Force alpha to 255 (default true). UMG draws onto transparency, and an unmodified alpha channel makes most viewers show the whole image as black. Pass false only when you intend to composite.',
+      ),
+    inline_image: z
+      .boolean()
+      .optional()
+      .describe(
+        'Return the PNG inline so you can actually look at it (default true). Skipped automatically above ~3MB; read out_path in that case.',
+      ),
+  })
+  .superRefine((value, ctx) => {
+    if (value.width !== undefined && value.height !== undefined) {
+      const scale = value.scale ?? 1;
+      if (Math.round(value.width * scale) * Math.round(value.height * scale) > 8 * 1024 * 1024) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['width'],
+          message: 'scaled width*height exceeds the 8,388,608-pixel render/readback budget',
+        });
+      }
+    }
+  });
 
 /**
  * True only for a well-formed, complete base64 string (correct charset, and a
