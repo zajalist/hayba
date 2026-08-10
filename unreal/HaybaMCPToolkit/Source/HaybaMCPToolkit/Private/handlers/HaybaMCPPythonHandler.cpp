@@ -1,5 +1,4 @@
 #include "HaybaMCPPythonHandler.h"
-#include "HaybaMCPSettings.h"
 #include "IPythonScriptPlugin.h"
 #include "PythonScriptTypes.h"
 #include "Misc/Base64.h"
@@ -23,10 +22,8 @@ namespace
     constexpr int32 PythonDeadlineCheckInterval = 256;
 
     // Operations whose failure happens outside Python exception handling (or
-    // outside this command entirely). `allow_unsafe` intentionally does NOT
-    // bypass these: it grants filesystem/subprocess access, not permission to
-    // tear down GWorld mid-tick, deadlock the command socket, or leave native
-    // callbacks pointing at collected Python objects.
+    // outside this command entirely). `allow_unsafe` is a deprecated wire
+    // compatibility field and is ineffective for every policy family.
     struct FFatalPythonRule
     {
         const TCHAR* Pattern;
@@ -143,10 +140,10 @@ namespace
             { TEXT("fromosimportkill"), TEXT("HCR-EXIT-001"), TEXT("imports a process-signal primitive under an arbitrary local name"), TEXT("use the disposable survival harness for process-failure tests") },
             { TEXT("request_exit("), TEXT("HCR-EXIT-001"), TEXT("requests editor process termination from inside an in-flight command"), TEXT("use the typed editor shutdown command") },
             { TEXT("quit_editor("), TEXT("HCR-EXIT-001"), TEXT("requests editor shutdown from inside an in-flight command"), TEXT("use the typed editor shutdown command") },
-            { TEXT("taskkill"), TEXT("HCR-EXIT-001"), TEXT("can terminate the editor through a subprocess despite the Tier-3 grant"), TEXT("use the typed editor shutdown workflow") },
-            { TEXT("pkill"), TEXT("HCR-EXIT-001"), TEXT("can terminate the editor through a subprocess despite the Tier-3 grant"), TEXT("use the typed editor shutdown workflow") },
-            { TEXT("kill-9"), TEXT("HCR-EXIT-001"), TEXT("can terminate the editor through a subprocess despite the Tier-3 grant"), TEXT("use the typed editor shutdown workflow") },
-            { TEXT("stop-process"), TEXT("HCR-EXIT-001"), TEXT("can terminate the editor through a subprocess despite the Tier-3 grant"), TEXT("use the typed editor shutdown workflow") },
+            { TEXT("taskkill"), TEXT("HCR-EXIT-001"), TEXT("attempts to terminate the editor through a forbidden host-process path"), TEXT("use the typed editor shutdown workflow") },
+            { TEXT("pkill"), TEXT("HCR-EXIT-001"), TEXT("attempts to terminate the editor through a forbidden host-process path"), TEXT("use the typed editor shutdown workflow") },
+            { TEXT("kill-9"), TEXT("HCR-EXIT-001"), TEXT("attempts to terminate the editor through a forbidden host-process path"), TEXT("use the typed editor shutdown workflow") },
+            { TEXT("stop-process"), TEXT("HCR-EXIT-001"), TEXT("attempts to terminate the editor through a forbidden host-process path"), TEXT("use the typed editor shutdown workflow") },
             { TEXT("execute_console_command("), TEXT("HCR-CONSOLE-001"), TEXT("can execute fatal, blocking, world-switch, or shutdown console commands outside typed policy"), TEXT("use editor_run_console_command for audited commands or a typed MCP tool") },
             { TEXT("fromunrealimportexecute_console_command"), TEXT("HCR-CONSOLE-001"), TEXT("imports unaudited console execution under an arbitrary local name"), TEXT("use editor_run_console_command for audited commands or a typed MCP tool") },
             { TEXT("exec("), TEXT("HCR-DYNAMIC-001"), TEXT("can construct and execute a crash primitive that source preflight cannot inspect"), TEXT("write the intended operations directly in the submitted script") },
@@ -1718,14 +1715,9 @@ namespace
         return false;
     }
 
-    bool ShouldBlockTier3(
-        const EPythonTier Tier,
-        const bool bSettingAllows,
-        const bool bAllowUnsafeOverride)
+    bool ShouldBlockTier3(const EPythonTier Tier)
     {
-        return Tier == EPythonTier::Unsafe
-            && !bSettingAllows
-            && !bAllowUnsafeOverride;
+        return Tier == EPythonTier::Unsafe;
     }
 }
 
@@ -1796,10 +1788,11 @@ bool FHaybaMCPPythonHandler::IsTier3PolicyBlockedForTests(
     const bool bSettingAllows,
     const bool bAllowUnsafeOverride)
 {
-    return ShouldBlockTier3(
-        ClassifyScript(Script),
-        bSettingAllows,
-        bAllowUnsafeOverride);
+    // Keep both booleans in this pure test seam to prove legacy callers and
+    // persisted settings cannot change the production predicate.
+    (void)bSettingAllows;
+    (void)bAllowUnsafeOverride;
+    return ShouldBlockTier3(ClassifyScript(Script));
 }
 #endif
 
@@ -1864,12 +1857,23 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     {
         return FHaybaHandlerResult::Err(TEXT("Missing required parameter: script"));
     }
+    if (P->HasField(TEXT("allow_unsafe"))
+        && !P->HasTypedField<EJson::Boolean>(TEXT("allow_unsafe")))
+    {
+        return FHaybaHandlerResult::Err(TEXT(
+            "python_run invalid_request [HCR-INPUT-001]: matched 'allow_unsafe_type'; field 'allow_unsafe' must be a boolean when present. "
+            "Facts: policy_phase:pre_execute, allow_unsafe_effective:false, allow_unsafe_deprecated:true. "
+            "Safe alternative: omit the deprecated compatibility field. Retry unchanged: forbidden."));
+    }
     if (Code.Len() > MaxPythonScriptChars)
     {
         return FHaybaHandlerResult::Err(FString::Printf(
             TEXT("python_run policy_blocked [HCR-SIZE-001]: matched 'script_size'; script is %d characters and the limit is %d. Safe alternative: split the work into bounded requests. Retry unchanged: forbidden."),
             Code.Len(), MaxPythonScriptChars));
     }
+
+    bool bAllowUnsafeRequested = false;
+    P->TryGetBoolField(TEXT("allow_unsafe"), bAllowUnsafeRequested);
 
     FString FatalPattern;
     FString FatalPolicyCode;
@@ -1878,29 +1882,27 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     if (FindFatalPythonPattern(Code, FatalPattern, FatalPolicyCode, FatalReason, FatalAlternative))
     {
         return FHaybaHandlerResult::Err(FString::Printf(
-            TEXT("python_run policy_blocked [%s]: matched '%s', which %s. Safe alternative: %s. Retry unchanged: forbidden. allow_unsafe only overrides filesystem/subprocess policy; it never overrides an editor-crash or deadlock guard."),
+            TEXT("python_run policy_blocked [%s]: matched '%s', which %s. Safe alternative: %s. Retry unchanged: forbidden. allow_unsafe is deprecated and ineffective; it never overrides an embedded-Python policy."),
             *FatalPolicyCode, *FatalPattern, *FatalReason, *FatalAlternative));
     }
-
-    // Optional per-call unsafe override
-    bool bAllowUnsafeOverride = false;
-    P->TryGetBoolField(TEXT("allow_unsafe"), bAllowUnsafeOverride);
 
     // Classify
     EPythonTier Tier = ClassifyScript(Code);
 
-    // Block Tier 3 if not allowed
-    if (Tier == EPythonTier::Unsafe)
+    // Tier 3 is an unconditional pre-execute refusal. Read the legacy field
+    // only to report compatibility facts; neither it nor any persisted setting
+    // is consulted as authority. Keep this branch before PythonScriptPlugin
+    // access so direct TCP callers get exactly the same boundary as the TS
+    // wrapper.
+    if (ShouldBlockTier3(Tier))
     {
-        const bool bSettingAllows = FHaybaMCPSettings::Get().bAllowUnsafePython;
-        if (ShouldBlockTier3(Tier, bSettingAllows, bAllowUnsafeOverride))
-        {
-            return FHaybaHandlerResult::Err(TEXT(
-                "python_run policy_blocked [HCR-SANDBOX-001]: matched 'tier_3_filesystem_or_subprocess'. "
-                "A detected filesystem or subprocess primitive is disabled by default. Safe alternative: use a typed MCP tool, or explicitly "
-                "enable AllowUnsafePython / pass allow_unsafe:true after reviewing the script. Retry unchanged: forbidden; "
-                "retry with the explicit unsafe grant is permitted. Crash, deadline, and deadlock guards remain non-bypassable."));
-        }
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT(
+            "python_run policy_blocked [HCR-SANDBOX-001]: matched 'tier_3_filesystem_or_subprocess'. "
+            "Tier-3 host filesystem, subprocess, and network access is unavailable from embedded python_run. "
+            "Facts: tier:3, policy_phase:pre_execute, allow_unsafe_requested:%s, allow_unsafe_effective:false, allow_unsafe_deprecated:true. "
+            "Safe alternative: use a typed brokered MCP tool (#412/#415). Retry unchanged: forbidden. "
+            "This classification boundary does not claim arbitrary in-process Python safety; isolation remains tracked by #392/#414."),
+            bAllowUnsafeRequested ? TEXT("true") : TEXT("false")));
     }
 
     // Check Python plugin
@@ -2214,6 +2216,9 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     TSharedPtr<FJsonObject> Out = MakeShareable(new FJsonObject());
     Out->SetBoolField(TEXT("ok"), bExecOk && bUserOk);
     Out->SetNumberField(TEXT("tier"), static_cast<int32>(Tier));
+    Out->SetBoolField(TEXT("allow_unsafe_requested"), bAllowUnsafeRequested);
+    Out->SetBoolField(TEXT("allow_unsafe_effective"), false);
+    Out->SetBoolField(TEXT("allow_unsafe_deprecated"), true);
     Out->SetStringField(TEXT("stdout"), StdOut);
     Out->SetStringField(TEXT("stderr"), StdErr);
 

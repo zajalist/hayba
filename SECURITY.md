@@ -18,15 +18,24 @@ The MCP server runs inside the Unreal Editor process and exposes a TCP listener 
 
 - Set a **Capability Token** in Settings; it must accompany every TCP command.
 - Keep the **Execution journal** enabled (`Saved/hayba-execution.log`).
-- Do **not** enable **Allow Tier 3 Python** unless you trust every client that can reach the listener — Tier 3 gives full filesystem / subprocess access.
+- Treat `python_run` as constrained, in-process editor scripting. Tier-3 host I/O
+  is always refused before interpreter execution. The legacy `allow_unsafe`
+  boolean and old persisted setting are accepted only for compatibility; both
+  are deprecated and ineffective.
 
-The Python script tool is sandboxed by tier:
+The Python script tool is classified by tier:
 
-| Tier | Allowed | Default |
-|---|---|---|
-| 1 | `unreal.*` editor scripting only | Always |
-| 2 | Tier 1 + read-only project FS | Always |
-| 3 | Tier 1+2 + arbitrary I/O, subprocess, sockets | Opt-in |
+| Tier | Allowed                                                      | Default                    |
+| ---- | ------------------------------------------------------------ | -------------------------- |
+| 1    | `unreal.*` editor scripting only                             | Always                     |
+| 2    | Tier 1 + read-only project FS                                | Always                     |
+| 3    | Filesystem writes, subprocesses, sockets, and other host I/O | Always refused pre-execute |
+
+Use typed brokered MCP tools for supported host operations (#412/#415). The
+denylist and cooperative deadline reduce known risks, but embedded Python still
+shares the Unreal Editor process: they do not prove arbitrary Python or native
+extension calls safe and are not process isolation. That trust-boundary work is
+tracked by #392/#414.
 
 ## Disclosure
 

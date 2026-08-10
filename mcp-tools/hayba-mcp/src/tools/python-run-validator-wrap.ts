@@ -82,7 +82,7 @@ export function makeValidatedPythonRunHandler(opts: WrapOpts = {}): ToolHandler 
         ruleId: 'dangling_lifetime_callback_in_python_run',
         severity: 'error',
         message: `python_run policy_blocked [HCR-LIFE-001]: script registers an engine-lifetime callback ('${danglingPattern}') that would dangle and crash the editor`,
-        hint: 'Do the work inline in this python_run call. allow_unsafe only overrides filesystem/subprocess policy and cannot override an editor-crash guard.',
+        hint: 'Do bounded Unreal work inline. allow_unsafe is deprecated and ineffective; use a typed brokered tool (#412/#415) for supported host work.',
         refs: ['[[python-run-no-dangling-delegate]]'],
         context: {
           policy_code: 'HCR-LIFE-001',

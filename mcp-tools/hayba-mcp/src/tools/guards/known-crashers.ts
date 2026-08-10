@@ -296,6 +296,6 @@ export function crashGuardMessage(hit: CrashGuardHit): string {
     `python_run policy_blocked [${hit.code}]: matched "${hit.pattern}" (${hit.family}); ${hit.reason}.`,
     `Safe alternative: ${hit.alternative}.`,
     'Retry unchanged: forbidden.',
-    'This guard is non-bypassable. allow_unsafe only overrides filesystem/subprocess policy, never editor-crash, deadline, or deadlock prevention.',
+    'This guard is non-bypassable. allow_unsafe is deprecated and ineffective for every embedded-Python policy; use typed brokered tools (#412/#415) for supported host work.',
   ].join('\n');
 }

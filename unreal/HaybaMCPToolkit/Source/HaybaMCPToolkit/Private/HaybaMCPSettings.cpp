@@ -213,7 +213,6 @@ void FHaybaMCPSettings::Load()
     {
         CapabilityToken          = DevSettings->CapabilityToken;
         bEnableExecutionJournal  = DevSettings->bEnableExecutionJournal;
-        bAllowUnsafePython       = DevSettings->bAllowUnsafePython;
         RateLimitPerMinute       = DevSettings->RateLimitPerMinute;
         // Clamp again at the runtime boundary. UPROPERTY clamps protect the UI,
         // but an edited config file must not turn a safety ceiling into an

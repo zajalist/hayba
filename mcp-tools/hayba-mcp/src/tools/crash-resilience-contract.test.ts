@@ -210,6 +210,8 @@ describe('TCP crash-resilience contract', () => {
       'pipelined_request_limit',
       'disconnect_after_dispatch',
       'python_deadline_exhaustion',
+      'python_tier3_filesystem_denied',
+      'python_tier3_legacy_override_denied',
       'pie_start_transition',
       'pie_stop_transition',
       "'-CanaryKill is launch-mode only",
@@ -318,7 +320,17 @@ describe('authoritative python_run crash boundary', () => {
     ]) {
       expect(source, pattern).toContain(pattern);
     }
-    expect(pythonCpp).toContain('allow_unsafe only overrides filesystem/subprocess policy');
+    expect(pythonCpp).toContain('allow_unsafe is deprecated and ineffective');
+    expect(pythonCpp).toContain('allow_unsafe_effective:false');
+    expect(pythonCpp).toContain('isolation remains tracked by #392/#414');
     expect(pythonCpp).toContain('MaxPythonScriptChars = 256 * 1024');
+  });
+
+  it('never turns the legacy Tier-3 compatibility field into survival-harness authority', () => {
+    expect(survivalHarness).toContain("Test-CommandRejection -Name 'python_tier3_filesystem_denied'");
+    expect(survivalHarness).toContain("Test-CommandRejection -Name 'python_tier3_legacy_override_denied'");
+    expect(survivalHarness).toContain('allow_unsafe_requested:true.*allow_unsafe_effective:false');
+    expect(survivalHarness).not.toContain('python_tier3_scratch_allowed_and_removed');
+    expect(survivalHarness).not.toContain('__HAYBA_SCRATCH_CLEAN__');
   });
 });

@@ -47,6 +47,8 @@ describe('known-crashers', () => {
         expect(message).toContain('Safe alternative:');
         expect(message).toContain('Retry unchanged: forbidden');
         expect(message).toContain('non-bypassable');
+        expect(message).toContain('allow_unsafe is deprecated and ineffective');
+        expect(message).toContain('#412/#415');
       }
     }
   });

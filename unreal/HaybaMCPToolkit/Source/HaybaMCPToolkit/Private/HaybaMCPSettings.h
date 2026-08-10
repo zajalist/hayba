@@ -83,8 +83,6 @@ public:
     FString CapabilityToken;
     // Append every command execution to Saved/hayba-execution.log.
     bool bEnableExecutionJournal = true;
-    // Allow Tier 3 Python scripts (filesystem, subprocess, socket).
-    bool bAllowUnsafePython = false;
 
     // Mirrored from UHaybaMCPDeveloperSettings (Project Settings UI)
     int32 RateLimitPerMinute = 60;

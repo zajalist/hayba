@@ -26,8 +26,14 @@ public:
         meta=(ToolTip="Append every command execution to Saved/hayba-execution.log."))
     bool bEnableExecutionJournal = true;
 
-    UPROPERTY(EditAnywhere, Config, Category="Security",
-        meta=(ToolTip="DANGER: Allow Tier-3 Python scripts (subprocess, file I/O, sockets)."))
+    /**
+     * Legacy config sink only. Keep the exact property name so an existing
+     * DefaultHaybaMCP.ini still deserializes, but do not expose or consume it.
+     * Embedded Python Tier 3 was retired by #411; external process isolation
+     * remains tracked by #392/#414.
+     */
+    UPROPERTY(Config, meta=(DeprecatedProperty,
+        DeprecationMessage="Embedded python_run Tier 3 is permanently disabled; this setting is ignored."))
     bool bAllowUnsafePython = false;
 
     UPROPERTY(EditAnywhere, Config, Category="Performance", meta=(ClampMin=10, ClampMax=600))

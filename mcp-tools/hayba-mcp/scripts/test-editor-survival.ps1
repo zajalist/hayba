@@ -125,7 +125,7 @@ $CaseCatalog = @(
     'world_switch_new_blank_map', 'world_switch_load_map', 'self_socket_deadlock',
     'dangling_tick_callback', 'python_background_thread', 'game_thread_sleep',
     'infinite_loop', 'python_deadline_exhaustion', 'python_tier3_filesystem_denied',
-    'python_tier3_scratch_allowed_and_removed', 'listview_duplicate_identity',
+    'python_tier3_legacy_override_denied', 'listview_duplicate_identity',
     'native_memory_escape', 'process_exit',
     'static_mesh_known_crasher', 'oversized_python_script', 'zero_length_frame',
     'oversized_declared_frame', 'truncated_header', 'truncated_body',
@@ -1319,35 +1319,24 @@ function Stop-OwnedEditorWithEvidence {
         allow_unsafe = $true
     } -ErrorPattern 'HCR-TIME-001|deadline|timed out' -MinDurationMs 4000
 
-    $scratchName = "survival-$SessionToken.tmp"
-    $scratchPath = Join-Path (Split-Path -Parent $ProjectPath) "Saved\HaybaMCP\Survival\$scratchName"
-    $scratchScript = @"
+    # This script would write and remove a bounded project Saved/ file if it
+    # ever reached Execute. Both compatibility shapes must refuse it first;
+    # Test-CommandRejection then proves fresh nonce/listener/PID recovery.
+    $tier3FilesystemScript = @"
 from pathlib import Path
 import unreal
-p = Path(unreal.Paths.project_saved_dir()) / 'HaybaMCP' / 'Survival' / '$scratchName'
+p = Path(unreal.Paths.project_saved_dir()) / 'HaybaMCP' / 'Survival' / 'must-not-exist.tmp'
 p.parent.mkdir(parents=True, exist_ok=True)
-p.write_text('survival-scratch', encoding='utf-8')
-created = p.exists()
-p.unlink()
-print('__HAYBA_SCRATCH_CLEAN__' + str(created and not p.exists()))
+p.write_text('this line must never execute', encoding='utf-8')
 "@
-    # The exact same self-cleaning script is first refused without the Tier-3
-    # grant, then permitted with it. If the first guard regresses, the script
-    # still removes its own bounded Saved/ scratch file before the test fails.
     Test-CommandRejection -Name 'python_tier3_filesystem_denied' -Command 'python_run' -Params @{
-        script = $scratchScript
-    } -ErrorPattern 'allow_unsafe|filesystem|sandbox|Tier.?3'
+        script = $tier3FilesystemScript
+    } -ErrorPattern 'HCR-SANDBOX-001.*allow_unsafe_requested:false.*allow_unsafe_effective:false'
 
-    Test-CommandSuccess -Name 'python_tier3_scratch_allowed_and_removed' -Command 'python_run' -Params @{
-        script = $scratchScript
+    Test-CommandRejection -Name 'python_tier3_legacy_override_denied' -Command 'python_run' -Params @{
+        script = $tier3FilesystemScript
         allow_unsafe = $true
-    } -VerifyResponse {
-        param($response)
-        if (-not ([string]$response.data.stdout).Contains('__HAYBA_SCRATCH_CLEAN__True', [StringComparison]::Ordinal)) {
-            throw 'allowed scratch operation did not prove create/readback/remove'
-        }
-        if (Test-Path -LiteralPath $scratchPath) { throw 'scratch file remained after allowed filesystem probe' }
-    }
+    } -ErrorPattern 'HCR-SANDBOX-001.*allow_unsafe_requested:true.*allow_unsafe_effective:false'
 
     Test-CommandRejection -Name 'oversized_python_script' -Command 'python_run' -Params @{
         script = 'x' * (256KB + 1)

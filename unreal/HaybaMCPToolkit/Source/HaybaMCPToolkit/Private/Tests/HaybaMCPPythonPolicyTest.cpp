@@ -2,6 +2,7 @@
 
 #include "Misc/AutomationTest.h"
 #include "handlers/HaybaMCPPythonHandler.h"
+#include "HaybaMCPDeveloperSettings.h"
 #include "Dom/JsonObject.h"
 
 namespace
@@ -320,14 +321,58 @@ bool FHaybaMCPPythonPolicyBoundaryTest::RunTest(const FString& Parameters)
         TestTrue(
             *FString::Printf(TEXT("Tier-3 blocks detected primitive with neither grant: %s"), *Tier3Script),
             Handler.IsTier3PolicyBlockedForTests(Tier3Script, false, false));
+        TestTrue(
+            *FString::Printf(TEXT("Tier-3 ignores legacy allow_unsafe grant: %s"), *Tier3Script),
+            Handler.IsTier3PolicyBlockedForTests(Tier3Script, false, true));
+        TestTrue(
+            *FString::Printf(TEXT("Tier-3 ignores persisted plugin setting: %s"), *Tier3Script),
+            Handler.IsTier3PolicyBlockedForTests(Tier3Script, true, false));
+        TestTrue(
+            *FString::Printf(TEXT("Tier-3 ignores both retired grants: %s"), *Tier3Script),
+            Handler.IsTier3PolicyBlockedForTests(Tier3Script, true, true));
     }
-    const FString Tier3Script = Tier3Scripts[0];
-    TestFalse(
-        TEXT("per-call allow_unsafe grants only Tier-3"),
-        Handler.IsTier3PolicyBlockedForTests(Tier3Script, false, true));
-    TestFalse(
-        TEXT("plugin setting grants Tier-3"),
-        Handler.IsTier3PolicyBlockedForTests(Tier3Script, true, false));
+
+    // Handle() itself must refuse before PythonScriptPlugin access, and its
+    // compatibility facts must say the requested override had no effect.
+    const FHaybaHandlerResult LegacyOverride = RunPolicyProbe(
+        Handler, Tier3Scripts[0], true);
+    TestFalse(TEXT("legacy override is refused before embedded Python"), LegacyOverride.bOk);
+    TestTrue(TEXT("Tier-3 refusal uses stable sandbox code"),
+        LegacyOverride.ErrorMessage.Contains(TEXT("HCR-SANDBOX-001")));
+    TestTrue(TEXT("Tier-3 refusal reports requested compatibility field"),
+        LegacyOverride.ErrorMessage.Contains(TEXT("allow_unsafe_requested:true")));
+    TestTrue(TEXT("Tier-3 refusal reports compatibility field ineffective"),
+        LegacyOverride.ErrorMessage.Contains(TEXT("allow_unsafe_effective:false")));
+    TestTrue(TEXT("Tier-3 refusal disclaims arbitrary Python safety"),
+        LegacyOverride.ErrorMessage.Contains(TEXT("#392/#414")));
+
+    TSharedPtr<FJsonObject> MalformedLegacyParams = MakeShared<FJsonObject>();
+    MalformedLegacyParams->SetStringField(TEXT("script"), TEXT("print(1)"));
+    MalformedLegacyParams->SetStringField(TEXT("allow_unsafe"), TEXT("true"));
+    const FHaybaHandlerResult MalformedLegacy = Handler.Handle(
+        TEXT("python_run"), MalformedLegacyParams);
+    TestFalse(TEXT("non-boolean legacy field is refused before embedded Python"),
+        MalformedLegacy.bOk);
+    TestTrue(TEXT("malformed legacy field has stable input-policy code"),
+        MalformedLegacy.ErrorMessage.Contains(TEXT("HCR-INPUT-001")));
+    TestTrue(TEXT("malformed legacy field names its required boolean type"),
+        MalformedLegacy.ErrorMessage.Contains(TEXT("'allow_unsafe' must be a boolean")));
+    TestTrue(TEXT("malformed legacy field reports pre-execute phase"),
+        MalformedLegacy.ErrorMessage.Contains(TEXT("policy_phase:pre_execute")));
+    TestTrue(TEXT("malformed legacy field cannot acquire authority"),
+        MalformedLegacy.ErrorMessage.Contains(TEXT("allow_unsafe_effective:false")));
+
+    // Simulate an old INI value reaching the developer-settings CDO. It must
+    // remain a deserialization-only compatibility sink: even both legacy true
+    // values cannot alter the production predicate. Restore the shared CDO
+    // without saving so this native test never writes project config.
+    UHaybaMCPDeveloperSettings* DeveloperSettings = GetMutableDefault<UHaybaMCPDeveloperSettings>();
+    const bool bPreviousLegacySetting = DeveloperSettings->bAllowUnsafePython;
+    DeveloperSettings->bAllowUnsafePython = true;
+    TestTrue(TEXT("legacy persisted Tier-3 grant remains ineffective"),
+        Handler.IsTier3PolicyBlockedForTests(Tier3Scripts[0],
+            DeveloperSettings->bAllowUnsafePython, true));
+    DeveloperSettings->bAllowUnsafePython = bPreviousLegacySetting;
 
     return true;
 }
@@ -350,6 +395,19 @@ bool FHaybaMCPPythonOutputBoundaryTest::RunTest(const FString& Parameters)
     if (TestTrue(TEXT("bounded-output script executes"), LargeOutput.bOk)
         && TestTrue(TEXT("bounded-output response has data"), LargeOutput.Data.IsValid()))
     {
+        bool bAllowUnsafeRequested = false;
+        bool bAllowUnsafeEffective = true;
+        bool bAllowUnsafeDeprecated = false;
+        TestTrue(TEXT("legacy allow_unsafe request fact is present"),
+            LargeOutput.Data->TryGetBoolField(TEXT("allow_unsafe_requested"), bAllowUnsafeRequested));
+        TestTrue(TEXT("legacy allow_unsafe request is observed"), bAllowUnsafeRequested);
+        TestTrue(TEXT("allow_unsafe effective fact is present"),
+            LargeOutput.Data->TryGetBoolField(TEXT("allow_unsafe_effective"), bAllowUnsafeEffective));
+        TestFalse(TEXT("allow_unsafe is ineffective on successful scripts too"), bAllowUnsafeEffective);
+        TestTrue(TEXT("allow_unsafe deprecated fact is present"),
+            LargeOutput.Data->TryGetBoolField(TEXT("allow_unsafe_deprecated"), bAllowUnsafeDeprecated));
+        TestTrue(TEXT("allow_unsafe is explicitly deprecated"), bAllowUnsafeDeprecated);
+
         bool bStdOutTruncated = false;
         bool bStdErrTruncated = false;
         double StdOutDropped = 0;

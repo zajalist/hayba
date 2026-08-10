@@ -32,8 +32,17 @@ const cppTest = readFileSync(
   ),
   'utf8',
 );
+const privateDir = join(repo, 'unreal', 'HaybaMCPToolkit', 'Source', 'HaybaMCPToolkit', 'Private');
+const developerSettings = readFileSync(join(privateDir, 'HaybaMCPDeveloperSettings.h'), 'utf8');
+const runtimeSettings = readFileSync(join(privateDir, 'HaybaMCPSettings.cpp'), 'utf8');
+const runtimeSettingsHeader = readFileSync(join(privateDir, 'HaybaMCPSettings.h'), 'utf8');
+const settingsPanel = readFileSync(join(privateDir, 'HaybaMCPSettingsPanel.cpp'), 'utf8');
+const capabilitiesPanel = readFileSync(join(privateDir, 'HaybaMCPCapabilitiesPanel.cpp'), 'utf8');
 const connectorShared = readFileSync(join(here, '..', 'asset-sources', 'shared.ts'), 'utf8');
 const tsHandler = readFileSync(join(here, 'python-run.ts'), 'utf8');
+const packageReadme = readFileSync(join(repo, 'mcp-tools', 'hayba-mcp', 'README.md'), 'utf8');
+const securityPolicy = readFileSync(join(repo, 'SECURITY.md'), 'utf8');
+const crashPolicyAudit = readFileSync(join(repo, 'docs', 'audit', '2026-08-10-python-run-crash-policy.md'), 'utf8');
 
 function tsPairs(): string[] {
   return PYTHON_CRASH_RULES.flatMap((rule) => rule.patterns.map((pattern) => `${rule.code}\0${pattern}`)).sort();
@@ -238,12 +247,14 @@ describe('python_run native/TS crash policy contract', () => {
     expect(cpp).toContain('general safety for arbitrary native extension calls remains #392');
   });
 
-  it('keeps allow_unsafe scoped to the production Tier-3 predicate', () => {
-    expect(cpp).toContain('ShouldBlockTier3(Tier, bSettingAllows, bAllowUnsafeOverride)');
+  it('makes Tier-3 an unconditional pre-execute refusal', () => {
+    expect(cpp).toContain('if (ShouldBlockTier3(Tier))');
+    expect(cpp).toContain('return Tier == EPythonTier::Unsafe;');
     expect(cpp).toContain('policy_blocked [HCR-SANDBOX-001]');
     expect(cppTest).toContain('IsTier3PolicyBlockedForTests(Tier3Script, false, false)');
     expect(cppTest).toContain('IsTier3PolicyBlockedForTests(Tier3Script, false, true)');
     expect(cppTest).toContain('IsTier3PolicyBlockedForTests(Tier3Script, true, false)');
+    expect(cppTest).toContain('IsTier3PolicyBlockedForTests(Tier3Script, true, true)');
     for (const primitive of [
       'files.remove(target)',
       'files.unlink(target)',
@@ -262,7 +273,72 @@ describe('python_run native/TS crash policy contract', () => {
     ]) {
       expect(cppTest).toContain(primitive);
     }
-    expect(cpp).toContain('A detected filesystem or subprocess primitive is disabled by default.');
+    expect(cpp).toContain('allow_unsafe_effective:false');
+    expect(cpp).toContain('policy_phase:pre_execute');
+    expect(cpp).not.toContain('FHaybaMCPSettings::Get().bAllowUnsafePython');
+    expect(cpp.indexOf('if (ShouldBlockTier3(Tier))')).toBeLessThan(
+      cpp.indexOf('IPythonScriptPlugin* PythonPlugin = IPythonScriptPlugin::Get()'),
+    );
+  });
+
+  it('absorbs old persisted grants without exposing or mirroring authority', () => {
+    expect(developerSettings).toContain('UPROPERTY(Config, meta=(DeprecatedProperty');
+    expect(developerSettings).not.toContain(
+      'UPROPERTY(EditAnywhere, Config, Category="Security",\n        meta=(ToolTip="DANGER: Allow Tier-3 Python',
+    );
+    expect(runtimeSettings).not.toContain('bAllowUnsafePython');
+    expect(runtimeSettingsHeader).not.toContain('bAllowUnsafePython');
+    expect(settingsPanel).toContain(
+      'legacy allow_unsafe request field and old saved setting are accepted for compatibility but are ineffective',
+    );
+    expect(settingsPanel).not.toContain(
+      'BuildToggle(\n                                NSLOCTEXT("Hayba", "S.UnsafePython"',
+    );
+    expect(settingsPanel).toContain('does not claim arbitrary in-process Python safety (#392/#414)');
+    expect(capabilitiesPanel).toContain(
+      'Constrained embedded Unreal Python; Tier-3 host I/O is always refused. This is not process isolation (#392/#414).',
+    );
+    expect(capabilitiesPanel).not.toContain('Sandboxed Python escape hatch');
+  });
+
+  it('keeps public Tier-3 documentation compatibility-only and explicit about the remaining trust boundary', () => {
+    for (const [label, document] of [
+      ['package README', packageReadme],
+      ['security policy', securityPolicy],
+      ['crash-policy audit', crashPolicyAudit],
+    ] as const) {
+      expect(document, label).toContain('deprecated');
+      expect(document, label).toContain('ineffective');
+      expect(document, label).toContain('#412/#415');
+      expect(document, label).toContain('#392/#414');
+    }
+
+    expect(packageReadme).toContain('Tier-3 host I/O');
+    expect(packageReadme).toMatch(/always\s+refused before interpreter execution/);
+    expect(packageReadme).not.toContain('filesystem/subprocess (Tier 3) access is gated behind `allow_unsafe`');
+
+    expect(securityPolicy).toMatch(
+      /\| 3\s+\| Filesystem writes, subprocesses, sockets, and other host I\/O\s+\| Always refused pre-execute \|/,
+    );
+    expect(securityPolicy).not.toContain('Do **not** enable **Allow Tier 3 Python**');
+    expect(securityPolicy).not.toContain('| 3 | Tier 1+2 + arbitrary I/O, subprocess, sockets | Opt-in |');
+
+    expect(crashPolicyAudit).toContain('Supersession note (#411)');
+    expect(crashPolicyAudit).toContain('acceptance is retained here as historical context, but it is superseded');
+    expect(crashPolicyAudit).toContain('No scratch permission is expected');
+    expect(crashPolicyAudit).not.toContain('it may override the Tier-3');
+    expect(crashPolicyAudit).not.toContain('with `allow_unsafe:true` (permitted and');
+  });
+
+  it('rejects a non-boolean compatibility field before classification or interpreter access', () => {
+    expect(cpp).toContain('HCR-INPUT-001');
+    expect(cpp).toContain("matched 'allow_unsafe_type'");
+    expect(cpp).toContain("field 'allow_unsafe' must be a boolean when present");
+    expect(cppTest).toContain('MalformedLegacyParams->SetStringField(TEXT("allow_unsafe"), TEXT("true"))');
+    const typeGate = cpp.indexOf('!P->HasTypedField<EJson::Boolean>(TEXT("allow_unsafe"))');
+    expect(typeGate).toBeGreaterThan(-1);
+    expect(typeGate).toBeLessThan(cpp.indexOf('EPythonTier Tier = ClassifyScript(Code);'));
+    expect(typeGate).toBeLessThan(cpp.indexOf('IPythonScriptPlugin* PythonPlugin = IPythonScriptPlugin::Get()'));
   });
 
   it('bounds bytecode cooperatively and always restores the trace hook', () => {
@@ -323,9 +399,10 @@ describe('python_run native/TS crash policy contract', () => {
     expect(cppTest).toContain('# import inspect as probe');
   });
 
-  it('does not hide trusted connector source inside forbidden dynamic exec', () => {
-    expect(connectorShared).toContain('const script = body;');
-    expect(connectorShared).not.toContain('const script = `exec(');
+  it('does not route connector host I/O back through embedded Python', () => {
+    expect(connectorShared).not.toContain("executeCommand('python_run'");
+    expect(connectorShared).not.toContain('const script = body;');
+    expect(connectorShared.toLowerCase()).toContain('native asset_import must satisfy #415');
     expect(tsHandler).not.toContain('export function wrapScriptForPrintRedirect');
   });
 });

@@ -397,19 +397,18 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                         BuildSection(
                             NSLOCTEXT("Hayba", "Settings.Sec.Python", "Python"),
                             NSLOCTEXT("Hayba", "Settings.Sec.Python.TT",
-                                "Controls what the agent's Python escape hatch (python_run) is allowed to do.\n\n"
-                                "Tier 1: pure UE editor scripting (unreal.* APIs). Always allowed.\n"
-                                "Tier 2: same as Tier 1 + read-only filesystem under the project. Always allowed.\n"
-                                "Tier 3: arbitrary code, full filesystem, subprocess, socket. Opt-in below."),
-                            BuildToggle(
-                                NSLOCTEXT("Hayba", "S.UnsafePython",
-                                    "Allow Tier 3 Python (filesystem, subprocess, socket) — DANGEROUS"),
-                                NSLOCTEXT("Hayba", "S.UnsafePython.TT",
-                                    "DANGER: turning this on lets the agent shell out, write anywhere on disk, open sockets, and import arbitrary modules.\n\n"
-                                    "Equivalent to giving the agent full code execution on your machine. Reserve for trusted local workflows where the alternative is even worse (e.g., scripting external tooling).\n\n"
-                                    "Default: off. Tier 3 calls return a permission error when this is off."),
-                                [](){ return FHaybaMCPSettings::Get().bAllowUnsafePython; },
-                                [](bool b){ FHaybaMCPSettings::Get().bAllowUnsafePython = b; })
+                                "python_run is an Unreal-only embedded scripting principal.\n\n"
+                                "Tier 1: bounded Unreal editor scripting.\n"
+                                "Tier 2: Unreal mutations guarded by the normal MCP policy.\n"
+                                "Tier 3: host filesystem, subprocess, and network access is always refused."),
+                            SNew(STextBlock)
+                                .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("NormalText"))
+                                .AutoWrapText(true)
+                                .Text(NSLOCTEXT("Hayba", "S.PythonBoundary",
+                                    "Host access from embedded python_run is permanently disabled. "
+                                    "The legacy allow_unsafe request field and old saved setting are accepted for compatibility but are ineffective. "
+                                    "Use a typed brokered MCP tool (#412/#415) for supported host operations. "
+                                    "This boundary reduces exposure; it does not claim arbitrary in-process Python safety (#392/#414)."))
                         )
                     ]
 

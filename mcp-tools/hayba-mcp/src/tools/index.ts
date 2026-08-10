@@ -3662,7 +3662,7 @@ export const CODE_MODE_DESCRIPTORS: ToolDescriptor[] = [
         .boolean()
         .optional()
         .describe(
-          'Override only the Tier 3 filesystem/subprocess policy (DANGEROUS). It cannot bypass crash, deadlock, editor-lifetime, or execution-deadline guards.',
+          'Deprecated compatibility field; accepted but always ineffective. Embedded python_run permanently refuses Tier 3 host filesystem, subprocess, and network access. Use typed brokered tools (#412/#415).',
         ),
     },
     wireSchema: {
@@ -3672,7 +3672,7 @@ export const CODE_MODE_DESCRIPTORS: ToolDescriptor[] = [
         .boolean()
         .optional()
         .describe(
-          'Override only the Tier 3 filesystem/subprocess policy (DANGEROUS). It cannot bypass crash, deadlock, editor-lifetime, or execution-deadline guards.',
+          'Deprecated compatibility field; accepted but always ineffective. Embedded python_run permanently refuses Tier 3 host filesystem, subprocess, and network access. Use typed brokered tools (#412/#415).',
         ),
     },
     cost: 'high',

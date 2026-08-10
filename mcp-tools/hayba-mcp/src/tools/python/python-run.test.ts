@@ -88,14 +88,35 @@ describe('python_run crash guard + spill', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it('keeps allow_unsafe limited to Tier-3 filesystem/subprocess policy', async () => {
+  it('refuses direct Tier-3 source before UE even with legacy allow_unsafe', async () => {
     const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
-    send.mockResolvedValueOnce({ ok: true, data: { ok: true, stdout: 'allowed by setting' } });
     const r = await pythonRunHandler({ script: 'open("C:/Temp/hayba.txt", "w")', allow_unsafe: true }, {} as never);
+    expect(r.isError).toBe(true);
+    const payload = JSON.parse(r.content[0].text);
+    expect(payload.policy_code).toBe('HCR-SANDBOX-001');
+    expect(payload.policy_phase).toBe('pre_execute');
+    expect(payload.allow_unsafe_requested).toBe(true);
+    expect(payload.allow_unsafe_effective).toBe(false);
+    expect(payload.allow_unsafe_deprecated).toBe(true);
+    expect(payload.retry_with_allow_unsafe).toBeUndefined();
+    expect(payload.tracking_issues).toEqual(['#392', '#414']);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('accepts but strips allow_unsafe from a non-Tier-3 compatibility request', async () => {
+    const { pythonRunHandler } = await import('./python-run.js');
+    send.mockClear();
+    setDefaultSender(send);
+    send.mockResolvedValueOnce({ ok: true, data: { ok: true, stdout: 'bounded' } });
+    const r = await pythonRunHandler({ script: 'print(1)', allow_unsafe: true }, {} as never);
     expect(r.isError).toBeFalsy();
-    expect(send).toHaveBeenCalledWith('python_run', expect.objectContaining({ allow_unsafe: true }), expect.anything());
+    expect(send).toHaveBeenCalledWith('python_run', { script: 'print(1)' }, expect.anything());
+    const payload = JSON.parse(r.content[0].text);
+    expect(payload.allow_unsafe_requested).toBe(true);
+    expect(payload.allow_unsafe_effective).toBe(false);
+    expect(payload.allow_unsafe_deprecated).toBe(true);
   });
 
   it('preserves an authoritative native policy code and recovery response', async () => {
@@ -107,11 +128,15 @@ describe('python_run crash guard + spill', () => {
       'Safe alternative: use a typed tool. Retry unchanged: forbidden.';
     send.mockResolvedValueOnce({ ok: false, error: nativeMessage });
 
-    const r = await pythonRunHandler({ script: 'open("C:/Temp/probe.txt", "w")' }, {} as never);
+    // Alias expansion is authoritative in native C++; the sidecar direct-source
+    // mirror intentionally lets this spelling reach the mocked native seam.
+    const r = await pythonRunHandler({ script: 'import os as files\nfiles.remove(target)' }, {} as never);
     const payload = JSON.parse(r.content[0].text);
     expect(payload.policy_code).toBe('HCR-SANDBOX-001');
     expect(payload.retry_unchanged).toBe('forbidden');
-    expect(payload.retry_with_allow_unsafe).toBe('permitted_after_review');
+    expect(payload.allow_unsafe_effective).toBe(false);
+    expect(payload.allow_unsafe_deprecated).toBe(true);
+    expect(payload.retry_with_allow_unsafe).toBeUndefined();
     expect(payload.error).toContain('Safe alternative:');
   });
 

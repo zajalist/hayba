@@ -17,6 +17,91 @@ import { TOOL_ALIASES } from '../tool-aliases.js';
  */
 const STDOUT_SPILL_THRESHOLD = 12_000;
 
+// Mirror the native Tier-3 classifier for immediate sidecar feedback. The C++
+// handler remains authoritative because its bounded alias expansion can see
+// indirect spellings that this direct-source mirror cannot. Keep this list in
+// parity with FHaybaMCPPythonHandler::ClassifyScript.
+const TIER3_SOURCE_PATTERNS = [
+  'subprocess',
+  'os.system',
+  'os.popen',
+  'os.remove(',
+  'os.unlink(',
+  'os.rename(',
+  'os.renames(',
+  'os.replace(',
+  'os.mkdir(',
+  'os.makedirs(',
+  'os.rmdir(',
+  'os.removedirs(',
+  'os.truncate(',
+  'os.chmod(',
+  'os.chown(',
+  'os.lchown(',
+  'os.link(',
+  'os.symlink(',
+  'os.mknod(',
+  '.write_text(',
+  '.write_bytes(',
+  '.unlink(',
+  '.rename(',
+  '.replace(',
+  '.mkdir(',
+  '.rmdir(',
+  '.touch(',
+  '.chmod(',
+  '.lchmod(',
+  '.symlink_to(',
+  '.hardlink_to(',
+  'open(',
+  '__import__',
+  'eval(',
+  'compile(',
+  'shutil',
+  'importsocket',
+  'socket.socket',
+] as const;
+
+function compactPythonPolicySource(script: string): string {
+  return script
+    .replace(/\\\r?\n/g, '')
+    .replace(/\r?\n/g, ';')
+    .replace(/"/g, "'")
+    .replace(/\s/g, '')
+    .toLowerCase();
+}
+
+function findDirectTier3Pattern(script: string): string | undefined {
+  const compact = compactPythonPolicySource(script);
+  return TIER3_SOURCE_PATTERNS.find((pattern) => compact.includes(compactPythonPolicySource(pattern)));
+}
+
+function tier3RefusalFacts(allowUnsafeRequested: boolean): Record<string, unknown> {
+  return {
+    policy_code: 'HCR-SANDBOX-001',
+    matched_rule: 'tier_3_filesystem_or_subprocess',
+    tier: 3,
+    policy_phase: 'pre_execute',
+    allow_unsafe_requested: allowUnsafeRequested,
+    allow_unsafe_effective: false,
+    allow_unsafe_deprecated: true,
+    retry_unchanged: 'forbidden',
+    safety_boundary: 'classification_only_not_process_isolation',
+    tracking_issues: ['#392', '#414'],
+  };
+}
+
+function tier3RefusalMessage(allowUnsafeRequested: boolean): string {
+  return (
+    "python_run policy_blocked [HCR-SANDBOX-001]: matched 'tier_3_filesystem_or_subprocess'. " +
+    'Tier-3 host filesystem, subprocess, and network access is unavailable from embedded python_run. ' +
+    `Facts: tier:3, policy_phase:pre_execute, allow_unsafe_requested:${allowUnsafeRequested}, ` +
+    'allow_unsafe_effective:false, allow_unsafe_deprecated:true. ' +
+    'Safe alternative: use a typed brokered MCP tool (#412/#415). Retry unchanged: forbidden. ' +
+    'This classification boundary does not claim arbitrary in-process Python safety; isolation remains tracked by #392/#414.'
+  );
+}
+
 export const meta: HaybaToolMeta = {
   cost: 'high',
   effects: ['runs_arbitrary_python', 'unknown_side_effects'],
@@ -50,8 +135,8 @@ export const pythonRunHandler: ToolHandler = async (args) => {
       },
     );
   }
-  // Crash guards are non-bypassable. `allow_unsafe` controls Tier-3 policy;
-  // it is not permission to deadlock or terminate the editor.
+  // All embedded-Python policy is non-bypassable. `allow_unsafe` remains in
+  // the wire schema only so older callers receive a stable, explicit refusal.
   const hit = scanPythonForCrashers(script);
   if (hit) {
     return errorResult(crashGuardMessage(hit), {
@@ -62,6 +147,14 @@ export const pythonRunHandler: ToolHandler = async (args) => {
       retry_unchanged: 'forbidden',
     });
   }
+  const allowUnsafeRequested = parsed.data.allow_unsafe === true;
+  const tier3Pattern = findDirectTier3Pattern(script);
+  if (tier3Pattern) {
+    return errorResult(tier3RefusalMessage(allowUnsafeRequested), {
+      ...tier3RefusalFacts(allowUnsafeRequested),
+      matched_primitive: tier3Pattern,
+    });
+  }
   try {
     // Send the raw script. The UE handler now captures print()/stderr itself
     // (it injects a capturing print into the user code's exec globals) and
@@ -70,11 +163,21 @@ export const pythonRunHandler: ToolHandler = async (args) => {
     // — see the 2026-06-18 python_run stdout investigation. The old exported
     // print wrapper was removed: it hid source in exec(compile(...)), directly
     // conflicting with the authoritative HCR-DYNAMIC-001 boundary.
-    const payload: Record<string, unknown> = {
-      ...(parsed.data as Record<string, unknown>),
-    };
+    // Never forward the deprecated compatibility field as authority. Native
+    // C++ independently refuses Tier 3 for direct/stale callers.
+    const payload: Record<string, unknown> = { script };
     const data = await executeCommand<Record<string, unknown>>('python_run', payload);
-    const text = JSON.stringify(data, null, 2);
+    // The sidecar intentionally strips the compatibility field before the
+    // native call, so restore truthful caller-observation facts on the reply.
+    // These are facts about authority, not a claim that arbitrary embedded
+    // Python is process-isolated (#392/#414).
+    const responseData = {
+      ...data,
+      allow_unsafe_requested: allowUnsafeRequested,
+      allow_unsafe_effective: false,
+      allow_unsafe_deprecated: true,
+    };
+    const text = JSON.stringify(responseData, null, 2);
     if (text.length > STDOUT_SPILL_THRESHOLD) {
       // Auto-spill: write the full payload to a temp file and return a head +
       // path so large dumps (pin lists, asset inventories) survive intact
@@ -108,25 +211,16 @@ export const pythonRunHandler: ToolHandler = async (args) => {
       | undefined;
     const nativeError = uePayload?.error ?? (e instanceof Error ? e.message : String(e));
     if (uePayload?.data?.tier === 3 && !nativeError.includes('[HCR-')) {
-      return errorResult(
-        `python_run policy_blocked [HCR-SANDBOX-001]: matched 'tier_3_filesystem_or_subprocess'. ` +
-          `A detected filesystem or subprocess primitive is disabled by default. Safe alternative: use a typed MCP tool, or set ` +
-          `bAllowUnsafePython=true / pass allow_unsafe:true after reviewing the script. ` +
-          `Retry unchanged: forbidden; underlying error: ${nativeError}`,
-        {
-          policy_code: 'HCR-SANDBOX-001',
-          tier: 3,
-          retry_unchanged: 'forbidden',
-          retry_with_allow_unsafe: 'permitted_after_review',
-        },
-      );
+      return errorResult(`${tier3RefusalMessage(allowUnsafeRequested)} Underlying error: ${nativeError}`, {
+        ...tier3RefusalFacts(allowUnsafeRequested),
+      });
     }
     const policyCode = /\[(HCR-[A-Z]+-\d{3})\]/.exec(nativeError)?.[1];
     if (policyCode) {
       return errorResult(nativeError, {
         policy_code: policyCode,
         retry_unchanged: 'forbidden',
-        ...(policyCode === 'HCR-SANDBOX-001' ? { tier: 3, retry_with_allow_unsafe: 'permitted_after_review' } : {}),
+        ...(policyCode === 'HCR-SANDBOX-001' ? tier3RefusalFacts(allowUnsafeRequested) : {}),
       });
     }
     return errorResult(`python_run error: ${nativeError}`);
