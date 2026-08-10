@@ -185,7 +185,10 @@ export function iniToConventions(ini: string): HaybaConventions {
     confirmBeforeOverwrite: flat['workflow.confirmBeforeOverwrite'] !== 'false',
     preferredLandscapeResolution: (parseInt(flat['workflow.preferredLandscapeResolution'], 10) || 1009) as 1009 | 2017 | 4033,
     defaultHeightmapFormat: (flat['workflow.defaultHeightmapFormat'] as 'r16' | 'png') || 'r16',
-    autoOpenInGaeaAfterBake: flat['workflow.autoOpenInGaeaAfterBake'] !== 'false',
+    // Unlike confirmBeforeOverwrite (defaults true), every preset defaults this
+    // to false — so a missing key (e.g. a hand-authored ini without the line)
+    // must default to false too, not silently flip the workflow on.
+    autoOpenInGaeaAfterBake: flat['workflow.autoOpenInGaeaAfterBake'] === 'true',
   };
 
   return { version: 1, preset: preset as PresetName, folders, naming, workflow };
