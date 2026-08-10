@@ -11,6 +11,7 @@ public:
     virtual FHaybaHandlerResult Handle(const FString& Cmd, const TSharedPtr<FJsonObject>& Params) override;
 private:
     FHaybaHandlerResult AssetSearch(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult AssetRegistryQuery(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult AssetGetInfo(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult AssetImport(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult AssetDuplicate(const TSharedPtr<FJsonObject>& P);

@@ -2470,6 +2470,31 @@
       "has_ts_wrapper": false,
       "notes": "Name and actor count of the level currently open. The cheapest way to confirm which level you are actually editing before making changes."
     },
+    "asset_registry_query": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPAssetHandler::Handle",
+      "params": [
+        { "name": "class_filter", "type": "string", "required": false },
+        { "name": "name_contains", "type": "string", "required": false },
+        { "name": "path_prefix", "type": "string", "required": false },
+        { "name": "recursive", "type": "boolean", "required": false },
+        { "name": "limit", "type": "integer", "required": false },
+        { "name": "offset", "type": "integer", "required": false }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          { "name": "ok", "type": "boolean" },
+          { "name": "assets", "type": "array" },
+          { "name": "total", "type": "integer" },
+          { "name": "has_more", "type": "boolean" },
+          { "name": "next_offset", "type": "integer" }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Native, read-only AssetRegistry discovery with class/name/path filters and deterministic bounded pagination. Returns package paths, not object paths."
+    },
     "asset_search": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPAssetHandler::Handle",

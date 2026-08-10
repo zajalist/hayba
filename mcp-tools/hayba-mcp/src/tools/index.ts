@@ -38,6 +38,11 @@ import {
   meta as editorGetStateMeta,
   schema as editorGetStateSchema,
 } from './editor/editor-get-state.js';
+import {
+  assetRegistryQueryHandler,
+  meta as assetRegistryQueryMeta,
+  schema as assetRegistryQuerySchema,
+} from './editor/asset-registry-query.js';
 import { editorStartPieHandler, meta as pieMeta } from './editor/editor-start-pie.js';
 import { editorStreamLogHandler, meta as streamLogMeta } from './editor/editor-stream-log.js';
 import { handleWaitForShaders, meta as waitForShadersMeta } from './wait-for-shaders.js';
@@ -3183,9 +3188,9 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   ...actorPyDescriptors.map((d) => toToolDescriptor(d)),
 
   // ── Editor-introspection & observability P0 tools (Phase 2 Wave 2) ────────
-  // Net-new editor/reflection/asset-registry read + gating tools, generated as
-  // UE Python via the pyTemplate factory. See src/tools/editor/editor-py-tools.ts
-  // for the catalog overlap/skip analysis.
+  // Editor/reflection observability and gating tools. Safety-critical editor
+  // state and AssetRegistry discovery are native; the remaining descriptors
+  // use the Python factory. See editor/editor-py-tools.ts for overlap notes.
   {
     name: 'editor_get_state',
     description:
@@ -3195,6 +3200,16 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     cost: 'low',
     returns: '{ok, map, pie_running, selection_count, dirty_packages[], dirty_count}',
     schema: editorGetStateSchema.shape,
+  },
+  {
+    name: 'asset_registry_query',
+    description:
+      'Native read-only AssetRegistry query by exact class, asset-name substring, and/or content-path prefix, with deterministic pagination.',
+    meta: assetRegistryQueryMeta,
+    handler: assetRegistryQueryHandler,
+    cost: 'low',
+    returns: '{ok, assets:[{name,path,class}], total, has_more, next_offset}',
+    schema: assetRegistryQuerySchema.shape,
   },
   ...editorPyDescriptors.map((d) => toToolDescriptor(d)),
 

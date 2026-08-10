@@ -4,6 +4,9 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 
 ## [Unreleased]
 
+### Fixed
+- `asset_registry_query` now uses a native, read-only AssetRegistry handler instead of blocked dynamic Python reflection, with deterministic bounded pagination, strict input checks, and fail-closed response validation.
+
 ### Added
 - Production audio authoring and verification: typed create/inspect/set/save
   support for SoundClass, SoundMix class overrides, SoundConcurrency,

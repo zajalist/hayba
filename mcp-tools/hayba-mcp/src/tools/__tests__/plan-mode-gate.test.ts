@@ -67,4 +67,9 @@ describe('Plan Mode gate covers every non-retryable command', () => {
         `does not change state, take it out of NON_IDEMPOTENT — but not both).`,
     ).toEqual([]);
   });
+
+  it.runIf(available)('keeps native asset registry discovery read-only and retry-safe', () => {
+    expect(parseGatedCommands().has('asset_registry_query')).toBe(false);
+    expect(NON_IDEMPOTENT.has('asset_registry_query')).toBe(false);
+  });
 });
