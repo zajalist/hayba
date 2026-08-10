@@ -7,7 +7,7 @@ contract, not a claim that the remaining handlers have been audited.
 
 The common boundary is **Parse → Preflight → Execute → Verify → Shape**. An
 error ending in “nothing was changed” is issued before `Modify()`, world
-replacement, graph insertion, reflection copy, or dirtying. Once execution has
+replacement, graph insertion, bounded scalar copy, or dirtying. Once execution has
 started, the response carries observed dirty/save/verification facts; it does
 not disguise a persistence or readback failure as a clean rejection.
 
@@ -59,8 +59,9 @@ explicit guarded compile command owns translation and persistence.
 
 | Commands | First mutation | Preflight | Verification / recovery |
 |---|---|---|---|
-| `data_create` | `AssetTools.CreateAsset` | Required fields, UDataAsset subclass, valid `/Game` target, collision guard | Returns actual object path, `saved`, and `dirty`; a failed save is explicitly an in-memory asset. |
-| `data_set` | `Asset->Modify()` followed by one completed property copy | Target must be a DataAsset; property must be editable/persisted. JSON is bounded to 4,096 values, 1,024 array items, 256 object fields and depth 32 before conversion runs against a fresh same-class transient object containing a copy of the old property value. | Post-edit value is compared to staging and serialized as `observed_value`; `verified`, real `saved`, `dirty`, and recovery text distinguish coercion and persistence failure. A conversion failure cannot partially resize/write the live property. |
+| `data_create` | `AssetTools.CreateAsset` | Required fields, current concrete UDataAsset subclass, valid `/Game` target, collision guard | Creation captures only stable path/class strings plus a weak pointer before `MarkPackageDirty`. No raw creation/class pointer crosses that broadcast. The object is freshly resolved by exact identity before `SaveLoadedAsset`, then freshly resolved again because save is a second callback boundary. `dirty_marked`, `pre_save_re_resolved`, `save_attempted`, conditional `saved`, `target_re_resolved`, and `dirty_known` expose each seam. Any unproven dirty/save/identity fact emits nested `ok:false` with `data_create_unknown_outcome`, so response shaping cannot claim success. |
+| `data_get` | None | The `/Game` package/object path is limited to 1,024 characters and lexically validated before object load. Reflection is a purpose-built bounded walk: at most 256 top-level properties, 4,096 JSON values, 1,024 items **and 1,024 physical slots** per container, 256 fields per struct, depth 16, 16,384 characters per string and 262,144 string characters total. Set/map `GetMaxIndex()` is checked before every iterator: `Num()` alone is not a traversal bound for sparse storage, and UE's iterators scan the holes. It never calls `UPropertyToJsonValue`, `ExportTextItem`, a custom struct converter or `FText::ToString`, because each can materialize arbitrary output before the router can trim it. | Partial reads are explicit: `reflection_complete`, `reflection_truncated`, examined/returned/omitted-at-least counts, `omitted_count_exact`, bounded omitted names, unsupported count, first limit reason and the active limits travel with the property bag. Integral values inside the exact IEEE-754 range are JSON numbers; larger signed/unsigned values are exact decimal strings and counted by `large_integers_as_strings`, never rounded or wrapped. A sparse set/map beyond the physical-slot cap is omitted with `reflection_truncated:true`, rather than scanned. Soft, weak and lazy wrapper references are deliberately unsupported/partial: reading them through `FObjectPropertyBase` would turn a valid unloaded path into a false null. Accessor-backed properties are likewise unsupported/partial: raw storage can differ from the logical getter value, while invoking the getter would execute arbitrary native code. |
+| `data_set` | One completed, bounded scalar property copy | Path and property name are bounded and lexically validated before load or `FindFProperty`. Only **exact built-in** numeric, enum, bool, string, and name field classes with `ArrayDim == 1` and no native getter/setter are accepted; custom subclasses and accessor-backed fields cannot enter. JSON kinds, finite/integral ranges, enum membership, exact IEEE integer encoding, and string/name limits are validated before staging. Large signed/unsigned integers use canonical decimal strings; enum names resolve by index then value so a legal underlying `-1` is not confused with failure, and bounded authored `A|B` flag lists are split and checked token by token. Assignment uses direct typed property setters—never `JsonValueToUProperty`, `ImportText`, or another extensible converter. Fixed arrays, dynamic containers, every struct, object/interface/delegate/optional/text/field-path value, `CPF_SkipSerialization`, instanced references and every other extensible type are refused. Rejecting all structs is intentional: `UUserDefinedStruct` has no `CppStructOps`, but `InitializeStruct` still copies its mutable `DefaultInstance` into staging. Abstract, transient, deprecated and superseded asset classes are refused too. | Inline scalar storage is capped at 1 MiB and the existing scalar passes bounded reflection before `CopyCompleteValue`. Staging uses `FDefaultConstructedPropertyElement`; it never constructs the attacker-selected DataAsset class. The router explicitly skips the global editor transaction, and the handler skips `Modify`, `PreEditChange`, `PostEditChangeProperty`, deep `Identical`, and implicit `SaveLoadedAsset`. Before `MarkPackageDirty`, it captures only bounded intended JSON plus weak/path/class identity, then leaves the scope containing every UObject/class/property/value pointer and staged destructor. Because dirty marking broadcasts arbitrary callbacks, post-broadcast verification re-loads the object by path, checks exact class identity, re-finds/re-audits the property (including the accessor refusal) and performs a fresh bounded read. `copy_completed` states only that the scalar copy ran. `target_re_resolved`, `dirty_marked`, `dirty_known`, optional `dirty`, and `verified` expose each later seam. If any is untrustworthy, nested `ok:false` plus `data_set_unknown_outcome` makes the top-level response `unknown_outcome` even in ErrorsOnly mode while preserving observed data and mandatory readback recovery. `save_requested:false` never pretends persistence was attempted. |
 
 ## Regression evidence
 
@@ -69,6 +70,23 @@ staging and schema checks precede `Modify()`, world preflights precede map
 replacement, the level sanitizer has an explicit restore path, post-compile CDO
 verification re-resolves the class, and `UpdateMaterialFunction` has exactly one
 guarded call site. Mutating any of those boundaries makes the focused test fail.
+
+`Hayba.MCP.DataAsset.ReadWritePreflight` also uses disposable in-memory assets
+to prove abstract classes, soft-object graphs, all structs, `SkipSerialization`
+fields and wrong JSON kinds are refused without dirtying or changing their
+target. An unloaded soft path proves `data_get` reports wrapper references as
+partial rather than false null. A positive scalar write proves the direct bool
+setter and fresh verification path. Real sparse script set/map
+fixtures (512 live entries behind 2,048 slots) exercise the exact physical-slot
+guard used before reflection iteration; scalar-only `data_set` has no container
+staging path. Test-only calls through the production parser/resolver prove exact
+`UINT64_MAX`, overflow refusal, a legitimate enum value of `-1`, and combined
+authored enum flags without an `INDEX_NONE` ambiguity. A package-dirty callback
+fixture changes a scalar during `PackageMarkedDirtyEvent` and proves the result
+uses fresh post-callback resolution/readback rather than stale pre-callback
+verification. Its result is passed through `MakeOkResponse` under ErrorsOnly to
+prove nested failure becomes top-level `ok:false`, `unknown_outcome`, preserves
+observed data and retains mandatory recovery. The test writes no package.
 
 Live dirty-count and object-state discrimination still belongs in the tagged
 editor survival run. Never run it against an untagged/user-owned editor.

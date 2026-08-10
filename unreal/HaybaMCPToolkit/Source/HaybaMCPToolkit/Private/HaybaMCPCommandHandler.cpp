@@ -17,7 +17,6 @@
 #include "HaybaMCPMemoryPanel.h"
 #include "HaybaMCPDiffPanel.h"
 #include "Json.h"
-#include "Async/Async.h"
 #include "Editor.h"
 #include "EngineUtils.h"
 #include "GameFramework/Actor.h"
@@ -220,6 +219,19 @@ namespace
             Signals.MutationStatus = IsDestructiveCommand(Operation)
                 ? EHaybaMCPMutationStatus::Unknown
                 : EHaybaMCPMutationStatus::None;
+        }
+
+        bool bSessionSuspect = false;
+        if (Data->TryGetBoolField(TEXT("session_suspect"), bSessionSuspect)
+            && bSessionSuspect)
+        {
+            Signals.bOperationSucceeded = false;
+            Signals.bStructuredException = true;
+            Signals.FailureKind = EHaybaMCPFailureKind::SessionSuspect;
+            Signals.Code = TEXT("structured_exception");
+            Signals.Error = LogicalFailureDiagnostic(Data);
+            Signals.Phase = EHaybaMCPCommandPhase::Execute;
+            Signals.MutationStatus = EHaybaMCPMutationStatus::Unknown;
         }
 
         FString Status;
@@ -504,6 +516,14 @@ bool FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(const FString& Cmd)
     // buffer here: that would silently destroy unrelated undo history.
     if (Cmd == TEXT("ui_compile_widget")) return false;
 
+    // data_set deliberately performs one bounded scalar copy without Modify(),
+    // editor property notifications, or persistence. A global transaction would
+    // serialize the entire attacker-selected DataAsset before its handler runs,
+    // defeating that crash-safety boundary through unrelated properties or
+    // custom serialization. The explicit asset_save command is the persistence
+    // boundary once the caller has inspected data_set's bounded readback.
+    if (Cmd == TEXT("data_set")) return false;
+
     return true;
 }
 
@@ -518,13 +538,10 @@ static void MaybeShowPlanModePrompt()
 
     S.bShownPlanModePrompt = true;
     S.Save();
-    AsyncTask(ENamedThreads::GameThread, []()
-    {
-        FNotificationInfo Info(NSLOCTEXT("Hayba", "PlanModePrompt",
-            "You've been using Plan Mode for a while — consider disabling it from the toolbar if you trust your workflow."));
-        Info.ExpireDuration = 10.f;
-        FSlateNotificationManager::Get().AddNotification(Info);
-    });
+    FNotificationInfo Info(NSLOCTEXT("Hayba", "PlanModePrompt",
+        "You've been using Plan Mode for a while — consider disabling it from the toolbar if you trust your workflow."));
+    Info.ExpireDuration = 10.f;
+    FSlateNotificationManager::Get().AddNotification(Info);
 }
 
 static EHaybaNodeSemantic SemanticFromString(const FString& S)
@@ -595,16 +612,13 @@ static void PushSceneGraphToPanel(const TSharedPtr<FJsonObject>& Data)
         }
     }
 
-    AsyncTask(ENamedThreads::GameThread, [Nodes = MoveTemp(Nodes), Edges = MoveTemp(Edges)]()
+    if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
     {
-        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        if (TSharedPtr<SHaybaMCPSceneMapPanel> Panel = M->SceneMapPanel.Pin())
         {
-            if (TSharedPtr<SHaybaMCPSceneMapPanel> Panel = M->SceneMapPanel.Pin())
-            {
-                Panel->LoadSceneGraph(Nodes, Edges);
-            }
+            Panel->LoadSceneGraph(Nodes, Edges);
         }
-    });
+    }
 }
 
 /** Push findings produced OUTSIDE the editor into the Validation panel.
@@ -652,17 +666,14 @@ static void PushExternalFindingsToPanel(const TSharedPtr<FJsonObject>& Data)
     bool bAppend = false;
     Data->TryGetBoolField(TEXT("append"), bAppend);
 
-    AsyncTask(ENamedThreads::GameThread, [Issues = MoveTemp(Issues), bAppend]()
+    if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
     {
-        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        if (TSharedPtr<SHaybaMCPValidationPanel> Panel = M->ValidationPanel.Pin())
         {
-            if (TSharedPtr<SHaybaMCPValidationPanel> Panel = M->ValidationPanel.Pin())
-            {
-                if (!bAppend) Panel->Clear();
-                for (const auto& I : Issues) Panel->AddIssue(I);
-            }
+            if (!bAppend) Panel->Clear();
+            for (const auto& I : Issues) Panel->AddIssue(I);
         }
-    });
+    }
 }
 
 static void PushPhysicsResultsToPanel(const TSharedPtr<FJsonObject>& Data)
@@ -687,33 +698,27 @@ static void PushPhysicsResultsToPanel(const TSharedPtr<FJsonObject>& Data)
             Issues.Add(MoveTemp(I));
         }
     }
-    AsyncTask(ENamedThreads::GameThread, [Issues = MoveTemp(Issues)]()
+    if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
     {
-        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        if (TSharedPtr<SHaybaMCPValidationPanel> Panel = M->ValidationPanel.Pin())
         {
-            if (TSharedPtr<SHaybaMCPValidationPanel> Panel = M->ValidationPanel.Pin())
-            {
-                Panel->Clear();
-                for (const auto& I : Issues) Panel->AddIssue(I);
-            }
+            Panel->Clear();
+            for (const auto& I : Issues) Panel->AddIssue(I);
         }
-    });
+    }
 }
 
 static void PushMemoryResultsToPanel(const TSharedPtr<FJsonObject>& Data)
 {
     // The Semantic Library now reads the PLUMB stores directly; a memory_query
     // just asks it to refresh from disk on the game thread.
-    AsyncTask(ENamedThreads::GameThread, []()
+    if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
     {
-        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        if (TSharedPtr<SHaybaMCPMemoryPanel> Panel = M->MemoryPanel.Pin())
         {
-            if (TSharedPtr<SHaybaMCPMemoryPanel> Panel = M->MemoryPanel.Pin())
-            {
-                Panel->RefreshLibrary();
-            }
+            Panel->RefreshLibrary();
         }
-    });
+    }
 }
 
 /**
@@ -912,16 +917,13 @@ static void PushDiffEntries(const FString& Cmd, const TSharedPtr<FJsonObject>& P
 
     if (Entries.IsEmpty()) return;
 
-    AsyncTask(ENamedThreads::GameThread, [Entries = MoveTemp(Entries)]()
+    if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
     {
-        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        if (TSharedPtr<SHaybaMCPDiffPanel> Panel = M->DiffPanel.Pin())
         {
-            if (TSharedPtr<SHaybaMCPDiffPanel> Panel = M->DiffPanel.Pin())
-            {
-                for (const auto& E : Entries) Panel->AddEntry(E);
-            }
+            for (const auto& E : Entries) Panel->AddEntry(E);
         }
-    });
+    }
 }
 
 static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject>& Params)
@@ -955,16 +957,13 @@ static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject
     int32 AwaitSecs = 30;
     if (Params.IsValid()) Params->TryGetNumberField(TEXT("await_seconds"), AwaitSecs);
 
-    AsyncTask(ENamedThreads::GameThread, [Steps, AwaitSecs]()
+    if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
     {
-        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        if (TSharedPtr<SHaybaMCPPlanPanel> Panel = M->PlanPanel.Pin())
         {
-            if (TSharedPtr<SHaybaMCPPlanPanel> Panel = M->PlanPanel.Pin())
-            {
-                Panel->LoadPlan(Steps, AwaitSecs);
-            }
+            Panel->LoadPlan(Steps, AwaitSecs);
         }
-    });
+    }
 
     auto Data = MakeShared<FJsonObject>();
     Data->SetBoolField(TEXT("received"), true);
@@ -981,6 +980,15 @@ static FString JsonToString(const TSharedRef<FJsonObject>& Obj)
         TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
     FJsonSerializer::Serialize(Safe.ToSharedRef(), Writer);
     return Output;
+}
+
+// ProcessCommand can be called directly by tests or future integrations, but
+// all editor-facing dispatch must stay on the game thread. This response is
+// intentionally a fixed literal: the refusal must not parse caller-controlled
+// JSON or consult response settings/editor singletons from the wrong thread.
+static FString MakeOffGameThreadResponse()
+{
+    return TEXT("{\"id\":\"\",\"ok\":false,\"error\":\"Request rejected: Hayba command dispatch must run on the Unreal game thread; no operation was started.\",\"data\":{}}");
 }
 
 static FString ShapeOkResponse(
@@ -1060,6 +1068,13 @@ TArray<FString> FHaybaMCPCommandHandler::GetAllCommands() const
 
 FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
 {
+    // This must remain the first branch. Even JSON parsing and the normal
+    // response helpers are outside the supported off-thread contract.
+    if (!IsInGameThread())
+    {
+        return MakeOffGameThreadResponse();
+    }
+
     TSharedPtr<FJsonObject> Parsed;
     TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(CommandJson);
     if (!FJsonSerializer::Deserialize(Reader, Parsed) || !Parsed.IsValid())
@@ -1133,16 +1148,13 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     // a fresh collapsible turn group.
     if (Cmd == TEXT("ui_tool_stream_new_turn"))
     {
-        AsyncTask(ENamedThreads::GameThread, []()
+        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
         {
-            if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+            if (TSharedPtr<SHaybaMCPToolStreamPanel> Panel = M->ToolStreamPanel.Pin())
             {
-                if (TSharedPtr<SHaybaMCPToolStreamPanel> Panel = M->ToolStreamPanel.Pin())
-                {
-                    Panel->BeginNewTurn();
-                }
+                Panel->BeginNewTurn();
             }
-        });
+        }
         auto Data = MakeShared<FJsonObject>();
         Data->SetBoolField(TEXT("received"), true);
         return MakeOkResponse(Id, Data, Cmd);
@@ -1181,16 +1193,10 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
         {
             M->RecordToolCall(TName, PStr, RStr);
-            AsyncTask(ENamedThreads::GameThread, [TName, PStr, RStr]()
+            if (TSharedPtr<SHaybaMCPToolStreamPanel> Panel = M->ToolStreamPanel.Pin())
             {
-                if (FHaybaMCPModule* Mod = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
-                {
-                    if (TSharedPtr<SHaybaMCPToolStreamPanel> Panel = Mod->ToolStreamPanel.Pin())
-                    {
-                        Panel->AddToolCall(TName, PStr, RStr);
-                    }
-                }
-            });
+                Panel->AddToolCall(TName, PStr, RStr);
+            }
         }
         auto Data = MakeShared<FJsonObject>();
         Data->SetBoolField(TEXT("received"), true);
@@ -1462,7 +1468,12 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
             M->RecordToolCall(Cmd, ParamsStr, ResultStr);
         }
 
-        AsyncTask(ENamedThreads::GameThread, [Cmd, ParamsStr, ResultStr]()
+        // ProcessRequest is drained by the TCP server's game-thread ticker.
+        // Updating the mounted panel synchronously avoids leaving a plugin-code
+        // lambda in the task graph that could run after a hot unload. A direct
+        // off-thread caller still reaches the durable history above, but never
+        // touches Slate and never queues plugin code with an unbounded lifetime.
+        if (IsInGameThread())
         {
             if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
             {
@@ -1471,7 +1482,13 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
                     Panel->AddToolCall(Cmd, ParamsStr, ResultStr);
                 }
             }
-        });
+        }
+        else
+        {
+            UE_LOG(LogHaybaMCPCmd, Warning,
+                TEXT("Skipped live Tool Stream panel update for off-game-thread command '%s'; history was still recorded."),
+                *Cmd);
+        }
     }
 
     if (Result.bOk)

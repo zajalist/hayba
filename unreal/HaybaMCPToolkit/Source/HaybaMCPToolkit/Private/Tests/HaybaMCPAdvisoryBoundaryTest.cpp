@@ -5,6 +5,7 @@
 #include "Misc/ScopeExit.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Async/Async.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -176,6 +177,45 @@ bool FHaybaMCPAdvisoryBoundaryTest::RunTest(const FString&)
             Advisory->GetStringField(TEXT("session_health")), FString(TEXT("suspect")));
         TestTrue(TEXT("SEH mandatory recovery survives ErrorsOnly"),
             Advisory->HasField(TEXT("mandatory_recovery")));
+    }
+
+    {
+        TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+        Data->SetBoolField(TEXT("ok"), false);
+        Data->SetBoolField(TEXT("compiled_clean"), true);
+        Data->SetBoolField(TEXT("saved"), true);
+        Data->SetBoolField(TEXT("session_suspect"), true);
+        Data->SetStringField(TEXT("error"), TEXT("native stats inspection faulted after save"));
+        const TSharedPtr<FJsonObject> Envelope = ParseEnvelope(
+            FHaybaMCPCommandHandler::MakeOkResponse(
+                TEXT("5b"), Data, TEXT("material_compile")));
+        TestFalse(TEXT("nested guarded native fault cannot remain ok:true"),
+            Envelope->GetBoolField(TEXT("ok")));
+        const TSharedPtr<FJsonObject> Advisory = Envelope->GetObjectField(TEXT("advisory"));
+        TestEqual(TEXT("nested guarded native fault marks the session suspect"),
+            Advisory->GetStringField(TEXT("state")), FString(TEXT("session_suspect")));
+        TestTrue(TEXT("nested guarded native fault retains mandatory recovery"),
+            Advisory->HasField(TEXT("mandatory_recovery")));
+    }
+
+    {
+        FHaybaMCPCommandHandler Router;
+        TFuture<TPair<FString, FString>> OffThread = Async(EAsyncExecution::Thread, [&Router]()
+        {
+            return TPair<FString, FString>(
+                Router.ProcessCommand(TEXT("{\"id\":\"thread\",\"cmd\":\"ping\",\"params\":{}}")),
+                Router.ProcessCommand(TEXT("not valid JSON")));
+        });
+        const TPair<FString, FString> Responses = OffThread.Get();
+        TestEqual(TEXT("off-thread refusal is fixed before JSON parsing"),
+            Responses.Key, Responses.Value);
+        const TSharedPtr<FJsonObject> Envelope = ParseEnvelope(Responses.Key);
+        TestTrue(TEXT("off-thread command refusal parses"), Envelope.IsValid());
+        TestFalse(TEXT("off-thread command never dispatches"), Envelope->GetBoolField(TEXT("ok")));
+        TestEqual(TEXT("off-thread refusal does not parse or echo the request id"),
+            Envelope->GetStringField(TEXT("id")), FString());
+        TestTrue(TEXT("off-thread refusal proves no operation started"),
+            Envelope->GetStringField(TEXT("error")).Contains(TEXT("no operation was started")));
     }
 
     {

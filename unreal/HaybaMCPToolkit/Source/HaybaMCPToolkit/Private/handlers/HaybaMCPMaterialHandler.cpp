@@ -2833,11 +2833,13 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         if (Problems.Num() > 0)
         {
             TSharedPtr<FJsonObject> Bad = MakeShared<FJsonObject>();
+            Bad->SetBoolField(TEXT("ok"), false);
             Bad->SetBoolField(TEXT("saved"), false);
             Bad->SetBoolField(TEXT("has_errors"), true);
             TArray<TSharedPtr<FJsonValue>> Arr;
             for (const FString& Pr : Problems) Arr.Add(MakeShared<FJsonValueString>(Pr));
             Bad->SetArrayField(TEXT("errors"), Arr);
+            Bad->SetStringField(TEXT("error"), TEXT("material_compile: graph preflight rejected the function; no compile or save was attempted."));
             Bad->SetStringField(TEXT("blocked"), TEXT("graph would crash the HLSL translator; not compiled. Fix the listed problems (or run material_validate) then retry."));
             return FHaybaHandlerResult::Ok(Bad);
         }
@@ -2852,16 +2854,29 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         if (bFnCrashed)
         {
             TSharedPtr<FJsonObject> Bad = MakeShared<FJsonObject>();
+            Bad->SetBoolField(TEXT("ok"), false);
             Bad->SetBoolField(TEXT("saved"), false);
-            Bad->SetStringField(TEXT("crash_guarded"), TEXT("material_compile(function): native access violation during UpdateMaterialFunction — commonly a stale Python-registered editor delegate firing on a GC'd target. Editor kept alive by the SEH guard; function NOT saved."));
+            Bad->SetBoolField(TEXT("has_errors"), true);
+            Bad->SetBoolField(TEXT("session_suspect"), true);
+            Bad->SetStringField(TEXT("error"), TEXT("material_compile: native function compilation failed; the function was not saved. Restart the editor before another mutation."));
+            Bad->SetStringField(TEXT("crash_guarded"), TEXT("material_compile(function): native access violation during UpdateMaterialFunction — commonly a stale Python-registered editor delegate firing on a GC'd target. Editor kept alive by the SEH guard; function NOT saved. Restart the editor before another mutation."));
             return FHaybaHandlerResult::Ok(Bad);
         }
         FString FnSaveErr;
         const bool bFnSaved = HaybaPersistAsset(Fn, FnSaveErr);
         TSharedPtr<FJsonObject> FnOut = MakeShared<FJsonObject>();
         FnOut->SetStringField(TEXT("function_path"), Fn->GetPathName());
+        FnOut->SetBoolField(TEXT("ok"), bFnSaved);
+        // UpdateMaterialFunction has no compiler-diagnostic return channel. We
+        // can prove that the update call returned without a native fault, but
+        // not that every dependent shader compiled cleanly.
+        FnOut->SetBoolField(TEXT("update_completed"), true);
         FnOut->SetBoolField(TEXT("saved"), bFnSaved);
-        if (!bFnSaved) FnOut->SetStringField(TEXT("save_error"), FnSaveErr);
+        if (!bFnSaved)
+        {
+            FnOut->SetStringField(TEXT("error"), TEXT("material_compile: function update completed, but persistence verification failed."));
+            FnOut->SetStringField(TEXT("save_error"), FnSaveErr);
+        }
         return FHaybaHandlerResult::Ok(FnOut);
     }
 
@@ -2879,11 +2894,13 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         if (Problems.Num() > 0)
         {
             TSharedPtr<FJsonObject> Bad = MakeShared<FJsonObject>();
+            Bad->SetBoolField(TEXT("ok"), false);
             Bad->SetBoolField(TEXT("saved"), false);
             Bad->SetBoolField(TEXT("has_errors"), true);
             TArray<TSharedPtr<FJsonValue>> Arr;
             for (const FString& Pr : Problems) Arr.Add(MakeShared<FJsonValueString>(Pr));
             Bad->SetArrayField(TEXT("errors"), Arr);
+            Bad->SetStringField(TEXT("error"), TEXT("material_compile: graph preflight rejected the material; no compile or save was attempted."));
             Bad->SetStringField(TEXT("blocked"), TEXT("graph would crash the HLSL translator; not compiled. Fix the listed problems (or run material_validate) then retry."));
             return FHaybaHandlerResult::Ok(Bad);
         }
@@ -2914,29 +2931,56 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         if (bCompileCrashed)
         {
             TSharedPtr<FJsonObject> Bad = MakeShared<FJsonObject>();
+            Bad->SetBoolField(TEXT("ok"), false);
             Bad->SetBoolField(TEXT("saved"), false);
             Bad->SetBoolField(TEXT("has_errors"), true);
-            Bad->SetStringField(TEXT("crash_guarded"), TEXT("material_compile: native access violation during recompile/PostEditChange — commonly a stale Python-registered editor delegate firing on a garbage-collected target, or a re-entrant property broadcast. The editor was kept alive by the SEH guard and the material was NOT saved. Do not register UE editor delegates from python_run whose targets can be GC'd."));
+            Bad->SetBoolField(TEXT("compiled_clean"), false);
+            Bad->SetBoolField(TEXT("session_suspect"), true);
+            Bad->SetStringField(TEXT("error"), TEXT("material_compile: native material compilation failed; the material was not saved. Restart the editor before another mutation."));
+            Bad->SetStringField(TEXT("crash_guarded"), TEXT("material_compile: native access violation during recompile/PostEditChange — commonly a stale Python-registered editor delegate firing on a garbage-collected target, or a re-entrant property broadcast. The editor was kept alive by the SEH guard and the material was NOT saved. Restart the editor before another mutation. Do not register UE editor delegates from python_run whose targets can be GC'd."));
             return FHaybaHandlerResult::Ok(Bad);
         }
 
         TArray<TSharedPtr<FJsonValue>> Errs;
         for (const FString& Error : CompileErrors) Errs.Add(MakeShared<FJsonValueString>(Error));
 
+        const bool bCompiledClean = CompileErrors.Num() == 0;
         FString SaveErr;
-        const bool bSaved = HaybaPersistAsset(Mat, SaveErr);
+        bool bSaved = false;
+        if (bCompiledClean)
+        {
+            // A failed compile must remain an in-memory diagnostic. Persisting
+            // it made a broken material survive restart and turned a truthful
+            // compile failure into a destructive save.
+            bSaved = HaybaPersistAsset(Mat, SaveErr);
+        }
 
         Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("material_path"), Mat->GetPathName());
         Out->SetArrayField(TEXT("errors"), Errs);
-        Out->SetBoolField(TEXT("has_errors"), Errs.Num() > 0);
+        Out->SetBoolField(TEXT("ok"), bCompiledClean && bSaved);
+        Out->SetBoolField(TEXT("compiled_clean"), bCompiledClean);
+        Out->SetBoolField(TEXT("has_errors"), !bCompiledClean);
         Out->SetBoolField(TEXT("saved"), bSaved);
-        if (!bSaved) Out->SetStringField(TEXT("save_error"), SaveErr);
+        if (!bCompiledClean)
+        {
+            Out->SetStringField(TEXT("error"), TEXT("material_compile: shader compilation failed; the material was not saved. Fix data.errors, then retry."));
+        }
+        else if (!bSaved)
+        {
+            Out->SetStringField(TEXT("error"), TEXT("material_compile: compilation succeeded, but persistence verification failed."));
+            Out->SetStringField(TEXT("save_error"), SaveErr);
+        }
 
         // Continue below to append optimization feedback using the recompiled
         // resource without compiling or saving a second time.
     }
-    FMaterialResource* Res = Mat->GetMaterialResource(GMaxRHIShaderPlatform);
+    // Do not inspect a resource derived from a failed compile. Apart from being
+    // misleading optimization feedback, downstream resource access adds risk
+    // precisely when the translator has already said its state is invalid.
+    FMaterialResource* Res = Out->GetBoolField(TEXT("compiled_clean"))
+        ? Mat->GetMaterialResource(GMaxRHIShaderPlatform)
+        : nullptr;
 
     // ── Optimization feedback ────────────────────────────────────────────────
     // After a clean recompile, read shader cost off the recompiled
@@ -2950,17 +2994,36 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         // Instruction counts per representative shader permutation.
         // ExtractMatertialStatsInfo is MATERIALEDITOR_API-exported; it internally
         // calls GetRepresentativeInstructionCounts (which is not exported).
-        FShaderStatsInfo Info;
-        // Also MaterialEditor — guard it; on a fault Info stays empty and the
-        // loops below just emit empty stats (never crashes the editor).
+        // Keep the extraction target off the C++ stack. If the guarded engine
+        // call faults midway through mutating its TMaps, running that partially
+        // written object's destructor outside SEH is another possible fault.
+        // Quarantine the single allocation on the crash path; mandatory editor
+        // restart will reclaim it. The normal path deletes it below.
+        FShaderStatsInfo* Info = new FShaderStatsInfo();
+        // Also MaterialEditor — guard it. A native fault means the resource is
+        // no longer safe to inspect: continuing into the getters below could
+        // immediately repeat the same AV outside SEH. Preserve the already
+        // completed compile/save facts, but fail the logical operation and tell
+        // the command boundary that this editor session is suspect.
+        bool bStatsCrashed = false;
         {
-            struct FStatsCtx { FShaderStatsInfo* I; FMaterialResource* R; } Ctx{ &Info, Res };
-            bool bStatsCrashed = false;
+            struct FStatsCtx { FShaderStatsInfo* I; FMaterialResource* R; } Ctx{ Info, Res };
             HaybaSeh::RunGuarded(+[](void* P)
             {
                 FStatsCtx* C = static_cast<FStatsCtx*>(P);
                 FMaterialStatsUtils::ExtractMatertialStatsInfo(GMaxRHIShaderPlatform, *C->I, C->R);
             }, &Ctx, bStatsCrashed);
+        }
+        if (bStatsCrashed)
+        {
+            Out->SetBoolField(TEXT("ok"), false);
+            Out->SetBoolField(TEXT("session_suspect"), true);
+            Out->SetStringField(TEXT("error"), TEXT(
+                "material_compile: native access violation while reading optimization statistics after compile/save. "
+                "No further FMaterialResource access was attempted; restart the editor before another mutation."));
+            Out->SetStringField(TEXT("crash_guarded"), TEXT(
+                "material_compile(stats): ExtractMatertialStatsInfo faulted under SEH after the material compile/save lifecycle completed."));
+            return FHaybaHandlerResult::Ok(Out);
         }
 
         // Local name map — FMaterialStatsUtils::RepresentativeShaderTypeToString is
@@ -2987,7 +3050,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
 
         TArray<TSharedPtr<FJsonValue>> Shaders;
         int32 PeakInstructions = 0;
-        for (const TPair<ERepresentativeShader, FShaderStatsInfo::FContent>& Pair : Info.ShaderInstructionCount)
+        for (const TPair<ERepresentativeShader, FShaderStatsInfo::FContent>& Pair : Info->ShaderInstructionCount)
         {
             // StrDescription is the bare instruction count (e.g. "142") or "n/a".
             const FString& Desc = Pair.Value.StrDescription;
@@ -3035,6 +3098,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         Stats->SetStringField(TEXT("blend_mode"), BlendModeName);
 
         Out->SetObjectField(TEXT("stats"), Stats);
+        delete Info;
     }
 
     return FHaybaHandlerResult::Ok(Out);

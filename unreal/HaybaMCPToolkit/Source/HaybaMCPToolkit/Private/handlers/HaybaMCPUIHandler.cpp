@@ -1213,6 +1213,41 @@ namespace
         return R;
     }
 
+    /** Preserve compiler diagnostics as structured data while exposing the
+     *  stable lifecycle facts consumed by the command boundary. A handler-level
+     *  Ok only means that compilation ran without crashing; `ok` and
+     *  `compiled_clean` say whether the requested operation actually worked. */
+    void DescribeCompileResult(
+        const FCompileResult& Result,
+        const TSharedPtr<FJsonObject>& Out)
+    {
+        Out->SetBoolField(TEXT("ok"), Result.bSuccess);
+        Out->SetBoolField(TEXT("success"), Result.bSuccess);
+        Out->SetBoolField(TEXT("compiled_clean"), Result.bSuccess);
+        Out->SetStringField(TEXT("status"), Result.Status);
+
+        TArray<TSharedPtr<FJsonValue>> WarningValues;
+        for (const FString& Warning : Result.Warnings)
+        {
+            WarningValues.Add(MakeShared<FJsonValueString>(Warning));
+        }
+        Out->SetArrayField(TEXT("warnings"), WarningValues);
+
+        TArray<TSharedPtr<FJsonValue>> ErrorValues;
+        for (const FString& Error : Result.Errors)
+        {
+            ErrorValues.Add(MakeShared<FJsonValueString>(Error));
+        }
+        Out->SetArrayField(TEXT("errors"), ErrorValues);
+
+        if (!Result.bSuccess)
+        {
+            Out->SetStringField(TEXT("error"), FString::Printf(
+                TEXT("Widget Blueprint compilation did not finish cleanly (status: %s). Fix the compiler errors in data.errors, then retry."),
+                *Result.Status));
+        }
+    }
+
     /** Save and verify against the file system. See HaybaMCPSaveVerify.h — the
      *  previous version returned a bare bool and the caller then inferred
      *  success from IsDirty(), which answers a different question and reported
@@ -2795,33 +2830,8 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleCompile(const TSharedPtr<FJsonObje
     }
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-    Out->SetBoolField(TEXT("success"), CR.bSuccess);
-    Out->SetStringField(TEXT("status"), CR.Status);
+    DescribeCompileResult(CR, Out);
     if (bAttemptedSave) HaybaSaveVerify::Describe(SaveResult, Out);
-
-    if (CR.Warnings.Num() > 0)
-    {
-        TArray<TSharedPtr<FJsonValue>> WArr;
-        for (const FString& W : CR.Warnings)
-            WArr.Add(MakeShared<FJsonValueString>(W));
-        Out->SetArrayField(TEXT("warnings"), WArr);
-    }
-    else
-    {
-        Out->SetArrayField(TEXT("warnings"), TArray<TSharedPtr<FJsonValue>>());
-    }
-
-    if (CR.Errors.Num() > 0)
-    {
-        TArray<TSharedPtr<FJsonValue>> EArr;
-        for (const FString& E : CR.Errors)
-            EArr.Add(MakeShared<FJsonValueString>(E));
-        Out->SetArrayField(TEXT("errors"), EArr);
-    }
-    else
-    {
-        Out->SetArrayField(TEXT("errors"), TArray<TSharedPtr<FJsonValue>>());
-    }
 
     return FHaybaHandlerResult::Ok(Out);
 }
@@ -2849,9 +2859,10 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSave(const TSharedPtr<FJsonObject>
         if (!CR.bSuccess)
         {
             TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-            Out->SetBoolField(TEXT("success"), false);
+            DescribeCompileResult(CR, Out);
             Out->SetStringField(TEXT("saved_path"), WBP->GetPathName());
             Out->SetStringField(TEXT("reason"), TEXT("compile_failed"));
+            Out->SetBoolField(TEXT("save_attempted"), false);
             return FHaybaHandlerResult::Ok(Out);
         }
     }

@@ -2295,12 +2295,64 @@
           {
             "name": "path",
             "type": "string"
+          },
+          {
+            "name": "class",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "create_call_succeeded",
+            "type": "boolean"
+          },
+          {
+            "name": "dirty_marked",
+            "type": "boolean"
+          },
+          {
+            "name": "pre_save_re_resolved",
+            "type": "boolean"
+          },
+          {
+            "name": "save_attempted",
+            "type": "boolean"
+          },
+          {
+            "name": "saved",
+            "type": "boolean"
+          },
+          {
+            "name": "target_re_resolved",
+            "type": "boolean"
+          },
+          {
+            "name": "dirty_known",
+            "type": "boolean"
+          },
+          {
+            "name": "dirty",
+            "type": "boolean"
+          },
+          {
+            "name": "ok",
+            "type": "boolean"
+          },
+          {
+            "name": "error",
+            "type": "string"
+          },
+          {
+            "name": "save_note",
+            "type": "string"
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Create a DataAsset of a class inheriting UDataAsset. Data assets are the standard home for designer-tunable config that should live in the content browser rather than in code."
+      "notes": "Create and persist a concrete, current UDataAsset subclass after bounded path/name/class preflight. MarkPackageDirty and SaveLoadedAsset are callback boundaries: no raw creation pointer crosses either one, and the target path/class is freshly re-resolved before save and again afterward. Inspect ok, dirty_marked, pre_save_re_resolved, save_attempted, saved (present only when attempted), target_re_resolved, and dirty_known. If any identity, dirty-mark, save, or final readback fact is not trustworthy, nested ok:false plus data_create_unknown_outcome makes the top-level response unknown_outcome; query the exact path before retrying."
     },
     "data_get": {
       "aliases": [],
@@ -2316,14 +2368,66 @@
         "shape": "object",
         "fields": [
           {
+            "name": "path",
+            "type": "string"
+          },
+          {
+            "name": "class",
+            "type": "string"
+          },
+          {
             "name": "properties",
+            "type": "object"
+          },
+          {
+            "name": "reflection_complete",
+            "type": "boolean"
+          },
+          {
+            "name": "reflection_truncated",
+            "type": "boolean"
+          },
+          {
+            "name": "properties_examined",
+            "type": "number"
+          },
+          {
+            "name": "properties_returned",
+            "type": "number"
+          },
+          {
+            "name": "properties_omitted_at_least",
+            "type": "number"
+          },
+          {
+            "name": "omitted_count_exact",
+            "type": "boolean"
+          },
+          {
+            "name": "unsupported_values",
+            "type": "number"
+          },
+          {
+            "name": "large_integers_as_strings",
+            "type": "number"
+          },
+          {
+            "name": "reflection_limit_reason",
+            "type": "string"
+          },
+          {
+            "name": "omitted_property_names",
+            "type": "array"
+          },
+          {
+            "name": "reflection_limits",
             "type": "object"
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Read every property off a DataAsset. Use this to discover the property names data_set expects rather than guessing them."
+      "notes": "Read a bounded property snapshot from a DataAsset. Always inspect reflection_complete, reflection_truncated, properties_omitted_at_least, unsupported_values, and large_integers_as_strings before treating it as complete. Set/map item counts and physical sparse-slot ranges are both capped before iteration, so a small live count cannot hide an unbounded hole scan. Integers outside the exact JSON-number range are decimal strings, never rounded. Soft, weak, lazy, and soft-class wrapper references are reported unsupported/partial instead of falsely serializing an unloaded non-null path as null. Properties with native getters or setters are also unsupported/partial: raw bytes may not be their logical value, and invoking an accessor would execute unaudited code."
     },
     "data_set": {
       "aliases": [],
@@ -2349,14 +2453,94 @@
         "shape": "object",
         "fields": [
           {
+            "name": "path",
+            "type": "string"
+          },
+          {
+            "name": "property",
+            "type": "string"
+          },
+          {
+            "name": "copy_completed",
+            "type": "boolean"
+          },
+          {
             "name": "ok",
             "type": "boolean"
+          },
+          {
+            "name": "error",
+            "type": "string"
+          },
+          {
+            "name": "verified",
+            "type": "boolean"
+          },
+          {
+            "name": "target_re_resolved",
+            "type": "boolean"
+          },
+          {
+            "name": "dirty_marked",
+            "type": "boolean"
+          },
+          {
+            "name": "save_requested",
+            "type": "boolean"
+          },
+          {
+            "name": "dirty_known",
+            "type": "boolean"
+          },
+          {
+            "name": "dirty",
+            "type": "boolean"
+          },
+          {
+            "name": "observed_value",
+            "type": "any"
+          },
+          {
+            "name": "observed_value_omitted",
+            "type": "boolean"
+          },
+          {
+            "name": "observed_value_reason",
+            "type": "string"
+          },
+          {
+            "name": "observed_value_truncated",
+            "type": "boolean"
+          },
+          {
+            "name": "observed_value_nodes",
+            "type": "number"
+          },
+          {
+            "name": "observed_value_string_chars",
+            "type": "number"
+          },
+          {
+            "name": "observed_value_unsupported_values",
+            "type": "number"
+          },
+          {
+            "name": "observed_value_large_integers_as_strings",
+            "type": "number"
+          },
+          {
+            "name": "warning",
+            "type": "string"
+          },
+          {
+            "name": "persistence_tip",
+            "type": "string"
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Write one property on a DataAsset by name. Read it back with data_get — a name the asset does not have is reported, but confirming the value is how you know it took."
+      "notes": "Write one bounded scalar property on a DataAsset by name, then inspect copy_completed, ok, verified, target_re_resolved, dirty_marked, dirty_known, dirty (when known), and observed_value or observed_value_omitted. Only exact built-in numeric, enum, bool, string, and name property classes without native getters/setters are accepted and assigned through direct typed setters; JsonValueToUProperty and ImportText are never entered. Fixed arrays, dynamic containers, structs (including user-defined structs), wrapper/object references, interfaces, delegates, optionals, text, field paths, SkipSerialization fields, accessor-backed fields, custom property subclasses, and every other extensible type are refused before staging. Staging and all property pointers end before dirty notification; the command then re-resolves the target/class/property and repeats the accessor/schema gate before fresh bounded readback. It deliberately skips transactions, UObject editor hooks, and persistence. save_requested is always false. If any final identity/verification/dirty fact is untrustworthy, nested ok:false plus stable error makes the top-level response unknown_outcome with mandatory readback; ErrorsOnly cannot hide it."
     },
     "level_create": {
       "aliases": [],
