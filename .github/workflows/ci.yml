@@ -17,9 +17,7 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      # The audit needs the resolved lock graph, not lifecycle scripts. In
-      # particular, onnxruntime-node's vulnerable AdmZip path is postinstall-
-      # only; an audit job must not execute the parser it is assessing.
+      # The audit needs the resolved lock graph, not lifecycle scripts.
       - name: Install without lifecycle scripts
         run: npm ci --ignore-scripts
 
@@ -39,7 +37,7 @@ jobs:
           cache: 'npm'
 
       - name: Install
-        run: npm install
+        run: npm ci --ignore-scripts
 
       # Scoped to the Node MCP server and non-blocking (like the sidecar ruff
       # step). The restructured tree carries large pre-existing subsystems that
@@ -63,7 +61,11 @@ jobs:
           cache: 'npm'
 
       - name: Install
-        run: npm install
+        run: npm ci --ignore-scripts
+
+      - name: Embedding fallback contract — cold cache + offline network
+        working-directory: mcp-tools/hayba-mcp
+        run: npx vitest run src/tools/routing/embedding-backends.test.ts src/tools/routing/tool-index.test.ts src/tools/production-dependency-audit-contract.test.ts
 
       - name: Typecheck
         working-directory: mcp-tools/hayba-mcp

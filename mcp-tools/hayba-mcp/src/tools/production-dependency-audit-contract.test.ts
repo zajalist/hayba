@@ -29,6 +29,7 @@ const ciWorkflow = join(repoRoot, '.github', 'workflows', 'ci.yml');
 const scheduledWorkflow = join(repoRoot, '.github', 'workflows', 'production-dependency-audit.yml');
 const productionInventory = join(repoRoot, 'docs', 'audit', 'production-dependency-assessments.json');
 const mcpPackage = join(repoRoot, 'mcp-tools', 'hayba-mcp', 'package.json');
+const rootLock = join(repoRoot, 'package-lock.json');
 const tempDirs: string[] = [];
 
 const advisory = {
@@ -228,6 +229,7 @@ describe('production dependency reachability gate', () => {
     const ci = readFileSync(ciWorkflow, 'utf8');
     const scheduled = readFileSync(scheduledWorkflow, 'utf8');
     expect(ci).toContain('npm ci --ignore-scripts');
+    expect(ci).not.toMatch(/^\s*run: npm install\s*$/m);
     expect(ci).toContain('npm run audit:production');
     expect(scheduled).toContain('schedule:');
     expect(scheduled).toContain("title='[security] Production dependency audit drift'");
@@ -236,7 +238,7 @@ describe('production dependency reachability gate', () => {
     expect(scheduled).toContain('gh issue close');
   });
 
-  it('keeps the residual AdmZip finding transitive and installation-only', () => {
+  it('removes the local Transformers backend and its vulnerable production graph', () => {
     const packageJson = JSON.parse(readFileSync(mcpPackage, 'utf8')) as {
       dependencies: Record<string, string>;
       devDependencies: Record<string, string>;
@@ -244,12 +246,14 @@ describe('production dependency reachability gate', () => {
     const inventory = JSON.parse(readFileSync(productionInventory, 'utf8')) as {
       assessments: Assessment[];
     };
-    expect(packageJson.dependencies).not.toHaveProperty('adm-zip');
-    expect(packageJson.devDependencies).not.toHaveProperty('@types/adm-zip');
+    const lock = JSON.parse(readFileSync(rootLock, 'utf8')) as {
+      packages: Record<string, { version?: string }>;
+    };
 
-    const residual = inventory.assessments.find((item) => item.finding_key === 'adm-zip|GHSA-xcpc-8h2w-3j85');
-    expect(residual?.reachability).toBe('install_time_only');
-    expect(residual?.decision).toBe('time_bounded_exception');
-    expect(residual?.evidence).not.toContain('mcp-tools/hayba-mcp/src/tools/asset-sources/shared.ts:47-49');
+    expect(packageJson.dependencies).not.toHaveProperty('@huggingface/transformers');
+    expect(inventory.assessments).toEqual([]);
+    for (const dependency of ['@huggingface/transformers', 'adm-zip', 'onnxruntime-node', 'sharp']) {
+      expect(Object.keys(lock.packages)).not.toContain(`node_modules/${dependency}`);
+    }
   });
 });

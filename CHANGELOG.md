@@ -33,6 +33,12 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   `mcp-tools/hayba-mcp/examples/github-actions-hayba-cli.yml`.
 
 ### Changed
+- Removed the optional local `@huggingface/transformers` embedding backend and
+  its vulnerable Sharp/ONNX/AdmZip production graph. Tool and asset search now
+  select Ollama when a bounded local probe succeeds and otherwise use the
+  deterministic lexical index; clean-install CI exercises the offline,
+  cold-cache fallback and the production audit needs no exceptions for
+  `GHSA-f88m-g3jw-g9cj` or `GHSA-xcpc-8h2w-3j85`.
 - The architecture workspace now declares its actual Three.js boundary: the
   browser-only Culture Studio keeps one pinned CDN import map, while the unused
   `three` and `@types/three` npm dependencies are removed. A source/manifest/

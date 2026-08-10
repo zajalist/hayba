@@ -2,7 +2,6 @@ import type { EmbeddingBackend } from './tool-index.js';
 
 const OLLAMA_URL = process.env.OLLAMA_URL ?? 'http://localhost:11434';
 const OLLAMA_MODEL = process.env.HAYBA_EMBED_MODEL_OLLAMA ?? 'nomic-embed-text';
-const XENOVA_MODEL = process.env.HAYBA_EMBED_MODEL_XENOVA ?? 'Xenova/all-MiniLM-L6-v2';
 
 /** How long the startup probe waits for Ollama. A refused connection fails fast,
  *  but a firewalled or black-holed port hangs until the OS gives up — which
@@ -40,28 +39,9 @@ export async function probeOllama(): Promise<EmbeddingBackend | null> {
   }
 }
 
-export async function probeTransformers(): Promise<EmbeddingBackend | null> {
-  try {
-    // @huggingface/transformers exposes `pipeline` for feature-extraction.
-    // The mean-pooled, normalized embedding is in `result.data` as a Float32Array.
-    const mod = await import('@huggingface/transformers');
-    const pipe = await mod.pipeline('feature-extraction', XENOVA_MODEL);
-    return {
-      id: `transformers:${XENOVA_MODEL}`,
-      async embed(texts: string[]): Promise<Float32Array[]> {
-        const out: Float32Array[] = [];
-        for (const t of texts) {
-          const result = await (pipe as any)(t, { pooling: 'mean', normalize: true });
-          out.push(new Float32Array(result.data as Float32Array));
-        }
-        return out;
-      },
-    };
-  } catch {
-    return null;
-  }
-}
-
 export async function selectEmbeddingBackend(): Promise<EmbeddingBackend | null> {
-  return (await probeOllama()) ?? (await probeTransformers());
+  // Ollama is optional. A refused, offline, or timed-out probe selects the
+  // deterministic lexical path; backend discovery never downloads a model or
+  // prevents the non-embedding MCP surface from starting.
+  return probeOllama();
 }
