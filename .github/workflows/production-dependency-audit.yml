@@ -1,0 +1,64 @@
+name: Scheduled production dependency audit
+
+on:
+  schedule:
+    - cron: '23 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install without lifecycle scripts
+        run: npm ci --ignore-scripts
+
+      - name: Run sanitized production audit
+        id: audit
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          npm run --silent audit:production > "$RUNNER_TEMP/production-audit.md" 2>&1
+          status=$?
+          set -e
+          cat "$RUNNER_TEMP/production-audit.md"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Open, update, or resolve the single drift issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUDIT_STATUS: ${{ steps.audit.outputs.status }}
+        shell: bash
+        run: |
+          title='[security] Production dependency audit drift'
+          issue="$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')"
+          if [ "$AUDIT_STATUS" != '0' ]; then
+            {
+              printf '%s\n\n' 'The scheduled production-only dependency gate found policy drift.'
+              printf '%s\n\n' 'Sanitized report:'
+              printf '%s\n' '```text'
+              cat "$RUNNER_TEMP/production-audit.md"
+              printf '%s\n\n' '```'
+              printf '%s\n' 'This issue is maintained by `.github/workflows/production-dependency-audit.yml`.'
+            } > "$RUNNER_TEMP/issue-body.md"
+            if [ -n "$issue" ]; then
+              gh issue edit "$issue" --body-file "$RUNNER_TEMP/issue-body.md"
+            else
+              gh issue create --title "$title" --body-file "$RUNNER_TEMP/issue-body.md"
+            fi
+            exit 1
+          fi
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body 'Production audit is green again; closing the automated drift issue.'
+            gh issue close "$issue" --reason completed
+          fi

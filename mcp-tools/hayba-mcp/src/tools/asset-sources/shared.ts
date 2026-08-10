@@ -2,11 +2,17 @@ import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { createHash } from 'node:crypto';
 import { executeCommand } from '../tool-executor.js';
 import { AssetVerifier } from '../asset-retriever/asset-verifier.js';
 import { getDefaultRetriever } from '../asset-retriever/asset-retriever.js';
+export {
+  downloadExtractThen,
+  downloadToFile,
+  extractZip,
+  fetchJsonBounded,
+  safeDownloadLeafName,
+} from './secure-archive.js';
 
 export interface DownloadedAsset {
   assetId: string;
@@ -23,33 +29,21 @@ export interface DownloadedAsset {
 }
 
 export function cachePathFor(source: string, assetId: string): string {
-  const safe = assetId.replace(/[^a-zA-Z0-9._-]/g, '_');
-  return path.join(os.tmpdir(), 'hayba-asset-connectors', source, safe);
+  const safeSource = source.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 32) || 'source';
+  const readable = assetId.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 64) || 'asset';
+  const digest = createHash('sha256').update(assetId).digest('hex').slice(0, 16);
+  return path.join(os.tmpdir(), 'hayba-asset-connectors', safeSource, `${readable}-${digest}`);
+}
+
+/** A request-owned cache root; concurrent/retried downloads never share files. */
+export async function createUniqueCacheDir(source: string, assetId: string): Promise<string> {
+  const prefix = cachePathFor(source, assetId);
+  await ensureDir(path.dirname(prefix));
+  return fsp.mkdtemp(`${prefix}-`);
 }
 
 export async function ensureDir(dir: string): Promise<void> {
   await fsp.mkdir(dir, { recursive: true });
-}
-
-export async function downloadToFile(url: string, dest: string, headers?: Record<string, string>): Promise<void> {
-  await ensureDir(path.dirname(dest));
-  const res = await fetch(url, { headers });
-  if (!res.ok || !res.body) {
-    throw new Error(`download failed: ${res.status} ${res.statusText} for ${url}`);
-  }
-  const nodeStream = Readable.fromWeb(res.body as any);
-  const out = fs.createWriteStream(dest);
-  await pipeline(nodeStream, out);
-}
-
-export async function extractZip(zipPath: string, destDir: string): Promise<string[]> {
-  await ensureDir(destDir);
-  // Lazy import — adm-zip is a CommonJS module.
-  const AdmZipMod = await import('adm-zip');
-  const AdmZip = (AdmZipMod as any).default ?? AdmZipMod;
-  const zip = new AdmZip(zipPath);
-  zip.extractAllTo(destDir, true);
-  return listFilesRecursive(destDir);
 }
 
 export async function listFilesRecursive(dir: string): Promise<string[]> {

@@ -7,6 +7,27 @@ on:
     branches: [main]
 
 jobs:
+  production-dependency-audit:
+    name: Production dependency audit — reachability + expiry
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      # The audit needs the resolved lock graph, not lifecycle scripts. In
+      # particular, onnxruntime-node's vulnerable AdmZip path is postinstall-
+      # only; an audit job must not execute the parser it is assessing.
+      - name: Install without lifecycle scripts
+        run: npm ci --ignore-scripts
+
+      # The script invokes `npm audit --omit=dev --json` itself, parses raw JSON
+      # in memory, and emits only sanitized package/advisory policy codes.
+      - name: Reject unassessed or expired production risk
+        run: npm run audit:production
+
   lint:
     name: TypeScript lint + format check (mcp-tools/hayba-mcp)
     runs-on: ubuntu-latest
@@ -104,4 +125,4 @@ jobs:
         run: pytest -q
 
       - name: Lint
-        run: ruff check . || true   # non-blocking until a style baseline is adopted
+        run: ruff check . || true # non-blocking until a style baseline is adopted

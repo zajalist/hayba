@@ -19,7 +19,8 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --check \"**/*.{ts,js,json,md}\"",
     "format:fix": "prettier --write \"**/*.{ts,js,json,md}\"",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -b --noEmit",
+    "audit:production": "node mcp-tools/hayba-mcp/scripts/audit-production-dependencies.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -30,9 +31,9 @@
   },
   "overrides": {
     "esbuild": "^0.25.0",
-    "hono": "^4.12.25",
-    "undici": "^7.28.0",
-    "protobufjs": "^7.6.3",
+    "hono": "^4.12.34",
+    "undici": "^7.29.0",
+    "protobufjs": "^7.6.5",
     "postcss": "^8.5.10"
   },
   "license": "MIT"

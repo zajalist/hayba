@@ -1,7 +1,14 @@
 import * as path from 'node:path';
 import { z } from 'zod';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
-import { cachePathFor, downloadToFile, ensureDir, extractZip, importIntoUe, verifyAndMarkDelta, type DownloadedAsset } from './shared.js';
+import {
+  createUniqueCacheDir,
+  downloadExtractThen,
+  fetchJsonBounded,
+  importIntoUe,
+  verifyAndMarkDelta,
+  type DownloadedAsset,
+} from './shared.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'high',
@@ -41,7 +48,7 @@ export function pickZipUrl(assetJson: any, resolution: string): string | null {
   for (const folder of folders as any[]) {
     const cats = folder?.downloadFiletypeCategories ?? {};
     const zip = cats?.zip ?? cats?.Zip;
-    for (const d of (zip?.downloads ?? [])) {
+    for (const d of zip?.downloads ?? []) {
       if (typeof d?.attribute === 'string' && d.attribute.toLowerCase() === resolution.toLowerCase() && pathOf(d)) {
         return pathOf(d);
       }
@@ -64,23 +71,25 @@ export async function handleAmbientCgDownload(params: AmbientCgDownloadParams) {
   }
   const { asset_id, resolution, target_dir } = parsed.data;
   try {
-    const res = await fetch(assetInfoUrl(asset_id));
-    if (!res.ok) {
-      return { content: [{ type: 'text' as const, text: `ambientCG lookup failed: ${res.status} ${res.statusText}` }], isError: true };
-    }
-    const json = (await res.json()) as any;
+    const json = await fetchJsonBounded<any>(assetInfoUrl(asset_id));
     const zipUrl = pickZipUrl(json, resolution);
     if (!zipUrl) {
-      return { content: [{ type: 'text' as const, text: `No zip download found for ${asset_id} @ ${resolution}` }], isError: true };
+      return {
+        content: [{ type: 'text' as const, text: `No zip download found for ${asset_id} @ ${resolution}` }],
+        isError: true,
+      };
     }
-    const cacheDir = cachePathFor('ambientcg', asset_id);
-    await ensureDir(cacheDir);
-    const zipPath = path.join(cacheDir, `${asset_id}_${resolution}.zip`);
-    await downloadToFile(zipUrl, zipPath);
+    const cacheDir = await createUniqueCacheDir('ambientcg', asset_id);
+    const zipPath = path.join(cacheDir, 'archive.zip');
     const extractDir = path.join(cacheDir, 'extracted');
-    const files = await extractZip(zipPath, extractDir);
     const gamePath = target_dir ?? `/Game/AssetConnectors/ambientcg/${asset_id}`;
-    const importResult = await importIntoUe(extractDir, gamePath);
+    const { files, result: importResult } = await downloadExtractThen({
+      url: zipUrl,
+      archivePath: zipPath,
+      extractDir,
+      failureCleanupRoot: cacheDir,
+      afterVerified: () => importIntoUe(extractDir, gamePath),
+    });
     const data: DownloadedAsset = {
       assetId: asset_id,
       source: 'ambientcg',

@@ -1,7 +1,14 @@
 import * as path from 'node:path';
 import { z } from 'zod';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
-import { cachePathFor, downloadToFile, ensureDir, extractZip, importIntoUe, verifyAndMarkDelta, type DownloadedAsset } from './shared.js';
+import {
+  createUniqueCacheDir,
+  downloadExtractThen,
+  fetchJsonBounded,
+  importIntoUe,
+  verifyAndMarkDelta,
+  type DownloadedAsset,
+} from './shared.js';
 import { tokenMissingMessage } from './sketchfab-search.js';
 import { getTokenWithEnvFallback } from './get-setting.js';
 
@@ -41,23 +48,25 @@ export async function handleSketchfabDownload(params: SketchfabDownloadParams) {
   }
   const { uid, flavour, target_dir } = parsed.data;
   try {
-    const res = await fetch(downloadInfoUrl(uid), { headers: { Authorization: `Token ${token}` } });
-    if (!res.ok) {
-      return { content: [{ type: 'text' as const, text: `Sketchfab download lookup failed: ${res.status} ${res.statusText}` }], isError: true };
-    }
-    const info = (await res.json()) as any;
+    const info = await fetchJsonBounded<any>(downloadInfoUrl(uid), { Authorization: `Token ${token}` });
     const signedUrl = pickFlavourUrl(info, flavour);
     if (!signedUrl) {
-      return { content: [{ type: 'text' as const, text: `No ${flavour} download available for ${uid}` }], isError: true };
+      return {
+        content: [{ type: 'text' as const, text: `No ${flavour} download available for ${uid}` }],
+        isError: true,
+      };
     }
-    const cacheDir = cachePathFor('sketchfab', uid);
-    await ensureDir(cacheDir);
-    const zipPath = path.join(cacheDir, `${uid}_${flavour}.zip`);
-    await downloadToFile(signedUrl, zipPath);
+    const cacheDir = await createUniqueCacheDir('sketchfab', uid);
+    const zipPath = path.join(cacheDir, 'archive.zip');
     const extractDir = path.join(cacheDir, 'extracted');
-    const files = await extractZip(zipPath, extractDir);
     const gamePath = target_dir ?? `/Game/AssetConnectors/sketchfab/${uid}`;
-    const importResult = await importIntoUe(extractDir, gamePath);
+    const { files, result: importResult } = await downloadExtractThen({
+      url: signedUrl,
+      archivePath: zipPath,
+      extractDir,
+      failureCleanupRoot: cacheDir,
+      afterVerified: () => importIntoUe(extractDir, gamePath),
+    });
     const verify = importResult.ok ? await verifyAndMarkDelta(gamePath) : { verified: false, reason: 'import_failed' };
     const data: DownloadedAsset = {
       assetId: uid,

@@ -24,11 +24,10 @@
     "@anthropic-ai/sdk": "^0.110.0",
     "@distube/ytdl-core": "^4.16.12",
     "@huggingface/transformers": "^4.0.1",
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "adm-zip": "^0.5.17",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "cheerio": "^1.2.0",
     "express": "^4.21.0",
-    "js-yaml": "^4.1.1",
+    "js-yaml": "^4.3.1",
     "lru-cache": "^11.3.6",
     "minisearch": "^7.2.0",
     "openai": "^6.45.0",
@@ -36,7 +35,6 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/adm-zip": "^0.5.5",
     "@types/express": "^5.0.0",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^26.1.1",
