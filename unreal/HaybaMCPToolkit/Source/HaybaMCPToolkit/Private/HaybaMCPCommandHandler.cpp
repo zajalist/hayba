@@ -191,6 +191,27 @@ static bool IsDestructiveCommand(const FString& Cmd)
     return DestructiveCommands.Contains(Cmd);
 }
 
+bool FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(const FString& Cmd)
+{
+    if (!IsDestructiveCommand(Cmd)) return false;
+
+    // FKismetEditorUtilities::CompileBlueprint runs UWidgetBlueprint's editor
+    // validation.  That validation creates short-lived UWorld/UUserWidget
+    // previews under /Engine/Transient.  If compilation is wrapped in the
+    // global transaction, those previews are serialized into UTransBuffer and
+    // survive as garbage.  The next PIE map transition then reports every one
+    // as "Old World ... not cleaned up by GC" (and can destabilize teardown).
+    //
+    // Compilation is derived-state generation; the authoring commands which
+    // staged the WBP changes already have their own undo entries.  Keep it in
+    // IsDestructiveCommand for Plan Mode, but do not create an undo record for
+    // the compile itself.  Never reset or disable the user's transaction
+    // buffer here: that would silently destroy unrelated undo history.
+    if (Cmd == TEXT("ui_compile_widget")) return false;
+
+    return true;
+}
+
 static void MaybeShowPlanModePrompt()
 {
     auto& S = FHaybaMCPSettings::Get();
@@ -933,18 +954,20 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     // Capture actor before-state for destructive ops so the Diff panel shows true Before -> After.
     const TMap<FString, FString> BeforeState = CaptureBeforeState(Cmd, Params);
 
-    // Initiative #1: wrap every destructive op in a native editor transaction
-    // so the user can revert AI mutations with Ctrl+Z. Read-only commands
-    // skip this for zero overhead.
+    // Initiative #1: wrap destructive authoring ops in a native editor
+    // transaction so the user can revert AI mutations with Ctrl+Z. Derived
+    // compilation work may remain Plan-gated while opting out through
+    // ShouldCreateEditorTransaction (see the UMG preview-world rationale).
+    // Read-only commands skip this for zero overhead.
     //
     // Skipped entirely during an active PIE session: the global transaction
     // buffer (GEditor->Trans) can end up retaining a reference into the PIE
     // world/GameInstance, which crashes the editor on PIE stop with
     // "Object 'GameInstance ...' from PIE level still referenced". AI-driven
     // edits made mid-PIE don't need undo support badly enough to risk that.
-    const bool bDestructive = IsDestructiveCommand(Cmd);
+    const bool bCreateEditorTransaction = ShouldCreateEditorTransaction(Cmd);
     const bool bInPIE = GEditor && GEditor->PlayWorld != nullptr;
-    if (bDestructive && GEditor && !bInPIE)
+    if (bCreateEditorTransaction && GEditor && !bInPIE)
     {
         const FText TxText = FText::FromString(FString::Printf(TEXT("Hayba: %s"), *Cmd));
         GEditor->BeginTransaction(TxText);
@@ -1012,7 +1035,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         // a native fault. The 2026-08-09 test_run incident proved that the old
         // "keep going" path could immediately double-fault in HashParams and
         // terminate UE despite the SEH guard's recovery claim.
-        if (bDestructive && GEditor && !bInPIE)
+        if (bCreateEditorTransaction && GEditor && !bInPIE)
         {
             GEditor->CancelTransaction(0);
         }
@@ -1022,7 +1045,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         return MakeErrorResponse(Id, Result.ErrorMessage);
     }
 
-    if (bDestructive && GEditor && !bInPIE)
+    if (bCreateEditorTransaction && GEditor && !bInPIE)
     {
         // Cancel the transaction if the handler reported failure — leaves no
         // empty undo entry. Otherwise end normally so Ctrl+Z reverts the op.

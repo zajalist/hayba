@@ -20,6 +20,7 @@
 #include "Layout/ArrangedChildren.h"
 #include "Layout/Geometry.h"
 #include "Widgets/SWidget.h"
+#include "UObject/UObjectHash.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPUILayout, Log, All);
 
@@ -102,12 +103,18 @@ FPreviewInstance::~FPreviewInstance()
 {
     if (Instance)
     {
-        // Drop Slate resources before the instance is collected so nothing
-        // retains a live SWidget for a UObject that is about to go away.
+        // Drop every Slate reference before marking the UObject garbage.  In
+        // particular, SObjectWidget owns a UObject reference back to Instance;
+        // leaving our external Slate pointer alive while marking Instance was
+        // enough to make preview teardown timing depend on the next GC.
         Instance->ReleaseSlateResources(true);
-        Instance->MarkAsGarbage();
     }
     Slate.Reset();
+    if (Instance)
+    {
+        Instance->MarkAsGarbage();
+        Instance = nullptr;
+    }
 }
 
 bool MakePreviewInstance(UWidgetBlueprint* WBP, FPreviewInstance& Out, FString& OutError)
@@ -133,6 +140,15 @@ bool MakePreviewInstance(UWidgetBlueprint* WBP, FPreviewInstance& Out, FString& 
         return false;
     }
 
+    // A TCP request can land while an unrelated editor gesture still owns
+    // GUndo. UUserWidget initialization hard-codes RF_Transactional on its
+    // cloned tree and slots, so clearing flags only after initialization is
+    // too late: constructors/previews may already have called Modify(). This
+    // engine-standard guard suppresses recording only for this synchronous,
+    // read-only preview construction. It neither cancels nor clears the active
+    // transaction; the caller's GUndo pointer is restored on scope exit.
+    TGuardValue<ITransaction*> SuppressPreviewTransactions(GUndo, nullptr);
+
     // Outer to the editor world when there is one (that is what the designer
     // preview uses). Never a PIE world — a retained reference into a PIE
     // GameInstance is what crashes the editor on PIE stop.
@@ -146,18 +162,40 @@ bool MakePreviewInstance(UWidgetBlueprint* WBP, FPreviewInstance& Out, FString& 
         }
     }
 
+    // Match the engine thumbnail renderer's lifetime contract: this is a
+    // disposable preview, never authored state.  RF_Transient prevents it
+    // from being serialized as part of its world/package.  Generated UMG
+    // initialization deliberately creates a transactional WidgetTree, so we
+    // scrub RF_Transactional from the complete preview object graph below.
     UUserWidget* Instance = World
-        ? NewObject<UUserWidget>(World, WBP->GeneratedClass)
-        : NewObject<UUserWidget>(GetTransientPackage(), WBP->GeneratedClass);
+        ? NewObject<UUserWidget>(World, WBP->GeneratedClass, NAME_None, RF_Transient)
+        : NewObject<UUserWidget>(GetTransientPackage(), WBP->GeneratedClass, NAME_None, RF_Transient);
     if (!Instance)
     {
         OutError = TEXT("failed to instantiate the widget class");
         return false;
     }
 
+    // A generated user-widget can itself acquire RF_Transactional during
+    // construction.  Clear it before any design-time initialization, then
+    // clear the recursively-created tree/slots immediately afterward.  This
+    // protects against a preview requested while some unrelated editor
+    // transaction is active without touching (or clearing) the undo buffer.
+    Instance->ClearFlags(RF_Transactional);
+
     // Designing flag keeps the instance from running BeginPlay-style logic and
     // matches how the UMG designer evaluates layout.
     Instance->SetDesignerFlags(EWidgetDesignFlags::Designing);
+    Instance->Initialize();
+
+    Instance->SetFlags(RF_Transient);
+    Instance->ClearFlags(RF_Transactional);
+    ForEachObjectWithOuter(Instance, [](UObject* PreviewObject)
+    {
+        if (!PreviewObject) return;
+        PreviewObject->SetFlags(RF_Transient);
+        PreviewObject->ClearFlags(RF_Transactional);
+    }, EGetObjectsFlags::IncludeNestedObjects);
     Out.Instance = Instance;
 
     Out.Slate = Instance->TakeWidget();

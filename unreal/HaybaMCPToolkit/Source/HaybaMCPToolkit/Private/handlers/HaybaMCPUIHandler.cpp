@@ -1066,6 +1066,15 @@ namespace
         FCompileResult R;
         if (!WBP) { R.Status = TEXT("NoBP"); return R; }
 
+        // UWidgetBlueprint validation creates dummy UWorld/UUserWidget
+        // previews.  ui_compile_widget intentionally has no Hayba transaction,
+        // but a command can still arrive while an unrelated editor gesture has
+        // GUndo active. Keep those derived validation objects out of that
+        // transaction without clearing, canceling, or globally disabling the
+        // user's undo buffer. TGuardValue restores the exact active transaction
+        // as soon as this synchronous compile returns.
+        TGuardValue<ITransaction*> SuppressCompileTransactions(GUndo, nullptr);
+
         FCompilerResultsLog ResultsLog;
         ResultsLog.SetSourcePath(WBP->GetPathName());
         ResultsLog.BeginEvent(TEXT("Compile"));
