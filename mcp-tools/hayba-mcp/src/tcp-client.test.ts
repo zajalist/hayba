@@ -1,12 +1,24 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   UETcpClient,
   connectWithBackoff,
+  discoverPortFromInstanceRegistry,
   resolveTargetPort,
   ensureConnected,
   awaitEditorResponsive,
   _resetClientForTesting,
 } from './tcp-client.js';
+
+const discoveryTempDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of discoveryTempDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 describe('awaitEditorResponsive', () => {
   const noDelay = async () => {};
@@ -184,6 +196,77 @@ describe('resolveTargetPort', () => {
 
     expect(port).toBe(60000);
     expect(discoverFn).not.toHaveBeenCalled();
+  });
+});
+
+describe('discoverPortFromInstanceRegistry', () => {
+  function makeRegistry(): string {
+    const root = mkdtempSync(join(tmpdir(), 'hayba-port-discovery-'));
+    discoveryTempDirs.push(root);
+    mkdirSync(join(root, 'Saved', 'HaybaMCP', 'instances'), { recursive: true });
+    return root;
+  }
+
+  function writeEntry(root: string, name: string, value: unknown): void {
+    writeFileSync(
+      join(root, 'Saved', 'HaybaMCP', 'instances', name),
+      typeof value === 'string' ? value : JSON.stringify(value),
+      'utf8',
+    );
+  }
+
+  it('reads the shipped ESM registry path and chooses the newest live editor', () => {
+    const root = makeRegistry();
+    writeEntry(root, '101.json', {
+      pid: 101, port: 52342, started_at: '2026-08-10T01:00:00.000Z',
+    });
+    writeEntry(root, '202.json', {
+      pid: 202, port: 52343, started_at: '2026-08-10T02:00:00.000Z',
+    });
+
+    expect(discoverPortFromInstanceRegistry(root, () => true)).toBe(52343);
+  });
+
+  it('ignores dead, malformed, invalid-port, and invalid-date entries', () => {
+    const root = makeRegistry();
+    writeEntry(root, 'dead.json', {
+      pid: 1, port: 52349, started_at: '2026-08-10T04:00:00.000Z',
+    });
+    writeEntry(root, 'bad-json.json', '{');
+    writeEntry(root, 'bad-port.json', {
+      pid: 2, port: 70000, started_at: '2026-08-10T03:00:00.000Z',
+    });
+    writeEntry(root, 'bad-date.json', {
+      pid: 3, port: 52348, started_at: 'not-a-date',
+    });
+    writeEntry(root, 'live.json', {
+      pid: 4, port: 52344, started_at: '2026-08-10T01:00:00.000Z',
+    });
+
+    expect(discoverPortFromInstanceRegistry(root, pid => pid === 4)).toBe(52344);
+  });
+
+  it('returns null when the registry is absent or has no live valid entry', () => {
+    const absent = mkdtempSync(join(tmpdir(), 'hayba-port-absent-'));
+    discoveryTempDirs.push(absent);
+    expect(discoverPortFromInstanceRegistry(absent, () => true)).toBeNull();
+
+    const root = makeRegistry();
+    writeEntry(root, 'dead.json', {
+      pid: 99, port: 52343, started_at: '2026-08-10T01:00:00.000Z',
+    });
+    expect(discoverPortFromInstanceRegistry(root, () => false)).toBeNull();
+  });
+
+  it('walks upward from a nested dist-like working directory', () => {
+    const root = makeRegistry();
+    const nested = join(root, 'mcp-tools', 'hayba-mcp', 'dist');
+    mkdirSync(nested, { recursive: true });
+    writeEntry(root, '303.json', {
+      pid: 303, port: 52345, started_at: '2026-08-10T01:00:00.000Z',
+    });
+
+    expect(discoverPortFromInstanceRegistry(nested, () => true)).toBe(52345);
   });
 });
 

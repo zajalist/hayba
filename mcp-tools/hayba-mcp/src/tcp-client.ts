@@ -2,6 +2,8 @@
 import { FrameDecoder } from './tcp-frame-decoder.js';
 import { createConnection, Socket } from 'node:net';
 import { EventEmitter } from 'node:events';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 export interface TcpCommand {
   cmd: string;
@@ -23,6 +25,7 @@ export interface TcpResponse {
 // ── Injectable types (also used in tests) ────────────────────────────────────
 export type DelayFn = (ms: number) => Promise<void>;
 export type DiscoverPortFn = () => number | null;
+export type ProcessAliveFn = (pid: number) => boolean;
 
 const defaultDelay: DelayFn = ms => new Promise(r => setTimeout(r, ms));
 
@@ -143,30 +146,66 @@ export class UETcpClient extends EventEmitter {
 // Singleton instance for the MCP server
 let client: UETcpClient | null = null;
 
-export function discoverPortFromInstanceRegistry(): number | null {
+export function discoverPortFromInstanceRegistry(
+  searchRoot = process.cwd(),
+  isProcessAlive: ProcessAliveFn = (pid: number) => {
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+): number | null {
   // Initiative #3: UE writes Saved/HaybaMCP/instances/<pid>.json on startup.
   // Pick the most recently started live entry so the Node side connects to
   // whichever editor is currently running, regardless of port collision.
   try {
-    // Lazy require to keep the cold path free of fs imports when env is set.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fs = require('node:fs') as typeof import('node:fs');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const path = require('node:path') as typeof import('node:path');
-    const cwd = process.cwd();
-    // Walk up to 4 levels so we find Saved/ from a workspace dist location.
-    for (let i = 0; i < 4; ++i) {
-      const dir = path.resolve(cwd, '../'.repeat(i), 'Saved/HaybaMCP/instances');
-      if (!fs.existsSync(dir)) continue;
-      const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
+    // This package is ESM. The old implementation called CommonJS `require`
+    // here, which is undefined in the shipped runtime; the catch below then
+    // silently returned null and every client kept dialing 52342 even when UE
+    // had truthfully registered a fallback port such as 52343. Static node:
+    // imports keep discovery alive in the actual distribution.
+    //
+    // Walk upward far enough to support both a project-root launch and a
+    // package/dist launch nested inside the project. A caller can inject a
+    // root in tests without changing process.cwd().
+    for (let i = 0; i < 8; ++i) {
+      const dir = resolve(searchRoot, '../'.repeat(i), 'Saved/HaybaMCP/instances');
+      if (!existsSync(dir)) continue;
+      const files = readdirSync(dir).filter(f => f.endsWith('.json'));
       const entries = files.map(f => {
         try {
-          const raw = fs.readFileSync(path.join(dir, f), 'utf-8');
-          return JSON.parse(raw) as { pid: number; port: number; started_at: string };
+          const raw = readFileSync(resolve(dir, f), 'utf-8');
+          const parsed = JSON.parse(raw) as Partial<{
+            pid: number;
+            port: number;
+            project_dir: string;
+            started_at: string;
+          }>;
+          if (!Number.isInteger(parsed.pid) || !Number.isInteger(parsed.port)
+            || parsed.port! <= 0 || parsed.port! > 65535
+            || typeof parsed.started_at !== 'string'
+            || Number.isNaN(Date.parse(parsed.started_at))
+            || !isProcessAlive(parsed.pid!)) {
+            return null;
+          }
+          return parsed as {
+            pid: number;
+            port: number;
+            project_dir?: string;
+            started_at: string;
+          };
         } catch {
           return null;
         }
-      }).filter((e): e is { pid: number; port: number; started_at: string } => e !== null);
+      }).filter((e): e is {
+        pid: number;
+        port: number;
+        project_dir?: string;
+        started_at: string;
+      } => e !== null);
       if (entries.length === 0) continue;
       // Most recently started wins.
       entries.sort((a, b) => b.started_at.localeCompare(a.started_at));
