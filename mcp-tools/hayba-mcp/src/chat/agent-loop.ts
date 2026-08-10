@@ -36,6 +36,7 @@ import type {
   LLMTool,
   LLMToolCall,
   LLMStopReason,
+  LLMUsage,
 } from '../agents/llm-client.js';
 import { deriveSignature, getRawShape, listRecordedCommands } from '../tools/schema-registry.js';
 import { unwrapZod } from '../tools/zod-unwrap.js';
@@ -255,7 +256,7 @@ export type AgentEvent =
   | { type: 'tool_call'; call: LLMToolCall }
   | { type: 'tool_result'; id: string; name: string; result: unknown; isError?: boolean }
   | { type: 'plan_request'; call: LLMToolCall; hint?: string; source: 'ts' | 'ue'; argsHash?: string }
-  | { type: 'done'; reason: AgentDoneReason; stopReason?: LLMStopReason }
+  | { type: 'done'; reason: AgentDoneReason; stopReason?: LLMStopReason; usage?: LLMUsage }
   | { type: 'error'; error: string; kind?: string };
 
 export interface AgentLoopParams {
@@ -344,19 +345,34 @@ export async function* runAgentLoop(
 
   let steps = 0;
   let tokens = 0;
+  // Sums usage across every LLM call in this turn (a "turn" may make several
+  // round-trips when the model chains tool calls). Fields the client never
+  // reports stay undefined rather than defaulting to 0, so a caller can tell
+  // "no cache activity happened" apart from "this protocol doesn't report it".
+  let usage: LLMUsage | undefined;
+  const accumulateUsage = (u: LLMUsage | undefined): void => {
+    if (!u) return;
+    const next: LLMUsage = { ...usage };
+    for (const key of Object.keys(u) as Array<keyof LLMUsage>) {
+      const v = u[key];
+      if (v === undefined) continue;
+      next[key] = (next[key] ?? 0) + v;
+    }
+    usage = next;
+  };
 
   while (true) {
     if (signal?.aborted) {
       yield { type: 'error', error: 'aborted', kind: 'aborted' };
-      yield { type: 'done', reason: 'aborted' };
+      yield { type: 'done', reason: 'aborted', usage };
       return;
     }
     if (steps >= maxSteps) {
-      yield { type: 'done', reason: 'max_steps' };
+      yield { type: 'done', reason: 'max_steps', usage };
       return;
     }
     if (tokenBudget !== undefined && tokens >= tokenBudget) {
-      yield { type: 'done', reason: 'token_budget' };
+      yield { type: 'done', reason: 'token_budget', usage };
       return;
     }
 
@@ -369,7 +385,7 @@ export async function* runAgentLoop(
       for await (const ev of client.stream({ system, messages, tools, maxTokens, signal })) {
         if (signal?.aborted) {
           yield { type: 'error', error: 'aborted', kind: 'aborted' };
-          yield { type: 'done', reason: 'aborted' };
+          yield { type: 'done', reason: 'aborted', usage };
           return;
         }
         if (ev.type === 'text_delta') {
@@ -379,6 +395,7 @@ export async function* runAgentLoop(
           content = ev.response.content;
           toolCalls = ev.response.toolCalls;
           stopReason = ev.response.stopReason;
+          accumulateUsage(ev.response.usage);
         }
         // 'tool_call' stream events are consolidated in the 'done' response.
       }
@@ -405,7 +422,7 @@ export async function* runAgentLoop(
 
     // ── Halt when the model is done ──────────────────────────────────────
     if (stopReason !== 'tool_use' || toolCalls.length === 0) {
-      yield { type: 'done', reason: 'end_turn', stopReason };
+      yield { type: 'done', reason: 'end_turn', stopReason, usage };
       return;
     }
 
@@ -414,7 +431,7 @@ export async function* runAgentLoop(
     for (const call of toolCalls) {
       if (signal?.aborted) {
         yield { type: 'error', error: 'aborted', kind: 'aborted' };
-        yield { type: 'done', reason: 'aborted' };
+        yield { type: 'done', reason: 'aborted', usage };
         return;
       }
       yield { type: 'tool_call', call };

@@ -53,10 +53,24 @@ export interface LLMToolCall {
 
 export type LLMStopReason = 'end_turn' | 'tool_use' | 'max_tokens';
 
+/**
+ * Token accounting for one LLM call. `cacheCreationInputTokens` /
+ * `cacheReadInputTokens` are Anthropic-specific (prompt caching); they stay
+ * `undefined` for protocols/providers that don't report them, never `0` — a
+ * real 0 vs "not reported" distinction matters for hit-rate metrics.
+ */
+export interface LLMUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+}
+
 export interface LLMResponse {
   content: string | null;
   toolCalls: LLMToolCall[];
   stopReason: LLMStopReason;
+  usage?: LLMUsage;
 }
 
 /** One normalized event type for `stream()`; both protocols normalize into it. */
@@ -194,6 +208,15 @@ function mapError(err: unknown, provider: string, apiKey: string): LLMError {
 // Tool mapping (our shape -> each wire format)
 // ---------------------------------------------------------------------------
 
+/**
+ * Anthropic prompt caching (GA, no beta header needed): a `cache_control`
+ * block marks "cache everything up to and including this block". Anthropic
+ * caps the number of active breakpoints per request at 4 — we use at most 2
+ * (system, tools), never one per tool, so the count stays fixed regardless
+ * of catalog size. See `buildAnthropicRequest` for the ordering rationale.
+ */
+const CACHE_CONTROL_EPHEMERAL = { type: 'ephemeral' as const };
+
 function toAnthropicTools(tools: LLMTool[]): Array<Record<string, unknown>> {
   return tools.map((t) => ({
     name: t.name,
@@ -229,22 +252,86 @@ function normalizeOpenAIStop(reason: unknown): LLMStopReason {
 // Anthropic protocol
 // ---------------------------------------------------------------------------
 
-function buildAnthropicRequest(cfg: ResolvedConfig, params: LLMCompleteParams): Record<string, unknown> {
+/**
+ * Build the Anthropic `messages.create`/`.stream` request body, with
+ * `cache_control` breakpoints on the two blocks that are genuinely stable
+ * across turns of one conversation:
+ *
+ *   - `system`: the same instructions are re-sent every turn verbatim.
+ *   - `tools`: the catalog is derived once per turn from the (unchanged)
+ *     registry — same names/descriptions/schemas turn after turn within a
+ *     session, so it round-trips byte-identical and is a cache HIT after the
+ *     first turn.
+ *
+ * `messages` is deliberately left unmarked — it grows every turn (new user
+ * turn + tool results appended), so marking it would make every request a
+ * cache MISS while still paying the cache-write premium: strictly worse than
+ * not caching at all.
+ *
+ * Anthropic evaluates cache breakpoints in request order — tools, then
+ * system, then messages — so placing the marked blocks first (tools, system)
+ * and the volatile block last (messages) keeps the cached prefix at the head
+ * of the prompt, which is what the API requires for a hit.
+ */
+export function buildAnthropicRequest(
+  cfg: ResolvedConfig,
+  params: LLMCompleteParams,
+): Record<string, unknown> {
   const req: Record<string, unknown> = {
     model: cfg.model,
     max_tokens: params.maxTokens ?? 4096,
-    system: params.system,
     // Block arrays map 1:1 to Anthropic content blocks; strings pass through.
     messages: params.messages.map((m) => ({ role: m.role, content: m.content })),
   };
   if (params.tools && params.tools.length > 0) {
-    req.tools = toAnthropicTools(params.tools);
+    const tools = toAnthropicTools(params.tools);
+    // One breakpoint on the LAST tool caches the whole preceding tool list as
+    // a single prefix — not one breakpoint per tool (that would blow the
+    // 4-breakpoint cap on any catalog bigger than a handful of tools).
+    tools[tools.length - 1] = {
+      ...tools[tools.length - 1],
+      cache_control: CACHE_CONTROL_EPHEMERAL,
+    };
+    req.tools = tools;
+  }
+  if (params.system.length > 0) {
+    // System-as-content-blocks (not a plain string) is what lets us attach
+    // cache_control to it at all — Anthropic only accepts the marker on a
+    // content block, never on the bare string form.
+    req.system = [{ type: 'text', text: params.system, cache_control: CACHE_CONTROL_EPHEMERAL }];
+  } else {
+    req.system = params.system;
   }
   return req;
 }
 
+/** Raw Anthropic `usage` object shape (present on non-stream responses and
+ *  on `message_start`/`message_delta` stream events). */
+interface RawAnthropicUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+}
+
+function parseAnthropicUsage(raw: RawAnthropicUsage | undefined): LLMUsage | undefined {
+  if (!raw) return undefined;
+  const usage: LLMUsage = {};
+  if (typeof raw.input_tokens === 'number') usage.inputTokens = raw.input_tokens;
+  if (typeof raw.output_tokens === 'number') usage.outputTokens = raw.output_tokens;
+  if (typeof raw.cache_creation_input_tokens === 'number')
+    usage.cacheCreationInputTokens = raw.cache_creation_input_tokens;
+  if (typeof raw.cache_read_input_tokens === 'number')
+    usage.cacheReadInputTokens = raw.cache_read_input_tokens;
+  return Object.keys(usage).length > 0 ? usage : undefined;
+}
+
 function parseAnthropicResponse(resp: unknown): LLMResponse {
-  const r = resp as { content?: Array<Record<string, unknown>>; stop_reason?: unknown };
+  const r = resp as {
+    content?: Array<Record<string, unknown>>;
+    stop_reason?: unknown;
+    usage?: RawAnthropicUsage;
+  };
   const blocks = r.content ?? [];
   const textParts: string[] = [];
   const toolCalls: LLMToolCall[] = [];
@@ -263,6 +350,7 @@ function parseAnthropicResponse(resp: unknown): LLMResponse {
     content: textParts.length > 0 ? textParts.join('') : null,
     toolCalls,
     stopReason: normalizeAnthropicStop(r.stop_reason),
+    usage: parseAnthropicUsage(r.usage),
   };
 }
 
@@ -276,6 +364,14 @@ async function* streamAnthropic(
   let stopReason: LLMStopReason = 'end_turn';
   // Accumulator for the tool_use block currently being streamed, keyed by index.
   const pending = new Map<number, { id: string; name: string; json: string }>();
+  // Usage arrives in two pieces: `message_start` carries input/cache tokens,
+  // `message_delta` carries the (cumulative) output token count. Merge both.
+  let usage: LLMUsage | undefined;
+  const mergeUsage = (raw: RawAnthropicUsage | undefined): void => {
+    const parsed = parseAnthropicUsage(raw);
+    if (!parsed) return;
+    usage = { ...usage, ...parsed };
+  };
 
   let iterable: AsyncIterable<unknown>;
   try {
@@ -291,8 +387,14 @@ async function* streamAnthropic(
         index?: number;
         content_block?: Record<string, unknown>;
         delta?: Record<string, unknown>;
+        message?: { usage?: RawAnthropicUsage };
+        usage?: RawAnthropicUsage;
       };
       switch (ev.type) {
+        case 'message_start': {
+          mergeUsage(ev.message?.usage);
+          break;
+        }
         case 'content_block_start': {
           const cb = ev.content_block ?? {};
           if (cb.type === 'tool_use') {
@@ -328,6 +430,7 @@ async function* streamAnthropic(
         case 'message_delta': {
           const d = ev.delta ?? {};
           if (d.stop_reason !== undefined) stopReason = normalizeAnthropicStop(d.stop_reason);
+          mergeUsage(ev.usage);
           break;
         }
         default:
@@ -344,6 +447,7 @@ async function* streamAnthropic(
       content: textParts.length > 0 ? textParts.join('') : null,
       toolCalls,
       stopReason,
+      usage,
     },
   };
 }

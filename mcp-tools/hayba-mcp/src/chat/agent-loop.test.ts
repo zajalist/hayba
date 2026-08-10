@@ -132,6 +132,43 @@ describe('runAgentLoop', () => {
     expect(result!.content).toContain('actor_list');
   });
 
+  it('sums usage across every LLM call in the turn (Issue #30 cache-hit metrics)', async () => {
+    // Two round-trips: a tool call, then the final text answer. Each carries
+    // its own usage; the turn's final `done` must report the SUM, not just
+    // the last call's numbers — a multi-step turn genuinely spends both.
+    const client = new FakeLLMClient([
+      {
+        content: null,
+        toolCalls: [{ id: 'c1', name: 'actor_list', input: {} }],
+        stopReason: 'tool_use',
+        usage: { inputTokens: 100, outputTokens: 10, cacheReadInputTokens: 900, cacheCreationInputTokens: 0 },
+      },
+      {
+        content: 'done',
+        toolCalls: [],
+        stopReason: 'end_turn',
+        usage: { inputTokens: 150, outputTokens: 20, cacheReadInputTokens: 900, cacheCreationInputTokens: 0 },
+      },
+    ]);
+    const dispatch = vi.fn(async (name: string) => ({ ok: true, name }));
+
+    const events = await collect(runAgentLoop(baseParams({ client, dispatchTool: dispatch })));
+    const done = events.at(-1);
+    expect(done).toEqual({
+      type: 'done',
+      reason: 'end_turn',
+      stopReason: 'end_turn',
+      usage: { inputTokens: 250, outputTokens: 30, cacheReadInputTokens: 1800, cacheCreationInputTokens: 0 },
+    });
+  });
+
+  it('leaves usage undefined on the done event when the client never reports it', async () => {
+    const client = new FakeLLMClient([textResponse('hi')]);
+    const events = await collect(runAgentLoop(baseParams({ client })));
+    const done = events.at(-1) as Extract<AgentEvent, { type: 'done' }>;
+    expect(done.usage).toBeUndefined();
+  });
+
   it('refuses a filtered/disabled tool: not offered AND refused if called', async () => {
     const client = new FakeLLMClient([
       toolResponse('actor_spawn', {}, 'c1'),
