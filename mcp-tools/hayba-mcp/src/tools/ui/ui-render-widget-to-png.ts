@@ -7,13 +7,77 @@ const pngArtifactPath = z
   .string()
   .min(1)
   .max(240)
-  .regex(/^[^<>:"/\\|?*\u0000-\u001f]+$/, 'must be a clean filename without path separators or reserved characters')
+  .regex(/^[^<>:"/\\|?*]+$/, 'must be a clean filename without path separators or reserved characters')
+  .refine((name) => [...name].every((character) => character.charCodeAt(0) >= 0x20), 'must not contain controls')
   .refine((name) => !/[. ]$/.test(name), 'must name a safe file')
   .refine(
     (name) => !/^(?:con|prn|aux|nul|clock\$|com[1-9]|lpt[1-9])(?:\s*\.|$)/i.test(name),
     'must not use a reserved Windows device name',
   )
   .refine((name) => name.toLowerCase().endsWith('.png'), 'must end in .png');
+
+function normalizedAbsolutePath(value: unknown): string | null {
+  if (typeof value !== 'string' || !value || [...value].some((c) => c.charCodeAt(0) < 0x20)) return null;
+  const normalized = value.replaceAll('\\', '/').replace(/\/+$/, '');
+  const absolute = /^[A-Za-z]:\//.test(normalized) || normalized.startsWith('//') || normalized.startsWith('/');
+  if (!absolute || normalized.split('/').includes('..')) return null;
+  return normalized;
+}
+
+type RenderRequest = z.infer<typeof schema>;
+
+function normalizedWidgetPackage(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  return value.trim().split('.', 1)[0]!.toLocaleLowerCase('en-US');
+}
+
+function hasVerifiedRenderEvidence(data: Record<string, unknown>, request: RenderRequest): boolean {
+  const saved = normalizedAbsolutePath(data.project_saved_dir);
+  const root = normalizedAbsolutePath(data.artifact_root);
+  const output = normalizedAbsolutePath(data.out_path);
+  if (!saved || !root || !output) return false;
+  const foldedSaved = saved.toLocaleLowerCase('en-US');
+  const foldedRoot = root.toLocaleLowerCase('en-US');
+  if (foldedRoot !== `${foldedSaved}/screenshots/hayba`) return false;
+  const lastSlash = output.lastIndexOf('/');
+  if (lastSlash < 0 || output.slice(0, lastSlash).toLocaleLowerCase('en-US') !== foldedRoot) return false;
+  const outputFilename = output.slice(lastSlash + 1);
+  if (!pngArtifactPath.safeParse(outputFilename).success) return false;
+  if (request.out_path !== undefined && outputFilename !== request.out_path) return false;
+
+  if (normalizedWidgetPackage(data.widget_blueprint_path) !== normalizedWidgetPackage(request.widget_blueprint_path))
+    return false;
+  const scale = request.scale ?? 1;
+  if (typeof data.design_width !== 'number' || !Number.isFinite(data.design_width) || data.design_width <= 0)
+    return false;
+  if (typeof data.design_height !== 'number' || !Number.isFinite(data.design_height) || data.design_height <= 0)
+    return false;
+  const requestedWidth = request.width ?? data.design_width;
+  const requestedHeight = request.height ?? data.design_height;
+  if (data.width !== Math.round(requestedWidth * scale)) return false;
+  if (data.height !== Math.round(requestedHeight * scale)) return false;
+  if (data.opaque_background !== (request.opaque_background ?? true)) return false;
+
+  return (
+    data.artifact_verified === true &&
+    Number.isSafeInteger(data.bytes) &&
+    (data.bytes as number) > 0 &&
+    (data.bytes as number) <= 64 * 1024 * 1024 &&
+    Number.isInteger(data.width) &&
+    (data.width as number) >= 16 &&
+    (data.width as number) <= 4096 &&
+    Number.isInteger(data.height) &&
+    (data.height as number) >= 16 &&
+    (data.height as number) <= 4096 &&
+    (data.width as number) * (data.height as number) <= 8 * 1024 * 1024 &&
+    typeof data.coverage_percent === 'number' &&
+    Number.isFinite(data.coverage_percent) &&
+    data.coverage_percent >= 0 &&
+    data.coverage_percent <= 100 &&
+    typeof data.widget_blueprint_path === 'string' &&
+    data.widget_blueprint_path.length > 0
+  );
+}
 
 export const meta: HaybaToolMeta = {
   cost: 'high',
@@ -107,6 +171,19 @@ export const uiRenderWidgetToPngHandler: RichToolHandler = async (args) => {
     'ui_render_widget_to_png',
     parsed.data as Record<string, unknown>,
   );
+  if (!hasVerifiedRenderEvidence(data, parsed.data)) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text:
+            'ui_render_widget_to_png error: native response did not prove a verified PNG inside ' +
+            "this project's Saved/Screenshots/Hayba artifact root",
+        },
+      ],
+      isError: true,
+    };
+  }
 
   // Split the payload: the image goes in a proper MCP image block and the
   // metadata stays a small text block. Serialising a multi-MB base64 string
@@ -120,8 +197,9 @@ export const uiRenderWidgetToPngHandler: RichToolHandler = async (args) => {
   // image_base64. `out_path` is UE's field name; `path` is the stable alias
   // callers should prefer.
   const rawPath = (metaFields as Record<string, unknown>).out_path;
-  const path = typeof rawPath === 'string' && rawPath.length > 0 ? rawPath : undefined;
-  const meta: Record<string, unknown> = path !== undefined ? { ...metaFields, path } : { ...metaFields };
+  // hasVerifiedRenderEvidence proves this is a non-empty string in the exact
+  // project-owned artifact root before it is surfaced as the stable alias.
+  const meta: Record<string, unknown> = { ...metaFields, path: rawPath };
 
   const content: RichToolResult['content'] = [{ type: 'text', text: JSON.stringify(meta, null, 2) }];
 

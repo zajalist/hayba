@@ -70,6 +70,11 @@ describe('asset_registry_query native wrapper', () => {
     { class_filter: '' },
     { name_contains: '   ' },
     { recursive: 'true' },
+    { class_filter: true },
+    { name_contains: 7 },
+    { path_prefix: true },
+    { limit: '50' },
+    { offset: '0' },
   ])('rejects invalid input before transport: %j', async (input) => {
     ue = scriptedUe();
     const result = await assetRegistryQueryHandler(input, {} as never);

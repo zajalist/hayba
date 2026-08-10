@@ -2,6 +2,9 @@
 #include "HaybaMCPRenderSafety.h"
 #include <limits>
 #include "RHIGlobals.h"
+#include "HAL/FileManager.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Guid.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -80,6 +83,20 @@ bool FHaybaMCPRenderSafetyPolicyTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("resolved path is absolute"), !FPaths::IsRelative(Path));
     TestTrue(TEXT("resolved path is confined to the plugin screenshot directory"),
         FPaths::IsUnderDirectory(Path, FPaths::ProjectSavedDir() / TEXT("Screenshots/Hayba")));
+
+    const FString OccupiedName = TEXT("hayba_no_overwrite_")
+        + FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(12) + TEXT(".png");
+    FString OccupiedPath;
+    TestTrue(TEXT("unique overwrite probe filename resolves"),
+        ResolveOutputPath(OccupiedName, TEXT("png"), TEXT("probe"), OccupiedPath, Error));
+    TestTrue(TEXT("overwrite probe directory can be staged"),
+        IFileManager::Get().MakeDirectory(*FPaths::GetPath(OccupiedPath), true));
+    TestTrue(TEXT("overwrite probe file can be staged"),
+        FFileHelper::SaveStringToFile(TEXT("occupied"), *OccupiedPath));
+    TestFalse(TEXT("an existing artifact is never overwritten"),
+        ResolveOutputPath(OccupiedName, TEXT("png"), TEXT("probe"), Path, Error));
+    TestTrue(TEXT("overwrite refusal is actionable"), Error.Contains(TEXT("never overwrite")));
+    IFileManager::Get().Delete(*OccupiedPath, false, true, true);
 
     TestFalse(TEXT("fractional source dimensions are refused before scaling"),
         ValidateScaledDimensions(800.5, 600, 1, Width, Height, Error));

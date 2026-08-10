@@ -2455,12 +2455,12 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'ui_replace_element',
     description:
-      'Replace a designer widget with a different class at the same position. Preserves parent, child index and slot layout; optionally the name, the variable GUID (preserve_guid) and every property the two classes share by name and type (preserve_properties).',
+      'Replace a designer widget with a different class at the same position. Preserves parent, child index, slot layout, and the complete child subtree by default (preserve_children); optionally preserves the name, variable GUID (preserve_guid), and every property the two classes share by name and type (preserve_properties). Set preserve_children:false only to explicitly delete descendants.',
     meta: uiReplaceElementMeta,
     handler: uiReplaceElementHandler,
     cost: 'medium',
     returns:
-      '{widget_blueprint_path, operation, widget_name, old_class, new_class, new_name, child_index, properties_copied}',
+      '{widget_blueprint_path, operation, widget_name, old_class, new_class, new_name, child_index, properties_copied, preserve_children, children_preserved, descendants_preserved}',
     niche: UI,
     schema: uiReplaceElementSchema.shape,
   },
@@ -2590,12 +2590,12 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'ui_render_widget_to_png',
     description:
-      'SEE a Widget Blueprint: draws it to a PNG and returns the image inline, with no PIE session and no editor restart. This is how you check fonts, colours, brushes, spacing and overflow in seconds instead of a rebuild-and-play cycle. Read coverage_percent — 0 means the widget drew nothing and the PNG is blank. USE_WHEN: you want to look at the UI. NOT_WHEN: you want numbers (ui_layout_snapshot) or a verdict (ui_validate).',
+      'SEE a Widget Blueprint: draws it to a PNG and returns the image inline, with no PIE session and no editor restart. out_path accepts only an optional clean PNG filename; Hayba writes it without overwrite under Saved/Screenshots/Hayba and returns the resolved absolute path. This is how you check fonts, colours, brushes, spacing and overflow in seconds instead of a rebuild-and-play cycle. Read coverage_percent — 0 means the widget drew nothing and the PNG is blank. USE_WHEN: you want to look at the UI. NOT_WHEN: you want numbers (ui_layout_snapshot) or a verdict (ui_validate).',
     meta: uiRenderWidgetToPngMeta,
     handler: uiRenderWidgetToPngHandler,
     cost: 'high',
     returns:
-      '{widget_blueprint_path, out_path, width, height, design_width, design_height, bytes, opaque_background, coverage_percent, warning?, inline_image_skipped?} + the PNG as an image block',
+      '{widget_blueprint_path, out_path, path, artifact_root, project_dir, project_saved_dir, width, height, design_width, design_height, bytes, artifact_verified:true, opaque_background, coverage_percent, warning?, inline_image_skipped?} + the PNG as an image block',
     niche: UI,
     schema: uiRenderWidgetToPngSchema.shape,
   },

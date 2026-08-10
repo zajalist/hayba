@@ -107,6 +107,25 @@ bool FHaybaMCPRenderWidgetToPngTest::RunTest(const FString& Parameters)
     FScratchWidget W(Handler, TEXT("Render"));
     if (!TestTrue(TEXT("scratch widget blueprint was created"), W.bValid)) return true;
 
+    {
+        TSharedPtr<FJsonObject> P = MakeShared<FJsonObject>();
+        P->SetStringField(TEXT("widget_blueprint_path"), W.ObjectPath);
+        P->SetBoolField(TEXT("out_path"), true);
+        const FHaybaHandlerResult R = Handler.Handle(TEXT("ui_render_widget_to_png"), P);
+        TestFalse(TEXT("wrong-type direct-native out_path is rejected"), R.bOk);
+        TestTrue(TEXT("wrong-type out_path refusal names the contract"),
+            R.ErrorMessage.Contains(TEXT("clean PNG filename string")));
+    }
+    {
+        TSharedPtr<FJsonObject> P = MakeShared<FJsonObject>();
+        P->SetStringField(TEXT("widget_blueprint_path"), W.ObjectPath);
+        P->SetStringField(TEXT("out_path"), TEXT(""));
+        const FHaybaHandlerResult R = Handler.Handle(TEXT("ui_render_widget_to_png"), P);
+        TestFalse(TEXT("explicit empty out_path is not treated as omission"), R.bOk);
+        TestTrue(TEXT("empty out_path refusal explains omission default"),
+            R.ErrorMessage.Contains(TEXT("omit it for a unique filename")));
+    }
+
     const FHaybaHandlerResult Added = AddBorder(Handler, W.ObjectPath, TEXT("Fill"));
     TestTrue(TEXT("border added"), Added.bOk);
     Compile(W.ObjectPath);
@@ -130,6 +149,18 @@ bool FHaybaMCPRenderWidgetToPngTest::RunTest(const FString& Parameters)
         }
 
         TestTrue(TEXT("returns out_path"), R.Data->TryGetStringField(TEXT("out_path"), OutPath));
+        FString ArtifactRoot;
+        FString ProjectDir;
+        FString ProjectSavedDir;
+        TestTrue(TEXT("returns artifact_root"), R.Data->TryGetStringField(TEXT("artifact_root"), ArtifactRoot));
+        TestTrue(TEXT("returns project_dir"), R.Data->TryGetStringField(TEXT("project_dir"), ProjectDir));
+        TestTrue(TEXT("returns project_saved_dir"),
+            R.Data->TryGetStringField(TEXT("project_saved_dir"), ProjectSavedDir));
+        TestTrue(TEXT("artifact root belongs to the effective saved directory"),
+            FPaths::IsUnderDirectory(ArtifactRoot, ProjectSavedDir));
+        TestEqual(TEXT("returned artifact parent is the declared root"),
+            FPaths::GetPath(OutPath), ArtifactRoot);
+        TestTrue(TEXT("render reports verified artifact"), R.Data->GetBoolField(TEXT("artifact_verified")));
 
         double Width = 0, Height = 0;
         R.Data->TryGetNumberField(TEXT("width"), Width);

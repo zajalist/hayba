@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { scriptedUe, type ScriptedUe } from '../testing/scripted-ue.js';
+import { deriveSignature } from '../schema-registry.js';
+import { recordToolSchema } from '../register-tool.js';
+import { STANDARD_DESCRIPTORS } from '../index.js';
 import { isValidBase64, schema, uiRenderWidgetToPngHandler } from './ui-render-widget-to-png.js';
 
 let ue: ScriptedUe | undefined;
@@ -9,8 +12,31 @@ afterEach(() => {
 });
 
 const BP = '/Game/UI/WBP_Panel';
+const PROJECT = 'D:/Project';
+const SAVED = `${PROJECT}/Saved`;
+const ROOT = `${SAVED}/Screenshots/Hayba`;
+const OUT = `${ROOT}/x.png`;
 // 1x1 transparent PNG.
 const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
+function verifiedReply(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    widget_blueprint_path: `${BP}.${BP.slice(BP.lastIndexOf('/') + 1)}_C`,
+    out_path: OUT,
+    artifact_root: ROOT,
+    project_dir: PROJECT,
+    project_saved_dir: SAVED,
+    artifact_verified: true,
+    bytes: 128,
+    width: 320,
+    height: 240,
+    design_width: 320,
+    design_height: 240,
+    opaque_background: true,
+    coverage_percent: 42.5,
+    ...overrides,
+  };
+}
 
 function blocks(r: { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> }) {
   return {
@@ -40,6 +66,19 @@ describe('ui_render_widget_to_png', () => {
     ).toThrow();
   });
 
+  it('publishes the same filename-only contract through get_tool_signature', () => {
+    const descriptor = STANDARD_DESCRIPTORS.find((candidate) => candidate.name === 'ui_render_widget_to_png');
+    expect(descriptor).toBeDefined();
+    recordToolSchema(descriptor!);
+    const signature = deriveSignature('ui_render_widget_to_png');
+    expect(signature?.params.out_path).toContain('clean PNG filename only');
+    expect(signature?.params.out_path).toContain('Saved/Screenshots/Hayba');
+    expect(signature?.params.out_path).toContain('omit for a unique filename');
+    expect(signature?.params.out_path).not.toMatch(/absolute|project-relative/i);
+    expect(signature?.returns).toContain('path');
+    expect(signature?.returns).toContain('artifact_verified:true');
+  });
+
   it('refuses traversal, invalid types, wrong extensions, controls, and oversized paths before UE', () => {
     const base = { widget_blueprint_path: BP };
     expect(() => schema.parse({ ...base, out_path: '../widget-proof.png' })).toThrow();
@@ -57,13 +96,15 @@ describe('ui_render_widget_to_png', () => {
     // The whole point of the tool is that the caller can SEE the widget. A
     // filename in a text block would leave them exactly as blind as the
     // four-minute PIE loop did.
-    ue = scriptedUe().replies('ui_render_widget_to_png', {
-      out_path: 'D:/x.png',
-      width: 320,
-      height: 240,
-      coverage_percent: 42.5,
-      image_base64: PNG_B64,
-    });
+    ue = scriptedUe().replies(
+      'ui_render_widget_to_png',
+      verifiedReply({
+        width: 320,
+        height: 240,
+        coverage_percent: 42.5,
+        image_base64: PNG_B64,
+      }),
+    );
 
     const r = await uiRenderWidgetToPngHandler({ widget_blueprint_path: BP }, {} as never);
     const { image, text } = blocks(r);
@@ -72,14 +113,16 @@ describe('ui_render_widget_to_png', () => {
     // The base64 must NOT also be serialised into the text block: the transport
     // length-caps text, which is what destroyed every screenshot last time.
     expect(text).not.toContain(PNG_B64);
-    expect(JSON.parse(text)).toMatchObject({ out_path: 'D:/x.png', coverage_percent: 42.5 });
+    expect(JSON.parse(text)).toMatchObject({ out_path: OUT, path: OUT, coverage_percent: 42.5 });
   });
 
   it('keeps the metadata readable when no image came back', async () => {
-    ue = scriptedUe().replies('ui_render_widget_to_png', {
-      out_path: 'D:/x.png',
-      inline_image_skipped: 'too big',
-    });
+    ue = scriptedUe().replies(
+      'ui_render_widget_to_png',
+      verifiedReply({
+        inline_image_skipped: 'too big',
+      }),
+    );
     const r = await uiRenderWidgetToPngHandler({ widget_blueprint_path: BP, inline_image: false }, {} as never);
     const { image, text } = blocks(r);
     expect(image).toBeUndefined();
@@ -90,22 +133,28 @@ describe('ui_render_widget_to_png', () => {
     // A widget that drew nothing still produces a valid, correctly-sized PNG.
     // If this warning gets dropped, the caller sees a confident success for an
     // empty image.
-    ue = scriptedUe().replies('ui_render_widget_to_png', {
-      out_path: 'D:/x.png',
-      coverage_percent: 0,
-      warning: 'The widget drew NOTHING',
-      image_base64: PNG_B64,
-    });
+    ue = scriptedUe().replies(
+      'ui_render_widget_to_png',
+      verifiedReply({
+        coverage_percent: 0,
+        warning: 'The widget drew NOTHING',
+        image_base64: PNG_B64,
+      }),
+    );
     const r = await uiRenderWidgetToPngHandler({ widget_blueprint_path: BP }, {} as never);
     expect(blocks(r).text).toContain('drew NOTHING');
   });
 
   it('passes sizing options straight through', async () => {
-    ue = scriptedUe().replies('ui_render_widget_to_png', { out_path: 'x' });
-    await uiRenderWidgetToPngHandler(
+    ue = scriptedUe().replies(
+      'ui_render_widget_to_png',
+      verifiedReply({ width: 1600, height: 1200, opaque_background: false }),
+    );
+    const result = await uiRenderWidgetToPngHandler(
       { widget_blueprint_path: BP, width: 800, height: 600, scale: 2, opaque_background: false },
       {} as never,
     );
+    expect(result.isError).toBeUndefined();
     expect(ue.paramsFor('ui_render_widget_to_png')).toMatchObject({
       widget_blueprint_path: BP,
       width: 800,
@@ -115,11 +164,110 @@ describe('ui_render_widget_to_png', () => {
     });
   });
 
+  it('binds a caller-supplied filename to the verified artifact', async () => {
+    ue = scriptedUe().replies('ui_render_widget_to_png', verifiedReply({ out_path: `${ROOT}/stale.png` }));
+    const result = await uiRenderWidgetToPngHandler(
+      { widget_blueprint_path: BP, out_path: 'requested.png' },
+      {} as never,
+    );
+    expect(result.isError).toBe(true);
+  });
+
+  it('binds scale to design dimensions when width and height are omitted', async () => {
+    ue = scriptedUe().replies(
+      'ui_render_widget_to_png',
+      verifiedReply({ width: 640, height: 480, design_width: 320, design_height: 240 }),
+    );
+    const result = await uiRenderWidgetToPngHandler({ widget_blueprint_path: BP, scale: 2 }, {} as never);
+    expect(result.isError).toBeUndefined();
+  });
+
+  it('rejects stale scale-1 evidence for an omitted-size scale-2 request', async () => {
+    ue = scriptedUe().replies(
+      'ui_render_widget_to_png',
+      verifiedReply({ width: 320, height: 240, design_width: 320, design_height: 240 }),
+    );
+    const result = await uiRenderWidgetToPngHandler({ widget_blueprint_path: BP, scale: 2 }, {} as never);
+    expect(result.isError).toBe(true);
+  });
+
   it('rejects a call with no blueprint path without contacting UE', async () => {
     ue = scriptedUe();
     const r = await uiRenderWidgetToPngHandler({}, {} as never);
     expect(r.isError).toBe(true);
     expect(ue.calls).toEqual([]);
+  });
+
+  it.each([
+    {},
+    { out_path: 'x.png' },
+    verifiedReply({ out_path: `${PROJECT}/Saved/Screenshots/Elsewhere/x.png` }),
+    verifiedReply({ out_path: `${ROOT}/sub/x.png` }),
+    verifiedReply({ out_path: `${ROOT}/../Hayba/x.png` }),
+    verifiedReply({ project_saved_dir: 'C:/Temp/Saved', artifact_root: ROOT }),
+    verifiedReply({
+      project_saved_dir: 'C:/Temp/Saved',
+      artifact_root: 'C:/Temp/Saved/Screenshots/Hayba',
+      out_path: OUT,
+    }),
+  ])('fails closed when native returns an invalid artifact path: %j', async (reply) => {
+    ue = scriptedUe().replies('ui_render_widget_to_png', reply);
+    const result = await uiRenderWidgetToPngHandler({ widget_blueprint_path: BP }, {} as never);
+    expect(result.isError).toBe(true);
+    const text = result.content.find((block) => block.type === 'text')?.text ?? '';
+    expect(text).toContain("verified PNG inside this project's Saved/Screenshots/Hayba");
+  });
+
+  it.each([
+    { out_path: OUT },
+    verifiedReply({ artifact_verified: false }),
+    verifiedReply({ bytes: 0 }),
+    verifiedReply({ bytes: '128' }),
+    verifiedReply({ width: '320' }),
+    verifiedReply({ height: 0 }),
+    verifiedReply({ width: 4096, height: 4096, design_width: 4096, design_height: 4096 }),
+    verifiedReply({ coverage_percent: Number.NaN }),
+    verifiedReply({ coverage_percent: 101 }),
+    verifiedReply({ opaque_background: 'true' }),
+    verifiedReply({ widget_blueprint_path: '/Game/UI/WBP_Other.WBP_Other' }),
+  ])('rejects path-only, false, zero, or wrong-type render evidence: %j', async (reply) => {
+    ue = scriptedUe().replies('ui_render_widget_to_png', reply);
+    const result = await uiRenderWidgetToPngHandler({ widget_blueprint_path: BP }, {} as never);
+    expect(result.isError).toBe(true);
+  });
+
+  it('correlates dimensions and opacity to the request', async () => {
+    ue = scriptedUe().replies(
+      'ui_render_widget_to_png',
+      verifiedReply({ width: 1600, height: 1200, opaque_background: false }),
+    );
+    const good = await uiRenderWidgetToPngHandler(
+      { widget_blueprint_path: BP, width: 800, height: 600, scale: 2, opaque_background: false },
+      {} as never,
+    );
+    expect(good.isError).toBeUndefined();
+
+    ue.restore();
+    ue = scriptedUe().replies(
+      'ui_render_widget_to_png',
+      verifiedReply({ width: 1599, height: 1200, opaque_background: false }),
+    );
+    const wrongWidth = await uiRenderWidgetToPngHandler(
+      { widget_blueprint_path: BP, width: 800, height: 600, scale: 2, opaque_background: false },
+      {} as never,
+    );
+    expect(wrongWidth.isError).toBe(true);
+
+    ue.restore();
+    ue = scriptedUe().replies(
+      'ui_render_widget_to_png',
+      verifiedReply({ width: 1600, height: 1200, opaque_background: true }),
+    );
+    const wrongOpaque = await uiRenderWidgetToPngHandler(
+      { widget_blueprint_path: BP, width: 800, height: 600, scale: 2, opaque_background: false },
+      {} as never,
+    );
+    expect(wrongOpaque.isError).toBe(true);
   });
 
   // --- Regression coverage for #334 ------------------------------------
@@ -150,10 +298,13 @@ describe('ui_render_widget_to_png', () => {
     const bigPng = 'A'.repeat(1_000_000); // 1,000,000 chars — multiple of 4, len % 4 === 0
     expect(isValidBase64(bigPng)).toBe(true);
 
-    ue = scriptedUe().replies('ui_render_widget_to_png', {
-      out_path: 'D:/big.png',
-      image_base64: bigPng,
-    });
+    ue = scriptedUe().replies(
+      'ui_render_widget_to_png',
+      verifiedReply({
+        out_path: `${ROOT}/big.png`,
+        image_base64: bigPng,
+      }),
+    );
 
     const r = await uiRenderWidgetToPngHandler({ widget_blueprint_path: BP }, {} as never);
     const { image } = blocks(r);
@@ -170,10 +321,12 @@ describe('ui_render_widget_to_png', () => {
     const clipped = validPrefix + '...';
     expect(isValidBase64(clipped)).toBe(false);
 
-    ue = scriptedUe().replies('ui_render_widget_to_png', {
-      out_path: 'D:/x.png',
-      image_base64: clipped,
-    });
+    ue = scriptedUe().replies(
+      'ui_render_widget_to_png',
+      verifiedReply({
+        image_base64: clipped,
+      }),
+    );
 
     const r = await uiRenderWidgetToPngHandler({ widget_blueprint_path: BP }, {} as never);
     const { image, text } = blocks(r);
@@ -184,19 +337,22 @@ describe('ui_render_widget_to_png', () => {
     expect(r.content.some((c) => c.type === 'text' && c.text?.includes('not valid base64'))).toBe(true);
     // And the metadata / path are still intact — the whole point of not
     // routing the bad string through the image block.
-    expect(JSON.parse(text).path).toBe('D:/x.png');
+    expect(JSON.parse(text).path).toBe(OUT);
   });
 
   it('always carries a usable "path" the caller can read from disk', async () => {
-    ue = scriptedUe().replies('ui_render_widget_to_png', {
-      out_path: 'D:/only-metadata.png',
-      inline_image_skipped: 'too big',
-    });
+    ue = scriptedUe().replies(
+      'ui_render_widget_to_png',
+      verifiedReply({
+        out_path: `${ROOT}/only-metadata.png`,
+        inline_image_skipped: 'too big',
+      }),
+    );
     const r = await uiRenderWidgetToPngHandler({ widget_blueprint_path: BP, inline_image: false }, {} as never);
     const { text } = blocks(r);
     const parsed = JSON.parse(text);
-    expect(parsed.path).toBe('D:/only-metadata.png');
-    expect(parsed.out_path).toBe('D:/only-metadata.png');
+    expect(parsed.path).toBe(`${ROOT}/only-metadata.png`);
+    expect(parsed.out_path).toBe(`${ROOT}/only-metadata.png`);
   });
 });
 

@@ -77,7 +77,7 @@ namespace
 bool ReadOptionalString(const TSharedPtr<FJsonObject>& Json, const TCHAR* Key, FString& Out, FString& Error)
 {
     if (!Json->HasField(Key)) return true;
-    if (!Json->TryGetStringField(Key, Out))
+    if (!Json->HasTypedField<EJson::String>(Key) || !Json->TryGetStringField(Key, Out))
     {
         Error = FString::Printf(TEXT("asset_registry_query: %s must be a string"), Key);
         return false;
@@ -97,7 +97,7 @@ bool ReadInteger(const TSharedPtr<FJsonObject>& Json, const TCHAR* Key, int32 De
     Out = DefaultValue;
     if (!Json->HasField(Key)) return true;
     double Value = 0.0;
-    if (!Json->TryGetNumberField(Key, Value) || !FMath::IsFinite(Value)
+    if (!Json->HasTypedField<EJson::Number>(Key) || !Json->TryGetNumberField(Key, Value) || !FMath::IsFinite(Value)
         || Value != FMath::FloorToDouble(Value) || Value < Minimum || Value > Maximum)
     {
         Error = FString::Printf(TEXT("asset_registry_query: %s must be an integer from %d to %d"),
@@ -124,7 +124,9 @@ bool ParseParams(const TSharedPtr<FJsonObject>& Json, FParams& Out, FString& Err
         || !ReadInteger(Json, TEXT("offset"), 0, 0, MAX_int32, Out.Offset, Error))
         return false;
 
-    if (Json->HasField(TEXT("recursive")) && !Json->TryGetBoolField(TEXT("recursive"), Out.bRecursive))
+    if (Json->HasField(TEXT("recursive"))
+        && (!Json->HasTypedField<EJson::Boolean>(TEXT("recursive"))
+            || !Json->TryGetBoolField(TEXT("recursive"), Out.bRecursive)))
     {
         Error = TEXT("asset_registry_query: recursive must be a boolean");
         return false;
