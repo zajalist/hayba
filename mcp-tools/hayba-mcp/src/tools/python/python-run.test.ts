@@ -1,4 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { MAX_PYTHON_SCRIPT_CHARS, PYTHON_CRASH_RULES } from '../guards/known-crashers.js';
 
 // Installed on the ToolExecutor seam rather than mocking the tcp-client module
@@ -6,7 +9,7 @@ import { MAX_PYTHON_SCRIPT_CHARS, PYTHON_CRASH_RULES } from '../guards/known-cra
 const send = vi.fn();
 import { setDefaultSender } from '../tool-executor.js';
 
-describe('python_run crash guard + spill', () => {
+describe('python_run crash guard + bounded inline output', () => {
   it('refuses a known-crasher script without contacting UE', async () => {
     const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
@@ -155,14 +158,85 @@ describe('python_run crash guard + spill', () => {
     expect(payload.retry_with_allow_unsafe).toBeUndefined();
   });
 
-  it('spills oversized output to a temp file and returns a path', async () => {
+  it('bounds >12K output truthfully in memory and has no raw filesystem spill path', async () => {
     const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
-    send.mockResolvedValueOnce({ ok: true, data: { ok: true, stdout: 'x'.repeat(20_000) } });
-    const r = await pythonRunHandler({ script: 'print("big")' }, {} as never);
-    expect(r.content[0].text).toContain('Full output written to:');
-    expect(r.content[0].text).toContain('output truncated');
+    const sentinel = 'HAYBA_SENTINEL_RAW_TEMP_SPILL_383';
+    const nativeStdout = `${'x'.repeat(20_000)}${sentinel}`;
+    send.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        ok: true,
+        stdout: nativeStdout,
+        stderr: '',
+        stdout_truncated: false,
+        stderr_truncated: false,
+        stdout_chars_dropped: 0,
+        stderr_chars_dropped: 0,
+        capture_limit_chars_per_stream: 65_536,
+      },
+    });
+    const r = await pythonRunHandler({ script: 'print("big")', allow_unsafe: true }, {} as never);
+    const responseText = r.content[0].text;
+    const payload = JSON.parse(responseText);
+
+    expect(responseText.length).toBeLessThan(32 * 1_024);
+    expect(responseText).not.toContain(sentinel);
+    expect(payload.stdout_mcp_truncated).toBe(true);
+    expect(payload.stdout_mcp_chars_dropped).toBe(nativeStdout.length - payload.stdout.length);
+    expect(payload.stdout_native_truncated).toBe(false);
+    expect(payload.stdout_native_chars_dropped).toBe(0);
+    expect(payload.stdout_truncated).toBe(true);
+    expect(payload.stdout_chars_dropped).toBe(payload.stdout_mcp_chars_dropped);
+    expect(payload.mcp_result_truncated).toBe(true);
+    expect(payload.output_truncated).toBe(true);
+    expect(payload.output_complete).toBe(false);
+    expect(payload.mcp_stream_limit_serialized_chars).toBe(12_000);
+    expect(payload.mcp_output_policy).toBe('bounded_inline_no_filesystem_spill');
+    expect(payload.allow_unsafe_requested).toBe(true);
+    expect(payload.allow_unsafe_effective).toBe(false);
+    expect(payload.allow_unsafe_deprecated).toBe(true);
+
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'python-run.ts'), 'utf8');
+    expect(source).not.toMatch(/from ['"]node:(?:fs|os|path)['"]/);
+    expect(source).not.toContain('writeFileSync');
+    expect(source).not.toContain('mkdirSync');
+    expect(source).not.toContain('tmpdir');
+    expect(source).not.toContain('hayba-python');
+    expect(source).not.toContain('Full output written to:');
+  });
+
+  it('preserves native 64KiB capture loss separately from the bounded MCP view', async () => {
+    const { pythonRunHandler } = await import('./python-run.js');
+    send.mockClear();
+    setDefaultSender(send);
+    send.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        ok: true,
+        stdout: 'native bounded head',
+        stderr: '',
+        stdout_truncated: true,
+        stderr_truncated: false,
+        stdout_chars_dropped: 5_000,
+        stderr_chars_dropped: 0,
+        capture_limit_chars_per_stream: 65_536,
+      },
+    });
+
+    const r = await pythonRunHandler({ script: 'print("native cap")' }, {} as never);
+    const payload = JSON.parse(r.content[0].text);
+    expect(payload.capture_limit_chars_per_stream).toBe(65_536);
+    expect(payload.stdout_native_truncated).toBe(true);
+    expect(payload.stdout_native_chars_dropped).toBe(5_000);
+    expect(payload.stdout_mcp_truncated).toBe(false);
+    expect(payload.stdout_mcp_chars_dropped).toBe(0);
+    expect(payload.stdout_truncated).toBe(true);
+    expect(payload.stdout_chars_dropped).toBe(5_000);
+    expect(payload.mcp_result_truncated).toBe(false);
+    expect(payload.output_truncated).toBe(true);
+    expect(payload.output_complete).toBe(false);
   });
 
   it('returns small output inline', async () => {
@@ -172,6 +246,12 @@ describe('python_run crash guard + spill', () => {
     send.mockResolvedValueOnce({ ok: true, data: { ok: true, stdout: 'small' } });
     const r = await pythonRunHandler({ script: 'print("small")' }, {} as never);
     expect(r.content[0].text).toContain('small');
-    expect(r.content[0].text).not.toContain('Full output written to:');
+    const payload = JSON.parse(r.content[0].text);
+    expect(payload.stdout).toBe('small');
+    expect(payload.stdout_truncated).toBe(false);
+    expect(payload.stdout_chars_dropped).toBe(0);
+    expect(payload.mcp_result_truncated).toBe(false);
+    expect(payload.output_truncated).toBe(false);
+    expect(payload.output_complete).toBe(true);
   });
 });

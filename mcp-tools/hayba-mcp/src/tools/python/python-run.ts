@@ -1,7 +1,4 @@
 import { z } from 'zod';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import type { ToolHandler } from '../types.js';
 import { executeCommand } from '../tool-executor.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
@@ -10,12 +7,45 @@ import { errorResult } from '../tool-result.js';
 import { resolveAliases } from '../param-aliases.js';
 import { TOOL_ALIASES } from '../tool-aliases.js';
 
-/**
- * When python_run output exceeds this many characters, spill the full payload
- * to a temp file and return a head + the path, instead of letting the transport
- * layer truncate it mid-output. See HANDOFF postmortem P1.
- */
-const STDOUT_SPILL_THRESHOLD = 12_000;
+// Keep each rendered stream below this many JSON-encoded characters. Two
+// streams plus facts remain comfortably below the central redactor's 64 KiB
+// per-string boundary. This is an in-memory presentation cap: raw native output
+// must never be persisted before the shared secret-redaction boundary (#383).
+const MCP_STREAM_JSON_CHAR_LIMIT = 12_000;
+
+interface BoundedCapturedStream {
+  value: string;
+  mcpTruncated: boolean;
+  mcpCharsDropped: number;
+}
+
+/** Return the longest prefix whose JSON string literal fits the wire budget. */
+function boundCapturedStream(value: unknown): BoundedCapturedStream {
+  const text = typeof value === 'string' ? value : value == null ? '' : String(value);
+  if (JSON.stringify(text).length <= MCP_STREAM_JSON_CHAR_LIMIT) {
+    return { value: text, mcpTruncated: false, mcpCharsDropped: 0 };
+  }
+
+  // Binary search avoids assuming one source character maps to one serialized
+  // character: quotes, controls, and lone surrogates expand under JSON escaping.
+  let low = 0;
+  let high = text.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (JSON.stringify(text.slice(0, middle)).length <= MCP_STREAM_JSON_CHAR_LIMIT) low = middle;
+    else high = middle - 1;
+  }
+  const valuePrefix = text.slice(0, low);
+  return {
+    value: valuePrefix,
+    mcpTruncated: true,
+    mcpCharsDropped: text.length - valuePrefix.length,
+  };
+}
+
+function nonnegativeNativeCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
+}
 
 // Mirror the native Tier-3 classifier for immediate sidecar feedback. The C++
 // handler remains authoritative because its bounded alias expansion can see
@@ -171,35 +201,43 @@ export const pythonRunHandler: ToolHandler = async (args) => {
     // native call, so restore truthful caller-observation facts on the reply.
     // These are facts about authority, not a claim that arbitrary embedded
     // Python is process-isolated (#392/#414).
+    const stdout = boundCapturedStream(data.stdout);
+    const stderr = boundCapturedStream(data.stderr);
+    const stdoutNativeTruncated = data.stdout_truncated === true;
+    const stderrNativeTruncated = data.stderr_truncated === true;
+    const stdoutNativeCharsDropped = nonnegativeNativeCount(data.stdout_chars_dropped);
+    const stderrNativeCharsDropped = nonnegativeNativeCount(data.stderr_chars_dropped);
+    const outputTruncated =
+      stdoutNativeTruncated || stderrNativeTruncated || stdout.mcpTruncated || stderr.mcpTruncated;
     const responseData = {
       ...data,
+      stdout: stdout.value,
+      stderr: stderr.value,
+      // Preserve the native 64 KiB capture facts separately, then expose the
+      // aggregate facts callers historically read. A partial reply can never
+      // masquerade as complete merely because truncation happened in Node.
+      stdout_native_truncated: stdoutNativeTruncated,
+      stderr_native_truncated: stderrNativeTruncated,
+      stdout_native_chars_dropped: stdoutNativeCharsDropped,
+      stderr_native_chars_dropped: stderrNativeCharsDropped,
+      stdout_mcp_truncated: stdout.mcpTruncated,
+      stderr_mcp_truncated: stderr.mcpTruncated,
+      stdout_mcp_chars_dropped: stdout.mcpCharsDropped,
+      stderr_mcp_chars_dropped: stderr.mcpCharsDropped,
+      stdout_truncated: stdoutNativeTruncated || stdout.mcpTruncated,
+      stderr_truncated: stderrNativeTruncated || stderr.mcpTruncated,
+      stdout_chars_dropped: stdoutNativeCharsDropped + stdout.mcpCharsDropped,
+      stderr_chars_dropped: stderrNativeCharsDropped + stderr.mcpCharsDropped,
+      mcp_result_truncated: stdout.mcpTruncated || stderr.mcpTruncated,
+      output_truncated: outputTruncated,
+      output_complete: !outputTruncated,
+      mcp_stream_limit_serialized_chars: MCP_STREAM_JSON_CHAR_LIMIT,
+      mcp_output_policy: 'bounded_inline_no_filesystem_spill',
       allow_unsafe_requested: allowUnsafeRequested,
       allow_unsafe_effective: false,
       allow_unsafe_deprecated: true,
     };
     const text = JSON.stringify(responseData, null, 2);
-    if (text.length > STDOUT_SPILL_THRESHOLD) {
-      // Auto-spill: write the full payload to a temp file and return a head +
-      // path so large dumps (pin lists, asset inventories) survive intact
-      // instead of being truncated downstream.
-      try {
-        const dir = join(tmpdir(), 'hayba-python');
-        mkdirSync(dir, { recursive: true });
-        const file = join(dir, `python_run-${Date.now()}.json`);
-        writeFileSync(file, text);
-        const head = text.slice(0, STDOUT_SPILL_THRESHOLD);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `${head}\n\n…[output truncated: ${text.length} chars]\nFull output written to: ${file}\nRead that file to get the complete result.`,
-            },
-          ],
-        };
-      } catch {
-        // Spill failed — fall through to returning the (large) text as-is.
-      }
-    }
     return { content: [{ type: 'text', text }] };
   } catch (e: unknown) {
     // The seam throws on a UE-reported failure and carries the original native
@@ -207,8 +245,7 @@ export const pythonRunHandler: ToolHandler = async (args) => {
     // C++ boundary is authoritative for stale/direct clients and for runtime
     // deadline/SEH failures that TypeScript cannot predict.
     const uePayload = (e as { uePayload?: unknown })?.uePayload as
-      | { data?: Record<string, unknown>; error?: string }
-      | undefined;
+      { data?: Record<string, unknown>; error?: string } | undefined;
     const nativeError = uePayload?.error ?? (e instanceof Error ? e.message : String(e));
     if (uePayload?.data?.tier === 3 && !nativeError.includes('[HCR-')) {
       return errorResult(`${tier3RefusalMessage(allowUnsafeRequested)} Underlying error: ${nativeError}`, {
