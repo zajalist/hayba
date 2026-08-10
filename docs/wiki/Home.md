@@ -10,7 +10,7 @@ Read [`../../CONTEXT.md`](../../CONTEXT.md) first for the domain language.
 |---|---|
 | [Getting-Started](Getting-Started.md) | Prerequisites + pointer to `docs/getting-started.md` |
 | [Architecture](Architecture.md) | The protocol seam, pointer to the architecture docs |
-| [MCP-Tool-Reference](MCP-Tool-Reference.md) | How the tool surface is derived; the 34 handler domains |
+| [MCP-Tool-Reference](MCP-Tool-Reference.md) | How the tool surface is derived; the 33 handler domains + 2 satellite plugins |
 | [UE-Plugin](UE-Plugin.md) | The UE5 C++ plugin + handler-domain table |
 | [Troubleshooting](Troubleshooting.md) | Ports, Node version, the local gate |
 | [Glossary](Glossary.md) | One-line definitions of the core terms |
@@ -29,7 +29,7 @@ Read [`../../CONTEXT.md`](../../CONTEXT.md) first for the domain language.
 
 - [`mcp-tools/hayba-mcp`](../../mcp-tools/hayba-mcp/README.md) — the core MCP
   server
-- [`mcp-tools/visual-sidecar`](../../mcp-tools/visual-sidecar/README.md) — the
+- [`mcp-tools/hayba-mcp/addons/visual-embeddings`](../../mcp-tools/hayba-mcp/addons/visual-embeddings/README.md) — the
   Python visual sidecar (CLIP / SpatialCLIP / SAM)
 - [`mcp-tools/pcgex`](../../mcp-tools/pcgex/README.md) — PCGEx debug tooling
   (parked)

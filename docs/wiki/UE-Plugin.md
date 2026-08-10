@@ -28,17 +28,32 @@ One `*Handler.cpp` per domain in
 |---|---|---|---|
 | Actor | Animation | Asset | Audio |
 | BehaviorTree | Blueprint | Build | DataAsset |
-| Docs | Editor | Foliage | GAS |
-| ISM | Input | Legacy | Level |
-| Material | MetaSound | Network | Niagara |
-| PIE | Perf | Physics | Project |
-| Python | SceneGraph | Sequencer | Spline |
-| StaticMesh | Test | Texture | UI |
+| Docs | Editor | Foliage | ISM |
+| Idle | Input | Legacy | Level |
+| Material | Network | PIE | Perf |
+| Physics | Project | Python | Render |
+| SceneGraph | Spline | StaticMesh | Test |
+| Texture | UI | UILayout | Vault |
 | WorldPartition | | | |
 
-33 concrete handler files; the repo's docs consistently frame this as
-**"34 command-handler domains"** (see [MCP-Tool-Reference](MCP-Tool-Reference.md)
-for the note on this count).
+33 concrete handler files, all inside the always-loaded `HaybaMCPToolkit`
+plugin.
+
+## Satellite plugins
+
+Two more UE modules ship optional handlers outside `HaybaMCPToolkit`,
+installed into a host project separately:
+
+- `unreal/HaybaMCPGAS` — Gameplay Ability System commands.
+- `unreal/HaybaMCPMetaSound` — MetaSound graph commands (two of six work
+  today; the rest are documented but not agent-callable, pending an
+  upstream API).
+
+`HaybaMCPNiagara` and `HaybaMCPSequencer` were deleted — their commands
+duplicated `niagara_*` / `seq_*` tools already shipped by the TS/python
+layer under different names. See
+[ADR-0008](../adr/0008-satellite-plugins-earn-their-place.md) for the
+command-by-command audit.
 
 ## Source layout
 

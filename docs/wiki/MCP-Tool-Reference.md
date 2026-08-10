@@ -38,17 +38,23 @@ There is one `*Handler.cpp` per domain in
 concrete handler files**:
 
 `Actor` · `Animation` · `Asset` · `Audio` · `BehaviorTree` · `Blueprint` ·
-`Build` · `DataAsset` · `Docs` · `Editor` · `Foliage` · `GAS` · `ISM` ·
-`Input` · `Legacy` · `Level` · `Material` · `MetaSound` · `Network` ·
-`Niagara` · `PIE` · `Perf` · `Physics` · `Project` · `Python` ·
-`SceneGraph` · `Sequencer` · `Spline` · `StaticMesh` · `Test` · `Texture` ·
-`UI` · `WorldPartition`
+`Build` · `DataAsset` · `Docs` · `Editor` · `Foliage` · `ISM` · `Idle` ·
+`Input` · `Legacy` · `Level` · `Material` · `Network` · `PIE` · `Perf` ·
+`Physics` · `Project` · `Python` · `Render` · `SceneGraph` · `Spline` ·
+`StaticMesh` · `Test` · `Texture` · `UI` · `UILayout` · `Vault` ·
+`WorldPartition`
 
-The repo refers to **"34 command-handler domains"** (CONTEXT.md, root
-README, the UE plugin README) — the count is the framing used across the
-docs; the 33 files above are the concrete `IHaybaMCPHandler`
-implementations dispatched by `HaybaMCPModule`. Each implements
-`GetCommands()` / `Handle()`.
+Each implements `GetCommands()` / `Handle()`, dispatched by `HaybaMCPModule`.
+
+### Satellite plugins (not in the list above)
+
+`GAS` and `MetaSound` handlers live in their own UE modules —
+`unreal/HaybaMCPGAS` and `unreal/HaybaMCPMetaSound` — installed into a host
+project only when wanted, not part of the always-loaded `HaybaMCPToolkit`
+count above. `Niagara` and `Sequencer` handler modules **used to exist** the
+same way and were deleted: their commands duplicated `niagara_*` / `seq_*`
+tools the TS/python layer already shipped under different names. See
+[ADR-0008](../adr/0008-satellite-plugins-earn-their-place.md).
 
 > The Node-side `list_tool_categories` groups commands into agent-facing
 > categories (e.g. `actor`, `pcg`, `seq`) that map onto these handlers plus
