@@ -53,6 +53,11 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   ones not written yet. This was the root cause under #334.
 
 ### Fixed
+- Long native commands no longer lose their TCP response at the five-second
+  next-frame read deadline. The server now tracks accepted requests through
+  response send completion, suspends only the empty next-frame idle timeout
+  while work is outstanding, and still disconnects idle clients and partial-
+  frame slowloris senders on a bounded deadline.
 - `test_run` now accepts the same case-insensitive filter/category selectors as
   `test_list`, rejects empty, ambiguous, and zero-match requests instead of
   returning false-green empty results, and reports explicit pass/fail/skip

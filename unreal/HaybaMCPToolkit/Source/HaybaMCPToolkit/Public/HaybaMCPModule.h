@@ -124,7 +124,7 @@ private:
     FString FindNodeExecutable() const;
     FString GetMCPServerPath() const;
 
-    TSharedPtr<FHaybaMCPTcpServer> TcpServer;
+    TSharedPtr<FHaybaMCPTcpServer, ESPMode::ThreadSafe> TcpServer;
     TSharedPtr<FHaybaMCPCommandHandler> CommandHandler;
     mutable FProcHandle MCPProcessHandle;
     int32 MCPPort = 0;

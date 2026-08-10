@@ -5,6 +5,7 @@
 #include "HAL/ThreadSafeBool.h"
 #include "Containers/Queue.h"
 #include "Containers/Ticker.h"
+#include "Async/Future.h"
 #include "Networking.h"
 
 class FHaybaMCPCommandHandler;
@@ -18,11 +19,23 @@ class FHaybaMCPCommandHandler;
  */
 struct FHaybaMCPClientConnection
 {
-	explicit FHaybaMCPClientConnection(FSocket* InSocket) : Socket(InSocket) {}
+	explicit FHaybaMCPClientConnection(FSocket* InSocket);
 	~FHaybaMCPClientConnection();
 
 	FSocket* Socket = nullptr;
 	FThreadSafeBool bAlive{ true };
+	// Number of accepted requests whose response has not finished sending.
+	// The reader uses this to distinguish a healthy long-running command from
+	// an idle/slow client while it waits for the next frame.
+	FThreadSafeCounter ResponsesPending;
+	// Incremented before ResponsesPending is cleared, so a descheduled reader
+	// cannot miss a complete response lifecycle and reuse a stale idle deadline.
+	FThreadSafeCounter ResponseGeneration;
+	FThreadSafeCounter RequestsReceived;
+	FThreadSafeCounter QueuedResponseChars;
+	double AcceptedAtSeconds = 0.0;
+	TQueue<FString, EQueueMode::Mpsc> OutboundResponses;
+	FEvent* OutboundEvent = nullptr;
 	FCriticalSection SendMutex;
 };
 
@@ -35,7 +48,7 @@ struct FHaybaMCPPendingCommand
 	FHaybaMCPClientConnectionPtr Conn;
 };
 
-class FHaybaMCPTcpServer : public FRunnable
+class FHaybaMCPTcpServer : public FRunnable, public TSharedFromThis<FHaybaMCPTcpServer, ESPMode::ThreadSafe>
 {
 public:
 	FHaybaMCPTcpServer(int32 InPort);
@@ -70,6 +83,14 @@ private:
 	// data race the compiler may hoist, never seeing shutdown).
 	FThreadSafeBool bIsRunning{ false };
 	FThreadSafeCounter ClientCount;
+	static constexpr int32 MaxClientConnections = 16;
+	static constexpr int32 MaxPipelinedRequestsPerClient = 8;
+	static constexpr int32 MaxQueuedResponseCharsPerClient = 8 * 1024 * 1024;
+	// Actual completion handles for every background connection/read/send task.
+	// Shutdown removes the ticker, joins the listener, then joins these workers
+	// before module code can unload.
+	FCriticalSection WorkerMutex;
+	TArray<TFuture<void>> Workers;
 
 	// Commands run on the game thread via a TICKER drain (not AsyncTask). Running
 	// inside an AsyncTask(GameThread) *task* makes any handler that itself pumps
@@ -80,8 +101,10 @@ private:
 	TQueue<FHaybaMCPPendingCommand, EQueueMode::Mpsc> PendingCommands;
 	FTSTicker::FDelegateHandle DrainTickerHandle;
 	bool DrainPendingCommands(float DeltaTime);
+	void RetainWorker(TFuture<void>&& Worker);
 
 	void HandleClientConnection(FHaybaMCPClientConnectionPtr Conn);
-	bool ReadMessage(FSocket* Socket, FString& OutMessage);
-	void SendMessage(const FHaybaMCPClientConnectionPtr& Conn, const FString& Message);
+	void HandleClientWrites(FHaybaMCPClientConnectionPtr Conn);
+	bool ReadMessage(const FHaybaMCPClientConnectionPtr& Conn, FString& OutMessage);
+	bool SendMessage(const FHaybaMCPClientConnectionPtr& Conn, const FString& Message);
 };

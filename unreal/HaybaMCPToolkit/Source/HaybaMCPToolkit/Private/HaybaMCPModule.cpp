@@ -366,7 +366,7 @@ bool FHaybaMCPModule::StartTcpServer()
     int32 ChosenPort = INDEX_NONE;
     for (int32 P = kPortFirst; P <= kPortLast; ++P)
     {
-        TcpServer = MakeShared<FHaybaMCPTcpServer>(P);
+        TcpServer = MakeShared<FHaybaMCPTcpServer, ESPMode::ThreadSafe>(P);
         TcpServer->SetCommandHandler(CommandHandler);
         if (TcpServer->Start())
         {
