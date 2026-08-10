@@ -3,6 +3,7 @@
 #include "HaybaMCPReflection.h"
 #include "HaybaMCPGameThread.h"
 #include "HaybaMCPCommandHandler.h"
+#include "HaybaMCPSettings.h"
 #include "HaybaMCPLandscapeImporter.h"
 #include "Interfaces/IPluginManager.h"
 #include "Runtime/Launch/Resources/Version.h"
@@ -148,6 +149,24 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_Ping(const TSharedPtr<FJsonObjec
 		}
 		Data->SetObjectField(TEXT("capabilities"), Caps);
 	}
+
+    // These are the centrally-clamped values the TCP server captures at Start.
+    // Surfacing them in the diagnostic ping makes the effective safety contract
+    // inspectable without asking a user to find an ini file. Runtime settings
+    // changes apply on the next TCP-server/editor restart.
+    {
+        const FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
+        TSharedPtr<FJsonObject> Limits = MakeShared<FJsonObject>();
+        Limits->SetNumberField(TEXT("max_request_bytes"), Settings.TcpMaxRequestBytes);
+        Limits->SetNumberField(TEXT("max_response_bytes"), Settings.TcpMaxResponseBytes);
+        Limits->SetNumberField(TEXT("max_clients"), Settings.TcpMaxClientConnections);
+        Limits->SetNumberField(TEXT("max_pending_commands"), Settings.TcpMaxPendingCommands);
+        Limits->SetNumberField(TEXT("max_json_nesting_depth"), Settings.TcpMaxJsonNestingDepth);
+        Limits->SetNumberField(TEXT("frame_read_timeout_ms"), Settings.TcpFrameReadTimeoutMs);
+        Limits->SetNumberField(TEXT("send_timeout_ms"), Settings.TcpSendTimeoutMs);
+        Limits->SetStringField(TEXT("applies"), TEXT("captured_at_tcp_server_start"));
+        Data->SetObjectField(TEXT("transport_limits"), Limits);
+    }
 
 	UE_LOG(LogHaybaMCPLegacy, Log, TEXT("Ping command processed"));
 	return FHaybaHandlerResult::Ok(Data);

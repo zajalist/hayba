@@ -122,13 +122,16 @@ static FHaybaHandlerResult MeshSetLOD(const TSharedPtr<FJsonObject>& P)
     FString Path;
     FHaybaParamReader ParamR(P, TEXT("mesh_set_lod"));
     Path = ParamR.RequiredString(TEXT("path"));
+    const int32 LodIndex = ParamR.RequiredInt(TEXT("lod_index"));
+    const double ScreenSize = ParamR.RequiredNumberInRange(TEXT("screen_size"), 0.0, 1.0);
+    // Keep the optional-presence query null-safe independently of the early
+    // guard above. The reader itself accepts a null params pointer, and a later
+    // refactor must not turn this auxiliary check into a raw dereference.
+    const bool bHasReduction = P.IsValid()
+        && P->HasField(TEXT("reduction_percent_triangles"));
+    const double ReductionPercent = ParamR.OptionalNumberInRange(
+        TEXT("reduction_percent_triangles"), 1.0, 0.0, 1.0);
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
-    int32 LodIndex = 0;
-    if (!P->TryGetNumberField(TEXT("lod_index"), LodIndex))
-        return FHaybaHandlerResult::Err(TEXT("mesh_set_lod: missing arg lod_index"));
-    double ScreenSize = 0.0;
-    if (!P->TryGetNumberField(TEXT("screen_size"), ScreenSize))
-        return FHaybaHandlerResult::Err(TEXT("mesh_set_lod: missing arg screen_size"));
 
     UStaticMesh* Mesh = Cast<UStaticMesh>(FSoftObjectPath(Path).TryLoad());
     if (!Mesh) return FHaybaHandlerResult::Err(FString::Printf(TEXT("mesh_set_lod: failed to load %s"), *Path));
@@ -156,8 +159,7 @@ static FHaybaHandlerResult MeshSetLOD(const TSharedPtr<FJsonObject>& P)
     FStaticMeshSourceModel& SM = Mesh->GetSourceModel(LodIndex);
     SM.ScreenSize = (float)ScreenSize;
 
-    double ReductionPercent;
-    if (P->TryGetNumberField(TEXT("reduction_percent_triangles"), ReductionPercent))
+    if (bHasReduction)
     {
         SM.ReductionSettings.PercentTriangles = (float)ReductionPercent;
     }

@@ -40,7 +40,10 @@ FHaybaHandlerResult FHaybaMCPVaultHandler::HandleGetSetting(const TSharedPtr<FJs
     // Allowlist, not a general settings reader: an arbitrary field read would
     // expose every developer setting, including ones added later by someone who
     // never considered this command.
-    static const TSet<FString> Allow = { TEXT("sketchfab_api_token") };
+    static const TSet<FString> Allow = {
+        TEXT("sketchfab_api_token"),
+        TEXT("advisory_verbosity"),
+    };
     if (!Allow.Contains(Key))
     {
         return FHaybaHandlerResult::Err(
@@ -49,7 +52,15 @@ FHaybaHandlerResult FHaybaMCPVaultHandler::HandleGetSetting(const TSharedPtr<FJs
 
     const UHaybaMCPDeveloperSettings* DS = GetDefault<UHaybaMCPDeveloperSettings>();
     FString Value;
-    if (Key == TEXT("sketchfab_api_token")) Value = DS->SketchfabApiToken;
+    if (Key == TEXT("sketchfab_api_token"))
+    {
+        Value = DS->SketchfabApiToken;
+    }
+    else if (Key == TEXT("advisory_verbosity"))
+    {
+        Value = FHaybaMCPSettings::AdvisoryVerbosityWireName(
+            FHaybaMCPSettings::Get().AdvisoryVerbosity);
+    }
 
     TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
     Data->SetStringField(TEXT("key"), Key);
