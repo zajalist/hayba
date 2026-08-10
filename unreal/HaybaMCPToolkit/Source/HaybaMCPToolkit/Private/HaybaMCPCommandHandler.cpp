@@ -832,12 +832,34 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
                 auto Data = MakeShared<FJsonObject>();
                 Data->SetStringField(TEXT("status"), TEXT("plan_mode_required"));
                 Data->SetStringField(TEXT("hint"), TEXT("Plan Mode is ON. Call hayba_propose_plan with a steps[] array, then the user must click Approve in the Plan tab before destructive commands run."));
+                // Under strict consume the previous Approve was SPENT by the
+                // last destructive command. Without saying so, the second call
+                // in a sequence looks exactly like Approve never worked, and
+                // the user clicks it again wondering what broke.
+                Data->SetStringField(TEXT("approval_mode"),
+                    S.bPlanApprovalStrictConsume ? TEXT("per_call_consume") : TEXT("per_plan_persist"));
+                if (S.bPlanApprovalStrictConsume)
+                {
+                    Data->SetStringField(TEXT("approval_mode_note"),
+                        TEXT("Strict consume is on: each Approve authorises exactly ONE destructive command, so an "
+                             "earlier approval in this sequence has already been used. Set "
+                             "bPlanApprovalStrictConsume=false in the Hayba settings for one Approve to cover a whole plan."));
+                }
                 return MakeOkResponse(Id, Data);
             }
-            // Consume the approval: subsequent destructive calls need a fresh plan.
-            // Comment out the next line if you want approval to persist across
-            // a multi-step destructive sequence.
-            // M->bPlanApproved = false;
+            // How long one Approve lasts is now a SETTING rather than a
+            // commented-out line, because both answers are right for different
+            // sessions and the choice was previously made by editing source.
+            //
+            // Default (false) keeps the existing per-plan behaviour: a plan
+            // whose steps are "delete these six assets" must not stop dead
+            // after the first one. Strict consume spends the approval on the
+            // first destructive command, which is what an unattended agent
+            // against content that matters wants.
+            if (S.bPlanApprovalStrictConsume && M)
+            {
+                M->bPlanApproved = false;
+            }
         }
         S.PlanModeToolCallCount++;
         S.Save();

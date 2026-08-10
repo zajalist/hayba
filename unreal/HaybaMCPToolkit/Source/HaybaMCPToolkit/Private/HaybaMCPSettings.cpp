@@ -261,6 +261,7 @@ void FHaybaMCPSettings::Load()
     GConfig->GetBool(Section, TEXT("bHasSeenWizard"), bHasSeenWizard, GEditorPerProjectIni);
     GConfig->GetBool(Section, TEXT("bHasSeenOnboarding"), bHasSeenOnboarding, GEditorPerProjectIni);
     GConfig->GetBool(Section, TEXT("bPlanModeEnabled"), bPlanModeEnabled, GEditorPerProjectIni);
+    GConfig->GetBool(Section, TEXT("bPlanApprovalStrictConsume"), bPlanApprovalStrictConsume, GEditorPerProjectIni);
     GConfig->GetInt(Section, TEXT("PlanModeToolCallCount"), PlanModeToolCallCount, GEditorPerProjectIni);
     GConfig->GetBool(Section, TEXT("bShownPlanModePrompt"), bShownPlanModePrompt, GEditorPerProjectIni);
     {
@@ -312,6 +313,7 @@ void FHaybaMCPSettings::Save() const
     GConfig->SetBool(Section, TEXT("bHasSeenWizard"), bHasSeenWizard, GEditorPerProjectIni);
     GConfig->SetBool(Section, TEXT("bHasSeenOnboarding"), bHasSeenOnboarding, GEditorPerProjectIni);
     GConfig->SetBool(Section, TEXT("bPlanModeEnabled"), bPlanModeEnabled, GEditorPerProjectIni);
+    GConfig->SetBool(Section, TEXT("bPlanApprovalStrictConsume"), bPlanApprovalStrictConsume, GEditorPerProjectIni);
     GConfig->SetInt(Section, TEXT("PlanModeToolCallCount"), PlanModeToolCallCount, GEditorPerProjectIni);
     GConfig->SetBool(Section, TEXT("bShownPlanModePrompt"), bShownPlanModePrompt, GEditorPerProjectIni);
     GConfig->SetString(Section, TEXT("PlanModeFirstUseDate"), *PlanModeFirstUseDate.ToIso8601(), GEditorPerProjectIni);

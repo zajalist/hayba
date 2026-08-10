@@ -59,6 +59,24 @@ public:
     int32 PlanModeToolCallCount = 0;
     bool bShownPlanModePrompt = false;
 
+    /**
+     * How long one Approve lasts.
+     *
+     * false (default) — PER-PLAN PERSIST. One Approve covers every destructive
+     *   command until the user rejects or proposes a new plan. This is what the
+     *   gate has always done, and it is what a multi-step plan needs: a plan
+     *   whose steps are "delete these 6 assets" would otherwise stop dead after
+     *   the first one.
+     * true — PER-CALL CONSUME. The approval is spent by the first destructive
+     *   command, so each one needs its own plan. Appropriate when an agent is
+     *   running unattended against content that matters.
+     *
+     * Default is the existing behaviour deliberately: flipping the meaning of an
+     * approval under someone who is mid-session is a worse surprise than the
+     * looser default they already have.
+     */
+    bool bPlanApprovalStrictConsume = false;
+
     // Security
     // Optional. When set, every TCP request must include matching `auth` field.
     FString CapabilityToken;
