@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { z } from 'zod';
 import { recordSchema } from '../../schema-registry.js';
 import { invokeHandler, UE_LEGACY_ALLOWLIST } from './invoke.js';
+import { IdempotencyLedger } from '../idempotency-ledger.js';
 
 describe('hayba_invoke', () => {
   beforeEach(() => {
@@ -47,6 +48,84 @@ describe('hayba_invoke', () => {
     });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error.kind).toBe('tool_disabled');
+  });
+
+  describe('principal-scoped idempotency', () => {
+    it('fails closed without SDK-authenticated principal context and never dispatches', async () => {
+      const dispatch = vi.fn();
+      const res = await invokeHandler(
+        { name: 'echo_tool', args: { msg: 'hi' }, idempotency_key: 'outside-tool-params' },
+        { dispatch, isDisabled: () => false, idempotency: { ledger: new IdempotencyLedger() } },
+      );
+      expect(res).toMatchObject({
+        ok: false,
+        error: {
+          kind: 'idempotency_unavailable',
+          scope: 'process_lifetime',
+        },
+      });
+      expect(JSON.stringify(res)).toContain('authenticated MCP principal');
+      expect(JSON.stringify(res)).toContain('#379');
+      expect(JSON.stringify(res)).not.toContain('outside-tool-params');
+      expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it('deduplicates verified calls after validation without forwarding the envelope key', async () => {
+      const ledger = new IdempotencyLedger();
+      const dispatch = vi.fn(async (_cmd: string, params: Record<string, unknown>) => ({
+        echoed: params.msg,
+        advisory: { state: 'success' },
+      }));
+      const ctx = {
+        dispatch,
+        isDisabled: () => false,
+        idempotency: { ledger, authenticatedPrincipal: 'resource\0authenticated-client' },
+      };
+      const envelope = { name: 'echo_tool', args: { msg: 'hi' }, idempotency_key: 'retry-7' };
+      const first = await invokeHandler(envelope, ctx);
+      const replay = await invokeHandler(envelope, ctx);
+
+      expect(replay).toEqual(first);
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(dispatch).toHaveBeenCalledWith('echo_tool', { msg: 'hi' });
+      expect(JSON.stringify(dispatch.mock.calls)).not.toContain('retry-7');
+    });
+
+    it('returns a stable secret-safe conflict for changed validated params', async () => {
+      const ledger = new IdempotencyLedger();
+      const ctx = {
+        dispatch: vi.fn(async () => ({ advisory: { state: 'success' } })),
+        isDisabled: () => false,
+        idempotency: { ledger, authenticatedPrincipal: 'authenticated-client' },
+      };
+      await invokeHandler(
+        { name: 'echo_tool', args: { msg: 'first-secret' }, idempotency_key: 'raw-secret-key' },
+        ctx,
+      );
+      const conflict = await invokeHandler(
+        { name: 'echo_tool', args: { msg: 'changed-secret' }, idempotency_key: 'raw-secret-key' },
+        ctx,
+      );
+      expect(conflict).toMatchObject({ ok: false, error: { kind: 'idempotency_conflict' } });
+      const json = JSON.stringify(conflict);
+      expect(json).not.toContain('raw-secret-key');
+      expect(json).not.toContain('first-secret');
+      expect(json).not.toContain('changed-secret');
+    });
+
+    it('does not replay a result that still needs verification', async () => {
+      const ledger = new IdempotencyLedger();
+      const dispatch = vi.fn(async () => ({ advisory: { state: 'success_needs_verification' } }));
+      const ctx = {
+        dispatch,
+        isDisabled: () => false,
+        idempotency: { ledger, authenticatedPrincipal: 'authenticated-client' },
+      };
+      const envelope = { name: 'echo_tool', args: { msg: 'hi' }, idempotency_key: 'retry-8' };
+      await invokeHandler(envelope, ctx);
+      await invokeHandler(envelope, ctx);
+      expect(dispatch).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('returns unknown_tool when no schema recorded', async () => {
