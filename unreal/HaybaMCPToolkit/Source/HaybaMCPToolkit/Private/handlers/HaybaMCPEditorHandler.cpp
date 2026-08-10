@@ -1,6 +1,7 @@
 #include "HaybaMCPEditorHandler.h"
 #include "HaybaEditorOps.h"
 #include "HaybaMCPCaptureActor.h"
+#include "HaybaMCPRenderSafety.h"
 #include "Editor.h"
 #include "EngineUtils.h"
 #include "Engine/Engine.h"
@@ -158,11 +159,11 @@ AHaybaMCPCaptureActor* FHaybaMCPEditorHandler::GetOrSpawnCaptureActor() const
 {
     if (!GEditor) return nullptr;
     UWorld* World = GEditor->GetEditorWorldContext().World();
-    if (!World) return nullptr;
+    if (!IsValid(World) || World->bIsTearingDown || IsEngineExitRequested()) return nullptr;
 
     for (TActorIterator<AHaybaMCPCaptureActor> It(World); It; ++It)
     {
-        return *It;
+        if (IsValid(*It) && !It->IsActorBeingDestroyed()) return *It;
     }
 
     return World->SpawnActor<AHaybaMCPCaptureActor>();
@@ -394,14 +395,27 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::FocusActor(const TSharedPtr<FJsonObj
 
 FHaybaHandlerResult FHaybaMCPEditorHandler::CaptureViewport(const TSharedPtr<FJsonObject>& P)
 {
-    int32 Width = 1280;
-    int32 Height = 720;
+    double RequestedWidth = 1280.0;
+    double RequestedHeight = 720.0;
     if (P.IsValid())
     {
-        int32 TmpW = 0, TmpH = 0;
-        if (P->TryGetNumberField(TEXT("width"), TmpW) && TmpW > 0) Width = TmpW;
-        if (P->TryGetNumberField(TEXT("height"), TmpH) && TmpH > 0) Height = TmpH;
+        P->TryGetNumberField(TEXT("width"), RequestedWidth);
+        P->TryGetNumberField(TEXT("height"), RequestedHeight);
     }
+
+    int32 Width = 0;
+    int32 Height = 0;
+    FString CaptureError;
+    if (!HaybaRenderSafety::ValidateDimensions(
+        RequestedWidth, RequestedHeight, Width, Height, CaptureError, HaybaRenderSafety::MaxInlinePixels))
+    {
+        return FHaybaHandlerResult::Err(TEXT("editor_capture_viewport: ") + CaptureError
+            + TEXT("; inline viewport captures are capped at 1920x1080 pixels"));
+    }
+    const TSharedPtr<HaybaRenderSafety::FLease, ESPMode::ThreadSafe> Lease =
+        HaybaRenderSafety::FLease::TryAcquire(TEXT("editor_capture_viewport"), 20.0, CaptureError);
+    if (!Lease.IsValid())
+        return FHaybaHandlerResult::Err(TEXT("editor_capture_viewport: ") + CaptureError);
 
     AHaybaMCPCaptureActor* CaptureActor = GetOrSpawnCaptureActor();
     if (!CaptureActor)
@@ -423,9 +437,9 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::CaptureViewport(const TSharedPtr<FJs
         }
     }
 
-    FString Base64 = CaptureActor->CaptureToBase64(Width, Height);
+    FString Base64 = CaptureActor->CaptureToBase64(Width, Height, Lease, &CaptureError);
     if (Base64.IsEmpty())
-        return FHaybaHandlerResult::Err(TEXT("CaptureToBase64 returned empty string"));
+        return FHaybaHandlerResult::Err(TEXT("editor_capture_viewport: ") + CaptureError);
 
     TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject());
     Result->SetStringField(TEXT("image_base64"), Base64);

@@ -1,7 +1,9 @@
 #include "HaybaMCPCaptureActor.h"
+#include "HaybaMCPRenderSafety.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "ImageUtils.h"
 #include "Misc/Base64.h"
+#include "Misc/ScopeExit.h"
 
 AHaybaMCPCaptureActor::AHaybaMCPCaptureActor()
 {
@@ -29,22 +31,66 @@ AHaybaMCPCaptureActor::AHaybaMCPCaptureActor()
     }
 }
 
-FString AHaybaMCPCaptureActor::CaptureToBase64(int32 W, int32 H)
+FString AHaybaMCPCaptureActor::CaptureToBase64(
+    int32 W, int32 H,
+    const TSharedPtr<HaybaRenderSafety::FLease, ESPMode::ThreadSafe>& Lease,
+    FString* OutError)
 {
-    if (!RT || RT->SizeX != W || RT->SizeY != H)
+    auto Fail = [OutError](const FString& Error)
     {
-        RT = NewObject<UTextureRenderTarget2D>(this);
-        RT->InitAutoFormat(W, H);
-        RT->RenderTargetFormat = ETextureRenderTargetFormat::RTF_RGBA8;
-        RT->UpdateResourceImmediate(true);
-        Capture->TextureTarget = RT;
+        if (OutError) *OutError = Error;
+        return FString();
+    };
+    if (!IsInGameThread()) return Fail(TEXT("editor_capture_viewport must run on the game thread"));
+    if (!IsValid(Capture)) return Fail(TEXT("capture actor has no valid SceneCaptureComponent2D"));
+
+    FString Error;
+    int32 SafeWidth = 0;
+    int32 SafeHeight = 0;
+    if (!HaybaRenderSafety::ValidateDimensions(
+        W, H, SafeWidth, SafeHeight, Error, HaybaRenderSafety::MaxInlinePixels))
+    {
+        return Fail(Error + TEXT("; inline viewport captures are capped at 1920x1080 pixels"));
     }
+    if (!Lease.IsValid()) return Fail(Error);
+    if (!Lease->Advance(HaybaRenderSafety::EStage::AllocatingTarget, Error)) return Fail(Error);
+
+    UTextureRenderTarget2D* RT = NewObject<UTextureRenderTarget2D>(this);
+    if (!RT) return Fail(TEXT("render-target allocation returned null"));
+    UTextureRenderTarget2D* PreviousTarget = Capture->TextureTarget;
+    ON_SCOPE_EXIT
+    {
+        if (IsValid(Capture)) Capture->TextureTarget = PreviousTarget;
+        if (IsValid(RT))
+        {
+            RT->ReleaseResource();
+            FlushRenderingCommands();
+        }
+    };
+
+    RT->RenderTargetFormat = ETextureRenderTargetFormat::RTF_RGBA8;
+    RT->InitAutoFormat(SafeWidth, SafeHeight);
+    RT->UpdateResourceImmediate(true);
+    Capture->TextureTarget = RT;
+    if (!Lease->Advance(HaybaRenderSafety::EStage::Capturing, Error)) return Fail(Error);
     Capture->CaptureScene();
     FTextureRenderTargetResource* Res = RT->GameThread_GetRenderTargetResource();
-    if (!Res) return FString();
+    if (!Res) return Fail(TEXT("render target has no game-thread resource"));
+    if (!Lease->Advance(HaybaRenderSafety::EStage::ReadingBack, Error)) return Fail(Error);
     TArray<FColor> Pixels;
-    Res->ReadPixels(Pixels);
-    TArray<uint8> PNG;
-    FImageUtils::ThumbnailCompressImageArray(W, H, Pixels, PNG);
-    return FBase64::Encode(PNG);
+    if (!Res->ReadPixels(Pixels) || Pixels.Num() != int64(SafeWidth) * int64(SafeHeight))
+    {
+        return Fail(FString::Printf(TEXT("pixel readback returned %d pixels, expected %lld"),
+            Pixels.Num(), int64(SafeWidth) * int64(SafeHeight)));
+    }
+    if (!Lease->Advance(HaybaRenderSafety::EStage::Encoding, Error)) return Fail(Error);
+    TArray64<uint8> Png;
+    FImageUtils::PNGCompressImageArray(SafeWidth, SafeHeight, Pixels, Png);
+    if (!HaybaRenderSafety::VerifyEncodedImage(Png, TEXT("png"), SafeWidth, SafeHeight, Error))
+        return Fail(Error);
+    if (!Lease->Advance(HaybaRenderSafety::EStage::Complete, Error)) return Fail(Error);
+
+    TArray<uint8> Narrow;
+    Narrow.Append(Png.GetData(), int32(Png.Num()));
+    return FBase64::Encode(Narrow);
 }
