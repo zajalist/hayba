@@ -18,6 +18,7 @@ import {
 } from './hayba-tool-meta.js';
 import { withValidationNudge } from './tool-result.js';
 import type { SessionManager, ToolResult } from './types.js';
+import { PLUMB_DESCRIPTORS, VALIDATOR_DESCRIPTORS } from './index.js';
 
 function fakeServer() {
   const calls: Array<{
@@ -117,8 +118,7 @@ describe('validation tools carry strengthened when/USE_WHEN guidance', () => {
   // The validator tools are now ToolDescriptors, so the guidance lives in
   // meta.when and appendMeta renders it — same words reach the agent, and the
   // assertion no longer breaks when a tool changes how it is registered.
-  it('validator descriptions are loud and directive as rendered', async () => {
-    const { VALIDATOR_DESCRIPTORS } = await import('./index.js');
+  it('validator descriptions are loud and directive as rendered', () => {
     const rendered = new Map(VALIDATOR_DESCRIPTORS.map((d) => [d.name, appendMeta(d.description, d.meta)]));
 
     const run = rendered.get('validator_run')!;
@@ -133,8 +133,7 @@ describe('validation tools carry strengthened when/USE_WHEN guidance', () => {
     expect(rendered.get('validator_history')!).toMatch(/NOT_WHEN:[\s\S]{0,200}validator_run/);
   });
 
-  it('every validator tool that persists state declares an effect', async () => {
-    const { VALIDATOR_DESCRIPTORS } = await import('./index.js');
+  it('every validator tool that persists state declares an effect', () => {
     // The hand-written form had nowhere to put effects, so the tools that write
     // config and history declared none and sat outside the evidence contract.
     for (const name of ['validator_resolve', 'validator_clear', 'validator_set_rule_enabled', 'validator_strictness']) {
@@ -147,8 +146,7 @@ describe('validation tools carry strengthened when/USE_WHEN guidance', () => {
     }
   });
 
-  it('plumb_validate copy is still loud as rendered', async () => {
-    const { PLUMB_DESCRIPTORS } = await import('./index.js');
+  it('plumb_validate copy is still loud as rendered', () => {
     const d = PLUMB_DESCRIPTORS.find((x) => x.name === 'plumb_validate')!;
     const rendered = appendMeta(d.description, d.meta);
     expect(rendered).toContain('VERIFY PLACEMENT IS ACTUALLY CORRECT');
@@ -157,8 +155,7 @@ describe('validation tools carry strengthened when/USE_WHEN guidance', () => {
     expect(rendered).toContain('provably grounded and non-overlapping');
   });
 
-  it('plumb tools declare effects by what they DO, not by their verb', async () => {
-    const { PLUMB_DESCRIPTORS } = await import('./index.js');
+  it('plumb tools declare effects by what they DO, not by their verb', () => {
     const eff = (n: string) => PLUMB_DESCRIPTORS.find((x) => x.name === n)!.meta.effects;
     // Reads like a query, but persists a lesson via upsertLesson.
     expect(eff('plumb_study_take').length).toBeGreaterThan(0);
