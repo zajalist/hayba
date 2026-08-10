@@ -6,7 +6,6 @@ import {
   editorCvarGetDescriptor,
   editorCvarSetDescriptor,
   selectionGetDescriptor,
-  assetRegistryQueryDescriptor,
   assetInspectDescriptor,
   outlinerTreeDescriptor,
   objectInspectDescriptor,
@@ -133,42 +132,6 @@ describe('selection_get', () => {
   });
 });
 
-describe('asset_registry_query', () => {
-  it('applies pagination defaults and uses the AssetRegistry', async () => {
-    const { sender, lastScript } = mockStdout(emit({ ok: true, assets: [], total: 0, has_more: false, next_offset: 50 }));
-    setDefaultSender(sender);
-    await makePyToolHandler(assetRegistryQueryDescriptor)({ path_prefix: '/Game/Meshes' });
-    const s = lastScript();
-    expect(s).toContain('_limit = 50');
-    expect(s).toContain('get_asset_registry');
-    expect(s).toContain('get_assets_by_path');
-    expect(s).toContain("_prefix = '/Game/Meshes'");
-  });
-
-  it('embeds a class filter', async () => {
-    const { sender, lastScript } = mockStdout(emit({ ok: true, assets: [], total: 0, has_more: false, next_offset: 0 }));
-    setDefaultSender(sender);
-    await makePyToolHandler(assetRegistryQueryDescriptor)({ class_filter: 'StaticMesh' });
-    expect(lastScript()).toContain("_cls = 'StaticMesh'");
-  });
-
-  it('embeds a name_contains substring filter (folds in the would-be asset_find)', async () => {
-    const { sender, lastScript } = mockStdout(emit({ ok: true, assets: [], total: 0, has_more: false, next_offset: 0 }));
-    setDefaultSender(sender);
-    await makePyToolHandler(assetRegistryQueryDescriptor)({ name_contains: 'rock' });
-    const s = lastScript();
-    expect(s).toContain("_name_contains = 'rock'");
-    expect(s).toContain('_name_contains.lower() not in nm.lower()');
-  });
-
-  it('defaults name_contains to None when omitted', async () => {
-    const { sender, lastScript } = mockStdout(emit({ ok: true, assets: [], total: 0, has_more: false, next_offset: 0 }));
-    setDefaultSender(sender);
-    await makePyToolHandler(assetRegistryQueryDescriptor)({ class_filter: 'StaticMesh' });
-    expect(lastScript()).toContain('_name_contains = None');
-  });
-});
-
 describe('asset_inspect', () => {
   it('requires asset_path and queries deps/refs', async () => {
     const missing = await makePyToolHandler(assetInspectDescriptor)({});
@@ -271,10 +234,11 @@ describe('reflect_class', () => {
 });
 
 describe('editor-domain factory catalog', () => {
-  it('exports 12 net-new Python tools with unique names', () => {
+  it('exports 11 net-new Python tools with unique names (registry query is native)', () => {
     const names = editorPyDescriptors.map((d) => d.name);
-    expect(names).toHaveLength(12);
-    expect(new Set(names).size).toBe(12);
+    expect(names).toHaveLength(11);
+    expect(new Set(names).size).toBe(11);
+    expect(names).not.toContain('asset_registry_query');
   });
 
   // The real cross-catalog no-duplicates backstop is the global

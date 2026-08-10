@@ -30,6 +30,7 @@ const CPP_PATH = join(
   process.cwd(),
   '../../unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPCommandHandler.cpp',
 );
+const AGENT_LOOP_PATH = join(process.cwd(), 'src/chat/agent-loop.ts');
 
 /** Pull the command names out of the `DestructiveCommands` TSet literal. */
 function parseGatedCommands(): Set<string> {
@@ -66,5 +67,25 @@ describe('Plan Mode gate covers every non-retryable command', () => {
         `run without an approved plan. Add them to the C++ set (or, if a command genuinely ` +
         `does not change state, take it out of NON_IDEMPOTENT — but not both).`,
     ).toEqual([]);
+  });
+
+  it.runIf(available)('keeps native asset registry discovery read-only and retry-safe', () => {
+    expect(parseGatedCommands().has('asset_registry_query')).toBe(false);
+    expect(NON_IDEMPOTENT.has('asset_registry_query')).toBe(false);
+  });
+
+  it.runIf(available)('gates idempotent material mutation and compile/save commands', () => {
+    const gated = parseGatedCommands();
+    const agentLoop = readFileSync(AGENT_LOOP_PATH, 'utf-8');
+    const setStart = agentLoop.indexOf('const EXTRA_DESTRUCTIVE');
+    const setEnd = agentLoop.indexOf(']);', setStart);
+    expect(setStart).toBeGreaterThan(-1);
+    expect(setEnd).toBeGreaterThan(setStart);
+    const editorGate = agentLoop.slice(setStart, setEnd);
+    for (const command of ['material_set_property', 'material_compile']) {
+      expect(gated.has(command)).toBe(true);
+      expect(editorGate).toContain(`'${command}'`);
+      expect(NON_IDEMPOTENT.has(command)).toBe(false);
+    }
   });
 });

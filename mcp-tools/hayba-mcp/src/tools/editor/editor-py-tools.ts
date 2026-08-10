@@ -7,8 +7,8 @@
 // python-feasible, NET-NEW subset and skip catalog entries that are C++-backed,
 // TS-only, already surfaced by the legacy sidecar, or whose python is speculative:
 //
-//   SHIPPED HERE (12): editor_get_camera, editor_cvar_get,
-//     editor_cvar_set, selection_get, asset_registry_query, asset_inspect,
+//   SHIPPED HERE (11): editor_get_camera, editor_cvar_get,
+//     editor_cvar_set, selection_get, asset_inspect,
 //     outliner_tree, object_inspect, object_exists, content_browser_sync,
 //     reflect_search_types, reflect_class.
 //
@@ -32,14 +32,15 @@
 //     content-browser asset selection and selected components.
 //   - object_inspect is the generic-by-path read; actor_inspect is the richer
 //     level-actor read. Both are kept.
-//   - asset_inspect / asset_registry_query vs the legacy sidecar's
+//   - asset_inspect vs the native sidecar's asset_registry_query and
 //     asset_get_info (C++, single-asset info): asset_registry_query is the
 //     BULK/DISCOVERY surface (class + path-prefix filter, pagination — "what
 //     assets exist here"); asset_inspect is the PYTHON-SIDE single-asset read
 //     (class, dirty flag, dependency/referencer counts — AssetRegistry-derived
 //     metadata); asset_get_info is the C++-backed single-asset info call and
 //     may expose engine-side fields the python path cannot reach (e.g. deeper
-//     tag/metadata introspection via UObject reflection). Use
+//     tag/metadata introspection via UObject reflection). The registry query
+//     is native so discovery is not blocked by Python reflection policy. Use
 //     asset_registry_query to find candidates, asset_inspect for dependency
 //     graph questions, asset_get_info when you need the C++-only fields.
 //   - object_inspect vs the legacy sidecar's object_get_property: object_inspect
@@ -313,67 +314,6 @@ export const selectionGetDescriptor: PyToolDescriptor<typeof selectionGetSchema.
   schema: selectionGetSchema.shape,
   meta: readMeta,
   buildScript: selectionGetScript,
-  timeoutMs: 30_000,
-};
-
-// ── asset_registry_query ──────────────────────────────────────────────────────
-export const assetRegistryQuerySchema = z.object({
-  class_filter: z.string().optional().describe('Exact asset class name, e.g. "StaticMesh" or "Material"'),
-  name_contains: z.string().optional().describe('Case-insensitive substring the asset name must contain, e.g. "rock"'),
-  path_prefix: z.string().optional().describe('Content path prefix, e.g. "/Game/Meshes"'),
-  recursive: z.boolean().optional().default(true).describe('Recurse under path_prefix'),
-  limit: z.number().int().positive().optional().default(50).describe('Max assets returned (pagination)'),
-  offset: z.number().int().nonnegative().optional().default(0).describe('Pagination offset'),
-});
-export type AssetRegistryQueryParams = z.infer<typeof assetRegistryQuerySchema>;
-
-function assetRegistryQueryScript(p: AssetRegistryQueryParams): string {
-  return [
-    PY_EDITOR_HELPERS,
-    `_cls = ${p.class_filter !== undefined ? pyStr(p.class_filter) : 'None'}`,
-    `_name_contains = ${p.name_contains !== undefined ? pyStr(p.name_contains) : 'None'}`,
-    `_prefix = ${p.path_prefix !== undefined ? pyStr(p.path_prefix) : 'None'}`,
-    `_recursive = ${p.recursive ? 'True' : 'False'}`,
-    `_limit = ${p.limit}`,
-    `_offset = ${p.offset}`,
-    'try:',
-    '    ar = unreal.AssetRegistryHelpers.get_asset_registry()',
-    '    if _prefix is not None:',
-    '        data = ar.get_assets_by_path(unreal.Name(_prefix), recursive=_recursive)',
-    '    else:',
-    '        f = unreal.ARFilter(recursive_paths=_recursive)',
-    '        data = ar.get_assets(f)',
-    '    rows = []',
-    '    for d in data:',
-    '        try:',
-    '            cn = str(d.asset_class_path.asset_name) if hasattr(d, "asset_class_path") else str(d.asset_class)',
-    '        except Exception:',
-    '            cn = None',
-    '        if _cls is not None and cn != _cls: continue',
-    '        try: pth = str(d.package_name)',
-    '        except Exception: pth = None',
-    '        try: nm = str(d.asset_name)',
-    '        except Exception: nm = None',
-    '        if _name_contains is not None and (nm is None or _name_contains.lower() not in nm.lower()): continue',
-    '        rows.append({"name": nm, "path": pth, "class": cn})',
-    '    total = len(rows)',
-    '    page = rows[_offset:_offset+_limit]',
-    '    _emit({"ok": True, "assets": page, "total": total,',
-    '           "has_more": (_offset+_limit) < total, "next_offset": _offset+_limit})',
-    'except Exception as _e:',
-    '    _err(_e)',
-  ].join('\n');
-}
-
-export const assetRegistryQueryDescriptor: PyToolDescriptor<typeof assetRegistryQuerySchema.shape> = {
-  name: 'asset_registry_query',
-  description:
-    'Query the AssetRegistry by class, name substring (name_contains), and/or content-path prefix, paginated. Discovery surface for "what assets exist that I can use here" — see asset_inspect for single-asset dependency detail and the legacy asset_get_info for C++-only fields.',
-  cost: 'low',
-  returns: '{ok, assets:[{name,path,class}], total, has_more, next_offset}',
-  schema: assetRegistryQuerySchema.shape,
-  meta: readMeta,
-  buildScript: assetRegistryQueryScript,
   timeoutMs: 30_000,
 };
 
@@ -754,7 +694,6 @@ export const editorPyDescriptors: PyToolDescriptor[] = [
   editorCvarGetDescriptor,
   editorCvarSetDescriptor,
   selectionGetDescriptor,
-  assetRegistryQueryDescriptor,
   assetInspectDescriptor,
   outlinerTreeDescriptor,
   objectInspectDescriptor,

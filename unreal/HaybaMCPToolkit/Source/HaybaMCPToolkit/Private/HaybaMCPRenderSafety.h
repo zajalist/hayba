@@ -21,6 +21,9 @@ namespace HaybaRenderSafety
     constexpr double MinDeadlineSeconds = 1.0;
     constexpr double MaxDeadlineSeconds = 75.0;
 
+    /** Absolute plugin-owned artifact directory for response contracts. */
+    FString ArtifactRoot();
+
     enum class EStage : uint8
     {
         Acquired,

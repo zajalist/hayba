@@ -1,4 +1,5 @@
 #include "HaybaMCPAssetHandler.h"
+#include "HaybaMCPAssetRegistryQuery.h"
 #include "Json.h"
 #include "Editor.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -32,6 +33,7 @@ TArray<FString> FHaybaMCPAssetHandler::GetCommands() const
 {
     return {
         TEXT("asset_search"),
+        TEXT("asset_registry_query"),
         TEXT("asset_get_info"),
         TEXT("asset_import"),
         TEXT("asset_duplicate"),
@@ -51,6 +53,7 @@ TArray<FString> FHaybaMCPAssetHandler::GetCommands() const
 FHaybaHandlerResult FHaybaMCPAssetHandler::Handle(const FString& Cmd, const TSharedPtr<FJsonObject>& P)
 {
     if (Cmd == TEXT("asset_search"))         return AssetSearch(P);
+    if (Cmd == TEXT("asset_registry_query")) return AssetRegistryQuery(P);
     if (Cmd == TEXT("asset_get_info"))       return AssetGetInfo(P);
     if (Cmd == TEXT("asset_import"))         return AssetImport(P);
     if (Cmd == TEXT("asset_duplicate"))      return AssetDuplicate(P);
@@ -65,6 +68,179 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::Handle(const FString& Cmd, const TSha
     if (Cmd == TEXT("object_get_property"))  return ObjectGetProperty(P);
     if (Cmd == TEXT("object_set_property"))  return ObjectSetProperty(P);
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("AssetHandler: unknown command %s"), *Cmd));
+}
+
+namespace HaybaAssetRegistryQuery
+{
+namespace
+{
+bool ReadOptionalString(const TSharedPtr<FJsonObject>& Json, const TCHAR* Key, FString& Out, FString& Error)
+{
+    if (!Json->HasField(Key)) return true;
+    if (!Json->HasTypedField<EJson::String>(Key) || !Json->TryGetStringField(Key, Out))
+    {
+        Error = FString::Printf(TEXT("asset_registry_query: %s must be a string"), Key);
+        return false;
+    }
+    Out.TrimStartAndEndInline();
+    if (Out.IsEmpty())
+    {
+        Error = FString::Printf(TEXT("asset_registry_query: %s must not be blank"), Key);
+        return false;
+    }
+    return true;
+}
+
+bool ReadInteger(const TSharedPtr<FJsonObject>& Json, const TCHAR* Key, int32 DefaultValue,
+    int32 Minimum, int32 Maximum, int32& Out, FString& Error)
+{
+    Out = DefaultValue;
+    if (!Json->HasField(Key)) return true;
+    double Value = 0.0;
+    if (!Json->HasTypedField<EJson::Number>(Key) || !Json->TryGetNumberField(Key, Value) || !FMath::IsFinite(Value)
+        || Value != FMath::FloorToDouble(Value) || Value < Minimum || Value > Maximum)
+    {
+        Error = FString::Printf(TEXT("asset_registry_query: %s must be an integer from %d to %d"),
+            Key, Minimum, Maximum);
+        return false;
+    }
+    Out = static_cast<int32>(Value);
+    return true;
+}
+}
+
+bool ParseParams(const TSharedPtr<FJsonObject>& Json, FParams& Out, FString& Error)
+{
+    Out = FParams{};
+    if (!Json.IsValid())
+    {
+        Error = TEXT("asset_registry_query: params must be an object");
+        return false;
+    }
+    if (!ReadOptionalString(Json, TEXT("class_filter"), Out.ClassFilter, Error)
+        || !ReadOptionalString(Json, TEXT("name_contains"), Out.NameContains, Error)
+        || !ReadOptionalString(Json, TEXT("path_prefix"), Out.PathPrefix, Error)
+        || !ReadInteger(Json, TEXT("limit"), 50, 1, 500, Out.Limit, Error)
+        || !ReadInteger(Json, TEXT("offset"), 0, 0, MAX_int32, Out.Offset, Error))
+        return false;
+
+    if (Json->HasField(TEXT("recursive"))
+        && (!Json->HasTypedField<EJson::Boolean>(TEXT("recursive"))
+            || !Json->TryGetBoolField(TEXT("recursive"), Out.bRecursive)))
+    {
+        Error = TEXT("asset_registry_query: recursive must be a boolean");
+        return false;
+    }
+    if (!Out.PathPrefix.IsEmpty()
+        && (!FPackageName::IsValidLongPackageName(Out.PathPrefix, true)
+            || (Out.PathPrefix.Len() > 1 && Out.PathPrefix.EndsWith(TEXT("/")))))
+    {
+        Error = TEXT("asset_registry_query: path_prefix must be a long package path such as /Game/Meshes");
+        return false;
+    }
+    return true;
+}
+
+bool ValidateRegistryRead(bool bSucceeded, FString& Error)
+{
+    if (bSucceeded) return true;
+    Error = TEXT("asset_registry_query: AssetRegistry query failed");
+    return false;
+}
+
+void FilterSortAndPage(const TArray<FRow>& Rows, const FParams& Params,
+    TArray<FRow>& Page, int32& Total, bool& bHasMore, int32& NextOffset)
+{
+    TArray<FRow> Filtered;
+    const FString PrefixWithSlash = Params.PathPrefix.IsEmpty() ? FString() : Params.PathPrefix + TEXT("/");
+    for (const FRow& Row : Rows)
+    {
+        if (!Params.ClassFilter.IsEmpty() && Row.Class != Params.ClassFilter) continue;
+        if (!Params.NameContains.IsEmpty() && !Row.Name.Contains(Params.NameContains, ESearchCase::IgnoreCase)) continue;
+        if (!Params.PathPrefix.IsEmpty())
+        {
+            const FString Folder = FPackageName::GetLongPackagePath(Row.Path);
+            const bool bPathMatches = Params.bRecursive
+                ? (Folder.Equals(Params.PathPrefix, ESearchCase::IgnoreCase)
+                    || Folder.StartsWith(PrefixWithSlash, ESearchCase::IgnoreCase))
+                : Folder.Equals(Params.PathPrefix, ESearchCase::IgnoreCase);
+            if (!bPathMatches) continue;
+        }
+        Filtered.Add(Row);
+    }
+    Filtered.Sort([](const FRow& A, const FRow& B)
+    {
+        const int32 PathOrder = A.Path.Compare(B.Path, ESearchCase::CaseSensitive);
+        return PathOrder == 0 ? A.Name.Compare(B.Name, ESearchCase::CaseSensitive) < 0 : PathOrder < 0;
+    });
+
+    Total = Filtered.Num();
+    Page.Reset();
+    const int32 Start = FMath::Min(Params.Offset, Total);
+    const int32 End = static_cast<int32>(
+        FMath::Min<int64>(static_cast<int64>(Start) + Params.Limit, Total));
+    for (int32 Index = Start; Index < End; ++Index) Page.Add(Filtered[Index]);
+    NextOffset = End;
+    bHasMore = End < Total;
+}
+}
+
+FHaybaHandlerResult FHaybaMCPAssetHandler::AssetRegistryQuery(const TSharedPtr<FJsonObject>& P)
+{
+    using namespace HaybaAssetRegistryQuery;
+    FParams Params;
+    FString Error;
+    if (!ParseParams(P, Params, Error)) return FHaybaHandlerResult::Err(Error);
+
+    IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+    if (Registry.IsLoadingAssets())
+        return FHaybaHandlerResult::Err(TEXT("asset_registry_query: AssetRegistry is still discovering assets; retry after it is ready"));
+
+    TArray<FAssetData> AssetData;
+    bool bQuerySucceeded = false;
+    if (Params.PathPrefix.IsEmpty())
+    {
+        bQuerySucceeded = Registry.GetAllAssets(AssetData, false);
+    }
+    else
+    {
+        FARFilter Filter;
+        Filter.PackagePaths.Add(FName(*Params.PathPrefix));
+        Filter.bRecursivePaths = Params.bRecursive;
+        bQuerySucceeded = Registry.GetAssets(Filter, AssetData);
+    }
+    if (!ValidateRegistryRead(bQuerySucceeded, Error)) return FHaybaHandlerResult::Err(Error);
+    TArray<FRow> Rows;
+    Rows.Reserve(AssetData.Num());
+    for (const FAssetData& Asset : AssetData)
+    {
+        Rows.Add({Asset.AssetName.ToString(), Asset.PackageName.ToString(),
+            Asset.AssetClassPath.GetAssetName().ToString()});
+    }
+
+    TArray<FRow> Page;
+    int32 Total = 0;
+    bool bHasMore = false;
+    int32 NextOffset = 0;
+    FilterSortAndPage(Rows, Params, Page, Total, bHasMore, NextOffset);
+
+    TArray<TSharedPtr<FJsonValue>> Assets;
+    Assets.Reserve(Page.Num());
+    for (const FRow& Row : Page)
+    {
+        TSharedPtr<FJsonObject> Item = MakeShared<FJsonObject>();
+        Item->SetStringField(TEXT("name"), Row.Name);
+        Item->SetStringField(TEXT("path"), Row.Path);
+        Item->SetStringField(TEXT("class"), Row.Class);
+        Assets.Add(MakeShared<FJsonValueObject>(Item));
+    }
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetBoolField(TEXT("ok"), true);
+    Out->SetArrayField(TEXT("assets"), Assets);
+    Out->SetNumberField(TEXT("total"), Total);
+    Out->SetBoolField(TEXT("has_more"), bHasMore);
+    Out->SetNumberField(TEXT("next_offset"), NextOffset);
+    return FHaybaHandlerResult::Ok(Out);
 }
 
 // ---------------------------------------------------------------------------

@@ -26,6 +26,17 @@ public:
     /** Returns all registered command names. */
     TArray<FString> GetAllCommands() const;
 
+    /**
+     * Whether a destructive command should also receive a global editor undo
+     * transaction.  This is deliberately narrower than the Plan Mode gate:
+     * some consequential operations (notably UMG compilation) create engine
+     * validation previews which must never be captured by UTransBuffer.
+     *
+     * Public so native policy regressions can prove that safety exception
+     * without routing through authentication or changing editor settings.
+     */
+    static bool ShouldCreateEditorTransaction(const FString& Cmd);
+
     static FString MakeOkResponse(
         const FString& Id,
         const TSharedPtr<FJsonObject>& Data,

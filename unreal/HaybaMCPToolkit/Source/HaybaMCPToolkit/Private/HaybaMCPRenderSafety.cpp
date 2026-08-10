@@ -203,6 +203,11 @@ namespace HaybaRenderSafety
         }
     }
 
+    FString ArtifactRoot()
+    {
+        return OutputRoot();
+    }
+
     const TCHAR* StageName(EStage Stage)
     {
         switch (Stage)

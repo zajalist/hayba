@@ -354,6 +354,10 @@ void FHaybaMCPModule::ShutdownModule()
             TEXT("Module shutdown began while render command '%s' was still in flight; new render work is now refused while TCP teardown drains the active request."),
             *ActiveRender);
     }
+
+    // Ticker lambdas execute plugin code. Remove/fail an in-flight test job
+    // before module unload so no callback can jump into an unloaded DLL.
+    FHaybaMCPTestHandler::ShutdownActiveRun();
     auto& TM = FGlobalTabmanager::Get();
     if (PlanOverlay) { PlanOverlay->Unregister(); PlanOverlay.Reset(); }
     TM->UnregisterNomadTabSpawner(TabMain);

@@ -18,11 +18,17 @@ export const schema = z.object({
     .string()
     .optional()
     .describe(
-      'Path to a composite UFont asset, e.g. "/Game/UI/Fonts/Cormorant". Must NOT be a UFontFace — Slate renders a raw font face as its glyph-preview tiles instead of as text, and the handler warns when it sees one.',
+      'Path to a composite UFont asset, e.g. "/Game/UI/Fonts/Cormorant". Must NOT be a UFontFace - Slate renders a raw font face as its glyph-preview tiles instead of as text, and the handler warns when it sees one.',
     ),
   typeface: z.string().optional().describe('Font typeface name (e.g. "Regular", "Bold", "Italic")'),
   size: z.number().optional().describe('Font size in points'),
-  letter_spacing: z.number().optional().describe('Letter spacing value'),
+  letter_spacing: z
+    .number()
+    .int()
+    .min(-1000)
+    .max(10000)
+    .optional()
+    .describe('Slate font letter spacing (stored in Font.LetterSpacing)'),
   color: z.array(z.number()).length(4).optional().describe('Text color as RGBA (0-1)'),
   outline_size: z.number().optional().describe('Outline size'),
   outline_color: z.array(z.number()).length(4).optional().describe('Outline color as RGBA (0-1)'),
@@ -55,15 +61,15 @@ export const uiSetTextStyleHandler: ToolHandler = async (args) => {
   const properties: Record<string, unknown> = {};
 
   if (text !== undefined) properties.Text = text;
-  if (letter_spacing !== undefined) properties.LetterSpacing = letter_spacing;
   if (color !== undefined) properties.ColorAndOpacity = color;
   if (justification !== undefined) properties.Justification = justification;
 
-  if (font_asset !== undefined || size !== undefined || typeface !== undefined) {
+  if (font_asset !== undefined || size !== undefined || typeface !== undefined || letter_spacing !== undefined) {
     const font: Record<string, unknown> = {};
     if (font_asset !== undefined) font.FontObject = font_asset;
     if (size !== undefined) font.Size = size;
     if (typeface !== undefined) font.TypefaceFontName = typeface;
+    if (letter_spacing !== undefined) font.LetterSpacing = letter_spacing;
     properties.Font = font;
   }
 

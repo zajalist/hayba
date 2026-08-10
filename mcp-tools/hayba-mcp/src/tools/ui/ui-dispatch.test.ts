@@ -13,6 +13,7 @@ import { uiBuildTreeHandler } from './ui-build-tree.js';
 import { uiDuplicateElementHandler } from './ui-duplicate-element.js';
 import { uiMoveElementHandler } from './ui-move-element.js';
 import { uiRenameElementHandler } from './ui-rename-element.js';
+import { schema as uiReplaceElementSchema, uiReplaceElementHandler } from './ui-replace-element.js';
 import { uiSetVariableHandler } from './ui-set-variable.js';
 import { uiListWidgetBlueprintsHandler } from './ui-list-widget-blueprints.js';
 import { uiMeasureTextHandler } from './ui-measure-text.js';
@@ -270,6 +271,7 @@ describe('ui_set_text_style', () => {
         font_asset: '/Game/UI/Fonts/Cormorant',
         typeface: 'Bold',
         size: 48,
+        letter_spacing: 125,
       },
       undefined as never,
     );
@@ -277,7 +279,84 @@ describe('ui_set_text_style', () => {
     const font = (seen as unknown as { properties: { Font: Record<string, unknown> } }).properties.Font;
     // `Typeface: {FontName}` matched no property on the struct; the field is
     // TypefaceFontName and FontObject takes an asset path.
-    expect(font).toEqual({ FontObject: '/Game/UI/Fonts/Cormorant', Size: 48, TypefaceFontName: 'Bold' });
+    expect(font).toEqual({
+      FontObject: '/Game/UI/Fonts/Cormorant',
+      Size: 48,
+      TypefaceFontName: 'Bold',
+      LetterSpacing: 125,
+    });
+    expect((seen as unknown as { properties: Record<string, unknown> }).properties).not.toHaveProperty('LetterSpacing');
+  });
+
+  it.each([-1001, 10001, 1.5])('rejects invalid letter spacing %s before transport', async (letter_spacing) => {
+    const exec = new InMemoryToolExecutor();
+    setDefaultSender(exec.send);
+
+    const result = await uiSetTextStyleHandler(
+      { widget_blueprint_path: '/Game/UI/WBP_Test', widget_name: 'Title', letter_spacing },
+      undefined as never,
+    );
+
+    expect(result.isError).toBe(true);
+  });
+});
+
+describe('ui_replace_element', () => {
+  it('preserves children by default and forwards an explicit destructive opt-out', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const exec = new InMemoryToolExecutor().on('ui_mutate_tree', (p) => {
+      seen.push(p);
+      const preserveChildren = p.preserve_children as boolean;
+      return ok({
+        operation: 'replace',
+        preserve_children: preserveChildren,
+        children_preserved: preserveChildren ? 1 : 0,
+        descendants_preserved: preserveChildren ? 2 : 0,
+      });
+    });
+    setDefaultSender(exec.send);
+
+    await uiReplaceElementHandler(
+      { widget_blueprint_path: '/Game/UI/WBP_Test', widget_name: 'Action', new_class: 'Button' },
+      undefined as never,
+    );
+    await uiReplaceElementHandler(
+      {
+        widget_blueprint_path: '/Game/UI/WBP_Test',
+        widget_name: 'Action',
+        new_class: 'Button',
+        preserve_children: false,
+      },
+      undefined as never,
+    );
+
+    expect(seen[0]).toMatchObject({ operation: 'replace', preserve_children: true });
+    expect(seen[1]).toMatchObject({ operation: 'replace', preserve_children: false });
+  });
+
+  it.each(['', 'None', 'none', 'Bad Name', 'Bad/Name', 'Bad.Name', 'Bad\nName'])(
+    'rejects invalid Unreal replacement name %j before transport',
+    (new_name) => {
+      expect(() =>
+        uiReplaceElementSchema.parse({
+          widget_blueprint_path: '/Game/UI/WBP_Test',
+          widget_name: 'Action',
+          new_class: 'Button',
+          new_name,
+        }),
+      ).toThrow();
+    },
+  );
+
+  it('rejects a success reply that lacks child-preservation evidence', async () => {
+    const exec = new InMemoryToolExecutor().on('ui_mutate_tree', () => ok({ operation: 'replace' }));
+    setDefaultSender(exec.send);
+
+    const result = await uiReplaceElementHandler(
+      { widget_blueprint_path: '/Game/UI/WBP_Test', widget_name: 'Action', new_class: 'Button' },
+      undefined as never,
+    );
+    expect(result.isError).toBe(true);
   });
 });
 

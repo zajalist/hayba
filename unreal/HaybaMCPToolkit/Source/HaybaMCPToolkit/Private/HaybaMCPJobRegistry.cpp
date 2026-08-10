@@ -36,6 +36,31 @@ void FHaybaMCPJobRegistry::SetDone(const FString& JobId, int32 ExitCode, const F
     }
 }
 
+bool FHaybaMCPJobRegistry::RestoreRunningJob(
+    const FString& JobId,
+    const FString& OpName,
+    const FDateTime& StartedAt)
+{
+    if (JobId.IsEmpty() || OpName.IsEmpty())
+    {
+        return false;
+    }
+
+    FScopeLock ScopeLock(&Lock);
+    if (const FHaybaJobState* Existing = Jobs.Find(JobId))
+    {
+        return Existing->OpName == OpName;
+    }
+
+    FHaybaJobState State;
+    State.JobId = JobId;
+    State.OpName = OpName;
+    State.Status = EHaybaJobStatus::Running;
+    State.StartedAt = StartedAt;
+    Jobs.Add(JobId, MoveTemp(State));
+    return true;
+}
+
 FHaybaJobState FHaybaMCPJobRegistry::GetJob(const FString& JobId) const
 {
     FScopeLock ScopeLock(&Lock);

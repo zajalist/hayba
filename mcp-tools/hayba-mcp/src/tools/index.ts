@@ -37,6 +37,11 @@ import {
   meta as editorGetStateMeta,
   schema as editorGetStateSchema,
 } from './editor/editor-get-state.js';
+import {
+  assetRegistryQueryHandler,
+  meta as assetRegistryQueryMeta,
+  schema as assetRegistryQuerySchema,
+} from './editor/asset-registry-query.js';
 import { editorStartPieHandler, meta as pieMeta } from './editor/editor-start-pie.js';
 import { editorStreamLogHandler, meta as streamLogMeta } from './editor/editor-stream-log.js';
 import { handleWaitForShaders, meta as waitForShadersMeta } from './wait-for-shaders.js';
@@ -91,6 +96,7 @@ import {
 import {
   materialSetMaterialPropertyHandler,
   meta as materialSetMaterialPropertyMeta,
+  schema as materialSetMaterialPropertySchema,
 } from './material/material-set-material-property.js';
 import { materialCompileHandler, meta as materialCompileMeta } from './material/material-compile.js';
 import { materialDisconnectHandler, meta as materialDisconnectMeta } from './material/material-disconnect.js';
@@ -2020,20 +2026,15 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   },
   {
     name: 'material_set_property',
-    description: 'Set master-material settings (blend mode, domain, shading model, two-sided, opacity mask clip).',
+    description:
+      'Stage strict master-material settings with observed readback. Set used_with_spline_meshes:true for spline routes, then call material_compile to compile the required permutation and save.',
     meta: materialSetMaterialPropertyMeta,
     handler: materialSetMaterialPropertyHandler,
-    cost: 'low',
-    returns: '{applied:[keys]}',
+    cost: 'medium',
+    returns:
+      '{material_path, applied:[keys], changed:[keys], dirty, saved:false, requires_compile, verified?, readback?, usage_flags_verified?, usage_flags?}',
     niche: M,
-    schema: {
-      material_path: z.string().min(1).describe('Path to the master material asset'),
-      properties: z
-        .record(z.string(), z.unknown())
-        .describe(
-          'Settings; aliases: domain, blend_mode, shading_model, two_sided, opacity_mask_clip_value, enable_tessellation',
-        ),
-    },
+    schema: materialSetMaterialPropertySchema.shape,
   },
   {
     name: 'material_compile',
@@ -2041,9 +2042,9 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       'Finalize a material OR material FUNCTION: write it to disk, apply staged settings, surface translator errors + shader optimization stats (materials). Graph edits DEFER the disk write — call this once the graph is complete. NOTE: material functions no longer auto-save either, so after editing a function call material_compile with function_path to persist it (this avoids a half-built function crashing the editor when it is opened/compiled).',
     meta: materialCompileMeta,
     handler: materialCompileHandler,
-    cost: 'medium',
+    cost: 'high',
     returns:
-      '{errors:[string], has_errors, saved, stats:{shaders:[{name,instructions}], texture_samples, ...}} (materials) | {saved} (functions)',
+      '{material_path, errors:[string], has_errors, saved, stats:{...}} (materials) | {function_path, saved} (functions)',
     niche: M,
     schema: {
       material_path: z
@@ -2558,12 +2559,12 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'ui_replace_element',
     description:
-      'Replace a designer widget with a different class at the same position. Preserves parent, child index and slot layout; optionally the name, the variable GUID (preserve_guid) and every property the two classes share by name and type (preserve_properties).',
+      'Replace a designer widget with a different class at the same position. Preserves parent, child index, slot layout, and the complete child subtree by default (preserve_children); optionally preserves the name, variable GUID (preserve_guid), and every property the two classes share by name and type (preserve_properties). Set preserve_children:false only to explicitly delete descendants.',
     meta: uiReplaceElementMeta,
     handler: uiReplaceElementHandler,
     cost: 'medium',
     returns:
-      '{widget_blueprint_path, operation, widget_name, old_class, new_class, new_name, child_index, properties_copied}',
+      '{widget_blueprint_path, operation, widget_name, old_class, new_class, new_name, child_index, properties_copied, preserve_children, children_preserved, descendants_preserved}',
     niche: UI,
     schema: uiReplaceElementSchema.shape,
   },
@@ -2694,12 +2695,12 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'ui_render_widget_to_png',
     description:
-      'SEE a Widget Blueprint: draws it to a PNG and returns the image inline, with no PIE session and no editor restart. This is how you check fonts, colours, brushes, spacing and overflow in seconds instead of a rebuild-and-play cycle. Read coverage_percent — 0 means the widget drew nothing and the PNG is blank. USE_WHEN: you want to look at the UI. NOT_WHEN: you want numbers (ui_layout_snapshot) or a verdict (ui_validate).',
+      'SEE a Widget Blueprint: draws it to a PNG and returns the image inline, with no PIE session and no editor restart. out_path accepts only an optional clean PNG filename; Hayba writes it without overwrite under Saved/Screenshots/Hayba and returns the resolved absolute path. This is how you check fonts, colours, brushes, spacing and overflow in seconds instead of a rebuild-and-play cycle. Read coverage_percent — 0 means the widget drew nothing and the PNG is blank. USE_WHEN: you want to look at the UI. NOT_WHEN: you want numbers (ui_layout_snapshot) or a verdict (ui_validate).',
     meta: uiRenderWidgetToPngMeta,
     handler: uiRenderWidgetToPngHandler,
     cost: 'high',
     returns:
-      '{widget_blueprint_path, out_path, width, height, design_width, design_height, bytes, opaque_background, coverage_percent, warning?, inline_image_skipped?} + the PNG as an image block',
+      '{widget_blueprint_path, out_path, path, artifact_root, project_dir, project_saved_dir, width, height, design_width, design_height, bytes, artifact_verified:true, opaque_background, coverage_percent, warning?, inline_image_skipped?} + the PNG as an image block',
     niche: UI,
     schema: uiRenderWidgetToPngSchema.shape,
   },
@@ -3307,9 +3308,9 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   ...actorPyDescriptors.map((d) => toToolDescriptor(d)),
 
   // ── Editor-introspection & observability P0 tools (Phase 2 Wave 2) ────────
-  // Net-new editor/reflection/asset-registry read + gating tools, generated as
-  // UE Python via the pyTemplate factory. See src/tools/editor/editor-py-tools.ts
-  // for the catalog overlap/skip analysis.
+  // Editor/reflection observability and gating tools. Safety-critical editor
+  // state and AssetRegistry discovery are native; the remaining descriptors
+  // use the Python factory. See editor/editor-py-tools.ts for overlap notes.
   {
     name: 'editor_get_state',
     description:
@@ -3319,6 +3320,16 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     cost: 'low',
     returns: '{ok, map, pie_running, selection_count, dirty_packages[], dirty_count}',
     schema: editorGetStateSchema.shape,
+  },
+  {
+    name: 'asset_registry_query',
+    description:
+      'Native read-only AssetRegistry query by exact class, asset-name substring, and/or content-path prefix, with deterministic pagination.',
+    meta: assetRegistryQueryMeta,
+    handler: assetRegistryQueryHandler,
+    cost: 'low',
+    returns: '{ok, assets:[{name,path,class}], total, has_more, next_offset}',
+    schema: assetRegistryQuerySchema.shape,
   },
   ...editorPyDescriptors.map((d) => toToolDescriptor(d)),
 

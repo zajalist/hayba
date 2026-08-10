@@ -48,6 +48,13 @@ public:
     /** Mark a job Done with its exit code + output. No-op for an unknown id. Thread-safe. */
     void SetDone(const FString& JobId, int32 ExitCode, const FString& Output);
 
+    /**
+     * Restore an in-flight job after registry state was recreated while its
+     * owning game-thread operation survived. Existing entries are untouched.
+     * Returns true when the id is present with the requested operation.
+     */
+    bool RestoreRunningJob(const FString& JobId, const FString& OpName, const FDateTime& StartedAt);
+
     /** Copy out a job's state by id. Returned.bFound==false when the id is unknown. Thread-safe. */
     FHaybaJobState GetJob(const FString& JobId) const;
 
