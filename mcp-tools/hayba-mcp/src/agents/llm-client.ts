@@ -2,7 +2,7 @@
  * BYOK LLM client with tool-calling + streaming.
  *
  * Restored from the removed commit ac46d40 (packages/hayba/src/agents/llm-client.ts):
- *   - LLMTool / LLMToolCall / LLMResponse (stopReason:'end_turn'|'tool_use'|'max_tokens')
+ *   - LLMTool / LLMToolCall / LLMResponse
  *   - complete()
  *
  * Extended for the chat copilot:
@@ -52,7 +52,31 @@ export interface LLMToolCall {
   input: Record<string, unknown>;
 }
 
-export type LLMStopReason = 'end_turn' | 'tool_use' | 'max_tokens' | 'content_filter' | 'unknown';
+/**
+ * Provider stop states kept distinct at the protocol boundary. In particular,
+ * an unfamiliar future value must never become `end_turn`: that would turn a
+ * provider/schema mismatch into an apparently successful response.
+ */
+export type LLMStopReason =
+  | 'end_turn'
+  | 'tool_use'
+  | 'max_tokens'
+  | 'stop_sequence'
+  | 'pause_turn'
+  | 'refusal'
+  | 'model_context_window_exceeded'
+  | 'content_filter'
+  | 'unknown';
+
+export type LLMStopDiagnosticCode =
+  'context_window_exceeded' | 'provider_refusal' | 'turn_paused' | 'unknown_stop_reason';
+
+/** Bounded, provider-safe guidance attached to exceptional stop states. */
+export interface LLMStopDiagnostic {
+  code: LLMStopDiagnosticCode;
+  message: string;
+  recoveryTip: string;
+}
 
 /**
  * Token accounting for one LLM call. `cacheCreationInputTokens` /
@@ -71,6 +95,7 @@ export interface LLMResponse {
   content: string | null;
   toolCalls: LLMToolCall[];
   stopReason: LLMStopReason;
+  stopDiagnostic?: LLMStopDiagnostic;
   usage?: LLMUsage;
 }
 
@@ -80,7 +105,7 @@ export type LLMStreamEvent =
   | { type: 'tool_call'; call: LLMToolCall }
   | { type: 'done'; response: LLMResponse };
 
-export type LLMErrorKind = 'auth' | 'rate_limit' | 'network' | 'api';
+export type LLMErrorKind = 'auth' | 'rate_limit' | 'network' | 'api' | 'protocol' | 'aborted';
 
 /** Typed error so the agent loop / UI can react. Never contains the API key. */
 export class LLMError extends Error {
@@ -249,10 +274,12 @@ function redactDiagnostic(text: string, apiKey: string): string {
 }
 
 function mapError(err: unknown, provider: string, apiKey: string): LLMError {
+  if (err instanceof LLMError) return err;
   const e = err as { name?: string; status?: number; statusCode?: number; message?: string; code?: string };
   const status = e?.status ?? e?.statusCode;
   let kind: LLMErrorKind;
-  if (status === 401 || status === 403) kind = 'auth';
+  if (e?.name === 'AbortError' || e?.code === 'ABORT_ERR') kind = 'aborted';
+  else if (status === 401 || status === 403) kind = 'auth';
   else if (status === 429) kind = 'rate_limit';
   else if (status === undefined) kind = 'network';
   else kind = 'api';
@@ -302,10 +329,65 @@ function toOpenAITools(tools: LLMTool[]): Array<Record<string, unknown>> {
 // Stop-reason normalization
 // ---------------------------------------------------------------------------
 
-function normalizeAnthropicStop(reason: unknown): LLMStopReason {
-  if (reason === 'tool_use') return 'tool_use';
-  if (reason === 'max_tokens') return 'max_tokens';
-  return 'end_turn';
+interface NormalizedAnthropicStop {
+  stopReason: LLMStopReason;
+  stopDiagnostic?: LLMStopDiagnostic;
+}
+
+const CONTEXT_RECOVERY_TIP =
+  'Start a new chat or remove older messages and large tool results, then retry the request.';
+
+function normalizeAnthropicStop(reason: unknown, stopDetails?: { category?: unknown } | null): NormalizedAnthropicStop {
+  switch (reason) {
+    case 'end_turn':
+    case 'tool_use':
+    case 'max_tokens':
+    case 'stop_sequence':
+      return { stopReason: reason };
+    case 'model_context_window_exceeded':
+      return {
+        stopReason: reason,
+        stopDiagnostic: {
+          code: 'context_window_exceeded',
+          message: 'Anthropic stopped because the model context window was exhausted.',
+          recoveryTip: CONTEXT_RECOVERY_TIP,
+        },
+      };
+    case 'refusal': {
+      const category =
+        typeof stopDetails?.category === 'string' && /^[a-z_]{1,32}$/.test(stopDetails.category)
+          ? ` (${stopDetails.category})`
+          : '';
+      return {
+        stopReason: reason,
+        stopDiagnostic: {
+          code: 'provider_refusal',
+          // Do not echo stop_details.explanation: providers may repeat prompt
+          // material there. The category is a bounded enum-like identifier.
+          message: `Anthropic refused the request${category}.`,
+          recoveryTip: 'Rephrase or narrow the request while preserving the intended safe operation.',
+        },
+      };
+    }
+    case 'pause_turn':
+      return {
+        stopReason: reason,
+        stopDiagnostic: {
+          code: 'turn_paused',
+          message: 'Anthropic paused a long-running turn that Hayba cannot resume automatically.',
+          recoveryTip: 'Retry the request as a smaller operation or continue it in a new turn.',
+        },
+      };
+    default:
+      return {
+        stopReason: 'unknown',
+        stopDiagnostic: {
+          code: 'unknown_stop_reason',
+          message: 'Anthropic returned an unsupported stop reason; the turn was not treated as complete.',
+          recoveryTip: 'Upgrade Hayba or choose another provider before retrying this turn.',
+        },
+      };
+  }
 }
 
 function normalizeOpenAIStop(reason: unknown): LLMStopReason {
@@ -391,30 +473,69 @@ function parseAnthropicUsage(raw: RawAnthropicUsage | undefined): LLMUsage | und
   return Object.keys(usage).length > 0 ? usage : undefined;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function anthropicProtocolError(message: string): LLMError {
+  return new LLMError('protocol', `Anthropic protocol error: ${message}`);
+}
+
+function parseAnthropicToolUse(block: Record<string, unknown>, location: string): LLMToolCall {
+  if (typeof block.id !== 'string' || block.id.length === 0) {
+    throw anthropicProtocolError(`${location} has no valid tool-use id.`);
+  }
+  if (typeof block.name !== 'string' || block.name.length === 0) {
+    throw anthropicProtocolError(`${location} has no valid tool name.`);
+  }
+  if (!isRecord(block.input)) {
+    throw anthropicProtocolError(`${location} tool input is not a JSON object.`);
+  }
+  return { id: block.id, name: block.name, input: block.input };
+}
+
+function rejectStateChangingAnthropicBlock(type: unknown, location: string): void {
+  if (type === 'tool_addition' || type === 'tool_removal' || type === 'mid_conv_system') {
+    throw anthropicProtocolError(
+      `${location} contains unsupported ${type} state. Hayba will not mutate its tool catalog mid-turn.`,
+    );
+  }
+  if (type === 'error' || type === 'refusal') {
+    throw anthropicProtocolError(`${location} contains an unsupported ${type} content block.`);
+  }
+}
+
 function parseAnthropicResponse(resp: unknown): LLMResponse {
+  if (!isRecord(resp)) throw anthropicProtocolError('the response is not a JSON object.');
   const r = resp as {
-    content?: Array<Record<string, unknown>>;
+    content?: unknown;
     stop_reason?: unknown;
     usage?: RawAnthropicUsage;
+    stop_details?: { category?: unknown } | null;
   };
-  const blocks = r.content ?? [];
+  if (!Array.isArray(r.content)) {
+    throw anthropicProtocolError('the response content field is not an array.');
+  }
+  const blocks = r.content;
   const textParts: string[] = [];
   const toolCalls: LLMToolCall[] = [];
-  for (const b of blocks) {
+  for (const [index, rawBlock] of blocks.entries()) {
+    if (!isRecord(rawBlock)) {
+      throw anthropicProtocolError(`content block ${index} is not a JSON object.`);
+    }
+    const b = rawBlock;
+    rejectStateChangingAnthropicBlock(b.type, `content block ${index}`);
     if (b.type === 'text' && typeof b.text === 'string') {
       textParts.push(b.text);
     } else if (b.type === 'tool_use') {
-      toolCalls.push({
-        id: String(b.id),
-        name: String(b.name),
-        input: (b.input as Record<string, unknown>) ?? {},
-      });
+      toolCalls.push(parseAnthropicToolUse(b, `content block ${index}`));
     }
   }
+  const stop = normalizeAnthropicStop(r.stop_reason, r.stop_details);
   return {
     content: textParts.length > 0 ? textParts.join('') : null,
     toolCalls,
-    stopReason: normalizeAnthropicStop(r.stop_reason),
+    ...stop,
     usage: parseAnthropicUsage(r.usage),
   };
 }
@@ -426,7 +547,8 @@ async function* streamAnthropic(
 ): AsyncGenerator<LLMStreamEvent, void, unknown> {
   const textParts: string[] = [];
   const toolCalls: LLMToolCall[] = [];
-  let stopReason: LLMStopReason = 'end_turn';
+  // A missing message_delta is a protocol failure, never an implicit success.
+  let stop = normalizeAnthropicStop(undefined);
   // Accumulator for the tool_use block currently being streamed, keyed by index.
   const pending = new Map<number, { id: string; name: string; json: string }>();
   // Usage arrives in two pieces: `message_start` carries input/cache tokens,
@@ -454,6 +576,7 @@ async function* streamAnthropic(
         delta?: Record<string, unknown>;
         message?: { usage?: RawAnthropicUsage };
         usage?: RawAnthropicUsage;
+        error?: { message?: unknown; type?: unknown };
       };
       switch (ev.type) {
         case 'message_start': {
@@ -462,8 +585,19 @@ async function* streamAnthropic(
         }
         case 'content_block_start': {
           const cb = ev.content_block ?? {};
+          rejectStateChangingAnthropicBlock(cb.type, `stream block ${ev.index ?? 0}`);
           if (cb.type === 'tool_use') {
-            pending.set(ev.index ?? 0, { id: String(cb.id), name: String(cb.name), json: '' });
+            const index = ev.index ?? 0;
+            if (pending.has(index)) {
+              throw anthropicProtocolError(`stream block ${index} started twice.`);
+            }
+            if (typeof cb.id !== 'string' || cb.id.length === 0) {
+              throw anthropicProtocolError(`stream block ${index} has no valid tool-use id.`);
+            }
+            if (typeof cb.name !== 'string' || cb.name.length === 0) {
+              throw anthropicProtocolError(`stream block ${index} has no valid tool name.`);
+            }
+            pending.set(index, { id: cb.id, name: cb.name, json: '' });
           }
           break;
         }
@@ -474,18 +608,30 @@ async function* streamAnthropic(
             yield { type: 'text_delta', text: d.text };
           } else if (d.type === 'input_json_delta' && typeof d.partial_json === 'string') {
             const acc = pending.get(ev.index ?? 0);
-            if (acc) acc.json += d.partial_json;
+            if (!acc) {
+              throw anthropicProtocolError(`stream block ${ev.index ?? 0} sent tool input before a tool-use start.`);
+            }
+            acc.json += d.partial_json;
+          } else if (d.type !== 'thinking_delta' && d.type !== 'signature_delta' && d.type !== 'citations_delta') {
+            throw anthropicProtocolError('the stream contains an unsupported content delta.');
           }
           break;
         }
         case 'content_block_stop': {
           const acc = pending.get(ev.index ?? 0);
           if (acc) {
-            const call: LLMToolCall = {
-              id: acc.id,
-              name: acc.name,
-              input: acc.json ? (JSON.parse(acc.json) as Record<string, unknown>) : {},
-            };
+            let input: unknown = {};
+            if (acc.json) {
+              try {
+                input = JSON.parse(acc.json);
+              } catch {
+                throw anthropicProtocolError(`stream block ${ev.index ?? 0} ended with malformed tool input JSON.`);
+              }
+            }
+            if (!isRecord(input)) {
+              throw anthropicProtocolError(`stream block ${ev.index ?? 0} tool input is not a JSON object.`);
+            }
+            const call: LLMToolCall = { id: acc.id, name: acc.name, input };
             toolCalls.push(call);
             pending.delete(ev.index ?? 0);
             yield { type: 'tool_call', call };
@@ -494,16 +640,36 @@ async function* streamAnthropic(
         }
         case 'message_delta': {
           const d = ev.delta ?? {};
-          if (d.stop_reason !== undefined) stopReason = normalizeAnthropicStop(d.stop_reason);
+          if (d.stop_reason !== undefined) {
+            stop = normalizeAnthropicStop(d.stop_reason, isRecord(d.stop_details) ? d.stop_details : undefined);
+          }
           mergeUsage(ev.usage);
           break;
         }
-        default:
+        case 'message_stop':
+        case 'ping':
           break;
+        case 'tool_change':
+        case 'tool_addition':
+        case 'tool_removal':
+          throw anthropicProtocolError(
+            `the stream contains unsupported ${ev.type} state; Hayba will not mutate its tool catalog mid-turn.`,
+          );
+        case 'error': {
+          const providerMessage =
+            typeof ev.error?.message === 'string' ? redactDiagnostic(ev.error.message, cfg.apiKey) : 'stream failed';
+          throw new LLMError('api', `LLM api error (${cfg.provider}): ${providerMessage}`);
+        }
+        default:
+          throw anthropicProtocolError('the stream contains an unsupported event type.');
       }
     }
   } catch (err) {
     throw mapError(err, cfg.provider, cfg.apiKey);
+  }
+
+  if (pending.size > 0) {
+    throw anthropicProtocolError('the stream ended with an unfinished tool-use block.');
   }
 
   yield {
@@ -511,7 +677,7 @@ async function* streamAnthropic(
     response: {
       content: textParts.length > 0 ? textParts.join('') : null,
       toolCalls,
-      stopReason,
+      ...stop,
       usage,
     },
   };

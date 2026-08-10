@@ -58,6 +58,12 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   response send completion, suspends only the empty next-frame idle timeout
   while work is outstanding, and still disconnects idle clients and partial-
   frame slowloris senders on a bounded deadline.
+- Anthropic SDK 0.115 compatibility keeps context-window exhaustion,
+  refusals, token limits, pauses, and unknown future stop reasons distinct
+  instead of reporting them as a successful `end_turn`. Unsupported
+  mid-turn tool-catalog changes and malformed streamed tool JSON now fail
+  closed with bounded diagnostics; the unused second SDK dependency in the
+  architecture package was removed.
 - `test_run` now accepts the same case-insensitive filter/category selectors as
   `test_list`, rejects empty, ambiguous, and zero-match requests instead of
   returning false-green empty results, and reports explicit pass/fail/skip

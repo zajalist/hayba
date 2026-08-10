@@ -26,9 +26,6 @@
     "typecheck": "tsc --noEmit",
     "serve": "tsc && node demo/serve.mjs"
   },
-  "dependencies": {
-    "@anthropic-ai/sdk": "^0.96.0"
-  },
   "devDependencies": {
     "@types/node": "^26.1.2",
     "@vitest/coverage-v8": "^4.1.10",

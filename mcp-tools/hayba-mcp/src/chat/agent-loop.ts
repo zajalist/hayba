@@ -36,6 +36,7 @@ import type {
   LLMTool,
   LLMToolCall,
   LLMStopReason,
+  LLMStopDiagnostic,
   LLMUsage,
 } from '../agents/llm-client.js';
 import { deriveSignature, getRawShape, listRecordedCommands } from '../tools/schema-registry.js';
@@ -246,7 +247,16 @@ export function argsHash(args: unknown): string {
  *  captured handlers. */
 export const defaultDispatchTool: DispatchTool = (name, args) => executeCommand(name, args);
 
-export type AgentDoneReason = 'end_turn' | 'max_steps' | 'token_budget' | 'aborted' | 'provider_stop';
+export type AgentDoneReason =
+  | 'end_turn'
+  | 'max_tokens'
+  | 'context_window_exceeded'
+  | 'provider_refusal'
+  | 'provider_protocol_error'
+  | 'provider_stop'
+  | 'max_steps'
+  | 'token_budget'
+  | 'aborted';
 
 export type AgentEvent =
   | { type: 'text_delta'; text: string }
@@ -290,6 +300,17 @@ export interface AgentLoopParams {
 }
 
 const DEFAULT_MAX_STEPS = 16;
+const MAX_STOP_ERROR_CHARS = 384;
+
+function boundedStopError(
+  diagnostic: LLMStopDiagnostic | undefined,
+  fallbackMessage: string,
+  fallbackTip: string,
+): string {
+  const message = diagnostic?.message ?? fallbackMessage;
+  const tip = diagnostic?.recoveryTip ?? fallbackTip;
+  return `${message} Tip: ${tip}`.slice(0, MAX_STOP_ERROR_CHARS);
+}
 
 /** chars/4 rough token estimate — good enough for a budget guard. */
 function estimateTokens(text: string): number {
@@ -373,6 +394,7 @@ export async function* runAgentLoop(params: AgentLoopParams): AsyncGenerator<Age
     let content: string | null = null;
     let toolCalls: LLMToolCall[] = [];
     let stopReason: LLMStopReason = 'end_turn';
+    let stopDiagnostic: LLMStopDiagnostic | undefined;
 
     try {
       for await (const ev of client.stream({ system, messages, tools, maxTokens, signal })) {
@@ -388,12 +410,18 @@ export async function* runAgentLoop(params: AgentLoopParams): AsyncGenerator<Age
           content = ev.response.content;
           toolCalls = ev.response.toolCalls;
           stopReason = ev.response.stopReason;
+          stopDiagnostic = ev.response.stopDiagnostic;
           accumulateUsage(ev.response.usage);
         }
         // 'tool_call' stream events are consolidated in the 'done' response.
       }
     } catch (err) {
       const e = err as { kind?: string; message?: string };
+      if (signal?.aborted || e?.kind === 'aborted') {
+        yield { type: 'error', error: 'aborted', kind: 'aborted' };
+        yield { type: 'done', reason: 'aborted', usage };
+        return;
+      }
       yield { type: 'error', error: e?.message ?? String(err), kind: e?.kind };
       return;
     }
@@ -414,23 +442,73 @@ export async function* runAgentLoop(params: AgentLoopParams): AsyncGenerator<Age
     }
 
     // ── Halt when the model is done ──────────────────────────────────────
-    // A content filter or a finish reason added by a compatible provider is
-    // not a successful end turn. Preserve an explicit machine state so the UI
-    // can warn/retry instead of silently presenting a partial answer as done.
-    if (stopReason === 'content_filter' || stopReason === 'unknown') {
+    if (stopReason !== 'tool_use') {
+      if (stopReason === 'end_turn' || stopReason === 'stop_sequence') {
+        yield { type: 'done', reason: 'end_turn', stopReason, usage };
+        return;
+      }
+      if (stopReason === 'max_tokens') {
+        yield { type: 'done', reason: 'max_tokens', stopReason, usage };
+        return;
+      }
+      if (stopReason === 'model_context_window_exceeded') {
+        yield {
+          type: 'error',
+          kind: 'context_window_exceeded',
+          error: boundedStopError(
+            stopDiagnostic,
+            'Anthropic stopped because the model context window was exhausted.',
+            'Start a new chat or remove older messages and large tool results, then retry.',
+          ),
+        };
+        yield { type: 'done', reason: 'context_window_exceeded', stopReason, usage };
+        return;
+      }
+      if (stopReason === 'refusal') {
+        yield {
+          type: 'error',
+          kind: 'provider_refusal',
+          error: boundedStopError(
+            stopDiagnostic,
+            'Anthropic refused the request.',
+            'Rephrase or narrow the request while preserving the intended safe operation.',
+          ),
+        };
+        yield { type: 'done', reason: 'provider_refusal', stopReason, usage };
+        return;
+      }
+      if (stopReason === 'content_filter' || (stopReason === 'unknown' && !stopDiagnostic)) {
+        yield {
+          type: 'error',
+          kind: 'api',
+          error:
+            stopReason === 'content_filter'
+              ? 'The provider stopped the response because of its content filter.'
+              : 'The provider returned an unsupported or missing finish reason.',
+        };
+        yield { type: 'done', reason: 'provider_stop', stopReason, usage };
+        return;
+      }
       yield {
         type: 'error',
-        kind: 'api',
-        error:
-          stopReason === 'content_filter'
-            ? 'The provider stopped the response because of its content filter.'
-            : 'The provider returned an unsupported or missing finish reason.',
+        kind: 'provider_protocol',
+        error: boundedStopError(
+          stopDiagnostic,
+          'Anthropic returned a stop state Hayba cannot continue safely.',
+          'Upgrade Hayba or retry the operation in a new turn.',
+        ),
       };
-      yield { type: 'done', reason: 'provider_stop', stopReason, usage };
+      yield { type: 'done', reason: 'provider_protocol_error', stopReason, usage };
       return;
     }
-    if (stopReason !== 'tool_use' || toolCalls.length === 0) {
-      yield { type: 'done', reason: 'end_turn', stopReason, usage };
+
+    if (toolCalls.length === 0) {
+      yield {
+        type: 'error',
+        kind: 'provider_protocol',
+        error: 'Anthropic stopped for tool use but supplied no complete tool call.',
+      };
+      yield { type: 'done', reason: 'provider_protocol_error', stopReason, usage };
       return;
     }
 
