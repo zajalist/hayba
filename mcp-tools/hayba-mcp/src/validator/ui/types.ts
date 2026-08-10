@@ -62,6 +62,12 @@ export interface UiWidget {
   is_interactive: boolean;
   is_focusable: boolean;
 
+  /** Native ScrollBox identity and scroll axis. Optional so a current MCP
+   *  server can still judge snapshots from a plugin build predating these
+   *  fields; class === "ScrollBox" is the legacy fallback. */
+  is_scroll_box?: boolean;
+  scroll_orientation?: 'Horizontal' | 'Vertical';
+
   /** Design-space rect. Absent/false `laid_out` means Slate gave this widget no
    *  box (collapsed, or an inactive switcher slot) — geometry rules must skip
    *  it rather than treat it as a zero-size violation. */

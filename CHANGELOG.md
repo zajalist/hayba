@@ -5,6 +5,10 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 ## [Unreleased]
 
 ### Fixed
+- UI validation no longer mistakes ScrollBox content outside the viewport for
+  off-screen or parent-overflow defects. Native layout snapshots now expose the
+  ScrollBox axis so cross-axis failures remain visible, and empty text is
+  ignored only when its effective visibility is `Collapsed` (not `Hidden`).
 - `asset_registry_query` now uses a native, read-only AssetRegistry handler instead of blocked dynamic Python reflection, with deterministic bounded pagination, strict input checks, and fail-closed response validation.
 
 ### Added

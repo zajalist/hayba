@@ -2,6 +2,9 @@
 
 #if WITH_EDITOR
 #include "EditorAssetLibrary.h"
+#include "Blueprint/WidgetTree.h"
+#include "Components/ScrollBox.h"
+#include "Components/TextBlock.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "WidgetBlueprint.h"
 #include "handlers/HaybaMCPUIHandler.h"
@@ -49,6 +52,24 @@ namespace
         P->SetStringField(TEXT("widget_blueprint_path"), ObjectPath);
         P->SetStringField(TEXT("child_class"), TEXT("Border"));
         P->SetStringField(TEXT("name"), Name);
+        return Handler.Handle(TEXT("ui_add_element"), P);
+    }
+
+    FHaybaHandlerResult AddElement(
+        FHaybaMCPUIHandler& Handler,
+        const FString& ObjectPath,
+        const TCHAR* ClassName,
+        const TCHAR* Name,
+        const TCHAR* ParentName = nullptr)
+    {
+        TSharedPtr<FJsonObject> P = MakeShared<FJsonObject>();
+        P->SetStringField(TEXT("widget_blueprint_path"), ObjectPath);
+        P->SetStringField(TEXT("child_class"), ClassName);
+        P->SetStringField(TEXT("name"), Name);
+        if (ParentName && ParentName[0] != TEXT('\0'))
+        {
+            P->SetStringField(TEXT("parent_widget_name"), ParentName);
+        }
         return Handler.Handle(TEXT("ui_add_element"), P);
     }
 
@@ -384,6 +405,121 @@ bool FHaybaMCPBrushInfoTest::RunTest(const FString& Parameters)
                 }
             }
         }
+    }
+
+    W.Cleanup();
+    return true;
+}
+
+// ── Validator ancestry facts ────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FHaybaMCPLayoutSnapshotValidatorFactsTest,
+    "Hayba.MCP.UI.LayoutSnapshot.ValidatorAncestryFacts",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPLayoutSnapshotValidatorFactsTest::RunTest(const FString& Parameters)
+{
+    FHaybaMCPUIHandler Handler;
+    FScratchWidget W(Handler, TEXT("ValidatorFacts"));
+    if (!TestTrue(TEXT("scratch widget blueprint was created"), W.bValid)) return true;
+
+    const FHaybaHandlerResult AddedScroll =
+        AddElement(Handler, W.ObjectPath, TEXT("ScrollBox"), TEXT("GoodsScroll"));
+    const FHaybaHandlerResult AddedCollapsed =
+        AddElement(Handler, W.ObjectPath, TEXT("TextBlock"), TEXT("RuntimeState"), TEXT("GoodsScroll"));
+    const FHaybaHandlerResult AddedHidden =
+        AddElement(Handler, W.ObjectPath, TEXT("TextBlock"), TEXT("HiddenState"));
+    if (!TestTrue(TEXT("ScrollBox was added"), AddedScroll.bOk)
+        || !TestTrue(TEXT("collapsed label was added under the ScrollBox"), AddedCollapsed.bOk)
+        || !TestTrue(TEXT("hidden label was added"), AddedHidden.bOk))
+    {
+        W.Cleanup();
+        return true;
+    }
+
+    UWidgetBlueprint* WBP = LoadObject<UWidgetBlueprint>(nullptr, *W.ObjectPath);
+    if (!TestNotNull(TEXT("scratch widget blueprint loads"), WBP) || !WBP->WidgetTree)
+    {
+        W.Cleanup();
+        return true;
+    }
+
+    UScrollBox* Scroll = WBP->WidgetTree->FindWidget<UScrollBox>(TEXT("GoodsScroll"));
+    UTextBlock* CollapsedLabel = WBP->WidgetTree->FindWidget<UTextBlock>(TEXT("RuntimeState"));
+    UTextBlock* HiddenLabel = WBP->WidgetTree->FindWidget<UTextBlock>(TEXT("HiddenState"));
+    if (!TestNotNull(TEXT("ScrollBox resolves"), Scroll)
+        || !TestNotNull(TEXT("collapsed label resolves"), CollapsedLabel)
+        || !TestNotNull(TEXT("hidden label resolves"), HiddenLabel))
+    {
+        W.Cleanup();
+        return true;
+    }
+
+    Scroll->SetOrientation(Orient_Horizontal);
+    CollapsedLabel->SetText(FText::GetEmpty());
+    CollapsedLabel->SetVisibility(ESlateVisibility::Collapsed);
+    HiddenLabel->SetText(FText::GetEmpty());
+    HiddenLabel->SetVisibility(ESlateVisibility::Hidden);
+    Compile(W.ObjectPath);
+
+    TSharedPtr<FJsonObject> P = MakeShared<FJsonObject>();
+    P->SetStringField(TEXT("widget_blueprint_path"), W.ObjectPath);
+    const FHaybaHandlerResult Snapshot = Handler.Handle(TEXT("ui_layout_snapshot"), P);
+    if (!TestTrue(TEXT("layout snapshot succeeds"), Snapshot.bOk) || !Snapshot.Data.IsValid())
+    {
+        W.Cleanup();
+        return true;
+    }
+
+    const TArray<TSharedPtr<FJsonValue>>* Widgets = nullptr;
+    if (!TestTrue(TEXT("snapshot returns widgets"), Snapshot.Data->TryGetArrayField(TEXT("widgets"), Widgets)))
+    {
+        W.Cleanup();
+        return true;
+    }
+
+    auto FindEntry = [Widgets](const FString& Name) -> TSharedPtr<FJsonObject>
+    {
+        for (const TSharedPtr<FJsonValue>& Value : *Widgets)
+        {
+            const TSharedPtr<FJsonObject> Entry = Value->AsObject();
+            FString EntryName;
+            if (Entry.IsValid() && Entry->TryGetStringField(TEXT("name"), EntryName) && EntryName == Name)
+            {
+                return Entry;
+            }
+        }
+        return nullptr;
+    };
+
+    const TSharedPtr<FJsonObject> ScrollEntry = FindEntry(TEXT("GoodsScroll"));
+    const TSharedPtr<FJsonObject> CollapsedEntry = FindEntry(TEXT("RuntimeState"));
+    const TSharedPtr<FJsonObject> HiddenEntry = FindEntry(TEXT("HiddenState"));
+    if (TestTrue(TEXT("ScrollBox entry is present"), ScrollEntry.IsValid()))
+    {
+        TestTrue(TEXT("ScrollBox identity is explicit"), ScrollEntry->GetBoolField(TEXT("is_scroll_box")));
+        TestEqual(TEXT("ScrollBox orientation is explicit"),
+            ScrollEntry->GetStringField(TEXT("scroll_orientation")), FString(TEXT("Horizontal")));
+    }
+    if (TestTrue(TEXT("collapsed label entry is present"), CollapsedEntry.IsValid()))
+    {
+        TestEqual(TEXT("collapsed label retains its ScrollBox parent"),
+            CollapsedEntry->GetStringField(TEXT("parent")), FString(TEXT("GoodsScroll")));
+        TestEqual(TEXT("Collapsed is not conflated with Hidden"),
+            CollapsedEntry->GetStringField(TEXT("visibility")), FString(TEXT("ESlateVisibility::Collapsed")));
+        const TSharedPtr<FJsonObject>* TextInfo = nullptr;
+        if (TestTrue(TEXT("collapsed label reports text facts"),
+            CollapsedEntry->TryGetObjectField(TEXT("text_info"), TextInfo) && TextInfo && TextInfo->IsValid()))
+        {
+            TestEqual(TEXT("collapsed label reports its empty runtime value"),
+                (*TextInfo)->GetStringField(TEXT("text")), FString());
+        }
+    }
+    if (TestTrue(TEXT("hidden label entry is present"), HiddenEntry.IsValid()))
+    {
+        TestEqual(TEXT("Hidden remains distinguishable from Collapsed"),
+            HiddenEntry->GetStringField(TEXT("visibility")), FString(TEXT("ESlateVisibility::Hidden")));
     }
 
     W.Cleanup();
