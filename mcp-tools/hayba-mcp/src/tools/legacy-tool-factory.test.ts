@@ -5,6 +5,7 @@ import {
   isLegacyTarget,
   isNonIdempotentLegacy,
   legacyNonIdempotentNames,
+  registerLegacyNonIdempotent,
 } from './legacy-tool-factory.js';
 import { STANDARD_DESCRIPTORS } from './index.js';
 import { getSidecar } from '../legacy-commands/index.js';
@@ -115,8 +116,9 @@ describe('no duplicate names across the merged registration set', () => {
   it('generated names never collide with hand-written descriptors', () => {
     const reserved = new Set(STANDARD_DESCRIPTORS.map((d) => d.name));
     // Simulate the index.ts splice: reserve every hand-written name.
+    const generatedNames = new Set(generateLegacyDescriptors(new Set()).map((d) => d.name));
     const handwritten = STANDARD_DESCRIPTORS.filter(
-      (d) => !generateLegacyDescriptors(new Set()).some((g) => g.name === d.name),
+      (d) => !generatedNames.has(d.name),
     ).map((d) => d.name);
     const gen = generateLegacyDescriptors(new Set(handwritten));
     for (const g of gen) expect(reserved.has(g.name)).toBe(true); // all merged in
@@ -126,11 +128,15 @@ describe('no duplicate names across the merged registration set', () => {
 });
 
 describe('NON_IDEMPOTENT extension', () => {
-  it('surfaced mutating commands are registered non-idempotent', () => {
-    // Importing the factory module runs the side-effect that extends the set.
-    for (const name of legacyNonIdempotentNames()) {
-      expect(NON_IDEMPOTENT.has(name)).toBe(true);
-    }
+  it('catalogue generation is pure and startup explicitly registers mutating commands', () => {
+    const names = legacyNonIdempotentNames();
+    for (const name of names) NON_IDEMPOTENT.delete(name);
+
+    generateLegacyDescriptors();
+    expect(names.filter((name) => NON_IDEMPOTENT.has(name))).toEqual([]);
+
+    registerLegacyNonIdempotent();
+    for (const name of names) expect(NON_IDEMPOTENT.has(name)).toBe(true);
     // Spot-checks across the mutating families.
     expect(NON_IDEMPOTENT.has('spline_add_point')).toBe(true);
     expect(NON_IDEMPOTENT.has('actor_duplicate')).toBe(true);

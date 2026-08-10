@@ -189,10 +189,6 @@ export function buildLegacyDescriptor(
 export function generateLegacyDescriptors(
   reserved: ReadonlySet<string> = new Set(),
 ): ToolDescriptor[] {
-  // The retry gate must know about these before anything can be invoked, and
-  // this is the earliest point that is a deliberate call rather than an import.
-  registerLegacyNonIdempotent();
-
   const out: ToolDescriptor[] = [];
   const skipped: string[] = [];
   const sidecar = getSidecar();
@@ -231,9 +227,10 @@ export function legacyNonIdempotentNames(): string[] {
  *  whether some unrelated import had happened yet. Nothing said so at the
  *  reading end, in tool-executor.
  *
- *  Called from generateLegacyDescriptors, which must run before any tool can be
- *  registered or invoked, so the set is complete by the time the gate reads it.
- *  Idempotent — Set.add is, and callers may run it more than once.
+ *  Called explicitly by registerTools before anything can be invoked. Catalogue
+ *  construction stays pure: importing index.ts or asking the factory for
+ *  descriptors cannot silently rewrite another module's exported state.
+ *  Idempotent — Set.add is, and startup may run it more than once in tests.
  *
  *  Exported for the drift test in __tests__/non-idempotent-domains.test.ts. */
 export function registerLegacyNonIdempotent(): void {

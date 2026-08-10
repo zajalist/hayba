@@ -5,7 +5,8 @@
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ensureConnected } from '../tcp-client.js';
-import { isToolDisabled } from './disabled-tools-watcher.js';
+import { getAdvisoryVerbosity, isToolDisabled } from './disabled-tools-watcher.js';
+import { applyAdvisoryVerbosity } from './advisory-verbosity.js';
 
 function preview(value: unknown, max: number): string {
   if (value == null) return '';
@@ -25,6 +26,7 @@ function preview(value: unknown, max: number): string {
 // distinct user prompts.
 const NEW_TURN_GAP_MS = 3000;
 let lastMirrorTimestamp = 0;
+const MIRRORED_HANDLERS = new WeakSet<Function>();
 
 async function mirror(toolName: string, params: unknown, result: unknown): Promise<void> {
   try {
@@ -62,7 +64,25 @@ export function installToolStreamMirror(server: McpServer): void {
     const handler = args[args.length - 1] as Function;
     if (typeof handler !== 'function') return orig(...args);
 
-    const wrapped = async (params: unknown, ...rest: unknown[]) => {
+    args[args.length - 1] = wrapToolHandlerForStream(name, handler);
+    return orig(...args);
+  };
+}
+
+/**
+ * Apply the same disabled-tool gate and best-effort stream mirroring used by a
+ * native MCP registration to a handler stored in the deferred catalogue.
+ *
+ * Deferred tools can be invoked without ever passing through `server.tool`, so
+ * the wrapper must be expressible independently of server registration. The
+ * WeakSet makes the operation idempotent: when a captured tool is later loaded
+ * as a native pack, `installToolStreamMirror` sees the already-wrapped handler
+ * and does not mirror the same call twice.
+ */
+export function wrapToolHandlerForStream<T extends Function>(name: string, handler: T): T {
+  if (MIRRORED_HANDLERS.has(handler)) return handler;
+
+  const wrapped = async (params: unknown, ...rest: unknown[]) => {
       // MCP panel gate: if the user disabled this tool, short-circuit with a
       // clear status. Meta-tools (list_tool_categories / get_tool_signature)
       // are never gated themselves — they handle disabled-state internally.
@@ -80,11 +100,15 @@ export function installToolStreamMirror(server: McpServer): void {
         };
       }
       const result = await handler(params, ...rest);
+      const filteredResult = result && typeof result === 'object'
+        && Array.isArray((result as { content?: unknown }).content)
+        ? applyAdvisoryVerbosity(result as never, getAdvisoryVerbosity())
+        : result;
       // Extract the text content the tool returned, when available — that's
       // what users care about in the stream. Fall back to the full object.
-      let resultForMirror: unknown = result;
-      if (result && typeof result === 'object') {
-        const r = result as { content?: Array<{ type?: string; text?: string }> };
+      let resultForMirror: unknown = filteredResult;
+      if (filteredResult && typeof filteredResult === 'object') {
+        const r = filteredResult as { content?: Array<{ type?: string; text?: string }> };
         if (Array.isArray(r.content)) {
           const text = r.content
             .filter(c => c?.type === 'text' && typeof c.text === 'string')
@@ -94,10 +118,9 @@ export function installToolStreamMirror(server: McpServer): void {
         }
       }
       mirror(name, params, resultForMirror).catch(() => {});
-      return result;
-    };
-
-    args[args.length - 1] = wrapped;
-    return orig(...args);
+      return filteredResult;
   };
+
+  MIRRORED_HANDLERS.add(wrapped);
+  return wrapped as unknown as T;
 }

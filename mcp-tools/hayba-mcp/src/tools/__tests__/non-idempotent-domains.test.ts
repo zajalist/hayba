@@ -15,8 +15,9 @@
  * hand, which the comments there say out loud ("added to tool-executor's
  * NON_IDEMPOTENT set", "Mirrors FOLIAGE_NON_IDEMPOTENT"). Importing them
  * directly would close the loop properly, but the py-tools modules reach
- * tool-executor themselves, so the import cycle is real — which is exactly why
- * legacy-tool-factory mutates the set at module load instead.
+ * tool-executor themselves, so the import cycle is real. Sidecar-derived names
+ * are therefore installed explicitly during registerTools startup; catalogue
+ * imports themselves remain side-effect free.
  *
  * Hand-copying is therefore load-bearing here. This test makes the copy
  * mechanically checked rather than merely intended: add a name to a domain
@@ -76,11 +77,11 @@ describe('per-domain non-idempotent lists are mirrored into the retry gate', () 
 });
 
 describe('sidecar-derived mutating commands reach the retry gate', () => {
-  it('generateLegacyDescriptors populates NON_IDEMPOTENT', async () => {
-    const { generateLegacyDescriptors, legacyNonIdempotentNames } =
+  it('explicit startup registration populates NON_IDEMPOTENT', async () => {
+    const { registerLegacyNonIdempotent, legacyNonIdempotentNames } =
       await import('../legacy-tool-factory.js');
 
-    generateLegacyDescriptors();
+    registerLegacyNonIdempotent();
 
     const names = legacyNonIdempotentNames();
     expect(names.length, 'the sidecar should surface some mutating commands').toBeGreaterThan(0);

@@ -3,21 +3,21 @@ import { z } from 'zod';
 import { config } from '../config.js';
 import { appendMeta } from './hayba-tool-meta.js';
 import type { HaybaToolMeta } from './hayba-tool-meta.js';
-import { recordSchema, type Cost } from './schema-registry.js';
-import { installToolStreamMirror } from './tool-stream-mirror.js';
+import { installToolStreamMirror, wrapToolHandlerForStream } from './tool-stream-mirror.js';
 import { installLiveSender, executeCommand } from './tool-executor.js';
-import { registerToolMeta, getToolMeta } from './tool-meta-registry.js';
+import { registerToolMeta } from './tool-meta-registry.js';
 import { readSettings } from './routing/settings-watcher.js';
 import { registerDeferredRouting, type CapturedTool, type RoutingHandle, type DeferredRoutingOptions } from './routing/register.js';
-import { defineTool, registerTool, recordToolSchema, type ToolDescriptor } from './register-tool.js';
+import {
+  defineTool,
+  materializeTool,
+  registerTool,
+  recordToolSchema,
+  type ToolDescriptor,
+} from './register-tool.js';
 import { resolveAliases } from './param-aliases.js';
 import { TOOL_ALIASES } from './tool-aliases.js';
 import { AUDIO_DESCRIPTORS } from './audio/audio-tools.js';
-import {
-  guardHandlerWithEvidence,
-  isUnderEvidenceContract,
-  parseEffectsFromDescription,
-} from './response-evidence.js';
 import { errorResult, okResult } from './tool-result.js';
 
 // ── Code Mode meta-tools (always-on) ──────────────────────────────────────────
@@ -348,7 +348,7 @@ import { landscapePyDescriptors } from './landscape/landscape-py-tools.js';
 import { foliagePyDescriptors } from './foliage/foliage-py-tools.js';
 import { lightingPyDescriptors } from './lighting/lighting-py-tools.js';
 import { toToolDescriptor } from './py-tool-factory.js';
-import { generateLegacyDescriptors } from './legacy-tool-factory.js';
+import { generateLegacyDescriptors, registerLegacyNonIdempotent } from './legacy-tool-factory.js';
 
 // ── Zone painter tool handlers ────────────────────────────────────────────────
 import { openZonePainterHandler } from './hayba-open-zone-painter.js';
@@ -440,10 +440,10 @@ type SessionManagerStub = {
 };
 
 // ── Shared Zod coercion helpers (module scope) ───────────────────────────────
-// Hoisted so the single descriptor list (buildStandardDescriptors) is the only
+// Hoisted so the descriptor catalogue is the only
 // place each tool's shape is declared — consumed both by recordToolSchema
-// (always) and registerTool (eager block). Previously these were defined twice:
-// once in registerToolsCore and once in recordEagerSchemas, identically.
+// (always) and registerTool (eager mode). Previously these were defined twice:
+// once for native registration and once for schema seeding, identically.
 const dVec3 = z.tuple([z.number(), z.number(), z.number()]);
 // Some MCP clients (incl. Claude Code's tool harness) JSON-stringify nested
 // arrays/booleans before they hit Zod. Wrap so we accept both raw and the
@@ -464,33 +464,15 @@ const dCoerceVec3 = z.preprocess((v) => {
  * Single-source tool descriptor list.
  *
  * ## Pattern
- * Each entry is a ToolDescriptor that declares the tool ONCE. Two consumers
- * iterate this list:
- *   - recordEagerSchemas → recordToolSchema(d)   — records Zod shape + cost +
- *     returns into the schema registry so get_tool_signature can derive params
- *     at runtime, regardless of Code Mode.
- *   - registerToolsCore eager block → registerTool(server, session, d) — calls
- *     server.tool(appendMeta(desc, meta), schema, handler) + remember(name, meta),
- *     only when Code Mode is off.
- *
- * ## Eligible tools
- * A tool belongs here if:
- *   1. Its server.tool schema and its reg() entry are identical (no drift).
- *   2. The handler is a plain ToolHandler — no custom closures or side-effects
- *      baked into the eager registration block.
- *   3. The tool returns ToolResult (not RichToolResult with image blocks).
- *
- * ## Non-eligible (stay hand-written)
- *   - editor_capture_viewport: custom wait_for_shaders pre-step closure.
- *   - editor_stream_log: reg schema adds fields absent from server.tool schema.
- *   - pcg_cook_and_wait: 3-step TS orchestrator (python generate → wait_for_idle → python inspect), not a single buildScript.
- *   - PLUMB / validator / PCGEx / zone-painter / conventions: these have no
- *     meta or non-standard registration — migrate incrementally as needed.
+ * Each entry is a ToolDescriptor that declares the tool once. The complete
+ * STATIC_TOOL_CATALOGUE has three consumers: schema seeding, eager native
+ * registration, and direct deferred capture. Rich image results and small
+ * orchestration closures are valid descriptor handlers; they are behavior, not
+ * a reason to invent a sixth registration path.
  *
  * ## Adding a new tool
- * Add a ToolDescriptor entry here. Do NOT add a separate server.tool call in
- * registerToolsCore or a separate reg() call in recordEagerSchemas — those
- * are now generated automatically from this list.
+ * Add a ToolDescriptor to the appropriate catalogue shard. Do not add a
+ * separate server.tool call or schema-registry entry.
  */
 const M = 'material'; // niche domain for the material toolset
 const UI = 'ui'; // niche domain for the UMG / Widget Blueprint toolset
@@ -3410,80 +3392,188 @@ export const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   ),
 ];
 
+const ueStatusMeta: HaybaToolMeta = {
+  cost: 'low',
+  effects: [],
+  when: 'checking whether the Unreal editor bridge is reachable before an editor operation',
+  not_when: 'a just-completed editor call already proved the bridge is reachable',
+};
+
+/**
+ * Tools exposed even when the large eager catalogue is hidden by Code Mode.
+ *
+ * They used to be hand-written `server.tool(...)` calls with separate schema
+ * registry entries. `wireSchema` preserves the two compatibility aliases while
+ * `schema` remains the canonical signature shown to agents.
+ */
+export const CODE_MODE_DESCRIPTORS: ToolDescriptor[] = [
+  defineTool({
+    name: 'list_tool_categories',
+    description:
+      'List all HaybaOS command domains and their commands. Call this first to discover what is available before requesting a specific schema.',
+    meta: listMeta,
+    schema: {},
+    cost: 'low',
+    returns: '{categories:[{domain,commands:[string]}]}',
+    handler: async (_params, session) => listToolCategoriesHandler({}, session),
+  }),
+  defineTool({
+    name: 'get_tool_signature',
+    description:
+      'Return the JSON schema (params, return shape, cost) for a specific HaybaOS command. Call list_tool_categories first to find command names.',
+    meta: sigMeta,
+    schema: {
+      command: z.string().describe('Exact command name, e.g. "actor_spawn"'),
+    },
+    wireSchema: {
+      command: z.string().optional().describe('Exact command name, e.g. "actor_spawn"'),
+      name: z.string().optional().describe('Alias for "command".'),
+    },
+    cost: 'low',
+    returns: '{command, params, returns, cost} or {status:"no_schema_available", did_you_mean}',
+    handler: async (params, session) => {
+      const resolved = resolveAliases(params as Record<string, unknown>, TOOL_ALIASES.get_tool_signature);
+      if (!resolved.ok) return errorResult(`Validation error: ${resolved.error}`);
+      return getToolSignatureHandler(resolved.args, session);
+    },
+  }),
+  defineTool({
+    name: 'python_run',
+    description:
+      'Execute a Python script inside UE via PythonScriptPlugin. Universal escape hatch for invoking any UE command not otherwise exposed.',
+    meta: pyMeta,
+    schema: {
+      script: z.string().describe('Python source to execute'),
+      allow_unsafe: z
+        .boolean()
+        .optional()
+        .describe(
+          'Override only the Tier 3 filesystem/subprocess policy (DANGEROUS). It cannot bypass crash, deadlock, editor-lifetime, or execution-deadline guards.',
+        ),
+    },
+    wireSchema: {
+      script: z.string().optional().describe('Python source to execute'),
+      code: z.string().optional().describe('Alias for "script".'),
+      allow_unsafe: z
+        .boolean()
+        .optional()
+        .describe(
+          'Override only the Tier 3 filesystem/subprocess policy (DANGEROUS). It cannot bypass crash, deadlock, editor-lifetime, or execution-deadline guards.',
+        ),
+    },
+    cost: 'high',
+    returns: '{ok, tier, stdout, stderr}',
+    handler: async (params, session) => pythonRunHandler(params as Record<string, unknown>, session),
+  }),
+];
+
+/** Eager-only tools whose wrappers need a small amount of local orchestration. */
+export const SPECIAL_EAGER_DESCRIPTORS: ToolDescriptor[] = [
+  {
+    name: 'editor_capture_viewport',
+    description:
+      'Capture the active editor viewport and return it as an inline image block (plus a small text block with camera/width/height). Set HAYBA_CAPTURE_TO_FILE to also spill the image to a temp file path.',
+    meta: captureMeta,
+    schema: {
+      width: z.coerce.number().int().optional(),
+      height: z.coerce.number().int().optional(),
+      wait_for_shaders: z
+        .boolean()
+        .optional()
+        .describe('If true, calls wait_for_shaders first (max_seconds=60, poll_seconds=1).'),
+    },
+    cost: 'medium',
+    returns: '{width, height, camera, ...} + the capture as an image block',
+    handler: async (params, session) => {
+      if (params.wait_for_shaders === true) {
+        await handleWaitForShaders({ max_seconds: 60, poll_seconds: 1 });
+      }
+      return editorCaptureViewportHandler(params as Record<string, unknown>, session);
+    },
+  },
+  defineTool({
+    name: 'editor_stream_log',
+    description: 'Tail recent UE log lines (paged via since_line).',
+    meta: streamLogMeta,
+    schema: {
+      filter: z.string().optional(),
+      since_line: z.coerce.number().int().nonnegative().optional(),
+    },
+    cost: 'low',
+    returns: '{lines:[string], next_line:int}',
+    handler: async (params, session) => editorStreamLogHandler(params as Record<string, unknown>, session),
+  }),
+  defineTool({
+    name: 'hayba_check_ue_status',
+    description: 'Check whether the Unreal editor bridge is reachable and report its current identity and status.',
+    meta: ueStatusMeta,
+    schema: {},
+    cost: 'low',
+    returns: '{connected, status, ueVersion, plugin, pluginVersion}',
+    handler: async () => okResult(await checkUeStatus()),
+  }),
+];
+
+/** Every statically declared tool, independent of which routing mode exposes it. */
+export const STATIC_TOOL_CATALOGUE: ReadonlyArray<ToolDescriptor> = [
+  ...CODE_MODE_DESCRIPTORS,
+  ...STANDARD_DESCRIPTORS,
+  ...SPECIAL_EAGER_DESCRIPTORS,
+];
+
+/**
+ * Convert the static catalogue directly into the deferred-routing value map.
+ * No registration code runs and no real or fake `server.tool` is involved.
+ */
+export function captureStaticToolCatalogue(
+  session: SessionManagerStub,
+): Map<string, CapturedTool> {
+  const captured = new Map<string, CapturedTool>();
+  for (const descriptor of STATIC_TOOL_CATALOGUE) {
+    if (captured.has(descriptor.name)) {
+      throw new Error(`duplicate static tool descriptor: ${descriptor.name}`);
+    }
+    registerToolMeta(descriptor.name, descriptor.meta);
+    const tool = materializeTool(session, descriptor);
+    captured.set(tool.name, {
+      description: tool.description,
+      schema: tool.schema,
+      handler: wrapToolHandlerForStream(tool.name, tool.handler) as CapturedTool['handler'],
+      dir: inferDir(tool.name),
+    });
+  }
+  return captured;
+}
+
 export async function registerTools(
   server: McpServer,
   session: SessionManagerStub,
   /** Forwarded to registerDeferredRouting. Exists so a test can pass a
    *  lexical-only embedding backend instead of letting the default probe reach
    *  the network — without it this function is untestable, which is how the
-   *  capture shim went uncovered for as long as it did. */
+   *  catalogue-construction path went uncovered for as long as it did. */
   options: DeferredRoutingOptions = {},
 ): Promise<RoutingHandle | null> {
+  // Retry policy is startup wiring, not an import-time side effect of building
+  // the sidecar descriptor values.
+  registerLegacyNonIdempotent();
+
+  // Runtime wiring is independent of catalogue construction. In particular,
+  // neither call below is made against a capture stand-in.
+  void installLiveSender();
+  installToolStreamMirror(server);
+
+  // Signatures exist in every mode, including Code Mode where most native MCP
+  // registrations are deliberately hidden until discovered.
+  seedCatalogueSchemas();
+
   const settings = readSettings();
   if (settings.toolRouting === 'deferred') {
-    // γ-hybrid: capture every server.tool(...) call into a descriptor map
-    // without registering it. registerDeferredRouting wires the always-on
-    // meta-tools and packs against the captured set.
-    const captured = new Map<string, CapturedTool>();
-
-    const capture = (name: string, ...rest: unknown[]): void => {
-      let description: string | undefined;
-      let schema: z.ZodRawShape;
-      let handler: (...args: unknown[]) => unknown;
-      if (typeof rest[0] === 'string') {
-        description = rest[0] as string;
-        schema = rest[1] as z.ZodRawShape;
-        handler = rest[2] as (...args: unknown[]) => unknown;
-      } else {
-        schema = rest[0] as z.ZodRawShape;
-        handler = rest[1] as (...args: unknown[]) => unknown;
-      }
-      const dir = inferDir(name);
-      // Put every captured tool under the response-evidence contract, not just
-      // the ones registered through registerTool — a tool should not escape the
-      // rule because of which registration path it took.
-      //
-      // Effects come from the meta registry when the tool has one. Only the
-      // hand-rolled server.tool(...) sites, which never register a meta object,
-      // fall back to recovering them from the description string — the effects
-      // are appended there as `[effects=[...]]` by appendMeta, so parsing them
-      // back out is reading our own formatting rather than a fact. Data first,
-      // string-scraping only where there is no data.
-      //
-      // Note the `.length` check rather than `??`. A registered meta with
-      // `effects: []` is a truthy value, so `??` would accept it and suppress
-      // the description fallback — quietly dropping that tool out of the
-      // evidence contract. This can only ever add coverage, never remove it.
-      const metaEffects = getToolMeta(name)?.effects;
-      const effects = metaEffects && metaEffects.length > 0
-        ? metaEffects
-        : parseEffectsFromDescription(description);
-      const guarded = isUnderEvidenceContract(effects) ? guardHandlerWithEvidence(handler) : handler;
-      captured.set(name, { description, schema, handler: guarded, dir });
-      // Nothing is forwarded to the real server here — registerDeferredRouting
-      // registers only the always-on subset plus alwaysLoadPacks tools.
-    };
-
-    // Registration writes into this stand-in, not into the real server.
-    //
-    // It used to monkey-patch `server.tool`, run registration, and restore the
-    // original in a `finally`. Same effect, but the real object spent the
-    // window in a mutated state: anything else holding a reference to it saw
-    // the capturing implementation, the tool-stream mirror silently wrapped the
-    // shim instead of the server (which is why it had to be re-installed
-    // afterwards), and an exception anywhere in registration risked leaving a
-    // live MCP server whose `tool` method quietly registered nothing.
-    //
-    // registerToolsCore only ever calls `.tool()`, so the stand-in only needs
-    // that. If it grows another dependency, this cast stops compiling — which
-    // is the point of writing it out rather than patching in place.
-    const capturingServer = { tool: capture } as unknown as McpServer;
-
-    registerToolsCore(capturingServer, session, { forceEager: true });
-
-    // The mirror goes on the real server. registerToolsCore installed one on
-    // the stand-in, which is discarded with it.
-    installToolStreamMirror(server);
+    // γ-hybrid: the complete static catalogue is already data. Convert the
+    // descriptors straight into the captured map; registration is no longer
+    // executed for its side effects merely to discover what would register.
+    const captured = captureStaticToolCatalogue(session);
+    installToolHooks();
 
     // Now register meta-tools + alwaysLoadPacks. Awaited so the caller can
     // sequence server.connect() after every server.tool() call has happened
@@ -3493,7 +3583,21 @@ export async function registerTools(
     return handle;
   }
 
-  registerToolsCore(server, session);
+  for (const descriptor of CODE_MODE_DESCRIPTORS) {
+    registerTool(server, session, descriptor);
+  }
+
+  // Code Mode keeps the native surface small. The descriptors and signatures
+  // still exist as values above; only native registration is skipped.
+  if (config.codeMode) return null;
+
+  for (const descriptor of STANDARD_DESCRIPTORS) {
+    registerTool(server, session, descriptor);
+  }
+  for (const descriptor of SPECIAL_EAGER_DESCRIPTORS) {
+    registerTool(server, session, descriptor);
+  }
+  installToolHooks();
   return null;
 }
 
@@ -3538,691 +3642,8 @@ export function inferDir(name: string): string | null {
   return null;
 }
 
-/** Options for {@link registerToolsCore}.
- *
- *  `forceEager` exists so the deferred-routing capture can walk the *whole*
- *  catalogue. It used to be expressed by assigning `config.codeMode = false`
- *  around the call and restoring it in a `finally` — a global mutated to pass
- *  one boolean one level down, which meant anything else reading `config`
- *  during registration saw a value that was briefly a lie. */
-interface RegisterCoreOptions {
-  forceEager?: boolean;
-}
-
-function registerToolsCore(
-  server: McpServer,
-  session: SessionManagerStub,
-  { forceEager = false }: RegisterCoreOptions = {},
-): void {
-  // Fire-and-forget: dynamic import resolves in <1ms; MCP handshake takes longer
-  // so any tool call is guaranteed to find DEFAULT_SENDER set.
-  void installLiveSender();
-
-  // Local helper: pushes the tool's meta into the registry so the ToolExecutor
-  // can look up cost by command name. Keeps registration sites one-liner.
-  const remember = (name: string, meta: HaybaToolMeta | undefined): void => {
-    if (meta) registerToolMeta(name, meta);
-  };
-
-  // Wrap server.tool BEFORE any registration so every tool is captured in the
-  // UE Tool Stream panel, including pure TS-side handlers (PCGEx catalog, etc).
-  installToolStreamMirror(server);
-
-  // Record every Zod shape into the schema registry so get_tool_signature can
-  // derive parameter docs from the actual validation schema — independent of
-  // whether the tool is also eagerly registered with server.tool() under
-  // Code Mode. The registry is the source of truth; the hand-maintained dict
-  // in get-tool-signature.ts is only a fallback for un-migrated tools.
-  const reg = (name: string, shape: z.ZodRawShape, cost: Cost, returns: string) =>
-    recordSchema(name, { shape, cost, returns });
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // Code Mode meta-tools — always registered. Per the HaybaOS spec (§2.4),
-  // these are Claude's progressive-discovery entry points.
-  //   list_tool_categories  → returns domain list + command counts
-  //   get_tool_signature    → returns the JSON schema for a specific command
-  //   python_run            → executes any command via UE Python (escape hatch)
-  // ──────────────────────────────────────────────────────────────────────────
-
-
-
-  server.tool(
-    'list_tool_categories',
-    appendMeta(
-      'List all HaybaOS command domains and their commands. Call this first to discover what is available before requesting a specific schema.',
-      listMeta,
-    ),
-    {},
-    async () => {
-      const r = await listToolCategoriesHandler({}, session);
-      return { content: r.content, isError: r.isError };
-    },
-  );
-  remember('list_tool_categories', listMeta);
-
-  server.tool(
-    'get_tool_signature',
-    appendMeta(
-      'Return the JSON schema (params, return shape, cost) for a specific HaybaOS command. Call list_tool_categories first to find command names.',
-      sigMeta,
-    ),
-    // Wire-level shape only — widened with `name` as an accepted alias for
-    // `command` (issue #339) so the MCP transport doesn't reject the call
-    // before it reaches getToolSignatureHandler. The DOCUMENTED signature
-    // (what get_tool_signature reports about itself, via recordEagerSchemas'
-    // separate `{command...}` literal below) is untouched — still one
-    // required field, one spelling.
-    {
-      command: z.string().optional().describe('Exact command name, e.g. "actor_spawn"'),
-      name: z.string().optional().describe('Alias for "command".'),
-    },
-    async (params) => {
-      const resolved = resolveAliases(params as Record<string, unknown>, TOOL_ALIASES.get_tool_signature);
-      if (!resolved.ok) {
-        return { content: [{ type: 'text', text: `Validation error: ${resolved.error}` }], isError: true };
-      }
-      const r = await getToolSignatureHandler(resolved.args, session);
-      return { content: r.content, isError: r.isError };
-    },
-  );
-  remember('get_tool_signature', sigMeta);
-
-  server.tool(
-    'python_run',
-    appendMeta(
-      'Execute a Python script inside UE via PythonScriptPlugin. Universal escape hatch for invoking any UE command not otherwise exposed.',
-      pyMeta,
-    ),
-    // Wire-level shape only — widened with `code` as an accepted alias for
-    // `script` (issue #339); pythonRunHandler's own schema (canonical-only)
-    // still enforces `script` is actually present after normalisation.
-    {
-      script: z.string().optional().describe('Python source to execute'),
-      code: z.string().optional().describe('Alias for "script".'),
-      allow_unsafe: z.boolean().optional().describe('Override Tier 3 filesystem/subprocess block (DANGEROUS)'),
-    },
-    async (params) => {
-      const r = await pythonRunHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
-    },
-  );
-  remember('python_run', pyMeta);
-
-  // Record schemas for tools whose shapes we want get_tool_signature to derive
-  // live. Runs regardless of Code Mode so the registry stays in sync.
-  recordEagerSchemas(reg);
-
-  // When Code Mode is ON (default), stop here — full schemas are only fetched
-  // on demand via get_tool_signature. Set HAYBA_CODE_MODE=off to expose
-  // every tool eagerly (~70 tools, much larger initial tool-list payload).
-  //
-  // forceEager overrides it for the deferred-routing capture, which needs to
-  // see every tool in order to make every tool reachable through hayba_invoke.
-  if (config.codeMode && !forceEager) return;
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // Eager registrations (Code Mode disabled) — every domain tool below here.
-  // ──────────────────────────────────────────────────────────────────────────
-
-  // Some MCP clients (incl. Claude Code's tool harness) JSON-stringify nested
-  // booleans before they hit Zod. Wrap so we accept both raw and the
-  // stringified form for params we know are commonly affected. (vec3/coerceVec3
-  // now live at module scope as dVec3/dCoerceVec3, used by the descriptor list.)
-  const coerceBool = z.preprocess((v) => (typeof v === 'string' ? v.toLowerCase() === 'true' : v), z.boolean());
-
-  // ── Standard tools (actor / material / scene) ───────────────────────────────
-  // Registered from the single descriptor list. Each descriptor declares the
-  // tool once; registerTool does server.tool(appendMeta(...)) + remember(...),
-  // and recordEagerSchemas already recorded the schema (always, above).
-  for (const d of STANDARD_DESCRIPTORS) registerTool(server, session, d);
-
-  // ── Editor domain ───────────────────────────────────────────────────────────
-
-  // editor_capture_viewport was hand-written only because it returns an image
-  // block and the registrar's handler type was text-only. Now that the
-  // descriptor accepts a RichToolHandler it goes through the same path as
-  // everything else, and picks up the policies it had been missing.
-  registerTool(server, session, {
-    name: 'editor_capture_viewport',
-    description:
-      'Capture the active editor viewport and return it as an inline image block (plus a small text block with camera/width/height). Set HAYBA_CAPTURE_TO_FILE to also spill the image to a temp file path.',
-    meta: captureMeta,
-    schema: {
-      width: z.coerce.number().int().optional(),
-      height: z.coerce.number().int().optional(),
-      wait_for_shaders: z
-        .boolean()
-        .optional()
-        .describe('If true, calls wait_for_shaders first (max_seconds=60, poll_seconds=1).'),
-    },
-    cost: 'medium',
-    returns: '{width, height, camera, ...} + the capture as an image block',
-    handler: async (params, sess) => {
-      if (params.wait_for_shaders === true) {
-        await handleWaitForShaders({ max_seconds: 60, poll_seconds: 1 });
-      }
-      return editorCaptureViewportHandler(params as Record<string, unknown>, sess);
-    },
-  });
-
-  // editor_start_pie is now in STANDARD_DESCRIPTORS — registered via the loop above.
-
-  server.tool(
-    'editor_stream_log',
-    appendMeta('Tail recent UE log lines (paged via since_line).', streamLogMeta),
-    {
-      filter: z.string().optional(),
-      since_line: z.coerce.number().int().nonnegative().optional(),
-    },
-    async (params) => {
-      const r = await editorStreamLogHandler(params as Record<string, unknown>, session);
-      return { content: r.content, isError: r.isError };
-    },
-  );
-  remember('editor_stream_log', streamLogMeta);
-
-  // wait_for_shaders, wait_for_idle, render_camera are now in STANDARD_DESCRIPTORS.
-
-  // ── Agent-ergonomics tools (HANDOFF postmortem) ─────────────────────────────
-  // hayba_introspect, pcg_add_node, pcg_set_prop, pcg_wire, pcg_inspect_instances
-  // are now in STANDARD_DESCRIPTORS (registered via the descriptor loop above).
-
-remember('pcg_cook_and_wait', pcgCookMeta);
-
-remember('pcg_scatter_mesh', pcgScatterMeta);
-
-  // hayba_fab_*, hayba_polyhaven_*, hayba_ambientcg_*, hayba_sketchfab_* tools
-  // are now in STANDARD_DESCRIPTORS — registered via the loop above.
-
-  // ── PCGEx tools ─────────────────────────────────────────────────────────────
-
-
-
-
-
-
-
-
-  // Two registrations of this tool exist and both are load-bearing, which is
-  // not obvious from either site.
-  //
-  // This one serves eager (non-deferred) mode, and it also puts the name and
-  // schema into the captured map so hayba_invoke can reach it. In deferred mode
-  // registerDeferredRouting then REPLACES the handler with one that wires
-  // onConnected -> maybeAutoLoad('ue_connected') (see routing/register.ts), a
-  // registry this module has no access to.
-  //
-  // The consequence worth knowing: in eager mode, confirming the editor is
-  // connected does not trigger pack autoload. That is a real difference in
-  // behaviour between the two modes, not an oversight in one of them.
-  server.tool('hayba_check_ue_status', {}, async () => {
-    const result = await checkUeStatus();
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-  });
-
-  // Gaea / terrain feature surface intentionally disabled — kept out of the
-  // build by removing imports + registrations. Will return when the
-  // worldbuilding-hub roadmap reaches the terrain integration phase.
-
-
-
-
-
-
-
-
-
- // end Gaea + Knowledge tool block
-
-  // ── Conventions tools ────────────────────────────────────────────────────────
-
-
-
-  // Landscape import surface intentionally disabled with the rest of the
-  // terrain features. See note above.
-
-  // ── Scene workflow ────────────────────────────────────────────────────────────
-
-  /* Disabled: depends on Gaea pipeline; will be re-added later.
-  server.tool(
-    'hayba_ue_landscape_pipeline',
-    'Full UE landscape project pipeline: guided brainstorm → zone painting → Gaea terrain generation → bake → import into Unreal Engine → foliage zones. Use this for major landscape projects that will be imported into UE5. For standalone Gaea terrain work, use hayba_brainstorm_gaea instead.',
-    {
-      step: z.enum(['start', 'biome', 'scale', 'features', 'name', 'layout', 'preview', 'bake', 'foliage', 'done'])
-        .describe('Current step in the pipeline flow. Always start with "start".'),
-      answer: z.string().optional()
-        .describe('The user\'s answer to the previous step\'s question.'),
-      projectId: z.string().optional()
-        .describe('Project ID — returned by the "layout" step, pass it through on subsequent steps.'),
-      projectName: z.string().optional()
-        .describe('Name for the project, used at the "layout" step when creating the project.'),
-      biomeAnswer: z.string().optional()
-        .describe('The biome answer from step "biome" — used for archetype search in preview.'),
-      featureAnswer: z.string().optional()
-        .describe('The feature answer from step "features" — used for archetype search in preview.'),
-    },
-    async (params) => {
-      const result = await ueLandscapePipelineHandler(params as Record<string, unknown>, session);
-      return { content: result.content, isError: result.isError };
-    }
-  );
-  */
-
-  // ── Zone Painter tools ──────────────────────────────────────────────────────
-
-
-
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // ── Validator (runtime rule system + history) ───────────────────────────
-  //
-  // The validator tools are declared as ToolDescriptors (see
-  // VALIDATOR_DESCRIPTORS) so they pass through the one registrar with every
-  // other tool. Only the evaluator-hook installation is left here, because it
-  // is a startup side-effect rather than a registration.
-  //
-  // Rule definitions live in src/validator/rules.ts; evaluators in
-  // src/validator/tool-hooks.ts (auto-installed below).
-  // ──────────────────────────────────────────────────────────────────────────
-  // Install evaluator hooks once — wires actual logic onto rules catalog.
-  installToolHooks();
-
-  // ── PLUMB constraint subsystem ──────────────────────────────────────────
-  //
-  // Quantified, directional validator + a tiny CLOSED constraint language bound
-  // to assets/tags, plus baked physical profiles. Authoring fills values; the
-  // grammar (10 primitives) never grows. See src/plumb/.
-  const j = (r: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] });
-
-
-  // Auto-fetch StaticMesh bounds (cm) via the UE mesh_get_info command when the
-  // caller omits origin_cm/extent_cm — "point at an SM and bake".
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  // ── Landscape import (TS wrapper for UE-side landscape_import handler) ────
-}
-
-// Schema registry seeding. Mirrors the Zod shapes used by the eager
-// server.tool() calls above, but lives independently of the Code Mode gate
-// so get_tool_signature can derive params from real schemas at runtime.
-// New tools should add an entry here when first registered.
-function recordEagerSchemas(reg: (name: string, shape: z.ZodRawShape, cost: Cost, returns: string) => void): void {
-  // coerceBool still used by hayba_validate_attribute_flow below. vec3/coerceVec3
-  // moved to module scope (dVec3/dCoerceVec3) and consumed via STANDARD_DESCRIPTORS.
-  const coerceBool = z.preprocess((v) => (typeof v === 'string' ? v.toLowerCase() === 'true' : v), z.boolean());
-
-  // ── Standard tools (actor / material / scene) ──────────────────────────────
-  // Schema recording from the single descriptor list. recordToolSchema mirrors
-  // the old reg(name, shape, cost, returns) calls exactly, one per descriptor.
-  for (const d of STANDARD_DESCRIPTORS) recordToolSchema(d);
-
-  // ── Code Mode meta ────────────────────────────────────────────────────────
-  reg('list_tool_categories', {}, 'low', '{categories:[{domain,commands:[string]}]}');
-  reg(
-    'get_tool_signature',
-    { command: z.string().describe('Exact command name, e.g. "actor_spawn"') },
-    'low',
-    '{command, params, returns, cost} or {status:"no_schema_available", did_you_mean}',
-  );
-  reg(
-    'python_run',
-    {
-      script: z.string().describe('Python source to execute'),
-      allow_unsafe: z.boolean().optional().describe('Override Tier 3 filesystem/subprocess block (DANGEROUS)'),
-    },
-    'high',
-    '{ok, tier, stdout, stderr}',
-  );
-
-  // ── Editor domain ─────────────────────────────────────────────────────────
-  reg(
-    'editor_capture_viewport',
-    {
-      width: z.coerce.number().int().optional(),
-      height: z.coerce.number().int().optional(),
-    },
-    'medium',
-    '{image_base64, width, height, camera}',
-  );
-  // editor_start_pie is now in STANDARD_DESCRIPTORS — recordToolSchema(d) called above.
-  reg(
-    'editor_stream_log',
-    {
-      filter: z.string().optional().describe('Plain substring filter (legacy)'),
-      regex_filter: z.string().optional().describe('Perl-style regex applied to each line'),
-      severity_filter: z
-        .string()
-        .optional()
-        .describe('Comma-separated severities: Verbose,Display,Log,Warning,Error,Fatal'),
-      format: z
-        .enum(['raw', 'structured'])
-        .optional()
-        .describe('"structured" emits {line, category, severity, msg, raw} objects'),
-      since_line: z.coerce.number().int().min(0).optional(),
-    },
-    'low',
-    '{lines:[string|object], next_line:int, format}',
-  );
-
-  // ── Agent-ergonomics tools (HANDOFF postmortem) ───────────────────────────
-  // hayba_introspect, pcg_add_node, pcg_set_prop, pcg_wire, pcg_inspect_instances:
-  // now in STANDARD_DESCRIPTORS — recordToolSchema(d) called by the loop above.
-  reg(
-    'pcg_cook_and_wait',
-    pcgCookSchema.shape,
-    'high',
-    '{ok, cook:{components}, idle, result:{ism:[{mesh,count}], total}}',
-  );
-  reg(
-    'pcg_scatter_mesh',
-    pcgScatterSchema.shape,
-    'high',
-    '{ok, graph_asset, volume_actor, instances, result:{ism:[{mesh,count}], total}} — ok:false when instances==0',
-  );
-
-  // ── PCGEx domain ──────────────────────────────────────────────────────────
-  reg(
-    'hayba_search_node_catalog',
-    {
-      query: z.string().describe('Search query — keyword, node class, or category'),
-    },
-    'low',
-    '{results:[{class,category,description,inputs,outputs,key_properties}], matchType}',
-  );
-  reg(
-    'hayba_get_node_details',
-    {
-      class: z.string().describe('PCGEx node class name'),
-    },
-    'low',
-    '{class, category, description, inputs, outputs, properties}',
-  );
-  reg(
-    'hayba_create_pcg_graph',
-    {
-      graph: z.string().describe('JSON string of the PCGEx graph topology'),
-      name: z.string().describe('Asset name for the new PCGGraph'),
-    },
-    'high',
-    '{ok, asset_path}',
-  );
-  reg(
-    'hayba_validate_pcg_graph',
-    {
-      graph: z.string().describe('JSON string of the PCGEx graph to validate'),
-    },
-    'medium',
-    '{valid, errors:[{type,node,pin,detail}], errorCount}',
-  );
-  reg(
-    'hayba_list_pcg_assets',
-    {
-      path: z.string().optional().describe('Content path filter (default: /Game/)'),
-    },
-    'low',
-    '{assets:[{name,path,nodeCount,edgeCount}], count}',
-  );
-  reg(
-    'hayba_export_pcg_graph',
-    {
-      assetPath: z.string().describe('Full UE asset path to the PCGGraph'),
-    },
-    'medium',
-    '{graph:{version,meta,nodes,edges,metadata}}',
-  );
-  reg(
-    'hayba_execute_pcg_graph',
-    {
-      assetPath: z.string().describe('Full UE asset path to execute'),
-    },
-    'high',
-    '{ok, generated_count, duration_ms}',
-  );
-  reg('hayba_check_ue_status', {}, 'low', '{connected, status, ueVersion, plugin, pluginVersion}');
-
-  // ── Asset domain — added Initiative #6 + #10 (ref-preserving move, deps) ─
-  reg(
-    'asset_move',
-    {
-      path: z.string().describe('Source asset path, e.g. "/Game/Foo/Bar.Bar"'),
-      target_dir: z.string().describe('Target content-browser folder, e.g. "/Game/Archive"'),
-    },
-    'medium',
-    '{ok, old_path, new_path}',
-  );
-  reg(
-    'asset_fix_redirectors',
-    {
-      path: z.string().optional().describe('Content path to scan (default /Game)'),
-    },
-    'medium',
-    '{fixed_count, path}',
-  );
-  reg(
-    'asset_get_dependencies',
-    {
-      path: z.string().describe('Asset path; returns what this asset depends on'),
-    },
-    'low',
-    '{dependencies:[string], count}',
-  );
-  reg(
-    'asset_get_referencers',
-    {
-      path: z.string().describe('Asset path; returns who depends on this asset (blast radius)'),
-    },
-    'low',
-    '{referencers:[string], count}',
-  );
-  reg(
-    'hayba_scrape_node_registry',
-    {
-      pluginSourcePath: z.string().optional().describe('Path to PCGExtendedToolkit/Source/ directory'),
-      outputDbPath: z.string().optional().describe('Output SQLite DB path (default: Resources/pcgex_registry.db)'),
-      forceRescan: z.boolean().optional().describe('Force re-scan even if DB exists'),
-    },
-    'high',
-    '{nodes_scanned, pins_scanned, properties_scanned, db_path, catalog_path}',
-  );
-  reg(
-    'hayba_match_pin_names',
-    {
-      fromClass: z.string().describe('Source node class'),
-      fromPin: z.string().describe('Pin name on source node (may be approximate)'),
-      toClass: z.string().describe('Target node class to find a matching input pin on'),
-    },
-    'low',
-    '{matches:[{pin,confidence,reason}]}',
-  );
-  reg(
-    'hayba_validate_attribute_flow',
-    {
-      graph: z.string().describe('JSON string of the PCGEx graph to validate attribute flow'),
-      strictMode: coerceBool.optional().describe('If true, also flag orphan writes (written but never consumed)'),
-    },
-    'medium',
-    '{valid, errors:[{type,node,attribute,detail}]}',
-  );
-  reg(
-    'hayba_diff_against_working_asset',
-    {
-      wipGraph: z.string().describe('JSON string of the work-in-progress graph'),
-      referenceAssetPath: z.string().describe('Full UE asset path to the reference PCGGraph'),
-      diffMode: z.enum(['structural', 'properties', 'full']).optional().describe('What to diff (default: full)'),
-    },
-    'medium',
-    '{added, removed, modified, identical}',
-  );
-  reg(
-    'hayba_format_graph_topology',
-    {
-      graph: z.string().describe('JSON string of the PCGEx graph to layout'),
-      algorithm: z.enum(['layered', 'grid']).optional(),
-      nodeWidth: z.number().int().optional(),
-      nodeHeight: z.number().int().optional(),
-      horizontalSpacing: z.number().int().optional(),
-      verticalSpacing: z.number().int().optional(),
-      addCommentBlocks: z.boolean().optional(),
-    },
-    'low',
-    'JSON string of laid-out graph (nodes carry position:{x,y})',
-  );
-  reg(
-    'hayba_abstract_to_subgraph',
-    {
-      graph: z.string().describe('JSON string of the full PCGEx graph'),
-      nodeIds: z.array(z.string()).describe('Array of node IDs to extract into a subgraph'),
-      subgraphName: z.string().optional().describe('Name for the extracted subgraph (default: SubGraph)'),
-    },
-    'medium',
-    '{subgraph, mainGraph}',
-  );
-  reg(
-    'hayba_parameterize_graph_inputs',
-    {
-      graph: z.string().describe('JSON string of the PCGEx graph'),
-      targets: z.array(
-        z.object({
-          nodeId: z.string(),
-          property: z.string(),
-          parameterName: z.string().optional(),
-        }),
-      ),
-    },
-    'medium',
-    '{graph, parameters:[{name,type,defaultValue}]}',
-  );
-  reg(
-    'hayba_query_pcgex_docs',
-    {
-      query: z.string().describe('Node class name or keyword to search documentation'),
-      includeSourceSnippet: z.boolean().optional().describe('Include up to 80 lines from the header file'),
-    },
-    'low',
-    '{results:[{class,description,sourceSnippet?}]}',
-  );
-  reg(
-    'hayba_initiate_infrastructure_brainstorm',
-    {
-      topic: z.string().describe('The infrastructure or system design topic to brainstorm'),
-      context: z.string().optional(),
-      constraints: z.array(z.string()).optional(),
-    },
-    'low',
-    '{approaches:[{name,description,nodes,tradeoffs}]} — PROPOSAL ONLY',
-  );
-
-  // ── Conventions domain ────────────────────────────────────────────────────
-  reg(
-    'hayba_setup_conventions',
-    {
-      stage: z.enum(['start', 'folders', 'naming', 'workflow', 'confirm', 'save']),
-      preset: z.enum(['epic-default', 'gamedevtv', 'custom']).optional(),
-      answers: z.record(z.string(), z.unknown()).optional(),
-      target: z.enum(['global', 'project']).optional(),
-      projectRoot: z.string().optional(),
-    },
-    'low',
-    '{stage, question?, next_stage?, saved_to?}',
-  );
-  reg(
-    'hayba_analyze_conventions',
-    {
-      projectRoot: z.string().describe('Path to UE project root (contains .uproject file)'),
-      save: z.boolean().optional(),
-      target: z.enum(['global', 'project']).optional(),
-    },
-    'medium',
-    '{inferred:{folders, naming, workflow}, saved_to?}',
-  );
-
-  // ── Landscape import ──────────────────────────────────────────────────────
-  reg(
-    'hayba_import_landscape',
-    {
-      heightmapPath: z.string().describe('Absolute path to a PNG or R16 heightmap file'),
-      worldSizeKm: z.number().optional().default(8.0).describe('Landscape XY size in km'),
-      maxHeightM: z
-        .number()
-        .optional()
-        .default(600.0)
-        .describe('Maximum height in m (0..maxHeightM mapped from uint16)'),
-      actorLabel: z.string().optional().default('Hayba_Terrain').describe('Label for the spawned Landscape actor'),
-      landscapeMaterial: z.string().optional().describe('UE material path; empty = no material'),
-    },
-    'high',
-    '{actorLabel, heightmapPath, worldSizeKm, maxHeightM}',
-  );
-
-  // ── Zone painter domain ───────────────────────────────────────────────────
-  reg(
-    'hayba_open_zone_painter',
-    {
-      projectId: z.string().optional(),
-      projectName: z.string().optional(),
-      phase: z.enum(['a', 'b']).optional(),
-    },
-    'low',
-    '{ok, url, projectId}',
-  );
-  reg(
-    'hayba_read_zones',
-    {
-      projectId: z.string().optional(),
-      scratchSessionId: z.string().optional(),
-    },
-    'low',
-    '{zones:[{id,label,mask_path,bounds}]}',
-  );
-  reg(
-    'hayba_set_painter_heightmap',
-    {
-      projectId: z.string(),
-      heightmapPath: z.string(),
-    },
-    'low',
-    '{ok}',
-  );
-
-  // ── PLUMB constraint subsystem ────────────────────────────────────────────
-  reg('plumb_primitives', plumbPrimitivesSchema, 'low', '{primitives:[{id,gate,default_hard,qualitative,params,doc}]}');
-  reg('plumb_profile_bake', plumbProfileBakeSchema, 'low', '{ok, profile}');
-  reg('plumb_profile_annotate', plumbProfileAnnotateSchema, 'low', '{ok, profile|error}');
-  reg('plumb_profile_list', plumbProfileListSchema, 'low', '{profiles:[{asset_id,profile,affordances,locked}]}');
-  reg('plumb_profile_get', plumbProfileGetSchema, 'low', '{ok, profile|error}');
-  reg('plumb_constraint_define', plumbConstraintDefineSchema, 'low', '{ok, errors?}');
-  reg('plumb_constraint_list', plumbConstraintListSchema, 'low', '{constraints:[Constraint]}');
-  reg('plumb_constraint_remove', plumbConstraintRemoveSchema, 'low', '{ok, removed}');
-  reg('plumb_constraint_propose', plumbConstraintProposeSchema, 'low', '{ok, proposals:[Partial<Constraint>]|error}');
-  reg('plumb_validate', plumbValidateSchema, 'low', '{verdict:Verdict}');
-  reg('plumb_mask_add', plumbMaskAddSchema, 'low', '{ok, profile|error}');
-  reg('plumb_mask_remove', plumbMaskRemoveSchema, 'low', '{ok, removed}');
-  reg('plumb_lesson_add', plumbLessonAddSchema, 'low', '{ok, errors?}');
-  reg('plumb_lesson_list', plumbLessonListSchema, 'low', '{lessons:[{slug,title,refs}]}');
-  reg('plumb_lesson_remove', plumbLessonRemoveSchema, 'low', '{ok, removed}');
-  reg('plumb_study', plumbStudySchema, 'low', '{asset, has_profile, profile?, primitives, mask_kinds, guidance}');
-  reg('plumb_study_take', plumbStudyTakeSchema, 'low', '{requests:[{asset,ts}], note}');
-  reg('plumb_segment', plumbSegmentSchema, 'high', '{ok, added:[label], skipped?, error?}');
-  reg('plumb_production_define', plumbProductionDefineSchema, 'low', '{ok, errors?}');
-  reg('plumb_production_list', plumbProductionListSchema, 'low', '{productions:[Production]}');
-  reg('plumb_production_remove', plumbProductionRemoveSchema, 'low', '{ok, removed}');
-  reg('plumb_socket_add', plumbSocketAddSchema, 'low', '{ok, profile|error}');
-  reg('plumb_grammar_expand', plumbGrammarExpandSchema, 'low', '{plan:PlacementPlan, note}');
+// Schema registry seeding reads the same descriptors as eager registration and
+// deferred capture, independently of which routing mode exposes them.
+function seedCatalogueSchemas(): void {
+  for (const descriptor of STATIC_TOOL_CATALOGUE) recordToolSchema(descriptor);
 }

@@ -8,7 +8,7 @@
 // The UE plugin's FHaybaMCPSettings::Save() writes this file every time the
 // user toggles something in the MCP panel.
 
-import { readFileSync, watch } from 'node:fs';
+import { readFileSync, watch, type FSWatcher } from 'node:fs';
 import { resolve } from 'node:path';
 
 function disabledToolsPath(): string {
@@ -21,17 +21,30 @@ function disabledToolsPath(): string {
 }
 
 let cached: Set<string> = new Set();
+export type AdvisoryVerbosity = 'errors_only' | 'errors_and_warnings' | 'errors_warnings_and_tips';
+
+const DEFAULT_ADVISORY_VERBOSITY: AdvisoryVerbosity = 'errors_and_warnings';
+let cachedAdvisoryVerbosity: AdvisoryVerbosity = DEFAULT_ADVISORY_VERBOSITY;
 let watcherInstalled = false;
+let watcher: FSWatcher | null = null;
+
+function parseAdvisoryVerbosity(value: unknown): AdvisoryVerbosity {
+  return value === 'errors_only' || value === 'errors_and_warnings' || value === 'errors_warnings_and_tips'
+    ? value
+    : DEFAULT_ADVISORY_VERBOSITY;
+}
 
 function reload(): void {
   try {
     const path = disabledToolsPath();
     const raw = readFileSync(path, 'utf-8');
-    const json = JSON.parse(raw) as { disabled?: string[] };
+    const json = JSON.parse(raw) as { disabled?: string[]; advisory_verbosity?: unknown };
     cached = new Set(json.disabled ?? []);
+    cachedAdvisoryVerbosity = parseAdvisoryVerbosity(json.advisory_verbosity);
   } catch {
     // File missing or malformed — treat as "nothing disabled".
     cached = new Set();
+    cachedAdvisoryVerbosity = DEFAULT_ADVISORY_VERBOSITY;
   }
 }
 
@@ -41,10 +54,12 @@ function ensureWatcher(): void {
   reload();
   try {
     const path = disabledToolsPath();
-    watch(path, { persistent: false }, () => reload());
+    watcher = watch(path, { persistent: false }, () => reload());
   } catch {
-    // File doesn't exist yet — the user hasn't opened the MCP tab. We'll
-    // pick it up on the next reload() call when it does.
+    // File doesn't exist yet — retry installation on the next query so a file
+    // created after Node startup is not ignored for the whole process lifetime.
+    watcherInstalled = false;
+    watcher = null;
   }
 }
 
@@ -58,8 +73,17 @@ export function listDisabledTools(): string[] {
   return Array.from(cached).sort();
 }
 
+/** User-selected optional-guidance level mirrored by the UE plugin settings. */
+export function getAdvisoryVerbosity(): AdvisoryVerbosity {
+  ensureWatcher();
+  return cachedAdvisoryVerbosity;
+}
+
 /** Reset internal cache — used in tests. Not part of the public API. */
 export function __resetDisabledToolsCache(): void {
+  watcher?.close();
+  watcher = null;
   cached = new Set();
+  cachedAdvisoryVerbosity = DEFAULT_ADVISORY_VERBOSITY;
   watcherInstalled = false;
 }

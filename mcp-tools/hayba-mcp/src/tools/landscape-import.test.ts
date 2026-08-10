@@ -45,7 +45,10 @@ describe('hayba_import_landscape wrapper', () => {
     expect(indexSrc).toMatch(declares('landscapeMaterial', 'string'));
   });
 
-  it('registers the schema in the eager schema-registry block', () => {
-    expect(indexSrc).toMatch(/reg\(\s*['"]hayba_import_landscape['"]/);
+  it('feeds its descriptor through the shared schema-seeding loop', () => {
+    expect(indexSrc).toMatch(/name:\s*['"]hayba_import_landscape['"]/);
+    expect(indexSrc).toMatch(
+      /for\s*\(\s*const\s+descriptor\s+of\s+STATIC_TOOL_CATALOGUE\s*\)\s*recordToolSchema\(/,
+    );
   });
 });

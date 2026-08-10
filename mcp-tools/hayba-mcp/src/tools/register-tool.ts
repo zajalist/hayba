@@ -46,6 +46,16 @@ export type ToolDescriptor = {
   description: string;
   /** Zod raw shape used both for server.tool validation and the schema registry. */
   schema: z.ZodRawShape;
+  /**
+   * Optional wire-only shape accepted by McpServer.
+   *
+   * Most tools use `schema` for both transport validation and their published
+   * signature. A very small compatibility surface accepts deprecated aliases
+   * at the wire while deliberately documenting only the canonical spelling.
+   * Keeping that exception on the descriptor makes it data too; it no longer
+   * requires a hand-written `server.tool(...)` site beside a separate `reg()`.
+   */
+  wireSchema?: z.ZodRawShape;
   /** Tool meta — drives appendMeta(description) and the cost-lookup registry. */
   meta: HaybaToolMeta;
   /**
@@ -87,6 +97,7 @@ export function defineTool<S extends z.ZodRawShape>(d: {
   name: string;
   description: string;
   schema: S;
+  wireSchema?: z.ZodRawShape;
   meta: HaybaToolMeta;
   cost: Cost;
   returns: string;
@@ -111,6 +122,44 @@ export function recordToolSchema(d: ToolDescriptor): void {
 }
 
 /**
+ * Fully materialized MCP registration produced from one descriptor.
+ *
+ * This value is consumed by both eager registration and deferred capture. The
+ * latter used to discover tools by executing the eager-registration routine
+ * against a fake server whose `.tool()` method intercepted each call. Making
+ * the registration itself a value removes that timing-sensitive shim: capture
+ * can now build its map without touching any server object at all.
+ */
+export interface MaterializedTool {
+  name: string;
+  description: string;
+  schema: z.ZodRawShape;
+  handler: (params: Record<string, unknown>) => Promise<RichToolResult>;
+}
+
+export function materializeTool(
+  session: SessionManager,
+  d: ToolDescriptor,
+): MaterializedTool {
+  const niche = d.niche;
+  const nudge = isSceneMutating(d.meta.effects);
+  const evidence = isUnderEvidenceContract(d.meta.effects);
+  return {
+    name: d.name,
+    description: appendMeta(d.description, d.meta),
+    schema: d.wireSchema ?? d.schema,
+    handler: async (params: Record<string, unknown>): Promise<RichToolResult> => {
+      const r = await d.handler(params, session);
+      const shaped = niche
+        ? appendNicheBriefing(niche, session, r)
+        : { content: r.content, isError: r.isError };
+      const checked = evidence ? withEvidenceWarning(shaped) : shaped;
+      return nudge ? withValidationNudge(checked) : checked;
+    },
+  };
+}
+
+/**
  * Eagerly register one tool from a descriptor: server.tool(...) with the
  * appendMeta'd description + the standard handler wrapper, plus remember(name).
  * Call only inside the eager (Code Mode off) block, matching the old
@@ -121,29 +170,12 @@ export function registerTool(
   session: SessionManager,
   d: ToolDescriptor,
 ): void {
-  const niche = d.niche;
-  // Scene-mutating tools get a post-mutation validation nudge appended to their
-  // successful result — see withValidationNudge. Decided ONCE here from the
-  // tool's declared effects so it's DRY across every registered tool.
-  const nudge = isSceneMutating(d.meta.effects);
-  // A tool that declares ANY effect is under the response-evidence contract:
-  // if it comes back with only ok/status/message, the caller is told "success"
-  // about a change nothing in the response describes. Decided here for the same
-  // reason as the nudge — one place, every tool, including the wrappers that
-  // pass the plugin's reply straight through.
-  const evidence = isUnderEvidenceContract(d.meta.effects);
+  const tool = materializeTool(session, d);
   server.tool(
-    d.name,
-    appendMeta(d.description, d.meta),
-    d.schema,
-    async (params: Record<string, unknown>): Promise<RichToolResult> => {
-      const r = await d.handler(params, session);
-      const shaped = niche
-        ? appendNicheBriefing(niche, session, r)
-        : { content: r.content, isError: r.isError };
-      const checked = evidence ? withEvidenceWarning(shaped) : shaped;
-      return nudge ? withValidationNudge(checked) : checked;
-    },
+    tool.name,
+    tool.description,
+    tool.schema,
+    tool.handler,
   );
   registerToolMeta(d.name, d.meta);
 }
