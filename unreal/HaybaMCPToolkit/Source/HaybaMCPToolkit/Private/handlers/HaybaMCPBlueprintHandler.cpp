@@ -2,6 +2,7 @@
 #include "HaybaBlueprintOps.h"
 #include "HaybaMCPParams.h"
 #include "HaybaMCPReflection.h"
+#include "HaybaMCPAssetGuard.h"
 #include "Json.h"
 #include "Editor.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -35,6 +36,41 @@ DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPBlueprint, Log, All);
 // (FHaybaMCPSecurityManager::Journal) captures command ok/err, but compile
 // counts/first-error are domain-specific and live here.
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPBP, Log, All);
+
+// Reflection converters recurse through attacker-controlled JSON. Bound the
+// shape before giving it a UObject so a single MCP request cannot exhaust the
+// game-thread stack or allocate an unbounded container during staging.
+static bool HaybaValidateMutationJsonShape(
+    const TSharedPtr<FJsonValue>& Value,
+    int32 Depth,
+    int32& Nodes,
+    FString& OutReason)
+{
+    if (!Value.IsValid()) { OutReason = TEXT("contains an invalid JSON value"); return false; }
+    if (++Nodes > 4096) { OutReason = TEXT("exceeds the 4096-value mutation limit"); return false; }
+    if (Depth > 32) { OutReason = TEXT("exceeds the 32-level mutation depth limit"); return false; }
+    if (Value->Type == EJson::Array)
+    {
+        if (Value->AsArray().Num() > 1024)
+        {
+            OutReason = TEXT("contains an array larger than 1024 items");
+            return false;
+        }
+        for (const TSharedPtr<FJsonValue>& Child : Value->AsArray())
+            if (!HaybaValidateMutationJsonShape(Child, Depth + 1, Nodes, OutReason)) return false;
+    }
+    else if (Value->Type == EJson::Object)
+    {
+        if (Value->AsObject()->Values.Num() > 256)
+        {
+            OutReason = TEXT("contains an object larger than 256 fields");
+            return false;
+        }
+        for (const auto& Pair : Value->AsObject()->Values)
+            if (!HaybaValidateMutationJsonShape(Pair.Value, Depth + 1, Nodes, OutReason)) return false;
+    }
+    return true;
+}
 
 TArray<FString> FHaybaMCPBlueprintHandler::GetCommands() const
 {
@@ -228,12 +264,11 @@ static FString BlueprintNotFoundError(const TCHAR* Command, const FString& Path)
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::Create(const TSharedPtr<FJsonObject>& P)
 {
     FString ParentPath, PkgPath, Name;
-    if (!P->TryGetStringField(TEXT("parent_class_path"), ParentPath) || ParentPath.IsEmpty())
-        return FHaybaHandlerResult::Err(TEXT("blueprint_create: missing parent_class_path"));
-    if (!P->TryGetStringField(TEXT("package_path"), PkgPath) || PkgPath.IsEmpty())
-        return FHaybaHandlerResult::Err(TEXT("blueprint_create: missing package_path"));
-    if (!P->TryGetStringField(TEXT("name"), Name) || Name.IsEmpty())
-        return FHaybaHandlerResult::Err(TEXT("blueprint_create: missing name"));
+    FHaybaParamReader ParamR(P, TEXT("blueprint_create"));
+    ParentPath = ParamR.RequiredString(TEXT("parent_class_path"));
+    PkgPath = ParamR.RequiredString(TEXT("package_path"));
+    Name = ParamR.RequiredString(TEXT("name"), 256);
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UClass* ParentClass = LoadClass<UObject>(nullptr, *ParentPath);
     if (!ParentClass)
@@ -250,6 +285,19 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Create(const TSharedPtr<FJsonObje
     const HaybaBlueprintOps::FResolvedPackage Resolved =
         HaybaBlueprintOps::ResolvePackage(PkgPath, Name);
     const FString FullPackageName = Resolved.PackageName;
+    if (!FullPackageName.StartsWith(TEXT("/Game/"))
+        || !FPackageName::IsValidLongPackageName(FullPackageName))
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("blueprint_create: target must be a valid unused package under /Game; resolved '%s'. Nothing was created."),
+            *FullPackageName));
+    }
+    if (FPackageName::DoesPackageExist(FullPackageName)
+        || HaybaAssetGuard::AssetNameTaken(Resolved.Directory, Name))
+    {
+        return FHaybaHandlerResult::Err(
+            HaybaAssetGuard::NameTakenError(TEXT("blueprint_create"), Resolved.Directory, Name));
+    }
     UPackage* Package = CreatePackage(*FullPackageName);
     if (!Package)
         return FHaybaHandlerResult::Err(TEXT("blueprint_create: CreatePackage failed"));
@@ -279,6 +327,12 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Create(const TSharedPtr<FJsonObje
     Out->SetStringField(TEXT("path"), BP->GetPathName());
     Out->SetStringField(TEXT("name"), Name);
     Out->SetBoolField(TEXT("saved"), bSaved);
+    Out->SetBoolField(TEXT("dirty"), Package->IsDirty());
+    if (!bSaved)
+    {
+        Out->SetStringField(TEXT("save_error"),
+            TEXT("The Blueprint exists in memory but SavePackage failed. Save or delete the new asset before closing the editor; do not retry creation with the same name."));
+    }
     // Say where it went when that is probably not where the caller meant. The
     // path above has always been accurate; nobody reads it until something is
     // missing, and by then the asset is sitting a directory up.
@@ -345,8 +399,20 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddComponent(const TSharedPtr<FJs
     if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_add_component"), Path));
     UClass* CompClass = LoadClass<UActorComponent>(nullptr, *CompClassPath);
     if (!CompClass) return FHaybaHandlerResult::Err(TEXT("blueprint_add_component: component class not found"));
+    if (!CompClass->IsChildOf<UActorComponent>() || CompClass->HasAnyClassFlags(CLASS_Abstract))
+        return FHaybaHandlerResult::Err(TEXT("blueprint_add_component: component_class_path must name a concrete UActorComponent class; nothing was changed"));
     if (!BP->SimpleConstructionScript)
         return FHaybaHandlerResult::Err(TEXT("blueprint_add_component: blueprint has no SCS"));
+
+    for (const USCS_Node* Existing : BP->SimpleConstructionScript->GetAllNodes())
+    {
+        if (Existing && Existing->GetVariableName().ToString().Equals(CompName, ESearchCase::IgnoreCase))
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("blueprint_add_component: component name '%s' already exists; nothing was changed"),
+                *CompName));
+        }
+    }
 
     USCS_Node* Node = BP->SimpleConstructionScript->CreateNode(CompClass, FName(*CompName));
     if (!Node) return FHaybaHandlerResult::Err(TEXT("blueprint_add_component: CreateNode failed"));
@@ -359,6 +425,9 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddComponent(const TSharedPtr<FJs
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("component_name"), CompName);
     AttachCompileReport(Out, bClean, Errors, Warnings);
+    Out->SetBoolField(TEXT("verified"), BP->SimpleConstructionScript
+        && BP->SimpleConstructionScript->GetAllNodes().Contains(Node));
+    Out->SetBoolField(TEXT("dirty"), BP->GetOutermost()->IsDirty());
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -382,7 +451,17 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddVariable(const TSharedPtr<FJso
     else if (L == TEXT("string") || L == TEXT("fstring")) PinType.PinCategory = UEdGraphSchema_K2::PC_String;
     else if (L == TEXT("name") || L == TEXT("fname"))   PinType.PinCategory = UEdGraphSchema_K2::PC_Name;
     else if (L == TEXT("text") || L == TEXT("ftext"))   PinType.PinCategory = UEdGraphSchema_K2::PC_Text;
-    else PinType.PinCategory = UEdGraphSchema_K2::PC_String;
+    else
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("blueprint_add_variable: unsupported variable_type '%s'. Supported: float/double, int/integer, bool/boolean, string/fstring, name/fname, text/ftext. Nothing was changed."),
+            *VarType));
+
+    for (const FBPVariableDescription& Existing : BP->NewVariables)
+    {
+        if (Existing.VarName.ToString().Equals(VarName, ESearchCase::IgnoreCase))
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("blueprint_add_variable: variable '%s' already exists; nothing was changed"), *VarName));
+    }
 
     bool bAdded = FBlueprintEditorUtils::AddMemberVariable(BP, FName(*VarName), PinType);
     if (!bAdded) return FHaybaHandlerResult::Err(TEXT("blueprint_add_variable: AddMemberVariable failed"));
@@ -394,6 +473,11 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddVariable(const TSharedPtr<FJso
     Out->SetStringField(TEXT("variable_name"), VarName);
     Out->SetStringField(TEXT("type"), VarType);
     AttachCompileReport(Out, bClean, Errors, Warnings);
+    bool bVerified = false;
+    for (const FBPVariableDescription& Current : BP->NewVariables)
+        if (Current.VarName == FName(*VarName)) { bVerified = true; break; }
+    Out->SetBoolField(TEXT("verified"), bVerified);
+    Out->SetBoolField(TEXT("dirty"), BP->GetOutermost()->IsDirty());
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -438,6 +522,11 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddFunction(const TSharedPtr<FJso
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("function_name"), FuncName);
     AttachCompileReport(Out, bClean, Errors, Warnings);
+    bool bVerified = false;
+    for (const UEdGraph* Current : BP->FunctionGraphs)
+        if (Current && Current->GetFName() == FName(*FuncName)) { bVerified = true; break; }
+    Out->SetBoolField(TEXT("verified"), bVerified);
+    Out->SetBoolField(TEXT("dirty"), BP->GetOutermost()->IsDirty());
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -503,22 +592,34 @@ static TSharedPtr<FJsonObject> HaybaDescribeNode(UEdGraphNode* Node)
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObject>& P)
 {
     FString Path, FunctionName, GraphName, ClassPath, NodeType;
-    if (!P->TryGetStringField(TEXT("path"), Path))
-        return FHaybaHandlerResult::Err(TEXT("blueprint_add_node: missing path"));
-    P->TryGetStringField(TEXT("graph_name"), GraphName);
-    P->TryGetStringField(TEXT("class_path"), ClassPath);
-    P->TryGetStringField(TEXT("node_type"), NodeType);
-    if (NodeType.IsEmpty()) { NodeType = TEXT("call_function"); }
+    FHaybaParamReader ParamR(P, TEXT("blueprint_add_node"));
+    Path = ParamR.RequiredString(TEXT("path"));
+    GraphName = ParamR.OptionalString(TEXT("graph_name"));
+    ClassPath = ParamR.OptionalString(TEXT("class_path"));
+    NodeType = ParamR.OptionalString(TEXT("node_type"), TEXT("call_function")).ToLower();
+    FunctionName = ParamR.OptionalString(TEXT("function_name"));
+    const FString VariableName = ParamR.OptionalString(TEXT("variable_name"));
+    const int32 NX = ParamR.OptionalInt(TEXT("x"));
+    const int32 NY = ParamR.OptionalInt(TEXT("y"));
+    const int32 OptionCount = ParamR.OptionalIntInRange(TEXT("option_count"), 2, 2, 32);
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
+
+    static const TSet<FString> SupportedNodeTypes = {
+        TEXT("call_function"), TEXT("branch"), TEXT("select"), TEXT("timer_by_function"),
+        TEXT("variable_get"), TEXT("variable_set"), TEXT("cast")
+    };
+    if (!SupportedNodeTypes.Contains(NodeType))
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("blueprint_add_node: unknown node_type '%s'. Supported: call_function, branch, select, timer_by_function, variable_get, variable_set, cast. Nothing was changed."),
+            *NodeType));
+    }
 
     UBlueprint* BP = LoadBPByPath(Path);
     if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_add_node"), Path));
 
     UEdGraph* Graph = HaybaFindGraph(BP, GraphName);
     if (!Graph) return FHaybaHandlerResult::Err(TEXT("blueprint_add_node: graph not found"));
-
-    double NX = 0.0, NY = 0.0;
-    P->TryGetNumberField(TEXT("x"), NX);
-    P->TryGetNumberField(TEXT("y"), NY);
 
     // Non-function node kinds. A graph that can only place function calls cannot express
     // "if a character is assumed, show their holdings" — the shape every real panel needs —
@@ -528,8 +629,8 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
         BP->Modify();
         Graph->Modify();
         Node->CreateNewGuid();
-        Node->NodePosX = (int32)NX;
-        Node->NodePosY = (int32)NY;
+        Node->NodePosX = NX;
+        Node->NodePosY = NY;
         Graph->AddNode(Node, false, false);
         Node->PostPlacedNewNode();
         Node->AllocateDefaultPins();
@@ -537,6 +638,8 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
         TSharedPtr<FJsonObject> Out = HaybaDescribeNode(Node);
         Out->SetStringField(TEXT("graph"), Graph->GetName());
         Out->SetStringField(TEXT("node_type"), NodeType);
+        Out->SetBoolField(TEXT("verified"), Graph->Nodes.Contains(Node));
+        Out->SetBoolField(TEXT("dirty"), BP->GetOutermost()->IsDirty());
         Out->SetStringField(TEXT("note"), TEXT("Staged. Call blueprint_compile to apply."));
         return FHaybaHandlerResult::Ok(Out);
     };
@@ -550,9 +653,16 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
     {
         UK2Node_Select* Node = NewObject<UK2Node_Select>(Graph);
         FHaybaHandlerResult Placed = Place(Node);
-        int32 Options = 2; P->TryGetNumberField(TEXT("option_count"), Options);
-        Options = FMath::Clamp(Options, 2, 32);
-        for (int32 I = 2; I < Options && Node->CanAddPin(); ++I) Node->AddInputPin();
+        for (int32 I = 2; I < OptionCount && Node->CanAddPin(); ++I) Node->AddInputPin();
+        if (Placed.Data.IsValid())
+        {
+            Placed.Data = HaybaDescribeNode(Node);
+            Placed.Data->SetStringField(TEXT("graph"), Graph->GetName());
+            Placed.Data->SetStringField(TEXT("node_type"), NodeType);
+            Placed.Data->SetBoolField(TEXT("verified"), Graph->Nodes.Contains(Node));
+            Placed.Data->SetBoolField(TEXT("dirty"), BP->GetOutermost()->IsDirty());
+            Placed.Data->SetStringField(TEXT("note"), TEXT("Staged. Call blueprint_compile to apply."));
+        }
         return Placed;
     }
 
@@ -566,8 +676,8 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
     if (NodeType.Equals(TEXT("variable_get"), ESearchCase::IgnoreCase)
         || NodeType.Equals(TEXT("variable_set"), ESearchCase::IgnoreCase))
     {
-        FString VarName;
-        if (!P->TryGetStringField(TEXT("variable_name"), VarName))
+        const FString& VarName = VariableName;
+        if (VarName.IsEmpty())
             return FHaybaHandlerResult::Err(TEXT("blueprint_add_node: variable_get/set needs variable_name"));
 
         UClass* VarScope = BP->SkeletonGeneratedClass ? BP->SkeletonGeneratedClass.Get() : BP->GeneratedClass.Get();
@@ -603,14 +713,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
         return Place(Node);
     }
 
-    if (!NodeType.Equals(TEXT("call_function"), ESearchCase::IgnoreCase))
-    {
-        return FHaybaHandlerResult::Err(FString::Printf(
-            TEXT("blueprint_add_node: unknown node_type '%s'. Supported: call_function, branch, select, timer_by_function, variable_get, variable_set, cast."),
-            *NodeType));
-    }
-
-    if (!P->TryGetStringField(TEXT("function_name"), FunctionName))
+    if (FunctionName.IsEmpty())
         return FHaybaHandlerResult::Err(TEXT("blueprint_add_node: missing function_name"));
 
     // Default to the blueprint's own generated class, which is what makes self-calls and
@@ -641,8 +744,8 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
     UK2Node_CallFunction* Node = NewObject<UK2Node_CallFunction>(Graph);
     Node->CreateNewGuid();
     Node->SetFromFunction(Fn);
-    Node->NodePosX = (int32)NX;
-    Node->NodePosY = (int32)NY;
+    Node->NodePosX = NX;
+    Node->NodePosY = NY;
     Graph->AddNode(Node, false, false);
     Node->PostPlacedNewNode();
     Node->AllocateDefaultPins();
@@ -651,6 +754,8 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
 
     TSharedPtr<FJsonObject> Out = HaybaDescribeNode(Node);
     Out->SetStringField(TEXT("graph"), Graph->GetName());
+    Out->SetBoolField(TEXT("verified"), Graph->Nodes.Contains(Node));
+    Out->SetBoolField(TEXT("dirty"), BP->GetOutermost()->IsDirty());
     Out->SetStringField(TEXT("note"), TEXT("Staged. Call blueprint_compile to apply."));
     return FHaybaHandlerResult::Ok(Out);
 }
@@ -667,8 +772,8 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetPinDefault(const TSharedPtr<FJ
     NodeId = ParamR.RequiredString(TEXT("node_id"));
     PinName = ParamR.RequiredString(TEXT("pin_name"));
     Value = ParamR.RequiredString(TEXT("value"));
+    GraphName = ParamR.OptionalString(TEXT("graph_name"));
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
-    P->TryGetStringField(TEXT("graph_name"), GraphName);
 
     UBlueprint* BP = LoadBPByPath(Path);
     if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_set_pin_default"), Path));
@@ -702,32 +807,47 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetPinDefault(const TSharedPtr<FJ
             *PinName));
     }
 
-    BP->Modify();
-    Graph->Modify();
-
     const UEdGraphSchema_K2* Schema = GetDefault<UEdGraphSchema_K2>();
+    UObject* ResolvedDefaultObject = nullptr;
+    const bool bHardObjectPin = Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object
+        || Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Class;
+    const bool bSoftObjectPin = Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_SoftObject
+        || Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_SoftClass;
+
     // Object/class pins take an asset reference rather than a string literal.
-    if (Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object
-        || Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Class
-        || Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_SoftObject
-        || Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_SoftClass)
+    if (bHardObjectPin || bSoftObjectPin)
     {
-        UObject* Asset = LoadObject<UObject>(nullptr, *Value);
-        if (!Asset)
+        ResolvedDefaultObject = LoadObject<UObject>(nullptr, *Value);
+        if (!ResolvedDefaultObject)
         {
-            Asset = LoadClass<UObject>(nullptr, *Value);
+            ResolvedDefaultObject = LoadClass<UObject>(nullptr, *Value);
         }
-        if (!Asset)
+        if (!ResolvedDefaultObject)
         {
             return FHaybaHandlerResult::Err(FString::Printf(
-                TEXT("blueprint_set_pin_default: could not load '%s' for object/class pin '%s'"), *Value, *PinName));
+                TEXT("blueprint_set_pin_default: could not load '%s' for object/class pin '%s'; nothing was changed"), *Value, *PinName));
         }
-        Schema->TrySetDefaultObject(*Pin, Asset);
     }
-    else
+
+    const FString ValidationError = Schema->IsPinDefaultValid(
+        Pin,
+        bHardObjectPin ? FString() : Value,
+        bHardObjectPin ? ResolvedDefaultObject : nullptr,
+        FText::GetEmpty());
+    if (!ValidationError.IsEmpty())
     {
-        Schema->TrySetDefaultValue(*Pin, Value);
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("blueprint_set_pin_default: invalid value for pin '%s': %s. Nothing was changed."),
+            *PinName, *ValidationError));
     }
+
+    // Execute only after path resolution and schema validation have succeeded.
+    BP->Modify();
+    Graph->Modify();
+    // The schema setters return void in UE 5.8, so their only trustworthy
+    // outcome is the readback below.
+    if (bHardObjectPin) Schema->TrySetDefaultObject(*Pin, ResolvedDefaultObject);
+    else                Schema->TrySetDefaultValue(*Pin, Value);
 
     FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(BP);
 
@@ -735,6 +855,17 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetPinDefault(const TSharedPtr<FJ
     Out->SetStringField(TEXT("node_id"), NodeId);
     Out->SetStringField(TEXT("pin_name"), PinName);
     Out->SetStringField(TEXT("applied"), Pin->DefaultObject ? Pin->DefaultObject->GetPathName() : Pin->DefaultValue);
+    const bool bVerified = bHardObjectPin
+        ? Pin->DefaultObject == ResolvedDefaultObject
+        : Pin->DefaultValue == Value;
+    Out->SetBoolField(TEXT("verified"), bVerified);
+    if (!bVerified)
+    {
+        Out->SetStringField(TEXT("warning"), FString::Printf(
+            TEXT("The schema setter returned but pin '%s' did not retain '%s'. State was re-read and does not match; inspect the pin before retrying."),
+            *PinName, *Value));
+    }
+    Out->SetBoolField(TEXT("dirty"), BP->GetOutermost()->IsDirty());
     Out->SetStringField(TEXT("note"), TEXT("Staged. Call blueprint_compile to apply."));
     return FHaybaHandlerResult::Ok(Out);
 }
@@ -744,12 +875,12 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::ConnectNodes(const TSharedPtr<FJs
     FString Path, FromId, FromPin, ToId, ToPin, GraphName;
     FHaybaParamReader ParamR(P, TEXT("blueprint_connect_nodes"));
     Path = ParamR.RequiredString(TEXT("path"));
+    FromId = ParamR.RequiredString(TEXT("from_node"));
+    ToId = ParamR.RequiredString(TEXT("to_node"));
+    FromPin = ParamR.RequiredString(TEXT("from_pin"));
+    ToPin = ParamR.RequiredString(TEXT("to_pin"));
+    GraphName = ParamR.OptionalString(TEXT("graph_name"));
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
-    if (!P->TryGetStringField(TEXT("from_node"), FromId) || !P->TryGetStringField(TEXT("to_node"), ToId))
-        return FHaybaHandlerResult::Err(TEXT("blueprint_connect_nodes: missing from_node / to_node"));
-    if (!P->TryGetStringField(TEXT("from_pin"), FromPin) || !P->TryGetStringField(TEXT("to_pin"), ToPin))
-        return FHaybaHandlerResult::Err(TEXT("blueprint_connect_nodes: missing from_pin / to_pin"));
-    P->TryGetStringField(TEXT("graph_name"), GraphName);
 
     UBlueprint* BP = LoadBPByPath(Path);
     if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_connect_nodes"), Path));
@@ -795,7 +926,15 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::ConnectNodes(const TSharedPtr<FJs
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetStringField(TEXT("from"), FromId + TEXT(".") + FromPin);
     Result->SetStringField(TEXT("to"), ToId + TEXT(".") + ToPin);
-    Result->SetBoolField(TEXT("connected"), true);
+    const bool bVerified = OutPin->LinkedTo.Contains(InPin) && InPin->LinkedTo.Contains(OutPin);
+    Result->SetBoolField(TEXT("connected"), bVerified);
+    Result->SetBoolField(TEXT("verified"), bVerified);
+    Result->SetBoolField(TEXT("dirty"), BP->GetOutermost()->IsDirty());
+    if (!bVerified)
+    {
+        Result->SetStringField(TEXT("warning"),
+            TEXT("The schema reported success but the bidirectional pin link was not present on readback. State is unknown; inspect both nodes before retrying."));
+    }
     Result->SetStringField(TEXT("note"), TEXT("Staged. Call blueprint_compile to apply."));
     return FHaybaHandlerResult::Ok(Result);
 }
@@ -805,6 +944,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Compile(const TSharedPtr<FJsonObj
     FString Path;
     FHaybaParamReader ParamR(P, TEXT("blueprint_compile"));
     Path = ParamR.RequiredString(TEXT("path"));
+    const bool bSave = ParamR.OptionalBool(TEXT("save"), true);
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
     UBlueprint* BP = LoadBPByPath(Path);
     if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_compile"), Path));
@@ -855,7 +995,6 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Compile(const TSharedPtr<FJsonObj
     Out->SetNumberField(TEXT("num_warnings"), ResultsLog.NumWarnings); // legacy alias
     Out->SetArrayField(TEXT("errors"),   Errors);
     Out->SetArrayField(TEXT("warnings"), Warnings);
-    bool bSave = true; P->TryGetBoolField(TEXT("save"), bSave);
     bool bSaved = false;
     if (bOk && bSave)
     {
@@ -863,9 +1002,13 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Compile(const TSharedPtr<FJsonObj
         const FString Filename = FPackageName::LongPackageNameToFilename(Package->GetName(), FPackageName::GetAssetPackageExtension());
         FSavePackageArgs Args; Args.TopLevelFlags = RF_Public | RF_Standalone;
         bSaved = UPackage::SavePackage(Package, BP, *Filename, Args);
-        if (!bSaved) return FHaybaHandlerResult::Err(TEXT("blueprint_compile: compile succeeded but SavePackage failed"));
+        if (!bSaved)
+            Out->SetStringField(TEXT("save_error"),
+                TEXT("Compile succeeded but SavePackage failed. The Blueprint is changed in memory and remains dirty; save it before closing the editor. Do not retry the mutation that preceded this compile."));
     }
-    Out->SetBoolField(TEXT("saved"), bSaved);
+    if (bSave) Out->SetBoolField(TEXT("saved"), bSaved);
+    else       Out->SetBoolField(TEXT("save_requested"), false);
+    Out->SetBoolField(TEXT("dirty"), BP->GetOutermost()->IsDirty());
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -957,10 +1100,11 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddEvent(const TSharedPtr<FJsonOb
     FString Path, EventName, GraphName;
     FHaybaParamReader ParamR(P, TEXT("blueprint_add_event"));
     Path = ParamR.RequiredString(TEXT("path"));
+    EventName = ParamR.RequiredString(TEXT("event_name"));
+    GraphName = ParamR.OptionalString(TEXT("graph_name"));
+    const int32 X = ParamR.OptionalInt(TEXT("x"));
+    const int32 Y = ParamR.OptionalInt(TEXT("y"));
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
-    if (!P->TryGetStringField(TEXT("event_name"), EventName))
-        return FHaybaHandlerResult::Err(TEXT("blueprint_add_event: missing event_name (e.g. \"Construct\", \"Tick\")"));
-    P->TryGetStringField(TEXT("graph_name"), GraphName);
 
     UBlueprint* BP = LoadBPByPath(Path);
     if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_add_event"), Path));
@@ -983,6 +1127,8 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddEvent(const TSharedPtr<FJsonOb
         {
             TSharedPtr<FJsonObject> Found = HaybaDescribeNode(Existing);
             Found->SetBoolField(TEXT("already_existed"), true);
+            Found->SetBoolField(TEXT("verified"), true);
+            Found->SetBoolField(TEXT("dirty"), BP->GetOutermost()->IsDirty());
             return FHaybaHandlerResult::Ok(Found);
         }
     }
@@ -994,11 +1140,8 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddEvent(const TSharedPtr<FJsonOb
     Node->CreateNewGuid();
     Node->EventReference.SetExternalMember(EventFn->GetFName(), ParentClass);
     Node->bOverrideFunction = true;
-    double X = 0.0, Y = 0.0;
-    P->TryGetNumberField(TEXT("x"), X);
-    P->TryGetNumberField(TEXT("y"), Y);
-    Node->NodePosX = (int32)X;
-    Node->NodePosY = (int32)Y;
+    Node->NodePosX = X;
+    Node->NodePosY = Y;
     Graph->AddNode(Node, false, false);
     Node->PostPlacedNewNode();
     Node->AllocateDefaultPins();
@@ -1007,19 +1150,18 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddEvent(const TSharedPtr<FJsonOb
 
     TSharedPtr<FJsonObject> Out = HaybaDescribeNode(Node);
     Out->SetBoolField(TEXT("already_existed"), false);
+    Out->SetBoolField(TEXT("verified"), Graph->Nodes.Contains(Node));
+    Out->SetBoolField(TEXT("dirty"), BP->GetOutermost()->IsDirty());
     Out->SetStringField(TEXT("note"), TEXT("Staged. Call blueprint_compile to apply."));
     return FHaybaHandlerResult::Ok(Out);
 }
 
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetDefaults(const TSharedPtr<FJsonObject>& P)
 {
-    FString Path;
     FHaybaParamReader ParamR(P, TEXT("blueprint_set_defaults"));
-    Path = ParamR.RequiredString(TEXT("path"));
+    const FString Path = ParamR.RequiredString(TEXT("path"));
+    const TSharedPtr<FJsonObject> PropsObj = ParamR.RequiredObject(TEXT("properties"), 1, 128);
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
-    const TSharedPtr<FJsonObject>* PropsObj;
-    if (!P->TryGetObjectField(TEXT("properties"), PropsObj) || !PropsObj->IsValid())
-        return FHaybaHandlerResult::Err(TEXT("blueprint_set_defaults: missing properties"));
 
     UBlueprint* BP = LoadBPByPath(Path);
     if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_set_defaults"), Path));
@@ -1028,9 +1170,25 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetDefaults(const TSharedPtr<FJso
 
     UObject* CDO = BP->GeneratedClass->GetDefaultObject();
     if (!CDO) return FHaybaHandlerResult::Err(TEXT("blueprint_set_defaults: CDO missing"));
+    if (CDO->GetClass()->HasAnyClassFlags(CLASS_Abstract))
+    {
+        return FHaybaHandlerResult::Err(
+            TEXT("blueprint_set_defaults: generated class is abstract and cannot be safely instantiated for staging; nothing was changed. Make a concrete child Blueprint and set its defaults instead."));
+    }
+
+    UObject* StagedCDO = NewObject<UObject>(GetTransientPackage(), CDO->GetClass());
+    if (!StagedCDO)
+        return FHaybaHandlerResult::Err(TEXT("blueprint_set_defaults: could not allocate a staging CDO; nothing was changed"));
 
     TArray<TSharedPtr<FJsonValue>> SetNames;
     TArray<TSharedPtr<FJsonValue>> Skipped;
+    struct FStagedDefault
+    {
+        FString Name;
+        FProperty* Property = nullptr;
+        FString ExpectedText;
+    };
+    TArray<FStagedDefault> Staged;
 
     auto AddSkipped = [&Skipped](const FString& Key, const TCHAR* Reason)
     {
@@ -1040,14 +1198,26 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetDefaults(const TSharedPtr<FJso
         Skipped.Add(MakeShared<FJsonValueObject>(Entry.ToSharedRef()));
     };
 
-    for (const auto& Pair : (*PropsObj)->Values)
+    int32 JsonNodes = 0;
+    for (const auto& Pair : PropsObj->Values)
     {
+        FString ShapeReason;
+        if (!HaybaValidateMutationJsonShape(Pair.Value, 0, JsonNodes, ShapeReason))
+        {
+            AddSkipped(FString(*Pair.Key), *ShapeReason);
+            continue;
+        }
         FProperty* Prop = BP->GeneratedClass->FindPropertyByName(FName(*Pair.Key));
         if (!Prop)
         {
             AddSkipped(FString(*Pair.Key), TEXT("property_not_found"));
             continue;
         }
+
+        // Preserve unspecified members of nested structs/containers while the
+        // JSON patch is staged, without duplicating the entire CDO/subobject
+        // graph and running unrelated PostDuplicate work.
+        Prop->CopyCompleteValue_InContainer(StagedCDO, CDO);
 
         // Routed through the shared reflection module rather than a local
         // stringify-then-ImportText pass.
@@ -1061,12 +1231,31 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetDefaults(const TSharedPtr<FJso
         // the property's ACTUAL struct type instead, and handles nested JSON
         // objects, enums by name and object references, none of which the text
         // path could express.
-        if (!HaybaReflection::SetValueFromJson(Prop, CDO, Pair.Value, CDO))
+        if (!HaybaReflection::SetValueFromJson(Prop, StagedCDO, Pair.Value, StagedCDO))
         {
             AddSkipped(FString(*Pair.Key), TEXT("value_could_not_be_applied"));
             continue;
         }
-        SetNames.Add(MakeShared<FJsonValueString>(FString(*Pair.Key)));
+        Staged.Add({ FString(*Pair.Key), Prop, FString() });
+    }
+
+    if (Staged.Num() == 0)
+    {
+        return FHaybaHandlerResult::Err(
+            TEXT("blueprint_set_defaults: none of the requested properties could be staged; the CDO, Blueprint dirty state, and compile state were not changed"));
+    }
+
+    // Execute only after every property has either been staged or assigned an
+    // explicit rejection. Copying completed FProperty values avoids repeating
+    // fallible JSON conversion against the live CDO.
+    CDO->Modify();
+    for (FStagedDefault& Item : Staged)
+    {
+        Item.Property->CopyCompleteValue_InContainer(CDO, StagedCDO);
+        const void* ValuePtr = Item.Property->ContainerPtrToValuePtr<void>(CDO);
+        Item.Property->ExportTextItem_Direct(
+            Item.ExpectedText, ValuePtr, nullptr, CDO, PPF_None);
+        SetNames.Add(MakeShared<FJsonValueString>(Item.Name));
     }
 
     FBlueprintEditorUtils::MarkBlueprintAsModified(BP);
@@ -1074,9 +1263,49 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetDefaults(const TSharedPtr<FJso
     TArray<FString> Errors, Warnings;
     const bool bClean = RecompileAndTrack(BP, Errors, Warnings);
 
+    // Compiling may reinstate the GeneratedClass and replace its CDO. Never
+    // trust the pointer captured before that boundary: re-resolve and verify
+    // each property by name on the post-compile object.
+    UObject* ObservedCDO = BP->GeneratedClass
+        ? BP->GeneratedClass->GetDefaultObject()
+        : nullptr;
+    TArray<TSharedPtr<FJsonValue>> VerificationFailed;
+    int32 VerifiedCount = 0;
+    for (const FStagedDefault& Item : Staged)
+    {
+        FProperty* ObservedProp = ObservedCDO
+            ? BP->GeneratedClass->FindPropertyByName(FName(*Item.Name))
+            : nullptr;
+        FString ObservedText;
+        if (ObservedProp)
+        {
+            const void* ValuePtr = ObservedProp->ContainerPtrToValuePtr<void>(ObservedCDO);
+            ObservedProp->ExportTextItem_Direct(
+                ObservedText, ValuePtr, nullptr, ObservedCDO, PPF_None);
+        }
+        if (ObservedProp && ObservedText == Item.ExpectedText)
+        {
+            ++VerifiedCount;
+        }
+        else
+        {
+            VerificationFailed.Add(MakeShared<FJsonValueString>(Item.Name));
+        }
+    }
+
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetArrayField(TEXT("set"), SetNames);
     Out->SetArrayField(TEXT("skipped"), Skipped);
+    Out->SetNumberField(TEXT("succeeded"), VerifiedCount);
+    Out->SetNumberField(TEXT("failed"), Skipped.Num() + VerificationFailed.Num());
+    Out->SetArrayField(TEXT("verification_failed"), VerificationFailed);
+    Out->SetBoolField(TEXT("verified"), VerificationFailed.Num() == 0);
+    Out->SetBoolField(TEXT("dirty"), BP->GetOutermost()->IsDirty());
+    if (VerificationFailed.Num() > 0)
+    {
+        Out->SetStringField(TEXT("warning"),
+            TEXT("One or more staged defaults did not survive Blueprint compilation. Read the CDO back before retrying; the listed properties have an unknown postcondition."));
+    }
     AttachCompileReport(Out, bClean, Errors, Warnings);
     return FHaybaHandlerResult::Ok(Out);
 }

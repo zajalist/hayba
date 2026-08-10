@@ -12,6 +12,7 @@
 #include "UObject/UnrealType.h"
 #include "UObject/Class.h"
 #include "UObject/Package.h"
+#include "UObject/UObjectGlobals.h"
 #include "UObject/SavePackage.h"
 #include "Misc/PackageName.h"
 #include "Modules/ModuleManager.h"
@@ -110,6 +111,38 @@ namespace HaybaMCPDataAssetHelpers
         }
         return Out;
     }
+
+    static bool ValidateMutationJsonShape(
+        const TSharedPtr<FJsonValue>& Value,
+        int32 Depth,
+        int32& Nodes,
+        FString& OutReason)
+    {
+        if (!Value.IsValid()) { OutReason = TEXT("invalid JSON value"); return false; }
+        if (++Nodes > 4096) { OutReason = TEXT("exceeds the 4096-value mutation limit"); return false; }
+        if (Depth > 32) { OutReason = TEXT("exceeds the 32-level mutation depth limit"); return false; }
+        if (Value->Type == EJson::Array)
+        {
+            if (Value->AsArray().Num() > 1024)
+            {
+                OutReason = TEXT("contains an array larger than 1024 items");
+                return false;
+            }
+            for (const TSharedPtr<FJsonValue>& Child : Value->AsArray())
+                if (!ValidateMutationJsonShape(Child, Depth + 1, Nodes, OutReason)) return false;
+        }
+        else if (Value->Type == EJson::Object)
+        {
+            if (Value->AsObject()->Values.Num() > 256)
+            {
+                OutReason = TEXT("contains an object larger than 256 fields");
+                return false;
+            }
+            for (const auto& Pair : Value->AsObject()->Values)
+                if (!ValidateMutationJsonShape(Pair.Value, Depth + 1, Nodes, OutReason)) return false;
+        }
+        return true;
+    }
 }
 
 // ---------- handler ----------
@@ -129,18 +162,24 @@ FHaybaHandlerResult FHaybaMCPDataAssetHandler::Handle(const FString& Cmd, const 
         if (!P->TryGetStringField(TEXT("class_name"), ClassName) || ClassName.IsEmpty())
             return FHaybaHandlerResult::Err(TEXT("data_create: missing class_name"));
 
+        const FString IntendedPackage = PackagePath / AssetName;
+        if (!(PackagePath == TEXT("/Game") || PackagePath.StartsWith(TEXT("/Game/")))
+            || !FPackageName::IsValidLongPackageName(IntendedPackage))
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("data_create: target must resolve to a valid package under /Game; got '%s'. Nothing was created."),
+                *IntendedPackage));
+        }
+
         UClass* Class = ResolveClass(ClassName);
         if (!Class)
             return FHaybaHandlerResult::Err(FString::Printf(
                 TEXT("data_create: class not found: %s"), *ClassName));
 
-        if (!Class->IsChildOf(UDataAsset::StaticClass()))
+        if (!Class->IsChildOf(UDataAsset::StaticClass())
+            || Class->HasAnyClassFlags(CLASS_Abstract))
             return FHaybaHandlerResult::Err(FString::Printf(
-                TEXT("data_create: class %s does not inherit UDataAsset"), *ClassName));
-
-        FAssetToolsModule& AssetToolsModule =
-            FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
-        IAssetTools& AssetTools = AssetToolsModule.Get();
+                TEXT("data_create: class %s must be a concrete UDataAsset subclass; nothing was created"), *ClassName));
 
         // Refuse a taken name instead of letting CreateAsset raise a modal
         // overwrite dialog, which would block the game thread and hang every
@@ -150,6 +189,10 @@ FHaybaHandlerResult FHaybaMCPDataAssetHandler::Handle(const FString& Cmd, const 
             return FHaybaHandlerResult::Err(
                 HaybaAssetGuard::NameTakenError(TEXT("data_create"), PackagePath, AssetName));
         }
+
+        FAssetToolsModule& AssetToolsModule =
+            FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
+        IAssetTools& AssetTools = AssetToolsModule.Get();
 
         UObject* NewAsset = AssetTools.CreateAsset(AssetName, PackagePath, Class, nullptr);
         if (!NewAsset)
@@ -175,6 +218,7 @@ FHaybaHandlerResult FHaybaMCPDataAssetHandler::Handle(const FString& Cmd, const 
         // whether it also reached disk, which is the difference between an edit
         // that survives an editor restart and one that does not.
         Out->SetBoolField(TEXT("saved"), bSaved);
+        Out->SetBoolField(TEXT("dirty"), NewAsset->GetOutermost()->IsDirty());
         if (!bSaved)
         {
             Out->SetStringField(TEXT("save_note"),
@@ -206,6 +250,10 @@ FHaybaHandlerResult FHaybaMCPDataAssetHandler::Handle(const FString& Cmd, const 
         if (!Asset)
             return FHaybaHandlerResult::Err(FString::Printf(
                 TEXT("data_get: could not load %s"), *Path));
+        if (!Asset->IsA<UDataAsset>())
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("data_get: %s is a %s, not a UDataAsset; no state was changed"),
+                *Path, *Asset->GetClass()->GetName()));
 
         TSharedPtr<FJsonObject> Props = ReflectObjectProperties(Asset);
 
@@ -228,11 +276,20 @@ FHaybaHandlerResult FHaybaMCPDataAssetHandler::Handle(const FString& Cmd, const 
         TSharedPtr<FJsonValue> Value = P->TryGetField(TEXT("value"));
         if (!Value.IsValid())
             return FHaybaHandlerResult::Err(TEXT("data_set: missing value"));
+        int32 JsonNodes = 0;
+        FString ShapeReason;
+        if (!ValidateMutationJsonShape(Value, 0, JsonNodes, ShapeReason))
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("data_set: value %s; nothing was changed"), *ShapeReason));
 
         UObject* Asset = LoadDataAsset(Path);
         if (!Asset)
             return FHaybaHandlerResult::Err(FString::Printf(
                 TEXT("data_set: could not load %s"), *Path));
+        if (!Asset->IsA<UDataAsset>())
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("data_set: %s is a %s, not a UDataAsset; nothing was changed"),
+                *Path, *Asset->GetClass()->GetName()));
 
         UClass* Class = Asset->GetClass();
         FProperty* Prop = FindFProperty<FProperty>(Class, *PropertyName);
@@ -240,33 +297,73 @@ FHaybaHandlerResult FHaybaMCPDataAssetHandler::Handle(const FString& Cmd, const 
             return FHaybaHandlerResult::Err(FString::Printf(
                 TEXT("data_set: property %s not found on %s"),
                 *PropertyName, *Class->GetName()));
+        if (!Prop->HasAnyPropertyFlags(CPF_Edit)
+            || Prop->HasAnyPropertyFlags(CPF_EditConst | CPF_Transient | CPF_Deprecated))
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("data_set: property %s (%s) is not a mutable persisted editor property; nothing was changed"),
+                *PropertyName, *Prop->GetCPPType()));
+        }
 
-        void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Asset);
-
-        // FJsonObjectConverter handles Bool/Int/Float/String/Name/Enum/Struct/Array
-        // /Map/Set/ObjectRef etc. PPF_None flags are fine for in-editor use.
+        // Deserialize into a transient same-class object first. JsonValueToUProperty can
+        // resize a container or write some struct members before returning
+        // false; pointing it at the live DataAsset made a rejected request a
+        // partial mutation. Only a completely converted property crosses the
+        // mutation boundary below.
+        UObject* StagedAsset = NewObject<UObject>(GetTransientPackage(), Asset->GetClass());
+        if (!StagedAsset)
+            return FHaybaHandlerResult::Err(TEXT("data_set: could not allocate a staging copy; nothing was changed"));
+        Prop->CopyCompleteValue_InContainer(StagedAsset, Asset);
+        void* StagedValuePtr = Prop->ContainerPtrToValuePtr<void>(StagedAsset);
         const bool bOk = FJsonObjectConverter::JsonValueToUProperty(
-            Value, Prop, ValuePtr, /*CheckFlags*/0, /*SkipFlags*/0);
+            Value, Prop, StagedValuePtr, /*CheckFlags*/0, /*SkipFlags*/0);
 
         if (!bOk)
             return FHaybaHandlerResult::Err(FString::Printf(
-                TEXT("data_set: failed to deserialize JSON into property %s (%s)"),
+                TEXT("data_set: failed to deserialize JSON into property %s (%s); conversion was staged and the live asset was not changed"),
                 *PropertyName, *Prop->GetCPPType()));
 
-        // Property notifications + dirty + save.
+        // Execute: from here on the request is fully resolved and typed.
         Asset->Modify();
+        Asset->PreEditChange(Prop);
+        Prop->CopyCompleteValue_InContainer(Asset, StagedAsset);
         FPropertyChangedEvent Evt(Prop, EPropertyChangeType::ValueSet);
         Asset->PostEditChangeProperty(Evt);
+
+        // PostEditChange may normalize a value. Compare to the staged value so
+        // silent refusal/coercion is visible rather than reported as success.
+        const bool bVerified = Prop->Identical_InContainer(
+            Asset, StagedAsset, 0, PPF_DeepComparison);
+        bool bSaved = false;
         if (UPackage* Pkg = Asset->GetOutermost())
         {
             Pkg->MarkPackageDirty();
-            UEditorAssetLibrary::SaveLoadedAsset(Asset, /*bOnlyIfDirty*/false);
+            bSaved = UEditorAssetLibrary::SaveLoadedAsset(Asset, /*bOnlyIfDirty*/false);
         }
 
         auto Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("path"), Asset->GetPathName());
         Out->SetStringField(TEXT("property"), PropertyName);
-        Out->SetBoolField(TEXT("ok"), true);
+        Out->SetBoolField(TEXT("applied"), true);
+        Out->SetBoolField(TEXT("verified"), bVerified);
+        Out->SetBoolField(TEXT("saved"), bSaved);
+        Out->SetBoolField(TEXT("dirty"), Asset->GetOutermost()->IsDirty());
+        if (TSharedPtr<FJsonValue> Observed =
+                FJsonObjectConverter::UPropertyToJsonValue(
+                    Prop, Prop->ContainerPtrToValuePtr<void>(Asset), 0, 0))
+        {
+            Out->SetField(TEXT("observed_value"), Observed);
+        }
+        if (!bVerified)
+        {
+            Out->SetStringField(TEXT("warning"),
+                TEXT("The property notification normalized or rejected the staged value. Read observed_value before making a dependent edit; do not retry blindly."));
+        }
+        if (!bSaved)
+        {
+            Out->SetStringField(TEXT("save_error"),
+                TEXT("The property changed in memory but SaveLoadedAsset failed. Save the package before closing the editor."));
+        }
         return FHaybaHandlerResult::Ok(Out);
     }
 
