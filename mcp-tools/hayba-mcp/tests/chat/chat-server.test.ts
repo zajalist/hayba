@@ -465,4 +465,125 @@ describe('sidecar SSE chat server', () => {
     expect(raw).not.toContain(FAKE_KEY);
     expect(raw).not.toContain('LEAK-CANARY');
   });
+
+  // ── Archetype loader wiring (issue #356) ─────────────────────────────────
+  // These exercise the REAL hayba.agents.json shipped at the package root
+  // (chat-server.ts resolves `body.archetype` via the default manifest path,
+  // there is no injection seam for a test fixture here) so the assertions
+  // below are pinned to that file's current 'asset-manager' entry.
+  describe('archetype wiring', () => {
+    /** Records the `system` prompt and tool names offered on each stream() call. */
+    function makeRecordingClientFactory(script: ScriptStep[]): {
+      factory: () => LLMClient;
+      calls: Array<{ system: string; toolNames: string[] }>;
+    } {
+      const calls: Array<{ system: string; toolNames: string[] }> = [];
+      let turn = 0;
+      const factory = () =>
+        ({
+          provider: 'mock',
+          model: 'fake',
+          protocol: 'anthropic',
+          async complete() {
+            throw new Error('not used');
+          },
+          async *stream(params: { system: string; tools?: Array<{ name: string }> }) {
+            calls.push({ system: params.system, toolNames: (params.tools ?? []).map((t) => t.name) });
+            const step = script[turn++] ?? {
+              content: null,
+              toolCalls: [],
+              stopReason: 'end_turn' as const,
+            };
+            for (const t of step.deltas ?? []) yield { type: 'text_delta' as const, text: t };
+            yield {
+              type: 'done' as const,
+              response: { content: step.content, toolCalls: step.toolCalls, stopReason: step.stopReason },
+            };
+          },
+        }) as unknown as LLMClient;
+      return { factory, calls };
+    }
+
+    it('a known archetype id applies its system_prompt (tool_filter left to the live registry)', async () => {
+      const { factory, calls } = makeRecordingClientFactory([
+        { deltas: ['ok'], content: 'ok', toolCalls: [], stopReason: 'end_turn' },
+      ]);
+      ({ server, url } = startApp({
+        createClient: factory as never,
+        dispatchTool: async () => ({}),
+        // No `tools` override here: omitting it forces the real
+        // buildToolCatalog() path, which is what archetypeFilter feeds into.
+      }));
+
+      const res = await fetch(`${url}/chat/stream`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ session_id: 'arch1', prompt: 'hi', provider: 'mock', archetype: 'asset-manager' }),
+      });
+      const frames = await readAllFrames(res.body!);
+      expect(frames.at(-1)!.event).toBe('done');
+      expect(calls).toHaveLength(1);
+      // The asset-manager system_prompt (hayba.agents.json) mentions asset mapping —
+      // distinct from DEFAULT_SYSTEM, which never does.
+      expect(calls[0].system).toMatch(/Content Browser assets/);
+      expect(calls[0].system).not.toMatch(/in-editor copilot/);
+    });
+
+    it('an unknown archetype id fails loudly with a specific error frame, not silence', async () => {
+      const { factory, calls } = makeRecordingClientFactory([
+        { deltas: ['ok'], content: 'ok', toolCalls: [], stopReason: 'end_turn' },
+      ]);
+      ({ server, url } = startApp({
+        createClient: factory as never,
+        dispatchTool: async () => ({}),
+      }));
+
+      const res = await fetch(`${url}/chat/stream`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          session_id: 'arch2',
+          prompt: 'hi',
+          provider: 'mock',
+          archetype: 'not-a-real-archetype',
+        }),
+      });
+      const frames = await readAllFrames(res.body!);
+      const err = frames.find((f) => f.event === 'error')!.data as { error: string; kind?: string };
+      expect(err.error).toMatch(/unknown archetype id "not-a-real-archetype"/);
+      expect(err.error).toMatch(/director/); // names a KNOWN id, not just "invalid"
+      expect(frames.at(-1)!.event).toBe('done');
+      // The LLM was never even called — the gate fires before dispatch.
+      expect(calls).toHaveLength(0);
+    });
+
+    it('hand-passed archetype_filter keeps working with no archetype id given', async () => {
+      const { factory, calls } = makeRecordingClientFactory([
+        { deltas: ['ok'], content: 'ok', toolCalls: [], stopReason: 'end_turn' },
+      ]);
+      ({ server, url } = startApp({
+        createClient: factory as never,
+        dispatchTool: async () => ({}),
+        tools: [
+          { name: 'get_thing', description: 'read a thing', input_schema: { type: 'object', properties: {} } },
+        ],
+      }));
+
+      const res = await fetch(`${url}/chat/stream`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          session_id: 'arch3',
+          prompt: 'hi',
+          provider: 'mock',
+          archetype_filter: ['get_thing'],
+        }),
+      });
+      const frames = await readAllFrames(res.body!);
+      expect(frames.at(-1)!.event).toBe('done');
+      expect(calls).toHaveLength(1);
+      // No archetype id supplied → the default system prompt applies unchanged.
+      expect(calls[0].system).toMatch(/in-editor copilot/);
+    });
+  });
 });

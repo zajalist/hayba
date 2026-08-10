@@ -53,6 +53,7 @@ import {
 } from './agent-loop.js';
 import type { LLMTool, LLMUsage } from '../agents/llm-client.js';
 import { createChatDispatcher } from './tool-dispatch.js';
+import { getArchetype } from '../agents/agent-registry.js';
 
 // ---------------------------------------------------------------------------
 // Localhost enforcement
@@ -563,6 +564,31 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     }
     session.messages = messages;
 
+    // Resolve `archetype` (an id into hayba.agents.json) to its tool_filter +
+    // system_prompt. Hand-passed `archetype_filter` keeps working unchanged —
+    // this is additive: if both are given, the explicit filter wins (the
+    // caller asked for something more specific than the archetype default),
+    // but the archetype's system_prompt still applies.
+    let archetypeFilter = body.archetype_filter;
+    let turnSystem = system;
+    if (body.archetype) {
+      try {
+        const archetype = getArchetype(body.archetype);
+        turnSystem = archetype.system_prompt;
+        if (!archetypeFilter) archetypeFilter = archetype.tool_filter;
+      } catch (err) {
+        emit(session, 'error', {
+          error: err instanceof Error ? err.message : String(err),
+          kind: 'config',
+        });
+        finalize(session, 'error');
+        session.running = false;
+        session.clients.delete(res);
+        cleanup();
+        return res.end();
+      }
+    }
+
     // Resolve provider/model/key: body overrides > session config > default cfg.
     const cfg = resolveSessionConfig(sessionId);
     const provider = body.provider ?? cfg?.provider ?? 'mock';
@@ -614,9 +640,9 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     // Drive the loop server-side, independent of the HTTP connection lifetime.
     void runTurn(session, {
       client,
-      system,
+      system: turnSystem,
       messages,
-      archetypeFilter: body.archetype_filter,
+      archetypeFilter,
       tools: options.tools,
       dispatchTool,
       signal: session.abortController.signal,
