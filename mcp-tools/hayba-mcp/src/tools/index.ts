@@ -3579,6 +3579,17 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   },
 ];
 
+// python_run's script namespace is worth stating at call time: the script does
+// NOT run in the editor's `__main__`. It gets a fresh dict per call containing
+// only `print` and builtins, and that one dict is used for BOTH globals and
+// locals — so module-scope comprehensions, generator expressions, and closures
+// resolve names exactly as they would in a normal module (pinned by
+// python-namespace-contract.test.ts). Nothing carries over between calls.
+const PYTHON_SCRIPT_FIELD_DESCRIPTION =
+  'Python source to execute. Runs in a FRESH namespace per call (__name__ == "__hayba_user__"): ' +
+  'nothing is pre-imported, so `import unreal` explicitly, and no state survives from a previous ' +
+  'python_run. Only print() output and stderr come back — assign nothing and you observe nothing.';
+
 // Single-source tool descriptor list = hand-written entries + the sidecar-
 // generated legacy tools. The generator surfaces every sidecar command that is
 // agent_callable:true && has_ts_wrapper:false (~55) as a first-class tool,
@@ -3657,7 +3668,7 @@ export const CODE_MODE_DESCRIPTORS: ToolDescriptor[] = [
       'Execute a Python script inside UE via PythonScriptPlugin. Universal escape hatch for invoking any UE command not otherwise exposed.',
     meta: pyMeta,
     schema: {
-      script: z.string().describe('Python source to execute'),
+      script: z.string().describe(PYTHON_SCRIPT_FIELD_DESCRIPTION),
       allow_unsafe: z
         .boolean()
         .optional()
@@ -3666,7 +3677,7 @@ export const CODE_MODE_DESCRIPTORS: ToolDescriptor[] = [
         ),
     },
     wireSchema: {
-      script: z.string().optional().describe('Python source to execute'),
+      script: z.string().optional().describe(PYTHON_SCRIPT_FIELD_DESCRIPTION),
       code: z.string().optional().describe('Alias for "script".'),
       allow_unsafe: z
         .boolean()
