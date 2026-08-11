@@ -3,6 +3,7 @@
 #include "PythonScriptTypes.h"
 #include "Misc/Base64.h"
 #include "Dom/JsonObject.h"
+#include "HaybaMCPSeh.h"   // world-switch repair after a swallowed fault
 #if PLATFORM_WINDOWS
 #include <excpt.h>   // EXCEPTION_EXECUTE_HANDLER for the SEH guard below
 #endif
@@ -1732,7 +1733,7 @@ namespace
 // C++ object unwinding (C2712), and the handler is full of FString locals — and
 // even a TFunctionRef parameter trips it. After a caught AV the interpreter may
 // be degraded, so the caller stops and returns rather than issuing follow-ups.
-static bool ExecPythonGuarded(IPythonScriptPlugin* Plugin, FPythonCommandEx* Cmd, bool& bOutCrashed)
+static bool ExecPythonGuardedRaw(IPythonScriptPlugin* Plugin, FPythonCommandEx* Cmd, bool& bOutCrashed)
 {
     bOutCrashed = false;
 #if PLATFORM_WINDOWS
@@ -1755,6 +1756,23 @@ static bool ExecPythonGuarded(IPythonScriptPlugin* Plugin, FPythonCommandEx* Cmd
 #else
     return Plugin->ExecPythonCommandEx(*Cmd);
 #endif
+}
+
+// A caught fault does not unwind the frames it jumped over, so the engine's own
+// play-world switch (UEditorEngine::OnScriptExecutionStart, which fires whenever
+// python reaches Blueprint code on a PIE object) can be left pushed — and GWorld
+// stuck on the PIE world kills the editor on the next tick. See the long note in
+// HaybaMCPSeh.h. Same repair as HaybaSeh::RunGuarded, applied to this handler's
+// own guard; the __try stays isolated in ExecPythonGuardedRaw for C2712.
+static bool ExecPythonGuarded(IPythonScriptPlugin* Plugin, FPythonCommandEx* Cmd, bool& bOutCrashed)
+{
+    const HaybaSeh::FWorldSwitchSnapshot Before = HaybaSeh::CaptureWorldSwitchState();
+    const bool bResult = ExecPythonGuardedRaw(Plugin, Cmd, bOutCrashed);
+    if (bOutCrashed)
+    {
+        HaybaSeh::RepairWorldSwitchState(Before);
+    }
+    return bResult;
 }
 
 TArray<FString> FHaybaMCPPythonHandler::GetCommands() const
