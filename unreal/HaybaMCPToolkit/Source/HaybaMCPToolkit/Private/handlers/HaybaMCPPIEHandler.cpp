@@ -674,7 +674,12 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEScreenshot(const TSharedPtr<FJsonObj
     // UMG/HUD, and bShowUI=false yields a black frame for UI-only screens. Callers can
     // pass show_ui:false for a scene-only capture.
     bool bShowUI = true;
-    if (P.IsValid()) P->TryGetBoolField(TEXT("show_ui"), bShowUI);
+    // TryGetBoolField assigns false when the field is absent. Guard presence so
+    // an omitted optional field preserves the documented UI-inclusive default.
+    if (P.IsValid() && P->HasTypedField<EJson::Boolean>(TEXT("show_ui")))
+    {
+        P->TryGetBoolField(TEXT("show_ui"), bShowUI);
+    }
     FScreenshotRequest::RequestScreenshot(Filename, bShowUI, /*bAddFilenameSuffix=*/false);
 
     // Returns immediately. The old code pumped the core ticker for up to three

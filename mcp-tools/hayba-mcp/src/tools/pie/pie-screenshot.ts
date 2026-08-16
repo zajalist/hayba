@@ -28,6 +28,10 @@ export const schema = z
       .describe(
         'Do not capture; just report whether the previously requested file (pass its filename!) has landed. The engine writes the image a frame or two after the request, so poll with this rather than assuming it is ready.',
       ),
+    show_ui: z
+      .boolean()
+      .default(true)
+      .describe('Include Slate/UMG in the capture. Defaults to true; set false only for a scene-only frame.'),
     // .strict() so a misspelled key is a loud validation error instead of
     // being stripped pre-wire — the exact failure that made check_only mint a
     // fresh timestamped filename and report captured:false forever.

@@ -153,6 +153,17 @@ describe('arguments survive the trip', () => {
 });
 
 describe('pie_screenshot check_only polls the file the caller named', () => {
+  it('includes Slate UI by default', async () => {
+    // Without this field UE's permissive bool getter rewrites the C++ default
+    // to false, so docked PIE captures the world while silently dropping UMG.
+    ue = scriptedUe().replies('editor_pie_screenshot', { requested: true, captured: false });
+    await pieScreenshotHandler({ filename: 'D:/Saved/HaybaPIE_ui.png' }, session);
+    expect(ue.paramsFor('editor_pie_screenshot')).toMatchObject({
+      filename: 'D:/Saved/HaybaPIE_ui.png',
+      show_ui: true,
+    });
+  });
+
   it('forwards filename on a check_only poll', async () => {
     ue = scriptedUe().replies('editor_pie_screenshot', {
       filename: 'D:/Saved/HaybaPIE_x.png',
