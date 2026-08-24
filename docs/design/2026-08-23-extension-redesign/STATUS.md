@@ -54,12 +54,26 @@ Full TS suite green at the time of writing: **187 files, 2119 tests**.
    omit; only one was actually omitted, and all three have since been
    implemented for real. **Live-verify before trusting it.**
 
+
+## Open issue: icon optical weight (found 2026-08-24)
+
+Pixel audit confirms the two-tone palette claim is true (zero off-palette
+pixels across 37 masters), but found ink coverage varies **6.7×** at 16px --
+`save` 73% solid, `connect`/`remove`/`camera-viewport` 10.9%. Ten icons fall
+under 20%, including `world` (sidebar) and `state-pending` (a row-end mark
+whose job is to be noticed). See `14-ICON-WEIGHT-AUDIT.md`.
+
+Not acted on: these were picked individually across four review rounds, so
+regenerating them at heavier weight is the user's call.
+
 ## What needs the user
 
 - **A Live Coding compile of the style layer.** It is reviewed against the
   UE 5.8 headers (`IMAGE_BRUSH` appends `.png`; `Set(FName, FLinearColor)`
   pairs with `GetColor`, `Set(FName, float)` with `GetFloat`) and its 44 icon
   bindings are verified to resolve — but reviewed is not compiled.
+- **A decision on the ten faint icons** (regenerate heavier, restrict to 28px,
+  or accept). See the audit above.
 - **A verdict on the 28px rasters** (`icon-rasters-proof.html`). If they
   disappoint at true size, the fallback is hand-tracing the six sidebar icons
   to SVG, and that is much cheaper to decide before more Slate work lands.
