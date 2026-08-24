@@ -1,0 +1,1 @@
+Generated with built-in image_gen and normalized to transparent 512 px flat `#DED4C3`/`#C47A28`: attention A flame, attention B signal horn, pending A hourglass, pending B folk lantern, unsaved A ink drop, and unsaved B wax seal mid-press.
