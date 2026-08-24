@@ -99,21 +99,28 @@ describe('searchNodes — haystack caching', () => {
     });
 
   it('does not rebuild searchable text on repeated queries', () => {
-    const nodes = Array.from({ length: 2000 }, (_, i) => heavy(i));
+    // Asserted by observable behaviour, not by a stopwatch. A timing assertion
+    // would measure the CI runner as much as the code, and a test that fails
+    // when a machine is busy teaches people to re-run rather than to look.
+    //
+    // The cache is proven by its own side effect: mutate a node after it has
+    // been searched once, and a cached implementation cannot see the change,
+    // while a rebuild-every-query implementation would immediately.
+    // "measurement" appears only in the description, so changing that field is
+    // enough to flip the match. ("bench" would not work — it is also in the
+    // category, which is exactly the kind of thing a haystack test should not
+    // quietly depend on.)
+    const node = heavy(1);
+    expect(searchNodes([node], 'measurement').length).toBe(1);
 
-    // First pass builds every haystack; later passes must only scan.
-    const t0 = performance.now();
-    searchNodes(nodes, 'bench');
-    const cold = performance.now() - t0;
+    node.description = 'nothing relevant here';
+    expect(searchNodes([node], 'measurement').length).toBe(1); // still cached
 
-    const t1 = performance.now();
-    for (let i = 0; i < 20; i++) searchNodes(nodes, 'bench');
-    const warmPerQuery = (performance.now() - t1) / 20;
-
-    // A rebuild-per-query implementation makes warm ~= cold. With the cache a
-    // warm pass is a substring scan over prebuilt strings. The bound is loose
-    // on purpose: this guards the algorithm, not the machine.
-    expect(warmPerQuery).toBeLessThan(cold / 2);
+    // …and a node never searched before is built fresh, so this is a cache and
+    // not a global short-circuit that matches everything.
+    const fresh = heavy(2);
+    fresh.description = 'nothing relevant here';
+    expect(searchNodes([fresh], 'measurement').length).toBe(0);
   });
 
   it('cached results stay correct across repeated and differing queries', () => {

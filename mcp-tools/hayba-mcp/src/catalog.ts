@@ -105,6 +105,12 @@ export function loadCatalog(): NodeCatalog {
  * arbitrary arrays (tests pass literals) while still paying the build cost at
  * most once per node. Entries die with the nodes, so a re-loaded catalog does
  * not leak the old one's strings.
+ *
+ * The one caveat, pinned by a test: a node mutated *after* it has been searched
+ * keeps its old searchable text. Catalog nodes are built once by `loadCatalog`
+ * and never edited, so this costs nothing today — but anything that starts
+ * rewriting a node in place must drop it from this cache, and there is no way
+ * for the cache to notice on its own.
  */
 const haystacks = new WeakMap<CatalogNode, string>();
 
