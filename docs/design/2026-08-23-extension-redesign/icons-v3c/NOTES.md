@@ -1,0 +1,6 @@
+- rules-a — Most telling rules candidate: the branded PLUMB metaphor makes “what must be true” immediate and memorable.
+- rules-b — The level two-pan balance reads as impartial constraint checking, though less product-specific than PLUMB.
+- rules-c — The dead-center ochre bubble is the most compact literal signal of exact alignment.
+- profile-a — The attached identity tag clearly separates the asset itself from the identity the system assigns it.
+- profile-b — Most telling profile candidate: the calipers make “measured = understood” legible without implying a person or container.
+- profile-c — The echoed ochre footprint communicates the real object and the simplified model known about it.

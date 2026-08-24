@@ -1,0 +1,6 @@
+- activity: **A** is the most telling because the four connected event rows form an immediate vertical timeline, with the newest row clearly accented.
+- recipe: **C** is the most telling because the wide-handled stamp and separate ochre imprint read cleanly as a reusable action and its result.
+- plan-pending: **A** is the most telling because the document dominates while the integrated ochre corner wedge adds an unmistakable waiting state.
+- rules: **A** is the most telling because its broad standing tablet, stable foot, and three law-lines remain recognizable at small size.
+- profile: **A** is the most telling because the wrap-around measuring band and ticks make the rounded asset block visibly measured.
+- diff: **A** is the most telling because two related version panels, a directional center notch, and a visible before/after change communicate comparison at a glance.

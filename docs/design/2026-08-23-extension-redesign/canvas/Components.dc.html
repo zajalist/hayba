@@ -1,0 +1,79 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; }
+    a { color: #C47A28; } a:hover { color: #D88A30; }
+  </style>
+</helmet>
+<div style="width: 960px; height: 1020px; background: #20252B; padding: 40px; box-sizing: border-box; display: flex; flex-direction: column; gap: 24px;">
+  <div style="color: #E5E9ED; font-size: 22px; font-weight: 650;">Components</div>
+
+  <div style="color: #77828E; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600;">Status — the icon vocabulary, used everywhere</div>
+  <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+    <div style="display: flex; align-items: center; gap: 8px; background: #292F36; border: 1px solid #3A424B; border-radius: 6px; padding: 6px 12px;"><img src="run.png" style="width: 16px; height: 16px;" alt=""><div style="color: #AAB3BD; font-size: 12px;">running</div></div>
+    <div style="display: flex; align-items: center; gap: 8px; background: #292F36; border: 1px solid #C47A28; border-radius: 6px; padding: 6px 12px;"><img src="plan-pending.png" style="width: 16px; height: 16px;" alt=""><div style="color: #C47A28; font-size: 12px;">needs approval</div></div>
+    <div style="display: flex; align-items: center; gap: 8px; background: #292F36; border: 1px solid #3A424B; border-radius: 6px; padding: 6px 12px;"><img src="approve.png" style="width: 16px; height: 16px;" alt=""><div style="color: #AAB3BD; font-size: 12px;">done</div></div>
+    <div style="display: flex; align-items: center; gap: 8px; background: #292F36; border: 1px solid #C47A28; border-radius: 6px; padding: 6px 12px;"><img src="state-attention.png" style="width: 16px; height: 16px;" alt=""><div style="color: #C47A28; font-size: 12px;">needs attention</div></div>
+    <div style="display: flex; align-items: center; gap: 8px; background: #292F36; border: 1px solid #3A424B; border-radius: 6px; padding: 6px 12px;"><img src="reject.png" style="width: 16px; height: 16px;" alt=""><div style="color: #AAB3BD; font-size: 12px;">error</div></div>
+  </div>
+
+  <div style="color: #77828E; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600;">Activity row — collapsed</div>
+  <div style="background: #292F36; border: 1px solid #3A424B; border-radius: 8px; padding: 12px 16px; display: flex; align-items: center; gap: 12px;">
+    <img src="recipe.png" style="width: 20px; height: 20px;" alt="">
+    <div style="color: #E5E9ED; font-size: 13px; flex-grow: 1;">Scatter conifers on Landscape</div>
+    <div style="color: #77828E; font-size: 11px;">Recipe · pcg_biome</div>
+    <div style="display: flex; align-items: center; gap: 6px;"><img src="approve.png" style="width: 14px; height: 14px;" alt=""><div style="color: #AAB3BD; font-size: 11px;">done · 2.4s</div></div>
+  </div>
+
+  <div style="color: #77828E; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600;">Activity row — expanded, the load-bearing pattern</div>
+  <div style="background: #292F36; border: 1px solid #3A424B; border-radius: 8px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <img src="recipe.png" style="width: 20px; height: 20px;" alt="">
+      <div style="color: #E5E9ED; font-size: 13px; font-weight: 600; flex-grow: 1;">Scatter conifers on Landscape</div>
+      <div style="color: #AAB3BD; font-size: 11px;">1,204 instances · 2.4s</div>
+    </div>
+    <div style="background: #171B20; border-radius: 6px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 10px;"><img src="rule-pass.png" style="width: 15px; height: 15px;" alt=""><div style="color: #AAB3BD; font-size: 12px; font-family: ui-monospace, monospace; flex-grow: 1;">grounded</div><div style="color: #7EA58A; font-size: 12px; font-family: ui-monospace, monospace;">+0.04 m</div></div>
+      <div style="display: flex; align-items: center; gap: 10px;"><img src="rule-pass.png" style="width: 15px; height: 15px;" alt=""><div style="color: #AAB3BD; font-size: 12px; font-family: ui-monospace, monospace; flex-grow: 1;">count_per_m2</div><div style="color: #7EA58A; font-size: 12px; font-family: ui-monospace, monospace;">+0.8</div></div>
+      <div style="display: flex; align-items: center; gap: 10px;"><img src="rule-violated.png" style="width: 15px; height: 15px;" alt=""><div style="color: #E5E9ED; font-size: 12px; font-family: ui-monospace, monospace; flex-grow: 1;">clearance</div><div style="color: #C47A28; font-size: 12px; font-family: ui-monospace, monospace;">−0.32 m</div><div style="background: #C47A28; color: #171B20; font-size: 11px; font-weight: 650; border-radius: 5px; padding: 4px 10px;">Fix →</div></div>
+    </div>
+    <div style="display: flex; gap: 8px;">
+      <div style="border: 1px solid #515B66; color: #AAB3BD; font-size: 11px; border-radius: 5px; padding: 5px 11px;">before | after</div>
+      <div style="border: 1px solid #515B66; color: #AAB3BD; font-size: 11px; border-radius: 5px; padding: 5px 11px; display: flex; align-items: center; gap: 6px;"><img src="undo.png" style="width: 13px; height: 13px;" alt="">undo</div>
+      <div style="flex-grow: 1;"></div>
+      <div style="border: 1px solid #C47A28; color: #C47A28; font-size: 11px; border-radius: 5px; padding: 5px 11px;">Save as Recipe</div>
+    </div>
+  </div>
+
+  <div style="color: #77828E; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600;">Activity row — awaiting approval (Plan Mode is a row state)</div>
+  <div style="background: #292F36; border: 1px solid #C47A28; border-radius: 8px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <img src="plan-pending.png" style="width: 20px; height: 20px;" alt="">
+      <div style="color: #E5E9ED; font-size: 13px; font-weight: 600; flex-grow: 1;">Import heightmap and build landscape</div>
+      <div style="display: flex; align-items: center; gap: 6px;"><img src="plan-pending.png" style="width: 14px; height: 14px;" alt=""><div style="color: #C47A28; font-size: 11px;">needs approval</div></div>
+    </div>
+    <div style="color: #AAB3BD; font-size: 12px; line-height: 1.6;">1. landscape_import — 4033×4033, 100m scale&nbsp;&nbsp;2. landscape_material — M_TerrainBlend&nbsp;&nbsp;3. pcg_execute_graph — BiomeScatter</div>
+    <div style="display: flex; gap: 8px;">
+      <div style="background: #C47A28; color: #171B20; font-size: 12px; font-weight: 650; border-radius: 5px; padding: 6px 16px;">Approve</div>
+      <div style="border: 1px solid #515B66; color: #AAB3BD; font-size: 12px; border-radius: 5px; padding: 6px 16px;">Reject</div>
+    </div>
+  </div>
+
+  <div style="color: #77828E; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600;">Buttons</div>
+  <div style="display: flex; gap: 10px; align-items: center;">
+    <div style="background: #C47A28; color: #171B20; font-size: 12px; font-weight: 650; border-radius: 6px; padding: 8px 18px;">Primary — one per surface</div>
+    <div style="border: 1px solid #515B66; color: #E5E9ED; font-size: 12px; border-radius: 6px; padding: 8px 18px;">Secondary</div>
+    <div style="color: #AAB3BD; font-size: 12px; padding: 8px 12px;">Quiet</div>
+    <div style="border: 1px solid #3A424B; color: #77828E; font-size: 12px; border-radius: 6px; padding: 8px 18px;">Disabled</div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>
