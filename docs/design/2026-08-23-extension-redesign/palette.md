@@ -27,3 +27,51 @@ The palette is a cool, neutral Slate ground that can live inside Unreal Editor c
 - Each icon has a separate `<g id="state">`; tint that group with `accent.ochre` only when the UI state requires it.
 - The sidebar active row uses `surface.raised` plus a restrained ochre state mark; do not paint the whole icon ochre.
 - Pass and fail appear only beside their corresponding verdicts. They are not general-purpose brand colors.
+
+## Categorical palette
+
+Added 2026-08-24, after finding the Tool Stream carried ten category colours
+inline and two of them broke the ochre rule.
+
+Measured against the semantic ochre (hue 32°):
+
+| Category | Old hue | Distance to ochre | Verdict |
+|---|---|---|---|
+| Performance | 30° | **1.5°** | indistinguishable from "needs attention" |
+| Scene | 41° | **9.6°** | indistinguishable from "needs attention" |
+| Actor | 196° | 165° | fine, but 7.6° from Plan |
+| Plan | 204° | 173° | fine, but 7.6° from Actor |
+
+Two categories reading as the accent colour is not a small problem: the whole
+value of reserving ochre is that seeing it means something. And two categories
+7.6° apart are not two categories.
+
+The replacement hues sit **≥25° clear of the ochre and ≥30° apart** from each
+other, at one shared saturation (0.48) and value (0.86) so no category shouts
+louder than the rest. Value comes down from the originals' 1.0, which glares
+against `#20252B`.
+
+| Token | Hex | Hue |
+|---|---|---|
+| `Hayba.Color.Cat.Performance` | `#CADB72` | 70° |
+| `Hayba.Color.Cat.Script` | `#95DB72` | 100° |
+| `Hayba.Color.Cat.Scene` | `#72DB9E` | 145° |
+| `Hayba.Color.Cat.Actor` | `#72CADB` | 190° |
+| `Hayba.Color.Cat.Plan` | `#728CDB` | 225° |
+| `Hayba.Color.Cat.Memory` | `#9972DB` | 262° |
+| `Hayba.Color.Cat.Asset` | `#CD72DB` | 292° |
+| `Hayba.Color.Cat.Image` | `#DB72AF` | 325° |
+| `Hayba.Color.Cat.Neutral` | `#B0B6C0` | — |
+
+**Error is deliberately not a category.** An error is a status; it uses
+`Hayba.Color.Status.Fail`, so the two can never drift apart.
+
+### Use this when…
+
+Telling *kinds* apart — tool domains, asset types, graph node families. Never
+for status, severity, or anything the ochre rule covers. If a colour is meant
+to make someone act, it is a status token, not a category one.
+
+The call sites are still the inline literals in `HaybaMCPToolStreamPanel.cpp`;
+they move to these tokens with P3b, when that panel becomes Activity. Doing it
+sooner would be churn in a file that is about to be substantially rewritten.

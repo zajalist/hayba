@@ -126,6 +126,31 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
         Tok(TEXT("Hayba.Color.Status.Pass"),    FLinearColor::FromSRGBColor(FColor(0x7E, 0xA5, 0x8A)));
         Tok(TEXT("Hayba.Color.Status.Fail"),    FLinearColor::FromSRGBColor(FColor(0xC4, 0x6E, 0x68)));
 
+        // Categorical palette — for telling *kinds* apart, not for status.
+        //
+        // The Tool Stream already had ten of these inline, and two of them were
+        // a problem: Performance sat 1.5 degrees from the semantic ochre and
+        // Scene 9.6, so two ordinary categories were visually indistinguishable
+        // from "needs your attention". Actor and Plan were 7.6 degrees apart
+        // from each other, which is not a distinction anyone can make.
+        //
+        // These hues are all at least 25 degrees clear of the ochre and at
+        // least 30 apart from each other, at a shared saturation and value so
+        // no one category shouts louder than the rest. Value is pulled down
+        // from the originals' 1.0, which glares on this chrome.
+        //
+        // Error is deliberately absent: an error is a status, not a category,
+        // and belongs to Status.Fail so the two can never drift apart.
+        Tok(TEXT("Hayba.Color.Cat.Performance"), FLinearColor::FromSRGBColor(FColor(0xCA, 0xDB, 0x72)));
+        Tok(TEXT("Hayba.Color.Cat.Script"),      FLinearColor::FromSRGBColor(FColor(0x95, 0xDB, 0x72)));
+        Tok(TEXT("Hayba.Color.Cat.Scene"),       FLinearColor::FromSRGBColor(FColor(0x72, 0xDB, 0x9E)));
+        Tok(TEXT("Hayba.Color.Cat.Actor"),       FLinearColor::FromSRGBColor(FColor(0x72, 0xCA, 0xDB)));
+        Tok(TEXT("Hayba.Color.Cat.Plan"),        FLinearColor::FromSRGBColor(FColor(0x72, 0x8C, 0xDB)));
+        Tok(TEXT("Hayba.Color.Cat.Memory"),      FLinearColor::FromSRGBColor(FColor(0x99, 0x72, 0xDB)));
+        Tok(TEXT("Hayba.Color.Cat.Asset"),       FLinearColor::FromSRGBColor(FColor(0xCD, 0x72, 0xDB)));
+        Tok(TEXT("Hayba.Color.Cat.Image"),       FLinearColor::FromSRGBColor(FColor(0xDB, 0x72, 0xAF)));
+        Tok(TEXT("Hayba.Color.Cat.Neutral"),     FLinearColor::FromSRGBColor(FColor(0xB0, 0xB6, 0xC0)));
+
         // Metrics — so spacing stops being magic numbers at each call site.
         Style->Set(TEXT("Hayba.Metric.Radius.Chip"),  6.f);
         Style->Set(TEXT("Hayba.Metric.Radius.Card"),  8.f);
