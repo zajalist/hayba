@@ -93,6 +93,24 @@ jobs:
         working-directory: mcp-tools/hayba-mcp
         run: npm run lint:legacy-wrappers
 
+      # Fails only when a command declared in C++ is reachable by nothing --
+      # no sidecar descriptor and no TS reference. Deliberate omissions are
+      # allowlisted with reasons inside the script, and the check also fails
+      # when an allowlist entry becomes reachable, so the list cannot rot.
+      # Absence from sidecar.json alone is NOT drift: ~80 commands are reached
+      # through hand-written TS wrappers instead, and gating on the sidecar
+      # would fail on all of them until someone switched the gate off.
+      - name: Capability inventory drift
+        run: node tools/capability-inventory.mjs --check
+
+      # Resources/Icons is generated from the signed masters. This proves the
+      # committed rasters still match, so editing a master without rebuilding
+      # cannot ship stale art. Hash-based, not mtime-based -- git does not
+      # preserve modification times, so on a fresh checkout an mtime comparison
+      # would decide by accident.
+      - name: Icon rasters current with masters
+        run: node tools/build-icons.mjs --check
+
   architecture:
     name: Architecture — clean install + build + test
     runs-on: ubuntu-latest
