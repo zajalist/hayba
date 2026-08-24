@@ -6,14 +6,18 @@
 // the source of truth; Resources/Icons/ holds only generated output and can be
 // deleted and rebuilt at any time. Never hand-edit a file under Resources/Icons.
 //
-// Slate is given rasters at the exact sizes it draws (28 and 16, plus @2x for
+// Slate is given rasters at the exact sizes it draws (28 and 16, plus 2x for
 // high-DPI) so it never scales an image at draw time -- a downscale in Slate is
 // a bilinear blur, and these are filled silhouettes whose whole legibility
 // argument rests on crisp edges.
 //
 // Usage:  node tools/build-icons.mjs [--check]
-//   --check  verify every expected raster exists and is newer than its master,
-//            and exit non-zero otherwise. For CI.
+//   --check  verify every raster exists and still matches its master's content
+//            hash, and exit non-zero otherwise. For CI.
+//
+// Size suffix is "-28", not "@28": Perforce treats @ as a revision specifier,
+// so a filename containing it needs %40 escaping and breaks p4 add. UE studios
+// live in Perforce; the Apple-style @2x convention is not worth that.
 
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -51,8 +55,8 @@ function masterHashes(files) {
   return out;
 }
 
-// Sidebar draws at 28, inline marks and row-end state marks at 16. @2x covers
-// 200% DPI scaling, which UE applies to Slate brushes on high-DPI displays.
+// Sidebar draws at 28, inline marks and row-end state marks at 16. The 2x
+// sizes cover 200% DPI scaling, which UE applies to Slate brushes on high-DPI displays.
 const SIZES = [16, 28, 32, 56];
 
 const CHECK = process.argv.includes('--check');
@@ -90,7 +94,7 @@ async function main() {
     for (const f of files) {
       const name = f.replace(/\.png$/, '');
       for (const size of SIZES) {
-        if (!existsSync(join(OUT, `${name}@${size}.png`))) missing.push(`${name}@${size}.png`);
+        if (!existsSync(join(OUT, `${name}-${size}.png`))) missing.push(`${name}-${size}.png`);
       }
     }
 
@@ -156,7 +160,7 @@ async function main() {
           // a cheaper filter visibly softens the ochre/cream boundary at 16px.
           .resize(size, size, { kernel: 'lanczos3', fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
           .png({ compressionLevel: 9 })
-          .toFile(join(OUT, `${name}@${size}.png`));
+          .toFile(join(OUT, `${name}-${size}.png`));
         written++;
       }
     }
@@ -202,7 +206,7 @@ Get-ChildItem -Path $masters -Filter *.png | ForEach-Object {
     $g.Clear([System.Drawing.Color]::Transparent)
     $g.DrawImage($src, 0, 0, $size, $size)
     $g.Dispose()
-    $bmp.Save((Join-Path $out ($name + '@' + $size + '.png')), [System.Drawing.Imaging.ImageFormat]::Png)
+    $bmp.Save((Join-Path $out ($name + '-' + $size + '.png')), [System.Drawing.Imaging.ImageFormat]::Png)
     $bmp.Dispose()
     $count++
   }

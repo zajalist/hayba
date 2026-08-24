@@ -184,8 +184,8 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
         {
             // "<Token>"   -> 28px, the sidebar size
             // "<Token>.S" -> 16px, inline and row-end marks
-            const FString Big   = FString(TEXT("Icons/")) + File + TEXT("@28");
-            const FString Small = FString(TEXT("Icons/")) + File + TEXT("@16");
+            const FString Big   = FString(TEXT("Icons/")) + File + TEXT("-28");
+            const FString Small = FString(TEXT("Icons/")) + File + TEXT("-16");
             Style->Set(Token,                                new IMAGE_BRUSH(*Big,   Sidebar));
             Style->Set(*(FString(Token) + TEXT(".S")),        new IMAGE_BRUSH(*Small, Inline16));
         };
@@ -235,7 +235,7 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
         // composited onto another icon. 16px is their only size.
         auto StateMark = [&Style, &Inline16](const TCHAR* Token, const TCHAR* File)
         {
-            const FString Path = FString(TEXT("Icons/")) + File + TEXT("@16");
+            const FString Path = FString(TEXT("Icons/")) + File + TEXT("-16");
             Style->Set(Token, new IMAGE_BRUSH(*Path, Inline16));
         };
         StateMark(TEXT("Hayba.State.Attention"), TEXT("state-attention"));
