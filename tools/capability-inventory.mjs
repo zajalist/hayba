@@ -172,70 +172,8 @@ function sidecarCommands() {
   return { all, callable };
 }
 
-function main() {
-  const declared = collectDeclared();
-  const registered = registeredClasses();
-  const sidecar = sidecarCommands();
-
-  const allDeclared = new Set();
-  for (const e of declared.values()) for (const c of e.commands) allDeclared.add(c);
-
-  const tsSeen = tsReferenced();
-  const undescribed = sidecar ? [...allDeclared].filter(c => !sidecar.all.has(c)).sort() : [];
-  // The gate's real question: can an agent reach this at all?
-  const unreachableAll = sidecar
-    ? undescribed.filter(c => !(tsSeen && tsSeen.has(c))).sort()
-    : [];
-  const unreachable = unreachableAll.filter(c => !INTENTIONALLY_UNREACHABLE.has(c));
-  const deliberate = unreachableAll.filter(c => INTENTIONALLY_UNREACHABLE.has(c));
-  // An allowlist entry for something now reachable is stale and should go.
-  const staleAllowlist = [...INTENTIONALLY_UNREACHABLE.keys()]
-    .filter(c => !unreachableAll.includes(c)).sort();
-  const wrappedOnly = undescribed.filter(c => tsSeen && tsSeen.has(c)).sort();
-  const unimplemented = sidecar ? [...sidecar.all].filter(c => !allDeclared.has(c)).sort() : [];
-  const unregistered = registered
-    ? [...declared.keys()].filter(c => !registered.has(c)).sort()
-    : [];
-
-  if (JSON_OUT) {
-    console.log(JSON.stringify({
-      handlers: declared.size,
-      commands: allDeclared.size,
-      sidecarDescribed: sidecar?.all.size ?? null,
-      sidecarCallable: sidecar?.callable.size ?? null,
-      undescribed, unimplemented, unregistered,
-      byHandler: Object.fromEntries([...declared].map(([k, v]) =>
-        [k, { domain: v.domain, commands: [...v.commands].sort() }])),
-    }, null, 2));
-    return;
-  }
-
-  if (CHECK) {
-    const problems = [];
-    if (unreachable.length) {
-      problems.push(`${unreachable.length} command(s) declared in C++ with no sidecar descriptor and no TS ` +
-        `reference (an agent cannot reach these at all): ${unreachable.slice(0, 8).join(', ')}${unreachable.length > 8 ? ' ...' : ''}`);
-    }
-    if (unimplemented.length) {
-      problems.push(`${unimplemented.length} command(s) described in sidecar.json with no C++ declaration ` +
-        `(these fail at call time): ${unimplemented.slice(0, 8).join(', ')}${unimplemented.length > 8 ? ' ...' : ''}`);
-    }
-    if (staleAllowlist.length) {
-      problems.push(`${staleAllowlist.length} allowlist entr(ies) in INTENTIONALLY_UNREACHABLE are now ` +
-        `reachable and should be removed: ${staleAllowlist.join(', ')}`);
-    }
-    if (problems.length) {
-      for (const p of problems) console.error(`drift: ${p}`);
-      console.error('\nregenerate with: node tools/capability-inventory.mjs');
-      process.exit(1);
-    }
-    console.log(
-      `ok: ${allDeclared.size} declared commands across ${declared.size} handlers; ` +
-      `${deliberate.length} intentionally unreachable, everything else reachable`
-    );
-    return;
-  }
-
+function renderMarkdown(declared, registered, sidecar, allDeclared,
+                        unreachable, deliberate, wrappedOnly, unimplemented, unregistered) {
   const rows = [...declared.entries()]
     .sort((a, b) => (a[1].domain ?? a[0]).localeCompare(b[1].domain ?? b[0]))
     .map(([cls, e]) => {
@@ -310,6 +248,91 @@ ${unregistered.map(c => `- \`${c}\``).join('\n')}
 ${rows.join('\n')}
 `;
 
+  return md;
+}
+
+function main() {
+  const declared = collectDeclared();
+  const registered = registeredClasses();
+  const sidecar = sidecarCommands();
+
+  const allDeclared = new Set();
+  for (const e of declared.values()) for (const c of e.commands) allDeclared.add(c);
+
+  const tsSeen = tsReferenced();
+  const undescribed = sidecar ? [...allDeclared].filter(c => !sidecar.all.has(c)).sort() : [];
+  // The gate's real question: can an agent reach this at all?
+  const unreachableAll = sidecar
+    ? undescribed.filter(c => !(tsSeen && tsSeen.has(c))).sort()
+    : [];
+  const unreachable = unreachableAll.filter(c => !INTENTIONALLY_UNREACHABLE.has(c));
+  const deliberate = unreachableAll.filter(c => INTENTIONALLY_UNREACHABLE.has(c));
+  // An allowlist entry for something now reachable is stale and should go.
+  const staleAllowlist = [...INTENTIONALLY_UNREACHABLE.keys()]
+    .filter(c => !unreachableAll.includes(c)).sort();
+  const wrappedOnly = undescribed.filter(c => tsSeen && tsSeen.has(c)).sort();
+  const unimplemented = sidecar ? [...sidecar.all].filter(c => !allDeclared.has(c)).sort() : [];
+  const unregistered = registered
+    ? [...declared.keys()].filter(c => !registered.has(c)).sort()
+    : [];
+
+  if (JSON_OUT) {
+    console.log(JSON.stringify({
+      handlers: declared.size,
+      commands: allDeclared.size,
+      sidecarDescribed: sidecar?.all.size ?? null,
+      sidecarCallable: sidecar?.callable.size ?? null,
+      undescribed, unimplemented, unregistered,
+      byHandler: Object.fromEntries([...declared].map(([k, v]) =>
+        [k, { domain: v.domain, commands: [...v.commands].sort() }])),
+    }, null, 2));
+    return;
+  }
+
+  if (CHECK) {
+    const problems = [];
+    if (unreachable.length) {
+      problems.push(`${unreachable.length} command(s) declared in C++ with no sidecar descriptor and no TS ` +
+        `reference (an agent cannot reach these at all): ${unreachable.slice(0, 8).join(', ')}${unreachable.length > 8 ? ' ...' : ''}`);
+    }
+    if (unimplemented.length) {
+      problems.push(`${unimplemented.length} command(s) described in sidecar.json with no C++ declaration ` +
+        `(these fail at call time): ${unimplemented.slice(0, 8).join(', ')}${unimplemented.length > 8 ? ' ...' : ''}`);
+    }
+    if (staleAllowlist.length) {
+      problems.push(`${staleAllowlist.length} allowlist entr(ies) in INTENTIONALLY_UNREACHABLE are now ` +
+        `reachable and should be removed: ${staleAllowlist.join(', ')}`);
+    }
+
+    // The committed doc must match what the generator would write. Without
+    // this the gate protects the C++/sidecar relationship but says nothing
+    // about the artefact people actually read -- CAPABILITIES.md could sit
+    // months out of date while the check stayed green, which is the same
+    // drift this tool exists to end, one level up.
+    const expected = renderMarkdown(declared, registered, sidecar, allDeclared,
+      unreachable, deliberate, wrappedOnly, unimplemented, unregistered);
+    const onDisk = existsSync(OUT) ? readFileSync(OUT, 'utf-8') : null;
+    if (onDisk === null) {
+      problems.push(`${OUT.slice(ROOT.length + 1)} does not exist`);
+    } else if (onDisk.replace(/\r\n/g, '\n') !== expected.replace(/\r\n/g, '\n')) {
+      // Line endings normalised: this repo checks out CRLF on Windows and LF in
+      // CI, and a gate that failed on that would be noise, not signal.
+      problems.push(`${OUT.slice(ROOT.length + 1)} is out of date with the source`);
+    }
+    if (problems.length) {
+      for (const p of problems) console.error(`drift: ${p}`);
+      console.error('\nregenerate with: node tools/capability-inventory.mjs');
+      process.exit(1);
+    }
+    console.log(
+      `ok: ${allDeclared.size} declared commands across ${declared.size} handlers; ` +
+      `${deliberate.length} intentionally unreachable, everything else reachable`
+    );
+    return;
+  }
+
+  const md = renderMarkdown(declared, registered, sidecar, allDeclared,
+    unreachable, deliberate, wrappedOnly, unimplemented, unregistered);
   writeFileSync(OUT, md);
   console.log(`wrote ${OUT.slice(ROOT.length + 1)} — ${allDeclared.size} commands, ${declared.size} handlers`);
   if (undescribed.length) console.log(`  ${undescribed.length} declared but not described`);
