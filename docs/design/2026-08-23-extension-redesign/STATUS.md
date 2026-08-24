@@ -16,9 +16,18 @@ serves from `dist/` in the main worktree, which was never modified.
 | **F7** — capability inventory | **done** | `tools/capability-inventory.mjs` derives the surface from `GetCommands()`: **236 commands, 34 handlers**. `docs/CAPABILITIES.md` generated. CI-gated. |
 | **P3a** — icon pipeline | **done** | `tools/build-icons.mjs` derives 148 rasters (37 icons × 16/28/32/56) from the signed masters. Hash manifest, CI-gated. |
 | **P3a** — style layer | **written, NOT COMPILED** | 14 colour + 11 metric tokens, 37 icons registered as PNG at exact draw sizes, text styles moved onto tokens. Needs a Live Coding compile. |
-| CI gates | **3 wired** | capability drift, icon staleness, icon-binding resolution. Each verified to fail on real drift, not just to pass. |
+| CI gates | **4 wired** | capability drift, generated-doc staleness, icon staleness, icon-binding resolution. Each verified to fail on the thing it guards, not just to pass. |
 
-Full TS suite green at the time of writing: **187 files, 2119 tests**.
+Full TS suite green: **187 files, 2119 tests** (re-run after every change).
+
+Also landed while auditing: a categorical colour family, with two hues fixed
+that sat within 10 degrees of the semantic ochre; raster filenames moved off
+`@` (a Perforce revision character); and the catalogue cache test rewritten
+from a timing assertion to an observable one.
+
+**Three of the last four fixes were defects in this session's own work.** Worth
+knowing when reading the rest: writing something carefully is not the same as
+having verified it.
 
 ## Corrections to the plans in this directory
 
