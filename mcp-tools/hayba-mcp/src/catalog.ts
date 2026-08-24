@@ -71,6 +71,11 @@ export function loadCatalog(): NodeCatalog {
   }
 
   catalog = { version: raw._meta?.version_support?.[0] || '1.0', categories: categoryNames, nodes };
+
+  // Warm the search text now, while the JSON parse has already made this call
+  // slow, rather than making the first agent lookup pay for the whole corpus.
+  for (const node of nodes) haystackFor(node);
+
   return catalog;
 }
 
@@ -87,21 +92,46 @@ export function loadCatalog(): NodeCatalog {
  * Single-token queries are unaffected (one token => identical to the old
  * `includes` behavior).
  */
+/**
+ * Per-node searchable text, built once and reused.
+ *
+ * Before this cache, every query rebuilt the haystack for every node — a fresh
+ * array (spreading patterns and mapping over pins/properties), a `join`, and a
+ * `toLowerCase` of the whole corpus, per lookup, against a ~650 KB catalog.
+ * `loadCatalog()` was memoized but the text it implied was not, so search cost
+ * scaled with the corpus on every call instead of once per process.
+ *
+ * A WeakMap keyed on the node keeps `searchNodes` usable as a pure function on
+ * arbitrary arrays (tests pass literals) while still paying the build cost at
+ * most once per node. Entries die with the nodes, so a re-loaded catalog does
+ * not leak the old one's strings.
+ */
+const haystacks = new WeakMap<CatalogNode, string>();
+
+function haystackFor(node: CatalogNode): string {
+  const cached = haystacks.get(node);
+  if (cached !== undefined) return cached;
+
+  const built = [
+    node.class,
+    node.category,
+    node.description,
+    ...node.common_patterns,
+    ...node.inputs.map(i => i.description || ''),
+    ...node.outputs.map(o => o.pin),
+    ...node.key_properties.map(p => p.name),
+  ].join(' ').toLowerCase();
+
+  haystacks.set(node, built);
+  return built;
+}
+
 export function searchNodes(nodes: CatalogNode[], query: string): CatalogNode[] {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (terms.length === 0) return [];
 
   return nodes.filter(node => {
-    const searchable = [
-      node.class,
-      node.category,
-      node.description,
-      ...node.common_patterns,
-      ...node.inputs.map(i => i.description || ''),
-      ...node.outputs.map(o => o.pin),
-      ...node.key_properties.map(p => p.name),
-    ].join(' ').toLowerCase();
-
+    const searchable = haystackFor(node);
     return terms.every(term => searchable.includes(term));
   });
 }

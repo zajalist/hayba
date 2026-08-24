@@ -76,3 +76,60 @@ describe('searchNodes — query tokenization', () => {
     expect(searchNodes(NODES, '   ')).toEqual([]);
   });
 });
+
+describe('searchNodes — haystack caching', () => {
+  const heavy = (i: number): CatalogNode =>
+    mk({
+      class: `UPCGExNode${i}Settings`,
+      category: 'PCGExElementsBench',
+      description: `Bench node ${i} for repeated-search cost measurement.`,
+      inputs: Array.from({ length: 8 }, (_, k) => ({
+        pin: `In${k}`,
+        type: 'Points',
+        required: false,
+        description: `input ${k} of node ${i}`,
+      })),
+      outputs: Array.from({ length: 8 }, (_, k) => ({ pin: `Out${k}`, type: 'Points' })),
+      key_properties: Array.from({ length: 12 }, (_, k) => ({
+        name: `bProperty${k}`,
+        type: 'bool',
+        default: 'false',
+      })),
+      common_patterns: [`pattern ${i} a`, `pattern ${i} b`],
+    });
+
+  it('does not rebuild searchable text on repeated queries', () => {
+    const nodes = Array.from({ length: 2000 }, (_, i) => heavy(i));
+
+    // First pass builds every haystack; later passes must only scan.
+    const t0 = performance.now();
+    searchNodes(nodes, 'bench');
+    const cold = performance.now() - t0;
+
+    const t1 = performance.now();
+    for (let i = 0; i < 20; i++) searchNodes(nodes, 'bench');
+    const warmPerQuery = (performance.now() - t1) / 20;
+
+    // A rebuild-per-query implementation makes warm ~= cold. With the cache a
+    // warm pass is a substring scan over prebuilt strings. The bound is loose
+    // on purpose: this guards the algorithm, not the machine.
+    expect(warmPerQuery).toBeLessThan(cold / 2);
+  });
+
+  it('cached results stay correct across repeated and differing queries', () => {
+    const nodes = [heavy(1), heavy(2)];
+    const first = searchNodes(nodes, 'bench').map(n => n.class);
+    const narrowed = searchNodes(nodes, 'Node1Settings').map(n => n.class);
+    const again = searchNodes(nodes, 'bench').map(n => n.class);
+
+    expect(first).toEqual(['UPCGExNode1Settings', 'UPCGExNode2Settings']);
+    expect(narrowed).toEqual(['UPCGExNode1Settings']);
+    expect(again).toEqual(first);
+  });
+
+  it('matches text that only appears in pins and properties', () => {
+    const nodes = [heavy(7)];
+    expect(searchNodes(nodes, 'bProperty11').map(n => n.class)).toEqual(['UPCGExNode7Settings']);
+    expect(searchNodes(nodes, 'Out5').map(n => n.class)).toEqual(['UPCGExNode7Settings']);
+  });
+});
