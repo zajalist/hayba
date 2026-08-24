@@ -35,10 +35,11 @@ const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: 
   { domain: 'editor', command_count: 10, commands: ['editor_start_pie','editor_stop_pie','editor_set_camera','editor_capture_viewport','editor_run_console_command','editor_get_output_log','editor_stream_log','editor_live_compile','editor_get_performance_stats','editor_set_viewport_mode'] },
   { domain: 'python', command_count: 1, commands: ['python_run'] },
   { domain: 'asset', command_count: 8, commands: ['asset_search','asset_get_info','asset_import','asset_duplicate','asset_delete','asset_get_references','asset_validate','asset_rename'] },
-  // blueprint_add_node / blueprint_connect_nodes / blueprint_add_event are C++ stubs that
-  // return not_implemented_in_v1 — they will never succeed. Omit them so the catalog
-  // does not advertise commands an agent cannot use. (HaybaMCPBlueprintHandler.cpp:345/350/465)
-  { domain: 'blueprint', command_count: 12, commands: ['blueprint_create','blueprint_get_info','blueprint_add_component','blueprint_add_variable','blueprint_add_function','blueprint_add_node','blueprint_connect_nodes','blueprint_set_pin_default','blueprint_compile','blueprint_document','blueprint_inspect_graph','blueprint_set_defaults'] },
+  // add_node / connect_nodes / add_event were once not_implemented_in_v1 stubs and are
+  // now real implementations (HaybaMCPBlueprintHandler.cpp, "Blueprint graph authoring").
+  // The old note said to omit all three; only add_event actually was, so a working
+  // command stayed invisible to agents while the other two were already listed.
+  { domain: 'blueprint', command_count: 13, commands: ['blueprint_create','blueprint_get_info','blueprint_add_component','blueprint_add_variable','blueprint_add_function','blueprint_add_node','blueprint_connect_nodes','blueprint_add_event','blueprint_set_pin_default','blueprint_compile','blueprint_document','blueprint_inspect_graph','blueprint_set_defaults'] },
   { domain: 'material', command_count: 8, commands: ['material_create','material_add_node','material_connect_nodes','material_create_instance','material_set_param','material_apply','material_list','material_get_info'] },
   { domain: 'foliage', command_count: 4, commands: ['foliage_add_instance','foliage_remove_instances','foliage_list_types','foliage_paint_at'] },
   { domain: 'spline', command_count: 5, commands: ['spline_create','spline_add_point','spline_set_point','spline_remove_point','spline_get_info'] },
