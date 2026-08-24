@@ -129,11 +129,14 @@ TS side [01c ranked list, endorsed]:
 - **F6.** Contract tests → `scripts/contracts/` drift lints; keep every
   lesson, stop breaking on correct refactors. 50 readFileSync test files
   audited in the same pass.
-- **F7.** W0 from 02-PLAN, sharpened by the reviews: generate `sidecar.json`
+- **F7.** **LANDED 2026-08-24** (`tools/capability-inventory.mjs`, 236 commands /
+  34 handlers, CI-gated). W0 from 02-PLAN, sharpened by the reviews: generate `sidecar.json`
   and `CAPABILITIES.md` from `GetCommands()` at build; CI gate on drift
   (82 implemented-but-undescribed commands today); fix `.codex/config.toml`
   geoforge paths.
-- **F8.** W1b: precompute the `searchNodes` haystack (afternoon; 10–50×).
+- **F8.** W1b: precompute the `searchNodes` haystack. **LANDED 2026-08-24** —
+  measured **6.5×** (7.740ms → 1.186ms per query), not the 10–50× estimated
+  here. See `STATUS.md`.
 
 C++ side [01b ranked list, endorsed]:
 - **F9.** `FHaybaParamReader` becomes the only door (delete the decoy thin
@@ -150,7 +153,8 @@ C++ side [01b ranked list, endorsed]:
   transaction; job registry remains for long mutations. Feeds R5's Tasks.
 - **F13.** Ops-pattern completion for the two whales (UIHandler 4018,
   PIEHandler 3259 → target ≤800/handler), continuing #320.
-- **F14.** Unify handler registration (core list → `RegisterExternalHandler`)
+- **F14.** *(Smaller than described: the orphaned dirs are untracked local build
+  residue, not repo content — an `rm`, not a commit.)* Unify handler registration (core list → `RegisterExternalHandler`)
   and delete the orphaned `HaybaMCPNiagara/`/`HaybaMCPSequencer/` binary
   dirs. **Best value-per-effort in either codebase.**
 
@@ -359,6 +363,7 @@ The tracks above are the strategy. These are the commit-level plans:
 | `06-EXECUTION-P1-collapse.md` | P1 — ADR-0009, five verdict types to one | Yes — TypeScript only |
 | `07-RELIABILITY-EVIDENCE.md` | R4 — the evidence play | Yes — writing, not code |
 | `08-EXECUTION-DISTRIBUTION.md` | D1 / D2 — install friction, repo hygiene | Yes — packaging and docs |
+| `STATUS.md` | **What is actually built** vs what these plans intend | read first |
 | `09-NWIRO-DEEP-DIVE.md` | The closest competitor: name-matcher world gen, no validation, library moat | research |
 | `10-ASSET-PIPELINE-GROUND-TRUTH.md` | Track A — what our asset/world pipeline actually does | research |
 | `11-CAPABILITY-MATRIX.md` | Whole-field feature audit, whitespace vs table stakes | research |
