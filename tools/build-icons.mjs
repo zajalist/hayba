@@ -29,6 +29,19 @@ const MANIFEST = join(OUT, 'icons.manifest.json');
 
 const preview = (xs, n = 6) => xs.slice(0, n).join(', ') + (xs.length > n ? ' ...' : '');
 
+const STYLE = join(ROOT, 'unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPStyle.cpp');
+
+/** Icon filenames the Slate style set binds, from its Icon()/StateMark() calls. */
+function styleBindings() {
+  if (!existsSync(STYLE)) return null;
+  const src = readFileSync(STYLE, 'utf-8');
+  const referenced = new Set();
+  for (const m of src.matchAll(/(?:Icon|StateMark)\(\s*TEXT\("[^"]+"\)\s*,\s*TEXT\("([^"]+)"\)/g)) {
+    referenced.add(m[1]);
+  }
+  return { referenced: [...referenced].sort() };
+}
+
 function masterHashes(files) {
   const out = {};
   for (const f of files) {
@@ -95,6 +108,28 @@ async function main() {
 
     const problems = [];
     if (missing.length) problems.push(`missing ${missing.length} raster(s): ${preview(missing)}`);
+
+    // Slate resolves brushes by path at load time and renders nothing when a
+    // file is absent -- no compile error, no log line anybody reads, just a
+    // blank square. So the binding between the C++ and these files is checked
+    // here, where it is cheap, rather than discovered in the editor.
+    const bind = styleBindings();
+    if (bind) {
+      const unresolved = bind.referenced.filter(f => !files.includes(`${f}.png`));
+      if (unresolved.length) {
+        problems.push(
+          `${unresolved.length} icon(s) referenced by HaybaMCPStyle.cpp with no master: ${preview(unresolved)}`
+        );
+      }
+      const unused = files.map(f => f.replace(/\.png$/, ''))
+        .filter(n => !bind.referenced.includes(n));
+      if (unused.length) {
+        // Not a failure: the set is authored ahead of the panels that will use
+        // it, and rasters are cheap. Worth saying out loud so it stays a choice.
+        console.log(`note: ${unused.length} icon(s) built but not yet referenced by the style set: ${preview(unused, 10)}`);
+      }
+    }
+
     if (!recorded) problems.push(`no manifest at ${MANIFEST.slice(ROOT.length + 1)} — rasters cannot be shown to match their masters`);
     if (changed.length) problems.push(`${changed.length} master(s) changed since the rasters were built: ${preview(changed)}`);
     if (orphaned.length) problems.push(`${orphaned.length} raster set(s) whose master is gone: ${preview(orphaned)}`);
