@@ -32,16 +32,22 @@ namespace
     {
         switch (T)
         {
-            case EHaybaRendererType::Actor:       return FLinearColor(0.45f, 0.85f, 1.00f);
-            case EHaybaRendererType::Scene:       return FLinearColor(1.00f, 0.78f, 0.30f);
-            case EHaybaRendererType::Asset:       return FLinearColor(0.85f, 0.65f, 1.00f);
-            case EHaybaRendererType::Image:       return FLinearColor(1.00f, 0.55f, 0.85f);
-            case EHaybaRendererType::Script:      return FLinearColor(0.60f, 1.00f, 0.55f);
-            case EHaybaRendererType::Performance: return FLinearColor(1.00f, 0.65f, 0.30f);
-            case EHaybaRendererType::Error:       return FLinearColor(1.00f, 0.40f, 0.40f);
-            case EHaybaRendererType::Memory:      return FLinearColor(0.70f, 0.55f, 1.00f);
-            case EHaybaRendererType::Plan:        return FLinearColor(0.50f, 0.80f, 1.00f);
-            default:                              return FLinearColor(0.70f, 0.72f, 0.78f);
+            // The style set's categorical ramp is named for these exact types,
+            // and this panel drew its own colours anyway. The ramp is an evenly
+            // spaced hue sweep; these literals were picked one at a time, so
+            // they never sat together as a set.
+            case EHaybaRendererType::Actor:       return FHaybaMCPStyle::Colour("Hayba.Color.Cat.Actor");
+            case EHaybaRendererType::Scene:       return FHaybaMCPStyle::Colour("Hayba.Color.Cat.Scene");
+            case EHaybaRendererType::Asset:       return FHaybaMCPStyle::Colour("Hayba.Color.Cat.Asset");
+            case EHaybaRendererType::Image:       return FHaybaMCPStyle::Colour("Hayba.Color.Cat.Image");
+            case EHaybaRendererType::Script:      return FHaybaMCPStyle::Colour("Hayba.Color.Cat.Script");
+            case EHaybaRendererType::Performance: return FHaybaMCPStyle::Colour("Hayba.Color.Cat.Performance");
+            // Error is a STATUS, not a category: it means the call failed,
+            // which is a different kind of fact from what the call was about.
+            case EHaybaRendererType::Error:       return FHaybaMCPStyle::Colour("Hayba.Color.Status.Fail");
+            case EHaybaRendererType::Memory:      return FHaybaMCPStyle::Colour("Hayba.Color.Cat.Memory");
+            case EHaybaRendererType::Plan:        return FHaybaMCPStyle::Colour("Hayba.Color.Cat.Plan");
+            default:                              return FHaybaMCPStyle::Colour("Hayba.Color.Cat.Neutral");
         }
     }
 
@@ -205,7 +211,7 @@ void SHaybaMCPToolStreamPanel::Construct(const FArguments& InArgs)
                 return (Turns.Num() == 1 && Turns[0]->Calls.IsEmpty())
                     ? EVisibility::Visible : EVisibility::Collapsed;
             })
-            .ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.7f)))
+            .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted")))
             .AutoWrapText(true)
             .Text(NSLOCTEXT("Hayba", "Stream.Empty",
                 "No tool calls yet. Invoke any Hayba MCP tool from your client and they will stream in here, grouped by turn."))
@@ -423,7 +429,7 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildStatsMenu()
     Box->AddSlot().AutoHeight().Padding(12.f, 2.f)
     [
         SNew(STextBlock)
-        .ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.62f, 0.72f)))
+        .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted")))
         .Text(NSLOCTEXT("Hayba", "Stream.StatsByDomain", "By domain"))
     ];
     for (const auto& KV : DomainCounts)
@@ -447,7 +453,7 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildStatsMenu()
     Box->AddSlot().AutoHeight().Padding(12.f, 8.f, 12.f, 2.f)
     [
         SNew(STextBlock)
-        .ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.62f, 0.72f)))
+        .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted")))
         .Text(NSLOCTEXT("Hayba", "Stream.StatsTopTools", "Top tools"))
     ];
     int32 Shown = 0;
@@ -650,14 +656,16 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildGenericRenderer(const FHaybaT
 {
     const bool bIsError = Call.ResultJson.StartsWith(TEXT("ERROR:"));
     const FLinearColor DomainColor = bIsError
-        ? FLinearColor(1.0f, 0.4f, 0.4f)
+        ? FHaybaMCPStyle::Colour("Hayba.Color.Status.Fail")
         : ColorForRenderer(Call.RendererType);
     const FString TypeChip = bIsError ? TEXT("ERROR") : LabelForRenderer(Call.RendererType);
     const FString TimeStr  = Call.Timestamp.ToString(TEXT("%H:%M:%S"));
     const FString PreviewParams = (Call.ParamsJson.IsEmpty() || Call.ParamsJson == TEXT("{}"))
         ? TEXT("") : Call.ParamsJson.Left(140);
     const FString PreviewResult = Call.ResultJson.Left(220);
-    const FLinearColor StatusDot = bIsError ? FLinearColor(1.0f, 0.35f, 0.35f) : FLinearColor(0.40f, 0.95f, 0.55f);
+    const FLinearColor StatusDot = bIsError
+        ? FHaybaMCPStyle::Colour("Hayba.Color.Status.Fail")
+        : FHaybaMCPStyle::Colour("Hayba.Color.Status.Pass");
 
     // Copy this row -- captured by value so the lambda survives.
     FHaybaToolCall CallCopy = Call;
@@ -698,7 +706,7 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildGenericRenderer(const FHaybaT
                 + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 6.f, 0.f)
                 [
                     SNew(STextBlock)
-                    .ColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.57f, 0.65f)))
+                    .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted")))
                     .Text(FText::FromString(TimeStr))
                 ]
                 // Per-row copy button — UE5 stock simple-button.
@@ -726,13 +734,13 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildGenericRenderer(const FHaybaT
                 + SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 6.f, 0.f)
                 [
                     SNew(STextBlock)
-                    .ColorAndOpacity(FSlateColor(FLinearColor(0.50f, 0.52f, 0.60f)))
+                    .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted")))
                     .Text(FText::FromString(TEXT("params")))
                 ]
                 + SHorizontalBox::Slot().FillWidth(1.f)
                 [
                     SNew(STextBlock)
-                    .ColorAndOpacity(FSlateColor(FLinearColor(0.78f, 0.78f, 0.85f)))
+                    .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary")))
                     .AutoWrapText(true)
                     .Text(FText::FromString(PreviewParams))
                 ]
@@ -744,15 +752,15 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildGenericRenderer(const FHaybaT
                 + SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 6.f, 0.f)
                 [
                     SNew(STextBlock)
-                    .ColorAndOpacity(FSlateColor(FLinearColor(0.50f, 0.52f, 0.60f)))
+                    .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted")))
                     .Text(FText::FromString(bIsError ? TEXT("error") : TEXT("→")))
                 ]
                 + SHorizontalBox::Slot().FillWidth(1.f)
                 [
                     SNew(STextBlock)
                     .ColorAndOpacity(FSlateColor(bIsError
-                        ? FLinearColor(1.0f, 0.55f, 0.55f)
-                        : FLinearColor(0.92f, 0.93f, 0.96f)))
+                        ? FHaybaMCPStyle::Colour("Hayba.Color.Status.Fail")
+                        : FHaybaMCPStyle::Colour("Hayba.Color.Text.Primary")))
                     .AutoWrapText(true)
                     .Text(FText::FromString(PreviewResult))
                 ]
