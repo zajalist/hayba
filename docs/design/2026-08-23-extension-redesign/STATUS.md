@@ -930,3 +930,45 @@ blocks the game thread, which is what `HCR-BLOCK-001` says, while
 `HCR-TIME-001` is for deadline tampering (`sys.settrace`, `_hb_deadline`
 writes). Every other sleep rule in the table is `HCR-BLOCK-001`. Worth
 confirming intent with whoever wrote the case list before changing either side.
+
+### `DataAsset.ReadWritePreflight`: the fixture cannot do what the test asks
+
+Settled by asking the engine rather than reasoning about it. A throwaway
+automation test built the same synthetic enum the test uses and reported what
+UE 5.8 answers:
+
+    SetEnums returned true
+    GetAuthoredNameStringByIndex(0) = 'MinusOne'          <- name IS available
+    GetValueByIndex(0)              = -1                  <- value IS correct
+    GetIndexByNameString(authored, CheckAuthoredName) = -1
+    GetIndexByNameString(authored, None)              = -1
+    GetIndexByNameString(nameStr,  CheckAuthoredName) = -1
+    GetIndexByNameString('MinusOne')                  = -1
+    GetIndexByNameString('EHaybaSignedProbe::MinusOne')= -1
+
+**No name lookup resolves on an enum built with `NewObject<UEnum>` +
+`SetEnums`** — not the authored name, not the stored name, not the qualified
+form, with or without `CheckAuthoredName` — while the very same names come back
+correctly *by index*. The enum is usable for index-based reads and unusable for
+name-based ones.
+
+My hypothesis had been that `CheckAuthoredName` specifically fails without UHT
+metadata. That was wrong: the flag is irrelevant, every spelling fails, and the
+authored name is in fact present.
+
+**So `ResolveAuditedEnumString` is not at fault.** It reads correctly — it
+deliberately pairs `GetIndexByNameString` with `GetValueByIndex` so a legal
+`-1` is never confused with `INDEX_NONE`, and the comment saying so is
+accurate. The test simply cannot exercise it through this fixture: the lookup
+it depends on returns `INDEX_NONE` for every input, which the resolver then
+correctly reports as an unknown name.
+
+**This is a test defect, not a product defect**, and fixing it means changing
+the fixture — a real UHT-generated `UEnum` with a negative enumerator, or
+driving the resolver through a real DataAsset property. Left alone deliberately:
+rewriting someone else's security test on a guess about intent is how a
+weakened assertion gets committed, and the product path here is verifiable by
+other means.
+
+The diagnostic probe was deleted once it had answered; it is preserved in this
+note rather than in the tree.
