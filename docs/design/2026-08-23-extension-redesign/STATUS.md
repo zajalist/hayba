@@ -1053,3 +1053,45 @@ does not consult it, as its source shows.
 probe asked the engine and answered it outright, including disproving my own
 hypothesis. Same technique settled the enum question. When a fix is guessed
 twice, stop guessing and measure.
+
+### `FatalPolicy`: the last three cases, settled
+
+Two are test errors and one is a real but low-severity imprecision. Established
+by reading the rule table rather than inferring from the failure text.
+
+**Every `HCR-TIME-001` rule in the table is deadline/instrumentation
+tampering** — `sys.settrace(`, `settrace(`, `sys.setprofile(`, `setprofile(` —
+plus lexical token checks for reserved `_hb_*` identifiers. **No rule covers
+sleeping**, and all three sleep rules (`time.sleep(`, `fromtimeimportsleep`,
+`importtimeas`) are `HCR-BLOCK-001`.
+
+| case | expects | gets | verdict |
+|---|---|---|---|
+| `from TIME import SLEEP as pause / pause(5)` | TIME | BLOCK | **test wrong** |
+| `import time as clock / clock.sleep(5)` | TIME | BLOCK | **test wrong** |
+| `inspect.currentframe().f_back.f_locals['_hb_deadline'] = ...` | TIME | DYNAMIC | imprecise, not unsafe |
+
+For the first two, `HCR-BLOCK-001`'s reason is "blocks the editor game thread"
+and `HCR-TIME-001`'s is "disables or replaces the cooperative execution
+deadline". Sleeping blocks; it does not disable the deadline. No rule in the
+table could produce TIME for those inputs, so the expectation is not merely
+debatable — nothing implements it.
+
+The third is genuine but narrow. The deadline check is deliberately restricted
+to IDENTIFIER tokens, and its comment says why: so `print("_hb_deadline")` and
+comments stay harmless. This attack spells the reserved name as a string
+subscript — `f_locals['_hb_deadline']` — so the identifier check does not see
+it and a broader `.currentframe(` / `.f_locals(` rule classifies it
+`HCR-DYNAMIC-001` first.
+
+**The script is refused either way.** Only the reported policy code is less
+precise. Fixing it means distinguishing a dangerous string subscript from a
+harmless string argument, which is context-sensitive work with a real false
+positive risk against the very case the current design protects. Not worth
+trading a correct refusal for a prettier code without someone deciding that is
+wanted.
+
+**Recommendation:** correct the two sleep expectations in the test to
+`HCR-BLOCK-001`, and either accept `HCR-DYNAMIC-001` for the third or file it
+as a diagnosis-precision improvement. All three are the case author's call, not
+mine — I have already been wrong once about what this test intended.
