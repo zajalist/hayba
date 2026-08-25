@@ -18,12 +18,31 @@
 //   node tools/declared-command-check.mjs
 //   node tools/declared-command-check.mjs --check   (same; exits 1 on a miss)
 
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const H = join(ROOT, 'unreal', 'HaybaMCPToolkit', 'Source', 'HaybaMCPToolkit', 'Private', 'handlers');
+
+/**
+ * Every plugin that declares commands -- the core toolkit AND the satellites.
+ *
+ * The first version of this check read only the core `handlers/` directory. A
+ * ghost command in HaybaMCPGAS or HaybaMCPMetaSound would have sailed past it,
+ * which is the same shape of blind spot the check exists to close.
+ */
+function handlerDirs() {
+  const dirs = [];
+  const unreal = join(ROOT, 'unreal');
+  if (!existsSync(unreal)) return dirs;
+  for (const plugin of readdirSync(unreal)) {
+    const src = join(unreal, plugin, 'Source', plugin, 'Private');
+    if (!existsSync(src) || !statSync(src).isDirectory()) continue;
+    const nested = join(src, 'handlers');
+    dirs.push(existsSync(nested) ? nested : src);
+  }
+  return dirs;
+}
 
 /**
  * Commands whose handler dispatches without naming them. Each entry is a
@@ -38,7 +57,9 @@ const DISPATCHES_WITHOUT_NAMING = new Map([
   ['render_camera', 'HaybaMCPRenderHandler.cpp — sole command, Command parameter deliberately unused'],
 ]);
 
-const files = readdirSync(H).filter((f) => f.endsWith('.cpp')).map((f) => join(H, f));
+const files = handlerDirs().flatMap((dir) =>
+  readdirSync(dir).filter((f) => f.endsWith('.cpp')).map((f) => join(dir, f)),
+);
 
 let declaredCount = 0;
 const problems = [];
@@ -78,6 +99,33 @@ if (declaredCount < 100) {
       'GetCommands() shape probably changed, so this check is no longer checking anything',
   );
   process.exit(1);
+}
+
+// ---------------------------------------------------------- sidecar ghosts
+// sidecar.json is the descriptor list every legacy tool is generated from. A
+// command listed there but declared by no plugin becomes a registered tool
+// that answers "Unknown command" -- exactly what the four Fab tools do.
+{
+  const sidecarPath = join(ROOT, 'mcp-tools', 'hayba-mcp', 'src', 'legacy-commands', 'sidecar.json');
+  if (existsSync(sidecarPath)) {
+    const raw = JSON.parse(readFileSync(sidecarPath, 'utf8'));
+    const entries = raw.commands ?? raw;
+    const listed = Object.keys(entries).filter((k) => /^[a-z][a-z0-9_]+$/.test(k));
+    const declaredAll = new Set();
+    for (const file of files) {
+      const src = readFileSync(file, 'utf8');
+      const gc = src.match(/GetCommands\(\)\s*const\s*\{([\s\S]*?)\n\}/);
+      if (!gc) continue;
+      for (const m of gc[1].matchAll(/TEXT\("([a-z0-9_]+)"\)/gi)) declaredAll.add(m[1]);
+    }
+    const ghosts = listed.filter((n) => !declaredAll.has(n));
+    for (const g of ghosts) {
+      problems.push(
+        `sidecar.json lists "${g}", which no plugin declares — it would be ` +
+          `registered as a tool and answer "unknown command"`,
+      );
+    }
+  }
 }
 
 if (problems.length > 0) {
