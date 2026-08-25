@@ -1,4 +1,5 @@
 #include "HaybaMCPToolStreamPanel.h"
+#include "HaybaMCPStyle.h"
 #include "HaybaMCPModule.h"
 #include "Widgets/Layout/SExpandableArea.h"
 #include "Widgets/Layout/SBorder.h"
@@ -326,7 +327,7 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildToolbar()
         [
             SNew(STextBlock)
             .Visibility_Lambda([this](){ return CountSelected() > 0 ? EVisibility::Visible : EVisibility::Collapsed; })
-            .ColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.78f, 0.30f)))
+            .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Accent.Ochre")))
             .Text_Lambda([this](){ return FText::FromString(FString::Printf(TEXT("%d turn%s selected"),
                 CountSelected(), CountSelected() == 1 ? TEXT("") : TEXT("s"))); })
         ]

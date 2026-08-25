@@ -1,4 +1,5 @@
 #include "HaybaMCPValidationPanel.h"
+#include "HaybaMCPStyle.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/SBoxPanel.h"
 
@@ -26,11 +27,15 @@ void SHaybaMCPValidationPanel::Clear()
 
 FSlateColor SHaybaMCPValidationPanel::ColorForSeverity(EHaybaSeverity S)
 {
+    // Warning is the ochre: it means "this needs you", which is precisely what
+    // that token is reserved for. The hand-rolled 1.0/0.85/0.2 sat 17 degrees
+    // from it -- close enough to read as the accent, far enough to look like a
+    // second, slightly-wrong accent sitting beside it.
     switch (S)
     {
-        case EHaybaSeverity::Error:   return FSlateColor(FLinearColor(1.f, 0.3f, 0.3f));
-        case EHaybaSeverity::Warning: return FSlateColor(FLinearColor(1.f, 0.85f, 0.2f));
-        default:                      return FSlateColor(FLinearColor(0.7f, 0.7f, 0.7f));
+        case EHaybaSeverity::Error:   return FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Status.Fail"));
+        case EHaybaSeverity::Warning: return FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Accent.Ochre"));
+        default:                      return FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary"));
     }
 }
 

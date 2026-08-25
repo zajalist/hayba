@@ -115,8 +115,10 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                         .ColorAndOpacity_Lambda([this]()
                         {
                             return bIsDirty
-                                ? FSlateColor(FLinearColor(1.0f, 0.78f, 0.30f))   // amber
-                                : FSlateColor(FLinearColor(0.65f, 0.65f, 0.7f));  // muted
+                                // Unsaved edit is one of the four things the ochre
+                                // is reserved for, so this is the token, not an amber.
+                                ? FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Accent.Ochre"))
+                                : FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary"));
                         })
                     ]
                     + SHorizontalBox::Slot().AutoWidth()
@@ -565,12 +567,12 @@ void SHaybaMCPSettingsPanel::RefreshKeyStatus()
     if (Last4.IsEmpty())
     {
         KeyStatusText->SetText(NSLOCTEXT("Hayba", "S.Key.None", "No key stored for this provider."));
-        KeyStatusText->SetColorAndOpacity(FSlateColor(FLinearColor(0.85f, 0.55f, 0.35f))); // amber
+        KeyStatusText->SetColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Accent.Ochre"))); // needs action
     }
     else
     {
         KeyStatusText->SetText(FText::FromString(FString::Printf(TEXT("Stored (DPAPI): ••••%s"), *Last4)));
-        KeyStatusText->SetColorAndOpacity(FSlateColor(FLinearColor(0.65f, 0.65f, 0.7f))); // muted
+        KeyStatusText->SetColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary")));
     }
 }
 
