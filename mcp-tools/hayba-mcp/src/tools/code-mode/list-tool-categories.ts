@@ -51,13 +51,16 @@ const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: 
   },
   {
     domain: 'level',
-    command_count: 8,
+    command_count: 7,
     commands: [
       'level_load',
       'level_save',
       'level_list',
       'level_get_info',
-      'level_get_spatial_index',
+      // level_get_spatial_index is NOT advertised: it is unimplemented and
+      // returns status:"deferred". The sidecar marks it agent_callable:false
+      // precisely so an agent does not spend a call discovering that; listing
+      // it here defeated the flag.
       'level_create',
       'level_set_bookmark',
       'level_goto_bookmark',
@@ -94,7 +97,10 @@ const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: 
   { domain: 'material', command_count: 8, commands: ['material_create','material_add_node','material_connect_nodes','material_create_instance','material_set_param','material_apply','material_list','material_get_info'] },
   { domain: 'foliage', command_count: 4, commands: ['foliage_add_instance','foliage_remove_instances','foliage_list_types','foliage_paint_at'] },
   { domain: 'spline', command_count: 5, commands: ['spline_create','spline_add_point','spline_set_point','spline_remove_point','spline_get_info'] },
-  { domain: 'wp', command_count: 3, commands: ['wp_get_cells','wp_load_cell','wp_get_streaming_state'] },
+  // wp_load_cell is NOT advertised: World Partition cell loading is
+  // interactive-only in the editor, so every call returns an error naming that
+  // limit. It stays invocable and honest; it is not offered as a capability.
+  { domain: 'wp', command_count: 2, commands: ['wp_get_cells','wp_get_streaming_state'] },
   { domain: 'ism', command_count: 4, commands: ['ism_create_actor','ism_add_instance','ism_add_instances','ism_clear_instances'] },
   { domain: 'physics', command_count: 3, commands: ['physics_set_simulate','physics_set_collision_profile','physics_add_impulse'] },
   { domain: 'docs', command_count: 3, commands: ['docs_search','docs_lookup_class','docs_lookup_api'] },
