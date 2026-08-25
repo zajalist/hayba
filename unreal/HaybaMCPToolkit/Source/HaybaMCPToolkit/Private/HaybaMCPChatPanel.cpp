@@ -468,21 +468,21 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildEmptyState()
                 LOCTEXT("PCard1Hint",  "Organic roads, parcels, building footprints"),
                 TEXT("Generate a mini city with organic roads and parcels."),
                 TEXT("MC"),
-                FLinearColor(0.30f, 0.55f, 0.85f)) ]
+                FHaybaMCPStyle::Colour("Hayba.Color.Cat.Plan")) ]
             + SHorizontalBox::Slot().FillWidth(1.f).Padding(4.f, 0.f, 4.f, 0.f)
             [ BuildPromptCard(
                 LOCTEXT("PCard2Title", "Dungeon"),
                 LOCTEXT("PCard2Hint",  "Connected rooms with corridor topology"),
                 TEXT("Generate a dungeon with connected rooms."),
                 TEXT("DG"),
-                FLinearColor(0.65f, 0.30f, 0.55f)) ]
+                FHaybaMCPStyle::Colour("Hayba.Color.Cat.Asset")) ]
             + SHorizontalBox::Slot().FillWidth(1.f).Padding(8.f, 0.f, 0.f, 0.f)
             [ BuildPromptCard(
                 LOCTEXT("PCard3Title", "Forest path"),
                 LOCTEXT("PCard3Hint",  "Branching path network through dense foliage"),
                 TEXT("Generate a forest path network with branching trails."),
                 TEXT("FP"),
-                FLinearColor(0.30f, 0.65f, 0.40f)) ]
+                FHaybaMCPStyle::Colour("Hayba.Color.Cat.Scene")) ]
         ];
 }
 
@@ -505,15 +505,22 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildPromptCard(const FText& Title, cons
                 // without binary deps.
                 + SVerticalBox::Slot().AutoHeight()
                 [
+                    // A neutral surface with a coloured monogram, not a
+                    // saturated block. The categorical colour still tells the
+                    // three cards apart -- that was its only job -- without
+                    // filling a third of an empty panel to do it. The brief
+                    // asks for "cool neutral chrome" and reserves saturation
+                    // for meaning.
                     SNew(SBorder)
                     .BorderImage(FAppStyle::Get().GetBrush("WhiteBrush"))
-                    .BorderBackgroundColor(FSlateColor(AccentColor))
+                    .BorderBackgroundColor(FSlateColor(
+                        FHaybaMCPStyle::Colour("Hayba.Color.Surface.Raised")))
                     .Padding(FMargin(0.f, 24.f))
                     [
                         SNew(STextBlock)
                         .Text(FText::FromString(Glyph))
                         .Justification(ETextJustify::Center)
-                        .ColorAndOpacity(FSlateColor(FLinearColor::White))
+                        .ColorAndOpacity(FSlateColor(AccentColor))
                         .Font(FCoreStyle::GetDefaultFontStyle("Bold", 36))
                     ]
                 ]

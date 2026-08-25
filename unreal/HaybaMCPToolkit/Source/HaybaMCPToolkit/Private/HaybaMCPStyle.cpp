@@ -166,6 +166,19 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
         Tok(TEXT("Hayba.Color.Cat.Image"),       FLinearColor::FromSRGBColor(FColor(0xDB, 0x72, 0xAF)));
         Tok(TEXT("Hayba.Color.Cat.Neutral"),     FLinearColor::FromSRGBColor(FColor(0xB0, 0xB6, 0xC0)));
 
+        // Scene-map node semantics. These lived as literals in
+        // HaybaMCPSceneMapPanel.cpp, outside the visual system: nothing could
+        // check them, reuse them, or notice them drifting. Registered here at
+        // their EXISTING values -- this moves them into the system without
+        // changing a pixel.
+        Tok(TEXT("Hayba.Color.Semantic.Foliage"),   FLinearColor(0.30f, 0.70f, 0.40f));
+        Tok(TEXT("Hayba.Color.Semantic.Building"),  FLinearColor(0.55f, 0.60f, 0.75f));
+        Tok(TEXT("Hayba.Color.Semantic.Light"),     FLinearColor(1.00f, 0.85f, 0.35f));
+        Tok(TEXT("Hayba.Color.Semantic.Trigger"),   FLinearColor(0.35f, 0.75f, 1.00f));
+        Tok(TEXT("Hayba.Color.Semantic.Character"), FLinearColor(1.00f, 0.45f, 0.45f));
+        Tok(TEXT("Hayba.Color.Semantic.Blueprint"), FLinearColor(0.70f, 0.50f, 1.00f));
+        Tok(TEXT("Hayba.Color.Semantic.Unknown"),   FLinearColor(0.70f, 0.72f, 0.78f));
+
         // Metrics — so spacing stops being magic numbers at each call site.
         Style->Set(TEXT("Hayba.Metric.Radius.Chip"),  6.f);
         Style->Set(TEXT("Hayba.Metric.Radius.Card"),  8.f);

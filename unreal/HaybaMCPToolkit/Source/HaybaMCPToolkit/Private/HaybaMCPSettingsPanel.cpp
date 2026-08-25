@@ -613,7 +613,10 @@ void SHaybaMCPSettingsPanel::RefreshKeyStatus()
     {
         KeyStatusText->SetText(NSLOCTEXT("Hayba", "S.Key.Keyless",
             "Keyless provider — no API key needed."));
-        KeyStatusText->SetColorAndOpacity(FSlateColor(FLinearColor(0.45f, 0.8f, 0.5f))); // green
+        // The product's restrained green, not a brighter one invented here.
+        // This is the IA's "done" colour and this is a done-ish state.
+        KeyStatusText->SetColorAndOpacity(
+            FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Status.Pass")));
         return;
     }
 

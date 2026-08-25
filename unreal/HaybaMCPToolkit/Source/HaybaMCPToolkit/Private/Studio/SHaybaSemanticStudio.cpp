@@ -1,4 +1,5 @@
 #include "Studio/SHaybaSemanticStudio.h"
+#include "HaybaMCPStyle.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Layout/SSplitter.h"
 #include "Widgets/Layout/SBorder.h"
@@ -427,7 +428,7 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildNodeInspector()
     UHaybaConstraintGraphNode* Node = SelectedGraphNode.Get();
     if (!Node)
     {
-        return SNew(STextBlock).Text(LOCTEXT("NoNode", "Select a node")).ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f)));
+        return SNew(STextBlock).Text(LOCTEXT("NoNode", "Select a node")).ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted")));
     }
 
     TSharedRef<SVerticalBox> Box = SNew(SVerticalBox)
@@ -445,7 +446,7 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildNodeInspector()
             [
                 SNew(SButton)
                 .Text(FText::FromString(MaskId))
-                .ButtonColorAndOpacity(bCurrent ? FLinearColor(0.2f, 0.5f, 0.9f) : FLinearColor(0.25f, 0.25f, 0.25f))
+                .ButtonColorAndOpacity(bCurrent ? FHaybaMCPStyle::Colour("Hayba.Color.Status.Info") : FHaybaMCPStyle::Colour("Hayba.Color.Surface.Raised"))
                 .OnClicked_Lambda([this, MaskId]()
                 {
                     if (UHaybaConstraintGraphNode* N = SelectedGraphNode.Get())
@@ -597,7 +598,7 @@ TSharedRef<ITableRow> SHaybaSemanticStudio::GenerateMaskRow(TSharedPtr<FHaybaStu
         + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(4, 0)
         [ SNew(STextBlock).Text(FText::FromString(Mask->Id)) ]
         + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2)
-        [ SNew(STextBlock).Text(FText::FromString(Mask->Type)).ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f))) ]
+        [ SNew(STextBlock).Text(FText::FromString(Mask->Type)).ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary"))) ]
         + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2)
         [ SNew(SImage).Image(FAppStyle::Get().GetBrush("Icons.Lock"))
                       .Visibility(Mask->bLocked ? EVisibility::Visible : EVisibility::Collapsed) ]
@@ -628,14 +629,14 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildInspector()
     if (!SelectedMask.IsValid())
     {
         return SNew(SBorder).Padding(8)
-        [ SNew(STextBlock).Text(LOCTEXT("NoSelection", "Select a mask")).ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f))) ];
+        [ SNew(STextBlock).Text(LOCTEXT("NoSelection", "Select a mask")).ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted"))) ];
     }
 
     const FHaybaStudioMask& M = *SelectedMask;
     auto Field = [](const FText& Label, const FString& Value)
     {
         return SNew(SHorizontalBox)
-            + SHorizontalBox::Slot().FillWidth(0.4f)[ SNew(STextBlock).Text(Label).ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f))) ]
+            + SHorizontalBox::Slot().FillWidth(0.4f)[ SNew(STextBlock).Text(Label).ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary"))) ]
             + SHorizontalBox::Slot().FillWidth(0.6f)[ SNew(STextBlock).Text(FText::FromString(Value)).AutoWrapText(true) ];
     };
 
@@ -647,7 +648,7 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildInspector()
         + SScrollBox::Slot().Padding(2)
         [
             SNew(SHorizontalBox)
-            + SHorizontalBox::Slot().FillWidth(0.4f)[ SNew(STextBlock).Text(LOCTEXT("FColor", "color")).ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f))) ]
+            + SHorizontalBox::Slot().FillWidth(0.4f)[ SNew(STextBlock).Text(LOCTEXT("FColor", "color")).ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary"))) ]
             + SHorizontalBox::Slot().AutoWidth()[ SNew(SColorBlock).Color(M.Color).Size(FVector2D(28, 14)) ]
         ]
         + SScrollBox::Slot().Padding(2)[ Field(LOCTEXT("FSource", "source"), M.Source) ]
@@ -655,7 +656,7 @@ TSharedRef<SWidget> SHaybaSemanticStudio::BuildInspector()
         + SScrollBox::Slot().Padding(2)
         [
             SNew(SHorizontalBox)
-            + SHorizontalBox::Slot().FillWidth(0.4f)[ SNew(STextBlock).Text(LOCTEXT("FLock", "locked")).ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f))) ]
+            + SHorizontalBox::Slot().FillWidth(0.4f)[ SNew(STextBlock).Text(LOCTEXT("FLock", "locked")).ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary"))) ]
             + SHorizontalBox::Slot().AutoWidth()[ SNew(SCheckBox).IsChecked(M.bLocked ? ECheckBoxState::Checked : ECheckBoxState::Unchecked).IsEnabled(false) ]
         ]
         + SScrollBox::Slot().Padding(2)[ Field(LOCTEXT("FDetail", "detail"), M.Detail) ]

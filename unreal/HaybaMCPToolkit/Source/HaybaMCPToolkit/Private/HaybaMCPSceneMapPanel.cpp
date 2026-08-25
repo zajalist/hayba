@@ -1,5 +1,6 @@
 // Plugins/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPSceneMapPanel.cpp
 #include "HaybaMCPSceneMapPanel.h"
+#include "HaybaMCPStyle.h"
 #include "HaybaMCPCogMapBuilder.h"
 
 #include "Widgets/SCanvas.h"
@@ -129,7 +130,7 @@ TSharedRef<SWidget> SHaybaMCPSceneMapPanel::BuildCellWidget(int32 CellIndex)
                         SNew(STextBlock)
                         .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("SmallText"))
                         .Text(FText::FromString(FString::Printf(TEXT("%d"), Cell.ActorCount)))
-                        .ColorAndOpacity(FSlateColor(FLinearColor(0.85f, 0.87f, 0.95f, 0.9f)))
+                        .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Primary")))
                     ]
                 ]
             ]
@@ -212,12 +213,12 @@ FLinearColor SHaybaMCPSceneMapPanel::ColorForSemantic(EHaybaNodeSemantic S)
 {
     switch (S)
     {
-        case EHaybaNodeSemantic::Foliage:    return FLinearColor(0.30f, 0.70f, 0.40f);
-        case EHaybaNodeSemantic::Building:   return FLinearColor(0.55f, 0.60f, 0.75f);
-        case EHaybaNodeSemantic::Light:      return FLinearColor(1.00f, 0.85f, 0.35f);
-        case EHaybaNodeSemantic::Trigger:    return FLinearColor(0.35f, 0.75f, 1.00f);
-        case EHaybaNodeSemantic::Character:  return FLinearColor(1.00f, 0.45f, 0.45f);
-        case EHaybaNodeSemantic::Blueprint:  return FLinearColor(0.70f, 0.50f, 1.00f);
-        default:                             return FLinearColor(0.70f, 0.72f, 0.78f);
+        case EHaybaNodeSemantic::Foliage:    return FHaybaMCPStyle::Colour("Hayba.Color.Semantic.Foliage");
+        case EHaybaNodeSemantic::Building:   return FHaybaMCPStyle::Colour("Hayba.Color.Semantic.Building");
+        case EHaybaNodeSemantic::Light:      return FHaybaMCPStyle::Colour("Hayba.Color.Semantic.Light");
+        case EHaybaNodeSemantic::Trigger:    return FHaybaMCPStyle::Colour("Hayba.Color.Semantic.Trigger");
+        case EHaybaNodeSemantic::Character:  return FHaybaMCPStyle::Colour("Hayba.Color.Semantic.Character");
+        case EHaybaNodeSemantic::Blueprint:  return FHaybaMCPStyle::Colour("Hayba.Color.Semantic.Blueprint");
+        default:                             return FHaybaMCPStyle::Colour("Hayba.Color.Semantic.Unknown");
     }
 }

@@ -1,5 +1,6 @@
 // SRecipeParamVector3.cpp
 #include "Recipes/SRecipeParamVector3.h"
+#include "HaybaMCPStyle.h"
 #include "Widgets/Input/SSpinBox.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
@@ -22,7 +23,7 @@ void SRecipeParamVector3::Construct(const FArguments& InArgs)
             [
                 SNew(STextBlock)
                 .Text(FText::FromString(Label))
-                .ColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.57f, 0.65f)))
+                .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary")))
             ]
             + SHorizontalBox::Slot().FillWidth(1.0f)
             [
