@@ -37,13 +37,13 @@ bool FHaybaEnumProbeTest::RunTest(const FString&)
         { FName(TEXT("EHaybaSignedProbe::Zero")),      0 },
     };
     const bool bInit = Signed->SetEnums(Names, UEnum::ECppForm::EnumClass, EEnumFlags::None, false);
-    AddInfo(FString::Printf(TEXT("SetEnums returned %s"), bInit ? TEXT("true") : TEXT("false")));
+    AddWarning(FString::Printf(TEXT("SetEnums returned %s"), bInit ? TEXT("true") : TEXT("false")));
 
     const FString Authored = Signed->GetAuthoredNameStringByIndex(0);
     const FString NameStr   = Signed->GetNameStringByIndex(0);
-    AddInfo(FString::Printf(TEXT("GetAuthoredNameStringByIndex(0) = '%s'"), *Authored));
-    AddInfo(FString::Printf(TEXT("GetNameStringByIndex(0)         = '%s'"), *NameStr));
-    AddInfo(FString::Printf(TEXT("GetValueByIndex(0)              = %lld"), Signed->GetValueByIndex(0)));
+    AddWarning(FString::Printf(TEXT("GetAuthoredNameStringByIndex(0) = '%s'"), *Authored));
+    AddWarning(FString::Printf(TEXT("GetNameStringByIndex(0)         = '%s'"), *NameStr));
+    AddWarning(FString::Printf(TEXT("GetValueByIndex(0)              = %lld"), Signed->GetValueByIndex(0)));
 
     const int32 ByAuthored = Signed->GetIndexByNameString(Authored, EGetByNameFlags::CheckAuthoredName);
     const int32 ByAuthoredPlain = Signed->GetIndexByNameString(Authored, EGetByNameFlags::None);
@@ -52,13 +52,15 @@ bool FHaybaEnumProbeTest::RunTest(const FString&)
     const int32 ByFull = Signed->GetIndexByNameString(
         TEXT("EHaybaSignedProbe::MinusOne"), EGetByNameFlags::CheckAuthoredName);
 
-    AddInfo(FString::Printf(TEXT("GetIndexByNameString(authored, CheckAuthoredName) = %d"), ByAuthored));
-    AddInfo(FString::Printf(TEXT("GetIndexByNameString(authored, None)              = %d"), ByAuthoredPlain));
-    AddInfo(FString::Printf(TEXT("GetIndexByNameString(nameStr,  CheckAuthoredName) = %d"), ByName));
-    AddInfo(FString::Printf(TEXT("GetIndexByNameString('MinusOne')                  = %d"), ByShort));
-    AddInfo(FString::Printf(TEXT("GetIndexByNameString('EHaybaSignedProbe::MinusOne')= %d"), ByFull));
+    AddWarning(FString::Printf(TEXT("GetIndexByNameString(authored, CheckAuthoredName) = %d"), ByAuthored));
+    AddWarning(FString::Printf(TEXT("GetIndexByNameString(authored, None)              = %d"), ByAuthoredPlain));
+    AddWarning(FString::Printf(TEXT("GetIndexByNameString(nameStr,  CheckAuthoredName) = %d"), ByName));
+    AddWarning(FString::Printf(TEXT("GetIndexByNameString('MinusOne')                  = %d"), ByShort));
+    AddWarning(FString::Printf(TEXT("GetIndexByNameString('EHaybaSignedProbe::MinusOne')= %d"), ByFull));
 
-    // Reported as info, not asserted: this test exists to answer a question,
+    // Reported as WARNINGS: the automation log does not surface AddInfo through
+    // test_get_log, and the point of this file is to be readable from there.
+    // Not asserted: this test exists to answer a question,
     // and a failing assertion would just restate the one already failing.
     return true;
 }
