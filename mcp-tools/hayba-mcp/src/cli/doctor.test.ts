@@ -39,7 +39,7 @@ describe('npm installed but the plugin never copied', () => {
 
   it('does not report checks it could not run', () => {
     expect(r['plugin dependencies enabled']!.status).toBe('unknown');
-    expect(r['versions match']!.status).toBe('unknown');
+    expect(r['versions']!.status).toBe('unknown');
   });
 });
 
@@ -76,18 +76,25 @@ describe('dependencies', () => {
   });
 });
 
-describe('version skew', () => {
-  const r = byName(facts({ serverVersion: '1.2.0', reportedPluginVersion: '1.0.0' }));
+describe('versions', () => {
+  it('reports both without calling a healthy install broken', () => {
+    // The plugin and the npm package have never shared a numbering scheme, so
+    // an equality test flags every install as skewed. The first live run of
+    // this tool did exactly that against a working setup.
+    const r = byName(facts({ serverVersion: '1.0.0', reportedPluginVersion: '0.3.0' }));
 
-  it('reports both versions rather than just disagreeing', () => {
-    expect(r['versions match']!.status).toBe('problem');
-    expect(r['versions match']!.detail).toMatch(/server 1\.2\.0, plugin 1\.0\.0/);
+    expect(r['versions']!.status).toBe('ok');
+    expect(r['versions']!.detail).toMatch(/server 1\.0\.0, plugin 0\.3\.0/);
   });
 
-  it('says what skew looks like from the outside', () => {
-    // Two artifacts updating separately WILL drift, and it presents as one
-    // command being unknown rather than as a version gap.
-    expect(r['versions match']!.fix).toMatch(/one command at a time/);
+  it('says why it cannot judge, rather than staying quiet about it', () => {
+    const r = byName(facts({ serverVersion: '1.0.0', reportedPluginVersion: '0.3.0' }));
+    expect(r['versions']!.detail).toMatch(/shared protocol version/);
+  });
+
+  it('says nothing at all when the editor did not report one', () => {
+    const r = byName(facts({ reportedPluginVersion: null }));
+    expect(r['versions']!.status).toBe('unknown');
   });
 });
 
