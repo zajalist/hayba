@@ -166,10 +166,11 @@ work still gates on R1.*
   shapes** [01c §3e] into the PLUMB directional verdict; delete
   `ValidatorFinding` + the 4 dead rules + their pinning test; rename slivers →
   Recipes; Recipes emit verdicts (the triggering moment).
-- **P2.** W3 IA rewrite (5 nouns; Scene Map = the **web renderer** —
-  `SceneMapWebPanel` + `cognitive-map/index.html`; delete the native
-  `SCanvas` panel; add a graceful "WebBrowser plugin disabled" fallback
-  state instead of a blank panel — decided 2026-08-23),
+- **P2.** W3 IA rewrite (5 nouns. **Scene Map renderer: decision withdrawn —
+  see `15-SCENEMAP-CORRECTION.md`.** The two renderers are a shipped
+  Web/Native/Auto user setting, not duplication, and only the native one
+  receives the router's `scene_get_graph` push, so the default Auto→Web path
+  already drops it),
   **plus** [01b §3]: extract `FHaybaChatModel`/`FHaybaToolStreamModel` as
   module-owned plain structs (the Studio/Slivers pattern) — this is also the
   prerequisite for chat persistence; replace singleton reach-through with the
