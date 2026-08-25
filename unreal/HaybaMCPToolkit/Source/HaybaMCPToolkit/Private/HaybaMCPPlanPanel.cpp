@@ -1,4 +1,6 @@
 #include "HaybaMCPPlanPanel.h"
+#include "HaybaMCPStyle.h"
+#include "HaybaMCPStatusVocabulary.h"
 #include "HaybaMCPModule.h"
 #include "Modules/ModuleManager.h"
 
@@ -15,31 +17,31 @@
 
 namespace
 {
-    const FLinearColor ColorPending  (0.55f, 0.57f, 0.65f);
-    const FLinearColor ColorRunning  (0.45f, 0.85f, 1.00f);
-    const FLinearColor ColorCompleted(0.40f, 0.95f, 0.55f);
-    const FLinearColor ColorFailed   (1.00f, 0.40f, 0.40f);
-    const FLinearColor ColorMuted    (0.55f, 0.57f, 0.65f);
-    const FLinearColor ColorAccent   (1.00f, 0.78f, 0.30f);
-
-    const TCHAR* StatusGlyph(FHaybaPlanStep::EStatus S)
+    // These used to be six literal FLinearColors defined right here. They
+    // bypassed the style tokens, which meant style-token-check could not see
+    // them at all -- it verifies that referenced tokens exist, and a hardcoded
+    // colour never references one. The old ColorAccent was (1.00, 0.78, 0.30),
+    // a bright yellow-orange, while the product's ochre is #C47A28. This
+    // panel's accent was simply a different colour from every other accent in
+    // the dock.
+    FSlateColor Muted()
     {
-        switch (S)
-        {
-            case FHaybaPlanStep::EStatus::Running:   return TEXT("●");
-            case FHaybaPlanStep::EStatus::Completed: return TEXT("✓");
-            case FHaybaPlanStep::EStatus::Failed:    return TEXT("✕");
-            default:                                  return TEXT("○");
-        }
+        return FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted"));
     }
-    FLinearColor StatusColor(FHaybaPlanStep::EStatus S)
+
+    /** A plan step's status in the product's shared vocabulary.
+     *
+     *  Pending maps to NotStarted, not to NeedsApproval: a step that has not
+     *  run yet is not waiting on a decision from the user, and saying it is
+     *  would put an approval prompt where there is nothing to approve. */
+    EHaybaStatus ToStatus(FHaybaPlanStep::EStatus S)
     {
         switch (S)
         {
-            case FHaybaPlanStep::EStatus::Running:   return ColorRunning;
-            case FHaybaPlanStep::EStatus::Completed: return ColorCompleted;
-            case FHaybaPlanStep::EStatus::Failed:    return ColorFailed;
-            default:                                  return ColorPending;
+            case FHaybaPlanStep::EStatus::Running:   return EHaybaStatus::Running;
+            case FHaybaPlanStep::EStatus::Completed: return EHaybaStatus::Done;
+            case FHaybaPlanStep::EStatus::Failed:    return EHaybaStatus::Error;
+            default:                                  return EHaybaStatus::NotStarted;
         }
     }
 }
@@ -85,7 +87,7 @@ TSharedRef<SWidget> SHaybaMCPPlanPanel::BuildHeader()
         [
             SNew(STextBlock)
             .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("SmallText"))
-            .ColorAndOpacity(FSlateColor(ColorMuted))
+            .ColorAndOpacity(Muted())
             .AutoWrapText(true)
             .Text_Lambda([this]()
             {
@@ -117,7 +119,7 @@ TSharedRef<SWidget> SHaybaMCPPlanPanel::BuildEmptyState()
             [
                 SNew(STextBlock)
                 .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("NormalText"))
-                .ColorAndOpacity(FSlateColor(ColorMuted))
+                .ColorAndOpacity(Muted())
                 .AutoWrapText(true)
                 .Text(LOCTEXT("EmptyHint",
                     "No plan proposed yet. The agent will call hayba_propose_plan with a steps[] array; you'll see those steps here and can Approve or Reject before any destructive op runs.\n\nWant to see what it looks like? Load a sample plan."))
@@ -136,8 +138,9 @@ TSharedRef<SWidget> SHaybaMCPPlanPanel::BuildStepRow(const TSharedPtr<FHaybaPlan
 {
     if (!Step.IsValid()) return SNullWidget::NullWidget;
     const FHaybaPlanStep* S = Step.Get();
-    const TCHAR* Glyph = StatusGlyph(S->Status);
-    const FLinearColor Color = StatusColor(S->Status);
+    const EHaybaStatus Status = ToStatus(S->Status);
+    const TCHAR* Glyph = HaybaStatus::Glyph(Status);
+    const FSlateColor Color = HaybaStatus::Colour(Status);
 
     TSharedRef<SVerticalBox> Body = SNew(SVerticalBox)
         + SVerticalBox::Slot().AutoHeight()
@@ -152,7 +155,7 @@ TSharedRef<SWidget> SHaybaMCPPlanPanel::BuildStepRow(const TSharedPtr<FHaybaPlan
         [
             SNew(STextBlock)
             .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("SmallText"))
-            .ColorAndOpacity(FSlateColor(ColorMuted))
+            .ColorAndOpacity(Muted())
             .AutoWrapText(true)
             .Text(FText::FromString(S->Description))
         ];
@@ -163,7 +166,11 @@ TSharedRef<SWidget> SHaybaMCPPlanPanel::BuildStepRow(const TSharedPtr<FHaybaPlan
         [
             SNew(STextBlock)
             .Font(FCoreStyle::GetDefaultFontStyle("Mono", 9))
-            .ColorAndOpacity(FSlateColor(FLinearColor(0.65f, 0.78f, 1.0f, 0.85f)))
+            // Secondary text, not a tint. This was a hardcoded pale blue,
+            // which the visual brief rules out: "If a shape is ochre, it
+            // means something" -- and the same goes for any colour. A tool
+            // name is supporting detail, so it reads as supporting detail.
+            .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary")))
             .Text(FText::FromString(FString::Printf(TEXT("→ %s"), *S->Tool)))
         ];
     }
@@ -214,7 +221,11 @@ TSharedRef<SWidget> SHaybaMCPPlanPanel::BuildActionBar()
             .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("SmallText"))
             .ColorAndOpacity_Lambda([this]() -> FSlateColor
             {
-                return FSlateColor(bApproved ? ColorCompleted : ColorAccent);
+                // Ochre because this is the IA's "needs approval": the work
+                // is paused on the user. Green once they have said yes.
+                return HaybaStatus::Colour(bApproved
+                    ? EHaybaStatus::Done
+                    : EHaybaStatus::NeedsApproval);
             })
             .Text_Lambda([this]()
             {
