@@ -501,3 +501,58 @@ the tree before work starts, not treated as a work order.
 End-to-end proof of the connector path still wants one real download through
 ambientCG, which hits an external API and writes to the project — worth doing
 deliberately rather than as a side effect of a check.
+
+
+---
+
+## Track A status — 2026-08-25 (later)
+
+**A2 — material_from_textures. DONE (`7831592d`).** An imported texture set
+becomes a wired PBR material. Classification is pure and covered from real
+ambientCG and PolyHaven filenames. Two bugs found by probing a live editor
+before trusting the mocks: `material_add_node` wants `SamplerType` in
+PascalCase (the `sampler_type` first sent is accepted, ignored, and reported
+only in `unknown_props`), and that call returns `ok:true` even when a property
+matched nothing — so an unapplied property is now an error here.
+
+**A4 — terrain conform. DONE (`f78ee83c`, `fd5fcdba`).** Instances are traced
+onto the actual ground instead of sharing the area actor's z. Adding the
+clearance constraint exposed that the conform was self-defeating: `grounded`
+measures against the world plane z=0, so on a hillside it failed every instance
+and dragged them back down, undoing the trace. It now runs only on the
+unconformed fallback. The trace returns a surface while a placement is a pivot,
+so the conform offsets by `ground_offset_m` — the SM_GiantTree lesson, enforced
+rather than remembered. Same-asset clearance runs before the trace, because a
+clearance fix pushes in XY. The description stops claiming
+"non-interpenetrating" and states what is and is not proven.
+
+Every line of the trace script was wrong on the first attempt and corrected
+against a live editor: `EditorSubsystemLibrary` does not exist, a `HitResult`
+has no `.impact_point` attribute, `get_editor_property('impact_point')` raises,
+and `location` sits a trace-epsilon above the surface. Verified end to end on
+two platforms at different heights — a flat test scene would have let a broken
+implementation look right.
+
+**A3 — CLIP asset matching. DONE (`66d38402`, `e7411853`, `3a00e68e`).**
+`_Clip` had held a tokenizer since it was written and nothing ever called it,
+so the sidecar could say what a thumbnail looked like but never which thumbnail
+matched a phrase. `/embed_text` uses the tokenizer that was already there;
+`rankAssetsByIntent` scores candidates; `asset_find_by_look` exposes it.
+
+Not scored zero, reported unscored: an asset with no thumbnail was not looked
+at, and a zero would sort it among the poor matches as though it had been. A
+missing sidecar returns `ok:false` rather than an empty ranking, because "no
+asset looks like that" is a claim you cannot make without looking.
+
+**Not verified:** none of A3 has run against real CLIP weights. Whether the
+sidecar is installed on this machine is unknown, and the tests deliberately use
+stand-ins. First real use should confirm the scores are meaningful and not just
+well-shaped.
+
+### Remaining in Track A
+
+- **A5** — 3D generation posture. Needs a licensing decision first: TRELLIS.2
+  (MIT) and Sloyd are the clean commercial options.
+- **A7** — interiors via the PLUMB room grammar, still unwired.
+- Cross-asset interpenetration in `world_generate` — needs real overlap, not a
+  centre-distance proxy.
