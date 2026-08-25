@@ -2285,26 +2285,6 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                     if (!WBP->WidgetVariableNameToGuidMap.Contains(ConstructName))
                         WBP->WidgetVariableNameToGuidMap.Add(ConstructName, OldGuid);
                 }
-                else if (NewWidget && NewWidget->bIsVariable)
-                {
-                    // There was nothing to preserve -- the outgoing widget had
-                    // no GUID entry (it was not a variable, or the entry was
-                    // already gone). Preserving nothing must not leave the
-                    // INCOMING widget unregistered: UMG's compiler ensures on a
-                    // bIsVariable widget missing from WidgetVariableNameToGuidMap
-                    //
-                    //   Ensure condition failed:
-                    //     WidgetBP->WidgetVariableNameToGuidMap.Contains(Widget->GetFName())
-                    //   Widget [X] was added but did not get a GUID
-                    //
-                    // and the replace then fails on an otherwise valid tree.
-                    //
-                    // Gated on bIsVariable in both directions, matching
-                    // ui_set_variable: registering a non-variable would leave a
-                    // phantom entry, which is the problem PurgeSubtreeGuids
-                    // exists to clean up.
-                    RegisterWidgetVariable(WBP, NewWidget);
-                }
             }
             else
             {
@@ -2315,21 +2295,6 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
             {
                 WBP->WidgetVariableNameToGuidMap.Remove(DescendantName);
             }
-
-            // The outgoing widget has just had its GUID taken away -- either
-            // moved to the replacement (preserve_guid) or dropped outright. It
-            // is still a UObject holding bIsVariable = true, and if anything
-            // keeps it reachable from the widget tree, UMG's compiler ensures:
-            //
-            //   Ensure condition failed:
-            //     WidgetBP->WidgetVariableNameToGuidMap.Contains(Widget->GetFName())
-            //   Widget [HaybaMCP_Replaced_0] was added but did not get a GUID
-            //
-            // Clearing the flag makes the invariant hold by construction rather
-            // than depending on RemoveWidget having detached every reference.
-            // A widget nobody can name is not a variable.
-            Widget->bIsVariable = false;
-
             WBP->WidgetTree->RemoveWidget(Widget);
             if (!bPreserveChildren && OldPanel)
             {

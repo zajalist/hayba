@@ -645,3 +645,66 @@ broken. I never checked whether the commands those tools call exist. The
 evidence for "shipped feature, lost registration" and for "TypeScript-only
 half, never finishable" looks identical from the registration side alone; only
 the C++ distinguishes them, and it was one grep away.
+
+---
+
+## A pre-existing UI test failure, diagnosed but not fixed (2026-08-25)
+
+Running the UE automation suite — which nothing on this branch had done —
+found **2 failures out of 38**. Both are `Hayba.MCP.UI.Replace.*`. They are
+**not** caused by this branch: `HaybaMCPUIHandler.cpp` and its test are
+byte-identical to the merge base (`git diff --quiet f0bb8369 HEAD -- …` passes).
+
+    Ensure condition failed:
+      WidgetBP->WidgetVariableNameToGuidMap.Contains(Widget->GetFName())
+      [WidgetBlueprintCompiler.cpp:781]
+    Widget [HaybaMCP_Replaced_0] was added but did not get a GUID
+
+### What is established
+
+UMG's compiler requires every widget it walks to have an entry in
+`WidgetVariableNameToGuidMap`. `ui_mutate_tree replace` renames the outgoing
+widget to a scratch name (`HaybaMCP_Replaced_N`, UIHandler.cpp:2147) so the
+replacement can take the original name, moves or drops its GUID, and then calls
+`WidgetTree->RemoveWidget(Widget)`. Something still walks that discarded widget
+at compile time, and it no longer has a GUID under its scratch name.
+
+**One real fixture bug was found and fixed** along the way: the test built
+`CollisionTarget` with `ConstructWidget` (which leaves `bIsVariable` true) and
+registered GUIDs for its three other widgets but not that one — so the fixture
+failed the compile it was setting up. That is committed; the failing widget
+name moved from `CollisionTarget` to `HaybaMCP_Replaced_0`, which is how we
+know it was a genuine second cause and not the same one.
+
+### What was tried and REVERTED
+
+Two handler changes, both reverted because neither fixed the failure and both
+rested on a diagnosis that turned out wrong:
+
+1. Registering the incoming widget when `preserve_guid` found nothing to carry.
+2. Clearing `bIsVariable` on the outgoing widget once its GUID was taken.
+
+Each is defensible on its own terms, and shipping unverified behaviour changes
+to a 4,000-line handler on the strength of a wrong diagnosis is not. If either
+is wanted later it should arrive with a test that fails without it.
+
+### The next hypothesis, untested
+
+`RemoveWidget` detaches a widget from its parent but does not change its
+`Outer`. If the compiler enumerates widgets via `GetObjectsWithOuter(WidgetTree)`
+rather than by walking from the root, a detached-but-still-outered widget is
+still visited — which would explain why renaming, detaching, and clearing
+`bIsVariable` all failed to help. The fix in that case is to move the discarded
+widget out of the tree's ownership entirely:
+
+    Widget->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_DoNotDirty);
+
+Unverified. Confirm how UE 5.8's `WidgetBlueprintCompiler` enumerates widgets
+before acting on it.
+
+### Worth noting for whoever picks this up
+
+Each attempt costs a full close-editor → rebuild → relaunch → run cycle of
+several minutes, which is why three guesses is where this stopped. The suite
+takes ~60s once running; `test_run { "filter": "Hayba.MCP" }` then poll
+`build_status { job_id }`.
