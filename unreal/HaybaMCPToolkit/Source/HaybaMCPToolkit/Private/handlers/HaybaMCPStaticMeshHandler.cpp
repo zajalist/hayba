@@ -160,27 +160,15 @@ static FHaybaHandlerResult MeshGenerateCollision(const TSharedPtr<FJsonObject>& 
         return FHaybaHandlerResult::Err(
             TEXT("mesh_generate_collision: StaticMeshEditorSubsystem unavailable"));
 
-    const int32 Before = Sub->GetSimpleCollisionCount(Mesh);
-    if (Before > 0 && !bReplace)
-    {
-        auto Out = MakeShared<FJsonObject>();
-        Out->SetStringField(TEXT("path"), Path);
-        Out->SetNumberField(TEXT("collision_count"), Before);
-        Out->SetBoolField(TEXT("changed"), false);
-        Out->SetStringField(TEXT("note"),
-            TEXT("mesh already has simple collision; pass replace_existing=true to regenerate"));
-        return FHaybaHandlerResult::Ok(Out);
-    }
-
+    // Parse the shape BEFORE deciding whether there is work to do. The
+    // "already has collision" short-circuit below used to run first, so
+    // shape:"banana" returned ok with a reassuring note and the caller never
+    // learned the tool had not understood the request.
     const FString ShapeLower = Shape.ToLower();
-    bool bOk = false;
-    if (ShapeLower == TEXT("convex"))
+    const bool bConvex = (ShapeLower == TEXT("convex"));
+    EScriptCollisionShapeType ShapeType = EScriptCollisionShapeType::Box;
+    if (!bConvex)
     {
-        bOk = Sub->SetConvexDecompositionCollisions(Mesh, HullCount, MaxHullVerts, HullPrecision);
-    }
-    else
-    {
-        EScriptCollisionShapeType ShapeType;
         if      (ShapeLower == TEXT("box"))     ShapeType = EScriptCollisionShapeType::Box;
         else if (ShapeLower == TEXT("sphere"))  ShapeType = EScriptCollisionShapeType::Sphere;
         else if (ShapeLower == TEXT("capsule")) ShapeType = EScriptCollisionShapeType::Capsule;
@@ -191,8 +179,24 @@ static FHaybaHandlerResult MeshGenerateCollision(const TSharedPtr<FJsonObject>& 
             return FHaybaHandlerResult::Err(FString::Printf(
                 TEXT("mesh_generate_collision: unknown shape '%s'; expected box, sphere, capsule, ndop10, ndop18, ndop26 or convex"),
                 *Shape));
-        bOk = Sub->AddSimpleCollisions(Mesh, ShapeType) != INDEX_NONE;
     }
+
+    const int32 Before = Sub->GetSimpleCollisionCount(Mesh);
+    if (Before > 0 && !bReplace)
+    {
+        auto Out = MakeShared<FJsonObject>();
+        Out->SetStringField(TEXT("path"), Path);
+        Out->SetStringField(TEXT("shape"), ShapeLower);
+        Out->SetNumberField(TEXT("collision_count"), Before);
+        Out->SetBoolField(TEXT("changed"), false);
+        Out->SetStringField(TEXT("note"),
+            TEXT("mesh already has simple collision; pass replace_existing=true to regenerate"));
+        return FHaybaHandlerResult::Ok(Out);
+    }
+
+    const bool bOk = bConvex
+        ? Sub->SetConvexDecompositionCollisions(Mesh, HullCount, MaxHullVerts, HullPrecision)
+        : (Sub->AddSimpleCollisions(Mesh, ShapeType) != INDEX_NONE);
 
     const int32 After = Sub->GetSimpleCollisionCount(Mesh);
     if (!bOk || After <= Before)
