@@ -708,3 +708,37 @@ Each attempt costs a full close-editor → rebuild → relaunch → run cycle of
 several minutes, which is why three guesses is where this stopped. The suite
 takes ~60s once running; `test_run { "filter": "Hayba.MCP" }` then poll
 `build_status { job_id }`.
+
+### Severity, settled by reading the engine source
+
+`WidgetBlueprintCompiler.cpp:781` is not a hard failure. The engine **recovers
+from it**:
+
+    if (!ensureAlwaysMsgf(WidgetBP->WidgetVariableNameToGuidMap.Contains(Widget->GetFName()),
+            TEXT("Widget [%s] was added but did not get a GUID"), *Widget->GetName()))
+    {
+        WidgetBP->WidgetVariableNameToGuidMap.Add(Widget->GetFName(), FGuid::NewGuid());
+    }
+
+The missing entry is filled in with a fresh GUID and compilation continues. So
+the user-visible consequence is not a broken blueprint or a lost binding — it
+is an `ensureAlways` firing, which the automation harness reports as a test
+failure because ensures are errors under test.
+
+Two things follow:
+
+- **This is a test-visible defect, not a data-loss one.** It should be fixed
+  because a permanently-red test trains people to ignore the suite, not
+  because `ui_mutate_tree replace` is corrupting assets. Nothing observed
+  suggests it is.
+- **The `bIsVariable` theory was disproven here, not just unconfirmed.** The
+  ensure sits inside `ForEachSourceWidget` and does not consult `bIsVariable`
+  at all, so clearing that flag could never have silenced it. Reverting that
+  change was right for a better reason than "it did not work".
+
+The remaining question is unchanged and still unanswered: what does
+`ForEachSourceWidget` enumerate, such that a widget passed to
+`WidgetTree->RemoveWidget` is still visited? The installed engine headers under
+`UE_5.8/Engine/Source/Editor/UMGEditor/Public/WidgetBlueprint.h` do not declare
+it (383 lines, no `WidgetTree`, no `ForEachSourceWidget`), so it is inherited
+from a base class elsewhere. Answer that before writing another fix.
