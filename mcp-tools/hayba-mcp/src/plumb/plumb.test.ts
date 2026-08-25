@@ -99,6 +99,172 @@ describe('surface_contact primitive', () => {
   });
 });
 
+describe('fix vectors actually satisfy the constraint', () => {
+  // Applying the fix and re-evaluating is the only test that catches a fix
+  // pointing the right way by the wrong amount. Direction-only assertions --
+  // "pushed away from b" -- pass regardless of distance.
+  function applyFix(i: InstanceState, fix: { translate: [number, number, number] }): InstanceState {
+    return {
+      ...i,
+      transform: {
+        ...i.transform,
+        pos: [
+          i.transform.pos[0] + fix.translate[0],
+          i.transform.pos[1] + fix.translate[1],
+          i.transform.pos[2] + fix.translate[2],
+        ],
+      },
+    };
+  }
+
+  it('clearance: the pushed instance is no longer too close', () => {
+    const prim = primitivesById().get('clearance')!;
+    const b = inst('b', [1, 0, 0]);
+    const c = { id: 'c', primitive: 'clearance', params: { min_m: 3 }, binding: { asset: 'x' } } as Constraint;
+    let a = inst('a', [0, 0, 0]);
+
+    const first = prim.evaluate({ constraint: c, instance: a, profile: null, scene: { instances: [a, b] } });
+    expect(first.value_m).toBeLessThan(0);
+
+    a = applyFix(a, first.fix!);
+    const after = prim.evaluate({ constraint: c, instance: a, profile: null, scene: { instances: [a, b] } });
+    expect(after.value_m).toBeGreaterThanOrEqual(-1e-6);
+  });
+
+  it('proximity: too close is pushed to exactly the minimum', () => {
+    const prim = primitivesById().get('proximity')!;
+    const t = inst('target', [1, 0, 0]);
+    const c = { id: 'p', primitive: 'proximity', params: { min_m: 5 }, binding: { asset: 'x' } } as Constraint;
+    let a = inst('a', [0, 0, 0]);
+
+    const first = prim.evaluate({ constraint: c, instance: a, profile: null, scene: { instances: [a, t] } });
+    expect(first.value_m).toBeLessThan(0);
+
+    a = applyFix(a, first.fix!);
+    const after = prim.evaluate({ constraint: c, instance: a, profile: null, scene: { instances: [a, t] } });
+    expect(after.value_m).toBeGreaterThanOrEqual(-1e-6);
+  });
+
+  it('proximity: too far is pulled back within the maximum', () => {
+    const prim = primitivesById().get('proximity')!;
+    const t = inst('target', [0, 0, 0]);
+    const c = { id: 'p', primitive: 'proximity', params: { max_m: 2 }, binding: { asset: 'x' } } as Constraint;
+    let a = inst('a', [10, 0, 0]);
+
+    const first = prim.evaluate({ constraint: c, instance: a, profile: null, scene: { instances: [a, t] } });
+    expect(first.value_m).toBeLessThan(0);
+
+    a = applyFix(a, first.fix!);
+    const after = prim.evaluate({ constraint: c, instance: a, profile: null, scene: { instances: [a, t] } });
+    expect(after.value_m).toBeGreaterThanOrEqual(-1e-6);
+  });
+
+  it('proximity: the fix is horizontal, because the rule measures horizontally', () => {
+    // A vertical component would move the object without changing what the
+    // rule measures -- the margin would not improve and the fix would be a lie.
+    const prim = primitivesById().get('proximity')!;
+    const t = inst('target', [1, 0, 0]);
+    const a = inst('a', [0, 0, 4]);
+    const out = prim.evaluate({
+      constraint: { id: 'p', primitive: 'proximity', params: { min_m: 5 }, binding: { asset: 'x' } } as Constraint,
+      instance: a, profile: null, scene: { instances: [a, t] },
+    });
+    expect(out.fix!.translate[2]).toBe(0);
+  });
+
+  it('inside_outside: an object outside the region is moved back in', () => {
+    const prim = primitivesById().get('inside_outside')!;
+    const c = {
+      id: 'io', primitive: 'inside_outside',
+      params: { center: [0, 0, 0], extents: [2, 2, 2], mode: 'inside' },
+      binding: { asset: 'x' },
+    } as Constraint;
+    let a = inst('a', [5, 0, 0]);
+
+    const first = prim.evaluate({ constraint: c, instance: a, profile: null, scene: { instances: [a] } });
+    expect(first.value_m).toBeLessThan(0);
+
+    a = applyFix(a, first.fix!);
+    const after = prim.evaluate({ constraint: c, instance: a, profile: null, scene: { instances: [a] } });
+    expect(after.value_m).toBeGreaterThanOrEqual(-1e-6);
+  });
+
+  it('inside_outside: an object inside a keep-out region is moved out', () => {
+    const prim = primitivesById().get('inside_outside')!;
+    const c = {
+      id: 'io', primitive: 'inside_outside',
+      params: { center: [0, 0, 0], extents: [2, 3, 2], mode: 'outside' },
+      binding: { asset: 'x' },
+    } as Constraint;
+    // Nearer the X faces than the Y faces, so leaving by X is the cheap route.
+    let a = inst('a', [1, 0, 0]);
+
+    const first = prim.evaluate({ constraint: c, instance: a, profile: null, scene: { instances: [a] } });
+    expect(first.value_m).toBeLessThan(0);
+
+    a = applyFix(a, first.fix!);
+    const after = prim.evaluate({ constraint: c, instance: a, profile: null, scene: { instances: [a] } });
+    expect(after.value_m).toBeGreaterThanOrEqual(-1e-6);
+  });
+
+  it('upright: the fix rotates and does not translate', () => {
+    // Moving a leaning object does not make it upright. A translate here would
+    // be a fix that cannot work.
+    const prim = primitivesById().get('upright')!;
+    const tilted = inst('a', [0, 0, 0]);
+    // ~90 degrees about X: local +Z ends up along -Y.
+    tilted.transform.quat = [Math.SQRT1_2, 0, 0, Math.SQRT1_2];
+
+    const out = prim.evaluate({
+      constraint: { id: 'u', primitive: 'upright', params: { max_deg: 5 }, binding: { asset: 'x' } } as Constraint,
+      instance: tilted, profile: null, scene: { instances: [tilted] },
+    });
+    expect(out.value_m).toBeLessThan(0);
+    expect(out.fix!.rotate_quat).toBeDefined();
+    expect(out.fix!.translate).toEqual([0, 0, 0]);
+  });
+
+  it('upright: an already-upright object gets no fix', () => {
+    const prim = primitivesById().get('upright')!;
+    const a = inst('a', [0, 0, 0]);
+    const out = prim.evaluate({
+      constraint: { id: 'u', primitive: 'upright', params: { max_deg: 5 }, binding: { asset: 'x' } } as Constraint,
+      instance: a, profile: null, scene: { instances: [a] },
+    });
+    expect(out.value_m).toBeGreaterThanOrEqual(0);
+    expect(out.fix).toBeUndefined();
+  });
+
+  it('facing: no fix while the front vector is only a guess', () => {
+    // An unlocked front is AI-inferred. Turning someone's object to satisfy a
+    // guess is not a fix, it is damage.
+    const prim = primitivesById().get('facing')!;
+    const t = inst('target', [0, 5, 0]);
+    const a = inst('a', [0, 0, 0]);
+    const out = prim.evaluate({
+      constraint: { id: 'f', primitive: 'facing', params: { max_deg: 10 }, binding: { asset: 'x' } } as Constraint,
+      instance: a, profile: null, scene: { instances: [a, t] },
+    });
+    expect(out.value_m).toBeLessThan(0);
+    expect(out.fix).toBeUndefined();
+  });
+
+  it('the primitives that cannot be fixed by a transform never offer one', () => {
+    // Not an oversight: a fix vector promises that applying it satisfies the
+    // constraint. Scale, instance counts, role presence, another object's
+    // position and the C++-only geometry rule cannot deliver on that promise.
+    for (const id of ['scale_range', 'count_per_m2', 'presence', 'affordance_clear', 'max_straight_run']) {
+      // A source-level check, deliberately. Calling evaluate() would be worse:
+      // most of these SKIP without a full context, and a SKIP result carries no
+      // fix, so the assertion would pass without testing anything. Matching
+      // `fix` as a property key rather than the literal 'fix:' so a reformat
+      // does not quietly disarm it.
+      const src = primitivesById().get(id)!.evaluate.toString();
+      expect(/\bfix\s*[:,]/.test(src), `${id} should not emit a fix vector`).toBe(false);
+    }
+  });
+});
+
 describe('Verdict assembly + gate ordering', () => {
   it('stops at collision before stability (hard short-circuit order)', () => {
     const v = assembleVerdict([

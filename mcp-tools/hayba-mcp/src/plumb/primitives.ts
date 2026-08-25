@@ -27,6 +27,36 @@ const len = (a: V3): number => Math.hypot(a[0], a[1], a[2]);
 const dist = (a: V3, b: V3): number => len(sub(a, b));
 const distXY = (a: V3, b: V3): number => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const dot = (a: V3, b: V3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross = (a: V3, b: V3): V3 => [
+  a[1] * b[2] - a[2] * b[1],
+  a[2] * b[0] - a[0] * b[2],
+  a[0] * b[1] - a[1] * b[0],
+];
+
+/** Shortest-arc quaternion rotating `from` onto `to`, as [x,y,z,w].
+ *
+ *  Used by the rotation fixes. The antiparallel case needs care: the cross
+ *  product is zero there, so the axis has to be picked rather than derived,
+ *  and skipping that check yields a zero quaternion that silently rotates
+ *  nothing -- a fix that reports success and does not fix. */
+function quatFromTo(from: V3, to: V3): [number, number, number, number] {
+  const a = norm(from);
+  const b = norm(to);
+  const d = Math.max(-1, Math.min(1, dot(a, b)));
+  if (d > 0.999999) return [0, 0, 0, 1];               // already aligned
+  if (d < -0.999999) {
+    // Opposed: any perpendicular axis is a valid 180-degree rotation.
+    let axis = cross(a, [1, 0, 0]);
+    if (len(axis) < 1e-6) axis = cross(a, [0, 1, 0]);
+    const n = norm(axis);
+    return [n[0], n[1], n[2], 0];
+  }
+  const axis = cross(a, b);
+  const w = 1 + d;
+  const l = Math.hypot(axis[0], axis[1], axis[2], w) || 1;
+  return [axis[0] / l, axis[1] / l, axis[2] / l, w / l];
+}
+
 const norm = (a: V3): V3 => { const l = len(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
 
 /** Rotate vector v by unit quaternion q ([x,y,z,w]). */
@@ -185,8 +215,22 @@ export const PRIMITIVES: Primitive[] = [
       const com = profile?.physical?.com ?? [0, 0, 0];
       const margin = polygonMargin(foot, [com[0], com[1]]); // +inside, -outside
       const value_m = margin - min;
+
+      // Move the object so its centre of mass sits back over the footprint.
+      // Direction is toward the footprint centroid, which is inside any convex
+      // support polygon and is the direction that gains margin fastest.
+      let fix: FixVector | undefined;
+      if (value_m < 0) {
+        let cx = 0, cy = 0;
+        for (const v of foot) { cx += v[0]; cy += v[1]; }
+        cx /= foot.length; cy /= foot.length;
+        const toward = norm([cx - com[0], cy - com[1], 0]);
+        const need = -value_m;
+        fix = { translate: [toward[0] * need, toward[1] * need, 0] };
+      }
       return {
         value_m,
+        fix,
         viz: value_m < 0 ? 'com_outside_polygon' : undefined,
         detail: `CoM margin ${margin.toFixed(3)}m vs min ${min}m`,
       };
@@ -205,7 +249,14 @@ export const PRIMITIVES: Primitive[] = [
       const worldUp = rotate(instance.transform.quat, localUp);
       const tilt = Math.acos(Math.max(-1, Math.min(1, dot(norm(worldUp), [0, 0, 1])))) * DEG;
       const value_m = maxDeg - tilt;   // margin in degrees (kept in value_m slot)
-      return { value_m, detail: `tilt ${tilt.toFixed(1)}° vs max ${maxDeg}°` };
+
+      // A rotation, not a translation. Moving a leaning object does not make it
+      // upright -- this is why FixVector carries rotate_quat, and why a rule
+      // whose fix is angular must not emit a translate.
+      const fix: FixVector | undefined = value_m < 0
+        ? { translate: [0, 0, 0], rotate_quat: quatFromTo(norm(worldUp), [0, 0, 1]) }
+        : undefined;
+      return { value_m, fix, detail: `tilt ${tilt.toFixed(1)}° vs max ${maxDeg}°` };
     },
   },
   {
@@ -260,8 +311,14 @@ export const PRIMITIVES: Primitive[] = [
         value: str(constraint.params.tag_value),
       });
       if (targets.length === 0) return SKIP('no proximity targets match filter');
+      // Track WHICH target is nearest, not just how far. The distance alone
+      // cannot produce a fix, which is why this rule never offered one.
       let best = Infinity;
-      for (const t of targets) best = Math.min(best, distXY(instance.transform.pos, t.transform.pos));
+      let nearest = targets[0];
+      for (const t of targets) {
+        const d = distXY(instance.transform.pos, t.transform.pos);
+        if (d < best) { best = d; nearest = t; }
+      }
       const hasMin = typeof constraint.params.min_m === 'number';
       const hasMax = typeof constraint.params.max_m === 'number';
       const minM = num(constraint.params.min_m, -Infinity);
@@ -269,7 +326,21 @@ export const PRIMITIVES: Primitive[] = [
       const lowMargin = hasMin ? best - minM : Infinity;
       const highMargin = hasMax ? maxM - best : Infinity;
       const value_m = Math.min(lowMargin, highMargin);
-      return { value_m, detail: `nearest ${best.toFixed(2)}m vs [${hasMin ? minM : '–'}, ${hasMax ? maxM : '–'}]` };
+
+      // Horizontal only: this rule measures with distXY, so a fix that moved
+      // the object vertically would not change what it measured.
+      let fix: FixVector | undefined;
+      if (value_m < 0) {
+        const away = norm([
+          instance.transform.pos[0] - nearest.transform.pos[0],
+          instance.transform.pos[1] - nearest.transform.pos[1],
+          0,
+        ]);
+        // Too close pushes out; too far pulls in. Same axis, opposite sign.
+        const push = lowMargin < highMargin ? -lowMargin : highMargin;
+        fix = { translate: [away[0] * push, away[1] * push, 0] };
+      }
+      return { value_m, fix, detail: `nearest ${best.toFixed(2)}m vs [${hasMin ? minM : '–'}, ${hasMax ? maxM : '–'}]` };
     },
   },
   {
@@ -290,7 +361,26 @@ export const PRIMITIVES: Primitive[] = [
       const dy = extents[1] - Math.abs(p[1] - center[1]);
       const inside = Math.min(dx, dy);   // horizontal containment
       const value_m = mode === 'inside' ? inside : -inside;
-      return { value_m, detail: `${mode} region (margin ${inside.toFixed(2)}m)` };
+
+      // Move along the cheapest axis. For "inside", that is whichever axis the
+      // object has fallen outside of; for "outside", whichever edge is nearest,
+      // because leaving by the near side is the smallest correction.
+      let fix: FixVector | undefined;
+      if (value_m < 0) {
+        const need = -value_m;
+        // The same test in both modes, which is easy to misread as a
+        // copy-paste slip. It is not: for "inside" the smaller value is the
+        // axis the object has fallen outside of, and for "outside" it is the
+        // nearest face to leave by. Both want the minimum.
+        const useX = dx < dy;
+        const sign = useX
+          ? Math.sign(p[0] - center[0]) || 1
+          : Math.sign(p[1] - center[1]) || 1;
+        // Inside pulls back toward the centre; outside pushes further away.
+        const dir = mode === 'inside' ? -sign : sign;
+        fix = { translate: useX ? [dir * need, 0, 0] : [0, dir * need, 0] };
+      }
+      return { value_m, fix, detail: `${mode} region (margin ${inside.toFixed(2)}m)` };
     },
   },
   {
@@ -316,7 +406,14 @@ export const PRIMITIVES: Primitive[] = [
       const ang = Math.acos(Math.max(-1, Math.min(1, dot(front, toTarget)))) * DEG;
       const value_m = maxDeg - ang;
       const locked = !!profile?.provenance?.locked?.includes('semantics.front');
-      return { value_m, confidence: profile ? 0.7 : 0.3, detail: `off-axis ${ang.toFixed(0)}° vs max ${maxDeg}° (front ${locked ? 'locked' : 'unlocked'})` };
+
+      // Rotate the front vector onto the target. Only when the front is LOCKED:
+      // an unlocked front is an AI guess, and turning someone's object to
+      // satisfy a guess is not a fix, it is damage.
+      const fix: FixVector | undefined = (value_m < 0 && locked)
+        ? { translate: [0, 0, 0], rotate_quat: quatFromTo(front, toTarget) }
+        : undefined;
+      return { value_m, fix, confidence: profile ? 0.7 : 0.3, detail: `off-axis ${ang.toFixed(0)}° vs max ${maxDeg}° (front ${locked ? 'locked' : 'unlocked'})` };
     },
   },
   {
