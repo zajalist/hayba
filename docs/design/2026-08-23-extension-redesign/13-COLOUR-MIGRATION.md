@@ -144,9 +144,11 @@ This is a real categorical ramp and it genuinely wants tokens. But it is a
 *third* axis, distinct from both existing ones: `Cat.*` classifies what a tool
 call was about, `Status.*` says how a thing turned out, and this classifies
 what an actor IS in the world. Adding `Semantic.*` is a design addition, and
-one palette addition is already awaiting sign-off (`Status.Warn` / `Info`).
-Stacking a second unapproved axis would mean two visible changes landing
-together with no one having agreed to either.
+adding an axis means choosing seven colours, which is curation and not a
+sweep.
+The `Status.Warn` / `Info` addition stayed invisible precisely by carrying the
+existing values; a `Semantic.*` ramp has no existing values to carry, so it
+cannot be added the same way.
 
 ### Left because the alpha is load-bearing
 

@@ -105,10 +105,13 @@ regenerating them at heavier weight is the user's call.
   `Build.bat AphrosiaEditor Win64 Development`, editor relaunched, MCP
   handshake confirmed. The header reading held — `IMAGE_BRUSH` does append
   `.png`, and the `Set`/`Get` type pairings were right.
-- **Sign-off on two new palette entries.** `Status.Warn` (`#C9A25E`) and
-  `Status.Info` (`#7E9CC4`), added so the Validation panel's severity colours
-  could leave their full-saturation primaries. This is a *visible* change to
-  that panel, not a like-for-like swap — see 13-COLOUR-MIGRATION.
+- ~~Sign-off on two new palette entries.~~ **Withdrawn.** `Status.Warn` and
+  `Status.Info` now carry the Validation panel's original literals unchanged,
+  so the addition moved those colours into the token system without altering a
+  pixel. The retuned values were a genuine improvement, but shipping a visible
+  palette change nobody approved is not how curation works here. Retuning is a
+  two-line edit in `HaybaMCPStyle.cpp` whenever it is wanted; the call sites
+  are already on tokens and need no further change.
 - **A decision on the ten faint icons** (regenerate heavier, restrict to 28px,
   or accept). See the audit above.
 - **A verdict on the 28px rasters** (`icon-rasters-proof.html`). If they

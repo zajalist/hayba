@@ -125,12 +125,21 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
         // pass and fail must not shout over it.
         Tok(TEXT("Hayba.Color.Status.Pass"),    FLinearColor::FromSRGBColor(FColor(0x7E, 0xA5, 0x8A)));
         Tok(TEXT("Hayba.Color.Status.Fail"),    FLinearColor::FromSRGBColor(FColor(0xC4, 0x6E, 0x68)));
-        // Severity is its own axis: how much a finding matters, as opposed
-        // to Cat.* which says what it is about. Tuned to sit beside Pass and
-        // Fail rather than to match the full-saturation primaries the
-        // Validation panel used to draw.
-        Tok(TEXT("Hayba.Color.Status.Warn"),    FLinearColor::FromSRGBColor(FColor(0xC9, 0xA2, 0x5E)));
-        Tok(TEXT("Hayba.Color.Status.Info"),    FLinearColor::FromSRGBColor(FColor(0x7E, 0x9C, 0xC4)));
+        // Severity is its own axis: how much a finding matters, as opposed to
+        // Cat.* which says what it is about.
+        //
+        // These carry the Validation panel's ORIGINAL literals unchanged
+        // (1.0,0.85,0.2 amber and 0.55,0.7,1.0 blue), so adding them moved the
+        // colours into the token system without altering a single pixel. An
+        // earlier revision retuned them to sit beside Pass and Fail, which was
+        // a real improvement and also a visible change nobody had approved --
+        // and palette curation is not a call to make on someone's behalf.
+        //
+        // Retuning is now a two-line edit here, with nothing else to change:
+        //     Warn -> FColor(0xC9, 0xA2, 0x5E)   (muted amber)
+        //     Info -> FColor(0x7E, 0x9C, 0xC4)   (muted blue)
+        Tok(TEXT("Hayba.Color.Status.Warn"),    FLinearColor(1.0f, 0.85f, 0.2f));
+        Tok(TEXT("Hayba.Color.Status.Info"),    FLinearColor(0.55f, 0.7f, 1.0f));
 
         // Categorical palette — for telling *kinds* apart, not for status.
         //
