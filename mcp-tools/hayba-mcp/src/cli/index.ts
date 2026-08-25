@@ -12,6 +12,8 @@
 // its MCP TCP port — same precondition every other MCP tool call has. A CI
 // job is expected to launch UE itself (its own step) before invoking this.
 import { readFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseSpec, SpecParseError } from './spec.js';
 import { runSpec, type RunnerDeps } from './runner.js';
 import { EXIT_SPEC_ERROR, EXIT_UNEXPECTED_ERROR } from './exit-codes.js';
@@ -20,6 +22,11 @@ function printUsage(): void {
   console.error(
     [
       'Usage: hayba-cli <spec-file.json|.yaml>',
+      '       hayba-cli doctor [--project <path to .uproject>]',
+      '',
+      'doctor checks the four things that break an install and says what to',
+      'do about each: plugin present, its dependencies enabled, the editor',
+      'reachable, and the two halves on matching versions.',
       '',
       'Runs each step in the spec against a running UE editor and exits:',
       '  0  all steps succeeded',
@@ -68,6 +75,45 @@ async function buildLiveDeps(): Promise<RunnerDeps> {
   };
 }
 
+
+/**
+ * `hayba-cli doctor` — diagnose an install.
+ *
+ * Deliberately reachable without a working install: every check degrades to
+ * "could not check" rather than throwing, because the whole point is to run
+ * when things are broken. A doctor that needs a healthy patient is no use.
+ */
+export async function runDoctor(args: string[]): Promise<number> {
+  const [{ diagnose, exitCodeFor, formatReport }, { gatherFacts }, { config }] = await Promise.all([
+    import('./doctor.js'),
+    import('./doctor-facts.js'),
+    import('../config.js'),
+  ]);
+
+  let projectPath: string | null = null;
+  const i = args.indexOf('--project');
+  if (i !== -1 && args[i + 1]) projectPath = args[i + 1]!;
+
+  // The probe must not require a live sender to have been installed, and must
+  // not blow up when there is nothing to talk to.
+  const send = async (cmd: string, params: Record<string, unknown>): Promise<unknown> => {
+    const { installLiveSender, executeCommand } = await import('../tools/tool-executor.js');
+    await installLiveSender();
+    return executeCommand(cmd, params);
+  };
+
+  const facts = await gatherFacts({
+    projectPath,
+    port: config.ueTcpPort,
+    here: dirname(fileURLToPath(import.meta.url)),
+    send,
+  });
+
+  const results = diagnose(facts);
+  console.log(formatReport(results));
+  return exitCodeFor(results);
+}
+
 /**
  * Core entrypoint logic, with the UE-facing seam injectable so tests can
  * drive every exit path (spec error, unreachable UE, step failure, success)
@@ -82,6 +128,10 @@ export async function main(
   if (!specPath || specPath === '--help' || specPath === '-h') {
     printUsage();
     return specPath ? 0 : EXIT_SPEC_ERROR;
+  }
+
+  if (specPath === 'doctor') {
+    return await runDoctor(argv.slice(1));
   }
 
   let raw: string;
@@ -110,7 +160,11 @@ export async function main(
 }
 
 /* c8 ignore start -- process wiring, exercised via buildLiveDeps/main unit tests, not this glue */
-if (process.argv[1] && (process.argv[1].endsWith('cli/index.js') || process.argv[1].endsWith('cli\\index.js'))) {
+// Matches the compiled entry AND the source one. Only the .js form used to
+// match, so running the CLI from source did nothing at all and exited 0 --
+// which reads as "it worked" rather than "it never started".
+const ENTRY = /[\\/]cli[\\/]index\.(js|ts)$/;
+if (process.argv[1] && ENTRY.test(process.argv[1])) {
   main(process.argv.slice(2))
     .then((code) => {
       // The live TCP client's socket keeps the event loop alive even after

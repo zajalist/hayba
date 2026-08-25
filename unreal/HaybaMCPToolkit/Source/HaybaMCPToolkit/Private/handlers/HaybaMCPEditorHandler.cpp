@@ -1,4 +1,5 @@
 #include "HaybaMCPEditorHandler.h"
+#include "Interfaces/IPluginManager.h"
 #include "HaybaEditorOps.h"
 #include "HaybaMCPCaptureActor.h"
 #include "Editor.h"
@@ -203,6 +204,17 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::GetState(const TSharedPtr<FJsonObjec
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetBoolField(TEXT("ok"), true);
+
+    // The install is two artifacts that update independently -- this plugin and
+    // the npm server -- so they drift, and drift presents as individual
+    // commands being unknown rather than as a version gap. Reporting the
+    // version here is what lets a client (and `hayba-cli doctor`) say "these
+    // two are different" instead of the caller debugging one command at a time.
+    if (TSharedPtr<IPlugin> Self = IPluginManager::Get().FindPlugin(TEXT("HaybaMCPToolkit")))
+    {
+        Out->SetStringField(TEXT("plugin_version"), Self->GetDescriptor().VersionName);
+    }
+
     Out->SetStringField(TEXT("map"), World ? World->GetPathName() : FString());
     Out->SetBoolField(TEXT("pie_running"), GEditor->IsPlaySessionInProgress());
     Out->SetNumberField(TEXT("selection_count"), GEditor->GetSelectedActorCount());
