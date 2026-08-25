@@ -558,6 +558,16 @@ FHaybaHandlerResult FHaybaMCPRenderHandler::Handle(const FString& /*Command*/,
         return FHaybaHandlerResult::Ok(Out);
     }
 
+    // Attached whatever the outcome. It used to ride only on the success
+    // branch, so a render that ALSO hit a wait_timeout reported the timeout
+    // without mentioning that world_tick had been dropped from the wait set
+    // before the wait even started -- which is the fact most likely to explain
+    // the timeout to whoever is reading it.
+    if (S->bSkippedWorldTickInline)
+    {
+        Out->SetBoolField(TEXT("skippedWorldTickInline"), true);
+    }
+
     if (S->bWaitTimedOut)
     {
         Out->SetBoolField(TEXT("ok"), false);
@@ -622,10 +632,6 @@ FHaybaHandlerResult FHaybaMCPRenderHandler::Handle(const FString& /*Command*/,
             Out->SetNumberField(TEXT("fileBytes"), (double)SizeBytes);
             Out->SetNumberField(TEXT("renderDurationMs"), S->RenderMs);
             Out->SetNumberField(TEXT("waitMs"), S->WaitMs);
-            if (S->bSkippedWorldTickInline)
-            {
-                Out->SetBoolField(TEXT("skippedWorldTickInline"), true);
-            }
         }
     }
 

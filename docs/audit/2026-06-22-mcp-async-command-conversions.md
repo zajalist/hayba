@@ -79,8 +79,14 @@ the game thread"*. So the editor is frozen for as long as the wait takes, up to
 The code already works around one consequence rather than fixing it: it removes
 `world_tick` from the wait set when running inline, because a blocked game
 thread cannot advance `GFrameCounter`, so that predicate could never settle.
-The capability is silently dropped — you cannot wait for a world tick before a
-render, and nothing says so.
+You cannot wait for a world tick before a render.
+
+It does say so — `skippedWorldTickInline: true` comes back on the response.
+(An earlier revision of this note claimed the drop was silent. It is not, and
+the flag is set exactly where the drop happens. The one gap is that the flag
+is only attached on the SUCCESS branch, so a render that also hit a
+wait_timeout reports the timeout without mentioning that world_tick was never
+in the wait set to begin with.)
 
 **Why a ticker alone does not fix it.** `Handle()` is synchronous and already on
 the game thread. Anywhere it waits, it waits on the game thread. Making the
