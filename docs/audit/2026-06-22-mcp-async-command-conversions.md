@@ -1,6 +1,27 @@
 # MCP Async Command Conversions — Implementation Plan
 
-> Status: **planned, not implemented.** These three commands block the game thread (editor freeze) but no longer crash. They change command contracts and need a **running editor to smoke-test**, so they are intentionally not auto-merged. Implement on a branch and verify in-editor before merging.
+> Status: **both tasks implemented** (verified 2026-08-25, reading the code
+> rather than the status line this replaces).
+>
+> - Task 1 — `HaybaMCPBuildHandler` allocates through `FHaybaMCPJobRegistry`
+>   and returns `{job_id, status:"running"}` immediately; `build_status` reads
+>   the result back.
+> - Task 2 — `HaybaMCPIdleHandler` runs on `FTSTicker` and contains no
+>   `FPlatformProcess::Sleep`.
+>
+> This header said "planned, not implemented" long after both landed, which is
+> a worse failure than being out of date: anyone deciding whether the editor
+> still freezes on a build would have got the wrong answer from the document
+> written to tell them.
+>
+> **One instance of the pattern is left**, and it is not covered by either task
+> above: `HaybaMCPRenderHandler.cpp` still calls `FPlatformProcess::Sleep` in
+> its wait phase (line ~325), on the game thread, with a 30-second default
+> timeout. See "Remaining: render_camera" at the end.
+>
+> The original caution still applies to that one: it changes a command
+> contract and needs a running editor to smoke-test, so it is not something to
+> merge on compile-verification alone.
 
 **Goal:** Stop `wait_for_idle`/`wait_for_shaders`, `build_*`, and `test_run` from freezing the editor's game thread. All three run on the game thread (TcpServer marshals every command there — see `project_haybamcp_gamethread_dispatch`), so they cannot both occupy the game thread AND let it tick to make progress. The fix is to make them non-blocking / cooperative.
 
@@ -44,3 +65,36 @@ Each changes observable behavior: a previously-synchronous command becomes async
 
 ## Shared note
 Tasks 1 and 2 both want a small **async-job registry** (`TMap<FString,FJobState>` + `FCriticalSection` + a `*_status` reader). Build it once and share it — that is the deepening that makes "long-running command" a first-class, non-freezing concept in the plugin.
+
+---
+
+## Remaining: `render_camera`
+
+`HaybaMCPRenderHandler::RunOnGameThread` waits for shaders/assets to settle by
+polling in a loop with `FPlatformProcess::Sleep(POLL_INTERVAL_SECONDS)`. Its
+own comment states the constraint plainly: *"RunOnGameThread always executes on
+the game thread"*. So the editor is frozen for as long as the wait takes, up to
+`TimeoutSeconds`, which defaults to **30**.
+
+The code already works around one consequence rather than fixing it: it removes
+`world_tick` from the wait set when running inline, because a blocked game
+thread cannot advance `GFrameCounter`, so that predicate could never settle.
+The capability is silently dropped — you cannot wait for a world tick before a
+render, and nothing says so.
+
+**Why a ticker alone does not fix it.** `Handle()` is synchronous and already on
+the game thread. Anywhere it waits, it waits on the game thread. Making the
+wait cooperative requires the command to stop being synchronous.
+
+**The seam already exists, and has two precedents.** `FHaybaMCPJobRegistry`
+says in its own header that it is "shared on purpose" for exactly this, and
+both `build_*` (background worker) and `test_run` (deferred game-thread ticker
+pump) use it. `render_camera` would follow the `test_run` shape: return
+`{job_id, status:"running"}`, pump the settle-predicates on a ticker, capture
+and write on a later tick, publish the result to the registry.
+
+**Why it is not done here.** It changes what every existing caller receives —
+the TS wrapper, the reel runbook and the workflow skills all expect a
+synchronous image path. That is a deliberate product decision about the command
+surface, not a refactor, and this document's own guidance is that such changes
+are not auto-merged.
