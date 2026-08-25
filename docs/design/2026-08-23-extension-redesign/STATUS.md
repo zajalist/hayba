@@ -94,9 +94,10 @@ regenerating them at heavier weight is the user's call.
 
 ## Deliberately not done
 
-F14's registration unification, still. The reasoning below applied equally to
-the colour literals when it was written; it stopped applying once the style
-layer could actually be built here, so those were swept.
+Nothing on this list any more. Both entries were deferred for the same stated
+reason — stacking unverified C++ on an unverified style layer makes the
+eventual build problem larger, not smaller — and that reason expired once the
+plugin could actually be built and run from this worktree.
 
 ~~The 53 inline `FLinearColor` literals across nine panels.~~ **Swept**, down
 to 34 that are deliberately not chrome — handler data, Unreal's own graph
@@ -104,9 +105,17 @@ grammar, one pending palette axis, and two load-bearing alphas. Each remainder
 is listed with its reason in 13-COLOUR-MIGRATION, because an undocumented
 remainder invites someone to sweep the ones that must not be swept.
 
-The original reason for deferring both: stacking unverified C++ on an
-unverified style layer makes the eventual build problem larger rather than
-smaller. That is still true of F14.
+~~F14's registration unification.~~ **Was already done**, which this section
+kept asserting otherwise long after 03-MASTER-PLAN recorded the finding.
+Satellites self-register via `RegisterExternalHandler`; GAS and MetaSound both
+`LoadModuleChecked` so the core router exists first regardless of load order.
+The one real change was making a dropped registration *say so* instead of
+silently no-opping — a dropped handler otherwise means every command it
+declares just does not exist, with nothing to explain why.
+
+Two docs disagreeing about whether work is done is worse than either being
+wrong on its own, so: 03-MASTER-PLAN §F14 is the record, and this section was
+the stale one.
 
 
 ---
