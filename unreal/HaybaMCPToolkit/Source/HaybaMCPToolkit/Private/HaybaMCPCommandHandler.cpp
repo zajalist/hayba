@@ -1,4 +1,5 @@
 #include "HaybaMCPCommandHandler.h"
+#include "HaybaSceneQuery.h"
 #include "HaybaMCPGameThread.h"
 #include "IHaybaMCPHandler.h"
 #include "HaybaMCPSeh.h"
@@ -347,11 +348,11 @@ static AActor* FindActorByLabel_GameThread(const FString& Label)
     if (!GEditor) return nullptr;
     UWorld* World = GEditor->GetEditorWorldContext().World();
     if (!World) return nullptr;
-    for (TActorIterator<AActor> It(World); It; ++It)
-    {
-        if (It->GetActorLabel() == Label) return *It;
-    }
-    return nullptr;
+    // Ambiguous label -> no actor, deliberately. This snapshot feeds the
+    // before/after diff a user approves in Plan Mode; describing the wrong
+    // actor's values would be worse than describing none.
+    const HaybaSceneQuery::FActorLookup Hit = HaybaSceneQuery::FindActor(World, Label);
+    return Hit.IsAmbiguous() ? nullptr : Hit.Actor;
 }
 
 /**

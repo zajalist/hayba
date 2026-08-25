@@ -1,4 +1,5 @@
 #include "HaybaMCPStaticMeshHandler.h"
+#include "HaybaSceneQuery.h"
 #include "HaybaMCPParams.h"
 
 #include "Engine/StaticMesh.h"
@@ -436,9 +437,10 @@ static FHaybaHandlerResult MeshExtract(const TSharedPtr<FJsonObject>& P, bool bS
         UWorld* World = GEditor->GetEditorWorldContext().World();
         if (!World) return FHaybaHandlerResult::Err(TEXT("mesh_extract: no editor world"));
 
-        AActor* Found = nullptr;
-        for (TActorIterator<AActor> It(World); It; ++It)
-            if (*It && (*It)->GetActorLabel() == ActorLabel) { Found = *It; break; }
+        const HaybaSceneQuery::FActorLookup Hit = HaybaSceneQuery::FindActor(World, ActorLabel);
+        if (Hit.IsAmbiguous())
+            return FHaybaHandlerResult::Err(HaybaSceneQuery::AmbiguousError(TEXT("mesh_extract"), ActorLabel, Hit.Candidates));
+        AActor* Found = Hit.Actor;
         if (!Found) return FHaybaHandlerResult::Err(FString::Printf(TEXT("mesh_extract: actor not found by label: %s"), *ActorLabel));
 
         TArray<UDynamicMeshComponent*> Comps;

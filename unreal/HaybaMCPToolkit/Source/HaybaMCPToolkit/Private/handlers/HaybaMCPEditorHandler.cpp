@@ -1,4 +1,5 @@
 #include "HaybaMCPEditorHandler.h"
+#include "HaybaSceneQuery.h"
 #include "Interfaces/IPluginManager.h"
 #include "HaybaMCPProtocol.h"
 #include "HaybaEditorOps.h"
@@ -358,9 +359,12 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::FocusActor(const TSharedPtr<FJsonObj
     UWorld* World = GEditor->GetEditorWorldContext().World();
     if (!World) return FHaybaHandlerResult::Err(TEXT("editor_focus_actor: no editor world"));
 
-    AActor* Target = nullptr;
-    for (TActorIterator<AActor> It(World); It; ++It)
-        if (*It && (*It)->GetActorLabel() == Label) { Target = *It; break; }
+    // Also accepts a unique object name now, which is strictly more useful
+    // than label-only and matches how every other handler resolves an actor.
+    const HaybaSceneQuery::FActorLookup Hit = HaybaSceneQuery::FindActor(World, Label);
+    if (Hit.IsAmbiguous())
+        return FHaybaHandlerResult::Err(HaybaSceneQuery::AmbiguousError(TEXT("editor_focus_actor"), Label, Hit.Candidates));
+    AActor* Target = Hit.Actor;
     if (!Target) return FHaybaHandlerResult::Err(FString::Printf(TEXT("editor_focus_actor: actor not found by label: %s"), *Label));
 
     // Frame the actor's world bounds. Camera sits back along a default 3/4 view

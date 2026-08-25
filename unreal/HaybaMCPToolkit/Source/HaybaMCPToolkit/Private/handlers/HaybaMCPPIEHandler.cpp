@@ -1,4 +1,5 @@
 #include "HaybaMCPPIEHandler.h"
+#include "HaybaSceneQuery.h"
 #include "HaybaPIERuntimeOps.h"
 
 #include "Dom/JsonObject.h"
@@ -185,11 +186,13 @@ static AActor* ResolveActor(UWorld* World, const TSharedPtr<FJsonObject>& P, FSt
 
     if (!Label.IsEmpty())
     {
-        for (TActorIterator<AActor> It(World); It; ++It)
+        const HaybaSceneQuery::FActorLookup Hit = HaybaSceneQuery::FindActor(World, Label);
+        if (Hit.IsAmbiguous())
         {
-            AActor* A = *It;
-            if (A && A->GetActorLabel() == Label) return A;
+            OutError = HaybaSceneQuery::AmbiguousError(TEXT("pie"), Label, Hit.Candidates);
+            return nullptr;
         }
+        if (Hit.Actor) return Hit.Actor;
         OutError = FString::Printf(TEXT("actor not found by label: %s"), *Label);
         return nullptr;
     }
