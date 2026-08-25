@@ -48,10 +48,6 @@ import { editorStreamLogHandler, meta as streamLogMeta } from './editor/editor-s
 import { handleWaitForShaders, meta as waitForShadersMeta } from './wait-for-shaders.js';
 import { handleWaitForIdle, meta as waitForIdleMeta, schema as waitForIdleSchema } from './wait-for-idle.js';
 import { handleRenderCamera, meta as renderCameraMeta, schema as renderCameraSchema } from './render-camera.js';
-import { handleFabLoginStatus, meta as fabLoginStatusMeta } from './fab/login-status.js';
-import { handleFabLibraryList, meta as fabLibraryListMeta } from './fab/library-list.js';
-import { handleFabMarketplaceSearch, meta as fabMarketplaceSearchMeta } from './fab/marketplace-search.js';
-import { handleFabDownload, meta as fabDownloadMeta } from './fab/download.js';
 
 // ── Agent memory tool handlers (issue #355) ──────────────────────────────────
 import { memoryWriteHandler, meta as memoryWriteMeta } from './memory/write.js';
@@ -3239,61 +3235,12 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     schema: renderCameraSchema.shape,
   },
 
-  // ── Fab connector domain ────────────────────────────────────────────────
-  {
-    name: 'hayba_fab_login_status',
-    description: 'Check whether the user is currently logged into Fab through the UE editor.',
-    meta: fabLoginStatusMeta,
-    handler: async (args, _session) => handleFabLoginStatus(args as any),
-    cost: 'low',
-    returns: '{logged_in:bool, user?:string}',
-    schema: {},
-  },
-  {
-    name: 'hayba_fab_library_list',
-    description: "List a page of the user's Fab library (assets they own).",
-    meta: fabLibraryListMeta,
-    handler: async (args, _session) => handleFabLibraryList(args as any),
-    cost: 'medium',
-    returns: '{assets:[{id,title,type}], next_cursor?}',
-    schema: {
-      count: z.number().int().min(1).max(100).optional().describe('Number of results per page (default 20).'),
-      page: z.string().optional().describe('Pagination cursor from previous call.'),
-    },
-  },
-  {
-    name: 'hayba_fab_marketplace_search',
-    description: 'Search the public Fab marketplace for assets matching a query.',
-    meta: fabMarketplaceSearchMeta,
-    handler: async (args, _session) => handleFabMarketplaceSearch(args as any),
-    cost: 'medium',
-    returns: '{assets:[{id,title,type,price}], next_cursor?}',
-    schema: {
-      query: z.string().min(1).describe('Search query string.'),
-      type: z.string().optional().describe('Filter by asset type (e.g. "Material", "StaticMesh").'),
-      page: z.string().optional().describe('Pagination cursor from previous call.'),
-    },
-  },
-  {
-    name: 'hayba_fab_download',
-    description: 'Download a Fab asset into the active UE project.',
-    meta: fabDownloadMeta,
-    handler: async (args, _session) => handleFabDownload(args as any),
-    cost: 'high',
-    returns: '{ok, import_path}',
-    schema: {
-      asset_id: z.string().min(1).describe('Fab asset identifier.'),
-      download_url: z.string().url().describe('Signed download URL from library_list / search result item.'),
-      target_dir: z
-        .string()
-        .optional()
-        .describe('Project content path, e.g. /Game/Fab/MyAsset. Defaults to /Game/Fab/<asset_id>.'),
-      wait: z
-        .boolean()
-        .optional()
-        .describe('If true, blocks until download completes (up to 10min cap on the C++ side). Default true.'),
-    },
-  },
+  // The Fab connector domain was removed. Its four tools sent fab_* commands
+  // that no plugin has ever declared -- they were written against an
+  // editor-side integration that was never built, so every call answered
+  // "unknown command", which reads as a stale plugin rather than a missing
+  // feature. Download Fab content through the Epic Games Launcher or the
+  // in-editor Fab plugin, then use asset_import / asset_browse on the result.
 
   // ── Asset-source connectors (Poly Haven / ambientCG / Sketchfab) ────────
   {
@@ -3909,7 +3856,6 @@ export function inferDir(name: string): string | null {
   if (name.startsWith('material_')) return 'material';
   if (name.startsWith('memory_')) return 'memory';
   if (name.startsWith('ui_')) return 'ui';
-  if (name.startsWith('hayba_fab_')) return 'fab';
   if (name.startsWith('hayba_polyhaven_')) return 'asset-sources';
   if (name.startsWith('hayba_ambientcg_')) return 'asset-sources';
   if (name.startsWith('hayba_sketchfab_')) return 'asset-sources';

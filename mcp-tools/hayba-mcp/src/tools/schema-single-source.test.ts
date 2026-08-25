@@ -108,41 +108,6 @@ describe('single-source migration: render_camera', () => {
   });
 });
 
-// ── fab connector domain ────────────────────────────────────────────────────
-
-describe('single-source migration: fab tools', () => {
-  const fabTools = [
-    'hayba_fab_login_status',
-    'hayba_fab_library_list',
-    'hayba_fab_marketplace_search',
-    'hayba_fab_download',
-  ];
-
-  for (const name of fabTools) {
-    it(`${name} is in STANDARD_DESCRIPTORS`, () => {
-      getDescriptor(name);
-    });
-
-    it(`${name} deriveSignature returns non-null signature`, () => {
-      const sig = deriveSignature(name);
-      expect(sig, `${name} must be derivable`).not.toBeNull();
-      expect(sig!.cost).toBeDefined();
-    });
-  }
-
-  it('hayba_fab_library_list has count and page params', () => {
-    const sig = deriveSignature('hayba_fab_library_list');
-    expect(sig!.params).toHaveProperty('count');
-    expect(sig!.params).toHaveProperty('page');
-    expect(sig!.params['count']).toMatch(/\(optional\)/);
-  });
-
-  it('hayba_fab_download has asset_id (required)', () => {
-    const sig = deriveSignature('hayba_fab_download');
-    expect(sig!.params['asset_id']).toMatch(/\(required\)/);
-  });
-});
-
 // ── asset-source connectors ─────────────────────────────────────────────────
 
 describe('single-source migration: asset-source tools', () => {
@@ -274,10 +239,6 @@ describe('no-double-declaration invariant', () => {
     'wait_for_shaders',
     'wait_for_idle',
     'render_camera',
-    'hayba_fab_login_status',
-    'hayba_fab_library_list',
-    'hayba_fab_marketplace_search',
-    'hayba_fab_download',
     'hayba_polyhaven_search',
     'hayba_polyhaven_download',
     'hayba_ambientcg_search',

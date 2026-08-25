@@ -160,7 +160,6 @@ const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: 
  *  convention every domain follows. */
 function domainOf(name: string): string {
   if (name === 'query_ue_docs') return 'docs';
-  if (name.startsWith('hayba_fab_')) return 'fab';
   if (
     name.startsWith('hayba_polyhaven_') ||
     name.startsWith('hayba_ambientcg_') ||
