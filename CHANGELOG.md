@@ -5,6 +5,31 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 ## [Unreleased]
 
 ### Fixed
+- `python_run`'s two pre-execution crash guards now actually run. The validated
+  handler that refuses a script opening a TCP socket to the plugin's own port
+  (deadlocks the game thread) and one registering an engine-lifetime callback
+  (the callable is garbage-collected and the next broadcast faults) existed and
+  was registered to nothing, so `python_run` used the unguarded handler. Only a
+  post-condition rule was live, which reports after the deadlock. The socket
+  detector also matched only `sock.connect((host, port))` and missed
+  `socket.create_connection((host, port))` — arguably the likelier idiom.
+- `net_set_replication` resolved its target actor by label and took the first
+  match, then wrote to it (`SetReplicates`, `bAlwaysRelevant`, `NetDormancy`).
+  Labels are not unique in Unreal, so on a duplicated label it reconfigured an
+  arbitrary actor and reported success. It now refuses and names the
+  candidates. Object names and path names are unique and still resolve
+  directly, so unambiguous lookups are unaffected.
+- `editor_pie_assert` / `editor_pie_wait_for` accepted a *suffix* of an actor
+  path and used the first actor it matched. A short suffix such as `1` ends the
+  name of every actor numbered 1, 11, 21 …, so an assertion could silently
+  check an unrelated actor and report a verdict about it — a false pass in a
+  test harness. An ambiguous suffix now refuses, naming what it matched; exact
+  path and object names are unaffected.
+- A failed command that the editor does not recognise no longer reports a bare
+  `Unknown command`. When the plugin and the npm server disagree on protocol
+  version, the failure now says so and which half to update; when they agree,
+  it says explicitly that this is *not* a version gap and points at the command
+  catalogue, rather than sending anyone to reinstall a healthy plugin.
 - `material_get_info` now reports each graph parameter's authored name, exact
   parameter type, and typed default value, with explicit availability flags
   for invalid/non-finite metadata instead of plausible omissions. Master
@@ -21,6 +46,19 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 - `asset_registry_query` now uses a native, read-only AssetRegistry handler instead of blocked dynamic Python reflection, with deterministic bounded pagination, strict input checks, and fail-closed response validation.
 
 ### Added
+- `hayba-cli configure` writes this server's entry into the MCP config of every
+  client it detects — Claude Code, Cursor, VS Code, Claude Desktop — replacing
+  the hand-edited JSON step that fails silently when the absolute path is
+  wrong. It preserves other servers and unrelated keys, refuses to overwrite an
+  entry that differs (without `--force`), refuses to rewrite a config it cannot
+  parse, backs up anything it changes, and recognises an existing entry by the
+  path it launches rather than its name, so an install registered under any
+  name is left alone instead of duplicated.
+- `hayba-cli doctor` gained a fifth check: whether any client is actually
+  pointed at this server. The other four examine the Unreal half and can all
+  pass while nothing works, because nothing was ever asked to start the server
+  — a failure with no error message anywhere. It is reported first, and names
+  the directory it searched.
 - `editor_pie_click_actor` performs exact OS-input-free world interaction
   against a live visible PIE viewport without moving the desktop cursor or
   foregrounding its window. It reuses player-controller projection, rejects
