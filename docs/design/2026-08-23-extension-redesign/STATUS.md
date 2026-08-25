@@ -190,3 +190,67 @@ An earlier note in 03-MASTER-PLAN said "#415 landed on this branch as
 3b2d102e". It did not. The A1 conclusion stands — it rests on reading this
 worktree's code and importing a glTF and an HDR through a build of THIS branch
 — but the attribution was wrong and is now marked as such.
+
+---
+
+## The merge, measured (2026-08-25)
+
+The note above says merging "is not mechanical" and lists the rework's renames
+as the reason. That was a guess. Here is the actual damage, from
+`git merge-tree --write-tree HEAD feat/crash-resilience-advisory-hardening`:
+
+    conflicting files        8
+    conflict hunks          13
+    conflicted lines       446
+    merged tree             59b8504c
+
+**The feared cause is not in the list.** The plugin directory rename, the moved
+handlers, and the validator's on-disk format change produce *zero* conflicts —
+git tracked all three cleanly. Every panel file, `HaybaMCPModule.cpp`, and the
+validator's `tool-hooks.ts` and `runner.test.ts` all auto-merge. The pessimism
+was unearned, and planning around it would have been planning around nothing.
+
+### What actually conflicts, and why it is the interesting kind
+
+| File | Hunks | Lines |
+|---|---|---|
+| `handlers/HaybaMCPDataAssetHandler.cpp` | 2 | 80 |
+| `handlers/HaybaMCPRenderHandler.cpp` | 2 | 58 |
+| `HaybaMCPCommandHandler.cpp` | 3 | ~150 |
+| `handlers/HaybaMCPPhysicsHandler.cpp` | 1 | 15 |
+| `validator/rules.ts` | 1 | — |
+| `tools/index.ts`, `code-mode/list-tool-categories.ts`, `python-run-validator-wrap.ts` | 4 | — |
+
+These are **not** either/or conflicts. In almost every case both branches
+independently improved the *same* code path, and the merge needs both edits
+kept, not one chosen:
+
+- **DataAssetHandler** — the hardening branch made a discarded save result
+  truthful (`ok:true` regardless of whether the save actually succeeded); this
+  branch changed the same block's output shape. Both are right. The resolution
+  is this branch's shape carrying that branch's honesty.
+- **RenderHandler** — that branch added timeout-safety (do not read
+  task-written fields after a signal timeout; the task owns the shared ref) and
+  PNG dimension verification. This branch touched the same function. Dropping
+  either side reintroduces a real bug.
+- **CommandHandler** — this branch *removed* the inline `ui_memory_set` /
+  `ui_tool_stream` router special-cases into a proper `UIBridgeHandler`, while
+  that branch edited them in place. The resolution is "take this branch's
+  extraction, and re-apply that branch's edits inside the new handler" — the
+  one hunk where a careless `--ours` silently loses work.
+
+### What this means for the decision
+
+The merge is roughly a day of careful work, not a rewrite. The cost is not in
+the volume; it is that **six of the eight conflicts are semantic** — both sides
+correct, both needed — so this cannot be resolved by picking a side, and a
+resolution done quickly will look fine and quietly drop hardening.
+
+Two things must be true afterwards, and neither is implied by "it compiles":
+this branch has *never* been tested against those hardening commits, and the
+survival suite that would test it (`test-editor-survival.ps1`, 706 lines) lives
+only on the other branch. So the order is: merge, then run that suite against
+the merged result, and only then treat R4's reliability claims as citable.
+
+Still a decision, not a task — it decides what ships and what gets re-tested.
+But it is now a decision with a number attached.
