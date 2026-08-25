@@ -433,3 +433,43 @@ from `tools/prompts/hayba-request-input.ts` and
 Nothing here was findable by running the code or by reading a test. Both
 defects are absences — a call that does not happen — and a green suite is
 exactly what an absence looks like from inside the suite.
+
+### Correction: "most of the 34 are legitimate" was not checked
+
+I wrote that and had verified two. Checking the rest changes the picture, though
+not the severity — nothing found is a hazard. The accurate classification:
+
+**Superseded entry points (4).** `registerPyTool`, `registerJsonTool`,
+`guardHandlerWithEvidence`, `parseEffectsFromDescription`. Each is an older
+door into a module whose *current* door is live and wired. The
+response-evidence contract in particular is fully applied — via
+`isUnderEvidenceContract` / `withEvidenceWarning` at `register-tool.ts:147`,
+not via the `guardHandlerWithEvidence` wrapper the module's own docblock
+describes. The docblock is right about the seam and wrong about the function.
+
+I suspected these were a hazard — that `registerPyTool` might bypass the
+evidence contract, silently opting any tool registered through it out of the
+silent-success protection. It does not: it calls `registerTool`, the same
+seam. Worth having checked, and worth recording that the answer was no.
+
+**Per-domain constant lists (11).** Now pinned by
+`non-idempotent-coverage.test.ts` — see above.
+
+**An unwired concept (1).** `plumb/junction.ts` defines `junctionType` and the
+`JunctionType` union `PORTAL | BOOLEAN_UNION | CLASH` — what happens where a
+native and an imperial space meet. Six tests. **Nothing in the product consumes
+any of the three values**, so the concept exists only as a tested function.
+
+Not fixed, because wiring it would mean inventing where a junction verdict
+belongs in the PLUMB pipeline, and that is a design decision about a headline
+feature rather than a gap to close. Flagged for whoever owns PLUMB's roadmap:
+either it earns a consumer or it should go, and right now it is neither.
+
+**Genuinely unused, no successor (1).** `awaitEditorResponsive` in
+`tcp-client.ts`.
+
+**Deliberate test seams and type-only exports.** The remainder.
+
+Nothing here is deleted. Deleting a superseded factory is safe but churns files
+during a pending merge for no behavioural gain, and the two findings that
+matter are recorded above rather than tidied away.
