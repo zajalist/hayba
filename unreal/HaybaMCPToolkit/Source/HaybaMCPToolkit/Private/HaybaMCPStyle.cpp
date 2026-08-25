@@ -255,7 +255,7 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
         Icon(TEXT("Hayba.Icon.Validation"), TEXT("rules"));        // what must be true
         Icon(TEXT("Hayba.Icon.Memory"),     TEXT("blueprint"));    // Lessons: the written why
         Icon(TEXT("Hayba.Icon.MCP"),        TEXT("connect"));      // which tools the agent sees
-        Icon(TEXT("Hayba.Icon.Recipes"),    TEXT("recipe"));       // recipes are Recipes
+        Icon(TEXT("Hayba.Icon.Recipes"),    TEXT("recipe"));       // registered for the Recipes section under Library
         Icon(TEXT("Hayba.Icon.Setup"),      TEXT("run"));          // first-run wizard
 
         // Still SVG: a 72px hero image with no raster equivalent, and the logo
