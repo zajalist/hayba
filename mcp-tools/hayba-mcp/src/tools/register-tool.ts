@@ -38,6 +38,7 @@ import { recordSchema, type Cost } from './schema-registry.js';
 import { registerToolMeta } from './tool-meta-registry.js';
 import { appendNicheBriefing } from './niche-briefing.js';
 import type { RichToolHandler, RichToolResult, ToolHandler, ToolResult, SessionManager } from './types.js';
+import { isToolDisabled } from './disabled-tools-watcher.js';
 
 export type ToolDescriptor = {
   /** MCP tool name, e.g. "material_create". */
@@ -164,12 +165,23 @@ export function materializeTool(
  * appendMeta'd description + the standard handler wrapper, plus remember(name).
  * Call only inside the eager (Code Mode off) block, matching the old
  * hand-written server.tool/remember sites.
+ *
+ * A tool the user has disabled is not registered. The deferred path has
+ * honoured that since it was written (registerByName in routing/register.ts);
+ * this one did not, so turning a tool off worked under Code Mode and did
+ * nothing without it -- the same setting, two answers, depending on a mode the
+ * user was not thinking about when they set it.
+ *
+ * Returns whether it registered, so a caller can report what it skipped
+ * instead of a silently shorter tool list.
  */
 export function registerTool(
   server: McpServer,
   session: SessionManager,
   d: ToolDescriptor,
-): void {
+): boolean {
+  if (isToolDisabled(d.name)) return false;
+
   const tool = materializeTool(session, d);
   server.tool(
     tool.name,
@@ -178,4 +190,5 @@ export function registerTool(
     tool.handler,
   );
   registerToolMeta(d.name, d.meta);
+  return true;
 }
