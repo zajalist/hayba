@@ -22,6 +22,10 @@ class EmbedRequest(BaseModel):
     detect_queries: list[str] | None = None
 
 
+class EmbedTextRequest(BaseModel):
+    texts: list[str]
+
+
 @app.get("/health")
 def health():
     """The client derives `available` from a non-empty `models` map, so every
@@ -66,6 +70,28 @@ def embed(req: EmbedRequest):
         out["detections"] = owl.detect(img, queries)
 
     return out
+
+
+@app.post("/embed_text")
+def embed_text(req: EmbedTextRequest):
+    """Embed phrases into the same space as /embed.
+
+    Without this, CLIP here could only answer "what does this picture look
+    like" and never "which of these pictures is the mossy boulder" -- so asset
+    selection stayed on filename and description text while an image-text model
+    sat loaded beside it.
+
+    Vectors come back L2-normalised, the same as /embed, so a caller compares
+    them with a plain dot product.
+    """
+    if not req.texts:
+        raise HTTPException(400, "texts must not be empty")
+    if len(req.texts) > 256:
+        raise HTTPException(400, f"too many texts ({len(req.texts)}); cap is 256")
+
+    clip = get_clip()
+    vecs = clip.encode_text(req.texts).tolist()
+    return {"embeddings": vecs, "dim": len(vecs[0]) if vecs else 0}
 
 
 class ValidateRequest(BaseModel):

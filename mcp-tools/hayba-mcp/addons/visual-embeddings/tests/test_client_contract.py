@@ -25,6 +25,7 @@ client = TestClient(app)
 CLIENT_ENDPOINTS = {
     ("GET", "/health"),
     ("POST", "/embed"),
+    ("POST", "/embed_text"),
     ("POST", "/segment_project"),
 }
 

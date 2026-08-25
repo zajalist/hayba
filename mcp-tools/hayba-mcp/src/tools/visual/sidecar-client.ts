@@ -113,6 +113,31 @@ export async function embedImage(imageBase64: string, opts?: { spatial?: boolean
   return res.json() as Promise<{ embedding: number[]; dim: number }>;
 }
 
+/**
+ * Embed phrases into the same space as `embedImage`.
+ *
+ * The pair is what makes CLIP useful here: an image vector alone can only say
+ * what a thumbnail looks like, never which thumbnail matches "mossy boulder".
+ * Both sides come back L2-normalised, so `cosineSimilarity` is a dot product.
+ */
+export async function embedText(
+  texts: string[],
+  opts?: { timeoutMs?: number },
+): Promise<{ embeddings: number[][]; dim: number }> {
+  assertSidecarAvailable();
+  if (texts.length === 0) return { embeddings: [], dim: 0 };
+  const res = await fetchWithTimeout(`${sidecarUrl()}/embed_text`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ texts }),
+    timeoutMs: opts?.timeoutMs ?? DEFAULT_EMBED_TIMEOUT_MS,
+  });
+  if (!res.ok) {
+    throw new Error(`sidecar /embed_text ${res.status}: ${await res.text()}`);
+  }
+  return res.json() as Promise<{ embeddings: number[][]; dim: number }>;
+}
+
 export interface SegmentPart {
   label: string;
   color?: string;

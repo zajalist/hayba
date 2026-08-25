@@ -32,6 +32,24 @@ class _Clip:
             v = v / v.norm(dim=-1, keepdim=True)
             return v[0].cpu().numpy()
 
+    def encode_text(self, texts: "list[str]"):
+        """Embed phrases into the same space as encode_image.
+
+        The tokenizer has been loaded here since this wrapper was written and
+        nothing ever called it -- half of what makes CLIP useful was sitting
+        unused. Matching a phrase against an asset thumbnail needs both sides
+        of the pair, and the vectors are L2-normalised exactly as the image
+        side is, so a dot product IS the cosine similarity.
+        """
+        import torch
+
+        with torch.no_grad():
+            device = next(self.m.parameters()).device
+            toks = self.tok(texts).to(device)
+            v = self.m.encode_text(toks)
+            v = v / v.norm(dim=-1, keepdim=True)
+            return v.cpu().numpy()
+
 
 def available() -> bool:
     """Whether CLIP could run — the import resolves. Reported by /health so the
