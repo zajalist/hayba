@@ -2603,10 +2603,21 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                 bool bReplacementNameFreed = true;
                 if (NewWidget->GetFName() == FinalName)
                 {
+                    // Move it OUT of the widget tree, not just to another name
+                    // inside it. Renaming within WBP->WidgetTree leaves the
+                    // object owned by the tree, and UMG's compiler enumerates
+                    // by ownership rather than by walking from the root -- so a
+                    // discarded staging widget was still visited and ensured on
+                    // ("Widget [...] was added but did not get a GUID"), and
+                    // this handler's own leaked-name check then refused the
+                    // next operation. Verified with a probe: after a replace,
+                    // GetAllWidgets did not list it and
+                    // GetObjectsWithOuter(WidgetTree) did.
+                    UObject* const Graveyard = GetTransientPackage();
                     const FName RollbackName = MakeUniqueObjectName(
-                        WBP->WidgetTree, NewClass, TEXT("HaybaMCP_ReplacementStagingRollback"));
+                        Graveyard, NewClass, TEXT("HaybaMCP_ReplacementStagingRollback"));
                     bReplacementNameFreed = NewWidget->Rename(
-                        *RollbackName.ToString(), WBP->WidgetTree,
+                        *RollbackName.ToString(), Graveyard,
                         REN_DontCreateRedirectors | REN_DoNotDirty)
                         && NewWidget->GetFName() == RollbackName;
                 }
