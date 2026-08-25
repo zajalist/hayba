@@ -18,6 +18,7 @@ function ctxWith(dispatch?: RecipeUeBridge): RecipeContext {
     stack: [], maxDepth: 8,
     runRecipe: async () => ({ ok: true, outputs: {}, side_effects: [], durationMs: 0 }),
     dispatch,
+    placed: () => {},
   };
 }
 

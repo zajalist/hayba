@@ -161,3 +161,104 @@ describe('RecipeRuntime.runRecipe', () => {
     // 'actor_spawn' appears in both parent and child — should appear once, in first-seen order
   });
 });
+
+describe('a run returns its own verdict', () => {
+  let registry: ExecutorRegistry;
+  let runtime: RecipeRuntime;
+  let specs: Map<string, RecipeSpec>;
+
+  // A requirement that is trivially satisfiable or violable depending on where
+  // the instance sits, so the verdict can be steered from the test.
+  const withRequires = (id: string): RecipeSpec =>
+    makeSpec(id, 'k.place', {
+      requires: [{
+        primitive: 'clearance',
+        params: { min_m: 1 },
+        binding: { asset: '/Game/Test/SM_Thing.SM_Thing' },
+        hard: true,
+      }],
+    });
+
+  const instance = (x: number) => ({
+    object: `Thing_${x}`,
+    asset: '/Game/Test/SM_Thing.SM_Thing',
+    transform: { pos: [x, 0, 0] as [number, number, number], quat: [0, 0, 0, 1] as [number, number, number, number], scale: [1, 1, 1] as [number, number, number] },
+  });
+
+  beforeEach(() => {
+    registry = new ExecutorRegistry();
+    specs = new Map();
+    runtime = new RecipeRuntime({ registry, getSpec: (id) => specs.get(id), maxDepth: 8 });
+  });
+
+  it('says nothing when there is nothing to judge', async () => {
+    specs.set('com.t.plain', makeSpec('com.t.plain', 'k.plain'));
+    registry.register('k.plain', async () => ({ v: 1 }));
+
+    const r = await runtime.runRecipe('com.t.plain', {});
+
+    // No declared requirements and no bound constraints: a verdict here would
+    // be noise, not reassurance.
+    expect(r.verdict).toBeUndefined();
+  });
+
+  it('judges what the executor reported, without being asked', async () => {
+    specs.set('com.t.place', withRequires('com.t.place'));
+    registry.register('k.place', async (_p, ctx) => {
+      ctx.placed([instance(0), instance(10)]);
+      return { v: 1 };
+    });
+
+    const r = await runtime.runRecipe('com.t.place', {});
+
+    // The whole point: the answer arrives with the edit. Nobody navigated to
+    // a Rules panel to ask for it.
+    expect(r.ok).toBe(true);
+    expect(r.verdict?.checked).toBe(true);
+    // Not merely present: the clearance constraint actually ran against both
+    // instances. An empty gate list would mean the verdict judged nothing.
+    const ran = r.verdict?.plumb?.gates.flatMap(g => g.constraints) ?? [];
+    expect(ran.map(c => c.primitive)).toContain('clearance');
+  });
+
+  it('refuses to call an unchecked run a clean one', async () => {
+    specs.set('com.t.place', withRequires('com.t.place'));
+    // An executor that declares requirements but reports nothing has checked
+    // nothing. Reporting `ok` here would be the exact lie the validator
+    // refuses to tell when a geometry rule has no geometry.
+    registry.register('k.place', async () => ({ v: 1 }));
+
+    const r = await runtime.runRecipe('com.t.place', {});
+
+    expect(r.ok).toBe(true);
+    expect(r.verdict?.checked).toBe(false);
+    expect(r.verdict?.plumb).toBeUndefined();
+    expect(r.verdict?.reason).toMatch(/reported no instances/);
+  });
+
+  it('judges instances a child recipe placed', async () => {
+    specs.set('com.t.parent', makeSpec('com.t.parent', 'k.parent', {
+      requires: withRequires('x').requires,
+    }));
+    specs.set('com.t.child', makeSpec('com.t.child', 'k.place'));
+    registry.register('k.parent', async (_p, ctx) => {
+      await ctx.runRecipe('com.t.child', {});
+      return { v: 1 };
+    });
+    registry.register('k.place', async (_p, ctx) => {
+      ctx.placed([instance(0)]);
+      return { v: 1 };
+    });
+
+    const r = await runtime.runRecipe('com.t.parent', {});
+
+    // Delegating placement to a child must not lose the judgement -- otherwise
+    // a recipe could dodge its own requirements by wrapping another one.
+    expect(r.verdict?.checked).toBe(true);
+  });
+
+  // NOTE: `judge()` catches a throwing evaluator and reports checked:false.
+  // That path has no test, deliberately -- PLUMB proved defensive enough that
+  // no input I could construct actually makes it throw, and a test that cannot
+  // fail for the reason it names is worse than an acknowledged gap.
+});

@@ -2,7 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { frameTargetExecutor, COMPOSITION_FRAME_TARGET_KIND } from './frame_target.js';
 import type { RecipeContext } from '../types.js';
 
-const ctxStub: RecipeContext = { stack: [], maxDepth: 8, runRecipe: async () => ({ ok: true, outputs: {}, side_effects: [], durationMs: 0 }) };
+const ctxStub: RecipeContext = {
+  stack: [], maxDepth: 8,
+  runRecipe: async () => ({ ok: true, outputs: {}, side_effects: [], durationMs: 0 }),
+  placed: () => {},
+};
 
 describe('frameTargetExecutor', () => {
   it('returns a camera_transform object with location, rotation, and fov', async () => {

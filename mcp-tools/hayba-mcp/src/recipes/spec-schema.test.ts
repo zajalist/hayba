@@ -78,3 +78,33 @@ describe('recipe spec schema', () => {
     if (withoutReads.ok) expect(withoutReads.spec.determinism.reads).toEqual([]);
   });
 });
+
+describe('requirements must be evaluatable, not merely well-shaped', () => {
+  const base = {
+    id: 'com.test.req', version: '1.0.0', category: 'test', title: 'T',
+    description: '', author: 'test', params: [], executor: { kind: 'k' },
+    determinism: { pure: true, declared_outputs: [], side_effects: [], reads: [], seed_param: null },
+  };
+
+  it('rejects a primitive outside the closed set', () => {
+    // evaluate() SKIPS an unrecognised primitive, on the assumption that this
+    // parse rejected it. Nothing used to call that validation, so such a spec
+    // loaded fine and was then reported satisfied while checking nothing.
+    const r = parseRecipeSpec({
+      ...base,
+      requires: [{ primitive: 'no_such_primitive', params: {}, binding: { asset: '/Game/T.T' } }],
+    });
+
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/primitive/i);
+  });
+
+  it('still accepts a requirement the evaluator understands', () => {
+    const r = parseRecipeSpec({
+      ...base,
+      requires: [{ primitive: 'clearance', params: { min_m: 1 }, binding: { asset: '/Game/T.T' } }],
+    });
+
+    expect(r.ok).toBe(true);
+  });
+});

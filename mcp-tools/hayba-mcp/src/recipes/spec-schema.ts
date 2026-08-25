@@ -75,10 +75,31 @@ export type ParseResult =
   | { ok: true; spec: RecipeSpec }
   | { ok: false; reason: string };
 
+import { validateRecipeRequires } from './requires.js';
+
 export function parseRecipeSpec(input: unknown): ParseResult {
   const r = recipeSpecSchema.safeParse(input);
-  if (r.success) return { ok: true, spec: r.data as RecipeSpec };
-  const first = r.error.issues[0];
-  const path = first.path.join('.') || '(root)';
-  return { ok: false, reason: `${path}: ${first.message}` };
+  if (!r.success) {
+    const first = r.error.issues[0];
+    const path = first.path.join('.') || '(root)';
+    return { ok: false, reason: `${path}: ${first.message}` };
+  }
+
+  const spec = r.data as RecipeSpec;
+
+  // The shape is right; now check the requirements can actually be evaluated.
+  //
+  // evaluate() skips a constraint whose primitive it does not recognise, on
+  // the stated assumption that define-time validation rejected it first. That
+  // validation existed but nothing called it, so a recipe could declare a
+  // nonsense primitive, load cleanly, and then be reported as SATISFIED while
+  // its requirement was silently skipped. A promise nobody checks is worse
+  // than no promise.
+  const errs = validateRecipeRequires(spec);
+  if (errs.length > 0) {
+    const e = errs[0]!;
+    return { ok: false, reason: `${e.field}: ${e.message}` };
+  }
+
+  return { ok: true, spec };
 }

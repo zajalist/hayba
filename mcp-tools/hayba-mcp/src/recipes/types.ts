@@ -4,6 +4,8 @@
 // all consume these. Discriminated-union params live here; the Zod
 // equivalent is mirrored in spec-schema.ts for JSON validation.
 
+import type { InstanceState, Verdict } from '../plumb/contracts.js';
+
 export type RecipeParamBase = {
   id: string;
   label?: string;
@@ -69,6 +71,24 @@ export interface RecipeRunResult {
   side_effects: string[];
   durationMs: number;
   error?: string;
+  /** The answer to "was that sound?", returned WITH the edit rather than
+   *  waiting to be asked for. Present whenever the recipe declares `requires`
+   *  or its instances carry bound constraints. See `checked` for why an
+   *  absent verdict is never the same as a clean one. */
+  verdict?: RecipeVerdict;
+}
+
+/** A verdict, plus whether it was actually able to look.
+ *
+ *  A recipe that declares requirements but reports no instances has checked
+ *  NOTHING, and saying "ok" there would be the same lie the validator refuses
+ *  to tell when a geometry rule has no geometry. So `checked: false` carries
+ *  the reason instead, and `plumb` is absent. */
+export interface RecipeVerdict {
+  checked: boolean;
+  /** Why nothing was checked. Set only when `checked` is false. */
+  reason?: string;
+  plumb?: Verdict;
 }
 
 /** Structured return shape for an executor's dispatched UE command — always
@@ -99,6 +119,12 @@ export interface RecipeContext {
    *  runtime was constructed without a bridge (the default — keeps pure
    *  recipes unit-testable without UE). */
   dispatch?: RecipeUeBridge;
+  /** An executor that places or moves things declares them here, and the
+   *  runtime judges the recipe's requirements against them once the frame is
+   *  done. Calling it more than once accumulates -- an executor that places in
+   *  batches need not gather everything first. An executor that touches
+   *  nothing spatial simply never calls it. */
+  placed: (instances: InstanceState[]) => void;
 }
 
 /** Executor function signature. Pure or mutating per the spec's determinism block. */
