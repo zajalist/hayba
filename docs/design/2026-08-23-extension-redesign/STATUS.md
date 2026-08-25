@@ -15,7 +15,7 @@ serves from `dist/` in the main worktree, which was never modified.
 | **F8** — catalogue search perf | **done** | `searchNodes` haystack cached in a WeakMap; **7.740ms → 1.186ms per query, 6.5×** on a 3000-node corpus. Test pins the property (repeats must not re-pay the build), not a timing number. |
 | **F7** — capability inventory | **done** | `tools/capability-inventory.mjs` derives the surface from `GetCommands()`: **236 commands, 34 handlers**. `docs/CAPABILITIES.md` generated. CI-gated. |
 | **P3a** — icon pipeline | **done** | `tools/build-icons.mjs` derives 148 rasters (37 icons × 16/28/32/56) from the signed masters. Hash manifest, CI-gated. |
-| **P3a** — style layer | **written, NOT COMPILED** | 14 colour + 11 metric tokens, 37 icons registered as PNG at exact draw sizes, text styles moved onto tokens. Needs a Live Coding compile. |
+| **P3a** — style layer | **compiled, live** | 24 colour + 11 metric tokens, 37 icons registered as PNG at exact draw sizes, text styles on tokens. Built and run in the editor; `tools/style-token-check.mjs` gates typo'd token names in CI. |
 | CI gates | **4 wired** | capability drift, generated-doc staleness, icon staleness, icon-binding resolution. Each verified to fail on the thing it guards, not just to pass. |
 
 Full TS suite green: **187 files, 2119 tests** (re-run after every change).
@@ -77,10 +77,15 @@ regenerating them at heavier weight is the user's call.
 
 ## What needs the user
 
-- **A Live Coding compile of the style layer.** It is reviewed against the
-  UE 5.8 headers (`IMAGE_BRUSH` appends `.png`; `Set(FName, FLinearColor)`
-  pairs with `GetColor`, `Set(FName, float)` with `GetFloat`) and its 44 icon
-  bindings are verified to resolve — but reviewed is not compiled.
+- ~~A Live Coding compile of the style layer.~~ **Done.** Class-layout
+  changes ruled Live Coding out, so it went through full rebuilds:
+  `Build.bat AphrosiaEditor Win64 Development`, editor relaunched, MCP
+  handshake confirmed. The header reading held — `IMAGE_BRUSH` does append
+  `.png`, and the `Set`/`Get` type pairings were right.
+- **Sign-off on two new palette entries.** `Status.Warn` (`#C9A25E`) and
+  `Status.Info` (`#7E9CC4`), added so the Validation panel's severity colours
+  could leave their full-saturation primaries. This is a *visible* change to
+  that panel, not a like-for-like swap — see 13-COLOUR-MIGRATION.
 - **A decision on the ten faint icons** (regenerate heavier, restrict to 28px,
   or accept). See the audit above.
 - **A verdict on the 28px rasters** (`icon-rasters-proof.html`). If they
@@ -89,11 +94,19 @@ regenerating them at heavier weight is the user's call.
 
 ## Deliberately not done
 
-The 53 inline `FLinearColor` literals across nine panels, and F14's
-registration unification. Both are C++ that cannot be compile-verified in this
-worktree, and stacking more unverified C++ on an already-unverified style layer
-makes the eventual build problem larger rather than smaller. They should follow
-the compile, not precede it.
+F14's registration unification, still. The reasoning below applied equally to
+the colour literals when it was written; it stopped applying once the style
+layer could actually be built here, so those were swept.
+
+~~The 53 inline `FLinearColor` literals across nine panels.~~ **Swept**, down
+to 34 that are deliberately not chrome — handler data, Unreal's own graph
+grammar, one pending palette axis, and two load-bearing alphas. Each remainder
+is listed with its reason in 13-COLOUR-MIGRATION, because an undocumented
+remainder invites someone to sweep the ones that must not be swept.
+
+The original reason for deferring both: stacking unverified C++ on an
+unverified style layer makes the eventual build problem larger rather than
+smaller. That is still true of F14.
 
 
 ---

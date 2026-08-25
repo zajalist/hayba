@@ -1,5 +1,6 @@
 #include "HaybaMCPPlanModeWidget.h"
 #include "HaybaMCPSettings.h"
+#include "HaybaMCPStyle.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Text/STextBlock.h"
 
@@ -33,6 +34,6 @@ FText SHaybaMCPPlanModeWidget::GetButtonLabel() const
 FSlateColor SHaybaMCPPlanModeWidget::GetButtonColor() const
 {
     return FHaybaMCPSettings::Get().bPlanModeEnabled
-        ? FSlateColor(FLinearColor(0.1f, 0.7f, 0.2f))
-        : FSlateColor(FLinearColor(0.5f, 0.5f, 0.5f));
+        ? FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Status.Pass"))
+        : FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted"));
 }

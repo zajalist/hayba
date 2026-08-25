@@ -101,3 +101,66 @@ worth a decision.
 Do not do any of this before P3b rewrites these panels. Every file in §1 and §3
 is one that pass substantially changes, and editing them twice is churn that
 makes the rewrite's diff harder to read.
+
+---
+
+## Where the sweep stops, and why (2026-08-25)
+
+The migration is finished in the sense that matters: every colour that is
+*Hayba chrome* now comes from the style set. What remains is 34 literals that
+were each looked at and deliberately left. Listing them is the point — an
+undocumented remainder reads as "we ran out of steam", and the next person
+sweeps the ones that must not be swept.
+
+### Left because they are data, not chrome
+
+All `handlers/` colours, and `Studio/HaybaStudioModel.cpp:23`. A handler's
+`FLinearColor` is a material constant, a debug-draw colour, or a value parsed
+out of JSON that came from the caller. The Studio one is the fallback for an
+unparseable hex string the *user* typed. Tokenising any of these would change
+what the tool does, not how it looks.
+
+### Left because they belong to Unreal's visual language, not ours
+
+`Studio/Graph/HaybaConstraintGraphNode.cpp` (5 node title colours) and
+`HaybaConstraintGraphSchema.cpp` (4 pin colours).
+
+These render inside `UEdGraph` — the same editor that draws Blueprints. A
+Blueprint author reads pin colour as a *type*, and that reading is trained by
+the engine, not by us: exec-white, object-blue, and so on. Our pins sit in
+that same grammar. Pulling them onto the Hayba palette would make the
+constraint graph the one graph in the editor where pin colour means something
+different, which is a worse outcome than palette inconsistency.
+
+This is the general rule the sweep discovered: **a token layer owns the
+surfaces we draw, and stops at surfaces the host draws.**
+
+### Left because they need a palette decision, not a sweep
+
+`HaybaMCPSceneMapPanel.cpp:215-221` — seven semantic node colours (Foliage,
+Building, Light, Trigger, Character, Blueprint, plus a neutral).
+
+This is a real categorical ramp and it genuinely wants tokens. But it is a
+*third* axis, distinct from both existing ones: `Cat.*` classifies what a tool
+call was about, `Status.*` says how a thing turned out, and this classifies
+what an actor IS in the world. Adding `Semantic.*` is a design addition, and
+one palette addition is already awaiting sign-off (`Status.Warn` / `Info`).
+Stacking a second unapproved axis would mean two visible changes landing
+together with no one having agreed to either.
+
+### Left because the alpha is load-bearing
+
+`HaybaMCPSceneMapPanel.cpp:132` (alpha 0.9) and `HaybaMCPPlanPanel.cpp:166`
+(alpha 0.85). Tokens carry no alpha, so these would become
+`FLinearColor C = Colour(...); C.A = 0.9f;` — three lines to say what one line
+says now, and the token would no longer be the whole answer at the call site.
+Not worth it for two sites. If a third appears, add an alpha-aware accessor
+rather than repeating the dance.
+
+### The guard
+
+`tools/style-token-check.mjs` catches the failure this layer actually has: a
+token name that is typo'd compiles, links, runs, and renders **magenta** —
+loud, but only to someone who opens that panel, on that tab, in that state. It
+does not and should not flag remaining literals; the list above is why a blunt
+"no literals anywhere" rule would be wrong.
