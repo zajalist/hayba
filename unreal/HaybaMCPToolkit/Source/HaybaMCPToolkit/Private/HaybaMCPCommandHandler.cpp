@@ -28,6 +28,37 @@ DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPCmd, Log, All);
 
 static bool IsDestructiveCommand(const FString& Cmd);
 
+/**
+ * Does this command change the scene or an asset?
+ *
+ * Deliberately separate from IsDestructiveCommand, which is the Plan-Mode
+ * approval gate and answers a different question -- "would running this twice
+ * do damage". A command can be perfectly idempotent and still mutate:
+ * actor_transform, actor_set_visibility, physics_set_simulate. Those need the
+ * verify-your-work advisory just as much, and must NOT thereby start
+ * requiring plan approval.
+ *
+ * Verb-based rather than a list, so a new mutating command is covered the day
+ * it is added rather than the day someone remembers this function.
+ */
+static bool CommandMutatesState(const FString& Cmd)
+{
+    if (IsDestructiveCommand(Cmd)) return true;
+
+    static const TCHAR* const MutatingVerbs[] = {
+        TEXT("_set"), TEXT("_transform"), TEXT("_apply"), TEXT("_assign"),
+        TEXT("_attach"), TEXT("_move"), TEXT("_rename"), TEXT("_paint"),
+        TEXT("_scatter"), TEXT("_place"), TEXT("_connect"), TEXT("_disconnect"),
+        TEXT("_clear"), TEXT("_reset"), TEXT("_update"), TEXT("_insert"),
+        TEXT("_convert"), TEXT("_bake"), TEXT("_compile"),
+    };
+    for (const TCHAR* Verb : MutatingVerbs)
+    {
+        if (Cmd.Contains(Verb)) return true;
+    }
+    return false;
+}
+
 namespace
 {
     constexpr int32 MaxPromotedFailureChars = 4096;
@@ -198,7 +229,7 @@ namespace
             if (!bVerified && Signals.Code.IsEmpty()) Signals.Code = TEXT("verification_failed");
         }
         else if (Signals.bOperationSucceeded && !Signals.bVerificationAttempted
-            && IsDestructiveCommand(Operation))
+            && CommandMutatesState(Operation))
         {
             Signals.bNeedsVerification = true;
             if (Signals.MutationStatus == EHaybaMCPMutationStatus::None)
