@@ -1636,17 +1636,6 @@ namespace
         const FString Compact = CompactPythonSource(Code);
         const FString AliasExpandedCalls = BuildAliasExpandedPythonCalls(Code);
 
-        if (FindReservedPythonRuntimeAccess(
-            Code,
-            AliasExpandedCalls,
-            OutPattern,
-            OutPolicyCode,
-            OutReason,
-            OutAlternative))
-        {
-            return true;
-        }
-
         // os.abort is deliberately lexical-only. Adding it to the compact
         // substring table would reject a comment or string that merely explains
         // the forbidden API.
@@ -1677,6 +1666,21 @@ namespace
             return true;
         }
 
+        // SPECIFIC BEFORE GENERIC.
+        //
+        // FindReservedPythonRuntimeAccess used to run before this loop. It
+        // matches bare reserved tokens -- `builtins`, `__builtins__`,
+        // `__main__` -- and returns HCR-DYNAMIC-001, which shadowed every
+        // more specific rule beginning with one of them. `builtins.input(`
+        // is HCR-BLOCK-001 in the table below ("waits for stdin an unattended
+        // editor cannot provide"), and was reported as a dynamic-execution
+        // risk instead. The branch's own test asserts that each rule
+        // classifies its own pattern as its own code; that is the invariant
+        // this violated.
+        //
+        // Moving the reserved check AFTER the table changes no verdict, only
+        // the code attached to it: both paths block, and anything the table
+        // does not match still reaches the reserved check unchanged.
         for (const FFatalPythonRule& Rule : FatalPythonRules())
         {
             // Deadline-tampering rules are lexical-only. The compact stream
@@ -1693,6 +1697,19 @@ namespace
                 OutAlternative = Rule.Alternative;
                 return true;
             }
+        }
+
+        // Generic reserved-runtime access: anything the specific table above
+        // did not already name.
+        if (FindReservedPythonRuntimeAccess(
+            Code,
+            AliasExpandedCalls,
+            OutPattern,
+            OutPolicyCode,
+            OutReason,
+            OutAlternative))
+        {
+            return true;
         }
 
         const bool bConnect = Compact.Contains(TEXT(".connect"));
