@@ -511,7 +511,21 @@ bool FHaybaMCPModule::IsMCPServerRunning() const
 
 void FHaybaMCPModule::RegisterExternalHandler(TSharedRef<IHaybaMCPHandler> Handler)
 {
-    if (CommandHandler.IsValid()) CommandHandler->RegisterHandler(Handler);
+    if (!CommandHandler.IsValid())
+    {
+        // Dropping a handler silently means every command it declares simply
+        // does not exist, with nothing to explain why. The satellites avoid
+        // this by loading the core with LoadModuleChecked, so reaching here
+        // means a caller that did not -- worth saying out loud rather than
+        // leaving someone to wonder where their domain went.
+        UE_LOG(LogHaybaMCP, Error,
+            TEXT("RegisterExternalHandler('%s') arrived before the command router existed; "
+                 "its commands will be unreachable. Load HaybaMCPToolkit with "
+                 "LoadModuleChecked before registering."),
+            *Handler->GetDomain());
+        return;
+    }
+    CommandHandler->RegisterHandler(Handler);
 }
 
 void FHaybaMCPModule::UnregisterExternalHandler(const TSharedRef<IHaybaMCPHandler>& Handler)
