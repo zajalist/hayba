@@ -34,6 +34,26 @@ struct FHaybaValidatorFinding
     bool bResolved = false;
     FString ResolvedAt;
 
+    /** The signed margin, when the producer measured one.
+     *
+     *  The IA's verdict contract needs an amount and a direction, not just a
+     *  severity: "+1.8 m" satisfied versus "-0.6 m" needing attention. The TS
+     *  side has always emitted this under `measurement`; nothing here modelled
+     *  it, so every row rendered as a bare severity chip.
+     *
+     *  bHasMeasurement distinguishes "measured exactly zero" -- a subject
+     *  sitting precisely on its limit, which is meaningful -- from "no
+     *  measurement supplied". A bare double cannot tell those apart. */
+    bool    bHasMeasurement = false;
+    double  MarginValue = 0.0;
+    FString MarginUnit;
+    FString MarginDetail;
+
+    /** The fix translation, when the producer returned one. This is what makes
+     *  the IA's "available next action" available. */
+    bool    bHasFix = false;
+    FVector FixTranslate = FVector::ZeroVector;
+
     /** Optional context fields surfaced for per-row actions. */
     FString ActorLabel;
     FString ActorId;
@@ -70,6 +90,7 @@ public:
      *  call these actions without needing friend access. */
     FReply OnDismissClicked_Public(TSharedPtr<FHaybaValidatorFinding> Item);
     FReply OnJumpToActorClicked_Public(TSharedPtr<FHaybaValidatorFinding> Item);
+    FReply OnApplyFixClicked_Public(TSharedPtr<FHaybaValidatorFinding> Item);
 
 private:
     // ── Data ────────────────────────────────────────────────────────────
@@ -102,6 +123,13 @@ private:
     FReply OnReRunAllClicked();
     FReply OnDismissClicked(TSharedPtr<FHaybaValidatorFinding> Item);
     FReply OnJumpToActorClicked(TSharedPtr<FHaybaValidatorFinding> Item);
+
+    /** Move the finding's actor along its fix vector, transacted. */
+    FReply OnApplyFixClicked(TSharedPtr<FHaybaValidatorFinding> Item);
+
+    /** Shared by Jump and Fix so the two can never disagree about
+     *  which actor a finding refers to. */
+    static AActor* ResolveActor(const TSharedPtr<FHaybaValidatorFinding>& Item);
 
     void UpdateHeader();
 

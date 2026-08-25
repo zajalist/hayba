@@ -81,6 +81,94 @@ bool FHaybaValidatorHistoryFieldTest::RunTest(const FString& Parameters)
         }
     }
 
+    // ── The signed margin, and the fix vector ───────────────────────────
+    //
+    // The IA's verdict contract needs an amount, a direction and a next
+    // action. All three come from `measurement`, which the panel ignored
+    // entirely until now. Every way of misreading this shape fails SOFT --
+    // you get "no measurement", never an error -- so it has to be pinned.
+    {
+        const FString Line =
+            TEXT(R"({"ruleId":"clearance.doorway","severity":"error",)")
+            TEXT(R"("message":"short","hint":"move it","timestamp":"t","toolName":"actor_spawn",)")
+            TEXT(R"("measurement":{"value":-0.62,"unit":"m","detail":"0.58m < 1.20m",)")
+            TEXT(R"("fix":{"translate":[0,62,0]}}})");
+
+        TSharedPtr<FHaybaValidatorFinding> F = SHaybaValidatorPanel::ParseFindingLine(Line);
+        if (TestTrue(TEXT("a finding with a measurement parses"), F.IsValid()))
+        {
+            TestTrue(TEXT("the measurement is recorded as present"), F->bHasMeasurement);
+            TestEqual(TEXT("the margin keeps its sign"), F->MarginValue, -0.62, 1e-9);
+            TestEqual(TEXT("the unit survives"), F->MarginUnit, FString(TEXT("m")));
+            TestEqual(TEXT("the detail survives"), F->MarginDetail, FString(TEXT("0.58m < 1.20m")));
+
+            // translate is an ARRAY. Reading it as {x,y,z} finds nothing and
+            // silently offers no Fix button.
+            TestTrue(TEXT("the fix vector is found"), F->bHasFix);
+            TestEqual(TEXT("the fix vector is read in order"),
+                F->FixTranslate, FVector(0.0, 62.0, 0.0));
+        }
+    }
+    {
+        const FString Line =
+            TEXT(R"({"ruleId":"r","severity":"info","message":"m","hint":"h",)")
+            TEXT(R"("timestamp":"t","toolName":"tool","measurement":{"value":1.8,"unit":"m"}})");
+
+        TSharedPtr<FHaybaValidatorFinding> F = SHaybaValidatorPanel::ParseFindingLine(Line);
+        if (F.IsValid())
+        {
+            TestTrue(TEXT("a measurement without a fix still measures"), F->bHasMeasurement);
+            // Not a zero fix. No fix at all -- otherwise the panel would offer
+            // a Fix button that moves the actor nowhere.
+            TestFalse(TEXT("no fix vector means no fix offered"), F->bHasFix);
+        }
+    }
+    {
+        // Zero is a measurement: it means sitting exactly on the limit. A
+        // bare double cannot tell that from "not measured", which is why the
+        // struct carries a separate flag.
+        const FString Line =
+            TEXT(R"({"ruleId":"r","severity":"info","message":"m","hint":"h",)")
+            TEXT(R"("timestamp":"t","toolName":"tool","measurement":{"value":0,"unit":"m"}})");
+
+        TSharedPtr<FHaybaValidatorFinding> F = SHaybaValidatorPanel::ParseFindingLine(Line);
+        if (F.IsValid())
+        {
+            TestTrue(TEXT("a measured zero is still a measurement"), F->bHasMeasurement);
+            TestEqual(TEXT("a measured zero keeps its value"), F->MarginValue, 0.0, 1e-9);
+        }
+    }
+    {
+        // A partial vector is not a fix. Applying one would move the actor
+        // somewhere nobody computed.
+        const FString Line =
+            TEXT(R"({"ruleId":"r","severity":"error","message":"m","hint":"h",)")
+            TEXT(R"("timestamp":"t","toolName":"tool",)")
+            TEXT(R"("measurement":{"value":-1,"unit":"m","fix":{"translate":[1,2]}}})");
+
+        TSharedPtr<FHaybaValidatorFinding> F = SHaybaValidatorPanel::ParseFindingLine(Line);
+        if (F.IsValid())
+        {
+            TestTrue(TEXT("a malformed fix does not lose the margin"), F->bHasMeasurement);
+            TestFalse(TEXT("a two-element translate is refused"), F->bHasFix);
+        }
+    }
+    {
+        // No measurement at all: the common case for non-spatial rules. The
+        // panel renders an em dash for this, which must not be confused with
+        // a measured zero.
+        const FString Line =
+            TEXT(R"({"ruleId":"naming","severity":"warning","message":"m","hint":"h",)")
+            TEXT(R"("timestamp":"t","toolName":"tool"})");
+
+        TSharedPtr<FHaybaValidatorFinding> F = SHaybaValidatorPanel::ParseFindingLine(Line);
+        if (F.IsValid())
+        {
+            TestFalse(TEXT("a finding without a measurement reports none"), F->bHasMeasurement);
+            TestFalse(TEXT("and offers no fix"), F->bHasFix);
+        }
+    }
+
     return true;
 }
 

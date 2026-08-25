@@ -1,5 +1,6 @@
 // SHaybaValidatorPanel.cpp
 #include "Slate/SHaybaValidatorPanel.h"
+#include "ScopedTransaction.h"
 #include "HaybaMCPStyle.h"
 
 #include "DirectoryWatcherModule.h"
@@ -33,6 +34,7 @@ namespace
     const FName ColMessage("Message");
     const FName ColTool("Tool");
     const FName ColTime("Time");
+    const FName ColMargin("Margin");
     const FName ColActions("Actions");
 
     FSlateColor ColorForSeverity(const FString& Sev)
@@ -89,10 +91,17 @@ namespace
             }
             if (Column == ColMessage)
             {
+                // Tool and timestamp ride along here now that they have no
+                // column of their own. In a tooltip they are readable in full;
+                // in a 40px column they were not readable at all.
+                FString Tip = Item->Message + TEXT("\n\nHint: ") + Item->Hint;
+                if (!Item->ToolName.IsEmpty())  Tip += TEXT("\n\nTool: ") + Item->ToolName;
+                if (!Item->Timestamp.IsEmpty()) Tip += TEXT("\nWhen: ") + Item->Timestamp;
+
                 return SNew(STextBlock)
                     .Margin(FMargin(6, 3))
                     .Text(FText::FromString(Truncate(Item->Message, 120)))
-                    .ToolTipText(FText::FromString(Item->Message + TEXT("\n\nHint: ") + Item->Hint));
+                    .ToolTipText(FText::FromString(Tip));
             }
             if (Column == ColTool)
             {
@@ -106,9 +115,69 @@ namespace
                     .Margin(FMargin(6, 3))
                     .Text(FText::FromString(Truncate(Item->Timestamp, 19)));
             }
+            if (Column == ColMargin)
+            {
+                // No measurement is not zero. A producer that did not measure
+                // gets an em dash, not "+0.0 m", which would read as "sitting
+                // exactly on the limit" -- a different and much stronger claim.
+                if (!Item->bHasMeasurement)
+                {
+                    return SNew(STextBlock)
+                        .Margin(FMargin(6, 3))
+                        .Text(FText::FromString(TEXT("\u2014")))
+                        .ColorAndOpacity(FSlateColor(
+                            FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted")))
+                        .ToolTipText(FText::FromString(
+                            TEXT("This check did not report a measured margin.")));
+                }
+
+                // Always signed. The sign IS the direction, and the IA's
+                // contract needs the direction as much as the amount.
+                const FString Text = FString::Printf(TEXT("%+.2f %s"),
+                    Item->MarginValue,
+                    Item->MarginUnit.IsEmpty() ? TEXT("") : *Item->MarginUnit);
+
+                const bool bSatisfied = Item->MarginValue >= 0.0;
+                return SNew(STextBlock)
+                    .Margin(FMargin(6, 3))
+                    .Text(FText::FromString(Text.TrimEnd()))
+                    .ColorAndOpacity(FSlateColor(bSatisfied
+                        ? FHaybaMCPStyle::Colour("Hayba.Color.Text.Primary")
+                        : FHaybaMCPStyle::Colour("Hayba.Color.Accent.Ochre")))
+                    .ToolTipText(FText::FromString(
+                        Item->MarginDetail.IsEmpty()
+                            ? (bSatisfied
+                                ? TEXT("Satisfied by this margin.")
+                                : TEXT("Short of the constraint by this margin."))
+                            : *Item->MarginDetail));
+            }
             if (Column == ColActions)
             {
                 TSharedRef<SHorizontalBox> ActionsBox = SNew(SHorizontalBox);
+
+                // Fix only when a vector was actually returned. A Fix button
+                // that cannot move anything teaches the user to distrust it.
+                if (Item->bHasFix)
+                {
+                    ActionsBox->AddSlot().AutoWidth().Padding(2)
+                    [
+                        SNew(SButton)
+                        .ContentPadding(FMargin(6, 2))
+                        .ToolTipText(FText::FromString(FString::Printf(
+                            TEXT("Move the actor by (%.1f, %.1f, %.1f) to satisfy this rule. Undoable."),
+                            Item->FixTranslate.X, Item->FixTranslate.Y, Item->FixTranslate.Z)))
+                        .OnClicked_Lambda([this]() -> FReply {
+                            if (Panel) return Panel->OnApplyFixClicked_Public(Item);
+                            return FReply::Handled();
+                        })
+                        [
+                            SNew(STextBlock)
+                            .Text(FText::FromString(TEXT("Fix")))
+                            .ColorAndOpacity(FSlateColor(
+                                FHaybaMCPStyle::Colour("Hayba.Color.Accent.Ochre")))
+                        ]
+                    ];
+                }
                 ActionsBox->AddSlot().AutoWidth().Padding(2)
                 [
                     SNew(SButton)
@@ -159,16 +228,7 @@ FReply SHaybaValidatorPanel::OnJumpToActorClicked(TSharedPtr<FHaybaValidatorFind
     if (!Item.IsValid()) return FReply::Handled();
     if (!GEditor) return FReply::Handled();
 
-    UEditorActorSubsystem* Sub = GEditor->GetEditorSubsystem<UEditorActorSubsystem>();
-    if (!Sub) return FReply::Handled();
-
-    AActor* Match = nullptr;
-    for (AActor* A : Sub->GetAllLevelActors())
-    {
-        if (!A) continue;
-        if (!Item->ActorId.IsEmpty() && A->GetName() == Item->ActorId) { Match = A; break; }
-        if (!Item->ActorLabel.IsEmpty() && A->GetActorLabel() == Item->ActorLabel) { Match = A; break; }
-    }
+    AActor* Match = ResolveActor(Item);
     if (Match)
     {
         GEditor->SelectNone(false, true);
@@ -178,10 +238,48 @@ FReply SHaybaValidatorPanel::OnJumpToActorClicked(TSharedPtr<FHaybaValidatorFind
     return FReply::Handled();
 }
 
+AActor* SHaybaValidatorPanel::ResolveActor(const TSharedPtr<FHaybaValidatorFinding>& Item)
+{
+    if (!Item.IsValid() || !GEditor) return nullptr;
+    UEditorActorSubsystem* Sub = GEditor->GetEditorSubsystem<UEditorActorSubsystem>();
+    if (!Sub) return nullptr;
+
+    for (AActor* A : Sub->GetAllLevelActors())
+    {
+        if (!A) continue;
+        if (!Item->ActorId.IsEmpty() && A->GetName() == Item->ActorId) return A;
+        if (!Item->ActorLabel.IsEmpty() && A->GetActorLabel() == Item->ActorLabel) return A;
+    }
+    return nullptr;
+}
+
+FReply SHaybaValidatorPanel::OnApplyFixClicked(TSharedPtr<FHaybaValidatorFinding> Item)
+{
+    if (!Item.IsValid() || !Item->bHasFix) return FReply::Handled();
+
+    AActor* Target = ResolveActor(Item);
+    if (!Target) return FReply::Handled();
+
+    // Transacted, so the fix is undoable. An edit the user cannot take back is
+    // not a next action, it is a gamble.
+    const FScopedTransaction Transaction(
+        NSLOCTEXT("Hayba", "ApplyRuleFix", "Apply rule fix"));
+    Target->Modify();
+    Target->SetActorLocation(Target->GetActorLocation() + Item->FixTranslate);
+
+    // Show the result. Applying a fix the user cannot see is indistinguishable
+    // from the button doing nothing.
+    GEditor->SelectNone(false, true);
+    GEditor->SelectActor(Target, true, true, true);
+    GEditor->MoveViewportCamerasToActor(*Target, false);
+    return FReply::Handled();
+}
+
 // Public bridge methods used by the table-row class — defined here so the
 // member access checker is satisfied without making the row a friend.
 FReply SHaybaValidatorPanel::OnDismissClicked_Public(TSharedPtr<FHaybaValidatorFinding> Item) { return OnDismissClicked(Item); }
 FReply SHaybaValidatorPanel::OnJumpToActorClicked_Public(TSharedPtr<FHaybaValidatorFinding> Item) { return OnJumpToActorClicked(Item); }
+FReply SHaybaValidatorPanel::OnApplyFixClicked_Public(TSharedPtr<FHaybaValidatorFinding> Item) { return OnApplyFixClicked(Item); }
 
 // ── Path helpers ───────────────────────────────────────────────────────────
 
@@ -296,12 +394,16 @@ void SHaybaValidatorPanel::Construct(const FArguments& InArgs)
             .SelectionMode(ESelectionMode::Single)
             .HeaderRow(
                 SNew(SHeaderRow)
-                + SHeaderRow::Column(ColSeverity).DefaultLabel(FText::FromString(TEXT("Severity"))).FixedWidth(80)
-                + SHeaderRow::Column(ColRuleId).DefaultLabel(FText::FromString(TEXT("Rule"))).FillWidth(0.22f)
-                + SHeaderRow::Column(ColMessage).DefaultLabel(FText::FromString(TEXT("Message"))).FillWidth(0.42f)
-                + SHeaderRow::Column(ColTool).DefaultLabel(FText::FromString(TEXT("Tool"))).FillWidth(0.16f)
-                + SHeaderRow::Column(ColTime).DefaultLabel(FText::FromString(TEXT("When"))).FillWidth(0.14f)
-                + SHeaderRow::Column(ColActions).DefaultLabel(FText::FromString(TEXT("Actions"))).FillWidth(0.16f)
+                // Tool and When are deliberately absent. At the dock's default
+                // width they truncated to "ac" and "20" while costing a fifth
+                // of the table; both now live in the row tooltip, readable in
+                // full. What remains is what a verdict needs: what broke, by
+                // how much and which way, and what to do about it.
+                + SHeaderRow::Column(ColSeverity).DefaultLabel(FText::FromString(TEXT("Severity"))).FixedWidth(64)
+                + SHeaderRow::Column(ColRuleId).DefaultLabel(FText::FromString(TEXT("Rule"))).FillWidth(0.26f)
+                + SHeaderRow::Column(ColMessage).DefaultLabel(FText::FromString(TEXT("Message"))).FillWidth(0.44f)
+                + SHeaderRow::Column(ColMargin).DefaultLabel(FText::FromString(TEXT("Margin"))).FixedWidth(76)
+                + SHeaderRow::Column(ColActions).DefaultLabel(FText::FromString(TEXT("Actions"))).FixedWidth(158)
             )
         ]
     ];
@@ -388,6 +490,54 @@ TSharedPtr<FHaybaValidatorFinding> SHaybaValidatorPanel::ParseFindingLine(const 
     // itself rather than going through the server, so it has to know both:
     // "data" for anything written since, "context" for records already on a
     // user's machine.
+    // The signed margin, read as a nested object because that is the shape the
+    // TS contract emits. A flat "margin" key never existed; looking for one
+    // would have found nothing and reported no measurement forever.
+    const TSharedPtr<FJsonObject>* Meas = nullptr;
+    if (Obj->TryGetObjectField(TEXT("measurement"), Meas) && Meas && Meas->IsValid())
+    {
+        double V = 0.0;
+        // A missing margin and a margin of exactly zero mean different things
+        // -- on the limit is not the same as unmeasured -- so record whether
+        // the field was present rather than leaning on the value.
+        if ((*Meas)->TryGetNumberField(TEXT("value"), V))
+        {
+            F->bHasMeasurement = true;
+            F->MarginValue = V;
+        }
+        FString MS;
+        if ((*Meas)->TryGetStringField(TEXT("unit"),   MS)) F->MarginUnit   = MS;
+        if ((*Meas)->TryGetStringField(TEXT("detail"), MS)) F->MarginDetail = MS;
+
+        // FixVector.translate is a 3-element ARRAY. It is not {x,y,z}; reading
+        // it that way finds nothing and silently offers no fix.
+        const TSharedPtr<FJsonObject>* Fix = nullptr;
+        if ((*Meas)->TryGetObjectField(TEXT("fix"), Fix) && Fix && Fix->IsValid())
+        {
+            const TArray<TSharedPtr<FJsonValue>>* T = nullptr;
+            if ((*Fix)->TryGetArrayField(TEXT("translate"), T) && T && T->Num() == 3)
+            {
+                bool bAllNumbers = true;
+                double C[3] = { 0.0, 0.0, 0.0 };
+                for (int32 i = 0; i < 3; ++i)
+                {
+                    if (!(*T)[i].IsValid() || !(*T)[i]->TryGetNumber(C[i]))
+                    {
+                        bAllNumbers = false;
+                        break;
+                    }
+                }
+                // A partial vector is not a fix. Offering one would move the
+                // actor somewhere nobody computed.
+                if (bAllNumbers)
+                {
+                    F->bHasFix = true;
+                    F->FixTranslate = FVector(C[0], C[1], C[2]);
+                }
+            }
+        }
+    }
+
     const TSharedPtr<FJsonObject>* Ctx = nullptr;
     if (!Obj->TryGetObjectField(TEXT("data"), Ctx))
     {
