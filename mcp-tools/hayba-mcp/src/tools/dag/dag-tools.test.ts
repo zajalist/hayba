@@ -38,8 +38,8 @@ describe('dag tools', () => {
   it('dag_rebuild reports skipped nodes with no executor', async () => {
     await dagRecordHandler({ reads: ['ue://A'], writes: ['ue://B'] }, { dag: sys });
     await dagRecordHandler({ writes: ['ue://A'] }, { dag: sys });
-    const r = await dagRebuildHandler({}, { dag: sys, runSliverNode: async () => ({ ok: false, reason: 'not a sliver node' }) });
-    expect(r.skipped).toEqual([{ uri: 'ue://B', reason: 'not a sliver node' }]);
+    const r = await dagRebuildHandler({}, { dag: sys, runRecipeNode: async () => ({ ok: false, reason: 'not a recipe node' }) });
+    expect(r.skipped).toEqual([{ uri: 'ue://B', reason: 'not a recipe node' }]);
   });
 
   it('journal_tail returns recent records newest last', async () => {

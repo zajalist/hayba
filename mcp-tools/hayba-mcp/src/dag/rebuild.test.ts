@@ -11,7 +11,7 @@ describe('rebuildDirty', () => {
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'hayba-rebuild-')); });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it('re-runs sliver nodes in topological order and clears their dirty flag', async () => {
+  it('re-runs recipe nodes in topological order and clears their dirty flag', async () => {
     const sys = setupDagSystem({ projectDir: dir });
     sys.recordMutation({ actor: 'manual', reads: ['ue://A'], writes: ['sliver://B'], paramsHash: 'h', ok: true });
     sys.recordMutation({ actor: 'manual', reads: ['sliver://B'], writes: ['sliver://C'], paramsHash: 'h', ok: true });

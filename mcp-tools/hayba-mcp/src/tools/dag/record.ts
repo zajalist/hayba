@@ -41,6 +41,6 @@ export const meta = {
   cost: 'low' as const,
   effects: ['write'],
   when: 'You performed a mutation Hayba did not instrument (editor-side actor edits, manual file writes) and want the DAG to know.',
-  not_when: 'The mutation was a sliver run or an asset tool — those record themselves.',
+  not_when: 'The mutation was a recipe run or an asset tool — those record themselves.',
   pack: 'core',
 };

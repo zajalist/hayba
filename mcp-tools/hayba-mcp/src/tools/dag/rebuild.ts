@@ -8,7 +8,7 @@ export const dagRebuildSchema = {
 
 export interface DagRebuildCtx {
   dag: DagSystem;
-  runSliverNode: (uri: string) => Promise<RunNodeResult>;
+  runRecipeNode: (uri: string) => Promise<RunNodeResult>;
 }
 
 export interface DagRebuildResult {
@@ -21,7 +21,7 @@ export async function dagRebuildHandler(
   args: { target?: string },
   ctx: DagRebuildCtx,
 ): Promise<DagRebuildResult> {
-  return rebuildDirty(ctx.dag.dag, { runNode: ctx.runSliverNode }, args.target);
+  return rebuildDirty(ctx.dag.dag, { runNode: ctx.runRecipeNode }, args.target);
 }
 
 export const meta = {

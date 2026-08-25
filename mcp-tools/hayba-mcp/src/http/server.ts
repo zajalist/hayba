@@ -1,6 +1,6 @@
 //
 // Bootstraps a minimal Express HTTP server alongside the MCP stdio server.
-// Used by the UE plugin's Slivers panel to call sliver list/get/run/import
+// Used by the UE plugin's Recipes panel to call recipe list/get/run/import
 // without going through the MCP transport. Logs go to stderr so they don't
 // corrupt the MCP stdio (stdout) channel.
 //
@@ -8,19 +8,19 @@
 
 import express from 'express';
 import type { Server } from 'node:http';
-import type { SliverSystem } from '../slivers/index.js';
-import { mountSliverRoutes } from './sliver-routes.js';
+import type { RecipeSystem } from '../recipes/index.js';
+import { mountRecipeRoutes } from './recipe-routes.js';
 import { installExpressJsonRedaction } from '../security/secret-redaction.js';
 import { installHttpErrorBoundary } from './express-boundary.js';
 
-export function startHttpServer(slivers: SliverSystem): Server {
+export function startHttpServer(recipes: RecipeSystem): Server {
   const app = express();
   app.set('query parser', 'simple');
   app.use(express.json({ limit: '1mb', strict: true }));
   installExpressJsonRedaction(app);
 
-  mountSliverRoutes(app, slivers);
-  app.use('/sliver', (_req, res) => {
+  mountRecipeRoutes(app, recipes);
+  app.use('/recipe', (_req, res) => {
     res.status(404).json({ error: 'Not found' });
   });
   installHttpErrorBoundary(app);

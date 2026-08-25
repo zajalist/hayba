@@ -45,7 +45,7 @@ export const GATE_ORDER: GateName[] = ['collision', 'stability', 'constraints', 
 /** One constraint's result. magnitude is the unsigned violation amount
  *  (0 = satisfied); value_m is the *signed* measured margin (>=0 = ok). */
 export interface ConstraintResult {
-  name: string;          // constraint id ("" for anonymous/sliver-inline)
+  name: string;          // constraint id ("" for anonymous/recipe-inline)
   primitive: string;     // which primitive produced it
   ok: boolean;
   hard: boolean;         // hard → gates commit; soft → repair objective only

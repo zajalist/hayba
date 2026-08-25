@@ -126,7 +126,7 @@ export function evaluate(
   return assembleVerdict(results, prims);
 }
 
-/** Fold per-constraint results into the gated Verdict. Exposed for sliver use. */
+/** Fold per-constraint results into the gated Verdict. Exposed for recipe use. */
 export function assembleVerdict(
   results: ConstraintResult[],
   prims = primitivesById(),

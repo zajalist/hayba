@@ -5,7 +5,7 @@
 // generate → read back instance counts — into a single tool call.
 //
 // The graph itself (including the scale/yaw jitter transform node) is produced
-// by buildBiomeScatterGraph, so this tool and the scatter.pcg_biome sliver share
+// by buildBiomeScatterGraph, so this tool and the scatter.pcg_biome recipe share
 // one source of graph truth.
 //
 // Like pcg_cook_and_wait, this HARD-FAILS (ok:false) on a zero-instance cook:
@@ -17,7 +17,7 @@ import { z } from 'zod';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 import { executeCommand } from '../tool-executor.js';
 import { runUePythonJson, pyStr } from '../ue-python.js';
-import { buildBiomeScatterGraph } from '../../slivers/scatter/pcg_biome.js';
+import { buildBiomeScatterGraph } from '../../recipes/scatter/pcg_biome.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'high',

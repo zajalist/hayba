@@ -3,7 +3,7 @@
 // setupDagSystem — one-shot wiring of the operation journal + the
 // in-memory dependency DAG. The DAG is rebuilt by replaying the journal
 // at construction. recordMutation() is the generic append path;
-// recordSliverRun() additionally infers read edges from param URIs.
+// recordRecipeRun() additionally infers read edges from param URIs.
 
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -16,11 +16,11 @@ export interface DagSystem {
   journal: OperationJournal;
   dag: DependencyDag;
   recordMutation: (input: JournalInput) => void;
-  recordSliverRun: (run: SliverRunRecord) => void;
+  recordRecipeRun: (run: RecipeRunRecord) => void;
 }
 
-export interface SliverRunRecord {
-  sliverId: string;
+export interface RecipeRunRecord {
+  recipeId: string;
   params: Record<string, unknown>;
   declaredReads: string[];
   writes: string[];
@@ -58,19 +58,19 @@ export function setupDagSystem(opts: DagSetupOpts = {}): DagSystem {
     }
   };
 
-  const recordSliverRun = (run: SliverRunRecord): void => {
+  const recordRecipeRun = (run: RecipeRunRecord): void => {
     const inferred = inferReadsFromParams(run.params, run.declaredReads);
     const rec = (() => {
       try {
         return journal.append({
-          actor: `sliver:${run.sliverId}`,
+          actor: `recipe:${run.recipeId}`,
           reads: [...run.declaredReads, ...inferred],
           writes: run.writes,
           paramsHash: paramsHashOf(run.params),
           ok: run.ok,
         });
       } catch (err) {
-        console.error('[dag] recordSliverRun failed:', err);
+        console.error('[dag] recordRecipeRun failed:', err);
         return null;
       }
     })();
@@ -81,5 +81,5 @@ export function setupDagSystem(opts: DagSetupOpts = {}): DagSystem {
     }
   };
 
-  return { journal, dag, recordMutation, recordSliverRun };
+  return { journal, dag, recordMutation, recordRecipeRun };
 }

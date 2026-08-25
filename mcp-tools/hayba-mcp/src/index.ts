@@ -56,10 +56,10 @@ async function main() {
   await startDashboard(config.dashboardPort, '127.0.0.1');
   console.error(`Dashboard: http://127.0.0.1:${config.dashboardPort}`);
 
-  // HTTP server for the UE plugin (Slivers panel). Stdio remains the primary
-  // MCP transport — this is a parallel surface for the same SliverSystem.
-  if (routing?.slivers) {
-    startHttpServer(routing.slivers);
+  // HTTP server for the UE plugin (Recipes panel). Stdio remains the primary
+  // MCP transport — this is a parallel surface for the same RecipeSystem.
+  if (routing?.recipes) {
+    startHttpServer(routing.recipes);
   }
 
   const transport = new StdioServerTransport();

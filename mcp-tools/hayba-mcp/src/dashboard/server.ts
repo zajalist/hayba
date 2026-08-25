@@ -62,7 +62,7 @@ export function createDashboardApp(options: DashboardAppOptions = {}): express.E
 
   // Once real routes have had their chance, reserved surfaces always stay JSON
   // 404s. They must never be mistaken for client-side dashboard navigation.
-  app.use(['/api', '/chat', '/sliver'], (_req, res) => {
+  app.use(['/api', '/chat', '/recipe'], (_req, res) => {
     res.status(404).json({ error: 'Not found' });
   });
 

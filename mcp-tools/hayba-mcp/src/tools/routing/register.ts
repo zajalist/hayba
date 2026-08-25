@@ -1,7 +1,7 @@
 // Wiring for γ-hybrid tool routing. Called from tools/index.ts when
 // settings.toolRouting === 'deferred'. The caller supplies the catalogue as a
 // value map built directly from ToolDescriptors; this layer augments it with
-// the few runtime descriptors that close over retriever/DAG/sliver instances.
+// the few runtime descriptors that close over retriever/DAG/recipe instances.
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
@@ -25,11 +25,11 @@ import { AssetRetriever, setDefaultRetriever } from '../asset-retriever/asset-re
 import { assetSearchHandler, assetSearchSchema } from '../asset-retriever/meta-tools/search.js';
 import { assetBrowseHandler, assetBrowseSchema } from '../asset-retriever/meta-tools/browse.js';
 import { assetReindexHandler, assetReindexSchema } from '../asset-retriever/meta-tools/reindex.js';
-import { setupSliverSystem, type SliverSystem } from '../../slivers/index.js';
-import { sliverListHandler, sliverListSchema } from '../sliver/list.js';
-import { sliverGetHandler,  sliverGetSchema  } from '../sliver/get.js';
-import { sliverRunHandler,  sliverRunSchema  } from '../sliver/run.js';
-import { sliverImportHandler, sliverImportSchema } from '../sliver/import.js';
+import { setupRecipeSystem, type RecipeSystem } from '../../recipes/index.js';
+import { recipeListHandler, recipeListSchema } from '../recipe/list.js';
+import { recipeGetHandler,  recipeGetSchema  } from '../recipe/get.js';
+import { recipeRunHandler,  recipeRunSchema  } from '../recipe/run.js';
+import { recipeImportHandler, recipeImportSchema } from '../recipe/import.js';
 import { setupDagSystem, type DagSystem } from '../../dag/index.js';
 import { dagStatusHandler, dagStatusSchema } from '../dag/status.js';
 import { dagRecordHandler, dagRecordSchema } from '../dag/record.js';
@@ -89,7 +89,7 @@ export const AUTOLOAD_ON_UE_CONNECT = ['editor'] as const;
  *
  *  Kept as a separate export because callers (and the routing integration test)
  *  treat it as "what is registered at startup". It is exactly CORE_META now;
- *  previously it also carried the whole PLUMB, validator, sliver, DAG and asset
+ *  previously it also carried the whole PLUMB, validator, recipe, DAG and asset
  *  surfaces — 49 tools — which is what made the catalog unsearchable.
  *
  *  Note on PLUMB in particular: it was always-on so "the Validator/Memory panels
@@ -114,7 +114,7 @@ export interface RoutingHandle {
   registry: PackRegistry;
   index: ToolIndex;
   retriever: AssetRetriever;
-  slivers: SliverSystem;
+  recipes: RecipeSystem;
   dag: DagSystem;
   /** Trigger autoload — wire to `check_ue_status.onConnected`. */
   onUeConnected: () => Promise<void>;
@@ -164,7 +164,7 @@ export async function registerDeferredRouting(
   // ── Runtime-constructed subsystems ─────────────────────────────────────────
   //
   // These tools cannot be declared statically: they close over live objects
-  // (the asset retriever, the DAG, the sliver loader). They used to call
+  // (the asset retriever, the DAG, the recipe loader). They used to call
   // server.tool() directly, which registered all 11 unconditionally and — because
   // it ran after the search index was built — left every one of them OUT of the
   // index. They were simultaneously always in your face and impossible to find
@@ -184,7 +184,7 @@ export async function registerDeferredRouting(
   const runtimeDescriptors: RuntimeToolDescriptor[] = [];
 
   /** Declare a runtime-constructed tool — one that closes over a live object
-   *  (the retriever, the DAG, the sliver loader) and so cannot be declared
+   *  (the retriever, the DAG, the recipe loader) and so cannot be declared
    *  statically as a descriptor.
    *
    *  `run` returns a plain JSON-serialisable value; the MCP content-block
@@ -252,11 +252,11 @@ export async function registerDeferredRouting(
     dag.recordMutation({ actor: 'asset', reads: [], writes: [writeUri], paramsHash: '', ok: true });
   });
 
-  // ── Slivers (Layer 2 — deterministic abstractions) ─────────────────────────
-  const slivers = await setupSliverSystem({
+  // ── Recipes (Layer 2 — deterministic abstractions) ─────────────────────────
+  const recipes = await setupRecipeSystem({
     onRun: (info) => {
-      dag.recordSliverRun({
-        sliverId: info.sliverId,
+      dag.recordRecipeRun({
+        recipeId: info.recipeId,
         params: info.params,
         declaredReads: info.declaredReads,
         writes: info.writes,
@@ -265,7 +265,7 @@ export async function registerDeferredRouting(
     },
     // Side-effecting executors reach the UE bridge through ctx.dispatch.
     // executeCommand throws on transport/UE error; we convert to the
-    // structured SliverDispatchResult so executors can branch on `ok`.
+    // structured RecipeDispatchResult so executors can branch on `ok`.
     ueBridge: async (cmd, params) => {
       try {
         const data = await executeCommand(cmd, params);
@@ -275,40 +275,40 @@ export async function registerDeferredRouting(
       }
     },
   });
-  for (const err of slivers.loader.errors()) {
-    console.warn(`[slivers] load error: ${err}`);
+  for (const err of recipes.loader.errors()) {
+    console.warn(`[recipes] load error: ${err}`);
   }
 
   defer(
     'sliver',
     'hayba_sliver_list',
-    'List installed Slivers (deterministic abstractions). Optional category or namespace filter.',
-    sliverListSchema,
-    (args: { category?: string; namespace?: string }) => sliverListHandler(args, { loader: slivers.loader }),
+    'List installed Recipes (deterministic abstractions). Optional category or namespace filter.',
+    recipeListSchema,
+    (args: { category?: string; namespace?: string }) => recipeListHandler(args, { loader: recipes.loader }),
   );
 
   defer(
     'sliver',
     'hayba_sliver_get',
-    'Get the full spec (params + determinism + executor) of an installed sliver by id.',
-    sliverGetSchema,
-    (args: { id: string }) => sliverGetHandler(args, { loader: slivers.loader }),
+    'Get the full spec (params + determinism + executor) of an installed recipe by id.',
+    recipeGetSchema,
+    (args: { id: string }) => recipeGetHandler(args, { loader: recipes.loader }),
   );
 
   defer(
     'sliver',
     'hayba_sliver_run',
-    'Execute a sliver with concrete parameter values. Returns outputs + declared side_effects + durationMs.',
-    sliverRunSchema,
-    (args: { id: string; params: Record<string, unknown> }) => sliverRunHandler(args, { runtime: slivers.runtime }),
+    'Execute a recipe with concrete parameter values. Returns outputs + declared side_effects + durationMs.',
+    recipeRunSchema,
+    (args: { id: string; params: Record<string, unknown> }) => recipeRunHandler(args, { runtime: recipes.runtime }),
   );
 
   defer(
     'sliver',
     'hayba_sliver_import',
-    'Install a sliver from a local file path or an http(s) URL into the user sliver library.',
-    sliverImportSchema,
-    (args: { source: string }) => sliverImportHandler(args, { loader: slivers.loader }),
+    'Install a recipe from a local file path or an http(s) URL into the user recipe library.',
+    recipeImportSchema,
+    (args: { source: string }) => recipeImportHandler(args, { loader: recipes.loader }),
   );
 
   defer(
@@ -334,9 +334,9 @@ export async function registerDeferredRouting(
     dagRebuildSchema,
     (args: { target?: string }) => dagRebuildHandler(args, {
       dag,
-      runSliverNode: async (uri: string) => {
+      runRecipeNode: async (uri: string) => {
         return { ok: false, reason: uri.startsWith('sliver://')
-          ? 'sliver re-run from node id is v2'
+          ? 'recipe re-run from node id is v2'
           : 'no executor for this node type' };
       },
     }),
@@ -579,7 +579,7 @@ export async function registerDeferredRouting(
     registry,
     index,
     retriever,
-    slivers,
+    recipes,
     dag,
     onUeConnected: () => registry.maybeAutoLoad('ue_connected'),
   };

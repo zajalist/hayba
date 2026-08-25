@@ -28,10 +28,10 @@ describe('setupDagSystem', () => {
     expect(b.dag.edges()).toHaveLength(2);
   });
 
-  it('recordSliverRun infers param-URI reads on top of declared reads', () => {
+  it('recordRecipeRun infers param-URI reads on top of declared reads', () => {
     const sys = setupDagSystem({ projectDir: dir });
-    sys.recordSliverRun({
-      sliverId: 'com.hayba.composition.frame_target',
+    sys.recordRecipeRun({
+      recipeId: 'com.hayba.composition.frame_target',
       params: { target: 'ue://Game/Maps/Demo.Actor_0', distance: 12 },
       declaredReads: [],
       writes: ['sliver://run/abc'],

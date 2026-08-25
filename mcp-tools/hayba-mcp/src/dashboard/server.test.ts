@@ -77,11 +77,11 @@ describe('Express 5 dashboard boundary', () => {
     }
   });
 
-  it('never lets the SPA shadow API, chat, or sliver 404s', async () => {
+  it('never lets the SPA shadow API, chat, or recipe 404s', async () => {
     const app = createDashboardApp({ staticDir: staticFixture(), registerRoutes: () => undefined });
     const { url } = await listen(app);
 
-    for (const path of ['/api/no-such-route', '/chat/no-such-route', '/sliver/no-such-route']) {
+    for (const path of ['/api/no-such-route', '/chat/no-such-route', '/recipe/no-such-route']) {
       const response = await fetch(`${url}${path}`, { headers: { accept: 'text/html' } });
       expect(response.status).toBe(404);
       expect(response.headers.get('content-type')).toContain('application/json');

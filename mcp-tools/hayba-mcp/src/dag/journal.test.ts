@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { OperationJournal, type JournalInput } from './journal.js';
 
 const sample: JournalInput = {
-  actor: 'sliver:com.test.demo',
+  actor: 'recipe:com.test.demo',
   reads: ['ue://Game/A'],
   writes: ['sliver://run/x'],
   paramsHash: 'sha256:abc',

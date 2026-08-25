@@ -2,7 +2,7 @@
 //
 // Param-URI inference: any param value that is a valid artifact URI is
 // treated as a read dependency. This draws DAG edges "for free" without
-// the sliver author declaring every input. Already-declared reads are
+// the recipe author declaring every input. Already-declared reads are
 // excluded so the caller can tag the remainder as `inferred`.
 
 import { isUri } from './uri.js';
