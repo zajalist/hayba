@@ -31,6 +31,7 @@
 #include "handlers/HaybaMCPEditorHandler.h"
 #include "handlers/HaybaMCPPIEHandler.h"
 #include "handlers/HaybaMCPPythonHandler.h"
+#include "handlers/HaybaMCPUIBridgeHandler.h"
 #include "handlers/HaybaMCPAssetHandler.h"
 #include "handlers/HaybaMCPBlueprintHandler.h"
 #include "handlers/HaybaMCPMaterialHandler.h"
@@ -164,6 +165,7 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPEditorHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPPIEHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPPythonHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPUIBridgeHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPAssetHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPBlueprintHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPMaterialHandler>());

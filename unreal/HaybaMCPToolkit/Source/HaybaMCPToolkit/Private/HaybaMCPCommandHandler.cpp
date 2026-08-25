@@ -339,22 +339,6 @@ static void PushPhysicsResultsToPanel(const TSharedPtr<FJsonObject>& Data)
     });
 }
 
-static void PushMemoryResultsToPanel(const TSharedPtr<FJsonObject>& Data)
-{
-    // The Semantic Library now reads the PLUMB stores directly; a memory_query
-    // just asks it to refresh from disk on the game thread.
-    AsyncTask(ENamedThreads::GameThread, []()
-    {
-        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
-        {
-            if (TSharedPtr<SHaybaMCPMemoryPanel> Panel = M->MemoryPanel.Pin())
-            {
-                Panel->RefreshLibrary();
-            }
-        }
-    });
-}
-
 /**
  * Find an actor by its label in the editor world. Must run on the game thread.
  */
@@ -734,66 +718,6 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         return HandleProposePlan(Id, Params);
     }
 
-    // Special-case: ui_memory_set pushes memory rows into the Memory Inspector
-    // (called by the TS-side memoryQuery tool after the sqlite read).
-    if (Cmd == TEXT("ui_memory_set"))
-    {
-        PushMemoryResultsToPanel(Params);
-        auto Data = MakeShared<FJsonObject>();
-        Data->SetBoolField(TEXT("received"), true);
-        return MakeOkResponse(Id, Data);
-    }
-
-    // Special-case: ui_tool_stream_new_turn — the Node mirror detected an
-    // idle gap (Claude started a new reply), so split the Tool Stream into
-    // a fresh collapsible turn group.
-    if (Cmd == TEXT("ui_tool_stream_new_turn"))
-    {
-        AsyncTask(ENamedThreads::GameThread, []()
-        {
-            if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
-            {
-                if (TSharedPtr<SHaybaMCPToolStreamPanel> Panel = M->ToolStreamPanel.Pin())
-                {
-                    Panel->BeginNewTurn();
-                }
-            }
-        });
-        auto Data = MakeShared<FJsonObject>();
-        Data->SetBoolField(TEXT("received"), true);
-        return MakeOkResponse(Id, Data);
-    }
-
-    // Special-case: ui_tool_stream lets the Node MCP side mirror its own
-    // tool-call lifecycle into the UE Tool Stream panel. PCGEx catalog tools
-    // and other TS-only handlers don't route through the UE command dispatch,
-    // so without this they'd be invisible. Fire-and-forget: just record and
-    // ack.
-    if (Cmd == TEXT("ui_tool_stream"))
-    {
-        FString TName, PStr, RStr;
-        Params->TryGetStringField(TEXT("tool"), TName);
-        Params->TryGetStringField(TEXT("params"), PStr);
-        Params->TryGetStringField(TEXT("result"), RStr);
-        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
-        {
-            M->RecordToolCall(TName, PStr, RStr);
-            AsyncTask(ENamedThreads::GameThread, [TName, PStr, RStr]()
-            {
-                if (FHaybaMCPModule* Mod = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
-                {
-                    if (TSharedPtr<SHaybaMCPToolStreamPanel> Panel = Mod->ToolStreamPanel.Pin())
-                    {
-                        Panel->AddToolCall(TName, PStr, RStr);
-                    }
-                }
-            });
-        }
-        auto Data = MakeShared<FJsonObject>();
-        Data->SetBoolField(TEXT("received"), true);
-        return MakeOkResponse(Id, Data);
-    }
-
     // Plan Mode safety gate: destructive commands require an approved plan.
     {
         auto& S = FHaybaMCPSettings::Get();
@@ -846,16 +770,16 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     // else, so GetRegisteredCommands() reports the surface the router actually
     // has.
     //
-    // Still inline above, with reasons:
+    // The three ui_* editor-panel mirrors have moved out too, into
+    // FHaybaMCPUIBridgeHandler. They were left here because they called panel
+    // helpers in this file and moving them looked like a separate change; the
+    // memory push turned out to ignore its parameters entirely and just ask
+    // the panel to re-read, so it was not.
+    //
+    // Still inline above, with a reason:
     //   hayba_propose_plan  — the Plan Mode gate's own control command; it has
-    //                         to be answerable before the gate it feeds.
-    //   ui_memory_set,
-    //   ui_tool_stream,
-    //   ui_tool_stream_new_turn
-    //                       — editor-panel mirrors that call this file's
-    //                         Push*ToPanel statics, which the post-dispatch
-    //                         path below also uses. Moving them means moving
-    //                         those, which is a separate change.
+    //                         to be answerable before the gate it feeds, so it
+    //                         cannot arrive through the gate.
 
     auto* Found = CommandToHandler.Find(Cmd);
     if (!Found)
