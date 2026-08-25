@@ -1,4 +1,5 @@
 #include "HaybaMCPPhysicsHandler.h"
+#include "HaybaSceneQuery.h"
 #include "HaybaMCPParams.h"
 #include "Json.h"
 #include "Editor.h"
@@ -24,15 +25,19 @@ namespace
         return true;
     }
 
-    static AActor* FindActorByName(UWorld* World, const FString& Name)
+    /** Resolve for a MUTATING command: returns null and fills OutError when the
+     *  label names more than one actor, rather than acting on whichever came
+     *  first out of the iterator. */
+    static AActor* FindActorOrAmbiguityError(UWorld* World, const FString& Name,
+                                             const TCHAR* Command, FString& OutError)
     {
-        if (!World) return nullptr;
-        for (TActorIterator<AActor> It(World); It; ++It)
+        const HaybaSceneQuery::FActorLookup Hit = HaybaSceneQuery::FindActor(World, Name);
+        if (Hit.IsAmbiguous())
         {
-            if (It->GetName() == Name || It->GetActorLabel() == Name)
-                return *It;
+            OutError = HaybaSceneQuery::AmbiguousError(Command, Name, Hit.Candidates);
+            return nullptr;
         }
-        return nullptr;
+        return Hit.Actor;
     }
 
     static UPrimitiveComponent* ResolvePrim(AActor* Actor, const FString& ComponentName)
@@ -90,7 +95,9 @@ FHaybaHandlerResult FHaybaMCPPhysicsHandler::PhysicsSetSimulate(const TSharedPtr
     FString ComponentName;
     P->TryGetStringField(TEXT("component_name"), ComponentName);
 
-    AActor* Actor = FindActorByName(World, ActorId);
+    FString AmbiguityError;
+    AActor* Actor = FindActorOrAmbiguityError(World, ActorId, TEXT("physics_set_simulate"), AmbiguityError);
+    if (!AmbiguityError.IsEmpty()) return FHaybaHandlerResult::Err(AmbiguityError);
     if (!Actor) return FHaybaHandlerResult::Err(TEXT("physics_set_simulate: actor not found"));
     UPrimitiveComponent* Prim = ResolvePrim(Actor, ComponentName);
     if (!Prim) return FHaybaHandlerResult::Err(TEXT("physics_set_simulate: no primitive component"));
@@ -120,7 +127,9 @@ FHaybaHandlerResult FHaybaMCPPhysicsHandler::PhysicsSetCollisionProfile(const TS
     FString ComponentName;
     P->TryGetStringField(TEXT("component_name"), ComponentName);
 
-    AActor* Actor = FindActorByName(World, ActorId);
+    FString AmbiguityError;
+    AActor* Actor = FindActorOrAmbiguityError(World, ActorId, TEXT("physics_set_collision_profile"), AmbiguityError);
+    if (!AmbiguityError.IsEmpty()) return FHaybaHandlerResult::Err(AmbiguityError);
     if (!Actor) return FHaybaHandlerResult::Err(TEXT("physics_set_collision_profile: actor not found"));
     UPrimitiveComponent* Prim = ResolvePrim(Actor, ComponentName);
     if (!Prim) return FHaybaHandlerResult::Err(TEXT("physics_set_collision_profile: no primitive component"));
@@ -166,7 +175,9 @@ FHaybaHandlerResult FHaybaMCPPhysicsHandler::PhysicsAddImpulse(const TSharedPtr<
     FString ComponentName;
     P->TryGetStringField(TEXT("component_name"), ComponentName);
 
-    AActor* Actor = FindActorByName(World, ActorId);
+    FString AmbiguityError;
+    AActor* Actor = FindActorOrAmbiguityError(World, ActorId, TEXT("physics_add_impulse"), AmbiguityError);
+    if (!AmbiguityError.IsEmpty()) return FHaybaHandlerResult::Err(AmbiguityError);
     if (!Actor) return FHaybaHandlerResult::Err(TEXT("physics_add_impulse: actor not found"));
     UPrimitiveComponent* Prim = ResolvePrim(Actor, ComponentName);
     if (!Prim) return FHaybaHandlerResult::Err(TEXT("physics_add_impulse: no primitive component"));

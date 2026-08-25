@@ -1,4 +1,5 @@
 #include "HaybaMCPSplineHandler.h"
+#include "HaybaSceneQuery.h"
 #include "HaybaMCPParams.h"
 #include "Json.h"
 #include "Editor.h"
@@ -24,15 +25,19 @@ namespace
         return true;
     }
 
-    static AActor* FindActorByName(UWorld* World, const FString& Name)
+    /** Resolve for a MUTATING command: returns null and fills OutError when the
+     *  label names more than one actor, rather than acting on whichever came
+     *  first out of the iterator. */
+    static AActor* FindActorOrAmbiguityError(UWorld* World, const FString& Name,
+                                             const TCHAR* Command, FString& OutError)
     {
-        if (!World) return nullptr;
-        for (TActorIterator<AActor> It(World); It; ++It)
+        const HaybaSceneQuery::FActorLookup Hit = HaybaSceneQuery::FindActor(World, Name);
+        if (Hit.IsAmbiguous())
         {
-            if (It->GetName() == Name || It->GetActorLabel() == Name)
-                return *It;
+            OutError = HaybaSceneQuery::AmbiguousError(Command, Name, Hit.Candidates);
+            return nullptr;
         }
-        return nullptr;
+        return Hit.Actor;
     }
 
     static USplineComponent* GetSpline(AActor* Actor)
@@ -116,7 +121,9 @@ FHaybaHandlerResult FHaybaMCPSplineHandler::SplineAddPoint(const TSharedPtr<FJso
     if (!ReadVec(P, TEXT("location"), Loc))
         return FHaybaHandlerResult::Err(TEXT("spline_add_point: missing location"));
 
-    AActor* Actor = FindActorByName(World, ActorId);
+    FString AmbiguityError;
+    AActor* Actor = FindActorOrAmbiguityError(World, ActorId, TEXT("spline_add_point"), AmbiguityError);
+    if (!AmbiguityError.IsEmpty()) return FHaybaHandlerResult::Err(AmbiguityError);
     if (!Actor) return FHaybaHandlerResult::Err(TEXT("spline_add_point: actor not found"));
     USplineComponent* Spline = GetSpline(Actor);
     if (!Spline) return FHaybaHandlerResult::Err(TEXT("spline_add_point: no spline component"));
@@ -154,7 +161,9 @@ FHaybaHandlerResult FHaybaMCPSplineHandler::SplineSetPoint(const TSharedPtr<FJso
     if (!ReadVec(P, TEXT("location"), Loc))
         return FHaybaHandlerResult::Err(TEXT("spline_set_point: missing location"));
 
-    AActor* Actor = FindActorByName(World, ActorId);
+    FString AmbiguityError;
+    AActor* Actor = FindActorOrAmbiguityError(World, ActorId, TEXT("spline_set_point"), AmbiguityError);
+    if (!AmbiguityError.IsEmpty()) return FHaybaHandlerResult::Err(AmbiguityError);
     if (!Actor) return FHaybaHandlerResult::Err(TEXT("spline_set_point: actor not found"));
     USplineComponent* Spline = GetSpline(Actor);
     if (!Spline) return FHaybaHandlerResult::Err(TEXT("spline_set_point: no spline component"));
@@ -184,7 +193,9 @@ FHaybaHandlerResult FHaybaMCPSplineHandler::SplineRemovePoint(const TSharedPtr<F
     if (!P->TryGetNumberField(TEXT("index"), Index))
         return FHaybaHandlerResult::Err(TEXT("spline_remove_point: missing index"));
 
-    AActor* Actor = FindActorByName(World, ActorId);
+    FString AmbiguityError;
+    AActor* Actor = FindActorOrAmbiguityError(World, ActorId, TEXT("spline_remove_point"), AmbiguityError);
+    if (!AmbiguityError.IsEmpty()) return FHaybaHandlerResult::Err(AmbiguityError);
     if (!Actor) return FHaybaHandlerResult::Err(TEXT("spline_remove_point: actor not found"));
     USplineComponent* Spline = GetSpline(Actor);
     if (!Spline) return FHaybaHandlerResult::Err(TEXT("spline_remove_point: no spline component"));
@@ -210,7 +221,9 @@ FHaybaHandlerResult FHaybaMCPSplineHandler::SplineGetInfo(const TSharedPtr<FJson
     ActorId = ParamR.RequiredString(TEXT("actor_id"));
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
-    AActor* Actor = FindActorByName(World, ActorId);
+    FString AmbiguityError;
+    AActor* Actor = FindActorOrAmbiguityError(World, ActorId, TEXT("spline_get_info"), AmbiguityError);
+    if (!AmbiguityError.IsEmpty()) return FHaybaHandlerResult::Err(AmbiguityError);
     if (!Actor) return FHaybaHandlerResult::Err(TEXT("spline_get_info: actor not found"));
     USplineComponent* Spline = GetSpline(Actor);
     if (!Spline) return FHaybaHandlerResult::Err(TEXT("spline_get_info: no spline component"));

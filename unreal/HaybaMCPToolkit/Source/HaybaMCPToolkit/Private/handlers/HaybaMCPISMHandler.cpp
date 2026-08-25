@@ -1,4 +1,5 @@
 #include "HaybaMCPISMHandler.h"
+#include "HaybaSceneQuery.h"
 #include "HaybaMCPParams.h"
 #include "Json.h"
 #include "Editor.h"
@@ -25,15 +26,19 @@ namespace
         return true;
     }
 
-    static AActor* FindActorByName(UWorld* World, const FString& Name)
+    /** Resolve for a MUTATING command: returns null and fills OutError when the
+     *  label names more than one actor, rather than acting on whichever came
+     *  first out of the iterator. */
+    static AActor* FindActorOrAmbiguityError(UWorld* World, const FString& Name,
+                                             const TCHAR* Command, FString& OutError)
     {
-        if (!World) return nullptr;
-        for (TActorIterator<AActor> It(World); It; ++It)
+        const HaybaSceneQuery::FActorLookup Hit = HaybaSceneQuery::FindActor(World, Name);
+        if (Hit.IsAmbiguous())
         {
-            if (It->GetName() == Name || It->GetActorLabel() == Name)
-                return *It;
+            OutError = HaybaSceneQuery::AmbiguousError(Command, Name, Hit.Candidates);
+            return nullptr;
         }
-        return nullptr;
+        return Hit.Actor;
     }
 
     static UInstancedStaticMeshComponent* GetISM(AActor* Actor)
@@ -125,7 +130,9 @@ FHaybaHandlerResult FHaybaMCPISMHandler::IsmAddInstance(const TSharedPtr<FJsonOb
     if (!P->TryGetObjectField(TEXT("transform"), TransformObj))
         return FHaybaHandlerResult::Err(TEXT("ism_add_instance: missing transform"));
 
-    AActor* Actor = FindActorByName(World, ActorId);
+    FString AmbiguityError;
+    AActor* Actor = FindActorOrAmbiguityError(World, ActorId, TEXT("ism_add_instance"), AmbiguityError);
+    if (!AmbiguityError.IsEmpty()) return FHaybaHandlerResult::Err(AmbiguityError);
     if (!Actor) return FHaybaHandlerResult::Err(TEXT("ism_add_instance: actor not found"));
     UInstancedStaticMeshComponent* ISM = GetISM(Actor);
     if (!ISM) return FHaybaHandlerResult::Err(TEXT("ism_add_instance: no ISM component"));
@@ -152,7 +159,9 @@ FHaybaHandlerResult FHaybaMCPISMHandler::IsmAddInstances(const TSharedPtr<FJsonO
     if (!P->TryGetArrayField(TEXT("transforms"), Arr))
         return FHaybaHandlerResult::Err(TEXT("ism_add_instances: missing transforms"));
 
-    AActor* Actor = FindActorByName(World, ActorId);
+    FString AmbiguityError;
+    AActor* Actor = FindActorOrAmbiguityError(World, ActorId, TEXT("ism_add_instances"), AmbiguityError);
+    if (!AmbiguityError.IsEmpty()) return FHaybaHandlerResult::Err(AmbiguityError);
     if (!Actor) return FHaybaHandlerResult::Err(TEXT("ism_add_instances: actor not found"));
     UInstancedStaticMeshComponent* ISM = GetISM(Actor);
     if (!ISM) return FHaybaHandlerResult::Err(TEXT("ism_add_instances: no ISM component"));
@@ -183,7 +192,9 @@ FHaybaHandlerResult FHaybaMCPISMHandler::IsmClearInstances(const TSharedPtr<FJso
     ActorId = ParamR.RequiredString(TEXT("actor_id"));
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
-    AActor* Actor = FindActorByName(World, ActorId);
+    FString AmbiguityError;
+    AActor* Actor = FindActorOrAmbiguityError(World, ActorId, TEXT("ism_clear_instances"), AmbiguityError);
+    if (!AmbiguityError.IsEmpty()) return FHaybaHandlerResult::Err(AmbiguityError);
     if (!Actor) return FHaybaHandlerResult::Err(TEXT("ism_clear_instances: actor not found"));
     UInstancedStaticMeshComponent* ISM = GetISM(Actor);
     if (!ISM) return FHaybaHandlerResult::Err(TEXT("ism_clear_instances: no ISM component"));
