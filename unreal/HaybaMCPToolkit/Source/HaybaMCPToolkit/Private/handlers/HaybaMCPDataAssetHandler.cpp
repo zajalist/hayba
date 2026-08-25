@@ -257,15 +257,33 @@ FHaybaHandlerResult FHaybaMCPDataAssetHandler::Handle(const FString& Cmd, const 
         Asset->Modify();
         FPropertyChangedEvent Evt(Prop, EPropertyChangeType::ValueSet);
         Asset->PostEditChangeProperty(Evt);
+
+        // The save result used to be discarded and ok:true returned regardless.
+        // A save can fail for ordinary reasons -- the file is read-only, or
+        // wants a source-control checkout -- and the caller was told the
+        // property had been persisted when it existed only in memory and would
+        // be gone at the next editor restart. Silently losing an edit is worse
+        // than refusing one.
+        bool bSaved = false;
         if (UPackage* Pkg = Asset->GetOutermost())
         {
             Pkg->MarkPackageDirty();
-            UEditorAssetLibrary::SaveLoadedAsset(Asset, /*bOnlyIfDirty*/false);
+            bSaved = UEditorAssetLibrary::SaveLoadedAsset(Asset, /*bOnlyIfDirty*/false);
+        }
+
+        if (!bSaved)
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("data_set: %s was set on %s in memory, but saving the asset failed ")
+                TEXT("— the change will be lost when the editor closes. The file may be ")
+                TEXT("read-only or need a source-control checkout."),
+                *PropertyName, *Asset->GetPathName()));
         }
 
         auto Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("path"), Asset->GetPathName());
         Out->SetStringField(TEXT("property"), PropertyName);
+        Out->SetBoolField(TEXT("saved"), true);
         Out->SetBoolField(TEXT("ok"), true);
         return FHaybaHandlerResult::Ok(Out);
     }
