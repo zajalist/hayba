@@ -477,13 +477,58 @@
         buildGraph(Array.isArray(data.cells) ? data.cells : []);
         render();
         reheat(1.0);
+        // Frame the new graph once it has had a moment to settle. Without
+        // this the map opens on whatever the previous view was -- typically
+        // the identity view, which is why a freshly-scanned level rendered
+        // as an empty black panel.
+        setTimeout(fitToContent, 400);
       } catch (e) {
         console.error('haybaLoadCells parse error:', e);
       }
     };
+    // Frame every node. This used to set the view to identity and reheat,
+    // which is haybaReset without the unpinning -- so the one control meant to
+    // rescue an off-screen graph reset the view to the state that was not
+    // showing it. A graph laid out away from the origin stayed invisible and
+    // the panel read as broken while its own status line said "1 cell".
+    function fitToContent(padding = 40) {
+      if (!nodes.length) { view = { tx: 0, ty: 0, scale: 1 }; applyView(); return; }
+
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const n of nodes) {
+        // A node mid-layout can have an undefined coordinate. Including one
+        // poisons the whole box to NaN and the view transform silently stops
+        // applying, which looks exactly like the bug being fixed here.
+        if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) continue;
+        if (n.x < minX) minX = n.x;
+        if (n.y < minY) minY = n.y;
+        if (n.x > maxX) maxX = n.x;
+        if (n.y > maxY) maxY = n.y;
+      }
+      if (!Number.isFinite(minX)) { view = { tx: 0, ty: 0, scale: 1 }; applyView(); return; }
+
+      const rect = svg.getBoundingClientRect();
+      const vw = rect.width  || 1;
+      const vh = rect.height || 1;
+
+      // A single node has a zero-sized box; give it a nominal extent so the
+      // scale below does not divide by zero and blow the view up to Infinity.
+      const bw = Math.max(maxX - minX, 1);
+      const bh = Math.max(maxY - minY, 1);
+
+      // Never zoom past 1:1 -- filling the panel with one enormous circle is
+      // not more legible than showing it at its natural size.
+      const scale = Math.min((vw - padding * 2) / bw, (vh - padding * 2) / bh, 1);
+      view = {
+        scale,
+        tx: vw / 2 - ((minX + maxX) / 2) * scale,
+        ty: vh / 2 - ((minY + maxY) / 2) * scale,
+      };
+      applyView();
+    }
+
     window.haybaFit = function() {
-      // Reset view + reheat the simulation so things re-settle nicely.
-      view = { tx: 0, ty: 0, scale: 1 }; applyView();
+      fitToContent();
       reheat(0.7);
     };
     window.haybaReset = function() {

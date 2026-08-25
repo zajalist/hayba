@@ -133,6 +133,33 @@ function decodePng(file) {
   return { ...ihdr, bpp, stride, px };
 }
 
+/**
+ * How uniform the content area is, as the share of pixels holding the single
+ * most common colour. The crop starts right of the sidebar and below the
+ * header and tab row, so the chrome cannot carry a dead panel to a pass.
+ *
+ * Quantised to 4 bits per channel: a gradient or an anti-aliased edge should
+ * not read as "varied" when the region is really one flat colour.
+ */
+function contentUniformity(img) {
+  const left = Math.floor(img.width * 0.24);   // past the sidebar
+  const top = Math.floor(img.height * 0.18);   // past the header, tabs and buttons
+  const counts = new Map();
+  let total = 0;
+  for (let y = top; y < img.height; y++) {
+    for (let x = left; x < img.width; x++) {
+      const i = y * img.stride + x * img.bpp;
+      const key = ((img.px[i] >> 4) << 8) | ((img.px[i + 1] >> 4) << 4) | (img.px[i + 2] >> 4);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+      total++;
+    }
+  }
+  if (!total) return 1;
+  let most = 0;
+  for (const n of counts.values()) if (n > most) most = n;
+  return most / total;
+}
+
 function countOchre(img) {
   let n = 0;
   for (let i = 0; i < img.px.length; i += img.bpp) {
@@ -205,6 +232,21 @@ for (const [panel, img] of Object.entries(images)) {
   const n = countOchre(img);
   if (n < 20) fail(`${panel}: no semantic ochre on screen (${n} px) - the active destination is unmarked`);
   else pass(`${panel}: active destination marked (${n} ochre px)`);
+}
+
+// A content region that is essentially ONE colour never painted at all -- a
+// web view that failed to load, a surface that was never composited.
+//
+// Scope, honestly: this catches a wholly blank region, NOT a mostly-empty one.
+// Real readings here run 37% (chat) to 96% (the World map with a single node
+// drawn), so a threshold tight enough to catch a sparsely-populated panel
+// would sit below a legitimate reading and fail on a quiet level. 0.995 stays
+// clear of everything measured and still catches a surface that drew nothing.
+const BLANK_THRESHOLD = 0.995;
+for (const [panel, img] of Object.entries(images)) {
+  const u = contentUniformity(img);
+  if (u > BLANK_THRESHOLD) fail(`${panel}: content area is ${(u * 100).toFixed(1)}% a single colour - nothing rendered into it`);
+  else pass(`${panel}: content area painted (${(u * 100).toFixed(1)}% flattest colour)`);
 }
 
 console.log('');
