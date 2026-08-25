@@ -120,6 +120,15 @@ jobs:
       - name: Prompts name only tools that exist
         run: node tools/prompt-tool-check.mjs --check
 
+      # tsc copies no data files, so the packaged server needs these copied
+      # alongside it. The copy list used to be a one-line `node -e` in
+      # package.json naming src/slivers/specs; renaming that directory broke
+      # the build while every test stayed green, because vitest runs from src/
+      # and never touches the packaged layout.
+      - name: Build assets still exist where the build expects them
+        run: node tools/copy-assets.mjs --check
+        working-directory: mcp-tools/hayba-mcp
+
   architecture:
     name: Architecture — clean install + build + test
     runs-on: ubuntu-latest

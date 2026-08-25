@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 // them rather than in a scratch directory that can be cleared at any time.
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const roomProds = JSON.parse(
-  readFileSync(join(__dirname, '__fixtures__', 'room-grammar.json'), 'utf8'),
+  readFileSync(join(__dirname, 'starter-grammar.json'), 'utf8'),
 ) as Record<string, Production>;
 
 const prods = Object.values(roomProds) as Production[];
