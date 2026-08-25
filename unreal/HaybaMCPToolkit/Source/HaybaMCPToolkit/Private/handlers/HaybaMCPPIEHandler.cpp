@@ -166,14 +166,38 @@ static AActor* ResolveActor(UWorld* World, const TSharedPtr<FJsonObject>& P, FSt
 
     if (!Path.IsEmpty())
     {
-        // Try direct PathName match against actors in the PIE world.
+        // Exact identifiers first. A full path name and an object name are both
+        // unique within a world, so the first hit on either is the only hit.
+        TArray<AActor*> SuffixMatches;
         for (TActorIterator<AActor> It(World); It; ++It)
         {
             AActor* A = *It;
             if (!A) continue;
-            if (A->GetPathName() == Path || A->GetPathName().EndsWith(Path))
-                return A;
+            if (A->GetPathName() == Path) return A;
             if (A->GetName() == Path) return A;
+            // A SUFFIX match is a convenience, not an identifier: `_1` ends the
+            // path name of StaticMeshActor_1, PointLight_1 and anything else
+            // numbered 1. Returning the first was the same silent
+            // wrong-actor bug that label lookups had -- collect and count
+            // instead, so an ambiguous suffix refuses rather than guesses.
+            if (A->GetPathName().EndsWith(Path)) SuffixMatches.Add(A);
+        }
+
+        if (SuffixMatches.Num() == 1) return SuffixMatches[0];
+        if (SuffixMatches.Num() > 1)
+        {
+            TArray<FString> Names;
+            for (AActor* A : SuffixMatches) Names.Add(A->GetName());
+            Names.Sort();
+            const int32 Shown = FMath::Min(Names.Num(), 8);
+            FString List = FString::Join(TArray<FString>(Names.GetData(), Shown), TEXT(", "));
+            if (Names.Num() > Shown)
+                List += FString::Printf(TEXT(", and %d more"), Names.Num() - Shown);
+            OutError = FString::Printf(
+                TEXT("actor_path \"%s\" is a suffix matching %d actors (%s) — refusing to guess ")
+                TEXT("which. Pass a full path name, or the unique object name."),
+                *Path, Names.Num(), *List);
+            return nullptr;
         }
         // FindObject fallback.
         if (UObject* Obj = StaticFindObject(AActor::StaticClass(), nullptr, *Path))
