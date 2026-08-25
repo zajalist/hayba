@@ -952,7 +952,7 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
   },
   {
     name: 'plumb_grammar_expand',
-    description: 'Expand a seed symbol using the stored production rules + the PLUMB constraint store as guards. Returns a PlacementPlan. In dry-run (no UE scene), geometry-dependent constraints self-skip — rejections only reflect TS-evaluable constraints.',
+    description: 'Expand a seed symbol into a PLACEMENT PLAN using the stored production rules, with the PLUMB constraint store as guards. NOTHING IS SPAWNED: this returns what should exist and where, and each item carries a `role` label the caller must still bind to a real asset — there is no plan-to-world step yet. A starter grammar (rooms, tunnels, shafts) is seeded on first run; the reply lists the symbol kinds the stored grammar knows. In dry-run (no UE scene), geometry-dependent constraints self-skip, so rejections reflect only TS-evaluable constraints.',
     meta: {
       cost: 'low',
       effects: [],

@@ -556,3 +556,66 @@ well-shaped.
 - **A7** — interiors via the PLUMB room grammar, still unwired.
 - Cross-asset interpenetration in `world_generate` — needs real overlap, not a
   centre-distance proxy.
+
+
+---
+
+## A7 — interiors: what is actually there (2026-08-25)
+
+A7 said the room-grammar machinery "is unwired to any workflow". Checked, and
+the shape of the gap is different from that.
+
+**The tool exists and is registered.** `plumb_grammar_expand` has been in the
+catalogue the whole time.
+
+**It shipped with no grammar.** The production store starts empty, so it
+answered every seed with an empty plan and "call plumb_production_define to
+author rules" — asking someone to write a grammar before they have seen one
+work. A starter set existed as a TEST FIXTURE: five productions, tunnels,
+shafts and rooms in two builder styles. It now ships and is seeded on first
+run (`17474b92`), and the tests read the same file so what ships is proven.
+
+**What a seed actually produces**, run against the shipped grammar:
+
+    room / imperial   3 items   shell(room) + scatter(debris) + fill(floor_detail)
+    room / native     2 items   shell(room) + scatter(rubble)
+    tunnel / native   7 items   shell + columns + vent + scatter + decal + fill,
+                                recursing into a shaft symbol
+    corridor          0 items   <no-production:corridor>
+
+The machinery is real — priorities, builder variants, recursion through
+`emit: symbol` all work. Two things are not.
+
+### Gap 1: nothing executes a plan
+
+`PlacementPlan` is produced and exported and **no code consumes it**. There is
+no plan-to-world step, so the tool returns a list of things and where they go,
+and a caller must interpret and place all of it by hand. Each item's `role` is
+a bare label — "column", "vent" — with no binding to an asset.
+
+The pieces to close this now exist: `asset_find_by_look` resolves a phrase to
+an asset, and `world_generate` already grounds, separates and spawns. An
+executor would compose them. That is a real feature, not a wiring task, so it
+is not something to start unprompted.
+
+### Gap 2: a room is not an interior
+
+The room productions emit a shell, some scatter and a floor fill. No doorways,
+no furniture, no subdivision, no adjacency. A7's premise is that coherent
+interiors are the field's admitted gap; a shell with rubble in it does not
+answer that. What an interior production should contain is a design decision
+about this product, not a defaulting choice.
+
+### Done this pass
+
+The tool now tells the truth about both. Its description says NOTHING IS
+SPAWNED and that `role` is unbound; the reply carries `placed: false`; and a
+seed that matches no production names the vocabulary the grammar does know
+instead of returning an empty plan that reads as "this produces nothing".
+
+### Decisions this needs
+
+1. Should A7 include a plan executor, or does `plumb_grammar_expand` stay an
+   advisory planner an agent reads and acts on?
+2. What belongs in an interior production — doors and furniture zones, or
+   room subdivision first?

@@ -570,16 +570,35 @@ export const plumbGrammarExpandSchema = {
 };
 export async function plumbGrammarExpandHandler(args: {
   seed: { kind: string; attrs?: Record<string, number | string | boolean> };
-}): Promise<{ plan: unknown; note: string }> {
+}): Promise<{ plan: unknown; known_symbol_kinds: string[]; placed: false; note: string }> {
   const seed = { kind: args.seed.kind, attrs: args.seed.attrs ?? {} };
   const prods = listProductions();
   const guard = makeGuardFn();
   const plan = expandGrammar(seed, prods, guard);
+
+  // A seed whose kind no production matches yields an empty plan, and an empty
+  // plan reads as "this produces nothing" rather than "nothing here speaks that
+  // word". Naming the vocabulary turns a dead end into a next step.
+  const known = [...new Set(prods.map((p) => p.lhs.kind))].sort();
+  const unmatched = plan.rejected.some((r) => r.startsWith('<no-production:'));
+
+  let note: string;
+  if (prods.length === 0) {
+    note = 'No productions defined yet — call plumb_production_define to author rules, then re-expand.';
+  } else if (unmatched && plan.items.length === 0) {
+    note = `Nothing matched the seed kind "${seed.kind}". The stored grammar knows: ${known.join(', ')}. Seed one of those, or author a production for "${seed.kind}" with plumb_production_define.`;
+  } else {
+    note = `Expanded from seed "${seed.kind}" using ${prods.length} production(s). In dry-run, geometry primitives (max_straight_run, presence) self-skip — rejections shown only reflect constraints evaluable without a UE scene.`;
+  }
+
   return {
     plan,
-    note: prods.length === 0
-      ? 'No productions defined yet — call plumb_production_define to author rules, then re-expand.'
-      : `Expanded from seed "${seed.kind}" using ${prods.length} production(s). In dry-run, geometry primitives (max_straight_run, presence) self-skip — rejections shown only reflect constraints evaluable without a UE scene.`,
+    known_symbol_kinds: known,
+    // Said out loud because the shape of the reply does not say it: this is a
+    // plan. No actor is spawned, and `role` is a label the caller still has to
+    // bind to a real asset.
+    placed: false,
+    note,
   };
 }
 
