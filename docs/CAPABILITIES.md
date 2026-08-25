@@ -12,8 +12,8 @@ The number below is the one with a definition: commands declared in a
 
 | What | Count |
 |---|---|
-| Handler classes declaring commands | **34** |
-| Commands declared in C++ | **236** |
+| Handler classes declaring commands | **35** |
+| Commands declared in C++ | **239** |
 | Commands described in `sidecar.json` | 154 |
 | …of those, marked agent-callable | 150 |
 
@@ -26,13 +26,13 @@ Allowlisted in `tools/capability-inventory.mjs`. The gate ignores these.
 - `copilot_get_key` — credential retrieval — the agent must never be able to read a stored key
 - `editor_get_perf_stats` — orphan duplicate: FHaybaMCPPerfHandler declares it while FHaybaMCPEditorHandler implements editor_get_performance_stats, which is the one described and used. Needs a decision (delete the duplicate, or merge and expose) rather than a descriptor.
 
-### Wrapped in TS, absent from `sidecar.json` (80)
+### Wrapped in TS, absent from `sidecar.json` (83)
 
 Reachable through a hand-written TS tool rather than a legacy descriptor, so
 these work — but the sidecar count under-reports the real surface by this much,
 which is one of the reasons the published numbers never agreed.
 
-<details><summary>80 commands</summary>
+<details><summary>83 commands</summary>
 
 - `actor_delete`
 - `actor_list`
@@ -106,12 +106,15 @@ which is one of the reasons the published numbers never agreed.
 - `ui_list_widget_blueprints`
 - `ui_list_widget_types`
 - `ui_measure_text`
+- `ui_memory_set`
 - `ui_mutate_tree`
 - `ui_query`
 - `ui_render_widget_to_png`
 - `ui_report_findings`
 - `ui_save_widget`
 - `ui_set_variable`
+- `ui_tool_stream`
+- `ui_tool_stream_new_turn`
 - `wait_for_idle`
 - `wait_for_shaders`
 
@@ -163,5 +166,6 @@ registration list. Satellite-module handlers register themselves via
 | `test` | FHaybaMCPTestHandler | 3 | yes |
 | `texture` | FHaybaMCPTextureHandler | 4 | yes |
 | `ui` | FHaybaMCPUIHandler | 16 | yes |
+| `ui_bridge` | FHaybaMCPUIBridgeHandler | 3 | yes |
 | `vault` | FHaybaMCPVaultHandler | 5 | yes |
 | `wp` | FHaybaMCPWorldPartitionHandler | 3 | yes |

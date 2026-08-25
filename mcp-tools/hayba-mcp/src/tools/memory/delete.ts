@@ -2,6 +2,7 @@ import type { ToolHandler } from '../types.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 import { errorResult, okResult } from '../tool-result.js';
 import { getMemoryStore } from './store.js';
+import { notifyMemoryPanel } from './notify-panel.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'low',
@@ -27,6 +28,7 @@ export const memoryDeleteHandler: ToolHandler = async (args) => {
 
   if (id) {
     const deleted = store.deleteById(id);
+    if (deleted) notifyMemoryPanel();
     return okResult({ ok: deleted, id, deleted_count: deleted ? 1 : 0 });
   }
 

@@ -3,6 +3,7 @@ import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 import { errorResult, okResult } from '../tool-result.js';
 import { getMemoryStore } from './store.js';
 import { config } from '../../config.js';
+import { notifyMemoryPanel } from './notify-panel.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'low',
@@ -36,6 +37,7 @@ export const memoryWriteHandler: ToolHandler = async (args) => {
 
   const store = getMemoryStore();
   const id = store.write({ id: explicitId, agentRole, scope, intent, content, accessedResources, tokenCost, provenance, timestamp });
+  notifyMemoryPanel();
 
   // Retention is applied on every write, never silently: the response always
   // names what (if anything) was pruned, using the bounds from config
