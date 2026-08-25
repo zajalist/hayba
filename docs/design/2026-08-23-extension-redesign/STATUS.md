@@ -830,3 +830,55 @@ class of thing a merge drops quietly.
 **Do not ship this merge until those are triaged.** The build being green and
 2,530 TypeScript tests passing is not sufficient evidence — the whole reason
 the hardening branch exists is behaviour these tests are the only check on.
+
+### Triage verdict: the 7 failures are NOT merge damage
+
+Checked out `feat/crash-resilience-advisory-hardening` **on its own** in the
+runtime worktree and built it against UE 5.8. It **does not compile**:
+
+    HaybaMCPUIHandler.cpp(1906): error C2664  ternary format string
+    HaybaMCPUIHandler.cpp(2102): error C2664  ternary format string
+    HaybaMCPUIHandler.cpp(2219): error C2664  ternary format string
+
+Those are the same three errors fixed in `77e4fff9` and attributed there to the
+merge. They are not merge artifacts — the hardening branch carries them. UE 5.8
+validates `Printf` format strings at compile time against a *literal*, and a
+ternary selecting between two literals is not one. (The first site was also
+genuinely wrong: three arguments passed to a branch with one specifier.)
+
+**So that branch has never been built on this engine, which means its
+automation tests have never run here either.** That accounts for the failures
+directly:
+
+- `Python.FatalPolicy`, `Python.PolicyBoundary`, `Params.Reader`,
+  `Advisory.ResponseBoundary`, `DataAsset.ReadWritePreflight`,
+  `MetaSound.InputBoundary` — the handlers under test are **byte-identical to
+  their branch** (`git diff --stat` between the merge and theirs shows no
+  change for `HaybaMCPPythonHandler.cpp`, `HaybaMCPParams.*`,
+  `HaybaMCPAdvisory.cpp`), and so are the test files. Nothing on this side
+  altered them. They fail because they have never passed on this engine.
+- `UI.Replace.PreservesChildrenAndRollsBackCollision` — the pre-existing
+  failure documented above, independent of the merge.
+
+### What that changes
+
+The merge is in better shape than the raw numbers suggested. It is not
+"7 things my resolutions broke"; it is one inherited red test plus six that
+arrived red and could not previously have been observed.
+
+It also means the hardening branch's *own* quality bar is lower than assumed:
+those six tests encode the crash-policy behaviour that branch exists to
+guarantee, and none of them has been demonstrated to pass. Merging it is still
+right — the hardening is real and much of it is verified by the 2,530 green
+TypeScript tests — but "their branch is the rigorous one" was an assumption
+worth checking, and it did not survive.
+
+### Still to do before shipping
+
+Triage the six inherited failures on their merits. They are now *observable*
+for the first time, which is the useful thing the merge bought. Start with
+`Python.FatalPolicy`: `builtins.input(` is classified `HCR-DYNAMIC-001` by a
+token-level check at `HaybaMCPPythonHandler.cpp:1516` before the substring
+table at line 100 can classify it `HCR-BLOCK-001`. That is a precedence bug in
+their policy engine, not a merge conflict — two layers disagreeing about the
+same input.
