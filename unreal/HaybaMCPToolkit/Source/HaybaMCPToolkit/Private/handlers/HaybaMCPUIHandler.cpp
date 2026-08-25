@@ -1903,11 +1903,18 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                 const bool bRecovered = RestoredSlot
                     && Widget->GetParent() == OldParent
                     && OldParent->GetChildIndex(Widget) == OldIndex;
+                if (bRecovered)
+                {
+                    return FHaybaHandlerResult::Err(FString::Printf(
+                        TEXT("ui_mutate_tree reparent: '%s' refused the child (a %s holds a limited number of children). Widget and slot restored under '%s'."),
+                        *NewParentName, *NewParent->GetClass()->GetName(), *OldParentName));
+                }
+                // One specifier, one argument. The ternary form passed three to
+                // this branch as well, which the checked-format overload in
+                // UE 5.8 rejects -- correctly, since two were never consumed.
                 return FHaybaHandlerResult::Err(FString::Printf(
-                    bRecovered
-                        ? TEXT("ui_mutate_tree reparent: '%s' refused the child (a %s holds a limited number of children). Widget and slot restored under '%s'.")
-                        : TEXT("ui_mutate_tree reparent: '%s' refused the child and recovery is unknown; reload the asset before any further UI command."),
-                    *NewParentName, *NewParent->GetClass()->GetName(), *OldParentName));
+                    TEXT("ui_mutate_tree reparent: '%s' refused the child and recovery is unknown; reload the asset before any further UI command."),
+                    *NewParentName));
             }
 
             // Slot layout for the NEW parent, since the old slot's type is
@@ -2099,10 +2106,14 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                         Widget->GetOuter(),
                         REN_DontCreateRedirectors | REN_DoNotDirty)
                     && Widget->GetName() == WidgetName);
+            if (bStillOriginal)
+            {
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("ui_mutate_tree rename: Unreal refused '%s'; widget remains '%s' and no GUID was moved"),
+                    *NewName, *Widget->GetName()));
+            }
             return FHaybaHandlerResult::Err(FString::Printf(
-                bStillOriginal
-                    ? TEXT("ui_mutate_tree rename: Unreal refused '%s'; widget remains '%s' and no GUID was moved")
-                    : TEXT("ui_mutate_tree rename: Unreal refused '%s' and the original name could not be verified; recovery is unknown, reload the asset before any further UI command (current name '%s')"),
+                TEXT("ui_mutate_tree rename: Unreal refused '%s' and the original name could not be verified; recovery is unknown, reload the asset before any further UI command (current name '%s')"),
                 *NewName, *Widget->GetName()));
         }
 
@@ -2216,10 +2227,14 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
             const bool bRecovered = DiscardStagedWidgets(WBP, StagedWidgets);
             FString IgnoredRecoveryError;
             ReconcileWidgetVariableGuids(WBP, TEXT("ui_mutate_tree duplicate attach rollback"), IgnoredRecoveryError);
+            if (bRecovered)
+            {
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("ui_mutate_tree duplicate: '%s' refused the child (panel is full); the staged subtree was removed and no compile was attempted"),
+                    *TargetParent->GetName()));
+            }
             return FHaybaHandlerResult::Err(FString::Printf(
-                bRecovered
-                    ? TEXT("ui_mutate_tree duplicate: '%s' refused the child (panel is full); the staged subtree was removed and no compile was attempted")
-                    : TEXT("ui_mutate_tree duplicate: '%s' refused the child and staged widgets remain; recovery is unknown, reload the asset before any further UI command"),
+                TEXT("ui_mutate_tree duplicate: '%s' refused the child and staged widgets remain; recovery is unknown, reload the asset before any further UI command"),
                 *TargetParent->GetName()));
         }
 

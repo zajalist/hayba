@@ -543,30 +543,6 @@ FHaybaHandlerResult FHaybaMCPRenderHandler::Handle(const FString& /*Command*/,
     // ── Build response ────────────────────────────────────────────────────
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
 
-    if (!bSignaled)
-    {
-        // The game-thread task is still running (busy/hitched/deadlocked). Do
-        // NOT read S's task-written fields here — that would race the game
-        // thread. The task keeps its own shared ref and will free S when it
-        // finishes; we just report the timeout.
-        Out->SetBoolField(TEXT("ok"), false);
-        TSharedPtr<FJsonObject> Err = MakeShared<FJsonObject>();
-        Err->SetStringField(TEXT("kind"), TEXT("render_timeout"));
-        Err->SetStringField(TEXT("engineHint"), TEXT("render did not complete within wait_timeout_s + 60s; the game thread may be blocked"));
-        Out->SetObjectField(TEXT("error"), Err);
-        return FHaybaHandlerResult::Ok(Out);
-    }
-
-    // Attached whatever the outcome. It used to ride only on the success
-    // branch, so a render that ALSO hit a wait_timeout reported the timeout
-    // without mentioning that world_tick had been dropped from the wait set
-    // before the wait even started -- which is the fact most likely to explain
-    // the timeout to whoever is reading it.
-    if (S->bSkippedWorldTickInline)
-    {
-        Out->SetBoolField(TEXT("skippedWorldTickInline"), true);
-    }
-
     if (S->bWaitTimedOut)
     {
         return FHaybaHandlerResult::Err(FString::Printf(
@@ -594,37 +570,7 @@ FHaybaHandlerResult FHaybaMCPRenderHandler::Handle(const FString& /*Command*/,
         Out->SetNumberField(TEXT("waitMs"), S->WaitMs);
         if (S->bSkippedWorldTickInline)
         {
-            if (ParsePngDims(FileBytes, PngW, PngH))
-            {
-                bDimsOk = (PngW == S->Width && PngH == S->Height);
-            }
-        }
-
-        if (!bRead || SizeBytes < 8 || !bMagic || !bDimsOk)
-        {
-            Out->SetBoolField(TEXT("ok"), false);
-            TSharedPtr<FJsonObject> Err = MakeShared<FJsonObject>();
-            Err->SetStringField(TEXT("kind"), TEXT("file_invalid"));
-            Err->SetStringField(TEXT("attempted"), S->OutPath);
-            Err->SetNumberField(TEXT("sizeBytes"), (double)SizeBytes);
-            Err->SetStringField(TEXT("firstBytesHex"), FirstHex);
-            Err->SetStringField(TEXT("expectedFormat"), S->Format);
-            if (!bDimsOk)
-            {
-                Err->SetNumberField(TEXT("actualWidth"), (double)PngW);
-                Err->SetNumberField(TEXT("actualHeight"), (double)PngH);
-            }
-            Out->SetObjectField(TEXT("error"), Err);
-        }
-        else
-        {
-            Out->SetBoolField(TEXT("ok"), true);
-            Out->SetStringField(TEXT("path"), S->OutPath);
-            Out->SetNumberField(TEXT("width"), S->Width);
-            Out->SetNumberField(TEXT("height"), S->Height);
-            Out->SetNumberField(TEXT("fileBytes"), (double)SizeBytes);
-            Out->SetNumberField(TEXT("renderDurationMs"), S->RenderMs);
-            Out->SetNumberField(TEXT("waitMs"), S->WaitMs);
+            Out->SetBoolField(TEXT("skippedWorldTickInline"), true);
         }
     }
 
