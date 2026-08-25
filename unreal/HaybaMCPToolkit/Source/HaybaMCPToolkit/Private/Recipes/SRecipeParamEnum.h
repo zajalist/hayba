@@ -1,13 +1,13 @@
-// SSliverParamEnum.h
+// SRecipeParamEnum.h
 #pragma once
-#include "Slivers/SSliverParamWidget.h"
+#include "Recipes/SRecipeParamWidget.h"
 #include "Widgets/Input/SComboBox.h"
 
-class SSliverParamEnum : public SSliverParamWidget
+class SRecipeParamEnum : public SRecipeParamWidget
 {
 public:
-    SLATE_BEGIN_ARGS(SSliverParamEnum) {}
-        SLATE_ARGUMENT(FHaybaSliverParam, Param)
+    SLATE_BEGIN_ARGS(SRecipeParamEnum) {}
+        SLATE_ARGUMENT(FHaybaRecipeParam, Param)
     SLATE_END_ARGS()
     void Construct(const FArguments& InArgs);
     virtual FString GetValueAsJson() const override;

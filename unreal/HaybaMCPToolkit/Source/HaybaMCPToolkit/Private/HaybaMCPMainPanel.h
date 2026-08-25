@@ -15,7 +15,7 @@ class SHorizontalBox;
  */
 enum class EHaybaSection : uint8
 {
-    Chat, MCP, Slivers, ToolStream, SceneMap, Plan, Diff, Validation, Memory, Lessons, Settings
+    Chat, MCP, Recipes, ToolStream, SceneMap, Plan, Diff, Validation, Memory, Lessons, Settings
 };
 
 /**

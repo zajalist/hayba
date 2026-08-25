@@ -1,5 +1,5 @@
-// HaybaSliverTypes.cpp
-#include "Slivers/HaybaSliverTypes.h"
+// HaybaRecipeTypes.cpp
+#include "Recipes/HaybaRecipeTypes.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -7,25 +7,25 @@
 
 bool IsReverseDnsId(const FString& Id)
 {
-    // Mirrors src/slivers/spec-schema.ts: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){2,}$
+    // Mirrors src/recipes/spec-schema.ts: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){2,}$
     const FRegexPattern Pattern(TEXT("^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){2,}$"));
     FRegexMatcher M(Pattern, Id);
     return M.FindNext();
 }
 
-static EHaybaSliverParamType ParamTypeFromString(const FString& S)
+static EHaybaRecipeParamType ParamTypeFromString(const FString& S)
 {
-    if (S == TEXT("float"))     return EHaybaSliverParamType::Float;
-    if (S == TEXT("int"))       return EHaybaSliverParamType::Int;
-    if (S == TEXT("bool"))      return EHaybaSliverParamType::Bool;
-    if (S == TEXT("string"))    return EHaybaSliverParamType::String;
-    if (S == TEXT("enum"))      return EHaybaSliverParamType::Enum;
-    if (S == TEXT("actor_ref")) return EHaybaSliverParamType::ActorRef;
-    if (S == TEXT("vector3"))   return EHaybaSliverParamType::Vector3;
-    return EHaybaSliverParamType::Unsupported;
+    if (S == TEXT("float"))     return EHaybaRecipeParamType::Float;
+    if (S == TEXT("int"))       return EHaybaRecipeParamType::Int;
+    if (S == TEXT("bool"))      return EHaybaRecipeParamType::Bool;
+    if (S == TEXT("string"))    return EHaybaRecipeParamType::String;
+    if (S == TEXT("enum"))      return EHaybaRecipeParamType::Enum;
+    if (S == TEXT("actor_ref")) return EHaybaRecipeParamType::ActorRef;
+    if (S == TEXT("vector3"))   return EHaybaRecipeParamType::Vector3;
+    return EHaybaRecipeParamType::Unsupported;
 }
 
-static bool ParseParam(const TSharedPtr<FJsonObject>& Obj, FHaybaSliverParam& Out, FString& OutError)
+static bool ParseParam(const TSharedPtr<FJsonObject>& Obj, FHaybaRecipeParam& Out, FString& OutError)
 {
     if (!Obj->TryGetStringField(TEXT("id"), Out.Id) || Out.Id.IsEmpty())
     { OutError = TEXT("param missing id"); return false; }
@@ -39,7 +39,7 @@ static bool ParseParam(const TSharedPtr<FJsonObject>& Obj, FHaybaSliverParam& Ou
     Out.Type = ParamTypeFromString(TypeStr);
 
     // Range
-    if (Out.Type == EHaybaSliverParamType::Float || Out.Type == EHaybaSliverParamType::Int)
+    if (Out.Type == EHaybaRecipeParamType::Float || Out.Type == EHaybaRecipeParamType::Int)
     {
         const TArray<TSharedPtr<FJsonValue>>* RangeArr = nullptr;
         if (Obj->TryGetArrayField(TEXT("range"), RangeArr) && RangeArr && RangeArr->Num() == 2)
@@ -50,17 +50,17 @@ static bool ParseParam(const TSharedPtr<FJsonObject>& Obj, FHaybaSliverParam& Ou
         double DefNum;
         if (Obj->TryGetNumberField(TEXT("default"), DefNum)) Out.DefaultNumber = DefNum;
     }
-    if (Out.Type == EHaybaSliverParamType::Bool)
+    if (Out.Type == EHaybaRecipeParamType::Bool)
     {
         bool DefB;
         if (Obj->TryGetBoolField(TEXT("default"), DefB)) Out.DefaultBool = DefB;
     }
-    if (Out.Type == EHaybaSliverParamType::String || Out.Type == EHaybaSliverParamType::Enum || Out.Type == EHaybaSliverParamType::ActorRef)
+    if (Out.Type == EHaybaRecipeParamType::String || Out.Type == EHaybaRecipeParamType::Enum || Out.Type == EHaybaRecipeParamType::ActorRef)
     {
         FString DefS;
         if (Obj->TryGetStringField(TEXT("default"), DefS)) Out.DefaultString = DefS;
     }
-    if (Out.Type == EHaybaSliverParamType::Enum)
+    if (Out.Type == EHaybaRecipeParamType::Enum)
     {
         const TArray<TSharedPtr<FJsonValue>>* OptArr = nullptr;
         if (Obj->TryGetArrayField(TEXT("options"), OptArr) && OptArr)
@@ -68,18 +68,18 @@ static bool ParseParam(const TSharedPtr<FJsonObject>& Obj, FHaybaSliverParam& Ou
             for (const TSharedPtr<FJsonValue>& Opt : *OptArr)
             {
                 if (Opt->Type != EJson::Object) continue;
-                FHaybaSliverEnumOption O;
+                FHaybaRecipeEnumOption O;
                 Opt->AsObject()->TryGetStringField(TEXT("value"), O.Value);
                 Opt->AsObject()->TryGetStringField(TEXT("label"), O.Label);
                 Out.EnumOptions.Add(O);
             }
         }
     }
-    if (Out.Type == EHaybaSliverParamType::ActorRef)
+    if (Out.Type == EHaybaRecipeParamType::ActorRef)
     {
         Obj->TryGetStringField(TEXT("class_filter"), Out.ClassFilter);
     }
-    if (Out.Type == EHaybaSliverParamType::Vector3)
+    if (Out.Type == EHaybaRecipeParamType::Vector3)
     {
         const TArray<TSharedPtr<FJsonValue>>* VecArr = nullptr;
         if (Obj->TryGetArrayField(TEXT("default"), VecArr) && VecArr && VecArr->Num() == 3)
@@ -93,7 +93,7 @@ static bool ParseParam(const TSharedPtr<FJsonObject>& Obj, FHaybaSliverParam& Ou
     return true;
 }
 
-bool ParseHaybaSliverSpec(const TSharedRef<FJsonObject>& In, FHaybaSliverSpec& OutSpec, FString& OutError)
+bool ParseHaybaRecipeSpec(const TSharedRef<FJsonObject>& In, FHaybaRecipeSpec& OutSpec, FString& OutError)
 {
     if (!In->TryGetStringField(TEXT("id"), OutSpec.Id) || !IsReverseDnsId(OutSpec.Id))
     { OutError = TEXT("invalid or missing reverse-DNS id"); return false; }
@@ -114,7 +114,7 @@ bool ParseHaybaSliverSpec(const TSharedRef<FJsonObject>& In, FHaybaSliverSpec& O
         for (const TSharedPtr<FJsonValue>& V : *ParamsArr)
         {
             if (V->Type != EJson::Object) continue;
-            FHaybaSliverParam P;
+            FHaybaRecipeParam P;
             FString Err;
             if (!ParseParam(V->AsObject(), P, Err)) { OutError = Err; return false; }
             if (SeenIds.Contains(P.Id)) { OutError = FString::Printf(TEXT("duplicate param id \"%s\""), *P.Id); return false; }

@@ -1,5 +1,5 @@
-// SSliverParamEnum.cpp
-#include "Slivers/SSliverParamEnum.h"
+// SRecipeParamEnum.cpp
+#include "Recipes/SRecipeParamEnum.h"
 #include "Widgets/Text/STextBlock.h"
 
 static FString JsonEscape2(const FString& In)
@@ -10,13 +10,13 @@ static FString JsonEscape2(const FString& In)
     return S;
 }
 
-void SSliverParamEnum::Construct(const FArguments& InArgs)
+void SRecipeParamEnum::Construct(const FArguments& InArgs)
 {
-    SSliverParamWidget::FArguments BaseArgs;
+    SRecipeParamWidget::FArguments BaseArgs;
     BaseArgs._Param = InArgs._Param;
-    SSliverParamWidget::Construct(BaseArgs);
+    SRecipeParamWidget::Construct(BaseArgs);
 
-    for (const FHaybaSliverEnumOption& O : Param.EnumOptions)
+    for (const FHaybaRecipeEnumOption& O : Param.EnumOptions)
         Options.Add(MakeShared<FString>(O.Value));
 
     const FString Def = Param.DefaultString.Get(Options.Num() > 0 ? *Options[0] : FString());
@@ -39,7 +39,7 @@ void SSliverParamEnum::Construct(const FArguments& InArgs)
     ];
 }
 
-FString SSliverParamEnum::GetValueAsJson() const
+FString SRecipeParamEnum::GetValueAsJson() const
 {
     if (!Selected.IsValid()) return TEXT("null");
     return FString::Printf(TEXT("\"%s\""), *JsonEscape2(*Selected));

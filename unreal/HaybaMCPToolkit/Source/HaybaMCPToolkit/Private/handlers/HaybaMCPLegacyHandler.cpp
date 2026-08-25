@@ -86,7 +86,7 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Handle(const FString& Cmd,
     // World-mutating or LoadObject-touching commands MUST run on the game
     // thread. The TCP server already marshals before dispatch today, but we
     // re-marshal here defensively so any future direct caller (python_run,
-    // sliver runtime, another handler) can't hit the race that crashed UE
+    // recipe runtime, another handler) can't hit the race that crashed UE
     // in the 2026-05-23 postmortem.
     if (Cmd == TEXT("list_pcg_assets") || Cmd == TEXT("pcg_list_assets"))
         return RunOnGameThread([this, Params]() { return Cmd_ListPCGAssets(Params); });

@@ -1,5 +1,5 @@
-// SSliverParamActorRef.cpp
-#include "Slivers/SSliverParamActorRef.h"
+// SRecipeParamActorRef.cpp
+#include "Recipes/SRecipeParamActorRef.h"
 #include "Editor.h"
 #include "Selection.h"
 #include "GameFramework/Actor.h"
@@ -17,11 +17,11 @@ static FString JsonEscapeA(const FString& In)
     return S;
 }
 
-void SSliverParamActorRef::Construct(const FArguments& InArgs)
+void SRecipeParamActorRef::Construct(const FArguments& InArgs)
 {
-    SSliverParamWidget::FArguments BaseArgs;
+    SRecipeParamWidget::FArguments BaseArgs;
     BaseArgs._Param = InArgs._Param;
-    SSliverParamWidget::Construct(BaseArgs);
+    SRecipeParamWidget::Construct(BaseArgs);
 
     Value = Param.DefaultString.Get(FString());
 
@@ -38,12 +38,12 @@ void SSliverParamActorRef::Construct(const FArguments& InArgs)
         [
             SNew(SButton)
             .Text(FText::FromString(TEXT("Pick from selection")))
-            .OnClicked(this, &SSliverParamActorRef::OnPickFromSelection)
+            .OnClicked(this, &SRecipeParamActorRef::OnPickFromSelection)
         ]
     ];
 }
 
-FReply SSliverParamActorRef::OnPickFromSelection()
+FReply SRecipeParamActorRef::OnPickFromSelection()
 {
     if (!GEditor) return FReply::Handled();
     TArray<AActor*> Sel;
@@ -52,13 +52,13 @@ FReply SSliverParamActorRef::OnPickFromSelection()
     {
         Value = Sel[0]->GetPathName();
         // Let the panel mirror the world location into a sibling
-        // "<id>_location" vector3 param so the sliver frames this actor.
+        // "<id>_location" vector3 param so the recipe frames this actor.
         OnActorPicked.ExecuteIfBound(Sel[0]->GetActorLocation());
     }
     return FReply::Handled();
 }
 
-FString SSliverParamActorRef::GetValueAsJson() const
+FString SRecipeParamActorRef::GetValueAsJson() const
 {
     return FString::Printf(TEXT("\"%s\""), *JsonEscapeA(Value));
 }

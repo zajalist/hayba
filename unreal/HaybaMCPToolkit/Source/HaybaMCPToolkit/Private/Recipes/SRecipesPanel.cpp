@@ -1,5 +1,5 @@
-// SSliversPanel.cpp
-#include "Slivers/SSliversPanel.h"
+// SRecipesPanel.cpp
+#include "Recipes/SRecipesPanel.h"
 
 #include "DesktopPlatformModule.h"
 #include "DirectoryWatcherModule.h"
@@ -26,11 +26,11 @@ namespace
     const FName ColVersion("Version");
 
     // One table row, three columns.
-    class SSliverTableRow : public SMultiColumnTableRow<TSharedPtr<FHaybaSliverSpec>>
+    class SRecipeTableRow : public SMultiColumnTableRow<TSharedPtr<FHaybaRecipeSpec>>
     {
     public:
-        SLATE_BEGIN_ARGS(SSliverTableRow) {}
-            SLATE_ARGUMENT(TSharedPtr<FHaybaSliverSpec>, Item)
+        SLATE_BEGIN_ARGS(SRecipeTableRow) {}
+            SLATE_ARGUMENT(TSharedPtr<FHaybaRecipeSpec>, Item)
         SLATE_END_ARGS()
 
         void Construct(const FArguments& InArgs, const TSharedRef<STableViewBase>& Owner)
@@ -55,13 +55,13 @@ namespace
         }
 
     private:
-        TSharedPtr<FHaybaSliverSpec> Item;
+        TSharedPtr<FHaybaRecipeSpec> Item;
     };
 }
 
-void SSliversPanel::Construct(const FArguments& InArgs)
+void SRecipesPanel::Construct(const FArguments& InArgs)
 {
-    WatchedDir = FHaybaSliverLoader::DefaultUserSliversDir();
+    WatchedDir = FHaybaRecipeLoader::DefaultUserRecipesDir();
     CategorySelected = MakeShared<FString>(TEXT("All categories"));
 
     ChildSlot
@@ -75,7 +75,7 @@ void SSliversPanel::Construct(const FArguments& InArgs)
             + SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center).Padding(2)
             [
                 SNew(SSearchBox)
-                .HintText(FText::FromString(TEXT("Search slivers…")))
+                .HintText(FText::FromString(TEXT("Search recipes…")))
                 .OnTextChanged_Lambda([this](const FText& T)
                 {
                     SearchText = T.ToString();
@@ -108,26 +108,26 @@ void SSliversPanel::Construct(const FArguments& InArgs)
             [
                 SNew(SButton)
                 .ContentPadding(FMargin(8, 3))
-                .ToolTipText(FText::FromString(TEXT("Import a .sliver.json file into the installed slivers.")))
-                .OnClicked(this, &SSliversPanel::OnImportClicked)
+                .ToolTipText(FText::FromString(TEXT("Import a .recipe.json file into the installed recipes.")))
+                .OnClicked(this, &SRecipesPanel::OnImportClicked)
                 [ SNew(STextBlock).Text(FText::FromString(TEXT("Import"))) ]
             ]
             + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2)
             [
                 SNew(SButton)
                 .ContentPadding(FMargin(8, 3))
-                .ToolTipText(FText::FromString(TEXT("Export the selected sliver to a .sliver.json file.")))
+                .ToolTipText(FText::FromString(TEXT("Export the selected recipe to a .recipe.json file.")))
                 .IsEnabled_Lambda([this]() { return Selected.IsValid(); })
-                .OnClicked(this, &SSliversPanel::OnExportClicked)
+                .OnClicked(this, &SRecipesPanel::OnExportClicked)
                 [ SNew(STextBlock).Text(FText::FromString(TEXT("Export"))) ]
             ]
             + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2)
             [
                 SNew(SButton)
                 .ContentPadding(FMargin(8, 3))
-                .ToolTipText(FText::FromString(TEXT("Delete the selected sliver from disk.")))
+                .ToolTipText(FText::FromString(TEXT("Delete the selected recipe from disk.")))
                 .IsEnabled_Lambda([this]() { return Selected.IsValid(); })
-                .OnClicked(this, &SSliversPanel::OnDeleteClicked)
+                .OnClicked(this, &SRecipesPanel::OnDeleteClicked)
                 [ SNew(STextBlock).Text(FText::FromString(TEXT("Delete"))) ]
             ]
         ]
@@ -139,15 +139,15 @@ void SSliversPanel::Construct(const FArguments& InArgs)
             .Orientation(Orient_Vertical)
             + SSplitter::Slot().Value(0.34f)
             [
-                SAssignNew(ListView, SListView<TSharedPtr<FHaybaSliverSpec>>)
+                SAssignNew(ListView, SListView<TSharedPtr<FHaybaRecipeSpec>>)
                 .ListItemsSource(&FilteredItems)
-                .OnGenerateRow(this, &SSliversPanel::OnGenerateRow)
-                .OnSelectionChanged(this, &SSliversPanel::OnSelectionChanged)
+                .OnGenerateRow(this, &SRecipesPanel::OnGenerateRow)
+                .OnSelectionChanged(this, &SRecipesPanel::OnSelectionChanged)
                 .SelectionMode(ESelectionMode::Single)
                 .HeaderRow(
                     SNew(SHeaderRow)
                     + SHeaderRow::Column(ColTitle)
-                      .DefaultLabel(FText::FromString(TEXT("Sliver"))).FillWidth(0.5f)
+                      .DefaultLabel(FText::FromString(TEXT("Recipe"))).FillWidth(0.5f)
                     + SHeaderRow::Column(ColCategory)
                       .DefaultLabel(FText::FromString(TEXT("Category"))).FillWidth(0.3f)
                     + SHeaderRow::Column(ColVersion)
@@ -156,12 +156,12 @@ void SSliversPanel::Construct(const FArguments& InArgs)
             ]
             + SSplitter::Slot().Value(0.66f)
             [
-                SAssignNew(DetailPanel, SSliverDetailPanel)
+                SAssignNew(DetailPanel, SRecipeDetailPanel)
             ]
         ]
     ];
 
-    // Live auto-refresh: watch the slivers directory for any change.
+    // Live auto-refresh: watch the recipes directory for any change.
     if (FDirectoryWatcherModule* DWM =
             FModuleManager::Get().GetModulePtr<FDirectoryWatcherModule>(TEXT("DirectoryWatcher")))
     {
@@ -170,7 +170,7 @@ void SSliversPanel::Construct(const FArguments& InArgs)
             IFileManager::Get().MakeDirectory(*WatchedDir, /*Tree*/true);
             Watcher->RegisterDirectoryChangedCallback_Handle(
                 WatchedDir,
-                IDirectoryWatcher::FDirectoryChanged::CreateSP(this, &SSliversPanel::OnDirectoryChanged),
+                IDirectoryWatcher::FDirectoryChanged::CreateSP(this, &SRecipesPanel::OnDirectoryChanged),
                 WatcherHandle);
         }
     }
@@ -178,7 +178,7 @@ void SSliversPanel::Construct(const FArguments& InArgs)
     Refresh();
 }
 
-SSliversPanel::~SSliversPanel()
+SRecipesPanel::~SRecipesPanel()
 {
     if (WatcherHandle.IsValid())
     {
@@ -193,14 +193,14 @@ SSliversPanel::~SSliversPanel()
     }
 }
 
-void SSliversPanel::Refresh()
+void SRecipesPanel::Refresh()
 {
     const FString PrevId = Selected.IsValid() ? Selected->Id : FString();
 
     Loader.Refresh(WatchedDir);
     AllItems.Reset();
-    for (const FHaybaSliverSpec& S : Loader.List())
-        AllItems.Add(MakeShared<FHaybaSliverSpec>(S));
+    for (const FHaybaRecipeSpec& S : Loader.List())
+        AllItems.Add(MakeShared<FHaybaRecipeSpec>(S));
 
     RebuildCategoryOptions();
     ApplyFilter();
@@ -208,7 +208,7 @@ void SSliversPanel::Refresh()
     // Keep the previous selection if it still exists.
     if (!PrevId.IsEmpty())
     {
-        for (const TSharedPtr<FHaybaSliverSpec>& S : FilteredItems)
+        for (const TSharedPtr<FHaybaRecipeSpec>& S : FilteredItems)
         {
             if (S.IsValid() && S->Id == PrevId)
             {
@@ -219,12 +219,12 @@ void SSliversPanel::Refresh()
     }
 }
 
-void SSliversPanel::RebuildCategoryOptions()
+void SRecipesPanel::RebuildCategoryOptions()
 {
     CategoryOptions.Reset();
     CategoryOptions.Add(MakeShared<FString>(TEXT("All categories")));
     TSet<FString> Seen;
-    for (const TSharedPtr<FHaybaSliverSpec>& S : AllItems)
+    for (const TSharedPtr<FHaybaRecipeSpec>& S : AllItems)
     {
         if (S.IsValid() && !S->Category.IsEmpty() && !Seen.Contains(S->Category))
         {
@@ -235,11 +235,11 @@ void SSliversPanel::RebuildCategoryOptions()
     if (CategoryCombo) CategoryCombo->RefreshOptions();
 }
 
-void SSliversPanel::ApplyFilter()
+void SRecipesPanel::ApplyFilter()
 {
     FilteredItems.Reset();
     const FString Needle = SearchText.TrimStartAndEnd();
-    for (const TSharedPtr<FHaybaSliverSpec>& S : AllItems)
+    for (const TSharedPtr<FHaybaRecipeSpec>& S : AllItems)
     {
         if (!S.IsValid()) continue;
         if (!CategoryFilter.IsEmpty() && S->Category != CategoryFilter) continue;
@@ -257,24 +257,37 @@ void SSliversPanel::ApplyFilter()
     if (ListView) ListView->RequestListRefresh();
 }
 
-TSharedRef<ITableRow> SSliversPanel::OnGenerateRow(
-    TSharedPtr<FHaybaSliverSpec> Item, const TSharedRef<STableViewBase>& Owner)
+TSharedRef<ITableRow> SRecipesPanel::OnGenerateRow(
+    TSharedPtr<FHaybaRecipeSpec> Item, const TSharedRef<STableViewBase>& Owner)
 {
-    return SNew(SSliverTableRow, Owner).Item(Item);
+    return SNew(SRecipeTableRow, Owner).Item(Item);
 }
 
-void SSliversPanel::OnSelectionChanged(TSharedPtr<FHaybaSliverSpec> Item, ESelectInfo::Type)
+void SRecipesPanel::OnSelectionChanged(TSharedPtr<FHaybaRecipeSpec> Item, ESelectInfo::Type)
 {
     Selected = Item;
     if (Item.IsValid() && DetailPanel) DetailPanel->SetSpec(*Item);
 }
 
-FString SSliversPanel::SliverFilePath(const FString& Id) const
+FString SRecipesPanel::RecipeFilePath(const FString& Id) const
 {
-    return FPaths::Combine(WatchedDir, Id + TEXT(".sliver.json"));
+    // Export and Delete both resolve through here, so this has to name the
+    // file that is actually on disk. A recipe installed before the rename is
+    // still called <id>.sliver.json, and returning only the new spelling would
+    // make it impossible to export or delete from the panel -- it would look
+    // present in the list and then not be found.
+    const FString Current = FPaths::Combine(WatchedDir, Id + TEXT(".recipe.json"));
+    if (IFileManager::Get().FileExists(*Current)) return Current;
+
+    const FString Legacy = FPaths::Combine(WatchedDir, Id + TEXT(".sliver.json"));
+    if (IFileManager::Get().FileExists(*Legacy)) return Legacy;
+
+    // Neither exists: hand back the current spelling so callers report a
+    // missing file under the name it would be written as.
+    return Current;
 }
 
-FReply SSliversPanel::OnImportClicked()
+FReply SRecipesPanel::OnImportClicked()
 {
     IDesktopPlatform* DP = FDesktopPlatformModule::Get();
     if (!DP) return FReply::Handled();
@@ -285,10 +298,10 @@ FReply SSliversPanel::OnImportClicked()
     TArray<FString> Picked;
     const bool bOk = DP->OpenFileDialog(
         ParentHandle,
-        TEXT("Import sliver"),
+        TEXT("Import recipe"),
         FPaths::ProjectDir(),
         TEXT(""),
-        TEXT("Sliver spec (*.sliver.json)|*.sliver.json"),
+        TEXT("Recipe spec (*.recipe.json;*.sliver.json)|*.recipe.json;*.sliver.json"),
         EFileDialogFlags::None,
         Picked);
 
@@ -300,24 +313,24 @@ FReply SSliversPanel::OnImportClicked()
         if (IFileManager::Get().Copy(*Dst, *Src) != COPY_OK)
         {
             FMessageDialog::Open(EAppMsgType::Ok,
-                FText::FromString(TEXT("Failed to copy the selected file into the slivers folder.")));
+                FText::FromString(TEXT("Failed to copy the selected file into the recipes folder.")));
         }
         Refresh();
     }
     return FReply::Handled();
 }
 
-FReply SSliversPanel::OnExportClicked()
+FReply SRecipesPanel::OnExportClicked()
 {
     if (!Selected.IsValid()) return FReply::Handled();
     IDesktopPlatform* DP = FDesktopPlatformModule::Get();
     if (!DP) return FReply::Handled();
 
-    const FString Src = SliverFilePath(Selected->Id);
+    const FString Src = RecipeFilePath(Selected->Id);
     if (!IFileManager::Get().FileExists(*Src))
     {
         FMessageDialog::Open(EAppMsgType::Ok,
-            FText::FromString(TEXT("Could not locate the source file for this sliver.")));
+            FText::FromString(TEXT("Could not locate the source file for this recipe.")));
         return FReply::Handled();
     }
 
@@ -327,10 +340,10 @@ FReply SSliversPanel::OnExportClicked()
     TArray<FString> Saved;
     const bool bOk = DP->SaveFileDialog(
         ParentHandle,
-        TEXT("Export sliver"),
+        TEXT("Export recipe"),
         FPaths::ProjectDir(),
-        Selected->Id + TEXT(".sliver.json"),
-        TEXT("Sliver spec (*.sliver.json)|*.sliver.json"),
+        Selected->Id + TEXT(".recipe.json"),
+        TEXT("Recipe spec (*.recipe.json;*.sliver.json)|*.recipe.json;*.sliver.json"),
         EFileDialogFlags::None,
         Saved);
 
@@ -345,7 +358,7 @@ FReply SSliversPanel::OnExportClicked()
     return FReply::Handled();
 }
 
-FReply SSliversPanel::OnDeleteClicked()
+FReply SRecipesPanel::OnDeleteClicked()
 {
     if (!Selected.IsValid()) return FReply::Handled();
 
@@ -353,23 +366,23 @@ FReply SSliversPanel::OnDeleteClicked()
     const EAppReturnType::Type Answer = FMessageDialog::Open(
         EAppMsgType::YesNo,
         FText::FromString(FString::Printf(
-            TEXT("Delete sliver \"%s\"?\n\nThis removes %s from disk."),
-            *Id, *(Id + TEXT(".sliver.json")))));
+            TEXT("Delete recipe \"%s\"?\n\nThis removes %s from disk."),
+            *Id, *FPaths::GetCleanFilename(RecipeFilePath(Id)))));
 
     if (Answer != EAppReturnType::Yes) return FReply::Handled();
 
-    const FString Path = SliverFilePath(Id);
+    const FString Path = RecipeFilePath(Id);
     if (!IFileManager::Get().Delete(*Path, /*RequireExists*/false))
     {
         FMessageDialog::Open(EAppMsgType::Ok,
-            FText::FromString(TEXT("Failed to delete the sliver file.")));
+            FText::FromString(TEXT("Failed to delete the recipe file.")));
     }
     Selected.Reset();
     Refresh();
     return FReply::Handled();
 }
 
-void SSliversPanel::OnDirectoryChanged(const TArray<FFileChangeData>& /*Changes*/)
+void SRecipesPanel::OnDirectoryChanged(const TArray<FFileChangeData>& /*Changes*/)
 {
     // The watcher fires on the game thread; rebuilding the table here is safe.
     Refresh();

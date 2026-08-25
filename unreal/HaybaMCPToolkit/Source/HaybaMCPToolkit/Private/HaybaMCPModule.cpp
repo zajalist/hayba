@@ -330,10 +330,10 @@ void FHaybaMCPModule::StartupModule()
         }
     }));
 
-    // Slivers live as a page inside the main toolkit panel (EHaybaPanel::Slivers).
+    // Recipes live as a page inside the main toolkit panel (EHaybaPanel::Recipes).
     // Only the param-widget factory registry needs module-level init.
-    extern void HaybaSliver_RegisterBuiltinParamWidgets();
-    HaybaSliver_RegisterBuiltinParamWidgets();
+    extern void HaybaRecipe_RegisterBuiltinParamWidgets();
+    HaybaRecipe_RegisterBuiltinParamWidgets();
 }
 
 void FHaybaMCPModule::ShutdownModule()

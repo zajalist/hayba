@@ -1,6 +1,6 @@
-// HaybaSliverTypes.h — C++ mirror of the on-disk SliverSpec JSON shape.
+// HaybaRecipeTypes.h — C++ mirror of the on-disk RecipeSpec JSON shape.
 // The decoded param types are Float, Int, Bool, String, Enum, ActorRef
-// and Vector3; other type strings parse into FHaybaSliverParam with
+// and Vector3; other type strings parse into FHaybaRecipeParam with
 // Type=Unsupported and are surfaced by the panel as "not yet supported".
 
 #pragma once
@@ -10,7 +10,7 @@
 
 class FJsonObject;
 
-enum class EHaybaSliverParamType : uint8
+enum class EHaybaRecipeParamType : uint8
 {
     Float,
     Int,
@@ -22,18 +22,18 @@ enum class EHaybaSliverParamType : uint8
     Unsupported,
 };
 
-struct FHaybaSliverEnumOption
+struct FHaybaRecipeEnumOption
 {
     FString Value;
     FString Label;
 };
 
-struct FHaybaSliverParam
+struct FHaybaRecipeParam
 {
     FString Id;
     FString Label;
     bool bRequired = false;
-    EHaybaSliverParamType Type = EHaybaSliverParamType::Unsupported;
+    EHaybaRecipeParamType Type = EHaybaRecipeParamType::Unsupported;
     FString OriginalTypeString;   // verbatim from JSON, used for the Unsupported message
 
     // Numeric (float / int)
@@ -46,7 +46,7 @@ struct FHaybaSliverParam
 
     // String / Enum / ActorRef
     TOptional<FString> DefaultString;
-    TArray<FHaybaSliverEnumOption> EnumOptions;
+    TArray<FHaybaRecipeEnumOption> EnumOptions;
 
     // ActorRef
     FString ClassFilter;
@@ -55,7 +55,7 @@ struct FHaybaSliverParam
     TOptional<FVector> DefaultVector;
 };
 
-struct FHaybaSliverDeterminism
+struct FHaybaRecipeDeterminism
 {
     bool bPure = true;
     TArray<FString> DeclaredOutputs;
@@ -63,7 +63,7 @@ struct FHaybaSliverDeterminism
     TOptional<FString> SeedParam;
 };
 
-struct FHaybaSliverSpec
+struct FHaybaRecipeSpec
 {
     FString Id;
     FString Version;
@@ -72,12 +72,12 @@ struct FHaybaSliverSpec
     FString Description;
     FString Author;
     FString ExecutorKind;
-    TArray<FHaybaSliverParam> Params;
-    FHaybaSliverDeterminism Determinism;
+    TArray<FHaybaRecipeParam> Params;
+    FHaybaRecipeDeterminism Determinism;
 };
 
 /** Returns true and fills OutSpec on success; false and OutError on validation failure. */
-bool ParseHaybaSliverSpec(const TSharedRef<FJsonObject>& In, FHaybaSliverSpec& OutSpec, FString& OutError);
+bool ParseHaybaRecipeSpec(const TSharedRef<FJsonObject>& In, FHaybaRecipeSpec& OutSpec, FString& OutError);
 
 /** Reverse-DNS check: at least 3 dot-separated segments, lowercase + underscores. */
 bool IsReverseDnsId(const FString& Id);

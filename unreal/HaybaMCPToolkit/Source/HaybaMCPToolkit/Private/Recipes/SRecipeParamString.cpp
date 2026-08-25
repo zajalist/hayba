@@ -1,5 +1,5 @@
-// SSliverParamString.cpp
-#include "Slivers/SSliverParamString.h"
+// SRecipeParamString.cpp
+#include "Recipes/SRecipeParamString.h"
 #include "Widgets/Input/SEditableTextBox.h"
 
 static FString JsonEscape(const FString& In)
@@ -13,11 +13,11 @@ static FString JsonEscape(const FString& In)
     return S;
 }
 
-void SSliverParamString::Construct(const FArguments& InArgs)
+void SRecipeParamString::Construct(const FArguments& InArgs)
 {
-    SSliverParamWidget::FArguments BaseArgs;
+    SRecipeParamWidget::FArguments BaseArgs;
     BaseArgs._Param = InArgs._Param;
-    SSliverParamWidget::Construct(BaseArgs);
+    SRecipeParamWidget::Construct(BaseArgs);
 
     Value = Param.DefaultString.Get(FString());
 
@@ -29,7 +29,7 @@ void SSliverParamString::Construct(const FArguments& InArgs)
     ];
 }
 
-FString SSliverParamString::GetValueAsJson() const
+FString SRecipeParamString::GetValueAsJson() const
 {
     return FString::Printf(TEXT("\"%s\""), *JsonEscape(Value));
 }

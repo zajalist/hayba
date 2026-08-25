@@ -1,17 +1,17 @@
-// HaybaSliverClient.cpp
-#include "Slivers/HaybaSliverClient.h"
+// HaybaRecipeClient.cpp
+#include "Recipes/HaybaRecipeClient.h"
 
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
 
-void FHaybaSliverClient::RunSliver(
+void FHaybaRecipeClient::RunRecipe(
     const FString& BaseUrl,
     const FString& Id,
     const FString& ParamsJson,
-    FHaybaSliverRunCallback OnDone)
+    FHaybaRecipeRunCallback OnDone)
 {
-    const FString Url = BaseUrl + TEXT("/sliver/run");
+    const FString Url = BaseUrl + TEXT("/recipe/run");
     const FString Body = FString::Printf(TEXT("{\"id\":\"%s\",\"params\":%s}"), *Id, *ParamsJson);
 
     const TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Req = FHttpModule::Get().CreateRequest();

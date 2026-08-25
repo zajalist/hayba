@@ -1,12 +1,12 @@
-// SSliverParamBool.cpp
-#include "Slivers/SSliverParamBool.h"
+// SRecipeParamBool.cpp
+#include "Recipes/SRecipeParamBool.h"
 #include "Widgets/Input/SCheckBox.h"
 
-void SSliverParamBool::Construct(const FArguments& InArgs)
+void SRecipeParamBool::Construct(const FArguments& InArgs)
 {
-    SSliverParamWidget::FArguments BaseArgs;
+    SRecipeParamWidget::FArguments BaseArgs;
     BaseArgs._Param = InArgs._Param;
-    SSliverParamWidget::Construct(BaseArgs);
+    SRecipeParamWidget::Construct(BaseArgs);
 
     bValue = Param.DefaultBool.Get(false);
 
@@ -18,4 +18,4 @@ void SSliverParamBool::Construct(const FArguments& InArgs)
     ];
 }
 
-FString SSliverParamBool::GetValueAsJson() const { return bValue ? TEXT("true") : TEXT("false"); }
+FString SRecipeParamBool::GetValueAsJson() const { return bValue ? TEXT("true") : TEXT("false"); }

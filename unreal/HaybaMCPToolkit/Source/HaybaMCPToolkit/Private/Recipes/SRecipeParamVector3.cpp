@@ -1,14 +1,14 @@
-// SSliverParamVector3.cpp
-#include "Slivers/SSliverParamVector3.h"
+// SRecipeParamVector3.cpp
+#include "Recipes/SRecipeParamVector3.h"
 #include "Widgets/Input/SSpinBox.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
 
-void SSliverParamVector3::Construct(const FArguments& InArgs)
+void SRecipeParamVector3::Construct(const FArguments& InArgs)
 {
-    SSliverParamWidget::FArguments BaseArgs;
+    SRecipeParamWidget::FArguments BaseArgs;
     BaseArgs._Param = InArgs._Param;
-    SSliverParamWidget::Construct(BaseArgs);
+    SRecipeParamWidget::Construct(BaseArgs);
 
     const FVector Def = Param.DefaultVector.Get(FVector::ZeroVector);
     X = Def.X; Y = Def.Y; Z = Def.Z;
@@ -44,12 +44,12 @@ void SSliverParamVector3::Construct(const FArguments& InArgs)
     ];
 }
 
-void SSliverParamVector3::SetVector(const FVector& V)
+void SRecipeParamVector3::SetVector(const FVector& V)
 {
     X = V.X; Y = V.Y; Z = V.Z;
 }
 
-FString SSliverParamVector3::GetValueAsJson() const
+FString SRecipeParamVector3::GetValueAsJson() const
 {
     return FString::Printf(TEXT("[%.3f,%.3f,%.3f]"), X, Y, Z);
 }

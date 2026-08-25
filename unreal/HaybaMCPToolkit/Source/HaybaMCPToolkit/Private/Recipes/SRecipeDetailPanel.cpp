@@ -1,10 +1,10 @@
-// SSliverDetailPanel.cpp
-#include "Slivers/SSliverDetailPanel.h"
+// SRecipeDetailPanel.cpp
+#include "Recipes/SRecipeDetailPanel.h"
 
-#include "Slivers/HaybaSliverClient.h"
-#include "Slivers/HaybaSliverSettings.h"
-#include "Slivers/SSliverParamActorRef.h"
-#include "Slivers/SSliverParamVector3.h"
+#include "Recipes/HaybaRecipeClient.h"
+#include "Recipes/HaybaRecipeSettings.h"
+#include "Recipes/SRecipeParamActorRef.h"
+#include "Recipes/SRecipeParamVector3.h"
 #include "Async/Async.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SMultiLineEditableTextBox.h"
@@ -13,12 +13,12 @@
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
 
-void SSliverDetailPanel::Construct(const FArguments& InArgs)
+void SRecipeDetailPanel::Construct(const FArguments& InArgs)
 {
     ChildSlot
     [
         SNew(SVerticalBox)
-        // Title — the sliver's description shows on hover as a tooltip,
+        // Title — the recipe's description shows on hover as a tooltip,
         // so it doesn't eat vertical space the param list needs.
         + SVerticalBox::Slot().AutoHeight().Padding(8, 6, 8, 4)
         [
@@ -51,15 +51,15 @@ void SSliverDetailPanel::Construct(const FArguments& InArgs)
             [
                 SNew(SButton)
                 .ContentPadding(FMargin(14, 4))
-                .ToolTipText(FText::FromString(TEXT("Run this sliver with the parameters above.")))
+                .ToolTipText(FText::FromString(TEXT("Run this recipe with the parameters above.")))
                 .Text(FText::FromString(TEXT("Run")))
-                .OnClicked(this, &SSliverDetailPanel::OnRunClicked)
+                .OnClicked(this, &SRecipeDetailPanel::OnRunClicked)
             ]
         ]
     ];
 }
 
-void SSliverDetailPanel::SetSpec(const FHaybaSliverSpec& InSpec)
+void SRecipeDetailPanel::SetSpec(const FHaybaRecipeSpec& InSpec)
 {
     Spec = InSpec;
     if (TitleText)
@@ -72,15 +72,15 @@ void SSliverDetailPanel::SetSpec(const FHaybaSliverSpec& InSpec)
     RebuildParamUI();
 }
 
-void SSliverDetailPanel::RebuildParamUI()
+void SRecipeDetailPanel::RebuildParamUI()
 {
     if (!ParamBox.IsValid()) return;
     ParamBox->ClearChildren();
     ParamWidgets.Reset();
 
-    for (const FHaybaSliverParam& P : Spec.Params)
+    for (const FHaybaRecipeParam& P : Spec.Params)
     {
-        TSharedRef<SSliverParamWidget> W = FSliverParamWidgetRegistry::Get().Create(P);
+        TSharedRef<SRecipeParamWidget> W = FRecipeParamWidgetRegistry::Get().Create(P);
         ParamWidgets.Add(W);
 
         const FString LabelText = (!P.Label.IsEmpty() ? P.Label : P.Id) + (P.bRequired ? TEXT(" *") : TEXT(""));
@@ -99,37 +99,37 @@ void SSliverDetailPanel::RebuildParamUI()
     }
 
     // Auto-fill wiring: an actor_ref param "X" mirrors the picked actor's
-    // world location into a sibling vector3 param "X_location", so a sliver
+    // world location into a sibling vector3 param "X_location", so a recipe
     // like frame_target actually frames the chosen actor.
-    for (const TSharedRef<SSliverParamWidget>& W : ParamWidgets)
+    for (const TSharedRef<SRecipeParamWidget>& W : ParamWidgets)
     {
-        if (W->GetParam().Type != EHaybaSliverParamType::ActorRef) continue;
+        if (W->GetParam().Type != EHaybaRecipeParamType::ActorRef) continue;
         const FString LocId = W->GetParam().Id + TEXT("_location");
 
-        TSharedPtr<SSliverParamVector3> VecW;
-        for (const TSharedRef<SSliverParamWidget>& V : ParamWidgets)
+        TSharedPtr<SRecipeParamVector3> VecW;
+        for (const TSharedRef<SRecipeParamWidget>& V : ParamWidgets)
         {
-            if (V->GetParam().Type == EHaybaSliverParamType::Vector3 && V->GetParam().Id == LocId)
+            if (V->GetParam().Type == EHaybaRecipeParamType::Vector3 && V->GetParam().Id == LocId)
             {
-                VecW = StaticCastSharedRef<SSliverParamVector3>(V);
+                VecW = StaticCastSharedRef<SRecipeParamVector3>(V);
                 break;
             }
         }
         if (!VecW.IsValid()) continue;
 
-        TWeakPtr<SSliverParamVector3> WeakVec = VecW;
-        StaticCastSharedRef<SSliverParamActorRef>(W)->OnActorPicked.BindLambda(
+        TWeakPtr<SRecipeParamVector3> WeakVec = VecW;
+        StaticCastSharedRef<SRecipeParamActorRef>(W)->OnActorPicked.BindLambda(
             [WeakVec](const FVector& Loc)
             {
-                if (TSharedPtr<SSliverParamVector3> V = WeakVec.Pin()) V->SetVector(Loc);
+                if (TSharedPtr<SRecipeParamVector3> V = WeakVec.Pin()) V->SetVector(Loc);
             });
     }
 }
 
-FString SSliverDetailPanel::BuildParamsJson() const
+FString SRecipeDetailPanel::BuildParamsJson() const
 {
     TArray<FString> Parts;
-    for (const TSharedRef<SSliverParamWidget>& W : ParamWidgets)
+    for (const TSharedRef<SRecipeParamWidget>& W : ParamWidgets)
     {
         const FString Id = W->GetParam().Id;
         FString Esc = Id; Esc.ReplaceInline(TEXT("\""), TEXT("\\\""));
@@ -138,18 +138,18 @@ FString SSliverDetailPanel::BuildParamsJson() const
     return TEXT("{") + FString::Join(Parts, TEXT(",")) + TEXT("}");
 }
 
-FReply SSliverDetailPanel::OnRunClicked()
+FReply SRecipeDetailPanel::OnRunClicked()
 {
     if (bRunning) return FReply::Handled();
     bRunning = true;
     if (OutputBox) OutputBox->SetText(FText::FromString(TEXT("(running…)")));
 
-    const UHaybaSliverSettings* S = UHaybaSliverSettings::GetChecked();
+    const UHaybaRecipeSettings* S = UHaybaRecipeSettings::GetChecked();
     const FString BaseUrl = S->McpHttpBaseUrl;
     const FString Id = Spec.Id;
     const FString ParamsJson = BuildParamsJson();
 
-    FHaybaSliverRunCallback OnDone = FHaybaSliverRunCallback::CreateLambda(
+    FHaybaRecipeRunCallback OnDone = FHaybaRecipeRunCallback::CreateLambda(
         [this](bool bOk, const FString& Body)
         {
             AsyncTask(ENamedThreads::GameThread, [this, bOk, Body]()
@@ -162,6 +162,6 @@ FReply SSliverDetailPanel::OnRunClicked()
             });
         });
 
-    FHaybaSliverClient::RunSliver(BaseUrl, Id, ParamsJson, OnDone);
+    FHaybaRecipeClient::RunRecipe(BaseUrl, Id, ParamsJson, OnDone);
     return FReply::Handled();
 }

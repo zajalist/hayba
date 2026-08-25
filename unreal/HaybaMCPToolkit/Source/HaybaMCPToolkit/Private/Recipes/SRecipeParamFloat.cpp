@@ -1,12 +1,12 @@
-// SSliverParamFloat.cpp
-#include "Slivers/SSliverParamFloat.h"
+// SRecipeParamFloat.cpp
+#include "Recipes/SRecipeParamFloat.h"
 #include "Widgets/Input/SSpinBox.h"
 
-void SSliverParamFloat::Construct(const FArguments& InArgs)
+void SRecipeParamFloat::Construct(const FArguments& InArgs)
 {
-    SSliverParamWidget::FArguments BaseArgs;
+    SRecipeParamWidget::FArguments BaseArgs;
     BaseArgs._Param = InArgs._Param;
-    SSliverParamWidget::Construct(BaseArgs);
+    SRecipeParamWidget::Construct(BaseArgs);
 
     Value = static_cast<float>(Param.DefaultNumber.Get(0.0));
 
@@ -33,7 +33,7 @@ void SSliverParamFloat::Construct(const FArguments& InArgs)
     ];
 }
 
-FString SSliverParamFloat::GetValueAsJson() const
+FString SRecipeParamFloat::GetValueAsJson() const
 {
     return FString::SanitizeFloat(Value);
 }

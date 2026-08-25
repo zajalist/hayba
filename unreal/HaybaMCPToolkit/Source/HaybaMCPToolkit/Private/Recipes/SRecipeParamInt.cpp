@@ -1,12 +1,12 @@
-// SSliverParamInt.cpp
-#include "Slivers/SSliverParamInt.h"
+// SRecipeParamInt.cpp
+#include "Recipes/SRecipeParamInt.h"
 #include "Widgets/Input/SSpinBox.h"
 
-void SSliverParamInt::Construct(const FArguments& InArgs)
+void SRecipeParamInt::Construct(const FArguments& InArgs)
 {
-    SSliverParamWidget::FArguments BaseArgs;
+    SRecipeParamWidget::FArguments BaseArgs;
     BaseArgs._Param = InArgs._Param;
-    SSliverParamWidget::Construct(BaseArgs);
+    SRecipeParamWidget::Construct(BaseArgs);
 
     Value = static_cast<int32>(Param.DefaultNumber.Get(0.0));
 
@@ -31,4 +31,4 @@ void SSliverParamInt::Construct(const FArguments& InArgs)
     ];
 }
 
-FString SSliverParamInt::GetValueAsJson() const { return FString::FromInt(Value); }
+FString SRecipeParamInt::GetValueAsJson() const { return FString::FromInt(Value); }

@@ -996,7 +996,9 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     if (Result.bOk && Result.Data.IsValid())
     {
         if (Cmd == TEXT("scene_validate_physics")) PushPhysicsResultsToPanel(Result.Data);
-        else if (Cmd == TEXT("memory_query"))           PushMemoryResultsToPanel(Result.Data);
+        // No memory_query entry: no handler declares that command, so this
+        // branch could never be reached. The Library is refreshed through the
+        // ui_memory_set path above, which is live.
         // ui_report_findings carries its payload in the REQUEST, not the
         // response, because the findings were judged MCP-side.
         else if (Cmd == TEXT("ui_report_findings"))      PushExternalFindingsToPanel(Params);

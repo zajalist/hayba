@@ -15,7 +15,7 @@
 #include "HaybaMCPOnboardingWidget.h"
 #include "HaybaMCPSettingsPanel.h"
 #include "HaybaMCPSettings.h"
-#include "Slivers/SSliversPanel.h"
+#include "Recipes/SRecipesPanel.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SSeparator.h"
@@ -69,7 +69,7 @@ namespace
         {
             case EHaybaSection::Chat:       return NSLOCTEXT("Hayba", "Sec.Chat",       "Chat");
             case EHaybaSection::MCP:        return NSLOCTEXT("Hayba", "Sec.MCP",        "Tools");
-            case EHaybaSection::Slivers:    return NSLOCTEXT("Hayba", "Sec.Recipes",    "Recipes");
+            case EHaybaSection::Recipes:    return NSLOCTEXT("Hayba", "Sec.Recipes",    "Recipes");
             case EHaybaSection::ToolStream: return NSLOCTEXT("Hayba", "Sec.Stream",     "Live");
             case EHaybaSection::SceneMap:   return NSLOCTEXT("Hayba", "Sec.SceneMap",   "Map");
             case EHaybaSection::Plan:       return NSLOCTEXT("Hayba", "Sec.Plan",       "Plans");
@@ -92,7 +92,7 @@ TArray<EHaybaSection> SHaybaMCPMainPanel::SectionsFor(EHaybaPanel Panel)
     switch (Panel)
     {
         case EHaybaPanel::World:    return { EHaybaSection::SceneMap };
-        case EHaybaPanel::Library:  return { EHaybaSection::Memory, EHaybaSection::Slivers };
+        case EHaybaPanel::Library:  return { EHaybaSection::Memory, EHaybaSection::Recipes };
         case EHaybaPanel::Rules:    return { EHaybaSection::Validation, EHaybaSection::Lessons };
         case EHaybaPanel::Activity: return { EHaybaSection::ToolStream, EHaybaSection::Plan, EHaybaSection::Diff };
         case EHaybaPanel::Chat:     return { EHaybaSection::Chat };
@@ -418,13 +418,13 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaSection Section)
             Subtitle = NSLOCTEXT("Hayba", "MCP.Sub", "Pick which tools your AI agent can see.");
             Body = SNew(SHaybaMCPCapabilitiesPanel).Module(Module);
             break;
-        case EHaybaSection::Slivers:
+        case EHaybaSection::Recipes:
         {
-            Subtitle = NSLOCTEXT("Hayba", "Slivers.Sub",
-                "Deterministic abstractions — pick a sliver, set its parameters, run it.");
-            auto Panel2 = SNew(SSliversPanel);
-            // Re-shown from cache → re-scan the installed slivers directory.
-            PanelRefreshHook.Add(EHaybaSection::Slivers, [Panel2]() { Panel2->Refresh(); });
+            Subtitle = NSLOCTEXT("Hayba", "Recipes.Sub",
+                "Deterministic abstractions — pick a recipe, set its parameters, run it.");
+            auto Panel2 = SNew(SRecipesPanel);
+            // Re-shown from cache → re-scan the installed recipes directory.
+            PanelRefreshHook.Add(EHaybaSection::Recipes, [Panel2]() { Panel2->Refresh(); });
             Body = Panel2;
             break;
         }
