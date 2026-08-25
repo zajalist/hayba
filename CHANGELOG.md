@@ -5,6 +5,25 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 ## [Unreleased]
 
 ### Fixed
+- Crash-resilience hardening merged in from its own branch. Four defects in
+  that work were found and fixed once it could be built and run:
+  - Optional string/boolean parameters silently accepted the wrong JSON kind.
+    The guards existed but could never fire, because UE's `TryGetStringField` /
+    `TryGetBoolField` *coerce*: a JSON number satisfied a string parameter (and
+    arrived as `"1"`), and the string `"true"` satisfied a boolean. A caller
+    could reach editor mutation with a value it never asked for.
+  - `success_needs_verification` was decided by the Plan-Mode approval gate,
+    which answers "would running this twice do damage" rather than "does this
+    change the scene". `actor_transform` is idempotent and mutating, so moving
+    an actor returned `ok` with no nudge to verify it moved. The advisory now
+    keys on mutation and no longer widens what Plan Mode gates.
+  - A generic reserved-token check ran before the specific Python policy table
+    and shadowed it, so `builtins.input(` was reported as a dynamic-execution
+    risk instead of a blocking-call one.
+  - A module merely *named* inside a string literal was refused as a dynamic
+    import: `module_name = 'importlib.util'` was rejected although it does
+    nothing. Policy rules can now match code outside quoted spans, which keeps
+    real `importlib` usage refused and the rule's own pattern self-rejecting.
 - `python_run`'s two pre-execution crash guards now actually run. The validated
   handler that refuses a script opening a TCP socket to the plugin's own port
   (deadlocks the game thread) and one registering an engine-lifetime callback
