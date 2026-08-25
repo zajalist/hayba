@@ -12,7 +12,8 @@
 class FHaybaRecipeLoader
 {
 public:
-    /** %APPDATA%/Hayba/recipes on Windows, $HOME/.hayba/Hayba/recipes elsewhere. */
+    /** %APPDATA%/Hayba/slivers on Windows, $HOME/.hayba/Hayba/slivers elsewhere.
+     *  Keeps the old directory name on purpose -- see the .cpp. */
     static FString DefaultUserRecipesDir();
 
     /** Reads + parses every *.recipe.json (and legacy *.sliver.json) in
