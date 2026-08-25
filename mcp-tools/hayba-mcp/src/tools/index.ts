@@ -64,6 +64,7 @@ import { memoryPruneHandler, meta as memoryPruneMeta } from './memory/prune.js';
 
 // ── Material instance-layer tool handlers ───────────────────────────────────
 import { materialCreateHandler, meta as materialCreateMeta } from './material/material-create.js';
+import { materialFromTexturesHandler, meta as materialFromTexturesMeta, schema as materialFromTexturesSchema } from './material/material-from-textures.js';
 import {
   materialCreateInstanceHandler,
   meta as materialCreateInstanceMeta,
@@ -1770,6 +1771,18 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       package_path: z.string().min(1).describe('UE content path for the new material'),
       name: z.string().min(1).describe('Name of the material asset'),
     },
+  },
+  {
+    name: 'material_from_textures',
+    description:
+      'Assemble a PBR material from a set of imported textures. Reads the role of each map from its file name (Color/BaseColor/Albedo, Normal, Roughness, Metallic, AmbientOcclusion, Displacement, Opacity, Emissive, Specular), creates one TextureSample per map with the correct colour space — linear for data maps, Normal for normals — connects each to its material input, and compiles once at the end. Files it cannot classify are reported, never guessed at. Use dry_run to see the classification and the graph before anything is created.',
+    meta: materialFromTexturesMeta,
+    handler: materialFromTexturesHandler,
+    cost: 'medium',
+    returns:
+      '{ok, material, plan:{nodes:[{role,texture,samplerType,connectsTo}], unrecognised, ambiguous, missing}, wired:[role], errors:[string]}',
+    niche: M,
+    schema: materialFromTexturesSchema.shape,
   },
   {
     name: 'material_create_instance',
