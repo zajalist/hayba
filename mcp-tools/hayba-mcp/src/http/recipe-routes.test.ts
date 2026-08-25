@@ -137,4 +137,16 @@ describe('recipe HTTP routes', () => {
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: 'Not found' });
   });
+
+  // HaybaSliverClient.cpp:14 POSTs /sliver/run, and a TypeScript-only release
+  // ships without a plugin rebuild. The old prefix answers until the plugin
+  // moves; this test is what stops a future rename from quietly dropping it.
+  it('still answers the prefix the plugin calls', async () => {
+    const r = await fetch(`${url}/sliver/list`);
+    expect(r.status).toBe(200);
+
+    const viaOld = (await r.json()) as { recipes?: unknown[] };
+    const viaNew = (await (await fetch(`${url}/recipe/list`)).json()) as { recipes?: unknown[] };
+    expect(viaOld).toEqual(viaNew);
+  });
 });

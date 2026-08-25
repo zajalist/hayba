@@ -1,6 +1,6 @@
 // mcp-tools/hayba-mcp/src/recipes/loader.ts
 //
-// RecipeLoader — reads *.recipe.json from %APPDATA%/Hayba/recipes/
+// RecipeLoader — reads *.recipe.json from %APPDATA%/Hayba/slivers/
 // (userDir), seeding from the package's bundled specs (bundledDir) on
 // first run. Validates with parseRecipeSpec; bad files are skipped and
 // reported via errors() so the MCP server keeps booting.
@@ -13,7 +13,7 @@ import type { RecipeSpec } from './types.js';
 import { parseRecipeSpec } from './spec-schema.js';
 
 export interface RecipeLoaderOpts {
-  /** Absolute path to %APPDATA%/Hayba/recipes/ (or test override). */
+  /** Absolute path to %APPDATA%/Hayba/slivers/ (or test override). */
   userDir: string;
   /** Absolute path to the package's bundled specs (dist/recipes/specs/). */
   bundledDir: string;
@@ -116,8 +116,15 @@ function readSpecVersion(path: string): string | null {
   }
 }
 
-/** Default user dir resolver — %APPDATA%/Hayba/recipes on Windows, ~/.hayba/recipes elsewhere. */
+/** Default user dir resolver — %APPDATA%/Hayba/slivers on Windows,
+ *  ~/.hayba/slivers elsewhere.
+ *
+ *  The directory still carries the old name on purpose. HaybaSliverLoader.h
+ *  reads the same path, and a TypeScript-only release ships without a plugin
+ *  rebuild -- renaming it here would point the two halves at different
+ *  directories and empty the user's Recipes panel. It moves in the same
+ *  commit that rebuilds the plugin, with a one-time migration. */
 export function defaultUserRecipesDir(): string {
   const base = process.env.APPDATA ?? join(process.env.HOME ?? '.', '.hayba');
-  return join(base, 'Hayba', 'recipes');
+  return join(base, 'Hayba', 'slivers');
 }

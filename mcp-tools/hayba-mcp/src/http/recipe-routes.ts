@@ -12,7 +12,7 @@ import { recipeRunHandler } from '../tools/recipe/run.js';
 import { jsonObjectBody, stringQuery } from './express-boundary.js';
 
 export function mountRecipeRoutes(app: Express, sys: RecipeSystem): void {
-  app.get('/recipe/list', async (req: Request, res: Response) => {
+  app.get(['/recipe/list', '/sliver/list'], async (req: Request, res: Response) => {
     const category = stringQuery(req.query.category, 'category');
     const namespace = stringQuery(req.query.namespace, 'namespace');
     if (!category.ok) return void res.status(400).json({ error: category.error });
@@ -27,7 +27,7 @@ export function mountRecipeRoutes(app: Express, sys: RecipeSystem): void {
     res.json(r);
   });
 
-  app.get('/recipe/get', async (req: Request, res: Response) => {
+  app.get(['/recipe/get', '/sliver/get'], async (req: Request, res: Response) => {
     const id = stringQuery(req.query.id, 'id');
     if (!id.ok) {
       res.status(400).json({ error: id.error });
@@ -41,7 +41,7 @@ export function mountRecipeRoutes(app: Express, sys: RecipeSystem): void {
     res.json(r);
   });
 
-  app.post('/recipe/run', async (req: Request, res: Response) => {
+  app.post(['/recipe/run', '/sliver/run'], async (req: Request, res: Response) => {
     const body = jsonObjectBody(req) as { id?: unknown; params?: unknown };
     if (typeof body.id !== 'string' || !body.id) {
       res.status(400).json({ error: 'missing id' });
@@ -57,7 +57,7 @@ export function mountRecipeRoutes(app: Express, sys: RecipeSystem): void {
     res.json(r);
   });
 
-  app.post('/recipe/import', async (req: Request, res: Response) => {
+  app.post(['/recipe/import', '/sliver/import'], async (req: Request, res: Response) => {
     const body = jsonObjectBody(req) as { spec?: unknown };
     if (!body.spec || typeof body.spec !== 'object') {
       res.status(400).json({ error: 'missing spec' });

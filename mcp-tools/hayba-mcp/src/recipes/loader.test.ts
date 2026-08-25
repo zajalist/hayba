@@ -110,3 +110,14 @@ describe('RecipeLoader', () => {
     expect(loader.list()).toEqual([]);
   });
 });
+
+describe('the on-disk library location', () => {
+  it('is the directory the plugin also reads', async () => {
+    // HaybaSliverLoader.h scans %APPDATA%/Hayba/slivers. If this ever moves
+    // without the plugin moving with it, both halves point at different
+    // directories and the user's Recipes panel goes empty -- which is exactly
+    // what a blanket rename did before this test existed.
+    const { defaultUserRecipesDir } = await import('./loader.js');
+    expect(defaultUserRecipesDir().replace(/\\/g, '/')).toMatch(/\/Hayba\/slivers$/);
+  });
+});
