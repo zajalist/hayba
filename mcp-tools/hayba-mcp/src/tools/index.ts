@@ -66,6 +66,7 @@ import { memoryPruneHandler, meta as memoryPruneMeta } from './memory/prune.js';
 import { materialCreateHandler, meta as materialCreateMeta } from './material/material-create.js';
 import { materialFromTexturesHandler, meta as materialFromTexturesMeta, schema as materialFromTexturesSchema } from './material/material-from-textures.js';
 import { assetFindByLookHandler, meta as assetFindByLookMeta, schema as assetFindByLookSchema } from './visual/asset-find-by-look.js';
+import { planBuildHandler, meta as planBuildMeta, schema as planBuildSchema } from './plumb/plan-execute.js';
 import {
   materialCreateInstanceHandler,
   meta as materialCreateInstanceMeta,
@@ -963,6 +964,17 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
     cost: 'low',
     returns: '{expansion:[{symbol,parts}]} - computed, nothing placed',
     handler: async (a) => okResult(await plumbGrammarExpandHandler(a as Parameters<typeof plumbGrammarExpandHandler>[0])),
+  },
+  {
+    name: 'plumb_plan_build',
+    description:
+      'Build the placeable parts of a plan from plumb_grammar_expand. Lays each item out on the room footprint you give it — a column run spaced along the floor edge, a vent at each wall middle, scatter inside — grounds every point with a line trace, and places one Instanced Static Mesh actor per bound mesh. Roles are bound by YOU via `bindings`; an unbound role is reported, never guessed at, because picking a mesh whose name looked close is how a colonnade ends up made of barrels. Shells, fills and decals are NOT built and say why: a shell is generated geometry, and a decal needs a surface that does not exist yet. Use dry_run to see the layout before anything spawns.',
+    meta: planBuildMeta,
+    handler: planBuildHandler,
+    cost: 'high',
+    returns:
+      '{ok, built:[{role,asset,instances}], skipped:[{kind,role,reason}], unbound:[role], grounded, ground_note?, errors:[]}',
+    schema: planBuildSchema.shape,
   },
 ];
 

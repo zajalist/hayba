@@ -16,3 +16,17 @@ describe('the visual tools are actually reachable', () => {
     expect(Object.keys(d?.schema ?? {})).toContain('intent');
   });
 });
+
+describe('the grammar executor is reachable too', () => {
+  it('plumb_plan_build is in the catalogue', () => {
+    const names = STATIC_TOOL_CATALOGUE.map((d) => d.name);
+    expect(names).toContain('plumb_plan_build');
+  });
+
+  it('takes a plan and bindings, so a caller can tell what it needs', () => {
+    const d = STATIC_TOOL_CATALOGUE.find((x) => x.name === 'plumb_plan_build');
+    const keys = Object.keys(d?.schema ?? {});
+    expect(keys).toContain('plan');
+    expect(keys).toContain('bindings');
+  });
+});
