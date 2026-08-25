@@ -866,3 +866,41 @@ that shipped to nobody.
 
 **Do them together or not at all.** The precondition is now verified, which is
 the part that was genuinely unknown.
+
+
+---
+
+## A5 — the import-hygiene half, measured (2026-08-25)
+
+A5 is blocked on a licensing decision, but its own text says the decisive part
+is provider-independent: *"import hygiene — LOD, collision, UVs, Nanite prep —
+is the part that decides whether output is usable."* That claim is checkable
+today, and it holds. Sharpened, with what exists:
+
+| hygiene item | can we OBSERVE it? | can we APPLY it? |
+|---|---|---|
+| LOD | yes — `mesh_audit` reports `lod_count`, `missing_lods`, `tris_lod0`; `mesh_get_lods` reads them | **no** — `mesh_set_lod` configures an LOD that already exists (screen size, optional reduction) and refuses `lod_index >= GetNumSourceModels()`. Nothing generates one. |
+| UVs | partially — `mesh_set_lod` refuses when any LOD has zero UV channels, because rebuilding would hit `check(NumUVs>0)`, an uncatchable engine assert | **no** — no UV or lightmap-UV generation |
+| collision | no | **no** — `physics_set_collision_profile` sets an actor's collision *profile*; nothing generates collision *geometry* (simple primitives, convex decomposition) |
+| Nanite | no | **no** for static meshes — `landscape_set_nanite` exists, its static-mesh counterpart does not |
+
+So of the four, we can partially observe two and apply none.
+
+### Why this matters beyond A5
+
+The gap is not specific to generated meshes. Every asset that enters the
+project through `asset_import`, `hayba_sketchfab_download` or
+`hayba_polyhaven_*` lands with whatever LODs, collision and UVs it shipped
+with, and nothing in the toolkit can fix any of it. A 3D-generation provider
+would simply be one more source of meshes with the same problem.
+
+That reframes the sequencing: the import-hygiene work is worth doing on its own
+merits, is not blocked on the licence, and would make an eventual A5
+integration a thin adapter rather than the whole feature. Conversely, choosing
+a provider first buys a `create -> poll -> import` pipeline that lands assets
+nobody can finish.
+
+### Still needs a decision
+
+Only the licence. TRELLIS.2 (MIT) and Sloyd remain the clean commercial
+options; nothing above depends on which is chosen.
