@@ -9,7 +9,8 @@
 // Adding a rule: append an entry here. Nothing else needs touching — the
 // runner, the settings surface and the strictness gate all read this array.
 
-import type { UiFinding, UiRule, UiRuleContext, UiWidget } from './types.js';
+import type { UiRule, UiRuleContext, UiWidget } from './types.js';
+import type { Finding } from '../finding.js';
 import { contrastRatio } from './thresholds.js';
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -220,8 +221,8 @@ function finding(
   hint: string,
   widget?: string,
   data?: Record<string, unknown>,
-): UiFinding {
-  return { ruleId: rule.id, category: rule.category, severity: rule.severity, widget, message, hint, data };
+): Finding {
+  return { ruleId: rule.id, category: rule.category, severity: rule.severity, subject: widget, message, hint, data };
 }
 
 // ── rules ───────────────────────────────────────────────────────────────────
@@ -236,7 +237,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Text is wider than the box it sits in',
     needsLayout: true,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of laidOut(ctx)) {
         const t = w.text_info;
         if (!t?.overflows || t.measured_width === undefined || t.available_width === undefined) continue;
@@ -270,7 +271,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Text nearly fills its box, so any longer string will clip',
     needsLayout: true,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of laidOut(ctx)) {
         const t = w.text_info;
         if (!t || t.overflows || t.measured_width === undefined || t.available_width === undefined) continue;
@@ -307,7 +308,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Label has no room to grow when translated',
     needsLayout: true,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       const headroom = ctx.thresholds.localizationHeadroom;
       if (headroom <= 1) return out;
       for (const w of laidOut(ctx)) {
@@ -344,7 +345,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Font is below the legible minimum for the target platform',
     needsLayout: false,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         const size = w.text_info?.font_size;
         if (size === undefined || size <= 0) continue;
@@ -372,7 +373,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Font is legible but below the comfortable size',
     needsLayout: false,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         const size = w.text_info?.font_size;
         if (size === undefined || size <= 0) continue;
@@ -399,7 +400,7 @@ export const UI_RULES: UiRule[] = [
     title: 'A UFontFace is assigned where Slate needs a composite UFont',
     needsLayout: false,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         if (!w.text_info?.font_is_font_face) continue;
         out.push(
@@ -432,7 +433,7 @@ export const UI_RULES: UiRule[] = [
       // It compounds because ui_set_text_style only writes the fields it is
       // given: setting size and colour while omitting font_asset and typeface
       // leaves the engine font in place and reports success either way.
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         if (!isTextWidget(w)) continue;
         const font = w.text_info?.font_object;
@@ -462,7 +463,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Text widget has no text',
     needsLayout: false,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         if (!isTextWidget(w)) continue;
         const text = w.text_info?.text;
@@ -488,7 +489,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Placeholder text left in the widget',
     needsLayout: false,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         const text = w.text_info?.text?.trim().toLowerCase();
         if (!text) continue;
@@ -514,7 +515,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Long text in a fixed-width box with wrapping off',
     needsLayout: true,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of laidOut(ctx)) {
         const t = w.text_info;
         if (!t || t.auto_wrap !== false || !t.text) continue;
@@ -544,7 +545,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Content sits outside the action-safe area',
     needsLayout: true,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       const f = ctx.thresholds.actionSafeFraction;
       if (f <= 0) return out;
       const { screen_width: sw, screen_height: sh } = ctx.snapshot;
@@ -585,7 +586,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Text or interactive content sits outside the title-safe area',
     needsLayout: true,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       const f = ctx.thresholds.titleSafeFraction;
       const action = ctx.thresholds.actionSafeFraction;
       if (f <= 0) return out;
@@ -633,7 +634,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Widget is partly or fully off-screen',
     needsLayout: true,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       const { screen_width: sw, screen_height: sh } = ctx.snapshot;
       for (const w of laidOut(ctx)) {
         const r = rect(w);
@@ -672,7 +673,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Two siblings overlap on screen',
     needsLayout: true,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       // Only content widgets: panels overlapping is how layering works, but
       // anything that actually paints — text, controls, images — colliding
       // with a sibling is a real visual defect.
@@ -709,7 +710,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Interactive widget is smaller than the minimum target size',
     needsLayout: true,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       const min = ctx.thresholds.minTouchTargetPx;
       for (const w of laidOut(ctx)) {
         if (!w.is_interactive) continue;
@@ -740,7 +741,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Interactive widgets are too close to each other',
     needsLayout: true,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       const minGap = ctx.thresholds.minInteractiveGapPx;
       for (const [a, b] of siblingPairs(ctx, (w) => w.is_interactive)) {
         const ra = rect(a);
@@ -772,7 +773,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Widget lays out to zero size',
     needsLayout: true,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         if (!w.laid_out) continue;
         const r = rect(w);
@@ -800,7 +801,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Child is drawn outside its parent panel',
     needsLayout: true,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of laidOut(ctx)) {
         const parent = ctx.byName.get(w.parent);
         if (!parent?.laid_out) continue;
@@ -843,7 +844,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Position or size is off the spacing grid',
     needsLayout: true,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       const grid = ctx.thresholds.spacingGridPx;
       if (grid <= 1) return out;
       for (const w of laidOut(ctx)) {
@@ -888,7 +889,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Canvas child is pinned to the top-left and will not adapt',
     needsLayout: false,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         const a = w.anchors;
         if (!a) continue;
@@ -919,7 +920,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Stretched anchor combined with a non-zero alignment',
     needsLayout: false,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         const a = w.anchors;
         if (!a) continue;
@@ -949,7 +950,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Text contrast against its background is below the minimum',
     needsLayout: false,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         const color = w.text_info?.color;
         if (!color) continue;
@@ -978,7 +979,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Widget is fully transparent',
     needsLayout: false,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         const reasons: string[] = [];
         if (w.render_opacity <= 0.001) reasons.push('render opacity is 0');
@@ -1008,7 +1009,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Image widget has no texture or material assigned',
     needsLayout: false,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         if (w.class !== 'Image') continue;
         if (w.brush_info?.has_resource) continue;
@@ -1034,7 +1035,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Interactive widget cannot receive focus',
     needsLayout: false,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         if (!w.is_interactive || w.is_focusable) continue;
         out.push(
@@ -1079,7 +1080,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Interactive widget has input disabled by its visibility setting',
     needsLayout: false,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         if (!w.is_interactive) continue;
         const v = w.visibility;
@@ -1105,7 +1106,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Button has no label or icon',
     needsLayout: false,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         if (w.class !== 'Button') continue;
         if ((w.child_count ?? 0) > 0) continue;
@@ -1131,7 +1132,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Panel has no children',
     needsLayout: false,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         if (!w.is_panel) continue;
         if ((w.child_count ?? 0) > 0) continue;
@@ -1160,7 +1161,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Panel wraps a single child for no layout reason',
     needsLayout: false,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       // These wrap one child ON PURPOSE — sizing, scaling, clipping, padding.
       const purposeful = new Set([
         'SizeBox',
@@ -1196,7 +1197,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Widget hierarchy is deeper than the recommended limit',
     needsLayout: true,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       const max = ctx.thresholds.maxNestingDepth;
       const deepest = laidOut(ctx).reduce<UiWidget | null>(
         (acc, w) => ((w.depth ?? 0) > (acc?.depth ?? -1) ? w : acc),
@@ -1244,7 +1245,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Widget still has its auto-generated name',
     needsLayout: false,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         if (!DEFAULT_NAME_RE.test(w.name)) continue;
         out.push(
@@ -1267,7 +1268,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Deliberately named widget is not exposed as a variable',
     needsLayout: false,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         if (w.is_variable) continue;
         if (DEFAULT_NAME_RE.test(w.name)) continue; // not deliberately named
@@ -1311,7 +1312,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Control is authored in the disabled state',
     needsLayout: false,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         if (!w.is_interactive || w.is_enabled) continue;
         out.push(
@@ -1355,7 +1356,7 @@ export const UI_RULES: UiRule[] = [
     title: 'RetainerBox wraps content that looks dynamic',
     needsLayout: false,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         if (w.class !== 'RetainerBox') continue;
         // Interactive descendants imply content that changes every frame,
@@ -1383,7 +1384,7 @@ export const UI_RULES: UiRule[] = [
     title: 'WidgetSwitcher has fewer than two children',
     needsLayout: false,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of ctx.snapshot.widgets) {
         if (w.class !== 'WidgetSwitcher') continue;
         const count = w.child_count ?? 0;
@@ -1409,7 +1410,7 @@ export const UI_RULES: UiRule[] = [
     title: 'Image is drawn much smaller than its source art',
     needsLayout: true,
     evaluate: (ctx) => {
-      const out: UiFinding[] = [];
+      const out: Finding[] = [];
       for (const w of laidOut(ctx)) {
         const b = w.brush_info;
         if (!b?.has_resource || !b.image_size_x || !b.image_size_y) continue;

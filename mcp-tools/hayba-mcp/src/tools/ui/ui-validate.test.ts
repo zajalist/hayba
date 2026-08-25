@@ -161,12 +161,12 @@ describe('ui_validate reporting', () => {
       undefined as never,
     );
     const parsed = JSON.parse(r.content[0]!.text) as {
-      findings: Array<{ ruleId: string; widget?: string }>;
+      findings: Array<{ ruleId: string; subject?: string }>;
     };
 
     expect(offsets).toEqual([0, 1]);
-    expect(parsed.findings.some((f) => f.ruleId === 'ui_text_overflows_box' && f.widget === 'NameLabel')).toBe(true);
-    expect(parsed.findings.some((f) => f.ruleId === 'ui_text_overflows_box' && f.widget === 'LateObserverAction')).toBe(true);
+    expect(parsed.findings.some((f) => f.ruleId === 'ui_text_overflows_box' && f.subject === 'NameLabel')).toBe(true);
+    expect(parsed.findings.some((f) => f.ruleId === 'ui_text_overflows_box' && f.subject === 'LateObserverAction')).toBe(true);
   });
 
   it('fails closed when an older plugin repeats page one instead of honoring pagination', async () => {

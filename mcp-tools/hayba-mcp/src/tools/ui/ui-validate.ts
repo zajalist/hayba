@@ -2,7 +2,8 @@ import { z } from 'zod';
 import type { ToolHandler } from '../types.js';
 import { executeCommand } from '../tool-executor.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
-import { validateUiSnapshot, UI_PLATFORMS, type UiFinding, type UiSnapshot } from '../../validator/ui/index.js';
+import { validateUiSnapshot, UI_PLATFORMS, type UiSnapshot } from '../../validator/ui/index.js';
+import type { Finding } from '../../validator/finding.js';
 import { STRICTNESS_MODES } from '../../validator/config.js';
 import { appendFinding } from '../../validator/history.js';
 
@@ -75,7 +76,7 @@ export const uiValidateHandler: ToolHandler = async (args) => {
           severity: f.severity,
           message: f.message,
           hint: f.hint,
-          widget: f.widget,
+          widget: f.subject,
         })),
         append: false,
       } as Record<string, unknown>);
@@ -99,7 +100,7 @@ export const uiValidateHandler: ToolHandler = async (args) => {
         context: toContext(f, widget_blueprint_path, platform),
         // Distinct per finding so resolve/clear can address them individually;
         // the runner emits them in one pass, so a shared stamp would collide.
-        timestamp: `${timestamp}#${f.ruleId}:${f.widget ?? '-'}`,
+        timestamp: `${timestamp}#${f.ruleId}:${f.subject ?? '-'}`,
         toolName: 'ui_validate',
       });
     }
@@ -164,11 +165,11 @@ async function readCompleteSnapshot(
   throw new Error('ui_layout_snapshot exceeded 100 pages; refusing to validate an incomplete widget tree');
 }
 
-function toContext(f: UiFinding, blueprintPath: string, platform: string): Record<string, unknown> {
+function toContext(f: Finding, blueprintPath: string, platform: string): Record<string, unknown> {
   return {
     widget_blueprint_path: blueprintPath,
     platform,
-    ...(f.widget ? { widget: f.widget } : {}),
+    ...(f.subject ? { widget: f.subject } : {}),
     ...(f.data ?? {}),
   };
 }

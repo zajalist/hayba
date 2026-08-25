@@ -9,7 +9,7 @@ import { runCategoryRules } from '../run-category-rules.js';
 import { UI_RULES, uiRulesById } from './rules.js';
 import { resolveThresholds } from './thresholds.js';
 import type {
-  UiFinding,
+  // UiFinding is gone: UI rules emit the shared Finding.
   UiPlatform,
   UiRuleContext,
   UiSeverity,

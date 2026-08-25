@@ -7,6 +7,7 @@
 // rebuilding the plugin.
 
 import type { RuleCategory, Strictness } from '../config.js';
+import type { Finding, Severity } from '../finding.js';
 
 /** Text facts for a widget that renders text. */
 export interface UiTextInfo {
@@ -100,20 +101,8 @@ export interface UiSnapshot {
   widgets: UiWidget[];
 }
 
-export type UiSeverity = 'error' | 'warning' | 'info';
-
-/** A single problem found in a widget blueprint. */
-export interface UiFinding {
-  ruleId: string;
-  category: RuleCategory;
-  severity: UiSeverity;
-  /** Widget the finding is about, when it is about one. */
-  widget?: string;
-  message: string;
-  hint: string;
-  /** Numbers behind the message, so a caller can re-check the maths. */
-  data?: Record<string, unknown>;
-}
+/** UI findings are plain `Finding`s: the widget name goes in `subject`. */
+export type UiSeverity = Severity;
 
 /** Which platform's conventions to judge against. Safe areas, minimum touch
  *  targets and legible font sizes differ enough between a TV at 3m and a phone
@@ -172,7 +161,7 @@ export interface UiRule {
   /** True when the rule needs resolved geometry — skipped, and reported as
    *  skipped, when the layout could not be computed. */
   needsLayout: boolean;
-  evaluate: (ctx: UiRuleContext) => UiFinding[];
+  evaluate: (ctx: UiRuleContext) => Finding[];
 }
 
 export interface UiValidationResult {
@@ -181,7 +170,7 @@ export interface UiValidationResult {
   strictness: Strictness;
   layout_resolved: boolean;
   layout_error?: string;
-  findings: UiFinding[];
+  findings: Finding[];
   /** Rules that ran, were disabled, or were skipped for want of geometry.
    *  Reported explicitly so "no findings" is never confused with "no checks". */
   rules_evaluated: number;

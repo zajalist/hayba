@@ -4,7 +4,6 @@ import {
   countBySeverity,
   fromConstraintResult,
   fromContentFinding,
-  fromUiFinding,
   fromValidatorFinding,
   type Finding,
 } from '../finding.js';
@@ -57,16 +56,11 @@ describe('adapters', () => {
   });
 
   it('maps the per-category subject field onto one name', () => {
-    const ui = fromUiFinding({
-      ruleId: 'ui_touch_target', category: 'ui', severity: 'warning',
-      widget: 'BtnConfirm', message: 'too small', hint: 'grow it', data: { px: 22 },
-    });
     const content = fromContentFinding({
       ruleId: 'content_texture_memory', category: 'asset', severity: 'warning',
       asset: '/Game/T_Rock', message: 'heavy', hint: 'compress it', data: { kb: 8192 },
     });
 
-    expect(ui.subject).toBe('BtnConfirm');
     expect(content.subject).toBe('/Game/T_Rock');
     expect(content.category).toBe('asset');
   });

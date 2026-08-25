@@ -304,8 +304,8 @@ describe('safe areas', () => {
       platform: 'console',
       strictness: 'standard',
     });
-    expect(findingsFor(result, 'ui_outside_action_safe').map((f) => f.widget)).not.toContain('LateGoodRow');
-    expect(findingsFor(result, 'ui_outside_title_safe').map((f) => f.widget)).not.toContain('LateGoodRow');
+    expect(findingsFor(result, 'ui_outside_action_safe').map((f) => f.subject)).not.toContain('LateGoodRow');
+    expect(findingsFor(result, 'ui_outside_title_safe').map((f) => f.subject)).not.toContain('LateGoodRow');
   });
 
   it('still reports visible scroller content in the console top and bottom safe margins', () => {
@@ -355,11 +355,11 @@ describe('safe areas', () => {
       snapshot([rootPanel, topScroll, bottomScroll, topAction, topTitle, bottomTitle, bottomAction]),
       { platform: 'console', strictness: 'standard' },
     );
-    expect(findingsFor(result, 'ui_outside_action_safe').map((f) => f.widget)).toEqual([
+    expect(findingsFor(result, 'ui_outside_action_safe').map((f) => f.subject)).toEqual([
       'TopAction',
       'BottomAction',
     ]);
-    expect(findingsFor(result, 'ui_outside_title_safe').map((f) => f.widget)).toEqual([
+    expect(findingsFor(result, 'ui_outside_title_safe').map((f) => f.subject)).toEqual([
       'TopTitle',
       'BottomTitle',
     ]);
@@ -392,7 +392,7 @@ describe('safe areas', () => {
       platform: 'console',
       strictness: 'standard',
     });
-    const action = findingsFor(result, 'ui_outside_action_safe').find((f) => f.widget === 'OppositeEdgeDefect');
+    const action = findingsFor(result, 'ui_outside_action_safe').find((f) => f.subject === 'OppositeEdgeDefect');
     expect(action?.message).toContain('bottom edge');
     expect(action?.message).toContain('top edge');
   });
@@ -446,12 +446,12 @@ describe('safe areas', () => {
       platform: 'console',
       strictness: 'standard',
     });
-    expect(findingsFor(result, 'ui_outside_action_safe').map((f) => f.widget)).toEqual([
+    expect(findingsFor(result, 'ui_outside_action_safe').map((f) => f.subject)).toEqual([
       'PartialTopRow',
       'PartialBottomRow',
     ]);
     expect(
-      findingsFor(result, 'ui_outside_action_safe').find((f) => f.widget === 'PartialBottomRow')?.data,
+      findingsFor(result, 'ui_outside_action_safe').find((f) => f.subject === 'PartialBottomRow')?.data,
     ).toMatchObject({
       safe_area_projection: { vertical: { start: 1030, end: 1080 } },
     });
@@ -493,8 +493,8 @@ describe('safe areas', () => {
       platform: 'console',
       strictness: 'standard',
     });
-    expect(findingsFor(result, 'ui_outside_action_safe').map((f) => f.widget)).toEqual(['ActionCrossAxis']);
-    expect(findingsFor(result, 'ui_outside_title_safe').map((f) => f.widget)).toEqual(['TitleCrossAxis']);
+    expect(findingsFor(result, 'ui_outside_action_safe').map((f) => f.subject)).toEqual(['ActionCrossAxis']);
+    expect(findingsFor(result, 'ui_outside_title_safe').map((f) => f.subject)).toEqual(['TitleCrossAxis']);
   });
 
   it('preserves cross-axis safe findings while content is far along a vertical scroll axis', () => {
@@ -532,10 +532,10 @@ describe('safe areas', () => {
     const result = validateUiSnapshot(snapshot([rootPanel, scroll, actionCross, titleCross]), {
       platform: 'console', strictness: 'standard',
     });
-    expect(findingsFor(result, 'ui_outside_action_safe').map((f) => f.widget)).toEqual([
+    expect(findingsFor(result, 'ui_outside_action_safe').map((f) => f.subject)).toEqual([
       'FarVerticalActionCross',
     ]);
-    expect(findingsFor(result, 'ui_outside_title_safe').map((f) => f.widget)).toEqual([
+    expect(findingsFor(result, 'ui_outside_title_safe').map((f) => f.subject)).toEqual([
       'FarVerticalTitleCross',
     ]);
   });
@@ -575,10 +575,10 @@ describe('safe areas', () => {
     const result = validateUiSnapshot(snapshot([rootPanel, scroll, actionCross, titleCross]), {
       platform: 'console', strictness: 'standard',
     });
-    expect(findingsFor(result, 'ui_outside_action_safe').map((f) => f.widget)).toEqual([
+    expect(findingsFor(result, 'ui_outside_action_safe').map((f) => f.subject)).toEqual([
       'FarHorizontalActionCross',
     ]);
-    expect(findingsFor(result, 'ui_outside_title_safe').map((f) => f.widget)).toEqual([
+    expect(findingsFor(result, 'ui_outside_title_safe').map((f) => f.subject)).toEqual([
       'FarHorizontalTitleCross',
     ]);
   });
@@ -641,7 +641,7 @@ describe('safe areas', () => {
       height: 200,
     });
     const result = validateUiSnapshot(snapshot([rootPanel, scroll, row]), { strictness: 'standard' });
-    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.widget)).toEqual(['GoodsScroll']);
+    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.subject)).toEqual(['GoodsScroll']);
   });
 
   it('reports cross-axis overflow inside a vertical ScrollBox', () => {
@@ -668,8 +668,8 @@ describe('safe areas', () => {
       height: 200,
     });
     const result = validateUiSnapshot(snapshot([rootPanel, scroll, row]), { strictness: 'standard' });
-    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.widget)).toContain('TooWideRow');
-    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.widget)).toContain('TooWideRow');
+    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.subject)).toContain('TooWideRow');
+    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.subject)).toContain('TooWideRow');
   });
 
   it('uses a horizontal ScrollBox orientation without suppressing vertical defects', () => {
@@ -706,10 +706,10 @@ describe('safe areas', () => {
       snapshot([rootPanel, scroll, expectedHorizontalOverflow, brokenVerticalOverflow]),
       { strictness: 'standard' },
     );
-    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.widget)).not.toContain('FarCard');
-    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.widget)).not.toContain('FarCard');
-    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.widget)).toContain('DroppedCard');
-    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.widget)).toContain('DroppedCard');
+    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.subject)).not.toContain('FarCard');
+    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.subject)).not.toContain('FarCard');
+    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.subject)).toContain('DroppedCard');
+    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.subject)).toContain('DroppedCard');
   });
 
   it('still reports a grandchild that exceeds an ordinary panel inside a ScrollBox', () => {
@@ -748,7 +748,7 @@ describe('safe areas', () => {
     const result = validateUiSnapshot(snapshot([rootPanel, scroll, row, brokenChild]), {
       strictness: 'standard',
     });
-    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.widget)).toContain('BrokenFactors');
+    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.subject)).toContain('BrokenFactors');
   });
 
   it('fails closed for a pre-orientation ScrollBox snapshot', () => {
@@ -772,8 +772,8 @@ describe('safe areas', () => {
       height: 200,
     });
     const result = validateUiSnapshot(snapshot([rootPanel, scroll, row]), { strictness: 'standard' });
-    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.widget)).toContain('LegacyOffscreenRow');
-    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.widget)).toContain('LegacyOffscreenRow');
+    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.subject)).toContain('LegacyOffscreenRow');
+    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.subject)).toContain('LegacyOffscreenRow');
   });
 
   it('fails closed when a current ScrollBox fact omits its required orientation', () => {
@@ -798,8 +798,8 @@ describe('safe areas', () => {
       height: 200,
     });
     const result = validateUiSnapshot(snapshot([rootPanel, scroll, row]), { strictness: 'standard' });
-    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.widget)).toContain('MalformedOffscreenRow');
-    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.widget)).toContain('MalformedOffscreenRow');
+    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.subject)).toContain('MalformedOffscreenRow');
+    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.subject)).toContain('MalformedOffscreenRow');
   });
 
   it('honours an explicit non-ScrollBox identity over a misleading legacy class name', () => {
@@ -825,8 +825,8 @@ describe('safe areas', () => {
       height: 200,
     });
     const result = validateUiSnapshot(snapshot([rootPanel, notScroll, row]), { strictness: 'standard' });
-    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.widget)).toContain('ContradictoryOffscreenRow');
-    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.widget)).toContain(
+    expect(findingsFor(result, 'ui_outside_screen').map((f) => f.subject)).toContain('ContradictoryOffscreenRow');
+    expect(findingsFor(result, 'ui_child_exceeds_parent').map((f) => f.subject)).toContain(
       'ContradictoryOffscreenRow',
     );
   });
