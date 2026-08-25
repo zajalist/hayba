@@ -62,12 +62,6 @@ namespace
 void SRecipesPanel::Construct(const FArguments& InArgs)
 {
     WatchedDir = FHaybaRecipeLoader::DefaultUserRecipesDir();
-
-    // Adopt a pre-rename library before the first read. The MCP server runs
-    // the same migration on its own startup; whichever gets there first wins
-    // and the other finds nothing left to move.
-    FHaybaRecipeLoader::MigrateLegacyLibrary(
-        FHaybaRecipeLoader::LegacyUserRecipesDir(), WatchedDir);
     CategorySelected = MakeShared<FString>(TEXT("All categories"));
 
     ChildSlot

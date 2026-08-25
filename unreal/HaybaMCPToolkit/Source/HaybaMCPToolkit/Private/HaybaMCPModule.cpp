@@ -15,6 +15,7 @@
 #include "HaybaMCPOnboardingWidget.h"
 #include "HaybaMCPPlanModeWidget.h"
 #include "HaybaMCPStyle.h"
+#include "Recipes/HaybaRecipeLoader.h"
 #include "Editor.h"
 #include "TimerManager.h"
 #include "ToolMenus.h"
@@ -145,6 +146,15 @@ void FHaybaMCPModule::StartupModule()
 
     FHaybaMCPStyle::Initialize();
     FHaybaMCPSettings::Get().Load();
+
+    // Adopt a pre-rename recipe library. This belongs at startup, not in the
+    // Recipes panel: a data migration that only runs if the user happens to
+    // open a particular tab is not a migration, it is a coin flip. The MCP
+    // server performs the same move on its own startup and the two are
+    // expected to race -- the move is atomic, so losing is harmless.
+    FHaybaRecipeLoader::MigrateLegacyLibrary(
+        FHaybaRecipeLoader::LegacyUserRecipesDir(),
+        FHaybaRecipeLoader::DefaultUserRecipesDir());
 
     CommandHandler = MakeShared<FHaybaMCPCommandHandler>();
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPLegacyHandler>());
