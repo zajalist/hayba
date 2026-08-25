@@ -1,5 +1,6 @@
 #pragma once
 #include "CoreMinimal.h"
+#include "HaybaMCPStatusVocabulary.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Views/SListView.h"
@@ -16,6 +17,38 @@ struct FHaybaToolCall
     FString ResultJson;
     EHaybaRendererType RendererType = EHaybaRendererType::Generic;
     FDateTime Timestamp;
+
+    /** The call failed outright. */
+    bool bIsError = false;
+
+    /** The call succeeded but a rule came back with a NEGATIVE margin.
+     *
+     *  The IA's "needs attention", and the reason it is separate from
+     *  bIsError: the tool did what was asked and the result violates a
+     *  constraint. Rendering that as a green tick -- which is what happened
+     *  before -- hides the verdict at the moment it matters most.
+     *
+     *  Computed once when the call is recorded rather than per paint: it means
+     *  parsing the result JSON, and a row repaints far more often than it
+     *  arrives. */
+    bool bNeedsAttention = false;
+
+    /** The worst margin behind bNeedsAttention, for the chip's tooltip. */
+    double WorstMargin = 0.0;
+    FString WorstMarginUnit;
+    FString WorstRuleId;
+
+    /** Derive the verdict fields from ResultJson.
+     *
+     *  Both places that build one of these must call this. It exists because
+     *  the first version classified inside AddToolCall only, and the panel
+     *  ALSO builds calls when hydrating from history -- which is the usual
+     *  path, since the panel is constructed on first show. The result was a
+     *  row displaying "ERROR: ..." beside a green tick.
+     *
+     *  Declared here and defined in the .cpp: the JSON walk needs the
+     *  serializer, and the header should not drag it in. */
+    void Classify();
 };
 
 struct FHaybaTurn
@@ -23,6 +56,19 @@ struct FHaybaTurn
     int32 TurnIndex = 0;
     TArray<FHaybaToolCall> Calls;
     FString Summary;
+
+    /** The turn's status in the product's shared vocabulary. Worst-wins:
+     *  an error outranks needing attention, which outranks done. */
+    EHaybaStatus Status() const
+    {
+        bool bAttention = false;
+        for (const FHaybaToolCall& C : Calls)
+        {
+            if (C.bIsError) return EHaybaStatus::Error;
+            if (C.bNeedsAttention) bAttention = true;
+        }
+        return bAttention ? EHaybaStatus::NeedsAttention : EHaybaStatus::Done;
+    }
     // Per-turn selection — Copy / Archive bulk actions target whole turns.
     bool bSelected = false;
 };

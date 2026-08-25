@@ -1,4 +1,7 @@
 #include "HaybaMCPToolStreamPanel.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonReader.h"
+#include "HaybaMCPStatusVocabulary.h"
 #include "HaybaMCPStyle.h"
 #include "HaybaMCPModule.h"
 #include "Widgets/Layout/SExpandableArea.h"
@@ -188,6 +191,9 @@ void SHaybaMCPToolStreamPanel::Construct(const FArguments& InArgs)
             Call.ResultJson   = R.ResultJson;
             Call.RendererType = ResolveRenderer(R.ToolName);
             Call.Timestamp    = R.Timestamp;
+            // A restored call needs the same verdict as a live one. Missing
+            // this is what made history render as uniformly successful.
+            Call.Classify();
             Turns.Last()->Calls.Add(MoveTemp(Call));
         }
         if (Hist.Num() > 0) RebuildSummary(Turns.Last());
@@ -289,6 +295,51 @@ void SHaybaMCPToolStreamPanel::RebuildTurnsContainer()
                     + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
                     [
                         SNew(STextBlock).Text_Lambda([Turn](){ return FText::FromString(Turn->Summary); })
+                    ]
+                    // The turn's verdict. A header reading "3 calls" while one
+                    // of them broke a constraint hides the only part that needs
+                    // a decision.
+                    + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                    .Padding(8.f, 0.f, 4.f, 0.f)
+                    [
+                        SNew(STextBlock)
+                        // Word AND colour. A coloured dot alone is unreadable
+                        // to anyone who cannot separate the hues, and needs-
+                        // attention and needs-approval share the same ochre by
+                        // design.
+                        .Text_Lambda([Turn]()
+                        {
+                            if (!Turn.IsValid() || Turn->Calls.Num() == 0) return FText::GetEmpty();
+                            const EHaybaStatus S = Turn->Status();
+                            return FText::FromString(FString::Printf(TEXT("%s %s"),
+                                HaybaStatus::Glyph(S), *HaybaStatus::Label(S).ToString()));
+                        })
+                        .ColorAndOpacity_Lambda([Turn]()
+                        {
+                            if (!Turn.IsValid() || Turn->Calls.Num() == 0)
+                                return FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted"));
+                            return HaybaStatus::Colour(Turn->Status());
+                        })
+                        .ToolTipText_Lambda([Turn]() -> FText
+                        {
+                            if (!Turn.IsValid()) return FText::GetEmpty();
+                            // Name the rule and the amount, not just the state.
+                            for (const FHaybaToolCall& C : Turn->Calls)
+                            {
+                                if (C.bNeedsAttention)
+                                {
+                                    return FText::FromString(FString::Printf(
+                                        TEXT("%s is short by %+.2f%s. Open Rules to fix it."),
+                                        *C.WorstRuleId, C.WorstMargin, *C.WorstMarginUnit));
+                                }
+                            }
+                            for (const FHaybaToolCall& C : Turn->Calls)
+                            {
+                                if (C.bIsError)
+                                    return FText::FromString(TEXT("A tool call in this turn failed."));
+                            }
+                            return FText::FromString(TEXT("Every call in this turn completed."));
+                        })
                     ]
                 ]
                 .BodyContent()
@@ -483,6 +534,76 @@ void SHaybaMCPToolStreamPanel::BeginNewTurn()
     RebuildTurnsContainer();
 }
 
+/** Look for a rule that came back with a negative margin.
+ *
+ *  The validator attaches `{"validator":{"findings":[{...,"measurement":
+ *  {"value":-0.62,"unit":"m"}}]}}` to a result. A negative value is the IA's
+ *  "needs attention": the tool succeeded and the outcome breaks a constraint.
+ *
+ *  A finding with NO measurement is not treated as attention-worthy here. It
+ *  may still be a warning, but without an amount there is nothing to show
+ *  beside it, and the whole point of this state is carrying the amount.
+ */
+static bool FindWorstNegativeMargin(const FString& ResultJson,
+    double& OutValue, FString& OutUnit, FString& OutRuleId)
+{
+    // Cheap reject first. Parsing every result would mean running a JSON
+    // reader over every tool response, most of which have no validator block.
+    if (!ResultJson.Contains(TEXT("\"validator\""))) return false;
+
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResultJson);
+    TSharedPtr<FJsonObject> Root;
+    if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid()) return false;
+
+    const TSharedPtr<FJsonObject>* Validator = nullptr;
+    if (!Root->TryGetObjectField(TEXT("validator"), Validator) || !Validator || !Validator->IsValid())
+        return false;
+
+    const TArray<TSharedPtr<FJsonValue>>* Findings = nullptr;
+    if (!(*Validator)->TryGetArrayField(TEXT("findings"), Findings) || !Findings) return false;
+
+    bool bFound = false;
+    for (const TSharedPtr<FJsonValue>& V : *Findings)
+    {
+        const TSharedPtr<FJsonObject>* F = nullptr;
+        if (!V.IsValid() || !V->TryGetObject(F) || !F || !F->IsValid()) continue;
+
+        const TSharedPtr<FJsonObject>* Meas = nullptr;
+        if (!(*F)->TryGetObjectField(TEXT("measurement"), Meas) || !Meas || !Meas->IsValid()) continue;
+
+        double Value = 0.0;
+        if (!(*Meas)->TryGetNumberField(TEXT("value"), Value)) continue;
+        if (Value >= 0.0) continue;
+
+        // Worst-wins, so the chip reports the biggest problem rather than
+        // whichever finding happened to be listed first.
+        if (!bFound || Value < OutValue)
+        {
+            bFound = true;
+            OutValue = Value;
+            (*Meas)->TryGetStringField(TEXT("unit"), OutUnit);
+            (*F)->TryGetStringField(TEXT("ruleId"), OutRuleId);
+        }
+    }
+    return bFound;
+}
+
+void FHaybaToolCall::Classify()
+{
+    bIsError = ResultJson.StartsWith(TEXT("ERROR:"));
+    bNeedsAttention = false;
+    WorstMargin = 0.0;
+    WorstMarginUnit.Reset();
+    WorstRuleId.Reset();
+
+    // An outright failure is not "needs attention": there is no margin to
+    // report and nothing to move.
+    if (bIsError) return;
+
+    bNeedsAttention = FindWorstNegativeMargin(
+        ResultJson, WorstMargin, WorstMarginUnit, WorstRuleId);
+}
+
 void SHaybaMCPToolStreamPanel::AddToolCall(const FString& ToolName, const FString& ParamsJson, const FString& ResultJson)
 {
     if (Turns.IsEmpty()) BeginNewTurn();
@@ -492,6 +613,7 @@ void SHaybaMCPToolStreamPanel::AddToolCall(const FString& ToolName, const FStrin
     Call.ResultJson   = ResultJson;
     Call.RendererType = ResolveRenderer(ToolName);
     Call.Timestamp    = FDateTime::Now();
+    Call.Classify();
     Turns.Last()->Calls.Add(Call);
     RebuildSummary(Turns.Last());
     RebuildTurnsContainer();
@@ -654,7 +776,9 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildCallRow(const FHaybaToolCall&
 
 TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildGenericRenderer(const FHaybaToolCall& Call, int32 TurnIdx, int32 CallIdx)
 {
-    const bool bIsError = Call.ResultJson.StartsWith(TEXT("ERROR:"));
+    // Classified when the call was recorded, not re-derived here. The two used
+    // to be computed in different places from the same string.
+    const bool bIsError = Call.bIsError;
     const FLinearColor DomainColor = bIsError
         ? FHaybaMCPStyle::Colour("Hayba.Color.Status.Fail")
         : ColorForRenderer(Call.RendererType);
@@ -663,9 +787,12 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildGenericRenderer(const FHaybaT
     const FString PreviewParams = (Call.ParamsJson.IsEmpty() || Call.ParamsJson == TEXT("{}"))
         ? TEXT("") : Call.ParamsJson.Left(140);
     const FString PreviewResult = Call.ResultJson.Left(220);
-    const FLinearColor StatusDot = bIsError
-        ? FHaybaMCPStyle::Colour("Hayba.Color.Status.Fail")
-        : FHaybaMCPStyle::Colour("Hayba.Color.Status.Pass");
+    // One vocabulary. This dot used to be a local error/pass choice, so a call
+    // that succeeded while breaking a rule showed a clean green tick.
+    const EHaybaStatus CallStatus = bIsError
+        ? EHaybaStatus::Error
+        : (Call.bNeedsAttention ? EHaybaStatus::NeedsAttention : EHaybaStatus::Done);
+    const FSlateColor StatusDot = HaybaStatus::Colour(CallStatus);
 
     // Copy this row -- captured by value so the lambda survives.
     FHaybaToolCall CallCopy = Call;
@@ -683,8 +810,15 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildGenericRenderer(const FHaybaT
                 + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 8.f, 0.f)
                 [
                     SNew(STextBlock)
-                    .ColorAndOpacity(FSlateColor(StatusDot))
-                    .Text(FText::FromString(TEXT("●")))
+                    .ColorAndOpacity(StatusDot)
+                    // The glyph comes from the vocabulary too, so a state that
+                    // is not "done" does not silently reuse the done shape.
+                    .Text(FText::FromString(HaybaStatus::Glyph(CallStatus)))
+                    .ToolTipText(FText::FromString(
+                        CallStatus == EHaybaStatus::NeedsAttention
+                            ? FString::Printf(TEXT("%s: %+.2f%s - needs attention"),
+                                *Call.WorstRuleId, Call.WorstMargin, *Call.WorstMarginUnit)
+                            : HaybaStatus::Label(CallStatus).ToString()))
                 ]
                 + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 8.f, 0.f)
                 [
