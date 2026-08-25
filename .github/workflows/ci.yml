@@ -145,6 +145,16 @@ jobs:
       - name: Docs name real CLI commands, and do not prescribe an entry name
         run: node tools/docs-command-check.mjs --check
 
+      # GetCommands() is the advertisement -- it feeds the capability
+      # inventory, CAPABILITIES.md and the router's dispatch table. Handle()
+      # is the implementation. Nothing checked that the two agree, so a
+      # command could be listed for agents, routed to its handler, and fall
+      # through to that handler's own "unknown command" tail: advertised,
+      # reachable, and broken, with the agent reasonably concluding the plugin
+      # was out of date.
+      - name: Declared commands are actually implemented
+        run: node tools/declared-command-check.mjs --check
+
   architecture:
     name: Architecture — clean install + build + test
     runs-on: ubuntu-latest
