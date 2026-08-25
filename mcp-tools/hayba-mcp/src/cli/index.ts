@@ -12,7 +12,7 @@
 // its MCP TCP port — same precondition every other MCP tool call has. A CI
 // job is expected to launch UE itself (its own step) before invoking this.
 import { readFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseSpec, SpecParseError } from './spec.js';
 import { runSpec, type RunnerDeps } from './runner.js';
@@ -23,10 +23,17 @@ function printUsage(): void {
     [
       'Usage: hayba-cli <spec-file.json|.yaml>',
       '       hayba-cli doctor [--project <path to .uproject>]',
+      '       hayba-cli configure [--client <id>] [--project <dir>] [--force] [--dry-run]',
       '',
       'doctor checks the four things that break an install and says what to',
       'do about each: plugin present, its dependencies enabled, the editor',
       'reachable, and the two halves on matching versions.',
+      '',
+      'configure writes this server into an editor\'s MCP config, so nobody has',
+      'to hand-edit JSON with an absolute path in it. With no --client it',
+      'configures every client it detects. It never overwrites a differing',
+      'entry without --force, and always leaves a .hayba-backup beside any',
+      'file it changes.',
       '',
       'Runs each step in the spec against a running UE editor and exits:',
       '  0  all steps succeeded',
@@ -115,6 +122,101 @@ export async function runDoctor(args: string[]): Promise<number> {
 }
 
 /**
+ * `hayba-cli configure` — write this server into the editors' MCP configs.
+ *
+ * Split the same way as doctor: the decision of what a config should contain
+ * is pure (configure.ts) and the disk lives in configure-facts.ts, so the
+ * refuse-to-clobber and refuse-to-parse branches are tested without ever
+ * pointing a test at a real machine's config.
+ */
+export async function runConfigure(args: string[]): Promise<number> {
+  const [
+    { CLIENT_SPECS, planConfigChange, planConfigOverwrite },
+    { configPathFor, detectClients, readConfigText, writeConfigText, serverEntryFor },
+  ] = await Promise.all([import('./configure.js'), import('./configure-facts.js')]);
+
+  const flag = (name: string): string | null => {
+    const i = args.indexOf(name);
+    return i !== -1 && args[i + 1] ? args[i + 1]! : null;
+  };
+  const force = args.includes('--force');
+  const dryRun = args.includes('--dry-run');
+  const projectRoot = flag('--project') ?? process.cwd();
+  const only = flag('--client');
+
+  // The path a client will launch. Resolved from this module rather than cwd:
+  // a client spawns the server from its own directory, and the absolute path
+  // is exactly the value people get wrong by hand.
+  const serverJs = join(dirname(fileURLToPath(import.meta.url)), '..', 'index.js');
+  const entry = serverEntryFor(serverJs);
+
+  const detected = detectClients(projectRoot);
+  const targets = CLIENT_SPECS.filter((spec) =>
+    only ? spec.id === only : detected.includes(spec.id),
+  );
+
+  if (targets.length === 0) {
+    console.error(
+      only
+        ? `unknown client "${only}". Known: ${CLIENT_SPECS.map((c) => c.id).join(', ')}`
+        : 'no MCP clients detected here. Name one explicitly with --client ' +
+          `(${CLIENT_SPECS.map((c) => c.id).join(', ')}), or run from your project root.`,
+    );
+    return EXIT_SPEC_ERROR;
+  }
+
+  let failed = false;
+  let wrote = false;
+  for (const spec of targets) {
+    const path = configPathFor(spec, projectRoot);
+    let current: string | null;
+    try {
+      current = readConfigText(path);
+    } catch (err) {
+      console.error(`${spec.label}: ${err instanceof Error ? err.message : String(err)}`);
+      failed = true;
+      continue;
+    }
+
+    const plan = force
+      ? planConfigOverwrite(current, spec, 'hayba', entry)
+      : planConfigChange(current, spec, 'hayba', entry);
+
+    switch (plan.verdict) {
+      case 'already-current':
+        console.log(`${spec.label}: already configured — ${path}`);
+        break;
+      case 'differs':
+        console.error(`${spec.label}: ${plan.reason}\n  ${path}`);
+        failed = true;
+        break;
+      case 'unparsable':
+        console.error(`${spec.label}: ${plan.reason}\n  ${path}`);
+        failed = true;
+        break;
+      case 'added': {
+        if (dryRun) {
+          console.log(`${spec.label}: would write ${path}`);
+          break;
+        }
+        const { backedUpTo } = writeConfigText(path, plan.nextText as string);
+        wrote = true;
+        console.log(
+          `${spec.label}: configured — ${path}` +
+            (backedUpTo ? `\n  previous version saved to ${backedUpTo}` : ''),
+        );
+        break;
+      }
+    }
+  }
+
+  if (wrote) {
+    console.log('\nRestart the client(s) above to pick up the change.');
+  }
+  return failed ? EXIT_SPEC_ERROR : 0;
+}
+
+/**
  * Core entrypoint logic, with the UE-facing seam injectable so tests can
  * drive every exit path (spec error, unreachable UE, step failure, success)
  * without a real socket or a real spawned process. Production callers omit
@@ -132,6 +234,10 @@ export async function main(
 
   if (specPath === 'doctor') {
     return await runDoctor(argv.slice(1));
+  }
+
+  if (specPath === 'configure') {
+    return await runConfigure(argv.slice(1));
   }
 
   let raw: string;
