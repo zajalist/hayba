@@ -17,14 +17,69 @@ namespace
         return GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     }
 
-    AActor* FindActor(UWorld* World, const FString& Name)
+    /** An actor lookup that admits when it cannot tell which one you meant. */
+    struct FActorLookup
     {
-        if (!World) return nullptr;
+        AActor* Actor = nullptr;
+        /** Actors whose LABEL matched, when the label was ambiguous. Empty on
+         *  a clean hit. */
+        TArray<FString> Candidates;
+    };
+
+    /**
+     * Resolve an actor by unique name, or failing that by label.
+     *
+     * Labels are NOT unique in UE. This used to return the first match and say
+     * nothing, so `actor_delete` on a duplicated label reported
+     * {"deleted": true} and destroyed an arbitrary one of several — verified
+     * against a live editor, two cubes labelled the same, one silently gone
+     * and the caller told it had succeeded.
+     *
+     * The unique object name is checked first and wins outright, because that
+     * is the identifier that can only mean one thing.
+     */
+    FActorLookup FindActorChecked(UWorld* World, const FString& Name)
+    {
+        FActorLookup Out;
+        if (!World) return Out;
+
+        TArray<AActor*> ByLabel;
         for (TActorIterator<AActor> It(World); It; ++It)
         {
-            if (It->GetName() == Name || It->GetActorLabel() == Name) return *It;
+            if (It->GetName() == Name)
+            {
+                // Object names are unique, so this is unambiguous by
+                // construction and outranks any label match.
+                Out.Actor = *It;
+                Out.Candidates.Reset();
+                return Out;
+            }
+            if (It->GetActorLabel() == Name) ByLabel.Add(*It);
         }
-        return nullptr;
+
+        if (ByLabel.Num() == 1)
+        {
+            Out.Actor = ByLabel[0];
+            return Out;
+        }
+        for (AActor* A : ByLabel) Out.Candidates.Add(A->GetName());
+        return Out;
+    }
+
+    /** The error a caller gets when a label matched several actors. Names the
+     *  unique alternatives, because "be more specific" without saying what to
+     *  be specific WITH is not an instruction. */
+    FString AmbiguousActorError(const FString& Name, const TArray<FString>& Candidates)
+    {
+        return FString::Printf(
+            TEXT("actor label \"%s\" matches %d actors (%s) — refusing to guess which. ")
+            TEXT("Use one of those unique names instead, or rename the actors so the label is unique."),
+            *Name, Candidates.Num(), *FString::Join(Candidates, TEXT(", ")));
+    }
+
+    AActor* FindActor(UWorld* World, const FString& Name)
+    {
+        return FindActorChecked(World, Name).Actor;
     }
 }
 
@@ -106,7 +161,13 @@ namespace HaybaActorOps
     {
         FDeleteResult Res;
 
-        AActor* Actor = FindActor(EditorWorld(), ActorId);
+        const FActorLookup Hit = FindActorChecked(EditorWorld(), ActorId);
+        if (Hit.Candidates.Num() > 1)
+        {
+            Res.Error = AmbiguousActorError(ActorId, Hit.Candidates);
+            return Res;
+        }
+        AActor* Actor = Hit.Actor;
         if (!Actor)
         {
             Res.Error = FString::Printf(TEXT("actor not found: %s"), *ActorId);
@@ -137,7 +198,13 @@ namespace HaybaActorOps
     {
         FTransformResult Res;
 
-        AActor* Actor = FindActor(EditorWorld(), Req.ActorId);
+        const FActorLookup Hit = FindActorChecked(EditorWorld(), Req.ActorId);
+        if (Hit.Candidates.Num() > 1)
+        {
+            Res.Error = AmbiguousActorError(Req.ActorId, Hit.Candidates);
+            return Res;
+        }
+        AActor* Actor = Hit.Actor;
         if (!Actor)
         {
             Res.Error = FString::Printf(TEXT("actor not found: %s"), *Req.ActorId);
