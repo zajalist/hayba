@@ -15,7 +15,7 @@ The number below is the one with a definition: commands declared in a
 | Handler classes declaring commands | **35** |
 | Commands declared in C++ | **243** |
 | Commands described in `sidecar.json` | 158 |
-| …of those, marked agent-callable | 150 |
+| …of those, marked agent-callable | 154 |
 
 _Every declared command is either described in `sidecar.json` or wrapped in TS._
 

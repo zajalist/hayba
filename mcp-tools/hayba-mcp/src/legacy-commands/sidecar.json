@@ -6406,7 +6406,9 @@
             "description": "Present only when nothing was done, explaining why"
           }
         ]
-      }
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false
     },
     "mesh_set_nanite": {
       "aliases": [],
@@ -6454,7 +6456,9 @@
             "description": "True when the readback matches the request"
           }
         ]
-      }
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false
     },
     "mesh_build_lods": {
       "aliases": [],
@@ -6515,7 +6519,9 @@
             "description": "Present when the reducer declined to produce every LOD"
           }
         ]
-      }
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false
     },
     "mesh_generate_uvs": {
       "aliases": [],
@@ -6559,7 +6565,9 @@
             "description": "True when the mesh has at least one UV channel"
           }
         ]
-      }
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false
     }
   }
 }
