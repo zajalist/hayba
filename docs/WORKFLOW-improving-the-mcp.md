@@ -384,12 +384,18 @@ sign of it. Check with:
 
     git diff --quiet origin/main HEAD -- unreal/HaybaMCPGAS unreal/HaybaMCPMetaSound
 
-**"Result: Succeeded" does not mean your new file is in the binary.** A build
-launched while the editor is still releasing its DLL can report success without
-compiling what you added. This was observed: a new automation test compiled on
-the *second* build (`[1/4] Compile HaybaSceneQueryTest.cpp`) after the first
-reported success and produced a binary without it. For a new test, the
-authoritative check is discovery, not the build log:
+**"Result: Succeeded" does not mean your NEW file is in the binary.** A build
+that adds a source file frequently misses it on the first pass and compiles it
+on the second, reporting success both times.
+
+Originally blamed on the editor still holding its DLL. That is wrong: two later
+probe files behaved identically with the editor closed for a full minute
+beforehand, each compiling only on the second invocation
+(`[1/4] Compile HaybaWidgetEnumProbeTest.cpp`). The trigger is the file being
+NEW — UBT does not pick it up until its file list is refreshed — not a lock.
+
+Practical rule: after adding a `.cpp`, build **twice**, or verify by discovery
+rather than by the build log:
 
     test_list { "filter": "<YourTestName>" }    -> count must be non-zero
 
