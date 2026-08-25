@@ -235,18 +235,45 @@ export async function worldGenerateHandler(args: Record<string, unknown>, _sessi
   // 4. plan
   const planned = planScatter(layers, assetByRole, center, radius, count, seed);
 
-  // 4b. put every instance on the ground.
+  // 5. separate same-asset overlaps, BEFORE grounding.
   //
-  // planScatter gives each placement the area actor's z, which is right only
-  // on a flat plane. This tool has always described itself as placing things
-  // "grounded", and the grounded constraint below was checking the plan
-  // against its own flat assumption rather than against the world.
+  // A clearance fix pushes in XY, so doing this after the trace would slide
+  // instances off the exact surface point they were just placed on. Order
+  // matters more than it looks.
   //
-  // A point with nothing under it is dropped rather than left floating at the
-  // actor's height, and the count is reported. If the trace cannot run at all,
-  // nothing is dropped and the report says the placements were never conformed
-  // -- an unconformed scatter must not be indistinguishable from a conformed
-  // one that happened to find flat ground.
+  // Bound per asset and filtered to the same asset: this proves two hemlocks
+  // are not inside each other. It does NOT prove a fern is outside a tree
+  // trunk -- cross-asset interpenetration needs real overlap, not a
+  // centre-distance proxy, and the tool's description now says so rather than
+  // implying more than is checked.
+  const clearanceConstraints: Constraint[] = [];
+  for (const l of layers) {
+    const asset = assetByRole[l.role];
+    if (!asset) continue;
+    const prof = profiles.get(asset);
+    if (!prof) continue; // no geometry, no honest claim
+    const bb = prof.geometry.aabb;
+    const halfX = (bb.max[0] - bb.min[0]) / 2;
+    const halfY = (bb.max[1] - bb.min[1]) / 2;
+    // Footprint proxy at the layer's largest scale, so the separation holds
+    // for the biggest instance the layer can produce rather than the average.
+    const min_m = 2 * Math.max(halfX, halfY) * l.scaleMax;
+    if (!(min_m > 0)) continue;
+    clearanceConstraints.push({
+      id: `wg_clearance_${asset}`,
+      primitive: 'clearance',
+      params: { min_m: Number(min_m.toFixed(3)), asset },
+      binding: { asset },
+    });
+  }
+  const separation = validateAndFix(planned, clearanceConstraints, profiles);
+
+  // 6. sit each base on the traced ground.
+  //
+  // The trace returns the surface; the placement is a PIVOT. Setting the pivot
+  // to the surface buries or floats anything whose pivot is not at its base --
+  // the SM_GiantTree pivot sits ~3.8m above the roots. ground_offset_m is the
+  // signed pivot-to-base distance, scaled with the instance.
   const conform = await conformToGround(
     planned.map((p) => [p.loc_cm[0], p.loc_cm[1]] as const),
     center[2],
@@ -257,9 +284,11 @@ export async function worldGenerateHandler(args: Record<string, unknown>, _sessi
   if (!conform.unavailable) {
     placements = [];
     for (const [i, p] of planned.entries()) {
-      const z = conform.hits[i]?.z ?? null;
-      if (z === null) { noGround.push(p.object); continue; }
-      placements.push({ ...p, loc_cm: [p.loc_cm[0], p.loc_cm[1], z] });
+      const groundZ = conform.hits[i]?.z ?? null;
+      if (groundZ === null) { noGround.push(p.object); continue; }
+      const offsetM = profiles.get(p.asset)?.structural?.ground_offset_m ?? 0;
+      const pivotZ = groundZ - offsetM * p.scale * 100;
+      placements.push({ ...p, loc_cm: [p.loc_cm[0], p.loc_cm[1], pivotZ] });
     }
   }
 
@@ -272,15 +301,33 @@ export async function worldGenerateHandler(args: Record<string, unknown>, _sessi
     }, null, 2) }], isError: true };
   }
 
-  // 5. validate + auto-fix the plan (grounded per asset)
-  const constraints: Constraint[] = Object.values(assetByRole).map((a) => ({ id: `wg_grounded_${a}`, primitive: 'grounded', params: { tolerance_m: tol }, binding: { asset: a } }));
-  const validation = validateAndFix(placements, constraints, profiles);
+  // 7. the grounded constraint measures the base against the WORLD PLANE z=0.
+  //
+  // That is the right check on flat ground and the wrong one on terrain: after
+  // a conform onto a hillside at z=4.5m it fails every instance and "fixes"
+  // them by dragging them back down to zero, undoing the trace. So it runs
+  // only on the unconformed fallback path, where its flat-world assumption is
+  // the situation. When the trace ran, groundedness comes from the trace and
+  // the report says which one happened.
+  const validation = conform.unavailable
+    ? validateAndFix(
+        placements,
+        Object.values(assetByRole).map((a) => ({
+          id: `wg_grounded_${a}`, primitive: 'grounded', params: { tolerance_m: tol }, binding: { asset: a },
+        })),
+        profiles,
+      )
+    : { passes: 0, failed_before: 0, failed_after: 0, fixed: 0, ran: false,
+        note: 'grounded by terrain trace, not by the z=0 plane check' };
 
   const report: Record<string, unknown> = {
     ok: true,
     area_actor, center_cm: center, radius_cm: radius, seed,
     layers: layers.map((l) => ({ role: l.role, keywords: l.keywords, asset: assetByRole[l.role] ?? null })),
     gaps,
+    separation: clearanceConstraints.length === 0
+      ? { ran: false, note: 'no baked geometry — same-asset clearance not checked' }
+      : { checked: 'same-asset centre distance', ...separation },
     terrain: conform.unavailable
       ? { conformed: false, reason: conform.unavailable, note: 'placements kept the area actor height and are NOT grounded to the world' }
       : { conformed: true, planned: planned.length, placed: placements.length, dropped_no_ground: noGround.length },

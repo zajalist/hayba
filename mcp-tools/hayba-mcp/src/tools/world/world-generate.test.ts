@@ -76,3 +76,79 @@ describe('validateAndFix', () => {
     expect(placements[0].loc_cm[2]).toBeLessThan(500);
   });
 });
+
+describe('grounded measures against the world plane, not the terrain', () => {
+  const asset = '/Game/T_Pine';
+  const profile: Profile = bakeProfile(
+    { asset_id: asset, origin_cm: [0, 0, 50], extent_cm: [50, 50, 50] },
+    '1970-01-01T00:00:00.000Z',
+  );
+
+  it('drags a hillside placement back down to zero', () => {
+    // This is why world_generate cannot run the grounded constraint after a
+    // terrain conform. An instance correctly sitting on ground at z=450cm is
+    // 4.5m from the z=0 plane, so grounded fails it and "fixes" it by pulling
+    // it to the plane -- silently undoing the trace.
+    const profiles = new Map<string, Profile>([[asset, profile]]);
+    const constraints: Constraint[] = [
+      { id: 'g', primitive: 'grounded', params: { tolerance_m: 0.1 }, binding: { asset } },
+    ];
+    const onHill: Placement[] = [
+      { object: 'tree0', asset, role: 'canopy', loc_cm: [0, 0, 450], yaw_deg: 0, scale: 1 },
+    ];
+
+    const v = validateAndFix(onHill, constraints, profiles);
+
+    expect(v.failed_before).toBe(1);
+    // Pulled to pivot z=50cm, which puts the BASE on the world plane -- this
+    // profile's pivot sits 0.5m above its base. Right answer, wrong world: the
+    // instance was correctly on ground at 450cm and is now 4m underground.
+    expect(onHill[0]!.loc_cm[2]).toBeCloseTo(50, 0);
+    expect(onHill[0]!.loc_cm[2]).toBeLessThan(450);
+  });
+});
+
+describe('same-asset clearance', () => {
+  const asset = '/Game/T_Pine';
+  // 2m wide, so two instances closer than 2m centre-to-centre overlap.
+  const profile: Profile = bakeProfile(
+    { asset_id: asset, origin_cm: [0, 0, 100], extent_cm: [100, 100, 100] },
+    '1970-01-01T00:00:00.000Z',
+  );
+
+  it('pushes overlapping instances of the same asset apart', () => {
+    const profiles = new Map<string, Profile>([[asset, profile]]);
+    const constraints: Constraint[] = [
+      { id: 'c', primitive: 'clearance', params: { min_m: 2, asset }, binding: { asset } },
+    ];
+    const stacked: Placement[] = [
+      { object: 'a', asset, role: 'canopy', loc_cm: [0, 0, 0], yaw_deg: 0, scale: 1 },
+      { object: 'b', asset, role: 'canopy', loc_cm: [30, 0, 0], yaw_deg: 0, scale: 1 },
+    ];
+
+    const v = validateAndFix(stacked, constraints, profiles);
+
+    expect(v.ran).toBe(true);
+    expect(v.failed_before).toBeGreaterThan(0);
+    const dx = Math.abs(stacked[0]!.loc_cm[0] - stacked[1]!.loc_cm[0]);
+    // 30cm apart to begin with; the fix must open them up towards 2m.
+    expect(dx).toBeGreaterThan(30);
+  });
+
+  it('leaves instances that already clear each other alone', () => {
+    const profiles = new Map<string, Profile>([[asset, profile]]);
+    const constraints: Constraint[] = [
+      { id: 'c', primitive: 'clearance', params: { min_m: 2, asset }, binding: { asset } },
+    ];
+    const apart: Placement[] = [
+      { object: 'a', asset, role: 'canopy', loc_cm: [0, 0, 0], yaw_deg: 0, scale: 1 },
+      { object: 'b', asset, role: 'canopy', loc_cm: [1000, 0, 0], yaw_deg: 0, scale: 1 },
+    ];
+
+    const v = validateAndFix(apart, constraints, profiles);
+
+    expect(v.failed_before).toBe(0);
+    expect(apart[0]!.loc_cm[0]).toBe(0);
+    expect(apart[1]!.loc_cm[0]).toBe(1000);
+  });
+});

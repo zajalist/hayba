@@ -1587,7 +1587,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'world_generate',
     description:
-      'Build an environment from a natural-language biome description. Parses the prompt into layers (canopy/rock/undergrowth/groundcover), resolves one of the PROJECT\'S OWN StaticMeshes per layer, plans a deterministic seeded scatter across an area actor, then PLUMB-VALIDATES and auto-corrects every instance IN MEMORY (grounded, non-interpenetrating) before spawning — "scatter and prove", not scatter-and-hope. Use dry_run to get the validated plan without spawning.',
+      'Build an environment from a natural-language biome description. Parses the prompt into layers (canopy/rock/undergrowth/groundcover), resolves one of the PROJECT\'S OWN StaticMeshes per layer, plans a deterministic seeded scatter across an area actor, separates same-asset overlaps, then line-traces every point so each instance BASE sits on the actual ground instead of at one flat height. Points with nothing under them are dropped and counted. PROVEN: same-asset centre separation, and groundedness by trace. NOT PROVEN: cross-asset interpenetration — a fern may still stand inside a trunk. Use dry_run to get the plan without spawning.',
     meta: worldGenerateMeta,
     handler: worldGenerateHandler,
     cost: 'high',
