@@ -36,4 +36,12 @@ public:
     int32 MaxRecipeDepth;
 
     static const UHaybaRecipeSettings* GetChecked();
+
+    //~ UObject
+    virtual void PostInitProperties() override;
+
+private:
+    /** One-time adoption of values saved under the pre-rename class name.
+     *  See the .cpp for why CoreRedirects do not cover this. */
+    void MigrateLegacyConfigSection();
 };
